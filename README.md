@@ -14,14 +14,11 @@ Handlers decide what each request means: real I/O in production, fakes in tests,
 recorded responses when you debug. Swap a handler, not your code.
 
 ```bash
-pip install doeff   # Python 3.11+
+pip install doeff          # Python 3.11+: the core (doeff, doeff-vm, doeff-core-effects)
+pip install "doeff[hy]"    # + Hy and the handlers written in Hy (files, SQL, processes, cache, …)
+pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
+pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
-
-> **Changing in the next release (0.6.0, not on PyPI yet):** `pip install doeff` will install
-> only the core. Add `"doeff[hy]"` for Hy and the handlers written in Hy (files, SQL,
-> subprocesses, randomness, caching, metrics), `"doeff[http]"` for the HTTP client handlers, or
-> `"doeff[all]"` for everything `pip install doeff` installs in 0.5.0. Installing from this
-> repository already works this way.
 
 ## A 30-second example
 
@@ -241,8 +238,7 @@ creates that shape directly:
 (print (run (ask-env greet)))  ; hello
 ```
 
-`pip install doeff` installs Hy too (from 0.6.0, Hy comes with the extra `hy`:
-`pip install "doeff[hy]"`). Save the example as `greet.hy` and run it with `hy greet.hy`. Macros such as `do!`, `<-` and `defhandler` are brought in with `require`, never
+Hy comes with the extra `hy`: `pip install "doeff[hy]"`. Save the example as `greet.hy` and run it with `hy greet.hy`. Macros such as `do!`, `<-` and `defhandler` are brought in with `require`, never
 with `import`.
 
 ### Using a Hy module from Python
@@ -367,7 +363,7 @@ See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 The add-on packages (LLM clients, agents, workflows and more) live in
 [`packages/`](https://github.com/proboscis/doeff/tree/main/packages).
 
-`doeff-agents` 0.1.1 on PyPI was built for doeff 0.4 and does not work with doeff 0.5 — importing
+`doeff-agents` 0.1.1 on PyPI was built for doeff 0.4 and does not work with doeff 0.5 or later — importing
 its handlers fails with `ImportError: cannot import name 'WithHandler' from 'doeff'`. To keep using
 that release, pin the doeff 0.4 line: `pip install doeff-agents "doeff<0.5"`. The `doeff-agents` in
 this repository ([`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md),

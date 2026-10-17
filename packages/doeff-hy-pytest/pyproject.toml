@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doeff-hy-pytest"
-version = "0.5.0"
+version = "0.6.0"
 description = "pytest plugin for doeff-hy tests: a Python 3.14 fix for Hy and optional per-test time limits"
 readme = "README.md"
 requires-python = ">=3.11"

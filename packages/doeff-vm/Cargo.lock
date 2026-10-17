@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "doeff-vm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "doeff-vm-core",
  "libc",

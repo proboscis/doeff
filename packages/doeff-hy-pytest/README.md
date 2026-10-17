@@ -34,11 +34,10 @@ The plugin does **not** collect `.hy` test files. The doeff-hy README shows the
 
 ## Installation
 
-doeff-hy depends on this package, so it is already installed when doeff or doeff-hy
-is:
+doeff-hy depends on this package, so it is already installed when doeff-hy is:
 
 ```bash
-pip install doeff      # installs doeff-hy and doeff-hy-pytest
+pip install "doeff[hy]"   # installs doeff-hy and doeff-hy-pytest
 ```
 
 You do not list it yourself. The exception: if you install doeff-hy from a git
@@ -124,7 +123,8 @@ The report and failure messages are currently written in Japanese.
 
 ## How it fits with the other doeff packages
 
-doeff is published as five core packages. `pip install doeff` installs all of them.
+doeff is published as five core packages. `pip install doeff` installs the first three; the extra
+`hy` (`pip install "doeff[hy]"`) adds doeff-hy and doeff-hy-pytest.
 
 | Package | Role |
 | --- | --- |
@@ -134,12 +134,12 @@ doeff is published as five core packages. `pip install doeff` installs all of th
 | [doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy) | Macros for writing doeff code in Hy, a Lisp that compiles to Python |
 | **doeff-hy-pytest** | This package: the pytest plugin for tests written with doeff-hy |
 
-Arrows point from a package to a package it depends on:
+Arrows point from a package to a package it depends on (the dotted one only with the extra `hy`):
 
 ```text
 doeff ──► doeff-vm
   │
-  └─────► doeff-core-effects ──► doeff-hy ──► doeff-hy-pytest
+  └─────► doeff-core-effects ┄┄► doeff-hy ──► doeff-hy-pytest
 ```
 
 doeff-hy also depends on doeff and doeff-core-effects, so the five packages are
