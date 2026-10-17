@@ -15,11 +15,16 @@ writer uses lazy state init via Get/Put + Some
 the ``state`` handler to be installed as an outer handler, so write
 ``state()(writer(prog))`` — not ``writer(state()(prog))``, which fails with
 UnhandledEffect on the first Tell.
+
+A factory given the program (``state(prog())``) and a handler called with no program
+(``writer()(prog())``) are refused with a TypeError that names the call meant.
 """
 
 import threading as _threading
 from collections.abc import Mapping
 from typing import Any
+
+from doeff_vm._not_a_program import program_shown, uncalled_do_function_call
 
 from doeff import do
 from doeff.program import Pass, ProgramHandler, Transfer, TransferThrow
@@ -37,12 +42,36 @@ from doeff_core_effects.effects import (
 )
 
 
+def _refuse_program(factory: str, value: object, takes: str) -> None:
+    """Refuse the program given to the handler factory ``factory`` in place of ``takes``, its
+    argument: ``state(prog())`` is meant as ``state()(prog())``. Without this the factory
+    fails on the program as a value (``dict(prog())``: "dictionary update sequence element
+    #0 has length 1") or later, far from the call."""
+    if value is None or isinstance(value, Mapping):
+        return
+    # doeff imports this module before it defines Program.
+    from doeff import Program
+
+    if isinstance(value, Program):
+        got = "a program"
+    elif uncalled_do_function_call(value) is not None:
+        got = f"the @do function {getattr(value, '__name__', '')!r}"
+    else:
+        return
+    raise TypeError(
+        f"{factory}() got {got}, not {takes}: {factory} is a handler factory. "
+        f"Call it to build the handler, then apply that to the program: "
+        f"{factory}()({program_shown(value)})"
+    )
+
+
 def reader(env: Mapping[Any, Any] | None = None) -> ProgramHandler:
     """Reader handler: resolves Ask(key) from env dict.
 
     Args:
         env: dict mapping keys to values. Default empty.
     """
+    _refuse_program("reader", env, "the env")
     if env is None:
         env = {}
 
@@ -67,6 +96,7 @@ def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     Args:
         initial: dict of initial state. Default empty.
     """
+    _refuse_program("state", initial, "the initial state")
     store = dict(initial) if initial else {}
 
     @do
@@ -556,6 +586,7 @@ def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> P
 
     Requires scheduler (for semaphores) to be installed as an outer handler.
     """
+    _refuse_program("lazy_ask", env, "the env")
     if env is None:
         env = {}
 
