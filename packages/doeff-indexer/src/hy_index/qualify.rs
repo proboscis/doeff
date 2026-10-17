@@ -16,6 +16,8 @@
 //!    module そのものを呼ぶ形(`(import m)` の `(m)`)は呼び先の定義が無いので null。
 //! 3. どれでもない(組み込み・special form・局所の束縛・引数・値の上の属性)は null。
 
+use std::collections::{HashMap, HashSet};
+
 use super::analyze::mangle;
 use super::model::{Definition, HyFileIndex, Import, NameRef, TypeNote};
 
@@ -66,15 +68,63 @@ fn bound_name(import: &Import) -> &str {
     import.alias.as_deref().or(import.name.as_deref()).unwrap_or(&import.module)
 }
 
-/// 名前の解決の場 — 1 つの file の module・定義・import(他の file は見ない)。
-struct Scope<'a> {
-    path: &'a str,
-    module: &'a str,
-    definitions: &'a [Definition],
-    imports: &'a [Import],
+/// import 1 つを、解決で引く形にしたもの(`require` は入れない — macro は呼び先の定義にしない)。
+struct BoundImport {
+    /// import が file の中に作る名(mangle した dotted)。
+    bound: String,
+    /// import の module(相対 import は書いた file の module を基準に絶対へ直し、mangle した dotted)。
+    from: String,
+    /// `(import m [x])` の `x`(mangle した名)。`(import m)` — module そのもの — は None。
+    imported: Option<String>,
 }
 
-impl Scope<'_> {
+/// 名前の解決の場 — 1 つの file の module・定義・import(他の file は見ない)を、引きやすい表にして持つ。
+///
+/// 呼び出しと参照は 1 つの file に数万在り(10,000 行の file で 3 万以上)、1 つごとに定義と import の全部を回して mangle の String を確保していると、
+/// 「呼びの数 × (定義 + import の数)」になる(10,000 行で `index_source` が 4.3 秒 — card ki-58bfad2c13a1 の残り)。表は 1 回だけ作り、解決は引くだけにする。
+struct Scope<'a> {
+    /// この file の module(mangle した dotted)。
+    own_module: String,
+    /// top level の定義の mangle した名(入れ物の無い物)。
+    top_level: HashSet<&'a str>,
+    /// 入れ物(mangle した名)→ その中の定義の mangle した名。
+    contained: HashMap<String, HashSet<&'a str>>,
+    /// `require` でない import(書いた順 — 修飾つきの呼びは最初に合う物を使う)。
+    imports: Vec<BoundImport>,
+    /// 同じ名を束ねる最初の import の添字(修飾なしの呼びが引く — 最初に当たる物だけを使い、後の import は見ない)。
+    first_by_bound: HashMap<String, usize>,
+}
+
+impl<'a> Scope<'a> {
+    fn new(path: &str, module: &str, definitions: &'a [Definition], imports: &[Import]) -> Scope<'a> {
+        let mut top_level = HashSet::new();
+        let mut contained: HashMap<String, HashSet<&'a str>> = HashMap::new();
+        for definition in definitions {
+            match &definition.container {
+                None => {
+                    top_level.insert(definition.mangled.as_str());
+                }
+                Some(container) => {
+                    contained.entry(mangle(container)).or_default().insert(definition.mangled.as_str());
+                }
+            }
+        }
+        let imports: Vec<BoundImport> = imports
+            .iter()
+            .filter(|import| !import.is_require)
+            .map(|import| BoundImport {
+                bound: mangle_dotted(bound_name(import)),
+                from: mangle_dotted(&absolute_module(path, module, &import.module)),
+                imported: import.name.as_deref().map(mangle),
+            })
+            .collect();
+        let mut first_by_bound = HashMap::new();
+        for (index, import) in imports.iter().enumerate() {
+            first_by_bound.entry(import.bound.clone()).or_insert(index);
+        }
+        Scope { own_module: mangle_dotted(module), top_level, contained, imports, first_by_bound }
+    }
+
     /// 書かれた dotted の名(`ReadInput`・`intent.ReadInput`)の完全修飾名。
     fn resolve_written(&self, written: &str) -> Option<String> {
         let (qualifier, name) = match written.rsplit_once('.') {
@@ -86,8 +136,31 @@ impl Scope<'_> {
 
     /// 修飾(書かれた綴り)と mangle した名の完全修飾名(解決の順は module の説明のとおり)。
     fn resolve(&self, qualifier: Option<&str>, name: &str) -> Option<String> {
-        let (path, module, definitions, imports) = (self.path, self.module, self.definitions, self.imports);
-        call_target(path, module, definitions, imports, qualifier, name)
+        match qualifier {
+            None => {
+                if self.top_level.contains(name) {
+                    return Some(join(&[&self.own_module, name]));
+                }
+                let import = &self.imports[*self.first_by_bound.get(name)?];
+                let imported = import.imported.as_deref()?; // module そのものは呼び先の定義ではない
+                Some(join(&[&import.from, imported]))
+            }
+            Some(qualifier) => {
+                let q = mangle_dotted(qualifier);
+                if self.contained.get(&q).is_some_and(|names| names.contains(name)) {
+                    return Some(join(&[&self.own_module, &q, name]));
+                }
+                self.imports.iter().find_map(|import| match import.imported.as_deref() {
+                    // `(import m)` の `m.f`・`m.sub.f`
+                    None => {
+                        let rest = if q == import.bound { Some("") } else { q.strip_prefix(import.bound.as_str()).and_then(|rest| rest.strip_prefix('.')) };
+                        rest.map(|rest| join(&[&import.from, rest, name]))
+                    }
+                    // `(import pkg [sub])` の `sub.f` と `(import m [Class])` の `Class.f` — どちらも `from.sub.f`
+                    Some(imported) => (q == import.bound).then(|| join(&[&import.from, imported, name])),
+                })
+            }
+        }
     }
 
     /// 名 1 つの target を埋める。
@@ -103,51 +176,6 @@ impl Scope<'_> {
     }
 }
 
-/// 修飾と名の完全修飾名(解決の順は module の説明のとおり)。
-fn call_target(
-    path: &str,
-    module: &str,
-    definitions: &[Definition],
-    imports: &[Import],
-    qualifier: Option<&str>,
-    name: &str,
-) -> Option<String> {
-    let own_module = mangle_dotted(module);
-    match qualifier {
-        None => {
-            if definitions.iter().any(|d| d.container.is_none() && d.mangled == name) {
-                return Some(join(&[&own_module, name]));
-            }
-            let import = imports.iter().filter(|imp| !imp.is_require).find(|imp| mangle_dotted(bound_name(imp)) == name)?;
-            let imported = import.name.as_ref()?; // module そのものは呼び先の定義ではない
-            let from = mangle_dotted(&absolute_module(path, module, &import.module));
-            Some(join(&[&from, &mangle(imported)]))
-        }
-        Some(qualifier) => {
-            let q = mangle_dotted(qualifier);
-            let local = definitions
-                .iter()
-                .any(|d| d.mangled == name && d.container.as_deref().is_some_and(|c| mangle(c) == q));
-            if local {
-                return Some(join(&[&own_module, &q, name]));
-            }
-            imports.iter().filter(|imp| !imp.is_require).find_map(|imp| {
-                let bound = mangle_dotted(bound_name(imp));
-                let from = mangle_dotted(&absolute_module(path, module, &imp.module));
-                match &imp.name {
-                    // `(import m)` の `m.f`・`m.sub.f`
-                    None => {
-                        let rest = if q == bound { Some("") } else { q.strip_prefix(&format!("{}.", bound)) };
-                        rest.map(|rest| join(&[&from, rest, name]))
-                    }
-                    // `(import pkg [sub])` の `sub.f` と `(import m [Class])` の `Class.f` — どちらも `from.sub.f`
-                    Some(imported) => (q == bound).then(|| join(&[&from, &mangle(imported), name])),
-                }
-            })
-        }
-    }
-}
-
 /// file の索引に完全修飾名を埋める — 定義の `qualified_name`、呼び出しの `target`、定義の effect・型・effect 節の名の `target`。
 pub fn link(file: &mut HyFileIndex) {
     for definition in &mut file.definitions {
@@ -155,7 +183,7 @@ pub fn link(file: &mut HyFileIndex) {
     }
     // 解決は埋める前の定義の写しの上で行う(定義の欄を書きながら同じ定義の列を読まないため)
     let definitions = file.definitions.clone();
-    let scope = Scope { path: &file.path, module: &file.module, definitions: &definitions, imports: &file.imports };
+    let scope = Scope::new(&file.path, &file.module, &definitions, &file.imports);
     for call in &mut file.calls {
         call.target = scope.resolve(call.qualifier.as_deref(), &call.mangled);
     }
