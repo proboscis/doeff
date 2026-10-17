@@ -58,6 +58,18 @@
 
 ### Changed
 
+- `doeff-hy`: a Hy module that uses a doeff-hy macro it never required, or brings a macro in with `import`, now
+  warns when it is loaded and names the line to add. Hy compiles an unrequired `(do! …)` as a call to an undefined
+  function, so the module died at run time with `NameError: name 'hyx_doXexclamation_markX' is not defined` (and
+  `(import doeff-hy.handle [defhandler])` with `ImportError: cannot import name 'defhandler'`) and said nothing
+  about the fix. The loader hook (`doeff_hy_bytecode_guard`, which `hy file.hy`, `hy -m`, `import`, pytest and
+  `doeff run --program` all pass through) now emits a `HyMacroUseWarning` before the traceback:
+  `Add (require doeff-hy.macros [do! <-]) to this module: …` / `Require, do not import: (require doeff-hy.handle
+  [defhandler]). …`. Names the module defines or imports itself (a function of its own called `check`) and modules
+  with `import *` are never reported; the warning is a `UserWarning`, so `-W error` turns it into an error. The
+  README's Hy section and `docs/01-getting-started.md` now show the extra (`pip install "doeff[hy]"`), `hy file.hy`,
+  and the `import hy` that Python needs before it can import a `.hy` module (without it: `ModuleNotFoundError: No
+  module named 'greet'`) — doeff adds no code for that one, since Python's import fails before any doeff code runs.
 - `doeff run` starts without Hy: its entry point read `DOEFF_PROFILE` through Hy's process effects
   (`doeff_core_effects.os_process` / `process_effects`, since 6ceb0db53), so with only the four core packages
   installed (`doeff`, `doeff-vm`, `doeff-core-effects`, `frozendict`) every call — `--help` included — died with
