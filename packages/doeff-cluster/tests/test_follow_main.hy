@@ -13,6 +13,7 @@
 ;; 係は 2026-09-28 に消した(Program の job は宣言した commit でだけ解く — ADR-DOE-CLUSTER-001・計画 2.2 の E)ので、版を変えるのは
 ;; 宣言し直しだけ。image の版を追う欄(baseFrom・base・overlay)を持つ宣言を断る検は test_old_declarations.hy。
 (require doeff-hy.macros [deftest defk <- val])
+(import tests.state_rows [table-from-rows])
 (import doeff [run])
 (import dataclasses [replace])
 (import doeff [with_handlers])
@@ -201,10 +202,10 @@
 
 (deftest test-a-retired-process-still-counts-as-live
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
-  (val empty (ClusterState :workers {}))
+  (val empty (ClusterState :workers (! (table-from-rows {}))))
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
   (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-  (val state (replace empty :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000 :task-reserve 0)}
+  (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 10 1000 :task-reserve 0)}))
                             :observations (! (reports-observed {"zeus" (WorkerReport :at 1000 :endpoint None
                                                                                      :jobs #((StatusRow :name "a#retired-1-x" :phase "running"
                                                                                                         :retired-from "a")))}))))
@@ -217,10 +218,10 @@
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
   (val state (replace (ClusterState)
-                      :workers {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000 :task-reserve 0)
-                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli") :task-reserve 0)}))
+                      :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000 :task-reserve 0)
+                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli") :task-reserve 0)}))))
   (val text (metrics-text state 91000 T))
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"zeus\"} 90.0" text) text)
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"proboscis-mbp\"} 30.0" text) text)
-  (val forgotten (replace state :workers {"zeus" (get state.workers "zeus")}))
+  (val forgotten (replace state :workers (! (table-from-rows {"zeus" (.row state.workers "zeus")}))))
   (assert (not-in "proboscis-mbp" (metrics-text forgotten 91000 T))))
