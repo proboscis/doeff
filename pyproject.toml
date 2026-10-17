@@ -561,6 +561,9 @@ tests = [
     # 自分の依存で入れる事(card ki-006338b48f4b)— pyproject.toml と部品の source を path で読むので逆依存では選べない。
     # 3.0 秒(4 本・起動を含む壁時計・load 約 37 の下・2026-10-17 会話の Pod)
     "tests/test_core_install_extras.py",
+    # 入口の file(根の README・docs/index.md・docs/README.md・部品の README・examples/)に社内の名が無い事(card ki-1736ed91eaac)—
+    # file を path で読むので逆依存では選べず、入口は根・docs・packages・examples に散るので repo 全体の行に置く
+    "tests/test_entry_files_have_no_internal_names.py",
 ]
 
 # ── 契約の組の要らない package(agora-redesign #2658 — 2026-10-02 に中身を読んで決めた 23 package)。

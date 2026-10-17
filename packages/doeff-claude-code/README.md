@@ -31,7 +31,7 @@
 その process だけの設定 dir(`<家の設定 dir>/.credential-homes/<乱数>/`・0700 — 家の設定 dir の直下の名への symlink を張る)に
 `.credentials.json`(0600)で置き、子の `CLAUDE_CONFIG_DIR` をそこへ向け、process が降りたら dir を消す(`credential_home.hy`)。
 起動条件のキーに token と期限は入らないので、資格だけが替わった手番は生きた process を使い回し、その手番の資格を同じ file に書く。
-`credential` の無い宣言は今までどおり家の設定 dir の資格で起こす(ki-4ffdafa021e5)。
+`credential` の無い宣言は今までどおり家の設定 dir の資格で起こす。
 
 型は `doeff_claude_code.values`(欄の値)・`doeff_claude_code.lines`(行の種類と手番の終わり)・`doeff_claude_code.effects`
 (effect と答え)にある。手番の終わり(`ClaudeTurnEnd`)は手番ごとにちょうど 1 つ:

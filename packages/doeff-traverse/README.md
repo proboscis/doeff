@@ -214,7 +214,7 @@ See `examples/` directory:
 - **ex03** — Zip: independent computations joined with failure union
 - **ex04** — traverse macro: full pipeline with CPS Iterate + fold
 - **ex05** — Parallel timing: 10x speedup confirmed (sequential 1.0s -> parallel 0.1s)
-- **ex06** — mediagen pipeline rewrite
+- **ex06** — LLM discussion-parsing pipeline rewrite
 - **ex07** — proboscis-ema pipeline rewrite with per-item failure tracking
 - **ex08** — tqdm progress bar integration (bars close with a failing item too)
 - **ex09** — for/do comprehension: From + When + SortBy + Take
