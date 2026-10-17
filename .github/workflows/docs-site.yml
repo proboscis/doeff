@@ -1,0 +1,38 @@
+# docs の site(mkdocs.yml)を組めるかの検 — docs/index.md の目次から辿る利用者向けの page だけを、版を固定した mkdocs と Material
+# (tools/docs_site/requirements.txt)で --strict に組む。link の先の file や anchor が無い・nav と exclude_docs の許す一覧が食い違う時は
+# warning になり、--strict が run を落とす。手元では make docs-site が同じ命令。組んだ site は artifact docs-site に置く(落として
+# index.html を開けば読める)。
+#
+# site はまだ出さない(取り組み doeff-publish の区切り 11・card ki-ba5f61eb7962 — 出すか・どこへ出すかは依頼書の答え次第)。出す時は、
+# この workflow に build の後で出す job を 1 つ足す(GitHub Pages なら、build の site/ を actions/upload-pages-artifact で上げ、
+# actions/deploy-pages で出す)。
+name: Docs site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build the docs site (strict)
+        run: make docs-site
+
+      - name: Upload the built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: site/
+          retention-days: 14
