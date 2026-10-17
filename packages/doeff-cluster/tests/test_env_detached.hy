@@ -43,6 +43,7 @@
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
 (import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
+(import tests.state_rows [table-from-rows])
 
 ;; --- 手元の runner sim-cluster の筋書き ------------------------------------------------------------
 ;; 本物の coordinator が env の task を置き、本物の run-worker が PrepareEnv で root の準備を撃ち、sim の宿が準備(即座に揃う・env-failure を
@@ -220,9 +221,9 @@
   ;; 置き直せる別の worker が無ければ、最後の失敗で終える
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
-  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)} :tasks {"t1" requeued}))
+  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)} :tasks (! (table-from-rows {"t1" requeued}))))
   (val placed (! (place-tasks 20 cluster {} timing)))
-  (assert (= (. (get placed "t1") phase) "env-failed") (get placed "t1"))
+  (assert (= (. (.row placed "t1") phase) "env-failed") (.row placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})
   (assert (= (outcome-of-view view) (DetachedEnvUnavailable "repo-unreachable" "d" True))))
 
@@ -239,7 +240,7 @@
     (assert (= (. (submit-detached (get placed 0) "k" (! (task-body-of body)) 0) status) 400) body))
   (val accepted (! (submit-task (get placed 0) (! (task-body-of (| base {"runtimeEnv" declared "format" 1}))) 0)))
   (assert (= (get accepted 1) 200) accepted)
-  (assert (= (. (get (. (get accepted 0) tasks) "t1") runtime-env) declared)))
+  (assert (= (. (.row (. (get accepted 0) tasks) "t1") runtime-env) declared)))
 
 
 ;; --- worker の判断 -------------------------------------------------------------------------

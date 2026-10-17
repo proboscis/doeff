@@ -82,6 +82,7 @@
 (import unittest.mock [patch])
 (import doeff_cluster.coordinator.core [api_policy])
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
+(import tests.state_rows [table-from-rows])
 
 
 (defn task-row [id [phase "assigned"] [worker "w"] [lease-until 20000]]
@@ -95,7 +96,7 @@
   (val ready (! (tick (! (placed)) now T)))
   (val body (! (beat-body "w" [{"name" "s0" "phase" "running" "revision" "r"}])))
   (val heard (! (register-heartbeat ready (run (body-of (! (http-request "POST" "/heartbeat" {} body)))) now)))
-  #((replace ready :tasks before-tasks) (replace heard :tasks heard-tasks) now))
+  #((replace ready :tasks (! (table-from-rows before-tasks))) (replace heard :tasks (! (table-from-rows heard-tasks))) now))
 
 
 (deftest test-a-task-rows-differing-only-in-lease-until-stay-quiet
@@ -139,5 +140,5 @@
   (assert (<= (len calls) 12) f"replace {(len calls)} 回(同じ object の行は飛ばす)")
   (setv calls [])
   (with [(patch.object api_policy "replace" counting)]
-    (assert (quiet-heartbeat b (replace b :tasks before) "w" now T)))
+    (assert (quiet-heartbeat b (replace b :tasks (! (table-from-rows before))) "w" now T)))
   (assert (<= (len calls) 6) "task の行がすべて同じ object なら task には replace を使わない"))

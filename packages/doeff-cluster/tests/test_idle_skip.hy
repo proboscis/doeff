@@ -9,7 +9,7 @@
 ;; - 期限の関数(liveness-due・sweep-due・task-due)は、判断が比べに使う期限の値と同じ刻を返す。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy.table [Table TableWrite table-of])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import doeff [Program])
@@ -388,6 +388,7 @@
 
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due])
+(import tests.state_rows [table-from-rows])
 
 
 (defk task-row [id phase lease-until * [detached False] [worker None] [finished None] [needs #()]]
@@ -408,11 +409,11 @@
   (<- dropped TaskRecord (task-row "call" "finished" 12000 :worker "w1" :finished 3000))
   (<- waiting TaskRecord (task-row "wait" "queued" 20000 :detached True :needs #("verify")))
   (val verify (replace (WorkerInfo "verify-1" #("verify") 1 0 :task-reserve 0) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
-  #(#("lease の内に終わった task の保持" (ClusterState :tasks {"done" retained}) 5000 10001)
-    #("lease の切れる置いた task" (ClusterState :tasks {"lost" lost}) 5000 20001)
-    #("呼び手が問い合わせを止めた task" (ClusterState :tasks {"call" dropped}) 5000 12001)
-    #("保持の期限と lease の期限の 2 本" (ClusterState :tasks {"done" retained "lost" lost}) 5000 10001)
-    #("能力の合う worker の沈黙を待つ task" (ClusterState :workers {"verify-1" verify} :tasks {"wait" waiting}) 15000
+  #(#("lease の内に終わった task の保持" (ClusterState :tasks (! (table-from-rows {"done" retained}))) 5000 10001)
+    #("lease の切れる置いた task" (ClusterState :tasks (! (table-from-rows {"lost" lost}))) 5000 20001)
+    #("呼び手が問い合わせを止めた task" (ClusterState :tasks (! (table-from-rows {"call" dropped}))) 5000 12001)
+    #("保持の期限と lease の期限の 2 本" (ClusterState :tasks (! (table-from-rows {"done" retained "lost" lost}))) 5000 10001)
+    #("能力の合う worker の沈黙を待つ task" (ClusterState :workers {"verify-1" verify} :tasks (! (table-from-rows {"wait" waiting}))) 15000
       (+ (. (ClusterTiming) silent-worker-wait-ms) 1))))
 
 
@@ -421,12 +422,12 @@
   (<- scenarios tuple (lapse-scenarios))
   (for [#(name state start expected) scenarios]
     ;; 起点の拍の後の状態(待つ task は待ちの理由を書いた後)から数える — 静かな区間の歩の前提。
-    (<- settled dict (place-tasks start state {} timing))
+    (<- settled Table (place-tasks start state {} timing))
     (val quiet (replace state :tasks settled))
     (<- answer (| DueAt DueNow DueNever) (task-due quiet start timing))
     (assert (= answer (DueAt :at expected)) #(name answer expected))
     (val due answer.at)
-    (<- before dict (place-tasks (- due 1) quiet {} timing))
-    (<- at dict (place-tasks due quiet {} timing))
+    (<- before Table (place-tasks (- due 1) quiet {} timing))
+    (<- at Table (place-tasks due quiet {} timing))
     (assert (= before settled) #(name "期限の 1 ms 前に変わった" before))
     (assert (!= at settled) #(name "期限の刻に変わらない" at))))

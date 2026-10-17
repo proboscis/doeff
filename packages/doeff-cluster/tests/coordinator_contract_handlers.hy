@@ -141,7 +141,7 @@
 (defk tasks-seen-of [state]
   {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "coordinator の状態の task を、契約が比べる行にするため(本物と sim-cluster が同じ関数を通る)。"
-  (tuple (gfor task (sorted (.values state.tasks) :key (fn [t] t.id))
+  (tuple (gfor task (sorted (.rows state.tasks) :key (fn [t] t.id))
                (TaskSeen :name task.name :needs (tuple task.needs) :environ (tuple task.environ)
                          :runtime-env task.runtime-env :detached task.detached))))
 
