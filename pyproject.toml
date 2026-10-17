@@ -120,6 +120,9 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = [
     "tests",
     "docs/adr",
+    # 例の dir に置いた例の pytest の検(examples/github_repo/test_repo_summary.py — 利用者が `pytest examples/github_repo` で
+    # 走らせる読み物)。examples/ の `.py` を script として走らせる検は tests/test_examples_run.py。
+    "examples",
     "packages/doeff-adr/tests",
     "packages/doeff-domain/tests",
     "packages/doeff-effect-analyzer/tests/python",
@@ -304,6 +307,13 @@ tests = ["tests/test_readme_demo.py"]
 [[tool.doeff.contract-tests]]
 prefix = "images/readme-demo.gif"
 tests = ["tests/test_readme_demo.py"]
+
+# examples/ の例を変えた便は、例を script として走らせる検(直下の `.py` と、examples/github_repo/ の本番の handler の組を手元の
+# 偽の API へ向けた子)と、例の dir に置いた例の pytest の検を払う。検は例を子の process で走らせるか、例の dir から import する
+# ので、import の逆依存では選ばれない。
+[[tool.doeff.contract-tests]]
+prefix = "examples/"
+tests = ["tests/test_examples_run.py", "examples/github_repo/test_repo_summary.py"]
 
 # 入門の道の docs の page(目次と 01〜05 章)を書き換えた便は、その例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
 # (card ki-9c93a506326b)。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と
