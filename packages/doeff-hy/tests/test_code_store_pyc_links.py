@@ -56,6 +56,27 @@ def test_using_a_stored_pyc_moves_its_time(tmp_path: Path) -> None:
     assert os.stat(blob).st_mtime > old
 
 
+def test_placing_the_same_pyc_again_leaves_no_temporary_link(tmp_path: Path) -> None:
+    """木の .pyc が既に保存先の同じ file の名なら置き直さない(同じ実体への rename は何もせず、一時の link が残って名が 1 つ増える —
+    査読の懸念)。"""
+    store = str(tmp_path / "store")
+    target = tmp_path / "a" / "m.pyc"
+    assert code_store.link_pyc(store, PYC, str(target)) is None
+    assert code_store.link_pyc(store, PYC, str(target)) is None
+    assert sorted(p.name for p in target.parent.iterdir()) == ["m.pyc"]
+    assert target.stat().st_nlink == 2
+
+
+def test_a_stored_pyc_left_writable_is_made_read_only_when_used(tmp_path: Path) -> None:
+    """読み取り専用にする前に書き手が落ちて書ける mode のまま残った保存先の file も、使う時に読み取り専用に揃える。"""
+    store = str(tmp_path / "store")
+    code_store.link_pyc(store, PYC, str(tmp_path / "a" / "m.pyc"))
+    blob = code_store.entry_path(store, hashlib.sha256(PYC).hexdigest(), code_store.PYC_SUFFIX)
+    os.chmod(blob, 0o600)
+    assert code_store.link_pyc(store, PYC, str(tmp_path / "b" / "m.pyc")) is None
+    assert stat.S_IMODE(os.stat(blob).st_mode) == 0o444
+
+
 def test_a_target_that_cannot_be_linked_answers_the_reason(tmp_path: Path) -> None:
     """木へ hardlink を置けない時(ここでは木の dir の場所に file が在る)は例外にせず、path を含まない理由を答える(呼び手は中身を書く —
     理由は準備の記録に 1 度ずつ出る)。"""

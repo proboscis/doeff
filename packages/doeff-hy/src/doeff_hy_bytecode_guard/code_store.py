@@ -354,21 +354,31 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
 
     path = entry_path(store, hashlib.sha256(pyc).hexdigest(), PYC_SUFFIX)
     try:
-        held = os.stat(path).st_size == len(pyc)
+        seen = os.stat(path)
     except FileNotFoundError:
-        held = False
+        seen = None
     except OSError as error:
         return f"保存先の .pyc を読めない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
-    if held:
+    if seen is not None and seen.st_size == len(pyc):
         touch_entry(path)
     else:
         problem = write_entry(path, pyc)
         if problem is not None:
             return problem
+        seen = None
+    if seen is None or seen.st_mode & 0o222:  # 読み取り専用にする前に落ちた書き手の file も、使う時に揃える(書く手を断る)
         try:
             os.chmod(path, 0o444)
         except OSError as error:
             return f"保存先の .pyc を読み取り専用にできない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+    try:
+        # 木の .pyc が既にこの file の名なら置き直さない(同じ実体への rename は何もせず、一時の link が残る)。
+        if os.path.samestat(os.lstat(target), os.stat(path)):
+            return None
+    except (FileNotFoundError, NotADirectoryError):
+        pass  # 木にまだ .pyc が無い — 下で置く(置けない時の理由は下の link が答える)
+    except OSError as error:
+        return f"木の .pyc を読めない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     temporary = f"{target}.{os.getpid()}.link"
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
