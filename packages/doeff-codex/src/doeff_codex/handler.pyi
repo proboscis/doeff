@@ -157,6 +157,10 @@ def on_exit(runtime: SessionRuntime, generation: int, home: str | None, exit_cod
 
 def wait_until(doorbell: Doorbell, ready: Callable, seconds: float) -> _Program[bool, object]:
     ...
+EXIT_RECORD_SECONDS: float
+
+def exit_recorded(runtime: SessionRuntime) -> _Program[bool, object]:
+    ...
 
 def launch_failure(runtime: SessionRuntime, stage: str) -> _Program[LaunchFailed, object]:
     ...
