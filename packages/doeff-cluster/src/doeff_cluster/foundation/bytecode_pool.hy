@@ -8,12 +8,14 @@
 ;;; 標準入力 = 焼く物 1 つ 1 行の `<木の path>\t<相対 path>\t<module 名>`(この順に pool へ渡す)。
 ;;; 1 つの用意(bake-one): source の中身で保存先(doeff-hy の code_store — 版・作業木をまたいで中身で引く入口の 1 つ)を引き、鍵に並ぶ macro の
 ;;; 環境ごとの code のうち今の source と今の環境の macro に合う物が在れば(doeff-hy の bytecode-is-current — Hy の source は記録の macro の
-;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を書く(stored)。無い・合わない物は焼いて .pyc を書き、今の環境の code を
-;;; 鍵に足す(rebuilt — 他の環境の code は上書きしない)。
+;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を置く(stored)。無い・合わない物は焼いて .pyc を置き、今の環境の code を
+;;; 鍵に足す(rebuilt — 他の環境の code は上書きしない)。.pyc は、保存先に置いた中身の同じ file への hardlink で置く(code_store の link-pyc —
+;;; root ごとに同じ中身を新しく書かない・card ki-d51b7baa38bc。置けなければ今どおり書く)。
 ;;; 木に既に在る .pyc(同じ commit の木を hardlink で写した root)が今の source と macro に合う物は、pool へ渡さずに残す(reused)。
 ;;; 標準出力 = 1 つ 1 行で、焼けなかった物は `failed\t<木の path>\t<相対 path>\t<理由>`(理由の tab と改行は空白)、保存先の code から書いた
-;;; 物は `stored\t<木の path>\t<相対 path>`、焼かずに残した物は `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由は
-;;; `unstored\t<理由>`(理由ごとに 1 行 — 読み手は worker/core/bake_plan.hy の bake-answer)。焼いた物は行を持たない(数は呼び手が引き算)。
+;;; 物は `stored\t<木の path>\t<相対 path>`、焼かずに残した物は `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由と、保存先の
+;;; .pyc を木へ hardlink で置けなかった理由は `unstored\t<理由>`(理由ごとに 1 行 — 読み手は worker/core/bake_plan.hy の bake-answer)。焼いた
+;;; 物は行を持たない(数は呼び手が引き算)。
 ;;; --store-module = worker の版の doeff-hy の code_store.py(root の版の doeff-hy は保存先の入口を持たない版でありうるので、worker の版の
 ;;; file を path で読む)・--store = 保存先の dir(無ければ保存先を使わずに全部を焼く — DOEFF_HY_CODE_STORE=off)。--path = 焼く process の
 ;;; import の路の先頭に足す dir(前が先 — 焼く source の macro が木の中の別の module を require するため・残すかの照らしも、記録の macro の
@@ -88,9 +90,20 @@
   None)
 
 
+(defn #^ str place-pyc [#^ (| str None) store #^ str source #^ bytes pyc]  ; defk にできない: process の pool の子が呼ぶ file の書き
+  "source の .pyc を置くため: 保存先が在れば、保存先の中身の同じ file への hardlink で置き(code_store の link-pyc — root ごとに同じ中身を
+   新しく書かない)、置けなかった・保存先を使わない時は write-pyc で書く。答え = hardlink で置けなかった理由(置けた・保存先を使わない時は空)。"
+  (setv problem (if (is store None) None (.link-pyc (get sys.modules STORE-MODULE-NAME) store pyc (pyc-path source))))
+  (when (or (is store None) (is-not problem None))
+    (write-pyc source pyc))
+  (or problem ""))
+
+
 (defn #^ tuple bake-one [#^ (| str None) store #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
-  "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を書いた)・\"rebuilt\"(焼いて .pyc を書き、
-   code を保存先へ足した — 足せなかった時は理由)・\"failed\"(焼けない・読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。
+  "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を置いた — 置き方の理由は place-pyc)・
+   \"rebuilt\"(焼いて .pyc を置き、code を保存先へ足した — 足せなかった・hardlink で置けなかった時は理由)・\"failed\"(焼けない・
+   読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。保存先の code から置く .pyc は、頭の後ろに entry の中身をそのまま
+   並べる(marshal し直さない — 同じ entry から置く .pyc が root をまたいで同じ bytes になり、保存先の 1 つの file を分け合う)。
    保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-code)。今の source の hash と
    今の環境の macro に合う entry だけを使い、無ければ焼き直して今の環境の entry を鍵に足す(他の環境の entry は上書きしない — card
    ki-6828e9af04b4: 鍵 1 つに entry 1 つの形では、版の違う書き手と同じ鍵を交互に上書きし、同じ版の準備でも 1 回に 100〜600 本を
@@ -105,16 +118,19 @@
                 None
                 (.code-key code-store source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize)))
   (when (is-not key None)
-    (setv code (.current-code code-store store key (fn [c] (bytecode-is-current source (run (checked-hash-pyc c data)) data))))
-    (when (is-not code None)
-      (write-pyc source (run (checked-hash-pyc code data)))
-      (return #("stored" ""))))
+    (setv found (.current-entry code-store store key (fn [c] (bytecode-is-current source (run (checked-hash-pyc c data)) data))))
+    (when (is-not found None)
+      (setv head (cut (run (checked-hash-pyc found.code data)) 0 PYC-HEAD-BYTES))
+      (return #("stored" (place-pyc store source (+ head found.data))))))
   (setv compiled (run (compiled-pyc rel name source data)))
   (when (isinstance compiled SourceNotCompiled)
     (return #("failed" compiled.reason)))
-  (write-pyc source compiled)
-  (setv problem (if (is key None) None (.add-code code-store store key (marshal.loads (cut compiled PYC-HEAD-BYTES None)))))
-  #("rebuilt" (or problem "")))
+  (setv placed (place-pyc store source compiled))
+  ;; entry の中身は焼いた .pyc の頭の後ろの bytes そのもの — 次の root が entry から置く .pyc が今置いた .pyc と同じ bytes になり、保存先の
+  ;; 1 つの file を分け合う(marshal し直すと bytes が変わり得る)。
+  (setv body (cut compiled PYC-HEAD-BYTES None))
+  (setv problem (if (is key None) None (.add-code code-store store key (marshal.loads body) body)))
+  #("rebuilt" (or problem placed)))
 
 
 (defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store]  ; defk にできない: process の pool を回す
@@ -135,7 +151,7 @@
   #((tuple (gfor #(item result) (zip work results) :if (= (get result 0) "failed") #((get item 0) (get item 1) (get result 1))))
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "stored") #((get item 0) (get item 1))))
     (tuple (gfor #(i k) (zip items kept) :if k #((get i 0) (get i 1))))
-    (tuple (sorted (sfor result results :if (and (= (get result 0) "rebuilt") (get result 1)) (get result 1))))))
+    (tuple (sorted (sfor result results :if (and (in (get result 0) #("stored" "rebuilt")) (get result 1)) (get result 1))))))
 
 
 (defn #^ None main []  ; defk にできない: console の入口(素の関数として呼ばれる)

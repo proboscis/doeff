@@ -280,7 +280,7 @@
   (for [#(path rel reason) (cut failures 0 20)]
     (<- (Note f"  焼けない: {path}/{rel}: {reason}")))
   (for [reason answer.unstored]
-    (<- (Note (.format "焼いた code を保存先へ書けない(次の準備が焼き直す): {}" reason))))
+    (<- (Note (.format "保存先を使えない(書けない code は次の準備が焼き直す・hardlink で置けない .pyc は書いた): {}" reason))))
   ;; 検め: 用意した結果を木から読み直す(焼きの答えを信じず、置かれた物を数える)。
   (var outcomes #())
   (for [#(tree scope tree-plan) (zip trees scopes plans)]

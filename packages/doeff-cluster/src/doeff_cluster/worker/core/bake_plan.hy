@@ -63,7 +63,8 @@
 (defrecord BakeAnswer
   "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・stored = 保存先の code から .pyc を書いた物の
    #(木の path 相対 path) の列・reused = 在った .pyc が今の source と今の環境の macro に合うので pool へ送らなかった物の
-   #(木の path 相対 path) の列(#3675)・unstored = 焼いた code を保存先へ書けなかった理由の列(重ねない)。"
+   #(木の path 相対 path) の列(#3675)・unstored = 焼いた code を保存先へ書けなかった理由と、保存先の .pyc を木へ hardlink で置けなかった
+   理由(その .pyc は書いた — card ki-d51b7baa38bc)の列(重ねない)。"
   (#^ tuple failed)
   (#^ tuple stored)
   (#^ tuple reused)

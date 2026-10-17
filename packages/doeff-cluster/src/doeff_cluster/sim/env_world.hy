@@ -1,5 +1,5 @@
 ;;; 実行環境の準備の速い模擬の世界(2026-09-27)— 翻訳 env-translation(本番と同じ 1 つ)の下で、土台の偽物だけが答える:
-;;;   子 process    doeff の scripted-process-handler に渡す台本 git(clone・cat-file・config・fetch・archive・diff・ls-tree)・tar・cp・uv(この module の ScriptedCommand)
+;;;   子 process    doeff の scripted-process-handler に渡す台本 git(clone・cat-file・config・fetch・archive・diff・ls-tree)・tar・uv(この module の ScriptedCommand)
 ;;;   file system  doeff の memory-file-handler(置き場の中身と空き)
 ;;;   時計          呼び手が外側に置く仮想の時計(uv の sync と native の build は台本の中で眠る)
 ;;; 準備の判断(env_prepare の prepare-env)も翻訳も本物のまま走る。業務の要求に直に答える偽物は持たない。
@@ -21,7 +21,7 @@
 ;;; --frozen は入れる行の先にだけ届こうとする — 届かない先(unreachable)なら sync が終わる。
 ;;;
 ;;; 世界の移ろう物は全部 memory の置き場の /world の下の file に置く(台本は状態を持たない):
-;;;   log.json        clone・fetch・展開・差(diff)・複製(cp の呼び)・sync・download・build・bytecode の焼きの呼びの回数(read-world-log で読む)
+;;;   log.json        clone・fetch・展開・差(diff)・sync・download・build・bytecode の焼きの呼びの回数(read-world-log で読む)
 ;;;   notes.log       準備の記録の行(設定 runtime-env.notes)
 ;;;   uv-cache.json   取りに行った package の名(同じ lock の 2 回目は download 0)
 ;;;   uv-failure.json 今の uv の失敗(set-uv-failure で差し替える)
@@ -71,7 +71,7 @@
 (val GIT-FATAL 128)
 (val BAD-USAGE 129)
 (val UNREACHABLE-TEXT "fatal: Could not read from remote repository.\n")
-(val LOG-FIELDS #("clones" "fetches" "archives" "diffs" "expanded" "copies" "syncs" "downloads" "builds" "compiles" "stored"))
+(val LOG-FIELDS #("clones" "fetches" "archives" "diffs" "expanded" "syncs" "downloads" "builds" "compiles" "stored"))
 ;; 模擬の焼く道具の保存先(source の中身で引く — 本物の code_store の代役・木の相対 path と中身の組を印の file の名にする)。
 (val CODE-STORE-PATH "/world/code-store")
 
@@ -140,7 +140,7 @@
 
 (defrecord EnvWorldLog
   "世界に起きた事の回数(筋書きの確かめに使う)。archives = git archive の呼び・diffs = git diff の呼び・expanded = tar が root の下へ書いた
-   file の数(木を mirror から置いた file の数 — 写した file は含まない)・copies = cp の呼び・compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
+   file の数(木を mirror から置いた file の数 — 写した file は含まない)・compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
    ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・stored = 保存先の
    code から書いた .pyc の数(木ごとに足す・#3858)・entries = 最後の bytecode の焼く範囲の入口・rebuilt = 木ごとに焼いた source の
    相対 path(#(木 path の tuple) の列・焼いた順)・diffed = git diff で読んだ 2 つの commit(#(旧 新) の列・読んだ順 — どの root を写し元に
@@ -150,7 +150,6 @@
   (setv #^ int archives 0)
   (setv #^ int diffs 0)
   (setv #^ int expanded 0)
-  (setv #^ int copies 0)
   (setv #^ int syncs 0)
   (setv #^ int downloads 0)
   (setv #^ int builds 0)
@@ -419,11 +418,12 @@
 
 (defk git-ls-tree [world argv args]
   {:pre [(: world EnvWorld) (: argv tuple) (: args tuple)] :post [(: % ProcessOutcome)]}
-  "git -C <mirror> ls-tree -r -z --name-only <sha> に答えるため(commit の追跡 path の全部 — path の順)。"
+  "git -C <mirror> ls-tree -r -z <sha> に答えるため(commit の追跡 path の全部 — path の順・1 つ = `<mode> blob <object>\\t<path>`。世界の
+   file は普通の file だけなので mode は 100644・object は 0 の並び)。"
   (<- commit (| WorldCommit None) (mirror-commit world argv (get args -1)))
   (if (is commit None)
       (ProcessOutcome :stdout "" :stderr "fatal: Not a valid object name\n" :exit-code GIT-FATAL)
-      (do (<- text str (nul-joined (tuple (sorted (gfor f commit.files f.path)))))
+      (do (<- text str (nul-joined (tuple (gfor path (sorted (gfor f commit.files f.path)) (.format "100644 blob {}\t{}" (* "0" 40) path)))))
           (ProcessOutcome :stdout text :stderr "" :exit-code 0))))
 
 
@@ -445,7 +445,7 @@
   answer)
 
 
-;; --- tar・cp ------------------------------------------------------------------------------
+;; --- tar -------------------------------------------------------------------------------------
 
 (defk tar-script [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
@@ -459,27 +459,6 @@
     (<- (write-file (posixpath.join dest path) text)))
   (<- (bump {"expanded" (len tree)}))
   (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
-
-
-(defk cp-script [commands request]
-  {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "cp -al --parents -t <dest> -- <path>… に答える台本(命令の cwd の木の path を、dest の同じ相対 path へ写す — 本物の hardlink は memory の
-   置き場に無いので中身を写す。cwd に無い path は本物の cp と同じく 1 で終わる)。呼びの数は log の copies。"
-  (val argv (tuple request.argv))
-  (when (not (and (>= (len argv) 6) (= (cut argv 0 4) #("cp" "-al" "--parents" "-t")) (= (get argv 5) "--") (is-not request.cwd None)))
-    (return (ProcessOutcome :stdout "" :stderr (.format "usage: cp の台本が知らない形: {}\n" argv) :exit-code BAD-USAGE)))
-  (val dest (get argv 4))
-  (var missing None)
-  (for [path (cut argv 6 None)]
-    (when (is missing None)
-      (<- text (| str FileFailed) (ReadText (posixpath.join request.cwd path)))
-      (if (isinstance text FileFailed)
-          (:= missing path)
-          (do (<- (write-file (posixpath.join dest path) text))))))
-  (<- (bump {"copies" 1}))
-  (if (is missing None)
-      (ProcessOutcome :stdout "" :stderr "" :exit-code 0)
-      (ProcessOutcome :stdout "" :stderr (.format "cp: cannot stat '{}': No such file or directory\n" missing) :exit-code 1)))
 
 
 ;; --- uv -----------------------------------------------------------------------------------
@@ -812,7 +791,6 @@
   "世界の宣言から、memory の置き場・台本の子 process・翻訳の設定・翻訳の handler の列(外側が先)を作る(外側に状態の置き場と時計が要る)。"
   (val script (ProcessScript :commands #((ScriptedCommand :name "git" :run (partial git-script world))
                                          (ScriptedCommand :name "tar" :run tar-script)
-                                         (ScriptedCommand :name "cp" :run cp-script)
                                          (ScriptedCommand :name "uv" :run (partial uv-script world)))))
   (<- files MemoryFiles (world-files-of world))
   (<- settings dict (world-settings world))

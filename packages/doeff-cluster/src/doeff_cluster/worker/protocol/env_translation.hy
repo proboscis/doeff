@@ -5,8 +5,8 @@
 ;;; 起こす(worker のループは待たない・worker の process は変わらない)。
 ;;; 準備の判断は env_prepare の prepare-env。env-translation は準備の要求(env_prepare の effect)を doeff の汎用の effect へ訳し直すだけで、
 ;;; 自分では I/O をしない(本番と模擬で同じ 1 つ):
-;;;   子 process       RunProcess(git・uv・tar・cp)— 本番 = subprocess-handler・模擬 = scripted-process-handler と env_world の台本
-;;;   file system     StatPath・ReadText・ReadBytes・WriteText・AppendText・MakeDirectory・ListDirectory・WalkTree・RenamePath・
+;;;   子 process       RunProcess(git・uv・tar)— 本番 = subprocess-handler・模擬 = scripted-process-handler と env_world の台本
+;;;   file system     StatPath・ReadText・ReadBytes・WriteText・AppendText・MakeDirectory・ListDirectory・WalkTree・LinkFile・RenamePath・
 ;;;                   RemoveTree・AcquireLock・ReleaseLock・ReadDiskFree — 本番 = os-file-handler・模擬 = memory-file-handler
 ;;; 設定は Ask で読む:
 ;;;   runtime-env.state         worker の世代ごとの state dir(probe/ を置く)
@@ -24,10 +24,11 @@
 ;;; git の子の環境は env-mode EXTEND(親を継いで足す)で、足すのは git-environment の 2 つだけ。uv の子は EXTEND に env-drop UV-DROP(呼び手の
 ;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
 ;;; process の間の錠を持つ。mirror は URL ごと、native の wheel は package ごとに file の錠(AcquireLock)で排他にする(wheel の鍵と保存先は build の口の物)。
-;;; 木は、写し元(元の鍵が同じ完成済みの root の同じ repo の木)が在れば、その commit の追跡 file のうち新しい commit まで変わらない物だけを
-;;; cp -al(hardlink)で写し、変わった path の新しい中身を git archive と tar で置く — .venv・__pycache__・完成マーカーなど追跡
-;;; しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写し元が無い・写せない時は git archive と
-;;; tar で全部を展開する。
+;;; 木は、写し元(元の鍵が同じ完成済みの root の同じ repo の木)が在れば、その commit の追跡する普通の file のうち新しい commit まで変わらない
+;;; 物だけを LinkFile(os.link — hardlink)で写し、変わった path と symlink の新しい中身を git archive と tar で置く — .venv・__pycache__・
+;;; 完成マーカーなど追跡しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写しは
+;;; 外の cp を起こさない(GNU の書き方 cp -al --parents -t は macOS の BSD の cp が断り、Mac の worker は毎回全部を展開して、消した root の
+;;; 中身を APFS の local snapshot が 24 時間持った — card ki-d51b7baa38bc)。写し元が無い・写せない時は git archive と tar で全部を展開する。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -43,7 +44,8 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText
-                                         MakeDirectory ListDirectory WalkTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
+                                         MakeDirectory ListDirectory WalkTree LinkFile RenamePath RemoveTree AcquireLock ReleaseLock
+                                         ReadDiskFree])
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
 (import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
@@ -56,8 +58,11 @@
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
 (val MOUNT-TABLE "/proc/self/mountinfo")
-;; git archive・cp の 1 回の命令に渡す path の数(命令の引数の長さの上限 — 数千 file の差でも収まる数ずつ分ける)。
+;; git archive の 1 回の命令に渡す path の数(命令の引数の長さの上限 — 数千 file の差でも収まる数ずつ分ける)。
 (val PATHS-PER-COMMAND 500)
+;; git ls-tree の mode のうち、hardlink で写さない物(symlink・submodule の commit)— 変わらなくても mirror から置く(os.link は symlink を
+;; 辿って先の file に名を付けるので、symlink のまま写せない)。
+(val UNLINKED-MODES #("120000" "160000"))
 ;; uv の出力で「lock が古い」と「一時の失敗(network)」を見分ける語。
 (val LOCK-STALE-PATTERN (re.compile r"(?i)lockfile .*needs to be updated|lock file .*needs to be updated|--locked"))
 (val NETWORK-PATTERN (re.compile r"(?i)failed to fetch|error sending request|dns error|connection (?:refused|reset)|timed out|could not resolve|temporary failure|could not read from remote"))
@@ -363,8 +368,10 @@
 
 
 (defrecord TreeDelta
-  "写し元の commit から新しい commit への木の差。tracked = 写し元の commit が追跡する path の全部・changes = PathChange の列。"
+  "写し元の commit から新しい commit への木の差。tracked = 写し元の commit が追跡する path の全部・unlinked = そのうち hardlink で写さない
+   path(symlink・submodule の commit — UNLINKED-MODES)・changes = PathChange の列。"
   (#^ tuple tracked)
+  (#^ frozenset unlinked)
   (#^ tuple changes))
 
 
@@ -379,17 +386,28 @@
   (tuple (gfor w (.split text "\0") :if w w)))
 
 
+(defk tracked-entries [text]
+  {:pre [(: text str)] :post [(: % (| tuple None))]}
+  "git ls-tree -r -z の出力(1 つ = `<mode> <種類> <object>\\t<path>`)を #(mode path) の列にするため(形の違う 1 つが在れば None)。"
+  (<- words tuple (nul-words text))
+  (val entries (tuple (gfor word words :setv parts (.split word "\t" 1) (if (= (len parts) 2) parts None))))
+  (if (all (gfor e entries (and (is-not e None) (= (len (.split (get e 0) " ")) 3))))
+      (tuple (gfor #(meta path) entries #((get (.split meta " ") 0) path)))
+      None))
+
+
 (defk tree-delta [mirror old new]
   {:pre [(: mirror str) (: old str) (: new str)] :post [(: % (| TreeDelta CopyRefused))]}
-  "写し元の commit(old)から新しい commit(new)への木の差を mirror の git から読むため: 写し元の commit の追跡 path の全部(ls-tree)と、
-   変わった path(diff --name-status --no-renames)。old が mirror に無い・git の命令が失敗する・出力の形が違う時は、写せない理由を答える。"
+  "写し元の commit(old)から新しい commit(new)への木の差を mirror の git から読むため: 写し元の commit の追跡 path の全部とその mode
+   (ls-tree)と、変わった path(diff --name-status --no-renames)。old が mirror に無い・git の命令が失敗する・出力の形が違う時は、写せない
+   理由を答える。"
   (<- have CommandResult (git #("-C" mirror "cat-file" "-e" (+ old "^{commit}")) None))
   (if (!= have.code 0)
       (CopyRefused :reason (.format "写し元の commit {} が mirror に無い" old))
       (do (<- diff CommandResult (git #("-C" mirror "diff" "--name-status" "--no-renames" "-z" old new) None))
-          (<- listed CommandResult (git #("-C" mirror "ls-tree" "-r" "-z" "--name-only" old) None))
+          (<- listed CommandResult (git #("-C" mirror "ls-tree" "-r" "-z" old) None))
           (<- words tuple (nul-words diff.stdout))
-          (<- tracked tuple (nul-words listed.stdout))
+          (<- entries (| tuple None) (tracked-entries listed.stdout))
           (val pairs (tuple (gfor i (range 0 (- (len words) 1) 2) (PathChange :status (get words i) :path (get words (+ i 1))))))
           (cond
             (or (!= diff.code 0) (!= listed.code 0))
@@ -397,22 +415,30 @@
                 (CopyRefused :reason (.format "{} から {} への差を git が読めない: {}" old new detail)))
             (or (= (% (len words) 2) 1) (not (all (gfor p pairs (in p.status #("A" "M" "D" "T"))))))
             (CopyRefused :reason (.format "git diff の出力の形が違う: {}" (cut diff.stdout 0 DETAIL-CHARS)))
-            True (TreeDelta :tracked tracked :changes pairs)))))
+            (is entries None)
+            (CopyRefused :reason (.format "git ls-tree の出力の形が違う: {}" (cut listed.stdout 0 DETAIL-CHARS)))
+            True (TreeDelta :tracked (tuple (gfor #(_ path) entries path))
+                            :unlinked (frozenset (gfor #(mode path) entries :if (in mode UNLINKED-MODES) path))
+                            :changes pairs)))))
 
 
 (defk link-unchanged [source dest paths]
   {:pre [(: source str) (: dest str) (: paths tuple)] :post [(: % (| None CopyRefused))]}
-  "写し元の木 source の path(追跡 file で、新しい commit まで変わらない物)を hardlink で dest の同じ相対 path に置くため(cp -al --parents —
-   path は数百ずつ命令の引数に渡す)。追跡しない物(.venv・__pycache__・完成マーカー・焼いた印)は path に無いので写さない。変わる path は
-   渡されないので、dest にはその hardlink が無く、あとで新しい中身を書いても写し元の file には届かない。命令が失敗したら写せない理由を答える。"
+  "写し元の木 source の path(追跡する普通の file で、新しい commit まで変わらない物)を、dest の同じ相対 path に hardlink で置くため
+   (LinkFile — os.link。dir は先に作る)。外の cp を起こさないので、GNU の cp の無い機体(macOS)でも同じに写す(card ki-d51b7baa38bc)。
+   追跡しない物(.venv・__pycache__・完成マーカー・焼いた印)は path に無いので写さない。変わる path は渡されないので、dest にはその hardlink が
+   無く、あとで新しい中身を書いても写し元の file には届かない。写せない file が 1 つでも在れば、写せない理由を答える。"
+  (for [directory (sorted (frozenset (gfor p paths :setv d (posixpath.dirname p) :if d d)))]
+    (<- made (| None FileFailed) (MakeDirectory (posixpath.join dest directory)))
+    (<- (settled made "写す木の dir を作れない")))
   (var refused None)
-  (for [start (range 0 (len paths) PATHS-PER-COMMAND)]
+  (for [path paths]
     (when (is refused None)
-      (<- run ProcessOutcome (RunProcess :argv (+ #("cp" "-al" "--parents" "-t" dest "--") (cut paths start (+ start PATHS-PER-COMMAND)))
-                                         :cwd source))
-      (<- copied CommandResult (outcome-result run))
-      (when (!= copied.code 0)
-        (:= refused (CopyRefused :reason (.format "{} から {} へ hardlink で写せない: {}" source dest (tail-of copied)))))))
+      (<- linked (| None FileFailed) (LinkFile (posixpath.join source path) (posixpath.join dest path)))
+      (match linked
+        (FileFailed :detail detail)
+        (:= refused (CopyRefused :reason (.format "{} から {} へ hardlink で写せない: {} — {}" source dest path detail)))
+        _ None)))
   refused)
 
 
@@ -462,21 +488,23 @@
 
 (defk copied-tree [mirror commit dest source]
   {:pre [(: mirror str) (: commit str) (: dest str) (: source TreeSource)] :post [(: % (| TreePlaced CopyRefused))]}
-  "写し元の木から commit の木を作るため: 写し元の commit の追跡 file のうち commit までに変わらない物を hardlink で写し、変わった・
-   増えた path の新しい中身だけ mirror から置く(変わった path の旧い file は写さないので消す必要も、書き換える事も無い)。写せなければ
-   写せない理由を答え、呼び手が dest を空にして展開に戻す。"
+  "写し元の木から commit の木を作るため: 写し元の commit の追跡する普通の file のうち commit までに変わらない物を hardlink で写し、
+   変わった・増えた path と、変わらない symlink・submodule の新しい中身だけ mirror から置く(変わった path の旧い file は写さないので
+   消す必要も、書き換える事も無い)。写せなければ写せない理由を答え、呼び手が dest を空にして展開に戻す。"
   (<- delta (| TreeDelta CopyRefused) (tree-delta mirror source.commit commit))
   (match delta
     (CopyRefused) delta
-    (TreeDelta :tracked tracked :changes changes)
+    (TreeDelta :tracked tracked :unlinked unlinked :changes changes)
     (do (val gone (frozenset (gfor c changes :if (in c.status #("D" "M" "T")) c.path)))
         (val kept (tuple (gfor p tracked :if (not-in p gone) p)))
-        (val fresh (tuple (gfor c changes :if (in c.status #("A" "M" "T")) c.path)))
-        (<- linked (| None CopyRefused) (link-unchanged source.dir dest kept))
+        (val linkable (tuple (gfor p kept :if (not-in p unlinked) p)))
+        (val fresh (+ (tuple (gfor c changes :if (in c.status #("A" "M" "T")) c.path))
+                      (tuple (gfor p kept :if (in p unlinked) p))))
+        (<- linked (| None CopyRefused) (link-unchanged source.dir dest linkable))
         (match linked
           (CopyRefused) linked
           _ (do (<- (place-paths mirror commit dest fresh))
-                (TreePlaced :how TREE-COPY :copied (len kept) :removed (- (len tracked) (len kept)) :replaced (len fresh)))))))
+                (TreePlaced :how TREE-COPY :copied (len linkable) :removed (- (len tracked) (len kept)) :replaced (len fresh)))))))
 
 
 (defk materialize [mirror commit dest source]
