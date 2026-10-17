@@ -1445,14 +1445,17 @@ RATIO_TESTS_INI = 'doeff_test_call_budget_steps = "25000"\n'
 
 
 def _ratio_tests(*, hot: bool) -> str:
-    """歩数 20,000 の検 8 本と 30,000 歩の検 1 本(上限 25,000 歩を越える — 報告のみの形で BudgetWarning)。hot なら 1 本目が CPU を
-    0.3 秒回す(中央値の 2 倍を大きく越える外れ)。"""
+    """歩数 20,000 の検 8 本と 30,000 歩の検 1 本(上限 25,000 歩を越える — 報告のみの形で BudgetWarning)。どの検も歩数 1 万あたり
+    CPU を 0.01 秒回し、比を揃える。歩数は fake の数で、回さなければ検 1 本の CPU は 1 ms に満たず、最初の検の準備などの数 ms の揺れで
+    比が 2 倍を越えた(日次の 10-14 08 時と 10-17 20 時の回で、外れの無い走りの検が名指された・card ki-6dde100393cd)。spin は自分の
+    process の CPU 秒で止まるので、機体が混んでも測る CPU 秒は回した分に揃う。hot なら 1 本目が更に 0.3 秒回す(中央値の 2 倍を
+    大きく越える外れ)。"""
     spin = "\n  (spin 0.3)" if hot else ""
-    tests = "".join(f"(deftest test-even-{i}\n  (fake_work.add 20000)\n  (assert True))\n" for i in range(1, 8))
+    tests = "".join(f"(deftest test-even-{i}\n  (fake_work.add 20000)\n  (spin 0.02)\n  (assert True))\n" for i in range(1, 8))
     return (
         f"(require doeff-hy.macros [deftest])\n{SPIN}\n(import fake_work)\n"
-        f"(deftest test-hot\n  (fake_work.add 20000){spin}\n  (assert True))\n"
-        f"{tests}(deftest test-over\n  (fake_work.add 30000)\n  (assert True))\n"
+        f"(deftest test-hot\n  (fake_work.add 20000)\n  (spin 0.02){spin}\n  (assert True))\n"
+        f"{tests}(deftest test-over\n  (fake_work.add 30000)\n  (spin 0.03)\n  (assert True))\n"
     )
 
 
