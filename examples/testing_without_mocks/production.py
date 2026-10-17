@@ -1,0 +1,29 @@
+# production.py
+import atexit
+import sqlite3
+
+from doeff import Resume, run, with_handlers
+
+from infra import User
+from welcome import LoadUser, SendMail, welcome
+
+db = sqlite3.connect(":memory:")
+atexit.register(db.close)
+db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)")
+db.execute("INSERT INTO users VALUES (1, 'Grace', 'grace@example.com')")
+
+
+def db_load_user(effect: LoadUser, k):
+    name, email = db.execute(
+        "SELECT name, email FROM users WHERE id = ?", (effect.user_id,)
+    ).fetchone()
+    return Resume(k, User(name, email))
+
+
+def smtp_send_mail(effect: SendMail, k):
+    print(f"SMTP -> {effect.to}: {effect.body}")  # stand-in for smtplib
+    return Resume(k, None)
+
+
+if __name__ == "__main__":
+    print(run(with_handlers([db_load_user, smtp_send_mail], welcome(1))))

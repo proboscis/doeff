@@ -141,6 +141,12 @@ EXCLUDED: dict[str, str] = {
         "plugin 無しの子で日次に走らせる(例の dir の pytest.ini が rootdir を例の dir に留める)— 上の test_llm_agent.py と同じく、"
         "根の下に置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
     ),
+    "examples/testing_without_mocks/": (
+        "紹介の記事の例の dir の README が書く `pytest` で利用者が走らせる、mock.patch と doeff の handler の検の例。母集団の根の"
+        "下の tests/test_examples_run.py::test_article_example_tests_run_with_pytest_alone が、例の dir で pytest の外の plugin "
+        "無しの子で日次に走らせる(例の dir の pytest.ini が rootdir を例の dir に留める)— 上の github_repo と同じく、根の下に"
+        "置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
+    ),
     "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": (
         "fixture の module 名(テストではない)"
     ),

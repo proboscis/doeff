@@ -279,6 +279,84 @@ def test_the_llm_example_check_copies_the_example_and_its_tests() -> None:
     assert all((ROOT / name).is_file() for name in tool.LLM_EXAMPLE_FILES)
 
 
+# --- 紹介の記事の例が核の 4 個(と pytest)だけで、記事の見せる行を印字して通る(card ki-eeaca7016c66) ---------------------------
+PRODUCTION = tool.ArticleScript("production.py", ("SMTP -> x", "Welcome, Grace!"))
+FANOUT = tool.ArticleScript("fanout.py", ("['a']", "['A']"), timed=True)
+
+
+@pytest.mark.parametrize(
+    ("script", "returncode", "stdout", "stderr", "passes"),
+    [
+        (PRODUCTION, 0, "SMTP -> x\nWelcome, Grace!\n", "", True),
+        (PRODUCTION, 1, "SMTP -> x\nWelcome, Grace!\n", "", False),
+        (
+            PRODUCTION,
+            0,
+            "SMTP -> x\nWelcome, Grace!\n",
+            "ResourceWarning: unclosed database\n",
+            False,
+        ),
+        (PRODUCTION, 0, "Welcome, Grace!\nSMTP -> x\n", "", False),
+        (PRODUCTION, 0, "SMTP -> x\nWelcome, Grace!\nmore\n", "", False),
+        (FANOUT, 0, "['a']\n['A']\n0.21 s\n", "", True),
+        (FANOUT, 0, "['a']\n['A']\n0.61 s\n", "", False),
+        (FANOUT, 0, "['a']\n['A']\n", "", False),
+        (FANOUT, 0, "['a']\n['A']\nabout 0.2 s\n", "", False),
+        (FANOUT, 0, "", "", False),
+    ],
+    ids=[
+        "lines",
+        "exit-1",
+        "warning-on-stderr",
+        "other-order",
+        "extra-line",
+        "concurrent",
+        "one-by-one",
+        "no-seconds",
+        "seconds-not-a-number",
+        "no-output",
+    ],
+)
+def test_an_article_script_passes_only_when_it_prints_the_articles_lines(
+    script: object, returncode: int, stdout: str, stderr: str, passes: bool
+) -> None:
+    result = subprocess.CompletedProcess(["python"], returncode, stdout, stderr)
+    assert (tool.article_script_failure(script, result) is None) is passes
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "passes"),
+    [
+        (0, ".......\n7 passed in 0.27s\n", True),
+        (0, ".......\n7 passed, 1 warning in 0.27s\n", False),
+        (0, "......s\n6 passed, 1 skipped in 0.27s\n", False),
+        (1, "...F...\n1 failed, 6 passed in 0.27s\n", False),
+        (5, "\nno tests ran in 0.01s\n", False),
+        (0, "", False),
+    ],
+    ids=["passed", "warning", "skipped", "failed", "no-tests", "no-output"],
+)
+def test_the_article_tests_pass_only_when_every_test_passes_cleanly(
+    returncode: int, stdout: str, passes: bool
+) -> None:
+    result = subprocess.CompletedProcess(["python"], returncode, stdout, "")
+    assert (tool.article_tests_failure(result) is None) is passes
+
+
+def test_the_article_check_expects_the_lines_the_examples_print() -> None:
+    # 道具は doeff を import できず、例の印字の行を写して持つ — 写しが、開発の環境で例の印字と比べる行とずれない事と、記事の
+    # script の全部を走らせ、記事の書く切り替え DOEFF_SCHEDULER=rust でも fanout.py を走らせる事。
+    from tests.test_examples_run import ARTICLE_STDOUT, ARTICLE_TIMED
+
+    assert {script.name: script.lines for script in tool.ARTICLE_SCRIPTS} == ARTICLE_STDOUT
+    assert {script.name for script in tool.ARTICLE_SCRIPTS if script.timed} == {ARTICLE_TIMED}
+    assert [script.label() for script in tool.ARTICLE_SCRIPTS if script.scheduler] == [
+        "DOEFF_SCHEDULER=rust fanout.py"
+    ]
+    directory = ROOT / tool.ARTICLE_EXAMPLE_DIRECTORY
+    assert (directory / "pytest.ini").is_file()
+
+
 @pytest.mark.parametrize("page", ["README.md", "docs/index.md"])
 def test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it(page: str) -> None:
     # 道具が確かめる約束(pip install doeff だけで走る)を言う page が、確かめる例そのものを指している事。
