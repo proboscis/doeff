@@ -72,7 +72,7 @@ your model. `digest` does not change, and the fake stays as your test.
 A handler can watch every request without touching `digest`. Add this below the example above:
 
 ```python continues
-seen = []
+seen: list[object] = []
 
 @do
 def trace(effect, k):          # sees every request first, then passes it on
@@ -140,7 +140,7 @@ def welcome(user_id):
     yield SendMail(user.email, body)
     return body
 
-sent = []
+sent: list[str] = []
 
 @do
 def fake_db(effect: LoadUser, k):      # the annotation picks the effects it answers
