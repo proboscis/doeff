@@ -8,6 +8,8 @@ handler は extra http で足す。tests/test_core_install_extras.py は pyproje
 
     uv run --no-project python tools/verify_core_install.py                  # 既定 3.11 と 3.14+gil
     uv run --no-project python tools/verify_core_install.py --python 3.13    # --python は何度でも書ける
+    uv run --no-project python tools/verify_core_install.py --pypi latest    # PyPI の最新(利用者の pip install doeff)
+    uv run --no-project python tools/verify_core_install.py --pypi 0.6.0     # PyPI の 0.6.0
 
 Python の版ごとに:
 
@@ -32,6 +34,11 @@ Python の版ごとに:
    pytest を足すので、核の 4 個だけを見る 2〜6 の後の最後に置く(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。
 
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
+
+--pypi は 1 で checkout の代わりに PyPI の doeff を入れ(doeff-vm は wheel だけを受ける — 利用者の機体に Rust の道具は無い)、2 で
+doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。4・6・7 は走らせない — 期待(extra の文・試しの命令の
+答え・例の file)が checkout の物で、出した版より新しい事が在る。毎日の CI(.github/workflows/core-install-from-pypi.yml)が
+Linux・macOS・Windows で走らせる(card ki-e7b4a1b9e9f4)。
 
 終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
 """
@@ -78,6 +85,31 @@ FROM_CHECKOUT = (
 )
 # pip install doeff で入る物の全部。
 CORE_FOUR = frozenset({*(package.name for package in FROM_CHECKOUT), "frozendict"})
+
+
+@dataclass(frozen=True)
+class Checkout:
+    """この checkout の doeff の 3 個を組んで入れる(出す前の確かめ)。"""
+
+
+@dataclass(frozen=True)
+class PyPI:
+    """PyPI の doeff を入れる(出した後の確かめ — 利用者が打つ `pip install doeff` と同じ)。"""
+
+    # 名指した版(None は PyPI の最新 — 今日来た人が入れる物)
+    version: str | None
+
+    def requirement(self) -> str:
+        """uv pip install に渡す要求。"""
+        return "doeff" if self.version is None else f"doeff=={self.version}"
+
+
+Source = Checkout | PyPI
+# --pypi の値のうち、版でなく PyPI の最新を言う語。
+LATEST = "latest"
+# PyPI から入れる時に wheel だけを受ける物(PyO3 の拡張)。GitHub の runner には Rust の道具が入っているので、機体に合う wheel が
+# 無くても source から組んで通ってしまい、Rust の無い利用者の機体で落ちる事に気づけない。
+WHEEL_ONLY = "doeff-vm"
 # 例を走らせる README。doeff-core-effects の README は外す — 例の 1 つ(節 Swapping a production handler for a test handler)が
 # Hy で書いた handler(os_file・memory_file)を使い、README もその例に extra hy が要ると書く。
 CHECKED_READMES = ("doeff", "doeff-vm")
@@ -108,7 +140,7 @@ import importlib.metadata as metadata, json, sys, sysconfig
 def source(distribution):
     direct = json.loads(distribution.read_text("direct_url.json") or "{}")
     editable = direct.get("dir_info", {}).get("editable", False)
-    return [distribution.metadata["Name"], direct.get("url", ""), editable]
+    return [distribution.metadata["Name"], distribution.version, direct.get("url", ""), editable]
 
 print(json.dumps({
     "version": sys.version.split()[0],
@@ -208,6 +240,8 @@ class Distribution:
 
     # 配布物の名(PEP 503 の形)
     name: str
+    # 版
+    version: str
     # 入れた所の URL(PEP 610 の direct_url.json — index から入れた物は "")
     url: str
     # dir を直に読む editable で入ったか(wheel の中身でなく checkout を読む)
@@ -269,27 +303,39 @@ def _texts(value: object) -> tuple[str, ...]:
 
 
 def _distribution(value: object) -> Distribution:
-    """JSON の [名, URL, editable か] を、入った配布物 1 つとして持つ(形が違えば、venv の interpreter の答えが壊れている)。"""
+    """JSON の [名, 版, URL, editable か] を、入った配布物 1 つとして持つ(形が違えば、venv の interpreter の答えが壊れている)。"""
     match value:
-        case [str(name), str(url), bool(editable)]:
-            return Distribution(verify_release_install.normalize(name), url, editable)
+        case [str(name), str(version), str(url), bool(editable)]:
+            return Distribution(verify_release_install.normalize(name), version, url, editable)
         case _:
             raise TypeError(
                 f"venv の interpreter の答えに、入った配布物の形でない値が在る: {value!r}"
             )
 
 
-def install(python_request: str, place: Path) -> Installed:
-    """place に新しい venv を作り、この checkout の doeff の 3 個を extra 無しで入れる。"""
+def install_arguments(source: Source) -> list[str]:
+    """uv pip install の、入れる物と入れ方の引数(venv の指定の後に続ける)。"""
+    match source:
+        case Checkout():
+            # uv は path から組んだ wheel を pyproject.toml が変わるまで使い回すので、今の checkout から組み直させる。
+            refresh = [
+                part for package in FROM_CHECKOUT for part in ("--refresh-package", package.name)
+            ]
+            paths = [str(REPO / package.directory) for package in FROM_CHECKOUT]
+            # --no-sources: 部品の [tool.uv.sources] の workspace = true を読むと、uv は 3 個を editable(checkout を直に読む
+            # .pth)で入れ、wheel の中身を確かめた事にならない。読まなければ、3 個は上の path から組んだ wheel で入る。
+            return ["--no-sources", *refresh, *paths]
+        case PyPI():
+            # --refresh: 手元の cache の索引を読み直す(cache に前の最新が残っていると、今日来た人が入れる版を確かめない)。
+            return ["--refresh", "--only-binary", WHEEL_ONLY, source.requirement()]
+
+
+def install(python_request: str, place: Path, source: Source) -> Installed:
+    """place に新しい venv を作り、source の doeff を extra 無しで入れる。"""
     venv = place / "venv"
     _uv(["venv", "--no-project", "--python", python_request, str(venv)], place)
     python = venv_command(venv, "python")
-    # uv は path から組んだ wheel を pyproject.toml が変わるまで使い回すので、今の checkout から組み直させる。
-    refresh = [part for package in FROM_CHECKOUT for part in ("--refresh-package", package.name)]
-    paths = [str(REPO / package.directory) for package in FROM_CHECKOUT]
-    # --no-sources: 部品の [tool.uv.sources] の workspace = true を読むと、uv は 3 個を editable(checkout を直に読む .pth)で
-    # 入れ、wheel の中身を確かめた事にならない。読まなければ、3 個は上の path から組んだ wheel で入る。
-    _uv(["pip", "install", "--python", str(python), "--no-sources", *refresh, *paths], place)
+    _uv(["pip", "install", "--python", str(python), *install_arguments(source)], place)
     result = subprocess.run(
         [str(python), "-I", "-c", _DESCRIBE, *CHECKED_READMES],
         cwd=place,
@@ -314,8 +360,8 @@ def install(python_request: str, place: Path) -> Installed:
     )
 
 
-def install_problems(installed: Installed) -> list[str]:
-    """入った物が核の 4 個でない事と、doeff の 3 個がこの checkout から入っていない事を言う文(合えば空)。"""
+def install_problems(installed: Installed, source: Source) -> list[str]:
+    """入った物が核の 4 個でない事と、doeff の 3 個が source から入っていない事を言う文(合えば空)。"""
     names = {distribution.name for distribution in installed.distributions}
     extra = sorted(names - CORE_FOUR)
     missing = sorted(CORE_FOUR - names)
@@ -328,13 +374,45 @@ def install_problems(installed: Installed) -> list[str]:
         else []
     )
     return problems + [
-        f"{package.name} が、この checkout({REPO / package.directory})から組んだ wheel で入っていない — "
-        f"入れた所: {distribution.url or 'index'}{'(editable)' if distribution.editable else ''}"
+        problem
         for package in FROM_CHECKOUT
         for distribution in installed.distributions
         if distribution.name == package.name
-        and (distribution.editable or not _is_directory(distribution.url, REPO / package.directory))
+        and (problem := _source_problem(package, distribution, source)) is not None
     ]
+
+
+def _source_problem(
+    package: FromCheckout, distribution: Distribution, source: Source
+) -> str | None:
+    """doeff の配布物 1 つが source から入っていない事を言う文(合えば None)。"""
+    where = (
+        f"入れた所: {distribution.url or 'index'}{'(editable)' if distribution.editable else ''}"
+    )
+    match source:
+        case Checkout():
+            if distribution.editable or not _is_directory(
+                distribution.url, REPO / package.directory
+            ):
+                return f"{package.name} が、この checkout({REPO / package.directory})から組んだ wheel で入っていない — {where}"
+            return None
+        case PyPI(version=version):
+            if distribution.url or distribution.editable:
+                return f"{package.name} が PyPI から入っていない — {where}"
+            if version is not None and distribution.version != version:
+                return f"{package.name} が名指した版 {version} でない — 入った版: {distribution.version}"
+            return None
+
+
+def source_name(source: Source) -> str:
+    """確かめの行に書く、doeff の 3 個の入れ元。"""
+    match source:
+        case Checkout():
+            return "checkout から組んだ wheel"
+        case PyPI(version=None):
+            return "PyPI の最新"
+        case PyPI(version=version):
+            return f"PyPI の {version}"
 
 
 def _is_directory(url: str, directory: Path) -> bool:
@@ -799,21 +877,32 @@ def check_llm_example(installed: Installed, place: Path, timeout: float) -> list
     return [failure for failure in (script_failure, tests_failure) if failure is not None]
 
 
-def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
+def check_python(python_request: str, work: Path, timeout: float, source: Source) -> list[str]:
     """Python の版 1 つで、新しい venv に核だけを入れて確かめ、落ちた事を言う文の列を返す。"""
     place = work / f"py{python_request.replace('+', '-')}"
     place.mkdir(parents=True)
-    print(f"\n== Python {python_request}: 新しい venv に doeff を extra 無しで入れる", flush=True)
-    installed = install(python_request, place)
+    print(
+        f"\n== Python {python_request}: 新しい venv に doeff({source_name(source)})を extra 無しで入れる",
+        flush=True,
+    )
+    installed = install(python_request, place, source)
     build_kind = "free-threading" if installed.free_threaded else "GIL"
     print(f"  interpreter {installed.version}({build_kind})・{installed.python}", flush=True)
-    names = sorted(distribution.name for distribution in installed.distributions)
+    names = sorted(f"{d.name} {d.version}" for d in installed.distributions)
     print(f"  入った配布物: {'・'.join(names)}", flush=True)
-    problems = install_problems(installed)
+    problems = install_problems(installed, source)
     print_result(
-        "入った物がちょうど核の 4 個で、doeff の 3 個はこの checkout から組んだ wheel",
+        f"入った物がちょうど核の 4 個で、doeff の 3 個は {source_name(source)}",
         "\n".join(problems) or None,
     )
+    if isinstance(source, PyPI):
+        # extra の文・試しの命令・LLM の例の期待は checkout の物で、出した版より新しい事が在る(README は入った wheel の物
+        # なので版に合う)。
+        return [
+            *problems,
+            *check_readmes(installed, place, timeout),
+            *check_public_names(installed, place, timeout),
+        ]
     return [
         *problems,
         *check_readmes(installed, place, timeout),
@@ -823,6 +912,13 @@ def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
         # venv に pytest を足すので最後に置く。
         *check_llm_example(installed, place, timeout),
     ]
+
+
+def parse_source(pypi: str | None) -> Source:
+    """--pypi の値を入れ元にする(無ければ checkout・latest は PyPI の最新)。"""
+    if pypi is None:
+        return Checkout()
+    return PyPI(None if pypi == LATEST else pypi)
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -840,6 +936,13 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="REQUEST",
         help=f"uv に渡す Python の指定(何度でも書ける・既定 {' と '.join(DEFAULT_PYTHONS)})",
     )
+    parser.add_argument(
+        "--pypi",
+        metavar="VERSION",
+        help=(
+            f"checkout の代わりに PyPI の doeff の版を入れる({LATEST} は最新)— 入った版の README の例と型の check だけを確かめる"
+        ),
+    )
     parser.add_argument("--keep", action="store_true", help="終わった後も作業の dir を消さない")
     parser.add_argument(
         "--timeout",
@@ -855,6 +958,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print_in_utf8()
     arguments = _parse(argv)
     pythons = tuple(arguments.pythons or DEFAULT_PYTHONS)
+    source = parse_source(arguments.pypi)
     if shutil.which("uv") is None:
         print("uv が PATH に無い — https://docs.astral.sh/uv/ の手順で入れる", file=sys.stderr)
         return 2
@@ -862,7 +966,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     work = Path(tempfile.mkdtemp(prefix="doeff-core-install-check-"))
     print(f"作業の dir: {work}", flush=True)
     try:
-        results = {python: check_python(python, work, arguments.timeout) for python in pythons}
+        results = {
+            python: check_python(python, work, arguments.timeout, source) for python in pythons
+        }
     except subprocess.CalledProcessError as failed:
         print(
             f"\nvenv か install が落ちた(確かめまでは進んでいない・終了コード {failed.returncode}): "

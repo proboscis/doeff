@@ -1,0 +1,47 @@
+# 今日来た人と同じく、PyPI の doeff を Linux・macOS・Windows の新しい venv に extra 無しで入れ、README の Python の例が注記の通りに
+# 印字する事を毎日確かめる(取り組み doeff-publish の区切り 16・card ki-e7b4a1b9e9f4)。中身は tools/verify_core_install.py --pypi latest
+# (入った物がちょうど核の 4 個で、doeff の 3 個が PyPI から入った事・doeff と doeff-vm の README の Python の例 — README は入った
+# wheel の metadata の本文なので入った版の物・その例の import を型の check が公開の名と読む事)。checkout から組む確かめ
+# (core-install-macos-windows.yml・python-compatibility.yml の core-only-install)と違い Rust の道具を入れず、doeff-vm は PyPI の wheel
+# だけを受ける — 機体と Python に合う wheel が PyPI に無ければ、install の段で落ちる。3.14 は素の 3.14 で頼む(core-install-macos-windows.yml
+# の頭の訳)。道具か workflow を変えた main の push でも走る。
+name: Core install from PyPI
+
+on:
+  schedule:
+    # 毎日 06:17 JST
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/core-install-from-pypi.yml
+      - tools/verify_core_install.py
+      - tools/verify_release_install.py
+      - tools/readme_examples.py
+
+permissions:
+  contents: read
+
+jobs:
+  core-install-from-pypi:
+    name: core install from PyPI (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    # runner の機体ごとに入っている Python の版と作りが違うため、uv の管理する Python だけを使う(他の核の確かめと同じ)。
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install doeff from PyPI into a fresh venv and run the README examples
+        run: uv run --no-project --python ${{ matrix.python }} python tools/verify_core_install.py --pypi latest --python ${{ matrix.python }}

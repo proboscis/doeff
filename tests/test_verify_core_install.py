@@ -16,6 +16,7 @@ from types import ModuleType
 from typing import get_args
 
 import pytest
+import tomllib
 import yaml
 from doeff_core_effects import extra_hints
 
@@ -24,6 +25,7 @@ from doeff.cli.demo import digest, fake_world
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "python-compatibility.yml"
+PYPI_WORKFLOW = ROOT / ".github" / "workflows" / "core-install-from-pypi.yml"
 
 
 def _load(name: str) -> ModuleType:
@@ -47,7 +49,12 @@ tool = _load("verify_core_install")
 def _from_checkout(name: str, *, editable: bool = False) -> object:
     """この checkout の dir から入った配布物の写し。"""
     directory = next(package.directory for package in tool.FROM_CHECKOUT if package.name == name)
-    return tool.Distribution(name, (ROOT / directory).resolve().as_uri(), editable)
+    return tool.Distribution(name, "0.6.0", (ROOT / directory).resolve().as_uri(), editable)
+
+
+def _from_index(name: str, version: str = "0.6.0") -> object:
+    """index(PyPI)から入った配布物の写し。"""
+    return tool.Distribution(name, version, "", False)
 
 
 def _installed(*distributions: object) -> object:
@@ -59,12 +66,18 @@ CORE_FROM_WHEELS = (
     _from_checkout("doeff"),
     _from_checkout("doeff-vm"),
     _from_checkout("doeff-core-effects"),
-    tool.Distribution("frozendict", "", False),
+    _from_index("frozendict", "2.4.7"),
+)
+CORE_FROM_PYPI = (
+    _from_index("doeff"),
+    _from_index("doeff-vm"),
+    _from_index("doeff-core-effects"),
+    _from_index("frozendict", "2.4.7"),
 )
 
 
 def test_the_core_four_built_from_the_checkout_pass() -> None:
-    assert tool.install_problems(_installed(*CORE_FROM_WHEELS)) == []
+    assert tool.install_problems(_installed(*CORE_FROM_WHEELS), tool.Checkout()) == []
 
 
 def test_an_install_that_brings_more_than_the_core_four_is_named() -> None:
@@ -72,9 +85,10 @@ def test_an_install_that_brings_more_than_the_core_four_is_named() -> None:
     problems = tool.install_problems(
         _installed(
             *CORE_FROM_WHEELS,
-            tool.Distribution("doeff-hy", "", False),
-            tool.Distribution("httpx", "", False),
-        )
+            _from_index("doeff-hy"),
+            _from_index("httpx", "0.28.1"),
+        ),
+        tool.Checkout(),
     )
     assert len(problems) == 1
     assert "余計: ['doeff-hy', 'httpx']・足りない: []" in problems[0]
@@ -85,14 +99,65 @@ def test_an_editable_or_index_install_of_a_checkout_package_is_named() -> None:
     problems = tool.install_problems(
         _installed(
             _from_checkout("doeff", editable=True),
-            tool.Distribution("doeff-vm", "", False),
+            _from_index("doeff-vm"),
             _from_checkout("doeff-core-effects"),
-            tool.Distribution("frozendict", "", False),
-        )
+            _from_index("frozendict", "2.4.7"),
+        ),
+        tool.Checkout(),
     )
     assert [problem.split(" ")[0] for problem in problems] == ["doeff", "doeff-vm"]
     assert "(editable)" in problems[0]
     assert "入れた所: index" in problems[1]
+
+
+@pytest.mark.parametrize("version", [None, "0.6.0"], ids=["latest", "named"])
+def test_the_core_four_from_pypi_pass(version: str | None) -> None:
+    assert tool.install_problems(_installed(*CORE_FROM_PYPI), tool.PyPI(version)) == []
+
+
+def test_a_checkout_or_editable_package_is_not_the_pypi_one() -> None:
+    # PyPI の確かめに、手元の checkout から入った物が混ざると、利用者の入れる物を確かめた事にならない。
+    problems = tool.install_problems(
+        _installed(
+            _from_checkout("doeff"),
+            _from_index("doeff-vm"),
+            _from_checkout("doeff-core-effects", editable=True),
+            _from_index("frozendict", "2.4.7"),
+        ),
+        tool.PyPI(None),
+    )
+    assert [problem.split(" ")[0] for problem in problems] == ["doeff", "doeff-core-effects"]
+    assert all("PyPI から入っていない" in problem for problem in problems)
+    assert "(editable)" in problems[1]
+
+
+def test_a_pypi_package_of_another_version_than_the_named_one_is_named() -> None:
+    problems = tool.install_problems(
+        _installed(
+            _from_index("doeff"),
+            _from_index("doeff-vm", "0.5.0"),
+            _from_index("doeff-core-effects"),
+            _from_index("frozendict", "2.4.7"),
+        ),
+        tool.PyPI("0.6.0"),
+    )
+    assert problems == ["doeff-vm が名指した版 0.6.0 でない — 入った版: 0.5.0"]
+
+
+def test_pypi_installs_take_only_a_wheel_of_the_rust_vm() -> None:
+    # GitHub の runner には Rust の道具が在るので、wheel が無い機体でも source から組んで通ってしまう。
+    arguments = tool.install_arguments(tool.PyPI(None))
+    assert arguments[arguments.index("--only-binary") + 1] == "doeff-vm"
+    assert arguments[-1] == "doeff"
+    assert tool.install_arguments(tool.PyPI("0.6.0"))[-1] == "doeff==0.6.0"
+
+
+@pytest.mark.parametrize(
+    ("value", "source"),
+    [(None, tool.Checkout()), ("latest", tool.PyPI(None)), ("0.6.0", tool.PyPI("0.6.0"))],
+)
+def test_the_pypi_option_names_the_source(value: str | None, source: object) -> None:
+    assert tool.parse_source(value) == source
 
 
 HY_LINE = (
@@ -466,4 +531,36 @@ def test_ci_runs_the_tool_on_every_python_of_the_compatibility_matrix() -> None:
     runs = [step.get("run", "") for step in job["steps"]]
     assert any(
         "tools/verify_core_install.py --python ${{ matrix.python-version }}" in run for run in runs
+    ), runs
+
+
+def _promised_pythons() -> list[str]:
+    """doeff-vm の classifiers が約束する Python の版(PyPI の頁が見せる物 — その版ごとに wheel が要る)。"""
+    project = tomllib.loads(
+        (ROOT / "packages" / "doeff-vm" / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    prefix = "Programming Language :: Python :: 3."
+    return [
+        classifier.removeprefix("Programming Language :: Python :: ")
+        for classifier in project["classifiers"]
+        if classifier.startswith(prefix) and classifier.removeprefix(prefix).isdigit()
+    ]
+
+
+def test_the_daily_pypi_check_installs_every_promised_python_on_three_systems() -> None:
+    workflow = yaml.safe_load(PYPI_WORKFLOW.read_text(encoding="utf-8"))
+    # PyYAML は鍵の on を真偽の True と読む(YAML 1.1)。
+    triggers = workflow[True]
+    assert {"schedule", "workflow_dispatch"} <= triggers.keys()
+    (job,) = workflow["jobs"].values()
+    matrix = job["strategy"]["matrix"]
+    assert matrix["os"] == ["ubuntu-latest", "macos-latest", "windows-latest"]
+    assert matrix["python"] == _promised_pythons()
+    uses = [step.get("uses", "") for step in job["steps"]]
+    # Rust の道具が在ると、wheel の無い機体でも doeff-vm を source から組んで通ってしまう。
+    assert not any("rust" in use for use in uses), uses
+    runs = [step.get("run", "") for step in job["steps"]]
+    assert any(
+        "tools/verify_core_install.py --pypi latest --python ${{ matrix.python }}" in run
+        for run in runs
     ), runs
