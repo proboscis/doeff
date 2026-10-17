@@ -5,33 +5,55 @@ With pyright (or any checker that reads the annotations) an effectful program is
 checked for three things: the value each effect answers with, the effects a
 program may yield, and the value a handler answers with.
 
+The examples on this page build one file: copy them in order, and pyright
+(`strict`) and mypy (`--strict`) report no errors.
+
 ## Effects declare their answer type
 
 ```python
 from dataclasses import dataclass
-from doeff import EffectBase
+from typing import TypeVar
+
+from doeff import EffectBase, effect_result_type
+
+T = TypeVar("T")
+
 
 @dataclass(frozen=True)
 class ReadClock(EffectBase[int]):        # the handler answers with an int
     pass
 
+
 class WriteEffect(EffectBase[T]):        # a generic parent is fine
     pass
+
 
 @dataclass(frozen=True)
 class WriteShared(WriteEffect[bool]):
     key: str
+
+
+print(effect_result_type(WriteShared))   # <class 'bool'>
 ```
 
-`EffectBase[T]` is valid at runtime (`types.GenericAlias`). An effect that
-subclasses plain `EffectBase` has an unknown answer type.
+`EffectBase[T]` is valid at runtime (`types.GenericAlias`), so the answer type
+can also be read at runtime (`effect_result_type` — see "Runtime readers"
+below). An effect that subclasses plain `EffectBase` has an unknown answer type.
 
 ## `yield from` gives the answer its type
 
 (The same types without `yield from`: `@effectful` + `perform(e)`, rewritten at import —
 docs/24-effectful-perform.md.)
 
-```python
+Add this below the example above:
+
+```python continues
+from collections.abc import Generator
+from typing import Any
+
+from doeff import do
+
+
 @do
 def elapsed(since: int) -> Generator[ReadClock, Any, int]:
     now = yield from ReadClock()          # now: int
@@ -100,10 +122,22 @@ types, mypy answers `list[object]` / `object`; pyright still answers the union.
 
 ## Handler answers
 
-```python
+A handler for `ReadClock` runs `elapsed`. Add this below the examples above:
+
+```python continues
+from doeff import K, handler, run, typed_resume
+
+
+def now_ms() -> int:
+    return 1_000
+
+
 @do
-def clock(effect: ReadClock, k: K):
+def clock(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
     return (yield typed_resume(effect, k, now_ms()))   # value must be an int
+
+
+print(run(handler(clock)(elapsed(400))))               # 600
 ```
 
 `typed_resume(effect, k, value)` / `typed_transfer(effect, k, value)` are
