@@ -95,7 +95,22 @@
   "鍵の組 1 つ(#2716): fields = 組の鍵を決める ClusterState の欄の Python の名(getattr で前後を比べる)・build = その欄だけから
    組の鍵を作る(答えは Sources)。"
   (#^ (get tuple #(str ...)) fields)
-  (#^ (get Callable #([ClusterState] Sources)) build))
+  (#^ (get Callable #([ClusterState] Sources)) build)
+  ;; 鍵の絞り(T7): 組の鍵が 1 つの Table 欄の行 1 つずつから作られる組だけ持つ — 表の鍵の列 keys の行だけから組の鍵を作る(答えは
+  ;; build の答えのうち、その行から作った鍵だけ)。持たない組(None)は build で組の全鍵を作る。
+  (setv #^ (| (get Callable #([ClusterState (get tuple #(str ...))] Sources)) None) keyed None))
+
+
+(defn #^ SourceGroup table-group [#^ str field #^ Callable row-source]
+  "Table 欄 field の行 1 つが鍵 1 つを作る組(T7)— row-source は 表の鍵と行 → #(耐久の鍵 元の値の tuple 直列化の関数)。build は全行・
+   keyed は与えた表の鍵の行(無い鍵は飛ばす)だけを同じ row-source で作るので、絞った答えは全部を作った答えの部分集合になる。"
+  (setv #^ (get tuple #(str ...)) fields #(field))
+  (defn #^ Sources build [#^ ClusterState state]
+    (dfor #(k row) (.items (getattr state field)) :setv made (row-source k row) (get made 0) (get made 1)))
+  (defn #^ Sources keyed [#^ ClusterState state #^ (get tuple #(str ...)) keys]
+    (setv table (getattr state field))
+    (dfor k keys :setv row (.row table k) :if (is-not row None) :setv made (row-source k row) (get made 0) (get made 1)))
+  (SourceGroup :fields fields :build build :keyed keyed))
 
 
 (val SOURCE-GROUPS
@@ -109,39 +124,17 @@
                           (setv #^ Sources refused
                                 (dfor r (.rows state.refused) (+ "service/" r.name) #(#(r.row) (partial as-stored r.row))))
                           (| declared refused)))
-    (SourceGroup :fields #("placements")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k a) (.items state.placements) (+ PLACEMENT k) #(#(a) (partial asdict a)))))
-    (SourceGroup :fields #("workers")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor w (.rows state.workers) (+ "worker/" w.name) #(#(w) (partial worker-json w)))))
-    (SourceGroup :fields #("tasks")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor t (.rows state.tasks) (+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
-    (SourceGroup :fields #("meta")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k m) (.items state.meta) (+ "meta/" k) #(#(m) (partial resource-meta-to-json m)))))
-    (SourceGroup :fields #("rollouts")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k r) (.items state.rollouts) (+ "rollout/" k) #(#(r) (partial rollout-row-to-json r)))))
-    (SourceGroup :fields #("group_limits")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k l) (.items state.group-limits) (+ GROUP-LIMIT k) #(#(l) (partial group-limit-spec l)))))
-    (SourceGroup :fields #("drains")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k d) (.items state.drains) (+ DRAIN k) #(#(d) (partial asdict d)))))
-    (SourceGroup :fields #("surges")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k a) (.items state.surges) (+ SURGE k) #(#(a) (partial asdict a)))))
-    (SourceGroup :fields #("warms")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k w) (.items state.warms) (+ WARM k) #(#(w) (partial warm-entry-to-json w)))))
-    (SourceGroup :fields #("programs")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k p) (.items state.programs) (+ PROGRAM k) #(#(p) (partial program-row-to-json p)))))
-    (SourceGroup :fields #("handoffs")
-                 :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor #(k w) (.items state.handoffs) (+ HANDOFF k) #(#(w) w.to-json))))
+    (table-group "placements" (fn [k a] #((+ PLACEMENT k) #(#(a) (partial asdict a)))))
+    (table-group "workers" (fn [k w] #((+ "worker/" w.name) #(#(w) (partial worker-json w)))))
+    (table-group "tasks" (fn [k t] #((+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
+    (table-group "meta" (fn [k m] #((+ "meta/" k) #(#(m) (partial resource-meta-to-json m)))))
+    (table-group "rollouts" (fn [k r] #((+ "rollout/" k) #(#(r) (partial rollout-row-to-json r)))))
+    (table-group "group_limits" (fn [k l] #((+ GROUP-LIMIT k) #(#(l) (partial group-limit-spec l)))))
+    (table-group "drains" (fn [k d] #((+ DRAIN k) #(#(d) (partial asdict d)))))
+    (table-group "surges" (fn [k a] #((+ SURGE k) #(#(a) (partial asdict a)))))
+    (table-group "warms" (fn [k w] #((+ WARM k) #(#(w) (partial warm-entry-to-json w)))))
+    (table-group "programs" (fn [k p] #((+ PROGRAM k) #(#(p) (partial program-row-to-json p)))))
+    (table-group "handoffs" (fn [k w] #((+ HANDOFF k) #(#(w) w.to-json))))
     (SourceGroup :fields #("keep_marks")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor m state.keep-marks (+ KEEP m.job) #(#(m) (partial asdict m)))))
@@ -177,6 +170,17 @@
        (all (gfor #(x y) (zip before after) (is x y)))))
 
 
+(defn #^ tuple built-pair [#^ SourceGroup g #^ ClusterState before #^ ClusterState after]
+  "鍵の組 g の前と後の鍵(Sources の組)。鍵の絞り(g.keyed)を持つ組は、Table 欄の changed-keys が名乗る行の鍵だけ前後で作る(基を分け合う
+   表は差分と消した鍵だけを読み、基を作り直した拍や基を分け合わない表は changed-keys が全部の鍵を比べるので、絞りは全鍵に落ちる)。
+   持たない組は組の全鍵を作る。"
+  (if (is g.keyed None)
+      #((g.build before) (g.build after))
+      (do (setv field (get g.fields 0))
+          (setv keys (.changed-keys (getattr before field) (getattr after field)))
+          #((g.keyed before keys) (g.keyed after keys)))))
+
+
 (defk durable-delta [before after]
   {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
@@ -187,7 +191,7 @@
   ;; 答えは全部の組を作った時と同じ。
   (setv groups (tuple (gfor g SOURCE-GROUPS
                             :if (not (all (gfor f g.fields (is (getattr before f) (getattr after f)))))
-                            #((g.build before) (g.build after)))))
+                            (built-pair g before after))))
   (setv written (dfor #(old new) groups
                       #(k #(parts encode)) (.items new)
                       :setv prior (.get old k)
