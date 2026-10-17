@@ -4,10 +4,11 @@ py.typed の package では、`__init__.py` で import しただけの名は公�
 README の Quick Start の `from doeff_core_effects import Ask, Get, Put, Tell` を写した人の editor と pyright が
 「"Ask" is not exported from module」(reportPrivateImportUsage)を出していた(card ki-02e317783af0 の抜け 1)。
 
-`__all__` は実行時の `from doeff_core_effects import *` にも効く。HTTP の名(`_LAZY_EXPORTS` — Hy の module で httpx を引く)は
-`__getattr__` で初めて読むので、`__all__` に載せると核だけの環境の star import が ImportError になる。だから載せない。
+この repo は `__all__` を置かない(doeff-linter の DOEFF021 — `doeff/__init__.py` も `X as X`)ので、頭の名は `X as X` で結ぶ。
+HTTP の名(`_LAZY_EXPORTS` — Hy の module で httpx を引く)は `__getattr__` で初めて読むので、`X as X` で結べない
+(結ぶと核だけの環境の import が落ちる)。star import が `__getattr__` を通って Hy の module を読まない事も、ここで守る。
 
-失敗ケース: `__all__` を消す・名を 1 つ足し忘れる・lazy な名を載せると赤。
+失敗ケース: 名を `X as X` にし忘れる・HTTP の名を頭で結ぶと赤。
 """
 
 import ast
@@ -25,32 +26,39 @@ PACKAGE_DIR = Path(doeff_core_effects.__file__).resolve().parent
 README_NAMES = ("Ask", "Get", "Put", "Tell")
 
 
-def _names_the_head_binds_from_submodules() -> set[str]:
-    """`__init__.py` の頭で `from doeff_core_effects.<sub> import name` と結んである名(Hy の module を読まない、実行時に結ぶ名)。"""
+def _head_imports() -> list[ast.alias]:
+    """`__init__.py` の頭で `from doeff_core_effects.<sub> import name` と結んである名(実行時に結ぶ、Hy を読まない名)。"""
     tree = ast.parse((PACKAGE_DIR / "__init__.py").read_text(encoding="utf-8"))
-    return {
-        alias.asname or alias.name
+    return [
+        alias
         for node in tree.body
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("doeff_core_effects.")
         for alias in node.names
-    }
+    ]
 
 
-def test_all_lists_every_name_the_head_binds() -> None:
-    bound = _names_the_head_binds_from_submodules()
-    assert set(doeff_core_effects.__all__) == bound, set(doeff_core_effects.__all__) ^ bound
+def _head_names() -> list[str]:
+    return sorted(alias.name for alias in _head_imports())
 
 
-def test_all_has_no_duplicates() -> None:
-    names = list(doeff_core_effects.__all__)
-    assert len(names) == len(set(names)), sorted(name for name in set(names) if names.count(name) > 1)
+def test_the_head_binds_the_readme_names() -> None:
+    assert set(README_NAMES) <= set(_head_names())
 
 
-def test_all_names_are_bound_without_the_lazy_getattr() -> None:
-    # `__all__` の名が module の dict に無いと、star import が `__getattr__` を通って Hy の module(httpx)を読む。
-    unbound = sorted(name for name in doeff_core_effects.__all__ if name not in vars(doeff_core_effects))
+def test_every_name_the_head_binds_is_a_redundant_alias_reexport() -> None:
+    # `import X as X` が py.typed の package の再 export の印。印の無い名が型の check に「公開していない名」と読まれる。
+    plain = sorted(alias.name for alias in _head_imports() if alias.asname != alias.name)
+    assert plain == [], f"X as X にする: {plain}"
+
+
+def test_the_head_does_not_bind_the_lazy_names() -> None:
+    # 頭で結ぶと、核だけの環境(Hy の module と httpx が無い)の `import doeff_core_effects` が落ちる。
+    assert set(_head_names()).isdisjoint(doeff_core_effects._LAZY_EXPORTS)
+
+
+def test_every_head_name_is_bound_in_the_module() -> None:
+    unbound = [name for name in _head_names() if name not in vars(doeff_core_effects)]
     assert unbound == [], unbound
-    assert set(doeff_core_effects.__all__).isdisjoint(doeff_core_effects._LAZY_EXPORTS)
 
 
 def test_star_import_does_not_load_the_hy_modules() -> None:
@@ -92,7 +100,6 @@ def test_pyright_accepts_the_readme_imports(tmp_path: Path) -> None:
     assert _pyright_errors(tmp_path, source, "standard") == []
 
 
-def test_pyright_accepts_every_name_in_all(tmp_path: Path) -> None:
-    names = sorted(doeff_core_effects.__all__)
-    source = "from doeff_core_effects import (\n" + "".join(f"    {name},\n" for name in names) + ")\n"
+def test_pyright_accepts_every_name_the_head_binds(tmp_path: Path) -> None:
+    source = "from doeff_core_effects import (\n" + "".join(f"    {name},\n" for name in _head_names()) + ")\n"
     assert _pyright_errors(tmp_path, source, "standard") == []

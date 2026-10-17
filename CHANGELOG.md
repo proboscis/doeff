@@ -58,13 +58,14 @@
 
 ### Changed
 
-- `doeff-core-effects`: `doeff_core_effects/__init__.py` now declares `__all__`, so the effects and handlers it
-  imports (`Ask`, `Get`, `Put`, `Tell`, `reader`, `state`, `writer`, `Spawn`, `Gather`, `scheduled`, …) are public to type
-  checkers. The package ships `py.typed`, and a name that `__init__.py` only imports is not public there: the README's
-  `from doeff_core_effects import Ask, Get, Put, Tell` was flagged `reportPrivateImportUsage` by pyright (basic and
-  up) and `attr-defined` by `mypy --strict`. `from doeff_core_effects import *` now binds exactly those names; the HTTP
-  names (`HttpRequest`, `http_production_handler`, …) stay out of `__all__` because they load on first use, and listing
-  them would make a star import pull in the Hy modules and httpx (card ki-02e317783af0).
+- `doeff-core-effects`: `doeff_core_effects/__init__.py` now re-exports the effects and handlers it imports
+  (`Ask`, `Get`, `Put`, `Tell`, `reader`, `state`, `writer`, `Spawn`, `Gather`, `scheduled`, … — 58 names) as
+  `from … import X as X`, so they are public to type checkers. The package ships `py.typed`, and a name that
+  `__init__.py` only imports is not public there: the README's `from doeff_core_effects import Ask, Get, Put, Tell`
+  was flagged `reportPrivateImportUsage` by pyright (basic and up) and `attr-defined` by `mypy --strict`. Nothing
+  changes at run time. The HTTP names (`HttpRequest`, `http_production_handler`, …) still load on first use through
+  `__getattr__` and are not re-exported this way, because that would import the Hy modules and httpx with the
+  package (card ki-02e317783af0).
 - `doeff-hy`: a Hy module that uses a doeff-hy macro it never required, or brings a macro in with `import`, now
   warns when it is loaded and names the line to add. Hy compiles an unrequired `(do! …)` as a call to an undefined
   function, so the module died at run time with `NameError: name 'hyx_doXexclamation_markX' is not defined` (and
