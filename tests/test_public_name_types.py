@@ -1,8 +1,8 @@
 """公開の名の型が型の道具に分かる事の検(型の報告の抜け 6・card ki-23e84023ab9c)。
 
 pyright の verifytypes は、package の公開の名ごとに、引数と戻りと属性の型がすべて分かるかを数える。核の 4 個だけの環境で
-測ると、doeff は 78%・doeff_core_effects は 87.3% だった(2026-10-17・main 7267f0105)。分からない名を使う人の strict の
-型の check は Unknown の error を出す。訳は 3 つだった:
+測ると、doeff は 81.9%・doeff_core_effects は 87.5% だった(2026-10-17・main 9fe8c330b・pyright 1.1.414)。分からない名を
+使う人の strict の型の check は Unknown の error を出す。訳は 3 つだった:
 
 - scheduler の内の名(``Task``・``Future``・``Promise``・``Semaphore`` の id、``ExternalPromise.fail``、
   ``SchedulerDeadlockError`` の欄)と effect の ``__repr__`` に注記が無く、class ごと「一部分からない」になっていた。
@@ -12,10 +12,11 @@ pyright の verifytypes は、package の公開の名ごとに、引数と戻り
   隠した: 使えば必ず落ちる名を型の check が通すより、import の行で error にする方が早く知らせる(doeff に無い名と同じ —
   tests/test_unknown_doeff_import_static_types.py)。実行時の import と案内の文は変わらない。
 
-直した後は doeff 95.4%・doeff_core_effects 92.2%(核の 4 個だけの環境・pyright 1.1.414)。
+直した後は doeff 99.5%・doeff_core_effects 92.3%(同じ環境と道具)。
 
 ここでは開発の環境で verifytypes を走らせ、型の分からない公開の名が、下の表に訳を書いた物だけである事を確かめる。表の名に
-型が付いた時(別の card が直した時)も赤にする — 表から外して、守る範囲を広げる。
+型が付いた時も赤にする — 表から外して、守る範囲を広げる(doeff.result の Some・Maybe・Nothing は抜け 5 の card が型を付け、
+この表から外れた)。
 
 失敗ケース: 公開の module に注記の無い関数・属性・変数を足す・``Task`` の id の注記を外す・置き物を型の道具に見せる、で赤。
 """
@@ -30,28 +31,24 @@ from pathlib import Path
 import pytest
 from doeff_hy.static_check import python_without_bytecode
 
+#: 型引数を書かない program の node の union(``isinstance(x, DoExpr)`` に渡せる形 — ``Pure[Any] | ...`` と書くと
+#: isinstance が型の error になる)。node の型引数に既定値 Any を持たせるのは doeff_vm の stub の側で、変えると doeff-vm の
+#: Rust の組み立て直しが起きる(tool.uv.cache-keys が .pyi を含む)。
+_NODE_TYPE_ARGS = "program の node の型引数"
+
 #: doeff の公開の名のうち、型が分からないままの物と訳。
 _DOEFF_GAPS: dict[str, str] = {
-    # Some・Maybe・Nothing に型が無い — 型の報告の抜け 5(doeff.result の card)が型を付ける。
-    "doeff.Some": "doeff.result",
-    "doeff.Maybe": "doeff.result",
-    "doeff.Nothing": "doeff.result",
-    # 型引数を書かない program の node の union(isinstance に渡せる形)。node の型引数に既定値 Any を持たせるのは
-    # doeff_vm の stub の側で、変えると doeff-vm の Rust の組み立て直しが起きる(tool.uv.cache-keys が .pyi を含む)。
-    "doeff.DoExpr": "program の node の型引数",
-    "doeff.ProgramBase": "program の node の型引数",
+    "doeff.DoExpr": _NODE_TYPE_ARGS,
+    "doeff.ProgramBase": _NODE_TYPE_ARGS,
 }
-#: 上と同じ訳で型が分からない module(この接頭の名は全部認める)。
-_DOEFF_GAP_MODULES: dict[str, str] = {"doeff.result.": "doeff.result"}
 
-#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(outcomes の境目の handler — 答えの Maybe と、
-#: 束ねる物の union Bindable の DoExpr に依る)。
+#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(outcomes の境目の handler — 束ねる物の union
+#: Bindable と戻りが DoExpr)。
 _CORE_HEAD_GAPS: dict[str, str] = {
-    "doeff_core_effects.RaiseCase": "doeff.result",
-    "doeff_core_effects.absent_as": "program の node の型引数",
-    "doeff_core_effects.maybe": "doeff.result",
-    "doeff_core_effects.on_raise": "doeff.result",
-    "doeff_core_effects.result": "doeff.result",
+    "doeff_core_effects.absent_as": _NODE_TYPE_ARGS,
+    "doeff_core_effects.maybe": _NODE_TYPE_ARGS,
+    "doeff_core_effects.on_raise": _NODE_TYPE_ARGS,
+    "doeff_core_effects.result": _NODE_TYPE_ARGS,
 }
 #: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。
 _CORE_TYPED_MODULES = (
@@ -111,22 +108,13 @@ def core_symbols(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
     return _verifytypes(tmp_path_factory.mktemp("verifytypes-core"), "doeff_core_effects")
 
 
-def _is_doeff_gap(name: str) -> bool:
-    return name in _DOEFF_GAPS or name.startswith(tuple(_DOEFF_GAP_MODULES))
-
-
 def test_every_public_name_of_doeff_has_a_known_type_but_the_listed_gaps(doeff_symbols: list[dict]) -> None:
-    unknown = _unknown(doeff_symbols)
-    unlisted = sorted(name for name in unknown if not _is_doeff_gap(name))
+    unlisted = sorted(_unknown(doeff_symbols) - set(_DOEFF_GAPS))
     assert unlisted == [], f"型の分からない公開の名 — 注記を付ける: {unlisted}"
 
 
 def test_each_listed_gap_of_doeff_is_still_a_gap(doeff_symbols: list[dict]) -> None:
-    unknown = _unknown(doeff_symbols)
-    closed = sorted(name for name in _DOEFF_GAPS if name not in unknown)
-    closed += sorted(
-        prefix for prefix in _DOEFF_GAP_MODULES if not any(name.startswith(prefix) for name in unknown)
-    )
+    closed = sorted(set(_DOEFF_GAPS) - _unknown(doeff_symbols))
     assert closed == [], f"型が付いた — 表から外して守る範囲に入れる: {closed}"
 
 
