@@ -10,6 +10,10 @@
   `https://example.com`; `file://` URLs are read the same way). It exits 1, naming the URL, when the page cannot be
   fetched, and 2 for a URL without a scheme. It imports only the core packages, which `tools/verify_core_install.py`
   checks in a fresh core-only venv.
+- `examples/github_repo`: a program that reads a repository and its latest release from the GitHub API and summarizes
+  them, with its pytest tests. The program yields `HttpRequest`; run as a script it installs `http_production_handler`
+  from `doeff[http]`, and the tests install a fake handler instead, so `pytest examples/github_repo` needs no network.
+  The README links it from the 30-second example and from Next steps.
 
 ### Changed
 

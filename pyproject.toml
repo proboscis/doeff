@@ -327,6 +327,17 @@ tests = [
     "tests/test_verify_core_install.py",
 ]
 
+# README が案内する HTTP の API の例(examples/github_repo/ — doeff[http] の handler で GitHub を呼ぶ program と、偽の handler の
+# pytest の検の例)を変えた便は、script の本番の handler の組を手元の偽の API へ向けて子で走らせる検と、README の命令
+# `pytest examples/github_repo` を pytest の外の plugin 無しの子で走らせる検を払う(card ki-1356963e2d0b)。どちらも例を path で
+# 走らせるので、import の逆依存では選ばれない。examples/ の他の例の検は選ばない。
+[[tool.doeff.contract-tests]]
+prefix = "examples/github_repo/"
+tests = [
+    "tests/test_examples_run.py::test_github_repo_example_runs_its_live_handlers_against_a_local_api",
+    "tests/test_examples_run.py::test_github_repo_example_tests_run_with_pytest_alone",
+]
+
 # 入門の道の docs の page(目次と 01〜05 章)を書き換えた便は、その例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
 # (card ki-9c93a506326b)。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と
 # ここの両方に足す(片方だけなら検 test_contract_table_selects_this_check_for_each_entry_page が名指す)。
