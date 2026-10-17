@@ -55,11 +55,13 @@
   (#^ (| TranscriptPresent TranscriptAbsent) transcript))
 
 (defclass [(dataclass :frozen True)] SessionExported []
-  "transcript の写し: jsonl の本文ちょうど(空でない)。Rebuilt(jsonl-text) に渡すと同じ transcript が持ち込める。"
+  "transcript の写し: jsonl の本文ちょうど(空白だけでない)。Rebuilt(jsonl-text) に渡すと同じ transcript が持ち込める。末尾だけを
+   頼んだ取り出し(ClaudeExportSession の tail-bytes)の答えは、末尾の行の列(行の頭から始まる)で、持ち込みには使えない。
+   空白だけかの判定は先頭から空白でない字を探すだけにする(100 MB 級の写しを strip で写し直さない — card ki-a264a73efcce)。"
   (#^ str jsonl-text)
   (defn __post_init__ [self]
-    (when (not (and (isinstance self.jsonl-text str) (.strip self.jsonl-text)))
-      (raise (ValueError "SessionExported.jsonl_text は空でない文字列")))))
+    (when (not (and (isinstance self.jsonl-text str) self.jsonl-text (not (.isspace self.jsonl-text))))
+      (raise (ValueError "SessionExported.jsonl_text は空白だけでない文字列")))))
 
 
 ;; --- 失敗の戻り値 ---------------------------------------------------------------------------------
@@ -159,12 +161,19 @@
   "会話の transcript の写しを家から取り出す(家の外に預けて、別の家へ ResumeSession の carry = Rebuilt で持ち込むため)。
    cwd は ClaudeSessionStatus と同じく実体の path(realpath)へ正規化して置き場を決める。写すのは transcript の jsonl 1 つだけ
    (subagent の記録・memory の dir は写さない)。session-id は会話の id の綴り(UUID — 置き場の外の path を名指せない)。
+   tail-bytes = 末尾の何 byte までを読むか(None = 全部)。末尾だけの答えは、切り口の後の最初の行の頭から始まる行の列で、持ち込み
+   には使えない — 写しの中の最近の行だけを読む使い手(道具の呼びで名指した作業場を新しい方から拾う等)が、100 MB 級の transcript を
+   手番ごとに丸ごと読まないため(card ki-a264a73efcce)。
    答え = SessionExported | SessionNotFound(transcript が無い・空)。"
   (#^ ClaudeHome home)
   (#^ str cwd)
   (#^ str session-id)
+  (setv #^ (| int None) tail-bytes None)
   (defn __post_init__ [self]
-    (checked-session-id self.session-id "ClaudeExportSession.session_id")))
+    (checked-session-id self.session-id "ClaudeExportSession.session_id")
+    (when (and (is-not self.tail-bytes None)
+               (or (isinstance self.tail-bytes bool) (not (isinstance self.tail-bytes int)) (< self.tail-bytes 1)))
+      (raise (ValueError (.format "ClaudeExportSession.tail_bytes は 1 以上の整数か None: {!r}" self.tail-bytes))))))
 
 
 ;; --- 入力の前に会話の process を事前起動して待たせる ------------------------------------------------------------

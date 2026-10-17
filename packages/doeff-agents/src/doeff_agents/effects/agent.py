@@ -1414,6 +1414,11 @@ class ExportContextEffect(AgentEffectBase):
     ``LaunchEffect(resume_from=context_id, resume_snapshot=copy)``.  Handlers
     that cannot take a copy refuse it with ``AgentCapabilityUnsupportedError``.
 
+    ``tail_bytes`` asks for only the last lines of the copy that fit in that
+    many bytes (starting at a line start).  Such a copy cannot be brought back
+    with ``resume_snapshot``; it is for callers that read only recent lines,
+    so a 100 MB context is not read whole on every turn (card ki-a264a73efcce).
+
     Yields: str | None (the copy; None = this runtime has no such context)
     """
 
@@ -1421,6 +1426,13 @@ class ExportContextEffect(AgentEffectBase):
     # A plain path value, like ``LaunchEffect.work_dir``.
     work_dir: str | PurePath
     context_id: str
+    tail_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.tail_bytes is not None and (
+            isinstance(self.tail_bytes, bool) or not isinstance(self.tail_bytes, int) or self.tail_bytes < 1
+        ):
+            raise ValueError("ExportContextEffect.tail_bytes must be a positive int or None")
 
 
 # =============================================================================

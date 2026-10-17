@@ -52,7 +52,6 @@
 (import operator [attrgetter])
 (import os)
 (import os.path)
-(import pathlib [Path])
 (import signal)
 (import threading)
 (import uuid)
@@ -334,16 +333,53 @@
 
 (defn #^ bool file-present [#^ str path] (os.path.exists path))
 
+;; 費用の起点を探す transcript の末尾の幅(byte・狭い順 — card ki-a264a73efcce)。CLI は降りる時に cost-state の行を末尾へ書き、起点を読む
+;; のは前の process が降りた後なので、ふつうは最初の幅で見つかる。最後の幅にも無ければ None(分からない — 0 を発明しない)。
+(val COST-TAIL-BYTES #(65536 1048576 16777216))
+
+(defrecord TranscriptBytes
+  "transcript の jsonl の読み: data = 読んだ byte(末尾だけの読みは行の頭から)・whole = file の頭から読んだか。"
+  (#^ bytes data)
+  (#^ bool whole))
+
+(defn #^ (| TranscriptBytes None) read-transcript-bytes [#^ str path #^ (| int None) tail-bytes]
+  "transcript の jsonl を、全部か末尾だけ byte で読むため(tail-bytes = 末尾の何 byte まで・None = 全部 — card ki-a264a73efcce。
+   100 MB 級の transcript を、最近の行だけが要る読みで丸ごと読まない)。末尾だけの読みは、切り口の後の最初の行の頭から返す(切り口の
+   直前の 1 byte も読み、それが改行なら切り口の行も残す — 行の途中から始めない)。file が無い・file でない = None。"
+  (when (not (os.path.isfile path))
+    (return None))
+  (try
+    (with [handle (open path "rb")]
+      (setv size (. (os.fstat (.fileno handle)) st-size))
+      (when (or (is tail-bytes None) (<= size tail-bytes))
+        (return (TranscriptBytes :data (.read handle) :whole True)))
+      (.seek handle (- size tail-bytes 1))
+      (setv chunk (.read handle))
+      (setv newline (.find chunk b"\n"))
+      (TranscriptBytes :data (if (< newline 0) b"" (cut chunk (+ newline 1) None)) :whole False))
+    (except [FileNotFoundError] None)))
+
 (defk transcript-cost-mark [#^ str path]
   {:pre [(: path str)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
   "transcript の file path を読み、最後の cost-state の額を読むため(recorded-cost-mark が TRANSCRIPT-THREADS の thread の新しい VM で回す —
-   読みも数十 MB の行の解きも scheduler の thread の外)。file が無い・読めない・行が無い・値が数でなければ None。"
-  (val text (try
-              (.read-text (Path path) :encoding "utf-8")
-              (except [#(OSError UnicodeDecodeError)] None)))
-  (when (is text None) (return None))
-  (<- mark (recorded-cost text))
-  mark)
+   読みも行の解きも scheduler の thread の外)。読むのは末尾だけ(COST-TAIL-BYTES の幅を狭い順に — card ki-a264a73efcce。前は 200 MB の
+   transcript を丸ごと読み、詰まった disk の上で起こすたびに 15〜74 秒かかった)。file が無い・読めない・最後の幅にも行が無い・値が数で
+   なければ None。"
+  (for [limit COST-TAIL-BYTES]
+    (val read (try
+                (read-transcript-bytes path limit)
+                (except [OSError] None)))
+    (when (is read None)
+      (return None))
+    (val text (try
+                (.decode read.data "utf-8")
+                (except [UnicodeDecodeError] None)))
+    (when (is text None)
+      (return None))
+    (<- mark (recorded-cost text))
+    (when (or (is-not mark None) read.whole)
+      (return mark)))
+  None)
 
 (defk recorded-cost-mark [#^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
   {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| float None))]
@@ -1240,11 +1276,13 @@
 
 (defk read-session-export [request]
   {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))] :tags {:context "claude-code" :role "foundation"}}
-  "transcript の jsonl 1 つを utf-8 で読むため(置き場は session-status と同じ規則)。無い・空 = SessionNotFound。"
-  (val path (Path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id)))
-  (when (not (.is-file path)) (return (SessionNotFound request.session-id)))
-  (val text (.read-text path :encoding "utf-8"))
-  (if (.strip text) (SessionExported text) (SessionNotFound request.session-id)))
+  "transcript の jsonl 1 つを utf-8 で読むため(置き場は session-status と同じ規則・tail-bytes が在れば末尾だけを行の頭から —
+   card ki-a264a73efcce)。無い・空白だけ = SessionNotFound(空白の判定は strip で写し直さず isspace で探すだけ)。"
+  (val read (read-transcript-bytes (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id)
+                                   request.tail-bytes))
+  (when (is read None) (return (SessionNotFound request.session-id)))
+  (val text (.decode read.data "utf-8"))
+  (if (and text (not (.isspace text))) (SessionExported text) (SessionNotFound request.session-id)))
 
 (defk export-session [#^ ClaudeExportSession request]
   {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}

@@ -11,7 +11,7 @@
 ;;; 本番と共通の不変条件(1 つの会話に走る手番は多くとも 1 つ・StartTurn 1 回に終わりちょうど 1 つ・seq の単調増加・
 ;;; FreshSession の id の重複と ResumeSession の不在の断り・手番の外の足す / 止めるの断り・止めた後は Interrupted・閉じるは冪等・
 ;;; process の死の注入で BackendLost・次の ResumeSession は通る)を同じ筋書きの検で確かめる。
-(require doeff-hy.macros [defhandler defk <- val])
+(require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass field replace])
@@ -803,9 +803,19 @@
 
 (defk fake-export [#^ FakeClaudeWorld world #^ ClaudeExportSession request]
   {:pre [(: world FakeClaudeWorld) (: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}
-  "transcript の写し: 行を改行で結んだ本文(carry-into の Rebuilt が同じ行の列へ読み戻す形)。無い・空 = SessionNotFound。"
+  "transcript の写し: 行を改行で結んだ本文(carry-into の Rebuilt が同じ行の列へ読み戻す形)。tail-bytes が在れば、本物と同じく
+   末尾の tail-bytes byte に丸ごと収まる行だけ(行の頭から)。無い・空 = SessionNotFound。"
   (val lines (transcript-of world request.home request.cwd request.session-id))
-  (val text (if (is lines None) "" (.join "" (gfor line lines (+ line "\n")))))
+  (val ended (if (is lines None) [] (lfor line lines (+ line "\n"))))
+  (var kept ended)
+  (when (is-not request.tail-bytes None)
+    (var room request.tail-bytes)
+    (var start (len ended))
+    (while (and (> start 0) (<= (len (.encode (get ended (- start 1)) "utf-8")) room))
+      (:= room (- room (len (.encode (get ended (- start 1)) "utf-8"))))
+      (:= start (- start 1)))
+    (:= kept (cut ended start None)))
+  (val text (.join "" kept))
   (if (.strip text) (SessionExported text) (SessionNotFound request.session-id)))
 
 (defk fake-drop [#^ FakeClaudeWorld world #^ str session-id]

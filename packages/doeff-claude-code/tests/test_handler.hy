@@ -29,7 +29,7 @@
 (import doeff_claude_code.process [ClaudeProcess])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [CLI-TIMING-LOG KEPT-TURNS ClaudeCodeHost Doorbell SessionRuntime claude-code-handler elapsed-ms note-reused
-                                   wait-until wall-elapsed-ms])
+                                   recorded-cost-mark wait-until wall-elapsed-ms])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
                               reply-prompt sleep-prompt])
@@ -363,6 +363,53 @@
   (val seconds (- (time.monotonic) started))
   (assert (= exported (SessionExported body)) (repr exported))
   (assert (< seconds (/ HELD-READ-SECONDS 2)) (.format "書き出しの読みが scheduler の thread を {:.1f} 秒塞いだ" seconds)))
+
+
+(defk written-transcript [#^ ClaudeSessionSpec spec #^ str sid #^ str body]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str) (: body str)] :post [(: % Path)] :tags {:context "claude-code" :role "program"}}
+  "読みの test の前に、会話 sid の transcript を body で置くため(置き場は handler と同じ transcript-path)。答え = その path。"
+  (val path (Path (transcript-path spec.home.config-dir (os.path.realpath spec.cwd) sid)))
+  (.mkdir path.parent :parents True :exist-ok True)
+  (.write-text path body :encoding "utf-8")
+  path)
+
+
+(deftest test-export-with-tail-bytes-reads-only-the-whole-last-lines [tmp-path]
+  ;; 末尾だけの取り出し(card ki-a264a73efcce): 末尾の tail-bytes byte に丸ごと収まる行だけを、行の頭から返す。切り口がちょうど行の頭なら
+  ;; その行も残す。file より広い幅は全部。
+  (val spec (spec-in tmp-path))
+  (val sid (str (uuid.uuid4)))
+  (val lines ["{\"type\":\"user\",\"text\":\"一つ目\"}\n" "{\"type\":\"assistant\",\"text\":\"二つ目\"}\n" "{\"type\":\"user\",\"text\":\"三\"}\n"])
+  (<- (written-transcript spec sid (.join "" lines)))
+  (val last-two (.join "" (cut lines 1 None)))
+  (val host (host-of #("/nonexistent/claude-binary")))
+  (<- exact (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :tail-bytes (len (.encode last-two "utf-8")))))
+  (assert (= exact (SessionExported last-two)) (repr exact))
+  (<- inside (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :tail-bytes (- (len (.encode last-two "utf-8")) 1))))
+  (assert (= inside (SessionExported (get lines 2))) (repr inside))
+  (<- wide (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :tail-bytes 1000000)))
+  (assert (= wide (SessionExported (.join "" lines))) (repr wide)))
+
+
+(deftest test-the-recorded-cost-is-read-from-the-tail-and-widens-until-found [tmp-path]
+  ;; 費用の起点は transcript の末尾だけを読む(card ki-a264a73efcce)。最後の cost-state が最初の幅(64 KiB)に在ればそれ。末尾の 64 KiB に
+  ;; 無ければ幅を広げて探す(前の cost-state を見落とさない)。どの幅にも無ければ None。
+  (val spec (spec-in tmp-path))
+  (val canonical (os.path.realpath spec.cwd))
+  (val filler (* "{\"type\":\"assistant\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n" 2000))
+  (assert (> (len filler) 65536))
+  (val near (str (uuid.uuid4)))
+  (<- (written-transcript spec near (+ "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n" filler "{\"type\":\"cost-state\",\"totalCostUSD\":1.25}\n")))
+  (val far (str (uuid.uuid4)))
+  (<- (written-transcript spec far (+ "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n" filler)))
+  (val none (str (uuid.uuid4)))
+  (<- (written-transcript spec none filler))
+  (<- near-mark (recorded-cost-mark spec.home canonical near))
+  (assert (= near-mark 1.25) (repr near-mark))
+  (<- far-mark (recorded-cost-mark spec.home canonical far))
+  (assert (= far-mark 0.5) (repr far-mark))
+  (<- none-mark (recorded-cost-mark spec.home canonical none))
+  (assert (is none-mark None) (repr none-mark)))
 
 
 ;; 替え玉の CLI が最後の本文を何片の差分で流すか(#3628)と、その本文(片の数以上の字数)。
