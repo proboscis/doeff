@@ -1,0 +1,150 @@
+# doeff の docs の site。中身は docs/index.md から辿る利用者向けの page だけ — 開発の記録(docs/design・docs/adr・
+# docs/history ほか)は入れない。page の組は 2 か所に書く: exclude_docs の許す一覧(この組の外の docs/ の file は site に入らない)と
+# nav(docs/index.md の目次と同じ節と順)。片方にだけ在る page は build が warning を出し、--strict の build を落とす
+# (validation の omitted_files と、nav の指す file が無い時の warning)。docs/index.md の目次と nav の食い違いは
+# tests/test_docs_site_pages.py が落とす。
+#
+# 組み方: make docs-site(tools/docs_site/requirements.txt の版で mkdocs build --strict)。CI は .github/workflows/docs-site.yml。
+# site の公開はまだしない — 公開の先(GitHub Pages など)が決まったら、その workflow に公開の job を足す。
+site_name: doeff
+site_description: Algebraic effects with one-shot continuations for Python, backed by a Rust VM
+repo_url: https://github.com/proboscis/doeff
+repo_name: proboscis/doeff
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+
+# mkdocs 1.6 は theme の file(Material の CSS と JS — assets/ の下)にも exclude_docs を当てるので、assets/ の下を許す(`!/assets/`
+# では `*` に当たった file が戻らない。make docs-site が組んだ site に theme の CSS と JS が在る事を確かめる)。
+exclude_docs: |
+  *
+  !/assets/**
+  !/index.md
+  !/01-getting-started.md
+  !/02-core-concepts.md
+  !/03-basic-effects.md
+  !/04-async-effects.md
+  !/05-error-handling.md
+  !/06-io-effects.md
+  !/07-cache-system.md
+  !/09-advanced-effects.md
+  !/11-kleisli-arrows.md
+  !/12-mcp-tools.md
+  !/12-patterns.md
+  !/13-api-reference.md
+  !/14-cli-auto-discovery.md
+  !/15-cli-script-execution.md
+  !/16-run-program-api.md
+  !/17-effect-boundaries.md
+  !/18-effect-combinations.md
+  !/19-agent-tutorial.md
+  !/20-why-effects-over-di.md
+  !/21-semaphore-effects.md
+  !/22-capability-classes.md
+  !/23-static-typing.md
+  !/25-rust-scheduler.md
+  !/MARKERS.md
+  !/cli-run-command-architecture.md
+  !/gemini_client_setup.md
+  !/gemini_cost_hook.md
+  !/ide-plugins.md
+  !/llm_unified_effects.md
+  !/program-architecture-overview.md
+  !/seedream.md
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Getting Started: 01-getting-started.md
+      - Core Concepts: 02-core-concepts.md
+  - Effect Types:
+      - Basic Effects: 03-basic-effects.md
+      - Async Effects: 04-async-effects.md
+      - Error Handling: 05-error-handling.md
+      - Cache System: 07-cache-system.md
+      - Advanced Effects: 09-advanced-effects.md
+      - Semaphore Effects: 21-semaphore-effects.md
+  - Integration & Advanced Topics:
+      - Kleisli Arrows: 11-kleisli-arrows.md
+      - Patterns: 12-patterns.md
+      - API Reference: 13-api-reference.md
+  - CLI Tools:
+      - CLI Script Execution: 15-cli-script-execution.md
+      - Effect Boundaries: 17-effect-boundaries.md
+      - Effect Combinations: 18-effect-combinations.md
+  - Specialized Topics:
+      - Program Architecture: program-architecture-overview.md
+      - Removed IO API: 06-io-effects.md
+      - Removed run_program API: 16-run-program-api.md
+  - Design Notes:
+      - Static Typing: 23-static-typing.md
+      - Rust Scheduler: 25-rust-scheduler.md
+      - Capability Classes: 22-capability-classes.md
+      - CLI Architecture: cli-run-command-architecture.md
+  - Pages That Need Other Components:
+      - CLI auto-discovery and IDE plugins:
+          - CLI Auto-Discovery: 14-cli-auto-discovery.md
+          - MARKERS.md: MARKERS.md
+          - IDE Plugins: ide-plugins.md
+      - Coding-agent sessions:
+          - Agent Tutorial: 19-agent-tutorial.md
+          - MCP Tools: 12-mcp-tools.md
+          - doeff-agents / session host: https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md
+      - LLM and image providers:
+          - Unified LLM Effects: llm_unified_effects.md
+          - Gemini Setup: gemini_client_setup.md
+          - Gemini Cost Hook: gemini_cost_hook.md
+          - seedream.md: seedream.md
+      - Design essay:
+          - Why Effects Over DI?: 20-why-effects-over-di.md
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - footnotes
+  - tables
+  # 見出しの anchor を GitHub と同じ作り方にする — page の中の link(#overview--motivation など)は GitHub の上で書かれた。
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  # ```mermaid の囲みを図に描く(Material の作法)。
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+# GitHub の上で読む形に書いた page を site でも同じに読ませる — site の外の repo の file への相対の link を GitHub の link にし、
+# 囲みの頭の言語の後の印(docs の例の検が読む excerpt など)を落とす。訳は hook の頭に書く。
+hooks:
+  - tools/docs_site/hooks.py
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

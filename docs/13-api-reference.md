@@ -63,7 +63,7 @@ Success/failure sum type used by `Try(...)`.
 Result[T] = Ok[T] | Err
 ```
 
-**See:** [Error Handling](05-error-handling.md#ok-and-err)
+**See:** [Error Handling](05-error-handling.md#okerr-result-values)
 
 ---
 
@@ -207,7 +207,7 @@ result = yield Local({"timeout": 30}, sub_program())
 
 **Signature:** `Local(env: Mapping, program: DoExpr)`
 
-**See:** [Basic Effects](03-basic-effects.md#local)
+**See:** [Basic Effects](03-basic-effects.md#local---temporary-environment-override)
 
 ---
 

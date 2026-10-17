@@ -4,7 +4,7 @@
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-changed test-packages print-package-extra-test-roots test-hy-floor test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
-        pre-commit-install hooks-install enforcement-ledger clean install-opencode-spec-gap-tdd
+        pre-commit-install hooks-install enforcement-ledger docs-site docs-serve clean install-opencode-spec-gap-tdd
 
 # Default target
 help:
@@ -42,6 +42,10 @@ help:
 	@echo "  make format            Format code with ruff"
 	@echo "  make check             Run format check without modifying files"
 	@echo "  make check-repo-hygiene Check generated artifacts are not tracked"
+	@echo ""
+	@echo "Docs site:"
+	@echo "  make docs-site         Build the docs site into site/ (mkdocs build --strict, same as CI)"
+	@echo "  make docs-serve        Serve the docs site locally with live reload"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean             Remove build artifacts and caches"
@@ -294,6 +298,23 @@ check: check-repo-hygiene
 
 check-repo-hygiene:
 	bash scripts/check-repo-hygiene.sh
+
+# =============================================================================
+# Docs site
+# =============================================================================
+
+# docs の site(mkdocs.yml)を、版を固定した mkdocs と Material(tools/docs_site/requirements.txt)で組む。workspace の venv は
+# 要らない。docs-site は CI(.github/workflows/docs-site.yml)と同じ --strict の build で、出力は DOCS_SITE_DIR(既定 site/)。
+# 組んだ後に theme の CSS と JS が在る事を確かめる — exclude_docs が theme の file を外しても --strict の build は落ちない。
+DOCS_SITE_RUN = uv run --no-project --python 3.12 --with-requirements tools/docs_site/requirements.txt
+DOCS_SITE_DIR ?= site
+
+docs-site:
+	$(DOCS_SITE_RUN) mkdocs build --strict --site-dir $(DOCS_SITE_DIR)
+	ls $(DOCS_SITE_DIR)/assets/stylesheets/main.*.min.css $(DOCS_SITE_DIR)/assets/javascripts/bundle.*.min.js
+
+docs-serve:
+	$(DOCS_SITE_RUN) mkdocs serve
 
 # =============================================================================
 # Utilities

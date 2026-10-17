@@ -168,14 +168,14 @@ print(f"Result: {result}")  # Result: 42
 - **[Async Effects](04-async-effects.md)** for HTTP requests
 - **[Cache System](07-cache-system.md)** for response caching
 - **[Error Handling](05-error-handling.md)** for request validation
-- **[Patterns](12-patterns.md#web-application-patterns)** for common patterns
+- **[Patterns](12-patterns.md#architectural-patterns)** for layering, repositories, and units of work
 
 ### Data Processing Pipelines
 
 - **[Basic Effects](03-basic-effects.md)** for state management
 - **[Async Effects](04-async-effects.md)** for parallel processing
 - **[Error Handling](05-error-handling.md)** for retry logic
-- **[Patterns](12-patterns.md#pipeline-patterns)** for data flow
+- **[Patterns](12-patterns.md#performance-patterns)** for parallel fetching and batching
 
 ### CLI Applications
 

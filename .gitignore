@@ -35,6 +35,9 @@ wheels/
 *.egg
 MANIFEST
 
+# docs の site(make docs-site・mkdocs build の出力)
+/site/
+
 # Testing
 .pytest_cache/
 .coverage
