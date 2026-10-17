@@ -685,7 +685,7 @@
                    (if (moved-names before.warms after.warms) (| (frozenset before.workers) (frozenset after.workers)) (frozenset)))
         moved (| (frozenset (gfor n services (key-of "Service" n)))
                  (frozenset (gfor n workers (key-of "Worker" n)))
-                 (frozenset (gfor n (moved-names before.tasks after.tasks) (key-of "Task" n)))
+                 (frozenset (gfor n (.changed-keys before.tasks after.tasks) (key-of "Task" n)))
                  (frozenset (gfor n (moved-names before.rollouts after.rollouts) (key-of "Rollout" n)))
                  (frozenset (gfor n (moved-names before.group-limits after.group-limits) (key-of "GroupLimit" n))))
         present (| (frozenset (gfor n all-services :if (or (in n jobs-after) (in n after.refused)) (key-of "Service" n)))

@@ -39,7 +39,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
+(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv StartWarmChild WarmChildView WarmChildMark
@@ -425,11 +425,11 @@
   ;; 準備済みの w2 を、名前順で先の w1(空き同じ)より優先する
   (val warm-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}
                                 :tasks (! (table-from-rows {"t1" task}))))
-  (val placed (.row (! (place-tasks 10 warm-state {} TIMING)) "t1"))
+  (val placed (.row (! (tasks-placed 10 warm-state {} TIMING)) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "w2")) placed)
   ;; 準備済みが無ければ置くが phase は preparing(assigned と分ける)で、冷たい起動を数える
   (val cold-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks (! (table-from-rows {"t1" task}))))
-  (val cold (.row (! (place-tasks 10 cold-state {} TIMING)) "t1"))
+  (val cold (.row (! (tasks-placed 10 cold-state {} TIMING)) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks (! (table-from-rows {"t1" cold}))))
   (assert (= (. (get (load-of after {}) "w1") tasks) 1) "preparing の task も担い手の数に入る")
@@ -460,11 +460,11 @@
   (val task (! (env-task "t1" declared)))
   (val two (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}
                          :tasks (! (table-from-rows {"t1" task}))))
-  (assert (= (. (.row (! (place-tasks 10 two {} TIMING)) "t1") worker) "w2") "空きの尽きた worker を避ける")
+  (assert (= (. (.row (! (tasks-placed 10 two {} TIMING)) "t1") worker) "w2") "空きの尽きた worker を避ける")
   (val only (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))} :tasks (! (table-from-rows {"t1" task}))))
-  (assert (= (. (.row (! (place-tasks 10 only {} TIMING)) "t1") phase) "queued") "置ける先が無ければ待つ")
+  (assert (= (. (.row (! (tasks-placed 10 only {} TIMING)) "t1") phase) "queued") "置ける先が無ければ待つ")
   (val ready (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))} :tasks (! (table-from-rows {"t1" task}))))
-  (assert (= (. (.row (! (place-tasks 10 ready {} TIMING)) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
+  (assert (= (. (.row (! (tasks-placed 10 ready {} TIMING)) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
 
 
 ;; --- worker の判断 -----------------------------------------------------------------------------

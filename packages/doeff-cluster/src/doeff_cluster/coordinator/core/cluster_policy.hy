@@ -22,7 +22,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_hy.table [Table TableWrite])
+(import doeff_hy.table [Table TableWrite TableDraft draft-of])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -1115,14 +1115,34 @@
   (if capable (+ (max (gfor w capable w.last-seen-ms)) timing.silent-worker-wait-ms 1) None))
 
 
-(defk place-tasks [now state placements timing]
+(defn #^ tuple task-writes [#^ (get Table TaskRecord) original #^ dict rows]
+  "純粋: rows(task の id → 書き直した行か None = 消す)のうち、original の行と違う行(object が違い値も違う行)だけの書きの列。
+   値が等しいだけで object の違う行・元から無い行を消す書きは含めない(何も変わらなければ空の列 — place-tasks の答えが前の表のまま)。"
+  (tuple (gfor #(id new) (.items rows)
+               :setv old (.row original id)
+               :if (not (or (is new old) (and (is-not new None) (is-not old None) (= new old))))
+               (TableWrite id new))))
+
+
+(defk tasks-placed [now state placements timing]
   {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % (get Table TaskRecord))]
    :tags {:context "coordinator" :role "judgment"}}
-  "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。"
+  "純粋: place-tasks の書きを state.tasks へ当てた表(書きが空なら state.tasks そのもの)— 全件の表で置き先を読む読み手(test)のため。"
+  (.with-writes state.tasks (! (place-tasks now state placements timing))))
+
+
+(defk place-tasks [now state placements timing]
+  {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。
+   答えは state.tasks へ当てる書きの列(TableWrite の tuple — 変わった行だけ・何も変わらなければ空)。全件の表は組まない。"
   ;; 結果を保持しているだけの行(切り離した終わり)は走査しない — 保持側の最小期限が来た拍だけ 1 周して期限切れを落とす。
   (<- split tuple (task-split state.tasks now))
   (setv #(live earliest) split)
-  (setv scanned {})
+  ;; writes = task の id → 書き直した行か None(消す)。変わらない行は書かない(最後に task-writes が元の行と比べて絞る)。
+  (setv writes {})
+  ;; queue = 走査の後も待っている task(置く判断の対象)。
+  (setv queue {})
   (for [#(id task) (.items live)]
     ;; 自分の期限(静かな区間の次の刻 task-due と同じ関数 task-lapse-at の刻)が来たか。
     (<- lapse (| int None) (task-lapse-at task now))
@@ -1130,37 +1150,37 @@
     (cond
       task.detached
         (do (<- kept (| TaskRecord None) (settle-detached task now lapsed))
-            (when (is-not kept None) (setv (get scanned id) kept)))
+            (setv (get writes id) kept))
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
-      lapsed None
+      lapsed (setv (get writes id) None)
       (and (in task.phase PLACED-PHASES)
            (or (not-in task.worker state.workers)
                (not (alive now (get state.workers task.worker) timing.reassign-after-ms))))
-        (setv (get scanned id) (replace task :phase "failed" :finished-ms now
-                                        :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))
-      True (setv (get scanned id) task)))
-  ;; 保持側の行は元の object のまま、元の id の順で戻す。期限(finished-ms + retain-ms + 1 — task-lapse-at と同じ式)が来た行は落とす。
-  ;; finished-ms の無い行は毎拍 now から数えるので落ちない。
-  (setv expiring (and (is-not earliest None) (>= now earliest)))
-  (setv tasks {})
-  (for [#(id task) (.items state.tasks)]
-    (cond
-      (in id scanned) (setv (get tasks id) (get scanned id))
-      (not (held-task? task)) None
-      (and expiring (is-not task.finished-ms None) (>= now (+ task.finished-ms task.retain-ms 1))) None
-      True (setv (get tasks id) task)))
+        (setv (get writes id) (replace task :phase "failed" :finished-ms now
+                                       :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))))
+  ;; 走査の後の行の読み(書いた行が先・無ければ元の行)。
+  (for [#(id task) (.items live)]
+    (setv now-row (if (in id writes) (get writes id) task))
+    (when (and (is-not now-row None) (= now-row.phase "queued"))
+      (setv (get queue id) now-row)))
+  ;; 保持側の行は書かず元の object のまま残す。期限(finished-ms + retain-ms + 1 — task-lapse-at と同じ式)が来た行は落とす(期限の来た拍だけ
+  ;; 全行を読む)。finished-ms の無い行は毎拍 now から数えるので落ちない。
+  (when (and (is-not earliest None) (>= now earliest))
+    (for [task (.rows state.tasks)]
+      (when (and (held-task? task) (is-not task.finished-ms None) (>= now (+ task.finished-ms task.retain-ms 1)))
+        (setv (get writes task.id) None))))
   ;; 待っている task が無ければ、置く判断(負荷・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
   ;; 模擬の拍の大半だった(#2655 の profile: replace 135,053 回・2.3 秒)。
-  (when (not (any (gfor t (.values tasks) (= t.phase "queued"))))
-    (return (tasks-rewritten state.tasks tasks)))
-  (setv placed (replace state :tasks (tasks-rewritten state.tasks tasks)))
+  (when (not queue)
+    (return (task-writes state.tasks writes)))
+  (setv placed (replace state :tasks (.with-writes state.tasks (task-writes state.tasks writes))))
   (setv load (load-of placed placements)
         draining (draining-workers state now))
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
   (var held (! (limit-holdings (! (placed-claims placed.tasks)) state.group-limits)))
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
-  (for [id (sorted tasks :key (fn [i] #((- (. (get tasks i) priority)) i)))]
-    (setv task (get tasks id))
+  (for [id (sorted queue :key (fn [i] #((- (. (get queue i) priority)) i)))]
+    (setv task (get queue id))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
       (setv able (lfor w (.values state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
@@ -1190,7 +1210,7 @@
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
-                 (setv (get tasks id) (if task.detached
+                 (setv (get writes id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
                                           (replace task :phase phase :worker chosen.name :started-ms now))))
@@ -1200,15 +1220,15 @@
         able-now
           (let [text (! (task-unplaced-text (! (misfit-reason misfits))))]
             (when (!= task.detail text)
-              (setv (get tasks id) (replace task :detail text))))
+              (setv (get writes id) (replace task :detail text))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
-          (setv (get tasks id) (end-env-failed task now task.detail))
+          (setv (get writes id) (end-env-failed task now task.detail))
         ;; 能力の合う生きた worker はいるが、宣言の道具を名乗る worker が無い。
         (and (not able) (is-not task.runtime-env None)
              (any (gfor w (.values state.workers)
                         (and (alive now w timing.lease-ms) (placeable task.needs w)))))
-          (setv (get tasks id)
+          (setv (get writes id)
                 (end-env-failed (replace task :failure-kind "tool-missing" :retryable False) now
                                 (.format "宣言の道具 {} を名乗る worker が無い"
                                          (lfor t (.get task.runtime-env "tools" []) (.format "{}{}" (get t "name")
@@ -1232,14 +1252,14 @@
                           (.format "要る能力 {} の worker {} が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)"
                                    (list task.needs) names (ceil (/ silence 1000)) limit-s)
                         True None)]
-            (setv (get tasks id)
+            (setv (get writes id)
                   (cond
                     (is ended None)
                       (replace task :detail (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
                                                      (list task.needs) names limit-s))
                     task.detached (end-detached task (unplaceable-phase task state now timing) now ended)
                     True (replace task :phase "failed" :finished-ms now :detail ended)))))))
-  (tasks-rewritten state.tasks tasks))
+  (task-writes state.tasks writes))
 
 
 (defn #^ bool same-boot [#^ TaskRecord task #^ (| str None) boot]
@@ -1301,67 +1321,93 @@
     True task))
 
 
-(defn #^ (get Table TaskRecord) changed-rows-over [#^ (get Table TaskRecord) original #^ dict rows]
-  "純粋: rows(original を写して書き直した dict — 行の鍵は original と同じ)のうち、original の行と違う行だけを original へ重ねた表。
-   違う行が無ければ original を同じ object で返す(durable-delta の tasks の組が飛ぶ — Q3)。値が等しいだけで object の違う行は
-   元の object のまま残す。"
-  (.with-writes original (tuple (gfor #(id t) (.items rows)
-                                      :setv old (.row original id)
-                                      :if (not (or (is t old) (= t old)))
-                                      (TableWrite id t)))))
+(defn #^ None put-row [#^ (get TableDraft TaskRecord) draft #^ TaskRecord task]
+  "下書きの task の行を task にする。下書きの今の行と同じ object か値の等しい行なら書かない(値が等しいだけで object の違う行は元の object のまま
+   — 書きの列が変わった行だけになる・Q3)。"
+  (setv old (.row draft task.id))
+  (when (not (or (is task old) (= task old)))
+    (.put draft task.id task)))
 
 
-(defn #^ (get Table TaskRecord) tasks-rewritten [#^ (get Table TaskRecord) original #^ dict rows]
-  "純粋: rows(original を写して書き直した dict — 消した行は無く、行の鍵は original の部分集合)を original へ当てた表。original の行と
-   違う行(object が違い値も違う行)だけ書き、rows に無い original の行は消す。何も変わらなければ original を同じ object で返す
-   (place-tasks の答えが前の表のまま — 値が等しいだけで object の違う行は元の object のまま残す)。"
-  (.with-writes original (tuple (gfor #(id old) (.items original)
-                                      :setv new (.get rows id)
-                                      :if (not (or (is new old) (= new old)))
-                                      (TableWrite id new)))))
-
-
-(defn #^ (get Table TaskRecord) absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
-                                   #^ bool [stopping False]]
-  "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。
+(defn #^ None absorb-task-reports-into [#^ (get TableDraft TaskRecord) draft #^ str worker #^ tuple statuses #^ int now #^ (| str None) boot
+                                        #^ bool stopping]
+  "純粋: worker の状態の報告のうち、task の終わりを task の記録へ写す書きを下書き draft に貯める(写す行が無ければ何も書かない)。
+   切り離した task は置いた時と同じ process の世代の報告だけ。
    stopping = この報告は今の世代が止まり始めを名乗った heartbeat の物(#2819 — 呼び手は今の世代か新しい世代の heartbeat だけを
    渡す)。その時は、その世代に置いて報告に task/<id> の行が無い task(その世代で一度も走っていない)を置き直しの待ち(queued)へ戻す
    (#2976 の I-3 の赤 R5): 止まり始めた worker は新しい task を始めない(worker/core/program の worker-tick は止まりの拍で宣言を
    空として扱う)ので、残すと lease まで止まる。積みと名乗りが同じ刻に届いた時に受ける順は決まっていない(本番の到着の順)ので、
    名乗りを先に受けた時だけ塞ぐ drain(drain_policy.absorb-stopping)では足りない。避ける worker(avoid)には足さない — 同じ名の
-   次の世代には置いてよい。
-   写す行が無ければ state.tasks を同じ object で返し、写した行だけ新しい object にする(他の行は元の object — Q3)。"
-  (setv tasks (dict (.items state.tasks)))
+   次の世代には置いてよい。"
   (for [status statuses]
     (setv name status.name)
     (when (.startswith name "task/")
-      (setv id (cut name 5 None) task (.get tasks id))
+      (setv task (.row draft (cut name 5 None)))
       (when (and task (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
         (setv phase status.phase)
         ;; 置いた世代が行を報告した = 子 process を起こした(止まりの報告で行が消えても走らせ直さない — 下の stopping の枝)。
         (when (not task.reported)
-          (setv task (replace task :reported True) (get tasks id) task))
+          (setv task (replace task :reported True))
+          (.put draft task.id task))
         (cond
-          (= phase "env-failed") (setv (get tasks id) (absorb-env-failure task worker status now))
-          task.detached (setv (get tasks id) (absorb-detached-report task status now))
+          (= phase "env-failed") (put-row draft (absorb-env-failure task worker status now))
+          task.detached (put-row draft (absorb-detached-report task status now))
           (= phase "finished")
-            (setv (get tasks id) (task-finished task now status.detail status.result))
+            (put-row draft (task-finished task now status.detail status.result))
           (= phase "code-failed")
-            (setv (get tasks id) (replace task :phase "code-failed" :finished-ms now
-                                          :detail status.detail))))))
+            (put-row draft (replace task :phase "code-failed" :finished-ms now :detail status.detail))))))
   (when stopping
     (setv running (frozenset (gfor status statuses :if (.startswith status.name "task/") (cut status.name 5 None))))
-    (for [#(id task) (sorted (.items tasks))]
+    (for [id (sorted (.keys draft))]
+      (setv task (.row draft id))
       (when (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot) (not-in id running))
-        (setv (get tasks id)
-              (if (and task.detached task.reported)
-                  ;; 行を報告した後に消えた = 止まり始めた worker が走っていた子 process を止めた。切り離した task は走らせ直さない
-                  ;; (置き直すと同じ名の次の世代でもう 1 度走った — 2026-10-10 17:56 の作り直しの後)。
-                  (end-detached task "lost" now
-                                (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた — 走らせ直さない" worker))
-                  (replace task :phase "queued" :worker None :boot None :started-ms None
-                           :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker)))))))
-  (changed-rows-over state.tasks tasks))
+        (put-row draft
+                 (if (and task.detached task.reported)
+                     ;; 行を報告した後に消えた = 止まり始めた worker が走っていた子 process を止めた。切り離した task は走らせ直さない
+                     ;; (置き直すと同じ名の次の世代でもう 1 度走った — 2026-10-10 17:56 の作り直しの後)。
+                     (end-detached task "lost" now
+                                   (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた — 走らせ直さない" worker))
+                     (replace task :phase "queued" :worker None :boot None :started-ms None
+                              :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))))
+
+
+(defn #^ None renew-detached-into [#^ (get TableDraft TaskRecord) draft #^ str worker #^ (| str None) boot #^ int now]
+  "純粋: 担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす書きを下書き draft に貯める(lease は worker が延ばす)。
+   延ばすのは置いた時と同じ process の世代の heartbeat だけ。別の世代の heartbeat では何もしない — 置いた世代の process が消えていれば
+   lease 切れで lost(settle-detached・走らせ直さない)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が
+   並んで動く間(旧い Pod の preStop の drain)は、旧い世代の heartbeat が新しい世代に置いた task を失わせた。"
+  (for [t (.rows draft)]
+    (when (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
+      (put-row draft (replace t :lease-until-ms (+ now t.lease-ms))))))
+
+
+(defn #^ None promote-prepared-into [#^ (get TableDraft TaskRecord) draft #^ WorkerInfo worker]
+  "純粋: worker が env を準備済みと名乗った拍に、その worker の preparing の task を assigned へ進める書きを下書き draft に貯める。"
+  (for [t (.rows draft)]
+    (when (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
+      (put-row draft (replace t :phase "assigned")))))
+
+
+(defn #^ (get Table TaskRecord) heard-tasks [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) boot
+                                             #^ bool stopping #^ (| WorkerInfo None) prepared]
+  "純粋: worker の heartbeat 1 本が tasks に与える変化(報告の写し・lease の延長・準備済みの進め — prepared が WorkerInfo の時だけ)を、
+   1 つの下書きに貯めて 1 度だけ freeze した表。変わる行が無ければ state.tasks を同じ object で返し、変わった行だけ新しい object
+   (他の行は元の object — Q3)。下書きはこの関数の中だけで作って freeze する(別の task が状態を置き換える `<-` をまたがない)。"
+  (setv draft (draft-of state.tasks))
+  (absorb-task-reports-into draft worker statuses now boot stopping)
+  (renew-detached-into draft worker boot now)
+  (when (is-not prepared None)
+    (promote-prepared-into draft prepared))
+  (.freeze draft))
+
+
+(defn #^ (get Table TaskRecord) absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
+                                   #^ bool [stopping False]]
+  "worker の状態の報告のうち、task の終わりを task の記録へ写した表(absorb-task-reports-into の 1 本だけの freeze)。
+   写す行が無ければ state.tasks を同じ object で返し、写した行だけ新しい object にする(他の行は元の object — Q3)。"
+  (setv draft (draft-of state.tasks))
+  (absorb-task-reports-into draft worker statuses now boot stopping)
+  (.freeze draft))
 
 
 (defk absorb-task-result [state id body now]
@@ -1395,14 +1441,11 @@
 
 
 (defn #^ (get Table TaskRecord) renew-detached [#^ (get Table TaskRecord) tasks #^ str worker #^ (| str None) boot #^ int now]
-  "担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす(lease は worker が延ばす)。延ばすのは置いた時と同じ
-   process の世代の heartbeat だけ。別の世代の heartbeat では何もしない — 置いた世代の process が消えていれば lease 切れで lost
-   (settle-detached・走らせ直さない)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が並んで
-   動く間(旧い Pod の preStop の drain)は、旧い世代の heartbeat が新しい世代に置いた task を失わせた。"
-  ;; 延ばす行が無ければ同じ object(担わない worker の heartbeat — Q3)。
-  (.with-writes tasks (tuple (gfor #(id t) (.items tasks)
-                                   :if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
-                                   (TableWrite id (replace t :lease-until-ms (+ now t.lease-ms)))))))
+  "担い手の heartbeat: その worker に置いた切り離した task の lease を延ばした表(renew-detached-into の 1 本だけの freeze)。
+   延ばす行が無ければ同じ object(担わない worker の heartbeat — Q3)。"
+  (setv draft (draft-of tasks))
+  (renew-detached-into draft worker boot now)
+  (.freeze draft))
 
 
 ;; --- 1 拍の調停 ------------------------------------------------------------------------
@@ -1445,6 +1488,15 @@
   (if (all (gfor w (.values state.warms) (> w.until-ms now)))
       state
       (replace state :warms (dfor #(k w) (.items state.warms) :if (> w.until-ms now) k w))))
+
+
+(defk cold-starts-written [tasks writes]
+  {:pre [(: tasks (get Table TaskRecord)) (: writes tuple)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "待ちから preparing に置かれた task の数を、書きの列 writes(place-tasks の答え)だけから数える(全行を読まない — cold-starts と同じ数)。"
+  (len (lfor w writes
+             :if (and (is-not w.value None) (= w.value.phase "preparing")
+                      (is-not (.row tasks w.key) None) (= (. (.row tasks w.key) phase) "queued"))
+             w)))
 
 
 (defk cold-starts [before after]
@@ -1551,8 +1603,8 @@
   (setv before state.placements
         placed (! (place-jobs now state timing))
         after (if (= placed before) before placed)
-        placed-tasks (! (place-tasks now state after timing))
-        tasks (if (= placed-tasks state.tasks) state.tasks placed-tasks))
+        task-changes (! (place-tasks now state after timing))
+        tasks (.with-writes state.tasks task-changes))
   (when (and (is after before) (is tasks state.tasks))
     (return state))
   (setv events (list state.events))
@@ -1563,7 +1615,7 @@
                        "from" (if old old.worker None) "to" (if new new.worker None)
                        "generation" (if new new.generation None)})))
   (replace state :placements after :tasks tasks :events (tuple (cut events (- MAX-EVENTS) None))
-                 :env-cold-starts (+ state.env-cold-starts (! (cold-starts state.tasks tasks)))))
+                 :env-cold-starts (+ state.env-cold-starts (! (cold-starts-written state.tasks task-changes)))))
 
 
 (defn #^ bool durable-changed [#^ ClusterState before #^ ClusterState after]
@@ -1763,10 +1815,7 @@
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
   ;; 置き直しの待ちへ戻す(absorb-task-reports・#2976 の I-3 の赤 R5)— 退いた世代の heartbeat はここへ来ないので戻さない。
-  (replace seeded :tasks (promote-prepared (renew-detached (absorb-task-reports seeded name statuses now boot
-                                                                                    :stopping body.stopping)
-                                                               name boot now)
-                                              info)
+  (replace seeded :tasks (heard-tasks seeded name statuses now boot body.stopping info)
                       :keep-marks (! (released-keep-marks seeded.keep-marks name body.kept-when-cut-off))))
 
 
@@ -1774,7 +1823,7 @@
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
    lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。
    その世代が走らせている入れ替えの job の組(SupersededRun — 旧い Pod の preStop が待つ・AL-D2)も書き直す。"
-  (replace state :tasks (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
+  (replace state :tasks (heard-tasks state name statuses now boot False None)
                  :superseded-runs (superseded-runs-after state name boot statuses now)))
 
 
@@ -1878,11 +1927,11 @@
 
 
 (defn #^ (get Table TaskRecord) promote-prepared [#^ (get Table TaskRecord) tasks #^ WorkerInfo worker]
-  "純粋: worker が env を準備済みと名乗った拍に、その worker の preparing の task を assigned へ進める。"
-  ;; 進める行が無ければ同じ object(Q3)。
-  (.with-writes tasks (tuple (gfor #(id t) (.items tasks)
-                                   :if (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
-                                   (TableWrite id (replace t :phase "assigned"))))))
+  "純粋: worker が env を準備済みと名乗った拍に、その worker の preparing の task を assigned へ進めた表(promote-prepared-into の 1 本だけの
+   freeze)。進める行が無ければ同じ object(Q3)。"
+  (setv draft (draft-of tasks))
+  (promote-prepared-into draft worker)
+  (.freeze draft))
 
 
 (defn #^ tuple warms-for [#^ ClusterState state #^ str worker #^ int now]
