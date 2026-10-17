@@ -7,7 +7,12 @@
 ;;;     読みは機体に依らない関数なので、Linux でも <sys/proc_info.h> の並びで作った bytes で確かめる(本物の proc_pidinfo を呼ぶ検は
 ;;;     macOS の上でだけ走る — test_process_exit_wait.hy の振る舞いの検が、その機体の開き方と読みを本物の process で測る)。
 (require doeff-hy.macros [deftest val])
+(import ctypes)
+(import os)
+(import platform)
 (import struct)
+(import sys)
+(import unittest.mock [Mock])
 (import pytest)
 (import doeff [run])
 (import doeff_core_effects.process_exit [exit-fd-opener-for ExitWaitUnavailable])
@@ -32,6 +37,19 @@
   ;; Linux は pidfd・macOS は kqueue。どちらの開き方も、居ない pid に None を返す同じ形(pid → fd | None)。
   (assert (is (run (exit-fd-opener-for "Linux")) pidfd-of))
   (assert (is (run (exit-fd-opener-for "Darwin")) kqueue-fd-of)))
+
+
+(deftest test-the-pidfd-opener-does-not-load-libc-per-call [monkeypatch]
+  ;; 失敗ケース: pidfd-of は呼ぶたびに ctypes.CDLL を作らない。CDLL は作るたびに関数の型(_FuncPtr の class)を 1 つ作り、free-threading の
+  ;; CPython 3.14 では、主 thread の VM が走る間に await の bridge の thread で作り続けると、放した後も memory が戻らない。worker の周の間の
+  ;; 待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に 0.5 GB を越えて増えた(依頼 lt-KAYKH21D2WYWBEG2EH8AJSB19N)。
+  (when (not (and (= sys.platform "linux") (in (platform.machine) #("x86_64" "aarch64"))))
+    (pytest.skip "pidfd_open は Linux の x86_64 と aarch64 だけ"))
+  (val loads (Mock :wraps ctypes.CDLL))
+  (.setattr monkeypatch ctypes "CDLL" loads)
+  (for [_ (range 3)]
+    (os.close (run (pidfd-of (os.getpid)))))
+  (assert (= loads.call-count 0) loads.call-args-list))
 
 
 (deftest test-a-machine-without-an-exit-wait-is-named
