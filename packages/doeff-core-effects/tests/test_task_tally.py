@@ -9,6 +9,8 @@ step-tally-handler.
   same steps for every task.
 - ReadTaskTally answers the table so far and keeps the window open; CloseTaskTally answers it and closes.
 - Step windows and task windows share the scheduler's one trace sink; the sink is removed with the last window.
+- Both scheduler versions emit the events (every test runs under each through ``DOEFF_SCHEDULER``), and the same
+  program gives the same tasks, parents and steps under both.
 
 These use the real thread clock, so the computation is kept to a few ms.
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import pytest
 from doeff_core_effects.scheduler import Spawn, Wait, scheduled, scheduler_trace_sink
 from doeff_core_effects.scheduler_step_tally import step_tally_handler
 from doeff_core_effects.step_tally_effects import (
@@ -76,8 +79,15 @@ def _two_trees():
     return busy.task_id, idle.task_id
 
 
-def _tallied(body):
-    return run(scheduled(with_handlers([step_tally_handler], body), implementation="python"))
+@pytest.fixture(params=["python", "rust"], autouse=True)
+def scheduler_implementation(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run each test under both scheduler versions: both emit the events the table is built from."""
+    monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
+    return request.param
+
+
+def _tallied(body, implementation=None):
+    return run(scheduled(with_handlers([step_tally_handler], body), implementation=implementation))
 
 
 def _tree_rows(table: tuple[TaskTally, ...], root: int) -> list[TaskTally]:
@@ -128,6 +138,19 @@ def test_the_same_program_takes_the_same_vm_steps_per_task() -> None:
 
     assert steps_by_tid(first) == steps_by_tid(second)
     assert all(vm_steps > 0 for vm_steps, _ in steps_by_tid(first).values()), first
+
+
+def test_both_versions_build_the_same_task_tree_and_steps() -> None:
+    """The same program gives the same rows under both versions: the same tasks with the same parents and the same
+    number of steps (the times and the doeff-vm counts differ — the Rust scheduler takes fewer VM steps)."""
+
+    def tree(table: tuple[TaskTally, ...]) -> dict[Any, tuple[Any, int]]:
+        return {row.tid: (row.parent, row.steps) for row in table}
+
+    _, _, python = _tallied(_tallied_trees(), "python")
+    _, _, rust = _tallied(_tallied_trees(), "rust")
+    assert len(python) == 2 * (STEPS + 1) + 1, python  # the root, and two trees of a task and its STEPS children
+    assert tree(rust) == tree(python), (rust, python)
 
 
 def test_read_keeps_the_window_open_and_close_answers_none_for_an_unknown_key() -> None:

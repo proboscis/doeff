@@ -9,4 +9,9 @@ def vm_work_counts() -> tuple[int, int]:
     """process の全部の VM の積み上げの数 (歩数, handler を呼んだ回数) — 減らない。2 つの読みの差がその間の仕事の量。"""
     ...
 
+def set_scheduler_trace_installed(installed: bool) -> None:
+    """Rust の版の scheduler の測りの口の旗(sink が据えてあるか)を切り替える — 呼び手は
+    doeff_core_effects.scheduler.set_scheduler_trace だけ(src/scheduler.rs の TRACE_INSTALLED)。"""
+    ...
+
 def __getattr__(name: str) -> Incomplete: ...

@@ -19,10 +19,16 @@
   1,000 tasks woken by one promise 200 → 33 µs; asyncio 12 and 17). The Python scheduler stays selectable:
   `DOEFF_SCHEDULER=python` for a process, `scheduled(..., implementation="python")` for one call. What changes with the
   default (docs/25-rust-scheduler.md):
-  - Only the Python scheduler emits the `set_scheduler_trace` events, which the step tally (`step-tally-handler`'s
-    `OpenStepTally` and `OpenTaskTally`) counts. With a sink installed, a plain `scheduled()` now raises `RuntimeError`
-    naming `DOEFF_SCHEDULER=python`; a tally window opened inside a Rust scheduler closes with no steps. A process that
-    counts steps names the Python scheduler.
+  - Both schedulers emit the `set_scheduler_trace` events, which the step tally (`step-tally-handler`'s
+    `OpenStepTally` and `OpenTaskTally`) counts: the same kinds with the same fields in the same order — only the clock
+    values, the doeff-vm counts (`step_vm_steps`, `step_handler_calls`) and the run numbers differ — including the
+    `task-leave` of an effect the scheduler passes on to an outer handler, and a sink installed after the scheduler was
+    built or in the middle of a run. A process that counts steps no longer has to name the Python scheduler. With no
+    sink, each event site of the Rust scheduler reads one flag (no measurable cost in `benchmarks/compare_libraries.py`);
+    with a no-op sink, 1,000 spawned and gathered tasks cost 105 µs per task under the Rust scheduler and 294 under the
+    Python one. An Exception the sink raises inside the Rust scheduler goes to `sys.unraisablehook` and the run goes on;
+    a `KeyboardInterrupt` is thrown at the next resumed task. `set_scheduler_trace` needs a `doeff_vm` extension with
+    the trace switch (`ImportError` naming the rebuild otherwise).
   - A checkout whose `doeff_vm` extension was built before the Rust scheduler existed (Python sources updated without
     rebuilding the extension) gets an `ImportError` from a plain `scheduled()` that names both remedies: rebuild the
     extension (`make sync`), or set `DOEFF_SCHEDULER=python`. The doeff-vm 0.5.0 and 0.6.0 wheels on PyPI have the

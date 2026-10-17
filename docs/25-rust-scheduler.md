@@ -36,13 +36,12 @@ Rust の版を選んだ(既定を含む)のに、読み込んだ Rust の拡張�
   Await・doeff-time の仮想の時計・doeff-agents・doeff-conductor・doeff-traverse ほか)と下流の worker のテスト 100 件が、
   両方の版で 1 件ずつ同じ結果になった(合格・不合格・skip の組が完全に一致)。既定を替えた後は、版を名指さない
   テストが Rust の版で走る(日次の全体の検が両方の版の違いを拾う)。版に依る振る舞いのテストは版を名指す。
+- 測りの口 `set_scheduler_trace` の出来事(歩の積算の答え手 `step-tally-handler` の `OpenStepTally`・
+  `OpenTaskTally` を含む)は、2026-10-18 から両方の版が出す — 同じ種類・同じ欄の出来事を同じ順で(下の
+  「測りの口」)。歩を数えるために Python の版を名指す要は無い。
 - Python の版を選ぶ時:
-  1. 測りの口 `set_scheduler_trace` の出来事を読む時(歩の積算の答え手 `step-tally-handler` の
-     `OpenStepTally`・`OpenTaskTally` を含む)。出来事を出すのは Python の版だけで、sink を据えたまま Rust の版を
-     組むと `scheduled()` が `RuntimeError` で断る。Rust の版を組んだ後に sink を据えた(窓を開けた)時は、
-     出来事が来ないので歩は 0 のまま数えられる — 歩を数える process は Python の版を名指す。
-  2. scheduler の中を pdb で 1 行ずつ追う時(Rust の版の判断は Rust の中で、Python の frame が無い)。
-  3. Rust の拡張を build し直せない checkout を急いで動かす時。
+  1. scheduler の中を pdb で 1 行ずつ追う時(Rust の版の判断は Rust の中で、Python の frame が無い)。
+  2. Rust の拡張を build し直せない checkout を急いで動かす時。
 - 選び方と戻し方(どれも元に戻せる):
   1. 1 つの process だけ: `DOEFF_SCHEDULER=python`。
   2. 1 つの呼び出しだけ: `scheduled(..., implementation="python")`。
@@ -62,6 +61,26 @@ Python に残したもの(利用者から見える形を変えないため):
 - handle の class(`Task`・`Future`・`Promise`・`ExternalPromise`・`Semaphore`)と例外の class。
 - 1 回の実行につき 1 回だけ走る、終わり際の警告(#501 と、誰も受け取らなかった task の例外の警告)と、
   失敗した task ごとに 1 回だけ走る、traceback の補強と、受け取られていない例外の説明の文。
+- 測りの口の出来事の dict と時計(`_trace`・`_trace_step_boundary`)。下の「測りの口」。
+
+### 測りの口(`set_scheduler_trace`)
+
+- 両方の版が、sink が据えてある時だけ、同じ種類(start・enqueued・resumed・spawned・task-enter・task-leave・
+  external-complete・external-drained・external-ignored)・同じ欄の出来事を同じ順で出す。違うのは時計の値と
+  doeff-vm の歩数(`step_vm_steps`・`step_handler_calls` — Rust の版は少ない歩で同じ仕事をする)と run の番号だけ。
+  `tests/test_scheduler_trace.py` が場面ごとに両方の版の並びを照らし、歩の積算の test(`test_step_tally.py`・
+  `test_task_tally.py`)は両方の版で走り、同じ program の歩の数と task の木が両方の版で一致する事を確かめる。
+- 出来事の dict と時計は Python の版の helper を Rust の版も呼んで作る(定義は 1 つ)。Rust の版が自分で数えるのは、
+  起こされ方(wake)と前に並ぶ数(ahead・ahead_by_wake)と歩の境目の置き場だけ。
+- Python の版の handler は prompt を通る効果を全部受け、scheduler の効果でない物にも task-leave を出して外の完了を
+  drain してから `Pass` する。Rust の版は scheduler の効果でない物を `accepts` で断るので、sink がある時だけ、断る時に
+  同じ task-leave と drain をする(外の handler が答える効果も歩を区切る)。
+- sink が無い間の費用: 出し所ごとに process に 1 つの旗(`TRACE_INSTALLED`、`set_scheduler_trace` が sink と
+  一緒に切り替える)を 1 度読むだけで、dict も時計の読みも Python の呼び出しも無い。run の途中で据えても外しても
+  次の出来事から従う(Rust の版を組んだ後に据えた sink も出来事を受ける)。
+- sink が例外を上げた時: Rust の版の中の出し所は状態の書き換えの途中なので、そこから上げない — Exception は
+  `sys.unraisablehook` へ渡して run を続け、KeyboardInterrupt などは次に再開する task の yield へ投げ込む
+  (Python の版では出した所から上がる)。
 
 ### handler の形の違い(意味は同じ)
 
