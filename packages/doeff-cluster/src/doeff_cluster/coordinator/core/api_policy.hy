@@ -122,14 +122,14 @@
   "生きていた時刻を now に進め、各 worker の最後の連絡の時刻を WorkerInfo.seen-mark に写した状態を作るため(耐久の鍵 counter と、連絡の
    あった worker の worker/<名> が変わる = 次の Persist に載る。沈黙している worker の鍵は変わらない)。印の間隔を問わない — 止まる時の
    印(run-coordinator の止まりの枝 — #3865)と、間隔の来た印(mark-alive)が使う。
-   印が最後の連絡の時刻と揃っている worker は同じ物のまま運び、全員が揃っていれば workers の写像も同じ物のまま — 沈黙している
+   印が最後の連絡の時刻と揃っている worker は同じ物のまま運び、全員が揃っていれば workers の表も同じ物のまま — 沈黙している
    worker の行と、版の比べ(resource_policy.dirty-keys の workers)を印の拍で動かさない(#2903)。"
   (replace state
            :alive-ms now
-           :workers (if (all (gfor w (.values state.workers) (= w.seen-mark w.last-seen-ms)))
-                        state.workers
-                        (dfor #(n w) (.items state.workers)
-                              n (if (= w.seen-mark w.last-seen-ms) w (replace w :seen-mark w.last-seen-ms))))))
+           :workers (.with-writes state.workers
+                                  (tuple (gfor #(n w) (.items state.workers)
+                                               :if (!= w.seen-mark w.last-seen-ms)
+                                               (TableWrite n (replace w :seen-mark w.last-seen-ms)))))))
 
 
 (defk mark-alive [state now]
@@ -200,10 +200,11 @@
            ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)— 上の board-written。
            :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
            :tasks (.with-writes state.tasks (tuple (gfor #(k t) (.items state.tasks) (TableWrite k (replace t :lease-until-ms (+ t.lease-until-ms gap))))))
-           :workers (dfor #(k w) (.items state.workers)
-                          k (replace w
-                                     :last-seen-ms (min now (+ w.last-seen-ms gap))
-                                     :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
+           :workers (.with-writes state.workers
+                                  (tuple (gfor #(k w) (.items state.workers)
+                                               (TableWrite k (replace w
+                                                                      :last-seen-ms (min now (+ w.last-seen-ms gap))
+                                                                      :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap))))))))
            :handoffs (dfor #(k w) (.items state.handoffs)
                            k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
            :drains (dfor #(k d) (.items state.drains) k (replace d :until-ms (+ d.until-ms gap)))
@@ -454,7 +455,7 @@
    worker が now に生きていて沈黙の列に無く、名乗り・job の報告・task が、時刻の欄(最後の連絡の時刻・報告の時刻・task の lease の
    期限の延長)を除いて前と同じ。調停はこの 3 つの欄を「生きているか・期限を過ぎたか」でしか読まず、before の調停の時点で生きていて
    期限の内だった物は、延びても同じ判断になる。"
-  (setv prev (.get before.workers name) info (.get heard.workers name)
+  (setv prev (.row before.workers name) info (.row heard.workers name)
         old-report (.row before.observations.statuses name) new-report (.row heard.observations.statuses name))
   (and (is-not prev None) (is-not info None) (is-not old-report None) (is-not new-report None)
        (not-in name before.silent)

@@ -114,7 +114,7 @@
                           (dfor #(k a) (.items state.placements) (+ PLACEMENT k) #(#(a) (partial asdict a)))))
     (SourceGroup :fields #("workers")
                  :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor w (.values state.workers) (+ "worker/" w.name) #(#(w) (partial worker-json w)))))
+                          (dfor w (.rows state.workers) (+ "worker/" w.name) #(#(w) (partial worker-json w)))))
     (SourceGroup :fields #("tasks")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor t (.rows state.tasks) (+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
@@ -237,15 +237,15 @@
     :jobs (get service-rows 0)
     :refused (get service-rows 1)
     :placements (dfor #(k v) (+ (part LEGACY-PLACEMENT) (part PLACEMENT)) k (Placement #** v)) ; 後に並ぶ新しい鍵が勝つ
-    :workers (dfor #(#(k w) #(_ generation)) (zip stored-workers generations)
+    :workers (table-of (tuple (gfor #(#(k w) #(_ generation)) (zip stored-workers generations)
                    :setv caps (worker-capabilities-of w (.format "保存の worker {}" (get w "name")))
-                   k (WorkerInfo (get w "name") (get caps 0) (get w "capacity")
+                   (TableWrite k (WorkerInfo (get w "name") (get caps 0) (get w "capacity")
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
                                  :exclusive (get caps 1) :node (.get w "node" "")
                                  :task-reserve (get w "taskReserve")
                                  :seen-mark (.get w "lastSeenMs")
-                                 #** generation))
+                                 #** generation)))))
     :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
     :next-task (.get counter "nextTask" 1)
     :task-prefix (.get counter "taskPrefix" "t")

@@ -41,7 +41,7 @@
    "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.values state.refused) r.row))
    "programs" (dfor #(k p) (.items state.programs) k (program-row-to-json p))
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
-   "workers" (lfor w (.values state.workers)
+   "workers" (lfor w (.rows state.workers)
                    (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
                        "taskReserve" w.task-reserve
                        "versions" (dict w.versions)}
@@ -212,14 +212,14 @@
     :jobs (get service-rows 0)
     :refused (get service-rows 1)
     :programs (dict programs)
-    :workers (dfor #(#(name w) #(_ generation)) (zip stored-workers generations)
+    :workers (table-of (tuple (gfor #(#(name w) #(_ generation)) (zip stored-workers generations)
                    :setv caps (worker-capabilities-of w (.format "保存の worker {}" name))
-                   name
+                   (TableWrite name
                    (WorkerInfo name (get caps 0) (get w "capacity") now
                                (component-versions-of (.get w "versions" {}))
                                :exclusive (get caps 1) :node (.get w "node" "")
                                :task-reserve (get w "taskReserve")
-                               #** generation))
+                               #** generation)))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
     :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))

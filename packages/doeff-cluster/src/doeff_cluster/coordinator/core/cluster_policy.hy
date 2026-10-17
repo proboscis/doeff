@@ -251,7 +251,7 @@
 (deff silent-names [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: note-liveness(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % frozenset)] :tags {:context "coordinator" :role "judgment"}}
   "刻 now に生きていないと数える worker の名を求めるため(note-liveness と liveness-due が同じ求め方を使う)。"
-  (frozenset (gfor w (.values state.workers) :if (not (alive now w timing.lease-ms)) w.name)))
+  (frozenset (gfor w (.rows state.workers) :if (not (alive now w timing.lease-ms)) w.name)))
 
 
 (deff note-liveness [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: 調停の純粋な判断(api_policy.settle — Program の外)が呼ぶ
@@ -275,10 +275,10 @@
    WorkerGone・出た名のうち after の名簿に残る名 = WorkerBack(長い沈黙で名簿から消えた worker — forget-silent-workers — は戻った事に
    しない)。変わらなければ空。"
   (val gone (sorted (- after.silent before.silent)))
-  (val back (sorted (gfor name (- before.silent after.silent) :if (in name after.workers) name)))
-  (+ (tuple (gfor name gone :setv w (get after.workers name)
+  (val back (sorted (gfor name (- before.silent after.silent) :if (is-not (.row after.workers name) None) name)))
+  (+ (tuple (gfor name gone :setv w (.row after.workers name)
                   (WorkerGone :worker name :boot w.boot :deadline-ms (liveness-deadline w timing.lease-ms))))
-     (tuple (gfor name back :setv w (get after.workers name)
+     (tuple (gfor name back :setv w (.row after.workers name)
                   (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
 
 
@@ -286,7 +286,7 @@
   {:pre [(: state ClusterState) (: timing ClusterTiming)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "coordinator が起きた時に、名簿の全部の worker の今の生死を 1 度出すため(名の順 — 沈黙の worker は WorkerGone・ほかは WorkerBack)。
    沈黙の集合は保存の形に無いので、起き直しの後の最初の歩の状態から求める。受け手の追いつきにも成る。"
-  (tuple (gfor name (sorted state.workers) :setv w (get state.workers name)
+  (tuple (gfor name (sorted (.keys state.workers)) :setv w (.row state.workers name)
                (if (in name state.silent)
                    (WorkerGone :worker name :boot w.boot :deadline-ms (liveness-deadline w timing.lease-ms))
                    (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
@@ -393,7 +393,7 @@
    入れ替えで退いた process の行(行の名は <名>#retired-<世代>・retiredFrom = 名)。「まだどこかで動いているか」(still-live-somewhere)と
    「どの版が動いているか」(resource_policy.live-processes)が同じ母集団を読むための定義点。"
   (tuple (gfor #(wname st) (sorted (.items state.observations.statuses))
-               :setv w (.get state.workers wname)
+               :setv w (.row state.workers wname)
                :if (and (is-not w None) (alive now w timing.lease-ms))
                row st.jobs
                :if (or (= row.name name) (= row.retired-from name))
@@ -461,14 +461,14 @@
 
 (defn #^ bool superseded-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
   "純粋: name の worker の heartbeat・drain の頼みの boot が、この名の退いた世代か(boot を名乗らない旧い worker は退かない)。"
-  (setv worker (.get state.workers name))
+  (setv worker (.row state.workers name))
   (and (is-not boot None) (is-not worker None) (in boot worker.retired)))
 
 
 (defn #^ bool other-generation-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
   "純粋: drain の頼みの boot が、name の今の世代でない(退いた世代か、一度も見ていない世代)か。今の世代でない頼みに今の世代の
    drain を付けないため。boot の無い頼み・今の世代を知らない worker(読み直しの直後の旧い形の置き場など)は今の世代の頼みとみなす。"
-  (setv worker (.get state.workers name))
+  (setv worker (.row state.workers name))
   (and (is-not boot None) (is-not worker None) (is-not worker.boot None) (!= boot worker.boot)))
 
 
@@ -549,12 +549,12 @@
 (defn #^ dict load-of [#^ ClusterState state #^ dict placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
    task(PLACED-PHASES)。置ける空きは job-room-of・task-room-of がこの値から求める(数え方を 1 か所にする)。"
-  (setv jobs (dfor name state.workers name 0) tasks (dfor name state.workers name 0))
+  (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0))
   (for [a (+ (list (.values placements)) (list (.values state.surges)))]
     (when (in a.worker jobs) (+= (get jobs a.worker) 1)))
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks)) (+= (get tasks t.worker) 1)))
-  (dfor name state.workers name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name))))
+  (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name))))
 
 
 (defk job-room-of [worker load]
@@ -604,7 +604,7 @@
    :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "job を担い手 holder 以外の worker へ今すぐ移せるか(生きていて・条件を満たし・drain 中でなく・空きの在る worker が他に在るか — can-take)を
    決めるため。移せない job は担い手が沈黙しても置き先を外さず、途絶しても動かし続けてよい印を付ける。load = worker ごとの担っている数。"
-  (any (gfor w (.values state.workers)
+  (any (gfor w (.rows state.workers)
              (and (!= w.name holder) (can-take now state job w load timing draining)))))
 
 
@@ -614,7 +614,7 @@
   "worker に置いた job のうち、返事で「途絶しても動かし続けてよい」印を付ける job の名を決めるため: 置き先(並べた置き先 surge は除く)が
    この worker で、入れ替えでなく(入れ替えの書き手は印が無くても途絶で止めない)、この worker が条件を満たし、他の worker へ今すぐ
    移せない job。負荷は他に置ける見込みの worker が在る時だけ求める(本番の Service はどれも置ける worker が 1 台なので求めない)。"
-  (val info (.get state.workers worker))
+  (val info (.row state.workers worker))
   (val draining (draining-workers state now))
   (val mine (if (is info None)
                 #()
@@ -622,7 +622,7 @@
                              :setv placed (.get state.placements job.spec.name)
                              :if (and (is-not placed None) (= placed.worker worker) (not job.spec.handoff) (eligible job info))
                              job))))
-  (val crowded (any (gfor job mine w (.values state.workers)
+  (val crowded (any (gfor job mine w (.rows state.workers)
                           (and (!= w.name worker) (alive now w timing.lease-ms) (eligible job w) (not-in w.name draining)))))
   (var marked #())
   (if (not crowded)
@@ -656,13 +656,13 @@
    1 周ごとの費用)。"
   (val draining (draining-workers state now))
   (val stale (any (gfor a (.values state.placements)
-                        :setv w (.get state.workers a.worker)
+                        :setv w (.row state.workers a.worker)
                         (and (is-not w None) (not (alive now w timing.reassign-after-ms))))))
   (val load (if (or draining stale) (load-of state state.placements) {}))
   (var kept {})
   (for [job (active-jobs state)]
     (val current (.get state.placements job.spec.name))
-    (val worker (if (is current None) None (.get state.workers current.worker)))
+    (val worker (if (is current None) None (.row state.workers current.worker)))
     (when (is-not worker None)
       (<- mark (| KeepMark None) (keep-mark-of state.keep-marks job.spec.name))
       (val promised (and (is-not mark None) (= mark.worker current.worker)))
@@ -715,7 +715,7 @@
    切り替えで、旧い名の worker が二度と知らせて来ない時も外れる)。生死の比べは alive で、期限の刻は liveness-due が同じ値で求める。
    外す物が無ければ同じ状態を返す。"
   (val held (tuple (gfor mark state.keep-marks
-                         :setv holder (.get state.workers mark.worker)
+                         :setv holder (.row state.workers mark.worker)
                          :if (and (is-not holder None) (alive now holder timing.kept-reassign-after-ms))
                          mark)))
   (if (= (len held) (len state.keep-marks))
@@ -747,14 +747,14 @@
   (for [job (sorted jobs :key (fn [j] j.spec.name))]
     (when (in job.spec.name result) (continue))
     (setv surge (.get state.surges job.spec.name)
-          surge-worker (if surge (.get state.workers surge.worker) None))
+          surge-worker (if surge (.row state.workers surge.worker) None))
     (when (and (is-not surge-worker None) (alive now surge-worker timing.lease-ms) (eligible job surge-worker))
       (setv (get result job.spec.name) surge)
       (continue))
     (when (still-live-somewhere now state job.spec.name timing) (continue))
     (setv mark (! (keep-mark-of state.keep-marks job.spec.name))
           candidates (sorted
-      (lfor w (.values state.workers)
+      (lfor w (.rows state.workers)
             :if (and (can-take now state job w load timing draining)
                      (or (is mark None) (= w.name mark.worker)))
             w)
@@ -838,7 +838,7 @@
 
 
 (defn #^ str versions-note [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
-  (setv seen (lfor w (sorted (.values state.workers) :key (fn [w] w.name))
+  (setv seen (lfor w (sorted (.rows state.workers) :key (fn [w] w.name))
                    :if (alive now w timing.lease-ms)
                    (.format "{}({})" w.name
                             (.join "・" (lfor #(k v) w.versions :if (!= v (.get (dict task.versions) k))
@@ -854,7 +854,7 @@
     ;; 途絶しても動かし続けてよい印の約束の在る job は、約束の担い手が印を持たないと知らせるまで他へ置かない(#2804)。
     (or (still-live-somewhere now state job.spec.name timing) (is-not (run (keep-mark-of state.keep-marks job.spec.name)) None))
       UnplacedKind.WAITING-PREVIOUS-HOLDER
-    (not (any (gfor w (.values state.workers) (and (alive now w timing.lease-ms) (eligible job w)
+    (not (any (gfor w (.rows state.workers) (and (alive now w timing.lease-ms) (eligible job w)
                                                     (not-in w.name (draining-workers state now))))))
       UnplacedKind.NO-ELIGIBLE-WORKER
     True UnplacedKind.NO-ROOM))
@@ -1060,7 +1060,7 @@
 
 (defn #^ str unplaceable-phase [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
   "置ける worker が無い切り離した task の終わりの phase。能力の合う生きた worker はいるのに版だけが違う = version-mismatch。"
-  (if (any (gfor w (.values state.workers)
+  (if (any (gfor w (.rows state.workers)
                  (and (alive now w timing.lease-ms) (placeable task.needs w))))
       "version-mismatch"
       "failed"))
@@ -1154,8 +1154,8 @@
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
       lapsed (setv (get writes id) None)
       (and (in task.phase PLACED-PHASES)
-           (or (not-in task.worker state.workers)
-               (not (alive now (get state.workers task.worker) timing.reassign-after-ms))))
+           (or (is (.row state.workers task.worker) None)
+               (not (alive now (.row state.workers task.worker) timing.reassign-after-ms))))
         (setv (get writes id) (replace task :phase "failed" :finished-ms now
                                        :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))))
   ;; 走査の後の行の読み(書いた行が先・無ければ元の行)。
@@ -1183,7 +1183,7 @@
     (setv task (get queue id))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
-      (setv able (lfor w (.values state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
+      (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
       ;; task を置けるのは task の空き(task-room-of — capacity 全体から job・surge・置かれた task を引いた数)が在り、名乗った上限に
@@ -1226,7 +1226,7 @@
           (setv (get writes id) (end-env-failed task now task.detail))
         ;; 能力の合う生きた worker はいるが、宣言の道具を名乗る worker が無い。
         (and (not able) (is-not task.runtime-env None)
-             (any (gfor w (.values state.workers)
+             (any (gfor w (.rows state.workers)
                         (and (alive now w timing.lease-ms) (placeable task.needs w)))))
           (setv (get writes id)
                 (end-env-failed (replace task :failure-kind "tool-missing" :retryable False) now
@@ -1240,7 +1240,7 @@
         ;; 拍ごとに保存して版を進める)。期限を過ぎたら、待った長さと期限を名指して終える。登録された worker のどれも能力と版が合わない時は
         ;; 待っても晴れないので、版の違う所を名指して終える。ended = 終える理由(None = 待つ)。
         (not able)
-          (let [capable (lfor w (.values state.workers) :if (can-run-task task w) w)
+          (let [capable (lfor w (.rows state.workers) :if (can-run-task task w) w)
                 silence (if capable (- now (max (gfor w capable w.last-seen-ms))) None)
                 ;; 待ちの期限(task-due と同じ関数 wait-lapse-at の刻)。
                 waited (! (wait-lapse-at capable timing))
@@ -1289,7 +1289,7 @@
 (defn #^ tuple tasks-for [#^ ClusterState state #^ str worker #^ (| str None) [boot None]]
   "heartbeat の返事で worker の process へ走らせる task を渡すため。切り離した task は、置いた時と同じ process の世代にだけ送る
    (作り直した worker の process で走らせ直さない)。boot = 返事を受ける process の世代(渡さなければ coordinator の見る今の世代)。"
-  (setv known (.get state.workers worker)
+  (setv known (.row state.workers worker)
         boot (cond (is-not boot None) boot (is known None) None True known.boot))
   ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
   ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す — adopt-running-detached・
@@ -1468,7 +1468,7 @@
         gone (lfor #(n w) (.items state.workers) :if (and (> now (liveness-deadline w timing.worker-forget-ms)) (not-in n busy)) n))
   (if (not gone)
       state
-      (replace state :workers (dfor #(n w) (.items state.workers) :if (not-in n gone) n w)
+      (replace state :workers (.with-writes state.workers (tuple (gfor n gone (TableWrite n None))))
                      :observations (replace state.observations
                                             :statuses (.with-writes state.observations.statuses (tuple (gfor n gone (TableWrite n None)))))
                      :drains (dfor #(n d) (.items state.drains) :if (not-in n gone) n d))))
@@ -1522,7 +1522,7 @@
    「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば DueNever)。生きていないと数える名(silent)が今の刻の求め直しと違えば、
    note-liveness が今の刻で答えを変えるので DueNow。"
   (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms timing.kept-reassign-after-ms timing.worker-forget-ms))
-  (val ats (tuple (gfor w (.values state.workers) window windows
+  (val ats (tuple (gfor w (.rows state.workers) window windows
                         :setv due (+ (liveness-deadline w window) 1)
                         :if (> due now)
                         due)))
@@ -1546,15 +1546,15 @@
   (setv dues (if (is earliest None) [] [earliest]))
   (for [task (.values scanned)]
     (<- lapse (| int None) (task-lapse-at task now))
-    (val capable (if (= task.phase "queued") (lfor w (.values state.workers) :if (can-run-task task w) w) []))
+    (val capable (if (= task.phase "queued") (lfor w (.rows state.workers) :if (can-run-task task w) w) []))
     (val live (lfor w capable :if (alive now w timing.lease-ms) w))
     (<- waited (| int None) (wait-lapse-at capable timing))
     (val tried (match task
                  ;; 置いた切り離していない task は、担い手が reassign-after-ms の窓の外に出た刻に失敗にする(place-tasks と同じ比べ)。
                  ;; 担い手が状態に居なければ、place-tasks が今の刻で失敗にする。
                  (TaskRecord :detached False :phase phase) :if (in phase PLACED-PHASES)
-                   (if (in task.worker state.workers)
-                       (+ (liveness-deadline (get state.workers task.worker) timing.reassign-after-ms) 1)
+                   (if (is-not (.row state.workers task.worker) None)
+                       (+ (liveness-deadline (.row state.workers task.worker) timing.reassign-after-ms) 1)
                        now)
                  ;; 待っている task: 置ける生きた worker が在れば、その置き先の候補が変わるのは worker が lease-ms の窓の外に出る刻
                  ;; (空き・drain の終わりは要求と sweep-due が受ける)。置ける worker が 1 台も無ければ place-tasks が今の刻で終える。
@@ -1630,9 +1630,9 @@
       (!= before.warms after.warms)
       (!= before.handoffs after.handoffs)
       (!= before.keep-marks after.keep-marks)
-      (!= (set before.workers) (set after.workers))
+      (!= (set (.keys before.workers)) (set (.keys after.workers)))
       (any (gfor #(n w) (.items after.workers)
-                 :setv b (.get before.workers n)
+                 :setv b (.row before.workers n)
                  (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.task-reserve b.versions b.boot b.retired b.boot-at
                                        b.known-exits)
                                      #(w.provides w.exclusive w.derived w.node w.capacity w.task-reserve w.versions w.boot w.retired w.boot-at
@@ -1736,7 +1736,7 @@
    持つ(known-exits-after — 保存する)。退いた世代の heartbeat は、その行の終わりの刻だけを知れた刻の候補に入れる(世代が重なる時)。
    本文の形の誤りは本文を解く所(coordinator/protocol/request_bodies — #2445)が 400 で断る。"
   (setv name body.name boot body.boot boot-at body.boot-at statuses body.statuses
-        previous (.get given.workers name)
+        previous (.row given.workers name)
         order (generation-order previous boot boot-at)
         adopted (adopt-running-detached given name boot statuses now)
         declared (frozenset (gfor j adopted.jobs j.spec.name))
@@ -1749,7 +1749,7 @@
     (setv current-report (.row adopted.observations.statuses name))
     (return (absorb-superseded-heartbeat
               (replace adopted
-                       :workers (| adopted.workers {name (replace previous :retired (retired-with previous.retired boot) :known-exits known)})
+                       :workers (.with-writes adopted.workers #((TableWrite name (replace previous :retired (retired-with previous.retired boot) :known-exits known))))
                        :observations (if (or (is current-report None) (= known previous.known-exits))
                                          adopted.observations
                                          (replace adopted.observations
@@ -1801,7 +1801,7 @@
         board-state (board-written adopted freed)
         ;; absorb-boot は drain だけを変えるので、観測は adopted のまま書いてよい。
         registered (replace (absorb-boot adopted name boot)
-                     :workers (| adopted.workers {name info})
+                     :workers (.with-writes adopted.workers #((TableWrite name info)))
                      :observations (replace adopted.observations
                                             :statuses (.with-writes adopted.observations.statuses #((TableWrite name report))))
                      :board board-state.board :board-tally board-state.board-tally)
@@ -1835,7 +1835,7 @@
    時に overlapped = 真で種を置く・それ以外の報告は前の組の印を引き継ぐ)なら recreate の job も(task は除く)— recreate の job は
    新しい世代が起こせると報告するまで退いた世代に残す(AL-D2f — heartbeat-reply の印 elder-runs と superseded-reply)。名 name の行の
    うち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。"
-  (setv info (.get state.workers name)
+  (setv info (.row state.workers name)
         kept (if (is info None) #() info.retired)
         prior (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
         overlap (if (is overlapped None) (and (is-not prior None) prior.overlapped) overlapped)
@@ -1938,7 +1938,7 @@
   "worker に配る温める表の行(期限の内・能力(専用の能力を含む)と宣言の道具が合う行)。heartbeat の返事の warm。
    drain 中の worker(draining-workers — 送り手が読む warm_policy.warm-view が数えない worker と同じ判断)には配らない: 空ける worker に
    新しい版の実行環境の準備を始めさせない(#3669 — 2026-10-05 に drain 中の旧い worker が準備を始めて捨てた)。"
-  (setv info (.get state.workers worker))
+  (setv info (.row state.workers worker))
   (if (or (is info None) (in worker (draining-workers state now)))
       #()
       (tuple (gfor w (sorted (.values state.warms) :key (fn [w] w.key))
@@ -2008,7 +2008,7 @@
                                  job)))
   (when (not waiting) (return False))
   ;; 状態の報告(statuses)は今の世代の物だけを持つ — 名乗りの世代(WorkerInfo.boot)が boot の時だけ読む。
-  (setv info (.get state.workers name)
+  (setv info (.row state.workers name)
         current (.row state.observations.statuses name)
         rows (if (and (is-not current None) (is-not info None) (= info.boot boot)) current.jobs #())
         own (frozenset (gfor row rows :if row.instance row.instance)))
@@ -2078,7 +2078,7 @@
                                        ;; 新しい試行を起こし、今の世代の process から lease を取る(10-11 21:29 JST の zeus)。値は今の
                                        ;; 世代(worker は値を読まず、在るかだけを読む)。
                                        (and s.handoff (is-not run None) run.leaving)
-                                         (replace s :superseded-by (+ "generation:" (or (getattr (.get state.workers name) "boot" None) "")))
+                                         (replace s :superseded-by (+ "generation:" (or (getattr (.row state.workers name) "boot" None) "")))
                                        True s)))
                   :tasks (tuple (gfor offer (tasks-for state name boot)
                                       :setv task (.row state.tasks offer.id)
@@ -2299,7 +2299,7 @@
   {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "見張る node の名(整列)— heartbeat で node を申告した worker の node 全部。能力の導出の材料(node の label)を、時間で読みに行かず
    変化の出来事で受けるため(#4070 — 時刻を読まない。worker の居なくなった node は外れ、見張りが止まる)。"
-  (tuple (sorted (sfor w (.values state.workers) :if w.node w.node))))
+  (tuple (sorted (sfor w (.rows state.workers) :if w.node w.node))))
 
 
 (deff derived-capabilities [#^ (get Table str) labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
@@ -2312,7 +2312,7 @@
   {:pre [(: state ClusterState) (: table tuple)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "node の label の観測から、各 worker の derived(導いた能力)を作り直す。label を読めなかった node(error)の worker は前の値を保つ
    (届かない間に会社の機体の能力を外したり足したりしない — 次に読めた時に直る)。node を名乗らない worker は空。"
-  (setv workers {})
+  (setv written [])
   (for [#(name w) (.items state.workers)]
     (setv derived
       (if (not w.node)
@@ -2321,6 +2321,8 @@
             (NodeLabelsSeen :labels labels) (derived-capabilities labels table)
             ;; まだ読んでいない・読めなかった node の worker は前の値を保つ。
             _ w.derived)))
-    ;; 能力の計算と検査は毎回行い、値が等しい時だけ既存の object を返す。
-    (setv (get workers name) (if (= derived w.derived) w (replace w :derived derived))))
-  (if (= workers state.workers) state (replace state :workers workers)))
+    ;; 能力の計算と検査は毎回行い、値が違う行だけ書く(全員が同じなら表は同じ object のまま)。
+    (when (!= derived w.derived)
+      (.append written (TableWrite name (replace w :derived derived)))))
+  (setv workers (.with-writes state.workers (tuple written)))
+  (if (is workers state.workers) state (replace state :workers workers)))
