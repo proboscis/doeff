@@ -32,7 +32,7 @@ def delegate_task(spec: AgentSpec):  # 依頼文と結果の形を持つ仕様�
 
 ![同じ処理に、外側でハンドラを1つ付ける](/images/zenn-use-cases-v0/generated/agents-concept.png)
 
-処理の本体は3つとも同じです。依頼にどう答えるかだけが、付けたハンドラで替わります。
+図の3つのハンドラのどれを付けても、処理の本体は同じです。依頼にどう答えるかだけが替わります。
 
 ## 依頼と、答える部品を分ける
 
@@ -43,7 +43,7 @@ doeffの言葉を4つだけ押さえます。
 - **`@do`**: 付けた関数は呼んでもすぐには動かず、動かす手順を返します。この手順をProgramと呼びます。
 - **`yield`**: 依頼を出して止まります。ハンドラの答えを受け取ると、続きが動きます。
 
-セッションとは、エージェントを1回起こしてから解放するまでの作業の単位です。`AgentSpec`の`run_id`と`node_id`と`attempt`から、セッションのIDが決まります。
+セッションとは、エージェントを1回起こしてから解放するまでの作業の単位です。`AgentSpec`の`run_id`と`node_id`と`attempt`から、セッションIDが決まります。
 
 本物のエージェントを起こさない、いちばん小さなハンドラを書いてみます。決めた答えを、待たずにすぐ返します。
 
@@ -177,7 +177,7 @@ def review_document(timeout_seconds: float = 60):  # 文章とコードの両方
 
 ## エージェントの操作だけをテスト用のハンドラへ替える
 
-`doeff-agents`には、テスト用の`ScenarioAgentHandler`が付いています。セッションのIDごとに、返す答えの列を決めておけます。
+`doeff-agents`には、テスト用の`ScenarioAgentHandler`が付いています。セッションIDごとに、返す答えの列を決めておけます。
 
 ```python
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep  # テスト用のハンドラ。
@@ -267,7 +267,9 @@ CLIを処理の中から直に呼ぶ書き方と比べると、違いは次の�
 | 結果の受け取り | 出力やファイルを、自分で探します | `AwaitOutcome`の`result`を読みます |
 | 本番への接続 | 処理のあちこちに散ります | 外側の1か所にまとまります |
 
-## 試し方と、確かめた範囲
+## 参考
+
+試し方と、確かめた範囲です。
 
 ```bash
 git clone https://github.com/proboscis/doeff.git  # リポジトリを取得する。
@@ -275,18 +277,16 @@ cd doeff && make sync  # 依存を入れる。RustのVMもビルドするのでc
 uv run python publications/zenn-use-cases-v0/examples/agents_workflow.py  # 完全な例を走らせる。
 ```
 
-- 掲載したPythonのコード5つは、2026-10-16にdoeffのmainで走らせました。使った版はcommit 914ea56です。
+- 掲載したPythonのコード5つは、2026年10月17日に走らせました。版はdoeffのmain（commit `9adc4f8`）です。
 - 動かしたのは、自作のハンドラとテスト用のハンドラだけです。本物のエージェントは起こしていません。
 - 本番の組み立ては、tmuxの無い環境で、端末への接続を作る所で止まることだけを確かめました。
-- 2026-10-16の時点で、PyPIのdoeff-agents 0.1.1にはこの記事のAPIがありません。0.1.1は2026-05-13の版です。
+- PyPIのdoeff-agentsの0.1.1と0.1.2はdoeff 0.4向けで、この記事のAPIがありません。
 - そのため、上のようにGitHubのリポジトリから試してください。
 - 完全な例は、失敗の分岐を確かめる途中で、doeffのtracebackを3つ表示します。最後にOKが出れば成功です。
 
-## 参考
-
 - [完全な例(自作ハンドラ、テスト、本番の組み立て)](examples/agents_workflow.py)
-- [セッションの仕様と、結果の型](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-agents/src/doeff_agents/effects/agent.py)
-- [テスト用のハンドラの実装](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-agents/src/doeff_agents/handlers/testing.hy)
-- [本番のハンドラの入口](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-agents/src/doeff_agents/handlers/__init__.py)
+- [セッションの仕様と、結果の型](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/effects/agent.py)
+- [テスト用のハンドラの実装](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/handlers/testing.hy)
+- [本番のハンドラの入口](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/handlers/__init__.py)
 - 前の回:[doeffとは？(エフェクトとハンドラの入門)](doeff-main.md)
 - 次の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)

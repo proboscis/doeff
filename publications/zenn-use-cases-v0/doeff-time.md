@@ -63,7 +63,7 @@ def test_job_finishes_without_waiting():  # pytestが集めるテスト関数。
 
 ### ハンドラの中身：待ちを飛ばすだけのハンドラ
 
-ハンドラは自分でも書けます。次のハンドラは待ちの依頼を受けると、待たずにすぐ続きを動かします。前のコードの`job`を、そのまま使います。
+ハンドラは自分でも書けます。次のハンドラは待ちの依頼を受けると、待たずにすぐ続きを動かします。ここからのコードは前のコードの続きで、`job`もそのまま使います。
 
 ```python
 from doeff import Pass, Resume, handler, with_handlers  # 依頼の委譲・再開・取り付けを使う。
@@ -150,15 +150,10 @@ print(result)  # おおむね[20.0, 10.0]。起床の遅れで、わずかにず
 
 - `async_time_handler`は、内部で`asyncio`を使って実際に待ちます。
 - `await_handler`は、その非同期の待ちをdoeffのスケジューラへ繋ぎます。
-- `scheduled`は、タスクの開始と再開を管理します。
 
 2026年10月16日に走らせると、表示は`[20.091931, 10.058906]`でした。全体で約20秒かかりました。
 
 処理本体には、`async def`も`asyncio.sleep`もありません。`asyncio`をやめる話ではありません。**`asyncio`への依存を、ハンドラの側に寄せる**という話です。スレッドを止めて待つ`sync_time_handler`もあり、3つの時計から選べます。
-
-:::message
-この記事のコードは、2026年10月16日にdoeffのmain（コミット`914ea56`）で確かめました。コードは上から順に、前のコードの続きとして動きます。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
-:::
 
 ## 指定時刻の処理と、優先度も同じ書き方で
 
@@ -212,15 +207,22 @@ def test_schedule_at_8_seconds():  # 3秒と8秒の流れを、待たずに確�
 
 時間以外の依頼との組み合わせは、[ハンドラの合成](doeff-handlers.md)で扱います。`await`との違いは[coroutineとの違い](doeff-coroutines.md)、ゲームの進行と組み合わせる例は[カードゲームの記事](doeff-games.md)にあります。
 
-[doeffでできること：メイン記事へ戻る](doeff-main.md)
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
 
-## 参考資料・検証版
+## 参考
 
-導入方法は[公式README](https://github.com/proboscis/doeff#installation)にあります。以下は、この記事で確かめた版へのリンクです。公開パッケージの最新版と同じかどうかは、確かめていません。
+この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain（commit `9adc4f8`）でも、同じく動きました。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
 
-- [doeff本体（この記事で確かめた版）](https://github.com/proboscis/doeff/tree/914ea5629ecbc9ed7af84926310eff312cd4eb12)
-- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-time)
-- [タスクと優先度を扱うスケジューラ](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
-- [ハンドラの能力と関数の色の整理](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/docs/22-capability-classes.md)
+doeff-timeはPyPIに無いので、GitHubから入れます。`--no-sources`を付けないと、doeff本体もGitHubから入り、Rustのビルドが要ります。完全な例を`scheduling.py`として保存し、次のコマンドで実行します。
+
+```bash
+uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time" python scheduling.py  # doeff本体はPyPI、doeff-timeだけGitHubから入れて、完全な例を実行する。
+```
+
+- [この記事のコードをまとめた完全な例](examples/scheduling.py)
+- [doeff本体（この記事で確かめた版）](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
+- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-time)
+- [タスクと優先度を扱うスケジューラ](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
+- [ハンドラの能力と関数の色の整理](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/docs/22-capability-classes.md)
 - 前の回:[AIエージェントの起動と結果待ちを、doeffの処理として書く](doeff-agents.md)
 - 次の回:[DIの代わりにeffect handler](doeff-di.md)
