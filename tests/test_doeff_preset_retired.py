@@ -19,8 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # retired package can never sit in the release matrix.
 ALLOWED_REFERENCE_PREFIXES = (
     "docs/",
-    "specs/",
-    "Hypha/",
     "uv.lock",
     ".semgrep.yaml",
     "tests/test_doeff_preset_retired.py",

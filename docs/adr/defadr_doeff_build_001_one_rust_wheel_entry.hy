@@ -36,7 +36,7 @@
 
 ;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場(検は入口を呼んで確かめる側・文書は手順の写し)。
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
-(val SCAN-SKIP-PREFIXES #("docs/" "specs/" "notes/" ".github/"))
+(val SCAN-SKIP-PREFIXES #("docs/" ".github/"))
 
 ;; Rust を組む・鍵を作る形の目印。`uv build --wheel` は入口(build の口)を通る呼びなので数えない(#3860 — worker と起動の script は
 ;; これだけで wheel を用意する)。

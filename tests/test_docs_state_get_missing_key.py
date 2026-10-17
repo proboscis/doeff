@@ -2,9 +2,10 @@
 
 0.5.0 の `state()` は、無い key の `Get` に None を返す(tests/test_core_effects.py の test_get_missing_returns_none)。writer と
 Hy の defhandler の session val / var は、この None を「まだ置いていない」と読んで初めの値を置く。ところが仕様
-specs/effects/SPEC-EFF-002-state.md は KeyError と書き、守る検として木に無い名(test_get_missing_key_raises_keyerror)を挙げて
-いた。09 章の節「State Effects in Concurrent Programs」も KeyError と言いながら、囲みは `(current or 0)` で None を前提にし、
-どの検も囲みを走らせていなかった(docs の報告 2026-10-17-doeff-docs-137-run.html の 09 章 L94)。
+docs/history/specs/effects/SPEC-EFF-002-state.md は KeyError と書き、守る検として木に無い名
+(test_get_missing_key_raises_keyerror)を挙げていた。09 章の節「State Effects in Concurrent Programs」も KeyError と
+言いながら、囲みは `(current or 0)` で None を前提にし、どの検も囲みを走らせていなかった(docs の報告
+2026-10-17-doeff-docs-137-run.html の 09 章 L94)。
 
 確かめる事は 2 つ:
 - 09 章のその節の囲みが、README と同じ約束(tools/readme_examples.py)で走り、print の注記どおりに印字する。
@@ -28,7 +29,7 @@ from tests.test_readme_examples import ROOT, Example, _run, examples
 ADVANCED_PAGE = "docs/09-advanced-effects.md"
 # 09 章の、並ぶ処理の中の State の節(無い key の Get を説明し、例を持つ)。
 STATE_SECTION = "State Effects in Concurrent Programs"
-STATE_SPEC = ROOT / "specs" / "effects" / "SPEC-EFF-002-state.md"
+STATE_SPEC = ROOT / "docs" / "history" / "specs" / "effects" / "SPEC-EFF-002-state.md"
 # 無い key の Get が None を返す事を守る検(仕様はこれを名指す)。
 MISSING_KEY_TEST = "tests/test_core_effects.py::TestState::test_get_missing_returns_none"
 # 仕様の中の、検の名指し(`tests/test_core_effects.py::TestState::test_get_put` の形)。

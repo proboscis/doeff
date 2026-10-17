@@ -219,7 +219,6 @@ join_s = 60
 # lane 分離は [gate].full の註と同じ(convoy 根治)。
 "docs/adr/" = "UV_CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
 "docs/" = "true"
-"notes/" = "true"
 "README.md" = "true"
 "CHANGELOG.md" = "true"
 ".agents/land-queue.toml" = "true"
