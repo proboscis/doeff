@@ -733,7 +733,7 @@
   ;; 記録: 待ち(キー → WaitingEnv — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
   ;; 固定の集合 pinned-roots(最後に受けた SweepEnvs の固定 — 判断の側の statuses の held と別の物)・最後の掃除の終わりの時刻・
   ;; 走っている掃除(数えか消し — 同時に 1 つ)・最後の数えの結び tally(RootsTally — まだ数えていなければ None・#3732)・prune の記録・
-  ;; 最後の観測(heartbeat の名乗りが読む)。
+  ;; 最後の観測(heartbeat の名乗りが読む)・最後に名乗った disk の条件(None = まだ名乗っていない — env-capacity の戻りの幅が読む)。
   (session var waiting {})
   (session var pending {})
   (session var failed {})
@@ -743,6 +743,7 @@
   (session var tally None)
   (session var prune (PruneState))
   (session var views None)
+  (session var disk-named None)
   ;; 最後の掃除の数えの root ごとの観測(RootInfo の列 — 先の組みの見積もりと、次の数えの大きさの使い回しが読む・#3748・
   ;; card ki-a619d34de8c9)と、先の組みを memory を測らずに始めた root の
   ;; キーの集合(heartbeat の memoryUnmeasured — 測って始め直した root は外す)。
@@ -804,7 +805,8 @@
       (:= failed (get observed 2))
       (:= views (get observed 3)))
     (<- free int (disk-free settings))
-    (<- capacity str (env-capacity free settings.min-free-bytes))
+    (<- capacity str (env-capacity free settings.min-free-bytes disk-named))
+    (:= disk-named capacity)
     (resume (env-report (or views #()) capacity unmeasured)))
   (SweepEnvs [pinned]
     ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
