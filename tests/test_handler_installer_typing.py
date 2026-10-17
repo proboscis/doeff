@@ -91,8 +91,11 @@ slog_discard_handler()  # missing body
 await_handler()(Pure(42), Pure(0))  # extra argument
 handler(42)  # non-callable
 """)
+    # handler は installer と素の handler の 2 つの overload を持つので、どちらにも合わない 42 は
+    # 「合う overload が無い」と最後の overload の引数の誤りの 2 つで赤になる
     assert [(item["range"]["start"]["line"], item["rule"]) for item in errors] == [
-        (7, "reportCallIssue"), (8, "reportCallIssue"), (9, "reportArgumentType"),
+        (7, "reportCallIssue"), (8, "reportCallIssue"),
+        (9, "reportCallIssue"), (9, "reportArgumentType"),
     ], errors
 
 
@@ -164,13 +167,13 @@ def test_installers_keep_the_result_type_and_refuse_a_non_program(tmp_path: Path
 _MYPY_ERROR = re.compile(r"^[^:]+:(?P<line>\d+): error: (?P<message>.*)  \[(?P<code>[a-z-]+)\]$")
 
 
-def test_installers_keep_the_result_type_and_refuse_a_non_program_under_mypy(tmp_path: Path) -> None:
-    # 使う人は pyright でも mypy でも check する — 同じ見本が mypy の既定の設定でも同じ所だけ赤になる
+def _mypy_errors(tmp_path: Path, source: str) -> list[dict[str, str]]:
+    """source を mypy の既定の設定で型検査し、error の所見(line・message・code)を返すため(型の契約の検)。"""
     # mypy は dev の group の道具(make sync で入る — 日次と手元)。Python Compatibility の CI の venv は dev の group から
     # maturin と pyright だけを入れるので、そこでは訳を出して飛ばす(2026-10-17 — 入れずに走らせて全部の版で failing になった)
     pytest.importorskip("mypy", reason="mypy が無い venv(Python Compatibility の CI は dev の group の maturin と pyright だけを入れる)")
     sample = tmp_path / "installer_contract.py"
-    sample.write_text(_RESULT_TYPE_SAMPLE)
+    sample.write_text(source)
     result = subprocess.run(
         [sys.executable, "-B", "-m", "mypy", "--cache-dir", str(tmp_path / "mypy-cache"),
          "--show-error-codes", "--hide-error-context", "--no-error-summary", "--no-color-output",
@@ -183,8 +186,121 @@ def test_installers_keep_the_result_type_and_refuse_a_non_program_under_mypy(tmp
     assert result.stderr == "", result.stderr
     assert result.returncode == 1, result.stdout
     assert len(errors) == len(result.stdout.splitlines()), result.stdout
+    return errors
+
+
+def test_installers_keep_the_result_type_and_refuse_a_non_program_under_mypy(tmp_path: Path) -> None:
+    # 使う人は pyright でも mypy でも check する — 同じ見本が mypy の既定の設定でも同じ所だけ赤になる
+    errors = _mypy_errors(tmp_path, _RESULT_TYPE_SAMPLE)
     flagged = [(_RESULT_TYPE_LINES[int(error["line"]) - 1], error["code"]) for error in errors]
     assert flagged == [
         (_MISTAKES[0], "assignment"),
         *((mistake, "arg-type") for mistake in _MISTAKES[1:]),
-    ], result.stdout
+    ], errors
+
+
+# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べ card ki-02e317783af0 の抜け 7):
+# handler() の引数が Callable[..., object] だった時、effect の注記に effect が当たらない関数(`effect: str`)も、
+# (effect, k) を受けない関数も型の check を通った — 実行すると handler() の所で TypeError(check_handler_annotation)。
+# 受ける関数を「EffectBase の effect と K を受ける関数」に絞る。effect の注記の無い関数・Any・object は全部の effect を受ける。
+_RAW_HANDLER_SAMPLE = """\
+from collections.abc import Generator
+from dataclasses import dataclass
+from functools import partial
+from typing import Any
+
+from doeff import EffectBase, Pass, Resume, do, handler
+from doeff_core_effects.handlers import writer
+from doeff_vm import K
+
+
+@dataclass(frozen=True)
+class Fetch(EffectBase[str]):
+    url: str
+
+
+@dataclass(frozen=True)
+class Store(EffectBase[None]):
+    key: str
+
+
+class WriteEffect(EffectBase):
+    \"\"\"A marker base the write effects share (derived from EffectBase).\"\"\"
+
+
+@do
+def fetches(effect: Fetch, k: K) -> Generator[Any, Any, None]:
+    yield Pass(effect, k)
+
+
+def either(effect: Fetch | Store, k: K) -> object: ...
+def bare(effect, k): ...
+def open_any(effect: Any, k: Any) -> object: ...
+def open_object(effect: object, k: object) -> object: ...
+def every(effect: EffectBase, k: K) -> object: ...
+def writes(effect: WriteEffect, k: K) -> object: ...
+def configured(prefix: str, effect: Fetch, k: K) -> object: ...
+
+
+class Dispatcher:
+    def __call__(self, effect: Fetch, k: K) -> object: ...
+    def method(self, effect: Store, k: K) -> object: ...
+
+
+@do
+def text(effect: str, k: K) -> Generator[Any, Any, None]:
+    yield Resume(k, None)
+
+
+def number(effect: int, k: K) -> object: ...
+def failure(effect: Exception, k: K) -> object: ...
+def one_argument(effect: Fetch) -> object: ...
+def not_a_continuation(effect: Fetch, k: int) -> object: ...
+
+
+class TextDispatcher:
+    def __call__(self, effect: str, k: K) -> object: ...
+
+
+handler(fetches)
+handler(either)
+handler(bare)
+handler(open_any)
+handler(open_object)
+handler(every)
+handler(writes)
+handler(partial(configured, "p"))
+handler(Dispatcher())
+handler(Dispatcher().method)
+handler(lambda effect, k: None)
+handler(writer)
+
+# ---- mistakes (each line below must be an error) ----
+handler(text)
+handler(number)
+handler(failure)
+handler(TextDispatcher())
+handler(one_argument)
+handler(not_a_continuation)
+"""
+
+
+_RAW_HANDLER_LINES = _RAW_HANDLER_SAMPLE.splitlines()
+_FIRST_RAW_MISTAKE = next(
+    i for i, line in enumerate(_RAW_HANDLER_LINES) if line.startswith("# ---- mistakes")
+)
+_RAW_MISTAKES = tuple(line for line in _RAW_HANDLER_LINES[_FIRST_RAW_MISTAKE + 1:] if line)
+
+
+def test_handler_refuses_a_raw_handler_no_effect_can_reach(tmp_path: Path) -> None:
+    errors = _pyright_errors(tmp_path, _RAW_HANDLER_SAMPLE)
+    assert [e for e in errors if e["range"]["start"]["line"] < _FIRST_RAW_MISTAKE] == [], errors
+    flagged = sorted({_RAW_HANDLER_LINES[e["range"]["start"]["line"]] for e in errors})
+    assert flagged == sorted(_RAW_MISTAKES), errors
+
+
+def test_handler_refuses_a_raw_handler_no_effect_can_reach_under_mypy(tmp_path: Path) -> None:
+    errors = _mypy_errors(tmp_path, _RAW_HANDLER_SAMPLE)
+    assert [e for e in errors if int(e["line"]) - 1 < _FIRST_RAW_MISTAKE] == [], errors
+    flagged = sorted({_RAW_HANDLER_LINES[int(e["line"]) - 1] for e in errors})
+    assert flagged == sorted(_RAW_MISTAKES), errors
