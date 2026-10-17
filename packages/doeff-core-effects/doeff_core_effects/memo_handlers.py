@@ -15,7 +15,7 @@ from typing import Any, TypeAlias
 
 from doeff import Program, UnhandledEffect, do
 from doeff import handler as _program_handler
-from doeff.program import Pass, Resume
+from doeff.program import Pass, ProgramHandler, Resume
 from doeff_core_effects.memo_effects import (
     MemoExists,
     MemoGet,
@@ -136,7 +136,7 @@ def memo_handler(
     *,
     cost: RecomputeCost | str | None = None,
     name: str | None = None,
-):
+) -> ProgramHandler:
     """Handle memo effects as a caching proxy.
 
     On hit: Resume with stored value.
@@ -165,12 +165,12 @@ def memo_handler(
     return _hy_memo_handler(storage, cost=cost, name=name)
 
 
-def in_memory_memo_handler():
+def in_memory_memo_handler() -> ProgramHandler:
     """Return a memo handler backed by in-memory storage (handles all costs)."""
     return memo_handler(InMemoryStorage())
 
 
-def sqlite_memo_handler(db_path: str | Path):
+def sqlite_memo_handler(db_path: str | Path) -> ProgramHandler:
     """Return a memo handler backed by SQLite storage (handles all costs)."""
     return memo_handler(SQLiteStorage(db_path))
 
@@ -180,7 +180,7 @@ def make_memo_rewriter(
     effect_type: type,
     key_fn: MemoKeyFn = content_address,
     recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP,
-):
+) -> ProgramHandler:
     """Create a handler that memoizes effects of the given type through memo storage.
 
     On memo hit: Resume with stored value (outer handler not called).
@@ -254,7 +254,7 @@ def memo_rewriters(
     *effect_types: type,
     key_fn: MemoKeyFn = content_address,
     recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP,
-) -> list:
+) -> list[ProgramHandler]:
     """Create memo rewriter handlers for each provided effect type.
 
     Args:

@@ -323,7 +323,7 @@ def _generator_program(value: GeneratorType) -> object:
 # ``BindOpener`` がその呼びそのものを返す — ``_settled`` が呼びをそのまま返すのと同じ答え(agora-redesign #2449 —
 # 預かり所の契約の例で Python の振り分けへ来た束ね 16.3k 回のうち 13.8k 回がこの形だった)。
 # doeff-hy の <- の展開と effect-analyzer は、この object を名で引く。
-open_bind = BindOpener(_open_bind, _generator_program)
+open_bind: BindOpener = BindOpener(_open_bind, _generator_program)
 
 
 @do
