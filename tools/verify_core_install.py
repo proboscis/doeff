@@ -92,7 +92,7 @@ PYRIGHT_RULES = frozenset({"reportPrivateImportUsage", "reportMissingImports"})
 MYPY_MARKERS = ("does not explicitly export attribute", "[import-not-found]")
 # 核だけの venv で、package の頭から取れる名の見本(README と入門の章の例が取る名)— Hy の module を読まずに結ばれている事の確かめ。
 HEAD_NAMES = ("Ask", "Get", "Put", "Tell", "reader", "state", "writer")
-_MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?")
+MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?")
 # 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
 CHILD_TIMEOUT_SECONDS = 120
 # 入れた venv の中で走らせ、入れた物の様子を JSON で印字する program(direct_url.json は PEP 610 — どこから入れたか)。
@@ -321,7 +321,7 @@ def _is_directory(url: str, directory: Path) -> bool:
     )
 
 
-def _print(name: str, failure: str | None) -> None:
+def print_result(name: str, failure: str | None) -> None:
     """確かめ 1 つの結末を 1 行で(落ちたら、その訳を続けて)印字する。"""
     print(f"    {'ok' if failure is None else 'NG'}  {name}", flush=True)
     if failure is not None:
@@ -397,7 +397,7 @@ def _check_readme(
         installed.python,
         timeout,
         environment=environment,
-        on_result=lambda example, failure: _print(example.name, failure),
+        on_result=lambda example, failure: print_result(example.name, failure),
     )
     # 走らせる例が無い README は、確かめた事が無いので通さない(例を全部 excerpt か Hy にした時など)。
     empty = (
@@ -406,7 +406,7 @@ def _check_readme(
         else [f"{package} の README に、核の 4 個だけで走らせる例が無い — 確かめた事が無い"]
     )
     for missing in empty:
-        _print(f"{package} の README", missing)
+        print_result(f"{package} の README", missing)
     return [*failures, *empty]
 
 
@@ -429,7 +429,7 @@ def pyright_failures(report: object, checked: int) -> list[str]:
     読んだ file が書いた数 checked に足りない事を言う文(合えば空)。"""
     match report:
         case {"generalDiagnostics": list(diagnostics), "summary": {"filesAnalyzed": int(analyzed)}}:
-            findings = tuple(map(_pyright_finding, diagnostics))
+            findings = tuple(map(pyright_finding, diagnostics))
         case _:
             raise TypeError(f"pyright の答えの形が違う: {report!r}")
     named = [
@@ -459,7 +459,7 @@ class PyrightFinding:
     line: int
 
 
-def _pyright_finding(diagnostic: object) -> PyrightFinding:
+def pyright_finding(diagnostic: object) -> PyrightFinding:
     """JSON の所見 1 つを持つ(形が違えば、pyright の答えが壊れている)。"""
     match diagnostic:
         case {"message": str(message), "file": str(file), "range": {"start": {"line": int(line)}}}:
@@ -473,7 +473,7 @@ def mypy_failures(output: str, checked: int) -> list[str]:
     """mypy の出力のうち、公開していない名と package の見つからなさ(MYPY_MARKERS)を言う行と、
     読んだ file が書いた数 checked に足りない事を言う文(合えば空)。"""
     named = [line for line in output.splitlines() if any(mark in line for mark in MYPY_MARKERS)]
-    found = _MYPY_CHECKED.search(output)
+    found = MYPY_CHECKED.search(output)
     read = "数えられなかった" if found is None else f"{found[1]} 個"
     unread = (
         [
@@ -485,7 +485,7 @@ def mypy_failures(output: str, checked: int) -> list[str]:
     return [*named, *unread]
 
 
-def _checker(
+def run_checker(
     command: Sequence[str], directory: Path, timeout: float
 ) -> subprocess.CompletedProcess[str]:
     """型の check の道具を 1 回起こす。誤りを見つけた時の終了コード 1 までは普通 — それ以外は道具が使えない事として落とす。"""
@@ -499,7 +499,7 @@ def _checker(
     return result
 
 
-def _write_example(example: readme_examples.Example, directory: Path) -> Path:
+def write_example(example: readme_examples.Example, directory: Path) -> Path:
     """README の囲み 1 つを dir の下の、囲みの名の file に書く(書かない囲みは渡さない)。"""
     name = example.written_as()
     if name is None:
@@ -513,11 +513,11 @@ def _write_example(example: readme_examples.Example, directory: Path) -> Path:
 def _check_types(package: str, installed: Installed, directory: Path, timeout: float) -> list[str]:
     """README 1 つの例を dir に書き、pyright(standard)と mypy --strict にかけて、公開していない名の誤りを言う文の列を返す。"""
     paths = [
-        _write_example(example, directory) for example in type_checked_examples(installed, package)
+        write_example(example, directory) for example in type_checked_examples(installed, package)
     ]
     config = directory / "pyrightconfig.json"
     config.write_text(json.dumps({"typeCheckingMode": "standard"}), encoding="utf-8")
-    pyright = _checker(
+    pyright = run_checker(
         [
             *PYRIGHT,
             "--project",
@@ -530,7 +530,7 @@ def _check_types(package: str, installed: Installed, directory: Path, timeout: f
         directory,
         timeout,
     )
-    mypy = _checker(
+    mypy = run_checker(
         [
             *MYPY,
             "--strict",
@@ -549,7 +549,7 @@ def _check_types(package: str, installed: Installed, directory: Path, timeout: f
         ("mypy --strict", mypy_failures(mypy.stdout, len(paths))),
     )
     for checker, found in results:
-        _print(
+        print_result(
             f"{package} の README の例の import を {checker} が公開の名と読む",
             "\n".join(found) or None,
         )
@@ -583,7 +583,7 @@ def check_head_names(installed: Installed, timeout: float) -> str | None:
             if result.returncode == 0
             else f"核だけの venv で、package の頭の名 {HEAD_NAMES} が揃わない\n{result.stderr}"
         )
-    _print("核だけの venv で package の頭の名が属性と star import に在る", failure)
+    print_result("核だけの venv で package の頭の名が属性と star import に在る", failure)
     return failure
 
 
@@ -652,7 +652,7 @@ def _run_extra_use(
         failure = extra_failure(use, result)
     except subprocess.TimeoutExpired:
         failure = f"{use.name} が {timeout} 秒で終わらなかった"
-    _print(use.name, failure)
+    print_result(use.name, failure)
     return failure
 
 
@@ -667,7 +667,7 @@ def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
     names = sorted(distribution.name for distribution in installed.distributions)
     print(f"  入った配布物: {'・'.join(names)}", flush=True)
     problems = install_problems(installed)
-    _print(
+    print_result(
         "入った物がちょうど核の 4 個で、doeff の 3 個はこの checkout から組んだ wheel",
         "\n".join(problems) or None,
     )
