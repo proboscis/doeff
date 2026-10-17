@@ -229,3 +229,130 @@ def test_every_python_example_that_imports_hy_in_a_checked_readme_is_set_aside(
         and re.search(r"^\s*(import hy\b|from hy\b)", example.code, re.MULTILINE)
     ]
     assert remaining_importing_hy == []
+
+
+# --- 型の check が「公開していない名」を名指す(card ki-d1628b5046d1) ---------------------------------------------------
+# 核だけの venv で README の例を pyright と mypy --strict にかける段の、判じ方。本物の pyright・mypy の出力の写しで確かめる。
+
+
+def _doeff_readme_installed() -> object:
+    """根の README(doeff の配布物の README)と doeff-vm の README を持つ、入れた物の写し。"""
+    readmes = tuple(
+        (ROOT / ("README.md" if package == "doeff" else f"packages/{package}/README.md")).read_text(
+            encoding="utf-8"
+        )
+        for package in tool.CHECKED_READMES
+    )
+    return tool.Installed(Path("venv/bin/python"), "3.12.14", False, (), readmes)
+
+
+def test_the_type_checked_examples_are_the_python_ones_the_core_only_venv_runs() -> None:
+    examples = tool.type_checked_examples(_doeff_readme_installed(), "doeff")
+    assert examples
+    assert {example.language for example in examples} == {"python"}
+    # README の Quick Start が package の頭から名を取る例が、型の check の対象に入っている(card の抜け 1 の形)。
+    assert any(re.search(r"from doeff_core_effects import ", example.code) for example in examples)
+    # Hy の module を読む例(extra hy)は入らない。
+    assert not any(
+        re.search(r"^\s*(import hy\b|from hy\b)", e.code, re.MULTILINE) for e in examples
+    )
+
+
+def _pyright_report(*diagnostics: tuple[str, str], analyzed: int = 4) -> dict[str, object]:
+    """pyright --outputjson の写し(規則と文の組から)。"""
+    return {
+        "version": "1.1.414",
+        "generalDiagnostics": [
+            {
+                "file": "/work/typed/doeff/example_21.py",
+                "severity": "error",
+                "message": message,
+                "range": {
+                    "start": {"line": 2, "character": 31},
+                    "end": {"line": 2, "character": 34},
+                },
+                "rule": rule,
+            }
+            for rule, message in diagnostics
+        ],
+        "summary": {"filesAnalyzed": analyzed, "errorCount": len(diagnostics)},
+    }
+
+
+NOT_EXPORTED = (
+    "reportPrivateImportUsage",
+    '"Ask" is not exported from module "doeff_core_effects"\n  Import from "doeff_core_effects.effects" instead',
+)
+
+
+def test_pyright_naming_a_private_import_is_a_failure() -> None:
+    failures = tool.pyright_failures(_pyright_report(NOT_EXPORTED), checked=4)
+    assert len(failures) == 1
+    assert "example_21.py:3" in failures[0]
+    assert '"Ask" is not exported from module "doeff_core_effects"' in failures[0]
+
+
+def test_pyright_complaints_about_the_example_itself_are_not_this_checks_business() -> None:
+    other = (
+        "reportArgumentType",
+        'Argument of type "int" cannot be assigned to parameter "x" of type "str"',
+    )
+    assert tool.pyright_failures(_pyright_report(other), checked=4) == []
+
+
+def test_pyright_not_finding_the_package_is_a_failure() -> None:
+    # venv の python を見つけられないと、import が全部「見つからない」になる。何も言わない緑ではなく、赤にする。
+    missing = ("reportMissingImports", 'Import "doeff_core_effects" could not be resolved')
+    assert len(tool.pyright_failures(_pyright_report(missing), checked=4)) == 1
+
+
+def test_pyright_that_read_fewer_files_than_were_written_is_a_failure() -> None:
+    failures = tool.pyright_failures(_pyright_report(analyzed=1), checked=4)
+    assert len(failures) == 1
+    assert "1" in failures[0]
+    assert "4" in failures[0]
+
+
+MYPY_EXAMPLE = "/work/typed/doeff/example_21.py"
+MYPY_NOT_EXPORTED = (
+    f'{MYPY_EXAMPLE}:3: error: Module "doeff_core_effects" does not explicitly export attribute "Tell"'
+    "  [attr-defined]"
+)
+MYPY_UNTYPED = (
+    f"{MYPY_EXAMPLE}:8: error: Function is missing a return type annotation  [no-untyped-def]"
+)
+
+
+def test_mypy_naming_an_unexported_attribute_is_a_failure() -> None:
+    output = (
+        f"{MYPY_NOT_EXPORTED}\n{MYPY_UNTYPED}\nFound 2 errors in 1 file (checked 4 source files)\n"
+    )
+    failures = tool.mypy_failures(output, checked=4)
+    assert failures == [MYPY_NOT_EXPORTED]
+
+
+def test_mypy_strict_complaints_about_the_example_itself_are_not_this_checks_business() -> None:
+    output = f"{MYPY_UNTYPED}\nFound 1 error in 1 file (checked 4 source files)\n"
+    assert tool.mypy_failures(output, checked=4) == []
+    assert tool.mypy_failures("Success: no issues found in 4 source files\n", checked=4) == []
+
+
+def test_mypy_not_finding_the_package_is_a_failure() -> None:
+    output = (
+        f'{MYPY_EXAMPLE}:3: error: Cannot find implementation or library stub for module named "doeff_core_effects"'
+        "  [import-not-found]\nFound 1 error in 1 file (checked 4 source files)\n"
+    )
+    assert len(tool.mypy_failures(output, checked=4)) == 1
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "Success: no issues found in 1 source file\n",
+        "Found 3 errors in 1 file (checked 1 source file)\n",
+        "",
+    ],
+    ids=["success-line", "found-line", "no-summary"],
+)
+def test_mypy_that_read_fewer_files_than_were_written_is_a_failure(output: str) -> None:
+    assert len(tool.mypy_failures(output, checked=4)) == 1

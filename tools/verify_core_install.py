@@ -19,6 +19,11 @@ Python の版ごとに:
    書く物・README の Hy の file= の囲みが書く module を import する物)は extra hy の例なので走らせない。
 4. Hy か HTTP の extra が要る使い方(EXTRA_USES)を走らせ、1 で終わり、標準エラーの最後の行が `pip install "doeff[<extra>]"` で
    終わる事を確かめる。
+5. 3 の README の Python の例を、pyright(standard)と mypy --strict にかけ(venv の外で `uv tool run` が起こし、核の venv を指す)、
+   import が「公開していない名」(reportPrivateImportUsage・attr-defined)と言われない事を確かめる。README の例そのものへの型の
+   注記の文句は数えない。py.typed の package は `X as X` か `__all__` で再 export した名だけを公開とするので、README が
+   `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする(card ki-d1628b5046d1)。
+   あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
 
 終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
 """
@@ -28,6 +33,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -70,6 +76,19 @@ NEEDS_AN_EXTRA = frozenset({"hy"})
 # Python が Hy の module を読むために import する、Hy の本体の名(`import hy` が Hy の import hook を置く)。
 HY_PACKAGE = "hy"
 DEFAULT_PYTHONS = ("3.11", "3.14+gil")
+# 型の check の道具。検める venv は核の 4 個だけに保つので、venv の外で uv tool run が起こし、--pythonpath・--python-executable で
+# 核の venv を指す。
+PYRIGHT = ("uv", "tool", "run", "pyright")
+MYPY = ("uv", "tool", "run", "mypy")
+# pyright の規則のうち、この確かめが名指す物 — 公開していない名(py.typed の package が再 export していない名)と、venv の package を
+# 見つけられない事(見つけられなければ、公開の名の確かめにならずに緑になる)。README の例そのものへの文句(型の注記の無さなど)は
+# この確かめの外。
+PYRIGHT_RULES = frozenset({"reportPrivateImportUsage", "reportMissingImports"})
+# mypy の同じ目印(mypy は規則でなく文と [コード] で言う)。
+MYPY_MARKERS = ("does not explicitly export attribute", "[import-not-found]")
+# 核だけの venv で、package の頭から取れる名の見本(README の Quick Start が取る名)— Hy の module を読まずに結ばれている事の確かめ。
+HEAD_NAMES = ("Ask", "Get", "Put", "Tell", "reader", "state", "writer")
+_MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?")
 # 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
 CHILD_TIMEOUT_SECONDS = 120
 # 入れた venv の中で走らせ、入れた物の様子を JSON で印字する program(direct_url.json は PEP 610 — どこから入れたか)。
@@ -120,27 +139,25 @@ class ExtraUse:
     extra: str
 
 
-def _python(statement: str) -> tuple[str, tuple[str, ...]]:
-    """Python の文 1 つを、checkout も cwd も sys.path に置かない interpreter で走らせる命令。"""
-    return "python", ("-I", "-c", statement)
+def _python_use(name: str, statement: str, extra: str) -> ExtraUse:
+    """Python の文 1 つを、checkout も cwd も sys.path に置かない interpreter で走らせる使い方。"""
+    return ExtraUse(name, "python", ("-I", "-c", statement), extra)
 
 
 # 文と extra の表は doeff_core_effects/extra_hints.py。開発の環境で同じ場面を読む検は tests/test_missing_extra_hints.py と
 # tests/cli/test_cli_without_hy.py(Hy は在り httpx だけが無い場面は、核の 4 個だけの venv には無い)。
 EXTRA_USES = (
-    ExtraUse("Hy で書いた module", *_python("import doeff_core_effects.os_process"), "hy"),
-    ExtraUse("cache", *_python("from doeff_core_effects.cache import cache"), "hy"),
-    ExtraUse(
-        "HTTP の handler",
-        *_python("from doeff_core_effects import http_production_handler"),
-        "http",
+    _python_use("Hy で書いた module", "import doeff_core_effects.os_process", "hy"),
+    _python_use("cache", "from doeff_core_effects.cache import cache", "hy"),
+    _python_use(
+        "HTTP の handler", "from doeff_core_effects import http_production_handler", "http"
     ),
-    ExtraUse(
+    _python_use(
         "HTTP の handler の module",
-        *_python("from doeff_core_effects.http_handlers import http_fixture_handler"),
+        "from doeff_core_effects.http_handlers import http_fixture_handler",
         "http",
     ),
-    ExtraUse("HTTP の effect", *_python("from doeff_core_effects import HttpRequest"), "http"),
+    _python_use("HTTP の effect", "from doeff_core_effects import HttpRequest", "http"),
     ExtraUse("doeff run --hy", "doeff", ("run", "--hy", "(import doeff [Pure]) (Pure 42)"), "hy"),
     ExtraUse(
         "doeff run の .hy の program",
@@ -368,6 +385,197 @@ def _check_readme(
     return [*failures, *empty]
 
 
+def type_checked_examples(installed: Installed, package: str) -> list[readme_examples.Example]:
+    """README 1 つの囲みのうち、核だけの venv で型の check にかける Python の囲み(extra hy の例と、書かない excerpt は除く)。
+
+    `file=` で書く module の囲みも含める — 後の例がそれを import するので、無いと「見つからない」になる。
+    """
+    fences = readme_examples.fences(installed.readme(package), f"{package} の README")
+    set_aside = hy_extra_examples(fences)
+    return [
+        fence
+        for fence in fences
+        if fence not in set_aside and fence.language == "python" and fence.written_as() is not None
+    ]
+
+
+def pyright_failures(report: object, checked: int) -> list[str]:
+    """pyright --outputjson の答えのうち、公開していない名と package の見つからなさ(PYRIGHT_RULES)を言う文の列と、
+    読んだ file が書いた数 checked に足りない事を言う文(合えば空)。"""
+    match report:
+        case {"generalDiagnostics": list(diagnostics), "summary": {"filesAnalyzed": int(analyzed)}}:
+            findings = tuple(map(_pyright_finding, diagnostics))
+        case _:
+            raise TypeError(f"pyright の答えの形が違う: {report!r}")
+    named = [
+        f"{Path(finding.file).name}:{finding.line + 1}: {finding.message.splitlines()[0]}  [{finding.rule}]"
+        for finding in findings
+        if finding.rule in PYRIGHT_RULES
+    ]
+    unread = (
+        [
+            f"pyright が読んだ file が {analyzed} 個で、書いた {checked} 個と違う — 型の check が例を読んでいない"
+        ]
+        if analyzed != checked
+        else []
+    )
+    return [*named, *unread]
+
+
+@dataclass(frozen=True)
+class PyrightFinding:
+    """pyright の所見 1 つ(--outputjson の generalDiagnostics の 1 要素)。"""
+
+    # 規則の名(構文の誤りなど、規則の無い所見は "")
+    rule: str
+    message: str
+    file: str
+    # 0 から数える行
+    line: int
+
+
+def _pyright_finding(diagnostic: object) -> PyrightFinding:
+    """JSON の所見 1 つを持つ(形が違えば、pyright の答えが壊れている)。"""
+    match diagnostic:
+        case {"message": str(message), "file": str(file), "range": {"start": {"line": int(line)}}}:
+            rule = diagnostic.get("rule")
+            return PyrightFinding(rule if isinstance(rule, str) else "", message, file, line)
+        case _:
+            raise TypeError(f"pyright の所見の形が違う: {diagnostic!r}")
+
+
+def mypy_failures(output: str, checked: int) -> list[str]:
+    """mypy の出力のうち、公開していない名と package の見つからなさ(MYPY_MARKERS)を言う行と、
+    読んだ file が書いた数 checked に足りない事を言う文(合えば空)。"""
+    named = [line for line in output.splitlines() if any(mark in line for mark in MYPY_MARKERS)]
+    found = _MYPY_CHECKED.search(output)
+    read = "数えられなかった" if found is None else f"{found[1]} 個"
+    unread = (
+        [
+            f"mypy が読んだ file が {read}で、書いた {checked} 個と違う — 型の check が例を読んでいない"
+        ]
+        if found is None or int(found[1]) != checked
+        else []
+    )
+    return [*named, *unread]
+
+
+def _checker(
+    command: Sequence[str], directory: Path, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """型の check の道具を 1 回起こす。誤りを見つけた時の終了コード 1 までは普通 — それ以外は道具が使えない事として落とす。"""
+    result = subprocess.run(
+        command, cwd=directory, capture_output=True, text=True, timeout=timeout, check=False
+    )
+    if result.returncode not in (0, 1):
+        raise subprocess.CalledProcessError(
+            result.returncode, list(command), result.stdout, result.stderr
+        )
+    return result
+
+
+def _write_example(example: readme_examples.Example, directory: Path) -> Path:
+    """README の囲み 1 つを dir の下の、囲みの名の file に書く(書かない囲みは渡さない)。"""
+    name = example.written_as()
+    if name is None:
+        raise ValueError(f"{example.name} は file に書かない囲み")
+    path = directory / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(example.code, encoding="utf-8")
+    return path
+
+
+def _check_types(package: str, installed: Installed, directory: Path, timeout: float) -> list[str]:
+    """README 1 つの例を dir に書き、pyright(standard)と mypy --strict にかけて、公開していない名の誤りを言う文の列を返す。"""
+    paths = [
+        _write_example(example, directory) for example in type_checked_examples(installed, package)
+    ]
+    config = directory / "pyrightconfig.json"
+    config.write_text(json.dumps({"typeCheckingMode": "standard"}), encoding="utf-8")
+    pyright = _checker(
+        [
+            *PYRIGHT,
+            "--project",
+            str(config),
+            "--pythonpath",
+            str(installed.python),
+            "--outputjson",
+            *map(str, paths),
+        ],
+        directory,
+        timeout,
+    )
+    mypy = _checker(
+        [
+            *MYPY,
+            "--strict",
+            "--python-executable",
+            str(installed.python),
+            "--follow-imports=silent",
+            "--cache-dir",
+            str(directory / ".mypy_cache"),
+            *map(str, paths),
+        ],
+        directory,
+        timeout,
+    )
+    results = (
+        ("pyright(standard)", pyright_failures(json.loads(pyright.stdout), len(paths))),
+        ("mypy --strict", mypy_failures(mypy.stdout, len(paths))),
+    )
+    for checker, found in results:
+        _print(
+            f"{package} の README の例の import を {checker} が公開の名と読む",
+            "\n".join(found) or None,
+        )
+    return [failure for _, found in results for failure in found]
+
+
+def check_head_names(installed: Installed, timeout: float) -> str | None:
+    """核だけの venv(Hy も httpx も無い)で、package の頭の名が属性として在り、star import でも結ばれる事を確かめ、
+    欠けを言う文を返す(合えば None)— 型の check に公開した名を、Hy の module を読まずに結んでいる事。"""
+    statement = (
+        "import doeff_core_effects as package\n"
+        "namespace = {}\n"
+        "exec('from doeff_core_effects import *', namespace)\n"
+        f"names = {HEAD_NAMES!r}\n"
+        "missing = [n for n in names if not hasattr(package, n) or n not in namespace]\n"
+        "assert not missing, missing\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(installed.python), "-I", "-c", statement],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        failure = f"package の頭の名の確かめが {timeout} 秒で終わらなかった"
+    else:
+        failure = (
+            None
+            if result.returncode == 0
+            else f"核だけの venv で、package の頭の名 {HEAD_NAMES} が揃わない\n{result.stderr}"
+        )
+    _print("核だけの venv で package の頭の名が属性と star import に在る", failure)
+    return failure
+
+
+def check_public_names(installed: Installed, place: Path, timeout: float) -> list[str]:
+    """CHECKED_READMES の例が package の頭から取る名を、型の check(pyright・mypy --strict)が公開の名と読む事と、その名が核だけの
+    venv で結ばれている事を確かめ、落ちた事を言う文の列を返す — README を写した利用者の editor に「公開していない名」が出ないため。"""
+    print("  型の check が README の例の import を公開の名と読む", flush=True)
+    typed = place / "typed"
+    failures = [
+        failure
+        for package in CHECKED_READMES
+        for failure in _check_types(package, installed, typed / package, timeout)
+    ]
+    head = check_head_names(installed, timeout)
+    return [*failures, *([head] if head is not None else [])]
+
+
 def extra_failure(use: ExtraUse, result: subprocess.CompletedProcess[str]) -> str | None:
     """extra が要る使い方の結末が、足す extra の名を言う文で 1 を返す形でない事を言う文(合えば None)。"""
     line = f'pip install "doeff[{use.extra}]"'
@@ -441,6 +649,7 @@ def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
     return [
         *problems,
         *check_readmes(installed, place, timeout),
+        *check_public_names(installed, place, timeout),
         *check_extra_uses(installed, place, timeout),
     ]
 
@@ -449,7 +658,8 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     """引数を読む — Python の版と、作業の dir を残すか。"""
     parser = argparse.ArgumentParser(
         description=(
-            "核の 4 個だけを入れた新しい venv で、README の Python の例と、Hy・HTTP の extra を言う文を確かめる。"
+            "核の 4 個だけを入れた新しい venv で、README の Python の例と、その例の import が型の check で公開の名と読まれる事と、"
+            "Hy・HTTP の extra を言う文を確かめる。"
         ),
     )
     parser.add_argument(
