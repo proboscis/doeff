@@ -58,7 +58,7 @@ root の tag では出さない。出す時は、部品ごとの tag `<package>/
 | `doeff-git` | Git の effect(取りまとめの部品が使う) | `doeff` |
 | `doeff-flow` | workflow の跡の部品 | `doeff` |
 | `doeff-adr` | 実行できる ADR の契約の部品 | `doeff-hy` |
-| `doeff-agents` | agent を起こす部品。PyPI に 0.1.1 が在るが、doeff 0.5 では動かない(README の Installation の注記)。repo の版は今は出さない | `doeff-time`・`doeff-hy`。依存の `doeff-claude-code`・`doeff-codex` が公開しない部品なので、それらを出すまで新しい版は出せない |
+| `doeff-agents` | agent を起こす部品。PyPI に 0.1.1 と 0.1.2 が在り、どちらも doeff 0.4 向けで doeff 0.5 では動かない。0.1.2(2026-10-17・tag `doeff-agents/v0.1.2`)は 0.1.1 と同じ code に `doeff<0.5` を宣言した版で、版を指定しない install を doeff 0.4 の組に解く(README の注記)。repo の版は今は出さない | `doeff-time`・`doeff-hy`。依存の `doeff-claude-code`・`doeff-codex` が公開しない部品なので、それらを出すまで新しい版は出せない |
 | `doeff-agentic` | workflow と session の部品 | `doeff-flow`・`doeff-agents` |
 | `doeff-conductor` | 取りまとめ(orchestration)の部品 | `doeff-git`・`doeff-agentic`・`doeff-flow` |
 | `doeff-openai` | LLM の provider の部品 | `doeff-llm` |
@@ -341,7 +341,7 @@ build だけに呼び(job `build-doeff-vm`)、組んだ wheel を自分の job `
 | 事柄 | 確かめる所 |
 | --- | --- |
 | 分類の表・公開の workflow が核の 5 個だけを出す事・出す順・同じ版の check を全ての upload が待つ事・upload の job が Trusted Publishing でも出せる形である事 | `tests/test_release_publish_contract.py` |
-| `doeff-agents` 0.1.1 が doeff 0.5 で動かない事 | README の Installation の注記・card ki-f913ac101994 |
+| `doeff-agents` 0.1.1 が doeff 0.5 で動かない事・0.1.2 が `doeff<0.5` を宣言した事 | README の注記・card ki-f913ac101994・card ki-f9af0dd30c37(0.1.2 は branch `wt/doeff-agents-0.1.2` の一回きりの publish.yml から出した) |
 | `doeff-vm` の版と根の `doeff` の依存の下限 | `tests/test_doeff_vm_release_contract.py` |
 | 同じ版の check の振る舞い | `tools/check_pypi_unpublished.py`・`tests/test_check_pypi_unpublished.py` |
 | 核の 5 個を新しい環境に入れて README の例を走らせる道具と、その README の約束 | `tools/verify_release_install.py`・`tools/readme_examples.py`・`tests/test_readme_examples.py`(card ki-7746480f388d) |
