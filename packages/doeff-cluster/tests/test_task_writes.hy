@@ -34,7 +34,8 @@
   {:pre [(: rows dict) (: workers dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "task の行 rows と worker workers を持つ状態を作るため。"
   (<- tasks (table-from-rows rows))
-  (ClusterState :workers workers :tasks tasks))
+  (<- worker-rows (table-from-rows workers))
+  (ClusterState :workers worker-rows :tasks tasks))
 
 (defn [contextmanager] counting-replaces []
   "with の間に cluster_policy が呼んだ replace のうち、TaskRecord を書き直した呼びの数(答えの list の 0 番)を数える。"
