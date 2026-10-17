@@ -55,7 +55,8 @@ Python に残したもの(利用者から見える形を変えないため):
 - effect の class(`Spawn`・`Wait`・`AcquireSemaphore` など)。Rust の版は `isinstance` で
   見分けるので、子 class(下の `CreateNamedSemaphore` など)は今までどおり親として扱われる。
 - handle の class(`Task`・`Future`・`Promise`・`ExternalPromise`・`Semaphore`)と例外の class。
-- 1 回の実行につき 1 回だけ走る、終わり際の警告(#501)と、失敗した task の traceback の補強。
+- 1 回の実行につき 1 回だけ走る、終わり際の警告(#501 と、誰も受け取らなかった task の例外の警告)と、
+  失敗した task ごとに 1 回だけ走る、traceback の補強と、受け取られていない例外の説明の文。
 
 ### handler の形の違い(意味は同じ)
 
@@ -103,6 +104,16 @@ Python の版は `@do` の generator の handler、Rust の版は同期の handl
 
 Discard(巻き戻さずに捨てる・SIGKILL と同じ形)も Python の版と一行ずつ対応させてある(`scheduler.rs` の `on_discard`)。
 捨てた task の続きはどちらの版でも落とすだけで、finally の中の effect は走らない。
+
+誰も受け取らなかった task の例外(card ki-84667a89b47a)も、両方の版で同じに扱う
+(`tests/test_scheduler_unretrieved_task_exception.py` が両方の版で確かめている)。
+
+- Wait・Gather・Race・Cancel・Discard のどれかに渡された task は、終わる前でも後でも「受け取られた」とする。
+- 受け取られないまま例外(`TaskCancelledError` を除く)で終わった task は、終わった時に説明の文を作る。
+  文を作る関数は Python の `_describe_unretrieved_exception` の 1 つだけで、program の名は Spawn の時に
+  控えた関数(`@do` の呼びでなければ program の型)から取る。
+- run の終わりに、その文を 1 つの `RuntimeWarning` にまとめて出す。#502 の掃除で行が消えた task の文も
+  残しておき、名指すのは `UNRETRIEVED_EXCEPTIONS_NAMED` 個まで(残りは数だけ言う)。
 
 Python の版から引き継いだ振る舞い(変えていない): root の本体が終わった時に置き去りに
 なった task(daemon の聞き手など)の継続は、実行の後も解放されず、その `finally` も走らない。

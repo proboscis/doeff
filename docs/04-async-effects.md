@@ -12,6 +12,7 @@ This chapter covers async integration and scheduler primitives for cooperative c
 - [Gather Fail-Fast Semantics](#gather-fail-fast-semantics)
 - [Race Semantics](#race-semantics)
 - [Cancel and TaskCancelledError](#cancel-and-taskcancellederror)
+- [Task Exceptions Nothing Retrieved](#task-exceptions-nothing-retrieved)
 - [Promise vs ExternalPromise](#promise-vs-externalpromise)
 - [Common Mistakes](#common-mistakes)
 - [Quick Reference](#quick-reference)
@@ -368,6 +369,46 @@ def watch_process(proc):
     return (yield Wait(ep.future))
 ```
 
+## Task Exceptions Nothing Retrieved
+
+A spawned task's exception reaches whoever waits on the task. When nothing does, the run still
+returns its value, and the scheduler warns at the end of the run — like asyncio's "Task exception
+was never retrieved":
+
+- a task's outcome is claimed once a `Wait`, `Gather` or `Race` is given the task, or a `Cancel` or
+  `Discard` — before or after the task ends. A `Gather` sibling that fails after the fail-fast and
+  a `Race` loser that fails later were given to the `Gather` / `Race`, so they are claimed
+- a task that ended with an exception while nothing claimed its outcome is named in one
+  `RuntimeWarning` when the run ends (on the root's error path too): the task, its program, where it
+  was spawned, the exception, and where it was raised. `daemon=True` does not silence it — the run
+  does not wait for a daemon task, but its exception is still lost
+- a task that ended with `TaskCancelledError` ended by cancellation, so it is not named
+- wrap the task's program in `Try(...)` when a failure is expected and its value is not needed
+
+```python
+import warnings
+
+from doeff import Spawn, do, run
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def send_report():
+    raise ValueError("mail server down")
+
+@do
+def main():
+    yield Spawn(send_report())  # nothing waits on the task
+    return "done"
+
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    print(run(scheduled(main())))  # done
+print(caught[0].category.__name__)  # RuntimeWarning
+print(str(caught[0].message).split(":")[0])  # spawned task exception was never retrieved
+print("running send_report" in str(caught[0].message))  # True
+print("ValueError: mail server down" in str(caught[0].message))  # True
+```
+
 ## Promise vs ExternalPromise
 
 Use `Promise` when producer and consumer are both inside doeff. Use `ExternalPromise` when
@@ -409,7 +450,11 @@ Use `Try(...)` around child programs if you need partial success collection.
 4. Using `task.cancel()` instead of `yield Cancel(task)`.
 `Cancel` is an effect that must be yielded; tasks do not have a `.cancel()` method.
 
-5. Forgetting to wrap the program with `scheduled()`.
+5. Spawning a task and never waiting on it.
+Its exception reaches nobody; the run ends with a "spawned task exception was never retrieved"
+`RuntimeWarning`. `Wait` on the task, or `Cancel`/`Discard` it when its outcome is not needed.
+
+6. Forgetting to wrap the program with `scheduled()`.
 Scheduler effects (`Spawn`, `Wait`, `Gather`, `Race`, `Cancel`) require
 `run(scheduled(prog))`.
 

@@ -13,8 +13,10 @@
 //!   `isinstance`, exactly like the Python `if isinstance(...)` chain);
 //! - the handle classes (`Task`, `Future`, `Promise`, `ExternalPromise`,
 //!   `Semaphore`) and the exception classes;
-//! - the root close-out warning (#501) and the task-error traceback
-//!   enrichment helper, which run once per run / per failing task.
+//! - the root close-out warning (#501), the never-retrieved task exception
+//!   warning and its per-task description (card ki-84667a89b47a), and the
+//!   task-error traceback enrichment helper, which run once per run / per
+//!   failing task.
 //!
 //! Handler shape. The Python scheduler is a `@do` generator handler; this one
 //! is a synchronous `Callable::call_handler`, so it has no handler stream
@@ -50,6 +52,7 @@ use doeff_vm_core::py_shared::PyShared;
 use doeff_vm_core::value::{Callable, CallableRef, Value};
 use doeff_vm_core::{Continuation, VMError};
 
+use crate::do_expr::PyCall;
 use crate::python_generator_stream::{classify_python_object, python_to_value, raised_object, value_to_python};
 use crate::result::{PyResultErr, PyResultOk};
 
@@ -161,6 +164,9 @@ struct Spec {
     callback_error_cls: Py<PyAny>,
     deadlock_error_cls: Py<PyAny>,
     enrich_traceback: Py<PyAny>,
+    /// `_describe_unretrieved_exception`: a failed task's entry in the
+    /// never-retrieved warning (card ki-84667a89b47a).
+    describe_unretrieved_exception: Py<PyAny>,
     logger: Py<PyAny>,
     /// `_external_wake_of`: the wake a new external promise carries.
     external_wake_of: Py<PyAny>,
@@ -174,6 +180,7 @@ struct Spec {
     priority_normal: i64,
     handle_sweep_interval: u64,
     handle_refs_prune_min: usize,
+    unretrieved_exceptions_named: usize,
 }
 
 impl Spec {
@@ -202,6 +209,7 @@ impl Spec {
             callback_error_cls: get("ExternalPromiseCancelCallbackError")?.unbind(),
             deadlock_error_cls: get("SchedulerDeadlockError")?.unbind(),
             enrich_traceback: get("enrich_exception_traceback")?.unbind(),
+            describe_unretrieved_exception: get("describe_unretrieved_exception")?.unbind(),
             logger: get("logger")?.unbind(),
             external_wake_of: get("external_wake_of")?.unbind(),
             external_wait_is_stall: get("external_wait_is_stall")?.unbind(),
@@ -211,6 +219,7 @@ impl Spec {
             priority_normal: get("PRIORITY_NORMAL")?.extract()?,
             handle_sweep_interval: get("HANDLE_SWEEP_INTERVAL")?.extract()?,
             handle_refs_prune_min: get("HANDLE_REFS_PRUNE_MIN")?.extract()?,
+            unretrieved_exceptions_named: get("UNRETRIEVED_EXCEPTIONS_NAMED")?.extract()?,
         })
     }
 
@@ -290,6 +299,17 @@ struct TaskEntry {
     /// the Cancel fallback (continuation not held by the scheduler) may still
     /// run to its `TaskCompleted`, which reads this entry.
     settled: bool,
+    /// What the never-retrieved warning names the task's program by (the
+    /// Python version's `definition` — `_program_definition`): the function a
+    /// `@do` call runs, else the program's type. `None` once released.
+    definition: Option<Py<PyAny>>,
+    /// A Wait, Gather, Race, Cancel or Discard was given the task (the Python
+    /// version's `retrieved`): its outcome is claimed (card ki-84667a89b47a).
+    retrieved: bool,
+    /// The description of the exception the task failed with while nothing
+    /// had claimed its outcome (the Python version's `unretrieved`); cleared
+    /// when something claims it later.
+    unretrieved: Option<String>,
 }
 
 struct PromiseEntry {
@@ -557,6 +577,11 @@ struct State {
     /// while the lock is held; they are dropped after it is released.
     graveyard_conts: Vec<Continuation>,
     graveyard_objs: Vec<Py<PyAny>>,
+    /// Never-retrieved task exceptions of entries the #502 sweep deleted (the
+    /// Python version's `unretrieved_swept`): at most
+    /// `unretrieved_exceptions_named` descriptions, and how many there were.
+    unretrieved_swept: Vec<String>,
+    unretrieved_swept_count: usize,
 }
 
 impl State {
@@ -577,6 +602,8 @@ impl State {
             next_group: 0,
             graveyard_conts: Vec::new(),
             graveyard_objs: Vec::new(),
+            unretrieved_swept: Vec::new(),
+            unretrieved_swept_count: 0,
         }
     }
 }
@@ -1055,7 +1082,8 @@ impl Locked<'_> {
             }
             match key.kind {
                 WKind::Task => {
-                    if let Some(entry) = self.tasks.remove(&key.id) {
+                    if let Some(mut entry) = self.tasks.remove(&key.id) {
+                        self.keep_swept_unretrieved(entry.unretrieved.take());
                         self.bury_task(entry);
                     }
                 }
@@ -1072,12 +1100,40 @@ impl Locked<'_> {
         }
     }
 
+    /// Keeps the never-retrieved exception of a task entry the sweep deletes:
+    /// with every handle dead, nothing can retrieve it any more.
+    fn keep_swept_unretrieved(&mut self, description: Option<String>) {
+        let Some(description) = description else {
+            return;
+        };
+        self.unretrieved_swept_count += 1;
+        if self.unretrieved_swept.len() < self.spec().unretrieved_exceptions_named {
+            self.unretrieved_swept.push(description);
+        }
+    }
+
+    /// A Wait, Gather, Race, Cancel or Discard was given the task: its outcome
+    /// is claimed, so its exception is not reported as never retrieved (card
+    /// ki-84667a89b47a).
+    fn mark_retrieved(&mut self, key: WKey) {
+        if key.kind != WKind::Task {
+            return;
+        }
+        if let Some(task) = self.tasks.get_mut(&key.id) {
+            task.retrieved = true;
+            task.unretrieved = None;
+        }
+    }
+
     fn bury_task(&mut self, entry: TaskEntry) {
         if let Some(result) = entry.result {
             self.bury(result);
         }
         if let Some(program) = entry.program {
             self.bury(program);
+        }
+        if let Some(definition) = entry.definition {
+            self.bury(definition);
         }
     }
 
@@ -1813,10 +1869,14 @@ impl Locked<'_> {
             return;
         };
         let program = task.program.take();
+        let definition = task.definition.take();
         task.inner_boundaries = None;
         task.spawn_site = None;
         if let Some(program) = program {
             self.bury(program);
+        }
+        if let Some(definition) = definition {
+            self.bury(definition);
         }
     }
 
@@ -2190,6 +2250,11 @@ impl Locked<'_> {
             (boundaries, spawn_site)
         };
         let program = effect.getattr(pyo3::intern!(py, "program"))?.unbind();
+        // `_program_definition`, read here without calling into Python.
+        let definition = match program.bind(py).cast::<PyCall>() {
+            Ok(call) => call.get().function.get().function.clone_ref(py),
+            Err(_) => program.bind(py).get_type().into_any().unbind(),
+        };
         let priority: i64 = effect.getattr(pyo3::intern!(py, "priority"))?.extract()?;
         let daemon: bool = effect.getattr(pyo3::intern!(py, "daemon"))?.is_truthy()?;
         let tid = self.fresh_id(py);
@@ -2204,6 +2269,9 @@ impl Locked<'_> {
                 inner_boundaries: Some(boundaries),
                 spawn_site: Some(spawn_site),
                 settled: false,
+                definition: Some(definition),
+                retrieved: false,
+                unretrieved: None,
             },
         );
         self.enqueue(ReadyEntry::New { tid }, priority);
@@ -2288,6 +2356,28 @@ impl Locked<'_> {
                             None => Ok(py.None()),
                         })
                         .unwrap_or_else(|| Ok("".into_pyobject(py)?.into_any().unbind()))?;
+                    // Nothing has claimed the outcome yet: describe the
+                    // exception now, while the program and spawn site are
+                    // still held (card ki-84667a89b47a).
+                    let unretrieved = {
+                        let task = self.tasks.get(&tid).expect("checked above");
+                        if task.retrieved || error.is_instance(&cancelled_error)? {
+                            None
+                        } else {
+                            let definition = task
+                                .definition
+                                .as_ref()
+                                .map_or_else(|| py.None(), |d| d.clone_ref(py));
+                            let site = task.spawn_site.clone().flatten();
+                            Some(
+                                self.spec()
+                                    .describe_unretrieved_exception
+                                    .bind(py)
+                                    .call1((tid, definition, site, &error))?
+                                    .extract::<String>()?,
+                            )
+                        }
+                    };
                     if error.is_instance_of::<PyBaseException>() {
                         if let Ok(tb) = error.getattr("__doeff_traceback__") {
                             let entry = PyDict::new(py);
@@ -2299,6 +2389,7 @@ impl Locked<'_> {
                     }
                     let task = self.tasks.get_mut(&tid).expect("checked above");
                     task.status = Status::Failed;
+                    task.unretrieved = unretrieved;
                     if let Some(old) = task.result.replace(error.unbind()) {
                         self.bury(old);
                     }
@@ -2321,6 +2412,7 @@ impl Locked<'_> {
 
     fn on_wait(&mut self, py: Python<'_>, current: Owner, effect: &Bound<'_, PyAny>, k: KRef) -> PyResult<Outcome> {
         let wk = self.waitable_key(py, &effect.getattr(pyo3::intern!(py, "task"))?)?;
+        self.mark_retrieved(wk);
         let (status, result) = self.waitable_status(py, wk)?;
         match status {
             Status::Completed => return self.resume_now(py, k, none_or(py, result)),
@@ -2386,6 +2478,11 @@ impl Locked<'_> {
         for t in tasks.try_iter()? {
             wks.push(self.waitable_key(py, &t?)?);
         }
+        // Every task given to the Gather is claimed, also a sibling that fails
+        // after the fail-fast (asyncio.gather retrieves it too).
+        for wk in &wks {
+            self.mark_retrieved(*wk);
+        }
         let mut pending = Vec::new();
         for wk in &wks {
             let (status, result) = self.waitable_status(py, *wk)?;
@@ -2434,6 +2531,12 @@ impl Locked<'_> {
             let error = PyValueError::new_err("Race() requires at least one Task or Future to race");
             return Ok(self.throw_now(k, error.value(py).clone().into_any().unbind()));
         }
+        // Every task given to the Race is claimed, also a loser that fails
+        // after the Race was decided.
+        for t in &tasks {
+            let wk = self.waitable_key(py, t)?;
+            self.mark_retrieved(wk);
+        }
         for t in &tasks {
             let wk = self.waitable_key(py, t)?;
             let (status, result) = self.waitable_status(py, wk)?;
@@ -2479,6 +2582,10 @@ impl Locked<'_> {
             .getattr(pyo3::intern!(py, "task"))?
             .getattr(pyo3::intern!(py, "task_id"))?
             .extract()?;
+        self.mark_retrieved(WKey {
+            kind: WKind::Task,
+            id: tid,
+        });
         let status = self.tasks.get(&tid).map(|t| t.status);
         let mut callbacks = Vec::new();
         match status {
@@ -2535,6 +2642,10 @@ impl Locked<'_> {
             .getattr(pyo3::intern!(py, "task"))?
             .getattr(pyo3::intern!(py, "task_id"))?
             .extract()?;
+        self.mark_retrieved(WKey {
+            kind: WKind::Task,
+            id: tid,
+        });
         let status = self.tasks.get(&tid).map(|t| t.status);
         let mut callbacks = Vec::new();
         match status {
@@ -3097,6 +3208,28 @@ impl PySchedulerCore {
             .collect();
         let to_wait = live.iter().map(|(tid, _)| *tid).collect();
         Ok((to_cancel, to_wait))
+    }
+
+    /// `(named, total)` of the task exceptions nothing retrieved, for the
+    /// run-end warning (card ki-84667a89b47a): the swept tasks' exceptions,
+    /// then the entries still holding one, in task order.
+    fn unretrieved_exceptions(&self) -> PyResult<(Vec<String>, usize)> {
+        let locked = self.core.lock()?;
+        let mut remaining: Vec<(Tid, &String)> = locked
+            .tasks
+            .iter()
+            .filter_map(|(tid, task)| task.unretrieved.as_ref().map(|text| (*tid, text)))
+            .collect();
+        remaining.sort_by_key(|(tid, _)| *tid);
+        let total = locked.unretrieved_swept_count + remaining.len();
+        let named = locked
+            .unretrieved_swept
+            .iter()
+            .chain(remaining.into_iter().map(|(_, text)| text))
+            .take(locked.spec().unretrieved_exceptions_named)
+            .cloned()
+            .collect();
+        Ok((named, total))
     }
 }
 

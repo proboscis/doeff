@@ -191,6 +191,12 @@
 - Added single-protocol handler entrypoints for Gemini and OpenRouter:
   - `gemini_production_handler` / `gemini_mock_handler`
   - `openrouter_production_handler` / `openrouter_mock_handler`
+- `doeff-core-effects`: a spawned task's exception that nothing retrieved is no longer lost silently. When a task ends
+  with an exception and no `Wait`, `Gather`, `Race`, `Cancel` or `Discard` was ever given the task, the run still
+  returns its value, and at the end of the run one `RuntimeWarning` ("spawned task exception was never retrieved", like
+  asyncio's) names each such task: its program, where it was spawned, the exception and where it was raised. Both
+  scheduler implementations; daemon tasks included; a task ending with `TaskCancelledError` is not named
+  (docs/04-async-effects.md "Task Exceptions Nothing Retrieved", card ki-84667a89b47a).
 
 ### Deprecated
 
