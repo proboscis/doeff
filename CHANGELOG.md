@@ -14,6 +14,12 @@
   them, with its pytest tests. The program yields `HttpRequest`; run as a script it installs `http_production_handler`
   from `doeff[http]`, and the tests install a fake handler instead, so `pytest examples/github_repo` needs no network.
   The README links it from the 30-second example and from Next steps.
+- `examples/testing_without_mocks`: the complete files of the introductory post "Testing Python code without mocks":
+  one small function tested with `mock.patch` and then with doeff handlers, a production handler on SQLite, and
+  handlers that trace, retry, record and replay, and run three fetches concurrently. `pytest` in the directory needs
+  only `pip install doeff pytest`. `tools/verify_core_install.py` runs every file in a fresh core-only venv, built from
+  the checkout and, every day, from PyPI on Linux, macOS and Windows, and checks that each script prints the lines the
+  post shows.
 
 ### Changed
 

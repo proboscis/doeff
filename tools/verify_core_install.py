@@ -32,13 +32,18 @@ Python の版ごとに:
    file だけを写した dir で走らせ、偽の model の答えを印字する事を確かめる。続けて venv に pytest を足し、その dir で検の例
    (examples/test_llm_agent.py)が通る事を確かめる。どちらも OPENAI_ の環境変数を外して走らせる(model の key を読まない)。
    pytest を足すので、核の 4 個だけを見る 2〜6 の後の最後に置く(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。
+8. 紹介の記事「Testing Python code without mocks」が `pip install doeff` で走ると書く例の dir(examples/testing_without_mocks)を
+   写した dir で、script が記事の見せる行をその順に印字し、標準エラーに何も出さない事と、その dir の pytest が通る事を確かめる。
+   fanout.py は、3 つの取り寄せが並行に走った(1 つずつなら掛かる 0.6 秒より短い)事も見る。7 と同じく pytest を足すので最後に
+   置く(card ki-eeaca7016c66)。
 
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
 
 --pypi は 1 で checkout の代わりに PyPI の doeff を入れ(doeff-vm は wheel だけを受ける — 利用者の機体に Rust の道具は無い)、2 で
 doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。4・6・7 は走らせない — 期待(extra の文・試しの命令の
-答え・例の file)が checkout の物で、出した版より新しい事が在る。毎日の CI(.github/workflows/core-install-from-pypi.yml)が
-Linux・macOS・Windows で走らせる(card ki-e7b4a1b9e9f4)。
+答え・例の file)が checkout の物で、出した版より新しい事が在る。8 は走らせる — 記事は例が今日の `pip install doeff` で走ると
+約束するので、例の file が出した版より先へ進んだら(まだ出していない API を使ったら)赤にする。毎日の CI
+(.github/workflows/core-install-from-pypi.yml)が Linux・macOS・Windows で走らせる(card ki-e7b4a1b9e9f4)。
 
 終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
 """
@@ -47,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import io
 import json
 import os
@@ -232,6 +238,71 @@ LLM_EXAMPLE_SCRIPT = "llm_agent.py"
 LLM_EXAMPLE_TESTS = "test_llm_agent.py"
 # 例が偽の model(canned_reply)の答えで印字する行。
 LLM_EXAMPLE_ANSWER = "answer: No: an existing queue already does all of it, for little cost."
+
+# 紹介の記事「Testing Python code without mocks」の例の dir(card ki-eeaca7016c66)。記事は script の印字を囲みで見せ、残りの
+# file(infra.py・試験の例)をこの dir への link で指す。repo の根からの path。
+ARTICLE_EXAMPLE_DIRECTORY = Path("examples/testing_without_mocks")
+
+
+@dataclass(frozen=True)
+class ArticleScript:
+    """記事の例の script 1 回の走らせ方と、記事が見せる印字。"""
+
+    # dir の中の file の名
+    name: str
+    # 標準出力の行の全部(timed なら、最後の秒の行の前の全部)
+    lines: tuple[str, ...]
+    # 最後の行に掛かった秒を印字し、並行に走ったか(SEQUENTIAL_SECONDS より短いか)を見るか
+    timed: bool = False
+    # 子に渡す DOEFF_SCHEDULER の値(None は渡さない — 入った版の既定の scheduler。子の環境は DOEFF_* を外す)
+    scheduler: str | None = None
+
+    def label(self) -> str:
+        """印字の名(読み手が打つ命令の形)。"""
+        return (
+            self.name
+            if self.scheduler is None
+            else f"{SCHEDULER_VARIABLE}={self.scheduler} {self.name}"
+        )
+
+    def environment(self, base: dict[str, str]) -> dict[str, str]:
+        """子の環境 — base に、選んだ scheduler を足した物。"""
+        return base if self.scheduler is None else {**base, SCHEDULER_VARIABLE: self.scheduler}
+
+
+# scheduler を選ぶ環境変数(README と記事が書く切り替え)。
+SCHEDULER_VARIABLE = "DOEFF_SCHEDULER"
+
+
+_FANOUT_TITLES = (
+    "['a.example', 'b.example', 'c.example']",
+    "['A.EXAMPLE', 'B.EXAMPLE', 'C.EXAMPLE']",
+)
+# 記事の囲みと同じ行(開発の環境で同じ行を比べる検は tests/test_examples_run.py の ARTICLE_STDOUT)。記事は fanout.py の切り替えを
+# DOEFF_SCHEDULER=rust と書くので、その選びでも走らせる。
+ARTICLE_SCRIPTS = (
+    ArticleScript(
+        "production.py", ("SMTP -> grace@example.com: Welcome, Grace!", "Welcome, Grace!")
+    ),
+    ArticleScript(
+        "trace.py",
+        (
+            "effect: LoadUser(user_id=1)",
+            "effect: SendMail(to='grace@example.com', body='Welcome, Grace!')",
+            "SMTP -> grace@example.com: Welcome, Grace!",
+            "Welcome, Grace!",
+        ),
+    ),
+    ArticleScript("retry.py", ("38.0",)),
+    ArticleScript("record_replay.py", ("True 2 0",)),
+    ArticleScript("fanout.py", _FANOUT_TITLES, timed=True),
+    ArticleScript("fanout.py", _FANOUT_TITLES, timed=True, scheduler="rust"),
+)
+# fanout.py の 3 つの取り寄せは各 0.2 秒 — 1 つずつ走れば 0.6 秒かかる。
+SEQUENTIAL_SECONDS = 0.6
+ARTICLE_TIMED_LINE = re.compile(r"(\d+\.\d+) s")
+# pytest -q の最後の行(失敗・skip・警告の無い形)。
+PASSED_SUMMARY = re.compile(r"\d+ passed in \S+")
 
 
 @dataclass(frozen=True)
@@ -877,6 +948,111 @@ def check_llm_example(installed: Installed, place: Path, timeout: float) -> list
     return [failure for failure in (script_failure, tests_failure) if failure is not None]
 
 
+def article_script_failure(
+    script: ArticleScript, result: subprocess.CompletedProcess[str]
+) -> str | None:
+    """記事の例の script 1 回の結末が、0 で終わり、標準エラーが空で、記事の見せる行をその順に印字した形でない事を言う文(合えば None)。
+
+    timed の script は、最後の行が掛かった秒で、SEQUENTIAL_SECONDS より短い事も見る。
+    """
+    printed = result.stdout.splitlines()
+    shown = printed[:-1] if script.timed and printed else printed
+    timed = ARTICLE_TIMED_LINE.fullmatch(printed[-1]) if script.timed and printed else None
+    if result.returncode != 0 or result.stderr:
+        problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
+    elif shown != list(script.lines):
+        problem = f"記事の見せる行 {list(script.lines)!r} をその順に印字しなかった"
+    elif script.timed and timed is None:
+        problem = "最後の行に掛かった秒(`0.20 s` の形)を印字しなかった"
+    elif timed is not None and float(timed.group(1)) >= SEQUENTIAL_SECONDS:
+        problem = f"取り寄せが並行に走らなかった({timed.group(1)} 秒 — 1 つずつなら {SEQUENTIAL_SECONDS} 秒)"
+    else:
+        return None
+    return f"{script.label()} が{problem}\n{result.stdout}{result.stderr}"
+
+
+def article_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
+    """記事の例の dir の pytest の結末が、0 で終わり、最後の行が失敗も skip も警告も無い passed の要約の形でない事を言う文(合えば None)。"""
+    lines = result.stdout.splitlines()
+    if result.returncode == 0 and lines and PASSED_SUMMARY.fullmatch(lines[-1]):
+        return None
+    return (
+        f"{ARTICLE_EXAMPLE_DIRECTORY} の pytest が、終了コード 0 で全部通らなかった(終了コード {result.returncode})\n"
+        f"{result.stdout}{result.stderr}"
+    )
+
+
+def _article_run_failure(
+    installed: Installed,
+    directory: Path,
+    arguments: Sequence[str],
+    environment: dict[str, str],
+    judge: Callable[[subprocess.CompletedProcess[str]], str | None],
+    timeout: float,
+) -> str | None:
+    """記事の例の dir で venv の python を 1 回走らせ、judge が言う落ちた訳か、時間切れの訳を返す(通れば None)。
+
+    -I を付けない — 例の file は同じ dir の file を import する(trace.py が production.py を読む)ので、読み手が打つ
+    `python trace.py` と同じく、script の dir が sys.path の頭に要る(-I は -P を含み、それを外す)。dir は repo の外の写しなので、
+    checkout の doeff を拾わない。
+    """
+    try:
+        result = subprocess.run(
+            [str(installed.python), *arguments],
+            cwd=directory,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return f"python {' '.join(arguments)} が {timeout} 秒で終わらなかった"
+    return judge(result)
+
+
+def check_article_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
+    """紹介の記事の例の dir を核だけの venv で走らせ、pytest を足して dir の検を走らせ、落ちた事を言う文の列を返す(通れば空)。
+
+    読み手と同じく、例の dir を写した所で走らせる。警告も誤りとして扱う(記事は印字を囲みのまま見せる)。pytest を venv に
+    足すので、核の 4 個だけを見る確かめの後に呼ぶ。
+    """
+    directory = place / ARTICLE_EXAMPLE_DIRECTORY.name
+    shutil.copytree(
+        REPO / ARTICLE_EXAMPLE_DIRECTORY,
+        directory,
+        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"),
+    )
+    print(
+        f"  紹介の記事の例({ARTICLE_EXAMPLE_DIRECTORY} — 記事が pip install doeff で走ると書く物)",
+        flush=True,
+    )
+    environment = verify_release_install.example_environment(place)
+    failures: list[str] = []
+    for script in ARTICLE_SCRIPTS:
+        failure = _article_run_failure(
+            installed,
+            directory,
+            ["-W", "error", script.name],
+            script.environment(environment),
+            functools.partial(article_script_failure, script),
+            timeout,
+        )
+        print_result(f"{script.label()} が記事の見せる行を印字する", failure)
+        failures.extend([] if failure is None else [failure])
+    _uv(["pip", "install", "--python", str(installed.python), "pytest"], place)
+    tests_failure = _article_run_failure(
+        installed,
+        directory,
+        ["-m", "pytest", "-q", "-W", "error", "-p", "no:cacheprovider"],
+        environment,
+        article_tests_failure,
+        timeout,
+    )
+    print_result("核の 4 個と pytest だけで、例の dir の pytest が全部通る", tests_failure)
+    return [*failures, *([] if tests_failure is None else [tests_failure])]
+
+
 def check_python(python_request: str, work: Path, timeout: float, source: Source) -> list[str]:
     """Python の版 1 つで、新しい venv に核だけを入れて確かめ、落ちた事を言う文の列を返す。"""
     place = work / f"py{python_request.replace('+', '-')}"
@@ -897,11 +1073,13 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
     )
     if isinstance(source, PyPI):
         # extra の文・試しの命令・LLM の例の期待は checkout の物で、出した版より新しい事が在る(README は入った wheel の物
-        # なので版に合う)。
+        # なので版に合う)。記事の例は出した版で走ると記事が約束する。
         return [
             *problems,
             *check_readmes(installed, place, timeout),
             *check_public_names(installed, place, timeout),
+            # venv に pytest を足すので最後に置く。
+            *check_article_examples(installed, place, timeout),
         ]
     return [
         *problems,
@@ -911,6 +1089,7 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
         *check_demo(installed, place, timeout),
         # venv に pytest を足すので最後に置く。
         *check_llm_example(installed, place, timeout),
+        *check_article_examples(installed, place, timeout),
     ]
 
 
@@ -926,7 +1105,8 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "核の 4 個だけを入れた新しい venv で、README の Python の例と、その例の import が型の check で公開の名と読まれる事と、"
-            "Hy・HTTP の extra を言う文と、試しの命令 python -m doeff demo と、LLM の agent の例とその pytest の検の例を確かめる。"
+            "Hy・HTTP の extra を言う文と、試しの命令 python -m doeff demo と、LLM の agent の例とその pytest の検の例と、"
+            "紹介の記事の例を確かめる。"
         ),
     )
     parser.add_argument(
@@ -940,7 +1120,8 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         "--pypi",
         metavar="VERSION",
         help=(
-            f"checkout の代わりに PyPI の doeff の版を入れる({LATEST} は最新)— 入った版の README の例と型の check だけを確かめる"
+            f"checkout の代わりに PyPI の doeff の版を入れる({LATEST} は最新)— 入った版の README の例と型の check と、"
+            "紹介の記事の例だけを確かめる"
         ),
     )
     parser.add_argument("--keep", action="store_true", help="終わった後も作業の dir を消さない")
