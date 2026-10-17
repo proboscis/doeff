@@ -1,10 +1,12 @@
 """Judge ⇄ HTTP の写し(純粋)。2 つの通信の形と、答えの読み。"""
 
+import hashlib
 import json
 
 import pytest
 from doeff_jev import JevTarget, cache_key, parse, prepare
-from doeff_system_one import Judge, JudgeError, choice, noul, score
+from doeff_jev.wire import IMAGES_HEADER
+from doeff_system_one import Image, Judge, JudgeError, choice, noul, score
 
 DIRECT = JevTarget("https://api.typesafe.ai/v1/systemone", "jev-latest", "direct", "k-direct", "default")
 GATEWAY = JevTarget("https://ai-gateway.vercel.sh/v4/ai/evaluation-model", "typesafe-ai/jev", "gateway", "k-gw", "default")
@@ -96,3 +98,38 @@ def test_cache_key_depends_on_target_state_and_questions() -> None:
     assert cache_key(DIRECT, a) != cache_key(DIRECT, c)
     assert cache_key(DIRECT, a) != cache_key(GATEWAY, a)
     assert cache_key(DIRECT, a).startswith("jev:")
+
+
+def test_direct_request_carries_images_and_the_images_header() -> None:
+    poster = Image(format="png", data_base64="iVBORw0KGgo=")
+    judge = Judge(state={"poster": "p-1"}, questions={"n": noul("Is `poster` text only?")}, assets={"p-1": poster})
+    prepared = prepare(DIRECT, judge)
+    assert prepared.body["assets"] == {"p-1": {"type": "image", "format": "png", "data_base64": "iVBORw0KGgo="}}
+    assert prepared.headers[IMAGES_HEADER] == "true"
+    plain = prepare(DIRECT, Judge(state={"x": 1}, questions={"n": noul("x")}))
+    assert "assets" not in plain.body
+    assert IMAGES_HEADER not in plain.headers
+    with pytest.raises(JudgeError, match="unsupported"):
+        prepare(GATEWAY, judge)
+
+
+def test_images_enter_the_cache_key_only_when_present() -> None:
+    questions = {"n": noul("Is `poster` text only?")}
+    a = Judge(state={"poster": "p-1"}, questions=questions, assets={"p-1": Image(format="png", data_base64="AAAA")})
+    b = Judge(state={"poster": "p-1"}, questions=questions, assets={"p-1": Image(format="png", data_base64="BBBB")})
+    assert cache_key(DIRECT, a) != cache_key(DIRECT, b)
+    plain = Judge(state={"poster": "p-1"}, questions=questions)
+    legacy = "jev:" + hashlib.sha256(json.dumps({
+        "url": DIRECT.base_url, "model": DIRECT.model, "state": plain.state,
+        "questions": {name: q.as_payload() for name, q in plain.questions.items()},
+    }, ensure_ascii=False, sort_keys=True, default=repr).encode("utf-8")).hexdigest()
+    assert cache_key(DIRECT, plain) == legacy
+
+
+def test_image_and_judge_refuse_malformed_assets() -> None:
+    with pytest.raises(ValueError):
+        Image(format="webp", data_base64="AAAA")
+    with pytest.raises(ValueError):
+        Image(format="png", data_base64="")
+    with pytest.raises(TypeError):
+        Judge(state="s", questions={"n": noul("x")}, assets={"p": {"format": "png"}})  # type: ignore[dict-item]
