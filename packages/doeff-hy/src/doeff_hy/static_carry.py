@@ -53,6 +53,7 @@ import math
 import os
 import re
 import subprocess
+import sys
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -460,11 +461,12 @@ class Environment:
 
 def semantics_digest(functions: Iterable[Callable[..., object]]) -> str:
     """pyright の診断を作って .hy の位置へ戻す関数の source と、この module の source の digest を作るため(どちらかが替われば、
-    前の回の診断を運ばない)。"""
+    前の回の診断を運ばない)。この module の source も関数と同じく inspect で読む(置き場の path から file を読まない — 検
+    tests/test_static_cache.py の test_doeff_hy_sources_do_not_read_their_place)。"""
     return _digest(
         (
             *(inspect.getsource(function) for function in functions),
-            Path(__file__).read_text(encoding="utf-8"),
+            inspect.getsource(sys.modules[__name__]),
         )
     )
 
