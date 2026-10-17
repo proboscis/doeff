@@ -363,10 +363,11 @@ See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 The add-on packages (LLM clients, agents, workflows and more) live in
 [`packages/`](https://github.com/proboscis/doeff/tree/main/packages).
 
-`doeff-agents` 0.1.1 on PyPI was built for doeff 0.4 and does not work with doeff 0.5 or later — importing
-its handlers fails with `ImportError: cannot import name 'WithHandler' from 'doeff'`. To keep using
-that release, pin the doeff 0.4 line: `pip install doeff-agents "doeff<0.5"`. The `doeff-agents` in
-this repository ([`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md),
+`doeff-agents` on PyPI (0.1.1 and 0.1.2) was built for doeff 0.4 and does not work with doeff 0.5 or
+later — importing its handlers fails with `ImportError: cannot import name 'WithHandler' from 'doeff'`.
+0.1.2 is the same code as 0.1.1 and declares `doeff<0.5`, so `pip install doeff-agents` installs it
+together with the doeff 0.4 line; it cannot share an environment with doeff 0.5 or later. The
+`doeff-agents` in this repository ([`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md),
 with its CLI) is not published to PyPI.
 
 ## Repository map
