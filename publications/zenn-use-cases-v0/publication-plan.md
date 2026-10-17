@@ -81,14 +81,16 @@ uv run --no-sync python publications/zenn-use-cases-v0/render_release.py doeff-m
 ## 公開の準備と手順
 
 1. `export_zenn.py`で、公開順の表の公開予定・公開済みの記事を、Zennの記事を置くリポジトリの根へ書き出す。下書きの行は書き出さない。`articles/<slug>.md`と、本文が参照する`images/`の画像が出来る。編集用の原稿は引き続きこのディレクトリを正本とする。
-2. 各記事のコード・ハンドラ・期待結果を確認し、`zenn-check/check.mjs`で書き出しを読み、崩れが0個であることを確かめる。
+2. 各記事のコード・ハンドラ・期待結果を確認し、`zenn-check/check.mjs`で書き出しを読み、`zenn-check/screenshot.mjs`でプレビューの画面を記事ごとに写して、どちらも崩れが0個であることを確かめる。
 
-書き出しと確かめは次の3行で行う。`<出力先>`は、記事を置くリポジトリの根である。
+書き出しと確かめは次の5行で行う。`<出力先>`は記事を置くリポジトリの根、`<写しの置き場>`は記事ごとの写し(`<slug>.png`)を書くディレクトリである。
 
 ```bash
 uv run --no-sync python publications/zenn-use-cases-v0/export_zenn.py <出力先>  # 公開順の表の記事を、Zennのarticles/とimages/へ書き出す。
 npm ci --prefix publications/zenn-use-cases-v0/zenn-check  # 版を固定したzenn-cliとzenn-modelを入れる。
 node publications/zenn-use-cases-v0/zenn-check/check.mjs <出力先> --online  # zenn-cliのプレビューで読み、崩れを数える。0個なら終了コード0。
+npx --prefix publications/zenn-use-cases-v0/zenn-check playwright install chromium  # 写しを撮るchromiumを入れる(agoraの会話では要らない)。
+node publications/zenn-use-cases-v0/zenn-check/screenshot.mjs <出力先> <写しの置き場>  # プレビューの画面を写し、画面の崩れを数える。agoraの会話では`agora-browser node …`で走らせる。
 ```
 
 | 書き出しの項目 | 書き出す値 |
@@ -104,8 +106,9 @@ node publications/zenn-use-cases-v0/zenn-check/check.mjs <出力先> --online  #
 | front matterと本文の誤り | プレビューのサーバーが返す記事を、プレビュー画面と同じzenn-modelの検査に通す |
 | 画像の欠け | Markdownの画像の数と描いた画像の数を比べ、各画像をプレビューのサーバーから読む |
 | リンク切れ | 記事内の`#…`は見出しを探す。相対パスは切れと数える。`--online`では外のURLを開き、GitHubの`#…`は見出しを探す |
-| Markdownの崩れ | コードの外に`](`・`![`・`:::`が文字のまま残っていないかを見る |
+| Markdownの崩れ | コードの外に`](`・`![`・`:::`・`**`・`` ` ``が文字のまま残っていないかを見る。`**`は、日本語の括弧に接した太字(例 `**「語」**です`)をZennが太字にしない時に残る |
 | 秘密の形 | zenn-cliと同じsecretlintの推奨の規則で、記事のMarkdownを読む |
+| 画面の崩れ | `screenshot.mjs`がプレビューの画面をchromiumで開き、検査の警告の行・本文の赤字のエラー(無い画像はこれになる)・読み終えても幅が0の画像(壊れた画像のファイル)を数える |
 3. 公開開始日・時刻と、利用するZennアカウント・連携先を確定してから公開または予約する。
 4. Zennの公開状態とURLを確認し、上の公開順の表の公開状態を「公開済み <URL>」へ更新する。
 5. 読者からの質問や分かりにくかった点を記録し、次の回と11本目からの題材へ反映する。
@@ -125,7 +128,7 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 - [x] 5〜10本目の下書きを仕上げ基準に揃え、公開状態を公開予定にした。5・7・8・10本目は新しいファイルに書いた(2026-10-17)。
 - [x] 10本の各回の参考に、前の回と次の回へのリンクを置いた。各回の確かめのスクリプト(`reviews/<slug>-check.py`)を`verify_examples.py`から呼ぶ(2026-10-17)。
 - [ ] 各回の図を揃える。`images/zenn-use-cases-v0/generated/`のPNG 47枚はリポジトリに入っておらず、週1の3枚、週3と週4の各2枚を作り直した(2026-10-16)。
-- [x] Zennの形への書き出しと確かめの道具を作った。最初の4本を書き出し、崩れ0個を確かめた(2026-10-16・zenn-cli 0.5.6)。
+- [x] Zennの形への書き出しと確かめの道具を作った。最初の4本を書き出し、崩れ0個を確かめた(2026-10-16・zenn-cli 0.5.6)。連載10本を書き出し、`check.mjs`と`screenshot.mjs`で崩れ0個を確かめた。10本の図22枚はリポジトリにある(2026-10-17)。
 - [ ] 記事を置くリポジトリを決め、書き出しを置く。
 - [x] 最初の4本を上の仕上げ基準で最終確認する。週1は2026-10-16に確認した。1〜5本目を通し読みで照らし、用語・前後の回・導入の案内を直した(2026-10-17・[記録](reviews/readthrough-1-5.md))。
 - [ ] 開始日を決める。
