@@ -30,7 +30,7 @@ MODULE = """\
 (defk probe-rollouts [state]
   {:pre [(: state ClusterState)] :post [(: % (get list str))] :tags {:context "probe" :role "judgment"}}
   "状態の Rollout の新の相手の名を読む(状態の欄の要素の型が読める)。"
-  (lfor r (.values state.rollouts) r.spec.to-target.name))
+  (lfor r (.rows state.rollouts) r.spec.to-target.name))
 
 (defk probe-target [name]
   {:pre [(: name str)] :post [(: % RolloutTarget)] :tags {:context "probe" :role "judgment"}}

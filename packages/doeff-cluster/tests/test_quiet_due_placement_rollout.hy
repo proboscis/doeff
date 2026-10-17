@@ -72,7 +72,7 @@
   (<- planned tuple (plan-rollouts ticked ROLLOUT-START (ClusterTiming) (ClusterNaming)))
   (assert (= (get planned 1) []) planned)
   (val state (stamp ticked (get planned 0) ROLLOUT-ACTOR ROLLOUT-START (ClusterTiming)))
-  (assert (= (. (get state.rollouts "to-b") status phase) "WaitingNewReady") (get state.rollouts "to-b"))
+  (assert (= (. (.row state.rollouts "to-b") status phase) "WaitingNewReady") (.row state.rollouts "to-b"))
   state)
 
 
@@ -80,21 +80,21 @@
   ;; Rollout: WaitingNewReady の Rollout で、rollout-due は段の時間切れ ready-timeout-from を返し、本番の判断 plan-rollouts は
   ;; その刻の 1 ms 前は待ったまま、その刻に戻し(RollingBack)へ入る。
   (<- state ClusterState (waiting-rollout))
-  (val row (get state.rollouts "to-b"))
+  (val row (.row state.rollouts "to-b"))
   (<- answer (| DueAt DueNow DueNever) (rollout-due state ROLLOUT-START (ClusterTiming) (ClusterNaming)))
   (assert (= answer (DueAt :at (ready-timeout-from row.spec row.status.phase-since-ms))) #(answer row.status))
   (val due answer.at)
   (<- before tuple (plan-rollouts state (- due 1) (ClusterTiming) (ClusterNaming)))
   (<- at tuple (plan-rollouts state due (ClusterTiming) (ClusterNaming)))
-  (assert (= (. (get (. (get before 0) rollouts) "to-b") status phase) "WaitingNewReady") (get before 0))
-  (assert (= (. (get (. (get at 0) rollouts) "to-b") status phase) "RollingBack") (get at 0)))
+  (assert (= (. (.row (. (get before 0) rollouts) "to-b") status phase) "WaitingNewReady") (get before 0))
+  (assert (= (. (.row (. (get at 0) rollouts) "to-b") status phase) "RollingBack") (get at 0)))
 
 
 (deftest test-the-rollout-due-is-the-deadline-itself-without-a-rollout-interval
   ;; Rollout の歩は毎歩回る(#3868)ので、期限の 500 ms 前の歩の後の rollout-due は期限ちょうどを返す(1 秒の格子へ遅らせない)。
   ;; 期限の刻の歩はその期限を判じたので、その歩の後は期限の刻より後だけを返す(期限の刻の答えに戻らない)。
   (<- state ClusterState (waiting-rollout))
-  (val row (get state.rollouts "to-b"))
+  (val row (.row state.rollouts "to-b"))
   (val due (ready-timeout-from row.spec row.status.phase-since-ms))
   (<- early (| DueAt DueNow DueNever) (rollout-due state (- due 500) (ClusterTiming) (ClusterNaming)))
   (assert (= early (DueAt :at due)) #(early due))
