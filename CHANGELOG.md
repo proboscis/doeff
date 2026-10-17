@@ -7,7 +7,7 @@
 ### Changed
 
 - `doeff`, `doeff-core-effects`: `pip install doeff` installs only the four core distributions — `doeff`, `doeff-vm`,
-  `doeff-core-effects` and `frozendict` (4 distributions and 3.4 MB, from 19 and 19.5 MB in 0.5.0). `doeff-hy` (with
+  `doeff-core-effects` and `frozendict` (4 distributions and 3.5 MB, from 19 and 19.5 MB in 0.5.0). `doeff-hy` (with
   `doeff-hy-pytest`, `hy` and `pydantic`) and `httpx` move to extras: `hy` for the effects and handlers written in Hy,
   the cache, `doeff run --hy` and `.hy` programs; `http` for the HTTP client handler (Hy and httpx); `all` for both, the
   set 0.5.0 installed by default. `doeff-core-effects` has the same three extras, and its `http-server` and `postgres`
