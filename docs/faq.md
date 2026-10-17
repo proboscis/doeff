@@ -120,9 +120,9 @@ it does: keep the loop in plain Python and yield effects around it.
 - The other Python effect libraries measured: effect 1.1.0 takes 12.7 µs per effect, effectful
   0.4.0 57.9 µs.
 - Many tasks: the Rust scheduler costs about 17 µs of CPU per spawned task, asyncio 11 µs.
-  `pip install doeff` installs 0.6.0, whose `scheduled()` still runs the Python scheduler (about
-  150 µs per task). Select the Rust one with `DOEFF_SCHEDULER=rust` or
-  `scheduled(program, implementation="rust")`; it is the default from the next release
+  `pip install doeff` installs 0.7.0, whose `scheduled()` runs the Rust scheduler by default (up
+  to 0.6.0 it ran the Python one, about 150 µs per task). Select the Python one with
+  `DOEFF_SCHEDULER=python` or `scheduled(program, implementation="python")`
   ([Rust Scheduler](25-rust-scheduler.md)).
 
 [Performance](../README.md#performance) has every number with its p90, the machine and the method.
@@ -254,8 +254,9 @@ No. `pip install doeff` installs no Hy, and the README's Python examples run wit
 
 Judge from these facts:
 
-- doeff is at 0.6.0, and versions before 1.0 change the API: code written for 0.4 does not run on
-  0.5 (`WithHandler` is gone from `doeff`), and 0.6.0 changed what `pip install doeff` installs.
+- doeff is at 0.7.0, and versions before 1.0 change the API: code written for 0.4 does not run on
+  0.5 (`WithHandler` is gone from `doeff`), 0.6.0 changed what `pip install doeff` installs, and
+  0.7.0 changed the default scheduler to the Rust one.
   The [changelog](../CHANGELOG.md) lists each change. Pin the version you test with.
 - One person maintains it, and uses it in their own projects.
 - Each push to `main` and each pull request runs the tests of the core packages on Linux with
@@ -270,7 +271,7 @@ Judge from these facts:
 | --- | --- | --- | --- | ---: |
 | [effect](https://github.com/python-effect/effect) 1.1.0 (2019) | generators that yield `Effect(...)` | listing the expected effects and their answers in order | an `AssertionError` | 12.7 |
 | [effectful](https://github.com/BasisResearch/effectful) 0.4.0 | plain functions that call `@defop` operations | a dict of handlers | no error: the call returns a symbolic term | 57.9 |
-| doeff 0.6.0 | generators that yield effects | installing one handler per effect | an `UnhandledEffect` error | 3.0 to 4.9 |
+| doeff 0.7.0 | generators that yield effects | installing one handler per effect | an `UnhandledEffect` error | 3.0 to 4.9 |
 
 - In the benchmark of many tasks, effect's `parallel()` runs the effects one by one, and effectful
   has no scheduler to measure.

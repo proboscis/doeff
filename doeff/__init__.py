@@ -247,7 +247,7 @@ if not TYPE_CHECKING:
         "default_async_handlers", "compose handlers by calling handler(program)"
     )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 # Handlers are imported from these modules, not from doeff. The names they hold are the

@@ -32,7 +32,7 @@ def test_the_plugin_lives_in_a_distribution_without_hy_sources() -> None:
     entry_points = _project("doeff-hy-pytest")["entry-points"]
     assert entry_points["pytest11"] == {"doeff_hy": "doeff_hy_pytest"}
     assert not list((PACKAGES / "doeff-hy-pytest" / "src").rglob("*.hy"))
-    # 依存は版の系の指定(>=0.6.0,<0.7 の形 — tests/test_core_packages_version.py)を伴うので、PEP 508 の名で比べる。
+    # 依存は版の系の指定(>=0.7.0,<0.8 の形 — tests/test_core_packages_version.py)を伴うので、PEP 508 の名で比べる。
     assert "doeff-hy-pytest" in {
         Requirement(line).name for line in _project("doeff-hy")["dependencies"]
     }
