@@ -1,7 +1,7 @@
 # 25. Rust の scheduler
 
 `scheduled()` の scheduler(Spawn・Wait・Gather・Race・Cancel・Discard・Semaphore・Promise・
-ExternalPromise)は Rust の版と Python の版の 2 つを持つ。意味は同じで、既定は Python の版(Rust の版は選んで使う)。
+ExternalPromise)は Rust の版と Python の版の 2 つを持つ。意味は同じで、既定は Rust の版(Python の版は選んで使う)。
 Rust の版は `packages/doeff-vm/src/scheduler.rs`、Python の版は
 `packages/doeff-core-effects/doeff_core_effects/scheduler.py` の `_scheduled_python`。
 
@@ -10,35 +10,40 @@ Rust の版は `packages/doeff-vm/src/scheduler.rs`、Python の版は
 ```python
 from doeff_core_effects.scheduler import scheduled
 
-run(scheduled(main()))                            # 既定(DEFAULT_IMPLEMENTATION = "python")
-run(scheduled(main(), implementation="rust"))    # この呼び出しだけ Rust の版
+run(scheduled(main()))                              # 既定(DEFAULT_IMPLEMENTATION = "rust")
+run(scheduled(main(), implementation="python"))    # この呼び出しだけ Python の版
 ```
 
 ```sh
-DOEFF_SCHEDULER=rust python app.py                # process 全体を Rust の版にする
+DOEFF_SCHEDULER=python python app.py                # process 全体を Python の版にする
 ```
 
 決まる順は「引数 → 環境変数 `DOEFF_SCHEDULER` → `DEFAULT_IMPLEMENTATION`」。
 環境変数は `scheduled()` を呼ぶたびに読むので、テストでは `monkeypatch.setenv` で切り替えられる。
 `python` / `rust` 以外の値は `ValueError` になる。
-Rust の版を選んだのに、読み込んだ Rust の拡張が古くて scheduler を持たない時は、黙って Python の版へ
-落とさず `ImportError`(Rust の拡張を build し直す、と名指す)にする。
+Rust の版を選んだ(既定を含む)のに、読み込んだ Rust の拡張が古くて scheduler を持たない時は、黙って Python の版へ
+落とさず `ImportError`(Rust の拡張を build し直す、または `DOEFF_SCHEDULER=python`、と名指す)にする。
 
-## 既定を Python の版にしている理由と、Rust の版へ切り替える条件
+## 既定を Rust の版にした理由と、Python の版を選ぶ時
 
-- 決めたこと(2026-09-23・元に戻せる決定): この変更では既定を `"python"` のままにする。
-  Rust の版は `DOEFF_SCHEDULER=rust` か `implementation="rust"` で選ぶ。
-- 理由: 既定を `"rust"` にすると、Python の source だけを本線に追随して Rust の拡張を build し直さない
-  環境(本線を追随する主 checkout を使う Mac の agentd など)で、古い拡張に scheduler が無いため
-  `scheduled()` が `ImportError` になり、本番の agent が止まりうる。
-- 意味が同じことの確認は済んでいる: scheduler に関係するテスト 1,382 件(scheduler・Cancel・Semaphore・
-  外部 Promise・Await・doeff-time の仮想の時計・doeff-agents・doeff-conductor・doeff-traverse ほか)と、
-  下流の agora-controllers の worker のテスト 100 件が、両方の版で 1 件ずつ同じ結果になった
-  (合格・不合格・skip の組が完全に一致)。速さは下の測定のとおり 3.7〜12 倍。
-- 既定を `"rust"` へ切り替える条件: 本番の image・pool の agentd・会社の Mac と個人の Mac の agentd の
-  それぞれで、Rust の拡張がこの変更以降の版で build し直されたことを確かめる。
-  切り替えは `DEFAULT_IMPLEMENTATION` を `"rust"` にする 1 行を、この変更とは別の着地で出す。
-- 切り替えた後に戻す時(どれも元に戻せる):
+- 決めたこと(2026-10-17・元に戻せる決定): 既定を `"rust"` にする。task 1 個の CPU の時間が約 9 分の 1 になり
+  (下の「既定を替えた時の測り」)、多くの task を回す時に asyncio の 1.4〜1.5 倍まで縮む。
+- 2026-09-23 の決め(既定を `"python"` に留める)の理由は、Python の source だけを本線に追随して Rust の拡張を
+  build し直さない環境で `scheduled()` が `ImportError` になる事だった。PyPI の 0.5.0 以降の doeff-vm の wheel と、
+  `make sync`(`uv sync`)で入れた checkout は Rust の scheduler を持つ。古い拡張のままの checkout は
+  `ImportError` の文に従って build し直すか、`DOEFF_SCHEDULER=python` を置く。
+- 意味が同じことの確認: 2026-09-23 に、scheduler に関係するテスト 1,382 件(scheduler・Cancel・Semaphore・外部 Promise・
+  Await・doeff-time の仮想の時計・doeff-agents・doeff-conductor・doeff-traverse ほか)と下流の worker のテスト 100 件が、
+  両方の版で 1 件ずつ同じ結果になった(合格・不合格・skip の組が完全に一致)。既定を替えた後は、版を名指さない
+  テストが Rust の版で走る(日次の全体の検が両方の版の違いを拾う)。版に依る振る舞いのテストは版を名指す。
+- Python の版を選ぶ時:
+  1. 測りの口 `set_scheduler_trace` の出来事を読む時(歩の積算の答え手 `step-tally-handler` の
+     `OpenStepTally`・`OpenTaskTally` を含む)。出来事を出すのは Python の版だけで、sink を据えたまま Rust の版を
+     組むと `scheduled()` が `RuntimeError` で断る。Rust の版を組んだ後に sink を据えた(窓を開けた)時は、
+     出来事が来ないので歩は 0 のまま数えられる — 歩を数える process は Python の版を名指す。
+  2. scheduler の中を pdb で 1 行ずつ追う時(Rust の版の判断は Rust の中で、Python の frame が無い)。
+  3. Rust の拡張を build し直せない checkout を急いで動かす時。
+- 選び方と戻し方(どれも元に戻せる):
   1. 1 つの process だけ: `DOEFF_SCHEDULER=python`。
   2. 1 つの呼び出しだけ: `scheduled(..., implementation="python")`。
   3. 既定そのもの: `scheduler.py` の `DEFAULT_IMPLEMENTATION` を `"python"` に戻す。
@@ -168,3 +173,19 @@ native の標本(macOS の `sample`)と Python の標本(`sys._current_frames`)�
   保つため Python に残した。
 - **handle の生成**: `Task(...)`・`Promise(...)` は下流が子 class を作る Python の class なので、
   生成は Python の呼び出しのまま(1 回あたり 0.1〜0.3 µs)。
+
+### 既定を替えた時の測り
+
+道具: `benchmarks/compare_libraries.py --runs 30 --library python --library doeff`。`scheduled(body)` を版を名指さずに
+呼ぶ case(`default = <版> scheduler`)を、既定を替える前と後の同じ木で測った。task 1 個あたりの CPU の µs の中央
+(括弧は p90)。Linux の 36 論理 CPU(load average 96〜110 の混んだ機体)、free-threaded の Python 3.14.3、2026-10-17。
+
+| 流れ | 替える前(既定 = Python の版) | 替えた後(既定 = Rust の版) | 倍 | asyncio |
+|---|---:|---:|---:|---:|
+| spawn_gather(何もしない task 1,000 個を出して集める) | 153.5(165.5) | 19.4(27.4) | 7.9 | 11.8〜11.9 |
+| fan_out_wait(1,000 個が 1 つの約束を待ち、一度に起きる) | 199.5(223.7) | 32.6(59.4) | 6.1 | 16.7〜17.4 |
+
+- 既定は asyncio の 13 倍と 12 倍から、1.6 倍と 1.9 倍になった。
+- 同じ走りで版を名指した case の中央は、Python の版 149〜152 と 193〜196、Rust の版 17.5〜19.2 と 30.2〜31.9。
+  既定の case は名指した case と同じ桁で、既定の選びの費用は見えない。
+- 混んでいない機体(load average 27〜30)では、Rust の版は spawn_gather 12.5・fan_out_wait 19.9 だった。

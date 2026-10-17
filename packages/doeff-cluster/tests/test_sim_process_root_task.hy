@@ -95,7 +95,8 @@
 
 (deftest test-each-process-names-its-root-task-and-the-tree-sums-only-its-own-cpu []
   ;; process の記録に根の task の id が在り、U6 の表と組むと、報告するだけの job の木の CPU は計算する job の木の 1/10 未満。
-  (<- seen RootReading (sim-cluster :notice-broker (MemoryBroker) (burn-and-idle sim-foundation)
+  ;; task の積算の窓は Python の scheduler の測りの口の出来事で数える — sim が組む scheduler を Python の版に名指す(既定の Rust の版は出来事を出さない)。
+  (<- seen RootReading (sim-cluster :notice-broker (MemoryBroker) :implementation "python" (burn-and-idle sim-foundation)
                                     (with-handlers [step-tally-handler] (read-roots))))
   (assert (is-not seen.burner.root-task None) seen.burner)
   (assert (is-not seen.idler.root-task None) seen.idler)

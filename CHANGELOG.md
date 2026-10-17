@@ -4,6 +4,26 @@
 
 ### Changed
 
+- `doeff-core-effects`: `scheduled()` runs the Rust scheduler by default (it was the Python one). Both implementations
+  handle the same effects with the same semantics, and the Rust one uses 6 to 8 times less CPU per task
+  (`benchmarks/compare_libraries.py`, free-threaded Python 3.14: 1,000 spawned and gathered tasks 153 → 19 µs per task,
+  1,000 tasks woken by one promise 200 → 33 µs; asyncio 12 and 17). The Python scheduler stays selectable:
+  `DOEFF_SCHEDULER=python` for a process, `scheduled(..., implementation="python")` for one call. What changes with the
+  default (docs/25-rust-scheduler.md):
+  - Only the Python scheduler emits the `set_scheduler_trace` events, which the step tally (`step-tally-handler`'s
+    `OpenStepTally` and `OpenTaskTally`) counts. With a sink installed, a plain `scheduled()` now raises `RuntimeError`
+    naming `DOEFF_SCHEDULER=python`; a tally window opened inside a Rust scheduler closes with no steps. A process that
+    counts steps names the Python scheduler.
+  - A checkout whose `doeff_vm` extension was built before the Rust scheduler existed (Python sources updated without
+    rebuilding the extension) gets an `ImportError` from a plain `scheduled()` that names both remedies: rebuild the
+    extension (`make sync`), or set `DOEFF_SCHEDULER=python`. The doeff-vm 0.5.0 and 0.6.0 wheels on PyPI have the
+    Rust scheduler.
+  - The scheduler's own decisions run in Rust, so a debugger cannot step through them; select the Python scheduler to
+    debug the scheduler itself.
+- `doeff-cluster`: `sim-cluster` and `wall-sim-cluster` take `:implementation` (`"python"` / `"rust"`; default `None`,
+  the same choice as `scheduled()`) for the scheduler they build.
+- `benchmarks/compare_libraries.py` also measures a plain `scheduled()`, labelled with the implementation it resolved to
+  (`doeff: scheduled (default = rust scheduler)`).
 - `handler(raw)` is typed to take a raw handler `(effect, k: K)` whose effect annotation is an `EffectBase` class, a
   union of them, or open (no annotation, `Any`, `object`); an installer is still taken as it is. `handler(f)` for
   `f(effect: str, k)`, `f(effect: int, k)` or a function that does not take `(effect, k)` is now an error in pyright
