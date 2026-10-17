@@ -173,6 +173,11 @@ ignore = [
 ]
 external = ["PINJ", "DOEFF"]  # doeff-linter codes in `# noqa: DOEFFnnn`
 
+[tool.ruff.lint.per-file-ignores]
+# 型の probe(tools/verify_type_probes.py が核だけの venv で pyright と mypy にかける)は、行の末の印で行ごとに型の道具の結末を
+# 照らす。import を 1 つの文にまとめると行の印が混ざり(I001)、誤りが出る事を見る代入は値を使わない(F841)。
+"tests/type_probes/*" = ["I001", "F841"]
+
 [tool.doeff-linter]
 # DOEFF013: Prefer Maybe Monad - intentionally using Optional/None patterns。
 # DOEFF110・119・123・125: 下の定義の書き方の規則の母集団(#2909 で足した)で当たりの在る規則 — #2877 の子(#2912 class・#2922
