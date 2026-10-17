@@ -14,7 +14,7 @@ doeff-openai と同じ位置(provider 側)。
 ## 宛先の切り替え
 
 ```
-JEV_BASE_URL=http://zeus:8646/v1/systemone JEV_MODEL=seimf-27b   # seimf(TypeSafe 互換)へ
+JEV_BASE_URL=http://<host>:8646/v1/systemone JEV_MODEL=<model>  # 自前で動かす Jev 互換の判定器へ
 JEV_WIRE=gateway                                                  # Vercel 経由(既存の呼び手の形)
 ```
 
@@ -40,4 +40,4 @@ verdict = run_judgment(
 ## 記録
 
 `~/.local/state/doeff-jev/journal.log` に 1 判定 1 行(宛先・model・問いの数・トークン・所要 ms・
-成否・cache の当たり)。Jev と seimf の比較はこの記録で測る。
+成否・cache の当たり)。Jev と自前の判定器の比較はこの記録で測る。

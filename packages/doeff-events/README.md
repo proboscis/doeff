@@ -29,8 +29,7 @@ Generic publish/subscribe effects for doeff.
 
 ## 出来事を待つループの macro `event-loop`
 
-係のループを「状態を読む → 出来事か止めの合図を待つ → 来た物の節を回す」の 1 つの形で書く Hy の macro です
-(設計 = agora-controllers の `docs/design/event-waits/README.md` 4 節)。
+係のループを「状態を読む → 出来事か止めの合図を待つ → 来た物の節を回す」の 1 つの形で書く Hy の macro です。
 
 ```hy
 (require doeff-events.macros [event-loop])
@@ -58,7 +57,7 @@ Generic publish/subscribe effects for doeff.
 展開の時に断る形: 止めの節が無い・2 つ在る / 待つ型の節が無い / 型を導けない節(`_`・名前だけ・`|`・値の式)/ 同じ型の節が 2 つ /
 型の節の束縛に値の式を書く(値で絞らず本体で分ける)/ 本体の無い節 / 最後の値の位置でない `stop`。
 
-## process をまたぐ知らせ(notice broker — agora-redesign #3850)
+## process をまたぐ知らせ(notice broker)
 
 業務の Program は今までどおり `Publish(event)` と `WaitForEvent(*types)` だけを書きます。出来事を別の process へ運ぶのは
 `notice_events_handler` で、運び方(channel の名・値の綴り方)はその引数の道の表にだけ書きます。Program には channel の名は
@@ -84,7 +83,7 @@ routes = (
 
 # 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
 program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStarted, SourceResumed))(
-    redis_notice_handler("redis://agora-events:6379/0", timeout_seconds=2.0)(  # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
+    redis_notice_handler("redis://localhost:6379/0", timeout_seconds=2.0)(  # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
         broker_back_by_retry(retry_seconds=2.0)(             # Redis の戻りを、待っている間だけ繋がるかの試しで知る
             notice_events_handler("screen", routes, patience_seconds=900.0)(body)
         )
@@ -133,7 +132,7 @@ program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStart
 
 ## ファイルの変更を待つ(`WatchFiles` / `NextFileChanges` / `CloseFileWatch`)
 
-file が伸びたかを決まった間隔で読みに行かず、OS の変更の知らせで起きます(#3977)。
+file が伸びたかを決まった間隔で読みに行かず、OS の変更の知らせで起きます。
 
 | 口 | 振る舞い |
 |---|---|

@@ -83,7 +83,7 @@ that actually runs the agent on a machine.
 
 Which revisions of the three go together is declared by the consuming project,
 typically in its `pyproject.toml` (for this package) plus a small pin file such
-as `infra/provision/acp-revs.toml` (for the engine and the client). That
+as `infra/provision/control-plane-revs.toml` (for the engine and the client). That
 declaration is the source of truth; the pins are not copied here.
 
 ## Quick Start
@@ -276,7 +276,7 @@ The session host never launches an agent in print mode.
 - The print-mode argv lives in the `doeff-claude-code` package, which owns the
   process lifetime. The headless handler below is an adapter onto its effects
   and holds no argv, no child process and no pid. The session host's own
-  headless backend was retired with agentd (agora-redesign #668). The semgrep
+  headless backend was retired with agentd. The semgrep
   rule `doeff-agents-no-claude-print-mode` keeps the ban in force everywhere in
   this package.
 
@@ -306,8 +306,8 @@ layer 2 then compares nothing and emits neither the over-limit log line nor
 `ClaudeLiveLimitExceeded`. There is no default; such a caller passes `None`
 explicitly.
 
-Callers that must not name a substrate (agora keeps the substrate the
-library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
+Callers that must not name a substrate (a control plane that keeps the
+substrate the library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
 and `fake_claude_agent_runtime_handlers(responder=..., env=..., settings=...)`:
 the same pairs under names that say "the Claude agent runtime" and leave the
 choice of substrate to doeff-agents.

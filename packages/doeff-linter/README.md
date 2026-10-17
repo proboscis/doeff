@@ -123,7 +123,7 @@ Hy の file は doeff-indexer の hy-index の解析(関数として呼ぶ)と�
 ```toml
 [tool.doeff-linter.layers]
 order = ["core", "intent", "protocol", "foundation", "entry"]   # 外の世界からの遠さの順
-paths = { core = "controllers/core", intent = "controllers/intent", protocol = "controllers/protocol", foundation = "controllers/foundation", entry = "controllers/entry" }
+paths = { core = "app/core", intent = "app/intent", protocol = "app/protocol", foundation = "app/foundation", entry = "app/entry" }
 exclude = ["tests", "__pycache__", "conftest.py"]              # 層の規則の外に置く dir や file の名
 types_only = ["intent"]                                        # 関数と handler を定めない層(DOEFF103)
 
@@ -157,14 +157,14 @@ allowed_layers = ["foundation", "entry"]
 
 [tool.doeff-linter.environment_names]                          # 業務の名に付けない環境の語(DOEFF108)
 words = ["production", "emulated", "fake", "local", "machine", "wire"]
-paths = ["controllers/kanban", "controllers/intent/daily_verify_*"]   # 業務の file の置き場(末尾 * は前方一致)
-exclude = ["controllers/entry"]
+paths = ["app/orders", "app/intent/daily_report_*"]            # 業務の file の置き場(末尾 * は前方一致)
+exclude = ["app/entry"]
 exclude_parts = ["tests"]
 assembly_files = ["handler_sets.hy"]                           # 最上位の定義の名を全部見る組み立ての file
 
 [[tool.doeff-linter.laws]]                                     # 規則と ADR の law の対応(出力の law・adr と鍵の綴り)
 name = "core-imports-only-intent"
-adr = "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET"
+adr = "ADR-APP-CHOOSE-ENVIRONMENT-BY-HANDLER-SET"
 rules = ["DOEFF101", "DOEFF102"]
 layers = ["core"]
 statement = "module ∈ 層 core の module ⇒ …"
@@ -180,9 +180,9 @@ reconciling = ["DOEFF104"]                                     # 照合中の規
   (method 名だけで見つけた物)は warning、DOEFF107 は常に info。
 - 終了コード: 0 = error なし、1 = error あり、2 = 引数・設定の誤り(設定の名前の食い違いは黙って捨てない)、75 = 未実行
   (機体の検の枠の待ちが上限を越え、lint を 1 つもせずに終わった — 撃ち直せる・赤でも緑でもない)。75 は重い mode(既定の実行・
-  editor-json の repo 全体・`--hook`・`--commit-hook`)だけが返す — 起動の時に HOME の下の正本
-  `dotfiles/agent/tests/machine_check_slots.py` の命令の包み `run` へ自分を渡して枠を取り、その包みの上限の終了コードがそのまま
-  linter の終了コードになる(`src/check_slot.rs`・card ki-ce35bf38508d)。終了コードで判じる呼び手は 75 を未実行と読む。
+  editor-json の repo 全体・`--hook`・`--commit-hook`)だけが返す — 起動の時に HOME の下の検の枠の道具(置き場は
+  `src/check_slot.rs` の `CANON_UNDER_HOME`)の命令の包み `run` へ自分を渡して枠を取り、その包みの上限の終了コードがそのまま
+  linter の終了コードになる(`src/check_slot.rs`)。道具の無い機体では枠を取らずに走る。終了コードで判じる呼び手は 75 を未実行と読む。
 - 説明: 層の規則の違反は「これは何か(subject)」「なぜ違反か(reason)」「law の文」を持ち、editor-json の `explanation`・text の
   出力・agent の hook の文に出ます。各 module の `layer_reason` は層を何で決めたか(path の置き場所・タグとの食い違い)です。
 - `noqa` の註は Python の文ごとの規則だけに効きます。層の規則の既知の破れは登録簿に鍵を置きます。
@@ -193,13 +193,13 @@ reconciling = ["DOEFF104"]                                     # 照合中の規
 
 ```toml
 [tool.doeff-linter.layers]
-paths = { core = ["controllers/*/core", "controllers/core"], intent = ["controllers/*/intent", "controllers/intent"], foundation = "controllers/foundation" }
+paths = { core = ["app/*/core", "app/core"], intent = ["app/*/intent", "app/intent"], foundation = "app/foundation" }
 
 [tool.doeff-linter.services]
-shared = ["shared"]                 # どの service からも読める置き場(controllers/shared/…)
+shared = ["shared"]                 # どの service からも読める置き場(app/shared/…)
 guarded_layers = ["core", "protocol"]
 open_layers = ["intent"]            # 別の service から読んでよい層
-exceptions = [{ from = "kanban", to = "automation" }]
+exceptions = [{ from = "orders", to = "billing" }]
 check_context = true                # タグの :context と service を照らす(DOEFF113・info)
 ```
 
@@ -209,7 +209,7 @@ check_context = true                # タグの :context と service を照ら�
 
 ```toml
 [tool.doeff-linter.definitions]     # 母集団(paths が空なら repo の Hy の全部)
-paths = ["controllers", "services"]
+paths = ["app", "services"]
 exclude = ["packages/doeff-hy/src/doeff_hy/macros"]   # 例: macro の持ち主
 deff_reason_marker = "defk にできない:"
 
@@ -273,7 +273,7 @@ foundation の外なら許さず、説明に訳を書きます。許す場所の
 
 ### 臭いの規則(DOEFF121〜125・DOEFF205)
 
-型と effect で書けるのに手で書いた形を拾います(operator 2026-09-28 "lets add them"・題材は agora の decide-tag)。重さの既定は warning
+型と effect で書けるのに手で書いた形を拾います。重さの既定は warning
 (`[tool.doeff-linter.rules.<ID>] severity = "info"` で下げられる・error にはしない)。DOEFF121 は `[tool.doeff-linter.smells]
 shape_check_layers` に挙げた判断の層の file だけ、DOEFF122〜125 は `definitions` の母集団の全部に当たります。DOEFF122 の「失敗の型」は
 名前で決め打ちせず、defrecord の頭の辞書の `{:failure True}` と defeffect の `:failure` / `:absent` の宣言から取ります(import で
@@ -285,7 +285,7 @@ module まで解く)。DOEFF205 は役が judgment / program の定義に形の�
 ```bash
 # defn を defk に直し、repo の中の呼び手を <- / ! に書き換える(DOEFF110・DOEFF126)
 doeff-linter fix defn-to-defk --path scripts/module_tags.hy
-doeff-linter fix defn-to-defk --path controllers/intent --dry-run          # 書かずに計画だけ
+doeff-linter fix defn-to-defk --path app/intent --dry-run                  # 書かずに計画だけ
 doeff-linter fix defn-to-defk --path scripts --report /tmp/fix.json        # 報告の JSON も書く
 doeff-linter fix defn-to-defk --path scripts --strict                      # 呼び手を全部直せる関数だけ変換する
 ```
@@ -298,7 +298,7 @@ doeff-linter fix defn-to-defk --path scripts --strict                      # 呼
 - 書き換えない所(判断の要る物に出す): 内包表記の中・素の関数(defn・deff・fn)の中・module の最上位・macro の中・`->` の段・関数そのものを
   値として渡す所・Python と toml からの参照・import の別名。既に `<-` / `!` / `run` へ渡している defn は Program を返す組み立てなので変換しません。
 - 当てない形: dunder・`:async`・`defk にできない:`(設定の `definitions.deff_reason_marker`)か「defn のまま」の註・`eval-and-compile` の中・
-  class の method・除いた path(既定 `clients/hy/acp_client`・`docs/design-checks`、`--exclude` で足す)。
+  class の method・除いた path(既定は `src/project/defn_to_defk.rs` の `DEFAULT_EXCLUDES`、`--exclude` で足す)。
 - 変換の後に同じ読み手で DOEFF126 を撃ち、残った素の呼びを報告します。終了コード 0 = 残りなし・1 = 残りあり・2 = 誤り。
 
 ## エディタ向けの出力(editor-json)

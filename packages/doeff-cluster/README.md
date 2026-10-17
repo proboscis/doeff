@@ -50,7 +50,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | coordinator(composition root・調停ループ) | `coordinator`・`coordinator_handler_sets`・`coordinator_inbox`・`coordinator_http` |
 | coordinator の純粋な判断 | `api_policy`・`cluster_policy`・`resource_policy`・`rollout_policy`・`drain_policy`・`handoff_policy`・`program_policy`・`warm_policy`・`detached_policy`・`metrics_policy` |
 | coordinator の状態と耐久 | `cluster_model`・`durable_kv`・`wal_store` |
-| worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`worker/entry/shim.py`(旧い path の `shim.py` は渡すだけ — #2028) |
+| worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`worker/entry/shim.py`(旧い path の `shim.py` は渡すだけ) |
 | 実行環境(runtime env)の宣言と準備 | `runtime_env_model`・`runtime_env`(送り手の checkout の読み)・`env_prepare`・`env_handlers`・`env_upkeep`・`env_world` |
 | 子 process の入口と実行先の契約 | `job_entry`・`run_context`(型)・`run_context_rules`(綴りと読み)・`run_context_env`・`host_reader`・`host_contract` |
 | 宣言 | `service_model`(`Job`・`System`)・`service_build`(`system-declaration`)・`declare` |
@@ -166,10 +166,10 @@ worker の子 process の入口は `hy -m doeff_cluster.worker.entry.job_entry s
 その外側に `(state)` を、`pipe-retirement-notices` の待ちは外部の Promise なので scheduler を置きます)。`sim-cluster` の偽の実行先は同じキーに
 同じ型で答え、environ は同じ答え方の値の表の答え手 `environ-table-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
 
-退きの知らせ(#3672): `:update "handoff"` の service の spec が変わると、worker は新のコードが揃い新の入口の検めが通った拍で旧を名から外し
+退きの知らせ: `:update "handoff"` の service の spec が変わると、worker は新のコードが揃い新の入口の検めが通った拍で旧を名から外し
 (`RetireJob`)、次の拍で新を起こし、coordinator が新を Ready と数えた後に旧へ SIGTERM を送り、停止の猶予(10 秒)の後に止めます。旧の
 Program は `(<- told (AwaitRetirement))` で、名から外された時点(新の起動・新の Ready・自分の SIGTERM のどれよりも前)に `Retired` を受け
-ます — 新しい仕事を取らずに今の仕事を終える(drain する)時間を、SIGTERM の猶予の外に持てます(条 W2)。入れ替えが期限で諦められると
+ます — 新しい仕事を取らずに今の仕事を終える(drain する)時間を、SIGTERM の猶予の外に持てます。入れ替えが期限で諦められると
 (新が Ready にならない)旧は止められずに動き続け、`(AwaitRetirement :after told)` が `HandoffAbandoned`(退きの取り消し)を返します。宣言が
 変わって諦めが解ければ、もう一度 `Retired` を受けます。1 回の待ちで 1 つの知らせで、答えは今の知らせが `after` と違う時に返ります。入れ替えの
 無い止め(宣言から外れた・recreate・worker の停止・途絶)では何も返りません(止めは `AwaitStop` で知ります)。本番の路 = worker の
@@ -182,7 +182,7 @@ worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WOR
 
 ### 宣言する(declare)
 
-宣言の入口(命令)はこの package に置かず、利用側の宣言の道具が次の部品を並べます(#3030 — 系に渡す土台は利用側の
+宣言の入口(命令)はこの package に置かず、利用側の宣言の道具が次の部品を並べます(系に渡す土台は利用側の
 「土台の型 → 本番の土台」の表で選び、命令の引数で選びません。以前の `hy -m doeff_cluster.shared.entry.declare … --foundation …` は消えました)。
 
 ```hy
@@ -253,7 +253,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 | `ownerScope` | その値の頭(`<scope>/Rollout/<名> replicas=<n>`) | `doeff-cluster` |
 | `nodeCapabilities` | node の label から導く能力 `[{"label" "value" "capability"} …]` | `company-machine` を `doeff.dev/company-machine=true` から |
 
-### worker の生死の出来事(coordinator の引数・#3864)
+### worker の生死の出来事(coordinator の引数)
 
 coordinator は、worker の生死の期限(最後の heartbeat + lease)が切れた歩で `WorkerGone(worker, boot, deadline-ms)` を、沈黙から戻った歩で
 `WorkerBack(worker, boot, seen-ms)` を、doeff-events の知らせとして channel `doeff-cluster:workers` へ出します(状態の保存の後・変わった時に
@@ -451,7 +451,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   3 つの file を別名に書いてから置き換え、断られた時(鍵の file が無い・形の違う url)は前の表のまま準備します。file が無ければ
   env の `WORKER_REPOS`(起動の時の値)を読み、組み直しません。
 
-- `deploy/k8s` — k8s の宣言。coordinator 1 つ(atlas・`deploy/k8s/coordinator`)と、機体(Node)ごとの worker 1 つ
+- `deploy/k8s` — k8s の宣言。coordinator 1 つ(決めた 1 台の Node に置く・`deploy/k8s/coordinator`)と、機体(Node)ごとの worker 1 つ
   (`deploy/k8s/workers` = worker の ServiceAccount と機体の dir の並び): 雛形 `deploy/k8s/worker` に、機体ごとの差(置く Node と
   資源の上限)を `deploy/k8s/nodes/<Node の名>` が足します(名は `doeff-worker-<Node の名>`)。Flux は `deploy/k8s/coordinator` と
   `deploy/k8s/workers` を別々の Kustomization で当てます(上に載る系が今の宣言から引き継ぐ時期を組ごとに決められます)。
@@ -460,7 +460,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   ServiceAccount `doeff-worker` の token・cluster の CA・namespace は標準の path(`/var/run/secrets/kubernetes.io/serviceaccount`)に
   置きます。確かめは `tests/test_k8s_declarations.py`(`kubectl kustomize` で組み立てた物を読む)。
 
-worker は静的に保ちます(利用者の決定 2026-10-09 原文 "we are not supposed to frequently restart doeff worker! it must be very static.")。
+worker は静的に保ち、頻繁に起動し直しません(2026-10-09 の保守者の決定)。
 Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doeff の版を含む)か機体の資源の上限が変わった時だけです。
 
 宣言は上に載る系の名と値を書かず(規則 `doeff-packages-have-no-application-vocabulary`)、次の物を名で参照するだけです。中身は
@@ -476,7 +476,7 @@ Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doe
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
 worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`deploy/k8s/workers/worker-cluster-admin.yaml`・
-利用者 1 人の cluster なので絞らない)— job の子は kubectl で cluster を扱え、上に載る系は job のための権限を与えなくてよい。
+1 人で使う cluster なので絞らない)— job の子は kubectl で cluster を扱え、上に載る系は job のための権限を与えなくてよい。
 
 coordinator の記録(WAL と snapshot)の控えは、上に載る系でなくこの package が持ちます(控えは記録を戻す元なので、上に載る系の
 有無で消えないように)。script は `deploy/k8s/coordinator/coord-wal-backup.sh` で、同じ dir の `kustomization.yaml` が ConfigMap
@@ -490,9 +490,9 @@ Deployment の在る namespace の権限として配備する側が与えます�
 
 ### 配備の順
 
-どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)に保ちます(card ki-76a269c31615)。coordinator は古い worker を
-受けますが、古い coordinator が新しい worker を受けるとは限りません — 2026-10-11 02:21〜02:37、zeus の worker の版を coordinator より先に
-上げた宣言が main へ入り、新しい worker が coordinator に登録できずに zeus が約 16 分止まりました。宣言の検
+どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)に保ちます。coordinator は古い worker を
+受けますが、古い coordinator が新しい worker を受けるとは限りません — 2026-10-11 02:21〜02:37、ある機体の worker の版を coordinator より先に
+上げた宣言が main へ入り、新しい worker が coordinator に登録できずにその機体が約 16 分止まりました。宣言の検
 `tests/test_k8s_declarations.py` の `test_no_worker_is_newer_than_the_coordinator` が、coordinator の版より新しい worker の版を commit の
 時点で断ります。worker の働きが要る変更でも、coordinator の版を先に(同じ版か、より新しい版へ)上げてから worker を上げます。本番の
 worker と coordinator は Flux が `deploy/k8s` の宣言(機体ごとの `deploy/k8s/nodes`)から作り直すので、順は宣言を当てる順(main へ入れる順と、
@@ -501,7 +501,7 @@ Flux の Kustomization の suspend / resume)で守ります。coordinator と wo
 入れ替えの順の不変条件 V1〜V5・模擬の Flux は、使い手が 0 になったので 2026-10-10 に退役しました。
 
 coordinator の版上げの commit は、`deploy/k8s/coordinator/coordinator.yaml` の `WORKER_DOEFF_COMMIT` の 1 行だけを変えます
-(ADR-DOE-CLUSTER-003・card ki-5808173477cf)。上げ先の root を先に組む Job(`deploy/k8s/coordinator-prepare`)の版と名
+(ADR-DOE-CLUSTER-003)。上げ先の root を先に組む Job(`deploy/k8s/coordinator-prepare`)の版と名
 (`coordinator-prepare-<commit>`)は、組み立ての時にその行から写されます。Flux はこの Job が上げ先の版の root を coordinator と同じ node・
 同じ dir に組み終えるのを待ってから(Kustomization の wait と dependsOn)Deployment coordinator を入れ替えるので、新しい Pod は組み済みの
 root で秒で起動します(前は古い Pod を止めてから新しい Pod が組み、全部の worker が 105〜141 秒 coordinator に届かなかった)。Job が組めなければ
