@@ -586,7 +586,7 @@ class SchedulerDeadlockError(RuntimeError):
 
 
 class StepBudgetExceeded(BaseException):
-    """Raised by the Python scheduler when an armed step budget is spent (#3143).
+    """Raised by the scheduler (either implementation) when an armed step budget is spent (#3143).
 
     A run that keeps waking tasks without the virtual clock advancing (a
     busy loop at one instant) never ends on its own and a wall-clock timeout
@@ -657,8 +657,10 @@ class SpentStepBudget:
 ProcessStepBudget = StepBudget | SpentStepBudget
 
 # The one step budget of the process (#3143). None (the default) means the
-# scheduler never reads the step count: production runs are unchanged. Only
-# the Python scheduler checks it.
+# scheduler never reads the step count: production runs are unchanged. Both
+# schedulers check it at every wake: the Python one reads it here, the Rust one
+# reads a flag that arm_step_budget / disarm_step_budget switch together with it
+# and, while the flag is set, calls _check_armed_step_budget.
 _armed_step_budget: ProcessStepBudget | None = None
 
 
@@ -676,21 +678,48 @@ def _check_step_budget(armed: ProcessStepBudget, task_id: int | None) -> None:
                 raise error
 
 
+def _check_armed_step_budget(task_id: int | None) -> None:
+    """The Rust scheduler's check at a wake while its flag is set: the same check as the Python scheduler's."""
+    armed = _armed_step_budget
+    if armed is not None:
+        _check_step_budget(armed, task_id)
+
+
 def arm_step_budget(limit_steps: int) -> StepBudget:
-    """Arm the process step budget: the scheduler fails a run that takes more than
+    """Arm the process step budget: either scheduler fails a run that takes more than
     ``limit_steps`` doeff-vm steps from now (``StepBudgetExceeded``)."""
     global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
     if limit_steps <= 0:
         raise ValueError(f"step budget must be a positive number of steps, got {limit_steps}")
+    switch = _rust_scheduler_step_budget_switch()
     budget = StepBudget(started_at_steps=_read_vm_steps(), limit_steps=limit_steps)
     _armed_step_budget = budget
+    switch(True)
     return budget
 
 
 def disarm_step_budget() -> None:
-    """Remove the process step budget; the scheduler stops reading the step count."""
+    """Remove the process step budget; neither scheduler reads the step count any more."""
     global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
     _armed_step_budget = None
+    _rust_scheduler_step_budget_switch()(False)
+
+
+def _rust_scheduler_step_budget_switch() -> Callable[[bool], None]:
+    """The flag the Rust scheduler reads at every wake (a budget is armed), switched with ``_armed_step_budget``.
+
+    Refuses with an ImportError when the Rust extension is too old to carry the flag (the budget is read from the
+    same extension's step count, so the remedy is the same rebuild). The budget is not changed.
+    """
+    try:
+        from doeff_vm.doeff_vm import set_scheduler_step_budget_armed
+    except ImportError as error:
+        raise ImportError(
+            "the step budget needs a doeff_vm extension that carries the scheduler step budget switch "
+            "(set_scheduler_step_budget_armed): rebuild the Rust extension (`make sync` in a doeff "
+            "checkout, or reinstall doeff-vm)"
+        ) from error
+    return set_scheduler_step_budget_armed
 
 
 class Race(EffectBase[_T], Generic[_T]):
@@ -1264,6 +1293,8 @@ def _rust_spec() -> dict[str, object]:
         # 測りの口: 出来事の dict と時計は Python の版と同じ helper で作る(sink が据えてある時だけ呼ばれる)。
         "trace": _trace,
         "trace_step_boundary": _trace_step_boundary,
+        # 歩数の上限(#3143): 旗が立っている間だけ、起こすたびに Python の版と同じ確かめを呼ぶ。
+        "check_step_budget": _check_armed_step_budget,
         "PRIORITY_IDLE": PRIORITY_IDLE,
         "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
         "PRIORITY_NORMAL": PRIORITY_NORMAL,

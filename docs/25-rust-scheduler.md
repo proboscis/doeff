@@ -39,6 +39,9 @@ Rust の版を選んだ(既定を含む)のに、読み込んだ Rust の拡張�
 - 測りの口 `set_scheduler_trace` の出来事(歩の積算の答え手 `step-tally-handler` の `OpenStepTally`・
   `OpenTaskTally` を含む)は、2026-10-18 から両方の版が出す — 同じ種類・同じ欄の出来事を同じ順で(下の
   「測りの口」)。歩を数えるために Python の版を名指す要は無い。
+- 歩数の上限 `arm_step_budget`(#3143・doeff-hy-pytest の暴走の見張りが入れる)は、2026-10-18 から両方の版が読む
+  (下の「歩数の上限」)。既定を替えた 10-17 の main から 10-18 の直し(card ki-fee92eb0a840)までは Rust の版が
+  上限を読まず、上限を越えた走りが落ちずに回り続けた。
 - Python の版を選ぶ時:
   1. scheduler の中を pdb で 1 行ずつ追う時(Rust の版の判断は Rust の中で、Python の frame が無い)。
   2. Rust の拡張を build し直せない checkout を急いで動かす時。
@@ -62,6 +65,7 @@ Python に残したもの(利用者から見える形を変えないため):
 - 1 回の実行につき 1 回だけ走る、終わり際の警告(#501 と、誰も受け取らなかった task の例外の警告)と、
   失敗した task ごとに 1 回だけ走る、traceback の補強と、受け取られていない例外の説明の文。
 - 測りの口の出来事の dict と時計(`_trace`・`_trace_step_boundary`)。下の「測りの口」。
+- 歩数の上限の確かめ(`_check_step_budget`)。下の「歩数の上限」。
 
 ### 測りの口(`set_scheduler_trace`)
 
@@ -138,6 +142,19 @@ Discard(巻き戻さずに捨てる・SIGKILL と同じ形)も Python の版と�
   控えた関数(`@do` の呼びでなければ program の型)から取る。
 - run の終わりに、その文を 1 つの `RuntimeWarning` にまとめて出す。#502 の掃除で行が消えた task の文も
   残しておき、名指すのは `UNRETRIEVED_EXCEPTIONS_NAMED` 個まで(残りは数だけ言う)。
+
+### 歩数の上限(`arm_step_budget`)
+
+`arm_step_budget(N)` を入れた後に N 歩を越えて task を起こそうとした走りは、どちらの版でも同じ
+`StepBudgetExceeded`(`BaseException`)の同じ文「step budget exceeded: … doeff-vm steps since the budget was armed,
+limit N (while waking …)」で、走っている最中に落ちる(`tests/test_scheduler_step_budget.py` が両方の版で確かめている)。
+
+- 確かめる関数は Python の `_check_step_budget` の 1 つだけ。Rust の版は、`arm_step_budget` と `disarm_step_budget` が
+  上限と一緒に切り替える旗(`set_scheduler_step_budget_armed`)を、準備のできた列から 1 つ取り出すたびに読み、旗が
+  立っている時だけこの関数を呼ぶ。数え方・使い切った上限が後の起こしで同じ error を上げる事も同じになる。
+- 上限を入れない走り(本番)は歩数を読まない。Rust の版が起こすたびにするのは旗を 1 つ読む事だけ。
+- 上限を入れるには、旗を持つ doeff_vm の拡張が要る(古い拡張では `arm_step_budget` が build し直しを名指す
+  `ImportError` を上げる)。
 
 Python の版から引き継いだ振る舞い(変えていない): root の本体が終わった時に置き去りに
 なった task(daemon の聞き手など)の継続は、実行の後も解放されず、その `finally` も走らない。
