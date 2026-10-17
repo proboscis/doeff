@@ -197,7 +197,7 @@ class McpToolDef:
     name: str
     description: str
     params: tuple[McpParamSchema, ...]
-    handler: Callable[..., "Expand"]
+    handler: Callable[..., "Expand[Any]"]
 
     def input_schema(self) -> dict[str, Any]:
         """Generate the ``inputSchema`` object for the MCP ``tools/list`` response."""

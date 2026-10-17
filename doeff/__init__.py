@@ -8,8 +8,9 @@ Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 import opcode as _opcode
 import sys as _sys
 import types as _types
+from collections.abc import Callable as _CallableT
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, NoReturn, TypeAlias, TypeVar
 
 from doeff_vm import Callable as Callable
 from doeff_vm import Callable as _VmCallable
@@ -94,8 +95,12 @@ from doeff_core_effects.scheduler import Task as Task
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.scheduler import Wait as Wait
 
+_BodyResult = TypeVar("_BodyResult")
 
-def WithObserve(observer, body):  # noqa: N802 - public compatibility constructor
+
+def WithObserve(  # noqa: N802 - public compatibility constructor
+    observer: "_CallableT[..., object] | _VmCallable", body: "Program[_BodyResult]"
+) -> "WithObserveRaw[_BodyResult]":
     """Install observer and run body under it.
 
     Accepts a plain Python callable as observer — automatically wraps it
@@ -171,12 +176,15 @@ AskEffect = Ask
 
 
 @do
-def merge_dicts(*sources) -> Generator[Any, Any, dict]:
+def merge_dicts(*sources: object) -> Generator[Any, Any, dict[Any, Any]]:
     """Monadically merge multiple Program[dict] or plain dicts left-to-right.
 
     Usage: merge_dicts(Pure({"a": 1}), Pure({"b": 2})) → Program[{"a": 1, "b": 2}]
+
+    The sources are typed ``object``: the CLI passes the env symbols it loaded by path,
+    and a source that is neither a dict nor a program yielding one raises ``TypeError``.
     """
-    merged: dict = {}
+    merged: dict[Any, Any] = {}
     for source in sources:
         if isinstance(source, DoExpr):
             d = yield source
@@ -191,42 +199,53 @@ def merge_dicts(*sources) -> Generator[Any, Any, dict]:
         merged.update(d)
     return merged
 
-# Removed concepts — raise clear error on use
-class _Removed:
-    def __init__(self, name, reason):
-        self._name = name
-        self._reason = reason
-    def __call__(self, *a, **kw):
-        raise RuntimeError(f"{self._name} was removed: {self._reason}")
-    def __getattr__(self, attr):
-        raise RuntimeError(f"{self._name} was removed: {self._reason}")
-
-Delegate = _Removed("Delegate", "use 'yield effect' to re-perform in handler body")
 _EffectGeneratorResult = TypeVar("_EffectGeneratorResult")
 EffectGenerator: TypeAlias = Generator[Any, Any, _EffectGeneratorResult]
 """``EffectGenerator[T]`` = ``Generator[Any, Any, T]``: a ``@do`` body returning T with
 unchecked effects. Declare the effects too with ``Generator[E, Any, T]``."""
-WithIntercept = _Removed("WithIntercept", "use WithObserve")
-KleisliProgram = _Removed("KleisliProgram", "use @do instead")
-Modify = _Removed("Modify", "use Get + Put")
-AllocVar = _Removed("AllocVar", "use var_store directly")
-Discontinued = _Removed("Discontinued", "concept removed")
-Discontinue = _Removed("Discontinue", "concept removed")
-graph_snapshot = _Removed("graph_snapshot", "concept removed")
-# NOTHING — use Nothing (lowercase singleton) instead
-ReadVar = _Removed("ReadVar", "use var_store directly")
-CacheGet = _Removed("CacheGet", "renamed to MemoGet in doeff_core_effects.memo_effects")
-CacheExists = _Removed("CacheExists", "renamed to MemoExists in doeff_core_effects.memo_effects")
-cache = _Removed("cache", "cache module removed")
-presets = _Removed("presets", "presets module removed")
-rust_vm = _Removed("rust_vm", "use PyVM directly")
 race = Race  # lowercase alias
 
-default_handlers = _Removed("default_handlers", "compose handlers by calling handler(program)")
-async_run = _Removed("async_run", "use run() with scheduled()")
-default_async_handlers = _Removed(
-    "default_async_handlers", "compose handlers by calling handler(program)"
-)
+# Removed concepts — importing one still works at runtime and using it raises an error
+# that names the replacement. Type checkers do not see them, so ``from doeff import
+# KleisliProgram`` is an error on the import line, as for any name doeff does not have
+# (tests/test_public_name_types.py).
+if not TYPE_CHECKING:
+
+    class _Removed:
+        def __init__(self, name: str, reason: str) -> None:
+            self._name = name
+            self._reason = reason
+
+        def __call__(self, *a: object, **kw: object) -> NoReturn:
+            raise RuntimeError(f"{self._name} was removed: {self._reason}")
+
+        def __getattr__(self, attr: str) -> NoReturn:
+            raise RuntimeError(f"{self._name} was removed: {self._reason}")
+
+    Delegate = _Removed("Delegate", "use 'yield effect' to re-perform in handler body")
+    WithIntercept = _Removed("WithIntercept", "use WithObserve")
+    KleisliProgram = _Removed("KleisliProgram", "use @do instead")
+    Modify = _Removed("Modify", "use Get + Put")
+    AllocVar = _Removed("AllocVar", "use var_store directly")
+    Discontinued = _Removed("Discontinued", "concept removed")
+    Discontinue = _Removed("Discontinue", "concept removed")
+    graph_snapshot = _Removed("graph_snapshot", "concept removed")
+    # NOTHING — use Nothing (lowercase singleton) instead
+    ReadVar = _Removed("ReadVar", "use var_store directly")
+    CacheGet = _Removed("CacheGet", "renamed to MemoGet in doeff_core_effects.memo_effects")
+    CacheExists = _Removed(
+        "CacheExists", "renamed to MemoExists in doeff_core_effects.memo_effects"
+    )
+    cache = _Removed("cache", "cache module removed")
+    presets = _Removed("presets", "presets module removed")
+    rust_vm = _Removed("rust_vm", "use PyVM directly")
+    default_handlers = _Removed(
+        "default_handlers", "compose handlers by calling handler(program)"
+    )
+    async_run = _Removed("async_run", "use run() with scheduled()")
+    default_async_handlers = _Removed(
+        "default_async_handlers", "compose handlers by calling handler(program)"
+    )
 
 __version__ = "0.6.0"
 
