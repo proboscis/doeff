@@ -221,7 +221,7 @@
                                :task-reserve (get w "taskReserve")
                                #** generation)))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
-    :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
+    :placements (table-of (tuple (gfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) (TableWrite k (Placement #** v)))))
     :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
@@ -236,7 +236,7 @@
     :group-limits (table-of (tuple (gfor #(k v) (.items (.get data "groupLimits" {})) (TableWrite k (group-limit-from-json k v)))))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
-    :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))
+    :surges (table-of (tuple (gfor #(k v) (.items (.get data "surges" {})) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
     :warms (dfor #(k entry) warms :if (is-not entry None) k entry)
     ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。

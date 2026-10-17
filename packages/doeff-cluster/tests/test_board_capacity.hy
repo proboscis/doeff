@@ -141,7 +141,7 @@
   (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   (:= s (get reply-11 0))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
-  (assert (in "j" s.placements))
+  (assert (is-not (.row s.placements "j") None))
   (setv later (! (tick s (+ (. (ClusterTiming) worker-forget-ms) 1) T)))
   (assert (not-in "newmac" (.keys later.workers)))
   (assert (in "atlas" (.keys later.workers))))

@@ -29,6 +29,7 @@
 ;;;     来るまで保つ(2026-10-09: 1 つの drain の間に Pod が 2 度入れ替わり、1 度目で解けた後に置かれた仕事が 2 度目で止められた)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
+(import doeff_hy.table [TableWrite])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
@@ -114,7 +115,7 @@
 (defn #^ bool surge-holds [#^ int now #^ ClusterState state #^ ClusterJob job #^ Placement surge #^ ClusterTiming timing
                            #^ frozenset draining]
   "並べた置き先を持ち続けてよいか: 元の置き先が drain 中の worker に在り、並べた先が生きていて条件を満たし、drain 中でない。"
-  (setv placed (.get state.placements job.spec.name)
+  (setv placed (.row state.placements job.spec.name)
         w (.row state.workers surge.worker))
   (and (> job.replicas 0) job.spec.handoff
        (is-not placed None) (in placed.worker draining) (!= placed.worker surge.worker)
@@ -123,42 +124,46 @@
 
 (defn #^ ClusterState advance-drains [#^ int now #^ ClusterState state #^ ClusterTiming timing]
   "1 拍: 要らなくなった並べた置き先を外し、Ready になった並べた置き先へ付け替え、まだ並べていない入れ替えの job を並べる。
-   変える物が無ければ同じ object。"
+   書くのは変わった job の行だけ(with-writes)・変える物が無ければ同じ object。"
   (setv draining (draining-workers state now)
         jobs (dfor j state.jobs j.spec.name j))
-  (when (and (not draining) (not state.surges)) (return state))
-  (setv surges {} placements (dict state.placements) events [])
+  (when (and (not draining) (= (.size state.surges) 0)) (return state))
+  ;; surge-rows・placement-rows = 当てる書き(job の名 → 次の Placement か、None = 外す)。読み直す行はここを先に引く。
+  (setv surge-rows {} placement-rows {} events [])
   ;; 1. 並べた置き先の見直し(drain が解けた・job が消えた・並べた先が死んだ等は外す — 並べた先の worker は次の heartbeat で止める)。
   (for [#(name surge) (sorted (.items state.surges))]
     (setv job (.get jobs name))
-    (if (and (is-not job None) (surge-holds now state job surge timing draining))
-        (setv (get surges name) surge)
-        (.append events {"at" now "job" name "from" surge.worker "to" None "generation" surge.generation
-                         "drain" "並べた置き先を外した"})))
-  (setv state (replace state :surges surges))
+    (when (not (and (is-not job None) (surge-holds now state job surge timing draining)))
+      (setv (get surge-rows name) None)
+      (.append events {"at" now "job" name "from" surge.worker "to" None "generation" surge.generation
+                       "drain" "並べた置き先を外した"})))
+  (setv kept-surges (.with-writes state.surges (tuple (gfor #(n r) (.items surge-rows) (TableWrite n r))))
+        stepped (replace state :surges kept-surges))
   ;; 2. 並べた先の process が Ready なら付け替える。3. drain 中の worker の上の入れ替えの job を並べる(並べた置き先は job の側で数える —
   ;;    load-of の jobs。並べるたびに同じ数えを進める)。
-  (setv load (load-of state placements))
+  (setv load (load-of stepped stepped.placements))
   (for [#(name placed) (sorted (.items state.placements))]
     (setv job (.get jobs name))
     (when (and (is-not job None) (> job.replicas 0) job.spec.handoff (in placed.worker draining))
-      (setv surge (.get surges name))
+      (setv surge (.row kept-surges name))
       (cond
         (is-not surge None)
-          (when (= (get (service-readiness state name now timing surge) "state") "Ready")
-            (setv (get placements name) surge)
-            (del (get surges name))
+          (when (= (get (service-readiness stepped name now timing surge) "state") "Ready")
+            (setv (get placement-rows name) surge
+                  (get surge-rows name) None)
             (.append events {"at" now "job" name "from" placed.worker "to" surge.worker "generation" surge.generation
                              "drain" "並べた先が Ready — 置き先を付け替えた"}))
         True
-          (do (setv target (move-target now state job placed.worker timing draining load))
+          (do (setv target (move-target now stepped job placed.worker timing draining load))
               (when (is-not target None)
-                (setv (get surges name) (Placement name target (+ placed.generation 1) now)
+                (setv (get surge-rows name) (Placement name target (+ placed.generation 1) now)
                       used (get load target)
                       (get load target) (replace used :jobs (+ used.jobs 1)))
                 (.append events {"at" now "job" name "from" placed.worker "to" target "generation" (+ placed.generation 1)
                                  "drain" "並べて置いた(standby の Ready を待つ)"}))))))
-  (if (and (= surges state.surges) (= placements state.placements) (not events))
+  (setv surges (.with-writes state.surges (tuple (gfor #(n r) (.items surge-rows) (TableWrite n r))))
+        placements (.with-writes state.placements (tuple (gfor #(n r) (.items placement-rows) (TableWrite n r)))))
+  (if (and (is surges state.surges) (is placements state.placements) (not events))
       state
       (replace state :surges surges :placements placements
                :events (tuple (cut (+ (list state.events) events) (- MAX-EVENTS) None)))))
@@ -207,7 +212,7 @@
                                n))
         ;; 切り離した task(2026-09-25)は移せない(走らせ直さない)ので、この worker の上で終わるまで drain を待たせる。
         remaining (sorted (- (| (set placed) (set (live-rows state name)) (set (detached-rows state name))) (set unmovable)))
-        moving (dfor n placed :if (in n state.surges) n (. (get state.surges n) worker))
+        moving (dfor n placed :setv s (.row state.surges n) :if (is-not s None) n s.worker)
         blocked {})
   (for [n placed]
     (setv job (.get jobs n))
@@ -223,7 +228,7 @@
                  :blocked blocked
                  :unmovable unmovable
                  :moving-ready (dfor #(n w) (.items moving)
-                                     n (get (service-readiness state n now timing (get state.surges n)) "reason"))))
+                                     n (get (service-readiness state n now timing (.row state.surges n)) "reason"))))
 
 
 (defn #^ WorkerDrainView worker-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing

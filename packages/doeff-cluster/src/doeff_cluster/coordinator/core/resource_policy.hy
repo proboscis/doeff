@@ -130,7 +130,7 @@
   (defn #^ dict no [#^ str s #^ NotReadyKind kind #^ str reason #^ (| dict None) #** extra] (| {"ok" False "state" s "kind" kind "reason" reason "job" job} extra))
   (when (is job None) (return (no "NotReady" NotReadyKind.NO-DECLARATION "宣言が無い")))
   (when (= job.replicas 0) (return (no "NotReady" NotReadyKind.NO-REPLICAS "replicas 0(置かない)")))
-  (setv a (if (is placement None) (.get state.placements name) placement))
+  (setv a (if (is placement None) (.row state.placements name) placement))
   (when (is a None)
     (setv unplaced (unplaced-kind now state job timing))
     (return (no "NotReady" (unplaced-not-ready unplaced) (+ "置き先が無い: " (unplaced-text unplaced job)))))
@@ -214,7 +214,7 @@
   "Service name の置き先(いまの置き先と drain で並べた置き先)の担い手が、名 name の行で動かしていると最後に報告した process の
    送り手 #(worker 世代の名) の組。readiness の判定(running-process)が報告を数える相手の候補で、報告の表がこの送り手の報告を
    必ず残す(keep-report)。時刻は問わない(担い手の報告が古い間も、最後に報告された process を置き先の process とみなす)。"
-  (frozenset (gfor a #((.get state.placements name) (.get state.surges name))
+  (frozenset (gfor a #((.row state.placements name) (.row state.surges name))
                    :if (is-not a None)
                    :setv row (job-status-row state a.worker name)
                    :if (and (is-not row None) row.instance)
@@ -287,7 +287,7 @@
   "Service name が止まっているか: 宣言が無いか replicas 0、かつ置き先が無く、どこにも生きていない(still-live-somewhere)。
    Rollout の相手の観測(api_policy.target-view の stopped)と版の判定(version-state の Stopped)が同じ条件を読むための定義点。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
-  (and (or (is job None) (= job.replicas 0)) (not-in name state.placements)
+  (and (or (is job None) (= job.replicas 0)) (is (.row state.placements name) None)
        (not (still-live-somewhere now state name timing))))
 
 
@@ -304,7 +304,7 @@
    猶予の終わりと、担い手の沈黙の窓 2 つ(移し替え・途絶の柵)。宣言・置き先が無い・replicas 0 の判定は時刻で変わらない(None)。
    placement = 見る置き先(既定 = いまの置き先 — running-process と同じ)。"
   (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
-  (val a (if (is placement None) (.get state.placements name) placement))
+  (val a (if (is placement None) (.row state.placements name) placement))
   (val st (if (is a None) None (.row state.observations.statuses a.worker)))
   (val carrier (if (is a None) None (.row state.workers a.worker)))
   (val proc (running-process state name now timing placement))
@@ -334,7 +334,7 @@
    宣言が無いか replicas 0 で置き先も無い Service の行を載せた worker が、沈黙で母集団(cluster_policy.service-rows の lease-ms の窓)から
    外れる刻の最小。それ以外は時刻で変わらない(None)。"
   (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
-  (if (and (or (is job None) (= job.replicas 0)) (not-in name state.placements))
+  (if (and (or (is job None) (= job.replicas 0)) (is (.row state.placements name) None))
       (min (gfor #(wname st) (.items state.observations.statuses)
                  :setv w (.row state.workers wname)
                  :if (and (is-not w None) (any (gfor row st.jobs (or (= row.name name) (= row.retired-from name)))))
@@ -491,7 +491,7 @@
 
 (defn #^ dict service-row [#^ ClusterState state #^ ClusterJob job #^ int now #^ ClusterTiming timing]
   "宣言した Service 1 つの {spec status}(snapshot の行)。"
-  (setv a (.get state.placements job.spec.name)
+  (setv a (.row state.placements job.spec.name)
         carrier (if a (job-status-row state a.worker job.spec.name) None)
         failures (if (is carrier None) None carrier.failures)
         last-exit (if (is carrier None) None carrier.last-exit-at-ms))
@@ -510,8 +510,8 @@
                ;; status の形・版は以前と同じ。
                (if (is-not last-exit None) {"lastExitAtMs" last-exit} {})
                ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
-               (if (in job.spec.name state.surges)
-                   {"surge" (. (get state.surges job.spec.name) worker)}
+               (if (is-not (.row state.surges job.spec.name) None)
+                   {"surge" (. (.row state.surges job.spec.name) worker)}
                    {})
                ;; 入れ替えの期限の見張り(2026-09-26 — handoff_policy)。Ready を待つ間と諦めた間だけ載せる: 段・起点・期限、
                ;; 諦めたなら時刻と理由(期限と最後の NotReady の理由)と新の世代の最後の ReportReady(偽)の reason。
@@ -672,7 +672,7 @@
                                  name))
         reported (frozenset (gfor state #(before after) w workers-moved name (status-row-names state w) name))
         unplaced (if workers-moved
-                     (frozenset (gfor name all-services :if (or (not-in name before.placements) (not-in name after.placements)) name))
+                     (frozenset (gfor name all-services :if (or (is (.row before.placements name) None) (is (.row after.placements name) None)) name))
                      (frozenset))
         services (if global-moved all-services (| names-moved carried reported unplaced))
         silent-moved (^ (frozenset before.silent) (frozenset after.silent))
@@ -784,7 +784,7 @@
   "資源の種類ごとの変わりやすい観測(比べる単位 snapshot に入れない物 — 資源の画面に足す)。"
   (cond
     (= kind "Service")
-      (do (setv a (.get state.placements name) reports (.row state.observations.readiness name))
+      (do (setv a (.row state.placements name) reports (.row state.observations.readiness name))
           (ServiceObserved :ready-reason (get (service-readiness state name now timing) "reason")
                            :last-readiness (if reports (get reports -1) None)
                            :process (if a (job-status-row state a.worker name) None)
