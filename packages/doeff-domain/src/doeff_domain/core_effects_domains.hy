@@ -90,6 +90,9 @@
 (import doeff_core_effects.warm-effects [ForkFromWarm PollWarmChild SignalWarmChild])
 (import doeff_core_effects.os-warm-process [os-warm-process-handler])
 (import doeff_core_effects.scripted-warm-process [scripted-warm-process-handler])
+(import doeff_core_effects.proc-table-effects [ReadProcTable SignalPid])
+(import doeff_core_effects.os-proc-table [os-proc-table-handler])
+(import doeff_core_effects.scripted-proc-table [scripted-proc-table-handler])
 (import doeff_core_effects.process-effects [AwaitProcessExit])
 (import doeff_core_effects.warm-effects [AwaitWarmChildExit])
 (import doeff_core_effects.process-exit [process-exit-handler])
@@ -323,6 +326,14 @@
   :handlers [os-warm-process-handler scripted-warm-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "os-warm-process-handler(本物 — 待ちの子の unix socket に頼み、/proc の start-ticks で照らして読む・送る)と scripted-warm-process-handler(I/O なし・台本)が 3 effect 全てに答える。頼んだ子は頼み手の子ではないので、子 process の語彙(doeff-process)の PollProcess では終わりを読めない — この語彙で読む。")
+
+
+(defdomain doeff-proc-table
+  :title "Process の表の語彙 — 機体の process の親子と memory を読み、1 つの process へ signal を送る"
+  :effects [ReadProcTable SignalPid]
+  :handlers [os-proc-table-handler scripted-proc-table-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "os-proc-table-handler(本物 — Linux の /proc を読み、start-ticks で照らして os.kill で送る)と scripted-proc-table-handler(I/O なし・台本の表)が 2 effect 全てに答える。process の group へ送るのは doeff-process の SignalProcess と doeff-warm-process の SignalWarmChild の語彙。")
 
 
 (defdomain doeff-process-exit
