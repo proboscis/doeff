@@ -187,12 +187,18 @@
                                       request.timeout-seconds
                                       (httpx.Timeout request.timeout-seconds :connect request.connect-timeout-seconds))
                          :follow-redirects request.follow-redirects)))
-    (HttpResponse :status response.status-code
-                  :headers (dict response.headers)
-                  :content response.content
-                  :text response.text
-                  :url (str response.url)
-                  :elapsed-seconds (.total-seconds response.elapsed))))
+    (setv answer (HttpResponse :status response.status-code
+                               :headers (dict response.headers)
+                               :content response.content
+                               :text response.text
+                               :url (str response.url)
+                               :elapsed-seconds (.total-seconds response.elapsed)))
+    ;; httpx の応答と本文の流れの循環を外す(agora card ki-83d403d6e421)。httpx の client は応答に本文の流れを付け直し、その流れが応答を
+    ;; 指し返す(Response.stream = BoundAsyncStream(..., response=self))ので、そのままでは応答と本文の bytes・str が参照の数で放されず、
+    ;; cyclic GC の回まで残る。free-threading の CPython は GC の間隔を生きている物の数に応じて広げ、GC で放した memory を機体へ返さないので、
+    ;; 大きい応答を周ごとに受ける job の常駐量が上がり続けた。本文は読み終えて上の答えに写したので、流れを空の流れ(公開の欄 stream)に替える。
+    (setv response.stream (httpx.ByteStream b""))
+    answer))
 
 
 (defn _request-headers-and-content [request]
