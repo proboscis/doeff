@@ -26,12 +26,23 @@ PYTHONPYCACHEPREFIX の dir(checkout の外)に置き、以後の起動は読む
 
 from __future__ import annotations
 
+import os
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import hy  # noqa: F401 — 下の Hy の module(翻訳と答え手)を import できるようにする
 import pytest
+from doeff import do, run, with_handlers
+from doeff_core_effects.handlers import reader, state
+from doeff_core_effects.os_file import os_file_handler
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_time import sync_time_handler
+
+from doeff_cluster.worker.intent.env_prepare_model import TREE_COPY, TREE_EXPAND, MaterializeTree, TreePlaced, TreeSource
+from doeff_cluster.worker.protocol.env_translation import env_translation
 
 #: 準備の道具(本番の準備の処理ステージが起こす script と同じ file)。
 TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "worker" / "entry" / "code_prepare.hy"
@@ -229,6 +240,122 @@ def test_d_a_broken_store_entry_is_named_and_rebuilt(filled: _Store, tmp_path: P
     _write_four(third, filled.salt)
     again = _bake(third, filled.store, filled.rig)
     assert again.compiled == [], ("足し直した entry を使わない", again.compiled)
+
+
+def _pycs(tree: Path) -> dict[str, Path]:
+    """木の __pycache__ の .pyc(相対 path → path)。"""
+    return {str(p.relative_to(tree)): p for p in sorted(tree.rglob("__pycache__/*.pyc"))}
+
+
+def test_f_trees_baked_from_the_store_share_one_file_per_pyc(filled: _Store, tmp_path: Path) -> None:
+    """失敗ケース(f・card ki-d51b7baa38bc): 保存先の code から置く .pyc は、root をまたいで保存先の 1 つの file を分け合い、2 つ目の木は
+    .pyc の新しい block を持たない(hardlink — 私有の byte 0)。直す前は木ごとに同じ中身を新しく書き、Mac の root 1 本で約 100 MB を書いて、
+    root を消した後も local snapshot が 24 時間持った。"""
+    second, third = tmp_path / "second", tmp_path / "third"
+    for tree in (second, third):
+        _write_four(tree, filled.salt)
+        baked = _bake(tree, filled.store, filled.rig)
+        assert baked.compiled == [] and baked.counts.get("stored", 0) >= len(_HY_SOURCES), baked.counts
+        assert "hardlink で置けない" not in baked.stderr, baked.stderr
+    placed, again = _pycs(second), _pycs(third)
+    assert set(placed) == set(again) and len(placed) >= len(_HY_SOURCES), (sorted(placed), sorted(again))
+    for rel, path in again.items():
+        assert path.stat().st_ino == placed[rel].stat().st_ino, ("同じ中身の .pyc が別の実体", rel)
+        assert path.stat().st_nlink >= 3, ("保存先と 2 つの木の 3 つの名", rel, path.stat().st_nlink)
+    assert sum(p.stat().st_blocks for p in again.values() if p.stat().st_nlink == 1) == 0, "2 つ目の木が .pyc の新しい block を持つ"
+    assert _import_value(third, filled) == 2
+
+
+def test_g_rebaking_one_tree_does_not_write_through_the_shared_pyc(filled: _Store, tmp_path: Path) -> None:
+    """失敗ケース(g・hardlink の先を書き換えない): 2 つの木が .pyc を分け合った後、片方の木で source を変えて焼き直しても、もう片方の木の
+    .pyc の中身と import した値は前のまま(置き換えで置く — その場で開いて書かない)。"""
+    second, third = tmp_path / "second", tmp_path / "third"
+    for tree in (second, third):
+        _write_four(tree, filled.salt)
+        _bake(tree, filled.store, filled.rig)
+    before = {rel: p.read_bytes() for rel, p in _pycs(second).items()}
+    _write_four(third, filled.salt, macro_add=7)
+    baked = _bake(third, filled.store, filled.rig)
+    assert baked.compiled == ["mac/macros.hy", "use/user.hy"], baked.compiled
+    assert {rel: p.read_bytes() for rel, p in _pycs(second).items()} == before, "焼き直しが他の木の .pyc を書き換えた"
+    assert _import_value(second, filled) == 2
+    assert _import_value(third, filled) == 8
+
+
+#: 2 つの版の木の中身の量を root の大きさに近づける業務の module の数(1 つの版の差は、そのうちの 1 つ)。
+_BULK_MODULES = 40
+
+
+def _materialize(mirror: Path, commit: str, dest: Path, source: TreeSource | None, tmp: Path) -> TreePlaced:
+    """worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation)で、MaterializeTree を 1 回出して木を置く。"""
+    settings = {"runtime-env.state": str(tmp / "state"), "runtime-env.shared": str(tmp / "state"),
+                "runtime-env.uv-cache": str(tmp / "uv-cache"), "runtime-env.repo-keys": {}, "runtime-env.code-prepare": "",
+                "runtime-env.uv": "uv", "runtime-env.progress": "", "runtime-env.notes": "/dev/null"}
+
+    @do
+    def placed() -> object:
+        answer = yield MaterializeTree(str(mirror), commit, str(dest), source)
+        return answer
+
+    return run(with_handlers([state(), sync_time_handler(), reader(settings), subprocess_handler, os_file_handler, env_translation],
+                             placed()))
+
+
+def _git(repo: Path, *args: str) -> str:
+    """検の手元の repo で git を 1 回撃ち、標準出力を返す。"""
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _inodes(*dirs: Path) -> dict[tuple[int, int], int]:
+    """dirs の下の普通の file の実体(#(device inode))→ 割り当てた byte。"""
+    found: dict[tuple[int, int], int] = {}
+    for base in dirs:
+        for path in base.rglob("*"):
+            st = path.lstat()
+            if stat.S_ISREG(st.st_mode):
+                found[(st.st_dev, st.st_ino)] = st.st_blocks * 512
+    return found
+
+
+def test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options(
+        filled: _Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """受入(card ki-d51b7baa38bc): 1 commit の差の root(木の写し + bytecode の焼き)が新しく書く byte(root と保存先に新しくできた実体の
+    block)は、今の形(木を全部展開し、.pyc を全部書く)の 10 分の 1 以下。PATH の頭には macOS の BSD の cp と同じく GNU の書き方を断る cp を
+    置く — 直す前の Mac は、木の写しが cp に断られて全部を展開し(10-17 19:53 JST の root は 2 つの repo の木とも展開)、.pyc を
+    root ごとに新しく書いた(root 1 本 私有 429 MB)。"""
+    bsd = tmp_path / "bsd-bin"
+    bsd.mkdir()
+    (bsd / "cp").write_text("#!/bin/sh\necho 'cp: illegal option -- -' >&2\nexit 64\n")
+    (bsd / "cp").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bsd}:{os.environ.get('PATH', '')}")
+    repo = tmp_path / "app-repo"
+    _write_four(repo, filled.salt)
+    for i in range(_BULK_MODULES):
+        path = repo / "bulk" / f"m{i}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {filled.salt}\n" + "".join(f"def f{j}(x):\n    return x + {i * 100 + j}\n" for j in range(60)))
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "v1")
+    v1 = _git(repo, "rev-parse", "HEAD")
+    (repo / "bulk" / "m0.py").write_text((repo / "bulk" / "m0.py").read_text() + "VALUE = 2\n")
+    _git(repo, "commit", "-q", "-am", "v2")
+    v2 = _git(repo, "rev-parse", "HEAD")
+    mirror = tmp_path / "app.git"
+    subprocess.run(["git", "clone", "--bare", "-q", str(repo), str(mirror)], check=True, capture_output=True)
+    first, second = tmp_path / "root-1" / "app", tmp_path / "root-2" / "app"
+    assert _materialize(mirror, v1, first, None, tmp_path).how == TREE_EXPAND
+    _bake(first, filled.store, filled.rig)
+    before = _inodes(first.parent, filled.store)
+    placed = _materialize(mirror, v2, second, TreeSource(dir=str(first), commit=v1), tmp_path)
+    assert (placed.how, placed.reason) == (TREE_COPY, ""), placed
+    baked = _bake(second, filled.store, filled.rig)
+    assert baked.counts.get("failed") == 0 and baked.counts.get("rebuilt", 0) >= 1, baked.counts
+    whole = sum(_inodes(second.parent).values())
+    written = sum(size for inode, size in _inodes(second.parent, filled.store).items() if inode not in before)
+    assert written * 10 <= whole, ("1 commit の差の root が新しく書いた byte", written, "今の形", whole)
+    assert _import_value(second, filled) == 2
 
 
 def test_e_two_macro_versions_taking_turns_do_not_rebake_each_other(filled: _Store, tmp_path: Path) -> None:

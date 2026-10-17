@@ -377,8 +377,9 @@
               (do (for [p problems]
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
-                  ;; 書いた file の数 = 焼いて書いた .pyc(rebuilt)と保存先の code から書いた .pyc(stored)(#3676・#3858)。焼かずに
-                  ;; 残した .pyc(reused)は書いていないので足さない(#3675)。
+                  ;; 書いた file の数 = 焼いて置いた .pyc(rebuilt)と保存先の code から置いた .pyc(stored)(#3676・#3858 — どちらも
+                  ;; 保存先の中身の同じ file への hardlink で置き、置けない時だけ中身を書く・card ki-d51b7baa38bc)。焼かずに残した
+                  ;; .pyc(reused)は置いていないので足さない(#3675)。
                   (replace state :interpreter used :bytecode counts :written (+ counts.rebuilt counts.stored)))))))
 
 

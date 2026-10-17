@@ -422,7 +422,9 @@
   (assert (!= second.root first.root) "新しい commit は新しい root")
   (assert (= #(second.downloaded second.built) #(0 0)))
   (assert (= (- after.syncs before.syncs) 1))
-  (assert (= (- after.copies before.copies) 2) "app も lib も前の root の木から写す(cp は repo ごとに 1 回)")
+  (<- app-part tuple (part-of second "app"))
+  (<- lib-part tuple (part-of second "lib"))
+  (assert (= #((get app-part 0) (get lib-part 0)) #("copy" "copy")) #("app も lib も前の root の木から写す" app-part lib-part))
   (assert (= (- after.diffs before.diffs) 2) "写す木ごとに、前の commit からの差を読む")
   (assert (= (- after.expanded before.expanded) 1) "mirror から置いた file は、変わった app/__init__.py の 1 つだけ")
   (assert (> (- after.stored before.stored) 0) "中身の同じ source の bytecode は保存先から書く")
@@ -579,7 +581,6 @@
   (<- (expanded-from-scratch "platform" same-env (tuple (gfor k known (replace k :platform "linux-aarch64")))))
   (<- (expanded-from-scratch "unknown platform" same-env (tuple (gfor k known (replace k :platform None)))))
   (<- after EnvWorldLog (read-world-log))
-  (assert (= after.copies before.copies) "どれも写さない")
   (assert (= after.diffs before.diffs) "写さないので差も読まない")
   True)
 

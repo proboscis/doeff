@@ -1,13 +1,15 @@
-;; 実行環境の木の置き方(翻訳 env-translation の MaterializeTree — #3677・#3671 の子 2)の検 — 本物の git・cp・tar と本物の file system の上で。
+;; 実行環境の木の置き方(翻訳 env-translation の MaterializeTree — #3677・#3671 の子 2)の検 — 本物の git・tar・os.link と本物の file system
+;; の上で。
 ;;
 ;; 模擬の世界(test_env_prepare)は、翻訳が出す命令の並びと数を確かめる。この検は、本物の file system でしか確かめられない性質を確かめる:
 ;;   1 写した file は写し元と同じ実体(hardlink)・変わった path は写し元と別の実体で、写し元の中身は前のまま(その場で上書きしない)
 ;;   2 できた木は、その commit を mirror から全部展開した木と同じ(増えた・消えた・変わった・種類が変わった path・名に空白・改行・- で
-;;     始まる path・実行の権限・symlink)。追跡しない物(.venv・__pycache__・焼いた印)は写さない
+;;     始まる path・実行の権限・変わらない symlink も symlink のまま)。追跡しない物(.venv・__pycache__・焼いた印)は写さない
 ;;   3 写し元の root を消しても、写した木の file の中身は残る(古い置き場の片づけが、そこから引き継いだ置き場を壊さない)
-;;   4 命令の引数の長さの内に収めるため、path を数百ずつ渡す(PATHS-PER-COMMAND を越える数の差も正しい木になる)
-;;   5 写せない時(写し元の commit が mirror に無い・写し元の file が欠けて cp が失敗する)は、途中まで写した木を空にして全部を展開に戻し、
-;;     理由を答えに載せる
+;;   4 git archive の引数の長さの内に収めるため、path を数百ずつ渡す(PATHS-PER-COMMAND を越える数の差も正しい木になる)
+;;   5 写せない時(写し元の commit が mirror に無い・写し元の file が欠けて hardlink を作れない)は、途中まで写した木を空にして全部を展開に
+;;     戻し、理由を答えに載せる
+;;   6 写しは外の cp を起こさない — PATH の cp が GNU の書き方を断る機体(macOS の BSD の cp)でも写す(card ki-d51b7baa38bc)
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import os)
@@ -116,6 +118,7 @@
          "sub dir/new\nline.txt" "weird name\n"
          "-dash.txt" "dash\n"
          "link" #("link" "keep.py")
+         "docs/stay-link" #("link" "../keep.py")
          "docs/old/readme.md" "R\n"
          "glob[1].txt" "g\n"
          "glob1.txt" "g1\n"})
@@ -157,9 +160,11 @@
   ;; 次の版の木を写す。
   (val dest (/ tmp-path "root-2" "app"))
   (<- second TreePlaced (place mirror v2 dest (TreeSource :dir (str src) :commit v1) tmp-path))
-  ;; V1 の追跡 file 10 のうち、変わった change.py・link・glob[1].txt と消えた gone.py・docs/old/readme.md の 5 つは持ち越さない。新しい中身を置くのは
-  ;; change.py・link・glob[1].txt・増えた add.py・docs/new/x.txt の 5 つ。持ち越す 5 + 置き直す 5 = 新しい木の 10 file。
-  (assert (= #(second.how second.copied second.removed second.replaced second.reason) #(TREE-COPY 5 5 5 "")) second)
+  ;; V1 の追跡 file 11 のうち、変わった change.py・link・glob[1].txt と消えた gone.py・docs/old/readme.md の 5 つは持ち越さない。変わらない
+  ;; symlink docs/stay-link は hardlink にせず(os.link は先の file に名を付ける)mirror から置き直す。新しい中身を置くのは change.py・link・
+  ;; glob[1].txt・増えた add.py・docs/new/x.txt と docs/stay-link の 6 つ。持ち越す 5 + 置き直す 6 = 新しい木の 11 file。
+  (assert (= #(second.how second.copied second.removed second.replaced second.reason) #(TREE-COPY 5 5 6 "")) second)
+  (assert (.is-symlink (/ dest "docs/stay-link")) "変わらない symlink は symlink のまま")
   ;; できた木 = 新しい commit を mirror から全部展開した木(追跡しない物は無い・消えた path の dir も残らない)。
   (val fresh (/ tmp-path "root-3" "app"))
   (<- expanded TreePlaced (place mirror v2 fresh None tmp-path))
@@ -185,6 +190,28 @@
   (<- remaining dict (snapshot dest))
   (assert (= remaining fresh-shape) "写し元を消したら写した木が欠けた")
   (assert (= (. (.stat (/ dest "keep.py")) st-nlink) 1) "写し元の名が消えた後は 1 つだけ"))
+
+
+(deftest test-a-tree-is-copied-where-cp-refuses-gnu-options [tmp-path monkeypatch]
+  ;; macOS の worker の PATH の cp は BSD の cp で、GNU の書き方(cp -al --parents -t)を使い方の誤り(64)で断る — 10-17 19:53 JST の Mac の
+  ;; root は 2 つの repo の木とも展開に戻った(card ki-d51b7baa38bc)。同じ断り方の cp を PATH の頭に置いても、写しは写しのまま。
+  (val bin (/ tmp-path "bsd-bin"))
+  (.mkdir bin)
+  (val fake (/ bin "cp"))
+  (.write-text fake "#!/bin/sh\necho 'cp: illegal option -- -' >&2\nexit 64\n")
+  (.chmod fake 0o755)
+  (.setenv monkeypatch "PATH" (.format "{}:{}" bin (os.environ.get "PATH" "")))
+  (val repo (/ tmp-path "app-repo"))
+  (<- v1 str (commit-files repo V1))
+  (<- v2 str (commit-files repo V2))
+  (val mirror (/ tmp-path "app.git"))
+  (<- (bare-mirror repo mirror))
+  (val src (/ tmp-path "root-1" "app"))
+  (<- first TreePlaced (place mirror v1 src None tmp-path))
+  (val dest (/ tmp-path "root-2" "app"))
+  (<- second TreePlaced (place mirror v2 dest (TreeSource :dir (str src) :commit v1) tmp-path))
+  (assert (= #(second.how second.reason) #(TREE-COPY "")) second)
+  (assert (= (. (.stat (/ dest "keep.py")) st-ino) (. (.stat (/ src "keep.py")) st-ino)) "持ち越した file は hardlink"))
 
 
 (defk bulk-files [n changed]
@@ -255,6 +282,7 @@
   (<- placed TreePlaced (place mirror v2 dest (TreeSource :dir (str src) :commit v1) tmp-path))
   (assert (= placed.how TREE-EXPAND) placed)
   (assert (in "hardlink で写せない" placed.reason) placed.reason)
+  (assert (in "-dash.txt" placed.reason) #("理由が写せなかった file を名指す" placed.reason))
   (val fresh (/ tmp-path "root-3" "app"))
   (<- expanded TreePlaced (place mirror v2 fresh None tmp-path))
   (<- placed-shape dict (snapshot dest))

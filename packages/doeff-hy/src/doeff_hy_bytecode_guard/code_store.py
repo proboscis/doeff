@@ -22,7 +22,8 @@ script は既定を ``$WORK_DIR/state/doeff-hy-code-store`` に置く(日次の�
 並び: ``<dir>/<鍵の頭 2 字>/<鍵の残り><種類の末尾>``。種類 = ``.code``(marshal した code object — dataclass の関数の code)と
 ``.imports``(worker の道具の閉包の歩みが読む import の名 — 形は道具が持つ)と ``.binding`` ・ ``.facts``(.pyc の記録の照らしの source の
 読みと code の読み — 形は bound_source・macro_use が持つ)。鍵は source の中身の sha256 と、中身の読みを変える物(:func:`code_key` の欄)
-だけで決まり、path と版(commit)に依らない。
+だけで決まり、path と版(commit)に依らない。``.pyc``(worker の道具が木へ置く .pyc の中身そのもの)だけは鍵が中身の sha256 で、木の
+.pyc はこの file への hardlink(:func:`link_pyc` — card ki-d51b7baa38bc)。
 
 source の code(:func:`code_key` の鍵 — import の口と worker の道具)は、鍵 1 つの dir に macro の環境ごとの entry を幾つか持つ:
 ``<dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code``(card ki-6828e9af04b4)。Hy の source は展開が依った macro の記録を code に持ち、
@@ -46,6 +47,7 @@ sweep-leftovers)は 7 日使われない entry と、中が全部 7 日動いて
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from types import CodeType
 
 #: 保存先の dir を指す環境変数(値 = dir の path・``off`` = 使わない)。
@@ -76,9 +78,20 @@ BINDING_SUFFIX = ".binding"
 #: macro の閉包の digest の歩みが読む code object の読み(doeff_hy_bytecode_guard.macro_use — code の中身で決まる純な読み。形は
 #: macro_use が持つ)。
 FACTS_SUFFIX = ".facts"
+#: worker の道具が木へ置く .pyc の中身そのもの(頭と marshal した code — 名は中身の sha256・:func:`link_pyc`)。
+PYC_SUFFIX = ".pyc"
 
 #: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる)— code の鍵に module 名と Hy の版を入れるかを分ける。
 HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")
+
+
+@dataclass(frozen=True)
+class StoredCode:
+    """引いた source の code の entry: code = 読んだ code object・data = entry の中身の bytes(marshal した code — 読み直さずに .pyc の頭の
+    後ろへ並べるため・:func:`current_entry`)。"""
+
+    code: CodeType
+    data: bytes
 
 
 def store_dir() -> str | None:
@@ -191,24 +204,33 @@ def current_code(store: str, key: str, is_current: Callable[[CodeType], bool]) -
     """source の code の鍵 key の entry のうち、is_current(記録を今の環境の macro で照らす — 呼び手が持つ)が真の最初の 1 つ(使った
     時刻の新しい順に照らす・無ければ None)。使った印は使う entry にだけ付ける — 照らして合わなかった entry の時刻は進めない(数の上限で
     除く順と掃除の 7 日を、その entry を使う書き手の使いだけで決める)。壊れた entry は :func:`stored_code` が名指して除き、次を照らす。"""
+    found = current_entry(store, key, is_current)
+    return None if found is None else found.code
+
+
+def current_entry(store: str, key: str, is_current: Callable[[CodeType], bool]) -> StoredCode | None:
+    """:func:`current_code` と同じ照らしで選んだ entry の code と中身の bytes(marshal した code)— worker の道具が .pyc の頭の後ろに中身を
+    そのまま並べ、同じ entry から置く .pyc を root をまたいで同じ bytes にするため(marshal し直すと、process の中の参照の数で bytes が
+    変わり得て、:func:`link_pyc` が分け合えない)。"""
     for path in code_entries(store, key):
-        code = stored_code(path, touch=False)
-        if code is not None and is_current(code):
+        found = _stored_entry(path, touch=False)
+        if found is not None and is_current(found.code):
             touch_entry(path)
-            return code
+            return found
     return None
 
 
-def add_code(store: str, key: str, code: CodeType) -> str | None:
+def add_code(store: str, key: str, code: CodeType, data: bytes | None = None) -> str | None:
     """code を source の code の鍵 key の entry に足す(名 = :func:`code_fingerprint` — 記録の同じ entry は書き直す)。足した entry の時刻は
     鍵の他の entry のどれよりも前に置き(今から :data:`NEW_ENTRY_FLOOR_SECONDS` より前にはしない)、照らして使われた時に初めて前へ出す。
     足した後に鍵の entry が :data:`CODE_ENTRIES_PER_KEY` 個を越えたら、今足した entry を残して、時刻の古い物から除く — 除かれるのは、
-    足しただけで使われていない entry と、使われなくなって久しい entry。答え = 書けなかった理由(:func:`write_entry` と同じ — 書けたら
-    None)。"""
+    足しただけで使われていない entry と、使われなくなって久しい entry。data = code を marshal した bytes(呼び手が既に持つ時 — 焼いた
+    .pyc の頭の後ろの bytes をそのまま entry にし、次に entry から置く .pyc を今置いた .pyc と同じ bytes にする・:func:`link_pyc`。無ければ
+    marshal する)。答え = 書けなかった理由(:func:`write_entry` と同じ — 書けたら None)。"""
     import marshal  # 保存先へ足す時だけ読む
 
     path = os.path.join(_code_dir(store, key), code_fingerprint(code) + CODE_SUFFIX)
-    problem = write_entry(path, marshal.dumps(code))
+    problem = write_entry(path, marshal.dumps(code) if data is None else data)
     if problem is not None:
         return problem
     others = tuple(pair for pair in _stamped_entries(store, key) if pair[1] != path)
@@ -296,6 +318,12 @@ def discard_entry(path: str, problem: str) -> None:
 def stored_code(path: str, *, touch: bool = True) -> CodeType | None:
     """code の entry を引く(無ければ None)。code として読めない entry は discard_entry で除いて None。macro の記録の照らしは呼び手
     (Hy の source だけ — 今の環境の macro の file と照らす)。touch の意味は :func:`read_entry` と同じ。"""
+    found = _stored_entry(path, touch=touch)
+    return None if found is None else found.code
+
+
+def _stored_entry(path: str, *, touch: bool) -> StoredCode | None:
+    """code の entry の code と中身の bytes を引くため(:func:`stored_code` と :func:`current_entry` の読み — 壊れた entry の扱いは同じ)。"""
     data = read_entry(path, touch=touch)
     if data is None:
         return None
@@ -309,4 +337,45 @@ def stored_code(path: str, *, touch: bool = True) -> CodeType | None:
     if not isinstance(code, CodeType):
         discard_entry(path, f"code object でない: {type(code).__name__}")
         return None
-    return code
+    return StoredCode(code, data)
+
+
+def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
+    """木の .pyc(target)を、保存先の中身の同じ file(種類 :data:`PYC_SUFFIX`・名は中身の sha256)への hardlink で置くため — 無ければ
+    保存先へ書いてから。root ごとに同じ中身の .pyc を新しく書くと、root を消した後も macOS の local snapshot がその中身を 24 時間持ち、
+    作業 disk の空きが root の作り直しの数だけ減った(card ki-d51b7baa38bc)。答え = 置けなかった理由(呼び手は今どおり target へ中身を
+    書く — 別の file system・link の数の上限など)。置けたら None。
+
+    hardlink の先を書き換えない: 保存先の file は一時の file から置き換えて作り、読み取り専用にする。木の .pyc を書き直す手(worker の
+    焼く道具・import の口・Python の import)は、どれも一時の file に書いてから置き換える(その場で開いて書かない)ので、他の木の .pyc と
+    保存先の中身は変わらない。使った印は .code と同じ(使うたびに時刻を今に — 掃除が 7 日使われない物を消す。木の名は残る)。"""
+    import errno  # 保存先へ置く時だけ読む
+    import hashlib
+
+    path = entry_path(store, hashlib.sha256(pyc).hexdigest(), PYC_SUFFIX)
+    try:
+        held = os.stat(path).st_size == len(pyc)
+    except FileNotFoundError:
+        held = False
+    except OSError as error:
+        return f"保存先の .pyc を読めない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+    if held:
+        touch_entry(path)
+    else:
+        problem = write_entry(path, pyc)
+        if problem is not None:
+            return problem
+        try:
+            os.chmod(path, 0o444)
+        except OSError as error:
+            return f"保存先の .pyc を読み取り専用にできない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+    temporary = f"{target}.{os.getpid()}.link"
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        os.link(path, temporary)
+        os.replace(temporary, target)
+    except OSError as error:
+        if os.path.lexists(temporary):  # link を作った後に置き換えを断られた時だけ、作った link が残る
+            os.unlink(temporary)
+        return f"保存先の .pyc を木へ hardlink で置けない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+    return None
