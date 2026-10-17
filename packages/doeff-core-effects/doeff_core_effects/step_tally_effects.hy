@@ -1,4 +1,4 @@
-;;; 歩の積算の効果 — 名前つきの窓を開けている間に、Python の scheduler が task を走らせた歩(task へ入ってから scheduler の効果で
+;;; 歩の積算の効果 — 名前つきの窓を開けている間に、scheduler(Python の版も Rust の版も)が task を走らせた歩(task へ入ってから scheduler の効果で
 ;;; 戻るまで)の数・壁の ns・CPU の ns と最長の歩 1 つを数える(agora-redesign #3855)。業務の語を持たない土台の語彙。
 ;;;
 ;;;   OpenStepTally   窓 key を開く。開いている key をもう 1 度開くと ValueError。答え = None。

@@ -166,8 +166,9 @@ class _ClaimMark:
         self.mut_in_ready = in_ready
 
 
-# 測りの口(agora-redesign #3861・#3855)。sink を据えると、Python の scheduler が出来事ごとに dict を 1 つ渡す。
-# sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない。
+# 測りの口(agora-redesign #3861・#3855)。sink を据えると、scheduler(Python の版も Rust の版も)が出来事ごとに dict を
+# 1 つ渡す。sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない(Rust の版は
+# doeff_vm の旗を 1 度読む)。
 TraceSink = Callable[[dict[str, object]], None]
 _trace_sink: TraceSink | None = None
 _trace_runs = itertools.count()
@@ -179,8 +180,9 @@ _trace_generation = 0
 def set_scheduler_trace(sink: TraceSink | None) -> None:
     """process 全体で 1 つの測りの sink を据える(None で外す)。
 
-    出来事を出すのは Python の scheduler だけ。sink を据えたまま Rust の scheduler を組むと
-    ``scheduled`` が RuntimeError で断る(黙って 0 件の測りにしない)。出来事の ``event`` は
+    出来事は Python の版も Rust の版(既定)も出す — 同じ種類・同じ欄の出来事を同じ順で(時計の値と doeff-vm の
+    歩数は版ごとに違う。tests/test_scheduler_trace.py が両方の版の並びを照らす)。run の途中で据えても外しても、
+    次の出来事から従う。出来事の ``event`` は
     start・enqueued・resumed・spawned・task-enter・task-leave・external-complete・external-drained・
     external-ignored で、どれも ``run``・``thread``・``ns``(perf_counter_ns)・``cpu_ns``
     (thread_time_ns)を持つ。task ごとの CPU は、task-leave の直前の区間(同じ task の
@@ -188,10 +190,35 @@ def set_scheduler_trace(sink: TraceSink | None) -> None:
     ``step_cpu_ns``・``step_vm_steps``・``step_handler_calls``(doeff-vm の数 — process 全体の累計の差)
     として添える(区間の始まりがこの sink の下に無ければ None)。spawned は ``tid``(子)・``parent``
     (Spawn を出した task・根は None)・``site`` を持つ(#4188 — task の木を出来事から組み直すため)。
+    task-leave は scheduler の prompt を通る効果ごとに出る — scheduler が渡すだけの効果(外の handler が答える物)にも。
+
+    sink が例外を上げた時: Python の版では出来事を出した所から上がる。Rust の版の中で出す出来事(start と
+    external-complete の外 — この 2 つは両方の版で Python の側が出す)では、状態の書き換えの途中で止めないため、
+    Exception は sys.unraisablehook へ渡して run を続け、KeyboardInterrupt などの BaseException は次に再開する
+    task の yield へ投げ込む。
     """
     global _trace_sink, _trace_generation
+    switch = _rust_scheduler_trace_switch()
     _trace_sink = sink
     _trace_generation += 1
+    switch(sink is not None)
+
+
+def _rust_scheduler_trace_switch() -> Callable[[bool], None]:
+    """Rust の版の scheduler が読む旗(sink が据えてあるか)の切り替え — Python の sink と揃えるため。
+
+    Rust の拡張が古くて旗を持たない時は ImportError で断る(Python の版の測りも doeff_vm の数を読むので、
+    同じ拡張を build し直す)。sink の状態は変えない。
+    """
+    try:
+        from doeff_vm.doeff_vm import set_scheduler_trace_installed
+    except ImportError as error:
+        raise ImportError(
+            "set_scheduler_trace needs a doeff_vm extension that carries the scheduler trace switch "
+            "(set_scheduler_trace_installed): rebuild the Rust extension (`make sync` in a doeff "
+            "checkout, or reinstall doeff-vm)"
+        ) from error
+    return set_scheduler_trace_installed
 
 
 def scheduler_trace_sink() -> TraceSink | None:
@@ -217,6 +244,45 @@ def _trace(event: str, run: int | None, **fields: object) -> None:
     if sink is None:
         return
     _trace_at(sink, event, run, time.perf_counter_ns(), time.thread_time_ns(), fields)
+
+
+@dataclass(frozen=True, slots=True)
+class _StepStart:
+    """歩の始まりの境目 1 つ: 据えた sink の番号(generation)・壁の ns・CPU の ns・doeff-vm の歩数と handler の呼びの累計。"""
+
+    generation: int
+    ns: int
+    cpu_ns: int
+    vm_steps: int
+    handler_calls: int
+
+
+def _trace_step_boundary(
+    previous: _StepStart | None, event: str, run: int, tid: int | None, fields: dict[str, object]
+) -> _StepStart | None:
+    """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出し、次の歩の始まりを返すため(両方の版が使う)。
+
+    時計と doeff-vm の数は 1 度だけ読み、出来事と次の歩の始まりの両方に使う。task-leave には、直前の境目
+    ``previous`` からこの歩の壁と CPU の ns(step_ns・step_cpu_ns)と doeff-vm の歩数と handler の呼び
+    (step_vm_steps・step_handler_calls — #4188。機体の混みで揺れない)を添える — 直前の境目が今の sink の下に
+    無ければ(据えた直後・据え直した後)None。sink が無ければ何も出さず ``previous`` を返す。"""
+    sink = _trace_sink
+    if sink is None:
+        return previous
+    ns, cpu_ns = time.perf_counter_ns(), time.thread_time_ns()
+    work = _read_vm_work()
+    start = _StepStart(_trace_generation, ns, cpu_ns, work.steps, work.handler_calls)
+    if event == "task-leave":
+        fresh = previous is not None and previous.generation == _trace_generation
+        fields = {
+            **fields,
+            "step_ns": ns - previous.ns if fresh else None,
+            "step_cpu_ns": cpu_ns - previous.cpu_ns if fresh else None,
+            "step_vm_steps": work.steps - previous.vm_steps if fresh else None,
+            "step_handler_calls": work.handler_calls - previous.handler_calls if fresh else None,
+        }
+    _trace_at(sink, event, run, ns, cpu_ns, {"tid": tid, **fields})
+    return start
 
 
 def _boundary_callable(kind: str, boundary_callable: Callable[..., object]) -> object:
@@ -1107,8 +1173,8 @@ SchedulerImplementation = Literal["python", "rust"]
 # environment variable chooses. "rust": the same semantics as the Python
 # implementation at about a ninth of the cost per task. The Python
 # implementation stays selectable — DOEFF_SCHEDULER=python for a process,
-# implementation="python" for one call — and is the one that emits the
-# set_scheduler_trace events (docs/25-rust-scheduler.md).
+# implementation="python" for one call (docs/25-rust-scheduler.md). Both emit
+# the same set_scheduler_trace events.
 DEFAULT_IMPLEMENTATION: SchedulerImplementation = "rust"
 
 # Environment variable that overrides DEFAULT_IMPLEMENTATION ("python" / "rust").
@@ -1149,12 +1215,6 @@ def scheduled(
     choose between them for comparison and rollback.
     """
     if resolve_implementation(implementation) == "rust":
-        if _trace_sink is not None:
-            raise RuntimeError(
-                "set_scheduler_trace の出来事は Python の scheduler だけが出す — sink を据えたまま "
-                "Rust の scheduler(既定の版)では走らせない(implementation='python' か "
-                f"${IMPLEMENTATION_ENV_VAR}=python で Python の scheduler を選んで測るか、sink を外す)"
-            )
         return _scheduled_rust(body_program)
     return _scheduled_python(body_program)
 
@@ -1201,6 +1261,9 @@ def _rust_spec() -> dict[str, object]:
         "module": sys.modules[__name__],
         "external_wake_of": _external_wake_of,
         "external_wait_is_stall": _external_wait_is_stall,
+        # 測りの口: 出来事の dict と時計は Python の版と同じ helper で作る(sink が据えてある時だけ呼ばれる)。
+        "trace": _trace,
+        "trace_step_boundary": _trace_step_boundary,
         "PRIORITY_IDLE": PRIORITY_IDLE,
         "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
         "PRIORITY_NORMAL": PRIORITY_NORMAL,
@@ -1224,12 +1287,17 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
             f"(${IMPLEMENTATION_ENV_VAR}=python, or implementation='python')"
         ) from error
 
+    # 測りの口(#3861): この run の番号は Python の版と同じ通し番号から取り、start も同じ所で出す。
+    run_id = next(_trace_runs)
+    if _trace_sink is not None:
+        _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
     core = SchedulerCore(
         {
             **_rust_spec(),
             "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,
             "HANDLE_REFS_PRUNE_MIN": HANDLE_REFS_PRUNE_MIN,
             "UNRETRIEVED_EXCEPTIONS_NAMED": UNRETRIEVED_EXCEPTIONS_NAMED,
+            "trace_run": run_id,
         }
     )
 
@@ -1491,8 +1559,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     run_id = next(_trace_runs)
     wake_context: list[tuple[str, int | None]] = [("internal", None)]
     wake_of_seq: dict[int, tuple[str, int | None]] = {}
-    # 今の歩の始まりの境目(sink の番号・壁の ns・CPU の ns・doeff-vm の歩数・handler の呼び)。sink がある時だけ書く。
-    step_start: list[tuple[int, int, int, int, int] | None] = [None]
+    # 今の歩の始まりの境目(_StepStart)。sink がある時だけ書く。
+    step_start: list[_StepStart | None] = [None]
     # sys._is_gil_enabled は Python 3.13 から。それより前は GIL が常に有る。
     if _trace_sink is not None:
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
@@ -2427,28 +2495,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         trace_step_boundary("task-enter", tid, site=site, ready=len(ready))
 
     def trace_step_boundary(event: str, tid: int | None, **fields: object) -> None:
-        """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出すため。時計と doeff-vm の数は 1 度だけ読み、次の歩の
-        始まりにも使う。task-leave には、直前の境目からこの歩の壁と CPU の ns(step_ns・step_cpu_ns)と doeff-vm の歩数と
-        handler の呼び(step_vm_steps・step_handler_calls — #4188。機体の混みで揺れない)を添える — 直前の境目が今の sink の下に
-        無ければ(据えた直後・据え直した後)None。"""
-        sink = _trace_sink
-        if sink is None:
-            return
-        ns, cpu_ns = time.perf_counter_ns(), time.thread_time_ns()
-        work = _read_vm_work()
-        vm_steps, handler_calls = work.steps, work.handler_calls
-        previous = step_start[0]
-        step_start[0] = (_trace_generation, ns, cpu_ns, vm_steps, handler_calls)
-        if event == "task-leave":
-            fresh = previous is not None and previous[0] == _trace_generation
-            fields = {
-                **fields,
-                "step_ns": ns - previous[1] if fresh else None,
-                "step_cpu_ns": cpu_ns - previous[2] if fresh else None,
-                "step_vm_steps": vm_steps - previous[3] if fresh else None,
-                "step_handler_calls": handler_calls - previous[4] if fresh else None,
-            }
-        _trace_at(sink, event, run_id, ns, cpu_ns, {"tid": tid, **fields})
+        """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出し、この run の歩の始まりを進めるため
+        (出来事の形は _trace_step_boundary — Rust の版と同じ物)。"""
+        step_start[0] = _trace_step_boundary(step_start[0], event, run_id, tid, fields)
 
     def pick_next() -> "Program[object, object]":
         """The next step of the run; a deadlock is thrown into the root body where it waits.
