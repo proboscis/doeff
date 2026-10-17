@@ -382,12 +382,12 @@
 
 ;; --- task の期限(#3062) -----------------------------------------------------------------------------------------------------------
 ;; task の判断(cluster_policy.place-tasks)の次の刻(task-due)は、判断が比べる期限と同じ関数(task-lapse-at・wait-lapse-at)から求める。
-;; - task-due の刻は place-tasks の答えが変わる最初の刻そのもの(1 ms 前の place-tasks は task を変えず、その刻の place-tasks は変える):
+;; - task-due の刻は tasks-placed の答えが変わる最初の刻そのもの(1 ms 前の tasks-placed は task を変えず、その刻の tasks-placed は変える):
 ;;   lease の内に終わって保持の期限が来る切り離した task・lease の切れる置いた切り離した task・呼び手が問い合わせを止めた task・能力の
 ;;   合う worker の沈黙を待つ task。反例 — 判断か task-due の片方だけ期限をずらすと赤(task-due を行の有無の形に戻しても赤)。
 
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord WorkerInfo ComponentVersion])
-(import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due])
+(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-due])
 (import tests.state_rows [table-from-rows])
 
 
@@ -422,12 +422,12 @@
   (<- scenarios tuple (lapse-scenarios))
   (for [#(name state start expected) scenarios]
     ;; 起点の拍の後の状態(待つ task は待ちの理由を書いた後)から数える — 静かな区間の歩の前提。
-    (<- settled Table (place-tasks start state {} timing))
+    (<- settled Table (tasks-placed start state {} timing))
     (val quiet (replace state :tasks settled))
     (<- answer (| DueAt DueNow DueNever) (task-due quiet start timing))
     (assert (= answer (DueAt :at expected)) #(name answer expected))
     (val due answer.at)
-    (<- before Table (place-tasks (- due 1) quiet {} timing))
-    (<- at Table (place-tasks due quiet {} timing))
+    (<- before Table (tasks-placed (- due 1) quiet {} timing))
+    (<- at Table (tasks-placed due quiet {} timing))
     (assert (= before settled) #(name "期限の 1 ms 前に変わった" before))
     (assert (!= at settled) #(name "期限の刻に変わらない" at))))

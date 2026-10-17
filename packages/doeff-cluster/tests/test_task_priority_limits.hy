@@ -1,4 +1,4 @@
-;;; task の優先(priority)と同時数の上限(limits)を coordinator の置き方 place-tasks が守る事の検(2026-10-11)。
+;;; task の優先(priority)と同時数の上限(limits)を coordinator の置き方 tasks-placed が守る事の検(2026-10-11)。
 ;;; 実例: 大きな worker の task の枠を呼び手たちの長い背景の仕事が埋め、後から積んだ配備の組み立ての task が 30 分超 queued のまま
 ;;; 待った(置く順が id の順だけ — 先に積んだ背景の仕事が空いた枠を先に取った)。
 (require doeff-hy.macros [deftest val <- defk])
@@ -10,7 +10,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo Placement ClusterState TaskRecord ComponentVersion TaskUnplacedKind])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
-(import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-unplaced-text])
+(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-unplaced-text])
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
@@ -63,7 +63,7 @@
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
   (val state (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val placed (! (place-tasks 1000 state placements T)))
+  (val placed (! (tasks-placed 1000 state placements T)))
   (assert (= (. (.row placed "t11") phase) "assigned") (.row placed "t11"))
   (val longs (! (phases placed LONG-IDS)))
   (assert (= (.count longs "assigned") 6) longs)
@@ -79,16 +79,16 @@
   (setv tasks {})
   (for [id LONG-IDS]
     (setv (get tasks id) (! (queued id :priority -1))))
-  (val first (! (place-tasks 1000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements (! (table-from-rows tasks))) placements T)))
+  (val first (! (tasks-placed 1000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements (! (table-from-rows tasks))) placements T)))
   (val longs (! (phases first LONG-IDS)))
   (assert (= (.count longs "assigned") 8) longs)
   (assert (= (. (.row first "t10") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))) (.row first "t10"))
-  (val later (! (place-tasks 2000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
+  (val later (! (tasks-placed 2000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
                                                 (! (table-from-rows (| (dict (.items first)) {"t11" (! (queued "t11"))}))))
                              placements T)))
   (assert (= (. (.row later "t11") phase) "assigned") (.row later "t11"))
   ;; 優先 0 の task は今までどおり予約の最後まで使える(上の組み立ての後も残した 1 本に置け、その次は空きが無い)。
-  (val more (! (place-tasks 3000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
+  (val more (! (tasks-placed 3000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
                                                (! (table-from-rows (| (dict (.items later)) {"t12" (! (queued "t12")) "t13" (! (queued "t13"))}))))
                             placements T)))
   (assert (= (! (phases more ["t12" "t13"])) ["assigned" "queued"]) more)
@@ -105,7 +105,7 @@
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
   (val state (ClusterState jobs {"zeus" (! (zeus-like 33 6))} placements (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val first (! (place-tasks 1000 state placements T)))
+  (val first (! (tasks-placed 1000 state placements T)))
   (val longs (! (phases first LONG-IDS)))
   (assert (= (.count longs "assigned") 3) longs)
   (<- reserved str (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))
@@ -114,7 +114,7 @@
   (setv more (dict (.items first)))
   (for [id builds]
     (setv (get more id) (! (queued id))))
-  (val later (! (place-tasks 2000 (replace state :tasks (! (table-from-rows more))) placements T)))
+  (val later (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows more))) placements T)))
   (assert (= (! (phases later builds)) ["assigned" "assigned" "assigned"]) later))
 
 (deftest test-one-caller-runs-at-most-two-background-tasks-at-once
@@ -123,11 +123,11 @@
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
   (val state (ClusterState #() {"zeus" (! (zeus-like 30 3))} {} (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val placed (! (place-tasks 1000 state {} T)))
+  (val placed (! (tasks-placed 1000 state {} T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (.row placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (.row placed "t3"))
   (val ended (| (dict (.items placed)) {"t1" (replace (.row placed "t1") :phase "finished" :finished-ms 1500)}))
-  (val next (! (place-tasks 2000 (replace state :tasks (! (table-from-rows ended))) {} T)))
+  (val next (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows ended))) {} T)))
   (assert (= (. (.row next "t3") phase) "assigned") (.row next "t3")))
 
 (defk submitted [key body]
