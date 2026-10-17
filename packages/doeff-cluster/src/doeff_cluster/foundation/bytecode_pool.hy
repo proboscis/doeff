@@ -102,8 +102,9 @@
 (defn #^ tuple bake-one [#^ (| str None) store #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
   "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を置いた — 置き方の理由は place-pyc)・
    \"rebuilt\"(焼いて .pyc を置き、code を保存先へ足した — 足せなかった・hardlink で置けなかった時は理由)・\"failed\"(焼けない・
-   読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。保存先の code から置く .pyc は、頭の後ろに entry の中身をそのまま
-   並べる(marshal し直さない — 同じ entry から置く .pyc が root をまたいで同じ bytes になり、保存先の 1 つの file を分け合う)。
+   読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。保存先の code から置く .pyc の bytes は code_store の entry-pyc が
+   組む(頭の後ろに entry の中身をそのまま — 同じ entry から置く .pyc が root をまたいで同じ bytes になり、保存先の 1 つの file を分け合う。
+   組み方は code_store だけが知る)。
    保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-code)。今の source の hash と
    今の環境の macro に合う entry だけを使い、無ければ焼き直して今の環境の entry を鍵に足す(他の環境の entry は上書きしない — card
    ki-6828e9af04b4: 鍵 1 つに entry 1 つの形では、版の違う書き手と同じ鍵を交互に上書きし、同じ版の準備でも 1 回に 100〜600 本を
@@ -121,7 +122,7 @@
     (setv found (.current-entry code-store store key (fn [c] (bytecode-is-current source (run (checked-hash-pyc c data)) data))))
     (when (is-not found None)
       (setv head (cut (run (checked-hash-pyc found.code data)) 0 PYC-HEAD-BYTES))
-      (return #("stored" (place-pyc store source (+ head found.data))))))
+      (return #("stored" (place-pyc store source (.entry-pyc code-store head found))))))
   (setv compiled (run (compiled-pyc rel name source data)))
   (when (isinstance compiled SourceNotCompiled)
     (return #("failed" compiled.reason)))

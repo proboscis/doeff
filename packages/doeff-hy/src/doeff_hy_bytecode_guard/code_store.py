@@ -389,3 +389,17 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
             os.unlink(temporary)
         return f"保存先の .pyc を木へ hardlink で置けない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     return None
+
+
+def entry_pyc(head: bytes, entry: StoredCode) -> bytes:
+    """引いた entry から木へ置く .pyc の bytes を組むため — 頭(呼び手の方式の 16 byte — checked hash か timestamp)の後ろに entry の中身を
+    そのまま並べる(marshal し直さない)。同じ entry と同じ頭からは root をまたいで同じ bytes になり、:func:`link_pyc` が保存先の 1 つの
+    file を分け合う。組み方を知るのはここだけ — 焼く道具も、.pyc を寄せる他の書き手も、この関数と :func:`link_pyc` を呼ぶ(設計検証
+    lt-4KTRWD3K1PH2VG5W5X294EZJP4 の盲検 A — 組み方が焼く道具にだけ在ると、2 つ目の書き手が marshal し直して分け合えなかった)。"""
+    return head + entry.data
+
+
+def link_entry_pyc(store: str, head: bytes, entry: StoredCode, target: str) -> str | None:
+    """引いた entry の .pyc(:func:`entry_pyc`)を、保存先の中身の同じ file への hardlink で target に置くため。答えは :func:`link_pyc` と同じ
+    (置けなかった理由 — 呼び手は :func:`entry_pyc` の bytes を書く)。"""
+    return link_pyc(store, entry_pyc(head, entry), target)

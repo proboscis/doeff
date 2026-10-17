@@ -77,6 +77,24 @@ def test_a_stored_pyc_left_writable_is_made_read_only_when_used(tmp_path: Path) 
     assert stat.S_IMODE(os.stat(blob).st_mode) == 0o444
 
 
+def test_a_second_writer_shares_the_bake_tools_file_through_the_entry_api(tmp_path: Path) -> None:
+    """同じ entry から .pyc を置く 2 つの書き手(焼く道具の形 = entry_pyc の bytes を link_pyc・.pyc を寄せる別の書き手 = link_entry_pyc)は、
+    組み方を自分で持たずに保存先の 1 つの file を分け合う(設計検証 lt-4KTRWD3K1PH2VG5W5X294EZJP4 の盲検 A — 組み方が焼く道具にだけ在ると、
+    2 つ目の書き手は marshal し直して root ごとに別の file を作った)。"""
+    store = str(tmp_path / "store")
+    key = code_store.code_key("/tree/pkg/m.py", b"VALUE = 1\n", "pkg.m", "1.1.0", "cpython-314", 0)
+    assert code_store.add_code(store, key, compile("VALUE = 1\n", "/tree-a/pkg/m.py", "exec")) is None
+    entry = code_store.current_entry(store, key, lambda code: True)
+    assert entry is not None
+    head = b"\x00" * 16
+    first, second = tmp_path / "a" / "m.pyc", tmp_path / "b" / "m.pyc"
+    assert code_store.link_pyc(store, code_store.entry_pyc(head, entry), str(first)) is None
+    again = code_store.current_entry(store, key, lambda code: True)
+    assert again is not None and code_store.link_entry_pyc(store, head, again, str(second)) is None
+    assert first.stat().st_ino == second.stat().st_ino
+    assert second.read_bytes() == head + entry.data
+
+
 def test_a_target_that_cannot_be_linked_answers_the_reason(tmp_path: Path) -> None:
     """木へ hardlink を置けない時(ここでは木の dir の場所に file が在る)は例外にせず、path を含まない理由を答える(呼び手は中身を書く —
     理由は準備の記録に 1 度ずつ出る)。"""
