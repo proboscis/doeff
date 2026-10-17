@@ -408,7 +408,10 @@ records.
 
 ## Contributing
 
-Setting up the development environment, running the tests and running the benchmarks are
+Questions, bug reports and feature ideas are welcome as
+[issues](https://github.com/proboscis/doeff/issues/new/choose). To send a change, pick a
+[good first issue](https://github.com/proboscis/doeff/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22);
+setting up the development environment, running the tests and opening a pull request are
 described in [CONTRIBUTING.md](https://github.com/proboscis/doeff/blob/main/CONTRIBUTING.md).
 
 ## License
