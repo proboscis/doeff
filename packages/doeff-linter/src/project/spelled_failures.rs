@@ -168,6 +168,23 @@ mod tests {
         assert!(failure_types_of_whole(dir.path(), &off, &reading).is_empty());
     }
 
+    /// 別の型の名を引いても repo の Hy を読み直さない — 宣言を持つ file(`:failure` か `:absent` を含む file)は名に依らないので 1 回だけ集める
+    /// (match の腕の型が 20 個の file で、名ごとに repo の Hy 約 2,900 file を読み直して CPU が 4 秒だった — 2026-10-17 の `cli_host.hy`)。
+    #[test]
+    fn different_names_share_one_read_of_the_repo() {
+        let dir = repo(&sample());
+        let reading = tag_reading(None, None);
+        let enabled = enabled();
+        let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
+        assert!(lookup.is_failure("app.errs.Refusal"));
+        // 宣言の file を消しても、別の名は 1 度目の読みで集めた宣言から答える。
+        std::fs::remove_file(dir.path().join("app/errs.hy")).unwrap();
+        std::fs::remove_file(dir.path().join("app/effs.hy")).unwrap();
+        assert!(lookup.is_failure("app.errs.Unreachable"), "別の名を引くたびに repo を読み直している");
+        assert!(lookup.is_failure("app.store.Gone"));
+        assert!(!lookup.is_failure("app.errs.Rejection"), "宣言しない型は、別の名でも失敗の型ではない");
+    }
+
     /// 同じ名の問いは 2 度集めない(memo)— 1 度目で集めた集合から答える。
     #[test]
     fn the_same_name_is_collected_once() {
