@@ -56,6 +56,9 @@ To go live, replace `fake_world` with handlers that call your HTTP client and
 your model. `digest` does not change, and the fake stays as your test.
 [`examples/llm_agent.py`](https://github.com/proboscis/doeff/blob/main/examples/llm_agent.py) does
 this for an LLM agent, with pytest tests that need no API key.
+[`examples/github_repo`](https://github.com/proboscis/doeff/tree/main/examples/github_repo) does it
+for a REST API: it calls GitHub through the HTTP handler of `doeff[http]`, and its tests answer
+with a fake handler, without the network.
 
 ## Why doeff?
 
@@ -256,6 +259,9 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
   makes the model call an effect: an OpenAI-compatible client answers it in production, canned answers
   in [its tests](https://github.com/proboscis/doeff/blob/main/examples/test_llm_agent.py). It needs only
   `pip install doeff`, and its tests pytest besides.
+- **Testing an HTTP API client**: [`examples/github_repo`](https://github.com/proboscis/doeff/tree/main/examples/github_repo)
+  calls the GitHub API through the HTTP handler of `doeff[http]`; its tests answer with a fake handler.
+  Run them with `pip install "doeff[http]" pytest`, then `pytest examples/github_repo` (no network).
 - **Why effects?**: [Effects vs. dependency injection and plain `async`](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
 - **Questions**: [FAQ](https://github.com/proboscis/doeff/blob/main/docs/faq.md): dependency injection, asyncio, speed, types, Hy, production use
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
