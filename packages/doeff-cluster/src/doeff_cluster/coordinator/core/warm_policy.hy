@@ -24,7 +24,7 @@
    (送り手が「1 台以上で準備済み」を読んで Ready を決めるため)。そのうち 1 台でも先の組みを memory を測らずに始めていれば memory-unmeasured。"
   (setv draining (draining-workers state now)
         ready [] preparing [] failed [] unmeasured False)
-  (for [w (sorted (.values state.workers) :key (fn [w] w.name))]
+  (for [w (sorted (.rows state.workers) :key (fn [w] w.name))]
     (when (and (alive now w timing.lease-ms) (not-in w.name draining) w.platform
                (placeable entry.needs w) (tools-cover entry.runtime-env w))
       (setv key (root-key-on entry.runtime-env w))
