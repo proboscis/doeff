@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- `handler(raw)` is typed to take a raw handler `(effect, k: K)` whose effect annotation is an `EffectBase` class, a
+  union of them, or open (no annotation, `Any`, `object`); an installer is still taken as it is. `handler(f)` for
+  `f(effect: str, k)`, `f(effect: int, k)` or a function that does not take `(effect, k)` is now an error in pyright
+  and mypy — before, any callable passed the type check and `handler()` raised `TypeError` at run time. A marker base
+  annotation must derive from `EffectBase` for the type checker; one that does not (or a runtime-checkable
+  `Protocol`) still filters at run time, but is now a type error in `handler()`.
+
 ### Fixed
 
 - `doeff-core-effects`: on macOS, `ReadDiskFree` and `ReadDiskUsage` (`os-file-handler`) answer the volume's

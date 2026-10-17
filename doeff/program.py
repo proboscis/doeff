@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 
 
 _Result = TypeVar("_Result")
+# The effect a raw handler's effect parameter takes (``handler``): bound to ``EffectBase`` so that
+# an annotation no effect can match (``effect: str``) is a type error, as it is a ``TypeError`` at
+# run time. A parameter typed ``object`` or ``Any``, or left bare, takes every effect.
+_HandledEffect = TypeVar("_HandledEffect", bound=EffectBase)
 
 
 class ProgramHandler(Protocol):
@@ -227,6 +231,14 @@ def _install_raw(
     return cast(_InstalledHandler, install)  # the marker is set on it just above
 
 
+@overload
+def handler(raw_handler: ProgramHandler) -> ProgramHandler: ...
+
+
+@overload
+def handler(raw_handler: Callable[[_HandledEffect, K], object]) -> ProgramHandler: ...
+
+
 def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
     """Wrap a raw effect dispatcher as a Program -> Program handler.
 
@@ -236,6 +248,14 @@ def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
     is returned as is. An unmarked value that cannot take ``(effect, k)``, or
     whose effect annotation no effect can match (``effect: str``), is refused
     with a ``TypeError`` naming it (see ``_install_raw``).
+
+    The type checker refuses the same mistakes before the program runs: a raw
+    handler is typed ``(effect, k: K)``, its effect parameter annotated with an
+    ``EffectBase`` class, a union of them, or left open (no annotation,
+    ``Any``, ``object``). ``handler(f)`` for ``f(effect: str, k)`` is an error
+    in pyright and mypy. A marker base the effects share must derive from
+    ``EffectBase`` for the type checker to accept it — one that does not still
+    filters at run time, but the type checker cannot tell it from ``str``.
     """
     if not callable(raw_handler):
         raise TypeError(

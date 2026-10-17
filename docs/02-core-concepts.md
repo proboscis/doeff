@@ -300,7 +300,9 @@ Rules (single definition: `doeff_vm/_effect_types.py`):
 - a type no effect can be an instance of — `str`, `int`, `dict`, `list[...]`,
   `None`, `Exception` or a class built on one of them — is refused with a
   `TypeError` where the handler is made (`handler(fn)`, `with_handlers`; a raw
-  `WithHandler` when it is installed), because the handler would never be called:
+  `WithHandler` when it is installed), because the handler would never be called.
+  pyright and mypy refuse `handler(fn)` for it before the program runs (see
+  "Handler answers" in [Static Typing](23-static-typing.md)):
 
 ```python
 from dataclasses import dataclass
@@ -426,14 +428,14 @@ runs and yields `Pass` (see the cost table above).
 
 Because the filter is `isinstance`, a guard written against a parent type also
 catches effects added later — there is no list to keep in sync. Give the
-family a common base (it does not have to derive from `EffectBase`):
+family a common base derived from `EffectBase`:
 
 ```python excerpt
-class WriteEffect:
+class WriteEffect(EffectBase):
     """Marker base: every effect that writes shared state."""
 
 @dataclass(frozen=True)
-class WriteRow(EffectBase, WriteEffect):
+class WriteRow(WriteEffect):
     key: str
     value: dict
 
@@ -442,12 +444,18 @@ def read_only_guard(effect: WriteEffect, k):
     raise PermissionError(f"read-only job emitted {type(effect).__name__}")
     yield
 
-# A DeleteRow(EffectBase, WriteEffect) added next year is refused without
+# A DeleteRow(WriteEffect) added next year is refused without
 # touching the guard.
 ```
 
 The remaining obligation is at the single place where an effect is defined:
-a new write effect must derive from `WriteEffect`.
+a new write effect must derive from `WriteEffect`. An effect can belong to
+several families (`class DeleteRow(WriteEffect, AuditEffect)`).
+
+A base that does not derive from `EffectBase` filters the same way at run
+time, but the type checker then refuses `handler(read_only_guard)`: it cannot
+tell such a class from `str`, which no effect can be (see "Handler answers"
+in [Static Typing](23-static-typing.md)).
 
 ## WithObserve Contract
 

@@ -112,6 +112,28 @@ effect's `T`. The `@do` tail-resume analysis recognises `typed_resume` like
 `Resume`. The effect annotation (`effect: ReadClock`) is also the handler's
 runtime filter — see "Typed handlers" in [Core Concepts](02-core-concepts.md).
 
+`handler(raw)` takes a raw handler `(effect, k: K)` whose effect annotation is
+an `EffectBase` class, a union of them, `EffectBase` itself, or open (no
+annotation, `Any`, `object`). A handler no effect can reach is a type error in
+pyright and mypy, as it is a `TypeError` when `handler()` runs:
+
+```python excerpt
+@do
+def wrong(effect: str, k: K):                # no effect is a str
+    return (yield Resume(k, None))
+
+handler(wrong)
+# pyright: Argument of type "(effect: str, k: K) -> ..." cannot be assigned to
+#          parameter "raw_handler" of type "(_HandledEffect@handler, K) -> object"
+# mypy:    Value of type variable "_HandledEffect" of "handler" cannot be "str"
+```
+
+A function that does not take `(effect, k)` is refused the same way. A marker
+base the effects share (`WriteEffect` in Core Concepts) must derive from
+`EffectBase` for the type checker to accept `effect: WriteEffect`: a base that
+does not, and a runtime-checkable `Protocol`, still filter at run time, but the
+type checker cannot tell them from `str`.
+
 ## Runtime readers (for Hy and other tools)
 
 The same annotations are readable at runtime, so tools that cannot run pyright
@@ -134,6 +156,9 @@ effects can be checked with `program_signature`.
 - `Ask` / `Get` answer `Any` (the environment and state are dynamic).
 - Checking that an environment's handlers cover a program's `E` is not done by
   the type checker; `program_signature` + `handler_effect_types` give the data.
+- `with_handlers([...], p)` and `stacked_handlers(...)` take any callable: the
+  type checker reads a raw handler's effect annotation in `handler(raw)` only
+  (all three refuse it at run time).
 
 ## Mapping from a hand-written typing layer
 
