@@ -19,7 +19,15 @@ shim(worker/entry/shim の --stamp-lines)と、待ちの子から分かれた子
   書き手の fd(writer_descriptors)を閉じる。
 - log の file へ書けなくなったら(disk が満ちた等)、以後は読み捨てる — 書き手が詰まって job の write を止めない。
 残る穴: shim 自身が KILL で止まった時(引き取りを使えない時の期限切れの group への KILL・worker の停止の猶予の後の KILL)は、その瞬間に
-pipe に残っていた分と末尾の改行は残らない(shim の残る穴と同じ所)。
+pipe と file の書きの溜めに残っていた分と末尾の改行は残らない(shim の残る穴と同じ所)。
+
+file の書き(card ki-2742a2af90b6 — 機体の log の置き場の disk が詰まると、log の file への write が 1〜16 秒返らない事が、1 つの常駐の
+job の 8 日分の log で 1 秒越え 1126 回在った。前の形は読みの thread が file へ書き終えるまで pipe を読まなかったので、詰まりが続くと
+pipe(64 KiB)が満ち、job の stdout・stderr への write が止まり、job の main thread と event loop が止まる): 読みの thread は pipe を読んで
+刻を差し込むだけにし、file への write は別の thread(FileFeed)が溜めから受けた順に書く。溜めは上限つき(FeedLimits.queue_bytes)で、
+越えた塊は捨てて数え、その位置に刻つきの 1 行の知らせ(捨てた byte の数)を書く — file の書きが詰まっても job の write を止めない
+(送りの溜めと同じ考え方)。終わり(end)は、読みの thread が pipe を読み切った後に、溜めに在る分を file へ書き終えるまで待つ(前の形と
+同じく file を欠かない)。
 
 送り(card ki-ae919abe5b26 — 取り決め job-log/1): 子の環境に送り先の基の URL(DOEFF_JOB_LOG_OTLP)が在る時だけ、file へ書く行を
 OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(無ければ今と同じ — 送り手を作らない)。機体の外から job の log を
@@ -591,11 +599,109 @@ class WriterEnds:
     stop_write: int
 
 
-def pumped(ends: WriterEnds, shipping: Shipping) -> None:
-    """書き手の thread の本体: pipe を読み、行の頭に刻を差し込んで log へ書き、同じ刻で行を送り手へ渡す(送り手は待たせない — 頭の註の
-    「送り」)。終わりの合図の後は、読める分を上限の内で読み切って止め、改行の無い末尾の行を改行で閉じる(送り手へも 1 行として渡す)。"""
+@dataclass(frozen=True)
+class FeedLimits:
+    """file の書きの溜めの上限(頭の註の「file の書き」): queue_bytes = file へ書くのを待つ byte の上限(越える塊は捨てて数える)。"""
+
+    queue_bytes: int = 8 << 20
+
+
+# 本番の file の書きの上限(検は小さい上限を渡す)。
+FEED_LIMITS = FeedLimits()
+
+
+@dataclass(frozen=True)
+class Dropped:
+    """溜めの中の印: 溜めが満ちて捨てた byte の数(file にはこの位置に 1 行の知らせを書く)。"""
+
+    count: int
+
+
+class FileFeed:
+    """読んだ byte を log の file へ書く書き手(頭の註の「file の書き」)。読みの thread が put で塊を溜めに入れ(待たない)、file の書きの
+    thread が受けた順に file へ書く。作るのは pumped(読みの thread の中 — 読みの thread と同じく job を起こした後に起こす)。"""
+
+    def __init__(self, target: int, limits: FeedLimits = FEED_LIMITS) -> None:
+        """書き先の fd と上限を持ち、溜めを空・thread をまだ起こしていない状態で始めるため。"""
+        self.target = target
+        self.limits = limits
+        self.ready = threading.Condition()
+        self.queue: deque[bytes | Dropped] = deque()
+        self._mut_queued_bytes = 0
+        self._mut_closing = False
+        self._mut_thread: threading.Thread | None = None
+
+    def put(self, data: bytes) -> None:
+        """塊 1 つを溜めに入れるため(待たない)。上限を越える塊は捨て、捨てた byte を溜めの今の位置の印に数える。"""
+        if not data:
+            return
+        with self.ready:
+            if self._mut_queued_bytes + len(data) > self.limits.queue_bytes:
+                last = self.queue[-1] if self.queue else None
+                if isinstance(last, Dropped):
+                    self.queue[-1] = Dropped(last.count + len(data))
+                else:
+                    self.queue.append(Dropped(len(data)))
+            else:
+                self.queue.append(data)
+                self._mut_queued_bytes += len(data)
+            self.ready.notify_all()
+
+    def begin(self) -> None:
+        """file の書きの thread を起こすため(1 度 — 2 度目は何もしない)。"""
+        if self._mut_thread is None:
+            self._mut_thread = threading.Thread(target=self.drained, name="line-stamp-file", daemon=True)
+            self._mut_thread.start()
+
+    def close(self) -> None:
+        """溜めに在る分を全部 file へ書かせてから thread を止めるため(file を欠かない — 書きが止まっている間は待つ。前の形で読みの thread が
+        file の書きを待ったのと同じ)。"""
+        with self.ready:
+            self._mut_closing = True
+            self.ready.notify_all()
+        if self._mut_thread is not None:
+            self._mut_thread.join()
+
+    def next_items(self) -> tuple[bytes | Dropped, ...] | None:
+        """次に書く物を溜めから全部取るため(来るまで待つ)。取った塊の byte は、書き終えるまで溜めの byte に数えたまま(書いている間も
+        memory の上限を守る)。None = 閉じた後で溜めが空。"""
+        with self.ready:
+            self.ready.wait_for(lambda: bool(self.queue) or self._mut_closing)
+            items = tuple(self.queue)
+            self.queue.clear()
+            return items or None
+
+    def done_with(self, size: int) -> None:
+        """書き終えた(か読み捨てた)塊の byte を、溜めの byte から外すため。"""
+        with self.ready:
+            self._mut_queued_bytes -= size
+
+    def drained(self) -> None:
+        """file の書きの thread の本体: 溜めの物を受けた順に file へ書く。捨てた印は、その位置に刻つきの 1 行の知らせにする(書きかけの行の
+        途中なら改行で閉じてから)。file へ書けなくなったら、以後は読み捨てる(前の形と同じ)。"""
+        writable = True
+        line_start = True
+        while (items := self.next_items()) is not None:
+            for item in items:
+                match item:
+                    case Dropped(count=count):
+                        notice = f"line_stamp: log の file への書きが詰まり、溜めの上限を越えた {count} byte を捨てた\n".encode()
+                        data = (b"" if line_start else b"\n") + stamp_of(time.time()) + notice
+                    case bytes():
+                        data = item
+                writable = writable and written(self.target, data)
+                line_start = data.endswith(b"\n")
+                if isinstance(item, bytes):
+                    self.done_with(len(item))
+
+
+def pumped(ends: WriterEnds, shipping: Shipping, limits: FeedLimits = FEED_LIMITS) -> None:
+    """読みの thread の本体: pipe を読み、行の頭に刻を差し込んで file の書き手(FileFeed — 別の thread)へ渡し、同じ刻で行を送り手へ渡す
+    (どちらも待たせない — 頭の註の「file の書き」「送り」)。終わりの合図の後は、読める分を上限の内で読み切って止め、改行の無い末尾の行を
+    改行で閉じ(送り手へも 1 行として渡す)、溜めに在る分を file へ書き終えるまで待つ。limits = file の書きの溜めの上限。"""
+    feed = FileFeed(ends.target, limits)
+    feed.begin()
     line_start = True
-    writable = True
     deadline: float | None = None
     while deadline is None or time.monotonic() <= deadline:
         if deadline is None:
@@ -609,11 +715,12 @@ def pumped(ends: WriterEnds, shipping: Shipping) -> None:
             break
         at_ns = time.time_ns()
         piece = stamped(chunk, line_start, stamp_of(at_ns / 1e9))
-        writable = writable and written(ends.target, piece.data)
+        feed.put(piece.data)
         line_start = piece.line_start
         shipping.take(chunk, at_ns)
-    if writable and not line_start:
-        written(ends.target, b"\n")
+    if not line_start:
+        feed.put(b"\n")
+    feed.close()
     shipping.finish()
 
 

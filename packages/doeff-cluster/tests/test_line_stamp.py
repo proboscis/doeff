@@ -12,18 +12,26 @@ worker は job の子の stdout・stderr を同じ log の file へ書き取る(
 - stdout と stderr の両方に付き、同じ file に混ざる今の形のまま行の境を壊さない
 - 子が signal で落ちても、os._exit で終わっても、それまでの行が全部 file に在る(終了コードは今のまま)
 - 旗の無い shim(入口の検めの形)は、子の出力をそのまま運ぶ
+- log の file への write が止まっても(disk の詰まり — 検は読まない pipe を file の代わりに渡す)、job の write は止まらず、job の
+  event loop の拍は止まらず、job が答える HTTP の要求は timeout しない。止まりが解けた後、行は全部・書いた順のまま・刻つきで file に在る
+  (card ki-2742a2af90b6)
+- file の書きの溜めが上限を越えたら、塊を捨てて、その位置に捨てた byte の数を 1 行で書く(読みの thread は待たない)
 """
 
+import json
+import os
 import re
+import socket
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from doeff_cluster.worker.entry.line_stamp import Stamped, stamp_of, stamped
+from doeff_cluster.worker.entry.line_stamp import FeedLimits, FileFeed, Stamped, stamp_of, stamped
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "program"}
 
@@ -175,3 +183,165 @@ def test_a_shim_without_the_flag_carries_the_output_as_is(tmp_path: Path) -> Non
     ran = shim_run(tmp_path, 'import os\nos.write(1, b"a\\nb\\n")\nos.write(2, b"c")\n', stamp=False)
     assert ran.code == 0, ran.log
     assert ran.log == b"a\nb\nc"
+
+
+class Drain:
+    """file の代わりの pipe の読み口を、合図の後に EOF まで読む thread(合図までは読まない = disk の詰まりの模擬)。"""
+
+    def __init__(self, source: int) -> None:
+        """読み口を持ち、まだ読まない状態で thread を起こすため。"""
+        self.source = source
+        self.go = threading.Event()
+        self._mut_chunks: tuple[bytes, ...] = ()
+        self.thread = threading.Thread(target=self.read_all, daemon=True)
+        self.thread.start()
+
+    def read_all(self) -> None:
+        """合図を待ってから、読み口を EOF まで読むため。"""
+        self.go.wait()
+        while chunk := os.read(self.source, 1 << 16):
+            self._mut_chunks = (*self._mut_chunks, chunk)
+
+    def read(self) -> bytes:
+        """EOF まで読んだ byte を返すため(書き口が全部閉じるまで待つ)。"""
+        self.go.set()
+        self.thread.join(END_LIMIT_SECONDS)
+        os.close(self.source)
+        return b"".join(self._mut_chunks)
+
+
+def full_pipe(target: int) -> int:
+    """pipe の書き口を、これ以上書けない所まで 1 KiB の行で満たすため(答え = 書いた byte)。1 KiB の write は不可分(PIPE_BUF の内)。"""
+    os.set_blocking(target, False)
+    line = b"p" * 1023 + b"\n"
+
+    def wrote() -> bool:
+        try:
+            return os.write(target, line) == len(line)
+        except BlockingIOError:
+            return False
+
+    count = sum(1 for _ in iter(wrote, False))
+    os.set_blocking(target, True)
+    return count * len(line)
+
+
+@LINUX_ONLY
+def test_the_feed_does_not_wait_for_a_stalled_file_and_writes_a_notice_where_it_dropped() -> None:
+    """file への write が止まった間(読まない pipe — 容量 64 KiB)も、put は待たずに返る。上限を越えた塊は捨て、止まりが解けた後の
+    file には、受けた順の塊と、捨てた位置の刻つきの 1 行(捨てた byte の数)が在る。pipe は先に満たしておく(最初の write から止まる)。"""
+    source, target = os.pipe()
+    drain = Drain(source)
+    filled = full_pipe(target)
+    feed = FileFeed(target, FeedLimits(queue_bytes=256 << 10))
+    feed.begin()
+    chunks = tuple(bytes([ord("a") + index % 26]) * 1023 + b"\n" for index in range(1024))
+    putter = threading.Thread(target=lambda: tuple(feed.put(chunk) for chunk in chunks), daemon=True)
+    putter.start()
+    putter.join(5.0)
+    stalled = putter.is_alive()
+    drain.go.set()
+    feed.close()
+    os.close(target)
+    assert not stalled, "put が止まった file の書きを待った"
+    lines = drain.read()[filled:].split(b"\n")[:-1]
+    assert lines[:256] == [chunk[:-1] for chunk in chunks[:256]], "上限の内の塊は受けた順のまま file に在る"
+    assert len(lines) == 257, len(lines)
+    assert payload_of(lines[256]) == f"line_stamp: log の file への書きが詰まり、溜めの上限を越えた {768 * 1024} byte を捨てた".encode()
+
+
+LOOP_AND_SERVER = """
+import asyncio, json, os, sys, time
+port_file, result_file, seconds = sys.argv[1], sys.argv[2], float(sys.argv[3])
+
+
+async def main():
+    served = 0
+
+    async def handle(reader, writer):
+        nonlocal served
+        await reader.readline()
+        print("request " + "r" * 2000, file=sys.stderr)
+        served += 1
+        writer.write(b"ok\\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    with open(port_file + ".part", "w") as out:
+        out.write(str(server.sockets[0].getsockname()[1]))
+    os.rename(port_file + ".part", port_file)
+    last = time.monotonic()
+    end = last + seconds
+    worst = 0.0
+    ticks = 0
+    while time.monotonic() < end:
+        await asyncio.sleep(0.01)
+        now = time.monotonic()
+        worst = max(worst, now - last)
+        last = now
+        ticks += 1
+        print("tick " + "t" * 1000, file=sys.stderr)
+    server.close()
+    with open(result_file, "w") as out:
+        json.dump({"worst": worst, "ticks": ticks, "served": served}, out)
+
+
+asyncio.run(main())
+"""
+
+
+def asked(port: int, timeout: float) -> bool:
+    """job が答える HTTP の模擬に 1 行を送り、timeout の内に答えが来たか。"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as connection:
+            connection.settimeout(timeout)
+            connection.sendall(b"GET\n")
+            return connection.recv(16) == b"ok\n"
+    except OSError:
+        return False
+
+
+@LINUX_ONLY
+@pytest.mark.realtime
+def test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers(tmp_path: Path) -> None:
+    """log の file への write が 3 秒止まる間(file の代わりに読まない pipe を shim の stdout・stderr に渡す)も、job(asyncio の loop が
+    10 ms ごとに 1 KiB の行を stderr へ書き、要求ごとに 2 KiB の行を書く)の loop の拍は 0.5 秒を越えて止まらず、1 秒の timeout の要求は
+    全部答えられる。止まりが解けた後、file には全部の行が刻つきで在る(前の形では 64 KiB の pipe が 2 本満ちた所で job の write が止まり、
+    loop も要求も止まった)。"""
+
+    def asked_after_a_pause(port: int) -> bool:
+        """0.2 秒おいてから 1 秒の timeout の要求を 1 本出し、答えが来たか(止まりの間に要求を並べるため)。"""
+        time.sleep(0.2)
+        return asked(port, 1.0)
+
+    port_file, result_file = tmp_path / "port", tmp_path / "result.json"
+    source, target = os.pipe()
+    drain = Drain(source)
+    argv = [sys.executable, "-B", "-m", SHIM, "1", "--stamp-lines", "--", sys.executable, "-B", "-c", LOOP_AND_SERVER]
+    process = subprocess.Popen(
+        [*argv, str(port_file), str(result_file), "5"], stdin=subprocess.PIPE, stdout=target, stderr=target, start_new_session=True
+    )
+    os.close(target)
+    try:
+        deadline = time.monotonic() + END_LIMIT_SECONDS
+        while not port_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        port = int(port_file.read_text())
+        stall_until = time.monotonic() + 3.0
+        answers = tuple(asked_after_a_pause(port) for _ in iter(lambda: time.monotonic() < stall_until, False))
+        log = drain.read()
+        code = process.wait(timeout=END_LIMIT_SECONDS)
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.poll() is None:
+            process.kill()
+    result = json.loads(result_file.read_text())
+    assert code == 0, log[-500:]
+    assert answers.count(True) >= 10, f"止まりの間の要求 {len(answers)} 本のうち答えの無い物 {answers.count(False)} 本"
+    assert all(answers), f"止まりの間の要求 {len(answers)} 本のうち答えの無い物 {answers.count(False)} 本"
+    assert result["worst"] < 0.5, f"loop の拍が {result['worst']:.2f} 秒止まった"
+    kinds = tuple(payload.split(b" ", 1)[0] for payload in payloads(log))
+    assert kinds.count(b"tick") == result["ticks"]
+    assert kinds.count(b"request") == result["served"] == len(answers)
