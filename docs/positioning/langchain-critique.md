@@ -174,7 +174,7 @@ LangChain's problems aren't implementation bugs. They're architectural. The chai
 ## Sources
 
 - [The Problem With LangChain](https://minimaxir.com/2023/07/langchain-problem/) — Max Woolf, Jul 2023
-- [Why we no longer use LangChain](https://www.octomind.dev/blog/why-we-no-longer-use-langchain-for-building-our-ai-agents) — Octomind, Jun 2024
+- [Why we no longer use LangChain](https://web.archive.org/web/20240620211903/https://www.octomind.dev/blog/why-we-no-longer-use-langchain-for-building-our-ai-agents) — Octomind, Jun 2024 (archived copy; the original site is gone)
 - [LangChain Made Our AI App Slow](https://blog.stackademic.com/langchain-made-our-ai-app-slow-we-rewrote-without-it-6386b78880d3) — Stackademic, Jan 2026
 - [Challenges & Criticisms of LangChain](https://shashankguda.medium.com/challenges-criticisms-of-langchain-b26afcef94e7) — Mar 2025
 - [HN discussion (480 pts)](https://news.ycombinator.com/item?id=40739982) — Octomind post

@@ -4,7 +4,7 @@ Games are the purest demonstration of handler switching. The game logic is a Pro
 
 ## Real-World Evidence: card_game_2026
 
-This isn't hypothetical. **[card_game_2026](https://github.com/...)** is a working Slay the Spire-style card game built on an effect runtime with algebraic effects. Written in Hy (Lisp on Python), it demonstrates every pattern described here — with real code running real games.
+This isn't hypothetical. **card_game_2026** (not public) is a working Slay the Spire-style card game built on an effect runtime with algebraic effects. Written in Hy (Lisp on Python), it demonstrates every pattern described here — with real code running real games.
 
 The architecture:
 - **Game logic** (`combat.hy`) — pure effects. Knows nothing about CLI, TUI, or Pygame.

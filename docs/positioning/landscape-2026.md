@@ -151,7 +151,7 @@ doeff is the principled Python implementation of what all four are converging to
 
 ## Sources
 
-- LangChain critique: [minimaxir](https://minimaxir.com/2023/07/langchain-problem/), [Octomind](https://www.octomind.dev/blog/why-we-no-longer-use-langchain-for-building-our-ai-agents), [Stackademic](https://blog.stackademic.com/langchain-made-our-ai-app-slow-we-rewrote-without-it-6386b78880d3)
+- LangChain critique: [minimaxir](https://minimaxir.com/2023/07/langchain-problem/), [Octomind (archived)](https://web.archive.org/web/20240620211903/https://www.octomind.dev/blog/why-we-no-longer-use-langchain-for-building-our-ai-agents), [Stackademic](https://blog.stackademic.com/langchain-made-our-ai-app-slow-we-rewrote-without-it-6386b78880d3)
 - Framework comparisons: [LangWatch](https://langwatch.ai/blog/best-ai-agent-frameworks-in-2025-comparing-langgraph-dspy-crewai-agno-and-more), [Vellum](https://www.vellum.ai/blog/top-langchain-alternatives)
 - Pydantic AI testing: [ai.pydantic.dev/testing](https://ai.pydantic.dev/testing/)
 - Haystack breakpoints: [deepset-ai/haystack](https://github.com/deepset-ai/haystack/blob/main/haystack/dataclasses/breakpoints.py)
