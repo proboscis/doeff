@@ -63,6 +63,8 @@ from doeff_cluster.coordinator.intent.worker_notices import WorkerBack as Worker
 from doeff_cluster.coordinator.intent.worker_notices import WorkerGone as WorkerGone
 from doeff_hy.table import Table as Table
 from doeff_hy.table import TableWrite as TableWrite
+from doeff_hy.table import TableDraft as TableDraft
+from doeff_hy.table import draft_of as draft_of
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
 from doeff_cluster.coordinator.intent.request_bodies import LeaseBody as LeaseBody
@@ -356,7 +358,13 @@ def task_split(tasks: Table[TaskRecord], now: int) -> _Program[tuple, object]:
 def wait_lapse_at(capable: list, timing: ClusterTiming) -> _Program[int | None, object]:
     ...
 
-def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[Table[TaskRecord], object]:
+def task_writes(original: Table[TaskRecord], rows: dict) -> tuple:
+    ...
+
+def tasks_placed(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[Table[TaskRecord], object]:
+    ...
+
+def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def same_boot(task: TaskRecord, boot: str | None) -> bool:
@@ -377,10 +385,19 @@ def task_finished(task: TaskRecord, now: int, detail: str, result: str | None) -
 def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int) -> TaskRecord:
     ...
 
-def changed_rows_over(original: Table[TaskRecord], rows: dict) -> Table[TaskRecord]:
+def put_row(draft: TableDraft[TaskRecord], task: TaskRecord) -> None:
     ...
 
-def tasks_rewritten(original: Table[TaskRecord], rows: dict) -> Table[TaskRecord]:
+def absorb_task_reports_into(draft: TableDraft[TaskRecord], worker: str, statuses: tuple, now: int, boot: str | None, stopping: bool) -> None:
+    ...
+
+def renew_detached_into(draft: TableDraft[TaskRecord], worker: str, boot: str | None, now: int) -> None:
+    ...
+
+def promote_prepared_into(draft: TableDraft[TaskRecord], worker: WorkerInfo) -> None:
+    ...
+
+def heard_tasks(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None, stopping: bool, prepared: WorkerInfo | None) -> Table[TaskRecord]:
     ...
 
 def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None, stopping: bool=False) -> Table[TaskRecord]:
@@ -402,6 +419,9 @@ def sweep_drains(state: ClusterState, now: int) -> _Program[ClusterState, object
     ...
 
 def sweep_warms(state: ClusterState, now: int) -> _Program[ClusterState, object]:
+    ...
+
+def cold_starts_written(tasks: Table[TaskRecord], writes: tuple) -> _Program[int, object]:
     ...
 
 def cold_starts(before: Table[TaskRecord], after: Table[TaskRecord]) -> _Program[int, object]:
