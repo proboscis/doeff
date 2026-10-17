@@ -73,7 +73,7 @@ class Some(Generic[_Value_co]):
     def __bool__(self) -> Literal[True]:
         return True
 
-    def __reduce__(self) -> tuple[type["Some[Any]"], tuple[object]]:
+    def __reduce__(self) -> tuple[type["Some[Any]"], tuple[object]]:  # noqa: DOEFF006 - pickle の __reduce__ の戻りは tuple と決まっている
         return (Some, (self._value,))
 
 
@@ -101,7 +101,7 @@ class _NothingType:
     def __bool__(self) -> Literal[False]:
         return False
 
-    def __reduce__(self) -> tuple[Callable[[], "_NothingType"], tuple[()]]:
+    def __reduce__(self) -> tuple[Callable[[], "_NothingType"], tuple[()]]:  # noqa: DOEFF006 - pickle の __reduce__ の戻りは tuple と決まっている
         return (_get_nothing, ())
 
 

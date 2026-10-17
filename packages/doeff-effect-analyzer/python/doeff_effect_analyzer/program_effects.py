@@ -859,7 +859,7 @@ class _ChunkedTree:
     def tree(self) -> ast.Module:
         """The whole tree, taken from the expansion's store the first time it is asked for (``module_ast``)."""
         if self._tree is None:
-            self._tree = self._whole()
+            self._tree = self._whole()  # noqa: DOEFF002 — 遅延して作る木の cache の欄
         return self._tree
 
     def _definitions_of(self, chunk: int) -> tuple[ast.AST, ...]:
@@ -925,7 +925,7 @@ def _read_cached_tree(path: Path, whole: Callable[[], ast.Module]) -> _ChunkedTr
     return _ChunkedTree(cached, payload, whole)
 
 
-def _derived(tree: ast.Module) -> tuple[_CachedTree, tuple[bytes, ...]]:
+def _derived(tree: ast.Module) -> tuple[_CachedTree, tuple[bytes, ...]]:  # noqa: DOEFF006 — 内部の小さな組の戻り
     """The tree cut into its top-level definitions, each with its body nodes and body facts
     (a def the reader cannot read is left out and read on demand as before), and the index
     that names where each definition is. The index keeps ``_definitions_by_path``'s order,

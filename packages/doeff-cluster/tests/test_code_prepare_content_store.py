@@ -328,7 +328,7 @@ def test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options
     bsd.mkdir()
     (bsd / "cp").write_text("#!/bin/sh\necho 'cp: illegal option -- -' >&2\nexit 64\n")
     (bsd / "cp").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bsd}:{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("PATH", f"{bsd}:{os.environ.get('PATH', '')}")  # noqa: DOEFF004 — 検が PATH の先頭へ道具の dir を足す 1 か所
     repo = tmp_path / "app-repo"
     _write_four(repo, filled.salt)
     for i in range(_BULK_MODULES):

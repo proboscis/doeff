@@ -293,7 +293,7 @@ def example_environment(place: Path) -> dict[str, str]:
     """
     kept = {
         name: value
-        for name, value in os.environ.items()
+        for name, value in os.environ.items()  # noqa: DOEFF004 — 道具が子の process へ今の環境を引き継ぐ 1 か所
         if not name.startswith(("PYTHON", "DOEFF_")) and name != "VIRTUAL_ENV"
     }
     return {**kept, "DOEFF_HY_CODE_STORE": str(place / "hy-code-store")}

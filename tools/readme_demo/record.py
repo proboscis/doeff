@@ -139,8 +139,8 @@ class Recorder:
     def _record(self, text: str) -> None:
         """出力を今の刻で GIF の列に残し、prompt が戻ったかを読む分にも足す。"""
         if text:
-            self.events = (*self.events, (round(self.clock, 3), text))
-            self.since_enter += text
+            self.events = (*self.events, (round(self.clock, 3), text))  # noqa: DOEFF002 — 録画の状態を持つ 1 つの recorder の時計と入力の欄
+            self.since_enter += text  # noqa: DOEFF002 — 録画の状態を持つ 1 つの recorder の時計と入力の欄
 
     def drain(self, quiet: float) -> None:
         """quiet 秒の間 何も来なくなるまで読み、今の刻で録る(打った字の echo など)。"""
@@ -159,7 +159,7 @@ class Recorder:
             if chunk == "":
                 raise ToolError(f"端末が閉じた。最後の出力:\n{plain(self.since_enter)[-2000:]}")
             if chunk is not None:
-                self.clock += min(now - last, gap_cap)
+                self.clock += min(now - last, gap_cap)  # noqa: DOEFF002 — 録画の状態を持つ 1 つの recorder の時計と入力の欄
                 last = now
                 self._record(chunk)
             if now > deadline:

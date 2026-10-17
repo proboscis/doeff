@@ -1607,7 +1607,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             row["retrieved"] = True
             row.pop("unretrieved", None)
 
-    def unretrieved_exceptions() -> tuple[list[str], int]:
+    def unretrieved_exceptions() -> tuple[list[str], int]:  # noqa: DOEFF006 — 内部の小さな組の戻り
         """``(named, total)`` for the run-end warning: the swept tasks' exceptions,
         then the rows still holding one, in task order."""
         remaining = [row["unretrieved"] for row in tasks.values() if "unretrieved" in row]
@@ -1621,7 +1621,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             sweep_terminal_unobserved_entries()
         return i
 
-    def waitable_key(effect: EffectBase, obj: object) -> tuple[str, int]:
+    def waitable_key(effect: EffectBase, obj: object) -> tuple[str, int]:  # noqa: DOEFF006 — 内部の小さな組の戻り
         """Convert a Task or Future of ``effect`` (Wait / Gather / Race) to a dict key.
 
         The dispatch checks every waitable first (_misused_waitable) and throws the TypeError
