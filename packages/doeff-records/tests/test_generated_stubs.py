@@ -148,5 +148,32 @@ def test_a_key_of_another_element_type_is_red_at_key_text(tmp_path: Path) -> Non
     assert [e for e in errors if "reportArgumentType" in e and "tuple[str, ...]" in e and "key_text" in e], errors
 
 
+# 表の用意の文の列(schema-statements)を使い手の形で受ける: 答えは Statement の tuple。素の tuple では .pyi が tuple[Unknown, ...] になり、
+# 使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た(card ki-a87c5f8a3b11)。BOUND = 受ける型。
+PREPARED = """\
+(require doeff-hy.macros [defk <-])
+(import doeff_records.pg_sql [Statement schema-statements])
+(import doeff_records.values [RecordsSchema])
+
+(defk texts-of [schema]
+  {:pre [(: schema RecordsSchema)] :post [(: % (get tuple #(str ...)))]}
+  "文の text を使い手の形で読むため。"
+  (<- statements BOUND (schema-statements "records_" schema))
+  (tuple (gfor statement statements statement.text)))
+"""
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_the_prepared_statements_are_not_partially_unknown(tmp_path: Path) -> None:
+    assert strict_errors(tmp_path, PREPARED.replace("BOUND", "(get tuple #(Statement ...))")) == ()
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_taking_the_prepared_statements_as_another_element_type_is_red(tmp_path: Path) -> None:
+    # 失敗ケース: 答えの要素が Statement だと使い手に届く — 整数の tuple で受けると赤(素の tuple の答えでは赤にならなかった)。
+    errors = strict_errors(tmp_path, PREPARED.replace("BOUND", "(get tuple #(int ...))"))
+    assert [e for e in errors if "reportAssignmentType" in e and "tuple[Statement, ...]" in e and "tuple[int, ...]" in e], errors
+
+
 def test_generated_stubs_are_what_the_tool_makes() -> None:
     assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []

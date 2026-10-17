@@ -200,7 +200,7 @@
 
 
 (defk schema-statements [prefix schema]
-  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % tuple)]
+  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "表を用意する文の列(何度流しても同じ — IF NOT EXISTS / ON CONFLICT DO NOTHING)。流すのは pg.prepare-records-store だけ
    (移行の錠の transaction の中で・process ごとに 1 度)。字面は旧い版と同じ(頭の註)。"
@@ -243,7 +243,7 @@
 
 
 (defk added-index-statements [prefix schema]
-  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % tuple)]
+  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "旧い版より後に足した索引の文の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・欄の名の順の状態の欄の式。状態の欄の索引は、保持の期限の在る
@@ -275,7 +275,7 @@
 
 
 (defk drop-statements [prefix]
-  {:pre [(: prefix str)] :post [(: % tuple)]
+  {:pre [(: prefix str)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "検の後片付けの文(この接頭辞の表を消す)を作るため。"
   (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys"]
