@@ -27,12 +27,17 @@ THIS_CHECK = Path(__file__).resolve().relative_to(ROOT).as_posix()
 DOCS_PREFIX = "docs/"
 
 
-def _prefixes_selecting_this_check() -> list[str]:
-    """pyproject.toml の契約の表で、この検を選ぶ行の接頭辞(表の順)。"""
+def prefixes_selecting(check: str) -> list[str]:
+    """pyproject.toml の契約の表で、check(repo の根からの path)を選ぶ行の接頭辞(表の順)。"""
     rows = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["doeff"][
         "contract-tests"
     ]
-    return [row["prefix"] for row in rows if THIS_CHECK in row.get("tests", [])]
+    return [row["prefix"] for row in rows if check in row.get("tests", [])]
+
+
+def _prefixes_selecting_this_check() -> list[str]:
+    """pyproject.toml の契約の表で、この検を選ぶ行の接頭辞(表の順)。"""
+    return prefixes_selecting(THIS_CHECK)
 
 
 # 例を走る形に直した、入門の道の外の page(docs/ からの名)— 契約の表の、この検を選ぶ行が 1 点の定義。
