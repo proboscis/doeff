@@ -257,6 +257,7 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
   in [its tests](https://github.com/proboscis/doeff/blob/main/examples/test_llm_agent.py). It needs only
   `pip install doeff`, and its tests pytest besides.
 - **Why effects?**: [Effects vs. dependency injection and plain `async`](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
+- **Questions**: [FAQ](https://github.com/proboscis/doeff/blob/main/docs/faq.md): dependency injection, asyncio, speed, types, Hy, production use
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)
 - **Command line**: [`doeff run`](https://github.com/proboscis/doeff/blob/main/docs/14-cli-auto-discovery.md)
