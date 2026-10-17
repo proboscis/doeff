@@ -1,0 +1,50 @@
+# macOS と Windows の機体で、`pip install doeff` の核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)を main から組んで新しい
+# venv に入れ、README の Python の例が注記の通りに印字する事を確かめる(取り組み doeff-publish の区切り 9・依頼 lt-3NNCV2T91GJBXFBG4G593E56RV)。
+# 中身は tools/verify_core_install.py(手元の Linux と同じ道具 — 入った物がちょうど核の 4 個である事・doeff と doeff-vm の README の
+# Python の例・Hy と HTTP の extra が要る使い方が足す extra の名を言う事)。Python は requires-python の両端の 3.11 と 3.14(GIL の在る方 —
+# uv は素の 3.14 に free-threading の 3.14t も当てる)。doeff-vm は PyPI の wheel でなく、利用者の機体に合う wheel が無い時と同じく
+# source から組む(build の口 tools/doeff_cargo_backend.py — Rust の道具が要る)。
+name: Core install on macOS and Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-install:
+    name: core install (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    # Linux の同じ確かめ(python-compatibility.yml の core-only-install)と同じく、uv の管理する Python だけを使う — runner の機体ごとに
+    # 入っている Python の版と作りが違うため。
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python: ["3.11", "3.14+gil"]
+
+    steps:
+      # packages/doeff-vm/doeff_cargo_backend.py は tools/doeff_cargo_backend.py への symlink(build の口の正本は 1 つ)。Windows の git の
+      # 既定(core.symlinks=false)は symlink を指し先の path を書いた file にし、build の口を読めずに doeff-vm を組めない。
+      - name: Check out symlinks as symlinks
+        if: runner.os == 'Windows'
+        run: git config --global core.symlinks true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install the core four into a fresh venv and run the README examples
+        run: uv run --no-project --python ${{ matrix.python }} python tools/verify_core_install.py --python ${{ matrix.python }}
