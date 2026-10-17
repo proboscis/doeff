@@ -247,6 +247,7 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 ## Next steps
 
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
+- **Questions**: [FAQ](https://github.com/proboscis/doeff/blob/main/docs/faq.md): dependency injection, asyncio, speed, types, Hy, production use
 - **Why effects?**: [Effects vs. dependency injection](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)

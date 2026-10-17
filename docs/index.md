@@ -23,6 +23,8 @@ components are listed separately under
 1. **[Getting Started](01-getting-started.md)** - Installation, first program, basic concepts
 2. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
 
+- **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
+
 ### Effect Types
 
 3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects

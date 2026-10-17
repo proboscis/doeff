@@ -43,6 +43,7 @@ exclude_docs: |
   !/22-capability-classes.md
   !/23-static-typing.md
   !/25-rust-scheduler.md
+  !/faq.md
   !/MARKERS.md
   !/cli-run-command-architecture.md
   !/gemini_client_setup.md
@@ -57,6 +58,7 @@ nav:
   - Getting Started:
       - Getting Started: 01-getting-started.md
       - Core Concepts: 02-core-concepts.md
+      - FAQ: faq.md
   - Effect Types:
       - Basic Effects: 03-basic-effects.md
       - Async Effects: 04-async-effects.md
