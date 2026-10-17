@@ -247,7 +247,7 @@
   (d.beat "mac" :provides ["mac-desk"])
   (d.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
   (d.call "PUT" "/detached/job-24" (d.task-body K3S {"revision" "r" "leaseSeconds" 60}) :actor "c-test")
-  (val task (next (gfor t (.values d.state.tasks) :if (= t.key "job-24") t)))
+  (val task (next (gfor t (.rows d.state.tasks) :if (= t.key "job-24") t)))
   (val waiting (d.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
   (assert (= #((get waiting "drain" "drained") (get waiting "drain" "remaining")) #(False [(+ "task/" task.id)])) waiting)
   (assert (= (get waiting "drain" "unmovable") ["w"]) waiting))
@@ -332,11 +332,11 @@
   (c.call "POST" "/resources/Service" {"name" "n" "spec" (! (service))} :expect 201)
   (assert (= (c.placed "n") "zeus"))
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
-  (assert (= (. (get c.state.tasks "t1") worker) "zeus"))
+  (assert (= (. (.row c.state.tasks "t1") worker) "zeus"))
   ;; drain 中の worker しか置ける先が無い task は失敗にせず待つ。
   (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
-  (assert (= (. (get c.state.tasks "t2") phase) "queued")))
+  (assert (= (. (.row c.state.tasks "t2") phase) "queued")))
 
 
 (deftest test-a-stopping-worker-drains-its-own-generation-until-the-next-one
@@ -349,13 +349,13 @@
   (val d (get c.state.drains "zeus"))
   (assert (= #(d.boot d.actor) #("b1" "worker-stopping")) d)
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
-  (assert (= (. (get c.state.tasks "t1") phase) "queued") (get c.state.tasks "t1"))
+  (assert (= (. (.row c.state.tasks "t1") phase) "queued") (.row c.state.tasks "t1"))
   (c.advance 2)
   (c.beat "zeus" :stopping True)
   (assert (= (get c.state.drains "zeus") d) (get c.state.drains "zeus"))
   (c.beat "zeus" :boot "b2")
   (assert (not-in "zeus" c.state.drains) c.state.drains)
-  (val t (get c.state.tasks "t1"))
+  (val t (.row c.state.tasks "t1"))
   (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
 
 
@@ -399,11 +399,11 @@
     (assert (in "zeus" c.state.drains) #(boot c.state.drains))
     (assert (get reply "draining") #(boot reply)))
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
-  (assert (= (. (get c.state.tasks "t1") phase) "queued") (get c.state.tasks "t1"))
+  (assert (= (. (.row c.state.tasks "t1") phase) "queued") (.row c.state.tasks "t1"))
   ;; 頼み手が外す(DELETE)と、今の世代に task が置かれる。
   (c.call "DELETE" "/workers/zeus/drain" :actor "upgrade")
   (c.beat "zeus")
-  (val t (get c.state.tasks "t1"))
+  (val t (.row c.state.tasks "t1"))
   (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
 
 
@@ -446,7 +446,7 @@
   ;; 新しい世代には新しい task を置ける。
   (c.call "POST" "/tasks" (c.task-body ["cluster-net"])
           :actor "c-test")
-  (assert (= #((. (get c.state.tasks "t1") phase) (. (get c.state.tasks "t1") worker)) #("assigned" "zeus"))))
+  (assert (= #((. (.row c.state.tasks "t1") phase) (. (.row c.state.tasks "t1") worker)) #("assigned" "zeus"))))
 
 
 (deftest test-the-old-generation-gets-only-its-running-handoff-jobs-and-its-own-detached-tasks
@@ -465,8 +465,8 @@
   ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 atlas へ置かれる)。
   (c.call "POST" "/resources/Service" {"name" "w2" "spec" (! (service))} :expect 201)
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
-  (setv remote (next (gfor t (.values c.state.tasks) :if (not t.detached) t))
-        own (next (gfor t (.values c.state.tasks) :if t.detached t)))
+  (setv remote (next (gfor t (.rows c.state.tasks) :if (not t.detached) t))
+        own (next (gfor t (.rows c.state.tasks) :if t.detached t)))
   (assert (= #((c.placed "w2") remote.worker own.boot) #("atlas" "atlas" "old")))
   (setv old-reply (c.beat "atlas" ["w" "r"] :boot "old"))
   (assert (get old-reply "superseded"))
@@ -687,7 +687,7 @@
   (c.beat "zeus" :boot "old")
   (c.call "PUT" "/detached/job-24" (c.task-body K3S {"revision" "r" "leaseSeconds" 60})
           :actor "c-test")
-  (setv task (next (gfor t (.values c.state.tasks) :if (= t.key "job-24") t)))
+  (setv task (next (gfor t (.rows c.state.tasks) :if (= t.key "job-24") t)))
   (assert (= #(task.worker task.boot) #("zeus" "old")))
   (c.advance 1)
   (c.beat "zeus" :boot "new")
@@ -700,7 +700,7 @@
   (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
                                "statuses" [{"name" (+ "task/" task.id) "phase" "finished" "result" "R" "detail" ""}]}
           :actor None)
-  (assert (= (. (get c.state.tasks task.id) phase) "finished"))
+  (assert (= (. (.row c.state.tasks task.id) phase) "finished"))
   (assert (get (c.call "POST" "/workers/zeus/drain" {"boot" "old"} :actor "drain@zeus") "drain" "drained")))
 
 

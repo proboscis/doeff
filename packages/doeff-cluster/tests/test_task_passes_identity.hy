@@ -4,6 +4,8 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
+(import doeff_hy.table [Table])
+(import tests.state_rows [table-from-rows])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ComponentVersion TaskRecord WorkerInfo])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.cluster_policy [absorb-task-reports renew-detached promote-prepared])
@@ -20,12 +22,12 @@
            :phase phase :worker worker :detached detached :boot boot))
 
 (defk rows []
-  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  {:pre [] :post [(: % Table)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker w の切り離した task(世代 b1)・別の世代 b0 の切り離した task・別の worker の切り離した task・待っている task の 4 行。"
-  {"mine" (! (task "mine" "assigned" "w" True "b1"))
-   "old-gen" (! (task "old-gen" "assigned" "w" True "b0"))
-   "other" (! (task "other" "assigned" "x" True "b1"))
-   "waiting" (! (task "waiting" "queued" None False None))})
+  (! (table-from-rows {"mine" (! (task "mine" "assigned" "w" True "b1"))
+                       "old-gen" (! (task "old-gen" "assigned" "w" True "b0"))
+                       "other" (! (task "other" "assigned" "x" True "b1"))
+                       "waiting" (! (task "waiting" "queued" None False None))})))
 
 (deftest test-renew-detached-returns-the-same-dict-when-nothing-needs-extending
   (val tasks (! (rows)))
@@ -37,13 +39,13 @@
   (val tasks (! (rows)))
   (val renewed (renew-detached tasks "w" "b1" 1000))
   (assert (is-not renewed tasks))
-  (assert (= (get renewed "mine") (replace (get tasks "mine") :lease-until-ms 16000)))
+  (assert (= (.row renewed "mine") (replace (.row tasks "mine") :lease-until-ms 16000)))
   (for [id ["old-gen" "other" "waiting"]]
-    (assert (is (get renewed id) (get tasks id)) id))
-  (assert (= (list renewed) (list tasks))))
+    (assert (is (.row renewed id) (.row tasks id)) id))
+  (assert (= (list (.keys renewed)) (list (.keys tasks)))))
 
 (deftest test-promote-prepared-returns-the-same-dict-when-no-row-is-ready
-  (val tasks {"p" (! (task "p" "preparing" "w" False None)) "q" (! (task "q" "queued" None False None))})
+  (val tasks (! (table-from-rows {"p" (! (task "p" "preparing" "w" False None)) "q" (! (task "q" "queued" None False None))})))
   ;; env-ready-on は runtime-env の無い task を準備済みとしない
   (val info (WorkerInfo "w" #() 10 0 :task-reserve 0))
   (assert (is (promote-prepared tasks info) tasks)))
@@ -60,9 +62,9 @@
   (val state (ClusterState #() {} {} (! (rows))))
   (val out (absorb-task-reports state "w" #((StatusRow :name "task/mine" :phase "code-failed" :detail "x")) 1000 "b1"))
   (assert (is-not out state.tasks))
-  (assert (= (. (get out "mine") phase) "code-failed"))
+  (assert (= (. (.row out "mine") phase) "code-failed"))
   (for [id ["old-gen" "other" "waiting"]]
-    (assert (is (get out id) (get state.tasks id)) id))
+    (assert (is (.row out id) (.row state.tasks id)) id))
   ;; 別の世代の報告は写さない
   (assert (is (absorb-task-reports state "w" #((StatusRow :name "task/mine" :phase "code-failed" :detail "x")) 1000 "b9") state.tasks)))
 
@@ -99,5 +101,5 @@
   (val first (! (beat state "w" 1000)))
   (val second (! (beat first "w" 2000)))
   (assert (is-not second.tasks first.tasks))
-  (assert (= (. (get second.tasks "mine") lease-until-ms) (+ 2000 15000)))
-  (assert (is (get second.tasks "other") (get first.tasks "other"))))
+  (assert (= (. (.row second.tasks "mine") lease-until-ms) (+ 2000 15000)))
+  (assert (is (.row second.tasks "other") (.row first.tasks "other"))))

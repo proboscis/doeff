@@ -36,7 +36,7 @@
   ;; (labels だけの旧い形の行と同じ扱い — state_json.state-from-json・durable_kv.state-from-kv)。
   (assert (= (lfor job state.jobs job.spec.name) ["beacon"]) (lfor job state.jobs job.spec.name))
   (assert (not-in "sim-worker" state.workers) (sorted state.workers))
-  (val kept (lfor task (.values state.tasks) :if (= task.key "k-done") task))
+  (val kept (lfor task (.rows state.tasks) :if (= task.key "k-done") task))
   (assert (= (lfor task kept #(task.phase task.detached (is-not task.result None))) [#("finished" True True)]) kept)
   (assert (is-not (.row state.board "note/a") None) (sorted (.keys state.board)))
   (assert (is-not (.row state.board "beacon/a") None) (sorted (.keys state.board)))

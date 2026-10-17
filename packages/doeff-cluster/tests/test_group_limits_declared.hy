@@ -6,6 +6,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
+(import doeff_hy.table [Table])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -22,6 +23,7 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator])
 (import tests.program_rows [program-placed task-body-of])
 (import tests.detached_rig [slow-add RIG-PROVIDES])
+(import tests.state_rows [table-from-rows])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (setv PY3 #((ComponentVersion "python" "3")))
@@ -54,9 +56,9 @@
 
 
 (defk phases-of [tasks]
-  {:pre [(: tasks dict)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  {:pre [(: tasks Table)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "task の行の phase を id の順に並べるため。"
-  (lfor id (sorted tasks) (. (get tasks id) phase)))
+  (lfor id (sorted (.keys tasks)) (. (.row tasks id) phase)))
 
 
 (deftest test-two-senders-naming-one-group-are-counted-by-the-one-declared-value
@@ -70,7 +72,7 @@
   (assert (= #(first-status second-status) #(200 200)) #(first-status second-status))
   (val placed (! (place-tasks 1000 after-second {} T)))
   (assert (= (sorted (! (phases-of placed))) ["assigned" "queued"]) placed)
-  (val waiting (next (gfor t (.values placed) :if (= t.phase "queued") t)))
+  (val waiting (next (gfor t (.rows placed) :if (= t.phase "queued") t)))
   (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) waiting)
   ;; 宣言し直し(値 1 → 2): 送り手は何も変えない。
   (val raised (update-resource (replace after-second :tasks placed) "GroupLimit" "heavy"
@@ -90,7 +92,7 @@
     (assert (= status 200) status)
     (:= current after))
   (val placed (! (place-tasks 1000 current {} T)))
-  (val by-key (dfor t (.values placed) t.key t.phase))
+  (val by-key (dfor t (.rows placed) t.key t.phase))
   (assert (= by-key {"caller-a/1" "assigned" "caller-a/2" "assigned" "caller-a/3" "queued" "caller-b/1" "assigned"}) by-key))
 
 
