@@ -35,6 +35,7 @@ from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
 from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
 from doeff_core_effects.python_bytecode import compile_python_sources as compile_python_sources
+from doeff_core_effects.darwin_volume import darwin_volume_free as darwin_volume_free
 from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
@@ -99,10 +100,16 @@ def _append(path: Incomplete, text: Incomplete, sync: Incomplete) -> Incomplete:
 def _release(held: Incomplete) -> Incomplete:
     ...
 
-def disk_free(path: str) -> _Program[int | FileFailed, object]:
+def free_reader_for(system: str) -> _Program[Callable | None, object]:
+    ...
+
+def reread_free(probe: str, floor: int, reader: Callable | None) -> _Program[int, object]:
     ...
 
 def disk_usage(path: str) -> _Program[DiskUsage | FileFailed, object]:
+    ...
+
+def disk_free(path: str) -> _Program[int | FileFailed, object]:
     ...
 
 def measure_tree(path: str) -> _Program[int | FileFailed, object]:
