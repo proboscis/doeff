@@ -10,8 +10,8 @@ link = markdown の `[文](先)`・`![文](先)`・参照の定義 `[名]: 先`�
 
 2 つの確かめ:
 
-- repo の中(既定 — 網に出ない。main の CI では、Python Compatibility の job が root の tests を走らせる時に
-  tests/test_check_links.py::test_repo_links_resolve_in_the_tree がこの確かめを走らせる):
+- repo の中(既定 — 網に出ない。CI では .github/workflows/links.yml の job in-repo が push と pull request ごとに走らせ、
+  Python Compatibility の root の tests でも tests/test_check_links.py::test_repo_links_resolve_in_the_tree が走らせる):
   - 相対の link(`docs/x.md`・`../LICENSE`・`/README.md`)の先が、git に載った file か dir である事。
   - main を指す GitHub の link(`https://github.com/proboscis/doeff/blob/main/<path>`・`tree/main`・`raw/main`・
     `https://raw.githubusercontent.com/proboscis/doeff/main/<path>`)の先も、同じく木に在る事 — 網に聞かず木で読む
@@ -20,9 +20,9 @@ link = markdown の `[文](先)`・`![文](先)`・参照の定義 `[名]: 先`�
   - PyPI の頁になる README(核の 5 個 — 定義元は tools/verify_release_install.py の CORE)に、相対の path の link が
     無い事。PyPI は相対の path を GitHub の木でなく PyPI の頁の URL に対して解くので、PyPI の頁で切れる。main を指す
     GitHub の link で書く。`#見出し` だけの link は PyPI でも働く(見出しに anchor を付け、link をそこへ向ける)。
-- 外の link(`--external` — 網に出る。相手の site の都合で揺れるので、push ごとの CI では走らせない): http と https の
-  link に要求を送り、返事が来る
-  事。HEAD で聞き、2xx・3xx で無ければ GET で聞き直す。404・410 と名の引けない host は切れた link。429・5xx・403・
+- 外の link(`--external` — 網に出る。相手の site の都合で揺れるので push ごとには走らせず、links.yml の job external が
+  週 1 回と手で起こす時に走らせる): http と https の link に要求を送り、返事が来る事。HEAD で聞き、2xx・3xx で無ければ
+  GET で聞き直す。404・410 と名の引けない host は切れた link。429・5xx・403・
   時間切れは、間を置いて聞き直しても同じなら「確かめられない」として出すが、終了コードには数えない(相手の都合で揺れる)。
   main を指す GitHub の link と、localhost・example.com などの例の host は送らない。
 
