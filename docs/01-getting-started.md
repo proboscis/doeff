@@ -394,6 +394,43 @@ run(fetch_handler(my_program()))  # Error!
 run(handler(fetch_handler)(my_program()))
 ```
 
+### "TypeError: unsupported operand type(s) for +: 'Get' and 'int'"
+
+An effect, a program or the result of `Try` was used as a value. An effect and a program give
+their result only where they are yielded, and `Try` gives `Ok(value)` or `Err(error)`, not the
+value. The error ends with a line that names the variable and the fix, for example
+"count is the effect Get('counter'), not its result. Yield the effect to get its result:
+count = yield Get('counter')". The type is `'Call'` for a program and `'Ok'` / `'Err'` for the
+result of `Try`:
+
+```python excerpt
+from doeff import Err, Ok, Try, do
+from doeff_core_effects import Get
+
+@do
+def child():
+    return 20
+
+# Wrong - uses the effect, the program and the result of Try as values
+@do
+def wrong():
+    count = Get("counter")  # count + 1: 'Get' and 'int'
+    x = child()  # x + 1: 'Call' and 'int'
+    r = yield Try(child())  # r + 1: 'Ok' and 'int'
+    return count + x + r + 1  # Error!
+
+# Right - yields the effect and the program, and takes the value out of the result
+@do
+def right():
+    count = yield Get("counter")
+    x = yield child()
+    match (yield Try(child())):
+        case Ok(value):
+            return count + x + value
+        case Err(error):
+            raise error
+```
+
 ### A second run still sees the state of the first run
 
 `run()` can run the same Program again; each run starts it fresh.

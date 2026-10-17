@@ -57,7 +57,14 @@ def format_default(exception):
 
     exc_type = type(exception).__name__
     exc_msg = str(exception)
-    lines.append(f"\n\n{exc_type}: {exc_msg}\n")
+    # The notes follow the message, as Python's traceback prints them.
+    notes = getattr(exception, "__notes__", None)
+    exc_notes = (
+        "".join(f"{note}\n" for note in notes if isinstance(note, str))
+        if isinstance(notes, (list, tuple))
+        else ""
+    )
+    lines.append(f"\n\n{exc_type}: {exc_msg}\n{exc_notes}")
     return "".join(lines)
 
 
