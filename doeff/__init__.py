@@ -268,23 +268,30 @@ def _looked_up_by_from_import() -> bool:
     return frame.f_code.co_code[frame.f_lasti] == _opcode.opmap["IMPORT_FROM"]
 
 
-def __getattr__(name: str) -> object:
-    """``DoeffRunContext`` belongs to the CLI (argparse, rich, Hy); load it on first use.
+if not TYPE_CHECKING:
+    # Hidden from type checkers: a module ``__getattr__`` returning ``object`` makes every
+    # name look present, so ``from doeff import state`` (or a misspelling) was no error at
+    # the import line. ``DoeffRunContext`` stays visible through the TYPE_CHECKING import above.
 
-    Importing it eagerly made every ``import doeff`` load the CLI stack.
+    def __getattr__(name: str) -> object:
+        """``DoeffRunContext`` belongs to the CLI (argparse, rich, Hy); load it on first use.
 
-    A handler name (``state``, ``reader``, ``scheduled``, ...) says the module to
-    import it from.
-    """
-    if name == "DoeffRunContext":
-        from doeff.cli.run_services import DoeffRunContext
+        Importing it eagerly made every ``import doeff`` load the CLI stack.
 
-        globals()[name] = DoeffRunContext
-        return DoeffRunContext
-    home = _handler_module(name)
-    if home is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    hint = f"it is in {home}: from {home} import {name}"
-    if _looked_up_by_from_import():
-        raise ImportError(f"cannot import name {name!r} from {__name__!r}; {hint}", name=__name__)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}; {hint}")
+        A handler name (``state``, ``reader``, ``scheduled``, ...) says the module to
+        import it from.
+        """
+        if name == "DoeffRunContext":
+            from doeff.cli.run_services import DoeffRunContext
+
+            globals()[name] = DoeffRunContext
+            return DoeffRunContext
+        home = _handler_module(name)
+        if home is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        hint = f"it is in {home}: from {home} import {name}"
+        if _looked_up_by_from_import():
+            raise ImportError(
+                f"cannot import name {name!r} from {__name__!r}; {hint}", name=__name__
+            )
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}; {hint}")
