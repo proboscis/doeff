@@ -22,7 +22,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_hy.table [Table TableWrite TableDraft draft-of])
+(import doeff_hy.table [Table TableWrite TableDraft draft-of table-of])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -546,11 +546,11 @@
   freed)
 
 
-(defn #^ dict load-of [#^ ClusterState state #^ dict placements]
+(defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
    task(PLACED-PHASES)。置ける空きは job-room-of・task-room-of がこの値から求める(数え方を 1 か所にする)。"
   (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0))
-  (for [a (+ (list (.values placements)) (list (.values state.surges)))]
+  (for [a (+ (list (.rows placements)) (list (.rows state.surges)))]
     (when (in a.worker jobs) (+= (get jobs a.worker) 1)))
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks)) (+= (get tasks t.worker) 1)))
@@ -619,7 +619,7 @@
   (val mine (if (is info None)
                 #()
                 (tuple (gfor job (active-jobs state)
-                             :setv placed (.get state.placements job.spec.name)
+                             :setv placed (.row state.placements job.spec.name)
                              :if (and (is-not placed None) (= placed.worker worker) (not job.spec.handoff) (eligible job info))
                              job))))
   (val crowded (any (gfor job mine w (.rows state.workers)
@@ -655,13 +655,13 @@
    いまの負荷は「他へ移せるか」の判断だけが読む — drain 中の worker も期限を過ぎて沈黙した担い手も無ければ求めない(#2655 — 調停の
    1 周ごとの費用)。"
   (val draining (draining-workers state now))
-  (val stale (any (gfor a (.values state.placements)
+  (val stale (any (gfor a (.rows state.placements)
                         :setv w (.row state.workers a.worker)
                         (and (is-not w None) (not (alive now w timing.reassign-after-ms))))))
   (val load (if (or draining stale) (load-of state state.placements) {}))
   (var kept {})
   (for [job (active-jobs state)]
-    (val current (.get state.placements job.spec.name))
+    (val current (.row state.placements job.spec.name))
     (val worker (if (is current None) None (.row state.workers current.worker)))
     (when (is-not worker None)
       (<- mark (| KeepMark None) (keep-mark-of state.keep-marks job.spec.name))
@@ -723,12 +723,19 @@
       (replace state :keep-marks held)))
 
 
+(defk jobs-placed [now state timing]
+  {:pre [(: now int) (: state ClusterState) (: timing ClusterTiming)] :post [(: % (get Table Placement))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "純粋: place-jobs の書きを state.placements へ当てた表(書きが空なら state.placements そのもの)— 全件の表で置き先を読む読み手(test)のため。"
+  (.with-writes state.placements (! (place-jobs now state timing))))
+
+
 (defk place-jobs [now state timing]
-  {:pre [(: now int) (: state ClusterState) (: timing ClusterTiming)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: now int) (: state ClusterState) (: timing ClusterTiming)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "宣言された job の次の割り当て(job の名 → Placement)を決めるため: 続けてよい割り当てを残し、担い手の無い job を空きの多い生きた
-   worker へ置き、宣言から消えた job の割り当てを落とす。"
+   worker へ置き、宣言から消えた job の割り当てを落とす。答えは state.placements へ当てる書きの列(TableWrite の tuple — 変わった
+   job だけ・何も変わらなければ空)。全件の写像は組んで返さない。"
   (setv jobs (active-jobs state)
-        names (sfor job jobs job.spec.name)
         draining (draining-workers state now))
   ;; 1. 続けてよい割り当てを残す(held-placements — 担い手が移し替えの期限内か、他へ移せないか、途絶しても動かし続けてよい印の約束を
   ;;    持つ。drain 中の担い手の上の入れ替えでない job は、他へ移せる時だけ外す)。
@@ -742,14 +749,17 @@
   ;;    沈黙して外れた時)。
   ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。置けるかは job の側の空きと
   ;; 全体の空きの両方(can-take — task のために空けておく分には置かない)・並びは担っている数(job と task の和)の少ない順。
-  (setv load (if (all (gfor job jobs (in job.spec.name kept))) {} (load-of state kept)))
-  (setv result (dict kept))
+  ;; 全部の job が割り当てを保っていれば load は読まれない(None)。
+  (setv load (if (all (gfor job jobs (in job.spec.name kept))) None (load-of state (table-of (tuple (gfor #(n a) (.items kept) (TableWrite n a)))))))
+  ;; 保った割り当ては state.placements の行そのもの(書かない)。新しく置く物だけ fresh に貯める。
+  (setv taken (set kept) fresh [])
   (for [job (sorted jobs :key (fn [j] j.spec.name))]
-    (when (in job.spec.name result) (continue))
-    (setv surge (.get state.surges job.spec.name)
+    (when (in job.spec.name taken) (continue))
+    (setv surge (.row state.surges job.spec.name)
           surge-worker (if surge (.row state.workers surge.worker) None))
     (when (and (is-not surge-worker None) (alive now surge-worker timing.lease-ms) (eligible job surge-worker))
-      (setv (get result job.spec.name) surge)
+      (.append fresh surge)
+      (.add taken job.spec.name)
       (continue))
     (when (still-live-somewhere now state job.spec.name timing) (continue))
     (setv mark (! (keep-mark-of state.keep-marks job.spec.name))
@@ -761,13 +771,16 @@
       :key (fn [w] #((+ (. (get load w.name) jobs) (. (get load w.name) tasks)) w.name))))
     (when candidates
       (setv chosen (get candidates 0)
-            previous (.get state.placements job.spec.name)
+            previous (.row state.placements job.spec.name)
             used (get load chosen.name)
             (get load chosen.name) (replace used :jobs (+ used.jobs 1)))
-      (setv (get result job.spec.name)
-        (Placement job.spec.name chosen.name (if previous (+ previous.generation 1) 1) now))))
+      (.append fresh (Placement job.spec.name chosen.name (if previous (+ previous.generation 1) 1) now))
+      (.add taken job.spec.name)))
+  ;; 書く = 新しく置いた行(今の行と値も同じなら書かない)と、保たれなかった・宣言から消えた job の行を消す書き(None)。
   ;; 宣言から消えた job の割り当ては残さない(担い手は次の heartbeat で止める)。
-  (dfor #(name a) (.items result) :if (in name names) name a))
+  (tuple (sorted (+ (tuple (gfor p fresh :setv old (.row state.placements p.job) :if (not (and (is-not old None) (= old p))) (TableWrite p.job p)))
+                    (tuple (gfor name (.keys state.placements) :if (not-in name taken) (TableWrite name None))))
+                 :key (fn [w] w.key))))
 
 
 (defn #^ tuple jobs-for [#^ ClusterState state #^ str worker #^ (| dict None) [ready-instances None]]
@@ -777,8 +790,8 @@
    drain で並べた置き先(surge)がこの worker に在る job も載せる(新しい process を起こし、standby で lease を待つ)。
    入れ替えを諦めた job(state.handoffs の ABANDONED — handoff_policy)には諦めの印を載せる(worker は新を止めて旧を残す)。"
   (tuple (gfor job state.jobs
-               :setv placed (.get state.placements job.spec.name)
-               :setv surge (.get state.surges job.spec.name)
+               :setv placed (.row state.placements job.spec.name)
+               :setv surge (.row state.surges job.spec.name)
                :setv a (cond (and placed (= placed.worker worker)) placed
                              (and surge (= surge.worker worker) (> job.replicas 0)) surge
                              True None)
@@ -873,7 +886,7 @@
 (defn #^ dict unplaced-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
   "担い手の無い job と、その理由(状態の表示用)。"
   (dfor job (active-jobs state)
-        :if (not-in job.spec.name state.placements)
+        :if (is (.row state.placements job.spec.name) None)
         job.spec.name
         (unplaced-text (unplaced-kind now state job timing) job)))
 
@@ -1125,14 +1138,14 @@
 
 
 (defk tasks-placed [now state placements timing]
-  {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % (get Table TaskRecord))]
+  {:pre [(: now int) (: state ClusterState) (: placements (get Table Placement)) (: timing ClusterTiming)] :post [(: % (get Table TaskRecord))]
    :tags {:context "coordinator" :role "judgment"}}
   "純粋: place-tasks の書きを state.tasks へ当てた表(書きが空なら state.tasks そのもの)— 全件の表で置き先を読む読み手(test)のため。"
   (.with-writes state.tasks (! (place-tasks now state placements timing))))
 
 
 (defk place-tasks [now state placements timing]
-  {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % tuple)]
+  {:pre [(: now int) (: state ClusterState) (: placements (get Table Placement)) (: timing ClusterTiming)] :post [(: % tuple)]
    :tags {:context "coordinator" :role "judgment"}}
   "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。
    答えは state.tasks へ当てる書きの列(TableWrite の tuple — 変わった行だけ・何も変わらなければ空)。全件の表は組まない。"
@@ -1462,7 +1475,7 @@
 (defk forget-silent-workers [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 設定の忘れる期限(ClusterTiming.worker-forget-ms)より長く沈黙し、置き先も task も持たない worker を忘れた状態(忘れる物が無ければ同じ object)。"
-  (setv busy (| (sfor a (+ (list (.values state.placements)) (list (.values state.surges))) a.worker)
+  (setv busy (| (sfor a (+ (list (.rows state.placements)) (list (.rows state.surges))) a.worker)
                 ;; 終わって結果を持っているだけの切り離した task は worker を引き留めない。
                 (sfor t (scan-rows state.tasks) :if t.worker t.worker))
         gone (lfor #(n w) (.items state.workers) :if (and (> now (liveness-deadline w timing.worker-forget-ms)) (not-in n busy)) n))
@@ -1602,18 +1615,17 @@
   ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。
   (setv before state.placements
         placed (! (place-jobs now state timing))
-        after (if (= placed before) before placed)
+        after (.with-writes before placed)
         task-changes (! (place-tasks now state after timing))
         tasks (.with-writes state.tasks task-changes))
   (when (and (is after before) (is tasks state.tasks))
     (return state))
   (setv events (list state.events))
-  (for [name (sorted (| (set before) (set after)))]
-    (setv old (.get before name) new (.get after name))
-    (when (!= old new)
-      (.append events {"at" now "job" name
-                       "from" (if old old.worker None) "to" (if new new.worker None)
-                       "generation" (if new new.generation None)})))
+  (for [write placed]
+    (setv name write.key old (.row before name) new write.value)
+    (.append events {"at" now "job" name
+                     "from" (if old old.worker None) "to" (if new new.worker None)
+                     "generation" (if new new.generation None)}))
   (replace state :placements after :tasks tasks :events (tuple (cut events (- MAX-EVENTS) None))
                  :env-cold-starts (+ state.env-cold-starts (! (cold-starts-written state.tasks task-changes)))))
 
@@ -2102,12 +2114,12 @@
   (StateView :now now
              :services (tuple (gfor j state.jobs (ServiceView :job j :resource-version (resource-version-of state (+ "Service/" j.spec.name)))))
              :workers workers
-             :placements (dict state.placements)
+             :placements state.placements
              :unplaced (unplaced-jobs now state timing)
              :statuses (dfor #(n st) (.items state.observations.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
              :tasks (tuple (sorted (.rows state.tasks) :key (fn [t] t.id)))
              :board-keys (.size state.board)
-             :surges (dict state.surges)
+             :surges state.surges
              :events (tuple (cut state.events -50 None))
              :revision state.revision
              ;; 途絶しても動かし続けてよい印の約束(#2883 — 読みだけ。列は job の名の順のまま)。

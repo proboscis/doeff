@@ -41,7 +41,7 @@
 (defn #^ (| tuple None) carrier-rows [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "Service name の担い手の worker が報告した job の行(報告が lease-ms より新しい時だけ)。置き先が無い・
    報告が無い・古い時は None(判じない — 作り直しの直後に「旧が居ない」と取り違えて諦めを捨てないため)。"
-  (setv placed (.get state.placements name)
+  (setv placed (.row state.placements name)
         st (if (is placed None) None (.row state.observations.statuses placed.worker)))
   (if (or (is st None) (>= now (carrier-stale-from st timing)))
       None
@@ -104,7 +104,7 @@
   (val fingerprint (declaration-fingerprint job))
   (val kept (.get state.handoffs name))
   (val watch (if (and (is-not kept None) (= kept.declaration fingerprint)) kept None))
-  (val placed (.get state.placements name))
+  (val placed (.row state.placements name))
   (val st (if (is placed None) None (.row state.observations.statuses placed.worker)))
   (val rows (carrier-rows state name now timing))
   (val judging (and job.spec.handoff (> job.replicas 0) (is-not rows None) (retired-live rows name)

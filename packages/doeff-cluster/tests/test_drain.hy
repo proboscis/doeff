@@ -59,7 +59,7 @@
 
   (defn #^ (| int None) gen-on [self #^ str worker #^ str name]
     "worker に置かれた(置き先か並べた置き先の)世代。無ければ None。"
-    (for [a [(.get self.state.placements name) (.get self.state.surges name)]]
+    (for [a [(.row self.state.placements name) (.row self.state.surges name)]]
       (when (and a (= a.worker worker)) (return a.generation)))
     None)
 
@@ -95,8 +95,8 @@
     (setv #(self.state sha) (run (program-placed self.state {} :now self.now)))
     (| {"program" sha "revision" "r1" "needs" needs} (or extra {})))
 
-  (defn #^ str placed [self #^ str name] (. (get self.state.placements name) worker))
-  (defn #^ (| str None) surge [self #^ str name] (if (in name self.state.surges) (. (get self.state.surges name) worker) None))
+  (defn #^ str placed [self #^ str name] (. (.row self.state.placements name) worker))
+  (defn #^ (| str None) surge [self #^ str name] (if (is-not (.row self.state.surges name) None) (. (.row self.state.surges name) worker) None))
   (defn #^ list names-for [self #^ str worker] (lfor s (jobs-for self.state worker) s.name)))
 
 
@@ -318,10 +318,10 @@
   (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
   ;; zeus が戻る → 外す(止めて移す)。旧が止め終えるまで zeus には置かない。
   (c.beat "zeus")
-  (assert (not-in "r" c.state.placements))
+  (assert (is (.row c.state.placements "r") None))
   (assert (not-in "r" (c.names-for "atlas")))
   (c.beat "atlas" ["r"])
-  (assert (not-in "r" c.state.placements))
+  (assert (is (.row c.state.placements "r") None))
   (c.beat "atlas" [])
   (assert (= (c.placed "r") "zeus")))
 
@@ -725,8 +725,8 @@
   (assert (= again.surges c.state.surges))
   ;; drain の鍵を知らない置き場(2026-09-25 より前)は空として読む。
   (setv old (! (state-from-kv (dfor #(k v) (.items kv) :if (not (or (.startswith k DRAIN) (.startswith k SURGE))) k v) c.now)))
-  (assert (= #(old.drains old.surges) #({} {})))
-  (assert (= (. (get old.placements "w") worker) "atlas"))
+  (assert (= #(old.drains (.size old.surges)) #({} 0)))
+  (assert (= (. (.row old.placements "w") worker) "atlas"))
   ;; GET /state に drain の進みと並べた置き先が載る。
   (setv view (c.call "GET" "/state"))
   (assert (= (get view "drains" "atlas" "moving") {"w" "zeus"}) (get view "drains"))

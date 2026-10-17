@@ -10,6 +10,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import tests.state_rows [table-from-rows])
+(import doeff_hy.table [table-of])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import pytest)
@@ -19,7 +20,7 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState KeepMark Drain])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.cluster_policy [place-jobs reconcile unplaced-jobs state-view])
+(import doeff_cluster.coordinator.core.cluster_policy [jobs-placed reconcile unplaced-jobs state-view])
 (import doeff_cluster.coordinator.core.resource_policy [running-process delete-resource Refused])
 (import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
@@ -64,9 +65,9 @@
   ;; 返事から job が消えて止め、置き直して起こし直した)。
   (<- job ClusterJob (job-of "a" #("net")))
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
-  (val state (ClusterState #(job) (! (table-from-rows {"w1" w1})) {"a" (Placement "a" "w1" 1 0)}))
+  (val state (ClusterState #(job) (! (table-from-rows {"w1" w1})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)}))))
   ;; 沈黙は移し替えの期限を 15 秒越えた所で見る(期限の値は写さない — #2806 で 45 秒から 60 秒にした)。
-  (assert (= (get (! (place-jobs (+ T.reassign-after-ms 15000) state T)) "a") (Placement "a" "w1" 1 0))))
+  (assert (= (.row (! (jobs-placed (+ T.reassign-after-ms 15000) state T)) "a") (Placement "a" "w1" 1 0))))
 
 
 (deftest test-a-job-with-another-place-still-moves-after-the-reassign-deadline
@@ -75,9 +76,9 @@
   (<- job ClusterJob (job-of "a" #("net")))
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (<- w2 WorkerInfo (worker-of "w2" (+ T.reassign-after-ms 5000) #("net")))
-  (val state (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) {"a" (Placement "a" "w1" 1 0)}))
-  (assert (= (. (get (! (place-jobs T.reassign-after-ms state T)) "a") worker) "w1"))
-  (val moved (get (! (place-jobs (+ T.reassign-after-ms 1) state T)) "a"))
+  (val state (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)}))))
+  (assert (= (. (.row (! (jobs-placed T.reassign-after-ms state T)) "a") worker) "w1"))
+  (val moved (.row (! (jobs-placed (+ T.reassign-after-ms 1) state T)) "a"))
   (assert (= #(moved.worker moved.generation) #("w2" 2)) moved))
 
 
@@ -88,13 +89,13 @@
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (<- w2 WorkerInfo (worker-of "w2" PAST-DEADLINE #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
-  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
-  (assert (= (. (get (! (place-jobs PAST-DEADLINE promised T)) "a") worker) "w1"))
+  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :keep-marks #(mark)))
+  (assert (= (. (.row (! (jobs-placed PAST-DEADLINE promised T)) "a") worker) "w1"))
   (val released (replace promised :keep-marks #()))
-  (assert (= (. (get (! (place-jobs PAST-DEADLINE released T)) "a") worker) "w2"))
+  (assert (= (. (.row (! (jobs-placed PAST-DEADLINE released T)) "a") worker) "w2"))
   ;; 宣言から消えて置き先を外した後に宣言し直した job も、約束の担い手にだけ置く(担い手が古い宣言の process を動かしているかもしれない)。
-  (val unplaced (replace promised :placements {}))
-  (assert (not-in "a" (! (place-jobs PAST-DEADLINE unplaced T))))
+  (val unplaced (replace promised :placements (table-of #())))
+  (assert (is (.row (! (jobs-placed PAST-DEADLINE unplaced T)) "a") None))
   (assert (in "前の担い手" (get (unplaced-jobs PAST-DEADLINE unplaced T) "a"))))
 
 
@@ -108,13 +109,13 @@
   (val lapsed (+ T.kept-reassign-after-ms 1))
   (<- w2 WorkerInfo (worker-of "w2" lapsed #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
-  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
+  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :keep-marks #(mark)))
   (<- held ClusterState (reconcile T.kept-reassign-after-ms promised T))
   (assert (= held.keep-marks #(mark)) held.keep-marks)
-  (assert (= (. (get held.placements "a") worker) "w1") held.placements)
+  (assert (= (. (.row held.placements "a") worker) "w1") held.placements)
   (<- moved ClusterState (reconcile lapsed promised T))
   (assert (= moved.keep-marks #()) moved.keep-marks)
-  (val placed (get moved.placements "a"))
+  (val placed (.row moved.placements "a"))
   (assert (= #(placed.worker placed.generation) #("w2" 2)) placed))
 
 
@@ -125,9 +126,9 @@
   (<- w1 WorkerInfo (worker-of "w1" 0 #("lone")))
   (<- w2 WorkerInfo (worker-of "w2" 60000 #("wide")))
   (<- mark KeepMark (promise-to "a" "w1"))
-  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
-  (assert (= (. (get (! (place-jobs 60000 promised T)) "a") worker) "w1"))
-  (assert (= (. (get (! (place-jobs 60000 (replace promised :keep-marks #()) T)) "a") worker) "w2")))
+  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :keep-marks #(mark)))
+  (assert (= (. (.row (! (jobs-placed 60000 promised T)) "a") worker) "w1"))
+  (assert (= (. (.row (! (jobs-placed 60000 (replace promised :keep-marks #()) T)) "a") worker) "w2")))
 
 
 (deftest test-deleting-the-silent-holder-releases-its-promise-and-the-job-moves
@@ -137,7 +138,7 @@
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (<- w2 WorkerInfo (worker-of "w2" PAST-DEADLINE #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
-  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
+  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :keep-marks #(mark)))
   (with [(pytest.raises Refused)]
     (delete-resource promised "Worker" "w1" {} 30000 T))
   ;; 読みの口(#2883): 消す前は約束が 1 件出て、Worker を消した後は消える。
@@ -147,7 +148,7 @@
   (val after (! (reconcile PAST-DEADLINE deleted T)))
   (assert (= after.keep-marks #()) after.keep-marks)
   (assert (= (. (! (state-view after PAST-DEADLINE T)) keep-marks) #()))
-  (assert (= (. (get after.placements "a") worker) "w2") after.placements))
+  (assert (= (. (.row after.placements "a") worker) "w2") after.placements))
 
 
 (deftest test-a-draining-holder-keeps-a-promised-job-until-it-drops-the-mark
@@ -158,14 +159,14 @@
   (<- w2 WorkerInfo (worker-of "w2" 60000 #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val running (WorkerReport :at 60000 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
-  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) {"a" (Placement "a" "w1" 1 0)} :observations (! (reports-observed {"w1" running}))
+  (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :observations (! (reports-observed {"w1" running}))
                               :drains {"w1" (Drain "w1" 0 999999)} :keep-marks #(mark)))
-  (assert (= (. (get (! (place-jobs 60000 promised T)) "a") worker) "w1"))
+  (assert (= (. (.row (! (jobs-placed 60000 promised T)) "a") worker) "w1"))
   (val released (replace promised :keep-marks #()))
-  (assert (not-in "a" (! (place-jobs 60000 released T))))
+  (assert (is (.row (! (jobs-placed 60000 released T)) "a") None))
   (val stopped (replace released :observations (! (reports-observed {"w1" (WorkerReport :at 60000 :endpoint None
                                                                                        :jobs #((StatusRow :name "a" :phase "stopped")))}))))
-  (assert (= (. (get (! (place-jobs 60000 stopped T)) "a") worker) "w2")))
+  (assert (= (. (.row (! (jobs-placed 60000 stopped T)) "a") worker) "w2")))
 
 
 (defk beat-body [name statuses kept]
@@ -252,7 +253,7 @@
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val report (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
-  (val plain (ClusterState #(job) (! (table-from-rows {"w1" w1})) {"a" (Placement "a" "w1" 1 0)} :observations (! (reports-observed {"w1" report}))))
+  (val plain (ClusterState #(job) (! (table-from-rows {"w1" w1})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :observations (! (reports-observed {"w1" report}))))
   (assert (= (get (running-process plain "a" PAST-DEADLINE T) "state") "NotReady"))
   (val kept (running-process (replace plain :keep-marks #(mark)) "a" PAST-DEADLINE T))
   (assert (= (get kept "state") "Unknown") kept)

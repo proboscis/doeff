@@ -283,7 +283,7 @@
   "worker に割り当てた入れ替え(handoff)の Service の名 → Ready と数えている process の世代の名(Ready でなければ None)。
    worker はこれが新しい process の世代の名になった後に、退いた旧い process を止める。"
   (dfor job state.jobs
-        :setv a (.get state.placements job.spec.name)
+        :setv a (.row state.placements job.spec.name)
         :if (and a (= a.worker worker) job.spec.handoff)
         job.spec.name
         (ready-instance state job.spec.name now timing)))

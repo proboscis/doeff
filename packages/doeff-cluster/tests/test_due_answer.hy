@@ -36,7 +36,7 @@
 (defk settled-state [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "now の tasks-placed を当てた後の状態(待つ task は待ちの理由を書いた後)を求めるため — 期限の関数の前提の、落ち着いた状態。"
-  (<- tasks Table (tasks-placed now state {} timing))
+  (<- tasks Table (tasks-placed now state (table-of #()) timing))
   (replace state :tasks tasks))
 
 
@@ -49,8 +49,8 @@
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.reassign-after-ms) 1))
   (assert (= due (DueAt :at expected)) due)
-  (<- before Table (tasks-placed (- expected 1) state {} timing))
-  (<- at Table (tasks-placed expected state {} timing))
+  (<- before Table (tasks-placed (- expected 1) state (table-of #()) timing))
+  (<- at Table (tasks-placed expected state (table-of #()) timing))
   (assert (= before state.tasks) "期限の 1 ms 前に変わった")
   (assert (= (. (.row at "run") phase) "failed") at))
 
@@ -66,8 +66,8 @@
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.lease-ms) 1))
   (assert (= due (DueAt :at expected)) due)
-  (<- before Table (tasks-placed (- expected 1) state {} timing))
-  (<- at Table (tasks-placed expected state {} timing))
+  (<- before Table (tasks-placed (- expected 1) state (table-of #()) timing))
+  (<- at Table (tasks-placed expected state (table-of #()) timing))
   (assert (= before state.tasks) "期限の 1 ms 前に変わった")
   (assert (!= (. (.row at "wait") detail) (. (.row state.tasks "wait") detail)) at))
 

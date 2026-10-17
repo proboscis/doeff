@@ -65,6 +65,7 @@ from doeff_hy.table import Table as Table
 from doeff_hy.table import TableWrite as TableWrite
 from doeff_hy.table import TableDraft as TableDraft
 from doeff_hy.table import draft_of as draft_of
+from doeff_hy.table import table_of as table_of
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
 from doeff_cluster.coordinator.intent.request_bodies import LeaseBody as LeaseBody
@@ -227,7 +228,7 @@ def holders_dropped(row: BoardRow, prefixes: tuple) -> _Program[dict | None, obj
 def board_without_generation_holders(board: Table[BoardRow], report: WorkerReport | None) -> _Program[tuple, object]:
     ...
 
-def load_of(state: ClusterState, placements: dict) -> dict:
+def load_of(state: ClusterState, placements: Table[Placement]) -> dict:
     ...
 
 def job_room_of(worker: WorkerInfo, load: dict[str, WorkerLoad]) -> _Program[int, object]:
@@ -260,7 +261,10 @@ def remember_keep_marks(state: ClusterState, worker: str, boot: str | None, held
 def sweep_keep_marks(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
 
-def place_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> _Program[dict, object]:
+def jobs_placed(now: int, state: ClusterState, timing: ClusterTiming) -> _Program[Table[Placement], object]:
+    ...
+
+def place_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def jobs_for(state: ClusterState, worker: str, ready_instances: dict | None=None) -> tuple:
@@ -361,10 +365,10 @@ def wait_lapse_at(capable: list, timing: ClusterTiming) -> _Program[int | None, 
 def task_writes(original: Table[TaskRecord], rows: dict) -> tuple:
     ...
 
-def tasks_placed(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[Table[TaskRecord], object]:
+def tasks_placed(now: int, state: ClusterState, placements: Table[Placement], timing: ClusterTiming) -> _Program[Table[TaskRecord], object]:
     ...
 
-def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[tuple, object]:
+def place_tasks(now: int, state: ClusterState, placements: Table[Placement], timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def same_boot(task: TaskRecord, boot: str | None) -> bool:

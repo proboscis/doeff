@@ -33,7 +33,7 @@
   {:pre [(: names tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "zeus に置いた常駐の job の宣言と置き先の組 #(jobs placements) を作るため。"
   #((tuple (gfor n names (ClusterJob (JobSpec n "m" #() "rev"))))
-    (dfor n names n (Placement n "zeus" 1 0))))
+    (! (table-from-rows (dfor n names n (Placement n "zeus" 1 0))))))
 
 (defk queued [id * [priority 0] [limits #()]]
   {:pre [(: id str) (: priority int) (: limits tuple)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -122,12 +122,12 @@
   ;; 1 本が終われば 3 本目が置かれる。
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
-  (val state (ClusterState #() (! (table-from-rows {"zeus" (! (zeus-like 30 3))})) {} (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val placed (! (tasks-placed 1000 state {} T)))
+  (val state (ClusterState #() (! (table-from-rows {"zeus" (! (zeus-like 30 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val placed (! (tasks-placed 1000 state (table-of #()) T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (.row placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (.row placed "t3"))
   (val ended (| (dict (.items placed)) {"t1" (replace (.row placed "t1") :phase "finished" :finished-ms 1500)}))
-  (val next (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows ended))) {} T)))
+  (val next (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows ended))) (table-of #()) T)))
   (assert (= (. (.row next "t3") phase) "assigned") (.row next "t3")))
 
 (defk submitted [key body]

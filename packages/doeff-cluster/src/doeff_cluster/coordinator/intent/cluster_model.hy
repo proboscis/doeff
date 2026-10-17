@@ -398,12 +398,12 @@
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
   (#^ (get tuple #(WorkerView ...)) workers)
-  (#^ (get dict #(str Placement)) placements)
+  (#^ (get Table Placement) placements)
   (#^ (get dict #(str str)) unplaced)
   (#^ (get dict #(str StatusView)) statuses)
   (#^ (get tuple #(TaskRecord ...)) tasks)
   (#^ int board-keys)
-  (#^ (get dict #(str Placement)) surges)
+  (#^ (get Table Placement) surges)
   (#^ (get tuple #(object ...)) events)
   (#^ int revision)
   (#^ (get tuple #(KeepMark ...)) keep-marks)
@@ -1033,7 +1033,7 @@
 (defclass [(dataclass :frozen True)] ClusterState []
   (setv #^ (get tuple #(ClusterJob ...)) jobs #())
   (setv #^ (get Table WorkerInfo) workers (field :default-factory (partial table-of #())))
-  (setv #^ (get dict #(str Placement)) placements (field :default-factory dict)) ; job の名 → Placement
+  (setv #^ (get Table Placement) placements (field :default-factory (partial table-of #()))) ; job の名 → Placement
   (setv #^ (get Table TaskRecord) tasks (field :default-factory (partial table-of #())))
   (setv #^ int next-task 1)
   ;; task の id の頭(2026-09-27 — #757)。id = <頭><番号>。以前からの置き場は "t"(t1, t2 …)。置き場の無いところから起きた
@@ -1073,7 +1073,7 @@
   ;; (job の名 → Placement・surge)。surge の担い手は process を起こし(standby で待つ)、coordinator がそれを Ready と数えたら
   ;; placements をその置き先へ付け替える(旧い担い手は宣言から外れて止め、lease を返す)。どちらも保存する(durable_kv)。
   (setv #^ (get dict #(str Drain)) drains (field :default-factory dict))
-  (setv #^ (get dict #(str Placement)) surges (field :default-factory dict))
+  (setv #^ (get Table Placement) surges (field :default-factory (partial table-of #())))
   ;; 温める表(2026-09-26): 行のキー → WarmEntry。保存する(durable_kv の warm/<キー>)。
   (setv #^ (get dict #(str WarmEntry)) warms (field :default-factory dict))
   ;; 冷たい起動の数(実行環境の task を、準備済みの worker が 1 つも無いまま置いた回数 — 計器 doeff_worker_env_cold_start_total)。
