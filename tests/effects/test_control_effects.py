@@ -1,7 +1,7 @@
 """Tests for Control effects composition rules (SPEC-EFF-004).
 
 This module tests the composition behavior of Pure, Try, and WithIntercept effects
-as defined in specs/effects/SPEC-EFF-004-control.md.
+as defined in docs/history/specs/effects/SPEC-EFF-004-control.md.
 
 Composition Rules Tested:
 - Try + Local: Environment restored even on caught error

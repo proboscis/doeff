@@ -1340,7 +1340,7 @@ Without markers, behavior is unchanged:
 ### Links
 
 - **Marker Specification**: See [MARKERS.md](MARKERS.md) for general marker usage
-- **Implementation Specs**: See `specs/features/cli-auto-discovery/` for technical details
+- **Implementation Specs**: See `docs/history/specs/features/cli-auto-discovery/` for technical details
 - **PyO3 Indexer**: See `packages/doeff-indexer/` for indexer internals
 
 ---

@@ -176,7 +176,7 @@ def transfer_money(from_account, to_account, amount):
 ## Effect Composition Patterns
 
 This section summarizes the composition guarantees from
-`specs/effects/SPEC-EFF-100-combinations.md`.
+`docs/history/specs/effects/SPEC-EFF-100-combinations.md`.
 
 ### Effect Combination Matrix
 
