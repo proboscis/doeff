@@ -1,571 +1,724 @@
-# Why Algebraic Effects? Real-World Use Cases vs Dependency Injection
+# Why Effects? Compared with Dependency Injection and Plain `async`
 
-> **The examples predate doeff 0.5.0 and are sketches, not runnable code.** In 0.5.0, `Pass()`
-> is `Pass(effect, k)`; a raw handler is installed with `handler(h)(program)` instead of being
-> called on a program; `WithObserve` only observes and cannot rewrite an effect; and `run`
-> returns the plain result, not a call tree. For runnable handler code see
-> [Core Concepts](02-core-concepts.md#handler-contract) and
-> [Advanced Effects](09-advanced-effects.md#custom-control-effects-with-handlers).
->
-> **The examples also need components outside `pip install doeff`:** `doeff-llm`, `doeff-image`,
-> `doeff-secret`, `doeff-time` and `doeff-events`. None of them is on PyPI; install them from a
-> checkout of this repository (pip takes everything else from PyPI). `doeff-sim`, which the
-> example under "Case Study: Simulation Through Composition" imports, has since been removed from
-> the repository.
+Python already has two common ways to keep business logic away from the outside world: pass the
+clients in (dependency injection, DI), and make the I/O `async`. This page shows, by example,
+where algebraic effects do better than either, and where they do not.
 
-```bash
-git clone --depth 1 https://github.com/proboscis/doeff.git
-pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-llm \
-  ./doeff/packages/doeff-image ./doeff/packages/doeff-secret ./doeff/packages/doeff-events
-```
+Every example runs with `pip install doeff` (0.6.0 or later, Python 3.11+). Copy a block into a
+file and run it with `python`; the comment after each `print` is what it prints. For the theory
+behind the comparisons, see [Capability Classes](22-capability-classes.md).
 
-This document captures concrete scenarios where doeff's algebraic effects provide genuine advantages over traditional dependency injection (DI). These aren't theoretical benefits — they emerged from building real multi-provider LLM and image generation systems.
+## The Same Workflow, Two Ways
 
-## The Setup: Multi-Provider AI Workflows
+An app summarizes a topic with a language model, then asks an image model for a picture. Both
+models are services from outside the app, and the tests must not call either.
 
-Modern AI applications rarely use a single provider. A typical workflow might:
+### With dependency injection
 
-- Use GPT-4o for structured analysis
-- Use Gemini for image generation
-- Use Claude for code review
-- Track costs across all providers
-- Retry failed calls with observability
-- Switch providers without rewriting business logic
-
-Both effects and DI can solve this. The question is: where does each approach shine?
-
-## Approach 1: Dependency Injection
+The workflow takes its clients as arguments. A test passes fakes:
 
 ```python
 from typing import Protocol
 
-class LLMService(Protocol):
-    async def chat(self, messages: list, model: str, **kwargs) -> Response: ...
-    async def structured(self, messages: list, model: str, response_format: type[T]) -> T: ...
 
-class ImageService(Protocol):
-    async def generate(self, prompt: str, model: str, **kwargs) -> ImageResult: ...
+class ChatModel(Protocol):
+    def chat(self, model: str, prompt: str) -> str: ...
 
-# Multi-provider router
-class MultiLLMService:
-    def __init__(self, providers: dict[str, LLMService]):
-        self.providers = providers
 
-    async def chat(self, messages, model, **kwargs):
-        provider = self._route(model)  # gpt-* -> openai, gemini-* -> gemini
-        return await provider.chat(messages, model, **kwargs)
+class ImageModel(Protocol):
+    def draw(self, model: str, prompt: str) -> str: ...
 
-# Usage
-@injected
-async def my_workflow(llm: LLMService, images: ImageService):
-    analysis = await llm.structured(messages, "gpt-4o", CodeAnalysis)
-    image = await images.generate("A diagram of the analysis", "seedream-4")
-    return analysis, image
+
+def illustrated_summary(topic: str, llm: ChatModel, images: ImageModel) -> str:
+    summary = llm.chat("gpt-4o", f"Summarize {topic}")
+    picture = images.draw("imagen-3", summary)
+    return f"{summary} | {picture}"
+
+
+class FakeChat:
+    def chat(self, model: str, prompt: str) -> str:
+        return f"summary by {model}"
+
+
+class FakeImages:
+    def draw(self, model: str, prompt: str) -> str:
+        return f"image by {model}"
+
+
+print(illustrated_summary("tides", FakeChat(), FakeImages()))  # summary by gpt-4o | image by imagen-3
 ```
 
-**DI strengths here:**
-- Familiar `async/await` syntax
-- IDE autocomplete on `LLMService` methods
-- Explicit dependency wiring at construction time
-- Strong typing via Protocol
+DI is good at this:
 
-## Approach 2: Algebraic Effects (doeff)
+- it is plain Python: methods and arguments, nothing new to learn
+- the editor completes `llm.` with the methods of `ChatModel`
+- the call site shows every dependency
+- a type checker verifies the wiring
 
-```python
-from doeff import do, run
-from doeff_llm.effects import LLMChat, LLMStructuredQuery
-from doeff_image.effects import ImageGenerate
+### With effects
+
+The workflow `yield`s requests instead of calling clients. A request is a small class (an
+*effect*); a *handler* decides what each request means. Save this block as `ai_effects.py`; the
+later examples on this page import it:
+
+```python file=ai_effects.py
+from dataclasses import dataclass
+
+from doeff import EffectBase, Resume, do
+
+
+@dataclass(frozen=True)
+class Chat(EffectBase):       # "ask a language model"
+    model: str
+    prompt: str
+
+
+@dataclass(frozen=True)
+class Draw(EffectBase):       # "ask an image model"
+    model: str
+    prompt: str
+
 
 @do
-def my_workflow():
-    analysis = yield LLMStructuredQuery(
-        messages=[{"role": "user", "content": "Analyze this code"}],
-        response_format=CodeAnalysis,
-        model="gpt-4o",
-    )
-    image = yield ImageGenerate(
-        prompt="A diagram of the analysis",
-        model="seedream-4",
-    )
-    return analysis, image
+def illustrated_summary(topic):
+    summary = yield Chat("gpt-4o", f"Summarize {topic}")
+    picture = yield Draw("imagen-3", summary)
+    return f"{summary} | {picture}"
 
-# Stack handlers — routing is automatic
-from doeff_core_effects.handlers import reader
-result = run(
-    reader({"openai_api_key": "...", "gemini_api_key": "...", "seedream_api_key": "..."})(
-        seedream_handler(
-            gemini_handler(
-                openai_handler(my_workflow()),
-            ),
-        ),
-    ),
-)
+
+@do
+def fake_chat(effect: Chat, k):       # the annotation picks the effects it answers
+    return (yield Resume(k, f"summary by {effect.model}"))
+
+
+@do
+def fake_images(effect: Draw, k):
+    return (yield Resume(k, f"image by {effect.model}"))
 ```
 
-## Where Effects Genuinely Win
-
-### 1. Cross-Cutting Concerns Compose for Free
-
-This is the single biggest advantage.
-
-**With DI**, every service needs its own middleware chain:
+`Resume(k, value)` answers the request: `k` is the rest of the workflow, and it continues with
+`value` as the result of its `yield`. Install the handlers around the workflow and run it:
 
 ```python
-# DI: Each service needs explicit instrumentation
-class LoggingLLM(LLMService):
-    def __init__(self, inner: LLMService, logger: Logger): ...
-    async def chat(self, messages, model, **kwargs):
-        logger.info(f"LLM call: {model}")
-        result = await self.inner.chat(messages, model, **kwargs)
-        logger.info(f"LLM response: {result.usage.total_tokens} tokens")
-        return result
+from doeff import handler, run
 
-class RetryLLM(LLMService):
-    def __init__(self, inner: LLMService, max_retries: int = 3): ...
+from ai_effects import fake_chat, fake_images, illustrated_summary
 
-class CostTrackingLLM(LLMService):
-    def __init__(self, inner: LLMService, cost_tracker: CostTracker): ...
-
-# Same wrappers needed for ImageService, EmbeddingService, etc.
-class LoggingImage(ImageService): ...
-class RetryImage(ImageService): ...
-class CostTrackingImage(ImageService): ...
-
-# Wiring becomes combinatorial
-llm = CostTrackingLLM(RetryLLM(LoggingLLM(OpenAILLM(), logger), 3), tracker)
-images = CostTrackingImage(RetryImage(LoggingImage(SeedreamImage(), logger), 3), tracker)
+program = handler(fake_chat)(handler(fake_images)(illustrated_summary("tides")))
+print(run(program))  # summary by gpt-4o | image by imagen-3
 ```
 
-**With effects**, cross-cutting handlers apply to ALL effects simultaneously:
+So far the two are even: each needs a fake per service, and DI needs no new concepts. The
+difference shows when something must happen around every call.
+
+## Where Effects Win
+
+### 1. One handler for a concern, across every service
+
+Log every model call. With DI, the log goes into a wrapper, and each service needs its own:
 
 ```python
-from doeff import Get, Pass, Resume, Try, do
+class FakeChat:
+    def chat(self, model, prompt):
+        return f"summary by {model}"
+
+
+class FakeImages:
+    def draw(self, model, prompt):
+        return f"image by {model}"
+
+
+log = []
+
+
+class LoggedChat:                       # a wrapper for the chat service…
+    def __init__(self, inner):
+        self.inner = inner
+
+    def chat(self, model, prompt):
+        log.append(f"chat {model}")
+        return self.inner.chat(model, prompt)
+
+
+class LoggedImages:                     # …and the same wrapper again for images
+    def __init__(self, inner):
+        self.inner = inner
+
+    def draw(self, model, prompt):
+        log.append(f"draw {model}")
+        return self.inner.draw(model, prompt)
+
+
+llm, images = LoggedChat(FakeChat()), LoggedImages(FakeImages())
+llm.chat("gpt-4o", "Summarize tides")
+images.draw("imagen-3", "summary by gpt-4o")
+print(log)  # ['chat gpt-4o', 'draw imagen-3']
+```
+
+Add retries and a cost cap and there are six wrapper classes; add an embedding service and there
+are nine. N services and M concerns make N × M wrappers.
+
+With effects, a concern is one handler. It sees every request it is annotated for, looks at it,
+and passes it on to the next handler with `Pass`:
+
+```python
+from doeff import Pass, do, handler, run
+
+from ai_effects import Chat, Draw, fake_chat, fake_images, illustrated_summary
+
+log = []
+
 
 @do
-def my_workflow():
-    yield LLMChat(...)           # Automatically gets: logging, cost tracking,
-    yield ImageGenerate(...)     #   retry, tracing, caching — all from
-    yield LLMEmbedding(...)      #   orthogonal stacked handlers
-    yield GetSecret(...)         # Even non-AI effects get the same benefits
+def log_calls(effect: Chat | Draw, k):  # one handler for both services
+    log.append(f"{type(effect).__name__.lower()} {effect.model}")
+    return (yield Pass(effect, k))
 
-# One cost handler works across all effect types
-@do
-def cost_cap_handler(effect: LLMChat | LLMEmbedding | LLMStructuredQuery | ImageGenerate, k):
-    current_cost = yield Get("total_cost")
-    if current_cost > MAX_BUDGET:
-        raise BudgetExceededError(current_cost)
-    yield Pass(effect, k)
 
-# One retry handler works for everything
+program = handler(log_calls)(illustrated_summary("tides"))
+print(run(handler(fake_chat)(handler(fake_images)(program))))  # summary by gpt-4o | image by imagen-3
+print(log)  # ['chat gpt-4o', 'draw imagen-3']
+```
+
+N services and M concerns make N effects and M handlers. A new service only has to be named in the
+annotations of the handlers that should see it; annotate a handler with `EffectBase` (or leave the
+annotation out) and it sees every effect, including the ones added later.
+
+### 2. A budget across all providers
+
+A cost cap must add up the price of every call, whichever model it goes to. A handler that
+returns without `Resume` ends the workflow there, and its return value becomes the answer, so
+the call over the budget never reaches a provider:
+
+```python
+from doeff import Pass, do, handler, run
+
+from ai_effects import Chat, Draw, fake_chat, fake_images, illustrated_summary
+
+PRICE_CENTS = {"gpt-4o": 1, "imagen-3": 4}
+
+
+def cost_cap(limit_cents):
+    spent = 0
+
+    @do
+    def cap(effect: Chat | Draw, k):
+        nonlocal spent
+        spent += PRICE_CENTS[effect.model]
+        if spent > limit_cents:
+            return f"stopped before {effect.model}: over {limit_cents} cents"
+        return (yield Pass(effect, k))
+
+    return handler(cap)
+
+
+def providers(program):
+    return handler(fake_chat)(handler(fake_images)(program))
+
+
+print(run(providers(cost_cap(10)(illustrated_summary("tides")))))  # summary by gpt-4o | image by imagen-3
+print(run(providers(cost_cap(3)(illustrated_summary("tides")))))  # stopped before imagen-3: over 3 cents
+```
+
+The workflow cannot get around the cap: it has no client to call directly.
+
+### 3. Retries under one-shot continuations
+
+A handler can perform the request again on the handlers outside it (`yield effect`) and catch
+what they raise. Each attempt is a new request, and the workflow's `k` resumes once, with the
+answer that succeeded:
+
+```python
+from doeff import Resume, do, handler, run
+
+from ai_effects import Chat, Draw, fake_images, illustrated_summary
+
+attempts = []
+
+
 @do
-def retry_handler(effect: Effect, k):
+def flaky_chat(effect: Chat, k):        # the provider times out twice, then answers
+    attempts.append(effect.model)
+    if len(attempts) < 3:
+        raise ConnectionError("provider timed out")
+    return (yield Resume(k, f"summary by {effect.model}"))
+
+
+@do
+def retry(effect: Chat | Draw, k):      # one retry policy for every model call
     for attempt in range(3):
-        safe = yield Try(Resume(k, effect))
-        if safe.is_ok():
-            return safe.value
-    raise safe.error
+        try:
+            answer = yield effect       # ask the handlers outside this one
+        except ConnectionError:
+            if attempt == 2:
+                raise
+            continue
+        return (yield Resume(k, answer))
+
+
+program = handler(retry)(illustrated_summary("tides"))
+print(run(handler(flaky_chat)(handler(fake_images)(program))))  # summary by gpt-4o | image by imagen-3
+print(len(attempts))  # 3
 ```
 
-**Why this matters:** With N services and M cross-cutting concerns:
-- DI requires N x M wrapper classes
-- Effects require M handlers (regardless of N)
+doeff's continuations are one-shot: `k` resumes at most once. Retrying means performing the
+request again, as above, never resuming `k` twice.
 
-### 2. Effect Interception Without Wrapping
+### 4. Dry runs and rewrites: effects are data
 
-Effects can be intercepted, transformed, or blocked without the original code knowing.
+A request is a frozen dataclass, so a handler can answer it without any provider, keep it, or
+build a different one. A dry run records what the workflow would call:
 
 ```python
-from doeff import Get, Pass, Resume, Tell, WithObserve, do
+from doeff import Resume, do, handler, run
 
-# Budget cap across ALL providers — impossible to bypass
+from ai_effects import Chat, Draw, illustrated_summary
+
+planned = []
+
+
 @do
-def budget_handler(effect: LLMChat | LLMStructuredQuery | ImageGenerate, k):
-    total = yield Get("total_cost")
-    if total > settings.max_budget_usd:
-        yield Tell(f"Budget exceeded: ${total:.2f} > ${settings.max_budget_usd}")
-        return (yield Resume(k, BudgetExceededResult()))
-    yield Pass(effect, k)
+def dry_run(effect: Chat | Draw, k):
+    planned.append(effect)
+    return (yield Resume(k, f"<{effect.model}>"))
 
-# Dry-run mode — intercept ALL side effects
-@do
-def dry_run_handler(effect: LLMChat | ImageGenerate, k):
-    yield Tell(f"[DRY RUN] Would execute: {type(effect).__name__}(model={effect.model})")
-    return (yield Resume(k, mock_response(effect)))
 
-# Rewriting is better modeled with WithObserve
-def rewrite_gpt4(effect):
-    if isinstance(effect, LLMChat) and effect.model == "gpt-4":
-        return LLMChat(**{**vars(effect), "model": "gpt-4o-mini"})
-    return effect
-
-rewritten_program = WithObserve(rewrite_gpt4, my_workflow())
+print(run(handler(dry_run)(illustrated_summary("tides"))))  # <gpt-4o> | <imagen-3>
+print(planned)  # [Chat(model='gpt-4o', prompt='Summarize tides'), Draw(model='imagen-3', prompt='<gpt-4o>')]
 ```
 
-With DI, each of these requires a new wrapper class per service type.
-
-### 3. The Call Tree Is Automatic
-
-Every `yield` in a `@do` function is captured in the effect call tree. You get a complete execution trace for free.
+A rewrite sends the request on with a different model, and the workflow does not change:
 
 ```python
-@do
-def rag_pipeline(query: str):
-    docs = yield semantic_search(query)       # Traced
-    analysis = yield LLMStructuredQuery(     # Traced
-        messages=build_prompt(docs),
-        model="gpt-4o",
-        response_format=Analysis,
-    )
-    image = yield ImageGenerate(              # Traced
-        prompt=analysis.diagram_prompt,
-        model="gemini-3-pro-image",
-    )
-    return PipelineResult(analysis, image)
+from doeff import Resume, do, handler, run
 
-# After execution, result contains:
-# rag_pipeline()
-# ├── semantic_search()
-# │   └── LLMEmbedding(model="text-embedding-3-small")
-# ├── LLMStructuredQuery(model="gpt-4o")
-# └── ImageGenerate(model="gemini-3-pro-image")
+from ai_effects import Chat, fake_chat, fake_images, illustrated_summary
+
+
+@do
+def cheaper_model(effect: Chat, k):
+    if effect.model == "gpt-4o":
+        effect = Chat("gpt-4o-mini", effect.prompt)
+    return (yield Resume(k, (yield effect)))
+
+
+program = handler(cheaper_model)(illustrated_summary("tides"))
+print(run(handler(fake_chat)(handler(fake_images)(program))))  # summary by gpt-4o-mini | image by imagen-3
 ```
 
-With doeff-flow, this becomes live-observable in real-time. DI gives you nothing comparable without explicit OpenTelemetry instrumentation.
+With DI, each of these is one more wrapper class per service.
 
-### 4. Handler Stacking IS the Router
+### 5. The handler stack is the router
 
-No explicit `MultiLLMService` router needed. The handler stack is the routing mechanism.
+With several providers behind one kind of request, DI needs a router object that picks the client
+for each model. With effects, each provider's handler answers the models it serves and passes the
+rest on. Adding a provider is adding a handler:
 
 ```python
-from doeff import Pass, Resume, do
+from doeff import Pass, Resume, do, handler, run
 
-# Each handler checks model prefix, then passes through if it's not responsible.
+from ai_effects import Chat
+
+
 @do
-def openai_handler(effect: LLMChat, k):
+def openai(effect: Chat, k):
     if not effect.model.startswith("gpt-"):
-        yield Pass()
-        return
-    response = yield _call_openai(effect)
-    return (yield Resume(k, response))
+        return (yield Pass(effect, k))  # not ours: the next handler gets it
+    return (yield Resume(k, f"openai answered {effect.model}"))
+
 
 @do
-def gemini_handler(effect: LLMChat, k):
+def gemini(effect: Chat, k):
     if not effect.model.startswith("gemini-"):
-        yield Pass()
-        return
-    response = yield _call_gemini(effect)
-    return (yield Resume(k, response))
+        return (yield Pass(effect, k))
+    return (yield Resume(k, f"gemini answered {effect.model}"))
 
-# Stacking = routing
-result = run(
-    gemini_handler(
-        openai_handler(my_workflow()),   # inner tries first
-    ),
-)
-```
-
-Adding a new provider? Just stack one more handler. No changes to the router, no factory updates, no wiring changes.
-
-### 5. Environment Portability (Secrets Example)
-
-Secret management perfectly illustrates the handler-swapping advantage:
-
-```python
-from doeff_secret.effects import GetSecret
 
 @do
-def deploy_workflow():
-    db_password = yield GetSecret(secret_id="db-password")
-    api_key = yield GetSecret(secret_id="openai-api-key")
-    yield do_deployment(db_password, api_key)
+def ask_both():
+    first = yield Chat("gpt-4o", "hi")
+    second = yield Chat("gemini-2.5-pro", "hi")
+    return [first, second]
+
+
+print(run(handler(gemini)(handler(openai)(ask_both()))))  # ['openai answered gpt-4o', 'gemini answered gemini-2.5-pro']
 ```
 
-The program never mentions a provider. The handler stack decides where secrets come from:
+### 6. One program, every environment
+
+Where a secret comes from depends on where the program runs: a vault in production, environment
+variables in CI, a dictionary in a test. The program asks for the secret and names no store. The
+handlers decide, and a handler that does not have the secret passes the request on to the next
+one:
 
 ```python
-# Production: Google Cloud Secret Manager
-run(gsm_handler(deploy_workflow()))
+import os
+from dataclasses import dataclass
 
-# Local dev: 1Password
-run(onepassword_handler(deploy_workflow()))
+from doeff import EffectBase, Pass, Resume, do, handler, run
 
-# CI: AWS Secrets Manager
-run(aws_secrets_handler(deploy_workflow()))
 
-# Fallback chain: try 1Password, fall back to env vars
-run(
-    env_var_handler(
-        onepassword_handler(deploy_workflow()),
-    ),
-)
+@dataclass(frozen=True)
+class GetSecret(EffectBase):
+    name: str
+
+
+@do
+def connect():
+    password = yield GetSecret("db-password")
+    return f"connected with a {len(password)}-character password"
+
+
+def from_dict(secrets):                 # a test's secrets (or a vault client's)
+    @do
+    def lookup(effect: GetSecret, k):
+        if effect.name not in secrets:
+            return (yield Pass(effect, k))
+        return (yield Resume(k, secrets[effect.name]))
+
+    return handler(lookup)
+
+
+@do
+def from_environment(effect: GetSecret, k):  # DB_PASSWORD for "db-password"
+    return (yield Resume(k, os.environ[effect.name.upper().replace("-", "_")]))
+
+
+os.environ["DB_PASSWORD"] = "hunter2"
+print(run(from_dict({"db-password": "s3cret"})(connect())))  # connected with a 6-character password
+print(run(handler(from_environment)(from_dict({})(connect()))))  # connected with a 7-character password
 ```
 
-With DI, you'd need a `SecretService` protocol, provider implementations, a factory, and explicit wiring per environment. With effects, you change one line: the handler.
+With DI this is a `SecretStore` protocol, an implementation per store, and a factory that picks
+one per environment. With effects, the stack of handlers is the configuration.
 
-### 6. Testing Is Handler Swapping
+### 7. Record once, replay in tests
+
+Because requests are hashable data, a handler can record the answers of a real run and another
+can replay them, failing on any request it has not seen:
 
 ```python
-# Production
-result = run(
-    openai_production_handler(my_workflow()),
-)
+from doeff import Resume, do, handler, run
 
-# Test — swap handler, everything else identical
-result = run(
-    openai_mock_handler(my_workflow()),
-)
+from ai_effects import Chat, Draw, fake_chat, fake_images, illustrated_summary
 
-# Replay — record and replay real responses
-result = run(
-    replay_handler(recorded_responses)(my_workflow()),
-)
+
+def record(tape):
+    @do
+    def recorder(effect: Chat | Draw, k):
+        answer = yield effect           # the real handlers answer…
+        tape[effect] = answer           # …and the answer is kept
+        return (yield Resume(k, answer))
+
+    return handler(recorder)
+
+
+def replay(tape):
+    @do
+    def player(effect: Chat | Draw, k):
+        if effect not in tape:
+            raise LookupError(f"not recorded: {effect}")
+        return (yield Resume(k, tape[effect]))
+
+    return handler(player)
+
+
+tape = {}
+live = handler(fake_chat)(handler(fake_images)(record(tape)(illustrated_summary("tides"))))
+print(run(live))  # summary by gpt-4o | image by imagen-3
+print(run(replay(tape)(illustrated_summary("tides"))))  # summary by gpt-4o | image by imagen-3
+try:
+    run(replay(tape)(illustrated_summary("waves")))
+except LookupError as error:
+    print(error)  # not recorded: Chat(model='gpt-4o', prompt='Summarize waves')
 ```
 
-DI can do this too (mock injection), but effects make it structural: the program itself never changes, only the handler stack.
+Here `fake_chat` and `fake_images` stand in for the real providers; in your app, the recording run
+uses the handlers that call them. DI can inject a mock too. The difference is that the program never
+changes, and one recorder covers every kind of request.
 
-## Where DI Is Better
+## Effects vs. Plain `async`
 
-Being honest about DI's strengths:
-
-### 1. Simple Single-Provider Usage
-
-If you only ever use OpenAI:
+`async` keeps I/O from blocking, but it spreads: a function that awaits must be `async`, so must
+its callers, and so must its tests:
 
 ```python
-# DI: clean, familiar
-result = await llm.chat(messages, "gpt-4o")
+import asyncio
 
-# Effects: more ceremony for the same thing
-result = yield LLMChat(messages=messages, model="gpt-4o")
+
+async def fetch(url):                   # the I/O is async…
+    await asyncio.sleep(0.01)
+    return f"<html>{url}</html>"
+
+
+async def total_size(urls):             # …so is every caller…
+    pages = await asyncio.gather(*(fetch(url) for url in urls))
+    return sum(len(page) for page in pages)
+
+
+print(asyncio.run(total_size(["a.com", "b.com"])))  # 36
 ```
 
-Effects add value when you have multiple providers, cross-cutting concerns, or need observability. For a single provider with no extras, DI is simpler.
-
-### 2. IDE Discoverability
+With effects, the program yields a `Fetch` request and runs concurrent work with `Spawn` and
+`Gather`. Whether a `Fetch` is answered by an `async` client is the handler's business; the fake
+handler of a test needs no event loop:
 
 ```python
-# DI: autocomplete shows all available methods
-llm.  # -> chat(), structured(), embedding(), ...
+import asyncio
+from dataclasses import dataclass
 
-# Effects: you need to know the effect class names
-yield LLM  # -> LLMChat, LLMStructuredQuery, LLMEmbedding (via import autocomplete)
+from doeff import Await, EffectBase, Gather, Resume, Spawn, do, handler, run
+from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.scheduler import scheduled
+
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+
+@do
+def fetch(url):
+    return (yield Fetch(url))
+
+
+@do
+def total_size(urls):                   # no async, no await
+    tasks = []
+    for url in urls:
+        tasks.append((yield Spawn(fetch(url))))
+    pages = yield Gather(*tasks)
+    return sum(len(page) for page in pages)
+
+
+async def download(url):                # production: an async client
+    await asyncio.sleep(0.01)
+    return f"<html>{url}</html>"
+
+
+@do
+def async_http(effect: Fetch, k):
+    return (yield Resume(k, (yield Await(download(effect.url)))))
+
+
+@do
+def fake_http(effect: Fetch, k):        # a test: answers at once
+    return (yield Resume(k, f"<html>{effect.url}</html>"))
+
+
+urls = ["a.com", "b.com"]
+print(run(scheduled(await_handler()(handler(async_http)(total_size(urls))))))  # 36
+print(run(scheduled(handler(fake_http)(total_size(urls)))))  # 36
 ```
 
-Protocol-based DI surfaces capabilities through method signatures. Effects require knowing the effect vocabulary.
+The trade: doeff does not remove the "color" of functions; it replaces two (plain and `async`)
+with one. A function that performs effects is a generator, and its callers
+`yield` it, as `total_size` yields `Spawn(fetch(url))`. What you gain is that sync, async and
+concurrent work share that one color, and the choice of I/O moves into a handler.
 
-### 3. Explicit Wiring
+### Virtual time: hours of waiting in an instant
 
-DI makes dependencies visible at construction time:
+The strongest case is code that waits. A program that sleeps for hours is slow to test, and a
+fake clock object, the DI answer, is not enough once several tasks sleep at the same time: whoever
+fakes the clock must also decide which task wakes next, which is the scheduler's job. With
+`asyncio`, that means replacing the event loop's clock.
+
+In doeff, the clock is a handler, and it works with the stock scheduler. The handler below parks
+each sleeping task on a promise. An idle-priority task, which runs only while every other task
+waits, moves the clock to the earliest wake-up and wakes that task:
 
 ```python
-# DI: clear what this service needs
-service = MyService(
-    llm=OpenAILLMService(api_key="..."),
-    cache=RedisCache(url="..."),
-    db=PostgresDB(dsn="..."),
+import heapq
+import time
+from dataclasses import dataclass
+from itertools import count
+
+from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
+from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
+    CompletePromise,
+    CreatePromise,
+    Wait,
+    scheduled,
 )
+
+
+@dataclass(frozen=True)
+class Sleep(EffectBase):
+    seconds: float
+
+
+@dataclass(frozen=True)
+class Now(EffectBase):
+    pass
+
+
+def virtual_clock():
+    now = 0.0
+    sleepers = []                       # (wake-up time, order, promise), earliest first
+    order = count()
+    advancing = False
+
+    @do
+    def advance():                      # idle priority: runs while every other task waits
+        nonlocal now, advancing
+        while sleepers:
+            now, _, promise = heapq.heappop(sleepers)
+            yield CompletePromise(promise, None)
+        advancing = False
+
+    @do
+    def clock(effect: Sleep | Now, k):
+        nonlocal advancing
+        if isinstance(effect, Now):
+            return (yield Resume(k, now))
+        promise = yield CreatePromise()
+        heapq.heappush(sleepers, (now + effect.seconds, next(order), promise))
+        if not advancing:
+            advancing = True
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+        yield Wait(promise.future)
+        return (yield Resume(k, None))
+
+    return handler(clock)
+
+
+log = []
+
+
+@do
+def reminder(name, every_hours, times):
+    for _ in range(times):
+        yield Sleep(every_hours * 3600)
+        hour = (yield Now()) / 3600
+        log.append(f"{hour:g}h {name}")
+
+
+@do
+def day():
+    tea = yield Spawn(reminder("tea", 2, 3))
+    stretch = yield Spawn(reminder("stretch", 3, 2))
+    yield Gather(tea, stretch)
+
+
+started = time.monotonic()
+run(scheduled(virtual_clock()(day())))
+print(log)  # ['2h tea', '3h stretch', '4h tea', '6h stretch', '6h tea']
+print(time.monotonic() - started < 1)  # True
 ```
 
-With effects, dependencies are resolved at runtime by whatever handler is stacked. This is powerful but less explicit.
+Six hours of two concurrent tasks ran in well under a second, in the same order every time. In
+production, a handler that answers `Sleep` with `Await(asyncio.sleep(effect.seconds))` (under
+`await_handler()`, as in the example above) and `Now` with the wall clock takes the place of
+`virtual_clock()`, and `day` does not change. The scheduler knows nothing about the clock, and the
+clock uses the scheduler only through effects any program can yield (`CreatePromise`, `Spawn`,
+`Wait`).
 
-### 4. Static Analysis
+## Where DI or Plain Python Is Better
 
-Type checkers can fully verify DI wiring. Effects with `Pass()` chains are harder to statically verify — you trust the handler stack at runtime.
+Effects are not free. Use plain functions or DI when:
+
+**The code runs one way.** With one provider and nothing around its calls, an effect is ceremony:
+a class, a generator, a handler and `run()` for what a function argument does in one line.
+
+```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, Resume, do, handler, run
+
+
+def summarize(topic, chat):             # plain Python: pass the one client in
+    return chat("gpt-4o", f"Summarize {topic}")
+
+
+print(summarize("tides", lambda model, prompt: f"summary by {model}"))  # summary by gpt-4o
+
+
+@dataclass(frozen=True)                 # doeff: the same call, four more pieces
+class Chat(EffectBase):
+    model: str
+    prompt: str
+
+
+@do
+def summarize_effect(topic):
+    return (yield Chat("gpt-4o", f"Summarize {topic}"))
+
+
+@do
+def answer(effect: Chat, k):
+    return (yield Resume(k, f"summary by {effect.model}"))
+
+
+print(run(handler(answer)(summarize_effect("tides"))))  # summary by gpt-4o
+```
+
+**You find an API through the editor.** `llm.` lists the methods of a client. With effects, you
+need to know the names of the effect classes and import them.
+
+**You want the wiring in one place.** A DI constructor shows every dependency where the object is
+built. With effects, what answers a request is decided by the handlers installed around the
+program at run time.
+
+**You want the type checker to prove the wiring.** doeff's effects can be typed, so the checker
+knows what each `yield` gives back (see [Static Typing](23-static-typing.md)). No checker proves
+that a handler is installed for every effect a program performs: a missing one is an
+`UnhandledEffect` error when the program runs, naming the effect.
+
+**The code is a tight loop.** An effect costs a few microseconds (see the
+[Performance](../README.md#performance) table in the README). Next to a network call that does not
+show; inside a numeric loop it does. Keep the loop in plain Python and yield effects around it.
 
 ## Decision Guide
 
-| Scenario | Recommendation |
-|----------|---------------|
-| Single provider, simple usage | DI |
-| Multi-provider, model-based routing | Effects |
-| Need cross-cutting concerns (logging, cost, retry) across many services | Effects |
-| Need live execution tracing | Effects |
-| Rapid prototyping with familiar patterns | DI |
-| Complex workflows composing LLM + Image + Secrets + Caching | Effects |
-| Library code where users choose their provider | Effects |
-| Already in the doeff ecosystem | Effects |
-| Standalone microservice with fixed dependencies | DI |
+| Situation | Use |
+| --- | --- |
+| One provider, code that runs one way | Plain functions or DI |
+| A small script, or a service whose dependencies never change | Plain functions or DI |
+| Discovering an API through editor completion matters most | DI |
+| A tight numeric loop | Plain Python (yield effects around the loop) |
+| Several providers behind one kind of request, chosen per call | Effects |
+| Logging, cost caps, retries or tracing across many kinds of calls | Effects |
+| Tests that must never reach production, or record and replay of expensive calls | Effects |
+| Async I/O without making every caller `async` | Effects |
+| Concurrent code that must also run on a virtual clock | Effects |
 
 ## The Composability Argument
 
-The deepest advantage of effects is **composability across concern boundaries**.
+Every handler on this page minds its own concern, and an effect it is not annotated for passes it
+by without a line of code. Effects are the rows and handlers the columns:
 
-In DI, each service type needs its own wrapper hierarchy. When you add a new cross-cutting concern (say, audit logging), you touch every service wrapper. When you add a new service type, you implement every cross-cutting wrapper for it.
-
-With effects, concerns are orthogonal:
-
-```
-                   Handlers (cross-cutting)
-                   ┌────────┬─────────┬──────────┐
-                   │ Retry  │ CostCap │ Tracing  │
-    ┌──────────────┼────────┼─────────┼──────────┤
-    │ LLMChat      │   ✓    │    ✓    │    ✓     │   doeff-llm
-E   │ LLMEmbedding │   ✓    │    ✓    │    ✓     │   doeff-llm
-f   │ ImageGen     │   ✓    │    ✓    │    ✓     │   doeff-image
-f   │ GetSecret    │   ✓    │    ✗    │    ✓     │   doeff-secret
-e   │ CacheGet     │   ✗    │    ✗    │    ✓     │   doeff (core)
-c   └──────────────┴────────┴─────────┴──────────┘
+```text
+                       Handlers (one concern each)
+                    ┌───────────┬──────────┬───────┬───────────────┬───────────┐
+                    │ log_calls │ cost_cap │ retry │ virtual_clock │ scheduled │
+    ┌───────────────┼───────────┼──────────┼───────┼───────────────┼───────────┤
+    │ Chat          │     ✓     │    ✓     │   ✓   │       ·       │     ·     │
+E   │ Draw          │     ✓     │    ✓     │   ✓   │       ·       │     ·     │
+f   │ GetSecret     │     ·     │    ·     │   ·   │       ·       │     ·     │
+f   │ Sleep, Now    │     ·     │    ·     │   ·   │       ✓       │     ·     │
+e   │ Spawn, Gather │     ·     │    ·     │   ·   │       ·       │     ✓     │
+c   └───────────────┴───────────┴──────────┴───────┴───────────────┴───────────┘
 t
-s   Adding a new effect type:  1 row  (just the effect, handlers apply automatically)
-    Adding a new handler:      1 column (just the handler, applies to all effects)
+s   ✓ = the handler acts on the effect     · = the effect passes the handler by
+
+    A new effect:  one row (one class; the handlers that should see it name it)
+    A new concern: one column (one handler; it applies to every effect it names)
 ```
 
-This maps to real packages:
-
-| Effects Package | Provider Handlers |
-|----------------|-------------------|
-| `doeff-llm` | openai, gemini, openrouter, anthropic |
-| `doeff-image` | seedream, gemini, dall-e |
-| `doeff-secret` | google-secret-manager, 1password, aws, vault, env vars |
-
-With DI, the same matrix requires N x M wrapper classes. This is the [Expression Problem](https://en.wikipedia.org/wiki/Expression_problem), and algebraic effects solve it elegantly.
-
-## Case Study: Simulation Through Composition
-
-The most striking example of effect composability is deterministic simulation. Consider a program that uses time, events, and concurrency:
-
-```python
-from doeff import do, Spawn, Wait
-from doeff_time.effects import Delay, GetTime, ScheduleAt
-from doeff_events.effects import Publish, WaitForEvent
-
-@do
-def trading_strategy():
-    now = yield GetTime()
-
-    # Spawn a background price monitor
-    monitor = yield Spawn(price_monitor())
-
-    # Schedule a market-open event at 9:30 AM
-    yield ScheduleAt(market_open_time, Publish(MarketOpen()))
-
-    # Wait for the event
-    event = yield WaitForEvent(MarketOpen)
-
-    # Delay before trading
-    yield Delay(5.0)
-
-    # Execute trade
-    result = yield place_order(event.symbol, 100)
-    return result
-```
-
-This program uses three independent effect domains:
-
-| Effect | Package | Concern |
-|--------|---------|---------|
-| `Spawn`, `Wait` | doeff core | Concurrency |
-| `Delay`, `GetTime`, `ScheduleAt` | doeff-time | Time |
-| `Publish`, `WaitForEvent` | doeff-events | Pub/sub |
-
-**None of these packages know about each other.** Yet they compose into a deterministic simulation:
-
-```python
-from doeff_sim.handlers import deterministic_sim_handler
-from doeff_events.handlers import event_handler
-from doeff_time.handlers import async_time_handler
-from doeff import run
-from doeff_core_effects.scheduler import scheduled
-
-# Deterministic simulation (instant, reproducible)
-result = run(
-    deterministic_sim_handler(              # Handles Delay/GetTime/ScheduleAt
-        start_time=1704067200.0,            #   + intercepts Spawn/Wait for
-    )(                                      #   deterministic scheduling
-        event_handler()(trading_strategy()),  # Handles Publish/WaitForEvent
-    ),
-)
-
-# Same program, real-time execution (with scheduler for concurrency)
-result = run(
-    scheduled(
-        async_time_handler()(                 # asyncio.sleep, time.time()
-            event_handler()(trading_strategy()),  # Same event handler
-        ),
-    ),
-)
-```
-
-### How the Composition Works
-
-The key insight is that **events know nothing about time, time knows nothing about events, and the simulation handler knows nothing about events** — yet time-ordered event dispatch emerges from composition:
-
-```
-yield ScheduleAt(t, Publish(event))
-         │                  │
-         │                  └─ event_handler: dispatches to listener queue via Promise
-         └─ sim_handler: queues the Publish program at simulated time t
-```
-
-When `WaitForEvent` is yielded:
-1. The **event handler** creates a `Promise`, registers it as a listener, and yields `Wait(promise.future)`
-2. The **sim handler** intercepts `Wait` and parks the continuation in its scheduling queue
-3. When sim time reaches `t`, the sim handler runs `Publish(event)`
-4. The **event handler** handles `Publish`, completing the `Promise`
-5. The **sim handler** sees the `Promise` resolved and wakes the parked continuation
-
-Three independent handlers, zero knowledge of each other, composing through doeff core's `Promise`/`Wait` primitives.
-
-### Why This Can't Work with DI
-
-With DI, making this program work in both simulated and real time would require:
-
-```python
-class TimeService(Protocol):
-    async def delay(self, seconds: float) -> None: ...
-    async def get_time(self) -> float: ...
-    async def schedule_at(self, time: float, callback: Callable) -> None: ...
-
-class EventService(Protocol):
-    async def publish(self, event: Any) -> None: ...
-    async def wait_for_event(self, *types: type) -> Any: ...
-
-class ConcurrencyService(Protocol):
-    async def spawn(self, task: Callable) -> Task: ...
-    async def wait(self, task: Task) -> Any: ...
-```
-
-Now you need three separate service implementations per mode (simulated, async, sync), but worse — the services need to **coordinate**. The simulated `TimeService` needs to control when `EventService` dispatches and when `ConcurrencyService` resumes tasks. You end up with:
-
-- A `SimulatedTimeService` that holds a reference to `SimulatedEventService` and `SimulatedConcurrencyService`
-- A shared priority queue that all three services access
-- Tight coupling between implementations that are supposed to be independent
-
-With DI, you'd inevitably build a monolithic `SimulationEngine` that bundles time, events, and concurrency together — exactly the 4,589-line interpreter we're decomposing. The independence is an illusion.
-
-With effects, the independence is real. Each handler manages its own concern. The `deterministic_sim_handler` only intercepts time and concurrency effects. The `event_handler` only handles pub/sub. They compose through the program's yield points and doeff's handler stack — no shared state, no circular references, no coordination protocol.
-
-### The Composability Matrix (Extended)
-
-```
-                  Handlers (cross-cutting)
-                  ┌────────┬─────────┬──────────┬─────────┬───────────┐
-                  │ Retry  │ CostCap │ Tracing  │ SimTime │ EventBus  │
-    ┌─────────────┼────────┼─────────┼──────────┼─────────┼───────────┤
-    │ LLMChat     │   ✓    │    ✓    │    ✓     │    ·    │     ·     │
-    │ ImageGen    │   ✓    │    ✓    │    ✓     │    ·    │     ·     │
-E   │ GetSecret   │   ✓    │    ·    │    ✓     │    ·    │     ·     │
-f   │ Delay       │   ·    │    ·    │    ✓     │    ✓    │     ·     │
-f   │ ScheduleAt  │   ·    │    ·    │    ✓     │    ✓    │     ·     │
-e   │ Spawn/Wait  │   ·    │    ·    │    ✓     │    ✓    │     ·     │
-c   │ Publish     │   ·    │    ·    │    ✓     │    ·    │     ✓     │
-t   │ WaitForEvt  │   ·    │    ·    │    ✓     │    ·    │     ✓     │
-s   └─────────────┴────────┴─────────┴──────────┴─────────┴───────────┘
-
-    ✓ = handler intercepts     · = handler passes through transparently
-```
-
-Every `·` in this matrix is a handler passing the effect through transparently. No wrapper needed.
-No code written. The handler simply doesn't care about effects outside its domain.
+With DI, each `✓` is a wrapper class, and a fake clock for concurrent code has to be a scheduler
+too.
 
 ## Summary
 
-Effects aren't universally better than DI. They're better when:
+Effects pay off when:
 
-1. **Multiple providers** serve the same effect type (LLM, image, etc.)
-2. **Cross-cutting concerns** need to apply uniformly across many service types
-3. **Runtime observability** of the full execution trace matters
-4. **Handler composition** is the natural way to express your system's configuration
-5. **Orthogonal concerns** (time, events, concurrency, I/O) need to compose without coordination
+1. **several providers** serve the same kind of request (models, stores, clocks)
+2. **cross-cutting concerns** (logging, cost, retries, recording) must apply to many kinds of calls
+3. **the same program** runs in production, in tests, in a dry run and in a replay
+4. **I/O and concurrency** should not force `async` onto every caller
+5. **independent concerns** such as time and scheduling must compose without knowing each other
 
-If you're building a multi-provider AI system with cost tracking, retry logic, and live tracing — effects are the right tool. If you're writing a deterministic simulation where time, events, and concurrency compose independently — effects are the *only* tool that keeps them truly independent. If you're calling one API with one client — just use DI.
+If you call one API with one client and run the code one way, use plain Python or DI. When you
+want to try effects, start with [Getting Started](01-getting-started.md); for when each kind of
+handler pays off, read [Capability Classes](22-capability-classes.md).

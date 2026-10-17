@@ -56,6 +56,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Getting Started: 01-getting-started.md
+      - Why Effects?: 20-why-effects-over-di.md
       - Core Concepts: 02-core-concepts.md
   - Effect Types:
       - Basic Effects: 03-basic-effects.md
@@ -95,8 +96,6 @@ nav:
           - Gemini Setup: gemini_client_setup.md
           - Gemini Cost Hook: gemini_cost_hook.md
           - seedream.md: seedream.md
-      - Design essay:
-          - Why Effects Over DI?: 20-why-effects-over-di.md
 
 theme:
   name: material

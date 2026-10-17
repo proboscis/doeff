@@ -61,6 +61,15 @@
   result types instead of taking their union, so `Gather` and `Race` also declare overloads for 2 to 6 handles (as
   `asyncio.gather` does); past 6 handles of different types, mypy answers `list[object]` (pyright still the union).
 
+### Documentation
+
+- "Why Effects?" (`docs/20-why-effects-over-di.md`) is rewritten so that its 16 examples run as written with
+  `pip install doeff` (0.6.0 or later); before, they were sketches that needed components not on PyPI and the old API.
+  It compares effects with dependency injection and with plain `async` (one handler per concern, a budget across
+  providers, retries under one-shot continuations, dry runs, routing, secrets per environment, record and replay,
+  virtual time for concurrent tasks) and says when DI or plain Python is simpler. `tests/test_docs_page_examples.py`
+  runs its examples. The table of contents lists it under Getting Started, and the README's "Why doeff?" links to it.
+
 ## 0.6.0 — 2026-10-17
 
 ### Changed

@@ -69,6 +69,9 @@ your model. `digest` does not change, and the fake stays as your test.
   Optional [Hy](https://hylang.org/) macros live in [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md).
 - **Rust VM.** Effects are dispatched by a VM written in Rust, with one-shot continuations.
 
+Why not dependency injection or plain `async`? [Why effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
+compares effects with both, example by example, and says when DI or plain Python is the simpler choice.
+
 ## One handler, every effect
 
 A handler can watch every request without touching `digest`. Add this below the example above:
@@ -247,7 +250,7 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 ## Next steps
 
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
-- **Why effects?**: [Effects vs. dependency injection](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
+- **Why effects?**: [Effects vs. dependency injection and plain `async`](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)
 - **Command line**: [`doeff run`](https://github.com/proboscis/doeff/blob/main/docs/14-cli-auto-discovery.md)
