@@ -111,7 +111,8 @@ class TestWarns:
         assert "ValueError: failed in task" in text
         # The task's program, where it was spawned, and where it raised.
         assert "running boom" in text
-        assert f"spawned at main  {__file__}" in text
+        assert "(spawned at TestWarns." in text
+        assert f".<locals>.main  {__file__}:" in text
         assert f"raised at {__file__}:" in text
         assert "in boom" in text
 
@@ -168,21 +169,19 @@ class TestWarns:
         """The #502 sweep deletes a terminal task whose handles are all dead —
         a failed task nobody kept a handle to is exactly that. Its exception
         must still reach the run-end warning."""
-        monkeypatch.setattr(scheduler_module, "HANDLE_SWEEP_INTERVAL", 2)
+        monkeypatch.setattr(scheduler_module, "HANDLE_SWEEP_INTERVAL", 1)  # sweep at every id
 
         @do
         def main():
-            yield Spawn(boom("swept"))
-            for i in range(8):
-                t = yield Spawn(answer(i))
-                yield Wait(t)
-            del t
+            yield Spawn(boom("swept"))  # fails at once; its handle is dropped
+            t = yield Spawn(answer(0))  # this id's sweep deletes the failed row
+            yield Wait(t)
             counts = yield SchedulerIntrospection()
             return counts["tasks"]
 
         rows, caught = _run_recording(main())
 
-        assert rows <= 2, "the failed task's row must have been swept before the run ended"
+        assert rows == 1, "only the waited task's row is left: the failed one was swept"
         [text] = _never_retrieved(caught)
         assert "ValueError: swept" in text
 
