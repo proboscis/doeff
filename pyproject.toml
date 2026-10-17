@@ -262,11 +262,23 @@ tests = [
 ]
 
 # README の囲みを書き換えた便は、例を走らせて印字を注記と比べる検と、囲みの言葉・入口の例の節の検を払う(card ki-68cd4c8effcd)。
+# 頭の GIF の画像の行を消す・指す先を変える便も、GIF の検が名指す。
 [[tool.doeff.contract-tests]]
 prefix = "README.md"
 tests = [
     "tests/test_readme_examples.py",  # 9.7 秒(10 本・子 7 本・pytest の計・枠の待ちを除く・load 約 70 の下)
+    "tests/test_readme_demo.py",  # 0.6 秒(4 本・子なし・pytest の計・枠の待ちを除く・load 約 40 の下)
 ]
+
+# README の頭の GIF と、GIF に映る例の file(tools/readme_demo/digest.py)を変えた便は、例が今の doeff で走り GIF が目安の
+# 大きさに収まる検を払う。例は path で読むので、import の逆依存では選ばれない。
+[[tool.doeff.contract-tests]]
+prefix = "tools/readme_demo/"
+tests = ["tests/test_readme_demo.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "images/readme-demo.gif"
+tests = ["tests/test_readme_demo.py"]
 
 # 入門の道の docs の page(目次と 01〜05 章)を書き換えた便は、その例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
 # (card ki-9c93a506326b)。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と

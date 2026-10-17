@@ -6,6 +6,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/doeff)](https://pypi.org/project/doeff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/proboscis/doeff/blob/main/LICENSE)
 
+![A terminal session: pip install doeff, then the same digest program runs under a fake handler and under a live HTTP handler, and only the answer changes](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
+
 doeff brings algebraic effects to Python. Your functions `yield` requests such as
 "fetch this URL" or "summarize this text" instead of doing the I/O themselves.
 Handlers decide what each request means: real I/O in production, fakes in tests,
