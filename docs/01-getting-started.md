@@ -279,6 +279,61 @@ print(run(state(initial={"count": 12})(writer(conditional_program()))))  # (12, 
 print(run(state(initial={"count": 3})(writer(conditional_program()))))  # (3, 'low')
 ```
 
+## Adding Types
+
+The examples above use plain `yield` and leave out annotations: they run, but pyright and mypy see
+`Any` for every value an effect or a program gives. To have them checked, use `yield from` and
+annotate the parameters and the return type `Generator[effects, Any, result]` of each `@do`
+function:
+
+```python
+from collections.abc import Generator
+from typing import Any
+
+from doeff import do, run
+from doeff_core_effects import Ask, Get, Put
+from doeff_core_effects.handlers import reader, state
+
+@do
+def visit(page: str) -> Generator[Get | Put, Any, int]:
+    count: int = yield from Get(page)  # Get answers Any: annotate what you stored
+    yield from Put(page, count + 1)
+    return count + 1
+
+@do
+def visit_twice(page: str) -> Generator[Ask | Get | Put, Any, str]:
+    site: str = yield from Ask("site")
+    yield from visit(page)
+    count = yield from visit(page)  # count: int, the result type of visit
+    return f"{site}/{page}: {count} visits"
+
+result = run(
+    reader(env={"site": "example.com"})(state(initial={"home": 0})(visit_twice("home")))
+)  # result: str
+print(result)  # example.com/home: 2 visits
+```
+
+- `yield from` runs exactly like `yield`; only the type differs. On an effect it gives the effect's
+  answer type, and on a program it gives the program's result type (`count` is an `int`). `yield`
+  gives `Any`.
+- In `Generator[Ask | Get | Put, Any, str]`, the first argument lists the effects the function may
+  yield, the second stays `Any` (each effect gives its own type), and the third is the result.
+  `yield from visit(page)` adds the effects of `visit` to the caller's, so leaving `Get | Put` out of
+  the declaration of `visit_twice` is an error.
+- `Ask` and `Get` answer `Any`, because the environment and the state can hold any value. Annotate
+  the variable with the type you put there.
+- `Tell(message)` builds a `WriterTellEffect`, so a function that tells lists `WriterTellEffect`
+  (from `doeff_core_effects`) in its declaration.
+- `run` keeps the result type through the handlers: `result` is a `str`.
+- mypy needs the annotations. It does not infer the types of a function without them: to mypy, an
+  unannotated `@do` function takes and returns `Any`, and its body is not checked. pyright infers
+  part of the types without annotations, and reads the same annotations.
+- mypy fixes the type of a variable at its first assignment. After `prog = visit_twice("home")`,
+  `prog = state()(prog)` is an error in mypy: a program under a handler is a `Program[str, Any]`,
+  not the `Expand` the `@do` function returned. Wrap the program in one expression, as above.
+
+[Static Typing](23-static-typing.md) covers the scheduler's effects, handlers and what stays `Any`.
+
 ## Writing Programs in Hy
 
 Programs, effects, and handlers can also be written in [Hy](https://hylang.org), a Lisp that runs on
@@ -642,6 +697,7 @@ Now that you understand the basics, explore:
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 - **[Async Effects](04-async-effects.md)** - Parallel execution and futures
 - **[Error Handling](05-error-handling.md)** - Result, Try for error handling
+- **[Static Typing](23-static-typing.md)** - What pyright and mypy check in effects, programs and handlers
 
 ## Quick Reference
 
