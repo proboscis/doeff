@@ -20,6 +20,7 @@ from typing import Any, cast
 from doeff_core_effects.extra_hints import MissingExtraError
 
 from doeff import MissingEnvKeyError
+from doeff.cli.hy_runner import HyRunnerError
 from doeff.cli.profiling import (
     ProfilingConfig,
     print_profiling_status,
@@ -219,13 +220,14 @@ def _json_safe(value: Any) -> Any:
 def _reported_exception(exc: BaseException) -> BaseException:
     """Unwrap chained exceptions to find the most relevant one.
 
-    Unwrapping stops at an error that names the extra to install: its cause is only
-    the bare ``No module named ...`` without that line.
+    Unwrapping stops at an error that carries its own words: the extra to install
+    (its cause is only the bare ``No module named ...`` without that line) and a
+    refused ``--hy`` source (its cause lacks the step that failed and the ``-c`` hint).
     """
     seen = set()
     current = exc
     while (
-        not isinstance(current, MissingExtraError)
+        not isinstance(current, (MissingExtraError, HyRunnerError))
         and current.__cause__ is not None
         and id(current.__cause__) not in seen
     ):
