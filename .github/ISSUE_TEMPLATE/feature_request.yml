@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest a new effect, handler, API or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Please search the [open issues](https://github.com/proboscis/doeff/issues) first,
+        and write the request in English. Starting from the problem helps us find the right design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what makes it hard with doeff today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: How it would look to a user. A short code sketch of the API you would like to write helps a lot.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other ways to solve the problem, including how you work around it now.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to send a pull request for this.
