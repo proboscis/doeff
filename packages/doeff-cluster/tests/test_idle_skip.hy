@@ -422,12 +422,12 @@
   (<- scenarios tuple (lapse-scenarios))
   (for [#(name state start expected) scenarios]
     ;; 起点の拍の後の状態(待つ task は待ちの理由を書いた後)から数える — 静かな区間の歩の前提。
-    (<- settled Table (tasks-placed start state {} timing))
+    (<- settled Table (tasks-placed start state (table-of #()) timing))
     (val quiet (replace state :tasks settled))
     (<- answer (| DueAt DueNow DueNever) (task-due quiet start timing))
     (assert (= answer (DueAt :at expected)) #(name answer expected))
     (val due answer.at)
-    (<- before Table (tasks-placed (- due 1) quiet {} timing))
-    (<- at Table (tasks-placed due quiet {} timing))
+    (<- before Table (tasks-placed (- due 1) quiet (table-of #()) timing))
+    (<- at Table (tasks-placed due quiet (table-of #()) timing))
     (assert (= before settled) #(name "期限の 1 ms 前に変わった" before))
     (assert (!= at settled) #(name "期限の刻に変わらない" at))))

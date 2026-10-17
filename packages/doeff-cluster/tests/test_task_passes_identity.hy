@@ -4,7 +4,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_hy.table [Table])
+(import doeff_hy.table [Table table-of])
 (import tests.state_rows [table-from-rows])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ComponentVersion TaskRecord WorkerInfo])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
@@ -51,7 +51,7 @@
   (assert (is (promote-prepared tasks info) tasks)))
 
 (deftest test-absorb-task-reports-returns-the-same-dict-when-nothing-is-reported
-  (val state (ClusterState #() (! (table-from-rows {})) {} (! (rows))))
+  (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
   (assert (is (absorb-task-reports state "w" #() 1000 "b1") state.tasks))
   ;; 知らない task・置いていない worker の行・走っている(running)報告だけでは task は変わらない
   (assert (is (absorb-task-reports state "w" #((StatusRow :name "task/zzz" :phase "finished")) 1000 "b1") state.tasks))
@@ -59,7 +59,7 @@
   (assert (is (absorb-task-reports state "x" #((StatusRow :name "task/mine" :phase "finished")) 1000 "b1") state.tasks)))
 
 (deftest test-absorb-task-reports-rewrites-only-the-reported-row
-  (val state (ClusterState #() (! (table-from-rows {})) {} (! (rows))))
+  (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
   (val out (absorb-task-reports state "w" #((StatusRow :name "task/mine" :phase "code-failed" :detail "x")) 1000 "b1"))
   (assert (is-not out state.tasks))
   (assert (= (. (.row out "mine") phase) "code-failed"))
@@ -78,7 +78,7 @@
 
 (deftest test-a-heartbeat-of-a-worker-holding-no-task-keeps-the-tasks-dict
   ;; 受入: 切り離した task を担わない worker の heartbeat の後、tasks は前の歩と同じ object(2 度目の heartbeat で名乗りの変化も無い)。
-  (val state (ClusterState #() (! (table-from-rows {})) {} (! (rows))))
+  (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
   (val first (! (beat state "atlas" 1000)))
   (val second (! (beat first "atlas" 2000)))
   (assert (is first.tasks state.tasks))
@@ -86,7 +86,7 @@
 
 (deftest test-a-heartbeat-of-a-worker-holding-no-task-builds-no-task-keys [monkeypatch]
   ;; 受入: その歩の durable-delta は tasks の組の鍵を作らず(呼ばれた回数 0)、task/ の鍵を 1 本も書かない。
-  (val state (ClusterState #() (! (table-from-rows {})) {} (! (rows))))
+  (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
   (val first (! (beat state "atlas" 1000)))
   (val second (! (beat first "atlas" 2000)))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
@@ -97,7 +97,7 @@
 
 (deftest test-a-heartbeat-of-the-holding-worker-renews-only-its-detached-task
   ;; 担う worker の heartbeat は延ばした行だけ新しい物(組は飛ばない — 仕様どおり)。
-  (val state (ClusterState #() (! (table-from-rows {})) {} (! (rows))))
+  (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
   (val first (! (beat state "w" 1000)))
   (val second (! (beat first "w" 2000)))
   (assert (is-not second.tasks first.tasks))

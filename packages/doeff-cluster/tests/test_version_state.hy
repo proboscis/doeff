@@ -90,7 +90,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "担い手の行: 今の宣言の spec で起こした process(handlers.status-row と同じ欄)。extra で欄を差し替える。"
   (val job (next (gfor j state.jobs :if (= j.spec.name name) j)))
-  (val a (.get state.placements name))
+  (val a (.row state.placements name))
   (| {"name" name "phase" phase "runningRevision" job.spec.revision "desiredRevision" job.spec.revision "pid" 100
       "attempts" 1 "detail" "" "instance" "1-a" "specHash" (spec-hash job.spec) "placement" (if a a.generation None)}
      (or extra {})))
@@ -210,7 +210,7 @@
   (assert (= (! (answer (! (scaled-to-zero None)))) #(NotReadyKind.NO-REPLICAS VersionState.UPDATING)))
   ;; 置き先が無い: 前の担い手の停止を待つ(置いていない zeus の上で w がまだ動いている)。
   (val waiting (! (beat (! (declared)) "zeus" [{"name" "w" "phase" "running" "runningRevision" "r1" "instance" "0-z" "specHash" "old"}])))
-  (assert (not-in "w" waiting.placements))
+  (assert (is (.row waiting.placements "w") None))
   (assert (= (get (unplaced-jobs START waiting T) "w") "前の担い手が止め終えるのを待っている"))
   (assert (= (! (answer waiting)) #(NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING)))
   ;; 置き先が無い: 置ける worker が無い・空きが無い(理由の文は今までどおり)。
@@ -501,7 +501,7 @@
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (c.beat "zeus")
   (c.beat "atlas" ["r"])
-  (assert (not-in "r" c.state.placements))
+  (assert (is (.row c.state.placements "r") None))
   (assert (= (get (running-process c.state "r" c.now T) "kind") NotReadyKind.WAITING-PREVIOUS-HOLDER))
   (val waiting (! (coord-version c "r")))
   (assert (= (get waiting "state") "Updating") waiting)

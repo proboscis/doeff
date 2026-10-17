@@ -6,7 +6,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_hy.table [Table])
+(import doeff_hy.table [Table table-of])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -70,7 +70,7 @@
   (setv #(second-status _ after-second) (! (detached-reply after-first sha "caller-b/check" [{"group" "heavy"}
                                                                                       {"group" "heavy-caller" "part" "caller-b"}])))
   (assert (= #(first-status second-status) #(200 200)) #(first-status second-status))
-  (val placed (! (tasks-placed 1000 after-second {} T)))
+  (val placed (! (tasks-placed 1000 after-second (table-of #()) T)))
   (assert (= (sorted (! (phases-of placed))) ["assigned" "queued"]) placed)
   (val waiting (next (gfor t (.rows placed) :if (= t.phase "queued") t)))
   (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) waiting)
@@ -79,7 +79,7 @@
                                (ResourceBody :spec {"scope" "worker" "limit" 2 "system" "probe"}
                                              :resource-version (resource-version-of after-second "GroupLimit/heavy"))
                                "declare"))
-  (val again (! (tasks-placed 2000 raised {} T)))
+  (val again (! (tasks-placed 2000 raised (table-of #()) T)))
   (assert (= (! (phases-of again)) ["assigned" "assigned"]) again))
 
 
@@ -91,7 +91,7 @@
     (setv #(status _ after) (! (detached-reply current sha key [{"group" "heavy-caller" "part" part}])))
     (assert (= status 200) status)
     (:= current after))
-  (val placed (! (tasks-placed 1000 current {} T)))
+  (val placed (! (tasks-placed 1000 current (table-of #()) T)))
   (val by-key (dfor t (.rows placed) t.key t.phase))
   (assert (= by-key {"caller-a/1" "assigned" "caller-a/2" "assigned" "caller-a/3" "queued" "caller-b/1" "assigned"}) by-key))
 
@@ -106,7 +106,7 @@
       (setv #(status _ after) (! (detached-reply current sha key [{"group" "heavy"}])))
       (assert (= status 200) #(key status))
       (:= current after))
-    (val placed (! (tasks-placed 1000 current {} T)))
+    (val placed (! (tasks-placed 1000 current (table-of #()) T)))
     (assert (= (sorted (! (phases-of placed))) ["assigned" "assigned" "queued"]) #(order placed))))
 
 

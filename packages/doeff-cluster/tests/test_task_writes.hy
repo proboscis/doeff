@@ -14,7 +14,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core [cluster_policy])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks tasks-placed heard-tasks])
-(import doeff_hy.table [TableWrite draft-of])
+(import doeff_hy.table [TableWrite draft-of table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])
 
@@ -102,7 +102,7 @@
 (deftest test-place-tasks-answers-an-empty-write-list-when-nothing-changes
   (<- state ClusterState (state-of (four-hundred "w" 400) {"w" (live-worker "w")}))
   (with [replaces (counting-replaces)]
-    (<- writes tuple (place-tasks NOW state {} T)))
+    (<- writes tuple (place-tasks NOW state (table-of #()) T)))
   (assert (= writes #()))
   (assert (= (get replaces 0) 0)))
 
@@ -113,7 +113,7 @@
                       #("q-b" (row "q-b" "queued" None :priority 5))
                       #("q-c" (row "q-c" "queued" None :priority 5))])))
   (<- state ClusterState (state-of rows {"w" (live-worker "w" 1) "o" (live-worker "o" 0)}))
-  (<- writes tuple (place-tasks NOW state {} T))
+  (<- writes tuple (place-tasks NOW state (table-of #()) T))
   ;; 置かれるのは q-b だけ。q-a・q-c は待つ理由の文が書きになる(まだ queued)。
   (val by-key (dfor w writes w.key w.value))
   (assert (= (sorted by-key) ["q-a" "q-b" "q-c"]))
@@ -121,7 +121,7 @@
   (assert (= (. (get by-key "q-b") worker) "w"))
   (assert (= #((. (get by-key "q-a") phase) (. (get by-key "q-c") phase)) #("queued" "queued")))
   (<- roomy ClusterState (state-of rows {"w" (live-worker "w" 2) "o" (live-worker "o" 0)}))
-  (<- both tuple (place-tasks NOW roomy {} T))
+  (<- both tuple (place-tasks NOW roomy (table-of #()) T))
   (val placed (dfor w both :if (= w.value.phase "assigned") w.key w.value))
   (assert (= (sorted placed) ["q-b" "q-c"])))
 
@@ -133,14 +133,14 @@
   (val fresh (TaskRecord "fresh" "" SAMPLE-TASK-PROGRAM "" #() #() 60000 60000 0
                          :phase "finished" :detached True :finished-ms NOW :retain-ms 1000))
   (<- state ClusterState (state-of {"gone" gone "held" held "fresh" fresh "keep" (row "keep" "assigned" "w")} {"w" (live-worker "w")}))
-  (<- writes tuple (place-tasks NOW state {} T))
+  (<- writes tuple (place-tasks NOW state (table-of #()) T))
   (assert (= (sorted (gfor w writes #(w.key w.value))) [#("gone" None) #("held" None)]))
   (val after (.with-writes state.tasks writes))
   (assert (= (sorted (.keys after)) ["fresh" "keep"]))
   (assert (is (.row after "fresh") fresh))
   (<- blank ClusterState (state-of {} {}))
-  (<- empty tuple (place-tasks NOW blank {} T))
-  (<- again tuple (place-tasks NOW (replace-tasks state after) {} T))
+  (<- empty tuple (place-tasks NOW blank (table-of #()) T))
+  (<- again tuple (place-tasks NOW (replace-tasks state after) (table-of #()) T))
   (assert (= empty #()))
   (assert (= again #())))
 
@@ -150,16 +150,16 @@
 (deftest test-a-sunk-detached-placed-row-ends-lost-on-lease-lapse
   (val lapsed (dc-replace (row "d1" "assigned" "w") :lease-until-ms (- NOW 1)))
   (<- state ClusterState (state-of {"d1" lapsed} {"w" (live-worker "w")}))
-  (<- writes tuple (place-tasks NOW state {} T))
+  (<- writes tuple (place-tasks NOW state (table-of #()) T))
   (assert (= (tuple (gfor w writes w.key)) #("d1")))
   (assert (= (. (get writes 0) value phase) "lost")))
 
 (deftest test-tasks-placed-applies-the-writes-to-state-tasks
   (<- state ClusterState (state-of {"q" (row "q" "queued" None)} {"w" (live-worker "w")}))
-  (<- table (tasks-placed NOW state {} T))
+  (<- table (tasks-placed NOW state (table-of #()) T))
   (assert (= (. (.row table "q") worker) "w"))
   (<- settled ClusterState (state-of {"a" (row "a" "assigned" "w")} {"w" (live-worker "w")}))
-  (<- unchanged (tasks-placed NOW settled {} T))
+  (<- unchanged (tasks-placed NOW settled (table-of #()) T))
   (assert (is unchanged settled.tasks)))
 
 

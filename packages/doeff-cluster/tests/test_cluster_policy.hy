@@ -6,7 +6,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for board-tally-of])
+(import doeff_cluster.coordinator.core.cluster_policy [jobs-placed jobs-for board-tally-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -24,35 +24,35 @@
   (setv state (ClusterState
     #((! (job "a")) (! (job "b")) (! (job "k" :needs #("cluster-net"))) (! (job "p" :pin "mac")))
     (! (table-from-rows {"mac" (! (worker "mac" 0)) "new" (! (worker "new" 0)) "pod" (! (worker "pod" 0 10 "cluster-net"))}))))
-  (setv result (! (place-jobs 1000 state T)))
-  (assert (= (. (get result "k") worker) "pod"))
-  (assert (= (. (get result "p") worker) "mac"))
+  (setv result (! (jobs-placed 1000 state T)))
+  (assert (= (. (.row result "k") worker) "pod"))
+  (assert (= (. (.row result "p") worker) "mac"))
   ;; a と b は空きの多い順に散る(p が mac・k が pod に載った後なので new が先)
-  (assert (= (sorted (lfor n ["a" "b"] (. (get result n) worker))) ["mac" "new"])))
+  (assert (= (sorted (lfor n ["a" "b"] (. (.row result n) worker))) ["mac" "new"])))
 
 (deftest test-placement-is-stable-while-worker-is-alive
   (setv state (ClusterState #((! (job "a"))) (! (table-from-rows {"mac" (! (worker "mac" 0)) "new" (! (worker "new" 0))}))
-                            {"a" (Placement "a" "new" 3 0)}))
-  (assert (= (get (! (place-jobs 5000 state T)) "a") (Placement "a" "new" 3 0))))
+                            (! (table-from-rows {"a" (Placement "a" "new" 3 0)}))))
+  (assert (= (.row (! (jobs-placed 5000 state T)) "a") (Placement "a" "new" 3 0))))
 
 (deftest test-silent-worker-keeps-job-until-reassign-deadline
   ;; new の最後の heartbeat は 0。fence(T の 10 秒)で new は自分で止めている。移すのは 30 秒後から。他に置ける worker(mac)が在る
   ;; 場合の形 — 置ける worker が無い job は沈黙しても置き先を外さない(#2804 — tests/test_keep_when_cut_off.hy)。
   (setv state (ClusterState #((! (job "a"))) (! (table-from-rows {"mac" (! (worker "mac" 40000)) "new" (! (worker "new" 0))}))
-                            {"a" (Placement "a" "new" 1 0)}))
-  (assert (= (. (get (! (place-jobs 30000 state T)) "a") worker) "new"))
-  (setv moved (get (! (place-jobs 30001 state T)) "a"))
+                            (! (table-from-rows {"a" (Placement "a" "new" 1 0)}))))
+  (assert (= (. (.row (! (jobs-placed 30000 state T)) "a") worker) "new"))
+  (setv moved (.row (! (jobs-placed 30001 state T)) "a"))
   (assert (= #(moved.worker moved.generation) #("mac" 2))))
 
 (deftest test-no_candidate-leaves-job-unassigned-and-removed-job-is-dropped
   (setv state (ClusterState #((! (job "k" :needs #("cluster-net")))) (! (table-from-rows {"mac" (! (worker "mac" 0))}))
-                            {"gone" (Placement "gone" "mac" 1 0)}))
-  (assert (= (! (place-jobs 1000 state T)) {})))
+                            (! (table-from-rows {"gone" (Placement "gone" "mac" 1 0)}))))
+  (assert (= (.size (! (jobs-placed 1000 state T))) 0)))
 
 (deftest test-capacity-and-jobs-for
   (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (worker "mac" 0 2))}))))
-  (setv result (! (place-jobs 0 state T)))
-  (assert (= (sorted result) ["a" "b"]))
+  (setv result (! (jobs-placed 0 state T)))
+  (assert (= (sorted (.keys result)) ["a" "b"]))
   (assert (= (lfor s (jobs-for (replace state :placements result) "mac") s.name) ["a" "b"])))
 
 (deftest test-timing-rejects-reassign-before-fence
@@ -79,23 +79,23 @@
 (deftest test-general-job-is-not-placed-on-a-dedicated-worker
   ;; Mac の方が空いていても、専用の印を求めない job は k3s へ
   (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))))
-  (val placed (! (place-jobs 1000 state T)))
-  (assert (= (sfor n ["a" "b" "c"] (. (get placed n) worker)) #{"atlas"})))
+  (val placed (! (jobs-placed 1000 state T)))
+  (assert (= (sfor n ["a" "b" "c"] (. (.row placed n) worker)) #{"atlas"})))
 
 (deftest test-agent-job-goes-to-the-dedicated-worker
   (setv state (ClusterState #((! (job "runner" :needs #(AGENT)))) (! (table-from-rows {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))))
-  (assert (= (. (get (! (place-jobs 1000 state T)) "runner") worker) "mac")))
+  (assert (= (. (.row (! (jobs-placed 1000 state T)) "runner") worker) "mac")))
 
 (deftest test-pin-does-not-override-the-dedicated-mark
   (setv state (ClusterState #((! (job "p" :pin "mac"))) (! (table-from-rows {"mac" (! (mac "mac"))}))))
-  (assert (= (! (place-jobs 1000 state T)) {}))
+  (assert (= (.size (! (jobs-placed 1000 state T))) 0))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 state T) "p"))))
 
 (deftest test-job-without-a-place-is-reported-unplaced
   ;; agent の job で Mac が居ない・一般の job で k3s が居ない
   (setv state (ClusterState #((! (job "runner" :needs #(AGENT))) (! (job "placer"))) (! (table-from-rows {"atlas" (! (pod "atlas"))}))))
   (setv s2 (ClusterState #((! (job "placer"))) (! (table-from-rows {"mac" (! (mac "mac"))}))))
-  (assert (not-in "runner" (! (place-jobs 1000 state T))))
+  (assert (is (.row (! (jobs-placed 1000 state T)) "runner") None))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 state T) "runner")))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 s2 T) "placer"))))
 
@@ -103,14 +103,14 @@
   ;; mac が専用の印を付けて戻った。mac に載っていた一般の job は外れ、mac がまだ動かしていると報告している間は置かず、
   ;; 止め終えた報告の後で k3s へ置く(同じ job を 2 つ動かさない)。
   (setv state (ClusterState #((! (job "placer"))) (! (table-from-rows {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))
-                            {"placer" (Placement "placer" "mac" 2 0)}
+                            (! (table-from-rows {"placer" (Placement "placer" "mac" 2 0)}))
                             :observations (! (reports-observed {"mac" (WorkerReport :at 0 :endpoint None
                                                                                     :jobs #((StatusRow :name "placer" :phase "running")))}))))
-  (assert (= (! (place-jobs 1000 state T)) {}))
-  (assert (= (get (unplaced-jobs 1000 (replace state :placements {}) T) "placer") "前の担い手が止め終えるのを待っている"))
-  (setv stopped (replace state :placements {}
+  (assert (= (.size (! (jobs-placed 1000 state T))) 0))
+  (assert (= (get (unplaced-jobs 1000 (replace state :placements (table-of #())) T) "placer") "前の担い手が止め終えるのを待っている"))
+  (setv stopped (replace state :placements (table-of #())
                                :observations (! (reports-observed {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))))
-  (assert (= (. (get (! (place-jobs 2000 stopped T)) "placer") worker) "atlas")))
+  (assert (= (. (.row (! (jobs-placed 2000 stopped T)) "placer") worker) "atlas")))
 
 (defk task [id needs]
   {:pre [(: id str) (: needs tuple)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -120,12 +120,12 @@
 (deftest test-task-follows-the-same-dedicated-rule
   (setv workers (! (table-from-rows {"mac" (replace (! (mac "mac")) :versions #((ComponentVersion "python" "3")))
                  "atlas" (replace (! (pod "atlas")) :versions #((ComponentVersion "python" "3")))})))
-  (setv state (ClusterState #() workers {} (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT)))}))))
-  (setv placed (! (tasks-placed 1000 state {} T)))
+  (setv state (ClusterState #() workers (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT)))}))))
+  (setv placed (! (tasks-placed 1000 state (table-of #()) T)))
   (assert (= #((. (.row placed "t1") worker) (. (.row placed "t2") worker)) #("atlas" "mac")))
   ;; agent の task で Mac が居なければ、送らずに失敗(理由に要る能力)
-  (setv only-pod (ClusterState #() (! (table-from-rows {"atlas" (.row workers "atlas")})) {} (! (table-from-rows {"t3" (! (task "t3" #(AGENT)))}))))
-  (setv failed (.row (! (tasks-placed 1000 only-pod {} T)) "t3"))
+  (setv only-pod (ClusterState #() (! (table-from-rows {"atlas" (.row workers "atlas")})) (table-of #()) (! (table-from-rows {"t3" (! (task "t3" #(AGENT)))}))))
+  (setv failed (.row (! (tasks-placed 1000 only-pod (table-of #()) T)) "t3"))
   (assert (= failed.phase "failed"))
   (assert (in "agent-cli" failed.detail)))
 
@@ -139,29 +139,29 @@
   {:pre [(: seen int) (: detached bool)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "能力 verify を持つ唯一の worker(最後の連絡 = seen)と、それを要る待っている task 1 本(lease の期限 20000)の状態を作るため。"
   (val v (replace (! (worker "verify-1" seen 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
-  (ClusterState #() (! (table-from-rows {"verify-1" v})) {} (! (table-from-rows {"t1" (replace (! (task "t1" #("verify"))) :detached detached)}))))
+  (ClusterState #() (! (table-from-rows {"verify-1" v})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #("verify"))) :detached detached)}))))
 
 (deftest test-a-queued-task-waits-while-its-only-capable-worker-is-silent
   ;; 失敗ケース(直す前の形では failed): 唯一の能力の合う worker の最後の連絡が生存の窓(lease-ms 10 秒)より古い — 入れ替えの間の沈黙。
   (for [detached [False True]]
-    (setv waiting (.row (! (tasks-placed 15000 (! (silent-verify-state 0 detached)) {} T)) "t1"))
+    (setv waiting (.row (! (tasks-placed 15000 (! (silent-verify-state 0 detached)) (table-of #()) T)) "t1"))
     (assert (= waiting.phase "queued") #(detached waiting.phase waiting.detail))
     (assert (in "verify-1" waiting.detail) waiting.detail)
     (assert (in "いま連絡していない" waiting.detail) waiting.detail)
     ;; worker が連絡し直すと(最後の連絡が新しい)置かれる。
-    (setv placed (.row (! (tasks-placed 15000 (! (silent-verify-state 14000 detached)) {} T)) "t1"))
+    (setv placed (.row (! (tasks-placed 15000 (! (silent-verify-state 14000 detached)) (table-of #()) T)) "t1"))
     (assert (= #(placed.phase placed.worker) #("assigned" "verify-1")) #(detached placed.phase))))
 
 (deftest test-a-queued-task-fails-when-no-registered-worker-can-ever-run-it
   ;; 待っても晴れない理由は今どおり失敗: 能力の合う worker が 1 台も登録されていない(上の test-task-follows-the-same-dedicated-rule と
   ;; 同じ)・登録された worker の版が違う・合う worker が待ちの期限(ClusterTiming.silent-worker-wait-ms)より長く live でない。
   (setv other (replace (! (worker "atlas" 0 10 "cluster-net")) :versions #((ComponentVersion "python" "3"))))
-  (setv none (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"atlas" other})) {} (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) {} T)) "t1"))
+  (setv none (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"atlas" other})) (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) (table-of #()) T)) "t1"))
   (assert (= none.phase "failed") none.phase)
   (setv old (replace (! (worker "verify-1" 0 1 "verify")) :versions #((ComponentVersion "python" "2")) :exclusive #("verify")))
-  (setv mismatch (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"verify-1" old})) {} (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) {} T)) "t1"))
+  (setv mismatch (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"verify-1" old})) (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) (table-of #()) T)) "t1"))
   (assert (= mismatch.phase "failed") mismatch.phase)
-  (setv expired (.row (! (tasks-placed (+ T.silent-worker-wait-ms 1) (! (silent-verify-state 0 True)) {} T)) "t1"))
+  (setv expired (.row (! (tasks-placed (+ T.silent-worker-wait-ms 1) (! (silent-verify-state 0 True)) (table-of #()) T)) "t1"))
   (assert (= expired.phase "failed") expired.phase))
 
 
@@ -173,14 +173,14 @@
 (deftest test-a-queued-detached-task-waits-past-its-lease-while-the-capable-worker-is-away
   ;; 失敗ケース(直す前の版では「版と能力(専用の能力を含む)が合う worker が無い」で failed): task の lease の期限(20000)を過ぎ、唯一の
   ;; 能力の合う worker が 120 秒 live でない(drain に入ってから 60 秒より長い)。
-  (val waiting (.row (! (tasks-placed 120000 (! (silent-verify-state 0 True)) {} T)) "t1"))
+  (val waiting (.row (! (tasks-placed 120000 (! (silent-verify-state 0 True)) (table-of #()) T)) "t1"))
   (assert (= waiting.phase "queued") #(waiting.phase waiting.detail))
   (assert (in "verify-1 がいま連絡していない" waiting.detail) waiting.detail)
   (assert (in (.format "待ちの期限 = 最後の連絡から {} 秒" (// T.silent-worker-wait-ms 1000)) waiting.detail) waiting.detail)
   ;; 待っている間の記録は拍ごとに変わらない(detail に経った秒を書かない — 変われば調停が拍ごとに保存し、版を進める)。
-  (assert (= (.row (! (tasks-placed 121000 (! (silent-verify-state 0 True)) {} T)) "t1") waiting))
+  (assert (= (.row (! (tasks-placed 121000 (! (silent-verify-state 0 True)) (table-of #()) T)) "t1") waiting))
   ;; worker が名乗り直すと置かれる(lease の期限を過ぎていても)。
-  (val placed (.row (! (tasks-placed 120000 (! (silent-verify-state 119000 True)) {} T)) "t1"))
+  (val placed (.row (! (tasks-placed 120000 (! (silent-verify-state 119000 True)) (table-of #()) T)) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "verify-1")) #(placed.phase placed.detail)))
 
 (deftest test-a-queued-task-fails-by-name-when-the-capable-worker-stays-away-past-the-deadline
@@ -191,8 +191,8 @@
   (for [detached [False True]]
     (<- silent (silent-verify-state 0 detached))
     (val state (replace silent :tasks (! (table-from-rows (dfor #(k t) (.items silent.tasks) k (replace t :lease-until-ms (* 2 limit)))))))
-    (assert (= (. (.row (! (tasks-placed limit state {} T)) "t1") phase) "queued") detached)
-    (val failed (.row (! (tasks-placed (+ limit 1000) state {} T)) "t1"))
+    (assert (= (. (.row (! (tasks-placed limit state (table-of #()) T)) "t1") phase) "queued") detached)
+    (val failed (.row (! (tasks-placed (+ limit 1000) state (table-of #()) T)) "t1"))
     (assert (= #(failed.phase failed.finished-ms) #("failed" (+ limit 1000))) #(detached failed.phase))
     (assert (in named failed.detail) failed.detail)))
 
@@ -202,8 +202,8 @@
   (val old (replace (! (worker "verify-old" 0 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
   ;; verify-new も生存の窓(10 秒)の外(61 秒 live でない)— 置けないが、期限の内なので待つ。
   (val new (replace (! (worker "verify-new" (- limit 60000) 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
-  (val state (ClusterState #() (! (table-from-rows {"verify-old" old "verify-new" new})) {} (! (table-from-rows {"t1" (replace (! (task "t1" #("verify"))) :detached True)}))))
-  (val waiting (.row (! (tasks-placed (+ limit 1000) state {} T)) "t1"))
+  (val state (ClusterState #() (! (table-from-rows {"verify-old" old "verify-new" new})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #("verify"))) :detached True)}))))
+  (val waiting (.row (! (tasks-placed (+ limit 1000) state (table-of #()) T)) "t1"))
   (assert (= waiting.phase "queued") #(waiting.phase waiting.detail))
   (assert (in "verify-new・verify-old がいま連絡していない" waiting.detail) waiting.detail))
 
@@ -302,7 +302,7 @@
   (assert (= (. (.row s.workers "at-work") node) "node-company"))
   ;; label を読む前は、どちらにも company-machine を要る job を置かない。
   (setv secret (ClusterState #((! (job "secret" :needs #(COMPANY "net")))) s.workers))
-  (assert (= (! (place-jobs 1000 secret T)) {}))
+  (assert (= (.size (! (jobs-placed 1000 secret T))) 0))
   ;; derivable に無い能力は、今までどおり名乗りのまま受ける。
   (<- plain ClusterState (beat-as (ClusterState) "w" "" 1000))
   (assert (= (. (.row plain.workers "w") provides) #(COMPANY "net"))))
@@ -315,9 +315,9 @@
   (assert (= (. (.row ticked.workers "at-home") derived) #()))
   ;; company-machine を要る job は会社の node の worker にだけ置く。一般の job はどちらにも置ける。
   (setv secret (replace ticked :jobs #((! (job "secret" :needs #(COMPANY "net"))) (! (job "other" :needs #(COMPANY))))))
-  (setv placed (! (place-jobs 1000 secret T)))
-  (assert (= (sorted placed) ["other" "secret"]) placed)
-  (assert (= (sfor p (.values placed) p.worker) #{"at-work"}) placed)
+  (setv placed (! (jobs-placed 1000 secret T)))
+  (assert (= (sorted (.keys placed)) ["other" "secret"]) placed)
+  (assert (= (sfor p (.rows placed) p.worker) #{"at-work"}) placed)
   ;; 同じ node の間の heartbeat は導いた能力を引き継ぐ(次の読みまで外さない)。
   (<- again ClusterState (beat-as ticked "at-work" "node-company" 2000))
   (assert (= (. (.row again.workers "at-work") derived) #(COMPANY)))
@@ -339,7 +339,7 @@
   (assert (= (. (.row cut-off.workers "at-work") derived) #(COMPANY)))
   (assert (= (. (.row cut-off.workers "at-home") derived) #()))
   (setv secret (replace cut-off :jobs #((! (job "secret" :needs #(COMPANY "net"))))))
-  (assert (= (. (get (! (place-jobs later secret T)) "secret") worker) "at-work"))
+  (assert (= (. (.row (! (jobs-placed later secret T)) "secret") worker) "at-work"))
   ;; 届くようになり label が外れていれば、見張りがそれを伝えた歩で外す。
   (setv kube.down False)
   (.relabel kube "node-company" {})
@@ -620,8 +620,8 @@
   ;; capacity 3・task-reserve 1 の worker に常駐の job を 3 本: 2 本だけ置き、残る 1 本の理由は「空きが無い」。job の側の空きは 0・task の
   ;; 空きは 1 で、手番の task は空けておいた分へ置かれる。
   (val state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 3 1))}))))
-  (val placed (! (place-jobs 0 state T)))
-  (assert (= (sorted placed) ["a" "b"]) placed)
+  (val placed (! (jobs-placed 0 state T)))
+  (assert (= (sorted (.keys placed)) ["a" "b"]) placed)
   (val after (replace state :placements placed))
   (assert (= (get (unplaced-jobs 0 after T) "c") "置ける worker に空きが無い") (unplaced-jobs 0 after T))
   (val load (load-of after placed))
@@ -633,7 +633,7 @@
 (deftest test-tasks-may-spill-from-the-reserve-into-the-room-jobs-left
   ;; 予約(1)を使い切った task は、常駐の job が使っていない残り(capacity 3 − 常駐 1 − 予約 1 = 1)へはみ出してよい — task の空きは
   ;; capacity 全体から数える。3 本目は空きが無く待つ。
-  (val state (ClusterState #((! (job "a"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 3 1))})) {"a" (Placement "a" "mac" 1 0)}
+  (val state (ClusterState #((! (job "a"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 3 1))})) (! (table-from-rows {"a" (Placement "a" "mac" 1 0)}))
                            (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #())) "t3" (! (task "t3" #()))}))))
   (val tasks (! (tasks-placed 0 state state.placements T)))
   (assert (= (lfor id ["t1" "t2" "t3"] (. (.row tasks id) phase)) ["assigned" "assigned" "queued"]) tasks))
@@ -642,7 +642,7 @@
   ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、常駐の job で capacity が埋まり task の空きが 0。
   ;; task は queued のまま、detail に TASK-NO-ROOM の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに保存しない)。
   (val full (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 2 0))}))
-                          {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}
+                          (! (table-from-rows {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}))
                           (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))))
   (val once (! (tick full 1000 T)))
   (val waiting (.row once.tasks "t1"))
@@ -653,14 +653,14 @@
   (assert (= twice.revision once.revision) #(once.revision twice.revision))
   (assert (not (durable-changed once twice)))
   ;; 常駐の job が 1 本消えて空きができたら置かれる。
-  (val freed (! (tick (replace twice :jobs #((! (job "a"))) :placements {"a" (Placement "a" "mac" 1 0)}) 3000 T)))
+  (val freed (! (tick (replace twice :jobs #((! (job "a"))) :placements (! (table-from-rows {"a" (Placement "a" "mac" 1 0)}))) 3000 T)))
   (assert (= #((. (.row freed.tasks "t1") phase) (. (.row freed.tasks "t1") worker)) #("assigned" "mac")) (.row freed.tasks "t1")))
 
 (deftest test-a-task-on-a-draining-worker-only-still-waits-without-the-room-reason
   ;; 置ける先が drain 中の worker だけの task は、今までどおり理由を書かずに待つ(空きの話ではない — TASK-NO-ROOM にしない)。
-  (val state (ClusterState #() (! (table-from-rows {"mac" (! (reserved "mac" 0 2 0))})) {} (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))
+  (val state (ClusterState #() (! (table-from-rows {"mac" (! (reserved "mac" 0 2 0))})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))
                            :drains {"mac" (Drain "mac" 0 600000)}))
-  (val waiting (.row (! (tasks-placed 1000 state {} T)) "t1"))
+  (val waiting (.row (! (tasks-placed 1000 state (table-of #()) T)) "t1"))
   (assert (= #(waiting.phase waiting.detail) #("queued" "")) waiting))
 
 (deftest test-a-surge-waits-while-the-job-side-is-full-and-leaves-the-task-reserve-open
@@ -670,10 +670,10 @@
   (val handoff-job (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True)))
   (val state (ClusterState #(handoff-job (! (job "x")))
                            (! (table-from-rows {"atlas" (! (reserved "atlas" 0 10 0)) "zeus" (! (reserved "zeus" 0 2 1))}))
-                           {"w" (Placement "w" "atlas" 1 0) "x" (Placement "x" "zeus" 1 0)}
+                           (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "x" (Placement "x" "zeus" 1 0)}))
                            :drains {"atlas" (Drain "atlas" 0 600000)}))
   (val waited (advance-drains 1000 state T))
-  (assert (= waited.surges {}) waited.surges)
+  (assert (= (.size waited.surges) 0) waited.surges)
   (val load (load-of waited waited.placements))
   (val zeus (.row waited.workers "zeus"))
   (assert (= #((! (job-room-of zeus load)) (! (task-room-of zeus load))) #(0 1)) load)
@@ -682,7 +682,7 @@
   (val full (drain-view waited "atlas" 1000 T))
   (assert (= #(full.remaining full.unmovable full.phase) #(#("w") #() DrainPhase.BLOCKED)) full)
   (val open (replace state :workers (! (rows-merged state.workers {"zeus" (replace (.row state.workers "zeus") :task-reserve 0)}))))
-  (assert (= (. (get (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
+  (assert (= (. (.row (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
 
 (deftest test-a-heartbeat-names-the-task-reserve-and-the-saved-rows-keep-it
   ;; heartbeat の taskReserve は worker の記録へ写り、保存の行(state file と durable の KV)も同じ値を持って読み直せる。この欄の無い保存の
@@ -903,7 +903,7 @@
   (val placed (! (tick joined (+ BOOT-1 11) T)))
   (val running (! (tick (! (generation-beat placed "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 20)))
                         (+ BOOT-1 21) T)))
-  (val before (get running.placements "w"))
+  (val before (.row running.placements "w"))
   (assert (= before.worker "atlas") running.placements)
   (val kv (! (full-kv running)))
   (assert (in "knownExits" (get kv "worker/atlas")) (get kv "worker/atlas"))
@@ -911,7 +911,7 @@
   (val from-old (! (restarted-and-beaten old-kv)))
   (val from-new (! (restarted-and-beaten kv)))
   (for [state [from-old from-new]]
-    (val after (get state.placements "w"))
+    (val after (.row state.placements "w"))
     (assert (= #(after.worker after.generation) #(before.worker before.generation)) #(before after))
     (assert (= (lfor r (. (.row state.observations.statuses "atlas") jobs) #(r.name r.pid)) [#("w" 100)]) (. (.row state.observations.statuses "atlas") jobs)))
   (assert (= (jobs-for from-old "atlas") (jobs-for from-new "atlas")) #((jobs-for from-new "atlas") (jobs-for from-old "atlas"))))
@@ -1063,7 +1063,7 @@
   (val w (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True :retired-ms 60000)))
   (val k (ClusterJob (JobSpec "k" "m" #() "rev")))
   (val placed (ClusterState #(w k) (! (table-from-rows {"atlas" (! (worker "atlas" HOLD-AT))}))
-                            :placements {"w" (Placement "w" "atlas" 1 0) "k" (Placement "k" "atlas" 1 0)}))
+                            :placements (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "k" (Placement "k" "atlas" 1 0)}))))
   (val held (! (hold-asked placed "claim" (! (token-of "w" "0-zzz")) HOLD-AT)))
   (val other (! (hold-asked held "claim" (! (token-of "other" "7-ooo")) HOLD-AT)))
   (setv #(locked ok) (! (lease-asked other "writer-lock" "claim" (! (token-of "w" "1-aaa")) HOLD-AT)))
@@ -1136,7 +1136,7 @@
 (defk place-held [tasks now]
   {:pre [(: tasks dict) (: now int)] :post [(: % Table)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "tasks だけを持つ状態に tasks-placed を掛けた結果を得るため。"
-  (! (tasks-placed now (ClusterState #() (! (table-from-rows {})) {} (! (table-from-rows tasks))) {} T)))
+  (! (tasks-placed now (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (table-from-rows tasks))) (table-of #()) T)))
 
 (deftest test-place-tasks-drops-a-held-row_exactly-at-its-retention-lapse
   ;; F1: 保持の期限(finished-ms + retain-ms + 1)の 1 ms 前は残り、その刻で消える。
@@ -1174,7 +1174,7 @@
 (defk held-due [tasks now]
   {:pre [(: tasks dict) (: now int)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "tasks だけを持つ状態の task-due を得るため。"
-  (! (task-due (ClusterState #() (! (table-from-rows {})) {} (! (table-from-rows tasks))) now T)))
+  (! (task-due (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (table-from-rows tasks))) now T)))
 
 (deftest test-task-due-takes-the-earliest-held-lapse-as-one-value
   ;; 保持側の最小期限が DueAt に入る(入れ忘れると保持の行が消える拍が遅れる)。F1: 期限の刻そのもの。
@@ -1244,7 +1244,7 @@
   (val tasks {"p" (replace (! (split-task "p" "assigned" :detached False)) :worker "w")
               "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "w")})
   (val state (ClusterState :workers workers :tasks (! (table-from-rows tasks))))
-  (assert (= (. (get (load-of state {}) "w") tasks) 1))
+  (assert (= (. (get (load-of state (table-of #())) "w") tasks) 1))
   (assert (= (len (! (placed-claims (! (table-from-rows tasks))))) 1))
   (assert (= (! (cold-starts (! (table-from-rows {"p" (replace (get tasks "p") :phase "queued")})) (! (table-from-rows tasks)))) 0)))
 
@@ -1258,11 +1258,11 @@
   (val rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT))) "t3" (! (task "t3" #()))})
   (val reversed-rows (dict (reversed (list (.items rows)))))
   (assert (!= (list rows) (list reversed-rows)) "挿入順が違う 2 つの dict で試す")
-  (val forward (! (tasks-placed 1000 (ClusterState #() workers {} (! (table-from-rows rows))) {} T)))
-  (val backward (! (tasks-placed 1000 (ClusterState #() workers {} (! (table-from-rows reversed-rows))) {} T)))
+  (val forward (! (tasks-placed 1000 (ClusterState #() workers (table-of #()) (! (table-from-rows rows))) (table-of #()) T)))
+  (val backward (! (tasks-placed 1000 (ClusterState #() workers (table-of #()) (! (table-from-rows reversed-rows))) (table-of #()) T)))
   (assert (= (dfor id ["t1" "t2" "t3"] id (. (.row forward id) worker)) (dfor id ["t1" "t2" "t3"] id (. (.row backward id) worker))))
-  (val state-a (ClusterState #() workers {} forward))
-  (val state-b (ClusterState #() workers {} backward))
+  (val state-a (ClusterState #() workers (table-of #()) forward))
+  (val state-b (ClusterState #() workers (table-of #()) backward))
   ;; GET /state の返事の元(state-view)は id の順 — 挿入順に依らない。保存の形(state-to-json)は挿入順のまま。
   (assert (= (! (state-view state-a 2000 T)) (! (state-view state-b 2000 T)))))
 

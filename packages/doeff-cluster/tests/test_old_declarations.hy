@@ -140,7 +140,7 @@
     (assert (= (get refused.row "entry") "m") refused.row)
     (assert (in "生の entry の job" refused.reason) refused.reason)
     ;; 置き先を持たない(どの worker にも起こさせない)。
-    (assert (not-in "raw" state.placements) state.placements)))
+    (assert (is (.row state.placements "raw") None) state.placements)))
 
 
 (deftest test-entry-6-an-old-service-row-in-the-state-file-is-read-as-refused

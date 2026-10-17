@@ -219,7 +219,7 @@
   ;; 宣言と置き先を外した Service の行(running)を zeus がまだ報告している。zeus が lease の窓から外れる刻 D の 1 ms 前は
   ;; まだどこかで動いている(止まっていない)、D で止まっている。
   (<- sim Sim (ready-world))
-  (val state (replace sim.state :jobs (tuple (gfor j sim.state.jobs :if (!= j.spec.name NAME) j)) :placements {}))
+  (val state (replace sim.state :jobs (tuple (gfor j sim.state.jobs :if (!= j.spec.name NAME) j)) :placements (table-of #())))
   (assert (not (service-stopped state NAME sim.now T)))
   (<- due (| int None) (service-stopped-due state NAME sim.now T))
   (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.lease-ms) 1)) due)

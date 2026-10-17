@@ -205,7 +205,7 @@
                         (! (req "GET" "/nothing"))]))
   (<- final ClusterState ((! (scripted script)) (run-coordinator (ClusterState) T (ClusterNaming))))
   (assert (= (lfor r script.replies (get r 1)) [200 200 200 404]))
-  (assert (= (. (get final.placements "a") worker) "w"))
+  (assert (= (. (.row final.placements "a") worker) "w"))
   ;; 永続化は変化のあったまとまりだけ。盤の書きは盤のキー 1 つだけ(資源の状態を書き直さない)
   (setv board-batch (next (gfor d script.saved :if (in "board/k" d) d)))
   (assert (= (get board-batch "board/k") {"value" 1 "resourceVersion" 1}))
@@ -409,8 +409,8 @@
   ;; 置き場が在るので以前の形の file は読まない — 読み直しの 1 行の報告(slog)だけに答える。
   (<- state (with-handlers [slog-handler] (load-state (str (/ (Path d) "absent.json")) (WalStore d) 5000)))
   ;; 読んだ置き先は旧い鍵の中身そのもの(担い手も世代も変わらない = worker は process を起こし直さない)
-  (assert (= (. (get state.placements "a") worker) "zeus"))
-  (assert (= (. (get state.placements "a") generation) 3))
+  (assert (= (. (.row state.placements "a") worker) "zeus"))
+  (assert (= (. (.row state.placements "a") generation) 3))
   ;; 置き場は新しい鍵だけを持つ(読み直しても同じ)
   (setv kv (! (durable-load (WalStore d))))
   (assert (in (+ PLACEMENT "a") kv))
@@ -423,7 +423,7 @@
   ;; 2 回目の起動は置き先の鍵を書かない(起動ごとに書くのは、ずらした時計と生きていた時刻の 1 行だけ — durable_kv.resume-writes)
   (setv before (len deltas))
   (<- again (with-handlers [slog-handler] (load-state (str (/ (Path d) "absent.json")) (WalStore d) 6000)))
-  (assert (= (. (get again.placements "a") worker) "zeus"))
+  (assert (= (. (.row again.placements "a") worker) "zeus"))
   (setv later (cut (lfor line (.splitlines (.read-text (/ (Path d) "wal.jsonl") :encoding "utf-8")) (get (json.loads line) "delta"))
                    before None))
   (assert (<= (len later) 1) later)
@@ -435,8 +435,8 @@
   (setv kv {(+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "old" "generation" 1 "since_ms" 0}
             (+ PLACEMENT "a") {"job" "a" "worker" "new" "generation" 2 "since_ms" 10}
             (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}})
-  (assert (= (. (get (. (! (state-from-kv kv 0)) placements) "a") worker) "new"))
-  (assert (= (. (get (. (! (state-from-kv kv 0)) placements) "b") worker) "zeus"))
+  (assert (= (. (.row (. (! (state-from-kv kv 0)) placements) "a") worker) "new"))
+  (assert (= (. (.row (. (! (state-from-kv kv 0)) placements) "b") worker) "zeus"))
   ;; 新しい鍵が在る a は書かず、無い b だけを書く。消すのは両方の旧い鍵
   (assert (= (! (legacy-key-moves kv))
              [{(+ PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}}
@@ -448,7 +448,7 @@
   ;; 追記の log の置き場より前の形(state.json)も、改名の前の欄の名で置き先を持っている。
   (setv data {"formatVersion" 2 "jobs" [] "workers" [] "tasks" [] "nextTask" 1
               "assignments" {"a" {"job" "a" "worker" "atlas" "generation" 4 "since_ms" 0}}})
-  (assert (= (. (get (. (! (state-from-json data 0)) placements) "a") generation) 4))
+  (assert (= (. (.row (. (! (state-from-json data 0)) placements) "a") generation) 4))
   (assert (in "placements" (! (state-to-json (! (state-from-json data 0))))))
   (assert (not-in "assignments" (! (state-to-json (! (state-from-json data 0)))))))
 

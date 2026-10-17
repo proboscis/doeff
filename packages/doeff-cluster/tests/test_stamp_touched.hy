@@ -148,7 +148,7 @@
   (val now (get (get CAPTURED 0) 1))
   (val timing (get (get CAPTURED 0) 2))
   (val key "Service/copier")
-  (val carrier (. (get state.placements "copier") worker))
+  (val carrier (. (.row state.placements "copier") worker))
   (val report (.row state.observations.statuses carrier))
   ;; 担い手の報告の copier の行だけを starting に戻した前の状態(他の材料は同じ物のまま)。
   (val starting (replace report :jobs (tuple (gfor r report.jobs (if (= r.name "copier") (replace r :phase "starting") r)))))
