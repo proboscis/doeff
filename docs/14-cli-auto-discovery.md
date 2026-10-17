@@ -1317,6 +1317,7 @@ Without markers, behavior is unchanged:
 | `expected DoExpr or EffectBase, got: <class 'function'>` | `--program` names a `@do` function, not a Program value | Point `--program` at a value such as `my_program = main()` |
 | `ModuleNotFoundError: No module named 'myapp'` | `myapp` is not importable where `doeff` runs | Install your project, or run `python -m doeff run ...` from the project root |
 | `Error: module 'myapp.main' has no attribute 'programm'`, then `Did you mean 'program'?` | The name after the module is misspelt (the same for `--interpreter`, `--apply`, `--transform`; a package's submodules are offered too) | Use a name from `Did you mean` |
+| `Error: No module named 'dep'` for `--program myapp.main.program`, where `myapp/main.py` exists | `myapp/main.py` (or a module it imports) imports `dep`, which is not installed. Any other error the module raises while it is imported (an `AttributeError`, a failing `from x import y`) is reported the same way, as itself | Install `dep`, or fix the line of your module the message names |
 | `Error: Failed to evaluate --hy source: name 'from' is not defined`, then `--hy reads Hy code, not Python` | Python code was passed to `--hy`, which reads Hy | Pass Python with `-c` (`doeff run -c 'from myapp.main import program; yield program'`) or write it in Hy (`--hy '(import myapp.main [program]) program'`) |
 
 ### JSON Output Format

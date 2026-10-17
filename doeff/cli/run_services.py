@@ -108,6 +108,16 @@ def _attribute_of(owner: object, name: str) -> object:
         ) from None
 
 
+def _names_missing_module(error: ModuleNotFoundError, module_path: str) -> bool:
+    """Whether ``error`` says ``module_path``, or a package above it, does not exist.
+
+    A ModuleNotFoundError that names any other module was raised by the code of a module that
+    does exist (a dependency it imports is missing), and that is the answer to report.
+    """
+    missing = error.name
+    return missing is not None and (module_path == missing or module_path.startswith(f"{missing}."))
+
+
 def import_symbol(full_path: str) -> object:
     """Import a symbol whose concrete type must be narrowed by the caller."""
     # Support colon separator: "module:attr"
@@ -120,22 +130,28 @@ def import_symbol(full_path: str) -> object:
             obj = _attribute_of(obj, part)
         return obj
 
-    # Dotted path: try progressively longer module paths
+    # Dotted path: try progressively longer module paths. Only "no such module" moves on to a
+    # shorter path; whatever else importing a module raises (a missing dependency of the module,
+    # an error in its code) is the real answer and must not turn into "no attribute" of its package.
     parts = full_path.split(".")
     for i in range(len(parts), 0, -1):
         module_path = ".".join(parts[:i])
-        attr_path = parts[i:]
         try:
             with profile(f"Import {module_path}", indent=1):
                 module = importlib.import_module(module_path)
-            obj = module
-            for attr in attr_path:
-                obj = _attribute_of(obj, attr)
-            return obj
         except MissingExtraError:
             # The module exists but needs an extra; a shorter path would only hide the extra's name.
             raise
-        except (ImportError, AttributeError):
+        except ModuleNotFoundError as error:
+            if i == 1 or not _names_missing_module(error, module_path):
+                raise
+            continue
+        try:
+            obj = module
+            for attr in parts[i:]:
+                obj = _attribute_of(obj, attr)
+            return obj
+        except AttributeError:
             if i == 1:
                 raise
     raise ImportError(f"Could not import {full_path}")
