@@ -1,7 +1,9 @@
 """Run services — symbol resolution, interpreter discovery, program execution."""
 
+import difflib
 import importlib
 import importlib.util
+import pkgutil
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -14,6 +16,8 @@ from doeff_vm._not_a_program import uncalled_do_function_call
 
 from doeff.cli.profiling import profile
 from doeff.program import handler as _program_handler
+
+_CLOSE_NAMES_SHOWN = 3
 
 
 class _HyModuleWithoutHyFinder:
@@ -72,6 +76,38 @@ def _load_doeff_config_env() -> str | None:
     return None
 
 
+def _close_names(owner: object, name: str) -> list[str]:
+    """The public names ``owner`` has that are close to ``name``: its attributes and a package's submodules."""
+    attributes = dir(owner)
+    submodules = (
+        [module.name for module in pkgutil.iter_modules(owner.__path__)]
+        if isinstance(owner, ModuleType) and "__path__" in vars(owner)
+        else []
+    )
+    if name in attributes or name in submodules:
+        return []
+    public = dict.fromkeys(n for n in (*attributes, *submodules) if not n.startswith("_"))
+    return difflib.get_close_matches(name, list(public), n=_CLOSE_NAMES_SHOWN)
+
+
+def _attribute_of(owner: object, name: str) -> object:
+    """``getattr`` whose AttributeError for a misspelt ``name`` adds the close names ``owner`` has.
+
+    A name ``owner`` does have (an AttributeError raised inside a property) and a name with no
+    close match keep their own message. The error is raised ``from None`` because the CLI
+    reports a chained error's cause (``_reported_exception``), which would drop the added line.
+    """
+    try:
+        return getattr(owner, name)
+    except AttributeError as error:
+        close = _close_names(owner, name)
+        if not close:
+            raise
+        raise AttributeError(
+            f"{error}\n  Did you mean {' or '.join(map(repr, close))}?", name=name, obj=owner
+        ) from None
+
+
 def import_symbol(full_path: str) -> object:
     """Import a symbol whose concrete type must be narrowed by the caller."""
     # Support colon separator: "module:attr"
@@ -81,7 +117,7 @@ def import_symbol(full_path: str) -> object:
             module = importlib.import_module(module_path)
         obj = module
         for part in attr_name.split("."):
-            obj = getattr(obj, part)
+            obj = _attribute_of(obj, part)
         return obj
 
     # Dotted path: try progressively longer module paths
@@ -94,7 +130,7 @@ def import_symbol(full_path: str) -> object:
                 module = importlib.import_module(module_path)
             obj = module
             for attr in attr_path:
-                obj = getattr(obj, attr)
+                obj = _attribute_of(obj, attr)
             return obj
         except MissingExtraError:
             # The module exists but needs an extra; a shorter path would only hide the extra's name.

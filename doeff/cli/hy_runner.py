@@ -8,6 +8,7 @@ is prepended automatically so ``do!`` / ``<-`` / ``handle`` /
 ``defhandler`` are available without extra ``require`` lines.
 """
 
+import ast
 import sys
 import types
 import uuid
@@ -32,6 +33,28 @@ class HyEvalResult:
 
 class HyRunnerError(RuntimeError):
     """Raised when --hy source cannot be parsed or evaluated."""
+
+
+_PYTHON_HINT = (
+    "  --hy reads Hy code, not Python. To run Python code, pass it with -c:\n"
+    "    doeff run -c 'from myapp.main import program; yield program'\n"
+    "  The same program written in Hy:\n"
+    "    doeff run --hy '(import myapp.main [program]) program'"
+)
+
+
+def _refused_message(step: str, error: Exception, source: str) -> str:
+    """The message for ``source`` that Hy refused in ``step``, ending in the ``-c`` hint if it is Python.
+
+    Hy code in parentheses is not valid Python (``(Pure 42)``), so a misspelt Hy name or an
+    unclosed Hy form gets no hint; ``from m import p``, ``Pure(42)`` and ``x = 1`` do.
+    """
+    message = f"Failed to {step} --hy source: {error}"
+    try:
+        ast.parse(source)
+    except (SyntaxError, ValueError):
+        return message
+    return f"{message}\n{_PYTHON_HINT}"
 
 
 def _require_hy():
@@ -62,6 +85,8 @@ def evaluate_hy_source(source: str, filename: str = "<doeff-hy>") -> HyEvalResul
 
     try:
         forms = list(hy.read_many(full_source, filename=filename))
+    except SyntaxError as exc:
+        raise HyRunnerError(_refused_message("parse", exc, source)) from exc
     except Exception as exc:
         raise HyRunnerError(f"Failed to parse --hy source: {exc}") from exc
 
@@ -71,6 +96,8 @@ def evaluate_hy_source(source: str, filename: str = "<doeff-hy>") -> HyEvalResul
             result = hy.eval(form, module.__dict__, module=module)
             if result is not None:
                 program = result
+    except (NameError, SyntaxError) as exc:
+        raise HyRunnerError(_refused_message("evaluate", exc, source)) from exc
     except Exception as exc:
         raise HyRunnerError(f"Failed to evaluate --hy source: {exc}") from exc
 

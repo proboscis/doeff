@@ -1316,6 +1316,8 @@ Without markers, behavior is unchanged:
 | `MissingEnvKeyError: Ask: key not found: ...` | The env did not reach the program | See [Environment Values Not Applied](#error-environment-values-not-applied) |
 | `expected DoExpr or EffectBase, got: <class 'function'>` | `--program` names a `@do` function, not a Program value | Point `--program` at a value such as `my_program = main()` |
 | `ModuleNotFoundError: No module named 'myapp'` | `myapp` is not importable where `doeff` runs | Install your project, or run `python -m doeff run ...` from the project root |
+| `Error: module 'myapp.main' has no attribute 'programm'`, then `Did you mean 'program'?` | The name after the module is misspelt (the same for `--interpreter`, `--apply`, `--transform`; a package's submodules are offered too) | Use a name from `Did you mean` |
+| `Error: Failed to evaluate --hy source: name 'from' is not defined`, then `--hy reads Hy code, not Python` | Python code was passed to `--hy`, which reads Hy | Pass Python with `-c` (`doeff run -c 'from myapp.main import program; yield program'`) or write it in Hy (`--hy '(import myapp.main [program]) program'`) |
 
 ### JSON Output Format
 
