@@ -86,6 +86,106 @@ print(run(handler(fake_world)(handler(trace)(digest("https://example.com")))))  
 print(seen)  # [Fetch(url='https://example.com'), Summarize(text='<h1>Hello</h1>')]
 ```
 
+## Before and after: fakes in a test
+
+`welcome` loads a user from the database and sends a welcome mail. Its test must reach neither.
+
+**Before: plain Python with `mock.patch`.** The test patches each dependency by the name `app`
+looks it up under. Forget one patch and the test still passes, after sending a real mail:
+
+```python excerpt
+# app.py
+from myapp.db import load_user
+from myapp.mail import send_mail
+
+def welcome(user_id):
+    user = load_user(user_id)
+    body = f"Welcome, {user.name}!"
+    send_mail(user.email, body)
+    return body
+
+# test_app.py
+from unittest import mock
+import app
+from myapp.db import User
+
+def test_welcome():
+    with mock.patch("app.load_user", return_value=User("Alice", "alice@example.com")):
+        assert app.welcome(1) == "Welcome, Alice!"
+    # Passes. app.send_mail was never patched, so the test sent a real mail.
+```
+
+**After: doeff.** `welcome` yields its requests. The test answers them with one fake handler
+per dependency, and nothing is patched:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler, run
+
+@dataclass(frozen=True)
+class User:
+    name: str
+    email: str
+
+@dataclass(frozen=True)
+class LoadUser(EffectBase):
+    user_id: int
+
+@dataclass(frozen=True)
+class SendMail(EffectBase):
+    to: str
+    body: str
+
+@do
+def welcome(user_id):
+    user = yield LoadUser(user_id)
+    body = f"Welcome, {user.name}!"
+    yield SendMail(user.email, body)
+    return body
+
+sent = []
+
+@do
+def fake_db(effect: LoadUser, k):      # the annotation picks the effects it answers
+    return (yield Resume(k, User("Alice", "alice@example.com")))
+
+@do
+def fake_mail(effect: SendMail, k):    # keeps the mail instead of sending it
+    sent.append(effect.to)
+    return (yield Resume(k, None))
+
+print(run(handler(fake_db)(handler(fake_mail)(welcome(1)))))  # Welcome, Alice!
+print(sent)  # ['alice@example.com']
+```
+
+Forget `fake_mail` and nothing is sent: no handler answers `SendMail`, so the run stops and
+names it. Add this below the example above:
+
+```python continues
+try:
+    run(handler(fake_db)(welcome(1)))  # fake_mail left out
+except Exception as error:
+    print(type(error).__name__)  # UnhandledEffect
+```
+
+In production, `welcome` stays as it is and handlers that call your database and mail server
+take the place of the fakes. The doeff version is longer: each request is a class, and
+`welcome` is a generator. What the extra lines buy is a test that cannot reach production by
+accident.
+
+The same test, written in other styles, with one fake left out:
+
+| Style | The logic is | The test swaps in fakes by | Forget one fake and |
+| --- | --- | --- | --- |
+| Plain Python, `mock.patch` | plain functions | patching each name where the code looks it up | the real function runs |
+| Plain Python, dependencies as arguments | functions that take their dependencies | passing fake functions | a `TypeError` if the test builds its own set; the real function runs if the test starts from production's set |
+| [effect](https://github.com/python-effect/effect) 1.1.0 | generators that yield `Effect(...)` | listing the expected effects and their answers in order | an `AssertionError` (`Performer not found`) |
+| [effectful](https://github.com/BasisResearch/effectful) 0.4.0 | plain functions that call `@defop` operations | a dict of handlers | no error: the call returns a symbolic term instead of a value |
+| doeff | generators that yield effects | installing one handler per effect | an `UnhandledEffect` error |
+
+A doeff handler without an effect annotation sees every effect: without `: LoadUser`, `fake_db`
+would answer `SendMail` too, and the test without `fake_mail` would pass.
+
 ## Next steps
 
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
