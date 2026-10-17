@@ -2,7 +2,10 @@
 that needs to capture and reinstall inner handlers from a continuation.
 """
 
-from typing import TypeVar
+from collections.abc import Callable, Generator
+from typing import Any, Literal, TypeVar
+
+from doeff_vm import K
 
 from doeff.do import do
 from doeff.program import GetBoundaries, GetHandlers
@@ -23,7 +26,9 @@ def inner_of(handlers: list[_Handler]) -> list[_Handler]:
 
 
 @do
-def get_inner_handlers(k):
+def get_inner_handlers(
+    k: K,
+) -> Generator[GetHandlers, Any, list[Callable[..., object]]]:
     """Get inner handler callables from a continuation, excluding the caller.
 
     Yields GetHandlers(k) and drops the last entry (the handler that caught
@@ -43,7 +48,11 @@ def get_inner_handlers(k):
 
 
 @do
-def get_inner_boundaries(k):
+def get_inner_boundaries(
+    k: K,
+) -> Generator[
+    GetBoundaries, Any, list[tuple[Literal["handler", "observer"], Callable[..., object]]]
+]:
     """Get the interleaved boundary stack from a continuation, excluding the caller.
 
     Yields GetBoundaries(k) — every handler (WithHandler) and observer
