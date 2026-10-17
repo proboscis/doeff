@@ -123,9 +123,7 @@ def test_an_effect_used_before_yielding_it_gets_a_note_to_yield_it() -> None:
     ]
 
 
-def test_a_program_used_before_yielding_it_gets_a_note_and_names_call_without_its_module() -> (
-    None
-):
+def test_a_program_used_before_yielding_it_gets_a_note_and_is_named_call() -> None:
     error = _type_error_of(uses_a_program_it_did_not_yield())
     assert str(error) == "unsupported operand type(s) for +: 'Call' and 'int'"
     assert _notes(error) == [
@@ -162,8 +160,7 @@ def test_the_err_of_try_used_as_the_value_gets_the_same_note() -> None:
     ]
 
 
-def test_the_note_names_the_variable_of_the_failing_expression_not_another_of_the_same_type(
-) -> None:
+def test_the_note_names_the_variable_in_the_failing_expression() -> None:
     error = _type_error_of(state()(holds_a_yielded_effect_and_uses_one_it_did_not_yield()))
     assert _notes(error) == [
         "count is the effect Get('counter'), not its result. "
