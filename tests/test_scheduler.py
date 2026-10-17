@@ -16,6 +16,7 @@ from doeff_core_effects.scheduler import (
     CreateSemaphore,
     Discard,
     Gather,
+    Promise,
     Race,
     Spawn,
     Task,
@@ -2292,6 +2293,56 @@ class TestGatherRaceExternalWaitShield:
                 return str(e)
 
         assert _run_scheduled_with_timeout(body(), timeout=5.0) == "boom"
+
+
+# ---------------------------------------------------------------------------
+# Race park mode: priority=PRIORITY_IDLE (agora-redesign #3054)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("scheduler_implementation")
+class TestRaceParkedWithoutShield:
+    """``Race(..., priority=PRIORITY_IDLE)`` parks on a pending external
+    promise without the PRIORITY_EXTERNAL_WAIT placeholder, as Wait's IDLE
+    park does: DAEMON tasks (the sim clock driver) keep running, and the
+    waiter still counts for the blocking drain.
+
+    Every test runs under both scheduler implementations: the Rust version
+    ignored the priority and always held the shield, so doeff-time's
+    ``WaitWithin(..., park=True)`` never reached its deadline under the
+    default scheduler (card ki-8f4f99f14664)."""
+
+    def test_parked_race_on_external_promise_lets_a_daemon_run(self):
+        """The external promise is never completed; only the IDLE daemon can
+        decide the race. Holding the shield starves it and blocks the run
+        on a completion that never comes."""
+
+        @do
+        def ring(bell: Promise[str]):
+            yield CompletePromise(bell, "daemon-ran")
+
+        @do
+        def body():
+            never = yield CreateExternalPromise()
+            bell = yield CreatePromise()
+            _ = yield Spawn(ring(bell), priority=PRIORITY_IDLE, daemon=True)
+            return (yield Race(never.future, bell.future, priority=PRIORITY_IDLE))
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == "daemon-ran"
+
+    @pytest.mark.realtime
+    def test_parked_race_still_blocks_for_the_external_completion(self):
+        """Parking drops only the placeholder: with no other work, the run
+        blocks on the external completion instead of naming a deadlock."""
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            timer = threading.Timer(0.1, lambda: ep.complete("from-outside"))
+            timer.daemon = True
+            timer.start()
+            return (yield Race(ep.future, priority=PRIORITY_IDLE))
+
+        assert _run_scheduled_with_timeout(body(), timeout=5.0) == "from-outside"
 
 
 # ---------------------------------------------------------------------------
