@@ -10,7 +10,8 @@
 ;;;                    違う・空きが割ったままで固定が変わった・上限を越えたままで固定が変わったか前の掃除の終わりから SWEEP-EVERY-MS —
 ;;;                    #3715・#3732・#4051)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
-;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted・最低 + NEAR-MARGIN-BYTES を割っていれば near)
+;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted・最低 + NEAR-MARGIN-BYTES を割っていれば near・
+;;;                    ok でない語を名乗った後は、その線の上 NEAR-RETURN-BYTES を越えるまで near)
 ;;;   warm-refusal     先の組み(温める表の行)を始める前に断るか(no-disk-room・over-roots-cap・no-memory-room — #3748)。見積もりは
 ;;;                    root-estimate(disk)と build-memory-estimate(memory の山)・memory の読みは memory-use-of
 ;;;
@@ -197,16 +198,26 @@
 ;; 空きの予告の幅(byte)— 空きが最低 + この幅を割ったら near を名乗る。2026-10-10 に空きが 1 時間に約 5 GB 減って最低を切り、切ってから
 ;; 分かった(準備が全部止まった後)。20 GB は約 4 時間の手前。
 (val NEAR-MARGIN-BYTES (* 20 (** 10 9)))
+;; near から ok へ戻る幅(byte)— ok でない語を名乗った後は、空きが最低 + NEAR-MARGIN-BYTES + この幅を越えるまで near のまま名乗る。ok から
+;; near へ入る所と exhausted の出入りは今のまま(予告を遅らせない・exhausted は準備の process の disk-full と同じ線)。2026-10-17 の mac-native
+;; は APFS の local snapshot の切れ(1 時間ごとに空きが 0.5〜1 GB 戻る)と版の env の組み(1 本で約 0.43 GB 減る)で、空きが near の線の上下
+;; 1 GB を行き来した。名乗りが near と ok を往復するたびに、読み手(見回りの責任 workers-stay-live)が同じ訳の failing を新しい 1 続きとして
+;; 作り直した(1 日に 3 続き — 依頼 lt-JJVZWCWHC91PJ5MF15W3YDKSQC)。2 GB は版の env 4〜5 本分。
+(val NEAR-RETURN-BYTES (* 2 (** 10 9)))
 
 
-(defk env-capacity [free min-free]
-  {:pre [(: free int) (: min-free int)] :post [(: % str)]}
+(defk env-capacity [free min-free named]
+  {:pre [(: free int) (: min-free int) (: named (| str None))] :post [(: % str)]}
   "heartbeat で名乗る disk の条件。共有の disk の空きが最低 min-free を割っていれば exhausted(coordinator は準備済みでない env の task を
    置かない — 準備の process も同じ値で disk-full と断る)。最低 + NEAR-MARGIN-BYTES を割っていれば near(置き方は ok と同じ — 最低を
-   切る前に読み手が予告するための語)。最低 0(下限を置かない worker)は ok。"
+   切る前に読み手が予告するための語)。前に名乗った語 named が ok でなければ(near・exhausted か、まだ名乗っていない None — 起き直す前の
+   process が near を名乗っていたかもしれない)、その線の上 NEAR-RETURN-BYTES の内も near(戻りの幅 — 線の近くの揺れで ok へ戻さない)。
+   最低 0(下限を置かない worker)は ok。"
+  (val line (+ min-free NEAR-MARGIN-BYTES))
+  (val holding (and (!= named "ok") (< free (+ line NEAR-RETURN-BYTES))))
   (cond
     (< free min-free) "exhausted"
-    (and (> min-free 0) (< free (+ min-free NEAR-MARGIN-BYTES))) "near"
+    (and (> min-free 0) (or (< free line) holding)) "near"
     True "ok"))
 
 
