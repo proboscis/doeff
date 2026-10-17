@@ -20,6 +20,8 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
+Then run `python -m doeff demo` to watch the example below answer from a fake handler, then over real HTTP.
+
 ## A 30-second example
 
 ```python

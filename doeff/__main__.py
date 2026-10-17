@@ -1,6 +1,7 @@
 """doeff CLI entry point.
 
 Usage:
+    doeff demo                      # (or python -m doeff demo) see a handler swap change the answer
     doeff run --program myapp.module.program
     doeff run --program myapp.program --interpreter myapp.interpreter
     doeff run --program myapp.program --env myapp.env
@@ -55,6 +56,7 @@ class RunArgs(argparse.Namespace):
     profile: bool
     script: str | None
     raw_argv: list[str]
+    url: str
 
 
 _HY_FLAG_REWRITE = {
@@ -436,6 +438,12 @@ def handle_run(args: RunArgs) -> int:
     return 0
 
 
+def handle_demo(args: RunArgs) -> int:
+    from doeff.cli.demo import main as demo
+
+    return demo(args.url)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="doeff", description="Run doeff programs"
@@ -514,6 +522,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Python script to execute after running. Use '-' for stdin.",
     )
     run_parser.set_defaults(func=handle_run)
+
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="Watch one program answer differently as its handler is swapped",
+        description=(
+            "Run a small program under a fake handler, then with a live handler that\n"
+            "fetches the page over real HTTP. The program does not change; the answer does.\n\n"
+            "Examples:\n"
+            "  python -m doeff demo\n"
+            "  python -m doeff demo --url https://www.python.org\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    demo_parser.add_argument(
+        "--url", default="https://example.com",
+        help="Page the live handler fetches (default: %(default)s; file:// URLs work too)",
+    )
+    # _main reads --profile of every command; the demo has no CLI steps to time.
+    demo_parser.set_defaults(func=handle_demo, profile=False)
 
     return parser
 
