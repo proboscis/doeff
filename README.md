@@ -54,6 +54,9 @@ print(run(handler(fake_world)(digest("https://example.com"))))  # 14 chars
 
 To go live, replace `fake_world` with handlers that call your HTTP client and
 your model. `digest` does not change, and the fake stays as your test.
+[`examples/github_repo`](https://github.com/proboscis/doeff/tree/main/examples/github_repo) does
+this with a real API: it calls GitHub through the HTTP handler of `doeff[http]`, and
+`pytest examples/github_repo` tests the same code under a fake handler, without the network.
 
 ## Why doeff?
 
@@ -247,6 +250,8 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 ## Next steps
 
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
+- **A real HTTP API and its tests**: [examples/github_repo](https://github.com/proboscis/doeff/tree/main/examples/github_repo)
+  (`pip install "doeff[http]" pytest`, then `pytest examples/github_repo`)
 - **Why effects?**: [Effects vs. dependency injection](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)

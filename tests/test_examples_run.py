@@ -4,7 +4,12 @@ examples/ の例は利用者が写して走らせる読み物で、どの検も�
 `Program.of`・`ask`・`default_handlers`・`async_run` が消えた後も、5 file 全部が import か実行の初めで落ちていた
 (docs の報告 2026-10-17-doeff-docs-examples-run.html の「古い使い方の訳」)。
 
-examples/ の `.py` は全部この検に入る(新しい例も書いただけで入り、EXPECTED_LINES に行が無ければ赤になる)。
+examples/ の直下の `.py` は全部この検に入る(新しい例も書いただけで入り、EXPECTED_LINES に行が無ければ赤になる)。
+dir に分けた例 examples/github_repo/(HTTP の API を呼ぶ program と、その pytest の検)は、例の検 test_repo_summary.py を root の
+testpaths が集め(偽の handler だけで network を使わない)、script が本番で入れる handler の組(live — doeff[http] の
+http_production_handler)は、下の検が手元に立てた偽の GitHub API へ向けて子の process で走らせる。例の検は live を走らせないので、
+この検が無いと http の handler の使い方が変わっても例の本番の道が落ちる事に誰も気づかない。README が書く走らせ方
+`pytest examples/github_repo` が pytest の外の plugin 無しで通る事(repo の根の conftest を読まない事)も、下の検が子で確かめる。
 終了コードだけでは足りない: traceback_demo は失敗を起こして捕まえる例なので、起こしたはずの失敗が起きなくても 0 で終わる。
 そこで例ごとに、標準出力に必ず出る行を EXPECTED_LINES に置き、全部が出る事を確かめる。例の印字を変えたら、ここも直す。
 例は開発の環境で走らせる(llm_multi_provider_stacking は核の外の部品 doeff-gemini・doeff-llm・doeff-openai・
@@ -18,8 +23,11 @@ Python Compatibility の venv — .github/workflows/python-compatibility.yml)で
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -119,3 +127,92 @@ def test_expected_lines_name_only_existing_examples() -> None:
     assert sorted(EXPECTED_LINES) == _examples()
     assert set(SLOW) <= set(EXPECTED_LINES)
     assert set(NEEDS_OUTSIDE_CORE) <= set(EXPECTED_LINES)
+
+
+GITHUB_REPO_EXAMPLE = EXAMPLES / "github_repo" / "repo_summary.py"
+# 手元の偽の GitHub API が答える path と JSON の本文(無い path には 404 の Not Found)。
+FAKE_GITHUB_API: dict[str, object] = {
+    "/repos/octo/hello": {
+        "full_name": "octo/hello",
+        "description": "Says hello",
+        "stargazers_count": 42,
+        "forks_count": 7,
+        "open_issues_count": 3,
+    },
+    "/repos/octo/hello/releases/latest": {"tag_name": "v1.2.0"},
+}
+
+
+class _FakeGitHubApi(BaseHTTPRequestHandler):
+    """FAKE_GITHUB_API の本文を JSON で返す、127.0.0.1 だけで答える GitHub API の替え玉。"""
+
+    def do_GET(self) -> None:
+        found = self.path in FAKE_GITHUB_API
+        body = FAKE_GITHUB_API[self.path] if found else {"message": "Not Found"}
+        payload = json.dumps(body).encode()
+        self.send_response(200 if found else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args: object) -> None:  # 要求ごとの access log を検の stderr に出さない
+        return None
+
+
+def test_github_repo_example_runs_its_live_handlers_against_a_local_api(
+    deadline_scale_factor: float,
+) -> None:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeGitHubApi)
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    api = f"http://127.0.0.1:{server.server_port}"
+    try:
+        # httpx は proxy の env を読むので、127.0.0.1 を proxy の外に置く(proxy の在る機体でも手元の API へ直に行く)。
+        completed = subprocess.run(
+            with_settings(
+                [sys.executable, str(GITHUB_REPO_EXAMPLE), "octo/hello", "--api", api],
+                {"DOEFF_PROFILE": None, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"},
+            ),
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert completed.returncode == 0, (
+        f"examples/github_repo/repo_summary.py が終了コード {completed.returncode} で落ちた:\n"
+        f"{completed.stderr[-3000:]}"
+    )
+    assert completed.stdout.splitlines() == [
+        "octo/hello: Says hello",
+        "42 stars, 7 forks, 3 open issues and pull requests, latest release: v1.2.0",
+    ]
+
+
+def test_github_repo_example_tests_run_with_pytest_alone(deadline_scale_factor: float) -> None:
+    # README が書く `pytest examples/github_repo` を、doeff を clone して `pip install "doeff[http]" pytest` だけを入れた人と
+    # 同じく、pytest の外の plugin 無しで走らせる。例の dir の pytest.ini が rootdir を例の dir に留めるので、repo の根の
+    # conftest.py(締切に pytest-timeout などの開発の道具を要る)を読まない — pytest.ini が無いと、根の conftest が
+    # `no option named 'timeout'` の INTERNALERROR で止まった(2026-10-17・PyPI の 0.6.0 と pytest だけの環境でも同じ)。
+    pytest_alone = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    completed = subprocess.run(
+        with_settings(
+            [*pytest_alone, "examples/github_repo"],
+            {"DOEFF_PROFILE": None, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": None},
+        ),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"pytest examples/github_repo が終了コード {completed.returncode} で落ちた:\n"
+        f"{completed.stdout[-3000:]}\n{completed.stderr[-3000:]}"
+    )
+    summary = completed.stdout.splitlines()[-1]  # -q の最後の行: `4 passed in …s`
+    assert summary.startswith("4 passed"), completed.stdout
