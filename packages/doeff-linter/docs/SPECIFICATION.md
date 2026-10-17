@@ -436,8 +436,13 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
   - 登録簿と判定の一覧(1 鍵 1 file の dir — agora-controllers の `scripts/doeff_lint/SMELL-BREACHES` は 447 file)は、全部の file を読む。作業木ごとに別の inode なので、
     冷えた作業木では 1 file ごとに disk を待つ — 順に読むと待ちが足し算になる。読みの待ちは `bulk_read::fan_out`(最大 32 本の thread・結果は入力の順・答えは順に読んだ時と
     同じで、読めない file の知らせも file の順)で重ねる。rayon の pool(1 file の実行は 4 本)は CPU の仕事向けなので使わない。
+    1 file の hook は何度も撃たれ、その度に全部を open すると、page cache が数分で追い出される Pod では毎回 disk を待つ(IO の圧迫 55〜66% の日、冷えた作業木の
+    1 回の open 596 件のうち 494 件がこの dir)。そこで dir の中の file の(path・大きさ・更新時刻・inode)の指紋が前の実行と同じなら、中身を読まずに前の読みの結果を使う
+    (`dir_stamp::remembered` — 結果は事実の置き場に、指紋を鍵に置く)。冷えた状態でも stat は 449 回で 0.02 秒。更新から 2 秒経たない file が 1 つでも在れば覚えない
+    (git の racy と同じ守り)。読めない file の知らせは file の絶対 path を持つので、知らせが在る読みは覚えない。指紋が同じで中身が違うのは、更新時刻を戻して大きさも
+    保つ書き方(`touch -r`・`cp -p`)をした時だけで、登録簿にその運用は無い。
   - 検: `tests/single_file_reads.rs`(答えが全体の実行と同じ・名指さない module の事実を置かない・全体の表を通らない)と、`signatures.rs`・`call_view.rs`・`body_view.rs` の
-    検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。登録簿の読みの待ちが重なる事は `bulk_read::watch`(同時に進んだ仕事の最大数)で確かめる。
+    検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。登録簿の読みの待ちが重なる事は `bulk_read::watch`(同時に進んだ仕事の最大数)で、変わっていない登録簿を 2 回目に読まない事・変えた/足した/消した/更新の直後は読み直して答え(`registered`)が付いてくる事は `tests/registry_remembered.rs` で確かめる。
 - 実測(agora-controllers の本線・2026-09-27): 全体 約 1.1 秒・1 file 10 ミリ秒未満。
 - 実測(agora-controllers の本線 Hy 2900 file・2026-10-12・Pod の load 70〜100・同じ負荷で旧新を交互に): 1 file の実行の open 12,077 → 約 600、opendir 2,837 → 5〜9、
   stat 39,472 → 約 2,000。温まった実時間の中央値 0.40 → 0.18 秒(CPU 0.58 → 0.20 秒)・新しい作業木の最初の 1 回 CPU 5.1 → 0.1 秒。残る open の大半は登録簿の
