@@ -1,20 +1,20 @@
 ---
-title: "外部APIのテストを、通信せずに回す — doeffで応答を記録して再生する"
+title: "外部APIのテストを、通信せずに回す"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "テスト", "pytest"]
 published: false
 ---
 
-外部のAPIを呼ぶ処理は、テストでも通信します。そのテストには、よく次の悩みがあります。
+外部のAPIを呼ぶ処理は、テストでも通信します。この記事では、本物の応答を一度だけ記録し、テストは通信せずに記録から答えます。通信するテストには、よく次の悩みがあります。
 
 - 呼ぶたびに通信を待つので、テストが遅くなります。
 - 相手の障害や回数の制限で、コードに誤りが無くても落ちます。
 - APIキーが要るので、CIに本物の鍵を置くことになります。
 
-この記事では、Pythonのライブラリdoeffで、この3つを解きます。本物の応答を一度だけ記録し、テストでは記録から答えます。記録に無い依頼は、通信せずに失敗させます。
+Pythonのライブラリdoeffで、この3つを解きます。記録に無い依頼は、通信せずに失敗させます。
 
-doeffは、処理の中の「通信する」「待つ」といった操作を、外側の部品で差し替えられるライブラリです。まずは、通信の代わりに固定の応答を返すテストから始めます。
+doeffは、処理の中の「通信する」「待つ」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。まずは、通信の代わりに固定の応答を返すテストから始めます。
 
 ```python
 from doeff import Pass, Resume, do, handler, run, with_handlers  # 処理の定義・ハンドラ・実行を使う。
@@ -221,7 +221,7 @@ def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに�
 - 記録に無い依頼は`reject_http`で、通信せずに失敗させます。
 - APIキーを記録の鍵から外せば、CIに本物の鍵を置かずに再生できます。
 
-待ちを含む処理のテストは、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で扱いました。依存を外側から渡す話は、4本目の[DIの代わりにeffect handler](doeff-di.md)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
+待ちを含む処理のテストは、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で扱いました。依存を外側から渡す話は、4本目の[DIコンテナなしで、依存を引数でバケツリレーしない](doeff-di.md)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
@@ -242,5 +242,5 @@ uv run --with "doeff[http]==0.6.0" --with pytest pytest -q http_replay.py  # PyP
 - [標準の取得担当とhttp_fixture_handler](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
 - [unittest.mock(Python公式の説明)](https://docs.python.org/ja/3/library/unittest.mock.html)
 - [VCR.py(公式の説明)](https://vcrpy.readthedocs.io/)
-- 前の回:[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)
-- 次の回:[バックテストと本番で同じ処理を動かす](doeff-backtest.md)
+- 前の回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)
+- 次の回:[バックテストと本番で、処理を2つ書かない](doeff-backtest.md)

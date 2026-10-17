@@ -1,18 +1,18 @@
 ---
-title: "20秒待つ処理を、20秒待たずにテストする — doeffの仮想時間"
+title: "20秒待つ処理を、20秒待たずにテストする"
 emoji: "⏱️"
 type: "tech"
 topics: ["python", "doeff", "テスト", "asyncio"]
 published: false
 ---
 
-20秒待ってから次へ進む処理は、テストでも20秒止まります。待ちを含む処理のテストには、よく次の悩みがあります。
+20秒待ってから次へ進む処理は、テストでも20秒止まります。この記事では、本番と同じ処理のまま、仮想の時計でテストを20秒待たずに終わらせます。待ちを含む処理のテストには、よく次の悩みがあります。
 
 - `time.sleep(20)`を含む処理は、テストも20秒かかります。
 - `sleep`をモックで消すと速くなりますが、2つの待ちのどちらが先に終わるかは試せません。
 - 今の時刻を読む処理は、テストを走らせた時刻で結果が変わります。
 
-この記事では、Pythonのライブラリdoeffで、この3つをまとめて解きます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。
+Pythonのライブラリdoeffを使い、この3つをまとめて解きます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード
 
@@ -224,5 +224,5 @@ uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ git+https://githu
 - [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-time)
 - [タスクと優先度を扱うスケジューラ](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
 - [ハンドラの能力と関数の色の整理](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/docs/22-capability-classes.md)
-- 前の回:[AIエージェントの起動と結果待ちを、doeffの処理として書く](doeff-agents.md)
-- 次の回:[DIの代わりにeffect handler](doeff-di.md)
+- 前の回:[Claude CodeやCodexを呼ぶ処理を、起動せずにテストする](doeff-agents.md)
+- 次の回:[DIコンテナなしで、依存を引数でバケツリレーしない](doeff-di.md)

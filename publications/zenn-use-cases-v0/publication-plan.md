@@ -14,20 +14,22 @@
 
 | 週 | 原稿 | Zennのslug | 読者への入口 | 公開状態 |
 | --- | --- | --- | --- | --- |
-| 1 | [doeffとは？](doeff-main.md) | `doeff-introduction` | エフェクトと最小ハンドラを実行し、用途の全体像を見る | 公開予定 |
-| 2 | [doeff-agents](doeff-agents.md) | `doeff-ai-agents` | AIエージェントの仕事を、起動・待機・結果の契約で組み合わせる | 公開予定 |
-| 3 | [時間とスケジューリング](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 |
-| 4 | [DI](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |
-| 5 | [AIの会話を最大50並べて1人で開発する](doeff-fleet.md) | `doeff-fifty-ai-conversations` | AIの会話を最大50並べて、1人でdoeffと周りの仕組みを開発した記録を読む | 公開予定 |
+| 1 | [処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは](doeff-main.md) | `doeff-introduction` | エフェクトと最小ハンドラを実行し、用途の全体像を見る | 公開予定 |
+| 2 | [Claude CodeやCodexを呼ぶ処理を、起動せずにテストする](doeff-agents.md) | `doeff-ai-agents` | AIエージェントの仕事を、起動・待機・結果の契約で組み合わせる | 公開予定 |
+| 3 | [20秒待つ処理を、20秒待たずにテストする](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 |
+| 4 | [DIコンテナなしで、依存を引数でバケツリレーしない](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |
+| 5 | [1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md) | `doeff-fifty-ai-conversations` | AIの会話を最大50並べて、1人でdoeffと周りの仕組みを開発した記録を読む | 公開予定 |
 | 6 | [外部APIのテストを、通信せずに回す](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 公開予定 |
-| 7 | [backtestの設計](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 公開予定 |
-| 8 | [AIに要る時だけ規則を見せるhook](doeff-hooks.md) | `doeff-ai-rule-hooks` | AIが決まりを読み落とす時に、要る場面でだけ規則を見せる | 公開予定 |
-| 9 | [async/awaitがあるのに、なぜyieldか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 公開予定 |
-| 10 | [設計の記録をテストとして走らせる](doeff-adr.md) | `doeff-executable-adr` | 設計の決まりが崩れないよう、例と規則を書いた設計の記録をテストとして走らせる | 公開予定 |
+| 7 | [バックテストと本番で、処理を2つ書かない](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 公開予定 |
+| 8 | [CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md) | `doeff-ai-rule-hooks` | AIが決まりを読み落とす時に、要る場面でだけ規則を見せる | 公開予定 |
+| 9 | [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 公開予定 |
+| 10 | [ADRをpytestで走らせ、設計の約束を守らせる](doeff-adr.md) | `doeff-executable-adr` | 設計の決まりが崩れないよう、例と規則を書いた設計の記録をテストとして走らせる | 公開予定 |
 
 公開状態は「公開済み <ZennのURL>」「公開予定」「下書き」のどれかで書く。下書きは、まだ仕上げ基準を満たしていない原稿で、満たしたら公開予定に変える。`render_release.py`がこの表を読み、公開する本文のリンクを作る。下書きの行と表に無い原稿は、候補として扱う。
 
 5〜10本目は、各回の担当が下の仕上げ基準を1項目ずつ照らし、掲載したコードを走らせた。その結果を受けて、2026-10-17に公開予定へ変えた。公開予定はZennへの登録ではない。
+
+原稿の欄の題は、各原稿のfront matterの`title`と同じにする。2026-10-17に、Zennで読まれる記事の傾向と手本の連載の調べを元に、10本の題と冒頭の3文を直した。題は区切り記号(—)で2つに分けず、30字前後の1つの主張にする。直した訳は[決定記録](../../docs/design/decisions/2026-10-17-zenn-titles-and-openings.md)にある。
 
 これから書く原稿は、ファイルが出来るまでリンクにせず、決めたファイル名を書く。ファイル名は`doeff-<英小文字>.md`の形にする(`render_release.py`が記事間のリンクと見なす形)。原稿が出来たら、原稿の欄を、題からその原稿へのリンクに変える。
 
@@ -127,6 +129,7 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 - [x] 最初の4本に対応する原稿・コード・レビュー記録がある。
 - [x] 5〜10本目の下書きを仕上げ基準に揃え、公開状態を公開予定にした。5・7・8・10本目は新しいファイルに書いた(2026-10-17)。
 - [x] 10本の各回の参考に、前の回と次の回へのリンクを置いた。各回の確かめのスクリプト(`reviews/<slug>-check.py`)を`verify_examples.py`から呼ぶ(2026-10-17)。
+- [x] 10本の題と冒頭の3文を、Zennで読まれる記事の傾向と手本の連載の調べで直した。2〜10本目の冒頭に、1本目とGitHubへ案内する1文を置いた(2026-10-17・[決定記録](../../docs/design/decisions/2026-10-17-zenn-titles-and-openings.md))。
 - [ ] 各回の図を揃える。`images/zenn-use-cases-v0/generated/`のPNG 47枚はリポジトリに入っておらず、週1の3枚、週3と週4の各2枚を作り直した(2026-10-16)。
 - [x] Zennの形への書き出しと確かめの道具を作った。最初の4本を書き出し、崩れ0個を確かめた(2026-10-16・zenn-cli 0.5.6)。連載10本を書き出し、`check.mjs`と`screenshot.mjs`で崩れ0個を確かめた。10本の図22枚はリポジトリにある(2026-10-17)。
 - [ ] 記事を置くリポジトリを決め、書き出しを置く。
