@@ -227,9 +227,9 @@ wake at once (µs of CPU per task):
 | doeff: `scheduled(..., implementation="python")` | 151 | 167 | 205 | 223 |
 
 A dash marks a case the implementation has no promise for. effectful has no scheduler, so it is
-not in this table. `pip install doeff` installs 0.6.0, whose `scheduled()` still runs the Python
-scheduler (the last row). Select the Rust one with `DOEFF_SCHEDULER=rust` or
-`scheduled(program, implementation="rust")`; it is the default from the next release.
+not in this table. `pip install doeff` installs 0.7.0, whose `scheduled()` runs the Rust scheduler
+by default (it ran the Python one up to 0.6.0). Select the Python one (the last row) with
+`DOEFF_SCHEDULER=python` or `scheduled(program, implementation="python")`.
 
 How the numbers were measured:
 

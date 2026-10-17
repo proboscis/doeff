@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-18
+
 ### Added
 
 - `python -m doeff demo` (also `doeff demo`): right after `pip install doeff`, it prints the README's `digest` program
@@ -68,6 +70,13 @@
   also be evaluated at runtime (in annotations `typing.get_type_hints` reads, and in function annotations on Python
   3.11–3.13); `isinstance(value, Maybe)` raises `TypeError` like any parameterised alias — use
   `isinstance(value, Some)` or `value is Nothing`.
+- `doeff`: the 17 removed names that `doeff` still defines so that using one names its replacement (`Delegate`,
+  `WithIntercept`, `KleisliProgram`, `Modify`, `AllocVar`, `Discontinued`, `Discontinue`, `graph_snapshot`, `ReadVar`,
+  `CacheGet`, `CacheExists`, `cache`, `presets`, `rust_vm`, `default_handlers`, `async_run`,
+  `default_async_handlers`) are hidden from type checkers. `from doeff import KleisliProgram` is now an error on the
+  import line under pyright and mypy, as for any name `doeff` does not have; before, the type check passed and the
+  first use failed at run time. At run time nothing changes: the import works and using the name raises
+  `RuntimeError: KleisliProgram was removed: use @do instead`.
 
 ### Fixed
 

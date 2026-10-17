@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doeff-hy"
-version = "0.6.0"
+version = "0.7.0"
 description = "Hy macros for writing doeff programs, effects, handlers and tests"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,8 +13,8 @@ license = "MIT"
 license-files = ["LICENSE"]
 # 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
 dependencies = [
-    "doeff>=0.6.0,<0.7",
-    "doeff-core-effects>=0.6.0,<0.7",
+    "doeff>=0.7.0,<0.8",
+    "doeff-core-effects>=0.7.0,<0.8",
     # 上限は doeff の uv.lock の hy の版ちょうど — doeff の検が確かめた版より新しい Hy を、doeff-hy を使う他の repo の lock に通さない。
     # Hy を上げる便は、この上限と uv.lock を同じ commit で上げる(ADR-DOE-HY-008 R6・card ki-0ff168f4eaf5)。
     # 下限は doeff-hy の検を走らせて緑だった最も古い版 1.3.0(merge-queue・code-quality の lock の版)— 1.2.0 では hy.eval に渡した
@@ -26,7 +26,7 @@ dependencies = [
     # pytest の plugin(Python 3.14 の Hy の ast.unparse の当て物を起動の時点で当てる)は別の配布物に置く —
     # pytest は pytest11 の entry point を持つ配布物の全 module に assert の書き換えの印を付け、ここに置くと
     # wheel で入れた repo で doeff_hy の .hy を Python として書き換えて import が落ちる(packages/doeff-hy-pytest)。
-    "doeff-hy-pytest>=0.6.0,<0.7",
+    "doeff-hy-pytest>=0.7.0,<0.8",
 ]
 
 [project.urls]
