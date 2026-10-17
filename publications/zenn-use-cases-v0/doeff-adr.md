@@ -167,17 +167,34 @@ ADRの形のテストは、`defadr`が自動で作ります。名前は`test_ADR
 
 ## 走らせる
 
-2026年10月17日の時点で、doeff-adrとdoeff-timeはPyPIにありません。doeffのリポジトリを取り寄せ、その環境で自分のプロジェクトを走らせます。doeffの部品を組むため、uvとRustの道具(cargo)が要ります。
+doeff本体とdoeff-hyは、PyPIの0.6.0を入れます。doeff-adrとdoeff-timeはPyPIに無いので、GitHubから入れます。どちらも、自分のプロジェクトの`pyproject.toml`に書きます。
 
 ```bash
-git clone https://github.com/proboscis/doeff.git ~/doeff  # doeff-adrを含むリポジトリを取り寄せる。
-make -C ~/doeff sync  # doeff・doeff-adr・doeff-time・Semgrepを入れる(中身は uv sync --group dev)。
 mkdir -p billing-example/docs/adr && cd billing-example  # 自分のプロジェクトを作り、上の4つの枠を置く。
-printf '[tool.pytest.ini_options]\ntestpaths = ["docs/adr"]\n' > pyproject.toml  # pytestにADRを集めさせる。
-uv run --project ~/doeff pytest -q  # ADRの3つのテストを走らせる。「3 passed」と出る。
-uv run --project ~/doeff semgrep scan --config .semgrep.yaml --error .  # 規則をコードに当てる。0件で終了コード0。
-uv run --project ~/doeff doeff-adr verify-wiring  # 全てのADRがpytestに集められたかを確かめる。
+cat > pyproject.toml <<'EOF'  # 依存と、pytestにADRを集めさせる設定を書く。
+[project]
+name = "billing-example"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "doeff-hy==0.6.0",  # PyPIの0.6.0。doeff本体も同じ版が入る。
+    "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time",
+    "doeff-adr @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-adr",
+    "semgrep",  # defsemgrepのテストとsemgrep scanが使う。
+]
+
+[tool.uv]
+no-sources = true  # doeff本体をGitHubから組み立てず、PyPIの版を使う。
+
+[tool.pytest.ini_options]
+testpaths = ["docs/adr"]  # pytestにADRのディレクトリを見させる。
+EOF
+uv run pytest -q  # 依存を入れ、ADRの3つのテストを走らせる。「3 passed」と出る。
+uv run semgrep scan --config .semgrep.yaml --error .  # 規則をコードに当てる。0件で終了コード0。
+uv run doeff-adr verify-wiring  # 全てのADRがpytestに集められたかを確かめる。
 ```
+
+`no-sources = true`を書かないと、doeff本体もGitHubから入り、Rustのビルドが要ります。
 
 4つの枠は、次の名前で置きます。ADRは`docs/adr/defadr_billing_clock.hy`、業務のコードは`billing.py`です。Semgrepの規則は`.semgrep.yaml`、fixtureは`conftest.py`です。
 
@@ -187,11 +204,11 @@ uv run --project ~/doeff doeff-adr verify-wiring  # 全てのADRがpytestに集�
 
 ## 決まりを破ると、どこで止まるか
 
-決まりを3通りに破り、どこで止まるかを試しました。2026年10月17日に、doeffのmain(commit `9adc4f8`)で走らせた出力です。
+決まりを3通りに破り、どこで止まるかを試しました。2026年10月17日に、上の手順でPyPIの0.6.0を入れて走らせた出力です。
 
 ```text
 # 1. billing.pyの「now = yield GetTime()」を「now = datetime.now(due.tzinfo)」に替えた
-$ uv run --project ~/doeff semgrep scan --config .semgrep.yaml --error .
+$ uv run semgrep scan --config .semgrep.yaml --error .
     billing.py
    ❯❯❱ billing-no-direct-now
           ❰❰ Blocking ❱❱
@@ -200,13 +217,13 @@ $ uv run --project ~/doeff semgrep scan --config .semgrep.yaml --error .
 (終了コード 1。同じ変更でも、pytestの3つのテストは通った)
 
 # 2. ADRから:enforcementを消した
-$ uv run --project ~/doeff pytest -q
+$ uv run pytest -q
 E           AssertionError: ADR-BILLING-001: accepted ADR must have executable enforcement
 FAILED docs/adr/defadr_billing_clock.hy::test_ADR_BILLING_001_adr_contract - ...
 (終了コード 1)
 
 # 3. pyproject.tomlのtestpathsを["tests"]にした(ADRは集められない)
-$ uv run --project ~/doeff doeff-adr verify-wiring
+$ uv run doeff-adr verify-wiring
 ERROR: doeff-adr wiring verification failed: executable ADR files exist but were not collected:
   - docs/adr/defadr_billing_clock.hy
 (終了コード 4。同じ設定でも、普段のpytestはtestsのテストだけを走らせて通った)
@@ -260,7 +277,7 @@ ADRの規則が破れると、テストの失敗として出ます。失敗の�
 
 ## 参考
 
-この記事のコードは、2026年10月17日に、doeffのmain(commit `9adc4f8`)で確かめました。Python 3.14.3・Hy 1.3.1・Semgrep 1.169.0の環境です。doeff-adrとdoeff-timeはPyPIに無いので、PyPIの版では試していません。
+この記事のコードは、2026年10月17日に、上の手順でPyPIのdoeff 0.6.0を入れて確かめました。Pythonは3.12と3.14で、Hy 1.3.1・Semgrep 1.181.0です。GitHubにあるdoeffのmain(commit `9adc4f8`)の環境でも、同じく動きました。
 
 - 完全な例:[ADR](examples/adr_as_test/docs/adr/adr_billing_clock.hy)・[業務のコード](examples/adr_as_test/billing.py)・[conftest.py](examples/adr_as_test/conftest.py)・[Semgrepの規則](examples/adr_as_test/.semgrep.yaml)・[pyproject.toml](examples/adr_as_test/pyproject.toml)
 - 完全な例は、doeffのリポジトリの中に置いています。そのためADRのファイル名を`adr_billing_clock.hy`にし、`pyproject.toml`で集めます。
