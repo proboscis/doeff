@@ -39,6 +39,11 @@
     Rust scheduler.
   - The scheduler's own decisions run in Rust, so a debugger cannot step through them; select the Python scheduler to
     debug the scheduler itself.
+  - Both schedulers read the step budget (`arm_step_budget`, which doeff-hy-pytest's runaway guard arms): a run that
+    keeps waking tasks past the budget fails while it runs with the same `StepBudgetExceeded` and the same message
+    under either (`tests/test_scheduler_step_budget.py`). The check is the Python scheduler's one function; the Rust
+    scheduler calls it at each wake only while a budget is armed, and with no budget each wake reads one flag. Arming a
+    budget needs a `doeff_vm` extension with the budget switch (`ImportError` naming the rebuild otherwise).
 - `doeff-cluster`: `sim-cluster` and `wall-sim-cluster` take `:implementation` (`"python"` / `"rust"`; default `None`,
   the same choice as `scheduled()`) for the scheduler they build.
 - `benchmarks/compare_libraries.py` also measures a plain `scheduled()`, labelled with the implementation it resolved to

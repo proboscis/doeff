@@ -194,6 +194,10 @@ struct Spec {
     trace_step_boundary: Py<PyAny>,
     /// The run's number in the events (`run`), from the Python version's counter.
     trace_run: u64,
+    /// `_check_armed_step_budget(task_id)`: raises `StepBudgetExceeded` when the
+    /// armed budget is spent — the Python scheduler's one check, so both
+    /// implementations count and word it the same way (called only while armed).
+    check_step_budget: Py<PyAny>,
     priority_idle: i64,
     priority_external_wait: i64,
     priority_normal: i64,
@@ -237,6 +241,7 @@ impl Spec {
             trace: get("trace")?.unbind(),
             trace_step_boundary: get("trace_step_boundary")?.unbind(),
             trace_run: get("trace_run")?.extract()?,
+            check_step_budget: get("check_step_budget")?.unbind(),
             priority_idle: get("PRIORITY_IDLE")?.extract()?,
             priority_external_wait: get("PRIORITY_EXTERNAL_WAIT")?.extract()?,
             priority_normal: get("PRIORITY_NORMAL")?.extract()?,
@@ -714,6 +719,27 @@ fn traced() -> bool {
 #[pyfunction]
 fn set_scheduler_trace_installed(installed: bool) {
     TRACE_INSTALLED.store(installed, Ordering::Relaxed);
+}
+
+// ---------------------------------------------------------------------------
+// The step budget (`arm_step_budget`, #3143)
+// ---------------------------------------------------------------------------
+
+/// Whether a step budget is armed in this process — the Python module's
+/// `_armed_step_budget is not None`, switched together with it by
+/// `arm_step_budget` / `disarm_step_budget`. With no budget each wake reads
+/// only this flag: the step count is never read.
+static STEP_BUDGET_ARMED: AtomicBool = AtomicBool::new(false);
+
+fn step_budget_armed() -> bool {
+    STEP_BUDGET_ARMED.load(Ordering::Relaxed)
+}
+
+/// Switch the flag: called by `arm_step_budget` (`True`) and
+/// `disarm_step_budget` (`False`) only.
+#[pyfunction]
+fn set_scheduler_step_budget_armed(armed: bool) {
+    STEP_BUDGET_ARMED.store(armed, Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -1793,6 +1819,15 @@ impl Locked<'_> {
             .extract()
     }
 
+    /// Raise `StepBudgetExceeded` when the armed step budget is spent (`owner`
+    /// = the task about to wake, None = the root body): the Python scheduler's
+    /// one check (`_check_armed_step_budget`), so both implementations fail a
+    /// run past the budget with the same error.
+    fn check_step_budget(&self, py: Python<'_>, owner: Owner) -> PyResult<()> {
+        self.spec().check_step_budget.bind(py).call1((owner,))?;
+        Ok(())
+    }
+
     fn keys_parked_by(&self, tid: Tid) -> Vec<WKey> {
         self.waiters
             .iter()
@@ -2153,6 +2188,11 @@ impl Locked<'_> {
             self.drain(py)?;
             while let Some(item) = heapq::pop(&mut self.ready) {
                 let wake = self.take_wake(item.seq);
+                if step_budget_armed() {
+                    // Only when a budget is armed (#3143): the default never
+                    // reads the step count.
+                    self.check_step_budget(py, item.entry.owner())?;
+                }
                 if shield_deferred
                     && !matches!(item.entry, ReadyEntry::WaitExternal { .. })
                     && self.is_live_daemon_entry(&item.entry)
@@ -3753,6 +3793,7 @@ pub fn register(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<HandleRegistrar>()?;
     m.add_class::<CancelBinder>()?;
     m.add_function(pyo3::wrap_pyfunction!(set_scheduler_trace_installed, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(set_scheduler_step_budget_armed, m)?)?;
     Ok(())
 }
 

@@ -14,4 +14,9 @@ def set_scheduler_trace_installed(installed: bool) -> None:
     doeff_core_effects.scheduler.set_scheduler_trace だけ(src/scheduler.rs の TRACE_INSTALLED)。"""
     ...
 
+def set_scheduler_step_budget_armed(armed: bool) -> None:
+    """Rust の版の scheduler の歩数の上限の旗(上限が入っているか)を切り替える — 呼び手は
+    doeff_core_effects.scheduler.arm_step_budget と disarm_step_budget だけ(src/scheduler.rs の STEP_BUDGET_ARMED)。"""
+    ...
+
 def __getattr__(name: str) -> Incomplete: ...
