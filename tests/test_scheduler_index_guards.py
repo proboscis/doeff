@@ -216,16 +216,16 @@ def _cells(function: types.FunctionType) -> dict[str, types.CellType]:
 
 
 def _run_holding(program: object) -> dict[str, types.CellType]:
-    """The closure cells of pick_next of the scheduler run whose task holds ``program``."""
-    for pick_next in _scheduler_functions("pick_next"):
-        cells = _cells(pick_next)
+    """The closure cells of pick_ready_entry of the scheduler run whose task holds ``program``."""
+    for pick_ready_entry in _scheduler_functions("pick_ready_entry"):
+        cells = _cells(pick_ready_entry)
         if any(row.get("program") is program for row in cells["tasks"].cell_contents.values()):
             return cells
     raise LookupError("no scheduler run holds the program")
 
 
 def _park_waiter_of(run: dict[str, types.CellType]) -> types.FunctionType:
-    """park_waiter of the same run (it shares the ``waiters`` cell with pick_next)."""
+    """park_waiter of the same run (it shares the ``waiters`` cell with pick_ready_entry)."""
     return next(
         function
         for function in _scheduler_functions("park_waiter")
