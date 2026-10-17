@@ -74,12 +74,29 @@ the business-code files.
 | effect | answer |
 |---|---|
 | `Spawn(p)` with `p: Program[T, E]` | `Task[T]`; `yield from Spawn(p)` also adds `E` to the caller's effects (the task runs under the caller's handlers) |
-| `Wait(task_or_future)` / `Race(*...)` | `T` |
-| `Gather(*tasks)` | `list[T]` |
+| `Wait(task_or_future)` | `T` |
+| `Race(*tasks_or_futures)` | `T`, the union of the handles' result types |
+| `Gather(*tasks_or_futures)` | `list[T]`, `T` the union of the handles' result types |
 | `CreatePromise[T]()` | `Promise[T]` (`.future: Future[T]`) |
 | `CompletePromise(promise, value)` | `None`, `value` checked against `T` |
 | `Cancel`, `AcquireSemaphore`, `ReleaseSemaphore`, `FailPromise` | `None` |
 | `CreateSemaphore(n)` | `Semaphore` |
+
+`Task[T]` and `Future[T]` are covariant in `T`: a `Task[int]` is also a
+`Task[object]`. So handles of different result types go into one `Gather` or
+`Race`:
+
+```python excerpt
+number = yield from Spawn(count())   # Task[int]
+text = yield from Spawn(name())      # Task[str]
+both = yield from Gather(number, text)   # list[int | str]
+first = yield from Race(number, text)    # int | str
+```
+
+mypy joins the result types instead of taking their union (`int` and `str`
+join to `object`), so `Gather` and `Race` declare overloads for 2 to 6 handles
+that give the union under mypy too. With more than 6 handles of different
+types, mypy answers `list[object]` / `object`; pyright still answers the union.
 
 ## Handler answers
 

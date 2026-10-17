@@ -8,6 +8,12 @@
   opportunistic-usage capacity (`kCFURLVolumeAvailableCapacityForOpportunisticUsageKey`), with the statvfs free space
   as the floor. statvfs leaves out the space macOS frees on its own (APFS local snapshots, purgeable caches), so a Mac
   with tens of GB of such space was measured as nearly full. Linux still answers the statvfs free space.
+- `doeff-core-effects`: `Gather` and `Race` take tasks and futures of different result types.
+  `Gather(Task[int], Task[str])` was a type error under pyright and mypy (it ran) because `Task` and `Future` were
+  invariant in their result type. They are now covariant (a `Task[int]` is a `Task[object]`), and
+  `Gather(Task[int], Task[str])` answers `list[int | str]`, `Race(Task[int], Task[str])` `int | str`. mypy joins the
+  result types instead of taking their union, so `Gather` and `Race` also declare overloads for 2 to 6 handles (as
+  `asyncio.gather` does); past 6 handles of different types, mypy answers `list[object]` (pyright still the union).
 
 ## 0.6.0 — 2026-10-17
 
