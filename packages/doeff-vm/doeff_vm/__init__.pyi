@@ -13,6 +13,8 @@ _ProgramEffects = TypeVar("_ProgramEffects", covariant=True, default=Any)
 # "any effect") means ``EffectBase[Any]``, so code written before effects carried an
 # answer type stays fully known under strict checking.
 _Answer = TypeVar("_Answer", default=Any)
+# The error type of ``Err``. Bare ``Err`` (``Ok[T] | Err``) means ``Err[Any]`` for the same reason.
+_Error_co = TypeVar("_Error_co", covariant=True, default=Any)
 
 # Static typing of effects and programs (runtime half: src/typing_support.rs).
 #
@@ -96,6 +98,7 @@ class EffectBase(Generic[_Answer]):
 # --- Result types ---
 
 class Ok(Generic[_T]):
+    __match_args__ = ("value",)
     value: _T
     def __init__(self, value: _T) -> None: ...
     def is_ok(self) -> bool: ...
@@ -104,10 +107,14 @@ class Ok(Generic[_T]):
     def __repr__(self) -> str: ...
     def __reduce__(self) -> tuple[Any, tuple[Any]]: ...
 
-class Err:
-    error: Any
+class Err(Generic[_Error_co]):
+    """``Err[E]``: ``error`` is an ``E``. Bare ``Err`` is ``Err[Any]`` (``Try``'s is ``Err[Exception]``)."""
+
+    __match_args__ = ("error",)
+    @property
+    def error(self) -> _Error_co: ...
     captured_traceback: Any
-    def __init__(self, error: Any, captured_traceback: Any | None = None) -> None: ...
+    def __init__(self, error: _Error_co, captured_traceback: Any | None = None) -> None: ...
     def is_ok(self) -> bool: ...
     def is_err(self) -> bool: ...
     def __bool__(self) -> bool: ...

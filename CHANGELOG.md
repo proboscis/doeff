@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- `doeff`, `doeff-vm`: `Some`, `Maybe` and `Err` carry their type. `Some(1).value` is `int` (was Unknown in pyright and
+  `Any` in mypy), `Maybe[int]` (`Some[int] | Nothing`) is accepted (was an error in both), `Err(ValueError("x")).error`
+  is `ValueError` (was `Any`), and `Try` answers `Ok[T] | Err[Exception]`. `case Ok(value):` and `case Err(error):`
+  type-check (`Ok` and `Err` declare `__match_args__`). Bare `Some`, `Maybe` and `Err` mean `...[Any]`, so code
+  written before stays clean under strict checking. `Maybe[int]`, `Some[int]`, `Ok[int]` and `Err[ValueError]` can
+  also be evaluated at runtime (in annotations `typing.get_type_hints` reads, and in function annotations on Python
+  3.11–3.13); `isinstance(value, Maybe)` raises `TypeError` like any parameterised alias — use
+  `isinstance(value, Some)` or `value is Nothing`.
+
 ### Fixed
 
 - `doeff-core-effects`: on macOS, `ReadDiskFree` and `ReadDiskUsage` (`os-file-handler`) answer the volume's

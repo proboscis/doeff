@@ -189,10 +189,11 @@ class Await(EffectBase[_T], Generic[_T]):
         return "Await(...)"
 
 
-class Try(EffectBase["Ok[_T] | Err"], Generic[_T]):
+class Try(EffectBase["Ok[_T] | Err[Exception]"], Generic[_T]):
     """Wrap a program to catch errors as Ok/Err results.
 
-    yield Try(some_program) → Ok(value) or Err(error)
+    yield Try(some_program) → Ok(value) or Err(error) — ``error`` is the ``Exception``
+    the program raised (``try_handler`` catches ``Exception``).
     """
 
     __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
