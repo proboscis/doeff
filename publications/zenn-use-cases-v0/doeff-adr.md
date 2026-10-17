@@ -56,6 +56,7 @@ published: false
 - `:laws`には、規則が守られた時に成り立つ性質と、許さない反例を書きます。
 - `:enforcement`の中が、pytestで走る検査です。
 - `deftest`は、時計を固定して期限の判定を試します。
+- `deftest`の中の`(<- 名 式)`は、Pythonの`名 = yield 式`にあたります。式の答えを名に入れます。
 - `defsemgrep`は、静的検査の規則が悪い例を検出し、良い例を検出しない事を試します。
 
 ![1件のADRから、3つのテストと1つの走査が出る](/images/zenn-use-cases-v0/generated/adr-concept.png)
@@ -97,13 +98,15 @@ def is_overdue(due: datetime) -> EffectGenerator[bool]:  # 期限を過ぎたか
     return now > due  # 期限より後ならTrue。
 ```
 
+- `@do`を付けた関数は、呼んでもすぐには動かず、手順を表すProgramを返します。
 - `GetTime`は「今の日時が欲しい」という依頼です。doeffでは、このような依頼をエフェクトと呼びます。
+- 依頼を受けて答える部品を、ハンドラと呼びます。
 - `yield GetTime()`で処理が止まります。外側のハンドラが日時を渡すと、続きが動きます。
 - 本番ではOSの時計のハンドラ、テストでは仮想の時計のハンドラを付けます。
 - 時計のハンドラは、doeffの部品doeff-timeが持ちます。
 - そのため、このプロジェクトのコードにはOSの時計を読む行がありません。
 
-仕組みは[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で詳しく説明しています。
+仕組みは、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で詳しく説明しています。
 
 ## 1つ目の検査:時計を固定して答えを試す
 
@@ -184,7 +187,7 @@ uv run --project ~/doeff doeff-adr verify-wiring  # 全てのADRがpytestに集�
 
 ## 決まりを破ると、どこで止まるか
 
-決まりを3通りに破り、どこで止まるかを試しました。2026-10-17に、doeffのmainの版`d1c67469d`で走らせた出力です。
+決まりを3通りに破り、どこで止まるかを試しました。2026年10月17日に、doeffのmain(コミット`9adc4f8e6`)で走らせた出力です。
 
 ```text
 # 1. billing.pyの「now = yield GetTime()」を「now = datetime.now(due.tzinfo)」に替えた
@@ -220,7 +223,7 @@ ERROR: doeff-adr wiring verification failed: executable ADR files exist but were
 
 ## doeffのリポジトリでの使い方
 
-doeff自身も、設計の判断をこの形で書いています。2026-10-17に、doeffのmainの版`d1c67469d`で数えた値です。
+doeff自身も、設計の判断をこの形で書いています。2026年10月17日に、doeffのmain(コミット`9adc4f8e6`)で数えた値です。
 
 | 項目 | 数 |
 | --- | --- |
@@ -230,7 +233,7 @@ doeff自身も、設計の判断をこの形で書いています。2026-10-17�
 | `defsemgrep`の検査 | 51個 |
 | `.semgrep.yaml`の規則 | 282個 |
 
-数は、doeffの台帳`docs/adr/enforcement-ledger.json`から読みました。この台帳は、ADRとSemgrepの規則から作る生成物です。検査が減ると、台帳の差分にその名前が残ります。最初のADRのファイルは、2026-07-01に入りました。
+数は、doeffの台帳`docs/adr/enforcement-ledger.json`から読みました。この台帳は、ADRとSemgrepの規則から作る生成物です。検査が減ると、台帳の差分にその名前が残ります。最初のADRのファイルは、2026年7月1日に入りました。
 
 ADRの規則が破れると、テストの失敗として出ます。失敗の出力は、人にもAIのエージェントにも同じ形で届きます。どのADRのどの規則かも、テストの名前と出力に出ます。
 
@@ -239,7 +242,7 @@ ADRの規則が破れると、テストの失敗として出ます。失敗の�
 - `law`の文と反例は記録です。文そのものは実行されません。守らせるのは`deftest`と`defsemgrep`です。
 - Semgrepは構文の形を見ます。文字列から関数を組み立てる呼び方などは見つけられません。
 - `semgrep`のコマンドが無い環境では、`defsemgrep`のテストは飛ばされず、失敗します。
-- Semgrepの起動には時間がかかります。2026-10-17に手元で測ると、`defsemgrep`のテスト1つに約10秒かかりました。
+- Semgrepの起動には時間がかかります。2026年10月17日に手元で測ると、`defsemgrep`のテスト1つに約10秒かかりました。
 - `deftest`を使うには、プロジェクトに`doeff_interpreter`のfixtureが要ります。
 - ADRはHyで書きます。プロジェクトの本体はPythonのままで構いません。
 
@@ -253,14 +256,17 @@ ADRの規則が破れると、テストの失敗として出ます。失敗の�
 
 最初は1件のADRと、1つの`deftest`から始められます。
 
-## 参考
+連載はこの10本目で一区切りです。1本目の目次から、ほかの悩みに合う回を選べます。
+
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
+
+## 参考資料・検証版
 
 - 完全な例:[ADR](examples/adr_as_test/docs/adr/adr_billing_clock.hy)・[業務のコード](examples/adr_as_test/billing.py)・[conftest.py](examples/adr_as_test/conftest.py)・[Semgrepの規則](examples/adr_as_test/.semgrep.yaml)・[pyproject.toml](examples/adr_as_test/pyproject.toml)
-- [doeff-adrのREADME](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-adr/README.md)
+- 完全な例は、doeffのリポジトリの中に置いています。そのためADRのファイル名を`adr_billing_clock.hy`にし、`pyproject.toml`で集めます。
+- [doeff-adrのREADME](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-adr/README.md)
 - 時計のハンドラ:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
 - Hyの書き方:[同じdoeffを、Hyでもっと組み立てやすく書く](doeff-hy.md)
 - 索引やリンターなどの道具:[書く・見つける・検査する](doeff-tooling.md)
 - AIのエージェントに規則を見せる仕組み:[AIに要る時だけ規則を見せるhook](doeff-hooks.md)
 - 前の回:[async/awaitがあるのに、なぜyieldか](doeff-coroutines.md)
-
-[メイン記事へ戻る](doeff-main.md)

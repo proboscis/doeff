@@ -65,13 +65,10 @@ def trading_loop(symbol: str, steps: int):  # 1分ごとに、steps回だけ判�
 
 ## 時刻・値段・注文を、外側への依頼にする
 
-コードに出てきた語を、先に整理します。
+`@do`を付けた関数は、呼んでもすぐには動かず、手順を表すProgramを返します。`yield`で外側へ渡す依頼をエフェクト(effect)、依頼に答える部品をハンドラ(handler)と呼びます。詳しくは1本目の[doeffとは？](doeff-main.md)で説明しています。
 
-- `@do`を付けた関数は、呼んでもすぐには動きません。手順を表す`Program`を返します。
-- `yield GetPrice("DEMO")`は、「今の値段を知りたい」という依頼を外側へ渡します。
-- このような依頼をエフェクト(effect)と呼びます。`Effect`を継承して自分で定義できます。
-- 依頼を受けて、何を返すかを決める部品をハンドラ(handler)と呼びます。
-- `GetTime`と`Delay`は、doeffの時間の部品doeff-timeが用意する依頼です。
+- `GetPrice`と`PlaceOrder`は、この記事で定義したエフェクトです。`Effect`を継承すれば、自分で定義できます。
+- `GetTime`と`Delay`は、doeffの時間の部品doeff-timeが用意するエフェクトです。
 - `Tell(値)`は、「この値を書き残したい」という依頼です。基本の部品doeff-core-effectsにあります。
 
 依頼ごとに、バックテストと本番のハンドラが違う答え方をします。
@@ -171,7 +168,7 @@ def test_no_record_before_start():  # 記録より前の時刻では、値段を
         backtest(history, 1, start=early)  # 08:59に値段を問う。
 ```
 
-記録の時刻は、その値段が分かった時刻にします。たとえば1分足に始まりの時刻を付けると、困った事が起きます。09:00の時点で、まだ分からない09:00台の終値を読めてしまうからです。
+記録の時刻は、その値段が分かった時刻にします。たとえば1分ごとの値段のまとめ(1分足)に、始まりの時刻を付けると困ります。09:00の時点で、まだ分からない09:00台の終値を読めてしまうからです。
 
 注文がどの値段で成立したかや手数料も、このハンドラの中で扱えます。この記事では、受付の番号を返すだけにしました。どう扱っても、処理の側は変わりません。
 
@@ -216,7 +213,7 @@ def run_live(broker: Broker, steps: int):  # 本番では、OSの時計と取引
 
 この記事では、実際の取引所には繋いでいません。値段と受付の番号を固定で返す偽物のクライアントを`run_live`に渡しました。2026年10月17日に1回だけ動かすと、表示は`[('17:38', 100.0, '受付A')]`でした。時刻はUTCです。全体で約60秒かかりました。
 
-非同期のSDKを使う時は、ハンドラの中で`Await`を使います。処理の側に`async def`は広がりません。詳しくは[関数の色の記事](doeff-color.md)で扱います。
+非同期のSDKを使う時は、ハンドラの中で`Await`を使います。処理の側に`async def`は広がりません。`Await`でのつなぎ方は、9本目の[async/awaitがあるのに、なぜyieldか](doeff-coroutines.md)で扱います。
 
 ## 1週間分を、1週間待たずに回す
 
@@ -231,12 +228,13 @@ def test_one_week_without_waiting():  # 1週間分の1分ごとの処理を、1�
     assert log[-1] == ("08:59", 100.0, "bt-0859")  # 最後の回は、7日後の09:00の1分前。
 ```
 
-仮想の時計は、動ける処理が無くなった時だけ、次に起きる予定の時刻へ飛びます。`Delay(60)`で待つ間に、実際の60秒は過ぎません。時計の進み方は、[20秒待つ処理を20秒待たずにテストする記事](doeff-time.md)で詳しく扱います。
+仮想の時計は、動ける処理が無くなった時だけ、次に起きる予定の時刻へ飛びます。`Delay(60)`で待つ間に、実際の60秒は過ぎません。時計の進み方は、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で詳しく扱いました。
 
 2026年10月17日に、このテストを同じ機械で3回走らせました。1回あたりの実時間は3.1〜3.8秒でした。同じ形で30日分(43,200回)を回すと、約17秒でした。ライブラリを読み込む時間は、この数に含みません。
 
 :::message
-この記事のコードは、2026年10月17日にdoeffのmain(コミット`d1c6746`)で確かめました。コードは上から順に、前のコードの続きとして動きます。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
+この記事のコードは、2026年10月17日にdoeffのmain(コミット`9adc4f8e6`)で確かめました。コードは上から順に、前のコードの続きとして動きます。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
+doeff-timeは、2026年10月17日の時点でPyPIにありません。GitHubのdoeffのリポジトリから入れてください。
 :::
 
 ## まとめ
@@ -247,19 +245,19 @@ def test_one_week_without_waiting():  # 1週間分の1分ごとの処理を、1�
 - 未来の値段を読ませない守りは、値段のハンドラの1か所に置けます。テストでも確かめられます。
 - 仮想の時計なら、1分ごとに動く処理の1週間分を数秒で回せます。
 
-依存を外側から渡す考え方は、[DIの代わりにeffect handlerの記事](doeff-di.md)で扱います。外部のAPIを通信せずにテストする方法は、[記録・再生とメモ化の記事](doeff-replay.md)にあります。`Tell`と状態の組み合わせは、[抽象の合成の記事](doeff-composition.md)で詳しく扱います。
+依存を外側から渡す考え方は、4本目の[DIの代わりにeffect handler](doeff-di.md)で扱いました。外部のAPIを通信せずにテストする方法は、前の6本目の[外部APIのテストを、通信せずに回す](doeff-replay.md)にあります。
 
 [全体を実行できる例](examples/backtest.py)もリポジトリにあります。
 
-[doeffでできること：メイン記事へ戻る](doeff-main.md)
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
 
 ## 参考資料・検証版
 
-導入方法は[公式README](https://github.com/proboscis/doeff#installation)にあります。以下は、この記事で確かめた版へのリンクです。公開パッケージの最新版で同じように動くかは、確かめていません。
+導入方法は[公式README](https://github.com/proboscis/doeff)の冒頭にあります。以下は、この記事で確かめた版へのリンクです。
 
-- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/d1c67469d14d7ab3ee185f5161f6965092213e9d)
-- [時刻と待ちの依頼と、3つの時計のハンドラ](https://github.com/proboscis/doeff/tree/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-time)
-- [Tell・state・writerの実装](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- [待っている処理の再開を受け持つスケジューラ](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
+- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
+- [時刻と待ちの依頼と、3つの時計のハンドラ](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-time)
+- [Tell・state・writerの実装](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/handlers.py)
+- [待っている処理の再開を受け持つスケジューラ](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
 - 前の回:[外部APIのテストを、通信せずに回す](doeff-replay.md)
 - 次の回:[AIに要る時だけ規則を見せるhook](doeff-hooks.md)

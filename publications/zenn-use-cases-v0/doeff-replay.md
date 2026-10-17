@@ -53,12 +53,12 @@ def test_fetch_text_without_network():  # pytestが集めるテスト関数。
 
 コードに出てきた語を、先に整理します。
 
-- `@do`を付けた関数は、呼んでもすぐには動きません。手順を表す`Program`を返します。
+- `@do`を付けた関数は、呼んでもすぐには動きません。手順を表すProgramを返します。
 - `yield HttpRequest("GET", url)`は、「このURLをGETしたい」という依頼を外側へ渡します。
-- このような依頼を、エフェクト（effect）と呼びます。
-- 依頼を受けて、どう答えるかを決める部品を、ハンドラ（handler）と呼びます。
-- `with_handlers`は、ハンドラを`Program`の外側に取り付けます。
-- `run`は、ハンドラを付けた`Program`を最後まで動かします。
+- このような依頼を、エフェクト(effect)と呼びます。
+- 依頼を受けて、どう答えるかを決める部品を、ハンドラ(handler)と呼びます。
+- `with_handlers`は、ハンドラをProgramの外側に取り付けます。
+- `run`は、ハンドラを付けたProgramを最後まで動かします。
 
 `fake_http`がしていることは、次の3つだけです。
 
@@ -142,7 +142,7 @@ def test_record_then_replay(tmp_path):  # tmp_pathは、pytestが用意する一
 ![記録にあれば、取得担当まで進まない](/images/zenn-use-cases-v0/generated/replay-flow.png)
 *記録の層は、まずSQLiteに記録があるかを尋ねます。記録があれば取得担当を通らず、無い時だけ取得担当が受けます。*
 
-記録は、同じファイルを開けば別の`run`からも読めます。2回目は`Program`とハンドラを作り直していますが、記録に当たります。別のプロセスから読んでも当たることを、2026年10月17日に確かめました。
+記録は、同じファイルを開けば別の`run`からも読めます。2回目はProgramとハンドラを作り直していますが、記録に当たります。別のプロセスから読んでも当たることを、2026年10月17日に確かめました。
 
 ## 記録する時だけ、本物のAPIへ通信する
 
@@ -167,7 +167,8 @@ text = run_recorded(fetch_text(url), database, http_production_handler())
 同じ日に、この記事のテストを含む完全な例の5つを、pytestで2回走らせました。2回とも5つ全部が通りました。pytestが測った関数の実行時間は、5つ合わせて約1.8秒と約2.9秒でした。同じ機械で、他の重い仕事も動いている時の値です。ライブラリを読み込む時間は、この数に含みません。
 
 :::message
-この記事のコードは、2026年10月17日にdoeffのmain（コミット`d1c67469d`）で確かめました。コードは上から順に、前のコードの続きとして動きます。`doeff`と`doeff-core-effects`、テストに`pytest`が要ります。
+この記事のコードは、2026年10月17日にdoeffのmain(コミット`9adc4f8e6`)で確かめました。コードは上から順に、前のコードの続きとして動きます。
+同じ日に、PyPIのdoeff 0.6.0の環境でも確かめました。入れ方は`pip install "doeff[http]" pytest`です。本物のAPIへ通信する枠を除く4つの枠が通りました。
 :::
 
 ## APIキーを、記録の鍵に入れない
@@ -225,21 +226,21 @@ def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに�
 - 記録に無い依頼は`reject_http`で、通信せずに失敗させます。
 - APIキーを記録の鍵から外せば、CIに本物の鍵を置かずに再生できます。
 
-待ちを含む処理のテストは、[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で扱いました。依存を外側から渡す話は、[DIの代わりにeffect handler](doeff-di.md)にあります。保存先を替える話は[メモ化の記事](doeff-memo.md)、組み合わせ方は[ハンドラの合成](doeff-handlers.md)にあります。
+待ちを含む処理のテストは、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で扱いました。依存を外側から渡す話は、4本目の[DIの代わりにeffect handler](doeff-di.md)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
 
-[doeffでできること：メイン記事へ戻る](doeff-main.md)
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
 
 ## 参考資料・検証版
 
-導入方法は[公式README](https://github.com/proboscis/doeff#installation)にあります。以下は、この記事で確かめた版へのリンクです。公開パッケージの最新版と同じかどうかは、確かめていません。
+導入方法は[公式README](https://github.com/proboscis/doeff)の冒頭にあります。以下は、この記事で確かめた版へのリンクです。
 
 - [実行できる完全な例](examples/http_replay.py)
-- [doeff本体（この記事で確かめた版）](https://github.com/proboscis/doeff/tree/d1c67469d14d7ab3ee185f5161f6965092213e9d)
-- [HttpRequestとHttpResponseの定義](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/http_effects.hy)
-- [記録の層（make_memo_rewriter）](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
-- [SQLiteへの保存](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py)
-- [標準の取得担当とhttp_fixture_handler](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
-- [unittest.mock（Python公式の説明）](https://docs.python.org/ja/3/library/unittest.mock.html)
-- [VCR.py（公式の説明）](https://vcrpy.readthedocs.io/)
+- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
+- [HttpRequestとHttpResponseの定義](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/http_effects.hy)
+- [記録の層(make_memo_rewriter)](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
+- [SQLiteへの保存](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py)
+- [標準の取得担当とhttp_fixture_handler](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
+- [unittest.mock(Python公式の説明)](https://docs.python.org/ja/3/library/unittest.mock.html)
+- [VCR.py(公式の説明)](https://vcrpy.readthedocs.io/)
 - 前の回:[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)
 - 次の回:[バックテストと本番で同じ処理を動かす](doeff-backtest.md)
