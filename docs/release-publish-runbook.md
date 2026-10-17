@@ -345,5 +345,6 @@ build だけに呼び(job `build-doeff-vm`)、組んだ wheel を自分の job `
 | `doeff-vm` の版と根の `doeff` の依存の下限 | `tests/test_doeff_vm_release_contract.py` |
 | 同じ版の check の振る舞い | `tools/check_pypi_unpublished.py`・`tests/test_check_pypi_unpublished.py` |
 | 核の 5 個を新しい環境に入れて README の例を走らせる道具と、その README の約束 | `tools/verify_release_install.py`・`tools/readme_examples.py`・`tests/test_readme_examples.py`(card ki-7746480f388d) |
+| `pip install doeff` が核の 4 個だけを入れ、その環境で README の Python の例が通り、Hy と HTTP の使い方が足す extra の名を言う事 | `tools/verify_core_install.py`(Python の版ごとに新しい venv で確かめる)・`tests/test_verify_core_install.py`・`tests/test_core_install_extras.py`(card ki-d6b421afac60) |
 | 範囲を核の 5 個にした決定 | 依頼書 lt-8D749ZHBM6VF2HQEDE2SDMNASF(2026-10-16)・取り組み doeff-publish の区切り ms-680daa3cc6a7 |
 | PyPI に在る版(2026-10-16 に PyPI の JSON の API で読んだ) | `doeff` 0.4.1・`doeff-vm` 0.2.0・`doeff-core-effects` 0.1.0・`doeff-agents` 0.1.1・`doeff-indexer` 0.1.3。`doeff-hy`・`doeff-hy-pytest`・`doeff-time` は無い |
