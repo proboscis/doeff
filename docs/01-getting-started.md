@@ -342,6 +342,58 @@ def right():
     return 42
 ```
 
+### "TypeError: state() got a program, not the initial state: state is a handler factory"
+
+`state`, `reader` and `lazy_ask` are handler factories. Call the factory first (with the
+initial values, if any), then apply the handler it returns to the program:
+
+```python excerpt
+from doeff import run
+from doeff_core_effects.handlers import state
+
+# Wrong - gives the program to the factory
+run(state(my_program()))  # Error!
+
+# Right - builds the handler, then applies it to the program
+run(state()(my_program()))
+run(state({"count": 0})(my_program()))
+```
+
+### "TypeError: writer() got no program: writer is a handler, not a handler factory"
+
+`writer`, `try_handler`, `local_handler`, `listen_handler` and `slog_handler` are handlers
+already. Apply them to the program without calling them first:
+
+```python excerpt
+from doeff import run
+from doeff_core_effects.handlers import state, writer
+
+# Wrong - calls writer as if it were a factory
+run(state()(writer()(my_program())))  # Error!
+
+# Right - applies writer to the program
+run(state()(writer(my_program())))
+```
+
+### "TypeError: fetch_handler takes (effect, k): it is a handler, not a function that builds a program"
+
+A function you write with the parameters `(effect, k)` handles effects; it does not take
+the program. Wrap it with `handler()` to get the handler that applies it to a program:
+
+```python excerpt
+from doeff import Resume, do, handler, run
+
+@do
+def fetch_handler(effect: Fetch, k):
+    return (yield Resume(k, f"got {effect.url}"))
+
+# Wrong - calls the handler with the program
+run(fetch_handler(my_program()))  # Error!
+
+# Right - wraps the handler, then applies it to the program
+run(handler(fetch_handler)(my_program()))
+```
+
 ### A second run still sees the state of the first run
 
 `run()` can run the same Program again; each run starts it fresh.

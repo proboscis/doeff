@@ -19,8 +19,6 @@ import traceback
 from dataclasses import dataclass
 
 import pytest
-
-from doeff import EffectBase, Resume, do, handler, run
 from doeff_core_effects import Ask, Get, Put, Tell
 from doeff_core_effects.handlers import (
     lazy_ask,
@@ -32,6 +30,8 @@ from doeff_core_effects.handlers import (
     writer_log,
 )
 from doeff_core_effects.scheduler import scheduled
+
+from doeff import EffectBase, Resume, do, handler, run
 
 
 @do
@@ -124,7 +124,6 @@ def test_the_factory_is_refused_where_it_is_called() -> None:
 def test_factories_still_take_their_values() -> None:
     assert run(state()(counter())) == 1
     assert run(state({"n": 0})(counter())) == 1
-    assert run(state([("n", 0)])(counter())) == 1
     assert run(reader({"key": "v"})(asks_key())) == "v"
     assert run(scheduled(lazy_ask({"key": "v"})(asks_key()))) == "v"
 

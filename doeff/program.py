@@ -134,6 +134,25 @@ def _keyword_cut_capacity(code: types.CodeType, bound: int, keywords: dict[str, 
     return None if code.co_flags & CO_VARARGS else code.co_argcount - bound
 
 
+class _NoProgram:
+    """The default of an installer's ``body``: the installer was called with no program."""
+
+    def __repr__(self) -> str:
+        return "<no program>"
+
+
+_NO_PROGRAM = _NoProgram()
+
+
+def _called_without_program(name: str) -> str:
+    """The message of the TypeError for an installer called with no program — a handler
+    called as if it were a handler factory (``writer()(prog())`` for ``writer(prog())``)."""
+    return (
+        f"{name}() got no program: {name} is a handler, not a handler factory. "
+        f"Apply it to the program itself: {name}(program), not {name}()(program)"
+    )
+
+
 def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHandler:
     """The installer for an unmarked handler value: a raw ``(effect, k)`` dispatcher.
 
@@ -143,6 +162,10 @@ def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHand
     refused here, when the stack is built, instead of failing with a
     ``TypeError`` at the first effect — which a test could miss when the
     failure lands outside the part it checks (agora-redesign #3724).
+
+    The installer called with no program — a handler taken for a factory,
+    ``writer()(prog())`` — is refused with a TypeError that names the call
+    meant, ``writer(prog())`` (only an identity check on the program's way in).
     """
     taken = _positional_capacity(raw_handler)
     if taken is not None and taken < 2:
@@ -154,7 +177,9 @@ def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHand
             f"{'' if taken == 1 else 's'})"
         )
 
-    def install(body: object) -> WithHandlerType:
+    def install(body: object = _NO_PROGRAM) -> WithHandlerType:
+        if body is _NO_PROGRAM:
+            raise TypeError(_called_without_program(install.__name__))
         return WithHandlerType(raw_handler, body)
 
     label = _handler_label(raw_handler)

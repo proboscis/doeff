@@ -205,9 +205,10 @@ fn generator_function_stream(
     tail_resume_lines: &[u32],
 ) -> Result<Value, doeff_vm_core::VMError> {
     let result = function.bind(py).call(args, kwargs).map_err(|err| {
-        doeff_vm_core::VMError::uncaught_exception(Value::Opaque(PyShared::new(
-            raised_object(py, &err),
-        )))
+        let err = explained_call_error(py, function.bind(py), args, kwargs, err);
+        doeff_vm_core::VMError::uncaught_exception(Value::Opaque(PyShared::new(raised_object(
+            py, &err,
+        ))))
     })?;
     // SAFETY: PyGen_Check only reads the object's type.
     let is_generator = unsafe { pyo3::ffi::PyGen_Check(result.as_ptr()) } != 0;
@@ -221,6 +222,42 @@ fn generator_function_stream(
     Ok(Value::Stream(doeff_vm_core::ir_stream::IRStreamRef::new(
         Box::new(stream),
     )))
+}
+
+static HANDLER_APPLIED_AS_A_PROGRAM: pyo3::sync::PyOnceLock<Py<PyAny>> =
+    pyo3::sync::PyOnceLock::new();
+
+/// `err`, the error calling a `@do` definition's `function` with `args` / `kwargs` raised —
+/// or, when `function` is an `(effect, k)` handler called with the program it was meant to
+/// handle (`fetch_handler(prog())`), a TypeError that says to wrap it with `handler()`
+/// (`doeff_vm._not_a_program.handler_applied_as_a_program`). Read only after the call failed.
+fn explained_call_error(
+    py: Python<'_>,
+    function: &Bound<'_, PyAny>,
+    args: &Bound<'_, pyo3::types::PyTuple>,
+    kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    err: PyErr,
+) -> PyErr {
+    if !err.is_instance_of::<PyTypeError>(py) {
+        return err;
+    }
+    let message = HANDLER_APPLIED_AS_A_PROGRAM
+        .get_or_try_init(py, || {
+            py.import("doeff_vm._not_a_program")
+                .and_then(|m| m.getattr("handler_applied_as_a_program"))
+                .map(Bound::unbind)
+        })
+        .and_then(|explain| {
+            explain
+                .bind(py)
+                .call1((function, args, kwargs))?
+                .extract::<Option<String>>()
+        });
+    match message {
+        Ok(Some(message)) => PyTypeError::new_err(message),
+        // Another mistake, or explaining it failed: the call's own error stands.
+        _ => err,
+    }
 }
 
 /// The VM-side callable a `Call` node becomes: `Apply` calls it and `Expand`
@@ -737,7 +774,7 @@ impl Started<'_> {
 
 /// The generator of `obj` when it is a `Call` of a definition whose body yields
 /// (calling it only builds the generator — no body code runs), the error calling it
-/// raised (its arguments did not bind), or None for anything else.
+/// raised (its arguments did not bind — `explained_call_error`), or None for anything else.
 fn started_call<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Option<PyResult<Started<'py>>> {
     let call = obj.cast::<crate::do_expr::PyCall>().ok()?;
     let call = call.get();
@@ -756,6 +793,15 @@ fn started_call<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Option<PyResul
             .function
             .bind(py)
             .call(call.args.bind(py), kwargs)
+            .map_err(|err| {
+                explained_call_error(
+                    py,
+                    definition.function.bind(py),
+                    call.args.bind(py),
+                    kwargs,
+                    err,
+                )
+            })
             .and_then(|result| {
                 // SAFETY: PyGen_Check only reads the object's type.
                 let generator = if unsafe { pyo3::ffi::PyGen_Check(result.as_ptr()) } != 0 {
