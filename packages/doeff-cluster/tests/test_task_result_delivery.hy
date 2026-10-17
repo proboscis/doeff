@@ -47,7 +47,7 @@
   (<- submitted tuple (answer (get placed 0) "POST" "/tasks"
                               {"program" (get placed 1) "revision" "r" "needs" ["net"] "name" "n" "leaseSeconds" 15.0} 100))
   (<- assigned tuple (answer (get submitted 0) "POST" "/heartbeat" alive 200))
-  (assert (= (. (get (. (get assigned 0) tasks) (get submitted 2 "task")) phase) "assigned") assigned)
+  (assert (= (. (.row (. (get assigned 0) tasks) (get submitted 2 "task")) phase) "assigned") assigned)
   #((get assigned 0) (get submitted 2 "task")))
 
 
@@ -89,12 +89,12 @@
   (val id (get placed 1))
   (<- stranger tuple (send-result (get placed 0) id "x" "R" 300))
   (assert (= (get stranger 1) 409) stranger)
-  (assert (= (. (get (. (get stranger 0) tasks) id) phase) "assigned") stranger)
+  (assert (= (. (.row (. (get stranger 0) tasks) id) phase) "assigned") stranger)
   (<- unknown tuple (send-result (get placed 0) "t-none" "w" "R" 300))
   (assert (= (get unknown 1) 404) unknown)
   (<- bare tuple (answer (get placed 0) "POST" (+ "/tasks/" id "/result") {"worker" "w"} 300))
   (assert (= (get bare 1) 400) bare)
-  (assert (= (. (get (. (get bare 0) tasks) id) phase) "assigned") bare))
+  (assert (= (. (.row (. (get bare 0) tasks) id) phase) "assigned") bare))
 
 
 (defk delivered [ctx transport]
@@ -114,8 +114,8 @@
   (setv coordinator.state (get placed 0))
   (val ctx (RunContext "http://coordinator" "w" "r" (+ "task/" id) :instance "w-p1"))
   (assert (! (delivered ctx (httpx.MockTransport coordinator.handle))))
-  (assert (= #((. (get coordinator.state.tasks id) phase) (. (get coordinator.state.tasks id) result)) #("finished" "R"))
-          (get coordinator.state.tasks id))
+  (assert (= #((. (.row coordinator.state.tasks id) phase) (. (.row coordinator.state.tasks id) result)) #("finished" "R"))
+          (.row coordinator.state.tasks id))
   (val stray (RunContext "http://coordinator" "w" "r" "task/t-none" :instance "w-p2"))
   (assert (not (! (delivered stray (httpx.MockTransport coordinator.handle)))))
   (assert (not (! (delivered ctx (httpx.MockTransport unreachable))))))

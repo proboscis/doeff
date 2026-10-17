@@ -63,7 +63,7 @@
 (defk task-row [coordinator key]
   {:pre [(: coordinator MemoryCoordinator) (: key str)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "coordinator が受けた key の task の行(1 つだけ在る)。"
-  (val rows (lfor t (.values coordinator.state.tasks) :if (= t.key key) t))
+  (val rows (lfor t (.rows coordinator.state.tasks) :if (= t.key key) t))
   (assert (= (len rows) 1) rows)
   (get rows 0))
 

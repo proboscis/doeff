@@ -8,13 +8,14 @@
 ;; - Rollout の進行中に Kubernetes を読む: 名のある読みの周期の後の刻。
 ;; どれも、返す刻の 1 ms 前では判断が状態を変えず、その刻で変える。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy.table [Table TableWrite table-of])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due liveness-due sweep-due note-liveness liveness-deadline])
 (import doeff_cluster.coordinator.core.api_policy [tick tick-due])
+(import tests.state_rows [table-from-rows])
 
 
 (val PYTHON #((ComponentVersion "python" "3")))
@@ -35,7 +36,7 @@
 (defk settled-state [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "now の place-tasks を当てた後の状態(待つ task は待ちの理由を書いた後)を求めるため — 期限の関数の前提の、落ち着いた状態。"
-  (<- tasks dict (place-tasks now state {} timing))
+  (<- tasks Table (place-tasks now state {} timing))
   (replace state :tasks tasks))
 
 
@@ -44,14 +45,14 @@
   (val timing (ClusterTiming))
   (<- w WorkerInfo (worker-at "w" 0 2))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
-  (<- state ClusterState (settled-state (ClusterState :workers {"w" w} :tasks {"run" run}) 5000 timing))
+  (<- state ClusterState (settled-state (ClusterState :workers {"w" w} :tasks (! (table-from-rows {"run" run}))) 5000 timing))
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.reassign-after-ms) 1))
   (assert (= due (DueAt :at expected)) due)
-  (<- before dict (place-tasks (- expected 1) state {} timing))
-  (<- at dict (place-tasks expected state {} timing))
+  (<- before Table (place-tasks (- expected 1) state {} timing))
+  (<- at Table (place-tasks expected state {} timing))
   (assert (= before state.tasks) "期限の 1 ms 前に変わった")
-  (assert (= (. (get at "run") phase) "failed") at))
+  (assert (= (. (.row at "run") phase) "failed") at))
 
 
 (deftest test-a-queued-task-with-a-live-capable-worker-is-due-when-that-worker-falls-silent
@@ -61,14 +62,14 @@
   (<- w WorkerInfo (worker-at "w" 0 1))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
   (<- wait TaskRecord (task-on "wait" "queued" None))
-  (<- state ClusterState (settled-state (ClusterState :workers {"w" w} :tasks {"run" run "wait" wait}) 5000 timing))
+  (<- state ClusterState (settled-state (ClusterState :workers {"w" w} :tasks (! (table-from-rows {"run" run "wait" wait}))) 5000 timing))
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.lease-ms) 1))
   (assert (= due (DueAt :at expected)) due)
-  (<- before dict (place-tasks (- expected 1) state {} timing))
-  (<- at dict (place-tasks expected state {} timing))
+  (<- before Table (place-tasks (- expected 1) state {} timing))
+  (<- at Table (place-tasks expected state {} timing))
   (assert (= before state.tasks) "期限の 1 ms 前に変わった")
-  (assert (!= (. (get at "wait") detail) (. (get state.tasks "wait") detail)) at))
+  (assert (!= (. (.row at "wait") detail) (. (.row state.tasks "wait") detail)) at))
 
 
 (deftest test-an-unsettled-state-is-due-now-not-one-millisecond-later
@@ -85,7 +86,7 @@
   (assert (= swept (DueNow)) swept)
   ;; task の期限が過ぎている(place-tasks をまだ当てていない)。
   (val lapsed (replace (! (task-on "call" "finished" "w")) :lease-until-ms 100 :finished-ms 50))
-  (<- tasked (| DueAt DueNow DueNever) (task-due (ClusterState :tasks {"call" lapsed}) 200 timing))
+  (<- tasked (| DueAt DueNow DueNever) (task-due (ClusterState :tasks (! (table-from-rows {"call" lapsed}))) 200 timing))
   (assert (= tasked (DueNow)) tasked))
 
 
@@ -106,9 +107,9 @@
   (<- silent WorkerInfo (worker-at "s" 0 1))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
   (<- wait TaskRecord (task-on "wait" "queued" None))
-  #(#("置ける worker が埋まっていて待つ task" (ClusterState :workers {"w" busy} :tasks {"run" run "wait" wait}))
-    #("能力の合う worker が黙っていて待つ task" (ClusterState :workers {"s" silent} :tasks {"wait" wait}))
-    #("置いた task と生きた担い手" (ClusterState :workers {"w" busy} :tasks {"run" run}))
+  #(#("置ける worker が埋まっていて待つ task" (ClusterState :workers {"w" busy} :tasks (! (table-from-rows {"run" run "wait" wait}))))
+    #("能力の合う worker が黙っていて待つ task" (ClusterState :workers {"s" silent} :tasks (! (table-from-rows {"wait" wait}))))
+    #("置いた task と生きた担い手" (ClusterState :workers {"w" busy} :tasks (! (table-from-rows {"run" run}))))
     #("何も無い状態" (ClusterState))))
 
 

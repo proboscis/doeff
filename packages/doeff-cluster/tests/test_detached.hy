@@ -702,7 +702,7 @@
   (val status (get reply-2 1))
   (val reply (get reply-2 2))
   (assert (= #(status (get reply "created")) #(200 True)))
-  (setv task (get s.tasks (get reply "task")))
+  (setv task (.row s.tasks (get reply "task")))
   (assert (= #(task.phase task.worker task.boot) #("assigned" "w" "b1")))
   (val reply-3 (! (beat s "w" 200)))
   (:= s (get reply-3 0))
@@ -725,10 +725,10 @@
   (val reply-7 (! (call s "GET" "/detached/job-2" 15000)))
   (:= s (get reply-7 0))   ; 呼び手の読みは lease に触らない
   (:= s (! (tick s 18000 T)))
-  (assert (= (. (get s.tasks id) phase) "assigned"))
+  (assert (= (. (.row s.tasks id) phase) "assigned"))
   (:= s (! (tick s 19001 T)))                            ; 担い手が沈黙した = worker の死
-  (assert (= (. (get s.tasks id) phase) "lost"))
-  (assert (in "lease" (. (get s.tasks id) detail))))
+  (assert (= (. (.row s.tasks id) phase) "lost"))
+  (assert (in "lease" (. (.row s.tasks id) detail))))
 
 
 (deftest test-a-detached-task-the-stopping-worker-had-started-is-lost-not-rerun-on-the-next-generation
@@ -745,18 +745,18 @@
   ;; 担い手の世代 b1 が子 process を起こし、行を報告する(走っている)。
   (val reply-c (! (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])))
   (:= s (get reply-c 0))
-  (assert (= (. (get s.tasks id) phase) "assigned"))
+  (assert (= (. (.row s.tasks id) phase) "assigned"))
   ;; b1 が止まり始め、子を止めた — 報告から行が消える。
   (val reply-d (! (beat s "w" 2000 :stopping True)))
   (:= s (get reply-d 0))
-  (setv task (get s.tasks id))
+  (setv task (.row s.tasks id))
   (assert (= task.phase "lost") #(task.phase task.detail))
   (assert (in "止まり始め" task.detail) task.detail)
   ;; 同じ名の次の世代 b2 には置かれない(返事の task にも載らない)。
   (val reply-e (! (beat s "w" 3000 :boot "b2")))
   (:= s (get reply-e 0))
   (assert (= (get (get reply-e 2) "tasks") []) (get reply-e 2))
-  (assert (= #((. (get s.tasks id) phase) (. (get s.tasks id) boot)) #("lost" "b1")) (get s.tasks id)))
+  (assert (= #((. (.row s.tasks id) phase) (. (.row s.tasks id) boot)) #("lost" "b1")) (.row s.tasks id)))
 
 
 (deftest test-a-detached-task-the-stopping-worker-never-started-waits-for-the-next-generation
@@ -769,10 +769,10 @@
   (setv id (get (get reply-b 2) "task"))
   (val reply-c (! (beat s "w" 1000 :stopping True)))
   (:= s (get reply-c 0))
-  (assert (= (. (get s.tasks id) phase) "queued") (get s.tasks id))
+  (assert (= (. (.row s.tasks id) phase) "queued") (.row s.tasks id))
   (val reply-d (! (beat s "w" 2000 :boot "b2")))
   (:= s (get reply-d 0))
-  (assert (= #((. (get s.tasks id) phase) (. (get s.tasks id) boot)) #("assigned" "b2")) (get s.tasks id)))
+  (assert (= #((. (.row s.tasks id) phase) (. (.row s.tasks id) boot)) #("assigned" "b2")) (.row s.tasks id)))
 
 
 (deftest test-a-restarted-worker-process-does-not-rerun-its-detached-tasks-and-they-are-lost-by-the-lease
@@ -789,13 +789,13 @@
   (:= s (get reply-10 0))
   (val body (get reply-10 2))
   (assert (= (get body "tasks") []))
-  (assert (= (. (get s.tasks id) phase) "assigned"))
+  (assert (= (. (.row s.tasks id) phase) "assigned"))
   ;; 新しい世代の heartbeat は旧い世代の task の lease を延ばさない。旧い世代が戻らなければ lease 切れ(10 秒)で lost。
   (val reply-11 (! (beat s "w" 9000 :boot "b2")))
   (:= s (get reply-11 0))
   (:= s (! (tick s 10001 T)))
-  (assert (= (. (get s.tasks id) phase) "lost"))
-  (assert (in "lease" (. (get s.tasks id) detail))))
+  (assert (= (. (.row s.tasks id) phase) "lost"))
+  (assert (in "lease" (. (.row s.tasks id) detail))))
 
 
 ;; --- 同じ名の 2 つの世代(2026-09-27 04:44 JST の実測) ------------------------------------
@@ -828,13 +828,13 @@
   (:= s (get reply-14 0))
   (val reply (get reply-14 2))
   (setv id (get reply "task"))
-  (assert (= (. (get s.tasks id) boot) "new"))
+  (assert (= (. (.row s.tasks id) boot) "new"))
   ;; 旧 Pod の drain の間、2 つの世代が交互に heartbeat を送る(実測は 2 秒ごと・ここは 50 ms ごと)。
   (val reply-15 (! (alternate s "w" 11010 ["old" "new" "old" "new" "old"])))
   (:= s (get reply-15 0))
   (val now (get reply-15 1))
   (val replies (get reply-15 2))
-  (setv task (get s.tasks id))
+  (setv task (.row s.tasks id))
   (assert (= #(task.phase task.boot) #("assigned" "new")) task.detail)
   ;; 新しい世代の返事にだけ載る(旧い世代は走らせない)。coordinator の見る世代は新しい世代のまま。
   (assert (= (lfor t (get replies "new" "tasks") (get t "id")) [id]))
@@ -844,7 +844,7 @@
   ;; 旧い世代の heartbeat は新しい世代の task の lease を延ばさず、新しい世代の heartbeat が延ばす。
   (val reply-16 (! (beat s "w" (+ now 50) :boot "new")))
   (:= s (get reply-16 0))
-  (assert (= (. (get s.tasks id) lease-until-ms) (+ now 50 (. (get s.tasks id) lease-ms)))))
+  (assert (= (. (.row s.tasks id) lease-until-ms) (+ now 50 (. (.row s.tasks id) lease-ms)))))
 
 
 (deftest test-a-task-on-the-old-generation-keeps-its-lease-and-result-while-the-old-generation-lives
@@ -861,7 +861,7 @@
   (val reply-20 (! (beat s "w" 6000 :boot "new")))
   (:= s (get reply-20 0))
   ;; 新しい世代が来ても、旧い世代に置いた task は lost にしない(旧い世代は drain の間まだ走らせている)。
-  (assert (= (. (get s.tasks done) phase) "assigned"))
+  (assert (= (. (.row s.tasks done) phase) "assigned"))
   ;; 旧い世代の heartbeat は自分の世代の task の lease を延ばし、その task だけを返事に載せる。
   (val reply-21 (! (beat s "w" 9000 :boot "old")))
   (:= s (get reply-21 0))
@@ -871,13 +871,13 @@
   (val reply-22 (! (beat s "w" 12000 :boot "old"
                        :statuses [{"name" (+ "task/" done) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-22 0))
-  (assert (= #((. (get s.tasks done) phase) (. (get s.tasks done) result)) #("finished" "R")))
+  (assert (= #((. (.row s.tasks done) phase) (. (.row s.tasks done) result)) #("finished" "R")))
   ;; 旧い世代が消えた(heartbeat が止まった)= lease 切れで lost。新しい世代の heartbeat は延ばさない。
   (val reply-23 (! (beat s "w" 20000 :boot "new")))
   (:= s (get reply-23 0))
   (:= s (! (tick s 22001 T)))
-  (assert (= (. (get s.tasks silent) phase) "lost"))
-  (assert (in "lease" (. (get s.tasks silent) detail)))
+  (assert (= (. (.row s.tasks silent) phase) "lost"))
+  (assert (in "lease" (. (.row s.tasks silent) detail)))
   ;; 新しい世代の生存はそのまま(旧い世代の沈黙は worker の沈黙ではない)。
   (assert (= (. (get s.workers "w") boot) "new")))
 
@@ -1082,7 +1082,7 @@
   (setv #(s id link spec) (! (placed-echo tmp-path ["cluster-net"])))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   (setv #(fresh _ _) (! (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows :provides ["cluster-net"])))
-  (assert (= (. (get fresh.tasks id) needs) (. (get s.tasks id) needs) #("cluster-net"))))
+  (assert (= (. (.row fresh.tasks id) needs) (. (.row s.tasks id) needs) #("cluster-net"))))
 
 
 (deftest test-an-empty-coordinator-adopts-a-finished-task-with-its-result [tmp-path]
@@ -1097,7 +1097,7 @@
   (val reply-55 (! (beat (ClusterState) "w" 5000 :boot-at 1000
                            :statuses [(| row {"phase" "code-failed" "detail" "boom"})])))
   (:= fresh (get reply-55 0))
-  (assert (= (. (get fresh.tasks id) phase) "code-failed")))
+  (assert (= (. (.row fresh.tasks id) phase) "code-failed")))
 
 
 (deftest test-a-coordinator-that-starts-without-a-store-does-not-reuse-task-ids [tmp-path]
@@ -1131,7 +1131,7 @@
   (setv broken (| row {"task" (dfor #(k v) (.items (get row "task")) :if (not-in k #("revision")) k v)}))
   (setv #(fresh status body) (! (beat (ClusterState) "w" 5000 :statuses [broken])))
   (assert (= #(status (get body "tasks")) #(200 [])) #(status body))
-  (assert (not-in id fresh.tasks)))
+  (assert (is (.row fresh.tasks id) None)))
 
 
 (defk amnesia-scenario [coordinator]
@@ -1171,9 +1171,9 @@
   (setv id (get reply "task"))
   (val reply-61 (! (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-61 0))
-  (assert (= (. (get s.tasks id) phase) "finished"))
+  (assert (= (. (.row s.tasks id) phase) "finished"))
   ;; 終わった行も置き場のキーを持つ(結果の保持の間は置き場の Program を参照し続け、行が消えたら掃除される)。
-  (assert (= (. (get s.tasks id) program) SAMPLE-TASK-PROGRAM))
+  (assert (= (. (.row s.tasks id) program) SAMPLE-TASK-PROGRAM))
   ;; 担い手が死んで lease の時間が過ぎても、結果はそのまま
   (:= s (! (tick s 60000 T)))
   (setv #(_ _ view) (! (call s "GET" "/detached/job-4" 60000)))
@@ -1219,7 +1219,7 @@
   (val reply-70 (! (put-detached s "job-8" 200)))
   (:= s (get reply-70 0))
   (val other (get reply-70 2))
-  (assert (= (. (get s.tasks (get other "task")) phase) "queued"))
+  (assert (= (. (.row s.tasks (get other "task")) phase) "queued"))
   (val reply-71 (! (beat s "w" 300 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-71 0))
   (val reply-72 (! (call s "GET" "/workers/w" 400)))
@@ -1250,7 +1250,7 @@
   (assert (get view "drain" "drained"))
   (val reply-78 (! (beat s "w" 5200)))
   (:= s (get reply-78 0))                   ; heartbeat は RemoteJob の lease を延ばさない
-  (assert (not-in id s.tasks)))
+  (assert (is (.row s.tasks id) None)))
 
 
 (deftest test-a-cut-off-worker-keeps-detached-tasks-and-stops-remote-job-tasks
@@ -1281,12 +1281,12 @@
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status reply.body.created) #(200 True)))
-  (setv task (get reply.state.tasks reply.body.id))
+  (setv task (.row reply.state.tasks reply.body.id))
   (assert (= task.needs #("cluster-net" "x-tool")))
   (assert (all (gfor item task.needs (isinstance item str))))
   (assert (= task.versions #((ComponentVersion "doeff" "1") (ComponentVersion "python" "3.14.0"))))
   (assert (all (gfor item task.versions (isinstance item ComponentVersion))))
-  (setv again (get (. (! (state-from-kv (! (full-kv reply.state)) 0)) tasks) task.id))
+  (setv again (.row (. (! (state-from-kv (! (full-kv reply.state)) 0)) tasks) task.id))
   (assert (= again task))
   (assert (= again.needs #("cluster-net" "x-tool"))))
 

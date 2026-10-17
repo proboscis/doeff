@@ -20,6 +20,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons handoff-beacons handoff-beacons-v2 gpu-only detaching relay])
 (import tests.test_local [crash-and-watch redeclare-and-watch watch-trainer watch-rows])
+(import tests.state_rows [table-from-rows])
 
 
 ;; --- 費用 ------------------------------------------------------------------------------------------------------------
@@ -48,8 +49,8 @@
     (val tasks (dfor i (range n) (.format "t{}" i)
                      (TaskRecord :id (.format "t{}" i) :name "job" :program None :revision "r1" :versions #() :needs #("k3s")
                                  :lease-ms 1000 :lease-until-ms 0 :submitted-ms 0)))
-    (val seeded (stamp empty (replace empty :tasks tasks) "test" 1000 timing))
-    (val moved (replace seeded :tasks (| seeded.tasks {"t7" (replace (get seeded.tasks "t7") :phase "assigned" :worker "w1")})))
+    (val seeded (stamp empty (replace empty :tasks (! (table-from-rows tasks))) "test" 1000 timing))
+    (val moved (replace seeded :tasks (! (table-from-rows (| (dict (.items seeded.tasks)) {"t7" (replace (.row seeded.tasks "t7") :phase "assigned" :worker "w1")})))))
     (setv (get BUILT 0) 0)
     (.setattr monkeypatch resource-policy "row_of" counted-row-of)
     (.setattr monkeypatch resource-policy "snapshot" refuse-whole-snapshot)

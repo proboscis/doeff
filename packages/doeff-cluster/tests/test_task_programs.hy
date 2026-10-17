@@ -100,7 +100,7 @@
       (assert (= (get refused 0) state) #(method extra)))
     (<- accepted tuple (call state method path (| base {"program" sha}) 10))
     (assert (= (get accepted 1) 200) #(method accepted))
-    (val row (next (gfor t (.values (. (get accepted 0) tasks)) t)))
+    (val row (next (gfor t (.rows (. (get accepted 0) tasks)) t)))
     (assert (= row.program sha) row)
     ;; task の版は置き場に Program と一緒に置いた版(本文は版を運ばない)。
     (assert (= (dict row.versions) V) row.versions)))
@@ -114,8 +114,8 @@
   (<- a tuple (call (get other 0) "POST" "/tasks" {"program" (get same 1) "revision" "r" "needs" ["net"]} 10))
   (<- b tuple (call (get a 0) "POST" "/tasks" {"program" (get other 1) "revision" "r" "needs" ["net"]} 10))
   (val tasks (. (get b 0) tasks))
-  (assert (= (. (get tasks (get a 2 "task")) phase) "assigned") tasks)
-  (val refused (get tasks (get b 2 "task")))
+  (assert (= (. (.row tasks (get a 2 "task")) phase) "assigned") tasks)
+  (val refused (.row tasks (get b 2 "task")))
   (assert (= refused.phase "failed") refused)
   (assert (in "python=3.14.0" refused.detail) refused.detail))
 
@@ -153,7 +153,7 @@
   (<- finished tuple (beat (get remote 0) 1000 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
   (<- alive tuple (beat (get finished 0) (- later 500) []))
   (val swept (! (tick (get alive 0) later T)))
-  (assert (= (. (get swept.tasks id) phase) "finished"))
+  (assert (= (. (.row swept.tasks id) phase) "finished"))
   (assert (in (get kept 1) swept.programs) "結果を保持している task の Program が消えた")
   (assert (in (get remote-program 1) swept.programs) "走っている task の Program が消えた")
   (assert (not-in (get loose 1) swept.programs) "参照の無い Program が猶予の後も残った")
@@ -180,7 +180,7 @@
   (val row (get (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))) 0))
   (assert (= (get row "task" "program") (get placed 1)) row)
   (<- fresh tuple (beat (ClusterState) 5000 [row]))
-  (assert (= (. (get (. (get fresh 0) tasks) id) program) (get placed 1)))
+  (assert (= (. (.row (. (get fresh 0) tasks) id) program) (get placed 1)))
   (assert (= (lfor t (get fresh 2 "tasks") (get t "program")) [(get placed 1)]) (get fresh 2))
   (assert (= (. (get fresh 0) programs) {}) "置き場を失った coordinator は Program を持たない")
   ;; 写しに置き場のキーが無い(blob を運んでいた旧い worker)・形の違う報告は引き取らない。
@@ -189,7 +189,7 @@
               (| (get row "task") {"blob" "QkxPQg=="} {"program" None})]]
     (<- refused tuple (beat (ClusterState) 5000 [(| row {"task" echo})]))
     (assert (= (get refused 2 "tasks") []) echo)
-    (assert (not-in id (. (get refused 0) tasks)) echo)))
+    (assert (is (.row (. (get refused 0) tasks) id) None) echo)))
 
 
 (deftest test-saved-task-rows-that-carry-a-blob-are-read-without-a-program
@@ -205,11 +205,11 @@
   (val old (| data {"tasks" (lfor t (get data "tasks")
                                   (| (dfor #(k v) (.items t) :if (!= k "program") k v) {"blob" "QkxPQg=="}))}))
   (for [again [(! (state-from-json old 100)) (! (state-from-kv (! (full-kv (! (state-from-json old 100)))) 100))]]
-    (val rows (dfor t (.values again.tasks) t.key t))
+    (val rows (dfor t (.rows again.tasks) t.key t))
     (assert (= (. (get rows "job-open") phase) "failed") (get rows "job-open"))
     (assert (in "旧い形の task(詰めた Program を行に持つ blob)" (. (get rows "job-open") detail)))
     (assert (= #((. (get rows "job-done") phase) (. (get rows "job-done") result)) #("finished" "R")) (get rows "job-done"))
-    (assert (= (lfor t (.values again.tasks) t.program) [None None]) again.tasks)))
+    (assert (= (lfor t (.rows again.tasks) t.program) [None None]) again.tasks)))
 
 
 ;; --- worker: task の Program も accept-programs の同じ仕組み ------------------------------------------------------

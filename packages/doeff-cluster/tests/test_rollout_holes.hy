@@ -18,6 +18,7 @@
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.test_rollout [Sim FORWARD DEP phases-of])
+(import tests.state_rows [table-from-rows])
 
 (setv T (ClusterTiming))
 
@@ -56,12 +57,12 @@
 
 (deftest test-task-leases-survive-coordinator-downtime
   (setv task (TaskRecord "t1" "n" "b" "r" #() #() 15000 (+ 1000 15000) 1000))
-  (setv state (ClusterState :tasks {"t1" task} :alive-ms 5000))
+  (setv state (ClusterState :tasks (! (table-from-rows {"t1" task})) :alive-ms 5000))
   (val reply-1 (resume-after-downtime state 65000))
   (var after (get reply-1 0))
   (var gap (get reply-1 1))
   (assert (= gap 60000))
-  (assert (= (. (get after.tasks "t1") lease-until-ms) (+ 16000 60000)))
+  (assert (= (. (.row after.tasks "t1") lease-until-ms) (+ 16000 60000)))
   ;; 生きていた時刻を知らない置き場(2026-09-25 より前)はずらさない
   (val reply-2 (resume-after-downtime (replace state :alive-ms 0) 65000))
   (:= after (get reply-2 0))

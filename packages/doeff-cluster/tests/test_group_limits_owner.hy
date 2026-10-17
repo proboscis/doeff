@@ -30,6 +30,7 @@
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_hy [system_form])
 (import tests.detached_rig [slow-add RIG-PROVIDES])
+(import tests.state_rows [table-from-rows])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (val LOCAL (frozenset RIG-PROVIDES))
@@ -219,7 +220,7 @@
   (val loud (replace plain :id "t2" :name "heavy" :key "k2" :priority 7
                            :environ #(#("SLOTS" "4") #("WEIGHT" "9"))))
   (val waiting (replace plain :id "t3" :key "k3" :phase "queued" :worker None))
-  (<- answer tuple (cluster_policy.placed-claims {"t1" plain "t2" loud "t3" waiting}))
+  (<- answer tuple (cluster_policy.placed-claims (! (table-from-rows {"t1" plain "t2" loud "t3" waiting}))))
   (assert (= (sorted answer :key repr) [#(claims "w1") #(claims "w1")]) answer))
 
 

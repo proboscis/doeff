@@ -77,7 +77,7 @@
   (val key (next (gfor k stored :if (.startswith k "task/") k)))
   ;; 直さなければ読める(task 1 つ)
   (<- good (state-from-kv stored NOW))
-  (assert (= (len good.tasks) 1) (sorted good.tasks))
+  (assert (= (.size good.tasks) 1) (sorted good.tasks))
   ;; 欄 lease_ms を欠いた行は読めない
   (val broken (dict stored))
   (setv (get broken key) (dfor #(k v) (.items (get stored key)) :if (!= k "lease_ms") k v))

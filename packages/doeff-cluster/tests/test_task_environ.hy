@@ -168,7 +168,7 @@
   (<- reply tuple (beat (get plain 0) 20))
   (val rows (dfor row (get reply 2 "tasks") (get row "id") row))
   (for [id [(get remote 2 "task") (get detached 2 "task")]]
-    (assert (= (. (get (. (get reply 0) tasks) id) environ) #(#(URL-NAME URL))))
+    (assert (= (. (.row (. (get reply 0) tasks) id) environ) #(#(URL-NAME URL))))
     (assert (= (get rows id "environ") {URL-NAME URL}) (get rows id)))
   (assert (not-in "environ" (get rows (get plain 2 "task"))) rows)
   (<- spec (task-spec (get rows (get remote 2 "task")) (/ tmp-path "tasks")))

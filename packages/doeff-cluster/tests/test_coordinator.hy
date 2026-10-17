@@ -142,7 +142,7 @@
   (<- reply-17 (submit s 10 :versions (| V {"python" "3.9.6"})))
   (:= s (get reply-17 0))
   (val id (get reply-17 1))
-  (setv task (get s.tasks id))
+  (setv task (.row s.tasks id))
   (assert (= task.phase "failed"))
   (assert (in "python=3.14.0" task.detail))
   (<- reply-18 (beat s "w" 20))
@@ -159,7 +159,7 @@
   (val id (get reply-20 1))
   (<- reply-21 (beat s "x" (+ T.reassign-after-ms 1000)))
   (:= s (get reply-21 0)) ; w は 0 から移し替えの期限を越えて沈黙、x だけが生きている
-  (setv task (get s.tasks id))
+  (setv task (.row s.tasks id))
   (assert (= task.phase "failed"))
   (assert (in "沈黙" task.detail)))
 

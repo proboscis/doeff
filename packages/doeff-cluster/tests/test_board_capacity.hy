@@ -13,6 +13,7 @@
                           board-usage board-tally-of value-size sweep-board] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
+(import tests.state_rows [table-from-rows])
 
 (setv T (ClusterTiming))
 
@@ -123,13 +124,13 @@
   ;; 終わっていない task が上限に達した盤(置ける worker はあるが空きが無い = 待っている)
   (val queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
                     (TaskRecord (.format "t{}" i) "n" SAMPLE-TASK-PROGRAM "r" #() #() 60000 999999999 0)))
-  (<- full tuple (program-placed (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1)
+  (<- full tuple (program-placed (ClusterState :tasks (! (table-from-rows queued)) :next-task (+ TASK-MAX-OPEN 1)
                                                :workers {"a" (WorkerInfo "a" #("net") 0 1000 :task-reserve 0)})
                                  {} :now 1000))
   (<- over (call (get full 0) "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= (get over 1) 429) over)
   ;; 終わった task は数えない
-  (val done (replace (get full 0) :tasks (dfor #(k t) (.items queued) k (replace t :phase "finished"))))
+  (val done (replace (get full 0) :tasks (! (table-from-rows (dfor #(k t) (.items queued) k (replace t :phase "finished"))))))
   (<- fits (call done "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= (get fits 1) 200) fits))
 
@@ -184,7 +185,7 @@
     (:= s after))
   (assert (= compared (len steps)))
   ;; 作り直したが中身の同じ部品(別の物で等しい)は、直列化して比べる側へ回り、差分に入らない。
-  (val rebuilt (replace s :tasks (dfor #(k t) (.items s.tasks) k (replace t))
+  (val rebuilt (replace s :tasks (! (table-from-rows (dfor #(k t) (.items s.tasks) k (replace t))))
                           :workers (dfor #(k w) (.items s.workers) k (replace w))))
   (assert (= (! (without-board (! (durable-delta s rebuilt)))) {}))
   ;; 中身の違う部品は差分に入る(同一性だけで黙って落とさない)。
