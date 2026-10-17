@@ -135,6 +135,12 @@ EXCLUDED: dict[str, str] = {
         "repo の外の dir で日次に走らせる — 根の下に置くと、根の conftest.py と pyproject.toml の pytest の設定の下でも走り、"
         "核の 4 個と pytest だけで通る事を確かめなくなる"
     ),
+    "examples/github_repo/": (
+        "README の命令 `pytest examples/github_repo` で利用者が走らせる、HTTP の API の例の pytest の検の例。母集団の根の下の "
+        "tests/test_examples_run.py::test_github_repo_example_tests_run_with_pytest_alone が、その命令の通りに pytest の外の "
+        "plugin 無しの子で日次に走らせる(例の dir の pytest.ini が rootdir を例の dir に留める)— 上の test_llm_agent.py と同じく、"
+        "根の下に置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
+    ),
     "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": (
         "fixture の module 名(テストではない)"
     ),
