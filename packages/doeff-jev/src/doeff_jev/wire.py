@@ -6,6 +6,9 @@
 - gateway = Vercel AI Gateway の evaluation-model v4(実測 2026-09-22)。種類は choice / score /
   boolean(noul は boolean に写す)、choice の criteria は record({id: 説明})、答えの確信度は
   providerMetadata.typesafe.confidence[名]、boolean の答えは probability、usage は camelCase。
+
+画像(Judge の assets)は direct だけが運ぶ: 本文の根の assets と見出し IMAGES_HEADER(https://docs.typesafe.ai/images.md —
+Jev 1.13 以降。見出しの無い要求を Jev は 400 で断る)。gateway の綴りは画像の形を持たないので、画像つきの Judge は JudgeError。
 """
 
 import hashlib
@@ -17,6 +20,9 @@ from typing import Any
 from doeff_system_one import Answer, Judge, JudgeError, Verdict
 
 from doeff_jev.target import JevTarget
+
+
+IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
 
 
 @dataclass(frozen=True)
@@ -43,6 +49,8 @@ def prepare(target: JevTarget, judge: Judge) -> Prepared:
     headers: dict[str, str] = {"content-type": "application/json"}
     if target.api_key:
         headers["authorization"] = "Bearer " + target.api_key
+    if judge.assets and target.wire == "gateway":
+        raise JudgeError("unsupported", "gateway の綴りは画像(assets)を運ばない — direct の宛先で問う")
     if target.wire == "gateway":
         headers.update({
             "ai-gateway-protocol-version": "0.0.1",
@@ -53,6 +61,9 @@ def prepare(target: JevTarget, judge: Judge) -> Prepared:
                                 "questions": {name: _gateway_question(q) for name, q in questions.items()}}
     else:
         body = {"state": judge.state, "questions": questions, "model": target.model}
+        if judge.assets:
+            body["assets"] = {name: asset.as_payload() for name, asset in judge.assets.items()}
+            headers[IMAGES_HEADER] = "true"
     return Prepared(url=target.base_url, headers=headers, body=body)
 
 
@@ -102,8 +113,12 @@ def parse(target: JevTarget, judge: Judge, status: int, text: str, *,
 
 def cache_key(target: JevTarget, judge: Judge) -> str:
     """答えの cache の鍵 — 宛先・model・state・問いの綴りで決まる(process をまたいで安定)。"""
-    material = json.dumps({
+    keyed: dict[str, Any] = {
         "url": target.base_url, "model": target.model, "state": judge.state,
         "questions": {name: q.as_payload() for name, q in judge.questions.items()},
-    }, ensure_ascii=False, sort_keys=True, default=repr).encode("utf-8")
+    }
+    # 画像は在る時だけ鍵に入れる(画像の無い判定の鍵は前と同じ — 覚えた答えを外さない)。
+    if judge.assets:
+        keyed["assets"] = {name: asset.as_payload() for name, asset in judge.assets.items()}
+    material = json.dumps(keyed, ensure_ascii=False, sort_keys=True, default=repr).encode("utf-8")
     return "jev:" + hashlib.sha256(material).hexdigest()
