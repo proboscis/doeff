@@ -26,6 +26,7 @@ Python の版ごと(既定 3.11 と 3.14+gil — uv は素の 3.14 に free-thre
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -225,7 +226,7 @@ def install(source: Source, python_request: str, place: Path) -> Installed:
     """place に新しい venv を作り、核の 5 個と README の例の道具を入れる。"""
     venv = place / "venv"
     _uv(["venv", "--no-project", "--python", python_request, str(venv)], place)
-    python = venv / "bin" / "python"
+    python = venv_command(venv, "python")
     match source:
         case FromWheels(directory=directory):
             _uv(
@@ -297,6 +298,23 @@ def example_environment(place: Path) -> dict[str, str]:
         if not name.startswith(("PYTHON", "DOEFF_")) and name != "VIRTUAL_ENV"
     }
     return {**kept, "DOEFF_HY_CODE_STORE": str(place / "hy-code-store")}
+
+
+def venv_command(venv: Path, name: str) -> Path:
+    """venv の中の命令 1 つ(python・doeff など)の path — Windows の venv は Scripts\\<名>.exe、他の機体は bin/<名>。"""
+    if os.name == "nt":
+        return venv / "Scripts" / f"{name}.exe"
+    return venv / "bin" / name
+
+
+def print_in_utf8() -> None:
+    """道具の印字(日本語)を UTF-8 で書く — Windows の pipe(CI の log)の既定は locale の符号(cp1252 など)で、日本語を書けずに落ちる。
+
+    子の process の環境は変えない: 子は利用者の機体と同じく locale の符号で書き、subprocess の text の読みも locale の符号で読む。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
 
 
 def _print_result(example: readme_examples.Example, failure: str | None) -> None:
@@ -442,6 +460,7 @@ def _work_dir(requested: Path | None) -> Path:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """入口 — 入れ方を決め、Python の版ごとに確かめ、表を印字して終了コードを返す。"""
+    print_in_utf8()
     arguments = _parse(argv)
     pythons = tuple(arguments.pythons or DEFAULT_PYTHONS)
     if shutil.which("uv") is None:
