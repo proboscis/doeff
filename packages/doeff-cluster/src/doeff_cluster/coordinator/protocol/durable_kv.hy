@@ -101,16 +101,25 @@
   (setv #^ (| (get Callable #([ClusterState (get tuple #(str ...))] Sources)) None) keyed None))
 
 
+(deff table-sources [#^ ClusterState state #^ str field row-source]  ; defk にできない: SourceGroup.build(durable-delta が Program の外の素の呼びで引く)の本体
+  {:pre [(: state ClusterState) (: field str) (: row-source Callable)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "Table 欄 field の全行から作った組の鍵(row-source は 表の鍵と行 → #(耐久の鍵 元の値の tuple 直列化の関数))。"
+  (dfor #(k row) (.items (getattr state field)) :setv made (row-source k row) (get made 0) (get made 1)))
+
+
+(deff table-sources-keyed [#^ ClusterState state #^ (get tuple #(str ...)) keys #^ str field row-source]  ; defk にできない: SourceGroup.keyed(同上)の本体
+  {:pre [(: state ClusterState) (: field str) (: keys tuple) (: row-source Callable)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "Table 欄 field の表の鍵 keys の行だけから作った組の鍵(無い鍵は飛ばす)。"
+  (setv table (getattr state field))
+  (dfor k keys :setv row (.row table k) :if (is-not row None) :setv made (row-source k row) (get made 0) (get made 1)))
+
+
 (defn #^ SourceGroup table-group [#^ str field #^ Callable row-source]
   "Table 欄 field の行 1 つが鍵 1 つを作る組(T7)— row-source は 表の鍵と行 → #(耐久の鍵 元の値の tuple 直列化の関数)。build は全行・
    keyed は与えた表の鍵の行(無い鍵は飛ばす)だけを同じ row-source で作るので、絞った答えは全部を作った答えの部分集合になる。"
-  (setv #^ (get tuple #(str ...)) fields #(field))
-  (defn #^ Sources build [#^ ClusterState state]
-    (dfor #(k row) (.items (getattr state field)) :setv made (row-source k row) (get made 0) (get made 1)))
-  (defn #^ Sources keyed [#^ ClusterState state #^ (get tuple #(str ...)) keys]
-    (setv table (getattr state field))
-    (dfor k keys :setv row (.row table k) :if (is-not row None) :setv made (row-source k row) (get made 0) (get made 1)))
-  (SourceGroup :fields fields :build build :keyed keyed))
+  (SourceGroup :fields #(field)
+               :build (partial table-sources :field field :row-source row-source)
+               :keyed (partial table-sources-keyed :field field :row-source row-source)))
 
 
 (val SOURCE-GROUPS
