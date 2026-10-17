@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -33,7 +34,7 @@ def _load(name: str) -> ModuleType:
     return module
 
 
-_load("readme_examples")
+readme_examples = _load("readme_examples")
 _load("verify_release_install")
 tool = _load("verify_core_install")
 
@@ -116,3 +117,115 @@ def test_an_extra_use_passes_only_when_its_last_line_installs_the_extra(
 
 def test_the_extra_uses_cover_every_extra_of_the_hint_table() -> None:
     assert {use.extra for use in tool.EXTRA_USES} == set(get_args(extra_hints.Extra))
+
+
+# 根の README の「Hy の module を Python から読む」節の形(card ki-909e814cc835 が足し、核の 4 個だけの venv で落ちた)。
+HY_MODULE_README = """\
+## Quick Start
+
+```python
+from doeff import run  # imported
+print(run)  # <function>
+```
+
+## Using a Hy module from Python
+
+```hy file=greet.hy
+(import doeff [Ask])
+```
+
+```python
+import hy  # first: registers Hy's import hook
+from greet import greet
+
+print(greet)  # <function>
+```
+
+```hy
+(print "hello")  ; hello
+```
+"""
+
+
+def _set_aside(readme: str) -> list[str]:
+    """README の囲みのうち、extra hy の例として走らせない物の言葉と始まりの行。"""
+    examples = readme_examples.fences(readme, "README")
+    return [f"{example.language}:{example.line}" for example in tool.hy_extra_examples(examples)]
+
+
+def test_a_python_example_that_imports_hy_is_set_aside_with_the_hy_ones() -> None:
+    # 14 行目の Python が `import hy` と Hy の module(greet)を読む物。Quick Start の Python は走らせる。
+    assert _set_aside(HY_MODULE_README) == ["hy:10", "python:14", "hy:21"]
+
+
+@pytest.mark.parametrize(
+    ("code", "set_aside"),
+    [
+        ("import hy\n", True),
+        ("import hy.models\n", True),
+        ("from hy import read\n", True),
+        ("from hy.models import Symbol\n", True),
+        ("import os, hy\n", True),
+        ("if True:\n    import hy\n", True),
+        ("from greet import greet\n", True),
+        ("import greet\n", True),
+        ("from doeff import run\n", False),
+        ("# import hy\nfrom doeff import run\n", False),
+        ('print("import hy")\n', False),
+        ("from . import hy\n", False),
+        ("import hyper\n", False),
+        ("import hy(\n", False),
+    ],
+    ids=[
+        "import",
+        "import-submodule",
+        "from-import",
+        "from-submodule",
+        "among-others",
+        "nested",
+        "from-hy-file-module",
+        "hy-file-module",
+        "core-only",
+        "comment",
+        "string",
+        "relative",
+        "other-package-with-hy-prefix",
+        "unreadable-code-is-run-and-fails-loudly",
+    ],
+)
+def test_a_python_example_is_set_aside_only_when_it_reads_a_hy_module(
+    code: str, set_aside: bool
+) -> None:
+    readme = f"```hy file=greet.hy\n(import doeff [Ask])\n```\n\n```python\n{code}```\n"
+    assert ("python:5" in _set_aside(readme)) is set_aside
+
+
+def test_a_python_example_reading_a_module_no_hy_file_writes_is_run() -> None:
+    # greet.hy を書く Hy の囲みが無ければ、`greet` は Hy の module と言えない(`from greet import greet` は他の file が書く)。
+    readme = "```python file=greet.py\ndef greet(): ...\nprint(1)  # 1\n```\n\n```python\nimport greet\n```\n"
+    assert _set_aside(readme) == []
+
+
+def test_examples_that_do_not_read_hy_are_left_to_run_in_the_core_only_venv() -> None:
+    readme = (
+        "```bash\npip install doeff\n```\n\n```python\nprint(1)  # 1\n```\n\n```toml\n[a]\n```\n"
+    )
+    assert _set_aside(readme) == []
+
+
+@pytest.mark.parametrize("package", tool.CHECKED_READMES)
+def test_every_python_example_that_imports_hy_in_a_checked_readme_is_set_aside(
+    package: str,
+) -> None:
+    # 道具が走らせる README(根と doeff-vm)の今の本文で、`import hy` を書く Python の囲みが核だけの venv の側に残らない事。
+    path = ROOT / ("README.md" if package == "doeff" else f"packages/{package}/README.md")
+    examples = readme_examples.fences(path.read_text(encoding="utf-8"), package)
+    set_aside = tool.hy_extra_examples(examples)
+    remaining_importing_hy = [
+        example.name
+        for example in examples
+        if example.language == "python"
+        and example not in set_aside
+        and re.search(r"^\s*(import hy\b|from hy\b)", example.code, re.MULTILINE)
+    ]
+    assert remaining_importing_hy == []

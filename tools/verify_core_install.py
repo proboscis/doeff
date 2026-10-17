@@ -15,7 +15,8 @@ Python の版ごとに:
    uv.lock でなく各 package の宣言から解く — PyPI から入れた利用者と同じ)。
 2. venv に入った配布物がちょうど核の 4 個で、doeff の 3 個はこの checkout から入った事を確かめる。
 3. doeff と doeff-vm の README(wheel の metadata の本文 — PyPI の頁が見せる物)の Python の例を、README ごとに新しい dir で上から
-   順に走らせ、注記と比べる(約束は tools/readme_examples.py)。Hy の囲みは extra hy の例なので走らせない。
+   順に走らせ、注記と比べる(約束は tools/readme_examples.py)。Hy の囲みと、Hy の module を読む Python の囲み(`import hy` を
+   書く物・README の Hy の file= の囲みが書く module を import する物)は extra hy の例なので走らせない。
 4. Hy か HTTP の extra が要る使い方(EXTRA_USES)を走らせ、1 で終わり、標準エラーの最後の行が `pip install "doeff[<extra>]"` で
    終わる事を確かめる。
 
@@ -25,6 +26,7 @@ Python の版ごとに:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import shutil
 import subprocess
@@ -65,6 +67,8 @@ CORE_FOUR = frozenset({*(package.name for package in FROM_CHECKOUT), "frozendict
 CHECKED_READMES = ("doeff", "doeff-vm")
 # README の囲みのうち、extra を足さないと走らない言葉(Hy の言語は extra hy が入れる)。
 NEEDS_AN_EXTRA = frozenset({"hy"})
+# Python が Hy の module を読むために import する、Hy の本体の名(`import hy` が Hy の import hook を置く)。
+HY_PACKAGE = "hy"
 DEFAULT_PYTHONS = ("3.11", "3.14+gil")
 # 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
 CHILD_TIMEOUT_SECONDS = 120
@@ -294,6 +298,41 @@ def check_readmes(installed: Installed, place: Path, timeout: float) -> list[str
     ]
 
 
+def _imported_modules(code: str) -> set[str]:
+    """Python の囲みが import する module の、最初の名の集まり(読めない囲みは空 — 走らせて落ちた所を見せる)。"""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    names = set[str]()
+    for node in ast.walk(tree):
+        match node:
+            case ast.Import(names=aliases):
+                names.update(alias.name for alias in aliases)
+            case ast.ImportFrom(module=str(module), level=0):
+                names.add(module)
+    return {name.split(".")[0] for name in names}
+
+
+def hy_extra_examples(examples: Sequence[readme_examples.Example]) -> list[readme_examples.Example]:
+    """README 1 つの囲みのうち、extra hy を足さないと走らない物 — Hy の言葉の囲みと、Hy の module を読む Python の囲み。
+
+    Python は `import hy` の後でだけ .hy を読めるので、`import hy` を書く囲みも、同じ README の Hy の file= の囲みが書く
+    module を import する囲みも、Hy の言語が無い核だけの venv では走らない。
+    """
+    hy_files = [example for example in examples if example.language in NEEDS_AN_EXTRA]
+    reads_hy = {HY_PACKAGE, *(Path(example.file).stem for example in hy_files if example.file)}
+    return [
+        example
+        for example in examples
+        if example in hy_files
+        or (
+            example.language == "python"
+            and not _imported_modules(example.code).isdisjoint(reads_hy)
+        )
+    ]
+
+
 def _check_readme(
     package: str,
     installed: Installed,
@@ -301,14 +340,15 @@ def _check_readme(
     timeout: float,
     environment: dict[str, str],
 ) -> list[str]:
-    """README 1 つの例(extra の要る言葉の囲みを除く)を、新しい dir で上から順に走らせ、落ちた事を言う文の列を返す。"""
-    examples = [
-        example
-        for example in readme_examples.fences(installed.readme(package), f"{package} の README")
-        if example.language not in NEEDS_AN_EXTRA
-    ]
+    """README 1 つの例(extra hy の要る囲みを除く)を、新しい dir で上から順に走らせ、落ちた事を言う文の列を返す。"""
+    fences = readme_examples.fences(installed.readme(package), f"{package} の README")
+    set_aside = hy_extra_examples(fences)
+    examples = [fence for fence in fences if fence not in set_aside]
     directory.mkdir(parents=True)
     print(f"  {package} の README の例", flush=True)
+    # 黙って検から外れないよう、extra hy の例として走らせない囲みの名を見せる。
+    for fence in set_aside:
+        print(f"    --  {fence.name}(extra hy の例 — 走らせない)", flush=True)
     failures = readme_examples.run_in_order(
         examples,
         directory,
