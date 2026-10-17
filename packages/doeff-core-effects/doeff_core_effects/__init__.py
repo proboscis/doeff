@@ -10,142 +10,78 @@ This package provides:
 import importlib as _importlib
 
 from doeff_core_effects import _hy_submodules  # noqa: F401 - installs the lazy Hy finder first
-from doeff_core_effects.effects import (
-    Absent,
-    Ask,
-    Await,
-    Get,
-    Listen,
-    Local,
-    MissingEnvKeyError,
-    Put,
-    Raise,
-    Resumption,
-    Slog,
-    SlogEffect,
-    Tell,
-    Try,
-    WriterTellEffect,
-    slog,
-)
-from doeff_core_effects.handlers import (
-    await_handler,
-    env_var_ask,
-    lazy_ask,
-    listen_handler,
-    local_handler,
-    reader,
-    slog_discard_handler,
-    slog_handler,
-    state,
-    try_handler,
-    writer,
-    writer_log,
-)
-from doeff_core_effects.outcomes import (  # absence and failure (ADR-DOE-CORE-EFFECTS-003)
-    RaiseCase,
-    absent_as,
-    maybe,
-    on_raise,
-    result,
-)
+
+# `X as X` makes each name public to type checkers: this package ships py.typed, where a plain import is not a
+# re-export (pyright: reportPrivateImportUsage, mypy --strict: attr-defined). `__all__` is not used (DOEFF021).
+from doeff_core_effects.effects import Absent as Absent
+from doeff_core_effects.effects import Ask as Ask
+from doeff_core_effects.effects import Await as Await
+from doeff_core_effects.effects import Get as Get
+from doeff_core_effects.effects import Listen as Listen
+from doeff_core_effects.effects import Local as Local
+from doeff_core_effects.effects import MissingEnvKeyError as MissingEnvKeyError
+from doeff_core_effects.effects import Put as Put
+from doeff_core_effects.effects import Raise as Raise
+from doeff_core_effects.effects import Resumption as Resumption
+from doeff_core_effects.effects import Slog as Slog
+from doeff_core_effects.effects import SlogEffect as SlogEffect
+from doeff_core_effects.effects import Tell as Tell
+from doeff_core_effects.effects import Try as Try
+from doeff_core_effects.effects import WriterTellEffect as WriterTellEffect
+from doeff_core_effects.effects import slog as slog
+from doeff_core_effects.handlers import await_handler as await_handler
+from doeff_core_effects.handlers import env_var_ask as env_var_ask
+from doeff_core_effects.handlers import lazy_ask as lazy_ask
+from doeff_core_effects.handlers import listen_handler as listen_handler
+from doeff_core_effects.handlers import local_handler as local_handler
+from doeff_core_effects.handlers import reader as reader
+from doeff_core_effects.handlers import slog_discard_handler as slog_discard_handler
+from doeff_core_effects.handlers import slog_handler as slog_handler
+from doeff_core_effects.handlers import state as state
+from doeff_core_effects.handlers import try_handler as try_handler
+from doeff_core_effects.handlers import writer as writer
+from doeff_core_effects.handlers import writer_log as writer_log
+
+# absence and failure (ADR-DOE-CORE-EFFECTS-003)
+from doeff_core_effects.outcomes import RaiseCase as RaiseCase
+from doeff_core_effects.outcomes import absent_as as absent_as
+from doeff_core_effects.outcomes import maybe as maybe
+from doeff_core_effects.outcomes import on_raise as on_raise
+from doeff_core_effects.outcomes import result as result
+from doeff_core_effects.scheduler import PRIORITY_HIGH as PRIORITY_HIGH
+from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
+from doeff_core_effects.scheduler import PRIORITY_NORMAL as PRIORITY_NORMAL
+from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
+from doeff_core_effects.scheduler import Cancel as Cancel
+from doeff_core_effects.scheduler import CompletePromise as CompletePromise
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import CreatePromise as CreatePromise
+from doeff_core_effects.scheduler import CreateSemaphore as CreateSemaphore
+from doeff_core_effects.scheduler import Discard as Discard
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.scheduler import (
-    PRIORITY_HIGH,
-    PRIORITY_IDLE,
-    PRIORITY_NORMAL,
-    AcquireSemaphore,
-    Cancel,
-    CompletePromise,
-    CreateExternalPromise,
-    CreatePromise,
-    CreateSemaphore,
-    Discard,
-    ExternalPromise,
-    ExternalPromiseCancelCallbackError,
-    FailPromise,
-    Future,
-    Gather,
-    Promise,
-    Race,
-    ReleaseSemaphore,
-    SchedulerDeadlockError,
-    Semaphore,
-    Spawn,
-    Task,
-    TaskCancelledError,
-    Wait,
-    scheduled,
+    ExternalPromiseCancelCallbackError as ExternalPromiseCancelCallbackError,
 )
+from doeff_core_effects.scheduler import FailPromise as FailPromise
+from doeff_core_effects.scheduler import Future as Future
+from doeff_core_effects.scheduler import Gather as Gather
+from doeff_core_effects.scheduler import Promise as Promise
+from doeff_core_effects.scheduler import Race as Race
+from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
+from doeff_core_effects.scheduler import SchedulerDeadlockError as SchedulerDeadlockError
+from doeff_core_effects.scheduler import Semaphore as Semaphore
+from doeff_core_effects.scheduler import Spawn as Spawn
+from doeff_core_effects.scheduler import Task as Task
+from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects.scheduler import scheduled as scheduled
 
 # isort: split
 # Last: the hint table reads the scheduler, which `import doeff` must finish loading first.
 from doeff_core_effects import unhandled_hints  # noqa: F401 - registers the hint lines with the VM
 
-# The names above are public to type checkers (py.typed packages do not re-export a plain import) and to
-# `from doeff_core_effects import *`. The lazy HTTP names below stay out: listing them would make a star import
-# load the Hy modules (and httpx), which a core-only install does not have.
-__all__ = [
-    "PRIORITY_HIGH",
-    "PRIORITY_IDLE",
-    "PRIORITY_NORMAL",
-    "Absent",
-    "AcquireSemaphore",
-    "Ask",
-    "Await",
-    "Cancel",
-    "CompletePromise",
-    "CreateExternalPromise",
-    "CreatePromise",
-    "CreateSemaphore",
-    "Discard",
-    "ExternalPromise",
-    "ExternalPromiseCancelCallbackError",
-    "FailPromise",
-    "Future",
-    "Gather",
-    "Get",
-    "Listen",
-    "Local",
-    "MissingEnvKeyError",
-    "Promise",
-    "Put",
-    "Race",
-    "Raise",
-    "RaiseCase",
-    "ReleaseSemaphore",
-    "Resumption",
-    "SchedulerDeadlockError",
-    "Semaphore",
-    "Slog",
-    "SlogEffect",
-    "Spawn",
-    "Task",
-    "TaskCancelledError",
-    "Tell",
-    "Try",
-    "Wait",
-    "WriterTellEffect",
-    "absent_as",
-    "await_handler",
-    "env_var_ask",
-    "lazy_ask",
-    "listen_handler",
-    "local_handler",
-    "maybe",
-    "on_raise",
-    "reader",
-    "result",
-    "scheduled",
-    "slog",
-    "slog_discard_handler",
-    "slog_handler",
-    "state",
-    "try_handler",
-    "writer",
-    "writer_log",
-]
-
-# HTTP effects and handlers live in Hy and pull in httpx; load them on first use.
+# HTTP effects and handlers live in Hy and pull in httpx; load them on first use. They are not re-exported with
+# `X as X` (that would import the Hy modules here), so type checkers see them through `__getattr__` as `object`.
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects.effects",
     "HttpRequest": "doeff_core_effects.effects",
