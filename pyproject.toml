@@ -340,6 +340,7 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 # 入門の道の外で、例を走る形に直した docs の page を書き換えた便は、その例を走らせて印字を注記と比べる検を払う
 # (card ki-8e45f740dc61)。page を足す時は、ここに行を 1 つ足す(検の CHECKED_PAGES はこの表から読む・card ki-7277427f6d8e)。
 # 秒は 27 秒(34 本・子 19 本・起動を含む壁時計・load 約 95 の下・2026-10-17 会話の Pod — 23 章と 24 章を足した後)。
+# 20 章を足した分は 18.6 秒(17 本・子 15 本・pytest の計・起動を除く・load 約 110 の下・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
@@ -376,6 +377,10 @@ tests = ["tests/test_docs_handler_endings.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "docs/18-effect-combinations.md"
+tests = ["tests/test_docs_page_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/20-why-effects-over-di.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 # 型の章(23 と 24)は、page の例の検に加え、写した例が pyright の strict と mypy の --strict で赤を出さない検を払う

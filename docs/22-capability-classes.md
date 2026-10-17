@@ -1,6 +1,6 @@
 # Capability Classes: Predicting Where Effects Pay Off
 
-[Why Effects Over DI](20-why-effects-over-di.md) argues the case for algebraic effects by example. This document gives the underlying theory: a classification that predicts — *before you write any code* — whether a proposed handler is trivial, cheap, powerful, or impossible in doeff. It was distilled from an evidence audit across every downstream project consuming doeff, including the places where adoption paid off and the places where it was pure ceremony.
+[Why Effects?](20-why-effects-over-di.md) argues the case for algebraic effects by example. This document gives the underlying theory: a classification that predicts — *before you write any code* — whether a proposed handler is trivial, cheap, powerful, or impossible in doeff. It was distilled from an evidence audit across every downstream project consuming doeff, including the places where adoption paid off and the places where it was pure ceremony.
 
 ## The Classification Axis
 

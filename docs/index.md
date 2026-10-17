@@ -21,16 +21,17 @@ components are listed separately under
 ### Getting Started
 
 1. **[Getting Started](01-getting-started.md)** - Installation, first program, basic concepts
-2. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
+2. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
+3. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
 
 ### Effect Types
 
-3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
-4. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
-5. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
-6. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
-7. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
-8. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
+4. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
+5. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
+6. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
+7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
+8. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
+9. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
 ### Integration & Advanced Topics
 
@@ -90,10 +91,6 @@ pip install doeff ./doeff/packages/doeff-time   # the paths the page names
 - **[Gemini Setup](gemini_client_setup.md)** - API key and ADC configuration
 - **[Gemini Cost Hook](gemini_cost_hook.md)** - Custom cost calculation
 - **[seedream.md](seedream.md)** - SeeDream integration
-
-### Design essay — `doeff-llm`, `doeff-image`, `doeff-secret`, `doeff-time`, `doeff-events`
-
-- **[Why Effects Over DI?](20-why-effects-over-di.md)** - Real-world use cases where algebraic effects beat dependency injection (the examples are sketches that predate 0.5.0)
 
 ## What is doeff?
 

@@ -267,7 +267,7 @@ Same strategy Program, different handler stacks:
 
 ## Why DI Falls Apart Here
 
-The [simulation case study in docs/20-why-effects-over-di.md](../../20-why-effects-over-di.md) explains this in depth. The summary:
+The [virtual-time section of docs/20-why-effects-over-di.md](../../20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) explains this with a runnable example. The summary:
 
 With DI, you'd need:
 ```python
