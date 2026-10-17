@@ -71,18 +71,18 @@ from doeff_events import (
 
 routes = (
     NoticeRoute(
-        event_type=TurnState,                              # Program が出す・待つ型
-        wire_name="turn-state",                            # 線の上の名(同じ channel に複数の型が乗る)
-        channel=lambda event: f"turn:{event.conversation}",  # 出す先の channel を出来事の値から決める
+        event_type=OrderState,                             # Program が出す・待つ型
+        wire_name="order-state",                           # 線の上の名(同じ channel に複数の型が乗る)
+        channel=lambda event: f"order:{event.order_id}",   # 出す先の channel を出来事の値から決める
         encode=lambda event: json.dumps(...),              # 型 → 文字列
-        decode=lambda body: TurnState(...),                # 文字列 → 型
+        decode=lambda body: OrderState(...),               # 文字列 → 型
         when_unsent=MarkGap(),                             # 届かなかった時: channel に欠けの印(Drop() = 持たない)
-        reads=("turn:c1",),                                # この process が受ける channel(出すだけなら ())
+        reads=("order:o1",),                               # この process が受ける channel(出すだけなら ())
     ),
 )
 
 # 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
-program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStarted, SourceResumed))(
+program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStarted, SourceResumed))(
     redis_notice_handler("redis://localhost:6379/0", timeout_seconds=2.0)(  # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
         broker_back_by_retry(retry_seconds=2.0)(             # Redis の戻りを、待っている間だけ繋がるかの試しで知る
             notice_events_handler("screen", routes, patience_seconds=900.0)(body)
