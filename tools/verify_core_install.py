@@ -86,7 +86,7 @@ MYPY = ("uv", "tool", "run", "mypy")
 PYRIGHT_RULES = frozenset({"reportPrivateImportUsage", "reportMissingImports"})
 # mypy の同じ目印(mypy は規則でなく文と [コード] で言う)。
 MYPY_MARKERS = ("does not explicitly export attribute", "[import-not-found]")
-# 核だけの venv で、package の頭から取れる名の見本(README の Quick Start が取る名)— Hy の module を読まずに結ばれている事の確かめ。
+# 核だけの venv で、package の頭から取れる名の見本(README と入門の章の例が取る名)— Hy の module を読まずに結ばれている事の確かめ。
 HEAD_NAMES = ("Ask", "Get", "Put", "Tell", "reader", "state", "writer")
 _MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?")
 # 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
