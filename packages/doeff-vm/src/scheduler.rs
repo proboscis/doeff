@@ -2308,10 +2308,15 @@ impl Locked<'_> {
         })
     }
 
-    fn register_pending_waiter(&mut self, wk: WKey, kind: GroupKind, owner: Owner, group: u64) {
+    /// A pending external promise also gets the PRIORITY_EXTERNAL_WAIT
+    /// placeholder, unless `park` (a Race with `priority=PRIORITY_IDLE`):
+    /// then the waiter still counts for the blocking drain
+    /// (`has_pending_external_waiters` reads `waiters`), but the sim clock
+    /// driver may run (agora-redesign #3054).
+    fn register_pending_waiter(&mut self, wk: WKey, kind: GroupKind, owner: Owner, group: u64, park: bool) {
         let external = wk.kind == WKind::Promise
             && self.promises.get(&wk.id).is_some_and(|p| p.external);
-        let claimed = if external {
+        let claimed = if external && !park {
             let claimed: Claim = Arc::new(AtomicBool::new(false));
             let priority = self.spec().priority_external_wait;
             self.enqueue(
@@ -2945,7 +2950,7 @@ impl Locked<'_> {
             },
         );
         for wk in pending {
-            self.register_pending_waiter(wk, GroupKind::Gather, current, group);
+            self.register_pending_waiter(wk, GroupKind::Gather, current, group, false);
         }
         Ok(Outcome::Ctrl(self.pick_next(py)?))
     }
@@ -2989,6 +2994,10 @@ impl Locked<'_> {
             }
         }
         if !pending.is_empty() {
+            // `priority` is the park mode (validated by Race itself): None or PRIORITY_IDLE.
+            let priority_obj = effect.getattr(pyo3::intern!(py, "priority"))?;
+            let park = !priority_obj.is_none()
+                && priority_obj.extract::<i64>()? == self.spec().priority_idle;
             let group = self.next_group;
             self.next_group += 1;
             self.groups.insert(
@@ -3002,7 +3011,7 @@ impl Locked<'_> {
                 },
             );
             for wk in pending {
-                self.register_pending_waiter(wk, GroupKind::Race, current, group);
+                self.register_pending_waiter(wk, GroupKind::Race, current, group, park);
             }
         }
         Ok(Outcome::Ctrl(self.pick_next(py)?))
