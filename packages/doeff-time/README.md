@@ -44,6 +44,6 @@ handler, so it cannot itself perform time effects.
 - Time advances to the earliest pending wake-up only when no normal-priority task is runnable, so a
   task woken at `t` reads `t` however many scheduler steps it takes.
 - Wake-ups at the same instant resume in the order they were requested; the trace is identical on
-  the Python and the Rust scheduler (`DOEFF_SCHEDULER=rust`).
+  the Rust scheduler (the default) and the Python one (`DOEFF_SCHEDULER=python`).
 - The run ends when the root program returns, even while daemon services are still sleeping.
 - `GetMonotonic()` answers the virtual clock's POSIX timestamp.

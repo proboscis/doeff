@@ -6,6 +6,8 @@
 - Steps after a window closed are not added to it: the same key opened again starts from zero.
 - Closing a key that is not open answers None.
 - No window open → the scheduler has no trace sink.
+- Only the Python scheduler emits the steps: ``DOEFF_SCHEDULER=python`` makes a plain
+  ``scheduled`` count, and a window opened inside the default (Rust) scheduler closes with none.
 
 These use the real thread clock, so the computation is kept to a few ms.
 """
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from doeff_core_effects.scheduler import Spawn, Wait, scheduled, scheduler_trace_sink
 from doeff_core_effects.scheduler_step_tally import step_tally_handler
 from doeff_core_effects.step_tally_effects import CloseStepTally, OpenStepTally, StepTally
@@ -160,3 +163,31 @@ def test_window_sums_steps_per_spawn_site() -> None:
     assert heaviest.cpu_ns >= STEPS * BUSY_CPU_MS * 1_000_000, tally.sites
     assert heaviest.site is not None and "test_step_tally.py" in heaviest.site, heaviest
     assert len({row.site for row in tally.sites}) == len(tally.sites), tally.sites
+
+
+@do
+def _busy_window():
+    yield OpenStepTally("busy")
+    yield _run_busy()
+    return (yield CloseStepTally("busy"))
+
+
+def test_python_scheduler_chosen_by_environment_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``DOEFF_SCHEDULER=python`` makes a plain ``scheduled`` the scheduler that emits the steps."""
+    monkeypatch.setenv("DOEFF_SCHEDULER", "python")
+    busy = run(scheduled(with_handlers([step_tally_handler], _busy_window())))
+    assert busy.cpu_ns >= STEPS * BUSY_CPU_MS * 1_000_000, busy
+    assert scheduler_trace_sink() is None
+
+
+def test_window_under_the_default_scheduler_counts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default (Rust) scheduler emits no trace events: a window opened inside it closes
+    with no steps, however much its tasks computed — a process that counts steps names the
+    Python scheduler (docs/25-rust-scheduler.md)."""
+    monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
+    busy = run(scheduled(with_handlers([step_tally_handler], _busy_window())))
+    assert busy.steps == 0, busy
+    assert busy.cpu_ns == 0, busy
+    assert scheduler_trace_sink() is None

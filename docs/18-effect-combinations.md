@@ -326,8 +326,8 @@ print(run(scheduled(state()(try_handler(test_law_9())))))  # (Err(ValueError('bo
 `run(program)` is the single entry point. `Spawn`, `Wait`, `Gather`, and `Race` are handled by
 `scheduled()`, so a program that uses `Gather` runs as `run(scheduled(...))`; without it, the
 first `Spawn` fails with `UnhandledEffect`. There is no separate sync or async runtime.
-`scheduled()` has a Python and a Rust implementation (chosen by its `implementation=` argument
-or by `DOEFF_SCHEDULER`), and both give the results shown in Laws 6–9.
+`scheduled()` has a Rust implementation (the default) and a Python one (chosen by its
+`implementation=` argument or by `DOEFF_SCHEDULER`), and both give the results shown in Laws 6–9.
 
 | Concern | Children that do not suspend | Children that suspend (`Await`, `Wait`, ...) |
 | --- | --- | --- |
