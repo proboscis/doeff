@@ -76,7 +76,8 @@ print(run(with_handlers([fixed_board], pick_cards())))  # ['B', 'E']と表示さ
 - `@do`を付けた関数は、呼ぶと実行の手順(`Program`)を返します。
 - `yield Ask(...)`や`yield ReadBoard()`は、外側への依頼です。この依頼をエフェクトと呼びます。
 - 依頼に答える部品をハンドラと呼びます。
-- ハンドラは`Resume`で値を渡して続きを動かし、担当外の依頼は`Pass`で外側へ渡します。
+- ハンドラは、届いた依頼`effect`と、止まった処理の続き`k`を受け取ります。
+- `Resume(k, 値)`で値を渡して続きを動かし、担当外の依頼は`Pass(effect, k)`で外側へ渡します。
 
 本物の配り役は、Pythonの上で動くLispのHyで、doeffを使って書いています。AIの利用枠の空きや、cardの優先度も見ます。それでも、骨はこの形です。
 
@@ -85,7 +86,7 @@ print(run(with_handlers([fixed_board], pick_cards())))  # ['B', 'E']と表示さ
 ![1人と最大50の会話の間に、3つの仕組みを置く](/images/zenn-use-cases-v0/generated/fleet-concept.png)
 *人は目標とcardを書き、判断が要る時だけ答えます。配り役が上限50まで会話を起こし、会話は自分の変更をマージキューへ載せます。*
 
-会話を並べる仕組みは、筆者が自分のために作ったagoraです。リポジトリは公開していません。画面から会話を開き、仕事を頼みます。会話1つは、Claude Codeを画面なしで動かす1つのsessionです。
+会話を並べる仕組みは、筆者が自分のために作ったagoraです。リポジトリは公開していません。画面から会話を開き、仕事を頼みます。会話1つは、Claude Codeを画面なしで動かす1つのセッションです。
 
 人と会話の間には、次の3つを置きました。
 
@@ -181,7 +182,7 @@ commitの内訳は、配り役などの裏の仕組みが8,713個、画面が3,1
 | 今の時刻と待ち | 実際の時計で待つ | 仮想の時計を進める |
 | 上限などの設定 | 宣言した設定を読む | シナリオで決めた値で上書きする |
 
-冒頭の`pick_cards`を、仮想の時間の中で回してみます。まず、配り役の周期と会話の仕事を書きます。
+冒頭のコードの続きとして、`pick_cards`を仮想の時間の中で回してみます。まず、配り役の周期と会話の仕事を書きます。
 
 ```python
 from doeff_core_effects.scheduler import Gather, Spawn, scheduled  # 会話を別のタスクとして始め、終わりを待つ。
@@ -262,7 +263,7 @@ print(run(scheduled(program)), peak[0])  # ([(0, 'B'), (0, 'D'), (30, 'E'), (40,
 
 2026年10月17日に走らせると、90分の流れが約1秒で終わりました。この秒数は、ライブラリを読み込む時間を含みます。
 
-本物の模擬も、同じ考えで作りました。本番の組み立てを書き換えず、記録・イベント・時計のハンドラだけを替えます。そして、1つのprocessで決まった順に動かし、次の約束を確かめます。
+本物の模擬も、同じ考えで作りました。本番の組み立てを書き換えず、記録・イベント・時計のハンドラだけを替えます。そして、1つのプロセスで決まった順に動かし、次の約束を確かめます。
 
 - 配るのは、配れる条件を満たしたcardだけです。
 - 1度に配る数は、空きの数までです。
@@ -289,16 +290,20 @@ print(run(scheduled(program)), peak[0])  # ([(0, 'B'), (0, 'D'), (30, 'E'), (40,
 
 AIの起動と結果待ちを処理として書く話は、[AIエージェントの起動と結果待ち](doeff-agents.md)にあります。
 
-[doeffでできること：メイン記事へ戻る](doeff-main.md)
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
 
-:::message
-この記事のコードは、2026年10月17日にdoeffのmain(commit `948aeff`)で確かめました。Pythonの3つの枠は、上から順に前の枠の続きとして動きます。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
-:::
+## 参考
 
-## 参考資料・検証版
+この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain(commit `9adc4f8`)でも、同じく動きました。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
 
-- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/948aeff47)
-- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/948aeff47/packages/doeff-time)
+doeff-timeはPyPIに無いので、GitHubから入れます。`--no-sources`を付けないと、doeff本体もGitHubから入り、Rustのビルドが要ります。完全な例を`fleet_dispatch.py`として保存し、次のコマンドで実行します。
+
+```bash
+uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time" python fleet_dispatch.py  # doeff本体はPyPI、doeff-timeだけGitHubから入れて、完全な例を実行する。
+```
+
+- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
+- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-time)
 - [この記事のコードをまとめた完全な例](examples/fleet_dispatch.py)
 - 前の回:[DIの代わりにeffect handler](doeff-di.md)
 - 次の回:[外部APIのテストを、通信せずに回す](doeff-replay.md)
