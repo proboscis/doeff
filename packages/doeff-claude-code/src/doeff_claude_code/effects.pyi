@@ -175,6 +175,7 @@ class ClaudeExportSession(EffectBase[ExportSessionOutcome]):
     home: ClaudeHome
     cwd: str
     session_id: str
+    tail_bytes: int | None = None
 
     def __post_init__(self) -> None:
         ...
