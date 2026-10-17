@@ -1,5 +1,7 @@
+import importlib
 import importlib.util
 import os
+import pkgutil
 import resource
 import shutil
 import subprocess
@@ -938,6 +940,26 @@ def bytecode_left_by_the_run(root: Path, since: float, startup: Sequence[Path]) 
     return sorted({*bytecode_written_since(root, since, skip=environments), *written_at_startup})
 
 
+def _import_bytecode_guard_modules() -> None:
+    """Import every module of doeff_hy_bytecode_guard, under the pin, before the tests start.
+
+    The .pth imports the package at every start of the interpreter, but some of its modules are
+    imported only when a Hy source is first compiled or read (macro_use, expansion_trees,
+    macro_hints — to keep the start cheap).  A test that turns bytecode writing on in this process
+    (``monkeypatch.setattr(sys, "dont_write_bytecode", False)``) and imports a Hy module then
+    imported such a module for the first time: its bytecode was written beside its source in the
+    checkout, and a test that counts the compiles of an import counted it as well (daily run
+    2026-10-17: expansion_trees from 93e96c2e7 and macro_hints from bda0bc470, under the names of
+    doeff-hy-pytest's and doeff-hy's last tests — card ki-6dde100393cd).  Imported here, they are
+    already loaded, so no test is the first to import them.  The 13 modules take about 0.2 s and
+    import neither hy nor doeff.
+    """
+    import doeff_hy_bytecode_guard
+
+    for module in pkgutil.iter_modules(doeff_hy_bytecode_guard.__path__, "doeff_hy_bytecode_guard."):
+        importlib.import_module(module.name)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _bytecode_settings_pinned(request: pytest.FixtureRequest):
     started = time.time()
@@ -951,6 +973,7 @@ def _bytecode_settings_pinned(request: pytest.FixtureRequest):
         patch.setattr(sys, "pycache_prefix", None)
         patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
         patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+        _import_bytecode_guard_modules()
         yield
         at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
     assert at_the_end == (True, None), (
