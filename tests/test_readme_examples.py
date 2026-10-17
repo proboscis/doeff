@@ -35,8 +35,14 @@ CORE_READMES = {
     "doeff-hy": ROOT / "packages" / "doeff-hy" / "README.md",
     "doeff-hy-pytest": ROOT / "packages" / "doeff-hy-pytest" / "README.md",
 }
-# README が保つ入口の例の節(頭の 2 つ = card ki-889cc73b231a・並行 = card ki-68cd4c8effcd)。節を消す・名を変える時は、ここも直す。
-KEPT_SECTIONS = ("A 30-second example", "One handler, every effect", "Scheduler and Concurrency")
+# README が保つ入口の例の節(頭の 2 つ = card ki-889cc73b231a・他の書き方との比べの Before / After = card ki-94411a991047・
+# 並行 = card ki-68cd4c8effcd)。節を消す・名を変える時は、ここも直す。
+KEPT_SECTIONS = (
+    "A 30-second example",
+    "One handler, every effect",
+    "Before and after: fakes in a test",
+    "Scheduler and Concurrency",
+)
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1〜2 秒(多くは doeff と hy の import)。
 CHILD_DEADLINE_SECONDS = 50
 
