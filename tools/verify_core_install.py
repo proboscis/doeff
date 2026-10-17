@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -207,6 +209,27 @@ class Installed:
         """CHECKED_READMES の配布物 1 つの README。"""
         return self.readmes[CHECKED_READMES.index(package)]
 
+    def command(self, name: str) -> Path:
+        """venv の中の命令 1 つ(doeff など)— interpreter と同じ dir(Windows は Scripts・他の機体は bin)に在る。"""
+        return venv_command(self.python.parent.parent, name)
+
+
+def venv_command(venv: Path, name: str) -> Path:
+    """venv の中の命令 1 つ(python・doeff など)の path — Windows の venv は Scripts\\<名>.exe、他の機体は bin/<名>。"""
+    if os.name == "nt":
+        return venv / "Scripts" / f"{name}.exe"
+    return venv / "bin" / name
+
+
+def print_in_utf8() -> None:
+    """道具の印字(日本語)を UTF-8 で書く — Windows の pipe(CI の log)の既定は locale の符号(cp1252 など)で、日本語を書けずに落ちる。
+
+    子の process の環境は変えない: 子は利用者の機体と同じく locale の符号で書き、subprocess の text の読みも locale の符号で読む。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
+
 
 def _uv(arguments: Sequence[str], cwd: Path) -> None:
     """uv を 1 回呼ぶ(落ちたら CalledProcessError — 道具が使えない事として終了コード 2 になる)。"""
@@ -236,7 +259,7 @@ def install(python_request: str, place: Path) -> Installed:
     """place に新しい venv を作り、この checkout の doeff の 3 個を extra 無しで入れる。"""
     venv = place / "venv"
     _uv(["venv", "--no-project", "--python", python_request, str(venv)], place)
-    python = venv / "bin" / "python"
+    python = venv_command(venv, "python")
     # uv は path から組んだ wheel を pyproject.toml が変わるまで使い回すので、今の checkout から組み直させる。
     refresh = [part for package in FROM_CHECKOUT for part in ("--refresh-package", package.name)]
     paths = [str(REPO / package.directory) for package in FROM_CHECKOUT]
@@ -618,7 +641,7 @@ def _run_extra_use(
     """使い方 1 つを venv の命令で走らせて結末を印字し、足す extra の名を言わなかった事を言う文を返す(言えば None)。"""
     try:
         result = subprocess.run(
-            [str(installed.python.parent / use.program), *use.arguments],
+            [str(installed.command(use.program)), *use.arguments],
             cwd=directory,
             env=environment,
             capture_output=True,
@@ -683,6 +706,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """入口 — Python の版ごとに確かめ、結末を印字して終了コードを返す。"""
+    print_in_utf8()
     arguments = _parse(argv)
     pythons = tuple(arguments.pythons or DEFAULT_PYTHONS)
     if shutil.which("uv") is None:
