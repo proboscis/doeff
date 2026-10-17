@@ -49,7 +49,7 @@ impl Registry {
             }
         };
         // 1 鍵 1 file の dir は数百 file になる — 冷えた作業木で 1 file ごとに disk を待たないよう、読みを重ねてから file の順に判じる。
-        let texts = bulk_read::fan_out(&files, |file| std::fs::read_to_string(file));
+        let texts = crate::timing::timed("registry.read", || bulk_read::fan_out(&files, |file| std::fs::read_to_string(file)));
         for (file, text) in files.iter().zip(texts) {
             match text {
                 Ok(text) => match text.lines().next().map(str::trim).filter(|line| !line.is_empty()) {
