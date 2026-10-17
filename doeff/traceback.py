@@ -18,7 +18,7 @@ _INTERNAL_PATHS = ("/doeff_core_effects/", "/doeff/do.py", "/doeff/run.py", "/do
 
 
 def format_default(exception):
-    """Render doeff traceback from __doeff_traceback__."""
+    """Render doeff traceback from __doeff_traceback__ (None when no entry is left to show)."""
     tb_data = getattr(exception, "__doeff_traceback__", None)
     if not tb_data:
         return None
@@ -54,6 +54,11 @@ def format_default(exception):
             func_name, source_file, source_line = entry[0], entry[1], int(entry[2])
             if not _is_internal(source_file):
                 lines.append(_render_frame(func_name, source_file, source_line))
+
+    if len(lines) == 1:
+        # Every entry was doeff's own code: a heading with nothing under it only hides the
+        # error among empty lines above Python's own traceback.
+        return None
 
     exc_type = type(exception).__name__
     exc_msg = str(exception)
