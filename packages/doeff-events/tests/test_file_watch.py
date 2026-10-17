@@ -120,6 +120,23 @@ def test_memory_watch_close_wakes_a_waiting_program_with_no_changes() -> None:
     assert run_scheduled(memory_file_watch_handler(files)(program())) == (FilesChanged(()), ())
 
 
+def test_memory_watch_sees_only_the_directorys_own_entries() -> None:
+    files = MemoryFiles()
+
+    @do
+    def program() -> "EffectGenerator[object]":
+        watch = yield WatchFiles("/work/out")
+        yield announce_file_change(files, "/work/out/below/b.log")
+        yield announce_file_change(files, "/work/out/a.log")
+        changed = yield NextFileChanges(watch)
+        yield CloseFileWatch(watch)
+        return changed
+
+    assert run_scheduled(memory_file_watch_handler(files)(program())) == FilesChanged(
+        ("/work/out/a.log",)
+    )
+
+
 def test_memory_watch_refuses_a_directory_the_test_did_not_create() -> None:
     files = MemoryFiles(missing=("/gone",))
 
@@ -149,6 +166,32 @@ def test_os_watch_sees_a_file_written_after_the_answer(tmp_path: Path) -> None:
     changed = run_scheduled(os_file_watch_handler()(program()))
     assert isinstance(changed, FilesChanged), changed
     assert str(target) in changed.paths, changed
+
+
+def test_os_watch_sees_only_the_directorys_own_entries(tmp_path: Path) -> None:
+    """The watch does not walk below the directory: a file written in a subdirectory is not seen, a file written in the
+    directory itself is. Before the fix the watch was recursive, and starting it walked every entry on the scheduler's
+    thread (on zeus 39 s for 4,217 entries of a tool-stream directory, and no end within 260 s for 95,900)."""
+    directory = tmp_path / "tool-stream"
+    below = directory / "below"
+    below.mkdir(parents=True)
+    hidden = below / "2-8.log"
+    target = directory / "1-7.log"
+
+    @do
+    def program() -> "EffectGenerator[object]":
+        watch = yield WatchFiles(str(directory))
+        assert isinstance(watch, FileWatch), watch
+        hidden.write_text("below\n", encoding="utf-8")
+        target.write_text("line 1\n", encoding="utf-8")
+        changed = yield NextFileChanges(watch)
+        yield CloseFileWatch(watch)
+        return changed
+
+    changed = run_scheduled(os_file_watch_handler()(program()))
+    assert isinstance(changed, FilesChanged), changed
+    assert str(target) in changed.paths, changed
+    assert str(hidden) not in changed.paths, changed
 
 
 class _OverlapNotifier:

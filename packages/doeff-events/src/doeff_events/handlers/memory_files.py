@@ -3,13 +3,14 @@ environments (#3977).
 
 ``MemoryFiles`` holds the watches; nothing touches a disk. Whoever stands for a writer (a test, an emulated agent
 environment) calls ``announce_file_change(files, path)`` when it writes a file, and every watch whose directory
-holds the path sees it. A blocked wait is a scheduler promise (``CreatePromise`` / ``Wait``), like
+holds the path directly sees it. A blocked wait is a scheduler promise (``CreatePromise`` / ``Wait``), like
 ``memory_notice_handler``, so a virtual clock and the scheduler's dead-end detection keep working.
 
 A directory named in ``MemoryFiles(missing=...)`` cannot be watched (``WatchRefused``) — the stand-in for a
 directory that does not exist.
 """
 
+import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, final
 
@@ -17,7 +18,14 @@ from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise
 
 from doeff import K, Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_events.effects.files import CloseFileWatch, FilesChanged, FileWatch, NextFileChanges, WatchFiles, WatchRefused
+from doeff_events.effects.files import (
+    CloseFileWatch,
+    FilesChanged,
+    FileWatch,
+    NextFileChanges,
+    WatchFiles,
+    WatchRefused,
+)
 
 if TYPE_CHECKING:
     from doeff import EffectGenerator
@@ -48,8 +56,10 @@ class _Watched:
 
 
 def _within(directory: str, path: str) -> bool:
-    """Whether ``path`` is ``directory`` itself or below it."""
-    return path == directory or path.startswith(directory.rstrip("/") + "/")
+    """Whether ``path`` is ``directory`` itself or an entry directly in it (a watch does not see below its
+    subdirectories — ``WatchFiles``)."""
+    folder = directory.rstrip("/")
+    return path == directory or posixpath.dirname(path) == folder
 
 
 @final

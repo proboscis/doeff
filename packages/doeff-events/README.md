@@ -136,7 +136,7 @@ file が伸びたかを決まった間隔で読みに行かず、OS の変更の
 
 | 口 | 振る舞い |
 |---|---|
-| `WatchFiles(directory)` | 絶対 path の dir(と下)の監視を始める。答えの後の変更は次の `NextFileChanges` が受ける(待っていない間の変更も失わない)。dir が無ければ `WatchRefused` |
+| `WatchFiles(directory)` | 絶対 path の dir の直下の entry の監視を始める(下の dir の中は見ない — 始める手間を entry の数に依らせない)。答えの後の変更は次の `NextFileChanges` が受ける(待っていない間の変更も失わない)。dir が無ければ `WatchRefused` |
 | `NextFileChanges(watch)` | 次の変更まで待ち、変わった path(作る・書く・消す)を `FilesChanged(paths)` で答える。時間の上限は無い |
 | `CloseFileWatch(watch)` | 監視を止め、handler が持つ物を捨てる |
 | `os_file_watch_handler()` | OS の知らせ(Linux の inotify・macOS の FSEvents)を `watchfiles` で受ける。extra `doeff-events[files]` が要る。`await_handler` の内側(`scheduled` の内)に置く |
