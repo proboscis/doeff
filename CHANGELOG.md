@@ -72,6 +72,12 @@
   no longer recommends the legacy CLI flags `--set` / `--env` / `--interpreter` to a program run from Python.
   `doeff run` adds the README's `--hy` form (`((lazy-ask :env {"key" VALUE}) p)`) when the error reaches it. Before,
   `doeff.MissingEnvKeyError` was `KeyError` itself.
+- `doeff-core-effects`: a spawned task's exception that nothing retrieved is no longer lost silently. When a task ends
+  with an exception and no `Wait`, `Gather`, `Race`, `Cancel` or `Discard` was ever given the task, the run still
+  returns its value, and at the end of the run one `RuntimeWarning` ("spawned task exception was never retrieved", like
+  asyncio's) names each such task: its program, where it was spawned, the exception and where it was raised. Both
+  scheduler implementations; daemon tasks included; a task ending with `TaskCancelledError` is not named
+  (docs/04-async-effects.md "Task Exceptions Nothing Retrieved", card ki-84667a89b47a).
 - `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
   2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
   `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run

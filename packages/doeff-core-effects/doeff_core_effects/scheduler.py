@@ -28,15 +28,17 @@ import os
 import sys
 import threading
 import time
+import traceback
 import warnings
 import weakref
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
+from types import FunctionType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar
 
+from doeff_vm import Call, EffectBase, Err, K, Ok, TailEval
 from doeff_vm import Callable as _VmCallable
-from doeff_vm import EffectBase, Err, K, Ok, TailEval
 from doeff_vm import WithBoundaries as _WithBoundariesRaw
 from doeff_vm import WithHandler as _WithHandlerRaw
 
@@ -71,6 +73,12 @@ HANDLE_SWEEP_INTERVAL = 1024
 # registration time (#502): a long-lived PENDING promise whose owner mints
 # `.future` repeatedly must not accumulate dead refs until terminality.
 HANDLE_REFS_PRUNE_MIN = 8
+
+# How many never-retrieved task exceptions the run-end warning names; the rest
+# are counted (card ki-84667a89b47a). A run keeps no more descriptions than this
+# for the tasks the #502 sweep deletes, so a long run of fire-and-forget
+# failures does not grow memory.
+UNRETRIEVED_EXCEPTIONS_NAMED = 10
 
 # The kinds of ready-heap entry, declared in one place (design check of card
 # ki-1294af4fa525): ready_push refuses any other kind, so a new kind is declared
@@ -980,8 +988,9 @@ def _rust_spec() -> dict[str, object]:
     """The classes and fixed settings the Rust scheduler reads (built once).
 
     Module settings a test may monkeypatch are not cached here:
-    HANDLE_SWEEP_INTERVAL / HANDLE_REFS_PRUNE_MIN are read when a run starts
-    and EXTERNAL_STALL_LOG_INTERVAL_SECONDS whenever the scheduler blocks.
+    HANDLE_SWEEP_INTERVAL / HANDLE_REFS_PRUNE_MIN / UNRETRIEVED_EXCEPTIONS_NAMED
+    are read when a run starts and EXTERNAL_STALL_LOG_INTERVAL_SECONDS whenever
+    the scheduler blocks.
     """
     return {
         "Spawn": Spawn,
@@ -1010,6 +1019,7 @@ def _rust_spec() -> dict[str, object]:
         "ExternalPromiseCancelCallbackError": ExternalPromiseCancelCallbackError,
         "SchedulerDeadlockError": SchedulerDeadlockError,
         "enrich_exception_traceback": _enrich_exception_traceback,
+        "describe_unretrieved_exception": _describe_unretrieved_exception,
         "logger": _logger,
         "module": sys.modules[__name__],
         "external_wake_of": _external_wake_of,
@@ -1042,6 +1052,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
             **_rust_spec(),
             "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,
             "HANDLE_REFS_PRUNE_MIN": HANDLE_REFS_PRUNE_MIN,
+            "UNRETRIEVED_EXCEPTIONS_NAMED": UNRETRIEVED_EXCEPTIONS_NAMED,
         }
     )
 
@@ -1071,6 +1082,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
         yield _unwind_abandoned(list(to_cancel), list(to_wait))
         left_abandoned, left_parked = core.close_out_report()
         _warn_abandoned_work(abandoned, parked, left_abandoned + left_parked)
+        _warn_unretrieved_exceptions(*core.unretrieved_exceptions())
         return None
 
     return _WithHandlerRaw(core.prompt(), root_close_out(body_program))
@@ -1186,6 +1198,74 @@ def _warn_abandoned_work(abandoned: list[str], parked: list[str], left_live: lis
         )
 
 
+def _program_definition(program: object) -> object:
+    """What the never-retrieved warning names a task's program by: the function
+    a ``@do`` call runs, else the program's type. Taken at the Spawn — a task
+    lets go of its program when it starts."""
+    if isinstance(program, Call):
+        return program.function.function
+    return type(program)
+
+
+def _describe_unretrieved_exception(
+    task_id: int, definition: object, spawn_site: str | None, error: BaseException
+) -> str:
+    """One task's entry in the never-retrieved warning (card ki-84667a89b47a).
+
+    Shared by both implementations; called when a task fails while nothing has
+    claimed its outcome yet, so the entry outlives the task's row.
+    ``definition`` is the task's ``_program_definition``.
+    """
+    match definition:
+        case type() | FunctionType():
+            program = definition.__qualname__
+        case _:
+            program = repr(definition)
+    spawned = f" (spawned at {spawn_site})" if spawn_site else ""
+    raised = ""
+    frame = error.__traceback__
+    if frame is not None:
+        while frame.tb_next is not None:
+            frame = frame.tb_next
+        code = frame.tb_frame.f_code
+        raised = f", raised at {code.co_filename}:{frame.tb_lineno} in {code.co_name}"
+    exception = "".join(traceback.format_exception_only(error)).strip()
+    return f"task {task_id} running {program}{spawned}: {exception}{raised}"
+
+
+def _warn_unretrieved_exceptions(named: list[str], total: int) -> None:
+    """The run-end warning for task exceptions nothing retrieved, shared by both
+    implementations (card ki-84667a89b47a).
+
+    asyncio warns "Task exception was never retrieved" for a failed task
+    dropped unread. A spawned task's outcome is claimed once a Wait, Gather or
+    Race is given the task, or a Cancel or Discard — before or after it ends.
+    A task that failed with no such claim by the end of the run is named here;
+    one that ended with TaskCancelledError ended by cancellation, not by a
+    failure to report.
+    """
+    if total == 0:
+        return
+    listed = "; ".join(named)
+    if total > len(named):
+        listed += f"; and {total - len(named)} more"
+    match total:
+        case 1:
+            head = "spawned task exception was never retrieved"
+            them = "the task"
+        case _:
+            head = f"{total} spawned task exceptions were never retrieved"
+            them = "these tasks"
+    warnings.warn(
+        f"{head}: {listed}. No Wait, Gather or Race was given {them}, and no Cancel or "
+        "Discard, before the scheduler run ended. Wait on a spawned task to receive its "
+        "exception (wrap its program in Try(...) when a failure is expected), or "
+        "Cancel/Discard it when its outcome is not needed.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
 def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """``scheduled`` implemented in Python (the reference implementation)."""
     import heapq
@@ -1238,6 +1318,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
     handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
     handle_prune_at = {}  # waitable_key → refs length that triggers a dead-ref prune
+    # Never-retrieved task exceptions of rows the #502 sweep deleted (card
+    # ki-84667a89b47a): a tuple of at most UNRETRIEVED_EXCEPTIONS_NAMED
+    # descriptions, and how many there were.
+    unretrieved_swept = [()]
+    unretrieved_swept_count = [0]
 
     def register_handle(key, handle):
         """Track handle liveness for the terminal-entry sweep (#502).
@@ -1318,9 +1403,38 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     continue
                 dead.append(wid)
             for wid in dead:
+                if kind == "task":
+                    keep_swept_unretrieved(store[wid])
                 del store[wid]
                 del handle_refs[(kind, wid)]
                 handle_prune_at.pop((kind, wid), None)
+
+    def keep_swept_unretrieved(row: dict[str, object]) -> None:
+        """Keep the never-retrieved exception of a task row the sweep deletes:
+        with every handle dead, nothing can retrieve it any more."""
+        description = row.get("unretrieved")
+        if not isinstance(description, str):
+            return
+        unretrieved_swept_count[0] += 1
+        if len(unretrieved_swept[0]) < UNRETRIEVED_EXCEPTIONS_NAMED:
+            unretrieved_swept[0] = (*unretrieved_swept[0], description)
+
+    def mark_retrieved(key: tuple[str, int]) -> None:
+        """A Wait, Gather, Race, Cancel or Discard was given the task: its
+        outcome is claimed, so its exception is not reported as never
+        retrieved (card ki-84667a89b47a)."""
+        kind, wid = key
+        row = tasks.get(wid) if kind == "task" else None
+        if row is not None:
+            row["retrieved"] = True
+            row.pop("unretrieved", None)
+
+    def unretrieved_exceptions() -> tuple[list[str], int]:
+        """``(named, total)`` for the run-end warning: the swept tasks' exceptions,
+        then the rows still holding one, in task order."""
+        remaining = [row["unretrieved"] for row in tasks.values() if "unretrieved" in row]
+        named = [*unretrieved_swept[0], *remaining][:UNRETRIEVED_EXCEPTIONS_NAMED]
+        return named, unretrieved_swept_count[0] + len(remaining)
 
     def fresh_id():
         i = next_id[0]
@@ -1619,6 +1733,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             "program": program, "priority": priority,
             "daemon": daemon,
             "inner_boundaries": inner_boundaries or [],
+            "definition": _program_definition(program),
+            "retrieved": False,
         }
         return tid
 
@@ -2023,6 +2139,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             parked,
             abandoned_ready_summary() + live_parked_waiter_summary(include_daemons=False),
         )
+        _warn_unretrieved_exceptions(*unretrieved_exceptions())
         return None
 
     def live_semaphore_waiters():
@@ -2285,8 +2402,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """Drop heavy references from a terminal task.
 
         Keeps status/result (needed by Wait/Gather) but releases the
-        program, inner_boundaries, and spawn_site closures that pin large
-        Python object graphs into memory.
+        program, inner_boundaries, spawn_site and definition (a closure's
+        function holds its cells) that pin large Python object graphs into
+        memory.
         """
         t = tasks.get(tid)
         if t is None:
@@ -2294,6 +2412,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         t.pop("program", None)
         t.pop("inner_boundaries", None)
         t.pop("spawn_site", None)
+        t.pop("definition", None)
 
     def resume_with_waitable_result(owner_tid, waiter_k, key, priority=None):
         """Add a ready entry that resumes waiter with the waitable's result.
@@ -2617,12 +2736,20 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                             "spawn_site": tasks[tid].get("spawn_site", ""),
                         })
                     tasks[tid]["result"] = error
+                    if not tasks[tid]["retrieved"] and not isinstance(error, TaskCancelledError):
+                        # Nothing has claimed the outcome yet: describe the
+                        # exception now, while the program and spawn site are
+                        # still held (card ki-84667a89b47a).
+                        tasks[tid]["unretrieved"] = _describe_unretrieved_exception(
+                            tid, tasks[tid]["definition"], tasks[tid].get("spawn_site"), error
+                        )
                 wake_waiters(("task", tid))
                 _release_task_refs(tid)
             yield TailEval(pick_next())
 
         elif isinstance(effect, Wait):
             wk = waitable_key(effect.task)
+            mark_retrieved(wk)
             status, result = waitable_status(wk)
             if status == "completed":
                 r = yield Resume(k, result)
@@ -2677,6 +2804,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
         elif isinstance(effect, Gather):
             wks = [waitable_key(t) for t in effect.tasks]
+            # Every task given to the Gather is claimed, also a sibling that
+            # fails after the fail-fast (asyncio.gather retrieves it too).
+            for wk in wks:
+                mark_retrieved(wk)
             pending_wks = []
             for wk in wks:
                 s, r = waitable_status(wk)
@@ -2716,6 +2847,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 return (yield ResumeThrow(k, ValueError(
                     "Race() requires at least one Task or Future to race"
                 )))
+            # Every task given to the Race is claimed, also a loser that fails
+            # after the Race was decided.
+            for t in effect.tasks:
+                mark_retrieved(waitable_key(t))
             for t in effect.tasks:
                 wk = waitable_key(t)
                 status, result = waitable_status(wk)
@@ -2753,6 +2888,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             # until it finishes unwinding, and only then are its waiters woken.
             from doeff.program import ResumeThrow
             tid = effect.task.task_id
+            mark_retrieved(("task", tid))
             task = tasks.get(tid)
             cancel_errors = []
             if task is not None and task["status"] == "pending":
@@ -2792,6 +2928,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             # dropped, never resumed or thrown into, so no except/finally runs.
             from doeff.program import ResumeThrow
             tid = effect.task.task_id
+            mark_retrieved(("task", tid))
             task = tasks.get(tid)
             discard_errors = []
             live = task is not None and task["status"] in ("pending", "running", "cancelling")
