@@ -139,7 +139,7 @@ def _writer_handler(effect: WriterTellEffect, k):
     yield Pass(effect, k)
 
 
-writer = _named_handler(_writer_handler, "writer")
+writer: ProgramHandler = _named_handler(_writer_handler, "writer")
 
 
 @do
@@ -194,7 +194,7 @@ def _try_handler(effect: Try, k):
     yield Pass(effect, k)
 
 
-try_handler = _named_handler(_try_handler, "try_handler")
+try_handler: ProgramHandler = _named_handler(_try_handler, "try_handler")
 
 
 def _format_slog_line(effect):
@@ -226,7 +226,7 @@ def _slog_handler(effect: Slog, k):
     yield Pass(effect, k)
 
 
-slog_handler = _named_handler(_slog_handler, "slog_handler")
+slog_handler: ProgramHandler = _named_handler(_slog_handler, "slog_handler")
 
 
 @do
@@ -239,7 +239,9 @@ def _slog_discard_handler(effect: Slog, k):
     yield Pass(effect, k)
 
 
-slog_discard_handler = _named_handler(_slog_discard_handler, "slog_discard_handler")
+slog_discard_handler: ProgramHandler = _named_handler(
+    _slog_discard_handler, "slog_discard_handler"
+)
 
 
 @do
@@ -284,7 +286,7 @@ def _local_handler(effect: Local, k):
     yield Pass(effect, k)
 
 
-local_handler = _named_handler(_local_handler, "local_handler")
+local_handler: ProgramHandler = _named_handler(_local_handler, "local_handler")
 
 
 @do
@@ -326,7 +328,7 @@ def _listen_handler(effect: Listen, k):
     yield Pass(effect, k)
 
 
-listen_handler = _named_handler(_listen_handler, "listen_handler")
+listen_handler: ProgramHandler = _named_handler(_listen_handler, "listen_handler")
 
 
 # --- Shared Await bridge loop (process-global singleton, issues #494/#498) ---

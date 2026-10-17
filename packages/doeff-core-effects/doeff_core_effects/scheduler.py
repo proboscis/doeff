@@ -33,7 +33,7 @@ import traceback
 import warnings
 import weakref
 from collections import Counter
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from types import FunctionType
 from typing import (
@@ -333,7 +333,7 @@ class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
 
 
 class TaskCompleted(EffectBase):
-    def __init__(self, task_id, result):
+    def __init__(self, task_id: int, result: "Ok[object] | Err") -> None:
         super().__init__()
         self.task_id = task_id
         self.result = result
@@ -468,7 +468,7 @@ class ExternalPromiseCancelCallbackError(RuntimeError):
     """
 
     def __init__(self, errors: list[Exception]) -> None:
-        self.errors = list(errors)
+        self.errors: list[Exception] = list(errors)
         super().__init__(
             "external promise cancel callback(s) failed: "
             + "; ".join(repr(error) for error in self.errors)
@@ -488,13 +488,17 @@ class SchedulerIndexDriftError(AssertionError):
 class SchedulerDeadlockError(RuntimeError):
     """Raised when the scheduler has parked work that cannot make progress."""
 
-    def __init__(self, semaphore_waiters, parked_waiters=None):
-        self.semaphore_waiters = {
+    def __init__(
+        self,
+        semaphore_waiters: Mapping[int, Iterable[int]],
+        parked_waiters: Iterable[str] | None = None,
+    ) -> None:
+        self.semaphore_waiters: dict[int, list[int]] = {
             sem_id: list(task_ids)
             for sem_id, task_ids in semaphore_waiters.items()
         }
-        self.parked_waiters = list(parked_waiters or [])
-        details = []
+        self.parked_waiters: list[str] = list(parked_waiters or [])
+        details: list[str] = []
         for sem_id, task_ids in self.semaphore_waiters.items():
             if task_ids:
                 task_list = ", ".join(str(task_id) for task_id in task_ids)
@@ -879,17 +883,17 @@ class Task(Generic[_T_co]):
     Covariant in T: the handle only reads the result, so a ``Task[int]`` is a ``Task[object]``.
     """
 
-    def __init__(self, task_id):
+    def __init__(self, task_id: int) -> None:
         self.task_id = task_id
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Task({self.task_id})"
 
 
 class Future(Generic[_T_co]):
     """Read-side handle for a promise; covariant in T like ``Task``."""
-    def __init__(self, promise_id):
+    def __init__(self, promise_id: int) -> None:
         self.promise_id = promise_id
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Future({self.promise_id})"
 
 
@@ -900,7 +904,11 @@ class Promise(Generic[_T]):
     ``Future`` must be registered too, so a promise entry is only swept once
     the write handle AND every read handle created from it are dead.
     """
-    def __init__(self, promise_id, _register=None):
+    def __init__(
+        self,
+        promise_id: int,
+        _register: Callable[[tuple[str, int], object], object] | None = None,
+    ) -> None:
         self.promise_id = promise_id
         self._register = _register
 
@@ -911,7 +919,7 @@ class Promise(Generic[_T]):
             self._register(("promise", self.promise_id), future)
         return future
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Promise({self.promise_id})"
 
 
@@ -926,18 +934,18 @@ class Semaphore:
     (doeff-cluster's ``ClusterSemaphore`` / ``ReplaySemaphore``) returns its
     own subclass, whose ``__init__`` calls ``super().__init__(sem_id)``.
     """
-    def __init__(self, sem_id):
+    def __init__(self, sem_id: int | str) -> None:
         if type(self) is Semaphore:
             raise TypeError(
                 "Semaphore(...) is not a public constructor: create a semaphore with "
                 "`sem = yield CreateSemaphore(permits)` and pass that handle around"
             )
         self.sem_id = sem_id
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Semaphore({self.sem_id})"
 
 
-def _semaphore_handle(sem_id) -> Semaphore:
+def _semaphore_handle(sem_id: int) -> Semaphore:
     """The scheduler's handle for its semaphore ``sem_id`` (both implementations mint with it)."""
     handle = object.__new__(Semaphore)
     handle.sem_id = sem_id
@@ -1019,13 +1027,13 @@ class ExternalPromise(Generic[_T]):
             _trace("external-complete", self._run, pid=self.promise_id)
         self._queue.put(("complete", self.promise_id, value))
 
-    def fail(self, error):
+    def fail(self, error: BaseException) -> None:
         """error で失敗にする。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
         if _trace_sink is not None:
             _trace("external-complete", self._run, pid=self.promise_id, failed=True)
         self._queue.put(("fail", self.promise_id, error))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"ExternalPromise({self.promise_id})"
 
 
@@ -2893,9 +2901,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             tid = effect.task_id
             r = effect.result
             status = tasks[tid]["status"]
-            error = None if (hasattr(r, "is_ok") and r.is_ok()) else (
-                r.error if hasattr(r, "error") else r
-            )
+            if isinstance(r, Ok):
+                value, error = r.value, None
+            else:
+                value, error = None, r.error
             if status == "cancelled":
                 # A task dropped by the Cancel fallback ran to its end after
                 # all: nothing re-reads its row any more.
@@ -2922,7 +2931,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 # reported as failed with that error (it is not hidden).
                 if error is None:
                     tasks[tid]["status"] = "completed"
-                    tasks[tid]["result"] = r.value
+                    tasks[tid]["result"] = value
                 else:
                     tasks[tid]["status"] = "failed"
                     # Add spawn boundary to traceback
