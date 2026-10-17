@@ -1,0 +1,26 @@
+name: Question
+description: Ask how to do something with doeff, or about something the docs do not make clear.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No question is too small. If the docs left you unsure, that is worth knowing too.
+        Please write the question in English.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: Code you wrote, docs pages you read, and what happened.
+      render: python
+  - type: input
+    id: versions
+    attributes:
+      label: doeff and Python versions
+      description: 'The output of `python -c "import doeff, sys; print(doeff.__version__, sys.version)"`'

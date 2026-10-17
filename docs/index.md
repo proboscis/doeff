@@ -247,10 +247,9 @@ def process_batch(items):
 
 ## Contributing
 
-See the [GitHub repository](https://github.com/proboscis/doeff) for:
-- Filing issues
-- Submitting pull requests
-- Development guidelines
+- Ask a question, report a bug or propose a feature: [open an issue](https://github.com/proboscis/doeff/issues/new/choose)
+- Find a small task to start with: [good first issues](https://github.com/proboscis/doeff/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+- Set up the development environment, run the tests and send a pull request: [CONTRIBUTING.md](https://github.com/proboscis/doeff/blob/main/CONTRIBUTING.md)
 
 ## License
 

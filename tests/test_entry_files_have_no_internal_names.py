@@ -1,7 +1,8 @@
 """入口の file に、社内の名が無いこと。
 
 入口 = 初めて来た人が GitHub と PyPI で最初に読む file — 根の README.md・docs/index.md・docs/README.md・
-packages/*/README.md(PyPI の説明の欄にもなる)・examples/ の下の file。
+CONTRIBUTING.md・GitHub の issue と pull request の雛形(.github/ISSUE_TEMPLATE/ の下・.github/PULL_REQUEST_TEMPLATE.md —
+問いと報告の画面に出る)・packages/*/README.md(PyPI の説明の欄にもなる)・examples/ の下の file。
 社内の名 = 4 種類 — 上に載る業務の系の名・作業ボードと会話の id・cluster の機体の名・人の home の path。
 
 語の一覧の定義元はこの module の INTERNAL_NAMES 1 つ。semgrep の規則 doeff-packages-have-no-application-vocabulary の
@@ -33,8 +34,14 @@ INTERNAL_NAMES: dict[str, str] = {
 
 _PATTERNS = {kind: re.compile(rf"(?i)(?<![a-z0-9])(?:{pattern})") for kind, pattern in INTERNAL_NAMES.items()}
 
-# 決まった名の入口(根からの path)。packages/*/README.md と examples/ の下は木から読む。
-FIXED_ENTRY_FILES = ("README.md", "docs/index.md", "docs/README.md")
+# 決まった名の入口(根からの path)。.github/ISSUE_TEMPLATE/ の下・packages/*/README.md・examples/ の下は木から読む。
+FIXED_ENTRY_FILES = (
+    "README.md",
+    "docs/index.md",
+    "docs/README.md",
+    "CONTRIBUTING.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+)
 
 
 def internal_names_in(text: str) -> list[str]:
@@ -50,6 +57,9 @@ def internal_names_in(text: str) -> list[str]:
 def entry_files(root: Path) -> list[str]:
     """root の下の入口の file の、root からの path。examples/ の下は cache の dir(__pycache__・. で始まる dir)を除く全部。"""
     fixed = [name for name in FIXED_ENTRY_FILES if (root / name).is_file()]
+    issue_templates = sorted(
+        str(path.relative_to(root)) for path in root.glob(".github/ISSUE_TEMPLATE/*") if path.is_file()
+    )
     packages = sorted(str(path.relative_to(root)) for path in root.glob("packages/*/README.md"))
     examples = sorted(
         str(path.relative_to(root))
@@ -57,7 +67,7 @@ def entry_files(root: Path) -> list[str]:
         if path.is_file()
         and not any(part == "__pycache__" or part.startswith(".") for part in path.relative_to(root).parts[:-1])
     )
-    return fixed + packages + examples
+    return fixed + issue_templates + packages + examples
 
 
 def internal_names_in_entry_files(root: Path) -> list[str]:
@@ -104,11 +114,16 @@ def test_general_words_and_public_names_are_not_internal_names() -> None:
 
 
 def test_the_scan_reads_the_entry_files_and_finds_a_planted_name(tmp_path: Path) -> None:
-    # 入口の外(docs の他の page・package の src)は読まない。examples/ の cache の dir は読まない。
+    # 入口の外(docs の他の page・package の src・GitHub の workflow)は読まない。examples/ の cache の dir は読まない。
     for name in (
         "README.md",
         "docs/index.md",
         "docs/README.md",
+        "CONTRIBUTING.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/ISSUE_TEMPLATE/bug_report.yml",
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/workflows/ci.yml",
         "docs/history/notes.md",
         "packages/doeff-a/README.md",
         "packages/doeff-a/src/agora.py",
@@ -123,6 +138,10 @@ def test_the_scan_reads_the_entry_files_and_finds_a_planted_name(tmp_path: Path)
         "README.md",
         "docs/index.md",
         "docs/README.md",
+        "CONTRIBUTING.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/ISSUE_TEMPLATE/bug_report.yml",
+        ".github/ISSUE_TEMPLATE/config.yml",
         "packages/doeff-a/README.md",
         "examples/demo.py",
         "examples/nested/demo.hy",
@@ -135,9 +154,11 @@ def test_the_scan_reads_the_entry_files_and_finds_a_planted_name(tmp_path: Path)
 
 
 def test_the_scan_covers_the_entry_files_of_this_repo() -> None:
-    # 母集団が空で緑にならない: 決まった名の入口の 3 つが在り、部品の README と examples/ の file が入っている。
+    # 母集団が空で緑にならない: 決まった名の入口が全部在り、issue の雛形・部品の README・examples/ の file が入っている。
     scanned = entry_files(REPO_ROOT)
     assert [name for name in FIXED_ENTRY_FILES if name not in scanned] == []
+    for name in (".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/question.yml"):
+        assert name in scanned
     for name in ("packages/doeff-vm/README.md", "packages/doeff-agents/README.md", "packages/doeff-cluster/README.md"):
         assert name in scanned
     assert any(name.startswith("examples/") for name in scanned)

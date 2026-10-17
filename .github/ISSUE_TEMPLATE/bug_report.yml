@@ -1,0 +1,65 @@
+name: Bug report
+description: doeff does something wrong, crashes, or does not do what the docs say.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please search the [open issues](https://github.com/proboscis/doeff/issues) first,
+        and write the report in English.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, and what went wrong? Paste the full error and traceback if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal program that shows the problem
+      description: The smallest program we can copy and run. Remove anything not needed to see the problem.
+      render: python
+      placeholder: |
+        from doeff import Ask, do, run
+        from doeff_core_effects.handlers import reader
+
+        @do
+        def main():
+            name = yield Ask("name")
+            return f"hello {name}"
+
+        print(run(reader(env={"name": "doeff"})(main())))  # expected: hello doeff
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: doeff and Python versions
+      description: 'The output of `python -c "import doeff, sys; print(doeff.__version__, sys.version)"`'
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11, ...
+    validations:
+      required: true
+  - type: textarea
+    id: install
+    attributes:
+      label: How doeff was installed
+      description: For example `pip install doeff`, `pip install "doeff[hy]"`, or a checkout of this repository. List other doeff packages you use.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to send a pull request that fixes this.
