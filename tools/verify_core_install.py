@@ -1,5 +1,5 @@
-"""核の 4 個だけを入れた新しい venv で、README の Python の例が通り、Hy と HTTP の extra が要る使い方が足す extra の名を言う事を
-確かめる(取り組み doeff-publish の区切り 8・card ki-d6b421afac60)。
+"""核の 4 個だけを入れた新しい venv で、README の Python の例と試しの命令 `python -m doeff demo` が通り、Hy と HTTP の extra が要る
+使い方が足す extra の名を言う事を確かめる(取り組み doeff-publish の区切り 8・card ki-d6b421afac60)。
 
 `pip install doeff` は核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを入れ、Hy の言語は extra hy・HTTP の client の
 handler は extra http で足す。tests/test_core_install_extras.py は pyproject.toml の宣言を読み、tests/test_missing_extra_hints.py は
@@ -24,6 +24,8 @@ Python の版ごとに:
    注記の文句は数えない。py.typed の package は `X as X` か `__all__` で再 export した名だけを公開とするので、README が
    `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする(card ki-d1628b5046d1)。
    あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
+6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、偽の handler の答えの後に、作業の dir の
+   頁を live_world が読んだ答えを印字する事を確かめる(card ki-34f672bff9f6)。
 
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
 
@@ -176,6 +178,14 @@ EXTRA_USES = (
         "hy",
     ),
 )
+
+
+# README の入れ方の直後に案内する試しの命令 `python -m doeff demo`(doeff/cli/demo.py)。live_world が取りに行く頁は --url で
+# 作業の dir の file にする — urlopen は file の URL を HTTP と同じ道で読むので、検は network に出ない。
+DEMO_ARGUMENTS = ("-I", "-m", "doeff", "demo")
+DEMO_PAGE = "<h1>Hello, live</h1>"
+# 偽の handler(fake_world)の答えの行 — 頁を読まず、決めた頁 <h1>Hello</h1> の字の数を言う。
+DEMO_FAKE_ANSWER = "'14 chars'"
 
 
 @dataclass(frozen=True)
@@ -656,6 +666,48 @@ def _run_extra_use(
     return failure
 
 
+def demo_failure(result: subprocess.CompletedProcess[str]) -> str | None:
+    """試しの命令の結末が、0 で終わり、偽の handler の答えの後に頁を読んだ答えを印字した形でない事を言う文(合えば None)。"""
+    live = repr(f"{len(DEMO_PAGE)} chars")
+    printed = result.stdout.splitlines()
+    if (
+        result.returncode == 0
+        and DEMO_FAKE_ANSWER in printed
+        and live in printed
+        and printed.index(DEMO_FAKE_ANSWER) < printed.index(live)
+    ):
+        return None
+    return (
+        f"python -m doeff demo が、終了コード 0 で偽の答え {DEMO_FAKE_ANSWER} の後に頁を読んだ答え {live} を"
+        f"印字しなかった(終了コード {result.returncode})\n{result.stdout}{result.stderr}"
+    )
+
+
+def check_demo(installed: Installed, place: Path, timeout: float) -> list[str]:
+    """試しの命令を核だけの venv で走らせ、落ちた事を言う文の列を返す(通れば空)— `pip install doeff` の直後に打つ命令が動くかを見るため。"""
+    directory = place / "demo"
+    directory.mkdir()
+    page = directory / "page.html"
+    page.write_text(DEMO_PAGE, encoding="utf-8")
+    print("  試しの命令(README の入れ方の直後に案内する物)", flush=True)
+    try:
+        result = subprocess.run(
+            [str(installed.python), *DEMO_ARGUMENTS, "--url", page.as_uri()],
+            cwd=directory,
+            env=verify_release_install.example_environment(place),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        failure = f"python -m doeff demo が {timeout} 秒で終わらなかった"
+    else:
+        failure = demo_failure(result)
+    print_result("python -m doeff demo が、偽の handler の答えの後に頁を読んだ答えを言う", failure)
+    return [] if failure is None else [failure]
+
+
 def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
     """Python の版 1 つで、新しい venv に核だけを入れて確かめ、落ちた事を言う文の列を返す。"""
     place = work / f"py{python_request.replace('+', '-')}"
@@ -676,6 +728,7 @@ def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
         *check_readmes(installed, place, timeout),
         *check_public_names(installed, place, timeout),
         *check_extra_uses(installed, place, timeout),
+        *check_demo(installed, place, timeout),
     ]
 
 
@@ -684,7 +737,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "核の 4 個だけを入れた新しい venv で、README の Python の例と、その例の import が型の check で公開の名と読まれる事と、"
-            "Hy・HTTP の extra を言う文を確かめる。"
+            "Hy・HTTP の extra を言う文と、試しの命令 python -m doeff demo を確かめる。"
         ),
     )
     parser.add_argument(

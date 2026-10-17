@@ -19,6 +19,9 @@ import pytest
 import yaml
 from doeff_core_effects import extra_hints
 
+from doeff import handler, run
+from doeff.cli.demo import digest, fake_world
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "python-compatibility.yml"
 
@@ -119,6 +122,44 @@ def test_an_extra_use_passes_only_when_its_last_line_installs_the_extra(
 
 def test_the_extra_uses_cover_every_extra_of_the_hint_table() -> None:
     assert {use.extra for use in tool.EXTRA_USES} == set(get_args(extra_hints.Extra))
+
+
+# --- 試しの命令 python -m doeff demo が核だけの venv で動く(card ki-34f672bff9f6) -------------------------------------------
+DEMO_LIVE = repr(f"{len(tool.DEMO_PAGE)} chars")
+DEMO_OUTPUT = (
+    f">>> run(handler(fake_world)(digest(url)))\n{tool.DEMO_FAKE_ANSWER}\n\n"
+    f">>> run(handler(fake_world)(handler(live_world)(digest(url))))\n{DEMO_LIVE}\n\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "passes"),
+    [
+        (0, DEMO_OUTPUT, True),
+        (1, DEMO_OUTPUT, False),
+        (0, f"{tool.DEMO_FAKE_ANSWER}\n", False),
+        (0, f"{DEMO_LIVE}\n", False),
+        (0, f"{DEMO_LIVE}\n{tool.DEMO_FAKE_ANSWER}\n", False),
+        (0, f"x {tool.DEMO_FAKE_ANSWER}\nx {DEMO_LIVE}\n", False),
+    ],
+    ids=["fake-then-live", "exit-1", "no-live", "no-fake", "live-first", "not-own-lines"],
+)
+def test_the_demo_passes_only_when_it_prints_the_fake_answer_then_the_page_it_read(
+    returncode: int, stdout: str, passes: bool
+) -> None:
+    result = subprocess.CompletedProcess(["python"], returncode, stdout, "")
+    assert (tool.demo_failure(result) is None) is passes
+
+
+def test_the_demo_check_expects_the_answer_of_the_demos_fake_handler() -> None:
+    # 道具は標準ライブラリだけで走るので doeff を import できず、偽の答えを写して持つ — 写しが demo の答えとずれない事。
+    assert repr(run(handler(fake_world)(digest(tool.DEMO_PAGE)))) == tool.DEMO_FAKE_ANSWER
+
+
+def test_the_demo_check_runs_the_command_the_readme_points_to() -> None:
+    command = " ".join(("python", *tool.DEMO_ARGUMENTS[1:]))
+    assert command == "python -m doeff demo"
+    assert f"`{command}`" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 # 根の README の「Hy の module を Python から読む」節の形(card ki-909e814cc835 が足し、核の 4 個だけの venv で落ちた)。

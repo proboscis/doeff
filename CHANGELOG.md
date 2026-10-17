@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- `python -m doeff demo` (also `doeff demo`): right after `pip install doeff`, it prints the README's `digest` program
+  and its handlers, then runs `digest` under a fake handler (`'14 chars'`) and again with a live handler stacked in front
+  that fetches the page over real HTTP. The program does not change; the answer does. `--url` picks the page (default
+  `https://example.com`; `file://` URLs are read the same way). It exits 1, naming the URL, when the page cannot be
+  fetched, and 2 for a URL without a scheme. It imports only the core packages, which `tools/verify_core_install.py`
+  checks in a fresh core-only venv.
+
 ### Changed
 
 - `doeff-core-effects`: `scheduled()` runs the Rust scheduler by default (it was the Python one). Both implementations
