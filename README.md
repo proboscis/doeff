@@ -54,6 +54,8 @@ print(run(handler(fake_world)(digest("https://example.com"))))  # 14 chars
 
 To go live, replace `fake_world` with handlers that call your HTTP client and
 your model. `digest` does not change, and the fake stays as your test.
+[`examples/llm_agent.py`](https://github.com/proboscis/doeff/blob/main/examples/llm_agent.py) does
+this for an LLM agent, with pytest tests that need no API key.
 
 ## Why doeff?
 
@@ -250,6 +252,10 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 ## Next steps
 
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
+- **Testing an LLM agent**: [`examples/llm_agent.py`](https://github.com/proboscis/doeff/blob/main/examples/llm_agent.py)
+  makes the model call an effect: an OpenAI-compatible client answers it in production, canned answers
+  in [its tests](https://github.com/proboscis/doeff/blob/main/examples/test_llm_agent.py). It needs only
+  `pip install doeff`, and its tests pytest besides.
 - **Why effects?**: [Effects vs. dependency injection and plain `async`](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)

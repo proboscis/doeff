@@ -1,5 +1,5 @@
-"""核の 4 個だけを入れた新しい venv で、README の Python の例と試しの命令 `python -m doeff demo` が通り、Hy と HTTP の extra が要る
-使い方が足す extra の名を言う事を確かめる(取り組み doeff-publish の区切り 8・card ki-d6b421afac60)。
+"""核の 4 個だけを入れた新しい venv で、README の Python の例と試しの命令 `python -m doeff demo` と LLM の agent の例が通り、Hy と
+HTTP の extra が要る使い方が足す extra の名を言う事を確かめる(取り組み doeff-publish の区切り 8・card ki-d6b421afac60)。
 
 `pip install doeff` は核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを入れ、Hy の言語は extra hy・HTTP の client の
 handler は extra http で足す。tests/test_core_install_extras.py は pyproject.toml の宣言を読み、tests/test_missing_extra_hints.py は
@@ -26,6 +26,10 @@ Python の版ごとに:
    あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
 6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、偽の handler の答えの後に、作業の dir の
    頁を live_world が読んだ答えを印字する事を確かめる(card ki-34f672bff9f6)。
+7. README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例(examples/llm_agent.py)を、例の 2 つの
+   file だけを写した dir で走らせ、偽の model の答えを印字する事を確かめる。続けて venv に pytest を足し、その dir で検の例
+   (examples/test_llm_agent.py)が通る事を確かめる。どちらも OPENAI_ の環境変数を外して走らせる(model の key を読まない)。
+   pytest を足すので、核の 4 個だけを見る 2〜6 の後の最後に置く(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。
 
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
 
@@ -46,7 +50,7 @@ import sys
 import tempfile
 import urllib.parse
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -186,6 +190,16 @@ DEMO_ARGUMENTS = ("-I", "-m", "doeff", "demo")
 DEMO_PAGE = "<h1>Hello, live</h1>"
 # 偽の handler(fake_world)の答えの行 — 頁を読まず、決めた頁 <h1>Hello</h1> の字の数を言う。
 DEMO_FAKE_ANSWER = "'14 chars'"
+
+# README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、それを確かめる pytest の検の例
+# (依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。repo の根からの path。
+LLM_EXAMPLE_FILES = ("examples/llm_agent.py", "examples/test_llm_agent.py")
+# 2 つの file を写す、作業の dir の下の dir。
+LLM_EXAMPLE_DIRECTORY = "llm-agent"
+LLM_EXAMPLE_SCRIPT = "llm_agent.py"
+LLM_EXAMPLE_TESTS = "test_llm_agent.py"
+# 例が偽の model(canned_reply)の答えで印字する行。
+LLM_EXAMPLE_ANSWER = "answer: No: an existing queue already does all of it, for little cost."
 
 
 @dataclass(frozen=True)
@@ -708,6 +722,83 @@ def check_demo(installed: Installed, place: Path, timeout: float) -> list[str]:
     return [] if failure is None else [failure]
 
 
+def llm_example_failure(result: subprocess.CompletedProcess[str]) -> str | None:
+    """LLM の agent の例の結末が、0 で終わり偽の model の答えの行を印字した形でない事を言う文(合えば None)。"""
+    if result.returncode == 0 and LLM_EXAMPLE_ANSWER in result.stdout.splitlines():
+        return None
+    return (
+        f"{LLM_EXAMPLE_SCRIPT} が、終了コード 0 で答えの行 {LLM_EXAMPLE_ANSWER!r} を印字しなかった"
+        f"(終了コード {result.returncode})\n{result.stdout}{result.stderr}"
+    )
+
+
+def llm_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
+    """検の例の pytest の結末が、0 で終わり要約の行が passed で始まる形でない事を言う文(合えば None)。"""
+    lines = result.stdout.splitlines()
+    if result.returncode == 0 and lines and re.match(r"\d+ passed\b", lines[-1]):
+        return None
+    return (
+        f"pytest {LLM_EXAMPLE_TESTS} が、終了コード 0 で通らなかった(終了コード {result.returncode})\n"
+        f"{result.stdout}{result.stderr}"
+    )
+
+
+def _llm_example_run_failure(
+    installed: Installed,
+    place: Path,
+    arguments: Sequence[str],
+    judge: Callable[[subprocess.CompletedProcess[str]], str | None],
+    timeout: float,
+) -> str | None:
+    """LLM の agent の例の dir で venv の python を 1 回走らせ、judge が言う落ちた訳か、時間切れの訳を返す(通れば None)。
+
+    model の key を読まない事を見るため、OPENAI_ の環境変数を外す。
+    """
+    environment = {
+        name: value
+        for name, value in verify_release_install.example_environment(place).items()
+        if not name.startswith("OPENAI_")
+    }
+    try:
+        result = subprocess.run(
+            [str(installed.python), "-I", *arguments],
+            cwd=place / LLM_EXAMPLE_DIRECTORY,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return f"python {' '.join(arguments)} が {timeout} 秒で終わらなかった"
+    return judge(result)
+
+
+def check_llm_example(installed: Installed, place: Path, timeout: float) -> list[str]:
+    """LLM の agent の例を核だけの venv で走らせ、pytest を足して検の例を走らせ、落ちた事を言う文の列を返す(通れば空)。
+
+    利用者と同じく、例の 2 つの file だけを置いた dir で走らせる。pytest を venv に足すので、核の 4 個だけを見る確かめの後に呼ぶ。
+    """
+    directory = place / LLM_EXAMPLE_DIRECTORY
+    directory.mkdir()
+    for name in LLM_EXAMPLE_FILES:
+        shutil.copy(REPO / name, directory / Path(name).name)
+    print(
+        "  LLM の agent の例(README と docs/index.md が pip install doeff だけで走ると案内する物)",
+        flush=True,
+    )
+    script_failure = _llm_example_run_failure(
+        installed, place, [LLM_EXAMPLE_SCRIPT], llm_example_failure, timeout
+    )
+    print_result(f"{LLM_EXAMPLE_SCRIPT} が偽の model の答えを言う", script_failure)
+    _uv(["pip", "install", "--python", str(installed.python), "pytest"], place)
+    tests_failure = _llm_example_run_failure(
+        installed, place, ["-m", "pytest", "-q", LLM_EXAMPLE_TESTS], llm_tests_failure, timeout
+    )
+    print_result(f"核の 4 個と pytest だけで pytest {LLM_EXAMPLE_TESTS} が通る", tests_failure)
+    return [failure for failure in (script_failure, tests_failure) if failure is not None]
+
+
 def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
     """Python の版 1 つで、新しい venv に核だけを入れて確かめ、落ちた事を言う文の列を返す。"""
     place = work / f"py{python_request.replace('+', '-')}"
@@ -729,6 +820,8 @@ def check_python(python_request: str, work: Path, timeout: float) -> list[str]:
         *check_public_names(installed, place, timeout),
         *check_extra_uses(installed, place, timeout),
         *check_demo(installed, place, timeout),
+        # venv に pytest を足すので最後に置く。
+        *check_llm_example(installed, place, timeout),
     ]
 
 
@@ -737,7 +830,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "核の 4 個だけを入れた新しい venv で、README の Python の例と、その例の import が型の check で公開の名と読まれる事と、"
-            "Hy・HTTP の extra を言う文と、試しの命令 python -m doeff demo を確かめる。"
+            "Hy・HTTP の extra を言う文と、試しの命令 python -m doeff demo と、LLM の agent の例とその pytest の検の例を確かめる。"
         ),
     )
     parser.add_argument(
