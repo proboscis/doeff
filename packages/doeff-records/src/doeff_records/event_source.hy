@@ -455,9 +455,9 @@
                       CreatePromise CompletePromise WaitWithinEffect Spawn Cancel Wait))
 
 
-;; 包む関数の型 = doeff の ProgramHandler(doeff/program.py の Callable[[object], Program[Any]] — subscribed_event_handler・timer_handler と
-;; 同じ with-handlers の列に並ぶ型)。名の ProgramHandler は総称の別名で isinstance に渡せない(契約の実行時の確かめが TypeError)ので、
-;; 同じ型を綴る — 型の引数を省いた Program は既定の Any(doeff の Program の型の引数の既定)で ProgramHandler と同じ。
+;; 包む関数の型 = 本文を object で受ける Callable[[object], Program](subscribed_event_handler・timer_handler と同じ with-handlers の列に
+;; 並ぶ型 — doeff の ProgramHandler(doeff/program.py の、本文の結果の型を保つ Protocol)に当たる)。ProgramHandler は runtime_checkable で
+;; ない Protocol で isinstance に渡せない(契約の実行時の確かめが TypeError)ので、契約にはこの型を綴る。
 (deff records-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3104)
   {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
   "記録の変化を合図として発する源で本体を包む関数を作るため(素の工場 — Program ではなく、with-handlers の列に置く)。bindings =

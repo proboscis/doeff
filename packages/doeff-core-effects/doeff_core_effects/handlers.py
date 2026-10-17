@@ -27,7 +27,7 @@ from typing import Any
 from doeff_vm._not_a_program import program_shown, uncalled_do_function_call
 
 from doeff import do
-from doeff.program import Pass, ProgramHandler, Transfer, TransferThrow
+from doeff.program import Pass, ProgramHandler, Transfer, TransferThrow, _named_handler
 from doeff.program import handler as _program_handler
 from doeff_core_effects.effects import (
     Ask,
@@ -139,9 +139,7 @@ def _writer_handler(effect: WriterTellEffect, k):
     yield Pass(effect, k)
 
 
-writer = _program_handler(_writer_handler)
-writer.__name__ = "writer"
-writer.__qualname__ = "writer"
+writer = _named_handler(_writer_handler, "writer")
 
 
 @do
@@ -196,9 +194,7 @@ def _try_handler(effect: Try, k):
     yield Pass(effect, k)
 
 
-try_handler = _program_handler(_try_handler)
-try_handler.__name__ = "try_handler"
-try_handler.__qualname__ = "try_handler"
+try_handler = _named_handler(_try_handler, "try_handler")
 
 
 def _format_slog_line(effect):
@@ -230,9 +226,7 @@ def _slog_handler(effect: Slog, k):
     yield Pass(effect, k)
 
 
-slog_handler = _program_handler(_slog_handler)
-slog_handler.__name__ = "slog_handler"
-slog_handler.__qualname__ = "slog_handler"
+slog_handler = _named_handler(_slog_handler, "slog_handler")
 
 
 @do
@@ -245,9 +239,7 @@ def _slog_discard_handler(effect: Slog, k):
     yield Pass(effect, k)
 
 
-slog_discard_handler = _program_handler(_slog_discard_handler)
-slog_discard_handler.__name__ = "slog_discard_handler"
-slog_discard_handler.__qualname__ = "slog_discard_handler"
+slog_discard_handler = _named_handler(_slog_discard_handler, "slog_discard_handler")
 
 
 @do
@@ -292,9 +284,7 @@ def _local_handler(effect: Local, k):
     yield Pass(effect, k)
 
 
-local_handler = _program_handler(_local_handler)
-local_handler.__name__ = "local_handler"
-local_handler.__qualname__ = "local_handler"
+local_handler = _named_handler(_local_handler, "local_handler")
 
 
 @do
@@ -336,9 +326,7 @@ def _listen_handler(effect: Listen, k):
     yield Pass(effect, k)
 
 
-listen_handler = _program_handler(_listen_handler)
-listen_handler.__name__ = "listen_handler"
-listen_handler.__qualname__ = "listen_handler"
+listen_handler = _named_handler(_listen_handler, "listen_handler")
 
 
 # --- Shared Await bridge loop (process-global singleton, issues #494/#498) ---

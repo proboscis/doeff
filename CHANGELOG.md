@@ -66,6 +66,15 @@
   changes at run time. The HTTP names (`HttpRequest`, `http_production_handler`, …) still load on first use through
   `__getattr__` and are not re-exported this way, because that would import the Hy modules and httpx with the
   package (card ki-02e317783af0).
+- `doeff`: a handler keeps the result type of the program it wraps. `doeff.program.ProgramHandler` was
+  `Callable[[object], Program[Any]]`, so `reader(env)(prog())`, `state()(p)`, `writer(p)`, `handler(h)(p)` and
+  `stacked_handlers(...)(p)` were all `Program[Any, Any]` and `run(...)` of them `Any`: a wrong result type passed
+  pyright and mypy unseen, and so did `writer(prog)` (the `@do` function, not called) and `state()(42)`, which fail
+  at run time. `ProgramHandler` is now a Protocol whose `__call__` takes a `Program[T, E]` and gives a
+  `Program[T, Any]` (Python types cannot take the effects the handler answers out of `E`). Every installer — the core
+  handlers, `handler()`, `stacked_handlers()`, a `defhandler` handler — keeps `T`, and a value that is not a program
+  is a type error. Code that installs a handler on a value typed `object` now names it a `Program`, or passes it to
+  `with_handlers(handlers, value)`, which still takes any value (card ki-68c54e9064e5).
 - `doeff-hy`: a Hy module that uses a doeff-hy macro it never required, or brings a macro in with `import`, now
   warns when it is loaded and names the line to add. Hy compiles an unrequired `(do! …)` as a call to an undefined
   function, so the module died at run time with `NameError: name 'hyx_doXexclamation_markX' is not defined` (and

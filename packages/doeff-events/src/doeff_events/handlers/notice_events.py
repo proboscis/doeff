@@ -707,7 +707,8 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     return answer
 
 
-class _BodyWrapper(partial["Program[object]"]):
+# Bare Program (Program[Any, Any]): a partial cannot carry the body's result type to its call; the factory's ProgramHandler does.
+class _BodyWrapper(partial["Program"]):
     """A function that wraps a body, marked so that Hy's ``with-handlers`` applies it to the body as it is."""
 
     _doeff_is_handler_fn = True

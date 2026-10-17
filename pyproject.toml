@@ -706,4 +706,7 @@ dev = [
     # 書いた後の linter(hook doeff-lint-after-write)は書いた file の repo の .venv/bin/doeff-linter を引く。agora の Pod の会話には
     # 開発版の置き場も PATH の binary も無いので、dev の依存に置いて make sync で入れる — 無いと doeff の Hy の file が検査されない。
     "doeff-linter",
+    # 公開の API の型が pyright だけでなく mypy でも効く事を確かめる検(tests/test_handler_installer_typing.py — 使う人は
+    # どちらの道具でも check する・card ki-68c54e9064e5)。
+    "mypy>=2.4.0",
 ]

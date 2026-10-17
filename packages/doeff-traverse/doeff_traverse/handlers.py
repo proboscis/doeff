@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from doeff_vm import WithBoundaries
 
 from doeff import do, handler_effect_types
-from doeff.program import GetHandlers, Pass, Resume, ResumeThrow, WithHandlerType
+from doeff.program import GetHandlers, Pass, Resume, ResumeThrow, WithHandlerType, _named_handler
 from doeff.program import handler as _program_handler
 from doeff_traverse.collection import Collection, HistoryEntry, ItemResult
 from doeff_traverse.effects import (
@@ -842,9 +842,7 @@ def _fail_handler(effect: Fail, k):
     yield Pass(effect, k)
 
 
-fail_handler = _program_handler(_fail_handler)
-fail_handler.__name__ = "fail_handler"
-fail_handler.__qualname__ = "fail_handler"
+fail_handler = _named_handler(_fail_handler, "fail_handler")
 
 
 @do
@@ -858,9 +856,7 @@ def _normalize_to_none(effect: Fail, k):
     yield Pass(effect, k)
 
 
-normalize_to_none = _program_handler(_normalize_to_none)
-normalize_to_none.__name__ = "normalize_to_none"
-normalize_to_none.__qualname__ = "normalize_to_none"
+normalize_to_none = _named_handler(_normalize_to_none, "normalize_to_none")
 
 
 class ProgressBar(Protocol):

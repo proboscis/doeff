@@ -18,7 +18,7 @@ from doeff_traverse.collection import Collection
 from doeff_traverse.effects import Traverse
 from doeff_traverse.handlers import parallel, parallel_fail_fast, sequential
 
-from doeff import Pass, do, run
+from doeff import EffectBase, Pass, Program, do, run
 from doeff import handler as program_handler
 
 _HEADER = """
@@ -35,8 +35,8 @@ def _half(x: int):
     return x // 2
 
 
-def _eval(code: str) -> object:
-    """for/do を含む Hy の式を、for/do の展開が引く名を import した module で評価した値(最後の式)。"""
+def _eval(code: str) -> Program:
+    """for/do を含む Hy の式を、for/do の展開が引く名を import した module で評価した値(最後の式 — Program か effect)。"""
     mod = types.ModuleType("for_do_runtime")
     sys.modules["for_do_runtime"] = mod
     mod.__dict__["half"] = _half
@@ -44,6 +44,8 @@ def _eval(code: str) -> object:
     result = None
     for form in hy.read_many(_HEADER + code):
         result = hy.eval(form, mod.__dict__, module=mod)
+    # 実行時の Program は DoExpr で、effect(Traverse)はその外
+    assert isinstance(result, (Program, EffectBase)), result
     return result
 
 
