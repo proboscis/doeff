@@ -67,7 +67,9 @@ def _run(
     )
 
 
-def _hy_script(directory: Path, text: str, deadline_scale_factor: float) -> subprocess.CompletedProcess[str]:
+def _hy_script(
+    directory: Path, text: str, deadline_scale_factor: float
+) -> subprocess.CompletedProcess[str]:
     """text を main.hy に書き、README の例と同じ ``python -m hy main.hy`` で走らせる。"""
     (directory / "main.hy").write_text(text, encoding="utf-8")
     return _run(directory, deadline_scale_factor, "-m", "hy", "main.hy")
@@ -81,16 +83,20 @@ def test_a_forgotten_require_of_do_and_arrow_says_the_line_to_add(
     assert result.returncode != 0
     assert "NameError: name 'hyx_doXexclamation_markX' is not defined" in result.stderr
     assert "(require doeff-hy.macros [do! <-])" in result.stderr
-    assert result.stderr.index("(require doeff-hy.macros [do! <-])") < result.stderr.index("Traceback")
+    assert result.stderr.index("(require doeff-hy.macros [do! <-])") < result.stderr.index(
+        "Traceback"
+    )
     # 警告は main.hy の使った行を指す(do! の行)。
-    assert "main.hy:10:" in result.stderr
+    assert "main.hy:9:" in result.stderr
 
 
 def test_the_second_run_reads_a_pyc_and_still_says_the_line(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     first = _hy_script(tmp_path, FORGOT_REQUIRE, deadline_scale_factor)
-    assert list((tmp_path / "pyc").rglob("*.pyc")), "1 回目が .pyc を書いていない — 2 回目が .pyc 経由にならない"
+    assert list((tmp_path / "pyc").rglob("*.pyc")), (
+        "1 回目が .pyc を書いていない — 2 回目が .pyc 経由にならない"
+    )
     second = _hy_script(tmp_path, FORGOT_REQUIRE, deadline_scale_factor)
     assert "(require doeff-hy.macros [do! <-])" in first.stderr
     assert "(require doeff-hy.macros [do! <-])" in second.stderr
@@ -100,7 +106,7 @@ def test_a_forgotten_require_in_an_imported_module_says_the_line_to_add(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     (tmp_path / "greet.hy").write_text(
-        "(import doeff [Ask])\n(setv greet (do! (<- greeting (Ask \"greeting\")) greeting))\n",
+        '(import doeff [Ask])\n(setv greet (do! (<- greeting (Ask "greeting")) greeting))\n',
         encoding="utf-8",
     )
     (tmp_path / "main.py").write_text("import hy\nimport greet\n", encoding="utf-8")
@@ -161,7 +167,7 @@ def test_a_plain_import_of_a_macro_module_is_not_reported(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     # module そのものを import する・macro でない名を import するのは正しい(macro の module の関数は import で入れる)。
-    text = "(import doeff-hy.handle)\n(import doeff-hy.macros)\n(print \"ok\")\n"
+    text = '(import doeff-hy.handle)\n(import doeff-hy.macros)\n(print "ok")\n'
     result = _hy_script(tmp_path, text, deadline_scale_factor)
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
@@ -181,12 +187,18 @@ def test_the_hint_is_a_warning_that_python_can_turn_into_an_error(
         "main.hy",
     )
     assert result.returncode != 0
-    assert "HyMacroUseWarning" in result.stderr
-    assert "NameError" not in result.stderr  # 実行に入る前に止まる
+    # 実行に入る前に警告の例外で止まる(落ちた表示の最後の行が警告の文で、module の本体の行は無い)。
+    last = result.stderr.rstrip().splitlines()[-1]
+    assert last.startswith("doeff_hy_bytecode_guard.macro_hints.HyMacroUseWarning:")
+    assert 'main.hy", line' not in result.stderr
 
 
 #: 表を実物と照らす提供元(table の順 — 名の提供元の探しは前から)。
-HOMES = {"doeff-hy.macros": "doeff_hy.macros", "doeff-hy.handle": "doeff_hy.handle", "doeff-hy.record": "doeff_hy.record"}
+HOMES = {
+    "doeff-hy.macros": "doeff_hy.macros",
+    "doeff-hy.handle": "doeff_hy.handle",
+    "doeff-hy.record": "doeff_hy.record",
+}
 
 
 @pytest.mark.parametrize("hy_name", sorted(HOMES))

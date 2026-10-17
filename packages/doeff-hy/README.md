@@ -175,7 +175,11 @@ Fixture parameters go in a list after the name:
 
 ## Macros
 
-Import macros with `(require doeff-hy.macros [<names>])`.
+Bring macros in with `(require doeff-hy.macros [<names>])` — `require`, never `import`. A macro that is
+used without being required is compiled by Hy as a call to an undefined function (`NameError: name
+'hyx_doXexclamation_markX' is not defined`); doeff-hy prints a `HyMacroUseWarning` with the line to add,
+e.g. `(require doeff-hy.macros [do! <-])`, before the traceback. The same warning names the `require`
+to write when a macro was brought in with `import`.
 
 | Macro | Purpose |
 | --- | --- |
@@ -339,7 +343,9 @@ checked. What it does not catch yet (effect result types, env / effect sets) and
   every Python start in the environment. It wraps the standard source loader so that a
   Hy module is recompiled when a macro it used has changed (Python's `.pyc` check looks
   only at the source file, not at the macros that expanded it). `import doeff_hy`
-  installs the same hook when `.pth` files are skipped (`python -S`).
+  installs the same hook when `.pth` files are skipped (`python -S`). The same loader hook
+  warns (`HyMacroUseWarning`) when a Hy module uses a doeff-hy macro it never required, or
+  imports a macro instead of requiring it.
 - **A compiled-code cache.** Compiled Hy code is also kept in a shared directory:
   `$DOEFF_HY_CODE_STORE`, by default `$XDG_CACHE_HOME/doeff-hy/code-store`
   (`~/.cache/doeff-hy/code-store`). Set `DOEFF_HY_CODE_STORE=off` to turn it off.

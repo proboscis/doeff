@@ -87,6 +87,42 @@ creates that shape directly:
 (print (run (ask-env greet)))  ; hello
 ```
 
+Hy comes with the extra `hy`: `pip install "doeff[hy]"`. Save the example as `greet.hy` and run it
+with `hy greet.hy`. Macros such as `do!`, `<-` and `defhandler` are brought in with `require`, never
+with `import`.
+
+### Using a Hy module from Python
+
+Python reads a `.hy` file only after `import hy` has run, so put `import hy` before the import of a
+Hy module:
+
+```hy file=greet.hy
+(require doeff-hy.macros [do! <-])
+(import doeff [Ask])
+
+(setv greet
+  (do!
+    (<- greeting (Ask "greeting"))
+    greeting))
+```
+
+```python
+import hy  # first: registers Hy's import hook, so Python can find greet.hy
+from doeff import run
+from doeff_core_effects.handlers import reader
+from greet import greet
+
+print(run(reader(env={"greeting": "hello"})(greet)))  # hello
+```
+
+### Common Hy mistakes and the line that fixes each
+
+| You see | Why | Fix |
+| --- | --- | --- |
+| `NameError: name 'hyx_doXexclamation_markX' is not defined` (or `name 'defk' is not defined`) | A macro was used without a `require`, so Hy compiled it as a call to an undefined function. doeff prints a `HyMacroUseWarning` with the line to add just before the traceback. | Add `(require doeff-hy.macros [do! <-])` |
+| `ImportError: cannot import name 'defhandler' from 'doeff_hy.handle'` | A macro was brought in with `import`. | Write `(require doeff-hy.handle [defhandler])` instead of `(import doeff-hy.handle [defhandler])` |
+| `ModuleNotFoundError: No module named 'greet'` with a `greet.hy` next to the script | Python does not read `.hy` files until `import hy` has run. | Add `import hy` above `from greet import greet` |
+
 ## Effect Surface
 
 Core effects (from `doeff_core_effects`):
