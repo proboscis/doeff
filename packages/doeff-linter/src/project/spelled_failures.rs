@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rayon::prelude::*;
 
@@ -26,22 +26,29 @@ pub struct SpelledFailures<'a> {
     reading: &'a TagReading,
     /// 型の名(最後の段)ごとの、その名を綴る宣言の file から集めた失敗の型(同じ名は 2 度集めない)。
     memo: Mutex<HashMap<String, Arc<FailureTypes>>>,
+    /// 宣言を持つ file(`:failure` か `:absent` を含む file)の(根からの path・中身)— 型の名に依らないので、最初の問いで 1 度だけ repo から集める。
+    /// 名ごとに repo の Hy の全部を読み直すと、match の腕の型が多い file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
+    declarations: OnceLock<Vec<(String, String)>>,
 }
 
 impl<'a> SpelledFailures<'a> {
     pub fn new(root: &'a Path, enabled: &'a BTreeSet<ProjectRule>, reading: &'a TagReading) -> Self {
-        SpelledFailures { root, enabled, reading, memo: Mutex::new(HashMap::new()) }
+        SpelledFailures { root, enabled, reading, memo: Mutex::new(HashMap::new()), declarations: OnceLock::new() }
     }
 
     /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
     fn declared_with(&self, name: &str) -> FailureTypes {
         let spelling = Spelling::of(name);
-        // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
-        let sources: Vec<(String, PathBuf, Option<String>)> = hy_files::collect_reading(self.root, |path| {
-            let source = std::fs::read_to_string(path).ok()?;
-            ((source.contains(":failure") || source.contains(":absent")) && spelling.in_source(&source)).then_some(source)
+        let declarations = self.declarations.get_or_init(|| {
+            // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
+            let sources: Vec<(String, PathBuf, Option<String>)> = hy_files::collect_reading(self.root, |path| {
+                let source = std::fs::read_to_string(path).ok()?;
+                (source.contains(":failure") || source.contains(":absent")).then_some(source)
+            });
+            sources.into_iter().filter_map(|(rel, _, source)| source.map(|source| (rel, source))).collect()
         });
-        let kept: Vec<(&str, &str)> = sources.iter().filter_map(|(rel, _, source)| source.as_deref().map(|source| (rel.as_str(), source))).collect();
+        let kept: Vec<(&str, &str)> =
+            declarations.iter().filter(|(_, source)| spelling.in_source(source)).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
         let found: Vec<FailureTypes> = kept
             .par_iter()
             .map(|(rel, source)| {
