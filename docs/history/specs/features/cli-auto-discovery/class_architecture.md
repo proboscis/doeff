@@ -1,7 +1,7 @@
 # Class Architecture: Doeff CLI Enhancement
 
 > **Status**: ✅ IMPLEMENTED - This document describes the original design. Implementation matches this architecture closely.
-> See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) for actual code locations.
+> See [IMPLEMENTATION_STATUS.md](https://github.com/proboscis/doeff/blob/343103894f94e37eb78ed7e2f15f2a03c35c6072/specs/cli-auto-discovery/IMPLEMENTATION_STATUS.md) for actual code locations.
 
 ## Design Principles
 
