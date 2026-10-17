@@ -24,6 +24,8 @@ components are listed separately under
 2. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
 3. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
 
+- **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
+
 ### Effect Types
 
 4. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
