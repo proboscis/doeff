@@ -155,7 +155,7 @@ def test_example_tests_pass_with_only_the_example_files(
     # 利用者が例の file を写した dir で `pytest test_<名>.py` と打つのと同じ形で、検の例が通るかを見る。
     for path in EXAMPLES.glob("*.py"):
         shutil.copy(path, tmp_path / path.name)
-    no_keys = {variable: None for variable in os.environ if variable.startswith("OPENAI_")}
+    no_keys = {variable: None for variable in os.environ if variable.startswith("OPENAI_")}  # noqa: DOEFF004 — 検が子の process の環境から model の key を外す 1 か所
     completed = subprocess.run(
         with_settings(
             [sys.executable, "-m", "pytest", "-q", name], {"DOEFF_PROFILE": None, **no_keys}
