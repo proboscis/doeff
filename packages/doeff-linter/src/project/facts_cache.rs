@@ -324,16 +324,28 @@ where
     T: Serialize + DeserializeOwned,
     F: FnOnce() -> T,
 {
-    let Some(place) = place(root, kind, Format::Compact) else { return compute() };
+    keyed_value_if(root, kind, key, || (compute(), true))
+}
+
+/// `keyed_value` の、置いてよい時だけ置く形 — `compute` は値と「置いてよいか」を返す(値が根の絶対 path を持つ時など、置き場が断る値を呼び手が
+/// 先に外す。置き場が断ると 1 度 stderr へ知らせるので、断られるとわかっている値は置こうとしない)。置かなかった値も答えとして返す。
+pub fn keyed_value_if<T, F>(root: &Path, kind: &str, key: u64, compute: F) -> T
+where
+    T: Serialize + DeserializeOwned,
+    F: FnOnce() -> (T, bool),
+{
+    let Some(place) = place(root, kind, Format::Compact) else { return compute().0 };
     let identity = format!("{}/", identity(kind));
     let object = object_key(&[identity.as_bytes(), b"keyed-value", &key.to_le_bytes()]);
     let cached = crate::timing::timed("facts-cache.load", || read_object::<T>(&place.objects, &object, Format::Compact));
     if let Some(value) = cached {
         return value;
     }
-    let value = compute();
-    let written = crate::timing::timed("facts-cache.save", || write_object(&place.objects, &object, &value, Format::Compact, &place.guard));
-    note_object_bytes(written);
+    let (value, keep) = compute();
+    if keep {
+        let written = crate::timing::timed("facts-cache.save", || write_object(&place.objects, &object, &value, Format::Compact, &place.guard));
+        note_object_bytes(written);
+    }
     value
 }
 

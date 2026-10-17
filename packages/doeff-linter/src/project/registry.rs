@@ -3,9 +3,11 @@
 //! (知らせ notes — 最後の行を消すと git が dir ごと消すため・agora-redesign #1732)。
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use super::bulk_read;
+use serde::{Deserialize, Serialize};
+
+use super::{bulk_read, dir_stamp};
 
 /// 読んだ登録簿(鍵の集合)と、読めなかった理由。
 #[derive(Debug, Default, Clone)]
@@ -23,7 +25,7 @@ impl Registry {
     pub fn load(root: &Path, dirs: &[String], files: &[String]) -> Registry {
         let mut registry = Registry::default();
         for dir in dirs {
-            registry.read_dir(&root.join(dir), dir);
+            registry.read_dir(root, &root.join(dir), dir);
         }
         for file in files {
             registry.read_list(&root.join(file), file);
@@ -36,7 +38,7 @@ impl Registry {
     /// 無い dir は空の登録簿として読む(知らせを 1 行 — agora-redesign #1732)。登録簿は縮める向きの表で、最後の 1 行を消すと git は
     /// 空の dir を持たないので dir ごと消える — それは正しい操作なので読めないとしない。登録簿は既知の当たりを緩めるだけの表なので、
     /// 無い(綴りの誤りを含む)dir を空と読んでも判定は厳しい側にしか倒れない(載っていたはずの当たりは新しい当たりとして出る)。
-    fn read_dir(&mut self, path: &Path, shown: &str) {
+    fn read_dir(&mut self, root: &Path, path: &Path, shown: &str) {
         if !path.exists() {
             self.notes.push(format!("登録簿の dir {} が無い — 空の登録簿として読んだ", shown));
             return;
@@ -48,21 +50,15 @@ impl Registry {
                 return;
             }
         };
-        // 1 鍵 1 file の dir は数百 file になる — 冷えた作業木で 1 file ごとに disk を待たないよう、読みを重ねてから file の順に判じる。
-        let texts = crate::timing::timed("registry.read", || bulk_read::fan_out(&files, |file| std::fs::read_to_string(file)));
-        for (file, text) in files.iter().zip(texts) {
-            match text {
-                Ok(text) => match text.lines().next().map(str::trim).filter(|line| !line.is_empty()) {
-                    Some(key) => {
-                        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        self.keys.insert(key.to_string());
-                        self.origins.insert(key.to_string(), format!("{}/{}", shown.trim_end_matches('/'), name));
-                    }
-                    None => self.problems.push(format!("登録簿の file {} の 1 行目が空", file.display())),
-                },
-                Err(error) => self.problems.push(format!("登録簿の file {} を読めない: {}", file.display(), error)),
-            }
+        // 1 鍵 1 file の dir は数百 file になる — 前の実行と(名・大きさ・更新時刻)が同じなら中身を読まずに前の読みを使い(`dir_stamp`)、
+        // 読む時は冷えた作業木で 1 file ごとに disk を待たないよう重ねる。
+        let read = dir_stamp::remembered(root, "registry-dir", &files, || read_key_files(&files));
+        let shown = shown.trim_end_matches('/');
+        for (key, name) in read.keys {
+            self.origins.insert(key.clone(), format!("{}/{}", shown, name));
+            self.keys.insert(key);
         }
+        self.problems.extend(read.problems);
     }
 
     /// 1 行 1 鍵の file を読む(空行と `#` で始まる行は飛ばす)。
@@ -118,29 +114,74 @@ impl JudgedKeys {
                     continue;
                 }
             };
-            let texts = bulk_read::fan_out(&files, |file| std::fs::read_to_string(file));
-            for (file, text) in files.iter().zip(texts) {
-                let text = match text {
-                    Ok(text) => text,
-                    Err(error) => {
-                        judged.problems.push(format!("判定の一覧の file {} を読めない: {}", file.display(), error));
-                        continue;
-                    }
-                };
-                let mut lines = text.lines();
-                let key = lines.next().map(str::trim).unwrap_or("");
-                let reason = lines.map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join(" ");
-                match (key.is_empty(), reason.is_empty()) {
-                    (true, _) => judged.problems.push(format!("判定の一覧の file {} の 1 行目(鍵)が空", file.display())),
-                    (false, true) => judged.problems.push(format!("判定の一覧の file {} に判定の理由(2 行目から後)が無い — 読まない", file.display())),
-                    (false, false) => {
-                        judged.reasons.insert(key.to_string(), reason);
-                    }
-                }
+            let read = dir_stamp::remembered(root, "judged-dir", &files, || read_judged_files(&files));
+            for (key, reason) in read.reasons {
+                judged.reasons.insert(key, reason);
             }
+            judged.problems.extend(read.problems);
         }
         judged
     }
+}
+
+/// 1 鍵 1 file の登録簿の dir を読んだ結果 — `*.txt` の file の順の (鍵, file の名) と、読めなかった理由。dir の指紋で覚える物(`dir_stamp`)。
+#[derive(Serialize, Deserialize)]
+struct KeyFiles {
+    keys: Vec<(String, String)>,
+    problems: Vec<String>,
+}
+
+/// 登録簿の file の中身を実際に読む(読みの待ちを重ねる)。結果と「覚えてよいか」— 読めない理由は file の絶対 path を持つので、理由が在る読みは覚えない
+/// (置き場は根の絶対 path を持つ値を断る)。
+fn read_key_files(files: &[PathBuf]) -> (KeyFiles, bool) {
+    let texts = crate::timing::timed("registry.read", || bulk_read::fan_out(files, |file| std::fs::read_to_string(file)));
+    let mut read = KeyFiles { keys: Vec::new(), problems: Vec::new() };
+    for (file, text) in files.iter().zip(texts) {
+        match text {
+            Ok(text) => match text.lines().next().map(str::trim).filter(|line| !line.is_empty()) {
+                Some(key) => {
+                    let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    read.keys.push((key.to_string(), name));
+                }
+                None => read.problems.push(format!("登録簿の file {} の 1 行目が空", file.display())),
+            },
+            Err(error) => read.problems.push(format!("登録簿の file {} を読めない: {}", file.display(), error)),
+        }
+    }
+    let keep = read.problems.is_empty();
+    (read, keep)
+}
+
+/// 人が判定した鍵の dir を読んだ結果 — `*.txt` の file の順の (鍵, 理由) と、読めなかった理由。`KeyFiles` と同じく dir の指紋で覚える物。
+#[derive(Serialize, Deserialize)]
+struct JudgedFiles {
+    reasons: Vec<(String, String)>,
+    problems: Vec<String>,
+}
+
+/// 判定の一覧の file の中身を実際に読む。結果と「覚えてよいか」(`read_key_files` と同じ — 読めない理由が在る読みは覚えない)。
+fn read_judged_files(files: &[PathBuf]) -> (JudgedFiles, bool) {
+    let texts = crate::timing::timed("judged.read", || bulk_read::fan_out(files, |file| std::fs::read_to_string(file)));
+    let mut read = JudgedFiles { reasons: Vec::new(), problems: Vec::new() };
+    for (file, text) in files.iter().zip(texts) {
+        let text = match text {
+            Ok(text) => text,
+            Err(error) => {
+                read.problems.push(format!("判定の一覧の file {} を読めない: {}", file.display(), error));
+                continue;
+            }
+        };
+        let mut lines = text.lines();
+        let key = lines.next().map(str::trim).unwrap_or("");
+        let reason = lines.map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join(" ");
+        match (key.is_empty(), reason.is_empty()) {
+            (true, _) => read.problems.push(format!("判定の一覧の file {} の 1 行目(鍵)が空", file.display())),
+            (false, true) => read.problems.push(format!("判定の一覧の file {} に判定の理由(2 行目から後)が無い — 読まない", file.display())),
+            (false, false) => read.reasons.push((key.to_string(), reason)),
+        }
+    }
+    let keep = read.problems.is_empty();
+    (read, keep)
 }
 
 /// dir の中の `*.txt` を名の順に並べる。
