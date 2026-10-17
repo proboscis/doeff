@@ -54,8 +54,21 @@ const BINDING_SYNTAX: &[&str] = &["val", "var", "lazy", "session"];
 /// 定数(参照に入れない)。
 const CONSTANTS: &[&str] = &["True", "False", "None", "...", "Ellipsis", "NotImplemented", "Inf", "NaN"];
 
+/// この thread で `mangle` を呼んだ回数(検が、仕事の量が file の大きさに比例するかを数える — `qualify::link`)。
+#[cfg(test)]
+thread_local! {
+    static MANGLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn mangle_calls() -> usize {
+    MANGLES.with(std::cell::Cell::get)
+}
+
 /// Hy の名前を Python の名前へ直す(契約の mangle: `-` を `_` に、先頭の `-` は残す)。
 pub fn mangle(name: &str) -> String {
+    #[cfg(test)]
+    MANGLES.with(|count| count.set(count.get() + 1));
     let has_word = name.chars().any(|c| c.is_alphanumeric() || c == '_');
     if has_word && name.contains('-') {
         let trimmed = name.trim_start_matches('-');

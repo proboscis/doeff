@@ -2,8 +2,10 @@
 
 use std::path::Path;
 
+use super::analyze;
 use super::index_source;
 use super::model::{Call, HyFileIndex};
+use super::qualify;
 
 /// source を `/r/<path>` として索引する(root は `/r`)。
 fn index_at(path: &str, source: &str) -> HyFileIndex {
@@ -149,4 +151,70 @@ fn references_resolve_like_calls() {
     assert_eq!(target_of("files").as_deref(), Some("doeff_core_effects.os_file.os_file_handler"));
     assert_eq!(target_of("with-cluster-handlers").as_deref(), Some("doeff_cluster.cluster_foundation.with_cluster_handlers"));
     assert_eq!(target_of("local"), None, "解決できない名に target を付けた");
+}
+
+/// 解決の順の約束(書き換えても変えない): 同じ名を束ねる import は先に書いた方が勝ち、最初に当たる import が module そのものなら未解決。
+/// 同じ file の top level の定義は import に勝つ。
+#[test]
+fn the_first_import_that_binds_a_name_decides_and_a_local_definition_beats_an_import() {
+    let file = index_at(
+        "pkg/order.hy",
+        "(import a.m [x])\n(import b.m [x])\n(import foo)\n(import c.m [foo])\n(import d [y])\n(defn y [] 1)\n(defn g [] (x 1) (foo 2) (y 3))\n",
+    );
+    assert_eq!(call(&file, None, "x").target.as_deref(), Some("a.m.x"), "先に書いた import");
+    assert_eq!(call(&file, None, "foo").target, None, "最初に当たる import が module そのもの(後の `[foo]` は見ない)");
+    assert_eq!(call(&file, None, "y").target.as_deref(), Some("pkg.order.y"), "同じ file の定義が import に勝つ");
+}
+
+/// 修飾つきの呼びも、import を書いた順で最初に合う物を使う — module の import は修飾の前方一致(`a.b` の下の `a.b.c.d`)でも合う。
+#[test]
+fn a_qualified_call_uses_the_first_import_in_order_that_fits() {
+    let file = index_at("pkg/q.hy", "(import m)\n(import n [m])\n(import a.b)\n(defn g [] (m.f 1) (a.b.c.d 2))\n");
+    assert_eq!(call(&file, Some("m"), "f").target.as_deref(), Some("m.f"), "module の import が先");
+    assert_eq!(call(&file, Some("a.b.c"), "d").target.as_deref(), Some("a.b.c.d"), "修飾の前方一致");
+    let swapped = index_at("pkg/q.hy", "(import n [m])\n(import m)\n(defn g [] (m.f 1))\n");
+    assert_eq!(call(&swapped, Some("m"), "f").target.as_deref(), Some("n.m.f"), "`[m]` の import が先");
+}
+
+/// 名前の解決の仕事は file の大きさに比例する — 「呼びの数 × (定義 + import の数)」にならない(10,000 行・呼び 5 万の file で `index_source` が 4.3 秒かかっていた:
+/// 呼びごとに定義と import の全部を回し、import ごとに mangle の確保をしていた。card ki-58bfad2c13a1 の残り)。
+#[test]
+fn linking_costs_the_size_of_the_file_not_calls_times_imports() {
+    const IMPORTS: usize = 40;
+    const NAMES: usize = 20;
+    const ROUNDS: usize = 20;
+    let mut source = String::new();
+    for i in 0..IMPORTS {
+        source.push_str(&format!("(import pkg{i}.mod{i} [fn{i}])\n(import util{i})\n"));
+    }
+    for i in 0..NAMES {
+        source.push_str(&format!("(defn local-{i} [x] x)\n"));
+    }
+    source.push_str("(defn run []\n");
+    for round in 0..ROUNDS {
+        for i in 0..NAMES {
+            source.push_str(&format!("  (unknown-{i} {round})\n  (local-{i} 1)\n  (util{i}.go {round})\n  (fn{i} 2)\n"));
+        }
+    }
+    source.push_str(")\n");
+    let mut file = index_at("pkg/many.hy", &source);
+    let calls = file.calls.len();
+    assert!(calls >= ROUNDS * NAMES * 4, "呼びが少なすぎる: {calls}");
+    let before = analyze::mangle_calls();
+    qualify::link(&mut file);
+    let spent = analyze::mangle_calls() - before;
+    let size = file.imports.len() + file.definitions.len() + NAMES * 4;
+    assert!(
+        spent <= 8 * size,
+        "link が mangle を {spent} 回呼んだ(file の大きさ {size} の 8 倍 = {} を越えた — 呼び {calls} 個ごとに全部の定義と import を回している)",
+        8 * size
+    );
+    // 答えは変わらない: 同じ名の呼びは、何回目も同じ target。
+    let targets = |name: &str, qualifier: Option<&str>| -> Vec<Option<String>> {
+        file.calls.iter().filter(|c| c.callee == name && c.qualifier.as_deref() == qualifier).map(|c| c.target.clone()).collect()
+    };
+    assert_eq!(targets("local-3", None), vec![Some("pkg.many.local_3".to_string()); ROUNDS]);
+    assert_eq!(targets("fn3", None), vec![Some("pkg3.mod3.fn3".to_string()); ROUNDS]);
+    assert_eq!(targets("go", Some("util3")), vec![Some("util3.go".to_string()); ROUNDS]);
+    assert_eq!(targets("unknown-3", None), vec![None; ROUNDS]);
 }
