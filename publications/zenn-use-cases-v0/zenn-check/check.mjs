@@ -10,57 +10,17 @@
 // - 画像の欠け: Markdownの画像の数とimgの数を比べ、/images/...をプレビューのサーバーから読む。
 // - リンク切れ: 記事内の#…は本文のidを探す。公開先から開けないパス(相対パスと/…)は切れと数える。
 //   --onlineの時は外のURLを開いて状態を確かめ、GitHubのURLの#…は見出しのidを探す。
-// - Markdownの崩れ: コードの外に「](」「![」「:::」が文字のまま残っていないか。
+// - Markdownの崩れ: コードの外に「](」「![」「:::」「**」「`」が文字のまま残っていないか。
+//   「**」は、日本語の括弧に接した太字(例 **「語」**です)をZennが太字にしない時に残る。
 // - 秘密の形: zenn-cliが使うsecretlintの推奨の規則で、記事のMarkdownを読む。
-import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:net";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createEngine } from "@secretlint/node";
 import { load } from "cheerio";
 import zennModel from "zenn-model";
+import { getJson, listSlugs, startPreview, zennVersion } from "./preview.mjs";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const zennBin = path.join(here, "node_modules/zenn-cli/dist/server/zenn.js");
 const markdownImage = /!\[[^\]]*\]\([^)\s]+\)/g;
-
-/** 空いているポートを1つ借りる。 */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
-/** 書き出し先でzenn-cliのプレビューを起こし、URLを表示したらそのoriginを返す。 */
-function startPreview(root, port) {
-  const child = spawn(process.execPath, [zennBin, "preview", "--port", String(port), "--no-watch"], {
-    cwd: root,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const ready = new Promise((resolve, reject) => {
-    let log = "";
-    const watch = (chunk) => {
-      log += chunk;
-      if (log.includes(`localhost:${port}`)) resolve(`http://localhost:${port}`);
-    };
-    child.stdout.on("data", watch);
-    child.stderr.on("data", watch);
-    child.once("exit", (code) => reject(new Error(`zenn previewが起きずに終わりました(${code}): ${log}`)));
-  });
-  return { child, ready };
-}
-
-async function getJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`${url}: ${response.status}`);
-  return response.json();
-}
 
 /** 外のURLを開き、切れていればその訳を返す(GitHubの#…は見出しのidも探す)。 */
 async function externalProblem(href, pages) {
@@ -119,7 +79,7 @@ async function checkArticle(origin, root, slug, options) {
   );
 
   $("pre, code").remove();
-  const leftovers = ["](", "![", ":::"].filter((mark) => $.root().text().includes(mark));
+  const leftovers = ["](", "![", ":::", "**", "`"].filter((mark) => $.root().text().includes(mark));
   const secrets = await options.secretlint.executeOnContent({ content: markdown, filePath: `${slug}.md` });
 
   return {
@@ -144,11 +104,10 @@ async function main() {
   }
   const root = path.resolve(rootArgument);
   const files = readdirSync(path.join(root, "articles")).filter((name) => name.endsWith(".md"));
-  const port = await freePort();
-  const { child, ready } = startPreview(root, port);
+  const { child, ready } = await startPreview(root);
   try {
     const origin = await ready;
-    const listed = (await getJson(`${origin}/api/articles`)).articles.map((article) => article.slug);
+    const listed = await listSlugs(origin);
     const secretlint = await createEngine({
       configFileJSON: { rules: [{ id: "@secretlint/secretlint-rule-preset-recommend" }] },
       formatter: "compact",
@@ -156,7 +115,7 @@ async function main() {
       maskSecrets: true,
     });
     const options = { online: flags.includes("--online"), pages: new Map(), secretlint };
-    const results = await Promise.all(listed.sort().map((slug) => checkArticle(origin, root, slug, options)));
+    const results = await Promise.all(listed.map((slug) => checkArticle(origin, root, slug, options)));
     const missing = files.filter((name) => !listed.includes(name.replace(/\.md$/, "")));
 
     let total = missing.length;
@@ -184,10 +143,6 @@ async function main() {
   } finally {
     child.kill();
   }
-}
-
-function zennVersion() {
-  return JSON.parse(readFileSync(path.join(here, "node_modules/zenn-cli/package.json"), "utf8")).version;
 }
 
 await main();
