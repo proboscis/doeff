@@ -13,7 +13,7 @@ it; the library is imported when a watch is started.
   lookups (``loop.getaddrinfo`` — an HTTP client's new connection); a turn-host with more turns than its 32 threads
   queued every new connection behind the waits until it timed out (agora-redesign card ki-fe848da94d24, 2026-10-12).
   When the awaiting task is cancelled, the thread stops after the notifier's current wait. The wait ends when the
-  operating system reports a change under the directory; a quiet stretch of the notifier's own time limit only waits
+  operating system reports a change in the directory; a quiet stretch of the notifier's own time limit only waits
   again (the program is never woken to look). Changes reported together within ``DEBOUNCE_MS`` come as one answer,
   sorted by path, each path once.
 - ``CloseFileWatch`` sets the notifier's stop flag (a wait in progress ends) and closes it — at once when no wait is
@@ -207,14 +207,15 @@ class _NextChanges:
 
 
 def _start(directory: str) -> _Notifier | WatchRefused:
-    """Start the library's notifier on ``directory`` (recursive), or refuse when it is not a directory."""
+    """Start the library's notifier on ``directory``'s own entries (not recursive — ``WatchFiles``: a recursive start
+    walks the tree here, on the scheduler's thread), or refuse when it is not a directory."""
     if not os.path.isdir(directory):
         return WatchRefused(f"{directory} is not a directory")
     from watchfiles._rust_notify import (
         RustNotify,
     )  # imported here: the optional dependency doeff-events[files]
 
-    return _Notifier(RustNotify([directory], False, False, LIBRARY_POLL_DELAY_MS, True, False))
+    return _Notifier(RustNotify([directory], False, False, LIBRARY_POLL_DELAY_MS, False, False))
 
 
 def os_file_watch_handler() -> "ProgramHandler":
