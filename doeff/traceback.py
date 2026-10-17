@@ -17,7 +17,7 @@ import warnings
 _INTERNAL_PATHS = ("/doeff_core_effects/", "/doeff/do.py", "/doeff/run.py", "/doeff_vm/")
 
 
-def format_default(exception):
+def format_default(exception: BaseException) -> str | None:
     """Render doeff traceback from __doeff_traceback__ (None when no entry is left to show)."""
     tb_data = getattr(exception, "__doeff_traceback__", None)
     if not tb_data:

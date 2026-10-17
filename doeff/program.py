@@ -6,7 +6,7 @@ The VM classifies them via downcast (not tag-based getattr).
 
 import functools
 import types
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from inspect import CO_VARARGS
 from typing import (
@@ -412,7 +412,9 @@ def typed_transfer(effect: EffectBase[_Answer], k: K, value: _Answer) -> Transfe
     return Transfer(k, value)
 
 
-def program(gen_fn, *args):
+def program(
+    gen_fn: Callable[..., Generator[Any, Any, _Result]], *args: object
+) -> Expand[_Result]:
     """Wrap a generator function as Expand(Apply(Callable(factory), args)).
 
     The factory calls gen_fn and wraps the generator as IRStream explicitly.
@@ -420,7 +422,7 @@ def program(gen_fn, *args):
     from doeff_vm import Callable as VmCallable
     from doeff_vm import IRStream
 
-    def factory(*inner_args):
+    def factory(*inner_args: object) -> IRStream:
         gen = gen_fn(*inner_args)
         return IRStream(gen)
 

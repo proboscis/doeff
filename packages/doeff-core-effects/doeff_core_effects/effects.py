@@ -34,7 +34,7 @@ class Ask(EffectBase[Any]):
         super().__init__()
         self.key = key
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Ask({self.key!r})"
 
 
@@ -105,7 +105,7 @@ class Get(EffectBase[Any]):
         super().__init__()
         self.key = key
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Get({self.key!r})"
 
 
@@ -117,7 +117,7 @@ class Put(EffectBase[None]):
         self.key = key
         self.value = value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Put({self.key!r}, {self.value!r})"
 
 
@@ -139,7 +139,7 @@ class Local(EffectBase[_T], Generic[_T]):
         self.env = env
         self.program = program
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Local({self.env!r}, ...)"
 
 
@@ -156,7 +156,7 @@ class Listen(EffectBase[tuple[_T, list[Any]]], Generic[_T]):
         self.program = program
         self.types = types
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Listen(...)"
 
 
@@ -185,7 +185,7 @@ class Await(EffectBase[_T], Generic[_T]):
         self.deadline = deadline
         self.source_alive = source_alive
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Await(...)"
 
 
@@ -201,7 +201,7 @@ class Try(EffectBase["Ok[_T] | Err"], Generic[_T]):
         super().__init__()
         self.program = program
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Try({self.program!r})"
 
 
@@ -305,7 +305,7 @@ class WriterTellEffect(EffectBase[None]):
         super().__init__()
         self.msg = msg
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Tell({self.msg!r})"
 
 
@@ -323,7 +323,7 @@ class SlogEffect(EffectBase[None]):
         self.msg = msg
         self.kwargs = kwargs
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         kw = ", ".join(f"{k}={v!r}" for k, v in self.kwargs.items())
         if kw:
             return f"slog({self.msg!r}, {kw})"
