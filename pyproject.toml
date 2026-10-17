@@ -313,7 +313,7 @@ prefix = "docs/09-advanced-effects.md"
 tests = ["tests/test_docs_state_get_missing_key.py"]
 
 [[tool.doeff.contract-tests]]
-prefix = "specs/effects/SPEC-EFF-002-state.md"
+prefix = "docs/history/specs/effects/SPEC-EFF-002-state.md"
 tests = ["tests/test_docs_state_get_missing_key.py"]
 
 # 11 章(Kleisli)は、page の例の検(tests/test_docs_page_examples.py)に加え、今の @do に無い引数の自動の解き(should_unwrap)

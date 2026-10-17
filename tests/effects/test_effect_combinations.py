@@ -4,7 +4,7 @@ This test module validates the composition laws defined in SPEC-EFF-100-combinat
 It tests how effects interact when nested or composed, ensuring consistent and
 predictable behavior.
 
-Reference: gh#180, specs/effects/SPEC-EFF-100-combinations.md
+Reference: gh#180, docs/history/specs/effects/SPEC-EFF-100-combinations.md
 """
 
 import asyncio

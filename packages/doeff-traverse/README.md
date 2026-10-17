@@ -221,4 +221,4 @@ See `examples/` directory:
 
 ## ADR
 
-See [ADR-TRAVERSE-001](../../specs/features/ADR-TRAVERSE-001-applicative-traverse-via-free-monad-on-algebraic-effects.md) for the full design rationale.
+See [ADR-TRAVERSE-001](../../docs/history/specs/features/ADR-TRAVERSE-001-applicative-traverse-via-free-monad-on-algebraic-effects.md) for the full design rationale.

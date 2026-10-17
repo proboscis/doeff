@@ -358,7 +358,7 @@ example a semaphore).
 
 ## References
 
-- `specs/effects/SPEC-EFF-100-combinations.md`
+- `docs/history/specs/effects/SPEC-EFF-100-combinations.md`
 - `tests/effects/test_effect_combinations.py`
 - `tests/core/test_sa008_runtime_contracts.py`
 - `tests/core/test_runtime_regressions_manual.py`

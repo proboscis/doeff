@@ -38,7 +38,7 @@
 
 ;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場。
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
-(val SCAN-SKIP-PREFIXES #("docs/" "specs/" "notes/" ".github/"))
+(val SCAN-SKIP-PREFIXES #("docs/" ".github/"))
 
 
 ;; ---------------------------------------------------------------------------

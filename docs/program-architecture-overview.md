@@ -9,8 +9,8 @@
 
 This document describes the current execution model defined by:
 
-- `specs/core/SPEC-TYPES-001-program-effect-separation.md`
-- `specs/vm/SPEC-008-rust-vm.md`
+- `docs/history/specs/core/SPEC-TYPES-001-program-effect-separation.md`
+- `docs/history/specs/vm/SPEC-008-rust-vm.md`
 
 ## Core Model
 
