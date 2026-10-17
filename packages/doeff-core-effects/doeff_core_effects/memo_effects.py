@@ -19,7 +19,7 @@ from doeff_core_effects.memo_policy import (
 
 class MemoGetEffect(EffectBase):
     """Requests the memoized value for the key."""
-    def __init__(self, key: Any, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
+    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
         super().__init__()
         self.key = key
         self.recompute_cost = recompute_cost
@@ -31,7 +31,7 @@ class MemoGetEffect(EffectBase):
 class MemoPutEffect(EffectBase):
     """Persists a memoized value under the key."""
     def __init__(
-        self, key: Any, value: Any, policy: MemoPolicy, source_effect: Any | None = None
+        self, key: object, value: object, policy: MemoPolicy, source_effect: object = None
     ) -> None:
         super().__init__()
         if not isinstance(policy, MemoPolicy):
@@ -47,7 +47,7 @@ class MemoPutEffect(EffectBase):
 
 class MemoDeleteEffect(EffectBase):
     """Deletes the memoized value under the key."""
-    def __init__(self, key: Any, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
+    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
         super().__init__()
         self.key = key
         self.recompute_cost = recompute_cost
@@ -58,7 +58,7 @@ class MemoDeleteEffect(EffectBase):
 
 class MemoExistsEffect(EffectBase):
     """Checks if a key exists in memo storage."""
-    def __init__(self, key: Any, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
+    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
         super().__init__()
         self.key = key
         self.recompute_cost = recompute_cost

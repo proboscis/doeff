@@ -311,7 +311,7 @@ class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
 
 
 class TaskCompleted(EffectBase):
-    def __init__(self, task_id: int, result: "Ok[Any] | Err") -> None:
+    def __init__(self, task_id: int, result: "Ok[object] | Err") -> None:
         super().__init__()
         self.task_id = task_id
         self.result = result
