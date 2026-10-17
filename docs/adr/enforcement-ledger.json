@@ -43,7 +43,8 @@
     "defadr_doeff_preset_001_retirement.hy",
     "defadr_doeff_records_001_domain_api_only.hy",
     "defadr_doeff_runner_001_reading_plane.hy",
-    "defadr_doeff_time_001_programs_wait_by_time_effects.hy"
+    "defadr_doeff_time_001_programs_wait_by_time_effects.hy",
+    "defadr_doeff_tracker_001_written_in_english.hy"
   ],
   "semgrep_rules": [
     "adr0001-d1-agentd-only-worker-route",
@@ -519,7 +520,8 @@
     "ADR-DOE-TIME-001 a-program-waits-by-a-time-effect",
     "ADR-DOE-TIME-001 a-test-sleeps-only-when-it-declares-realtime",
     "ADR-DOE-TIME-001 the-sleep-rules-stop-as-errors-from-one-definition",
-    "ADR-DOE-TIME-001 the-time-handler-decides-what-a-second-is"
+    "ADR-DOE-TIME-001 the-time-handler-decides-what-a-second-is",
+    "ADR-DOE-TRACKER-001 tracker-is-written-in-english"
   ],
   "adr_deftest_enforcements": [
     "ADR-DOC-LINTER-SELECTABLE-SCOPE test-doc-lint-modes-in-vscode",
@@ -637,7 +639,9 @@
     "ADR-DOE-TIME-001 test-adr-doe-time-001-each-sleep-rule-is-read-by-its-polarity-test",
     "ADR-DOE-TIME-001 test-adr-doe-time-001-every-law-names-living-checks",
     "ADR-DOE-TIME-001 test-adr-doe-time-001-judgments-reject-the-counterexamples",
-    "ADR-DOE-TIME-001 test-adr-doe-time-001-the-sleep-rules-stop-as-errors"
+    "ADR-DOE-TIME-001 test-adr-doe-time-001-the-sleep-rules-stop-as-errors",
+    "ADR-DOE-TRACKER-001 test-adr-doe-tracker-001-agents-md-keeps-the-english-paragraph",
+    "ADR-DOE-TRACKER-001 test-adr-doe-tracker-001-broken-paragraphs-are-named"
   ],
   "adr_defsemgrep_enforcements": [
     "ADR-DOE-ADR-001 no-silent-off-wiring-default",

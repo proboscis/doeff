@@ -28,6 +28,13 @@ attribution clean, write access is governed by **account routing**:
   is a downstream project that depends on doeff and you find a bug or missing
   feature here, file an issue instead of fixing it in passing — the maintainer
   routes it.
+- **The tracker is written in English.** Issues, pull requests, and comments on
+  this repository (titles and bodies) are written in English, whatever language
+  the session itself uses: the tracker is public and is read by people outside
+  the maintainer's own tooling. Internal design or work notes that assume private
+  infrastructure are kept out of this tracker and recorded in the maintainer's
+  internal tracking instead. Write each report so that a reader who knows only
+  this repository can follow it.
 - orch remains available as an execution engine for multi-agent runs; using it
   is a workflow choice, not a write-authority requirement.
 
