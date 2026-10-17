@@ -1,10 +1,29 @@
 {
+  "dynamic_imports": [
+    {
+      "function": "_runtime_do_import",
+      "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
+      "reason": "展開が出す実行時の `do` の import の module 名を、置き場の表(`_runtime-do`)から計算して綴るのが役目の口 — 置き場を macro ごとに綴ると表を替えても写しが古い `do` で包み続けた(card ki-973b4e44d7bc)。"
+    },
+    {
+      "function": "_do_reference",
+      "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
+      "reason": "fnk の lambda が呼ばれた時に `do` を、書いた場所の scope に名を束ねず `__import__` で引く式を出すのが役目の口 — 名で束ねると defk の本体の `_doeff_do` の読みを未束縛にする。"
+    },
+    {
+      "function": "_publish_imports",
+      "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
+      "reason": "class の本体の import が束ねた名を module の globals へも置く文を出すのが役目の口 — 補助は `__import__` で引く(名で引くと、その名の import が局所の名に混ざる)。"
+    }
+  ],
   "modules": [
     {
       "allow": [
         "doeff-hy-binding-forms",
         "doeff-hy-declarations",
+        "doeff-hy-quoted-forms",
         "doeff-hy-static-check",
+        "doeff-hy-static-types",
         "pytest-item-records"
       ],
       "layer": "io",
