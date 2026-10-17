@@ -1,5 +1,5 @@
-"""Gather / Wait / Race given something other than a task, and a wait nothing can ever end, fail at
-the user's own yield with a message that names the fix.
+"""Gather / Wait / Race / Cancel / Discard given something other than a task, and a wait nothing can
+ever end, fail at the user's own yield with a message that names the fix.
 
 Before (doeff 0.5.0 and main 4685dc801d62, the default Python scheduler):
 
@@ -12,6 +12,11 @@ Before (doeff 0.5.0 and main 4685dc801d62, the default Python scheduler):
   ``SchedulerDeadlockError``, and the tasks the run left behind were never unwound.
 
 (first-look error table 2026-10-17, row 14 and the appendix; card ki-8152466e96ad)
+
+Before (main c564cc230), ``Cancel(worker())`` and ``Discard(worker())`` read ``task.task_id`` of
+whatever they were given: ``AttributeError: 'Call' object has no attribute 'task_id'`` — raised
+inside the Python scheduler's dispatch, so it escaped the run past the root body exactly like the
+Gather case above, and raised at the yield by the Rust scheduler with the same words.
 """
 
 from __future__ import annotations
@@ -28,13 +33,16 @@ from pathlib import Path
 import pytest
 from doeff_core_effects.scheduler import (
     Cancel,
+    CompletePromise,
     CreatePromise,
+    Discard,
     Future,
     Gather,
     Race,
     SchedulerDeadlockError,
     SchedulerImplementation,
     Spawn,
+    TaskCancelledError,
     Wait,
     scheduled,
 )
@@ -48,6 +56,11 @@ IMPLEMENTATIONS: list[SchedulerImplementation] = ["python", "rust"]
 GATHER_OF_PROGRAMS = (
     "Gather takes the tasks that Spawn returns, got a program. Spawn each program first and "
     "pass the tasks: t = yield Spawn(prog); yield Gather(t, ...)"
+)
+
+CANCEL_OF_PROGRAM = (
+    "Cancel takes the task that Spawn returns, got a program. Spawn the program first and "
+    "cancel its task: t = yield Spawn(prog); yield Cancel(t)"
 )
 
 
@@ -115,6 +128,38 @@ def test_gather_of_programs_ends_with_spawn_first_at_the_users_yield(
     shown = _doeff_traceback(stderr)
     assert "main()" in shown
     assert 'return (yield Gather(worker("a"), worker("b")))' in shown
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_cancel_of_a_program_ends_with_spawn_first_at_the_users_yield(
+    tmp_path: Path, implementation: SchedulerImplementation
+) -> None:
+    stderr = _run_script(
+        tmp_path,
+        """\
+        from doeff import do, run
+        from doeff_core_effects.scheduler import scheduled, Cancel
+
+        @do
+        def worker():
+            return "a"
+
+        @do
+        def main():
+            yield Cancel(worker())
+
+        print(run(scheduled(main())))
+        """,
+        implementation,
+    )
+    assert _last_line(stderr) == f"TypeError: {CANCEL_OF_PROGRAM}"
+    assert "AttributeError" not in stderr
+    assert "task_id" not in stderr
+    assert "GeneratorExit" not in stderr
+    assert "Exception ignored" not in stderr
+    shown = _doeff_traceback(stderr)
+    assert "main()" in shown
+    assert "yield Cancel(worker())" in shown
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
@@ -203,8 +248,31 @@ def test_the_root_given_a_deadlock_is_not_reported_as_abandoned_work(
             lambda: Gather(42),
             "Gather takes a Task (t = yield Spawn(prog)) or a Future (p.future), got 42 (int)",
         ),
+        (lambda: Cancel(worker("a")), CANCEL_OF_PROGRAM),
+        (
+            lambda: Discard(worker("a")),
+            "Discard takes the task that Spawn returns, got a program. Spawn the program first "
+            "and discard its task: t = yield Spawn(prog); yield Discard(t)",
+        ),
+        (
+            lambda: Cancel(42),
+            "Cancel takes a Task (t = yield Spawn(prog)), got 42 (int)",
+        ),
+        (
+            lambda: Discard(None),
+            "Discard takes a Task (t = yield Spawn(prog)), got None (NoneType)",
+        ),
     ],
-    ids=["wait-program", "gather-programs", "race-programs", "gather-plain-value"],
+    ids=[
+        "wait-program",
+        "gather-programs",
+        "race-programs",
+        "gather-plain-value",
+        "cancel-program",
+        "discard-program",
+        "cancel-plain-value",
+        "discard-none",
+    ],
 )
 def test_the_type_error_names_the_effect_and_the_fix(
     implementation: SchedulerImplementation, make_effect: Callable[[], EffectBase], message: str
@@ -236,6 +304,23 @@ def test_waiting_on_the_promise_itself_says_to_wait_on_its_future(
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+@pytest.mark.parametrize("effect_type", [Cancel, Discard], ids=["cancel", "discard"])
+def test_cancelling_the_promise_itself_says_it_takes_a_task(
+    implementation: SchedulerImplementation, effect_type: type[Cancel | Discard]
+) -> None:
+    @do
+    def body():
+        p = yield CreatePromise()
+        return (yield effect_type(p))
+
+    with pytest.raises(TypeError) as raised:
+        run(scheduled(body(), implementation=implementation))
+    assert str(raised.value) == (
+        f"{effect_type.__name__} takes a Task (t = yield Spawn(prog)), got Promise(0) (Promise)"
+    )
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
 def test_the_body_catches_the_type_error_at_its_own_yield(
     implementation: SchedulerImplementation,
 ) -> None:
@@ -249,6 +334,41 @@ def test_the_body_catches_the_type_error_at_its_own_yield(
 
     answer = run(scheduled(body(), implementation=implementation))
     assert answer == f"caught: {GATHER_OF_PROGRAMS}"
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_the_body_catches_the_cancel_type_error_at_its_own_yield(
+    implementation: SchedulerImplementation,
+) -> None:
+    @do
+    def body():
+        try:
+            yield Cancel(worker("a"))
+        except TypeError as error:
+            return f"caught: {error}"
+        return "not raised"
+
+    answer = run(scheduled(body(), implementation=implementation))
+    assert answer == f"caught: {CANCEL_OF_PROGRAM}"
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_cancel_still_takes_the_task_spawn_returns(
+    implementation: SchedulerImplementation,
+) -> None:
+    @do
+    def sleeper():
+        p = yield CreatePromise()
+        yield Wait(p.future)
+
+    @do
+    def body():
+        task = yield Spawn(sleeper())
+        yield Cancel(task)
+        return (yield Wait(task))
+
+    with pytest.raises(TaskCancelledError):
+        run(scheduled(body(), implementation=implementation))
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
@@ -312,12 +432,15 @@ def test_a_deadlocked_run_unwinds_the_tasks_it_leaves_behind(
 def test_an_error_that_escapes_the_scheduler_leaves_no_ignored_generator_exit(
     implementation: SchedulerImplementation,
 ) -> None:
-    # Cancel of something that is not a task fails inside the Python scheduler's dispatch, so the
-    # error leaves the run past the root body; the dropped body is closed when it is collected,
-    # and an exception it ignores there turns into the warning this test makes an error.
+    # CompletePromise of something that is not a promise still fails inside the Python
+    # scheduler's dispatch (it reads ``promise.promise_id`` of whatever it is given), so the error
+    # leaves the run past the root body; the dropped body is closed when it is collected, and an
+    # exception it ignores there turns into the warning this test makes an error. Cancel was the
+    # example here until it threw a TypeError at the yield; when CompletePromise does too, name
+    # another effect that still raises from the dispatch.
     @do
     def body():
-        yield Cancel(42)
+        yield CompletePromise(42, "done")
 
     with pytest.raises(AttributeError) as raised:
         run(scheduled(body(), implementation=implementation))
