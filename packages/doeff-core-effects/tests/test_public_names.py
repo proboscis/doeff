@@ -22,7 +22,7 @@ from doeff_hy.static_check import python_without_bytecode
 
 PACKAGE_DIR = Path(doeff_core_effects.__file__).resolve().parent
 
-#: README の Quick Start が package の頭から取る名(README.md の 21・58・130 行目の例)。
+#: README と入門の章(docs/01-getting-started.md)の例が package の頭から取る名。
 README_NAMES = ("Ask", "Get", "Put", "Tell")
 
 

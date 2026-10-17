@@ -1,8 +1,8 @@
 # maintainer の設備(着地・検証)
 
 この文書は doeff の**maintainer 専用**の設備を集めたもの。doeff を依存として使う人・
-手元で開発する人には要らない。通常の導入と開発は root `README.md` の
-`## Installation` / `## Development`(`make sync` と `uv run pytest`)で足りる。
+手元で開発する人には要らない。通常の導入は root `README.md` の install の行、開発は
+`CONTRIBUTING.md` の `## Development`(`make sync` と `uv run pytest`)で足りる。
 
 ## main への着地(2026-08-09〜)
 

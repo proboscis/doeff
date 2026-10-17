@@ -1,44 +1,96 @@
-# doeff - Algebraic Effects for Python
+# doeff
 
-doeff is an algebraic effects runtime for Python with one-shot continuations and a Rust VM.
-Programs are written with generator-based `@do` notation and executed through explicit handler stacks.
+**Write your Python logic once. Choose later how it talks to the world.**
 
-## Installation
+[![PyPI](https://img.shields.io/pypi/v/doeff)](https://pypi.org/project/doeff/)
+[![Python](https://img.shields.io/pypi/pyversions/doeff)](https://pypi.org/project/doeff/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/proboscis/doeff/blob/main/LICENSE)
+
+doeff brings algebraic effects to Python. Your functions `yield` requests such as
+"fetch this URL" or "summarize this text" instead of doing the I/O themselves.
+Handlers decide what each request means: real I/O in production, fakes in tests,
+recorded responses when you debug. Swap a handler, not your code.
 
 ```bash
-pip install doeff
+pip install doeff   # Python 3.11+
 ```
 
-> **Note on `doeff-agents` from PyPI**: `doeff-agents` 0.1.1 on PyPI was built for doeff 0.4
-> and does not work with doeff 0.5 — importing its handlers fails with
-> `ImportError: cannot import name 'WithHandler' from 'doeff'`.
-> To keep using that release, pin the doeff 0.4 line: `pip install doeff-agents "doeff<0.5"`.
-> The `doeff-agents` in this repository (`packages/doeff-agents`) is not published to PyPI.
+> **Changing in the next release (0.6.0, not on PyPI yet):** `pip install doeff` will install
+> only the core. Add `"doeff[hy]"` for Hy and the handlers written in Hy (files, SQL,
+> subprocesses, randomness, caching, metrics), `"doeff[http]"` for the HTTP client handlers, or
+> `"doeff[all]"` for everything `pip install doeff` installs in 0.5.0. Installing from this
+> repository already works this way.
 
-## Quick Start
+## A 30-second example
 
 ```python
-from doeff import do, run
-from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from dataclasses import dataclass
+from doeff import EffectBase, Pass, Resume, do, handler, run
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):       # a request your code can make
+    url: str
+
+@dataclass(frozen=True)
+class Summarize(EffectBase):
+    text: str
 
 @do
-def counter_program():
-    yield Put("counter", 0)
-    yield Tell("Starting computation")
-    count = yield Get("counter")
-    yield Put("counter", count + 1)
-    return count + 1
+def digest(url):               # your logic: no I/O inside
+    page = yield Fetch(url)
+    return (yield Summarize(page))
 
-# Compose handlers explicitly by calling each handler installer.
-prog = counter_program()
-prog = writer(prog)
-prog = state()(prog)
-prog = reader(env={"greeting": "hello"})(prog)
-result = run(scheduled(prog))
-print(result)  # 1
+@do
+def fake_world(effect, k):     # a handler: answers the requests it knows
+    if isinstance(effect, Fetch):
+        return (yield Resume(k, "<h1>Hello</h1>"))
+    if isinstance(effect, Summarize):
+        return (yield Resume(k, f"{len(effect.text)} chars"))
+    yield Pass(effect, k)      # anything else goes to the next handler
+
+print(run(handler(fake_world)(digest("https://example.com"))))  # 14 chars
 ```
+
+To go live, replace `fake_world` with handlers that call your HTTP client and
+your model. `digest` does not change, and the fake stays as your test.
+
+## Why doeff?
+
+| You want to… | Plain Python | doeff |
+| --- | --- | --- |
+| Test code that does I/O | `mock.patch("app.requests.get")` for every import path | Install a fake handler. Nothing is patched |
+| Add logging, retries or a cost cap | One wrapper per client | One handler that sees every effect |
+| Run work in parallel | Rewrite the path with `async` or threads | `Spawn`, `Gather` and `Race` in the same program |
+
+- **Batteries included.** Production *and* test handlers ship for files, HTTP (record / replay),
+  SQL (in-memory SQLite for tests), subprocesses, randomness, caching and metrics.
+- **Plain Python.** Programs are generator functions; no new syntax.
+  Optional [Hy](https://hylang.org/) macros live in [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md).
+- **Rust VM.** Effects are dispatched by a VM written in Rust, with one-shot continuations.
+
+## One handler, every effect
+
+A handler can watch every request without touching `digest`. Add this below the example above:
+
+```python continues
+seen = []
+
+@do
+def trace(effect, k):          # sees every request first, then passes it on
+    seen.append(effect)
+    return (yield Pass(effect, k))
+
+print(run(handler(fake_world)(handler(trace)(digest("https://example.com")))))  # 14 chars
+print(seen)  # [Fetch(url='https://example.com'), Summarize(text='<h1>Hello</h1>')]
+```
+
+## Next steps
+
+- **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
+- **Why effects?**: [Effects vs. dependency injection](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
+- **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
+- **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)
+- **Command line**: [`doeff run`](https://github.com/proboscis/doeff/blob/main/docs/14-cli-auto-discovery.md)
 
 ## Runtime API
 
@@ -87,8 +139,8 @@ creates that shape directly:
 (print (run (ask-env greet)))  ; hello
 ```
 
-Hy comes with the extra `hy`: `pip install "doeff[hy]"`. Save the example as `greet.hy` and run it
-with `hy greet.hy`. Macros such as `do!`, `<-` and `defhandler` are brought in with `require`, never
+`pip install doeff` installs Hy too (from 0.6.0, Hy comes with the extra `hy`:
+`pip install "doeff[hy]"`). Save the example as `greet.hy` and run it with `hy greet.hy`. Macros such as `do!`, `<-` and `defhandler` are brought in with `require`, never
 with `import`.
 
 ### Using a Hy module from Python
@@ -208,64 +260,22 @@ doeff run --program myapp.program --format json
 The CLI supports automatic interpreter/environment discovery via `doeff-indexer`.
 See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 
-The agent session host that connects to an agent control plane (`doeff-sessionhost`)
-and the `doeff-agents` CLI are documented in
-[`packages/doeff-agents/README.md`](packages/doeff-agents/README.md).
+## Related packages
 
-## Performance Benchmarks
+The add-on packages (LLM clients, agents, workflows and more) live in
+[`packages/`](https://github.com/proboscis/doeff/tree/main/packages).
 
-Rust VM dispatch micro-benchmarks live in `packages/doeff-vm-core/benches/` and
-use Criterion. Run them from the VM core crate with the VM feature enabled:
+`doeff-agents` 0.1.1 on PyPI was built for doeff 0.4 and does not work with doeff 0.5 — importing
+its handlers fails with `ImportError: cannot import name 'WithHandler' from 'doeff'`. To keep using
+that release, pin the doeff 0.4 line: `pip install doeff-agents "doeff<0.5"`. The `doeff-agents` in
+this repository ([`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md),
+with its CLI) is not published to PyPI.
 
-```bash
-cd packages/doeff-vm-core
-cargo bench --features python_bridge
-```
+## Contributing
 
-If PyO3 selects the wrong Python installation on macOS, pin it to the uv
-environment:
-
-```bash
-cd packages/doeff-vm-core
-PYO3_PYTHON="$(cd ../.. && uv run python -c 'import sys; print(sys.executable)')" \
-  cargo bench --features python_bridge
-```
-
-Python end-to-end benchmarks live in `benchmarks/benchmark_runner.py`. A normal
-run writes JSON to `benchmarks/results/<yyyymmdd>-<hostname>.json`:
-
-```bash
-uv run python benchmarks/benchmark_runner.py --runs 20
-```
-
-Compare a fresh run against a committed baseline with:
-
-```bash
-uv run python benchmarks/benchmark_runner.py \
-  --compare benchmarks/results/<baseline>.json
-```
-
-CI uses smoke mode only. It runs one iteration with the smallest N values and
-checks that the benchmark entrypoints still execute; it does not gate on
-performance:
-
-```bash
-make bench-smoke
-```
-
-## Development
-
-```bash
-make sync            # install deps (Rust VM is rebuilt only when its sources change)
-uv run pytest        # run full test suite
-```
-
-> **Warning**: `uv sync` alone does NOT rebuild the Rust VM extension. Always
-> use `make sync` after editing `.rs` files under `packages/doeff-vm/`.
-
-> Maintainers: the landing queue and the verification rigs live in
-> [`docs/maintainers.md`](docs/maintainers.md).
+Setting up the development environment, running the tests and running the benchmarks are
+described in [CONTRIBUTING.md](https://github.com/proboscis/doeff/blob/main/CONTRIBUTING.md).
 
 ## License
 
-MIT License. See `LICENSE`.
+MIT License. See [LICENSE](https://github.com/proboscis/doeff/blob/main/LICENSE).
