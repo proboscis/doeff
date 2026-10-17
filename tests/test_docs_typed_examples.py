@@ -6,14 +6,16 @@
 型の check は見ない。型の章は「写せば pyright の strict でも mypy の --strict でも赤が出ない」と言うので、それをここで確かめる。
 
 page の囲みを、例の検と同じ約束(tools/readme_examples.py)で page ごとの dir の file に書く: continues の囲みは上の囲みに
-書き足した script、file= の囲みはその名の file。読み手が上から写して途中で止めた形のどれもが型の check を通る。かける page は
-pyproject.toml の契約の表の、この検を選ぶ行から読む(tests/test_docs_page_examples.py と同じ — page を足す commit がこの file の
-一覧で衝突しない)。
+書き足した script、file= の囲みはその名の file。読み手が上から写して途中で止めた形のどれもが型の check を通る。excerpt の囲み
+(program の数行だけの断片・わざと型の誤りを見せる例)は書かない。読み手には excerpt の印が見えないので、page は「import の行を
+持つ例が 1 つの file を作る」と言い、断片が import を持たない事もここで確かめる。かける page は pyproject.toml の契約の表の、
+この検を選ぶ行から読む(tests/test_docs_page_examples.py と同じ — page を足す commit がこの file の一覧で衝突しない)。
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +37,8 @@ THIS_CHECK = Path(__file__).resolve().relative_to(ROOT).as_posix()
 TYPED_PAGES = tuple(prefix.removeprefix(DOCS_PREFIX) for prefix in prefixes_selecting(THIS_CHECK))
 # 型の check にかける囲みの言葉。
 PYTHON = "python"
+# import の行(断片の囲みが持たない物)。
+_IMPORT_LINE = re.compile(r"^(?:import|from)\s", re.MULTILINE)
 
 
 def _write_page(page: str, directory: Path) -> list[Path]:
@@ -133,6 +137,19 @@ def test_page_examples_are_clean_under_strict_mypy(page: str, tmp_path: Path) ->
     assert result.stderr == ""
     assert result.stdout.splitlines() == []
     assert result.returncode == 0
+
+
+@pytest.mark.parametrize("page", TYPED_PAGES)
+def test_page_excerpts_have_no_imports(page: str) -> None:
+    # import の行を持つ例を excerpt にすると、page が「1 つの file を作る」と言う例が型の check から黙って外れる
+    excerpts_with_imports = [
+        example.name
+        for example in _fences(page)
+        if example.language == PYTHON
+        and examples.EXCERPT in example.words
+        and _IMPORT_LINE.search(example.code)
+    ]
+    assert excerpts_with_imports == []
 
 
 def test_rows_selecting_this_check_name_docs_pages() -> None:
