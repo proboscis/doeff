@@ -1,14 +1,14 @@
 ---
-title: "DIの代わりにeffect handler — 依存を外側から渡す"
+title: "DIコンテナなしで、依存を引数でバケツリレーしない"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "設計"]
 published: false
 ---
 
-処理の奥で使う実装を、テストと本番で替えたいことがあります。引数で渡すと、自分では使わない途中の関数まで依存を運びます。DIのコンテナを入れると、今度は処理の書き方がコンテナに縛られます。
+処理の奥で使う実装を、テストと本番で替えたいことがあります。引数で渡すと、自分では使わない途中の関数まで、依存をバケツリレーで運びます。DIのコンテナを入れると、今度は処理の書き方がコンテナに縛られます。
 
-この記事では、Pythonのライブラリdoeffで、依存を外側から渡します。処理の側は「この実装がほしい」と依頼を書くだけです。どの実装を渡すかは、外側に取り付けたハンドラが決めます。最後に、この書き方が効く所と、儀式になる所を整理します。
+この記事では、Pythonのライブラリdoeffで、コンテナを使わずに依存を外側から渡します。処理の側は「この実装がほしい」と依頼を書くだけです。どの実装を渡すかは、外側に取り付けたハンドラが決めます。最後に、この書き方が効く所と、儀式になる所を整理します。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 | 言葉 | この記事での意味 |
 | --- | --- |
@@ -212,4 +212,4 @@ uv run --with "doeff==0.6.0" python dependencies.py  # PyPIのdoeff 0.6.0を入�
 - [ハッシュできるキーの検証](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/tests/misc/test_reader_hashable_keys.py)
 - [エフェクトとDIの比較（英語）](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/docs/20-why-effects-over-di.md)
 - 前の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
-- 次の回:[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)
+- 次の回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)

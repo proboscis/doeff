@@ -1,18 +1,20 @@
 ---
-title: "async/awaitがあるのに、なぜyieldか — 止まった所へ答える役を外側に置く"
+title: "async/awaitがあるのに、なぜyieldで書くのか"
 emoji: "🔀"
 type: "tech"
 topics: ["python", "asyncio", "doeff", "設計"]
 published: false
 ---
 
-async/awaitで書いた処理を、テストで動かしたいとします。途中で名前を読み、外部のAPIを待つような処理です。
+Pythonにはasync/awaitがあるのに、ライブラリdoeffは処理を`yield`で書きます。理由は、止まった所へ答える役を、呼ばれた関数ではなく外側に置けるからです。async/awaitで書いた処理を、テストで動かす場面で比べます。
+
+途中で名前を読み、外部のAPIを待つような処理です。async/awaitで書くと、テストでは次のようになります。
 
 - `await`の先で何が起きるかは、呼んだ関数の実装で決まります。
 - テストで替えるには、`unittest.mock.patch`を当てるか、関数を引数で渡す形に直します。
 - 奥の関数が何を何回待ったかを外から見るには、待つ関数ごとに包みを足します。
 
-doeffは、処理の読み書きや待ちを、外側の部品で差し替えるPythonのライブラリです。doeffでは、この「止まって続きを待つ」所を`yield`で書きます。
+doeffは、処理の読み書きや待ちを、外側の部品で差し替えるPythonのライブラリです。doeffでは、この「止まって続きを待つ」所を`yield`で書きます。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 `yield`で渡すのは実装ではありません。「これをしてほしい」という依頼のデータです。同じ挨拶の処理を、2つの形で並べます。
 
@@ -239,5 +241,5 @@ uv run --with "doeff==0.6.0" python coroutine_comparison.py  # PyPIのdoeff 0.6.
 - [Python公式: Event loop](https://docs.python.org/3/library/asyncio-eventloop.html)
 - [PEP 492 – Coroutines with async and await syntax](https://peps.python.org/pep-0492/)
 - [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- 前の回:[AIに要る時だけ規則を見せるhook](doeff-hooks.md)
-- 次の回:[設計の記録をテストとして走らせる](doeff-adr.md)
+- 前の回:[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)
+- 次の回:[ADRをpytestで走らせ、設計の約束を守らせる](doeff-adr.md)
