@@ -1,27 +1,50 @@
 """Run services — symbol resolution, interpreter discovery, program execution."""
 
-import contextlib
 import importlib
 import importlib.util
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+from doeff_core_effects.extra_hints import MissingExtraError
 from doeff_vm._not_a_program import uncalled_do_function_call
 
+from doeff.cli.profiling import profile
 from doeff.program import handler as _program_handler
+
+
+class _HyModuleWithoutHyFinder:
+    """Name the extra hy when a program, interpreter or env path is a .hy module and Hy is missing.
+
+    Last on sys.meta_path, it is asked only for modules that no other finder found.
+    """
+
+    @classmethod
+    def find_spec(
+        cls,
+        fullname: str,
+        path: Sequence[str] | None = None,
+        target: ModuleType | None = None,  # noqa: ARG003 - MetaPathFinder protocol
+    ) -> None:
+        leaf = fullname.rpartition(".")[2]
+        for entry in sys.path if path is None else path:
+            if Path(entry, leaf + ".hy").is_file() or Path(entry, leaf, "__init__.hy").is_file():
+                raise MissingExtraError("hy", "hy", f"{fullname} is a .hy module")
+
 
 # Activate Hy's import hook so doeff run can resolve program/interpreter/env
 # paths that live in .hy files (e.g. nakagawa.live.agent_pipeline.p_agent_daily).
 # Without this, importlib.import_module for a .hy module silently creates an
 # empty entry in sys.modules, and subsequent getattr(mod, name) fails with
-# "module '<parent>' has no attribute '<child>'".
-with contextlib.suppress(ImportError):
+# "module '<parent>' has no attribute '<child>'". Without Hy (doeff installed
+# without the extra hy), a .hy module fails with the line that installs the extra.
+try:
     import hy.importer  # noqa: F401 — registers sys.meta_path hook
-
-from doeff.cli.profiling import profile
+except ImportError:
+    sys.meta_path.append(_HyModuleWithoutHyFinder)
 
 
 def _require_callable(symbol: object, *, description: str) -> Callable[..., object]:
@@ -73,6 +96,9 @@ def import_symbol(full_path: str) -> object:
             for attr in attr_path:
                 obj = getattr(obj, attr)
             return obj
+        except MissingExtraError:
+            # The module exists but needs an extra; a shorter path would only hide the extra's name.
+            raise
         except (ImportError, AttributeError):
             if i == 1:
                 raise

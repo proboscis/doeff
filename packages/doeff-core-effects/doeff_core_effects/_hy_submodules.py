@@ -6,10 +6,14 @@ effects), which registered Hy's import hook as a side effect of every
 ``._memo_handlers_impl`` directly relied on that. The hook is now registered on
 the first import of a ``.hy`` submodule instead (import floor of ``import doeff``
 47 → 28 MiB, measured 2026-09-23). Importing this module installs the finder.
+Without Hy (``pip install doeff`` without the extra ``hy``), importing a ``.hy``
+submodule fails with the line that installs the extra (extra_hints.py).
 """
 
 import os
 import sys
+
+from doeff_core_effects.extra_hints import extra_needed
 
 _PACKAGE = __name__.rpartition(".")[0]
 _PACKAGE_DIR = os.path.dirname(__file__)
@@ -24,7 +28,8 @@ class HySubmoduleFinder:
         leaf = fullname[len(prefix):].replace("-", "_")
         if "." in leaf or not os.path.exists(os.path.join(_PACKAGE_DIR, leaf + ".hy")):
             return
-        import doeff_hy  # noqa: F401 - registers Hy's import hook
+        with extra_needed("hy", f"{fullname} is written in Hy"):
+            import doeff_hy  # noqa: F401 - registers Hy's import hook
 
         # Returning None lets the finders after this one see the .hy file.
 

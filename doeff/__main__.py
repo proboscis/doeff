@@ -17,6 +17,8 @@ import sys
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
+from doeff_core_effects.extra_hints import MissingExtraError
+
 from doeff import MissingEnvKeyError
 from doeff.cli.profiling import (
     ProfilingConfig,
@@ -215,10 +217,18 @@ def _json_safe(value: Any) -> Any:
 
 
 def _reported_exception(exc: BaseException) -> BaseException:
-    """Unwrap chained exceptions to find the most relevant one."""
+    """Unwrap chained exceptions to find the most relevant one.
+
+    Unwrapping stops at an error that names the extra to install: its cause is only
+    the bare ``No module named ...`` without that line.
+    """
     seen = set()
     current = exc
-    while current.__cause__ is not None and id(current.__cause__) not in seen:
+    while (
+        not isinstance(current, MissingExtraError)
+        and current.__cause__ is not None
+        and id(current.__cause__) not in seen
+    ):
         seen.add(id(current))
         current = current.__cause__
     return current

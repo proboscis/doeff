@@ -48,8 +48,8 @@ NOT_SHIPPED = frozenset({"tests", "test", "examples", "benchmarks"})
 NOT_SCANNED = {
     # Hy の module の持ち主。自分の module の要る物は、下の _core_effects_needs が読む。
     canonicalize_name("doeff-core-effects"): "Hy の module の持ち主",
-    # CLI の doeff run は Hy 無しで動き、--hy と .hy の program の時だけ遅い import で Hy を読む(tests/cli/test_cli_without_hy.py)。
-    # その時に足す extra の名を言う文は区切り 8 の card 2(ki-7310ee8e4fd0)。
+    # CLI の doeff run は Hy 無しで動き、--hy と .hy の program の時だけ遅い import で Hy を読む。Hy が無ければ、足す extra の名を
+    # 言う文で落ちる(tests/cli/test_cli_without_hy.py・doeff_core_effects/extra_hints.py)。
     canonicalize_name("doeff"): "CLI の --hy と .hy の program だけが Hy を読む",
     # doeff-hy の依存としてだけ入る pytest の plugin(doeff-hy が doeff-hy-pytest を引く — 逆に引くと輪になる)。
     canonicalize_name("doeff-hy-pytest"): "doeff-hy が引く plugin",
@@ -188,18 +188,23 @@ def _inner_statements(node: ast.AST) -> list[ast.stmt]:
 
 
 def _statements(body: list[ast.stmt], nested: bool) -> Iterator[ast.stmt]:
-    """文の列と(nested なら)その中の文 — import は文にだけ現れるので、式は辿らない。`if TYPE_CHECKING:` の中は除く。"""
+    """文の列とその中の文 — import は文にだけ現れるので、式は辿らない。`if TYPE_CHECKING:` の中は除く。
+
+    nested でなければ import の時に走る文だけを辿る — 上の段の with・try・if・class の中は辿り、関数の中は辿らない(例 http_handlers.py
+    は Hy と httpx の import を `with extra_needed(...)` の中に置く)。
+    """
     for statement in body:
         if not _is_type_checking(statement):
             yield statement
-            if nested:
+            if nested or not isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
                 yield from _statements(_inner_statements(statement), nested)
 
 
 def _python_imports(text: str, package: str, top_level_only: bool) -> Iterator[str]:
     """Python の source の import が読む module と、`from m import n` の m.n(n が submodule か lazy な名の時のため)。
 
-    `if TYPE_CHECKING:` の中は実行の時に読まないので除く。top_level_only なら module の上の段の文だけを読む。
+    `if TYPE_CHECKING:` の中は実行の時に読まないので除く。top_level_only なら import の時に走る文(上の段と、その with・try・if の
+    中)だけを読む。
     """
     parts = package.split(".") if package else []
     body = ast.parse(text).body

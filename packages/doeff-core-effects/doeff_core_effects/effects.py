@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
 
 from doeff_vm import EffectBase
 
+from doeff_core_effects.extra_hints import extra_needed
+
 if TYPE_CHECKING:
     from doeff_vm import Err, Ok  # noqa: F401 - named in the string answer type of Try
 
@@ -338,11 +340,13 @@ def __getattr__(name: str) -> object:
     """HTTP effects are defined in Hy; load Hy only when they are asked for.
 
     Importing them eagerly made ``import doeff`` load the Hy compiler for every
-    program (import floor +13 MiB, measured 2026-09-23).
+    program (import floor +13 MiB, measured 2026-09-23). Without Hy, asking for
+    one names the extra ``http``, which also brings the handler that answers them.
     """
     if name not in _HTTP_EFFECTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from doeff_core_effects import http_effects  # a .hy module; loads Hy on first use
+    with extra_needed("http", "the HTTP effects are written in Hy"):
+        from doeff_core_effects import http_effects  # a .hy module; loads Hy on first use
 
     value = getattr(http_effects, name)
     globals()[name] = value
