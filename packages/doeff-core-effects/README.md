@@ -26,13 +26,18 @@ imported from the top-level `doeff_core_effects` module; a few of them (`Ask`, `
 ## Installation
 
 ```bash
-pip install doeff                              # installs doeff-core-effects
-pip install "doeff-core-effects[http-server]"  # + aiohttp: HTTP server and WebSocket client handlers
-pip install "doeff-core-effects[postgres]"     # + psycopg: PostgreSQL handler
+pip install doeff                              # installs doeff-core-effects: the modules written in Python
+pip install "doeff[hy]"                        # + Hy (doeff-hy): the modules written in Hy
+pip install "doeff[http]"                      # + Hy and httpx: the HTTP client handler
+pip install "doeff-core-effects[http-server]"  # + Hy and aiohttp: HTTP server and WebSocket client handlers
+pip install "doeff-core-effects[postgres]"     # + Hy and psycopg: PostgreSQL handler
 ```
 
-Requires Python 3.11 or newer. The HTTP client handler uses `httpx`, which is always
-installed. The SQLite and ClickHouse handlers use only the standard library.
+Requires Python 3.11 or newer. Many modules are written in Hy; the Extra column of the
+table under [Effect families](#effect-families) names the extra each family needs.
+Without it, importing such a module fails with a `ModuleNotFoundError` that ends with
+the install line (`pip install "doeff[hy]"`). The SQLite and ClickHouse handlers need
+nothing beyond the extra `hy`: they use the standard library.
 
 ## Minimal example
 
@@ -81,6 +86,8 @@ scheduled ( reader ( state ( writer ( main() ) ) ) )
 
 The program below reads a file. With `os_file_handler` it reads the real disk; with
 `memory_file_handler` it reads an in-memory file system. The program does not change.
+
+The file handlers are written in Hy, so this example needs the extra `hy`.
 
 ```python
 import tempfile
@@ -222,19 +229,19 @@ named in the handler columns (all under `doeff_core_effects`).
 | Absence and failure | `doeff_core_effects`: `Absent`, `Raise` | `outcomes`: `maybe`, `result`, `on_raise`, `absent_as` | same | — |
 | asyncio bridge | `doeff_core_effects`: `Await` | `handlers.await_handler()` | — | — |
 | Concurrency | `scheduler`: `Spawn`, `Wait`, `Gather`, `Race`, `Cancel`, `CreatePromise`, `CreateExternalPromise`, `CreateSemaphore` | `scheduler.scheduled(program)` | same | — |
-| Channels | `channel_effects`: `CreateChannel`, `PutChannel`, `TakeChannel` | `scheduler_channel.scheduler_channel_handler` | same | — |
-| HTTP client | `http_effects`: `HttpRequest`, `HttpResponse`, `HttpError` | `http_handlers.http_production_handler` | `http_handlers.http_fixture_handler(path, mode="record" or "replay")` | — |
+| Channels | `channel_effects`: `CreateChannel`, `PutChannel`, `TakeChannel` | `scheduler_channel.scheduler_channel_handler` | same | `hy` |
+| HTTP client | `http_effects`: `HttpRequest`, `HttpResponse`, `HttpError` | `http_handlers.http_production_handler` | `http_handlers.http_fixture_handler(path, mode="record" or "replay")` | `http` |
 | HTTP server | `http_server_effects`: `HttpListen`, `HttpNextRequest`, `HttpRespond` | `aiohttp_http_server.aiohttp_http_server` | `scripted_http_server.scripted_http_server(script)` | `http-server` |
 | WebSocket client | `ws_client_effects`: `WsConnect`, `WsSend`, `WsReceive`, `WsDisconnect` | `aiohttp_ws_client.aiohttp_ws_client` | `scripted_ws_client.scripted_ws_client(script)` | `http-server` |
-| SQL | `sql_effects`: `SqlQuery`, `SqlInsertRows`, `SqlTransaction`, `SqlEnsureTables` | `postgres_sql.postgres_sql_handler`, `clickhouse_http_sql.clickhouse_http_sql_handler`, `sqlite_file_sql.sqlite_file_sql_handler` | `sqlite_sql.sqlite_sql_handler(databases)` (in-memory SQLite) | `postgres` (PostgreSQL only) |
-| Files | `file_effects`: `ReadText`, `WriteText`, `ListDirectory`, `StatPath` | `os_file.os_file_handler`, `rooted_file.rooted_file_handler(root)` | `memory_file.memory_file_handler(files)` | — |
-| OS processes | `process_effects`: `RunProcess`, `StartProcess`, `PollProcess`, `StopProcess` | `os_process.subprocess_handler` | `scripted_process.scripted_process_handler(script)` | — |
-| Compute offload | `compute_effects`: `Compute` | `thread_pool_compute.thread_pool_compute_handler(pool)` | `inline_compute.inline_compute_handler` | — |
-| Random bytes | `random_effects`: `RandomBytes` | `os_random.os_random_handler` | `seeded_random.seeded_random_handler(seed)` | — |
-| Cache and memo | `cache_effects`: `cache_get`, `cache_put`; `memo_effects`: `MemoGet`, `MemoPut`; decorator `cache.cache` | `cache_handlers.sqlite_cache_handler(db_path)`, `memo_handlers.sqlite_memo_handler` | `cache_handlers.in_memory_cache_handler()`, `memo_handlers.in_memory_memo_handler()` | — |
-| Metrics | `meter_effects`: `CountMetric`, `ObserveSeconds`, `SetGauge`, `ReadMeter` | `process_meter.process_meter_handler`; `meter_prometheus.render_prometheus` | `memory_meter.memory_meter_handler` | — |
-| Latest value | `latest_effects`: `PublishLatest`, `ReadLatest`, `AwaitLatest` | `process_latest.process_latest_handler(name)` | `memory_latest.memory_latest_handler` | — |
-| Stop signals | `stop_signal_effects`: `StopRequested`, `AwaitStop` | `stop_signal_handlers.os_signal_stop_handler` | `stop_signal_handlers.scripted_stop_handler` | — |
+| SQL | `sql_effects`: `SqlQuery`, `SqlInsertRows`, `SqlTransaction`, `SqlEnsureTables` | `postgres_sql.postgres_sql_handler`, `clickhouse_http_sql.clickhouse_http_sql_handler`, `sqlite_file_sql.sqlite_file_sql_handler` | `sqlite_sql.sqlite_sql_handler(databases)` (in-memory SQLite) | `hy`; `postgres` for PostgreSQL |
+| Files | `file_effects`: `ReadText`, `WriteText`, `ListDirectory`, `StatPath` | `os_file.os_file_handler`, `rooted_file.rooted_file_handler(root)` | `memory_file.memory_file_handler(files)` | `hy` |
+| OS processes | `process_effects`: `RunProcess`, `StartProcess`, `PollProcess`, `StopProcess` | `os_process.subprocess_handler` | `scripted_process.scripted_process_handler(script)` | `hy` |
+| Compute offload | `compute_effects`: `Compute` | `thread_pool_compute.thread_pool_compute_handler(pool)` | `inline_compute.inline_compute_handler` | `hy` |
+| Random bytes | `random_effects`: `RandomBytes` | `os_random.os_random_handler` | `seeded_random.seeded_random_handler(seed)` | `hy` |
+| Cache and memo | `cache_effects`: `cache_get`, `cache_put`; `memo_effects`: `MemoGet`, `MemoPut`; decorator `cache.cache` | `cache_handlers.sqlite_cache_handler(db_path)`, `memo_handlers.sqlite_memo_handler` | `cache_handlers.in_memory_cache_handler()`, `memo_handlers.in_memory_memo_handler()` | `hy` |
+| Metrics | `meter_effects`: `CountMetric`, `ObserveSeconds`, `SetGauge`, `ReadMeter` | `process_meter.process_meter_handler`; `meter_prometheus.render_prometheus` | `memory_meter.memory_meter_handler` | `hy` |
+| Latest value | `latest_effects`: `PublishLatest`, `ReadLatest`, `AwaitLatest` | `process_latest.process_latest_handler(name)` | `memory_latest.memory_latest_handler` | `hy` |
+| Stop signals | `stop_signal_effects`: `StopRequested`, `AwaitStop` | `stop_signal_handlers.os_signal_stop_handler` | `stop_signal_handlers.scripted_stop_handler` | `hy` |
 
 Notes on installing handlers:
 
@@ -251,11 +258,13 @@ processes when their parent process exits; `os_process` starts it for you.
 
 Many modules are written in [Hy](https://hylang.org/) with
 [doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy). You import
-them from Python like any other module; `.pyi` stubs ship with the package.
+them from Python like any other module once the extra `hy` is installed; `.pyi`
+stubs ship with the package.
 
 ## How it fits with the other doeff packages
 
-doeff is published as five core packages. `pip install doeff` installs all of them.
+doeff is published as five core packages. `pip install doeff` installs the first three; the extra
+`hy` (`pip install "doeff[hy]"`) adds doeff-hy and doeff-hy-pytest.
 
 | Package | Role |
 | --- | --- |
@@ -265,12 +274,12 @@ doeff is published as five core packages. `pip install doeff` installs all of th
 | [doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy) | Macros for writing doeff code in Hy, a Lisp that compiles to Python |
 | [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest) | pytest plugin for tests written with doeff-hy |
 
-Arrows point from a package to a package it depends on:
+Arrows point from a package to a package it depends on (the dotted one only with the extra `hy`):
 
 ```text
 doeff ──► doeff-vm
   │
-  └─────► doeff-core-effects ──► doeff-hy ──► doeff-hy-pytest
+  └─────► doeff-core-effects ┄┄► doeff-hy ──► doeff-hy-pytest
 ```
 
 doeff-hy also depends on doeff and doeff-core-effects, so the five packages are

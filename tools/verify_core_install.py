@@ -68,8 +68,8 @@ FROM_CHECKOUT = (
 )
 # pip install doeff で入る物の全部。
 CORE_FOUR = frozenset({*(package.name for package in FROM_CHECKOUT), "frozendict"})
-# 例を走らせる README。doeff-core-effects の README は外す — 例の 1 つが Hy で書いた handler(os_file・memory_file)を使い、
-# 「httpx は必ず入る」と書いてある。核だけの入れ方に合わせて書き直すのは、README の入れ方の行と同じく戦略の答えの後の区切り。
+# 例を走らせる README。doeff-core-effects の README は外す — 例の 1 つ(節 Swapping a production handler for a test handler)が
+# Hy で書いた handler(os_file・memory_file)を使い、README もその例に extra hy が要ると書く。
 CHECKED_READMES = ("doeff", "doeff-vm")
 # README の囲みのうち、extra を足さないと走らない言葉(Hy の言語は extra hy が入れる)。
 NEEDS_AN_EXTRA = frozenset({"hy"})

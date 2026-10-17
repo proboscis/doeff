@@ -1,6 +1,6 @@
 [project]
 name = "doeff"
-version = "0.5.0"
+version = "0.6.0"
 description = "Pragmatic do-notation and effects system for Python"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,8 +23,8 @@ classifiers = [
 
 # 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
 dependencies = [
-    "doeff-vm>=0.5.0,<0.6",
-    "doeff-core-effects>=0.5.0,<0.6",
+    "doeff-vm>=0.6.0,<0.7",
+    "doeff-core-effects>=0.6.0,<0.7",
 ]
 
 [project.optional-dependencies]
@@ -32,9 +32,9 @@ viz = ["phart>=1.1.4"]
 # 既定は核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけ。Hy で書いた effect と handler・cache・CLI の doeff run は
 # hy、HTTP の client の handler は http、0.5 までの既定と同じ組は all で足す。中身は doeff-core-effects の同じ名の extra が持つ
 # (tests/test_core_install_extras.py・card ki-006338b48f4b)。
-hy = ["doeff-core-effects[hy]>=0.5.0,<0.6"]
-http = ["doeff-core-effects[http]>=0.5.0,<0.6"]
-all = ["doeff-core-effects[all]>=0.5.0,<0.6"]
+hy = ["doeff-core-effects[hy]>=0.6.0,<0.7"]
+http = ["doeff-core-effects[http]>=0.6.0,<0.7"]
+all = ["doeff-core-effects[all]>=0.6.0,<0.7"]
 
 [project.scripts]
 doeff = "doeff.__main__:main"

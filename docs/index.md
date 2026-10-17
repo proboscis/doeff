@@ -10,8 +10,10 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 ## Table of Contents
 
-The pages in this table need only `pip install doeff`, which installs the five core packages
-(`doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`). The few examples
+The pages in this table need only the five core packages (`doeff`, `doeff-vm`,
+`doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`). `pip install doeff` installs the first three;
+add the extra `hy` (`pip install "doeff[hy]"`) for the pages that use Hy, the handlers written in
+Hy or the cache, or `all` (`pip install "doeff[all]"`) for every page. The few examples
 that also need `doeff-time` are named below and say so where they appear. Pages that need other
 components are listed separately under
 [Pages That Need Other Components](#pages-that-need-other-components).
@@ -61,7 +63,7 @@ These pages use components that `pip install doeff` does not install. Each page 
 which components it needs and how to install them.
 
 `doeff-indexer` is on PyPI. `doeff-agents` is on PyPI only as an old 0.1.1 build that does not
-import with doeff 0.5.0. The other components are not on PyPI: install them from a checkout of
+import with doeff 0.5 or later. The other components are not on PyPI: install them from a checkout of
 this repository, passing pip the path of every component the page names. pip takes everything
 else from PyPI.
 

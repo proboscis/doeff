@@ -16,14 +16,16 @@ handler installers, pytest functions) with runtime contracts (`:pre` / `:post`) 
 arguments and results.
 
 Parts of [doeff-core-effects](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects)
-are written with these macros, so doeff-hy is installed whenever doeff is.
+are written with these macros; the extra `hy` of doeff installs doeff-hy for them.
 
 ## Installation
 
 ```bash
-pip install doeff      # installs doeff-hy
-pip install doeff-hy   # the same set of packages
+pip install "doeff[hy]"   # installs doeff-hy
+pip install doeff-hy      # the same set of packages
 ```
+
+`pip install doeff` without the extra does not install doeff-hy.
 
 Requires Python 3.11 or newer and Hy 1.3 (doeff-hy pins `hy>=1.3.0,<=1.3.1`, the
 versions its tests cover).
@@ -354,7 +356,8 @@ checked. What it does not catch yet (effect result types, env / effect sets) and
 
 ## How it fits with the other doeff packages
 
-doeff is published as five core packages. `pip install doeff` installs all of them.
+doeff is published as five core packages. `pip install doeff` installs the first three; the extra
+`hy` (`pip install "doeff[hy]"`) adds doeff-hy and doeff-hy-pytest.
 
 | Package | Role |
 | --- | --- |
@@ -364,12 +367,12 @@ doeff is published as five core packages. `pip install doeff` installs all of th
 | **doeff-hy** | This package: macros for writing doeff code in Hy |
 | [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest) | pytest plugin for tests written with doeff-hy |
 
-Arrows point from a package to a package it depends on:
+Arrows point from a package to a package it depends on (the dotted one only with the extra `hy`):
 
 ```text
 doeff ──► doeff-vm
   │
-  └─────► doeff-core-effects ──► doeff-hy ──► doeff-hy-pytest
+  └─────► doeff-core-effects ┄┄► doeff-hy ──► doeff-hy-pytest
 ```
 
 doeff-hy also depends on doeff and doeff-core-effects, so the five packages are

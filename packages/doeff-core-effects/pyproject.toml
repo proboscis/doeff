@@ -1,6 +1,6 @@
 [project]
 name = "doeff-core-effects"
-version = "0.5.0"
+version = "0.6.0"
 description = "Standard effects and handlers for doeff: state, reader, writer, concurrency, HTTP, SQL, files and processes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,7 +10,7 @@ license-files = ["LICENSE"]
 # 既定は Python の核だけ — pip install doeff は doeff・doeff-vm・doeff-core-effects・frozendict の 4 個を入れる。Hy で書いた
 # effect と handler の Hy(doeff-hy)と、HTTP の client の httpx は下の extra で足す(tests/test_core_install_extras.py・card ki-006338b48f4b)。
 dependencies = [
-    "doeff>=0.5.0,<0.6",
+    "doeff>=0.6.0,<0.7",
     "frozendict>=2.4.0",
 ]
 
@@ -21,19 +21,19 @@ Issues = "https://github.com/proboscis/doeff/issues"
 
 [project.optional-dependencies]
 # Hy で書いた effect と handler(file・process・sql・random・channel・meter など・cache)を読む Hy。
-hy = ["doeff-hy>=0.5.0,<0.6"]
+hy = ["doeff-hy>=0.6.0,<0.7"]
 # HTTP の client の handler(http_handlers — Hy で書いてあり、httpx で送る)。
-http = ["doeff-hy>=0.5.0,<0.6", "httpx>=0.27.0"]
+http = ["doeff-hy>=0.6.0,<0.7", "httpx>=0.27.0"]
 # hy と http — 0.5 までの既定と同じ組。
-all = ["doeff-hy>=0.5.0,<0.6", "httpx>=0.27.0"]
+all = ["doeff-hy>=0.6.0,<0.7", "httpx>=0.27.0"]
 # 汎用の HTTP の待ち受けの本物の答え手 aiohttp-http-server(doeff_core_effects/aiohttp_http_server.hy — agora-redesign #802)と、
 # 汎用の WebSocket の client の本物の答え手 aiohttp-ws-client(doeff_core_effects/aiohttp_ws_client.hy — agora-redesign #4007 U0)。
 # どちらも Hy で書いてあるので doeff-hy も入れる。
-http-server = ["doeff-hy>=0.5.0,<0.6", "aiohttp>=3.14"]
+http-server = ["doeff-hy>=0.6.0,<0.7", "aiohttp>=3.14"]
 # 汎用の SQL の本物の PostgreSQL の答え手 postgres-sql-handler(doeff_core_effects/postgres_sql.hy — agora-redesign #802 便 3)。
 # Hy で書いてあるので doeff-hy も入れる。ClickHouse の答え手は stdlib の urllib だけで、sqlite の答え手は stdlib の sqlite3 だけを
 # 使う(どちらも Hy で書いてあるので extra hy で入れる)。
-postgres = ["doeff-hy>=0.5.0,<0.6", "psycopg>=3.1"]
+postgres = ["doeff-hy>=0.6.0,<0.7", "psycopg>=3.1"]
 
 [build-system]
 # license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。

@@ -93,7 +93,8 @@ Type stubs ship with the package (`py.typed`).
 
 ## How it fits with the other doeff packages
 
-doeff is published as five core packages. `pip install doeff` installs all of them.
+doeff is published as five core packages. `pip install doeff` installs the first three; the extra
+`hy` (`pip install "doeff[hy]"`) adds doeff-hy and doeff-hy-pytest.
 
 | Package | Role |
 | --- | --- |
@@ -103,12 +104,12 @@ doeff is published as five core packages. `pip install doeff` installs all of th
 | [doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy) | Macros for writing doeff code in [Hy](https://hylang.org/), a Lisp that compiles to Python |
 | [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest) | pytest plugin for tests written with doeff-hy |
 
-Arrows point from a package to a package it depends on:
+Arrows point from a package to a package it depends on (the dotted one only with the extra `hy`):
 
 ```text
 doeff ──► doeff-vm
   │
-  └─────► doeff-core-effects ──► doeff-hy ──► doeff-hy-pytest
+  └─────► doeff-core-effects ┄┄► doeff-hy ──► doeff-hy-pytest
 ```
 
 doeff-hy also depends on doeff and doeff-core-effects, so the five packages are
