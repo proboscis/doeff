@@ -22,6 +22,9 @@ pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 
 Then run `python -m doeff demo` to watch the example below answer from a fake handler, then over real HTTP.
 
+**Documentation:** [start here](https://github.com/proboscis/doeff/blob/main/docs/index.md), with
+install, a first program, the FAQ, why effects, examples and the API, in that order.
+
 ## A 30-second example
 
 ```python
@@ -254,6 +257,7 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 
 ## Next steps
 
+- **Documentation**: [start here](https://github.com/proboscis/doeff/blob/main/docs/index.md): every guide, in reading order
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
 - **Testing an LLM agent**: [`examples/llm_agent.py`](https://github.com/proboscis/doeff/blob/main/examples/llm_agent.py)
   makes the model call an effect: an OpenAI-compatible client answers it in production, canned answers
