@@ -100,3 +100,51 @@ def test_doeff_run_works_without_hy(
     assert completed.returncode == 0, completed.stderr
     assert stdout_has in completed.stdout
     assert (PROFILE_LINE in completed.stderr) is profile_line
+
+
+# Hy が要る program を Hy 無しで走らせると、足す extra の名を言う文で 1 を返す(card ki-7310ee8e4fd0)。文は
+# doeff_core_effects/extra_hints.py の表 1 つが持つ(Hy の module・HTTP の handler の場面は tests/test_missing_extra_hints.py)。
+HY_MODULE = "(import doeff [Pure])\n(setv answer-program (Pure 42))\n"
+USES_HY_MODULE = """
+from doeff import Pure
+from doeff_core_effects.os_process import subprocess_handler  # noqa: F401 - a .hy module of doeff-core-effects
+
+answer_program = Pure(42)
+"""
+CODE_USES_HY_MODULE = "import doeff_core_effects.os_process\nPure(42)"
+HY_EXTRA_LINE = 'pip install "doeff[hy]"'
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["run", "--no-runbox", "--hy", "(import doeff [Pure]) (Pure 42)"],
+        ["run", "--no-runbox", "--program", "hyprog.mod.answer_program"],
+        ["run", "--no-runbox", "--program", "uses_hy_module.answer_program"],
+        ["run", "--no-runbox", "-c", CODE_USES_HY_MODULE],
+    ],
+    ids=["hy-flag", "hy-program", "program-importing-a-hy-module", "code-importing-a-hy-module"],
+)
+def test_doeff_run_names_the_hy_extra_when_the_program_needs_hy(
+    tmp_path: Path, deadline_scale_factor: float, argv: list[str]
+) -> None:
+    (tmp_path / "hyprog").mkdir()
+    (tmp_path / "hyprog" / "__init__.py").write_text("")
+    (tmp_path / "hyprog" / "mod.hy").write_text(HY_MODULE)
+    (tmp_path / "uses_hy_module.py").write_text(USES_HY_MODULE)
+    command = with_settings(
+        [sys.executable, "-c", BLOCK_HY_THEN_RUN_CLI, *argv],
+        {"PYTHONPATH": str(tmp_path), "DOEFF_PROFILE": None},
+    )
+
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        check=False,
+    )
+
+    assert completed.returncode == 1, (completed.stdout, completed.stderr)
+    assert completed.stderr.rstrip().endswith(HY_EXTRA_LINE), completed.stderr
