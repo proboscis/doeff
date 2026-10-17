@@ -29,12 +29,12 @@ def main() -> Generator[Any, Any, list[int]]:
     both = yield from Gather(t1, t2)
     assert_type(both, list[int])
     ts = yield from Spawn(namer(3))
-    mixed = yield from Gather(t1, ts)  # gap-4 want-clean (結果の型の違う task — 実行は通る)
-    assert_type(mixed, list[int | str])  # gap-4 want-clean
+    mixed = yield from Gather(t1, ts)  # 結果の型の違う task(抜け 4 — 直った)
+    assert_type(mixed, list[int | str])
     first = yield from Race(t1, t2)
     assert_type(first, int)
-    either = yield from Race(t1, ts)  # gap-4 want-clean
-    assert_type(either, int | str)  # gap-4 want-clean
+    either = yield from Race(t1, ts)
+    assert_type(either, int | str)
     p = yield from CreatePromise[int]()
     assert_type(p, Promise[int])
     yield from CompletePromise(p, "x")  # expect-error (Promise[int] に str)
