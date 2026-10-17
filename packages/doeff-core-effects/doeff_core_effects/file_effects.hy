@@ -36,6 +36,8 @@
 ;;;   ReleaseLock    取った錠を放す。答え = None
 ;;;   ReadDiskFree   path を含む file system の空き(byte・無い path は在る親で測る — agora-redesign #831)。答え = int
 ;;;   ReadDiskUsage  path を含む file system の総量と空き(byte・無い path は在る親で測る — #2504)。答え = DiskUsage
+;;;                  空きは書ける量: Linux = statvfs の空き・macOS = statvfs の空きを床に、macOS が自動で空ける領域の一部も数える volume の
+;;;                  資源の key の空き(darwin_volume.hy — card ki-4ee952807ce0)
 ;;;   MeasureTree    dir の下の file の大きさの合計(byte・symlink は辿らずリンク自身の大きさ・hardlink は重ねて数える — #2504)。答え = int
 ;;;
 ;;; memory の置き場の語彙(本物の file system には無い): MemoryFile / MemoryFiles = 置き場の初めの形と今の中身・ReadMemoryFiles = 今の中身を

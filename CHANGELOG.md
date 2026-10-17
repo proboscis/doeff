@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- `doeff-core-effects`: on macOS, `ReadDiskFree` and `ReadDiskUsage` (`os-file-handler`) answer the volume's
+  opportunistic-usage capacity (`kCFURLVolumeAvailableCapacityForOpportunisticUsageKey`), with the statvfs free space
+  as the floor. statvfs leaves out the space macOS frees on its own (APFS local snapshots, purgeable caches), so a Mac
+  with tens of GB of such space was measured as nearly full. Linux still answers the statvfs free space.
+
 ## 0.6.0 — 2026-10-17
 
 ### Changed

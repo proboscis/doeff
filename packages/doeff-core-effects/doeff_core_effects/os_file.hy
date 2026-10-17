@@ -1,5 +1,7 @@
 ;;; 汎用の file system の effect(file_effects.hy)の本物の答え手 os-file-handler(agora-redesign #802 便 1)。os・shutil・fcntl を呼んで値を
 ;;; 詰め替えるだけで、判断を持たない。失敗(OSError)は FileFailed の値で答える。
+;;; 空きの読み(ReadDiskFree・ReadDiskUsage)は機体で読み手を選ぶ: Linux = statvfs・macOS = statvfs の空きを床にした volume の資源の key
+;;; の空き(darwin_volume.hy — statvfs は macOS が自動で空ける領域を使えない空きとして引く・card ki-4ee952807ce0)。
 ;;;
 ;;; 錠の取り(AcquireLock)は取れるまで待つ(fcntl.flock)。os-file-handler はその待ちを呼んだ thread で待つので、1 つの scheduler に task が
 ;;; 並ぶ process では、錠を持った task が待ち(子 process・HTTP)へ移った間に別の task が同じ錠を取りに来ると scheduler の thread ごと
@@ -30,6 +32,7 @@
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 (import doeff_core_effects.python_bytecode [compile-python-sources])
+(import doeff_core_effects.darwin_volume [darwin-volume-free])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
 ;; offloaded-lock-handler の thread(錠の取り 1 つに thread 1 本 — 同時の数の上限は錠を取りに来る task の数)。
@@ -257,22 +260,41 @@
   (try (fcntl.flock held.token fcntl.LOCK-UN) (finally (os.close held.token))))
 
 
-(defk disk-free [path]
-  {:pre [(: path str)] :post [(: % (| int FileFailed))]}
-  "path を含む file system の空きを読むため(無い path は在る親で測る)。"
-  (var probe (Path path))
-  (while (not (.exists probe)) (:= probe probe.parent))
-  (try (. (shutil.disk-usage probe) free)
-       (except [error OSError] (FileFailed :path path :detail (str error)))))
+(defk free-reader-for [system]
+  {:pre [(: system str)] :post [(: % (| Callable None))]}
+  "機体(platform.system の名)の空きの読み直し手を選ぶため(card ki-4ee952807ce0): macOS(Darwin)は statvfs が引く macOS の自動で空ける
+   領域の一部も数える darwin-volume-free(darwin_volume.hy の頭の註)・他の機体(Linux)は None = statvfs の空きのまま。"
+  (if (= system "Darwin") darwin-volume-free None))
+
+
+(defk reread-free [probe floor reader]
+  {:pre [(: probe str) (: floor int) (: reader (| Callable None))] :post [(: % int)]}
+  "statvfs の空き floor を機体の読み直し手で読み直すため。答えが無い時と floor より小さい答えは floor のまま — statvfs の空きは何も消さず
+   に今すぐ書ける量なので、読み直しで今より小さく測らない。"
+  (if (is reader None)
+      floor
+      (do (<- answered (| int None) (reader probe))
+          (if (is answered None) floor (max floor answered)))))
 
 
 (defk disk-usage [path]
   {:pre [(: path str)] :post [(: % (| DiskUsage FileFailed))]}
-  "path を含む file system の総量と空きを読むため(無い path は在る親で測る)。"
+  "path を含む file system の総量と空きを読むため(無い path は在る親で測る・空きは機体の読み直し手で読み直す — reread-free)。"
   (var probe (Path path))
   (while (not (.exists probe)) (:= probe probe.parent))
-  (try (let [usage (shutil.disk-usage probe)] (DiskUsage :total usage.total :free usage.free))
-       (except [error OSError] (FileFailed :path path :detail (str error)))))
+  (val usage (try (shutil.disk-usage probe) (except [error OSError] error)))
+  (when (isinstance usage OSError)
+    (return (FileFailed :path path :detail (str usage))))
+  (<- reader (| Callable None) (free-reader-for (platform.system)))
+  (<- free int (reread-free (str probe) usage.free reader))
+  (DiskUsage :total usage.total :free free))
+
+
+(defk disk-free [path]
+  {:pre [(: path str)] :post [(: % (| int FileFailed))]}
+  "path を含む file system の空きを読むため(disk-usage の空き — 無い path は在る親で測る)。"
+  (<- usage (| DiskUsage FileFailed) (disk-usage path))
+  (if (isinstance usage FileFailed) usage usage.free))
 
 
 (defk measure-tree [path]
