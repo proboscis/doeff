@@ -1,6 +1,7 @@
 use crate::gc::visit_py_field;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
+use pyo3::types::PyType;
 
 // GC note (#500): both result classes implement `__traverse__` so the cycle
 // collector can see through them. They are `frozen`, so `__clear__` is not
@@ -14,6 +15,15 @@ pub struct PyResultOk {
 
 #[pymethods]
 impl PyResultOk {
+    /// `Ok[int]` / `Err[ValueError]` in an evaluated annotation (see crate::typing_support).
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     fn new(value: Py<PyAny>) -> Self {
         Self { value }
@@ -64,6 +74,15 @@ pub struct PyResultErr {
 
 #[pymethods]
 impl PyResultErr {
+    /// `Ok[int]` / `Err[ValueError]` in an evaluated annotation (see crate::typing_support).
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     #[pyo3(signature = (error, captured_traceback=None))]
     fn new(py: Python<'_>, error: Py<PyAny>, captured_traceback: Option<Py<PyAny>>) -> Self {

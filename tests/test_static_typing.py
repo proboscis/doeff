@@ -231,7 +231,7 @@ def job() -> Generator[ReadClock | WriteShared | Ask | Get | Put | Try[int], Any
     stored = yield from Put("k", 1)
     assert_type(stored, None)
     tried = yield from Try(elapsed(1))
-    assert_type(tried, Ok[int] | Err)
+    assert_type(tried, Ok[int] | Err[Exception])
     return tag
 
 

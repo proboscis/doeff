@@ -60,7 +60,7 @@ the arguments without a word.
 Success/failure sum type used by `Try(...)`.
 
 ```python excerpt
-Result[T] = Ok[T] | Err
+Result[T] = Ok[T] | Err[Exception]
 ```
 
 **See:** [Error Handling](05-error-handling.md#okerr-result-values)
@@ -99,11 +99,12 @@ Failure constructor for `Result[T]`.
 err = Err(ValueError("invalid input"))
 ```
 
-**Signature:** `Err(error: Exception)`
+**Signature:** `Err(error: E)` → `Err[E]`
 
 **Fields:**
 
-- **`error`** - The captured exception
+- **`error`** - The error, typed `E`: `Err(ValueError("x")).error` is a `ValueError`. `Try` answers
+  `Err[Exception]` (the exception the program raised); a bare `Err` annotation means `Err[Any]`
 
 **Pattern matching:**
 
@@ -117,22 +118,25 @@ match result:
 
 ### Maybe
 
-Optional value type.
+Optional value type: `Maybe[T] = Some[T] | Nothing`. `Some(42).value` is an `int`; a bare `Maybe`
+annotation means `Maybe[Any]`.
 
 ```python
-from doeff import Some, Nothing
+from doeff import Maybe, Nothing, Some
 
-maybe_val = Some(42)
-empty = Nothing
 
-match maybe_val:
+def first(items: list[int]) -> Maybe[int]:
+    return Some(items[0]) if items else Nothing
+
+
+match first([42]):
     case Some(value=v):
         print("has value", v)
-    case Nothing:
+    case _:  # Nothing (a bare `case Nothing:` would capture any value)
         print("empty")
 ```
 
-`Maybe = Some | Nothing`
+`Maybe[int]` is for annotations; test a value with `isinstance(value, Some)` or `value is Nothing`.
 
 ---
 
