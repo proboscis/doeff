@@ -1,0 +1,50 @@
+# README・docs・PyPI の頁に出る README の link が切れていない事を確かめる(取り組み doeff-publish の区切り 11・card
+# ki-235c38cce9ad)。中身は tools/check_links.py(標準ライブラリだけ — workspace を同期しない)。job は 2 つ:
+# - in-repo: 相対の link・main を指す GitHub の link・`#見出し` の anchor・PyPI の頁になる README の相対の path を、checkout の
+#   木で読む。網に出ないので push と pull request のたびに走らせる(file の改名や見出しの書き換えで切れた link を名指す)。
+#   同じ確かめは tests/test_check_links.py::test_repo_links_resolve_in_the_tree でも走る(Python Compatibility の root の tests)。
+#   こちらは切れた link の一覧を 1 つの名の job に出す。
+# - external: 外の link に要求を送る。相手の site の都合で揺れるので push では走らせず、週 1 回(月曜 03:17 UTC)と手で
+#   起こす時だけ走らせる。404・410・名の引けない host だけを赤にし、429・5xx・403・時間切れは「確かめられない」と印字する。
+name: Links
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  in-repo:
+    name: In-repo links (relative, main, anchors, PyPI pages)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Check links against the tree
+        run: uv run --no-project python tools/check_links.py
+
+  external:
+    name: External links
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Ask every external link for an answer
+        run: uv run --no-project python tools/check_links.py --external
