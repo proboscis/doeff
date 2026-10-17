@@ -5,7 +5,8 @@
 ;;;                    確かめる分岐・名簿・合言葉は持たない)。断りの文は warm_effects.hy の関数で作り、env の値は含めない。
 ;;;   PollWarmChild    pid の process の state と start-ticks を機体ごとの読み proc-stat-of で読む(Linux = /proc/<pid>/stat の state〔3 番目の
 ;;;                    欄〕と starttime〔22 番目の欄〕・macOS = darwin_proc.hy の libproc の proc_bsdinfo)。同じ start-ticks で終わって
-;;;                    いない(zombie でない)process が居れば WarmRunning、そうでなければ exit の file を読む(在れば WarmExited・無ければ WarmLost)。
+;;;                    いない(zombie でも回収の最中でもない — process_stat.hy の ENDED-STATES の外)process が居れば WarmRunning、
+;;;                    そうでなければ exit の file を読む(在れば WarmExited・無ければ WarmLost)。
 ;;;   SignalWarmChild  同じ start-ticks で終わっていない process が居る時だけ、その group(子 A は setsid した group の先頭)へ os.killpg で送る。
 ;;;   読みを知らない機体(Linux と macOS の外)・/proc の無い Linux では WarmProcUnavailable を上げる — 黙って Lost / Gone にしない。
 ;;;   待ちの子(doeff-cluster の warm_child.py)も、分けた子の start-ticks と自分の thread の本数を同じ読み(proc-stat-of・own-thread-count)
@@ -27,7 +28,7 @@
 (import dataclasses [dataclass])
 (import doeff_hy.wire [Malformed dump parse-json])
 (import doeff_core_effects.process_effects [ProcessSignal])
-(import doeff_core_effects.process_stat [ProcStat])
+(import doeff_core_effects.process_stat [ProcStat ENDED-STATES])
 (import doeff_core_effects.darwin_proc [darwin-proc-stat darwin-thread-count])
 (import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited
                                          WarmLost WarmSignaled WarmGone WARM-ANSWER-SECONDS warm-socket-missing warm-socket-refused
@@ -200,9 +201,10 @@
 
 (defk same-child-running [pid start-ticks]
   {:pre [(: pid int) (: start-ticks int)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
-  "pid が、頼んだ時と同じ start-ticks の process のままで、まだ終わっていない(zombie でない)かを確かめるため。"
+  "pid が、頼んだ時と同じ start-ticks の process のままで、まだ終わっていない(state が zombie でも回収の最中でもない —
+   ENDED-STATES の外)かを確かめるため。"
   (<- seen (| ProcStat None) (proc-stat-of pid))
-  (and (is-not seen None) (= seen.start-ticks start-ticks) (!= seen.state "Z")))
+  (and (is-not seen None) (= seen.start-ticks start-ticks) (not-in seen.state ENDED-STATES)))
 
 
 (defk os-poll-warm-child [pid start-ticks exit-path]

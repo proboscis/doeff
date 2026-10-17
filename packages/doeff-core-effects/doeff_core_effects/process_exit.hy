@@ -34,7 +34,7 @@
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_core_effects.os_process [STARTED-CHILDREN])
 (import doeff_core_effects.os_warm_process [proc-stat-of same-child-running])
-(import doeff_core_effects.process_stat [ProcStat])
+(import doeff_core_effects.process_stat [ProcStat ENDED-STATES])
 (import doeff_core_effects.pidfd_exit [pidfd-of])
 (import doeff_core_effects.kqueue_exit [kqueue-fd-of])
 
@@ -73,12 +73,13 @@
 
 (defk child-running [pid]
   {:pre [(: pid int)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
-  "pid が、この process が立ててまだ回収していない子で、まだ終わっていない(zombie でない)かを確かめるため — 終わりの知らせの
-   出どころが生きているかの読み(頭の註の止まりの見張り)。回収前の子の pid は使い回されないので start-ticks は照らさない。"
+  "pid が、この process が立ててまだ回収していない子で、まだ終わっていない(zombie でも回収の最中でもない — ENDED-STATES の外)かを
+   確かめるため — 終わりの知らせの出どころが生きているかの読み(頭の註の止まりの見張り)。回収前の子の pid は使い回されないので
+   start-ticks は照らさない。"
   (<- unreaped bool (child-unreaped pid))
   (if unreaped
       (do (<- seen (| ProcStat None) (proc-stat-of pid))
-          (and (is-not seen None) (!= seen.state "Z")))
+          (and (is-not seen None) (not-in seen.state ENDED-STATES)))
       False))
 
 

@@ -65,6 +65,9 @@
   (val zombie "9 (gone) Z 1 9 9 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 77 0 0 18446744073709551615 0\n")
   (<- dead (| ProcRow None) (proc-row-of-stat 9 zombie 4096))
   (assert (is dead None) dead)
+  ;; 親が回収している最中(state X — 回収が済んで /proc/<pid> が消える手前の短い間だけ見える)も、終わった process として表に入れない。
+  (<- reaping (| ProcRow None) (proc-row-of-stat 9 (.replace zombie " Z " " X ") 4096))
+  (assert (is reaping None) reaping)
   (var refused None)
   (try
     (<- (proc-row-of-stat 9 "9 (short) S 1 9\n" 4096))

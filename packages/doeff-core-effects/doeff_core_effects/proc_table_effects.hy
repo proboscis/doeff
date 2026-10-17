@@ -15,6 +15,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_core_effects.process_effects [ProcessSignal])
+(import doeff_core_effects.process_stat [ENDED-STATES])
 
 ;; /proc/<pid>/stat の欄の位置(最後の ')' の後ろを空白で割った列の番号 — 3 番目の欄 state が 0)。ppid = 4 番目・starttime = 22 番目・
 ;; rss = 24 番目(page の数)。
@@ -38,15 +39,15 @@
   {:pre [(: pid int) (> pid 0) (: text str) (: page-bytes int) (> page-bytes 0)] :post [(: % (| ProcRow None))]
    :tags {:context "process" :role "judgment"}}
   "/proc/<pid>/stat の中身 text を表の 1 行にするため(本物の答え手が使う)。comm(2 番目の欄)は空白や括弧を含みうるので、最後の ')' の
-   後ろを空白で割る。終わって刈られる前の process(state Z)は None(表に入れない)。欄の足りない中身は機体の形を知らない読みなので
-   ValueError で名指す(黙って捨てない)。"
+   後ろを空白で割る。終わって刈られる前・刈られている最中の process(state Z・X — process_stat.hy の ENDED-STATES)は None(表に
+   入れない)。欄の足りない中身は機体の形を知らない読みなので ValueError で名指す(黙って捨てない)。"
   (val parts (.rsplit text ")" 1))
   (val head (get parts 0))
   (val comm (cut head (+ (.find head "(") 1) None))
   (val fields (if (= (len parts) 2) (.split (get parts 1)) []))
   (when (<= (len fields) STAT-RSS-PAGES)
     (raise (ValueError (.format "/proc/{}/stat の欄が足りない: {!r}" pid text))))
-  (if (= (get fields 0) "Z")
+  (if (in (get fields 0) ENDED-STATES)
       None
       (ProcRow :pid pid :ppid (int (get fields STAT-PPID)) :start-ticks (int (get fields STAT-START-TICKS))
                :rss-bytes (* (max 0 (int (get fields STAT-RSS-PAGES))) page-bytes) :comm comm)))

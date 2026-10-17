@@ -6,7 +6,7 @@
 ;;;   - macOS の process の様子は libproc の proc_pidinfo の答え(struct proc_bsdinfo・struct proc_taskinfo)から読む。bytes の並びの
 ;;;     読みは機体に依らない関数なので、Linux でも <sys/proc_info.h> の並びで作った bytes で確かめる(本物の proc_pidinfo を呼ぶ検は
 ;;;     macOS の上でだけ走る — test_process_exit_wait.hy の振る舞いの検が、その機体の開き方と読みを本物の process で測る)。
-(require doeff-hy.macros [deftest val])
+(require doeff-hy.macros [deftest defk <- val])
 (import ctypes)
 (import os)
 (import platform)
@@ -19,6 +19,8 @@
 (import doeff_core_effects.pidfd_exit [pidfd-of])
 (import doeff_core_effects.kqueue_exit [kqueue-fd-of])
 (import doeff_core_effects.darwin_proc [bsd-info-stat task-info-threads BSD-INFO-SIZE TASK-INFO-SIZE])
+(import doeff_core_effects.os_warm_process [same-child-running])
+(import doeff_core_effects.os_warm_process :as os-warm-process-module)
 (import doeff_core_effects.process_stat [ProcStat])
 
 ;; <sys/proc_info.h> の struct proc_bsdinfo の並び(136 byte): uint32 × 5(flags status xstatus pid ppid)・uid / gid × 6・rfu_1・
@@ -31,6 +33,12 @@
 (defn #^ bytes bsd-info [#^ int status #^ int seconds #^ int micros]
   "status と起動の時刻だけを持つ proc_bsdinfo の bytes を作るため(他の欄は 0・名は sleep)。"
   (struct.pack BSD-INFO-LAYOUT 0 status 0 4242 1 501 20 501 20 501 20 0 b"sleep" b"sleep" 0 4242 0 0 0 0 seconds micros))
+
+
+(defk stat-line [pid state start-ticks]
+  {:pre [(: pid int) (: state str) (: start-ticks int)] :post [(: % str)]}
+  "/proc/<pid>/stat の 1 行を作るため(state と starttime〔22 番目の欄〕だけを決め、他の欄は 0 か pid)。"
+  (.format "{0} (warm job) {1} 1 {0} {0} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 {2} 0 0\n" pid state start-ticks))
 
 
 (deftest test-the-exit-fd-opener-follows-the-machine
@@ -57,6 +65,22 @@
   (with [caught (pytest.raises ExitWaitUnavailable)]
     (run (exit-fd-opener-for "Windows")))
   (assert (in "Windows" (str caught.value)) caught.value))
+
+
+(deftest test-a-process-being-reaped-is-not-running [tmp-path monkeypatch]
+  ;; 失敗ケース: 親が回収している最中の process(/proc の state X — Linux の EXIT_DEAD。回収が済んで /proc/<pid> が消える手前の短い間だけ
+  ;; 見える)は、zombie(Z)と同じく走っていない。前は Z だけを終わりと読み、待ちの子から分かれた子の終わりを待った直後の PollWarmChild が、
+  ;; 待ちの子の回収と重なった時に WarmRunning と答えた(日次の packages の段の test_task_venv_on_both_paths・card ki-6dde100393cd)。
+  ;; /proc の根を検の置き場に差し替え、Linux の読みで測る。
+  (when (!= (platform.system) "Linux")
+    (pytest.skip "/proc の state を読むのは Linux の読み"))
+  (.setattr monkeypatch os-warm-process-module "PROC_ROOT" (str tmp-path))
+  (for [[pid state running] [[41 "S" True] [42 "Z" False] [43 "X" False]]]
+    (<- line str (stat-line pid state 77))
+    (.mkdir (/ tmp-path (str pid)))
+    (.write-text (/ tmp-path (str pid) "stat") line)
+    (<- seen bool (same-child-running pid 77))
+    (assert (= seen running) state)))
 
 
 (deftest test-the-layouts-are-the-sizes-libproc-answers
