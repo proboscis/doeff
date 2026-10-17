@@ -52,6 +52,14 @@ class Other(EffectBase):
     value: int
 
 
+class MyEffectA(EffectBase):
+    pass
+
+
+class MyEffectB(EffectBase):
+    pass
+
+
 class MyError(Exception):
     pass
 
@@ -239,6 +247,11 @@ def fetch_passer(effect: Fetch, k):
     yield Pass(effect, k)
 
 
+@do
+def many(effect: Store | Other | MyEffectA | MyEffectB, k):
+    return (yield Resume(k, None))
+
+
 class TestUnhandledEffectNamesTheSkippedHandlers:
     def test_the_skipped_handler_and_its_annotation_follow_the_chain_line(self):
         lines = _message(handler(store_handler)(fetch_program())).splitlines()
@@ -255,9 +268,26 @@ class TestUnhandledEffectNamesTheSkippedHandlers:
             "store_or_other (effect: Store | Other)" + _SKIPPED_TAIL
         )
 
-    def test_a_handler_that_saw_the_effect_is_not_named(self):
-        message = _message(with_handlers([fetch_passer, pass_through], fetch_program()))
+    def test_a_long_union_shows_its_first_types_and_its_size(self):
+        """A defhandler of many clauses would otherwise spell every clause type in the line."""
+        lines = _message(handler(many)(fetch_program())).splitlines()
+        assert lines[2] == (
+            "  skipped by annotation: many (effect: Store | Other | MyEffectA | … (4 types))"
+            + _SKIPPED_TAIL
+        )
+
+    def test_no_line_when_a_handler_annotated_for_the_effect_saw_it(self):
+        """fetch_passer is annotated for Fetch and passed it on: the annotations are not why
+        it fell off (an Ask whose key no handler holds), so store_handler is not named either."""
+        program = with_handlers([fetch_passer, store_handler, pass_through], fetch_program())
+        message = _message(program)
+        assert "store_handler" in message.splitlines()[1]
         assert "skipped by annotation" not in message
+
+    def test_an_unannotated_handler_in_scope_does_not_hide_the_line(self):
+        program = with_handlers([pass_through, store_handler], fetch_program())
+        lines = _message(program).splitlines()
+        assert lines[2] == "  skipped by annotation: store_handler (effect: Store)" + _SKIPPED_TAIL
 
     def test_a_class_of_the_same_name_is_told_apart_by_its_module(self):
         """The handler names another class called Fetch (a module imported twice, as __main__

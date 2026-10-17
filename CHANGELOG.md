@@ -58,6 +58,16 @@
 
 ### Changed
 
+- `doeff` / `doeff-vm`: a handler whose effect annotation no effect can match (`effect: str`, `int`, `dict`,
+  `list[...]`, `None`, an `Exception` subclass) is refused with a `TypeError` where `handler(fn)` or `with_handlers`
+  makes it, naming the handler and how to annotate it; a raw `WithHandler` is refused when it is installed. In 0.5.0
+  the VM skipped such a handler for every effect and the run ended in an `UnhandledEffect` that did not name the
+  annotation. Marker base classes that are not an `EffectBase` stay filters, and an annotation that cannot be
+  evaluated keeps its `RuntimeWarning` and its fallback to every effect. When an effect falls off and no handler in
+  scope is annotated for it, the `UnhandledEffect` message names the handlers whose annotation skipped it
+  (`skipped by annotation: store_handler (effect: Store)`), and an effect no package registered a hint for (an effect
+  class of the user's own) ends with `hint: install a handler for Fetch: run(handler(fn)(prog)), …` (first-look error
+  table rows 9 and the appendix, card ki-f102109edbc8).
 - `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
   2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
   `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run
