@@ -36,6 +36,17 @@
 ;; 前の版の木から .pyc を引き継ぐ形(古い保存の形 — 道具の引数 --from / --changed)の目印。
 (val CARRY-ARGUMENT (re.compile r"\"--(?:from|changed)\""))
 
+;; .pyc の置き場の知識(__pycache__ の dir の名・.pyc の末尾・source から .pyc の path を求める関数)の目印。doeff-cluster の中でこれを綴って
+;; よいのは焼く道具の module と模擬の世界だけ(R3b — 木を置く翻訳や準備の program が .pyc を置くと、前の root からの 2 本目の引き継ぎになる)。
+(val PLACEMENT-TOKEN (re.compile r"[\"']__pycache__[\"']|[\"']\.pyc[\"']|\bpyc[-_]path\b|\bcache[-_]from[-_]source\b"))
+(val CLUSTER-SRC "packages/doeff-cluster/src/doeff_cluster")
+(val BYTECODE-TOOL-FILES #{"packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy"})
 ;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場。
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
 (val SCAN-SKIP-PREFIXES #("docs/" ".github/"))
@@ -66,6 +77,19 @@
   (bool (.search CARRY-ARGUMENT code)))
 
 
+(defk spells-bytecode-placement [text]
+  {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
+  "source が .pyc の置き場の知識(PLACEMENT-TOKEN)を綴るか(; と # で始まる註の行は数えない)— R3b の判断。"
+  (val code (.join "\n" (gfor line (.splitlines text) :if (not (.startswith (.lstrip line) #(";" "#"))) line)))
+  (bool (.search PLACEMENT-TOKEN code)))
+
+
+(defk placement-violations [found]
+  {:pre [(: found frozenset)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
+  "doeff-cluster の中で .pyc の置き場を綴る file の集合 found のうち、焼く道具の module と模擬の世界(BYTECODE-TOOL-FILES)でない物を挙げる。"
+  (lfor rel (sorted found) :if (not-in rel BYTECODE-TOOL-FILES)
+        f"{rel}: .pyc の置き場(__pycache__・.pyc・pyc-path)を綴る — .pyc を root に置くのは焼く道具だけ(code_store の link-pyc 経由)。前の root から .pyc を持ち越す 2 本目の道になる"))
+
 ;; ---------------------------------------------------------------------------
 ;; 土台(file を読む)
 
@@ -83,6 +107,18 @@
     (<- hit bool (spells-store-layout (.read-text p :encoding "utf-8" :errors "replace")))
     (when hit
       (:= found (| found #{(.as-posix rel)}))))
+  (frozenset found))
+
+
+(defk placement-files [repo-root]
+  {:pre [(: repo-root Path)] :post [(: % frozenset)] :tags {:context "doeff-build-adr" :role "foundation"}}
+  "doeff-cluster の source(CLUSTER-SRC の下の Python と Hy)のうち、.pyc の置き場の知識を綴る file の相対 path を集める。"
+  (var found #{})
+  (for [p (sorted (.rglob (/ repo-root CLUSTER-SRC) "*"))
+        :if (and (in p.suffix #(".py" ".hy")) (not (.is-symlink p)) (.is-file p) (not-in "__pycache__" p.parts))]
+    (<- hit bool (spells-bytecode-placement (.read-text p :encoding "utf-8" :errors "replace")))
+    (when hit
+      (:= found (| found #{(.as-posix (.relative-to p repo-root))}))))
   (frozenset found))
 
 
@@ -130,6 +166,7 @@
      (rule R2b "R2 の追補(2026-10-12・card ki-6828e9af04b4 の案 2 = 根治): 鍵 1 つの dir に macro の環境ごとの code の entry を並べる — <dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code(鍵の印 doeff-hy/code-store/3)。記録の指紋 = code の定数の末尾(doeff-hy の記録)の sha256 の頭 32 字(code_store.code-fingerprint — 記録の欄の意味は読まず、記録の印の違う版の記録にも同じ作り方が効く)。引く側は使った時刻の新しい順に照らし、合う最初の 1 つを使い、その entry の時刻だけを進める。焼き直した code は今の環境の entry として足し、他の環境の entry は上書きしない(読めない記録の entry も除かない — 他の版の書き手の物)。足した entry の時刻は鍵の他の entry のどれよりも前に置き(今から 1 日より前にはしない)、照らして使われて初めて前へ出す。鍵 1 つの entry は 16 個(CODE-ENTRIES-PER-KEY)までで、越えたら今足した entry を残して時刻の古い物から除く — 一度きりの環境(macro を直している作業木の検)の entry は互いを除き合い、使い続けている entry を押し出さない。上限を越える数の環境が同じ鍵を順に使っても、外れるのは越えた分だけ(設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 A — 足した entry を頭に置いた形では、17 の環境で毎巡全部が外れた)。R2 の「同じ鍵の entry を書き直す」は、記録の同じ entry を書き直す事に読み替える。訳: 鍵 1 つに entry 1 つでは、doeff の版の違う書き手(実行環境の準備と作業木の import)が同じ鍵を交互に上書きし、互いに焼き直した(上の測り)。失敗ケース = packages/doeff-hy/tests/test_bytecode_guard.py の test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round・test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries(盲検 B)・packages/doeff-cluster/tests/test_code_prepare_content_store.py の test_e_two_macro_versions_taking_turns_do_not_rebake_each_other・packages/doeff-hy/tests/test_code_store_entries.py。")
      (rule R2c "R2b の追補(2026-10-12・card ki-11a90ffff495): import の口は、作業木の .pyc が source に合っても、その .pyc の記録が今の環境の macro に合わない時は、compile し直す前に鍵の entry を R2b と同じ照らしで引く。合う entry が在れば compile せずにそれを使い、.pyc を読んだ .pyc と同じ方式(timestamp か hash)で書き直す。合う entry が無ければ今どおり compile し、今の環境の entry として足す。訳: .pyc が在るというだけで保存先を引かないと、兄弟の doeff を替えて使い回す作業木(配備の宣言の木・長く使う会話の木)の最初の import が、保存先に同じ版の entry が揃っていても木の Hy の module を全部 compile し直した(2026-10-12・agora_sim の検 1 本の収集で約 880 本・CPU 約 670 秒 — card ki-ff53506fda43 の調べ)。失敗ケース = packages/doeff-hy/tests/test_bytecode_guard.py の test_a_stale_pyc_in_a_reused_tree_takes_the_stores_matching_entry_without_compiling・test_a_stale_checked_hash_pyc_takes_the_stores_matching_entry_and_is_rewritten_in_the_same_form(合う entry が無い側 = test_a_stale_pyc_with_no_matching_entry_in_the_store_compiles_and_adds_the_entry)。")
      (rule R3 "worker の bytecode の準備は前の版の木から .pyc も import の名も引き継がない(--from・--changed・引き継ぎ元の選びを持たない)。.pyc は保存先の code から書き、無い物と今の macro に合わない物だけを焼いて足す。閉包の import の名も source の中身の鍵で保存先から引く(種類 .imports)。")
+     (rule R3b "R3 の追補(2026-10-17・card ki-d51b7baa38bc・設計検証 lt-4KTRWD3K1PH2VG5W5X294EZJP4 の盲検 B): root の木に .pyc を置くのは焼く道具だけ。doeff-cluster の中で .pyc の置き場の知識(\"__pycache__\"・\".pyc\" の綴り・pyc-path・cache_from_source)を持つのは、焼く道具の module(bytecode_pool・code_prepare・code_plan・bake_plan・code_model)と模擬の世界だけ。訳: 写し元の root の .pyc を、木を置く翻訳の別の effect で新しい root へ hardlink する実装は、R3 の検(道具の --from・--changed)も木の形の検も通った。持ち越した .pyc は保存先の使った印を進めないので、掃除が root の使う保存先の .pyc と code を 7 日で消し、変わった Python の source の古い .pyc が完成した root に残った(盲検 B の実測 — 保存先の .pyc 24 → 0・次の root の新しい byte 188,416)。失敗ケース = この冊の test-adr-doe-build-002-only-the-bytecode-tool-places-pyc と judgments-reject-the-counterexamples の盲検 B の行。")
      (rule R4 "保存先の dir は env DOEFF_HY_CODE_STORE。worker の起動の script は既定を $WORK_DIR/state/doeff-hy-code-store に置き、呼び手の値を優先する(手元の 1 台の cluster のテストは件をまたいで同じ dir を渡す)。")
      (rule R5 "7 日使われない entry は worker の掃除が消す(native の wheel と同じ 7 日 — CODE-STORE-UNUSED-SECONDS = WHEEL-UNUSED-SECONDS)。")
      (rule R5b "R5 の追補(2026-10-12・card ki-6828e9af04b4): 掃除は、自分も下の物も全部 7 日動いていない保存先の dir を dir ごと消す(env_store の unused-store-names)。使った entry の在る dir と、作ったばかりの空の dir は残す。訳: R2b の鍵の dir は版ごとの source の数だけ増えるので、entry だけを消すと空の dir が残り続け、保存先の歩きが読む数が増え続ける。失敗ケース = packages/doeff-cluster/tests/test_env_store.hy の test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused。")
@@ -144,6 +181,10 @@
        :statement "not carries_from_a_previous_tree(PREPARE-TOOL)"
        :counterexamples
          [(counterexample "道具の引数に --from <前の木> と --changed <差の一覧> が残る(引き継ぎ元の無い準備で全部を焼き直す道が残る)")])
+     (law only-the-bytecode-tool-places-pyc
+       :statement "for_all file f in packages/doeff-cluster/src: spells_bytecode_placement(f) => f in BYTECODE-TOOL-FILES"
+       :counterexamples
+         [(counterexample "木を置く翻訳(env_translation)に (val PYCACHE-DIR \"__pycache__\") と、写し元の木の .pyc を新しい root へ LinkFile で置く effect の答えを足す(盲検 B — R3 の検と木の形の検を通り、保存先の使った印が進まず掃除が使っている .pyc を消した)")])
      (law the-worker-defaults-the-store-under-its-state
        :statement "boot.sh exports DOEFF_HY_CODE_STORE defaulting to $WORK_DIR/state/doeff-hy-code-store, and the prepare tool reads the store entry from the worker's own doeff-hy"
        :counterexamples
@@ -159,6 +200,12 @@
        (for [rel #(PREPARE-TOOL POOL-TOOL)]
          (assert (not (run (carries-from-a-previous-tree (.read-text (/ repo-root rel) :encoding "utf-8"))))
                  (+ rel ": 前の版の木から引き継ぐ引数が残る(ADR-DOE-BUILD-002 R3)"))))
+     (deftest test-adr-doe-build-002-only-the-bytecode-tool-places-pyc
+       (val repo-root (. (Path __file__) parent parent parent))
+       (val found (run (placement-files repo-root)))
+       (val violations (run (placement-violations found)))
+       (assert (= violations []) (+ ".pyc を root に置く 2 本目の道(ADR-DOE-BUILD-002 R3b): " (str violations)))
+       (assert (in "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy" found) "焼く道具の綴りを見つけない — 走査の範囲が壊れた"))
      (deftest test-adr-doe-build-002-the-worker-defaults-the-store-under-its-state
        (val repo-root (. (Path __file__) parent parent parent))
        (val boot (.read-text (/ repo-root BOOT-SCRIPT) :encoding "utf-8"))
@@ -182,5 +229,15 @@
        (assert (= (run (layout-violations (frozenset #{ENTRY}))) []))
        (assert (= (len (run (layout-violations (frozenset #{second})))) 2))
        (assert (run (carries-from-a-previous-tree "(.add-argument parser \"--from\" :action \"append\")\n")))
-       (assert (not (run (carries-from-a-previous-tree ";; 前は \"--from\" で引き継いだ\n")))))]
+       (assert (not (run (carries-from-a-previous-tree ";; 前は \"--from\" で引き継いだ\n"))))
+       ;; 反例(R3b・盲検 B): 木を置く翻訳が .pyc の置き場を綴る行は赤。註の行と、文の中の __pycache__ の語(引用符の無い物)は数えない。
+       (assert (run (spells-bytecode-placement "(val PYCACHE-DIR \"__pycache__\")\n")))
+       (assert (run (spells-bytecode-placement "(when (.endswith e.name \".pyc\") (<- (LinkFile a b)))\n")))
+       (assert (run (spells-bytecode-placement "(import doeff_core_effects.python_bytecode [pyc-path])\n")))
+       (assert (run (spells-bytecode-placement "cache = importlib.util.cache_from_source(path)\n")))
+       (assert (not (run (spells-bytecode-placement ";; 追跡しない物(.venv・__pycache__)は写さない\n"))))
+       (assert (not (run (spells-bytecode-placement "\"追跡しない物(.venv・__pycache__・焼いた印)は写さない\"\n"))))
+       (val tree "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy")
+       (assert (= (len (run (placement-violations (frozenset #{tree "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"})))) 1))
+       (assert (= (run (placement-violations (frozenset #{"packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"}))) [])))]
   :plans [])
