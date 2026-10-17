@@ -18,7 +18,7 @@ AIエージェントに守ってほしい決まりは、失敗のたびに増え
 
 ## まず短いコード
 
-Claude Codeのhookは、決まった出来事の時に外の命令を呼ぶ仕組みです。道具を使う直前には、出来事のJSONが標準入力に届きます。命令がJSONで`additionalContext`を返すと、その文がAIの文脈に足されます。次のhookは、規則を2本だけ持ちます。
+Claude Codeのhookは、決まった出来事(イベント)の時に外の命令を呼ぶ仕組みです。道具(ツール)を使う直前には、出来事のJSONが標準入力に届きます。命令がJSONで`additionalContext`を返すと、その文がAIの文脈に足されます。次のhookは、規則を2本だけ持ちます。
 
 ```python
 import json  # hookに届く出来事のJSONを読み、返す答えをJSONで書く。
@@ -26,12 +26,12 @@ import re  # 命令の文に、規則の綴りが当たるかを見る。
 import sys  # 標準入力から出来事を読む。
 
 RULES = [  # 規則は「いつ当てるか」と「何を見せるか」の組にする。
-    {"id": "config-values-are-hidden", "tool": "Bash",  # 設定fileの値を出さない規則。
-     "when": r"\b(?:cat|head|tail|diff)\b[^\n]*settings\.json",  # 設定fileを丸ごと出す命令。
-     "advice": "設定fileは丸ごと出さず、欄の名だけを出してください。"},  # 当たった時に見せる文。
-    {"id": "python-runs-through-uv", "tool": "Bash",  # 機体のpythonを使わない規則。
+    {"id": "config-values-are-hidden", "tool": "Bash",  # 設定ファイルの値を出さない規則。
+     "when": r"\b(?:cat|head|tail|diff)\b[^\n]*settings\.json",  # 設定ファイルを丸ごと出す命令。
+     "advice": "設定ファイルは丸ごと出さず、欄の名だけを出してください。"},  # 当たった時に見せる文。
+    {"id": "python-runs-through-uv", "tool": "Bash",  # OSに入っているpythonを使わない規則。
      "when": r"(?:^|[;&|]\s*)python3?\b",  # 命令の頭で、pythonを直に呼ぶ形。
-     "advice": "機体のpythonではなく、uv run pythonを使ってください。"},  # 当たった時に見せる文。
+     "advice": "OSに入っているpythonではなく、uv run pythonを使ってください。"},  # 当たった時に見せる文。
 ]
 
 
@@ -49,13 +49,13 @@ def hook(event):  # 道具を使う直前の出来事1つから、見せる助�
 def test_only_the_matching_rule_is_shown():  # 当たった規則の文だけが出る事を確かめる。
     event = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.claude/settings.json"}}  # 設定を丸ごと出す命令。
     advice = hook(event)["hookSpecificOutput"]["additionalContext"]  # hookが足す文。
-    assert advice == "設定fileは丸ごと出さず、欄の名だけを出してください。(規則 config-values-are-hidden)"  # 1行だけ。
+    assert advice == "設定ファイルは丸ごと出さず、欄の名だけを出してください。(規則 config-values-are-hidden)"  # 1行だけ。
     assert hook({"tool_name": "Bash", "tool_input": {"command": "ls"}}) is None  # 関係の無い命令には何も出さない。
 
 
 if __name__ == "__main__":  # Claude Codeから呼ばれた時だけ、標準入出力を使う。
     answer = hook(json.load(sys.stdin))  # 標準入力の出来事から、助言を決める。
-    if answer:  # 当たる規則が在った時だけ書く。
+    if answer:  # 当たる規則があった時だけ書く。
         print(json.dumps(answer, ensure_ascii=False))  # 標準出力のJSONを、Claude Codeが読む。
 ```
 
@@ -101,15 +101,15 @@ CLAUDE.mdに残すのは、どの場面でも要ることだけです。答え�
 
 例えば「設定ファイルを丸ごと出さない」は、事故の後に足した規則です。設定ファイルを2つ比べた時に、鍵の値が1つ会話の記録に残りました。助言の文には、事故の日と、代わりに打つ命令を書きます。値を伏せて欄の名だけを出す`jq 'keys'`などです。
 
-助言の文は、1本あたり平均300字、長くても400字です。851本を全部つなぐと255,942字になります。CLAUDE.mdに入れれば、今の17倍の長さです。
+同じ目録で数えると、助言の文は1本あたり平均300字、長くても400字です。851本を全部つなぐと255,942字になります。CLAUDE.mdに入れれば、今の17倍の長さです。
 
 ## 規則に、当たる例と当たらない例を持たせる
 
-綴りの規則は、書いた日に正しくても、直すうちに壊れます。そこで規則ごとに、当たるべき例と当たってはいけない例を持たせます。
+綴り(正規表現)の規則は、書いた日に正しくても、直すうちに壊れます。そこで規則ごとに、当たるべき例と当たってはいけない例を持たせます。
 
 ```python
 EXAMPLES = {  # 規則ごとに、当たるべき命令と、当たってはいけない命令を持つ。
-    "config-values-are-hidden": (  # 設定fileの規則の例。
+    "config-values-are-hidden": (  # 設定ファイルの規則の例。
         ["cat ~/.claude/settings.json", "diff a/settings.json b/settings.json"],  # 当たるべき命令。
         ["jq 'keys' ~/.claude/settings.json", "cat README.md"]),  # 当たってはいけない命令。
     "python-runs-through-uv": (  # pythonの規則の例。
@@ -168,7 +168,7 @@ JUDGED = [  # 綴りでは決まらず、判定器に問う規則。
      "advice": "議論の依頼です。例と比較で答え、実装には進まないでください。"},  # 当たった時に見せる文。
     {"id": "remember-goes-to-memory",  # 覚えてと頼まれた時の規則。
      "question": "利用者は、次の会話でも覚えておくよう頼んでいる。",  # 判定器に問う1文。
-     "advice": "覚える依頼です。記憶のfileに1件として書いてください。"},  # 当たった時に見せる文。
+     "advice": "覚える依頼です。記憶のファイルに1件として書いてください。"},  # 当たった時に見せる文。
 ]
 
 
@@ -178,10 +178,10 @@ def advise_prompt(prompt):  # 利用者の依頼1つから、見せる助言を�
     answers = yield AskJudge(prompt, questions)  # 問いを1つの依頼に束ね、確率の組を受け取る。
     return [f"{rule['advice']}(規則 {rule['id']})"  # 当たった規則の助言を1行ずつ。
             for rule, probability in zip(JUDGED, answers, strict=True)  # 規則と答えを順に組む。
-            if probability is not None and probability >= 0.5]  # 答えが在り、当たる側だけを採る。
+            if probability is not None and probability >= 0.5]  # 答えがあり、当たる側だけを採る。
 ```
 
-- `@do`を付けた関数は、呼んでもすぐには動きません。実行する手順を返します。
+- `@do`を付けた関数は、呼んでもすぐには動きません。実行する手順(Program)を返します。
 - `yield AskJudge(...)`は、問いを外側へ渡し、答えが来るまで止まります。
 - このような依頼をエフェクト(effect)と呼びます。
 - `advise_prompt`は、判定器をどう呼ぶかを知りません。
@@ -224,7 +224,7 @@ def test_judged_rule_with_fixed_answers():  # 同じ処理を、判定器を替�
 
 本番では、同じ`AskJudge`を、判定用のモデルを呼ぶハンドラが受けます。`advise_prompt`は1字も変えません。
 
-私たちの本物の評価器も、doeffで書いています。問いは、doeff-system-oneの`Judge`というeffectです。試験では台本のハンドラが答えます。評価器の56本の試験は、モデルを一度も呼ばずに走ります。
+規則を選ぶ私たちの本物のhookも、doeffで書いています。判定器への問いは、doeff-system-oneの`Judge`というエフェクトです。試験では、決めた答えを返すハンドラが答えます。このhookの56本の試験は、モデルを一度も呼ばずに走ります。
 
 判定器の使い方では、2つのことを学びました。
 
@@ -235,7 +235,7 @@ def test_judged_rule_with_fixed_answers():  # 同じ処理を、判定器を替�
 
 同じ規則は、1回の依頼の間に1度だけ見せます。hookは会話ごとに小さな記憶のファイルを持ち、見せた規則のidを覚えます。同じ注意を何度も読ませると、それ自体が文脈を埋めるからです。
 
-返事を送る直前(Stop)の規則は、返事を止めて書き直させることもできます。止めるのは、1回の依頼で2回までです。止め続けて返事が出ない事態を避けるためです。壊す命令と、資格の漏れを止める規則だけは、この上限の外に置きます。
+返事を送る直前(Stop)の規則は、返事を止めて書き直させることもできます。止めるのは、1回の依頼で2回までです。止め続けて返事が出ない事態を避けるためです。壊す命令と、認証情報の漏れを止める規則だけは、この上限の外に置きます。
 
 一部の規則では、止める時に別のモデルが当たった所を引用し、書き換えの案を添えます。2026年10月15日に実際の返事3本で測りました。1回7.4〜9.3秒で、費用はAPIの値段で0.007〜0.016ドルでした。
 
@@ -270,24 +270,25 @@ def test_judged_rule_with_fixed_answers():  # 同じ処理を、判定器を替�
 - CLAUDE.mdには、どの場面でも要ることだけを残します。
 - 残りの決まりは「いつ見せるか」の条件つきの規則にし、hookで当たった時だけ見せます。
 - 規則には当たる例と当たらない例を持たせ、試験で確かめます。
-- 綴りで決まらない規則は判定器に問います。問いをdoeffのeffectにすると、試験では表で、本番ではモデルが答えます。
+- 綴りで決まらない規則は判定器に問います。問いをdoeffのエフェクトにすると、試験では表で、本番ではモデルが答えます。
 - 移して25日で規則は851本に増えましたが、毎回読む文は約1.5万字のままです。
 
 次の9本目は「[async/awaitがあるのに、なぜyieldか](doeff-coroutines.md)」です。この記事の`AskJudge`のように、止まった所へ答える役を外側に置く理由を扱います。
 
-[doeffでできること：メイン記事へ戻る](doeff-main.md)
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
 
-## 参考資料・検証版
+## 参考
 
-:::message
-この記事のコードは、2026年10月17日にdoeffのmain(コミット`6ab1e37`)で確かめました。Pythonの枠は、上から順に前の枠の続きとして動きます。`doeff`のパッケージだけが要ります。
-:::
+この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain(commit `9adc4f8`)でも、同じく動きました。Pythonの枠は、上から順に前の枠の続きとして動きます。`doeff`のパッケージだけが要ります。
 
-導入方法は[公式README](https://github.com/proboscis/doeff#installation)にあります。公開パッケージの最新版で動くかは、確かめていません。
+試す時は、[完全な例](examples/rule_hook.py)を`rule_hook.py`として保存し、次のコマンドで実行します。
+
+```bash
+uv run --with "doeff==0.6.0" python rule_hook.py  # PyPIのdoeff 0.6.0を入れて、完全な例の3つの試験を走らせる。
+```
 
 - [Claude Codeのhooksの説明(公式)](https://code.claude.com/docs/en/hooks)
-- [この記事の完全な例](examples/rule_hook.py)
-- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/6ab1e37d6c65b53d944343ff7cd866043a7abf9d)
-- [判定器への問いのeffect(doeff-system-one)](https://github.com/proboscis/doeff/tree/6ab1e37d6c65b53d944343ff7cd866043a7abf9d/packages/doeff-system-one)
+- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
+- [判定器への問いのエフェクト(doeff-system-one)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-system-one)
 - 前の回:[バックテストと本番で同じ処理を動かす](doeff-backtest.md)
 - 次の回:[async/awaitがあるのに、なぜyieldか](doeff-coroutines.md)

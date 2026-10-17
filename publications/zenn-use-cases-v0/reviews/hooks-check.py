@@ -36,7 +36,7 @@ def check_example() -> None:  # 完全な例を、試験の形とhookの形の�
     print(f"OK: example tests: {tests.stdout.strip()}")  # 試験が通った事を表示する。
     cases = {  # hookへ渡す命令と、期待する助言の規則のid。
         "cat ~/.claude/settings.json": ["config-values-are-hidden"],  # 設定を丸ごと出す命令。
-        "cd app && python main.py": ["python-runs-through-uv"],  # 機体のpythonを直に呼ぶ命令。
+        "cd app && python main.py": ["python-runs-through-uv"],  # OSに入っているpythonを直に呼ぶ命令。
         "uv run python main.py": [],  # 規則に当たらない命令。
     }
     for command, expected in cases.items():  # 命令ごとに、hookの形で1回答えさせる。

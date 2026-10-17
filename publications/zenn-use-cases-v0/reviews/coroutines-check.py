@@ -83,7 +83,7 @@ assert "published: false" in article
 first_code_end = body.index("```", body.index("```python") + 3)
 assert body.index("![") > first_code_end, "全体の図は冒頭の短いコードの直後に置く"
 assert body.index("![") < body.index("\n## "), "全体の図は最初の節より前に置く"
-order = ["\n## まとめ", "\n## 試し方と、確かめた範囲", "\n## 参考"]
+order = ["\n## まとめ", "\n## 参考"]  # 本文→まとめ→参考(公開計画の形)。試し方は参考に置く。
 assert [body.index(heading) for heading in order] == sorted(body.index(h) for h in order)
 # 社外に出せない名前と、鍵やトークンの形。
 forbidden = re.compile(
