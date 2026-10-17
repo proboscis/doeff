@@ -431,6 +431,61 @@ def right():
             raise error
 ```
 
+### "TypeError: Gather takes the tasks that Spawn returns, got a program"
+
+`Gather`, `Wait` and `Race` wait on tasks that already run. Spawn each program first, then pass
+the task `Spawn` returns:
+
+```python excerpt
+from doeff import do
+from doeff_core_effects.scheduler import Gather, Spawn
+
+@do
+def worker(label):
+    return label
+
+# Wrong - passes the programs themselves
+@do
+def wrong():
+    return (yield Gather(worker("a"), worker("b")))  # Error!
+
+# Right - spawns each program and gathers the tasks
+@do
+def right():
+    a = yield Spawn(worker("a"))
+    b = yield Spawn(worker("b"))
+    return (yield Gather(a, b))  # ['a', 'b']
+```
+
+### "SchedulerDeadlockError: scheduler deadlock: parked waiters that no external completion can wake: ..."
+
+The program waits on something nothing can finish any more. The message lists each waiter
+(`root (wait) on promise 0`), and the doeff Traceback above it points at the `yield` where your
+program waits. Here nothing completes the promise:
+
+```python excerpt
+from doeff import do
+from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, Wait
+
+# Wrong - nothing ever completes the promise
+@do
+def wrong():
+    p = yield CreatePromise()
+    return (yield Wait(p.future))  # SchedulerDeadlockError
+
+# Right - one task waits, and the other completes the promise
+@do
+def waiter(future):
+    return (yield Wait(future))
+
+@do
+def right():
+    p = yield CreatePromise()
+    task = yield Spawn(waiter(p.future))
+    yield CompletePromise(p, "done")
+    return (yield Wait(task))  # 'done'
+```
+
 ### A second run still sees the state of the first run
 
 `run()` can run the same Program again; each run starts it fresh.
