@@ -16,9 +16,11 @@ from types import ModuleType
 from typing import get_args
 
 import pytest
+import yaml
 from doeff_core_effects import extra_hints
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "python-compatibility.yml"
 
 
 def _load(name: str) -> ModuleType:
@@ -356,3 +358,13 @@ def test_mypy_not_finding_the_package_is_a_failure() -> None:
 )
 def test_mypy_that_read_fewer_files_than_were_written_is_a_failure(output: str) -> None:
     assert len(tool.mypy_failures(output, checked=4)) == 1
+
+
+def test_ci_runs_the_tool_on_every_python_of_the_compatibility_matrix() -> None:
+    jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    job = jobs["core-only-install"]
+    assert job["strategy"]["matrix"] == jobs["pytest-matrix"]["strategy"]["matrix"]
+    runs = [step.get("run", "") for step in job["steps"]]
+    assert any(
+        "tools/verify_core_install.py --python ${{ matrix.python-version }}" in run for run in runs
+    ), runs
