@@ -61,7 +61,7 @@ class Prepared:
     problems: tuple[str, ...]
 
 
-def read_front(source: str) -> tuple[dict[str, object], str] | None:
+def read_front(source: str) -> tuple[dict[str, object], str] | None:  # noqa: DOEFF006 — 道具の小さな組の戻り
     """正本をfront matterの項目と本文へ分ける。front matterが無ければNoneを返す。"""
     found = _FRONT.match(source)
     if found is None:

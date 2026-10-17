@@ -478,7 +478,7 @@ def _module(body: str) -> str:
     return f"(require doeff-hy.macros [defk <-])\n{body}\n"
 
 
-def _run(root: Path, *extra: str) -> tuple[int, list[dict[str, object]], str]:
+def _run(root: Path, *extra: str) -> tuple[int, list[dict[str, object]], str]:  # noqa: DOEFF006 — 検の補助の戻り
     """入口の main を 1 度当て、終わりの code・JSON の診断・標準エラーを返す。"""
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -579,7 +579,7 @@ def _real(root: Path, *extra: str) -> list[dict[str, object]]:
     return diagnostics
 
 
-def _same_as_full(root: Path, carry: Path) -> tuple[int, int]:
+def _same_as_full(root: Path, carry: Path) -> tuple[int, int]:  # noqa: DOEFF006 — 検の補助の戻り
     """運びの下の答えが、同じ木を全部当てた答えと同じことを確かめ、その回に pyright に当てた数と運んだ数を返す(運ばずに全部を当てても
     答えは同じなので、数で運んだことを確かめる)。"""
     carried = _real(root, "--carry", str(carry), "--carry-refresh-runs", "0")

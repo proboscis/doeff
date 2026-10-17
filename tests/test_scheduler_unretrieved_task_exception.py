@@ -44,7 +44,7 @@ def scheduler_implementation(request, monkeypatch):
     return request.param
 
 
-def _run_recording(program: Any) -> tuple[Any, list[warnings.WarningMessage]]:
+def _run_recording(program: Any) -> tuple[Any, list[warnings.WarningMessage]]:  # noqa: DOEFF006 — 検の補助の戻り
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = doeff_run(scheduled(program))

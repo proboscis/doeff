@@ -10,7 +10,6 @@
       "packages/doeff-agentic/src/doeff_agentic/tui/widgets.py": 5,
       "packages/doeff-agentic/tests/test_handlers_module.py": 1,
       "packages/doeff-agents/src/doeff_agents/agentd_client.py": 2,
-      "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py": 1,
       "packages/doeff-effect-analyzer/tests/python/test_result_cache.py": 1,
       "packages/doeff-flow/src/doeff_flow/handlers/production.py": 1,
       "packages/doeff-flow/src/doeff_flow/handlers/testing.py": 1,
@@ -252,5 +251,5 @@
       "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
     }
   },
-  "version": "doeff-linter の組み立ての入力 4b7c677c8e8d1bf46de0f4c760eb0ac3a251b166"
+  "version": "doeff-linter の組み立ての入力 6deb5d4454f2e7dd5eba0f4af1292d28f5968239"
 }

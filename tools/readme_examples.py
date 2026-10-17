@@ -239,7 +239,7 @@ def run(
     environment が無ければ、この process の環境を継ぐ。wrap は命令の前に置く物(検の `env …` など)を足す。
     """
     script = write(example, directory)
-    inherited = os.environ if environment is None else environment
+    inherited = os.environ if environment is None else environment  # noqa: DOEFF004 — 道具が子の process へ今の環境を引き継ぐ 1 か所
     path = os.pathsep.join(filter(None, (str(python.parent), inherited.get("PATH"))))
     return subprocess.run(
         wrap(command(example, script, python)),

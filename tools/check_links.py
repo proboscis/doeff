@@ -551,7 +551,7 @@ def check_in_repo(root: Path, tree: Tree, links: Sequence[Link]) -> list[Problem
     return [problem for link in links for problem in checker.problems(link)]
 
 
-def check_external(links: Sequence[Link]) -> tuple[list[Problem], list[Problem], int]:
+def check_external(links: Sequence[Link]) -> tuple[list[Problem], list[Problem], int]:  # noqa: DOEFF006 — 道具の小さな組の戻り
     """外の link に聞いて、(切れた物・確かめられない物・聞いた URL の数)を返す。同じ URL は 1 度だけ聞く。"""
     urls = {
         link: resolved.url
