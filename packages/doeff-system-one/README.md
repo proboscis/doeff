@@ -9,7 +9,7 @@ provider を知らない層で、doeff-llm と doeff-openai の関係と同じ�
 |---|---|
 | `doeff-system-one`(この package) | effect の契約(`Judge`)・問いと答えの型・純粋な判断の道具・テスト用の scripted handler |
 | `doeff-jev` | TypeSafe(直の API と Vercel AI Gateway)へ `Judge` を写す handler・宛先と鍵の解決・答えの cache |
-| `doeff-seimf`(将来) | zeus の GPU で動く Jev 互換の判定器の handler(通信の形が同じなら doeff-jev の handler に宛先を渡すだけ) |
+| 自前の判定器の package(将来) | 自前の GPU で動く Jev 互換の判定器の handler(通信の形が同じなら doeff-jev の handler に宛先を渡すだけ) |
 
 ## 使い方
 
