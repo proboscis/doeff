@@ -74,7 +74,7 @@ def _run_script(tmp_path: Path, source: str, implementation: SchedulerImplementa
     """Run ``source`` as a first-time user would — a new process — and return its stderr."""
     script = tmp_path / "main.py"
     script.write_text(textwrap.dedent(source))
-    env = {**os.environ, "DOEFF_SCHEDULER": implementation, "PYTHONDONTWRITEBYTECODE": "1"}
+    env = {**os.environ, "DOEFF_SCHEDULER": implementation, "PYTHONDONTWRITEBYTECODE": "1"}  # noqa: DOEFF004 — 検が子の process へ今の環境を引き継ぐ 1 か所
     completed = subprocess.run(
         [sys.executable, str(script)],
         cwd=tmp_path,

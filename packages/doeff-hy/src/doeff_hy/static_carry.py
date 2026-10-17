@@ -371,7 +371,7 @@ def plan_carry(
     )
 
 
-def next_record(
+def next_record(  # noqa: DOEFF006 — 内部の小さな組の戻り
     plan: Plan, fingerprint: str, inputs: Sequence[FileInputs], fresh: Sequence[FileRows]
 ) -> tuple[CarryRecord, Summary]:
     """純粋: この回の運びの文書と数を作るため(当てた file は今回の診断 fresh と今回の番号、運んだ file は前の回の記録のまま)。"""
@@ -1535,15 +1535,15 @@ class InputGraph:
             if successor not in index:
                 return successor
             if successor in on_stack:
-                low[node] = min(low[node], index[successor])
+                low[node] = min(low[node], index[successor])  # noqa: DOEFF007 - Tarjan の探索が自分の作業表を更新する
         return None
 
     def _close(self, head: _Node, stack: list[_Node], on_stack: set[_Node]) -> None:
         """強連結成分 1 つ(stack の head から上)を閉じ、成分の全部の節に同じ推移の digest を付けるため。"""
         start = len(stack) - 1 - stack[::-1].index(head)
         members = tuple(stack[start:])
-        del stack[start:]
-        on_stack.difference_update(members)
+        del stack[start:]  # noqa: DOEFF007 - Tarjan の探索が自分の作業表を更新する
+        on_stack.difference_update(members)  # noqa: DOEFF007 - Tarjan の探索が自分の作業表を更新する
         inside = set(members)
         locals_ = sorted(self._expand(m).local for m in members)
         outside = sorted(

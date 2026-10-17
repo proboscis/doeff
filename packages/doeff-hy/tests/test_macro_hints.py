@@ -55,7 +55,7 @@ def _run(
     directory: Path, deadline_scale_factor: float, *arguments: str
 ) -> subprocess.CompletedProcess[str]:
     """directory で新しい interpreter を走らせる(bytecode は directory の pyc に書く — 2 回目は .pyc を読む)。"""
-    environment = {**os.environ, "DOEFF_HY_CODE_STORE": "off"}
+    environment = {**os.environ, "DOEFF_HY_CODE_STORE": "off"}  # noqa: DOEFF004 — 検が子の process へ今の環境を引き継ぐ 1 か所
     return subprocess.run(
         [sys.executable, "-E", "-s", "-X", f"pycache_prefix={directory / 'pyc'}", *arguments],
         cwd=directory,
