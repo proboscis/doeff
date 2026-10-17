@@ -139,6 +139,7 @@
     "packages/doeff-linter/src/check_slot.rs",
     "packages/doeff-linter/tests/check_slot.rs",
     "packages/doeff-linter/tests/single_file_reads.rs",
+    "packages/doeff-linter/tests/registry_remembered.rs",
     "packages/doeff-linter/tests/program_sleep.rs",
     "packages/doeff-linter/tests/test_sleep.rs"
   ],
@@ -450,6 +451,7 @@
         "packages/doeff-linter/tests/out_of_scope.rs",
         "packages/doeff-linter/tests/check_slot.rs",
         "packages/doeff-linter/tests/single_file_reads.rs",
+        "packages/doeff-linter/tests/registry_remembered.rs",
         "packages/doeff-linter/tests/program_sleep.rs",
         "packages/doeff-linter/tests/test_sleep.rs"
       ],
