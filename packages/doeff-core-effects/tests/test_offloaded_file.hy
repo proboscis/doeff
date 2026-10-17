@@ -6,7 +6,8 @@
 (import pathlib [Path])
 (import doeff [Program with_handlers])
 (import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
-(import doeff_core_effects.file_effects [WriteText ReadText StatPath ListDirectory MakeDirectory RenamePath ReadDiskFree FileFailed PathKind])
+(import doeff_core_effects.file_effects [WriteText ReadText StatPath ListDirectory MakeDirectory RenamePath ReadDiskFree FileFailed PathKind
+                                         ReadBytes WriteBytes AppendText CopyFile CopyTree WalkTree LinkFile MakeSymlink ReadDiskUsage])
 (import doeff_core_effects.os_file [os-file-handler offloaded-file-handler])
 (import doeff_core_effects.scheduler [scheduled CreateExternalPromise Spawn Wait Task])
 
@@ -25,6 +26,26 @@
   (<- missing (ReadText (+ root "/d/e/a")))
   (<- free (ReadDiskFree root))
   #(made wrote text stat.kind stat.size renamed (tuple (gfor e listing e.name)) (isinstance missing FileFailed) (> free 0)))
+
+
+(defk copied [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-test" :role "program"}}
+  "bytes を書き・読み・追記し・写し・張り・木を写して歩き・総量と空きを読んだ答えを並べて返すため(card ki-24ee30105583 で広げた効果)。"
+  (<- (MakeDirectory (+ root "/t/u") None))
+  (<- wrote (WriteBytes (+ root "/t/u/a") b"hello" None True False))
+  (<- whole (ReadBytes (+ root "/t/u/a")))
+  (<- part (ReadBytes (+ root "/t/u/a") 2 1))
+  (<- appended (AppendText (+ root "/t/u/a") " world" False))
+  (<- copied-file (CopyFile (+ root "/t/u/a") (+ root "/t/u/b")))
+  (<- linked (LinkFile (+ root "/t/u/a") (+ root "/t/u/c")))
+  (<- symlinked (MakeSymlink (+ root "/t/u/d") "a"))
+  (<- copied-tree (CopyTree (+ root "/t") (+ root "/w")))
+  (<- walked (WalkTree (+ root "/w")))
+  (<- after (ReadBytes (+ root "/w/u/b")))
+  (<- missing (ReadBytes (+ root "/t/u/none")))
+  (<- usage (ReadDiskUsage root))
+  #(wrote whole part appended copied-file linked symlinked copied-tree (tuple (gfor e walked #(e.name e.kind))) after
+    (isinstance missing FileFailed) (> usage.total 0)))
 
 
 (defk write-while-another-runs [path gate]
@@ -69,3 +90,42 @@
   (.setattr monkeypatch tempfile "NamedTemporaryFile" (fn [#* args #** kwargs] (.wait gate (* 2 SCENARIO-LIMIT)) (original #* args #** kwargs)))
   (<- (in-thread (write-while-another-runs (str (/ tmp-path "f")) gate) [os-file-handler offloaded-file-handler]))
   (assert (= (.read-text (/ tmp-path "f")) "x")))
+
+
+(deftest test-the-widened-offloaded-file-answers-like-the-os-file-handler [tmp-path]
+  (val one (tmp-path.joinpath "one"))
+  (val two (tmp-path.joinpath "two"))
+  (.mkdir one)
+  (.mkdir two)
+  (<- direct tuple (in-thread (copied (str one)) [os-file-handler]))
+  (<- offloaded tuple (in-thread (copied (str two)) [os-file-handler offloaded-file-handler]))
+  (assert (= offloaded direct) #(offloaded direct))
+  (assert (= offloaded #(None b"hello" b"el" None None None None None
+                         #(#("u" PathKind.DIRECTORY) #("u/a" PathKind.FILE) #("u/b" PathKind.FILE) #("u/c" PathKind.FILE)
+                           #("u/d" PathKind.SYMLINK))
+                         b"hello world" True True))
+          offloaded))
+
+
+(defk read-while-another-runs [path gate]
+  {:pre [(: path str) (: gate threading.Event)] :post [(: % bytes)] :tags {:context "file-test" :role "program"}}
+  "合図まで止まる bytes の読みを別の task で始め、外の合図を待ってから合図を出し、読みの答えを返すため(書きの筋書きと同じ作り — 読みが
+   scheduler の thread で待つと、この task は戻れず合図を出せない)。"
+  (<- reading Task (Spawn (ReadBytes path)))
+  (<- promise (CreateExternalPromise))
+  (.start (threading.Timer 0.2 (fn [] (.complete promise None))))
+  (<- (Wait promise.future))
+  (.set gate)
+  (<- content (Wait reading))
+  content)
+
+
+(deftest test-another-task-runs-while-bytes-are-read [tmp-path monkeypatch]
+  ;; 読みは合図まで Path.read_bytes の頭で止まる(card ki-24ee30105583 — turn-host が会話の記録を読む間も他の手番が回る事)。
+  (val target (/ tmp-path "f"))
+  (.write-bytes target b"payload")
+  (val gate (threading.Event))
+  (val original Path.read-bytes)
+  (.setattr monkeypatch Path "read_bytes" (fn [self] (.wait gate (* 2 SCENARIO-LIMIT)) (original self)))
+  (<- content bytes (in-thread (read-while-another-runs (str target) gate) [os-file-handler offloaded-file-handler]))
+  (assert (= content b"payload") content))

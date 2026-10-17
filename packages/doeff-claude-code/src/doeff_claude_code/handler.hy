@@ -59,6 +59,7 @@
 (import doeff [run])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
@@ -91,6 +92,11 @@
 (val CLI-TIMING-LOG "claude CLI の起動の計時")
 ;; 生かす本数の上限を越えて起動した時の log の行の名(#4072 の E1b — 同じ事を知らせ ClaudeLiveLimitExceeded でホストへも届ける)。
 (val LIVE-LIMIT-LOG "claude CLI の生かす本数の上限を越えた起動")
+;; transcript の読み書き(額の起点の読み・書き出し・持ち込み・様子)1 つに thread 1 本(card ki-24ee30105583): transcript の jsonl は数十 MB に
+;; なり、待ち行列の浅い詰まった disk では 1 回の読みが秒の単位で待つ。handler の節は scheduler の thread の上で走るので、そこで読むと
+;; 同じ process の全部の手番が止まる。待つのは読みを頼んだ task だけにする(doeff_core_effects の offloaded — 外側に scheduled が要るのは
+;; 呼び鈴の待ちと同じ)。待ちが取り消された後の答えは値か持ち込みの終わりの印だけ — 後始末は要らない。
+(val TRANSCRIPT-THREADS (ThreadPerCall))
 
 
 ;; --- 状態 ---------------------------------------------------------------------------------------
@@ -328,18 +334,25 @@
 
 (defn #^ bool file-present [#^ str path] (os.path.exists path))
 
-(defk recorded-cost-mark [#^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
-  {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| float None))]
-   :tags {:context "claude-code" :role "foundation"}}
-  "手番の額の起点を、この handler が前の process を見ていない会話(新しい host での続き・持ち込んだ transcript・枝の親)でも知るため、
-   CLI が数え始める額 = その会話の transcript の最後の cost-state の額を読む(置き場は transcript-present と同じ transcript-path)。
-   file が無い・読めない・行が無い・値が数でなければ None。"
-  (val path (transcript-path home.config-dir canonical-cwd session-id))
+(defk transcript-cost-mark [#^ str path]
+  {:pre [(: path str)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
+  "transcript の file path を読み、最後の cost-state の額を読むため(recorded-cost-mark が TRANSCRIPT-THREADS の thread の新しい VM で回す —
+   読みも数十 MB の行の解きも scheduler の thread の外)。file が無い・読めない・行が無い・値が数でなければ None。"
   (val text (try
               (.read-text (Path path) :encoding "utf-8")
               (except [#(OSError UnicodeDecodeError)] None)))
   (when (is text None) (return None))
   (<- mark (recorded-cost text))
+  mark)
+
+(defk recorded-cost-mark [#^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
+  {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| float None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "手番の額の起点を、この handler が前の process を見ていない会話(新しい host での続き・持ち込んだ transcript・枝の親)でも知るため、
+   CLI が数え始める額 = その会話の transcript の最後の cost-state の額を読む(置き場は transcript-present と同じ transcript-path)。
+   読むのは TRANSCRIPT-THREADS の thread(頭の註の下の値の註)。file が無い・読めない・行が無い・値が数でなければ None。"
+  (val path (transcript-path home.config-dir canonical-cwd session-id))
+  (<- mark (| float None) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (transcript-cost-mark path))) keep-nothing))
   mark)
 
 (defn link-if-present [#^ str source #^ str target]
@@ -375,6 +388,28 @@
     (except [error OSError]
       (return (CarryRefused (.format "{}: {}" target error)))))
   None)
+
+(defrecord TranscriptPlace
+  "起こす前の transcript の置き場の読み(transcript-place の答え)。canonical = cwd の realpath・refused = 持ち込みを断った訳(None = 持ち込めた・
+   既に在る・持ち込む物が無い)・present = 持ち込みの後に transcript が在るか(断った時は False)。"
+  (#^ str canonical)
+  (#^ (| CarryRefused None) refused)
+  (#^ bool present))
+
+(defk read-transcript-place [home cwd session-id carry]
+  {:pre [(: home ClaudeHome) (: cwd str) (: session-id str) (: carry (| Rebuilt LinkFromHome None))] :post [(: % TranscriptPlace)] :tags {:context "claude-code" :role "foundation"}}
+  "cwd を realpath にし、transcript を持ち込み(apply-carry)、その後に transcript が在るかを読むため(どれも file system を待つ)。"
+  (val canonical (os.path.realpath cwd))
+  (val refused (apply-carry home canonical session-id carry))
+  (TranscriptPlace :canonical canonical :refused refused
+                   :present (and (is refused None) (file-present (transcript-path home.config-dir canonical session-id)))))
+
+(defk transcript-place [#^ ClaudeHome home #^ str cwd #^ str session-id #^ (| Rebuilt LinkFromHome None) carry]
+  {:pre [(: home ClaudeHome) (: cwd str) (: session-id str) (: carry (| Rebuilt LinkFromHome None))] :post [(: % TranscriptPlace)] :tags {:context "claude-code" :role "foundation"}}
+  "起こすか使い回すかを決める前の transcript の置き場の読みと持ち込みを、TRANSCRIPT-THREADS の thread で済ませるため(頭の註の下の値の註 —
+   持ち込みは数十 MB の jsonl を書くことがある)。"
+  (<- place TranscriptPlace (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (read-transcript-place home cwd session-id carry))) keep-nothing))
+  place)
 
 (defn session-view [runtime]
   "起こすか使い回すかの判断(decision.start-decision)へ渡す、会話の今の観測。生きて降りる途中でなく手番を走らせていない process が
@@ -1007,14 +1042,14 @@
   (setv origin request.origin spec request.spec input request.input)
   (setv refused (refused-attachment input))
   (when (is-not refused None) (return refused))
-  (setv canonical (os.path.realpath spec.cwd))
   (setv target-id (if (isinstance origin ForkSession) origin.parent-session-id origin.session-id))
-  (setv carried (apply-carry spec.home canonical target-id (if (isinstance origin FreshSession) None origin.carry)))
-  (when (is-not carried None) (return carried))
+  (<- place TranscriptPlace (transcript-place spec.home spec.cwd target-id (if (isinstance origin FreshSession) None origin.carry)))
+  (when (is-not place.refused None) (return place.refused))
+  (setv canonical place.canonical)
   (setv runtime (if (isinstance origin ForkSession) None (.runtime host target-id)))
   (<- key (launch-key host.command spec))
   (var decision (start-decision origin (session-view runtime)
-                                (file-present (transcript-path spec.home.config-dir canonical target-id))
+                                place.present
                                 (is-not spec.cold-resume-prompt None)
                                 key))
   (when (isinstance decision Refuse) (return decision.outcome))
@@ -1057,14 +1092,14 @@
   (<- (retire-under-floor host))
   (val origin request.origin)
   (val spec request.spec)
-  (val canonical (os.path.realpath spec.cwd))
   (val target-id origin.session-id)
-  (val carried (apply-carry spec.home canonical target-id (match origin (ResumeSession :carry carry) carry _ None)))
-  (when (is-not carried None) (return carried))
+  (<- place TranscriptPlace (transcript-place spec.home spec.cwd target-id (match origin (ResumeSession :carry carry) carry _ None)))
+  (when (is-not place.refused None) (return place.refused))
+  (val canonical place.canonical)
   (val known (.runtime host target-id))
   (<- key (launch-key host.command spec))
   (val decision (start-decision origin (session-view known)
-                                (file-present (transcript-path spec.home.config-dir canonical target-id))
+                                place.present
                                 (is-not spec.cold-resume-prompt None)
                                 key))
   (match decision
@@ -1181,9 +1216,16 @@
                                           process.pid request.session-id request.reason)))))
   (SessionClosed was-running))
 
-(defn session-status [#^ ClaudeCodeHost host #^ ClaudeSessionStatus request]
-  (setv path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id))
-  (setv transcript (if (os.path.exists path) (TranscriptPresent (os.path.getmtime path)) (TranscriptAbsent)))
+(defk read-transcript-state [request]
+  {:pre [(: request ClaudeSessionStatus)] :post [(: % (| TranscriptPresent TranscriptAbsent))] :tags {:context "claude-code" :role "foundation"}}
+  "会話の transcript が在るかと最後に書かれた刻を file system から読むため。"
+  (val path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id))
+  (if (os.path.exists path) (TranscriptPresent (os.path.getmtime path)) (TranscriptAbsent)))
+
+(defk session-status [#^ ClaudeCodeHost host #^ ClaudeSessionStatus request]
+  {:pre [(: host ClaudeCodeHost) (: request ClaudeSessionStatus)] :post [(: % SessionStatus)] :tags {:context "claude-code" :role "foundation"}}
+  "会話の今の様子(走っている手番・閉じたか)と transcript の在る無しを答えるため(transcript の様子は TRANSCRIPT-THREADS の thread で読む)。"
+  (<- transcript (| TranscriptPresent TranscriptAbsent) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (read-transcript-state request))) keep-nothing))
   (setv runtime (.runtime host request.session-id))
   (setv state
         (if (is runtime None)
@@ -1196,13 +1238,19 @@
                 True (Idle)))))
   (SessionStatus state transcript))
 
-(defk export-session [#^ ClaudeExportSession request]
-  {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}
-  "transcript の jsonl 1 つを utf-8 で読む(置き場は session-status と同じ規則)。無い・空 = SessionNotFound。"
+(defk read-session-export [request]
+  {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))] :tags {:context "claude-code" :role "foundation"}}
+  "transcript の jsonl 1 つを utf-8 で読むため(置き場は session-status と同じ規則)。無い・空 = SessionNotFound。"
   (val path (Path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id)))
   (when (not (.is-file path)) (return (SessionNotFound request.session-id)))
   (val text (.read-text path :encoding "utf-8"))
   (if (.strip text) (SessionExported text) (SessionNotFound request.session-id)))
+
+(defk export-session [#^ ClaudeExportSession request]
+  {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}
+  "transcript を書き出すため(ClaudeExportSession)。数十 MB の jsonl の読みは TRANSCRIPT-THREADS の thread で待つ(頭の註の下の値の註)。"
+  (<- exported (| SessionExported SessionNotFound) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (read-session-export request))) keep-nothing))
+  exported)
 
 (defn drop-process [#^ ClaudeCodeHost host #^ str session-id]
   (setv runtime (.runtime host session-id))
@@ -1280,7 +1328,8 @@
     (resume closed))
   (ClaudeSessionStatus [home cwd session-id]
     (<- (retire-under-floor host))
-    (resume (session-status host effect)))
+    (<- status (session-status host effect))
+    (resume status))
   (ClaudeExportSession [home cwd session-id]
     (<- exported (export-session effect))
     (resume exported))

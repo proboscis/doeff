@@ -15,7 +15,8 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [await-handler listen-handler slog-discard-handler])
-(import doeff_core_effects.scheduler [CreateExternalPromise])
+(import doeff_core_effects.scheduler [CreateExternalPromise Spawn Task Wait])
+(import time)
 (import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler epoch-ms-of sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput LentCredential])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
@@ -324,6 +325,44 @@
   (assert (= blank (SessionNotFound empty)) (repr blank))
   (<- absent (with-real-handler host (ClaudeExportSession spec.home spec.cwd missing)))
   (assert (= absent (SessionNotFound missing)) (repr absent)))
+
+
+;; 書き出しの読みを止めておく上限の秒(合図が来なければこの秒で読みが進む)。
+(val HELD-READ-SECONDS 10.0)
+
+
+(defk export-while-another-runs [#^ ClaudeExportSession request #^ threading.Event gate]
+  {:pre [(: request ClaudeExportSession) (: gate threading.Event)] :post [(: % "書き出しの答え")] :tags {:context "claude-code" :role "program"}}
+  "合図まで止まる transcript の読みを別の task で書き出し、外の合図を待ってから合図を出し、書き出しの答えを返すため。読みが scheduler の
+   thread で待つと、この task は外の合図の後に戻れず、読みの上限の秒まで合図を出せない。"
+  (<- exporting Task (Spawn request))
+  (<- promise (CreateExternalPromise))
+  (.start (threading.Timer 0.2 (fn [] (.complete promise None))))
+  (<- (Wait promise.future))
+  (.set gate)
+  (<- exported (Wait exporting))
+  exported)
+
+
+(deftest test-another-task-runs-while-the-transcript-is-read-for-export [tmp-path monkeypatch]
+  ;; transcript(数十 MB の jsonl)の読みは scheduler の thread の外で待つ(card ki-24ee30105583 — turn-host の手番の終わりの書き出しが、
+  ;; 詰まった disk の上で同じ process の全部の手番を止めた)。読みは合図まで Path.read_text の頭で止まり、合図を出すのは同じ scheduler の
+  ;; 別の task。失敗ケース = handler の節が scheduler の thread で読む形では、合図は読みの上限の 10 秒の後にしか出ない。
+  (val spec (spec-in tmp-path))
+  (val sid (str (uuid.uuid4)))
+  (val body "{\"type\":\"user\",\"text\":\"held\"}\n")
+  (val path (Path (transcript-path spec.home.config-dir (os.path.realpath spec.cwd) sid)))
+  (.mkdir path.parent :parents True)
+  (.write-text path body :encoding "utf-8")
+  (val gate (threading.Event))
+  (val original Path.read-text)
+  (.setattr monkeypatch Path "read_text" (fn [self #* args #** kwargs] (.wait gate HELD-READ-SECONDS) (original self #* args #** kwargs)))
+  (val host (host-of #("/nonexistent/claude-binary")))
+  (val started (time.monotonic))
+  (<- exported (with-real-handler host (export-while-another-runs (ClaudeExportSession spec.home spec.cwd sid) gate)))
+  (val seconds (- (time.monotonic) started))
+  (assert (= exported (SessionExported body)) (repr exported))
+  (assert (< seconds (/ HELD-READ-SECONDS 2)) (.format "書き出しの読みが scheduler の thread を {:.1f} 秒塞いだ" seconds)))
 
 
 ;; 替え玉の CLI が最後の本文を何片の差分で流すか(#3628)と、その本文(片の数以上の字数)。
