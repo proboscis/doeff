@@ -1374,7 +1374,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             sweep_terminal_unobserved_entries()
         return i
 
-    def waitable_key(effect, obj):
+    def waitable_key(effect: EffectBase, obj: object) -> tuple[str, int]:
         """Convert a Task or Future of ``effect`` (Wait / Gather / Race) to a dict key.
 
         The dispatch checks every waitable first (_misused_waitable) and throws the TypeError
@@ -2198,7 +2198,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             }
         _trace_at(sink, event, run_id, ns, cpu_ns, {"tid": tid, **fields})
 
-    def pick_next():
+    def pick_next() -> "Program[object, object]":
         """The next step of the run; a deadlock is thrown into the root body where it waits.
 
         The root body is where the run's answer comes from, so the SchedulerDeadlockError ends
@@ -2210,12 +2210,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             return pick_ready_entry()
         except SchedulerDeadlockError as deadlock:
             root_k = detach_parked_continuation(None)
-            if root_k is None:
+            if not isinstance(root_k, K):
                 raise
             from doeff.program import ResumeThrow
             return ResumeThrow(root_k, deadlock)
 
-    def pick_ready_entry():  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
+    def pick_ready_entry() -> "Program[object, object]":  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
         from doeff.program import ResumeThrow
         # Heap tuples held out of the heap for the duration of this call:
         # unclaimed external-wait placeholders deferring to live non-daemon
