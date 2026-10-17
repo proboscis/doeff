@@ -58,7 +58,7 @@ EXPECTED_LINES: dict[str, tuple[str, ...]] = {
     ),
     "traceback_demo.py": (
         "caught RuntimeError — run() printed its doeff traceback above",
-        "caught KeyError — run() printed its doeff traceback above",
+        "caught MissingEnvKeyError — run() printed its doeff traceback above",
         "caught ValueError — run() printed its doeff traceback above",
     ),
 }
