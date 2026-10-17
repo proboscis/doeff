@@ -9,6 +9,7 @@ from doeff_hy.wire import dump as dump
 from doeff_hy.wire import parse_json as parse_json
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.process_stat import ProcStat as ProcStat
+from doeff_core_effects.process_stat import ENDED_STATES as ENDED_STATES
 from doeff_core_effects.darwin_proc import darwin_proc_stat as darwin_proc_stat
 from doeff_core_effects.darwin_proc import darwin_thread_count as darwin_thread_count
 from doeff_core_effects.warm_effects import ForkFromWarm as ForkFromWarm

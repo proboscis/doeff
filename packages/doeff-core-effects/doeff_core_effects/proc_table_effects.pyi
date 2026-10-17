@@ -5,6 +5,7 @@ from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
+from doeff_core_effects.process_stat import ENDED_STATES as ENDED_STATES
 STAT_PPID: int
 STAT_START_TICKS: int
 STAT_RSS_PAGES: int
