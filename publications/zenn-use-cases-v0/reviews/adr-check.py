@@ -1,11 +1,15 @@
 """設計の記録の記事(doeff-adr.md)の枠を、読者のprojectの形で一時dirに置いて走らせる。
 
-記事の「走らせる」の手順どおりに、4つの枠と2行のpyproject.tomlを置き、doeffのリポジトリの環境
-(uv run --project <リポジトリの根>)でpytest・semgrep scan・verify-wiringを走らせる。続けて、記事の
-「決まりを破ると、どこで止まるか」の3通りの破り方を試し、記事に載せた出力の行が実際に出る事を確かめる。
-最後に、リポジトリの中の完全な例(examples/adr_as_test/)が記事の枠と同じ中身で、そのまま走る事を確かめる。
+記事の「走らせる」の手順どおりに、4つの枠と記事のbashの枠が書くpyproject.tomlを置き、pytest・semgrep scan・
+verify-wiringを走らせる。続けて、記事の「決まりを破ると、どこで止まるか」の3通りの破り方を試し、記事に載せた
+出力の行が実際に出る事を確かめる。最後に、リポジトリの中の完全な例(examples/adr_as_test/)が記事の枠と同じ
+中身で、そのまま走る事を確かめる。
 
-使い方: uv run python publications/zenn-use-cases-v0/reviews/adr-check.py [<doeffの木>]
+使い方: uv run python publications/zenn-use-cases-v0/reviews/adr-check.py [--pypi | <doeffの木>]
+- 引数なし: doeffのリポジトリの環境(uv run --project <リポジトリの根> --no-sync)で走らせる。
+- <doeffの木>: その木の環境で走らせる。
+- --pypi: 読者と同じく、各projectのpyproject.tomlの依存をuvが入れて走らせる(PyPIの0.6.0と、PyPIに無い
+  部品は記事が名指すGitHubの版)。Pythonの版は環境変数UV_PYTHONで選べる。
 """
 
 from __future__ import annotations
@@ -18,13 +22,13 @@ import tempfile  # 読者のprojectを一時dirに作る。
 from pathlib import Path  # ファイルの置き場を組み立てる。
 
 SOURCE = Path(__file__).resolve().parents[1]  # publications/zenn-use-cases-v0
-# uv run --projectに渡すdoeffの環境。既定はこのリポジトリの根。引数で、読者と同じく新しく取り寄せた
-# doeffの木(git clone して make sync した物)を渡せる。
-ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else SOURCE.parents[1]
+PYPI = sys.argv[1:] == ["--pypi"]  # 読者と同じく、projectの依存をuvに入れさせる。
+# --pypiでない時にuv run --projectに渡すdoeffの環境。既定はこのリポジトリの根。引数で別の木を渡せる。
+ROOT = SOURCE.parents[1] if PYPI or len(sys.argv) < 2 else Path(sys.argv[1]).resolve()
 ARTICLE = SOURCE / "doeff-adr.md"  # 確かめる記事。
 EXAMPLE = SOURCE / "examples/adr_as_test"  # リポジトリの中の完全な例。
 ADR_NAME = "docs/adr/defadr_billing_clock.hy"  # 記事が読者に勧める名前。
-PYPROJECT = '[tool.pytest.ini_options]\ntestpaths = ["docs/adr"]\n'  # 記事のprintfが書く2行。
+WIRED = 'testpaths = ["docs/adr"]'  # 記事のpyproject.tomlの、pytestにADRを集めさせる行。
 GOOD_LINE = "now = yield GetTime()"  # 業務のコードの、規則を守る行。
 BAD_LINE = "now = datetime.now(due.tzinfo)"  # 1つ目の破り方で置き換える行。
 
@@ -42,11 +46,20 @@ def without_leading_comments(
     return "\n".join(lines)
 
 
+def pyproject_of(bash: str) -> str:
+    """記事のbashの枠がcat > pyproject.tomlで書く中身を、読者が書く物と同じに得る。"""
+    found = re.search(r"^cat > pyproject\.toml <<'EOF'.*?\n(.*?)^EOF$", bash, re.S | re.M)
+    assert found, "bashの枠に、pyproject.tomlを書く行がありません"
+    return found.group(1)
+
+
 def run(
-    project: Path, *command: str
+    project: Path, *command: str, env: Path | None = None
 ) -> subprocess.CompletedProcess[str]:  # doeffの環境で1つ走らせる。
+    # --pypiでは、env(既定はproject)のpyproject.tomlの依存を、uvが入れてから走らせる。
+    where = [str(env or project)] if PYPI else [str(ROOT), "--no-sync"]
     return subprocess.run(
-        ["uv", "run", "--project", str(ROOT), "--no-sync", *command],
+        ["uv", "run", "--project", *where, *command],
         cwd=project,
         capture_output=True,
         text=True,
@@ -68,14 +81,16 @@ def expect(name: str, result: subprocess.CompletedProcess[str], code: int, *line
     return output
 
 
-def write_project(project: Path, adr: str, billing: str, conftest: str, rule: str) -> None:
+def write_project(
+    project: Path, adr: str, billing: str, conftest: str, rule: str, *, pyproject: str
+) -> None:
     """記事の4つの枠とpyproject.tomlを、記事が書いた名前で置く。"""
     (project / "docs/adr").mkdir(parents=True)
     (project / ADR_NAME).write_text(adr)
     (project / "billing.py").write_text(billing)
     (project / "conftest.py").write_text(conftest)
     (project / ".semgrep.yaml").write_text(rule)
-    (project / "pyproject.toml").write_text(PYPROJECT)
+    (project / "pyproject.toml").write_text(pyproject)
 
 
 def main() -> None:  # 記事の手順・3通りの破り方・完全な例を順に確かめる。
@@ -83,14 +98,16 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
     languages = [language for language, _ in found]
     assert languages == ["hy", "python", "python", "yaml", "bash", "text"], languages
     adr, billing, conftest, rule, bash, shown = (code for _, code in found)
-    assert f"printf '{PYPROJECT.replace(chr(10), chr(92) + 'n')}' > pyproject.toml" in bash
+    pyproject = pyproject_of(bash)
+    assert WIRED in pyproject, "pyproject.tomlに、pytestにADRを集めさせる行がありません"
+    assert "no-sources = true" in pyproject, "pyproject.tomlに、PyPIの本体を使う指定がありません"
     assert GOOD_LINE in billing
 
     with tempfile.TemporaryDirectory(prefix="adr-article-") as tmp:
         base = Path(tmp)
 
         project = base / "billing-example"  # 記事の手順どおりのproject。
-        write_project(project, adr, billing, conftest, rule)
+        write_project(project, adr, billing, conftest, rule, pyproject=pyproject)
         collected = run(project, "pytest", "--collect-only", "-q")
         assert collected.stdout.count("::") == 3, collected.stdout
         expect("pytest -q", run(project, "pytest", "-q"), 0, "3 passed")
@@ -107,7 +124,9 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
         )
 
         broken = base / "broken-code"  # 1. 業務のコードでOSの時計を読む。
-        write_project(broken, adr, billing.replace(GOOD_LINE, BAD_LINE), conftest, rule)
+        write_project(
+            broken, adr, billing.replace(GOOD_LINE, BAD_LINE), conftest, rule, pyproject=pyproject
+        )
         lines = billing.splitlines()  # 置き換える行の番号を、Semgrepの出力と比べる。
         number = next(index for index, line in enumerate(lines, 1) if GOOD_LINE in line)
         expect(
@@ -136,7 +155,7 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
         head = (
             adr.split("  :enforcement")[0].rstrip() + "\n  )\n"
         )  # :lawsの行の注釈の後、次の行でdefadrを閉じる。
-        write_project(no_enforcement, head, billing, conftest, rule)
+        write_project(no_enforcement, head, billing, conftest, rule, pyproject=pyproject)
         expect(
             "2. ADRの形のテストが落ちる",
             run(no_enforcement, "pytest", "-q"),
@@ -146,10 +165,8 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
         )
 
         unwired = base / "unwired"  # 3. testpathsからdocs/adrを外す。
-        write_project(unwired, adr, billing, conftest, rule)
-        (unwired / "pyproject.toml").write_text(
-            '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
-        )
+        unwired_pyproject = pyproject.replace(WIRED, 'testpaths = ["tests"]')  # 依存はそのまま。
+        write_project(unwired, adr, billing, conftest, rule, pyproject=unwired_pyproject)
         (unwired / "tests").mkdir()
         (unwired / "tests/test_placeholder.py").write_text("def test_placeholder():\n    pass\n")
         expect("3. 普段のpytestは通る", run(unwired, "pytest", "-q"), 0, "1 passed")
@@ -159,6 +176,14 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
             4,
             "ERROR: doeff-adr wiring verification failed: executable ADR files exist but were not collected:",
             f"  - {ADR_NAME}",
+        )
+
+        # 完全な例は、--pypiでは記事の手順どおりのprojectの環境で走らせる(例のpyproject.tomlは依存を書かない)。
+        expect(
+            "完全な例 pytest -q",
+            run(EXAMPLE, "pytest", "-q", "-p", "no:cacheprovider", env=project),
+            0,
+            "3 passed",
         )
 
     for line in [
@@ -177,9 +202,6 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
     assert (EXAMPLE / "billing.py").read_text() == billing, "billing.pyが違います"
     assert (EXAMPLE / "conftest.py").read_text() == conftest, "conftest.pyが違います"
     assert (EXAMPLE / ".semgrep.yaml").read_text() == rule, ".semgrep.yamlが違います"
-    expect(
-        "完全な例 pytest -q", run(EXAMPLE, "pytest", "-q", "-p", "no:cacheprovider"), 0, "3 passed"
-    )
     print("OK: 記事の6枠・3通りの破り方・完全な例")
 
 
