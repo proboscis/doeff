@@ -2,7 +2,7 @@
 ;;
 ;; 期限の関数は、状態がこのままで判断の答えが変わる最初の刻を返す。今まで「行が在れば次の拍」「まだ落ち着いていない」を now + 1 の
 ;; 数で返していたので、1 秒の格子に乗らない待ちでは「1 ms 先の期限」と「すぐもう 1 歩」を見分けられなかった。
-;; - 置いた切り離していない task: 担い手の生死の窓(reassign-after-ms)が切れる刻(place-tasks が task を失敗にする刻)。
+;; - 置いた切り離していない task: 担い手の生死の窓(reassign-after-ms)が切れる刻(tasks-placed が task を失敗にする刻)。
 ;; - 置ける生きた worker の在る待っている task: その worker の生死の窓(lease-ms)が切れる最初の刻(置き先の候補が変わる刻)。
 ;; - まだ落ち着いていない(生きていないと数える名の求め直しが違う・期限が過ぎている): 今すぐ。
 ;; - Rollout の進行中に Kubernetes を読む: 名のある読みの周期の後の刻。
@@ -13,7 +13,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due liveness-due sweep-due note-liveness liveness-deadline])
+(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-due liveness-due sweep-due note-liveness liveness-deadline])
 (import doeff_cluster.coordinator.core.api_policy [tick tick-due])
 (import tests.state_rows [table-from-rows])
 
@@ -35,13 +35,13 @@
 
 (defk settled-state [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "now の place-tasks を当てた後の状態(待つ task は待ちの理由を書いた後)を求めるため — 期限の関数の前提の、落ち着いた状態。"
-  (<- tasks Table (place-tasks now state {} timing))
+  "now の tasks-placed を当てた後の状態(待つ task は待ちの理由を書いた後)を求めるため — 期限の関数の前提の、落ち着いた状態。"
+  (<- tasks Table (tasks-placed now state {} timing))
   (replace state :tasks tasks))
 
 
 (deftest test-a-placed-task-is-due-when-its-worker-falls-out-of-the-reassign-window
-  ;; 置いた task の担い手 w(最後の連絡 0): place-tasks が task を失敗にするのは reassign-after-ms の窓が切れる刻。直す前は now + 1(数)。
+  ;; 置いた task の担い手 w(最後の連絡 0): tasks-placed が task を失敗にするのは reassign-after-ms の窓が切れる刻。直す前は now + 1(数)。
   (val timing (ClusterTiming))
   (<- w WorkerInfo (worker-at "w" 0 2))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
@@ -49,8 +49,8 @@
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.reassign-after-ms) 1))
   (assert (= due (DueAt :at expected)) due)
-  (<- before Table (place-tasks (- expected 1) state {} timing))
-  (<- at Table (place-tasks expected state {} timing))
+  (<- before Table (tasks-placed (- expected 1) state {} timing))
+  (<- at Table (tasks-placed expected state {} timing))
   (assert (= before state.tasks) "期限の 1 ms 前に変わった")
   (assert (= (. (.row at "run") phase) "failed") at))
 
@@ -66,8 +66,8 @@
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.lease-ms) 1))
   (assert (= due (DueAt :at expected)) due)
-  (<- before Table (place-tasks (- expected 1) state {} timing))
-  (<- at Table (place-tasks expected state {} timing))
+  (<- before Table (tasks-placed (- expected 1) state {} timing))
+  (<- at Table (tasks-placed expected state {} timing))
   (assert (= before state.tasks) "期限の 1 ms 前に変わった")
   (assert (!= (. (.row at "wait") detail) (. (.row state.tasks "wait") detail)) at))
 
@@ -84,7 +84,7 @@
   (val expired (ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms 100 :size 1))))))
   (<- swept (| DueAt DueNow DueNever) (sweep-due expired 200 timing))
   (assert (= swept (DueNow)) swept)
-  ;; task の期限が過ぎている(place-tasks をまだ当てていない)。
+  ;; task の期限が過ぎている(tasks-placed をまだ当てていない)。
   (val lapsed (replace (! (task-on "call" "finished" "w")) :lease-until-ms 100 :finished-ms 50))
   (<- tasked (| DueAt DueNow DueNever) (task-due (ClusterState :tasks (! (table-from-rows {"call" lapsed}))) 200 timing))
   (assert (= tasked (DueNow)) tasked))

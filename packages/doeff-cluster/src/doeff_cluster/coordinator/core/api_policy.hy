@@ -461,11 +461,12 @@
        (alive now prev timing.lease-ms)
        (= (replace info :last-seen-ms prev.last-seen-ms) prev)
        (= (replace new-report :at old-report.at) old-report)
-       ;; task は鍵ごとに引き、同じ object の行は飛ばす(task 387 本で replace が 774 回 → 0〜6 回・Q1)。行の数が違えば静かでない。
+       ;; task は変わった鍵(changed-keys — 基を分け合う表は書いた行だけ読む)だけ比べる(task 387 本で replace が 774 回 → 0〜6 回・Q1)。
+       ;; 行の数が違えば静かでない。
        (= (.size heard.tasks) (.size before.tasks))
-       (all (gfor #(k t) (.items heard.tasks)
-              (let [o (.row before.tasks k)]
-                (and (is-not o None) (or (is o t) (= (replace t :lease-until-ms 0) (replace o :lease-until-ms 0)))))))
+       (all (gfor k (.changed-keys heard.tasks before.tasks)
+              (let [t (.row heard.tasks k) o (.row before.tasks k)]
+                (and (is-not t None) (is-not o None) (= (replace t :lease-until-ms 0) (replace o :lease-until-ms 0))))))
        (= (replace heard :workers before.workers :tasks before.tasks
                          :observations (replace heard.observations :statuses before.observations.statuses))
           before)))

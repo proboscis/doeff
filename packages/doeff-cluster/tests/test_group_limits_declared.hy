@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo ClusterState TaskRecord ComponentVersion TaskUnplacedKind])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody ResourceBody])
-(import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-unplaced-text submit-task])
+(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-unplaced-text submit-task])
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.coordinator.core.resource_policy [create-resource update-resource stamp Refused])
 (import doeff_cluster.coordinator.core.cluster_policy [resource-version-of])
@@ -70,7 +70,7 @@
   (setv #(second-status _ after-second) (! (detached-reply after-first sha "caller-b/check" [{"group" "heavy"}
                                                                                       {"group" "heavy-caller" "part" "caller-b"}])))
   (assert (= #(first-status second-status) #(200 200)) #(first-status second-status))
-  (val placed (! (place-tasks 1000 after-second {} T)))
+  (val placed (! (tasks-placed 1000 after-second {} T)))
   (assert (= (sorted (! (phases-of placed))) ["assigned" "queued"]) placed)
   (val waiting (next (gfor t (.rows placed) :if (= t.phase "queued") t)))
   (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) waiting)
@@ -79,7 +79,7 @@
                                (ResourceBody :spec {"scope" "worker" "limit" 2 "system" "probe"}
                                              :resource-version (resource-version-of after-second "GroupLimit/heavy"))
                                "declare"))
-  (val again (! (place-tasks 2000 raised {} T)))
+  (val again (! (tasks-placed 2000 raised {} T)))
   (assert (= (! (phases-of again)) ["assigned" "assigned"]) again))
 
 
@@ -91,13 +91,13 @@
     (setv #(status _ after) (! (detached-reply current sha key [{"group" "heavy-caller" "part" part}])))
     (assert (= status 200) status)
     (:= current after))
-  (val placed (! (place-tasks 1000 current {} T)))
+  (val placed (! (tasks-placed 1000 current {} T)))
   (val by-key (dfor t (.rows placed) t.key t.phase))
   (assert (= by-key {"caller-a/1" "assigned" "caller-a/2" "assigned" "caller-a/3" "queued" "caller-b/1" "assigned"}) by-key))
 
 
 (deftest test-the-same-tasks-sent-in-either-order-place-the-declared-number-in-one-tick
-  ;; 並行(同じ拍・送る順): 組 heavy(worker の範囲・値 2)を名乗る 3 本(呼び手 2 つ)を 2 つの順で送り、1 拍の置き(place-tasks 1 回)で
+  ;; 並行(同じ拍・送る順): 組 heavy(worker の範囲・値 2)を名乗る 3 本(呼び手 2 つ)を 2 つの順で送り、1 拍の置き(tasks-placed 1 回)で
   ;; 置く本数はどちらの順でも宣言の値 2(同じ拍で置いた分も数える — hold-limits。送る順は値に関わらない)。
   (setv #(state sha) (! (declared-state #((GroupLimit :group "heavy" :scope "worker" :limit 2)))))
   (for [order [["a/1" "a/2" "b/1"] ["b/1" "a/2" "a/1"]]]
@@ -106,7 +106,7 @@
       (setv #(status _ after) (! (detached-reply current sha key [{"group" "heavy"}])))
       (assert (= status 200) #(key status))
       (:= current after))
-    (val placed (! (place-tasks 1000 current {} T)))
+    (val placed (! (tasks-placed 1000 current {} T)))
     (assert (= (sorted (! (phases-of placed))) ["assigned" "assigned" "queued"]) #(order placed))))
 
 

@@ -32,7 +32,7 @@
 (import doeff_cluster.shared.protocol.detached [outcome-from-task-outcome])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
-(import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])
+(import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure tasks-placed submit-task ENV-RETRIES])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
@@ -222,7 +222,7 @@
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
   (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)} :tasks (! (table-from-rows {"t1" requeued}))))
-  (val placed (! (place-tasks 20 cluster {} timing)))
+  (val placed (! (tasks-placed 20 cluster {} timing)))
   (assert (= (. (.row placed "t1") phase) "env-failed") (.row placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})
   (assert (= (outcome-of-view view) (DetachedEnvUnavailable "repo-unreachable" "d" True))))
