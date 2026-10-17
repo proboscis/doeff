@@ -160,7 +160,13 @@ spec:
             # mac-native を同じ版へ上げるため、版の向きに合わせて先に上げる。間の coordinator の code の差は、ClusterState の欄を Table にする
             # 作り替え(T1〜T7・G — ki-a47c2ba2e4fb ほか)・cluster_policy の走査を task-split の対象に絞る変更(ki-7a6a60dc516e)・tasks の
             # 書き手を変わった行だけの書きにする変更(ki-c9fb4d5d2408)。前の版 29bba00f(L2361)は 5ab25a28f の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 5ab25a28f51522199e5b028e36a1293856656b9c }
+            # 9fe8c330b = 実行環境の root の木を os.link で写し、.pyc を保存先の 1 つの file への hardlink で置く版(card ki-d51b7baa38bc・
+            # L2515)。Mac の機体の worker mac-native を同じ版へ上げるため、版の向きに合わせて先に上げる。間の差で coordinator の process に
+            # 効く物は、line_stamp の log の write を読みの thread の外へ出す変更(ki-2742a2af90b6)・scheduler の Task と Future の共変
+            # (Gather・Race)・pidfd-of の libc を 1 度だけ読む変更・doeff.result の型(doeff-vm の result.rs を含む — 準備で wheel を
+            # 組み直す)。worker の準備の変更(L2515)は worker の内部だけ(coordinator との契約は変えない)。前の版 5ab25a28f(L2496)は
+            # 9fe8c330b の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 9fe8c330bdd86f6d2ff5c36ea643344d62b1ca94 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
