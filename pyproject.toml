@@ -278,6 +278,8 @@ tests = [
     # 節 Type checking の型を書いた例が pyright の strict と mypy --strict で error 0 である事(card ki-92c3133da46d — 下の
     # 01 章の行と同じ検)。16 秒(4 本・子 2 本・pytest の計・2026-10-17 会話の Pod)
     "tests/test_docs_typed_examples.py",
+    # 核だけの venv の道具が確かめる LLM の agent の例を、README が指したままでいる事(下の docs/index.md の行と同じ検)
+    "tests/test_verify_core_install.py::test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it",
 ]
 
 # docs の page を書き換えた便(改名・消す・見出しを書き換える)は、README・docs・packages/*/README.md の repo の中の link が
@@ -305,13 +307,37 @@ tests = ["tests/test_readme_demo.py"]
 prefix = "images/readme-demo.gif"
 tests = ["tests/test_readme_demo.py"]
 
+# README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、その pytest の検の例を変えた便は、例が
+# 走って答えを印字する検・例の 2 つの file だけを写した dir で検の例が通る検・核だけの venv の道具がその例を確かめる判じ方の検を
+# 払う(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。どれも例を path で読むので、import の逆依存では選ばれない。examples/ の他の例の
+# 検(印 slow の llm_multi_provider_stacking — openai の SDK の import に 約 25 秒)は選ばない。14 秒(64 本・子 2 本・pytest の計・
+# 起動を含む壁時計は 76 秒・load 約 100 の下・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "examples/llm_agent.py"
+tests = [
+    "tests/test_examples_run.py::test_example_runs_and_prints_its_results[llm_agent.py]",
+    "tests/test_examples_run.py::test_example_tests_pass_with_only_the_example_files",
+    "tests/test_verify_core_install.py",
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/test_llm_agent.py"
+tests = [
+    "tests/test_examples_run.py::test_example_tests_pass_with_only_the_example_files",
+    "tests/test_verify_core_install.py",
+]
+
 # 入門の道の docs の page(目次と 01〜05 章)を書き換えた便は、その例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
 # (card ki-9c93a506326b)。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と
 # ここの両方に足す(片方だけなら検 test_contract_table_selects_this_check_for_each_entry_page が名指す)。
 # 秒は 38 秒(79 本・子 64 本・起動を含む壁時計・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/index.md"
-tests = ["tests/test_docs_entry_path_examples.py"]
+tests = [
+    "tests/test_docs_entry_path_examples.py",
+    # 核だけの venv の道具が確かめる LLM の agent の例を、目次が指したままでいる事(上の README の行と同じ検)
+    "tests/test_verify_core_install.py::test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it",
+]
 
 # 01 章は、入門の道の検に加え、節 Adding Types の型を書いた例が型の check で error 0 である事の検を払う(card ki-92c3133da46d —
 # 上の README の行と同じ検)。

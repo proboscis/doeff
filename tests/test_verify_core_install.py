@@ -162,6 +162,64 @@ def test_the_demo_check_runs_the_command_the_readme_points_to() -> None:
     assert f"`{command}`" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
+# --- LLM の agent の例と、その pytest の検の例が核の 4 個(と pytest)だけで通る(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S) -------------
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "passes"),
+    [
+        (0, f"question: q\n{tool.LLM_EXAMPLE_ANSWER}\n", True),
+        (1, f"{tool.LLM_EXAMPLE_ANSWER}\n", False),
+        (0, "question: q\nanswer: something else\n", False),
+        (0, f"> {tool.LLM_EXAMPLE_ANSWER}\n", False),
+    ],
+    ids=["answer", "exit-1", "other-answer", "not-own-line"],
+)
+def test_the_llm_example_passes_only_when_it_prints_the_fake_models_answer(
+    returncode: int, stdout: str, passes: bool
+) -> None:
+    result = subprocess.CompletedProcess(["python"], returncode, stdout, "")
+    assert (tool.llm_example_failure(result) is None) is passes
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "passes"),
+    [
+        (0, "....\n4 passed in 0.12s\n", True),
+        (0, "....\n4 passed, 1 warning in 0.12s\n", True),
+        (1, ".F..\n1 failed, 3 passed in 0.12s\n", False),
+        (5, "\nno tests ran in 0.01s\n", False),
+        (0, "", False),
+        (0, "4 passed in 0.12s\nException ignored in: <function _cleanup>\n", False),
+    ],
+    ids=["passed", "passed-with-warning", "failed", "no-tests", "no-output", "summary-not-last"],
+)
+def test_the_llm_example_tests_pass_only_when_pytest_ends_with_a_passed_summary(
+    returncode: int, stdout: str, passes: bool
+) -> None:
+    result = subprocess.CompletedProcess(["python"], returncode, stdout, "")
+    assert (tool.llm_tests_failure(result) is None) is passes
+
+
+def test_the_llm_example_check_expects_the_line_the_example_prints() -> None:
+    # 道具は doeff を import できず、例の答えの行を写して持つ — 写しが、開発の環境で例の印字と比べる行とずれない事。
+    from tests.test_examples_run import EXPECTED_LINES
+
+    assert tool.LLM_EXAMPLE_ANSWER in EXPECTED_LINES[tool.LLM_EXAMPLE_SCRIPT]
+
+
+def test_the_llm_example_check_copies_the_example_and_its_tests() -> None:
+    assert [Path(name).name for name in tool.LLM_EXAMPLE_FILES] == [
+        tool.LLM_EXAMPLE_SCRIPT,
+        tool.LLM_EXAMPLE_TESTS,
+    ]
+    assert all((ROOT / name).is_file() for name in tool.LLM_EXAMPLE_FILES)
+
+
+@pytest.mark.parametrize("page", ["README.md", "docs/index.md"])
+def test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it(page: str) -> None:
+    # 道具が確かめる約束(pip install doeff だけで走る)を言う page が、確かめる例そのものを指している事。
+    assert "examples/llm_agent.py" in (ROOT / page).read_text(encoding="utf-8")
+
+
 # 根の README の「Hy の module を Python から読む」節の形(card ki-909e814cc835 が足し、核の 4 個だけの venv で落ちた)。
 HY_MODULE_README = """\
 ## Quick Start

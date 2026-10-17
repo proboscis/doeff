@@ -13,11 +13,19 @@ doeff-openrouter を使う)。核の 5 個だけの新しい環境で走る事�
 Python Compatibility の venv — .github/workflows/python-compatibility.yml)では skip になり、入っている開発の環境では走る
 (skip しないと、例の import が ModuleNotFoundError で落ちて main の CI 全体が赤になった — 2026-10-17)。
 1 本が長い例は SLOW に訳つきで置き、印 slow を付ける(`make test` の `-m "not e2e and not slow"` が外す — 名指せば走る)。
+
+名が test_ で始まる `.py` は、例を確かめる pytest の検の例(llm_agent.py の test_llm_agent.py — 取り組み doeff-publish・card の
+依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)で、script としては走らせない。利用者は例の file を写して `pytest test_<名>.py` と打つので、
+examples/ の `.py` だけを repo の外の dir に写して pytest で走らせ、全部が通る事を見る(repo の conftest.py と pyproject.toml の
+pytest の設定を読ませない)。例の検は LLM の model の key も network も使わない約束なので、OPENAI_ の環境変数を外して走らせる。
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +41,10 @@ CHILD_DEADLINE_SECONDS = 50
 
 # 例ごとの、標準出力に出るはずの行(行の全体で比べる)。結果の値を印字する行を選ぶ。
 EXPECTED_LINES: dict[str, tuple[str, ...]] = {
+    "llm_agent.py": (
+        "question: Should a small team build its own job queue?",
+        "answer: No: an existing queue already does all of it, for little cost.",
+    ),
     "llm_multi_provider_stacking.py": (
         "analysis: verdict='clean' score=8",
         "summary: Gemini summary",
@@ -77,7 +89,13 @@ NEEDS_OUTSIDE_CORE = {
 
 
 def _examples() -> list[str]:
-    return sorted(path.name for path in EXAMPLES.glob("*.py"))
+    """script として走らせる例(test_ で始まる名は pytest の検の例なので外す)。"""
+    return sorted(path.name for path in EXAMPLES.glob("*.py") if not path.name.startswith("test_"))
+
+
+def _example_tests() -> list[str]:
+    """例を確かめる pytest の検の例。"""
+    return sorted(path.name for path in EXAMPLES.glob("test_*.py"))
 
 
 def _marks(name: str) -> tuple[pytest.MarkDecorator, ...]:
@@ -112,6 +130,35 @@ def test_example_runs_and_prints_its_results(name: str, deadline_scale_factor: f
     missing = [line for line in EXPECTED_LINES[name] if line not in printed]
     assert missing == [], (
         f"examples/{name} が印字しなかった行: {missing}\n印字:\n{completed.stdout}"
+    )
+
+
+@pytest.mark.parametrize("name", _example_tests())
+def test_example_tests_pass_with_only_the_example_files(
+    name: str, tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    # 利用者が例の file を写した dir で `pytest test_<名>.py` と打つのと同じ形で、検の例が通るかを見る。
+    for path in EXAMPLES.glob("*.py"):
+        shutil.copy(path, tmp_path / path.name)
+    no_keys = {variable: None for variable in os.environ if variable.startswith("OPENAI_")}
+    completed = subprocess.run(
+        with_settings(
+            [sys.executable, "-m", "pytest", "-q", name], {"DOEFF_PROFILE": None, **no_keys}
+        ),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"examples/{name} の pytest が終了コード {completed.returncode} で落ちた:\n"
+        f"{completed.stdout[-3000:]}{completed.stderr[-3000:]}"
+    )
+    lines = completed.stdout.splitlines()
+    assert lines, f"examples/{name} の pytest が何も印字しなかった:\n{completed.stderr[-3000:]}"
+    assert re.match(r"\d+ passed", lines[-1]), (
+        f"examples/{name} の pytest の要約の行が passed で始まらない: {lines[-1]!r}"
     )
 
 
