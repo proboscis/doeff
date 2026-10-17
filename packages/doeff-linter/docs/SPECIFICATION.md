@@ -428,10 +428,15 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
       (`spelled_failures.rs`・`spelled_callers.rs`・綴りの探り方は `spelling.rs`)。宣言も呼び手も、解いた名の最後の段の綴りを字面に必ず含む(mangle は `-` を `_` に直すだけ・
       名に識別子でない文字が入る名は綴りを決められないので絞らない)。渡された記号が defk かは、記号の module の file だけで決める(`defk_names_over` の名指し)。
       答えは repo の全部から作った集合を引いた時と同じ(実 repo の全部の呼び先・型の名で確かめた)。
+    - 失敗の型の宣言を持つ file(`:failure` か `:absent` を含む file)の集まりは型の名に依らないので、最初の問いで repo から 1 回だけ集め(`OnceLock`)、名ごとにその集まりを
+      綴りで絞って読み解く。名ごとに repo の Hy の全部を読み直すと、match の腕の型が 20 個の file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
     - repo の Hy の一覧を歩く待ちと、見つけた file を読む待ちは、全部を待ちの重なる仕事として回す(`hy_files::collect_reading`・`bulk_read::pipeline` — 128 本)。
       一覧の集合と順は `hy_index::collect_hy_files` と同じ。
     - 呼び手の事実を引くのは、実行の中で登録簿・effect の世界・名指しの module の表を作った後になる。書いた file が自分の引数を素で呼ぶ定義を持つなら、その呼び先の名での
       repo の読みを実行の頭から別の thread で走らせ始める(`SpelledCallers::started` — 呼び先は defk の集まりが空の見積りで、実際に引く呼び先を全部含む。収まらなければ引く時に読み直す)。
+  - 大きい file の CPU は行数の二乗でなく行数に比例する: 書いた file の記号を解く名前の解決(`hy_index::qualify::link`)は、file ごとに 1 回だけ表(定義の名・import の別名・
+    import した名)を作り、呼びごとにその表を引くだけにした(以前は呼びごとに定義と import の全部を走査し、`mangle` を呼び数 × (定義数 + import 数)回呼んでいた)。
+    10,053 行の file の `index_source` は 4,306 ミリ秒 → 92 ミリ秒。`doeff-indexer` の `qualify_tests.rs` が、`mangle` の呼び数が file の大きさに比例する事と、解決の順(先に書いた import が勝つ・同じ file の定義が import に勝つ)を確かめる。
   - 1 file の実行は事実の根ごとの表を読まず書かない(中身の hash で事実を引く — 全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む)。
   - 登録簿と判定の一覧(1 鍵 1 file の dir — agora-controllers の `scripts/doeff_lint/SMELL-BREACHES` は 447 file)は、全部の file を読む。作業木ごとに別の inode なので、
     冷えた作業木では 1 file ごとに disk を待つ — 順に読むと待ちが足し算になる。読みの待ちは `bulk_read::fan_out`(最大 32 本の thread・結果は入力の順・答えは順に読んだ時と
