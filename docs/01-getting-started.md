@@ -279,7 +279,102 @@ print(run(state(initial={"count": 12})(writer(conditional_program()))))  # (12, 
 print(run(state(initial={"count": 3})(writer(conditional_program()))))  # (3, 'low')
 ```
 
+## Writing Programs in Hy
+
+Programs, effects, and handlers can also be written in [Hy](https://hylang.org), a Lisp that runs on
+Python. Hy comes with the extra `hy`:
+
+```bash
+pip install "doeff[hy]"
+```
+
+A Hy file starts with the `(require ...)` lines that bring in the macros it uses: `do!` and `<-` come
+from `doeff-hy.macros`, `defhandler` from `doeff-hy.handle`. Save this as `greet_hy.hy` and run it with
+`hy greet_hy.hy`:
+
+```hy
+(require doeff-hy.macros [do! <-])
+(import doeff [Ask run])
+(import doeff-core-effects.handlers [reader])
+
+(setv greet
+  (do!
+    (<- greeting (Ask "greeting"))
+    greeting))
+
+(print (run ((reader :env {"greeting" "hello"}) greet)))  ; hello
+```
+
+### Importing a Hy module from Python
+
+Python reads a `.hy` file only after `import hy` has run. Put `import hy` before the import of a Hy
+module (Python files that never import `hy` cannot see `.hy` files at all):
+
+```hy file=greet.hy
+(require doeff-hy.macros [do! <-])
+(import doeff [Ask])
+
+(setv greet
+  (do!
+    (<- greeting (Ask "greeting"))
+    greeting))
+```
+
+```python
+import hy  # first: registers Hy's import hook, so Python can find greet.hy
+from doeff import run
+from doeff_core_effects.handlers import reader
+from greet import greet
+
+print(run(reader(env={"greeting": "hello"})(greet)))  # hello
+```
+
 ## Troubleshooting
+
+### "NameError: name 'hyx_doXexclamation_markX' is not defined"
+
+Or `name 'defk' is not defined`, `name 'defhandler' is not defined`. A Hy macro was used without a
+`require`, so Hy compiled the use as a call to a function that does not exist. doeff prints a
+`HyMacroUseWarning` with the exact line to add just before the traceback. Add the `require` for the
+macros the module uses:
+
+```hy excerpt
+; Wrong - do! and <- are macros that were never required
+(import doeff [Ask])
+(setv greet (do! (<- greeting (Ask "greeting")) greeting))
+
+; Right - the first line brings the macros in
+(require doeff-hy.macros [do! <-])
+(import doeff [Ask])
+(setv greet (do! (<- greeting (Ask "greeting")) greeting))
+```
+
+### "ImportError: cannot import name 'defhandler' from 'doeff_hy.handle'"
+
+A macro cannot be brought in with `import`; macros are not attributes of their module. Use `require`
+(doeff prints a `HyMacroUseWarning` with the corrected line before the traceback):
+
+```hy excerpt
+; Wrong
+(import doeff-hy.handle [defhandler])
+
+; Right
+(require doeff-hy.handle [defhandler])
+```
+
+### "ModuleNotFoundError: No module named 'greet'" (and `greet.hy` is next to the script)
+
+Python does not know `.hy` files until `import hy` has run. Add `import hy` above the import of the Hy
+module (see "Importing a Hy module from Python" above):
+
+```python excerpt
+# Wrong - Python cannot find greet.hy
+from greet import greet
+
+# Right - import hy first
+import hy
+from greet import greet
+```
 
 ### "TypeError: ... expected DoExpr or EffectBase, got: <class 'generator'>"
 
