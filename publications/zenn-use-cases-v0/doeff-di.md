@@ -168,7 +168,7 @@ with patch.dict("os.environ", {"ARTICLE_DEMO_greeting": "環境からの挨拶"}
 
 `lazy_ask`の空の辞書で見つからないキーは、外側のハンドラへ渡ります。外側の`env_var_ask`が、接頭辞を付けた`ARTICLE_DEMO_greeting`を読んで答えます。値は文字列のまま返り、数値などへは自動で変換されません。供給元を替えても、`read_greeting`のコードは同じです。
 
-## まとめ：DIとeffectの境目
+## まとめ：DIとエフェクトの境目
 
 ### 依存の受け取りと、処理の中身は別のもの
 
@@ -188,7 +188,7 @@ with patch.dict("os.environ", {"ARTICLE_DEMO_greeting": "環境からの挨拶"}
 
 `Ask`で実装を選ぶだけなら、できる事はDIと同じです。違いは、選ぶ場所と届け方にあります。同じ処理を、実行ごとやテストごとに別のハンドラの組で動かせます。依存は途中の関数を通らず、外側の環境から届きます。
 
-代わりに、依存が関数の引数として見えません。答えるハンドラが無いと、実行して初めて`UnhandledEffect`のエラーになります。doeffには、処理の依頼とハンドラの組を静的に突き合わせる道具もあります。[doeff-effect-analyzer](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-effect-analyzer/README.md)ですが、この記事では試していません。
+代わりに、依存が関数の引数として見えません。答えるハンドラが無いと、実行して初めて`UnhandledEffect`のエラーになります。doeffには、処理の依頼とハンドラの組を静的に突き合わせる道具もあります。[doeff-effect-analyzer](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-effect-analyzer/README.md)ですが、この記事では試していません。
 
 [全体を実行できる例](examples/dependencies.py)もリポジトリにあります。状態や失敗の合成は[抽象の合成の記事](doeff-composition.md)で扱います。ハンドラの重ね方は[ハンドラ合成の記事](doeff-handlers.md)で扱います。
 
@@ -196,20 +196,20 @@ with patch.dict("os.environ", {"ARTICLE_DEMO_greeting": "環境からの挨拶"}
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
-## 参考資料・検証版
+## 参考
 
-導入方法は[公式README](https://github.com/proboscis/doeff#installation)を参照してください。この記事のコードは、2026-10-16にdoeffの開発版`914ea562`で実行して確かめました。どの例も固定のハンドラと架空の環境変数で動かし、外部のサービスには接続していません。公開パッケージの最新版で同じように動くかは、別に確かめる必要があります。
+この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain（commit `9adc4f8`）でも、同じく動きました。どの例も固定のハンドラと架空の環境変数で動かし、外部のサービスには接続していません。
 
-リポジトリで環境を作った後、全体の例を次の命令で実行できます。
+試す時は、[完全な例](examples/dependencies.py)を`dependencies.py`として保存し、次のコマンドで実行します。
 
 ```bash
-uv run python publications/zenn-use-cases-v0/examples/dependencies.py  # 記事の4つの例をまとめて確かめる。
+uv run --with "doeff==0.6.0" python dependencies.py  # PyPIのdoeff 0.6.0を入れて、記事の4つの例をまとめて確かめる。
 ```
 
-- [Ask・Local・Tellの定義](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-core-effects/doeff_core_effects/effects.py)
-- [reader・lazy_ask・env_var_ask・writerの実装](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- [遅延解決とLocalの検証](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/tests/effects/test_lazy_ask.py)
-- [ハッシュできるキーの検証](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/tests/misc/test_reader_hashable_keys.py)
-- [effectとDIの比較（英語）](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/docs/20-why-effects-over-di.md)
+- [Ask・Local・Tellの定義](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/effects.py)
+- [reader・lazy_ask・env_var_ask・writerの実装](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/handlers.py)
+- [遅延解決とLocalの検証](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/tests/effects/test_lazy_ask.py)
+- [ハッシュできるキーの検証](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/tests/misc/test_reader_hashable_keys.py)
+- [エフェクトとDIの比較（英語）](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/docs/20-why-effects-over-di.md)
 - 前の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
 - 次の回:[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)
