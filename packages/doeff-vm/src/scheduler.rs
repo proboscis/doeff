@@ -163,7 +163,8 @@ struct Spec {
     task_cancelled_error: Py<PyAny>,
     callback_error_cls: Py<PyAny>,
     deadlock_error_cls: Py<PyAny>,
-    /// `_not_a_waitable`: the TypeError of a Wait / Gather / Race given a non-waitable.
+    /// `_not_a_waitable`: the TypeError of a Wait / Gather / Race given a non-waitable, or of a
+    /// Cancel / Discard given a non-task.
     not_a_waitable: Py<PyAny>,
     enrich_traceback: Py<PyAny>,
     /// `_describe_unretrieved_exception`: a failed task's entry in the
@@ -1164,8 +1165,24 @@ impl Locked<'_> {
                 id: obj.getattr(pyo3::intern!(py, "promise_id"))?.extract()?,
             });
         }
+        Err(self.not_a_waitable_error(py, effect, obj)?)
+    }
+
+    /// The TypeError the Python `_not_a_waitable` words for `obj`, which `effect` (a Wait /
+    /// Gather / Race / Cancel / Discard) was given where it takes a task.
+    fn not_a_waitable_error(&self, py: Python<'_>, effect: &Bound<'_, PyAny>, obj: &Bound<'_, PyAny>) -> PyResult<PyErr> {
         let error = self.spec().not_a_waitable.bind(py).call1((effect, obj))?;
-        Err(PyErr::from_value(error))
+        Ok(PyErr::from_value(error))
+    }
+
+    /// The id of the task a Cancel or Discard names. Anything but a Task there (a program passed
+    /// for its task, a promise) is the same TypeError, which `handle` throws at the caller's yield.
+    fn cancel_target(&self, py: Python<'_>, effect: &Bound<'_, PyAny>) -> PyResult<Tid> {
+        let target = effect.getattr(pyo3::intern!(py, "task"))?;
+        if !target.is_instance(self.spec().task_cls.bind(py))? {
+            return Err(self.not_a_waitable_error(py, effect, &target)?);
+        }
+        target.getattr(pyo3::intern!(py, "task_id"))?.extract()
     }
 
     fn waitable_status(&self, py: Python<'_>, key: WKey) -> PyResult<(Status, Option<Py<PyAny>>)> {
@@ -2584,10 +2601,7 @@ impl Locked<'_> {
     }
 
     fn on_cancel(&mut self, py: Python<'_>, current: Owner, effect: &Bound<'_, PyAny>, k: KRef) -> PyResult<Outcome> {
-        let tid: Tid = effect
-            .getattr(pyo3::intern!(py, "task"))?
-            .getattr(pyo3::intern!(py, "task_id"))?
-            .extract()?;
+        let tid = self.cancel_target(py, effect)?;
         self.mark_retrieved(WKey {
             kind: WKind::Task,
             id: tid,
@@ -2644,10 +2658,7 @@ impl Locked<'_> {
         effect: &Bound<'_, PyAny>,
         k: KRef,
     ) -> PyResult<Outcome> {
-        let tid: Tid = effect
-            .getattr(pyo3::intern!(py, "task"))?
-            .getattr(pyo3::intern!(py, "task_id"))?
-            .extract()?;
+        let tid = self.cancel_target(py, effect)?;
         self.mark_retrieved(WKey {
             kind: WKind::Task,
             id: tid,
