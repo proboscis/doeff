@@ -37,8 +37,9 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import dataclasses [replace])
+(import doeff_hy.table [Table])
 (import math)
-(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView
+(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutRow RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView
                                                        DeploymentSeen DeploymentUnreadable])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
@@ -393,7 +394,7 @@
 
 ;; --- 完了の後: 台数の持ち主と食い違い -----------------------------------------------------------
 
-(defn #^ dict deployment-owners [#^ dict rollouts]  ; rollouts = Rollout の名 → RolloutRow
+(defn #^ dict deployment-owners [#^ (get Table RolloutRow) rollouts]  ; rollouts = Rollout の名 → RolloutRow の Table
   "Deployment ごとに台数を持つ Rollout(その Deployment を扱った、旧を止め終えた — Observing か Complete の — 最後の物)。
    dry-run の相手は持たない。返り値 = 「ns/名」→ #(Rollout の名 期待する台数)。旧として止めたなら 0・新として起こしたなら replicas。"
   (setv best {})

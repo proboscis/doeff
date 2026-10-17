@@ -82,6 +82,7 @@ from doeff_cluster.coordinator.core.handoff_policy import watch_handoffs as watc
 from doeff_cluster.coordinator.core.handoff_policy import handoff_due as handoff_due
 from doeff_cluster.coordinator.intent.cluster_model import HandoffPhase as HandoffPhase
 from doeff_hy.table import TableWrite as TableWrite
+from doeff_hy.table import draft_of as draft_of
 from doeff_cluster.coordinator.core.detached_policy import Reply as Reply
 from doeff_cluster.coordinator.core.detached_policy import submit_detached as submit_detached
 from doeff_cluster.coordinator.core.detached_policy import detached_read as detached_read

@@ -110,7 +110,7 @@
   {:pre [(: state ClusterState)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "読み直した状態: new は受け付け、old は RefusedJob(元の行と理由)。"
   (assert (= (lfor j state.jobs j.spec.name) ["new"]) state.jobs)
-  (val refused (get state.refused "old"))
+  (val refused (.row state.refused "old"))
   (assert (isinstance refused RefusedJob))
   (assert (= (get refused.row "run") OLD-RUN) refused.row)
   (assert (in "旧い宣言の形" refused.reason) refused.reason)
@@ -135,7 +135,7 @@
   (<- data dict (saved-with-raw-entry-row))
   (for [state [(! (state-from-json data 5000)) (! (state-from-kv (! (full-kv (! (state-from-json data 5000)))) 5000))]]
     (assert (= (lfor j state.jobs j.spec.name) ["new"]) state.jobs)
-    (val refused (get state.refused "raw"))
+    (val refused (.row state.refused "raw"))
     (assert (isinstance refused RefusedJob) state.refused)
     (assert (= (get refused.row "entry") "m") refused.row)
     (assert (in "生の entry の job" refused.reason) refused.reason)
@@ -180,11 +180,11 @@
   (assert (= (get put 1) 200) put)
   (val replaced (get put 0))
   (assert (= (sorted (gfor j replaced.jobs j.spec.name)) ["new" "old"]))
-  (assert (= replaced.refused {}))
+  (assert (= (.size replaced.refused) 0))
   ;; DELETE で消せる(置き換えずに捨てる道)。
   (<- deleted tuple (call state "DELETE" "/resources/Service/old" None 6000))
   (assert (= (get deleted 1) 200) deleted)
-  (assert (= (. (get deleted 0) refused) {}))
+  (assert (= (.size (. (get deleted 0) refused)) 0))
   (assert (= (lfor j (. (get deleted 0) jobs) j.spec.name) ["new"])))
 
 
@@ -320,6 +320,6 @@
   (<- run dict (program-run "m:g" 1))
   (<- made tuple (call state "POST" "/resources/Service" {"name" "old" "spec" (| ROW {"run" run})} 6000))
   (assert (= (get made 1) 201) made)
-  (assert (= (. (get made 0) refused) {}))
+  (assert (= (.size (. (get made 0) refused)) 0))
   (assert (in "old" (lfor j (. (get made 0) jobs) j.spec.name)))
   (assert (= (. (.row (. (get made 0) meta) "Service/old") generation) (+ before.generation 1))))

@@ -2,6 +2,7 @@
 ;; readiness・盤の行ごとの版。
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.cluster_policy [board-changes job-from-json] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json board-rows-of])
@@ -167,12 +168,12 @@
   (<- reply-16 (call started "DELETE" "/resources/Rollout/to-worker" :actor "c-someone-else"))
   (:= status (get reply-16 1))
   (assert (= status 409) (get reply-16 2))
-  (val row (get started.rollouts "to-worker"))
-  (val finished (replace started :rollouts (| started.rollouts {"to-worker" (replace row :status (replace row.status :phase "Complete"))})))
+  (val row (.row started.rollouts "to-worker"))
+  (val finished (replace started :rollouts (.with-writes started.rollouts #((TableWrite "to-worker" (replace row :status (replace row.status :phase "Complete")))))))
   (<- reply-17 (call finished "DELETE" "/resources/Rollout/to-worker" :actor "c-someone-else"))
   (:= status (get reply-17 1))
   (assert (= status 200) (get reply-17 2))
-  (assert (not-in "to-worker" (. (get reply-17 0) rollouts))))
+  (assert (is (.row (. (get reply-17 0) rollouts) "to-worker") None)))
 
 
 (deftest test-legacy-put-jobs-never-deletes-and-refuses-stale-rows

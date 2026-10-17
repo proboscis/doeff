@@ -6,6 +6,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run])
 (import dataclasses [replace])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView DeploymentUnreadable])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -43,15 +44,15 @@
   (sim.rollout "to-worker" FORWARD)
   (sim.run-until "to-worker" #("Observing"))
   (for [_ (range 30)] (sim.step))
-  (setv since (. (get sim.state.rollouts "to-worker") status phase-since-ms))
+  (setv since (. (.row sim.state.rollouts "to-worker") status phase-since-ms))
   (<- gap int (restart-after sim 600))
   (assert (>= gap 600000))
-  (assert (= (. (get sim.state.rollouts "to-worker") status phase-since-ms) (+ since gap)))
+  (assert (= (. (.row sim.state.rollouts "to-worker") status phase-since-ms) (+ since gap)))
   (sim.step)
   (assert (= (sim.phase "to-worker") "Observing"))
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "Complete"))
   ;; 完了は起き直した後に 90 秒ほど見てから(止まっていた 10 分は数えていない)
-  (setv done (. (get sim.state.rollouts "to-worker") status completed-ms))
+  (setv done (. (.row sim.state.rollouts "to-worker") status completed-ms))
   (assert (>= (- done (+ since gap)) (* 1000 (get FORWARD "observeSeconds")))))
 
 
@@ -196,13 +197,13 @@
   ;; から倍々に数え、成功した書きは最後の書きの後の観測を待つ。at が最初の刻のままだと、間の上限(60 秒)を越えた後と、2 度目の成功の
   ;; 後は毎歩出し直しになり、調停ループが落ち着かない(Rollout の歩の 1 秒の間隔がこれを隠していた)。
   (val action {"rollout" "r" "op" "scale" "target" SPEC.from-target "replicas" 0})
-  (val state (ClusterState :rollouts {"r" (RolloutRow :spec SPEC :status (RolloutStatus :phase "StoppingOld" :phase-since-ms 0))}))
+  (val state (ClusterState :rollouts (table-of #((TableWrite "r" (RolloutRow :spec SPEC :status (RolloutStatus :phase "StoppingOld" :phase-since-ms 0)))))))
   (val twice (record-action (record-action state action False "403" 1000) action False "403" 3000))
-  (val failed (. (get twice.rollouts "r") status))
+  (val failed (. (.row twice.rollouts "r") status))
   (assert (= #((get failed.last-action "at") (get failed.last-action "count")) #(3000 2)) failed.last-action)
   (assert (not (action-due failed action (+ 3000 (retry-delay-ms 2) -1) NO-OBSERVATION)))
   (assert (action-due failed action (+ 3000 (retry-delay-ms 2)) NO-OBSERVATION))
-  (val written (. (get (. (record-action (record-action state action True None 1000) action True None 5000) rollouts) "r") status))
+  (val written (. (.row (. (record-action (record-action state action True None 1000) action True None 5000) rollouts) "r") status))
   (assert (= (get written.last-action "at") 5000) written.last-action)
   ;; 2 度目の書き(5000)より前の観測では、3 度目を出さない。
   (assert (not (action-due written action 6000 (! (observed-at 4000))))))
@@ -212,8 +213,8 @@
   ;; markDeployment の Rollout が台数を持つ Deployment に印の annotation を置けない(403)時、plan-rollouts は失敗の間(1 秒から倍々)を
   ;; 空けて出し直し、調停ループはその刻に起きる(終わった Rollout でも)。間を空けないと失敗の記録で状態が毎歩変わり、調停ループが
   ;; 落ち着かない(#3868 のレビュー — 以前は Rollout の歩の 1 秒の間隔が隠していた)。
-  (val state (ClusterState :rollouts {"to-a" (RolloutRow :spec OWNER-SPEC
-                                                          :status (RolloutStatus :phase "Complete" :stopped-old-ms 500 :completed-ms 500))}))
+  (val state (ClusterState :rollouts (table-of #((TableWrite "to-a" (RolloutRow :spec OWNER-SPEC
+                                                          :status (RolloutStatus :phase "Complete" :stopped-old-ms 500 :completed-ms 500)))))))
   (<- first tuple (plan-rollouts state 1000 T))
   (val marks (lfor a (get first 1) :if (= (get a "op") "annotate") a))
   (assert (= (len marks) 1) first)
@@ -241,5 +242,5 @@
   (setv #(again _) (rollout-step SPEC s old-down READY 700000))
   (assert (= again.stuck s.stuck))         ; 印は付けた拍だけ変わる
   ;; 計器に出る
-  (setv state (ClusterState :rollouts {"r" (RolloutRow :spec SPEC :status s)}))
+  (setv state (ClusterState :rollouts (table-of #((TableWrite "r" (RolloutRow :spec SPEC :status s))))))
   (assert (in "doeff_worker_rollout_stuck{rollout=\"r\"} 1" (metrics-text state 700000 T))))
