@@ -91,7 +91,9 @@ def _count_waitable_status_calls_for_gather(total: int) -> int:
     previous_profile = sys.getprofile()
     sys.setprofile(profile_waitable_status)
     try:
-        result = doeff_run(scheduled(body()))
+        # Counts calls into the Python scheduler's waitable_status, so name it: the default
+        # (Rust) scheduler has no such Python function and would count zero.
+        result = doeff_run(scheduled(body(), implementation="python"))
     finally:
         sys.setprofile(previous_profile)
 

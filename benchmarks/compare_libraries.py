@@ -48,7 +48,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from doeff_core_effects import Ask, Gather, Spawn, reader, scheduled
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Wait
+from doeff_core_effects.scheduler import (
+    CompletePromise,
+    CreatePromise,
+    SchedulerImplementation,
+    Wait,
+    resolve_implementation,
+)
 
 from doeff import EffectBase, EffectGenerator, K, Pass, Resume, do, run, with_handlers
 
@@ -398,7 +404,7 @@ def _doeff_fan_out(n: int) -> EffectGenerator[int]:
 
 
 def _doeff_cases(config: CompareConfig) -> list[Case]:
-    """doeff's cases, both scheduler implementations included."""
+    """doeff's cases: both scheduler implementations, and the default one."""
     n = config.round_trip_effects
     depth, repeats = config.nested_depth, config.nested_repeats
     h, h_effects = config.handler_depth, config.handler_depth_effects
@@ -464,13 +470,22 @@ def _doeff_cases(config: CompareConfig) -> list[Case]:
             h_effects,
         ),
     ]
+    # None = what a plain `scheduled(body)` runs: neither the argument nor
+    # $DOEFF_SCHEDULER chooses, so DEFAULT_IMPLEMENTATION decides. The label names
+    # the implementation it resolved to, so a run before and after a change of the
+    # default compares the same call.
+    default_label = f"default = {resolve_implementation()}"
+    choices: list[tuple[SchedulerImplementation | None, str]] = [
+        *((implementation, implementation) for implementation in SCHEDULER_IMPLEMENTATIONS),
+        (None, default_label),
+    ]
     scheduler_cases = [
         case
-        for implementation in SCHEDULER_IMPLEMENTATIONS
+        for implementation, label in choices
         for case in (
             Case(
                 "spawn_gather",
-                f"doeff: scheduled ({implementation} scheduler)",
+                f"doeff: scheduled ({label} scheduler)",
                 "doeff",
                 "task",
                 tasks,
@@ -481,7 +496,7 @@ def _doeff_cases(config: CompareConfig) -> list[Case]:
             ),
             Case(
                 "fan_out_wait",
-                f"doeff: scheduled ({implementation} scheduler)",
+                f"doeff: scheduled ({label} scheduler)",
                 "doeff",
                 "task",
                 tasks,

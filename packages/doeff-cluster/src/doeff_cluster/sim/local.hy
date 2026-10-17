@@ -3918,13 +3918,14 @@
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None] [runtime-env None] [nodes None] notice-broker]
+                  [outside None] [store None] [deployments None] [runtime-env None] [nodes None] [implementation None] notice-broker]
   {:tp [A]
    :pre [(: system System) (: scenario (| (of Program A object) (of EffectBase A))) (: workers (| (get tuple #(SimWorker ...)) None))
          (: environ (| (get dict #(str (get dict #(str str)))) None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))
          (: store (| (get Callable #([] MemoryWalStore)) None)) (: deployments (| (get dict #(str (get dict #(str object)))) None))
-         (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None)) (: notice-broker MemoryBroker)]
+         (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None))
+         (: implementation (| str None)) (: notice-broker MemoryBroker)]
    :post [(: % A)]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -3941,21 +3942,24 @@
    wall-sim-cluster。worker の代役(宿)は本番と同じ待ち(tick_pauses の await-wakes — 期限・呼び鈴・止めの合図の早い 1 つ)で周の間を
    待つ(#3871 の単位 5)。notice-broker = 知らせの broker
    (doeff-events の MemoryBroker — coordinator が worker の生死の出来事を出す先。呼び手が作って渡し、筋書きと呼び手の世界の job は同じ
-   broker の受け手に成れる。既定は無い — sim は作らない・#3850)。"
+   broker の受け手に成れる。既定は無い — sim は作らない・#3850)。implementation = sim が組む scheduler の版(\"python\" / \"rust\"・
+   既定 None = doeff の既定と環境変数 DOEFF_SCHEDULER — scheduled と同じ。測りの口 set_scheduler_trace の出来事で数える検は \"python\")。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
-                                           :notice-broker notice-broker))))
+                                           :notice-broker notice-broker))
+                        :implementation implementation))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None] [deployments None] [runtime-env None] [nodes None] notice-broker]
+                       [store None] [deployments None] [runtime-env None] [nodes None] [implementation None] notice-broker]
   {:tp [A]
    :pre [(: system System) (: scenario (| (of Program A object) (of EffectBase A))) (: workers (| (get tuple #(SimWorker ...)) None))
          (: environ (| (get dict #(str (get dict #(str str)))) None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))
          (: store (| (get Callable #([] MemoryWalStore)) None)) (: deployments (| (get dict #(str (get dict #(str object)))) None))
-         (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None)) (: notice-broker MemoryBroker)]
+         (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None))
+         (: implementation (| str None)) (: notice-broker MemoryBroker)]
    :post [(: % A)]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -3966,5 +3970,6 @@
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
-                                           :notice-broker notice-broker))))
+                                           :notice-broker notice-broker))
+                        :implementation implementation))
   answer)

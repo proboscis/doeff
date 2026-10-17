@@ -179,3 +179,22 @@ def test_each_external_completion_is_drained_or_ignored(events: list[dict[str, A
 def test_rust_scheduler_refuses_a_sink(events: list[dict[str, Any]]) -> None:
     with pytest.raises(RuntimeError, match="set_scheduler_trace"):
         scheduled(_busy_and_idle_ping_pong(), implementation="rust")
+
+
+def test_default_scheduler_refuses_a_sink_and_names_the_python_one(
+    events: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default is the Rust scheduler: a sink makes a plain ``scheduled`` refuse,
+    naming how to choose the Python scheduler that emits the events."""
+    monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
+    with pytest.raises(RuntimeError, match="DOEFF_SCHEDULER=python"):
+        scheduled(_busy_and_idle_ping_pong())
+    assert events == []
+
+
+def test_python_scheduler_chosen_by_environment_emits_events(
+    events: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DOEFF_SCHEDULER", "python")
+    run(scheduled(_busy_and_idle_ping_pong()))
+    assert any(e["event"] == "task-leave" for e in events)

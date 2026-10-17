@@ -1104,11 +1104,12 @@ def _misused_task(effect: EffectBase, target: object) -> TypeError | None:
 SchedulerImplementation = Literal["python", "rust"]
 
 # Which implementation `scheduled()` uses when neither its argument nor the
-# environment variable chooses. Stays "python" until every deployment (image,
-# pool agentd, company / personal Mac agentd) has rebuilt the Rust extension
-# with the scheduler; the switch to "rust" lands separately
-# (docs/25-rust-scheduler.md).
-DEFAULT_IMPLEMENTATION: SchedulerImplementation = "python"
+# environment variable chooses. "rust": the same semantics as the Python
+# implementation at about a ninth of the cost per task. The Python
+# implementation stays selectable — DOEFF_SCHEDULER=python for a process,
+# implementation="python" for one call — and is the one that emits the
+# set_scheduler_trace events (docs/25-rust-scheduler.md).
+DEFAULT_IMPLEMENTATION: SchedulerImplementation = "rust"
 
 # Environment variable that overrides DEFAULT_IMPLEMENTATION ("python" / "rust").
 IMPLEMENTATION_ENV_VAR = "DOEFF_SCHEDULER"
@@ -1151,7 +1152,8 @@ def scheduled(
         if _trace_sink is not None:
             raise RuntimeError(
                 "set_scheduler_trace の出来事は Python の scheduler だけが出す — sink を据えたまま "
-                "Rust の scheduler では走らせない(implementation='python' で測るか、sink を外す)"
+                "Rust の scheduler(既定の版)では走らせない(implementation='python' か "
+                f"${IMPLEMENTATION_ENV_VAR}=python で Python の scheduler を選んで測るか、sink を外す)"
             )
         return _scheduled_rust(body_program)
     return _scheduled_python(body_program)
@@ -1215,11 +1217,11 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
         from doeff_vm.doeff_vm import SchedulerCore
     except ImportError as error:
         raise ImportError(
-            "the Rust scheduler was selected (implementation='rust' or "
-            f"${IMPLEMENTATION_ENV_VAR}=rust) but the loaded doeff_vm extension has no "
-            "SchedulerCore: rebuild the Rust extension (`make sync`, or "
-            "`maturin develop --release` in packages/doeff-vm), or select "
-            "implementation='python'"
+            "the Rust scheduler was selected (it is the default; also implementation='rust' "
+            f"or ${IMPLEMENTATION_ENV_VAR}=rust) but the loaded doeff_vm extension has no "
+            "SchedulerCore: rebuild the Rust extension (`make sync` in a doeff checkout, or "
+            "reinstall doeff-vm), or select the Python scheduler "
+            f"(${IMPLEMENTATION_ENV_VAR}=python, or implementation='python')"
         ) from error
 
     core = SchedulerCore(

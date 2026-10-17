@@ -210,10 +210,21 @@ def test_virtual_clock_handler_cooperates_with_the_scheduler(
     assert order == [("b", 2), ("a", 3), ("b", 4), ("a", 6)]
 
 
-def test_default_is_python(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rust becomes the default only after every deployment rebuilt the extension."""
+def test_default_is_rust(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plain ``scheduled(body)`` runs the Rust scheduler (docs/25-rust-scheduler.md)."""
     monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
-    assert resolve_implementation() == "python"
+    assert resolve_implementation() == "rust"
+    program = scheduled(_one())
+    assert _root_prompt_type(program) == "SchedulerPrompt"
+    assert run(program) == 1
+
+
+def test_python_stays_selectable_by_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``DOEFF_SCHEDULER=python`` is the way back for a whole process."""
+    monkeypatch.setenv("DOEFF_SCHEDULER", "python")
+    program = scheduled(_one())
+    assert _root_prompt_type(program) != "SchedulerPrompt"
+    assert run(program) == 1
 
 
 def test_stale_extension_is_named_not_silently_replaced(
@@ -224,6 +235,23 @@ def test_stale_extension_is_named_not_silently_replaced(
     monkeypatch.delattr(extension, "SchedulerCore")
     with pytest.raises(ImportError, match="rebuild the Rust extension"):
         scheduled(_one(), implementation="rust")
+
+
+def test_stale_extension_under_the_default_names_the_way_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An extension built before the Rust scheduler fails the default with both remedies
+    named, and ``DOEFF_SCHEDULER=python`` runs the same program on it."""
+    import doeff_vm.doeff_vm as extension
+
+    monkeypatch.delattr(extension, "SchedulerCore")
+    monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
+    with pytest.raises(ImportError, match="it is the default") as raised:
+        scheduled(_one())
+    assert "rebuild the Rust extension" in str(raised.value)
+    assert "DOEFF_SCHEDULER=python" in str(raised.value)
+    monkeypatch.setenv("DOEFF_SCHEDULER", "python")
+    assert run(scheduled(_one())) == 1
 
 
 # --- A spawned task runs under the spawn site's handlers and observers (#3149) ---
