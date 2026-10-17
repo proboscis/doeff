@@ -271,6 +271,42 @@ that release, pin the doeff 0.4 line: `pip install doeff-agents "doeff<0.5"`. Th
 this repository ([`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md),
 with its CLI) is not published to PyPI.
 
+## Repository map
+
+The paths for users come first. The rest are for people who work on doeff itself.
+
+| Path | For | What is inside |
+| --- | --- | --- |
+| [`doeff/`][map-doeff], [`packages/`][map-packages] | users | the library and its add-on packages |
+| [`docs/index.md`][map-docs-index] | users | start here: guides and API notes |
+| [`examples/`][map-examples] | users | runnable examples |
+| [`ide-plugins/`][map-ide-plugins] | users | editor plugins for PyCharm, VS Code and Neovim |
+| [`docs/adr/`][map-adr] | contributors | design decisions written as executable tests |
+| [`tests/`][map-tests], [`scripts/`][map-scripts], [`tools/`][map-tools], [`benchmarks/`][map-benchmarks] | contributors | the test suite, development tools and benchmarks |
+| [`docs/design/`][map-design], [`docs/design-checks/`][map-design-checks] | maintainers | development records; not user documentation |
+| [`docs/history/`][map-history] | maintainers | older planning notes |
+| [`publications/`][map-publications], [`images/`][map-images] | maintainers | drafts of articles about doeff and their images |
+
+[`docs/README.md`][map-docs-readme] tells the user guides in `docs/` apart from the development
+records.
+
+[map-doeff]: https://github.com/proboscis/doeff/tree/main/doeff
+[map-packages]: https://github.com/proboscis/doeff/tree/main/packages
+[map-docs-index]: https://github.com/proboscis/doeff/blob/main/docs/index.md
+[map-examples]: https://github.com/proboscis/doeff/tree/main/examples
+[map-ide-plugins]: https://github.com/proboscis/doeff/tree/main/ide-plugins
+[map-adr]: https://github.com/proboscis/doeff/tree/main/docs/adr
+[map-tests]: https://github.com/proboscis/doeff/tree/main/tests
+[map-scripts]: https://github.com/proboscis/doeff/tree/main/scripts
+[map-tools]: https://github.com/proboscis/doeff/tree/main/tools
+[map-benchmarks]: https://github.com/proboscis/doeff/tree/main/benchmarks
+[map-design]: https://github.com/proboscis/doeff/tree/main/docs/design
+[map-design-checks]: https://github.com/proboscis/doeff/tree/main/docs/design-checks
+[map-history]: https://github.com/proboscis/doeff/tree/main/docs/history
+[map-publications]: https://github.com/proboscis/doeff/tree/main/publications
+[map-images]: https://github.com/proboscis/doeff/tree/main/images
+[map-docs-readme]: https://github.com/proboscis/doeff/blob/main/docs/README.md
+
 ## Contributing
 
 Setting up the development environment, running the tests and running the benchmarks are
