@@ -183,6 +183,65 @@ The same test, written in other styles, with one fake left out:
 A doeff handler without an effect annotation sees every effect: without `: LoadUser`, `fake_db`
 would answer `SendMail` too, and the test without `fake_mail` would pass.
 
+## Performance
+
+An effect costs about 3 to 5 µs. A network request or a model call takes milliseconds, so in I/O
+code the cost does not show. In a tight numeric loop it does: keep such a loop in plain Python and
+yield effects around it.
+
+One effect round trip: perform an effect and get the handler's answer back (µs of CPU per effect,
+2,000 effects per sample):
+
+| Implementation | Median | p90 | × a function call |
+| --- | ---: | ---: | ---: |
+| Plain Python: a function call | 0.13 | 0.20 | 1 |
+| Plain Python: a generator and a driver loop | 0.38 | 0.61 | 3 |
+| doeff: plain function handler that returns `Resume` | 3.0 | 4.5 | 23 |
+| doeff: `@do` handler and `Resume` | 4.3 | 6.0 | 34 |
+| doeff: built-in `reader` (`Ask`) | 4.9 | 6.7 | 38 |
+| [effect](https://github.com/python-effect/effect) 1.1.0: `@do` and a sync performer | 12.7 | 14.6 | 99 |
+| [effectful](https://github.com/BasisResearch/effectful) 0.4.0: `@defop` and `handler` | 57.9 | 62.3 | 452 |
+
+Many tasks: spawn 1,000 tasks and gather them, and 1,000 tasks that all wait on one promise and
+wake at once (µs of CPU per task):
+
+| Implementation | Spawn and gather: median | p90 | Wait on one promise: median | p90 |
+| --- | ---: | ---: | ---: | ---: |
+| Plain Python: round-robin generator tasks | 1.3 | 1.9 | – | – |
+| Plain Python: `asyncio` | 11.4 | 13.7 | 15.5 | 18.6 |
+| effect 1.1.0: `parallel()` (runs the effects one by one) | 13.9 | 16.1 | – | – |
+| doeff: `scheduled()` (the Rust scheduler, the default) | 16.6 | 20.7 | 25.5 | 44.7 |
+| doeff: `scheduled(..., implementation="python")` | 151 | 167 | 205 | 223 |
+
+A dash marks a case the implementation has no promise for. effectful has no scheduler, so it is
+not in this table. `pip install doeff` installs 0.6.0, whose `scheduled()` still runs the Python
+scheduler (the last row). Select the Rust one with `DOEFF_SCHEDULER=rust` or
+`scheduled(program, implementation="rust")`; it is the default from the next release.
+
+How the numbers were measured:
+
+- **Machine**: an Intel Core i9-7980XE (18 cores, 2.6 GHz) under Linux, with CPython 3.14.7, on
+  2026-10-17 at commit
+  [`d40d0ab`](https://github.com/proboscis/doeff/commit/d40d0ab9576cf5671d95caf1f85062d8630d6d6a).
+- **Method**:
+  [`benchmarks/compare_libraries.py`](https://github.com/proboscis/doeff/blob/main/benchmarks/compare_libraries.py)
+  takes 50 samples of each case and reports the median and the 90th percentile of the process CPU
+  time. Each sample runs every case once, in a new random order. Each case checks its result, so no
+  implementation can win by skipping work. The script has two more scenarios: nested calls, and
+  handlers that an effect passes on its way.
+- **Load**: the machine was shared with other work. The random order spreads the load over every
+  case alike, so compare the rows with each other more than with your own numbers.
+- **Free-threaded build**: two runs on CPython 3.14.3t gave numbers of the same size: doeff
+  medians of 3.2 to 5.8 µs per effect, and with `scheduled()` 17.5 to 19.5 µs per spawned task and
+  29 to 32 µs per waiting task.
+
+To run the benchmark in a checkout after `make sync` (there `uv run` uses the free-threaded CPython
+3.14.3t):
+
+```bash
+uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_libraries.py --runs 50
+```
+
 ## Next steps
 
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
