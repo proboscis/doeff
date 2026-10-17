@@ -45,7 +45,7 @@
   (val timing (ClusterTiming))
   (<- w WorkerInfo (worker-at "w" 0 2))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
-  (<- state ClusterState (settled-state (ClusterState :workers {"w" w} :tasks (! (table-from-rows {"run" run}))) 5000 timing))
+  (<- state ClusterState (settled-state (ClusterState :workers (! (table-from-rows {"w" w})) :tasks (! (table-from-rows {"run" run}))) 5000 timing))
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.reassign-after-ms) 1))
   (assert (= due (DueAt :at expected)) due)
@@ -62,7 +62,7 @@
   (<- w WorkerInfo (worker-at "w" 0 1))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
   (<- wait TaskRecord (task-on "wait" "queued" None))
-  (<- state ClusterState (settled-state (ClusterState :workers {"w" w} :tasks (! (table-from-rows {"run" run "wait" wait}))) 5000 timing))
+  (<- state ClusterState (settled-state (ClusterState :workers (! (table-from-rows {"w" w})) :tasks (! (table-from-rows {"run" run "wait" wait}))) 5000 timing))
   (<- due (| DueAt DueNow DueNever) (task-due state 5000 timing))
   (val expected (+ (liveness-deadline w timing.lease-ms) 1))
   (assert (= due (DueAt :at expected)) due)
@@ -77,7 +77,7 @@
   (val timing (ClusterTiming))
   ;; 生きていないと数える名の求め直しが、状態の欄と違う(note-liveness をまだ当てていない)。
   (<- w WorkerInfo (worker-at "w" 0 1))
-  (val unsettled (ClusterState :workers {"w" w}))
+  (val unsettled (ClusterState :workers (! (table-from-rows {"w" w}))))
   (<- live (| DueAt DueNow DueNever) (liveness-due unsettled (+ timing.lease-ms 1) timing))
   (assert (= live (DueNow)) live)
   ;; 掃除の期限が過ぎている(掃く前の状態)。
@@ -107,9 +107,9 @@
   (<- silent WorkerInfo (worker-at "s" 0 1))
   (<- run TaskRecord (task-on "run" "assigned" "w"))
   (<- wait TaskRecord (task-on "wait" "queued" None))
-  #(#("置ける worker が埋まっていて待つ task" (ClusterState :workers {"w" busy} :tasks (! (table-from-rows {"run" run "wait" wait}))))
-    #("能力の合う worker が黙っていて待つ task" (ClusterState :workers {"s" silent} :tasks (! (table-from-rows {"wait" wait}))))
-    #("置いた task と生きた担い手" (ClusterState :workers {"w" busy} :tasks (! (table-from-rows {"run" run}))))
+  #(#("置ける worker が埋まっていて待つ task" (ClusterState :workers (! (table-from-rows {"w" busy})) :tasks (! (table-from-rows {"run" run "wait" wait}))))
+    #("能力の合う worker が黙っていて待つ task" (ClusterState :workers (! (table-from-rows {"s" silent})) :tasks (! (table-from-rows {"wait" wait}))))
+    #("置いた task と生きた担い手" (ClusterState :workers (! (table-from-rows {"w" busy})) :tasks (! (table-from-rows {"run" run}))))
     #("何も無い状態" (ClusterState))))
 
 

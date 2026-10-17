@@ -100,7 +100,7 @@
   (assert (= (get at-next "worker/w1" "lastSeenMs") 12000) at-next)
   (assert (= (get at-next "worker/w2") (get at-mark "worker/w2")) "沈黙した worker の行が変わった")
   (<- reloaded ClusterState (state-from-kv at-next 20000))
-  (assert (= (. (get reloaded.workers "w1") last-seen-ms) 12000))
+  (assert (= (. (.row reloaded.workers "w1") last-seen-ms) 12000))
   (<- again dict (full-kv reloaded))
   (assert (= (workers-of again) (workers-of at-next))))
 

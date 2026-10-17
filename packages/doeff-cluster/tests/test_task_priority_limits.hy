@@ -62,7 +62,7 @@
   (setv tasks {"t11" (! (queued "t11"))})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 12 3))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
   (val placed (! (tasks-placed 1000 state placements T)))
   (assert (= (. (.row placed "t11") phase) "assigned") (.row placed "t11"))
   (val longs (! (phases placed LONG-IDS)))
@@ -79,16 +79,16 @@
   (setv tasks {})
   (for [id LONG-IDS]
     (setv (get tasks id) (! (queued id :priority -1))))
-  (val first (! (tasks-placed 1000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements (! (table-from-rows tasks))) placements T)))
+  (val first (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 12 3))})) placements (! (table-from-rows tasks))) placements T)))
   (val longs (! (phases first LONG-IDS)))
   (assert (= (.count longs "assigned") 8) longs)
   (assert (= (. (.row first "t10") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))) (.row first "t10"))
-  (val later (! (tasks-placed 2000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
+  (val later (! (tasks-placed 2000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 12 3))})) placements
                                                 (! (table-from-rows (| (dict (.items first)) {"t11" (! (queued "t11"))}))))
                              placements T)))
   (assert (= (. (.row later "t11") phase) "assigned") (.row later "t11"))
   ;; 優先 0 の task は今までどおり予約の最後まで使える(上の組み立ての後も残した 1 本に置け、その次は空きが無い)。
-  (val more (! (tasks-placed 3000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
+  (val more (! (tasks-placed 3000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 12 3))})) placements
                                                (! (table-from-rows (| (dict (.items later)) {"t12" (! (queued "t12")) "t13" (! (queued "t13"))}))))
                             placements T)))
   (assert (= (! (phases more ["t12" "t13"])) ["assigned" "queued"]) more)
@@ -104,7 +104,7 @@
   (setv tasks {})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs {"zeus" (! (zeus-like 33 6))} placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 33 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
   (val first (! (tasks-placed 1000 state placements T)))
   (val longs (! (phases first LONG-IDS)))
   (assert (= (.count longs "assigned") 3) longs)
@@ -122,7 +122,7 @@
   ;; 1 本が終われば 3 本目が置かれる。
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
-  (val state (ClusterState #() {"zeus" (! (zeus-like 30 3))} {} (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState #() (! (table-from-rows {"zeus" (! (zeus-like 30 3))})) {} (! (table-from-rows tasks)) :group-limits GROUPS))
   (val placed (! (tasks-placed 1000 state {} T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (.row placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (.row placed "t3"))

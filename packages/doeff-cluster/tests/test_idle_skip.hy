@@ -307,7 +307,7 @@
   (val timing (ClusterTiming))
   (val seen 1000000)
   (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms seen :task-reserve 0))
-  (val start (ClusterState :workers {"w" worker}))
+  (val start (ClusterState :workers (! (table-from-rows {"w" worker}))))
   ;; lease-ms — note-liveness が生きていないと数え始める刻。
   (<- lease-answer (| DueAt DueNow DueNever) (liveness-due start seen timing))
   (assert (= lease-answer (DueAt :at (+ seen timing.lease-ms 1))) lease-answer)
@@ -341,7 +341,7 @@
   (<- kept ClusterState (forget-silent-workers silent (- forget-due 1) timing))
   (assert (is kept silent))
   (<- forgotten ClusterState (forget-silent-workers silent forget-due timing))
-  (assert (= forgotten.workers {}) forgotten.workers)
+  (assert (= (.size forgotten.workers) 0) forgotten.workers)
   ;; 忘れた後: 生きていないと数える名が残っていれば note-liveness が今の刻で外す(今すぐ)・外した後は期限が無い(無し)。
   (<- left (| DueAt DueNow DueNever) (liveness-due forgotten forget-due timing))
   (assert (= left (DueNow)) left)
@@ -413,7 +413,7 @@
     #("lease の切れる置いた task" (ClusterState :tasks (! (table-from-rows {"lost" lost}))) 5000 20001)
     #("呼び手が問い合わせを止めた task" (ClusterState :tasks (! (table-from-rows {"call" dropped}))) 5000 12001)
     #("保持の期限と lease の期限の 2 本" (ClusterState :tasks (! (table-from-rows {"done" retained "lost" lost}))) 5000 10001)
-    #("能力の合う worker の沈黙を待つ task" (ClusterState :workers {"verify-1" verify} :tasks (! (table-from-rows {"wait" waiting}))) 15000
+    #("能力の合う worker の沈黙を待つ task" (ClusterState :workers (! (table-from-rows {"verify-1" verify})) :tasks (! (table-from-rows {"wait" waiting}))) 15000
       (+ (. (ClusterTiming) silent-worker-wait-ms) 1))))
 
 
