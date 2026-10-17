@@ -16,11 +16,11 @@ def risky(n: int) -> Generator[Any, Any, int]:
 @do
 def main() -> Generator[Any, Any, int]:
     r = yield from Try(risky(1))
-    assert_type(r, Ok[int] | Err)
+    assert_type(r, Ok[int] | Err[Exception])
     if isinstance(r, Ok):
         assert_type(r.value, int)
         return r.value
-    assert_type(r, Err)
-    assert_type(r.error, BaseException)  # gap-5 want-clean (Err.error は Any)
+    assert_type(r, Err[Exception])
+    assert_type(r.error, Exception)  # 抜け 5 — 直った
     s: str = r.value  # expect-error (Err に value は無い)
     return 0

@@ -40,4 +40,4 @@ def body() -> Generator[ReadClock, Any, int]:
 installed = handler(clock)
 assert_type(installed(body()), Program[int, Any])
 assert_type(run(installed(body())), int)
-handler(wrong_filter)  # gap-7 want-error (effect に当たらない注記 — 実行時は TypeError)
+handler(wrong_filter)  # expect-error (effect に当たらない注記 — 抜け 7 — 直った)
