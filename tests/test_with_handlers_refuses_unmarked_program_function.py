@@ -12,6 +12,7 @@ builtin など ``__code__`` を読めない形は判じずに今どおり通す�
 
 import functools
 import inspect
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -211,6 +212,8 @@ def test_stacked_handlers_is_a_marked_installer_called_with_the_program_only() -
 
     assert getattr(stacked, "_doeff_is_handler_fn", False) is True
     assert handler(stacked) is stacked
+    # 型の ProgramHandler は関数の名を宣言しないので、束ねが関数である事を確かめてから名を読む
+    assert isinstance(stacked, types.FunctionType)
     assert stacked.__name__ == "stacked_handlers"
     assert "outer" in (stacked.__doc__ or "")
     assert "relay_inner" in (stacked.__doc__ or "")

@@ -29,7 +29,7 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.handlers import fail_handler, sequential
 from hy.compiler import hy_compile
 
-from doeff import run
+from doeff import Program, run
 
 # handle・defhandler の展開が書いた場所で import する名(handle.hy の `_do-import`・`_vm-imports`・`_clause-endings-import`、
 # 節の外の効果を素通しする宣言の `_doeff-declare-passes`、defhandler の宣言の `doeff_hy`)
@@ -68,7 +68,7 @@ def _eval_module(code: str, header: str = _HEADER) -> types.ModuleType:
     return mod
 
 
-def _run(program: object) -> object:
+def _run(program: Program) -> object:
     """handle を含む Program を、traverse / for/do の handler の下で走らせる。"""
     return run(scheduled(try_handler(fail_handler(sequential()(program)))))
 
@@ -373,7 +373,7 @@ _CLASS_BODY_CASES = {
 }
 
 
-def _run_with_state(program: object) -> object:
+def _run_with_state(program: Program) -> object:
     """class の本体の handle・defhandler の Program を走らせる — session var の Get・Put を state の handler が受ける。"""
     return run(scheduled(state(initial={})(program)))
 
@@ -382,7 +382,7 @@ def _run_with_state(program: object) -> object:
     ("source", "program"), _CLASS_BODY_CASES.values(), ids=_CLASS_BODY_CASES.keys()
 )
 def test_class_body_handle_clauses_read_their_operations(
-    source: str, program: Callable[[types.ModuleType], object]
+    source: str, program: Callable[[types.ModuleType], Program]
 ) -> None:
     """class の本体に直に書いた handle・defhandler の節が Transfer・Resume・Pass を読んで走る — 直す前は NameError。"""
     mod = _eval_module(source, header=_CLASS_ONLY_HEADER)
@@ -399,7 +399,7 @@ _MODULE_OWN_NAMES = """
     ("source", "program"), _CLASS_BODY_CASES.values(), ids=_CLASS_BODY_CASES.keys()
 )
 def test_class_body_handle_leaves_module_globals_alone(
-    source: str, program: Callable[[types.ModuleType], object]
+    source: str, program: Callable[[types.ModuleType], Program]
 ) -> None:
     """class の本体の handle・defhandler は、節が読む名を module の globals に置かず、そこから読まない — 書き手の module の
     同じ名(Transfer など)を変えず、節もそれに左右されない。補助を module の globals へ setdefault で入れる直し(defk の

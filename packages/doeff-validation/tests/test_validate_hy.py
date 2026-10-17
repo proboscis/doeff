@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 import hy
@@ -13,7 +12,8 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_traverse import parallel, sequential
 from doeff_validation import CheckError, CheckFailure, ValidationException
 
-from doeff import run
+from doeff import Program, run
+from doeff.program import ProgramHandler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validation_cases as cases
@@ -21,13 +21,13 @@ import validation_cases as cases
 ENV = {"seats-a": 3, "seats-n1": 5, "seats-empty": 0}
 
 
-def _run(program: object, traverse_handler: Callable[[object], object] | None = None) -> object:
+def _run(program: Program, traverse_handler: ProgramHandler | None = None) -> object:
     """検査の Program を、reader と traverse の handler(既定は逐次)の下で走らせる。"""
     handler = traverse_handler if traverse_handler is not None else sequential()
     return run(scheduled(reader(ENV)(handler(program))))
 
 
-def _failures(program: object, traverse_handler: Callable[[object], object] | None = None) -> ValidationException:
+def _failures(program: Program, traverse_handler: ProgramHandler | None = None) -> ValidationException:
     """ValidationException が投げられることを確かめ、その例外を返す。"""
     with pytest.raises(ValidationException) as caught:
         _run(program, traverse_handler)

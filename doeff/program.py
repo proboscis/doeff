@@ -44,12 +44,35 @@ if TYPE_CHECKING:
     from doeff import Program
 
 
-ProgramHandler = Callable[[object], "Program[Any]"]
+_Result = TypeVar("_Result")
+
+
+class ProgramHandler(Protocol):
+    """A Program -> Program handler: the program it wraps keeps its result type.
+
+    ``reader(env=...)(prog())`` is a ``Program[T, Any]`` for ``prog()`` a
+    ``Program[T, E]``, so ``run`` of it is a ``T``. The effects after
+    installing are ``Any``: Python types cannot take the effects the handler
+    answers out of ``E``. A value that is not a program — the ``@do`` function
+    itself (``writer(prog)``) or ``state()(42)`` — is a type error, as it is a
+    ``TypeError`` when the program runs.
+
+    Every installer has this type: the core handlers (``reader``, ``state``,
+    ``writer``, ...), ``handler(raw)`` and ``stacked_handlers(...)``. A
+    ``defhandler`` handler (``doeff_hy.static_types.Handler``) is one too.
+    """
+
+    def __call__(self, program: "Program[_Result, Any]", /) -> "Program[_Result, Any]": ...
 
 
 @runtime_checkable
 class _InstalledHandler(Protocol):
-    """The existing installer marker declares a one-Program calling convention."""
+    """The existing installer marker declares a one-Program calling convention.
+
+    Inside this module an installer takes any value: ``with_handlers`` and
+    ``stacked_handlers`` apply it to a body typed ``object``, and the VM refuses
+    one that is not a program. Callers get it as a ``ProgramHandler``.
+    """
 
     @property
     def _doeff_is_handler_fn(self) -> Literal[True]: ...
@@ -154,7 +177,9 @@ def _called_without_program(name: str) -> str:
     )
 
 
-def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHandler:
+def _install_raw(
+    raw_handler: Callable[..., object], caller: str, name: str | None = None
+) -> _InstalledHandler:
     """The installer for an unmarked handler value: a raw ``(effect, k)`` dispatcher.
 
     A value without the installer marker is called by the VM with
@@ -172,6 +197,9 @@ def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHand
     too: the VM would skip the handler for every effect, and the run would end
     in an UnhandledEffect that does not name the annotation
     (``doeff_vm._effect_types.check_handler_annotation``).
+
+    The installer is named after the raw handler (``_handler_label``), or
+    ``name`` when given (``_named_handler``).
     """
     taken = _positional_capacity(raw_handler)
     if taken is not None and taken < 2:
@@ -190,13 +218,13 @@ def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHand
         return WithHandlerType(raw_handler, body)
 
     label = _handler_label(raw_handler)
-    install.__name__ = label.name
-    install.__qualname__ = label.qualname
+    install.__name__ = label.name if name is None else name
+    install.__qualname__ = label.qualname if name is None else name
     install.__doc__ = label.doc
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
     install_meta.__doeff_handler_data__ = raw_handler
-    return install
+    return cast(_InstalledHandler, install)  # the marker is set on it just above
 
 
 def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
@@ -223,7 +251,16 @@ def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
     return _install_raw(raw_handler, "handler")
 
 
-_Result = TypeVar("_Result")
+def _named_handler(raw_handler: Callable[..., object], name: str) -> ProgramHandler:
+    """The installer of a package's ready-made handler, under the name the package exports.
+
+    ``writer`` installs the raw ``_writer_handler``: the installer is named
+    ``writer``, so its calls and errors (``writer() got no program``) show the
+    name the user wrote. The name is given where the installer is made:
+    ``ProgramHandler`` does not declare a function's names, since a partial or
+    a ``defhandler`` handler is one too.
+    """
+    return _install_raw(raw_handler, "handler", name)
 
 
 @overload
@@ -272,7 +309,7 @@ def with_handlers(handlers: Iterable[Callable[..., object]], program: object) ->
     return wrapped
 
 
-def _bundled_installer(value: Callable[..., object]) -> ProgramHandler:
+def _bundled_installer(value: Callable[..., object]) -> _InstalledHandler:
     """One handler of a ``stacked_handlers`` bundle as an installer, normalized as ``with_handlers`` does."""
     if not callable(value):
         raise TypeError(f"stacked_handlers: handler must be callable, got {type(value).__name__}")

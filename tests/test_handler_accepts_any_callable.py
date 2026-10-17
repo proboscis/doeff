@@ -8,6 +8,7 @@ partial なら中の関数・呼べる instance なら class から取る。
 """
 
 import functools
+import types
 from dataclasses import dataclass
 
 from doeff_core_effects.scheduler import scheduled
@@ -63,8 +64,16 @@ def test_handler_accepts_callable_instance_and_bound_method() -> None:
     assert run(handler(PrefixHandler("m:").method)(body())) == "m:1"
 
 
+def _installer_name(install: object) -> str:
+    """handler() が作った installer の名を読むため(installer は関数 — 型の ProgramHandler は関数の名を宣言しない)。"""
+    assert isinstance(install, types.FunctionType), install
+    return install.__name__
+
+
 def test_installer_is_labelled_by_the_wrapped_function() -> None:
-    assert handler(functools.partial(prefixed, "p:")).__name__ == "prefixed"
-    assert handler(functools.partial(functools.partial(prefixed), "p:")).__name__ == "prefixed"
-    assert handler(PrefixHandler("c:")).__name__ == "PrefixHandler"
-    assert handler(PrefixHandler("m:").method).__name__ == "method"
+    assert _installer_name(handler(functools.partial(prefixed, "p:"))) == "prefixed"
+    assert (
+        _installer_name(handler(functools.partial(functools.partial(prefixed), "p:"))) == "prefixed"
+    )
+    assert _installer_name(handler(PrefixHandler("c:"))) == "PrefixHandler"
+    assert _installer_name(handler(PrefixHandler("m:").method)) == "method"

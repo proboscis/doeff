@@ -15,7 +15,7 @@ from doeff_core_effects.extra_hints import MissingExtraError
 from doeff_vm._not_a_program import uncalled_do_function_call
 
 from doeff.cli.profiling import profile
-from doeff.program import handler as _program_handler
+from doeff.program import with_handlers
 
 _CLOSE_NAMES_SHOWN = 3
 
@@ -307,10 +307,7 @@ def default_interpreter(program: object) -> object:
         lazy_ask(), state(), writer, try_handler, slog_handler,
         listen_handler, await_handler(),
     ]
-    wrapped = program
-    for h in reversed(handlers):
-        wrapped = _program_handler(h)(wrapped)
-    return run(scheduled(wrapped))
+    return run(scheduled(with_handlers(handlers, program)))
 
 
 def execute(resolved: ResolvedRunContext) -> object:

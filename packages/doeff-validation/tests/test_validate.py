@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import operator
-from collections.abc import Callable
 from enum import Enum
 
 import pytest
@@ -21,7 +20,8 @@ from doeff_validation import (
     validate,
 )
 
-from doeff import EffectGenerator, do, run
+from doeff import EffectGenerator, Program, do, run
+from doeff.program import ProgramHandler
 
 
 class Reason(Enum):
@@ -33,13 +33,13 @@ class Reason(Enum):
 ENV = {"seats": 3, "phase": "pending"}
 
 
-def _run(program: object, traverse_handler: Callable[[object], object] | None = None) -> object:
+def _run(program: Program, traverse_handler: ProgramHandler | None = None) -> object:
     """検査の Program を、reader と traverse の handler(既定は逐次)の下で走らせる。"""
     handler = traverse_handler if traverse_handler is not None else sequential()
     return run(scheduled(reader(ENV)(handler(program))))
 
 
-def _failures(program: object, traverse_handler: Callable[[object], object] | None = None) -> ValidationException:
+def _failures(program: Program, traverse_handler: ProgramHandler | None = None) -> ValidationException:
     """ValidationException が投げられることを確かめ、その例外を返す。"""
     with pytest.raises(ValidationException) as caught:
         _run(program, traverse_handler)
