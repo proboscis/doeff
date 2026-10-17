@@ -29,6 +29,26 @@ from doeff import Program, run
 # 契約テストでない deftest の名: handler は各 deftest が本体の中で被せる。
 PLAIN = "plain"
 
+# worker が job の子へ渡す文脈の名の頭(shared/core/run_context_rules の DOEFF_WORKER_*・DOEFF_RUNTIME_ENV*・宿の契約の program-env と notice-env)。
+JOB_CONTEXT_PREFIXES = ("DOEFF_WORKER_", "DOEFF_RUNTIME_ENV")
+
+
+@pytest.fixture(autouse=True)
+def outside_any_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """検の process から、外の job の文脈の名(JOB_CONTEXT_PREFIXES)を外す — 検の process は job の外の worker の代わりを務めるため。
+
+    本番の worker の環境にはこの名が無い(木の job の子は worker の環境を EXTEND で継ぐので、置かない事は雛形 deploy/ の側が守る —
+    worker/core/launch の job-launch)。検の process が job の子の中(job が起こした shell の下など)で走ると、子へ渡る文脈と送り手の
+    envKey と Program の file の名に、外の job の値が混ざった(2026-10-17 — test_job_context.hy の 2 件と test_worker_programs.hy の
+    1 件が、job の外で緑・中で赤)。読みは foundation の this-process-environ(DOEFF004)、外すのは MonkeyPatch(検の後に戻す)。
+    """
+    import hy  # noqa: F401  - Hy の module を import できるようにする
+    from doeff_cluster.foundation.process_versions import this_process_environ
+
+    environ = run(this_process_environ())
+    for name in [name for name in environ if name.startswith(JOB_CONTEXT_PREFIXES)]:
+        monkeypatch.delenv(name)
+
 
 @pytest.fixture
 def doeff_interpreter_name() -> str:
