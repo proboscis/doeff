@@ -5,6 +5,10 @@ verify-wiringを走らせる。続けて、記事の「決まりを破ると、�
 出力の行が実際に出る事を確かめる。最後に、リポジトリの中の完全な例(examples/adr_as_test/)が記事の枠と同じ
 中身で、そのまま走る事を確かめる。
 
+1つ目の破り方(datetime.now()を直に読む)のpytestは、走らせた日で結果が変わる(UTCの10月31日0時までは3つ通り、
+過ぎるとdeftestが落ちる)。そのため、走らせる日を実際の日付に任せず、datetime.now()が返す日時を環境変数で
+固定して、境目の前後と記事に載せた11月1日の3通りを確かめる。これで、この確かめはいつ走らせても同じ結果になる。
+
 使い方: uv run python publications/zenn-use-cases-v0/reviews/adr-check.py [--pypi | <doeffの木>]
 - 引数なし: doeffのリポジトリの環境(uv run --project <リポジトリの根> --no-sync)で走らせる。
 - <doeffの木>: その木の環境で走らせる。
@@ -14,11 +18,12 @@ verify-wiringを走らせる。続けて、記事の「決まりを破ると、�
 
 from __future__ import annotations
 
-import datetime  # 1つ目の破り方でdeftestが通る期間(10月31日まで)かを判じる。
+import os  # 固定した日時を、子プロセスの環境変数で渡す。
 import re  # 記事から枠を抜き出す。
 import subprocess  # uv runで検査を走らせる。
 import sys  # 失敗した時に終了コードを返す。
 import tempfile  # 読者のprojectを一時dirに作る。
+from dataclasses import dataclass  # 固定する日時と期待する結果の組に、欄の名前を付ける。
 from pathlib import Path  # ファイルの置き場を組み立てる。
 
 SOURCE = Path(__file__).resolve().parents[1]  # publications/zenn-use-cases-v0
@@ -31,6 +36,48 @@ ADR_NAME = "docs/adr/defadr_billing_clock.hy"  # 記事が読者に勧める名�
 WIRED = 'testpaths = ["docs/adr"]'  # 記事のpyproject.tomlの、pytestにADRを集めさせる行。
 GOOD_LINE = "now = yield GetTime()"  # 業務のコードの、規則を守る行。
 BAD_LINE = "now = datetime.now(due.tzinfo)"  # 1つ目の破り方で置き換える行。
+ASSERT_LINE = "(assert (and late (not early)))"  # ADRのdeftestが落ちる時に指される行。
+CLOCK_VARIABLE = "ADR_CHECK_NOW"  # datetime.now()が返す日時(ISO 8601)を渡す環境変数。
+
+
+@dataclass(frozen=True)
+class ClockCase:
+    """1つ目の破り方のpytestを走らせる日時と、その時に期待する結果。"""
+
+    now: str  # datetime.now()が返す日時(ISO 8601)。
+    exit_code: int  # pytestの終了コード。
+    shown_as: str  # 記事の出力の枠に書いた日付。枠に載せない日時は空。
+
+
+# 期限(2026年10月31日0時UTC)の直前は通り、直後は落ちる。記事の出力の枠は、通る側の10月30日と落ちる側の11月1日を載せる。
+CLOCKS = (
+    ClockCase("2026-10-30T23:59:59+00:00", 0, "2026年10月30日"),
+    ClockCase("2026-10-31T00:00:01+00:00", 1, ""),
+    ClockCase("2026-11-01T00:00:00+00:00", 1, "2026年11月1日"),
+)
+# deftestが落ちる時に、pytestが出す行(記事の出力の枠にも載せた物)。
+FAILED_LINES = (
+    "E   AssertionError",
+    "FAILED docs/adr/defadr_billing_clock.hy::test_overdue_follows_the_clock",
+    "1 failed, 2 passed",
+)
+# datetime.now()だけを固定する。PYTHONPATHに置くと、読者のprojectを変えずに、pytestの子プロセスが読み込む。
+SITECUSTOMIZE = f"""\
+# datetime.now()が返す日時を、環境変数{CLOCK_VARIABLE}の日時に固定する(OSの時計を進めた時の確かめ用)。
+import datetime as _datetime  # 標準のdatetimeの型を差し替える。
+import os as _os  # 固定する日時を環境変数から読む。
+
+_FIXED = _datetime.datetime.fromisoformat(_os.environ["{CLOCK_VARIABLE}"]).timestamp()  # 固定する日時(UNIX秒)。
+
+
+class _FixedDatetime(_datetime.datetime):  # now()だけを固定したdatetime。
+    @classmethod
+    def now(cls, tz=None):  # billing.pyが読む、今の日時。
+        return cls.fromtimestamp(_FIXED, tz)  # tzを渡されたら、その時間帯の日時で返す。
+
+
+_datetime.datetime = _FixedDatetime  # 以後のfrom datetime import datetimeは、固定した型を得る。
+"""
 
 
 def blocks() -> list[tuple[str, str]]:  # 記事の枠を、(言語, 中身)の組で掲載順に返す。
@@ -53,14 +100,26 @@ def pyproject_of(bash: str) -> str:
     return found.group(1)
 
 
+def pinned_clock(clock: Path, now: str) -> dict[str, str]:
+    """datetime.now()が返す日時をnowに固定した、子プロセスの環境変数を作る。"""
+    clock.mkdir(exist_ok=True)
+    (clock / "sitecustomize.py").write_text(SITECUSTOMIZE)
+    path = os.pathsep.join(filter(None, [str(clock), os.environ.get("PYTHONPATH")]))
+    return {**os.environ, "PYTHONPATH": path, CLOCK_VARIABLE: now}
+
+
 def run(
-    project: Path, *command: str, env: Path | None = None
+    project: Path,
+    *command: str,
+    env: Path | None = None,
+    environ: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:  # doeffの環境で1つ走らせる。
     # --pypiでは、env(既定はproject)のpyproject.tomlの依存を、uvが入れてから走らせる。
     where = [str(env or project)] if PYPI else [str(ROOT), "--no-sync"]
     return subprocess.run(
         ["uv", "run", "--project", *where, *command],
         cwd=project,
+        env=environ,
         capture_output=True,
         text=True,
         timeout=300,
@@ -91,6 +150,27 @@ def write_project(
     (project / "conftest.py").write_text(conftest)
     (project / ".semgrep.yaml").write_text(rule)
     (project / "pyproject.toml").write_text(pyproject)
+
+
+def check_pytest_by_clock(project: Path, clock: Path, adr: str, shown: str) -> None:
+    """1つ目の破り方のpytestを、日時を固定して期限の前後で走らせ、記事の出力の枠と比べる。"""
+    assert_number = next(
+        index for index, line in enumerate(adr.splitlines(), 1) if ASSERT_LINE in line
+    )  # deftestが落ちる時に指される行の番号を、pytestの出力と比べる。
+    failed_lines = (*FAILED_LINES, f"{ADR_NAME}:{assert_number}: AssertionError")
+    for case in CLOCKS:
+        result = run(project, "pytest", "-q", environ=pinned_clock(clock, case.now))
+        if case.exit_code == 0:
+            expect(f"1. {case.now}は、同じ変更でもpytestが通る", result, 0, "3 passed")
+        else:
+            expect(f"1. {case.now}は、deftestも落ちる", result, case.exit_code, *failed_lines)
+        if case.shown_as:
+            assert f"{case.shown_as}にした" in shown, (
+                f"記事の出力の枠に「{case.shown_as}にした」がありません"
+            )
+    assert "3 passed" in shown, "記事の出力の枠に、通る側の「3 passed」がありません"
+    for line in failed_lines:
+        assert line in shown, f"記事の出力の枠に「{line}」がありません"
 
 
 def main() -> None:  # 記事の手順・3通りの破り方・完全な例を順に確かめる。
@@ -138,18 +218,7 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
             f"{number}┆ {BAD_LINE}",
         )
         assert f"{number}┆ {BAD_LINE}" in shown, "記事の出力の行番号が実際と違います"
-        today = datetime.datetime.now(datetime.timezone.utc).date()
-        before_deadline = today < datetime.date(2026, 10, 31)  # 10月31日までは、deftestが見逃す。
-        pytest_result = run(broken, "pytest", "-q")
-        if before_deadline:
-            expect("1. 同じ変更でpytestは通る", pytest_result, 0, "3 passed")
-        else:
-            expect(
-                "1. 10月31日を過ぎるとdeftestも落ちる",
-                pytest_result,
-                1,
-                "test_overdue_follows_the_clock",
-            )
+        check_pytest_by_clock(broken, base / "clock", adr, shown)
 
         no_enforcement = base / "no-enforcement"  # 2. ADRから:enforcementを消す。
         head = (

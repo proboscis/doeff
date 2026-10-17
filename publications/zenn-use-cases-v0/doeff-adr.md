@@ -134,7 +134,12 @@ def doeff_interpreter():  # 名前はdoeff-adrが決めている。
 
 doeff-adrは、実行の仕方やハンドラを自分では選びません。プロジェクトごとに、使う時計や外部の接続が違うからです。
 
-ここに落とし穴があります。`is_overdue`の中で、`datetime.now(due.tzinfo)`を直に読むように書き換えたとします。それでもこのテストは、10月31日までは通ります。今日が、10月1日より後で10月31日より前だからです。実行のテストだけでは、規則の破れを見逃すことがあります。そこで、コードの形を見る2つ目の検査を置きます。
+ここに落とし穴があります。`is_overdue`の中で、`datetime.now(due.tzinfo)`を直に読むように書き換えたとします。このテストの結果は、走らせた日で変わります。
+
+- OSの時計がUTCで10月30日までなら、`early`は`False`のままで、テストは通ります。
+- 10月31日になると、期限が過ぎて`early`が`True`になり、テストが落ちます。
+
+落ちるのは、規則を破ったからではなく、日が過ぎたからです。実行のテストだけでは、規則の破れに気づく日が、時計まかせになります。そこで、コードの形を見る2つ目の検査を置きます。
 
 ## 2つ目の検査:Semgrepの規則を例で試す
 
@@ -204,7 +209,7 @@ uv run doeff-adr verify-wiring  # 全てのADRがpytestに集められたかを�
 
 ## 決まりを破ると、どこで止まるか
 
-決まりを3通りに破り、どこで止まるかを試しました。2026年10月17日に、上の手順でPyPIの0.6.0を入れて走らせた出力です。
+決まりを3通りに破り、どこで止まるかを試しました。2026年10月17日に、上の手順でPyPIの0.6.0を入れて走らせた出力です。1つ目のpytestだけは、走らせた日で結果が変わります。そのため、`datetime.now()`が返す日時を固定して、10月30日と11月1日の2通りを走らせました。
 
 ```text
 # 1. billing.pyの「now = yield GetTime()」を「now = datetime.now(due.tzinfo)」に替えた
@@ -214,7 +219,18 @@ $ uv run semgrep scan --config .semgrep.yaml --error .
           ❰❰ Blocking ❱❱
           今の時刻はGetTimeの依頼で頼みます(ADR-BILLING-001のR1)
             9┆ now = datetime.now(due.tzinfo)
-(終了コード 1。同じ変更でも、pytestの3つのテストは通った)
+(終了コード 1。走らせた日によらず、同じ出力)
+
+$ uv run pytest -q  # datetime.now()の日時を、2026年10月30日にした
+3 passed
+(終了コード 0。ADRの3つのテストが通った)
+
+$ uv run pytest -q  # datetime.now()の日時を、2026年11月1日にした
+E   AssertionError
+docs/adr/defadr_billing_clock.hy:25: AssertionError
+FAILED docs/adr/defadr_billing_clock.hy::test_overdue_follows_the_clock - ...
+1 failed, 2 passed
+(終了コード 1。指すのは25行目のassertで、datetime.now()の行ではない)
 
 # 2. ADRから:enforcementを消した
 $ uv run pytest -q
@@ -230,13 +246,13 @@ ERROR: doeff-adr wiring verification failed: executable ADR files exist but were
 ```
 
 ![決まりを破る3つの変更と、止まる所](/images/zenn-use-cases-v0/generated/adr-flow.png)
-*破り方ごとに、止める検査が違います。1つ目はpytestでは通るので、コードの形を見る走査が要ります。*
+*破り方ごとに、止める検査が違います。1つ目はpytestの結果が日付しだいなので、コードの形を見る走査が要ります。*
 
-- 業務のコードに`datetime.now()`を足すと、`semgrep scan`がその行を指して止まります。
+- 業務のコードに`datetime.now()`を足すと、`semgrep scan`がその行を指して止まります。走らせた日によらず、同じ結果です。
 - `:enforcement`を消すと、採用済みなのに検査が無いとして、ADRの形のテストが落ちます。
 - `testpaths`から外すと、`verify-wiring`が集められていないファイルを名指します。
 
-1つ目の変更では、pytestの3つのテストが通りました。実行のテストと形の検査は、互いの見逃しを埋めます。
+1つ目の変更では、pytestの結果が日付しだいで変わりました。10月30日までは3つとも通り、10月31日からは`deftest`が落ちます。落ちた時に指すのは`assert`の行で、`datetime.now()`の行ではありません。実行のテストと形の検査は、互いの見逃しを埋めます。
 
 ## doeffのリポジトリでの使い方
 
@@ -277,7 +293,7 @@ ADRの規則が破れると、テストの失敗として出ます。失敗の�
 
 ## 参考
 
-この記事のコードは、2026年10月17日に、上の手順でPyPIのdoeff 0.6.0を入れて確かめました。Pythonは3.12と3.14で、Hy 1.3.1・Semgrep 1.181.0です。GitHubにあるdoeffのmain(commit `9adc4f8`)の環境でも、同じく動きました。
+この記事のコードは、2026年10月17日に、上の手順でPyPIのdoeff 0.6.0を入れて確かめました。Pythonは3.12と3.14で、Hy 1.3.1・Semgrep 1.181.0です。GitHubにあるdoeffのmain(commit `9adc4f8`)の環境でも、同じく動きました。1つ目の破り方のpytestだけは、日時を固定して確かめました。固定した日は、2026年10月30日・10月31日・11月1日です。
 
 - 完全な例:[ADR](examples/adr_as_test/docs/adr/adr_billing_clock.hy)・[業務のコード](examples/adr_as_test/billing.py)・[conftest.py](examples/adr_as_test/conftest.py)・[Semgrepの規則](examples/adr_as_test/.semgrep.yaml)・[pyproject.toml](examples/adr_as_test/pyproject.toml)
 - 完全な例は、doeffのリポジトリの中に置いています。そのためADRのファイル名を`adr_billing_clock.hy`にし、`pyproject.toml`で集めます。

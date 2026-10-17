@@ -20,10 +20,10 @@
   <text x="54" y="312" font-size="22" font-family="DejaVu Sans Mono, monospace" fill="#b91c1c">  due.tzinfo)を読む</text>
   <line x1="352" y1="250" x2="416" y2="250" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
   <rect x="420" y="150" width="360" height="200" rx="16" fill="#fef9c3" stroke="#a16207" stroke-width="3"/>
-  <text x="444" y="196" font-size="30" font-weight="bold" fill="#a16207">3 passed</text>
-  <text x="444" y="242" font-size="24" fill="#111827">10月31日までは</text>
-  <text x="444" y="280" font-size="24" fill="#111827">deftestも通ってしまう</text>
-  <text x="444" y="322" font-size="22" fill="#4b5563">(実行のテストの見逃し)</text>
+  <text x="444" y="196" font-size="28" font-weight="bold" fill="#a16207">走らせた日で変わる</text>
+  <text x="444" y="242" font-size="24" fill="#111827">10月30日まで <tspan font-weight="bold" fill="#0f766e">3 passed</tspan></text>
+  <text x="444" y="282" font-size="24" fill="#111827">10月31日から <tspan font-weight="bold" fill="#b91c1c">1 failed</tspan></text>
+  <text x="444" y="322" font-size="22" fill="#4b5563">(規則でなく日付で落ちる)</text>
   <line x1="782" y1="250" x2="846" y2="250" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
   <rect x="850" y="150" width="320" height="200" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
   <text x="874" y="196" font-size="27" font-weight="bold" fill="#c2410c">semgrep scan</text>
@@ -70,5 +70,5 @@
   <text x="874" y="802" font-size="24" fill="#111827">終了コード 4</text>
 
   <text x="600" y="890" text-anchor="middle" font-size="27" font-weight="bold" fill="#111827">実行のテストと形の検査が、互いの見逃しを埋める</text>
-  <text x="600" y="940" text-anchor="middle" font-size="22" fill="#4b5563">2026-10-17に、doeffのmainで走らせた結果</text>
+  <text x="600" y="940" text-anchor="middle" font-size="22" fill="#4b5563">2026-10-17に、PyPIのdoeff 0.6.0で走らせた結果(1行目のpytestは日時を固定)</text>
 </svg>

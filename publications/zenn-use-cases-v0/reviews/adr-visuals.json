@@ -8,7 +8,7 @@
   "flow": {
     "title": "決まりを破る3つの変更と、止まる所",
     "code": "1. now = datetime.now(due.tzinfo)  # semgrep scan が止める\n2. :enforcement を消す              # ADRの形のテストが止める\n3. testpaths = [\"tests\"]           # verify-wiring が止める",
-    "flow": "白背景の3行3列。列の見出しは「変更」「普段のpytest」「止める所」。行1:灰の枠「1. 業務のコード billing.pyで datetime.now(due.tzinfo)を読む」→黄の枠「3 passed 10月31日まではdeftestも通ってしまう(実行のテストの見逃し)」→橙の枠「semgrep scan 9行目を指して止める billing-no-direct-now 終了コード 1」。行2:灰の枠「2. ADRの検査 ADRから:enforcementを消す」→緑の枠「1 failed(赤字) ADRの形のテストが落ちる accepted ADR must have executable enforcement」→緑の枠「pytest 採用済みなのに検査が無いとして止める 終了コード 1」。行3:灰の枠「3. pytestの設定 testpathsを[\"tests\"]にする」→黄の枠「1 passed testsのテストだけが走る ADRのテストは0本(ADRが漏れても通る)」→青の枠「verify-wiring 集められていないADRのファイルを名指す 終了コード 4」。下に太字「実行のテストと形の検査が、互いの見逃しを埋める」と、小さく「2026-10-17に、doeffのmainで走らせた結果」。正本はvisuals/adr-flow.svg。",
-    "caption": "破り方ごとに、止める検査が違います。1つ目はpytestでは通るので、コードの形を見る走査が要ります。"
+    "flow": "白背景の3行3列。列の見出しは「変更」「普段のpytest」「止める所」。行1:灰の枠「1. 業務のコード billing.pyで datetime.now(due.tzinfo)を読む」→黄の枠「走らせた日で変わる(太字) 10月30日まで 3 passed(緑字) 10月31日から 1 failed(赤字) (規則でなく日付で落ちる)」→橙の枠「semgrep scan 9行目を指して止める billing-no-direct-now 終了コード 1」。行2:灰の枠「2. ADRの検査 ADRから:enforcementを消す」→緑の枠「1 failed(赤字) ADRの形のテストが落ちる accepted ADR must have executable enforcement」→緑の枠「pytest 採用済みなのに検査が無いとして止める 終了コード 1」。行3:灰の枠「3. pytestの設定 testpathsを[\"tests\"]にする」→黄の枠「1 passed testsのテストだけが走る ADRのテストは0本(ADRが漏れても通る)」→青の枠「verify-wiring 集められていないADRのファイルを名指す 終了コード 4」。下に太字「実行のテストと形の検査が、互いの見逃しを埋める」と、小さく「2026-10-17に、PyPIのdoeff 0.6.0で走らせた結果(1行目のpytestは日時を固定)」。正本はvisuals/adr-flow.svg。",
+    "caption": "破り方ごとに、止める検査が違います。1つ目はpytestの結果が日付しだいなので、コードの形を見る走査が要ります。"
   }
 }

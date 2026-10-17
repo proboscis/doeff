@@ -17,10 +17,10 @@
     "generation_prompt": "adr-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "361044eb6a760feb62423caf57f89ef81ed47607f48f8daf052e14b2a34c850a",
+    "sha256": "8350ceaf111513a319cb18f0d62ac6048eec3b8f8037557ecfd402d78c3663b7",
     "width": 1200,
     "height": 1000,
-    "bytes": 178954,
-    "review": "2026-10-17：reviews/adr-check.pyで走らせた3通りの破り方の結果(3 passed・1 failed・1 passed)と、止める所(終了コード1・1・4)・9行目を目視確認。白背景の平面図として採用。"
+    "bytes": 187976,
+    "review": "2026-10-17：reviews/adr-check.pyで走らせた3通りの破り方の結果と、止める所(終了コード1・1・4)・9行目を目視確認。1つ目のpytestは、datetime.now()の日時を固定した結果(10月30日は3 passed・10月31日からは1 failed)に直した。白背景の平面図として採用。"
   }
 ]
