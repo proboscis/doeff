@@ -551,12 +551,13 @@ def test_generic_effect_clauses_have_no_unknown_type_error(tmp_path: Path) -> No
 
 @needs_pyright
 def test_generic_effect_field_keeps_the_type_of_its_definition(tmp_path: Path) -> None:
-    # 欄は Any に逃げない: Race の tasks は定義の型 `tuple[Task[Any] | Future[Any], ...]`、Spawn の program は `Program[Any, Any]`
-    # なので、int の引数へ渡せば赤(型引数だけが Any で、入れ物の形は残る)。
+    # 欄は Any に逃げない: Race の tasks は定義の型 `tuple[Task[object] | Future[object], ...]`(Task・Future を共変にした
+    # 25f1dcd02 から、Race の実装の __init__ はこの型で受ける)、Spawn の program は `Program[Any, Any]` なので、int の引数へ
+    # 渡せば赤(入れ物の形は残る)。
     race = _generic({"RACE_USE": "(takes-int tasks)"})
     race_errors = _errors_at(_check(tmp_path, race), _line_of(race, "(takes-int tasks)"))
     assert [d["rule"] for d in race_errors] == ["reportArgumentType"], race_errors
-    assert "Task[Any] | Future[Any]" in str(race_errors[0]["message"]), race_errors
+    assert "Task[object] | Future[object]" in str(race_errors[0]["message"]), race_errors
 
     spawn = _generic({"SPAWN_USE": "(takes-int program)"})
     spawn_errors = _errors_at(_check(tmp_path, spawn), _line_of(spawn, "(takes-int program)"))
