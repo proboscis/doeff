@@ -335,6 +335,53 @@ result = run(scheduled(state()(writer(main()))))
 print(result)  # ['a', 'b']
 ```
 
+## Type checking
+
+The examples above leave out type annotations and use plain `yield`, so pyright and mypy see
+`Any` where their values flow. Here is the 30-second example with types:
+
+```python
+from collections.abc import Generator
+from dataclasses import dataclass
+from typing import Any
+
+from doeff import EffectBase, K, Resume, do, handler, run, typed_resume
+
+@dataclass(frozen=True)
+class Fetch(EffectBase[str]):  # [str]: the type a handler answers with
+    url: str
+
+@dataclass(frozen=True)
+class Summarize(EffectBase[str]):
+    text: str
+
+@do
+def digest(url: str) -> Generator[Fetch | Summarize, Any, str]:
+    page = yield from Fetch(url)  # page: str (plain yield gives Any)
+    return (yield from Summarize(page))
+
+@do
+def fake_world(effect: Fetch | Summarize, k: K) -> Generator[Resume, Any, Any]:
+    if isinstance(effect, Fetch):
+        return (yield typed_resume(effect, k, "<h1>Hello</h1>"))  # must be a str
+    return (yield typed_resume(effect, k, f"{len(effect.text)} chars"))
+
+summary = run(handler(fake_world)(digest("https://example.com")))  # summary: str
+print(summary)  # 14 chars
+```
+
+- `yield from Fetch(url)` runs exactly like `yield Fetch(url)`, but gives the answer the type
+  `EffectBase[str]` declares: `page` is a `str`, where `yield` gives `Any`.
+- `Generator[Fetch | Summarize, Any, str]` lists the effects `digest` may yield and its result.
+  Yielding another effect in `digest` is an error, and `run` of the program is a `str`.
+- `typed_resume` checks the handler's answer against the effect: `42` for a `Fetch` is an error.
+- mypy needs the annotations. It does not infer the types of a function without them: to mypy, an
+  unannotated `@do` function takes and returns `Any`, and its body is not checked. pyright infers
+  part of the types without annotations, and reads the same annotations.
+
+[Static typing](https://github.com/proboscis/doeff/blob/main/docs/23-static-typing.md) covers the
+scheduler's effects, handlers and what stays `Any`.
+
 ## CLI
 
 ```bash
