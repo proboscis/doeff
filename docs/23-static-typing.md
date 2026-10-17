@@ -5,33 +5,56 @@ With pyright (or any checker that reads the annotations) an effectful program is
 checked for three things: the value each effect answers with, the effects a
 program may yield, and the value a handler answers with.
 
+The examples that start with `import` lines build one file: copy them in
+order, and pyright (`strict`) and mypy (`--strict`) report no errors. Fragments
+without imports show a few lines out of a larger program.
+
 ## Effects declare their answer type
 
 ```python
 from dataclasses import dataclass
-from doeff import EffectBase
+from typing import TypeVar
+
+from doeff import EffectBase, effect_result_type
+
+T = TypeVar("T")
+
 
 @dataclass(frozen=True)
 class ReadClock(EffectBase[int]):        # the handler answers with an int
     pass
 
+
 class WriteEffect(EffectBase[T]):        # a generic parent is fine
     pass
+
 
 @dataclass(frozen=True)
 class WriteShared(WriteEffect[bool]):
     key: str
+
+
+print(effect_result_type(WriteShared))   # <class 'bool'>
 ```
 
-`EffectBase[T]` is valid at runtime (`types.GenericAlias`). An effect that
-subclasses plain `EffectBase` has an unknown answer type.
+`EffectBase[T]` is valid at runtime (`types.GenericAlias`), so the answer type
+can also be read at runtime (`effect_result_type` — see "Runtime readers"
+below). An effect that subclasses plain `EffectBase` has an unknown answer type.
 
 ## `yield from` gives the answer its type
 
 (The same types without `yield from`: `@effectful` + `perform(e)`, rewritten at import —
 docs/24-effectful-perform.md.)
 
-```python
+Add this below the example above:
+
+```python continues
+from collections.abc import Generator
+from typing import Any
+
+from doeff import do
+
+
 @do
 def elapsed(since: int) -> Generator[ReadClock, Any, int]:
     now = yield from ReadClock()          # now: int
@@ -84,14 +107,31 @@ the business-code files.
 
 `Task[T]` and `Future[T]` are covariant in `T`: a `Task[int]` is also a
 `Task[object]`. So handles of different result types go into one `Gather` or
-`Race`:
+`Race`. Add this below the examples above:
 
-```python excerpt
-number = yield from Spawn(count())   # Task[int]
-text = yield from Spawn(name())      # Task[str]
-both = yield from Gather(number, text)   # list[int | str]
-first = yield from Race(number, text)    # int | str
+```python continues
+from doeff import Gather, Race, Spawn
+
+
+@do
+def label(since: int) -> Generator[ReadClock, Any, str]:
+    spent = yield from elapsed(since)
+    return f"{spent} ms"
+
+
+@do
+def both(since: int) -> Generator[
+    Spawn[Any, Any] | Gather[int | str] | Race[int | str] | ReadClock, Any, list[int | str]
+]:
+    number = yield from Spawn(elapsed(since))   # Task[int]
+    text = yield from Spawn(label(since))       # Task[str]
+    together = yield from Gather(number, text)  # list[int | str]
+    first = yield from Race(number, text)       # int | str
+    return [*together, first]
 ```
+
+The spawned programs' `ReadClock` is in `both`'s effects: the tasks run under
+the caller's handlers.
 
 mypy joins the result types instead of taking their union (`int` and `str`
 join to `object`), so `Gather` and `Race` declare overloads for 2 to 6 handles
@@ -100,10 +140,25 @@ types, mypy answers `list[object]` / `object`; pyright still answers the union.
 
 ## Handler answers
 
-```python
+A handler for `ReadClock` runs `elapsed`, and under the scheduler `both`. Add
+this below the examples above:
+
+```python continues
+from doeff import K, handler, run, typed_resume
+from doeff_core_effects.scheduler import scheduled
+
+
+def now_ms() -> int:
+    return 1_000
+
+
 @do
-def clock(effect: ReadClock, k: K):
+def clock(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
     return (yield typed_resume(effect, k, now_ms()))   # value must be an int
+
+
+print(run(handler(clock)(elapsed(400))))               # 600
+print(run(scheduled(handler(clock)(both(400)))))       # [600, '600 ms', 600]
 ```
 
 `typed_resume(effect, k, value)` / `typed_transfer(effect, k, value)` are

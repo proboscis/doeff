@@ -334,7 +334,7 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 
 # 入門の道の外で、例を走る形に直した docs の page を書き換えた便は、その例を走らせて印字を注記と比べる検を払う
 # (card ki-8e45f740dc61)。page を足す時は、ここに行を 1 つ足す(検の CHECKED_PAGES はこの表から読む・card ki-7277427f6d8e)。
-# 秒は 16 秒(16 本・子 8 本・起動を含む壁時計・load 約 85 の下・2026-10-17 会話の Pod)。
+# 秒は 27 秒(34 本・子 19 本・起動を含む壁時計・load 約 95 の下・2026-10-17 会話の Pod — 23 章と 24 章を足した後)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
@@ -372,6 +372,17 @@ tests = ["tests/test_docs_handler_endings.py"]
 [[tool.doeff.contract-tests]]
 prefix = "docs/18-effect-combinations.md"
 tests = ["tests/test_docs_page_examples.py"]
+
+# 型の章(23 と 24)は、page の例の検に加え、写した例が pyright の strict と mypy の --strict で赤を出さない検を払う
+# (card ki-b370d8d59e8c)。型の検の page の一覧(TYPED_PAGES)もこの表から読む。型の検の秒は 38 秒(7 本・子 4 本 — pyright 2・mypy 2・
+# 起動を含む壁時計・load 約 95 の下・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/23-static-typing.md"
+tests = ["tests/test_docs_page_examples.py", "tests/test_docs_typing_chapter_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/24-effectful-perform.md"
+tests = ["tests/test_docs_page_examples.py", "tests/test_docs_typing_chapter_examples.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
