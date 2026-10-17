@@ -456,7 +456,7 @@ def job(perform: Effects[ReadClock | WriteShared | Ask | Get | Put | Try[int]]) 
     stored = perform(Put("k", 1))
     assert_type(stored, None)
     tried = perform(Try(elapsed(1)))
-    assert_type(tried, Ok[int] | Err)
+    assert_type(tried, Ok[int] | Err[Exception])
     return tag
 
 
