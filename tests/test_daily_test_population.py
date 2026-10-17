@@ -129,6 +129,12 @@ EXCLUDED: dict[str, str] = {
         "PyCharm plugin の検出の検体(テスト関数を持たない)"
     ),
     "packages/doeff-agentic/examples/": "例示の script(__main__ で走らせる)",
+    "examples/test_llm_agent.py": (
+        "利用者が例の llm_agent.py の隣に写して走らせる pytest の検の例。母集団の根(testpaths)の下の "
+        "tests/test_examples_run.py::test_example_tests_pass_with_only_the_example_files が、examples/ の .py だけを写した "
+        "repo の外の dir で日次に走らせる — 根の下に置くと、根の conftest.py と pyproject.toml の pytest の設定の下でも走り、"
+        "核の 4 個と pytest だけで通る事を確かめなくなる"
+    ),
     "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": (
         "fixture の module 名(テストではない)"
     ),

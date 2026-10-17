@@ -33,6 +33,10 @@ components are listed separately under
 8. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
 9. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
+### Examples
+
+- **[LLM agent](../examples/llm_agent.py)** - The model call as your own effect `Complete(prompt)`: an OpenAI-compatible client answers it in production, canned answers in [its pytest tests](../examples/test_llm_agent.py). It needs only `pip install doeff`, and its tests pytest besides
+
 ### Integration & Advanced Topics
 
 11. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
@@ -86,6 +90,9 @@ pip install doeff ./doeff/packages/doeff-time   # the paths the page names
 - **[doeff-agents / session host](../packages/doeff-agents/README.md)** - Agent session management, the `doeff-sessionhost` host, and joining an agent control plane
 
 ### LLM and image providers — `doeff-llm`, `doeff-gemini`, `doeff-openai`, `doeff-openrouter`, `doeff-seedream`
+
+These packages ship ready-made LLM effects and provider handlers. To call a model with only
+`pip install doeff`, define the call as your own effect, as the [LLM agent example](../examples/llm_agent.py) does.
 
 - **[Unified LLM Effects](llm_unified_effects.md)** - Provider-agnostic LLM effects and handler stacking
 - **[Gemini Setup](gemini_client_setup.md)** - API key and ADC configuration
