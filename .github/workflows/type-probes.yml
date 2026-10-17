@@ -1,0 +1,41 @@
+# 核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを main から組んで新しい venv に入れ、型の probe(tests/type_probes/)
+# と README の Python の例を pyright と mypy にかけ、誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12・
+# card ki-d2c901bc9a2d)。中身は tools/verify_type_probes.py — 型の報告の抜けを直した所が使う人の入れ方で戻らない事と、開いている抜けが
+# 埋まった時に印を替えさせる事。型の道具の版は uv.lock の版。Python は requires-python の両端の 3.11 と 3.14(macOS と Windows の job と
+# 同じく素の 3.14)。doeff-vm は PyPI の wheel でなく source から組む(build の口 tools/doeff_cargo_backend.py — Rust の道具が要る)。
+name: Type probes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  type-probes:
+    name: type probes (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    # 核だけの入れ方の検(python-compatibility.yml の core-only-install)と同じく、uv の管理する Python だけを使う。
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check the type probes and the README examples in a fresh core-only venv
+        run: uv run --no-project python tools/verify_type_probes.py --python ${{ matrix.python }}
