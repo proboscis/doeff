@@ -11,9 +11,10 @@ from tests.cli.cli_child import with_settings
 pytestmark = [
     pytest.mark.cli,
     pytest.mark.skip(
-        reason="blocked on tests.cli_assets dotted-path resolution in "
-        "import_symbol (progressive prefix walk) — see ISSUE-VM-001 / prior "
-        "session issues.md #7"
+        reason="tests/cli/cli_assets.py cannot be imported: it calls Program.pure, which "
+        "DoExpr does not have (doeff run now says so: \"type object 'DoExpr' has no attribute "
+        "'pure'\"; import_symbol used to hide it as a missing module attribute) — see "
+        "ISSUE-VM-001 / prior session issues.md #7"
     ),
 ]
 

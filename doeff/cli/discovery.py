@@ -10,6 +10,7 @@ import logging
 from typing import Any, Protocol, cast
 
 from doeff.cli.profiling import profile
+from doeff.cli.run_services import import_symbol
 from doeff.program import Expand, Pure
 
 EnvProgram = Pure | Expand
@@ -36,21 +37,9 @@ class SymbolLoader(Protocol):
 
 class StandardSymbolLoader:
     def load_symbol(self, full_path: str) -> object:
+        """Load the env symbol a discovered or ``--env`` path names, resolved as ``doeff run`` resolves any path."""
         with profile(f"Load symbol {full_path}", indent=2):
-            parts = full_path.split(".")
-            for i in range(len(parts), 0, -1):
-                module_path = ".".join(parts[:i])
-                attr_path = parts[i:]
-                try:
-                    module = importlib.import_module(module_path)
-                    obj = module
-                    for attr in attr_path:
-                        obj = getattr(obj, attr)
-                    return obj
-                except (ImportError, AttributeError):
-                    if i == 1:
-                        raise
-            raise ImportError(f"Could not import {full_path}")
+            return import_symbol(full_path)
 
 
 class IndexerBasedDiscovery:
