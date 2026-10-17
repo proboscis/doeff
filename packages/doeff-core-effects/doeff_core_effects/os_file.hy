@@ -15,6 +15,11 @@
 ;;; offloaded-file-handler は tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・
 ;;; ReadDiskFree)を同じく呼び 1 つに thread 1 本で待つ(card ki-97da6e8be47f — 本体の thread が disk の block 層の待ちで D 状態になると、同じ
 ;;; thread の背景の heartbeat も一緒に止まった。待つ間も本体は他の task を回す)。置き場は offloaded-tree-handler と同じ。
+;;; 2026-10-18 に file 1 つと木の写しの効果(ReadBytes・WriteBytes・AppendText・CopyFile・CopyTree・WalkTree・LinkFile・MakeSymlink・
+;;; ReadDiskUsage)も受けるようにした(card ki-24ee30105583 — agora の turn-host が scheduler の thread で会話の記録を読み・写し、待ち行列の
+;;; 浅い詰まった disk の上で全部の手番が止まった)。受けないのは、錠の取り(offloaded-lock-handler — 取り消しの後の錠を返す後始末が要る)・
+;;; 錠の返し(disk を待たない)・木の数えと消しと様子つきの歩き(offloaded-tree-handler — IO 優先度を下げる)・bytecode の作り(自分の
+;;; process の組で回す)。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import ctypes)
@@ -60,7 +65,8 @@
 
 ;; offloaded-tree-handler の thread(木の数え・消し・様子つきの歩き 1 つに thread 1 本 — 本体の IO を先に通すため IO 優先度を IDLE に下げる)。
 (val TREE-THREADS (ThreadPerCall :on-start lower-io-priority))
-;; offloaded-file-handler の thread(file 1 つの読み・書き・様子・一覧・dir 作り・改名・空きの読み 1 つに thread 1 本)。
+;; offloaded-file-handler の thread(file 1 つの読み・書き・追記・写し・様子・一覧・dir 作り・改名・張り・空きの読みと、木の写しと歩き
+;; 1 つに thread 1 本)。
 (val FILE-THREADS (ThreadPerCall))
 
 
@@ -412,9 +418,9 @@
 
 
 (defhandler offloaded-file-handler
-  ;; tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)だけを thread で
-  ;; 待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。待つ task が取り消された後の答えは何も持たない(書き・改名・
-  ;; dir 作りは終わった印、読みは値)— 後始末は要らない。
+  ;; 同期の file の効果(頭の註の一覧 — 錠と木の数え・消し・様子つきの歩きと bytecode の作りの外の全部)を thread で待つ答え手。他の file の
+  ;; effect は外側の答え手(offloaded-lock-handler・offloaded-tree-handler・os-file-handler)が答える。待つ task が取り消された後の答えは
+  ;; 何も持たない(書き・追記・写し・改名・張り・dir 作りは終わった印、読みは値)— 後始末は要らない。走り出した書きと写しは走り切る。
   (WriteText [path text mode replace sync]
     (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (write-content path text mode replace sync))) keep-nothing))
     (resume answer))
@@ -435,4 +441,35 @@
     (resume answer))
   (ReadDiskFree [path]
     (<- answer (| int FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (disk-free path))) keep-nothing))
+    (resume answer))
+  (ReadDiskUsage [path]
+    (<- answer (| DiskUsage FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (disk-usage path))) keep-nothing))
+    (resume answer))
+  (ReadBytes [path limit offset]
+    (<- answer (| bytes FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (read-file path True limit offset))) keep-nothing))
+    (resume answer))
+  (WriteBytes [path content mode replace sync]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (write-content path content mode replace sync))) keep-nothing))
+    (resume answer))
+  (AppendText [path text sync]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded path (fn [] (_append path text sync))))) keep-nothing))
+    (resume answer))
+  (CopyFile [source target]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded source (fn [] (shutil.copyfile source target)))))
+                                              keep-nothing))
+    (resume answer))
+  (CopyTree [source target]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS
+                                              (fn [] (run-detached (guarded source (fn [] (shutil.copytree source target :symlinks True
+                                                                                                            :dirs-exist-ok True)))))
+                                              keep-nothing))
+    (resume answer))
+  (WalkTree [path]
+    (<- answer (| tuple FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (walk-tree path))) keep-nothing))
+    (resume answer))
+  (LinkFile [source target]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded source (fn [] (os.link source target))))) keep-nothing))
+    (resume answer))
+  (MakeSymlink [path target]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded path (fn [] (os.symlink target path))))) keep-nothing))
     (resume answer)))
