@@ -1,12 +1,59 @@
 # doeff Documentation
 
-Welcome to the comprehensive documentation for doeff - an algebraic effects system with one-shot continuations for Python, backed by a Rust VM.
+doeff brings algebraic effects to Python. Your functions `yield` requests such as "fetch this
+URL" instead of doing the I/O themselves, and handlers decide what each request means: real I/O
+in production, fakes in tests. This page is where the documentation starts.
 
-## Quick Links
+## Start Here
 
-- **[GitHub Repository](https://github.com/proboscis/doeff)**
-- **[PyPI Package](https://pypi.org/project/doeff/)**
-- **[Issue Tracker](https://github.com/proboscis/doeff/issues)**
+Read these in order the first time:
+
+1. **Install** - `pip install doeff` on Python 3.11 or later: see [Install](#install) below
+2. **A first program** - the [Quick Example](#quick-example) below, then [Getting Started](01-getting-started.md)
+3. **Questions** - the [FAQ](faq.md): dependency injection, asyncio, speed, types, debugging, Hy, production use
+4. **Why effects?** - [where effects beat dependency injection and plain `async`, and where they do not](20-why-effects-over-di.md)
+5. **Examples** - an [LLM agent](../examples/llm_agent.py) and a [GitHub API client](../examples/github_repo/README.md), each tested with a fake handler and no network
+6. **API** - the [API Reference](13-api-reference.md) and the [built-in effects and handlers](../packages/doeff-core-effects/README.md)
+
+The [Table of Contents](#table-of-contents) below lists every guide.
+
+## Install
+
+```bash
+pip install doeff          # Python 3.11+: the core (doeff, doeff-vm, doeff-core-effects)
+pip install "doeff[hy]"    # + Hy and the handlers written in Hy (files, SQL, processes, cache, …)
+pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
+pip install "doeff[all]"   # both
+```
+
+## Quick Example
+
+```python
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def example_workflow():
+    # State management
+    yield Put("counter", 0)
+
+    # Logging
+    yield Tell("Starting computation")
+
+    # State updates
+    yield Put("result", 42)
+    count = yield Get("result")
+
+    return count
+
+prog = example_workflow()
+prog = writer(prog)
+prog = state()(prog)
+result = run(scheduled(prog))
+print(f"Result: {result}")  # Result: 42
+```
 
 ## Table of Contents
 
@@ -21,23 +68,23 @@ components are listed separately under
 ### Getting Started
 
 1. **[Getting Started](01-getting-started.md)** - Installation, first program, basic concepts
-2. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
-3. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
-
-- **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
+2. **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
+3. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
+4. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
 
 ### Effect Types
 
-4. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
-5. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
-6. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
-7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
-8. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
-9. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
+5. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
+6. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
+7. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
+8. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
+9. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
+10. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
 ### Examples
 
 - **[LLM agent](../examples/llm_agent.py)** - The model call as your own effect `Complete(prompt)`: an OpenAI-compatible client answers it in production, canned answers in [its pytest tests](../examples/test_llm_agent.py). It needs only `pip install doeff`, and its tests pytest besides
+- **[GitHub API client](../examples/github_repo/README.md)** - Calls the GitHub REST API through the HTTP handler of `doeff[http]`; its tests answer with a fake handler, without the network. Run them with `pip install "doeff[http]" pytest`, then `pytest examples/github_repo`
 
 ### Integration & Advanced Topics
 
@@ -114,35 +161,6 @@ Key characteristics:
 - **Generator-based do-notation**: Write effectful code that looks like regular Python
 - **Stack-safe execution**: Trampolining prevents stack overflow
 - **Type safety**: Full type annotations with `.pyi` files
-
-## Quick Example
-
-```python
-from doeff import do, run
-from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
-
-@do
-def example_workflow():
-    # State management
-    yield Put("counter", 0)
-
-    # Logging
-    yield Tell("Starting computation")
-
-    # State updates
-    yield Put("result", 42)
-    count = yield Get("result")
-
-    return count
-
-prog = example_workflow()
-prog = writer(prog)
-prog = state()(prog)
-result = run(scheduled(prog))
-print(f"Result: {result}")  # Result: 42
-```
 
 ## Learning Path
 
@@ -250,6 +268,12 @@ def process_batch(items):
     results = yield Gather(*spawned)
     return {"processed": len(results), "results": results}
 ```
+
+## Links
+
+- **[GitHub Repository](https://github.com/proboscis/doeff)**
+- **[PyPI Package](https://pypi.org/project/doeff/)**
+- **[Issue Tracker](https://github.com/proboscis/doeff/issues)**
 
 ## Contributing
 

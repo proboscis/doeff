@@ -57,9 +57,9 @@ nav:
   - Home: index.md
   - Getting Started:
       - Getting Started: 01-getting-started.md
+      - FAQ: faq.md
       - Why Effects?: 20-why-effects-over-di.md
       - Core Concepts: 02-core-concepts.md
-      - FAQ: faq.md
   - Effect Types:
       - Basic Effects: 03-basic-effects.md
       - Async Effects: 04-async-effects.md
