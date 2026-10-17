@@ -26,7 +26,8 @@ The matrix below follows `SPEC-EFF-100` outer/inner structure.
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
 `*` Listen captures logs only on success paths. On error, the error propagates and logs are not
-wrapped in `ListenResult`.[^D5]
+wrapped in `ListenResult`.[^D5] The logs that `Listen` captures from parallel `Gather` branches
+come in no guaranteed order.[^D2]
 
 `**` Children share one store; a read-modify-write is safe only when the child does not suspend
 between the read and the write (`Law 8a` and `Law 8b`).[^D4]
