@@ -37,6 +37,9 @@ from doeff_system_one.types import (
     Answer as Answer,
 )
 from doeff_system_one.types import (
+    Image as Image,
+)
+from doeff_system_one.types import (
     JudgeError as JudgeError,
 )
 from doeff_system_one.types import (

@@ -52,6 +52,31 @@ class Question:
         return body
 
 
+IMAGE_FORMATS: tuple[str, ...] = ("png", "jpg", "jpeg")
+
+
+@dataclass(frozen=True)
+class Image:
+    """state から鍵で指す画像 1 枚(TypeSafe の images — https://docs.typesafe.ai/images.md)。
+
+    format: png / jpg / jpeg。data_base64: file の中身の base64(標準の綴り・= の詰めつき・空白も data: の頭も無い)。
+    state の中では、Judge の assets の鍵の文字列で指す(例 state={"poster": "poster-1"}・assets={"poster-1": Image(...)})。
+    """
+
+    format: str
+    data_base64: str
+
+    def __post_init__(self) -> None:
+        if self.format not in IMAGE_FORMATS:
+            raise ValueError(f"format は png / jpg / jpeg のどれか: {self.format!r}")
+        if not self.data_base64:
+            raise ValueError("data_base64 が空")
+
+    def as_payload(self) -> dict[str, Any]:
+        """TypeSafe の綴り(本文の根の assets の値)。"""
+        return {"type": "image", "format": self.format, "data_base64": self.data_base64}
+
+
 def choice(instructions: str, options: Mapping[str, str] | Sequence[str]) -> Question:
     """候補から 1 つ選ぶ問い。候補は id → 説明の表か、id だけの列(説明 = id)。
     「どれでもない」を候補に含めたい時は呼び手が足す。"""
