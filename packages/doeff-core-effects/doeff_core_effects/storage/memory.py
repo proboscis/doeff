@@ -50,11 +50,11 @@ class InMemoryStorage:
         with self._lock:
             return key in self._data
 
-    def get(self, key: str) -> Await[Any | None]:
+    def get(self, key: str) -> Await[object]:
         """Get value by key. Returns Program[Any | None] via Await."""
         return Await(asyncio.to_thread(self._sync_get, key))
 
-    def put(self, key: str, value: Any) -> Await[None]:
+    def put(self, key: str, value: object) -> Await[None]:
         """Store value with key. Returns Program[None] via Await."""
         return Await(asyncio.to_thread(self._sync_put, key, value))
 

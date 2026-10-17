@@ -15,7 +15,7 @@ from doeff_core_effects.cache_policy import (
 
 class CacheGetEffect(EffectBase):
     """Requests the cached value for the key."""
-    def __init__(self, key: Any) -> None:
+    def __init__(self, key: object) -> None:
         super().__init__()
         self.key = key
 
@@ -25,7 +25,7 @@ class CacheGetEffect(EffectBase):
 
 class CachePutEffect(EffectBase):
     """Persists the value under the key."""
-    def __init__(self, key: Any, value: Any, policy: CachePolicy) -> None:
+    def __init__(self, key: object, value: object, policy: CachePolicy) -> None:
         super().__init__()
         if not isinstance(policy, CachePolicy):
             raise TypeError(f"policy must be CachePolicy, got {type(policy).__name__}")
@@ -39,7 +39,7 @@ class CachePutEffect(EffectBase):
 
 class CacheDeleteEffect(EffectBase):
     """Deletes the value under the key."""
-    def __init__(self, key: Any) -> None:
+    def __init__(self, key: object) -> None:
         super().__init__()
         self.key = key
 
@@ -49,7 +49,7 @@ class CacheDeleteEffect(EffectBase):
 
 class CacheExistsEffect(EffectBase):
     """Checks if a key exists in the cache."""
-    def __init__(self, key: Any) -> None:
+    def __init__(self, key: object) -> None:
         super().__init__()
         self.key = key
 
