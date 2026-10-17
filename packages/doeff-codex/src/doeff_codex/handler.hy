@@ -314,11 +314,26 @@
 
 ;; --- 要求と答え --------------------------------------------------------------------------------
 
+(val EXIT-RECORD-SECONDS 5.0)  ; 読み手の thread が stdout の EOF の後に stderr の thread を待つ上限(process.hy の 2.0 秒)より長く
+
+(defk exit-recorded [#^ SessionRuntime runtime]
+  {:pre [(: runtime SessionRuntime)] :post [(: % bool)] :tags {:context "codex" :role "process"}}
+  "降りた process の終わりの code と stderr の末尾(on-exit)が記されたかを読むため(code は信号でも None にならない)。"
+  (with [runtime.lock]
+    (val recorded (is-not runtime.exit-code None)))
+  recorded)
+
+
 (defk launch-failure [#^ SessionRuntime runtime #^ str stage]
   {:pre [(: runtime SessionRuntime) (: stage str)] :post [(: % LaunchFailed)] :tags {:context "codex" :role "process"}}
-  "要求の答えを得られなかった時の失敗を、降りた process の終了の code と stderr の末尾つきで作るため。"
+  "要求の答えを得られなかった時の失敗を、降りた process の終了の code と stderr の末尾つきで作るため。process が降りた直後は
+   on-exit(読み手の thread が stdout の EOF と stderr の読み終わりの後に呼ぶ)がまだ code と stderr を記していないので、
+   記されるまで(上限つき)待ってから読む。"
   (with [runtime.lock]
-    (val alive (and (is-not runtime.process None) (.alive runtime.process)))
+    (val alive (and (is-not runtime.process None) (.alive runtime.process))))
+  (when (not alive)
+    (<- (wait-until runtime.doorbell (fn [] (exit-recorded runtime)) EXIT-RECORD-SECONDS)))
+  (with [runtime.lock]
     (val failure (LaunchFailed :detail (if alive
                                            (.format "{} の答えを待つ上限の秒を過ぎた" stage)
                                            (.format "{} の答えの前に codex の process が降りた" stage))
