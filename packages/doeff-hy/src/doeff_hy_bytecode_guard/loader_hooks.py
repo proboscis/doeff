@@ -407,7 +407,13 @@ def _checking_get_code(previous: GetCode):
             code = _hy_code(self, fullname, path)
         finally:
             _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
-        _remember_record(path, code)
+        record = _remember_record(path, code)
+        if code is not None and record is not None:
+            # macro を require し忘れた・import で入れた module に、書き足す 1 行を言う(実行の前 — 文は Python が出し、
+            # その frame に doeff の code が無い・card ki-909e814cc835)。.pyc・保存先から読んだ code にも同じ記録が載る。
+            from doeff_hy_bytecode_guard import macro_hints  # Hy の source に当たった時だけ読む
+
+            macro_hints.warn_about_macro_use(code, record, path, fullname)
         return code
 
     def _hy_code(self: importlib.machinery.SourceFileLoader, fullname: str, path: str) -> CodeType | None:
@@ -462,9 +468,9 @@ def _replacing_stale_pyc(
     return recompiled
 
 
-def _remember_record(path: str, code: CodeType | None) -> None:
+def _remember_record(path: str, code: CodeType | None) -> "MacroRecord | None":
     """読みの口が返した code に載った記録を覚える(:func:`loaded_record`)— 記録の無い code(module の外の compile・型検査の展開)
-    なら前の覚えを消す(別の code の記録を残さない)。"""
+    なら前の覚えを消す(別の code の記録を残さない)。覚えた記録(無ければ None)を返す。"""
     from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
     record = None if code is None else records.record_of(code)
@@ -472,6 +478,7 @@ def _remember_record(path: str, code: CodeType | None) -> None:
         _loaded_records.pop(path, None)
     else:
         _loaded_records[path] = record
+    return record
 
 
 def _record_is_current_here(code: CodeType) -> bool:

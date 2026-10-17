@@ -20,6 +20,7 @@ import hy.reader
 import pytest
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import scheduled
+from doeff_hy_bytecode_guard.macro_hints import HyMacroUseWarning
 
 from doeff import EffectBase, Pass, Resume, Transfer, run
 from doeff import do as _doeff_do
@@ -561,7 +562,9 @@ class TestDefhandlerMissingRequire:
         import os
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_387_no_require", None)
-        import fixtures.repro_387_no_require as mod
+        # この固定の file は require を意図して抜いた形 — doeff-hy は読む時に書き足す 1 行を警告で言う(card ki-909e814cc835)。
+        with pytest.warns(HyMacroUseWarning, match=r"\(require doeff-hy\.macros \[defhandler\]\)"):
+            import fixtures.repro_387_no_require as mod
         return mod
 
     def test_yield_leaks_without_defhandler_require(self, mod: ModuleType):
