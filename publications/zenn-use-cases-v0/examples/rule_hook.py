@@ -13,12 +13,12 @@ import re  # 命令の文に、規則の綴りが当たるかを見る。
 import sys  # 標準入力から出来事を読む。
 
 RULES = [  # 規則は「いつ当てるか」と「何を見せるか」の組にする。
-    {"id": "config-values-are-hidden", "tool": "Bash",  # 設定fileの値を出さない規則。
-     "when": r"\b(?:cat|head|tail|diff)\b[^\n]*settings\.json",  # 設定fileを丸ごと出す命令。
-     "advice": "設定fileは丸ごと出さず、欄の名だけを出してください。"},  # 当たった時に見せる文。
-    {"id": "python-runs-through-uv", "tool": "Bash",  # 機体のpythonを使わない規則。
+    {"id": "config-values-are-hidden", "tool": "Bash",  # 設定ファイルの値を出さない規則。
+     "when": r"\b(?:cat|head|tail|diff)\b[^\n]*settings\.json",  # 設定ファイルを丸ごと出す命令。
+     "advice": "設定ファイルは丸ごと出さず、欄の名だけを出してください。"},  # 当たった時に見せる文。
+    {"id": "python-runs-through-uv", "tool": "Bash",  # OSに入っているpythonを使わない規則。
      "when": r"(?:^|[;&|]\s*)python3?\b",  # 命令の頭で、pythonを直に呼ぶ形。
-     "advice": "機体のpythonではなく、uv run pythonを使ってください。"},  # 当たった時に見せる文。
+     "advice": "OSに入っているpythonではなく、uv run pythonを使ってください。"},  # 当たった時に見せる文。
 ]
 
 
@@ -36,19 +36,19 @@ def hook(event):  # 道具を使う直前の出来事1つから、見せる助�
 def test_only_the_matching_rule_is_shown():  # 当たった規則の文だけが出る事を確かめる。
     event = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.claude/settings.json"}}  # 設定を丸ごと出す命令。
     advice = hook(event)["hookSpecificOutput"]["additionalContext"]  # hookが足す文。
-    assert advice == "設定fileは丸ごと出さず、欄の名だけを出してください。(規則 config-values-are-hidden)"  # 1行だけ。
+    assert advice == "設定ファイルは丸ごと出さず、欄の名だけを出してください。(規則 config-values-are-hidden)"  # 1行だけ。
     assert hook({"tool_name": "Bash", "tool_input": {"command": "ls"}}) is None  # 関係の無い命令には何も出さない。
 
 
 if __name__ == "__main__" and "--hook" in sys.argv:  # hookとして呼ばれた時だけ、標準入出力を使う。
     answer = hook(json.load(sys.stdin))  # 標準入力の出来事から、助言を決める。
-    if answer:  # 当たる規則が在った時だけ書く。
+    if answer:  # 当たる規則があった時だけ書く。
         print(json.dumps(answer, ensure_ascii=False))  # 標準出力のJSONを、Claude Codeが読む。
     raise SystemExit(0)  # hookの時は、下の試験を走らせずに終わる。
 
 
 EXAMPLES = {  # 規則ごとに、当たるべき命令と、当たってはいけない命令を持つ。
-    "config-values-are-hidden": (  # 設定fileの規則の例。
+    "config-values-are-hidden": (  # 設定ファイルの規則の例。
         ["cat ~/.claude/settings.json", "diff a/settings.json b/settings.json"],  # 当たるべき命令。
         ["jq 'keys' ~/.claude/settings.json", "cat README.md"]),  # 当たってはいけない命令。
     "python-runs-through-uv": (  # pythonの規則の例。
@@ -90,7 +90,7 @@ JUDGED = [  # 綴りでは決まらず、判定器に問う規則。
      "advice": "議論の依頼です。例と比較で答え、実装には進まないでください。"},  # 当たった時に見せる文。
     {"id": "remember-goes-to-memory",  # 覚えてと頼まれた時の規則。
      "question": "利用者は、次の会話でも覚えておくよう頼んでいる。",  # 判定器に問う1文。
-     "advice": "覚える依頼です。記憶のfileに1件として書いてください。"},  # 当たった時に見せる文。
+     "advice": "覚える依頼です。記憶のファイルに1件として書いてください。"},  # 当たった時に見せる文。
 ]
 
 
@@ -100,7 +100,7 @@ def advise_prompt(prompt):  # 利用者の依頼1つから、見せる助言を�
     answers = yield AskJudge(prompt, questions)  # 問いを1つの依頼に束ね、確率の組を受け取る。
     return [f"{rule['advice']}(規則 {rule['id']})"  # 当たった規則の助言を1行ずつ。
             for rule, probability in zip(JUDGED, answers, strict=True)  # 規則と答えを順に組む。
-            if probability is not None and probability >= 0.5]  # 答えが在り、当たる側だけを採る。
+            if probability is not None and probability >= 0.5]  # 答えがあり、当たる側だけを採る。
 
 
 def fixed_judge(answers):  # 試験用の判定器。問いの文ごとに、決めた確率で答える。

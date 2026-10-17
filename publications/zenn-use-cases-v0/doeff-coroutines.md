@@ -53,8 +53,7 @@ assert run(with_handlers([hanako], greet())) == "こんにちは、花子さん"
 `greet_async`は、`read_name_async`という実装を直に進めます。`greet`は、`ReadName`という依頼を出して止まるだけです。「花子」を返したのは、外側に付けた`hanako`です。
 
 ![awaitは実装を進め、yieldは依頼を外側へ出す](/images/zenn-use-cases-v0/generated/coroutines-concept.png)
-
-awaitの先は、呼んだ実装で決まります。yieldの先は、外側に付けたハンドラが決めます。
+*awaitの先は、呼んだ実装で決まります。yieldの先は、外側に付けたハンドラが決めます。*
 
 ## doeffの言葉を4つだけ
 
@@ -155,8 +154,7 @@ def introduction(stream: AsyncIterator[str]):  # 断片を集め、前後の空�
 この例の入力は`str`だけなので、`None`を終わりの合図にできます。空の文字列`""`は終わりではありません。本物のSDKでは、SDKのチャンクの型から本文の欄を取り出します。
 
 ![ストリームは、1断片ずつdoeffへ戻す](/images/zenn-use-cases-v0/generated/coroutines-flow.png)
-
-収集のループは@doに残します。次の1断片を待つ所だけを、Awaitで非同期の実装へつなぎます。
+*収集のループは`@do`に残します。次の1断片を待つ所だけを、`Await`で非同期の実装へつなぎます。*
 
 ## 何回待ったかを、外側から数える
 
@@ -188,7 +186,7 @@ assert len(waits) == 5  # 4つの断片と終わりの確かめで、5回の待�
 
 5回は、4つの断片と、終わりを確かめる1回の合計です。`collect_chunks`を1文字も変えずに、待ちの回数を外から数えられました。
 
-これが、収集を`yield collect_chunks(stream)`と書く訳です。手順がdoeffの中に在るので、待ちの間にログや時刻の依頼を足しても、同じハンドラの組で扱えます。収集を丸ごと1つの`async def`にして`Await`で包むと、届く待ちは1回だけになります。
+これが、収集を`yield collect_chunks(stream)`と書く訳です。手順がdoeffの中にあるので、待ちの間にログや時刻の依頼を足しても、同じハンドラの組で扱えます。収集を丸ごと1つの`async def`にして`Await`で包むと、届く待ちは1回だけになります。
 
 ## yieldを選ばなくてよい所
 
@@ -199,13 +197,25 @@ yieldにも代償があります。awaitで足りる場面と合わせて書い�
 - `asyncio`は時間だけの仕組みではありません。ネットワーク、サブプロセス、同期の道具も扱います。
 - ハンドラを書く側は、値だけでなく、取り消しや例外や順序の約束も守ります。
 
-`Await`の橋渡しにも約束があります。2026-10-17に、mainの実装とテストで確かめた範囲です。
+`Await`の橋渡しにも約束があります。2026年10月17日に、mainの実装とテストで確かめた範囲です。
 
 - `await_handler()`は、プロセスで共有する裏の`asyncio`のループで、coroutineを動かします。
 - 別のイベントループに結び付いたFutureは、そのままでは待てません。
 - doeffの側でタスクを取り消すと、橋渡し先のcoroutineに`CancelledError`が届きます。
 - ただし、取り消しは頼むだけで、片付けの終わりは待ちません。
 - 裏のループを同期の呼び出しで止めると、同じプロセスのすべての`Await`が止まります。
+
+## 試し方と、確かめた範囲
+
+```bash
+pip install doeff  # PyPIの0.6.0。掲載したPythonの4つの枠は、これだけで動く。
+git clone https://github.com/proboscis/doeff.git  # 完全な例を含むリポジトリを取得する。
+python doeff/publications/zenn-use-cases-v0/examples/coroutine_comparison.py  # 完全な例を走らせる。
+```
+
+- 掲載したPythonの4つの枠を、2026年10月17日にdoeffのmainで走らせました。コミットは`9adc4f8e6`です。
+- 同じ日に、`pip install doeff`で入れたPyPIの0.6.0でも、4つの枠と完全な例が通りました。
+- 実行はPython 3.14で、通信も本物のSDKも使っていません。0.6.0より前の版では試していません。
 
 ## まとめ
 
@@ -222,28 +232,17 @@ yieldにも代償があります。awaitで足りる場面と合わせて書い�
 | 同じ処理を2回動かす | coroutineを作り直します | 同じProgramを何度でも動かせます |
 | 非同期SDK | そのままawaitします | Awaitで1操作ずつつなぎます |
 
-## 試し方と、確かめた範囲
+時間の依頼を仮想の時計で答える例は、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)にあります。次の10本目では、設計で決めた約束を、doeffのテストとして走らせます。
 
-```bash
-git clone https://github.com/proboscis/doeff.git  # リポジトリを取得する。
-cd doeff && make sync  # 依存を入れる。RustのVMもビルドするのでcargoが要る。
-uv run python publications/zenn-use-cases-v0/examples/coroutine_comparison.py  # 完全な例を走らせる。
-```
+[doeffとは？：メイン記事へ戻る](doeff-main.md)
 
-- 掲載したPythonのコード4つは、2026-10-17にdoeffのmainで走らせました。使った版はcommit 6ab1e37です。
-- 実行はPython 3.14で、通信も本物のSDKも使っていません。
-- 2026-10-17の時点で、PyPIの最新はdoeff 0.4.1です。0.4.1は2026-05-13の版です。
-- 0.4.1には`handler`と`with_handlers`が無いので、上のようにGitHubから試してください。
-
-## 参考
+## 参考資料・検証版
 
 - [完全な例(比べる2つの形、ハンドラの差し替え、待ちの数え方)](examples/coroutine_comparison.py)
 - [Python公式: Coroutine objects](https://docs.python.org/3/reference/datamodel.html#coroutine-objects)
 - [Python公式: Coroutines and tasks](https://docs.python.org/3/library/asyncio-task.html)
 - [Python公式: Event loop](https://docs.python.org/3/library/asyncio-eventloop.html)
 - [PEP 492 – Coroutines with async and await syntax](https://peps.python.org/pep-0492/)
-- [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/6ab1e37d6c65b53d944343ff7cd866043a7abf9d/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- [時間とスケジューリング(待ちを仮想の時間で答える)](doeff-time.md)
-- [doeffとは？(エフェクトとハンドラの入門)](doeff-main.md)
+- [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/handlers.py)
 - 前の回:[AIに要る時だけ規則を見せるhook](doeff-hooks.md)
 - 次の回:[設計の記録をテストとして走らせる](doeff-adr.md)
