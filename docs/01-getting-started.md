@@ -457,6 +457,31 @@ def right():
     return (yield Gather(a, b))  # ['a', 'b']
 ```
 
+### "TypeError: Cancel takes the task that Spawn returns, got a program"
+
+`Cancel` and `Discard` stop a task that already runs, so they take the task `Spawn` returns, never
+the program. Spawn the program first, keep its task, and cancel that:
+
+```python excerpt
+from doeff import do
+from doeff_core_effects.scheduler import Cancel, Spawn
+
+@do
+def worker():
+    return "a"
+
+# Wrong - passes the program itself
+@do
+def wrong():
+    yield Cancel(worker())  # Error!
+
+# Right - spawns the program and cancels the task Spawn returns
+@do
+def right():
+    task = yield Spawn(worker())
+    yield Cancel(task)
+```
+
 ### "SchedulerDeadlockError: scheduler deadlock: parked waiters that no external completion can wake: ..."
 
 The program waits on something nothing can finish any more. The message lists each waiter
