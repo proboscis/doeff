@@ -176,6 +176,7 @@ class ClaudeExportSession(EffectBase[ExportSessionOutcome]):
     cwd: str
     session_id: str
     tail_bytes: int | None = None
+    from_byte: int | None = None
 
     def __post_init__(self) -> None:
         ...

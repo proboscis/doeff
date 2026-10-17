@@ -528,7 +528,9 @@
   ;; 末尾だけの写し(card ki-a264a73efcce): 層 2 へ tail-bytes を渡し、末尾の行だけが返る。
   (val half (max 1 (// (len (.encode (or copied "") "utf-8")) 2)))
   (<- tail (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id context :tail-bytes half))
-  {"context" context "copied" copied "missing" missing "malformed" malformed "tail" tail "half" half})
+  ;; 伸びた分だけの写し(card ki-3b521394a063): 層 2 へ from-byte を渡し、その byte 目から後ろだけが返る。
+  (<- grown (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id context :from-byte half))
+  {"context" context "copied" copied "missing" missing "malformed" malformed "tail" tail "half" half "grown" grown})
 
 (defk continue-from-copy [#^ Setting s #^ str context #^ (| str None) copied #^ bool prompt-first]
   {:pre [(: s Setting) (: context str) (: copied (| str None)) (: prompt-first bool)] :post [(: % dict)]}
@@ -563,6 +565,9 @@
   (assert (and (isinstance tail str) (.endswith copied tail)) (repr out))
   (assert (<= (len (.encode tail "utf-8")) (get out "half")) (repr out))
   (assert (or (= tail copied) (.endswith (cut copied 0 (- (len copied) (len tail))) "\n")) (repr out))
+  ;; 伸びた分だけの写しは、写しの half byte 目から後ろ(half が字の途中なら None)。
+  (setv whole (.encode copied "utf-8") grown (get out "grown"))
+  (assert (= grown (try (.decode (cut whole (get out "half") None) "utf-8") (except [UnicodeDecodeError] None))) (repr out))
   ;; 写しなしでは、空の家に文脈が無い — 黙って新しく始めずに断る。
   (with [info (pytest.raises ResumeTargetNotFoundError)]
     (run-on backend tmp-path (fn [s] (continue-from-copy s context None True)) "home-without-copy"))

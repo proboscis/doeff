@@ -359,6 +359,19 @@
       (TranscriptBytes :data (if (< newline 0) b"" (cut chunk (+ newline 1) None)) :whole False))
     (except [FileNotFoundError] None)))
 
+(defn #^ (| bytes None) read-transcript-from [#^ str path #^ int from-byte]
+  "transcript の jsonl の from-byte byte 目から末尾までを読むため(前に取り出した写しを持つ使い手が伸びた分だけを読む —
+   card ki-3b521394a063)。読むのは from-byte から後ろだけ(seek)。file が無い・file でない・from-byte より短い = None。"
+  (when (not (os.path.isfile path))
+    (return None))
+  (try
+    (with [handle (open path "rb")]
+      (when (< (. (os.fstat (.fileno handle)) st-size) from-byte)
+        (return None))
+      (.seek handle from-byte)
+      (.read handle))
+    (except [FileNotFoundError] None)))
+
 (defk transcript-cost-mark [#^ str path]
   {:pre [(: path str)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
   "transcript の file path を読み、最後の cost-state の額を読むため(recorded-cost-mark が TRANSCRIPT-THREADS の thread の新しい VM で回す —
@@ -1277,9 +1290,17 @@
 (defk read-session-export [request]
   {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))] :tags {:context "claude-code" :role "foundation"}}
   "transcript の jsonl 1 つを utf-8 で読むため(置き場は session-status と同じ規則・tail-bytes が在れば末尾だけを行の頭から —
-   card ki-a264a73efcce)。無い・空白だけ = SessionNotFound(空白の判定は strip で写し直さず isspace で探すだけ)。"
-  (val read (read-transcript-bytes (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id)
-                                   request.tail-bytes))
+   card ki-a264a73efcce・from-byte が在ればその byte 目から後ろだけ — card ki-3b521394a063)。無い・空白だけ = SessionNotFound(空白の
+   判定は strip で写し直さず isspace で探すだけ)。from-byte より短い・from-byte が字の途中も SessionNotFound。"
+  (val path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id))
+  (when (is-not request.from-byte None)
+    (val grown (read-transcript-from path request.from-byte))
+    (when (is grown None) (return (SessionNotFound request.session-id)))
+    (val after (try
+                 (.decode grown "utf-8")
+                 (except [UnicodeDecodeError] None)))
+    (return (if (and after (not (.isspace after))) (SessionExported after) (SessionNotFound request.session-id))))
+  (val read (read-transcript-bytes path request.tail-bytes))
   (when (is read None) (return (SessionNotFound request.session-id)))
   (val text (.decode read.data "utf-8"))
   (if (and text (not (.isspace text))) (SessionExported text) (SessionNotFound request.session-id)))

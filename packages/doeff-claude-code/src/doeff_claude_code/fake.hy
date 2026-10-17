@@ -804,9 +804,18 @@
 (defk fake-export [#^ FakeClaudeWorld world #^ ClaudeExportSession request]
   {:pre [(: world FakeClaudeWorld) (: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}
   "transcript の写し: 行を改行で結んだ本文(carry-into の Rebuilt が同じ行の列へ読み戻す形)。tail-bytes が在れば、本物と同じく
-   末尾の tail-bytes byte に丸ごと収まる行だけ(行の頭から)。無い・空 = SessionNotFound。"
+   末尾の tail-bytes byte に丸ごと収まる行だけ(行の頭から)。from-byte が在れば、本物と同じく本文の from-byte byte 目から後ろ
+   (本文より短い・字の途中なら SessionNotFound)。無い・空 = SessionNotFound。"
   (val lines (transcript-of world request.home request.cwd request.session-id))
   (val ended (if (is lines None) [] (lfor line lines (+ line "\n"))))
+  (when (is-not request.from-byte None)
+    (val whole (.encode (.join "" ended) "utf-8"))
+    (val after (if (> request.from-byte (len whole))
+                   None
+                   (try
+                     (.decode (cut whole request.from-byte None) "utf-8")
+                     (except [UnicodeDecodeError] None))))
+    (return (if (and after (.strip after)) (SessionExported after) (SessionNotFound request.session-id))))
   (var kept ended)
   (when (is-not request.tail-bytes None)
     (var room request.tail-bytes)

@@ -164,16 +164,26 @@
    tail-bytes = 末尾の何 byte までを読むか(None = 全部)。末尾だけの答えは、切り口の後の最初の行の頭から始まる行の列で、持ち込み
    には使えない — 写しの中の最近の行だけを読む使い手(道具の呼びで名指した作業場を新しい方から拾う等)が、100 MB 級の transcript を
    手番ごとに丸ごと読まないため(card ki-a264a73efcce)。
+   from-byte = 頭から何 byte 目より後ろだけを読むか(None = 全部)。答えは transcript の from-byte byte 目から末尾まで(from-byte は字の頭 —
+   前に取り出した写しの byte の長さの内の字の切れ目)で、持ち込みには使えない — 前に取り出した写しを持つ使い手が、伸びた分だけを
+   読むため(手番の終わりの写しの預け・card ki-3b521394a063)。transcript が from-byte より短い・from-byte が字の途中なら SessionNotFound。
+   tail-bytes と from-byte は一緒に名指さない。
    答え = SessionExported | SessionNotFound(transcript が無い・空)。"
   (#^ ClaudeHome home)
   (#^ str cwd)
   (#^ str session-id)
   (setv #^ (| int None) tail-bytes None)
+  (setv #^ (| int None) from-byte None)
   (defn __post_init__ [self]
     (checked-session-id self.session-id "ClaudeExportSession.session_id")
     (when (and (is-not self.tail-bytes None)
                (or (isinstance self.tail-bytes bool) (not (isinstance self.tail-bytes int)) (< self.tail-bytes 1)))
-      (raise (ValueError (.format "ClaudeExportSession.tail_bytes は 1 以上の整数か None: {!r}" self.tail-bytes))))))
+      (raise (ValueError (.format "ClaudeExportSession.tail_bytes は 1 以上の整数か None: {!r}" self.tail-bytes))))
+    (when (and (is-not self.from-byte None)
+               (or (isinstance self.from-byte bool) (not (isinstance self.from-byte int)) (< self.from-byte 0)))
+      (raise (ValueError (.format "ClaudeExportSession.from_byte は 0 以上の整数か None: {!r}" self.from-byte))))
+    (when (and (is-not self.tail-bytes None) (is-not self.from-byte None))
+      (raise (ValueError "ClaudeExportSession の tail_bytes と from_byte は一緒に名指さない")))))
 
 
 ;; --- 入力の前に会話の process を事前起動して待たせる ------------------------------------------------------------

@@ -652,7 +652,8 @@
     (checked-session-id request.context-id "ExportContextEffect.context_id")
     (except [#(ValueError TypeError)]
       (return None)))
-  (<- outcome (ClaudeExportSession config.home (str request.work-dir) request.context-id :tail-bytes request.tail-bytes))
+  (<- outcome (ClaudeExportSession config.home (str request.work-dir) request.context-id :tail-bytes request.tail-bytes
+                                    :from-byte request.from-byte))
   (cond
     (isinstance outcome SessionExported) outcome.jsonl-text
     (isinstance outcome SessionNotFound) None

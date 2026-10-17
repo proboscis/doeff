@@ -247,7 +247,11 @@
   (assert (isinstance done.end Completed) (repr done.end))
   (assert (in CODEWORD done.end.result-text) done.end.result-text)
   (<- again (ClaudeExportSession s.other-home s.base.cwd sid))
-  (assert (.startswith again.jsonl-text exported.jsonl-text) (repr again)))
+  (assert (.startswith again.jsonl-text exported.jsonl-text) (repr again))
+  ;; 伸びた分だけの取り出し(card ki-3b521394a063): 前の写しの byte の長さから後ろは、続けた手番が足した行だけ。
+  (val before (len (.encode exported.jsonl-text "utf-8")))
+  (<- grown (ClaudeExportSession s.other-home s.base.cwd sid :from-byte before))
+  (assert (= grown (SessionExported (.decode (cut (.encode again.jsonl-text "utf-8") before None) "utf-8"))) (repr grown)))
 
 
 ;; --- 会話ごとに process を生かしたまま待たせる形(#3672)の使い回しと守り ------------------------------------

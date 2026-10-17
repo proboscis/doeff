@@ -1419,6 +1419,14 @@ class ExportContextEffect(AgentEffectBase):
     with ``resume_snapshot``; it is for callers that read only recent lines,
     so a 100 MB context is not read whole on every turn (card ki-a264a73efcce).
 
+    ``from_byte`` asks for only the part of the copy after that many bytes
+    (``from_byte`` is a character start within a copy taken before).  Such a
+    copy cannot be brought back with ``resume_snapshot``; it is for callers
+    that hold an earlier copy and read only what was appended since (card
+    ki-3b521394a063).  The answer is None when the copy is shorter than
+    ``from_byte`` or ``from_byte`` falls inside a character.  ``tail_bytes``
+    and ``from_byte`` are not given together.
+
     Yields: str | None (the copy; None = this runtime has no such context)
     """
 
@@ -1427,12 +1435,19 @@ class ExportContextEffect(AgentEffectBase):
     work_dir: str | PurePath
     context_id: str
     tail_bytes: int | None = None
+    from_byte: int | None = None
 
     def __post_init__(self) -> None:
         if self.tail_bytes is not None and (
             isinstance(self.tail_bytes, bool) or not isinstance(self.tail_bytes, int) or self.tail_bytes < 1
         ):
             raise ValueError("ExportContextEffect.tail_bytes must be a positive int or None")
+        if self.from_byte is not None and (
+            isinstance(self.from_byte, bool) or not isinstance(self.from_byte, int) or self.from_byte < 0
+        ):
+            raise ValueError("ExportContextEffect.from_byte must be a non-negative int or None")
+        if self.tail_bytes is not None and self.from_byte is not None:
+            raise ValueError("ExportContextEffect takes tail_bytes or from_byte, not both")
 
 
 # =============================================================================

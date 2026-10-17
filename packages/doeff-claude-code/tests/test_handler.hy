@@ -391,6 +391,29 @@
   (assert (= wide (SessionExported (.join "" lines))) (repr wide)))
 
 
+(deftest test-export-from-byte-reads-only-what-follows-it [tmp-path]
+  ;; 伸びた分だけの取り出し(card ki-3b521394a063): from-byte byte 目から末尾までを返す(行の途中からでも字の頭なら読める)。file より
+  ;; 長い from-byte・字の途中の from-byte は SessionNotFound。tail-bytes と一緒には名指せない。
+  (val spec (spec-in tmp-path))
+  (val sid (str (uuid.uuid4)))
+  (val body "{\"type\":\"user\",\"text\":\"一つ目\"}\n{\"type\":\"assistant\",\"text\":\"二つ目\"}\n")
+  (<- (written-transcript spec sid body))
+  (val whole (.encode body "utf-8"))
+  (val cut-at (.index whole (.encode "二つ目" "utf-8")))
+  (val host (host-of #("/nonexistent/claude-binary")))
+  (<- after (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :from-byte cut-at)))
+  (assert (= after (SessionExported (.decode (cut whole cut-at None) "utf-8"))) (repr after))
+  (<- from-head (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :from-byte 0)))
+  (assert (= from-head (SessionExported body)) (repr from-head))
+  (<- beyond (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :from-byte (+ (len whole) 1))))
+  (assert (= beyond (SessionNotFound sid)) (repr beyond))
+  (<- inside (with-real-handler host (ClaudeExportSession spec.home spec.cwd sid :from-byte (+ cut-at 1))))
+  (assert (= inside (SessionNotFound sid)) (repr inside))
+  (assert (try
+            (do (ClaudeExportSession spec.home spec.cwd sid :tail-bytes 10 :from-byte 0) False)
+            (except [ValueError] True))))
+
+
 (deftest test-the-recorded-cost-is-read-from-the-tail-and-widens-until-found [tmp-path]
   ;; 費用の起点は transcript の末尾だけを読む(card ki-a264a73efcce)。最後の cost-state が最初の幅(64 KiB)に在ればそれ。末尾の 64 KiB に
   ;; 無ければ幅を広げて探す(前の cost-state を見落とさない)。どの幅にも無ければ None。
