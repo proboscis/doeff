@@ -10,8 +10,8 @@ use doeff_vm_core::segment::Fiber;
 use doeff_vm_core::value::Value;
 use doeff_vm_core::VM;
 
-use crate::python_generator_stream::{classify_python_object, value_to_python};
-use crate::unhandled_hint::unhandled_hint;
+use crate::python_generator_stream::{classify_python_object, value_to_python, PythonCallable};
+use crate::unhandled_hint::{skipped_by_annotation, unhandled_hint};
 
 create_exception!(
     doeff_vm,
@@ -169,6 +169,11 @@ impl PyVM {
                 chain.join(" → "),
             )
         };
+        if let Some(skipped) = skipped_by_annotation(py, effect, self.typed_handlers_in_scope(py))
+        {
+            msg.push_str("\n  ");
+            msg.push_str(&skipped);
+        }
         if let Some(hint) = unhandled_hint(py, effect) {
             msg.push_str("\n  hint: ");
             msg.push_str(&hint);
@@ -234,16 +239,7 @@ impl PyVM {
             let mut out: Vec<String> = Vec::new();
             for n in names {
                 let Value::String(raw) = n else { continue };
-                // Mirror the traceback renderer: take everything before the
-                // first ``.<locals>.``. This surfaces the factory name for
-                // the core handler pattern (``lazy_ask.<locals>.handler``
-                // → ``lazy_ask``) while keeping unqualified names intact.
-                let base = match raw.split_once(".<locals>.") {
-                    Some((outer, _)) => outer,
-                    None => raw.as_str(),
-                };
-                // Drop module prefixes: ``pkg.mod.foo`` → ``foo``.
-                let trimmed = base.rsplit('.').next().unwrap_or(base).to_string();
+                let trimmed = Self::chain_name(raw);
                 if out.last().map_or(true, |prev| prev != &trimmed) {
                     out.push(trimmed);
                 }
@@ -251,6 +247,52 @@ impl PyVM {
             return Some(out);
         }
         None
+    }
+
+    /// The name the handler chain line shows for a handler's qualified name.
+    ///
+    /// Mirror the traceback renderer: take everything before the first
+    /// ``.<locals>.``. This surfaces the factory name for the core handler
+    /// pattern (``lazy_ask.<locals>.handler`` → ``lazy_ask``) while keeping
+    /// unqualified names intact. Module prefixes are dropped: ``pkg.mod.foo``
+    /// → ``foo``.
+    fn chain_name(raw: &str) -> String {
+        let base = match raw.split_once(".<locals>.") {
+            Some((outer, _)) => outer,
+            None => raw,
+        };
+        base.rsplit('.').next().unwrap_or(base).to_string()
+    }
+
+    /// The handlers in scope that filter by their effect annotation, innermost first,
+    /// as (the name the chain line shows, the types the annotation admits) — so the
+    /// UnhandledEffect message can name the ones that skipped the effect.
+    ///
+    /// The VM converts an unhandled effect while it still stands at the perform (the
+    /// continuation is reattached before the error is raised into the body), so the
+    /// walk up from the current fiber meets every handler the effect went through.
+    fn typed_handlers_in_scope(&self, py: Python<'_>) -> Vec<(String, Py<pyo3::types::PyTuple>)> {
+        let mut typed = Vec::new();
+        let mut cursor = self.vm.current_segment;
+        while let Some(fiber_id) = cursor {
+            let Some(fiber) = self.vm.segments.get(fiber_id) else {
+                break;
+            };
+            if let Some(handler) = fiber.prompt_handler() {
+                let types = handler
+                    .as_any()
+                    .downcast_ref::<PythonCallable>()
+                    .and_then(|python| python.effect_types(py));
+                if let Some(types) = types {
+                    let name = handler
+                        .name()
+                        .map_or_else(|| "<handler>".to_string(), |raw| Self::chain_name(&raw));
+                    typed.push((name, types));
+                }
+            }
+            cursor = fiber.parent;
+        }
+        typed
     }
 
     /// Get a human-readable description of an effect value (type name + repr).

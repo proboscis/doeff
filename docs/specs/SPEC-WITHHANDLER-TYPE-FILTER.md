@@ -43,6 +43,31 @@ in the module's globals (unresolvable → unfiltered with a warning, never an im
 A clause on `EffectBase` makes the union mean "everything" (no filter). Tests:
 `packages/doeff-hy/tests/test_defhandler_effect_type_filter.py`.
 
+Annotations no effect can match, and the skipped handlers in the UnhandledEffect message
+(2026-10-17・card ki-f102109edbc8): a filter on a type no effect can be an instance of
+(`effect: str`) made the handler unreachable, and the run ended in an UnhandledEffect that
+did not name the annotation.
+
+- `handler_effect_types` raises `TypeError` for such a type: one that cannot be inherited
+  (`bool`, `NoneType`), or one built on a builtin class whose instances are laid out unlike
+  `object`'s (`str`, `int`, `dict`, `list`, `Exception` and their subclasses) — no class can
+  inherit it together with `EffectBase`. A class of Python's own that is not an `EffectBase`
+  (a marker base) stays a filter, even before an effect class inherits it.
+- `handler()` and `with_handlers` resolve the annotation where they make the handler
+  (`check_handler_annotation`), so the `TypeError` points at the line that made it; a raw
+  `WithHandler` meets it when the VM installs it. An annotation that cannot be evaluated yet is
+  not settled there: the install resolves it (and warns) as before.
+- When an effect falls off and no handler in scope is annotated for it, the message names the
+  typed handlers in scope with the types they admit, before the `hint:` line. The VM walks the
+  handlers in scope at the perform and reads each one's `effect_types`; the line is written by
+  `doeff_vm._unhandled_hint.skipped_by_annotation`. A handler annotated for the effect that saw it
+  and passed it on (an `Ask` whose key no handler holds) means the annotations are not the cause,
+  so no line is written.
+- An effect no package registered a hint for ends with the general hint, how to install a handler
+  with `handler(fn)(prog)` (`doeff_vm._unhandled_hint.hint_for`).
+
+Tests: `tests/test_handler_annotation_messages.py`.
+
 ## Summary
 
 Add type filtering to `WithHandler` dispatch, derived automatically from the handler function's `effect` parameter type annotation. The Rust VM skips calling a handler for effects that don't match the annotated types. This eliminates Python round-trips for non-matching effects while preserving full isinstance semantics including subclass relationships.

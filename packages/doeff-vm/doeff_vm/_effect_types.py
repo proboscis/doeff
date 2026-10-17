@@ -42,6 +42,16 @@ Resolution rules (``None`` = no filter = the handler sees every effect):
 - ``Annotated[T, ...]`` → the rule for ``T``
 - a string annotation (``from __future__ import annotations``) is evaluated in
   the function's module globals
+- a class no effect can be an instance of → ``TypeError`` naming the handler and
+  how to annotate it: a class that cannot be inherited (``bool``, ``NoneType``)
+  or one built on a builtin class whose instances are laid out unlike
+  ``object``'s (``str``, ``int``, ``dict``, ``list``, ``Exception`` and their
+  subclasses) — no class can inherit it together with ``EffectBase``. Such a
+  handler would never be called. ``handler()`` and ``with_handlers`` ask
+  ``check_handler_annotation`` where the handler is made; a raw ``WithHandler``
+  meets the same refusal when the VM installs it. A class of Python's own that
+  is not an ``EffectBase`` (a marker base) stays a filter, even before an effect
+  class inherits it.
 - anything else (TypeVar, Literal, a non-runtime-checkable Protocol, an
   annotation that cannot be evaluated) → None, i.e. today's behaviour of
   delivering every effect. An annotation that cannot be evaluated also emits a
@@ -155,11 +165,32 @@ class _EffectParameter(NamedTuple):
 
 
 def handler_effect_types(handler: object) -> EffectTypes:
-    """Types the handler's effect parameter admits, or None for every effect."""
+    """Types the handler's effect parameter admits, or None for every effect.
+
+    Raises ``TypeError`` when the annotation names a class no effect can be an instance of.
+    """
     function, position = _effect_parameter(handler)
     if function is None:
         return None
     return _cached_parameter_types(function, position)
+
+
+def check_handler_annotation(handler: object) -> None:
+    """Refuse, where a handler is made, an annotation no effect can match (``TypeError``).
+
+    Resolves as ``handler_effect_types`` does and keeps the answer, except for an
+    annotation that cannot be evaluated yet: a name its module defines after this call
+    may resolve when the handler is first installed, which resolves (or warns) then.
+    """
+    function, position = _effect_parameter(handler)
+    if function is None:
+        return
+    cache = _parameter_cache(function)
+    if position in cache:
+        return
+    resolved = _resolve_parameter(function, position)
+    if resolved is not _UNRESOLVED:
+        cache[position] = resolved
 
 
 def _effect_parameter(handler: object) -> _EffectParameter:
@@ -189,19 +220,28 @@ def _effect_parameter(handler: object) -> _EffectParameter:
         current = call
 
 
-def _cached_parameter_types(function: types.FunctionType, index: int) -> EffectTypes:
+def _parameter_cache(function: types.FunctionType) -> dict[int, EffectTypes]:
     cache = function.__dict__.get(_CACHE_ATTR)
     if cache is None:
         cache = {}
         setattr(function, _CACHE_ATTR, cache)
-    elif index in cache:
+    return cache
+
+
+def _cached_parameter_types(function: types.FunctionType, index: int) -> EffectTypes:
+    cache = _parameter_cache(function)
+    if index in cache:
         return cache[index]
-    result = _parameter_types(function, index)
+    result = _resolve_parameter(function, index)
+    if result is _UNRESOLVED:
+        _warn_unresolved(function, function.__code__.co_varnames[index])
+        result = None
     cache[index] = result
     return result
 
 
-def _parameter_types(function: types.FunctionType, index: int) -> EffectTypes:
+def _resolve_parameter(function: types.FunctionType, index: int) -> Any:
+    """The parameter's effect types, None for every effect, or _UNRESOLVED (the caller warns or waits)."""
     code = function.__code__
     if index >= code.co_argcount:
         return None
@@ -210,12 +250,14 @@ def _parameter_types(function: types.FunctionType, index: int) -> EffectTypes:
     if annotation is _NOT_ANNOTATED:
         return None
     if annotation is _UNRESOLVED:
-        _warn_unresolved(function, name)
-        return None
-    if isinstance(annotation, str):
-        # 文字の註は関数の globals で評価する — code が同じでも globals が違えば答えが違いうるので code で共有しない
-        return _resolved_or_warn(annotation, function, name)
-    return _shared_parameter_types(function, index, name, annotation)
+        return _UNRESOLVED
+    try:
+        if isinstance(annotation, str):
+            # 文字の註は関数の globals で評価する — code が同じでも globals が違えば答えが違いうるので code で共有しない
+            return _types_of(annotation, function)
+        return _shared_parameter_types(function, index, annotation)
+    except _NoEffectIsInstanceError as refused:
+        raise TypeError(_refusal(function, name, refused.annotation_type)) from None
 
 
 class _SharedResolution(NamedTuple):
@@ -243,7 +285,7 @@ class _SharedResolution(NamedTuple):
 _SHARED_BY_CODE: dict[int, _SharedResolution] = {}
 
 
-def _shared_parameter_types(function: types.FunctionType, index: int, name: str, annotation: object) -> EffectTypes:
+def _shared_parameter_types(function: types.FunctionType, index: int, annotation: object) -> Any:
     """Resolve once per code — a handler made afresh for every example re-resolves nothing (agora-redesign #2422)."""
     code = function.__code__
     shared = _SHARED_BY_CODE.get(id(code))
@@ -257,8 +299,7 @@ def _shared_parameter_types(function: types.FunctionType, index: int, name: str,
     resolved = _types_of(annotation, function)
     if resolved is _UNRESOLVED:
         # 解けない註は共有しない — 後で作る閉包では解けうる(後で定義した名前)
-        _warn_unresolved(function, name)
-        return None
+        return _UNRESOLVED
     key = id(code)
     _SHARED_BY_CODE[key] = _SharedResolution(weakref.ref(code, functools.partial(_forget_code, key)), index, annotation, resolved)
     return resolved
@@ -280,15 +321,6 @@ def _same_annotation(shared: object, current: object) -> bool:
     if shared is current:
         return True
     return type(shared) is type(current) and shared == current and get_args(shared) == get_args(current)
-
-
-def _resolved_or_warn(annotation: object, function: types.FunctionType, name: str) -> EffectTypes:
-    """Resolve a text annotation for this function alone — an unresolvable one leaves the handler unfiltered, with a warning."""
-    resolved = _types_of(annotation, function)
-    if resolved is _UNRESOLVED:
-        _warn_unresolved(function, name)
-        return None
-    return resolved
 
 
 def _parameter_annotation(function: types.FunctionType, name: str) -> object:
@@ -334,10 +366,55 @@ def _union_types(members: tuple[object, ...], function: types.FunctionType) -> A
 
 
 def _class_filter(cls: type) -> EffectTypes:
-    if cls.__dict__.get("_is_protocol") is True and cls.__dict__.get("_is_runtime_protocol") is not True:
-        # isinstance() against a plain Protocol raises TypeError.
-        return None
+    if cls.__dict__.get("_is_protocol") is True:
+        # isinstance() against a plain Protocol raises TypeError; a runtime-checkable one matches by members.
+        return (cls,) if cls.__dict__.get("_is_runtime_protocol") is True else None
+    if not issubclass(cls, EffectBase) and _no_effect_is_instance(cls):
+        raise _NoEffectIsInstanceError(cls)
     return (cls,)
+
+
+class _NoEffectIsInstanceError(Exception):
+    """Carries, out of the resolution, the annotated class no effect can be an instance of."""
+
+    def __init__(self, annotation_type: type) -> None:
+        super().__init__(annotation_type)
+        self.annotation_type = annotation_type
+
+
+_HEAP_TYPE = 1 << 9  # Py_TPFLAGS_HEAPTYPE: made by a class statement (not a builtin class)
+_BASE_TYPE = 1 << 10  # Py_TPFLAGS_BASETYPE: other classes may inherit it
+
+
+def _no_effect_is_instance(cls: type) -> bool:
+    """Whether no class can inherit both ``cls`` and EffectBase — so a filter on ``cls`` matches nothing.
+
+    So it is when ``cls`` cannot be inherited (``bool``, ``NoneType``) or when a builtin
+    class in its MRO lays its instances out unlike ``object`` (``str``, ``int``, ``dict``,
+    ``Exception`` …): Python refuses such a class ("multiple bases have instance lay-out
+    conflict"). A class of Python's own without such a base can be inherited along with
+    EffectBase — by an effect class defined later, too — so it is never refused.
+    """
+    if not cls.__flags__ & _BASE_TYPE:
+        return True
+    return any(
+        base is not object
+        and not base.__flags__ & _HEAP_TYPE
+        and (base.__itemsize__ != 0 or base.__basicsize__ != object.__basicsize__)
+        for base in cls.__mro__
+    )
+
+
+def _refusal(function: types.FunctionType, name: str, annotation_type: type) -> str:
+    """The TypeError text for a handler whose annotation no effect can match: which handler, and the fix."""
+    code = function.__code__
+    return (
+        f"handler {function.__qualname__} (defined at {code.co_filename}:{code.co_firstlineno}): "
+        f"the annotation of effect parameter {name!r} names {annotation_type.__qualname__}, which "
+        "no effect can be an instance of, so the handler would never be called. Annotate it with "
+        "the effect class it handles (a subclass of EffectBase, e.g. effect: MyEffect), or with "
+        "EffectBase to receive every effect."
+    )
 
 
 def _warn_unresolved(function: types.FunctionType, name: str) -> None:
