@@ -72,6 +72,17 @@
   no longer recommends the legacy CLI flags `--set` / `--env` / `--interpreter` to a program run from Python.
   `doeff run` adds the README's `--hy` form (`((lazy-ask :env {"key" VALUE}) p)`) when the error reaches it. Before,
   `doeff.MissingEnvKeyError` was `KeyError` itself.
+- `run()`: a `TypeError` from using an effect, a program or the result of `Try` as a value ends with a note that
+  names the variable and the fix — `count = Get("counter")` then `count + 1` adds "count is the effect
+  Get('counter'), not its result. Yield the effect to get its result: count = yield Get('counter')", `x = child()`
+  then `x + 1` adds "x is the program child() builds, …: x = yield child()", and `r = yield Try(child())` then
+  `r + 1` says to take the value out with `match r: case Ok(value) / case Err(error)` or to yield the program
+  without `Try`. The note is found from the expression that failed and the values its variables hold, and only for
+  an error that reaches `run()`; the doeff traceback prints notes after the message, as Python does
+  (card ki-1c49d3ce4554).
+- `doeff-vm`: messages name its classes without the module — `'Call'`, `'Ok'`, `'Err'` instead of
+  `'doeff_vm.doeff_vm.Call'` (and `'K'` instead of `'builtins.K'`). `__module__` and `__qualname__` are unchanged,
+  so pickles and stored type names (cache keys, memo) read the same.
 - `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
   2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
   `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run

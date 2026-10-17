@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Never, TypeVar
 from doeff_vm import PyVM
 from doeff_vm._not_a_program import uncalled_do_function_call
 
+from doeff._not_a_result import not_a_result_note
+
 if TYPE_CHECKING:
     from doeff import Program
 
@@ -59,8 +61,15 @@ def _extra_arguments_message(positional_count: int, keywords: tuple[str, ...]) -
 
 
 def _enrich_and_print(exception):
-    """Enrich exception with doeff traceback and print to stderr."""
+    """Enrich exception with doeff traceback and print to stderr.
+
+    A TypeError from using an effect, a program or a Result as a value gets a note that says
+    to yield it (doeff._not_a_result) — once, when it passes through nested runs.
+    """
     try:
+        note = not_a_result_note(exception)
+        if note is not None and note not in getattr(exception, "__notes__", ()):
+            exception.add_note(note)
         if hasattr(exception, "__doeff_traceback__"):
             # VM already set __doeff_traceback__ (e.g. handler chain),
             # but pure Python frames from __traceback__ may be missing.
