@@ -1,7 +1,8 @@
-"""Effects of a file watch: wake a program when files under a directory change, instead of reading them at an
+"""Effects of a file watch: wake a program when files in a directory change, instead of reading them at an
 interval (#3977).
 
-- ``WatchFiles`` — start watching a directory (and what is below it); changes made from the answer on are seen.
+- ``WatchFiles`` — start watching a directory's own entries (not what is below its subdirectories); changes made
+  from the answer on are seen.
 - ``NextFileChanges`` — wait for the next changes on a watch; answers the paths that changed (created, written,
   removed), in the order they were first seen, each once.
 - ``CloseFileWatch`` — stop watching and give up what the handler keeps for the watch.
@@ -52,8 +53,13 @@ class FileWatch:
 
 @dataclass(frozen=True)
 class WatchFiles(EffectBase["FileWatch | WatchRefused"]):
-    """Start watching ``directory`` (an absolute path) and what is below it. A change made after the answer is
-    seen by ``NextFileChanges``; a change made before it is not."""
+    """Start watching ``directory`` (an absolute path): the entries directly in it, not what is below its
+    subdirectories. A change made after the answer is seen by ``NextFileChanges``; a change made before it is not.
+
+    The watch is not recursive so that starting it costs the same for any number of entries: a recursive start walks
+    the whole tree first, and the operating-system answerer starts on the caller's scheduler thread — on zeus a
+    tool-stream directory of 4,217 entries took 39 s to start and one of 95,900 had not started after 260 s, with
+    every task of the turn-host waiting behind it (agora-redesign card ki-b82163261cc0, 2026-10-17)."""
 
     directory: str
 
