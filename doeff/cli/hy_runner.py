@@ -14,6 +14,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from doeff_core_effects.extra_hints import extra_needed
+
 _REQUIRE_PRELUDE = (
     "(require doeff-hy.macros [do! <-])\n"
     "(require doeff-hy.handle [defhandler handle])"
@@ -33,12 +35,10 @@ class HyRunnerError(RuntimeError):
 
 
 def _require_hy():
-    try:
+    # Without the extra hy, fail with the line that installs it (tests/cli/test_cli_without_hy.py).
+    with extra_needed("hy", "doeff run --hy reads its source as Hy"):
+        import doeff_hy  # noqa: F401 - the prelude requires doeff-hy's macros
         import hy  # type: ignore
-    except ImportError as exc:  # pragma: no cover - optional dep
-        raise HyRunnerError(
-            "--hy requires the 'hy' package. Install it with 'pip install hy'."
-        ) from exc
     return hy
 
 
