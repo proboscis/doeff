@@ -1,5 +1,5 @@
-;;; 歩の積算の答え手 step-tally-handler(agora-redesign #3855)— OpenStepTally・CloseStepTally に、Python の scheduler の測りの口
-;;; (set_scheduler_trace)が出す task-leave の出来事で答える。
+;;; 歩の積算の答え手 step-tally-handler(agora-redesign #3855)— OpenStepTally・CloseStepTally に、scheduler の測りの口
+;;; (set_scheduler_trace — Python の版も Rust の版も同じ出来事を出す)が出す task-leave の出来事で答える。
 ;;;
 ;;; 何のためか: 呼び手(agora の CLI ホストなど)が、ある区間(1 つのターンを運ぶ間)に scheduler が走らせた歩の数・壁と CPU の時間と
 ;;; 最長の歩を、測りの口に自分で触らずに効果で数えるため。時計を読むのは scheduler の口の側だけ(task-leave の step_ns・step_cpu_ns)。
@@ -11,8 +11,8 @@
 ;;;   費用    窓が開いている間だけ、scheduler の出来事ごとに sink が 1 回呼ばれ、task-leave ごとに lock を取って窓を差し替える。
 ;;;           task の spawn の場所ごとの和(SiteTally)は、窓ごとの表の 1 行を歩ごとに差し替え、閉じた時に 1 度だけ並べる。
 ;;;
-;;; 窓を閉じずに run が終わると、その窓と sink は process に残る(次に同じ key を開けると断る)。Rust の scheduler は出来事を出さないので、
-;;; 窓を開けている間に Rust の scheduler を組むと scheduled が断る。
+;;; 窓を閉じずに run が終わると、その窓と sink は process に残る(次に同じ key を開けると断る)。scheduler はどちらの版でもよい
+;;; (既定の Rust の版も同じ出来事を出す — docs/25-rust-scheduler.md の「測りの口」)。
 ;;;
 ;;; task の積算の窓(OpenTaskTally・ReadTaskTally・CloseTaskTally — agora-redesign #4188): 同じ sink が spawned と task-leave の出来事で、
 ;;; 窓ごとの (run, tid) → 行(TaskTally)の表を進める。歩の窓と task の窓は sink を分け合い、どちらかの窓が 1 つでも開いている間は
@@ -224,7 +224,7 @@
 
 (defhandler step-tally-handler
   "OpenStepTally・CloseStepTally・OpenTaskTally・ReadTaskTally・CloseTaskTally に、process に 1 つの窓の表と scheduler の測りの口で
-   答える(頭の註)。Python の scheduler の内側に置く。"
+   答える(頭の註)。scheduler(Python の版でも Rust の版でも)の内側に置く。"
   (OpenStepTally [key]
     (<- (opened key (. (threading.current-thread) name) (time.perf-counter-ns)))
     (resume None))

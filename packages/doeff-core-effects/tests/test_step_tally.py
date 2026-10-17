@@ -6,8 +6,9 @@
 - Steps after a window closed are not added to it: the same key opened again starts from zero.
 - Closing a key that is not open answers None.
 - No window open → the scheduler has no trace sink.
-- Only the Python scheduler emits the steps: ``DOEFF_SCHEDULER=python`` makes a plain
-  ``scheduled`` count, and a window opened inside the default (Rust) scheduler closes with none.
+- Both versions emit the steps (every test runs under each through ``DOEFF_SCHEDULER``): a window
+  opened inside the default (Rust) scheduler counts, and the same program counts the same steps
+  under both — per window and per spawn site.
 
 These use the real thread clock, so the computation is kept to a few ms.
 """
@@ -55,8 +56,15 @@ def _run_busy():
     yield Wait(task)
 
 
-def _tallied(body):
-    return run(scheduled(with_handlers([step_tally_handler], body), implementation="python"))
+@pytest.fixture(params=["python", "rust"], autouse=True)
+def scheduler_implementation(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run each test under both scheduler versions: both emit the steps the tally counts."""
+    monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
+    return request.param
+
+
+def _tallied(body, implementation=None):
+    return run(scheduled(with_handlers([step_tally_handler], body), implementation=implementation))
 
 
 def test_computing_task_raises_the_window_cpu() -> None:
@@ -172,22 +180,30 @@ def _busy_window():
     return (yield CloseStepTally("busy"))
 
 
-def test_python_scheduler_chosen_by_environment_counts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``DOEFF_SCHEDULER=python`` makes a plain ``scheduled`` the scheduler that emits the steps."""
-    monkeypatch.setenv("DOEFF_SCHEDULER", "python")
+def test_window_under_the_default_scheduler_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default (Rust) scheduler emits the steps: a window opened inside a plain ``scheduled``
+    counts its tasks' work (until 2026-10-18 it closed with none)."""
+    monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
     busy = run(scheduled(with_handlers([step_tally_handler], _busy_window())))
+    assert busy.steps > STEPS, busy
     assert busy.cpu_ns >= STEPS * BUSY_CPU_MS * 1_000_000, busy
     assert scheduler_trace_sink() is None
 
 
-def test_window_under_the_default_scheduler_counts_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The default (Rust) scheduler emits no trace events: a window opened inside it closes
-    with no steps, however much its tasks computed — a process that counts steps names the
-    Python scheduler (docs/25-rust-scheduler.md)."""
-    monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
-    busy = run(scheduled(with_handlers([step_tally_handler], _busy_window())))
-    assert busy.steps == 0, busy
-    assert busy.cpu_ns == 0, busy
-    assert scheduler_trace_sink() is None
+def test_both_versions_count_the_same_steps() -> None:
+    """The same program counts the same steps under both versions — in the window and per spawn
+    site, and with the same ready count at the last step (the times differ)."""
+
+    @do
+    def body():
+        yield OpenStepTally("sites")
+        yield _run_busy()
+        return (yield CloseStepTally("sites"))
+
+    python, rust = _tallied(body(), "python"), _tallied(body(), "rust")
+
+    def counted(tally: StepTally) -> tuple[int, int, dict[str | None, int]]:
+        return tally.steps, tally.ready, {row.site: row.steps for row in tally.sites}
+
+    assert python.steps > STEPS, python
+    assert counted(rust) == counted(python), (rust, python)

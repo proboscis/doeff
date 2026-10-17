@@ -31,6 +31,15 @@
 //! - an error raised while handling an effect is thrown into the performing
 //!   continuation when the scheduler still holds it — the Python version gets
 //!   the same routing from the VM's `handler_k_handle` recovery.
+//!
+//! The measurement hook (`set_scheduler_trace`, agora-redesign #3855 / #3861).
+//! While a sink is installed this scheduler emits the Python version's events —
+//! the same kinds, the same fields, in the same order — through the Python
+//! version's own helpers (`_trace`, `_trace_step_boundary`), so the dicts and
+//! the clocks are one definition. The Python handler sees every effect at its
+//! prompt, so an effect this one declines (`accepts`) still gets its
+//! `task-leave` and drain. While no sink is installed every event site reads
+//! one process-wide flag (`TRACE_INSTALLED`) and nothing else.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
@@ -178,6 +187,13 @@ struct Spec {
     /// The Python scheduler module: settings a test may monkeypatch
     /// (`EXTERNAL_STALL_LOG_INTERVAL_SECONDS`) are read from it when used.
     module: Py<PyAny>,
+    /// `_trace(event, run, **fields)`: one measurement event to the installed sink.
+    trace: Py<PyAny>,
+    /// `_trace_step_boundary(previous, event, run, tid, fields)`: a step boundary
+    /// (task-enter / task-leave); answers the next step start.
+    trace_step_boundary: Py<PyAny>,
+    /// The run's number in the events (`run`), from the Python version's counter.
+    trace_run: u64,
     priority_idle: i64,
     priority_external_wait: i64,
     priority_normal: i64,
@@ -218,6 +234,9 @@ impl Spec {
             external_wake_of: get("external_wake_of")?.unbind(),
             external_wait_is_stall: get("external_wait_is_stall")?.unbind(),
             module: get("module")?.unbind(),
+            trace: get("trace")?.unbind(),
+            trace_step_boundary: get("trace_step_boundary")?.unbind(),
+            trace_run: get("trace_run")?.extract()?,
             priority_idle: get("PRIORITY_IDLE")?.extract()?,
             priority_external_wait: get("PRIORITY_EXTERNAL_WAIT")?.extract()?,
             priority_normal: get("PRIORITY_NORMAL")?.extract()?,
@@ -425,6 +444,54 @@ enum ReadyEntry {
     },
 }
 
+impl ReadyEntry {
+    /// The task the entry starts or resumes (the Python version's `entry[1]`;
+    /// `None` = the root body).
+    fn owner(&self) -> Owner {
+        match self {
+            ReadyEntry::New { tid } => Some(*tid),
+            ReadyEntry::Resume { owner, .. }
+            | ReadyEntry::Raise { owner, .. }
+            | ReadyEntry::SemResume { owner, .. }
+            | ReadyEntry::WaitExternal { owner, .. } => *owner,
+        }
+    }
+}
+
+/// How a ready entry came to be queued — the Python version's `wake_of_seq`
+/// values, kept only while a trace sink is installed. An entry queued with no
+/// sink has none ("untracked").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wake {
+    /// A spawned task's start.
+    New,
+    /// An external-wait placeholder.
+    Placeholder,
+    /// Queued by the scheduler's own work.
+    Internal,
+    /// Woken by the drained completion of the external promise `pid`.
+    External(u64),
+}
+
+/// The `wake` of an event: the name the Python version gives the wake.
+fn wake_name(wake: Option<Wake>) -> &'static str {
+    match wake {
+        None => "untracked",
+        Some(Wake::New) => "new",
+        Some(Wake::Placeholder) => "placeholder",
+        Some(Wake::Internal) => "internal",
+        Some(Wake::External(_)) => "external",
+    }
+}
+
+/// The `pid` of an event: the external promise whose completion woke the entry.
+fn wake_pid(wake: Option<Wake>) -> Option<u64> {
+    match wake {
+        Some(Wake::External(pid)) => Some(pid),
+        None | Some(Wake::New) | Some(Wake::Placeholder) | Some(Wake::Internal) => None,
+    }
+}
+
 /// A ready-heap item: the Python version's `(-priority, seq, entry)` tuple.
 struct HeapItem {
     neg_priority: i64,
@@ -586,6 +653,18 @@ struct State {
     /// `unretrieved_exceptions_named` descriptions, and how many there were.
     unretrieved_swept: Vec<String>,
     unretrieved_swept_count: usize,
+    /// The measurement hook, written only while a sink is installed: the wake
+    /// of each queued entry by its seq (the Python version's `wake_of_seq`),
+    /// the wake an entry queued now gets (`wake_context` — External while a
+    /// drained completion wakes its waiters), and the start of the run's
+    /// current step (`step_start`: what `_trace_step_boundary` answered).
+    wake_of_seq: HashMap<u64, Wake>,
+    wake_context: Wake,
+    step_start: Option<Py<PyAny>>,
+    /// A KeyboardInterrupt (or another BaseException that is not an
+    /// Exception) the sink raised at an event site, kept until `handle`
+    /// throws it at the next resumed task (`trace_failed`).
+    trace_interrupt: Option<Py<PyAny>>,
 }
 
 impl State {
@@ -608,8 +687,33 @@ impl State {
             graveyard_objs: Vec::new(),
             unretrieved_swept: Vec::new(),
             unretrieved_swept_count: 0,
+            wake_of_seq: HashMap::default(),
+            wake_context: Wake::Internal,
+            step_start: None,
+            trace_interrupt: None,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The measurement hook (`set_scheduler_trace`)
+// ---------------------------------------------------------------------------
+
+/// Whether a `set_scheduler_trace` sink is installed in this process — the
+/// Python module's `_trace_sink is not None`, switched together with it by
+/// `set_scheduler_trace`. With no sink every event site reads only this flag:
+/// no dict, no clock, no Python call.
+static TRACE_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+fn traced() -> bool {
+    TRACE_INSTALLED.load(Ordering::Relaxed)
+}
+
+/// Switch the flag: called by `set_scheduler_trace` only, with the sink it
+/// installs (`True`) or removes (`False`).
+#[pyfunction]
+fn set_scheduler_trace_installed(installed: bool) {
+    TRACE_INSTALLED.store(installed, Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -872,16 +976,21 @@ impl Core {
                     })
                 }
             };
+            if traced() {
+                locked.trace_task_leave(py, tid, effect.bind(py));
+            }
             let kref = locked.store_k(k);
             let outcome = locked.dispatch(py, tid, kind, effect.bind(py), kref);
             let result = match outcome {
                 Ok(Outcome::Ctrl(ctrl)) => Ok(ctrl),
                 Ok(Outcome::CancelCallbacks { k, callbacks }) => {
                     let k = locked.take_k(k);
+                    let interrupt = locked.trace_interrupt.take();
                     let graveyard = locked.take_graveyard();
                     drop(locked);
                     drop(graveyard);
-                    return Ok(finish_cancel(py, &self.spec, k, callbacks));
+                    let resumed = Ok(finish_cancel(py, &self.spec, k, callbacks));
+                    return self.deliver_trace_interrupt(resumed, interrupt);
                 }
                 Err(err) => {
                     let exception = exception_value(py, err);
@@ -891,10 +1000,60 @@ impl Core {
                     }
                 }
             };
+            let interrupt = locked.trace_interrupt.take();
             let graveyard = locked.take_graveyard();
             drop(locked);
             drop(graveyard);
-            result
+            self.deliver_trace_interrupt(result, interrupt)
+        })
+    }
+
+    /// Throw a KeyboardInterrupt the sink raised at an event site
+    /// (`trace_failed`) at the yield of the task this dispatch resumes. A
+    /// dispatch that resumes no task (a task start, the end of the run) keeps
+    /// it for the next one.
+    fn deliver_trace_interrupt(
+        self: &Arc<Self>,
+        result: Result<DoCtrl, VMError>,
+        interrupt: Option<Py<PyAny>>,
+    ) -> Result<DoCtrl, VMError> {
+        let Some(interrupt) = interrupt else {
+            return result;
+        };
+        if let Ok(DoCtrl::Resume { k, .. } | DoCtrl::ResumeThrow { k, .. }) = result {
+            return Ok(DoCtrl::ResumeThrow {
+                k,
+                exception: Value::Opaque(PyShared::new(interrupt)),
+            });
+        }
+        if let Ok(mut locked) = self.lock() {
+            locked.trace_interrupt.get_or_insert(interrupt);
+        }
+        result
+    }
+
+    /// An effect the scheduler passes on (`accepts` declines it) while a trace
+    /// sink is installed. The Python version's handler sees every effect at its
+    /// prompt: it emits task-leave and drains the external completions before
+    /// its `yield Pass(effect, k)`. This does the same, in the same order, so
+    /// both versions emit the same events; the VM then reperforms the effect
+    /// from the prompt's parent, as for every effect `accepts` declines. A
+    /// failed drain has no performing continuation to be thrown into here
+    /// (`trace_failed` takes it).
+    fn trace_passed(self: &Arc<Self>, tid: Owner, effect: &PyShared) {
+        Python::attach(|py| {
+            // Held by this thread: the scheduler is inside its own dispatch, which
+            // performs no effect through its prompt — there is no step to end.
+            let Ok(mut locked) = self.lock() else {
+                return;
+            };
+            locked.trace_task_leave(py, tid, effect.bind(py));
+            if let Err(err) = locked.drain(py) {
+                locked.trace_failed(py, err);
+            }
+            let graveyard = locked.take_graveyard();
+            drop(locked);
+            drop(graveyard);
         })
     }
 }
@@ -1210,6 +1369,27 @@ impl Locked<'_> {
     fn enqueue(&mut self, entry: ReadyEntry, priority: i64) {
         let seq = self.insertion_seq;
         self.insertion_seq += 1;
+        if !traced() {
+            heapq::push(
+                &mut self.ready,
+                HeapItem {
+                    neg_priority: -priority,
+                    seq,
+                    entry,
+                },
+            );
+            return;
+        }
+        // The wake is kept before the push, as the Python version counts it.
+        let wake = match entry {
+            ReadyEntry::New { .. } => Wake::New,
+            ReadyEntry::WaitExternal { .. } => Wake::Placeholder,
+            ReadyEntry::Resume { .. } | ReadyEntry::Raise { .. } | ReadyEntry::SemResume { .. } => {
+                self.wake_context
+            }
+        };
+        let owner = entry.owner();
+        self.wake_of_seq.insert(seq, wake);
         heapq::push(
             &mut self.ready,
             HeapItem {
@@ -1218,6 +1398,184 @@ impl Locked<'_> {
                 entry,
             },
         );
+        Python::attach(|py| self.trace_enqueued(py, owner, wake, priority));
+    }
+
+    // --- the measurement hook (set_scheduler_trace) -------------------------
+
+    /// One event through the Python version's `_trace` (the same dict, the
+    /// same clocks).
+    fn trace_event(&mut self, py: Python<'_>, event: &str, fields: impl FnOnce(&Bound<'_, PyDict>) -> PyResult<()>) {
+        let emitted = (|| -> PyResult<()> {
+            let kwargs = PyDict::new(py);
+            fields(&kwargs)?;
+            self.spec()
+                .trace
+                .bind(py)
+                .call((event, self.spec().trace_run), Some(&kwargs))?;
+            Ok(())
+        })();
+        if let Err(err) = emitted {
+            self.trace_failed(py, err);
+        }
+    }
+
+    /// An exception raised at an event site — by the sink, or by the drain of
+    /// a passed effect (`Core::trace_passed`). The site sits inside a state
+    /// change, which must not stop halfway, or has no continuation to throw
+    /// into, so the error does not propagate from it: an Exception is reported
+    /// through `sys.unraisablehook` and the run goes on; a KeyboardInterrupt
+    /// (or another BaseException that is not an Exception) is kept and
+    /// `handle` throws it at the yield of the task the scheduler resumes next
+    /// — the way a signal lands at the next bytecode.
+    fn trace_failed(&mut self, py: Python<'_>, err: PyErr) {
+        if err.is_instance_of::<PyException>(py) {
+            err.write_unraisable(py, None);
+            return;
+        }
+        if self.trace_interrupt.is_none() {
+            self.trace_interrupt = Some(raised_object(py, &err));
+        }
+    }
+
+    /// A step boundary (task-enter / task-leave) through the Python version's
+    /// `_trace_step_boundary`, which also answers the run's next step start.
+    fn trace_step_boundary(
+        &mut self,
+        py: Python<'_>,
+        event: &str,
+        tid: Owner,
+        fields: impl FnOnce(&Bound<'_, PyDict>) -> PyResult<()>,
+    ) {
+        let crossed = (|| -> PyResult<Py<PyAny>> {
+            let kwargs = PyDict::new(py);
+            fields(&kwargs)?;
+            let previous = match &self.step_start {
+                Some(start) => start.clone_ref(py),
+                None => py.None(),
+            };
+            Ok(self
+                .spec()
+                .trace_step_boundary
+                .bind(py)
+                .call1((previous, event, self.spec().trace_run, tid, kwargs))?
+                .unbind())
+        })();
+        match crossed {
+            Ok(start) if start.is_none(py) => self.step_start = None,
+            Ok(start) => self.step_start = Some(start),
+            Err(err) => self.trace_failed(py, err),
+        }
+    }
+
+    /// The spawn site of `owner`'s task (`tasks[tid].get("spawn_site")`; the
+    /// root and a released task have none).
+    fn site_of(&self, owner: Owner) -> Option<String> {
+        owner
+            .and_then(|tid| self.tasks.get(&tid))
+            .and_then(|task| task.spawn_site.clone())
+            .flatten()
+    }
+
+    /// task-leave of `tid`, whose `effect` reached the scheduler prompt (the
+    /// first line of the Python version's handler).
+    fn trace_task_leave(&mut self, py: Python<'_>, tid: Owner, effect: &Bound<'_, PyAny>) {
+        let ready = self.ready.len();
+        let site = self.site_of(tid);
+        let name = effect.get_type().getattr(pyo3::intern!(py, "__name__"));
+        self.trace_step_boundary(py, "task-leave", tid, |fields| {
+            fields.set_item("effect", name?)?;
+            fields.set_item("ready", ready)?;
+            fields.set_item("site", site)?;
+            Ok(())
+        });
+    }
+
+    /// resumed and task-enter of the entry `pick_next` chose to run (the
+    /// Python version's `trace_entered`).
+    fn trace_entered(&mut self, py: Python<'_>, wake: Option<Wake>, tid: Owner) {
+        if !traced() {
+            return;
+        }
+        let ready = self.ready.len();
+        self.trace_event(py, "resumed", |fields| {
+            fields.set_item("tid", tid)?;
+            fields.set_item("wake", wake_name(wake))?;
+            fields.set_item("pid", wake_pid(wake))?;
+            fields.set_item("ready", ready)?;
+            Ok(())
+        });
+        let site = self.site_of(tid);
+        self.trace_step_boundary(py, "task-enter", tid, |fields| {
+            fields.set_item("site", site)?;
+            fields.set_item("ready", ready)?;
+            Ok(())
+        });
+    }
+
+    /// enqueued of the entry just pushed (the Python version's
+    /// `trace_enqueued`). An entry an external completion woke also names the
+    /// entries it queued behind: those at its priority or above, by wake.
+    fn trace_enqueued(&mut self, py: Python<'_>, tid: Owner, wake: Wake, priority: i64) {
+        let Wake::External(pid) = wake else {
+            self.trace_event(py, "enqueued", |fields| {
+                fields.set_item("tid", tid)?;
+                fields.set_item("wake", wake_name(Some(wake)))?;
+                fields.set_item("pid", wake_pid(Some(wake)))?;
+                fields.set_item("priority", priority)?;
+                Ok(())
+            });
+            return;
+        };
+        let mut ahead_by_wake: Vec<(&'static str, usize)> = Vec::new();
+        for item in &self.ready {
+            if item.neg_priority > -priority {
+                continue;
+            }
+            let name = wake_name(self.wake_of_seq.get(&item.seq).copied());
+            match ahead_by_wake.iter_mut().find(|(seen, _)| *seen == name) {
+                Some((_, count)) => *count += 1,
+                None => ahead_by_wake.push((name, 1)),
+            }
+        }
+        // Not the entry just queued.
+        if let Some((_, count)) = ahead_by_wake.iter_mut().find(|(seen, _)| *seen == "external") {
+            *count -= 1;
+        }
+        ahead_by_wake.retain(|(_, count)| *count > 0);
+        let ahead: usize = ahead_by_wake.iter().map(|(_, count)| count).sum();
+        let ready = self.ready.len();
+        self.trace_event(py, "enqueued", |fields| {
+            fields.set_item("tid", tid)?;
+            fields.set_item("wake", "external")?;
+            fields.set_item("pid", pid)?;
+            fields.set_item("priority", priority)?;
+            fields.set_item("ready", ready)?;
+            fields.set_item("ahead", ahead)?;
+            let by_wake = PyDict::new(py);
+            for (name, count) in &ahead_by_wake {
+                by_wake.set_item(name, count)?;
+            }
+            fields.set_item("ahead_by_wake", by_wake)?;
+            Ok(())
+        });
+    }
+
+    /// The wake kept for the ready entry `seq`, taken out (`None` when it was
+    /// queued untracked). One length check while nothing is kept.
+    fn take_wake(&mut self, seq: u64) -> Option<Wake> {
+        if self.wake_of_seq.is_empty() {
+            return None;
+        }
+        self.wake_of_seq.remove(&seq)
+    }
+
+    /// Keep `wake` again for an entry `pick_next` holds out of the heap: it is
+    /// pushed back with its seq.
+    fn keep_wake(&mut self, seq: u64, wake: Option<Wake>) {
+        if let Some(wake) = wake {
+            self.wake_of_seq.insert(seq, wake);
+        }
     }
 
     fn is_owner_cancelled(&self, owner: Owner) -> bool {
@@ -1309,10 +1667,17 @@ impl Locked<'_> {
     fn settle_external(&mut self, py: Python<'_>, settle: Settle, pid: u64, value: Py<PyAny>) -> PyResult<()> {
         let Some(promise) = self.promises.get_mut(&pid) else {
             self.bury(value);
+            if traced() {
+                self.trace_ignored(py, pid, "swept");
+            }
             return Ok(());
         };
         if promise.status != Status::Pending {
+            let status = promise.status;
             self.bury(value);
+            if traced() {
+                self.trace_ignored(py, pid, status.name());
+            }
             return Ok(());
         }
         promise.status = match settle {
@@ -1326,14 +1691,36 @@ impl Locked<'_> {
                 self.bury(callback);
             }
         }
-        self.wake_waiters(
-            py,
-            WKey {
-                kind: WKind::Promise,
-                id: pid,
-            },
-        )?;
+        let completed = WKey {
+            kind: WKind::Promise,
+            id: pid,
+        };
+        if !traced() {
+            self.wake_waiters(py, completed)?;
+            return Ok(());
+        }
+        let ready = self.ready.len();
+        self.trace_event(py, "external-drained", |fields| {
+            fields.set_item("pid", pid)?;
+            fields.set_item("ready", ready)?;
+            Ok(())
+        });
+        // The entries this completion wakes are queued with its wake.
+        self.wake_context = Wake::External(pid);
+        let woken = self.wake_waiters(py, completed);
+        self.wake_context = Wake::Internal;
+        woken?;
         Ok(())
+    }
+
+    /// external-ignored: a drained completion of a promise that is no longer
+    /// pending (`status` — or "swept" when its entry is gone).
+    fn trace_ignored(&mut self, py: Python<'_>, pid: u64, status: &str) {
+        self.trace_event(py, "external-ignored", |fields| {
+            fields.set_item("pid", pid)?;
+            fields.set_item("status", status)?;
+            Ok(())
+        });
     }
 
     fn drain(&mut self, py: Python<'_>) -> PyResult<()> {
@@ -1521,6 +1908,7 @@ impl Locked<'_> {
         })?;
         let item = self.ready.remove(index);
         heapq::heapify(&mut self.ready);
+        self.take_wake(item.seq);
         match item.entry {
             ReadyEntry::Resume { k, value, .. } => {
                 self.bury(value);
@@ -1764,10 +2152,12 @@ impl Locked<'_> {
         loop {
             self.drain(py)?;
             while let Some(item) = heapq::pop(&mut self.ready) {
+                let wake = self.take_wake(item.seq);
                 if shield_deferred
                     && !matches!(item.entry, ReadyEntry::WaitExternal { .. })
                     && self.is_live_daemon_entry(&item.entry)
                 {
+                    self.keep_wake(item.seq, wake);
                     held.push(item);
                     continue;
                 }
@@ -1788,6 +2178,7 @@ impl Locked<'_> {
                         let Some(program) = program else {
                             return Err(key_error("program"));
                         };
+                        self.trace_entered(py, wake, Some(tid));
                         return Ok(start_task(py, self.core, tid, program, boundaries));
                     }
                     ReadyEntry::Resume { owner, k, value } => {
@@ -1798,6 +2189,7 @@ impl Locked<'_> {
                         }
                         let k = self.take_k_or_empty(k);
                         let value = obj_value(py, &value);
+                        self.trace_entered(py, wake, owner);
                         return Ok(DoCtrl::Resume { k, value });
                     }
                     ReadyEntry::SemResume { owner, k, sid } => {
@@ -1809,6 +2201,7 @@ impl Locked<'_> {
                             continue;
                         }
                         let k = self.take_k_or_empty(k);
+                        self.trace_entered(py, wake, owner);
                         return Ok(DoCtrl::Resume {
                             k,
                             value: Value::None,
@@ -1821,6 +2214,7 @@ impl Locked<'_> {
                             continue;
                         }
                         let k = self.take_k_or_empty(k);
+                        self.trace_entered(py, wake, owner);
                         return Ok(DoCtrl::ResumeThrow {
                             k,
                             exception: Value::Opaque(PyShared::new(error)),
@@ -1835,6 +2229,7 @@ impl Locked<'_> {
                             continue;
                         }
                         if self.has_live_ready_entry(false) {
+                            self.keep_wake(item.seq, wake);
                             held.push(HeapItem {
                                 neg_priority: item.neg_priority,
                                 seq: item.seq,
@@ -2147,6 +2542,8 @@ impl Locked<'_> {
                 let kwargs = PyDict::new(py);
                 kwargs.set_item("_register", self.core.registrar(py)?)?;
                 kwargs.set_item("_bind_cancel", self.core.cancel_binder(py)?)?;
+                // The run its external-complete events name (emitted by ExternalPromise itself).
+                kwargs.set_item("_run", self.spec().trace_run)?;
                 let handle = self
                     .spec()
                     .external_promise_cls
@@ -2294,6 +2691,17 @@ impl Locked<'_> {
                 unretrieved: None,
             },
         );
+        if traced() {
+            // #4188: the parent (the task that performed Spawn — None for the root) and the child, so the
+            // task tree can be rebuilt from the events.
+            let site = self.site_of(Some(tid));
+            self.trace_event(py, "spawned", |fields| {
+                fields.set_item("tid", tid)?;
+                fields.set_item("parent", current)?;
+                fields.set_item("site", site)?;
+                Ok(())
+            });
+        }
         self.enqueue(ReadyEntry::New { tid }, priority);
         let handle = self.spec().task_cls.bind(py).call1((tid,))?;
         self.register_handle(
@@ -3089,7 +3497,15 @@ impl Callable for SchedulerHandler {
 
     fn accepts(&self, effect: &Value) -> bool {
         match effect {
-            Value::Opaque(obj) => self.core.kind_of(obj).is_some(),
+            Value::Opaque(obj) => {
+                if self.core.kind_of(obj).is_some() {
+                    return true;
+                }
+                if traced() {
+                    self.core.trace_passed(self.tid, obj);
+                }
+                false
+            }
             _ => false,
         }
     }
@@ -3327,6 +3743,7 @@ pub fn register(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyExternalQueue>()?;
     m.add_class::<HandleRegistrar>()?;
     m.add_class::<CancelBinder>()?;
+    m.add_function(pyo3::wrap_pyfunction!(set_scheduler_trace_installed, m)?)?;
     Ok(())
 }
 
