@@ -251,11 +251,81 @@ def _fence(info: str, code: str) -> Example:
         ("python file=../a.py", "x = 1\n", "dir を含まない名"),
         ("python", "print(1)\n", "注記が無い"),
         ("bash run", "pytest\n", "注記が無い"),
+        ("python continues", "print(1)  # 1\n", "続く先の python の囲み"),
+        ("python continues file=a.py", "print(1)  # 1\n", "continues は python か hy の囲みに書き"),
+        ("bash continues", "pip install doeff\n", "continues は python か hy の囲みに書き"),
     ],
 )
 def test_rules_name_a_fence_that_breaks_them(info: str, code: str, named: str) -> None:
     problems = _fence(info, code).problems()
     assert any(named in problem for problem in problems), problems
+
+
+def test_a_continuing_fence_is_the_fence_above_it_with_its_own_lines_added() -> None:
+    # 読み手は続きの囲みを、上の例の file に書き足して走らせる — 間の bash の囲みと、別の言葉の囲みは飛ばす。
+    text = """## First
+
+```python
+x = 20
+print(x)  # 20
+```
+
+```bash
+pip install doeff
+```
+
+## Next
+
+```hy
+(print 1)  ; 1
+```
+
+```python continues
+print(x + 1)  # 21
+```
+
+```python continues
+print(x + 2)  # 22
+```
+"""
+    first, _shown, _hy, second, third = examples.fences(text, "README.md")
+    assert (second.continues_from, third.continues_from) == (first.line, second.line)
+    assert second.code == "x = 20\nprint(x)  # 20\nprint(x + 1)  # 21\n"
+    assert third.stated_output() == ["20", "21", "22"]
+    assert [example.problems() for example in (second, third)] == [[], []]
+
+
+@pytest.mark.parametrize("above", ["python excerpt", "python file=helper.py"])
+def test_a_fence_does_not_continue_an_excerpt_or_a_module(above: str) -> None:
+    # excerpt は走らない断片で、file= は後の囲みが import する module — どちらも書き足して走らせる script ではない。
+    text = f"## Rules\n\n```{above}\nx = 1\n```\n\n```python continues\nprint(x)  # 1\n```\n"
+    continuing = examples.fences(text, "README.md")[1]
+    assert continuing.continues_from is None
+    assert any("続く先の python の囲み" in problem for problem in continuing.problems())
+
+
+@pytest.mark.parametrize(("stated", "failed"), [("21", []), ("20", ["README.md:8"])])
+def test_a_continuing_fence_runs_as_one_script_with_the_fence_above(
+    stated: str, failed: list[str], tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    text = f"""## Steps
+
+```python
+x = 20
+print(x)  # 20
+```
+
+```python continues
+print(x + 1)  # {stated}
+```
+"""
+    failures = examples.run_in_order(
+        examples.fences(text, "README.md"),
+        tmp_path,
+        Path(sys.executable),
+        CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+    )
+    assert [failure.split("(")[0] for failure in failures] == failed
 
 
 @pytest.mark.parametrize(
