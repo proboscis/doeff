@@ -1,13 +1,14 @@
 name: Publish doeff
 
+# One-off release branch for doeff-agents 0.1.2 (cut from tag v0.4.1). It publishes doeff-agents
+# only: 0.1.1 declares `doeff>=0.1.0` with no upper bound, so an unpinned install pairs it with
+# doeff 0.5, which removed the public WithHandler its handlers import. 0.1.2 is the same code
+# with `doeff<0.5`. Dispatch it on this branch; main's publish.yml stays the core-five release.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to PyPI"
+        description: "Publish doeff-agents 0.1.2 to PyPI"
         required: false
         default: false
         type: boolean
@@ -16,98 +17,46 @@ permissions:
   contents: read
 
 jobs:
-  publish-doeff-vm:
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    uses: ./.github/workflows/build-vm.yml
-    with:
-      publish: true
-    secrets: inherit
-
-  publish-doeff-indexer:
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: [publish-doeff-vm]
-    uses: ./.github/workflows/build-indexer.yml
-    with:
-      publish: true
-    secrets: inherit
-
-  build-dist:
+  build-doeff-agents:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Build wheel and sdist
-        run: uv build --wheel --sdist
-
-      - name: Verify built metadata
-        run: uv run python tools/verify_dist_metadata.py dist/*.whl dist/*.tar.gz
-
-      - name: Upload distribution artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: doeff-dist
-          path: dist/*
-
-  build-doeff-agents-dist:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Fail unless the release is doeff-agents 0.1.2 and it is not on PyPI yet
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' packages/doeff-agents/pyproject.toml)
+          test "$version" = "0.1.2"
+          status=$(python3 -c 'import urllib.request, urllib.error
+          try:
+              urllib.request.urlopen("https://pypi.org/pypi/doeff-agents/0.1.2/json"); print(200)
+          except urllib.error.HTTPError as e:
+              print(e.code)')
+          test "$status" = "404"
 
       - name: Build doeff-agents wheel and sdist
         run: uv build --package doeff-agents --wheel --sdist --out-dir dist-doeff-agents
 
       - name: Verify built metadata
-        run: uv run python tools/verify_dist_metadata.py dist-doeff-agents/*.whl dist-doeff-agents/*.tar.gz
+        run: uv run --no-project python tools/verify_dist_metadata.py dist-doeff-agents/*.whl dist-doeff-agents/*.tar.gz
 
       - name: Upload doeff-agents distribution artifacts
         uses: actions/upload-artifact@v4
         with:
           name: doeff-agents-dist
           path: dist-doeff-agents/*
-
-  publish:
-    name: Publish to PyPI
-    needs: [build-dist, publish-doeff-vm, publish-doeff-indexer]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    steps:
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-dist
-          path: dist
-
-      - name: List artifacts
-        run: ls -la dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-          skip_existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          if-no-files-found: error
 
   publish-doeff-agents:
     name: Publish doeff-agents to PyPI
-    needs: [build-doeff-agents-dist, publish]
+    needs: [build-doeff-agents]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    environment: pypi
+    permissions:
+      id-token: write
     steps:
       - name: Download doeff-agents dist artifacts
         uses: actions/download-artifact@v4
@@ -122,5 +71,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist-doeff-agents/
-          skip_existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}

@@ -1,6 +1,6 @@
 [project]
 name = "doeff-agents"
-version = "0.1.1"
+version = "0.1.2"
 description = "Agent session management for coding agents (Claude, Codex, Gemini) in tmux"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,7 +21,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "doeff>=0.1.0",
+    # 0.1.x is built for doeff 0.4: doeff 0.5 removed the public WithHandler that the handlers import.
+    "doeff>=0.1.0,<0.5",
     "click>=8.0.0",
     "rich>=13.0.0",
 ]
