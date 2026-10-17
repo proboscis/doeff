@@ -25,6 +25,7 @@ import functools
 import itertools
 import logging
 import os
+import reprlib
 import sys
 import threading
 import time
@@ -915,6 +916,46 @@ class ExternalPromise(Generic[_T]):
         return f"ExternalPromise({self.promise_id})"
 
 
+def _not_a_waitable(effect: EffectBase, value: object) -> TypeError:
+    """The TypeError a Wait / Gather / Race throws at its yield when ``value``, one of its
+    waitables, is neither a Task nor a Future.
+
+    Both implementations build it here (Rust through ``_rust_spec``), only after the check failed.
+    The usual cause is a program passed where its task belongs — ``Gather(worker("a"))`` without
+    Spawn — so the message names Spawn, not the VM's node type (``Call``).
+    """
+    from doeff import DoExpr  # doeff imports this package: resolved on the error path only
+
+    name = type(effect).__name__
+    if isinstance(value, (DoExpr, EffectBase)):
+        if isinstance(effect, Wait):
+            return TypeError(
+                f"{name} takes the task that Spawn returns, got a program. Spawn the program "
+                f"first and wait on its task: t = yield Spawn(prog); yield {name}(t)"
+            )
+        return TypeError(
+            f"{name} takes the tasks that Spawn returns, got a program. Spawn each program "
+            f"first and pass the tasks: t = yield Spawn(prog); yield {name}(t, ...)"
+        )
+    if isinstance(value, (Promise, ExternalPromise)):
+        return TypeError(
+            f"{name} takes the promise's future, not the promise: yield {name}(p.future)"
+        )
+    return TypeError(
+        f"{name} takes a Task (t = yield Spawn(prog)) or a Future (p.future), "
+        f"got {reprlib.repr(value)} ({type(value).__name__})"
+    )
+
+
+def _misused_waitable(effect: EffectBase, waitables: Iterable[object]) -> TypeError | None:
+    """The TypeError for the first of ``waitables`` that is neither a Task nor a Future (None
+    when every one is), checked before the Python scheduler reads any of them."""
+    for value in waitables:
+        if not isinstance(value, (Task, Future)):
+            return _not_a_waitable(effect, value)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
@@ -1009,6 +1050,7 @@ def _rust_spec() -> dict[str, object]:
         "TaskCancelledError": TaskCancelledError,
         "ExternalPromiseCancelCallbackError": ExternalPromiseCancelCallbackError,
         "SchedulerDeadlockError": SchedulerDeadlockError,
+        "not_a_waitable": _not_a_waitable,
         "enrich_exception_traceback": _enrich_exception_traceback,
         "logger": _logger,
         "module": sys.modules[__name__],
@@ -1057,6 +1099,9 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
         """
         try:
             result = yield prog
+        except GeneratorExit:
+            # Python closes the body a run dropped: there is no run left to unwind work in.
+            raise
         except BaseException:
             yield close_out()
             raise
@@ -1329,13 +1374,17 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             sweep_terminal_unobserved_entries()
         return i
 
-    def waitable_key(obj):
-        """Convert Task or Future to a dict key."""
+    def waitable_key(effect, obj):
+        """Convert a Task or Future of ``effect`` (Wait / Gather / Race) to a dict key.
+
+        The dispatch checks every waitable first (_misused_waitable) and throws the TypeError
+        at the waiter's yield; the raise here only guards a caller that skipped the check.
+        """
         if isinstance(obj, Task):
             return ("task", obj.task_id)
         if isinstance(obj, Future):
             return ("promise", obj.promise_id)
-        raise TypeError(f"expected Task or Future, got {type(obj).__name__}")
+        raise _not_a_waitable(effect, obj)
 
     def waitable_status(key):
         kind, wid = key
@@ -1806,7 +1855,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             else:
                 owned[key] -= 1
 
-    def keys_parked_by(tid: int) -> list[tuple[str, int]]:
+    def keys_parked_by(tid: int | None) -> list[tuple[str, int]]:
         """Waitable keys that hold a Wait/Gather/Race entry owned by ``tid``, in ``waiters``' order.
 
         Read from the reverse index, so a Cancel does not walk every parked
@@ -1857,16 +1906,17 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     errors.append(error)
         return errors
 
-    def detach_parked_continuation(tid: int) -> object | None:
-        """Take the one continuation of started task ``tid`` the scheduler holds.
+    def detach_parked_continuation(tid: int | None) -> object | None:
+        """Take the one continuation of started task ``tid`` (None = the root body) the scheduler holds.
 
         A started task that is not the one currently running is suspended in
         exactly one scheduler structure: a Wait/Gather/Race registration in
         ``waiters``, a queued resume/raise/permit in the ready heap, or a
         semaphore wait queue. The continuation is removed from there (so no
         wake can resume it a second time) and returned, so Cancel can throw
-        ``TaskCancelledError`` into it. Returns None when the scheduler does
-        not hold the task's continuation.
+        ``TaskCancelledError`` into it (and pick_next a deadlock into the root
+        body). Returns None when the scheduler does not hold the task's
+        continuation.
         """
         for detach in (detach_from_waiters, detach_from_ready, detach_from_semaphores):
             cont = detach(tid)
@@ -1874,7 +1924,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 return cont
         return None
 
-    def detach_from_waiters(tid: int) -> object | None:
+    def detach_from_waiters(tid: int | None) -> object | None:
         """Detach a Wait/Gather/Race registration of ``tid`` (see above).
 
         The external-wait placeholder is claimed so it drops itself, and a
@@ -1900,7 +1950,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 return entry[2]
         return None
 
-    def detach_from_ready(tid: int) -> object | None:
+    def detach_from_ready(tid: int | None) -> object | None:
         """Detach a queued resume/raise/permit of ``tid`` (see above).
 
         A permit already transferred to the task is handed on (#496). Every
@@ -1916,7 +1966,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             return entry[2]
         return None
 
-    def detach_from_semaphores(tid: int) -> object | None:
+    def detach_from_semaphores(tid: int | None) -> object | None:
         """Detach ``tid`` from a semaphore wait queue (see above)."""
         for sem in semaphores.values():
             for waiter in sem["waiters"]:
@@ -1995,6 +2045,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """
         try:
             result = yield prog
+        except GeneratorExit:
+            # Python closes the body a run dropped — an error left the run from inside the
+            # scheduler's dispatch: there is no run left to unwind work in, and yielding here
+            # would make the close print "generator ignored GeneratorExit" over that error.
+            raise
         except BaseException:
             # The root body raised: the work it left behind still gets unwound
             # (a leased connection must come back on the error path too), then
@@ -2143,7 +2198,24 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             }
         _trace_at(sink, event, run_id, ns, cpu_ns, {"tid": tid, **fields})
 
-    def pick_next():  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
+    def pick_next():
+        """The next step of the run; a deadlock is thrown into the root body where it waits.
+
+        The root body is where the run's answer comes from, so the SchedulerDeadlockError ends
+        the run at the user's own yield, and root_close_out unwinds the tasks the run leaves
+        behind. Raised from the dispatch only when the scheduler does not hold the root's
+        continuation (nothing to throw it into).
+        """
+        try:
+            return pick_ready_entry()
+        except SchedulerDeadlockError as deadlock:
+            root_k = detach_parked_continuation(None)
+            if root_k is None:
+                raise
+            from doeff.program import ResumeThrow
+            return ResumeThrow(root_k, deadlock)
+
+    def pick_ready_entry():  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
         from doeff.program import ResumeThrow
         # Heap tuples held out of the heap for the duration of this call:
         # unclaimed external-wait placeholders deferring to live non-daemon
@@ -2622,7 +2694,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             yield TailEval(pick_next())
 
         elif isinstance(effect, Wait):
-            wk = waitable_key(effect.task)
+            misuse = _misused_waitable(effect, (effect.task,))
+            if misuse is not None:
+                # Thrown at the waiter's own yield, as the Rust version does with a dispatch error.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, misuse))
+            wk = waitable_key(effect, effect.task)
             status, result = waitable_status(wk)
             if status == "completed":
                 r = yield Resume(k, result)
@@ -2676,7 +2753,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 yield TailEval(pick_next())
 
         elif isinstance(effect, Gather):
-            wks = [waitable_key(t) for t in effect.tasks]
+            misuse = _misused_waitable(effect, effect.tasks)
+            if misuse is not None:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, misuse))
+            wks = [waitable_key(effect, t) for t in effect.tasks]
             pending_wks = []
             for wk in wks:
                 s, r = waitable_status(wk)
@@ -2716,8 +2797,14 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 return (yield ResumeThrow(k, ValueError(
                     "Race() requires at least one Task or Future to race"
                 )))
-            for t in effect.tasks:
-                wk = waitable_key(t)
+            # Every waitable is checked before any is read: a settled first one does not let a
+            # program in a later place through.
+            misuse = _misused_waitable(effect, effect.tasks)
+            if misuse is not None:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, misuse))
+            race_wks = [waitable_key(effect, t) for t in effect.tasks]
+            for wk in race_wks:
                 status, result = waitable_status(wk)
                 if status == "completed":
                     r = yield Resume(k, result)
@@ -2727,11 +2814,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     err = result if status == "failed" else TaskCancelledError()
                     return (yield ResumeThrow(k, err))
             # All pending
-            pending_wks = []
-            for t in effect.tasks:
-                wk = waitable_key(t)
-                if waitable_status(wk)[0] not in terminal_statuses:
-                    pending_wks.append(wk)
+            pending_wks = [wk for wk in race_wks if waitable_status(wk)[0] not in terminal_statuses]
             if pending_wks:
                 race_state = {
                     "owner_tid": current_tid,

@@ -160,6 +160,8 @@ struct Spec {
     task_cancelled_error: Py<PyAny>,
     callback_error_cls: Py<PyAny>,
     deadlock_error_cls: Py<PyAny>,
+    /// `_not_a_waitable`: the TypeError of a Wait / Gather / Race given a non-waitable.
+    not_a_waitable: Py<PyAny>,
     enrich_traceback: Py<PyAny>,
     logger: Py<PyAny>,
     /// `_external_wake_of`: the wake a new external promise carries.
@@ -201,6 +203,7 @@ impl Spec {
             task_cancelled_error: get("TaskCancelledError")?.unbind(),
             callback_error_cls: get("ExternalPromiseCancelCallbackError")?.unbind(),
             deadlock_error_cls: get("SchedulerDeadlockError")?.unbind(),
+            not_a_waitable: get("not_a_waitable")?.unbind(),
             enrich_traceback: get("enrich_exception_traceback")?.unbind(),
             logger: get("logger")?.unbind(),
             external_wake_of: get("external_wake_of")?.unbind(),
@@ -1090,7 +1093,9 @@ impl Locked<'_> {
         id
     }
 
-    fn waitable_key(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<WKey> {
+    /// The key of `obj`, a waitable of `effect` (Wait / Gather / Race). Otherwise the TypeError
+    /// the Python `_not_a_waitable` words, which `handle` throws at the waiter's yield.
+    fn waitable_key(&self, py: Python<'_>, effect: &Bound<'_, PyAny>, obj: &Bound<'_, PyAny>) -> PyResult<WKey> {
         if obj.is_instance(self.spec().task_cls.bind(py))? {
             return Ok(WKey {
                 kind: WKind::Task,
@@ -1103,10 +1108,8 @@ impl Locked<'_> {
                 id: obj.getattr(pyo3::intern!(py, "promise_id"))?.extract()?,
             });
         }
-        Err(PyTypeError::new_err(format!(
-            "expected Task or Future, got {}",
-            obj.get_type().name()?
-        )))
+        let error = self.spec().not_a_waitable.bind(py).call1((effect, obj))?;
+        Err(PyErr::from_value(error))
     }
 
     fn waitable_status(&self, py: Python<'_>, key: WKey) -> PyResult<(Status, Option<Py<PyAny>>)> {
@@ -2320,7 +2323,7 @@ impl Locked<'_> {
     }
 
     fn on_wait(&mut self, py: Python<'_>, current: Owner, effect: &Bound<'_, PyAny>, k: KRef) -> PyResult<Outcome> {
-        let wk = self.waitable_key(py, &effect.getattr(pyo3::intern!(py, "task"))?)?;
+        let wk = self.waitable_key(py, effect, &effect.getattr(pyo3::intern!(py, "task"))?)?;
         let (status, result) = self.waitable_status(py, wk)?;
         match status {
             Status::Completed => return self.resume_now(py, k, none_or(py, result)),
@@ -2384,7 +2387,7 @@ impl Locked<'_> {
         let tasks = effect.getattr(pyo3::intern!(py, "tasks"))?;
         let mut wks = Vec::new();
         for t in tasks.try_iter()? {
-            wks.push(self.waitable_key(py, &t?)?);
+            wks.push(self.waitable_key(py, effect, &t?)?);
         }
         let mut pending = Vec::new();
         for wk in &wks {
@@ -2434,8 +2437,13 @@ impl Locked<'_> {
             let error = PyValueError::new_err("Race() requires at least one Task or Future to race");
             return Ok(self.throw_now(k, error.value(py).clone().into_any().unbind()));
         }
-        for t in &tasks {
-            let wk = self.waitable_key(py, t)?;
+        // Every waitable is checked before any is read: a settled first one does not let a
+        // program in a later place through.
+        let wks: Vec<WKey> = tasks
+            .iter()
+            .map(|t| self.waitable_key(py, effect, t))
+            .collect::<PyResult<_>>()?;
+        for &wk in &wks {
             let (status, result) = self.waitable_status(py, wk)?;
             match status {
                 Status::Completed => return self.resume_now(py, k, none_or(py, result)),
@@ -2448,8 +2456,7 @@ impl Locked<'_> {
             }
         }
         let mut pending = Vec::new();
-        for t in &tasks {
-            let wk = self.waitable_key(py, t)?;
+        for wk in wks {
             if !self.waitable_status(py, wk)?.0.is_terminal() {
                 pending.push(wk);
             }
