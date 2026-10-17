@@ -877,6 +877,19 @@ A Rust-defined Python exception raised when waiting on a cancelled task:
 pyo3::create_exception!(doeff_vm, TaskCancelledError, pyo3::exceptions::PyException);
 ```
 
+### Task exceptions nothing retrieved
+
+A failed task's error is not dropped silently (card ki-84667a89b47a). A
+task's outcome is claimed once a Wait, Gather or Race is given the task, or a
+Cancel or Discard — before or after the task ends. A task that ends Failed
+(with an error other than `TaskCancelledError`) while unclaimed gets a
+description of the error at TaskCompleted; a later claim clears it. At root
+return the scheduler emits one `RuntimeWarning` ("spawned task exception was
+never retrieved") naming every description still held, including those of
+tasks the #502 sweep removed (at most `UNRETRIEVED_EXCEPTIONS_NAMED`, the rest
+counted). Daemon tasks are included; the root's result and exception are
+unchanged.
+
 ## Store Semantics
 
 ### Isolated State/Log (Get/Put/Tell)
