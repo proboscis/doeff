@@ -1032,7 +1032,7 @@
 
 (defclass [(dataclass :frozen True)] ClusterState []
   (setv #^ (get tuple #(ClusterJob ...)) jobs #())
-  (setv #^ (get dict #(str WorkerInfo)) workers (field :default-factory dict))
+  (setv #^ (get Table WorkerInfo) workers (field :default-factory (partial table-of #())))
   (setv #^ (get dict #(str Placement)) placements (field :default-factory dict)) ; job の名 → Placement
   (setv #^ (get Table TaskRecord) tasks (field :default-factory (partial table-of #())))
   (setv #^ int next-task 1)

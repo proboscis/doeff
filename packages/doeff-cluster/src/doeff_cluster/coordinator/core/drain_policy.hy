@@ -47,7 +47,7 @@
   "POST /workers/<名>/drain {\"ttlSeconds\"? \"boot\"?}。何度頼んでも同じ意味(始めた時刻は最初の頼みのまま・期限だけ延びる)。
    世代つきの頼みの drain はその世代に、世代を付けない頼みの drain は worker の名前に付く(頭の註 — 世代に付いた drain の最中に
    世代を付けない頼みが来たら、名前に付け替える。名前に付いた drain は世代つきの頼みでは世代へ戻らない)。"
-  (setv worker (.get state.workers name)
+  (setv worker (.row state.workers name)
         ttl (if (is body.ttl-seconds None) DRAIN-DEFAULT-TTL-SECONDS body.ttl-seconds)
         boot body.boot)
   (when (is worker None) (refuse 404 (+ "知らない worker: " name)))
@@ -104,7 +104,7 @@
   "入れ替えの job を source から並べて置く先の worker の名(担っている数の少ない順・同点は名前順)。無ければ None。並べた置き先(surge)は
    job の側で数える(can-take — job の側の空き job-room-of と全体の空き task-room-of の両方が要る)ので、job の側に空きが無ければ並べず、
    入れ替えは空くまで待つ(task のために空けておく分 task-reserve を食わない)。load = cluster_policy.load-of の答え。"
-  (setv candidates (sorted (lfor w (.values state.workers)
+  (setv candidates (sorted (lfor w (.rows state.workers)
                                  :if (and (!= w.name source) (can-take now state job w load timing draining))
                                  w)
                            :key (fn [w] #((+ (. (get load w.name) jobs) (. (get load w.name) tasks)) w.name))))
@@ -115,7 +115,7 @@
                            #^ frozenset draining]
   "並べた置き先を持ち続けてよいか: 元の置き先が drain 中の worker に在り、並べた先が生きていて条件を満たし、drain 中でない。"
   (setv placed (.get state.placements job.spec.name)
-        w (.get state.workers surge.worker))
+        w (.row state.workers surge.worker))
   (and (> job.replicas 0) job.spec.handoff
        (is-not placed None) (in placed.worker draining) (!= placed.worker surge.worker)
        (is-not w None) (alive now w timing.lease-ms) (eligible job w) (not-in w.name draining)))
@@ -203,7 +203,7 @@
         unmovable (tuple (gfor n placed
                                :setv job (.get jobs n)
                                :if (and (is-not job None)
-                                        (not (any (gfor w (.values state.workers) (and (!= w.name name) (eligible job w))))))
+                                        (not (any (gfor w (.rows state.workers) (and (!= w.name name) (eligible job w))))))
                                n))
         ;; 切り離した task(2026-09-25)は移せない(走らせ直さない)ので、この worker の上で終わるまで drain を待たせる。
         remaining (sorted (- (| (set placed) (set (live-rows state name)) (set (detached-rows state name))) (set unmovable)))
@@ -231,7 +231,7 @@
   "GET /workers/<名>: 生存・世代・drain の進み。ready = 生きていて drain 中でなく、同じ名の前の世代がまだ動かしている job を全部
    受け取れる(handover-pending でない — AL-D2k・heartbeat の返事で worker が ready の file を書く判断と同じ)。ready-instances = handoff の
    Service の Ready と数えている process(api_policy.ready-instances)。"
-  (setv w (.get state.workers name))
+  (setv w (.row state.workers name))
   (when (is w None) (refuse 404 (+ "知らない worker: " name)))
   (setv drain (drain-view state name now timing)
         live (alive now w timing.lease-ms)
@@ -249,7 +249,7 @@
    走っている仕事を切る(10-11 18:58 JST の zeus — load 58 で heartbeat が lease の 10 秒を越えて途絶え、drained を返してターン 15 本が
    切れた)。待ちの上限は preStop の側の期限(DRAIN_DEADLINE)。形は worker-view と同じ(drain_client.drain-outcome が drain.drained を
    読む)。"
-  (setv w (get state.workers name)
+  (setv w (.row state.workers name)
         remaining (sorted (+ (lfor t (scan-rows state.tasks)
                                    :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
                                    (+ "task/" t.id))
