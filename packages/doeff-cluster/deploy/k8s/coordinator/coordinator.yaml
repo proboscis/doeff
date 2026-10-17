@@ -156,7 +156,11 @@ spec:
             # stall-of の 1 つに縛る 8e9a0d3e2(ki-d033e5f969cf の続き)だけ。前の版 e8d948145(L2333)は e1f9303ce の祖先。
             # 29bba00f = e1f9303ce に、機体の memory が逼迫の間は task の起こしを見送る変更を足した版(card ki-7b934e2538f9・L2361)。間の差は
             # worker の内部だけ(coordinator との契約は変えない)。前の版 e1f9303ce(L2360)は 29bba00f の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 29bba00f8c9a3850d0c4acec7f4c376410044d87 }
+            # 5ab25a28f = macOS の worker が空きを Opportunistic の volume の空きで読む版(card ki-4ee952807ce0・L2496)。Mac の機体の worker
+            # mac-native を同じ版へ上げるため、版の向きに合わせて先に上げる。間の coordinator の code の差は、ClusterState の欄を Table にする
+            # 作り替え(T1〜T7・G — ki-a47c2ba2e4fb ほか)・cluster_policy の走査を task-split の対象に絞る変更(ki-7a6a60dc516e)・tasks の
+            # 書き手を変わった行だけの書きにする変更(ki-c9fb4d5d2408)。前の版 29bba00f(L2361)は 5ab25a28f の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 5ab25a28f51522199e5b028e36a1293856656b9c }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
