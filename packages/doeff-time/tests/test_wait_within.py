@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from doeff_core_effects.scheduler import (
+    IMPLEMENTATION_ENV_VAR,
     PRIORITY_NORMAL,
     CompletePromise,
     CreateExternalPromise,
@@ -138,6 +139,10 @@ def test_a_withdrawn_entry_is_skipped_by_the_queue() -> None:
 # 仮想の時計の駆動を止める(埋まる前に時間を進めない)。期限つきの待ちでは期限まで時計が進む必要があるので、park で待つ。
 
 
+#: scheduler の版(scheduled の implementation・環境変数 DOEFF_SCHEDULER の値)。
+SCHEDULERS = ("python", "rust")
+
+
 def _complete_from_a_thread(promise: Any, value: str) -> None:
     """外の promise を、実の時計で 0.2 秒後に別の thread から埋めるため(run の外からの完了)。"""
     timer = threading.Timer(0.2, lambda: promise.complete(value))
@@ -154,16 +159,25 @@ def _wait_external_within(park: bool):
     return value, now
 
 
-def test_a_parked_wait_on_an_external_promise_reaches_its_deadline() -> None:
+@pytest.mark.parametrize("scheduler", SCHEDULERS)
+def test_a_parked_wait_on_an_external_promise_reaches_its_deadline(scheduler: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # park: 外の promise が埋まる前に、仮想の時計が期限(5 秒)へ進み None が返る。task は時計の駆動の 1 本だけ。
+    # scheduler の両方の版で測る — Rust の版の Race は park を見ずに外の待ちの印を置き、時計の駆動を止めた。誰も埋めない
+    # 外の promise を park で待つと期限が来ず、既定を Rust の版にした後の日次の回で doeff-agents の 36 本が止まった
+    # (card ki-6dde100393cd)。
+    monkeypatch.setenv(IMPLEMENTATION_ENV_VAR, scheduler)
     counted = _spawns_and_result(_wait_external_within(True))
     assert counted.result == (None, sim_time(5.0)), counted
     assert counted.spawns == 1, counted
 
 
-def test_the_counterexample_unparked_wait_holds_the_clock_until_the_promise_completes() -> None:
+@pytest.mark.parametrize("scheduler", SCHEDULERS)
+def test_the_counterexample_unparked_wait_holds_the_clock_until_the_promise_completes(
+    scheduler: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # park しない既定の待ちは、外の promise が埋まるまで仮想の時計を止める — 期限の 5 秒は来ず、実の時計の 0.2 秒後の完了が
     # 仮想の 0 秒で返る(期限つきの待ちが期限を持たない形 — park が要る理由)。
+    monkeypatch.setenv(IMPLEMENTATION_ENV_VAR, scheduler)
     assert _spawns_and_result(_wait_external_within(False)).result == ("rung", sim_time(0.0))
 
 

@@ -2308,10 +2308,16 @@ impl Locked<'_> {
         })
     }
 
-    fn register_pending_waiter(&mut self, wk: WKey, kind: GroupKind, owner: Owner, group: u64) {
+    /// `register_pending_waiter`: a pending external promise also gets the
+    /// PRIORITY_EXTERNAL_WAIT placeholder, unless `park` (a Race with
+    /// `priority=PRIORITY_IDLE`) — like Wait's IDLE park, the waiter still
+    /// counts for the blocking drain but the sim clock may run
+    /// (agora-redesign #3054). Without it a parked WaitWithin on an external
+    /// promise nobody completes never reaches its virtual deadline.
+    fn register_pending_waiter(&mut self, wk: WKey, kind: GroupKind, owner: Owner, group: u64, park: bool) {
         let external = wk.kind == WKind::Promise
             && self.promises.get(&wk.id).is_some_and(|p| p.external);
-        let claimed = if external {
+        let claimed = if external && !park {
             let claimed: Claim = Arc::new(AtomicBool::new(false));
             let priority = self.spec().priority_external_wait;
             self.enqueue(
@@ -2945,7 +2951,7 @@ impl Locked<'_> {
             },
         );
         for wk in pending {
-            self.register_pending_waiter(wk, GroupKind::Gather, current, group);
+            self.register_pending_waiter(wk, GroupKind::Gather, current, group, false);
         }
         Ok(Outcome::Ctrl(self.pick_next(py)?))
     }
@@ -3001,8 +3007,12 @@ impl Locked<'_> {
                     remaining: 0,
                 },
             );
+            // Race's priority is a park mode: None or PRIORITY_IDLE (the Python
+            // Race refuses any other value when it is made).
+            let priority_obj = effect.getattr(pyo3::intern!(py, "priority"))?;
+            let park = !priority_obj.is_none() && priority_obj.extract::<i64>()? == self.spec().priority_idle;
             for wk in pending {
-                self.register_pending_waiter(wk, GroupKind::Race, current, group);
+                self.register_pending_waiter(wk, GroupKind::Race, current, group, park);
             }
         }
         Ok(Outcome::Ctrl(self.pick_next(py)?))
