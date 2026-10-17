@@ -106,7 +106,7 @@
   ;; 3 分止まった。ずらした欄はずらすと言った欄だけで、止まりの直後の歩でどの期限も切れない(直す前は drain と盤の行が消えた)。
   (val base (! (tick (! (named)) JUDGED T)))
   (val before (replace base
-                       :drains {"w" (Drain :worker "w" :since-ms SEEN :until-ms (+ SEEN 60000))}
+                       :drains (table-of #((TableWrite "w" (Drain :worker "w" :since-ms SEEN :until-ms (+ SEEN 60000)))))
                        :warms {"k" (WarmEntry :key "k" :runtime-env {} :needs #() :until-ms (+ SEEN 60000) :holder "h")}
                        :board (table-of #((TableWrite "presence-x" (BoardRow :value 1 :version 1 :expires-ms (+ SEEN 60000) :size 1))))
                        :superseded-runs #((SupersededRun :worker "w" :boot "b0" :jobs #("j") :seen-ms SEEN :overlapped False :leaving False))))
@@ -115,10 +115,10 @@
   (val moved (frozenset (gfor f (fields ClusterState) :if (!= (getattr before f.name) (getattr shifted f.name)) f.name)))
   (assert (<= moved STALL-SHIFTED-FIELDS) (sorted (- moved STALL-SHIFTED-FIELDS)))
   (assert (<= #{"workers" "board" "drains" "warms" "superseded_runs" "alive_ms"} moved) (sorted moved))
-  (assert (= (. (get shifted.drains "w") until-ms) (+ SEEN 60000 STALL-MS)))
+  (assert (= (. (.row shifted.drains "w") until-ms) (+ SEEN 60000 STALL-MS)))
   (assert (= (. (.row shifted.board "presence-x") version) 1) "TTL の行は値が同じなので版を進めない")
   (val after (! (tick shifted now T)))
-  (assert (in "w" after.drains) "止まりの直後の歩で drain が切れない")
+  (assert (is-not (.row after.drains "w") None) "止まりの直後の歩で drain が切れない")
   (assert (in "k" after.warms) "止まりの直後の歩で温める表の行が切れない")
   (assert (is-not (.row after.board "presence-x") None) "止まりの直後の歩で盤の TTL の行が切れない")
   (assert (= (. (get after.superseded-runs 0) seen-ms) (+ SEEN STALL-MS)) "退いた世代の沈黙は止まる前の時点のまま"))

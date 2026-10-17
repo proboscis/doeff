@@ -61,11 +61,11 @@
   ;; 新しい世代へ渡させる(cluster_policy.superseded-reply)。
   (when (other-generation-boot state name boot) (return (superseded-leaving state name boot)))
   (setv until (+ now (int (* 1000 ttl)))
-        current (.get state.drains name))
-  (replace state :drains (| state.drains
-                            {name (if (and current (> current.until-ms now))
-                                      (replace current :until-ms until :boot (if (is boot None) None current.boot))
-                                      (Drain name now until boot actor))})))
+        current (.row state.drains name))
+  (replace state :drains (.with-writes state.drains
+                                       (tuple [(TableWrite name (if (and current (> current.until-ms now))
+                                                                    (replace current :until-ms until :boot (if (is boot None) None current.boot))
+                                                                    (Drain name now until boot actor)))]))))
 
 
 (defn #^ ClusterState superseded-leaving [#^ ClusterState state #^ str name #^ (| str None) boot]
@@ -93,8 +93,8 @@
 
 (defn #^ ClusterState cancel-drain [#^ ClusterState state #^ str name]
   "DELETE /workers/<名>/drain。並べた置き先は次の調停(advance-drains)で外れる(旧はそのまま動き続ける)。"
-  (if (in name state.drains)
-      (replace state :drains (dfor #(k v) (.items state.drains) :if (!= k name) k v))
+  (if (is-not (.row state.drains name) None)
+      (replace state :drains (.with-writes state.drains (tuple [(TableWrite name None)])))
       state))
 
 
@@ -196,7 +196,7 @@
    待っても移す先は来ないので待たず、この worker の上で止まるまで動かす・#3669)。
    moving = 並べた先の worker(Ready 待ち)。blocked = 能力の合う別の worker は名簿に居るが、今は死んでいる・drain 中・空きが無いので
    移せず待っている job と理由(待てば移す先が来うる)。drain が無ければ None。"
-  (setv d (.get state.drains name))
+  (setv d (.row state.drains name))
   (when (or (is d None) (<= d.until-ms now)) (return None))
   (setv draining (draining-workers state now)
         jobs (dfor j state.jobs j.spec.name j)
@@ -271,7 +271,7 @@
 
 (defn #^ (get dict #(str DrainProgress)) drains-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
   "GET /state の drains(worker の名 → drain の進み)。"
-  (dfor n (sorted state.drains)
+  (dfor n (.keys state.drains)
         :setv v (drain-view state n now timing)
         :if (is-not v None)
         n v))

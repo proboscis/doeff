@@ -915,7 +915,7 @@
   (val reply-29 (! (call s "POST" "/workers/w/drain" 100 {"boot" "old"})))
   (:= s (get reply-29 0))
   (var view (get reply-29 2))
-  (assert (not-in "w" s.drains) s.drains)
+  (assert (is (.row s.drains "w") None) s.drains)
   (assert (get view "drain" "superseded") view)
   ;; 古い世代が止み、新しい世代だけが 5 秒ごとに heartbeat を送る → 60 秒後も新しい世代が生きていて ready。
   (for [t (range 5000 65000 5000)]

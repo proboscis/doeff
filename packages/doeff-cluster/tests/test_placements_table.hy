@@ -89,7 +89,7 @@
   (val state (state-of [(job-of "w" :handoff True)]
                        {"atlas" (worker-of "atlas" 1000) "zeus" (worker-of "zeus" 1000)}
                        {"w" (Placement "w" "atlas" 1 0)}
-                       :drains {"atlas" (Drain "atlas" 0 600000)}))
+                       :drains (! (table-from-rows {"atlas" (Drain "atlas" 0 600000)}))))
   (val stepped (advance-drains 1000 state T))
   (assert (= (tuple (.keys stepped.surges)) #("w")))
   (assert (= (. (.row stepped.surges "w") worker) "zeus"))

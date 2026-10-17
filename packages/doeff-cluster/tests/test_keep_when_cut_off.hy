@@ -160,7 +160,7 @@
   (<- mark KeepMark (promise-to "a" "w1"))
   (val running (WorkerReport :at 60000 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
   (val promised (ClusterState #(job) (! (table-from-rows {"w1" w1 "w2" w2})) (! (table-from-rows {"a" (Placement "a" "w1" 1 0)})) :observations (! (reports-observed {"w1" running}))
-                              :drains {"w1" (Drain "w1" 0 999999)} :keep-marks #(mark)))
+                              :drains (! (table-from-rows {"w1" (Drain "w1" 0 999999)})) :keep-marks #(mark)))
   (assert (= (. (.row (! (jobs-placed 60000 promised T)) "a") worker) "w1"))
   (val released (replace promised :keep-marks #()))
   (assert (is (.row (! (jobs-placed 60000 released T)) "a") None))
