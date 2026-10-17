@@ -4,32 +4,80 @@
 pyright は答えの型と「出してよい effect」の両方を検査し、実行時は import の時に
 `perform(e)` を `(yield e)` へ書き換えて、今の `@do` と同じ Program にする。
 
-```python
+下の 2 つの file(`clock.py` と `main.py`)を同じ dir に写すと、`python main.py` で走り、
+pyright(`strict`)でも mypy(`--strict`)でも赤が出ない。effect と `@effectful` の関数は `clock.py` に書く:
+
+```python file=clock.py
+from dataclasses import dataclass
+
 from doeff import EffectBase, Effects, effectful
+
 
 @dataclass(frozen=True)
 class ReadClock(EffectBase[int]):          # 答えの型は int(docs/23-static-typing.md)
     pass
+
+
+@dataclass(frozen=True)
+class ReadShared(EffectBase[list[str]]):   # 答えは prefix で始まる key の list
+    prefix: str
+
+
+@dataclass(frozen=True)
+class WriteShared(EffectBase[bool]):       # 答えは書けたかどうか
+    key: str
+
 
 @effectful
 def elapsed(perform: Effects[ReadClock], since: int) -> int:
     now = perform(ReadClock())             # now: int
     return now - since
 
+
 @effectful
 def place_turns(perform: Effects[ReadShared | WriteShared | ReadClock]) -> int:
-    rows = perform(ReadShared("turn/"))    # rows: ReadShared の答えの型
+    rows = perform(ReadShared("turn/"))    # rows: list[str](ReadShared の答えの型)
     spent = perform(elapsed(400))          # 別の Program も perform で走らせる(spent: int)
-    ...
+    placed = 0
+    for row in rows:
+        if perform(WriteShared(f"{row}/{spent}")):   # 答えは bool
+            placed += 1
     return placed
-
-elapsed(400)    # Expand[int, ReadClock] — まだ走らせていない Program(@do と同じ型)
 ```
 
 - `perform` は関数の**最初の引数**(method では `self` の次)で受け、`Effects[...]` に
   この関数が出してよい effect を並べる。戻り値の注記は普通の `-> int` のまま書く。
 - 呼ぶ側から見た型は `Callable[P, Expand[T, E]]`(`perform` の引数は消える)。`@do` と同じ型
   なので、`@do` の Program と混ぜて使える。
+
+`main.py` は、`clock` を書き換えの対象に登録してから import し(下の「import の時の書き換え」)、
+3 つの effect に答える handler を付けて走らせる。handler は今のまま生成器と `typed_resume` で書く:
+
+```python file=main.py
+from collections.abc import Generator
+from typing import Any
+
+from doeff import K, do, handler, install_import_hook, run, typed_resume
+
+install_import_hook("clock")               # clock を import する前に、書き換えを登録する
+
+from clock import ReadClock, ReadShared, WriteShared, elapsed, place_turns
+
+program = elapsed(400)    # Expand[int, ReadClock] — まだ走らせていない Program(@do と同じ型)
+
+
+@do
+def world(effect: ReadClock | ReadShared | WriteShared, k: K) -> Generator[Any, Any, Any]:
+    if isinstance(effect, ReadClock):
+        return (yield typed_resume(effect, k, 1_000))
+    if isinstance(effect, ReadShared):
+        return (yield typed_resume(effect, k, [f"{effect.prefix}1", f"{effect.prefix}2"]))
+    return (yield typed_resume(effect, k, True))
+
+
+print(run(handler(world)(program)))        # 600
+print(run(handler(world)(place_turns())))  # 2
+```
 
 ## pyright が捕まえるもの
 
@@ -75,7 +123,7 @@ pyright だけでは lambda や内包表記の中の `perform` は赤になら�
 
 - 登録: `doeff.install_import_hook("mypkg")` を、その package を import する前に呼ぶ。
   package の `__init__.py` に `install_import_hook(__name__)` と書くのが基本の形で、その下の
-  module がすべて対象になる。登録した package の中でも、source に `effectful` の文字が無い
+  module がすべて対象になる(上の `main.py` のように、module 1 つの名も書ける)。登録した package の中でも、source に `effectful` の文字が無い
   module は書き換えずに普通に compile する。
 - 登録していない module で `@effectful` を使うと、`@effectful` がその場で `TypeError` を出し、
   どの package を登録すればよいかを文言で示す(書き換えの印 `__doeff_effectful__` が
