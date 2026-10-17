@@ -269,19 +269,19 @@ CLIを処理の中から直に呼ぶ書き方と比べると、違いは次の�
 
 ## 参考
 
-試し方と、確かめた範囲です。
+この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain（commit `9adc4f8`）でも、同じく動きました。
+
+doeff-agentsと、それが使う3つの部品は、0.6.0と組める版がPyPIにありません。そこで、この4つだけをGitHubから入れます。`--no-sources`を付けないと、doeff本体もGitHubから入り、Rustのビルドが要ります。完全な例を`agents_workflow.py`として保存し、次のコマンドで実行します。
 
 ```bash
-git clone https://github.com/proboscis/doeff.git  # リポジトリを取得する。
-cd doeff && make sync  # 依存を入れる。RustのVMもビルドするのでcargoが要る。
-uv run python publications/zenn-use-cases-v0/examples/agents_workflow.py  # 完全な例を走らせる。
+G="git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages"  # PyPIに無い4つの部品の在りか。
+uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ $G/doeff-time" --with "doeff-codex @ $G/doeff-codex" --with "doeff-claude-code @ $G/doeff-claude-code" --with "doeff-agents @ $G/doeff-agents" python agents_workflow.py  # doeff本体はPyPI、4つの部品だけGitHubから入れて、完全な例を実行する。
 ```
 
-- 掲載したPythonのコード5つは、2026年10月17日に走らせました。版はdoeffのmain（commit `9adc4f8`）です。
+- 掲載したPythonのコード5つと完全な例を、上のコマンドの版で走らせました。
 - 動かしたのは、自作のハンドラとテスト用のハンドラだけです。本物のエージェントは起こしていません。
 - 本番の組み立ては、tmuxの無い環境で、端末への接続を作る所で止まることだけを確かめました。
 - PyPIのdoeff-agentsの0.1.1と0.1.2はdoeff 0.4向けで、この記事のAPIがありません。
-- そのため、上のようにGitHubのリポジトリから試してください。
 - 完全な例は、失敗の分岐を確かめる途中で、doeffのtracebackを3つ表示します。最後にOKが出れば成功です。
 
 - [完全な例(自作ハンドラ、テスト、本番の組み立て)](examples/agents_workflow.py)
