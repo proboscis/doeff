@@ -154,15 +154,15 @@
   (<- alive tuple (beat (get finished 0) (- later 500) []))
   (val swept (! (tick (get alive 0) later T)))
   (assert (= (. (.row swept.tasks id) phase) "finished"))
-  (assert (in (get kept 1) swept.programs) "結果を保持している task の Program が消えた")
-  (assert (in (get remote-program 1) swept.programs) "走っている task の Program が消えた")
-  (assert (not-in (get loose 1) swept.programs) "参照の無い Program が猶予の後も残った")
+  (assert (is-not (.row swept.programs (get kept 1)) None) "結果を保持している task の Program が消えた")
+  (assert (is-not (.row swept.programs (get remote-program 1)) None) "走っている task の Program が消えた")
+  (assert (is (.row swept.programs (get loose 1)) None) "参照の無い Program が猶予の後も残った")
   ;; 行が消えたら(保持を解く・呼び手が task を落とす)、置いてから猶予を過ぎた Program は消える。
   (<- released tuple (call swept "DELETE" "/detached/job-k" None (+ later 1000)))
   (<- dropped tuple (call (get released 0) "DELETE" (+ "/tasks/" (get remote 2 "task")) None (+ later 1000)))
   (val gone (! (tick (get dropped 0) (+ later 2000) T)))
-  (assert (not-in (get kept 1) gone.programs) gone.programs)
-  (assert (not-in (get remote-program 1) gone.programs) gone.programs))
+  (assert (is (.row gone.programs (get kept 1)) None) gone.programs)
+  (assert (is (.row gone.programs (get remote-program 1)) None) gone.programs))
 
 
 ;; --- coordinator: 状態を失った coordinator の引き取り・保存の旧い行 ---------------------------------------------
@@ -182,7 +182,7 @@
   (<- fresh tuple (beat (ClusterState) 5000 [row]))
   (assert (= (. (.row (. (get fresh 0) tasks) id) program) (get placed 1)))
   (assert (= (lfor t (get fresh 2 "tasks") (get t "program")) [(get placed 1)]) (get fresh 2))
-  (assert (= (. (get fresh 0) programs) {}) "置き場を失った coordinator は Program を持たない")
+  (assert (= (.size (. (get fresh 0) programs)) 0) "置き場を失った coordinator は Program を持たない")
   ;; 写しに置き場のキーが無い(blob を運んでいた旧い worker)・形の違う報告は引き取らない。
   (for [echo [(dfor #(k v) (.items (get row "task")) :if (!= k "program") k v)
               (| (get row "task") {"program" "not-a-sha"})

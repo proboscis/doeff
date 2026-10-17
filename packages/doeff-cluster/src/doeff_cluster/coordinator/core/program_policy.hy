@@ -10,6 +10,7 @@
 ;;; PROGRAM-GRACE-MS を過ぎたら掃除する(送り手は Program を先に置いてから行を書くので、その間に消さない)。
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
+(import doeff_hy.table [TableWrite])
 (import re)
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow ProgramStored ErrorReply])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
@@ -31,14 +32,14 @@
     (> (len blob) PROGRAM-MAX-BYTES) #(state 413 (ErrorReply :message (.format "詰めた Program が上限 {} byte を越える" PROGRAM-MAX-BYTES)))
     (!= (program-sha blob) sha)
       #(state 400 (ErrorReply :message "blob の sha256 がキーと合わない"))
-    True #((replace state :programs (| state.programs {sha (ProgramRow :blob blob :versions versions :put-ms now)}))
+    True #((replace state :programs (.with-writes state.programs #((TableWrite sha (ProgramRow :blob blob :versions versions :put-ms now)))))
            200 (ProgramStored :sha sha))))
 
 
 (deff program-read [#^ ClusterState state #^ str sha]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple) (= (len %) 3)] :tags {:context "coordinator" :role "judgment"}}
   "GET /programs/<sha>: 置いた Program(無ければ 404)。"
-  (setv row (.get state.programs sha))
+  (setv row (.row state.programs sha))
   (if (is row None)
       #(state 404 (ErrorReply :message (.format "Program {} は置かれていない(宣言・task の前に送り手が置く)" sha)))
       ;; 置いた行そのもの(JSON の {blob versions} は coordinator/protocol/replies が綴る — #2614)。
@@ -56,8 +57,10 @@
 (deff sweep-programs [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "受け付けた Service と task の行のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
-  (let [used (program-refs state)
-        kept (dfor #(sha row) (.items state.programs)
-                   :if (or (in sha used) (<= (- now row.put-ms) PROGRAM-GRACE-MS))
-                   sha row)]
-    (if (= (len kept) (len state.programs)) state (replace state :programs kept))))
+  ;; 猶予を過ぎた Program が無ければ、参照の走査(program-refs — tasks と services を回る)を回さない。
+  (let [aged (tuple (gfor #(sha row) (.items state.programs) :if (> (- now row.put-ms) PROGRAM-GRACE-MS) sha))]
+    (if (= (len aged) 0)
+        state
+        (let [used (program-refs state)
+              dropped (tuple (gfor sha aged :if (not-in sha used) (TableWrite sha None)))]
+          (if (= (len dropped) 0) state (replace state :programs (.with-writes state.programs dropped)))))))

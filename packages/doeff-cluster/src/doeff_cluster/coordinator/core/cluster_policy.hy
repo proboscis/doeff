@@ -352,7 +352,7 @@
         "本文の versions は受け付けない — task の版は PUT /programs/<sha> で Program と一緒に置いた版を使う"
       (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
         (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
-      (not-in program state.programs)
+      (is (.row state.programs program) None)
         (.format "program {} は置き場に無い — 先に PUT /programs/{} で置く" program program)
       ;; 版(送り手の commit)は行の必須の欄(TaskRecord.revision)— 欠けを行を作る所の KeyError に任せない(#1024)。
       (not (isinstance body.revision str))
@@ -364,7 +364,10 @@
   {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
    運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
-  (component-versions-of (. (get state.programs sha) versions)))
+  (setv row (.row state.programs sha))
+  (when (is row None)
+    (raise (KeyError sha)))
+  (component-versions-of row.versions))
 
 
 (deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
@@ -796,7 +799,7 @@
                              (and surge (= surge.worker worker) (> job.replicas 0)) surge
                              True None)
                :if a
-               :setv watch (.get state.handoffs job.spec.name)
+               :setv watch (.row state.handoffs job.spec.name)
                (replace job.spec :placement a.generation
                         :ready-instance (.get (or ready-instances {}) job.spec.name)
                         :handoff-abandoned (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED))))))
@@ -1498,9 +1501,10 @@
 (defk sweep-warms [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 期限を過ぎた温める表の行を消した状態(消す物が無ければ同じ object)。"
-  (if (all (gfor w (.values state.warms) (> w.until-ms now)))
+  (setv expired (tuple (gfor #(k w) (.items state.warms) :if (<= w.until-ms now) (TableWrite k None))))
+  (if (= (len expired) 0)
       state
-      (replace state :warms (dfor #(k w) (.items state.warms) :if (> w.until-ms now) k w))))
+      (replace state :warms (.with-writes state.warms expired))))
 
 
 (defk cold-starts-written [tasks writes]
@@ -1590,10 +1594,10 @@
    program_policy.sweep-programs = 参照の無い Program の put-ms + PROGRAM-GRACE-MS を過ぎた刻。途絶しても動かし続けてよい印の約束を
    外す sweep-keep-marks の刻は担い手の沈黙の期限(kept-reassign-after-ms)なので liveness-due が求める・冷えた起動の数は数えるだけなので、
    刻を持たない。"
-  (val used (if state.programs (program-refs state) (frozenset)))
+  (val used (if (> (.size state.programs) 0) (program-refs state) (frozenset)))
   (val deadlines (+ (lfor row (.rows state.board) :if (is-not row.expires-ms None) row.expires-ms)
                     (lfor d (.rows state.drains) d.until-ms)
-                    (lfor w (.values state.warms) w.until-ms)
+                    (lfor w (.rows state.warms) w.until-ms)
                     (lfor #(sha row) (.items state.programs) :if (not-in sha used) (+ row.put-ms PROGRAM-GRACE-MS 1))))
   ;; 掃いた後の状態なら期限はどれも now より後。掃く前の状態(期限が now 以前)は DueNow(sweep が今の刻で変える)。
   (<- answer (| DueAt DueNow DueNever) (due-of-instants now (tuple deadlines)))
@@ -1953,7 +1957,7 @@
   (setv info (.row state.workers worker))
   (if (or (is info None) (in worker (draining-workers state now)))
       #()
-      (tuple (gfor w (sorted (.values state.warms) :key (fn [w] w.key))
+      (tuple (gfor w (sorted (.rows state.warms) :key (fn [w] w.key))
                    :if (and (> w.until-ms now) (placeable w.needs info)
                             (tools-cover w.runtime-env info))
                    (WarmOffer :key w.key :runtime-env w.runtime-env)))))

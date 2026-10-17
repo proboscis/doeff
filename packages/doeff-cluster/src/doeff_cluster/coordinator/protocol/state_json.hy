@@ -211,7 +211,7 @@
   (ClusterState
     :jobs (get service-rows 0)
     :refused (get service-rows 1)
-    :programs (dict programs)
+    :programs (table-of (tuple (gfor #(k p) programs (TableWrite k p))))
     :workers (table-of (tuple (gfor #(#(name w) #(_ generation)) (zip stored-workers generations)
                    :setv caps (worker-capabilities-of w (.format "保存の worker {}" name))
                    (TableWrite name
@@ -238,9 +238,9 @@
     :drains (table-of (tuple (gfor #(k v) (.items (.get data "drains" {})) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (.items (.get data "surges" {})) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
-    :warms (dfor #(k entry) warms :if (is-not entry None) k entry)
+    :warms (table-of (tuple (gfor #(k entry) warms (TableWrite k entry))))
     ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。
-    :handoffs (dfor #(k v) (.items (.get data "handoffs" {})) k (handoff-watch-from-json v))
+    :handoffs (table-of (tuple (gfor #(k v) (.items (.get data "handoffs" {})) (TableWrite k (handoff-watch-from-json v)))))
     :started-ms now))
 
 

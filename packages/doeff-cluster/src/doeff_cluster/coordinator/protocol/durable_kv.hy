@@ -258,9 +258,9 @@
     :drains (table-of (tuple (gfor #(k v) (part DRAIN) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (part SURGE) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
-    :warms (dfor #(k entry) warms :if (is-not entry None) k entry)
-    :programs (dict programs)
-    :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
+    :warms (table-of (tuple (gfor #(k entry) warms (TableWrite k entry))))
+    :programs (table-of (tuple (gfor #(k p) programs (TableWrite k p))))
+    :handoffs (table-of (tuple (gfor #(k v) (part HANDOFF) (TableWrite k (handoff-watch-from-json v)))))
     :keep-marks (tuple (gfor #(_ v) (part KEEP) (KeepMark #** v)))
     :superseded-runs (tuple (gfor #(_ v) (part SUPERSEDED) (SupersededRun #** (| v {"jobs" (tuple (get v "jobs"))}))))
     :audit (tuple (gfor #(_ event) audit event))

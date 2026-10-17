@@ -7,6 +7,7 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
+(import doeff_hy.table [TableWrite])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WarmEntry ErrorReply])
@@ -57,13 +58,13 @@
       (return #(state 400 (ErrorReply :message (str error))))))
   (setv key (run (warm-key env needs))
         entry (WarmEntry key declared needs (+ now (int (* 1000 ttl))) (or body.holder actor))
-        after (replace state :warms (| state.warms {key entry})))
+        after (replace state :warms (.with-writes state.warms #((TableWrite key entry)))))
   #(after 200 (warm-view after entry now timing)))
 
 
 (defn #^ tuple warm-read [#^ ClusterState state #^ str key #^ int now #^ ClusterTiming timing]
   "GET /warm/<キー>: 行の今の姿。表に無い(期限で消えた)行は 404。"
-  (setv entry (.get state.warms key))
+  (setv entry (.row state.warms key))
   (if (is entry None)
       #(state 404 (ErrorReply :message (.format "温める表に行 {} が無い(期限で消えたか、書かれていない)" key)))
       ;; 行の今の姿(JSON は coordinator/protocol/replies が warm-state->json で綴る — #2614)。

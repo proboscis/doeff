@@ -111,5 +111,5 @@
         (with-detached-client COORDINATOR-URL REVISION env
           (submit-detached-task (slow-add 1.0 7) "k-env-key" :needs LOCAL :lease-seconds 5.0))))
   (assert (= submitted (DetachedSubmitted "k-env-key" True)) submitted)
-  (val placed (lfor row (.values coordinator.state.programs) row.versions))
+  (val placed (lfor row (.rows coordinator.state.programs) row.versions))
   (assert (= placed [(! (process-versions {}))]) placed))

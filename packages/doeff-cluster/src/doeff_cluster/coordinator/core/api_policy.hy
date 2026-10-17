@@ -205,10 +205,11 @@
                                                (TableWrite k (replace w
                                                                       :last-seen-ms (min now (+ w.last-seen-ms gap))
                                                                       :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap))))))))
-           :handoffs (dfor #(k w) (.items state.handoffs)
-                           k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
+           :handoffs (.with-writes state.handoffs
+                                   (tuple (gfor #(k w) (.items state.handoffs) :if (= w.phase HandoffPhase.WAITING)
+                                                (TableWrite k (replace w :since-ms (min now (+ w.since-ms gap)))))))
            :drains (.with-writes state.drains (tuple (gfor #(k d) (.items state.drains) (TableWrite k (replace d :until-ms (+ d.until-ms gap))))))
-           :warms (dfor #(k w) (.items state.warms) k (replace w :until-ms (+ w.until-ms gap)))
+           :warms (.with-writes state.warms (tuple (gfor #(k w) (.items state.warms) (TableWrite k (replace w :until-ms (+ w.until-ms gap))))))
            :superseded-runs (tuple (gfor r state.superseded-runs (replace r :seen-ms (min now (+ r.seen-ms gap)))))
            :alive-ms now))
 

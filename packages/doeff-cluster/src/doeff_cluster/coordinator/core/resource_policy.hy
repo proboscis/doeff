@@ -450,7 +450,7 @@
   (when (service-stopped state name now timing)
     (return (VersionVerdict :state VersionState.STOPPED :reason "止めている")))
   (setv proc (running-process state name now timing)
-        watch (.get state.handoffs name)
+        watch (.row state.handoffs name)
         handoff (if (is watch None) None watch.phase)
         retired (.join "・" (gfor p (live-processes state name now timing) :if p.retired (str p.revision))))
   (cond
@@ -515,8 +515,8 @@
                    {})
                ;; 入れ替えの期限の見張り(2026-09-26 — handoff_policy)。Ready を待つ間と諦めた間だけ載せる: 段・起点・期限、
                ;; 諦めたなら時刻と理由(期限と最後の NotReady の理由)と新の世代の最後の ReportReady(偽)の reason。
-               (if (in job.spec.name state.handoffs)
-                   {"handoff" (.status-json (get state.handoffs job.spec.name) (handoff-timeout-ms job.readiness))}
+               (if (setx handoff-watch (.row state.handoffs job.spec.name))
+                   {"handoff" (.status-json handoff-watch (handoff-timeout-ms job.readiness))}
                    {}))})
 
 

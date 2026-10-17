@@ -20,6 +20,7 @@
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
+(import doeff_hy.table [TableWrite])
 (import hashlib)
 (import json)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -68,7 +69,7 @@
   "Service job の 1 拍後の見張り(持たないなら None)。規則は頭注の 1〜3。"
   (setv name job.spec.name
         fingerprint (declaration-fingerprint job)
-        kept (.get state.handoffs name)
+        kept (.row state.handoffs name)
         watch (if (and (is-not kept None) (= kept.declaration fingerprint)) kept None))
   (when (not (and job.spec.handoff (> job.replicas 0)))
     (return None))
@@ -102,7 +103,7 @@
    handoff でない・replicas 0・担い手の報告が無いか古い・戻る先が無い・諦めた後は、時刻では変わらない。"
   (val name job.spec.name)
   (val fingerprint (declaration-fingerprint job))
-  (val kept (.get state.handoffs name))
+  (val kept (.row state.handoffs name))
   (val watch (if (and (is-not kept None) (= kept.declaration fingerprint)) kept None))
   (val placed (.row state.placements name))
   (val st (if (is placed None) None (.row state.observations.statuses placed.worker)))
@@ -123,10 +124,13 @@
 
 (defn #^ ClusterState watch-handoffs [#^ int now #^ ClusterState state #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(api_policy.settle)が呼ぶ
   "1 拍: 入れ替えの Service ごとに期限の見張りを進める(始める・諦める・捨てる)。変える物が無ければ同じ object(版と保存を進めない)。"
-  (when (and (not state.handoffs) (not (any (gfor job state.jobs job.spec.handoff))))
+  (when (and (= (.size state.handoffs) 0) (not (any (gfor job state.jobs job.spec.handoff))))
     (return state))
   (setv watches (dfor job state.jobs
                       :setv watch (next-watch now state job timing)
                       :if (is-not watch None)
                       job.spec.name watch))
-  (if (= watches state.handoffs) state (replace state :handoffs watches)))
+  ;; 変わった見張りの行だけ書く(始めた・諦めた・捨てた)。変わらない拍は同じ状態(is)— 行を作り直さず、版と保存を進めない。
+  (setv writes (+ (tuple (gfor #(name watch) (.items watches) :if (!= watch (.row state.handoffs name)) (TableWrite name watch)))
+                  (tuple (gfor name (.keys state.handoffs) :if (not-in name watches) (TableWrite name None)))))
+  (if (= (len writes) 0) state (replace state :handoffs (.with-writes state.handoffs writes))))

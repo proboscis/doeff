@@ -1061,7 +1061,7 @@
   ;; 受け付けない Service の行(名 → RefusedJob — 改訂 1 の C)。保存する(元の行のまま)— 読み直しても同じ理由で受け付けない。
   (setv #^ (get Table RefusedJob) refused (field :default-factory (partial table-of #())))
   ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。
-  (setv #^ (get dict #(str ProgramRow)) programs (field :default-factory dict))
+  (setv #^ (get Table ProgramRow) programs (field :default-factory (partial table-of #())))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)
   ;; coordinator が生きていた最後の時刻(ALIVE-MARK-MS ごとに耐久の鍵 counter へ書く)。起動の時に「止まっていた長さ」を測り、
   ;; 進行中の Rollout の段の起点と task の lease を、その長さだけずらす(api_policy.resume-after-downtime・2026-09-25)。
@@ -1075,13 +1075,13 @@
   (setv #^ (get Table Drain) drains (field :default-factory (partial table-of #())))
   (setv #^ (get Table Placement) surges (field :default-factory (partial table-of #())))
   ;; 温める表(2026-09-26): 行のキー → WarmEntry。保存する(durable_kv の warm/<キー>)。
-  (setv #^ (get dict #(str WarmEntry)) warms (field :default-factory dict))
+  (setv #^ (get Table WarmEntry) warms (field :default-factory (partial table-of #())))
   ;; 冷たい起動の数(実行環境の task を、準備済みの worker が 1 つも無いまま置いた回数 — 計器 doeff_worker_env_cold_start_total)。
   ;; 保存しない(counter は process の世代ごとに 0 から数える)。
   (setv #^ int env-cold-starts 0)
   ;; 入れ替え(handoff)の期限の見張り(2026-09-26): Service の名 → HandoffWatch。新の世代が動き出してから期限の間 Ready にならなければ
   ;; 諦めを記録し、heartbeat の返事の job に載せる(worker は新を止めて旧を残す — handoff_policy)。保存する(durable_kv)。
-  (setv #^ (get dict #(str HandoffWatch)) handoffs (field :default-factory dict))
+  (setv #^ (get Table HandoffWatch) handoffs (field :default-factory (partial table-of #())))
   ;; 生きていないと数えた worker の名(heartbeat が lease の外 — #1934)。調停の拍ごとに cluster_policy.note-liveness が時刻から
   ;; 求め直し、変わった拍だけ新しい値にする — Worker の資源の status の live と版は、この欄の変化で進む(時刻そのものを版の比べに
   ;; 入れると、何も変わらない拍の早い戻り(resource_policy.stamp)で切り替わりを取りこぼす)。保存しない(読み直しの後の最初の拍で
