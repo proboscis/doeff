@@ -10,7 +10,7 @@ This package provides:
 import importlib as _importlib
 
 from doeff_core_effects import _hy_submodules  # noqa: F401 - installs the lazy Hy finder first
-from doeff_core_effects.effects import (  # noqa: F401
+from doeff_core_effects.effects import (
     Absent,
     Ask,
     Await,
@@ -28,7 +28,7 @@ from doeff_core_effects.effects import (  # noqa: F401
     WriterTellEffect,
     slog,
 )
-from doeff_core_effects.handlers import (  # noqa: F401
+from doeff_core_effects.handlers import (
     await_handler,
     env_var_ask,
     lazy_ask,
@@ -42,14 +42,14 @@ from doeff_core_effects.handlers import (  # noqa: F401
     writer,
     writer_log,
 )
-from doeff_core_effects.outcomes import (  # noqa: F401 - absence and failure (ADR-DOE-CORE-EFFECTS-003)
+from doeff_core_effects.outcomes import (  # absence and failure (ADR-DOE-CORE-EFFECTS-003)
     RaiseCase,
     absent_as,
     maybe,
     on_raise,
     result,
 )
-from doeff_core_effects.scheduler import (  # noqa: F401
+from doeff_core_effects.scheduler import (
     PRIORITY_HIGH,
     PRIORITY_IDLE,
     PRIORITY_NORMAL,
@@ -80,6 +80,70 @@ from doeff_core_effects.scheduler import (  # noqa: F401
 # isort: split
 # Last: the hint table reads the scheduler, which `import doeff` must finish loading first.
 from doeff_core_effects import unhandled_hints  # noqa: F401 - registers the hint lines with the VM
+
+# The names above are public to type checkers (py.typed packages do not re-export a plain import) and to
+# `from doeff_core_effects import *`. The lazy HTTP names below stay out: listing them would make a star import
+# load the Hy modules (and httpx), which a core-only install does not have.
+__all__ = [
+    "PRIORITY_HIGH",
+    "PRIORITY_IDLE",
+    "PRIORITY_NORMAL",
+    "Absent",
+    "AcquireSemaphore",
+    "Ask",
+    "Await",
+    "Cancel",
+    "CompletePromise",
+    "CreateExternalPromise",
+    "CreatePromise",
+    "CreateSemaphore",
+    "Discard",
+    "ExternalPromise",
+    "ExternalPromiseCancelCallbackError",
+    "FailPromise",
+    "Future",
+    "Gather",
+    "Get",
+    "Listen",
+    "Local",
+    "MissingEnvKeyError",
+    "Promise",
+    "Put",
+    "Race",
+    "Raise",
+    "RaiseCase",
+    "ReleaseSemaphore",
+    "Resumption",
+    "SchedulerDeadlockError",
+    "Semaphore",
+    "Slog",
+    "SlogEffect",
+    "Spawn",
+    "Task",
+    "TaskCancelledError",
+    "Tell",
+    "Try",
+    "Wait",
+    "WriterTellEffect",
+    "absent_as",
+    "await_handler",
+    "env_var_ask",
+    "lazy_ask",
+    "listen_handler",
+    "local_handler",
+    "maybe",
+    "on_raise",
+    "reader",
+    "result",
+    "scheduled",
+    "slog",
+    "slog_discard_handler",
+    "slog_handler",
+    "state",
+    "try_handler",
+    "writer",
+    "writer_log",
+]
 
 # HTTP effects and handlers live in Hy and pull in httpx; load them on first use.
 _LAZY_EXPORTS = {
