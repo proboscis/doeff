@@ -25,6 +25,8 @@ Python の版ごとに:
    `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする(card ki-d1628b5046d1)。
    あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
 
+CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
+
 終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
 """
 

@@ -110,3 +110,35 @@ jobs:
           export LD_LIBRARY_PATH="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           cd packages/doeff-vm-core
           cargo bench --features python_bridge --bench dispatch -- --test
+
+  # 核だけの入れ方の検 — pip install doeff と同じく extra 無しで入れた新しい venv で、入った物がちょうど核の 4 個(doeff・doeff-vm・
+  # doeff-core-effects・frozendict)で、README の Python の例が通り、Hy と HTTP の extra が要る使い方が足す extra の名を言う事を
+  # 確かめる(tools/verify_core_install.py・card ki-d6b421afac60)。上の job の venv は Hy と検の道具も入れ、3 個を editable で読むので、
+  # 核だけの入れ方が壊れても気づけない。版の扱いは上の job と同じ(3.14t は実験・Python は uv の管理する物)。
+  core-only-install:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        experimental: [false]
+        include:
+          - python-version: "3.14t"
+            experimental: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # doeff-vm(PyO3 の拡張)を checkout から組む。
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check the core-only install
+        run: uv run --no-project python tools/verify_core_install.py --python ${{ matrix.python-version }}
