@@ -926,7 +926,8 @@ class ExternalPromise(Generic[_T]):
 
 def _not_a_waitable(effect: EffectBase, value: object) -> TypeError:
     """The TypeError a Wait / Gather / Race throws at its yield when ``value``, one of its
-    waitables, is neither a Task nor a Future.
+    waitables, is neither a Task nor a Future; also a Cancel / Discard's, when its ``task`` is not
+    a Task (only a task is cancelled, so a Future is no better there).
 
     Both implementations build it here (Rust through ``_rust_spec``), only after the check failed.
     The usual cause is a program passed where its task belongs — ``Gather(worker("a"))`` without
@@ -941,9 +942,20 @@ def _not_a_waitable(effect: EffectBase, value: object) -> TypeError:
                 f"{name} takes the task that Spawn returns, got a program. Spawn the program "
                 f"first and wait on its task: t = yield Spawn(prog); yield {name}(t)"
             )
+        if isinstance(effect, (Cancel, Discard)):
+            return TypeError(
+                f"{name} takes the task that Spawn returns, got a program. Spawn the program "
+                f"first and {name.lower()} its task: t = yield Spawn(prog); yield {name}(t)"
+            )
         return TypeError(
             f"{name} takes the tasks that Spawn returns, got a program. Spawn each program "
             f"first and pass the tasks: t = yield Spawn(prog); yield {name}(t, ...)"
+        )
+    if isinstance(effect, (Cancel, Discard)):
+        # No "use its future" advice below: nothing is cancelled through a promise or a Future.
+        return TypeError(
+            f"{name} takes a Task (t = yield Spawn(prog)), "
+            f"got {reprlib.repr(value)} ({type(value).__name__})"
         )
     if isinstance(value, (Promise, ExternalPromise)):
         return TypeError(
@@ -962,6 +974,14 @@ def _misused_waitable(effect: EffectBase, waitables: Iterable[object]) -> TypeEr
         if not isinstance(value, (Task, Future)):
             return _not_a_waitable(effect, value)
     return None
+
+
+def _misused_task(effect: EffectBase, target: object) -> TypeError | None:
+    """The TypeError for the ``task`` of a Cancel or Discard when it is not a Task (None when it
+    is), checked before the Python scheduler reads its ``task_id``."""
+    if isinstance(target, Task):
+        return None
+    return _not_a_waitable(effect, target)
 
 
 # ---------------------------------------------------------------------------
@@ -2970,6 +2990,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             # point, so its except/finally run; it stays live ("cancelling")
             # until it finishes unwinding, and only then are its waiters woken.
             from doeff.program import ResumeThrow
+            misuse = _misused_task(effect, effect.task)
+            if misuse is not None:
+                # Thrown at the canceller's own yield, as the Rust version does with a dispatch error.
+                return (yield ResumeThrow(k, misuse))
             tid = effect.task.task_id
             mark_retrieved(("task", tid))
             task = tasks.get(tid)
@@ -3010,6 +3034,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             # A hard kill (see Discard's docstring): the task's continuation is
             # dropped, never resumed or thrown into, so no except/finally runs.
             from doeff.program import ResumeThrow
+            misuse = _misused_task(effect, effect.task)
+            if misuse is not None:
+                return (yield ResumeThrow(k, misuse))
             tid = effect.task.task_id
             mark_retrieved(("task", tid))
             task = tasks.get(tid)
