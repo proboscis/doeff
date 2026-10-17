@@ -178,6 +178,14 @@ impl PythonCallable {
         self.spec.as_ref().map(Py::get)
     }
 
+    /// The effect types the handler's annotation admits (`None` = every effect), so
+    /// an UnhandledEffect can name the handlers the annotation skipped.
+    pub(crate) fn effect_types(&self, py: Python<'_>) -> Option<Py<pyo3::types::PyTuple>> {
+        self.spec()
+            .and_then(|spec| spec.effect_types.as_ref())
+            .map(|types| types.clone_ref(py))
+    }
+
     /// Run a `@do` handler's generator function directly as the handler stream.
     fn call_generator_function(
         &self,

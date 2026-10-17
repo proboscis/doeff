@@ -297,9 +297,71 @@ Rules (single definition: `doeff_vm/_effect_types.py`):
 - string annotations are evaluated in the handler's module; an annotation that
   cannot be evaluated at runtime (a `TYPE_CHECKING`-only import) warns once and
   falls back to every effect
+- a type no effect can be an instance of — `str`, `int`, `dict`, `list[...]`,
+  `None`, `Exception` or a class built on one of them — is refused with a
+  `TypeError` where the handler is made (`handler(fn)`, `with_handlers`; a raw
+  `WithHandler` when it is installed), because the handler would never be called:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+@do
+def fetch_handler(effect: str, k):
+    return (yield Resume(k, f"got {effect}"))
+
+try:
+    handler(fetch_handler)
+except TypeError as error:
+    # the message starts with "handler fetch_handler (defined at <file>:<line>): "
+    print(str(error).partition("): ")[2])  # the annotation of effect parameter 'effect' names str, which no effect can be an instance of, so the handler would never be called. Annotate it with the effect class it handles (a subclass of EffectBase, e.g. effect: MyEffect), or with EffectBase to receive every effect.
+```
 
 A handler whose annotation matches can still `yield Pass(effect, k)` after
 looking at field values; the annotation only states which effects it wants to see.
+
+When an effect falls off the stack and no handler in scope is annotated for it,
+the `UnhandledEffect` message names the handlers whose annotation skipped it,
+before the `hint:` line. An effect class of your own ends with how to install
+a handler for it:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, UnhandledEffect, do, handler, run
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+@dataclass(frozen=True)
+class Store(EffectBase):
+    key: str
+
+@do
+def store_handler(effect: Store, k):
+    return (yield Resume(k, None))
+
+@do
+def prog():
+    return (yield Fetch("https://example.com"))
+
+try:
+    run(handler(store_handler)(prog()))
+except UnhandledEffect as error:
+    found, in_scope, skipped, hint = str(error).splitlines()
+    print(found)  # no handler found for effect: Fetch (Fetch(url='https://example.com'))
+    print(in_scope.strip())  # handlers in scope (innermost→outermost): store_handler
+    print(skipped.strip())  # skipped by annotation: store_handler (effect: Store) — a handler only sees the effects its effect parameter is annotated with
+    print(hint.strip())  # hint: install a handler for Fetch: run(handler(fn)(prog)), where fn is a @do function (effect: Fetch, k) that returns (yield Resume(k, value))
+```
+
+A class of the same name from another module (a script imported both as
+`__main__` and by its module name) is spelled with its module there, so the two
+`Fetch` classes can be told apart.
 
 ### Pass the effects a handler does not answer
 

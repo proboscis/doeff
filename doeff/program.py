@@ -38,6 +38,7 @@ from doeff_vm import Transfer as Transfer
 from doeff_vm import TransferThrow as TransferThrow
 from doeff_vm import WithHandler as WithHandlerType
 from doeff_vm import WithObserve as WithObserve
+from doeff_vm._effect_types import check_handler_annotation
 
 if TYPE_CHECKING:
     from doeff import Program
@@ -166,6 +167,11 @@ def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHand
     The installer called with no program — a handler taken for a factory,
     ``writer()(prog())`` — is refused with a TypeError that names the call
     meant, ``writer(prog())`` (only an identity check on the program's way in).
+
+    An effect annotation no effect can match (``effect: str``) is refused here
+    too: the VM would skip the handler for every effect, and the run would end
+    in an UnhandledEffect that does not name the annotation
+    (``doeff_vm._effect_types.check_handler_annotation``).
     """
     taken = _positional_capacity(raw_handler)
     if taken is not None and taken < 2:
@@ -176,6 +182,7 @@ def _install_raw(raw_handler: Callable[..., object], caller: str) -> ProgramHand
             f"called with (effect, k); this one takes {taken} positional argument"
             f"{'' if taken == 1 else 's'})"
         )
+    check_handler_annotation(raw_handler)
 
     def install(body: object = _NO_PROGRAM) -> WithHandlerType:
         if body is _NO_PROGRAM:
@@ -198,8 +205,9 @@ def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
     ``raw_handler`` may be any callable ``(effect, k) -> Program``: a ``@do``
     function, a plain function, a bound method, a ``functools.partial`` or a
     callable instance. An installer that already carries the handler marker
-    is returned as is. An unmarked value that cannot take ``(effect, k)`` is
-    refused with a ``TypeError`` naming it (see ``_install_raw``).
+    is returned as is. An unmarked value that cannot take ``(effect, k)``, or
+    whose effect annotation no effect can match (``effect: str``), is refused
+    with a ``TypeError`` naming it (see ``_install_raw``).
     """
     if not callable(raw_handler):
         raise TypeError(
