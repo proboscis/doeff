@@ -643,4 +643,4 @@ python code_reviewer.py --concurrent 4 *.py
 - Add GitHub PR commenting
 - Implement caching to avoid re-reviewing unchanged files
 
-See the [API Reference](18-agent-session-management.md) for more details.
+See the [doeff-agents README](../packages/doeff-agents/README.md) for more details.

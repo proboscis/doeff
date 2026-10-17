@@ -5,7 +5,7 @@
 **Revised:** 2026-03-20
 **Motivation:** Align doeff VM architecture with OCaml 5 effect handler runtime
 
-**ADR:** [DEC-VM-012 Pure Stack Machine Dispatch](../../doeff-VAULT/Decisions/DEC-VM-012-pure-stack-machine-dispatch.md)
+**ADR:** DEC-VM-012 Pure Stack Machine Dispatch (kept outside this repository)
 
 ## Design Principle: Match OCaml 5
 

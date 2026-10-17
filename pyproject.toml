@@ -268,7 +268,24 @@ prefix = "README.md"
 tests = [
     "tests/test_readme_examples.py",  # 9.7 秒(10 本・子 7 本・pytest の計・枠の待ちを除く・load 約 70 の下)
     "tests/test_readme_demo.py",  # 0.6 秒(4 本・子なし・pytest の計・枠の待ちを除く・load 約 40 の下)
+    # README の link が木で解ける事(下の docs/ の行と同じ検)。7.1 秒(1 本・子なし・pytest の計・load 約 86 の下)
+    "tests/test_check_links.py::test_repo_links_resolve_in_the_tree",
 ]
+
+# docs の page を書き換えた便(改名・消す・見出しを書き換える)は、README・docs・packages/*/README.md の repo の中の link が
+# 木で解ける事の検を払う。検は markdown を path で読むので、import の逆依存では選ばれない。docs の page ごとの行(下)は
+# それぞれの例の検を払い、この行は全部の page に当たる。7.1 秒(1 本・子なし・pytest の計・起動を含む壁時計は 22 秒・
+# load 約 86 の下・2026-10-17 会話の Pod)。packages/*/README.md の変更は、main の CI(Python Compatibility の job が root の
+# tests を走らせる)でこの検が名指す。
+[[tool.doeff.contract-tests]]
+prefix = "docs/"
+tests = ["tests/test_check_links.py::test_repo_links_resolve_in_the_tree"]
+
+# link の確かめの道具(tools/check_links.py — 標準ライブラリだけで workspace の外でも走る)を変えた便は、道具の検の全部を払う。
+# 検は道具を path で読むので、import の逆依存では選ばれない。
+[[tool.doeff.contract-tests]]
+prefix = "tools/check_links.py"
+tests = ["tests/test_check_links.py"]
 
 # README の頭の GIF と、GIF に映る例の file(tools/readme_demo/digest.py)を変えた便は、例が今の doeff で走り GIF が目安の
 # 大きさに収まる検を払う。例は path で読むので、import の逆依存では選ばれない。

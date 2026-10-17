@@ -2,7 +2,7 @@
 
 doeff provides a caching system with policy-based cache management via the `doeff_core_effects` package.
 
-> **Note**: For detailed cache system documentation including policy fields, lifecycle hints, storage options, and custom handlers, see **[cache.md](cache.md)**.
+> **Note**: For the signatures of the cache effects and the policy enums, see **[Cache Effects in the API Reference](13-api-reference.md#cache-effects)**.
 
 ## Quick Overview
 
@@ -57,7 +57,7 @@ def with_manual_cache():
 | `storage` | CacheStorage | MEMORY, DISK |
 | `metadata` | dict | Custom metadata |
 
-See [cache.md](cache.md) for complete policy documentation.
+See [CachePolicy in the API Reference](13-api-reference.md#cachepolicy) for the policy enums.
 
 ## Common Patterns
 
@@ -135,6 +135,6 @@ def smart_cache(key, fresh=False):
 
 ## Next Steps
 
-- **[cache.md](cache.md)** - Complete cache system documentation
+- **[API Reference](13-api-reference.md#cache-effects)** - Cache effect signatures and policy enums
 - **[Patterns](12-patterns.md)** - Cache patterns and best practices
 - **[Advanced Effects](09-advanced-effects.md)** - Spawn, Gather, and concurrency effects

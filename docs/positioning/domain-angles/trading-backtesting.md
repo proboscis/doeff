@@ -11,7 +11,7 @@ DI can swap a `MarketDataService` from real to historical. What DI **cannot** do
 3. **Replay a live session as a backtest** — same recording, simulated time, instant execution
 4. **Run the same strategy across 10 years of data in seconds** — impossible if `Delay` actually sleeps
 
-The key insight from [docs/20-why-effects-over-di.md](../20-why-effects-over-di.md): time, events, and concurrency are **independent effect domains** that compose through handlers. DI can't keep them independent — you'd build a monolithic `SimulationEngine`.
+The key insight from [docs/20-why-effects-over-di.md](../../20-why-effects-over-di.md): time, events, and concurrency are **independent effect domains** that compose through handlers. DI can't keep them independent — you'd build a monolithic `SimulationEngine`.
 
 ## The Strategy: Pure Effects
 

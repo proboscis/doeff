@@ -350,9 +350,9 @@ See `examples/07_workflow_status.py` for a complete example.
 | `TraceFrame` | A frame in the effect trace (function, file, line, code) |
 | `LiveTrace` | Complete execution snapshot (workflow_id, step, status, trace, ...) |
 
-## Documentation
+## Examples
 
-Full documentation: [docs/17-workflow-observability.md](../../docs/17-workflow-observability.md)
+Runnable examples: [examples/](examples/)
 
 ## License
 

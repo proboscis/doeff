@@ -8,17 +8,20 @@
 
 ## Documents in This Directory
 
+> `todo.md`, `indexer_findings.md`, `COMPLETION_SUMMARY.md` and `IMPLEMENTATION_STATUS.md` were removed from
+> the tree in February 2026; their links below open the last version before the removal.
+
 ### Planning & Architecture
 - **[architecture.md](./architecture.md)** - Comprehensive feature specification and implementation plan (Phase 0-7)
 - **[class_architecture.md](./class_architecture.md)** - Protocol-based class design and data flow
-- **[todo.md](./todo.md)** - Original implementation checklist
+- **[todo.md](https://github.com/proboscis/doeff/blob/343103894f94e37eb78ed7e2f15f2a03c35c6072/specs/cli-auto-discovery/todo.md)** - Original implementation checklist
 
 ### Implementation Notes
-- **[indexer_findings.md](./indexer_findings.md)** - Analysis of existing doeff-indexer capabilities
-- **[COMPLETION_SUMMARY.md](./COMPLETION_SUMMARY.md)** - Phase-by-phase completion summary
+- **[indexer_findings.md](https://github.com/proboscis/doeff/blob/343103894f94e37eb78ed7e2f15f2a03c35c6072/specs/cli-auto-discovery/indexer_findings.md)** - Analysis of existing doeff-indexer capabilities
+- **[COMPLETION_SUMMARY.md](https://github.com/proboscis/doeff/blob/343103894f94e37eb78ed7e2f15f2a03c35c6072/specs/cli-auto-discovery/COMPLETION_SUMMARY.md)** - Phase-by-phase completion summary
 
 ### Status & Results
-- **[IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md)** - Final implementation status, test results, and usage examples
+- **[IMPLEMENTATION_STATUS.md](https://github.com/proboscis/doeff/blob/343103894f94e37eb78ed7e2f15f2a03c35c6072/specs/cli-auto-discovery/IMPLEMENTATION_STATUS.md)** - Final implementation status, test results, and usage examples
 
 ## Quick Overview
 

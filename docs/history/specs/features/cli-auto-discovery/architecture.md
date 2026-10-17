@@ -1,7 +1,7 @@
 # Doeff CLI Enhancement Architecture
 
 > **Status**: ✅ IMPLEMENTED - This document describes the original architecture plan. All phases have been completed.
-> See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) for final results.
+> See [IMPLEMENTATION_STATUS.md](https://github.com/proboscis/doeff/blob/343103894f94e37eb78ed7e2f15f2a03c35c6072/specs/cli-auto-discovery/IMPLEMENTATION_STATUS.md) for final results.
 
 ## Overview
 Enhance `doeff run` command with automatic interpreter discovery and environment accumulation/injection capabilities using the mature `doeff-indexer` infrastructure.
