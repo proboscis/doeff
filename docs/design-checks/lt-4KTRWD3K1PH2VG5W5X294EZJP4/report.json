@@ -1,0 +1,470 @@
+{
+  "version": 1,
+  "task_id": "lt-4KTRWD3K1PH2VG5W5X294EZJP4",
+  "base_revision": "9fe8c330bdd86f6d2ff5c36ea643344d62b1ca94",
+  "author": {
+    "conversation_id": "c-JX54TF8S2WEQYEMSSA5J92B8D6",
+    "model": "claude-opus-5-5",
+    "effort": "既定(この会話の起動の設定・自己申告)"
+  },
+  "requirements": "依頼 lt-4KTRWD3K1PH2VG5W5X294EZJP4(card ki-d51b7baa38bc): Mac の worker の env の root の作り直しが agora-controllers の木と bytecode を毎回全部書き、消した中身を APFS の snapshot が 24 時間持つ — 前の root と変わらない file を書き直さない。今の約束(root の鍵・完成の印・掃除の規則・hardlink の写しが写し元の file を書き換えない事)は保つ。受入: 1 commit の差の root の新しい byte が今の形の 10 分の 1 以下である事を検で固定。",
+  "design": {
+    "path": "design.md",
+    "sha256": "9643e90e7244ce5e9d013eb7147c88da8a3855c831acd4ab72f877d0d166f79f"
+  },
+  "modules": [
+    {
+      "id": "tree-placement",
+      "responsibility": "commit の木を root の下に置く(写し元の root が在れば変わらない普通の file を hardlink・無ければ・写せなければ mirror から展開)— worker/protocol/env_translation.hy の tree-delta・tracked-entries・link-unchanged・copied-tree・materialize",
+      "owns": "git の差の読み方(diff --name-status・ls-tree の mode)・hardlink の置き方(LinkFile)・symlink と submodule の置き直し・展開への戻し",
+      "hides": "git の命令の形・os.link が symlink を辿る事・置けない時の後片付け",
+      "interface": "effect MaterializeTree(mirror commit dest source)→ TreePlaced(how copied removed replaced reason)",
+      "effects": "RunProcess(git・tar)・LinkFile・MakeDirectory・RemoveTree・WalkTree(準備の process の中だけ)",
+      "lifetime": "準備の process 1 つの間。置いた木は root の持ち主(worker の掃除)が消す",
+      "invariants": "できた木 = commit を全部展開した木(I2)・写し元の file をその場で書き換えない(I1)・置けなければ展開に戻し理由を残す(I6)"
+    },
+    {
+      "id": "copy-source-choice",
+      "responsibility": "写し元の root を選ぶ(worker/core/env_prepare.hy の copy-root・tree-source)",
+      "owns": "元の鍵 source-key で同じ環境の最新の完成済みの root を選ぶ判断",
+      "hides": "なし、純な判断だけで隠す仕組みを持たない",
+      "interface": "PrepareRequest(known)→ TreeSource か None",
+      "effects": "なし、純な判断",
+      "lifetime": "なし、状態を持たない",
+      "invariants": "元の鍵が違う root・platform を知らない root は写し元にしない"
+    },
+    {
+      "id": "code-store",
+      "responsibility": "bytecode の保存先の並び・鍵・使った印・壊れた entry・木へ置く .pyc の bytes の組み方と hardlink(doeff-hy の doeff_hy_bytecode_guard/code_store.py)",
+      "owns": "並び <dir>/<頭 2>/<残り><種類>・code の鍵・.pyc の blob の名(中身の sha256)・読み取り専用・一時の file からの置き換え・entry_pyc の組み方",
+      "hides": "並びと名の作り方・hardlink と書き戻しの判断・blob の mode",
+      "interface": "code_key・current_code・current_entry→StoredCode・add_code(store key code data)・entry_pyc(head entry)・link_pyc(store pyc target)・link_entry_pyc(store head entry target)→ 置けなかった理由か None",
+      "effects": "file system を直に(標準 library — 保存先の file の作成・置き換え・時刻・mode、木の .pyc の hardlink)",
+      "lifetime": "呼びごと。保存先の file は worker の掃除が 7 日使われなければ消す",
+      "invariants": "blob の名 = 中身の sha256(I3)・保存先の file は一時の file から置き換えて作り、その場で書かない(I1)・並びを綴るのはここだけ(I5)"
+    },
+    {
+      "id": "bake-pool",
+      "responsibility": "焼く物 1 つずつ、保存先の code から置くか焼くかを決め .pyc を置く(foundation/bytecode_pool.hy・worker/entry/code_prepare.hy・worker/core/code_plan.hy・bake_plan.hy)",
+      "owns": "bytecode-is-current での照らし・.pyc の頭(checked hash)・stored/rebuilt/reused の判断・root に .pyc を置く唯一の書き手",
+      "hides": "pool の並べ方・置けない時の書き戻し(place-pyc)",
+      "interface": "標準入力の焼く物の行 → 標準出力の failed・stored・reused・unstored の行",
+      "effects": "source の読み・code_store の呼び・.pyc の置き換え・子 process の pool",
+      "lifetime": "準備の bytecode の処理ステージの子 process の間",
+      "invariants": "前の版の木から .pyc を引き継がない(I4)・置き方は置き換えだけ(I1)"
+    },
+    {
+      "id": "store-sweep",
+      "responsibility": "保存先の 7 日使われない file と dir を消す(worker/protocol/env_store.hy の unused-store-names)",
+      "owns": "時刻での選び",
+      "hides": "種類を読まない事",
+      "interface": "StatTree の答え → 消す名の列",
+      "effects": "RemoveTree(worker の掃除の task)",
+      "lifetime": "worker の掃除の 1 回",
+      "invariants": "使った印の進んだ file と、その上の dir は消さない"
+    },
+    {
+      "id": "import-hook",
+      "responsibility": "子の import で .pyc を照らし、合わなければ保存先から引くか compile して書き直す(doeff-hy の loader_hooks.py)",
+      "owns": "import の時の照らしと書き直し",
+      "hides": "Hy の compile の包み",
+      "interface": "Python の import(SourceFileLoader の口)",
+      "effects": "set_data(一時の file + replace)・保存先へ add_code",
+      "lifetime": "子の process の間",
+      "invariants": "木の .pyc は置き換えで書く(I1)"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "GNU の userland を持たない機体(macOS の BSD の cp)に worker を置く",
+      "claim": "木の写しは外の cp を起こさない(LinkFile = os.link)ので、どの module も変えずに写す",
+      "expected_scope": "どの module も変えない(機体の土台だけ)",
+      "actual_scope": "どの module も変えない。GNU の書き方を断る cp を PATH の頭に置いても copy・変わらない symlink は symlink のまま",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "tree-placement",
+        "copy-source-choice",
+        "code-store",
+        "bake-pool",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "L2515 で cp を LinkFile に替えた後は、機体の userland に依る所が tree-placement に無い",
+      "revision": "不要 — 盲検で崩れなかった"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "保存先と root を別の file system に置く(または .pyc を APFS の clone で置く形に替える)",
+      "claim": "別の file system は link_pyc が理由を返し bake-pool が書きに戻る。clone に替えるなら code-store の link_pyc の中だけを変える",
+      "expected_scope": "別の file system: どの module も変えない。clone: code-store だけ",
+      "actual_scope": "別の file system: link_pyc が例外にせず理由を返す(書きに戻る)。2 つの木は 1 つの file を分け合う。clone への切り替えは未実行",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "tree-placement",
+        "copy-source-choice",
+        "code-store",
+        "bake-pool",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "置けない時の書き戻しが bake-pool の place-pyc に在り、置き方は code-store に閉じている",
+      "revision": "不要 — clone の形は未実行として design.md の限界に記した"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "LinkFile が途中で断られる(写し元の file が消えた・link の数の上限)",
+      "claim": "tree-placement の中で CopyRefused → dest を空にして展開に戻し、理由を残す。copy-source-choice は変えない",
+      "expected_scope": "tree-placement の中だけ",
+      "actual_scope": "tree-placement の中だけ: 写し元の file が欠けると dest を空にして展開し、理由が file を名指す・写し元の commit が mirror に無ければ展開",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "tree-placement",
+        "copy-source-choice",
+        "code-store",
+        "bake-pool",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "戻し方は materialize が持つ",
+      "revision": "不要"
+    },
+    {
+      "id": "S4",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "保存先と root は機体ごと(boot.sh の $WORK_DIR/state)。機体をまたぐ hardlink は作れず、link_pyc は理由を返して書きに戻る。複数の機体で保存先を分け合う要求は無い"
+    },
+    {
+      "id": "S5",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "同じ機体の 2 つの worker の世代と焼く道具の pool の複数の process が、同じ .pyc を同時に置く・片方の root が .pyc を書き直す",
+      "claim": "名 = 中身の sha256 と一時の file + replace で、どの module も変えずに正しい中身。片方の書き直しは他の root と保存先を変えない",
+      "expected_scope": "どの module も変えない",
+      "actual_scope": "どの module も変えない: 8 process × 50 木で blob 1 つ・一時の file の残り 0・置き直しは他を変えない・片方の木の焼き直しは他の木の .pyc を書き換えない",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "tree-placement",
+        "copy-source-choice",
+        "code-store",
+        "bake-pool",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "blob の作成と木の .pyc の置き方がどちらも置き換え",
+      "revision": "不要"
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "模擬の世界(memory の置き場)で写しを確かめる",
+      "claim": "memory-file-handler の LinkFile(中身の写し)で写しの判断を確かめられる。hardlink の実体の性質は本物の file system の検が確かめる",
+      "expected_scope": "模擬の世界の cp の台本を外すだけ",
+      "actual_scope": "模擬の世界の cp の台本と数えを外し、ls-tree の台本を mode つきにした。commit だけ変えた準備は copy・元の鍵の違う root は写さない",
+      "changed_modules": [
+        "tree-placement"
+      ],
+      "unchanged_modules": [
+        "copy-source-choice",
+        "code-store",
+        "bake-pool",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "模擬の世界は tree-placement が出す命令(git の ls-tree の形)に合わせる配線",
+      "revision": "不要"
+    },
+    {
+      "id": "SA",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "(盲検 A)job が import の時に書く .pyc も、保存先の 1 つの file に寄せる",
+      "claim": "code-store が並びと名の作り方・hardlink の判断を隠すので、2 つ目の書き手は link_pyc を呼ぶだけで済む",
+      "expected_scope": "import-hook だけ(公開の口を呼ぶ配線)",
+      "actual_scope": "直す前: import-hook に加えて、分け合える bytes の組み方を bake-pool から写すか code-store へ移す必要があった(素直に link_pyc を呼ぶと root ごとに別の blob — 4 つ)。直した後: 組み方は code-store の entry_pyc・link_entry_pyc に在り、2 つ目の書き手は公開の口だけで焼く道具と同じ file を分け合う",
+      "changed_modules": [
+        "code-store",
+        "bake-pool"
+      ],
+      "unchanged_modules": [
+        "tree-placement",
+        "copy-source-choice",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "知識の漏洩: 分け合える .pyc の bytes の組み方(頭 + entry の中身をそのまま)が bake-pool にだけ在った",
+      "revision": "F1(この記録と同じ branch の直しの commit): code_store に entry_pyc・link_entry_pyc を置き、bake-pool は entry_pyc を呼ぶだけにした。検 test_a_second_writer_shares_the_bake_tools_file_through_the_entry_api で再検証"
+    },
+    {
+      "id": "SB",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "(盲検 B)写した root では変わらない source の .pyc も前の root から hardlink で持ち越す(木を置く翻訳の別の effect)",
+      "claim": "I4(前の木から引き継がない)は law the-prepare-tool-does-not-carry-from-a-previous-tree が守る",
+      "expected_scope": "持ち越しの実装は law で断られる",
+      "actual_scope": "直す前: 全部の検を通った(R3 の law は道具の引数だけを見る)。持ち越した .pyc は保存先の使った印を進めず、8 日後の掃除で保存先の .pyc 24 → 0・次の root の新しい byte 188,416・変わった .py の古い .pyc が残った。直した後: law only-the-bytecode-tool-places-pyc が B の木の env_translation.hy を名指して断る",
+      "changed_modules": [
+        "tree-placement",
+        "copy-source-choice"
+      ],
+      "unchanged_modules": [
+        "code-store",
+        "bake-pool",
+        "store-sweep",
+        "import-hook"
+      ],
+      "reason": "知識の漏洩: .pyc の置き場の知識(__pycache__ と source の対応)が tree-placement へ入り、bake-pool の判断(どの .pyc を置くか)が写し元の選びに移った",
+      "revision": "F2(同じ commit): ADR-DOE-BUILD-002 に R3b と law only-the-bytecode-tool-places-pyc(enforcement 台帳に登記)。evidence/law_on_tree.py で今の木 = 違反 0・B の木 = rc 1 を再検証"
+    }
+  ],
+  "checks": [
+    {
+      "id": "S1-pos",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "GNU の書き方を断る cp を PATH の頭に置いても、写し元の在る木は copy で理由が空",
+      "observation": "test_a_tree_is_copied_where_cp_refuses_gnu_options PASSED",
+      "evidence": {
+        "path": "evidence/ev-tree-placement.log",
+        "sha256": "6cd7cf513706d0c3ff7bfa7381060a4f05237f800629fd9b38fe521d5d7b7732"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S1-neg",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "os.link に頼っても、変わらない symlink は symlink のまま・写し元の file は書き換わらない(hardlink の先を書かない)",
+      "observation": "test_a_copied_tree_shares_unchanged_files_and_never_writes_through_them PASSED",
+      "evidence": {
+        "path": "evidence/ev-tree-placement.log",
+        "sha256": "6cd7cf513706d0c3ff7bfa7381060a4f05237f800629fd9b38fe521d5d7b7732"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S2-pos",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "2 つの木の同じ中身の .pyc は保存先の 1 つの file と同じ実体",
+      "observation": "test_two_trees_share_the_stores_one_file_for_the_same_pyc PASSED",
+      "evidence": {
+        "path": "evidence/ev-code-store.log",
+        "sha256": "9e12cbfab0c31fda8dc77fd8ca658748fbad1cd084ac75f04e8bfcafa0812ff9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S2-neg",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "木へ hardlink を置けない時は例外にせず、path を含まない理由を返す(呼び手が書きに戻る)",
+      "observation": "test_a_target_that_cannot_be_linked_answers_the_reason PASSED",
+      "evidence": {
+        "path": "evidence/ev-code-store.log",
+        "sha256": "9e12cbfab0c31fda8dc77fd8ca658748fbad1cd084ac75f04e8bfcafa0812ff9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S3-pos",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "写し元の commit が mirror に無い時は展開に戻し、理由を答えに載せ、できた木は展開と同じ",
+      "observation": "test_a_source_commit_missing_from_the_mirror_expands_the_whole_tree PASSED",
+      "evidence": {
+        "path": "evidence/ev-tree-placement.log",
+        "sha256": "6cd7cf513706d0c3ff7bfa7381060a4f05237f800629fd9b38fe521d5d7b7732"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S3-neg",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "写し元の file が欠けて hardlink を作れない時は、途中まで写した木を空にして展開し、理由が file を名指す・写し元は変わらない",
+      "observation": "test_a_copy_source_missing_a_file_expands_and_leaves_no_partial_copy PASSED",
+      "evidence": {
+        "path": "evidence/ev-tree-placement.log",
+        "sha256": "6cd7cf513706d0c3ff7bfa7381060a4f05237f800629fd9b38fe521d5d7b7732"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S5-pos",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "positive",
+      "expectation": "8 process が同時に 50 の木へ同じ .pyc を置くと、全部同じ中身・blob 1 つ・一時の file の残り 0",
+      "observation": "problems [] / targets 400 all same / blobs 1 nlink 401 / leftovers [] / rc=0",
+      "evidence": {
+        "path": "evidence/s5-concurrent.log",
+        "sha256": "431f3d1ecc11d1dc3ae05157adba9e96dab967617cc83c956762af941542f42d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S5-neg",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "negative",
+      "expectation": "分け合った後に片方の木で source を変えて焼き直しても、他の木の .pyc の中身と import の値は前のまま",
+      "observation": "test_g_rebaking_one_tree_does_not_write_through_the_shared_pyc PASSED",
+      "evidence": {
+        "path": "evidence/ev-bake.log",
+        "sha256": "35165714a6f91ee26e1794cc73b63921dfcc6ef740fc78391f49b600125c3bef"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S6-pos",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "positive",
+      "expectation": "模擬の世界で commit だけ変えた準備は app も lib も copy",
+      "observation": "test_changing_only_the_project_commit_makes_a_warm_root PASSED",
+      "evidence": {
+        "path": "evidence/ev-sim.log",
+        "sha256": "be398ec9d2b5ffa2930d92e25a558fc7f1d5d0bde11640d8b152205b37bb672e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "S6-neg",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "negative",
+      "expectation": "元の鍵の違う root(lock・import の根・platform)は写し元にせず展開",
+      "observation": "test_a_root_with_another_source_key_is_not_a_copy_source PASSED",
+      "evidence": {
+        "path": "evidence/ev-sim.log",
+        "sha256": "be398ec9d2b5ffa2930d92e25a558fc7f1d5d0bde11640d8b152205b37bb672e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "SA-pos",
+      "scenarios": [
+        "SA"
+      ],
+      "control": "positive",
+      "expectation": "2 つ目の書き手が code_store の公開の口(current_entry・link_entry_pyc)だけで、焼く道具と同じ保存先の file を分け合う",
+      "observation": "test_a_second_writer_shares_the_bake_tools_file_through_the_entry_api PASSED",
+      "evidence": {
+        "path": "evidence/ev-code-store.log",
+        "sha256": "9e12cbfab0c31fda8dc77fd8ca658748fbad1cd084ac75f04e8bfcafa0812ff9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "SA-neg",
+      "scenarios": [
+        "SA"
+      ],
+      "control": "negative",
+      "expectation": "2 つ目の書き手が置き直しても、他の木の .pyc と保存先の中身は変わらない(保存先の file は 0444)",
+      "observation": "test_the_stores_file_is_read_only_and_a_replaced_tree_pyc_leaves_the_others PASSED",
+      "evidence": {
+        "path": "evidence/ev-code-store.log",
+        "sha256": "9e12cbfab0c31fda8dc77fd8ca658748fbad1cd084ac75f04e8bfcafa0812ff9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "SB-pos",
+      "scenarios": [
+        "SB"
+      ],
+      "control": "positive",
+      "expectation": "今の木(焼く道具の module と模擬の世界だけが .pyc の置き場を綴る)は law only-the-bytecode-tool-places-pyc を通る",
+      "observation": "test_adr_doe_build_002_only_the_bytecode_tool_places_pyc PASSED・judgments PASSED・carry PASSED",
+      "evidence": {
+        "path": "evidence/ev-adr.log",
+        "sha256": "3c4cef36e6b248cb974cb3cd99bafbaf755d44ed984fcb002ab1e60bf698ca71"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "SB-neg",
+      "scenarios": [
+        "SB"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分を当てた木は law が env_translation.hy を名指して断る(fixture の欠けなどの別の失敗でなく、違反の文で)",
+      "observation": "今の木: 違反 [] rc=0 / B の木: 違反 ['…/worker/protocol/env_translation.hy: .pyc の置き場…'] rc=1",
+      "evidence": {
+        "path": "evidence/blind-b-law-after.log",
+        "sha256": "96caa0c83fe4e245b27f8d2b17a59d78a957e08f4ab7a2f54d460066ec9b6070"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "ACC",
+      "scenarios": [
+        "S1",
+        "S5"
+      ],
+      "control": "positive",
+      "expectation": "1 commit の差の root(木の写し + 焼き)が root と保存先に新しく作った実体の byte は今の形の 10 分の 1 以下(GNU の書き方を断る cp の下で)",
+      "observation": "test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options PASSED(28,672 / 548,864)",
+      "evidence": {
+        "path": "evidence/ev-bake.log",
+        "sha256": "35165714a6f91ee26e1794cc73b63921dfcc6ef740fc78391f49b600125c3bef"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "SA-before",
+      "scenarios": [
+        "SA"
+      ],
+      "control": "negative",
+      "expectation": "直す前の形で、組み方を持たない 2 つ目の書き手は root ごとに別の blob を作る(盲検 A の崩れの再現)",
+      "observation": "naive store .pyc blobs: 4 / rule store .pyc blobs: 1 / marshal.dumps(entry code) == entry data: False",
+      "evidence": {
+        "path": "evidence/blind-a-repro-before.log",
+        "sha256": "05fe58fe3c7b6ecdfb515db3d746337637ceb01d47949c7a2b01d8d6c0927780"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "SB-before",
+      "scenarios": [
+        "SB"
+      ],
+      "control": "negative",
+      "expectation": "直す前の形で、持ち越しの実装は保存先の使った印を進めず、掃除が使っている .pyc を消す(盲検 B の崩れの再現)",
+      "observation": "share: sweep 後の store の .pyc 0・root-3 の新しい .pyc の byte 188,416・root-2 に古い m0.pyc / control: .pyc 24・0",
+      "evidence": {
+        "path": "evidence/blind-b-repro-before.log",
+        "sha256": "639f27140dfee632a34fa998435d92e000eb3d0bbf6d1695f3077166d7f9f9e3"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

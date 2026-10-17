@@ -1,0 +1,116 @@
+--- env_translation.hy.orig	2026-10-17 12:57:37.000000000 +0000
++++ repo/packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy	2026-10-17 13:14:32.989133958 +0000
+@@ -53,7 +53,7 @@
+ (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
+ (import doeff_cluster.worker.core.env_prepare [
+                      
+-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
++                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree ShareBytecode EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+ 
+ (val DETAIL-CHARS 600)
+ ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
+@@ -507,6 +507,39 @@
+                 (TreePlaced :how TREE-COPY :copied (len linkable) :removed (- (len tracked) (len kept)) :replaced (len fresh)))))))
+ 
+ 
++;; 焼いた .pyc の置き場の dir の名と、.pyc を持つ source の拡張子(焼く道具が焼く物 — Python と Hy)。
++(val PYCACHE-DIR "__pycache__")
++(val BYTECODE-SOURCE-SUFFIXES #(".py" ".hy" ".hyk" ".hyp"))
++
++
++(defk shared-bytecode [source dest]
++  {:pre [(: source str) (: dest str)] :post [(: % int)]}
++  "写し元の木 source の __pycache__ の .pyc のうち、同じ dir の同じ名の source が dest の木に在る物を、dest の同じ相対 path に hardlink で
++   置くため(LinkFile)。写し元の .pyc は焼く道具が保存先の file への hardlink で置いた物なので、置いても新しい block を持たない。置いた .pyc は
++   焼く道具が今の source と macro に照らし、合う物は焼かずに残し(reused)、合わない物は一時の file から置き換える(写し元の .pyc は
++   その場で書かない)。.venv の下は見ない。置けない .pyc は飛ばす(焼く道具が置く)。答え = 置いた数。"
++  (<- old (| tuple FileFailed) (WalkTree source))
++  (<- new (| tuple FileFailed) (WalkTree dest))
++  (match #(old new)
++    #((tuple) (tuple))
++    (do (val present (frozenset (gfor e new :if (= e.kind PathKind.FILE) e.name)))
++        (var placed 0)
++        (for [e old]
++          (val parts (.split e.name "/"))
++          (when (and (= e.kind PathKind.FILE) (.endswith e.name ".pyc") (>= (len parts) 2)
++                     (= (get parts -2) PYCACHE-DIR) (not-in ".venv" parts))
++            (val base (.join "/" (cut parts 0 -2)))
++            (val stem (get (.split (get parts -1) ".") 0))
++            (when (any (gfor s BYTECODE-SOURCE-SUFFIXES (in (posixpath.join base (+ stem s)) present)))
++              (<- (MakeDirectory (posixpath.join dest base PYCACHE-DIR)))
++              (<- linked (| None FileFailed) (LinkFile (posixpath.join source e.name) (posixpath.join dest e.name)))
++              (match linked
++                (FileFailed) None
++                _ (:= placed (+ placed 1))))))
++        placed)
++    _ 0))
++
++
+ (defk materialize [mirror commit dest source]
+   {:pre [(: mirror str) (: commit str) (: dest str) (: source (| TreeSource None))] :post [(: % TreePlaced)]}
+   "commit の木を dest に置くため(source = 写し元の木 — 在れば hardlink で写して変わった path だけ新しく置き、無ければ・写せなければ mirror から
+@@ -817,6 +850,10 @@
+     (<- placed TreePlaced (materialize mirror commit dest source))
+     (resume placed))
+ 
++  (ShareBytecode [source dest]
++    (<- shared int (shared-bytecode source dest))
++    (resume shared))
++
+   (FileSha256 [path]
+     (<- digest (| str None) (file-sha256 path))
+     (resume digest))
+--- env_prepare.hy.orig	2026-10-17 12:57:37.000000000 +0000
++++ repo/packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy	2026-10-17 13:14:20.761490040 +0000
+@@ -42,7 +42,7 @@
+ (import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json source-key])
+ (import doeff_cluster.shared.core.runtime_env [project-dir])
+ (import doeff_cluster.shared.core.native_wheel [wheel-out-dir])
+-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
++(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker ShareBytecode TREE-COPY] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+ 
+ (defk absolute-roots [env root]
+   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
+@@ -257,6 +257,11 @@
+     (<- ended float (GetMonotonic))
+     (when placed.reason
+       (<- (PrepareNote (.format "repo {} の木を写し元 {} から写せず展開した: {}" repo.name source.dir placed.reason))))
++    ;; 写した木には、写し元の木の .pyc(焼く道具が保存先の file への hardlink で置いた物)も hardlink で置く — 焼く道具が照らして合う物は
++    ;; 焼かずに残す(reused)ので、保存先が root と別の volume で焼く道具が hardlink で置けない機体でも、root ごとに同じ中身を書かない。
++    (when (= placed.how TREE-COPY)
++      (<- shared int (ShareBytecode source.dir (.format "{}/{}" request.root repo.name)))
++      (<- (PrepareNote (.format "repo {} の木に写し元 {} の .pyc を {} 個 hardlink で置いた" repo.name source.dir shared))))
+     (:= parts (+ parts #((StagePart :name repo.name :how placed.how :seconds (- ended started)
+                                     :copied placed.copied :removed placed.removed :replaced placed.replaced)))))
+   (replace state :parts parts :written (sum (gfor p parts p.replaced))))
+--- env_prepare_model.hy.orig	2026-10-17 12:57:37.000000000 +0000
++++ repo/packages/doeff-cluster/src/doeff_cluster/worker/intent/env_prepare_model.hy	2026-10-17 13:14:11.850326546 +0000
+@@ -259,6 +259,14 @@
+   (#^ (| TreeSource None) source))
+ 
+ 
++(defclass [(dataclass :frozen True)] ShareBytecode [EffectBase]
++  "写し元の木(source — TreeSource の dir)の __pycache__ の .pyc のうち、同じ名の source が dest の木に在る物を、dest の同じ相対 path に
++   hardlink で置く(MaterializeTree の木は展開と同じ形のまま — .pyc は木の置き方の外)。置いた .pyc は bytecode の処理ステージの焼く道具が
++   今の source と macro に照らし、合う物は焼かずに残す(reused)。答え = 置いた数(int)。"
++  (#^ str source)
++  (#^ str dest))
++
++
+ 
+ 
+ (defclass [(dataclass :frozen True)] EnsureNativeWheel [EffectBase]
+--- env_prepare_model.pyi.orig	2026-10-17 12:57:37.000000000 +0000
++++ repo/packages/doeff-cluster/src/doeff_cluster/worker/intent/env_prepare_model.pyi	2026-10-17 13:14:13.868308186 +0000
+@@ -191,6 +191,11 @@
+     source: TreeSource | None
+ 
+ @dataclass(frozen=True)
++class ShareBytecode(EffectBase):
++    source: str
++    dest: str
++
++@dataclass(frozen=True)
+ class EnsureNativeWheel(EffectBase):
+     package: str
+     source_dir: str

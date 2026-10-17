@@ -1,0 +1,9 @@
+# 2026-10-17T13:40:19+00:00 doeff f207e4d366c7350f45418e4bb28b39c8a93ad65b(作業木の未 commit の変更 = F1・F2)
+$ uv run --no-sync pytest -v packages/doeff-cluster/tests/test_env_tree_placement.hy
+packages/doeff-cluster/tests/test_env_tree_placement.hy::test_a_copied_tree_shares_unchanged_files_and_never_writes_through_them PASSED [ 20%]
+packages/doeff-cluster/tests/test_env_tree_placement.hy::test_a_tree_is_copied_where_cp_refuses_gnu_options PASSED [ 40%]
+packages/doeff-cluster/tests/test_env_tree_placement.hy::test_a_change_set_larger_than_one_command_is_placed_in_chunks PASSED [ 60%]
+packages/doeff-cluster/tests/test_env_tree_placement.hy::test_a_source_commit_missing_from_the_mirror_expands_the_whole_tree PASSED [ 80%]
+packages/doeff-cluster/tests/test_env_tree_placement.hy::test_a_copy_source_missing_a_file_expands_and_leaves_no_partial_copy PASSED [100%]
+========================= 5 passed, 1 warning in 7.76s =========================
+rc=0

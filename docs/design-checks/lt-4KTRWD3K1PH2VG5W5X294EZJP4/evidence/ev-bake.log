@@ -1,0 +1,7 @@
+# 2026-10-17T13:40:56+00:00 doeff f207e4d366c7350f45418e4bb28b39c8a93ad65b(作業木の未 commit の変更 = F1・F2)
+$ uv run --no-sync pytest -v packages/doeff-cluster/tests/test_code_prepare_content_store.py -k test_f or test_g or test_h
+packages/doeff-cluster/tests/test_code_prepare_content_store.py::test_f_trees_baked_from_the_store_share_one_file_per_pyc PASSED [ 33%]
+packages/doeff-cluster/tests/test_code_prepare_content_store.py::test_g_rebaking_one_tree_does_not_write_through_the_shared_pyc PASSED [ 66%]
+packages/doeff-cluster/tests/test_code_prepare_content_store.py::test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options PASSED [100%]
+============ 3 passed, 5 deselected, 1 warning in 72.85s (0:01:12) =============
+rc=0

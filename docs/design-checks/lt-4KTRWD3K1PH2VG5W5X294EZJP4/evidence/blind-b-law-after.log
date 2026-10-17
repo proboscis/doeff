@@ -1,0 +1,11 @@
+# R3b の law(ADR の判断の関数)を 2 つの木に当てる(設計者・2026-10-17T13:37:26+00:00)
+## 正常例: 作業木(doeff 9fe8c330b + この branch)
+$ uv run --no-sync python evidence/law_on_tree.py docs/adr/defadr_doeff_build_002_one_bytecode_store.hy <作業木>
+綴る file: ['packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy', 'packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy', 'packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy', 'packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy']
+違反: []
+rc=0
+## 失敗例: 作業木の doeff-cluster の src の写しに、盲検 B の写しの 3 file(env_translation.hy・env_prepare.hy・env_prepare_model.hy — share-bytecode.diff を当てた物)を重ねた木
+$ uv run --no-sync python evidence/law_on_tree.py docs/adr/defadr_doeff_build_002_one_bytecode_store.hy <写し>
+綴る file: ['packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy', 'packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy', 'packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy', 'packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy', 'packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy']
+違反: ['packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy: .pyc の置き場(__pycache__・.pyc・pyc-path)を綴る — .pyc を root に置くのは焼く道具だけ(code_store の link-pyc 経由)。前の root から .pyc を持ち越す 2 本目の道になる']
+rc=1
