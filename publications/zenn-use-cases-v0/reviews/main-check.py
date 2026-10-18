@@ -107,4 +107,18 @@ assert all_slugs == expected_slugs, (expected_slugs - all_slugs, all_slugs - exp
 table_text = "\n".join(line for line in article.splitlines() if line.startswith("|"))
 table_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", table_text))
 assert table_slugs == expected_slugs, (expected_slugs - table_slugs, table_slugs - expected_slugs)
-print(f"main: 本文2例の順次実行、最小ハンドラ2個、担当外2種類の委譲、各行コメント、{len(expected_slugs)}記事の表を確認")
+
+# 連載の10本の一覧は、公開計画の「公開順」の表と同じ題と順にする(順を変えた時に1本目だけ古くなるのを防ぐ)。
+plan = (Path(__file__).resolve().parents[1] / "publication-plan.md").read_text()
+planned = re.findall(r"^\| (\d+) \| \[([^\]]+)\]\((doeff-[a-z]+\.md)\) \|", plan, re.M)
+listed = re.findall(
+    r"^(\d+)\. (?:\[([^\]]+)\]\((doeff-[a-z]+\.md)\)|(.+)\(この記事\))$", article, re.M
+)
+listed_rows = [
+    (number, title or own, name or "doeff-main.md") for number, title, name, own in listed
+]
+assert listed_rows == planned, (listed_rows, planned)
+print(
+    f"main: 本文2例の順次実行、最小ハンドラ2個、担当外2種類の委譲、各行コメント、{len(expected_slugs)}記事の表、"
+    f"公開順の表と同じ{len(planned)}本の一覧を確認"
+)
