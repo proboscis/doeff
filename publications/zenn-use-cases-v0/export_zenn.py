@@ -172,23 +172,41 @@ def write(item: Prepared, output: Path) -> None:
     (output / "articles" / f"{item.slug}.md").write_text(item.article)
 
 
+@dataclass(frozen=True)
+class Export:
+    """公開順の表の全記事を書き出す形にした物と、全記事の食い違い(1つでもあれば何も書かない)。"""
+
+    items: tuple[Prepared, ...]
+    problems: tuple[str, ...]
+
+
+def prepare_all() -> Export:
+    """公開順の表の全記事を書き出す形にし、食い違いを全部集める。"""
+    rows = release.read_rows((SOURCE / "publication-plan.md").read_text())
+    items = tuple(prepare(row, rows) for row in rows)
+    problems = tuple(f"{item.name}: {problem}" for item in items for problem in item.problems)
+    empty = () if rows else ("publication-plan.mdの「公開順」の表に記事がありません",)
+    return Export(items, (*problems, *empty))
+
+
+def summary(item: Prepared) -> str:
+    """書き出した記事1本の1行(出力先のファイル・原稿・公開設定・画像の数)。"""
+    state = "true" if item.published else "false"
+    return f"articles/{item.slug}.md ← {item.name}(published: {state}・画像 {len(item.images)}枚)"
+
+
 def main() -> None:
     """公開順の表の記事を書き出し、書き出した記事の一覧か、全部の食い違いを表示するため。"""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("output", type=Path, help="Zennの記事を置くリポジトリの根(無ければ作る)")
     args = parser.parse_args()
-    rows = release.read_rows((SOURCE / "publication-plan.md").read_text())
-    prepared = tuple(prepare(row, rows) for row in rows)
-    problems = tuple(f"{item.name}: {problem}" for item in prepared for problem in item.problems)
-    if not rows or problems:
-        print("\n".join(problems or ("publication-plan.mdの「公開順」の表に記事がありません",)))
+    export = prepare_all()
+    if export.problems:
+        print("\n".join(export.problems))
         sys.exit(1)
-    for item in prepared:
+    for item in export.items:
         write(item, args.output)
-        state = "true" if item.published else "false"
-        print(
-            f"articles/{item.slug}.md ← {item.name}(published: {state}・画像 {len(item.images)}枚)"
-        )
+        print(summary(item))
 
 
 if __name__ == "__main__":
