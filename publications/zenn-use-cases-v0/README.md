@@ -14,6 +14,7 @@
 | AIの会話を何十も並べる開発の流れを知りたい | [AIの会話を50並べる開発の記録](doeff-fleet.md) |
 | AIの変更が多く、マージの前のテストで列が詰まる | [マージキューのテストをやめた記録](doeff-mergequeue.md) |
 | AIが書く差分を読み切れない中で、ライブラリの約束を守りたい | [commitの68%をClaude Codeと書いた記録](doeff-commits.md) |
+| AIの会話に仕事を配らせるのをやめ、配り方を比べて選びたい | [AIの配り役を関数に替えた記録](doeff-dispatch.md) |
 | LLMのプロバイダごとのSDKが処理に広がる | [LLM](doeff-llm.md) |
 | 画像生成・編集をパイプラインへ入れたい | [画像](doeff-image.md) |
 | 入力待ちを含むゲームのルールを書きたい | [カードゲームとゲーム進行](doeff-games.md) |
