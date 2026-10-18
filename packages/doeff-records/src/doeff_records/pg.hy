@@ -58,8 +58,11 @@
 ;;;   - 答えは用意の終わりを待たない: ListRows が名指す宣言した索引の欄に、使える索引がまだ無ければ NotIndexed で断る(使い手は
 ;;;     Unavailable として撃ち直す — 宣言の注記の形)。他の読みと書きは答える(索引は読みの速さで、答えの値を変えない)。
 ;;;   - 宣言した索引の欄の索引は表の欄の式の索引(pg_sql の頭の註 — card ki-2176012d1804)。旧い形の索引か前の部分索引(aliases)が在る欄は、
-;;;     表の欄の式の索引を作り終えるまで前の文の形で照らして答え(NotIndexed にしない)、作り終えた欄から表の欄の式で照らす(IndexBook の
-;;;     scoped — ListRows と回収の終端の行の読みが文の形を決める)。索引の用意は aliases が在っても表の欄の式の索引を作る。
+;;;     表の欄の式の索引を作り終えるまで前の文の形で照らして答え(NotIndexed にしない)、作り終えて表の標本を取り直した欄から表の欄の式で
+;;;     照らす(IndexBook の scoped — ListRows と回収の終端の行の読みが文の形を決める)。索引の用意は aliases が在っても表の欄の式の索引を
+;;;     作り、作り終えた回の終わりに表の標本を取り直して観測し直す。標本を取り直す前の表の欄の式の索引は、索引の式の統計が無く値の組の
+;;;     見積もりが既定の選択度の積み上げになって表を頭から読む計画が選ばれる(本番の分布の置き場で値 995 個の組の 1 頁が 745 ms)ので、
+;;;     観測は統計の在る索引(か、統計がまだ 1 つも無い表の索引)だけを表の欄の式で照らす欄に数える(pg_sql.indexes-statement)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
@@ -87,7 +90,7 @@
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               writer-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
-                              concurrent-index-statement drop-index-statement statistics-statement analyze-statement
+                              concurrent-index-statement drop-index-statement analyze-statement
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
@@ -129,7 +132,7 @@
 (defclass IndexBook []
   "宣言した索引の欄のうち、置き場に使える索引が在ると観測した欄の覚え(頭の註の「索引の用意」— 表の用意と索引の用意の task が書き、
    ListRows と回収が読む)。fields = 使える索引(表の欄の式の索引か、その aliases の旧い形の索引)の在る欄(IndexedField の集合)/
-   scoped = 表の欄の式の索引の在る (表, 欄)(IndexedField の集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/
+   scoped = 表の欄の式の索引が使える形で見積もれる (表, 欄)(IndexedField の集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/
    missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)。資源なので値の型ではない(中身を
    書き換え、同一性で扱う)。書きも読みも scheduler の thread の上で、driver の thread は触らない。"
 
@@ -154,11 +157,10 @@
           self.missing missing)
     None)
 
-  (defn #^ None added [self #^ str name #^ tuple fields #^ tuple scoped]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
-    "索引の用意が作り終えた索引(名 name・答える欄 fields・表の欄の式で照らす欄 scoped)を覚えに足すため(次の観測を待たずに読みが
-     使う)。"
+  (defn #^ None added [self #^ str name #^ tuple fields]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
+    "索引の用意が作り終えた索引(名 name・答える欄 fields)を覚えに足すため(次の観測を待たずに ListRows が使う。表の欄の式で照らす欄
+     scoped は、表の標本を取り直した後の観測が書く)。"
     (setv self.fields (| self.fields (frozenset fields))
-          self.scoped (| self.scoped (frozenset scoped))
           self.missing (tuple (gfor missing self.missing :if (!= missing name) missing)))
     None))
 
@@ -177,9 +179,11 @@
 
 
 (defrecord ObservedIndex
-  "置き場の表に在る索引 1 つの観測(pg_index): name = 索引の名 / valid = 使える形か(CONCURRENTLY の作りかけは False で残る)。"
+  "置き場の表に在る索引 1 つの観測(pg_index): name = 索引の名 / valid = 使える形か(CONCURRENTLY の作りかけは False で残る)/
+   estimable = 見積もれるか(索引の式の統計が在るか、表に統計がまだ無い — pg_sql.indexes-statement)。"
   (#^ str name)
-  (#^ bool valid))
+  (#^ bool valid)
+  (#^ bool estimable))
 
 
 (defrecord IndexGap
@@ -437,8 +441,8 @@
 (defk observed-indexes [found]
   {:pre [(: found tuple)] :post [(: % (get tuple #(ObservedIndex ...)))]
    :tags {:context "records" :role "foundation"}}
-  "索引の観測の行(名・使える形か — pg_sql.indexes-statement の答え)を ObservedIndex の並びにするため。"
-  (tuple (gfor #(name valid) found (ObservedIndex :name name :valid (bool valid)))))
+  "索引の観測の行(名・使える形か・見積もれるか — pg_sql.indexes-statement の答え)を ObservedIndex の並びにするため。"
+  (tuple (gfor #(name valid estimable) found (ObservedIndex :name name :valid (bool valid) :estimable (bool estimable)))))
 
 
 (defk usable-index? [index usable]
@@ -465,17 +469,23 @@
 (defk index-observed [book prefix schema found]
   {:pre [(: book IndexBook) (: prefix str) (: schema RecordsSchema) (: found tuple)] :post [(: % (get tuple #(IndexGap ...)))]
    :tags {:context "records" :role "foundation"}}
-  "置き場の索引の観測の行 found で覚え book を書き替え、宣言の索引との差を返すため(表の用意の終わりと、索引の用意の回の頭)。"
+  "置き場の索引の観測の行 found で覚え book を書き替え、宣言の索引との差を返すため(表の用意の終わりと、索引の用意の回の頭と終わり)。
+   表の欄の式で照らす欄(scoped)は、表の欄の式の索引が使える形で、見積もれる(索引の式の統計が在る — 表の標本を取り直す前は前の文の形で
+   照らす・pg_sql.indexes-statement)欄だけ。"
   (<- declared (declared-indexes prefix schema))
   (<- observed (observed-indexes found))
   (<- gaps (index-gaps declared observed))
   (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
+  (val estimable (frozenset (gfor seen observed :if (and seen.valid seen.estimable) seen.name)))
   (var served #())
   (for [index declared]
     (<- answers (usable-index? index usable))
     (when answers
       (:= served (+ served index.serves))))
-  (val scoped (frozenset (gfor index declared :if (in index.name usable) indexed index.scoped indexed)))
+  (val scoped (frozenset (gfor index declared
+                               :if (in index.name (if index.sampled estimable usable))
+                               indexed index.scoped
+                               indexed)))
   (.observed book (frozenset served) scoped (tuple (gfor gap gaps gap.index.name)))
   gaps)
 
@@ -546,12 +556,15 @@
 (defk locked-round [store observing]
   {:pre [(: store PreparedStore) (: observing Statement)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の錠の中: 置き場の索引を観測し直し、残った差を作って、式の統計を作った表の標本を取り直すため。答え = 全部を作れたか。"
+  "索引の用意の錠の中: 置き場の索引を観測し直し、残った差を作って、式の索引を作った表の標本を取り直し、もう 1 度観測して覚えを書き
+   替えるため(標本を取り直した表の欄の式の索引の欄から、読みが表の欄の式で照らす — index-observed の scoped)。答え = 全部を作れたか。"
   (<- held (query-rows store.database observing))
   (<- remaining (index-observed store.indexes store.prefix store.schema held))
   (<- built (built-gaps store remaining))
   (when built
-    (<- (analyzed store remaining)))
+    (<- (analyzed store remaining))
+    (<- after (query-rows store.database observing))
+    (<- (index-observed store.indexes store.prefix store.schema after)))
   built)
 
 
@@ -609,9 +622,10 @@
 (defk analyzed [store gaps]
   {:pre [(: store PreparedStore) (: gaps tuple)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "式の統計を作った索引の表の標本を取り直すため(作ったばかりの統計は空 — 表の欄の式の索引の読みの見積もりに要る・pg_sql.field-index)。
-   落ちても索引は使えるので、名乗って続ける(見積もりは次の autovacuum の analyze で揃う)。"
-  (val relations (sorted (sfor gap gaps :if (is-not gap.index.statistics None) gap.index.relation)))
+  "式の索引を作った表の標本を取り直すため(作ったばかりの索引の式の統計は空 — 表の欄の式の索引の読みの見積もりに要る・
+   DeclaredIndex の sampled)。落ちても索引は使えるので、名乗って続ける(その欄は、次の autovacuum の analyze の後の観測まで前の文の形で
+   照らす)。"
+  (val relations (sorted (sfor gap gaps :if gap.index.sampled gap.index.relation)))
   (for [relation relations]
     (<- analyzing (analyze-statement store.prefix relation))
     (try
@@ -627,15 +641,12 @@
 (defk built-gaps [store gaps]
   {:pre [(: store PreparedStore) (: gaps tuple)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "差の索引を宣言の順に 1 つずつ CONCURRENTLY で作り(式の統計が要る索引は統計を先に作る・使えない形で残った同じ名の索引は先に
-   消す)、作れた索引の欄を覚えに足すため。
+  "差の索引を宣言の順に 1 つずつ CONCURRENTLY で作り(使えない形で残った同じ名の索引は先に消す)、作れた索引の答える欄を覚えに足す
+   ため(表の欄の式で照らす欄は、表の標本を取り直した後の観測が足す — locked-round)。
    答え = 全部を作れたか(作れなかった索引は名乗り、残りは次の回へ — 錠を外す道を例外で飛ばさないよう、取り消しの外の例外を上げない)。"
   (for [gap gaps]
     (<- started float (GetMonotonic))
     (try
-      (when (is-not gap.index.statistics None)
-        (<- counting (statistics-statement gap.index))
-        (<- (query-rows store.ddl-database counting)))
       (when gap.invalid
         (<- dropping (drop-index-statement gap.index))
         (<- (query-rows store.ddl-database dropping)))
@@ -648,7 +659,7 @@
                :file sys.stderr :flush True)
         (return False)))
     (<- done float (GetMonotonic))
-    (.added store.indexes gap.index.name gap.index.serves gap.index.scoped)
+    (.added store.indexes gap.index.name gap.index.serves)
     (print (.format "記録の service: 索引 {} を {} 秒で作った({}{}・CONCURRENTLY)"
                     gap.index.name (round (- done started) 1) store.prefix gap.index.relation)
            :file sys.stderr :flush True))
