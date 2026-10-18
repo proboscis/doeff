@@ -9,15 +9,17 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
+(import json)
 (import sys)
+(import threading)
 (import pathlib [Path])
 (import doeff [with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexTurn CodexSessionSpec])
+(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexTurn CodexSessionSpec CodexHome])
 (import doeff_codex.lines [TurnEnded TurnStatus])
-(import doeff_codex.handler [CodexHost KEPT-TURNS codex-handler])
+(import doeff_codex.handler [CodexHost codex-handler on-line])
 (import doeff_codex.effects [CodexStartTurn CodexCloseSession CodexLaunchCount CodexReadTurnEvents TurnStarted TurnEventPage UnknownTurn
                              SessionClosed BackendLost])
 (import tests.interpreters [STUB-PATH CODEX-HOME-DIR settings-for])
@@ -43,6 +45,12 @@
   (.mkdir (/ tmp-path CODEX-HOME-DIR) :exist-ok True)
   (<- settings (settings-for "stub" tmp-path))
   settings.spec)
+
+(defk spec-numbered [#^ CodexSessionSpec spec #^ int index]
+  {:pre [(: spec CodexSessionSpec) (: index int)] :post [(: % CodexSessionSpec)] :tags {:context "codex-test" :role "program"}}
+  "宣言を、index 番目の会話の物にするため(替え玉は process ごとに id を 1 から数えるので、同じ host に開いた会話が同じ thread の id に
+   衝突しないよう、会話ごとに替え玉の id の接頭辞を変える)。"
+  (replace spec :home (CodexHome :env (| spec.home.env {"STUB_ID_PREFIX" (str index)}))))
 
 (defk turns-held [#^ CodexHost host #^ str thread-id]
   {:pre [(: host CodexHost) (: thread-id str)] :post [(: % list)] :tags {:context "codex-test" :role "program"}}
@@ -107,8 +115,9 @@
   {:pre [(: host CodexHost) (: spec CodexSessionSpec) (: count int)] :post [(: % Fleet)] :tags {:context "codex-test" :role "program"}}
   "会話を count 本開き、それぞれ turn を重ねて走っている turn を残したまま閉じ、全部閉じてから終わりを読ませるため。"
   (var closed #())
-  (for [_ (range count)]
-    (<- one (closed-mid-turn host spec 3))
+  (for [index (range count)]
+    (<- numbered (spec-numbered spec index))
+    (<- one (closed-mid-turn host numbered 3))
     (:= closed (+ closed #(one))))
   (var read #())
   (for [one closed]
@@ -206,34 +215,47 @@
   (<- spec (spec-in tmp-path))
   (<- stack (handlers-for host))
   (<- fleet (scheduled (with_handlers stack (fleet-closed-then-read host spec 1))))
+  (<- numbered (spec-numbered spec 0))
   (val thread-id (. (get fleet.closed 0) turn thread-id))
   (assert (is (.runtime host thread-id) None) (.runtime host thread-id))
   (val continuation (.continuation host thread-id))
   (assert (is-not continuation None) continuation)
   (assert (= continuation.thread-id thread-id) continuation.thread-id)
-  (assert (= continuation.spec spec) continuation.spec)
+  (assert (= continuation.spec numbered) continuation.spec)
   (assert (= continuation.launches 1) continuation.launches)
   (assert (>= continuation.next-seq (. (get fleet.read 0) page next-seq)) continuation.next-seq))
 
 
-(defk turns-then-count [#^ CodexHost host #^ CodexSessionSpec spec #^ int count]
-  {:pre [(: host CodexHost) (: spec CodexSessionSpec) (: count int)] :post [(: % CodexTurn)] :tags {:context "codex-test" :role "program"}}
-  "同じ会話で count 本の turn を終わりまで走らせるため(答え = 最後の turn)。"
+(defk read-then-straggler-line [#^ CodexHost host #^ CodexSessionSpec spec]
+  {:pre [(: host CodexHost) (: spec CodexSessionSpec)] :post [(: % tuple)] :tags {:context "codex-test" :role "program"}}
+  "走っている turn を残して閉じ、終わりを読ませて状態が外れた後に、降ろし中だった process の最後の行が届く場面を作るため。
+   答え = 外れた状態・その process の世代・走っていた turn。"
   (<- opened (finished-turn "" spec "say hello"))
-  (var last opened)
-  (for [_ (range (- count 1))]
-    (<- next-turn (finished-turn opened.thread-id spec "say hello"))
-    (:= last next-turn))
-  last)
+  (<- running (CodexStartTurn (ResumeThread :thread-id opened.thread-id) spec (CodexInput :text "SLOW please")))
+  (assert (isinstance running TurnStarted) running)
+  (val runtime (.runtime host opened.thread-id))
+  (val generation runtime.generation)
+  (<- before (CodexReadTurnEvents running.turn -1 1.0))
+  (<- closed (CodexCloseSession opened.thread-id "検の終わり"))
+  (assert (isinstance closed SessionClosed) closed)
+  (<- ended (CodexReadTurnEvents running.turn before.next-seq 5.0))
+  (assert (isinstance ended TurnEventPage) ended)
+  #(runtime generation running.turn))
 
-(deftest test-a-live-session-keeps-only-the-last-few-turn-logs [tmp-path]
-  ;; 開いた会話が持つ turn の記録は最近の KEPT-TURNS 本だけ(読み手は今の turn と続きの turn しか読まない — 読み手の
-  ;; doeff-agents の headless_codex の pull は、走っている turn だけを名指して読む)。
-  (assert (<= KEPT-TURNS 4) KEPT-TURNS)
+(deftest test-a-last-line-of-the-closed-process-does-not-bring-a-released-turn-log-back [tmp-path]
+  ;; 閉じる時に降ろし始めた process の最後の行(turn/completed など)が、読み手が終わりを読んで状態が外れた後に届いても、外れたターンの
+  ;; 記録を作り直さず、続きの記録の seq も進めない(作り直すと閉じた会話が外れず、外れた状態が続きの記録を古い物から書き換える)。
   (<- host (new-host))
   (<- spec (spec-in tmp-path))
   (<- stack (handlers-for host))
-  (<- last (scheduled (with_handlers stack (turns-then-count host spec (+ KEPT-TURNS 3)))))
-  (<- held (turns-held host last.thread-id))
-  (assert (= (len held) KEPT-TURNS) held)
-  (assert (in last.turn-id held) #(last held)))
+  (<- #(runtime generation turn) (scheduled (with_handlers stack (read-then-straggler-line host spec))))
+  (assert (is (.runtime host turn.thread-id) None) (.runtime host turn.thread-id))
+  (val continuation (.continuation host turn.thread-id))
+  (val seq-before continuation.next-seq)
+  (val straggler (json.dumps {"method" "turn/completed"
+                              "params" {"threadId" turn.thread-id "turn" {"id" turn.turn-id "status" "interrupted"}}}))
+  (val reader (threading.Thread :target on-line :args [runtime generation straggler]))
+  (.start reader)
+  (.join reader)
+  (assert (= runtime.turns {}) runtime.turns)
+  (assert (= continuation.next-seq seq-before) #(continuation.next-seq seq-before)))

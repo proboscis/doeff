@@ -12,7 +12,7 @@
 (import json)
 (import doeff_codex.lines [classify-line CodeModeUnavailable CodexWarning Response TurnStarted TextDelta
                            CODE-MODE-UNAVAILABLE-HEAD CODE-MODE-FAIL-CLOSED])
-(import doeff_codex.handler [SessionRuntime absorb])
+(import doeff_codex.handler [Continuation SessionRuntime absorb])
 (import doeff_codex.effects [ToolsUnavailable])
 (import doeff_codex.values [CodexSessionSpec CodexHome])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
@@ -22,9 +22,9 @@
 (defk fresh-runtime []
   {:pre [] :post [(: % SessionRuntime)] :tags {:context "codex-test" :role "foundation"}}
   "process を持たない会話の状態を作るため(読みの thread の振り分け absorb だけを、行の順を替えて当てる)。"
-  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
-                                                 :sandbox SandboxMode.DANGER-FULL-ACCESS)))
-  (setv runtime.thread-id "t")
+  (val runtime (SessionRuntime (Continuation (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                 :sandbox SandboxMode.DANGER-FULL-ACCESS))))
+  (setv runtime.continuation.thread-id "t")
   runtime)
 
 
@@ -81,7 +81,7 @@
   (val lines (lfor line (.splitlines (.read-text (/ RECORDED "code-mode-unavailable.stdout.jsonl") :encoding "utf-8")) :if (.strip line)
                    line))
   (val messages (lfor line lines (json.loads line)))
-  (setv runtime.thread-id (get (next (gfor message messages :if (= (.get message "id") 2) message)) "result" "thread" "id"))
+  (setv runtime.continuation.thread-id (get (next (gfor message messages :if (= (.get message "id") 2) message)) "result" "thread" "id"))
   (val turn (get (next (gfor message messages :if (= (.get message "id") 3) message)) "result" "turn" "id"))
   ;; 1 つ目のターンの終わり(turn/completed)までを振り分ける — 録りの 2 つ目のターンは、本番では降ろした後の新しい process の物。
   (val first-end (next (gfor #(index message) (enumerate messages) :if (= (.get message "method") "turn/completed") index)))

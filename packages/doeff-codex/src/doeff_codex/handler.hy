@@ -20,6 +20,12 @@
 ;;; handler の節は会話ごとの lock で状態を差し替える。待つ所(要求の答え・出来事・降りるの待ち)は呼び鈴(Doorbell — CreateExternalPromise
 ;;; の約束)を掛けてから条件を読み直し、WaitWithin で上限の秒まで待つ。状態を変えた側が呼び鈴を鳴らす(時間で起きて確かめない)。
 ;;; 手本 = doeff-claude-code の handler.hy(同じ待ち方・同じ host の持ち方)。
+;;;
+;;; 会話の状態は寿命の違う 2 つに分ける: 続きの記録(Continuation — thread の id・今の宣言・出来事の seq・起こした process の数。小さく、
+;;; 会話の寿命の間 CodexHost が持つ。閉じた後の ResumeThread が seq と起こした数を続けるのに要る)と、生きた状態(SessionRuntime — process・
+;;; 走っているターン・ターンの記録 TurnLog。重い: 道具の出力の全文を含む)。ターンの記録は読み手が終わりまで読めば要らず、閉じた会話は
+;;; 読み終えた記録を外し、記録が無くなって process も降りた時に生きた状態ごと外して続きの記録だけを残す(1 会話が閉じた後も重い記録を
+;;; 持ち続けると、codex の会話の数だけ host の本体の memory が重くなる — zeus の turn-host の観測)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "codex" :role "process"})
 (import collections.abc [Callable])
@@ -77,32 +83,45 @@
 
 (defclass TurnLog []
   "1 つのターンの出来事と終わり(まだなら end は None)。pending = 答えを待つ codex からの要求の id(ServerRequest)。limits = そのターンで
-   届いた口座の枠の知らせを重ねた物(limits.hy の merged-limits の答え — 枠の名ごとに 1 つ・終わりの利用枠切れの事実の材料)。"
+   届いた口座の枠の知らせを重ねた物(limits.hy の merged-limits の答え — 枠の名ごとに 1 つ・終わりの利用枠切れの事実の材料)。
+   end-read = 読み手に終わりを頁で渡した(頁は after-seq より後の出来事を全部載せるので、終わりを渡した時点で出来事も全部渡している —
+   読み手は終わりの後にそのターンを読まない)。"
   (defn __init__ [self]
     (setv #^ (get tuple #(CodexEvent ...)) self.events #())
     (setv self.end None)
+    (setv #^ bool self.end-read False)
     (setv #^ tuple self.pending #())
     (setv #^ tuple self.limits #())))
 
 
+(defclass Continuation []
+  "会話の続きを起こすのに要る小さな記録(会話の寿命の間 CodexHost が持つ — 閉じた後も残す): thread-id = codex の thread の id
+   (新しい会話の thread/start の答えまで None)/ spec = 今の宣言(同じ宣言の続きは生きた process を使い回し、違えば起こし直す)/
+   next-seq = 最後に振った出来事の seq(出来事の seq は会話の中で単調に増え、process を起こし直しても・生きた状態が外れても続く)/
+   launches = 会話のために起こした process の数。重いターンの記録(SessionRuntime.turns)を持たない — 寿命が違うので別の記録にしてある。"
+  (defn __init__ [self #^ CodexSessionSpec spec]
+    (setv self.thread-id None
+          self.spec spec
+          self.next-seq 0
+          self.launches 0)))
+
+
 (defclass SessionRuntime []
-  "1 つの会話(thread)の状態(handler の中だけ)。thread-id は新しい会話の thread/start の答えまで None。generation = 今の process を
+  "1 つの会話(thread)の生きた状態(handler の中だけ)。continuation = この会話の続きの記録(CodexHost が会話の寿命の間持つ物と
+   同じ物 — thread の id・宣言・seq・起こした数はここにだけ在る)。generation = 今の process を
    起こした回の番号(古い process の行と終わりを、今の process の物と取り違えないため)。credential-home = 今の process の資格の家
    (借りた資格で起こした時だけ — 降ろしたら消す)。answers = 要求の id → 答えの記録(要求ごとに
    handler が待って読む — 読んだら消す)。outside = 走っているターンの外で読んだ記録(数えて見せるため・ターンの頁には載せない)。
    late = 走っているターンの無い間に届いた、終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 次のターンの頭に積む)。
    tools-lost = 今の process が道具を呼べないと codex が名乗った事実(lines.CodeModeUnavailable — 無ければ None。process を起こし
    直すと消す)。"
-  (defn __init__ [self #^ CodexSessionSpec spec]
-    (setv self.spec spec
-          self.thread-id None
+  (defn __init__ [self #^ Continuation continuation]
+    (setv self.continuation continuation
           self.process None
           self.generation 0
-          self.launches 0
           self.lock (threading.Lock)
           self.doorbell (Doorbell)
           self.next-request-id 0
-          self.next-seq 0
           self.current-turn None
           self.closed False
           self.exit-code None
@@ -147,9 +166,29 @@
     (if (and (is-not log None) (is log.end None)) log None))
 
   (defn add-event [self #^ TurnLog log record]
-    "記録を seq を振ってターンの出来事に積むため。lock の中で呼ぶ。"
-    (setv self.next-seq (+ self.next-seq 1))
-    (setv log.events (+ log.events #((CodexEvent :seq self.next-seq :record record)))))
+    "記録を seq を振ってターンの出来事に積むため(seq は続きの記録が数える)。lock の中で呼ぶ。"
+    (setv self.continuation.next-seq (+ self.continuation.next-seq 1))
+    (setv log.events (+ log.events #((CodexEvent :seq self.continuation.next-seq :record record)))))
+
+  (defn note-read [self #^ str turn-id #^ TurnEventPage page]
+    "読み手に渡した頁を、そのターンの記録に記すため(終わりを渡したら、読み手はそのターンをもう読まない)。lock の中で呼ぶ。"
+    (setv log (.get self.turns turn-id))
+    (when (and (is-not log None) (is-not page.end None))
+      (setv log.end-read True))
+    None)
+
+  (defn drop-read [self]
+    "読み手が終わりまで読んだターンの記録を外すため(読み終えていない出来事と終わりを持つ記録は残す)。lock の中で呼ぶ。"
+    (for [turn-id (list self.turns)]
+      (when (. (get self.turns turn-id) end-read)
+        (del (get self.turns turn-id))))
+    None)
+
+  (defn #^ bool drained [self]
+    "閉じて、ターンの記録がもう無く、process も降りているか(生きた状態を CodexHost から外してよいか)。lock の中で呼ぶ。"
+    (and self.closed
+         (not self.turns)
+         (or (is self.process None) (not (.alive self.process)))))
 
   (defn end-toolless-turn [self]
     "道具を呼べない process(tools-lost が在る)で走っているターンを、model が文だけを返して completed になる前に ToolsUnavailable で
@@ -164,23 +203,43 @@
 
 
 (defclass CodexHost []
-  "handler の状態: thread の id → SessionRuntime。command = 実行ファイルと前置きの引数(例 #(\"codex\"))・launch-timeout = 起動と
-   要求の答えを待つ上限(秒)。"
+  "handler の状態: thread の id → 続きの記録 Continuation(会話の寿命の間)と thread の id → 生きた状態 SessionRuntime(閉じた会話は
+   ターンの記録を読み手が読み終え、process も降りたら外れる)。command = 実行ファイルと前置きの引数(例 #(\"codex\"))・launch-timeout =
+   起動と要求の答えを待つ上限(秒)。lock の順は CodexHost → 会話(release だけが両方を取る)。"
   (defn __init__ [self #^ tuple command [launch-timeout 120.0]]
     (when (not command)
       (raise (ValueError "CodexHost.command は空でない tuple")))
     (setv self.command command
           self.launch-timeout (float launch-timeout)
           self.lock (threading.Lock))
+    (setv #^ (get dict #(str Continuation)) self.continuations {})
     (setv #^ (get dict #(str SessionRuntime)) self.runtimes {}))
 
   (defn runtime [self #^ str thread-id]
-    "会話の状態を引くため(知らなければ None)。"
+    "会話の生きた状態を引くため(知らなければ、または閉じて外れていれば None)。"
     (with [self.lock] (.get self.runtimes thread-id)))
 
+  (defn continuation [self #^ str thread-id]
+    "会話の続きの記録を引くため(知らなければ None — 閉じて生きた状態が外れた会話も持つ)。"
+    (with [self.lock] (.get self.continuations thread-id)))
+
   (defn register [self #^ SessionRuntime runtime]
-    "thread の id が決まった会話の状態を覚えるため。"
-    (with [self.lock] (setv (get self.runtimes runtime.thread-id) runtime))))
+    "thread の id が決まった会話の続きの記録と生きた状態を覚えるため。"
+    (with [self.lock]
+      (setv thread-id runtime.continuation.thread-id)
+      (setv (get self.continuations thread-id) runtime.continuation)
+      (setv (get self.runtimes thread-id) runtime)))
+
+  (defn #^ bool release [self #^ SessionRuntime runtime]
+    "閉じて、ターンの記録がもう無く、process も降りた会話の生きた状態を外すため(続きの記録は残す)。閉じた時に世代を進めてあるので
+     (close-session)、外した状態へ古い process の行が届いても積まれず、続きの記録の seq も進まない。答え = 外したか。"
+    (with [self.lock]
+      (with [runtime.lock]
+        (setv thread-id runtime.continuation.thread-id)
+        (setv released (and (is (.get self.runtimes thread-id) runtime) (.drained runtime)))
+        (when released
+          (del (get self.runtimes thread-id)))))
+    released))
 
 
 ;; --- 読み手の thread からの呼び(lock の中で状態を進める) --------------------------------------------
@@ -189,7 +248,8 @@
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % bool)] :tags {:context "codex" :role "process"}}
   "記録が会話の thread でない thread(子の agent)を名乗るかを答えるため(ターンを名乗る記録だけが thread を名乗る。会話の thread は
    turn/start を書く前に決まる — handler の start-turn)。"
-  (and (isinstance record lines.TurnRecord) (is-not runtime.thread-id None) (!= record.thread-id runtime.thread-id)))
+  (val thread-id runtime.continuation.thread-id)
+  (and (isinstance record lines.TurnRecord) (is-not thread-id None) (!= record.thread-id thread-id)))
 
 (defk absorb [#^ SessionRuntime runtime record]
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
@@ -413,8 +473,8 @@
   (<- argv (app-server-argv host.command spec.disabled-features))
   (with [runtime.lock]
     (setv runtime.generation (+ runtime.generation 1)
-          runtime.launches (+ runtime.launches 1)
-          runtime.spec spec
+          runtime.continuation.launches (+ runtime.continuation.launches 1)
+          runtime.continuation.spec spec
           runtime.exit-code None
           runtime.stderr-tail None
           runtime.tools-lost None)
@@ -493,27 +553,32 @@
       (val running-id known.current-turn))
     (when (is-not running None)
       (return (TurnInFlight :turn (CodexTurn :thread-id origin.thread-id :turn-id running-id)))))
-  (val runtime (if (is known None) (SessionRuntime asked.spec) known))
+  ;; 生きた状態が外れた閉じた会話の続きは、続きの記録(seq と起こした数)の上に新しい状態を作る。
+  (val continued (match origin
+                   (ResumeThread) (.continuation host origin.thread-id)
+                   _ None))
+  (val runtime (if (is known None) (SessionRuntime (if (is continued None) (Continuation asked.spec) continued)) known))
   (val reusable (and (is-not known None) (not known.closed) (is-not known.process None) (.alive known.process)
-                     (= known.spec asked.spec) (is known.tools-lost None)))
+                     (= known.continuation.spec asked.spec) (is known.tools-lost None)))
   (when (not reusable)
     (<- (retire runtime))
     (<- opened (launch host runtime asked.spec origin))
     (when (not (isinstance opened str)) (return opened))
     (with [runtime.lock]
-      (setv runtime.thread-id opened
+      (setv runtime.continuation.thread-id opened
             runtime.closed False))
     (.register host runtime))
   (<- urls (image-urls-of asked.input))
   (<- answer (request runtime "turn/start"
-                      (fn [request-id] (turn-start-request request-id runtime.thread-id asked.input.text urls :effort asked.spec.effort))
+                      (fn [request-id] (turn-start-request request-id runtime.continuation.thread-id asked.input.text urls
+                                                                       :effort asked.spec.effort))
                       host.launch-timeout))
   (match answer
     (lines.Response)
     (if (is answer.turn-id None)
         (LaunchFailed :detail "turn/start の答えがターンの id を名乗らない")
         ;; 走っているターンは、読みの thread がこの答えを読んだ時に立てた(absorb の mark-running — 遅れた記録もその時に頭に積んだ)。
-        (TurnStarted :turn (CodexTurn :thread-id runtime.thread-id :turn-id answer.turn-id)))
+        (TurnStarted :turn (CodexTurn :thread-id runtime.continuation.thread-id :turn-id answer.turn-id)))
     (lines.ErrorResponse) (do (<- refusal (refused "turn/start" answer)) refusal)
     _ answer))
 
@@ -595,42 +660,72 @@
   (or (is page None) (bool page.events) (is-not page.end None)))
 
 
+(defk shed [#^ CodexHost host #^ SessionRuntime runtime]
+  {:pre [(: host CodexHost) (: runtime SessionRuntime)] :post [(: % None)] :tags {:context "codex" :role "process"}}
+  "閉じた会話の、読み手が終わりまで読んだターンの記録を外し、記録が無くなって process も降りていれば生きた状態ごと CodexHost から
+   外すため(続きの記録 Continuation は残る)。読み終えていない出来事と終わりを持つ記録は、読み手が読むまで残す。"
+  (with [runtime.lock]
+    (.drop-read runtime))
+  (.release host runtime)
+  None)
+
+
+(defk settle-read [#^ CodexHost host #^ SessionRuntime runtime #^ CodexTurn turn #^ TurnEventPage page]
+  {:pre [(: host CodexHost) (: runtime SessionRuntime) (: turn CodexTurn) (: page TurnEventPage)] :post [(: % None)]
+   :tags {:context "codex" :role "process"}}
+  "読み手に渡した頁を記し、閉じた会話なら読み終えたターンの記録を外すため(開いた会話は続きのターンのために記録を持つ)。"
+  (with [runtime.lock]
+    (.note-read runtime turn.turn-id page)
+    (val closed runtime.closed))
+  (when closed
+    (<- (shed host runtime)))
+  None)
+
+
 (defk read-events [#^ CodexHost host #^ CodexReadTurnEvents asked]
   {:pre [(: host CodexHost) (: asked CodexReadTurnEvents)] :post [(: % (| TurnEventPage UnknownTurn))]
    :tags {:context "codex" :role "process"}}
-  "ターンの出来事を、新しい出来事か終わりが来るか上限の秒まで待って読むため。"
+  "ターンの出来事を、新しい出来事か終わりが来るか上限の秒まで待って読むため。閉じた会話の終わりを読み手に渡したら、その
+   ターンの記録は外れる(読み手は終わりの後にそのターンを読まない)。"
   (val runtime (.runtime host asked.turn.thread-id))
   (when (is runtime None) (return (UnknownTurn :turn asked.turn)))
   (<- (wait-until runtime.doorbell (fn [] (page-ready runtime asked.turn asked.after-seq)) (float asked.wait-up-to)))
   (<- page (page-of runtime asked.turn asked.after-seq))
-  (if (is page None) (UnknownTurn :turn asked.turn) page))
+  (when (is page None) (return (UnknownTurn :turn asked.turn)))
+  (<- (settle-read host runtime asked.turn page))
+  page)
 
 
 (defk close-session [#^ CodexHost host #^ CodexCloseSession asked]
   {:pre [(: host CodexHost) (: asked CodexCloseSession)] :post [(: % (| SessionClosed ProcessStillAlive))]
    :tags {:context "codex" :role "process"}}
-  "会話を閉じるため(冪等): 走っているターンを BackendLost で閉じ、process を降ろす。"
+  "会話を閉じるため(冪等): 走っているターンを BackendLost で閉じ、process を降ろす。読み手が終わりまで読んだターンの記録は外し、
+   読み手がまだ読んでいない終わりを持つ記録だけ残す(読み手が読んだ時に外れる)。"
   (val runtime (.runtime host asked.thread-id))
   (when (is runtime None) (return (SessionClosed :was-running False)))
   (with [runtime.lock]
     (val log (.running-log runtime))
     (when (is-not log None)
       (setv log.end (BackendLost :detail (.format "会話を閉じた: {}" asked.reason))))
-    (setv runtime.closed True))
+    ;; 世代を進めて、降ろし中の process の行をここから捨てる: 読み手が終わりを読んで外したターンの記録を、降りる前の最後の行が
+    ;; 作り直さない(作り直されると閉じた会話が外れず、続きの記録の seq も古い状態から進む)。
+    (setv runtime.generation (+ runtime.generation 1)
+          runtime.closed True))
   (.ring runtime.doorbell)
   (<- down (retire runtime))
   (when (not down)
     (return (ProcessStillAlive :detail (.format "thread {} の process が EOF・SIGTERM・SIGKILL の後も降りない({})"
                                                 asked.thread-id asked.reason))))
-  ;; 状態は閉じた印のまま残す — 続き(ResumeThread)は同じ状態の上で新しい process を起こし、seq と起こした数を続ける。
+  ;; 閉じた会話が持つのは続きの記録だけにする — 続き(ResumeThread)は続きの記録の上で新しい process を起こし、seq と起こした数を続ける。
+  (<- (shed host runtime))
   (SessionClosed :was-running (is-not log None)))
 
 
 (defk launch-count [#^ CodexHost host #^ str thread-id]
   {:pre [(: host CodexHost) (: thread-id str)] :post [(: % int)] :tags {:context "codex" :role "process"}}
-  "会話のために起こした process の数を答えるため(検の口 — 使い回しを確かめる)。"
-  (val runtime (.runtime host thread-id))
-  (if (is runtime None) 0 runtime.launches))
+  "会話のために起こした process の数を答えるため(検の口 — 使い回しを確かめる。閉じて生きた状態が外れた会話も続きの記録が数える)。"
+  (val continuation (.continuation host thread-id))
+  (if (is continuation None) 0 continuation.launches))
 
 
 ;; --- handler -----------------------------------------------------------------------------------

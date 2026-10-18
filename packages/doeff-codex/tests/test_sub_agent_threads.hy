@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest <- var])
 (import json)
 (import doeff_codex.lines [classify-line RateLimits TurnRecord])
-(import doeff_codex.handler [SessionRuntime absorb])
+(import doeff_codex.handler [Continuation SessionRuntime absorb])
 (import doeff_codex.values [CodexSessionSpec CodexHome])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import tests.test_lines [RECORDED])
@@ -22,10 +22,10 @@
   (val answers (dfor line lines :setv message (json.loads line) :if (in "result" message) (get message "id") (get message "result")))
   (val parent (get answers 2 "thread" "id"))
   (val turn (get answers 3 "turn" "id"))
-  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
-                                                 :sandbox SandboxMode.DANGER-FULL-ACCESS)))
-  ;; handler は thread/start の答えで会話の thread の id を持ってから turn/start を書く(handler.hy の start-turn)。
-  (setv runtime.thread-id parent)
+  (val runtime (SessionRuntime (Continuation (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                               :sandbox SandboxMode.DANGER-FULL-ACCESS))))
+  ;; handler は thread/start の答えで会話の thread の id を続きの記録に持ってから turn/start を書く(handler.hy の start-turn)。
+  (setv runtime.continuation.thread-id parent)
   (var limits 0)
   (for [line lines]
     (<- record (classify-line line))
