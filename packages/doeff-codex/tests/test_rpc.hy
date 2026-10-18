@@ -64,13 +64,13 @@
   (assert (= (json.loads interrupt-line) recorded-interrupt) interrupt-line)
   (<- resume-line (thread-resume-request 5 "t-1" "/w"))
   (assert (= (json.loads resume-line)
-             {"jsonrpc" "2.0" "id" 5 "method" "thread/resume" "params" {"threadId" "t-1" "cwd" "/w"}})
+             {"jsonrpc" "2.0" "id" 5 "method" "thread/resume" "params" {"threadId" "t-1" "cwd" "/w" "excludeTurns" True}})
           resume-line)
   ;; 新しい process で続ける時は、thread/start と同じ方針を名乗り直す。
   (<- resumed (thread-resume-request 7 "t-1" "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY
                                      :model "gpt-6-astra"))
   (assert (= (get (json.loads resumed) "params")
-             {"threadId" "t-1" "cwd" "/w" "approvalPolicy" "never" "sandbox" "read-only" "model" "gpt-6-astra"})
+             {"threadId" "t-1" "cwd" "/w" "approvalPolicy" "never" "sandbox" "read-only" "model" "gpt-6-astra" "excludeTurns" True})
           resumed)
   ;; model を名指した thread の始め。
   (<- named (thread-start-request 6 "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.WORKSPACE-WRITE :model "gpt-6-astra"))
@@ -90,7 +90,7 @@
   (<- opened (thread-start-request 2 "/w" :auto-compact-token-limit 600000))
   (assert (= (get (json.loads opened) "params") {"cwd" "/w" "config" {"model_auto_compact_token_limit" 600000}}) opened)
   (<- resumed (thread-resume-request 3 "t-1" "/w" :auto-compact-token-limit 250000))
-  (assert (= (get (json.loads resumed) "params") {"threadId" "t-1" "cwd" "/w" "config" {"model_auto_compact_token_limit" 250000}})
+  (assert (= (get (json.loads resumed) "params") {"threadId" "t-1" "cwd" "/w" "config" {"model_auto_compact_token_limit" 250000} "excludeTurns" True})
           resumed)
   (<- deep (turn-start-request 4 "t-1" "think" #() :effort "xhigh"))
   (assert (= (get (json.loads deep) "params") {"threadId" "t-1" "input" [{"type" "text" "text" "think"}] "effort" "xhigh"}) deep))
@@ -110,3 +110,16 @@
              {"jsonrpc" "2.0" "id" 7 "method" "turn/steer"
               "params" {"threadId" "t-1" "expectedTurnId" "turn-9" "input" [{"type" "text" "text" "also this"}]}})
           steer))
+
+
+(deftest test-a-resume-request-asks-for-the-thread-without-its-history
+  ;; thread/resume は excludeTurns を付けないと、答えの thread.turns に session の履歴の全部を 1 行で載せて返す(codex 0.162.1 の
+  ;; v2/ThreadResumeParams — 数百 MB の 1 行になりうる)。本体が答えから使うのは thread の id だけなので、どの組み立てでも履歴を求めない。
+  ;; thread/start の要求には無い欄(新しい thread に履歴は無い)。
+  (<- bare (thread-resume-request 1 "t-1"))
+  (assert (= (get (json.loads bare) "params" "excludeTurns") True) bare)
+  (<- full (thread-resume-request 2 "t-1" "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY :model "gpt-6-astra"
+                                  :auto-compact-token-limit 250000))
+  (assert (= (get (json.loads full) "params" "excludeTurns") True) full)
+  (<- opened (thread-start-request 3 "/w"))
+  (assert (not-in "excludeTurns" (get (json.loads opened) "params")) opened))

@@ -68,6 +68,7 @@ class ThreadResumeParamsWire:
     sandbox: SandboxMode | None = None
     model: str | None = None
     config: ConfigWire | None = None
+    exclude_turns: bool | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class TextInputWire:
