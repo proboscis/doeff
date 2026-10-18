@@ -14,12 +14,13 @@ agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy 約 3,
 """
 
 import contextlib
+import importlib.util
 import io
 import json
 import shlex
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
@@ -212,6 +213,50 @@ def test_the_carry_file_round_trips_and_a_broken_one_is_unreadable(tmp_path: Pat
         path.write_text(broken, encoding="utf-8")
         with pytest.raises(CarryUnreadableError):
             read_carry(path)
+
+
+# --- 環境の指紋 ------------------------------------------------------------------------------------------------------------
+
+
+def _function_from(place: Path, source: str) -> Callable[..., object]:
+    """source を module の file に書いて読み、その中の関数 f を返す(inspect が source を読める関数)。"""
+    place.mkdir(parents=True)
+    path = place / "semantics_case.py"
+    path.write_text(source, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(f"semantics_case_{place.name}", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return vars(module)["f"]
+
+
+def test_a_comment_only_change_keeps_the_semantics_digest(tmp_path: Path) -> None:
+    """診断を作る関数の註・空行だけの書き換えは指紋を替えず(全部の .hy を当て直さない)、code の変更は替える。"""
+    plain = _function_from(tmp_path / "a", "def f(x: int) -> int:\n    return x + 1\n")
+    commented = _function_from(
+        tmp_path / "b", "def f(x: int) -> int:  # noqa: DOEFF007 - 註\n\n    return x + 1  # 註\n"
+    )
+    changed = _function_from(tmp_path / "c", "def f(x: int) -> int:\n    return x + 2\n")
+    assert static_carry.semantics_digest([plain]) == static_carry.semantics_digest([commented])
+    assert static_carry.semantics_digest([plain]) != static_carry.semantics_digest([changed])
+
+
+def test_an_editable_distribution_version_is_not_in_the_listing(tmp_path: Path) -> None:
+    """editable で入れた配布物(doeff の checkout)の版の上げは探し道の指紋の材料を替えず、editable でない配布物の版の上げは替える。"""
+
+    def listing(editable_version: str, other_version: str) -> list[str]:
+        place = tmp_path / f"{editable_version}-{other_version}"
+        editable = place / f"doeff_hy-{editable_version}.dist-info"
+        editable.mkdir(parents=True, exist_ok=True)
+        (editable / "direct_url.json").write_text(
+            '{"url": "file:///x", "dir_info": {"editable": true}}', encoding="utf-8"
+        )
+        (place / f"httpx-{other_version}.dist-info").mkdir(exist_ok=True)
+        return static_carry._listing(place)
+
+    assert listing("0.5.0", "0.28.1") == listing("0.6.0", "0.28.1")
+    assert listing("0.5.0", "0.28.1") != listing("0.5.0", "0.29.0")
 
 
 # --- 依存の digest ---------------------------------------------------------------------------------------------------------
