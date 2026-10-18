@@ -560,11 +560,14 @@
   (assert (and (isinstance copied str) (.strip copied)) (repr out))
   (assert (is (get out "missing") None) (repr out))
   (assert (is (get out "malformed") None) (repr out))
-  ;; 末尾だけの写しは、写しの後ろの丸ごとの行の列で、頼んだ幅に収まる。
-  (setv tail (get out "tail"))
-  (assert (and (isinstance tail str) (.endswith copied tail)) (repr out))
-  (assert (<= (len (.encode tail "utf-8")) (get out "half")) (repr out))
-  (assert (or (= tail copied) (.endswith (cut copied 0 (- (len copied) (len tail))) "\n")) (repr out))
+  ;; 末尾だけの写しは、写しの後ろの丸ごとの行の列で、頼んだ幅に収まる。幅に丸ごとの行が 1 つも収まらなければ写しは無い(None —
+  ;; 層 2 の本物と fake の約束)。fake の 1 手番の写しは利用者の入力の 1 行だけで、半分の幅に収まらない。
+  (setv tail (get out "tail") last-line (get (.splitlines copied :keepends True) -1))
+  (if (> (len (.encode last-line "utf-8")) (get out "half"))
+      (assert (is tail None) (repr out))
+      (do (assert (and (isinstance tail str) (.endswith copied tail)) (repr out))
+          (assert (<= (len (.encode tail "utf-8")) (get out "half")) (repr out))
+          (assert (or (= tail copied) (.endswith (cut copied 0 (- (len copied) (len tail))) "\n")) (repr out))))
   ;; 伸びた分だけの写しは、写しの half byte 目から後ろ(half が字の途中なら None)。
   (setv whole (.encode copied "utf-8") grown (get out "grown"))
   (assert (= grown (try (.decode (cut whole (get out "half") None) "utf-8") (except [UnicodeDecodeError] None))) (repr out))
