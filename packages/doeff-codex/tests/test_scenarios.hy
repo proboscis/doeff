@@ -4,14 +4,14 @@
 ;; 守る事: 答えの文字の途中(TextDelta)がターンの出来事の頁に順に載り、ターンの終わりはちょうど 1 つ届く。止めたターンは INTERRUPTED で
 ;; 終わり、同じ process が次のターンを受ける。これが崩れると、上の層(doeff-agents の adapter)は答えの途中を画面へ流せない
 ;; (決まりの元 = 利用者 2026-09-10「どの会話も、文字が届くたびに 1 文字ずつ更新されない」・2026-10-10 21:27 の答え A)。
-(require doeff-hy.macros [deftest <- val])
+(require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (import pathlib [Path])
 (import doeff_codex.values [FreshThread ResumeThread CodexInput CodexImage CodexHome])
 (import doeff_codex.lines [TextDelta AgentMessageDone TurnEnded TurnStatus])
 (import dataclasses [replace])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
-                             Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight BackendLost ToolsUnavailable])
+                             Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight RequestRefused BackendLost ToolsUnavailable])
 (import tests.scenario_steps [settings read-until read-to-end read-to-first-delta records-of])
 (import tests.interpreters [USAGE-LIMIT-HIT CODE-MODE-WARNING])
 
@@ -142,6 +142,86 @@
   ;; 終わったターンには足せない。
   (<- late (CodexSteerTurn started.turn (CodexInput :text "too late")))
   (assert (= late (NoTurnInFlight :turn started.turn)) late))
+
+
+;; turn/steer を断らせる言い方(替え玉の app-server の STEER_REFUSALS の目印 — 本物の codex 0.162.1 の断り方を写す)。
+(val STEER-ENDED-FIRST "STEER-ENDED-FIRST")
+(val STEER-REFUSED-FIRST "STEER-REFUSED-FIRST")
+(val STEER-OTHER-TURN "STEER-OTHER-TURN")
+(val STEER-ENDED-UNNAMED "STEER-ENDED-UNNAMED")
+(val STEER-NOT-STEERABLE "STEER-NOT-STEERABLE")
+
+
+(defk steer-a-turn-codex-refuses [#^ str word]
+  {:pre [(: word str)] :post [(: % tuple)] :tags {:context "codex-test" :role "program"}}
+  "目印 word の替え玉のターン(走っている間 turn/steer を目印の断り方で断る)が走っている所へ入力を足し、足した答えと、止めを送って
+   読み切ったターンの終わりを返すため(答え = #(ターン 足した答え 終わり))。ターンが既に終わっていれば止めは届かず、終わりは
+   替え玉が書いた終わり。"
+  (<- s (settings))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text (+ word " please"))))
+  (assert (isinstance started TurnStarted) started)
+  (<- (read-to-first-delta started.turn s.turn-timeout))
+  (<- steered (CodexSteerTurn started.turn (CodexInput :text "more")))
+  (<- (CodexInterruptTurn started.turn))
+  (<- stopped (read-to-end started.turn s.turn-timeout))
+  #(started.turn steered stopped.end))
+
+
+(deftest test-a-steer-refused-after-the-end-notice-is-no-turn-in-flight
+  ;; ターンの終わりの通知(turn/completed)が断りより先に届く順 — 層 2 は終わりを読んでから断りを読むので、走っているターンが無い。
+  ;; 断られたのは「走っているターンが無い」からで、入力が悪いのではない(card ki-5ce2c2216149 の原因 2 — 10-18 の本番の実例)。
+  {:interpreters ["stub"]}
+  (<- seen (steer-a-turn-codex-refuses STEER-ENDED-FIRST))
+  (val turn (get seen 0))
+  (val steered (get seen 1))
+  (val end (get seen 2))
+  (assert (= steered (NoTurnInFlight :turn turn)) steered)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.COMPLETED)) end))
+
+
+(deftest test-a-steer-refused-before-the-end-notice-is-no-turn-in-flight
+  ;; 断りが終わりの通知より先に届く順(本物の codex 0.162.1 で、終わりの通知が 5〜200 ms 遅れて届く事を測った)— 層 2 は断りを読んだ
+  ;; 時点でまだターンを走っていると見ている。codex の断りの文が「走っているターンが無い」を名乗るので、走っていないと読む。
+  {:interpreters ["stub"]}
+  (<- seen (steer-a-turn-codex-refuses STEER-REFUSED-FIRST))
+  (val turn (get seen 0))
+  (val steered (get seen 1))
+  (val end (get seen 2))
+  (assert (= steered (NoTurnInFlight :turn turn)) steered)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.INTERRUPTED)) end))
+
+
+(deftest test-a-steer-refused-for-another-active-turn-is-no-turn-in-flight
+  ;; codex が「名指したターンでない別のターンが走っている」と断る(expected active turn id … but found …)— 名指したターンは走っていない。
+  {:interpreters ["stub"]}
+  (<- seen (steer-a-turn-codex-refuses STEER-OTHER-TURN))
+  (val turn (get seen 0))
+  (val steered (get seen 1))
+  (val end (get seen 2))
+  (assert (= steered (NoTurnInFlight :turn turn)) steered)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.INTERRUPTED)) end))
+
+
+(deftest test-a-steer-refused-in-unknown-words-after-the-end-notice-is-no-turn-in-flight
+  ;; 断りの文が知らない文でも(codex の版で変わっても)、断りを読んだ時にターンの終わりを読んでいれば、走っているターンは無い。
+  {:interpreters ["stub"]}
+  (<- seen (steer-a-turn-codex-refuses STEER-ENDED-UNNAMED))
+  (val turn (get seen 0))
+  (val steered (get seen 1))
+  (val end (get seen 2))
+  (assert (= steered (NoTurnInFlight :turn turn)) steered)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.COMPLETED)) end))
+
+
+(deftest test-a-steer-refused-for-a-turn-that-cannot-take-it-stays-refused
+  ;; 走っているターンが足せない種類(review・compact)だという断りは、走っていないという断りではない — RequestRefused のまま。
+  {:interpreters ["stub"]}
+  (<- seen (steer-a-turn-codex-refuses STEER-NOT-STEERABLE))
+  (val turn (get seen 0))
+  (val steered (get seen 1))
+  (val end (get seen 2))
+  (assert (= steered (RequestRefused :method "turn/steer" :code -32600 :message "cannot steer a review turn")) steered)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.INTERRUPTED)) end))
 
 
 (deftest test-the-images-ride-on-the-turn-input
