@@ -90,6 +90,7 @@ def flow(arrivals, seconds):  # 到着の刻と門の秒を決めて、列を仮
 
 def test_three_changes():  # 冒頭の枠: 1語の修正は入り、印と衝突は止まる。
     handlers = [conflict_scan, sample_repo]  # 衝突の印だけを見る門。
+    # 3つの変更を、それぞれ衝突の印だけを見る門で入れてみる。
     results = {change: run(with_handlers(handlers, land(change))) for change in ["fix-typo", "left-marks", "clash"]}
     assert results == {"fix-typo": "landed", "left-marks": "gate-red", "clash": "rebase-conflict"}  # 記事の3行。
 

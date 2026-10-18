@@ -95,6 +95,8 @@ expected_slugs = {
     "remote", "tooling", "boundaries", "hy", "vm", "handlers", "coroutines",
     "adr",  # 2026-10-17に足した10本目「設計の記録をテストとして走らせる」。
     "hooks",  # 2026-10-17に足した8本目「AIに要る時だけ規則を見せるhook」。
+    "mergequeue",  # 2026-10-18に足した11本目からの候補1「マージキューでテストを走らせるのをやめた」。
+    "dispatch",  # 2026-10-18に足した11本目からの候補2「Claude Codeに仕事を配らせるのをやめ、関数で配る」。
 }
 all_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", article))
 assert all_slugs == expected_slugs, (expected_slugs - all_slugs, all_slugs - expected_slugs)
