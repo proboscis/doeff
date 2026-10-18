@@ -1,0 +1,38 @@
+[
+  {
+    "id": "commits-concept",
+    "image": "images/zenn-use-cases-v0/generated/commits-concept.png",
+    "generation_prompt": "commits-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "9bdc00d5b4bb0bd7c06eb9b00ac3c4493bc4119ed8e305cc8d5454f2bd53931d",
+    "width": 1200,
+    "height": 1180,
+    "bytes": 233838,
+    "review": "2026-10-18：左の列（人→Claude Codeの会話→doeffのmain→PyPI）、右の4つの網（文書のコードと注記・使う人と同じ入れ方の型の検査・設計の約束と別のAI・PyPIから毎朝入れ直す）、網が見る所の点線、赤の戻りの矢印、数（2026年10月の2,114個と98%・5,566個と68%・137個のうち25個・ファイル25個・ADR 44本・規則54個・検証の記録50件・12の組）を本文と照らして目視確認。網をmainの前の門として描いていない。白背景の平面図として採用。"
+  },
+  {
+    "id": "commits-flow",
+    "image": "images/zenn-use-cases-v0/generated/commits-flow.png",
+    "generation_prompt": "commits-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "5c83ee99a0643ee63f981be90f0c1ef810721f53d96582d4e9590cbfc558c8fc",
+    "width": 1200,
+    "height": 1080,
+    "bytes": 171702,
+    "review": "2026-10-18：claude_shareの4行、ReadMessages(rev)、fixed_logの3つの本文（共著の行なし・Opus 5.5・小文字のFable 5）、git_logの命令（git log -z --format=%B c0dfc3f24）、表示（(2, 3)と(3811, 5566)）を、本文の枠と確かめのスクリプトの表示に照らして目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "commits-months",
+    "image": "images/zenn-use-cases-v0/generated/commits-months.png",
+    "generation_prompt": "commits-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "d9f0c93420aa5bd0d1edb1d8459474c568f6a3c15bfb75182f67a62d57c351c8",
+    "width": 1200,
+    "height": 820,
+    "bytes": 78591,
+    "review": "2026-10-18：reviews/commits-months.csvから描いた14か月の積み上げ棒、凡例の合計（3,811・1,755、計5,566）、本文で触れる月の割合（2025年11月0%・2026年2月11%・2026年10月98%）を目視確認。配色はdatavizの既定の1〜2番で、色の確かめの道具を通した。白背景の平面図として採用。"
+  }
+]

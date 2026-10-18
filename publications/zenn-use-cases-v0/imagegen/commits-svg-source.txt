@@ -1,0 +1,15 @@
+開発の記録（doeff-commits.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-18）。
+
+- 正本：../visuals/commits-concept.svg・../visuals/commits-flow.svg・../visuals/commits-months.svg。
+- commits-months.svgは、数えた表../reviews/commits-months.csvから../visuals/commits_months_svg.pyで描く。
+  - 配色はdatavizの既定の1〜2番（#2a78d6・#eb6834）。白背景で色の確かめの道具を通した（全項目PASS）。
+  - 凡例に系列ごとの合計を添え、本文に数の表を置いた。
+- 図の仕様：../reviews/commits-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る・agoraの会話ではagora-browser node …）。
+  - commits-concept：幅1200・高さ1180。
+  - commits-flow：幅1200・高さ1080。
+  - commits-months：幅1200・高さ820。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+この記事は概念図・処理図の2枚に、数の図を1枚足す。../visuals/captions/commits.jsonの`extra_kinds`に`months`と書き、
+verify_publication.pyがその図も照らす。

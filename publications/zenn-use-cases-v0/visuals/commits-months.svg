@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <rect width="1200" height="820" fill="#ffffff"/>
+  <text x="600" y="60" text-anchor="middle" font-size="40" font-weight="bold" fill="#111827">月ごとのcommitの数と、Claudeとの共著の行があるcommit</text>
+  <text x="600" y="102" text-anchor="middle" font-size="24" fill="#4b5563">doeffのmain・2025年9月16日〜2026年10月18日・計5,566個(mergeを含む)</text>
+  <rect x="130" y="128" width="26" height="26" rx="4" fill="#2a78d6"/><text x="168" y="150" font-size="26" fill="#111827">Claudeとの共著の行あり 3,811個</text>
+  <rect x="130" y="170" width="26" height="26" rx="4" fill="#eb6834"/><text x="168" y="192" font-size="26" fill="#111827">共著の行なし(人の手かCodexで、分けられない) 1,755個</text>
+  <line x1="130" y1="690.0" x2="1160" y2="690.0" stroke="#e5e7eb" stroke-width="2"/><text x="116" y="699.0" text-anchor="end" font-size="24" fill="#4b5563">0</text>
+  <line x1="130" y1="590.0" x2="1160" y2="590.0" stroke="#e5e7eb" stroke-width="2"/><text x="116" y="599.0" text-anchor="end" font-size="24" fill="#4b5563">500</text>
+  <line x1="130" y1="490.0" x2="1160" y2="490.0" stroke="#e5e7eb" stroke-width="2"/><text x="116" y="499.0" text-anchor="end" font-size="24" fill="#4b5563">1,000</text>
+  <line x1="130" y1="390.0" x2="1160" y2="390.0" stroke="#e5e7eb" stroke-width="2"/><text x="116" y="399.0" text-anchor="end" font-size="24" fill="#4b5563">1,500</text>
+  <line x1="130" y1="290.0" x2="1160" y2="290.0" stroke="#e5e7eb" stroke-width="2"/><text x="116" y="299.0" text-anchor="end" font-size="24" fill="#4b5563">2,000</text>
+  <text x="166.8" y="724" text-anchor="middle" font-size="22" fill="#4b5563">9月</text><text x="166.8" y="754" text-anchor="middle" font-size="22" fill="#4b5563">2025年</text>
+  <text x="240.4" y="724" text-anchor="middle" font-size="22" fill="#4b5563">10月</text>
+  <text x="313.9" y="724" text-anchor="middle" font-size="22" fill="#4b5563">11月</text>
+  <text x="387.5" y="724" text-anchor="middle" font-size="22" fill="#4b5563">12月</text>
+  <text x="461.1" y="724" text-anchor="middle" font-size="22" fill="#4b5563">1月</text><text x="461.1" y="754" text-anchor="middle" font-size="22" fill="#4b5563">2026年</text>
+  <text x="534.6" y="724" text-anchor="middle" font-size="22" fill="#4b5563">2月</text>
+  <text x="608.2" y="724" text-anchor="middle" font-size="22" fill="#4b5563">3月</text>
+  <text x="681.8" y="724" text-anchor="middle" font-size="22" fill="#4b5563">4月</text>
+  <text x="755.4" y="724" text-anchor="middle" font-size="22" fill="#4b5563">5月</text>
+  <text x="828.9" y="724" text-anchor="middle" font-size="22" fill="#4b5563">6月</text>
+  <text x="902.5" y="724" text-anchor="middle" font-size="22" fill="#4b5563">7月</text>
+  <text x="976.1" y="724" text-anchor="middle" font-size="22" fill="#4b5563">8月</text>
+  <text x="1049.6" y="724" text-anchor="middle" font-size="22" fill="#4b5563">9月</text>
+  <text x="1123.2" y="724" text-anchor="middle" font-size="22" fill="#4b5563">10月</text>
+  <rect x="141.0" y="686.0" width="51.6" height="4.0" fill="#2a78d6"/>
+  <rect x="141.0" y="673.4" width="51.6" height="10.6" fill="#eb6834"/>
+  <rect x="214.6" y="685.4" width="51.6" height="4.6" fill="#2a78d6"/>
+  <rect x="214.6" y="677.2" width="51.6" height="6.2" fill="#eb6834"/>
+  <rect x="288.1" y="681.2" width="51.6" height="8.8" fill="#eb6834"/>
+  <rect x="361.7" y="675.0" width="51.6" height="15.0" fill="#2a78d6"/>
+  <rect x="361.7" y="659.2" width="51.6" height="13.8" fill="#eb6834"/>
+  <rect x="435.3" y="680.6" width="51.6" height="9.4" fill="#2a78d6"/>
+  <rect x="435.3" y="622.8" width="51.6" height="55.8" fill="#eb6834"/>
+  <rect x="508.9" y="676.0" width="51.6" height="14.0" fill="#2a78d6"/>
+  <rect x="508.9" y="567.4" width="51.6" height="106.6" fill="#eb6834"/>
+  <rect x="582.4" y="657.8" width="51.6" height="32.2" fill="#2a78d6"/>
+  <rect x="582.4" y="610.8" width="51.6" height="45.0" fill="#eb6834"/>
+  <rect x="656.0" y="667.6" width="51.6" height="22.4" fill="#2a78d6"/>
+  <rect x="656.0" y="661.0" width="51.6" height="4.6" fill="#eb6834"/>
+  <rect x="729.6" y="686.0" width="51.6" height="4.0" fill="#2a78d6"/>
+  <rect x="729.6" y="678.4" width="51.6" height="5.6" fill="#eb6834"/>
+  <rect x="803.1" y="676.0" width="51.6" height="14.0" fill="#2a78d6"/>
+  <rect x="803.1" y="638.2" width="51.6" height="35.8" fill="#eb6834"/>
+  <rect x="876.7" y="659.8" width="51.6" height="30.2" fill="#2a78d6"/>
+  <rect x="876.7" y="643.0" width="51.6" height="14.8" fill="#eb6834"/>
+  <rect x="950.3" y="683.2" width="51.6" height="6.8" fill="#2a78d6"/>
+  <rect x="950.3" y="677.8" width="51.6" height="3.4" fill="#eb6834"/>
+  <rect x="1023.9" y="498.4" width="51.6" height="191.6" fill="#2a78d6"/>
+  <rect x="1023.9" y="489.2" width="51.6" height="7.2" fill="#eb6834"/>
+  <rect x="1097.4" y="276.0" width="51.6" height="414.0" fill="#2a78d6"/>
+  <rect x="1097.4" y="267.2" width="51.6" height="6.8" fill="#eb6834"/>
+  <text x="313.9" y="669.2" text-anchor="middle" font-size="22" font-weight="bold" fill="#111827">0%</text>
+  <text x="534.6" y="555.4" text-anchor="middle" font-size="22" font-weight="bold" fill="#111827">11%</text>
+  <text x="1123.2" y="255.2" text-anchor="middle" font-size="22" font-weight="bold" fill="#111827">98%</text>
+  <line x1="130" y1="690" x2="1160" y2="690" stroke="#374151" stroke-width="2"/>
+  <text x="600" y="800" text-anchor="middle" font-size="22" fill="#4b5563">2026年10月18日に、書いた月(日本時間)で数えた。棒の上の数は共著の割合。10月は18日まで</text>
+</svg>
