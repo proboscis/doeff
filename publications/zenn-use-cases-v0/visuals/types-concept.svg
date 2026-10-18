@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1120" viewBox="0 0 1200 1120" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1120" fill="#ffffff"/>
+  <text x="600" y="64" text-anchor="middle" font-size="42" font-weight="bold" fill="#111827">型の穴を、2つのテストで見張る</text>
+
+  <!-- 守るもの -->
+  <rect x="250" y="96" width="700" height="84" rx="16" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="600" y="132" text-anchor="middle" font-size="28" font-weight="bold" fill="#111827">doeffのsource</text>
+  <text x="600" y="166" text-anchor="middle" font-size="23" fill="#4b5563">公開の名・型の注記・py.typed</text>
+  <line x1="450" y1="182" x2="450" y2="222" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="750" y1="182" x2="750" y2="222" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <!-- 1 表のテスト -->
+  <rect x="30" y="228" width="1140" height="370" rx="18" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="58" y="272" font-size="30" font-weight="bold" fill="#0f766e">1 表のテスト</text>
+  <text x="270" y="272" font-size="24" fill="#111827">pytest・変更のたびにCIでも走る</text>
+
+  <rect x="58" y="296" width="330" height="110" rx="12" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="223" y="340" text-anchor="middle" font-size="22" font-family="DejaVu Sans Mono, monospace" fill="#111827">pyright</text>
+  <text x="223" y="378" text-anchor="middle" font-size="22" font-family="DejaVu Sans Mono, monospace" fill="#111827">--verifytypes doeff</text>
+  <line x1="390" y1="351" x2="430" y2="351" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="436" y="296" width="330" height="110" rx="12" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="601" y="340" text-anchor="middle" font-size="24" fill="#111827">型の分からない</text>
+  <text x="601" y="378" text-anchor="middle" font-size="24" fill="#111827">公開の名を集める</text>
+  <line x1="768" y1="351" x2="808" y2="351" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="814" y="296" width="330" height="110" rx="12" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="979" y="340" text-anchor="middle" font-size="24" fill="#111827">訳を書いた表と比べる</text>
+  <text x="979" y="378" text-anchor="middle" font-size="22" fill="#4b5563">今は5個(DoExprなど)</text>
+
+  <rect x="58" y="430" width="420" height="96" rx="12" fill="#fef2f2" stroke="#b91c1c" stroke-width="2"/>
+  <text x="80" y="468" font-size="24" font-weight="bold" fill="#b91c1c">表に無い名がある → 赤</text>
+  <text x="80" y="506" font-size="22" fill="#111827">注記を付けるか、訳を書いて表へ</text>
+  <rect x="494" y="430" width="420" height="96" rx="12" fill="#fef2f2" stroke="#b91c1c" stroke-width="2"/>
+  <text x="516" y="468" font-size="24" font-weight="bold" fill="#b91c1c">表の名が塞がった → 赤</text>
+  <text x="516" y="506" font-size="22" fill="#111827">表から外し、守る範囲へ入れる</text>
+  <rect x="930" y="430" width="214" height="96" rx="12" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+  <text x="1037" y="468" text-anchor="middle" font-size="24" font-weight="bold" fill="#15803d">同じ → 緑</text>
+  <text x="1037" y="506" text-anchor="middle" font-size="22" fill="#111827">穴は表の通り</text>
+  <text x="58" y="570" font-size="24" fill="#0f766e" font-weight="bold">見るのは、型が分かるか(数)</text>
+
+  <!-- 2 型の見本 -->
+  <rect x="30" y="626" width="1140" height="370" rx="18" fill="#eff6ff" stroke="#1d4ed8" stroke-width="3"/>
+  <text x="58" y="670" font-size="30" font-weight="bold" fill="#1d4ed8">2 型の見本</text>
+  <text x="250" y="670" font-size="24" fill="#111827">CIの新しい環境・Python 3.11と3.14</text>
+
+  <rect x="58" y="694" width="330" height="110" rx="12" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="223" y="738" text-anchor="middle" font-size="24" fill="#111827">核の4個だけを入れる</text>
+  <text x="223" y="776" text-anchor="middle" font-size="22" fill="#4b5563">pip install doeffと同じ</text>
+  <line x1="390" y1="749" x2="430" y2="749" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="436" y="694" width="330" height="110" rx="12" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="601" y="738" text-anchor="middle" font-size="24" fill="#111827">見本25個を読ませる</text>
+  <text x="601" y="776" text-anchor="middle" font-size="22" fill="#4b5563">誤りの出る行に印(32行)</text>
+  <line x1="768" y1="749" x2="808" y2="749" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="814" y="694" width="330" height="110" rx="12" fill="#ffffff" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="979" y="738" text-anchor="middle" font-size="22" fill="#111827">pyrightのstrictと</text>
+  <text x="979" y="776" text-anchor="middle" font-size="22" fill="#111827">mypy --strictの誤りの行</text>
+
+  <rect x="58" y="828" width="420" height="96" rx="12" fill="#fef2f2" stroke="#b91c1c" stroke-width="2"/>
+  <text x="80" y="866" font-size="24" font-weight="bold" fill="#b91c1c">印と違う行に誤り → 赤</text>
+  <text x="80" y="904" font-size="22" fill="#111827">誤りを見逃す・誤って止める</text>
+  <rect x="494" y="828" width="420" height="96" rx="12" fill="#fef2f2" stroke="#b91c1c" stroke-width="2"/>
+  <text x="516" y="866" font-size="24" font-weight="bold" fill="#b91c1c">印の穴が塞がった → 赤</text>
+  <text x="516" y="904" font-size="22" fill="#111827">印を替え、守る範囲へ入れる</text>
+  <rect x="930" y="828" width="214" height="96" rx="12" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+  <text x="1037" y="866" text-anchor="middle" font-size="24" font-weight="bold" fill="#15803d">印の通り → 緑</text>
+  <text x="1037" y="904" text-anchor="middle" font-size="22" fill="#111827">誤りは印の行だけ</text>
+  <text x="58" y="968" font-size="24" fill="#1d4ed8" font-weight="bold">見るのは、誤りを誤りと言うか(正しさ)</text>
+
+  <text x="600" y="1046" text-anchor="middle" font-size="27" font-weight="bold" fill="#111827">どちらも2つの向きで赤にする — 穴が開いても、塞がっても</text>
+  <text x="600" y="1090" text-anchor="middle" font-size="21" fill="#4b5563">表の5個と見本の数は、2026年10月18日のdoeffのmainで数えた</text>
+</svg>

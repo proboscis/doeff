@@ -1,0 +1,11 @@
+型の穴の記事（doeff-types.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-18）。
+
+- 正本：../visuals/types-concept.svg と ../visuals/types-flow.svg。
+- 図の仕様：../reviews/types-visuals.json。
+- types-flowの数は、reviews/types-check.pyがPyPIのdoeff 0.6.0のverifytypesから訳ごとに数え直し、図の数（FLOW_COUNTS）と照らす。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る・agoraの会話ではagora-browser node …）。
+  - types-concept：幅1200・高さ1120。
+  - types-flow：幅1200・高さ1110。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+11本目からの候補7の新しい回なので、2026-09-16のimagegenの画像は元から無い。

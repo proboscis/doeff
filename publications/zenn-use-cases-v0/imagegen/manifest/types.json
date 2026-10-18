@@ -1,0 +1,26 @@
+[
+  {
+    "id": "types-concept",
+    "image": "images/zenn-use-cases-v0/generated/types-concept.png",
+    "generation_prompt": "types-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "2a24df65e4d380997b9ea95d3aa4fe1d9953f4a02f4a8e122ce3470944bfdff3",
+    "width": 1200,
+    "height": 1120,
+    "bytes": 189025,
+    "review": "2026-10-18：上の表のテスト(verifytypes→型の分からない公開の名→訳を書いた表の5個と比べる・表に無い名と表の名が塞がった時の2つの赤)と、下の型の見本(核の4個だけ→見本25個・印の行32→pyrightのstrictとmypy --strict・印と違う行と印の穴が塞がった時の2つの赤)を、本文・tests/test_public_name_types.py・tools/verify_type_probes.pyの出力と照らして目視確認。表のテストはCIのPython Compatibilityでもpushとpull requestのたびに走る。白背景の平面図として採用。"
+  },
+  {
+    "id": "types-flow",
+    "image": "images/zenn-use-cases-v0/generated/types-flow.png",
+    "generation_prompt": "types-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "e410d704d9442d9192e22fb69ce22b0e2c7458c5637d3f804d1586abed5ea962",
+    "width": 1200,
+    "height": 1110,
+    "bytes": 186978,
+    "review": "2026-10-18：0.6.0の84個の訳ごとの数(27・17・12・11・15・2)と扱い、点線の中の67個を1つのcommit(78c7c3811)で塞いだ事、0.7.0の5個(残した2個と demo の3個)を、reviews/types-check.pyの数え直しと、9fe8c330b・78c7c3811の木の測りと照らして目視確認。白背景の平面図として採用。"
+  }
+]
