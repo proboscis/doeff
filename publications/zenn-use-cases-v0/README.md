@@ -12,6 +12,7 @@
 | --- | --- |
 | エージェントの起動・結果待ちを処理へ組み込みたい | [doeff-agentsと共同作業](doeff-agents.md) |
 | AIの会話を何十も並べる開発の流れを知りたい | [AIの会話を50並べる開発の記録](doeff-fleet.md) |
+| AIが書く差分を読み切れない中で、ライブラリの約束を守りたい | [commitの68%をClaude Codeと書いた記録](doeff-commits.md) |
 | LLMのプロバイダごとのSDKが処理に広がる | [LLM](doeff-llm.md) |
 | 画像生成・編集をパイプラインへ入れたい | [画像](doeff-image.md) |
 | 入力待ちを含むゲームのルールを書きたい | [カードゲームとゲーム進行](doeff-games.md) |

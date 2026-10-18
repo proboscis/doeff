@@ -1,0 +1,11 @@
+{
+  "concept_title": "AIが書く変更を、4つの網で受け止める",
+  "concept_caption": "人は仕事を頼み、AIの会話が変更を書きます。約束は人が読む代わりに、4つの網が機械で確かめます。",
+  "flow_title": "同じclaude_shareを、テスト用と本番用のハンドラで動かす",
+  "flow_caption": "claude_shareはReadMessagesを依頼するだけです。fixed_logは決めた3つの本文で(2, 3)を、git_logは本物の履歴で(3811, 5566)を返します。",
+  "extra_kinds": [
+    "months"
+  ],
+  "months_title": "月ごとのcommitの数と、Claudeとの共著の行があるcommit",
+  "months_caption": "doeffのmainのcommitを、書いた月(日本時間)で数えました。範囲は2025年9月16日〜2026年10月18日で、10月は18日までです。"
+}
