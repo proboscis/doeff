@@ -10,7 +10,8 @@ task に 1 つ被せる 1 歩だけ(``event_handler`` は 1 つを全員で共�
 
 from dataclasses import dataclass
 
-from doeff_core_effects.scheduler import Spawn, Wait, _read_vm_steps, scheduled
+import pytest
+from doeff_core_effects.scheduler import IMPLEMENTATION_ENV_VAR, Spawn, Wait, _read_vm_steps, scheduled
 
 from doeff import do, run, with_handlers
 from doeff_events import (
@@ -24,6 +25,8 @@ from doeff_events import (
 
 # 購読者ごとの handler を待ち手の task に被せる歩(event_handler の組み立てには無い)。
 WAITER_HANDLER_STEPS = 1
+# scheduler の版(scheduled の implementation・環境変数 DOEFF_SCHEDULER の値)。
+SCHEDULERS = ("python", "rust")
 
 
 @dataclass(frozen=True)
@@ -91,9 +94,20 @@ def shared_woken_steps() -> int:
     )
 
 
-def test_a_woken_wait_for_event_costs_no_more_than_the_shared_handler_and_the_waiters_own_handler() -> None:
-    assert subscribed_woken_steps(many=False) == shared_woken_steps() + WAITER_HANDLER_STEPS
+@pytest.mark.parametrize("scheduler", SCHEDULERS)
+def test_a_woken_wait_for_event_costs_no_more_than_the_shared_handler_and_the_waiters_own_handler(
+    scheduler: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 上限で比べる: Python の版は購読者の handler を被せる 1 歩だけ多く、Rust の版は被せる歩を数えず同じ数になる
+    # (既定を Rust の版にした後の日次の回で、等号の比べが 29 == 30 で落ちた・card ki-6dde100393cd)。下請けの Program の 3 歩は
+    # どちらの版でも上限を越える。
+    monkeypatch.setenv(IMPLEMENTATION_ENV_VAR, scheduler)
+    assert subscribed_woken_steps(many=False) <= shared_woken_steps() + WAITER_HANDLER_STEPS
 
 
-def test_a_woken_wait_for_events_costs_the_same_as_a_woken_wait_for_event() -> None:
+@pytest.mark.parametrize("scheduler", SCHEDULERS)
+def test_a_woken_wait_for_events_costs_the_same_as_a_woken_wait_for_event(
+    scheduler: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(IMPLEMENTATION_ENV_VAR, scheduler)
     assert subscribed_woken_steps(many=True) == subscribed_woken_steps(many=False)
