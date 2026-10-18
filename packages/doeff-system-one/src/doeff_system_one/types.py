@@ -126,13 +126,31 @@ class Verdict:
 
 
 class JudgeError(Exception):
-    """判定が答えを返せなかった。kind = no_credentials / http / malformed / transport。"""
+    """判定が答えを返せなかった。kind = no_credentials / http / malformed / transport / unsupported / usage_limit(JudgeUsageLimited)。"""
 
     def __init__(self, kind: str, detail: str, *, status: int | None = None) -> None:
         super().__init__(f"{kind}: {detail}")
         self.kind = kind
         self.detail = detail
         self.status = status
+
+
+class JudgeUsageLimited(JudgeError):
+    """判定器の口座の利用枠が尽きて答えなかった(kind = usage_limit・status = 429)。
+
+    届かない・壊れた答えの誤り(JudgeError の他の kind)と分けて、呼び手が「いつ出し直せるか」を言うため。
+    window = 尽きた枠の種類(provider の語のまま — 例 five_hour・seven_day。名乗らなければ None)/
+    resets_at = 枠が戻る刻(epoch 秒・名乗らなければ None)。
+    """
+
+    def __init__(self, detail: str, *, window: str | None, resets_at: int | None) -> None:
+        if window is not None and (not isinstance(window, str) or not window):
+            raise ValueError(f"JudgeUsageLimited.window は空でない文字列か None: {window!r}")
+        if resets_at is not None and (not isinstance(resets_at, int) or isinstance(resets_at, bool)):
+            raise TypeError(f"JudgeUsageLimited.resets_at は epoch 秒の整数か None: {resets_at!r}")
+        super().__init__("usage_limit", detail, status=429)
+        self.window = window
+        self.resets_at = resets_at
 
 
 def answer_choice(value: str, confidence: float | None = 1.0,

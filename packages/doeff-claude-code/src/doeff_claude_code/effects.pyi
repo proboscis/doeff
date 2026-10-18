@@ -24,6 +24,7 @@ from doeff_claude_code.lines import Failed as Failed
 from doeff_claude_code.lines import Interrupted as Interrupted
 from doeff_claude_code.lines import BackendLost as BackendLost
 from doeff_claude_code.lines import Usage as Usage
+from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
 
 @dataclass(frozen=True)
 class TurnStarted:
@@ -255,7 +256,13 @@ class PrintFailed:
 class PrintTimedOut:
     seconds: float
     stderr_tail: str
-PrintOutcome: TypeAlias = PrintAnswered | PrintFailed | PrintTimedOut
+
+@dataclass(frozen=True, kw_only=True)
+class PrintLimited:
+    limit: AccountLimitHit
+    exit_code: int | None
+    stderr_tail: str
+PrintOutcome: TypeAlias = PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut
 
 def is_json_object_text(text: object) -> bool:
     ...
