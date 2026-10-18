@@ -1,0 +1,38 @@
+[
+  {
+    "id": "mergequeue-concept",
+    "image": "images/zenn-use-cases-v0/generated/mergequeue-concept.png",
+    "generation_prompt": "mergequeue-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "42fc2397b592724edf760443030097e4e704ef3674e759abee679ef025169e16",
+    "width": 1200,
+    "height": 1240,
+    "bytes": 186467,
+    "review": "2026-10-18：前の形（橙）と今の形（青緑）の2列、門の3つの確かめ（積み直し・衝突の印・打ち消し）、517秒（2026年9月26日の1件）と中央値5.3秒（2026年10月16日の394件）、1日167件までと433件、別の列の4時間ごとの全体の検証（25の段・約3時間39分・stableと赤のcard）を本文と照らして目視確認。白背景の平面図として採用。1回目の点線と字の重なりを直した。"
+  },
+  {
+    "id": "mergequeue-flow",
+    "image": "images/zenn-use-cases-v0/generated/mergequeue-flow.png",
+    "generation_prompt": "mergequeue-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "6236de6012253765c7c9321c5e596a4695a06058382797bc3c5b16b2f23b78e1",
+    "width": 1200,
+    "height": 1060,
+    "bytes": 109513,
+    "review": "2026-10-18：本文の2つ目の枠と同じ8件（75秒おき）の時刻表。517秒の門の門の始まり（0・517・1034…3619秒）と最後の待ち3,611秒、5秒の門の待ち5秒を、枠の表示と照らして目視確認。161件の到着での中央値2.3時間・最大7.2時間は、reviews/mergequeue-check.pyが数え直した値。白背景の平面図として採用。"
+  },
+  {
+    "id": "mergequeue-verify",
+    "image": "images/zenn-use-cases-v0/generated/mergequeue-verify.png",
+    "generation_prompt": "mergequeue-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "9623ab79b72f819807254aa03c15da05da19e72ae0edea591d095b0ee506b050",
+    "width": 1200,
+    "height": 1060,
+    "bytes": 139527,
+    "review": "2026-10-18：reviews/mergequeue-verify-runs.csvから描いた42回のマス目（赤20・判じられない19・始まらず1・記録なし2・緑0）と、各回の赤の段の数（3〜12）を表と照らして目視確認。状態の色に×・△・○・—の記号と凡例の文字を添えた。白背景の平面図として採用。"
+  }
+]

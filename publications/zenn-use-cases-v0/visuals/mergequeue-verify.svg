@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1060" viewBox="0 0 1200 1060" font-family="IPAPGothic, IPAGothic, sans-serif">
+<rect width="1200" height="1060" fill="#ffffff"/>
+<text x="600" y="62" text-anchor="middle" font-size="38" font-weight="bold" fill="#111827">4時間ごとの全体の検証の結末(7日・42回)</text>
+<text x="600" y="104" text-anchor="middle" font-size="24" fill="#4b5563">2026年10月11〜17日(UTC)。結末が出た39回は、赤20回・判じられない19回で、緑は0回</text>
+<text x="600" y="146" text-anchor="middle" font-size="22" fill="#4b5563">マスの数は、その回で赤になった段の数(全部で25の段)</text>
+<text x="278" y="194" text-anchor="middle" font-size="22" fill="#4b5563">3時(UTC)</text>
+<text x="434" y="194" text-anchor="middle" font-size="22" fill="#4b5563">7時(UTC)</text>
+<text x="590" y="194" text-anchor="middle" font-size="22" fill="#4b5563">11時(UTC)</text>
+<text x="746" y="194" text-anchor="middle" font-size="22" fill="#4b5563">15時(UTC)</text>
+<text x="902" y="194" text-anchor="middle" font-size="22" fill="#4b5563">19時(UTC)</text>
+<text x="1058" y="194" text-anchor="middle" font-size="22" fill="#4b5563">23時(UTC)</text>
+<text x="184" y="255" text-anchor="end" font-size="22" fill="#4b5563">10月11日</text>
+<text x="184" y="329" text-anchor="end" font-size="22" fill="#4b5563">10月12日</text>
+<text x="184" y="403" text-anchor="end" font-size="22" fill="#4b5563">10月13日</text>
+<text x="184" y="477" text-anchor="end" font-size="22" fill="#4b5563">10月14日</text>
+<text x="184" y="551" text-anchor="end" font-size="22" fill="#4b5563">10月15日</text>
+<text x="184" y="625" text-anchor="end" font-size="22" fill="#4b5563">10月16日</text>
+<text x="184" y="699" text-anchor="end" font-size="22" fill="#4b5563">10月17日</text>
+<rect x="203" y="213" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="278" y="256" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="359" y="213" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="434" y="256" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 6</text>
+<rect x="515" y="213" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="590" y="256" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="671" y="213" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="746" y="256" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 6</text>
+<rect x="827" y="213" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="902" y="256" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 5</text>
+<rect x="983" y="213" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="1058" y="256" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 6</text>
+<rect x="203" y="287" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="278" y="330" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="359" y="287" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="434" y="330" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 5</text>
+<rect x="515" y="287" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="590" y="330" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 5</text>
+<rect x="671" y="287" width="150" height="68" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+<text x="746" y="330" text-anchor="middle" font-size="26" font-weight="bold" fill="#4b5563">— 記録なし</text>
+<rect x="827" y="287" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="902" y="330" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 5</text>
+<rect x="983" y="287" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="1058" y="330" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="203" y="361" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="278" y="404" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 5</text>
+<rect x="359" y="361" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="434" y="404" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="515" y="361" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="590" y="404" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 6</text>
+<rect x="671" y="361" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="746" y="404" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 4</text>
+<rect x="827" y="361" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="902" y="404" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 4</text>
+<rect x="983" y="361" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="1058" y="404" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 4</text>
+<rect x="203" y="435" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="278" y="478" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 4</text>
+<rect x="359" y="435" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="434" y="478" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 3</text>
+<rect x="515" y="435" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="590" y="478" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 3</text>
+<rect x="671" y="435" width="150" height="68" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+<text x="746" y="478" text-anchor="middle" font-size="26" font-weight="bold" fill="#4b5563">— 始まらず</text>
+<rect x="827" y="435" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="902" y="478" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 5</text>
+<rect x="983" y="435" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="1058" y="478" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="203" y="509" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="278" y="552" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 4</text>
+<rect x="359" y="509" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="434" y="552" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 6</text>
+<rect x="515" y="509" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="590" y="552" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 6</text>
+<rect x="671" y="509" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="746" y="552" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 8</text>
+<rect x="827" y="509" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="902" y="552" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 8</text>
+<rect x="983" y="509" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="1058" y="552" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 7</text>
+<rect x="203" y="583" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="278" y="626" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 7</text>
+<rect x="359" y="583" width="150" height="68" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+<text x="434" y="626" text-anchor="middle" font-size="26" font-weight="bold" fill="#4b5563">— 記録なし</text>
+<rect x="515" y="583" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="590" y="626" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 6</text>
+<rect x="671" y="583" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="746" y="626" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 8</text>
+<rect x="827" y="583" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="902" y="626" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 9</text>
+<rect x="983" y="583" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="1058" y="626" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 8</text>
+<rect x="203" y="657" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="278" y="700" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 8</text>
+<rect x="359" y="657" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="434" y="700" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 8</text>
+<rect x="515" y="657" width="150" height="68" rx="8" fill="#fab219"/>
+<text x="590" y="700" text-anchor="middle" font-size="26" font-weight="bold" fill="#111827">△ 8</text>
+<rect x="671" y="657" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="746" y="700" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 12</text>
+<rect x="827" y="657" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="902" y="700" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 7</text>
+<rect x="983" y="657" width="150" height="68" rx="8" fill="#d03b3b"/>
+<text x="1058" y="700" text-anchor="middle" font-size="26" font-weight="bold" fill="#ffffff">× 9</text>
+<rect x="200" y="752" width="44" height="34" rx="6" fill="#0ca30c"/>
+<text x="222" y="777" text-anchor="middle" font-size="22" font-weight="bold" fill="#ffffff">○</text>
+<text x="260" y="778" font-size="22" fill="#111827">緑(全部の段が通った) 0回</text>
+<rect x="200" y="796" width="44" height="34" rx="6" fill="#d03b3b"/>
+<text x="222" y="821" text-anchor="middle" font-size="22" font-weight="bold" fill="#ffffff">×</text>
+<text x="260" y="822" font-size="22" fill="#111827">赤 20回</text>
+<rect x="200" y="840" width="44" height="34" rx="6" fill="#fab219"/>
+<text x="222" y="865" text-anchor="middle" font-size="22" font-weight="bold" fill="#111827">△</text>
+<text x="260" y="866" font-size="22" fill="#111827">判じられない(走らなかった段がある) 19回</text>
+<rect x="200" y="884" width="44" height="34" rx="6" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+<text x="222" y="909" text-anchor="middle" font-size="22" font-weight="bold" fill="#4b5563">—</text>
+<text x="260" y="910" font-size="22" fill="#111827">始まらず・記録なし 3回</text>
+<text x="600" y="998" text-anchor="middle" font-size="24" font-weight="bold" fill="#111827">安定版のブランチ stable は、10月6日の版から進んでいない</text>
+<text x="600" y="1034" text-anchor="middle" font-size="22" fill="#4b5563">10月18日に数えると、mainは stable より4,407 commit先にある</text>
+</svg>

@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1060" viewBox="0 0 1200 1060" font-family="IPAPGothic, IPAGothic, sans-serif">
+<rect width="1200" height="1060" fill="#ffffff"/>
+<text x="600" y="62" text-anchor="middle" font-size="38" font-weight="bold" fill="#111827">同じ8件を、517秒の門と5秒の門で流す</text>
+<text x="600" y="104" text-anchor="middle" font-size="24" fill="#4b5563">10分の間に、8件が75秒おきに届いた時の待ち(仮想の時計で流した)</text>
+<text x="40" y="150" font-size="28" font-weight="bold" fill="#111827">517秒の門(テストを走らせる)</text>
+<line x1="230.0" y1="170" x2="230.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="230.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">0分</text>
+<line x1="360.0" y1="170" x2="360.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="360.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">10分</text>
+<line x1="490.0" y1="170" x2="490.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="490.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">20分</text>
+<line x1="620.0" y1="170" x2="620.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="620.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">30分</text>
+<line x1="750.0" y1="170" x2="750.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="750.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">40分</text>
+<line x1="880.0" y1="170" x2="880.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="880.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">50分</text>
+<line x1="1010.0" y1="170" x2="1010.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="1010.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">60分</text>
+<line x1="1140.0" y1="170" x2="1140.0" y2="490" stroke="#d1d5db" stroke-width="1"/>
+<text x="1140.0" y="518" text-anchor="middle" font-size="20" fill="#4b5563">70分</text>
+<text x="214" y="206" text-anchor="end" font-size="20" fill="#4b5563">1件目</text>
+<rect x="230.0" y="184" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M223.0,180 L237.0,180 L230.0,190 z" fill="#111827"/>
+<text x="214" y="244" text-anchor="end" font-size="20" fill="#4b5563">2件目</text>
+<rect x="246.2" y="228" width="95.8" height="16" rx="4" fill="#d1d5db"/>
+<rect x="342.0" y="222" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M239.2,218 L253.2,218 L246.2,228 z" fill="#111827"/>
+<text x="214" y="282" text-anchor="end" font-size="20" fill="#4b5563">3件目</text>
+<rect x="262.5" y="266" width="191.5" height="16" rx="4" fill="#d1d5db"/>
+<rect x="454.0" y="260" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M255.5,256 L269.5,256 L262.5,266 z" fill="#111827"/>
+<text x="214" y="320" text-anchor="end" font-size="20" fill="#4b5563">4件目</text>
+<rect x="278.8" y="304" width="287.3" height="16" rx="4" fill="#d1d5db"/>
+<rect x="566.0" y="298" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M271.8,294 L285.8,294 L278.8,304 z" fill="#111827"/>
+<text x="214" y="358" text-anchor="end" font-size="20" fill="#4b5563">5件目</text>
+<rect x="295.0" y="342" width="383.1" height="16" rx="4" fill="#d1d5db"/>
+<rect x="678.1" y="336" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M288.0,332 L302.0,332 L295.0,342 z" fill="#111827"/>
+<text x="214" y="396" text-anchor="end" font-size="20" fill="#4b5563">6件目</text>
+<rect x="311.2" y="380" width="478.8" height="16" rx="4" fill="#d1d5db"/>
+<rect x="790.1" y="374" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M304.2,370 L318.2,370 L311.2,380 z" fill="#111827"/>
+<text x="214" y="434" text-anchor="end" font-size="20" fill="#4b5563">7件目</text>
+<rect x="327.5" y="418" width="574.6" height="16" rx="4" fill="#d1d5db"/>
+<rect x="902.1" y="412" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M320.5,408 L334.5,408 L327.5,418 z" fill="#111827"/>
+<text x="214" y="472" text-anchor="end" font-size="20" fill="#4b5563">8件目</text>
+<rect x="343.8" y="456" width="670.4" height="16" rx="4" fill="#d1d5db"/>
+<rect x="1014.1" y="450" width="112.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M336.8,446 L350.8,446 L343.8,456 z" fill="#111827"/>
+<text x="1140.0" y="206" text-anchor="end" font-size="24" font-weight="bold" fill="#111827">最後の1件は 3,611秒(約60分)待つ</text>
+<text x="40" y="590" font-size="28" font-weight="bold" fill="#111827">5秒の門(衝突の印だけを見る)</text>
+<line x1="230.0" y1="610" x2="230.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="230.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">0分</text>
+<line x1="360.0" y1="610" x2="360.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="360.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">10分</text>
+<line x1="490.0" y1="610" x2="490.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="490.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">20分</text>
+<line x1="620.0" y1="610" x2="620.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="620.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">30分</text>
+<line x1="750.0" y1="610" x2="750.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="750.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">40分</text>
+<line x1="880.0" y1="610" x2="880.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="880.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">50分</text>
+<line x1="1010.0" y1="610" x2="1010.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="1010.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">60分</text>
+<line x1="1140.0" y1="610" x2="1140.0" y2="930" stroke="#d1d5db" stroke-width="1"/>
+<text x="1140.0" y="958" text-anchor="middle" font-size="20" fill="#4b5563">70分</text>
+<text x="214" y="646" text-anchor="end" font-size="20" fill="#4b5563">1件目</text>
+<rect x="230.0" y="624" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M223.0,620 L237.0,620 L230.0,630 z" fill="#111827"/>
+<text x="214" y="684" text-anchor="end" font-size="20" fill="#4b5563">2件目</text>
+<rect x="246.2" y="662" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M239.2,658 L253.2,658 L246.2,668 z" fill="#111827"/>
+<text x="214" y="722" text-anchor="end" font-size="20" fill="#4b5563">3件目</text>
+<rect x="262.5" y="700" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M255.5,696 L269.5,696 L262.5,706 z" fill="#111827"/>
+<text x="214" y="760" text-anchor="end" font-size="20" fill="#4b5563">4件目</text>
+<rect x="278.8" y="738" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M271.8,734 L285.8,734 L278.8,744 z" fill="#111827"/>
+<text x="214" y="798" text-anchor="end" font-size="20" fill="#4b5563">5件目</text>
+<rect x="295.0" y="776" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M288.0,772 L302.0,772 L295.0,782 z" fill="#111827"/>
+<text x="214" y="836" text-anchor="end" font-size="20" fill="#4b5563">6件目</text>
+<rect x="311.2" y="814" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M304.2,810 L318.2,810 L311.2,820 z" fill="#111827"/>
+<text x="214" y="874" text-anchor="end" font-size="20" fill="#4b5563">7件目</text>
+<rect x="327.5" y="852" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M320.5,848 L334.5,848 L327.5,858 z" fill="#111827"/>
+<text x="214" y="912" text-anchor="end" font-size="20" fill="#4b5563">8件目</text>
+<rect x="343.8" y="890" width="4.0" height="28" rx="4" fill="#2a78d6"/>
+<path d="M336.8,886 L350.8,886 L343.8,896 z" fill="#111827"/>
+<text x="373.8" y="912" text-anchor="start" font-size="24" font-weight="bold" fill="#111827">どの件も、届いてから5秒で入る</text>
+<path d="M60,972 L76,972 L68,984 z" fill="#111827"/>
+<text x="86" y="986" font-size="22" fill="#111827">届いた刻</text>
+<rect x="230" y="968" width="40" height="16" rx="4" fill="#d1d5db"/>
+<text x="280" y="986" font-size="22" fill="#111827">待っている間</text>
+<rect x="460" y="964" width="40" height="24" rx="4" fill="#2a78d6"/>
+<text x="510" y="986" font-size="22" fill="#111827">門で確かめている間</text>
+<text x="600" y="1036" text-anchor="middle" font-size="22" fill="#4b5563">10月16日に実際に届いた161件では、517秒の門で待ちの中央値2.3時間・最大7.2時間</text>
+</svg>
