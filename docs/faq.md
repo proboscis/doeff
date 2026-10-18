@@ -3,7 +3,9 @@
 Short answers to the questions people ask first about doeff. Each answer links to the page, the
 measurement or the test it rests on.
 
+- [What are algebraic effects?](#what-are-algebraic-effects)
 - [What does doeff give me?](#what-does-doeff-give-me)
+- [Is doeff a tool for swapping I/O in tests?](#is-doeff-a-tool-for-swapping-io-in-tests)
 - [Isn't this just dependency injection?](#isnt-this-just-dependency-injection)
 - [How is it different from asyncio?](#how-is-it-different-from-asyncio)
 - [Isn't this just generators, or a monad?](#isnt-this-just-generators-or-a-monad)
@@ -16,13 +18,67 @@ measurement or the test it rests on.
 - [How does it compare with other Python effect libraries?](#how-does-it-compare-with-other-python-effect-libraries)
 - [Is it the same as effect handlers in OCaml 5 or Koka?](#is-it-the-same-as-effect-handlers-in-ocaml-5-or-koka)
 
+## What are algebraic effects?
+
+A way to separate the operations a program performs from what they mean. The program performs an
+operation, an *effect*, and pauses. A handler installed around the program receives the effect
+together with the *continuation*: the rest of the program from that point on. The handler decides
+what happens next: answer and let the program go on, throw an error at that point, run other work
+first, or end the computation with a value of its own.
+
+An exception is the case where the handler never goes back: `raise` pauses the function, and the
+`except` outside it drops the rest. A handler of an algebraic effect can also answer at the place
+of the `yield`, and the program goes on from there:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler, run
+
+@dataclass(frozen=True)
+class Missing(EffectBase):              # "this setting has no value: what now?"
+    key: str
+
+@do
+def settings(given):
+    result = {}
+    for key in ("host", "port"):
+        if key in given:
+            result[key] = given[key]
+        else:
+            result[key] = yield Missing(key)
+    return result
+
+@do
+def use_defaults(effect: Missing, k):   # answer, and go back to the yield
+    return (yield Resume(k, {"host": "localhost", "port": 8080}[effect.key]))
+
+@do
+def give_up(effect: Missing, k):        # do not go back: like an exception caught outside
+    return f"no {effect.key} given"
+
+print(run(handler(use_defaults)(settings({"host": "example.com"}))))  # {'host': 'example.com', 'port': 8080}
+print(run(handler(give_up)(settings({"host": "example.com"}))))  # no port given
+```
+
+You define the effects and write the handlers, and several handlers stack around one program, each
+answering the effects it knows. State, exceptions, concurrency (a scheduler is a handler that holds
+the continuations of waiting tasks), logging and I/O can all be written this way, so one mechanism
+covers what a language usually builds in one feature at a time. The idea comes from Plotkin and
+Pretnar's *Handlers of Algebraic Effects* (2009); OCaml 5 and Koka build it into the language.
+
+In doeff, an effect is an instance of a class under `EffectBase`, a program is a generator function
+under `@do`, and a handler is a function of `(effect, k)`. Continuations are one-shot: a handler
+resumes each `k` at most once ([Is it the same as effect handlers in OCaml 5 or Koka?](#is-it-the-same-as-effect-handlers-in-ocaml-5-or-koka)).
+[What doeff Is](positioning/what-doeff-is.md) defines doeff's version, what it covers and where it
+stops.
+
 ## What does doeff give me?
 
 Algebraic effects. Your functions `yield` effects, and a handler decides what each effect means by
 what it does with `k`, the continuation: the rest of the function from that `yield` on. It can
-resume `k` with an answer, throw an error into it, hold it while other tasks run, or drop it and
-end the computation with a value of its own ([the table in the README](../README.md)). Four things
-follow that plain Python does not give you:
+resume `k` with an answer, throw an error into it, pass the effect on, hold it while other tasks
+run, or drop it and end the computation with a value of its own
+([the table in the README](../README.md)). Four things follow that plain Python does not give you:
 
 - **Control flow you define.** Early exit, budgets and errors raised where the effect was
   performed are handlers, not checks inside the function: a handler that drops `k` stops the
@@ -31,45 +87,70 @@ follow that plain Python does not give you:
 - **Concurrency without `async`.** `Spawn`, `Gather` and `Race` are effects too, and the
   scheduler that runs them is a handler that holds the continuations of the waiting tasks
   ([Async Effects](04-async-effects.md)).
-- **One handler sees every effect.** Logging, a cost cap, or record and replay is one handler,
-  not one wrapper per client ([One handler, every effect](../README.md#one-handler-every-effect)).
-- **A test cannot reach production by accident.** If no handler answers an effect, the run stops
-  with `UnhandledEffect`. With `mock.patch`, a patch you forget runs the real function
-  ([Before and after](../README.md#before-and-after-fakes-in-a-test)).
+- **One handler sees every effect.** Logging, a cost cap, retries, or record and replay is one
+  handler around the program, not one wrapper per client
+  ([One handler, every effect](../README.md#one-handler-every-effect)).
+- **One program, many meanings.** Production, a test, a dry run and a replay run the same function
+  under different handlers, and an effect that no handler answers stops the run with
+  `UnhandledEffect` ([Is doeff a tool for swapping I/O in tests?](#is-doeff-a-tool-for-swapping-io-in-tests)).
 
 What it costs: each effect is a class, the logic is written as generators, and the doeff version
 of a function is longer than the plain one. If your code only ever runs one way, the effects are
 ceremony ([When adoption pays](22-capability-classes.md#when-adoption-pays-the-evidence-rule)).
 
+## Is doeff a tool for swapping I/O in tests?
+
+No. Swapping I/O is one use of it, and the one most people meet first: a test answers the effects
+that reach the outside world with fake handlers, and production with handlers that do the real
+I/O. It works well, because nothing is patched: if no handler answers an effect, the run stops with
+`UnhandledEffect`, where a `mock.patch` you forget runs the real function
+([Before and after](../README.md#before-and-after-fakes-in-a-test)).
+
+But most handlers in these docs do no I/O at all. A budget resumes or drops the rest of the program
+([A 30-second example](../README.md#a-30-second-example)), a retry policy performs the effect again,
+the scheduler holds the continuations of waiting tasks, a virtual clock runs hours of sleeping tasks
+in an instant, and a tracing handler sees every effect and passes it on
+([Why Effects?](20-why-effects-over-di.md)). What they share is the mechanism: the handler gets the
+continuation and decides how the program goes on.
+
+If swapping one implementation for another is all you need, dependency injection is the simpler
+tool ([Isn't this just dependency injection?](#isnt-this-just-dependency-injection)).
+
 ## Isn't this just dependency injection?
 
-For swapping one implementation for another, yes. A handler that answers `LoadUser` with a fake
-user has the same power as passing a fake `load_user` in, and if that is all you need, dependency
-injection is the simpler tool ([Class 0](22-capability-classes.md#class-0--dispatch)).
+No, though the two overlap in one place. An injected object answers a call and returns; a handler
+receives the effect together with the rest of the program as `k`. Where all you do is pick one
+implementation of an operation, such as answering `LoadUser` from a dict in a test and from the
+database in production, the two have the same power, and dependency injection is the simpler tool
+([Class 0](22-capability-classes.md#class-0--dispatch)).
 
 doeff differs in three places:
 
-- **Forgetting a fake.** A missing handler stops the run with `UnhandledEffect`. A test that starts
-  from production's set of dependencies, or forgets a `mock.patch`, runs the real one. The
-  [comparison table](../README.md#before-and-after-fakes-in-a-test) shows what each style does.
+- **Holding the continuation.** A handler may drop `k`, throw into it, or resume it later. That is
+  how the scheduler works, and how a handler can stop a program over budget, park callers until a
+  rate limit frees up, batch several requests into one call, or answer identical requests in
+  flight from one call. An injected object has no continuation to hold
+  ([Class 2](22-capability-classes.md#class-2--scheduling)).
 - **Reach.** A handler answers an effect type for everything inside it, including code deep in
   the call chain that takes no parameter for it, and you can install a handler around one part of
-  a program only.
-- **Holding the continuation.** A handler gets the rest of the program as `k` and may resume it
-  later. That is how the scheduler works, and how a handler can park callers until a rate limit
-  frees up, batch several requests into one call, or answer identical requests in flight from one
-  call. An injected object has no continuation to hold
-  ([Class 2](22-capability-classes.md#class-2--scheduling)).
+  a program only. One handler can see every effect, where DI needs one wrapper per client.
+- **A missing answer.** A missing handler stops the run with `UnhandledEffect`. A test that starts
+  from production's set of dependencies, or forgets a `mock.patch`, runs the real one. The
+  [comparison table](../README.md#before-and-after-fakes-in-a-test) shows what each style does.
 
-[Why Effects?](20-why-effects-over-di.md) writes one workflow both ways, in examples that run, and
-lists [where dependency injection or plain Python is the better tool](20-why-effects-over-di.md#where-di-or-plain-python-is-better).
+[Why Effects?](20-why-effects-over-di.md) shows what a handler does with the continuation, example
+by example, writes the workflow with DI for comparison, and lists
+[where dependency injection or plain Python is the better tool](20-why-effects-over-di.md#where-di-or-plain-python-is-better).
 
 ## How is it different from asyncio?
 
 - **No `async` in your functions.** A doeff program is a plain `def` generator under `@do`;
   `@do` refuses an `async def` function.
 - **Concurrency is effects.** `Spawn`, `Wait`, `Gather` and `Race` are effects, and `scheduled()`
-  is the handler that runs them ([Async Effects](04-async-effects.md)).
+  is the handler that runs them: it holds the continuation of each task that waits and resumes it
+  when it can go on. A handler of your own can build on it, as the
+  [virtual clock](20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) does
+  ([Async Effects](04-async-effects.md)).
 - **Existing async code still runs.** `yield Await(coro)` under `await_handler()` waits for a
   coroutine; one background asyncio loop thread runs the coroutines of the whole process
   ([Await Effect](04-async-effects.md#await-effect)).

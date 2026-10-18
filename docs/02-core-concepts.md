@@ -1,11 +1,72 @@
 # Core Concepts
 
-This chapter defines the doeff execution model:
+doeff implements algebraic effects: a program yields effects, and a handler receives each effect
+together with the continuation `k` and decides what the effect means by what it does with `k`.
+This chapter defines that model first, then the layer that runs it:
 
+- a handler receives `(effect, k)`, stays installed around `k`, and resumes, passes, throws into,
+  holds or drops it
 - `Program[T]` is `DoExpr[T]`
 - `DoExpr` is control IR evaluated by the Rust VM
 - effect values are user-space data and dispatch through `Perform(effect)`
 - `@do` generators are lazy ASTs interpreted by the runtime
+
+## Effects, Handlers and Continuations
+
+- **An effect** is a plain value that names an operation: `Get("count")`, `Spawn(task)`, or an
+  instance of an effect class of your own under `EffectBase`. It does nothing by itself.
+- **A program** pauses at each `yield` of an effect.
+- **A handler** is a callable of `(effect, k)`. The innermost handler installed around the program
+  whose annotation matches the effect receives it.
+- **The continuation `k`** is the rest of the program from that `yield` on. The handler stays
+  installed around it, so it also receives the effects the rest of the program yields.
+
+`after` below is installed once and receives both `Step` effects of `job`: the second one comes
+from inside `k`, which runs under the handler. `yield Resume(k, None)` runs the rest of `job` and
+gives the handler its result, which the handler returns changed:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler, run
+
+@dataclass(frozen=True)
+class Step(EffectBase):
+    name: str
+
+@do
+def job():
+    yield Step("load")
+    yield Step("train")
+    return "model"
+
+@do(non_tail=True)                       # the handler goes on after the resumed k returns
+def after(effect: Step, k):              # receives both Steps: it stays installed around k
+    result = yield Resume(k, None)       # the rest of job runs here, under this handler
+    return f"{result} after {effect.name}"
+
+print(run(handler(after)(job())))  # model after train after load
+```
+
+What a handler can do with `k` ([Handler Contract](#handler-contract) has the rules):
+
+- **resume it** with `Resume(k, value)`, and get the result of the rest back; or with
+  `Transfer(k, value)` when it is done after answering
+- **throw into it** with `ResumeThrow(k, error)`: the program sees `error` raised at the `yield`
+- **pass the effect on** with `Pass(effect, k)` to the next handler out, or perform an effect of
+  its own with `yield effect` while it answers
+- **hold it** while other tasks run: the scheduler (`scheduled()`) is a handler that keeps the
+  continuation of each waiting task, and `Spawn`, `Gather`, `Race` and `Wait` are its effects
+- **drop it** by returning a value without resuming: the rest of the program never runs
+
+`k` is one-shot: a handler resumes it at most once, and a second `Resume` of the same `k` raises a
+`RuntimeError`. Effects that need several resumptions of one continuation, such as backtracking or
+nondeterministic choice, cannot be written as handlers
+([Continuations are one-shot](positioning/what-doeff-is.md#continuations-are-one-shot)).
+
+The built-in effects work the same way. `state()` answers `Get` and `Put` from a dict and resumes
+`k`; `writer` answers `Tell` by yielding `Get` and `Put` to `state()`; `try_handler` answers
+`Try(program)` with `Ok(value)` or `Err(error)`. State, exceptions, concurrency, observation and I/O are effects and handlers of this one
+kind, and a program uses any of them together.
 
 ## Program Model
 
@@ -66,11 +127,15 @@ value = yield Perform(Ask("key"))
 3. VM sends the result with `gen.send(value)`.
 4. Generator yields the next expression, until completion.
 
-Free-monad interpretation:
+Each `yield` splits the generator into the expression and the rest of the program:
 
 ```text
 yield expr  ≡  Bind(expr, λresult. rest_of_program)
 ```
+
+The `λ` is the continuation. For a control node, the VM evaluates the node and calls it with the
+value. For an effect, the VM hands it to the handler as `k`, and the handler decides whether, when
+and with what it is called.
 
 ## DoCtrl Instruction Set
 
@@ -202,10 +267,13 @@ Handlers interpret effects with this shape:
 - input: `(effect, k)`
 - output: `DoExpr`
 
-Handlers use `yield Resume(k, value)` to resume the continuation with a value,
+Handlers use `yield Resume(k, value)` to resume the continuation with a value
+(or `yield Transfer(k, value)` when nothing is left to do after it),
+`yield ResumeThrow(k, error)` to raise `error` at the `yield` in the program,
 `yield Pass(effect, k)` to forward the effect to an outer handler, or
 `yield effect` to re-perform an effect in the handler body. A handler that
-returns without any of these ends the program it handles (see below).
+returns without resuming, transferring or passing `k` ends the program it
+handles (see below).
 
 If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
 before continuing.
@@ -547,6 +615,10 @@ are factories that return an installer.
 
 ## Summary
 
+- a handler receives each effect with its continuation `k`, stays installed around `k`, and
+  decides what the effect means: resume, transfer, throw into, pass, hold or drop `k`
+- continuations are one-shot: each `k` resumes at most once
+- state, exceptions, concurrency, observation and I/O are all effects and handlers of this kind
 - `Program[T]` is `DoExpr[T]` — a virtual type alias with no methods
 - effect dispatch is explicit via `Perform(effect)`
 - VM evaluates control IR and handlers interpret effect payloads

@@ -3,11 +3,13 @@
 doeff brings algebraic effects and their handlers to Python. A function `yield`s an effect, and
 the nearest handler for it receives the effect together with `k`, the continuation: the rest of the
 function from that `yield` on. The handler decides what the effect means by what it does with `k`:
-resume it with an answer, throw an error into it, hold it while other tasks run, or drop it and end
-the computation with a value of its own. State, early exit, concurrency and I/O are all handlers of
-this kind, and swapping real I/O for fakes in tests is one use of them. Continuations are one-shot:
-a handler resumes each `k` at most once, so backtracking and nondeterministic choice cannot be
-written as handlers. This page is where the documentation starts.
+resume it with an answer, throw an error into it, pass it on, hold it while other tasks run, or
+drop it and end the computation with a value of its own. State, exceptions, concurrency,
+observation, budgets and I/O are all effects with handlers of this kind, under one mechanism in one
+program; answering I/O effects one way in tests and another in production is one use of it.
+Continuations are one-shot: a handler resumes each `k` at most once, so backtracking and
+nondeterministic choice cannot be written as handlers. [What doeff Is](positioning/what-doeff-is.md)
+defines all of this; this page is where the documentation starts.
 
 ## Start Here
 
@@ -15,10 +17,11 @@ Read these in order the first time:
 
 1. **Install** - `pip install doeff` on Python 3.11 or later: see [Install](#install) below
 2. **A first program** - the [Quick Example](#quick-example) below, then [Getting Started](01-getting-started.md)
-3. **Questions** - the [FAQ](faq.md): dependency injection, asyncio, speed, types, debugging, Hy, production use
-4. **Why effects?** - [where effects beat dependency injection and plain `async`, and where they do not](20-why-effects-over-di.md)
-5. **Examples** - an [LLM agent](../examples/llm_agent.py) and a [GitHub API client](../examples/github_repo/README.md), each tested with a fake handler and no network
-6. **API** - the [API Reference](13-api-reference.md) and the [built-in effects and handlers](../packages/doeff-core-effects/README.md)
+3. **What doeff is** - [the mechanism, what it covers and where it stops](positioning/what-doeff-is.md)
+4. **Questions** - the [FAQ](faq.md): what algebraic effects are, dependency injection, asyncio, speed, types, debugging, Hy, production use
+5. **Why effects?** - [what a handler does with the rest of the program, example by example, and how that compares with dependency injection and plain `async`](20-why-effects-over-di.md)
+6. **Examples** - an [LLM agent](../examples/llm_agent.py) and a [GitHub API client](../examples/github_repo/README.md); their tests answer the model and HTTP effects with handlers, without the network
+7. **API** - the [API Reference](13-api-reference.md) and the [built-in effects and handlers](../packages/doeff-core-effects/README.md)
 
 The [Table of Contents](#table-of-contents) below lists every guide.
 
@@ -33,32 +36,52 @@ pip install "doeff[all]"   # both
 
 ## Quick Example
 
+`pay` yields an effect of its own, `Withdraw`, and a built-in one, `Tell`. It does not know where
+the money comes from or what happens when it runs out: the handler `account` decides, by resuming
+`k` or by throwing an error into it at the `yield`:
+
 ```python
-from doeff import do, run
-from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, ResumeThrow, do, handler, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, writer, writer_log
+
+@dataclass(frozen=True)
+class Withdraw(EffectBase):          # your own effect: "take this much from the account"
+    amount: int
 
 @do
-def example_workflow():
-    # State management
-    yield Put("counter", 0)
+def pay(bills):                      # yields Withdraw (yours) and Tell (built in)
+    paid = []
+    for name, amount in bills:
+        try:
+            yield Withdraw(amount)
+        except ValueError as error:  # thrown in by the handler, at the yield
+            yield Tell(f"skipped {name}: {error}")
+            continue
+        paid.append(name)
+    return paid, (yield writer_log())
 
-    # Logging
-    yield Tell("Starting computation")
+def account(balance):                # one meaning of Withdraw: an account with a balance
+    @do
+    def on_withdraw(effect: Withdraw, k):
+        nonlocal balance
+        if effect.amount > balance:
+            return (yield ResumeThrow(k, ValueError("not enough money")))
+        balance -= effect.amount
+        return (yield Resume(k, None))
 
-    # State updates
-    yield Put("result", 42)
-    count = yield Get("result")
+    return handler(on_withdraw)
 
-    return count
-
-prog = example_workflow()
-prog = writer(prog)
-prog = state()(prog)
-result = run(scheduled(prog))
-print(f"Result: {result}")  # Result: 42
+bills = [("rent", 80), ("phone", 30), ("water", 15)]
+print(run(state()(writer(account(100)(pay(bills))))))  # (['rent', 'water'], ['skipped phone: not enough money'])
 ```
+
+The built-in handlers are written the same way as `account`: `writer` is a `@do` function of
+`(effect, k)` that answers `Tell`, and it keeps its log by yielding `Get` and `Put`, which `state`
+answers. Another handler could give `Withdraw` another meaning without changing `pay`: one that
+records every withdrawal and passes it on, or one that drops `k` and ends the run at the first bill
+it refuses.
 
 ## Table of Contents
 
@@ -75,7 +98,7 @@ components are listed separately under
 1. **[Getting Started](01-getting-started.md)** - Installation, first program, basic concepts
 2. **[What doeff Is](positioning/what-doeff-is.md)** - Algebraic effects: what a handler does with the continuation, what one mechanism covers, where it stops (one-shot continuations), and how to describe doeff
 3. **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
-4. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
+4. **[Why Effects?](20-why-effects-over-di.md)** - What a handler does with the continuation (drop it, pass it on, retry, route, record, hold it for the scheduler), compared with dependency injection and plain `async`, in examples that run as written
 5. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
 
 ### Effect Types
@@ -160,11 +183,12 @@ doeff is an **algebraic effects** system for Python. Effects are first-class ope
 
 Key characteristics:
 
-- **Algebraic effects with handlers**: Define effects as data; a handler receives each effect with its continuation and decides what it means: resume it, throw into it, hold it while other tasks run, or drop it
+- **Algebraic effects with handlers**: Define effects as data; a handler receives each effect with its continuation and decides what it means: resume it, throw into it, pass it on, hold it while other tasks run, or drop it
+- **One mechanism**: State, exceptions, concurrency, observation, budgets and I/O are all effects and handlers, and stack around one program
 - **One-shot continuations**: Each continuation resumes at most once (unlike multi-shot systems like Koka or Eff), so backtracking and nondeterministic choice cannot be written as handlers
 - **Rust VM runtime**: High-performance effect handling and continuation management
 - **Batteries-included handlers**: Reader, State, Writer, Scheduler, Result — ready to use
-- **Generator-based do-notation**: Write effectful code that looks like regular Python
+- **Plain generator functions**: A program is a generator function under `@do`; no new syntax
 - **Stack-safe execution**: Trampolining prevents stack overflow
 - **Type safety**: Full type annotations with `.pyi` files
 
@@ -234,8 +258,9 @@ Key characteristics:
 
 ## Common Patterns
 
-These are excerpts: they assume the imports of the Quick Example above and call
-programs your application defines (`do_work`, `risky_operation`, `process_item`).
+These are excerpts: they leave out their imports (`Ask`, `Put`, `Tell`, `Try` and `Ok` from
+`doeff_core_effects` and `doeff`, `Spawn` and `Gather` from `doeff_core_effects.scheduler`) and
+call programs your application defines (`do_work`, `risky_operation`, `process_item`).
 
 ### Configuration + State + Logging
 
