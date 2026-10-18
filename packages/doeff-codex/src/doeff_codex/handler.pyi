@@ -29,8 +29,10 @@ from doeff_codex.rpc import turn_steer_request as turn_steer_request
 from doeff_codex.rpc import turn_interrupt_request as turn_interrupt_request
 from doeff_codex.rpc import server_response_line as server_response_line
 from doeff_codex.process import CodexProcess as CodexProcess
+from doeff_codex.process import CutLine as CutLine
 from doeff_codex.process import EOF_GRACE_SECONDS as EOF_GRACE_SECONDS
 from doeff_codex.process import TERM_GRACE_SECONDS as TERM_GRACE_SECONDS
+from doeff_codex.process import LINE_CAP_BYTES as LINE_CAP_BYTES
 from doeff_codex.credential_home import open_credential_home as open_credential_home
 from doeff_codex.credential_home import close_credential_home as close_credential_home
 from doeff_codex.effects import CodexStartTurn as CodexStartTurn
@@ -147,11 +149,12 @@ class SessionRuntime:
 class CodexHost:
     command: tuple
     launch_timeout: Incomplete
+    line_cap: Incomplete
     lock: Incomplete
     continuations: dict[str, Continuation]
     runtimes: dict[str, SessionRuntime]
 
-    def __init__(self, command: tuple, launch_timeout: Incomplete=120.0) -> None:
+    def __init__(self, command: tuple, launch_timeout: Incomplete=120.0, line_cap: Incomplete=...) -> None:
         ...
 
     def runtime(self, thread_id: str) -> Incomplete:
@@ -172,7 +175,7 @@ def another_thread(runtime: SessionRuntime, record: lines.CodexLine) -> _Program
 def absorb(runtime: SessionRuntime, record: lines.CodexLine) -> _Program[None, object]:
     ...
 
-def on_line(runtime: SessionRuntime, generation: int, raw: str) -> None:
+def on_line(runtime: SessionRuntime, generation: int, raw: str | CutLine) -> None:
     ...
 
 def on_exit(runtime: SessionRuntime, generation: int, home: str | None, exit_code: int | None, stderr_tail: str) -> None:
