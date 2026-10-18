@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1120" viewBox="0 0 1200 1120" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1120" fill="#ffffff"/>
+  <text x="600" y="66" text-anchor="middle" font-size="42" font-weight="bold" fill="#111827">配る判断を、会話の頭の中から関数へ移す</text>
+
+  <!-- 列の見出し -->
+  <text x="300" y="134" text-anchor="middle" font-size="30" font-weight="bold" fill="#4b5563">前(2026年10月11日まで)</text>
+  <text x="900" y="134" text-anchor="middle" font-size="30" font-weight="bold" fill="#0f766e">今(10月11日17時57分から)</text>
+  <line x1="600" y1="105" x2="600" y2="1040" stroke="#e5e7eb" stroke-width="3"/>
+
+  <!-- 作業ボード(左右) -->
+  <rect x="40" y="160" width="520" height="110" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="300" y="202" text-anchor="middle" font-size="30" font-weight="bold" fill="#111827">作業ボード</text>
+  <text x="300" y="244" text-anchor="middle" font-size="24" fill="#111827">配れるcard(10月10日は445枚)</text>
+  <rect x="640" y="160" width="520" height="110" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="900" y="202" text-anchor="middle" font-size="30" font-weight="bold" fill="#111827">作業ボード</text>
+  <text x="900" y="244" text-anchor="middle" font-size="24" fill="#111827">配れるcard・空き(上限50)</text>
+
+  <line x1="300" y1="270" x2="300" y2="330" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="324" y="308" font-size="24" fill="#111827">読む</text>
+  <line x1="900" y1="270" x2="900" y2="330" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="924" y="308" font-size="24" fill="#111827">読む</text>
+  <text x="876" y="308" text-anchor="end" font-size="22" fill="#0f766e">ReadReady・ReadFree</text>
+
+  <!-- 左: 配り役の会話 -->
+  <rect x="40" y="335" width="520" height="250" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="300" y="380" text-anchor="middle" font-size="28" font-weight="bold" fill="#c2410c">配り役の会話(Claude Code)</text>
+  <text x="70" y="428" font-size="24" fill="#111827">どれを配るかを、頭の中で選ぶ</text>
+  <text x="70" y="468" font-size="24" fill="#111827">決まりの文を読み、自分で当てはめる</text>
+  <text x="70" y="508" font-size="24" fill="#111827">夜は利用枠を残そうと、配るのを控えた</text>
+  <rect x="70" y="526" width="460" height="42" rx="10" fill="#ffffff" stroke="#c2410c" stroke-width="2"/>
+  <text x="300" y="555" text-anchor="middle" font-size="22" fill="#c2410c">10月11日 2時15分〜4時5分は0枚</text>
+
+  <!-- 右: scheduler -->
+  <rect x="640" y="335" width="520" height="250" rx="18" fill="#f0fdfa" stroke="#0f766e" stroke-width="3"/>
+  <text x="900" y="380" text-anchor="middle" font-size="28" font-weight="bold" fill="#0f766e">scheduler(doeffのProgram)</text>
+  <rect x="670" y="402" width="460" height="46" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="900" y="434" text-anchor="middle" font-size="24" fill="#111827">読む → 配る順の関数 → 頼む</text>
+  <text x="670" y="488" font-size="24" fill="#111827">配る順は純粋な関数(A〜Eを設定で選ぶ)</text>
+  <text x="670" y="528" font-size="24" fill="#111827">約束の外の答えは、配らずに止める</text>
+  <text x="670" y="568" font-size="24" fill="#111827">本番で選んだのは C 厳密な優先</text>
+
+  <line x1="300" y1="585" x2="300" y2="645" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="324" y="623" font-size="24" fill="#111827">会話を起こして頼む</text>
+  <line x1="900" y1="585" x2="900" y2="645" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="924" y="623" font-size="24" fill="#111827">頼む</text>
+  <text x="876" y="623" text-anchor="end" font-size="22" fill="#0f766e">Dispatch(1枚 = 会話1つ)</text>
+
+  <!-- 担い手の会話(左右) -->
+  <rect x="40" y="650" width="520" height="170" rx="18" fill="#eff6ff" stroke="#2a78d6" stroke-width="3"/>
+  <text x="300" y="694" text-anchor="middle" font-size="28" font-weight="bold" fill="#1d4ed8">担い手の会話(Claude Code)</text>
+  <text x="70" y="742" font-size="24" fill="#111827">10月10日に配ったのは289枚</text>
+  <text x="70" y="784" font-size="24" fill="#111827">急ぎのcardの最長の待ち 557分</text>
+  <rect x="640" y="650" width="520" height="170" rx="18" fill="#eff6ff" stroke="#2a78d6" stroke-width="3"/>
+  <text x="900" y="694" text-anchor="middle" font-size="28" font-weight="bold" fill="#1d4ed8">担い手の会話(最大50)</text>
+  <text x="670" y="742" font-size="24" fill="#111827">本運転の最初の24時間に536枚</text>
+  <text x="670" y="784" font-size="24" fill="#111827">待ちの中央値 9〜12秒(優先度ごと)</text>
+
+  <!-- 左: 困りごと -->
+  <rect x="40" y="870" width="520" height="150" rx="18" fill="#ffffff" stroke="#9ca3af" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="70" y="918" font-size="24" fill="#111827">止まった訳が、外から見えない</text>
+  <text x="70" y="960" font-size="24" fill="#111827">別の配り方を、同じ日で試し直せない</text>
+  <text x="70" y="1002" font-size="24" fill="#111827">決まりの当てはめ方が、読み方しだい</text>
+
+  <!-- 右: 見張りの会話 -->
+  <rect x="640" y="870" width="520" height="150" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="3" stroke-dasharray="10 8"/>
+  <text x="900" y="912" text-anchor="middle" font-size="28" font-weight="bold" fill="#c2410c">見張りの会話(Claude Code)</text>
+  <text x="670" y="958" font-size="24" fill="#111827">配る判断は持たない</text>
+  <text x="670" y="1000" font-size="24" fill="#111827">詰まりの兆し4つを読み、知らせる</text>
+  <path d="M1160,945 C1190,945 1190,460 1166,460" fill="none" stroke="#c2410c" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow-orange)"/>
+  <text x="1150" y="852" text-anchor="end" font-size="22" fill="#c2410c">記録を読む</text>
+
+  <text x="600" y="1086" text-anchor="middle" font-size="22" fill="#4b5563">数は2026年10月10日〜12日(日本時間)の、作業ボードとschedulerの記録から数えた</text>
+</svg>

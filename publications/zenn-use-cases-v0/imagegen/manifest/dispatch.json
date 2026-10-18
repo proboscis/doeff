@@ -1,0 +1,38 @@
+[
+  {
+    "id": "dispatch-compare",
+    "image": "images/zenn-use-cases-v0/generated/dispatch-compare.png",
+    "generation_prompt": "dispatch-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "d88514b3ef6bb37e53640ea9b31ac22184cfaab59d73247e0bd1e1c319752e27",
+    "width": 1200,
+    "height": 1000,
+    "bytes": 159809,
+    "review": "2026-10-18：reviews/dispatch-compare.csvから描いた上下2段のdumbbell。上の段の配った枚数（実績289・A 392〜441・B 369〜441・C 395〜439・D 397〜446・E 385〜439）と下の段の急ぎの最長の待ち（実績557・A 30〜38・B 30・C 11・D 30・E 58〜109分）を、本文の表と照らして目視確認。2つの指標は1つの軸に混ぜていない。配色はdatavizの既定の1・2番で、色の確かめの道具を通した。白背景の平面図として採用。"
+  },
+  {
+    "id": "dispatch-concept",
+    "image": "images/zenn-use-cases-v0/generated/dispatch-concept.png",
+    "generation_prompt": "dispatch-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "970f97b316b94d6edd1314a5dd0366a544307be6a25dc9a8c871f20c47abc1a9",
+    "width": 1200,
+    "height": 1120,
+    "bytes": 241619,
+    "review": "2026-10-18：左の前の形（作業ボード → 配り役の会話 → 担い手の会話、10月11日2時15分〜4時5分の0枚、289枚・557分）と、右の今の形（作業ボード → scheduler → 担い手の会話、見張りの会話、本運転の24時間の536枚・中央値9〜12秒）を、本文の表と数に照らして目視確認。社内の機体の名・会話やcardのidは描いていない。白背景の平面図として採用。"
+  },
+  {
+    "id": "dispatch-flow",
+    "image": "images/zenn-use-cases-v0/generated/dispatch-flow.png",
+    "generation_prompt": "dispatch-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "891f23280ce6db39ede90750dd8da603685f829c46d2cbf096335c4db69aa8fa",
+    "width": 1200,
+    "height": 1100,
+    "bytes": 203567,
+    "review": "2026-10-18：tickの5行（Ask・ReadReady・ReadFree・strategy・Dispatch）が本文の枠の名と同じであること、配る順A〜E、3つの組（本番・記録だけの運転・模擬）の読む・頼む・待つの答え方、記録だけの運転の1時間（212周期・5枚）と模擬の1.2〜2.9秒を、本文と照らして目視確認。白背景の平面図として採用。"
+  }
+]

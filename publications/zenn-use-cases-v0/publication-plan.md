@@ -143,6 +143,7 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 
 - 候補1:[マージキューでテストを走らせるのをやめた](doeff-mergequeue.md)。Zennのslugの案は`doeff-merge-queue-without-tests`。2026-10-18に下書きした([確かめの記録](reviews/mergequeue.md))。公開の前に、記事の数(全体の検証の結末・`stable`の位置)を数え直す。
 - 候補6:[ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md)。Zennのslugの案は`doeff-claude-code-commits`。2026-10-18に下書きした([確かめの記録](reviews/commits.md)・[決定記録](../../docs/design/decisions/2026-10-18-zenn-candidate-commits.md))。
+- 候補2:[Claude Codeに仕事を配らせるのをやめ、関数で配る](doeff-dispatch.md)。Zennのslugの案は`doeff-dispatch-by-function`。5本目と材料が重なり、その続きに置ける。2026-10-18に下書きした([確かめの記録](reviews/dispatch.md))。
 
 ## 準備状況
 
