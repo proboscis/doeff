@@ -468,8 +468,12 @@
 (defk index-lock-statement [prefix]
   {:pre [(: prefix str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の錠を取る文(session の advisory lock — 他の process が持てば外れるまで待つ)を作るため。"
-  (Statement :text "SELECT pg_advisory_lock(hashtext(:key))" :params (! (params-of #(#("key" (! (index-lock-key prefix))))))))
+  "索引の用意の錠を待たずに取りに行く文(session の advisory lock — 答え = 取れたかの真偽 1 行)を作るため。錠を待つ文
+   (SELECT pg_advisory_lock)にしない: 待つ文は snapshot を持ったまま待ち、錠を持つ process の CREATE INDEX CONCURRENTLY の最後の待ち
+   (古い snapshot の transaction の終わりを待つ)と輪になって deadlock(40P01)になる。待つ側の deadlock の検めは待ち始めて 1 秒で
+   1 度だけ走り、その時はまだ輪が無いので、捨てられるのは後から最後の待ちに入る作り手(作りかけの索引が残る)。取れなかった process は
+   錠を持つ process が放した合図(pg.index-turn)で観測し直す。"
+  (Statement :text "SELECT pg_try_advisory_lock(hashtext(:key))" :params (! (params-of #(#("key" (! (index-lock-key prefix))))))))
 
 
 (defk index-unlock-statement [prefix]

@@ -50,8 +50,10 @@
 ;;;   - 足りない索引は索引の用意の task(reconcile-indexes — main.hy の pg-handlers-of が serving と別の daemon の task で立てる)が、
 ;;;     transaction の外の CREATE INDEX CONCURRENTLY で作る(表の書きを止めない)。文は置き場の ddl-database に流す: 接続 1 本・文の上限
 ;;;     なし(main.hy の DDL-DATABASE — 作る時間は表の大きさで決まり、上限で切ると作りかけを残して同じ所からやり直すだけ)。同じ置き場の
-;;;     2 つの process(本体と twin)が同時に作らないよう、索引の用意の錠(session の advisory lock — pg_sql.index-lock-key)を取り
-;;;     (持たれていれば外れるまで待つ)、錠の中で観測し直して残った差だけを作る。使えない形で残った同じ名の索引(CONCURRENTLY の作りかけ)は
+;;;     2 つの process(本体と twin)が同時に作らないよう、索引の用意の錠(session の advisory lock — pg_sql.index-lock-key)を待たずに取り
+;;;     (持たれていれば、持つ process が放した合図〔置き場の通知の channel・名 INDEX-TOPIC〕で観測し直す — 錠を PostgreSQL の錠の待ちで
+;;;     待つと、待つ側の snapshot と作り手の CONCURRENTLY が deadlock になり作り手が捨てられる・pg_sql.index-lock-statement)、錠の中で
+;;;     観測し直して残った差だけを作る。使えない形で残った同じ名の索引(CONCURRENTLY の作りかけ)は
 ;;;     消してから作る。落ちた回は名乗って INDEX-RETRY-SECONDS 秒の後に観測し直す(service を終えない)。
 ;;;   - 答えは用意の終わりを待たない: ListRows が名指す宣言した索引の欄に、使える索引がまだ無ければ NotIndexed で断る(使い手は
 ;;;     Unavailable として撃ち直す — 宣言の注記の形)。他の読みと書きは答える(索引は読みの速さで、答えの値を変えない)。
@@ -62,7 +64,7 @@
 (import dataclasses [dataclass])
 (import doeff [Program])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
-(import doeff_time [Delay GetMonotonic GetTime])
+(import doeff_time [Delay GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects.scheduler [ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable])
@@ -106,8 +108,11 @@
 (val DEADLOCK-SQLSTATE "40P01")
 ;; 索引の用意(頭の註)が、差を埋めきれなかった回(置き場に届かない・engine が断った)の後に置き場を観測し直すまでの秒。
 ;; ポーリングの訳: 失敗の終わり(DB の戻り・断りの訳の解け)を知らせる出来事が無いので、間を置いて撃ち直す。他の process が作っている間は
-;; 時間で見直さず、索引の用意の錠の待ち(PostgreSQL が外れた時に起こす)で待つ。差が無くなれば task は終わる。
+;; その process が錠を放した合図(NOTIFY)で起き、この秒は合図を出さずに落ちた process の錠が外れた後の観測し直しの上限にだけ使う。
+;; 差が無くなれば task は終わる。
 (val INDEX-RETRY-SECONDS 30.0)
+;; 索引の用意の錠を放した合図の名(置き場の通知の channel — 表と列の待ち手の名 "table:" / "stream:" とは重ならない)。
+(val INDEX-TOPIC "index-build")
 
 
 (defclass StoreUnreachable [Exception]
@@ -490,16 +495,22 @@
 (defk index-round [store]
   {:pre [(: store PreparedStore)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差が在れば索引の用意の錠を取り(他の process が持てば外れるまで待つ — 錠の
-   待ちは PostgreSQL が起こす)、錠の中で観測し直して残った差を CONCURRENTLY で埋めるため(待つ間に他の process が作った索引は作らない)。
+  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差が在れば索引の用意の錠を待たずに取りに行き(index-turn)、取れたら錠の中で
+   観測し直して残った差を CONCURRENTLY で埋めるため。他の process が錠を持つ間は、その process が錠を放した合図か INDEX-RETRY-SECONDS の
+   早い方まで待って観測し直す(待つ間に他の process が作った索引は作らない)。錠を PostgreSQL の錠の待ちで待たない訳は
+   pg_sql.index-lock-statement の註(待つ側が snapshot を持ったまま待ち、作り手の CONCURRENTLY と deadlock になる)。
    答え = 差が無くなったか(作れない索引が在れば False — 後で観測し直す)。"
   (<- observing (indexes-statement store.prefix))
-  (<- found (query-rows store.database observing))
-  (<- gaps (index-observed store.indexes store.prefix store.schema found))
-  (when (not gaps)
-    (return True))
-  (<- locking (index-lock-statement store.prefix))
-  (<- (query-rows store.ddl-database locking))
+  (var claimed False)
+  (while (not claimed)
+    (<- found (query-rows store.database observing))
+    (<- gaps (index-observed store.indexes store.prefix store.schema found))
+    (when (not gaps)
+      (return True))
+    (<- bell (index-turn store))
+    (if (is bell None)
+        (:= claimed True)
+        (<- (holder-awaited store bell))))
   ;; 錠の中の失敗でも錠を外す(外さないと、この process が生きる間 twin の索引の用意が錠を待ち続ける)。取り消しは process の終わりで、
   ;; 錠は接続と一緒に消える。
   (try
@@ -528,9 +539,51 @@
 (defk index-unlocked [store]
   {:pre [(: store PreparedStore)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の錠を外すため(取った接続 — ddl-database の接続 1 本)。"
+  "索引の用意の錠を外し、錠を待つ他の process へ合図(置き場の通知の channel・名 INDEX-TOPIC)を出すため(取った接続 — ddl-database の
+   接続 1 本)。"
   (<- unlocking (index-unlock-statement store.prefix))
   (<- (query-rows store.ddl-database unlocking))
+  (<- channel (notice-channel store))
+  (<- notified (SqlNotify store.database channel #(INDEX-TOPIC)))
+  (<- (notice-raised notified))
+  None)
+
+
+(defk index-lock-taken [store]
+  {:pre [(: store PreparedStore)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠を待たずに取りに行くため(真 = 取れた — ddl-database の接続 1 本が持つ)。"
+  (<- locking (index-lock-statement store.prefix))
+  (<- rows (query-rows store.ddl-database locking))
+  (bool (get rows 0 0)))
+
+
+(defk index-turn [store]
+  {:pre [(: store PreparedStore)] :post [(: % (| ExternalPromise None))]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠を取りに行き、取れたら None を、他の process が持っていれば、その process が錠を放した合図(index-unlocked)の呼び鈴を
+   返すため。取れなかった時は呼び鈴を掛けてから錠をもう 1 度試す(掛ける前に放された合図は届かないので、その時は 2 度目で取れる)。
+   呼び鈴(LISTEN の接続)は snapshot を持たずに待つ。待ち受けに届かなければ StoreUnreachable を上げる(回が落ちて観測し直す)。"
+  (<- taken (index-lock-taken store))
+  (when taken
+    (return None))
+  (<- bell (hung-bell store #(INDEX-TOPIC)))
+  (when (isinstance bell Unreachable)
+    (raise (StoreUnreachable bell.detail)))
+  (<- again (index-lock-taken store))
+  (when again
+    (<- (dropped-bell store bell))
+    (return None))
+  bell)
+
+
+(defk holder-awaited [store bell]
+  {:pre [(: store PreparedStore) (: bell ExternalPromise)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "錠を持つ process が錠を放した合図か、INDEX-RETRY-SECONDS 秒の早い方まで待つため(合図を出さずに落ちた process の錠は PostgreSQL が
+   接続と一緒に外すので、時間で観測し直す — ポーリングの訳は INDEX-RETRY-SECONDS の註)。"
+  (<- (WaitWithin bell.future INDEX-RETRY-SECONDS))
+  (<- (dropped-bell store bell))
   None)
 
 
