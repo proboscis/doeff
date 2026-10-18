@@ -47,14 +47,14 @@
 (val TRAP-RATIO 100)
 
 
-(defk trap-seed-statements [prefix count]
-  {:pre [(: prefix str) (: count int)] :post [(: % tuple)]
+(defk trap-seed-statements [prefix count expired]
+  {:pre [(: prefix str) (: count int) (: expired int)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
-  "相関の罠を持つ置き場の行(頭の註)を置き、統計を取る文の列を作るため。"
+  "相関の罠を持つ置き場の行(頭の註 — 期限を過ぎた組は expired 組)を置き、統計を取る文の列を作るため。"
   (<- asks (event-rows-statement prefix "pairs" "ask:" count YOUNG))
   (<- dones (event-rows-statement prefix "pairs" "done:" count YOUNG))
-  (<- expired-asks (event-rows-statement prefix "pairs" "ask:x-" EXPIRED-GROUPS OLD))
-  (<- expired-dones (event-rows-statement prefix "pairs" "done:x-" EXPIRED-GROUPS OLD))
+  (<- expired-asks (event-rows-statement prefix "pairs" "ask:x-" expired OLD))
+  (<- expired-dones (event-rows-statement prefix "pairs" "done:x-" expired OLD))
   (<- mixed-asks (event-rows-statement prefix "pairs" "ask:m-" MIXED-GROUPS OLD))
   (<- mixed-dones (event-rows-statement prefix "pairs" "done:m-" MIXED-GROUPS YOUNG))
   (<- pulses (event-rows-statement prefix "pulses" "pulse-" count YOUNG))
@@ -122,7 +122,7 @@
   {:pre [(: prefix str) (: count int)] :post [(: % dict)]
    :tags {:context "records" :role "program"}}
   "用意した置き場 prefix に罠の行を count 組ずつ置き、{名 値} で #(見積もりの行 実際の行) と列ごとの回収の走査の節を返すため。"
-  (<- seeds (trap-seed-statements prefix count))
+  (<- seeds (trap-seed-statements prefix count EXPIRED-GROUPS))
   (for [seed seeds]
     (<- seeded (SqlQuery DATABASE seed.text seed.params))
     (assert (isinstance seeded SqlRows) (repr seeded)))
@@ -171,6 +171,75 @@
       (:= reads (+ reads #(#(stream index small-read large-read)))))
     (assert (all (gfor #(_ _ small-read large-read) reads (<= large-read small-read))) (repr #(reads small large)))
     (finally
+      (.close connections))))
+
+
+;; --- 本番の大きさの見積もりの外れで、錠の中の文の時間 ----------------------------------------------------------------
+;; 本番の外れ(候補 約 180 行・見積もり 約 47,000 行)と同じ大きさの罠の置き場で、既定の planner のまま、錠の中で流れる文(候補の番号の
+;; DELETE)の計画と実行の時間の和が LOCK-LIMIT-MS 未満である事。置き場は期限の前の組 PROD-GROUPS 組(生きた出来事 2 × PROD-GROUPS 個)・
+;; 期限を過ぎた組 PROD-EXPIRED-GROUPS 組・journal に境より前の出来事 TRAP-FACTOR × PROD-GROUPS 個。
+;; 反例(2026-10-18 に流した): 前の形(列の全部を条件で消す DELETE 1 文)は同じ置き場(見積もり 69,060 行・実際 182 行)で 2,165 ms
+;; かかり赤 — 新しい形は 6.65 ms。前の形の時間は列の生きた出来事の数に比例する(48,000 組で 1,022 ms・75,000 組で 3,304 ms)。
+(val PROD-GROUPS 60000)
+(val PROD-EXPIRED-GROUPS 90)
+;; 見積もりの下限(本番の見積もり 約 47,000 行)と、錠を持つ時間の上限。
+(val PROD-ESTIMATE 47000)
+(val LOCK-LIMIT-MS 1000.0)
+
+
+(defk explained-milliseconds [statement]
+  {:pre [(: statement Statement)] :post [(: % float)]
+   :tags {:context "records" :role "program"}}
+  "文 statement を EXPLAIN (ANALYZE, FORMAT JSON) つきで流し(本当に流れる)、計画と実行の時間の和(ms — 錠の中で流れれば錠を持つ間)を返すため。"
+  (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+  (assert (isinstance answer SqlRows) (repr answer))
+  (val plan (get answer.rows 0 0))
+  (val explained (get (if (isinstance plan str) (json.loads plan) plan) 0))
+  (float (+ (get explained "Planning Time") (get explained "Execution Time"))))
+
+
+(defk locked-sweep-milliseconds [prefix]
+  {:pre [(: prefix str)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "列 pairs の回収の 1 回分を流し、#(錠の中の文の ms 捨てた出来事の数) を返すため(候補の番号は錠の外の読みの答え)。"
+  (<- candidates (expiring-candidates-statement prefix "pairs" BEFORE ":" EXPIRE-BATCH))
+  (<- chosen (SqlQuery DATABASE candidates.text candidates.params))
+  (assert (isinstance chosen SqlRows) (repr chosen))
+  (val sequences (tuple (gfor record chosen.rows (int (get record 0)))))
+  (<- delete (expire-chosen-events-statement prefix "pairs" BEFORE ":" sequences))
+  (<- milliseconds (explained-milliseconds delete))
+  #(milliseconds (len sequences)))
+
+
+(defk locked-sweep-on-prod-sized-trap [prefix]
+  {:pre [(: prefix str)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix に本番の大きさの罠の行を置き、{名 値} で #(見積もりの行 実際の行) と #(錠の中の文の ms 捨てた出来事の数) を返すため。"
+  (<- seeds (trap-seed-statements prefix PROD-GROUPS PROD-EXPIRED-GROUPS))
+  (for [seed seeds]
+    (<- seeded (SqlQuery DATABASE seed.text seed.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  (<- trap (estimate-and-actual prefix))
+  (<- locked (locked-sweep-milliseconds prefix))
+  {"trap" trap "locked" locked})
+
+
+(deftest test-the-sweep-holds-the-writer-lock-under-a-second-when-the-estimate-is-off-like-in-production
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (val store (prepared-store connections (fresh-prefix)))
+  (try
+    (val measured (run-sql connections (locked-sweep-on-prod-sized-trap store.prefix)))
+    (val trap (get measured "trap"))
+    (val locked (get measured "locked"))
+    ;; 罠の確かめ: 境より前の pairs の出来事は 期限を過ぎた組 + 古い要求 だけ(約 180 行)なのに、見積もりは本番と同じ 47,000 行以上。
+    (assert (= (get trap 1) (+ (* 2 PROD-EXPIRED-GROUPS) MIXED-GROUPS)) (repr measured))
+    (assert (>= (get trap 0) PROD-ESTIMATE) (repr measured))
+    ;; 錠の中の文は期限を過ぎた組を全部捨て、計画と実行の時間の和が 1 秒未満。
+    (assert (= (get locked 1) (* 2 PROD-EXPIRED-GROUPS)) (repr measured))
+    (assert (< (get locked 0) LOCK-LIMIT-MS) (repr measured))
+    (finally
+      (run-sql connections (drop-records-tables store))
       (.close connections))))
 
 
