@@ -72,15 +72,10 @@ def read_front(source: str) -> tuple[dict[str, object], str] | None:  # noqa: DO
     return fields, source[found.end() :]
 
 
-def front_problems(fields: dict[str, object]) -> tuple[str, ...]:
-    """front matterがZennの規則(zenn-modelの検査の重大な項目)に合わない所を全部返す。"""
-    title, emoji, kind, topics = (fields.get(key) for key in FRONT_KEYS[:4])
+def topic_problems(topics: object) -> tuple[str, ...]:
+    """topicsがZennの規則(zenn-modelの検査の重大な項目)に合わない所を全部返す。記事と本で同じ規則。"""
     topic_list = topics if isinstance(topics, list) else []
     checks = (
-        (tuple(fields) == FRONT_KEYS, f"front matterの項目は{FRONT_KEYS}の順にしてください"),
-        (isinstance(title, str) and 0 < len(title) <= 70, "titleは1〜70字の文字列にしてください"),
-        (isinstance(emoji, str) and len(emoji) > 0, "emojiを1つ指定してください"),
-        (kind in ("tech", "idea"), "typeはtechかideaにしてください"),
         (isinstance(topics, list) and 0 < len(topics) <= 5, "topicsは1〜5個の配列にしてください"),
         *(
             (
@@ -91,6 +86,18 @@ def front_problems(fields: dict[str, object]) -> tuple[str, ...]:
         ),
     )
     return tuple(message for valid, message in checks if not valid)
+
+
+def front_problems(fields: dict[str, object]) -> tuple[str, ...]:
+    """front matterがZennの規則(zenn-modelの検査の重大な項目)に合わない所を全部返す。"""
+    title, emoji, kind, topics = (fields.get(key) for key in FRONT_KEYS[:4])
+    checks = (
+        (tuple(fields) == FRONT_KEYS, f"front matterの項目は{FRONT_KEYS}の順にしてください"),
+        (isinstance(title, str) and 0 < len(title) <= 70, "titleは1〜70字の文字列にしてください"),
+        (isinstance(emoji, str) and len(emoji) > 0, "emojiを1つ指定してください"),
+        (kind in ("tech", "idea"), "typeはtechかideaにしてください"),
+    )
+    return (*(message for valid, message in checks if not valid), *topic_problems(topics))
 
 
 def image_problems(target: str) -> tuple[str, ...]:
@@ -108,6 +115,35 @@ def image_problems(target: str) -> tuple[str, ...]:
         ),
     )
     return tuple(message for valid, message in checks if not valid)
+
+
+def image_targets(released: str) -> tuple[str, ...]:
+    """公開する本文が参照する画像のパスを、出てくる順に返す。"""
+    return tuple(_IMAGE_TARGET.findall(released))
+
+
+def body_problems(released: str) -> tuple[str, ...]:
+    """公開する本文の、Zennに置けない画像と、公開先から開けないリンク(リポジトリの中の相対パス)を全部返す。"""
+    stray = tuple(
+        f"公開先から開けないリンク{target}が残っています"
+        for target in _LINK_TARGET.findall(released)
+        if not target.startswith(("https://", "http://", "#"))
+    )
+    return (
+        *(problem for target in image_targets(released) for problem in image_problems(target)),
+        *stray,
+    )
+
+
+def copy_images(images: tuple[str, ...], output: Path) -> None:
+    """本文が参照する画像を、出力先の同じパスへ写す。"""
+    for target in images:
+        image = (ROOT / target.lstrip("/")).resolve()
+        destination = output / target.lstrip("/")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # 出力先がこのリポジトリの根なら、画像はすでに同じ場所にある。
+        if destination.resolve() != image:
+            shutil.copyfile(image, destination)
 
 
 def typed_front(fields: dict[str, object]) -> Front | None:
@@ -139,18 +175,8 @@ def prepare(row: release.PlanRow, rows: tuple[release.PlanRow, ...]) -> Prepared
         return Prepared(row.name, row.slug, published, "", (), ("front matterがありません",))
     fields, body = parsed
     released = release.release_text(body, rows)
-    images = tuple(_IMAGE_TARGET.findall(released))
-    # 公開先から開けないリンク(リポジトリの中の相対パス)を残さない。
-    stray = tuple(
-        f"公開先から開けないリンク{target}が残っています"
-        for target in _LINK_TARGET.findall(released)
-        if not target.startswith(("https://", "http://", "#"))
-    )
-    problems = (
-        *front_problems(fields),
-        *(problem for target in images for problem in image_problems(target)),
-        *stray,
-    )
+    images = image_targets(released)
+    problems = (*front_problems(fields), *body_problems(released))
     front = typed_front(fields)
     if problems or front is None:
         return Prepared(row.name, row.slug, published, "", images, problems or ("型の誤り",))
@@ -161,13 +187,7 @@ def prepare(row: release.PlanRow, rows: tuple[release.PlanRow, ...]) -> Prepared
 
 def write(item: Prepared, output: Path) -> None:
     """食い違いの無い記事1本を、出力先のarticles/<slug>.mdと画像へ書く。"""
-    for target in item.images:
-        image = (ROOT / target.lstrip("/")).resolve()
-        destination = output / target.lstrip("/")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        # 出力先がこのリポジトリの根なら、画像はすでに同じ場所にある。
-        if destination.resolve() != image:
-            shutil.copyfile(image, destination)
+    copy_images(item.images, output)
     (output / "articles").mkdir(parents=True, exist_ok=True)
     (output / "articles" / f"{item.slug}.md").write_text(item.article)
 

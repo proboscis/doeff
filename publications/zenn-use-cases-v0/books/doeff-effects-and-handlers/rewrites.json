@@ -1,0 +1,70 @@
+{
+  "*": [
+    {
+      "from": "連載が初めての方は[1本目の入門](doeff-main.md)から",
+      "to": "doeffが初めての方は[章](doeff-main.md)から"
+    },
+    {
+      "from": "\n[doeffとは？：メイン記事へ戻る](doeff-main.md)\n",
+      "to": "\n"
+    }
+  ],
+  "doeff-main.md": [
+    {
+      "from": "下の表は、困りごとごとの回の一覧です。公開した回から順に、表にリンクを付けていきます。",
+      "to": "下の表は、困りごとごとの入口の一覧です。この本の章は、章の番号で示しました。番号の無い題は、この本の外の記事です。"
+    },
+    {
+      "from": "| 回 |",
+      "to": "| 章・記事 |"
+    }
+  ],
+  "doeff-time.md": [
+    {
+      "from": "`await`との違いは[coroutineとの違い](doeff-coroutines.md)、",
+      "to": "`await`との違いは[章](doeff-coroutines.md)、"
+    }
+  ],
+  "doeff-replay.md": [
+    {
+      "from": "次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。",
+      "to": "時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かす話は、[章](doeff-backtest.md)で書きます。"
+    }
+  ],
+  "doeff-coroutines.md": [
+    {
+      "from": "次の10本目では、設計で決めた約束を、doeffのテストとして走らせます。",
+      "to": "設計で決めた約束を、doeffのテストとして走らせる話は、[章](doeff-adr.md)で書きます。"
+    }
+  ],
+  "doeff-fleet.md": [
+    {
+      "from": "要る時だけ決まりを見せるhookの話は、連載の8本目で書きます。題は「[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)」です。",
+      "to": "要る時だけ決まりを見せるhookの話は、次の[章](doeff-hooks.md)で書きます。"
+    },
+    {
+      "from": "AIの起動と結果待ちを処理として書く話は、[AIエージェントの起動と結果待ち](doeff-agents.md)にあります。",
+      "to": "AIの起動と結果待ちを処理として書く話は、[章](doeff-agents.md)にあります。"
+    },
+    {
+      "from": "この記事のcard自身が",
+      "to": "この章の元の記事のcard自身が"
+    }
+  ],
+  "doeff-hooks.md": [
+    {
+      "from": "全体の話は、連載の5本目「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」にあります。",
+      "to": "全体の話は、前の[章](doeff-fleet.md)にあります。"
+    },
+    {
+      "from": "次の9本目は「[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)」です。この記事の`AskJudge`のように、止まった所へ答える役を外側に置く理由を扱います。",
+      "to": "この章の`AskJudge`も、止まった所へ答える役を外側に置きました。そう置く理由は、[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で扱いました。"
+    }
+  ],
+  "doeff-adr.md": [
+    {
+      "from": "連載はこの10本目で一区切りです。1本目の目次から、ほかの悩みに合う回を選べます。\n\n",
+      "to": ""
+    }
+  ]
+}

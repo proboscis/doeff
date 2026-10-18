@@ -1,6 +1,6 @@
 # packages網羅表 — 記事編集の根拠
 
-2026-09-16に再精査し、2026-10-17に今の`packages/`へ合わせ直した。9月の棚卸しでは`packages/`の全31ディレクトリを列挙し、30にはパッケージ定義があり、旧`doeff-agentd`は廃止済みの残存ディレクトリとして区別した。その後に8パッケージが加わり（[下の節](#9月の棚卸し以後に足した8パッケージ)）、`doeff-agentd`はgitの管理から2026-07-30に外れていたので表から外した。今は全38ディレクトリで、すべてにパッケージ定義（pyproject.tomlかCargo.toml）がある。すべてに紹介先か除外理由を割り当てた（記事が無いものは「記事なし」と書き、理由を注意点に書く）。
+2026-09-16に再精査し、2026-10-17に今の`packages/`へ合わせ直した。9月の棚卸しでは`packages/`の全31ディレクトリを列挙し、30にはパッケージ定義があり、旧`doeff-agentd`は廃止済みの残存ディレクトリとして区別した。その後に9パッケージが加わり（[下の節](#9月の棚卸し以後に足した9パッケージ)）、`doeff-agentd`はgitの管理から2026-07-30に外れていたので表から外した。今は全39ディレクトリで、すべてにパッケージ定義（pyproject.tomlかCargo.toml）がある。すべてに紹介先か除外理由を割り当てた（記事が無いものは「記事なし」と書き、理由を注意点に書く）。
 
 これは**静的な棚卸しと記事への対応付け**であり、全パッケージの実動作を検証した一覧ではない。README、公開エフェクト・ハンドラ、実例やテストの内容を読み、旧API・開発途中・環境依存の条件を記録した。テストへのリンクは根拠としての所在を示し、今回の実行済みを意味しない。
 
@@ -13,6 +13,7 @@
 | `doeff-agentic-cli` | ワークフローの一覧・監視・接続用Rust CLI | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agentic-cli/src/main.rs) | 専用テスト未特定（確認対象を保証しない） | 実CLI接続・速度は未検証 |
 | `doeff-agents` | 起動・観測・追加指示・停止・スキーマで指定した結果の受け取り | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agents/src/doeff_agents/effects/agent.py) | [所在](../../packages/doeff-agents/tests/conftest.py) | 実エージェント未起動。AwaitOutcomeの状態を確認してresultを利用 |
 | `doeff-claude-code` | `claude -p`（print mode）のprocessの寿命を受け持つeffectとhandler。手番の開始・入力の追加・中断・出来事の読み取り・許可への回答・会話の終了と、本番/fakeのhandler | 記事なし（上位は[agents](doeff-agents.md)） | [定義・説明](../../packages/doeff-claude-code/README.md) | [所在](../../packages/doeff-claude-code/tests/test_handler.hy) | doeff-agentsのheadless handlerの土台。[agents](doeff-agents.md)は上位のdoeff-agentsだけを扱い、このpackageのeffectは紹介していない。実CLIは未起動 |
+| `doeff-claude-judge` | doeff-system-oneの`Judge`を、Claudeの構造化の答え(structured output)への1回の問いに写し、答えを`Verdict`へ戻す純粋な変換 | 記事なし(関連は[hooks](doeff-hooks.md)) | [定義・説明](../../packages/doeff-claude-judge/README.md) | [所在](../../packages/doeff-claude-judge/tests/test_wire.py) | provider側のpackage(doeff-jevと同じ位置)。答えを運ぶhandlerはまだ無く、通信しない。[hooks](doeff-hooks.md)はこのpackageを名指ししない |
 | `doeff-cluster` | Programをk8sのDeploymentのように動かし続ける実行基盤。coordinator・worker・名前付きlease・Rollout・drain・effectの記録と再生 | 記事なし | [定義・説明](../../packages/doeff-cluster/README.md) | [所在](../../packages/doeff-cluster/tests/test_coordinator.hy) | 業務を知らない基盤で、コード例を載せる記事がまだ無い。READMEは長く、冒頭の全体図・用語・module表を読んだ範囲。coordinator・workerの起動とk8s配備は未実行 |
 | `doeff-codex` | `codex app-server`（JSON-RPC・stdio）をheadlessで走らせる層。ターンの開始・入力の追加・中断・出来事の読み取り・要求への回答・会話の終了と、本番/fakeのhandler | 記事なし（上位は[agents](doeff-agents.md)） | [定義・説明](../../packages/doeff-codex/README.md) | [所在](../../packages/doeff-codex/tests/test_scenarios.hy) | doeff-agentsのheadless codex handlerの土台。[agents](doeff-agents.md)は上位の`AgentType.CODEX`を使う例だけで、このpackageのeffectは紹介していない。実codexは未起動 |
 | `doeff-conductor` | issue・隔離Git作業環境・エージェント・依存関係付きワークフロー・記録 | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-conductor/README.md) | [所在](../../packages/doeff-conductor/tests/__init__.py) | 時刻・乱数のみのワークフローは実行確認。エージェント・Git操作は未実行 |
@@ -47,9 +48,9 @@
 | `doeff-vm` | Pythonバインディング・VM接続・継続/トレース等の公開プリミティブ | [VM](doeff-vm.md) | [定義・説明](../../packages/doeff-vm/Cargo.toml) | [所在](../../packages/doeff-vm/tests/test_pyvm.py) | 独立した業務機能としては扱わない |
 | `doeff-vm-core` | RustのVM本体・継続管理・実行機構 | [VM](doeff-vm.md) | [定義・説明](../../packages/doeff-vm-core/Cargo.toml) | [所在](../../packages/doeff-vm-core/tests/test_vm_module_split.py) | 速度比較や耐久性の実証はしていない |
 
-## 9月の棚卸し以後に足した8パッケージ
+## 9月の棚卸し以後に足した9パッケージ
 
-2026-09-16の棚卸しの後に、次の8パッケージが`packages/`へ加わった。上の表に足し、READMEの冒頭とpyproject.tomlを読んだ静的な棚卸しにとどめる。テストは実行しておらず、記事への対応付けも次の通り限られる。
+2026-09-16の棚卸しの後に、次の9パッケージが`packages/`へ加わった。上の表に足し、READMEの冒頭とpyproject.tomlを読んだ静的な棚卸しにとどめる。テストは実行しておらず、記事への対応付けも次の通り限られる。
 
 | パッケージ | 加わった日 | 記事での扱い |
 | --- | --- | --- |
@@ -61,8 +62,9 @@
 | `doeff-records` | 2026-09-26 | 記事なし |
 | `doeff-validation` | 2026-09-26 | 記事なし |
 | `doeff-codex` | 2026-10-10 | 記事なし。上位のdoeff-agentsは[agents](doeff-agents.md) |
+| `doeff-claude-judge` | 2026-10-18 | 記事なし |
 
-日はgitで`packages/<名>`が最初に入ったコミットの日付。「記事なし」の7つは、記事を書く時にこの表へ紹介先を足す。外した`doeff-agentd`は、2026-07-30のコミット7e12d0068でgitの管理から削除された。9月の棚卸しのcheckoutには未追跡のCargo.lockだけの残骸があったが、2026-10-17のこの作業の時点のcheckoutには無い。`verify_publication.py`は`packages/`の中のディレクトリを全部数えるので、残骸が手元に残る環境では表に無い名として落ちる。
+日はgitで`packages/<名>`が最初に入ったコミットの日付。「記事なし」の8つは、記事を書く時にこの表へ紹介先を足す。外した`doeff-agentd`は、2026-07-30のコミット7e12d0068でgitの管理から削除された。9月の棚卸しのcheckoutには未追跡のCargo.lockだけの残骸があったが、2026-10-17のこの作業の時点のcheckoutには無い。`verify_publication.py`は`packages/`の中のディレクトリを全部数えるので、残骸が手元に残る環境では表に無い名として落ちる。
 
 ## コアの能力も省略しない
 

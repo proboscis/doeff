@@ -16,6 +16,8 @@ import struct
 from itertools import pairwise
 from pathlib import Path
 
+from export_zenn_book import Book
+from export_zenn_book import prepare_all as prepare_books
 from render_release import read_rows
 
 SOURCE = Path(__file__).resolve().parent
@@ -116,6 +118,17 @@ def verify_series_links() -> int:
     return len(names)
 
 
+def verify_books() -> tuple[Book, ...]:
+    """本の正本(books/<本のslug>/)が、今の原稿から崩れずに書き出せることを照らし、書き出す形の本を返す。
+
+    原稿の文が変わり、rewrites.jsonの直す前の文が見つからない時や、連載の言葉が章に残る時に落ちる。
+    """
+    books = prepare_books()
+    problems = tuple(problem for book in books for problem in book.problems)
+    assert not problems, ("本の正本を書き出せない(export_zenn_book.pyを走らせて直し方を見る)", problems)
+    return books
+
+
 def verify() -> None:
     articles = {path.stem.removeprefix("doeff-"): path for path in SOURCE.glob("doeff-*.md")}
     captions = read_ledger(CAPTIONS)
@@ -170,9 +183,11 @@ def verify() -> None:
         "doeff-" in row and ("本文にコード" in row or "examples/" in row) for row in feature_rows
     )
     series = verify_series_links()
+    books = verify_books()
     print(
         f"OK: {len(articles)}記事・{len(packages)}パッケージ・{len(feature_rows)}機能・{len(expected_images)}枚の図"
         f"(うち{len(missing)}枚は台帳のmissingの通りまだ無い)・Python {blocks}ブロック・公開順の{series}回の前後のリンク"
+        f"・本{len(books)}冊({sum(len(book.chapters) for book in books)}章)"
     )
 
 
