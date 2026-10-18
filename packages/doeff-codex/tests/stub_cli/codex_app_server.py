@@ -31,12 +31,20 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   --resume-history-bytes <数> が在れば、thread/resume の答えの thread の turns(録った答えでは thread の最後の欄)に、その数の
   bytes ほどの履歴(1 MB ほどの文字を持つターンの列)を載せ、1 行のまま少しずつ書く(本物の codex が再開する session の履歴全体を
   答え 1 行で運ぶ形 — 読み手の 1 行の上限の検)。
+- 状態の DB(本物の codex 0.162.1 で測った形 — doeff_codex.credential_home の頭の註): 起動の時、置き場($CODEX_SQLITE_HOME、
+  無ければ $CODEX_HOME)の state_5.sqlite が無ければ、sessions の rollout を全部読んで DB を作る(backfill — 読んだ bytes を数える。
+  環境変数 STUB_BACKFILL_SECONDS が在れば、作る間その秒だけ待つ)。ほかの起動が DB を作っている最中(作りの目印の file が在る)なら、
+  本物と同じ文を stderr に書いて code 1 で降りる。thread/start は sessions に rollout を 1 本書き、DB の行に家を通る path
+  ($CODEX_HOME/sessions/…)を書く。thread/resume は、DB の行の path が無ければ本物と同じ誤り(no rollout found for thread id)で断り、
+  行が無ければ sessions の file を名で探して行を作る(見つからなければ今までどおり答える)。STATE_PHRASE が在れば
+  ``STATE backfilled=<この起動が読んだ bytes> rows=<DB の行の数>`` と答える。
 - 環境変数 STUB_ID_PREFIX が在れば、thread とターンの id の頭に足す(1 つの host に開いた複数の会話が同じ id に衝突しないように —
   この process は id を 1 から数えるので、無ければ会話ごとに stub-thread-1 になる)。
 """
 
 import json
 import os
+import sqlite3
 import sys
 import threading
 from pathlib import Path
@@ -47,6 +55,15 @@ MAX_SLOW_PIECES = 400
 IMAGES_PHRASE = "Count the attached images."
 SETTINGS_PHRASE = "Tell the settings."
 HOME_PHRASE = "Tell the home."
+STATE_PHRASE = "Tell the state."
+STATE_DB = "state_5.sqlite"
+# 本物の codex 0.162.1 が、DB を作る最中のほかの起動と重なった時に stderr に書いて降りた文の頭。
+STATE_INIT_FAILED = "Error: failed to initialize sqlite state runtime"
+# 本物の codex 0.162.1 が、DB の行の rollout の path が無い thread の thread/resume を断った誤りの文の頭。
+NO_ROLLOUT = "no rollout found for thread id"
+# DB を作る間の長さの模型(本物の codex は記録の全部を読む間 DB を作りかけのまま持つ — 条件の待ちではなく、答えの文字の間合いと同じ
+# 外の時間の模型)。鳴らさない Event の wait で、STUB_BACKFILL_SECONDS の秒だけ作りかけを保つ。
+BACKFILL_PACE = threading.Event()
 STEERED_PREFIX = "steered:"
 # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
 REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls", "OTHER-TOOLS": "other-tools",
@@ -61,6 +78,10 @@ HISTORY_PIECE_CHARS = 1_000_000
 HISTORY_MARK = "__stub-history__"
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
+# DB の行の rollout の path が無い thread の thread/resume を断る誤りの code(本物の codex 0.162.1 の答え — invalid request)。
+NO_ROLLOUT_CODE = -32600
+# rollout の file の名の頭(rollout-<刻 19 字>-<thread の id>.jsonl)の字数。
+ROLLOUT_HEAD_CHARS = len("rollout-2026-10-19T00-00-00-")
 
 
 def disabled_features(argv: list[str]) -> list[str]:
@@ -102,6 +123,80 @@ def home_text() -> str:
             f"config={entry_kind(home / 'config.toml')} sessions={entry_kind(home / 'sessions')}")
 
 
+def codex_home() -> Path:
+    """この process の CODEX_HOME。"""
+    return Path(os.environ.get("CODEX_HOME", ""))
+
+
+def state_db_path() -> Path:
+    """状態の DB の path(置き場 = $CODEX_SQLITE_HOME、無ければ $CODEX_HOME — 本物の codex の決まり)。"""
+    return Path(os.environ.get("CODEX_SQLITE_HOME") or os.environ.get("CODEX_HOME", "")) / STATE_DB
+
+
+def open_state_db() -> int:
+    """起動の時に状態の DB を開くため(無ければ sessions を全部読んで作る — 頭の註)。答え = この起動が読んだ rollout の bytes。"""
+    db = state_db_path()
+    if db.exists():
+        return 0
+    making = db.with_name(STATE_DB + ".making")
+    try:
+        marker = os.open(making, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        sys.stderr.write(f"{STATE_INIT_FAILED} under {db.parent}\n")
+        sys.stderr.flush()
+        sys.exit(1)
+    sessions = codex_home() / "sessions"
+    rollouts = sorted(sessions.rglob("rollout-*.jsonl")) if sessions.is_dir() else []
+    read = sum(len(path.read_bytes()) for path in rollouts)
+    BACKFILL_PACE.wait(float(os.environ.get("STUB_BACKFILL_SECONDS", "0")))
+    building = db.with_name(STATE_DB + ".building")
+    connection = sqlite3.connect(building)
+    connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)")
+    connection.executemany("INSERT INTO threads VALUES (?, ?)",
+                           [(path.stem[ROLLOUT_HEAD_CHARS:], str(path)) for path in rollouts])
+    connection.commit()
+    connection.close()
+    os.replace(building, db)
+    os.close(marker)
+    os.unlink(making)
+    return read
+
+
+def state_connection() -> sqlite3.Connection:
+    """状態の DB へつなぐため(ほかの起動の書き込みとは待ち合う)。"""
+    return sqlite3.connect(state_db_path(), timeout=30)
+
+
+def write_rollout(thread_id: str) -> None:
+    """新しい thread の rollout を sessions に書き、DB の行に家を通る path を書くため(本物の codex の形)。"""
+    path = codex_home() / "sessions" / "2026" / "10" / "19" / f"rollout-2026-10-19T00-00-00-{thread_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"type": "session_meta", "payload": {"id": thread_id}}) + "\n", encoding="utf-8")
+    with state_connection() as connection:
+        connection.execute("INSERT OR REPLACE INTO threads VALUES (?, ?)", (thread_id, str(path)))
+
+
+def resume_refusal(thread_id: str) -> str | None:
+    """thread/resume を本物の codex と同じく断る訳を引くため(DB の行の path が無い時だけ — 頭の註)。行が無ければ sessions の file を
+    名で探して行を作る。答え = 断りの文か None。"""
+    with state_connection() as connection:
+        row = connection.execute("SELECT rollout_path FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if row is not None:
+            return None if Path(row[0]).exists() else f"{NO_ROLLOUT} {thread_id}"
+        sessions = codex_home() / "sessions"
+        found = next(iter(sessions.rglob(f"rollout-*-{thread_id}.jsonl")), None) if sessions.is_dir() else None
+        if found is not None:
+            connection.execute("INSERT INTO threads VALUES (?, ?)", (thread_id, str(found.resolve())))
+    return None
+
+
+def state_text(backfilled: int) -> str:
+    """この起動が読んだ bytes と DB の行の数を答えの文にするため。"""
+    with state_connection() as connection:
+        rows = connection.execute("SELECT count(*) FROM threads").fetchone()[0]
+    return f"STATE backfilled={backfilled} rows={rows}"
+
+
 def recorded_messages(name: str) -> list[dict[str, object]]:
     """録った 1 本の stdout の行を JSON の object の列で読むため。"""
     return [json.loads(line) for line in (RECORDED / f"{name}.stdout.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -115,7 +210,8 @@ def answer_of(messages: list[dict[str, object]], request_id: int) -> dict[str, o
 class Stub:
     """替え玉の 1 つの process の状態(thread とターンの id・止めの合図)。要求をまたいで書き換える欄は名の頭に mut_ を付ける(DOEFF002)。"""
 
-    def __init__(self) -> None:
+    def __init__(self, backfilled: int) -> None:
+        self.backfilled = backfilled
         self.two_turns = recorded_messages("two-turns")
         self.interrupt = recorded_messages("interrupt")
         thread_answer = answer_of(self.two_turns, 2)
@@ -221,10 +317,15 @@ class Stub:
         elif method == "thread/start":
             self.mut_thread_id = self.fresh_id("thread")
             self.mut_opened_with = dict(params)  # type: ignore[arg-type]  # 要求の形は handler の rpc.hy が作る
+            write_rollout(self.mut_thread_id)
             self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]})
             started = next(m for m in self.two_turns if m.get("method") == "thread/started")
             self.write(self.renamed(started, ""))
         elif method == "thread/resume":
+            refusal = resume_refusal(str(params["threadId"]))  # type: ignore[index]  # 同上
+            if refusal is not None:
+                self.write({"id": request_id, "error": {"code": NO_ROLLOUT_CODE, "message": refusal}})
+                return
             self.mut_thread_id = str(params["threadId"])  # type: ignore[index]  # 同上
             self.mut_opened_with = dict(params)  # type: ignore[arg-type]  # 同上
             answer = {"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]}
@@ -273,6 +374,9 @@ class Stub:
             return
         if HOME_PHRASE in said:
             self.answer_turn(turn_id, home_text())
+            return
+        if STATE_PHRASE in said:
+            self.answer_turn(turn_id, state_text(self.backfilled))
             return
         spanning = next((recorded for marker, recorded in SPANNING.items() if marker in said), None)
         if spanning is not None:
@@ -331,7 +435,7 @@ class Stub:
 
 def main() -> None:
     """stdin の要求を 1 行ずつ読んで答えるため(stdin の EOF で終わる)。"""
-    stub = Stub()
+    stub = Stub(open_state_db())
     for line in sys.stdin:
         if line.strip():
             stub.handle(json.loads(line))

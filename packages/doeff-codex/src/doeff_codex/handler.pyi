@@ -35,6 +35,9 @@ from doeff_codex.process import TERM_GRACE_SECONDS as TERM_GRACE_SECONDS
 from doeff_codex.process import LINE_CAP_BYTES as LINE_CAP_BYTES
 from doeff_codex.credential_home import open_credential_home as open_credential_home
 from doeff_codex.credential_home import close_credential_home as close_credential_home
+from doeff_codex.credential_home import credential_env as credential_env
+from doeff_codex.credential_home import state_db_claim as state_db_claim
+from doeff_codex.credential_home import state_db_release as state_db_release
 from doeff_codex.effects import CodexStartTurn as CodexStartTurn
 from doeff_codex.effects import CodexSteerTurn as CodexSteerTurn
 from doeff_codex.effects import CodexInterruptTurn as CodexInterruptTurn
@@ -204,6 +207,26 @@ def refused(method: str, answer: lines.ErrorResponse) -> _Program[RequestRefused
     ...
 
 def retire(runtime: SessionRuntime) -> _Program[bool, object]:
+    ...
+
+class StateDbHandoff:
+    lock: Incomplete
+    mut_taken: Incomplete
+    mut_left: Incomplete
+
+    def __init__(self) -> None:
+        ...
+
+    def offer(self, claim: Incomplete) -> Incomplete:
+        ...
+
+    def leave(self) -> Incomplete:
+        ...
+
+def take_state_db_lock(base: str, handoff: StateDbHandoff, bell: ExternalPromise) -> None:
+    ...
+
+def claim_state_db_within(base: str, seconds: float) -> _Program[int | bool, object]:
     ...
 
 def launch(host: CodexHost, runtime: SessionRuntime, spec: CodexSessionSpec, origin: FreshThread | ResumeThread) -> _Program[str | ThreadUnknown | LaunchFailed | RequestRefused, object]:
