@@ -100,12 +100,15 @@ guard = {guard!r}
 
 def load_guard():
     # 包みの package は checkout の中にあるので、その .pyc を checkout に書かない(root の conftest の検査)—
-    # 記録の module も先に読んでおく(包みは Hy の source に初めて当たった時に読む)。
+    # 包みの module を全部先に読んでおく(包みは一部の module を Hy の source に初めて当たった時に読む。名を並べて読むと、
+    # 後から足した module(expansion_trees・macro_hints)が書く設定の下で初めて読まれ、その .pyc が checkout に書かれた)。
+    import importlib
+    import pkgutil
     sys.dont_write_bytecode = True
     sys.path.insert(0, {guard_root!r})
     import doeff_hy_bytecode_guard
-    import doeff_hy_bytecode_guard.records
-    import doeff_hy_bytecode_guard.macro_use
+    for module in pkgutil.iter_modules(doeff_hy_bytecode_guard.__path__, "doeff_hy_bytecode_guard."):
+        importlib.import_module(module.name)
     doeff_hy_bytecode_guard.install()
     sys.dont_write_bytecode = False
 
