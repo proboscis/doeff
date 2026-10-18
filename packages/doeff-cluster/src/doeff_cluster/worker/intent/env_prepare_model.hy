@@ -15,9 +15,9 @@
 ;; --- 要求と答え ---------------------------------------------------------------------------
 
 (defrecord KnownRoot
-  "worker が既に完成させた root(木を写す元の候補)。platform = 完成マーカーに書いた、その root の platform(元の鍵の材料 — 準備の要求の
-   platform と比べる。欄の無い印の root は None = 分からない・写し元にしない)・made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 — 元の鍵が同じ root のうち最も新しく完成した物を写し元に選ぶため・
-   #3677)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
+  "worker が既に完成させた root(木を写す元の候補)。platform = 完成マーカーに書いた、その root の platform(欄の無い印の root は
+   None = 分からない・写し元にしない)・made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 — 同じ repo を持つ root のうち最も新しく完成した物を写し元に選ぶため・
+   #3677・card ki-61eb8170b3b9)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
    None = 分からない — #3706)。"
   (#^ RuntimeEnv env)
   (#^ str root)
@@ -42,7 +42,7 @@
 
 
 (defrecord StagePart
-  "処理ステージの中の 1 区切りの秒と数(#3676 — 木の処理ステージの repo ごと)。name = repo の名・how = 置き方(TREE-COPY = 元の鍵が同じ
+  "処理ステージの中の 1 区切りの秒と数(#3676 — 木の処理ステージの repo ごと)。name = repo の名・how = 置き方(TREE-COPY = 同じ repo を持つ
    別の root からの写し・TREE-EXPAND = mirror からの展開)・seconds = 経過の秒・copied・removed・replaced = 木の file の数の内訳
    (TreePlaced と同じ意味・#3677)。"
   (#^ str name)
@@ -58,7 +58,7 @@
 
 
 (defrecord TreeSource
-  "木を写す元(元の鍵が同じ完成済みの root の中の、同じ repo の木)。dir = その木の dir・commit = その木が置いた commit(完成済みの
+  "木を写す元(同じ repo — 名と url の正体 — を持つ完成済みの root の中の、その repo の木)。dir = その木の dir・commit = その木が置いた commit(完成済みの
    root の宣言から読む)。"
   (#^ str dir)
   (#^ str commit))

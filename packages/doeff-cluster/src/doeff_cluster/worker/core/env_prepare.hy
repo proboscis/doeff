@@ -8,8 +8,9 @@
 ;;; 処理ステージ(失敗はその場で EnvFailure を値で返し、後の処理ステージを走らせない — どれも子 process を起こす前):
 ;;;   1 空き      DiskFree                                   空きが下限を切れば disk-full
 ;;;   2 mirror    EnsureMirror / FetchCommit                 repo-unreachable・commit-missing(URL は断らない — 鍵の表に無い URL は鍵なしで clone)
-;;;   3 展開      MaterializeTree                            元の鍵(source-key)が同じ完成済みの root の木を hardlink で写し、変わった path だけ
-;;;                                                          新しく置く(追跡しない .venv・__pycache__・マーカーは写さない)・写し元が無ければ展開 — #3677
+;;;   3 展開      MaterializeTree                            同じ repo(名と url の正体)を持つ完成済みの root の木を repo ごとに hardlink で写し、
+;;;                                                          変わった path だけ新しく置く(追跡しない .venv・__pycache__・マーカーは写さない)・
+;;;                                                          写し元が無ければ展開 — #3677・card ki-61eb8170b3b9
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
@@ -39,10 +40,10 @@
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
-(import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json source-key])
+(import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
 (import doeff_cluster.shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -87,29 +88,36 @@
   (+ declared (tuple (gfor r extra :if (not-in r declared) r))))
 
 
-(defk copy-root [request]
-  {:pre [(: request PrepareRequest)] :post [(: % (| KnownRoot None))]}
-  "木を写す元の root を選ぶため: 元の鍵(source-key — commit が替わっても変わらない環境の同一性)が要求と同じ完成済みの root のうち、
-   最も新しく完成した物(同じ時刻なら root の path の大きい方 — 並びに依らず同じ root を選ぶ)。無ければ None(木は全部 mirror から展開する)。
-   repo の url は綴りでなく正体で比べる(元の鍵の中で url-location を通す — #3693)。"
-  (<- wanted str (source-key request.env request.platform))
+(defk repo-in [env wanted]
+  {:pre [(: env RuntimeEnv) (: wanted dict)] :post [(: % (| RepoCheckout None))]}
+  "宣言 env の repo のうち、木の同一性(repo-source-material — 名と url の正体)が wanted と同じ物を求めるため(無ければ None)。"
+  (var found None)
+  (for [r env.repos]
+    (when (is found None)
+      (<- material dict (repo-source-material r))
+      (when (= material wanted) (:= found r))))
+  found)
+
+
+(defk tree-source [request repo]
+  {:pre [(: request PrepareRequest) (: repo RepoCheckout)] :post [(: % (| TreeSource None))]}
+  "宣言の repo 1 つの木を写す元を選ぶため: 同じ repo(名と url の正体 — 綴りでなく正体で比べる・#3693)を宣言に持つ完成済みの root の
+   うち、最も新しく完成した物(同じ時刻なら root の path の大きい方 — 並びに依らず同じ root を選ぶ)の木と、その木が置いた commit(その
+   root の宣言から読む)。無ければ None(木は mirror から展開する)。写し元は repo ごとに選び、lock の sha256・Python・組・native・import の
+   根は比べない — 写すのは写し元の commit が追跡する file だけで、木の中身は repo と commit で決まる(venv・焼いた .pyc・native の組みの
+   出力は追跡しない物なので、写し元の宣言が違っても新しい木へ渡らない)。直す前は環境の同一性(lock を含む元の鍵)で root を選び、
+   uv.lock が替わるたびに全部の木を展開し直した(card ki-61eb8170b3b9)。"
+  (<- wanted dict (repo-source-material repo))
   (var best None)
+  (var best-order None)
   (for [k request.known]
-    (when (and (!= k.root request.root) (is-not k.platform None))
-      (<- key str (source-key k.env k.platform))
-      (when (and (= key wanted) (or (is best None) (> #(k.made-ms k.root) #(best.made-ms best.root))))
-        (:= best k))))
+    (when (and (!= k.root request.root) (is-not k.platform None)
+               (or (is best-order None) (> #(k.made-ms k.root) best-order)))
+      (<- held (| RepoCheckout None) (repo-in k.env wanted))
+      (when (is-not held None)
+        (:= best (TreeSource :dir (.format "{}/{}" k.root held.name) :commit held.commit))
+        (:= best-order #(k.made-ms k.root)))))
   best)
-
-
-(defk tree-source [from-root repo]
-  {:pre [(: from-root (| KnownRoot None)) (: repo RepoCheckout)] :post [(: % (| TreeSource None))]}
-  "写し元の root(copy-root の答え)の中の repo の木と、その木が置いた commit(その root の宣言から読む)。写し元が無ければ None。"
-  (if (is from-root None)
-      None
-      (next (gfor r from-root.env.repos :if (= r.name repo.name)
-                  (TreeSource :dir (.format "{}/{}" from-root.root r.name) :commit r.commit))
-            None)))
 
 
 (defk env-marker->json [marker]
@@ -243,19 +251,21 @@
 
 (defk stage-trees [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
-  "repo ごとのツリーを root の下に兄弟で並べる(元の鍵が同じ完成済みの root が在れば、その木を hardlink で写して変わった path だけ新しく
+  "repo ごとのツリーを root の下に兄弟で並べる(同じ repo を持つ完成済みの root が在れば、その木を hardlink で写して変わった path だけ新しく
    置く — 無ければ mirror から展開する)。repo ごとの秒と置き方(写し・展開)と file の数の内訳(写した・消した・置き直した)を区切りとして
    印へ渡し、この処理ステージが root に書いた file の数は新しく置いた数の合計(hardlink は書かない・#3677)。写し元を渡したのに展開した
-   木は、その理由を記録に残す。"
+   木はその理由を、写し元が無くて展開した木はそのことを記録に残す。"
   (val mirrors (dfor m state.mirrors m.name m.mirror))
-  (<- from-root (| KnownRoot None) (copy-root request))
   (var parts #())
   (for [repo request.env.repos]
-    (<- source (| TreeSource None) (tree-source from-root repo))
+    (<- source (| TreeSource None) (tree-source request repo))
     (<- started float (GetMonotonic))
     (<- placed TreePlaced (MaterializeTree (get mirrors repo.name) repo.commit (.format "{}/{}" request.root repo.name) source))
     (<- ended float (GetMonotonic))
-    (when placed.reason
+    (cond
+      (is source None)
+      (<- (PrepareNote (.format "repo {} の木は写し元が無い(同じ repo を持つ完成済みの root を知らない)ので展開した" repo.name)))
+      placed.reason
       (<- (PrepareNote (.format "repo {} の木を写し元 {} から写せず展開した: {}" repo.name source.dir placed.reason))))
     (:= parts (+ parts #((StagePart :name repo.name :how placed.how :seconds (- ended started)
                                     :copied placed.copied :removed placed.removed :replaced placed.replaced)))))

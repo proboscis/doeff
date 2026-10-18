@@ -17,11 +17,10 @@ from doeff_cluster.shared.intent.runtime_env_model import SUPPORTED_CHILD_PROTOC
 from doeff_cluster.shared.core.runtime_env_rules import env_failure as env_failure
 from doeff_cluster.shared.core.runtime_env_rules import root_split as root_split
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
-from doeff_cluster.shared.core.runtime_env_rules import source_key as source_key
+from doeff_cluster.shared.core.runtime_env_rules import repo_source_material as repo_source_material
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
 from doeff_cluster.shared.core.native_wheel import wheel_out_dir as wheel_out_dir
 from doeff_cluster.worker.intent.env_prepare_model import PrepareRequest as PrepareRequest
-from doeff_cluster.worker.intent.env_prepare_model import KnownRoot as KnownRoot
 from doeff_cluster.worker.intent.env_prepare_model import StageTime as StageTime
 from doeff_cluster.worker.intent.env_prepare_model import StagePart as StagePart
 from doeff_cluster.worker.intent.env_prepare_model import TreeSource as TreeSource
@@ -71,10 +70,10 @@ def editable_repo_roots(editable: tuple, name: str) -> _Program[tuple, object]:
 def bytecode_roots(env: RuntimeEnv, editable: tuple, name: str) -> _Program[tuple, object]:
     ...
 
-def copy_root(request: PrepareRequest) -> _Program[KnownRoot | None, object]:
+def repo_in(env: RuntimeEnv, wanted: dict) -> _Program[RepoCheckout | None, object]:
     ...
 
-def tree_source(from_root: KnownRoot | None, repo: RepoCheckout) -> _Program[TreeSource | None, object]:
+def tree_source(request: PrepareRequest, repo: RepoCheckout) -> _Program[TreeSource | None, object]:
     ...
 
 def hyx_env_marker_XgreaterHthan_signXjson(marker: EnvMarker) -> _Program[dict, object]:

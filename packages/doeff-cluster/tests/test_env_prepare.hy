@@ -26,7 +26,7 @@
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
-(import doeff_cluster.shared.core.runtime_env_rules [env-key source-key key-material runtime-env->json runtime-env-of-json])
+(import doeff_cluster.shared.core.runtime_env_rules [env-key repo-source-material key-material runtime-env->json runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS
@@ -442,7 +442,7 @@
 
 
 ;; --- 木を前の root から写す(#3677 — #3671 の子 2)-----------------------------------------------------------------
-;; 元の鍵(source-key)が同じ最新の完成済みの root の木を hardlink で写し、変わった path だけを mirror から置く。展開した file の数は、
+;; 同じ repo(名と url の正体)を持つ最新の完成済みの root の木を repo ごとに hardlink で写し、変わった path だけを mirror から置く。展開した file の数は、
 ;; 変わった path の数(git diff --name-status)と同じ。直す前は repo 全体を git archive で展開した(同じ commit の木だけ写した)。
 
 (defk prepare-app [app lib known [lock LOCK] [roots #("app/." "app/vendor")]]
@@ -557,37 +557,73 @@
 
 (defk expanded-from-scratch [label env known]
   {:pre [(: label str) (: env RuntimeEnv) (: known tuple)] :post [(: % None)]}
-  "env を known のもとで準備し、app と lib の木が両方とも mirror からの展開(写し元が無い)である事を確かめるため(label は失敗の名指し)。"
+  "env を known のもとで準備し、app と lib の木が両方とも mirror からの展開(写し元が無い)である事を確かめ、できた root を消すため(label は
+   失敗の名指し — 同じ宣言を別の known でやり直せるように消す)。"
   (<- ready (| EnvReady EnvFailure) (prepare env known))
   (assert (isinstance ready EnvReady) #(label ready))
   (<- app-part tuple (part-of ready "app"))
   (<- lib-part tuple (part-of ready "lib"))
   (assert (= #((get app-part 0) (get lib-part 0)) #("expand" "expand")) #(label app-part lib-part))
+  (<- (RemoveTree ready.root))
   None)
 
 
 (defk ineligible-sources-scenario []
   {:pre [] :post [(: % bool)]}
-  "元の鍵が違う root は木の写し元にしない(lock・import の根・platform が違う・platform を知らない印)— どれも全部を mirror から展開し、
-   写さない。"
+  "同じ repo(名と url の正体)を持たない root と platform を知らない印は木の写し元にしない — 全部を mirror から展開し、写さない。"
   (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
   (<- known tuple (known-of first))
   (<- before EnvWorldLog (read-world-log))
-  (<- lock-env RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
-  (<- roots-env RuntimeEnv (env-of "app-2" "lib-1" LOCK #("app/.")))
   (<- same-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
-  (<- (expanded-from-scratch "lock" lock-env known))
-  (<- (expanded-from-scratch "import root" roots-env known))
-  (<- (expanded-from-scratch "platform" same-env (tuple (gfor k known (replace k :platform "linux-aarch64")))))
+  (val elsewhere (tuple (gfor k known (replace k :env (replace k.env :repos (tuple (gfor r k.env.repos
+                                                                                        (replace r :url (.format "file:///remotes/other-{}.git" r.name)))))))))
+  (<- (expanded-from-scratch "another url" same-env elsewhere))
   (<- (expanded-from-scratch "unknown platform" same-env (tuple (gfor k known (replace k :platform None)))))
   (<- after EnvWorldLog (read-world-log))
   (assert (= after.diffs before.diffs) "写さないので差も読まない")
   True)
 
 
-(deftest test-a-root-with-another-source-key-is-not-a-copy-source
+(deftest test-a-root-without-the-same-repo-is-not-a-copy-source
   (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (ineligible-sources-scenario)))
+  (assert ok))
+
+
+(defk copied-across-env-scenario []
+  {:pre [] :post [(: % bool)]}
+  "lock の sha256・import の根・platform だけが違う root も、同じ repo を持てば木の写し元にする(写すのは追跡する file だけで、木の中身は
+   repo と commit で決まる)。できた木は新しい commit の木そのもので、venv・焼いた .pyc は写し元から渡らない(card ki-61eb8170b3b9 —
+   直す前は元の鍵(lock を含む)が違う root から写さず、uv.lock が替わるたびに全部を展開した)。"
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- known tuple (known-of first))
+  (<- a2 WorldCommit (app-commit "app-2" LOCK "V = 2\n"))
+  (<- a3 WorldCommit (app-commit "app-3" (+ LOCK "rich==13.9.4 top=rich\n") "V = 3\n"))
+  (<- l1 WorldCommit (lib-commit "lib-1" "fn a() {}\n"))
+  (<- lock-env RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (<- roots-env RuntimeEnv (env-of "app-2" "lib-1" LOCK #("app/.")))
+  (<- same-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (for [#(label env known-here commit) [#("lock" lock-env known a3)
+                                        #("import root" roots-env known a2)
+                                        #("platform" same-env (tuple (gfor k known (replace k :platform "linux-aarch64"))) a2)]]
+    (<- ready (| EnvReady EnvFailure) (prepare env known-here))
+    (assert (isinstance ready EnvReady) #(label ready))
+    (<- app-part tuple (part-of ready "app"))
+    (<- lib-part tuple (part-of ready "lib"))
+    (assert (= #((get app-part 0) (get lib-part 0)) #("copy" "copy")) #(label app-part lib-part))
+    (<- app-tree dict (source-files ready "app"))
+    (<- app-files dict (commit-files commit))
+    (assert (= app-tree app-files) #(label app-tree))
+    (<- lib-tree dict (source-files ready "lib"))
+    (<- lib-files dict (commit-files l1))
+    (assert (= lib-tree lib-files) #(label lib-tree))
+    (<- (RemoveTree ready.root)))
+  True)
+
+
+(deftest test-a-root-with-another-lock-is-a-copy-source
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (copied-across-env-scenario)))
   (assert ok))
 
 
@@ -605,7 +641,7 @@
 
 (defk latest-source-scenario []
   {:pre [] :post [(: % bool)]}
-  "元の鍵が同じ root が複数在れば、最も新しく完成した物を写し元にする(known の並びに依らない)。"
+  "同じ repo を持つ root が複数在れば、最も新しく完成した物を写し元にする(known の並びに依らない)。"
   (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
   (<- known-1 tuple (known-of first))
   (<- second EnvReady (prepare-app "app-2" "lib-1" known-1))
@@ -621,11 +657,62 @@
   True)
 
 
-(deftest test-the-newest-root-with-the-same-source-key-is-the-copy-source
+(deftest test-the-newest-root-holding-the-repo-is-the-copy-source
   (<- world EnvWorld (base-world))
   (<- six WorldCommit (app-commit "app-6" LOCK "V = 6\n"))
   (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes (if (= r.url APP-URL) (replace r :commits (+ r.commits #(six))) r))))
                             (latest-source-scenario)))
+  (assert ok))
+
+
+(val TOOLS-URL "file:///remotes/tools.git")
+
+
+(defk with-tools [env tools]
+  {:pre [(: env RuntimeEnv) (: tools str)] :post [(: % RuntimeEnv)]}
+  "宣言 env に 3 つ目の repo(tools の commit の名 tools)を足すため(repo の組の違う宣言を作る)。"
+  (<- tools-sha str (sha-of tools))
+  (replace env :repos (+ env.repos #((RepoCheckout :name "tools" :url TOOLS-URL :commit tools-sha)))
+               :import-roots (+ env.import-roots #("tools/src"))))
+
+
+(defk per-repo-source-scenario []
+  {:pre [] :post [(: % bool)]}
+  "写し元は repo ごとに選ぶ: 3 つの repo の宣言は、app と lib を後に完成した 2 つの repo の root から、tools を前に完成した 3 つの repo の
+   root から写す(repo の組が違う root も、共通の repo の木の写し元になる — card ki-61eb8170b3b9)。"
+  (<- base RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- three-env RuntimeEnv (with-tools base "tools-1"))
+  (<- older EnvReady (prepare three-env #()))
+  (<- two-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- known-1 tuple (known-of older))
+  (<- newer EnvReady (prepare two-env known-1))
+  (<- newer-parts tuple (part-of newer "app"))
+  (assert (= (get newer-parts 0) "copy") "repo の組の違う 3 つの repo の root からも写す")
+  (<- known tuple (known-of older newer))
+  (<- lock-base RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (<- target RuntimeEnv (with-tools lock-base "tools-1"))
+  (<- before EnvWorldLog (read-world-log))
+  (<- ready (| EnvReady EnvFailure) (prepare target known))
+  (assert (isinstance ready EnvReady) ready)
+  (<- after EnvWorldLog (read-world-log))
+  (<- app-2 str (sha-of "app-2"))
+  (<- app-3 str (sha-of "app-3"))
+  (<- lib-1 str (sha-of "lib-1"))
+  (<- tools-1 str (sha-of "tools-1"))
+  (val diffed (frozenset (cut after.diffed (len before.diffed) None)))
+  (assert (= diffed (frozenset #(#(app-2 app-3) #(lib-1 lib-1) #(tools-1 tools-1)))) diffed)
+  (for [name ["app" "lib" "tools"]]
+    (<- part tuple (part-of ready name))
+    (assert (= (get part 0) "copy") #(name part)))
+  True)
+
+
+(deftest test-each-repo-picks-its-own-copy-source
+  (<- world EnvWorld (base-world))
+  (<- tools WorldCommit (lib-commit "tools-1" ""))
+  (val tools-commit (replace tools :files #((WorldFile :path "src/tool/__init__.py" :text "Z = 3\n"))))
+  (<- ok bool (run-in-world (replace world :remotes (+ world.remotes #((WorldRemote :url TOOLS-URL :commits #(tools-commit)))))
+                            (per-repo-source-scenario)))
   (assert ok))
 
 
@@ -684,37 +771,26 @@
   (assert ok))
 
 
-(deftest test-the-source-key-is-the-env-key-without-the-commits
-  ;; 元の鍵は版(commit)が替わっても変わらず、lock・Python・platform・import の根・repo の正体・project・native の宣言で変わる。置き場の鍵
-  ;; env-key は commit で変わる(意味を変えない)。同じ repo の綴りの違い(https と scp の形)は同じ元の鍵になる(#3693)。
+(deftest test-the-repo-identity-is-the-name-and-the-url-without-the-commit
+  ;; 木の写し元を選ぶ repo の同一性(repo-source-material)は名と url の正体で、版(commit)が替わっても変わらず、url の正体と名で変わる。
+  ;; 同じ repo の綴りの違い(https と scp の形)は同じ repo になる(#3693)。置き場の鍵 env-key は commit と綴りで変わる(意味を変えない)。
   (<- base RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- newer RuntimeEnv (env-of "app-2" "lib-2" LOCK))
-  (<- k-base str (source-key base PLATFORM))
-  (<- k-newer str (source-key newer PLATFORM))
-  (assert (= k-base k-newer) "commit だけ違う宣言は同じ元の鍵")
+  (val app (get base.repos 0))
+  (<- i-base dict (repo-source-material app))
+  (<- i-newer dict (repo-source-material (get newer.repos 0)))
+  (assert (= i-base i-newer) "commit だけ違う repo は同じ repo")
   (<- e-base str (env-key base PLATFORM))
   (<- e-newer str (env-key newer PLATFORM))
   (assert (!= e-base e-newer) "置き場の鍵は commit で変わる")
-  (<- e-lock RuntimeEnv (env-of "app-1" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
-  (<- e-roots RuntimeEnv (env-of "app-1" "lib-1" LOCK #("app/vendor" "app/.")))
-  (<- e-native RuntimeEnv (env-of "app-1" "lib-1" LOCK #("app/." "app/vendor") False))
-  (val others [e-lock e-roots e-native
-               (replace base :project (replace base.project :python "3.13"))
-               (replace base :project (replace base.project :groups #("dev")))
-               (replace base :repos #((replace (get base.repos 0) :url "file:///remotes/other.git") (get base.repos 1)))])
-  (var different #())
-  (for [env others]
-    (<- key str (source-key env PLATFORM))
-    (:= different (+ different #(key))))
-  (assert (not-in k-base different) different)
-  (assert (= (len (frozenset different)) (len different)) "変えた物ごとに別の元の鍵")
-  (<- k-arm str (source-key base "linux-aarch64"))
-  (assert (!= k-base k-arm))
-  (val https (replace base :repos #((replace (get base.repos 0) :url "https://github.com/Owner/App.git") (get base.repos 1))))
-  (val scp (replace base :repos #((replace (get base.repos 0) :url "git@GitHub.com:Owner/App") (get base.repos 1))))
-  (<- k-https str (source-key https PLATFORM))
-  (<- k-scp str (source-key scp PLATFORM))
-  (assert (= k-https k-scp) "綴りの違う同じ repo は同じ元の鍵")
+  (<- i-url dict (repo-source-material (replace app :url "file:///remotes/other.git")))
+  (<- i-name dict (repo-source-material (replace app :name "app-old")))
+  (assert (and (!= i-base i-url) (!= i-base i-name) (!= i-url i-name)) #(i-url i-name))
+  (val https (replace base :repos #((replace app :url "https://github.com/Owner/App.git") (get base.repos 1))))
+  (val scp (replace base :repos #((replace app :url "git@GitHub.com:Owner/App") (get base.repos 1))))
+  (<- i-https dict (repo-source-material (get https.repos 0)))
+  (<- i-scp dict (repo-source-material (get scp.repos 0)))
+  (assert (= i-https i-scp) "綴りの違う同じ repo は同じ repo")
   (<- e-https str (env-key https PLATFORM))
   (<- e-scp str (env-key scp PLATFORM))
   (assert (!= e-https e-scp) "置き場の鍵は綴りも含む(意味を変えない)"))

@@ -184,8 +184,8 @@
 (defk known-roots [settings]
   {:pre [(: settings EnvSettings)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "完成した root の列(木を写す元の候補)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path \"platform\" マーカーの platform \"madeMs\" 完成の時刻
-   \"hyVersion\" マーカーの Hy の compiler の版} で返すため。写し元は元の鍵(宣言と platform)が同じ root のうち、完成の時刻が最も新しい物
-   (#3677)。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み)。マーカーを読めても時刻を読めない root(読む間に掃除で
+   \"hyVersion\" マーカーの Hy の compiler の版} で返すため。写し元は repo ごとに、同じ repo を持つ root のうち完成の時刻が最も新しい物
+   (#3677・card ki-61eb8170b3b9)。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み)。マーカーを読めても時刻を読めない root(読む間に掃除で
    消えた)は完成した root に数えない。Hy の版は報告の値で(#3706)、完成した root に数えるかには使わない — 欄の無い前の印の root は null で
    列に入る。"
   (<- names tuple (root-dirs settings))

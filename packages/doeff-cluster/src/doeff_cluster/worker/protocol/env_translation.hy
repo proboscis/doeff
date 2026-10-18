@@ -24,7 +24,7 @@
 ;;; git の子の環境は env-mode EXTEND(親を継いで足す)で、足すのは git-environment の 2 つだけ。uv の子は EXTEND に env-drop UV-DROP(呼び手の
 ;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
 ;;; process の間の錠を持つ。mirror は URL ごと、native の wheel は package ごとに file の錠(AcquireLock)で排他にする(wheel の鍵と保存先は build の口の物)。
-;;; 木は、写し元(元の鍵が同じ完成済みの root の同じ repo の木)が在れば、その commit の追跡する普通の file のうち新しい commit まで変わらない
+;;; 木は、写し元(同じ repo を持つ完成済みの root の、その repo の木)が在れば、その commit の追跡する普通の file のうち新しい commit まで変わらない
 ;;; 物だけを LinkFile(os.link — hardlink)で写し、変わった path と symlink の新しい中身を git archive と tar で置く — .venv・__pycache__・
 ;;; 完成マーカーなど追跡しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写しは
 ;;; 外の cp を起こさない(GNU の書き方 cp -al --parents -t は macOS の BSD の cp が断り、Mac の worker は毎回全部を展開して、消した root の
