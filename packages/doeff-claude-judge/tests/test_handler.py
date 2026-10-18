@@ -1,6 +1,9 @@
 """claude_judge_handler — Judge を 1 回きりの print(ClaudePrintOnce)へ運ぶ handler。print は fake の handler で答える(CLI を起こさない)。"""
 
+from __future__ import annotations
+
 import math
+from typing import TYPE_CHECKING
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect と fake は Hy の module doeff_claude_code に住む
 import pytest
@@ -20,11 +23,15 @@ from doeff_claude_judge import (
     run_judgment,
     scripted_printer,
 )
+from doeff_hy.frozen import freeze_json
 from doeff_system_one import Judge, JudgeError, choice, noul, score
 from doeff_vm import Err
 
 from doeff import Pass, Resume, ResumeThrow, Try, do
 from doeff import handler as _program_handler
+
+if TYPE_CHECKING:
+    from doeff_hy.frozen import JsonIn  # 型の宣言(frozen.pyi)だけに在る JSON の値の別名
 
 QUESTIONS = {
     "plain": noul("Can a first-time reader decide from the document?"),
@@ -37,8 +44,8 @@ TARGET = ClaudeJudgeTarget(model="claude-test", config_dir="/h/.claude", env={"P
 LENT = JudgeCredential(access_token="lent-token", expires_at=4102444800.0, subscription_type="max")
 
 
-def _answered(structured: object) -> PrintAnswered:
-    return PrintAnswered(structured_output=structured, usage=Usage(input_tokens=1000, cache_creation_input_tokens=200,
+def _answered(structured: JsonIn) -> PrintAnswered:
+    return PrintAnswered(structured_output=freeze_json(structured), usage=Usage(input_tokens=1000, cache_creation_input_tokens=200,
                                                                    cache_read_input_tokens=300, output_tokens=50),
                          cost_usd=0.0125, models=("claude-test-5",), elapsed_ms=4200, api_ms=3100)
 
@@ -167,7 +174,7 @@ def test_a_judge_the_cli_cannot_take_is_refused_before_borrowing_or_printing() -
 
 def test_the_scripted_printer_answers_from_the_query_without_the_cli() -> None:
     # 使い手の検の fake(doeff_claude_code を import しない): 問いの部品と model → 構造化の答え。
-    def answer(query: ClaudeQuery, model: str) -> object:
+    def answer(query: ClaudeQuery, model: str) -> JsonIn:
         assert query == prepare(JUDGE)
         assert model == "claude-test"
         return ANSWER
@@ -179,23 +186,22 @@ def test_the_scripted_printer_answers_from_the_query_without_the_cli() -> None:
 
 def test_a_judge_credential_hides_its_token() -> None:
     assert "lent-token" not in repr(LENT)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="access_token"):
         JudgeCredential(access_token="", expires_at=None)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="access_token"):
         JudgeCredential(access_token="two\nlines", expires_at=None)
 
 
 def test_a_target_refuses_what_the_cli_cannot_take() -> None:
-    for changes in ({"model": ""}, {"config_dir": ""}, {"thinking_tokens": -1}, {"thinking_tokens": True}):
+    for changes in ({"model": ""}, {"config_dir": ""}, {"thinking_tokens": -1}, {"thinking_tokens": True},
+                    {"env": {"PATH": 1}}):
         with pytest.raises((TypeError, ValueError)):
             ClaudeJudgeTarget(**{"model": "claude-test", "config_dir": "/h", "env": {}, **changes})
-    with pytest.raises(TypeError):
-        ClaudeJudgeTarget(model="claude-test", config_dir="/h", env={"PATH": 1})
 
 
 def test_the_verdict_input_tokens_count_only_what_the_cli_named() -> None:
     # usage の欄を CLI が名乗らなければ 0 を足す(数を発明しない — 名乗った欄だけの和)。
-    partial = PrintAnswered(structured_output=ANSWER, usage=Usage(input_tokens=7), cost_usd=None, models=(),
+    partial = PrintAnswered(structured_output=freeze_json(ANSWER), usage=Usage(input_tokens=7), cost_usd=None, models=(),
                             elapsed_ms=10, api_ms=None)
     verdict = _run(JUDGE, printer=_printer(partial, {}), lender=_lender(LENT))
     assert verdict.input_tokens == 7

@@ -20,6 +20,18 @@
 | `ClaudeWarmSession(origin, spec)` | 会話の process を最初の入力の前に起動し、入力を書かずに待たせる(`origin` は `FreshSession` / `ResumeSession`) | `SessionWarmed` | `SessionNotFound` / `SessionIdInUse` / `TurnInFlight` / `CarryRefused` / `LaunchFailed` |
 | `ClaudeReplaceSessionCredential(session-id, credential)` | 会話の生きた process の借りた資格を替える(手番の途中でも次の API の呼びから新しい token を使う) | `CredentialReplaced` | `NoSuchSession` / `SessionProcessDown` / `HomeCredentialSession` |
 
+会話と手番の外の 1 回きりの問い(構造化の答えを 1 つ受けて降りる — 会話の id も記録も残さない):
+
+| effect | すること | 答え |
+|---|---|---|
+| `ClaudePrintOnce(home, model, system_prompt, json_schema, input, timeout_seconds, credential=None, thinking_tokens=None, effort=None)` | CLI の print mode を `--output-format json --json-schema` で 1 回走らせる。本文は標準入力・道具なし・設定の源なし(`--setting-sources ""`)・家の MCP なし・記録なし | `PrintAnswered`(structured_output・usage・cost_usd・models・elapsed_ms・api_ms)/ `PrintFailed`(exit_code・api_status・detail・stderr_tail)/ `PrintTimedOut`(seconds・stderr_tail) |
+
+借りた資格(`credential`)は会話の process と同じく、その process だけの設定 dir の `.credentials.json` に置いて、降りたら dir ごと消す。
+`thinking_tokens` は子の env の `MAX_THINKING_TOKENS`(0 = 考えない)。待ちの上限(`timeout_seconds`)は CLI の起動と終わりの秒
+(1 回 4〜6 秒)を含み、越えたら process の組を止めて `PrintTimedOut`。本番 = `doeff_claude_code.print_once.claude-print-handler(command)`・
+fake = `doeff_claude_code.fake.fake-claude-print-handler(respond)`(respond = 宣言 → 答えの Program)。本番の handler は外側に doeff の
+scheduler が要る(時間の handler は要らない)。
+
 `ClaudeExportSession` が写すのは transcript の jsonl 1 つだけ。`<session-id>/` の下の subagent の記録と `memory/` は写さない(残りの設計)。
 
 `ClaudeWarmSession` は、起動してから入力を受けられるまでの秒を入力の前に済ませるための effect。後に来た同じ会話の `ClaudeStartTurn`
@@ -68,6 +80,9 @@
 ```sh
 uv run --no-sync pytest packages/doeff-claude-code/tests -m "not e2e"
 ```
+
+1 回きりの print の本番の handler は、替え玉の CLI `tests/stub_cli/claude_print.py`(素の Python — API は撃たない)で
+`tests/test_print_once.hy` が確かめる。
 
 `tests/test_scenarios.hy` の筋書きは 3 つの解釈器で走る: `fake`(fake + 仮想の時計)・`stub`(本番の handler + 替え玉の CLI
 `tests/stub_cli/claude.hy`)・`real`(本番の handler + 本物の claude・印 `e2e`)。`real` は env `DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR`

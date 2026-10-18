@@ -859,7 +859,11 @@ version = "0.1.0"
 source = { editable = "packages/doeff-claude-judge" }
 dependencies = [
     { name = "doeff" },
+    { name = "doeff-claude-code" },
+    { name = "doeff-core-effects" },
+    { name = "doeff-hy" },
     { name = "doeff-system-one" },
+    { name = "hy" },
 ]
 
 [package.optional-dependencies]
@@ -870,7 +874,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "doeff", editable = "." },
+    { name = "doeff-claude-code", editable = "packages/doeff-claude-code" },
+    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-system-one", editable = "packages/doeff-system-one" },
+    { name = "hy", specifier = ">=1.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
 ]
 provides-extras = ["dev"]

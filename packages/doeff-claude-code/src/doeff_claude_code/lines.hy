@@ -289,7 +289,8 @@
    数え続ける — --fork-session の枝も親の transcript の額から数える)。手番の額へ直すのは状態機械(dialogue.hy)/
    api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)/
    model-windows = modelUsage の model ごとの窓(ModelWindow の列・object の鍵の順 — 無ければ空)/
-   timing = 計時の欄(RequestTiming)。"
+   timing = 計時の欄(RequestTiming)/ structured-output = structured_output(--json-schema を付けて起こした CLI の構造化の答え —
+   深く凍らせた JSON の値。名乗らない・null なら None)。"
   (#^ str subtype)
   (#^ bool is-error)
   (setv #^ str terminal-reason "")
@@ -300,7 +301,8 @@
   (setv #^ (| int None) api-error-status None)
   (setv #^ (get tuple #(str ...)) input-refs #())
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
-  (setv #^ RequestTiming timing (field :default-factory RequestTiming)))
+  (setv #^ RequestTiming timing (field :default-factory RequestTiming))
+  (setv #^ FrozenJson structured-output None))
 
 ;; Stop hook が答えを差し戻した時に CLI が手番へ注入する行の本文の頭(実測 CLI 2.1.292・#4020)。
 (val STOP-HOOK-FEEDBACK-HEAD "Stop hook feedback:")
@@ -668,7 +670,8 @@
               :cost-usd (number-at record "total_cost_usd")
               :api-error-status (int-at record "api_error_status")
               :input-refs (strings-at record "user_message_uuids")
-              :timing (run (request-timing-of record))))
+              :timing (run (request-timing-of record))
+              :structured-output (freeze-json (.get record "structured_output"))))
 
 (defn classify-lifecycle [#^ dict record]
   (setv state (text-at record "state"))

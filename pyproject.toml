@@ -666,7 +666,7 @@ reason = "Rust の bin crate(src/main.rs だけ)で Python の公開面も Pytho
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-claude-judge/"
-reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は問いの部品の形・答えの読み・形の違う答えの単体だけ(変えた wire.py を import する)"
+reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は問いの部品の形・答えの読み・形の違う答えと、print を fake で答える handler の単体(変えた module を import する)、印 e2e の本物の CLI の検だけ"
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-effect-analyzer/"

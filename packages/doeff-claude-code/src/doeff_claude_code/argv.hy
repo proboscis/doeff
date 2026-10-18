@@ -13,6 +13,7 @@
 (import doeff_hy.frozen [FrozenMap thaw-json])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome LentCredential BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
+(import doeff_claude_code.effects [ClaudePrintOnce])
 
 ;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
 ;; CLI 2.1.292 は旗が無いと SessionStart・Setup の hook の行だけを出す(CLI の中の判定の実測)。上の層が会話の画面に hook の結果
@@ -150,6 +151,27 @@
                  "credential" credential})
   (.hexdigest (hashlib.sha256 (.encode (json.dumps material :separators #("," ":") :sort-keys True :ensure-ascii False)
                                        "utf-8"))))
+
+;; 1 回きりの print(effects.hy の ClaudePrintOnce)の旗: 答えは 1 つの JSON の object(--output-format json)・道具なし(--tools "")・
+;; 設定の源なし(--setting-sources "" — 家の settings・hook・CLAUDE.md を読まない)・家の MCP と connector を継がない・記録を残さない。
+;; 素の CLI の測り(2026-10-18・CLI 2.1.292)と同じ組。--bare は OAuth を読まない(借りた資格で走らない)ので使わない。
+(setv PRINT-ONCE-FLAGS ["-p" "--output-format" "json"])
+(setv PRINT-ONCE-ISOLATION-FLAGS ["--tools" "" "--setting-sources" "" "--strict-mcp-config" "--no-session-persistence"])
+
+(defn #^ (get list str) print-once-argv [#^ (get tuple #(str ...)) command #^ ClaudePrintOnce request]
+  "1 回きりの print の argv: command + 頭の旗 + model・system の文・答えの Schema + 切り離しの旗 + effort(宣言した時だけ)。本文は
+   argv に載せない(標準入力 — 5 万字の本文が argv の長さの上限に当たらない・process の一覧に出ない)。"
+  (+ (list command) PRINT-ONCE-FLAGS
+     ["--model" request.model "--system-prompt" request.system-prompt "--json-schema" request.json-schema]
+     PRINT-ONCE-ISOLATION-FLAGS
+     (if request.effort ["--effort" request.effort] [])))
+
+(defn #^ (get dict #(str str)) print-once-env [#^ ClaudePrintOnce request #^ str config-dir]
+  "1 回きりの print の process の env: 家の env ちょうど + CLAUDE_CONFIG_DIR = config-dir(借りた資格ならその process だけの設定 dir・
+   家の資格なら家の設定 dir)+ thinking の token 数を宣言した時だけ MAX_THINKING_TOKENS(0 = 考えない)。os.environ は足さず、資格の
+   値も env に置かない。"
+  (| (dict request.home.env) {"CLAUDE_CONFIG_DIR" config-dir}
+     (if (is request.thinking-tokens None) {} {"MAX_THINKING_TOKENS" (str request.thinking-tokens)})))
 
 (defn #^ list cold-resume-argv [#^ tuple command #^ ClaudeSessionSpec spec #^ str session-id]
   "降りた会話を --resume で起こす前の 1 回きりの print mode の argv(spec.cold-resume-prompt)。

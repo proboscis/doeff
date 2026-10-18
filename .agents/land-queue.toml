@@ -153,7 +153,8 @@ outside = [
 #   packages/doeff-agents/tests の test_agentd_byte_faithful_transport_e2e.py・test_agentd_result_retry_e2e.py = 替え玉の agent と tmux だけで
 #     実 API は使わない。日次の worker の Pod に tmux が在るかが未測定 — conformance の 33 file と同じ card ki-2832a04913cc が決める。
 #   packages/doeff-agents/tests の test_agentd_real_agent_result_retry_e2e.py・test_mcp_live_e2e.py・test_headless_adapter.hy の 1 本、
-#   packages/doeff-claude-code/tests/test_scenarios.hy の real の 9 本、packages/doeff-conductor/tests/test_agent_effect_c1.py の 1 本 =
+#   packages/doeff-claude-code/tests/test_scenarios.hy の real の 9 本、packages/doeff-conductor/tests/test_agent_effect_c1.py の 1 本、
+#   packages/doeff-claude-judge/tests/test_real_cli.py の 1 本(資格の file を env で渡した時だけ走る)=
 #     login 済みの本物の claude / codex を呼んで利用枠を使う(走らせた機体の既定の login を使う — 会社機体なら会社の profile になり得る)。
 #   packages/doeff-openai/tests/e2e/test_effect_handlers_e2e.py と test_openai_api.py の印 real_openai の 2 本、
 #   packages/doeff-gemini/tests/e2e/test_gemini_live.py の 1 本、packages/doeff-openrouter/tests/e2e/test_openrouter_integration.py の 1 本、
