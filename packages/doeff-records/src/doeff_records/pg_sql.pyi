@@ -60,7 +60,7 @@ class DeclaredIndex:
     serves: tuple[IndexedField, ...]
     scoped: tuple[IndexedField, ...]
     aliases: tuple[str, ...]
-    statistics: str | None
+    sampled: bool
 
 @dataclass(frozen=True, kw_only=True)
 class SchemaStep:
@@ -144,9 +144,6 @@ def indexes_statement(prefix: str) -> _Program[Statement, object]:
     ...
 
 def concurrent_index_statement(index: DeclaredIndex) -> _Program[Statement, object]:
-    ...
-
-def statistics_statement(index: DeclaredIndex) -> _Program[Statement, object]:
     ...
 
 def analyze_statement(prefix: str, relation: str) -> _Program[Statement, object]:
