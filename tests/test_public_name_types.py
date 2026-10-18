@@ -36,9 +36,9 @@ from doeff_hy.static_check import python_without_bytecode
 #: Rust の組み立て直しが起きる(tool.uv.cache-keys が .pyi を含む)。
 _NODE_TYPE_ARGS = "program の node の型引数"
 
-#: ``python -m doeff demo``(doeff/cli/demo.py)は自分の source を README の最初の例(注記を書かない 30 秒の例)のまま
-#: 印字して走らせる。注記を足すと、印字する program が README の例とずれる。
-_DEMO_PRINTS_THE_README_EXAMPLE = "demo が印字する README の最初の例(注記なし)"
+#: ``python -m doeff demo``(doeff/cli/demo.py)は自分の source を README の例と同じ書き方(注記を書かない例)のまま
+#: 印字して走らせる。注記を足すと、印字する program と handler が README の例とずれる。
+_DEMO_PRINTS_THE_README_EXAMPLE = "demo が印字する README の書き方の例(注記なし)"
 
 #: doeff の公開の名のうち、型が分からないままの物と訳。
 _DOEFF_GAPS: dict[str, str] = {
@@ -46,6 +46,8 @@ _DOEFF_GAPS: dict[str, str] = {
     "doeff.ProgramBase": _NODE_TYPE_ARGS,
     "doeff.cli.demo.digest": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.fake_world": _DEMO_PRINTS_THE_README_EXAMPLE,
+    "doeff.cli.demo.trace": _DEMO_PRINTS_THE_README_EXAMPLE,
+    "doeff.cli.demo.budget": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.live_world": _DEMO_PRINTS_THE_README_EXAMPLE,
 }
 

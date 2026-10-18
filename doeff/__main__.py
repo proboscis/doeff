@@ -1,7 +1,7 @@
 """doeff CLI entry point.
 
 Usage:
-    doeff demo                      # (or python -m doeff demo) see a handler swap change the answer
+    doeff demo                      # (or python -m doeff demo) see four handlers give one program four meanings
     doeff run --program myapp.module.program
     doeff run --program myapp.program --interpreter myapp.interpreter
     doeff run --program myapp.program --env myapp.env
@@ -525,10 +525,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo_parser = subparsers.add_parser(
         "demo",
-        help="Watch one program answer differently as its handler is swapped",
+        help="Watch four handlers give one program four meanings",
         description=(
-            "Run a small program under a fake handler, then with a live handler that\n"
-            "fetches the page over real HTTP. The program does not change; the answer does.\n\n"
+            "Run a small program under four handlers: one answers its effects with made-up\n"
+            "values, one traces every effect, one stops the program midway by dropping its\n"
+            "continuation, and one fetches the page over real HTTP. The program does not\n"
+            "change; what its effects mean does, and so does the answer.\n\n"
             "Examples:\n"
             "  python -m doeff demo\n"
             "  python -m doeff demo --url https://www.python.org\n"

@@ -1,9 +1,12 @@
 """README の頭の GIF(images/readme-demo.gif)を録り直す道具。
 
-GIF は「`pip install doeff` → 例の file を見る → 同じ `digest` を偽の handler と本物の HTTP の handler で走らせると答えが
-変わる」を見せる。台本は下の SCRIPT の 1 か所に在り、録る file は隣の digest.py(GIF に映る file そのもの)。digest.py は
-README の例と同じ書き方(定義の間の空行は 1 つ・註を揃える)で 1 画面に収め、REPL で使う `handler` と `run` も import する
-— ruff の整形は当てない(`make lint-ruff` の範囲の外)。走るかは tests/test_readme_demo.py が確かめる:
+GIF は「`pip install doeff` → program の file と handler の file を見る → 同じ `digest` を 4 つの handler で走らせると、
+handler が k(continuation)をどう扱うかで effect の意味と答えが変わる」を見せる — 値を答えて k を resume する fake_world・
+全部の effect を見て次へ渡す trace・1 つ通した後に k を捨てて途中で止める budget(1)・本物の HTTP で答える live_world
+(`python -m doeff demo` と同じ 4 つ・card ki-2ccb68ed0ad7)。台本は下の SCRIPT の 1 か所に在り、録る file は隣の digest.py と
+handlers.py(GIF に映る file そのもの)。2 つは README の例と同じ書き方(定義の間の空行は 1 つ・註を揃える)で、それぞれ 1 画面に
+収める。handlers.py は REPL で使う `handler` と `run` も import する — ruff の整形は当てない(`make lint-ruff` の範囲の外)。
+走るかは tests/test_readme_demo.py が確かめる:
 
     uv run --no-project python tools/readme_demo/record.py                       # images/readme-demo.gif を書き直す
     uv run --no-project python tools/readme_demo/record.py --font-dir <dir>      # 等幅の字形が機体に無い時
@@ -11,7 +14,7 @@ README の例と同じ書き方(定義の間の空行は 1 つ・註を揃える
 
 録り方:
 
-1. repo の外の一時の dir に digest.py を写し、`uv venv --seed` で pip の入った新しい venv を作る。
+1. repo の外の一時の dir に digest.py と handlers.py を写し、`uv venv --seed` で pip の入った新しい venv を作る。
 2. その dir で bash を擬似端末(pty)の中に起こし、台本の命令を 1 字ずつ打ち込む。命令は本当に走る — `pip install doeff` は
    PyPI から入れ、`live_world` は https://example.com を本当に取りに行く。画面に出る物は bash と Python の出力そのもの。
 3. 出力の刻を asciicast v2 に書く。打鍵の間と台本の「待つ」は決めた長さにし、命令の出力の間の待ち(pip の取り寄せなど)は
@@ -49,13 +52,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-DEMO_FILE = HERE / "digest.py"
+# GIF に映る file — program の digest.py と、それを import する handler の handlers.py。
+DEMO_FILES = (HERE / "digest.py", HERE / "handlers.py")
 DEFAULT_OUT = ROOT / "images" / "readme-demo.gif"
 SIZE_BUDGET_BYTES = 1_000_000
 
-# 端末の大きさ — `cat digest.py` から最後の `>>>` までが 1 画面に収まる高さ(file 22 行 + 命令と答え 7 行)。
+# 端末の大きさ — `cat handlers.py` の命令の行と file(29 行)と次の prompt が 1 画面に収まる高さ。
 COLUMNS = 76
-ROWS = 30
+ROWS = 32
 SHELL_PROMPT = r"\$ $"
 PYTHON_PROMPT = r">>> $"
 
@@ -84,12 +88,18 @@ SCRIPT: tuple[Type | Hold, ...] = (
     Type("pip install doeff", SHELL_PROMPT, gap_cap=0.005),
     Hold(1.0),
     Type("cat digest.py", SHELL_PROMPT),
-    Hold(1.5),
-    Type("python -i digest.py", PYTHON_PROMPT),
+    Hold(2.0),
+    Type("cat handlers.py", SHELL_PROMPT),
+    Hold(3.0),
+    Type("python -i handlers.py", PYTHON_PROMPT),
     Hold(0.5),
     Type("run(handler(fake_world)(digest(url)))", PYTHON_PROMPT),
     Hold(1.2),
-    Type("run(handler(live_world)(digest(url)))", PYTHON_PROMPT),
+    Type("run(handler(fake_world)(handler(trace)(digest(url))))", PYTHON_PROMPT),
+    Hold(1.5),
+    Type("run(handler(fake_world)(budget(1)(digest(url))))", PYTHON_PROMPT),
+    Hold(1.5),
+    Type("run(handler(fake_world)(handler(live_world)(digest(url))))", PYTHON_PROMPT),
 )
 # 最後の画面を見せる長さ(秒)— agg の --last-frame-duration。
 LAST_FRAME_SECONDS = 4.0
@@ -187,11 +197,12 @@ class Recorder:
 
 
 def make_world(work: Path, python: str) -> Path:
-    """digest.py を写し、pip の入った新しい venv を作る。venv の dir を返す。"""
+    """GIF に映る file を写し、pip の入った新しい venv を作る。venv の dir を返す。"""
     uv = shutil.which("uv")
     if uv is None:
         raise ToolError("uv が PATH に無い(https://docs.astral.sh/uv/)")
-    shutil.copy(DEMO_FILE, work / "digest.py")
+    for demo_file in DEMO_FILES:
+        shutil.copy(demo_file, work / demo_file.name)
     venv = work / ".venv"
     made = subprocess.run(
         [uv, "venv", "--quiet", "--seed", "--python", python, str(venv)],
