@@ -202,7 +202,7 @@ def test_both_versions_count_the_same_steps() -> None:
 
     python, rust = _tallied(body(), "python"), _tallied(body(), "rust")
 
-    def counted(tally: StepTally) -> tuple[int, int, dict[str | None, int]]:
+    def counted(tally: StepTally) -> tuple[int, int, dict[str | None, int]]:  # noqa: DOEFF006 — 検の補助の戻り
         return tally.steps, tally.ready, {row.site: row.steps for row in tally.sites}
 
     assert python.steps > STEPS, python

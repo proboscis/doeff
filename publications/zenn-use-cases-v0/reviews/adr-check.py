@@ -104,8 +104,8 @@ def pinned_clock(clock: Path, now: str) -> dict[str, str]:
     """datetime.now()が返す日時をnowに固定した、子プロセスの環境変数を作る。"""
     clock.mkdir(exist_ok=True)
     (clock / "sitecustomize.py").write_text(SITECUSTOMIZE)
-    path = os.pathsep.join(filter(None, [str(clock), os.environ.get("PYTHONPATH")]))
-    return {**os.environ, "PYTHONPATH": path, CLOCK_VARIABLE: now}
+    path = os.pathsep.join(filter(None, [str(clock), os.environ.get("PYTHONPATH")]))  # noqa: DOEFF004 — 道具が子の process へ今の環境を引き継ぐ 1 か所
+    return {**os.environ, "PYTHONPATH": path, CLOCK_VARIABLE: now}  # noqa: DOEFF004 — 道具が子の process へ今の環境を引き継ぐ 1 か所
 
 
 def run(
