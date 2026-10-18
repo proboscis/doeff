@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """配る判断の記事(doeff-dispatch.md)の本文のPython枠を上から順に実行し、各枠の表示を期待と照らす。"""
 
 import contextlib  # 各枠の表示を受け取る。

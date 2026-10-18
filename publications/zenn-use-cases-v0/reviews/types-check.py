@@ -1,3 +1,12 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+#
+# [tool.verify_pypi]
+# args = ["--pypi", "{doeff}"]  # 「今のdoeff」を、確かめる版を入れた一時の環境にする。
+# ///
 """型の穴の記事(doeff-types.md)の6つの枠を、記事が書いた形で走らせる。
 
 1. app.pyとbashの枠: bashの枠の命令をそのまま走らせ(PyPIのdoeff 0.6.0と0.7.0・pyright 1.1.414)、行の末の注釈の数と
@@ -13,7 +22,9 @@
    約5分)、枠の行が出力に在る事を確かめる。
 
 PyPIの版は、読者と同じくuv run --withで一時の環境に入れる(networkが要る)。
-使い方: uv run --no-sync python publications/zenn-use-cases-v0/reviews/types-check.py [--probes]
+使い方: uv run --no-sync python publications/zenn-use-cases-v0/reviews/types-check.py [--probes] [--pypi <doeffの版>]
+- --pypi <doeffの版>: 「今のdoeff」を、リポジトリの環境でなく、PyPIのその版とpyright・mypy・pytestを入れた一時の
+  環境にする(毎日の確かめ../verify_pypi.pyが、PyPIの新しい版で記事のコードを走らせる)。
 """
 
 from __future__ import annotations
@@ -51,6 +62,30 @@ REPO = (
     str(ROOT),
     "--no-sync",
 )  # 今のdoeffの環境(uv.lockのpyrightとmypy)。
+# 確かめるPyPIの版。
+PYPI = sys.argv[sys.argv.index("--pypi") + 1] if "--pypi" in sys.argv[1:] else None
+# 「今のdoeff」の環境と名。--pypiでは、PyPIのその版を入れた一時の環境(記事と同じpyright・型の見本と同じmypy)。
+CURRENT = (
+    REPO
+    if PYPI is None
+    else (
+        "uv",
+        "run",
+        "-q",
+        "--no-project",
+        "--python",
+        "3.12",
+        "--with",
+        f"doeff=={PYPI}",
+        "--with",
+        "pyright==1.1.414",
+        "--with",
+        "mypy==2.4.0",
+        "--with",
+        "pytest",
+    )
+)
+CURRENT_NAME = "今のdoeff" if PYPI is None else f"確かめるPyPIの{PYPI}"
 # 図2(types-flow)に書いた、0.6.0の型の分からない名84個の訳ごとの数。
 FLOW_COUNTS = {
     "再公開": 27,
@@ -219,10 +254,10 @@ def check_app_and_commands(app: str, bash: str, workdir: Path) -> None:
     assert {name.rsplit(".", 1)[0] for name in added} == {"doeff.cli.demo"}, added
     ok(f"0.6.0の穴の訳ごとの数が図2と同じ({dict(counts)})・0.7.0は残した2個とdemoの3個")
     strict = run(
-        [*REPO, "python", "-m", "pyright", "app.py"], workdir
+        [*CURRENT, "python", "-m", "pyright", "app.py"], workdir
     )  # 今のdoeffで同じapp.pyを読む。
     assert "0 errors, 0 warnings" in strict, strict
-    ok("今のdoeffの環境で、app.pyのstrictの誤りは0")
+    ok(f"{CURRENT_NAME}の環境で、app.pyのstrictの誤りは0")
 
 
 def tinylib_before(after: str) -> str:  # 記事の3つの直しを外した、直す前の形を作る。
@@ -283,7 +318,7 @@ def check_gap_table(
         )
 
     for name, environment in (
-        ("今のdoeff", REPO),
+        (CURRENT_NAME, CURRENT),
         ("PyPIの0.7.0", (*PYPI_070, "--with", "pytest")),
     ):
         output = pytest(test, name, environment)
@@ -291,7 +326,7 @@ def check_gap_table(
         ok(f"表のテストが{name}の環境で通る(2 passed)")
     missing_line = next(line for line in test.splitlines() if '"doeff.cli.demo.live_world"' in line)
     output = pytest(
-        test.replace(missing_line + "\n", ""), "表から1行抜く", REPO
+        test.replace(missing_line + "\n", ""), "表から1行抜く", CURRENT
     )  # 表に無い穴が開いた時。
     assert "1 failed, 1 passed" in output, output
     assert "FAILED tests/test_public_types.py::test_no_new_gap_opens" in output, output
@@ -299,7 +334,7 @@ def check_gap_table(
     extra = test.replace(
         '    "doeff.DoExpr": NODE,', '    "doeff.run": NODE,\n    "doeff.DoExpr": NODE,'
     )
-    output = pytest(extra, "表に塞がった名を足す", REPO)  # 表の穴が塞がった時。
+    output = pytest(extra, "表に塞がった名を足す", CURRENT)  # 表の穴が塞がった時。
     assert "1 failed, 1 passed" in output, output
     assert "FAILED tests/test_public_types.py::test_closed_gaps_leave_the_table" in output, output
     ok("型の分かる名を表に足すと、test_closed_gaps_leave_the_tableだけが落ちる")
@@ -322,7 +357,7 @@ def check_probe(probe: str, workdir: Path) -> None:  # 型の見本を、2つの
     }
     assert len(expected) == 1, expected
     for name, environment in (
-        ("今のdoeff", REPO),
+        (CURRENT_NAME, CURRENT),
         ("PyPIの0.7.0", (*PYPI_070, "--with", "mypy==2.4.0")),
     ):
         place = workdir / name  # 環境ごとの置き場。

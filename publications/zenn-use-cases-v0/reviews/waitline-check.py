@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """待ちの1行の記事(doeff-waitline.md)の本文の枠を上から順に実行し、表示と答えを期待と照らす。"""
 
 import json  # 設定の枠を読み、hookの答えを読む。

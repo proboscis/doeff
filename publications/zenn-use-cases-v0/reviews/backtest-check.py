@@ -1,3 +1,14 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+#     "pytest",
+#     "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time",
+# ]
+#
+# [tool.uv]
+# no-sources = true  # doeff本体もPyPIから入れる(GitHubの部品の宣言のworkspaceから組み立てない)。
+# ///
 """バックテストの記事の掲載コードを順に実行し、完全な例との一致と書き方の決まりの数を確かめる。
 
 既定では、実時間で約60秒待つ本番の枠(run_live)を定義だけにする。`--real-time`を付けると、

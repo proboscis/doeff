@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """hookの記事の本文の枠を上から順に実行し、各枠のtest関数を呼んで検証する。"""
 
 import json  # 本文のJSONの枠を読み、hookの入出力を作る。

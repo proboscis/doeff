@@ -1,3 +1,12 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+#
+# [tool.verify_pypi]
+# args = ["--pypi", "{doeff}"]  # 記事のpyproject.tomlのdoeff-hyの版を、確かめる版に替える。
+# ///
 """設計の記録の記事(doeff-adr.md)の枠を、読者のprojectの形で一時dirに置いて走らせる。
 
 記事の「走らせる」の手順どおりに、4つの枠と記事のbashの枠が書くpyproject.tomlを置き、pytest・semgrep scan・
@@ -9,11 +18,13 @@ verify-wiringを走らせる。続けて、記事の「決まりを破ると、�
 過ぎるとdeftestが落ちる)。そのため、走らせる日を実際の日付に任せず、datetime.now()が返す日時を環境変数で
 固定して、境目の前後と記事に載せた11月1日の3通りを確かめる。これで、この確かめはいつ走らせても同じ結果になる。
 
-使い方: uv run python publications/zenn-use-cases-v0/reviews/adr-check.py [--pypi | <doeffの木>]
+使い方: uv run python publications/zenn-use-cases-v0/reviews/adr-check.py [--pypi [<doeffの版>] | <doeffの木>]
 - 引数なし: doeffのリポジトリの環境(uv run --project <リポジトリの根> --no-sync)で走らせる。
 - <doeffの木>: その木の環境で走らせる。
 - --pypi: 読者と同じく、各projectのpyproject.tomlの依存をuvが入れて走らせる(PyPIの0.6.0と、PyPIに無い
   部品は記事が名指すGitHubの版)。Pythonの版は環境変数UV_PYTHONで選べる。
+- --pypi <doeffの版>: pyproject.tomlのdoeff-hyの版を、記事の版からその版に替える(毎日の確かめ
+  ../verify_pypi.pyが、PyPIの新しい版で記事のコードを走らせる)。
 """
 
 from __future__ import annotations
@@ -27,7 +38,8 @@ from dataclasses import dataclass  # 固定する日時と期待する結果の�
 from pathlib import Path  # ファイルの置き場を組み立てる。
 
 SOURCE = Path(__file__).resolve().parents[1]  # publications/zenn-use-cases-v0
-PYPI = sys.argv[1:] == ["--pypi"]  # 読者と同じく、projectの依存をuvに入れさせる。
+PYPI = sys.argv[1:2] == ["--pypi"]  # 読者と同じく、projectの依存をuvに入れさせる。
+VERSION = sys.argv[2] if PYPI and len(sys.argv) > 2 else None  # 記事の版の代わりに入れるdoeffの版。
 # --pypiでない時にuv run --projectに渡すdoeffの環境。既定はこのリポジトリの根。引数で別の木を渡せる。
 ROOT = SOURCE.parents[1] if PYPI or len(sys.argv) < 2 else Path(sys.argv[1]).resolve()
 ARTICLE = SOURCE / "doeff-adr.md"  # 確かめる記事。
@@ -181,6 +193,9 @@ def main() -> None:  # 記事の手順・3通りの破り方・完全な例を�
     pyproject = pyproject_of(bash)
     assert WIRED in pyproject, "pyproject.tomlに、pytestにADRを集めさせる行がありません"
     assert "no-sources = true" in pyproject, "pyproject.tomlに、PyPIの本体を使う指定がありません"
+    if VERSION:  # 記事の固定したdoeff-hyの版を、確かめる版に替える(doeff本体も同じ版が入る)。
+        pyproject, pinned = re.subn(r'"doeff-hy==[\w.]+"', f'"doeff-hy=={VERSION}"', pyproject)
+        assert pinned == 1, "pyproject.tomlに、doeff-hyの版を固定する行がありません"
     assert GOOD_LINE in billing
 
     with tempfile.TemporaryDirectory(prefix="adr-article-") as tmp:
