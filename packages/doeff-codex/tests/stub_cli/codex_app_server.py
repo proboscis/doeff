@@ -27,7 +27,10 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
-- 引数は --disable の機能の名だけを読む(SETTINGS の答え — app-server --listen stdio:// は読まない)。
+- 引数は --disable の機能の名(SETTINGS の答え)と --resume-history-bytes の数だけを読む(app-server --listen stdio:// は読まない)。
+  --resume-history-bytes <数> が在れば、thread/resume の答えの thread の turns(録った答えでは thread の最後の欄)に、その数の
+  bytes ほどの履歴(1 MB ほどの文字を持つターンの列)を載せ、1 行のまま少しずつ書く(本物の codex が再開する session の履歴全体を
+  答え 1 行で運ぶ形 — 読み手の 1 行の上限の検)。
 """
 
 import json
@@ -50,6 +53,10 @@ REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALL
 SPANNING = {"BG-COMMAND": ("background-command", 3), "BG-WAIT": ("background-command", 4)}
 # 入力の目印 → 録った筋書きの名(1 つ目のターンの前の警告を turn/start の答えより先に書く — そのターンの通知は REPLAYED が流す)。
 PREFACED = {"CODE-MODE": "code-mode-unavailable"}
+# 履歴を載せた thread/resume の答えの、ターン 1 つが持つ文字の数(1 行を少しずつ書く単位)。
+HISTORY_PIECE_CHARS = 1_000_000
+# 録った答えの turns の欄に置き、書く時に履歴の列へ差し替える目印。
+HISTORY_MARK = "__stub-history__"
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
 
@@ -57,6 +64,11 @@ NOT_STEERABLE_CODE = -32600
 def disabled_features(argv: list[str]) -> list[str]:
     """起こされた argv の --disable の後ろの機能の名を順に取るため(会話の宣言の切る機能が argv に載ったかを答える)。"""
     return [name for flag, name in zip(argv, argv[1:]) if flag == "--disable"]
+
+
+def resume_history_bytes(argv: list[str]) -> int:
+    """起こされた argv の --resume-history-bytes の後ろの数を取るため(無ければ 0 — 履歴を載せない)。"""
+    return next((int(size) for flag, size in zip(argv, argv[1:]) if flag == "--resume-history-bytes"), 0)
 
 
 def said_text(inputs: list[dict[str, object]]) -> str:
@@ -108,6 +120,7 @@ class Stub:
         turn_answer = answer_of(self.two_turns, 3)
         self.recorded_thread = str(thread_answer["result"]["thread"]["id"])  # type: ignore[index]  # 録った答えの形は検が確かめている
         self.recorded_turn = str(turn_answer["result"]["turn"]["id"])  # type: ignore[index]  # 同上
+        self.history_bytes = resume_history_bytes(sys.argv)
         self.mut_made = 0
         self.mut_thread_id = ""
         self.write_lock = threading.Lock()
@@ -122,6 +135,24 @@ class Stub:
         """1 行の message を stdout へ書くため(止めの thread と主の loop の両方から書くので lock の中で)。"""
         with self.write_lock:
             sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+    def write_with_history(self, message: dict[str, object]) -> None:
+        """thread を開いた答え 1 行の thread の turns に、history_bytes ほどの履歴を載せて書くため(1 行のまま、ターン 1 つずつ書く —
+        替え玉が行全体を 1 度に持たない)。"""
+        result = message["result"]
+        thread = {**result["thread"], "turns": HISTORY_MARK}  # type: ignore[index, dict-item]  # 録った答えの形は検が確かめている
+        text = json.dumps({**message, "result": {**result, "thread": thread}}, ensure_ascii=False,  # type: ignore[dict-item]  # 同上
+                          separators=(",", ":"))
+        before, after = text.split(json.dumps(HISTORY_MARK), 1)
+        filler = "x" * HISTORY_PIECE_CHARS
+        with self.write_lock:
+            sys.stdout.write(before + "[")
+            for number in range(max(1, -(-self.history_bytes // HISTORY_PIECE_CHARS))):
+                turn = {"id": f"history-turn-{number}", "status": "completed",
+                        "items": [{"type": "agentMessage", "id": f"history-msg-{number}", "text": filler}]}
+                sys.stdout.write(("," if number else "") + json.dumps(turn, separators=(",", ":")))
+            sys.stdout.write("]" + after + "\n")
             sys.stdout.flush()
 
     def renamed(self, message: dict[str, object], turn_id: str) -> dict[str, object]:
@@ -194,7 +225,11 @@ class Stub:
         elif method == "thread/resume":
             self.mut_thread_id = str(params["threadId"])  # type: ignore[index]  # 同上
             self.mut_opened_with = dict(params)  # type: ignore[arg-type]  # 同上
-            self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]})
+            answer = {"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]}
+            if self.history_bytes:
+                self.write_with_history(answer)
+            else:
+                self.write(answer)
         elif method == "turn/start":
             self.start_turn(request_id, params)  # type: ignore[arg-type]  # 同上
         elif method == "turn/steer":
