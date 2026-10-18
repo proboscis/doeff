@@ -47,8 +47,10 @@
                              UnknownTurn NoSuchRequest ProcessStillAlive])
 
 (val RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
-;; 会話ごとに残すターンの記録の数(古いターンの出来事は読めなくなる — UnknownTurn)。
-(val KEPT-TURNS 16)
+;; 開いた会話ごとに残すターンの記録の数(古いターンの出来事は読めなくなる — UnknownTurn)。読み手(doeff-agents の headless_codex の pull)は
+;; 走っているターンだけを名指して読み、次のターンは前のターンの終わりを読んでから始めるので、今のターンと続きの数本があればよい
+;; (16 本では、道具の出力の全文を含む記録を、開いた会話ごとに 16 ターン分 host の本体が持った)。
+(val KEPT-TURNS 4)
 (val CLIENT-NAME "doeff-codex")
 (val CLIENT-VERSION "0.1.0")
 

@@ -19,7 +19,7 @@
 (import doeff_time [sync-time-handler])
 (import doeff_codex.values [FreshThread ResumeThread CodexInput CodexTurn CodexSessionSpec CodexHome])
 (import doeff_codex.lines [TurnEnded TurnStatus])
-(import doeff_codex.handler [CodexHost codex-handler on-line])
+(import doeff_codex.handler [CodexHost KEPT-TURNS codex-handler on-line])
 (import doeff_codex.effects [CodexStartTurn CodexCloseSession CodexLaunchCount CodexReadTurnEvents TurnStarted TurnEventPage UnknownTurn
                              SessionClosed BackendLost])
 (import tests.interpreters [STUB-PATH CODEX-HOME-DIR settings-for])
@@ -259,3 +259,26 @@
   (.join reader)
   (assert (= runtime.turns {}) runtime.turns)
   (assert (= continuation.next-seq seq-before) #(continuation.next-seq seq-before)))
+
+
+(defk turns-then-count [#^ CodexHost host #^ CodexSessionSpec spec #^ int count]
+  {:pre [(: host CodexHost) (: spec CodexSessionSpec) (: count int)] :post [(: % CodexTurn)] :tags {:context "codex-test" :role "program"}}
+  "同じ会話で count 本の turn を終わりまで走らせるため(答え = 最後の turn)。"
+  (<- opened (finished-turn "" spec "say hello"))
+  (var last opened)
+  (for [_ (range (- count 1))]
+    (<- next-turn (finished-turn opened.thread-id spec "say hello"))
+    (:= last next-turn))
+  last)
+
+(deftest test-a-live-session-keeps-only-the-last-few-turn-logs [tmp-path]
+  ;; 開いた会話が持つ turn の記録は最近の KEPT-TURNS 本だけ(読み手は今の turn と続きの turn しか読まない — 読み手の
+  ;; doeff-agents の headless_codex の pull は、走っている turn だけを名指して読む)。
+  (assert (<= KEPT-TURNS 4) KEPT-TURNS)
+  (<- host (new-host))
+  (<- spec (spec-in tmp-path))
+  (<- stack (handlers-for host))
+  (<- last (scheduled (with_handlers stack (turns-then-count host spec (+ KEPT-TURNS 3)))))
+  (<- held (turns-held host last.thread-id))
+  (assert (= (len held) KEPT-TURNS) held)
+  (assert (in last.turn-id held) #(last held)))
