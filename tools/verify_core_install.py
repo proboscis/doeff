@@ -26,8 +26,9 @@ Python の版ごとに:
    注記の文句は数えない。py.typed の package は `X as X` か `__all__` で再 export した名だけを公開とするので、README が
    `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする(card ki-d1628b5046d1)。
    あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
-6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、偽の handler の答えの後に、作業の dir の
-   頁を live_world が読んだ答えを印字する事を確かめる(card ki-34f672bff9f6)。
+6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、同じ digest を 4 つの handler で
+   走らせた答え — fake_world の答え・trace が見た effect の行・budget(1) が k を捨てた答え・作業の dir の頁を live_world が読んだ
+   答え — をその順に印字する事を確かめる(card ki-34f672bff9f6・ki-2ccb68ed0ad7)。
 7. README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例(examples/llm_agent.py)を、例の 2 つの
    file だけを写した dir で走らせ、偽の model の答えを印字する事を確かめる。続けて venv に pytest を足し、その dir で検の例
    (examples/test_llm_agent.py)が通る事を確かめる。どちらも OPENAI_ の環境変数を外して走らせる(model の key を読まない)。
@@ -228,6 +229,9 @@ DEMO_ARGUMENTS = ("-I", "-m", "doeff", "demo")
 DEMO_PAGE = "<h1>Hello, live</h1>"
 # 偽の handler(fake_world)の答えの行 — 頁を読まず、決めた頁 <h1>Hello</h1> の字の数を言う。
 DEMO_FAKE_ANSWER = "'14 chars'"
+# trace が 2 つ目の effect を見て印字する行と、budget(1) が 2 つ目の effect で k を捨てて返す答えの行。
+DEMO_TRACE_LINE = "trace: Summarize(text='<h1>Hello</h1>')"
+DEMO_BUDGET_ANSWER = "'over budget at Summarize'"
 
 # README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、それを確かめる pytest の検の例
 # (依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。repo の根からの path。
@@ -830,18 +834,19 @@ def _run_extra_use(
 
 
 def demo_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """試しの命令の結末が、0 で終わり、偽の handler の答えの後に頁を読んだ答えを印字した形でない事を言う文(合えば None)。"""
-    live = repr(f"{len(DEMO_PAGE)} chars")
-    printed = result.stdout.splitlines()
-    if (
-        result.returncode == 0
-        and DEMO_FAKE_ANSWER in printed
-        and live in printed
-        and printed.index(DEMO_FAKE_ANSWER) < printed.index(live)
-    ):
+    """試しの命令の結末が、0 で終わり、4 つの handler の答えの行をその順に印字した形でない事を言う文(合えば None)。"""
+    expected = (
+        DEMO_FAKE_ANSWER,
+        DEMO_TRACE_LINE,
+        DEMO_BUDGET_ANSWER,
+        repr(f"{len(DEMO_PAGE)} chars"),
+    )
+    # 行の iterator を前から読み進め、expected の各行をその前の行より後ろに探す(間に別の行を挟んでよい)。
+    printed = iter(result.stdout.splitlines())
+    if result.returncode == 0 and all(line in printed for line in expected):
         return None
     return (
-        f"python -m doeff demo が、終了コード 0 で偽の答え {DEMO_FAKE_ANSWER} の後に頁を読んだ答え {live} を"
+        f"python -m doeff demo が、終了コード 0 で 4 つの handler の答えの行 {' → '.join(expected)} をその順に"
         f"印字しなかった(終了コード {result.returncode})\n{result.stdout}{result.stderr}"
     )
 
@@ -867,7 +872,10 @@ def check_demo(installed: Installed, place: Path, timeout: float) -> list[str]:
         failure = f"python -m doeff demo が {timeout} 秒で終わらなかった"
     else:
         failure = demo_failure(result)
-    print_result("python -m doeff demo が、偽の handler の答えの後に頁を読んだ答えを言う", failure)
+    print_result(
+        "python -m doeff demo が、同じ digest を 4 つの handler で走らせた答えをその順に言う",
+        failure,
+    )
     return [] if failure is None else [failure]
 
 

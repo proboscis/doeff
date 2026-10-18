@@ -1,23 +1,18 @@
 from dataclasses import dataclass
-from urllib.request import urlopen
 
-from doeff import EffectBase, Resume, do, handler, run
+from doeff import EffectBase, do
 
 @dataclass(frozen=True)
-class Fetch(EffectBase):            # a request your code can make
+class Fetch(EffectBase):            # an effect: "get the page at url"
     url: str
 
+@dataclass(frozen=True)
+class Summarize(EffectBase):        # an effect: "summarize this text"
+    text: str
+
 @do
-def digest(url):                    # your logic: no I/O inside
+def digest(url):                    # the program: it only yields effects
     page = yield Fetch(url)
-    return f"{len(page)} chars"
-
-@do
-def fake_world(effect: Fetch, k):   # answers Fetch with a canned page
-    return (yield Resume(k, "<h1>Hello</h1>"))
-
-@do
-def live_world(effect: Fetch, k):   # answers Fetch over real HTTP
-    return (yield Resume(k, urlopen(effect.url).read().decode()))
+    return (yield Summarize(page))
 
 url = "https://example.com"
