@@ -817,7 +817,8 @@
         "packages/doeff-records/src/doeff_records/pg_sql.hy"
       ],
       "allow": [
-        "records-values"
+        "records-values",
+        "records-admission"
       ],
       "typed": true
     },
