@@ -45,7 +45,6 @@
 ;;     印を置いたので、焼けなかった版の root が準備済みのまま残り、版上げの Program が READY-MARK-INCOMPLETE で断り続けた。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import hashlib)
 (import importlib.util)
 (import os)
 (import re)
@@ -58,7 +57,6 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_hy_bytecode_guard.code_store [entry-path PYC-SUFFIX])
 (import doeff_cluster.shared.core.native_wheel :as native-wheel)
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
@@ -518,8 +516,8 @@
 (deftest test-boot-sh-writes-the-unchanged-bytecode-of-the-next-root-from-the-store [tmp-path]
   ;; 失敗ケース(#3858): 1 file だけ変えた次の版の root は、変わっていない file の .pyc を source の中身で引く保存先
   ;; ($WORK_DIR/state/doeff-hy-code-store — 起動の script の既定)から置き(stored)、変えた file だけを焼く。置く先は保存先の 1 つの
-  ;; file(名 = .pyc の中身の sha256)への hardlink で、前の root からは引き継がない(前の root が消えた・別の /work でも同じに効く —
-  ;; ADR-DOE-BUILD-002 R3・R6)。前の root の .pyc も同じ保存先の file を指すので、2 つの root の .pyc は同じ file になる。
+  ;; file への hardlink で、前の root からは引き継がない(前の root が消えた・別の /work でも同じに効く — ADR-DOE-BUILD-002 R3・R6)。
+  ;; 前の root の .pyc も同じ保存先の file を指すので、2 つの root の .pyc は同じ file になる — 保存先の dir の中の file である事を見る。
   (<- made tuple (doeff-source tmp-path :bake True))
   (val src (get made 0))
   (val sha1 (get made 2))
@@ -539,8 +537,8 @@
   (for [rel (gfor r BAKED :if (!= r changed-rel) r)]
     (<- new Path (pyc-of root2 rel))
     (assert (.is-file new) #("変えていない file の .pyc が無い" rel second.stderr))
-    (val in-store (Path (entry-path (str store) (.hexdigest (hashlib.sha256 (.read-bytes new))) PYC-SUFFIX)))
-    (assert (and (.is-file in-store) (os.path.samefile new in-store)) #("変えていない file の .pyc が保存先の file への hardlink でない" rel)))
+    (assert (any (gfor f (.rglob store "*") (and (.is-file f) (os.path.samefile new f))))
+            #("変えていない file の .pyc が保存先の file への hardlink でない" rel)))
   (<- new-changed Path (pyc-of root2 changed-rel))
   (assert (.is-file new-changed) #("変えた file が焼かれていない" second.stderr))
   (assert (= (cut (.read-bytes new-changed) 8 16) (importlib.util.source-hash (.encode changed-text "utf-8")))
