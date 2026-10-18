@@ -594,6 +594,40 @@ def test_the_worker_first_declaration_of_10_11_is_refused() -> None:
     assert _workers_newer_than(COORDINATOR_OF_10_11, WORKER_FIRST_OF_10_11) == WORKER_FIRST_OF_10_11
 
 
+# Program の cache の名の版(card ki-172e63fed4c7・ki-bc7697da6cf0): どの機体の worker の版も、service の Program の cache を
+# (宣言の版・sha) で名づける版(PROGRAM_CACHE_BY_VERSION_SINCE)かその子孫でなければならない。それより前の worker は cache を <sha>.json と
+# sha だけで名づけ、doeff の pin を上げても Program の sha が変わらない宣言し直しで前の版の file を子へ渡し、子が「版が違うので Program を
+# 解かない」で落ち続ける — 10-16・10-17・10-18 の 3 回(card ki-d132c14e6f13・ki-fbefb0cf6abd・ki-bc7697da6cf0)eos(901c200c8)の
+# patrol-watch が落ち続け、k3s-0(同じ版)の ideas も 0.7.0 で落ちた(ki-3c1998e1e787)。直しの版の後に機体の worker を古い版のまま残すと
+# 穴が残るので、宣言の側で断る。
+PROGRAM_CACHE_BY_VERSION_SINCE = "7decfe5f7d23c813504e3260a59da0f7be89e7f1"
+WORKER_OF_10_18 = "901c200c8ff693e58c49284395a980532bae760f"
+
+
+def _workers_caching_by_sha_alone(workers: tuple[NodeVersion, ...]) -> tuple[NodeVersion, ...]:
+    """Program の cache を sha だけで名づける版の worker(PROGRAM_CACHE_BY_VERSION_SINCE の子孫でない物)— 宣言の検が断る物を名指すため。"""
+    return tuple(worker for worker in workers if not _same_or_ancestor(PROGRAM_CACHE_BY_VERSION_SINCE, worker.commit))
+
+
+def test_no_worker_caches_programs_by_sha_alone(rendered: list[Manifest]) -> None:
+    """宣言の全部の機体の worker の版は、Program の cache を (版・sha) で名づける版かその子孫(上の註)。"""
+    workers = tuple(
+        NodeVersion(node=node, commit=str(_env_value(_worker_on(rendered, node), "WORKER_DOEFF_COMMIT")["value"]))
+        for node in NODES
+    )
+    stale = _workers_caching_by_sha_alone(workers)
+    assert stale == (), (
+        f"Program の cache を sha だけで名づける版の worker(PROGRAM_CACHE_BY_VERSION_SINCE {PROGRAM_CACHE_BY_VERSION_SINCE} の子孫へ"
+        f"上げる): {stale!r}"
+    )
+
+
+def test_the_eos_worker_of_10_18_is_refused() -> None:
+    """10-18 の落ちの形(eos の worker が 901c200c8 — cache を sha だけで名づける版)を、cache の名の版の判じが断る。"""
+    eos = (NodeVersion(node="eos", commit=WORKER_OF_10_18),)
+    assert _workers_caching_by_sha_alone(eos) == eos
+
+
 @dataclass(frozen=True)
 class Part:
     """上に載る系が別々の時に引き継げるよう、別の dir で組み立てる宣言の組 1 つ(dir の名と、その中の Deployment の役と ServiceAccount)。"""
