@@ -10,7 +10,10 @@
 ;;     読みにも答える。service は落ちない(受入の条 2)
 ;;   - 旧い形の索引(全部の行に張った (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と同じ形)が在る欄は、作り直さずに
 ;;     答える(受入の条 4)
-;;   - CONCURRENTLY の作りかけ(使えない形で残った同じ名の索引)は消してから作り直す・索引の用意の錠を他の process が持つ間は錠を待つ
+;;   - CONCURRENTLY の作りかけ(使えない形で残った同じ名の索引)は消してから作り直す・索引の用意の錠を他の process が持つ間は作らずに待ち、
+;;     錠を放した合図で観測し直す
+;;   - 錠を持つ process の作りの最中に別の process の回が錠を求めても、作りは deadlock で捨てられず、両方の回が差を埋めて終わる
+;;     (反例: 錠を SELECT pg_advisory_lock で待つ相手が居ると、作り手の CONCURRENTLY が 40P01 で捨てられる — 前の待ち方)
 ;; 反例: 前の形(既に在る表へ移行の transaction の中で CREATE INDEX)は、同じ筋書きで 1 秒の文の上限に cancel される(57014 — 本番の失敗と
 ;; 同じ形。「通る」の判定が何も確かめずに緑になる形を外す)。
 ;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
@@ -28,13 +31,13 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts postgres-sql-handler])
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlFailed])
+(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlFailed SqlNotify])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_time [SimClock sim-time-handler async-time-handler])
 (import doeff_records.values [RecordsSchema Row Page NotIndexed ExpectAbsent Written Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables])
+(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
 (import doeff_records.pg_sql [table-index-name index-name index-lock-key migrate-lock-key schema-statements])
 (import doeff_records.main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
 (import doeff_records.http_server [MaintenancePlan RecordsListening])
@@ -267,10 +270,21 @@
           (.close watcher))))))
 
 
+(defn released-with-notice [other store]  ; defk にできない: 検の素の接続と別の run で錠を放す代役
+  "別の process の代役の接続 other が持つ索引の用意の錠を放し、本番の作り手と同じ合図(SqlNotify — 別の接続の貸し出しなので別の process の
+   合図として届く)を出す。"
+  (.execute other "SELECT pg_advisory_unlock(hashtext(%s))" #((run (index-lock-key store.prefix))))
+  (setv notifier (quick-connections))
+  (try
+    (run (scheduled (with_handlers [(postgres-sql-handler notifier)]
+                                   (SqlNotify DATABASE (run (notice-channel store)) #(INDEX-TOPIC)))))
+    (finally (.close notifier))))
+
+
 (deftest test-the-round-waits-for-the-index-lock-held-by-another-process
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
-  ;; 同じ置き場の別の process(本体と twin)が索引の用意の錠を持つ間、回は錠を待って作らず(時間で見直さない — 錠の待ち)、錠が外れたら
-  ;; 錠の中で観測し直して作る。待つ間に別の process が作った索引は作らない(作り直しの文が流れても IF NOT EXISTS で何もしない)。
+  ;; 同じ置き場の別の process(本体と twin)が索引の用意の錠を持つ間、回は作らずに待ち(錠を PostgreSQL の錠の待ちで待たない)、錠を放した
+  ;; 合図で観測し直して作る。待つ間に別の process が作った索引は作らない(作り直しの文が流れても IF NOT EXISTS で何もしない)。
   (with-seeded-store
     (fn [prefix quick ddl]
       (setv note-index (run (table-index-name prefix "parts" "note"))
@@ -278,20 +292,87 @@
             watcher (open-postgres)
             pool (ThreadPoolExecutor :max-workers 1))
       (try
-        (setv other-pid (get (.fetchone (.execute other "SELECT pg_backend_pid()")) 0))
         (.execute other "SELECT pg_advisory_lock(hashtext(%s))" #((run (index-lock-key prefix))))
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
         (setv rounding (.submit pool (fn [] (run-on quick ddl (index-round store)))))
-        (wait-until-blocked watcher other-pid)
-        (assert (not (.done rounding)) "錠を持たれた回が待たずに終わった")
+        (time.sleep 1.0)
+        (assert (not (.done rounding)) (repr (.result rounding)))
         (assert (is (index-validity watcher note-index) None) "錠を持たれた間に索引を作った")
-        (.execute other "SELECT pg_advisory_unlock(hashtext(%s))" #((run (index-lock-key prefix))))
+        (released-with-notice other store)
         (assert (is (.result rounding 60) True) "錠が外れた後の回が埋めなかった")
         (assert (is (index-validity watcher note-index) True) note-index)
         (finally
           (.shutdown pool)
           (.close other)
           (.close watcher))))))
+
+
+(defn deadlocks [watcher]  ; defk にできない: 検の素の接続で数える
+  "この database で PostgreSQL が見つけた deadlock の数(pg_stat_database)。"
+  (get (.fetchone (.execute watcher "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()")) 0))
+
+
+(defn build-beside-a-lock-seeker [prefix quick ddl seek]  ; defk にできない: 回を thread の run で回し、書きの代役を素の接続で流す入口
+  "回 A が索引の用意の錠を取って作り始め、作りが書きの代役を待つ間に、錠を求める相手 seek(→ 結末を返す関数)を走らせ、相手が錠を求め
+   始めてから 2.5 秒(待つ側の deadlock の検めが済む 1 秒より長い)後に代役を外す。#(A の回の答え 相手の結末 その間の deadlock の数) を返す。"
+  (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix))
+        writer (open-postgres)
+        watcher (open-postgres)
+        pool (ThreadPoolExecutor :max-workers 2))
+  (try
+    (setv before (deadlocks watcher)
+          writer-pid (hold-writer writer prefix)
+          building (.submit pool (fn [] (run-on quick ddl (index-round store)))))
+    (wait-until-blocked watcher writer-pid)
+    (setv seeking (.submit pool seek))
+    (time.sleep 2.5)
+    (.execute writer "COMMIT")
+    (setv built (.result building 60)
+          sought (.result seeking 60))
+    #(built sought (- (deadlocks watcher) before))
+    (finally
+      (.shutdown pool)
+      (.close writer)
+      (.close watcher))))
+
+
+(deftest test-a-build-is-not-lost-to-a-deadlock-while-another-process-seeks-the-lock
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 本体と twin が同時に索引の用意に入る配備の代役: A が作る間に B(別の接続の貸し出し)の回が錠を求める。B は作らずに A の合図を待ち、
+  ;; A の作りは捨てられない。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv other-quick (quick-connections) other-ddl (ddl-connections))
+      (try
+        (setv twin (run-on other-quick other-ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (setv #(built sought found) (build-beside-a-lock-seeker prefix quick ddl
+                                                                (fn [] (run-on other-quick other-ddl (index-round twin)))))
+        (assert (is built True) "錠を持つ回の作りが捨てられた")
+        (assert (is sought True) "錠を求めた回が差を埋めずに終わった")
+        (assert (= found 0) found)
+        (with [watcher (open-postgres)]
+          (assert (is (index-validity watcher (run (table-index-name prefix "parts" "note"))) True)))
+        (finally
+          (.close other-quick)
+          (.close other-ddl))))))
+
+
+(deftest test-a-build-is-lost-to-a-deadlock-when-another-process-waits-on-the-lock
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 反例: 前の待ち方(SELECT pg_advisory_lock で外れるまで待つ)の相手が居ると、A の CREATE INDEX CONCURRENTLY の最後の待ちが相手の
+  ;; snapshot を待って輪になり、A の作りが 40P01 で捨てられる(「捨てられない」の判定が何も確かめずに緑になる形を外す)。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv seeker (open-postgres))
+      (defn seek []  ; defk にできない: thread の target
+        (.execute seeker "SELECT pg_advisory_lock(hashtext(%s))" #((run (index-lock-key prefix))))
+        (.execute seeker "SELECT pg_advisory_unlock(hashtext(%s))" #((run (index-lock-key prefix))))
+        True)
+      (try
+        (setv #(built sought found) (build-beside-a-lock-seeker prefix quick ddl seek))
+        (assert (is built False) "前の待ち方の相手が居ても作りが通った")
+        (assert (>= found 1) found)
+        (finally (.close seeker))))))
 
 
 ;; --- 記録の service(本番の土台の口)-------------------------------------------------------------------------------------------------
