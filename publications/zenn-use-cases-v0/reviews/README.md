@@ -41,3 +41,4 @@
 | backtest | 2026-10-17 新規の下書き | 検証済み（[記録](backtest.md)） | SVGで作成・目視確認済み |
 | adr | 10本目の担当(Opus 5.5・2026-10-17) | 新規・検証済み(`adr-check.py`) | SVGで作成・目視確認済み |
 | dispatch | 11本目からの候補2の担当(Opus 5.5・2026-10-18) | 新規・検証済み(`dispatch-check.py`・[記録](dispatch.md)) | SVGで作成・目視確認済み |
+| types | 11本目からの候補7の担当(Opus 5.5・2026-10-18) | 新規・検証済み(`types-check.py`・[記録](types.md)) | SVGで作成・目視確認済み |
