@@ -10,6 +10,7 @@ from doeff import EffectBase as EffectBase
 from doeff import with_handlers as with_handlers
 from doeff_core_effects.handlers import await_handler as await_handler
 from doeff_core_effects.handlers import state as state
+from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import scheduled as scheduled
 from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
 from doeff_core_effects.file_effects import ReadText as ReadText
@@ -17,8 +18,10 @@ from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler as os_signal_stop_handler
 from doeff_core_effects.aiohttp_http_server import aiohttp_http_server as aiohttp_http_server
 from doeff_core_effects.http_server_effects import HttpAddress as HttpAddress
+from doeff_core_effects.postgres_sql import DEFAULT_TIMEOUTS as DEFAULT_TIMEOUTS
 from doeff_core_effects.postgres_sql import PostgresConnections as PostgresConnections
 from doeff_core_effects.postgres_sql import PostgresDatabase as PostgresDatabase
+from doeff_core_effects.postgres_sql import PostgresTimeouts as PostgresTimeouts
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlRows as SqlRows
 from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
@@ -28,6 +31,7 @@ from doeff_time import async_time_handler as async_time_handler
 from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.pg import pg_records_handler as pg_records_handler
 from doeff_records.pg import prepare_records_store as prepare_records_store
+from doeff_records.pg import reconcile_indexes as reconcile_indexes
 from doeff_records.pg_sql import DEFAULT_PREFIX as DEFAULT_PREFIX
 from doeff_records.http_server import MaintenancePlan as MaintenancePlan
 from doeff_records.http_server import RecordsServing as RecordsServing
@@ -53,6 +57,8 @@ DEFAULT_POOL_SIZE: int
 DEFAULT_MAINTENANCE_SECONDS: float
 DEFAULT_KEEP_CHANGES_SECONDS: float
 DATABASE: str
+DDL_DATABASE: str
+DDL_TIMEOUTS: PostgresTimeouts
 STOP_POLL_SECONDS: float
 DRAIN_SECONDS: float
 

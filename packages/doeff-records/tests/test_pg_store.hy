@@ -12,7 +12,7 @@
 (import doeff_records.values [ExpectAbsent Written Conflict Row Unreachable Missing WrittenRows])
 (import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables])
+(import doeff_records.pg [IndexBook PreparedStore pg-records-handler drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 
@@ -101,7 +101,7 @@
   ;; 接続できない置き場(開いていない port)— 答え手の SqlUnreachable が公開 effect の答え Unreachable になる(読みも書きも)。
   (val closed (PostgresConnections #((PostgresDatabase :name DATABASE :dsn "postgresql://nobody@127.0.0.1:1/none?connect_timeout=2"))
                                    :size 1))
-  (val store (PreparedStore :database DATABASE :schema LAW-SCHEMA :prefix (fresh-prefix)))
+  (val store (PreparedStore :database DATABASE :ddl-database DATABASE :schema LAW-SCHEMA :prefix (fresh-prefix) :indexes (IndexBook)))
   (val answer (run-on (postgres-sql-handler closed) store (ReadRow "parts" #("p1"))))
   (assert (isinstance answer Unreachable) (repr answer))
   (val put (run-on (postgres-sql-handler closed) store (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))))

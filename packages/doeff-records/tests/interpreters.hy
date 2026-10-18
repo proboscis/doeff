@@ -102,14 +102,14 @@
 
 (defn prepared-store [connections #^ str prefix]  ; defk にできない: 検の解釈器の組み立て(Program の外)で呼ぶ
   "表を用意して(prepare-records-store)置き場を返す — 検の置き場 1 つにつき 1 度。"
-  (run-sql connections (prepare-records-store DATABASE LAW-SCHEMA prefix)))
+  (run-sql connections (prepare-records-store DATABASE DATABASE LAW-SCHEMA prefix)))
 
 
 (defk prepared-fresh-store [aligned-epoch]
   {:pre [(: aligned-epoch bool)] :post [(: % PreparedStore)]
    :tags {:context "records" :role "foundation"}}
   "検ごとの接頭辞の置き場を用意して返すため。aligned-epoch なら、用意の直後に版の行を memory の置き場の初めの版 1 にする(頭の註)。"
-  (<- store (prepare-records-store DATABASE LAW-SCHEMA (fresh-prefix)))
+  (<- store (prepare-records-store DATABASE DATABASE LAW-SCHEMA (fresh-prefix)))
   (when aligned-epoch
     (<- (SqlQuery DATABASE (.format "UPDATE {}store_epoch SET epoch = 1 WHERE id = 1" store.prefix) #())))
   store)
