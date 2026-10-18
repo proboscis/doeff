@@ -40,6 +40,10 @@ class InterruptRequested:
     ...
 
 @dataclass(frozen=True)
+class InputAlreadyRead:
+    ref: str
+
+@dataclass(frozen=True)
 class TurnEventPage:
     lines: tuple[ClaudeStreamLine, ...]
     next_seq: int
@@ -145,8 +149,9 @@ class ClaudeInjectInput(EffectBase[InputQueued | NoTurnInFlight | AttachmentRefu
     input: TurnInput
 
 @dataclass(frozen=True)
-class ClaudeInterruptTurn(EffectBase[InterruptRequested | NoTurnInFlight]):
+class ClaudeInterruptTurn(EffectBase[InterruptRequested | InputAlreadyRead | NoTurnInFlight]):
     turn: ClaudeTurn
+    for_input: str | None = None
 
 @dataclass(frozen=True)
 class ClaudeReadTurnEvents(EffectBase[TurnEventPage | UnknownTurn]):
