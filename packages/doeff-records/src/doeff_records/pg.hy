@@ -57,6 +57,9 @@
 ;;;     消してから作る。落ちた回は名乗って INDEX-RETRY-SECONDS 秒の後に観測し直す(service を終えない)。
 ;;;   - 答えは用意の終わりを待たない: ListRows が名指す宣言した索引の欄に、使える索引がまだ無ければ NotIndexed で断る(使い手は
 ;;;     Unavailable として撃ち直す — 宣言の注記の形)。他の読みと書きは答える(索引は読みの速さで、答えの値を変えない)。
+;;;   - 宣言した索引の欄の索引は表の欄の式の索引(pg_sql の頭の註 — card ki-2176012d1804)。旧い形の索引か前の部分索引(aliases)が在る欄は、
+;;;     表の欄の式の索引を作り終えるまで前の文の形で照らして答え(NotIndexed にしない)、作り終えた欄から表の欄の式で照らす(IndexBook の
+;;;     scoped — ListRows と回収の終端の行の読みが文の形を決める)。索引の用意は aliases が在っても表の欄の式の索引を作る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
@@ -125,28 +128,37 @@
 
 (defclass IndexBook []
   "宣言した索引の欄のうち、置き場に使える索引が在ると観測した欄の覚え(頭の註の「索引の用意」— 表の用意と索引の用意の task が書き、
-   ListRows が読む)。fields = 使える索引の在る欄(IndexedField の集合)/ missing = 最後の観測で置き場に無かった宣言の索引の名の並び
-   (空 = 宣言と置き場の差が無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。書きも読みも scheduler の thread の上で、
-   driver の thread は触らない。"
+   ListRows と回収が読む)。fields = 使える索引(表の欄の式の索引か、その aliases の旧い形の索引)の在る欄(IndexedField の集合)/
+   scoped = 表の欄の式の索引の在る (表, 欄)(IndexedField の集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/
+   missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)。資源なので値の型ではない(中身を
+   書き換え、同一性で扱う)。書きも読みも scheduler の thread の上で、driver の thread は触らない。"
 
   (defn #^ None __init__ [self]  ; defk にできない: 資源の class の初期化
     "観測の前の覚え(使える索引の在る欄は無い)を作るため。"
     (setv self.fields (frozenset)
+          self.scoped (frozenset)
           self.missing #()))
 
   (defn #^ bool covers [self #^ str table #^ str field]  ; defk にできない: ListRows の判断の中で同期に読む覚え(Program を返すと真偽にならない)
     "表 table の欄 field に、使える索引が在ると観測したかを読むため。"
     (in (IndexedField :table table :field field) self.fields))
 
-  (defn #^ None observed [self #^ frozenset fields #^ tuple missing]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
+  (defn #^ frozenset scoped-fields [self #^ str table]  ; defk にできない: 読みの文を組む前に同期に読む覚え(Program を返すと集合にならない)
+    "表 table の欄のうち、表の欄の式の索引が在ると観測した欄の名の集合を読むため(読みの文の条件の形を決める — pg_sql.row-filter)。"
+    (frozenset (gfor indexed self.scoped :if (= indexed.table table) indexed.field)))
+
+  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ tuple missing]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
     "置き場の索引を観測した断面で、覚えを書き替えるため(消えた索引の欄は外れる)。"
     (setv self.fields fields
+          self.scoped scoped
           self.missing missing)
     None)
 
-  (defn #^ None added [self #^ str name #^ tuple fields]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
-    "索引の用意が作り終えた索引(名 name・答える欄 fields)を覚えに足すため(次の観測を待たずに ListRows が使う)。"
+  (defn #^ None added [self #^ str name #^ tuple fields #^ tuple scoped]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
+    "索引の用意が作り終えた索引(名 name・答える欄 fields・表の欄の式で照らす欄 scoped)を覚えに足すため(次の観測を待たずに読みが
+     使う)。"
     (setv self.fields (| self.fields (frozenset fields))
+          self.scoped (| self.scoped (frozenset scoped))
           self.missing (tuple (gfor missing self.missing :if (!= missing name) missing)))
     None))
 
@@ -432,23 +444,22 @@
 (defk usable-index? [index usable]
   {:pre [(: index DeclaredIndex) (: usable frozenset)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "宣言の索引 index に、置き場の使える索引の名 usable の中で答える物(同じ名か旧い形の名 — aliases)が在るかを判じるため。"
+  "宣言の索引 index の読み(serves)に、置き場の使える索引の名 usable の中で答える物(同じ名か、作り終えるまで答える旧い形の名 —
+   aliases)が在るかを判じるため。"
   (or (in index.name usable) (any (gfor alias index.aliases (in alias usable)))))
 
 
 (defk index-gaps [declared observed]
   {:pre [(: declared tuple) (: observed tuple)] :post [(: % (get tuple #(IndexGap ...)))]
    :tags {:context "records" :role "foundation"}}
-  "宣言の索引 declared のうち、置き場の観測 observed に使える索引の無い物を差の並びにするため(宣言の順 — 同じ名の使えない索引が
-   残っていれば invalid)。"
+  "宣言の索引 declared のうち、置き場の観測 observed に同じ名の使える索引の無い物を差の並びにするため(宣言の順 — 同じ名の使えない
+   索引が残っていれば invalid)。aliases の旧い形の索引が在っても差に数える(表の欄の式の索引でなければ等号 2 つの読みが索引を組めない —
+   pg_sql の頭の註。旧い形の索引は作り終えるまでの読みに答える — usable-index?)。"
   (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
   (val unusable (frozenset (gfor seen observed :if (not seen.valid) seen.name)))
-  (var gaps #())
-  (for [index declared]
-    (<- found (usable-index? index usable))
-    (when (not found)
-      (:= gaps (+ gaps #((IndexGap :index index :invalid (in index.name unusable)))))))
-  gaps)
+  (tuple (gfor index declared
+               :if (not-in index.name usable)
+               (IndexGap :index index :invalid (in index.name unusable)))))
 
 
 (defk index-observed [book prefix schema found]
@@ -458,9 +469,14 @@
   (<- declared (declared-indexes prefix schema))
   (<- observed (observed-indexes found))
   (<- gaps (index-gaps declared observed))
-  (val missing (frozenset (gfor gap gaps gap.index.name)))
-  (val fields (frozenset (gfor index declared :if (not-in index.name missing) field index.serves field)))
-  (.observed book fields (tuple (gfor gap gaps gap.index.name)))
+  (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
+  (var served #())
+  (for [index declared]
+    (<- answers (usable-index? index usable))
+    (when answers
+      (:= served (+ served index.serves))))
+  (val scoped (frozenset (gfor index declared :if (in index.name usable) indexed index.scoped indexed)))
+  (.observed book (frozenset served) scoped (tuple (gfor gap gaps gap.index.name)))
   gaps)
 
 
@@ -593,7 +609,7 @@
 (defk analyzed [store gaps]
   {:pre [(: store PreparedStore) (: gaps tuple)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "式の統計を作った索引の表の標本を取り直すため(作ったばかりの統計は空 — 部分索引の値の組の読みの見積もりに要る・pg_sql.field-index)。
+  "式の統計を作った索引の表の標本を取り直すため(作ったばかりの統計は空 — 表の欄の式の索引の読みの見積もりに要る・pg_sql.field-index)。
    落ちても索引は使えるので、名乗って続ける(見積もりは次の autovacuum の analyze で揃う)。"
   (val relations (sorted (sfor gap gaps :if (is-not gap.index.statistics None) gap.index.relation)))
   (for [relation relations]
@@ -632,7 +648,7 @@
                :file sys.stderr :flush True)
         (return False)))
     (<- done float (GetMonotonic))
-    (.added store.indexes gap.index.name gap.index.serves)
+    (.added store.indexes gap.index.name gap.index.serves gap.index.scoped)
     (print (.format "記録の service: 索引 {} を {} 秒で作った({}{}・CONCURRENTLY)"
                     gap.index.name (round (- done started) 1) store.prefix gap.index.relation)
            :file sys.stderr :flush True))
@@ -747,7 +763,8 @@
   (var found [])
   (for [#(name decl) (sorted (.items store.schema.tables))]
     (when (and (isinstance decl.retention KeepFor) decl.terminal)
-      (<- statement (terminal-rows-statement store.prefix name decl.state-field decl.terminal))
+      (val scoped (in decl.state-field (.scoped-fields store.indexes name)))
+      (<- statement (terminal-rows-statement store.prefix name decl.state-field decl.terminal scoped))
       (<- records (query-rows store.database statement))
       (for [record records]
         (<- value (decoded-value (get record 1)))
@@ -907,13 +924,16 @@
   (<- expiry (row-expiry decl now-ms))
   (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
   (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
+  ;; 表の欄の式の索引が在る欄は表の欄の式で照らす(作り終える前の欄は前の文の形 — pg_sql の頭の註)。
+  (val scoped (.scoped-fields store.indexes ask.table))
   (when (is-not ask.descending-by None)
     ;; 上から読む読み(ListRows の註): 1 頁だけ・続きを返さない。
-    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields ask.descending-by where-json where-any-json ask.limit expiry))
+    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by where-json where-any-json ask.limit
+                                          expiry))
     (<- top-records (query-rows store.database top-statement))
     (<- top-rows (listed-rows-of decl ask.fields top-records))
     (return (Page top-rows None head.epoch head.head)))
-  (<- statement (list-rows-statement store.prefix ask.table decl.key-fields
+  (<- statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
                                      (if (is ask.cursor None) None ask.cursor.after-key)
                                      where-json
                                      where-any-json

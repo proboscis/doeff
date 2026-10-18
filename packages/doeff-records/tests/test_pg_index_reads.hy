@@ -15,7 +15,7 @@
 (import doeff_records.admission [canonical-json])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
-                              event-by-key-statement list-rows-statement top-rows-statement table-index-name])
+                              event-by-key-statement list-rows-statement top-rows-statement table-field-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -115,7 +115,7 @@
    結末の付いた組の結末(受付の列で一番多い、要求の後の結末の追記の形)。"
   (<- pulse-probe (expiring-candidates-statement prefix "pulses" BEFORE None CANDIDATE-LIMIT))
   (<- pair-probe (expiring-candidates-statement prefix "pairs" BEFORE ":" CANDIDATE-LIMIT))
-  (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done")))
+  (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done") True))
   (<- touched (touched-events-statement prefix "pairs" BEFORE ":" "done:m-1"))
   ;; WatchChanges の頭の文に列の末尾を並べた形(#3718 — 列ごとの副問い合わせ stream-tail-statement): (ledger, seq) の索引を後ろから 1 行。
   ;; pulses の出来事は pairs より前に積んである — 主鍵 seq を後ろから読む道なら pairs の出来事を全部読む(等号の照らしの形がそうだった)。
@@ -241,7 +241,7 @@
 
 
 ;; --- 値の組の読み(ListRows の where-any)--------------------------------------------------------------------------
-;; 表 parts の索引の欄 color を値の組 ANY-OF-VALUES 個で絞る 1 頁の読み(list-rows-statement)が、欄の式の索引 (ledger, color の式) に当たり、
+;; 表 parts の索引の欄 color を値の組 ANY-OF-VALUES 個で絞る 1 頁の読み(list-rows-statement)が、表の欄の式の索引(parts の color)に当たり、
 ;; 組に当たらない行を読まない事。置き場は行ごとに color の値が違う行を ANY-OF-ROWS 行と 2 倍の行で作り、組は在る値 ANY-OF-VALUES 個。
 ;; 行の大きさは本番の表 message の行(13,941 行・約 25 MB — 1 行 約 1.8 KB・2026-10-17 の測り)に近づける(欄 note に ANY-OF-NOTE-BLOCKS 個の
 ;; md5 の綴り)。計画は見積もりで選ばれ、表を頭から読む見積もりは行ごとの payload の jsonb への読み直しを安く数えるので、数十 byte の行
@@ -271,7 +271,7 @@
   {:pre [(: prefix str)] :post [(: % Statement)]
    :tags {:context "records" :role "program"}}
   "値の組の 1 頁の読みの文を作るため: 欄 color が c1 … c{ANY-OF-VALUES} のどれかの行を、鍵の順に ANY-OF-VALUES 行まで(保持の期限の無い表の形)。"
-  (<- statement (list-rows-statement prefix "parts" #("id") None {}
+  (<- statement (list-rows-statement prefix "parts" #("id") (frozenset #("color")) None {}
                                      {"color" (tuple (gfor n (range 1 (+ ANY-OF-VALUES 1)) (canonical-json (.format "c{}" n))))}
                                      ANY-OF-VALUES None))
   statement)
@@ -316,7 +316,7 @@
     (:= measured (run-sql connections (any-of-reads-on-seeded-store store.prefix count)))
     (finally
       (run-sql connections (drop-records-tables store))))
-  (<- color-index (table-index-name store.prefix "parts" "color"))
+  (<- color-index (table-field-index-name store.prefix "parts" "color"))
   (+ measured #(color-index)))
 
 
@@ -344,19 +344,172 @@
 ;; 鍵の欄が 1 つの表の鍵の欄を文字列で名指す絞りは、欄の式でなく主キー (ledger, key) の列 key の綴り(key-text)で照らす(表を頭から
 ;; 読み直す走査にしない)。鍵の欄が 2 つの表・鍵でない欄・文字列でない値の組は今の欄の式のまま。
 (deftest test-a-key-field-filter-is-read-through-the-key-column
-  (<- by-set (list-rows-statement "records_" "message" #("id") None {} {"id" #((canonical-json "m1") (canonical-json "é"))} 10 None))
+  (<- by-set (list-rows-statement "records_" "message" #("id") (frozenset) None {} {"id" #((canonical-json "m1") (canonical-json "é"))} 10 None))
   (assert (in "AND key IN (:a0_0, :a0_1)" by-set.text) by-set.text)
   (assert (not (in "payload" (get (.split by-set.text "WHERE") 1))) by-set.text)
   (assert (= (lfor p by-set.params :if (.startswith p.name "a0_") p.value) ["[\"m1\"]" "[\"\\u00e9\"]"]) by-set.params)
-  (<- by-one (list-rows-statement "records_" "message" #("id") None {"id" (canonical-json "m1")} {} 10 None))
+  (<- by-one (list-rows-statement "records_" "message" #("id") (frozenset) None {"id" (canonical-json "m1")} {} 10 None))
   (assert (in "key = :w0" by-one.text) by-one.text)
   (assert (= (lfor p by-one.params :if (= p.name "w0") p.value) ["[\"m1\"]"]) by-one.params)
-  (<- top (top-rows-statement "records_" "message" #("id") "n" {"id" (canonical-json "m1")} {} 10 None))
+  (<- top (top-rows-statement "records_" "message" #("id") (frozenset) "n" {"id" (canonical-json "m1")} {} 10 None))
   (assert (in "key = :w0" top.text) top.text)
   ;; 文字列でない値が混ざる組・鍵でない欄・鍵の欄が 2 つの表は欄の式のまま。
-  (<- mixed (list-rows-statement "records_" "message" #("id") None {} {"id" #((canonical-json "m1") (canonical-json 2))} 10 None))
+  (<- mixed (list-rows-statement "records_" "message" #("id") (frozenset) None {} {"id" #((canonical-json "m1") (canonical-json 2))} 10 None))
   (assert (in "((payload::jsonb) -> 'id') IN" mixed.text) mixed.text)
-  (<- other (list-rows-statement "records_" "message" #("id") None {} {"kind" #((canonical-json "a"))} 10 None))
+  (<- other (list-rows-statement "records_" "message" #("id") (frozenset) None {} {"kind" #((canonical-json "a"))} 10 None))
   (assert (in "((payload::jsonb) -> 'kind') IN" other.text) other.text)
-  (<- pair (list-rows-statement "records_" "tickets" #("group" "id") None {} {"id" #((canonical-json "a"))} 10 None))
+  (<- pair (list-rows-statement "records_" "tickets" #("group" "id") (frozenset) None {} {"id" #((canonical-json "a"))} 10 None))
   (assert (in "((payload::jsonb) -> 'id') IN" pair.text) pair.text))
+
+
+;; --- 当たる行の少ない絞り(等号 2 つ・値の組と値の組)は当たる行だけを読む(card ki-2176012d1804)-----------------------------------
+;; 本番の表 message(2026-10-18 — 44,296 行)で、宛先 1 人の行 5,283 行のうち kind = ask の 34 行を等号 2 つで読む 1 頁が、宛先の索引で
+;; 5,283 行を引いて 1 行ずつ payload を jsonb に読み直し、kind で 5,249 行を捨てた(0.43 秒)。2 つの欄の索引が同じ ledger の条件を使うと
+;; planner は索引を組まない(pg_sql の頭の註)。表 parts の索引の欄 label(宛先の代役)と color(kind の代役)で同じ形を作る: label = "hot" の
+;; 行と color = "ask" の行がそれぞれ表の 1/5 で、両方に合う行は PAIR-HITS 行(表の大きさに依らない)。値の組と値の組の読み(in_reply_to の組
+;; 995 個と kind の組 5 個の代役)は、color の値の組 SET-VALUES 個(行ごとに違う値)と label の組 SET-LABELS。置き場を PAIR-ROWS 行と 2 倍の
+;; 行で作り、読んだ行の数が 2 倍の置き場でも増えない(当たる行の数で決まる)事を確かめる。前の形では、等号 2 つの読みは片方の欄の行
+;; (表の 1/5)を全部読み、2 倍の置き場で倍に読んで赤になる。
+(val PAIR-ROWS 10000)
+(val PAIR-HITS 32)
+(val PAIR-PAGE 500)
+(val SET-VALUES 995)
+(val SET-LABELS #("l0" "l1" "l2" "l3" "l4"))
+;; 表 parts の表の欄の式の索引が在る欄(新しい置き場は表の用意で作る)。
+(val PARTS-SCOPED (frozenset #("color" "label")))
+
+
+(defk pair-rows-statement [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "表 parts に count 行(鍵 q1 …)をまとめて置く文を作るため: 行 g の label は g が 5 の倍数なら hot・他は l{g mod 7}、color は g mod 5 = 1
+   の行と hot の行の頭の PAIR-HITS 行が ask・他は行ごとに違う c{g}。欄 note は本番の行の大きさに近い md5 の綴りの連なり。"
+  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
+                       SELECT 'parts', '[\"q' || g || '\"]',
+                              json_build_object('id', 'q' || g,
+                                                'label', CASE WHEN g % 5 = 0 THEN 'hot' ELSE 'l' || (g % 7) END,
+                                                'color', CASE WHEN g % 5 = 1 OR (g % 5 = 0 AND g <= 5 * CAST(:hits AS integer)) THEN 'ask'
+                                                              ELSE 'c' || g END,
+                                                'state', 'open',
+                                                'note', (SELECT string_agg(md5(g || '-' || b), '')
+                                                           FROM generate_series(1, CAST(:blocks AS integer)) AS b))::text,
+                              1, CAST(:at AS bigint), 'maker', CAST(:origin AS text), 1
+                         FROM generate_series(1, CAST(:count AS integer)) AS g" :p prefix)
+             :params (tuple (gfor #(name value) #(#("count" count) #("hits" PAIR-HITS) #("blocks" ANY-OF-NOTE-BLOCKS) #("at" YOUNG)
+                                                  #("origin" ORIGIN-HOST))
+                                  (SqlParam :name name :value value)))))
+
+
+(defk pair-statements [prefix]
+  {:pre [(: prefix str)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "測る 2 つの読みを #(名 文) で並べるため: 等号 2 つ(label = hot かつ color = ask)の 1 頁と、color の値の組 SET-VALUES 個(hot でも ask でも
+   ない行の値)かつ label の組 SET-LABELS の 1 頁(どちらも PAIR-PAGE 行まで・表の欄の式で照らす形)。"
+  (val colors (tuple (gfor g (cut (lfor g (range 1 (* 4 SET-VALUES)) :if (in (% g 5) #(2 3 4)) g) SET-VALUES)
+                           (canonical-json (.format "c{}" g)))))
+  (<- pair (list-rows-statement prefix "parts" #("id") PARTS-SCOPED None {"label" (canonical-json "hot") "color" (canonical-json "ask")} {}
+                                PAIR-PAGE None))
+  (<- sets (list-rows-statement prefix "parts" #("id") PARTS-SCOPED None {}
+                                {"color" colors "label" (tuple (gfor label SET-LABELS (canonical-json label)))} PAIR-PAGE None))
+  #(#("等号 2 つ" pair) #("値の組と値の組" sets)))
+
+
+(defk pair-reads-on-seeded-store [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix の表 parts に count 行を置いて統計を取り、測る読みごとの #(走査の節 引いた索引の名 返した行の数) を
+   {名 …} で返すため。"
+  (<- seed (pair-rows-statement prefix count))
+  (for [statement #(seed (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
+    (<- seeded (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  (<- measured (pair-statements prefix))
+  (var reads {})
+  (for [#(name statement) measured]
+    (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+    (assert (isinstance answer SqlRows) (repr answer))
+    (val plan (get answer.rows 0 0))
+    (val explained (if (isinstance plan str) (json.loads plan) plan))
+    (<- scans (table-scans prefix explained))
+    (<- names (index-names explained))
+    (<- listed (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance listed SqlRows) (repr listed))
+    (:= reads (| reads {name #(scans names (len listed.rows))})))
+  reads)
+
+
+(defk pair-reads-at [connections count]
+  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して表 parts に count 行を置き、測る読みを測るため(終わりに表を消す)。
+   答え = #(読みごとの測り 表の欄の式の索引が在ると覚えた parts の欄 label と color の表の欄の式の索引の名)。"
+  (val store (prepared-store connections (fresh-prefix)))
+  (var reads {})
+  (try
+    (:= reads (run-sql connections (pair-reads-on-seeded-store store.prefix count)))
+    (finally
+      (run-sql connections (drop-records-tables store))))
+  (<- label-index (table-field-index-name store.prefix "parts" "label"))
+  (<- color-index (table-field-index-name store.prefix "parts" "color"))
+  #(reads (.scoped-fields store.indexes "parts") (frozenset #(label-index color-index))))
+
+
+(deftest test-a-narrow-filter-on-two-fields-reads-only-the-matching-rows-on-a-store-twice-as-large
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (try
+    (<- small (pair-reads-at connections PAIR-ROWS))
+    (<- large (pair-reads-at connections (* 2 PAIR-ROWS)))
+    (for [#(reads scoped field-indexes) #(small large)]
+      ;; 新しい置き場は表の用意で表の欄の式の索引を作り、覚えに書く(読みの文が表の欄の式で照らす)。
+      (assert (= scoped PARTS-SCOPED) (repr scoped))
+      (val pair (get reads "等号 2 つ"))
+      (val sets (get reads "値の組と値の組"))
+      ;; 等号 2 つ: 当たる PAIR-HITS 行だけを返し、2 つの欄の表の欄の式の索引を組んで引く(片方の欄の行を全部読まない)。
+      (assert (= (get pair 2) PAIR-HITS) (repr pair))
+      (assert (<= field-indexes (get pair 1)) (repr #(field-indexes pair)))
+      (<- pair-read (total-read (get pair 0)))
+      (assert (<= pair-read PAIR-HITS) (repr pair))
+      ;; 値の組と値の組: 1 頁 + 続きの有無を知る 1 行を返し、置き場の表を頭から読む節が無い。
+      (assert (= (get sets 2) (+ PAIR-PAGE 1)) (repr sets))
+      (assert (not (lfor #(kind table _) (get sets 0) :if (= kind "Seq Scan") table)) (repr sets)))
+    ;; 2 倍の置き場でも読んだ行は増えない(読むのは当たる行と値の組の行だけ — 片方の欄だけに合う行の数に依らない)。
+    (for [name #("等号 2 つ" "値の組と値の組")]
+      (<- small-read (total-read (get (get small 0) name 0)))
+      (<- large-read (total-read (get (get large 0) name 0)))
+      (assert (<= large-read small-read) (repr #(name small-read large-read (get (get small 0) name 0) (get (get large 0) name 0)))))
+    (finally
+      (.close connections))))
+
+
+(deftest test-a-filter-of-scoped-fields-reads-through-the-table-field-expressions-without-the-ledger-condition
+  ;; 絞りの欄が全部表の欄の式の索引の在る欄なら、条件は表の欄の式だけで ledger = :ledger を置かない(pg_sql の頭の註)。表の欄の式の索引が
+  ;; まだ無い欄(作り終える前 — 旧い形の索引が答える)・鍵の欄の絞り(主キーの列)が混ざれば ledger = :ledger を置き、その欄は前の形で照らす。
+  (val kind (canonical-json "ask"))
+  (val recipient (canonical-json "m1"))
+  (<- scoped (list-rows-statement "records_" "message" #("id") (frozenset #("kind" "recipient")) "k" {"kind" kind "recipient" recipient} {}
+                                  10 None))
+  (assert (not (in "ledger = :ledger" scoped.text)) scoped.text)
+  (assert (in "(CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'kind') END) = :w0::jsonb" scoped.text) scoped.text)
+  (assert (in "(CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'recipient') END) = :w1::jsonb" scoped.text) scoped.text)
+  (assert (in "key COLLATE \"C\" > :after" scoped.text) scoped.text)
+  (assert (not-in "ledger" (lfor p scoped.params p.name)) scoped.params)
+  (<- any-of (list-rows-statement "records_" "message" #("id") (frozenset #("kind" "in_reply_to")) None {}
+                                  {"in_reply_to" #((canonical-json "a") (canonical-json "b")) "kind" #(kind)} 10 None))
+  (assert (not (in "ledger = :ledger" any-of.text)) any-of.text)
+  (assert (in "(CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'in_reply_to') END) IN (:a0_0::jsonb, :a0_1::jsonb)" any-of.text)
+          any-of.text)
+  (<- top (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" {"kind" kind} {} 10 None))
+  (assert (not (in "ledger = :ledger" top.text)) top.text)
+  ;; 表の欄の式の索引がまだ無い欄が混ざる。
+  (<- partly (list-rows-statement "records_" "message" #("id") (frozenset #("kind")) None {"kind" kind "recipient" recipient} {} 10 None))
+  (assert (in "WHERE ledger = :ledger AND (CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'kind') END) = :w0::jsonb" partly.text)
+          partly.text)
+  (assert (in "((payload::jsonb) -> 'recipient') = :w1::jsonb" partly.text) partly.text)
+  ;; 鍵の欄の絞り(主キーの列で照らす)が混ざる。
+  (<- keyed (list-rows-statement "records_" "message" #("id") (frozenset #("kind")) None {"kind" kind} {"id" #((canonical-json "m1"))} 10 None))
+  (assert (in "WHERE ledger = :ledger AND " keyed.text) keyed.text)
+  (assert (in "key IN (:a0_0)" keyed.text) keyed.text)
+  ;; 絞りの無い読みは表の行に限る条件だけ。
+  (<- bare (list-rows-statement "records_" "message" #("id") (frozenset #("kind")) None {} {} 10 None))
+  (assert (in "WHERE ledger = :ledger ORDER BY" bare.text) bare.text))
