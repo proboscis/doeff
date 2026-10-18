@@ -62,9 +62,21 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `config.toml` | 元の `config.toml` への link(元に在る時だけ) | 元の設定のまま走る |
 | `sessions` | 元の `sessions` への link | 会話の記録を元に書く — 家を消しても次の process が同じ thread を `thread/resume` で続けられる |
 
-家は process が降りた時(降ろす手順の最後と、process の終わりの callback の両方)に中身ごと消える。codex が家の中に作る状態の
-sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確かめた(家を消した後に別の家から同じ thread を続け、続きの呼びが前の
+家は process が降りた時(降ろす手順の最後と、process の終わりの callback の両方)に中身ごと消える。codex が家の中に作る log・tmp
+は家と一緒に消える。形は本物の codex 0.162.1 で確かめた(家を消した後に別の家から同じ thread を続け、続きの呼びが前の
 ターンの発言と答えを運んだ)。`CodexHome` の env と auth-json は repr に出さない。
+
+状態の DB(`state_5.sqlite` ほか codex の sqlite — thread の一覧と rollout の置き場の索引)は家の外に 1 つ持つ(card ki-f316f508a6a5)。
+空の DB の codex は起動の時に sessions の全部を読んで DB を埋める(backfill)ので、DB を家に置くと起動のたびに記録の全部を読み直す。
+
+| 決まり | 形 | 訳(本物の codex 0.162.1 で測った事) |
+|---|---|---|
+| DB の置き場 | 家で起こす env の `CODEX_SQLITE_HOME` = 元の CODEX_HOME | 埋まった DB なら、別の家から起こしても backfill をしない(6 本を同時に起こして、どれも約 2 秒で thread を開いた) |
+| rollout の path の書き直し | 家を開く時、DB の行の `<元>/.credential-homes/<家>/sessions/…` を `<元>/sessions/…` へ | codex は行に家を通る path を書き、家を消すと別の家からの `thread/resume` が `no rollout found for thread id` で断られる |
+| DB を作る起動の lock | DB が無い間だけ、`<元>/.state-db.lock` の flock で initialize の答えまで 1 本ずつ | DB が無い時に 3 本を同時に起こすと、1 本が `failed to initialize sqlite state runtime` で降りた |
+
+検 `tests/test_state_db.hy`(替え玉が同じ振る舞いを持つ): 順に起こすと 2 回目から記録を読まず、家が消えた後も続きを開ける。DB が無い
+所へ同時に起こしても、どれも起動し、記録を読むのは 1 本だけで DB は壊れない。
 
 ## 行の記録(`classify-line` の答え)
 

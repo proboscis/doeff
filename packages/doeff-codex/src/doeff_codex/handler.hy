@@ -40,7 +40,7 @@
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_codex.process [CodexProcess CutLine EOF-GRACE-SECONDS TERM-GRACE-SECONDS LINE-CAP-BYTES])
-(import doeff_codex.credential_home [open-credential-home close-credential-home])
+(import doeff_codex.credential_home [open-credential-home close-credential-home credential-env state-db-claim state-db-release])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight
@@ -467,13 +467,60 @@
   down)
 
 
+(defclass StateDbHandoff []
+  "DB を作る起動の lock を、lock を待つ thread から起動の手へ渡す受け渡し。手が上限で去った後に取れた lock は、thread が返す(誰も
+   持たない lock を残さない)。thread と手の両方から触るので自分の lock を持つ。"
+  (defn __init__ [self]
+    (setv self.lock (threading.Lock)
+          self.mut-taken None
+          self.mut-left False))
+
+  (defn offer [self claim]
+    "待つ thread が取れた答え(True か lock)を置くため。答え = 手が受け取るか(去った後なら偽 — thread が lock を返す)。"
+    (with [self.lock]
+      (when self.mut-left (return False))
+      (setv self.mut-taken claim)
+      True))
+
+  (defn leave [self]
+    "手が待ちを終えるため。答え = 置かれた答え(まだ無ければ None — 以後の答えは thread が返す)。"
+    (with [self.lock]
+      (setv self.mut-left True)
+      self.mut-taken)))
+
+
+(deff take-state-db-lock [#^ str base #^ StateDbHandoff handoff bell]  ; defk にできない: 待つ thread の入口
+  {:pre [(: base str) (: handoff StateDbHandoff) (: bell ExternalPromise)] :post [(: % None)]}
+  "DB を作る起動の lock を取れるまで待ち、受け渡しに置いて呼び鈴を鳴らすため(手が去っていれば lock を返す)。"
+  (setv claim (run (state-db-claim base True)))
+  (when (not (.offer handoff claim))
+    (run (state-db-release claim)))
+  (.complete bell True))
+
+
+(defk claim-state-db-within [#^ str base #^ float seconds]
+  {:pre [(: base str) (: seconds float)] :post [(: % (| int bool))] :tags {:context "codex" :role "process"}}
+  "状態の DB を作る起動の lock を、上限 seconds 秒まで待って取るため(credential_home.hy の頭の註 — DB が無い間は DB を作る起動を
+   1 本ずつにする)。ほかの起動が持っていれば、待つ thread が lock を取って呼び鈴を鳴らすまで待つ。答え = state-db-claim の答え
+   (DB が在れば True・取れた lock・上限まで取れなければ False)。"
+  (<- claim (state-db-claim base False))
+  (when (is-not claim False) (return claim))
+  (val handoff (StateDbHandoff))
+  (<- bell (CreateExternalPromise))
+  (.start (threading.Thread :target (fn [] (take-state-db-lock base handoff bell)) :daemon True))
+  (<- (WaitWithin bell.future seconds :park True))
+  (val taken (.leave handoff))
+  (if (is taken None) False taken))
+
+
 (defk launch [#^ CodexHost host #^ SessionRuntime runtime #^ CodexSessionSpec spec origin]
   {:pre [(: host CodexHost) (: runtime SessionRuntime) (: spec CodexSessionSpec) (: origin (| FreshThread ResumeThread))]
    :post [(: % (| str ThreadUnknown LaunchFailed RequestRefused))]
    :tags {:context "codex" :role "process"}}
   "新しい process を起こし、初期化して thread を開くため(新しい会話は thread/start・続きは thread/resume)。答え = thread の id か失敗
    (失敗した process は降ろす)。宣言の家が借りた資格(auth-json)を持てば、その process だけの資格の家を env の CODEX_HOME の下に作って
-   CODEX_HOME をそこへ向け、process が降りたら消す(credential_home.hy)。"
+   CODEX_HOME をそこへ向け、process が降りたら消す(credential_home.hy)。その process の状態の DB は家の外の元の CODEX_HOME に置き
+   (CODEX_SQLITE_HOME)、DB がまだ無い間は、DB を作る起動(initialize の答えまで)を lock で 1 本ずつにする。"
   (val base (.get spec.home.env "CODEX_HOME"))
   (when (and (is-not spec.home.auth-json None) (not base))
     (return (LaunchFailed :detail "借りた資格を置く元の CODEX_HOME が宣言の env に無い")))
@@ -492,7 +539,17 @@
     (:= home opened))
   (with [runtime.lock]
     (setv runtime.credential-home home))
-  (val env (if (is home None) (dict spec.home.env) (| (dict spec.home.env) {"CODEX_HOME" home})))
+  (var claim None)
+  (when (is-not home None)
+    (<- claimed (claim-state-db-within base host.launch-timeout))
+    (when (is claimed False)
+      (<- (close-credential-home home))
+      (return (LaunchFailed :detail "状態の DB を作るほかの起動が、起動の待ちの上限まで終わらない")))
+    (:= claim claimed))
+  (var env (dict spec.home.env))
+  (when (is-not home None)
+    (<- lent-env (credential-env spec.home.env base home))
+    (:= env lent-env))
   (var process None)
   (try
     (:= process (CodexProcess argv spec.cwd env
@@ -501,13 +558,16 @@
                               (fn [] (.ring runtime.doorbell))
                               :line-cap host.line-cap))
     (except [OSError]
-      ;; 起こせなかった(実行ファイルが無いなど)— on-exit は呼ばれないので、作った家をここで消してから上げる。
+      ;; 起こせなかった(実行ファイルが無いなど)— on-exit は呼ばれないので、lock を返し、作った家をここで消してから上げる。
+      (<- (state-db-release claim))
       (<- (close-credential-home home))
       (raise)))
   (with [runtime.lock]
     (setv runtime.process process))
   (<- greeted (request runtime "initialize" (fn [request-id] (initialize-request request-id CLIENT-NAME CLIENT-VERSION))
                        host.launch-timeout))
+  ;; initialize に答えた codex は状態の DB を作り終えている(答えなければ降ろす)— どちらでも DB を作る起動の lock を返す。
+  (<- (state-db-release claim))
   (when (not (isinstance greeted lines.Response))
     (<- (retire runtime))
     (return (if (isinstance greeted lines.ErrorResponse) (refused "initialize" greeted) greeted)))
