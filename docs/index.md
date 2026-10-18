@@ -113,7 +113,7 @@ components are listed separately under
 ### Examples
 
 - **[LLM agent](../examples/llm_agent.py)** - The model call as your own effect `Complete(prompt)`: an OpenAI-compatible client answers it in production, canned answers in [its pytest tests](../examples/test_llm_agent.py). It needs only `pip install doeff`, and its tests pytest besides
-- **[GitHub API client](../examples/github_repo/README.md)** - Calls the GitHub REST API through the HTTP handler of `doeff[http]`; its tests answer with a fake handler, without the network. Run them with `pip install "doeff[http]" pytest`, then `pytest examples/github_repo`
+- **[GitHub API client](../examples/github_repo/README.md)** - Calls the GitHub REST API through the HTTP handler of `doeff[http]`; its tests answer the HTTP effects with a handler of their own, without the network. Run them with `pip install "doeff[http]" pytest`, then `pytest examples/github_repo`
 
 ### Integration & Advanced Topics
 

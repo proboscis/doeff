@@ -8,9 +8,13 @@ production handler for a test handler, and find the effect family you need.
 
 ## What it does
 
-In doeff, a program does not call the outside world directly. It *performs effects*:
-small data objects such as `Get("count")` or `ReadText("notes.txt")`. A *handler*
-installed around the program decides what each effect does. This package provides:
+doeff brings algebraic effects to Python. A program *performs effects*: small data
+objects such as `Get("count")` or `ReadText("notes.txt")`. A *handler* installed around
+the program receives each effect together with `k`, the rest of the program from that
+`yield` on, and decides what the effect means: it resumes `k` with an answer, throws an
+error into it, holds it while other tasks run, or drops it
+([What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)).
+This package provides:
 
 - the everyday effects: reader (`Ask`), state (`Get` / `Put`), writer (`Tell`),
   error handling (`Try`), absence and failure (`Absent` / `Raise`);
