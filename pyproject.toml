@@ -438,6 +438,12 @@ tests = ["tests/test_docs_page_examples.py", "tests/test_docs_typing_chapter_exa
 prefix = "docs/faq.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+# doeff の説明の軸の定義の page(何が algebraic effects で、何が使い方の例か — 取り組み doeff-publish の区切り 17・
+# card ki-3a3b13c1d16e)の例を走らせる。
+[[tool.doeff.contract-tests]]
+prefix = "docs/positioning/what-doeff-is.md"
+tests = ["tests/test_docs_page_examples.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
 tests = [

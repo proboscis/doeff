@@ -52,11 +52,13 @@ exclude_docs: |
   !/llm_unified_effects.md
   !/program-architecture-overview.md
   !/seedream.md
+  !/positioning/what-doeff-is.md
 
 nav:
   - Home: index.md
   - Getting Started:
       - Getting Started: 01-getting-started.md
+      - What doeff Is: positioning/what-doeff-is.md
       - FAQ: faq.md
       - Why Effects?: 20-why-effects-over-di.md
       - Core Concepts: 02-core-concepts.md
