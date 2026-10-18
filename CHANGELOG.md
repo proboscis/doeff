@@ -5,7 +5,7 @@
 ### Changed
 
 - `python -m doeff demo` runs its `digest` program under four handlers instead of two, to show that a handler decides
-  what an effect means, not only where I/O goes: `fake_world` resumes the continuation `k` with made-up values,
+  what an effect means, not only where I/O goes: `canned` resumes the continuation `k` with made-up values,
   `trace` sees every effect and passes it on, `budget(1)` lets one effect through and then drops `k`, so `digest` stops
   midway (`'over budget at Summarize'`), and `live_world` fetches the page over real HTTP. It closes with one line for
   what stayed the same (`digest`) and one line per handler for what it did with `k` and the answer it gave. The

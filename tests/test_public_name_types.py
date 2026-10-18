@@ -45,7 +45,7 @@ _DOEFF_GAPS: dict[str, str] = {
     "doeff.DoExpr": _NODE_TYPE_ARGS,
     "doeff.ProgramBase": _NODE_TYPE_ARGS,
     "doeff.cli.demo.digest": _DEMO_PRINTS_THE_README_EXAMPLE,
-    "doeff.cli.demo.fake_world": _DEMO_PRINTS_THE_README_EXAMPLE,
+    "doeff.cli.demo.canned": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.trace": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.budget": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.live_world": _DEMO_PRINTS_THE_README_EXAMPLE,

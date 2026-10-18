@@ -3,7 +3,7 @@
 ``python -m doeff demo`` (or ``doeff demo``) needs nothing beyond ``pip install doeff``. It
 prints the program ``digest``, then runs it four times, each under another handler, which
 receives every effect together with ``k``, the rest of ``digest`` from that ``yield`` on:
-``fake_world`` resumes ``k`` with made-up values, ``trace`` sees every effect and passes it on,
+``canned`` resumes ``k`` with made-up values, ``trace`` sees every effect and passes it on,
 ``budget(1)`` lets one effect through and then drops ``k``, so ``digest`` stops midway, and
 ``live_world`` answers ``Fetch`` over real HTTP. ``digest`` is the same in every run; what the
 handler does with ``k`` changes, and so does the answer. ``--url`` picks the page ``live_world``
@@ -45,7 +45,7 @@ def digest(url):               # the program: it only yields effects
 
 
 @do
-def fake_world(effect, k):     # answers the effects it knows
+def canned(effect, k):         # answers the effects it knows
     if isinstance(effect, Fetch):
         return (yield Resume(k, "<h1>Hello</h1>"))
     if isinstance(effect, Summarize):
@@ -79,7 +79,7 @@ def live_world(effect, k):     # answers Fetch over real HTTP
         with urlopen(effect.url, timeout=10) as response:
             page = response.read().decode(errors="replace")
         return (yield Resume(k, page))
-    yield Pass(effect, k)      # Summarize goes on to fake_world
+    yield Pass(effect, k)      # Summarize goes on to canned
 
 
 @dataclass(frozen=True)
@@ -99,18 +99,18 @@ class Step:
 
 STEPS = (
     Step(
-        "1. Answer each effect: fake_world resumes k, the rest of digest,\n"
+        "1. Answer each effect: canned resumes k, the rest of digest,\n"
         "   with a made-up value.",
-        fake_world,
-        "run(handler(fake_world)(digest(url)))",
-        "fake_world",
+        canned,
+        "run(handler(canned)(digest(url)))",
+        "canned",
         "resumed k with made-up values",
     ),
     Step(
         "2. Watch it run: trace sees every effect first and passes it on.\n"
         "   It knows nothing about Fetch or Summarize, so it works on any program.",
         trace,
-        "run(handler(fake_world)(handler(trace)(digest(url))))",
+        "run(handler(canned)(handler(trace)(digest(url))))",
         "trace",
         "saw each effect, passed it on",
     ),
@@ -118,15 +118,15 @@ STEPS = (
         "3. Stop it midway: budget(1) lets one effect through, then returns\n"
         "   without resuming k. The rest of digest never runs, and nothing raises.",
         budget,
-        "run(handler(fake_world)(budget(1)(digest(url))))",
+        "run(handler(canned)(budget(1)(digest(url))))",
         "budget(1)",
         "let one effect through, dropped k",
     ),
     Step(
         "4. Do real I/O: live_world answers Fetch over HTTP, and Summarize\n"
-        "   passes on to fake_world. Swapping I/O is one meaning among these.",
+        "   passes on to canned. Swapping I/O is one meaning among these.",
         live_world,
-        "run(handler(fake_world)(handler(live_world)(digest(url))))",
+        "run(handler(canned)(handler(live_world)(digest(url))))",
         "live_world",
         "answered Fetch over real HTTP",
     ),
@@ -159,7 +159,7 @@ def main(url: str = DEFAULT_URL) -> int:
         "run": run,
         "handler": handler,
         "digest": digest,
-        "fake_world": fake_world,
+        "canned": canned,
         "trace": trace,
         "budget": budget,
         "live_world": live_world,

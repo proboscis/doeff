@@ -1,7 +1,7 @@
 """README の頭の GIF(images/readme-demo.gif)を録り直す道具。
 
 GIF は「`pip install doeff` → program の file と handler の file を見る → 同じ `digest` を 4 つの handler で走らせると、
-handler が k(continuation)をどう扱うかで effect の意味と答えが変わる」を見せる — 値を答えて k を resume する fake_world・
+handler が k(continuation)をどう扱うかで effect の意味と答えが変わる」を見せる — 値を答えて k を resume する canned・
 全部の effect を見て次へ渡す trace・1 つ通した後に k を捨てて途中で止める budget(1)・本物の HTTP で答える live_world
 (`python -m doeff demo` と同じ 4 つ・card ki-2ccb68ed0ad7)。台本は下の SCRIPT の 1 か所に在り、録る file は隣の digest.py と
 handlers.py(GIF に映る file そのもの)。2 つは README の例と同じ書き方(定義の間の空行は 1 つ・註を揃える)で、それぞれ 1 画面に
@@ -93,13 +93,13 @@ SCRIPT: tuple[Type | Hold, ...] = (
     Hold(3.0),
     Type("python -i handlers.py", PYTHON_PROMPT),
     Hold(0.5),
-    Type("run(handler(fake_world)(digest(url)))", PYTHON_PROMPT),
+    Type("run(handler(canned)(digest(url)))", PYTHON_PROMPT),
     Hold(1.2),
-    Type("run(handler(fake_world)(handler(trace)(digest(url))))", PYTHON_PROMPT),
+    Type("run(handler(canned)(handler(trace)(digest(url))))", PYTHON_PROMPT),
     Hold(1.5),
-    Type("run(handler(fake_world)(budget(1)(digest(url))))", PYTHON_PROMPT),
+    Type("run(handler(canned)(budget(1)(digest(url))))", PYTHON_PROMPT),
     Hold(1.5),
-    Type("run(handler(fake_world)(handler(live_world)(digest(url))))", PYTHON_PROMPT),
+    Type("run(handler(canned)(handler(live_world)(digest(url))))", PYTHON_PROMPT),
 )
 # 最後の画面を見せる長さ(秒)— agg の --last-frame-duration。
 LAST_FRAME_SECONDS = 4.0

@@ -21,7 +21,7 @@ import yaml
 from doeff_core_effects import extra_hints
 
 from doeff import handler, run
-from doeff.cli.demo import budget, digest, fake_world, trace
+from doeff.cli.demo import budget, canned, digest, trace
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "python-compatibility.yml"
@@ -192,12 +192,12 @@ def test_the_extra_uses_cover_every_extra_of_the_hint_table() -> None:
 # --- 試しの命令 python -m doeff demo が核だけの venv で動く(card ki-34f672bff9f6・ki-2ccb68ed0ad7) --------------------------
 DEMO_LIVE = repr(f"{len(tool.DEMO_PAGE)} chars")
 DEMO_OUTPUT = (
-    f">>> run(handler(fake_world)(digest(url)))\n{tool.DEMO_FAKE_ANSWER}\n\n"
-    ">>> run(handler(fake_world)(handler(trace)(digest(url))))\n"
+    f">>> run(handler(canned)(digest(url)))\n{tool.DEMO_CANNED_ANSWER}\n\n"
+    ">>> run(handler(canned)(handler(trace)(digest(url))))\n"
     "trace: Fetch(url='file:///page.html')\n"
-    f"{tool.DEMO_TRACE_LINE}\n{tool.DEMO_FAKE_ANSWER}\n\n"
-    f">>> run(handler(fake_world)(budget(1)(digest(url))))\n{tool.DEMO_BUDGET_ANSWER}\n\n"
-    f">>> run(handler(fake_world)(handler(live_world)(digest(url))))\n{DEMO_LIVE}\n\n"
+    f"{tool.DEMO_TRACE_LINE}\n{tool.DEMO_CANNED_ANSWER}\n\n"
+    f">>> run(handler(canned)(budget(1)(digest(url))))\n{tool.DEMO_BUDGET_ANSWER}\n\n"
+    f">>> run(handler(canned)(handler(live_world)(digest(url))))\n{DEMO_LIVE}\n\n"
 )
 
 
@@ -211,7 +211,7 @@ DEMO_OUTPUT = (
         (0, DEMO_OUTPUT.replace(DEMO_LIVE, ""), False),
         (
             0,
-            f"{DEMO_LIVE}\n{tool.DEMO_BUDGET_ANSWER}\n{tool.DEMO_TRACE_LINE}\n{tool.DEMO_FAKE_ANSWER}\n",
+            f"{DEMO_LIVE}\n{tool.DEMO_BUDGET_ANSWER}\n{tool.DEMO_TRACE_LINE}\n{tool.DEMO_CANNED_ANSWER}\n",
             False,
         ),
         (0, DEMO_OUTPUT.replace(f"\n{DEMO_LIVE}\n", f"\nx {DEMO_LIVE}\n"), False),
@@ -237,11 +237,9 @@ def test_the_demo_check_expects_the_answers_of_the_demos_handlers(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # 道具は標準ライブラリだけで走るので doeff を import できず、答えを写して持つ — 写しが demo の答えとずれない事。
-    assert repr(run(handler(fake_world)(digest(tool.DEMO_PAGE)))) == tool.DEMO_FAKE_ANSWER
-    assert (
-        repr(run(handler(fake_world)(budget(1)(digest(tool.DEMO_PAGE))))) == tool.DEMO_BUDGET_ANSWER
-    )
-    run(handler(fake_world)(handler(trace)(digest(tool.DEMO_PAGE))))
+    assert repr(run(handler(canned)(digest(tool.DEMO_PAGE)))) == tool.DEMO_CANNED_ANSWER
+    assert repr(run(handler(canned)(budget(1)(digest(tool.DEMO_PAGE))))) == tool.DEMO_BUDGET_ANSWER
+    run(handler(canned)(handler(trace)(digest(tool.DEMO_PAGE))))
     assert tool.DEMO_TRACE_LINE in capsys.readouterr().out.splitlines()
 
 

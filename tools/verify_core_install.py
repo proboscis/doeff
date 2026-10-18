@@ -27,7 +27,7 @@ Python の版ごとに:
    `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする(card ki-d1628b5046d1)。
    あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
 6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、同じ digest を 4 つの handler で
-   走らせた答え — fake_world の答え・trace が見た effect の行・budget(1) が k を捨てた答え・作業の dir の頁を live_world が読んだ
+   走らせた答え — canned の答え・trace が見た effect の行・budget(1) が k を捨てた答え・作業の dir の頁を live_world が読んだ
    答え — をその順に印字する事を確かめる(card ki-34f672bff9f6・ki-2ccb68ed0ad7)。
 7. README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例(examples/llm_agent.py)を、例の 2 つの
    file だけを写した dir で走らせ、偽の model の答えを印字する事を確かめる。続けて venv に pytest を足し、その dir で検の例
@@ -227,8 +227,8 @@ EXTRA_USES = (
 # 作業の dir の file にする — urlopen は file の URL を HTTP と同じ道で読むので、検は network に出ない。
 DEMO_ARGUMENTS = ("-I", "-m", "doeff", "demo")
 DEMO_PAGE = "<h1>Hello, live</h1>"
-# 偽の handler(fake_world)の答えの行 — 頁を読まず、決めた頁 <h1>Hello</h1> の字の数を言う。
-DEMO_FAKE_ANSWER = "'14 chars'"
+# 決めた値で答える handler(canned)の答えの行 — 頁を読まず、決めた頁 <h1>Hello</h1> の字の数を言う。
+DEMO_CANNED_ANSWER = "'14 chars'"
 # trace が 2 つ目の effect を見て印字する行と、budget(1) が 2 つ目の effect で k を捨てて返す答えの行。
 DEMO_TRACE_LINE = "trace: Summarize(text='<h1>Hello</h1>')"
 DEMO_BUDGET_ANSWER = "'over budget at Summarize'"
@@ -836,7 +836,7 @@ def _run_extra_use(
 def demo_failure(result: subprocess.CompletedProcess[str]) -> str | None:
     """試しの命令の結末が、0 で終わり、4 つの handler の答えの行をその順に印字した形でない事を言う文(合えば None)。"""
     expected = (
-        DEMO_FAKE_ANSWER,
+        DEMO_CANNED_ANSWER,
         DEMO_TRACE_LINE,
         DEMO_BUDGET_ANSWER,
         repr(f"{len(DEMO_PAGE)} chars"),

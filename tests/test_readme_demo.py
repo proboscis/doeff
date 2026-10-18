@@ -2,7 +2,7 @@
 
 GIF(images/readme-demo.gif)は tools/readme_demo/record.py が、隣の digest.py(program)と handlers.py(4 つの handler)を
 本物の bash と Python で走らせて録る。GIF は録り直すまで変わらないので、doeff の API が変わって 2 つの file が走らなくなっても
-GIF は古いまま「動く」ように見える。この検は 2 つの file を今の doeff で走らせ、GIF に映る 4 つの答え — fake_world の
+GIF は古いまま「動く」ように見える。この検は 2 つの file を今の doeff で走らせ、GIF に映る 4 つの答え — canned の
 '14 chars'・trace が見る 2 つの effect・budget(1) が k を捨てた 'over budget at Summarize'・本物の取り寄せの道(live_world)— が
 今も通る事と、GIF の 4 行が `python -m doeff demo` の 4 行と同じ答えを返す事を確かめる(card ki-2ccb68ed0ad7)。落ちたら file を
 直して GIF を録り直す(record.py の docstring の命令)。
@@ -53,14 +53,14 @@ def handlers(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     return _load(DEMO_DIR / "handlers.py")
 
 
-def test_fake_world_answers_what_the_gif_shows(handlers: ModuleType) -> None:
-    assert run(handler(handlers.fake_world)(handlers.digest(handlers.url))) == "14 chars"
+def test_canned_answers_what_the_gif_shows(handlers: ModuleType) -> None:
+    assert run(handler(handlers.canned)(handlers.digest(handlers.url))) == "14 chars"
 
 
 def test_trace_sees_both_effects_and_passes_them_on(
     handlers: ModuleType, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    program = handler(handlers.fake_world)(handler(handlers.trace)(handlers.digest(handlers.url)))
+    program = handler(handlers.canned)(handler(handlers.trace)(handlers.digest(handlers.url)))
     assert run(program) == "14 chars"
     assert capsys.readouterr().out.splitlines() == [
         "trace: Fetch(url='https://example.com')",
@@ -69,16 +69,14 @@ def test_trace_sees_both_effects_and_passes_them_on(
 
 
 def test_budget_drops_k_at_the_second_effect(handlers: ModuleType) -> None:
-    program = handler(handlers.fake_world)(handlers.budget(1)(handlers.digest(handlers.url)))
+    program = handler(handlers.canned)(handlers.budget(1)(handlers.digest(handlers.url)))
     assert run(program) == "over budget at Summarize"
 
 
 def test_live_world_reads_the_page_at_the_url(handlers: ModuleType, tmp_path: Path) -> None:
     page = tmp_path / "page.html"
     page.write_text("<h1>Hello, live</h1>", encoding="utf-8")
-    program = handler(handlers.fake_world)(
-        handler(handlers.live_world)(handlers.digest(page.as_uri()))
-    )
+    program = handler(handlers.canned)(handler(handlers.live_world)(handlers.digest(page.as_uri())))
     assert run(program) == "20 chars"
 
 

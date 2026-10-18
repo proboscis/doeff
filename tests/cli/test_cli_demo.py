@@ -83,16 +83,16 @@ def test_demo_runs_with_the_core_only_and_each_handler_gives_the_program_another
     assert completed.returncode == 0, completed.stderr
     shown = completed.stdout
     live = f"{len(PAGE)} chars"
-    # 同じ digest の 4 回の答え。fake_world は頁を読まずに '14 chars'、trace は 2 つの effect を見て渡す、budget(1) は
+    # 同じ digest の 4 回の答え。canned は頁を読まずに '14 chars'、trace は 2 つの effect を見て渡す、budget(1) は
     # 2 つ目の effect(Summarize)で k を捨てて digest を止める、live_world は file の頁(20 字)を読む。
     runs = (
-        ">>> run(handler(fake_world)(digest(url)))\n'14 chars'\n",
-        ">>> run(handler(fake_world)(handler(trace)(digest(url))))\n"
+        ">>> run(handler(canned)(digest(url)))\n'14 chars'\n",
+        ">>> run(handler(canned)(handler(trace)(digest(url))))\n"
         f"trace: Fetch(url={page.as_uri()!r})\n"
         "trace: Summarize(text='<h1>Hello</h1>')\n"
         "'14 chars'\n",
-        ">>> run(handler(fake_world)(budget(1)(digest(url))))\n'over budget at Summarize'\n",
-        f">>> run(handler(fake_world)(handler(live_world)(digest(url))))\n{live!r}\n",
+        ">>> run(handler(canned)(budget(1)(digest(url))))\n'over budget at Summarize'\n",
+        f">>> run(handler(canned)(handler(live_world)(digest(url))))\n{live!r}\n",
     )
     places = [shown.index(run) for run in runs]
     assert places == sorted(places)
@@ -101,7 +101,7 @@ def test_demo_runs_with_the_core_only_and_each_handler_gives_the_program_another
     closing = shown[places[-1] :]
     assert "Same in all 4 runs: digest, not one line of it changed.\n" in closing
     for handler_name, answer in (
-        ("fake_world", "'14 chars'"),
+        ("canned", "'14 chars'"),
         ("trace", "'14 chars'"),
         ("budget(1)", "'over budget at Summarize'"),
         ("live_world", repr(live)),
@@ -112,7 +112,7 @@ def test_demo_runs_with_the_core_only_and_each_handler_gives_the_program_another
     # 走らせた program と handler の source を見せる(README の handler の例と同じ digest)。
     for source in (
         "def digest(url):",
-        "def fake_world(effect, k):",
+        "def canned(effect, k):",
         "def trace(effect, k):",
         "def budget(effects):",
         "def live_world(effect, k):",
