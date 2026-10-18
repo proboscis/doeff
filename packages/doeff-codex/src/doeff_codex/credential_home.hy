@@ -20,8 +20,11 @@
 ;;; 確かめた事(2026-10-19):
 ;;;   - DB が埋まっていれば、別の家から起こしても backfill をしない(6 本を同時に起こして、どれも約 2 秒で thread を開いた)。
 ;;;   - codex は DB の行に rollout の path を、家を通る形(<家>/sessions/…)で書く。家を消すとその path は無くなり、別の家からの
-;;;     thread/resume が「no rollout found for thread id」で断られる。そこで家を開く時に、家を通る path を元の sessions の path へ
-;;;     書き直す(同じ file)。行が無い thread は、codex が sessions の file を名で探して行を作り直す(元の path で書く)。
+;;;     thread/resume が「no rollout found for thread id」で断られる。そこで家で起こすたびに、家を通る path を元の sessions の path へ
+;;;     書き直す(同じ file — repoint-state-db)。行が無い thread は、codex が sessions の file を名で探して行を作り直す(元の path で書く)。
+;;;     書き直しは sqlite への書き込みで、disk が混む間や codex の書き込みと重なる間は数十秒かかる(配備の後の最初の起動で 59 秒)。
+;;;     handler の手で書くと turn-host の全部の会話が止まるので、handler は書き直しを手の外の thread で走らせ、待つのは続き
+;;;     (thread/resume)の要求の前の、その会話の手だけにする(handler.hy の start-repoint)。
 ;;;   - DB が無い時に 3 本を同時に起こすと、1 本が「failed to initialize sqlite state runtime」で降りた。そこで DB が無い間は、
 ;;;     DB を作る起動を lock で 1 本ずつにする(state-db-claim — 在れば lock を取らない)。
 ;;; 手本 = 預かり所の deploy/custody/codex-home.sh(借りた auth.json を 0600 で置き、終わったら消す)。
@@ -51,11 +54,10 @@
 (defk open-credential-home [#^ str base #^ str auth-json]
   {:pre [(: base str) (: auth-json str)] :post [(: % str)] :tags {:context "codex" :role "process"}}
   "借りた資格の家を元の CODEX_HOME(base)の下に作り、その path を返すため(頭の註の形)。auth.json は作る時から権限 0600 で書く。
-   作る前に、状態の DB の家を通る rollout の path を元の sessions の path へ書き直す(repoint-state-db)。"
+   状態の DB は触らない(DB の path の書き直しは、起こす手が手の外の thread で走らせる — 頭の註)。"
   (val root (Path base))
   (val homes (/ root CREDENTIAL-HOMES-DIR))
   (.mkdir homes :mode 0o700 :parents True :exist-ok True)
-  (<- (repoint-state-db base))
   (val home (/ homes (. (uuid.uuid4) hex)))
   (.mkdir home :mode 0o700)
   (val descriptor (os.open (/ home AUTH-FILE) (| os.O-WRONLY os.O-CREAT os.O-EXCL) 0o600))

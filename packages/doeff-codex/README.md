@@ -75,7 +75,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | 決まり | 形 | 訳(本物の codex 0.162.1 で測った事) |
 |---|---|---|
 | DB の置き場 | 家で起こす env の `CODEX_SQLITE_HOME` = 元の CODEX_HOME | 埋まった DB なら、別の家から起こしても backfill をしない(6 本を同時に起こして、どれも約 2 秒で thread を開いた) |
-| rollout の path の書き直し | 家を開く時、DB の行の `<元>/.credential-homes/<家>/sessions/…` を `<元>/sessions/…` へ | codex は行に家を通る path を書き、家を消すと別の家からの `thread/resume` が `no rollout found for thread id` で断られる |
+| rollout の path の書き直し | 家で起こすたび、DB の行の `<元>/.credential-homes/<家>/sessions/…` を `<元>/sessions/…` へ。書き直しは handler の手の外の thread で走らせ、待つのは `thread/resume` の要求の前のその会話だけ(上限 = 起動の待ち) | codex は行に家を通る path を書き、家を消すと別の家からの `thread/resume` が `no rollout found for thread id` で断られる。書き直しは disk が混む間は数十秒かかり(配備の後の最初の起動で 59 秒)、手で書くと turn-host の全部の会話が止まる |
 | DB を作る起動の lock | DB が無い間だけ、`<元>/.state-db.lock` の flock で initialize の答えまで 1 本ずつ | DB が無い時に 3 本を同時に起こすと、1 本が `failed to initialize sqlite state runtime` で降りた |
 
 検 `tests/test_state_db.hy`(替え玉が同じ振る舞いを持つ): 順に起こすと 2 回目から記録を読まず、家が消えた後も続きを開ける。DB が無い

@@ -10,6 +10,9 @@
 (import dataclasses [replace])
 (import sqlite3)
 (import sys)
+(import threading)
+(import doeff_codex.credential_home :as credential-home)
+(import doeff_codex.handler :as handler)
 (import pathlib [Path])
 (import doeff [with_handlers])
 (import doeff_core_effects.scheduler [scheduled Spawn Gather])
@@ -102,6 +105,55 @@
   answers)
 
 
+(defclass RepointGate []
+  "DB の path の書き直しを、ほかの会話のターンが終わるまで(上限 GATE-SECONDS)止める門(disk が混んで書き直しが遅い間の模型)。
+   書き直しが門で待った結末(開けられた = 真・上限で切れた = 偽・まだ待っていない = None)と、続きのターンが終わった時に門が
+   開いていたか(ほかの会話のターンの後に終わったか)を記す。"
+  (defn __init__ [self real]
+    (setv self.real real
+          self.opened (threading.Event)
+          self.mut-waited None
+          self.mut-resumed-after-other None))
+
+  (defn repoint [self base]
+    "門が開くまで待ってから本物の書き直しをする Program を作るため(handler が repoint-state-db の代わりに呼ぶ)。"
+    (setv self.mut-waited (.wait self.opened GATE-SECONDS))
+    (self.real base)))
+
+;; 書き直しを止める上限(秒)。手で書き直す handler では turn-host の手がこの秒だけ止まり、門は上限で切れる。
+(val GATE-SECONDS 15.0)
+
+(defk plain-spec [#^ Path tmp-path #^ str prefix]
+  {:pre [(: tmp-path Path) (: prefix str)] :post [(: % CodexSessionSpec)] :tags {:context "codex-test" :role "program"}}
+  "借りた資格を持たない(家を作らない)会話の宣言を作るため。"
+  (<- settings (settings-for "stub" tmp-path))
+  (replace settings.spec :home (CodexHome :env (| settings.spec.home.env {"STUB_ID_PREFIX" prefix}))))
+
+(defk resumed-then-noted [#^ CodexSessionSpec spec #^ str thread-id #^ RepointGate gate]
+  {:pre [(: spec CodexSessionSpec) (: thread-id str) (: gate RepointGate)] :post [(: % tuple)] :tags {:context "codex-test" :role "program"}}
+  "借りた口座の家から会話を続け、終わった事を門の順に記すため。"
+  (<- said (said-state spec (ResumeThread :thread-id thread-id)))
+  (setv gate.mut-resumed-after-other (.is-set gate.opened))
+  said)
+
+(defk other-then-open [#^ CodexSessionSpec spec #^ RepointGate gate]
+  {:pre [(: spec CodexSessionSpec) (: gate RepointGate)] :post [(: % tuple)] :tags {:context "codex-test" :role "program"}}
+  "ほかの会話のターンを 1 つ回し、終わったら門を開けるため(書き直しの間にこのターンが進めば門は上限より前に開く)。"
+  (<- said (said-state spec (FreshThread)))
+  (.set gate.opened)
+  said)
+
+(defk resume-beside-other [#^ Path tmp-path #^ str thread-id #^ RepointGate gate]
+  {:pre [(: tmp-path Path) (: thread-id str) (: gate RepointGate)] :post [(: % list)] :tags {:context "codex-test" :role "program"}}
+  "書き直しが門で止まる続きの起動と、ほかの会話のターンを同時に回すため。"
+  (<- spec-a (lent-spec tmp-path "r" {}))
+  (<- spec-b (plain-spec tmp-path "o"))
+  (<- resumed (Spawn (resumed-then-noted spec-a thread-id gate)))
+  (<- other (Spawn (other-then-open spec-b gate)))
+  (<- answers (Gather resumed other))
+  answers)
+
+
 (deftest test-a-second-launch-from-a-lent-home-reads-no-session-records-and-resumes-across-homes [tmp-path]
   ;; 1 回目は DB が無いので記録の全部を読む。2 回目は、1 回目の家が消えた後の別の家から起こしても記録を 1 byte も読まず、DB の行が
   ;; 残っている(1 回目の会話の行と置いた記録の行)。3 回目は、1 回目と 2 回目の家が消えた後に 1 回目の会話を続けられる(DB の行の
@@ -141,3 +193,27 @@
   (assert (= (. (.execute connection "PRAGMA integrity_check") (fetchone)) #("ok")))
   (assert (= (get (.fetchone (.execute connection "SELECT count(*) FROM threads")) 0) (+ ROLLOUTS TOGETHER)))
   (.close connection))
+
+
+(deftest test-a-slow-state-db-repoint-holds-only-the-resuming-launch-and-other-turns-go-on [tmp-path monkeypatch]
+  ;; 家で起こすたびの DB の path の書き直しが遅い間(disk が混む・codex の書き込みと重なる — 配備の後の最初の起動で 59 秒)も、ほかの
+  ;; 会話のターンは進む。書き直しを止める門は、ほかの会話のターンが終わって開ける。書き直しを handler の手で書くと、手が門で止まり、
+  ;; ほかの会話のターンも進まず、門は上限で切れる。続きの起動は書き直しの終わりを待つので、消えた家を指していた行で断られない。
+  (<- base (base-of tmp-path))
+  (<- written (put-rollouts base))
+  (<- spec-x (lent-spec tmp-path "x" {}))
+  (<- stack (stub-handlers))
+  (<- first (scheduled (with_handlers stack (said-state spec-x (FreshThread)))))
+  (val gate (RepointGate credential-home.repoint-state-db))
+  (.setattr monkeypatch credential-home "repoint_state_db" gate.repoint)
+  (.setattr monkeypatch handler "repoint_state_db" gate.repoint :raising False)
+  (<- stack-again (stub-handlers))
+  (<- answers (scheduled (with_handlers stack-again (resume-beside-other tmp-path (get first 0) gate))))
+  (val resumed (get answers 0))
+  (val other (get answers 1))
+  (assert (is gate.mut-waited True) gate.mut-waited)
+  (assert (is gate.mut-resumed-after-other True) gate.mut-resumed-after-other)
+  (assert (= (get resumed 0) (get first 0)) resumed)
+  (assert (= (get resumed 1) (.format "STATE backfilled=0 rows={}" (+ ROLLOUTS 2))) resumed)
+  (assert (.startswith (get other 1) "STATE backfilled=0") other)
+  (assert (= (get first 1) (.format "STATE backfilled={} rows={}" written (+ ROLLOUTS 1))) first))

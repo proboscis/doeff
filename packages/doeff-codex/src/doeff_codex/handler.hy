@@ -29,6 +29,7 @@
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "codex" :role "process"})
 (import collections.abc [Callable])
+(import sqlite3)
 (import threading)
 (import doeff [run])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
@@ -40,7 +41,8 @@
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_codex.process [CodexProcess CutLine EOF-GRACE-SECONDS TERM-GRACE-SECONDS LINE-CAP-BYTES])
-(import doeff_codex.credential_home [open-credential-home close-credential-home credential-env state-db-claim state-db-release])
+(import doeff_codex.credential_home [open-credential-home close-credential-home credential-env state-db-claim state-db-release
+                                     repoint-state-db])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight
@@ -541,6 +543,29 @@
   (if (is taken None) False taken))
 
 
+(deff repoint-in-background [#^ str base bell]  ; defk にできない: 書き直しの thread の入口
+  {:pre [(: base str) (: bell ExternalPromise)] :post [(: % None)]}
+  "状態の DB の家を通る rollout の path を書き直し、終わったら(書き直せなかった時も)呼び鈴を鳴らすため。書き直せなかった時は、
+   続きの要求に codex が答える(行が消えた家を指せば codex が断る — 断りが会話の失敗になる)。"
+  (try
+    (run (repoint-state-db base))
+    (except [[sqlite3.Error OSError]]
+      None)
+    (finally
+      (.complete bell True)))
+  None)
+
+
+(defk start-repoint [#^ str base]
+  {:pre [(: base str)] :post [(: % ExternalPromise)] :tags {:context "codex" :role "process"}}
+  "状態の DB の家を通る rollout の path の書き直し(credential_home.hy の repoint-state-db)を、手の外の thread で始めるため。
+   書き直しは sqlite への書き込みで、disk が混む間は数十秒かかり、手で書くとその間 turn-host の全部の会話が止まる(配備の後の
+   最初の起動で 59 秒)。答え = 書き直しが終わると鳴る呼び鈴(待つのは続きの要求の前の、その会話の手だけ — launch)。"
+  (<- bell (CreateExternalPromise))
+  (.start (threading.Thread :target (fn [] (repoint-in-background base bell)) :daemon True))
+  bell)
+
+
 (defk launch [#^ CodexHost host #^ SessionRuntime runtime #^ CodexSessionSpec spec origin]
   {:pre [(: host CodexHost) (: runtime SessionRuntime) (: spec CodexSessionSpec) (: origin (| FreshThread ResumeThread))]
    :post [(: % (| str ThreadUnknown LaunchFailed RequestRefused))]
@@ -548,7 +573,8 @@
   "新しい process を起こし、初期化して thread を開くため(新しい会話は thread/start・続きは thread/resume)。答え = thread の id か失敗
    (失敗した process は降ろす)。宣言の家が借りた資格(auth-json)を持てば、その process だけの資格の家を env の CODEX_HOME の下に作って
    CODEX_HOME をそこへ向け、process が降りたら消す(credential_home.hy)。その process の状態の DB は家の外の元の CODEX_HOME に置き
-   (CODEX_SQLITE_HOME)、DB がまだ無い間は、DB を作る起動(initialize の答えまで)を lock で 1 本ずつにする。"
+   (CODEX_SQLITE_HOME)、DB がまだ無い間は、DB を作る起動(initialize の答えまで)を lock で 1 本ずつにする。DB の家を通る rollout の
+   path の書き直しは手の外の thread で走らせ(start-repoint)、続き(thread/resume)の要求の前だけ、上限まで終わりを待つ。"
   (val base (.get spec.home.env "CODEX_HOME"))
   (when (and (is-not spec.home.auth-json None) (not base))
     (return (LaunchFailed :detail "借りた資格を置く元の CODEX_HOME が宣言の env に無い")))
@@ -562,9 +588,12 @@
           runtime.tools-lost None)
     (val generation runtime.generation))
   (var home None)
+  (var repointing None)
   (when (is-not spec.home.auth-json None)
     (<- opened (open-credential-home base spec.home.auth-json))
-    (:= home opened))
+    (:= home opened)
+    (<- bell (start-repoint base))
+    (:= repointing bell))
   (with [runtime.lock]
     (setv runtime.credential-home home))
   (var claim None)
@@ -601,6 +630,10 @@
     (return (if (isinstance greeted lines.ErrorResponse) (refused "initialize" greeted) greeted)))
   (<- ready-line (initialized-notification))
   (.send process ready-line)
+  ;; 続きの thread の行が消えた家の path を指したままだと codex が thread/resume を断るので、書き直しの終わりを待つ(park — 待つ間も
+  ;; ほかの会話の手は進む)。上限を過ぎたら待たずに要求を書き、codex の答えに任せる。新しい会話は書き直しを待たない。
+  (when (and (isinstance origin ResumeThread) (is-not repointing None))
+    (<- (WaitWithin repointing.future host.launch-timeout :park True)))
   (<- opened (match origin
                (FreshThread)
                (request runtime "thread/start"

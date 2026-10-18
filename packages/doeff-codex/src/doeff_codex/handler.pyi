@@ -38,6 +38,7 @@ from doeff_codex.credential_home import close_credential_home as close_credentia
 from doeff_codex.credential_home import credential_env as credential_env
 from doeff_codex.credential_home import state_db_claim as state_db_claim
 from doeff_codex.credential_home import state_db_release as state_db_release
+from doeff_codex.credential_home import repoint_state_db as repoint_state_db
 from doeff_codex.effects import CodexStartTurn as CodexStartTurn
 from doeff_codex.effects import CodexSteerTurn as CodexSteerTurn
 from doeff_codex.effects import CodexInterruptTurn as CodexInterruptTurn
@@ -235,6 +236,12 @@ def take_state_db_lock(base: str, handoff: StateDbHandoff, bell: ExternalPromise
     ...
 
 def claim_state_db_within(base: str, seconds: float) -> _Program[int | bool, object]:
+    ...
+
+def repoint_in_background(base: str, bell: ExternalPromise) -> None:
+    ...
+
+def start_repoint(base: str) -> _Program[ExternalPromise, object]:
     ...
 
 def launch(host: CodexHost, runtime: SessionRuntime, spec: CodexSessionSpec, origin: FreshThread | ResumeThread) -> _Program[str | ThreadUnknown | LaunchFailed | RequestRefused, object]:
