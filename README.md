@@ -28,10 +28,12 @@ stays the same when you change the handlers around it.
 resume one continuation several times, such as backtracking search or nondeterministic choice,
 cannot be written as doeff handlers.
 
-Swapping real I/O for fakes is one use of all this. In the recording, one program answers from a
-fake handler, then from a live HTTP handler:
+In the recording, one program runs under four handlers. The first answers its effects with
+made-up values, the second traces every effect, the third stops the program midway by dropping
+`k`, and the fourth fetches the page over real HTTP. Swapping real I/O for fakes is one of these
+uses:
 
-![A terminal session: pip install doeff, then the same digest program runs under a fake handler and under a live HTTP handler, and only the answer changes](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
+![A terminal session: pip install doeff, then the same digest program runs under four handlers: one answers with made-up values, one traces every effect, one stops it midway by dropping k, and one fetches the page over real HTTP](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
 
 ```bash
 pip install doeff          # Python 3.11+: the core (doeff, doeff-vm, doeff-core-effects)
@@ -40,7 +42,8 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
-Then run `python -m doeff demo` to watch that program answer from a fake handler, then over real HTTP.
+Then run `python -m doeff demo` to watch that program run under the same four handlers, each
+giving its effects another meaning.
 
 **Documentation:** [start here](https://github.com/proboscis/doeff/blob/main/docs/index.md), with
 install, a first program, the FAQ, why effects, examples and the API, in that order.
