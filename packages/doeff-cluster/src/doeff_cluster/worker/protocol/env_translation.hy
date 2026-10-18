@@ -29,6 +29,8 @@
 ;;; 完成マーカーなど追跡しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写しは
 ;;; 外の cp を起こさない(GNU の書き方 cp -al --parents -t は macOS の BSD の cp が断り、Mac の worker は毎回全部を展開して、消した root の
 ;;; 中身を APFS の local snapshot が 24 時間持った — card ki-d51b7baa38bc)。写し元が無い・写せない時は git archive と tar で全部を展開する。
+;;; git archive と tar は StartProcess/PollProcess で起こし、待つ間 WATCH-SECONDS ごとに子の書いた量(archive の大きさ・tar -v の一覧の大きさ)を読んで、
+;;; 増えた時だけ進みの印(runtime-env.progress)を触る。量が増えない子は印を触らず、worker が停滞の窓で止める(時間だけで触る heartbeat は入れない)。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -40,9 +42,10 @@
 (import sys)
 (import datetime [datetime])
 (import doeff [Program])
-(import doeff_time [GetTime])
+(import doeff_time [GetTime Delay])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess StartProcess PollProcess StopProcess
+                                           ProcessStarted ProcessNotStarted ProcessRunning ProcessExited NOT_STARTED_CODE])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText
                                          MakeDirectory ListDirectory WalkTree LinkFile RenamePath RemoveTree AcquireLock ReleaseLock
                                          ReadDiskFree])
@@ -60,6 +63,10 @@
 (val MOUNT-TABLE "/proc/self/mountinfo")
 ;; git archive の 1 回の命令に渡す path の数(命令の引数の長さの上限 — 数千 file の差でも収まる数ずつ分ける)。
 (val PATHS-PER-COMMAND 500)
+;; 木を置く子(git archive・tar)の書いた量を読み直す間隔(秒)。進みの印の停滞の窓(runtime-env の stall-seconds — 数百秒)よりずっと短い。
+(val WATCH-SECONDS 5.0)
+;; 木を置く子が量を進めた時に進みの印へ書く名(木の処理ステージの名と同じ — 印の中身は診断だけで、読む側は時刻しか見ない)。
+(val TREE-STAGE "tree")
 ;; git ls-tree の mode のうち、hardlink で写さない物(symlink・submodule の commit)— 変わらなくても mirror から置く(os.link は symlink を
 ;; 辿って先の file に名を付けるので、symlink のまま写せない)。
 (val UNLINKED-MODES #("120000" "160000"))
@@ -442,31 +449,79 @@
   refused)
 
 
-(defk archive-into [mirror commit dest pathspec]
-  {:pre [(: mirror str) (: commit str) (: dest str) (: pathspec tuple)] :post [(: % None)]}
+(defk written-bytes [paths]
+  {:pre [(: paths tuple)] :post [(: % int)]}
+  "子の目に見える仕事の量として、paths の file の大きさの合計を読むため(まだ無い file は 0)。"
+  (var total 0)
+  (for [path paths]
+    (<- seen (| PathStat FileFailed) (StatPath path))
+    (match seen
+      (PathStat :kind kind :size size) :if (= kind PathKind.FILE) (:= total (+ total size))
+      _ None))
+  total)
+
+
+(defk run-watched [argv env out-path err-path watched progress poll-seconds]
+  {:pre [(: argv tuple) (: env (| tuple None)) (: out-path str) (: err-path str) (: watched tuple) (: progress str) (: poll-seconds float)]
+   :post [(: % CommandResult)]}
+  "子を 1 つ起こし、終わるまで poll-seconds ごとに子の書いた量(watched の file の大きさの合計 — 子の出力 file・子が作る file)を読んで、
+   前の読みより増えた時だけ進みの印(progress — 空なら書かない)を触るため。量が増えない子(止まった git・tar)は印を触らず、worker が停滞の窓で
+   止める。時間だけで触る heartbeat ではない。出力は out-path・err-path の file に集め、終わったら読んで消す。"
+  (<- (remove-if-present out-path))
+  (<- (remove-if-present err-path))
+  (<- started (| ProcessStarted ProcessNotStarted)
+      (StartProcess :argv argv :env env :env-mode EnvMode.EXTEND :stdout-path out-path :stderr-path err-path))
+  (var result None)
+  (match started
+    (ProcessNotStarted :detail detail) (:= result (CommandResult :code NOT_STARTED_CODE :stdout "" :stderr detail))
+    _ None)
+  (var seen-bytes 0)
+  (while (is result None)
+    (<- polled (| ProcessRunning ProcessExited) (PollProcess started.pid))
+    (match polled
+      (ProcessExited :exit-code code)
+      (do (<- out (| str FileFailed) (ReadText out-path))
+          (<- err (| str FileFailed) (ReadText err-path))
+          (:= result (CommandResult :code code :stdout (match out (FileFailed) "" text text) :stderr (match err (FileFailed) "" text text))))
+      _ (do (<- now-bytes int (written-bytes watched))
+            (when (> now-bytes seen-bytes)
+              (:= seen-bytes now-bytes)
+              (when progress
+                (<- (write-replacing progress (+ TREE-STAGE "\n")))))
+            (<- (Delay poll-seconds)))))
+  (<- (remove-if-present out-path))
+  (<- (remove-if-present err-path))
+  result)
+
+
+(defk archive-into [mirror commit dest pathspec progress]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: pathspec tuple) (: progress str)] :post [(: % None)]}
   "commit の木のうち pathspec の path(空なら木の全部)を git archive と tar で dest に新しい file として置くため。path は名のとおりに
    読ませ(GIT_LITERAL_PATHSPECS — 名の中の * ? [ を glob と読むと、変わっていない別の file まで置き直す)、tar は既に在る file を
    開いて書かず、消してから作る(tar の既定 — -U は dir まで消そうとして、中身の在る dir で失敗するので付けない)ので、hardlink の先を
-   その場で書き換えない。"
+   その場で書き換えない。2 つの子とも、書いた量が増えた時だけ進みの印を触る(run-watched): git archive は出力の tar の大きさ、tar は
+   -v が 1 file ごとに書く一覧(GNU は標準出力・bsdtar は標準エラー)の大きさ。"
   (val archive (+ dest ".tar"))
   (val literal #((EnvEntry :name "GIT_LITERAL_PATHSPECS" :value "1")))
-  (<- packed CommandResult (git (+ #("-C" mirror "archive" "--format=tar" "-o" archive commit) (if pathspec (+ #("--") pathspec) #())) literal))
+  (val git-argv (+ #("git" "-C" mirror "archive" "--format=tar" "-o" archive commit) (if pathspec (+ #("--") pathspec) #())))
+  (<- packed CommandResult (run-watched git-argv literal (+ archive ".git-out") (+ archive ".git-err") #(archive) progress WATCH-SECONDS))
   (when (!= packed.code 0)
     (raise (RuntimeError (.format "git archive {} に失敗: {}" commit packed.stderr))))
-  (<- unpack-run ProcessOutcome (RunProcess :argv #("tar" "-xf" archive "-C" dest)))
-  (<- unpacked CommandResult (outcome-result unpack-run))
+  (val tar-out (+ archive ".tar-out"))
+  (val tar-err (+ archive ".tar-err"))
+  (<- unpacked CommandResult (run-watched #("tar" "-xvf" archive "-C" dest) None tar-out tar-err #(tar-out tar-err) progress WATCH-SECONDS))
   (when (!= unpacked.code 0)
-    (raise (RuntimeError (.format "{} を展開できない: {}" archive unpacked.stderr))))
+    (raise (RuntimeError (.format "{} を展開できない: {}" archive (cut unpacked.stderr (- DETAIL-CHARS) None)))))
   (<- gone (| None FileFailed) (RemoveTree archive))
   (<- (settled gone "展開の tar を消せない"))
   None)
 
 
-(defk place-paths [mirror commit dest paths]
-  {:pre [(: mirror str) (: commit str) (: dest str) (: paths tuple)] :post [(: % None)]}
+(defk place-paths [mirror commit dest paths progress]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: paths tuple) (: progress str)] :post [(: % None)]}
   "commit の木のうち paths を、命令の引数の長さの内の数ずつ archive-into で dest に置くため。"
   (for [start (range 0 (len paths) PATHS-PER-COMMAND)]
-    (<- (archive-into mirror commit dest (cut paths start (+ start PATHS-PER-COMMAND)))))
+    (<- (archive-into mirror commit dest (cut paths start (+ start PATHS-PER-COMMAND)) progress)))
   None)
 
 
@@ -478,16 +533,16 @@
   (len (tuple (gfor e entries :if (!= e.kind PathKind.DIRECTORY) e))))
 
 
-(defk expanded-tree [mirror commit dest reason]
-  {:pre [(: mirror str) (: commit str) (: dest str) (: reason str)] :post [(: % TreePlaced)]}
+(defk expanded-tree [mirror commit dest reason progress]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: reason str) (: progress str)] :post [(: % TreePlaced)]}
   "commit の木の全部を mirror から dest へ展開するため(写し元が無い時と、写し元から写せなかった時 — その理由 reason は答えに載せる)。"
-  (<- (archive-into mirror commit dest #()))
+  (<- (archive-into mirror commit dest #() progress))
   (<- placed int (files-under dest))
   (TreePlaced :how TREE-EXPAND :copied 0 :removed 0 :replaced placed :reason reason))
 
 
-(defk copied-tree [mirror commit dest source]
-  {:pre [(: mirror str) (: commit str) (: dest str) (: source TreeSource)] :post [(: % (| TreePlaced CopyRefused))]}
+(defk copied-tree [mirror commit dest source progress]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: source TreeSource) (: progress str)] :post [(: % (| TreePlaced CopyRefused))]}
   "写し元の木から commit の木を作るため: 写し元の commit の追跡する普通の file のうち commit までに変わらない物を hardlink で写し、
    変わった・増えた path と、変わらない symlink・submodule の新しい中身だけ mirror から置く(変わった path の旧い file は写さないので
    消す必要も、書き換える事も無い)。写せなければ写せない理由を答え、呼び手が dest を空にして展開に戻す。"
@@ -503,24 +558,24 @@
         (<- linked (| None CopyRefused) (link-unchanged source.dir dest linkable))
         (match linked
           (CopyRefused) linked
-          _ (do (<- (place-paths mirror commit dest fresh))
+          _ (do (<- (place-paths mirror commit dest fresh progress))
                 (TreePlaced :how TREE-COPY :copied (len linkable) :removed (- (len tracked) (len kept)) :replaced (len fresh)))))))
 
 
-(defk materialize [mirror commit dest source]
-  {:pre [(: mirror str) (: commit str) (: dest str) (: source (| TreeSource None))] :post [(: % TreePlaced)]}
+(defk materialize [mirror commit dest source progress]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: source (| TreeSource None)) (: progress str)] :post [(: % TreePlaced)]}
   "commit の木を dest に置くため(source = 写し元の木 — 在れば hardlink で写して変わった path だけ新しく置き、無ければ・写せなければ mirror から
    全部を展開する。写せなかった理由は答えの reason)。途中まで写した dest は、展開に戻す前に空にする。"
   (<- (MakeDirectory dest))
   (if (is source None)
-      (do (<- placed TreePlaced (expanded-tree mirror commit dest ""))
+      (do (<- placed TreePlaced (expanded-tree mirror commit dest "" progress))
           placed)
-      (do (<- tried (| TreePlaced CopyRefused) (copied-tree mirror commit dest source))
+      (do (<- tried (| TreePlaced CopyRefused) (copied-tree mirror commit dest source progress))
           (match tried
             (CopyRefused :reason reason)
             (do (<- (remove-if-present dest))
                 (<- (MakeDirectory dest))
-                (<- placed TreePlaced (expanded-tree mirror commit dest reason))
+                (<- placed TreePlaced (expanded-tree mirror commit dest reason progress))
                 placed)
             _ tried))))
 
@@ -814,7 +869,7 @@
     (resume answer))
 
   (MaterializeTree [mirror commit dest source]
-    (<- placed TreePlaced (materialize mirror commit dest source))
+    (<- placed TreePlaced (materialize mirror commit dest source progress))
     (resume placed))
 
   (FileSha256 [path]
