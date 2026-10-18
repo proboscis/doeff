@@ -367,7 +367,10 @@
                          #({} {"color" ["red" "red"]})
                          #({"label" "a"} {"color" ["red" "green"]})
                          #({} {"color" ["red" "blue"] "label" ["b"]})
-                         #({} {"id" ["p02" "p05" "p99"]})]
+                         #({} {"id" ["p02" "p05" "p99"]})
+                         ;; 鍵の欄の絞り(PG の置き場は主キーの列で引く): 文字列でない値が混ざる組・where の等号・他の欄との AND。
+                         #({} {"id" ["p02" 5 "p05"]})
+                         #({"id" "p02"} {"color" ["red" "blue"]})]
         #((FrozenMap where) (FrozenMap any-of))))
 ;; 組の絞りの頁の上限(頁の続きの位置を辿る)と、上から読む読みの件数。
 (val ANY-OF-PAGE 2)
