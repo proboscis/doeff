@@ -100,6 +100,7 @@ expected_slugs = {
     "dispatch",  # 2026-10-18に足した11本目からの候補2「Claude Codeに仕事を配らせるのをやめ、関数で配る」。
     "types",  # 2026-10-18に足した11本目からの候補7「公開APIの型の穴をテストで塞ぎ、黙って開かせない」。
     "reports",  # 2026-10-18に足した11本目からの候補5「Claude Codeに報告のページを丸ごと作らせるのをやめた」。
+    "waitline",  # 2026-10-18に足した11本目からの候補4「Claude Codeが止まる前に、待っている物を1行書かせる」。
 }
 all_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", article))
 assert all_slugs == expected_slugs, (expected_slugs - all_slugs, all_slugs - expected_slugs)
