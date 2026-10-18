@@ -8,16 +8,16 @@
 (import doeff_claude_code.lines [Init InputFate PermissionRequested TurnResult Completed Interrupted BackendLost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
-                                   TurnStarted InputQueued InterruptRequested Answered SessionClosed
+                                   TurnStarted InputQueued InterruptRequested InputAlreadyRead Answered SessionClosed
                                    SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
                                    HomeCredentialSession])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
-(import tests.scenario_rules [CODEWORD EXTRA-WORD remember-prompt recall-prompt reply-prompt sleep-prompt
+(import tests.scenario_rules [CODEWORD EXTRA-WORD THINK-PHRASE STREAM-PHRASE remember-prompt recall-prompt reply-prompt sleep-prompt
                               touch-prompt extra-prompt])
-(import tests.scenario_steps [settings start read-to-end read-to-tool-start read-until-permission new-id typed kinds-of
+(import tests.scenario_steps [settings start read-until read-to-end read-to-tool-start read-until-permission new-id typed kinds-of
                               live-process-until])
 
 (setv LONG-SLEEP 40)
@@ -99,6 +99,49 @@
   (<- next-turn (read-to-end stopped.end.continued-by s.turn-timeout))
   (assert (isinstance next-turn.end Completed) (repr next-turn.end))
   (assert (in EXTRA-WORD next-turn.end.result-text) next-turn.end.result-text))
+
+
+(deftest test-a-named-interrupt-of-an-unread-input-stops-the-tool-for-it
+  ;; 入力を名指した止め(今すぐ送る — card ki-1c4cfde50ac5)で、名指した入力がまだ読まれていない: 名指さない止めと同じく道具を止め、その入力を
+  ;; 生き残った入力として次の手番で走らせる。
+  {:interpreters ["fake" "stub" "real"]}
+  (<- s (settings))
+  (<- started (start (FreshSession (new-id)) s.base (sleep-prompt LONG-SLEEP "NEVER")))
+  (<- _opened (read-to-tool-start started.turn s.turn-timeout))
+  (<- queued (ClaudeInjectInput started.turn (typed (extra-prompt) "inj-hurried")))
+  (assert (= queued (InputQueued "inj-hurried")) (repr queued))
+  (<- asked (ClaudeInterruptTurn started.turn :for-input "inj-hurried"))
+  (assert (isinstance asked InterruptRequested) (repr asked))
+  (<- stopped (read-to-end started.turn s.turn-timeout))
+  (assert (isinstance stopped.end Interrupted) (repr stopped.end))
+  (assert (= stopped.end.surviving-refs #("inj-hurried")) (repr stopped.end))
+  (val continued stopped.end.continued-by)
+  (assert (is-not continued None) (repr stopped.end))
+  (<- next-turn (read-to-end continued s.turn-timeout))
+  (assert (isinstance next-turn.end Completed) (repr next-turn.end))
+  (assert (in EXTRA-WORD next-turn.end.result-text) next-turn.end.result-text))
+
+
+(deftest test-a-named-interrupt-of-an-input-already-read-leaves-the-turn-running
+  ;; 入力を名指した止めが、CLI がその入力を読んだ後に来た(今すぐ送るを押した時には担当がもう読み終えていた — card ki-1c4cfde50ac5): 止めずに
+  ;; InputAlreadyRead で答え、手番は道具の後の答えを最後まで書いて Completed で終わる(答えが途中で切れない)。読んだ後も手番が続く間を作るため、
+  ;; 道具の後に答えを考える秒(替え玉の CLI)と答えの差分(fake)を置く。本物の claude は考える秒を選べないので替え玉の CLI と fake だけ。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val prompt (.join " " #((sleep-prompt 1 "SLEPT") (.format THINK-PHRASE 5) (.format STREAM-PHRASE 5))))
+  (<- started (start (FreshSession (new-id)) s.base prompt))
+  (<- opened (read-to-tool-start started.turn s.turn-timeout))
+  (<- _ (ClaudeInjectInput started.turn (typed (extra-prompt) "inj-read")))
+  (<- read (read-until started.turn (fn [lines end] (or (in (InputFate "inj-read" "started") (kinds-of lines InputFate))
+                                                        (is-not end None)))
+                       s.turn-timeout opened.after))
+  (assert (is read.end None) (repr read.end))
+  (<- asked (ClaudeInterruptTurn started.turn :for-input "inj-read"))
+  (assert (= asked (InputAlreadyRead "inj-read")) (repr asked))
+  (<- done (read-to-end started.turn s.turn-timeout))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (in "SLEPT" done.end.result-text) done.end.result-text)
+  (assert (in EXTRA-WORD done.end.result-text) done.end.result-text))
 
 
 (deftest test-a-permission-question-is-answered-by-the-host

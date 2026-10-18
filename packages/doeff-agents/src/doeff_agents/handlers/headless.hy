@@ -24,7 +24,7 @@
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
-;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る)
+;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る。for_input の入力を層 2 がもう読んでいれば止めない)
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
 ;;;   手番の終わりの last-call-usage・last-call-model・model-windows → AgentTurn*.last_call_usage(AgentTurnUsage — 額は None)・
 ;;;                                      last_call_model・model_windows(会話の今の context の大きさの材料 — agora-redesign #3744)
@@ -93,7 +93,7 @@
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
-                                   TurnStarted InterruptRequested TurnEventPage SessionExported SessionWarmed
+                                   TurnStarted InterruptRequested InputAlreadyRead TurnEventPage SessionExported SessionWarmed
                                    SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused
                                    NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
@@ -619,13 +619,14 @@
     (SessionWarmed) (do (setv session.carry None) True)
     _ (raise (start-refusal outcome session))))
 
-(defk interrupt [#^ HeadlessSession session]
-  {:pre [(: session HeadlessSession)] :post [(: % bool)]}
-  "走っている手番だけを止める(session と文脈は残る)。答え = 止める手番が在ったか。"
+(defk interrupt [#^ HeadlessSession session #^ (| str None) for-input]
+  {:pre [(: session HeadlessSession) (: for-input (| str None))] :post [(: % bool)]}
+  "走っている手番だけを止める(session と文脈は残る)。for-input = この止めで早く読ませたい足した入力(None = 名指さない止め)— 層 2 が
+   その入力をもう読んだと答えたら(InputAlreadyRead)手番は止めずに走らせ続ける。答え = 走っている手番が在ったか。"
   (<- (pull session 0.0))
   (when (is session.turn None) (return False))
-  (<- outcome (ClaudeInterruptTurn session.turn))
-  (isinstance outcome InterruptRequested))
+  (<- outcome (ClaudeInterruptTurn session.turn for-input))
+  (isinstance outcome #(InterruptRequested InputAlreadyRead)))
 
 (defk stop [#^ HeadlessSession session #^ str reason]
   {:pre [(: session HeadlessSession) (: reason str)] :post [(: % (type None))]}
@@ -730,9 +731,9 @@
     (<- (deliver (get state.sessions handle.session-id) (TurnInput message (or input-ref (new-ref)) images) mode))
     (resume handle))
 
-  (InterruptEffect [handle]
+  (InterruptEffect [handle for-input]
     :when (in handle.session-id state.sessions)
-    (<- asked (interrupt (get state.sessions handle.session-id)))
+    (<- asked (interrupt (get state.sessions handle.session-id) for-input))
     (resume asked))
 
   (WarmSessionEffect [handle]

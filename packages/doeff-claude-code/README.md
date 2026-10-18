@@ -11,7 +11,7 @@
 |---|---|---|---|
 | `ClaudeStartTurn(origin, spec, input)` | 手番を始める(新しい会話・続き・枝分かれ) | `TurnStarted` | `SessionNotFound` / `SessionIdInUse` / `TurnInFlight` / `CarryRefused` / `LaunchFailed` / `AttachmentRefused` |
 | `ClaudeInjectInput(turn, input)` | 走っている手番に入力を足す | `InputQueued` | `NoTurnInFlight` / `AttachmentRefused` |
-| `ClaudeInterruptTurn(turn)` | 手番を止める | `InterruptRequested` | `NoTurnInFlight` |
+| `ClaudeInterruptTurn(turn, for_input=None)` | 手番を止める(`for_input` を名指すと、その入力がまだ読まれていない時だけ止める) | `InterruptRequested` / `InputAlreadyRead` | `NoTurnInFlight` |
 | `ClaudeReadTurnEvents(turn, after-seq, wait-up-to)` | 手番の出来事(stdout の行)と終わりを読む | `TurnEventPage` | `UnknownTurn` |
 | `ClaudeAnswerPermission(turn, request-id, answer)` | 道具の許可の問いに答える | `Answered` | `NoSuchRequest` |
 | `ClaudeCloseSession(session-id, reason)` | 会話を閉じる(冪等) | `SessionClosed` | `ProcessStillAlive` |

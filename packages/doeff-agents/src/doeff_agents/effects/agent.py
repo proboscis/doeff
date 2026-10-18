@@ -1284,10 +1284,20 @@ class InterruptEffect(AgentEffectBase):
     ``AwaitResult``.  Handlers without turns refuse it with
     ``AgentCapabilityUnsupportedError``.
 
-    Yields: bool (True = a turn was running and was asked to stop)
+    ``for_input`` names an input already added to the running turn (its
+    ``FollowUpEffect.input_ref``) that this stop exists to have read sooner.
+    When the agent has already read that input, there is nothing to hurry and
+    the turn is left running: only the layer that owns the agent process knows
+    whether the input was read, so the decision is made there.  Handlers that
+    cannot tell whether an input was read stop the turn as if ``for_input``
+    were absent.
+
+    Yields: bool (True = a turn was running; it was asked to stop, or the
+    named input was already read and the turn was left running)
     """
 
     handle: SessionHandle
+    for_input: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1658,8 +1668,8 @@ def Stop(handle: SessionHandle) -> StopEffect:  # noqa: N802
     return StopEffect(handle=handle)
 
 
-def Interrupt(handle: SessionHandle) -> InterruptEffect:  # noqa: N802
-    return InterruptEffect(handle=handle)
+def Interrupt(handle: SessionHandle, *, for_input: str | None = None) -> InterruptEffect:  # noqa: N802
+    return InterruptEffect(handle=handle, for_input=for_input)
 
 
 def WarmSession(handle: SessionHandle) -> WarmSessionEffect:  # noqa: N802

@@ -29,7 +29,7 @@
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
-                                   TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
+                                   TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
@@ -714,15 +714,19 @@
   (InputQueued request.input.ref))
 
 (defk fake-interrupt [#^ FakeClaudeWorld world #^ ClaudeInterruptTurn request]
-  {:pre [(: world FakeClaudeWorld) (: request ClaudeInterruptTurn)] :post [(: % (| InterruptRequested NoTurnInFlight))]}
-  "止める(本物の対話の解釈 dialogue.hy の interrupt と同じ分け方): 読まれていない注入が在り、この手番の CLI が止めるの受理
-   (interrupt_receipt_v1)を名乗っていれば control_request の形 — 注入を生き残った入力として次の手番で走らせる。それ以外は SIGINT の形
-   (result は error_during_execution・aborted_streaming)で Interrupted — 読まれていない注入は捨てた入力(dropped-refs・on-result の
-   StopSignal の道)。捨てた注入の行方の行は出さない(SIGINT の時に CLI が名乗る行は実測に無く、本物の handler も終わりだけを使う)。"
+  {:pre [(: world FakeClaudeWorld) (: request ClaudeInterruptTurn)] :post [(: % (| InterruptRequested InputAlreadyRead NoTurnInFlight))]}
+  "止める(本物の対話の解釈 dialogue.hy の interrupt と同じ分け方): 入力を名指した止め(for-input)で、その入力がまだ読まれていない注入で
+   なければ止めずに InputAlreadyRead(dialogue.hy の input-already-read と同じ — 偽の CLI はいつも入力の運命を名乗る)。読まれていない
+   注入が在り、この手番の CLI が止めるの受理(interrupt_receipt_v1)を名乗っていれば control_request の形 — 注入を生き残った入力として
+   次の手番で走らせる。それ以外は SIGINT の形(result は error_during_execution・aborted_streaming)で Interrupted — 読まれていない注入は
+   捨てた入力(dropped-refs・on-result の StopSignal の道)。捨てた注入の行方の行は出さない(SIGINT の時に CLI が名乗る行は実測に無く、
+   本物の handler も終わりだけを使う)。"
   (setv turn (running-turn-of world request.turn))
   (when (is turn None) (return (NoTurnInFlight request.turn.session-id)))
   (setv session (get world.sessions request.turn.session-id))
   (setv queued (lfor injection turn.injections :if (= injection.fate "queued") injection))
+  (when (and (is-not request.for-input None) (not-in request.for-input (lfor injection queued injection.ref)))
+    (return (InputAlreadyRead request.for-input)))
   (if (and queued turn.reply.interrupt-receipt)
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_tools")))

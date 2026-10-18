@@ -8,7 +8,8 @@
 ;;; - result の時点でまだ読まれていない注入(InputFate が queued)が在れば、CLI がそれを次の CLI の手番として走らせるので、
 ;;;   host の手番は続く(中間の result)。
 ;;; - 止める: まだ読まれていない注入が在り CLI が interrupt_receipt_v1 を名乗った時だけ control_request interrupt(process は残り、
-;;;   答えの still_queued の注入が次の CLI の手番として走る)。それ以外は SIGINT。
+;;;   答えの still_queued の注入が次の CLI の手番として走る)。それ以外は SIGINT。入力を名指した止め(その入力を早く読ませるための止め)は、
+;;;   名指した入力がもう読まれていれば出さない(input-already-read — 読み終えた手番を止めない)。
 ;;; - #603 の直し: claude 2.1.282 の SIGINT は result(subtype error_during_execution・terminal_reason aborted_streaming)を出して
 ;;;   から降りる。止めるを求めた後の result は失敗ではなく Interrupted に写す(求めていない aborted_streaming は Failed のまま・
 ;;;   terminal_reason つき)。
@@ -160,6 +161,13 @@
 
 (defn #^ bool knows-injection [#^ DialogueState state #^ str ref]
   (any (gfor injection state.injections (= injection.ref ref))))
+
+(defn #^ bool input-already-read [#^ DialogueState state #^ str ref]
+  "入力を名指した止めを出さずに済むか: 手番の途中で、CLI が入力の運命を名乗り(msg_lifecycle_v1)、名指した入力 ref がまだ読まれていない
+   注入(queued)でない — もう読んだ注入・手番を始めた入力・この手番に無い入力。止めはまだ読まれていない注入を先に読ませるための物で、
+   読み終えた手番を止めると答えが途中で切れる(card ki-1c4cfde50ac5)。運命を名乗らない CLI では読んだかが分からないので偽(名指さない
+   止めと同じに止める)。"
+  (and state.in-flight state.lifecycle (not-in ref (queued-refs state))))
 
 
 ;; --- 手番の終わりの組み立て --------------------------------------------------------------------------

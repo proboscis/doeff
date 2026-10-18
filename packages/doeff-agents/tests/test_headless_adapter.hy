@@ -126,6 +126,7 @@
   (setv sleep (re.search r"sleep (\d+)" text)
         thinking (re.search r"Stream (\d+) thinking pieces\." text)
         tool-pieces (re.search r"Stream the tool input in (\d+) pieces\." text)
+        streamed (re.search r"Stream the reply in (\d+) pieces\." text)
         sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text)
         advised (re.search r"Have the hook advise: (\S+?)\." text)
         command (re.search r"run exactly this command: (.+?) \." text)
@@ -144,6 +145,7 @@
   (FakeReply word :tool-seconds (cond sleep (float (.group sleep 1)) echoed ECHO-SECONDS True 0.0)
              :thinking-deltas (if thinking (int (.group thinking 1)) 0)
              :tool-input-deltas (if tool-pieces (int (.group tool-pieces 1)) 0)
+             :deltas (if streamed (int (.group streamed 1)) 0)
              :stop-hook-rejections (if sent-back #((compose.StopHookRejection :answer REJECTED-ANSWER :reason (.group sent-back 1))) #())
              :hooks (if advised
                         #((compose.HookNotice :event "UserPromptSubmit" :phase compose.HookPhase.STARTED :name "UserPromptSubmit"
@@ -439,6 +441,25 @@
   (<- (Stop handle))
   {"asked" asked "after" after})
 
+(defk interrupt-for-a-read-input-leaves-the-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "入力を名指した止め(Interrupt の for_input — 今すぐ送る・card ki-1c4cfde50ac5)が、CLI がその入力を読んだ後に来た形を走らせるため: 道具の
+   途中で入力を足し、CLI がそれを読んだ(運命 started)のを見てから名指して止め、手番を最後まで読む。読んだ後も手番が続く間を作るため、道具の
+   後に答えを考える秒(替え玉の CLI)と答えの差分(fake)を置く(scenario_rules.hy の THINK-PHRASE・STREAM-PHRASE と同じ言葉)。"
+  (val prompt (.join " " #((sleep-prompt 1 "SLEPT") "Think for 5 seconds before replying." "Stream the reply in 5 pieces.")))
+  (<- handle (launch s "adapter-interrupt-read" prompt None))
+  (<- started (read-until handle tool-started s.timeout -1))
+  (<- _ (FollowUp handle (extra-prompt) :mode TurnInputMode.INJECT :input-ref "ref-read"))
+  (<- read (read-until handle (fn [events end] (or (in #("ref-read" InputFateState.STARTED)
+                                                       (lfor event events :if (isinstance event AgentInputFateEvent)
+                                                             #(event.input-ref event.state)))
+                                                   (is-not end None)))
+                       s.timeout started.after))
+  (<- asked (Interrupt handle :for-input "ref-read"))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout read.after))
+  (<- (Stop handle))
+  {"read" read "asked" asked "done" done})
+
 (defk stop-discards-waiting-inputs [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)]}
   (<- handle (launch s "adapter-stop" (sleep-prompt 40 "NEVER") None))
@@ -697,6 +718,18 @@
   (assert (is (. (get ends 0) cli-kept) True) (repr ends))
   (assert (= (. (get ends 0) surviving-refs) #("ref-kept")) (repr ends))
   (assert (isinstance (get ends 1) AgentTurnCompleted) (repr ends)))
+
+(defk check-interrupt-for-a-read-input [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "名指した入力を CLI がもう読んでいた止めは、手番を止めずに走っていたと答え、手番は答えを最後まで書いて 1 つの Completed で終わる事を確かめるため
+   (止めていれば Interrupted で答えが途中で切れる)。"
+  (assert (is (. (get seen "read") end) None) (repr (get seen "read")))
+  (assert (is (get seen "asked") True) (repr (get seen "asked")))
+  (val ends (ends-of (. (get seen "done") events)))
+  (assert (= (len ends) 1) (repr ends))
+  (assert (isinstance (get ends 0) AgentTurnCompleted) (repr ends))
+  (assert (in EXTRA-WORD (. (get ends 0) result-text)) (repr ends))
+  None)
 
 (defn check-stop [#^ dict seen]
   (setv events (. (get seen "page") events))
@@ -1133,6 +1166,12 @@
 
 (deftest test-headless-interrupt-after-inject-keeps-the-cli-stub [tmp-path]
   (check-interrupt-after-inject (run-on STUB tmp-path interrupt-after-inject-keeps-the-cli)))
+
+(deftest test-headless-interrupt-for-a-read-input-leaves-the-turn-fake [tmp-path]
+  (<- (check-interrupt-for-a-read-input (run-on FAKE tmp-path interrupt-for-a-read-input-leaves-the-turn))))
+
+(deftest test-headless-interrupt-for-a-read-input-leaves-the-turn-stub [tmp-path]
+  (<- (check-interrupt-for-a-read-input (run-on STUB tmp-path interrupt-for-a-read-input-leaves-the-turn))))
 
 (deftest test-headless-stop-discards-waiting-fake [tmp-path]
   (check-stop (run-on FAKE tmp-path stop-discards-waiting-inputs)))

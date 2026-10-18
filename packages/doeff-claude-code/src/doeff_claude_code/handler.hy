@@ -66,7 +66,7 @@
                                  TimedPhase TurnResult parse-record classify-record recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
-                                   TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
+                                   TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
                                    ProcessStillAlive ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
@@ -1247,12 +1247,16 @@
     (apply-transition runtime binding transition))
   (InputQueued input.ref))
 
-(defn interrupt-turn [#^ ClaudeCodeHost host #^ ClaudeTurn turn]
+(defn interrupt-turn [#^ ClaudeCodeHost host #^ ClaudeTurn turn #^ (| str None) for-input]
+  "走っている手番を止めるため。for-input(早く読ませたい足した入力の ref)を名指した止めは、CLI がその入力をもう読んでいれば止めずに
+   InputAlreadyRead で答える — 読んだかの判断は CLI の行を読む同じ lock の中で対話の状態(dialogue.input-already-read)から取る。"
   (setv runtime (.runtime host turn.session-id))
   (when (is runtime None) (return (NoTurnInFlight turn.session-id)))
   (with [runtime.lock]
-    (setv transition (if (is (in-flight-log runtime turn) None) None
-                         (dialogue.interrupt runtime.state (str (uuid.uuid4)))))
+    (setv in-flight (is-not (in-flight-log runtime turn) None))
+    (when (and in-flight (is-not for-input None) (dialogue.input-already-read runtime.state for-input))
+      (return (InputAlreadyRead for-input)))
+    (setv transition (if in-flight (dialogue.interrupt runtime.state (str (uuid.uuid4))) None))
     (setv binding runtime.binding)
     (when (or (is transition None) (is binding None)) (return (NoTurnInFlight turn.session-id)))
     (apply-transition runtime binding transition))
@@ -1434,8 +1438,8 @@
     (resume outcome))
   (ClaudeInjectInput [turn input]
     (resume (inject-input host turn input)))
-  (ClaudeInterruptTurn [turn]
-    (resume (interrupt-turn host turn)))
+  (ClaudeInterruptTurn [turn for-input]
+    (resume (interrupt-turn host turn for-input)))
   (ClaudeReadTurnEvents [turn after-seq wait-up-to]
     (<- page (read-events host effect))
     (resume page))

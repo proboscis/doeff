@@ -31,6 +31,11 @@
 
 (defclass [(dataclass :frozen True)] InterruptRequested [])
 
+(defclass [(dataclass :frozen True)] InputAlreadyRead []
+  "入力を名指した止め(ClaudeInterruptTurn の for-input)で、名指した入力 ref を CLI がもう読んでいた(運命が queued でない)ので止めなかった
+   — 走っている手番はそのまま続く。"
+  (#^ str ref))
+
 (defclass [(dataclass :frozen True)] TurnEventPage []
   "lines = after-seq より後の行(重複も欠落もなく)・next-seq = 次に渡す after-seq・end = 手番の終わり(まだなら None)。"
   (#^ (get tuple #(ClaudeStreamLine ...)) lines)
@@ -129,9 +134,12 @@
   (#^ ClaudeTurn turn)
   (#^ TurnInput input))
 
-(defclass [(dataclass :frozen True)] ClaudeInterruptTurn [(get EffectBase (| InterruptRequested NoTurnInFlight))]
-  "手番を止める。答え = InterruptRequested | NoTurnInFlight(終わりは ClaudeReadTurnEvents の Interrupted で届く)。"
-  (#^ ClaudeTurn turn))
+(defclass [(dataclass :frozen True)] ClaudeInterruptTurn [(get EffectBase (| InterruptRequested InputAlreadyRead NoTurnInFlight))]
+  "手番を止める。答え = InterruptRequested | InputAlreadyRead | NoTurnInFlight(終わりは ClaudeReadTurnEvents の Interrupted で届く)。
+   for-input = この止めが早く読ませたい足した入力の ref(None = 名指さない止め)。名指した入力を CLI がもう読んでいれば止めずに
+   InputAlreadyRead で答える(読んだかを知るのは CLI と同じ process のこの層だけ — CLI が入力の運命を名乗らない版では名指さない止めと同じ)。"
+  (#^ ClaudeTurn turn)
+  (setv #^ (| str None) for-input None))
 
 (defclass [(dataclass :frozen True)] ClaudeReadTurnEvents [(get EffectBase (| TurnEventPage UnknownTurn))]
   "手番の出来事を読む: after-seq より後の行を、新しい行か終わりが来るか wait-up-to 秒が過ぎるまで待って返す。
