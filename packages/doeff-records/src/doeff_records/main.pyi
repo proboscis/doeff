@@ -3,6 +3,7 @@
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
+from dataclasses import replace as replace
 from collections.abc import Callable as Callable
 from concurrent.futures import ThreadPoolExecutor as ThreadPoolExecutor
 from doeff import Program as Program
@@ -19,6 +20,7 @@ from doeff_core_effects.aiohttp_http_server import aiohttp_http_server as aiohtt
 from doeff_core_effects.http_server_effects import HttpAddress as HttpAddress
 from doeff_core_effects.postgres_sql import PostgresConnections as PostgresConnections
 from doeff_core_effects.postgres_sql import PostgresDatabase as PostgresDatabase
+from doeff_core_effects.postgres_sql import DEFAULT_TIMEOUTS as DEFAULT_TIMEOUTS
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlRows as SqlRows
 from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
@@ -53,6 +55,7 @@ DEFAULT_POOL_SIZE: int
 DEFAULT_MAINTENANCE_SECONDS: float
 DEFAULT_KEEP_CHANGES_SECONDS: float
 DATABASE: str
+BUILDER_DATABASE: str
 STOP_POLL_SECONDS: float
 DRAIN_SECONDS: float
 

@@ -17,7 +17,8 @@
 (import doeff_records.effects [PutRow ListRows WatchChanges])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
-(import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix])
+(import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE BUILDER ORIGIN-HOST open-postgres postgres-connections
+                            builder-connections fresh-prefix])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
 ;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
@@ -30,9 +31,12 @@
   {:pre [(: connections PostgresConnections) (: prefix str)] :post [(: % PreparedStore)]
    :tags {:context "records" :role "foundation"}}
   "接頭辞 prefix の置き場の表を用意し(prepare-records-store)、置き場を返すため。"
-  (<- store (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)]
-                           (prepare-records-store DATABASE LAW-SCHEMA prefix)))
-  store)
+  (val builder (builder-connections))
+  (try
+    (<- store (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler builder) (postgres-sql-handler connections)]
+                             (prepare-records-store DATABASE BUILDER LAW-SCHEMA prefix)))
+    store
+    (finally (.close builder))))
 
 
 (defk dropped-on [connections store]

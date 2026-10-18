@@ -14,6 +14,7 @@ PREFIX_PATTERN: Incomplete
 DEFAULT_PREFIX: str
 WRITER_LOCK_SUFFIX: str
 MIGRATE_LOCK_SUFFIX: str
+BUILD_LOCK_SUFFIX: str
 
 @dataclass(frozen=True, kw_only=True)
 class Statement:
@@ -67,19 +68,63 @@ def index_name(prefix: str, field_name: str) -> _Program[str, object]:
 def field_expression(payload: str, field_name: str) -> _Program[str, object]:
     ...
 
-def field_index_statement(prefix: str, field_name: str) -> _Program[Statement, object]:
+@dataclass(frozen=True, kw_only=True)
+class TableIndex:
+    name: str
+    statement: Statement
+
+@dataclass(frozen=True, kw_only=True)
+class LateIndex:
+    name: str
+    table: str
+    columns: str
+
+def late_index_statement(index: LateIndex, concurrently: bool) -> _Program[Statement, object]:
     ...
 
-def group_index_statement(prefix: str, separator: str) -> _Program[Statement, object]:
+def empty_table_statement(table: str) -> _Program[Statement, object]:
     ...
 
-def head_index_statement(prefix: str, separator: str) -> _Program[Statement, object]:
+def drop_late_index_statement(index: LateIndex) -> _Program[Statement, object]:
+    ...
+
+def build_lock_key(index: LateIndex) -> _Program[str, object]:
+    ...
+
+def build_claim_statement(index: LateIndex) -> _Program[Statement, object]:
+    ...
+
+def build_release_statement(index: LateIndex) -> _Program[Statement, object]:
+    ...
+
+def index_states_statement(names: tuple) -> _Program[Statement, object]:
+    ...
+
+def field_index(prefix: str, field_name: str) -> _Program[LateIndex, object]:
+    ...
+
+def group_index(prefix: str, separator: str) -> _Program[LateIndex, object]:
+    ...
+
+def head_index(prefix: str, separator: str) -> _Program[LateIndex, object]:
+    ...
+
+def table_statements(prefix: str) -> _Program[tuple, object]:
+    ...
+
+def retired_keys_statement(prefix: str) -> _Program[Statement, object]:
     ...
 
 def schema_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
     ...
 
-def added_index_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
+def late_indexes(prefix: str, schema: RecordsSchema) -> _Program[tuple[LateIndex, ...], object]:
+    ...
+
+def declared_indexes(prefix: str, schema: RecordsSchema) -> _Program[tuple[LateIndex, ...], object]:
+    ...
+
+def added_indexes(prefix: str, schema: RecordsSchema) -> _Program[tuple[LateIndex, ...], object]:
     ...
 
 def drop_statements(prefix: str) -> _Program[tuple[Statement, ...], object]:

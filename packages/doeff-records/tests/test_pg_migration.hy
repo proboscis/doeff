@@ -15,7 +15,8 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store RecordsSqlFailed])
 (import doeff_records.pg_sql [schema-statements])
-(import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
+(import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE BUILDER ORIGIN-HOST postgres-connections builder-connections
+                            fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
@@ -33,9 +34,14 @@
   (defn attempt []  ; defk にできない: thread の target
     (.wait start)
     (try
-      (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))
-                                      (probe-sql-handler connections DATABASE (QueryProbe (StatementCounts) :keep-lock keep-lock))]
-                                     (prepare-records-store DATABASE LAW-SCHEMA prefix))))
+      ;; 別の process の代役なので、後から作る索引の作りの 1 本も racer ごとに別に開く。
+      (setv builder (builder-connections))
+      (try
+        ;; 作り手の合図と呼び鈴(SqlNotify・SqlHangNotice — 数えの代役は答えない)は外側の postgres-sql-handler が答える。
+        (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler builder) (postgres-sql-handler connections)
+                                        (probe-sql-handler connections DATABASE (QueryProbe (StatementCounts) :keep-lock keep-lock))]
+                                       (prepare-records-store DATABASE BUILDER LAW-SCHEMA prefix))))
+        (finally (.close builder)))
       (except [error RecordsSqlFailed]
         (.append raised error.sqlstate))
       (except [error Exception]
@@ -50,7 +56,7 @@
 (defn cleanup [#^ str prefix]  ; defk にできない: 検の後片付けで別の run を回す入口
   "検の置き場の表を消す。"
   (setv connections (postgres-connections 1))
-  (run-sql connections (drop-records-tables (run-sql connections (prepare-records-store DATABASE LAW-SCHEMA prefix))))
+  (run-sql connections (drop-records-tables (run-sql connections (prepare-records-store DATABASE BUILDER LAW-SCHEMA prefix))))
   (.close connections))
 
 
@@ -81,8 +87,11 @@
   (val counts (StatementCounts))
   (val connections (postgres-connections RACERS))
   (val counting (probe-sql-handler connections DATABASE (QueryProbe counts)))
-  (val store (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) counting]
-                                            (prepare-records-store DATABASE LAW-SCHEMA prefix)))))
+  (val builder (builder-connections))
+  (val store (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler builder)
+                                             (postgres-sql-handler connections) counting]
+                                            (prepare-records-store DATABASE BUILDER LAW-SCHEMA prefix)))))
+  (.close builder)
   (val creates-after-prepare counts.creates)
   (val start (threading.Barrier RACERS))
   (val answers [])
@@ -96,6 +105,7 @@
     (for [t threads] (.start t))
     (for [t threads] (.join t))
     (assert (= answers (* [(Missing)] RACERS)) (repr answers))
+    ;; 空の置き場なので、表の用意の transaction が表と索引の全部を作る(後から作る索引も空の表の上で — pg_sql.hy の頭の註)。
     (assert (= creates-after-prepare
                (len (lfor s (run (schema-statements prefix LAW-SCHEMA)) :if (.startswith (.lstrip s.text) "CREATE") s)))
             creates-after-prepare)

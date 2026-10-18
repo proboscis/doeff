@@ -23,7 +23,7 @@
 ;;; 置き場の初めの版(memory.hy の MemoryStore の epoch 1)にする。PostgreSQL の置き場の版は作った時の server の時計の ms で始まる
 ;;; (pg_sql.hy の頭の註・#3632)ので、揃えないと版の値だけで答えの列が食い違う。仮想の時計で時刻を揃えるのと同じ、始まりの状態の揃え。
 (require doeff-hy.macros [defhandler defk <-])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import collections.abc [Callable])
 (import importlib)
 (import uuid)
@@ -35,7 +35,7 @@
 (import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.sql_effects [SqlQuery])
-(import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
+(import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase DEFAULT-TIMEOUTS postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
 (import urllib.parse [urlsplit])
@@ -50,7 +50,8 @@
 (setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")
 (setv PG-DSN-VARIABLE "DOEFF_RECORDS_TEST_PG_DSN")
 ;; 検の置き場の database の名(SqlQuery に書く名 — 答え手の宣言と揃える)と、行に刻む機体の名。
-(setv DATABASE "records" ORIGIN-HOST "law-host")
+;; BUILDER = 後から作る索引の作りの database の名(同じ置き場を、文の上限を付けない接続 1 本で開く — 本番の records-connected と同じ形)。
+(setv DATABASE "records" BUILDER "records-index-builds" ORIGIN-HOST "law-host")
 
 
 (defclass [(dataclass :frozen True)] LawSetup [EffectBase])
@@ -90,26 +91,37 @@
   (PostgresConnections #((PostgresDatabase :name DATABASE :dsn (session-dsn PG-DSN-VARIABLE))) :size size))
 
 
+(defn builder-connections []
+  "後から作る索引の作りの接続の貸し出し(BUILDER — 1 本・文の上限なし)。"
+  (PostgresConnections #((PostgresDatabase :name BUILDER :dsn (session-dsn PG-DSN-VARIABLE))) :size 1
+                       :timeouts (replace DEFAULT-TIMEOUTS :statement-milliseconds None)))
+
+
 (defn fresh-prefix []
   "検ごとの乱数の接頭辞(同じ database の別の検の表と混ざらない)。"
   (+ "t" (cut (. (uuid.uuid4) hex) 12) "_"))
 
 
 (defn run-sql [connections program]
-  "SQL の答え手(postgres-sql-handler)と仮想の時計の下で program を 1 回走らせる(検の組み立てと後片付け)。"
-  (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)] program))))
+  "SQL の答え手(postgres-sql-handler — connections と、後から作る索引の作りの 1 本 BUILDER)と仮想の時計の下で program を 1 回走らせる
+   (検の組み立てと後片付け)。"
+  (setv builder (builder-connections))
+  (try
+    (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler builder) (postgres-sql-handler connections)]
+                                   program)))
+    (finally (.close builder))))
 
 
 (defn prepared-store [connections #^ str prefix]  ; defk にできない: 検の解釈器の組み立て(Program の外)で呼ぶ
   "表を用意して(prepare-records-store)置き場を返す — 検の置き場 1 つにつき 1 度。"
-  (run-sql connections (prepare-records-store DATABASE LAW-SCHEMA prefix)))
+  (run-sql connections (prepare-records-store DATABASE BUILDER LAW-SCHEMA prefix)))
 
 
 (defk prepared-fresh-store [aligned-epoch]
   {:pre [(: aligned-epoch bool)] :post [(: % PreparedStore)]
    :tags {:context "records" :role "foundation"}}
   "検ごとの接頭辞の置き場を用意して返すため。aligned-epoch なら、用意の直後に版の行を memory の置き場の初めの版 1 にする(頭の註)。"
-  (<- store (prepare-records-store DATABASE LAW-SCHEMA (fresh-prefix)))
+  (<- store (prepare-records-store DATABASE BUILDER LAW-SCHEMA (fresh-prefix)))
   (when aligned-epoch
     (<- (SqlQuery DATABASE (.format "UPDATE {}store_epoch SET epoch = 1 WHERE id = 1" store.prefix) #())))
   store)

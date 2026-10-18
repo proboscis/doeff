@@ -28,7 +28,8 @@
 ;;; (notice-topics の 1 か所で綴る — 表と列が同じ綴りでも混ざらない)。書きは触った名を合図し(行の書き = その表・追記 = その列・保持の
 ;;; 刈り = 期限の在る表とその列)、待ちは待つ名で呼び鈴を掛ける(WatchChanges = 頼んだ表・WatchEvents = その列)。版の繰り上げと変更の
 ;;; 刈り取り(PruneChanges)は全部の待ち手に関わる(版と床は全部の表の位置を変える — 名の分からない合図 None)。memory の置き場の呼び鈴と
-;;; 同じ分け方(memory.hy の ring-bells)。
+;;; 同じ分け方(memory.hy の ring-bells)。表の用意の後から作る索引の作り手が錠を放した合図も同じ channel に "index-build:" + 表の名で
+;;; 載せる(build-topic — 表と列の待ち手の名とは重ならない)。
 ;;; 読み手の窓の read-modify-write の競合(同じ読み手の位置を 2 つの要求が同時に読んで進める)は旧い版と同じで、ここでは直さない
 ;;; (#880 の構成のレビュー A4)。
 ;;; 保持の期限(#3561): 読みの効果(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd・ReadEventByKey)は回収を流さず、期限を
@@ -47,13 +48,13 @@
 (import dataclasses [dataclass])
 (import doeff [Program])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
-(import doeff_time [GetTime])
+(import doeff_time [GetTime WaitWithin])
 (import doeff_core_effects.scheduler [ExternalPromise])
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
-                              EventAbsent EventRetired
+                              EventAbsent EventRetired WaitsClosed
                               StreamTail StreamTailEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
@@ -64,8 +65,10 @@
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
-(import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
-                              writer-lock-statement schema-statements drop-statements
+(import doeff_records.pg_sql [Statement TableIndex LateIndex RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key
+                              migrate-lock-key writer-lock-statement table-statements retired-keys-statement late-indexes
+                              late-index-statement drop-late-index-statement empty-table-statement build-claim-statement
+                              build-release-statement index-states-statement drop-statements
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
@@ -86,6 +89,10 @@
 ;; 表の用意の transaction を deadlock(40P01)の後に流し直す回数の上限(prepare-records-store)。
 (val PREPARE-ATTEMPTS 3)
 (val DEADLOCK-SQLSTATE "40P01")
+;; 後から作る索引 1 つの作り・待ち・消しが断られてよい回数(built-late-index — これに届いたら起動を止める)。
+(val LATE-INDEX-ATTEMPTS 3)
+;; 別の process が作っている索引を待つ時、作り手の合図が無くても読み直すまでの秒(作り手が合図を出さずに落ちた時の読み直し — built-late-index)。
+(val LATE-INDEX-RECHECK-SECONDS 30)
 
 
 (defclass StoreUnreachable [Exception]
@@ -100,6 +107,13 @@
   (#^ str database)
   (#^ RecordsSchema schema)
   (#^ str prefix))
+
+
+(defrecord IndexState
+  "在る索引 1 つの状態(pg_sql.index-states-statement の行): oid = 索引の oid(同じ名で作り直したかの見分け)/ valid = 使える(indisvalid —
+   CREATE INDEX CONCURRENTLY の作りの間と、作り手が落ちて残った索引は偽)。"
+  (#^ int oid)
+  (#^ bool valid))
 
 
 (defrecord StoreHead
@@ -150,10 +164,10 @@
 
 
 (defk in-transaction [database lock-key program [batched False]]
-  {:pre [(: database str) (: lock-key str) (: program Program) (: batched bool)]
+  {:pre [(: database str) (: lock-key (| str None)) (: program Program) (: batched bool)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "program を錠 lock-key の transaction 1 つで流すため(届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる)。batched =
+  "program を錠 lock-key(None = 錠なし)の transaction 1 つで流すため(届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる)。batched =
    往復をまとめる transaction を選ぶか(既定 False — 文 1 つずつ・頭の註)。"
   (<- answer (SqlTransaction database program :lock-key lock-key :batched batched))
   (match answer
@@ -185,7 +199,16 @@
   {:pre [(: store PreparedStore)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "置き場の通知の channel の名(表の名の接頭辞ごとに 1 つ — 同じ database の別の置き場の書きで起きない)。"
-  (.format "{}changes" store.prefix))
+  (<- channel (prefix-channel store.prefix))
+  channel)
+
+
+(defk prefix-channel [prefix]
+  {:pre [(: prefix str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "接頭辞 prefix の置き場の通知の channel の名を綴るため(notice-channel と、表を用意する間の後から作る索引の合図 — まだ置き場の値が
+   無い — がこの 1 か所を使う)。"
+  (.format "{}changes" prefix))
 
 
 (defk notice-topics [tables streams]
@@ -294,35 +317,235 @@
 
 ;; --- 用意と後片付け -----------------------------------------------------------------------------------------
 
-(defk prepare-records-store [database schema prefix]
-  {:pre [(: database str) (: schema RecordsSchema) (: prefix str)] :post [(: % PreparedStore)]
+(defk prepare-records-store [database builder schema prefix]
+  {:pre [(: database str) (: builder str) (!= builder database) (: schema RecordsSchema) (: prefix str)] :post [(: % PreparedStore)]
    :tags {:context "records" :role "foundation"}}
-  "表を用意する(移行)— process ごとに 1 度、composition root が要求を受ける前に流す。文は移行の錠の transaction の中で流す:
-   同じ置き場を同時に用意する別の process(replicas > 1・入れ替えの重なり)は錠を待ち、先の commit の後で IF NOT EXISTS が
-   何もしない(錠が無いと同時の CREATE INDEX IF NOT EXISTS が競って遅れた方が UniqueViolation)。同じ transaction の頭で置き場の
-   書きの錠も取り、同じ置き場の書き(入れ替えの間も答える別の process)と表の lock を逆の順で取らない(pg_sql.writer-lock-statement)。
-   錠の外の相手との deadlock(40P01)は transaction ごと戻るので、PREPARE-ATTEMPTS 回まで同じ transaction を流し直す(文はどれも冪等)。
-   届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる(起動を止める)。"
+  "表を用意する(移行)— process ごとに 1 度、composition root が要求を受ける前に流す。2 段で流す(pg_sql.hy の頭の註の「後から作る索引」):
+   1. 表の用意: 移行の錠の transaction 1 つで、書きの錠 → 表の文 → 表と共に作る索引のうち無い物と、空の表の後から作る索引のうち無い物
+      (tables-prepared)。同じ置き場を同時に
+      用意する別の process(replicas > 1・入れ替えの重なり)は錠を待ち、先の commit の後で IF NOT EXISTS が何もしない(錠が無いと同時の
+      CREATE INDEX IF NOT EXISTS が競って遅れた方が UniqueViolation)。同じ transaction の頭で置き場の書きの錠も取り、同じ置き場の書き
+      (入れ替えの間も答える別の process)と表の lock を逆の順で取らない(pg_sql.writer-lock-statement)。錠の外の相手との deadlock(40P01)は
+      transaction ごと戻るので、PREPARE-ATTEMPTS 回まで同じ transaction を流し直す(文はどれも冪等)。
+   2. 後から作る索引(pg_sql.late-indexes — 宣言から作る索引の全部)のうち使えない物を、transaction の後に 1 つずつ built-late-index で
+      作る(置き場の書きを止めない)。builder = CREATE INDEX CONCURRENTLY とその待ちと作り手の錠を流す database の名 — 同じ置き場を、statement timeout を
+      付けない接続 1 本(session の錠を持つので 1 本 — 2 本以上だと錠を放せず build-released が断る)で開いた名(本番の組み立て
+      main.records-connected が置く)。
+   索引を作り終えるまで返さない(答えた時には宣言の索引が全部使える — 作る間の要求には、入れ替えの間も答える旧い版の process が
+   今の宣言で答える)。届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる(起動を止める)。"
   (<- checked (checked-prefix prefix))
-  (<- statements (schema-statements checked schema))
+  (<- tables (table-statements checked))
+  (<- retired (retired-keys-statement checked))
   (<- writer-lock (writer-lock-statement checked))
   (<- key (migrate-lock-key checked))
-  (<- (prepared-tables database key (+ #(writer-lock) statements) PREPARE-ATTEMPTS))
+  (<- late (late-indexes checked schema))
+  (<- (prepared-tables database key (+ #(writer-lock) tables #(retired)) late PREPARE-ATTEMPTS))
+  (<- usable (usable-index-names database (tuple (gfor index late index.name))))
+  (for [index late]
+    (when (not-in index.name usable)
+      (<- (built-late-index database builder checked index))))
   (PreparedStore :database database :schema schema :prefix checked))
 
 
-(defk prepared-tables [database key statements attempts]
-  {:pre [(: database str) (: key str) (: statements tuple) (: attempts int) (>= attempts 1)] :post [(: % None)]
+(defk prepared-tables [database key steps late attempts]
+  {:pre [(: database str) (: key str) (: steps tuple) (: late tuple) (: attempts int) (>= attempts 1)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
   "表の用意の文を錠 key の transaction 1 つで流し、deadlock(40P01)で戻された時は残りの attempts 回まで流し直すため。"
   (try
-    (<- (in-transaction database key (run-statements database statements)))
+    (<- (in-transaction database key (tables-prepared database steps late)))
     None
     (except [error RecordsSqlFailed]
       (when (or (!= error.sqlstate DEADLOCK-SQLSTATE) (<= attempts 1))
         (raise))
-      (<- (prepared-tables database key statements (- attempts 1)))
+      (<- (prepared-tables database key steps late (- attempts 1)))
       None)))
+
+
+(defk tables-prepared [database steps late]
+  {:pre [(: database str) (: steps tuple) (all (gfor step steps (isinstance step #(Statement TableIndex))))
+         (: late tuple) (all (gfor index late (isinstance index LateIndex)))]
+   :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "表の用意の transaction の中身: 文(Statement)を順に流し、表と共に作る索引(TableIndex)の無い物と、後から作る索引 late のうち空の表
+   (作ったばかりの置き場・足した表)の無い物を最後に作るため(pg_sql.hy の頭の註 — 在る索引の文は流さない: 何も作らないのに表に
+   ShareLock を取り、別の process の CONCURRENTLY の作りの終わりまで待つ。空の表の作りは一瞬で終わり、CONCURRENTLY の待ちを足さない)。"
+  (val indexes (tuple (gfor step steps :if (isinstance step TableIndex) step)))
+  (for [step steps]
+    (when (isinstance step Statement)
+      (<- (query-rows database step))))
+  (<- present (present-index-names database (+ (tuple (gfor index indexes index.name)) (tuple (gfor index late index.name)))))
+  (for [index indexes]
+    (when (not-in index.name present)
+      (<- (query-rows database index.statement))))
+  (val missing (tuple (gfor index late :if (not-in index.name present) index)))
+  (var empty {})
+  (for [table (sorted (sfor index missing index.table))]
+    (<- probe (empty-table-statement table))
+    (<- rows (query-rows database probe))
+    (:= empty (| empty {table (bool (get rows 0 0))})))
+  (for [index missing]
+    (when (get empty index.table)
+      (<- statement (late-index-statement index False))
+      (<- (query-rows database statement))))
+  None)
+
+
+(defk present-index-names [database names]
+  {:pre [(: database str) (: names tuple) (> (len names) 0)] :post [(: % frozenset)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の名 names のうち在る物の名を読むため(表の用意の transaction が無い索引だけを作るため)。"
+  (<- statement (index-states-statement names))
+  (<- rows (query-rows database statement))
+  (frozenset (gfor row rows (get row 0))))
+
+
+(defk usable-index-names [database names]
+  {:pre [(: database str) (: names tuple)] :post [(: % frozenset)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の名 names のうち在って使える(indisvalid)物の名を 1 文で読むため(用意の後から作る索引の段が、使える索引を 1 つずつ読み直さない)。"
+  (when (not names)
+    (return (frozenset)))
+  (<- statement (index-states-statement names))
+  (<- rows (query-rows database statement))
+  (frozenset (gfor row rows :if (get row 2) (get row 0))))
+
+
+(defk late-index-state [database index]
+  {:pre [(: database str) (: index LateIndex)] :post [(: % (| IndexState None))]
+   :tags {:context "records" :role "foundation"}}
+  "後から作る索引 index の今の状態を読むため(None = 無い)。"
+  (<- statement (index-states-statement #(index.name)))
+  (<- rows (query-rows database statement))
+  (if rows
+      (IndexState :oid (int (get rows 0 1)) :valid (bool (get rows 0 2)))
+      None))
+
+
+(defk refusal-of [database statement]
+  {:pre [(: database str) (: statement Statement)] :post [(: % (| RecordsSqlFailed None))]
+   :tags {:context "records" :role "foundation"}}
+  "後から作る索引の作り・消しの文 1 つを流し、engine の断りを上げずに答えにするため(None = 通った — 断りの扱いは built-late-index が
+   決める。届かなければ StoreUnreachable を上げる)。"
+  (try
+    (<- (query-rows database statement))
+    None
+    (except [error RecordsSqlFailed]
+      error)))
+
+
+(defk build-topic [index]
+  {:pre [(: index LateIndex)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "索引 index の表の作り手が錠を放した合図の名(置き場の通知の channel の名 — 頭の註の「合図と呼び鈴は名で絞る」の \"index-build:\" + 表の名)。"
+  (+ "index-build:" index.table))
+
+
+(defk build-bell [database prefix index]
+  {:pre [(: database str) (: prefix str) (: index LateIndex)] :post [(: % ExternalPromise)]
+   :tags {:context "records" :role "foundation"}}
+  "索引 index の表の作り手が錠を放した合図を待つ呼び鈴を、置き場の通知の channel に掛けるため(LISTEN の接続は snapshot を持たずに
+   待つ — built-late-index の註)。待ち受けに届かなければ StoreUnreachable を上げる。"
+  (<- channel (prefix-channel prefix))
+  (<- topic (build-topic index))
+  (<- bell (SqlHangNotice database channel #(topic)))
+  (when (isinstance bell SqlUnreachable)
+    (raise (StoreUnreachable bell.reason)))
+  bell)
+
+
+(defk build-claimed [builder index]
+  {:pre [(: builder str) (: index LateIndex)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "索引 index の表の作り手の錠を、待たずに取りに行くため(真 = 取れた — この接続が作り手。pg_sql.build-claim-statement)。"
+  (<- statement (build-claim-statement index))
+  (<- rows (query-rows builder statement))
+  (bool (get rows 0 0)))
+
+
+(defk build-turn [database builder prefix index]
+  {:pre [(: database str) (: builder str) (: prefix str) (: index LateIndex)] :post [(: % (| ExternalPromise None))]
+   :tags {:context "records" :role "foundation"}}
+  "索引 index の表の作り手の錠を取りに行き、取れたら None を、別の process が持っていれば作り手が放した合図の呼び鈴を返すため。取れ
+   なかった時は呼び鈴を掛けてから錠をもう 1 度試す(掛ける前に放された合図は届かないので、その時は 2 度目で取れる)。呼び鈴は錠を
+   待つ時だけ掛ける(待ち受けの接続を、作り手が他に居ない用意で開かない)。"
+  (<- claimed (build-claimed builder index))
+  (when claimed
+    (return None))
+  (<- bell (build-bell database prefix index))
+  (<- again (build-claimed builder index))
+  (when again
+    (<- (SqlDropNotice database (! (prefix-channel prefix)) bell))
+    (return None))
+  bell)
+
+
+(defk build-released [database builder prefix index]
+  {:pre [(: database str) (: builder str) (: prefix str) (: index LateIndex)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "build-claimed で取った作り手の錠を放し、表の作りを待つ別の process へ合図を出すため。放せない(同じ接続で取っていない — builder の
+   接続が 1 本でない組み立ての誤り)なら RuntimeError を上げる(錠が借りた接続に残り、他の process の作りを止め続けるので、黙って
+   進まない)。"
+  (<- statement (build-release-statement index))
+  (<- rows (query-rows builder statement))
+  (when (not (get rows 0 0))
+    (raise (RuntimeError (.format "後から作る索引 {} の作り手の錠を放せない — builder {} の接続が 1 本でない" index.name builder))))
+  (<- channel (prefix-channel prefix))
+  (<- topic (build-topic index))
+  (<- notified (SqlNotify database channel #(topic)))
+  (<- (notice-raised notified))
+  None)
+
+
+(defk late-index-made [database builder index]
+  {:pre [(: database str) (: builder str) (: index LateIndex)] :post [(: % (| RecordsSqlFailed None))]
+   :tags {:context "records" :role "foundation"}}
+  "作り手の錠を持った作り手として索引 index を作るため(None = 使えるか、作り終えた・RecordsSqlFailed = 作りか消しの断り)。錠を持つ間に
+   在って使えない索引は、作っている process が他に居ないので、作り手が落ちて残った作りかけ(INVALID)— DROP INDEX CONCURRENTLY で消して
+   から作り直す。"
+  (<- state (late-index-state database index))
+  (when (and (is-not state None) state.valid)
+    (return None))
+  (when (is-not state None)
+    (<- drop (drop-late-index-statement index))
+    (<- dropped (refusal-of builder drop))
+    (when (is-not dropped None)
+      (return dropped)))
+  (<- create (late-index-statement index True))
+  (<- created (refusal-of builder create))
+  created)
+
+
+(defk built-late-index [database builder prefix index]
+  {:pre [(: database str) (: builder str) (: prefix str) (: index LateIndex)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "後から作る索引 index を、置き場の書きを止めずに使える所まで作るため(pg_sql.hy の頭の註の「後から作る索引」): 使える(indisvalid)なら
+   何もしない。使えなければ表の作り手の錠を待たずに取りに行き(build-turn)、取れたら作り手として作り(late-index-made)錠を放して合図を
+   出す。別の process が持っていれば、作り手の合図か LATE-INDEX-RECHECK-SECONDS の早い方まで待って読み直す(作り手が合図を出さずに
+   落ちても、その錠は PostgreSQL が放すので、読み直しで作り手になれる)。
+   待ちを PostgreSQL の錠の待ち(SELECT pg_advisory_lock・LOCK TABLE)にしない: 錠を待つ文は snapshot(LOCK TABLE も名を引く catalog の
+   snapshot)を持ったまま待ち、作り手の CREATE INDEX CONCURRENTLY の最後の待ち(古い snapshot の transaction の終わりを待つ)と輪になって
+   deadlock になり、作りかけの索引が捨てられる。合図(LISTEN / NOTIFY)の待ち受けの接続は snapshot を持たない。作りか消しが
+   LATE-INDEX-ATTEMPTS 回断られたら、最後の断りの RecordsSqlFailed を上げる(起動を止める — 断りが続く索引を黙って無いままにしない)。
+   届かなければ StoreUnreachable を上げる(接続が切れれば作り手の錠も PostgreSQL が放す)。"
+  (var failures 0)
+  (var settled False)
+  (while (not settled)
+    (<- state (late-index-state database index))
+    (if (and (is-not state None) state.valid)
+        (:= settled True)
+        (do (<- bell (build-turn database builder prefix index))
+            (if (is bell None)
+                (do (<- made (late-index-made database builder index))
+                    (<- (build-released database builder prefix index))
+                    (when (is-not made None)
+                      (:= failures (+ failures 1))
+                      (when (>= failures LATE-INDEX-ATTEMPTS)
+                        (raise made))))
+                (do (<- woke (WaitWithin bell.future LATE-INDEX-RECHECK-SECONDS))
+                    (<- (SqlDropNotice database (! (prefix-channel prefix)) bell))
+                    (when (isinstance woke WaitsClosed)
+                      (raise (RuntimeError (.format "止めの合図で、後から作る索引 {} の作りの待ちを止めた" index.name)))))))))
+  None)
 
 
 (defk drop-records-tables [store]

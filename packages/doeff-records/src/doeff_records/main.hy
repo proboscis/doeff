@@ -11,7 +11,8 @@
 ;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
 ;;;                          印字・PostgreSQL の答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
-;;;                          pool の thread へ)の下で本体を走らせ、終われば接続と pool を閉じる。外側(scheduler・Await の橋・session の値の
+;;;                          pool の thread へ。後から作る索引の 1 本〔BUILDER-DATABASE — 文の上限なし〕も同じ答え手で開く)の下で本体を
+;;;                          走らせ、終われば接続と pool を閉じる。外側(scheduler・Await の橋・session の値の
 ;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
 ;;;   records-foundation     単独で起こす時の本番の土台の全部 = 外側(scheduler・Await の橋・session の値の置き場・async-time-handler
 ;;;                          〔scheduler を塞がない時計・#880 A1〕・止めの合図 os-signal-stop-handler)+ records-connected
@@ -47,7 +48,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (require doeff-hy.record [defrecord])
 (import sys)
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import collections.abc [Callable])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [Program EffectBase with-handlers])
@@ -58,7 +59,7 @@
 (import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress])
-(import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase])
+(import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase DEFAULT-TIMEOUTS])
 (import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
@@ -86,6 +87,10 @@
 (val DEFAULT-KEEP-CHANGES-SECONDS 604800.0)
 ;; SqlQuery に書く database の名(この service の置き場は 1 つ — 答え手の宣言と揃える)。
 (val DATABASE "records")
+;; 後から作る索引(CREATE INDEX CONCURRENTLY とその待ち — doeff_records.pg の built-late-index)を流す database の名。同じ DSN を、文の上限
+;; (statement timeout)を付けない接続の貸し出し 1 本で開く(records-connected)— 育った置き場の索引の作りは上限の 60 秒を越える
+;; (2026-10-18 の記録の service の障害)。要求の文はこの名を使わず、上限の付いた DATABASE で流す。
+(val BUILDER-DATABASE "records-index-builds")
 ;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
 (val STOP-POLL-SECONDS 0.5)
 (val DRAIN-SECONDS 0.0)
@@ -159,9 +164,9 @@
 
 (defk pg-handlers-of [schema prefix host]
   {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
-  "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
-   1 度だけ撃つ)。"
-  (<- store (prepare-records-store DATABASE schema prefix))
+  "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS・宣言から作る索引はその後に BUILDER-DATABASE で CREATE INDEX CONCURRENTLY)、
+   書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が 1 度だけ撃つ)。"
+  (<- store (prepare-records-store DATABASE BUILDER-DATABASE schema prefix))
   (fn [writer] (pg-records-handler store writer host)))
 
 
@@ -190,12 +195,20 @@
   ;; 接続の貸し出しは借りた時に初めて開く(作るだけでは繋がない)。
   (val connections (PostgresConnections #((PostgresDatabase :name DATABASE :dsn settings.dsn)) :size (+ settings.pool-size 1)))
   (val pool (ThreadPoolExecutor :max-workers (+ settings.pool-size 1) :thread-name-prefix "records-pg"))
+  ;; 後から作る索引の 1 本(BUILDER-DATABASE — 文の上限を付けない・用意の task だけが使う)。
+  (val builder (PostgresConnections #((PostgresDatabase :name BUILDER-DATABASE :dsn settings.dsn)) :size 1
+                                    :timeouts (replace DEFAULT-TIMEOUTS :statement-milliseconds None)))
+  (val builder-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-index"))
   (try
-    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool)] body))
+    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool)
+                               (pooled-postgres-sql-handler builder builder-pool)]
+                 body))
     answer
     (finally
       (.close connections)
-      (.shutdown pool :wait False :cancel-futures True))))
+      (.close builder)
+      (.shutdown pool :wait False :cancel-futures True)
+      (.shutdown builder-pool :wait False :cancel-futures True))))
 
 
 (defk records-foundation [settings body]
