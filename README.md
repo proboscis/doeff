@@ -1,17 +1,37 @@
 # doeff
 
-**Write your Python logic once. Choose later how it talks to the world.**
+**Algebraic effects for Python: your code yields effects, and handlers decide what they mean.**
 
 [![PyPI](https://img.shields.io/pypi/v/doeff)](https://pypi.org/project/doeff/)
 [![Python](https://img.shields.io/pypi/pyversions/doeff)](https://pypi.org/project/doeff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/proboscis/doeff/blob/main/LICENSE)
 
-![A terminal session: pip install doeff, then the same digest program runs under a fake handler and under a live HTTP handler, and only the answer changes](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
+doeff brings algebraic effects and their handlers to Python. A function `yield`s an *effect*, a
+plain value that names an operation such as `Spend(3)`, `Get("count")` or `Spawn(task)`, and pauses
+there. The nearest handler for that effect receives it together with `k`, the *continuation*: the
+rest of the function from that `yield` on. What the handler does with `k` decides what the effect
+means:
 
-doeff brings algebraic effects to Python. Your functions `yield` requests such as
-"fetch this URL" or "summarize this text" instead of doing the I/O themselves.
-Handlers decide what each request means: real I/O in production, fakes in tests,
-recorded responses when you debug. Swap a handler, not your code.
+| The handler | Written as | The function |
+| --- | --- | --- |
+| answers and runs the rest | `Resume(k, value)` | goes on with `value`; when it finishes, the handler gets its result and returns that or another value |
+| answers and is done | `Transfer(k, value)` | goes on with `value`; the handler does not get control back |
+| throws into it | `ResumeThrow(k, error)` | sees `error` raised at the `yield`, where its own `try` can catch it |
+| passes the effect on | `Pass(effect, k)` | gets the answer of the next handler out |
+| holds it while other tasks run | the built-in scheduler, `scheduled(...)` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
+| drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
+
+State, early exit, retries, concurrency and I/O are all handlers built from these, and a function
+stays the same when you change the handlers around it.
+
+**Continuations are one-shot**, as in OCaml 5: a handler resumes each `k` at most once. Effects that
+resume one continuation several times, such as backtracking search or nondeterministic choice,
+cannot be written as doeff handlers.
+
+Swapping real I/O for fakes is one use of all this. In the recording, one program answers from a
+fake handler, then from a live HTTP handler:
+
+![A terminal session: pip install doeff, then the same digest program runs under a fake handler and under a live HTTP handler, and only the answer changes](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
 
 ```bash
 pip install doeff          # Python 3.11+: the core (doeff, doeff-vm, doeff-core-effects)
@@ -20,12 +40,76 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
-Then run `python -m doeff demo` to watch the example below answer from a fake handler, then over real HTTP.
+Then run `python -m doeff demo` to watch that program answer from a fake handler, then over real HTTP.
 
 **Documentation:** [start here](https://github.com/proboscis/doeff/blob/main/docs/index.md), with
 install, a first program, the FAQ, why effects, examples and the API, in that order.
 
 ## A 30-second example
+
+`research` spends part of a budget on each topic. It yields `Spend` and leaves the budget to a
+handler, which either resumes `k` or drops it:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler, run
+
+@dataclass(frozen=True)
+class Spend(EffectBase):        # an effect: "the next step costs this much"
+    cost: int
+
+@do
+def research(topics):           # yields effects; knows nothing about budgets
+    notes = []
+    for topic in topics:
+        yield Spend(3)
+        notes.append(f"notes on {topic}")
+    return notes
+
+def budget(limit):              # one meaning of Spend: stop when the budget runs out
+    left = limit
+
+    @do
+    def on_spend(effect: Spend, k):     # k: the rest of research, paused at the yield
+        nonlocal left
+        if effect.cost > left:
+            return "over budget"         # drop k: research stops at this Spend
+        left -= effect.cost
+        return (yield Resume(k, None))   # resume k: research goes on
+
+    return handler(on_spend)
+
+print(run(budget(10)(research(["tides", "moons"]))))                      # ['notes on tides', 'notes on moons']
+print(run(budget(10)(research(["tides", "moons", "comets", "stars"]))))  # over budget
+```
+
+The fourth `Spend` finds 1 left, so the handler returns without resuming `k`: the fourth topic is
+never researched, and `"over budget"` is the result. `research` has no check of its own. Another
+handler gives `Spend` another meaning without changing `research`: one that only counts the cost,
+or one that throws an error into `research` with `ResumeThrow(k, error)`.
+
+## Why doeff?
+
+| You want to… | Plain Python | doeff |
+| --- | --- | --- |
+| Decide outside a function whether its next step runs: go on, fail there, wait or stop | A callee can only return or raise; a generator needs a driver loop written for it | A handler gets the rest of the function as `k`, and resumes it, throws into it, holds it or drops it |
+| Run work in parallel | Rewrite the path with `async` or threads | `Spawn`, `Gather` and `Race` in the same program; the scheduler that runs them is a handler |
+| Add logging, retries or a cost cap | One wrapper per client | One handler that sees every effect |
+| Test code that does I/O | `mock.patch("app.requests.get")` for every import path | Install a fake handler. Nothing is patched |
+
+- **Batteries included.** Production *and* test handlers ship for files, HTTP (record / replay),
+  SQL (in-memory SQLite for tests), subprocesses, randomness, caching and metrics.
+- **Plain Python.** Programs are generator functions; no new syntax.
+  Optional [Hy](https://hylang.org/) macros live in [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md).
+- **Rust VM.** Effects are dispatched by a VM written in Rust, with one-shot continuations.
+
+Why not dependency injection or plain `async`? [Why effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
+compares effects with both, example by example, and says when DI or plain Python is the simpler choice.
+
+## Swap a handler: fakes in tests, real I/O in production
+
+Effects that reach the outside world are effects like any other, so a handler decides whether
+they reach it. `digest` yields two requests and does no I/O itself:
 
 ```python
 from dataclasses import dataclass
@@ -62,23 +146,6 @@ this for an LLM agent, with pytest tests that need no API key.
 [`examples/github_repo`](https://github.com/proboscis/doeff/tree/main/examples/github_repo) does it
 for a REST API: it calls GitHub through the HTTP handler of `doeff[http]`, and its tests answer
 with a fake handler, without the network.
-
-## Why doeff?
-
-| You want to… | Plain Python | doeff |
-| --- | --- | --- |
-| Test code that does I/O | `mock.patch("app.requests.get")` for every import path | Install a fake handler. Nothing is patched |
-| Add logging, retries or a cost cap | One wrapper per client | One handler that sees every effect |
-| Run work in parallel | Rewrite the path with `async` or threads | `Spawn`, `Gather` and `Race` in the same program |
-
-- **Batteries included.** Production *and* test handlers ship for files, HTTP (record / replay),
-  SQL (in-memory SQLite for tests), subprocesses, randomness, caching and metrics.
-- **Plain Python.** Programs are generator functions; no new syntax.
-  Optional [Hy](https://hylang.org/) macros live in [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md).
-- **Rust VM.** Effects are dispatched by a VM written in Rust, with one-shot continuations.
-
-Why not dependency injection or plain `async`? [Why effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
-compares effects with both, example by example, and says when DI or plain Python is the simpler choice.
 
 ## One handler, every effect
 
@@ -419,7 +486,7 @@ print(result)  # ['a', 'b']
 ## Type checking
 
 The examples above leave out type annotations and use plain `yield`, so pyright and mypy see
-`Any` where their values flow. Here is the 30-second example with types:
+`Any` where their values flow. Here is the `digest` example with types:
 
 ```python
 from collections.abc import Generator

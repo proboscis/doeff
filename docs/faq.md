@@ -18,18 +18,26 @@ measurement or the test it rests on.
 
 ## What does doeff give me?
 
-Your functions `yield` requests (effects) instead of doing the I/O themselves, and handlers decide
-what each request means. Three things follow that plain Python does not give you:
+Algebraic effects. Your functions `yield` effects, and a handler decides what each effect means by
+what it does with `k`, the continuation: the rest of the function from that `yield` on. It can
+resume `k` with an answer, throw an error into it, hold it while other tasks run, or drop it and
+end the computation with a value of its own ([the table in the README](../README.md)). Four things
+follow that plain Python does not give you:
 
+- **Control flow you define.** Early exit, budgets and errors raised where the effect was
+  performed are handlers, not checks inside the function: a handler that drops `k` stops the
+  function at the `yield`, and one that resumes it lets it go on
+  ([A 30-second example](../README.md#a-30-second-example)).
+- **Concurrency without `async`.** `Spawn`, `Gather` and `Race` are effects too, and the
+  scheduler that runs them is a handler that holds the continuations of the waiting tasks
+  ([Async Effects](04-async-effects.md)).
+- **One handler sees every effect.** Logging, a cost cap, or record and replay is one handler,
+  not one wrapper per client ([One handler, every effect](../README.md#one-handler-every-effect)).
 - **A test cannot reach production by accident.** If no handler answers an effect, the run stops
   with `UnhandledEffect`. With `mock.patch`, a patch you forget runs the real function
   ([Before and after](../README.md#before-and-after-fakes-in-a-test)).
-- **One handler sees every effect.** Logging, a cost cap, or record and replay is one handler,
-  not one wrapper per client ([One handler, every effect](../README.md#one-handler-every-effect)).
-- **Concurrency without `async`.** `Spawn`, `Gather` and `Race` are effects too, and the
-  scheduler that runs them is a handler ([Async Effects](04-async-effects.md)).
 
-What it costs: each request is a class, the logic is written as generators, and the doeff version
+What it costs: each effect is a class, the logic is written as generators, and the doeff version
 of a function is longer than the plain one. If your code only ever runs one way, the effects are
 ceremony ([When adoption pays](22-capability-classes.md#when-adoption-pays-the-evidence-rule)).
 
@@ -267,11 +275,21 @@ Judge from these facts:
 
 ## How does it compare with other Python effect libraries?
 
-| Library | The logic is | A test answers effects by | Forget one answer and | One effect (µs) |
+What a handler can do with the computation that performed the effect:
+
+| Library | The logic is | A handler receives | A handler can | One effect (µs) |
 | --- | --- | --- | --- | ---: |
-| [effect](https://github.com/python-effect/effect) 1.1.0 (2019) | generators that yield `Effect(...)` | listing the expected effects and their answers in order | an `AssertionError` | 12.7 |
-| [effectful](https://github.com/BasisResearch/effectful) 0.4.0 | plain functions that call `@defop` operations | a dict of handlers | no error: the call returns a symbolic term | 57.9 |
-| doeff 0.7.0 | generators that yield effects | installing one handler per effect | an `UnhandledEffect` error | 3.0 to 4.9 |
+| [effect](https://github.com/python-effect/effect) 1.1.0 (2019) | generators that yield `Effect(...)` | the intent and a box for its answer | answer through the box now or later, or fail it; a box it never answers leaves the run unfinished | 12.7 |
+| [effectful](https://github.com/BasisResearch/effectful) 0.4.0 | plain functions that call `@defop` operations | the operation's arguments, not a continuation | return the answer, raise, or forward with `fwd()` | 57.9 |
+| doeff 0.7.0 | generators that yield effects | the effect and its continuation `k` | resume `k`, throw into it, pass it on, hold it while other tasks run, or drop it and end the computation with a value of its own | 3.0 to 4.9 |
+
+What a test does:
+
+| Library | A test answers effects by | Forget one answer and |
+| --- | --- | --- |
+| effect 1.1.0 | listing the expected effects and their answers in order | an `AssertionError` |
+| effectful 0.4.0 | a dict of handlers | no error: the call returns a symbolic term |
+| doeff 0.7.0 | installing one handler per effect | an `UnhandledEffect` error |
 
 - In the benchmark of many tasks, effect's `parallel()` runs the effects one by one, and effectful
   has no scheduler to measure.
