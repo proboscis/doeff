@@ -130,8 +130,9 @@
 
 (defeffect CodexSteerTurn
   "走っているターンに入力を足す(turn/steer — codex はターンの次の区切りで読み、同じターンが続く)。名指したターンが走っていなければ
-   NoTurnInFlight、codex が断れば RequestRefused(ターンが終わりかけていた・足せない種類のターン)、答えの前に process が降りれば
-   LaunchFailed。答え = Steered | NoTurnInFlight | RequestRefused | LaunchFailed。"
+   NoTurnInFlight(handler が終わりを読んだターンと、ターンの終わりと行き違って codex が「走っているターンが無い・別のターンが走っている」と
+   断った時を含む — 上の層は入力を次のターンへ回せる)、codex がそれ以外の訳で断れば RequestRefused(足せない種類のターン・空の入力)、
+   答えの前に process が降りれば LaunchFailed。答え = Steered | NoTurnInFlight | RequestRefused | LaunchFailed。"
   {:fields [(: turn CodexTurn) (: input CodexInput)]
    :pre [(: turn CodexTurn) (: input CodexInput)]
    :answer (| Steered NoTurnInFlight RequestRefused LaunchFailed)

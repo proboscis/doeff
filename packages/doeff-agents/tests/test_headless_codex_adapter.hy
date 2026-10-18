@@ -370,6 +370,58 @@
   (<- (check-injected seen)))
 
 
+;; turn/steer を「走っているターンが無い」と断らせる言い方(替え玉の規則 — 本物の codex 0.162.1 の断りが、ターンの終わりの通知より先に
+;; 届く順と後に届く順を写す。doeff-codex の tests/stub_cli/codex_app_server.py の STEER_REFUSALS)。
+(val STEER-REFUSED-FIRST "STEER-REFUSED-FIRST")
+(val STEER-ENDED-FIRST "STEER-ENDED-FIRST")
+
+(defk two-ends [events end]
+  {:pre [(: events tuple) (: end PageEnd)] :post [(: % bool)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "ターンの終わりが 2 つ届いたか(断られた入力を次のターンとして出し直す筋書きの、読みの止めの条件)。"
+  (<- ends (of-kind events AgentTurnEndEvent))
+  (>= (len ends) 2))
+
+(defk inject-while-codex-ends-the-turn [#^ Setting s #^ str word #^ bool stop-first]
+  {:pre [(: s Setting) (: word str) (: stop-first bool)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "目印 word の替え玉のターン(turn/steer を「走っているターンが無い」と断る)が走る所へ入力を足し(INJECT)、断りが型で届くのを見てから、
+   断られた入力を次のターンの入力として出し直して(上の層がする回し方)、次のターンの終わりまで読むため。stop-first = 断りの時点で
+   ターンが終わっていない言い方なので、出し直した後にそのターンを止める。"
+  (<- handle (launch s "codex-steer-race" (+ word " please") {}))
+  (<- before (read-until handle first-delta s.timeout -1))
+  (var refused None)
+  (try
+    (<- (FollowUp handle "more" :input-ref "ref-more" :mode TurnInputMode.INJECT))
+    (except [error NoTurnInFlightError]
+      (:= refused error)))
+  (<- (FollowUp handle "say hello" :input-ref "ref-next" :mode TurnInputMode.NEXT-TURN))
+  (when stop-first
+    (<- (Interrupt handle)))
+  (<- done (read-until handle two-ends s.timeout before.after))
+  (<- (Stop handle))
+  {"events" (+ before.events done.events) "end" done.end "refused" refused})
+
+(defk check-inject-while-codex-ends-the-turn [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "ターンの終わりと行き違った INJECT が、手番を失敗させる AgentError でなく NoTurnInFlightError で断られ、断られた入力は読まれたと名乗られず、
+   出し直した入力が次のターンとして完了することを確かめるため。"
+  (assert (isinstance (get seen "refused") NoTurnInFlightError) seen)
+  (<- fates (of-kind (get seen "events") AgentInputFateEvent))
+  (val started (tuple (gfor fate fates :if (= fate.state InputFateState.STARTED) fate.input-ref)))
+  (assert (not-in "ref-more" started) fates)
+  (assert (in "ref-next" started) fates)
+  (val end (get seen "end"))
+  (assert (and (isinstance end AgentTurnCompleted) (= end.input-refs #("ref-next"))) end)
+  None)
+
+(deftest test-headless-codex-inject-refused-before-the-end-notice-is-no-turn-in-flight-stub [tmp-path]
+  (<- seen (run-on STUB tmp-path (fn [s] (inject-while-codex-ends-the-turn s STEER-REFUSED-FIRST True))))
+  (<- (check-inject-while-codex-ends-the-turn seen)))
+
+(deftest test-headless-codex-inject-refused-after-the-end-notice-is-no-turn-in-flight-stub [tmp-path]
+  (<- seen (run-on STUB tmp-path (fn [s] (inject-while-codex-ends-the-turn s STEER-ENDED-FIRST False))))
+  (<- (check-inject-while-codex-ends-the-turn seen)))
+
+
 (defk stop-a-running-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "走っているターンと待たせた入力の在る session を止め、終わりと入力の行方と状態を読むため。"
