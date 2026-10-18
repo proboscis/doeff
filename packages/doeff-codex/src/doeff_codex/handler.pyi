@@ -80,22 +80,29 @@ class Doorbell:
 class TurnLog:
     events: tuple[CodexEvent, ...]
     end: Incomplete
+    end_read: bool
     pending: tuple
     limits: tuple
 
     def __init__(self) -> None:
         ...
 
-class SessionRuntime:
-    spec: CodexSessionSpec
+class Continuation:
     thread_id: Incomplete
+    spec: CodexSessionSpec
+    next_seq: Incomplete
+    launches: Incomplete
+
+    def __init__(self, spec: CodexSessionSpec) -> None:
+        ...
+
+class SessionRuntime:
+    continuation: Continuation
     process: Incomplete
     generation: Incomplete
-    launches: Incomplete
     lock: Incomplete
     doorbell: Incomplete
     next_request_id: Incomplete
-    next_seq: Incomplete
     current_turn: Incomplete
     closed: Incomplete
     exit_code: Incomplete
@@ -107,7 +114,7 @@ class SessionRuntime:
     outside: tuple
     late: tuple
 
-    def __init__(self, spec: CodexSessionSpec) -> None:
+    def __init__(self, continuation: Continuation) -> None:
         ...
 
     def take_request_id(self) -> int:
@@ -125,6 +132,15 @@ class SessionRuntime:
     def add_event(self, log: TurnLog, record: Incomplete) -> Incomplete:
         ...
 
+    def note_read(self, turn_id: str, page: TurnEventPage) -> Incomplete:
+        ...
+
+    def drop_read(self) -> Incomplete:
+        ...
+
+    def drained(self) -> bool:
+        ...
+
     def end_toolless_turn(self) -> Incomplete:
         ...
 
@@ -132,6 +148,7 @@ class CodexHost:
     command: tuple
     launch_timeout: Incomplete
     lock: Incomplete
+    continuations: dict[str, Continuation]
     runtimes: dict[str, SessionRuntime]
 
     def __init__(self, command: tuple, launch_timeout: Incomplete=120.0) -> None:
@@ -140,7 +157,13 @@ class CodexHost:
     def runtime(self, thread_id: str) -> Incomplete:
         ...
 
+    def continuation(self, thread_id: str) -> Incomplete:
+        ...
+
     def register(self, runtime: SessionRuntime) -> Incomplete:
+        ...
+
+    def release(self, runtime: SessionRuntime) -> bool:
         ...
 
 def another_thread(runtime: SessionRuntime, record: lines.CodexLine) -> _Program[bool, object]:
@@ -202,6 +225,12 @@ def page_of(runtime: SessionRuntime, turn: CodexTurn, after_seq: int) -> _Progra
     ...
 
 def page_ready(runtime: SessionRuntime, turn: CodexTurn, after_seq: int) -> _Program[bool, object]:
+    ...
+
+def shed(host: CodexHost, runtime: SessionRuntime) -> _Program[None, object]:
+    ...
+
+def settle_read(host: CodexHost, runtime: SessionRuntime, turn: CodexTurn, page: TurnEventPage) -> _Program[None, object]:
     ...
 
 def read_events(host: CodexHost, asked: CodexReadTurnEvents) -> _Program[TurnEventPage | UnknownTurn, object]:

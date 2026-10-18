@@ -28,6 +28,8 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
 - 引数は --disable の機能の名だけを読む(SETTINGS の答え — app-server --listen stdio:// は読まない)。
+- 環境変数 STUB_ID_PREFIX が在れば、thread とターンの id の頭に足す(1 つの host に開いた複数の会話が同じ id に衝突しないように —
+  この process は id を 1 から数えるので、無ければ会話ごとに stub-thread-1 になる)。
 """
 
 import json
@@ -132,7 +134,7 @@ class Stub:
     def fresh_id(self, kind: str) -> str:
         """thread とターンの id を振るため。"""
         self.mut_made += 1
-        return f"stub-{kind}-{self.mut_made}"
+        return f"stub{os.environ.get('STUB_ID_PREFIX', '')}-{kind}-{self.mut_made}"
 
     def spanning_turn(self, name: str, request_id: int, turn_id: str) -> list[dict[str, object]]:
         """2 つのターンにまたがる録り name のうち、要求 request_id で始めたターンの通知(その答えの後から最初の turn/completed まで)を

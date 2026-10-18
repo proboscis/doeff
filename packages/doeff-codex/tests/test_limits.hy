@@ -14,7 +14,7 @@
 (import doeff_codex.lines [classify-line CodexLine LimitRecord RateLimits RateLimitWindow TurnEnded TurnStatus UnknownValue
                            UsageLimitHit])
 (import doeff_codex.limits [merged-limits usage-limit-hit-of])
-(import doeff_codex.handler [SessionRuntime absorb])
+(import doeff_codex.handler [Continuation SessionRuntime absorb])
 (import doeff_codex.values [CodexSessionSpec CodexHome])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_hy.json_value [OpaqueJson])
@@ -86,8 +86,8 @@
   ;; 失敗ケース(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS の再現): 読みの thread は turn/start の答えの直後の行を、答えを待つ側が
   ;; 走っているターンを立てる前に読み得る。ターンを名乗らない枠の知らせがその隙に届いても、答えが名乗ったターンに積まれ、
   ;; そのターンの失敗の終わりが利用枠切れの事実を運ぶ(読みの thread と同じ順で absorb を呼ぶ — 答えを待つ側は何もしない)。
-  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
-                                                 :sandbox SandboxMode.READ-ONLY)))
+  (val runtime (SessionRuntime (Continuation (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                 :sandbox SandboxMode.READ-ONLY))))
   (for [line [{"id" 3 "result" {"turn" {"id" "u1" "status" "inProgress"}}}
               {"method" "account/rateLimits/updated"
                "params" {"rateLimits" {"limitId" "codex" "secondary" None
@@ -107,8 +107,8 @@
   ;; 終わって走っているターンの印がまだ u0 を指す間に、読みの thread が turn/started(u1)を読み、続けて枠の知らせを読む(turn/start の
   ;; 答えはまだ読んでいない)。枠の知らせは u1 に積まれ(終わった u0 にも outside にも落ちない)、u1 の失敗の終わりが利用枠切れの事実を
   ;; 運ぶ(読みの thread と同じ順で absorb を呼ぶ — 答えを待つ側は何もしない)。
-  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
-                                                 :sandbox SandboxMode.READ-ONLY)))
+  (val runtime (SessionRuntime (Continuation (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                 :sandbox SandboxMode.READ-ONLY))))
   (for [line [{"id" 3 "result" {"turn" {"id" "u0" "status" "inProgress"}}}
               {"method" "turn/started" "params" {"threadId" "t1" "turn" {"id" "u0" "status" "inProgress"}}}
               {"method" "turn/completed" "params" {"threadId" "t1" "turn" {"id" "u0" "status" "completed"}}}
@@ -155,8 +155,8 @@
   (val quiet (json.dumps {"method" "account/rateLimits/updated"
                           "params" {"rateLimits" {"limitId" "codex" "primary" None "secondary" None}}}))
   (for [later [#() #(quiet)]]
-    (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
-                                                   :sandbox SandboxMode.READ-ONLY)))
+    (val runtime (SessionRuntime (Continuation (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                   :sandbox SandboxMode.READ-ONLY))))
     (<- first (limited-turn-lines "u0" 3 #(spent)))
     (<- second (limited-turn-lines "u1" 4 later))
     (for [raw (+ first second)]
