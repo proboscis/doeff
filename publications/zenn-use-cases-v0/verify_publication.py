@@ -26,7 +26,11 @@ CAPTIONS = SOURCE / "visuals/captions"
 MANIFESTS = SOURCE / "imagegen/manifest"
 IMAGE_DIRECTORY = ROOT / "images/zenn-use-cases-v0/generated"
 # 採用画像を作った道具。SVGの図は正本をvisuals/に置き、作り方をimagegen/の台帳の文書に書く。
-IMAGE_TOOLS = {"image_gen (built-in)", "SVG (hand-written) + chromium screenshot"}
+IMAGE_TOOLS = {
+    "image_gen (built-in)",
+    "SVG (hand-written) + chromium screenshot",
+    "example's HTML page + chromium screenshot",  # 完全な例が組んだページの写し(記事が見せる結果そのもの)。
+}
 # コードの枠とインラインのコード。この中の`](`はリンクではない。
 _CODE = re.compile(r"^```.*?^```[ \t]*$|`[^`\n]*`", re.S | re.M)
 

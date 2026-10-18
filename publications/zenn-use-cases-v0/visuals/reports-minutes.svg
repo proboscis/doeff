@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <text x="600" y="66" text-anchor="middle" font-size="38" font-weight="bold" fill="#111827">図の数ごとの、図が全部入るまでの分</text>
+  <rect x="250" y="128" width="28" height="20" rx="4" fill="#2a78d6"/>
+  <text x="290" y="146" font-size="22" fill="#111827">毎日の中央値(2026年10月12〜18日・180ページ)</text>
+  <path d="M264,165 L277,178 L264,191 L251,178 Z" fill="#eb6834"/>
+  <text x="290" y="186" font-size="22" fill="#111827">試しの1回(2026年10月1日・図4つ)</text>
+  <line x1="250.0" y1="214" x2="250.0" y2="610" stroke="#e5e7eb" stroke-width="2"/>
+  <line x1="412.0" y1="214" x2="412.0" y2="610" stroke="#e5e7eb" stroke-width="2"/>
+  <line x1="574.0" y1="214" x2="574.0" y2="610" stroke="#e5e7eb" stroke-width="2"/>
+  <line x1="736.0" y1="214" x2="736.0" y2="610" stroke="#e5e7eb" stroke-width="2"/>
+  <line x1="898.0" y1="214" x2="898.0" y2="610" stroke="#e5e7eb" stroke-width="2"/>
+  <line x1="1060.0" y1="214" x2="1060.0" y2="610" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="250.0" y="644" text-anchor="middle" font-size="22" fill="#4b5563">0分</text>
+  <text x="412.0" y="644" text-anchor="middle" font-size="22" fill="#4b5563">5分</text>
+  <text x="574.0" y="644" text-anchor="middle" font-size="22" fill="#4b5563">10分</text>
+  <text x="736.0" y="644" text-anchor="middle" font-size="22" fill="#4b5563">15分</text>
+  <text x="898.0" y="644" text-anchor="middle" font-size="22" fill="#4b5563">20分</text>
+  <text x="1060.0" y="644" text-anchor="middle" font-size="22" fill="#4b5563">25分</text>
+  <text x="230" y="249" text-anchor="end" font-size="24" fill="#111827">図1つ</text>
+  <path d="M250,230 H337.26 Q341.26,230 341.26,234 V250 Q341.26,254 337.26,254 H250 Z" fill="#2a78d6"/>
+  <text x="355.26" y="250" font-size="22" fill="#111827">2.8分<tspan fill="#4b5563">(75ページ)</tspan></text>
+  <text x="230" y="333" text-anchor="end" font-size="24" fill="#111827">図2つ</text>
+  <path d="M250,314 H578.9100000000001 Q582.9100000000001,314 582.9100000000001,318 V334 Q582.9100000000001,338 578.9100000000001,338 H250 Z" fill="#2a78d6"/>
+  <text x="596.9100000000001" y="334" font-size="22" fill="#111827">10.3分<tspan fill="#4b5563">(46ページ)</tspan></text>
+  <text x="230" y="417" text-anchor="end" font-size="24" fill="#111827">図3つ</text>
+  <path d="M250,398 H670.98 Q674.98,398 674.98,402 V418 Q674.98,422 670.98,422 H250 Z" fill="#2a78d6"/>
+  <text x="688.98" y="418" font-size="22" fill="#111827">13.1分<tspan fill="#4b5563">(36ページ)</tspan></text>
+  <text x="230" y="501" text-anchor="end" font-size="24" fill="#111827">図4つ</text>
+  <path d="M250,482 H952.59 Q956.59,482 956.59,486 V502 Q956.59,506 952.59,506 H250 Z" fill="#2a78d6"/>
+  <text x="970.59" y="502" font-size="22" fill="#111827">21.8分<tspan fill="#4b5563">(14ページ)</tspan></text>
+  <text x="230" y="585" text-anchor="end" font-size="24" fill="#111827">図5〜8つ</text>
+  <path d="M250,566 H874.56 Q878.56,566 878.56,570 V586 Q878.56,590 874.56,590 H250 Z" fill="#2a78d6"/>
+  <text x="892.56" y="586" font-size="22" fill="#111827">19.4分<tspan fill="#4b5563">(9ページ)</tspan></text>
+  <path d="M431.44,481.0 L444.44,494.0 L431.44,507.0 L418.44,494.0 Z" fill="#eb6834" stroke="#ffffff" stroke-width="2"/>
+  <text x="431.44" y="468.0" text-anchor="middle" font-size="22" fill="#111827">試し 5分36秒</text>
+  <text x="600" y="730" text-anchor="middle" font-size="20" fill="#4b5563">頼まれてから、図の指定が全部ページに入るまで。図の数は、全部入った時の数。</text>
+</svg>

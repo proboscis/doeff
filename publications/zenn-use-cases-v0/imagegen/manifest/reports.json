@@ -1,0 +1,50 @@
+[
+  {
+    "id": "reports-concept",
+    "image": "images/zenn-use-cases-v0/generated/reports-concept.png",
+    "generation_prompt": "reports-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "66b5735b06f085c432dc612546ab4e122ae788050a3b86e678c9f8b42392b9d5",
+    "width": 1200,
+    "height": 1120,
+    "bytes": 229031,
+    "review": "2026-10-18：左の前の形（話していた会話 → 文脈の無い作業役が読み直す15.7分・書く3.5分・スクリーンショット12分 → 開かれずに9.5分 → 42分・読める物まで74分）と、右の今の形（会話が中身を書く57秒 → スクリプトと雛形 → 決まった依頼文 → Opusのサブエージェントが図を描く・起動21秒・図4つと見た目で4分18秒 → build し直して図 4/4 → 5分36秒）を、本文の表と数、元の実測の表（2026-10-01）に照らして目視確認。社内の機体の名・会話やcardのid・利用者の発言は描いていない。白背景の平面図として採用。"
+  },
+  {
+    "id": "reports-flow",
+    "image": "images/zenn-use-cases-v0/generated/reports-flow.png",
+    "generation_prompt": "reports-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "8c7178d14c82ce8381decf48720ed6ada15d7b71792a874c3d0a13be2d5d2f45",
+    "width": 1200,
+    "height": 1100,
+    "bytes": 194316,
+    "review": "2026-10-18：buildの4行（FIGURE.finditer・yield DrawnFigure・drawn・return）と、1回目の組[not_yet]で図 0/2、2回目の組[not_yet, from_dir(figures)]で図 2/2になる事、from_dirが内側で先に受け無い図をPassで外へ渡す事を、本文の枠と完全な例に照らして目視確認。作業役の90秒は完全な例の試し（2026-10-18）、下の帯は2026-10-01の試しの57秒・21秒・4分18秒で、長さを秒に比例させた。白背景の平面図として採用。"
+  },
+  {
+    "id": "reports-minutes",
+    "image": "images/zenn-use-cases-v0/generated/reports-minutes.png",
+    "generation_prompt": "reports-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "1810a4cff4ce03cb7cd534a43f7bb594cb6d439403e2092d7279d15453a5208e",
+    "width": 1200,
+    "height": 760,
+    "bytes": 73344,
+    "review": "2026-10-18：reviews/reports-pages.csvから描いた横棒。図1つ2.8分（75ページ）・図2つ10.3分（46）・図3つ13.1分（36）・図4つ21.8分（14）・図5〜8つ19.4分（9）と、試しの菱形（図4つ・5分36秒）を、本文とreports-check.pyの数え直しに照らして目視確認。1つの軸だけで、値はどの棒にも字で添えた。配色はdatavizの既定の1・2番で、色の確かめの道具を通した。白背景の平面図として採用。"
+  },
+  {
+    "id": "reports-page",
+    "image": "images/zenn-use-cases-v0/generated/reports-page.png",
+    "generation_prompt": "reports-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "example's HTML page + chromium screenshot",
+    "sha256": "cda9bd515bc5b953f56743fbcde126623c0dabfe3d1633b7873ded9e1805d8cb",
+    "width": 1200,
+    "height": 1237,
+    "bytes": 88056,
+    "review": "2026-10-18：examples/report_page.pyの例の中身（検索の応答が遅くなった件・架空の報告）を組んだページ。表（21時0.2秒・22時3.1秒・23時0.2秒と遅い1%）と、Opusのサブエージェントが記事の依頼文だけで描いた図2つ（折れ線・3つの箱）が入り、図 2/2で組めた事を目視確認。図の数と言葉は図の指定と中身にある物だけ。社内の名・idは無い。採用。"
+  }
+]
