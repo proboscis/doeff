@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1100" viewBox="0 0 1200 1100" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1100" fill="#ffffff"/>
+  <text x="600" y="66" text-anchor="middle" font-size="42" font-weight="bold" fill="#111827">同じtickを、3つのハンドラの組で動かす</text>
+
+  <!-- 配りの判断 -->
+  <rect x="40" y="110" width="760" height="300" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="70" y="154" font-size="28" font-weight="bold" fill="#111827">配りの判断(1つだけ書く)</text>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="22" fill="#111827">
+    <text x="70" y="202">def tick(memo):</text>
+    <text x="110" y="240">strategy = <tspan fill="#0f766e" font-weight="bold">yield Ask("strategy")</tspan></text>
+    <text x="110" y="278">ready = <tspan fill="#0f766e" font-weight="bold">yield ReadReady()</tspan></text>
+    <text x="110" y="316">free = <tspan fill="#0f766e" font-weight="bold">yield ReadFree()</tspan></text>
+    <text x="110" y="354">picks, memo = strategy(ready, free, memo)</text>
+    <text x="110" y="392">for key in picks: <tspan fill="#0f766e" font-weight="bold">yield Dispatch(key)</tspan></text>
+  </g>
+
+  <!-- 配る順の関数 -->
+  <rect x="830" y="110" width="330" height="300" rx="18" fill="#f0fdfa" stroke="#0f766e" stroke-width="3"/>
+  <text x="995" y="152" text-anchor="middle" font-size="26" font-weight="bold" fill="#0f766e">配る順の関数</text>
+  <text x="995" y="186" text-anchor="middle" font-size="20" fill="#4b5563">設定の値1つで選ぶ</text>
+  <text x="856" y="228" font-size="22" fill="#111827">A 重みつきの経過</text>
+  <text x="856" y="264" font-size="22" fill="#111827">B 取り置き</text>
+  <rect x="848" y="276" width="294" height="34" rx="8" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="856" y="300" font-size="22" font-weight="bold" fill="#0f766e">C 厳密な優先(本番)</text>
+  <text x="856" y="342" font-size="22" fill="#111827">D 重みつきの公平な分配</text>
+  <text x="856" y="378" font-size="22" fill="#111827">E 先着順</text>
+  <line x1="830" y1="235" x2="804" y2="235" stroke="#0f766e" stroke-width="3" marker-end="url(#arrow-teal)"/>
+
+  <line x1="420" y1="410" x2="420" y2="470" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="444" y="448" font-size="24" fill="#111827">依頼を外側へ渡す。担当外はPassで、さらに外へ</text>
+
+  <!-- 3つの組 -->
+  <rect x="40" y="480" width="360" height="430" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="220" y="524" text-anchor="middle" font-size="28" font-weight="bold" fill="#c2410c">本番</text>
+  <rect x="420" y="480" width="360" height="430" rx="18" fill="#f3f4f6" stroke="#4b5563" stroke-width="3"/>
+  <text x="600" y="524" text-anchor="middle" font-size="28" font-weight="bold" fill="#374151">記録だけの運転</text>
+  <rect x="800" y="480" width="360" height="430" rx="18" fill="#f0fdfa" stroke="#0f766e" stroke-width="3"/>
+  <text x="980" y="524" text-anchor="middle" font-size="28" font-weight="bold" fill="#0f766e">模擬</text>
+
+  <!-- 行: 読む -->
+  <text x="64" y="572" font-size="20" font-weight="bold" fill="#4b5563">読む(ReadReady・ReadFree)</text>
+  <text x="64" y="606" font-size="22" fill="#111827">作業ボードと上限を</text>
+  <text x="64" y="636" font-size="22" fill="#111827">HTTPで読む</text>
+  <text x="444" y="572" font-size="20" font-weight="bold" fill="#4b5563">読む</text>
+  <text x="444" y="606" font-size="22" fill="#111827">本番と同じ</text>
+  <text x="824" y="572" font-size="20" font-weight="bold" fill="#4b5563">読む</text>
+  <text x="824" y="606" font-size="22" fill="#111827">メモリ上の世界の値</text>
+
+  <!-- 行: 頼む -->
+  <text x="64" y="688" font-size="20" font-weight="bold" fill="#4b5563">頼む(Dispatch)</text>
+  <text x="64" y="722" font-size="22" fill="#111827">会話を開き、依頼を送る</text>
+  <text x="444" y="688" font-size="20" font-weight="bold" fill="#4b5563">頼む</text>
+  <text x="444" y="722" font-size="22" fill="#111827">配るはずだったcardを</text>
+  <text x="444" y="752" font-size="22" fill="#111827">記録するだけ</text>
+  <text x="824" y="688" font-size="20" font-weight="bold" fill="#4b5563">頼む</text>
+  <text x="824" y="722" font-size="22" fill="#111827">世界に会話を足す</text>
+
+  <!-- 行: 待つ -->
+  <text x="64" y="804" font-size="20" font-weight="bold" fill="#4b5563">待つ(AwaitChange)</text>
+  <text x="64" y="838" font-size="22" fill="#111827">作業ボードの変化の</text>
+  <text x="64" y="868" font-size="22" fill="#111827">通知を待つ</text>
+  <text x="444" y="804" font-size="20" font-weight="bold" fill="#4b5563">待つ</text>
+  <text x="444" y="838" font-size="22" fill="#111827">本番と同じ</text>
+  <text x="824" y="804" font-size="20" font-weight="bold" fill="#4b5563">待つ</text>
+  <text x="824" y="838" font-size="22" fill="#111827">仮想の時計を1分進める</text>
+
+  <!-- 使った時と数 -->
+  <text x="220" y="950" text-anchor="middle" font-size="22" fill="#c2410c">10月11日17時57分から</text>
+  <text x="600" y="950" text-anchor="middle" font-size="22" fill="#374151">10月11日16時47分から1時間</text>
+  <text x="600" y="980" text-anchor="middle" font-size="22" fill="#374151">212周期・配るはずだった5枚</text>
+  <text x="980" y="950" text-anchor="middle" font-size="22" fill="#0f766e">記事の例: 400枚の1日を</text>
+  <text x="980" y="980" text-anchor="middle" font-size="22" fill="#0f766e">3つの順で1.2〜2.9秒(10月18日)</text>
+
+  <text x="600" y="1060" text-anchor="middle" font-size="24" fill="#111827">処理の中に「本番か模擬か」の分岐は無い。組み立ての1か所で、組を選ぶ</text>
+</svg>

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1000" viewBox="0 0 1200 1000" font-family="IPAPGothic, IPAGothic, sans-serif">
+<rect width="1200" height="1000" fill="#ffffff"/>
+<text x="600" y="62" text-anchor="middle" font-size="40" font-weight="bold" fill="#111827">配った枚数と、急ぎのcardの最長の待ち</text>
+<text x="600" y="108" text-anchor="middle" font-size="22" fill="#4b5563">2026年10月10日(日本時間)の負荷。A〜Eは模擬、実績はAIの配り役が実際に配った値</text>
+<circle cx="70" cy="172" r="8" fill="#2a78d6"/>
+<text x="90" y="180" font-size="22" fill="#111827">逼迫の仮定(利用枠 = 負荷の60%)</text>
+<circle cx="480" cy="172" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<text x="504" y="180" font-size="22" fill="#111827">余裕の仮定(利用枠 = 負荷の10倍)</text>
+<path d="M900,160 L912,172 L900,184 L888,172 z" fill="#eb6834"/>
+<text x="922" y="180" font-size="22" fill="#111827">実績</text>
+<text x="40" y="250" font-size="28" font-weight="bold" fill="#111827">配った枚数(枚)</text>
+<line x1="340.0" y1="266" x2="340.0" y2="534" stroke="#e5e7eb" stroke-width="2"/>
+<text x="340.0" y="562" text-anchor="middle" font-size="20" fill="#4b5563">0</text>
+<line x1="484.0" y1="266" x2="484.0" y2="534" stroke="#e5e7eb" stroke-width="2"/>
+<text x="484.0" y="562" text-anchor="middle" font-size="20" fill="#4b5563">100</text>
+<line x1="628.0" y1="266" x2="628.0" y2="534" stroke="#e5e7eb" stroke-width="2"/>
+<text x="628.0" y="562" text-anchor="middle" font-size="20" fill="#4b5563">200</text>
+<line x1="772.0" y1="266" x2="772.0" y2="534" stroke="#e5e7eb" stroke-width="2"/>
+<text x="772.0" y="562" text-anchor="middle" font-size="20" fill="#4b5563">300</text>
+<line x1="916.0" y1="266" x2="916.0" y2="534" stroke="#e5e7eb" stroke-width="2"/>
+<text x="916.0" y="562" text-anchor="middle" font-size="20" fill="#4b5563">400</text>
+<line x1="1060.0" y1="266" x2="1060.0" y2="534" stroke="#e5e7eb" stroke-width="2"/>
+<text x="1060.0" y="562" text-anchor="middle" font-size="20" fill="#4b5563">500</text>
+<text x="40" y="298" font-size="24" fill="#111827">実績(AIの配り役)</text>
+<path d="M756.2,278 L768.2,290 L756.2,302 L744.2,290 z" fill="#eb6834" stroke="#ffffff" stroke-width="2"/>
+<text x="778.2" y="298" font-size="22" fill="#111827">289枚</text>
+<text x="40" y="342" font-size="24" fill="#111827">A 重みつきの経過</text>
+<line x1="904.5" y1="334" x2="975.0" y2="334" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="975.0" cy="334" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="904.5" cy="334" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="997.0" y="342" font-size="22" fill="#111827">392〜441枚</text>
+<text x="40" y="386" font-size="24" fill="#111827">B 取り置き</text>
+<line x1="871.4" y1="378" x2="975.0" y2="378" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="975.0" cy="378" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="871.4" cy="378" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="997.0" y="386" font-size="22" fill="#111827">369〜441枚</text>
+<text x="40" y="430" font-size="24" fill="#111827">C 厳密な優先</text>
+<line x1="908.8" y1="422" x2="972.2" y2="422" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="972.2" cy="422" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="908.8" cy="422" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="994.2" y="430" font-size="22" fill="#111827">395〜439枚</text>
+<text x="40" y="474" font-size="24" fill="#111827">D 重みつきの公平な分配</text>
+<line x1="911.7" y1="466" x2="982.2" y2="466" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="982.2" cy="466" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="911.7" cy="466" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="1004.2" y="474" font-size="22" fill="#111827">397〜446枚</text>
+<text x="40" y="518" font-size="24" fill="#111827">E 先着順</text>
+<line x1="894.4" y1="510" x2="972.2" y2="510" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="972.2" cy="510" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="894.4" cy="510" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="994.2" y="518" font-size="22" fill="#111827">385〜439枚</text>
+<text x="40" y="625" font-size="28" font-weight="bold" fill="#111827">急ぎ(p0)のcardの最長の待ち(分)</text>
+<line x1="340.0" y1="641" x2="340.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="340.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">0</text>
+<line x1="460.0" y1="641" x2="460.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="460.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">100</text>
+<line x1="580.0" y1="641" x2="580.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="580.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">200</text>
+<line x1="700.0" y1="641" x2="700.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="700.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">300</text>
+<line x1="820.0" y1="641" x2="820.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="820.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">400</text>
+<line x1="940.0" y1="641" x2="940.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="940.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">500</text>
+<line x1="1060.0" y1="641" x2="1060.0" y2="909" stroke="#e5e7eb" stroke-width="2"/>
+<text x="1060.0" y="937" text-anchor="middle" font-size="20" fill="#4b5563">600</text>
+<text x="40" y="673" font-size="24" fill="#111827">実績(AIの配り役)</text>
+<path d="M1008.6,653 L1020.6,665 L1008.6,677 L996.6,665 z" fill="#eb6834" stroke="#ffffff" stroke-width="2"/>
+<text x="1030.6" y="673" font-size="22" fill="#111827">557分</text>
+<text x="40" y="717" font-size="24" fill="#111827">A 重みつきの経過</text>
+<line x1="385.6" y1="709" x2="376.0" y2="709" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="376.0" cy="709" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="385.6" cy="709" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="407.6" y="717" font-size="22" fill="#111827">30〜38分</text>
+<text x="40" y="761" font-size="24" fill="#111827">B 取り置き</text>
+<line x1="376.0" y1="753" x2="376.0" y2="753" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="376.0" cy="753" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="376.0" cy="753" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="398.0" y="761" font-size="22" fill="#111827">30分</text>
+<text x="40" y="805" font-size="24" fill="#111827">C 厳密な優先</text>
+<line x1="353.2" y1="797" x2="353.2" y2="797" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="353.2" cy="797" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="353.2" cy="797" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="375.2" y="805" font-size="22" fill="#111827">11分</text>
+<text x="40" y="849" font-size="24" fill="#111827">D 重みつきの公平な分配</text>
+<line x1="376.5" y1="841" x2="376.5" y2="841" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="376.5" cy="841" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="376.5" cy="841" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="398.5" y="849" font-size="22" fill="#111827">30分</text>
+<text x="40" y="893" font-size="24" fill="#111827">E 先着順</text>
+<line x1="470.2" y1="885" x2="409.5" y2="885" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="409.5" cy="885" r="12" fill="#ffffff" stroke="#2a78d6" stroke-width="3"/>
+<circle cx="470.2" cy="885" r="8" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="492.2" y="893" font-size="22" fill="#111827">58〜109分</text>
+<text x="40" y="975" font-size="20" fill="#4b5563">模擬の上限は50。配り役は10月10日の夕方から、同時に持たせる会話を20までに抑えていた。</text>
+</svg>
