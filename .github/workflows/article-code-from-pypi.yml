@@ -1,0 +1,78 @@
+# 連載10本と候補の下書きに載せたコードを、PyPIのdoeffだけを入れた新しい環境で毎日走らせる(取り組み articles の区切り 11・
+# card ki-69ab98a224f6)。読者は pip か uv で入れた PyPI の doeff で記事のコードを試すので、doeff の新しい版で記事のコードが壊れたら、
+# その日のうちにこの workflow が赤になる。中身は publications/zenn-use-cases-v0/verify_pypi.py(公開計画の公開順の表と候補の節が
+# リンクする原稿ごとに、reviews/<slug>-check.py を、PyPI の doeff と確かめの頭の PEP 723 の宣言の物だけを入れた環境で走らせる)。
+# 版を出す workflow(Publish doeff)が終わった後にも走り、tag(v<版>)から出した時は、その版を PyPI から入れて確かめる。
+# 道具か workflow を変えた main の push でも走る。
+name: Article code from PyPI
+
+on:
+  schedule:
+    # 毎日 06:47 JST(core-install-from-pypi.yml の 30 分後)
+    - cron: "47 21 * * *"
+  workflow_run:
+    workflows: ["Publish doeff"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      doeff:
+        description: "PyPI の doeff の版(latest = 最新の版)"
+        required: false
+        default: latest
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/article-code-from-pypi.yml
+      - publications/zenn-use-cases-v0/verify_pypi.py
+
+permissions:
+  contents: read
+
+jobs:
+  article-code-from-pypi:
+    name: article code on PyPI doeff (Python ${{ matrix.python }})
+    # 版を出す workflow が落ちた時は、新しい版が PyPI に揃っていないので走らせない(毎日の走りが最新の版を確かめる)。
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # runner の機体に入っている Python ではなく、uv の管理する Python だけを使う(他の PyPI の確かめと同じ)。
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # 候補 6(doeff-commits.md)の枠が、main の履歴の commit の本文を数える。
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Choose the doeff version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ inputs.doeff }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [ "$EVENT" = "workflow_run" ] && [[ "$TAG" =~ ^v[0-9] ]]; then
+            echo "doeff=${TAG#v}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT" ]; then
+            echo "doeff=$INPUT" >> "$GITHUB_OUTPUT"
+          else
+            echo "doeff=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the published code of every draft on PyPI doeff
+        env:
+          DOEFF: ${{ steps.version.outputs.doeff }}
+          PYTHON: ${{ matrix.python }}
+        run: >-
+          uv run --no-project --python "$PYTHON" python publications/zenn-use-cases-v0/verify_pypi.py
+          --doeff "$DOEFF" --python "$PYTHON"

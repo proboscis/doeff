@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """メイン記事の最小ハンドラ、委譲、各行コメント、表の導線を確認する。"""
 
 import ast

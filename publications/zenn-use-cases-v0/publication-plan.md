@@ -63,6 +63,7 @@ Zennのslugは、Zennの`articles/<slug>.md`のファイル名で、公開後の
 - 記事の台帳は、記事ごとのファイルを足して書く(図の題と説明は`visuals/captions/<slug>.json`、採用画像は`imagegen/manifest/<slug>.json`、制作の経緯は`imagegen/records/<slug>.md`、決定は`docs/design/decisions/<日付>-zenn-week<N>-<slug>.md`。`<slug>`は原稿`doeff-<slug>.md`の名)。共有の台帳の末尾へ書き足さず、記事の数も書かない。`verify_publication.py`が原稿と台帳の組を照らす。
 - 参考の節に、公開順の前の回と次の回へのリンクを`- 前の回:[題](doeff-<slug>.md)`・`- 次の回:[題](doeff-<slug>.md)`の形で置く。`verify_publication.py`が、公開予定・公開済みの回どうしで照らす。
 - 掲載したコードの確かめは`reviews/<slug>-check.py`に置く。`verify_examples.py`が、公開予定・公開済みの回の確かめを表の順に走らせる。
+- 確かめの頭に、PyPIで入れる物をPEP 723の宣言(`# /// script`)で書く。doeffは版を書かず、GitHubから入れる部品は記事と同じ版を書く。`verify_pypi.py`が毎日と版を出した後に、公開順の表と候補の回の確かめを、PyPIの最新のdoeffと宣言の物だけを入れた新しい環境で走らせる(`.github/workflows/article-code-from-pypi.yml`)。
 
 字数・枠・図・文の長さは`render_release.py`で測る。字数は、コードの枠・画像・リンク先・Markdownの記号・空白を除いて数える。
 

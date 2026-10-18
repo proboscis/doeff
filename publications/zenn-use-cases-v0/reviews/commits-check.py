@@ -1,3 +1,11 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+#     "pyright==1.1.411",
+#     "mypy==2.4.0",
+# ]
+# ///
 """開発の記録(doeff-commits.md)の本文のPython枠を上から順に実行し、各枠の表示を期待と照らす。
 
 3つ目の枠(型の検査に当てるファイル)は、pyrightとmypyの厳しい設定にかけ、誤りの出た行が印の行だけである事も照らす。

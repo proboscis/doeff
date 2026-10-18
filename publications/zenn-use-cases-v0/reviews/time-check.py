@@ -1,3 +1,16 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+#     "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time",
+# ]
+#
+# [tool.uv]
+# no-sources = true  # doeff本体もPyPIから入れる(GitHubの部品の宣言のworkspaceから組み立てない)。
+#
+# [tool.verify_pypi]
+# args = ["--real-time"]  # 実時間で約20秒待つ4つ目の枠も走らせる。
+# ///
 """時間の記事の本文のPython枠を上から順に実行し、各枠のtest関数を呼んで検証する。"""
 
 import re  # 記事のPythonブロックを抜き出す。

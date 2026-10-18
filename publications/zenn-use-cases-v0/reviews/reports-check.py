@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """報告のページの記事(doeff-reports.md)の掲載コードと数を、完全な例と所要の表に照らす。
 
 - Pythonの枠を上から順に同じ名前空間で実行し、各枠の表示を期待と照らす。

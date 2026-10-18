@@ -1,3 +1,16 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+#     "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time",
+#     "doeff-codex @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-codex",
+#     "doeff-claude-code @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-claude-code",
+#     "doeff-agents @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-agents",
+# ]
+#
+# [tool.uv]
+# no-sources = true  # doeff本体もPyPIから入れる(GitHubの部品の宣言のworkspaceから組み立てない)。
+# ///
 """agents記事の掲載コードを順に実行し、完全な例との一致と書き方の決まりの数を確かめる。"""
 
 import ast

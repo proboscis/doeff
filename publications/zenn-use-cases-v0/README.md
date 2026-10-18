@@ -63,7 +63,10 @@
 ```bash
 uv run --no-sync python publications/zenn-use-cases-v0/verify_examples.py  # ローカル例・原稿・図・コメントの整合を一括確認する。
 uv run --no-sync ruff check publications/zenn-use-cases-v0/*.py publications/zenn-use-cases-v0/examples/*.py  # 原稿用Pythonの静的検査を行う。
+uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py  # 連載と候補の掲載したコードを、PyPIの最新のdoeffだけを入れた新しい環境で走らせる。
 ```
+
+`verify_pypi.py`は、`.github/workflows/article-code-from-pypi.yml`が毎日と、doeffの版を出した後に走らせる。doeffの新しい版で記事のコードが壊れたら、その日のうちにworkflowが赤になる(2026-10-19から)。
 
 一括検査は21本のオフライン例、SQLiteの実3プロセス、Hy・ADR・Semgrep、エージェントなしのConductor履歴再利用を扱う。メインの最小ハンドラ、担当外の委譲、22記事の表も実行検査する。原稿検査は23記事・31パッケージ・43機能・47画像・Python138ブロックの構文とリンクを確認し、本文・完全な例のPython実質4,101行の日本語コメントも検査する。最終修正後の一括検査とRuffは成功した。コメントの説明内容とHy・CLIの用法は記事別の担当が確認した。
 

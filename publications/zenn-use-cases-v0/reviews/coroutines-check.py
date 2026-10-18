@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """coroutines記事の掲載コードを順に実行し、完全な例との一致・本文の言葉・決まりの数を確かめる。"""
 
 import ast

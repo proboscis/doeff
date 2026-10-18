@@ -1,3 +1,9 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+# ]
+# ///
 """DIの記事(doeff-di.md)の本文のPython枠を上から順に実行し、完全な例との一致を確かめる。"""
 
 import ast  # import文の行を見分ける。

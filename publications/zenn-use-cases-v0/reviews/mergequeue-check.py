@@ -1,3 +1,13 @@
+# PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
+# /// script
+# dependencies = [
+#     "doeff",
+#     "doeff-time @ git+https://github.com/proboscis/doeff@c0dfc3f#subdirectory=packages/doeff-time",
+# ]
+#
+# [tool.uv]
+# no-sources = true  # doeff本体もPyPIから入れる(GitHubの部品の宣言のworkspaceから組み立てない)。
+# ///
 """マージキューの記事(doeff-mergequeue.md)の本文の枠を上から順に実行して表示を照らし、本文の数字を元の表から数え直す。"""
 
 import contextlib  # 各枠の表示を受け取る。
