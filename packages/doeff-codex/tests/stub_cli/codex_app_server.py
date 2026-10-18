@@ -27,10 +27,13 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
-- 引数は --disable の機能の名(SETTINGS の答え)と --resume-history-bytes の数だけを読む(app-server --listen stdio:// は読まない)。
+- 引数は --disable の機能の名(SETTINGS の答え)と --resume-history-bytes の数と --ignore-exclude-turns だけを読む(app-server
+  --listen stdio:// は読まない)。
   --resume-history-bytes <数> が在れば、thread/resume の答えの thread の turns(録った答えでは thread の最後の欄)に、その数の
   bytes ほどの履歴(1 MB ほどの文字を持つターンの列)を載せ、1 行のまま少しずつ書く(本物の codex が再開する session の履歴全体を
-  答え 1 行で運ぶ形 — 読み手の 1 行の上限の検)。
+  答え 1 行で運ぶ形)。ただし要求が excludeTurns: true を名乗った時は載せない(本物の codex 0.162.1 の v2/ThreadResumeParams の規則 —
+  履歴を空にして thread の欄だけを返す)。--ignore-exclude-turns が在れば excludeTurns を無視して載せる(この欄を知らない版の codex の
+  模型 — 読み手の 1 行の上限の検は、要求の側の工夫に依らず上限が守る事を見る)。
 - 環境変数 STUB_ID_PREFIX が在れば、thread とターンの id の頭に足す(1 つの host に開いた複数の会話が同じ id に衝突しないように —
   この process は id を 1 から数えるので、無ければ会話ごとに stub-thread-1 になる)。
 """
@@ -71,6 +74,14 @@ def disabled_features(argv: list[str]) -> list[str]:
 def resume_history_bytes(argv: list[str]) -> int:
     """起こされた argv の --resume-history-bytes の後ろの数を取るため(無ければ 0 — 履歴を載せない)。"""
     return next((int(size) for flag, size in zip(argv, argv[1:]) if flag == "--resume-history-bytes"), 0)
+
+
+def carries_history(argv: list[str], params: dict[str, object]) -> bool:
+    """thread/resume の答えに履歴を載せるか決めるため(--resume-history-bytes が在り、要求が excludeTurns: true を名乗らないか、
+    --ignore-exclude-turns で名乗りを無視する時)。"""
+    if not resume_history_bytes(argv):
+        return False
+    return "--ignore-exclude-turns" in argv or params.get("excludeTurns") is not True
 
 
 def said_text(inputs: list[dict[str, object]]) -> str:
@@ -228,7 +239,7 @@ class Stub:
             self.mut_thread_id = str(params["threadId"])  # type: ignore[index]  # 同上
             self.mut_opened_with = dict(params)  # type: ignore[arg-type]  # 同上
             answer = {"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]}
-            if self.history_bytes:
+            if carries_history(sys.argv, params):  # type: ignore[arg-type]  # 要求の形は handler の rpc.hy が作る
                 self.write_with_history(answer)
             else:
                 self.write(answer)

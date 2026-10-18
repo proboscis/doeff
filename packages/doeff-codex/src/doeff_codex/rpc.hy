@@ -76,14 +76,17 @@
 
 (defwire ThreadResumeParamsWire
   "thread/resume の params: 続ける thread の id と、作業の dir・許可の方針・sandbox・model・config(新しい process で続ける時に
-   thread/start と同じ方針を名乗り直す — 名乗らないと codex の既定へ戻り、答え手の無い許可の問いで止まりうる。None の欄は送らない)。"
+   thread/start と同じ方針を名乗り直す — 名乗らないと codex の既定へ戻り、答え手の無い許可の問いで止まりうる。None の欄は送らない)と、
+   exclude-turns(true なら答えの thread.turns に session の履歴を載せない — codex 0.162.1 は名乗らないと履歴の全部を答え 1 行に載せ、
+   数百 MB になりうる)。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :reject}
   (#^ str thread-id)
   (setv #^ (| str None) cwd None)
   (setv #^ (| ApprovalPolicy None) approval-policy None)
   (setv #^ (| SandboxMode None) sandbox None)
   (setv #^ (| str None) model None)
-  (setv #^ (| ConfigWire None) config None))
+  (setv #^ (| ConfigWire None) config None)
+  (setv #^ (| bool None) exclude-turns None))
 
 (defwire TextInputWire
   "ターンの入力 1 つ(文字の入力)。"
@@ -185,11 +188,12 @@
    :post [(: % str)]
    :tags {:context "codex" :role "foundation"}}
   "前の thread を続ける thread/resume の要求の行を作るため(新しい process で同じ thread のターンを続ける時 — 方針は thread/start と同じ
-   値を名乗り直す)。"
+   値を名乗り直す)。本体は答えから thread の id しか使わないので、履歴は常に求めない(excludeTurns: true — 名乗らないと codex は
+   session の履歴の全部を答え 1 行で返す)。"
   (<- config (config-of auto-compact-token-limit))
   (<- line (request-line request-id "thread/resume"
                          (ThreadResumeParamsWire :thread-id thread-id :cwd cwd :approval-policy approval-policy :sandbox sandbox
-                                                 :model model :config config)))
+                                                 :model model :config config :exclude-turns True)))
   line)
 
 
