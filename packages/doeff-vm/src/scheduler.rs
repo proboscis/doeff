@@ -45,7 +45,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pyo3::exceptions::{
     PyBaseException, PyException, PyKeyError, PyKeyboardInterrupt, PyRuntimeError,
@@ -69,6 +69,12 @@ use crate::result::{PyResultErr, PyResultOk};
 /// scope"). Same qualname as the Python version's raw handler, so rendered
 /// handler chains read `scheduled` in both versions.
 const HANDLER_QUALNAME: &str = "scheduled.<locals>.make_handler.<locals>.raw_handler";
+
+/// The longest a blocking wait on external completions goes without running
+/// the Python signal handlers (`pop_external_within`): a stop signal is
+/// answered within this, as the Python version's interruptible
+/// `SimpleQueue.get` answers it at once.
+const SIGNAL_CHECK_SLICE: Duration = Duration::from_millis(50);
 
 /// The scheduler's maps are keyed by small integers it allocates itself; the
 /// default SipHash showed up in the profile, so they use a multiplicative
@@ -1765,10 +1771,7 @@ impl Locked<'_> {
                 .bind(py)
                 .getattr("EXTERNAL_STALL_LOG_INTERVAL_SECONDS")?
                 .extract()?;
-            let queue = self.core.external.clone();
-            let timeout = Duration::from_secs_f64(interval.max(0.0));
-            let item = py.detach(move || queue.pop_timeout(timeout));
-            if let Some((settle, pid, value)) = item {
+            if let Some((settle, pid, value)) = self.pop_external_within(py, Duration::from_secs_f64(interval.max(0.0)))? {
                 return self.settle_external(py, settle, pid, value);
             }
             waited += interval;
@@ -1797,6 +1800,32 @@ impl Locked<'_> {
                     blocked_obj,
                 ),
             )?;
+        }
+    }
+
+    /// Block up to `timeout` for one external completion, running the Python
+    /// signal handlers between slices of at most `SIGNAL_CHECK_SLICE`. The
+    /// Python version blocks in `SimpleQueue.get`, which a signal interrupts on
+    /// the main thread: a stop signal's handler (stop_signal_handlers'
+    /// StopBox.receive) runs at once and completes an ExternalPromise into this
+    /// queue. Blocking the whole interval in a Rust wait instead held SIGTERM's
+    /// handler back for up to EXTERNAL_STALL_LOG_INTERVAL_SECONDS (30 s): a
+    /// process waiting on an external completion did not stop on SIGTERM
+    /// (agora card ki-6dde100393cd). `check_signals` is a no-op off the main
+    /// thread; an error a handler raises propagates.
+    fn pop_external_within(&mut self, py: Python<'_>, timeout: Duration) -> PyResult<Option<(Settle, u64, Py<PyAny>)>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(None);
+            }
+            let slice = (deadline - now).min(SIGNAL_CHECK_SLICE);
+            let queue = self.core.external.clone();
+            if let Some(item) = py.detach(move || queue.pop_timeout(slice)) {
+                return Ok(Some(item));
+            }
+            py.check_signals()?;
         }
     }
 
