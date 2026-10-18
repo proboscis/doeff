@@ -11,7 +11,8 @@
 ;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
 ;;;                          印字・PostgreSQL の答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
-;;;                          pool の thread へ)の下で本体を走らせ、終われば接続と pool を閉じる。外側(scheduler・Await の橋・session の値の
+;;;                          pool の thread へ)の下で本体を走らせ、終われば接続と pool を閉じる。索引の用意(pg.hy の頭の註)の文は別の
+;;;                          database の名 DDL-DATABASE の接続 1 本(文の上限なし — DDL-TIMEOUTS)へ流す。外側(scheduler・Await の橋・session の値の
 ;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
 ;;;   records-foundation     単独で起こす時の本番の土台の全部 = 外側(scheduler・Await の橋・session の値の置き場・async-time-handler
 ;;;                          〔scheduler を塞がない時計・#880 A1〕・止めの合図 os-signal-stop-handler)+ records-connected
@@ -43,7 +44,8 @@
 ;;;   RECORDS_MAINTENANCE_SECONDS    手入れの間隔(既定 60)
 ;;;   RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
 ;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
-;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。
+;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。既に在る表に足りない索引は、索引の用意の task が
+;;; CREATE INDEX CONCURRENTLY で作る(pg.hy の頭の註の「索引の用意」)。
 (require doeff-hy.macros [defhandler defk <- val])
 (require doeff-hy.record [defrecord])
 (import sys)
@@ -52,18 +54,18 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [Program EffectBase with-handlers])
 (import doeff_core_effects.handlers [await-handler state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.scheduler [Spawn scheduled])
 (import doeff_core_effects.process_effects [ReadEnvironment])
 (import doeff_core_effects.file_effects [ReadText FileFailed])
 (import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress])
-(import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase])
+(import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts])
 (import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
-(import doeff_records.pg [pg-records-handler prepare-records-store])
+(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
@@ -86,6 +88,18 @@
 (val DEFAULT-KEEP-CHANGES-SECONDS 604800.0)
 ;; SqlQuery に書く database の名(この service の置き場は 1 つ — 答え手の宣言と揃える)。
 (val DATABASE "records")
+;; 索引の用意(pg.hy の頭の註)が CREATE INDEX CONCURRENTLY と索引の用意の錠を流す database の名(同じ DSN の別の貸し出し)。接続は 1 本
+;; (錠は session の advisory lock — 取る文と外す文を同じ接続に届ける)。文の上限は付けない: 作る時間は表の大きさで決まり、query 用の
+;; 上限(60 秒)で切ると作りかけを残して同じ所からやり直すだけ(2026-10-18 の 13:18〜14:26 JST)。死んだ相手を見つける上限(keepalive・
+;; 送った bytes の返事を待つ上限)は query 用と同じ。
+(val DDL-DATABASE "records-ddl")
+(val DDL-TIMEOUTS (PostgresTimeouts :connect-seconds DEFAULT-TIMEOUTS.connect-seconds
+                                    :keepalive-idle-seconds DEFAULT-TIMEOUTS.keepalive-idle-seconds
+                                    :keepalive-interval-seconds DEFAULT-TIMEOUTS.keepalive-interval-seconds
+                                    :keepalive-count DEFAULT-TIMEOUTS.keepalive-count
+                                    :unacknowledged-milliseconds DEFAULT-TIMEOUTS.unacknowledged-milliseconds
+                                    :statement-milliseconds None
+                                    :idle-transaction-milliseconds DEFAULT-TIMEOUTS.idle-transaction-milliseconds))
 ;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
 (val STOP-POLL-SECONDS 0.5)
 (val DRAIN-SECONDS 0.0)
@@ -160,8 +174,14 @@
 (defk pg-handlers-of [schema prefix host]
   {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
   "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
-   1 度だけ撃つ)。"
-  (<- store (prepare-records-store DATABASE schema prefix))
+   1 度だけ撃つ)。宣言の索引が置き場に足りなければ、索引の用意の task(pg.reconcile-indexes)を serving と別の daemon の task で立てる —
+   用意の終わりも serving の生死も索引の作りに縛られない(pg.hy の頭の註の「索引の用意」)。"
+  (<- store (prepare-records-store DATABASE DDL-DATABASE schema prefix))
+  (when store.indexes.missing
+    (print (.format "記録の service: 宣言の索引 {} 本が置き場に無い — 索引の用意の task が作る({})"
+                    (len store.indexes.missing) (.join "・" store.indexes.missing))
+           :file sys.stderr :flush True)
+    (<- (Spawn (reconcile-indexes store) :daemon True)))
   (fn [writer] (pg-records-handler store writer host)))
 
 
@@ -187,15 +207,22 @@
    PostgreSQL の並び(外側が先)で本体を走らせ、終われば(例外でも)接続と pool を閉じる。外側(scheduler・Await の橋・session の値の
    置き場・時計・止めの合図)は呼び手が置く。答えは本体の答え(型の引数 T — 呼び手の型検査へ本体の答えの型を運ぶ・#2893)。"
   ;; 要求に貸す pool-size 本と、手入れの係の 1 本。pool の worker の数 = 宣言した接続の数(pooled-postgres-sql-handler の契約)。
-  ;; 接続の貸し出しは借りた時に初めて開く(作るだけでは繋がない)。
+  ;; 接続の貸し出しは借りた時に初めて開く(作るだけでは繋がない)。索引の用意の貸し出しは別に 1 本(DDL-DATABASE — 使うのは足りない
+  ;; 索引の在る起動だけ)。答え手は database の名で分かれる(知らない名は外側へ回す)。
   (val connections (PostgresConnections #((PostgresDatabase :name DATABASE :dsn settings.dsn)) :size (+ settings.pool-size 1)))
   (val pool (ThreadPoolExecutor :max-workers (+ settings.pool-size 1) :thread-name-prefix "records-pg"))
+  (val ddl-connections (PostgresConnections #((PostgresDatabase :name DDL-DATABASE :dsn settings.dsn)) :size 1 :timeouts DDL-TIMEOUTS))
+  (val ddl-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-ddl"))
   (try
-    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool)] body))
+    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool)
+                               (pooled-postgres-sql-handler ddl-connections ddl-pool)]
+                 body))
     answer
     (finally
       (.close connections)
-      (.shutdown pool :wait False :cancel-futures True))))
+      (.close ddl-connections)
+      (.shutdown pool :wait False :cancel-futures True)
+      (.shutdown ddl-pool :wait False :cancel-futures True))))
 
 
 (defk records-foundation [settings body]

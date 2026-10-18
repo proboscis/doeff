@@ -22,8 +22,16 @@
 ;;;   append_rows (ledger, 頭の式, seq) 頭で引ける列(key-lookup の ByKeyHead)の区切りごとに 1 つ — 頭で引く読み(read-events-statement の
 ;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
-;;;   state_rows (ledger, 状態の欄の式) 保持の期限の在る表の状態の欄が、どの表の索引の欄にも無い時だけ(名と式は宣言した索引の欄と同じ — 終端の行の
+;;;   state_rows (ledger, 状態の欄の式) 保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ — 終端の行の
 ;;;                                  読み terminal-rows-statement が引く)
+;;; 欄の式の索引は表ごとの部分索引(card ki-954c58540d0f): 宣言した表 1 つ × 欄 1 つに `… WHERE ledger = '<表>'` の索引 1 つ(名 =
+;;; table-index-name)。state_rows は全部の表の行を持つ 1 つの表なので、全部の行に張る索引(旧い形 — 名 = index-name)を足す費用は
+;;; 置き場の全体の大きさに比例した(2026-10-18 に 444,566 行・6.3 GB の置き場で 1 本 3 分 23 秒)。部分索引は、その表の行の payload
+;;; だけを読んで並べる(主の heap は全部の行を辿るが、TOAST に在る payload を開いて jsonb にするのはその表の行だけ)。旧い形の索引が
+;;; 在る欄は、それが同じ読みに答える(aliases — 在れば作らない。旧い 21 本は作り直さない)。
+;;; 索引の用意(pg.hy の頭の註): 移行の transaction は、その transaction で生まれた表の索引だけを作る(空の表 — 一瞬)。既に在る表に
+;;; 足りない索引は、索引の用意の task が transaction の外の CREATE INDEX CONCURRENTLY で作る(declared-indexes が宣言の索引の全部・
+;;; indexes-statement が置き場の索引の観測)。
 ;;; 表の名は接頭辞つき(既定 records_)— 同じ database に在る別の置き場の同名の表と混ざらない。
 ;;; DDL は SqlEnsureTables の宣言に書き換えない(式の索引と bigserial を宣言で表せない)— 旧い版と同じ字面のまま流す
 ;;; (検 test_pg_sql.hy が旧い版の字面と比べる)。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632)。
@@ -51,7 +59,7 @@
 (import json)
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
-(import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix FIELD-NAME-PATTERN SEPARATOR-PATTERN])
+(import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
@@ -59,6 +67,11 @@
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
 (val MIGRATE-LOCK-SUFFIX "records-migrate")
+;; 索引の用意の錠の鍵の接尾(session の advisory lock — 同じ置き場の索引を 2 つの process が同時に CONCURRENTLY で作らない)。
+(val INDEX-LOCK-SUFFIX "records-indexes")
+;; 置き場の表(接頭辞の後ろの名)— 表の用意の観測(relations-statement)と索引の観測(indexes-statement)が引く。
+(val STORE-RELATIONS #("state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys"))
+(val INDEXED-RELATIONS #("state_rows" "append_rows" "row_changes"))
 
 
 (defrecord Statement
@@ -96,6 +109,33 @@
    separator = 組で数える列(ByKeySuffix)の区切り(None = 出来事ごとに数える — 文に直に置く宣言の値・字は values.SEPARATOR-PATTERN)。"
   (#^ int before-at)
   (#^ (| str None) separator))
+
+
+(defrecord IndexedField
+  "宣言した索引の欄 1 つ(表 table の欄 field — ListRows の where・where-any が名指す欄): 索引の用意の観測が「使える索引が在る」と
+   覚える単位。"
+  (#^ str table)
+  (#^ str field))
+
+
+(defrecord DeclaredIndex
+  "宣言から作る索引 1 つ(頭の註の「索引の用意」): name = 索引の名 / relation = 張る表(接頭辞の後ろの名 — STORE-RELATIONS のどれか)/
+   text = 移行の transaction の中で作る文(CREATE [UNIQUE] INDEX IF NOT EXISTS …)/ serves = この索引が在って初めて答える ListRows の
+   (表, 欄) の組の並び(宣言した索引の欄 — 無ければ NotIndexed。空 = 速さだけの索引)/ aliases = 同じ読みに答える旧い形の索引の名
+   (在れば作らない)/ statistics = 索引の前に作る式の統計の文(CREATE STATISTICS IF NOT EXISTS … — 部分索引の式の見積もり・None = 要らない)。"
+  (#^ str name)
+  (#^ str relation)
+  (#^ str text)
+  (#^ (get tuple #(IndexedField ...)) serves)
+  (#^ (get tuple #(str ...)) aliases)
+  (#^ (| str None) statistics))
+
+
+(defrecord SchemaStep
+  "表の用意の文 1 つ(schema-steps の並び): statement = 流す文 / index = 索引を作る文ならその索引(表と行の文は None — 移行の
+   transaction は、表がその transaction で生まれた時だけ索引の文を流す)。"
+  (#^ Statement statement)
+  (#^ (| DeclaredIndex None) index))
 
 
 (val NO-CLAUSE (Clause :text "" :params #()))
@@ -152,126 +192,291 @@
           :params (! (params-of (tuple (zip names values :strict True))))))
 
 
+(defk digest-of [text]
+  {:pre [(: text str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の名に入れる指紋(sha1 の頭 12 字)を作るため。"
+  (cut (.hexdigest (hashlib.sha1 (.encode text "utf-8"))) 12))
+
+
 (defk index-name [prefix field-name]
   {:pre [(: prefix str) (: field-name str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "宣言した索引の欄の式の索引の名を作るため(旧い版と同じ名)。"
-  (+ prefix "ix_" (cut (.hexdigest (hashlib.sha1 (.encode field-name "utf-8"))) 12)))
+  "旧い形の欄の式の索引(state_rows の全部の行 — 旧い版と同じ名)の名を作るため。表ごとの部分索引の aliases(頭の註)。"
+  (<- digest (digest-of field-name))
+  (+ prefix "ix_" digest))
+
+
+(defk table-index-name [prefix table field-name]
+  {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の欄 field-name の部分索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
+  (<- field-digest (digest-of field-name))
+  (<- table-digest (digest-of table))
+  (.format "{}ix_{}_{}" prefix field-digest table-digest))
 
 
 (defk field-expression [payload field-name]
   {:pre [(: payload str) (: field-name str) (.match FIELD-NAME-PATTERN field-name)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "行の欄 field-name の値(jsonb)の式を作るため — 欄の式の索引(field-index-statement)と、その索引で引く文の条件(terminal-state-condition)が
+  "行の欄 field-name の値(jsonb)の式を作るため — 欄の式の索引(field-index)と、その索引で引く文の条件(terminal-state-condition)が
    この 1 つを使い、索引の式と文の式の字面を揃える(欄の名は宣言を通った英数字 — 文に直に置く)。payload = payload の列の綴り(索引は
    payload・文は別名つきでもよい)。"
   (.format "(({}::jsonb) -> '{}')" payload field-name))
 
 
-(defk field-index-statement [prefix field-name]
-  {:pre [(: prefix str) (: field-name str)] :post [(: % Statement)]
+(defk field-index [prefix table field-name serves]
+  {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (: serves bool)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
-  "state_rows の欄 field-name の式の索引 (ledger, 欄の式) を作る文を作るため(宣言した索引の欄と、索引の欄に無い保持の期限の在る表の状態の欄 —
-   名も字面も旧い版の宣言した索引の欄の文と同じ)。"
-  (<- name (index-name prefix field-name))
+  "表 table の欄 field-name の式の部分索引 state_rows (欄の式) WHERE ledger = '<表>' を作るため(頭の註 — 宣言した索引の欄と、その表の
+   索引の欄に無い保持の期限の在る表の状態の欄)。列に ledger を持たない: 条件の ledger = '<表>' が索引の述語に含まれるので、列に置くと
+   planner は列の条件を述語に任せて外し、頭の列の条件の無い索引として値の組(IN)の読みに使わない。部分索引の式の統計は planner が
+   読まない(全部の行に張った索引の式の統計だけを読む)ので、欄の式の統計(statistics — 欄ごとに 1 つ・全部の行の標本)を索引の前に
+   作る — 無いと値の組の見積もりが既定の選択度(1 値 0.5%)の積み上げになり、表を頭から読む計画が選ばれる。serves = 宣言した索引の
+   欄か(ListRows がこの索引を待つ — NotIndexed の判断)。表の名は宣言を通った英小文字・数字・_・- だけ(values.TABLE-NAME-PATTERN —
+   引用符を含まないので文に直に置ける)。"
+  (<- name (table-index-name prefix table field-name))
+  (<- legacy (index-name prefix field-name))
+  (<- digest (digest-of field-name))
   (<- expression (field-expression "payload" field-name))
-  (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows (ledger, {e})" :i name :p prefix :e expression) :params #()))
+  (DeclaredIndex :name name :relation "state_rows"
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e}) WHERE ledger = '{t}'"
+                                :i name :p prefix :e expression :t table)
+                 :serves (if serves #((IndexedField :table table :field field-name)) #())
+                 :aliases #(legacy)
+                 :statistics (.format "CREATE STATISTICS IF NOT EXISTS {p}st_{d} ON {e} FROM {p}state_rows" :p prefix :d digest :e expression)))
 
 
-(defk group-index-statement [prefix separator]
-  {:pre [(: prefix str) (: separator str)] :post [(: % Statement)]
+(defk fixed-index [name relation text]
+  {:pre [(: name str) (: relation str) (: text str)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
-  "組で数える列の区切り separator の組の名の式の索引 append_rows (ledger, 組の名の式) を作る文を作るため(区切りごとに 1 つ — 同じ区切りの列は
+  "宣言に依らない索引(置き場の形の索引 — 速さと一意の索引)1 つを作るため(読みを待たせない・旧い名の写しは無い)。"
+  (DeclaredIndex :name name :relation relation :text text :serves #() :aliases #() :statistics None))
+
+
+(defk group-index [prefix separator]
+  {:pre [(: prefix str) (: separator str)] :post [(: % DeclaredIndex)]
+   :tags {:context "records" :role "foundation"}}
+  "組で数える列の区切り separator の組の名の式の索引 append_rows (ledger, 組の名の式) を作るため(区切りごとに 1 つ — 同じ区切りの列は
    索引を分け合う)。式は文の組の照らしと同じ key-suffix-expression。"
-  (val name (+ prefix "append_rows_group_" (cut (.hexdigest (hashlib.sha1 (.encode separator "utf-8"))) 12)))
+  (<- digest (digest-of separator))
+  (val name (+ prefix "append_rows_group_" digest))
   (<- group (key-suffix-expression "payload" separator))
-  (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}append_rows (ledger, {g})" :i name :p prefix :g group) :params #()))
+  (! (fixed-index name "append_rows"
+                  (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}append_rows (ledger, {g})" :i name :p prefix :g group))))
 
 
-(defk head-index-statement [prefix separator]
-  {:pre [(: prefix str) (: separator str)] :post [(: % Statement)]
+(defk head-index [prefix separator]
+  {:pre [(: prefix str) (: separator str)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
-  "頭で引ける列の区切り separator の頭の式の索引 append_rows (ledger, 頭の式, seq) を作る文を作るため(区切りごとに 1 つ — 同じ区切りの列は
+  "頭で引ける列の区切り separator の頭の式の索引 append_rows (ledger, 頭の式, seq) を作るため(区切りごとに 1 つ — 同じ区切りの列は
    索引を分け合う)。頭で引く読み(read-events-statement の key-head)が、列の他の頭の出来事を辿らずに、その頭の after より後を番号の順に
    上から読む。式は文と同じ key-head-expression。"
-  (val name (+ prefix "append_rows_head_" (cut (.hexdigest (hashlib.sha1 (.encode separator "utf-8"))) 12)))
+  (<- digest (digest-of separator))
+  (val name (+ prefix "append_rows_head_" digest))
   (<- head (key-head-expression "payload" separator))
-  (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}append_rows (ledger, {h}, seq)" :i name :p prefix :h head) :params #()))
+  (! (fixed-index name "append_rows"
+                  (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}append_rows (ledger, {h}, seq)" :i name :p prefix :h head))))
+
+
+(defk table-step [text]
+  {:pre [(: text str)] :post [(: % SchemaStep)]
+   :tags {:context "records" :role "foundation"}}
+  "表と行の文 1 つを表の用意の文にするため(いつも流す — IF NOT EXISTS / ON CONFLICT DO NOTHING)。"
+  (SchemaStep :statement (Statement :text text :params #()) :index None))
+
+
+(defk index-steps [index]
+  {:pre [(: index DeclaredIndex)] :post [(: % (get tuple #(SchemaStep ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "索引 1 つを表の用意の文(式の統計が要れば統計 → 索引の 2 つ)にするため(移行の transaction は、索引の表がその transaction で生まれた
+   時だけ流す)。"
+  (val made (SchemaStep :statement (Statement :text index.text :params #()) :index index))
+  (if (is index.statistics None)
+      #(made)
+      #((SchemaStep :statement (Statement :text index.statistics :params #()) :index index) made)))
+
+
+(defk schema-steps [prefix schema]
+  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(SchemaStep ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "表を用意する文の列(何度流しても同じ — IF NOT EXISTS / ON CONFLICT DO NOTHING)を、索引の文かどうかの印つきで作るため。流すのは
+   pg.prepare-records-store だけ(移行の錠の transaction の中で・process ごとに 1 度 — 既に在る表の索引の文は流さない・頭の註)。
+   表と置き場の形の索引の字面と順は旧い版と同じ(頭の註)。宣言した索引の欄の索引は表ごとの部分索引(表の名の順・欄の名の順)。"
+  (val p prefix)
+  (val tables
+    #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}state_rows (
+           ledger text NOT NULL, key text NOT NULL, payload text NOT NULL, version bigint NOT NULL,
+           updated_at bigint NOT NULL, updated_by text NOT NULL, origin_host text NOT NULL, epoch bigint NOT NULL,
+           PRIMARY KEY (ledger, key))" :p p)))
+      (! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}append_rows (
+           seq bigserial PRIMARY KEY, ledger text NOT NULL, at bigint NOT NULL, payload text NOT NULL,
+           origin_host text NOT NULL, epoch bigint NOT NULL)" :p p)))
+      #* (! (index-steps (! (fixed-index (+ p "append_rows_ledger") "append_rows"
+                                         (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger ON {p}append_rows (ledger, seq)" :p p)))))
+      #* (! (index-steps (! (fixed-index (+ p "append_rows_idempotency") "append_rows"
+                                         (.format "CREATE UNIQUE INDEX IF NOT EXISTS {p}append_rows_idempotency
+           ON {p}append_rows (ledger, ((payload::jsonb) ->> 'idempotencyKey'))" :p p)))))
+      (! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}row_changes (
+           seq bigserial PRIMARY KEY, ledger text NOT NULL, key text NOT NULL, version bigint NOT NULL,
+           payload text, at bigint NOT NULL, epoch bigint NOT NULL)" :p p)))
+      #* (! (index-steps (! (fixed-index (+ p "row_changes_ledger") "row_changes"
+                                         (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_ledger ON {p}row_changes (ledger, seq)" :p p)))))
+      (! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}store_epoch (
+           id smallint PRIMARY KEY CHECK (id = 1), epoch bigint NOT NULL, floor bigint NOT NULL)" :p p)))
+      ;; 版の初めの値 = 行を作った時の server の時計の ms(頭の註の store_epoch・#3632)。行が在れば版に触らない。
+      (! (table-step (.format "INSERT INTO {p}store_epoch (id, epoch, floor)
+           VALUES (1, (extract(epoch from clock_timestamp()) * 1000)::bigint, 0) ON CONFLICT (id) DO NOTHING" :p p)))))
+  ;; 宣言した索引の欄ごとに表ごとの部分索引 1 つ(欄の名は FIELD-NAME-PATTERN を通った英数字だけ — 文に直に置ける)。
+  (var indexes #())
+  (for [table (sorted schema.tables)]
+    (for [name (sorted (. (get schema.tables table) indexes))]
+      (<- index (field-index p table name True))
+      (<- made (index-steps index))
+      (:= indexes (+ indexes made))))
+  ;; 旧い版より後に足した表と索引は旧い版の文の後ろに足した順に並べる(旧い版の文の字面と順はそのまま — 検 test_pg_sql.hy)。
+  (<- added (added-indexes p schema))
+  (var added-steps #())
+  (for [index added]
+    (<- made (index-steps index))
+    (:= added-steps (+ added-steps made)))
+  (+ tables
+     indexes
+     #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
+           ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
+           PRIMARY KEY (ledger, idempotency_key))" :p p))))
+     added-steps))
 
 
 (defk schema-statements [prefix schema]
   {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
-  "表を用意する文の列(何度流しても同じ — IF NOT EXISTS / ON CONFLICT DO NOTHING)。流すのは pg.prepare-records-store だけ
-   (移行の錠の transaction の中で・process ごとに 1 度)。字面は旧い版と同じ(頭の註)。"
-  (val p prefix)
-  (val fields (sorted (sfor decl (.values schema.tables) name decl.indexes name)))
-  (val tables
-    #((Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}state_rows (
-           ledger text NOT NULL, key text NOT NULL, payload text NOT NULL, version bigint NOT NULL,
-           updated_at bigint NOT NULL, updated_by text NOT NULL, origin_host text NOT NULL, epoch bigint NOT NULL,
-           PRIMARY KEY (ledger, key))" :p p) :params #())
-      (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}append_rows (
-           seq bigserial PRIMARY KEY, ledger text NOT NULL, at bigint NOT NULL, payload text NOT NULL,
-           origin_host text NOT NULL, epoch bigint NOT NULL)" :p p) :params #())
-      (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger ON {p}append_rows (ledger, seq)" :p p) :params #())
-      (Statement :text (.format "CREATE UNIQUE INDEX IF NOT EXISTS {p}append_rows_idempotency
-           ON {p}append_rows (ledger, ((payload::jsonb) ->> 'idempotencyKey'))" :p p) :params #())
-      (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}row_changes (
-           seq bigserial PRIMARY KEY, ledger text NOT NULL, key text NOT NULL, version bigint NOT NULL,
-           payload text, at bigint NOT NULL, epoch bigint NOT NULL)" :p p) :params #())
-      (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_ledger ON {p}row_changes (ledger, seq)" :p p) :params #())
-      (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}store_epoch (
-           id smallint PRIMARY KEY CHECK (id = 1), epoch bigint NOT NULL, floor bigint NOT NULL)" :p p) :params #())
-      ;; 版の初めの値 = 行を作った時の server の時計の ms(頭の註の store_epoch・#3632)。行が在れば版に触らない。
-      (Statement :text (.format "INSERT INTO {p}store_epoch (id, epoch, floor)
-           VALUES (1, (extract(epoch from clock_timestamp()) * 1000)::bigint, 0) ON CONFLICT (id) DO NOTHING" :p p)
-                 :params #())))
-  ;; 宣言した索引の欄ごとに式の索引 1 つ(欄の名は FIELD-NAME-PATTERN を通った英数字だけ — 文に直に置ける)。
-  (var indexes #())
-  (for [name fields]
-    (<- statement (field-index-statement p name))
-    (:= indexes (+ indexes #(statement))))
-  ;; 旧い版より後に足した表と索引は旧い版の文の後ろに足した順に並べる(旧い版の文の字面と順はそのまま — 検 test_pg_sql.hy)。
-  (<- added (added-index-statements p schema))
-  (+ tables
-     indexes
-     #((Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
-           ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
-           PRIMARY KEY (ledger, idempotency_key))" :p p) :params #()))
-     added))
+  "空の置き場を作る文の列(schema-steps の文の全部 — 表がどれも無い置き場の移行が流す文と同じ並び)。"
+  (<- steps (schema-steps prefix schema))
+  (tuple (gfor step steps step.statement)))
 
 
-(defk added-index-statements [prefix schema]
-  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(Statement ...)))]
+(defk declared-indexes [prefix schema]
+  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(DeclaredIndex ...)))]
    :tags {:context "records" :role "foundation"}}
-  "旧い版より後に足した索引の文の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
-   データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・欄の名の順の状態の欄の式。状態の欄の索引は、保持の期限の在る
-   表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄のうち、どの表の索引の欄にも無い物だけ
-   (在る欄は旧い版の文が同じ名で作る)。"
+  "置き場に在るべき索引の全部を作るため(schema-steps の索引の文の並び — 索引の用意が置き場の索引と比べる宣言・頭の註)。"
+  (<- steps (schema-steps prefix schema))
+  (var declared #())
+  (for [step steps]
+    (when (and (is-not step.index None) (not-in step.index declared))
+      (:= declared (+ declared #(step.index)))))
+  declared)
+
+
+(defk added-indexes [prefix schema]
+  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % (get tuple #(DeclaredIndex ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "旧い版より後に足した索引の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
+   データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
+   保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
+   無い時だけ(在る欄はその表の宣言した索引の欄の部分索引が答える)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
-  (val indexed (sfor decl (.values schema.tables) name decl.indexes name))
-  (val state-fields (sorted (sfor decl (.values schema.tables)
-                                  :if (and (isinstance decl.retention KeepFor) decl.terminal (not-in decl.state-field indexed))
-                                  decl.state-field)))
   (val head-separators (sorted (sfor decl (.values schema.streams) :if (is-not decl.key-lookup None) decl.key-lookup.separator)))
+  (val state-tables (lfor table (sorted schema.tables)
+                          :setv decl (get schema.tables table)
+                          :if (and (isinstance decl.retention KeepFor) decl.terminal (not-in decl.state-field decl.indexes))
+                          #(table decl.state-field)))
   (var groups #())
   (for [separator separators]
-    (<- statement (group-index-statement p separator))
-    (:= groups (+ groups #(statement))))
+    (<- index (group-index p separator))
+    (:= groups (+ groups #(index))))
   (for [separator head-separators]
-    (<- head-statement (head-index-statement p separator))
-    (:= groups (+ groups #(head-statement))))
+    (<- head (head-index p separator))
+    (:= groups (+ groups #(head))))
   (var states #())
-  (for [field state-fields]
-    (<- state-index (field-index-statement p field))
+  (for [#(table field) state-tables]
+    (<- state-index (field-index p table field False))
     (:= states (+ states #(state-index))))
-  (+ #((Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger_at ON {p}append_rows (ledger, at)" :p p) :params #()))
+  (+ #((! (fixed-index (+ p "append_rows_ledger_at") "append_rows"
+                       (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger_at ON {p}append_rows (ledger, at)" :p p))))
      groups
-     #((Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_at ON {p}row_changes (at)" :p p) :params #()))
+     #((! (fixed-index (+ p "row_changes_at") "row_changes"
+                       (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_at ON {p}row_changes (at)" :p p))))
      states))
+
+
+(defk relation-names [prefix relations]
+  {:pre [(: prefix str) (: relations tuple) (> (len relations) 0)] :post [(: % InList)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の表の名(接頭辞つき)を、catalog の oid の組 `to_regclass(:r0), …` に展げるため(search_path で引く — 表を作る文と同じ引き方)。"
+  (<- names (in-list "r" (tuple (gfor relation relations (+ prefix relation)))))
+  (InList :text (.join ", " (gfor param names.params (.format "to_regclass(:{})" param.name))) :params names.params))
+
+
+(defk relations-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の表のうち在る物の名(接頭辞つき)を読む文を作るため(移行の transaction の頭 — この transaction で生まれる表を見分ける)。"
+  (<- relations (relation-names prefix STORE-RELATIONS))
+  (Statement :text (.format "SELECT c.relname FROM pg_class AS c WHERE c.oid IN ({r})" :r relations.text) :params relations.params))
+
+
+(defk indexes-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の表の索引の名と、使える形か(indisvalid — CONCURRENTLY の作りかけは False で残る)を読む文を作るため(索引の観測)。"
+  (<- relations (relation-names prefix INDEXED-RELATIONS))
+  (Statement :text (.format "SELECT c.relname, i.indisvalid FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid
+                       WHERE i.indrelid IN ({r})" :r relations.text)
+             :params relations.params))
+
+
+(defk concurrent-index-statement [index]
+  {:pre [(: index DeclaredIndex)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "既に在る表に足りない索引を、表の書きを止めずに transaction の外で作る文(CREATE … INDEX CONCURRENTLY IF NOT EXISTS)を作るため
+   (字面は移行の文の INDEX の後ろに CONCURRENTLY を挟んだ物 — 名と形は移行の文と同じ)。"
+  (Statement :text (.replace index.text "INDEX IF NOT EXISTS" "INDEX CONCURRENTLY IF NOT EXISTS" 1) :params #()))
+
+
+(defk statistics-statement [index]
+  {:pre [(: index DeclaredIndex) (is-not index.statistics None)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の式の統計を作る文(CREATE STATISTICS IF NOT EXISTS — catalog だけの一瞬の文)を作るため。"
+  (Statement :text index.statistics :params #()))
+
+
+(defk analyze-statement [prefix relation]
+  {:pre [(: prefix str) (: relation str) (in relation STORE-RELATIONS)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "式の統計を作った表の標本を取り直す文を作るため(作ったばかりの統計は空で、次の autovacuum の analyze まで見積もりに効かない)。"
+  (Statement :text (.format "ANALYZE {}{}" prefix relation) :params #()))
+
+
+(defk drop-index-statement [index]
+  {:pre [(: index DeclaredIndex)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "使えない形で残った索引(CONCURRENTLY の作りかけ)を、表の書きを止めずに消す文を作るため。"
+  (Statement :text (.format "DROP INDEX CONCURRENTLY IF EXISTS {}" index.name) :params #()))
+
+
+(defk index-lock-key [prefix]
+  {:pre [(: prefix str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠の鍵を作るため(同じ置き場の索引を同時に作るのを 1 つの process にする — 2 本の CREATE INDEX CONCURRENTLY は
+   互いの snapshot を待ち合って deadlock になり、負けた方が使えない索引を残す)。"
+  (+ prefix INDEX-LOCK-SUFFIX))
+
+
+(defk index-lock-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠を取る文(session の advisory lock — 他の process が持てば外れるまで待つ)を作るため。"
+  (Statement :text "SELECT pg_advisory_lock(hashtext(:key))" :params (! (params-of #(#("key" (! (index-lock-key prefix))))))))
+
+
+(defk index-unlock-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠を外す文を作るため。"
+  (Statement :text "SELECT pg_advisory_unlock(hashtext(:key))" :params (! (params-of #(#("key" (! (index-lock-key prefix))))))))
 
 
 (defk drop-statements [prefix]

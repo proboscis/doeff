@@ -6,6 +6,9 @@
 ;;     旧い版の文の字面と順を変えない。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632 — 行を作った時の
 ;;     server の時計の ms)。ON CONFLICT DO NOTHING なので既に在る置き場の行(旧い版が作った epoch 1 を含む)には触らず、表の形も
 ;;     変わらない(既に在る置き場の版が 1 のままなことは test_pg_store_epoch.hy が実 PostgreSQL で確かめる)。
+;;     宣言した索引の欄の索引だけは旧い版と形が違う(card ki-954c58540d0f — 全部の行に張る (ledger, 欄の式) を、表ごとの部分索引
+;;     (欄の式) WHERE ledger = '<表>' と欄の式の統計にした・TABLE-INDEXES)。旧い形の索引(旧い名)が在る置き場では、それが同じ読みに
+;;     答え、新しい版は作り直さない(pg_sql.hy の頭の註 — test_pg_reconcile_indexes.hy が実 PostgreSQL で確かめる)。
 ;;   - 書きの錠と移行の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / "records-migrate" — 区切りなし)で、
 ;;     PostgreSQL の hashtext が同じ整数を返す(= 同じ advisory lock の番号)。
 ;;   - 旧い版の錠の文(`SELECT pg_advisory_xact_lock(hashtext(%s))`)を別の接続で取っている間、新しい版の書きは待つ
@@ -42,9 +45,22 @@
 (val UNIQUE-EPOCH-ROW (+ "INSERT INTO records_store_epoch (id, epoch, floor)\n"
                          "           VALUES (1, (extract(epoch from clock_timestamp()) * 1000)::bigint, 0) ON CONFLICT (id) DO NOTHING"))
 (val EPOCH-ROW-AT (.index BEFORE-880-DDL BEFORE-880-EPOCH-ROW))
-(val EXPECTED-DDL (+ (cut BEFORE-880-DDL EPOCH-ROW-AT) [UNIQUE-EPOCH-ROW] (cut BEFORE-880-DDL (+ EPOCH-ROW-AT 1) None)))
+;; 旧い版の宣言した索引の欄の索引(全部の行に張る — "records_ix_" で始まる 3 文)は、表ごとの部分索引と欄の式の統計に替えた(頭の註)。
+(val BEFORE-880-FIELD-INDEXES (lfor text BEFORE-880-DDL :if (.startswith text "CREATE INDEX IF NOT EXISTS records_ix_") text))
+(val TABLE-INDEXES
+  ["CREATE STATISTICS IF NOT EXISTS records_st_6dd0fe800114 ON ((payload::jsonb) -> 'color') FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_ix_6dd0fe800114_909e6bf0ca53 ON records_state_rows (((payload::jsonb) -> 'color')) WHERE ledger = 'parts'"
+   "CREATE STATISTICS IF NOT EXISTS records_st_64c65374dbab ON ((payload::jsonb) -> 'label') FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_ix_64c65374dbab_909e6bf0ca53 ON records_state_rows (((payload::jsonb) -> 'label')) WHERE ledger = 'parts'"
+   "CREATE STATISTICS IF NOT EXISTS records_st_579233b2c479 ON ((payload::jsonb) -> 'owner') FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_ix_579233b2c479_d370d9cd5625 ON records_state_rows (((payload::jsonb) -> 'owner')) WHERE ledger = 'tickets'"])
+(val EXPECTED-DDL (+ (lfor text (cut BEFORE-880-DDL EPOCH-ROW-AT) :if (not-in text BEFORE-880-FIELD-INDEXES) text)
+                     [UNIQUE-EPOCH-ROW]
+                     (lfor text (cut BEFORE-880-DDL (+ EPOCH-ROW-AT 1) None) :if (not-in text BEFORE-880-FIELD-INDEXES) text)
+                     TABLE-INDEXES))
 ;; 旧い版より後に足した表と索引の文("records_" の答え・旧い版の文の後ろに足した順)。索引は #3614: 列の期限の境 (ledger, at)・
-;; 組で数える列 pairs の区切り「:」の組の名の式・頭で引ける列 trails の区切り「#」の頭の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(どの表の索引の欄にも無い)。
+;; 組で数える列 pairs の区切り「:」の組の名の式・頭で引ける列 trails の区切り「#」の頭の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(表 tickets の索引の欄に無い —
+;; 表ごとの部分索引と欄の式の統計)。
 (val ADDED-AFTER-880
   ["CREATE TABLE IF NOT EXISTS records_retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
@@ -55,7 +71,8 @@
                  ELSE ((payload::jsonb) ->> 'idempotencyKey') END))"
    "CREATE INDEX IF NOT EXISTS records_append_rows_head_d08f88df745f ON records_append_rows (ledger, split_part(((payload::jsonb) ->> 'idempotencyKey'), '#', 1), seq)"
    "CREATE INDEX IF NOT EXISTS records_row_changes_at ON records_row_changes (at)"
-   "CREATE INDEX IF NOT EXISTS records_ix_aa4a5f8125f2 ON records_state_rows (ledger, ((payload::jsonb) -> 'state'))"])
+   "CREATE STATISTICS IF NOT EXISTS records_st_aa4a5f8125f2 ON ((payload::jsonb) -> 'state') FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_ix_aa4a5f8125f2_d370d9cd5625 ON records_state_rows (((payload::jsonb) -> 'state')) WHERE ledger = 'tickets'"])
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
 (val BEFORE-880-WRITER-KEY (fn [prefix] (+ prefix "records-writer")))
@@ -68,6 +85,7 @@
   (for [statement statements]
     (<- bound (postgres-statement statement.text statement.params))
     (.append texts bound.text))
+  (assert (= (len BEFORE-880-FIELD-INDEXES) 3) (repr BEFORE-880-FIELD-INDEXES))
   (assert (= (cut texts (len EXPECTED-DDL)) EXPECTED-DDL) (repr texts))
   (assert (= (cut texts (len EXPECTED-DDL) None) ADDED-AFTER-880) (repr texts)))
 

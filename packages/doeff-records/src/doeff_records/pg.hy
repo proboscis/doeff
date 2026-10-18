@@ -41,14 +41,29 @@
 ;;; 「消えた」を積む文を 2 往復目に入れ、無い行として判じる(locked-row)。追記は冪等キーの単位(出来事ごとに数える列は鍵の出来事・組で
 ;;; 数える列は鍵の組)の期限を過ぎた出来事を 1 往復目に読み、それを捨てて鍵の覚えへ移した後の断面で前の使いを判じ、捨てる文と覚えの文を
 ;;; 2 往復目に入れる(earlier-use)。触らない行と出来事は SweepExpired まで置き場に残り(読みには出ない)、その行の「消えた」も SweepExpired が積む。
+;;; 索引の用意(card ki-954c58540d0f — 2026-10-18 13:18〜14:26 JST に、索引を 1 つ宣言した配備で起動が落ち続けた): 表の用意
+;;; (prepare-records-store)は宣言と置き場の差を観測して埋める形で、置き場の大きさに比例する仕事を起動の道に置かない。
+;;;   - 移行の transaction は、表と行の文(CREATE TABLE IF NOT EXISTS・store_epoch の行)を流し、その transaction で生まれた表の索引だけを
+;;;     作る(空の表 — 一瞬)。既に在る表の索引の文は流さない(在る表への CREATE INDEX は表に ShareLock を取り、その表の書きを止め、表の
+;;;     大きさに比例する時間を query 用の文の上限〔60 秒〕の中で使う — 2026-10-18 は 1 本 3 分 23 秒で 60 秒ごとに cancel された)。
+;;;     終わりに置き場の索引を観測し(pg_sql.indexes-statement)、宣言した索引の欄のうち使える索引の在る欄を覚え(IndexBook)に書く。
+;;;   - 足りない索引は索引の用意の task(reconcile-indexes — main.hy の pg-handlers-of が serving と別の daemon の task で立てる)が、
+;;;     transaction の外の CREATE INDEX CONCURRENTLY で作る(表の書きを止めない)。文は置き場の ddl-database に流す: 接続 1 本・文の上限
+;;;     なし(main.hy の DDL-DATABASE — 作る時間は表の大きさで決まり、上限で切ると作りかけを残して同じ所からやり直すだけ)。同じ置き場の
+;;;     2 つの process(本体と twin)が同時に作らないよう、索引の用意の錠(session の advisory lock — pg_sql.index-lock-key)を取り
+;;;     (持たれていれば外れるまで待つ)、錠の中で観測し直して残った差だけを作る。使えない形で残った同じ名の索引(CONCURRENTLY の作りかけ)は
+;;;     消してから作る。落ちた回は名乗って INDEX-RETRY-SECONDS 秒の後に観測し直す(service を終えない)。
+;;;   - 答えは用意の終わりを待たない: ListRows が名指す宣言した索引の欄に、使える索引がまだ無ければ NotIndexed で断る(使い手は
+;;;     Unavailable として撃ち直す — 宣言の注記の形)。他の読みと書きは答える(索引は読みの速さで、答えの値を変えない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
+(import sys)
 (import dataclasses [dataclass])
 (import doeff [Program])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
-(import doeff_time [GetTime])
-(import doeff_core_effects.scheduler [ExternalPromise])
+(import doeff_time [Delay GetMonotonic GetTime])
+(import doeff_core_effects.scheduler [ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
@@ -65,7 +80,10 @@
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
-                              writer-lock-statement schema-statements drop-statements
+                              writer-lock-statement schema-steps drop-statements
+                              IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
+                              concurrent-index-statement drop-index-statement statistics-statement analyze-statement
+                              index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
@@ -86,6 +104,10 @@
 ;; 表の用意の transaction を deadlock(40P01)の後に流し直す回数の上限(prepare-records-store)。
 (val PREPARE-ATTEMPTS 3)
 (val DEADLOCK-SQLSTATE "40P01")
+;; 索引の用意(頭の註)が、差を埋めきれなかった回(置き場に届かない・engine が断った)の後に置き場を観測し直すまでの秒。
+;; ポーリングの訳: 失敗の終わり(DB の戻り・断りの訳の解け)を知らせる出来事が無いので、間を置いて撃ち直す。他の process が作っている間は
+;; 時間で見直さず、索引の用意の錠の待ち(PostgreSQL が外れた時に起こす)で待つ。差が無くなれば task は終わる。
+(val INDEX-RETRY-SECONDS 30.0)
 
 
 (defclass StoreUnreachable [Exception]
@@ -93,13 +115,57 @@
    Program の奥の手順から 1 つずつ答えを返して回らないための印で、handler の外へは出ない(用意と版の繰り上げを除く)。")
 
 
+(defclass IndexBook []
+  "宣言した索引の欄のうち、置き場に使える索引が在ると観測した欄の覚え(頭の註の「索引の用意」— 表の用意と索引の用意の task が書き、
+   ListRows が読む)。fields = 使える索引の在る欄(IndexedField の集合)/ missing = 最後の観測で置き場に無かった宣言の索引の名の並び
+   (空 = 宣言と置き場の差が無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。書きも読みも scheduler の thread の上で、
+   driver の thread は触らない。"
+
+  (defn __init__ [self]  ; defk にできない: 資源の class の初期化
+    "観測の前の覚え(使える索引の在る欄は無い)を作るため。"
+    (setv self.fields (frozenset)
+          self.missing #()))
+
+  (defn #^ bool covers [self #^ str table #^ str field]  ; defk にできない: ListRows の判断の中で同期に読む覚え(Program を返すと真偽にならない)
+    "表 table の欄 field に、使える索引が在ると観測したかを読むため。"
+    (in (IndexedField :table table :field field) self.fields))
+
+  (defn #^ None observed [self #^ frozenset fields #^ tuple missing]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
+    "置き場の索引を観測した断面で、覚えを書き替えるため(消えた索引の欄は外れる)。"
+    (setv self.fields fields
+          self.missing missing)
+    None)
+
+  (defn #^ None added [self #^ str name #^ tuple fields]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
+    "索引の用意が作り終えた索引(名 name・答える欄 fields)を覚えに足すため(次の観測を待たずに ListRows が使う)。"
+    (setv self.fields (| self.fields (frozenset fields))
+          self.missing (tuple (gfor missing self.missing :if (!= missing name) missing)))
+    None))
+
+
 (defrecord PreparedStore
-  "表を用意し終えた置き場: database = SqlQuery に書く database の名 / schema = 宣言 / prefix = 表の名の接頭辞(検め済み)。
-   作るのは prepare-records-store だけで、pg-records-handler はこれを受け取る — 表を用意せずに handler は組めず、handler は要求ごとに
-   表を用意し直さない。"
+  "表を用意し終えた置き場: database = SqlQuery に書く database の名 / ddl-database = 索引の用意が CREATE INDEX CONCURRENTLY と索引の
+   用意の錠を流す database の名(頭の註 — 文の上限の無い接続 1 本の貸し出し。錠は session の advisory lock なので、取る文と外す文が同じ
+   接続に届く貸し出しでなければならない)/ schema = 宣言 / prefix = 表の名の接頭辞(検め済み)/ indexes = 使える索引の在る宣言した索引の
+   欄の覚え(IndexBook)。作るのは prepare-records-store だけで、pg-records-handler はこれを受け取る — 表を用意せずに handler は組めず、
+   handler は要求ごとに表を用意し直さない。"
   (#^ str database)
+  (#^ str ddl-database)
   (#^ RecordsSchema schema)
-  (#^ str prefix))
+  (#^ str prefix)
+  (#^ IndexBook indexes))
+
+
+(defrecord ObservedIndex
+  "置き場の表に在る索引 1 つの観測(pg_index): name = 索引の名 / valid = 使える形か(CONCURRENTLY の作りかけは False で残る)。"
+  (#^ str name)
+  (#^ bool valid))
+
+
+(defrecord IndexGap
+  "宣言の索引と置き場の差 1 つ(索引の用意が埋める): index = 作る索引 / invalid = 同じ名の索引が使えない形で残っている(消してから作る)。"
+  (#^ DeclaredIndex index)
+  (#^ bool invalid))
 
 
 (defrecord StoreHead
@@ -294,35 +360,227 @@
 
 ;; --- 用意と後片付け -----------------------------------------------------------------------------------------
 
-(defk prepare-records-store [database schema prefix]
-  {:pre [(: database str) (: schema RecordsSchema) (: prefix str)] :post [(: % PreparedStore)]
+(defk prepare-records-store [database ddl-database schema prefix]
+  {:pre [(: database str) (: ddl-database str) (: schema RecordsSchema) (: prefix str)] :post [(: % PreparedStore)]
    :tags {:context "records" :role "foundation"}}
   "表を用意する(移行)— process ごとに 1 度、composition root が要求を受ける前に流す。文は移行の錠の transaction の中で流す:
    同じ置き場を同時に用意する別の process(replicas > 1・入れ替えの重なり)は錠を待ち、先の commit の後で IF NOT EXISTS が
    何もしない(錠が無いと同時の CREATE INDEX IF NOT EXISTS が競って遅れた方が UniqueViolation)。同じ transaction の頭で置き場の
    書きの錠も取り、同じ置き場の書き(入れ替えの間も答える別の process)と表の lock を逆の順で取らない(pg_sql.writer-lock-statement)。
-   錠の外の相手との deadlock(40P01)は transaction ごと戻るので、PREPARE-ATTEMPTS 回まで同じ transaction を流し直す(文はどれも冪等)。
-   届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる(起動を止める)。"
+   索引の文はその transaction で生まれた表の物だけを流し、終わりに置き場の索引を観測して覚え(IndexBook)に書く — 既に在る表に足りない
+   索引は作らず、索引の用意の task(reconcile-indexes)に残す(頭の註の「索引の用意」)。ddl-database = 索引の用意の文を流す database の名
+   (PreparedStore の註)。錠の外の相手との deadlock(40P01)は transaction ごと戻るので、PREPARE-ATTEMPTS 回まで同じ transaction を
+   流し直す(文はどれも冪等)。届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる(起動を止める)。"
   (<- checked (checked-prefix prefix))
-  (<- statements (schema-statements checked schema))
+  (<- steps (schema-steps checked schema))
   (<- writer-lock (writer-lock-statement checked))
   (<- key (migrate-lock-key checked))
-  (<- (prepared-tables database key (+ #(writer-lock) statements) PREPARE-ATTEMPTS))
-  (PreparedStore :database database :schema schema :prefix checked))
+  (<- found (prepared-tables database key writer-lock steps checked PREPARE-ATTEMPTS))
+  (val indexes (IndexBook))
+  (<- (index-observed indexes checked schema found))
+  (PreparedStore :database database :ddl-database ddl-database :schema schema :prefix checked :indexes indexes))
 
 
-(defk prepared-tables [database key statements attempts]
-  {:pre [(: database str) (: key str) (: statements tuple) (: attempts int) (>= attempts 1)] :post [(: % None)]
+(defk prepared-tables [database key writer-lock steps prefix attempts]
+  {:pre [(: database str) (: key str) (: writer-lock Statement) (: steps tuple) (: prefix str) (: attempts int) (>= attempts 1)]
+   :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "表の用意の文を錠 key の transaction 1 つで流し、deadlock(40P01)で戻された時は残りの attempts 回まで流し直すため。"
+  "表の用意(prepare-steps)を錠 key の transaction 1 つで流し、deadlock(40P01)で戻された時は残りの attempts 回まで流し直すため。
+   答え = transaction の終わりの置き場の索引の観測の行。"
   (try
-    (<- (in-transaction database key (run-statements database statements)))
-    None
+    (<- found (in-transaction database key (prepare-steps database prefix writer-lock steps)))
+    found
     (except [error RecordsSqlFailed]
       (when (or (!= error.sqlstate DEADLOCK-SQLSTATE) (<= attempts 1))
         (raise))
-      (<- (prepared-tables database key statements (- attempts 1)))
-      None)))
+      (<- again (prepared-tables database key writer-lock steps prefix (- attempts 1)))
+      again)))
+
+
+(defk prepare-steps [database prefix writer-lock steps]
+  {:pre [(: database str) (: prefix str) (: writer-lock Statement) (: steps tuple)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "移行の transaction の中身(頭の註の「索引の用意」): 置き場の書きの錠を取り、在る表を読み、表と行の文を流し、この transaction で
+   生まれた表の索引の文だけを流して、終わりの置き場の索引を観測するため。答え = 索引の観測の行(名・使える形か)。"
+  (<- (query-rows database writer-lock))
+  (<- relations (relations-statement prefix))
+  (<- present (query-rows database relations))
+  (val existing (frozenset (gfor record present (get record 0))))
+  (for [step steps]
+    (when (or (is step.index None) (not-in (+ prefix step.index.relation) existing))
+      (<- (query-rows database step.statement))))
+  (<- observing (indexes-statement prefix))
+  (<- found (query-rows database observing))
+  found)
+
+
+(defk observed-indexes [found]
+  {:pre [(: found tuple)] :post [(: % (get tuple #(ObservedIndex ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "索引の観測の行(名・使える形か — pg_sql.indexes-statement の答え)を ObservedIndex の並びにするため。"
+  (tuple (gfor #(name valid) found (ObservedIndex :name name :valid (bool valid)))))
+
+
+(defk usable-index? [index usable]
+  {:pre [(: index DeclaredIndex) (: usable frozenset)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "宣言の索引 index に、置き場の使える索引の名 usable の中で答える物(同じ名か旧い形の名 — aliases)が在るかを判じるため。"
+  (or (in index.name usable) (any (gfor alias index.aliases (in alias usable)))))
+
+
+(defk index-gaps [declared observed]
+  {:pre [(: declared tuple) (: observed tuple)] :post [(: % (get tuple #(IndexGap ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "宣言の索引 declared のうち、置き場の観測 observed に使える索引の無い物を差の並びにするため(宣言の順 — 同じ名の使えない索引が
+   残っていれば invalid)。"
+  (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
+  (val unusable (frozenset (gfor seen observed :if (not seen.valid) seen.name)))
+  (var gaps #())
+  (for [index declared]
+    (<- found (usable-index? index usable))
+    (when (not found)
+      (:= gaps (+ gaps #((IndexGap :index index :invalid (in index.name unusable)))))))
+  gaps)
+
+
+(defk index-observed [book prefix schema found]
+  {:pre [(: book IndexBook) (: prefix str) (: schema RecordsSchema) (: found tuple)] :post [(: % (get tuple #(IndexGap ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の索引の観測の行 found で覚え book を書き替え、宣言の索引との差を返すため(表の用意の終わりと、索引の用意の回の頭)。"
+  (<- declared (declared-indexes prefix schema))
+  (<- observed (observed-indexes found))
+  (<- gaps (index-gaps declared observed))
+  (val missing (frozenset (gfor gap gaps gap.index.name)))
+  (val fields (frozenset (gfor index declared :if (not-in index.name missing) field index.serves field)))
+  (.observed book fields (tuple (gfor gap gaps gap.index.name)))
+  gaps)
+
+
+;; --- 索引の用意 --------------------------------------------------------------------------------------------
+
+(defk reconcile-indexes [store]
+  {:pre [(: store PreparedStore)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の task(頭の註の「索引の用意」): 宣言の索引と置き場の索引の差が無くなるまで、観測して埋める回(index-round)を繰り返すため。
+   差を埋めきれなかった回(置き場に届かない・engine が断った)の後は INDEX-RETRY-SECONDS 秒待って観測し直す。置き場の失敗も思わぬ
+   例外も上げない(service を終えない — 名乗って次の回へ)。取り消しだけは通す。"
+  (while True
+    (<- settled (guarded-round store))
+    (when settled
+      (return None))
+    (<- (Delay INDEX-RETRY-SECONDS))))
+
+
+(defk guarded-round [store]
+  {:pre [(: store PreparedStore)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の 1 回を流し、落ちた回を名乗って「埋めきれなかった」にするため(取り消しは通す)。答え = 差が無くなったか。"
+  (try
+    (<- settled (index-round store))
+    settled
+    (except [TaskCancelledError]
+      (raise))
+    (except [error Exception]
+      (print (.format "記録の service: 索引の用意の回が落ちた({} 秒の後に観測し直す): {}: {}"
+                      INDEX-RETRY-SECONDS (. (type error) __name__) error)
+             :file sys.stderr :flush True)
+      False)))
+
+
+(defk index-round [store]
+  {:pre [(: store PreparedStore)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差が在れば索引の用意の錠を取り(他の process が持てば外れるまで待つ — 錠の
+   待ちは PostgreSQL が起こす)、錠の中で観測し直して残った差を CONCURRENTLY で埋めるため(待つ間に他の process が作った索引は作らない)。
+   答え = 差が無くなったか(作れない索引が在れば False — 後で観測し直す)。"
+  (<- observing (indexes-statement store.prefix))
+  (<- found (query-rows store.database observing))
+  (<- gaps (index-observed store.indexes store.prefix store.schema found))
+  (when (not gaps)
+    (return True))
+  (<- locking (index-lock-statement store.prefix))
+  (<- (query-rows store.ddl-database locking))
+  ;; 錠の中の失敗でも錠を外す(外さないと、この process が生きる間 twin の索引の用意が錠を待ち続ける)。取り消しは process の終わりで、
+  ;; 錠は接続と一緒に消える。
+  (try
+    (<- built (locked-round store observing))
+    (except [TaskCancelledError]
+      (raise))
+    (except [Exception]
+      (<- (index-unlocked store))
+      (raise)))
+  (<- (index-unlocked store))
+  built)
+
+
+(defk locked-round [store observing]
+  {:pre [(: store PreparedStore) (: observing Statement)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠の中: 置き場の索引を観測し直し、残った差を作って、式の統計を作った表の標本を取り直すため。答え = 全部を作れたか。"
+  (<- held (query-rows store.database observing))
+  (<- remaining (index-observed store.indexes store.prefix store.schema held))
+  (<- built (built-gaps store remaining))
+  (when built
+    (<- (analyzed store remaining)))
+  built)
+
+
+(defk index-unlocked [store]
+  {:pre [(: store PreparedStore)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "索引の用意の錠を外すため(取った接続 — ddl-database の接続 1 本)。"
+  (<- unlocking (index-unlock-statement store.prefix))
+  (<- (query-rows store.ddl-database unlocking))
+  None)
+
+
+(defk analyzed [store gaps]
+  {:pre [(: store PreparedStore) (: gaps tuple)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "式の統計を作った索引の表の標本を取り直すため(作ったばかりの統計は空 — 部分索引の値の組の読みの見積もりに要る・pg_sql.field-index)。
+   落ちても索引は使えるので、名乗って続ける(見積もりは次の autovacuum の analyze で揃う)。"
+  (val relations (sorted (sfor gap gaps :if (is-not gap.index.statistics None) gap.index.relation)))
+  (for [relation relations]
+    (<- analyzing (analyze-statement store.prefix relation))
+    (try
+      (<- (query-rows store.ddl-database analyzing))
+      (except [TaskCancelledError]
+        (raise))
+      (except [error Exception]
+        (print (.format "記録の service: 表 {}{} の標本を取り直せなかった: {}: {}" store.prefix relation (. (type error) __name__) error)
+               :file sys.stderr :flush True))))
+  None)
+
+
+(defk built-gaps [store gaps]
+  {:pre [(: store PreparedStore) (: gaps tuple)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "差の索引を宣言の順に 1 つずつ CONCURRENTLY で作り(式の統計が要る索引は統計を先に作る・使えない形で残った同じ名の索引は先に
+   消す)、作れた索引の欄を覚えに足すため。
+   答え = 全部を作れたか(作れなかった索引は名乗り、残りは次の回へ — 錠を外す道を例外で飛ばさないよう、取り消しの外の例外を上げない)。"
+  (for [gap gaps]
+    (<- started float (GetMonotonic))
+    (try
+      (when (is-not gap.index.statistics None)
+        (<- counting (statistics-statement gap.index))
+        (<- (query-rows store.ddl-database counting)))
+      (when gap.invalid
+        (<- dropping (drop-index-statement gap.index))
+        (<- (query-rows store.ddl-database dropping)))
+      (<- creating (concurrent-index-statement gap.index))
+      (<- (query-rows store.ddl-database creating))
+      (except [TaskCancelledError]
+        (raise))
+      (except [error Exception]
+        (print (.format "記録の service: 索引 {} を作れなかった: {}: {}" gap.index.name (. (type error) __name__) error)
+               :file sys.stderr :flush True)
+        (return False)))
+    (<- done float (GetMonotonic))
+    (.added store.indexes gap.index.name gap.index.serves)
+    (print (.format "記録の service: 索引 {} を {} 秒で作った({}{}・CONCURRENTLY)"
+                    gap.index.name (round (- done started) 1) store.prefix gap.index.relation)
+           :file sys.stderr :flush True))
+  True)
 
 
 (defk drop-records-tables [store]
@@ -542,6 +800,14 @@
   (if records (! (row-of (get records 0))) (Missing)))
 
 
+(defk unbuilt-fields [store decl names]
+  {:pre [(: store PreparedStore) (: decl TableDecl) (: names tuple)] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows が名指す欄 names のうち、宣言した索引の欄なのに置き場に使える索引がまだ無い欄を名の順に並べるため(索引の用意が作り
+   終えるまで NotIndexed で断る — 頭の註の「索引の用意」。鍵の欄は索引を待たない)。"
+  (tuple (sorted (sfor name names :if (and (in name decl.indexes) (not (.covers store.indexes decl.name name))) name))))
+
+
 (defk pg-list-rows [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int)] :post [(: % (| Page Reset NotIndexed))]
    :tags {:context "records" :role "foundation"}}
@@ -552,6 +818,8 @@
     (return (Reset head.epoch head.floor)))
   (val refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
+  (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
+  (when unbuilt (return (NotIndexed unbuilt)))
   (<- expiry (row-expiry decl now-ms))
   (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
   (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))

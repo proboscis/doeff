@@ -35,7 +35,7 @@
     (try
       (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))
                                       (probe-sql-handler connections DATABASE (QueryProbe (StatementCounts) :keep-lock keep-lock))]
-                                     (prepare-records-store DATABASE LAW-SCHEMA prefix))))
+                                     (prepare-records-store DATABASE DATABASE LAW-SCHEMA prefix))))
       (except [error RecordsSqlFailed]
         (.append raised error.sqlstate))
       (except [error Exception]
@@ -50,7 +50,7 @@
 (defn cleanup [#^ str prefix]  ; defk にできない: 検の後片付けで別の run を回す入口
   "検の置き場の表を消す。"
   (setv connections (postgres-connections 1))
-  (run-sql connections (drop-records-tables (run-sql connections (prepare-records-store DATABASE LAW-SCHEMA prefix))))
+  (run-sql connections (drop-records-tables (run-sql connections (prepare-records-store DATABASE DATABASE LAW-SCHEMA prefix))))
   (.close connections))
 
 
@@ -82,7 +82,7 @@
   (val connections (postgres-connections RACERS))
   (val counting (probe-sql-handler connections DATABASE (QueryProbe counts)))
   (val store (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) counting]
-                                            (prepare-records-store DATABASE LAW-SCHEMA prefix)))))
+                                            (prepare-records-store DATABASE DATABASE LAW-SCHEMA prefix)))))
   (val creates-after-prepare counts.creates)
   (val start (threading.Barrier RACERS))
   (val answers [])

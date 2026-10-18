@@ -15,7 +15,7 @@
 (import doeff_records.admission [canonical-json])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
-                              event-by-key-statement list-rows-statement index-name])
+                              event-by-key-statement list-rows-statement table-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -298,7 +298,7 @@
     (:= measured (run-sql connections (any-of-reads-on-seeded-store store.prefix count)))
     (finally
       (run-sql connections (drop-records-tables store))))
-  (<- color-index (index-name store.prefix "color"))
+  (<- color-index (table-index-name store.prefix "parts" "color"))
   (+ measured #(color-index)))
 
 

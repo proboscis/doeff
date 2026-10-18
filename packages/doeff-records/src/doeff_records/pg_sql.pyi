@@ -10,10 +10,14 @@ from doeff_records.values import KeepFor as KeepFor
 from doeff_records.values import ByKeySuffix as ByKeySuffix
 from doeff_records.values import FIELD_NAME_PATTERN as FIELD_NAME_PATTERN
 from doeff_records.values import SEPARATOR_PATTERN as SEPARATOR_PATTERN
+from doeff_records.values import TABLE_NAME_PATTERN as TABLE_NAME_PATTERN
 PREFIX_PATTERN: Incomplete
 DEFAULT_PREFIX: str
 WRITER_LOCK_SUFFIX: str
 MIGRATE_LOCK_SUFFIX: str
+INDEX_LOCK_SUFFIX: str
+STORE_RELATIONS: tuple[str, ...]
+INDEXED_RELATIONS: tuple[str, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class Statement:
@@ -41,6 +45,25 @@ class RowExpiry:
 class EventExpiry:
     before_at: int
     separator: str | None
+
+@dataclass(frozen=True, kw_only=True)
+class IndexedField:
+    table: str
+    field: str
+
+@dataclass(frozen=True, kw_only=True)
+class DeclaredIndex:
+    name: str
+    relation: str
+    text: str
+    serves: tuple[IndexedField, ...]
+    aliases: tuple[str, ...]
+    statistics: str | None
+
+@dataclass(frozen=True, kw_only=True)
+class SchemaStep:
+    statement: Statement
+    index: DeclaredIndex | None
 NO_CLAUSE: Clause
 
 def params_of(pairs: tuple) -> _Program[tuple, object]:
@@ -61,25 +84,76 @@ def writer_lock_statement(prefix: str) -> _Program[Statement, object]:
 def in_list(stem: str, values: tuple) -> _Program[InList, object]:
     ...
 
+def digest_of(text: str) -> _Program[str, object]:
+    ...
+
 def index_name(prefix: str, field_name: str) -> _Program[str, object]:
+    ...
+
+def table_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
 def field_expression(payload: str, field_name: str) -> _Program[str, object]:
     ...
 
-def field_index_statement(prefix: str, field_name: str) -> _Program[Statement, object]:
+def field_index(prefix: str, table: str, field_name: str, serves: bool) -> _Program[DeclaredIndex, object]:
     ...
 
-def group_index_statement(prefix: str, separator: str) -> _Program[Statement, object]:
+def fixed_index(name: str, relation: str, text: str) -> _Program[DeclaredIndex, object]:
     ...
 
-def head_index_statement(prefix: str, separator: str) -> _Program[Statement, object]:
+def group_index(prefix: str, separator: str) -> _Program[DeclaredIndex, object]:
+    ...
+
+def head_index(prefix: str, separator: str) -> _Program[DeclaredIndex, object]:
+    ...
+
+def table_step(text: str) -> _Program[SchemaStep, object]:
+    ...
+
+def index_steps(index: DeclaredIndex) -> _Program[tuple[SchemaStep, ...], object]:
+    ...
+
+def schema_steps(prefix: str, schema: RecordsSchema) -> _Program[tuple[SchemaStep, ...], object]:
     ...
 
 def schema_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
     ...
 
-def added_index_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
+def declared_indexes(prefix: str, schema: RecordsSchema) -> _Program[tuple[DeclaredIndex, ...], object]:
+    ...
+
+def added_indexes(prefix: str, schema: RecordsSchema) -> _Program[tuple[DeclaredIndex, ...], object]:
+    ...
+
+def relation_names(prefix: str, relations: tuple) -> _Program[InList, object]:
+    ...
+
+def relations_statement(prefix: str) -> _Program[Statement, object]:
+    ...
+
+def indexes_statement(prefix: str) -> _Program[Statement, object]:
+    ...
+
+def concurrent_index_statement(index: DeclaredIndex) -> _Program[Statement, object]:
+    ...
+
+def statistics_statement(index: DeclaredIndex) -> _Program[Statement, object]:
+    ...
+
+def analyze_statement(prefix: str, relation: str) -> _Program[Statement, object]:
+    ...
+
+def drop_index_statement(index: DeclaredIndex) -> _Program[Statement, object]:
+    ...
+
+def index_lock_key(prefix: str) -> _Program[str, object]:
+    ...
+
+def index_lock_statement(prefix: str) -> _Program[Statement, object]:
+    ...
+
+def index_unlock_statement(prefix: str) -> _Program[Statement, object]:
     ...
 
 def drop_statements(prefix: str) -> _Program[tuple[Statement, ...], object]:

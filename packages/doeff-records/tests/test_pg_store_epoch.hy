@@ -31,7 +31,7 @@
    :tags {:context "records" :role "foundation"}}
   "接頭辞 prefix の置き場の表を用意し(prepare-records-store)、置き場を返すため。"
   (<- store (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)]
-                           (prepare-records-store DATABASE LAW-SCHEMA prefix)))
+                           (prepare-records-store DATABASE DATABASE LAW-SCHEMA prefix)))
   store)
 
 
