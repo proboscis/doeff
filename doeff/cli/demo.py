@@ -105,8 +105,8 @@ def main(url: str = DEFAULT_URL) -> int:
         )
         return 2
     print(
-        f"doeff {__version__} demo: write your logic once, "
-        "choose later how it talks to the world.\n"
+        f"doeff {__version__} demo: one program, and the handlers decide "
+        "what its effects mean.\n"
     )
     print(f"digest yields requests and does no I/O itself ({__file__}):\n")
     print(_source(Fetch, Summarize, digest))

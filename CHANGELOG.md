@@ -15,7 +15,7 @@
 - `examples/github_repo`: a program that reads a repository and its latest release from the GitHub API and summarizes
   them, with its pytest tests. The program yields `HttpRequest`; run as a script it installs `http_production_handler`
   from `doeff[http]`, and the tests install a fake handler instead, so `pytest examples/github_repo` needs no network.
-  The README links it from the 30-second example and from Next steps.
+  The README links it from its handler-swap example and from Next steps.
 - `examples/testing_without_mocks`: the complete files of the introductory post "Testing Python code without mocks":
   one small function tested with `mock.patch` and then with doeff handlers, a production handler on SQLite, and
   handlers that trace, retry, record and replay, and run three fetches concurrently. `pytest` in the directory needs
