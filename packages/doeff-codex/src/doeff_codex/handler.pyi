@@ -134,6 +134,9 @@ class SessionRuntime:
     def running_log(self) -> Incomplete:
         ...
 
+    def runs(self, turn_id: str) -> bool:
+        ...
+
     def add_event(self, log: TurnLog, record: Incomplete) -> Incomplete:
         ...
 
@@ -204,6 +207,11 @@ def request(runtime: SessionRuntime, method: str, build: Callable, seconds: floa
     ...
 
 def refused(method: str, answer: lines.ErrorResponse) -> _Program[RequestRefused, object]:
+    ...
+NOT_RUNNING_CODE: int
+NOT_RUNNING_WORDS: tuple[str, ...]
+
+def steer_refused_as_not_running(runtime: SessionRuntime, turn: CodexTurn, answer: lines.ErrorResponse) -> _Program[bool, object]:
     ...
 
 def retire(runtime: SessionRuntime) -> _Program[bool, object]:
