@@ -4,7 +4,7 @@ from digest import Fetch, digest, url
 from doeff import Pass, Resume, do, handler, run
 
 @do
-def fake_world(effect, k):          # resume k with made-up values
+def canned(effect, k):              # resume k with made-up values
     if isinstance(effect, Fetch):
         return (yield Resume(k, "<h1>Hello</h1>"))
     return (yield Resume(k, f"{len(effect.text)} chars"))
