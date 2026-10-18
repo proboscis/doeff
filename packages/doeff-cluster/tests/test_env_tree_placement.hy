@@ -23,7 +23,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.worker.intent.env_prepare_model [MaterializeTree TreeSource TreePlaced TREE-COPY TREE-EXPAND])
-(import doeff_cluster.worker.protocol.env_translation [env-translation PATHS-PER-COMMAND])
+(import doeff_cluster.worker.protocol.env_translation [env-translation PATHS-PER-COMMAND run-watched CommandResult])
 
 
 (defk git [repo #* args]
@@ -290,3 +290,54 @@
   (assert (= placed-shape fresh-shape) "途中まで写した file が残った")
   (<- after dict (snapshot src))
   (assert (= after before) "写し元の木が変わった"))
+
+
+;; 進みの印は子の書いた量に結ぶ(段の区切りだけで進めない): 書き続ける子は印を触り、量が増えない子は触らない。
+(defk watched [argv out err watched-paths progress]
+  {:pre [(: argv tuple) (: out Path) (: err Path) (: watched-paths tuple) (: progress Path)] :post [(: % CommandResult)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "本物の子を run-watched で 1 つ走らせ、結果を返すため(読み直しの間隔は検のため短い)。"
+  (<- result CommandResult
+      (with-handlers [(sync-time-handler) subprocess-handler os-file-handler]
+                     (run-watched argv None (str out) (str err) (tuple (gfor p watched-paths (str p))) (str progress) 0.05)))
+  result)
+
+
+(deftest test-a-child-that-keeps-writing-touches-the-progress-mark [tmp-path]
+  (val progress (/ tmp-path "mark.progress"))
+  (val out (/ tmp-path "child.out"))
+  (<- result CommandResult
+      (watched #("sh" "-c" "for i in 1 2 3 4; do echo line; sleep 0.1; done") out (/ tmp-path "child.err") #(out) progress))
+  (assert (= result.code 0) result)
+  (assert (= result.stdout "line\nline\nline\nline\n") result)
+  (assert (= (.read-text progress) "tree\n"))
+  (assert (not (.exists out)) "出力の file は片づける")
+  None)
+
+
+(deftest test-a-child-that-writes-nothing-never-touches-the-progress-mark [tmp-path]
+  (val progress (/ tmp-path "mark.progress"))
+  (val out (/ tmp-path "child.out"))
+  (<- result CommandResult
+      (watched #("sh" "-c" "sleep 0.5; echo done >&2; exit 3") out (/ tmp-path "child.err") #(out) progress))
+  (assert (= #(result.code result.stderr) #(3 "done\n")) result)
+  (assert (not (.exists progress)) "量が増えない子は、時間が経っても印を触らない")
+  None)
+
+
+(deftest test-expanding-a-tree-touches-the-progress-mark-from-what-the-children-wrote [tmp-path]
+  (val repo (/ tmp-path "app-repo"))
+  (<- v1 str (commit-files repo V1))
+  (val mirror (/ tmp-path "app.git"))
+  (<- (bare-mirror repo mirror))
+  (val progress (/ tmp-path "mark.progress"))
+  (val settings {"runtime-env.state" (str (/ tmp-path "state")) "runtime-env.shared" (str (/ tmp-path "state"))
+                 "runtime-env.uv-cache" (str (/ tmp-path "uv-cache")) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
+                 "runtime-env.uv" "uv" "runtime-env.progress" (str progress) "runtime-env.notes" "/dev/null"})
+  (<- placed TreePlaced
+      (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
+                     (materialized mirror v1 (/ tmp-path "root" "app") None)))
+  (assert (= placed.how TREE-EXPAND) placed)
+  ;; 子が速く終わるので、読み直しの間(5 秒)に印を触る機会は無い — 触れるのは子が走っている間に量が増えた時だけ。ここでは触らずに終わる。
+  (assert (not (.exists progress)) "子が読み直しの前に終わる木は、印を触らない")
+  None)

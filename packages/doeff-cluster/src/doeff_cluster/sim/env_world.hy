@@ -449,16 +449,16 @@
 
 (defk tar-script [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "tar -xf <archive> -C <dest> に答える台本(git の台本が書いた archive の中身を dest の下へ置く — 書いた file の数は
-   log の expanded: 翻訳が展開した file の数の、台本側の数え)。"
+  "tar -xvf <archive> -C <dest> に答える台本(git の台本が書いた archive の中身を dest の下へ置く — 書いた file の数は
+   log の expanded: 翻訳が展開した file の数の、台本側の数え。-v の一覧は GNU tar と同じく標準出力に 1 file 1 行)。"
   (val argv (tuple request.argv))
-  (<- archive str (required-option-of argv "-xf"))
+  (<- archive str (required-option-of argv "-xvf"))
   (<- dest str (required-option-of argv "-C"))
   (<- tree dict (read-json archive {}))
   (for [#(path text) (.items tree)]
     (<- (write-file (posixpath.join dest path) text)))
   (<- (bump {"expanded" (len tree)}))
-  (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
+  (ProcessOutcome :stdout (.join "" (gfor path tree (+ path "\n"))) :stderr "" :exit-code 0))
 
 
 ;; --- uv -----------------------------------------------------------------------------------
