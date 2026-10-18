@@ -17,24 +17,27 @@ def summarize(doc: str):
 
 
 def recording(tape: dict):
+    @handler
     @do
     def record(effect: Complete, k):
         tape[effect.prompt] = yield effect  # the real model answers
         return (yield Resume(k, tape[effect.prompt]))
 
-    return handler(record)
+    return record
 
 
 def replaying(tape: dict):
+    @handler
     def replay(effect: Complete, k):
         return Resume(k, tape[effect.prompt])  # no model call at all
 
-    return handler(replay)
+    return replay
 
 
 model_calls = []
 
 
+@handler
 def fake_model(effect: Complete, k):  # stand-in for your real model client
     model_calls.append(effect.prompt)
     return Resume(k, f"<answer {len(model_calls)}>")
@@ -42,7 +45,7 @@ def fake_model(effect: Complete, k):  # stand-in for your real model client
 
 if __name__ == "__main__":
     tape = {}
-    first = run(handler(fake_model)(recording(tape)(summarize("release notes"))))
+    first = run(fake_model(recording(tape)(summarize("release notes"))))
     calls_while_recording = len(model_calls)
     again = run(replaying(tape)(summarize("release notes")))
     print(first == again, calls_while_recording, len(model_calls) - calls_while_recording)

@@ -20,6 +20,7 @@ def order_total(sku: str, qty: int):
 
 
 def retrying(times: int):
+    @handler
     @do
     def retry(effect: FetchPrice, k):
         for attempt in range(1, times + 1):
@@ -31,19 +32,20 @@ def retrying(times: int):
                     raise
         return (yield Resume(k, price))
 
-    return handler(retry)
+    return retry
 
 
 def flaky_api(failures: int):  # stand-in for an API that returns 503 a few times
     left = [failures]
 
+    @handler
     def api(effect: FetchPrice, k):
         if left[0] > 0:
             left[0] -= 1
             raise Flaky("503")
         return Resume(k, 9.5)
 
-    return handler(api)
+    return api
 
 
 if __name__ == "__main__":
