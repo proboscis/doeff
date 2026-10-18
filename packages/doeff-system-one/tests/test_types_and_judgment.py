@@ -84,3 +84,17 @@ def test_clip_keeps_head() -> None:
     assert clip("abcdef", 3) == "abc"
     assert clip(None) == ""
     assert clip("ab", 3) == "ab"
+
+
+def test_a_usage_limit_is_a_judge_error_of_its_own_kind() -> None:
+    # 判定器の口座の利用枠の尽き(card ki-eb4f8e1db64d): 呼び手は JudgeError のまま受けられ、型で尽きを分けて戻る刻を読める。
+    from doeff_system_one import JudgeError, JudgeUsageLimited
+
+    limited = JudgeUsageLimited("You've hit your session limit", window="five_hour", resets_at=1791342000)
+    assert isinstance(limited, JudgeError)
+    assert (limited.kind, limited.window, limited.resets_at, limited.status) == ("usage_limit", "five_hour", 1791342000, 429)
+    unnamed = JudgeUsageLimited("limit", window=None, resets_at=None)
+    assert (unnamed.window, unnamed.resets_at) == (None, None)
+    for bad in ({"window": "", "resets_at": None}, {"window": None, "resets_at": True}, {"window": None, "resets_at": 1.5}):
+        with pytest.raises((TypeError, ValueError)):
+            JudgeUsageLimited("limit", **bad)

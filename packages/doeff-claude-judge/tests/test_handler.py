@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect と fake は Hy の module doeff_claude_code に住む
 import pytest
-from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintFailed, PrintTimedOut
+from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintFailed, PrintLimited, PrintTimedOut
 from doeff_claude_code.fake import fake_claude_print_handler
-from doeff_claude_code.lines import Usage
+from doeff_claude_code.lines import AccountLimitHit, Usage
 from doeff_claude_code.values import LentCredential
 from doeff_claude_judge import (
     BorrowJudgeCredential,
@@ -24,7 +24,7 @@ from doeff_claude_judge import (
     scripted_printer,
 )
 from doeff_hy.frozen import freeze_json
-from doeff_system_one import Judge, JudgeError, choice, noul, score
+from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, choice, noul, score
 from doeff_vm import Err
 
 from doeff import Pass, Resume, ResumeThrow, Try, do
@@ -159,6 +159,16 @@ def test_a_cli_that_ends_without_an_answer_or_runs_past_the_wait_is_a_transport_
     timed_out = _refusal(JUDGE, printer=_printer(PrintTimedOut(seconds=90.0, stderr_tail=""), {}), lender=_lender(LENT))
     assert timed_out.kind == "transport"
     assert "90" in timed_out.detail
+
+
+def test_an_exhausted_usage_limit_is_its_own_refusal_with_the_reset() -> None:
+    # 口座の利用枠が尽きた print は、届かない・壊れた答えの誤りと分けた JudgeUsageLimited(枠の種類と戻る刻 — card ki-eb4f8e1db64d)。
+    # 失敗ケース(前の形): PrintLimited が無く 429 の http の誤りになり、呼び手は戻る刻を知れない。
+    limit = AccountLimitHit(window="five_hour", resets_at=1791342000, text="You've hit your session limit · resets 12pm")
+    error = _refusal(JUDGE, printer=_printer(PrintLimited(limit=limit, exit_code=1, stderr_tail=""), {}), lender=_lender(LENT))
+    assert isinstance(error, JudgeUsageLimited), error
+    assert (error.kind, error.window, error.resets_at) == ("usage_limit", "five_hour", 1791342000)
+    assert "session limit" in error.detail
 
 
 def test_an_answer_out_of_shape_is_a_malformed_refusal() -> None:
