@@ -1,7 +1,9 @@
-"""CLI の 1 回きりの print(`--output-format json --json-schema …`)の替え玉 — 本番の print の handler を API を撃たずに回すための CLI。
+"""CLI の 1 回きりの print(`--output-format stream-json --verbose --json-schema …`)の替え玉 — 本番の print の handler を API を撃たずに
+回すための CLI。
 
 素の Python で書く(Hy の起動の 0.5〜1 秒を待ちの上限の検に入れない — 混んだ機体で上限より先に起動が終わらないと、検が見る物を
-書く前に止められる)。実物(2.1.292・2026-10-19 の測り)と同じ形の 1 つの JSON の object(type result)を stdout に出して降りる:
+書く前に止められる)。実物(2.1.292・2026-10-19 の測り)と同じ形の JSON の object(最後の行が type result)を stdout に出して降りる
+(実物の stream-json は result の前に init・assistant などの行も出すが、替え玉は筋に要る行だけを出す):
 
 - 成功 = rc 0・is_error 偽・structured_output(--json-schema の欄ごとの答え)と、その JSON の文の result・usage・modelUsage・
   total_cost_usd・duration_ms・duration_api_ms。
@@ -11,7 +13,8 @@
 答えは --json-schema の欄の型で決める: number = NUMBER_ANSWER・object = 最初の欄に FIRST_OPTION_ANSWER、残りの欄に 1 から引いた残りを等分。
 標準入力の本文の印で筋を替える(印は本文のどこに在ってもよい): STUB:api-401 = API の誤り 401 / STUB:crash = stdout に何も出さず
 stderr に 1 行・rc 2 / STUB:no-structured = 成功だが structured_output が無い / STUB:out-of-range = number の欄を 1.5 で答える /
-STUB:hang = 降ろされるまで待つ(信号を待つ — 時間で起きない)。
+STUB:hang = 降ろされるまで待つ(信号を待つ — 時間で起きない)/ STUB:usage-limit = 口座の利用枠が尽きた(拒まれた
+rate_limit_event の行・error rate_limit の答えの行・result の 429 — rc 1)。
 
 env STUB_PRINT_RECORD(file の path)が在れば、見た物(argv・cwd・設定 dir・その .credentials.json の access token と権限・
 MAX_THINKING_TOKENS・本文の長さ・pid)を JSON で書く — 検が handler の渡し方を確かめるため。
@@ -25,6 +28,10 @@ import sys
 
 NUMBER_ANSWER = 0.8125
 FIRST_OPTION_ANSWER = 0.625
+#: STUB:usage-limit の行(口座の利用枠が尽きた print — 拒まれた限度の行・限度の答え・result の 429)。
+LIMIT_TEXT = "You've hit your session limit · resets 12pm (Asia/Tokyo)"
+LIMIT_REJECTED = {"type": "rate_limit_event",
+                  "rate_limit_info": {"status": "rejected", "resetsAt": 1791342000, "rateLimitType": "five_hour"}}
 FLAGS_WITH_VALUE = {"--output-format", "--json-schema", "--model", "--system-prompt", "--tools", "--setting-sources", "--effort"}
 
 
@@ -96,6 +103,13 @@ def main() -> int:
         return 2
     if credential is None:
         print(json.dumps(result_line(is_error=True, result="Not logged in · Please run /login")))
+        return 1
+    if "STUB:usage-limit" in text:
+        print(json.dumps(LIMIT_REJECTED))
+        print(json.dumps({"type": "assistant", "parent_tool_use_id": None, "error": "rate_limit",
+                          "message": {"id": "msg_l", "model": "<synthetic>", "content": [{"type": "text", "text": LIMIT_TEXT}],
+                                      "usage": {"input_tokens": 0, "output_tokens": 0}}}))
+        print(json.dumps(result_line(is_error=True, api_error_status=429, api_error="usage_limit_reached", result=LIMIT_TEXT)))
         return 1
     if "STUB:api-401" in text:
         print(json.dumps(result_line(is_error=True, api_error_status=401,
