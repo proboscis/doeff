@@ -51,6 +51,9 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `auto-compact-token-limit` | `thread/start`・`thread/resume` の `config` の `model_auto_compact_token_limit` | config を送らない |
 | `effort` | `turn/start` の `effort` | 送らない |
 
+`thread/resume` の要求は、宣言の欄に依らず常に `excludeTurns: true` を載せる。codex 0.162.1 はこれが無いと、答えの `thread.turns` に session の
+履歴の全部を答え 1 行で載せる(session が育つほど数百 MB になる)。handler が答えから使うのは thread の id だけなので履歴は求めない。
+
 借りた口座(`CodexHome.auth-json` — 貸し手が封じた auth.json の中身)を持つ宣言の process は、元の CODEX_HOME の auth.json を
 書き換えず、その process だけの家(資格の家 — `doeff_codex.credential_home`)で走る。codex は口座を `$CODEX_HOME/auth.json` から
 だけ読み、同じ機体で別の口座のターンが並んで走るため。
