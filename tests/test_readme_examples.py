@@ -36,9 +36,11 @@ CORE_READMES = {
     "doeff-hy-pytest": ROOT / "packages" / "doeff-hy-pytest" / "README.md",
 }
 # README が保つ入口の例の節(頭の 2 つ = card [id]・他の書き方との比べの Before / After = card [id]・
-# 並行 = card [id])。節を消す・名を変える時は、ここも直す。
+# 並行 = card [id]・最初の例を IO でない effect にし、IO の差し替えを使い方の 1 つの節へ移した =
+# 依頼 [id])。節を消す・名を変える時は、ここも直す。
 KEPT_SECTIONS = (
     "A 30-second example",
+    "Swap a handler: fakes in tests, real I/O in production",
     "One handler, every effect",
     "Before and after: fakes in a test",
     "Scheduler and Concurrency",

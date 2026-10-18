@@ -1,7 +1,7 @@
 [project]
 name = "doeff"
 version = "0.7.0"
-description = "Pragmatic do-notation and effects system for Python"
+description = "Algebraic effects for Python: code yields effects, and handlers decide what they mean by resuming, throwing into or dropping the continuation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

@@ -1,8 +1,13 @@
 # doeff Documentation
 
-doeff brings algebraic effects to Python. Your functions `yield` requests such as "fetch this
-URL" instead of doing the I/O themselves, and handlers decide what each request means: real I/O
-in production, fakes in tests. This page is where the documentation starts.
+doeff brings algebraic effects and their handlers to Python. A function `yield`s an effect, and
+the nearest handler for it receives the effect together with `k`, the continuation: the rest of the
+function from that `yield` on. The handler decides what the effect means by what it does with `k`:
+resume it with an answer, throw an error into it, hold it while other tasks run, or drop it and end
+the computation with a value of its own. State, early exit, concurrency and I/O are all handlers of
+this kind, and swapping real I/O for fakes in tests is one use of them. Continuations are one-shot:
+a handler resumes each `k` at most once, so backtracking and nondeterministic choice cannot be
+written as handlers. This page is where the documentation starts.
 
 ## Start Here
 
@@ -150,12 +155,12 @@ These packages ship ready-made LLM effects and provider handlers. To call a mode
 
 ## What is doeff?
 
-doeff is an **algebraic effects** system for Python. Effects are first-class operations that can be intercepted and handled by composable handlers. The runtime uses **one-shot continuations** — each effect invocation suspends, gets handled, and resumes exactly once — backed by a high-performance **Rust VM**.
+doeff is an **algebraic effects** system for Python. Effects are first-class operations that can be intercepted and handled by composable handlers. The runtime uses **one-shot continuations** — each effect invocation suspends, and its handler resumes it at most once or drops it — backed by a high-performance **Rust VM**.
 
 Key characteristics:
 
-- **Algebraic effects with handlers**: Define effects as data, handle them with composable, swappable handlers
-- **One-shot continuations**: Each continuation resumes exactly once (unlike multi-shot systems like Koka or Eff)
+- **Algebraic effects with handlers**: Define effects as data; a handler receives each effect with its continuation and decides what it means: resume it, throw into it, hold it while other tasks run, or drop it
+- **One-shot continuations**: Each continuation resumes at most once (unlike multi-shot systems like Koka or Eff), so backtracking and nondeterministic choice cannot be written as handlers
 - **Rust VM runtime**: High-performance effect handling and continuation management
 - **Batteries-included handlers**: Reader, State, Writer, Scheduler, Result — ready to use
 - **Generator-based do-notation**: Write effectful code that looks like regular Python

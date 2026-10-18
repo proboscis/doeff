@@ -20,7 +20,7 @@ pytest examples/github_repo                                   # tests: no networ
 The live run prints something like:
 
 ```text
-proboscis/doeff: Algebraic effects for Python: swap real and fake I/O without mocks.
+proboscis/doeff: Algebraic effects for Python: code yields effects, and handlers decide what they mean by resuming, throwing into or dropping the continuation.
 2 stars, 0 forks, 100 open issues and pull requests, latest release: v0.6.0
 ```
 
