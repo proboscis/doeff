@@ -43,3 +43,4 @@
 | dispatch | 11本目からの候補2の担当(Opus 5.5・2026-10-18) | 新規・検証済み(`dispatch-check.py`・[記録](dispatch.md)) | SVGで作成・目視確認済み |
 | types | 11本目からの候補7の担当(Opus 5.5・2026-10-18) | 新規・検証済み(`types-check.py`・[記録](types.md)) | SVGで作成・目視確認済み |
 | reports | 11本目からの候補5の担当(Opus 5.5・2026-10-18) | 新規・検証済み(`reports-check.py`・[記録](reports.md)) | SVGと例のページの写しで作成・目視確認済み |
+| waitline | 11本目からの候補4の担当(Opus 5.5・2026-10-18) | 新規・検証済み(`waitline-check.py`・[記録](waitline.md)) | SVGで作成・目視確認済み |

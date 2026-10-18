@@ -146,6 +146,7 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 - 候補2:[Claude Codeに仕事を配らせるのをやめ、関数で配る](doeff-dispatch.md)。Zennのslugの案は`doeff-dispatch-by-function`。5本目と材料が重なり、その続きに置ける。2026-10-18に下書きした([確かめの記録](reviews/dispatch.md))。
 - 候補7:[公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md)。Zennのslugの案は`doeff-public-api-types`。候補6の4つの網のうち、型の網を詳しく書く回。2026-10-18に下書きした([確かめの記録](reviews/types.md)・[決定記録](../../docs/design/decisions/2026-10-18-zenn-candidate-types.md))。
 - 候補5:[Claude Codeに報告のページを丸ごと作らせるのをやめた](doeff-reports.md)。Zennのslugの案は`doeff-claude-code-report-pages`。8本目(hook)と同じく、Claude Codeを使う人へ向けた回。2026-10-18に下書きした([確かめの記録](reviews/reports.md)・[決定記録](../../docs/design/decisions/2026-10-18-zenn-candidate-reports.md))。公開の前に、毎日の所要の数を数え直す。
+- 候補4:[Claude Codeが止まる前に、待っている物を1行書かせる](doeff-waitline.md)。Zennのslugの案は`doeff-claude-code-wait-line`。8本目(hook)と読者が同じで、その続きに置ける。2026-10-18に下書きした([確かめの記録](reviews/waitline.md)・[決定記録](../../docs/design/decisions/2026-10-18-zenn-candidate-waitline.md))。公開の前に、記事の数(待ちの申告の内訳・止めた回数)を数え直す。
 
 ## 1冊の本にまとめる下書き
 

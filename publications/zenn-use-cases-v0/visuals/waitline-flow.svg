@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1160" viewBox="0 0 1200 1160" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1160" fill="#ffffff"/>
+  <text x="600" y="64" text-anchor="middle" font-size="38" font-weight="bold" fill="#111827">ターンの終わりから、次のターンまで</text>
+  <text x="600" y="104" text-anchor="middle" font-size="24" fill="#6b7280">書く側はClaude CodeのStop hook、読む側は会話を並べる仕組み</text>
+
+  <!-- 列の見出し -->
+  <text x="300" y="160" text-anchor="middle" font-size="28" font-weight="bold" fill="#374151">書かせる(on_stop)</text>
+  <text x="900" y="160" text-anchor="middle" font-size="28" font-weight="bold" fill="#0f766e">読む(close_turn)</text>
+  <line x1="600" y1="140" x2="600" y2="900" stroke="#e5e7eb" stroke-width="3"/>
+
+  <!-- 書かせる側 -->
+  <rect x="80" y="190" width="440" height="80" rx="14" fill="#f9fafb" stroke="#9ca3af" stroke-width="2"/>
+  <text x="300" y="240" text-anchor="middle" font-size="26" fill="#111827">AIが返事を書き終え、止まろうとする</text>
+  <line x1="300" y1="272" x2="300" y2="320" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="80" y="326" width="440" height="100" rx="14" fill="#ffffff" stroke="#374151" stroke-width="3"/>
+  <text x="300" y="368" text-anchor="middle" font-size="26" fill="#111827">最後の行にWAITがあるか</text>
+  <text x="300" y="404" text-anchor="middle" font-size="22" fill="#4b5563" font-family="monospace">last_assistant_message</text>
+
+  <!-- 無い・1度目 -->
+  <line x1="270" y1="428" x2="270" y2="492" stroke="#c2410c" stroke-width="4" marker-end="url(#arrow-orange)"/>
+  <text x="96" y="468" font-size="22" fill="#c2410c">無い・1度目</text>
+  <rect x="60" y="498" width="290" height="130" rx="14" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="205" y="540" text-anchor="middle" font-size="24" fill="#111827">止めて、書き方を返す</text>
+  <text x="205" y="576" text-anchor="middle" font-size="20" fill="#4b5563" font-family="monospace">"decision": "block"</text>
+  <text x="205" y="608" text-anchor="middle" font-size="20" fill="#4b5563">AIが行を足して、また止まる</text>
+  <path d="M 60 560 C 20 560, 20 230, 76 230" fill="none" stroke="#c2410c" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow-orange)"/>
+
+  <!-- 無い・2度目 -->
+  <line x1="420" y1="428" x2="420" y2="492" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="442" y="468" font-size="22" fill="#374151">無い・2度目</text>
+  <rect x="370" y="498" width="210" height="130" rx="14" fill="#f3f4f6" stroke="#6b7280" stroke-width="2"/>
+  <text x="475" y="540" text-anchor="middle" font-size="24" fill="#111827">必ず通す</text>
+  <text x="475" y="576" text-anchor="middle" font-size="18" fill="#4b5563" font-family="monospace">stop_hook_active</text>
+  <text x="475" y="608" text-anchor="middle" font-size="20" fill="#4b5563">待ちは空になる</text>
+
+  <!-- ある -->
+  <line x1="520" y1="376" x2="680" y2="376" stroke="#0f766e" stroke-width="4" marker-end="url(#arrow-teal)"/>
+  <text x="530" y="360" font-size="22" fill="#0f766e">ある</text>
+  <path d="M 580 560 L 630 560 L 630 404 L 680 404" fill="none" stroke="#374151" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- 読む側 -->
+  <rect x="686" y="326" width="460" height="100" rx="14" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="916" y="368" text-anchor="middle" font-size="26" fill="#111827">止まった返事の、末尾の行を読む</text>
+  <text x="916" y="404" text-anchor="middle" font-size="22" fill="#0f766e" font-family="monospace">waits = waits_of(reply)</text>
+  <line x1="916" y1="428" x2="916" y2="492" stroke="#0f766e" stroke-width="4" marker-end="url(#arrow-teal)"/>
+  <rect x="646" y="498" width="500" height="120" rx="14" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="896" y="540" text-anchor="middle" font-size="24" fill="#0f766e" font-weight="bold" font-family="monospace">yield DeclareWait(waits)</text>
+  <text x="896" y="580" text-anchor="middle" font-size="22" fill="#111827">会話の今の待ちを、丸ごと置き換える</text>
+  <text x="896" y="608" text-anchor="middle" font-size="20" fill="#4b5563">行が空なら、待ちの解消</text>
+  <line x1="896" y1="620" x2="896" y2="664" stroke="#0f766e" stroke-width="4" marker-end="url(#arrow-teal)"/>
+  <rect x="646" y="670" width="500" height="80" rx="14" fill="#ffffff" stroke="#374151" stroke-width="2"/>
+  <text x="896" y="718" text-anchor="middle" font-size="24" fill="#111827">全部が、外の相手を書かないworkか</text>
+  <line x1="896" y1="752" x2="896" y2="796" stroke="#c2410c" stroke-width="4" marker-end="url(#arrow-orange)"/>
+  <text x="914" y="784" font-size="22" fill="#c2410c">はい</text>
+  <rect x="646" y="802" width="500" height="100" rx="14" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="896" y="844" text-anchor="middle" font-size="22" fill="#c2410c" font-weight="bold" font-family="monospace">yield PostContinue("続けて — …")</text>
+  <text x="896" y="882" text-anchor="middle" font-size="22" fill="#111827">人の代わりに、次のターンを始める</text>
+
+  <!-- ハンドラの組 -->
+  <text x="600" y="964" text-anchor="middle" font-size="26" fill="#4b5563">2つの依頼に答えるハンドラだけを、組み立ての1か所で替える</text>
+  <rect x="80" y="990" width="490" height="120" rx="14" fill="#f9fafb" stroke="#9ca3af" stroke-width="2"/>
+  <text x="325" y="1034" text-anchor="middle" font-size="26" font-weight="bold" fill="#374151">試験: fake_board</text>
+  <text x="325" y="1074" text-anchor="middle" font-size="22" fill="#111827">待ちと続きを、メモリの表に書く</text>
+  <rect x="630" y="990" width="490" height="120" rx="14" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+  <text x="875" y="1034" text-anchor="middle" font-size="26" font-weight="bold" fill="#0f766e">本番</text>
+  <text x="875" y="1074" text-anchor="middle" font-size="22" fill="#111827">連絡の受付へ送り、画面と入力の列に届く</text>
+</svg>
