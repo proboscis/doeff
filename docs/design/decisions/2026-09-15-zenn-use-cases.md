@@ -161,3 +161,12 @@
 - 残る失敗：`verify_publication.py`はまだ2つの検査で止まる。メイン記事が`doeff-hooks.md`を案内していない（記事の本文を変える仕事。前後の回へのリンクを揃えるcard ki-230f7761ade8が持つ）。`package-coverage.md`の表が2026-09-16の31ディレクトリのままで、その後に足された8パッケージが無く、消えた`doeff-agentd`が残る。
 - 変えていない物：記事の本文。`render_release.py`・`export_zenn.py`・図を描く道具（`visuals/render_svg.mjs`・`visuals/fleet_commits_svg.py`）は台帳を読まないので、変えていない。
 - 戻す手順：この変更のcommitで戻す。台帳は元の`captions.json`・`manifest.json`・`imagegen/README.md`の追記に戻り、移した4節もこの文書の末尾へ戻る。
+
+## 記事の置き場を、このリポジトリの記事だけのbranchにする（2026-10-18）
+
+- 決定担当：記事の取り組みの区切り3の3枚目の仕事（card ki-d963ca8666cb）を受け持ったAIの会話（Opus 5.5）。置き場の切り替えは、取り組みを回すAIの会話が2026-10-18に推した。
+- 根拠：ユーザーは「基本的に全部の操作はuserの手動であってはならない」（2026-10-16）と、GUIの操作を減らすよう求めた（2026-10-18）。Zenn用の別のリポジトリを組織に作る道は、GitHubにAppの登録とinstallのAPIが無く、ユーザーの操作が2回残る。このリポジトリのbranchなら、ユーザーの操作はZennの連携の1回だけになる（Zennにも連携のAPIは無い）。原稿はmainで既に公開しているので、新しく外へ出る物は無い。
+- 採用：記事はmainと履歴を共有しないorphan branch `zenn-content`に置く。根には`articles/`と`images/`だけを置き、`push_zenn_branch.py`が`export_zenn.py`の書き出しを1つのcommitにしてpushする。mainの木は変えない。
+- 採用：`push_zenn_branch.py`は`published`を変えない。公開はユーザーがbranchで`published`を`true`にするcommitで行い、その後に公開順の表を「公開済み <URL>」にする。
+- 採用：Zennは連携の後のpushで変わった`.md`だけを同期する（[公式の手引き](https://zenn.dev/zenn/articles/connect-to-github)）。連携の直後に`--resync`で、記事を外すcommitと置き直すcommitを別々にpushする。
+- 戻す手順：Zennの連携を外し、branch `zenn-content`を消し、この変更のcommitで`push_zenn_branch.py`と公開計画の追記を戻す。組織のリポジトリの道へ戻すなら、`export_zenn.py`の出力先をそのリポジトリの根にする。
