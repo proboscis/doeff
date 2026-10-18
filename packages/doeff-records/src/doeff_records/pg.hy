@@ -89,8 +89,8 @@
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
-                              insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement expire-events-statement
-                              expire-event-groups-statement touched-events-statement delete-events-statement expiring-events-statement
+                              insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
+                              expire-chosen-events-statement touched-events-statement delete-events-statement expiring-candidates-statement
                               retire-keys-statement find-retired-key-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
@@ -113,6 +113,9 @@
 (val INDEX-RETRY-SECONDS 30.0)
 ;; 索引の用意の錠を放した合図の名(置き場の通知の channel — 表と列の待ち手の名 "table:" / "stream:" とは重ならない)。
 (val INDEX-TOPIC "index-build")
+;; 回収(purge-expired)が書きの錠の transaction 1 つで捨てる出来事の数の上限(錠の外で読む候補の数 — 錠を持つ間に触る行をこの数で縛る)。
+;; これより多く期限を過ぎた列は、錠を取り直して続きを捨てる(錠と錠の間に他の書きが入れる)。
+(val EXPIRE-BATCH 500)
 
 
 (defclass StoreUnreachable [Exception]
@@ -797,14 +800,14 @@
   kept)
 
 
-(defk retire-expired-events [store stream before-at separator]
-  {:pre [(: store PreparedStore) (: stream str) (: before-at int) (: separator (| str None))] :post [(: % int)]
+(defk retire-expired-events [store stream before-at separator sequences]
+  {:pre [(: store PreparedStore) (: stream str) (: before-at int) (: separator (| str None)) (: sequences tuple) (> (len sequences) 0)]
+   :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "書きの錠の transaction の中で、列 stream の保持の期限を過ぎた出来事を捨て、同じ transaction で冪等キーの覚えへ移すため(回収 —
-   retired-keys)。separator = None は出来事ごとに数える列・str は組で数える列の区切り。答え = 捨てた出来事の数。"
-  (<- delete (if (is separator None)
-                 (expire-events-statement store.prefix stream before-at)
-                 (expire-event-groups-statement store.prefix stream before-at separator)))
+  "書きの錠の transaction の中で、列 stream の回収の候補(番号 sequences — 錠の外で読んだ expiring-sequences の答え)のうち今も保持の期限を
+   過ぎた出来事を捨て、同じ transaction で冪等キーの覚えへ移すため(回収 — retired-keys)。separator = None は出来事ごとに数える列・str は
+   組で数える列の区切り。答え = 捨てた出来事の数。"
+  (<- delete (expire-chosen-events-statement store.prefix stream before-at separator sequences))
   (<- removed (query-rows store.database delete))
   (<- kept (retired-keys stream removed))
   (when kept
@@ -813,12 +816,44 @@
   (len removed))
 
 
+(defk expiring-sequences [store stream expiry]
+  {:pre [(: store PreparedStore) (: stream str) (: expiry EventExpiry)] :post [(: % (get tuple #(int ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "列 stream の保持の期限(境 expiry)を過ぎた出来事の番号を EXPIRE-BATCH 個まで、書きの錠の外で読むため(回収の候補 — 空なら錠を取らない)。"
+  (<- statement (expiring-candidates-statement store.prefix stream expiry.before-at expiry.separator EXPIRE-BATCH))
+  (<- records (query-rows store.database statement))
+  (tuple (gfor record records (int (get record 0)))))
+
+
+(defk retire-stream [store stream expiry]
+  {:pre [(: store PreparedStore) (: stream str) (: expiry EventExpiry)] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "列 stream の保持の期限(境 expiry)を過ぎた出来事を、EXPIRE-BATCH 個ずつ書きの錠の transaction を分けて捨てるため(錠の外で候補の番号を
+   読み、錠の中ではその番号の出来事だけを条件を読み直して捨てる — 錠を持つ間に触る行を EXPIRE-BATCH で縛る・pg_sql の頭の註)。候補が
+   無ければ錠を取らない。候補が上限より少なかった回(残りが無い)か、錠の中で 1 つも捨てなかった回(候補を読んだ後に組へ新しい出来事が
+   積まれた — 続きは次の SweepExpired)で終える。答え = 捨てた出来事の数。"
+  (<- topics (notice-topics #() #(stream)))
+  (<- first (expiring-sequences store stream expiry))
+  (var chosen first)
+  (var total 0)
+  (var going (bool chosen))
+  (while going
+    (<- removed (writing store topics (retire-expired-events store stream expiry.before-at expiry.separator chosen)))
+    (:= total (+ total removed))
+    (:= going (and (= (len chosen) EXPIRE-BATCH) (> removed 0)))
+    (when going
+      (<- more (expiring-sequences store stream expiry))
+      (:= chosen more)
+      (:= going (bool chosen))))
+  total)
+
+
 (defk purge-expired [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため(SweepExpired の掃除 — 読みは
    回収を待たずに期限を自分で見て、書きは自分が触る物だけを片付ける・頭の註)。候補が無ければ錠を取らない(行も出来事も、候補の読み 1 文の
-   後に、候補が在る時だけ書きの錠の transaction を開く)。答え = 消した行の数。"
+   後に、候補が在る時だけ書きの錠の transaction を開く — 出来事は列ごとに retire-stream)。答え = 消した行の数。"
   (<- candidates (expired-rows store now-ms))
   (var removed 0)
   (when candidates
@@ -832,11 +867,7 @@
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (<- expiry (event-expiry decl now-ms))
     (when (is-not expiry None)
-      (<- probe (expiring-events-statement store.prefix name expiry.before-at expiry.separator))
-      (<- due (query-rows store.database probe))
-      (when due
-        (<- stream-topics (notice-topics #() #(name)))
-        (<- (writing store stream-topics (retire-expired-events store name expiry.before-at expiry.separator))))))
+      (<- (retire-stream store name expiry))))
   removed)
 
 
