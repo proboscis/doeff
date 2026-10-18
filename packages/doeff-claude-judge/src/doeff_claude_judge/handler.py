@@ -7,7 +7,8 @@
 print を 1 回出す(待ちの上限 = Judge の timeout_seconds)→ 構造化の答えを Verdict に写す(parse)。失敗はどれも JudgeError で呼び手へ
 投げる:
 
-  写せない問い = unsupported / 資格を借りられない = no_credentials / CLI が API の誤りを名乗った = http(status = その HTTP status)/
+  写せない問い = unsupported / 資格を借りられない = no_credentials / 口座の利用枠が尽きた = usage_limit(JudgeUsageLimited — 枠の種類と
+  戻る刻・card ki-eb4f8e1db64d)/ CLI が API の誤りを名乗った = http(status = その HTTP status)/
   CLI が答えずに降りた・待ちの上限を越えた・print の handler の誤り = transport / 答えの形が違う = malformed。
 
 記録は slog("claude_judge", …) 1 行(資格・本文は載せない)。handler は答えを返したら用が済むので Transfer / TransferThrow で続きへ
@@ -18,12 +19,12 @@ from collections.abc import Callable
 from typing import Any
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect は Hy の module doeff_claude_code に住む
-from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintFailed, PrintTimedOut
+from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintFailed, PrintLimited, PrintTimedOut
 from doeff_claude_code.lines import Usage
 from doeff_claude_code.values import ClaudeHome, LentCredential
 from doeff_core_effects import slog
 from doeff_hy.frozen import FrozenMap
-from doeff_system_one import Judge, JudgeError, Verdict
+from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, Verdict
 from doeff_vm import Err, Ok
 
 from doeff import Pass, Transfer, TransferThrow, Try, do
@@ -72,8 +73,12 @@ def _borrowed(target: ClaudeJudgeTarget) -> Any:
     return lent_credential(lent)
 
 
-def _print_error(outcome: PrintFailed | PrintTimedOut) -> JudgeError:
+def _print_error(outcome: PrintFailed | PrintLimited | PrintTimedOut) -> JudgeError:
     """答えの無い print の結末を、Judge の呼び手へ投げる誤りにするため(頭の註の kind の分け方)。"""
+    if isinstance(outcome, PrintLimited):
+        limit = outcome.limit
+        return JudgeUsageLimited(limit.text or "CLI が口座の利用枠の尽きを名乗った", window=limit.window,
+                                 resets_at=limit.resets_at)
     if isinstance(outcome, PrintTimedOut):
         return JudgeError("transport", f"CLI が待ちの上限 {outcome.seconds:g} 秒の内に答えなかった")
     if outcome.api_status is not None:

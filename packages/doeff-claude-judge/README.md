@@ -41,8 +41,9 @@ Verdict を作らずに `MalformedAnswer(detail, question)` で返す。運ぶ h
    `no_credentials`。借りた資格は、その CLI の process だけの設定 dir(家の設定 dir の下)の `.credentials.json` に置かれ、process が
    降りたら dir ごと消える(doeff-claude-code)。refresh token は運ばない。
 3. `ClaudePrintOnce` を 1 回出す。待ちの上限は Judge の `timeout_seconds`(CLI の起動と終わりの 4〜6 秒を含む — Jev の既定の 4 秒では
-   足りないので、呼び手が判定ごとに決める)。CLI が API の誤りを名乗れば `http`(`status` = その HTTP status)、答えずに降りた・待ちの
-   上限を越えた・print の handler の誤りは `transport`。
+   足りないので、呼び手が判定ごとに決める)。口座の利用枠が尽きた print(`PrintLimited`)は `JudgeUsageLimited`(kind `usage_limit`・
+   `window` = 尽きた枠の種類・`resets_at` = 戻る刻の epoch 秒 — 名乗らなければ None。呼び手は `JudgeError` のまま受けられる)、CLI が
+   API の誤りを名乗れば `http`(`status` = その HTTP status)、答えずに降りた・待ちの上限を越えた・print の handler の誤りは `transport`。
 4. 構造化の答えを `parse` で Verdict に写す(形が違えば `malformed`)。Verdict の `model` = CLI が名乗った model・`input_tokens` =
    CLI が名乗った読みの token の和(cache の作り・読みを含む)・`elapsed_ms` = CLI の process の秒。
 

@@ -14,11 +14,14 @@ from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
 from doeff_claude_code.effects import ClaudePrintOnce as ClaudePrintOnce
 from doeff_claude_code.effects import PrintAnswered as PrintAnswered
 from doeff_claude_code.effects import PrintFailed as PrintFailed
+from doeff_claude_code.effects import PrintLimited as PrintLimited
 from doeff_claude_code.effects import PrintTimedOut as PrintTimedOut
+from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
 from doeff_claude_code.lines import TurnResult as TurnResult
 from doeff_claude_code.lines import parse_record as parse_record
 from doeff_claude_code.lines import classify_record as classify_record
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
+from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.argv import print_once_argv as print_once_argv
 from doeff_claude_code.argv import print_once_env as print_once_env
 from doeff_claude_code.credential_home import open_credential_home as open_credential_home
@@ -59,10 +62,13 @@ def run_print_once(command: tuple, request: ClaudePrintOnce, holder: PrintProces
 def failed_detail(result: TurnResult) -> _Program[str, object]:
     ...
 
-def print_outcome(exit_code: int | None, stdout: str, stderr: str, elapsed_ms: int, timed_out: bool, seconds: float) -> _Program[PrintAnswered | PrintFailed | PrintTimedOut, object]:
+def limit_in_stream(stdout: str) -> _Program[AccountLimitHit | None, object]:
     ...
 
-def print_once(command: tuple, request: ClaudePrintOnce) -> _Program[PrintAnswered | PrintFailed | PrintTimedOut, object]:
+def print_outcome(exit_code: int | None, stdout: str, stderr: str, elapsed_ms: int, timed_out: bool, seconds: float) -> _Program[PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut, object]:
+    ...
+
+def print_once(command: tuple, request: ClaudePrintOnce) -> _Program[PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut, object]:
     ...
 
 def claude_print_handler(command: Incomplete) -> _Handler:

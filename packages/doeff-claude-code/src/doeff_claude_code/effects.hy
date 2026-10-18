@@ -16,7 +16,7 @@
 (import doeff_hy.frozen [FrozenJson freeze-json])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
                                   FreshSession ResumeSession ForkSession LentCredential])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage AccountLimitHit])
 
 
 ;; --- 成功の戻り値 ---------------------------------------------------------------------------------
@@ -298,7 +298,16 @@
   (#^ float seconds)
   (#^ str stderr-tail))
 
-(val PrintOutcome (| PrintAnswered PrintFailed PrintTimedOut))
+(defrecord PrintLimited
+  "1 回きりの print の口座の利用枠が尽きて、CLI が答えずに降りた(card ki-eb4f8e1db64d — 誤りの PrintFailed と分ける: 上の層が「枠が
+   いつ戻るか」を言い、資格や CLI の不具合と取り違えないため)。limit = 尽きた事実(lines.AccountLimitHit — どの枠・戻る刻・CLI の限度の
+   文。会話の手番の終わりと同じ型)/ exit-code = process の終了 code / stderr-tail = stderr の末尾。どの口座かは CLI の行に無い — 資格を
+   渡した呼び手が知っている。"
+  (#^ AccountLimitHit limit)
+  (#^ (| int None) exit-code)
+  (#^ str stderr-tail))
+
+(val PrintOutcome (| PrintAnswered PrintFailed PrintLimited PrintTimedOut))
 
 (defn #^ bool is-json-object-text [#^ object text]
   "--json-schema に渡せる文か(JSON の object の文ちょうど — CLI は読めない Schema で答えを出さずに降りる)。"
@@ -315,7 +324,7 @@
    だけの設定 dir の .credentials.json に置き、降りたら dir ごと消す。None = 家の設定 dir の資格のまま)/ thinking-tokens = 子の env の
    MAX_THINKING_TOKENS(0 = 考えない。None = CLI の既定)/ effort = --effort(None = CLI の既定)。
    CLI は道具なし・設定の源なし・家の MCP なし・記録なしで起こす(argv.hy の PRINT-ONCE-FLAGS)。
-   答え = PrintAnswered | PrintFailed | PrintTimedOut(失敗も値で返す — 例外にしない)。"
+   答え = PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut(失敗も値で返す — 例外にしない)。"
   {:fields [(: home ClaudeHome) (: model str) (: system-prompt str) (: json-schema str) (: input str) (: timeout-seconds float)
             (: credential (| LentCredential None) None) (: thinking-tokens (| int None) None) (: effort (| str None) None)]
    :pre [(: home ClaudeHome) (: model str) (bool model) (: system-prompt str) (is-json-object-text json-schema) (: input str)

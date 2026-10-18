@@ -7,12 +7,14 @@
 ;;;   3. 起こす: argv.hy の print-once-argv・print-once-env。本文は標準入力。process は自分の組(新しい session)で起こし、待ちの上限
 ;;;      (宣言の timeout-seconds)を越えたら組ごと SIGKILL して PrintTimedOut。
 ;;;   4. 片づけ: 降りたら(止めた時も、起こせなかった時も)作業 dir と資格の置き場を消す。
-;;;   5. 読む: stdout の JSON の object(result の行)を lines.hy の分類で読み、答えの和にする(print-outcome — 純関数)。
+;;;   5. 読む: stdout(stream-json)の JSON の object の行を lines.hy の分類で読み、答えの和にする(print-outcome — 純関数。答えは最後の
+;;;      result の行・口座の利用枠の尽きは前の行の拒まれた限度の行と限度の答え)。
 ;;; 1〜4 は塞ぐ I/O なので PRINT-THREADS の thread で回す(offloaded — 撃った task だけが待ち、scheduler の他の task は回り続ける)。
 ;;; 待ちが取り消されたら、走っている process の組を止める。外側に doeff の scheduler が要る。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import contextlib)
+(import functools)
 (import dataclasses [dataclass field])
 (import os)
 (import shutil)
@@ -22,8 +24,9 @@
 (import threading)
 (import time)
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
-(import doeff_claude_code.effects [ClaudePrintOnce PrintAnswered PrintFailed PrintTimedOut])
-(import doeff_claude_code.lines [TurnResult parse-record classify-record stderr-tail-within])
+(import doeff_claude_code.effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
+(import doeff_claude_code.lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
+(import doeff_claude_code.dialogue [limit-hit-after])
 (import doeff_claude_code.argv [print-once-argv print-once-env])
 (import doeff_claude_code.credential_home [open-credential-home close-credential-home])
 
@@ -115,18 +118,33 @@
       (cut result.result-text 0 DETAIL-CHARS)
       (.format "CLI が誤りを名乗った(subtype {}・terminal_reason {})" result.subtype result.terminal-reason)))
 
+(defk limit-in-stream [#^ str stdout]
+  {:pre [(: stdout str)] :post [(: % (| AccountLimitHit None))] :tags {:context "claude-code" :role "judgment"}}
+  "stream-json の stdout の行から、口座の利用枠が尽きた事実を読むため(純関数 — card ki-eb4f8e1db64d): 規則は会話の手番と同じ 1 点
+   dialogue.hy の limit-hit-after(拒まれた rate_limit_event の行 = 枠の種類と戻る刻・本体の error rate_limit の答えの行 = 限度の文)。
+   名乗る行が無ければ None。"
+  (val kinds (gfor line (.splitlines stdout) :setv record (parse-record line) :if (is-not record None) (classify-record record)))
+  (functools.reduce limit-hit-after kinds None))
+
 (defk print-outcome [exit-code #^ str stdout #^ str stderr #^ int elapsed-ms #^ bool timed-out #^ float seconds]
   {:pre [(: exit-code (| int None)) (: stdout str) (: stderr str) (: elapsed-ms int) (: timed-out bool) (: seconds float)]
-   :post [(: % (| PrintAnswered PrintFailed PrintTimedOut))] :tags {:context "claude-code" :role "judgment"}}
-  "1 回きりの print の CLI の生の結末を答えの和にするため(純関数): 止めた = PrintTimedOut・result の行が無い・誤りを名乗った・終了
-   code が 0 でない・構造化の答えが無い = PrintFailed・ほか = PrintAnswered(答えの値は CLI の値のまま)。result の行は stdout の
-   空でない最後の行(lines.hy の分類で読む — JSON の境界はそこ 1 か所)。"
+   :post [(: % (| PrintAnswered PrintFailed PrintLimited PrintTimedOut))] :tags {:context "claude-code" :role "judgment"}}
+  "1 回きりの print の CLI の生の結末を答えの和にするため(純関数): 止めた = PrintTimedOut・答えずに降りた print の行が口座の利用枠の
+   尽きを名乗った = PrintLimited(limit-in-stream)・result の行が無い・誤りを名乗った・終了 code が 0 でない・構造化の答えが無い =
+   PrintFailed・ほか = PrintAnswered(答えの値は CLI の値のまま — 拒まれた限度の行が在っても答えた print は答え)。result の行は stdout
+   (stream-json)の空でない最後の行(lines.hy の分類で読む — JSON の境界はそこ 1 か所)。"
   (<- tail (stderr-tail-within stderr))
   (when timed-out
     (return (PrintTimedOut :seconds seconds :stderr-tail tail)))
   (val last-line (next (gfor line (reversed (.splitlines stdout)) :if (.strip line) line) ""))
   (val record (parse-record last-line))
   (val result (if (is record None) None (classify-record record)))
+  (val answered (and (isinstance result TurnResult) (not result.is-error) (= exit-code 0)
+                     (is-not result.structured-output None)))
+  (when (not answered)
+    (<- limit (| AccountLimitHit None) (limit-in-stream stdout))
+    (when (is-not limit None)
+      (return (PrintLimited :limit limit :exit-code exit-code :stderr-tail tail))))
   (when (not (isinstance result TurnResult))
     (return (PrintFailed :exit-code exit-code :api-status None :stderr-tail tail
                          :detail (.format "CLI が答えの行(type result の JSON)を出さずに降りた(終了 code {})" exit-code))))
@@ -141,7 +159,7 @@
                  :api-ms result.timing.duration-api-ms))
 
 (defk print-once [#^ tuple command #^ ClaudePrintOnce request]
-  {:pre [(: command tuple) (bool command) (: request ClaudePrintOnce)] :post [(: % (| PrintAnswered PrintFailed PrintTimedOut))]
+  {:pre [(: command tuple) (bool command) (: request ClaudePrintOnce)] :post [(: % (| PrintAnswered PrintFailed PrintLimited PrintTimedOut))]
    :tags {:context "claude-code" :role "process"}}
   "宣言 1 つに CLI を 1 回走らせて答えるため: 塞ぐ手順(run-print-once)を PRINT-THREADS の thread で回して待ち(取り消されたら process の
    組を止める)、生の結末を答えの和にする。起こせなかった CLI は PrintFailed(終了 code なし)。"

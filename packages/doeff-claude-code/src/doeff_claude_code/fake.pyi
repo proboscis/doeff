@@ -97,6 +97,7 @@ from doeff_claude_code.effects import HomeCredentialSession as HomeCredentialSes
 from doeff_claude_code.effects import ClaudePrintOnce as ClaudePrintOnce
 from doeff_claude_code.effects import PrintAnswered as PrintAnswered
 from doeff_claude_code.effects import PrintFailed as PrintFailed
+from doeff_claude_code.effects import PrintLimited as PrintLimited
 from doeff_claude_code.effects import PrintTimedOut as PrintTimedOut
 from doeff_claude_code.faults import ClaudeDropProcess as ClaudeDropProcess
 from doeff_claude_code.faults import ClaudeForgetSession as ClaudeForgetSession
@@ -345,7 +346,7 @@ def fake_replace_credential(world: FakeClaudeWorld, request: ClaudeReplaceSessio
 def fake_claude_code_handler(world: Incomplete) -> _Handler:
     ...
 
-def fake_print(respond: Callable, request: ClaudePrintOnce) -> _Program[PrintAnswered | PrintFailed | PrintTimedOut, object]:
+def fake_print(respond: Callable, request: ClaudePrintOnce) -> _Program[PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut, object]:
     ...
 
 def fake_claude_print_handler(respond: Incomplete) -> _Handler:

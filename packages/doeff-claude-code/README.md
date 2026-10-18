@@ -24,7 +24,7 @@
 
 | effect | すること | 答え |
 |---|---|---|
-| `ClaudePrintOnce(home, model, system_prompt, json_schema, input, timeout_seconds, credential=None, thinking_tokens=None, effort=None)` | CLI の print mode を `--output-format json --json-schema` で 1 回走らせる。本文は標準入力・道具なし・設定の源なし(`--setting-sources ""`)・家の MCP なし・記録なし | `PrintAnswered`(structured_output・usage・cost_usd・models・elapsed_ms・api_ms)/ `PrintFailed`(exit_code・api_status・detail・stderr_tail)/ `PrintTimedOut`(seconds・stderr_tail) |
+| `ClaudePrintOnce(home, model, system_prompt, json_schema, input, timeout_seconds, credential=None, thinking_tokens=None, effort=None)` | CLI の print mode を `--output-format stream-json --verbose --json-schema` で 1 回走らせる(答えは最後の result の行)。本文は標準入力・道具なし・設定の源なし(`--setting-sources ""`)・家の MCP なし・記録なし | `PrintAnswered`(structured_output・usage・cost_usd・models・elapsed_ms・api_ms)/ `PrintFailed`(exit_code・api_status・detail・stderr_tail)/ `PrintLimited`(limit = `AccountLimitHit` の window・resets_at・text・exit_code・stderr_tail — 口座の利用枠が尽きて答えなかった)/ `PrintTimedOut`(seconds・stderr_tail) |
 
 借りた資格(`credential`)は会話の process と同じく、その process だけの設定 dir の `.credentials.json` に置いて、降りたら dir ごと消す。
 `thinking_tokens` は子の env の `MAX_THINKING_TOKENS`(0 = 考えない)。待ちの上限(`timeout_seconds`)は CLI の起動と終わりの秒

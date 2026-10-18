@@ -155,7 +155,10 @@
 ;; 1 回きりの print(effects.hy の ClaudePrintOnce)の旗: 答えは 1 つの JSON の object(--output-format json)・道具なし(--tools "")・
 ;; 設定の源なし(--setting-sources "" — 家の settings・hook・CLAUDE.md を読まない)・家の MCP と connector を継がない・記録を残さない。
 ;; 素の CLI の測り(2026-10-18・CLI 2.1.292)と同じ組。--bare は OAuth を読まない(借りた資格で走らない)ので使わない。
-(setv PRINT-ONCE-FLAGS ["-p" "--output-format" "json"])
+;; 出力は stream-json(print mode では --verbose が要る): 口座の利用枠が尽きた事を名乗る行(拒まれた rate_limit_event・error rate_limit の
+;; 答えの行)は result の行の前に出て、`--output-format json` の 1 行の result には戻る刻が載らない(CLI 2.1.292 の測り 2026-10-19・
+;; card ki-eb4f8e1db64d)。答えは今までどおり最後の result の行。
+(setv PRINT-ONCE-FLAGS ["-p" "--output-format" "stream-json" "--verbose"])
 (setv PRINT-ONCE-ISOLATION-FLAGS ["--tools" "" "--setting-sources" "" "--strict-mcp-config" "--no-session-persistence"])
 
 (defn #^ (get list str) print-once-argv [#^ (get tuple #(str ...)) command #^ ClaudePrintOnce request]

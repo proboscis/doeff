@@ -34,7 +34,7 @@
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
-                                   HomeCredentialSession ClaudePrintOnce PrintAnswered PrintFailed PrintTimedOut])
+                                   HomeCredentialSession ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
 (import doeff_claude_code.argv [launch-key])
@@ -942,19 +942,19 @@
 ;; --- 1 回きりの print の fake -------------------------------------------------------------------------
 
 (defk fake-print [#^ Callable respond #^ ClaudePrintOnce request]
-  {:pre [(: respond Callable) (: request ClaudePrintOnce)] :post [(: % (| PrintAnswered PrintFailed PrintTimedOut))]
+  {:pre [(: respond Callable) (: request ClaudePrintOnce)] :post [(: % (| PrintAnswered PrintFailed PrintLimited PrintTimedOut))]
    :tags {:context "claude-code" :role "foundation"}}
   "1 回きりの print に筋書き(respond — 宣言 → 答えの Program)の答えで答えるため(CLI を起こさない・資格の置き場も作らない)。筋書きの
    答えが答えの和の外なら TypeError(筋書きの誤りを本番に無い値で隠さない)。"
   (<- outcome (respond request))
-  (when (not (isinstance outcome #(PrintAnswered PrintFailed PrintTimedOut)))
-    (raise (TypeError (.format "fake の 1 回きりの print の筋書きの答えは PrintAnswered / PrintFailed / PrintTimedOut: {}"
+  (when (not (isinstance outcome #(PrintAnswered PrintFailed PrintLimited PrintTimedOut)))
+    (raise (TypeError (.format "fake の 1 回きりの print の筋書きの答えは PrintAnswered / PrintFailed / PrintLimited / PrintTimedOut: {}"
                                (. (type outcome) __name__)))))
   outcome)
 
 ;; 引数に残す理由: 筋書き(respond)は検ごとに違い、同じ組に本番の handler の代わりに並べる。
 (defhandler fake-claude-print-handler [respond]
-  "1 回きりの print(ClaudePrintOnce)の fake。respond = 宣言 → 答え(PrintAnswered | PrintFailed | PrintTimedOut)の Program を作る
+  "1 回きりの print(ClaudePrintOnce)の fake。respond = 宣言 → 答え(PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut)の Program を作る
    関数(効果は fake の handler の外側が答える)。"
   (ClaudePrintOnce [home model]
     (<- outcome (fake-print respond effect))
