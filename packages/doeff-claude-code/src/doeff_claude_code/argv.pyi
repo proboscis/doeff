@@ -19,6 +19,7 @@ from doeff_claude_code.values import AutocompactTokens as AutocompactTokens
 from doeff_claude_code.values import FreshSession as FreshSession
 from doeff_claude_code.values import ResumeSession as ResumeSession
 from doeff_claude_code.values import ForkSession as ForkSession
+from doeff_claude_code.effects import ClaudePrintOnce as ClaudePrintOnce
 STREAM_FLAGS: list[str]
 PER_TURN_SETTINGS_ENV: FrozenMap
 OUTSIDE_TURN_TOOLS: tuple[str, ...]
@@ -71,6 +72,14 @@ def launch_argv(command: tuple, spec: ClaudeSessionSpec, origin: Incomplete) -> 
     ...
 
 def launch_key(command: tuple[str, ...], spec: ClaudeSessionSpec) -> _Program[str, object]:
+    ...
+PRINT_ONCE_FLAGS: list[str]
+PRINT_ONCE_ISOLATION_FLAGS: list[str]
+
+def print_once_argv(command: tuple[str, ...], request: ClaudePrintOnce) -> list[str]:
+    ...
+
+def print_once_env(request: ClaudePrintOnce, config_dir: str) -> dict[str, str]:
     ...
 
 def cold_resume_argv(command: tuple, spec: ClaudeSessionSpec, session_id: str) -> list:

@@ -5,6 +5,8 @@ from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
+from doeff_hy.frozen import FrozenJson as FrozenJson
+from doeff_hy.frozen import freeze_json as freeze_json
 from doeff_claude_code.values import ClaudeSessionSpec as ClaudeSessionSpec
 from doeff_claude_code.values import ClaudeHome as ClaudeHome
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
@@ -21,6 +23,7 @@ from doeff_claude_code.lines import Completed as Completed
 from doeff_claude_code.lines import Failed as Failed
 from doeff_claude_code.lines import Interrupted as Interrupted
 from doeff_claude_code.lines import BackendLost as BackendLost
+from doeff_claude_code.lines import Usage as Usage
 
 @dataclass(frozen=True)
 class TurnStarted:
@@ -225,6 +228,49 @@ ReplaceCredentialOutcome: TypeAlias = CredentialReplaced | NoSuchSession | Sessi
 class ClaudeReplaceSessionCredential(_doeff_effect_base[ReplaceCredentialOutcome]):
     session_id: str
     credential: LentCredential
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class PrintAnswered:
+    structured_output: FrozenJson
+    usage: Usage
+    cost_usd: float | None
+    models: tuple[str, ...]
+    elapsed_ms: int
+    api_ms: int | None
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class PrintFailed:
+    exit_code: int | None
+    api_status: int | None
+    detail: str
+    stderr_tail: str
+
+@dataclass(frozen=True, kw_only=True)
+class PrintTimedOut:
+    seconds: float
+    stderr_tail: str
+PrintOutcome: TypeAlias = PrintAnswered | PrintFailed | PrintTimedOut
+
+def is_json_object_text(text: object) -> bool:
+    ...
+
+@_doeff_dataclass(frozen=True)
+class ClaudePrintOnce(_doeff_effect_base[PrintOutcome]):
+    home: ClaudeHome
+    model: str
+    system_prompt: str
+    json_schema: str
+    input: str
+    timeout_seconds: float
+    credential: LentCredential | None = None
+    thinking_tokens: int | None = None
+    effort: str | None = None
 
     def __post_init__(self) -> None:
         ...
