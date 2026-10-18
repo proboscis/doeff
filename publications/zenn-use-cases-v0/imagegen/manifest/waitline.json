@@ -1,0 +1,38 @@
+[
+  {
+    "id": "waitline-concept",
+    "image": "images/zenn-use-cases-v0/generated/waitline-concept.png",
+    "generation_prompt": "waitline-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "4f040dd03948b585495848134b32830b756b764b662c32fc3a2c8f8648462803",
+    "width": 1200,
+    "height": 1120,
+    "bytes": 203266,
+    "review": "2026-10-18：上の段の「入力待ち」6つ、中の段の1行の形（WAIT: <種類> — <理由>）、下の段の3つの行き先（筆者の番 16個・外を待つ・続けてよい、workは合わせて504個）と、最下部の520個・16個（3%）・10月17日20時14分〜18日20時14分を、本文の表と数に照らして目視確認。社内の機体の名・会話のidは描いていない。白背景の平面図として採用。"
+  },
+  {
+    "id": "waitline-days",
+    "image": "images/zenn-use-cases-v0/generated/waitline-days.png",
+    "generation_prompt": "waitline-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "ff32a35ce95278ef4e4ac38d82befc135d386fe42d4a405d6d0a221497c2f03e",
+    "width": 1200,
+    "height": 960,
+    "bytes": 110155,
+    "review": "2026-10-18：reviews/waitline-days.csvから描いた左右2段の横棒。左のwork（10月9日3〜12日565・計2,508）と右の筆者を待つ申告（見てほしい40・66・13、決めてほしい1・13、議論したい3、計136）を、表と本文に照らして目視確認。桁が違う2つを1つの軸に混ぜず、右の段に「左と目盛りが違う」と書いた。配色はdatavizの既定の1〜3番で、色の確かめの道具を通した（水色の字の濃さのWARNは、値の字を全部の行に添えて補った）。白背景の平面図として採用。"
+  },
+  {
+    "id": "waitline-flow",
+    "image": "images/zenn-use-cases-v0/generated/waitline-flow.png",
+    "generation_prompt": "waitline-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "17f9b195a035e34330f748d3a2d59729cafbdb24591a64ec6e1054fe28fb8142",
+    "width": 1200,
+    "height": 1160,
+    "bytes": 177406,
+    "review": "2026-10-18：左の書かせる側（止まろうとする → 最後の行にWAITがあるか → 無い・1度目は止めて書き方を返す／無い・2度目は必ず通す）と、右の読む側（waits_of → DeclareWait → 外の相手を書かないworkか → PostContinue）が、本文の枠の名（on_stop・close_turn・waits_of・DeclareWait・PostContinue・fake_board・stop_hook_active・last_assistant_message）と同じであることを目視確認。最初の版は「無い・1度目」の字が矢印に重なり、2度目の矢印が判定の箱に入っていたので、矢印を右へ移し、2度目の行き先を読む側の入口に直した。白背景の平面図として採用。"
+  }
+]
