@@ -4,6 +4,7 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.sql_effects import SqlParam as SqlParam
+from doeff_records.admission import key_text as key_text
 from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.values import RetiredKey as RetiredKey
 from doeff_records.values import KeepFor as KeepFor
@@ -57,6 +58,7 @@ class DeclaredIndex:
     relation: str
     text: str
     serves: tuple[IndexedField, ...]
+    scoped: tuple[IndexedField, ...]
     aliases: tuple[str, ...]
     statistics: str | None
 
@@ -93,7 +95,13 @@ def index_name(prefix: str, field_name: str) -> _Program[str, object]:
 def table_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
+def table_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
+    ...
+
 def field_expression(payload: str, field_name: str) -> _Program[str, object]:
+    ...
+
+def table_field_expression(alias: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
 def field_index(prefix: str, table: str, field_name: str, serves: bool) -> _Program[DeclaredIndex, object]:
@@ -171,10 +179,34 @@ def expired_row_part(alias: str, stem: str, expiry: RowExpiry) -> _Program[Claus
 def terminal_state_condition(payload: str, state_field: str, stem: str, terminal: tuple) -> _Program[Clause, object]:
     ...
 
-def field_in_condition(payload: str, field_name: str, stem: str, encoded: tuple) -> _Program[Clause, object]:
+def terminal_words(terminal: tuple) -> _Program[tuple, object]:
     ...
 
-def any_of_filter(where_any_json: dict) -> _Program[Clause, object]:
+def field_in_condition(expression: str, stem: str, encoded: tuple) -> _Program[Clause, object]:
+    ...
+
+def key_spellings(key_fields: tuple, name: str, encoded: tuple) -> _Program[tuple | None, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class RowFilter:
+    clauses: tuple[str, ...]
+    params: tuple[SqlParam, ...]
+    ledger_free: bool
+
+def field_term(table: str, scoped: frozenset, name: str) -> _Program[str, object]:
+    ...
+
+def where_condition(table: str, key_fields: tuple, scoped: frozenset, i: int, name: str, encoded: str) -> _Program[Clause, object]:
+    ...
+
+def any_of_condition(table: str, key_fields: tuple, scoped: frozenset, i: int, name: str, encoded: tuple) -> _Program[Clause, object]:
+    ...
+
+def hyx_scoped_conditionXquestion_markX(key_fields: tuple, scoped: frozenset, name: str, encoded: tuple) -> _Program[bool, object]:
+    ...
+
+def row_filter(table: str, key_fields: tuple, scoped: frozenset, where_json: dict, where_any_json: dict) -> _Program[RowFilter, object]:
     ...
 
 def unexpired_rows_filter(alias: str, expiries: tuple) -> _Program[Clause, object]:
@@ -186,13 +218,13 @@ def read_row_statement(prefix: str, table: str, key: str, expiry: RowExpiry | No
 def lock_row_statement(prefix: str, table: str, key: str) -> _Program[Statement, object]:
     ...
 
-def list_rows_statement(prefix: str, table: str, after_key: str | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def list_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, after_key: str | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
-def top_rows_statement(prefix: str, table: str, descending_by: str, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
-def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple) -> _Program[Statement, object]:
+def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple, scoped: bool) -> _Program[Statement, object]:
     ...
 
 def upsert_row_statement(prefix: str, table: str, key: str, payload: str, version: int, at: int, writer: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
