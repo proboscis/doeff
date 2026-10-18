@@ -42,7 +42,9 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   等しさは JSON の値としての等しさ(`admission` の `json-equal?` — 数は数で比べ `1` と `1.0` は等しく、`True` と `1` は等しくない)。値の組の
   頁を辿った全件は、組の値ごとの等号の `ListRows` の全件の和をキーの順に並べた物と同じ(法 `law_any_of_list_equals_the_union_of_equal_lists`)。
   呼び手は値の組 1 つを、値ごとの往復でなく 1 回の読み(組が上限を越える時は上限ごとに割った回数)で引く。PostgreSQL の置き場は組を
-  `(欄の式) IN (…)` に展げ、宣言の索引の欄の式の索引で引く。
+  `(表の欄の式) IN (…)` に展げ、宣言の索引の欄ごとの表の欄の式の索引(`(CASE WHEN ledger = '<表>' THEN ((payload::jsonb) -> '<欄>') END)` —
+  `pg_sql.hy` の頭の註)で引く。2 つ以上の欄の絞り(等号 2 つ・等号と値の組・値の組と値の組)は欄ごとの索引を組んで(BitmapAnd)当たる行だけを
+  読み、1 頁の所要は片方の欄だけに合う行の数でなく当たる行の数で決まる(card ki-2176012d1804)。
 - `descending_by`(欄の名)を付けた `ListRows` は上から読む読み: 欄の値が整数の行だけを、その値の大きい順(同じ値はキーの綴りの逆順)に上から
   `limit` 件読む 1 頁で、`cursor` を受けず(作る時に `ValueError`)、`next_cursor` は常に `None`。`where`・`where_any` はそのまま効く。
 - HTTP の口の本文(`list-rows`)は、`descendingBy` と `whereAny`(欄 → 値の組の配列)の鍵を使う読みの時だけ載せる — 使わない読みの本文は

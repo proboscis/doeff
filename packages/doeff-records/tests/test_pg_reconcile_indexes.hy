@@ -8,8 +8,8 @@
 ;;     通す。作り終えるまで、索引の欄 note を名指す ListRows だけが NotIndexed で、他の読みと書きは答える(受入の条 1)
 ;;   - 記録の service(本番と同じ records-connected・PG-STORE)は、索引を作り終える前から記録の操作に 200 で答え、作り終えれば note の
 ;;     読みにも答える。service は落ちない(受入の条 2)
-;;   - 旧い形の索引(全部の行に張った (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と同じ形)が在る欄は、作り直さずに
-;;     答える(受入の条 4)
+;;   - 旧い形の索引(全部の行に張った (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と同じ形)が在る欄は、表の欄の式の
+;;     索引を待たずに答え、索引の用意は表の欄の式の索引を作る(受入の条 4 — card ki-2176012d1804 で改めた)
 ;;   - CONCURRENTLY の作りかけ(使えない形で残った同じ名の索引)は消してから作り直す・索引の用意の錠を他の process が持つ間は作らずに待ち、
 ;;     錠を放した合図で観測し直す
 ;;   - 錠を持つ process の作りの最中に別の process の回が錠を求めても、作りは deadlock で捨てられず、両方の回が差を埋めて終わる
@@ -38,7 +38,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
-(import doeff_records.pg_sql [table-index-name index-name index-lock-key migrate-lock-key schema-statements])
+(import doeff_records.pg_sql [table-index-name table-field-index-name index-name index-lock-key migrate-lock-key schema-statements])
 (import doeff_records.main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
 (import doeff_records.http_server [MaintenancePlan RecordsListening])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
@@ -149,7 +149,7 @@
   ;; note の読みだけが NotIndexed。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv note-index (run (table-index-name prefix "parts" "note"))
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
             writer (open-postgres)
             watcher (open-postgres)
             pool (ThreadPoolExecutor :max-workers 1))
@@ -220,21 +220,30 @@
 
 ;; --- 旧い形の索引・作りかけ・錠 ------------------------------------------------------------------------------------------------------
 
-(deftest test-a-legacy-index-over-all-rows-answers-without-building-again
+(deftest test-a-legacy-index-over-all-rows-answers-while-the-table-field-index-is-built
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
-  ;; 受入の条 4: 旧い形の索引(全部の行の (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と同じ形・旧い名)が在る欄は、
-  ;; 用意が差に数えず、作り直さずに読みに答える。
+  ;; 受入の条 4(card ki-2176012d1804 で改めた): 旧い形の索引(全部の行の (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と
+  ;; 同じ形・旧い名)が在る欄は、表の用意の直後から(表の欄の式の索引を待たずに)前の文の形の読みに答える。索引の用意は表の欄の式の索引を
+  ;; 作り(旧い形の索引では等号 2 つの読みが索引を組めない — pg_sql の頭の註)、作り終えた後の読みは表の欄の式で照らす。前の部分索引は作らない。
   (with-seeded-store
     (fn [prefix quick ddl]
       (setv legacy (run (index-name prefix "note"))
+            note-index (run (table-field-index-name prefix "parts" "note"))
             watcher (open-postgres))
       (try
         (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (ledger, ((payload::jsonb) -> 'note'))" :i legacy :p prefix))
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
-        (assert (= store.indexes.missing #()) (repr store.indexes.missing))
+        (assert (= store.indexes.missing #(note-index)) (repr store.indexes.missing))
+        (assert (not-in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color by-note) (reads-of quick ddl store))
         (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
-        (assert (is (index-validity watcher (run (table-index-name prefix "parts" "note"))) None) "部分索引を作り直した")
+        (run-on quick ddl (reconcile-indexes store))
+        (assert (is (index-validity watcher note-index) True) note-index)
+        (assert (= store.indexes.missing #()) (repr store.indexes.missing))
+        (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (setv #(_row _color note-after) (reads-of quick ddl store))
+        (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
+        (assert (is (index-validity watcher (run (table-index-name prefix "parts" "note"))) None) "前の部分索引を作った")
         (finally
           (.close watcher))))))
 
@@ -244,7 +253,7 @@
   ;; CONCURRENTLY の作りかけ(cancel された作りが残す使えない索引)は、差の中で invalid と数え、消してから作り直す。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv note-index (run (table-index-name prefix "parts" "note"))
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
             writer (open-postgres)
             builder (open-postgres)
             watcher (open-postgres))
@@ -252,7 +261,8 @@
         (hold-writer writer prefix)
         (.execute builder "SET statement_timeout = 300")
         (try
-          (.execute builder (.format "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows (((payload::jsonb) -> 'note')) WHERE ledger = 'parts'"
+          (.execute builder (.format (+ "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+                                        " WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END) IS NOT NULL")
                                      :i note-index :p prefix))
           (except [error Exception]
             (assert (= (getattr error "sqlstate" None) "57014") (repr error))))
@@ -287,7 +297,7 @@
   ;; 合図で観測し直して作る。待つ間に別の process が作った索引は作らない(作り直しの文が流れても IF NOT EXISTS で何もしない)。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv note-index (run (table-index-name prefix "parts" "note"))
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
             other (open-postgres)
             watcher (open-postgres)
             pool (ThreadPoolExecutor :max-workers 1))
@@ -351,7 +361,7 @@
         (assert (is sought True) "錠を求めた回が差を埋めずに終わった")
         (assert (= found 0) found)
         (with [watcher (open-postgres)]
-          (assert (is (index-validity watcher (run (table-index-name prefix "parts" "note"))) True)))
+          (assert (is (index-validity watcher (run (table-field-index-name prefix "parts" "note"))) True)))
         (finally
           (.close other-quick)
           (.close other-ddl))))))

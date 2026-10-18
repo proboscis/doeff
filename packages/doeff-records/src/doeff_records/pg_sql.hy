@@ -22,13 +22,24 @@
 ;;;   append_rows (ledger, 頭の式, seq) 頭で引ける列(key-lookup の ByKeyHead)の区切りごとに 1 つ — 頭で引く読み(read-events-statement の
 ;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
-;;;   state_rows (ledger, 状態の欄の式) 保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ — 終端の行の
-;;;                                  読み terminal-rows-statement が引く)
-;;; 欄の式の索引は表ごとの部分索引(card ki-954c58540d0f): 宣言した表 1 つ × 欄 1 つに `… WHERE ledger = '<表>'` の索引 1 つ(名 =
-;;; table-index-name)。state_rows は全部の表の行を持つ 1 つの表なので、全部の行に張る索引(旧い形 — 名 = index-name)を足す費用は
-;;; 置き場の全体の大きさに比例した(2026-10-18 に 444,566 行・6.3 GB の置き場で 1 本 3 分 23 秒)。部分索引は、その表の行の payload
-;;; だけを読んで並べる(主の heap は全部の行を辿るが、TOAST に在る payload を開いて jsonb にするのはその表の行だけ)。旧い形の索引が
-;;; 在る欄は、それが同じ読みに答える(aliases — 在れば作らない。旧い 21 本は作り直さない)。
+;;;   state_rows (表の状態の欄の式)    保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ表の欄の式 —
+;;;                                  終端の行の読み terminal-rows-statement が引く)
+;;; 欄の式の索引は表の欄の式の索引(card ki-2176012d1804): 宣言した表 1 つ × 欄 1 つに、表の欄の式
+;;; `(CASE WHEN ledger = '<表>' THEN ((payload::jsonb) -> '<欄>') END)`(table-field-expression — その表の行の欄の値・他の表の行は NULL)の
+;;; 索引 1 つ(名 = table-field-index-name)を `WHERE <式> IS NOT NULL` の部分索引で張る。state_rows は全部の表の行を持つ 1 つの表なので、
+;;; 全部の行に張る索引(旧い形 — 名 = index-name)を足す費用は置き場の全体の大きさに比例した(2026-10-18 に 444,566 行・6.3 GB の置き場で
+;;; 1 本 3 分 23 秒)。表の欄の式の索引は、その表の行の payload だけを読んで並べる(主の heap は全部の行を辿るが、他の表の行は CASE が
+;;; payload を開かずに NULL にする)。
+;;; 表の欄の式にする訳(2026-10-18 に本番の 44,296 行の表 message で計画を読んだ): 等号 2 つ(宛先と kind)の 1 頁は、宛先の索引で宛先の
+;;; 行 5,283 行を引き、1 行ずつ payload を jsonb に読み直して kind で 5,249 行を捨てた(0.43〜9 秒)。2 つの欄の索引を組んで(BitmapAnd)
+;;; 当たる 34 行だけを読む計画を、planner は選べなかった: 2 つの索引が同じ条件 ledger = '<表>' を使う(旧い形は列 ledger の条件・
+;;; 前の部分索引 `… WHERE ledger = '<表>'`〔card ki-954c58540d0f〕は述語)と、planner は後の索引を前の索引と重なる物として組まない
+;;; (PostgreSQL の choose_bitmap_and の重なりの判じ)。表の欄の式の索引は、条件も述語も欄ごとに別の式なので組め、当たる行の数で
+;;; 決まる読みになる(同じ表で 300 ms → 6 ms)。読みの文は、絞りの欄が全部表の欄の式で照らせる時、条件 ledger = :ledger を置かない
+;;; (表の欄の式の条件がその表の行だけに合う — 置くと planner は ledger の選択度を式の選択度に重ねて掛け、ledger だけの索引を組みに足す)。
+;;; 式の統計(表の欄の式 1 つずつ — 部分索引の式の統計は planner が読まない)はその表の行の値の数え。
+;;; 旧い形の索引と前の部分索引(名 = table-index-name)は aliases: 在る欄は、表の欄の式の索引を作り終えるまで、その欄を前の文の形
+;;; (ledger = :ledger と欄の式 — field-expression)で照らす読みに答える(索引の用意は aliases が在っても表の欄の式の索引を作る)。
 ;;; 索引の用意(pg.hy の頭の註): 移行の transaction は、その transaction で生まれた表の索引だけを作る(空の表 — 一瞬)。既に在る表に
 ;;; 足りない索引は、索引の用意の task が transaction の外の CREATE INDEX CONCURRENTLY で作る(declared-indexes が宣言の索引の全部・
 ;;; indexes-statement が置き場の索引の観測)。
@@ -126,12 +137,15 @@
 (defrecord DeclaredIndex
   "宣言から作る索引 1 つ(頭の註の「索引の用意」): name = 索引の名 / relation = 張る表(接頭辞の後ろの名 — STORE-RELATIONS のどれか)/
    text = 移行の transaction の中で作る文(CREATE [UNIQUE] INDEX IF NOT EXISTS …)/ serves = この索引が在って初めて答える ListRows の
-   (表, 欄) の組の並び(宣言した索引の欄 — 無ければ NotIndexed。空 = 速さだけの索引)/ aliases = 同じ読みに答える旧い形の索引の名
-   (在れば作らない)/ statistics = 索引の前に作る式の統計の文(CREATE STATISTICS IF NOT EXISTS … — 部分索引の式の見積もり・None = 要らない)。"
+   (表, 欄) の組の並び(宣言した索引の欄 — 無ければ NotIndexed。空 = 速さだけの索引)/ scoped = この索引が在れば読みの文が表の欄の式
+   (table-field-expression)で照らす (表, 欄) の組の並び(表の欄の式の索引だけ)/ aliases = この索引を作り終えるまで serves の読みに答える
+   旧い形の索引の名(頭の註 — 在っても作る)/ statistics = 索引の前に作る式の統計の文(CREATE STATISTICS IF NOT EXISTS … — 部分索引の式の
+   見積もり・None = 要らない)。"
   (#^ str name)
   (#^ str relation)
   (#^ str text)
   (#^ (get tuple #(IndexedField ...)) serves)
+  (#^ (get tuple #(IndexedField ...)) scoped)
   (#^ (get tuple #(str ...)) aliases)
   (#^ (| str None) statistics))
 
@@ -207,7 +221,7 @@
 (defk index-name [prefix field-name]
   {:pre [(: prefix str) (: field-name str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "旧い形の欄の式の索引(state_rows の全部の行 — 旧い版と同じ名)の名を作るため。表ごとの部分索引の aliases(頭の註)。"
+  "旧い形の欄の式の索引(state_rows の全部の行 — 旧い版と同じ名)の名を作るため。表の欄の式の索引の aliases(頭の註)。"
   (<- digest (digest-of field-name))
   (+ prefix "ix_" digest))
 
@@ -215,48 +229,74 @@
 (defk table-index-name [prefix table field-name]
   {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の欄 field-name の部分索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
+  "前の部分索引(表 table の欄 field-name の (欄の式) WHERE ledger = '<表>' — card ki-954c58540d0f)の名を作るため。表の欄の式の索引の
+   aliases(頭の註)。"
   (<- field-digest (digest-of field-name))
   (<- table-digest (digest-of table))
   (.format "{}ix_{}_{}" prefix field-digest table-digest))
 
 
+(defk table-field-index-name [prefix table field-name]
+  {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の欄 field-name の表の欄の式の索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
+  (<- field-digest (digest-of field-name))
+  (<- table-digest (digest-of table))
+  (.format "{}fx_{}_{}" prefix field-digest table-digest))
+
+
 (defk field-expression [payload field-name]
   {:pre [(: payload str) (: field-name str) (.match FIELD-NAME-PATTERN field-name)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "行の欄 field-name の値(jsonb)の式を作るため — 欄の式の索引(field-index)と、その索引で引く文の条件(terminal-state-condition)が
+  "行の欄 field-name の値(jsonb)の式を作るため — 旧い形の索引と前の部分索引が引く読みの条件と、表の欄の式(table-field-expression)が
    この 1 つを使い、索引の式と文の式の字面を揃える(欄の名は宣言を通った英数字 — 文に直に置く)。payload = payload の列の綴り(索引は
    payload・文は別名つきでもよい)。"
   (.format "(({}::jsonb) -> '{}')" payload field-name))
 
 
+(defk table-field-expression [alias table field-name]
+  {:pre [(: alias str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の行の欄 field-name の値(jsonb — 他の表の行と欄の無い行は NULL)の式を作るため(頭の註の表の欄の式)。表の欄の式の索引
+   (field-index)と、その索引で引く読みの条件(where-condition・any-of-filter・terminal-rows-statement)がこの 1 つを使い、索引の式と
+   文の式の字面を揃える。alias = 列の別名(空 = 別名なし — 索引の式)。表の名は宣言を通った英小文字・数字・_・- だけ
+   (values.TABLE-NAME-PATTERN — 引用符を含まないので文に直に置ける。引数にすると文の式が索引の式と揃わず索引に当たらない)。"
+  (val columns (if alias (+ alias ".") ""))
+  (<- value (field-expression (+ columns "payload") field-name))
+  (.format "(CASE WHEN {c}ledger = '{t}' THEN {v} END)" :c columns :t table :v value))
+
+
 (defk field-index [prefix table field-name serves]
   {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (: serves bool)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の欄 field-name の式の部分索引 state_rows (欄の式) WHERE ledger = '<表>' を作るため(頭の註 — 宣言した索引の欄と、その表の
-   索引の欄に無い保持の期限の在る表の状態の欄)。列に ledger を持たない: 条件の ledger = '<表>' が索引の述語に含まれるので、列に置くと
-   planner は列の条件を述語に任せて外し、頭の列の条件の無い索引として値の組(IN)の読みに使わない。部分索引の式の統計は planner が
-   読まない(全部の行に張った索引の式の統計だけを読む)ので、欄の式の統計(statistics — 欄ごとに 1 つ・全部の行の標本)を索引の前に
-   作る — 無いと値の組の見積もりが既定の選択度(1 値 0.5%)の積み上げになり、表を頭から読む計画が選ばれる。serves = 宣言した索引の
-   欄か(ListRows がこの索引を待つ — NotIndexed の判断)。表の名は宣言を通った英小文字・数字・_・- だけ(values.TABLE-NAME-PATTERN —
-   引用符を含まないので文に直に置ける)。"
-  (<- name (table-index-name prefix table field-name))
+  "表 table の欄 field-name の表の欄の式の索引 state_rows (表の欄の式) WHERE 表の欄の式 IS NOT NULL を作るため(頭の註 — 宣言した索引の
+   欄と、その表の索引の欄に無い保持の期限の在る表の状態の欄)。述語を ledger = '<表>' にしない: 同じ表の欄の索引どうしの述語が同じに
+   なり、planner が 2 つの索引を組まない(頭の註)。述語の IS NOT NULL は、文の表の欄の式の等号と IN(strict な比べ)から planner が
+   導く(引数の値の組が 100 を越えても — PostgreSQL の predtest の clause_is_strict_for)。部分索引の式の統計は planner が読まないので、
+   表の欄の式の統計(statistics — 表 × 欄ごとに 1 つ)を索引の前に作る — 無いと値の組の見積もりが既定の選択度(1 値 0.5%)の積み上げに
+   なり、表を頭から読む計画が選ばれる。serves = 宣言した索引の欄か(ListRows がこの索引を待つ — NotIndexed の判断)。aliases = 旧い形の
+   索引と前の部分索引(作り終えるまで前の文の形の読みに答える)。"
+  (<- name (table-field-index-name prefix table field-name))
+  (<- partial (table-index-name prefix table field-name))
   (<- legacy (index-name prefix field-name))
-  (<- digest (digest-of field-name))
-  (<- expression (field-expression "payload" field-name))
+  (<- field-digest (digest-of field-name))
+  (<- table-digest (digest-of table))
+  (<- expression (table-field-expression "" table field-name))
+  (val indexed (IndexedField :table table :field field-name))
   (DeclaredIndex :name name :relation "state_rows"
-                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e}) WHERE ledger = '{t}'"
-                                :i name :p prefix :e expression :t table)
-                 :serves (if serves #((IndexedField :table table :field field-name)) #())
-                 :aliases #(legacy)
-                 :statistics (.format "CREATE STATISTICS IF NOT EXISTS {p}st_{d} ON {e} FROM {p}state_rows" :p prefix :d digest :e expression)))
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e}) WHERE {e} IS NOT NULL" :i name :p prefix :e expression)
+                 :serves (if serves #(indexed) #())
+                 :scoped #(indexed)
+                 :aliases #(legacy partial)
+                 :statistics (.format "CREATE STATISTICS IF NOT EXISTS {p}fs_{f}_{t} ON {e} FROM {p}state_rows"
+                                      :p prefix :f field-digest :t table-digest :e expression)))
 
 
 (defk fixed-index [name relation text]
   {:pre [(: name str) (: relation str) (: text str)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
   "宣言に依らない索引(置き場の形の索引 — 速さと一意の索引)1 つを作るため(読みを待たせない・旧い名の写しは無い)。"
-  (DeclaredIndex :name name :relation relation :text text :serves #() :aliases #() :statistics None))
+  (DeclaredIndex :name name :relation relation :text text :serves #() :scoped #() :aliases #() :statistics None))
 
 
 (defk group-index [prefix separator]
@@ -307,7 +347,7 @@
    :tags {:context "records" :role "foundation"}}
   "表を用意する文の列(何度流しても同じ — IF NOT EXISTS / ON CONFLICT DO NOTHING)を、索引の文かどうかの印つきで作るため。流すのは
    pg.prepare-records-store だけ(移行の錠の transaction の中で・process ごとに 1 度 — 既に在る表の索引の文は流さない・頭の註)。
-   表と置き場の形の索引の字面と順は旧い版と同じ(頭の註)。宣言した索引の欄の索引は表ごとの部分索引(表の名の順・欄の名の順)。"
+   表と置き場の形の索引の字面と順は旧い版と同じ(頭の註)。宣言した索引の欄の索引は表の欄の式の索引(表の名の順・欄の名の順)。"
   (val p prefix)
   (val tables
     #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}state_rows (
@@ -332,7 +372,7 @@
       ;; 版の初めの値 = 行を作った時の server の時計の ms(頭の註の store_epoch・#3632)。行が在れば版に触らない。
       (! (table-step (.format "INSERT INTO {p}store_epoch (id, epoch, floor)
            VALUES (1, (extract(epoch from clock_timestamp()) * 1000)::bigint, 0) ON CONFLICT (id) DO NOTHING" :p p)))))
-  ;; 宣言した索引の欄ごとに表ごとの部分索引 1 つ(欄の名は FIELD-NAME-PATTERN を通った英数字だけ — 文に直に置ける)。
+  ;; 宣言した索引の欄ごとに表の欄の式の索引 1 つ(欄の名は FIELD-NAME-PATTERN を通った英数字だけ — 文に直に置ける)。
   (var indexes #())
   (for [table (sorted schema.tables)]
     (for [name (sorted (. (get schema.tables table) indexes))]
@@ -379,7 +419,7 @@
   "旧い版より後に足した索引の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
-   無い時だけ(在る欄はその表の宣言した索引の欄の部分索引が答える)。"
+   無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
@@ -535,22 +575,29 @@
 (defk terminal-state-condition [payload state-field stem terminal]
   {:pre [(: payload str) (: state-field str) (: stem str) (: terminal tuple) (> (len terminal) 0)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
-  "行の状態の欄 state-field が終端の語 terminal のどれかである条件を作るため(回収の候補の読み terminal-rows-statement と、読みの文の期限の
-   条件 expired-row-part の 1 つの形)。欄の式は field-expression(欄の式の索引 field-index-statement と同じ字面 — 索引に当たる)で、
-   終端の語は JSON の値(jsonb)の引数 `:{stem}0::jsonb, …` にして比べる(memory の判定 admission.terminal-row? と同じく値そのものを比べる)。
-   payload = payload の列の綴り(別名つきでもよい)。"
-  (<- states (field-in-condition payload state-field stem (tuple (gfor word terminal (json.dumps word :ensure-ascii False)))))
+  "行の状態の欄 state-field が終端の語 terminal のどれかである条件を作るため(読みの文の期限の条件 expired-row-part の 1 つの形 — 行ごとに
+   照らす条件で、索引では引かない)。欄の式は field-expression で、終端の語は JSON の値(jsonb)の引数 `:{stem}0::jsonb, …` にして比べる
+   (memory の判定 admission.terminal-row? と同じく値そのものを比べる)。payload = payload の列の綴り(別名つきでもよい)。"
+  (<- expression (field-expression payload state-field))
+  (<- states (field-in-condition expression stem (! (terminal-words terminal))))
   states)
 
 
-(defk field-in-condition [payload field-name stem encoded]
-  {:pre [(: payload str) (: field-name str) (: stem str) (: encoded tuple) (> (len encoded) 0)] :post [(: % Clause)]
+(defk terminal-words [terminal]
+  {:pre [(: terminal tuple) (> (len terminal) 0)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "行の欄 field-name の値が JSON の値の組 encoded(JSON の綴りの空でない tuple)のどれかに等しい条件を作るため(終端の状態の条件
-   terminal-state-condition と、ListRows の値の組の絞り any-of-filter の 1 つの形)。欄の式は field-expression(欄の式の索引
-   field-index-statement と同じ字面 — 索引に当たる)で、値は JSON の値(jsonb)の引数 `:{stem}0::jsonb, …` にして比べる(memory の判定
-   admission.json-equal? と同じく値そのものを比べる)。payload = payload の列の綴り(別名つきでもよい)。空の組は文にできないので :pre が断る。"
-  (<- expression (field-expression payload field-name))
+  "終端の語 terminal を、状態の欄の値と比べる JSON の綴りの組にするため(terminal-state-condition と terminal-rows-statement が同じ綴りで
+   比べる)。"
+  (tuple (gfor word terminal (json.dumps word :ensure-ascii False))))
+
+
+(defk field-in-condition [expression stem encoded]
+  {:pre [(: expression str) (: stem str) (: encoded tuple) (> (len encoded) 0)] :post [(: % Clause)]
+   :tags {:context "records" :role "foundation"}}
+  "欄の値の式 expression(field-expression か table-field-expression の綴り)の値が JSON の値の組 encoded(JSON の綴りの空でない tuple)の
+   どれかに等しい条件を作るため(終端の状態の条件と、ListRows の値の組の絞りの 1 つの形)。値は JSON の値(jsonb)の引数
+   `:{stem}0::jsonb, …` にして比べる(memory の判定 admission.json-equal? と同じく値そのものを比べる)。空の組は文にできないので :pre が
+   断る。"
   (<- members (in-list stem encoded))
   (Clause :text (.format "{e} IN ({s})" :e expression :s (.join ", " (gfor param members.params (.format ":{}::jsonb" param.name))))
           :params members.params))
@@ -570,38 +617,88 @@
       None))
 
 
-(defk where-condition [key-fields i name encoded]
-  {:pre [(: key-fields tuple) (: i int) (: name str) (: encoded str)] :post [(: % Clause)]
+(defrecord RowFilter
+  "ListRows の絞り(where と where-any)を行の読みの文の条件にした物(row-filter の答え): clauses = 条件の綴りの並び(where の欄の名の順 →
+   where-any の欄の名の順 — 文は AND で続ける)/ params = その引数 / ledger-free = 条件が 1 つ以上在り、全部が表の欄の式の条件で、文に
+   条件 ledger = :ledger を置かない(頭の註 — 表の欄の式の条件がその表の行だけに合う)。"
+  (#^ (get tuple #(str ...)) clauses)
+  (#^ (get tuple #(SqlParam ...)) params)
+  (#^ bool ledger-free))
+
+
+(defk field-term [table scoped name]
+  {:pre [(: table str) (: scoped frozenset) (: name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の絞りが名指す欄 name の値の式を作るため: 表 table の欄 name の表の欄の式の索引が在る(scoped = その欄の名の集合に在る)なら
+   表の欄の式(table-field-expression)・無ければ前の文の形の欄の式(field-expression — 旧い形の索引か前の部分索引が引く・頭の註)。"
+  (if (in name scoped)
+      (! (table-field-expression "" table name))
+      (! (field-expression "payload" name))))
+
+
+(defk where-condition [table key-fields scoped i name encoded]
+  {:pre [(: table str) (: key-fields tuple) (: scoped frozenset) (: i int) (: name str) (: encoded str)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
   "ListRows の where の等号 1 つ(欄 name = 値 encoded〔JSON の綴り〕・引数の名 w{i})を、行の読みの文の条件にするため: 鍵の欄が 1 つの
-   表の鍵の欄を文字列で名指す時は主キーの列で `key = :w{i}`(key-spellings)・それ以外は欄の式 `(payload::jsonb) -> 'name' = :w{i}::jsonb`。"
+   表の鍵の欄を文字列で名指す時は主キーの列で `key = :w{i}`(key-spellings)・それ以外は欄の値の式(field-term)の `<式> = :w{i}::jsonb`。"
   (<- spellings (key-spellings key-fields name #(encoded)))
   (val argument (.format "w{}" i))
   (if (is spellings None)
-      (Clause :text (.format "(payload::jsonb) -> '{}' = :{}::jsonb" name argument)
-              :params (! (params-of #(#(argument encoded)))))
+      (do (<- term (field-term table scoped name))
+          (Clause :text (.format "{} = :{}::jsonb" term argument)
+                  :params (! (params-of #(#(argument encoded))))))
       (Clause :text (.format "key = :{}" argument)
               :params (! (params-of #(#(argument (get spellings 0))))))))
 
 
-(defk any-of-filter [key-fields where-any-json]
-  {:pre [(: key-fields tuple) (: where-any-json dict)] :post [(: % Clause)]
+(defk any-of-condition [table key-fields scoped i name encoded]
+  {:pre [(: table str) (: key-fields tuple) (: scoped frozenset) (: i int) (: name str) (: encoded tuple)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
-  "ListRows の値の組の絞り(where-any)を、行の読みの文の WHERE の後ろに足す条件にするため: 欄ごと(名の順)に AND で続ける(欄 i の
-   引数の名は a{i}_0・a{i}_1 … — 文の他の引数と混ざらない)。鍵の欄が 1 つの表の鍵の欄を文字列の組で名指す時は主キーの列で
-   `key IN (…)`(key-spellings)・それ以外は field-in-condition。where-any-json = 欄 → 値の JSON の綴りの空でない tuple(欄の名は宣言を
-   通った英数字)。空の写像なら空の断片(文を変えない — 組を使わない読みの文は前と同じ字面)。"
-  (var text "")
+  "ListRows の値の組の絞り(where-any)の欄 1 つ(欄 name の値が組 encoded〔JSON の綴りの空でない tuple〕のどれか・引数の名 a{i}_0・a{i}_1 …
+   — 文の他の引数と混ざらない)を、行の読みの文の条件にするため: 鍵の欄が 1 つの表の鍵の欄を文字列の組で名指す時は主キーの列で
+   `key IN (…)`(key-spellings)・それ以外は欄の値の式(field-term)の field-in-condition。"
+  (<- spellings (key-spellings key-fields name encoded))
+  (val stem (.format "a{}_" i))
+  (if (is spellings None)
+      (do (<- term (field-term table scoped name))
+          (<- condition (field-in-condition term stem encoded))
+          condition)
+      (do (<- members (in-list stem spellings))
+          (Clause :text (.format "key IN ({})" members.text) :params members.params))))
+
+
+(defk scoped-condition? [key-fields scoped name encoded]
+  {:pre [(: key-fields tuple) (: scoped frozenset) (: name str) (: encoded tuple)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "絞りの欄 name(値の JSON の綴りの組 encoded)の条件が表の欄の式の条件になるかを判じるため(主キーの列で照らす鍵の欄の条件と、表の欄の
+   式の索引がまだ無い欄の条件は、条件 ledger = :ledger を要る — RowFilter の ledger-free)。"
+  (<- spellings (key-spellings key-fields name encoded))
+  (and (is spellings None) (in name scoped)))
+
+
+(defk row-filter [table key-fields scoped where-json where-any-json]
+  {:pre [(: table str) (: key-fields tuple) (: scoped frozenset) (: where-json dict) (: where-any-json dict)] :post [(: % RowFilter)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の絞り(where と where-any)を、行の読みの文の条件(RowFilter)にするため(list-rows-statement と top-rows-statement が同じ
+   条件を使う)。where-json = 欄 → 値の JSON の綴り・where-any-json = 欄 → 値の JSON の綴りの空でない tuple(欄の名は宣言を通った英数字)・
+   scoped = 表の欄の式の索引が在る表 table の欄の名の集合(索引の用意の観測 — pg.IndexBook)。両方が空の写像なら条件は無い(文は前と同じ
+   字面)。"
+  (var clauses #())
   (var params #())
-  (for [#(i #(name encoded)) (enumerate (sorted (.items where-any-json)))]
-    (<- spellings (key-spellings key-fields name encoded))
-    (if (is spellings None)
-        (<- condition (field-in-condition "payload" name (.format "a{}_" i) encoded))
-        (do (<- members (in-list (.format "a{}_" i) spellings))
-            (setv condition (Clause :text (.format "key IN ({})" members.text) :params members.params))))
-    (:= text (+ text " AND " condition.text))
-    (:= params (+ params condition.params)))
-  (Clause :text text :params params))
+  (var every-scoped True)
+  (for [#(i #(name encoded)) (enumerate (sorted (.items where-json)))]
+    (<- condition (where-condition table key-fields scoped i name encoded))
+    (<- scoped-here (scoped-condition? key-fields scoped name #(encoded)))
+    (:= clauses (+ clauses #(condition.text)))
+    (:= params (+ params condition.params))
+    (:= every-scoped (and every-scoped scoped-here)))
+  (for [#(i #(name members)) (enumerate (sorted (.items where-any-json)))]
+    (<- any-of (any-of-condition table key-fields scoped i name members))
+    (<- any-scoped (scoped-condition? key-fields scoped name members))
+    (:= clauses (+ clauses #(any-of.text)))
+    (:= params (+ params any-of.params))
+    (:= every-scoped (and every-scoped any-scoped)))
+  (RowFilter :clauses clauses :params params :ledger-free (and (> (len clauses) 0) every-scoped)))
 
 
 (defk unexpired-rows-filter [alias expiries]
@@ -635,69 +732,72 @@
              :params (! (params-of #(#("ledger" table) #("key" key))))))
 
 
-(defk list-rows-statement [prefix table key-fields after-key where-json where-any-json limit expiry]
-  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: after-key (| str None)) (: where-json dict) (: where-any-json dict) (: limit int)
-         (: expiry (| RowExpiry None))]
+(defk list-rows-statement [prefix table key-fields scoped after-key where-json where-any-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: after-key (| str None)) (: where-json dict)
+         (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "鍵の綴りの順(COLLATE \"C\" = 符号点の順・鍵の綴りは ASCII だけ)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため。
    where-json = 欄 → 値の JSON の綴り(欄の名は宣言を通った英数字)。where-any-json = 欄 → 値の組の JSON の綴りの tuple(ListRows の
-   where-any — 条件は any-of-filter・空の写像は文を変えない)。expiry = 表の保持の期限の境(None = 期限の無い表)— 期限を過ぎた
-   終端の行は、回収の前でも頁に出さない(頁の上限の前に除く — 頁の続きの位置がずれない・#3561)。"
-  (var clauses ["ledger = :ledger"])
-  (var pairs [#("ledger" table)])
-  (when (is-not after-key None)
-    (.append clauses "key COLLATE \"C\" > :after")
-    (.append pairs #("after" after-key)))
-  (var wheres #())
-  (for [#(i #(name encoded)) (enumerate (sorted (.items where-json)))]
-    (<- condition (where-condition key-fields i name encoded))
-    (.append clauses condition.text)
-    (:= wheres (+ wheres condition.params)))
-  (.append pairs #("limit" (+ limit 1)))
-  (<- any-of (any-of-filter key-fields where-any-json))
+   where-any)。条件は row-filter(scoped = 表の欄の式の索引が在る欄の名の集合 — 在る欄は表の欄の式で照らし、絞りが全部そうなら
+   ledger = :ledger を置かない・頭の註)。expiry = 表の保持の期限の境(None = 期限の無い表)— 期限を過ぎた終端の行は、回収の前でも頁に
+   出さない(頁の上限の前に除く — 頁の続きの位置がずれない・#3561)。"
+  (<- filter (row-filter table key-fields scoped where-json where-any-json))
+  (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
+  (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
+  (val after-clauses (if (is after-key None) #() #("key COLLATE \"C\" > :after")))
+  (val after-pairs (if (is after-key None) #() #(#("after" after-key))))
+  (val clauses (+ ledger-clauses after-clauses filter.clauses))
+  (val pairs (+ ledger-pairs after-pairs #(#("limit" (+ limit 1)))))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
-  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{a}{u} ORDER BY key COLLATE \"C\" LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses) :a any-of.text :u unexpired.text)
-             :params (+ (! (params-of (tuple pairs))) wheres any-of.params unexpired.params)))
+  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u} ORDER BY key COLLATE \"C\" LIMIT :limit"
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text)
+             :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
-(defk top-rows-statement [prefix table key-fields descending-by where-json where-any-json limit expiry]
-  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by) (: where-json dict)
-         (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
+(defk top-rows-statement [prefix table key-fields scoped descending-by where-json where-any-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by)
+         (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "上から読む ListRows(descending-by — effects.hy の ListRows の註)の 1 頁を読む文を作るため: 欄 descending-by の値が JSON の整数の行
    (memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、(値, 鍵の綴り) の大きい順に limit 件。続きを
-   返さないので 1 行多く読まない。where・where-any と保持の期限の条件は list-rows-statement と同じ。"
-  (var conditions #())
-  (for [#(i #(name encoded)) (enumerate (sorted (.items where-json)))]
-    (<- condition (where-condition key-fields i name encoded))
-    (:= conditions (+ conditions #(condition))))
+   返さないので 1 行多く読まない。where・where-any(row-filter・scoped)と保持の期限の条件は list-rows-statement と同じ。並べる欄の
+   条件は行ごとに照らす(索引の欄でなくてよい — 表の行に限る条件は絞りが持つ)。"
+  (<- filter (row-filter table key-fields scoped where-json where-any-json))
+  (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
+  (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
   (<- ordered (field-expression "payload" descending-by))
-  (val clauses (+ #("ledger = :ledger")
-                  (tuple (gfor condition conditions condition.text))
+  (val clauses (+ ledger-clauses
+                  filter.clauses
                   #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered))))
-  (val pairs #(#("ledger" table) #("limit" limit)))
-  (<- any-of (any-of-filter key-fields where-any-json))
+  (val pairs (+ ledger-pairs #(#("limit" limit))))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
-  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{a}{u}
+  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
                        ORDER BY ({o})::text::numeric DESC, key COLLATE \"C\" DESC LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses) :a any-of.text :u unexpired.text :o ordered)
-             :params (+ (! (params-of pairs)) (sum (gfor condition conditions condition.params) #()) any-of.params unexpired.params)))
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered)
+             :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
-(defk terminal-rows-statement [prefix table state-field terminal]
-  {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0)] :post [(: % Statement)]
+(defk terminal-rows-statement [prefix table state-field terminal scoped]
+  {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0) (: scoped bool)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "終端の状態の行(保持の期限の候補 — 期限の判断は admission.row-expired?)を読む文を作るため(terminal が空なら呼ばない)。状態の欄の条件は
-   (ledger, 状態の欄の式) の索引に当たる形(terminal-state-condition — 索引は宣言した索引の欄か added-index-statements が作る)で、表の
-   終端でない行を読まない(#3614)。"
-  (<- states (terminal-state-condition "payload" state-field "t" terminal))
-  (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
+   索引に当たる形で、表の終端でない行を読まない(#3614): scoped = 表の状態の欄の表の欄の式の索引が在る(索引は宣言した索引の欄か
+   added-indexes が作る)なら表の欄の式の IN だけ・無ければ前の形(ledger = :ledger と欄の式の IN — 旧い形の索引か前の部分索引が引く)。"
+  (<- words (terminal-words terminal))
+  (if scoped
+      (do (<- expression (table-field-expression "" table state-field))
+          (<- states (field-in-condition expression "t" words))
+          (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
+                       WHERE {s} ORDER BY key COLLATE \"C\""
+                                    :p prefix :s states.text)
+                     :params states.params))
+      (do (<- states (terminal-state-condition "payload" state-field "t" terminal))
+          (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
                        WHERE ledger = :ledger AND {s} ORDER BY key COLLATE \"C\""
-                            :p prefix :s states.text)
-             :params (+ (! (params-of #(#("ledger" table)))) states.params)))
+                                    :p prefix :s states.text)
+                     :params (+ (! (params-of #(#("ledger" table)))) states.params)))))
 
 
 (defk upsert-row-statement [prefix table key payload version at writer origin-host epoch]
