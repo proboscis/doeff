@@ -2,4 +2,4 @@
 from doeff import state  # expect-error
 from doeff import no_such_name  # expect-error
 
-__all__ = ["no_such_name", "state"]
+__all__ = ["no_such_name", "state"]  # noqa: DOEFF021 — 型の見本の file が __all__ の誤りを意図して持つ

@@ -6,5 +6,5 @@ from doeff_core_effects.python_bytecode import compiled_pyc
 from doeff_core_effects.sql_transaction import transaction_scope  # gap-6 want-clean[pyright] (strict で型が一部分からない)
 from doeff_core_effects.sql_transaction import Transaction  # expect-error (無い名)
 
-__all__ = ["PathStat", "Transaction", "compiled_pyc", "offloaded", "pooled_postgres_sql_handler",
+__all__ = ["PathStat", "Transaction", "compiled_pyc", "offloaded", "pooled_postgres_sql_handler",  # noqa: DOEFF021 — 型の見本の file が __all__ を意図して持つ
            "transaction_scope"]

@@ -325,10 +325,10 @@ class _Recorder(Generic[_T]):
         self.seen: tuple[_T, ...] = ()
 
     def __call__(self, item: _T) -> None:
-        self.seen = (*self.seen, item)
+        self.seen = (*self.seen, item)  # noqa: DOEFF002 — 検の補助が受けた項目を貯める欄
 
 
-def _traced(program: object, implementation: str) -> tuple[object, tuple[dict[str, object], ...]]:
+def _traced(program: object, implementation: str) -> tuple[object, tuple[dict[str, object], ...]]:  # noqa: DOEFF006 — 検の補助の戻り
     """Run ``program`` under one version with a sink installed, with Get / Put answered outside the scheduler, and
     answer its result and events."""
     recorded: _Recorder[dict[str, object]] = _Recorder()
