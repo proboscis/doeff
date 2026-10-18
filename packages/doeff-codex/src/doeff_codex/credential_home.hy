@@ -11,12 +11,26 @@
 ;;;       auth.json                        借りた資格の中身(権限 0600 — 作る時から。書き終わるまで他から読めない)
 ;;;       config.toml → <元>/config.toml     元に在る時だけ
 ;;;       sessions    → <元>/sessions        会話の記録の置き場(元に無ければ作る)
-;;;   codex が家の中に作る物(状態の sqlite・log・tmp)は、家と一緒に消える。
+;;;   codex が家の中に作る物(log・tmp)は、家と一緒に消える。
+;;;
+;;; 状態の DB(state_5.sqlite ほか codex の sqlite — thread の一覧と rollout の置き場の索引)は家の外の元の CODEX_HOME に 1 つ持つ
+;;; (起こす env の CODEX_SQLITE_HOME = 元 — 家を作らない process と同じ置き場)。空の DB の codex は起動の時に sessions の全部を読んで
+;;; DB を埋める(state db backfill)ので、DB を家に置くと、起動のたびに記録の全部を読み直し、記録が育つと起動の待ちの上限を越える
+;;; (card ki-f316f508a6a5 — 10-19 に 5.0 GB を起動ごとに読み、Codex の会話の turn が起動できなくなった)。本物の codex 0.162.1 で
+;;; 確かめた事(2026-10-19):
+;;;   - DB が埋まっていれば、別の家から起こしても backfill をしない(6 本を同時に起こして、どれも約 2 秒で thread を開いた)。
+;;;   - codex は DB の行に rollout の path を、家を通る形(<家>/sessions/…)で書く。家を消すとその path は無くなり、別の家からの
+;;;     thread/resume が「no rollout found for thread id」で断られる。そこで家を開く時に、家を通る path を元の sessions の path へ
+;;;     書き直す(同じ file)。行が無い thread は、codex が sessions の file を名で探して行を作り直す(元の path で書く)。
+;;;   - DB が無い時に 3 本を同時に起こすと、1 本が「failed to initialize sqlite state runtime」で降りた。そこで DB が無い間は、
+;;;     DB を作る起動を lock で 1 本ずつにする(state-db-claim — 在れば lock を取らない)。
 ;;; 手本 = 預かり所の deploy/custody/codex-home.sh(借りた auth.json を 0600 で置き、終わったら消す)。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "codex" :role "process"})
+(import fcntl)
 (import os)
 (import shutil)
+(import sqlite3)
 (import uuid)
 (import pathlib [Path])
 
@@ -24,14 +38,24 @@
 (val AUTH-FILE "auth.json")
 (val LINKED-FILES #("config.toml"))
 (val SESSIONS-DIR "sessions")
+;; codex が状態の DB の置き場を読む env(codex 0.162.1 — 無ければ CODEX_HOME)と、その置き場の thread の索引の DB の名(版を上げて
+;; 名が替わったら、ここを替えて録り直す)。
+(val SQLITE-HOME-ENV "CODEX_SQLITE_HOME")
+(val STATE-DB "state_5.sqlite")
+;; DB が無い間、DB を作る起動を 1 本ずつにする lock の file(元の CODEX_HOME の直下 — 状態の DB の隣)。
+(val STATE-DB-LOCK ".state-db.lock")
+;; 書き直しが、起動中の codex の書き込みと重なった時に待つ上限(秒)。
+(val STATE-DB-BUSY-SECONDS 30.0)
 
 
 (defk open-credential-home [#^ str base #^ str auth-json]
   {:pre [(: base str) (: auth-json str)] :post [(: % str)] :tags {:context "codex" :role "process"}}
-  "借りた資格の家を元の CODEX_HOME(base)の下に作り、その path を返すため(頭の註の形)。auth.json は作る時から権限 0600 で書く。"
+  "借りた資格の家を元の CODEX_HOME(base)の下に作り、その path を返すため(頭の註の形)。auth.json は作る時から権限 0600 で書く。
+   作る前に、状態の DB の家を通る rollout の path を元の sessions の path へ書き直す(repoint-state-db)。"
   (val root (Path base))
   (val homes (/ root CREDENTIAL-HOMES-DIR))
   (.mkdir homes :mode 0o700 :parents True :exist-ok True)
+  (<- (repoint-state-db base))
   (val home (/ homes (. (uuid.uuid4) hex)))
   (.mkdir home :mode 0o700)
   (val descriptor (os.open (/ home AUTH-FILE) (| os.O-WRONLY os.O-CREAT os.O-EXCL) 0o600))
@@ -42,6 +66,64 @@
   (.mkdir (/ root SESSIONS-DIR) :parents True :exist-ok True)
   (.symlink-to (/ home SESSIONS-DIR) (/ root SESSIONS-DIR) :target-is-directory True)
   (str home))
+
+
+(defk credential-env [#^ dict env #^ str base #^ str home]
+  {:pre [(: env dict) (: base str) (: home str)] :post [(: % dict)] :tags {:context "codex" :role "process"}}
+  "資格の家で起こす process の env を作るため: CODEX_HOME を家へ、状態の DB の置き場(CODEX_SQLITE_HOME)を元の CODEX_HOME へ向ける。"
+  (| (dict env) {"CODEX_HOME" home SQLITE-HOME-ENV base}))
+
+
+(defk repoint-state-db [#^ str base]
+  {:pre [(: base str)] :post [(: % int)] :tags {:context "codex" :role "process"}}
+  "元の CODEX_HOME(base)の状態の DB の、資格の家を通る rollout の path(<base>/.credential-homes/<家>/sessions/…)を、元の
+   sessions の path(<base>/sessions/…)へ書き直すため(頭の註 — 消えた家の path で thread/resume が断られない)。起動中の codex の
+   家を通る path を書き直しても同じ file を指す。DB が無ければ何もしない。答え = 書き直した行の数。"
+  (val db (/ (Path base) STATE-DB))
+  (when (not (.exists db))
+    (return 0))
+  (val prefix (+ (str (/ (Path base) CREDENTIAL-HOMES-DIR)) "/"))
+  (val connection (sqlite3.connect (str db) :timeout STATE-DB-BUSY-SECONDS))
+  (try
+    (with [connection]
+      (val rows (.fetchall (.execute connection "SELECT id, rollout_path FROM threads WHERE substr(rollout_path, 1, ?) = ?"
+                                     #((len prefix) prefix))))
+      ;; <家>/sessions/… の家の名を外した残り(sessions/…)を元の CODEX_HOME の下へ。
+      (val moved (lfor [thread-id path] rows
+                       #((str (/ (Path base) (get (.split (cut path (len prefix) None) "/" 1) 1))) thread-id)))
+      (.executemany connection "UPDATE threads SET rollout_path = ? WHERE id = ?" moved)
+      (len moved))
+    (finally
+      (.close connection))))
+
+
+(defk state-db-claim [#^ str base #^ bool block]
+  {:pre [(: base str) (: block bool)] :post [(: % (| int bool))] :tags {:context "codex" :role "process"}}
+  "状態の DB がまだ無い時、DB を作る起動の lock を取るため(頭の註 — DB が無い時に同時に起こすと 1 本が降りる)。block = 取れるまで
+   待つか(待つのは handler の待ちの thread だけ)。答え = DB が在る(lock は要らない)なら True・lock を取れたらその file descriptor
+   (起動の初期化が済んだら state-db-release で返す)・待たずに取れなければ False。lock を取った後に DB が在れば、lock を返して True。"
+  (val root (Path base))
+  (when (.exists (/ root STATE-DB))
+    (return True))
+  (val descriptor (os.open (/ root STATE-DB-LOCK) (| os.O-RDWR os.O-CREAT) 0o600))
+  (try
+    (fcntl.flock descriptor (if block fcntl.LOCK-EX (| fcntl.LOCK-EX fcntl.LOCK-NB)))
+    (except [BlockingIOError]
+      (os.close descriptor)
+      (return False)))
+  (when (.exists (/ root STATE-DB))
+    (<- (state-db-release descriptor))
+    (return True))
+  descriptor)
+
+
+(defk state-db-release [claim]
+  {:pre [(: claim (| int bool None))] :post [(: % None)] :tags {:context "codex" :role "process"}}
+  "state-db-claim で取った lock を返すため(lock を取っていない答え True・False・None なら何もしない)。"
+  (when (and (isinstance claim int) (not (isinstance claim bool)))
+    (fcntl.flock claim fcntl.LOCK-UN)
+    (os.close claim))
+  None)
 
 
 (defk close-credential-home [home]
