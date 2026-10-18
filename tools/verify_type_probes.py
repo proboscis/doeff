@@ -427,10 +427,12 @@ def check_python(
     place = work / f"py{python_request.replace('+', '-')}"
     place.mkdir(parents=True)
     print(f"\n== Python {python_request}: 新しい venv に doeff を extra 無しで入れる", flush=True)
-    installed = verify_core_install.install(python_request, place)
+    # 型の道具にかけるのは、この checkout から組んだ核(出す前の確かめ — CI は main と pull request の木を見る)。
+    source = verify_core_install.Checkout()
+    installed = verify_core_install.install(python_request, place, source)
     build_kind = "free-threading" if installed.free_threaded else "GIL"
     print(f"  interpreter {installed.version}({build_kind})・{installed.python}", flush=True)
-    problems = verify_core_install.install_problems(installed)
+    problems = verify_core_install.install_problems(installed, source)
     verify_core_install.print_result(
         "入った物がちょうど核の 4 個で、doeff の 3 個はこの checkout から組んだ wheel",
         "\n".join(problems) or None,

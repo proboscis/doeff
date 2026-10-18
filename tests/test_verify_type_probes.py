@@ -236,3 +236,35 @@ def test_ci_runs_the_tool_on_both_ends_of_requires_python() -> None:
     assert any(
         "tools/verify_type_probes.py --python ${{ matrix.python }}" in run for run in runs
     ), runs
+
+
+class _StoppedAfterInstallError(Exception):
+    """install と install_problems の呼びを見た後で、check_python を止める合図。"""
+
+
+def test_the_tool_installs_the_checkout_through_the_core_install_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """道具が verify_core_install の install・install_problems を今の引数で呼ぶ事。
+
+    81aa4fd9d が両方に引数 source(この checkout か PyPI か)を足した後も、道具は古い 2 引数で呼んでいた。どの版でも venv を
+    作る前に TypeError で落ち、CI の workflow Type probes は probe を 1 つも見ずに赤だった。ここでは本物の install を偽に替え、
+    道具がこの checkout(Checkout)を渡す事を確かめる。"""
+    core = sys.modules["verify_core_install"]
+    seen: list[tuple[str, object]] = []
+    installed = core.Installed(Path("python"), "3.12.0", False, (), ())
+
+    def fake_install(python_request: str, place: Path, source: object) -> object:
+        seen.append(("install", source))
+        return installed
+
+    def fake_install_problems(given: object, source: object) -> list[str]:
+        assert given is installed
+        seen.append(("install_problems", source))
+        raise _StoppedAfterInstallError
+
+    monkeypatch.setattr(core, "install", fake_install)
+    monkeypatch.setattr(core, "install_problems", fake_install_problems)
+    with pytest.raises(_StoppedAfterInstallError):
+        tool.check_python("3.12", tmp_path, tool.Versions("1.1.411", "2.4.0"), 1.0)
+    assert seen == [("install", core.Checkout()), ("install_problems", core.Checkout())]
