@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1400" viewBox="0 0 1000 1400" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <!-- Zennの本の表紙。visuals/render_svg.mjsで幅1000・高さ1400のcover.pngにする(幅:高さ=1:1.4)。 -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="1400" fill="#ffffff"/>
+  <rect x="0" y="0" width="1000" height="18" fill="#0f766e"/>
+
+  <!-- 題 -->
+  <text x="80" y="150" font-size="34" fill="#0f766e" font-weight="bold">Python × doeff</text>
+  <g font-size="70" font-weight="bold" fill="#111827">
+    <text x="80" y="270">処理を書き換えずに</text>
+    <text x="80" y="370">テストと本番の</text>
+    <text x="80" y="470">動かし方を替える</text>
+  </g>
+  <text x="80" y="550" font-size="34" fill="#4b5563">10の悩みで読む、エフェクトとハンドラ</text>
+
+  <!-- 処理本体 -->
+  <rect x="200" y="640" width="600" height="220" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="228" y="684" font-size="26" fill="#4b5563">処理（1つだけ書く）</text>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="32" fill="#111827">
+    <text x="250" y="738">@do</text>
+    <text x="250" y="782">def job():</text>
+    <text x="250" y="826"><tspan xml:space="preserve">    yield </tspan><tspan fill="#0f766e" font-weight="bold">Delay(20)</tspan></text>
+  </g>
+
+  <!-- 2つのハンドラ -->
+  <line x1="420" y1="862" x2="290" y2="972" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="580" y1="862" x2="710" y2="972" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="80" y="980" width="400" height="170" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="280" y="1040" text-anchor="middle" font-size="32" font-weight="bold" fill="#0f766e">テストのハンドラ</text>
+  <text x="280" y="1092" text-anchor="middle" font-size="28" fill="#111827">仮想の時計で</text>
+  <text x="280" y="1130" text-anchor="middle" font-size="28" fill="#111827">すぐ終わる</text>
+  <rect x="520" y="980" width="400" height="170" rx="16" fill="#eff6ff" stroke="#2a78d6" stroke-width="3"/>
+  <text x="720" y="1040" text-anchor="middle" font-size="32" font-weight="bold" fill="#2a78d6">本番のハンドラ</text>
+  <text x="720" y="1092" text-anchor="middle" font-size="28" fill="#111827">実時間で</text>
+  <text x="720" y="1130" text-anchor="middle" font-size="28" fill="#111827">20秒待つ</text>
+
+  <!-- 下の帯 -->
+  <line x1="80" y1="1250" x2="920" y2="1250" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="80" y="1310" font-size="30" fill="#4b5563">依存・時計・通信・AIエージェント・バックテスト</text>
+</svg>

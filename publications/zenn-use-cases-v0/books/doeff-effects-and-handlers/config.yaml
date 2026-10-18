@@ -1,0 +1,19 @@
+# Zennの本の設定。export_zenn_book.pyがそのまま写す。値はJSONと同じ書き方にする。
+# 無料の本(price: 0)にし、公開の操作はユーザーがする(published: falseのまま置く)。
+# chaptersの並びが章立てで、名ごとに章の雛形<名>.mdがある。
+title: "doeffで、処理を書き換えずにテストと本番の動かし方を替える"
+summary: "Pythonのライブラリdoeffで、処理の中の「待つ」「読む」「呼ぶ」を外側のハンドラへ出し、テストと本番で動かし方を替える本です。依存の受け渡し・仮想の時計・通信しないテスト・AIエージェントを起動しないテスト・バックテストを、1章ずつ扱います。後半の3章は、doeffを使ってAIと開発した記録です。各章のコードは、PyPIのdoeff 0.6.0で動くことを確かめました。"
+topics: ["python", "doeff", "テスト", "設計", "ai"]
+published: false
+price: 0
+chapters:
+  - introduction
+  - dependency-injection
+  - virtual-time
+  - offline-api-tests
+  - ai-agents
+  - backtest-design
+  - yield-vs-async-await
+  - fifty-ai-conversations
+  - ai-rule-hooks
+  - executable-adr

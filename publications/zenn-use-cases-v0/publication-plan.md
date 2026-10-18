@@ -146,6 +146,30 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 - 候補2:[Claude Codeに仕事を配らせるのをやめ、関数で配る](doeff-dispatch.md)。Zennのslugの案は`doeff-dispatch-by-function`。5本目と材料が重なり、その続きに置ける。2026-10-18に下書きした([確かめの記録](reviews/dispatch.md))。
 - 候補7:[公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md)。Zennのslugの案は`doeff-public-api-types`。候補6の4つの網のうち、型の網を詳しく書く回。2026-10-18に下書きした([確かめの記録](reviews/types.md)・[決定記録](../../docs/design/decisions/2026-10-18-zenn-candidate-types.md))。
 
+## 1冊の本にまとめる下書き
+
+連載10本を、1冊の無料のZennの本にまとめる下書きを持つ(候補14・2026-10-18)。本を出すかと出す時期は、連載の始め方を決めた後に決める。記事のbranch `zenn-content`には置かず、公開もしない。
+
+| 項目 | 中身 |
+| --- | --- |
+| 本の正本 | `books/doeff-effects-and-handlers/`。Zennの本と同じ形で、`config.yaml`(章立て)・章の雛形10個・`rewrites.json`・表紙を置く |
+| 題 | doeffで、処理を書き換えずにテストと本番の動かし方を替える |
+| 値段と公開 | `price: 0`(無料)・`published: false`。`export_zenn_book.py`は、どちらかが違うと止まる |
+| 章の本文 | 書き出すたびに原稿から作る。本のために原稿を写して直さない |
+| 章のつなぎ | 章の雛形の、印の行「`<!-- 原稿の本文 -->`」の前と後に書く。前後の章は`[章](doeff-<slug>.md)`のリンクで書き、書き出しが「第N章」に直す |
+| 連載の言葉 | 「3本目の」「前の回:」「この記事」などを、決まった規則と`rewrites.json`で直す。直す前の文が原稿から消えると止まる |
+| 章の順 | 1 doeffとは・2 DI・3 時間・4 通信・5 AIエージェント・6 バックテスト・7 yieldとasync・8 AIの会話を50並べる・9 hook・10 ADR |
+
+章の順は、連載の順(案M)と違い、差し替える物が1つずつ増える順にした。訳は[決定記録](../../docs/design/decisions/2026-10-18-zenn-book-draft.md)にある。書き出しと確かめは、記事と同じ道具で行う。`check.mjs`と`screenshot.mjs`は、出力先に`books/`があれば本も読む。
+
+```bash
+uv run --no-sync python publications/zenn-use-cases-v0/export_zenn_book.py <出力先>  # 本の正本と原稿から、books/<本のslug>/とimages/を書き出す。
+node publications/zenn-use-cases-v0/zenn-check/check.mjs <出力先> --online  # 本はvalidateBook、章はvalidateBookChapterで読み、崩れを数える。
+agora-browser node publications/zenn-use-cases-v0/zenn-check/screenshot.mjs <出力先> <写しの置き場>  # 本と章の画面を写し、画面の崩れを数える。
+```
+
+`verify_publication.py`も、本の正本が今の原稿から崩れずに書き出せることを照らす。原稿を直して本の書き出しが止まったら、`rewrites.json`の直す前の文を、直した原稿の文に合わせる。
+
 ## 準備状況
 
 - [x] 7日間の題材と順序を合意した(2026-09-16)。
@@ -158,6 +182,7 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 - [ ] 各回の図を揃える。`images/zenn-use-cases-v0/generated/`のPNG 47枚はリポジトリに入っておらず、週1の3枚、週3と週4の各2枚を作り直した(2026-10-16)。
 - [x] Zennの形への書き出しと確かめの道具を作った。最初の4本を書き出し、崩れ0個を確かめた(2026-10-16・zenn-cli 0.5.6)。連載10本を書き出し、`check.mjs`と`screenshot.mjs`で崩れ0個を確かめた。10本の図22枚はリポジトリにある(2026-10-17)。
 - [x] 記事を置く場所を、このリポジトリの記事だけのbranch `zenn-content`に決め、10本を`published: false`で置いた(2026-10-18・[決定記録](../../docs/design/decisions/2026-09-15-zenn-use-cases.md))。
+- [x] 連載10本を1冊の無料のZennの本にまとめる下書きを作り、Zennの本の形で崩れ0個を確かめた(2026-10-18・[決定記録](../../docs/design/decisions/2026-10-18-zenn-book-draft.md))。本は公開しておらず、`zenn-content`にも置いていない。
 - [ ] ZennのダッシュボードでこのリポジトリとZennを連携し、同期するbranchを`zenn-content`にする(ユーザーの操作)。その後に`push_zenn_branch.py --resync`を1度走らせる。
 - [x] 最初の4本を上の仕上げ基準で最終確認する。週1は2026-10-16に確認した。1〜5本目を通し読みで照らし、用語・前後の回・導入の案内を直した(2026-10-17・[記録](reviews/readthrough-1-5.md))。
 - [ ] 開始日を決める。

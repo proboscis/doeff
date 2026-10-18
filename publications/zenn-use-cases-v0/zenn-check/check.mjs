@@ -1,19 +1,21 @@
-// 書き出したZennの記事の組(articles/とimages/)を、zenn-cliのプレビューとzenn-modelの検査で読み、崩れを数える。
+// 書き出したZennの記事と本の組(articles/・books/とimages/)を、zenn-cliのプレビューとzenn-modelの検査で読み、崩れを数える。
 //
-// 使い方(書き出し先はexport_zenn.pyの出力先):
+// 使い方(書き出し先はexport_zenn.pyとexport_zenn_book.pyの出力先。articles/とbooks/の在る方を読む):
 //   npm ci --prefix publications/zenn-use-cases-v0/zenn-check
 //   node publications/zenn-use-cases-v0/zenn-check/check.mjs <書き出し先> [--online]
 //
 // 数える崩れ(1つでもあれば終了コード1):
 // - front matterと本文の誤り: プレビューのサーバーが返す記事を、プレビュー画面と同じzenn-modelの
 //   validateArticleで検査する(slug・title・emoji・type・topics・published・本文のエラー)。
+//   本はvalidateBook(title・summary・topics・published・price・表紙・chapters)、章はvalidateBookChapterで検査し、
+//   config.yamlのchaptersの並びとプレビューに出る章の並びを比べる。
 // - 画像の欠け: Markdownの画像の数とimgの数を比べ、/images/...をプレビューのサーバーから読む。
 // - リンク切れ: 記事内の#…は本文のidを探す。公開先から開けないパス(相対パスと/…)は切れと数える。
 //   --onlineの時は外のURLを開いて状態を確かめ、GitHubのURLの#…は見出しのidを探す。
 // - Markdownの崩れ: コードの外に「](」「![」「:::」「**」「`」が文字のまま残っていないか。
 //   「**」は、日本語の括弧に接した太字(例 **「語」**です)をZennが太字にしない時に残る。
-// - 秘密の形: zenn-cliが使うsecretlintの推奨の規則で、記事のMarkdownを読む。
-import { readdirSync, readFileSync } from "node:fs";
+// - 秘密の形: zenn-cliが使うsecretlintの推奨の規則で、記事・章のMarkdownと本のconfig.yamlを読む。
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createEngine } from "@secretlint/node";
 import { load } from "cheerio";
@@ -43,12 +45,15 @@ async function externalProblem(href, pages) {
   return null;
 }
 
-/** 記事1本を読み、崩れを種類ごとに数える。 */
-async function checkArticle(origin, root, slug, options) {
-  const { article } = await getJson(`${origin}/api/articles/${encodeURIComponent(slug)}`);
-  const markdown = readFileSync(path.join(root, "articles", `${slug}.md`), "utf8");
-  const errors = zennModel.validateArticle(article).map((error) => `${error.type}: ${error.message}`);
-  const $ = load(article.bodyHtml);
+/** 秘密の形を探し、見つかればsecretlintの出力を1つの並びで返す。 */
+async function secretProblems(content, filePath, options) {
+  const secrets = await options.secretlint.executeOnContent({ content, filePath });
+  return secrets.ok ? [] : [secrets.output];
+}
+
+/** 記事か章の本文(プレビューのHTMLと元のMarkdown)を読み、画像・リンク・Markdownの崩れ・秘密の形を数える。 */
+async function checkBody(origin, bodyHtml, markdown, filePath, options) {
+  const $ = load(bodyHtml);
 
   const sources = $("img").map((_, element) => $(element).attr("src")).get();
   const expectedImages = (markdown.match(markdownImage) ?? []).length;
@@ -80,20 +85,88 @@ async function checkArticle(origin, root, slug, options) {
 
   $("pre, code").remove();
   const leftovers = ["](", "![", ":::", "**", "`"].filter((mark) => $.root().text().includes(mark));
-  const secrets = await options.secretlint.executeOnContent({ content: markdown, filePath: `${slug}.md` });
 
   return {
-    slug,
-    title: article.title,
-    published: article.published,
-    errors,
     images: sources.length,
     imageProblems: imageProblems.filter(Boolean),
     links: hrefs.length,
     linkProblems: linkProblems.filter(Boolean),
     leftovers: leftovers.map((mark) => `「${mark}」が文字のまま残っている`),
-    secrets: secrets.ok ? [] : [secrets.output],
+    secrets: await secretProblems(markdown, filePath, options),
   };
+}
+
+/** 記事1本を読み、崩れを種類ごとに数える。 */
+async function checkArticle(origin, root, slug, options) {
+  const { article } = await getJson(`${origin}/api/articles/${encodeURIComponent(slug)}`);
+  const markdown = readFileSync(path.join(root, "articles", `${slug}.md`), "utf8");
+  const errors = zennModel.validateArticle(article).map((error) => `${error.type}: ${error.message}`);
+  return {
+    slug,
+    title: article.title,
+    published: article.published,
+    errors,
+    ...(await checkBody(origin, article.bodyHtml, markdown, `${slug}.md`, options)),
+  };
+}
+
+/** 本1冊(設定・表紙・章の並び)と、その章を全部読み、崩れを種類ごとに数える。 */
+async function checkBook(origin, root, slug, options) {
+  const directory = path.join(root, "books", slug);
+  const { book } = await getJson(`${origin}/api/books/${encodeURIComponent(slug)}`);
+  const { chapters } = await getJson(`${origin}/api/books/${encodeURIComponent(slug)}/chapters`);
+  const listed = chapters.map((chapter) => chapter.slug);
+  const specified = book.specifiedChapterSlugs ?? [];
+  const files = readdirSync(directory).filter((name) => name.endsWith(".md"));
+  const errors = [
+    ...zennModel.validateBook(book).map((error) => `${error.type}: ${error.message}`),
+    ...(listed.join("\n") === specified.join("\n")
+      ? []
+      : [`config.yamlのchapters(${specified.join(", ")})と、プレビューに出る章(${listed.join(", ")})が違う`]),
+    ...files
+      .filter((name) => !listed.includes(name.replace(/\.md$/, "")))
+      .map((name) => `プレビューに出ない章: ${name}`),
+    ...(await secretProblems(readFileSync(path.join(directory, "config.yaml"), "utf8"), "config.yaml", options)),
+  ];
+  const results = await Promise.all(
+    chapters.map(async (item) => {
+      const url = `${origin}/api/books/${encodeURIComponent(slug)}/chapters/${encodeURIComponent(item.filename)}`;
+      const { chapter } = await getJson(url);
+      const markdown = readFileSync(path.join(directory, item.filename), "utf8");
+      return {
+        slug: `${slug}/${item.slug}`,
+        title: chapter.title,
+        errors: zennModel.validateBookChapter(chapter).map((error) => `${error.type}: ${error.message}`),
+        ...(await checkBody(origin, chapter.bodyHtml, markdown, item.filename, options)),
+      };
+    }),
+  );
+  return { slug, title: book.title, published: book.published, price: book.price, errors, chapters: results };
+}
+
+/** 記事か章1つの結果を表示し、崩れの数を返す。 */
+function report(result, options, head) {
+  const problems = [
+    ...result.errors,
+    ...result.imageProblems,
+    ...result.linkProblems,
+    ...result.leftovers,
+    ...result.secrets,
+  ];
+  console.log(
+    `${result.slug}: ${head}検査の誤り ${result.errors.length}・` +
+      `画像 ${result.images}枚中の欠け ${result.imageProblems.length}・` +
+      `リンク ${result.links}個中の切れ ${result.linkProblems.length}` +
+      `(外のURL ${options.online ? "開いた" : "開いていない"})・` +
+      `Markdownの崩れ ${result.leftovers.length}・秘密の形 ${result.secrets.length}`,
+  );
+  for (const problem of problems) console.log(`  - ${problem}`);
+  return problems.length;
+}
+
+/** 書き出し先のディレクトリの中の名を返す(ディレクトリが無ければ空)。 */
+function entries(directory, keep) {
+  return existsSync(directory) ? readdirSync(directory, { withFileTypes: true }).filter(keep).map((item) => item.name) : [];
 }
 
 async function main() {
@@ -103,11 +176,17 @@ async function main() {
     process.exit(2);
   }
   const root = path.resolve(rootArgument);
-  const files = readdirSync(path.join(root, "articles")).filter((name) => name.endsWith(".md"));
+  const files = entries(path.join(root, "articles"), (item) => item.isFile() && item.name.endsWith(".md"));
+  const bookDirectories = entries(path.join(root, "books"), (item) => item.isDirectory());
+  if (files.length === 0 && bookDirectories.length === 0) {
+    console.error(`${root}に、articles/の記事もbooks/の本もありません`);
+    process.exit(2);
+  }
   const { child, ready } = await startPreview(root);
   try {
     const origin = await ready;
     const listed = await listSlugs(origin);
+    const listedBooks = (await getJson(`${origin}/api/books`)).books.map((book) => book.slug).sort();
     const secretlint = await createEngine({
       configFileJSON: { rules: [{ id: "@secretlint/secretlint-rule-preset-recommend" }] },
       formatter: "compact",
@@ -116,29 +195,28 @@ async function main() {
     });
     const options = { online: flags.includes("--online"), pages: new Map(), secretlint };
     const results = await Promise.all(listed.map((slug) => checkArticle(origin, root, slug, options)));
-    const missing = files.filter((name) => !listed.includes(name.replace(/\.md$/, "")));
+    const books = await Promise.all(listedBooks.map((slug) => checkBook(origin, root, slug, options)));
+    const missing = [
+      ...files.filter((name) => !listed.includes(name.replace(/\.md$/, ""))),
+      ...bookDirectories.filter((name) => !listedBooks.includes(name)).map((name) => `books/${name}`),
+    ];
 
     let total = missing.length;
-    if (missing.length) console.log(`プレビューに出ない記事: ${missing.join(", ")}`);
-    for (const result of results) {
-      const problems = [
-        ...result.errors,
-        ...result.imageProblems,
-        ...result.linkProblems,
-        ...result.leftovers,
-        ...result.secrets,
-      ];
-      total += problems.length;
+    if (missing.length) console.log(`プレビューに出ない記事と本: ${missing.join(", ")}`);
+    for (const result of results) total += report(result, options, `published ${result.published}・`);
+    for (const book of books) {
       console.log(
-        `${result.slug}: published ${result.published}・検査の誤り ${result.errors.length}・` +
-          `画像 ${result.images}枚中の欠け ${result.imageProblems.length}・` +
-          `リンク ${result.links}個中の切れ ${result.linkProblems.length}` +
-          `(外のURL ${options.online ? "開いた" : "開いていない"})・` +
-          `Markdownの崩れ ${result.leftovers.length}・秘密の形 ${result.secrets.length}`,
+        `book ${book.slug}: published ${book.published}・price ${book.price}・` +
+          `検査の誤り ${book.errors.length}・章 ${book.chapters.length}`,
       );
-      for (const problem of problems) console.log(`  - ${problem}`);
+      for (const problem of book.errors) console.log(`  - ${problem}`);
+      total += book.errors.length;
+      for (const chapter of book.chapters) total += report(chapter, options, "");
     }
-    console.log(`記事 ${results.length}本・崩れ ${total}個(zenn-cli ${zennVersion()})`);
+    const chapters = books.reduce((sum, book) => sum + book.chapters.length, 0);
+    console.log(
+      `記事 ${results.length}本・本 ${books.length}冊(章 ${chapters})・崩れ ${total}個(zenn-cli ${zennVersion()})`,
+    );
     process.exitCode = total === 0 ? 0 : 1;
   } finally {
     child.kill();
