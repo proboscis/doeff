@@ -3,6 +3,7 @@
 ;; git repo と偽の焼きの道具で、本物の答え手(subprocess-handler・os-file-handler)の下で確かめる。
 (require doeff-hy.macros [defhandler defk deftest <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import hashlib)
 (import json)
 (import os)
 (import subprocess)
@@ -14,6 +15,7 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
+(import doeff_hy_bytecode_guard.code_store [entry-path store-dir PYC-SUFFIX])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_core_effects.python_bytecode [compiled-pyc])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode])
@@ -209,9 +211,18 @@
   (assert (= view.state CodeState.READY) view.detail)
   (setv marker (json.loads (.read-text (/ cache rev2 MARKER))))
   (assert (= (get marker "pycs") 3))
-  ;; 前の版の木の .pyc を hardlink しない(版の木は互いに独立 — 同じ中身の .pyc は保存先から書く)。
-  (assert (!= (. (.stat (/ cache rev2 (cache-rel "pkg/m.py"))) st-ino)
-              (. (.stat (/ cache rev1 (cache-rel "pkg/m.py"))) st-ino))))
+  ;; 前の版の木の .pyc を hardlink しない(版の木は互いに独立 — 同じ中身の .pyc は保存先から置く)。置く先は保存先の 1 つの file
+  ;; (名 = .pyc の中身の sha256)への hardlink で、2 つの版の .pyc はその file を分け合う(ADR-DOE-BUILD-002 R6)。保存先が別の
+  ;; file system で hardlink を置けない時は中身を書くので、前の版の .pyc とは別の file になる。前は inode が違う事だけを見たので、
+  ;; 保存先と同じ file system の一時の dir(日次の回)で落ち、別の file system の手元では通った。
+  (val pyc1 (/ cache rev1 (cache-rel "pkg/m.py")))
+  (val pyc2 (/ cache rev2 (cache-rel "pkg/m.py")))
+  (val store (store-dir))
+  (val in-store (if (is store None) None (Path (entry-path store (.hexdigest (hashlib.sha256 (.read-bytes pyc2))) PYC-SUFFIX))))
+  (assert (if (and (is-not in-store None) (.is-file in-store) (os.path.samefile pyc2 in-store))
+              True
+              (not (os.path.samefile pyc1 pyc2)))
+          #("次の版の .pyc が保存先の file でなく、前の版の .pyc と同じ file" pyc2 in-store)))
 
 
 (deftest test-a-ready-tree-of-another-history-does-not-affect-the-next-revision [tmp-path]
