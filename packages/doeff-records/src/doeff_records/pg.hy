@@ -121,7 +121,7 @@
    (空 = 宣言と置き場の差が無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。書きも読みも scheduler の thread の上で、
    driver の thread は触らない。"
 
-  (defn __init__ [self]  ; defk にできない: 資源の class の初期化
+  (defn #^ None __init__ [self]  ; defk にできない: 資源の class の初期化
     "観測の前の覚え(使える索引の在る欄は無い)を作るため。"
     (setv self.fields (frozenset)
           self.missing #()))

@@ -338,8 +338,8 @@
   (<- added (added-indexes p schema))
   (var added-steps #())
   (for [index added]
-    (<- made (index-steps index))
-    (:= added-steps (+ added-steps made)))
+    (<- added-made (index-steps index))
+    (:= added-steps (+ added-steps added-made)))
   (+ tables
      indexes
      #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
