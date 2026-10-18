@@ -73,18 +73,19 @@ components are listed separately under
 ### Getting Started
 
 1. **[Getting Started](01-getting-started.md)** - Installation, first program, basic concepts
-2. **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
-3. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
-4. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
+2. **[What doeff Is](positioning/what-doeff-is.md)** - Algebraic effects: what a handler does with the continuation, what one mechanism covers, where it stops (one-shot continuations), and how to describe doeff
+3. **[FAQ](faq.md)** - Short answers to the first questions: dependency injection, asyncio, speed, types, debugging, Hy, production use
+4. **[Why Effects?](20-why-effects-over-di.md)** - Where effects beat dependency injection and plain `async`, and where they do not, in examples that run as written
+5. **[Core Concepts](02-core-concepts.md)** - Program, Effect, execution model, type system
 
 ### Effect Types
 
-5. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
-6. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
-7. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
-8. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
-9. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
-10. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
+6. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
+7. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
+8. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
+9. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
+10. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
+11. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
 ### Examples
 
@@ -93,15 +94,15 @@ components are listed separately under
 
 ### Integration & Advanced Topics
 
-11. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
-12. **[Patterns](12-patterns.md)** - Best practices and common patterns (five examples need `doeff-time`)
-13. **[API Reference](13-api-reference.md)** - Complete API documentation
+12. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
+13. **[Patterns](12-patterns.md)** - Best practices and common patterns (five examples need `doeff-time`)
+14. **[API Reference](13-api-reference.md)** - Complete API documentation
 
 ### CLI Tools
 
-14. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
-15. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
-16. **[Effect Combinations](18-effect-combinations.md)** - Composition laws and interaction guarantees across effects
+15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
+16. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
+17. **[Effect Combinations](18-effect-combinations.md)** - Composition laws and interaction guarantees across effects
 
 ### Specialized Topics
 
