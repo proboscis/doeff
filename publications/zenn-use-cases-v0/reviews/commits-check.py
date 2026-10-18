@@ -44,7 +44,7 @@ def marked_lines(code: str) -> set[int]:  # 印(expect-error)を付けた行の�
 def pyright_lines(path: Path) -> set[int]:  # pyrightの厳しい設定で、誤りの出た行の番号。
     config = path.parent / "pyrightconfig.json"  # このファイルだけに効く設定。
     config.write_text(json.dumps({"typeCheckingMode": "strict"}))  # 厳しい設定にする。
-    env = {**os.environ, "PYRIGHT_PYTHON_FORCE_VERSION": "1.1.411"}  # 版を、確かめた版に留める。
+    env = {**os.environ, "PYRIGHT_PYTHON_FORCE_VERSION": "1.1.411"}  # 版を、確かめた版に留める。  # noqa: DOEFF004 — 道具が子の process へ今の環境を引き継ぐ 1 か所
     argv = [sys.executable, "-m", "pyright", "--outputjson", "-p", str(config), str(path)]  # JSONで結果を出させる。
     result = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)  # 誤りがあると1で終わる。
     report = json.loads(result.stdout)  # 結果を読む。

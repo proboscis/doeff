@@ -133,7 +133,7 @@ def tree_of(directory: Path) -> str:
     git_dir = git("rev-parse", "--absolute-git-dir")
     with tempfile.TemporaryDirectory() as scratch:
         env = {
-            **os.environ,
+            **os.environ,  # noqa: DOEFF004 — 道具が子の git へ今の環境を引き継ぐ 1 か所
             "GIT_DIR": git_dir,
             "GIT_WORK_TREE": str(directory),
             "GIT_INDEX_FILE": str(Path(scratch) / "index"),
