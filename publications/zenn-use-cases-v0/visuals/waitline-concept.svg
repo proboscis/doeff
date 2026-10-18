@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1120" viewBox="0 0 1200 1120" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1120" fill="#ffffff"/>
+  <text x="600" y="64" text-anchor="middle" font-size="38" font-weight="bold" fill="#111827">止まった会話を、最後の1行で3つに分ける</text>
+  <text x="600" y="104" text-anchor="middle" font-size="24" fill="#6b7280">数は2026年10月18日20時14分(日本時間)の時点の、会話の待ちの申告から数えた</text>
+
+  <!-- 前: どれも同じに見える -->
+  <text x="600" y="164" text-anchor="middle" font-size="28" fill="#4b5563">1行が無いと、止まった会話はどれも「入力待ち」に見える</text>
+  <g font-size="22" text-anchor="middle" fill="#6b7280">
+    <rect x="70" y="190" width="150" height="70" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="145" y="233">入力待ち</text>
+    <rect x="250" y="190" width="150" height="70" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="325" y="233">入力待ち</text>
+    <rect x="430" y="190" width="150" height="70" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="505" y="233">入力待ち</text>
+    <rect x="610" y="190" width="150" height="70" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="685" y="233">入力待ち</text>
+    <rect x="790" y="190" width="150" height="70" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="865" y="233">入力待ち</text>
+    <rect x="970" y="190" width="150" height="70" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="1045" y="233">入力待ち</text>
+  </g>
+  <text x="600" y="306" text-anchor="middle" font-size="24" fill="#6b7280">筆者の番か、CIを待つのか、自分の作業が残るのかは、開いて読むまで分からない</text>
+
+  <!-- 1行を読む -->
+  <line x1="600" y1="326" x2="600" y2="386" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="250" y="392" width="700" height="112" rx="16" fill="#f9fafb" stroke="#374151" stroke-width="2"/>
+  <text x="600" y="436" text-anchor="middle" font-size="28" fill="#111827">ターンの最後の行を読む(Stop hookが書かせる)</text>
+  <text x="600" y="482" text-anchor="middle" font-size="30" font-weight="bold" fill="#111827" font-family="monospace">WAIT: &lt;種類&gt; — &lt;理由&gt;</text>
+  <line x1="420" y1="506" x2="220" y2="572" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="600" y1="506" x2="600" y2="572" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="780" y1="506" x2="980" y2="572" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <!-- 3つの行き先 -->
+  <rect x="40" y="580" width="360" height="300" rx="18" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="220" y="626" text-anchor="middle" font-size="30" font-weight="bold" fill="#0f766e">筆者の番</text>
+  <text x="220" y="672" text-anchor="middle" font-size="22" fill="#111827" font-family="monospace">WAIT: user:decide</text>
+  <text x="220" y="702" text-anchor="middle" font-size="22" fill="#111827" font-family="monospace">— AかBか</text>
+  <text x="220" y="752" text-anchor="middle" font-size="24" fill="#111827">筆者の番の一覧に出す</text>
+  <text x="220" y="788" text-anchor="middle" font-size="22" fill="#4b5563">種類は decide・review・discuss</text>
+  <text x="220" y="852" text-anchor="middle" font-size="40" font-weight="bold" fill="#0f766e">16個</text>
+
+  <rect x="420" y="580" width="360" height="300" rx="18" fill="#f3f4f6" stroke="#6b7280" stroke-width="3"/>
+  <text x="600" y="626" text-anchor="middle" font-size="30" font-weight="bold" fill="#374151">外を待つ</text>
+  <text x="600" y="672" text-anchor="middle" font-size="22" fill="#111827" font-family="monospace">WAIT: work</text>
+  <text x="600" y="702" text-anchor="middle" font-size="22" fill="#111827" font-family="monospace">— CIの結果</text>
+  <text x="600" y="752" text-anchor="middle" font-size="24" fill="#111827">一覧から外し、届くのを待つ</text>
+  <text x="600" y="788" text-anchor="middle" font-size="22" fill="#4b5563">相手を名で書く(CI・別の会話)</text>
+  <text x="600" y="846" text-anchor="middle" font-size="22" fill="#4b5563">届いた知らせが、次のターンを始める</text>
+
+  <rect x="800" y="580" width="360" height="300" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="980" y="626" text-anchor="middle" font-size="30" font-weight="bold" fill="#c2410c">続けてよい</text>
+  <text x="980" y="672" text-anchor="middle" font-size="22" fill="#111827" font-family="monospace">WAIT: work</text>
+  <text x="980" y="702" text-anchor="middle" font-size="22" fill="#111827" font-family="monospace">— 単位2を続ける</text>
+  <text x="980" y="752" text-anchor="middle" font-size="24" fill="#111827">外の相手が書かれていない</text>
+  <text x="980" y="788" text-anchor="middle" font-size="22" fill="#4b5563">人の代わりに「続けて」を置く</text>
+  <text x="980" y="846" text-anchor="middle" font-size="22" fill="#c2410c">その入力が、次のターンを始める</text>
+
+  <!-- workの合計 -->
+  <path d="M 430 896 L 430 912 L 1150 912 L 1150 896" fill="none" stroke="#374151" stroke-width="3"/>
+  <text x="790" y="958" text-anchor="middle" font-size="34" font-weight="bold" fill="#374151">workは合わせて504個</text>
+
+  <!-- 下の注 -->
+  <text x="600" y="1014" text-anchor="middle" font-size="26" fill="#111827">直近24時間にターンを終えた会話520個のうち、筆者を待つのは16個(3%)</text>
+  <text x="600" y="1052" text-anchor="middle" font-size="22" fill="#6b7280">10月17日20時14分〜18日20時14分(日本時間)に、最後の申告をした会話を数えた</text>
+  <text x="600" y="1086" text-anchor="middle" font-size="22" fill="#6b7280">workの504個は、外を待つ物と続けた物を分けて数えていない</text>
+</svg>

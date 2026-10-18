@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="960" viewBox="0 0 1200 960" font-family="IPAPGothic, IPAGothic, sans-serif">
+<rect width="1200" height="960" fill="#ffffff"/>
+<text x="600" y="62" text-anchor="middle" font-size="36" font-weight="bold" fill="#111827">待ちの申告2,644個を、最後に申告した日ごとに分ける</text>
+<text x="600" y="102" text-anchor="middle" font-size="22" fill="#4b5563">2026年10月18日20時14分(日本時間)の時点。会話ごとに、最後のターンの1行だけが残る</text>
+<text x="190" y="160" font-size="26" font-weight="bold" fill="#111827">work(外を待つ・続ける)  計2,508</text>
+<text x="720" y="160" font-size="26" font-weight="bold" fill="#111827">筆者を待つ  計136</text>
+<line x1="190.0" y1="236" x2="190.0" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="190.0" y="830" text-anchor="middle" font-size="20" fill="#4b5563">0</text>
+<line x1="251.7" y1="236" x2="251.7" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="251.7" y="830" text-anchor="middle" font-size="20" fill="#4b5563">100</text>
+<line x1="313.3" y1="236" x2="313.3" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="313.3" y="830" text-anchor="middle" font-size="20" fill="#4b5563">200</text>
+<line x1="375.0" y1="236" x2="375.0" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="375.0" y="830" text-anchor="middle" font-size="20" fill="#4b5563">300</text>
+<line x1="436.7" y1="236" x2="436.7" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="436.7" y="830" text-anchor="middle" font-size="20" fill="#4b5563">400</text>
+<line x1="498.3" y1="236" x2="498.3" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="498.3" y="830" text-anchor="middle" font-size="20" fill="#4b5563">500</text>
+<line x1="560.0" y1="236" x2="560.0" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="560.0" y="830" text-anchor="middle" font-size="20" fill="#4b5563">600</text>
+<line x1="720.0" y1="236" x2="720.0" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="720.0" y="830" text-anchor="middle" font-size="20" fill="#4b5563">0</text>
+<line x1="812.5" y1="236" x2="812.5" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="812.5" y="830" text-anchor="middle" font-size="20" fill="#4b5563">20</text>
+<line x1="905.0" y1="236" x2="905.0" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="905.0" y="830" text-anchor="middle" font-size="20" fill="#4b5563">40</text>
+<line x1="997.5" y1="236" x2="997.5" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="997.5" y="830" text-anchor="middle" font-size="20" fill="#4b5563">60</text>
+<line x1="1090.0" y1="236" x2="1090.0" y2="800" stroke="#e5e7eb" stroke-width="2"/>
+<text x="1090.0" y="830" text-anchor="middle" font-size="20" fill="#4b5563">80</text>
+<rect x="720" y="174" width="22" height="22" rx="4" fill="#2a78d6"/>
+<text x="750" y="192" font-size="18" fill="#111827">決めてほしい</text>
+<rect x="880" y="174" width="22" height="22" rx="4" fill="#eb6834"/>
+<text x="910" y="192" font-size="18" fill="#111827">見てほしい</text>
+<rect x="1040" y="174" width="22" height="22" rx="4" fill="#1baf7a"/>
+<text x="1070" y="192" font-size="18" fill="#111827">議論したい</text>
+<text x="174" y="272.0" text-anchor="end" font-size="22" fill="#111827">10月09日</text>
+<rect x="190" y="250" width="1.8" height="30" rx="4" fill="#9ca3af"/>
+<text x="199.8" y="272.0" font-size="20" fill="#111827">3</text>
+<rect x="720.0" y="250" width="185.0" height="30" rx="4" fill="#eb6834"/>
+<text x="913.0" y="272.0" font-size="20" fill="#111827">見てほしい 40</text>
+<text x="174" y="328.0" text-anchor="end" font-size="22" fill="#111827">10月10日</text>
+<rect x="190" y="306" width="2.5" height="30" rx="4" fill="#9ca3af"/>
+<text x="200.5" y="328.0" font-size="20" fill="#111827">4</text>
+<rect x="720.0" y="306" width="305.2" height="30" rx="4" fill="#eb6834"/>
+<text x="1033.2" y="328.0" font-size="20" fill="#111827">見てほしい 66</text>
+<text x="174" y="384.0" text-anchor="end" font-size="22" fill="#111827">10月11日</text>
+<rect x="190" y="362" width="96.2" height="30" rx="4" fill="#9ca3af"/>
+<text x="294.2" y="384.0" font-size="20" fill="#111827">156</text>
+<rect x="720.0" y="362" width="60.1" height="30" rx="4" fill="#eb6834"/>
+<text x="788.1" y="384.0" font-size="20" fill="#111827">見てほしい 13</text>
+<text x="174" y="440.0" text-anchor="end" font-size="22" fill="#111827">10月12日</text>
+<rect x="190" y="418" width="348.4" height="30" rx="4" fill="#9ca3af"/>
+<text x="546.4" y="440.0" font-size="20" fill="#111827">565</text>
+<text x="728.0" y="440.0" font-size="20" fill="#111827">0</text>
+<text x="174" y="496.0" text-anchor="end" font-size="22" fill="#111827">10月13日</text>
+<rect x="190" y="474" width="135.1" height="30" rx="4" fill="#9ca3af"/>
+<text x="333.1" y="496.0" font-size="20" fill="#111827">219</text>
+<text x="728.0" y="496.0" font-size="20" fill="#111827">0</text>
+<text x="174" y="552.0" text-anchor="end" font-size="22" fill="#111827">10月14日</text>
+<rect x="190" y="530" width="117.8" height="30" rx="4" fill="#9ca3af"/>
+<text x="315.8" y="552.0" font-size="20" fill="#111827">191</text>
+<text x="728.0" y="552.0" font-size="20" fill="#111827">0</text>
+<text x="174" y="608.0" text-anchor="end" font-size="22" fill="#111827">10月15日</text>
+<rect x="190" y="586" width="101.1" height="30" rx="4" fill="#9ca3af"/>
+<text x="299.1" y="608.0" font-size="20" fill="#111827">164</text>
+<text x="728.0" y="608.0" font-size="20" fill="#111827">0</text>
+<text x="174" y="664.0" text-anchor="end" font-size="22" fill="#111827">10月16日</text>
+<rect x="190" y="642" width="186.2" height="30" rx="4" fill="#9ca3af"/>
+<text x="384.2" y="664.0" font-size="20" fill="#111827">302</text>
+<text x="728.0" y="664.0" font-size="20" fill="#111827">0</text>
+<text x="174" y="720.0" text-anchor="end" font-size="22" fill="#111827">10月17日</text>
+<rect x="190" y="698" width="291.7" height="30" rx="4" fill="#9ca3af"/>
+<text x="489.7" y="720.0" font-size="20" fill="#111827">473</text>
+<rect x="720.0" y="698" width="4.6" height="30" rx="4" fill="#2a78d6"/>
+<text x="732.6" y="720.0" font-size="20" fill="#111827">決めてほしい 1</text>
+<text x="174" y="776.0" text-anchor="end" font-size="22" fill="#111827">10月18日</text>
+<rect x="190" y="754" width="265.8" height="30" rx="4" fill="#9ca3af"/>
+<text x="463.8" y="776.0" font-size="20" fill="#111827">431</text>
+<rect x="720.0" y="754" width="60.1" height="30" rx="4" fill="#2a78d6"/>
+<rect x="782.1" y="754" width="11.9" height="30" rx="4" fill="#1baf7a"/>
+<text x="802.0" y="776.0" font-size="20" fill="#111827">決めてほしい 13・議論したい 3</text>
+<text x="375.0" y="864" text-anchor="middle" font-size="20" fill="#4b5563">会話の数(個)</text>
+<text x="905.0" y="864" text-anchor="middle" font-size="20" fill="#4b5563">会話の数(個)・左と目盛りが違う</text>
+<text x="600" y="910" text-anchor="middle" font-size="22" fill="#111827">10月11日までの「見てほしい」119個は、1週間後も残っていた。筆者は11日にこの申告をやめた</text>
+</svg>
