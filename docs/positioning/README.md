@@ -2,6 +2,8 @@
 
 Internal documents for positioning doeff in the Python ecosystem. These are selling arguments, competitive analysis, and domain-specific pitches — not user-facing docs.
 
+The one exception is **[What doeff Is](what-doeff-is.md)**, which the docs site publishes: what doeff is (algebraic effects: a handler receives each effect with its one-shot continuation and decides what the effect means), what is only a use of it (swapping I/O is one), where it stops, and how to describe it. Every public text about doeff draws on that page. The pitches below lead with uses; when one becomes public text, its first sentence follows that page.
+
 ## The Core Narrative
 
 Wang 2025 proved LLM calls are algebraic effects. Effect-TS shipped it in TypeScript. Pydantic AI is approximating it without the theory. doeff is the principled Python implementation — backed by a Rust VM, with batteries-included handlers, and a paradigm that the research community is independently converging toward.
