@@ -167,6 +167,10 @@
     (setv log (if (is self.current-turn None) None (.get self.turns self.current-turn)))
     (if (and (is-not log None) (is log.end None)) log None))
 
+  (defn #^ bool runs [self #^ str turn-id]
+    "名指したターンが今走っているターンか(終わりの通知を読んだ・走っているターンが別のターンに替わったなら偽)。lock の中で呼ぶ。"
+    (and (is-not (.running-log self) None) (= self.current-turn turn-id)))
+
   (defn add-event [self #^ TurnLog log record]
     "記録を seq を振ってターンの出来事に積むため(seq は続きの記録が数える)。lock の中で呼ぶ。"
     (setv self.continuation.next-seq (+ self.continuation.next-seq 1))
@@ -449,6 +453,30 @@
   (RequestRefused :method method :code answer.code :message answer.message))
 
 
+;; codex 0.162.1 が turn/steer を「名指したターンは走っていない」と断る時の誤りの code(JSON-RPC の invalid request)と文の頭。codex の
+;; binary の文字列と、偽の上流でターンの終わりと steer を競わせた実測で確かめた: 「走っているターンが無い」= no active turn to steer・
+;; 「別のターンが走っている」= expected active turn id `…` but found `…`。足せない種類のターンへの断り(cannot steer a review turn・
+;; cannot steer a compact turn)と空の入力の断りは、ターンが走っているので含めない。
+(val NOT-RUNNING-CODE -32600)
+(val NOT-RUNNING-WORDS #("no active turn to steer" "expected active turn id"))
+
+
+(defk steer-refused-as-not-running [#^ SessionRuntime runtime #^ CodexTurn turn #^ lines.ErrorResponse answer]
+  {:pre [(: runtime SessionRuntime) (: turn CodexTurn) (: answer lines.ErrorResponse)] :post [(: % bool)]
+   :tags {:context "codex" :role "process"}}
+  "turn/steer への codex の断りが、名指したターンがもう走っていない事を言うかを読むため。ターンの終わりと steer の行き違いで codex が
+   断る時、断りの答えは終わりの通知(turn/completed)より先にも後にも届く(codex 0.162.1 の実測 — 終わりの通知が 5〜200 ms 遅れる
+   順も在る)ので、2 つで読む: 断りの文が「走っているターンが無い・別のターンが走っている」を名乗る(終わりの通知より先に届いた断りも
+   これで読める)か、断りを読んだ後の状態でそのターンの終わりを読んだ・走っているターンが別のターンに替わった。それ以外の断り(足せない
+   種類のターン・空の入力など)は、走っていない事にしない。"
+  (when (and (= answer.code NOT-RUNNING-CODE)
+             (any (gfor words NOT-RUNNING-WORDS (.startswith answer.message words))))
+    (return True))
+  (with [runtime.lock]
+    (val running (.runs runtime turn.turn-id)))
+  (not running))
+
+
 ;; --- 起こす・降ろす -----------------------------------------------------------------------------
 
 (defk retire [#^ SessionRuntime runtime]
@@ -672,7 +700,9 @@
 (defk steer-turn [#^ CodexHost host #^ CodexSteerTurn asked]
   {:pre [(: host CodexHost) (: asked CodexSteerTurn)] :post [(: % (| Steered NoTurnInFlight RequestRefused LaunchFailed))]
    :tags {:context "codex" :role "process"}}
-  "走っているターンに turn/steer を書き、codex が受けたかの答えを待つため(受けた入力はターンの次の区切りで読まれる)。"
+  "走っているターンに turn/steer を書き、codex が受けたかの答えを待つため(受けた入力はターンの次の区切りで読まれる)。codex が、名指した
+   ターンはもう走っていないと断れば(ターンの終わりと steer の行き違い — steer-refused-as-not-running)、断りでなく NoTurnInFlight で
+   答える(上の層は入力を次のターンへ回す)。"
   (val turn asked.turn)
   (val runtime (.runtime host turn.thread-id))
   (when (is runtime None) (return (NoTurnInFlight :turn turn)))
@@ -687,7 +717,10 @@
                       host.launch-timeout))
   (match answer
     (lines.Response) (Steered)
-    (lines.ErrorResponse) (do (<- refusal (refused "turn/steer" answer)) refusal)
+    (lines.ErrorResponse) (do (<- gone (steer-refused-as-not-running runtime turn answer))
+                              (if gone
+                                  (NoTurnInFlight :turn turn)
+                                  (do (<- refusal (refused "turn/steer" answer)) refusal)))
     _ answer))
 
 

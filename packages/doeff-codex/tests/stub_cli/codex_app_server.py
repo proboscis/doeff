@@ -26,7 +26,9 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
     warning の通知 — code mode が使えない警告を含む)を、turn/start の答えより先に書く(録った順)。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
-  途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
+  途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。STEER_REFUSALS の目印が在るターンは SLOW と
+  同じに走り、turn/steer を目印の断り方で断る(本物の codex 0.162.1 を、偽の上流でターンの終わりと steer を競わせて測った断り方 —
+  終わりの通知が断りより先に届く順も、断りが先で終わりの通知が後の順も起きた。断りの文は binary の文字列で確かめた)。
 - 引数は --disable の機能の名(SETTINGS の答え)と --resume-history-bytes の数と --ignore-exclude-turns だけを読む(app-server
   --listen stdio:// は読まない)。
   --resume-history-bytes <数> が在れば、thread/resume の答えの thread の turns(録った答えでは thread の最後の欄)に、その数の
@@ -81,6 +83,20 @@ HISTORY_PIECE_CHARS = 1_000_000
 HISTORY_MARK = "__stub-history__"
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
+# 入力の目印 → turn/steer の断り方(断りの前にターンの終わりの通知を書くか, 断りの文)。目印のターンは SLOW と同じに止めまで走り、
+# 断りの文の {expected} は steer が名指したターンの id。
+STEER_REFUSALS = {
+    # ターンの終わりの通知が先に届き、断りが後に届く順(本物の codex の実測の 1 つ目)。
+    "STEER-ENDED-FIRST": (True, "no active turn to steer"),
+    # 断りが先に届き、終わりの通知が後(5〜200 ms ほど後)に届く順(実測の 2 つ目 — 断りを読んだ時点では終わりの通知がまだ無い)。
+    "STEER-REFUSED-FIRST": (False, "no active turn to steer"),
+    # 別のターンが走っていると名乗る断り(名指したターンの id が走っているターンと食い違う)。
+    "STEER-OTHER-TURN": (False, "expected active turn id `{expected}` but found `stub-other-turn`"),
+    # codex の版で文が変わっても、終わりの通知を読んでいれば走っていないと読める断り。
+    "STEER-ENDED-UNNAMED": (True, "the turn is shutting down"),
+    # 走っているターンが足せない種類だという断り(ターンは走り続ける — 走っていない断りと読み違えない)。
+    "STEER-NOT-STEERABLE": (False, "cannot steer a review turn"),
+}
 # DB の行の rollout の path が無い thread の thread/resume を断る誤りの code(本物の codex 0.162.1 の答え — invalid request)。
 NO_ROLLOUT_CODE = -32600
 # rollout の file の名の頭(rollout-<刻 19 字>-<thread の id>.jsonl)の字数。
@@ -236,6 +252,8 @@ class Stub:
         self.stop_slow = threading.Event()
         self.mut_slow_turn = ""
         self.mut_slow_thread: threading.Thread | None = None
+        # 走っている SLOW のターンの turn/steer の断り方(STEER_REFUSALS の値 — 無ければ受ける)。
+        self.mut_steer_refusal: tuple[bool, str] | None = None
         self.mut_opened_with: dict[str, object] = {}
         # 2 つのターンにまたがる録りの、録ったターンの id → この process が振ったターンの id。
         self.mut_spanned: dict[str, str] = {}
@@ -399,11 +417,13 @@ class Stub:
             for notification in self.replayed_turn(replayed, turn_id):
                 self.write(notification)
             return
-        if "SLOW" not in said:
+        refusal = next((spec for marker, spec in STEER_REFUSALS.items() if marker in said), None)
+        if "SLOW" not in said and refusal is None:
             for notification in self.first_turn_notifications():
                 self.write(self.renamed(notification, turn_id))
             return
         self.mut_slow_turn = turn_id
+        self.mut_steer_refusal = refusal
         self.stop_slow.clear()
         self.mut_slow_thread = threading.Thread(target=self.emit_slow, args=(turn_id,), daemon=True)
         self.mut_slow_thread.start()
@@ -425,11 +445,25 @@ class Stub:
         if not running or params.get("expectedTurnId") != self.mut_slow_turn:
             self.write({"id": request_id, "error": {"code": NOT_STEERABLE_CODE, "message": "no active turn to steer"}})
             return
+        if self.mut_steer_refusal is not None:
+            self.refuse_steer(request_id, *self.mut_steer_refusal)
+            return
         self.write({"id": request_id, "result": {"turnId": self.mut_slow_turn}})
         said = said_text(list(params.get("input", [])))  # type: ignore[call-overload]  # 要求の形は handler の rpc.hy が作る
         self.write({"method": "item/agentMessage/delta",
                     "params": {"threadId": self.mut_thread_id, "turnId": self.mut_slow_turn, "itemId": "msg_1",
                                "delta": f"{STEERED_PREFIX}{said} "}})
+
+    def refuse_steer(self, request_id: object, ends_first: bool, message: str) -> None:
+        """走っているターンへの turn/steer を、目印の断り方で断るため(ends_first なら、断りより先にターンを completed で終えて終わりの
+        通知を書く — 先に終えない断りのターンは止めが来るまで走り続ける。実物は終わりの通知が少し後に届く)。"""
+        if ends_first:
+            self.stop_slow.set()
+            if self.mut_slow_thread is not None:
+                self.mut_slow_thread.join(5)
+            self.write({"method": "turn/completed", "params": {"threadId": self.mut_thread_id,
+                                                               "turn": {"id": self.mut_slow_turn, "status": "completed", "error": None}}})
+        self.write({"id": request_id, "error": {"code": NOT_STEERABLE_CODE, "message": message.format(expected=self.mut_slow_turn)}})
 
     def interrupt_turn(self, request_id: object) -> None:
         """遅いターンを止め、録った止めの終わり(状態 interrupted)を出すため。"""
