@@ -102,6 +102,7 @@ doeff-adr = { workspace = true }
 doeff-domain = { workspace = true }
 doeff-system-one = { workspace = true }
 doeff-jev = { workspace = true }
+doeff-claude-judge = { workspace = true }
 doeff-cluster = { workspace = true }
 doeff-validation = { workspace = true }
 doeff-claude-code = { workspace = true }
@@ -664,6 +665,10 @@ prefix = "packages/doeff-agentic-cli/"
 reason = "Rust の bin crate(src/main.rs だけ)で Python の公開面も Python の検も無い — maturin の build の宣言は repo 全体の tests/test_rust_build_target_outside_package.py が見る"
 
 [[tool.doeff.contract-tests]]
+prefix = "packages/doeff-claude-judge/"
+reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は問いの部品の形・答えの読み・形の違う答えの単体だけ(変えた wire.py を import する)"
+
+[[tool.doeff.contract-tests]]
 prefix = "packages/doeff-effect-analyzer/"
 reason = "stub も公開の名の一覧も無い(analyze・analyze_symbol を遅延で出すだけ)— Python の検は使い捨ての package を作って解析する単体で、Rust の検は cargo(make test-rust)の範囲"
 
@@ -794,6 +799,7 @@ dev = [
     "doeff-domain[dogfood]",
     "doeff-system-one",
     "doeff-jev",
+    "doeff-claude-judge",
     "doeff-cluster",
     "doeff-validation",
     "doeff-claude-code",
