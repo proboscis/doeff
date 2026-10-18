@@ -16,6 +16,7 @@ members = [
     "doeff-agentic-cli",
     "doeff-agents",
     "doeff-claude-code",
+    "doeff-claude-judge",
     "doeff-cluster",
     "doeff-codex",
     "doeff-conductor",
@@ -633,6 +634,7 @@ dev = [
     { name = "doeff-adr" },
     { name = "doeff-agents" },
     { name = "doeff-claude-code" },
+    { name = "doeff-claude-judge" },
     { name = "doeff-cluster" },
     { name = "doeff-codex" },
     { name = "doeff-conductor" },
@@ -688,6 +690,7 @@ dev = [
     { name = "doeff-adr", editable = "packages/doeff-adr" },
     { name = "doeff-agents", editable = "packages/doeff-agents" },
     { name = "doeff-claude-code", editable = "packages/doeff-claude-code" },
+    { name = "doeff-claude-judge", editable = "packages/doeff-claude-judge" },
     { name = "doeff-cluster", editable = "packages/doeff-cluster" },
     { name = "doeff-codex", editable = "packages/doeff-codex" },
     { name = "doeff-conductor", editable = "packages/doeff-conductor" },
@@ -849,6 +852,28 @@ requires-dist = [
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "hy", specifier = ">=1.3" },
 ]
+
+[[package]]
+name = "doeff-claude-judge"
+version = "0.1.0"
+source = { editable = "packages/doeff-claude-judge" }
+dependencies = [
+    { name = "doeff" },
+    { name = "doeff-system-one" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "doeff", editable = "." },
+    { name = "doeff-system-one", editable = "packages/doeff-system-one" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "doeff-cluster"
