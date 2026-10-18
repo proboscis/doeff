@@ -1,0 +1,16 @@
+配る判断の記事（doeff-dispatch.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-18）。
+
+- 正本：../visuals/dispatch-concept.svg・../visuals/dispatch-flow.svg・../visuals/dispatch-compare.svg。
+- dispatch-compare.svgは、比べた表../reviews/dispatch-compare.csvから../visuals/dispatch_compare_svg.pyで描く。
+  - 配った枚数と急ぎの最長の待ちは単位が違うので、1つの軸に混ぜず、上下2段に分けた。
+  - 配色はdatavizの既定の1・2番（#2a78d6・#eb6834）。白背景で色の確かめの道具を通した（全項目PASS）。
+  - 2つの仮定は、塗りの丸（逼迫）と白抜きの輪（余裕）の形でも分け、値の字を各行に添えた。
+- 図の仕様：../reviews/dispatch-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る。agoraの会話では`agora-browser node …`）。
+  - dispatch-concept：幅1200・高さ1120。
+  - dispatch-flow：幅1200・高さ1100。
+  - dispatch-compare：幅1200・高さ1000。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+この記事は概念図・処理図の2枚に、比べの図を1枚足す。../visuals/captions/dispatch.jsonの`extra_kinds`に`compare`と書き、
+verify_publication.pyがその図も照らす。
