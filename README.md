@@ -27,6 +27,8 @@ stays the same when you change the handlers around it.
 **Continuations are one-shot**, as in OCaml 5: a handler resumes each `k` at most once. Effects that
 resume one continuation several times, such as backtracking search or nondeterministic choice,
 cannot be written as doeff handlers.
+[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)
+defines the mechanism, what it covers and where it stops.
 
 In the recording, one program runs under four handlers. The first answers its effects with
 made-up values, the second traces every effect, the third stops the program midway by dropping
@@ -112,38 +114,38 @@ compares effects with both, example by example, and says when DI or plain Python
 ## Swap a handler: fakes in tests, real I/O in production
 
 Effects that reach the outside world are effects like any other, so a handler decides whether
-they reach it. `digest` yields two requests and does no I/O itself:
+they reach it. `digest` yields two effects and does nothing else:
 
 ```python
 from dataclasses import dataclass
 from doeff import EffectBase, Pass, Resume, do, handler, run
 
 @dataclass(frozen=True)
-class Fetch(EffectBase):       # a request your code can make
+class Fetch(EffectBase):       # an effect: "get the page at url"
     url: str
 
 @dataclass(frozen=True)
-class Summarize(EffectBase):
+class Summarize(EffectBase):   # an effect: "summarize this text"
     text: str
 
 @do
-def digest(url):               # your logic: no I/O inside
+def digest(url):               # the program: it only yields effects
     page = yield Fetch(url)
     return (yield Summarize(page))
 
 @do
-def fake_world(effect, k):     # a handler: answers the requests it knows
+def canned(effect, k):         # a handler: resumes k with made-up values
     if isinstance(effect, Fetch):
         return (yield Resume(k, "<h1>Hello</h1>"))
     if isinstance(effect, Summarize):
         return (yield Resume(k, f"{len(effect.text)} chars"))
     yield Pass(effect, k)      # anything else goes to the next handler
 
-print(run(handler(fake_world)(digest("https://example.com"))))  # 14 chars
+print(run(handler(canned)(digest("https://example.com"))))  # 14 chars
 ```
 
-To go live, replace `fake_world` with handlers that call your HTTP client and
-your model. `digest` does not change, and the fake stays as your test.
+To go live, replace `canned` with handlers that call your HTTP client and
+your model. `digest` does not change, and `canned` stays as the fake in your test.
 [`examples/llm_agent.py`](https://github.com/proboscis/doeff/blob/main/examples/llm_agent.py) does
 this for an LLM agent, with pytest tests that need no API key.
 [`examples/github_repo`](https://github.com/proboscis/doeff/tree/main/examples/github_repo) does it
@@ -152,17 +154,17 @@ with a fake handler, without the network.
 
 ## One handler, every effect
 
-A handler can watch every request without touching `digest`. Add this below the example above:
+A handler can watch every effect without touching `digest`. Add this below the example above:
 
 ```python continues
 seen: list[object] = []
 
 @do
-def trace(effect, k):          # sees every request first, then passes it on
+def trace(effect, k):          # sees every effect first, then passes it on
     seen.append(effect)
     return (yield Pass(effect, k))
 
-print(run(handler(fake_world)(handler(trace)(digest("https://example.com")))))  # 14 chars
+print(run(handler(canned)(handler(trace)(digest("https://example.com")))))  # 14 chars
 print(seen)  # [Fetch(url='https://example.com'), Summarize(text='<h1>Hello</h1>')]
 ```
 
@@ -329,14 +331,16 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 
 - **Documentation**: [start here](https://github.com/proboscis/doeff/blob/main/docs/index.md): every guide, in reading order
 - **Tutorial**: [Getting started](https://github.com/proboscis/doeff/blob/main/docs/01-getting-started.md)
+- **What doeff is**: [the mechanism, what it covers and where it stops](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)
 - **Testing an LLM agent**: [`examples/llm_agent.py`](https://github.com/proboscis/doeff/blob/main/examples/llm_agent.py)
   makes the model call an effect: an OpenAI-compatible client answers it in production, canned answers
   in [its tests](https://github.com/proboscis/doeff/blob/main/examples/test_llm_agent.py). It needs only
   `pip install doeff`, and its tests pytest besides.
 - **Testing an HTTP API client**: [`examples/github_repo`](https://github.com/proboscis/doeff/tree/main/examples/github_repo)
-  calls the GitHub API through the HTTP handler of `doeff[http]`; its tests answer with a fake handler.
+  calls the GitHub API through the HTTP handler of `doeff[http]`; its tests answer the HTTP effects
+  with a handler of their own.
   Run them with `pip install "doeff[http]" pytest`, then `pytest examples/github_repo` (no network).
-- **Why effects?**: [Effects vs. dependency injection and plain `async`](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)
+- **Why effects?**: [What a handler does with the rest of the program](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md), compared with dependency injection and plain `async`
 - **Questions**: [FAQ](https://github.com/proboscis/doeff/blob/main/docs/faq.md): dependency injection, asyncio, speed, types, Hy, production use
 - **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)
@@ -512,12 +516,12 @@ def digest(url: str) -> Generator[Fetch | Summarize, Any, str]:
     return (yield from Summarize(page))
 
 @do
-def fake_world(effect: Fetch | Summarize, k: K) -> Generator[Resume, Any, Any]:
+def canned(effect: Fetch | Summarize, k: K) -> Generator[Resume, Any, Any]:
     if isinstance(effect, Fetch):
         return (yield typed_resume(effect, k, "<h1>Hello</h1>"))  # must be a str
     return (yield typed_resume(effect, k, f"{len(effect.text)} chars"))
 
-summary = run(handler(fake_world)(digest("https://example.com")))  # summary: str
+summary = run(handler(canned)(digest("https://example.com")))  # summary: str
 print(summary)  # 14 chars
 ```
 
