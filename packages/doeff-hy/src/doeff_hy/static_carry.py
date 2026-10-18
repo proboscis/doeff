@@ -24,9 +24,10 @@
   候補が増える・消える(新しい file が前の解き先を隠す・解けなかった import が解ける)と digest が変わる。名の宣言の digest も、その
   module の解き先を含む。
 - 環境の指紋(Environment.fingerprint): 運びの形の版・pyright の版・pyright の設定・python の版と探し道・探し道のうち python の prefix の
-  下の dir(site-packages・標準ライブラリ)の中身の名(dist-info の名 = 配布物の版)と .pth の中身・診断を作る関数の source(semantics)。
-  中身を file ごとに見る探し道(根・extraPaths・typings・prefix の外の dir — editable で入れた doeff の checkout)は指紋に入れない —
-  doeff の pin が上がっても、変わった宣言を使う .hy だけを当て直す。
+  下の dir(site-packages・標準ライブラリ)の中身の名(dist-info の名 = 配布物の版)と .pth の中身・診断を作る関数の source(semantics —
+  構文の木なので註と字下げは入らない)。中身を file ごとに見る探し道(根・extraPaths・typings・prefix の外の dir — editable で入れた
+  doeff の checkout)は指紋に入れない(editable の dist-info も版を落とした名だけ)— doeff の pin や版が上がっても、変わった宣言を使う
+  .hy だけを当て直す。
 - 置き場の印(Places): 日次の回は task ごとの作業 dir の下に根を置き、doeff の pin の checkout を根の隣に置く(回ごとに path が違う)。
   digest の材料の中の根と根の親の綴りは印(@root・@parent)に替える — 同じ木を別の置き場で測っても同じ digest になる。
 
@@ -54,6 +55,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -462,13 +464,19 @@ class Environment:
 def semantics_digest(functions: Iterable[Callable[..., object]]) -> str:
     """pyright の診断を作って .hy の位置へ戻す関数の source と、この module の source の digest を作るため(どちらかが替われば、
     前の回の診断を運ばない)。この module の source も関数と同じく inspect で読む(置き場の path から file を読まない — 検
-    tests/test_static_cache.py の test_doeff_hy_sources_do_not_read_their_place)。"""
+    tests/test_static_cache.py の test_doeff_hy_sources_do_not_read_their_place)。材料は構文の木(_syntax_of)で、註・字下げ・
+    空行だけの書き換えは指紋を替えない(2026-10-17 に `# noqa` の註 4 行の追加で全部の .hy を当て直した)。"""
     return _digest(
         (
-            *(inspect.getsource(function) for function in functions),
-            inspect.getsource(sys.modules[__name__]),
+            *(_syntax_of(inspect.getsource(function)) for function in functions),
+            _syntax_of(inspect.getsource(sys.modules[__name__])),
         )
     )
+
+
+def _syntax_of(source: str) -> str:
+    """純粋: source の構文の木の綴り(ast.dump — 註・字下げ・空行を落とす)— 意味の変わらない書き換えで指紋を替えないため。"""
+    return ast.dump(ast.parse(textwrap.dedent(source)))
 
 
 def probe_environment(
@@ -528,13 +536,37 @@ def probe_environment(
 
 
 def _listing(place: Path) -> list[str]:
-    """prefix の下の探し道 1 つの型を覆う指紋の材料にするため — 中身の名(dist-info の名 = 配布物の版)と .pth の中身。"""
+    """prefix の下の探し道 1 つの型を覆う指紋の材料にするため — 中身の名(dist-info の名 = 配布物の版)と .pth の中身。editable で
+    入れた配布物の dist-info は版を落とした名にする(中身は探し道の file ごとの digest が覆う — 2026-10-17 に doeff の版の上げ
+    0.5.0 → 0.6.0 → 0.7.0 だけで 2 回、全部の .hy を当て直した)。"""
     return [
         piece
         for name in sorted(os.listdir(place))
         if name != "__pycache__"
-        for piece in ((name, _text_of(place / name)) if name.endswith(".pth") else (name,))
+        for piece in _listed(place, name)
     ]
+
+
+def _listed(place: Path, name: str) -> tuple[str, ...]:
+    """探し道の中身 1 つの指紋の材料(.pth は名と中身・editable の dist-info は版の無い名・ほかは名)。"""
+    if name.endswith(".pth"):
+        return (name, _text_of(place / name))
+    if name.endswith(".dist-info") and _editable(place / name):
+        return (f"editable:{name.split('-', 1)[0]}",)
+    return (name,)
+
+
+def _editable(dist_info: Path) -> bool:
+    """dist-info が editable の install か(direct_url.json の dir_info.editable — PEP 610。読めなければ editable でない側)。"""
+    try:
+        answer: object = json.loads((dist_info / "direct_url.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    match answer:
+        case {"dir_info": {"editable": True}}:
+            return True
+        case _:
+            return False
 
 
 def _text_of(path: Path) -> str:
