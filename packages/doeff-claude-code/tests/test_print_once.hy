@@ -1,7 +1,7 @@
 ;; 1 回きりの print(ClaudePrintOnce — CLI の print mode を `--output-format json --json-schema …` で 1 回走らせて構造化の答えを受ける)の検。
 ;;
 ;; - 純関数: argv・env・CLI の答えの JSON の読み(実物 2.1.292 の行 — 2026-10-19 の測り)。
-;; - 本番の handler + 替え玉の CLI(tests/stub_cli/claude_print.hy — API は撃たない): 借りた資格をその process だけの設定 dir に置いて
+;; - 本番の handler + 替え玉の CLI(tests/stub_cli/claude_print.py — API は撃たない): 借りた資格をその process だけの設定 dir に置いて
 ;;   終わったら消す・家の資格のまま走らせる・待ちの上限で止める・CLI が無い。
 ;; - fake の handler: 筋書きの答えで答える。
 (require doeff-hy.macros [deftest defk <- val])
@@ -20,8 +20,9 @@
 (import doeff_claude_code.print_once [claude-print-handler print-outcome])
 (import doeff_claude_code.fake [fake-claude-print-handler])
 
-(val STUB-PATH (str (/ (. (Path __file__) (resolve) parent) "stub_cli" "claude_print.hy")))
-(val STUB #(sys.executable "-m" "hy" STUB-PATH))
+(val STUB-PATH (str (/ (. (Path __file__) (resolve) parent) "stub_cli" "claude_print.py")))
+;; -I = 呼び手の env と作業 dir を読まない・-B = bytecode を checkout に書かない(子の env は家の env ちょうどなので PYTHONDONTWRITEBYTECODE が無い)。
+(val STUB #(sys.executable "-I" "-B" STUB-PATH))
 (val HOME (ClaudeHome "/h/.claude" {"PATH" "/bin" "HOME" "/h"}))
 ;; 答えの Schema(はいの確率 1 つと、候補 2 つの重み)。
 (val SCHEMA (json.dumps {"type" "object"

@@ -1,9 +1,9 @@
 [project]
 name = "doeff-claude-judge"
 version = "0.1.0"
-description = "Claude structured-output translation for doeff-system-one judgments (Judge -> system/user text and JSON Schema, structured answer -> Verdict)"
+description = "Claude judge for doeff-system-one: Judge -> system/user text and JSON Schema -> one Claude Code CLI print run -> Verdict"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Proboscis", email = "3684241+proboscis@users.noreply.github.com"}
@@ -14,7 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -23,6 +22,10 @@ classifiers = [
 dependencies = [
     "doeff>=0.1.0",
     "doeff-system-one",
+    "doeff-core-effects",
+    "doeff-claude-code",
+    "doeff-hy",
+    "hy>=1.3",
 ]
 
 [project.optional-dependencies]
@@ -44,3 +47,6 @@ packages = ["src/doeff_claude_judge"]
 [tool.uv.sources]
 doeff = {workspace = true}
 doeff-system-one = {workspace = true}
+doeff-core-effects = {workspace = true}
+doeff-claude-code = {workspace = true}
+doeff-hy = {workspace = true}

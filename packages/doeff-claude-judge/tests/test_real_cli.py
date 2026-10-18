@@ -23,7 +23,12 @@ import time
 from pathlib import Path
 
 import pytest
-from doeff_claude_judge import ClaudeJudgeTarget, JudgeCredential, fixed_credential_lender, run_judgment
+from doeff_claude_judge import (
+    ClaudeJudgeTarget,
+    JudgeCredential,
+    fixed_credential_lender,
+    run_judgment,
+)
 from doeff_system_one import Judge, Verdict, choice, noul
 
 from doeff import do
@@ -129,7 +134,8 @@ def test_a_fifty_thousand_character_document_is_judged_by_the_real_cli(tmp_path:
     for name, question in QUESTIONS.items():
         answer = verdict.answers[name]
         if question.kind == "noul":
-            assert 0.0 <= answer.value <= 1.0 and math.isfinite(answer.value), (name, answer)
+            assert math.isfinite(answer.value), (name, answer)
+            assert 0.0 <= answer.value <= 1.0, (name, answer)
         else:
             assert set(answer.probabilities or {}) == set(question.option_ids), (name, answer)
     assert seconds < WAIT_SECONDS

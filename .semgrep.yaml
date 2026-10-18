@@ -75,6 +75,31 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/handlers/headless.hy
         - /packages/doeff-agents/src/doeff_agents/handlers/headless_compose.hy
 
+  - id: doeff-claude-judge-starts-no-process
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      doeff-claude-judge does not start the Claude CLI itself. Its Judge
+      handler emits the one-shot print effect (doeff_claude_code.effects
+      ClaudePrintOnce) and the print handler of doeff-claude-code owns the
+      process: the argv, the config dir of its own that carries a lent
+      credential, the wait limit and the kill. A subprocess / os.system /
+      asyncio child process here would be a second place that spells the CLI
+      and hands it the credential (card ki-ca120a2c8eb3). Emit
+      ClaudePrintOnce instead.
+    pattern-either:
+      - pattern: import subprocess
+      - pattern: from subprocess import $NAME
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: asyncio.create_subprocess_exec(...)
+      - pattern: asyncio.create_subprocess_shell(...)
+    paths:
+      include:
+        - /packages/doeff-claude-judge/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-claude-judge/**
+
   - id: doeff-agents-built-in-adapters-must-not-read-launch-prompt
     languages:
       - python

@@ -1,19 +1,22 @@
-;;; doeff-claude-code の公開 effect 10 と、その戻り値の型(設計 4.3)。
+;;; doeff-claude-code の公開 effect 11 と、その戻り値の型(設計 4.3)。
 ;;;
 ;;; ClaudeStartTurn / ClaudeInjectInput / ClaudeInterruptTurn / ClaudeReadTurnEvents / ClaudeAnswerPermission /
-;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeWarmSession / ClaudeReplaceSessionCredential。
+;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeWarmSession / ClaudeReplaceSessionCredential /
+;;; ClaudePrintOnce。
 ;;;
 ;;; 単位は「claude の会話(session)と、その上の手番」。process の単位の操作(起こす・stdin に書く・信号・降ろす・pid の生存)は
 ;;; 公開しない — handler の内側の語彙(ClaudeWarmSession も「会話を入力の前に事前起動する」操作で、process を指定しない)。失敗は
 ;;; 例外ではなく戻り値の型で返す(成功の型と失敗の型の判別可能な union)。handler の実装の誤り(I/O の予期しない例外)だけが例外として
-;;; 上がる。
+;;; 上がる。ClaudePrintOnce だけは会話と手番の外の 1 回きりの問い(構造化の答えを 1 つ受けて降りる — 会話の id も記録も持たない)。
 (require doeff-hy.macros [defeffect val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import json)
 (import doeff [EffectBase])
+(import doeff_hy.frozen [FrozenJson freeze-json])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
                                   FreshSession ResumeSession ForkSession LentCredential])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage])
 
 
 ;; --- 成功の戻り値 ---------------------------------------------------------------------------------
@@ -260,4 +263,66 @@
   {:fields [(: session-id str) (: credential LentCredential)]
    :pre [(: session-id str) (: credential LentCredential)]
    :answer ReplaceCredentialOutcome
+   :tags {:context "claude-code" :role "intent"}})
+
+
+;; --- 1 回きりの print(構造化の答えを 1 つ受けて降りる)--------------------------------------------------------
+
+(defclass [(dataclass :frozen True :kw-only True)] PrintAnswered []
+  "1 回きりの print の CLI が構造化の答えを返した。structured-output = CLI の structured_output(--json-schema に合う答え — 深く凍らせた
+   JSON の値・CLI の値のまま)/ usage = 消費の token(CLI が名乗った数だけ — lines.Usage)/ cost-usd = total_cost_usd(CLI が API の
+   価格で換算した額・名乗らなければ None)/ models = 答えた model の名(modelUsage の鍵の順)/ elapsed-ms = handler が測った、CLI の
+   process を起こしてから降りるまでのミリ秒 / api-ms = duration_api_ms(API の呼びの合計・名乗らなければ None)。"
+  (#^ FrozenJson structured-output)
+  (#^ Usage usage)
+  (#^ (| float None) cost-usd)
+  (#^ (get tuple #(str ...)) models)
+  (#^ int elapsed-ms)
+  (#^ (| int None) api-ms)
+  (defn __post_init__ [self]
+    (object.__setattr__ self "structured_output" (freeze-json self.structured-output))))
+
+(defrecord PrintFailed
+  "1 回きりの print の CLI が構造化の答えを返さずに降りた・起こせなかった。exit-code = process の終了 code(起こせなかった時は None)/
+   api-status = CLI が名乗った API の誤りの HTTP status(api_error_status — 401 = 資格が無効・429 = 利用枠など。API の誤りでなければ
+   None)/ detail = 何が起きたかの 1 行(CLI の result の文・起こせなかった訳・答えの行が無かった事)/ stderr-tail = stderr の末尾
+   (lines.STDERR-TAIL-CHARS 字まで)。"
+  (#^ (| int None) exit-code)
+  (#^ (| int None) api-status)
+  (#^ str detail)
+  (#^ str stderr-tail))
+
+(defrecord PrintTimedOut
+  "1 回きりの print の CLI が待ちの上限(seconds 秒)の内に降りなかったので、handler が止めた(process の組に SIGKILL)。
+   stderr-tail = 止めるまでの stderr の末尾。"
+  (#^ float seconds)
+  (#^ str stderr-tail))
+
+(val PrintOutcome (| PrintAnswered PrintFailed PrintTimedOut))
+
+(defn #^ bool is-json-object-text [#^ object text]
+  "--json-schema に渡せる文か(JSON の object の文ちょうど — CLI は読めない Schema で答えを出さずに降りる)。"
+  (and (isinstance text str)
+       (try
+         (isinstance (json.loads text) dict)
+         (except [ValueError] False))))
+
+(defeffect ClaudePrintOnce
+  "CLI の print mode を 1 回だけ走らせ、答えの JSON Schema に合う構造化の答えを 1 つ受ける(会話の id も記録も残さない)。
+   home = 家(設定 dir と子の env ちょうど)/ model = --model / system-prompt = --system-prompt(CLI の既定の system の文を替える)/
+   json-schema = --json-schema(答えの Schema の JSON の文 — object)/ input = 標準入力に渡す本文(argv に載せない)/ timeout-seconds =
+   待ちの上限(CLI の起動と終わりの秒を含む — 越えたら止めて PrintTimedOut)/ credential = 借りた資格(LentCredential — その process
+   だけの設定 dir の .credentials.json に置き、降りたら dir ごと消す。None = 家の設定 dir の資格のまま)/ thinking-tokens = 子の env の
+   MAX_THINKING_TOKENS(0 = 考えない。None = CLI の既定)/ effort = --effort(None = CLI の既定)。
+   CLI は道具なし・設定の源なし・家の MCP なし・記録なしで起こす(argv.hy の PRINT-ONCE-FLAGS)。
+   答え = PrintAnswered | PrintFailed | PrintTimedOut(失敗も値で返す — 例外にしない)。"
+  {:fields [(: home ClaudeHome) (: model str) (: system-prompt str) (: json-schema str) (: input str) (: timeout-seconds float)
+            (: credential (| LentCredential None) None) (: thinking-tokens (| int None) None) (: effort (| str None) None)]
+   :pre [(: home ClaudeHome) (: model str) (bool model) (: system-prompt str) (is-json-object-text json-schema) (: input str)
+         (: timeout-seconds float) (> timeout-seconds 0)
+         (: credential (| LentCredential None))
+         (or (is thinking-tokens None) (and (isinstance thinking-tokens int) (not (isinstance thinking-tokens bool))
+                                            (>= thinking-tokens 0)))
+         (or (is effort None) (and (isinstance effort str) (bool effort)))]
+   :answer PrintOutcome
    :tags {:context "claude-code" :role "intent"}})
