@@ -34,6 +34,7 @@
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
                               reply-prompt sleep-prompt])
 (import doeff_claude_code [lines])
+(import doeff_claude_code [handler :as handler-module])
 (import tests.scenario_steps [TurnRecord live-process-until read-to-end read-to-tool-start])
 
 
@@ -433,6 +434,39 @@
   (assert (= far-mark 0.5) (repr far-mark))
   (<- none-mark (recorded-cost-mark spec.home canonical none))
   (assert (is none-mark None) (repr none-mark)))
+
+
+(defk cost-mark-while-another-runs [#^ ClaudeSessionSpec spec #^ str sid #^ threading.Event gate]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str) (: gate threading.Event)] :post [(: % (| float None))]
+   :tags {:context "claude-code" :role "program"}}
+  "合図まで止まる transcript の読みで費用の起点を別の task に読ませ、外の合図を待ってから合図を出し、起点の答えを返すため。読みが
+   scheduler の thread で待つと、この task は外の合図の後に戻れず、読みの上限の秒まで合図を出せない。"
+  (<- reading Task (Spawn (recorded-cost-mark spec.home (os.path.realpath spec.cwd) sid)))
+  (<- promise (CreateExternalPromise))
+  (.start (threading.Timer 0.2 (fn [] (.complete promise None))))
+  (<- (Wait promise.future))
+  (.set gate)
+  (<- mark (Wait reading))
+  mark)
+
+
+(deftest test-another-task-runs-while-the-recorded-cost-is-read [tmp-path monkeypatch]
+  ;; 起こす前の費用の起点の読み(recorded-cost-mark)も scheduler の thread の外で待つ(card ki-14b918a38cd5 — 206 MB の transcript の会話を
+  ;; 起こす準備の間、turn-host の log が 81〜130 秒 1 行も出なかった)。読みは合図まで read-transcript-bytes の頭で止まり、合図を出すのは
+  ;; 同じ scheduler の別の task。失敗ケース = 起点を scheduler の thread で読む形では、合図は読みの上限の 10 秒の後にしか出ない。
+  (val spec (spec-in tmp-path))
+  (val sid (str (uuid.uuid4)))
+  (<- (written-transcript spec sid "{\"type\":\"cost-state\",\"totalCostUSD\":0.75}\n"))
+  (val gate (threading.Event))
+  (val original handler-module.read-transcript-bytes)
+  (.setattr monkeypatch handler-module "read_transcript_bytes"
+            (fn [path tail-bytes] (.wait gate HELD-READ-SECONDS) (original path tail-bytes)))
+  (val host (host-of #("/nonexistent/claude-binary")))
+  (val started (time.monotonic))
+  (<- mark (with-real-handler host (cost-mark-while-another-runs spec sid gate)))
+  (val seconds (- (time.monotonic) started))
+  (assert (= mark 0.75) (repr mark))
+  (assert (< seconds (/ HELD-READ-SECONDS 2)) (.format "費用の起点の読みが scheduler の thread を {:.1f} 秒塞いだ" seconds)))
 
 
 ;; 替え玉の CLI が最後の本文を何片の差分で流すか(#3628)と、その本文(片の数以上の字数)。
