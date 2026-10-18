@@ -1,6 +1,16 @@
 # Getting Started with doeff
 
-doeff is an **algebraic effects** system for Python. You write programs that *perform* effects (read config, update state, log messages), and **handlers** interpret those effects. The runtime uses **one-shot continuations** backed by a **Rust VM** for performance.
+doeff brings **algebraic effects** to Python. A program `yield`s *effects*: values that name an
+operation, such as `Get("count")`, `Tell("done")` or an effect class of your own. A **handler**
+receives each effect together with `k`, the *continuation*: the rest of the program from that
+`yield` on. What the handler does with `k` decides what the effect means: it can resume `k` with an
+answer, throw an error into it, pass the effect on, hold it while other tasks run, or drop it and
+end the program with a value of its own. State, logging, errors, concurrency and I/O all work this
+way. Continuations are **one-shot**: a handler resumes each `k` at most once. A VM written in
+Rust runs the programs and the handlers.
+
+This page installs doeff, runs a program on the built-in handlers, then writes an effect and a
+handler of your own. [What doeff Is](positioning/what-doeff-is.md) defines the mechanism in full.
 
 ## Installation
 
@@ -10,13 +20,8 @@ Install doeff using pip:
 pip install doeff
 ```
 
-The CLI ships with a Rust-powered indexer used for auto-discovery.
-When you install `doeff`, the indexer is built automatically.
-Make sure a Rust toolchain is available first:
-
-```bash
-curl https://sh.rustup.rs -sSf | sh
-```
+The Rust VM ships as wheels for Linux, macOS and Windows, so pip needs no Rust toolchain there. On
+other platforms pip builds the VM from source, which needs a Rust toolchain.
 
 If you're using uv:
 
@@ -27,7 +32,6 @@ uv add doeff
 ## Requirements
 
 - Python 3.11 or higher
-- asyncio support (built into Python)
 
 ## Your First Program
 
@@ -72,13 +76,17 @@ Result: 1
 Let's break down what's happening:
 
 1. **`@do` decorator**: Converts a generator function into a callable that produces an `Expand` program node
-2. **`yield` effects**: Each `yield` *performs* an algebraic effect — the program suspends and the handler processes it
+2. **`yield` effects**: Each `yield` *performs* an algebraic effect — the program suspends, and the handler for that effect receives it with the continuation `k` and decides how the program goes on
 3. **Effects** (algebraic effect operations):
    - `Put("counter", value)` - State effect: sets state (handled by the State handler)
    - `Get("counter")` - State effect: retrieves state
    - `Tell(message)` - Writer effect: appends to log (handled by the Writer handler)
 4. **Handler composition**: Handlers are composed by wrapping the program: `state()(writer(prog))`
 5. **`run`**: Executes the fully-handled program and returns the raw result value
+
+Here the handlers answer each effect and resume `k` at once: `state` answers `Get` with the stored
+value, and `writer` adds the message to its log. [Your First Effect and Handler](#your-first-effect-and-handler)
+below writes a handler that decides otherwise.
 
 Handler composition is done by applying each handler to the program.
 Each handler is a `Program -> Program` installer — compose them by nesting calls rather than
@@ -90,6 +98,63 @@ that return an installer.
 Without `state()` outside, the first `Tell` fails with
 `UnhandledEffect: unhandled effect: Get (Get('__doeff_writer_log__'))`.
 Read the collected log with `yield writer_log()` (from `doeff_core_effects.handlers`).
+
+## Your First Effect and Handler
+
+An effect of your own is a frozen dataclass under `EffectBase`, and a handler is a `@do` function
+of `(effect, k)`; the annotation of `effect` picks the effects it receives. `shrink_all` reports its
+progress with an effect and leaves the meaning of that report to a handler:
+
+```python
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler, run
+
+@dataclass(frozen=True)
+class Progress(EffectBase):              # your own effect: "this much of the work is done"
+    done: int
+    total: int
+
+@do
+def shrink_all(images):                  # yields Progress; knows nothing about what it means
+    sizes = []
+    for width, height in images:
+        sizes.append((width // 2, height // 2))
+        yield Progress(len(sizes), len(images))
+    return sizes
+
+shown = []
+
+@do
+def show(effect: Progress, k):           # one meaning: note it, and resume k
+    shown.append(f"{effect.done}/{effect.total}")
+    return (yield Resume(k, None))
+
+def stop_after(limit):                   # another meaning: stop the work after `limit` steps
+    @do
+    def on_progress(effect: Progress, k):
+        if effect.done >= limit:
+            return f"stopped after {effect.done} of {effect.total}"   # drops k
+        return (yield Resume(k, None))
+
+    return handler(on_progress)
+
+images = [(640, 480), (1024, 768), (800, 600)]
+print(run(handler(show)(shrink_all(images))))  # [(320, 240), (512, 384), (400, 300)]
+print(shown)  # ['1/3', '2/3', '3/3']
+print(run(stop_after(2)(shrink_all(images))))  # stopped after 2 of 3
+```
+
+- `Resume(k, None)` answers the effect with `None` and runs the rest of `shrink_all`. When the
+  rest finishes, `yield Resume(...)` gives the handler its result, and the handler returns it.
+- A handler that returns without resuming `k` drops the rest: `shrink_all` stops at the `yield`,
+  the third image is never shrunk, and the handler's return value is the result of the run.
+- `handler(fn)` turns the function into a handler that you apply to a program, the same way as
+  `writer` and `state()`. The built-in handlers are written like this too.
+
+`shrink_all` has no cancel flag and no callback parameter: how it goes on is decided by the handler
+installed around it. Other handlers can throw an error into `k` with `ResumeThrow(k, error)`, pass
+the effect to the next handler out with `Pass(effect, k)`, or perform effects of their own while
+they answer. [Core Concepts](02-core-concepts.md#handler-contract) lists them.
 
 ## Key Concepts
 
@@ -142,7 +207,8 @@ print(result1, result2)  # ALPHA BETA
 
 ### Effects are Composable
 
-You can compose effectful programs together — a key advantage of algebraic effects:
+A program yields other programs, and their effects go to the same handlers, installed once around
+the whole:
 
 ```python
 from doeff import do, run
@@ -693,6 +759,7 @@ print(run(state()(writer(prog))))  # ['test']
 
 Now that you understand the basics, explore:
 
+- **[What doeff Is](positioning/what-doeff-is.md)** - The mechanism, what it covers (state, exceptions, concurrency, observation, budgets, I/O) and where it stops
 - **[Core Concepts](02-core-concepts.md)** - Algebraic effects, handlers, one-shot continuations, and the Rust VM
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 - **[Async Effects](04-async-effects.md)** - Parallel execution and futures
