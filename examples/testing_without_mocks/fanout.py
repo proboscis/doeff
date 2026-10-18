@@ -27,6 +27,7 @@ def titles(urls: list[str]):
     return (yield Gather(*tasks))
 
 
+@handler
 def fake_web(effect: FetchPage, k):  # test: answers at once
     return Resume(k, f"<h1>{effect.url}</h1>")
 
@@ -36,6 +37,7 @@ async def slow_get(url: str) -> str:  # stand-in for an async HTTP client
     return f"<h1>{url.upper()}</h1>"
 
 
+@handler
 @do
 def http_web(effect: FetchPage, k):  # production: real async I/O
     page = yield Await(slow_get(effect.url))
@@ -45,7 +47,7 @@ def http_web(effect: FetchPage, k):  # production: real async I/O
 URLS = ["a.example", "b.example", "c.example"]
 
 if __name__ == "__main__":
-    print(run(scheduled(handler(fake_web)(titles(URLS)))))
+    print(run(scheduled(fake_web(titles(URLS)))))
     started = time.perf_counter()
-    print(run(scheduled(await_handler()(handler(http_web)(titles(URLS))))))
+    print(run(scheduled(await_handler()(http_web(titles(URLS))))))
     print(f"{time.perf_counter() - started:.2f} s")
