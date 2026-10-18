@@ -248,6 +248,34 @@
           (.close watcher))))))
 
 
+(deftest test-a-table-field-index-without-statistics-is-read-in-the-former-form-until-the-table-is-sampled
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 統計の在る表に足して標本を取り直す前の表の欄の式の索引は、値の組の見積もりが既定の選択度の積み上げになり表を頭から読む計画が
+  ;; 選ばれる(pg.hy の頭の註)。観測はその欄を答える欄に数え(NotIndexed にしない)、表の欄の式で照らす欄(scoped)には標本を取り直した
+  ;; 後に数える。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
+            watcher (open-postgres))
+      (try
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+                                   :i note-index :p prefix))
+        (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (assert (= store.indexes.missing #()) (repr store.indexes.missing))
+        (assert (.covers store.indexes "parts" "note") (repr store.indexes.fields))
+        (assert (= (.scoped-fields store.indexes "parts") (frozenset #("color" "label"))) (repr store.indexes.scoped))
+        (setv #(_row _color by-note) (reads-of quick ddl store))
+        (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (assert (is (run-on quick ddl (index-round store)) True))
+        (assert (= (.scoped-fields store.indexes "parts") (frozenset #("color" "label" "note"))) (repr store.indexes.scoped))
+        (setv #(_row _color note-after) (reads-of quick ddl store))
+        (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
+        (finally
+          (.close watcher))))))
+
+
 (deftest test-a-half-built-index-is-dropped-and-built-again
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; CONCURRENTLY の作りかけ(cancel された作りが残す使えない索引)は、差の中で invalid と数え、消してから作り直す。
@@ -261,8 +289,7 @@
         (hold-writer writer prefix)
         (.execute builder "SET statement_timeout = 300")
         (try
-          (.execute builder (.format (+ "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
-                                        " WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END) IS NOT NULL")
+          (.execute builder (.format "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
                                      :i note-index :p prefix))
           (except [error Exception]
             (assert (= (getattr error "sqlstate" None) "57014") (repr error))))
