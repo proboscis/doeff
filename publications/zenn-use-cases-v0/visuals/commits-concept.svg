@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1180" viewBox="0 0 1200 1180" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1180" fill="#ffffff"/>
+  <text x="600" y="68" text-anchor="middle" font-size="42" font-weight="bold" fill="#111827">AIが書く変更を、4つの網で受け止める</text>
+
+  <!-- 左の列: 人 → 会話 → main → PyPI -->
+  <rect x="40" y="110" width="460" height="130" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="270" y="158" text-anchor="middle" font-size="32" font-weight="bold" fill="#c2410c">人(筆者1人)</text>
+  <text x="270" y="200" text-anchor="middle" font-size="25" fill="#111827">仕事を頼み、約束を決める</text>
+  <text x="270" y="228" text-anchor="middle" font-size="22" fill="#4b5563">差分は全部は読まない</text>
+
+  <line x1="270" y1="242" x2="270" y2="296" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="290" y="278" font-size="24" fill="#111827">頼む</text>
+
+  <rect x="40" y="304" width="460" height="160" rx="18" fill="#eff6ff" stroke="#2a78d6" stroke-width="3"/>
+  <text x="270" y="352" text-anchor="middle" font-size="30" font-weight="bold" fill="#1d4ed8">Claude Codeの会話</text>
+  <text x="270" y="394" text-anchor="middle" font-size="25" fill="#111827">変更を書いてcommitする</text>
+  <text x="270" y="430" text-anchor="middle" font-size="22" fill="#4b5563">2026年10月は18日で2,114個</text>
+  <text x="270" y="456" text-anchor="middle" font-size="22" fill="#4b5563">(98%に共著の行)</text>
+
+  <line x1="270" y1="466" x2="270" y2="540" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="548" width="460" height="150" rx="18" fill="#f3f4f6" stroke="#6b7280" stroke-width="3"/>
+  <text x="270" y="598" text-anchor="middle" font-size="30" font-weight="bold" fill="#111827">doeffのmain</text>
+  <text x="270" y="640" text-anchor="middle" font-size="24" fill="#111827">commit 5,566個</text>
+  <text x="270" y="676" text-anchor="middle" font-size="22" fill="#4b5563">68%に共著の行(2026年10月18日まで)</text>
+
+  <line x1="270" y1="700" x2="270" y2="800" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="290" y="760" font-size="24" fill="#111827">版を出す</text>
+
+  <rect x="40" y="808" width="460" height="150" rx="18" fill="#f3f4f6" stroke="#6b7280" stroke-width="3"/>
+  <text x="270" y="858" text-anchor="middle" font-size="30" font-weight="bold" fill="#111827">PyPI</text>
+  <text x="270" y="900" text-anchor="middle" font-size="24" fill="#111827">pip install doeff</text>
+  <text x="270" y="936" text-anchor="middle" font-size="22" fill="#4b5563">0.7.0まで7つの版</text>
+
+  <!-- 右の列: 4つの網 -->
+  <g>
+    <rect x="620" y="300" width="540" height="130" rx="16" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+    <text x="645" y="342" font-size="27" font-weight="bold" fill="#0f766e">1 文書のコードと注記</text>
+    <text x="645" y="380" font-size="23" fill="#111827">走らせ、表示を注記と比べる</text>
+    <text x="645" y="414" font-size="21" fill="#4b5563">0.5.0の時点で137個のうち25個が落ちた</text>
+
+    <rect x="620" y="450" width="540" height="130" rx="16" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+    <text x="645" y="492" font-size="27" font-weight="bold" fill="#0f766e">2 使う人と同じ入れ方の型の検査</text>
+    <text x="645" y="530" font-size="23" fill="#111827">核だけの新しい環境で、印の行を照らす</text>
+    <text x="645" y="564" font-size="21" fill="#4b5563">印を付けたファイル25個</text>
+
+    <rect x="620" y="600" width="540" height="150" rx="16" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+    <text x="645" y="642" font-size="27" font-weight="bold" fill="#0f766e">3 設計の約束と、別のAI</text>
+    <text x="645" y="680" font-size="23" fill="#111827">ADRとsemgrepの規則をテストで走らせ、</text>
+    <text x="645" y="710" font-size="23" fill="#111827">別の2つのAIに破り方を探させる</text>
+    <text x="645" y="738" font-size="21" fill="#4b5563">ADR 44本・規則54個・検証の記録50件</text>
+
+    <rect x="620" y="808" width="540" height="150" rx="16" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+    <text x="645" y="850" font-size="27" font-weight="bold" fill="#0f766e">4 PyPIから毎朝入れ直す</text>
+    <text x="645" y="888" font-size="23" fill="#111827">入る物が核の4個で、READMEが動く</text>
+    <text x="645" y="918" font-size="23" fill="#111827">ことを確かめる</text>
+    <text x="645" y="946" font-size="21" fill="#4b5563">3つのOS × Pythonの4つの版 = 12の組</text>
+  </g>
+
+  <!-- 網が見る所 -->
+  <g stroke="#0f766e" stroke-width="3" stroke-dasharray="8 6" fill="none">
+    <path d="M620,365 C560,365 560,600 502,612"/>
+    <path d="M620,515 C570,515 570,620 502,623"/>
+    <path d="M620,675 C570,675 570,640 502,634"/>
+    <path d="M620,883 L502,883"/>
+  </g>
+
+  <!-- 赤くなった時 -->
+  <path d="M1140,300 C1140,250 1080,220 1000,220 L560,220 C520,220 520,380 504,384" stroke="#b91c1c" stroke-width="4" fill="none" marker-end="url(#arrow-red)"/>
+  <text x="780" y="206" text-anchor="middle" font-size="25" font-weight="bold" fill="#b91c1c">赤くなれば、直す仕事を会話へ頼む</text>
+
+  <text x="600" y="1030" text-anchor="middle" font-size="25" fill="#111827">網は、人が差分を読む代わりに、約束を機械が確かめる</text>
+  <text x="600" y="1072" text-anchor="middle" font-size="22" fill="#4b5563">数は2026年10月18日に、doeffのmain(c0dfc3f24)・CHANGELOG.md・PyPIから数えた</text>
+  <text x="600" y="1108" text-anchor="middle" font-size="22" fill="#4b5563">137個のうち25個は0.5.0の時点の数(doeffのテストの説明に書いた値)</text>
+</svg>

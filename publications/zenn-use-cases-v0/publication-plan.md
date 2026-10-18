@@ -142,6 +142,7 @@ Zennは1記事を1つのMarkdownで管理し、`published_at`による予約公�
 読まれる見込みの強い候補の下書きを、何番目に出すかを決めずに先に用意する。下書きは仕上げ基準を照らしてあり、順を決めたら公開順の表へ移す。
 
 - 候補1:[マージキューでテストを走らせるのをやめた](doeff-mergequeue.md)。Zennのslugの案は`doeff-merge-queue-without-tests`。2026-10-18に下書きした([確かめの記録](reviews/mergequeue.md))。
+- 候補6:[ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md)。Zennのslugの案は`doeff-claude-code-commits`。2026-10-18に下書きした([確かめの記録](reviews/commits.md)・[決定記録](../../docs/design/decisions/2026-10-18-zenn-candidate-commits.md))。
 
 ## 準備状況
 

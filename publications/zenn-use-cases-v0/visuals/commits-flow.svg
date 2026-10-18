@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1080" viewBox="0 0 1200 1080" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1080" fill="#ffffff"/>
+  <text x="600" y="68" text-anchor="middle" font-size="40" font-weight="bold" fill="#111827">同じclaude_shareを、テスト用と本番用のハンドラで動かす</text>
+
+  <!-- 処理本体 -->
+  <rect x="150" y="100" width="900" height="220" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="178" y="138" font-size="24" fill="#4b5563">数える処理(1つだけ書く・書き換えない)</text>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="27" fill="#111827">
+    <text x="200" y="184">def claude_share(rev):</text>
+    <text x="200" y="224"><tspan xml:space="preserve">    messages = yield </tspan><tspan fill="#0f766e" font-weight="bold">ReadMessages(rev)</tspan></text>
+    <text x="200" y="264"><tspan xml:space="preserve">    marked = </tspan>共著の行を持つ本文の数</text>
+    <text x="200" y="302"><tspan xml:space="preserve">    return </tspan>marked, len(messages)</text>
+  </g>
+
+  <line x1="600" y1="322" x2="600" y2="372" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="624" y="356" font-size="26" fill="#111827">依頼を外側のハンドラへ渡す</text>
+
+  <!-- テスト用 -->
+  <rect x="40" y="380" width="550" height="430" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="68" y="426" font-size="30" font-weight="bold" fill="#0f766e">テスト用のハンドラ fixed_log</text>
+  <text x="68" y="472" font-size="26" fill="#111827">決めた3つの本文を答える</text>
+  <rect x="68" y="494" width="494" height="66" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+  <text x="88" y="536" font-size="24" fill="#111827">1. Fix typo(共著の行なし)</text>
+  <rect x="68" y="572" width="494" height="66" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="88" y="614" font-size="24" fill="#111827">2. Co-Authored-By: Claude Opus 5.5</text>
+  <rect x="68" y="650" width="494" height="66" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text x="88" y="692" font-size="24" fill="#111827">3. Co-authored-by: Claude Fable 5</text>
+  <text x="68" y="770" font-size="24" fill="#4b5563">大文字と小文字の違う行も、共著と数える</text>
+
+  <!-- 本番用 -->
+  <rect x="610" y="380" width="550" height="430" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="638" y="426" font-size="30" font-weight="bold" fill="#c2410c">本番用のハンドラ git_log</text>
+  <text x="638" y="472" font-size="26" fill="#111827">今いるリポジトリの履歴を読む</text>
+  <rect x="638" y="494" width="494" height="110" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="23" fill="#111827">
+    <text x="658" y="538">git log -z --format=%B</text>
+    <text x="658" y="580"><tspan xml:space="preserve">        </tspan>c0dfc3f24</text>
+  </g>
+  <text x="638" y="652" font-size="26" fill="#111827">NUL文字で区切った本文</text>
+  <text x="638" y="694" font-size="26" fill="#111827">5,566個(mergeを含む)</text>
+  <text x="638" y="770" font-size="24" fill="#4b5563">2026年10月18日のmainまで</text>
+
+  <!-- 結果 -->
+  <line x1="315" y1="812" x2="315" y2="872" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="885" y1="812" x2="885" y2="872" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="40" y="880" width="550" height="110" rx="16" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+  <text x="315" y="932" text-anchor="middle" font-family="DejaVu Sans Mono, monospace" font-size="40" font-weight="bold" fill="#0f766e">(2, 3)</text>
+  <text x="315" y="972" text-anchor="middle" font-size="24" fill="#111827">3つのうち2つが共著</text>
+  <rect x="610" y="880" width="550" height="110" rx="16" fill="#ffffff" stroke="#c2410c" stroke-width="3"/>
+  <text x="885" y="932" text-anchor="middle" font-family="DejaVu Sans Mono, monospace" font-size="40" font-weight="bold" fill="#c2410c">(3811, 5566)</text>
+  <text x="885" y="972" text-anchor="middle" font-size="24" fill="#111827">5,566個のうち3,811個(68.5%)</text>
+
+  <text x="600" y="1046" text-anchor="middle" font-size="26" fill="#111827">処理は同じまま、答えるハンドラだけを替える</text>
+</svg>
