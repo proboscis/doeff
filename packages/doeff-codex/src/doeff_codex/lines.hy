@@ -15,6 +15,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
+(import re)
 (import doeff_hy.frozen [FrozenJson freeze-json-text])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.wire [parse parse-json Malformed])
@@ -950,3 +951,78 @@
     (is-not envelope.method None)
     (do (<- record (notification-of envelope.method envelope.params)) record)
     True (Unparsed :method "" :reason "id も method も無い")))
+
+
+;; --- 上限を超えて頭だけを読んだ行 -------------------------------------------------------------------
+;; 読み手(process.hy)は、読む上限を超えた行の頭(CutLine)だけを渡す。頭は途中で切れた JSON なので、最後に揃った値の後で閉じてから
+;; 外枠を読む。
+
+;; 途中で切れた JSON の頭の字句: 閉じた文字列 / 区切りの 1 字 / 空白 / 数と語(true・false・null)。閉じていない文字列は合わない
+;; (頭の終わりで読むのをやめる)。
+(val JSON-HEAD-TOKEN (re.compile #[x["[^"\\]*(?:\\.[^"\\]*)*"|[{}\[\],:]|\s+|[^{}\[\],:\s"]+]x]))
+
+
+(defk json-head-scan [#^ str text]
+  {:pre [(: text str)] :post [(: % tuple)] :tags {:context "codex" :role "foundation"}}
+  "途中で切れた JSON の text を閉じる所を探すため、前から読んで #(最後に揃った値の後の位置 開いたままの入れ子の列) を答える。揃った
+   値 = 閉じた文字列の値・後ろに字の来た数と語・閉じた入れ子(object の鍵の文字列は値でない — 頭の終わりに触れる数と語は切れている
+   かもしれないので揃わない)。入れ子の列の 1 つ = \"{k\"(object・次は鍵)/ \"{v\"(object・次は値)/ \"[\"(array)。読めない字
+   (閉じていない文字列の頭など)で読むのをやめる(位置は揃った値が無ければ 0)。"
+  (var stack #())
+  (var safe 0)
+  (var at 0)
+  (while (< at (len text))
+    (val token (.match JSON-HEAD-TOKEN text at))
+    (when (is token None) (break))
+    (val word (.group token))
+    (val end (.end token))
+    (val lead (get word 0))
+    (val top (if stack (get stack -1) None))
+    (match lead
+      _ :if (.isspace lead) None
+      "{" (:= stack (+ stack #("{k")))
+      "[" (:= stack (+ stack #("[")))
+      (| "}" "]") (do (:= stack (cut stack 0 -1))
+                      (:= safe end))
+      ":" (:= stack (+ (cut stack 0 -1) #("{v")))
+      "," (when (= top "{v") (:= stack (+ (cut stack 0 -1) #("{k"))))
+      _ :if (= top "{k") None
+      "\"" (:= safe end)
+      _ :if (= end (len text)) (break)
+      _ (:= safe end))
+    (:= at end))
+  #(safe stack))
+
+
+(defk closed-json-head [#^ str head]
+  {:pre [(: head str)] :post [(: % str)] :tags {:context "codex" :role "foundation"}}
+  "途中で切れた JSON の頭を、読める JSON の文字列にするため: 最後に揃った値の後で切り、開いたままの入れ子を順に閉じる。途中の
+   文字列・数・鍵だけの欄・開いたばかりの入れ子は丸ごと落とす(欄を途中で切らない)。揃った値が無ければ空の文字列。"
+  (<- scanned (json-head-scan head))
+  (val safe (get scanned 0))
+  (when (= safe 0)
+    (return ""))
+  (val kept (cut head 0 safe))
+  (<- rescanned (json-head-scan kept))
+  (+ kept (.join "" (gfor frame (reversed (get rescanned 1)) (if (= frame "[") "]" "}")))))
+
+
+(defk classify-cut-line [#^ str head #^ int size]
+  {:pre [(: head str) (: size int)] :post [(: % (| Response ErrorResponse Unparsed))] :tags {:context "codex" :role "foundation"}}
+  "読む上限を超えて頭だけを読んだ行(process.hy の CutLine — head = 行の頭・size = 行の大きさの bytes)を、上の層が読む記録にする
+   ため。頭を閉じて(closed-json-head)外枠を読み、要求への答えと誤りの答えはその記録にする — 運ぶ欄は id と短い欄だけで、閉じた頭は
+   欄を途中で切らず丸ごと落とすので、記録は欠けないか形の違いになる(thread を開く答えは thread の id が頭に、履歴 turns が thread の
+   最後の欄に在る — codex 0.162.1)。ほかの行(通知・codex からの要求)は中身が欠けるので記録を作らず、method と行の大きさを名乗る
+   Unparsed にする(欠けた記録を揃った物として渡さない — codex 0.162.1 の turn/completed は items を載せないので上限に届かない)。"
+  (val reason (.format "行の大きさ {} bytes が読む上限を超えた — 頭だけを読み、残りを読み捨てた" size))
+  (<- closed (closed-json-head head))
+  (<- envelope (parse-json EnvelopeWire closed))
+  (match envelope
+    (Malformed) (Unparsed :method "" :reason reason)
+    _ :if (is-not envelope.method None) (Unparsed :method envelope.method :reason reason)
+    _ :if (and (is-not envelope.id None) (is-not envelope.error None))
+    (ErrorResponse :id envelope.id :code envelope.error.code :message envelope.error.message)
+    _ :if (and (is-not envelope.id None) (is-not envelope.result None))
+    (do (<- answer (response-of envelope))
+        (if (isinstance answer Response) answer (Unparsed :method "" :reason reason)))
+    _ (Unparsed :method "" :reason reason)))

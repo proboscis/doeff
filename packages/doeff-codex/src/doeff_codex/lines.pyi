@@ -1,6 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = lines.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
+from _typeshed import Incomplete
 from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
@@ -557,4 +558,14 @@ def response_of(envelope: EnvelopeWire) -> _Program[Response | Unparsed, object]
     ...
 
 def classify_line(line: str) -> _Program[CodexLine, object]:
+    ...
+JSON_HEAD_TOKEN: Incomplete
+
+def json_head_scan(text: str) -> _Program[tuple, object]:
+    ...
+
+def closed_json_head(head: str) -> _Program[str, object]:
+    ...
+
+def classify_cut_line(head: str, size: int) -> _Program[Response | ErrorResponse | Unparsed, object]:
     ...

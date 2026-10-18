@@ -39,7 +39,7 @@
 (import dataclasses [replace])
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
-(import doeff_codex.process [CodexProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
+(import doeff_codex.process [CodexProcess CutLine EOF-GRACE-SECONDS TERM-GRACE-SECONDS LINE-CAP-BYTES])
 (import doeff_codex.credential_home [open-credential-home close-credential-home])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
@@ -207,12 +207,14 @@
 (defclass CodexHost []
   "handler の状態: thread の id → 続きの記録 Continuation(会話の寿命の間)と thread の id → 生きた状態 SessionRuntime(閉じた会話は
    ターンの記録を読み手が読み終え、process も降りたら外れる)。command = 実行ファイルと前置きの引数(例 #(\"codex\"))・launch-timeout =
-   起動と要求の答えを待つ上限(秒)。lock の順は CodexHost → 会話(release だけが両方を取る)。"
-  (defn __init__ [self #^ tuple command [launch-timeout 120.0]]
+   起動と要求の答えを待つ上限(秒)・line-cap = app-server の stdout の 1 行の読む上限(bytes — 超えた行は頭だけを分ける。process.hy)。
+   lock の順は CodexHost → 会話(release だけが両方を取る)。"
+  (defn __init__ [self #^ tuple command [launch-timeout 120.0] [line-cap LINE-CAP-BYTES]]
     (when (not command)
       (raise (ValueError "CodexHost.command は空でない tuple")))
     (setv self.command command
           self.launch-timeout (float launch-timeout)
+          self.line-cap (int line-cap)
           self.lock (threading.Lock))
     (setv #^ (get dict #(str Continuation)) self.continuations {})
     (setv #^ (get dict #(str SessionRuntime)) self.runtimes {}))
@@ -323,10 +325,13 @@
                 (.add-event runtime current record))))))
 
 
-(deff on-line [#^ SessionRuntime runtime #^ int generation #^ str raw]  ; defk にできない: CodexProcess の読み手の thread が呼ぶ callback
-  {:pre [(: runtime SessionRuntime) (: generation int) (: raw str)] :post [(: % None)]}
-  "stdout の 1 行を分けて会話の状態へ積み、呼び鈴を鳴らすため(今の process の行だけ — 降ろし中の古い process の行は捨てる)。"
-  (setv record (run (lines.classify-line raw)))
+(deff on-line [#^ SessionRuntime runtime #^ int generation raw]  ; defk にできない: CodexProcess の読み手の thread が呼ぶ callback
+  {:pre [(: runtime SessionRuntime) (: generation int) (: raw (| str CutLine))] :post [(: % None)]}
+  "stdout の 1 行を分けて会話の状態へ積み、呼び鈴を鳴らすため(今の process の行だけ — 降ろし中の古い process の行は捨てる)。読む上限を
+   超えた行(CutLine)は頭だけを分ける(thread/resume の答えの履歴を本体に載せない — card ki-83f24000d86c)。"
+  (setv record (run (match raw
+                      (CutLine) (lines.classify-cut-line raw.head raw.size)
+                      _ (lines.classify-line raw))))
   (with [runtime.lock]
     (when (= runtime.generation generation)
       (run (absorb runtime record))))
@@ -493,7 +498,8 @@
     (:= process (CodexProcess argv spec.cwd env
                               (fn [raw] (on-line runtime generation raw))
                               (fn [code tail] (on-exit runtime generation home code tail))
-                              (fn [] (.ring runtime.doorbell))))
+                              (fn [] (.ring runtime.doorbell))
+                              :line-cap host.line-cap))
     (except [OSError]
       ;; 起こせなかった(実行ファイルが無いなど)— on-exit は呼ばれないので、作った家をここで消してから上げる。
       (<- (close-credential-home home))
