@@ -15,6 +15,7 @@
 | AIの変更が多く、マージの前のテストで列が詰まる | [マージキューのテストをやめた記録](doeff-mergequeue.md) |
 | AIが書く差分を読み切れない中で、ライブラリの約束を守りたい | [commitの68%をClaude Codeと書いた記録](doeff-commits.md) |
 | AIの会話に仕事を配らせるのをやめ、配り方を比べて選びたい | [AIの配り役を関数に替えた記録](doeff-dispatch.md) |
+| 止まったClaude Codeの会話のどれが自分の番か、開かないと分からない | [待っている物を1行書かせる記録](doeff-waitline.md) |
 | LLMのプロバイダごとのSDKが処理に広がる | [LLM](doeff-llm.md) |
 | 画像生成・編集をパイプラインへ入れたい | [画像](doeff-image.md) |
 | 入力待ちを含むゲームのルールを書きたい | [カードゲームとゲーム進行](doeff-games.md) |

@@ -1,0 +1,16 @@
+待ちの1行の記事（doeff-waitline.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-18）。
+
+- 正本：../visuals/waitline-concept.svg・../visuals/waitline-flow.svg・../visuals/waitline-days.svg。
+- waitline-days.svgは、日ごとの表../reviews/waitline-days.csvから../visuals/waitline_days_svg.pyで描く。
+  - workと筆者を待つ申告は数の桁が違うので、1つの軸に混ぜず、左右2段に分けた。右の段に「左と目盛りが違う」と書いた。
+  - 配色はdatavizの既定の1〜3番（#2a78d6・#eb6834・#1baf7a）。白背景で色の確かめの道具を通した（水色の字の濃さだけWARN。値の字を全部の行に添えた）。
+  - workは1つの系列なので灰の1色にし、凡例は置かず段の見出しで名指した。
+- 図の仕様：../reviews/waitline-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る。agoraの会話では`agora-browser node …`）。
+  - waitline-concept：幅1200・高さ1120。
+  - waitline-flow：幅1200・高さ1160。
+  - waitline-days：幅1200・高さ960。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+この記事は概念図・処理図の2枚に、日ごとの申告の図を1枚足す。../visuals/captions/waitline.jsonの`extra_kinds`に`days`と書き、
+verify_publication.pyがその図も照らす。
