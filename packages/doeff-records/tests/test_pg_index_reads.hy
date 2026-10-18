@@ -15,7 +15,7 @@
 (import doeff_records.admission [canonical-json])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
-                              event-by-key-statement list-rows-statement table-index-name])
+                              event-by-key-statement list-rows-statement top-rows-statement table-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -253,7 +253,7 @@
   {:pre [(: prefix str)] :post [(: % Statement)]
    :tags {:context "records" :role "program"}}
   "値の組の 1 頁の読みの文を作るため: 欄 color が c1 … c{ANY-OF-VALUES} のどれかの行を、鍵の順に ANY-OF-VALUES 行まで(保持の期限の無い表の形)。"
-  (<- statement (list-rows-statement prefix "parts" None {}
+  (<- statement (list-rows-statement prefix "parts" #("id") None {}
                                      {"color" (tuple (gfor n (range 1 (+ ANY-OF-VALUES 1)) (canonical-json (.format "c{}" n))))}
                                      ANY-OF-VALUES None))
   statement)
@@ -320,3 +320,25 @@
     (assert (<= large-read small-read) (repr #(small-read large-read small large)))
     (finally
       (.close connections))))
+
+
+;; --- 鍵の欄の絞り(where / where-any)は主キーの列で引く -----------------------------------------------------------
+;; 鍵の欄が 1 つの表の鍵の欄を文字列で名指す絞りは、欄の式でなく主キー (ledger, key) の列 key の綴り(key-text)で照らす(表を頭から
+;; 読み直す走査にしない)。鍵の欄が 2 つの表・鍵でない欄・文字列でない値の組は今の欄の式のまま。
+(deftest test-a-key-field-filter-is-read-through-the-key-column
+  (<- by-set (list-rows-statement "records_" "message" #("id") None {} {"id" #((canonical-json "m1") (canonical-json "é"))} 10 None))
+  (assert (in "AND key IN (:a0_0, :a0_1)" by-set.text) by-set.text)
+  (assert (not (in "payload" (get (.split by-set.text "WHERE") 1))) by-set.text)
+  (assert (= (lfor p by-set.params :if (.startswith p.name "a0_") p.value) ["[\"m1\"]" "[\"\\u00e9\"]"]) by-set.params)
+  (<- by-one (list-rows-statement "records_" "message" #("id") None {"id" (canonical-json "m1")} {} 10 None))
+  (assert (in "key = :w0" by-one.text) by-one.text)
+  (assert (= (lfor p by-one.params :if (= p.name "w0") p.value) ["[\"m1\"]"]) by-one.params)
+  (<- top (top-rows-statement "records_" "message" #("id") "n" {"id" (canonical-json "m1")} {} 10 None))
+  (assert (in "key = :w0" top.text) top.text)
+  ;; 文字列でない値が混ざる組・鍵でない欄・鍵の欄が 2 つの表は欄の式のまま。
+  (<- mixed (list-rows-statement "records_" "message" #("id") None {} {"id" #((canonical-json "m1") (canonical-json 2))} 10 None))
+  (assert (in "((payload::jsonb) -> 'id') IN" mixed.text) mixed.text)
+  (<- other (list-rows-statement "records_" "message" #("id") None {} {"kind" #((canonical-json "a"))} 10 None))
+  (assert (in "((payload::jsonb) -> 'kind') IN" other.text) other.text)
+  (<- pair (list-rows-statement "records_" "tickets" #("group" "id") None {} {"id" #((canonical-json "a"))} 10 None))
+  (assert (in "((payload::jsonb) -> 'id') IN" pair.text) pair.text))

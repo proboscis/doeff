@@ -878,11 +878,11 @@
   (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
   (when (is-not ask.descending-by None)
     ;; 上から読む読み(ListRows の註): 1 頁だけ・続きを返さない。
-    (<- top-statement (top-rows-statement store.prefix ask.table ask.descending-by where-json where-any-json ask.limit expiry))
+    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields ask.descending-by where-json where-any-json ask.limit expiry))
     (<- top-records (query-rows store.database top-statement))
     (<- top-rows (listed-rows-of decl ask.fields top-records))
     (return (Page top-rows None head.epoch head.head)))
-  (<- statement (list-rows-statement store.prefix ask.table
+  (<- statement (list-rows-statement store.prefix ask.table decl.key-fields
                                      (if (is ask.cursor None) None ask.cursor.after-key)
                                      where-json
                                      where-any-json

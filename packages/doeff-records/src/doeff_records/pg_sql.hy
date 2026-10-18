@@ -59,6 +59,7 @@
 (import json)
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
+(import doeff_records.admission [key-text])
 (import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
@@ -551,16 +552,49 @@
           :params members.params))
 
 
-(defk any-of-filter [where-any-json]
-  {:pre [(: where-any-json dict)] :post [(: % Clause)]
+(defk key-spellings [key-fields name encoded]
+  {:pre [(: key-fields tuple) (: name str) (: encoded tuple) (> (len encoded) 0)] :post [(: % (| tuple None))]
    :tags {:context "records" :role "foundation"}}
-  "ListRows の値の組の絞り(where-any)を、行の読みの文の WHERE の後ろに足す条件にするため: 欄ごと(名の順)に field-in-condition を AND で
-   続ける(欄 i の引数の名は a{i}_0・a{i}_1 … — 文の他の引数と混ざらない)。where-any-json = 欄 → 値の JSON の綴りの空でない tuple
-   (欄の名は宣言を通った英数字)。空の写像なら空の断片(文を変えない — 組を使わない読みの文は前と同じ字面)。"
+  "ListRows の絞りが名指す欄 name が、鍵の欄が 1 つの表の鍵の欄で、値 encoded(JSON の綴りの空でない tuple)が全部文字列の時に、その値を
+   鍵の綴り(admission.key-text — 行の key の列の綴り)にして返すため(主キー (ledger, key) の索引で引ける)。鍵の欄が 2 つ以上の表・
+   鍵でない欄・文字列でない値が混ざる組は None(欄の式のまま — 文字列でない値は鍵の綴りに無いので、答えは memory と同じ)。"
+  (when (or (!= (len key-fields) 1) (!= name (get key-fields 0)))
+    (return None))
+  (val values (tuple (gfor text encoded (json.loads text))))
+  (if (all (gfor value values (isinstance value str)))
+      (tuple (gfor value values (key-text #(value))))
+      None))
+
+
+(defk where-condition [key-fields i name encoded]
+  {:pre [(: key-fields tuple) (: i int) (: name str) (: encoded str)] :post [(: % Clause)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の where の等号 1 つ(欄 name = 値 encoded〔JSON の綴り〕・引数の名 w{i})を、行の読みの文の条件にするため: 鍵の欄が 1 つの
+   表の鍵の欄を文字列で名指す時は主キーの列で `key = :w{i}`(key-spellings)・それ以外は欄の式 `(payload::jsonb) -> 'name' = :w{i}::jsonb`。"
+  (<- spellings (key-spellings key-fields name #(encoded)))
+  (val argument (.format "w{}" i))
+  (if (is spellings None)
+      (Clause :text (.format "(payload::jsonb) -> '{}' = :{}::jsonb" name argument)
+              :params (! (params-of #(#(argument encoded)))))
+      (Clause :text (.format "key = :{}" argument)
+              :params (! (params-of #(#(argument (get spellings 0))))))))
+
+
+(defk any-of-filter [key-fields where-any-json]
+  {:pre [(: key-fields tuple) (: where-any-json dict)] :post [(: % Clause)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の値の組の絞り(where-any)を、行の読みの文の WHERE の後ろに足す条件にするため: 欄ごと(名の順)に AND で続ける(欄 i の
+   引数の名は a{i}_0・a{i}_1 … — 文の他の引数と混ざらない)。鍵の欄が 1 つの表の鍵の欄を文字列の組で名指す時は主キーの列で
+   `key IN (…)`(key-spellings)・それ以外は field-in-condition。where-any-json = 欄 → 値の JSON の綴りの空でない tuple(欄の名は宣言を
+   通った英数字)。空の写像なら空の断片(文を変えない — 組を使わない読みの文は前と同じ字面)。"
   (var text "")
   (var params #())
   (for [#(i #(name encoded)) (enumerate (sorted (.items where-any-json)))]
-    (<- condition (field-in-condition "payload" name (.format "a{}_" i) encoded))
+    (<- spellings (key-spellings key-fields name encoded))
+    (if (is spellings None)
+        (<- condition (field-in-condition "payload" name (.format "a{}_" i) encoded))
+        (do (<- members (in-list (.format "a{}_" i) spellings))
+            (setv condition (Clause :text (.format "key IN ({})" members.text) :params members.params))))
     (:= text (+ text " AND " condition.text))
     (:= params (+ params condition.params)))
   (Clause :text text :params params))
@@ -597,8 +631,8 @@
              :params (! (params-of #(#("ledger" table) #("key" key))))))
 
 
-(defk list-rows-statement [prefix table after-key where-json where-any-json limit expiry]
-  {:pre [(: prefix str) (: table str) (: after-key (| str None)) (: where-json dict) (: where-any-json dict) (: limit int)
+(defk list-rows-statement [prefix table key-fields after-key where-json where-any-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: after-key (| str None)) (: where-json dict) (: where-any-json dict) (: limit int)
          (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
@@ -611,39 +645,42 @@
   (when (is-not after-key None)
     (.append clauses "key COLLATE \"C\" > :after")
     (.append pairs #("after" after-key)))
+  (var wheres #())
   (for [#(i #(name encoded)) (enumerate (sorted (.items where-json)))]
-    (.append clauses (.format "(payload::jsonb) -> '{}' = :w{}::jsonb" name i))
-    (.append pairs #((.format "w{}" i) encoded)))
+    (<- condition (where-condition key-fields i name encoded))
+    (.append clauses condition.text)
+    (:= wheres (+ wheres condition.params)))
   (.append pairs #("limit" (+ limit 1)))
-  (<- any-of (any-of-filter where-any-json))
+  (<- any-of (any-of-filter key-fields where-any-json))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
   (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{a}{u} ORDER BY key COLLATE \"C\" LIMIT :limit"
                             :p prefix :w (.join " AND " clauses) :a any-of.text :u unexpired.text)
-             :params (+ (! (params-of (tuple pairs))) any-of.params unexpired.params)))
+             :params (+ (! (params-of (tuple pairs))) wheres any-of.params unexpired.params)))
 
 
-(defk top-rows-statement [prefix table descending-by where-json where-any-json limit expiry]
-  {:pre [(: prefix str) (: table str) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by) (: where-json dict)
+(defk top-rows-statement [prefix table key-fields descending-by where-json where-any-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by) (: where-json dict)
          (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "上から読む ListRows(descending-by — effects.hy の ListRows の註)の 1 頁を読む文を作るため: 欄 descending-by の値が JSON の整数の行
    (memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、(値, 鍵の綴り) の大きい順に limit 件。続きを
    返さないので 1 行多く読まない。where・where-any と保持の期限の条件は list-rows-statement と同じ。"
-  (val wheres (tuple (enumerate (sorted (.items where-json)))))
+  (var conditions #())
+  (for [#(i #(name encoded)) (enumerate (sorted (.items where-json)))]
+    (<- condition (where-condition key-fields i name encoded))
+    (:= conditions (+ conditions #(condition))))
   (<- ordered (field-expression "payload" descending-by))
   (val clauses (+ #("ledger = :ledger")
-                  (tuple (gfor #(i #(name _)) wheres (.format "(payload::jsonb) -> '{}' = :w{}::jsonb" name i)))
+                  (tuple (gfor condition conditions condition.text))
                   #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered))))
-  (val pairs (+ #(#("ledger" table))
-                (tuple (gfor #(i #(_ encoded)) wheres #((.format "w{}" i) encoded)))
-                #(#("limit" limit))))
-  (<- any-of (any-of-filter where-any-json))
+  (val pairs #(#("ledger" table) #("limit" limit)))
+  (<- any-of (any-of-filter key-fields where-any-json))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
   (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{a}{u}
                        ORDER BY ({o})::text::numeric DESC, key COLLATE \"C\" DESC LIMIT :limit"
                             :p prefix :w (.join " AND " clauses) :a any-of.text :u unexpired.text :o ordered)
-             :params (+ (! (params-of pairs)) any-of.params unexpired.params)))
+             :params (+ (! (params-of pairs)) (sum (gfor condition conditions condition.params) #()) any-of.params unexpired.params)))
 
 
 (defk terminal-rows-statement [prefix table state-field terminal]
