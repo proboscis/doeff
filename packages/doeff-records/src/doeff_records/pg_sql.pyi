@@ -272,10 +272,10 @@ def expiring_where(prefix: str, separator: str | None) -> _Program[str, object]:
 def expiring_params(stream: str, before_at: int) -> _Program[tuple, object]:
     ...
 
-def expiring_events_statement(prefix: str, stream: str, before_at: int, separator: str | None) -> _Program[Statement, object]:
+def expiring_candidates_statement(prefix: str, stream: str, before_at: int, separator: str | None, limit: int) -> _Program[Statement, object]:
     ...
 
-def expire_events_statement(prefix: str, stream: str, before_at: int) -> _Program[Statement, object]:
+def expire_chosen_events_statement(prefix: str, stream: str, before_at: int, separator: str | None, sequences: tuple) -> _Program[Statement, object]:
     ...
 
 def key_suffix_of(key: str, separator: str) -> _Program[str, object]:
@@ -285,9 +285,6 @@ def key_suffix_expression(payload: str, separator: str) -> _Program[str, object]
     ...
 
 def key_head_expression(payload: str, separator: str) -> _Program[str, object]:
-    ...
-
-def expire_event_groups_statement(prefix: str, stream: str, before_at: int, separator: str) -> _Program[Statement, object]:
     ...
 
 def touched_events_statement(prefix: str, stream: str, before_at: int, separator: str | None, idempotency_key: str) -> _Program[Statement, object]:
