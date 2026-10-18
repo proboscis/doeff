@@ -80,6 +80,8 @@
 (import doeff_claude_code.argv [transcript-dir transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 (import doeff_claude_code.credential_home [open-credential-home replace-credential close-credential-home])
+(import doeff_claude_code.rotation [ROTATE-ABOVE-BYTES TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed
+                                    rotate-transcript])
 
 ;; 会話が持ち続ける手番の記録(stdout の行の全部)の本数。読み手(上の層)は今の手番と、止めて生き残った入力の続きの手番しか読まない
 ;; ので、続きを数本たどる間だけ持つ。閉じた会話は最後の手番だけを持つ(SessionRuntime.keep-only-current)。16 本だった時は、
@@ -91,6 +93,9 @@
 (val CLI-TIMING-LOG "claude CLI の起動の計時")
 ;; 生かす本数の上限を越えて起動した時の log の行の名(#4072 の E1b — 同じ事を知らせ ClaudeLiveLimitExceeded でホストへも届ける)。
 (val LIVE-LIMIT-LOG "claude CLI の生かす本数の上限を越えた起動")
+;; 続きの前に大きな transcript を最後の compact の境から後だけに置き直した(か置き直せなかった)所の log の行の名(card ki-d96c2ca8a5a1 —
+;; rotation.hy の頭の註)。
+(val TRANSCRIPT-ROTATION-LOG "claude CLI の transcript の差し替え")
 ;; transcript の読み書き(額の起点の読み・書き出し・持ち込み・様子)1 つに thread 1 本(card ki-24ee30105583): transcript の jsonl は数十 MB に
 ;; なり、待ち行列の浅い詰まった disk では 1 回の読みが秒の単位で待つ。handler の節は scheduler の thread の上で走るので、そこで読むと
 ;; 同じ process の全部の手番が止まる。待つのは読みを頼んだ task だけにする(doeff_core_effects の offloaded — 外側に scheduled が要るのは
@@ -233,20 +238,25 @@
    刻む関数(clock.clock-of)・live-limit = 同時に生かす process の本数の上限(走っている手番の process も数える — 機体の memory の
    予算 ÷ 1 本の memory。#3672 の D2。越える起動は止めずに知らせる — 頭の註。None = 上限を宣言しない: 使い手が別の物差し — 機体の
    memory の余白 — で決める時で、本数を上限と比べず、log の行も知らせも出さない・#4282)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential の expires-at)の手前で
-   process を止める床の秒・launch-timeout = init の行を待つ上限(秒)。上限と床は呼び手の宣言から
-   受ける(既定を持たない — 上限を宣言しない呼び手も None を明示で渡す)。"
-  (defn __init__ [self #^ tuple command clock #^ (| int None) live-limit #^ float credential-floor-seconds [launch-timeout 120.0]]
+   process を止める床の秒・launch-timeout = init の行を待つ上限(秒)・rotate-above-bytes = 続きの前に transcript を最後の compact の
+   境から後だけに置き直す大きさの下限(byte — rotation.hy の頭の註。CLI は init の前に transcript を全部読むので、大きな transcript は
+   launch-timeout を越える)。上限と床は呼び手の宣言から受ける(既定を持たない — 上限を宣言しない呼び手も None を明示で渡す)。"
+  (defn __init__ [self #^ tuple command clock #^ (| int None) live-limit #^ float credential-floor-seconds [launch-timeout 120.0]
+                  [rotate-above-bytes ROTATE-ABOVE-BYTES]]
     ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る。
     ;; None(上限を宣言しない)は比べる数が無いので、検査を通さずそのまま持つ(fake の FakeClaudeWorld と同じ)。
     (when (and (is-not live-limit None) (or (isinstance live-limit bool) (< live-limit 1)))
       (raise (ValueError (.format "ClaudeCodeHost.live_limit は 1 以上の整数か None: {!r}" live-limit))))
     (when (or (isinstance credential-floor-seconds bool) (< credential-floor-seconds 0))
       (raise (ValueError (.format "ClaudeCodeHost.credential_floor_seconds は 0 以上の秒: {!r}" credential-floor-seconds))))
+    (when (or (isinstance rotate-above-bytes bool) (not (isinstance rotate-above-bytes int)) (< rotate-above-bytes 1))
+      (raise (ValueError (.format "ClaudeCodeHost.rotate_above_bytes は 1 以上の整数: {!r}" rotate-above-bytes))))
     (setv self.command command
           self.clock clock
           self.live-limit live-limit
           self.credential-floor-seconds (float credential-floor-seconds)
           self.launch-timeout (float launch-timeout)
+          self.rotate-above-bytes rotate-above-bytes
           self.lock (threading.Lock))
     (setv #^ (get dict #(str SessionRuntime)) self.runtimes {}))
 
@@ -403,6 +413,45 @@
   (val path (transcript-path home.config-dir canonical-cwd session-id))
   (<- mark (| float None) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (transcript-cost-mark path))) keep-nothing))
   mark)
+
+(defk rotate-before-resume [#^ ClaudeCodeHost host #^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
+  {:pre [(: host ClaudeCodeHost) (: home ClaudeHome) (: canonical-cwd str) (: session-id str)]
+   :post [(: % (| TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "続き(--resume)の CLI が init の前に読む transcript を、上限(host.rotate-above-bytes)の内に戻すため(rotation.hy の頭の註 — card
+   ki-d96c2ca8a5a1)。前の process が降りた後に呼ぶ。読みと書きは TRANSCRIPT-THREADS の thread。置き直した・置き直せなかった時は
+   log の 1 行(TRANSCRIPT-ROTATION-LOG)を出す(上限の内で置き直さなかった時は出さない)。"
+  (val path (transcript-path home.config-dir canonical-cwd session-id))
+  (<- began (GetMonotonic))
+  (<- at (GetTime))
+  (<- wall-ms (wall-ms-of at))
+  (<- outcome (| TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed)
+      (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (rotate-transcript path host.rotate-above-bytes wall-ms))) keep-nothing))
+  (<- ended (GetMonotonic))
+  (<- ms (elapsed-ms began ended))
+  (match outcome
+    (TranscriptRotated :before before :after after :archive archive)
+      (<- (slog TRANSCRIPT-ROTATION-LOG :level "info" :event "rotated" :wall-ms wall-ms :session-id session-id :before-bytes before
+                :after-bytes after :archive archive :ms ms))
+    (TranscriptUnrotatable :size size :searched searched)
+      (<- (slog TRANSCRIPT-ROTATION-LOG :level "warning" :event "unrotatable" :wall-ms wall-ms :session-id session-id :size-bytes size
+                :searched-bytes searched :ms ms))
+    (TranscriptRotationFailed :reason reason)
+      (<- (slog TRANSCRIPT-ROTATION-LOG :level "warning" :event "rotation-failed" :wall-ms wall-ms :session-id session-id
+                :reason reason :ms ms))
+    (TranscriptKept) None)
+  outcome)
+
+(defk unrotatable-note [started #^ (| TranscriptUnrotatable None) unrotatable]
+  {:pre [(: started (| TurnStarted LaunchFailed)) (: unrotatable (| TranscriptUnrotatable None))] :post [(: % (| TurnStarted LaunchFailed))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "上限を越えるのに境が無くて置き直せなかった transcript の続きが起動に失敗した時、利用者に分かる訳(transcript が大きすぎて縮められ
+   なかった)を stderr-tail に足すため(card ki-d96c2ca8a5a1)。始まった手番・置き直せた・上限の内の続きの失敗はそのまま。"
+  (match #(started unrotatable)
+    #((LaunchFailed :stderr-tail tail) (TranscriptUnrotatable :size size :searched searched))
+      (replace started :stderr-tail (.format "{} (transcript of {} bytes has no usable compact boundary in its last {} bytes, so it was not shortened before --resume)"
+                                            tail size searched))
+    _ started))
 
 (defn link-if-present [#^ str source #^ str target]
   "周辺の置き物の持ち込み(在れば張る・無ければ飛ばす)。"
@@ -1052,16 +1101,18 @@
 
 (defrecord LaunchReady
   "新しい process を起動する前の準備が済んだ: recorded = 続き・枝の親の transcript の最後の cost-state の額(CLI が数え始める額 —
-   無ければ None)。"
-  (#^ (| float None) recorded))
+   無ければ None)・unrotatable = 続きの transcript が上限を越えるのに置き直せなかった(起動が期限を越えた時に訳を足す — 無ければ None)。"
+  (#^ (| float None) recorded)
+  (#^ (| TranscriptUnrotatable None) unrotatable))
 
-(defk prepare-launch [#^ ClaudeCodeHost host runtime #^ ClaudeSessionSpec spec #^ str canonical #^ str target-id #^ Launch decision
-                      #^ bool warm]
-  {:pre [(: host ClaudeCodeHost) (: runtime (| SessionRuntime None)) (: spec ClaudeSessionSpec) (: canonical str) (: target-id str)
-         (: decision Launch) (: warm bool)]
+(defk prepare-launch [#^ ClaudeCodeHost host runtime #^ ClaudeSessionSpec spec origin #^ str canonical #^ str target-id
+                      #^ Launch decision #^ bool warm]
+  {:pre [(: host ClaudeCodeHost) (: runtime (| SessionRuntime None)) (: spec ClaudeSessionSpec)
+         (: origin (| FreshSession ResumeSession ForkSession)) (: canonical str) (: target-id str) (: decision Launch) (: warm bool)]
    :post [(: % (| LaunchReady LaunchFailed))] :tags {:context "claude-code" :role "foundation"}}
   "新しい process を起動する前の準備を、ターン(start-turn)と入力の前の事前起動(warm-session)で同じ順に行うため: 生きて待っている
-   process を停止する(理由 LAUNCH-CHANGED)→ 停止中の process の終了を待つ → transcript の最後の額を読む → 冷えた続きの前の命令 →
+   process を停止する(理由 LAUNCH-CHANGED)→ 停止中の process の終了を待つ → 続き(ResumeSession)なら大きな transcript を置き直す
+   (rotate-before-resume — 前の process が降りた後)→ transcript の最後の額を読む → 冷えた続きの前の命令 →
    生かす本数を数える(越えるなら知らせる — note-over-limit。warm = 入力の前の事前起動か)。結果 = LaunchReady か、前の process が
    終了しない時の LaunchFailed。"
   (when decision.retire-idle
@@ -1075,13 +1126,20 @@
     (<- down (wait-until (fn [bell] (.hang runtime.doorbell bell)) (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
     (when (not down)
       (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
+  ;; 続きの CLI は init の前に transcript を全部読む — 上限を越える transcript は最後の compact の境から後だけに置き直す(card
+  ;; ki-d96c2ca8a5a1)。枝(ForkSession)の親は置き直さない(親の process が生きているかをここは知らない)。
+  (var unrotatable None)
+  (when (isinstance origin ResumeSession)
+    (<- rotated (rotate-before-resume host spec.home canonical target-id))
+    (when (isinstance rotated TranscriptUnrotatable)
+      (:= unrotatable rotated)))
   ;; CLI が数え始める額 = 続き・枝の親の transcript の最後の cost-state の額(前の process が終了して額を記録した後 = 終了を待った後に
   ;; 読む)。冷えた続きの前の命令より前に読む — その命令が使った額もこのターンの費用に数える。新しい会話は transcript が無いので None。
   (<- recorded (recorded-cost-mark spec.home canonical target-id))
   (when decision.cold-resume
     (<- (run-cold-resume host spec target-id)))
   (<- (note-over-limit host target-id warm))
-  (LaunchReady :recorded recorded))
+  (LaunchReady :recorded recorded :unrotatable unrotatable))
 
 (defk start-turn [#^ ClaudeCodeHost host #^ ClaudeStartTurn request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeStartTurn)] :post [(: % "StartTurnOutcome")]}
@@ -1109,7 +1167,7 @@
     (when (is-not reused None) (return reused))
     ;; 判断の後に process が降りた・降り始めた(手番の外で出力した)— 降りるのを待ってから起こす。
     (:= decision (Launch :wait-retire True)))
-  (<- ready (prepare-launch host runtime spec canonical target-id decision False))
+  (<- ready (prepare-launch host runtime spec origin canonical target-id decision False))
   (when (isinstance ready LaunchFailed) (return ready))
   ;; ターンを 1 度も始めていない会話(新しく作る・入力なしで事前起動しただけ)は、起動できなかった時に忘れる — 新しい会話の id は
   ;; 未使用の扱いに戻る。
@@ -1128,8 +1186,9 @@
     (when unused (.forget host target-id runtime))
     (return spawned))
   (<- (note-spawned runtime spawned origin requested launching launching-wall))
-  (<- outcome (await-init host runtime spawned unused))
-  (<- (note-init runtime spawned outcome))
+  (<- started (await-init host runtime spawned unused))
+  (<- (note-init runtime spawned started))
+  (<- outcome (unrotatable-note started ready.unrotatable))
   outcome)
 
 (defk warm-session [#^ ClaudeCodeHost host #^ ClaudeWarmSession request]
@@ -1155,7 +1214,7 @@
     (Refuse :outcome outcome) (return outcome)
     (Reuse) (return (SessionWarmed :session-id target-id))
     _ None)
-  (<- ready (prepare-launch host known spec canonical target-id decision True))
+  (<- ready (prepare-launch host known spec origin canonical target-id decision True))
   (when (isinstance ready LaunchFailed) (return ready))
   (val runtime (if (is known None)
                    (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) 0.0 None))

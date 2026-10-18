@@ -16,6 +16,9 @@
 ;;; - stdin の EOF で降りる。stdin を開いたまま result の後も生きる(温かい — 降ろすのは host の仕事)。
 ;;; - 入力の前は transcript を作らない(実物と同じ — 最初の入力で作る)。入力を 1 つも受けずに終了した新しい会話は記録を残さない。
 ;;; - テスト用の env STUB_CLI_AT_START が在れば、起動の直後(入力の前)にその行を出す(main のコメント)。
+;;; - テスト用の env STUB_CLI_READ_SECONDS_PER_MIB(秒の数)が在れば、--resume の process は transcript の大きさ(MiB)× その秒だけ、
+;;;   入力を読む前に待つ — 実物の CLI が init の前に transcript を頭から全部読む秒を模す(実測 2026-10-18: 割れた 216 MB の file を
+;;;   混んだ USB の disk から約 127 秒・card ki-d96c2ca8a5a1)。
 ;;; - --input-format の無い -p <prompt>(冷えた続きの前の 1 回きりの命令)は transcript に印を 1 行足して rc 0。
 ;;; - 額(実測 2.1.283・#883): result の行の total_cost_usd は会話の累積(CLI の手番 1 回 = TURN-COST)で、usage は
 ;;;   その手番の分だけ。stdin の EOF・SIGINT で降りる時に累積の額を transcript に実物と同じ形の 1 行で記し
@@ -29,6 +32,7 @@
 (import re)
 (import select)
 (import sys)
+(import time)
 (import uuid)
 
 (.insert sys.path 0 (str (. (Path __file__) (resolve) parent parent)))
@@ -360,6 +364,9 @@
         (when (not (os.path.exists (transcript-path resumed)))
           (.write sys.stderr (.format "No transcript found for session ID: {}\n" resumed))
           (sys.exit 1))
+        (setv read-rate (.get os.environ "STUB_CLI_READ_SECONDS_PER_MIB"))
+        (when read-rate
+          (time.sleep (* (float read-rate) (/ (os.path.getsize (transcript-path resumed)) 1048576))))
         (if (in "--fork-session" args)
             (do
               (setv child (str (uuid.uuid4)))
