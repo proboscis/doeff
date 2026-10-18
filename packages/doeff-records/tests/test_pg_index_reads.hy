@@ -11,9 +11,9 @@
 (import json)
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
 (import doeff_core_effects.postgres_sql [PostgresConnections])
-(import doeff_records.pg [drop-records-tables])
+(import doeff_records.pg [drop-records-tables EXPIRE-BATCH])
 (import doeff_records.admission [canonical-json])
-(import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
+(import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement list-rows-statement table-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
@@ -36,6 +36,8 @@
 ;; 走査の節の種類(Bitmap Index Scan は Bitmap Heap Scan と同じ行を数えるので数えない)と、数えない 1 行の表。
 (val SCANS #("Seq Scan" "Index Scan" "Index Only Scan" "Bitmap Heap Scan"))
 (val ONE-ROW-TABLE "store_epoch")
+;; 回収の候補の読みの上限(置き場の回収と同じ数)。
+(val CANDIDATE-LIMIT EXPIRE-BATCH)
 
 
 (defk event-rows-statement [prefix stream head count at]
@@ -94,28 +96,44 @@
     (Statement :text (.format "ANALYZE {p}state_rows, {p}append_rows, {p}row_changes" :p prefix) :params #())))
 
 
+(defk sweep-sequences [prefix stream]
+  {:pre [(: prefix str) (: stream str)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "回収の錠の中の文(expire-chosen-events-statement)に渡す番号を作るため: 列 stream の境以前の出来事(pairs では古い要求に新しい結末の
+   付いた組の古い要求 — 組の照らしを索引で引く事も測る)と、列の最初の出来事(期限の前 — 条件の読み直しが落とす)。"
+  (<- answer (SqlQuery DATABASE (.format "SELECT seq FROM {p}append_rows WHERE ledger = :ledger AND at <= :before_at
+                                          UNION SELECT min(seq) FROM {p}append_rows WHERE ledger = :ledger ORDER BY 1" :p prefix)
+                       #((SqlParam :name "ledger" :value stream) (SqlParam :name "before_at" :value BEFORE))))
+  (assert (isinstance answer SqlRows) (repr answer))
+  (tuple (gfor record answer.rows (int (get record 0)))))
+
+
 (defk measured-statements [prefix]
   {:pre [(: prefix str)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
   "測る文を #(名 文) で並べるため(読みを先に・消す文を後に — 消す文も EXPLAIN ANALYZE は本当に流す)。組の片付けの鍵は古い要求に新しい
    結末の付いた組の結末(受付の列で一番多い、要求の後の結末の追記の形)。"
-  (<- pulse-probe (expiring-events-statement prefix "pulses" BEFORE None))
-  (<- pair-probe (expiring-events-statement prefix "pairs" BEFORE ":"))
+  (<- pulse-probe (expiring-candidates-statement prefix "pulses" BEFORE None CANDIDATE-LIMIT))
+  (<- pair-probe (expiring-candidates-statement prefix "pairs" BEFORE ":" CANDIDATE-LIMIT))
   (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done")))
   (<- touched (touched-events-statement prefix "pairs" BEFORE ":" "done:m-1"))
   ;; WatchChanges の頭の文に列の末尾を並べた形(#3718 — 列ごとの副問い合わせ stream-tail-statement): (ledger, seq) の索引を後ろから 1 行。
   ;; pulses の出来事は pairs より前に積んである — 主鍵 seq を後ろから読む道なら pairs の出来事を全部読む(等号の照らしの形がそうだった)。
-  ;; 組で数える列(pairs)の末尾は測らない: 期限の条件(living-events-filter — ReadEvents と同じ)の組の照らしは hashed SubPlan の
-  ;; Seq Scan に計画される(末尾の出来事が生きていれば走らない)。これは列の読みの期限の条件の性質で、末尾の読みが足した物ではない。
+  ;; 組で数える列(pairs)の末尾も並べる: 期限の条件(living-events-filter — ReadEvents と同じ)の組の照らしは値の副問い合わせで、
+  ;; 出来事ごとに組の名の式の索引を引く(NOT EXISTS の形は hashed SubPlan の Seq Scan に計画された — pg_sql.expired-event-condition)。
   (val pulse-expiry (EventExpiry :before-at BEFORE :separator None))
   (<- watch-head (watch-head-statement prefix #((TailRead :stream "pulses" :expiry pulse-expiry)
+                                                (TailRead :stream "pairs" :expiry (EventExpiry :before-at BEFORE :separator ":"))
                                                 (TailRead :stream "journal" :expiry None))))
   ;; 冪等キー 1 つの読み(#3750 — ReadEventByKey): 一意の索引 (ledger, 冪等キー) で 1 行を引き、期限の判定はその 1 行についてだけ見る
   ;; (組で数える列は組の名の式の索引)。鍵は拾わない行の中の 1 つ(置き場が大きくても読む行は変わらない)。
   (<- pulse-key (event-by-key-statement prefix "pulses" "pulse-7" pulse-expiry))
   (<- pair-key (event-by-key-statement prefix "pairs" "done:m-1" (EventExpiry :before-at BEFORE :separator ":")))
-  (<- pulse-sweep (expire-events-statement prefix "pulses" BEFORE))
-  (<- pair-sweep (expire-event-groups-statement prefix "pairs" BEFORE ":"))
+  ;; 回収の錠の中の文は候補の番号で捨てる(この置き場に期限を過ぎた出来事は無い — 錠の中の条件の読み直しが落とす番号を渡す)。
+  (<- pulse-chosen (sweep-sequences prefix "pulses"))
+  (<- pair-chosen (sweep-sequences prefix "pairs"))
+  (<- pulse-sweep (expire-chosen-events-statement prefix "pulses" BEFORE None pulse-chosen))
+  (<- pair-sweep (expire-chosen-events-statement prefix "pairs" BEFORE ":" pair-chosen))
   (<- prune (prune-changes-statement prefix BEFORE UNBOUNDED-SEQ))
   #(#("出来事ごとの列の回収の候補の読み" pulse-probe)
     #("組で数える列の回収の候補の読み" pair-probe)
