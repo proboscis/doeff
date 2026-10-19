@@ -2004,8 +2004,8 @@
 
 
 ;; 受け渡しで「今の世代が受け取れる」と数える recreate の job の phase(AL-D2k): 準備と検めが揃って待っている(elder-runs)か、もう
-;; 動いているか、準備できないと確定した(待っても揃わない — 入れ替えを止めない)。
-(val HANDOVER-SETTLED-PHASES #{"elder-runs" "running" "code-failed" "probe-failed" "env-failed" "handoff-abandoned"})
+;; 動いているか、準備できないと確定した・機体の memory の見張りに続けて止められて起こし直さない(待っても揃わない — 入れ替えを止めない)。
+(val HANDOVER-SETTLED-PHASES #{"elder-runs" "running" "code-failed" "probe-failed" "env-failed" "handoff-abandoned" "memory-killed"})
 
 
 (defn #^ bool handover-pending [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing

@@ -156,6 +156,14 @@
        (= record.last-outcome Outcome.EXITED)
        (< (- now record.last-exit-ms) (backoff-ms record policy))))
 
+(defn #^ bool memory-given-up [#^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "常駐の job spec が機体の memory の見張りに続けて止められ、起こし直しを止めたか(起こしの段 start-step と状態の行の phase-of・job-status が
+   同じ述語を読む): memory-kill-limit 回に達し、最後に止められた process の spec が今の宣言と同じ(宣言が変われば新しい spec は起こす)。
+   task は 1 度だけ走るので当たらない(止められた task は終わった task として返る)。"
+  (and (not spec.once)
+       (>= record.memory-kills policy.memory-kill-limit)
+       (= record.memory-killed-spec (spec-hash spec))))
+
 (defn #^ tuple stop-actions [#^ int now #^ ProcessView process #^ JobRecord record #^ WorkerPolicy policy #^ StopReason reason]
   "止める action(reason = 止め始める訳 — 止め始めた後は記憶の訳を持ち回り、KILL も TERM と同じ訳を名乗る・#3713)。"
   (setv stopping record.stopping)
@@ -268,6 +276,9 @@
     (and spec.handoff world.leaving) (StartStep :actions #() :hold StartHold.LEAVING)
     ;; task は 1 度だけ走らせる。終わった後は宣言から外れるまで待つ(結果は状態の報告で運ぶ)。
     (and spec.once (is-not record.last-outcome None)) (StartStep :actions #() :hold None)
+    ;; 機体の memory の見張りに続けて止められた常駐の job は起こし直さない(起動のたびに同じ memory の山を作る job は、起こし直しても
+    ;; 同じ所で止められる)。状態の行は memory-killed(coordinator は版の判定を Blocked にする)。宣言の spec が変われば起こす。
+    (memory-given-up spec record policy) (StartStep :actions #() :hold StartHold.MEMORY-KILLED)
     ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)で焼く。
     (is tree None) (StartStep :actions (prepare-actions now spec world policy None) :hold (! (prepare-hold code record)))
     True (! (ready-tree-step now spec tree world record policy))))
@@ -379,7 +390,9 @@
     (is process None) (if (or (is want None) abandoned superseded) #() (. (! (start-step now want world record policy)) actions))
     (is-not process.exit-code None)
       (+ #((ReapJob name process.pid
-             (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code))
+             (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code
+             ;; 機体の memory の見張りがこの process の木を止めていれば、その spec の指紋(記憶が続けて止められた回数を数える)。
+             (if (in #(name process.pid) world.memory-killed) (spec-hash process.spec) None)))
          ;; 終わった process の lease は、期限を待たずに返す(次の担い手がすぐ取れる)。
          ;; 担い手の名は子が名乗った job の名(起こした spec の名 — 退いた process も元の名)と世代の名。
          (if process.instance #((ReleaseLeases process.spec.name process.instance)) #()))
@@ -597,16 +610,25 @@
         (JobStop :requested-ms (if (is record.stopping None) now record.stopping.requested-ms) :stage action.stage :signalled-ms now
                  :reason action.reason))
     (isinstance action ReapJob)
-      ;; 数え方は 2 つ: unexpected-exits = 停止を求めずに終わった回数(起こし直しの間を伸ばす・exit code を問わない)、
-      ;; failures = そのうち exit code が 0 でなかった回数(失敗として表示する)。どちらも長く動いた後の終わりは 1 回目に数え直す。
+      ;; 数え方は 3 つ: unexpected-exits = 停止を求めずに終わった回数(起こし直しの間を伸ばす・exit code を問わない)、
+      ;; failures = そのうち exit code が 0 でなかった回数(失敗として表示する)、memory-kills = 機体の memory の見張りに続けて止められた
+      ;; 回数(同じ spec の間だけ — memory-kill-limit に達したら起こし直さない)。どれも長く動いた後の終わりは 1 回目に数え直す。見張りに
+      ;; 止められた終わりの「長く」は memory-kill-reset-ms(起動から約 1 分で止められる job を stable-run-ms で数え直さない)、それ以外は
+      ;; stable-run-ms。見張りに止められずに終わった回は memory-kills を進めず、memory-kill-reset-ms 以上動いていた時だけ 0 に戻す。
       (do
         (setv exited (= action.outcome Outcome.EXITED)
-              stable (and (is-not record.last-start-ms None)
-                          (>= (- now record.last-start-ms) policy.stable-run-ms)))
+              ran-ms (if (is record.last-start-ms None) None (- now record.last-start-ms))
+              killed (is-not action.memory-killed-spec None)
+              worked (and (is-not ran-ms None) (>= ran-ms policy.memory-kill-reset-ms))
+              stable (if killed worked (and (is-not ran-ms None) (>= ran-ms policy.stable-run-ms))))
         (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
                  :stopping None
                  :unexpected-exits (cond (not exited) 0 stable 1 True (+ record.unexpected-exits 1))
-                 :failures (cond (or (not exited) (= action.exit-code 0)) 0 stable 1 True (+ record.failures 1))))
+                 :failures (cond (or (not exited) (= action.exit-code 0)) 0 stable 1 True (+ record.failures 1))
+                 :memory-kills (cond (not killed) (if worked 0 record.memory-kills)
+                                     (or worked (!= action.memory-killed-spec record.memory-killed-spec)) 1
+                                     True (+ record.memory-kills 1))
+                 :memory-killed-spec (if killed action.memory-killed-spec record.memory-killed-spec)))
     True record))
 
 (defk records-after [now records actions [policy (WorkerPolicy)]]
@@ -676,6 +698,7 @@
     (is want None) JobPhase.STOPPED
     (and want.once (is-not record.last-outcome None)) JobPhase.FINISHED
     (and want.handoff want.handoff-abandoned) JobPhase.HANDOFF-ABANDONED
+    (memory-given-up want record policy) JobPhase.MEMORY-KILLED
     True
       (do
         (setv code (code-of world (code-key want)))
@@ -738,6 +761,8 @@
   (<- replacing bool (recreating? want process record))
   (val warm-wait (warm-wait-detail world want process record))
   (val refused (refused-warm-child world want process record policy))
+  ;; 機体の memory の見張りに続けて止められ、起こし直しを止めた常駐の job(動いている process が無い時だけ — phase-of と同じ述語)。
+  (val given-up (and (is process None) (is-not want None) (memory-given-up want record policy)))
   ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
   ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
   (val stable (and (is-not process None) (is-not record.last-start-ms None)
@@ -752,6 +777,8 @@
         abandoned "入れ替えを諦めた(新の process は止めて起こし直さない・旧は動かしたまま — 宣言が変わるまで)"
         ;; drain 中で新しい版を受けていない(#3684)。新しい版の準備・検めの姿はこの worker では進めないので、ここで止める。
         held "drain 中 — 新しい版は drain の後"
+        ;; 機体の memory の見張りに続けて止められた(起こし直さない — 宣言が変わるまで)。
+        given-up (.format "機体の memory の見張りに {} 回続けて止められた — 起こし直さない(宣言の spec が変わるまで)" record.memory-kills)
         ;; recreate の job の新しい版の準備の失敗・入口を読み込めない・検めの間・準備の間は、旧い版が動いている事を頭に示す(2026-10-08)。
         (and replacing (is-not code None) (= code.state CodeState.FAILED))
           (.format "旧い版を動かしたまま — 新しい版を準備できない: {}" code.detail)

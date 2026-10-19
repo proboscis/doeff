@@ -152,7 +152,11 @@
   (setv #^ bool leaving False)
   ;; 機体の memory が逼迫(見張り worker/protocol/memory_watch の様子が TIGHT か DANGER — card ki-7b934e2538f9)。真の間、worker の判断
   ;; (policy の ready-tree-step)は task(once)の起動を見送る(常駐の job は見送らない)。既定は偽(見張りを持たない呼び手・模擬の環境)。
-  (setv #^ bool memory-tight False))
+  (setv #^ bool memory-tight False)
+  ;; 機体の memory の見張りが止めた job の process の印(#(process の名 根の pid) の frozenset — 見張りが止めた単位の属する job の根)。
+  ;; 判断(policy の plan-job)は終わった process を回収する時にこれを読み、見張りに止められた終わりを数える(続けて止められた job の
+  ;; 起こし直しを止める — WorkerPolicy.memory-kill-limit)。既定は空(見張りを持たない呼び手・模擬の環境)。
+  (setv #^ frozenset memory-killed (frozenset)))
 
 
 (defclass StopStage [Enum]
@@ -205,8 +209,10 @@
 ;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)・
 ;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)・
 ;;   MEMORY-TIGHT = 機体の memory が逼迫(TIGHT か DANGER)の間、task を起こさない(WorldView.memory-tight — 常駐の job は見送らない・
-;;   card ki-7b934e2538f9)。
-(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING MEMORY-TIGHT)
+;;   card ki-7b934e2538f9)・MEMORY-KILLED = 常駐の job が機体の memory の見張りに続けて止められた(WorkerPolicy.memory-kill-limit 回 —
+;;   起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められる。宣言の spec が変わるまで起こさない)。
+(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING MEMORY-TIGHT
+         MEMORY-KILLED)
 
 
 ;; --- 待ちの子(#3646)-------------------------------------------------------------
@@ -271,6 +277,11 @@
   ;; 停止を求めずに続けて終わった回数(exit code を問わない — 起こし直しの間 backoff を伸ばす)。失敗の数え方とは別に持つ
   ;; (exit code 0 で終わってすぐ起こし直すサービスも、間を伸ばして起こし直しの連打を避ける)。
   (setv #^ int unexpected-exits 0)
+  ;; 機体の memory の見張りに続けて止められた回数(WorkerPolicy.memory-kill-limit に達したら起こし直さない)と、最後に止められた process の
+  ;; spec の指紋(spec-hash — 数えるのは同じ spec の間だけ。宣言が変われば新しい spec は起こす)。memory-kill-reset-ms 以上動いてから
+  ;; 終わったら 0 に戻す(止められても、その前に仕事を回せた job は数え直す)。
+  (setv #^ int memory-kills 0)
+  (setv #^ (| str None) memory-killed-spec None)
   ;; 最後に名乗った起こしの見送りの訳(#3713 — 同じ訳が続く間は行を出さない・None = 見送っていない)。拍の Program が拍の終わりに書く。
   (setv #^ (| StartHold None) held None))
 
@@ -307,6 +318,14 @@
   ;; env-failed で終える回数(正の整数)。断りが決定的(import の失敗など)なら起こし直しても同じで、上限が無いと task は PREPARING のまま
   ;; worker の枠を取り続けた(2026-10-10 に 1,092 回・10 時間)。
   (setv #^ int warm-refusal-limit 3)
+  ;; 常駐の job が機体の memory の見張りに続けて止められた時に、起こし直しを止めて失敗(phase memory-killed)として報告する回数(正の整数)。
+  ;; 起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められ、要求を 1 件も回さずに起き直し続けた(2026-10-19 の本番の
+  ;; worker で 1 つの job が起動から約 1 分で止められ、3 時間 13 分に 125 回・43 分に 37 回。失敗の数は約 1 分の走りで 1 に戻り、表に
+  ;; 出なかった)。
+  (setv #^ int memory-kill-limit 3)
+  ;; 見張りに止められる前にこれ以上動いた job は、止められた数を 1 から数え直す(仕事を回せた job)。stable-run-ms は起動から約 1 分で
+  ;; 止められる job を「長く動いた」と数えてしまうので、別に長く持つ。見張りに止められた終わりの backoff と失敗の数もこの境で数え直す。
+  (setv #^ int memory-kill-reset-ms 600000)
 
   (defn #^ None __post-init__ [self]
     ;; 焼く道具の並べる数が正の整数である事を、方策を作る時に確かめるため(0 以下は道具が受けない — 準備が使い方の誤りで落ち続ける)。
@@ -317,7 +336,12 @@
       (raise (ValueError (.format "retired-limit は 1 以上: {}" self.retired-limit))))
     ;; 起動の断りの上限が正の整数である事(0 以下では待ちの子を 1 度も起こさずに task を終えてしまう)。
     (when (< self.warm-refusal-limit 1)
-      (raise (ValueError (.format "warm-refusal-limit は 1 以上: {}" self.warm-refusal-limit))))))
+      (raise (ValueError (.format "warm-refusal-limit は 1 以上: {}" self.warm-refusal-limit))))
+    ;; 見張りに止められた回数の上限が正の整数である事(0 以下では 1 度も起こさずに失敗にしてしまう)。
+    (when (< self.memory-kill-limit 1)
+      (raise (ValueError (.format "memory-kill-limit は 1 以上: {}" self.memory-kill-limit))))
+    (when (< self.memory-kill-reset-ms 0)
+      (raise (ValueError (.format "memory-kill-reset-ms は 0 以上: {}" self.memory-kill-reset-ms))))))
 
 
 (defclass [(dataclass :frozen True)] JobStatus []
@@ -468,11 +492,13 @@
 
 
 (defclass [(dataclass :frozen True)] ReapJob [EffectBase]
-  "終了を観測した process を観測の表から外す。"
+  "終了を観測した process を観測の表から外す。memory-killed-spec = 機体の memory の見張りがこの process の木の単位を止めていれば、その
+   process の spec の指紋(spec-hash — 記憶の数え record-after が読む)・止めていなければ None。"
   (#^ str name)
   (#^ int pid)
   (#^ Outcome outcome)
-  (#^ int exit-code))
+  (#^ int exit-code)
+  (setv #^ (| str None) memory-killed-spec None))
 
 
 (defclass [(dataclass :frozen True)] RetireJob [EffectBase]

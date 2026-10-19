@@ -47,6 +47,7 @@
    JobPhase.STOP-UNCONFIRMED VersionState.BLOCKED
    JobPhase.FINISHED VersionState.BLOCKED               ; service の process が終わった — 想定の外
    JobPhase.HANDOFF-ABANDONED VersionState.BLOCKED
+   JobPhase.MEMORY-KILLED VersionState.BLOCKED          ; 機体の memory の見張りに続けて止められて起こし直さない
    ;; running-process は phase が running の行を「running でない」と答えない(届かない組)。届いたら様子が分からないと答える。
    JobPhase.RUNNING VersionState.UNKNOWN})
 
@@ -157,7 +158,7 @@
 
 (deftest test-every-phase-and-every-not-ready-kind-maps-to-one-of-the-five-states
   ;; 閉じた型の全部の値を回す: 値を足して写し忘れると match が何も返さず赤になる。
-  (assert (= (len JobPhase) 14))
+  (assert (= (len JobPhase) 15))
   (assert (= (len NotReadyKind) 11))
   (assert (= (len UnplacedKind) 3))
   (assert (= (sfor s VersionState s.value) #{"Current" "Updating" "Blocked" "Stopped" "Unknown"}))

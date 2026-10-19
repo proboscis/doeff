@@ -120,6 +120,7 @@ class WorldView:
     warm_children: tuple[WarmChildView, ...] = ()
     leaving: bool = False
     memory_tight: bool = False
+    memory_killed: frozenset[tuple[str, int]] = frozenset()
 
 class StopStage(Enum):
     TERM = "term"
@@ -182,6 +183,7 @@ class StartHold(StrEnum):
     ELDER_RUNS = "elder-runs"
     LEAVING = "leaving"
     MEMORY_TIGHT = "memory-tight"
+    MEMORY_KILLED = "memory-killed"
 
 # --- 待ちの子(#3646)-------------------------------------------------------------
 
@@ -237,6 +239,8 @@ class JobRecord:
     failures: int = 0
     last_start_ms: int | None = None
     unexpected_exits: int = 0
+    memory_kills: int = 0
+    memory_killed_spec: str | None = None
     held: StartHold | None = None
 
 @dataclass(frozen=True)
@@ -252,6 +256,8 @@ class WorkerPolicy:
     wake_gap_seconds: float = 0.1
     retired_limit: int = 3
     warm_refusal_limit: int = 3
+    memory_kill_limit: int = 3
+    memory_kill_reset_ms: int = 600000
 
 @dataclass(frozen=True)
 class JobStatus:
@@ -366,6 +372,7 @@ class ReapJob(EffectBase[None]):
     pid: int
     outcome: Outcome
     exit_code: int
+    memory_killed_spec: str | None = None
 
 @dataclass(frozen=True)
 class RetireJob(EffectBase[None]):

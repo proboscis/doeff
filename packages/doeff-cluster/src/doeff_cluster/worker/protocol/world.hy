@@ -8,7 +8,7 @@
 (import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk
 ])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving ObserveMemoryTight])
+  ObserveLeaving ObserveMemoryTight ObserveMemoryKills])
 
 
 (defhandler local-host
@@ -22,4 +22,6 @@
     (<- children tuple (ObserveWarmChildren))
     (<- leaving bool (ObserveLeaving))
     (<- tight bool (ObserveMemoryTight))
-    (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving :memory-tight tight))))
+    (<- killed frozenset (ObserveMemoryKills))
+    (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving :memory-tight tight
+                       :memory-killed killed))))

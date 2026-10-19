@@ -112,6 +112,9 @@ def backoff_ms(record: JobRecord, policy: WorkerPolicy) -> int:
 def in_backoff(now: int, record: JobRecord, policy: WorkerPolicy) -> bool:
     ...
 
+def memory_given_up(spec: JobSpec, record: JobRecord, policy: WorkerPolicy) -> bool:
+    ...
+
 def stop_actions(now: int, process: ProcessView, record: JobRecord, policy: WorkerPolicy, reason: StopReason) -> tuple:
     ...
 

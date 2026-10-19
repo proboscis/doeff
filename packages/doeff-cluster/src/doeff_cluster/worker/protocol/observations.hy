@@ -55,3 +55,9 @@
 (defclass [(dataclass :frozen True)] ObserveMemoryTight [EffectBase]
   "機体の memory が逼迫(見張りの様子が TIGHT か DANGER)かの観測(bool)。世界の観測のまとめ(local-host)が、機体の memory の見張りの
    観測の答え手(worker/protocol/memory_observer)へ問う(card ki-7b934e2538f9)。")
+
+
+(defclass [(dataclass :frozen True)] ObserveMemoryKills [EffectBase]
+  "機体の memory の見張りが止めた job の根の印(#(process の名 根の pid) の frozenset — WorldView.memory-killed)。世界の観測のまとめ
+   (local-host)が、機体の memory の見張りの観測の答え手(worker/protocol/memory_observer)へ問う。判断は終わった process の回収で読み、
+   見張りに続けて止められた常駐の job の起こし直しを止める(WorkerPolicy.memory-kill-limit)。")

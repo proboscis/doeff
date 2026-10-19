@@ -91,7 +91,9 @@
 ;; Blocked にした時(status.version.state — 前の版の行・置き先の無さは Blocked に数えない判断を coordinator が先にしている)だけ読む。
 ;; 落ちて起こし直す途中(backoff)・止めを確かめられない(stop-unconfirmed)・終わった(finished)は数えない — Crash の後に Ready の戻りを
 ;; 待つ筋書きが早まって「落ちた」を受けないため。worker が撃ち直す env-failed(retryable)は coordinator が Updating と数えるので届かない。
-(val FAILED-PHASES (frozenset #(JobPhase.ENV-FAILED JobPhase.CODE-FAILED JobPhase.PROBE-FAILED JobPhase.HANDOFF-ABANDONED)))
+;; 機体の memory の見張りに続けて止められて worker が起こし直さない job(memory-killed)も、待っても戻らないので「落ちた」と数える。
+(val FAILED-PHASES (frozenset #(JobPhase.ENV-FAILED JobPhase.CODE-FAILED JobPhase.PROBE-FAILED JobPhase.HANDOFF-ABANDONED
+                                JobPhase.MEMORY-KILLED)))
 
 
 (defrecord ServiceFailed

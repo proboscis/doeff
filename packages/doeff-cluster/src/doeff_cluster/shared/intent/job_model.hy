@@ -122,5 +122,6 @@
         ENV-FAILED "env-failed"        ; 実行環境(runtime env)の root を準備できない(子 process を起こしていない)
         HANDOFF-ABANDONED "handoff-abandoned"  ; 入れ替えを諦めた(新は起こさない・退いた旧が動いている — 宣言が変わるまで)
         ELDER-RUNS "elder-runs"        ; コードと入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — 起こさない)
+        MEMORY-KILLED "memory-killed"  ; 常駐の job が機体の memory の見張りに続けて止められた(起こし直さない — 宣言が変わるまで)
         FINISHED "finished"            ; task が終わった(起動し直さない)
         STOPPED "stopped"))

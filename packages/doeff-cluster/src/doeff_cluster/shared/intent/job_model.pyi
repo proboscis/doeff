@@ -49,5 +49,6 @@ class JobPhase(Enum):
     ENV_FAILED = 'env-failed'
     HANDOFF_ABANDONED = 'handoff-abandoned'
     ELDER_RUNS = 'elder-runs'
+    MEMORY_KILLED = 'memory-killed'
     FINISHED = 'finished'
     STOPPED = 'stopped'

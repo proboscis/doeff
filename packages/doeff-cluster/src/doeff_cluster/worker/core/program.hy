@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes
-  WorkerUnsettled SweepEnvs TickMarks] doeff_cluster.shared.intent.job_model [JobPhase])
+  WorkerUnsettled SweepEnvs TickMarks StartHold] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.worker_due [plan-due wakes-with])
 (import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
@@ -194,11 +194,11 @@
       (<- settled WorldView (ObserveWorld))
       (:= after settled)))
   ;; 起こしの見送り(#3713): 拍の終わりの観測で起こさない・起こせない宣言の job を、訳が前の拍と替わった時だけ 1 行にし、訳を記憶に書く
-  ;; (同じ訳が続く間は出さない)。
+  ;; (同じ訳が続く間は出さない)。機体の memory の見張りに続けて止められて起こし直しを止めた job は、待っても戻らない失敗なので warning。
   (<- holds tuple (start-holds now desired after records policy))
   (<- fresh tuple (noted-holds records holds))
   (for [h fresh]
-    (<- (slog START-HOLD-LOG :level "info" :job h.name :reason h.hold.value)))
+    (<- (slog START-HOLD-LOG :level (if (= h.hold StartHold.MEMORY-KILLED) "warning" "info") :job h.name :reason h.hold.value)))
   (<- held dict (held-records records holds))
   (:= records held)
   (<- report tuple (statuses now desired after records policy))

@@ -395,6 +395,8 @@
     JobPhase.FINISHED VersionState.BLOCKED
     ;; 入れ替えを諦めた(worker の側から見た同じ事実 — 見張りの Abandoned)。
     JobPhase.HANDOFF-ABANDONED VersionState.BLOCKED
+    ;; 機体の memory の見張りに続けて止められ、worker が起こし直しを止めた(宣言が変わるまで進まない)。
+    JobPhase.MEMORY-KILLED VersionState.BLOCKED
     ;; running-process は phase が running の行を「running でない」と答えないので、ここへは届かない。届いたら答えの食い違いなので
     ;; 既定の状態へ倒さず「分からない」と答える。
     JobPhase.RUNNING VersionState.UNKNOWN))
