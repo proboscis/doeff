@@ -611,7 +611,8 @@
                  :reason action.reason))
     (isinstance action ReapJob)
       ;; 数え方は 3 つ: unexpected-exits = 停止を求めずに終わった回数(起こし直しの間を伸ばす・exit code を問わない)、
-      ;; failures = そのうち exit code が 0 でなかった回数(失敗として表示する)、memory-kills = 機体の memory の見張りに続けて止められた
+      ;; failures = そのうち exit code が 0 でなかった回数と見張りに止められた回数(失敗として表示する — 見張りが job の木の単位を止めた後に
+      ;; 根が exit code 0 で終わっても、止められた終わりは失敗)、memory-kills = 機体の memory の見張りに続けて止められた
       ;; 回数(同じ spec の間だけ — memory-kill-limit に達したら起こし直さない)。どれも長く動いた後の終わりは 1 回目に数え直す。見張りに
       ;; 止められた終わりの「長く」は memory-kill-reset-ms(起動から約 1 分で止められる job を stable-run-ms で数え直さない)、それ以外は
       ;; stable-run-ms。見張りに止められずに終わった回は memory-kills を進めず、memory-kill-reset-ms 以上動いていた時だけ 0 に戻す。
@@ -624,7 +625,7 @@
         (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
                  :stopping None
                  :unexpected-exits (cond (not exited) 0 stable 1 True (+ record.unexpected-exits 1))
-                 :failures (cond (or (not exited) (= action.exit-code 0)) 0 stable 1 True (+ record.failures 1))
+                 :failures (cond (or (not exited) (and (= action.exit-code 0) (not killed))) 0 stable 1 True (+ record.failures 1))
                  :memory-kills (cond (not killed) (if worked 0 record.memory-kills)
                                      (or worked (!= action.memory-killed-spec record.memory-killed-spec)) 1
                                      True (+ record.memory-kills 1))
