@@ -189,7 +189,7 @@ agora-browser node publications/zenn-use-cases-v0/zenn-check/screenshot.mjs <出
 - [x] 記事を置く場所を、このリポジトリの記事だけのbranch `zenn-content`に決め、10本を`published: false`で置いた(2026-10-18・[決定記録](../../docs/design/decisions/2026-09-15-zenn-use-cases.md))。
 - [x] 連載10本を1冊の無料のZennの本にまとめる下書きを作り、Zennの本の形で崩れ0個を確かめた(2026-10-18・[決定記録](../../docs/design/decisions/2026-10-18-zenn-book-draft.md))。本は公開しておらず、`zenn-content`にも置いていない。
 - [x] 1本目を確定の形にした。目次に連載10本の順の一覧と候補の扱いの1文を置き、AIの表を2つに分け、各表で10本の回を先に並べた。PyPIのdoeff 0.6.0と0.7.0で確かめ直し、記事と本の書き出しで崩れ0個を確かめた(2026-10-19・[記録](reviews/main-final.md)・[決定記録](../../docs/design/decisions/2026-10-19-zenn-week1-main.md))。
-- [ ] ZennのダッシュボードでこのリポジトリとZennを連携し、同期するbranchを`zenn-content`にする(ユーザーの操作)。その後に`push_zenn_branch.py --resync`を1度走らせる。
+- [x] ZennのダッシュボードでこのリポジトリとZennを連携し、同期するbranchを`zenn-content`にした(2026-10-19・ユーザーの頼みでブラウザを操作するChatGPT workが設定した)。その後に`push_zenn_branch.py --resync`を1度走らせ、Zennの下書きの一覧に10本が並び、デプロイが3回とも成功した事を確かめた(2026-10-20)。
 - [x] 最初の4本を上の仕上げ基準で最終確認する。週1は2026-10-16に確認した。1〜5本目を通し読みで照らし、用語・前後の回・導入の案内を直した(2026-10-17・[記録](reviews/readthrough-1-5.md))。
 - [ ] 開始日を決める。
 - [ ] 各回の公開後に、公開状態を更新する。
