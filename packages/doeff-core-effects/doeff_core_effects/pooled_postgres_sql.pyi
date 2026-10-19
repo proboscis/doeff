@@ -32,5 +32,5 @@ def permit_for(permits: dict, database: str, size: int) -> _Program[Incomplete, 
 def permitted(permit: Incomplete, program: Program) -> _Program[Incomplete, object]:
     ...
 
-def pooled_postgres_sql_handler(connections: PostgresConnections, pool: Executor) -> _Handler:
+def pooled_postgres_sql_handler(connections: PostgresConnections, pool: Executor, serialized_lock_keys: tuple[str, ...] = ()) -> _Handler:
     ...
