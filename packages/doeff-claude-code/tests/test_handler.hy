@@ -23,7 +23,8 @@
 (import doeff_claude_code.effects [ClaudeReplaceSessionCredential CredentialReplaced
                                    ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
                                    ClaudeSessionStatus ClaudeWarmSession TurnStarted LaunchFailed SessionExported SessionNotFound
-                                   SessionClosed SessionWarmed ProcessStillAlive ClaudeReadTurnEvents TurnEventPage])
+                                   SessionClosed SessionWarmed ProcessStillAlive ClaudeReadTurnEvents TurnEventPage UnknownTurn
+                                   Closed])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.argv [launch-key transcript-path])
 (import doeff_claude_code.process [ClaudeProcess])
@@ -83,10 +84,10 @@
 
 
 (defrecord KeptTurns
-  "同じ process で手番を重ねてから閉じた観測: live = 最後の手番の後に会話が持つ手番の番号・closed = 閉じた後に持つ手番の番号・
-   last = 閉じた後に最後の手番を読み直した頁。"
+  "同じ process で手番を重ねてから閉じた観測: live = 最後の手番の後に会話が持つ手番の番号・held = 閉じた後もホストが会話の生きた
+   状態を持つか・last = 閉じた後に最後の手番を読み直した答え。"
   (#^ list live)
-  (#^ list closed)
+  (#^ bool held)
   (#^ object last))
 
 (defk turns-then-close [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid #^ int count]
@@ -103,21 +104,111 @@
   (val live (sorted (. (.runtime host sid) turns)))
   (<- closed (ClaudeCloseSession sid "test"))
   (assert (isinstance closed SessionClosed) (repr closed))
+  (val held (is-not (.runtime host sid) None))
   (<- last (ClaudeReadTurnEvents turn -1 0.0))
-  (KeptTurns :live live :closed (sorted (. (.runtime host sid) turns)) :last last))
+  (KeptTurns :live live :held held :last last))
 
-(deftest test-the-session-keeps-a-few-recent-turns-and-only-the-last-once-closed [tmp-path]
-  ;; 手番の記録(stdout の行の全部)は、読み手が今の手番と続きの手番しか読まないので、最近の KEPT-TURNS 本だけ持つ。閉じた会話は
-  ;; 最後の手番の記録だけを持つ(上の層が閉じた後に最後の手番の終わりを読む)— 会話の数と手番の数だけ ホストの process の memory が
-  ;; 伸び続けない(zeus の turn-host の本体・lt-KATGT933TATG1ESPPSW9QGFM7K)。
+(deftest test-the-session-keeps-a-few-recent-turns-and-none-once-closed [tmp-path]
+  ;; 手番の記録(stdout の行の全部)は、読み手が今の手番と続きの手番しか読まないので、最近の KEPT-TURNS 本だけ持つ。最後の手番の
+  ;; 終わりを読み手が読んだ後に閉じた会話は、手番の記録ごと生きた状態をホストから外す(読み手は終わりを読んだ手番を読み直さない —
+  ;; 読み直すと知らない手番)— 会話の数と手番の数だけ ホストの process の memory が伸び続けない(zeus の turn-host の本体・
+  ;; lt-KATGT933TATG1ESPPSW9QGFM7K・lt-5611P8B4MJS6CZQZ1809H94JPQ)。
   ;; 生きた会話ごとに持つ本数は数本(16 本では、生きた会話の数 × 16 手番分の行をホストが持った)。
   (assert (<= KEPT-TURNS 4) KEPT-TURNS)
   (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
   (<- seen (with-real-handler host (turns-then-close host (spec-in tmp-path) (str (uuid.uuid4)) (+ KEPT-TURNS 2))))
   (assert (= seen.live (list (range 3 (+ KEPT-TURNS 3)))) (repr seen.live))
-  (assert (= seen.closed [(+ KEPT-TURNS 2)]) (repr seen.closed))
-  (assert (isinstance seen.last TurnEventPage) (repr seen.last))
-  (assert (isinstance seen.last.end Completed) (repr seen.last.end)))
+  (assert (not seen.held) "閉じた会話の生きた状態をホストが持ち続けた")
+  (assert (isinstance seen.last UnknownTurn) (repr seen.last)))
+
+
+(defrecord ClosedHosts
+  "会話を何本か開いて閉じた観測: held = 閉じた後もホストが生きた状態を持つ会話の数・states = 閉じた会話の様子・views = 閉じた会話の
+   process の見え方・resumed = 閉じた会話の 1 本を続けた手番・resumed-end = その終わり・resumed-view = 続けた後の process の見え方・
+   seq-grew = 続けた手番の行の seq が閉じる前の最後の行より後か。"
+  (#^ int held)
+  (#^ tuple states)
+  (#^ tuple views)
+  (#^ object resumed)
+  (#^ object resumed-end)
+  (#^ object resumed-view)
+  (#^ bool seq-grew))
+
+(defk sessions-closed-then-one-resumed [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ list sids]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sids list)] :post [(: % ClosedHosts)]
+   :tags {:context "claude-code-test" :role "program"}}
+  "会話ごとに 2 手番を終わりまで読んで閉じ、閉じた会話をホストが持つか・閉じた様子を答えるか・最初の会話を続けられるかを見るため。"
+  (var last-seq -1)
+  (for [sid sids]
+    (for [#(origin word) [#((FreshSession sid) "ONE") #((ResumeSession sid) "TWO")]]
+      (<- started (ClaudeStartTurn origin spec (TurnInput (reply-prompt word) (str (uuid.uuid4)))))
+      (<- done (read-to-end started.turn 30.0))
+      (assert (isinstance done.end Completed) (repr done.end))
+      (when (= sid (get sids 0))
+        (:= last-seq (. (get done.lines -1) seq))))
+    (<- closed (ClaudeCloseSession sid "test"))
+    (assert (isinstance closed SessionClosed) (repr closed)))
+  (val held (len (lfor sid sids :if (is-not (.runtime host sid) None) sid)))
+  (var states #())
+  (var views #())
+  (for [sid sids]
+    (<- status (ClaudeSessionStatus spec.home spec.cwd sid))
+    (<- view (ClaudeLiveProcess sid))
+    (:= states (+ states #(status.state)))
+    (:= views (+ views #(view))))
+  (val first (get sids 0))
+  (<- again (ClaudeStartTurn (ResumeSession first) spec (TurnInput (reply-prompt "THREE") (str (uuid.uuid4)))))
+  (<- third (read-to-end again.turn 30.0))
+  (<- resumed-view (ClaudeLiveProcess first))
+  (ClosedHosts :held held :states states :views views :resumed again :resumed-end third.end :resumed-view resumed-view
+               :seq-grew (> (. (get third.lines 0) seq) last-seq)))
+
+(deftest test-closed-sessions-leave-no-runtime-and-resume-where-they-stopped [tmp-path]
+  ;; 閉じた会話の生きた状態(手番の記録 — stdout の行の全部)をホストが持ち続けると、閉じた会話の数だけ turn-host の memory が伸び、
+  ;; CLI の数が減っても memory が減らない(10-19 の本番 pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB —
+  ;; lt-5611P8B4MJS6CZQZ1809H94JPQ)。最後の手番の終わりを読んだ会話は、閉じたらホストから外す。外しても閉じた様子と process の
+  ;; 見え方(起こした数・降ろした訳)は同じに答え、続きは手番の番号・行の seq・起こした数を続ける。
+  (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
+  (val sids (lfor _ (range 3) (str (uuid.uuid4))))
+  (<- seen (with-real-handler host (sessions-closed-then-one-resumed host (spec-in tmp-path) sids)))
+  (assert (= seen.held 0) (repr seen.held))
+  (assert (all (gfor state seen.states (isinstance state Closed))) (repr seen.states))
+  (assert (= seen.views (* #((NoLiveProcess :launches 1 :stopped-because StopReason.SESSION-CLOSED)) 3)) (repr seen.views))
+  (assert (isinstance seen.resumed TurnStarted) (repr seen.resumed))
+  (assert (= seen.resumed.turn.turn-seq 3) (repr seen.resumed))
+  (assert (isinstance seen.resumed-end Completed) (repr seen.resumed-end))
+  (assert (= seen.resumed-view (LiveProcess :launches 2)) (repr seen.resumed-view))
+  (assert seen.seq-grew "続けた手番の行の seq が閉じる前の行の seq から続かない"))
+
+
+(defrecord ClosedMidTurn
+  "走っている手番の途中で閉じた観測: held-before = 終わりを読む前にホストが持つ手番の番号(持たなければ None)・end = 読んだ終わり・
+   held-after = 終わりを読んだ後もホストが生きた状態を持つか。"
+  (#^ object held-before)
+  (#^ object end)
+  (#^ bool held-after))
+
+(defk closed-mid-turn [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % ClosedMidTurn)]
+   :tags {:context "claude-code-test" :role "program"}}
+  "道具の途中で会話を閉じ、閉じた後に読み手が最後の手番の終わりを読めるか・読んだ後にホストが会話を外すかを見るため。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (sleep-prompt 40 "NEVER") (str (uuid.uuid4)))))
+  (<- (read-to-tool-start started.turn 30.0))
+  (<- closed (ClaudeCloseSession sid "test"))
+  (assert (isinstance closed SessionClosed) (repr closed))
+  (val runtime (.runtime host sid))
+  (val held-before (if (is runtime None) None (sorted runtime.turns)))
+  (<- done (read-to-end started.turn 30.0))
+  (ClosedMidTurn :held-before held-before :end done.end :held-after (is-not (.runtime host sid) None)))
+
+(deftest test-a-session-closed-mid-turn-is-released-once-its-end-is-read [tmp-path]
+  ;; 閉じた時に走っていた手番は、上の層が閉じた後にその終わりを読む(doeff-agents の headless の stop)。終わりを読むまでは、その手番の
+  ;; 記録だけを持ち、読んだらホストから外す。
+  (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
+  (<- seen (with-real-handler host (closed-mid-turn host (spec-in tmp-path) (str (uuid.uuid4)))))
+  (assert (= seen.held-before [1]) (repr seen.held-before))
+  (assert (isinstance seen.end Interrupted) (repr seen.end))
+  (assert (not seen.held-after) "終わりを読んだ後も閉じた会話の生きた状態をホストが持ち続けた"))
 
 
 (defk two-turns [#^ ClaudeSessionSpec spec #^ str sid]
@@ -728,12 +819,14 @@
 
 (defrecord WarmFirstTurn
   "事前起動してから最初のターンを走らせたシナリオの観測: before = ターンの前の状態・warm-process = 事前起動した process・done = ターンの
-   読み取り結果・after = ターンの後の状態・turn-process = ターンを走らせた process。"
+   読み取り結果・after = ターンの後の状態・turn-process = ターンを走らせた process・launch-key = ターンの後(閉じる前 — 閉じて読み終えた
+   会話はホストから外れる)の起動条件のキー。"
   (#^ (| LiveProcess NoLiveProcess) before)
   (#^ ClaudeProcess warm-process)
   (#^ TurnRecord done)
   (#^ (| LiveProcess NoLiveProcess) after)
-  (#^ (| ClaudeProcess None) turn-process))
+  (#^ (| ClaudeProcess None) turn-process)
+  (#^ (| str None) launch-key))
 
 (defk warm-then-first-turn [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid #^ str marker]
   {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str) (: marker str)] :post [(: % WarmFirstTurn)]
@@ -750,8 +843,10 @@
   (<- done TurnRecord (read-to-end started.turn 30.0))
   (<- after (ClaudeLiveProcess sid))
   (val turn-process (. (.runtime host sid) process))
+  (val turn-key (. (.runtime host sid) launch-key))
   (<- (ClaudeCloseSession sid "test"))
-  (WarmFirstTurn :before before :warm-process warm-process :done done :after after :turn-process turn-process))
+  (WarmFirstTurn :before before :warm-process warm-process :done done :after after :turn-process turn-process
+                 :launch-key turn-key))
 
 
 (deftest test-a-warm-process-that-only-ran-the-session-start-hooks-serves-the-first-turn [tmp-path]
@@ -773,7 +868,7 @@
   (assert (= (get argv (+ (.index argv "--session-id") 1)) sid) (repr argv))
   (assert (not-in "--resume" argv) (repr argv))
   (<- turn-key (launch-key STUB-COMMAND made.spec))
-  (assert (= (. (.runtime host sid) launch-key) turn-key)))
+  (assert (= seen.launch-key turn-key)))
 
 
 (defrecord ForbiddenLine

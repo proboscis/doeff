@@ -84,8 +84,11 @@
                                     rotate-transcript])
 
 ;; 会話が持ち続ける手番の記録(stdout の行の全部)の本数。読み手(上の層)は今の手番と、止めて生き残った入力の続きの手番しか読まない
-;; ので、続きを数本たどる間だけ持つ。閉じた会話は最後の手番だけを持つ(SessionRuntime.keep-only-current)。16 本だった時は、
-;; 生きた会話ごとに 16 手番分の行と、閉じた会話の 16 手番分の行をホストの process が持ち続けた(lt-KATGT933TATG1ESPPSW9QGFM7K)。
+;; ので、続きを数本たどる間だけ持つ。閉じた会話は最後の手番だけを持ち(SessionRuntime.keep-only-current)、読み手がその終わりを
+;; 読み、process も降りたら、生きた状態ごとホストから外して小さな記録(ClosedSession)だけを残す(ClaudeCodeHost.release)。16 本だった
+;; 時は、生きた会話ごとに 16 手番分の行と、閉じた会話の 16 手番分の行をホストの process が持ち続けた(lt-KATGT933TATG1ESPPSW9QGFM7K)。
+;; 最後の 1 本を持ち続けた時も、閉じた会話の数だけ行が溜まり、CLI の数が減っても turn-host の memory が減らなかった(10-19 の本番の
+;; pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB — lt-5611P8B4MJS6CZQZ1809H94JPQ)。
 (setv KEPT-TURNS 4)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 (setv COLD-RESUME-TIMEOUT-SECONDS 600.0)
@@ -136,10 +139,13 @@
   "1 つの手番の行と終わり(まだ終わっていなければ end は None)。launched-at = この手番で process を起こし始めた刻(GetMonotonic の
    読み — process を起こさずに続いた手番は None)・launched-wall = 同じ刻の壁の時刻(GetTime の読み — 読み手の thread が行に刻む at と
    比べる)・reply-noted = init の後の最初の行の計時の行を出したか・text-noted = 本文の最初の差分の計時の行を出したか・end-noted = 手番の
-   終わりの計時の行を出したか(頭の註の計時の行)。"
+   終わりの計時の行を出したか(頭の註の計時の行)・end-read = 読み手がこの手番を読み終えた(終わりを頁で渡した — 頁は after-seq より
+   後の行を全部載せるので、終わりを渡した時点で行も全部渡している。読み手は終わりの後にその手番を読まない)か、読み手がこの手番を
+   受けていない(起動の失敗 — 上の層は手番の参照でなく LaunchFailed を受ける)。"
   (defn __init__ [self]
     (setv #^ (get list ClaudeStreamLine) self.lines [])
     (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
+    (setv #^ bool self.end-read False)
     (setv #^ (| float None) self.launched-at None)
     (setv #^ (| datetime None) self.launched-wall None)
     (setv #^ bool self.reply-noted False)
@@ -227,14 +233,53 @@
     self.current-seq)
 
   (defn keep-only-current [self]
-    "閉じた会話の手番の記録を最後の手番だけにする(上の層が閉じた後に読むのは最後の手番の終わりだけ)。会話の lock の中で呼ぶ。"
+    "閉じた会話の手番の記録を最後の手番だけにする(上の層が閉じた後に読むのは最後の手番の終わりだけ — 読み終えたら会話ごと外す
+     ClaudeCodeHost.release)。会話の lock の中で呼ぶ。"
     (for [old (list self.turns)]
       (when (!= old self.current-seq)
-        (del (get self.turns old))))))
+        (del (get self.turns old)))))
+
+  (defn note-read [self #^ ClaudeTurn turn #^ TurnEventPage page]
+    "読み手に渡した頁を手番の記録に記すため(終わりを渡したら、読み手はその手番をもう読まない — 閉じた会話を外してよいかの材料)。
+     会話の lock の中で呼ぶ。"
+    (setv log (.get self.turns turn.turn-seq))
+    (when (and (is-not log None) (is-not page.end None))
+      (setv log.end-read True)))
+
+  (defn #^ bool drained [self]
+    "閉じて、読み手が読み終えていない手番の記録が無く、process も降りたか(生きた状態をホストから外してよいか)。会話の lock の中で呼ぶ。"
+    (and self.closed
+         (all (gfor log (.values self.turns) log.end-read))
+         (or (is self.process None) (not (.alive self.process)))))
+
+  (defn closed-record [self #^ (| float None) cost-mark]
+    "外す時に残す小さな記録を作るため(cost-mark = 次に起こす process の額の起点の控え — release-closed が前の process の終わり方から
+     決めた物)。会話の lock の中で呼ぶ。"
+    (ClosedSession :session-id self.session-id :home self.home :canonical-cwd self.canonical-cwd :current-seq self.current-seq
+                   :next-line-seq self.next-line-seq :launches self.launches :stopped-because self.stopped-because
+                   :cost-mark cost-mark :warmed-fresh self.warmed-fresh)))
+
+
+(defrecord ClosedSession
+  "閉じて、読み手が手番を読み終え、process も降りた会話の小さな記録(手番の記録 — stdout の行 — を持たない)。生きた状態を外した後も
+   同じに答えるのに要る物だけを持つ: 閉じた様子(ClaudeSessionStatus の Closed)・process の見え方(ClaudeLiveProcess の起こした数と
+   降ろした訳)・使用済みの id(同じ id の FreshSession を断る — warmed-fresh = 入力の前に事前起動しただけで、まだ使っていない)と、
+   続き(ResumeSession)・事前起動で生きた状態を作り直す材料(手番の番号・行の seq・額の起点 cost-mark — 前の process の終わり方で
+   決めた控え。transcript の最後の額が在ればそちらが先 — launch-cost-mark)。"
+  (#^ str session-id)
+  (#^ ClaudeHome home)
+  (#^ str canonical-cwd)
+  (#^ int current-seq)
+  (#^ int next-line-seq)
+  (#^ int launches)
+  (#^ (| StopReason None) stopped-because)
+  (#^ (| float None) cost-mark)
+  (#^ bool warmed-fresh))
 
 
 (defclass ClaudeCodeHost []
-  "handler の状態: 会話の id → SessionRuntime。command = 実行ファイルと前置きの引数(例: #(\"claude\"))・clock = 行の時刻を
+  "handler の状態: 会話の id → SessionRuntime(生きた状態)と、会話の id → ClosedSession(閉じて生きた状態を外した会話の小さな記録 —
+   release)。lock の順は ClaudeCodeHost → 会話(release だけが両方を取る)。command = 実行ファイルと前置きの引数(例: #(\"claude\"))・clock = 行の時刻を
    刻む関数(clock.clock-of)・live-limit = 同時に生かす process の本数の上限(走っている手番の process も数える — 機体の memory の
    予算 ÷ 1 本の memory。#3672 の D2。越える起動は止めずに知らせる — 頭の註。None = 上限を宣言しない: 使い手が別の物差し — 機体の
    memory の余白 — で決める時で、本数を上限と比べず、log の行も知らせも出さない・#4282)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential の expires-at)の手前で
@@ -258,18 +303,58 @@
           self.launch-timeout (float launch-timeout)
           self.rotate-above-bytes rotate-above-bytes
           self.lock (threading.Lock))
-    (setv #^ (get dict #(str SessionRuntime)) self.runtimes {}))
+    (setv #^ (get dict #(str SessionRuntime)) self.runtimes {})
+    (setv #^ (get dict #(str ClosedSession)) self.closed {}))
 
   (defn runtime [self #^ str session-id]
     (with [self.lock] (.get self.runtimes session-id)))
 
+  (defn closed-session [self #^ str session-id]
+    "閉じて生きた状態を外した会話の小さな記録を引くため(生きた状態が在る・知らない会話は None)。"
+    (with [self.lock] (.get self.closed session-id)))
+
   (defn register [self #^ SessionRuntime runtime]
-    (with [self.lock] (setv (get self.runtimes runtime.session-id) runtime)))
+    (with [self.lock]
+      (setv (get self.runtimes runtime.session-id) runtime)
+      (.pop self.closed runtime.session-id None)))
 
   (defn forget [self #^ str session-id #^ SessionRuntime runtime]
     (with [self.lock]
       (when (is (.get self.runtimes session-id) runtime)
-        (del (get self.runtimes session-id))))))
+        (del (get self.runtimes session-id)))))
+
+  (defn #^ bool release [self #^ SessionRuntime runtime #^ (| float None) cost-mark]
+    "閉じて読み終えた会話の生きた状態を外し、小さな記録(ClosedSession)だけを残すため(頭の註の KEPT-TURNS)。外した状態の手番の記録も
+     空にする — 降りた process の stdout に残った行を読み手の thread が後から渡しても、記録に積まない(on-line は手番の記録が無ければ
+     積まない)。外す前に lock の中で drained を読み直す(間に続きが同じ状態で手番を始めていれば外さない)。答え = 外したか。"
+    (with [self.lock]
+      (with [runtime.lock]
+        (setv session-id runtime.session-id)
+        (setv released (and (is (.get self.runtimes session-id) runtime) (.drained runtime)))
+        (when released
+          (setv (get self.closed session-id) (.closed-record runtime cost-mark))
+          (del (get self.runtimes session-id))
+          (.clear runtime.turns))))
+    released)
+
+  (defn #^ SessionRuntime reopen [self #^ ClosedSession closed]
+    "外した会話の続き・事前起動のために、小さな記録から生きた状態(閉じた印つき・手番の記録なし)を作り直して覚えるため。手番の番号・
+     行の seq・起こした数は記録から続ける。並んだ要求が先に作り直していれば、その生きた状態を答える。"
+    (with [self.lock]
+      (setv known (.get self.runtimes closed.session-id))
+      (when (is-not known None)
+        (return known))
+      (when (is (.get self.closed closed.session-id) closed)
+        (del (get self.closed closed.session-id)))
+      (setv runtime (SessionRuntime closed.session-id closed.home closed.canonical-cwd :cost-mark closed.cost-mark))
+      (setv runtime.closed True
+            runtime.current-seq closed.current-seq
+            runtime.next-line-seq closed.next-line-seq
+            runtime.launches closed.launches
+            runtime.stopped-because closed.stopped-because
+            runtime.warmed-fresh closed.warmed-fresh)
+      (setv (get self.runtimes closed.session-id) runtime)
+      runtime)))
 
 
 ;; --- 読み手の thread からの呼び(lock の中で状態機械を進める) ------------------------------------------
@@ -524,6 +609,15 @@
                          :retiring (is-not process.retiring None)
                          :idle-key (if (and (is process.retiring None) (is running None)) runtime.launch-key None)
                          :warmed-fresh runtime.warmed-fresh)))))
+
+(defk observed-view [runtime closed]
+  {:pre [(: runtime (| SessionRuntime None)) (: closed (| ClosedSession None))] :post [(: % SessionView)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "起こすか使い回すかの判断へ渡す観測を、生きた状態が在ればそこから、閉じて外した会話なら小さな記録から作るため(外した会話も
+   この handler が知る会話 — 同じ id の FreshSession を断る。process は降りているので使い回しも降りる途中の process も無い)。"
+  (if (is closed None)
+      (session-view runtime)
+      (SessionView :known True :warmed-fresh closed.warmed-fresh)))
 
 (defn refused-attachment [#^ TurnInput input]
   (setv refused (lfor item input.attachments :if (not-in item.mime IMAGE-MIMES) item.mime))
@@ -873,11 +967,19 @@
    SIGTERM・誤りの終了)= 分からないので None(そのターンの費用は None。次のターンからは読んだ行の累積で数え直す)。"
   (match origin
     (FreshSession) 0.0
-    _ (cond
-        (is-not recorded None) recorded
-        (or (not had-previous) (= previous-exit 0)) cost-mark
-        (= previous-exit (- signal.SIGKILL)) start-mark
-        True None)))
+    _ (if (is-not recorded None)
+          recorded
+          (<- (process-cost-mark had-previous previous-exit cost-mark start-mark)))))
+
+(defk process-cost-mark [#^ bool had-previous #^ (| int None) previous-exit #^ (| float None) cost-mark #^ (| float None) start-mark]
+  {:pre [(: had-previous bool) (: previous-exit (| int None)) (: cost-mark (| float None)) (: start-mark (| float None))]
+   :post [(: % (| float None))] :tags {:context "claude-code" :role "judgment"}}
+  "transcript に額の記録が無い時の、次の process の CLI が数え始める額を、前の process の終わり方から決めるため(launch-cost-mark の
+   後半 — 閉じた会話を外す時に、生きた状態の代わりに残す控えもこれで決める・release-closed)。"
+  (cond
+    (or (not had-previous) (= previous-exit 0)) cost-mark
+    (= previous-exit (- signal.SIGKILL)) start-mark
+    True None))
 
 (defk launch-mark-of [#^ SessionRuntime runtime origin #^ (| float None) recorded]
   {:pre [(: runtime SessionRuntime) (: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| float None))]
@@ -921,7 +1023,9 @@
         (setv runtime.binding None)
         (setv binding.credential-home None)
         (run (close-credential-home home))
-        (setv (. (.open-log runtime) end) (Interrupted :process-kept False))
+        ;; 上の層はこの手番の参照でなく LaunchFailed を受ける — 読み手の居ない手番は読み終えた扱い(閉じた会話を外す妨げにしない)。
+        (setv (. (.open-log runtime) end) (Interrupted :process-kept False)
+              (. (.open-log runtime) end-read) True)
         (.ring runtime.doorbell)
         (return (LaunchFailed :stderr-tail (str error)))))
     (apply-transition runtime binding transition)
@@ -986,6 +1090,8 @@
         (with [runtime.lock]
           (setv log (get runtime.turns turn-seq))
           (when (is log.end None) (setv log.end (Interrupted :process-kept False)))
+          ;; 上の層はこの手番の参照でなく LaunchFailed を受ける — 読み手の居ない手番は読み終えた扱い(spawn-turn と同じ)。
+          (setv log.end-read True)
           (.ring runtime.doorbell))
         (when fresh-runtime (.forget host runtime.session-id runtime))
         (LaunchFailed :exit-code (.exit-code process)
@@ -1154,8 +1260,11 @@
   (when (is-not place.refused None) (return place.refused))
   (setv canonical place.canonical)
   (setv runtime (if (isinstance origin ForkSession) None (.runtime host target-id)))
+  ;; 閉じて生きた状態を外した会話は、小さな記録から観る(process は降りている — 使い回しは無い)。
+  (setv closed (if (or (isinstance origin ForkSession) (is-not runtime None)) None (.closed-session host target-id)))
   (<- key (launch-key host.command spec))
-  (var decision (start-decision origin (session-view runtime)
+  (<- view (observed-view runtime closed))
+  (var decision (start-decision origin view
                                 place.present
                                 (is-not spec.cold-resume-prompt None)
                                 key))
@@ -1169,6 +1278,9 @@
     (:= decision (Launch :wait-retire True)))
   (<- ready (prepare-launch host runtime spec origin canonical target-id decision False))
   (when (isinstance ready LaunchFailed) (return ready))
+  ;; 外した会話の続きは、記録から生きた状態を作り直す(手番の番号・行の seq・起こした数・額の起点の控えを続ける)。
+  (when (is-not closed None)
+    (setv runtime (.reopen host closed)))
   ;; ターンを 1 度も始めていない会話(新しく作る・入力なしで事前起動しただけ)は、起動できなかった時に忘れる — 新しい会話の id は
   ;; 未使用の扱いに戻る。
   (val unused (or (is runtime None) runtime.warmed-fresh))
@@ -1204,9 +1316,12 @@
   (<- place TranscriptPlace (transcript-place spec.home spec.cwd target-id (match origin (ResumeSession :carry carry) carry _ None)))
   (when (is-not place.refused None) (return place.refused))
   (val canonical place.canonical)
-  (val known (.runtime host target-id))
+  (val held (.runtime host target-id))
+  ;; 閉じて生きた状態を外した会話は、小さな記録から観る(start-turn と同じ)。
+  (val closed (if (is held None) (.closed-session host target-id) None))
   (<- key (launch-key host.command spec))
-  (val decision (start-decision origin (session-view known)
+  (<- view (observed-view held closed))
+  (val decision (start-decision origin view
                                 place.present
                                 (is-not spec.cold-resume-prompt None)
                                 key))
@@ -1214,8 +1329,10 @@
     (Refuse :outcome outcome) (return outcome)
     (Reuse) (return (SessionWarmed :session-id target-id))
     _ None)
-  (<- ready (prepare-launch host known spec origin canonical target-id decision True))
+  (<- ready (prepare-launch host held spec origin canonical target-id decision True))
   (when (isinstance ready LaunchFailed) (return ready))
+  ;; 外した会話は、記録から生きた状態を作り直す(start-turn と同じ)。
+  (val known (if (is closed None) held (.reopen host closed)))
   (val runtime (if (is known None)
                    (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) 0.0 None))
                    known))
@@ -1300,8 +1417,28 @@
   (when (is-not page None)
     (<- (note-first-reply runtime turn page))
     (<- (note-first-text runtime turn page))
-    (<- (note-turn-end runtime turn page)))
+    (<- (note-turn-end runtime turn page))
+    ;; 終わりを渡した手番は読み終えた — 閉じた会話の最後の手番なら、ここで会話ごと外す(閉じた時に走っていた手番の終わりは、上の層が
+    ;; 閉じた後に読む)。
+    (with [runtime.lock]
+      (.note-read runtime turn page))
+    (<- (release-closed host runtime)))
   (if (is page None) (UnknownTurn turn) page))
+
+(defk release-closed [#^ ClaudeCodeHost host #^ SessionRuntime runtime]
+  {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
+  "閉じて、読み手が手番を読み終え、process も降りた会話の生きた状態をホストから外し、小さな記録(ClosedSession)だけを残すため(頭の註の
+   KEPT-TURNS — 閉じた会話の数だけ手番の記録を持ち続けない)。記録の額の起点は、生きた状態が持つ前の process の終わり方から今決める
+   (作り直した状態は前の process を持たない)。まだ外せない会話は何もしない(閉じていない・読み手が終わりを読んでいない・process が
+   降りていない — 次の close-session か read-events が読み直す)。答え = 外したか。"
+  (when (not (with [runtime.lock] (.drained runtime)))
+    (return False))
+  ;; process は降りているので、終わり方はもう変わらない(外す時に release が lock の中で drained を読み直す)。
+  (val process (with [runtime.lock] runtime.process))
+  (val state (with [runtime.lock] runtime.state))
+  (<- mark (process-cost-mark (is-not process None) (if (is process None) None (.exit-code process)) state.cost-mark
+                              state.start-mark))
+  (.release host runtime mark))
 
 (defk close-session [#^ ClaudeCodeHost host #^ ClaudeCloseSession request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeCloseSession)] :post [(: % (| SessionClosed ProcessStillAlive))]}
@@ -1326,6 +1463,8 @@
     (when (.alive process)
       (return (ProcessStillAlive (.format "process pid {} of session {} did not go down after EOF, SIGTERM and SIGKILL ({})"
                                           process.pid request.session-id request.reason)))))
+  ;; 読み手が最後の手番の終わりを読み終えていれば、ここで会話ごと外す(まだなら、終わりを渡す read-events が外す)。
+  (<- (release-closed host runtime))
   (SessionClosed was-running))
 
 (defk read-transcript-state [request]
@@ -1341,7 +1480,8 @@
   (setv runtime (.runtime host request.session-id))
   (setv state
         (if (is runtime None)
-            (Idle)
+            ;; 閉じて生きた状態を外した会話も閉じた様子で答える。
+            (if (is (.closed-session host request.session-id) None) (Idle) (Closed))
             (with [runtime.lock]
               (setv running (.running-turn runtime))
               (cond
@@ -1385,7 +1525,12 @@
   "会話の process の見え方を答えるため(fake と同じ筋書きで、使い回しと守りを確かめる口 — #3672)。生きた process =
    起こした process が生きていて、降りる途中でない物。"
   (val runtime (.runtime host session-id))
-  (when (is runtime None) (return (NoLiveProcess :launches 0 :stopped-because None)))
+  (when (is runtime None)
+    ;; 閉じて生きた状態を外した会話は、記録の起こした数と降ろした訳で答える(外す前と同じ見え方)。
+    (val closed (.closed-session host session-id))
+    (return (if (is closed None)
+                (NoLiveProcess :launches 0 :stopped-because None)
+                (NoLiveProcess :launches closed.launches :stopped-because closed.stopped-because))))
   (with [runtime.lock]
     (val process runtime.process)
     (if (and (is-not process None) (.alive process) (is process.retiring None))
@@ -1416,7 +1561,10 @@
   (val session-id request.session-id)
   (val runtime (.runtime host session-id))
   (when (is runtime None)
-    (return (NoSuchSession :session-id session-id)))
+    ;; 閉じて生きた状態を外した会話の process は降りている(外す前と同じ答え)。
+    (return (if (is (.closed-session host session-id) None)
+                (NoSuchSession :session-id session-id)
+                (SessionProcessDown :session-id session-id))))
   (with [runtime.lock]
     (val binding runtime.binding)
     (when (or (is binding None) (is binding.process None) (not (.alive binding.process))
