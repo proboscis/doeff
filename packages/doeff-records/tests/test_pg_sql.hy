@@ -9,7 +9,8 @@
 ;;     宣言した索引の欄の索引だけは旧い版と形が違う(全部の行に張る (ledger, 欄の式) を、card ki-954c58540d0f で表ごとの部分索引
 ;;     (欄の式) WHERE ledger = '<表>' にし、card ki-2176012d1804 で全部の行の表の欄の式の索引 (表の欄の式) にした・
 ;;     TABLE-INDEXES)。旧い形の索引(旧い名)と前の部分索引が在る置き場では、表の欄の式の索引を作り終えるまでそれが前の文の形の
-;;     読みに答える(pg_sql.hy の頭の註 — test_pg_reconcile_indexes.hy が実 PostgreSQL で確かめる)。
+;;     読みに答え、作り終えて見積もれるようになった後に索引の用意が外す(pg_sql.hy の頭の註 — test_pg_reconcile_indexes.hy が実
+;;     PostgreSQL で確かめる)。外す名の形は旧い 2 つの形だけに当たり、宣言の索引の名には当たらない(retired-index?)。
 ;;   - 書きの錠と移行の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / "records-migrate" — 区切りなし)で、
 ;;     PostgreSQL の hashtext が同じ整数を返す(= 同じ advisory lock の番号)。
 ;;   - 旧い版の錠の文(`SELECT pg_advisory_xact_lock(hashtext(%s))`)を別の接続で取っている間、新しい版の書きは待つ
@@ -31,7 +32,8 @@
 (import doeff_records.effects [PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables])
-(import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement RowExpiry])
+(import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement RowExpiry
+                              declared-indexes index-name table-index-name retired-index?])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records.main [store-pressure-pg])
 (import doeff_records.store_choice [StorePressure])
@@ -86,6 +88,29 @@
   (assert (= (len BEFORE-880-FIELD-INDEXES) 3) (repr BEFORE-880-FIELD-INDEXES))
   (assert (= (cut texts (len EXPECTED-DDL)) EXPECTED-DDL) (repr texts))
   (assert (= (cut texts (len EXPECTED-DDL) None) ADDED-AFTER-880) (repr texts)))
+
+
+(deftest test-only-the-two-former-index-forms-are-retired-and-no-declared-index-is
+  ;; 旧い形の索引を外す(pg_sql.hy の頭の註): 外す名は旧い版の 2 つの形(index-name の全部の行の (ledger, 欄の式)・table-index-name の
+  ;; 前の部分索引)だけ。宣言の索引(表の欄の式・上から読む欄・置き場の形の索引 — LAW-SCHEMA はどれも持つ)の名に当たると、索引の
+  ;; 用意が宣言の索引を外して次の回が作り直す輪になるので、1 つも当たらない。
+  (<- legacy (index-name "records_" "role"))
+  (<- partial (table-index-name "records_" "parts" "role"))
+  ;; 2026-10-19 の本番の置き場に在った 2 つの形の名の写しも当たる。
+  (for [name [legacy partial "records_ix_8dca46428d00" "records_ix_12cb5b79d6a2_a8c39f3520e2"]]
+    (<- hit (retired-index? "records_" name))
+    (assert hit name))
+  ;; 別の接頭辞の置き場の名・主キー・形の違う手の索引の名は当たらない。
+  (for [name ["records_state_rows_pkey" "records_ix_8dca46428d0" "records_ix_8dca46428d00_note" "records_hand_ix_8dca46428d00"]]
+    (<- missed (retired-index? "records_" name))
+    (assert (not missed) name))
+  (<- elsewhere (retired-index? "app_" legacy))
+  (assert (not elsewhere) legacy)
+  (<- declared (declared-indexes "records_" LAW-SCHEMA))
+  (assert (>= (len declared) 10) (repr declared))
+  (for [index declared]
+    (<- declared-hit (retired-index? "records_" index.name))
+    (assert (not declared-hit) index.name)))
 
 
 (deftest test-the-lock-keys-have-the-text-of-the-version-before-880

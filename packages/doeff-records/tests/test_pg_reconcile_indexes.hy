@@ -10,6 +10,10 @@
 ;;     読みにも答える。service は落ちない(受入の条 2)
 ;;   - 旧い形の索引(全部の行に張った (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と同じ形)が在る欄は、表の欄の式の
 ;;     索引を待たずに答え、索引の用意は表の欄の式の索引を作る(受入の条 4 — card ki-2176012d1804 で改めた)
+;;   - 旧い形の索引と前の部分索引は、宣言の索引が全部そろい表の欄の式で照らせる(見積もれる)ようになった後に、索引の用意が
+;;     DROP INDEX CONCURRENTLY で外す。見積もれない間は外さず、旧い形でない宣言に無い索引は外さない。宣言の索引が全部在る置き場でも、
+;;     旧い形の索引が在れば記録の service は索引の用意の task を立てて外し、外す間も答える(2026-10-19 — 本番の置き場の state_rows の
+;;     索引 72 本のうち旧い形の 23 本〔約 1.9 GB〕は読みに使われず、payload を変える書きのたびに更新されていた)
 ;;   - CONCURRENTLY の作りかけ(使えない形で残った同じ名の索引)は消してから作り直す・索引の用意の錠を他の process が持つ間は作らずに待ち、
 ;;     錠を放した合図で観測し直す
 ;;   - 錠を持つ process の作りの最中に別の process の回が錠を求めても、作りは deadlock で捨てられず、両方の回が差を埋めて終わる
@@ -220,20 +224,34 @@
 
 ;; --- 旧い形の索引・作りかけ・錠 ------------------------------------------------------------------------------------------------------
 
+(defn create-former-indexes [watcher #^ str prefix]  ; defk にできない: 検の素の接続で旧い版の索引を作る
+  "欄 note の旧い形の 2 つの索引(全部の行の (ledger, 欄の式) と前の部分索引 — 旧い版の名と形)と、宣言に無い手の索引(旧い形でない名)を
+   作る。答え = #(旧い形の名 前の部分索引の名 手の索引の名)。"
+  (setv legacy (run (index-name prefix "note"))
+        partial (run (table-index-name prefix "parts" "note"))
+        hand (+ prefix "hand_note"))
+  (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (ledger, ((payload::jsonb) -> 'note'))" :i legacy :p prefix))
+  (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (((payload::jsonb) -> 'note')) WHERE ledger = 'parts'" :i partial :p prefix))
+  (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (version)" :i hand :p prefix))
+  #(legacy partial hand))
+
+
 (deftest test-a-legacy-index-over-all-rows-answers-while-the-table-field-index-is-built
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 受入の条 4(card ki-2176012d1804 で改めた): 旧い形の索引(全部の行の (ledger, 欄の式) — 2026-10-18 に手で作った records_ix_8dca46428d00 と
   ;; 同じ形・旧い名)が在る欄は、表の用意の直後から(表の欄の式の索引を待たずに)前の文の形の読みに答える。索引の用意は表の欄の式の索引を
   ;; 作り(旧い形の索引では等号 2 つの読みが索引を組めない — pg_sql の頭の註)、作り終えた後の読みは表の欄の式で照らす。前の部分索引は作らない。
+  ;; 作り終えて表の標本を取り直した回は、旧い形の索引と前の部分索引を外す(読みは表の欄の式で照らすので引かない — 書きのたびの更新だけが
+  ;; 残る)。旧い形でない宣言に無い索引(手の索引)は外さない。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv legacy (run (index-name prefix "note"))
-            note-index (run (table-field-index-name prefix "parts" "note"))
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
             watcher (open-postgres))
       (try
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (ledger, ((payload::jsonb) -> 'note'))" :i legacy :p prefix))
+        (setv #(legacy partial hand) (create-former-indexes watcher prefix))
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
         (assert (= store.indexes.missing #(note-index)) (repr store.indexes.missing))
+        (assert (= store.indexes.retired (tuple (sorted #(legacy partial)))) (repr store.indexes.retired))
         (assert (not-in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color by-note) (reads-of quick ddl store))
         (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
@@ -243,7 +261,41 @@
         (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color note-after) (reads-of quick ddl store))
         (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
-        (assert (is (index-validity watcher (run (table-index-name prefix "parts" "note"))) None) "前の部分索引を作った")
+        (assert (is (index-validity watcher legacy) None) "旧い形の索引を外さなかった")
+        (assert (is (index-validity watcher partial) None) "前の部分索引を外さなかった")
+        (assert (= store.indexes.retired #()) (repr store.indexes.retired))
+        (assert (is (index-validity watcher hand) True) "旧い形でない手の索引を外した")
+        (finally
+          (.close watcher))))))
+
+
+(deftest test-a-legacy-index-is-kept-until-the-table-field-index-can-be-estimated
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 表の欄の式の索引が在っても、標本を取り直す前(式の統計が無い — 見積もれない)の欄は前の文の形(ledger = :ledger と欄の式)で照らし、
+  ;; その読みは旧い形の索引を引く。見積もれない間の回は旧い形の索引を外さず「埋めきれなかった」と答え(索引の用意は後で観測し直す)、
+  ;; 表の標本が取れた後の回が外す。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
+            watcher (open-postgres))
+      (try
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+                                   :i note-index :p prefix))
+        (setv #(legacy partial _hand) (create-former-indexes watcher prefix))
+        (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (assert (= store.indexes.missing #()) (repr store.indexes.missing))
+        (assert (not-in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (assert (is (run-on quick ddl (index-round store)) False) "見積もれない間の回が埋めたと答えた")
+        (assert (is (index-validity watcher legacy) True) "見積もれない間に旧い形の索引を外した")
+        (assert (is (index-validity watcher partial) True) "見積もれない間に前の部分索引を外した")
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (assert (is (run-on quick ddl (index-round store)) True) "標本の後の回が埋めなかった")
+        (assert (is (index-validity watcher legacy) None) "標本の後に旧い形の索引を外さなかった")
+        (assert (is (index-validity watcher partial) None) "標本の後に前の部分索引を外さなかった")
+        (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (setv #(_row _color note-after) (reads-of quick ddl store))
+        (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
         (finally
           (.close watcher))))))
 
@@ -501,4 +553,41 @@
         (finally
           (.set stopping)
           (.close writer)
+          (.close watcher))))))
+
+
+(deftest test-the-service-drops-former-indexes-when-no-declared-index-is-missing
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 宣言の索引が全部在り見積もれる置き場(2026-10-19 の本番の形)に旧い形の索引が残っていれば、記録の service は索引の用意の task を
+  ;; 立て(差が無くても)、起動の道の外で外す。外す間も外した後も記録の操作に答え、service は落ちない。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
+            watcher (open-postgres)
+            opened (queue.Queue)
+            ended (queue.Queue)
+            stopping (threading.Event))
+      (try
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+                                   :i note-index :p prefix))
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (setv #(legacy partial hand) (create-former-indexes watcher prefix))
+        (setv thread (serve-in-thread prefix opened stopping ended))
+        (setv bound (.get opened :timeout 30))
+        (assert (isinstance bound HttpAddress) (repr bound))
+        (setv url (.format "http://{}:{}" bound.host bound.port)
+              deadline (+ (time.monotonic) DEADLINE-SECONDS))
+        (while (and (or (is-not (index-validity watcher legacy) None) (is-not (index-validity watcher partial) None))
+                    (< (time.monotonic) deadline))
+          (time.sleep POLL-SECONDS))
+        (assert (is (index-validity watcher legacy) None) "記録の service が旧い形の索引を外さなかった")
+        (assert (is (index-validity watcher partial) None) "記録の service が前の部分索引を外さなかった")
+        (assert (is (index-validity watcher hand) True) "旧い形でない手の索引を外した")
+        (setv by-note (over-http url (ListRows "parts" :where {"note" "n1"})))
+        (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
+        (assert (.is-alive thread) "記録の service が終わった")
+        (.set stopping)
+        (assert (= (.get ended :timeout 30) 0) "記録の service が 0 で終わらなかった")
+        (finally
+          (.set stopping)
           (.close watcher))))))
