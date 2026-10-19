@@ -317,8 +317,8 @@
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
   "上から読む ListRows の法: descending-by を付けた読みは、where に合う行を全件読み、欄の値が整数の行だけを (値, 鍵) の大きい順に並べた
-   上から limit 件と同じ行を、同じ順で 1 頁に返し、続き(next-cursor)を返さない。使い手が最新の何件かを、表の行の数でなく limit に比例する
-   読み 1 回で得るため。どの置き場の handler も同じ答えを返すことを確かめる。"
+   上から limit 件と同じ行を、同じ順で 1 頁に返し、続き(next-cursor)は並べた行が limit 件を越える時だけ返す。使い手が最新の何件かを、表の
+   行の数でなく limit に比例する読み 1 回で得るため。どの置き場の handler も同じ答えを返すことを確かめる(続きを辿る頁は法 6b2)。"
   (val law "上から読む ListRows は全件を読んで並べた上から limit 件と同じ")
   (var transcript [])
   (for [#(n note) (.items TOP-NOTES)]
@@ -333,8 +333,9 @@
     (val ordered (sorted scanned :key (fn [row] #((get row.value "note") row.key)) :reverse True))
     (for [limit [1 3 50]]
       (<- top (as-writer harness MAKER (ListRows "parts" :where where :descending-by "note" :limit limit)))
-      (<- (require-law (and (isinstance top Page) (is top.next-cursor None)) law
-                       (.format "{!r} の上から {} 件の答えが 1 頁でない・続きを返した: {!r}" where limit top)))
+      (<- (require-law (and (isinstance top Page) (= (is top.next-cursor None) (<= (len ordered) limit))) law
+                       (.format "{!r} の上から {} 件の答えが頁でない・続きの有無が並べた行の数({} 件)と合わない: {!r}" where limit (len ordered)
+                                top)))
       (<- (require-law (= top.rows (tuple (cut ordered limit))) law
                        (.format "{!r} の上から {} 件が全件を並べた上の {} 件と違う: {!r} / {!r}" where limit limit top.rows
                                 (cut ordered limit))))
@@ -345,6 +346,89 @@
   (<- loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" 30}) :descending-by "note")))
   (<- (require-law (= loose (NotIndexed #("note"))) law (.format "上から読む読みの索引の無い欄: {!r}" loose)))
   (+ transcript [narrow loose]))
+
+
+;; --- 法 6b2: 上から読む ListRows の頁を続きの位置で辿ると全件を並べた物と同じ ----------------------------------
+
+;; 上から読む読みの頁を辿る数の上限(法の行は 20 行に満たず、1 件ずつの頁でも届かない)。
+(val DESCENDING-PAGE-CAP 64)
+
+(defk sorted-descending-scan [harness where]
+  {:pre [(: harness LawHarness) (: where FrozenMap)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "上から読む読みが辿るはずの行を、置き場の判じを借りずに鍵の順の読みだけで組むため: where に合う行を全件読み、欄 note の値が JSON の
+   整数(真偽は数えない)の行を (値, 鍵の綴り) の大きい順に並べる。答え = #(行の tuple 読んだ頁の list)。"
+  (<- pages (collect-pages harness "parts" where 500))
+  (val scanned (lfor page pages row page.rows :setv noted (.get row.value "note")
+                     :if (and (isinstance noted int) (not (isinstance noted bool))) row))
+  #((tuple (sorted scanned :key (fn [row] #((get row.value "note") (key-text row.key))) :reverse True)) pages))
+
+
+(defk collect-descending-pages [harness where fields cursor limit]
+  {:pre [(: harness LawHarness) (: where FrozenMap) (: fields (| tuple None)) (: cursor (| ListCursor None)) (: limit int)]
+   :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "上から読む ListRows(欄 note の大きい順)の頁を、位置 cursor(None = 上から)から next-cursor が尽きるまで読み、頁を全部並べるため。
+   DESCENDING-PAGE-CAP 頁で止める(位置を読み捨てて上から読み直す handler でも法が終わり、重なりで赤になる)。"
+  (var pages [])
+  (var at cursor)
+  (while True
+    (<- page (as-writer harness MAKER (ListRows "parts" :where where :fields fields :cursor at :limit limit :descending-by "note")))
+    (:= pages (+ pages [page]))
+    (when (or (not (isinstance page Page)) (is page.next-cursor None) (>= (len pages) DESCENDING-PAGE-CAP)) (return pages))
+    (:= at page.next-cursor)))
+
+
+(defk law-descending-pages-follow-the-sorted-scan [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "上から読む ListRows の続きの法: descending-by の読みの next-cursor を辿った頁を連ねると、where に合う行の欄の値が整数の行を (値, 鍵) の
+   大きい順に並べた全件と同じ(頁は上限を越えず、重なりも欠けも無く、最後の頁だけが続きを返さない — 返す欄 fields が並べる欄を外しても)。
+   頁の間に書かれた行は、位置の (値, 鍵) より小さければ後の頁に出て、大きければ出ない(位置は前の頁の最後の行の値と鍵 — keyset)。
+   古い置き場の版の位置は Reset。使い手が鍵の順でなく新しい順に古い頁を送る(鍵が時刻の順でない表でも)ため。どの置き場の handler も
+   同じ答えを返すことを確かめる。"
+  (val law "上から読む ListRows の頁を続きの位置で辿ると全件を並べた物と同じ")
+  (var transcript [])
+  (for [#(n note) (.items TOP-NOTES)]
+    (val value (| {"color" (get COLORS (% n 3)) "label" (get LABELS (% n 2))} (if (is note None) {} {"note" note})))
+    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n)) (FrozenMap value) (ExpectAbsent))))
+    (:= transcript (+ transcript [written])))
+  (for [where TOP-WHERES]
+    (<- expected (sorted-descending-scan harness where))
+    (val ordered (get expected 0))
+    (:= transcript (+ transcript (get expected 1)))
+    (for [#(limit fields) [#(1 None) #(2 None) #(3 #("color")) #(50 None)]]
+      (<- pages (collect-descending-pages harness where fields None limit))
+      (<- (require-law (all (gfor page pages (isinstance page Page))) law (.format "{!r} の {} 件ずつの頁: {!r}" where limit pages)))
+      (<- (require-law (all (gfor page pages (<= (len page.rows) limit))) law (.format "{!r} の頁が上限 {} を越えた: {!r}" where limit pages)))
+      (<- (require-law (all (gfor page (cut pages -1) (is-not page.next-cursor None))) law
+                       (.format "{!r} の {} 件ずつの頁の途中で続きが切れた: {!r}" where limit pages)))
+      (val paged (tuple (gfor page pages row page.rows row.key)))
+      (<- (require-law (= paged (tuple (gfor row ordered row.key))) law
+                       (.format "{!r} の {} 件ずつ辿った頁が全件を並べた物と違う(重なりか欠け): {!r} / {!r}" where limit paged
+                                (tuple (gfor row ordered row.key)))))
+      (<- (require-law (or (is fields None) (all (gfor page pages row page.rows (= (set row.value) (| #{"id"} (set fields)))))) law
+                       (.format "{!r} の欄の絞りの頁: {!r}" where pages)))
+      (:= transcript (+ transcript pages))))
+  ;; 頁の間の書き: 上から 3 件の頁の後に、位置より大きい組の行(p13 = 100)と小さい組の行(p14 = -100)を書き、位置の値と同じ値の行の鍵の
+  ;; 前後(p00 < 位置の鍵 < p99)も足す。続きは位置より小さい組の行だけを読む。
+  (<- first (as-writer harness MAKER (ListRows "parts" :descending-by "note" :limit 3)))
+  (<- (require-law (and (isinstance first Page) (is-not first.next-cursor None)) law (.format "上から 3 件の頁に続きが無い: {!r}" first)))
+  (val at first.next-cursor)
+  (for [#(key note) [#("p13" 100) #("p14" -100) #("p00" at.after-value) #("p99" at.after-value)]]
+    (<- written (as-writer harness MAKER (PutRow "parts" #(key) (FrozenMap {"note" note}) (ExpectAbsent))))
+    (:= transcript (+ transcript [written])))
+  (<- after (sorted-descending-scan harness (FrozenMap)))
+  (val below (tuple (gfor row (get after 0) :if (< #((get row.value "note") (key-text row.key)) #(at.after-value at.after-key)) row.key)))
+  (<- rest (collect-descending-pages harness (FrozenMap) None at 2))
+  (val rest-keys (tuple (gfor page rest :if (isinstance page Page) row page.rows row.key)))
+  (<- (require-law (and (= rest-keys below) (in #("p14") rest-keys) (in #("p00") rest-keys) (not-in #("p13") rest-keys) (not-in #("p99") rest-keys))
+                   law (.format "頁の間に書いた行の続きが位置より小さい組の行と違う: {!r} / {!r}" rest-keys below)))
+  ;; 置き場の版が変われば、上から読む読みの位置も Reset。
+  (<- epoch (as-writer harness MAKER (AdvanceStoreEpoch)))
+  (<- stale (as-writer harness MAKER (ListRows "parts" :descending-by "note" :cursor at :limit 3)))
+  (<- (require-law (and (isinstance stale Reset) (= stale.epoch epoch)) law (.format "古い版の上から読む読みの位置: {!r}" stale)))
+  (+ transcript [first] (get after 1) rest [epoch stale]))
 
 
 ;; --- 法 6c: 値の組の ListRows は値ごとの等号の ListRows の和を鍵の順に並べた物と同じ ----------------------
@@ -434,7 +518,9 @@
                                :if (and (isinstance noted int) (not (isinstance noted bool))) row)
                          :key (fn [row] #((get row.value "note") (key-text row.key))) :reverse True))
     (<- top (as-writer harness MAKER (ListRows "parts" :where where :where-any where-any :descending-by "note" :limit ANY-OF-TOP)))
-    (<- (require-law (and (isinstance top Page) (is top.next-cursor None) (= top.rows (tuple (cut ordered ANY-OF-TOP)))) law
+    (<- (require-law (and (isinstance top Page) (= (is top.next-cursor None) (<= (len ordered) ANY-OF-TOP))
+                          (= top.rows (tuple (cut ordered ANY-OF-TOP))))
+                     law
                      (.format "{!r} {!r} の上から {} 件が和を並べた上の {} 件と違う: {!r} / {!r}" where where-any ANY-OF-TOP ANY-OF-TOP
                               top (cut ordered ANY-OF-TOP))))
     (:= transcript (+ transcript equal-pages pages [top])))
@@ -1180,6 +1266,7 @@
             "transient-rows-expire" law-transient-rows-expire
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "descending-list-is-the-head-of-the-sorted-scan" law-descending-list-is-the-head-of-the-sorted-scan
+            "descending-pages-follow-the-sorted-scan" law-descending-pages-follow-the-sorted-scan
             "any-of-list-equals-the-union-of-equal-lists" law-any-of-list-equals-the-union-of-equal-lists
             "append-is-idempotent" law-append-is-idempotent
             "key-head-read-equals-filtered-scan" law-key-head-read-equals-filtered-scan

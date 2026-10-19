@@ -19,6 +19,9 @@
    (ListRows "parts" :where {"color" "red"} :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
    ;; 上から読む読み(descending-by — 鍵 descendingBy は付けた時だけ送る)。
    (ListRows "parts" :where {"color" "red"} :fields #("color") :limit 3 :descending-by "note")
+   ;; 上から読む読みの続き(位置の鍵 afterValue は上から読む読みの位置の時だけ送る — int8 を越える整数も)。
+   (ListRows "parts" :where {"color" "red"} :limit 3 :descending-by "note" :cursor (ListCursor 2 "[\"p1\"]" -7))
+   (ListRows "parts" :limit 3 :descending-by "note" :cursor (ListCursor 2 "[\"p1\"]" (** 10 30)))
    ;; 値の組の絞り(where-any — 鍵 whereAny は付けた時だけ送る)。値は JSON の値なら何でも(数・真偽・null・object)。
    (ListRows "parts" :where {"label" "a"} :where-any {"color" ["red" 1 2.5 True None {"x" [1]}] "id" ["p1"]}
              :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
@@ -45,6 +48,7 @@
   [#("read-row" ROW)
    #("read-row" (Missing))
    #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9))
+   #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]" 1760000000000) 1 9))
    #("list-rows" (Page #() None 2 0))
    #("list-rows" (Reset 3 0))
    #("list-rows" (NotIndexed #("note")))
@@ -114,10 +118,15 @@
                            #("read-row" {"table" "Parts!" "key" ["p1"]})
                            #("list-rows" {"table" "parts" "limit" True})
                            #("list-rows" {"table" "parts" "limit" 0})
-                           ;; 上から読む読み: 欄の名は文字列・上から読む読みは cursor を受けない(続きを返さない 1 頁)。
+                           ;; 上から読む読み: 欄の名は文字列・上から読む読みの位置は afterValue(整数)を持つ位置だけ・鍵の順の読みの位置は
+                           ;; afterValue を持たない。
                            #("list-rows" {"table" "parts" "descendingBy" None})
                            #("list-rows" {"table" "parts" "descendingBy" "Note!"})
                            #("list-rows" {"table" "parts" "descendingBy" "note" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]"}})
+                           #("list-rows" {"table" "parts" "descendingBy" "note" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]" "afterValue" 2.5}})
+                           #("list-rows" {"table" "parts" "descendingBy" "note" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]" "afterValue" True}})
+                           #("list-rows" {"table" "parts" "descendingBy" "note" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]" "afterValue" None}})
+                           #("list-rows" {"table" "parts" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]" "afterValue" 3}})
                            ;; 値の組の絞り: 絞らない時は鍵ごと無い(空の object は綴りの外)・組は空でない配列・欄の名の形・where と同じ欄は置けない・
                            ;; 値の数の上限。
                            #("list-rows" {"table" "parts" "whereAny" {}})

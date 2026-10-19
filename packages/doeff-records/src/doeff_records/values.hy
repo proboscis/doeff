@@ -305,9 +305,15 @@
   (#^ int sequence))
 
 (defclass [(dataclass :frozen True)] ListCursor []
-  "ListRows の次の頁の位置: epoch = 置き場の版 / after-key = 前の頁の最後の行の鍵の綴り。"
+  "ListRows の次の頁の位置: epoch = 置き場の版 / after-key = 前の頁の最後の行の鍵の綴り /
+   after-value = 上から読む読み(ListRows の descending-by)の前の頁の最後の行の並べる欄の値(整数 — 次の頁は (値, 鍵の綴り) がこの組より
+   小さい行から読む。鍵の順の読みの位置は None)。"
   (#^ int epoch)
-  (#^ str after-key))
+  (#^ str after-key)
+  (setv #^ (| int None) after-value None)
+  (defn #^ None __post_init__ [self]
+    (when (and (is-not self.after-value None) (or (isinstance self.after-value bool) (not (isinstance self.after-value int))))
+      (raise (TypeError (.format "ListCursor.after_value は整数か None: {!r}" self.after-value))))))
 
 
 ;; --- 成功の答え --------------------------------------------------------------------------------------------

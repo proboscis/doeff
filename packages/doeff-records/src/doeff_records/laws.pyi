@@ -128,6 +128,16 @@ TOP_WHERES: list[FrozenMap]
 
 def law_descending_list_is_the_head_of_the_sorted_scan(harness: LawHarness) -> _Program[list[object], object]:
     ...
+DESCENDING_PAGE_CAP: int
+
+def sorted_descending_scan(harness: LawHarness, where: FrozenMap) -> _Program[tuple, object]:
+    ...
+
+def collect_descending_pages(harness: LawHarness, where: FrozenMap, fields: tuple | None, cursor: ListCursor | None, limit: int) -> _Program[list[object], object]:
+    ...
+
+def law_descending_pages_follow_the_sorted_scan(harness: LawHarness) -> _Program[list[object], object]:
+    ...
 ANY_OF_ROWS: tuple[FrozenMap, ...]
 ANY_OF_CASES: list[tuple[FrozenMap, ...]]
 ANY_OF_PAGE: int

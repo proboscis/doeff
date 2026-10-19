@@ -79,7 +79,7 @@
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
 (import doeff_records.admission [key-text])
-(import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
+(import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix ListCursor FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
@@ -751,23 +751,33 @@
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
-(defk top-rows-statement [prefix table key-fields scoped descending-by where-json where-any-json limit expiry]
+(defk top-rows-statement [prefix table key-fields scoped descending-by cursor where-json where-any-json limit expiry]
   {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by)
+         (: cursor (| ListCursor None)) (or (is cursor None) (is-not cursor.after-value None))
          (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "上から読む ListRows(descending-by — effects.hy の ListRows の註)の 1 頁を読む文を作るため: 欄 descending-by の値が JSON の整数の行
-   (memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、(値, 鍵の綴り) の大きい順に limit 件。続きを
-   返さないので 1 行多く読まない。where・where-any(row-filter・scoped)と保持の期限の条件は list-rows-statement と同じ。並べる欄の
-   条件は行ごとに照らす(索引の欄でなくてよい — 表の行に限る条件は絞りが持つ)。"
+  "上から読む ListRows(descending-by — effects.hy の ListRows の註)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため: 欄
+   descending-by の値が JSON の整数の行(memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、
+   (値, 鍵の綴り) の大きい順に。cursor = 前の頁の位置(None = 上から): (値, 鍵の綴り) が位置の (after-value, after-key) より小さい行
+   だけ(keyset)。位置の値は文字列で渡して numeric に読む(JSON の整数は int8 を越え得る — 並べる式と同じ型で比べる)。where・where-any
+   (row-filter・scoped)と保持の期限の条件は list-rows-statement と同じ。並べる欄の条件は行ごとに照らす(索引の欄でなくてよい — 表の行に
+   限る条件は絞りが持つ)。"
   (<- filter (row-filter table key-fields scoped where-json where-any-json))
   (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
   (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
   (<- ordered (field-expression "payload" descending-by))
+  (val below-clauses
+    (if (is cursor None)
+        #()
+        #((.format "(({o})::text::numeric < CAST(:after_value AS numeric) OR (({o})::text::numeric = CAST(:after_value AS numeric) AND key COLLATE \"C\" < :after))"
+                   :o ordered))))
+  (val below-pairs (if (is cursor None) #() #(#("after_value" (str cursor.after-value)) #("after" cursor.after-key))))
   (val clauses (+ ledger-clauses
                   filter.clauses
-                  #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered))))
-  (val pairs (+ ledger-pairs #(#("limit" limit))))
+                  #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered))
+                  below-clauses))
+  (val pairs (+ ledger-pairs below-pairs #(#("limit" (+ limit 1)))))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
   (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
                        ORDER BY ({o})::text::numeric DESC, key COLLATE \"C\" DESC LIMIT :limit"

@@ -938,12 +938,20 @@
   ;; 表の欄の式の索引が在る欄は表の欄の式で照らす(作り終える前の欄は前の文の形 — pg_sql の頭の註)。
   (val scoped (.scoped-fields store.indexes ask.table))
   (when (is-not ask.descending-by None)
-    ;; 上から読む読み(ListRows の註): 1 頁だけ・続きを返さない。
-    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by where-json where-any-json ask.limit
-                                          expiry))
+    ;; 上から読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) より小さい行から 1 頁 + 1 行(続きの有無を知るため)。
+    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by ask.cursor where-json where-any-json
+                                          ask.limit expiry))
     (<- top-records (query-rows store.database top-statement))
-    (<- top-rows (listed-rows-of decl ask.fields top-records))
-    (return (Page top-rows None head.epoch head.head)))
+    (val top-taken (cut top-records ask.limit))
+    (<- top-rows (listed-rows-of decl ask.fields top-taken))
+    (when (<= (len top-records) ask.limit)
+      (return (Page top-rows None head.epoch head.head)))
+    ;; 位置の値は頁の最後の行の全部の欄から読む(返す欄 fields が並べる欄を外しても)。
+    (<- last-row (row-of (get top-taken -1)))
+    (return (Page top-rows
+                  (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ask.descending-by))
+                  head.epoch
+                  head.head)))
   (<- statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
                                      (if (is ask.cursor None) None ask.cursor.after-key)
                                      where-json

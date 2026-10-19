@@ -127,6 +127,7 @@ class WatchCursor:
 class ListCursor:
     epoch: int
     after_key: str
+    after_value: int | None = None
 
 # --- 成功の答え ---
 
