@@ -240,11 +240,14 @@
         (del (get self.turns old)))))
 
   (defn note-read [self #^ ClaudeTurn turn #^ TurnEventPage page]
-    "読み手に渡した頁を手番の記録に記すため(終わりを渡したら、読み手はその手番をもう読まない — 閉じた会話を外してよいかの材料)。
-     会話の lock の中で呼ぶ。"
+    "読み手に渡した頁を手番の記録に記し、終わりまで渡した手番の行を捨てるため(終わりを渡したら、読み手はその手番をもう読まない — 閉じた
+     会話を外してよいかの材料。生きた会話も、読み終えた手番の行を最近の KEPT-TURNS 本ぶん持ち続けない: 本番の turn-host では、running の
+     手番が減っても ClaudeStreamLine が増え続けた — card ki-ff61c7e52cb9)。手番の記録と終わりは残すので、読み直しには行の無い頁と終わりを
+     答える(知らない手番にはしない)。計時の行(note-turn-end)は捨てる前に行を読み終えている(read-events の順)。会話の lock の中で呼ぶ。"
     (setv log (.get self.turns turn.turn-seq))
     (when (and (is-not log None) (is-not page.end None))
-      (setv log.end-read True)))
+      (setv log.end-read True)
+      (.clear log.lines)))
 
   (defn #^ bool drained [self]
     "閉じて、読み手が読み終えていない手番の記録が無く、process も降りたか(生きた状態をホストから外してよいか)。会話の lock の中で呼ぶ。"

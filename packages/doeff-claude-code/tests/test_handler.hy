@@ -181,6 +181,40 @@
   (assert seen.seq-grew "続けた手番の行の seq が閉じる前の行の seq から続かない"))
 
 
+(defrecord ReadTurnsOnALiveSession
+  "閉じていない会話で turn を重ねた観測: held-lines = 全部の turn の終わりを読んだ後に会話の turn の記録が持つ行の数・again = 読み終えた
+   turn を読み直した答え。"
+  (#^ int held-lines)
+  (#^ object again))
+
+(defk read-turns-on-a-live-session [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % ReadTurnsOnALiveSession)]
+   :tags {:context "claude-code-test" :role "program"}}
+  "閉じない会話で 3 turn を終わりまで読み、読み終えた turn の行を host が持ち続けるかを見るため。"
+  (var first None)
+  (for [#(i origin) (enumerate [(FreshSession sid) (ResumeSession sid) (ResumeSession sid)])]
+    (<- started (ClaudeStartTurn origin spec (TurnInput (reply-prompt (+ "W" (str i))) (+ "r" (str i)))))
+    (<- done (read-to-end started.turn 30.0))
+    (assert (isinstance done.end Completed) (repr done.end))
+    (when (is first None) (:= first started.turn)))
+  (val held (sum (gfor log (.values (. (.runtime host sid) turns)) (len log.lines))))
+  (<- again (ClaudeReadTurnEvents first -1 0.0))
+  (<- (ClaudeCloseSession sid "test"))
+  (ReadTurnsOnALiveSession :held-lines held :again again))
+
+(deftest test-a-live-session-drops-the-lines-of-turns-whose-end-was-read [tmp-path]
+  ;; 閉じていない会話も、読み手が終わりまで読んだ turn の行(stdout の行の全部)を持ち続けない — 読み手は終わりを読んだ turn を読み直さない。
+  ;; 生きた会話ごとに最近の KEPT-TURNS 本の行を持つと、CLI が減っても running の turn が減っても、本番の turn-host の ClaudeStreamLine が
+  ;; 増え続けた(10-19 の pid 1135549: running の turn 88→72 の区間で +39,677 個 — card ki-ff61c7e52cb9)。読み直しには行の無い頁と終わりを答える
+  ;; (知らない turn にはしない)。
+  (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
+  (<- seen (with-real-handler host (read-turns-on-a-live-session host (spec-in tmp-path) (str (uuid.uuid4)))))
+  (assert (= seen.held-lines 0) (repr seen.held-lines))
+  (assert (isinstance seen.again TurnEventPage) (repr seen.again))
+  (assert (= seen.again.lines #()) (repr seen.again))
+  (assert (isinstance seen.again.end Completed) (repr seen.again)))
+
+
 (defrecord ClosedMidTurn
   "走っている手番の途中で閉じた観測: held-before = 終わりを読む前にホストが持つ手番の番号(持たなければ None)・end = 読んだ終わり・
    held-after = 終わりを読んだ後もホストが生きた状態を持つか。"
