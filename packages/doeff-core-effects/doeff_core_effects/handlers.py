@@ -459,6 +459,31 @@ def _observe_await_bridge_future(future):
         )
 
 
+class _AwaitedValue:
+    """One-slot box carrying an awaited value from the bridge loop to the awaiter.
+
+    The scheduler keeps a completed promise's result in its promise table until
+    the terminal-entry sweep finds every handle dead, and that sweep runs once
+    per ``HANDLE_SWEEP_INTERVAL`` id allocations (#502). Completing the Await's
+    promise with the value itself kept up to that many awaited values alive
+    after their awaiters had dropped them (a job reading 238 pages of ~3 MiB
+    grew from 131 to 895 MiB). await_handler is the promise's only holder, so
+    it completes the promise with this box and empties it on hand-over: the
+    table keeps an empty box and the value lives as long as the awaiter keeps it.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    def take(self) -> object:
+        """Hand the value over once and drop the box's reference to it."""
+        value = self.value
+        self.value = None
+        return value
+
+
 def await_handler() -> ProgramHandler:
     """Await handler: runs async coroutines via a background thread with asyncio.
 
@@ -518,14 +543,16 @@ def await_handler() -> ProgramHandler:
                     # ep.fail already delivers it to the run() caller.
                     ep.fail(e)
                 else:
-                    ep.complete(result)
+                    # Boxed so the scheduler's promise table does not keep
+                    # the value after the hand-over (_AwaitedValue).
+                    ep.complete(_AwaitedValue(result))
 
             fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
             fut.add_done_callback(_observe_await_bridge_future)
             # Thread-safe: schedules the bridge task's cancel on the loop.
             ep.on_cancel(fut.cancel)
-            value = yield Wait(ep.future)
-            return (yield Transfer(k, value))
+            box = yield Wait(ep.future)
+            return (yield Transfer(k, box.take()))
         yield Pass(effect, k)
 
     return _program_handler(handler)
