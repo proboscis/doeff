@@ -40,9 +40,11 @@ impl<'a> SpelledFailures<'a> {
         let spelling = Spelling::of(name);
         let declarations = self.declarations.get_or_init(|| {
             // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
-            let sources: Vec<(String, PathBuf, Option<String>)> = hy_files::collect_reading(self.root, |path| {
-                let source = std::fs::read_to_string(path).ok()?;
-                has_failure_declaration_spelling(&source).then_some(source)
+            let sources: Vec<(String, PathBuf, Option<String>)> = crate::timing::timed("failure-types.collect", || {
+                hy_files::collect_reading(self.root, |path| {
+                    let source = std::fs::read_to_string(path).ok()?;
+                    has_failure_declaration_spelling(&source).then_some(source)
+                })
             });
             sources.into_iter().filter_map(|(rel, _, source)| source.map(|source| (rel, source))).collect()
         });
@@ -53,9 +55,9 @@ impl<'a> SpelledFailures<'a> {
         if !fresh.is_empty() {
             // 読み解きは事実の置き場で覚える(全体の実行と同じ置き場・同じ鍵 — 変わっていない file は、次の実行でも読み解かない)。空の事実も覚えて、宣言でない file を読み解き直さない。
             let reading = self.reading;
-            let done = facts_cache::per_file_content(self.root, FAILURE_TYPES_KIND, &failure_types_key(reading), &fresh, |rel, source| {
+            let done = crate::timing::timed("failure-types.parse", || facts_cache::per_file_content(self.root, FAILURE_TYPES_KIND, &failure_types_key(reading), &fresh, |rel, source| {
                 Some(failure_types_of_source(rel, source, reading))
-            });
+            }));
             for ((rel, _), found) in fresh.iter().zip(done) {
                 parsed.insert((*rel).to_string(), Arc::new(found.unwrap_or_default()));
             }
