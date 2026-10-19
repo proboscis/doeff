@@ -9,6 +9,7 @@ from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.values import RetiredKey as RetiredKey
 from doeff_records.values import KeepFor as KeepFor
 from doeff_records.values import ByKeySuffix as ByKeySuffix
+from doeff_records.values import ListCursor as ListCursor
 from doeff_records.values import FIELD_NAME_PATTERN as FIELD_NAME_PATTERN
 from doeff_records.values import SEPARATOR_PATTERN as SEPARATOR_PATTERN
 from doeff_records.values import TABLE_NAME_PATTERN as TABLE_NAME_PATTERN
@@ -218,7 +219,7 @@ def lock_row_statement(prefix: str, table: str, key: str) -> _Program[Statement,
 def list_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, after_key: str | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
-def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
 def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple, scoped: bool) -> _Program[Statement, object]:

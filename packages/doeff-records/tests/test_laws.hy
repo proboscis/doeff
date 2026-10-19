@@ -5,7 +5,7 @@
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
-                            law-any-of-list-equals-the-union-of-equal-lists
+                            law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
@@ -88,10 +88,19 @@
   (assert transcript))
 
 (deftest test-descending-list-is-the-head-of-the-sorted-scan
-  ;; 上から読む ListRows(descending-by): 全件を読んで並べた上から limit 件と同じ行を同じ順で 1 頁に返し、続きを返さない(4 つの組で同じ)。
+  ;; 上から読む ListRows(descending-by): 全件を読んで並べた上から limit 件と同じ行を同じ順で 1 頁に返し、続きは limit 件を越える時だけ
+  ;; 返す(4 つの組で同じ)。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-descending-list-is-the-head-of-the-sorted-scan harness))
+  (assert transcript))
+
+(deftest test-descending-pages-follow-the-sorted-scan
+  ;; 上から読む ListRows の続き: next-cursor を辿った頁を連ねると全件を (値, 鍵) の大きい順に並べた物と同じ(重なりも欠けも無い)・頁の間の
+  ;; 書きは位置より小さい組だけが後の頁に出る・古い版の位置は Reset(4 つの組で同じ)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-descending-pages-follow-the-sorted-scan harness))
   (assert transcript))
 
 (deftest test-any-of-list-equals-the-union-of-equal-lists
