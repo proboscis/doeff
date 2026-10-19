@@ -2148,6 +2148,25 @@
   (assert (is done.end.account-limit None) (repr done.end)))
 
 
+(deftest test-the-model-refusal-of-a-turn-end-reaches-the-agent-turn-end
+  ;; 層 2 の手番の終わりが運ぶ「model の安全装置の断り」の事実(ModelRefusalHit — 断りの種類・model・CLI の文)を、層 3 の
+  ;; AgentTurnCompleted・AgentTurnFailed の欄 model_refusal(AgentModelRefusal)へ写す。断られていない終わりは None。口座の断りの欄とは別。
+  ;; 失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(turn-host)が「この transcript はこの model で続けられない」と知れずに cli-failed で
+  ;; 落とし、次のターンも同じ transcript を続けて同じ断りを繰り返した(本番 2026-10-20 の Fable 5.1 の reasoning_extraction)。
+  (import doeff_claude_code.lines [ModelRefusalHit Completed Failed])
+  (import doeff_agents.handlers.headless [end-of])
+  (import doeff_agents.effects.agent [AgentModelRefusal AgentTurnCompleted AgentTurnFailed])
+  (val hit (ModelRefusalHit :category "reasoning_extraction" :model "claude-fable-5-1" :text "flagged"))
+  (val failed (end-of (Failed :detail "flagged" :model-refusal hit) "ctx-1"))
+  (assert (isinstance failed AgentTurnFailed) failed)
+  (assert (= failed.model-refusal (AgentModelRefusal :category "reasoning_extraction" :model "claude-fable-5-1" :text "flagged")) failed)
+  (assert (is failed.account-refusal None) failed)
+  (val completed (end-of (Completed :result-text "" :model-refusal hit) "ctx-1"))
+  (assert (= completed.model-refusal failed.model-refusal) completed)
+  (val calm (end-of (Completed :result-text "ok") "ctx-1"))
+  (assert (and (isinstance calm AgentTurnCompleted) (is calm.model-refusal None)) calm))
+
+
 ;; --- CLI の process の終了 code と stderr の末尾(#4207)--------------------------------------------------------------
 ;; 失敗ケース(前の形): 終了 code と stderr の末尾は層 3 の終わりの文 detail の中にだけ在り、上の層(agora の手番の宿)は文を読み解かないと
 ;; 「CLI がなぜ降りたか」を知れない。

@@ -55,9 +55,12 @@ from doeff_claude_code.lines import CompactStarted as CompactStarted
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import HookNotice as HookNotice
 from doeff_claude_code.lines import HookPhase as HookPhase
+from doeff_claude_code.lines import ModelRefusalHit as ModelRefusalHit
+from doeff_claude_code.lines import STOP_REASON_REFUSAL as STOP_REASON_REFUSAL
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
+from doeff_claude_code.dialogue import model_refusal_after as model_refusal_after
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
 from doeff_claude_code.effects import ClaudeInjectInput as ClaudeInjectInput
 from doeff_claude_code.effects import ClaudeInterruptTurn as ClaudeInterruptTurn
@@ -121,11 +124,15 @@ FAKE_TOOL_NAME: str
 SYNTHETIC_MODEL: str
 SYNTHETIC_USAGE: Usage
 REFUSAL_RESULT_SUBTYPE: str
+MODEL_REFUSAL_ERROR: str
 
 @dataclass(frozen=True, kw_only=True)
 class StopHookRejection:
     answer: str
     reason: str
+
+def hyx_scripted_endXquestion_markX(reply: Incomplete) -> bool:
+    ...
 
 @dataclass(frozen=True)
 class FakeReply:
@@ -152,6 +159,7 @@ class FakeReply:
     tool_input_deltas: int = 0
     account_limit: AccountLimitHit | None = None
     account_refusal: AccountRefusalHit | None = None
+    model_refusal: ModelRefusalHit | None = None
     stop_hook_rejections: tuple[StopHookRejection, ...] = ...
     compactions: tuple[CompactBoundary, ...] = ...
     hooks: tuple[HookNotice, ...] = ...
@@ -185,6 +193,7 @@ class FakeTurn:
     model_windows: tuple[ModelWindow, ...]
     limit_hit: AccountLimitHit | None
     refusal_hit: AccountRefusalHit | None
+    model_refusal_hit: ModelRefusalHit | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -276,6 +285,9 @@ def emit_due_lines(session: FakeSession, turn: FakeTurn, now: float) -> _Program
     ...
 
 def refuse_turn(session: FakeSession, turn: FakeTurn, refusal: AccountRefusalHit) -> _Program[None, object]:
+    ...
+
+def model_refuse_turn(session: FakeSession, turn: FakeTurn, refusal: ModelRefusalHit) -> _Program[None, object]:
     ...
 
 def end_scripted(session: FakeSession, turn: FakeTurn) -> _Program[None, object]:

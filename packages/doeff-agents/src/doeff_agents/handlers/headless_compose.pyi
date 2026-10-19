@@ -18,6 +18,7 @@ from doeff_claude_code.fake import StopHookRejection as StopHookRejection
 from doeff_claude_code.fake import fake_claude_code_handler as fake_claude_code_handler
 from doeff_claude_code.lines import Usage as Usage
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
+from doeff_claude_code.lines import ModelRefusalHit as ModelRefusalHit
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import CompactTrigger as CompactTrigger
 from doeff_claude_code.lines import HookNotice as HookNotice

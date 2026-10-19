@@ -100,7 +100,11 @@
   (setv #^ (| str None) model None)
   (setv #^ (| str None) parent-tool-use-id None)
   ;; error = 行の最上位の error(CLI が API の誤りを答えの代わりに出した時の語 — 例 rate_limit: 口座の限度に当たった・#3983。無ければ None)。
-  (setv #^ (| str None) error None))
+  (setv #^ (| str None) error None)
+  ;; stop-reason = message.stop_reason(無ければ None)/ refusal-category = model の安全装置が答えを断った行(stop-reason refusal)の
+  ;; message.stop_details.category(例 reasoning_extraction・cyber — 無ければ None)。
+  (setv #^ (| str None) stop-reason None)
+  (setv #^ (| str None) refusal-category None))
 
 (defclass [(dataclass :frozen True)] ToolAnswer []
   "user の行の tool_result の block 1 つ(道具の結果 1 つ): id = 答えた呼びの id(tool_use_id — 前の ToolCall.id と同じ・空でない文字列)/
@@ -251,6 +255,20 @@
   (#^ str error)
   (#^ str text))
 
+;; assistant の行の message.stop_reason のうち、model の安全装置が答えを断った事を名乗る語(CLI は API の答えの stop_reason refusal を、
+;; 本体の assistant の行 — error invalid_request・本文「API Error: <model>'s safeguards flagged this message …」— に写す。実測 2.1.x の
+;; CLI の code: 行の message.stop_reason = refusal・message.stop_details = API の stop_details {category, explanation})。
+(val STOP-REASON-REFUSAL "refusal")
+
+(defrecord ModelRefusalHit
+  "手番の要求を model の安全装置が断った事実(上の層が「この transcript はこの model で続けられない」と知って、別の model で引き継ぎ書を
+   書かせ、新しい session で続けるため — 口座の側の断り AccountRefusalHit とは別の事実: 口座は使える)。category = 断りの種類
+   (message.stop_details.category — 例 reasoning_extraction・名乗らなければ None)/ model = 断った行が名乗った model(無ければ None)/
+   text = CLI が答えの代わりに出した断りの文(読めなければ空)。"
+  (#^ (| str None) category)
+  (#^ (| str None) model)
+  (#^ str text))
+
 (defclass [(dataclass :frozen True)] ModelWindow []
   "result の行の modelUsage の model 1 つの窓(会話の context の大きさを上限と比べるため — #3744): model = model の名(modelUsage の鍵)/
    context-window = contextWindow / max-output-tokens = maxOutputTokens(名乗らない欄は None — 0 を発明しない)。"
@@ -386,7 +404,8 @@
    cost-usd = この手番の額(USD)= CLI が名乗った累積の額(total_cost_usd)の、手番の始まりから終わりまでの差(状態機械 dialogue.hy が
    数える)。始まりか終わりの額が分からなければ None(0 を発明しない)/ last-call-usage・last-call-model・model-windows は節の頭の註 /
    account-limit = この手番が口座の限度に当たった事実(AccountLimitHit — 当たっていなければ None・#3983)/
-   account-refusal = この手番の要求を口座の側が断った事実(AccountRefusalHit — 断られていなければ None)。"
+   account-refusal = この手番の要求を口座の側が断った事実(AccountRefusalHit — 断られていなければ None)/
+   model-refusal = この手番の要求を model の安全装置が断った事実(ModelRefusalHit — 断られていなければ None)。"
   (setv #^ str result-text "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
@@ -395,13 +414,14 @@
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
   (setv #^ (| AccountLimitHit None) account-limit None)
-  (setv #^ (| AccountRefusalHit None) account-refusal None))
+  (setv #^ (| AccountRefusalHit None) account-refusal None)
+  (setv #^ (| ModelRefusalHit None) model-refusal None))
 
 (defclass [(dataclass :frozen True)] Failed []
   "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
    usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)・
    cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)/
-   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit(#3983)・account-refusal は Completed と同じ /
+   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit(#3983)・account-refusal・model-refusal は Completed と同じ /
    exit-code・stderr-tail = 注入を待って飲んだ result で終わる前に CLI の process が降りた時の、process の終了 code と stderr の末尾
    (STDERR-TAIL-CHARS 字まで — #4207)。result の行で閉じた失敗(process は降りていない)・注入の断りの終わりは None。"
   (#^ str detail)
@@ -415,6 +435,7 @@
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
   (setv #^ (| AccountLimitHit None) account-limit None)
   (setv #^ (| AccountRefusalHit None) account-refusal None)
+  (setv #^ (| ModelRefusalHit None) model-refusal None)
   (setv #^ (| int None) exit-code None)
   (setv #^ (| str None) stderr-tail None))
 
@@ -501,7 +522,8 @@
    input が無い・JSON の object でない tool_use の block を 1 つでも持つ行は、名指しの Other(type = assistant・subtype =
    tool_use_without_id / tool_use_without_name / tool_use_without_input)で断る — 空の id の ToolCall を作らない(結果の tool_use_id と
    突き合わせられない呼びを通さない)・命令の無い呼びを空の命令として通さない。
-   message.usage(object の時だけ — usage-of で読む)・message.model・行の最上位の parent_tool_use_id も読む(無い・空なら None)。"
+   message.usage(object の時だけ — usage-of で読む)・message.model・行の最上位の parent_tool_use_id・message.stop_reason・
+   message.stop_details.category も読む(無い・空なら None)。"
   (setv blocks (content-blocks record))
   (setv uses (tuple (gfor block blocks :if (= (.get block "type") "tool_use") block)))
   (setv message (object-at record "message"))
@@ -517,7 +539,9 @@
            :usage (if (isinstance usage dict) (usage-of usage) None)
            :model (or (text-at message "model") None)
            :parent-tool-use-id (or (text-at record "parent_tool_use_id") None)
-           :error (or (text-at record "error") None))))
+           :error (or (text-at record "error") None)
+           :stop-reason (or (text-at message "stop_reason") None)
+           :refusal-category (or (text-at (object-at message "stop_details") "category") None))))
 
 (defk tool-answer-of [#^ dict block]
   {:pre [(: block dict)] :post [(: % ToolAnswer)] :tags {:context "claude-code" :role "foundation"}}

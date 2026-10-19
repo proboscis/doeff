@@ -30,6 +30,9 @@
 (val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
                      "or ask your admin to enable access"))
 
+(val SAFEGUARDS (lines.ModelRefusalHit :category "reasoning_extraction" :model "claude-fable-5-1"
+                                        :text "API Error: Fable 5.1's safeguards flagged this message"))
+
 (defn scripted-reply [#^ str text #^ tuple memory]  ; defk にできない: fake の世界が呼ぶ callback
   "筋書きの返事(本文の語で終わり方を選ぶ): fail / lose / lines / usage / それ以外は 30 秒の道具のあと本文をそのまま返す。"
   (cond
@@ -43,6 +46,7 @@
     (= text "limited") (FakeReply "" :fail "limit" :account-limit LIMIT)
     (= text "limited-done") (FakeReply "partial" :account-limit (AccountLimitHit :text LIMIT.text))
     (= text "refused") (FakeReply "" :account-refusal (lines.AccountRefusalHit :error "oauth_org_not_allowed" :text REFUSAL-TEXT))
+    (= text "flagged") (FakeReply "" :model-refusal SAFEGUARDS)
     True (FakeReply text :tool-seconds 30.0)))
 
 (defk on-fake [world program]
@@ -464,3 +468,32 @@
     (try (bad) (except [ValueError] (:= refused True)))
     (assert refused))
   (assert (= (. (FakeReply "" :lose "x" :lose-exit-code 1) lose-exit-code) 1)))
+
+
+(deftest test-a-turn-the-model-safeguards-refuse-emits-the-refusal-lines-and-carries-the-refusal-on-its-end
+  ;; model の安全装置の断りで答えない手番(本番 2026-10-20 の Fable 5.1 の reasoning_extraction)は、本物の CLI と同じ行 — 本体の
+  ;; assistant の行(断りの model・error invalid_request・stop_reason refusal・断りの種類・断りの文)と result の行(is_error true)— を
+  ;; 出し、終わり(Failed)の model-refusal は出した行から本物の状態機械と同じ規則で数える。上の層が模擬で「この transcript はこの model で
+  ;; 続けられない」を受け取れるため。
+  (<- flagged TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "flagged")))
+  (assert (isinstance flagged.end Failed) (repr flagged.end))
+  (assert (= flagged.end.model-refusal SAFEGUARDS) (repr flagged.end))
+  (assert (is flagged.end.account-refusal None) (repr flagged.end))
+  (assert (= (lfor kind (kinds-of flagged.lines AssistantMessage) :if kind.error
+                   #(kind.error kind.stop-reason kind.refusal-category kind.model))
+             [#("invalid_request" "refusal" "reasoning_extraction" "claude-fable-5-1")])
+          flagged.lines)
+  ;; 本物の状態機械に同じ行を読ませると、同じ終わり(断りの欄・文)になる。
+  (var moved (dialogue.begin-turn (DialogueState :cost-mark 0.0) (typed "flagged")))
+  (var real-end None)
+  (for [line flagged.lines]
+    (:= moved (dialogue.on-record moved.state line.kind))
+    (when (is-not moved.end None) (:= real-end moved.end)))
+  (assert (= #(real-end.model-refusal real-end.detail) #(SAFEGUARDS SAFEGUARDS.text)) (repr real-end))
+  ;; 断りは筋書きの終わり方の 1 つなので、ほかの終わり方と組まない。
+  (for [bad [(fn [] (FakeReply "" :fail "x" :model-refusal SAFEGUARDS))
+             (fn [] (FakeReply "" :account-refusal (lines.AccountRefusalHit :error "billing_error" :text "t") :model-refusal SAFEGUARDS))
+             (fn [] (FakeReply "abc" :deltas 2 :model-refusal SAFEGUARDS))]]
+    (var refused False)
+    (try (bad) (except [ValueError] (:= refused True)))
+    (assert refused)))

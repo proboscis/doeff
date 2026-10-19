@@ -193,6 +193,21 @@ class AgentAccountRefusal:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentModelRefusal:
+    """The model's safeguards refused the turn's request: the runtime answered with the refusal instead of
+    the model (the API's ``stop_reason`` ``refusal`` — e.g. "Fable 5.1's safeguards flagged this message",
+    which can also hit a safe request).  The account can still be used; the transcript
+    can no longer be continued with this model.  ``category`` = the refusal's category as the API stated it
+    (e.g. ``reasoning_extraction``; ``None`` when not stated), ``model`` = the model that refused (``None``
+    when not stated), ``text`` = the runtime's refusal message.  The layer that started the turn decides how
+    to go on (e.g. have another model write a handoff and continue in a new session)."""
+
+    category: str | None = None
+    model: str | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
     """The turn finished.  ``resume_from`` continues this agent's context.
 
@@ -200,7 +215,8 @@ class AgentTurnCompleted:
     runtime reports none of them).  ``account_limit`` = the turn ran into the
     account's usage limit (``None`` when it did not — agora-redesign #3983).
     ``account_refusal`` = the account refused the turn's request (``None`` when
-    it did not).
+    it did not).  ``model_refusal`` = the model's safeguards refused the turn's
+    request (``None`` when they did not).
     """
 
     result_text: str
@@ -212,6 +228,7 @@ class AgentTurnCompleted:
     model_windows: tuple[ModelWindow, ...] = ()
     account_limit: AgentAccountLimit | None = None
     account_refusal: AgentAccountRefusal | None = None
+    model_refusal: AgentModelRefusal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -222,7 +239,8 @@ class AgentTurnFailed:
     (``None`` when the runtime reports none of them).  ``account_limit`` = the
     turn ran into the account's usage limit (``None`` when it did not — #3983).
     ``account_refusal`` = the account refused the turn's request (``None`` when
-    it did not).
+    it did not).  ``model_refusal`` = the model's safeguards refused the turn's
+    request (``None`` when they did not).
 
     ``exit_code`` / ``stderr_tail`` = 手番の終わりの前に agent の CLI の process が降りた時(手番を起こす前に降りて手番を
     始められなかった時も)の、process の終了 code と stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。
@@ -238,6 +256,7 @@ class AgentTurnFailed:
     model_windows: tuple[ModelWindow, ...] = ()
     account_limit: AgentAccountLimit | None = None
     account_refusal: AgentAccountRefusal | None = None
+    model_refusal: AgentModelRefusal | None = None
     exit_code: int | None = None
     stderr_tail: str | None = None
 

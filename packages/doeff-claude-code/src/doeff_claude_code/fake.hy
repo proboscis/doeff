@@ -25,8 +25,8 @@
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactBoundary HookNotice HookPhase
-                                 stderr-tail-within])
-(import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after])
+                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within])
+(import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
@@ -66,6 +66,8 @@
 ;; 口座の側の断りの手番を閉じる result の行の subtype(CLI は API の誤りの答えで終えた手番を subtype success・is_error true で閉じる —
 ;; 限度の答えの手番と同じ形と推定)。本物の状態機械は result の本文が空の時にこの subtype を手番の失敗の文にする。
 (val REFUSAL-RESULT-SUBTYPE "success")
+;; model の安全装置の断りの行の最上位の error(CLI の code — 断りの行を error invalid_request の API の誤りの行として作る)。
+(val MODEL-REFUSAL-ERROR "invalid_request")
 
 
 (defrecord StopHookRejection
@@ -75,10 +77,16 @@
   (#^ str reason))
 
 
+(defn #^ bool scripted-end? [reply]  ; defk にできない: FakeReply の __post-init__(defn)が値として呼ぶ
+  "純粋: 筋書きの返事 reply(FakeReply)が本文で終わらない手番(失敗・process の消失・口座の側の断り・model の安全装置の断り)かを
+   決める 1 か所。"
+  (any (gfor end #(reply.fail reply.lose reply.account-refusal reply.model-refusal) (is-not end None))))
+
+
 (defclass [(dataclass :frozen True)] FakeReply []
   "筋書きの 1 手番の返事: text = 最後の本文・tool-seconds = 道具が走る秒数(0 = 道具なし)・
    needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
-   BackendLost(detail = この文)で終わる(fail・lose・account-refusal は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
+   BackendLost(detail = この文)で終わる(fail・lose・account-refusal・model-refusal は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
    cost-usd = Completed / Failed に載せる手番の額(USD — 本番の handler が累積の額の差から数える値の代わり。None = 名乗らない)・
    lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番)・
    think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)・
@@ -108,6 +116,11 @@
    状態機械と同じ規則(dialogue.hy の refusal-hit-after)で数える。上の層が模擬で「この口座は使えない」を受け取るため。断りは手番の
    終わり方の 1 つなので fail・lose と組まない(本文を出さないので deltas・stop-hook-rejections とも組まない)。道具を呼ぶ手番
    (tool-seconds)なら、道具の結果の後に断る・
+   model-refusal = この手番の要求を model の安全装置が断る筋書き(ModelRefusalHit — 本番 2026-10-20 の Fable 5.1 の
+   reasoning_extraction の誤フラグ)。偽の CLI は本物と同じ行 — 本体の assistant の行(model = 断りの model・error invalid_request・
+   stop_reason refusal・stop_details の category・断りの文)と、その後の result の行(subtype success・is_error true・本文 = 断りの文)—
+   を出して Failed で終え、終わりの model-refusal は出した行から本物の状態機械と同じ規則(dialogue.hy の model-refusal-after)で数える。
+   上の層が模擬で「この transcript はこの model で続けられない」を受け取るため。組み方の制約は account-refusal と同じ・
    stop-hook-rejections = Stop hook が答えを差し戻す筋書き(StopHookRejection の列・#4020)。偽の CLI は本物と同じ順 — 差し戻される
    答えの本文の行(AssistantMessage)→ 差し戻しの行(StopHookFeedback)を 1 つずつ — を最後の本文を書き始める前に出し、手番の終わりの
    本文は最後の本文だけ(本物の result の行と同じ)。上の層が差し戻された答えを見分けて画面から落とす事を模擬で確かめるため。本文で
@@ -154,6 +167,8 @@
   (setv #^ (| AccountLimitHit None) account-limit None)
   ;; 口座の側が要求を断る筋書き(断らない = None)。
   (setv #^ (| AccountRefusalHit None) account-refusal None)
+  ;; model の安全装置が要求を断る筋書き(断らない = None)。
+  (setv #^ (| ModelRefusalHit None) model-refusal None)
   ;; Stop hook が答えを差し戻す筋書き(差し戻さない = 空)。
   (setv #^ (get tuple #(StopHookRejection ...)) stop-hook-rejections #())
   ;; 要求の前に CLI が会話を自動で圧縮する筋書き(圧縮しない = 空)。
@@ -165,8 +180,8 @@
     (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
       (raise (ValueError (.format "FakeReply の thinking-deltas・tool-input-deltas は 0 以上: {} / {}"
                                   self.thinking-deltas self.tool-input-deltas))))
-    (when (> (len (lfor end #(self.fail self.lose self.account-refusal) :if (is-not end None) end)) 1)
-      (raise (ValueError "FakeReply の fail・lose・account-refusal は多くとも 1 つ")))
+    (when (> (len (lfor end #(self.fail self.lose self.account-refusal self.model-refusal) :if (is-not end None) end)) 1)
+      (raise (ValueError "FakeReply の fail・lose・account-refusal・model-refusal は多くとも 1 つ")))
     (when (and (is self.lose None) (or (is-not self.lose-exit-code None) (is-not self.lose-stderr None)))
       (raise (ValueError "FakeReply の lose-exit-code・lose-stderr は lose の手番だけ(消える process の終わりの欄)")))
     (when (< self.lines 0)
@@ -176,8 +191,8 @@
     (when (> self.deltas (len self.text))
       (raise (ValueError (.format "FakeReply の deltas は本文の字数以下(どの片も空でない): deltas {} / 本文 {} 字"
                                   self.deltas (len self.text)))))
-    (when (and (> self.deltas 0) (or (is-not self.fail None) (is-not self.lose None) (is-not self.account-refusal None)))
-      (raise (ValueError "FakeReply の deltas は本文で終わる手番だけ(fail・lose・account-refusal の手番は本文を出さない)")))
+    (when (and (> self.deltas 0) (scripted-end? self))
+      (raise (ValueError "FakeReply の deltas は本文で終わる手番だけ(fail・lose・account-refusal・model-refusal の手番は本文を出さない)")))
     (when (is-not self.account-limit None)
       (when (and (is self.account-limit.window None) (not self.account-limit.text))
         (raise (ValueError "FakeReply の account-limit は window か text を名乗る(行に出せない値は数えられない)")))
@@ -185,9 +200,8 @@
         (raise (ValueError "FakeReply の account-limit の resets-at は window と一緒に(拒まれた限度の行が運ぶ)")))
       (when (is-not self.lose None)
         (raise (ValueError "FakeReply の account-limit は Completed / Failed で終わる手番だけ(lose の終わりに欄が無い)"))))
-    (when (and self.stop-hook-rejections
-               (or (is-not self.fail None) (is-not self.lose None) (is-not self.account-refusal None)))
-      (raise (ValueError "FakeReply の stop-hook-rejections は本文で終わる手番だけ(fail・lose・account-refusal の手番は本文を出さない)")))
+    (when (and self.stop-hook-rejections (scripted-end? self))
+      (raise (ValueError "FakeReply の stop-hook-rejections は本文で終わる手番だけ(fail・lose・account-refusal・model-refusal の手番は本文を出さない)")))
     (when (any (gfor rejection self.stop-hook-rejections (not rejection.answer)))
       (raise (ValueError "FakeReply の stop-hook-rejections の answer は空でない(差し戻される答えの本文の行を出す)")))))
 
@@ -224,7 +238,8 @@
     (setv #^ (| str None) self.last-call-model None)
     (setv #^ (get tuple #(ModelWindow ...)) self.model-windows #())
     (setv #^ (| AccountLimitHit None) self.limit-hit None)
-    (setv #^ (| AccountRefusalHit None) self.refusal-hit None)))
+    (setv #^ (| AccountRefusalHit None) self.refusal-hit None)
+    (setv #^ (| ModelRefusalHit None) self.model-refusal-hit None)))
 
 
 (defclass FakeSession []
@@ -333,7 +348,8 @@
     (isinstance said TurnResult)
       (setv turn.model-windows (! (merged-windows turn.model-windows said.model-windows))))
   (setv turn.limit-hit (limit-hit-after turn.limit-hit said)
-        turn.refusal-hit (refusal-hit-after turn.refusal-hit said))
+        turn.refusal-hit (refusal-hit-after turn.refusal-hit said)
+        turn.model-refusal-hit (model-refusal-after turn.model-refusal-hit said))
   (<- (ring-turn turn))
   None)
 
@@ -351,7 +367,8 @@
   (val called (replace end :last-call-usage turn.last-call-usage :last-call-model turn.last-call-model
                            :model-windows turn.model-windows))
   (setv turn.end (match called
-                   (| (Completed) (Failed)) (replace called :account-limit turn.limit-hit :account-refusal turn.refusal-hit)
+                   (| (Completed) (Failed)) (replace called :account-limit turn.limit-hit :account-refusal turn.refusal-hit
+                                                     :model-refusal turn.model-refusal-hit)
                    _ called)
         turn.phase "done")
   (when (isinstance end BackendLost) (setv session.alive False))
@@ -483,6 +500,21 @@
                                    :input-refs (tuple turn.refs))))
   None)
 
+(defk model-refuse-turn [#^ FakeSession session #^ FakeTurn turn #^ ModelRefusalHit refusal]
+  {:pre [(: session FakeSession) (: turn FakeTurn) (: refusal ModelRefusalHit)] :post [(: % (type None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "model の安全装置が要求を断る筋書きの手番(返事の model-refusal)を、本物の CLI と同じ断りの行を出して Failed で終えるため: 本体の
+   assistant の行(model = 断りの model・error MODEL-REFUSAL-ERROR・stop_reason STOP-REASON-REFUSAL・断りの種類・断りの文)→ result の行
+   (subtype REFUSAL-RESULT-SUBTYPE・is_error true・本文 = 断りの文)。終わりの model-refusal は emit が出した行から数える(finish が載せる)。"
+  (val reply turn.reply)
+  (<- (emit-limit session turn))
+  (<- (emit-all session turn [(AssistantMessage :text refusal.text :error MODEL-REFUSAL-ERROR :model refusal.model :usage SYNTHETIC-USAGE
+                                                :stop-reason STOP-REASON-REFUSAL :refusal-category refusal.category)
+                              (TurnResult REFUSAL-RESULT-SUBTYPE True :result-text refusal.text :usage reply.usage)]))
+  (<- (finish session turn (Failed (or (.strip refusal.text) REFUSAL-RESULT-SUBTYPE) :usage reply.usage :cost-usd reply.cost-usd
+                                   :input-refs (tuple turn.refs))))
+  None)
+
 (defk end-scripted [#^ FakeSession session #^ FakeTurn turn]
   {:pre [(: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
   "筋書きが失敗・口座の側の断り・process の消失で終わる手番の終わり(注入は読まない)。process の消失の終わりには、台本が名乗った
@@ -491,6 +523,8 @@
   (cond
     (is-not reply.account-refusal None)
       (<- (refuse-turn session turn reply.account-refusal))
+    (is-not reply.model-refusal None)
+      (<- (model-refuse-turn session turn reply.model-refusal))
     (is-not reply.fail None)
       (do
         (<- (emit-limit session turn))
@@ -515,7 +549,7 @@
       (<- (emit-all session turn [(ToolResult :answers #((ToolAnswer :id FAKE-TOOL-USE-ID :text turn.reply.tool-output
                                                                       :is-error turn.reply.tool-error)))
                                   (TaskEvent "fake-task" "completed")])))
-    (if (or (is-not turn.reply.fail None) (is-not turn.reply.lose None) (is-not turn.reply.account-refusal None))
+    (if (scripted-end? turn.reply)
         (<- (end-scripted session turn))
         (<- (begin-text world session turn now))))
   (when (= turn.phase "text")

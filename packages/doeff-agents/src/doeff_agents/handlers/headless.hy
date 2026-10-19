@@ -32,6 +32,8 @@
 ;;;                                      当たった事実・agora-redesign #3983)
 ;;;   Completed / Failed の account-refusal(AccountRefusalHit)→ AgentTurnCompleted / AgentTurnFailed.account_refusal(AgentAccountRefusal —
 ;;;                                      口座の側が要求を断った事実・本番 2026-10-08 22:32 の口座 cryptic-2 の oauth_org_not_allowed)
+;;;   Completed / Failed の model-refusal(ModelRefusalHit)→ AgentTurnCompleted / AgentTurnFailed.model_refusal(AgentModelRefusal —
+;;;                                      model の安全装置が要求を断った事実・本番 2026-10-20 の Fable 5.1 の reasoning_extraction)
 ;;;   Failed / BackendLost の exit-code・stderr-tail → AgentTurnFailed / AgentTurnLost.exit_code・stderr_tail(手番の途中で降りた CLI の
 ;;;                                      process の終了 code と stderr の末尾・agora-redesign #4207)
 ;;;   LaunchFailed の exit-code・stderr-tail → AgentLaunchError.exit_code・stderr_tail(stderr の末尾は層 2 と同じ上限 stderr-tail-within)。
@@ -79,7 +81,7 @@
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent CompactionTrigger
   AgentHookEvent AgentCallUsageEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
-  AgentAccountRefusal
+  AgentAccountRefusal AgentModelRefusal
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError
@@ -90,7 +92,7 @@
                                   BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactBoundary
                                  HookNotice HookPhase
-                                 Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
+                                 Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
                                    TurnStarted InterruptRequested InputAlreadyRead TurnEventPage SessionExported SessionWarmed
@@ -285,6 +287,13 @@
    AgentAccountRefusal へ写すため(欄はそのまま写す)。"
   (if (is hit None) None (AgentAccountRefusal :error hit.error :text hit.text)))
 
+(defk model-refusal-of [hit]
+  {:pre [(: hit (| ModelRefusalHit None))] :post [(: % (| AgentModelRefusal None))]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "上の層が「この transcript はこの model で続けられない」と知って続け方を決められるように、層 2 の model の安全装置が断った事実
+   (ModelRefusalHit か None)を層 3 の AgentModelRefusal へ写すため(欄はそのまま写す)。"
+  (if (is hit None) None (AgentModelRefusal :category hit.category :model hit.model :text hit.text)))
+
 (defn end-of [end #^ str context-id]
   "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。どの終わりも本体の最後の呼びの usage と model・
    model ごとの窓を運ぶ(#3744)。"
@@ -299,13 +308,15 @@
                           :usage (usage-of end.usage end.cost-usd)
                           :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
                           :account-limit (account-limit-of end.account-limit)
-                          :account-refusal (run (account-refusal-of end.account-refusal)))
+                          :account-refusal (run (account-refusal-of end.account-refusal))
+                          :model-refusal (run (model-refusal-of end.model-refusal)))
     (isinstance end Failed)
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
                        :usage (usage-of end.usage end.cost-usd)
                        :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
                        :account-limit (account-limit-of end.account-limit)
                        :account-refusal (run (account-refusal-of end.account-refusal))
+                       :model-refusal (run (model-refusal-of end.model-refusal))
                        :exit-code end.exit-code :stderr-tail end.stderr-tail)
     (isinstance end Interrupted)
       (AgentTurnInterrupted :cli-kept end.process-kept :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs

@@ -610,3 +610,45 @@
   (val again (dialogue.begin-turn refused.state (TurnInput "again" "msg-2")))
   (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
   (assert (and (isinstance second.end Completed) (is second.end.account-refusal None)) (repr second.end)))
+
+
+;; --- model の安全装置の断りで答えなかった手番 ---------------------------------------------------------------------
+;; 形の出所: CLI 2.1.x の code(API の答えの stop_reason refusal を写す所)— 本体の assistant の行は最上位の error "invalid_request"・
+;; message.stop_reason "refusal"・message.stop_details = API の stop_details({category, explanation})・本文「API Error: Fable 5.1's
+;; safeguards flagged this message …」。本番 2026-10-20 の会話の画面の文(下の SAFEGUARDS-TEXT)。続く result の行は口座の断りと同じ形と推定。
+(val SAFEGUARDS-TEXT (+ "API Error: Fable 5.1's safeguards flagged this message (https://www.anthropic.com/legal/aup). "
+                        "\n\nDetails: [reasoning_extraction]"))
+(val SAFEGUARDS-ANSWER {"type" "assistant" "parent_tool_use_id" None "error" "invalid_request" "isApiErrorMessage" True
+                        "message" {"id" "msg_s" "model" "claude-fable-5-1" "stop_reason" "refusal"
+                                   "stop_details" {"category" "reasoning_extraction" "explanation" None}
+                                   "content" [{"type" "text" "text" SAFEGUARDS-TEXT}]
+                                   "usage" {"input_tokens" 0 "output_tokens" 0}}})
+(val SAFEGUARDS-RESULT {"type" "result" "subtype" "success" "is_error" True "result" SAFEGUARDS-TEXT})
+
+
+(deftest test-a-turn-the-model-safeguards-refuse-carries-the-model-refusal-on-its-end
+  ;; 本体の assistant の行の stop_reason が refusal なら、手番の終わりは閉じた型の欄 model-refusal(断りの種類・model・CLI の文)を持つ。
+  ;; 口座の側の断り(account-refusal)とは別の欄で、error の語 invalid_request は口座の断りに数えない。
+  ;; 失敗ケース(前の形): 終わりに欄が無く、上の層が「この transcript はこの model で続けられない」と知れず、次のターンも同じ transcript を
+  ;; 続けて同じ断りを繰り返した(本番 2026-10-20 の Fable 5.1 の reasoning_extraction)。
+  (val read (read-record (. (read-record (started) SAFEGUARDS-ANSWER) state) SAFEGUARDS-RESULT))
+  (assert (isinstance read.end Failed) (repr read.end))
+  (assert (= read.end.model-refusal (lines.ModelRefusalHit :category "reasoning_extraction" :model "claude-fable-5-1"
+                                                           :text SAFEGUARDS-TEXT))
+          (repr read.end))
+  (assert (is read.end.account-refusal None) (repr read.end))
+  (assert (= read.end.detail SAFEGUARDS-TEXT) (repr read.end)))
+
+
+(deftest test-a-subagent-model-refusal-is-not-counted-and-is-not-carried-to-the-next-turn
+  ;; subagent の行の断りは親の会話の断りではない(親は続く)ので数えない。断られた手番の次の手番は空から数え直す。名乗りの無い
+  ;; stop_details は種類 None で数える。
+  (val sub (. (read-record (started) (| SAFEGUARDS-ANSWER {"parent_tool_use_id" "toolu_sub"})) state))
+  (val calm (read-record sub SUCCESS-RESULT))
+  (assert (and (isinstance calm.end Completed) (is calm.end.model-refusal None)) (repr calm.end))
+  (val bare (| SAFEGUARDS-ANSWER {"message" (| (get SAFEGUARDS-ANSWER "message") {"stop_details" None})}))
+  (val refused (read-record (. (read-record (started) bare) state) SAFEGUARDS-RESULT))
+  (assert (= refused.end.model-refusal.category None) (repr refused.end))
+  (val again (dialogue.begin-turn refused.state (TurnInput "again" "msg-2")))
+  (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
+  (assert (and (isinstance second.end Completed) (is second.end.model-refusal None)) (repr second.end)))

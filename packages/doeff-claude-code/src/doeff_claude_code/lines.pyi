@@ -62,6 +62,8 @@ class AssistantMessage:
     model: str | None = None
     parent_tool_use_id: str | None = None
     error: str | None = None
+    stop_reason: str | None = None
+    refusal_category: str | None = None
 
 @dataclass(frozen=True)
 class ToolAnswer:
@@ -168,6 +170,13 @@ class AccountRefusalHit:
 
     def __post_init__(self) -> None:
         ...
+STOP_REASON_REFUSAL: str
+
+@dataclass(frozen=True, kw_only=True)
+class ModelRefusalHit:
+    category: str | None
+    model: str | None
+    text: str
 
 @dataclass(frozen=True)
 class ModelWindow:
@@ -253,6 +262,7 @@ class Completed:
     model_windows: tuple[ModelWindow, ...] = ...
     account_limit: AccountLimitHit | None = None
     account_refusal: AccountRefusalHit | None = None
+    model_refusal: ModelRefusalHit | None = None
 
 @dataclass(frozen=True)
 class Failed:
@@ -267,6 +277,7 @@ class Failed:
     model_windows: tuple[ModelWindow, ...] = ...
     account_limit: AccountLimitHit | None = None
     account_refusal: AccountRefusalHit | None = None
+    model_refusal: ModelRefusalHit | None = None
     exit_code: int | None = None
     stderr_tail: str | None = None
 
