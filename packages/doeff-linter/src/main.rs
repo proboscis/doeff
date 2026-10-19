@@ -461,6 +461,12 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         ),
         None => None,
     };
+    // 母集団の問い(`population_of`)は宣言の dir を根として同じ宣言を読み直す。同じ読み方の時は読んだ物を渡して、2 度読まない。
+    if let (Some(path), Some(architecture)) = (&declaration, &architecture) {
+        if path.parent() == Some(root.as_path()) {
+            doeff_linter::population::remember_declaration(path, std::sync::Arc::new(architecture.clone()));
+        }
+    }
     notices.extend(architecture.iter().flat_map(|a| a.notices.iter().cloned()));
     let mut settings = match (&config, architecture) {
         (Some(config), architecture) => {
