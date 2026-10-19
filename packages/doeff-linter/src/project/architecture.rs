@@ -511,6 +511,16 @@ pub fn collect_contract_spellings(value: &serde_json::Value, out: &mut BTreeSet<
     }
 }
 
+/// 宣言の正規表現(`:patterns`・`:pattern`)が読めるか。**構文だけ**を確かめる: 宣言を読むたび(1 回の実行で 195 個)`Regex::new` で NFA まで組むと 50〜130 ミリ秒
+/// かかり、書いた file 1 つの hook の CPU の半分近くになっていた(agora-redesign #1022)。宣言が持つのは綴りで、使う時に規則が組み直すので、ここで組んだ物は捨てていた。
+/// 読めない時だけ `Regex::new` に聞き直し、知らせの文は今までと同じ綴りにする。
+fn check_regex(pattern: &str) -> Result<(), regex::Error> {
+    match regex_syntax::Parser::new().parse(pattern) {
+        Ok(_) => Ok(()),
+        Err(_) => regex::Regex::new(pattern).map(|_| ()),
+    }
+}
+
 /// 使わないと決めた呼びの群 1 つ(`:retired-calls` の `(retired-calls "名" :calls [..] :files [..] :except [..] :instead "…")` — DOEFF151)。
 /// Hy の file の `(名 …)` の形の呼びだけを数える(註・文字列・`#_` で読み捨てた form は数えない)。glob は :retired-words と同じ。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1632,7 +1642,7 @@ impl<'a> Parser<'a> {
                         Some(items) => {
                             for item in items {
                                 let Some(pattern) = self.pattern(item, ":patterns") else { continue };
-                                match regex::Regex::new(&pattern) {
+                                match check_regex(&pattern) {
                                     Ok(_) => group.patterns.push(pattern),
                                     Err(error) => self.problem(item, &format!("retired-words {} の正規表現 {} を読めない: {}", group.name, pattern, error)),
                                 }
@@ -1757,7 +1767,7 @@ impl<'a> Parser<'a> {
                         Some(items) => {
                             for item in items {
                                 let Some(pattern) = self.pattern(item, ":patterns") else { continue };
-                                match regex::Regex::new(&pattern) {
+                                match check_regex(&pattern) {
                                     Ok(_) => group.patterns.push(pattern),
                                     Err(error) => self.problem(item, &format!("confined-spelling {} の正規表現 {} を読めない: {}", group.name, pattern, error)),
                                 }
@@ -1991,7 +2001,7 @@ impl<'a> Parser<'a> {
                 match self.text(key) {
                     ":pattern" => {
                         if let Some(text) = self.pattern(field, ":pattern") {
-                            match regex::Regex::new(&text) {
+                            match check_regex(&text) {
                                 Ok(_) => pattern = Some(text),
                                 Err(error) => self.problem(field, &format!("counted-spelling {} の正規表現 {} を読めない: {}", name, text, error)),
                             }
@@ -2058,7 +2068,7 @@ impl<'a> Parser<'a> {
                         Some(items) => {
                             for item in items {
                                 let Some(pattern) = self.pattern(item, ":patterns") else { continue };
-                                match regex::Regex::new(&pattern) {
+                                match check_regex(&pattern) {
                                     Ok(_) => group.patterns.push(pattern),
                                     Err(error) => self.problem(item, &format!("vocabulary-scope {} の正規表現 {} を読めない: {}", group.name, pattern, error)),
                                 }
@@ -3710,5 +3720,20 @@ mod tests {
         let expected = ["$defs", "Carrier", "Ref", "ask", "chat", "comment", "const", "deprecated", "enum", "examples", "kind", "mail", "note", "properties", "required", "source", "streamKinds", "type"];
         assert_eq!(spellings.iter().map(String::as_str).collect::<Vec<_>>(), expected);
         assert!(!spellings.contains("letter"), "enum / const でない文字列の値は集めない");
+    }
+
+    /// agora-redesign #1022: 宣言の正規表現が読めるかは構文だけで決める(`Regex::new` で NFA まで組まない)。読める綴りは今までと同じに通し、
+    /// 読めない綴りは `Regex::new` と同じ知らせの文で断る。
+    #[test]
+    fn a_declared_pattern_is_checked_by_syntax_and_refused_with_the_compilers_words() {
+        for good in [r"foo\.bar", r"\bsleep\b", r"^\(time\.sleep\b", r"(?i)abc|def", r"[a-z_]+\d{2,4}", r"\p{Han}+", "plain text", ""] {
+            assert!(check_regex(good).is_ok(), "{good} は読める綴り");
+            assert!(regex::Regex::new(good).is_ok(), "{good} は読める綴り(検の前提)");
+        }
+        for bad in ["(unclosed", "[a-", "a{2,1}", r"\", "*start", "(?P<n>a)(?P<n>b)", r"\p{NoSuchClass}"] {
+            let ours = check_regex(bad).expect_err(bad).to_string();
+            let theirs = regex::Regex::new(bad).expect_err(bad).to_string();
+            assert_eq!(ours, theirs, "{bad} の断りの文が今までと違う");
+        }
     }
 }
