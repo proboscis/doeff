@@ -52,6 +52,12 @@
 ;;;     doeff の計器の効果 ObserveSecondsBatch 1 回で積む(区間ごとに ObserveSeconds を撃つと 1 要求で 7〜9 回 — 書きのたびに起きた待ちの
 ;;;     要求が波で並ぶ時、その 1 本ずつの後ろに観測の往復が乗っていた・#3688)。GET /metrics が区間ごとの秒の和と数を描く。log には書かない
 ;;;     (本番の書きと待ちの要求の数で行が積もり、log の file を切り替える仕組みが無いため)
+;;;   - 一覧の読みの数(重い読み手を数で名指すため): 記録の handler の包み(stamped-handling)が、ListRows に置き場が答えるたびに(届かない
+;;;     Unreachable は 503 の系列が数える)、表ごとと呼び手 × 表ごとの呼びの数と返した行の数を CountMetric で足す(綴りと閉じた系列は wire の
+;;;     LIST-ROWS-*)。呼び手は要求の見出し X-Records-Caller の名乗りを宣言の名(serving.callers)に照らした名(宣言に無い名乗りは
+;;;     undeclared・名乗りの無い要求は unnamed)。表ごとの系列は起動の時に 0 で置き、呼び手 × 表の系列は最初の答えで現れる(宣言の表 ×
+;;;     呼び手の組は数千 — 全部を 0 で置くと /metrics の本文と、数えるたびの断面の写しが重くなる)。区間の秒の系列(records_stage_*)に表の
+;;;     名は付けない(区間 9 × 表 80 の観測の列になる — 遅い表は呼びの数と行の数から絞り、区間は操作ごとに読む)
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
 ;;; 要求の本文の上限は HttpReadBody の max-bytes(読む前に宣言の長さで、宣言の無い本文は流しながら判じる)だけが持つ。
@@ -76,7 +82,7 @@
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time.effects.time [WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [RecordsSchema Unreachable WaitsClosed])
+(import doeff_records.values [NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
 (import doeff_records.schema_digest [schema-digests])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
                                ReadEventByKey])
@@ -86,7 +92,7 @@
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric
                             operation-of])
-(import doeff_records.wire [WRITER-HEADER])
+(import doeff_records.wire [WRITER-HEADER CALLER-HEADER list-rows-caller list-rows-counts list-rows-metrics list-rows-metric-helps])
 (import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
@@ -100,7 +106,7 @@
 (val PATH-METRICS "/metrics")
 ;; 動いている process の木と配っている表の要約の口(身元を問わず、表の用意と置き場に頼らない — #2742)。
 (val PATH-SERVED "/served")
-;; GET /metrics の # HELP の説明(要求の数の系列 + 区間の秒の系列 — #3688)。
+;; GET /metrics の # HELP の説明(要求の数の系列 + 区間の秒の系列 — #3688)。表ごとの一覧の読みの系列の説明は宣言の表から足す(metrics-answer)。
 (val METRIC-HELPS (FrozenMap (+ (tuple (.items ANSWER-METRIC-HELPS)) (tuple (.items STAGE-METRIC-HELPS)))))
 
 (val MODULE-TAGS {:context "records" :role "entry"})
@@ -154,7 +160,8 @@
    判断 store-reach が READINESS-SECONDS の上限で撃つ・None = 問わない — 用意が済めば ready)・pressure = () → 置き場の詰まりの読み
    (StorePressure | PressureUnread)の Program(store-reach が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
    meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)・
-   served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)。"
+   served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)・
+   callers = 一覧の読みを呼び手ごとに数える宣言の呼び手の名(X-Records-Caller の名乗りをこの名に限って数える — 空 = 名乗りは全部 undeclared)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
   (#^ (| Program EffectBase) prepare)
@@ -166,7 +173,8 @@
   (setv #^ (| Callable None) readiness None)
   (setv #^ (| Callable None) pressure None)
   (setv #^ (| (get Callable #(... object)) None) meter None)
-  (setv #^ (| ServedBuild None) served None))
+  (setv #^ (| ServedBuild None) served None)
+  (setv #^ (get tuple #(str ...)) callers #()))
 
 
 (defrecord TextAnswer
@@ -488,11 +496,13 @@
       (! (refusal-answer ERROR-STORE-UNAVAILABLE (.format "置き場が {} 秒の内に答えない" seconds)))))
 
 
-(defk metrics-answer []
-  {:pre [] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
-  "GET /metrics に答えるため: 計器の断面(ReadMeter)を Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。"
+(defk metrics-answer [schema]
+  {:pre [(: schema RecordsSchema)] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
+  "GET /metrics に答えるため: 計器の断面(ReadMeter)を Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。
+   説明は固定の系列と、宣言の表 schema の一覧の読みの系列の分。"
   (<- snapshot MeterSnapshot (ReadMeter))
-  (<- text str (render-prometheus snapshot METRIC-HELPS))
+  (<- list-rows-helps (get FrozenMap str) (list-rows-metric-helps (tuple schema.tables)))
+  (<- text str (render-prometheus snapshot (.updated METRIC-HELPS list-rows-helps)))
   (TextAnswer :status 200 :content-type METRICS-CONTENT-TYPE :body text))
 
 
@@ -508,15 +518,31 @@
                        "schemaDigests" (dict digests)})))
 
 
-(defk stamped-handling [ticket record-handler body]
-  {:pre [(: ticket str) (: record-handler Callable) (: body (| Program EffectBase))] :post [(: % "body の答え")]
+(defk count-list-rows [caller ask answer]
+  {:pre [(: caller str) (: ask ListRows) (: answer (| Page Reset NotIndexed Unreachable))] :post [(: % None)]
+   :tags {:context "records" :role "entry"}}
+  "置き場が一覧の読み ask に答えた時に、表ごとと呼び手 caller × 表ごとの呼びの数と返した行の数を計器に足し、どの呼び手がどの表を
+   読み通しているかを /metrics の数で言えるようにするため(頭の註の一覧の読みの数 — 届かない答え Unreachable は 503 の系列が数える)。"
+  (when (isinstance answer Unreachable)
+    (return None))
+  (<- counts tuple (list-rows-counts caller ask.table (if (isinstance answer Page) (len answer.rows) 0)))
+  (for [#(name amount) counts]
+    (<- (CountMetric :name name :amount amount)))
+  None)
+
+
+(defk stamped-handling [ticket caller record-handler body]
+  {:pre [(: ticket str) (: caller str) (: record-handler Callable) (: body (| Program EffectBase))] :post [(: % "body の答え")]
    :tags {:context "records" :role "entry"}}
   "記録の handler record-handler の下で body(札 ticket の要求の公開 effect)を撃ち、handler の入りと出に刻を打つため(handler の中の
-   待ちの刻は wait-stamps — 頭の註の要求ごとの計時)。answer-with が書き手の名ごとの handler をこの包み(BodyWrapper)にして service へ渡す。"
+   待ちの刻は wait-stamps — 頭の註の要求ごとの計時)。一覧の読みなら答えを呼び手 caller の名で数える(count-list-rows)。answer-with が
+   書き手の名ごとの handler をこの包み(BodyWrapper)にして service へ渡す。"
   (<- (StampRequest :ticket ticket :mark RequestMark.HANDLER-IN))
   ;; 待ちの切り手は刻の控えの外側(刻の控えが待ちの入りと起きを、切り手の Race ごと測る)。
   (<- answer (with-handlers [closing-cuts-waits (wait-stamps ticket) record-handler] body))
   (<- (StampRequest :ticket ticket :mark RequestMark.HANDLER-OUT))
+  (when (isinstance body ListRows)
+    (<- (count-list-rows caller body answer)))
   answer)
 
 
@@ -529,14 +555,15 @@
    GET /metrics は計器を描く(metrics-answer — どちらも身元を引く前に答える)。GET /served は走っている木と表の要約を答える
    (served-answer — 身元も表の用意も問わない)。"
   (when (and (= request.method "GET") (= request.path PATH-METRICS))
-    (return (! (metrics-answer))))
+    (return (! (metrics-answer serving.schema))))
   (when (and (= request.method "GET") (= request.path PATH-SERVED))
     (return (! (served-answer serving))))
   (<- prepared (| Callable None) (PreparedHandlers))
   (when (and (= request.method "GET") (= request.path PATH-READYZ))
     (return (! (with-handlers [#* serving.request-handlers] (readiness-answer serving prepared)))))
   (val handler-for (if (is prepared None) (fn [writer] store-not-prepared) prepared))
-  (<- service (records-service serving.schema (fn [writer] (BodyWrapper stamped-handling ticket (handler-for writer)))))
+  (<- caller str (list-rows-caller request.caller serving.callers))
+  (<- service (records-service serving.schema (fn [writer] (BodyWrapper stamped-handling ticket caller (handler-for writer)))))
   (<- answer (with-handlers [#* serving.request-handlers]
                             (respond service request)))
   answer)
@@ -549,7 +576,8 @@
   (match body
     (HttpAnswer) body
     _ (! (answer-with serving arrival.ticket (HttpRequest arrival.method path body
-                                                          (! (header-value arrival.headers WRITER-HEADER)))))))
+                                                          (! (header-value arrival.headers WRITER-HEADER))
+                                                          (! (header-value arrival.headers CALLER-HEADER)))))))
 
 
 (defk final-answer [decided]
@@ -560,11 +588,12 @@
     answer answer))
 
 
-(defk place-answer-metrics []
-  {:pre [] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "要求の数の系列(wire の ANSWER-METRICS)を全部 0 で置くため(起動の時 1 回 — 読み手が「無い」と「0」を区別しなくて済み、区間の差が最初の
-   1 つ目の増えを取りこぼさない)。"
-  (for [metric ANSWER-METRICS]
+(defk place-answer-metrics [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % None)] :tags {:context "records" :role "entry"}}
+  "要求の数の系列(wire の ANSWER-METRICS)と表ごとの一覧の読みの系列(宣言の表と呼び手の閉じた組 — 名が重なる宣言は起動を止める)を
+   全部 0 で置くため(起動の時 1 回 — 読み手が「無い」と「0」を区別しなくて済み、区間の差が最初の 1 つ目の増えを取りこぼさない)。"
+  (<- list-rows tuple (list-rows-metrics (tuple serving.schema.tables) serving.callers))
+  (for [metric (+ ANSWER-METRICS list-rows)]
     (<- (CountMetric :name metric :amount 0.0)))
   None)
 
@@ -733,7 +762,7 @@
 (defk serving-body [serving]
   {:pre [(: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
   "serve-records の本体(prepared-slot と計器の内側 — 用意の task と要求の task が同じ session の値と計器を読む)。"
-  (<- (place-answer-metrics))
+  (<- (place-answer-metrics serving))
   ;; 待ち受けは port の共有(share-port — SO_REUSEPORT)で開く: 同じ置き場を答える口が同じ port に何本並んでも答えは同じなので、
   ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(ki-a4f46b3d98c5 — 2026-10-09 23:08 の
   ;; 17 分の止まりで、1 本の口が閉じた間の書きが全部 503 になった)。入れ替えで新旧を同じ port に並べる形も同じ共有で開ける。
@@ -765,22 +794,25 @@
   "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
    request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
    meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)/
-   served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)。"
+   served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)/ callers = 一覧の読みを呼び手ごとに数える
+   宣言の呼び手の名(RecordsServing の callers へそのまま渡す)。"
   (#^ RecordsSchema schema)
   (#^ Callable handler-for)
   (setv #^ tuple request-handlers #())
   (setv #^ str host "127.0.0.1")
   (setv #^ int port 0)
   (setv #^ (| (get Callable #(... object)) None) meter None)
-  (setv #^ (| ServedBuild None) served None))
+  (setv #^ (| ServedBuild None) served None)
+  (setv #^ tuple callers #()))
 
 
-(defk records-server-config [schema handler-for [request-handlers #()] [host "127.0.0.1"] [port 0] [meter None] [served None]]
+(defk records-server-config [schema handler-for [request-handlers #()] [host "127.0.0.1"] [port 0] [meter None] [served None]
+                             [callers #()]]
   {:pre [(: schema RecordsSchema) (: handler-for Callable) (: request-handlers tuple) (: host str) (: port int)
-         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None))] :post [(: % RecordsServerConfig)]}
+         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None)) (: callers tuple)] :post [(: % RecordsServerConfig)]}
   "名簿を取らずに RecordsServerConfig を組む(引数を並べて組む・#3008)。
    引数は RecordsServerConfig の欄と同じ順。"
-  (RecordsServerConfig schema handler-for request-handlers host port meter served))
+  (RecordsServerConfig schema handler-for request-handlers host port meter served callers))
 
 
 (defclass [(dataclass :frozen True)] RunningServer []
@@ -835,7 +867,7 @@
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
-                                :drain-seconds 0.0 :meter config.meter :served config.served))
+                                :drain-seconds 0.0 :meter config.meter :served config.served :callers (tuple config.callers)))
   (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server
                                 (shell-control opened.put (fn [] (if (.is-set ended) SHELL-STOP-REASON None)))]
                                (serve-records serving)))

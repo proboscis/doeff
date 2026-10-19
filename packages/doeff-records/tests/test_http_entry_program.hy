@@ -32,7 +32,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServing RecordsListening RecordsPrepared StoreReach StoreReachable StoreSilent StoreUnreachable
                                    serve-records store-reach])
-(import doeff_records.wire [ANSWER-METRICS])
+(import doeff_records.wire [ANSWER-METRICS list-rows-metrics])
 (import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
 (import doeff_hy.frozen [FrozenMap])
@@ -232,11 +232,13 @@
 
 (deftest test-every-answer-is-counted-once-by-its-kind-and-status
   ;; 札 5 つ = 数え 5 つ: /healthz(other 200)・書き(write 200)・読み(read 200)・上限を超えた本文(read 400 — 本文の断りの出口)・
-  ;; 答えの途中で落ちた札(read 500 — 落ちた時の出口)。閉じた系列(種 3 × status 5)は全部、断面に在る(起動の時に 0 で置いた)。
+  ;; 答えの途中で落ちた札(read 500 — 落ちた時の出口)。閉じた系列(種 3 × status 5)と宣言の表ごとの一覧の読みの系列は全部、断面に在る
+  ;; (起動の時に 0 で置いた — 台本に一覧の読みは無いので、呼び手 × 表の系列は無い)。
   (<- script HttpScript (served-script))
   (<- ran MeteredRun (metered-entry script BROKEN-TICKET (handlers-at-once (MemoryStore LAW-SCHEMA))))
   (assert (= ran.code 0) ran)
-  (assert (= (frozenset ran.snapshot.counters) (frozenset ANSWER-METRICS)) ran.snapshot)
+  (<- list-rows tuple (list-rows-metrics (tuple LAW-SCHEMA.tables) #()))
+  (assert (= (frozenset ran.snapshot.counters) (frozenset (+ ANSWER-METRICS list-rows))) ran.snapshot)
   (<- answered (get FrozenMap float) (answered-counts ran.snapshot))
   (assert (= answered (FrozenMap {"records_requests_other_200" 1.0 "records_requests_write_200" 1.0 "records_requests_read_200" 1.0
                                   "records_requests_read_400" 1.0 "records_requests_read_500" 1.0}))

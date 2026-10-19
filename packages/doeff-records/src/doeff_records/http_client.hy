@@ -2,7 +2,8 @@
 ;;; memory や PostgreSQL の handler と同じ effect のまま記録の service を読み書きするため。
 ;;;
 ;;; 書き手の名は endpoint の writer を平文の見出し X-Records-Writer で送る(service は確かめずに書き手の名に使う — 自分の program
-;;; どうしの呼び出しに token の認証を入れない・#2986・#2988・#3007)。client は Authorization を送らない(欄 token は #2986 で消した)。
+;;; どうしの呼び出しに token の認証を入れない・#2986・#2988・#3007)。呼び手の job の名は endpoint の caller を見出し X-Records-Caller で
+;;; 送る(service が一覧の読みを呼び手ごと・表ごとに数える — 宣言された名だけを数え、許可には使わない)。client は Authorization を送らない(欄 token は #2986 で消した)。
 ;;; 綴りは wire.hy(service と同じ 1 か所)。
 ;;;
 ;;; 答えの写し方:
@@ -57,7 +58,7 @@
                                ReadEventByKey ReadRequestPatience])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
-                            WRITER-HEADER WATCH-MAX-SECONDS])
+                            WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 
@@ -72,11 +73,13 @@
    request-timeout = 要求 1 つの上限の秒(変化の待ちの要求は、待ちの秒をこれに足す)。待ちの読み直しの間隔の欄は無い(待ちは
    long-poll — #3074。前の欄 poll-seconds は使い手が渡すのをやめた後に消した)。要求は常に HttpRequest の effect で出す(file の頭の註)。
    meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
-   writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)。"
+   writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)/
+   caller = 呼び手の job の名(在れば見出し X-Records-Caller で送る — service が一覧の読みを呼び手ごとに数える。許可には使わない)。"
   (#^ str base-url)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
   (setv #^ (| (get Callable #(... object)) None) meter None)
-  (setv #^ (| str None) writer None))
+  (setv #^ (| str None) writer None)
+  (setv #^ (| str None) caller None))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
@@ -93,9 +96,10 @@
 
 (defk request-headers [endpoint]
   {:pre [(: endpoint RecordsEndpoint)] :post [(: % (get dict #(str str)))]}
-  "要求の header(本文の型と、在れば書き手の名)。"
+  "要求の header(本文の型と、在れば書き手の名と呼び手の job の名)。"
   (| {"Content-Type" "application/json; charset=utf-8"}
-     (if (is endpoint.writer None) {} {WRITER-HEADER endpoint.writer})))
+     (if (is endpoint.writer None) {} {WRITER-HEADER endpoint.writer})
+     (if (is endpoint.caller None) {} {CALLER-HEADER endpoint.caller})))
 
 
 (defk request-bytes [body]

@@ -26,11 +26,13 @@
 
 (defclass [(dataclass :frozen True)] HttpRequest []
   "HTTP の口が受けた要求 1 つ: method・path(query を除く)・body = 本文の byte・
-   writer = 呼び手が名乗る書き手の名 X-Records-Writer の見出し(無ければ None — 無ければ名無しの anonymous)。"
+   writer = 呼び手が名乗る書き手の名 X-Records-Writer の見出し(無ければ None — 無ければ名無しの anonymous)/
+   caller = 呼び手が名乗る job の名 X-Records-Caller の見出し(無ければ None — 一覧の読みを呼び手ごとに数える計器だけが読む)。"
   (#^ str method)
   (#^ str path)
   (#^ bytes body)
-  (setv #^ (| str None) writer None))
+  (setv #^ (| str None) writer None)
+  (setv #^ (| str None) caller None))
 
 
 (defclass [(dataclass :frozen True)] HttpAnswer []

@@ -44,6 +44,8 @@
 ;;;   RECORDS_MAINTENANCE_SECONDS    手入れの間隔(既定 60)
 ;;;   RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
 ;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
+;;;   RECORDS_CALLERS                一覧の読みを呼び手ごとに数える呼び手の job の名(, で区切る・既定 = 無し — 要求の見出し X-Records-Caller の
+;;;                                  名乗りをこの名に限って数え、ほかの名乗りは undeclared に畳む。http_server.hy の頭の註の一覧の読みの数)
 ;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。既に在る表に足りない索引は、索引の用意の task が
 ;;; CREATE INDEX CONCURRENTLY で作る(pg.hy の頭の註の「索引の用意」)。
 (require doeff-hy.macros [defhandler defk <- val])
@@ -80,6 +82,7 @@
 (val ENV-MAINTENANCE-SECONDS "RECORDS_MAINTENANCE_SECONDS")
 (val ENV-KEEP-CHANGES-SECONDS "RECORDS_KEEP_CHANGES_SECONDS")
 (val ENV-ORIGIN-HOST "RECORDS_ORIGIN_HOST")
+(val ENV-CALLERS "RECORDS_CALLERS")
 (val ENV-HOSTNAME "HOSTNAME")
 (val DEFAULT-HOST "0.0.0.0")
 (val DEFAULT-PORT 8875)
@@ -108,15 +111,16 @@
 (defrecord RecordsSettings
   "env と Secret の file から読んだ設定の値(records-settings が作る — 土台の口 records-connected と本体の設定 records-serving の材料):
    dsn = PostgreSQL の DSN・prefix = 表の名の接頭辞・origin-host = 行に刻む機体の名・pool-size = 要求に同時に貸す
-   接続の上限(手入れの係の 1 本は別に足す)・address = 待ち受けの宛先・maintenance = 手入れの周期。資源(接続の貸し出しと pool)は持たない —
-   records-connected が開いて閉じる。"
+   接続の上限(手入れの係の 1 本は別に足す)・address = 待ち受けの宛先・maintenance = 手入れの周期・callers = 一覧の読みを呼び手ごとに
+   数える呼び手の job の名(RecordsServing の callers)。資源(接続の貸し出しと pool)は持たない — records-connected が開いて閉じる。"
   {:check [(> (len dsn) 0) (> (len prefix) 0) (> (len origin-host) 0) (> pool-size 0)]}
   (#^ str dsn)
   (#^ str prefix)
   (#^ str origin-host)
   (#^ int pool-size)
   (#^ HttpAddress address)
-  (#^ MaintenancePlan maintenance))
+  (#^ MaintenancePlan maintenance)
+  (setv #^ (get tuple #(str ...)) callers #()))
 
 
 ;; --- env と Secret の file の読み --------------------------------------------------------------------------------------------------
@@ -262,9 +266,11 @@
   (<- listen-port str (env-text ENV-PORT (str DEFAULT-PORT)))
   (<- interval float (env-number ENV-MAINTENANCE-SECONDS DEFAULT-MAINTENANCE-SECONDS))
   (<- keep float (env-number ENV-KEEP-CHANGES-SECONDS DEFAULT-KEEP-CHANGES-SECONDS))
+  (<- callers-text str (env-text ENV-CALLERS ""))
   (RecordsSettings :dsn dsn :prefix prefix :origin-host host :pool-size (int size)
                    :address (HttpAddress :host listen-host :port (int listen-port))
-                   :maintenance (MaintenancePlan :interval-seconds interval :keep-seconds keep)))
+                   :maintenance (MaintenancePlan :interval-seconds interval :keep-seconds keep)
+                   :callers (tuple (gfor name (.split callers-text ",") :if (.strip name) (.strip name)))))
 
 
 (defk store-reachable []
@@ -321,7 +327,7 @@
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
                   :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
-                  :pressure choice.pressure))
+                  :pressure choice.pressure :callers settings.callers))
 
 
 (defk records-process [foundation serving]

@@ -11,6 +11,8 @@
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "protocol"})
 (require doeff-hy.record [defenum])
+(import re)
+(import collections [Counter])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff_hy.frozen [FrozenMap thaw-json])
@@ -96,6 +98,23 @@
 (val CLIENT-KINDS #(RequestKind.WRITE RequestKind.READ))
 (val CLIENT-OUTCOMES (+ (tuple (gfor status ANSWER-STATUSES (str status))) #(CLIENT-UNREACHABLE CLIENT-OTHER-STATUS)))
 (val CLIENT-ANSWER-METRICS (tuple (gfor kind CLIENT-KINDS outcome CLIENT-OUTCOMES (.format CLIENT-ANSWER-METRIC kind outcome))))
+
+;; 呼び手が名乗る job の名の見出し(一覧の読みを呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
+(val CALLER-HEADER "X-Records-Caller")
+;; 一覧の読み(list-rows)の計器の counter の名の綴り: 一覧の答え 1 つごとに、表ごとの呼びの数(calls)と返した行の数(rows)を数える
+;; (描く名は末尾に _total)。表と呼び手の名は Prometheus の名の字(英数字と _)へ畳んだ語(metric-word)にする。
+;;   records_list_rows_table_<表>_<calls|rows>                全部の呼び手の和。宣言の表の全部を起動の時に 0 で置く
+;;   records_list_rows_caller_<呼び手>_table_<表>_<calls|rows>  呼び手ごと。最初の答えで現れる(宣言の表 × 呼び手の組は数千になるので
+;;                                                           0 で置かない — 呼び手の和は表ごとの系列で読む)
+;; 呼び手 = 宣言された呼び手の名(service の設定)・名乗りの無い要求 = unnamed・宣言に無い名乗り = undeclared(名乗りの綴りで系列を増やさない)。
+;; 表は宣言の表だけ(宣言に無い表の要求は撃つ前に 404 で断る)。系列は宣言の表 × (宣言の呼び手 + 2)× 2 で閉じる。
+(val LIST-ROWS-TABLE-METRIC "records_list_rows_table_{}_{}")
+(val LIST-ROWS-CALLER-METRIC "records_list_rows_caller_{}_table_{}_{}")
+(val LIST-ROWS-MEASURES #("calls" "rows"))
+(val CALLER-UNNAMED "unnamed")
+(val CALLER-UNDECLARED "undeclared")
+;; 名を語に畳む時に _ へ替える字(Prometheus の名に使えない字 — ASCII の英数字と _ の外)。
+(val METRIC-WORD-UNSAFE (re.compile "[^A-Za-z0-9_]"))
 
 ;; 操作ごとに答えてよい kind(契約の records.routes の 200 の答えと同じ)。
 (setv ANSWER-KINDS {OP-READ-ROW #("row" "missing")
@@ -188,6 +207,68 @@
   {:pre [(: status int)] :post [(: % str)]}
   "service の答えの status を client の結果の語にするため(閉じた系列の外の status は other に畳む — 間の proxy の 502 / 504 など)。"
   (if (in status ANSWER-STATUSES) (str status) CLIENT-OTHER-STATUS))
+
+
+(defk metric-word [name]
+  {:pre [(: name str)] :post [(: % str)]}
+  "表や呼び手の名を counter の名に入れる語にするため(Prometheus の名に使えない字 — ASCII の英数字と _ の外 — を _ に畳む)。"
+  (.sub METRIC-WORD-UNSAFE "_" name))
+
+
+(defk list-rows-caller [named callers]
+  {:pre [(: named (| str None)) (: callers tuple)] :post [(: % str)]}
+  "要求が名乗った呼び手の名 named を、数える呼び手の名にするため: 宣言された名 callers に在ればその名・名乗りが無いか空なら unnamed・
+   宣言に無ければ undeclared(名乗りの綴りで系列を増やさない)。"
+  (val stripped (if (is named None) "" (.strip named)))
+  (cond (= stripped "") CALLER-UNNAMED
+        (in stripped callers) stripped
+        True CALLER-UNDECLARED))
+
+
+(defk list-rows-counts [caller table rows]
+  {:pre [(: caller str) (: table str) (: rows int)] :post [(: % tuple)]}
+  "一覧の答え 1 つ(呼び手 caller — list-rows-caller の答え・表 table・返した行の数 rows)で足す counter の名と量の組を作るため
+   (表ごとの calls と rows・呼び手ごとの calls と rows の 4 つ)。"
+  (val table-word (.sub METRIC-WORD-UNSAFE "_" table))
+  (val caller-word (.sub METRIC-WORD-UNSAFE "_" caller))
+  (tuple (gfor #(measure amount) (zip LIST-ROWS-MEASURES #(1.0 (float rows)) :strict True)
+               pair #(#((.format LIST-ROWS-TABLE-METRIC table-word measure) amount)
+                      #((.format LIST-ROWS-CALLER-METRIC caller-word table-word measure) amount))
+               pair)))
+
+
+(defk list-rows-metrics [tables callers]
+  {:pre [(: tables tuple) (: callers tuple)] :post [(: % tuple)]}
+  "宣言の表 tables と宣言の呼び手 callers の一覧の読みの系列の閉じた組を確かめ、表ごとの系列(起動の時に 0 で置く物)を返すため。
+   語へ畳んだ名が重なる(別の表・呼び手が同じ counter に入る)か、宣言の呼び手が unnamed・undeclared を名乗るなら、数えを混ぜずに
+   起動を止める(ValueError)。"
+  (val reserved (tuple (gfor name callers :if (in name #(CALLER-UNNAMED CALLER-UNDECLARED)) name)))
+  (when reserved
+    (raise (ValueError (.format "宣言の呼び手の名に予約の語は使えない: {}" reserved))))
+  (val table-words (tuple (gfor table tables (.sub METRIC-WORD-UNSAFE "_" table))))
+  (val caller-words (tuple (gfor who (+ callers #(CALLER-UNNAMED CALLER-UNDECLARED)) (.sub METRIC-WORD-UNSAFE "_" who))))
+  (val table-names (tuple (gfor word table-words measure LIST-ROWS-MEASURES (.format LIST-ROWS-TABLE-METRIC word measure))))
+  (val every (+ table-names
+                (tuple (gfor who caller-words word table-words measure LIST-ROWS-MEASURES
+                             (.format LIST-ROWS-CALLER-METRIC who word measure)))))
+  (val clashes (sorted (gfor #(name seen) (.items (Counter every)) :if (> seen 1) name)))
+  (when clashes
+    (raise (ValueError (.format "一覧の読みの系列の名が重なる(表か呼び手の名が同じ語に畳まれる — 表 {}・呼び手 {}): {}"
+                                tables callers (cut clashes 0 5)))))
+  table-names)
+
+
+(defk list-rows-metric-helps [tables]
+  {:pre [(: tables tuple)] :post [(: % (get FrozenMap str))]}
+  "表ごとの一覧の読みの系列の # HELP の説明(名 → 説明)を作り、/metrics の読み手が系列の意味を読めるようにするため(呼び手ごとの
+   系列は数が多いので説明を付けない — 表ごとの説明が綴りを名指す)。"
+  (FrozenMap (gfor table tables
+                   :setv word (.sub METRIC-WORD-UNSAFE "_" table)
+                   measure LIST-ROWS-MEASURES
+                   #((.format LIST-ROWS-TABLE-METRIC word measure)
+                     (.format "記録の service が表 {} の一覧の読み(list-rows)に{}(起動からの累計・呼び手ごとは {})"
+                              table (if (= measure "calls") "答えた数" "返した行の数")
+                              (.format LIST-ROWS-CALLER-METRIC "<呼び手>" word measure))))))
 
 
 ;; --- 境界の読みの部品 ---------------------------------------------------------------------------------------

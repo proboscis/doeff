@@ -32,6 +32,7 @@ class HttpRequest:
     path: str
     body: bytes
     writer: str | None = None
+    caller: str | None = None
 
 @dataclass(frozen=True)
 class HttpAnswer:
