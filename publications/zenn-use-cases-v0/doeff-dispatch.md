@@ -16,7 +16,7 @@ AIの会話に配らせると、配る判断が会話の頭の中にあります
 - 別の配り方ならどうだったかを、同じ日で試し直せません。
 - 決まりを書き足しても、当てはめ方は会話の読み方しだいです。
 
-cardは作業ボードに1件ずつ書いた仕事で、会話1つはClaude Codeの1つのセッションです。この記事は、配る判断をAIの会話から関数へ移した記録です。会話を並べる仕組みの全体は、[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)に書きました。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+cardは作業ボードに1件ずつ書いた仕事で、会話1つはClaude Codeの1つのセッションです。この記事は、配る判断をAIの会話から関数へ移した記録です。仕組みの全体は、この連載の1本目「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」です。doeffが初めての方は[doeffの連載の1本目](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 配る順を、純粋な関数にする
 
@@ -370,7 +370,8 @@ uv run --no-project --with "doeff==0.7.0" python card_dispatch.py  # PyPIのdoef
 - [LinuxのCFS](https://docs.kernel.org/scheduler/sched-design-CFS.html)
 - [tc-htb(8)](https://man7.org/linux/man-pages/man8/tc-htb.8.html)
 - [Weighted fair queueing(Wikipedia・元の論文はDemersほか1989)](https://en.wikipedia.org/wiki/Weighted_fair_queueing)
-- 関連する回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)
-- 関連する回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
+- 関連する回:[テストで20秒待つのをやめる](doeff-time.md)
+- 前の回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)
+- 次の回:[CLAUDE.mdに決まり851本を書き足すのをやめた](doeff-hooks.md)
 
 数字は、非公開のリポジトリにある作業ボードの記録・比べた報告・schedulerの記録から数えました。読者は、数えた元を確かめられません。

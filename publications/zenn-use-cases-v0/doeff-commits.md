@@ -173,7 +173,7 @@ def user_name() -> Generator[Ask, Any, str]:  # 名前の文字列を返す手�
 
 「業務のコードは、今の時刻を直に読まない」のような約束は、文書に書くだけでは崩れます。doeffでは、設計の判断の記録(ADR)に規則と反例を持たせ、pytestで走らせます。
 
-2026年10月18日に数えると、`docs/adr`にそうしたファイルが44本ありました。コードの形を探すsemgrepの規則も、54個あります。詳しくは「[ADRをpytestで走らせ、設計の約束を守らせる](doeff-adr.md)」に書きました。
+2026年10月18日に数えると、`docs/adr`にそうしたファイルが44本ありました。コードの形を探すsemgrepの規則も、54個あります。詳しくは「[ADRを書いて終わりにするのをやめる](doeff-adr.md)」に書きました。
 
 ただ、規則は、書いた人が思いつく破り方しか止めません。そこで変更の一部では、設計を書いた会話の文脈を持たない2つのAIに、失敗例を探させます。
 
@@ -227,7 +227,7 @@ def user_name() -> Generator[Ask, Any, str]:  # 名前の文字列を返す手�
 - 設計の約束はテストにし、別のAIに破り方を探させます。
 - 出した版は、PyPIから毎日入れ直して確かめます。
 
-AIの会話を並べる仕組みは、連載の5本目に書きました。題は「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」です。
+AIの会話を並べる仕組みは、AIエージェントで開発した記録の連載の1本目に書きました。題は「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」です。
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
@@ -247,5 +247,7 @@ uv run --no-project --with "doeff==0.7.0" python publications/zenn-use-cases-v0/
 - [型の検査を当てる25個のファイル](https://github.com/proboscis/doeff/tree/c0dfc3f242b20d5dce25324cbc03ead7f532726d/tests/type_probes)
 - [設計の検証の記録](https://github.com/proboscis/doeff/tree/c0dfc3f242b20d5dce25324cbc03ead7f532726d/docs/design-checks)
 - [この記事のコードをまとめた完全な例](examples/commit_share.py)
+- 前の回:[依存を引数で引き回すのをやめる](doeff-di.md)
+- 次の回:[外部APIのテストで通信するのをやめる](doeff-replay.md)
 
 数字は、2026年10月18日に数えました。元は、doeffのmainの`git log`・`CHANGELOG.md`・テストのファイルと、PyPIの公開の情報です。どれも公開されていて、読者も同じ手順で数えられます。

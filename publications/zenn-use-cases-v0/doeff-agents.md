@@ -1,5 +1,5 @@
 ---
-title: "Claude CodeやCodexを呼ぶ処理を、起動せずにテストする"
+title: "Claude Codeを起動してテストするのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "ai", "agent", "testing"]
@@ -288,4 +288,4 @@ uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ $G/doeff-time" --
 - [テスト用のハンドラの実装](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/handlers/testing.hy)
 - [本番のハンドラの入口](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/handlers/__init__.py)
 - 前の回:[処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは](doeff-main.md)
-- 次の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
+- 次の回:[テストで20秒待つのをやめる](doeff-time.md)

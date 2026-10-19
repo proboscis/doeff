@@ -1,5 +1,5 @@
 ---
-title: "DIコンテナなしで、依存を引数でバケツリレーしない"
+title: "依存を引数で引き回すのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "設計"]
@@ -211,5 +211,5 @@ uv run --with "doeff==0.6.0" python dependencies.py  # PyPIのdoeff 0.6.0を入�
 - [遅延解決とLocalの検証](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/tests/effects/test_lazy_ask.py)
 - [ハッシュできるキーの検証](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/tests/misc/test_reader_hashable_keys.py)
 - [エフェクトとDIの比較（英語）](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/docs/20-why-effects-over-di.md)
-- 前の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
-- 次の回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)
+- 前の回:[テストで20秒待つのをやめる](doeff-time.md)
+- 次の回:[ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md)

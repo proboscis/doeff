@@ -17,7 +17,7 @@ Claude Codeに図つきの報告のページを頼むと、筆者の環境では
 
 本文と図を書く時間は、3.5分だけでした。しかも最初のページは読みにくく、書き直して読める物になるまで74分かかりました。
 
-会話はClaude Codeの1つのセッションで、作業役は会話が起こすサブエージェントです。この記事は、報告のページを3つの役に分けた記録です。ページを組む処理は、doeffで書いて見せます。doeffは、処理の中の「読む」「頼む」といった操作を、外側の部品で差し替えられるPythonのライブラリです。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+会話はClaude Codeの1つのセッションで、作業役は会話が起こすサブエージェントです。この記事は、報告のページを3つの役に分けた記録です。ページを組む処理は、doeffで書いて見せます。doeffは、処理の中の「読む」「頼む」といった操作を、外側の部品で差し替えられるPythonのライブラリです。doeffが初めての方は[doeffの連載の1本目](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 図が無くても、ページを組む
 
@@ -330,7 +330,9 @@ uv run --no-project --with "doeff==0.7.0" python report_page.py build search-slo
 - [この記事のコードをまとめた完全な例](examples/report_page.py)
 - [Claude Codeのサブエージェント](https://docs.claude.com/en/docs/claude-code/sub-agents)
 - [Claude CodeのSkills](https://docs.claude.com/en/docs/claude-code/skills)
-- 関連する回:[Claude CodeやCodexを呼ぶ処理を、起動せずにテストする](doeff-agents.md)
+- 関連する回:[Claude Codeを起動してテストするのをやめる](doeff-agents.md)
 - 関連する回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)
+- 前の回:[止まったClaude Codeを1つずつ開くのをやめた](doeff-waitline.md)
+- 次の回:[マージキューでテストを走らせるのをやめた](doeff-mergequeue.md)
 
 数字は、非公開のリポジトリにある手順書の実測と、筆者の作業機に残った所要の記録から数えました。読者は、数えた元を確かめられません。所要の記録から数えた表は、doeffのリポジトリに置きました。置き場は`publications/zenn-use-cases-v0/reviews/`です。
