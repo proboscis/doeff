@@ -1,4 +1,5 @@
-;; wire の綴り: 公開 effect と答えの全部の形が JSON を往復して元と等しい・契約の形でない JSON は WireMalformed で断る。
+;; wire の綴り: 公開 effect と答えの全部の形が JSON を往復して元と等しい・契約の形でない JSON は WireMalformed で断る(答えの知らない鍵は
+;; 断らずに読み捨てる — 版の違いの検は test_wire_versions.hy)。
 (require doeff-hy.macros [deftest])
 (import json)
 (import doeff [run])
@@ -213,17 +214,14 @@
                            #("read-stream-end" {"kind" "streamEnd"})
                            #("read-stream-end" {"kind" "streamEnd" "sequence" 0})
                            #("read-stream-end" {"kind" "streamEnd" "sequence" True})
-                           #("read-stream-end" {"kind" "streamEmpty" "sequence" 3})
                            #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})
-                           ;; 列の待ちの答えは eventsMoved | eventsQuiet だけ(欄を持たない)。
-                           #("watch-events" {"kind" "eventsMoved" "sequence" 3})
+                           ;; 列の待ちの答えは eventsMoved | eventsQuiet だけ。
                            #("watch-events" {"kind" "events" "items" [] "lastSequence" 0})
                            ;; 冪等キーの読みの答え(#3750): 出来事は欄 event の入れ子だけ・消えた番号は 1 以上・他の操作の答えの kind は断る。
                            #("read-event-by-key" {"kind" "event" "stream" "journal" "sequence" 1 "idempotencyKey" "k1" "body" 1
                                                   "writer" "maker" "at" 1})
                            #("read-event-by-key" {"kind" "eventRetired"})
                            #("read-event-by-key" {"kind" "eventRetired" "sequence" 0})
-                           #("read-event-by-key" {"kind" "eventAbsent" "sequence" 3})
                            #("read-event-by-key" {"kind" "missing"})]]
     (try
       (run (decode-answer operation body))

@@ -5,7 +5,12 @@
 ;;; HTTP の口(service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
 ;;; 契約: この file の綴りが正本。呼び手の系が契約の file(route・要求・答え・断り)と golden を持つ時は、その golden をこの口に通して照合する。
 ;;;
-;;; 読みは境界の検め: 知らない鍵・足りない鍵・型の違う値は WireMalformed(黙って既定へ倒さない)。
+;;; 読みは境界の検め: 足りない鍵・型の違う値は WireMalformed(黙って既定へ倒さない)。知らない鍵の扱いは向きで分ける:
+;;;   要求の読み(service が読む)= 知らない鍵を断る — 要求の鍵は読みの意味を変える(絞り・名指す列)ので、読み捨てると違う答えを返す。
+;;;     鍵を足す要求は、使う client より先に service を新しい版で起こす(下の encode-request の註)。
+;;;   答えの読み(client が読む)= 知らない鍵を読み捨てる(answer-object-of)— 書き手(service)は答えに鍵を足すだけにし、1 版前の client も
+;;;     新しい版の service の答えを読める(service を先に起こす順と両立する)。鍵を消す・綴りを変える・新しい鍵を必須にする変更はしない
+;;;     (検 tests/test_wire_versions.hy が凍らせた答えの見本で断る)。知らない答えの kind は読み捨てられないので断る。
 ;;; effect の答えの失敗(Conflict・Refused・NotIndexed・Reset・Missing・RowsConflict・RowsRefused)は答えの値で、`kind` の欄で判別する。
 ;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(service.hy)。
 (require doeff-hy.macros [defk <- val])
@@ -285,6 +290,17 @@
   value)
 
 
+(defk answer-object-of [value what required optional]
+  {:pre [(: value JsonValue) (: what str) (: required tuple) (: optional tuple)] :post [(: % dict)]}
+  "答えの JSON の object を読むため: 足りない鍵は断り、知らない鍵は読み捨てて、契約の鍵だけの object を返す(頭の註 — 新しい版の service が
+   答えに足した鍵を、1 版前の client が WireMalformed にしない)。"
+  (when (not (isinstance value dict))
+    (raise (WireMalformed (.format "{} は JSON の object: {!r}" what value))))
+  (val missing (sorted (gfor name required :if (not-in name value) name)))
+  (when missing (raise (WireMalformed (.format "{} に鍵が足りない: {}" what missing))))
+  (dfor #(name part) (.items value) :if (in name (+ required optional)) name part))
+
+
 (defk string-of [value what]
   {:pre [(: value JsonValue) (: what str)] :post [(: % str)]}
   "文字列であるべき JSON の値を検める。"
@@ -345,10 +361,18 @@
   {"epoch" cursor.epoch "sequence" cursor.sequence})
 
 
-(defk watch-cursor-from [value what]
-  {:pre [(: value JsonValue) (: what str)] :post [(: % WatchCursor)]}
-  "wire の object から変更の列の位置を読む。"
-  (<- body (object-of value what #("epoch" "sequence") #()))
+(defk shape-of [value what required optional answer]
+  {:pre [(: value JsonValue) (: what str) (: required tuple) (: optional tuple) (: answer bool)] :post [(: % dict)]}
+  "要求と答えの両方に載る object(位置)を、載った向きの決まりで読むため(頭の註 — answer = 答えの読みなら知らない鍵を読み捨てる)。"
+  (if answer
+      (! (answer-object-of value what required optional))
+      (! (object-of value what required optional))))
+
+
+(defk watch-cursor-from [value what answer]
+  {:pre [(: value JsonValue) (: what str) (: answer bool)] :post [(: % WatchCursor)]}
+  "wire の object から変更の列の位置を読む(answer = 答えの位置か — 要求の位置は知らない鍵を断る)。"
+  (<- body (shape-of value what #("epoch" "sequence") #() answer))
   (WatchCursor (! (integer-of (get body "epoch") (+ what ".epoch"))) (! (integer-of (get body "sequence") (+ what ".sequence")))))
 
 
@@ -360,11 +384,12 @@
         True {"epoch" cursor.epoch "afterKey" cursor.after-key "afterValue" cursor.after-value}))
 
 
-(defk list-cursor-from [value what]
-  {:pre [(: value JsonValue) (: what str)] :post [(: % (| ListCursor None))]}
-  "wire の値から一覧の次の頁の位置を読む(null = 無し・鍵 afterValue は上から読む読みの位置の時だけ在る)。"
+(defk list-cursor-from [value what answer]
+  {:pre [(: value JsonValue) (: what str) (: answer bool)] :post [(: % (| ListCursor None))]}
+  "wire の値から一覧の次の頁の位置を読む(null = 無し・鍵 afterValue は上から読む読みの位置の時だけ在る・answer = 答えの位置か — 要求の
+   位置は知らない鍵を断る)。"
   (when (is value None) (return None))
-  (<- body (object-of value what #("epoch" "afterKey") #("afterValue")))
+  (<- body (shape-of value what #("epoch" "afterKey") #("afterValue") answer))
   (ListCursor (! (integer-of (get body "epoch") (+ what ".epoch")))
               (! (string-of (get body "afterKey") (+ what ".afterKey")))
               (if (in "afterValue" body) (! (integer-of (get body "afterValue") (+ what ".afterValue"))) None)))
@@ -477,7 +502,7 @@
             (when (in "where" body) (setv (get keywords "where") (! (json-object-in (get body "where") "where"))))
             (when (in "fields" body)
               (setv (get keywords "fields") (if (is (get body "fields") None) None (! (strings-of (get body "fields") "fields")))))
-            (when (in "cursor" body) (setv (get keywords "cursor") (! (list-cursor-from (get body "cursor") "cursor"))))
+            (when (in "cursor" body) (setv (get keywords "cursor") (! (list-cursor-from (get body "cursor") "cursor" False))))
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
             (when (in "descendingBy" body)
               (setv (get keywords "descending_by") (! (string-of (get body "descendingBy") "descendingBy"))))
@@ -509,7 +534,7 @@
               (<- streams (strings-of (get body "streams") "streams"))
               (when (not streams) (raise (WireMalformed "watch-changes の streams は空でない配列(名指さない時は鍵ごと無い)")))
               (setv (get keywords "streams") streams))
-            (WatchChanges (! (strings-of (get body "tables") "tables")) (! (watch-cursor-from (get body "cursor") "cursor"))
+            (WatchChanges (! (strings-of (get body "tables") "tables")) (! (watch-cursor-from (get body "cursor") "cursor" False))
                           #** keywords))
       "append-event"
         (do (<- (object-of body "append-event の本文" #("stream" "idempotencyKey" "body") #()))
@@ -560,7 +585,8 @@
 
 ;; --- 宣言に無い名の断り(404 not-found)の理由の綴り---------------------------------------------------------
 ;; service が理由の文を組み、client がその文から UndeclaredTable の欄(宣言に無いと分かった名)を戻す — 綴りはこの 2 つの 1 か所。
-;; 断りの本文(契約 $defs.refusal = error・reason)には欄を足さない: 旧い client は本文の知らない鍵を WireMalformed にするので、
+;; 断りの本文(契約 $defs.refusal = error・reason)には欄を足さない: 答えの知らない鍵を読み捨てる前の版(頭の註)の client は本文の
+;; 知らない鍵を WireMalformed にするので、
 ;; 本文を変えると版のずれの時(client と service の版が違う時 — 欄が要るのはまさにこの時)に読めなくなる。理由の文は名を
 ;; Python の repr(引用符つき)で並べる。表・追記の列の名は英小文字・数字・_・- に限られ引用符を含まないので、client は要求が
 ;; 名指した名のうち「'名'」が理由に載った物だけを欄にする — この綴りは欄を足す前の service(「宣言に無い表: ['x']」)とも同じ。
@@ -675,7 +701,7 @@
 (defk row-from [value]
   {:pre [(: value JsonValue)] :post [(: % Row)]}
   "wire の object から行 1 つを読む。"
-  (<- body (object-of value "row" #("kind" "key" "value" "version") #()))
+  (<- body (answer-object-of value "row" #("kind" "key" "value" "version") #()))
   (<- key (strings-of (get body "key") "row.key"))
   (<- fields (json-object-in (get body "value") "row.value"))
   (<- version (integer-of (get body "version") "row.version"))
@@ -687,12 +713,12 @@
   "wire の object から変更 1 つを読む。"
   (match value
     {"kind" "rowChanged"}
-      (do (<- (object-of value "rowChanged" #("kind" "table" "key" "version" "value" "sequence" "at") #()))
+      (do (<- (answer-object-of value "rowChanged" #("kind" "table" "key" "version" "value" "sequence" "at") #()))
           (RowChanged (! (string-of (get value "table") "table")) (! (strings-of (get value "key") "key"))
                       (! (integer-of (get value "version") "version")) (! (json-object-in (get value "value") "value"))
                       (! (integer-of (get value "sequence") "sequence")) (! (integer-of (get value "at") "at"))))
     {"kind" "rowRemoved"}
-      (do (<- (object-of value "rowRemoved" #("kind" "table" "key" "sequence") #()))
+      (do (<- (answer-object-of value "rowRemoved" #("kind" "table" "key" "sequence") #()))
           (RowRemoved (! (string-of (get value "table") "table")) (! (strings-of (get value "key") "key"))
                       (! (integer-of (get value "sequence") "sequence"))))
     _ (raise (WireMalformed (.format "変更は kind = rowChanged | rowRemoved: {!r}" value)))))
@@ -701,7 +727,7 @@
 (defk event-from [value]
   {:pre [(: value JsonValue)] :post [(: % Event)]}
   "wire の object から追記の列の出来事 1 つを読む。"
-  (<- body (object-of value "event" #("stream" "sequence" "idempotencyKey" "body" "writer" "at") #()))
+  (<- body (answer-object-of value "event" #("stream" "sequence" "idempotencyKey" "body" "writer" "at") #()))
   (Event (! (string-of (get body "stream") "event.stream")) (! (integer-of (get body "sequence") "event.sequence"))
          (! (string-of (get body "idempotencyKey") "event.idempotencyKey")) (get body "body")
          (! (string-of (get body "writer") "event.writer")) (! (integer-of (get body "at") "event.at"))))
@@ -719,12 +745,12 @@
   "wire の object から、WatchChanges の答えの名指した列 1 つの末尾を読むため(#3718)。"
   (match value
     {"kind" "streamTail"}
-      (do (<- (object-of value "streamTail" #("kind" "stream" "sequence" "at") #()))
+      (do (<- (answer-object-of value "streamTail" #("kind" "stream" "sequence" "at") #()))
           (StreamTail :stream (! (string-of (get value "stream") "streamTail.stream"))
                       :sequence (! (integer-of (get value "sequence") "streamTail.sequence"))
                       :at (! (integer-of (get value "at") "streamTail.at"))))
     {"kind" "streamTailEmpty"}
-      (do (<- (object-of value "streamTailEmpty" #("kind" "stream") #()))
+      (do (<- (answer-object-of value "streamTailEmpty" #("kind" "stream") #()))
           (StreamTailEmpty :stream (! (string-of (get value "stream") "streamTailEmpty.stream"))))
     _ (raise (WireMalformed (.format "列の末尾は kind = streamTail | streamTailEmpty: {!r}" value)))))
 
@@ -748,7 +774,7 @@
 (defk written-rows-from [value]
   {:pre [(: value JsonValue)] :post [(: % WrittenRows)]}
   "wire の object から PutRows の確定(束の順の written の列)を読む。"
-  (<- (object-of value "writtenRows" #("kind" "items") #()))
+  (<- (answer-object-of value "writtenRows" #("kind" "items") #()))
   (val items [])
   (for [item (! (list-in (get value "items") "writtenRows.items"))] (.append items (! (answer-from item))))
   (when (not (all (gfor item items (isinstance item Written))))
@@ -759,7 +785,7 @@
 (defk rows-conflict-from [value]
   {:pre [(: value JsonValue)] :post [(: % RowsConflict)]}
   "wire の object から PutRows の衝突(束の中の位置・行・今の値)を読む。"
-  (<- (object-of value "rowsConflict" #("kind" "index" "table" "key" "current") #()))
+  (<- (answer-object-of value "rowsConflict" #("kind" "index" "table" "key" "current") #()))
   (<- current (answer-from (get value "current")))
   (when (not (isinstance current #(Row Missing)))
     (raise (WireMalformed (.format "rowsConflict.current は row | missing: {!r}" value))))
@@ -773,59 +799,59 @@
   (try
     (match value
       {"kind" "row"} (! (row-from value))
-      {"kind" "missing"} (do (<- (object-of value "missing" #("kind") #())) (Missing))
+      {"kind" "missing"} (do (<- (answer-object-of value "missing" #("kind") #())) (Missing))
       {"kind" "page"}
-        (do (<- (object-of value "page" #("kind" "rows" "nextCursor" "epoch" "sequence") #()))
+        (do (<- (answer-object-of value "page" #("kind" "rows" "nextCursor" "epoch" "sequence") #()))
             (setv rows [])
             (for [item (! (list-in (get value "rows") "page.rows"))] (.append rows (! (row-from item))))
-            (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor"))
+            (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor" True))
                   (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))))
       {"kind" "written"}
-        (do (<- (object-of value "written" #("kind" "version" "value") #()))
+        (do (<- (answer-object-of value "written" #("kind" "version" "value") #()))
             (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))))
       {"kind" "conflict"}
-        (do (<- (object-of value "conflict" #("kind" "current") #()))
+        (do (<- (answer-object-of value "conflict" #("kind" "current") #()))
             (<- current (answer-from (get value "current")))
             (when (not (isinstance current #(Row Missing)))
               (raise (WireMalformed (.format "conflict.current は row | missing: {!r}" value))))
             (Conflict current))
       {"kind" "refused"}
-        (do (<- (object-of value "refused" #("kind" "reason") #())) (Refused (! (string-of (get value "reason") "refused.reason"))))
+        (do (<- (answer-object-of value "refused" #("kind" "reason") #())) (Refused (! (string-of (get value "reason") "refused.reason"))))
       {"kind" "notIndexed"}
-        (do (<- (object-of value "notIndexed" #("kind" "fields") #()))
+        (do (<- (answer-object-of value "notIndexed" #("kind" "fields") #()))
             (NotIndexed (! (strings-of (get value "fields") "notIndexed.fields"))))
       {"kind" "reset"}
-        (do (<- (object-of value "reset" #("kind" "epoch" "floor") #()))
+        (do (<- (answer-object-of value "reset" #("kind" "epoch" "floor") #()))
             (Reset (! (integer-of (get value "epoch") "reset.epoch")) (! (integer-of (get value "floor") "reset.floor"))))
       {"kind" "changes"}
-        (do (<- (object-of value "changes" #("kind" "items" "cursor") #("tails")))
+        (do (<- (answer-object-of value "changes" #("kind" "items" "cursor") #("tails")))
             (setv items [])
             (for [item (! (list-in (get value "items") "changes.items"))] (.append items (! (change-from item))))
             (<- tails tuple (tails-from value))
-            (Changes (tuple items) (! (watch-cursor-from (get value "cursor") "changes.cursor")) tails))
+            (Changes (tuple items) (! (watch-cursor-from (get value "cursor") "changes.cursor" True)) tails))
       {"kind" "appended"}
-        (do (<- (object-of value "appended" #("kind" "sequence" "replayed") #()))
+        (do (<- (answer-object-of value "appended" #("kind" "sequence" "replayed") #()))
             (Appended (! (integer-of (get value "sequence") "appended.sequence")) (! (boolean-of (get value "replayed") "appended.replayed"))))
       {"kind" "events"}
-        (do (<- (object-of value "events" #("kind" "items" "lastSequence") #()))
+        (do (<- (answer-object-of value "events" #("kind" "items" "lastSequence") #()))
             (setv items [])
             (for [item (! (list-in (get value "items") "events.items"))] (.append items (! (event-from item))))
             (Events (tuple items) (! (integer-of (get value "lastSequence") "events.lastSequence"))))
       {"kind" "streamEnd"}
-        (do (<- (object-of value "streamEnd" #("kind" "sequence") #()))
+        (do (<- (answer-object-of value "streamEnd" #("kind" "sequence") #()))
             (StreamEnd (! (integer-of (get value "sequence") "streamEnd.sequence"))))
-      {"kind" "streamEmpty"} (do (<- (object-of value "streamEmpty" #("kind") #())) (StreamEmpty))
-      {"kind" "eventsMoved"} (do (<- (object-of value "eventsMoved" #("kind") #())) (EventsMoved))
-      {"kind" "eventsQuiet"} (do (<- (object-of value "eventsQuiet" #("kind") #())) (EventsQuiet))
-      {"kind" "event"} (do (<- (object-of value "event の答え" #("kind" "event") #())) (! (event-from (get value "event"))))
-      {"kind" "eventAbsent"} (do (<- (object-of value "eventAbsent" #("kind") #())) (EventAbsent))
+      {"kind" "streamEmpty"} (do (<- (answer-object-of value "streamEmpty" #("kind") #())) (StreamEmpty))
+      {"kind" "eventsMoved"} (do (<- (answer-object-of value "eventsMoved" #("kind") #())) (EventsMoved))
+      {"kind" "eventsQuiet"} (do (<- (answer-object-of value "eventsQuiet" #("kind") #())) (EventsQuiet))
+      {"kind" "event"} (do (<- (answer-object-of value "event の答え" #("kind" "event") #())) (! (event-from (get value "event"))))
+      {"kind" "eventAbsent"} (do (<- (answer-object-of value "eventAbsent" #("kind") #())) (EventAbsent))
       {"kind" "eventRetired"}
-        (do (<- (object-of value "eventRetired" #("kind" "sequence") #()))
+        (do (<- (answer-object-of value "eventRetired" #("kind" "sequence") #()))
             (EventRetired (! (integer-of (get value "sequence") "eventRetired.sequence"))))
       {"kind" "writtenRows"} (! (written-rows-from value))
       {"kind" "rowsConflict"} (! (rows-conflict-from value))
       {"kind" "rowsRefused"}
-        (do (<- (object-of value "rowsRefused" #("kind" "index" "table" "key" "reason") #()))
+        (do (<- (answer-object-of value "rowsRefused" #("kind" "index" "table" "key" "reason") #()))
             (RowsRefused (! (integer-of (get value "index") "rowsRefused.index")) (! (string-of (get value "table") "rowsRefused.table"))
                          (! (strings-of (get value "key") "rowsRefused.key")) (! (string-of (get value "reason") "rowsRefused.reason"))))
       _ (raise (WireMalformed (.format "知らない答え: {!r}" value))))
@@ -869,7 +895,7 @@
 (defk refusal-from [value]
   {:pre [(: value JsonValue)] :post [(: % WireRefusal)]}
   "HTTP の断りの本文を読む(client の handler が status と合わせて答えへ写すため)。"
-  (<- body (object-of value "断り" #("error" "reason") #()))
+  (<- body (answer-object-of value "断り" #("error" "reason") #()))
   (<- error (string-of (get body "error") "error"))
   (<- reason (string-of (get body "reason") "reason"))
   (try (WireRefusal error reason) (except [problem ValueError] (raise (! (malformed "断り" problem))))))

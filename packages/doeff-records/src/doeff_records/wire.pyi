@@ -158,6 +158,9 @@ def list_rows_metric_helps(tables: tuple) -> _Program[FrozenMap[str], object]:
 def object_of(value: JsonValue, what: str, required: tuple, optional: tuple) -> _Program[dict, object]:
     ...
 
+def answer_object_of(value: JsonValue, what: str, required: tuple, optional: tuple) -> _Program[dict, object]:
+    ...
+
 def string_of(value: JsonValue, what: str) -> _Program[str, object]:
     ...
 
@@ -182,13 +185,16 @@ def malformed(what: str, error: Exception) -> _Program[WireMalformed, object]:
 def watch_cursor_json(cursor: WatchCursor) -> _Program[dict, object]:
     ...
 
-def watch_cursor_from(value: JsonValue, what: str) -> _Program[WatchCursor, object]:
+def shape_of(value: JsonValue, what: str, required: tuple, optional: tuple, answer: bool) -> _Program[dict, object]:
+    ...
+
+def watch_cursor_from(value: JsonValue, what: str, answer: bool) -> _Program[WatchCursor, object]:
     ...
 
 def list_cursor_json(cursor: ListCursor | None) -> _Program[dict | None, object]:
     ...
 
-def list_cursor_from(value: JsonValue, what: str) -> _Program[ListCursor | None, object]:
+def list_cursor_from(value: JsonValue, what: str, answer: bool) -> _Program[ListCursor | None, object]:
     ...
 
 def expect_json(expect: ExpectAbsent | ExpectVersion | ExpectAny) -> _Program[dict, object]:
