@@ -19,14 +19,15 @@
 (import doeff_records.values [Events])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
 
-;; 1 頁の出来事の数と、出来事 1 つの本文の大きさ(1 頁の本文が約 1 MiB)。
-(val PAGE-EVENTS 100)
-(val EVENT-TEXT-BYTES (* 10 1024))
+;; 1 頁の出来事の数と、出来事 1 つの本文の大きさ(本番の読みと同じ 1,000 件の頁・1 頁の本文が約 1.1 MiB)。
+(val PAGE-EVENTS 1000)
+(val EVENT-TEXT-BYTES 1024)
 ;; 測る前に読む頁の数(allocator の置き場と接続の持ち方が落ち着くまで)と、測る頁の数。
 (val WARM-PAGES 10)
 (val PAGES 100)
-;; 測る頁を読む間の RSS の伸びの上限。前の形は 1 頁ごとに本文の bytes と str(約 2 MiB)が残り、100 頁で 200 MiB ほど伸びた。
-(val GROWTH-LIMIT-BYTES (* 48 1024 1024))
+;; 測る頁を読む間の RSS の伸びの上限を、1 頁の本文の大きさの何倍で置くか。前の形は 1 頁ごとに本文の bytes と str(本文の約 2 倍)が
+;; 残り、100 頁で本文の約 200 倍伸びた。読み終えた頁を放す形の伸びは頁の数に依らず、本文の 1 倍に届かない。
+(val GROWTH-LIMIT-PAGES 4)
 
 
 (defn page-payload []
@@ -98,7 +99,8 @@
                                                   (http-production-handler :client-factory (fn [] (http-client-factory :trust-env False)))
                                                   (sim-time-handler :clock (SimClock)) records-unwaited (http-records-handler endpoint)]
                                                  (measured-growth WARM-PAGES PAGES)))))
-      (assert (< growth GROWTH-LIMIT-BYTES)
-              (.format "{} 頁(1 頁 {} byte)を読む間に RSS が {:.1f} MiB 伸びた(上限 {:.0f} MiB)"
-                       PAGES (len server.payload) (/ growth 1048576) (/ GROWTH-LIMIT-BYTES 1048576))))
+      (val limit (* GROWTH-LIMIT-PAGES (len server.payload)))
+      (assert (< growth limit)
+              (.format "{} 頁(1 頁 {} byte)を読む間に RSS が {:.1f} MiB 伸びた(上限 = 1 頁の本文の {} 倍の {:.1f} MiB)"
+                       PAGES (len server.payload) (/ growth 1048576) GROWTH-LIMIT-PAGES (/ limit 1048576))))
     (finally (.shutdown server) (.server-close server))))
