@@ -1112,13 +1112,13 @@
   {:pre [(: tasks (get Table TaskRecord)) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "1 走査で tasks を、走査の対象の行(held-task? でない行 — id の順を保つ dict)と、保持側の最小期限(task-lapse-at と同じ式 —
    終わった刻 finished-ms を持たない行は除く。無ければ None)に分けるため。#(走査の対象 最小期限) を返す。"
-  (setv live {})
-  (setv earliest None)
+  (val live {})
+  (var earliest None)
   (for [#(id task) (.items tasks)]
     (if (held-task? task)
         (when (is-not task.finished-ms None)
-          (setv lapse (+ task.finished-ms task.retain-ms 1))
-          (when (or (is earliest None) (< lapse earliest)) (setv earliest lapse)))
+          (val lapse (+ task.finished-ms task.retain-ms 1))
+          (when (or (is earliest None) (< lapse earliest)) (:= earliest lapse)))
         (setv (get live id) task)))
   #(live earliest))
 

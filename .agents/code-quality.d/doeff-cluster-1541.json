@@ -1632,7 +1632,8 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy",
         "doeff-cluster-due-model",
-        "doeff-cluster-worker-due"
+        "doeff-cluster-worker-due",
+        "doeff-cluster-worker-heartbeat-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker",
