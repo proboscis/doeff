@@ -208,3 +208,29 @@
   ;; 0 回の上限は 1 度も起こさずに失敗にしてしまう・負の数え直しの境は意味を持たない — 方策を作る時に断る。
   (with [(pytest.raises ValueError)] (WorkerPolicy :memory-kill-limit 0))
   (with [(pytest.raises ValueError)] (WorkerPolicy :memory-kill-reset-ms -1)))
+
+
+(deftest test-the-default-limit-stops-at-the-fifth-kill-and-reports-five-failures-even-when-the-root-exits-with-0
+  ;; 既定の方策(memory-kill-limit 5): 起こし直しを止めた job の失敗の数は 5 — 上に載る系の運転の見張りが「落ち続け」と数える閾
+  ;; (status.failures が 5 以上)に届く。見張りが木の単位を止めた後に根が exit code 0 で終わっても、止められた終わりは失敗に数える
+  ;; (失敗ケース: exit code 0 を失敗に数えないままだと、失敗の数は 0 で表に出ない)。
+  (val policy (WorkerPolicy))
+  (val empty (WorldView #(READY1) #()))
+  (var records {})
+  (var now 0)
+  (var held-at None)
+  (for [round (range 6)]
+    (<- started tuple (plan now #(SVC) empty records policy))
+    (when (= started #())
+      (:= held-at round)
+      (break))
+    (:= records (! (records-after now records started policy)))
+    (val end-ms (+ now KILLED-AFTER-MS))
+    (val ended (ProcessView "svc" SVC (+ round 1) 50 now :exit-code 0))
+    (<- reaped tuple (plan end-ms #(SVC) (WorldView #(READY1) #(ended) :memory-killed (frozenset #(#("svc" 50)))) records policy))
+    (:= records (! (records-after end-ms records reaped policy)))
+    (:= now (+ end-ms policy.restart-backoff-max-ms)))
+  (assert (= held-at 5) #(held-at records))
+  (<- reported tuple (statuses now #(SVC) empty records policy))
+  (val status (get reported 0))
+  (assert (= #(status.phase status.failures) #(JobPhase.MEMORY-KILLED 5)) status))
