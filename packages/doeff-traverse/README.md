@@ -143,6 +143,8 @@ doeff-traverse makes results opaque. User code accesses them only via `for/do`, 
 
 The answers are collected in a chain of `(value, previous chain)` pairs folded into the tuple once at the end: no list is grown and no tuple is copied per item (`(:= read (+ read #(row)))` per item costs the square of the rows — 3.5 s for 30,000 rows).
 
+doeff-effect-analyzer reads the programs `sequence` runs when the argument is written at the call: a generator expression or list comprehension whose element is a program call (`(gfor row rows (read row))`), or a tuple / list literal of program calls. An iterable built elsewhere and passed by name is reported as unresolved (`yielded a value that is not a call: program`), so a closure check does not take it as running nothing.
+
 ### Legacy aliases
 
 `traverse` and `Iterate` are aliases for `for/do` and `From`. Prefer `for/do` + `From` in new code.
