@@ -1,5 +1,6 @@
 """Synthetic local HTTP/PG checks of client disconnect versus server work."""
 
+import importlib.util
 import json
 import socket
 import time
@@ -16,10 +17,6 @@ from doeff_core_effects.postgres_sql import (
     postgres_sql_handler,
 )
 from doeff_core_effects.scheduler import scheduled
-from doeff_records.http_server import records_server_config, start_records_server
-from doeff_records.laws import LAW_SCHEMA
-from doeff_records.pg import pg_records_handler, prepare_records_store
-from doeff_records.pg_sql import writer_lock_key
 from doeff_time import SimClock, sim_time_handler
 from test_pooled_writer_admission import DSN, AcquireObserver
 
@@ -99,8 +96,44 @@ def assert_http_callable_timed_out(abandoned):
     assert "timed out" in str(http_error).lower()
 
 
+def records_config(connections, pool, observer, prefix, enabled):
+    from doeff_records.http_server import records_server_config
+    from doeff_records.laws import LAW_SCHEMA
+    from doeff_records.pg import pg_records_handler, prepare_records_store
+    from doeff_records.pg_sql import writer_lock_key
+
+    key = run(writer_lock_key(prefix))
+    store = run(
+        scheduled(
+            with_handlers(
+                [sim_time_handler(clock=SimClock()), postgres_sql_handler(connections)],
+                prepare_records_store("probe", "probe", LAW_SCHEMA, prefix),
+            )
+        )
+    )
+    config = run(
+        records_server_config(
+            LAW_SCHEMA,
+            lambda writer: pg_records_handler(store, writer, "local-test"),
+            request_handlers=(
+                observer.handler,
+                pooled_postgres_sql_handler(
+                    connections, pool, serialized_lock_keys=(key,) if enabled else ()
+                ),
+            ),
+        )
+    )
+    return config, key
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("doeff_records") is None,
+    reason="HTTP integration requires optional doeff-records package",
+)
 @pytest.mark.parametrize("enabled", [False, True], ids=["admission-off", "admission-on"])
 def test_client_disconnect_does_not_cancel_waiting_write(enabled):
+    from doeff_records.http_server import start_records_server
+
     prefix = "http_probe_" + uuid.uuid4().hex[:8] + "_"
     connections = PostgresConnections((PostgresDatabase(name="probe", dsn=DSN),), size=3)
     pool = ThreadPoolExecutor(max_workers=3)
@@ -110,28 +143,8 @@ def test_client_disconnect_does_not_cancel_waiting_write(enabled):
     server = None
     held = False
     observer = AcquireObserver()
-    key = run(writer_lock_key(prefix))
     try:
-        store = run(
-            scheduled(
-                with_handlers(
-                    [sim_time_handler(clock=SimClock()), postgres_sql_handler(connections)],
-                    prepare_records_store("probe", "probe", LAW_SCHEMA, prefix),
-                )
-            )
-        )
-        config = run(
-            records_server_config(
-                LAW_SCHEMA,
-                lambda writer: pg_records_handler(store, writer, "local-test"),
-                request_handlers=(
-                    observer.handler,
-                    pooled_postgres_sql_handler(
-                        connections, pool, serialized_lock_keys=(key,) if enabled else ()
-                    ),
-                ),
-            )
-        )
+        config, key = records_config(connections, pool, observer, prefix, enabled)
         server = start_records_server(config)
         lock.execute("SELECT pg_advisory_lock(hashtext(%s))", (key,))
         held = True

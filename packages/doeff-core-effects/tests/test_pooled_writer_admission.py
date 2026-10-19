@@ -1,5 +1,6 @@
 """Real scheduler/PG tests. Disposable DSN only; DB gates establish ordering."""
 
+import importlib.util
 import selectors
 import subprocess
 import sys
@@ -315,7 +316,12 @@ def test_same_lock_preserves_exclusion_across_processes(batched, gate):
 
     try:
         for number in range(2):
-            code = f"import runpy; m=runpy.run_path({str(Path(__file__).resolve())!r}); m['child_process']({batched!r}, {number == 0!r}, {DSN!r})"
+            code = (
+                "import runpy, sys; "
+                f"sys.path.insert(0, {str(Path(__file__).resolve().parent / 'postgres_support')!r}); "
+                f"m=runpy.run_path({str(Path(__file__).resolve())!r}); "
+                f"m['child_process']({batched!r}, {number == 0!r}, {DSN!r})"
+            )
             children.append(
                 subprocess.Popen(
                     [sys.executable, "-c", code],
@@ -329,8 +335,14 @@ def test_same_lock_preserves_exclusion_across_processes(batched, gate):
         for child in children:
             with selectors.DefaultSelector() as selector:
                 selector.register(child.stdout, selectors.EVENT_READ)
-                assert selector.select(timeout=4), "child ready deadline"
-                assert child.stdout.readline().strip() == "READY"
+                # A cold Hy import in a fresh Python-version environment can take several seconds.
+                assert selector.select(timeout=15), "child ready deadline"
+                ready = child.stdout.readline().strip()
+                if ready != "READY":
+                    out, err = child.communicate(timeout=5)
+                    pytest.fail(
+                        f"child failed before READY: {child.returncode}, {ready}, {out}, {err}"
+                    )
         children[0].stdin.write("START\n")
         children[0].stdin.flush()
         wait_for(gate.waiting)  # first holds process-key and reached inner query
@@ -562,6 +574,10 @@ def records_composition_probe(prefix, batched, gate, observer):
     assert set(stored.value) == {("records", key)}, stored.value
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("doeff_records") is None,
+    reason="records composition integration requires optional doeff-records package",
+)
 def test_actual_records_composition_opts_in_only_its_writer_key(batched, gate):
     from doeff_core_effects.http_server_effects import HttpAddress
     from doeff_records.http_server import MaintenancePlan
