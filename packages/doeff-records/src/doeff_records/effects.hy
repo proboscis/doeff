@@ -59,9 +59,11 @@
 (defclass [(dataclass :frozen True)] ListRows [EffectBase]
   "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値の凍らせた写像(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
    cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限。答え = Page | Reset | Unreachable | NotIndexed。
-   descending-by = 欄の名(None = 鍵の綴りの順): 値が整数の行だけを、その値の大きい順(同じ値は鍵の綴りの逆順)に上から limit 件読む。
-   上から読む読みは 1 頁だけで、cursor を受けず(作る時に ValueError)、答えの next-cursor は常に None(続きを返さない — 呼び手は
-   上から何件かだけを求める。値が整数でない行・欄の無い行は出さない)。
+   descending-by = 欄の名(None = 鍵の綴りの順): 値が整数の行だけを、その値の大きい順(同じ値は鍵の綴りの逆順)に上から limit 件読む
+   (値が整数でない行・欄の無い行は出さない)。続きが在れば答えの next-cursor は頁の最後の行の (値, 鍵の綴り) を持つ位置(ListCursor の
+   after-value と after-key — keyset)で、それを cursor に渡した読みは (値, 鍵の綴り) がその組より小さい行から次の頁を読む(呼び手が新しい
+   順に古い頁を送るため — 鍵が時刻の順でない表でも)。頁の間に書かれた行は、位置より小さい組なら後の頁に出て、大きい組なら出ない。
+   上から読む読みの cursor は after-value を持つ位置だけ・鍵の順の読みの cursor は after-value の無い位置だけ(作る時に ValueError)。
    where-any = 欄 → 値の組(JSON の値の空でない tuple)の凍らせた写像(既定 = 空 = 絞らない): 行の欄の値が組のどれかに等しい行だけ
    (等しさは where の等号と同じ・欄どうしと where とは AND・索引の欄だけ — 他は NotIndexed)。使い手が値の組 1 つを値ごとの往復でなく
    1 回の読みで引くため。組の値の数は全部の欄の和で WHERE-ANY-LIMIT まで・空の組・where と同じ欄は作る時に断る(ValueError — 配列で
@@ -95,9 +97,11 @@
       (raise (TypeError "ListRows.cursor は ListCursor か None")))
     (checked-limit self.limit "ListRows.limit")
     (when (is-not self.descending-by None)
-      (checked-field-name self.descending-by "ListRows.descending_by")
-      (when (is-not self.cursor None)
-        (raise (ValueError "ListRows.descending_by の読みは上から 1 頁だけで、cursor を受けない"))))))
+      (checked-field-name self.descending-by "ListRows.descending_by"))
+    (when (and (is-not self.cursor None) (!= (is self.descending-by None) (is self.cursor.after-value None)))
+      (raise (ValueError (if (is self.descending-by None)
+                             "ListRows の鍵の順の読みの cursor は after_value の無い位置(上から読む読みの位置を渡さない)"
+                             "ListRows.descending_by の読みの cursor は after_value を持つ位置(上から読む読みが返した next_cursor)"))))))
 
 
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]

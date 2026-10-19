@@ -401,22 +401,27 @@
     (return (Reset store.epoch store.floor)))
   (setv refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
-  (setv after (if (is ask.cursor None) None ask.cursor.after-key)
-        table (get store.rows ask.table)
+  (setv table (get store.rows ask.table)
         matching (lfor text (sorted table)
-                       :if (and (or (is after None) (> text after)) (row-matches? ask.where (. (get table text) row value))
+                       :if (and (row-matches? ask.where (. (get table text) row value))
                                 (row-matches-any? ask.where-any (. (get table text) row value))
                                 (not (stored-row-expired? decl (get table text) now-ms)))
                        text))
   (when (is-not ask.descending-by None)
-    ;; 上から読む読み(ListRows の註): 値が整数の行だけを (値, 鍵の綴り) の大きい順に limit 件 — 続きは返さない。
-    (setv top (cut (sorted (gfor text matching
-                                 :setv value (.get (. (get table text) row value) ask.descending-by)
-                                 :if (descending-value? value)
-                                 #(value text))
-                           :reverse True)
-                   ask.limit))
-    (return (Page (tuple (gfor #(_ text) top (listed-row decl ask.fields (. (get table text) row)))) None store.epoch store.head)))
+    ;; 上から読む読み(ListRows の註): 値が整数の行だけを (値, 鍵の綴り) の大きい順に、cursor の位置の組より小さい行から limit 件。
+    (setv below (if (is ask.cursor None) None #(ask.cursor.after-value ask.cursor.after-key))
+          ordered (sorted (gfor text matching
+                                :setv value (.get (. (get table text) row value) ask.descending-by)
+                                :if (and (descending-value? value) (or (is below None) (< #(value text) below)))
+                                #(value text))
+                          :reverse True)
+          top (cut ordered ask.limit))
+    (return (Page (tuple (gfor #(_ text) top (listed-row decl ask.fields (. (get table text) row))))
+                  (if (> (len ordered) ask.limit) (ListCursor store.epoch (get top -1 1) (get top -1 0)) None)
+                  store.epoch
+                  store.head)))
+  (setv after (if (is ask.cursor None) None ask.cursor.after-key)
+        matching (lfor text matching :if (or (is after None) (> text after)) text))
   (setv taken (cut matching ask.limit)
         rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
   (Page rows

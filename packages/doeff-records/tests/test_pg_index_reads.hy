@@ -13,6 +13,7 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables EXPIRE-BATCH])
 (import doeff_records.admission [canonical-json])
+(import doeff_records.values [ListCursor])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement list-rows-statement top-rows-statement table-field-index-name])
@@ -351,7 +352,7 @@
   (<- by-one (list-rows-statement "records_" "message" #("id") (frozenset) None {"id" (canonical-json "m1")} {} 10 None))
   (assert (in "key = :w0" by-one.text) by-one.text)
   (assert (= (lfor p by-one.params :if (= p.name "w0") p.value) ["[\"m1\"]"]) by-one.params)
-  (<- top (top-rows-statement "records_" "message" #("id") (frozenset) "n" {"id" (canonical-json "m1")} {} 10 None))
+  (<- top (top-rows-statement "records_" "message" #("id") (frozenset) "n" None {"id" (canonical-json "m1")} {} 10 None))
   (assert (in "key = :w0" top.text) top.text)
   ;; 文字列でない値が混ざる組・鍵でない欄・鍵の欄が 2 つの表は欄の式のまま。
   (<- mixed (list-rows-statement "records_" "message" #("id") (frozenset) None {} {"id" #((canonical-json "m1") (canonical-json 2))} 10 None))
@@ -499,8 +500,17 @@
   (assert (not (in "ledger = :ledger" any-of.text)) any-of.text)
   (assert (in "(CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'in_reply_to') END) IN (:a0_0::jsonb, :a0_1::jsonb)" any-of.text)
           any-of.text)
-  (<- top (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" {"kind" kind} {} 10 None))
+  (<- top (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" None {"kind" kind} {} 10 None))
   (assert (not (in "ledger = :ledger" top.text)) top.text)
+  (assert (not (in ":after" top.text)) top.text)
+  ;; 上から読む読みの続き: (値, 鍵) が位置より小さい行(位置の値は文字列で渡して numeric に読む — int8 を越える整数も)・1 頁 + 1 行。
+  (<- below (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" (ListCursor 1 "[\"m9\"]" (** 10 20)) {"kind" kind} {}
+                                10 None))
+  (assert (in "< CAST(:after_value AS numeric) OR" below.text) below.text)
+  (assert (in "= CAST(:after_value AS numeric) AND key COLLATE \"C\" < :after)" below.text) below.text)
+  (assert (= (lfor p below.params :if (in p.name #("after_value" "after" "limit")) #(p.name p.value))
+             [#("after_value" "100000000000000000000") #("after" "[\"m9\"]") #("limit" 11)])
+          below.params)
   ;; 表の欄の式の索引がまだ無い欄が混ざる。
   (<- partly (list-rows-statement "records_" "message" #("id") (frozenset #("kind")) None {"kind" kind "recipient" recipient} {} 10 None))
   (assert (in "WHERE ledger = :ledger AND (CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'kind') END) = :w0::jsonb" partly.text)

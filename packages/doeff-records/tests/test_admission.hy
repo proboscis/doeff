@@ -6,7 +6,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable
-                              ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows])
+                              ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows ListCursor])
 (import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows WHERE-ANY-LIMIT])
 (import doeff_records.admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
                                  Admitted])
@@ -45,7 +45,13 @@
   (assert (refuses? (fn [] (FieldDecl "x" #())) ValueError) "誰も書けない欄")
   (assert (refuses? (fn [] (LAW-SCHEMA.table "nope")) UndeclaredTable))
   (assert (refuses? (fn [] (PutRow "parts" #("p1") {} "any")) TypeError))
-  (assert (refuses? (fn [] (ListRows "parts" :limit 0)) ValueError)))
+  (assert (refuses? (fn [] (ListRows "parts" :limit 0)) ValueError))
+  ;; 上から読む読みの位置は並べる欄の値(整数)を持つ位置だけ・鍵の順の読みの位置は値の無い位置だけ。
+  (assert (refuses? (fn [] (ListRows "parts" :descending-by "note" :cursor (ListCursor 1 "[\"p1\"]"))) ValueError) "値の無い位置で上から読む")
+  (assert (refuses? (fn [] (ListRows "parts" :cursor (ListCursor 1 "[\"p1\"]" 30))) ValueError) "値の在る位置で鍵の順に読む")
+  (for [broken [True 2.5 "30"]]
+    (assert (refuses? (fn [] (ListCursor 1 "[\"p1\"]" broken)) TypeError) (repr broken)))
+  (assert (= (. (ListRows "parts" :descending-by "note" :cursor (ListCursor 1 "[\"p1\"]" -3)) cursor after-value) -3)))
 
 
 (deftest test-json-equality-does-not-confuse-true-with-one

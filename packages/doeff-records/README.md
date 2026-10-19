@@ -46,7 +46,11 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   `pg_sql.hy` の頭の註)で引く。2 つ以上の欄の絞り(等号 2 つ・等号と値の組・値の組と値の組)は欄ごとの索引を組んで(BitmapAnd)当たる行だけを
   読み、1 頁の所要は片方の欄だけに合う行の数でなく当たる行の数で決まる(card ki-2176012d1804)。
 - `descending_by`(欄の名)を付けた `ListRows` は上から読む読み: 欄の値が整数の行だけを、その値の大きい順(同じ値はキーの綴りの逆順)に上から
-  `limit` 件読む 1 頁で、`cursor` を受けず(作る時に `ValueError`)、`next_cursor` は常に `None`。`where`・`where_any` はそのまま効く。
+  `limit` 件読む。続きが在れば `next_cursor` は頁の最後の行の (値, キーの綴り) を持つ位置(`ListCursor` の `after_value` と `after_key` —
+  keyset)で、それを `cursor` に渡すと (値, キーの綴り) がその組より小さい行から次の頁を読む(キーが時刻の順でない表でも、新しい順に古い頁を
+  送れる)。頁の間に書かれた行は、位置より小さい組なら後の頁に出て、大きい組なら出ない。上から読む読みの `cursor` は `after_value` を持つ
+  位置だけ・キーの順の読みの `cursor` は `after_value` の無い位置だけ(作る時に `ValueError`)。HTTP の口の位置の鍵 `afterValue` は上から読む
+  読みの位置の時だけ載る。`where`・`where_any` はそのまま効く。
 - HTTP の口の本文(`list-rows`)は、`descendingBy` と `whereAny`(欄 → 値の組の配列)の鍵を使う読みの時だけ載せる — 使わない読みの本文は
   鍵を足す前と同じ。古い記録の service は知らない鍵を 400 で断るので、鍵を使う client より先に service を新しい版で起こす。
 - `PutRows` は全部か 0 で書く: 1 行でも期待が合わないか断られれば、1 行も書かない。判定は `PutRow` と同じで、全部の行の期待を
@@ -259,7 +263,8 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_undeclared_writes_are_refused` | 定義に無い欄・状態・上限・終端の行・キーの書き換えは `Refused` で、行を変えない。書き手の名では断らない |
 | `law_transient_rows_expire` | `KeepFor` の終端の行は期限で読みに出なくなり、回収(`SweepExpired`)の後の変更に `RowRemoved` が 1 回出る。`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
-| `law_descending_list_is_the_head_of_the_sorted_scan` | 上から読む `ListRows`(`descending_by`)は、全件を読んで欄の値が整数の行を並べた上から `limit` 件と同じで、続きを返さない |
+| `law_descending_list_is_the_head_of_the_sorted_scan` | 上から読む `ListRows`(`descending_by`)は、全件を読んで欄の値が整数の行を並べた上から `limit` 件と同じで、続きは並べた行が `limit` 件を越える時だけ返す |
+| `law_descending_pages_follow_the_sorted_scan` | 上から読む `ListRows` の `next_cursor` を辿った頁を連ねると、全件を (値, キー) の大きい順に並べた物と同じ(重なりも欠けも無い)。頁の間の書きは位置より小さい組だけが後の頁に出る。古い版の位置は `Reset` |
 | `law_any_of_list_equals_the_union_of_equal_lists` | 値の組の `ListRows`(`where_any`)の頁を辿った全件は、組の値ごとの等号の `ListRows` の全件の和をキーの順に並べた物と同じ。上から読む読みを重ねた答えはその和の上から `limit` 件。索引でない欄は `NotIndexed` |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |

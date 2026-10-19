@@ -273,16 +273,20 @@
 
 (defk list-cursor-json [cursor]
   {:pre [(: cursor (| ListCursor None))] :post [(: % (| dict None))]}
-  "一覧の次の頁の位置を wire の値にする(None = 終わり / 最初から)。"
-  (if (is cursor None) None {"epoch" cursor.epoch "afterKey" cursor.after-key}))
+  "一覧の次の頁の位置を wire の値にする(None = 終わり / 最初から)。鍵 afterValue は上から読む読みの位置の時だけ載せる。"
+  (cond (is cursor None) None
+        (is cursor.after-value None) {"epoch" cursor.epoch "afterKey" cursor.after-key}
+        True {"epoch" cursor.epoch "afterKey" cursor.after-key "afterValue" cursor.after-value}))
 
 
 (defk list-cursor-from [value what]
   {:pre [(: value JsonValue) (: what str)] :post [(: % (| ListCursor None))]}
-  "wire の値から一覧の次の頁の位置を読む(null = 無し)。"
+  "wire の値から一覧の次の頁の位置を読む(null = 無し・鍵 afterValue は上から読む読みの位置の時だけ在る)。"
   (when (is value None) (return None))
-  (<- body (object-of value what #("epoch" "afterKey") #()))
-  (ListCursor (! (integer-of (get body "epoch") (+ what ".epoch"))) (! (string-of (get body "afterKey") (+ what ".afterKey")))))
+  (<- body (object-of value what #("epoch" "afterKey") #("afterValue")))
+  (ListCursor (! (integer-of (get body "epoch") (+ what ".epoch")))
+              (! (string-of (get body "afterKey") (+ what ".afterKey")))
+              (if (in "afterValue" body) (! (integer-of (get body "afterValue") (+ what ".afterValue"))) None)))
 
 
 (defk expect-json [expect]

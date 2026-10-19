@@ -8,7 +8,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
-(import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict Refused RowsConflict RowsRefused
+(import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty Event EventAbsent EventRetired])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.memory :as memory)
@@ -16,7 +16,7 @@
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
-                            law-any-of-list-equals-the-union-of-equal-lists
+                            law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
                             law-put-rows-is-all-or-nothing
@@ -73,6 +73,27 @@
   ;; 上から読む読みを知らない handler の顔: descending-by を捨てて鍵の順の頁を返す。
   (ListRows [table where fields cursor limit descending-by]
     (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit))
+    (resume answer)))
+
+(defhandler hide-descending-cursor
+  ;; 上から読む読みの続きを返さない handler の顔(続きの位置を足す前の 1 頁だけの形): 上から読む頁の next-cursor を捨てる。
+  (ListRows [table where fields cursor limit descending-by where-any]
+    (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit :descending-by descending-by :where-any where-any))
+    (resume (if (and (is-not descending-by None) (isinstance answer Page)) (Page answer.rows None answer.epoch answer.sequence) answer))))
+
+(defhandler descending-cursor-from-the-top
+  ;; 上から読む読みの位置を読み捨てる handler の顔: 位置を渡された読みも上から読み直す(頁が重なる)。
+  (ListRows [table where fields cursor limit descending-by where-any]
+    (<- answer (ListRows table :where where :fields fields :cursor (if (is descending-by None) cursor None) :limit limit
+                         :descending-by descending-by :where-any where-any))
+    (resume answer)))
+
+(defhandler descending-cursor-by-value-only
+  ;; 位置を並べる欄の値だけで比べる handler の顔: 位置の値より小さい値の行から読む(同じ値で鍵の小さい行を落とす — 欠け)。
+  (ListRows [table where fields cursor limit descending-by where-any]
+    (<- answer (ListRows table :where where :fields fields
+                         :cursor (if (or (is descending-by None) (is cursor None)) cursor (ListCursor cursor.epoch "" cursor.after-value))
+                         :limit limit :descending-by descending-by :where-any where-any))
     (resume answer)))
 
 (defhandler ignore-where-any
@@ -221,6 +242,10 @@
                       #(law-epoch-change-resets (hide-reset))
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
                       #(law-descending-list-is-the-head-of-the-sorted-scan (ignore-descending))
+                      #(law-descending-list-is-the-head-of-the-sorted-scan hide-descending-cursor)
+                      #(law-descending-pages-follow-the-sorted-scan hide-descending-cursor)
+                      #(law-descending-pages-follow-the-sorted-scan descending-cursor-from-the-top)
+                      #(law-descending-pages-follow-the-sorted-scan descending-cursor-by-value-only)
                       #(law-any-of-list-equals-the-union-of-equal-lists ignore-where-any)
                       #(law-any-of-list-equals-the-union-of-equal-lists first-of-any)
                       #(law-append-is-idempotent (forget-idempotency))
