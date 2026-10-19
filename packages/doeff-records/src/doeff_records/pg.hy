@@ -938,9 +938,10 @@
   ;; 表の欄の式の索引が在る欄は表の欄の式で照らす(作り終える前の欄は前の文の形 — pg_sql の頭の註)。
   (val scoped (.scoped-fields store.indexes ask.table))
   (when (is-not ask.descending-by None)
-    ;; 上から読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) より小さい行から 1 頁 + 1 行(続きの有無を知るため)。
-    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by ask.cursor where-json where-any-json
-                                          ask.limit expiry))
+    ;; 上から読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) より小さい行から 1 頁 + 1 行(続きの有無を知るため)。表の上から読む
+    ;; 欄は並べる式の索引の順に辿る形(pg_sql の頭の註)。
+    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by (in ask.descending-by decl.descending)
+                                          ask.cursor where-json where-any-json ask.limit expiry))
     (<- top-records (query-rows store.database top-statement))
     (val top-taken (cut top-records ask.limit))
     (<- top-rows (listed-rows-of decl ask.fields top-taken))

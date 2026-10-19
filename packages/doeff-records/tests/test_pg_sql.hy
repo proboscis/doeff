@@ -58,7 +58,7 @@
                      TABLE-INDEXES))
 ;; 旧い版より後に足した表と索引の文("records_" の答え・旧い版の文の後ろに足した順)。索引は #3614: 列の期限の境 (ledger, at)・
 ;; 組で数える列 pairs の区切り「:」の組の名の式・頭で引ける列 trails の区切り「#」の頭の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(表 tickets の索引の欄に無い —
-;; 表の欄の式の索引)。
+;; 表の欄の式の索引)・表 parts の上から読む欄 note の並べる式の索引(pg_sql.hy の頭の註の上から読む欄の索引)。
 (val ADDED-AFTER-880
   ["CREATE TABLE IF NOT EXISTS records_retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
@@ -69,7 +69,8 @@
                  ELSE ((payload::jsonb) ->> 'idempotencyKey') END))"
    "CREATE INDEX IF NOT EXISTS records_append_rows_head_d08f88df745f ON records_append_rows (ledger, split_part(((payload::jsonb) ->> 'idempotencyKey'), '#', 1), seq)"
    "CREATE INDEX IF NOT EXISTS records_row_changes_at ON records_row_changes (at)"
-   "CREATE INDEX IF NOT EXISTS records_fx_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END))"])
+   "CREATE INDEX IF NOT EXISTS records_fx_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END))"
+   "CREATE INDEX IF NOT EXISTS records_ox_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"])
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
 (val BEFORE-880-WRITER-KEY (fn [prefix] (+ prefix "records-writer")))

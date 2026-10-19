@@ -24,6 +24,8 @@
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
 ;;;   state_rows (表の状態の欄の式)    保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ表の欄の式 —
 ;;;                                  終端の行の読み terminal-rows-statement が引く)
+;;;   state_rows (並べる式 DESC NULLS LAST, key DESC)  表の上から読む欄(TableDecl.descending)ごとに 1 つ — 上から読む読み
+;;;                                  (top-rows-statement)が索引の順に 1 頁だけ辿る。式は ordered-expression の 1 か所(下の註)
 ;;; 欄の式の索引は表の欄の式の索引(card ki-2176012d1804): 宣言した表 1 つ × 欄 1 つに、表の欄の式
 ;;; `(CASE WHEN ledger = '<表>' THEN ((payload::jsonb) -> '<欄>') END)`(table-field-expression — その表の行の欄の値・他の表の行は NULL)の
 ;;; 索引 1 つ(名 = table-field-index-name)を張る。state_rows は全部の表の行を持つ 1 つの表なので、全部の行の payload を読み直す索引
@@ -44,6 +46,11 @@
 ;;; 1 本 約 10 MB(旧い形 1 本 約 56 MB)。式の統計は表の標本(ANALYZE)が索引の式から取る(sampled — 作った後に標本を取り直す)。
 ;;; 旧い形の索引と前の部分索引(名 = table-index-name)は aliases: 在る欄は、表の欄の式の索引を作り終えるまで、その欄を前の文の形
 ;;; (ledger = :ledger と欄の式 — field-expression)で照らす読みに答える(索引の用意は aliases が在っても表の欄の式の索引を作る)。
+;;; 上から読む欄の索引: 並べる式 ordered-expression は、表の行の欄の値が JSON の整数の時だけ numeric、他(他の表の行・欄の無い行・整数で
+;;; ない値)は NULL(外の CASE が他の表の行の payload を開かない — 表の欄の式と同じ)。宣言の無い欄の上から読む読みは、表の全部の行の
+;;; payload を jsonb に読み直して並べ替える(2026-10-19 — 4.7 万行の表 message で 1 頁 0.6〜0.8 秒・負荷の下で読みの期限を越えた)。
+;;; 索引の在る形は、索引の順に 1 頁 + 1 行だけを辿る(同じ置き場で 2〜7 ms)。続きの位置は行の比べ (式, key) < (値, 鍵) — OR に分けた形は
+;;; 索引の範囲にならず、位置より下の行を全部読んで並べ替える。文は条件 ledger = :ledger を置かない(式が NULL でない行は表の行だけ)。
 ;;; 索引の用意(pg.hy の頭の註): 移行の transaction は、その transaction で生まれた表の索引だけを作る(空の表 — 一瞬)。既に在る表に
 ;;; 足りない索引は、索引の用意の task が transaction の外の CREATE INDEX CONCURRENTLY で作る(declared-indexes が宣言の索引の全部・
 ;;; indexes-statement が置き場の索引の観測)。
@@ -270,6 +277,42 @@
   (.format "(CASE WHEN {c}ledger = '{t}' THEN {v} END)" :c columns :t table :v value))
 
 
+(defk ordered-expression [table field-name]
+  {:pre [(: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (.match FIELD-NAME-PATTERN field-name)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の上から読む欄 field-name の並べる式を作るため(頭の註の上から読む欄の索引 — 値が JSON の整数の行は numeric・他は NULL。
+   admission.descending-value? と同じ行を並べる)。上から読む欄の索引(ordered-index)と、その索引で辿る読みの文(top-rows-statement)が
+   この 1 つを使い、索引の式と文の式の字面を揃える。"
+  (<- value (field-expression "payload" field-name))
+  (.format "(CASE WHEN ledger = '{t}' THEN (CASE WHEN jsonb_typeof({v}) = 'number' AND ({v})::text ~ '^-?[0-9]+$' THEN ({v})::text::numeric END) END)"
+           :t table :v value))
+
+
+(defk ordered-index-name [prefix table field-name]
+  {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の上から読む欄 field-name の索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
+  (<- field-digest (digest-of field-name))
+  (<- table-digest (digest-of table))
+  (.format "{}ox_{}_{}" prefix field-digest table-digest))
+
+
+(defk ordered-index [prefix table field-name]
+  {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str)] :post [(: % DeclaredIndex)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の上から読む欄 field-name の索引 state_rows (並べる式 DESC NULLS LAST, key DESC) を作るため(頭の註 — 速さだけの索引: 無くても
+   上から読む読みは同じ行を返すので、ListRows を待たせない)。見積もりは索引の式の統計(sampled — 表の標本が取る)。"
+  (<- name (ordered-index-name prefix table field-name))
+  (<- expression (ordered-expression table field-name))
+  (DeclaredIndex :name name :relation "state_rows"
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e} DESC NULLS LAST, key COLLATE \"C\" DESC)"
+                                :i name :p prefix :e expression)
+                 :serves #()
+                 :scoped #()
+                 :aliases #()
+                 :sampled True))
+
+
 (defk field-index [prefix table field-name serves]
   {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (: serves bool)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
@@ -414,7 +457,7 @@
   "旧い版より後に足した索引の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
-   無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。"
+   無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。最後に表の名の順・欄の名の順の上から読む欄の索引(頭の註)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
@@ -434,12 +477,20 @@
   (for [#(table field) state-tables]
     (<- state-index (field-index p table field False))
     (:= states (+ states #(state-index))))
+  (val ordered-fields (lfor table (sorted schema.tables)
+                            field (sorted (. (get schema.tables table) descending))
+                            #(table field)))
+  (var ordered #())
+  (for [#(table field) ordered-fields]
+    (<- ordered-made (ordered-index p table field))
+    (:= ordered (+ ordered #(ordered-made))))
   (+ #((! (fixed-index (+ p "append_rows_ledger_at") "append_rows"
                        (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger_at ON {p}append_rows (ledger, at)" :p p))))
      groups
      #((! (fixed-index (+ p "row_changes_at") "row_changes"
                        (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_at ON {p}row_changes (at)" :p p))))
-     states))
+     states
+     ordered))
 
 
 (defk relation-names [prefix relations]
@@ -751,9 +802,9 @@
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
-(defk top-rows-statement [prefix table key-fields scoped descending-by cursor where-json where-any-json limit expiry]
+(defk top-rows-statement [prefix table key-fields scoped descending-by ordered cursor where-json where-any-json limit expiry]
   {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by)
-         (: cursor (| ListCursor None)) (or (is cursor None) (is-not cursor.after-value None))
+         (: ordered bool) (: cursor (| ListCursor None)) (or (is cursor None) (is-not cursor.after-value None))
          (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
@@ -762,26 +813,38 @@
    (値, 鍵の綴り) の大きい順に。cursor = 前の頁の位置(None = 上から): (値, 鍵の綴り) が位置の (after-value, after-key) より小さい行
    だけ(keyset)。位置の値は文字列で渡して numeric に読む(JSON の整数は int8 を越え得る — 並べる式と同じ型で比べる)。where・where-any
    (row-filter・scoped)と保持の期限の条件は list-rows-statement と同じ。並べる欄の条件は行ごとに照らす(索引の欄でなくてよい — 表の行に
-   限る条件は絞りが持つ)。"
+   限る条件は絞りが持つ)。ordered = 欄が表の上から読む欄(TableDecl.descending — 頭の註の上から読む欄の索引)か: 真なら並べる式
+   ordered-expression で並べ、続きの位置を行の比べで照らし、条件 ledger = :ledger を置かない(索引の順に辿る形)。偽なら前の形。"
   (<- filter (row-filter table key-fields scoped where-json where-any-json))
+  (val below-pairs (if (is cursor None) #() #(#("after_value" (str cursor.after-value)) #("after" cursor.after-key))))
+  (val pairs-tail (+ below-pairs #(#("limit" (+ limit 1)))))
+  (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
+  (when ordered
+    (<- sorted-value (ordered-expression table descending-by))
+    (val ordered-below (if (is cursor None)
+                           #()
+                           #((.format "({o}, key COLLATE \"C\") < (CAST(:after_value AS numeric), :after)" :o sorted-value))))
+    (val ordered-clauses (+ filter.clauses #((.format "{o} IS NOT NULL" :o sorted-value)) ordered-below))
+    (return (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
+                       ORDER BY {o} DESC NULLS LAST, key COLLATE \"C\" DESC LIMIT :limit"
+                                      :p prefix :w (.join " AND " ordered-clauses) :u unexpired.text :o sorted-value)
+                       :params (+ (! (params-of pairs-tail)) filter.params unexpired.params))))
   (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
   (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
-  (<- ordered (field-expression "payload" descending-by))
+  (<- ordered-field (field-expression "payload" descending-by))
   (val below-clauses
     (if (is cursor None)
         #()
         #((.format "(({o})::text::numeric < CAST(:after_value AS numeric) OR (({o})::text::numeric = CAST(:after_value AS numeric) AND key COLLATE \"C\" < :after))"
-                   :o ordered))))
-  (val below-pairs (if (is cursor None) #() #(#("after_value" (str cursor.after-value)) #("after" cursor.after-key))))
+                   :o ordered-field))))
   (val clauses (+ ledger-clauses
                   filter.clauses
-                  #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered))
+                  #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered-field))
                   below-clauses))
-  (val pairs (+ ledger-pairs below-pairs #(#("limit" (+ limit 1)))))
-  (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
+  (val pairs (+ ledger-pairs pairs-tail))
   (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
                        ORDER BY ({o})::text::numeric DESC, key COLLATE \"C\" DESC LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered)
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered-field)
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 

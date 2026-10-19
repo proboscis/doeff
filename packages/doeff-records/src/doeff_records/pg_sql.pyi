@@ -105,6 +105,15 @@ def field_expression(payload: str, field_name: str) -> _Program[str, object]:
 def table_field_expression(alias: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
+def ordered_expression(table: str, field_name: str) -> _Program[str, object]:
+    ...
+
+def ordered_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
+    ...
+
+def ordered_index(prefix: str, table: str, field_name: str) -> _Program[DeclaredIndex, object]:
+    ...
+
 def field_index(prefix: str, table: str, field_name: str, serves: bool) -> _Program[DeclaredIndex, object]:
     ...
 
@@ -219,7 +228,7 @@ def lock_row_statement(prefix: str, table: str, key: str) -> _Program[Statement,
 def list_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, after_key: str | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
-def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, ordered: bool, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
 def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple, scoped: bool) -> _Program[Statement, object]:

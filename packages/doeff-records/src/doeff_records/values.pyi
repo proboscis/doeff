@@ -71,6 +71,7 @@ class TableDecl:
     key_fields: tuple[str, ...]
     fields: tuple[FieldDecl, ...]
     indexes: tuple[str, ...] = ()
+    descending: tuple[str, ...] = ()
     state_field: str = "state"
     states: tuple[str, ...] = ()
     terminal: tuple[str, ...] = ()

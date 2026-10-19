@@ -133,12 +133,16 @@
    name = 表の名 / key-fields = 鍵の欄(順つき)/ fields = 欄の宣言(FieldDecl — 欄の名とその欄を書いてよい書き手)の tuple
    (宣言した欄はこれで全部。行を作る = 鍵の欄を書く、なので鍵の欄の書き手 = 行を作ってよい書き手)/
    indexes = ListRows の where に使える欄(鍵の欄は常に使える)/
+   descending = ListRows の descending-by で上から読む欄(速さだけの宣言 — PostgreSQL の置き場が欄ごとに並べる式の索引を張り、上から読む
+   読みの文がその式で並べる。宣言の無い欄も上から読めて答えは同じ。答えを変えないので repr に出さない — 表の要約〔schema_digest〕を
+   変えない)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
    operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
   (#^ str name)
   (#^ tuple key-fields)
   (#^ tuple fields)
   (setv #^ tuple indexes #())
+  (setv #^ tuple descending (field :default #() :repr False))
   (setv #^ str state-field "state")
   (setv #^ tuple states #())
   (setv #^ tuple terminal #())
@@ -165,6 +169,9 @@
     (checked-names self.indexes "TableDecl.indexes")
     (for [name self.indexes]
       (when (not (self.declares name)) (raise (ValueError (.format "索引の欄 {!r} が fields に無い(宣言の外の欄)" name)))))
+    (checked-names self.descending "TableDecl.descending")
+    (for [name self.descending]
+      (when (not (self.declares name)) (raise (ValueError (.format "上から読む欄 {!r} が fields に無い(宣言の外の欄)" name)))))
     (checked-names self.operator-paths "TableDecl.operator_paths")
     (for [name self.operator-paths]
       (when (not (self.declares name)) (raise (ValueError (.format "承認の欄 {!r} が fields に無い" name))))

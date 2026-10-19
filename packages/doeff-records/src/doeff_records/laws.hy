@@ -41,6 +41,8 @@
                                           (FieldDecl "color" #(MAKER PAINTER)) (FieldDecl "state" #(MAKER CLOSER))
                                           (FieldDecl "note" #(MAKER)) (FieldDecl "grant" #(MAKER OVERSEER)))
                                 :indexes #("color" "label")
+                                ;; 上から読む欄(法の上から読む読みが並べる欄 — PostgreSQL の置き場は並べる式の索引で辿る)。
+                                :descending #("note")
                                 :states #("open" "held" "closed") :terminal #("closed") :initial "open"
                                 :operator-paths #("grant") :size-budget 400)
              "tickets" (TableDecl :name "tickets" :key-fields #("group" "id")
