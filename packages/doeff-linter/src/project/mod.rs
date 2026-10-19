@@ -4740,42 +4740,11 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &lay
     // 変わった file だけ読み直す(#1033)。集合の和なので、束ねる順は答えを変えない。
     let files = hy_rel_files(root);
     let found: Vec<smells::FailureTypes> =
-        facts_cache::per_file_keyed(root, FAILURE_TYPES_KIND, &failure_types_key(reading), &files, |rel, path| failure_types_of_file(rel, path, reading));
+        facts_cache::per_file_keyed(root, smells::FAILURE_TYPES_KIND, &smells::failure_types_key(reading), &files, |rel, path| smells::failure_types_of_file(rel, path, reading));
     for one in found {
         all.extend(one);
     }
     all
-}
-
-/// 失敗の型の事実の種類(file ごとの cache の置き場の名)— 全体の実行(`failure_types_for`)と 1 file の実行(`spelled_failures`)が同じ置き場を使う。
-pub(super) const FAILURE_TYPES_KIND: &str = "failure-types";
-
-/// file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋が cache の印の `key`。
-pub(super) fn failure_types_key(reading: &layers::TagReading) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(format!("{reading:?}").as_bytes()))
-}
-
-/// Hy の file 1 つが宣言する失敗の型(`:failure` か `:absent` を綴らない file・宣言の無い file は None)。全体の実行と 1 file の実行が同じ作り方を使う。
-pub(super) fn failure_types_of_file(rel: &str, path: &Path, reading: &layers::TagReading) -> Option<smells::FailureTypes> {
-    let source = std::fs::read_to_string(path).ok()?;
-    if !has_failure_declaration_spelling(&source) {
-        return None;
-    }
-    let found = failure_types_of_source(rel, &source, reading);
-    (!found.is_empty()).then_some(found)
-}
-
-/// 失敗の型の宣言(`defrecord` の `:failure True` と `defeffect` の `:failure` / `:absent`)を持ちうる file の中身か — どちらの綴りも無い file は宣言を持たない。
-pub(super) fn has_failure_declaration_spelling(source: &str) -> bool {
-    source.contains(":failure") || source.contains(":absent")
-}
-
-/// 中身を読んだ Hy の file 1 つが宣言する失敗の型(空の事は在る — 綴りは在るが宣言でない file)。
-pub(super) fn failure_types_of_source(rel: &str, source: &str, reading: &layers::TagReading) -> smells::FailureTypes {
-    let module = module_of(rel);
-    let facts = read_facts(Language::Hy, source, &module, reading);
-    smells::failure_types_in(source, smells::Scope { module: &module, bindings: &facts.bindings })
 }
 
 /// 読めない Hy の file を DOEFF128 の違反にする(全体 = 規則が読む Hy の file を並べて読む・1 file = 保存前の中身だけ)。

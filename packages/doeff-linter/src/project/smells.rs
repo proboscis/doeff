@@ -18,8 +18,9 @@ use std::path::Path;
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader, StrKind};
 
-use super::facts::ByteSpan;
-use super::names::hy_mangle;
+use super::facts::{read_facts, ByteSpan, Language};
+use super::layers::TagReading;
+use super::names::{hy_mangle, module_of};
 
 /// 臭いの種類と、説明の文に差し込む材料(閉じた集合)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +126,37 @@ impl FailureTypes {
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }
+}
+
+/// 失敗の型の事実の種類(file ごとの cache の置き場の名)— 全体の実行(`failure_types_for`)と 1 file の実行(`spelled_failures`)が同じ置き場を使う。
+pub const FAILURE_TYPES_KIND: &str = "failure-types";
+
+/// file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋が cache の印の `key`。
+pub fn failure_types_key(reading: &TagReading) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(format!("{reading:?}").as_bytes()))
+}
+
+/// 失敗の型の宣言(`defrecord` の `:failure True` と `defeffect` の `:failure` / `:absent`)を持ちうる file の中身か — どちらの綴りも無い file は宣言を持たない。
+pub fn has_failure_declaration_spelling(source: &str) -> bool {
+    source.contains(":failure") || source.contains(":absent")
+}
+
+/// 中身を読んだ Hy の file 1 つが宣言する失敗の型(空の事は在る — 綴りは在るが宣言でない file)。
+pub fn failure_types_of_source(rel: &str, source: &str, reading: &TagReading) -> FailureTypes {
+    let module = module_of(rel);
+    let facts = read_facts(Language::Hy, source, &module, reading);
+    failure_types_in(source, Scope { module: &module, bindings: &facts.bindings })
+}
+
+/// Hy の file 1 つが宣言する失敗の型(`:failure` か `:absent` を綴らない file・宣言の無い file は None)。全体の実行と 1 file の実行が同じ作り方を使う。
+pub fn failure_types_of_file(rel: &str, path: &Path, reading: &TagReading) -> Option<FailureTypes> {
+    let source = std::fs::read_to_string(path).ok()?;
+    if !has_failure_declaration_spelling(&source) {
+        return None;
+    }
+    let found = failure_types_of_source(rel, &source, reading);
+    (!found.is_empty()).then_some(found)
 }
 
 /// 1 つの source の失敗の型の宣言 — `(defrecord 名 "doc"? {… :failure True …} …)` の名と、
