@@ -27,6 +27,9 @@
 (import doeff_claude_code.effects [ClaudeStartTurn])
 ;; 待たせた入力の手番を起こせない形(層 2 の LaunchFailed)を層 2 の代わりに答える口も、層 2 の答えの型を写す(#4207)。
 (import doeff_claude_code.effects [LaunchFailed])
+;; 入力を名指した止めを、層 2 が判断した事(adapter が層 2 へ ClaudeInterruptTurn を出し、層 2 が InputAlreadyRead で答えた)を見る口も、
+;; 層 2 の effect と答えの型を写す(公開面は止めたか読まれていたかを区別しない — 設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 B)。
+(import doeff_claude_code.effects [ClaudeInterruptTurn InputAlreadyRead])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec TurnInput])
 (import doeff_agents.handlers.headless [HeadlessSession start-waiting])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
@@ -1172,6 +1175,42 @@
 
 (deftest test-headless-interrupt-for-a-read-input-leaves-the-turn-stub [tmp-path]
   (<- (check-interrupt-for-a-read-input (run-on STUB tmp-path interrupt-for-a-read-input-leaves-the-turn))))
+
+(defhandler layer-two-interrupt-tap [#^ list calls]
+  ;; adapter が層 2 へ出した止め(ClaudeInterruptTurn)の名指しと層 2 の答えを写すだけ(答えは外側の層 2 に任せる)— 入力を名指した止めの
+  ;; 判断を層 2 がした事を観測するため(adapter が自分の出来事の写しで止めを省くと、写しが 0 件になる)。
+  {:tags {:context "headless-adapter-test" :role "foundation"}}
+  (ClaudeInterruptTurn [turn for-input]
+    (<- answer effect)
+    (.append calls #(for-input answer))
+    (resume answer)))
+
+(defn run-on-tapped [#^ str backend #^ Path tmp-path #^ Callable scenario #^ list calls]
+  "run-on と同じ組の、層 2 と headless の adapter の間に layer-two-interrupt-tap を挟んで走らせる(adapter は組の最後)。"
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (setv handlers (handlers-for backend (str (/ tmp-path "home"))))
+  (setv setting (Setting work None 60.0 (if (= backend FAKE) 8 3)))
+  (run (scheduled (with_handlers (+ (cut handlers 0 -1) [(layer-two-interrupt-tap calls)] (cut handlers -1 None)) (scenario setting)))))
+
+(defk check-layer-two-decided [#^ list calls]
+  {:pre [(: calls list)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "読まれた入力を名指した止めが層 2 まで届き、層 2 が InputAlreadyRead で答えた事を確かめるため(判断の持ち主は層 2 — adapter の出来事の
+   写しで止めを省く実装は、止めたか読まれていたかを区別しない公開の答えでは見分けられない)。"
+  (assert (= calls [#("ref-read" (InputAlreadyRead "ref-read"))]) calls)
+  None)
+
+(deftest test-headless-a-named-stop-of-a-read-input-is-decided-by-layer-two-fake [tmp-path]
+  (val calls [])
+  (val seen (run-on-tapped FAKE tmp-path interrupt-for-a-read-input-leaves-the-turn calls))
+  (<- (check-interrupt-for-a-read-input seen))
+  (<- (check-layer-two-decided calls)))
+
+(deftest test-headless-a-named-stop-of-a-read-input-is-decided-by-layer-two-stub [tmp-path]
+  (val calls [])
+  (val seen (run-on-tapped STUB tmp-path interrupt-for-a-read-input-leaves-the-turn calls))
+  (<- (check-interrupt-for-a-read-input seen))
+  (<- (check-layer-two-decided calls)))
 
 (deftest test-headless-stop-discards-waiting-fake [tmp-path]
   (check-stop (run-on FAKE tmp-path stop-discards-waiting-inputs)))

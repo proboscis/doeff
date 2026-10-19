@@ -163,11 +163,12 @@
   (any (gfor injection state.injections (= injection.ref ref))))
 
 (defn #^ bool input-already-read [#^ DialogueState state #^ str ref]
-  "入力を名指した止めを出さずに済むか: 手番の途中で、CLI が入力の運命を名乗り(msg_lifecycle_v1)、名指した入力 ref がまだ読まれていない
-   注入(queued)でない — もう読んだ注入・手番を始めた入力・この手番に無い入力。止めはまだ読まれていない注入を先に読ませるための物で、
-   読み終えた手番を止めると答えが途中で切れる(card ki-1c4cfde50ac5)。運命を名乗らない CLI では読んだかが分からないので偽(名指さない
-   止めと同じに止める)。"
-  (and state.in-flight state.lifecycle (not-in ref (queued-refs state))))
+  "入力を名指した止めを出さずに済むか: 手番の途中で、CLI が入力の運命を名乗り(msg_lifecycle_v1)、名指した入力 ref がこの手番に入れた
+   入力(turn-refs — 手番を始めた入力と足した注入)で、まだ読まれていない注入(queued)でない。止めはまだ読まれていない注入を先に読ませる
+   ための物で、読み終えた手番を止めると答えが途中で切れる(card ki-1c4cfde50ac5)。この手番に無い ref(止めの依頼の id など)と、運命を
+   名乗らない CLI では読んだかが分からないので偽(名指さない止めと同じに止める — 止めが黙って効かなくなる事を防ぐ・設計検証
+   lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 A)。"
+  (and state.in-flight state.lifecycle (in ref state.turn-refs) (not-in ref (queued-refs state))))
 
 
 ;; --- 手番の終わりの組み立て --------------------------------------------------------------------------

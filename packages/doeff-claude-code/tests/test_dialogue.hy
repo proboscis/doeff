@@ -317,14 +317,17 @@
 
 (deftest test-a-named-interrupt-is-needed-only-while-the-named-input-is-queued
   ;; 入力を名指した止め(今すぐ送る — card ki-1c4cfde50ac5)を出すかの判断: 名指した注入がまだ読まれていない(queued)間だけ止める。
-  ;; CLI がもう読んだ注入(started・completed)・手番を始めた入力・この手番に無い入力は読み終えた物で、止めると答えが途中で切れる。
+  ;; CLI がもう読んだ注入(started・completed)・手番を始めた入力は読み終えた物で、止めると答えが途中で切れる。
   (val injected (. (dialogue.inject (started) (TurnInput "also this" "inj-1")) state))
   (assert (not (dialogue.input-already-read injected "inj-1")))
   (val read (. (read-record injected (lifecycle "inj-1" "started")) state))
   (assert (dialogue.input-already-read read "inj-1"))
   (assert (dialogue.input-already-read (. (read-record read (lifecycle "inj-1" "completed")) state) "inj-1"))
   (assert (dialogue.input-already-read injected "msg-1"))
-  (assert (dialogue.input-already-read injected "never-added"))
+  ;; この手番に入れていない ref(止めの依頼の id など)は読んだかが分からない — 止める(読んだと数えると止めが黙って効かなくなる・設計検証
+  ;; lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 A)。
+  (assert (not (dialogue.input-already-read injected "never-added")))
+  (assert (not (dialogue.input-already-read read "stop-request-1")))
   ;; 入力の運命を名乗らない CLI(msg_lifecycle_v1 なし)では読んだかが分からない — 名指さない止めと同じに止める。
   (val blind-init {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["interrupt_receipt_v1"]})
   (val blind (. (read-record (. (dialogue.begin-turn (DialogueState) (TurnInput "hello" "msg-1")) state) blind-init) state))

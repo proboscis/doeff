@@ -144,6 +144,19 @@
   (assert (in EXTRA-WORD done.end.result-text) done.end.result-text))
 
 
+(deftest test-a-named-interrupt-of-an-id-not-added-to-the-turn-still-stops-it
+  ;; 名指した ref がこの手番に入れた入力でない(止めの依頼の id を名指した等): 読んだかが分からないので名指さない止めと同じに止める。読んだと
+  ;; 数えると止めが黙って効かず、道具が走り切る(設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 A)。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (<- started (start (FreshSession (new-id)) s.base (sleep-prompt LONG-SLEEP "NEVER")))
+  (<- _opened (read-to-tool-start started.turn s.turn-timeout))
+  (<- asked (ClaudeInterruptTurn started.turn :for-input "stop-request-1"))
+  (assert (isinstance asked InterruptRequested) (repr asked))
+  (<- stopped (read-to-end started.turn s.turn-timeout))
+  (assert (isinstance stopped.end Interrupted) (repr stopped.end)))
+
+
 (deftest test-a-permission-question-is-answered-by-the-host
   ;; 許可の問いに答える: AskHost の会話は道具の前に PermissionRequested を出し、答えるまで道具は走らない。
   {:interpreters ["fake" "stub" "real"]}

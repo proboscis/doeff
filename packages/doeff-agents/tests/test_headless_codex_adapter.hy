@@ -370,6 +370,36 @@
   (<- (check-injected seen)))
 
 
+(defk named-stop-after-a-steer [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "走っているターンに入力を足した直後に、その入力を名指して止めるため(agora の割り込み送信の形 — InterruptEffect の for_input)。codex の
+   層 2 は入力を読んだかを名乗らないので、名指しても名指さない止めと同じに止まる(I3 — adapter が steer で合成した行方を「読んだ」と読み
+   替えて止めを省くと、ターンが終わらない・設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 B)。"
+  (<- handle (launch s "codex-named-stop" SLOW-PROMPT {}))
+  (<- before (read-until handle first-delta s.timeout -1))
+  (<- (FollowUp handle "more" :input-ref "ref-more" :mode TurnInputMode.INJECT))
+  (<- joined (read-until handle steered-delta s.timeout before.after))
+  (<- asked (Interrupt handle :for-input "ref-more"))
+  (<- done (read-until handle ended s.timeout joined.after))
+  (<- (Stop handle))
+  {"asked" asked "end" done.end})
+
+(defk check-named-stop-stops [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "codex の名指した止めが受けられ、ターンが AgentTurnInterrupted で終わる事を確かめるため。"
+  (assert (is (get seen "asked") True) seen)
+  (assert (isinstance (get seen "end") AgentTurnInterrupted) seen)
+  None)
+
+(deftest test-headless-codex-a-named-stop-still-stops-the-turn-fake [tmp-path]
+  (<- seen (run-on FAKE tmp-path named-stop-after-a-steer))
+  (<- (check-named-stop-stops seen)))
+
+(deftest test-headless-codex-a-named-stop-still-stops-the-turn-stub [tmp-path]
+  (<- seen (run-on STUB tmp-path named-stop-after-a-steer))
+  (<- (check-named-stop-stops seen)))
+
+
 ;; turn/steer を「走っているターンが無い」と断らせる言い方(替え玉の規則 — 本物の codex 0.162.1 の断りが、ターンの終わりの通知より先に
 ;; 届く順と後に届く順を写す。doeff-codex の tests/stub_cli/codex_app_server.py の STEER_REFUSALS)。
 (val STEER-REFUSED-FIRST "STEER-REFUSED-FIRST")
