@@ -58,13 +58,16 @@
     (finally (<- (ReleaseSemaphore permit)))))
 
 
-(defhandler pooled-postgres-sql-handler [#^ PostgresConnections connections #^ Executor pool]
+(defhandler pooled-postgres-sql-handler [#^ PostgresConnections connections #^ Executor pool [serialized-lock-keys #()]]
   ;; 引数に残す理由: 接続の貸し出しは組み立ての側が作って閉じる資源で(DSN と資格を持つ)、答える database の名で ClickHouse の答え手と
   ;; 同じ組に並べ分ける。pool も組み立ての側が作って閉じる資源(worker の数の契約は頭の註)。
   ;; permits = database の名 → 接続の許可(scheduler の semaphore — 初めて使う拍に作る)(session の値)。
   "scheduler を塞がない本物の PostgreSQL の答え手(頭の註)。connections が宣言した database の名にだけ答える(他の名は外側へ回す)。"
   {:tags {:context "sql" :role "foundation"}}
   (session var permits {})
+  ;; serialized-lock-keys はsession中固定の有限tuple。登録キーだけを接続取得前に直列化する。
+  ;; Semaphoreは回収されないので保持して再利用する。ローカルの待機にはDBのstatement_timeoutは掛からない。
+  (session var transaction-permits {})
   (SqlQuery [database statement params] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))
@@ -88,7 +91,18 @@
   (SqlTransaction [database program lock-key batched] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))
-    (<- answer (permitted (get permits database) (offloaded-transaction connections pool database program lock-key batched)))
+    (val transaction (permitted (get permits database)
+                                (offloaded-transaction connections pool database program lock-key batched)))
+    (var admitted transaction)
+    (when (and (is-not lock-key None) (in lock-key serialized-lock-keys))
+      (val identity #(database lock-key))
+      (var admission (.get transaction-permits identity))
+      (when (is admission None)
+        (<- created-admission (CreateSemaphore 1))
+        (:= admission created-admission)
+        (:= transaction-permits (| transaction-permits {identity admission})))
+      (:= admitted (permitted admission transaction)))
+    (<- answer admitted)
     (resume answer))
   ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
   (SqlBatch [database queries commit] :when (in database (.names connections))

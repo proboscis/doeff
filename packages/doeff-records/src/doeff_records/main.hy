@@ -66,7 +66,7 @@
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes])
-(import doeff_records.pg_sql [DEFAULT-PREFIX])
+(import doeff_records.pg_sql [DEFAULT-PREFIX writer-lock-key])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
 
@@ -214,7 +214,8 @@
   (val ddl-connections (PostgresConnections #((PostgresDatabase :name DDL-DATABASE :dsn settings.dsn)) :size 1 :timeouts DDL-TIMEOUTS))
   (val ddl-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-ddl"))
   (try
-    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool)
+    (<- writer-key (writer-lock-key settings.prefix))
+    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool :serialized-lock-keys #(writer-key))
                                (pooled-postgres-sql-handler ddl-connections ddl-pool)]
                  body))
     answer
