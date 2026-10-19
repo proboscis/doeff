@@ -26,6 +26,8 @@ walkdir = "2.5"
 colored = "2.1"
 rayon = "1.10"
 regex = "1.10"
+# 宣言の正規表現が読めるかを構文だけで確かめる(architecture.rs の check_regex)。regex の依存で Cargo.lock に既に在る(新しい crate を足さない)。
+regex-syntax = "0.8"
 once_cell = "1.19"
 chrono = "0.4"
 # Hy の file の事実(定義・import・生の副作用の証拠 raw)と読み取り器 — hy-index の解析を関数として呼ぶ(子 process は使わない)。

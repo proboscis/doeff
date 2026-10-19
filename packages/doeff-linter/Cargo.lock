@@ -344,6 +344,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "regex",
+ "regex-syntax",
  "rustpython-ast 0.4.0",
  "rustpython-parser 0.4.0",
  "serde",
