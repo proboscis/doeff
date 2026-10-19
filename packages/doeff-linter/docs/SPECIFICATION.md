@@ -430,8 +430,14 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
       答えは repo の全部から作った集合を引いた時と同じ(実 repo の全部の呼び先・型の名で確かめた)。
     - 失敗の型の宣言を持つ file(`:failure` か `:absent` を含む file)の集まりは型の名に依らないので、最初の問いで repo から 1 回だけ集め(`OnceLock`)、名ごとにその集まりを
       綴りで絞って読み解く。名ごとに repo の Hy の全部を読み直すと、match の腕の型が 20 個の file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
-    - repo の Hy の一覧を歩く待ちと、見つけた file を読む待ちは、全部を待ちの重なる仕事として回す(`hy_files::collect_reading`・`bulk_read::pipeline` — 128 本)。
+    - 宣言の file の読み解き(その file が宣言する型)も、file の中身と読み方だけで決まり型の名に依らない。実行の中で file ごとに 1 度だけ読み解き(`parsed`)、事実の置き場にも
+      覚える(`facts_cache::per_file_content` — 全体の実行と同じ種類 `failure-types`・同じ鍵なので、全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む。空の事実も置く)。
+      置くのは型の名を綴る宣言の file の分だけで、repo 全体の表は通らない。名を変えて引くたびに全部の宣言の file を読み解き直す形は、`|` のように全部を綴る名で 246 file・CPU 0.4 秒を名ごとに使っていた。
+    - repo の Hy の一覧を歩く待ちと、見つけた file を読む待ちは、全部を待ちの重なる仕事として回す(`hy_files::collect_reading`・`bulk_read::pipeline` — 最大 128 本)。
       一覧の集合と順は `hy_index::collect_hy_files` と同じ。
+    - 待ちを重ねる thread は、**待ちが disk の待ちだと見えた時だけ**増やす(`bulk_read::Widen`)。page cache から読める間は仕事が速くならず thread の起動と待ち合わせの CPU
+      だけが増える(混んだ機体で repo の Hy 4,144 file を page cache から読むのに、128 本で CPU 7〜14 秒・1 本で 0.4〜0.8 秒)ので、4 本で始め、1 件が 500 マイクロ秒以上かかる回が
+      3 件続いたら(thread が止められた 1 回の遅れでは増やさない)呼び手が決めた本数まで 1 度だけ増やす。冷えた作業木では最初の数件で増えるので、重なる待ちの数は変わらない。
     - 呼び手の事実を引くのは、実行の中で登録簿・effect の世界・名指しの module の表を作った後になる。書いた file が自分の引数を素で呼ぶ定義を持つなら、その呼び先の名での
       repo の読みを実行の頭から別の thread で走らせ始める(`SpelledCallers::started` — 呼び先は defk の集まりが空の見積りで、実際に引く呼び先を全部含む。収まらなければ引く時に読み直す)。
   - 大きい file の CPU は行数の二乗でなく行数に比例する: 書いた file の記号を解く名前の解決(`hy_index::qualify::link`)は、file ごとに 1 回だけ表(定義の名・import の別名・
@@ -448,6 +454,9 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
     保つ書き方(`touch -r`・`cp -p`)をした時だけで、登録簿にその運用は無い。
   - 検: `tests/single_file_reads.rs`(答えが全体の実行と同じ・名指さない module の事実を置かない・全体の表を通らない)と、`signatures.rs`・`call_view.rs`・`body_view.rs` の
     検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。登録簿の読みの待ちが重なる事は `bulk_read::watch`(同時に進んだ仕事の最大数)で、変わっていない登録簿を 2 回目に読まない事・変えた/足した/消した/更新の直後は読み直して答え(`registered`)が付いてくる事は `tests/registry_remembered.rs` で確かめる。
+- 宣言(architecture.hy)の読みは、1 回の実行の固定の費用: agora-controllers の宣言(530KB)は、`:patterns` / `:pattern` の正規表現 195 個を読めるかの確かめだけのために `Regex::new` で組み(組んだ物は
+  捨て、使う規則が組み直す)、実行の頭と層の除外の問い(`population_of`)で 2 度読まれていた。確かめは構文だけにし(`architecture::check_regex` — 読めない時だけ `Regex::new` に聞き直し、断りの文は同じ)、
+  実行の頭で読んだ宣言は問いへ渡す(`population::remember_declaration` — 宣言の dir を repo の根として読んだ時だけ)。実行の頭(`prepare`)の CPU は中央値 0.050 → 0.020 秒、小さい file の 1 回の CPU は 0.164 → 0.062 秒(25 走行の中央値・load 30・LTO なし)。
 - 実測(agora-controllers の本線・2026-09-27): 全体 約 1.1 秒・1 file 10 ミリ秒未満。
 - 実測(agora-controllers の本線 Hy 2900 file・2026-10-12・Pod の load 70〜100・同じ負荷で旧新を交互に): 1 file の実行の open 12,077 → 約 600、opendir 2,837 → 5〜9、
   stat 39,472 → 約 2,000。温まった実時間の中央値 0.40 → 0.18 秒(CPU 0.58 → 0.20 秒)・新しい作業木の最初の 1 回 CPU 5.1 → 0.1 秒。残る open の大半は登録簿の
@@ -465,6 +474,15 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
   `cli_host.hy`(4,866 行)の冷えた最初の 1 回の実時間は、中央値 5.3 秒(4.4〜6.0 秒)→ 3.2 秒(3.1〜5.3 秒 — 5.3 秒の 1 組は load 76 の回)。`failure-types` の段は 2.3 秒 → 1.5 秒
   (名ごとに repo の Hy を読み直す形から、1 回だけ読む形)。温まった状態(page cache に在る)では旧新に差が無い(中央値 1.11 → 1.13 秒)。
   大きい file の CPU(`qualify::link`・同じ日の続けた測定): `test_server.hy`(10,052 行)の温まった実時間は 9.5 → 1.5 秒・`react.hy`(3,715 行)は 10.6 → 1.2 秒。
+- 実測(同じ本線 Hy 4,144 file・2026-10-19・Pod の load 30〜70・LTO なしの同じ設定で build した旧〔origin/main 5d16a1729〕新を、同じ走行の並びで撃つ・事実の置き場は旧新で別・温めた後に測る):
+  hook の 1 回の CPU(hook の log に残った書いた file で撃つ)が旧の 1.67 秒だった理由は 3 つで、どれも page cache に在る repo を読む所だった — 宣言の読み(上)・128 本の thread での repo の Hy の全部の読み
+  (CPU の大半は sys)・名ごとの宣言の file の読み解き直し。
+  - 10-18 12:00 以降の log から走行の頻度のとおり選んだ 150 走行(121 file): 1 回の CPU 平均 0.80〜1.02 → 0.24 秒、p99 10.1 → 1.3 秒。
+  - 10-19 08:00〜16:00 の実際の 290 走行を同じ順で(2 回目): 平均 0.285 → 0.161 秒(repo を読まない 89% の走行は 0.214 → 0.123・失敗の型を引く 9% は 0.90 → 0.55)。
+  - 小さい file(`policy_types.hy`): CPU 0.19 → 0.06 秒。
+  - 冷えた作業木(mincore で確かめた・旧新で別の作業木・共有 cache): 失敗の型を引く file の最初の 1 回 実時間 中央値 4.9 → 3.0 秒・CPU 15 → 1.1 秒。引数に渡された Program を引く file は 3.06 → 3.05 秒・CPU 2.6 → 2.8 秒(変わらない)。
+  - 答え: 150 走行の出力は linter の版の欄を除いて 1 byte も違わない。破れを足した断片(平の defn・os.environ・素の sleep・タグの無い record・失敗の型の match・括弧の閉じない所)を 40 file × 7 の 280 走行に足した出力と、
+    失敗の型を別の file から引く DOEFF122 の 13 走行も同じ。hook が返す助言の文は、実際の 139 走行で同じ(確かめ方の行の binary の path を除く)。
 - 残り: 冷えた作業木の最初の 1 回は、これでも hook の期限 4 秒を越える回が多い(Pod の load 85 以上で中央値 4.5〜5.4 秒)。残りは repo の Hy の 2839 file の読み 約 2〜3.5 秒(page cache を
   追い出された作業木の file ごとの disk の待ち — 並列度を 128 から 256 に上げても縮まない)と、登録簿・prepare・effect の世界の冷えた読み(合わせて約 1.5 秒)。2 回目以降は約 0.6 秒。
   - `facts-cache.roots`(置き場の根の掃除 — 1 時間ごとの 1 回、3〜19 秒)が、その時間の最初の 1 回に載る。別の直し。
