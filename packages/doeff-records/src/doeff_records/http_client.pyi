@@ -47,6 +47,7 @@ from doeff_records.wire import CLIENT_UNREACHABLE as CLIENT_UNREACHABLE
 from doeff_records.wire import client_answer_metric as client_answer_metric
 from doeff_records.wire import client_status_outcome as client_status_outcome
 from doeff_records.wire import WRITER_HEADER as WRITER_HEADER
+from doeff_records.wire import CALLER_HEADER as CALLER_HEADER
 from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 DEFAULT_REQUEST_TIMEOUT: float
 
@@ -59,6 +60,7 @@ class RecordsEndpoint:
     request_timeout: float = ...
     meter: Callable[..., object] | None = None
     writer: str | None = None
+    caller: str | None = None
 
 @dataclass(frozen=True)
 class RawReply:

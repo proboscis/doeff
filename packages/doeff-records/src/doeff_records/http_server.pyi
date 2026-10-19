@@ -59,6 +59,7 @@ class RecordsServing:
     pressure: Callable[..., object] | None = None
     meter: Callable[..., object] | None = None
     served: ServedBuild | None = None
+    callers: tuple[str, ...] = ()
 
 @dataclass(frozen=True, kw_only=True)
 class TextAnswer:
@@ -117,6 +118,7 @@ class RecordsServerConfig:
     port: int = 0
     meter: Callable[..., object] | None = None
     served: ServedBuild | None = None
+    callers: tuple[str, ...] = ()
 
 def records_server_config(
     schema: RecordsSchema,
@@ -126,6 +128,7 @@ def records_server_config(
     port: int = 0,
     meter: Callable[..., object] | None = None,
     served: ServedBuild | None = None,
+    callers: tuple[str, ...] = (),
 ) -> Program[RecordsServerConfig, object]: ...
 
 @dataclass(frozen=True)

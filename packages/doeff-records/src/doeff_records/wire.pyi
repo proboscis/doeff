@@ -3,6 +3,7 @@
 from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
+from collections import Counter as Counter
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff_hy.frozen import FrozenMap as FrozenMap
@@ -85,6 +86,13 @@ CLIENT_OTHER_STATUS: str
 CLIENT_KINDS: tuple[RequestKind, ...]
 CLIENT_OUTCOMES: tuple[str, ...]
 CLIENT_ANSWER_METRICS: tuple[str, ...]
+CALLER_HEADER: str
+LIST_ROWS_TABLE_METRIC: str
+LIST_ROWS_CALLER_METRIC: str
+LIST_ROWS_MEASURES: tuple[str, ...]
+CALLER_UNNAMED: str
+CALLER_UNDECLARED: str
+METRIC_WORD_UNSAFE: Incomplete
 ANSWER_KINDS: dict[str, tuple[str, ...]]
 PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey
 WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet | Event | EventAbsent | EventRetired
@@ -130,6 +138,21 @@ def client_answer_metric(operation: str, outcome: str) -> _Program[str, object]:
     ...
 
 def client_status_outcome(status: int) -> _Program[str, object]:
+    ...
+
+def metric_word(name: str) -> _Program[str, object]:
+    ...
+
+def list_rows_caller(named: str | None, callers: tuple) -> _Program[str, object]:
+    ...
+
+def list_rows_counts(caller: str, table: str, rows: int) -> _Program[tuple, object]:
+    ...
+
+def list_rows_metrics(tables: tuple, callers: tuple) -> _Program[tuple, object]:
+    ...
+
+def list_rows_metric_helps(tables: tuple) -> _Program[FrozenMap[str], object]:
     ...
 
 def object_of(value: JsonValue, what: str, required: tuple, optional: tuple) -> _Program[dict, object]:

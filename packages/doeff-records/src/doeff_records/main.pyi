@@ -51,6 +51,7 @@ ENV_POOL_SIZE: str
 ENV_MAINTENANCE_SECONDS: str
 ENV_KEEP_CHANGES_SECONDS: str
 ENV_ORIGIN_HOST: str
+ENV_CALLERS: str
 ENV_HOSTNAME: str
 DEFAULT_HOST: str
 DEFAULT_PORT: int
@@ -71,6 +72,7 @@ class RecordsSettings:
     pool_size: int
     address: HttpAddress
     maintenance: MaintenancePlan
+    callers: tuple[str, ...] = ...
 
     def __post_init__(self) -> None:
         ...
