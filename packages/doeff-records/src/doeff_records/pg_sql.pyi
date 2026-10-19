@@ -14,6 +14,7 @@ from doeff_records.values import FIELD_NAME_PATTERN as FIELD_NAME_PATTERN
 from doeff_records.values import SEPARATOR_PATTERN as SEPARATOR_PATTERN
 from doeff_records.values import TABLE_NAME_PATTERN as TABLE_NAME_PATTERN
 PREFIX_PATTERN: Incomplete
+RETIRED_INDEX_PATTERN: Incomplete
 DEFAULT_PREFIX: str
 WRITER_LOCK_SUFFIX: str
 MIGRATE_LOCK_SUFFIX: str
@@ -96,6 +97,9 @@ def index_name(prefix: str, field_name: str) -> _Program[str, object]:
 def table_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
+def hyx_retired_indexXquestion_markX(prefix: str, name: str) -> _Program[bool, object]:
+    ...
+
 def table_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
@@ -159,7 +163,7 @@ def concurrent_index_statement(index: DeclaredIndex) -> _Program[Statement, obje
 def analyze_statement(prefix: str, relation: str) -> _Program[Statement, object]:
     ...
 
-def drop_index_statement(index: DeclaredIndex) -> _Program[Statement, object]:
+def drop_index_statement(name: str) -> _Program[Statement, object]:
     ...
 
 def index_lock_key(prefix: str) -> _Program[str, object]:

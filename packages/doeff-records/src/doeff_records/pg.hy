@@ -63,6 +63,11 @@
 ;;;     作り、作り終えた回の終わりに表の標本を取り直して観測し直す。標本を取り直す前の表の欄の式の索引は、索引の式の統計が無く値の組の
 ;;;     見積もりが既定の選択度の積み上げになって表を頭から読む計画が選ばれる(本番の分布の置き場で値 995 個の組の 1 頁が 745 ms)ので、
 ;;;     観測は統計の在る索引(か、統計がまだ 1 つも無い表の索引)だけを表の欄の式で照らす欄に数える(pg_sql.indexes-statement)。
+;;;   - 旧い形の索引と前の部分索引(pg_sql.retired-index? の名の形 — 宣言に無い)は、宣言の索引が全部使える形で在り、表の欄の式の索引の
+;;;     欄が全部表の欄の式で照らせる(retirement-ready?)ようになった回に、索引の用意が錠の中で 1 本ずつ DROP INDEX CONCURRENTLY で外す
+;;;     (pg_sql の頭の註の「旧い形の索引を外す」)。その前は前の文の形の読みが引くので外さず、INDEX-RETRY-SECONDS 秒の後に観測し直す。
+;;;     宣言の索引が全部在る置き場でも、旧い形の索引が在れば記録の service は索引の用意の task を立てる(IndexBook の retired)。
+;;;     旧い形でない宣言に無い索引(手で足した物)は外さない。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
@@ -90,7 +95,7 @@
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               writer-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
-                              concurrent-index-statement drop-index-statement analyze-statement
+                              concurrent-index-statement drop-index-statement analyze-statement retired-index?
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
@@ -115,7 +120,8 @@
 ;; 索引の用意(頭の註)が、差を埋めきれなかった回(置き場に届かない・engine が断った)の後に置き場を観測し直すまでの秒。
 ;; ポーリングの訳: 失敗の終わり(DB の戻り・断りの訳の解け)を知らせる出来事が無いので、間を置いて撃ち直す。他の process が作っている間は
 ;; その process が錠を放した合図(NOTIFY)で起き、この秒は合図を出さずに落ちた process の錠が外れた後の観測し直しの上限にだけ使う。
-;; 差が無くなれば task は終わる。
+;; 旧い形の索引を外す前に表の欄の式の索引が見積もれるようになる(autovacuum の analyze が表の標本を取る)のを待つ間も、標本が取れた事を
+;; 知らせる出来事が無いので、同じ間で観測し直す。差も外す旧い形の索引も無くなれば task は終わる。
 (val INDEX-RETRY-SECONDS 30.0)
 ;; 索引の用意の錠を放した合図の名(置き場の通知の channel — 表と列の待ち手の名 "table:" / "stream:" とは重ならない)。
 (val INDEX-TOPIC "index-build")
@@ -133,14 +139,16 @@
   "宣言した索引の欄のうち、置き場に使える索引が在ると観測した欄の覚え(頭の註の「索引の用意」— 表の用意と索引の用意の task が書き、
    ListRows と回収が読む)。fields = 使える索引(表の欄の式の索引か、その aliases の旧い形の索引)の在る欄(IndexedField の集合)/
    scoped = 表の欄の式の索引が使える形で見積もれる (表, 欄)(IndexedField の集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/
-   missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)。資源なので値の型ではない(中身を
-   書き換え、同一性で扱う)。書きも読みも scheduler の thread の上で、driver の thread は触らない。"
+   missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)/ retired = 最後の観測で置き場に在った
+   旧い形の索引の名の並び(名の順 — 索引の用意が外す・頭の註。空 = 無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。
+   書きも読みも scheduler の thread の上で、driver の thread は触らない。"
 
   (defn #^ None __init__ [self]  ; defk にできない: 資源の class の初期化
     "観測の前の覚え(使える索引の在る欄は無い)を作るため。"
     (setv self.fields (frozenset)
           self.scoped (frozenset)
-          self.missing #()))
+          self.missing #()
+          self.retired #()))
 
   (defn #^ bool covers [self #^ str table #^ str field]  ; defk にできない: ListRows の判断の中で同期に読む覚え(Program を返すと真偽にならない)
     "表 table の欄 field に、使える索引が在ると観測したかを読むため。"
@@ -150,11 +158,17 @@
     "表 table の欄のうち、表の欄の式の索引が在ると観測した欄の名の集合を読むため(読みの文の条件の形を決める — pg_sql.row-filter)。"
     (frozenset (gfor indexed self.scoped :if (= indexed.table table) indexed.field)))
 
-  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ tuple missing]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
+  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ tuple missing #^ tuple retired]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
     "置き場の索引を観測した断面で、覚えを書き替えるため(消えた索引の欄は外れる)。"
     (setv self.fields fields
           self.scoped scoped
-          self.missing missing)
+          self.missing missing
+          self.retired retired)
+    None)
+
+  (defn #^ None dropped [self #^ str name]  ; defk にできない: 旧い形の索引を外し終えた拍に同期に書き替える資源の覚え
+    "索引の用意が外し終えた旧い形の索引 name を、外す物の並びから除くため(次の観測を待たずに、回が外し残しを数える)。"
+    (setv self.retired (tuple (gfor retired self.retired :if (!= retired name) retired)))
     None)
 
   (defn #^ None added [self #^ str name #^ tuple fields]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
@@ -471,10 +485,16 @@
    :tags {:context "records" :role "foundation"}}
   "置き場の索引の観測の行 found で覚え book を書き替え、宣言の索引との差を返すため(表の用意の終わりと、索引の用意の回の頭と終わり)。
    表の欄の式で照らす欄(scoped)は、表の欄の式の索引が使える形で、見積もれる(索引の式の統計が在る — 表の標本を取り直す前は前の文の形で
-   照らす・pg_sql.indexes-statement)欄だけ。"
+   照らす・pg_sql.indexes-statement)欄だけ。外す旧い形の索引(retired)は、名が旧い形で宣言に無い観測の索引(使えない形を含む — 外しかけ)。"
   (<- declared (declared-indexes prefix schema))
   (<- observed (observed-indexes found))
   (<- gaps (index-gaps declared observed))
+  (val declared-names (frozenset (gfor index declared index.name)))
+  (var retired #())
+  (for [seen observed]
+    (<- former (retired-index? prefix seen.name))
+    (when (and former (not-in seen.name declared-names))
+      (:= retired (+ retired #(seen.name)))))
   (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
   (val estimable (frozenset (gfor seen observed :if (and seen.valid seen.estimable) seen.name)))
   (var served #())
@@ -486,8 +506,18 @@
                                :if (in index.name (if index.sampled estimable usable))
                                indexed index.scoped
                                indexed)))
-  (.observed book (frozenset served) scoped (tuple (gfor gap gaps gap.index.name)))
+  (.observed book (frozenset served) scoped (tuple (gfor gap gaps gap.index.name)) (tuple (sorted retired)))
   gaps)
+
+
+(defk retirement-ready? [book prefix schema]
+  {:pre [(: book IndexBook) (: prefix str) (: schema RecordsSchema)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "旧い形の索引を外してよい断面かを判じるため(頭の註): 最後の観測で宣言の索引が全部使える形で在り(missing が空)、表の欄の式の索引の
+   欄が全部表の欄の式で照らせる(scoped — 見積もれる)。崩れている間は、前の文の形の読み(ledger = :ledger と欄の式)が旧い形の索引を引く。"
+  (<- declared (declared-indexes prefix schema))
+  (and (not book.missing)
+       (all (gfor index declared (<= (frozenset index.scoped) book.scoped)))))
 
 
 ;; --- 索引の用意 --------------------------------------------------------------------------------------------
@@ -495,8 +525,9 @@
 (defk reconcile-indexes [store]
   {:pre [(: store PreparedStore)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の task(頭の註の「索引の用意」): 宣言の索引と置き場の索引の差が無くなるまで、観測して埋める回(index-round)を繰り返すため。
-   差を埋めきれなかった回(置き場に届かない・engine が断った)の後は INDEX-RETRY-SECONDS 秒待って観測し直す。置き場の失敗も思わぬ
+  "索引の用意の task(頭の註の「索引の用意」): 宣言の索引と置き場の索引の差と、外す旧い形の索引が無くなるまで、観測して埋める回
+   (index-round)を繰り返すため。差を埋めきれなかった回(置き場に届かない・engine が断った・旧い形の索引をまだ外せない)の後は
+   INDEX-RETRY-SECONDS 秒待って観測し直す。置き場の失敗も思わぬ
    例外も上げない(service を終えない — 名乗って次の回へ)。取り消しだけは通す。"
   (while True
     (<- settled (guarded-round store))
@@ -508,7 +539,7 @@
 (defk guarded-round [store]
   {:pre [(: store PreparedStore)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の 1 回を流し、落ちた回を名乗って「埋めきれなかった」にするため(取り消しは通す)。答え = 差が無くなったか。"
+  "索引の用意の 1 回を流し、落ちた回を名乗って「埋めきれなかった」にするため(取り消しは通す)。答え = 差と外す旧い形の索引が無くなったか。"
   (try
     (<- settled (index-round store))
     settled
@@ -524,17 +555,17 @@
 (defk index-round [store]
   {:pre [(: store PreparedStore)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差が在れば索引の用意の錠を待たずに取りに行き(index-turn)、取れたら錠の中で
-   観測し直して残った差を CONCURRENTLY で埋めるため。他の process が錠を持つ間は、その process が錠を放した合図か INDEX-RETRY-SECONDS の
-   早い方まで待って観測し直す(待つ間に他の process が作った索引は作らない)。錠を PostgreSQL の錠の待ちで待たない訳は
-   pg_sql.index-lock-statement の註(待つ側が snapshot を持ったまま待ち、作り手の CONCURRENTLY と deadlock になる)。
-   答え = 差が無くなったか(作れない索引が在れば False — 後で観測し直す)。"
+  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差か外す旧い形の索引が在れば索引の用意の錠を待たずに取りに行き(index-turn)、
+   取れたら錠の中で観測し直して残った差を CONCURRENTLY で埋め、旧い形の索引を外すため。他の process が錠を持つ間は、その process が錠を
+   放した合図か INDEX-RETRY-SECONDS の早い方まで待って観測し直す(待つ間に他の process が作った索引は作らない)。錠を PostgreSQL の錠の
+   待ちで待たない訳は pg_sql.index-lock-statement の註(待つ側が snapshot を持ったまま待ち、作り手の CONCURRENTLY と deadlock になる)。
+   答え = 差と外す旧い形の索引が無くなったか(作れない索引か、まだ外せない旧い形の索引が在れば False — 後で観測し直す)。"
   (<- observing (indexes-statement store.prefix))
   (var claimed False)
   (while (not claimed)
     (<- found (query-rows store.database observing))
     (<- gaps (index-observed store.indexes store.prefix store.schema found))
-    (when (not gaps)
+    (when (and (not gaps) (not store.indexes.retired))
       (return True))
     (<- bell (index-turn store))
     (if (is bell None)
@@ -557,7 +588,8 @@
   {:pre [(: store PreparedStore) (: observing Statement)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
   "索引の用意の錠の中: 置き場の索引を観測し直し、残った差を作って、式の索引を作った表の標本を取り直し、もう 1 度観測して覚えを書き
-   替えるため(標本を取り直した表の欄の式の索引の欄から、読みが表の欄の式で照らす — index-observed の scoped)。答え = 全部を作れたか。"
+   替え(標本を取り直した表の欄の式の索引の欄から、読みが表の欄の式で照らす — index-observed の scoped)、旧い形の索引を外してよい
+   断面なら(retirement-ready?)外して観測し直すため。答え = 全部を作り、外す旧い形の索引も残っていないか(まだ外せない断面は False)。"
   (<- held (query-rows store.database observing))
   (<- remaining (index-observed store.indexes store.prefix store.schema held))
   (<- built (built-gaps store remaining))
@@ -565,7 +597,39 @@
     (<- (analyzed store remaining))
     (<- after (query-rows store.database observing))
     (<- (index-observed store.indexes store.prefix store.schema after)))
-  built)
+  (when (or (not built) (not store.indexes.retired))
+    (return built))
+  (<- ready (retirement-ready? store.indexes store.prefix store.schema))
+  (when (not ready)
+    (return False))
+  (<- dropped (retired-dropped store))
+  (<- final (query-rows store.database observing))
+  (<- (index-observed store.indexes store.prefix store.schema final))
+  (and dropped (not store.indexes.retired)))
+
+
+(defk retired-dropped [store]
+  {:pre [(: store PreparedStore)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "旧い形の索引(覚えの retired)を名の順に 1 本ずつ CONCURRENTLY で外し、書きのたびの索引の更新を減らすため(DROP INDEX CONCURRENTLY は
+   表に SHARE UPDATE EXCLUSIVE だけを取り、その索引を見た transaction の終わりを待つ — 行の読み書きを止めない)。答え = 全部を外せたか
+   (外せなかった索引は名乗り、残りは次の回へ — 錠を外す道を例外で飛ばさないよう、取り消しの外の例外を上げない)。"
+  (for [name store.indexes.retired]
+    (<- started float (GetMonotonic))
+    (try
+      (<- dropping (drop-index-statement name))
+      (<- (query-rows store.ddl-database dropping))
+      (except [TaskCancelledError]
+        (raise))
+      (except [error Exception]
+        (print (.format "記録の service: 旧い形の索引 {} を外せなかった: {}: {}" name (. (type error) __name__) error)
+               :file sys.stderr :flush True)
+        (return False)))
+    (<- done float (GetMonotonic))
+    (.dropped store.indexes name)
+    (print (.format "記録の service: 旧い形の索引 {} を {} 秒で外した(CONCURRENTLY)" name (round (- done started) 1))
+           :file sys.stderr :flush True))
+  True)
 
 
 (defk index-unlocked [store]
@@ -648,7 +712,7 @@
     (<- started float (GetMonotonic))
     (try
       (when gap.invalid
-        (<- dropping (drop-index-statement gap.index))
+        (<- dropping (drop-index-statement gap.index.name))
         (<- (query-rows store.ddl-database dropping)))
       (<- creating (concurrent-index-statement gap.index))
       (<- (query-rows store.ddl-database creating))
