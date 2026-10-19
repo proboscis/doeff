@@ -45,6 +45,15 @@ fn declarations() -> &'static Mutex<Declarations> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 実行の頭で読んだ宣言を、母集団の問いに渡す。同じ宣言を 2 度読まないため(`Architecture::load` は 530KB の architecture.hy で 1 回 30〜80 ミリ秒 —
+/// 書いた file 1 つの hook の CPU の約 1/4・agora-redesign #1022)。呼び手は、問いが読むのと同じ読み方(宣言の dir を repo の根として読んだ宣言)だけを渡す。
+pub fn remember_declaration(path: &Path, architecture: Arc<Architecture>) {
+    declarations()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(path.to_path_buf(), Ok(architecture));
+}
+
 /// file から上へ最も近い architecture.hy。repo の根(`.git` の在る dir)より上は見ない。
 fn nearest_declaration(file: &Path) -> Option<PathBuf> {
     let mut dir = file.parent()?;
@@ -232,4 +241,46 @@ pub fn business_import_violations(
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DECLARATION: &str = r#"
+(defarchitecture pkg
+  :root "pkg"
+  :layers [(layer startup
+             :summary "Python の起動の時点(.pth)で入る見張り"
+             :modules [guard]
+             :exempt [(rule DOEFF004 "Program の外で起動の時点に入るので、設定を Ask で受ける入口が無い")]
+             :forbid-modules [doeff doeff_hy])])
+"#;
+
+    /// 壊れた宣言の file の在る repo を作る(`guard.py` は宣言の `:modules [guard]` の module)。(repo の dir, 宣言の path, guard.py)を返す。
+    fn broken_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("architecture.hy"), "(this is not a declaration").unwrap();
+        std::fs::write(root.join("guard.py"), "x = 1\n").unwrap();
+        (dir, root.join("architecture.hy"), root.join("guard.py"))
+    }
+
+    /// 実行の頭で読んだ宣言を渡されたら、母集団の問いは architecture.hy を読み直さない。
+    /// 宣言の file を壊してある repo で、読み直せば誤りになる所を、渡した宣言で答える。
+    #[test]
+    fn a_remembered_declaration_answers_without_reading_the_file_again() {
+        let (_unremembered, _, guard) = broken_repo();
+        assert!(population_of(&guard).is_err(), "検の前提: 壊した宣言を読めば誤りになる");
+
+        let good = tempfile::TempDir::new().unwrap();
+        let good_declaration = good.path().canonicalize().unwrap().join("architecture.hy");
+        std::fs::write(&good_declaration, DECLARATION).unwrap();
+        let loaded = Architecture::load(&good_declaration, good_declaration.parent().unwrap()).expect("検の前提: 宣言が読める");
+
+        let (_remembered, declaration, guard) = broken_repo();
+        remember_declaration(&declaration, Arc::new(loaded));
+        assert!(matches!(population_of(&guard), Ok(FilePopulation::Exempt { .. })), "渡した宣言から答える");
+    }
 }
