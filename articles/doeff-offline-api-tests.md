@@ -1,5 +1,5 @@
 ---
-title: "外部APIのテストを、通信せずに回す"
+title: "外部APIのテストで通信するのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "テスト", "pytest"]
@@ -221,7 +221,7 @@ def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに�
 - 記録に無い依頼は`reject_http`で、通信せずに失敗させます。
 - APIキーを記録の鍵から外せば、CIに本物の鍵を置かずに再生できます。
 
-待ちを含む処理のテストは、3本目の20秒待つ処理を、20秒待たずにテストする(公開予定)で扱いました。依存を外側から渡す話は、4本目のDIコンテナなしで、依存を引数でバケツリレーしない(公開予定)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
+待ちを含む処理のテストは、3本目のテストで20秒待つのをやめる(公開予定)で扱いました。依存を外側から渡す話は、4本目の依存を引数で引き回すのをやめる(公開予定)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
 
 doeffとは？：メイン記事へ戻る(公開予定)
 
@@ -242,5 +242,5 @@ uv run --with "doeff[http]==0.6.0" --with pytest pytest -q http_replay.py  # PyP
 - [標準の取得担当とhttp_fixture_handler](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
 - [unittest.mock(Python公式の説明)](https://docs.python.org/ja/3/library/unittest.mock.html)
 - [VCR.py(公式の説明)](https://vcrpy.readthedocs.io/)
-- 前の回:1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)
-- 次の回:バックテストと本番で、処理を2つ書かない(公開予定)
+- 前の回:ライブラリのcommitの68%を、Claude Codeと書いた1年(公開予定)
+- 次の回:バックテストと本番で処理を2つ書くのをやめる(公開予定)

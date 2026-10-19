@@ -1,5 +1,5 @@
 ---
-title: "CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる"
+title: "CLAUDE.mdに決まり851本を書き足すのをやめた"
 emoji: "📏"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "llm"]
@@ -15,7 +15,7 @@ CLAUDE.mdは、Claude Codeが毎回の会話の頭に読み込む指示のファ
 
 全部を読ませると長すぎます。削ると、要る時に手元にありません。この記事は、この悩みをClaude Codeのhookで解いた開発の記録です。決まりを「いつ見せるか」の条件つきで持ち、当たった時だけAIに見せます。
 
-この仕組みは、自作のAI開発の基盤agoraで動いています。agoraは、AIの会話を何十も並べて開発を進める仕組みです。全体の話は、連載の5本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」にあります。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+この仕組みは、自作のAI開発の基盤agoraで動いています。agoraは、AIの会話を何十も並べて開発を進める仕組みです。全体の話は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード
 
@@ -274,7 +274,7 @@ def test_judged_rule_with_fixed_answers():  # 同じ処理を、判定器を替�
 - 綴りで決まらない規則は判定器に問います。問いをdoeffのエフェクトにすると、試験では表で、本番ではモデルが答えます。
 - 移して25日で規則は851本に増えましたが、毎回読む文は約1.5万字のままです。
 
-次の9本目は「async/awaitがあるのに、なぜyieldで書くのか(公開予定)」です。この記事の`AskJudge`のように、止まった所へ答える役を外側に置く理由を扱います。
+この記事の`AskJudge`は、止まった所へ答える役を外側に置きました。その理由は、doeffの連載の9本目「async/awaitがあるのに、なぜyieldで書くのか(公開予定)」です。
 
 doeffとは？：メイン記事へ戻る(公開予定)
 
@@ -291,5 +291,5 @@ uv run --with "doeff==0.6.0" python rule_hook.py  # PyPIのdoeff 0.6.0を入れ�
 - [Claude Codeのhooksの説明(公式)](https://code.claude.com/docs/en/hooks)
 - [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
 - [判定器への問いのエフェクト(doeff-system-one)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-system-one)
-- 前の回:バックテストと本番で、処理を2つ書かない(公開予定)
-- 次の回:async/awaitがあるのに、なぜyieldで書くのか(公開予定)
+- 前の回:Claude Codeに仕事を配らせるのをやめ、関数で配る(公開予定)
+- 次の回:止まったClaude Codeを1つずつ開くのをやめた(公開予定)
