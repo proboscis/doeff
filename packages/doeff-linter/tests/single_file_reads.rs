@@ -261,7 +261,8 @@ fn a_single_file_run_that_needs_the_callers_reads_only_the_files_that_spell_the_
 }
 
 /// 逆向きの依存のうち、失敗の型の宣言(別の file の defeffect の `:failure`)が要る file の 1 file の実行も、型の名を字面に含む宣言の file だけを読む:
-/// repo 全体の表を通らず、失敗の型の事実を cache に置かない(冷えた作業木の最初の 1 回が 19〜27 秒かかっていた・card ki-58bfad2c13a1 の残り)。
+/// repo 全体の表を通らず、置く失敗の型の事実も、型の名を綴る宣言の file の分だけ(冷えた作業木の最初の 1 回が 19〜27 秒かかっていた・card ki-58bfad2c13a1 の残り)。
+/// 宣言の file の読み解きを置くのは、次の実行が同じ file を読み解き直さないため(混んだ機体の hook の CPU の大半だった・agora-redesign #1022)。置き場の鍵は全体の実行と同じ。
 /// 答えは `a_single_file_run_answers_like_the_whole_run_for_that_file` が守る。
 #[test]
 fn a_single_file_run_that_needs_the_failure_types_reads_only_the_declarations_that_spell_the_type() {
@@ -272,8 +273,16 @@ fn a_single_file_run_that_needs_the_failure_types_reads_only_the_declarations_th
     // 検が空振りでないことの確かめ: effs.hy が Unreachable を失敗の型と宣言するので、needs.hy の腕は DOEFF122 に当たる。
     assert!(keys_of(&report, "app/core/needs.hy").iter().any(|k| k.contains("DOEFF122")), "needs.hy に DOEFF122 が当たらない(検の材料の誤り)\n{stderr}");
     assert!(!stderr.contains("doeff-linter-timing: facts-cache.resolve "), "repo 全体の表を通った(宣言を探すのに全 file を作り直している)\n{stderr}");
-    let kinds = stored_kinds(cache.path());
-    assert!(!kinds.iter().any(|k| k == "failure-types.json"), "repo 全体の失敗の型の事実が置かれた: {kinds:?}\n{stderr}");
+    // 置かれた失敗の型の事実は、型の名を綴る宣言の file(effs.hy の 1 つ)だけ。
+    let stored: Vec<_> = walkdir::WalkDir::new(cache.path().join("objects").join("failure-types.json"))
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .collect();
+    assert_eq!(stored.len(), 1, "失敗の型の事実が宣言の file の数と合わない: {:?}\n{stderr}", stored.iter().map(|e| e.path().to_path_buf()).collect::<Vec<_>>());
+    // 次の実行は、置いた読み解きを読む(同じ答え)。
+    let (again, _) = single_report(dir.path(), cache.path(), "app/core/needs.hy");
+    assert_eq!(keys_of(&again, "app/core/needs.hy"), keys_of(&report, "app/core/needs.hy"), "置いた読み解きから引いた答えが違う");
 }
 
 /// 1 file の実行は、repo 全体の file の事実を引く表(`facts-cache.resolve`)も、層の module の全部の走査(`layer-files`)も通らない。
