@@ -653,3 +653,96 @@
   (<- plain (top-rows-statement "records_" "message" #("id") (frozenset) "at" False None {} {} 10 None))
   (assert (in "WHERE ledger = :ledger AND jsonb_typeof(((payload::jsonb) -> 'at')) = 'number'" plain.text) plain.text)
   (assert (not (in "NULLS LAST" plain.text)) plain.text))
+
+
+;; --- 鍵の綴りの順の頁読み(絞りの無い ListRows)は照合順 "C" の索引を辿る -------------------------------------------------
+;; 列 key が照合順 "C" でない置き場(本番の database の既定は en_US.utf8 — 検の使い捨ての PostgreSQL は --locale=C で立ち ICU も無いので、
+;; 列を libc の照合順 C.utf8 に替えて本番の形を作る。C.utf8 の順は "C" と同じでも、planner は別の照合順として主キーを頁の順に使わない)で、
+;; 続きの位置からの 1 頁(list-rows-statement)が、鍵の綴りの順の索引 (ledger, key COLLATE "C") の範囲を 1 頁 + 1 行だけ辿る事。主キー
+;; (ledger, key) は列の照合順で並ぶので頁の順 key COLLATE "C" では辿れず、索引の無い前の形は表の行を全部読んで並べ替えた(Sort — 1 頁ごとに
+;; 表の全部の行・2026-10-19 の本番)。
+(val KEY-ORDER-ROWS 5000)
+(val KEY-ORDER-PAGE 200)
+(val NON-C-COLLATION "C.utf8")
+
+
+(defk key-order-seed-statement [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "表 parts に id = p-1・P-2・p-3 …(奇数は小文字・偶数は大文字の頭)の行を count 行、表 tickets に count 行(別の表の行 — 頁に出ない)まとめて置く文を作るため。"
+  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
+                       SELECT t.ledger, t.key, t.payload, 1, CAST(:at AS bigint), 'maker', CAST(:origin AS text), 1
+                         FROM (SELECT 'parts' AS ledger,
+                                      '[\"' || CASE WHEN g % 2 = 1 THEN 'p' ELSE 'P' END || '-' || g || '\"]' AS key,
+                                      json_build_object('id', CASE WHEN g % 2 = 1 THEN 'p' ELSE 'P' END || '-' || g,
+                                                        'color', 'c', 'state', 'open')::text AS payload
+                                 FROM generate_series(1, CAST(:count AS integer)) AS g
+                               UNION ALL
+                               SELECT 'tickets', '[\"g\", \"k' || g || '\"]',
+                                      json_build_object('group', 'g', 'id', 'k' || g, 'state', 'open')::text
+                                 FROM generate_series(1, CAST(:count AS integer)) AS g) AS t" :p prefix)
+             :params (tuple (gfor #(name value) #(#("count" count) #("at" YOUNG) #("origin" ORIGIN-HOST))
+                                  (SqlParam :name name :value value)))))
+
+
+(defk key-order-reads-on-seeded-store [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix の列 key を照合順 C.utf8 に替え、表 parts と tickets に count 行ずつ置いて統計を取り、真ん中の鍵の後ろからの 1 頁の
+   #(走査の節 引いた索引の名 計画の節の種類 返した鍵 期待の鍵) を返すため。期待 = 鍵の綴りの符号点の順の、真ん中の鍵の後ろの 1 頁 + 1 行。"
+  (<- seed (key-order-seed-statement prefix count))
+  (for [statement #((Statement :text (.format "ALTER TABLE {p}state_rows ALTER COLUMN key TYPE text COLLATE \"{c}\"" :p prefix :c NON-C-COLLATION)
+                               :params #())
+                    seed
+                    (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
+    (<- seeded (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  ;; 表 parts の g 番目の行の id(奇数は小文字・偶数は大文字の頭 — "C" の順では大文字の頭の行が全部先・置く文と同じ形)。
+  (val ordered (sorted (gfor g (range 1 (+ count 1)) (json.dumps [(.format "{}-{}" (if (% g 2) "p" "P") g)]))))
+  (val middle (get ordered (// count 2)))
+  (val expected (tuple (cut ordered (+ (// count 2) 1) (+ (// count 2) 2 KEY-ORDER-PAGE))))
+  (<- statement (list-rows-statement prefix "parts" #("id") (frozenset) middle {} {} KEY-ORDER-PAGE None))
+  (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+  (assert (isinstance answer SqlRows) (repr answer))
+  (val plan (get answer.rows 0 0))
+  (val explained (if (isinstance plan str) (json.loads plan) plan))
+  (<- scans (table-scans prefix explained))
+  (<- names (index-names explained))
+  (<- nodes (plan-nodes (get explained 0 "Plan")))
+  (<- listed (SqlQuery DATABASE statement.text statement.params))
+  (assert (isinstance listed SqlRows) (repr listed))
+  #(scans names (frozenset (gfor node nodes (get node "Node Type"))) (tuple (gfor record listed.rows (get record 0))) expected))
+
+
+(defk key-order-reads-at [connections count]
+  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して count 行ずつ置き、鍵の綴りの順の頁読みを測るため(終わりに表を消す)。
+   答え = #(走査の節 引いた索引の名 計画の節の種類 返した鍵 期待の鍵 鍵の綴りの順の索引の名)。"
+  (val store (prepared-store connections (fresh-prefix)))
+  (var measured #())
+  (try
+    (:= measured (run-sql connections (key-order-reads-on-seeded-store store.prefix count)))
+    (finally
+      (run-sql connections (drop-records-tables store))))
+  (+ measured #((+ store.prefix "state_rows_key_c"))))
+
+
+(deftest test-a-page-in-key-order-reads-through-the-c-collated-key-index-when-the-key-column-is-not-c
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (try
+    (<- small (key-order-reads-at connections KEY-ORDER-ROWS))
+    (<- large (key-order-reads-at connections (* 2 KEY-ORDER-ROWS)))
+    (for [#(scans names kinds keys expected key-index) #(small large)]
+      ;; 鍵の綴りの符号点の順(memory の置き場と同じ順)に、続きの位置の後ろの 1 頁 + 1 行。
+      (assert (= keys expected) (repr #(keys expected)))
+      ;; 鍵の綴りの順の索引を辿り、並べ替えの節も置き場の表を頭から読む節も無い。
+      (assert (in key-index names) (repr #(key-index names scans)))
+      (assert (not-in "Sort" kinds) (repr #(kinds scans)))
+      (assert (not (lfor #(kind table _) scans :if (= kind "Seq Scan") table)) (repr scans))
+      ;; 読んだ行は 1 頁 + 1 行だけ(表 parts の行の数に依らない)。
+      (<- read (total-read scans))
+      (assert (<= read (+ KEY-ORDER-PAGE 1)) (repr #(read scans))))
+    (finally
+      (.close connections))))

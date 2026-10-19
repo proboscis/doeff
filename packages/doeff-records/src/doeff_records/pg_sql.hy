@@ -26,6 +26,8 @@
 ;;;                                  終端の行の読み terminal-rows-statement が引く)
 ;;;   state_rows (並べる式 DESC NULLS LAST, key DESC)  表の上から読む欄(TableDecl.descending)ごとに 1 つ — 上から読む読み
 ;;;                                  (top-rows-statement)が索引の順に 1 頁だけ辿る。式は ordered-expression の 1 か所(下の註)
+;;;   state_rows (ledger, key COLLATE "C")  鍵の綴りの順の頁読み(list-rows-statement の ledger = :ledger と key COLLATE "C" > :after・
+;;;                                  ORDER BY key COLLATE "C")が索引の範囲を 1 頁 + 1 行だけ辿る(下の註)
 ;;; 欄の式の索引は表の欄の式の索引(card ki-2176012d1804): 宣言した表 1 つ × 欄 1 つに、表の欄の式
 ;;; `(CASE WHEN ledger = '<表>' THEN ((payload::jsonb) -> '<欄>') END)`(table-field-expression — その表の行の欄の値・他の表の行は NULL)の
 ;;; 索引 1 つ(名 = table-field-index-name)を張る。state_rows は全部の表の行を持つ 1 つの表なので、全部の行の payload を読み直す索引
@@ -57,6 +59,12 @@
 ;;; payload を jsonb に読み直して並べ替える(2026-10-19 — 4.7 万行の表 message で 1 頁 0.6〜0.8 秒・負荷の下で読みの期限を越えた)。
 ;;; 索引の在る形は、索引の順に 1 頁 + 1 行だけを辿る(同じ置き場で 2〜7 ms)。続きの位置は行の比べ (式, key) < (値, 鍵) — OR に分けた形は
 ;;; 索引の範囲にならず、位置より下の行を全部読んで並べ替える。文は条件 ledger = :ledger を置かない(式が NULL でない行は表の行だけ)。
+;;; 鍵の綴りの順の索引: 列 key と主キー (ledger, key) の索引は database の既定の照合順(本番は en_US.utf8)で並び、頁読みの順
+;;; key COLLATE "C"(memory の置き場と同じ符号点の順)では主キーを辿れない。索引の無い置き場の 1 頁は、表の全部の行を読んで並べ替えて
+;;; 上から limit + 1 行を取る(2026-10-19 の本番 — 1.88 万行の表で 1 頁ごとに 1.88 万行・全頁の読みは行の数の 2 乗)。照合順 "C" の
+;;; (ledger, key) の索引は 1 頁 + 1 行だけを辿る。列 key の照合順を "C" に替える形(ALTER COLUMN … COLLATE "C")にしない訳: 替える文は
+;;; 表の排他の錠(ACCESS EXCLUSIVE)を持ったまま主キーと key を含む索引(上から読む欄の索引 — payload を開き直す式)を作り直し、その間
+;;; 行の読み書きが全部止まる。足す索引は索引の用意が CONCURRENTLY で作り、読みを止めない(速さだけの索引 — 無くても答えは同じ)。
 ;;; 索引の用意(pg.hy の頭の註): 移行の transaction は、その transaction で生まれた表の索引だけを作る(空の表 — 一瞬)。既に在る表に
 ;;; 足りない索引は、索引の用意の task が transaction の外の CREATE INDEX CONCURRENTLY で作る(declared-indexes が宣言の索引の全部・
 ;;; indexes-statement が置き場の索引の観測)。
@@ -475,7 +483,8 @@
   "旧い版より後に足した索引の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
-   無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。最後に表の名の順・欄の名の順の上から読む欄の索引(頭の註)。"
+   無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。続いて表の名の順・欄の名の順の上から読む欄の索引(頭の註)。
+   最後に鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
@@ -508,7 +517,9 @@
      #((! (fixed-index (+ p "row_changes_at") "row_changes"
                        (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_at ON {p}row_changes (at)" :p p))))
      states
-     ordered))
+     ordered
+     #((! (fixed-index (+ p "state_rows_key_c") "state_rows"
+                       (.format "CREATE INDEX IF NOT EXISTS {p}state_rows_key_c ON {p}state_rows (ledger, key COLLATE \"C\")" :p p))))))
 
 
 (defk relation-names [prefix relations]
