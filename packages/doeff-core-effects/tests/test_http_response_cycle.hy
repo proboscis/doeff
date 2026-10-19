@@ -34,10 +34,10 @@
   (fn [] (httpx.AsyncClient :transport (httpx.MockTransport (functools.partial answer-body seen)))))
 
 
-;; 1 つの run の中で出す要求の数 — scheduler は終わった Await の答え(ここでは httpx の応答)を約束の表に持ち、id を 1024 個払い出すごとの
-;; 掃除で、持ち手の死んだ行を消す(scheduler.py の HANDLE_SWEEP_INTERVAL)。その掃除を少なくとも 1 度通る数。run の終わりの後は scheduler の
-;; 状態そのものが GC を待つので、最初の応答が消えたかは、掃除を通った後の run の中の値で見る。
-(val REQUESTS 1100)
+;; 1 つの run の中で出す要求の数 — 最初の応答が消えたかは、後の要求を出した後の run の中で見る(run の終わりの後は scheduler の状態そのものが
+;; GC を待つ)。Await の答え手は待った値を約束の表に残さない(doeff_core_effects.handlers の _AwaitedValue)ので、表の掃除
+;; (scheduler.py の HANDLE_SWEEP_INTERVAL ごと)を待つ数は要らない。
+(val REQUESTS 3)
 
 
 (defk fetch-many [n]
@@ -51,9 +51,9 @@
 
 
 (deftest test-the-httpx-response-is-freed-without-the-cyclic-gc
-  ;; 失敗ケース: 直す前は httpx の応答が本文の流れとの循環で残り、GC を止めている間、scheduler の表の行が掃かれた後も最初の応答の weakref が
+  ;; 失敗ケース: 直す前は httpx の応答が本文の流れとの循環で残り、GC を止めている間、後の要求を出した後も最初の応答の weakref が
   ;; 消えない(本文の 96 KB も残る — 周ごとに大きい応答を受ける job の常駐量が上がり続けた形)。直した後は、答え手が答えた時点で循環が
-  ;; 外れ、表の行が掃かれた時に参照の数で消える。答えの本文は欠けない。
+  ;; 外れ、参照の数で消える。Await の答え手が待った応答を約束の表に残す形に戻っても赤。答えの本文は欠けない。
   (val seen {})
   (<- factory Callable (watching-factory seen))
   (gc.collect)
@@ -63,6 +63,6 @@
                               (fetch-many REQUESTS)))
     (assert (= #(answer.status (len answer.content)) #(200 (len BODY))) answer.status)
     (assert (in "first" seen) seen)
-    (assert (is ((get seen "first")) None) "最初の httpx の応答が GC を待って残っている(本文の流れとの循環)")
+    (assert (is ((get seen "first")) None) "最初の httpx の応答が残っている(本文の流れとの循環か、Await の約束の表)")
     (finally
       (gc.enable))))
