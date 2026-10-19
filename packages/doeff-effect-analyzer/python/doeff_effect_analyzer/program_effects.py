@@ -40,6 +40,10 @@ generator function):
   ``__doeff_runs_carried__`` (``Traverse(f, items)`` — its handler calls ``f`` for each
   item) → a carried Program: ``fn``'s body, read where it was written.  The handler's
   ``effect.f(item)`` then adds nothing where the handler is read.
+- ``f(xs)`` where ``xs`` is a tuple / list literal of Program calls, or a generator
+  expression / list comprehension whose element is a Program call
+  (``sequence(read(v) for v in values)``) → what ``f`` takes out of ``xs`` and yields
+  is read as an element, where the caller wrote it.
 - doeff-vm control values (``Resume``, ``Transfer``, ``Pass`` …) are not effects.
 
 Anything the reader cannot follow (a yielded local variable, a call whose target
@@ -1103,6 +1107,10 @@ Imported = Any
 
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
 
+# A comprehension that builds a sequence in order (a set's order is not the written one,
+# and a dict's elements are pairs).
+Comprehension = ast.GeneratorExp | ast.ListComp
+
 
 class _Unbound:
     """What a name resolves to when the reader cannot bind it to an object."""
@@ -1258,17 +1266,25 @@ class _ProgramArg:
 @dataclass(frozen=True, eq=False)
 class _ProgramSeq:
     """A parameter bound to a tuple / list of Programs the caller built
-    (``f(parts, #((serve-a) (serve-b)))`` — one body per port).  It is not a Program
-    itself: what the callee takes out of it (``for p in ps`` / ``ps[i]``) is one of the
-    elements, read where the caller wrote it (agora-redesign #1265)."""
+    (``f(parts, #((serve-a) (serve-b)))`` — one body per port), or to a generator
+    expression / list comprehension whose element builds one
+    (``(sequence (gfor row rows (carrier-of row)))`` — doeff-traverse's ``sequence``).
+    It is not a Program itself: what the callee takes out of it (``for p in ps`` /
+    ``ps[i]``) is one of the elements, read where the caller wrote it (agora-redesign
+    #1265; a comprehension — request lt-QX2FM3MDS8EX0Q308A3NCQQYGJ)."""
 
-    expr: ast.Tuple | ast.List
+    expr: ast.Tuple | ast.List | Comprehension
     scope: "_Scope"
 
-    @property
+    @functools.cached_property
     def elements(self) -> tuple[_ProgramArg, ...]:
-        """Each element, as a Program argument written in the caller's scope."""
-        return tuple(_ProgramArg(element, self.scope) for element in self.expr.elts)
+        """Each element, as a Program argument written in the caller's scope — a
+        comprehension's one element read with its own variables unknown."""
+        match self.expr:
+            case ast.GeneratorExp(elt=elt) | ast.ListComp(elt=elt):
+                return (_ProgramArg(elt, self.scope.shadowing(_comprehension_names(self.expr))),)
+            case ast.Tuple(elts=elts) | ast.List(elts=elts):
+                return tuple(_ProgramArg(element, self.scope) for element in elts)
 
     @property
     def depth(self) -> int:
@@ -1381,6 +1397,8 @@ def _element_of(sequence: Imported, index: ast.expr) -> Imported:
     or any element when the index is not a constant the reader can read."""
     if not isinstance(sequence, _ProgramSeq):
         return UNBOUND
+    if isinstance(sequence.expr, Comprehension):
+        return _ProgramAnyOf(sequence)  # every element is the one written element
     elements = sequence.elements
     match index:
         case ast.Constant(value=int() as position) if -len(elements) <= position < len(elements):
@@ -1592,6 +1610,23 @@ class _Scope:
                 return inner._returned_at_once(defined)
             case _:
                 return UNBOUND
+
+    def shadowing(self, names: frozenset[str]) -> "_Scope":
+        """This scope with ``names`` bound to values the reader cannot see (a comprehension's
+        own variables): they no longer resolve to a local, a parameter or a module global."""
+        return replace(
+            self,
+            local_names=self.local_names | names,
+            local_calls=_unshadowed(self.local_calls, names),
+            local_imports=_unshadowed(self.local_imports, names),
+            local_values=_unshadowed(self.local_values, names),
+            local_functions=_unshadowed(self.local_functions, names),
+            local_elements=_unshadowed(self.local_elements, names),
+            local_choices=_unshadowed(self.local_choices, names),
+            local_rewraps=_unshadowed(self.local_rewraps, names),
+            local_unpacked=_unshadowed(self.local_unpacked, names),
+            bound=self.bound.without(names),
+        )
 
     def aliases(self, name: str, param: str) -> bool:
         """Whether the local ``name`` is an alias of the parameter ``param``: every assignment of
@@ -2283,16 +2318,31 @@ def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
 
 
 def _program_sequence(expr: ast.expr, scope: _Scope) -> _ProgramSeq | None:
-    """A tuple / list literal whose every element builds a Program (one body per port);
-    a literal holding plain data, or spreading another sequence, is not one."""
+    """A tuple / list literal whose every element builds a Program (one body per port), or
+    a generator expression / list comprehension whose element builds one; a literal or a
+    comprehension holding plain data, or a literal spreading another sequence, is not one."""
     match expr:
         case ast.Tuple(elts=[_, *_] as elements) | ast.List(elts=[_, *_] as elements) if all(
             not isinstance(element, ast.Starred) and _is_program_expr(element, scope)
             for element in elements
         ):
             return _ProgramSeq(expr, scope)
+        case ast.GeneratorExp(elt=elt) | ast.ListComp(elt=elt) if _is_program_expr(
+            elt, scope.shadowing(_comprehension_names(expr))
+        ):
+            return _ProgramSeq(expr, scope)
         case _:
             return None
+
+
+def _comprehension_names(expr: Comprehension) -> frozenset[str]:
+    """The variables a comprehension binds for its element (``for a, b in …`` → a, b)."""
+    return frozenset(
+        node.id
+        for generator in expr.generators
+        for node in ast.walk(generator.target)
+        if isinstance(node, ast.Name)
+    )
 
 
 def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
