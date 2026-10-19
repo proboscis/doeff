@@ -759,29 +759,23 @@
   (StoreHead :epoch (int (get record 0)) :floor (int (get record 1)) :head (int (get record 2))))
 
 
-(defk decoded-value [payload]
-  {:pre [(: payload str)] :post [(: % FrozenMap)]
-   :tags {:context "records" :role "foundation"}}
+(defn #^ FrozenMap decoded-value [#^ str payload]  ; defk にできない: 頁の行を内包表記で 1 度に組む listed-rows-of が行ごとに呼ぶ純粋な綴り(defk にすると行ごとに Program を bind し、頁の行の数だけ費用が足される)
   "state_rows / row_changes の payload(JSON の綴り)を行の値(深く凍らせた写像)にするため。DB から読む境界はここ 1 か所。"
   (frozen-json-object (json.loads payload) "state_rows の payload"))
 
 
-(defk row-of [record]
-  {:pre [(: record tuple)] :post [(: % Row)]
-   :tags {:context "records" :role "foundation"}}
+(defn #^ Row row-of [#^ tuple record]  ; defk にできない: decoded-value と同じ — listed-rows-of の内包表記が行ごとに呼ぶ純粋な綴り
   "state_rows の行(key payload version …)を Row にするため。"
-  (Row (key-from-text (get record 0)) (! (decoded-value (get record 1))) (int (get record 2))))
+  (Row (key-from-text (get record 0)) (decoded-value (get record 1)) (int (get record 2))))
 
 
 (defk listed-rows-of [decl fields records]
   {:pre [(: decl TableDecl) (: fields (| tuple None)) (: records (| tuple list))] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "ListRows の頁に出す行(返す欄だけ)を state_rows の行の列から作るため — 鍵の順の読みと上から読む読みが同じ形で行を出す 1 点。"
-  (var rows #())
-  (for [record records]
-    (<- row (row-of record))
-    (:= rows (+ rows #((listed-row decl fields row)))))
-  rows)
+  "ListRows の頁に出す行(返す欄だけ)を state_rows の行の列から作るため — 鍵の順の読みと上から読む読みが同じ形で行を出す 1 点。
+   頁の行は内包表記で 1 度に tuple にする(行ごとに tuple を継ぎ足すと頁の行の数の 2 乗の写しになり、4 万行の頁で 1 回の答えの
+   7 割 — 10 秒 — をこの写しが使っていた。行ごとの Program の bind も 1 割を使っていた)。"
+  (tuple (gfor record records (listed-row decl fields (row-of record)))))
 
 
 (defk change-of [record]
@@ -792,7 +786,7 @@
   (val key (key-from-text (get record 2)))
   (if (is payload None)
       (RowRemoved (get record 1) key (int (get record 0)))
-      (RowChanged (get record 1) key (int (get record 3)) (! (decoded-value payload)) (int (get record 0)) (int (get record 5)))))
+      (RowChanged (get record 1) key (int (get record 3)) (decoded-value payload) (int (get record 0)) (int (get record 5)))))
 
 
 (defk event-of [stream record]
@@ -842,7 +836,7 @@
       (<- statement (terminal-rows-statement store.prefix name decl.state-field decl.terminal scoped))
       (<- records (query-rows store.database statement))
       (for [record records]
-        (<- value (decoded-value (get record 1)))
+        (val value (decoded-value (get record 1)))
         (when (row-expired? decl value (int (get record 3)) now-ms)
           (.append found (ExpiredRow :table name :record (tuple record)))))))
   (tuple found))
@@ -973,7 +967,7 @@
   (<- expiry (row-expiry decl now-ms))
   (<- statement (read-row-statement store.prefix ask.table (key-text ask.key) expiry))
   (<- records (query-rows store.database statement))
-  (if records (! (row-of (get records 0))) (Missing)))
+  (if records (row-of (get records 0)) (Missing)))
 
 
 (defk unbuilt-fields [store decl names]
@@ -1012,7 +1006,7 @@
     (when (<= (len top-records) ask.limit)
       (return (Page top-rows None head.epoch head.head)))
     ;; 位置の値は頁の最後の行の全部の欄から読む(返す欄 fields が並べる欄を外しても)。
-    (<- last-row (row-of (get top-taken -1)))
+    (val last-row (row-of (get top-taken -1)))
     (return (Page top-rows
                   (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ask.descending-by))
                   head.epoch
@@ -1042,7 +1036,7 @@
   (when (not records)
     (return (LockedRow :current None :cleanup #())))
   (val record (get records 0))
-  (<- row (row-of record))
+  (val row (row-of record))
   (when (row-expired? decl row.value (int (get record 3)) now-ms)
     (<- cleanup (removed-row-statements store decl.name text row.version now-ms epoch))
     (return (LockedRow :current None :cleanup cleanup)))
