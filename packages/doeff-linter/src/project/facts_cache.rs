@@ -316,6 +316,35 @@ where
     files.iter().zip(resolved).filter_map(|((rel, path), (value, _))| bound(rel, path, value)).collect()
 }
 
+/// `per_file_named` の、**中身を既に読んだ file** のための形 — 1 file の実行が repo の Hy を歩きながら読んだ中身を、disk から読み直さずに引く
+/// (読み直すと、file ごとに open と read がもう 1 回ずつ増える)。置き場の鍵は `per_file_keyed` と同じ(印・`key`・`rel`・中身の SHA-256)なので、全体の実行が
+/// 置いた事実を読み、ここが置いた事実を全体の実行が読む。`contents` は(根からの path・中身)の列。結果は `contents` の順で、`compute` が None を返した file は None
+/// (置かない — 表を通らないので、集める物が無い file を覚える行は無い。呼び手が空の事実で覚えさせたい時は `Some(空)` を返す)。
+pub fn per_file_content<T, F>(root: &Path, kind: &str, key: &str, contents: &[(&str, &str)], compute: F) -> Vec<Option<T>>
+where
+    T: Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &str) -> Option<T> + Sync,
+{
+    let place = place(root, kind, Format::Json);
+    let identity = format!("{}/{key}", identity(kind));
+    let resolved: Vec<(Option<T>, u64)> = contents
+        .par_iter()
+        .map(|(rel, source)| {
+            let Some(place) = place.as_ref() else { return (compute(rel, source), 0) };
+            let digest = Sha256::digest(source.as_bytes());
+            let object = object_key(&[identity.as_bytes(), rel.as_bytes(), digest.as_slice()]);
+            if let Some(value) = read_object::<T>(&place.objects, &object, Format::Json) {
+                return (Some(value), 0);
+            }
+            let value = compute(rel, source);
+            let written = value.as_ref().map_or(0, |value| write_object(&place.objects, &object, value, Format::Json, &place.guard));
+            (value, written)
+        })
+        .collect();
+    note_object_bytes(resolved.iter().map(|(_, written)| *written).sum());
+    resolved.into_iter().map(|(value, _)| value).collect()
+}
+
 /// 1 つの値を、呼び手が材料から作った鍵 `key` で覚える(file ごとではなく、repo 全体の事実から導いた値 — 例: effect の推論の不動点)。
 /// 置いた値の鍵が `key` と同じなら読み、違えば(無い・壊れた・linter が組み直された時も)`compute` で作って置く。答えは変えない —
 /// 鍵が材料を漏れなく覆うことは呼び手が保つ。値は根をまたいで分け合う(根の絶対 path を持たない値だけ)。形は binary(bincode)。

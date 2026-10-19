@@ -9,15 +9,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use rayon::prelude::*;
-
-use super::facts::{read_facts, Language};
 use super::layers::TagReading;
-use super::names::module_of;
 use super::rule::ProjectRule;
-use super::smells::{failure_types_in, FailureLookup, FailureTypes, Scope};
+use super::smells::{FailureLookup, FailureTypes};
 use super::spelling::Spelling;
-use super::hy_files;
+use super::{facts_cache, failure_types_key, failure_types_of_source, has_failure_declaration_spelling, hy_files, FAILURE_TYPES_KIND};
 
 /// 引かれた時に型の名を字面に含む宣言の file から集める失敗の型(1 file の実行)。
 pub struct SpelledFailures<'a> {
@@ -29,11 +25,14 @@ pub struct SpelledFailures<'a> {
     /// 宣言を持つ file(`:failure` か `:absent` を含む file)の(根からの path・中身)— 型の名に依らないので、最初の問いで 1 度だけ repo から集める。
     /// 名ごとに repo の Hy の全部を読み直すと、match の腕の型が多い file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
     declarations: OnceLock<Vec<(String, String)>>,
+    /// 宣言の file ごとの失敗の型(根からの path → その file が宣言する型)。file の中身と読み方だけで決まり、引く型の名に依らないので、名が変わっても同じ file を読み解き直さない
+    /// (match の腕の型が違う名で何度も引かれると、`|` のように全部の宣言の file を綴る名では 246 file の読み解きが名の数だけ繰り返された)。
+    parsed: Mutex<HashMap<String, Arc<FailureTypes>>>,
 }
 
 impl<'a> SpelledFailures<'a> {
     pub fn new(root: &'a Path, enabled: &'a BTreeSet<ProjectRule>, reading: &'a TagReading) -> Self {
-        SpelledFailures { root, enabled, reading, memo: Mutex::new(HashMap::new()), declarations: OnceLock::new() }
+        SpelledFailures { root, enabled, reading, memo: Mutex::new(HashMap::new()), declarations: OnceLock::new(), parsed: Mutex::new(HashMap::new()) }
     }
 
     /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
@@ -43,23 +42,27 @@ impl<'a> SpelledFailures<'a> {
             // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
             let sources: Vec<(String, PathBuf, Option<String>)> = hy_files::collect_reading(self.root, |path| {
                 let source = std::fs::read_to_string(path).ok()?;
-                (source.contains(":failure") || source.contains(":absent")).then_some(source)
+                has_failure_declaration_spelling(&source).then_some(source)
             });
             sources.into_iter().filter_map(|(rel, _, source)| source.map(|source| (rel, source))).collect()
         });
         let kept: Vec<(&str, &str)> =
             declarations.iter().filter(|(_, source)| spelling.in_source(source)).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
-        let found: Vec<FailureTypes> = kept
-            .par_iter()
-            .map(|(rel, source)| {
-                let module = module_of(rel);
-                let facts = read_facts(Language::Hy, source, &module, self.reading);
-                failure_types_in(source, Scope { module: &module, bindings: &facts.bindings })
-            })
-            .collect();
+        let mut parsed = self.parsed.lock().expect("失敗の型の file ごとの memo");
+        let fresh: Vec<(&str, &str)> = kept.iter().filter(|(rel, _)| !parsed.contains_key(*rel)).copied().collect();
+        if !fresh.is_empty() {
+            // 読み解きは事実の置き場で覚える(全体の実行と同じ置き場・同じ鍵 — 変わっていない file は、次の実行でも読み解かない)。空の事実も覚えて、宣言でない file を読み解き直さない。
+            let reading = self.reading;
+            let done = facts_cache::per_file_content(self.root, FAILURE_TYPES_KIND, &failure_types_key(reading), &fresh, |rel, source| {
+                Some(failure_types_of_source(rel, source, reading))
+            });
+            for ((rel, _), found) in fresh.iter().zip(done) {
+                parsed.insert((*rel).to_string(), Arc::new(found.unwrap_or_default()));
+            }
+        }
         let mut all = FailureTypes::default();
-        for one in found {
-            all.extend(one);
+        for (rel, _) in &kept {
+            all.extend(parsed[*rel].as_ref().clone());
         }
         all
     }
@@ -86,8 +89,11 @@ impl FailureLookup for SpelledFailures<'_> {
 mod tests {
     use doeff_indexer::hy_index::collect_hy_files;
 
+    use super::super::facts::{read_facts, Language};
     use super::super::layers::tag_reading;
+    use super::super::names::module_of;
     use super::super::paths::relative_path;
+    use super::super::smells::{failure_types_in, Scope};
     use super::*;
 
     /// repo の Hy の全部から集める失敗の型 — 全体の実行(`failure_types_for`)と同じ作り方(歩く物は `hy_index::collect_hy_files` — 検の相手と歩き方を分ける)。
@@ -190,6 +196,22 @@ mod tests {
         assert!(lookup.is_failure("app.errs.Unreachable"), "別の名を引くたびに repo を読み直している");
         assert!(lookup.is_failure("app.store.Gone"));
         assert!(!lookup.is_failure("app.errs.Rejection"), "宣言しない型は、別の名でも失敗の型ではない");
+    }
+
+    /// 宣言の file の読み解きは、その file を綴る名が変わっても 1 度だけ(file の中身と読み方だけで決まり、引く名に依らない)。
+    /// 名ごとに読み解き直すと、全部の宣言の file を綴る名(`|` など)で、246 file の読み解きが名の数だけ繰り返された。
+    #[test]
+    fn a_declaration_file_is_read_through_once_for_every_name_that_spells_it() {
+        let dir = repo(&sample());
+        let reading = tag_reading(None, None);
+        let enabled = enabled();
+        let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
+        assert!(lookup.is_failure("app.errs.Refusal"));
+        let first = Arc::clone(&lookup.parsed.lock().unwrap()["app/errs.hy"]);
+        // errs.hy は Unreachable も綴る: 別の名を引いても、集めた読み解きをそのまま使う。
+        assert!(lookup.is_failure("app.errs.Unreachable"));
+        let again = Arc::clone(&lookup.parsed.lock().unwrap()["app/errs.hy"]);
+        assert!(Arc::ptr_eq(&first, &again), "別の名を引くたびに同じ宣言の file を読み解き直している");
     }
 
     /// 同じ名の問いは 2 度集めない(memo)— 1 度目で集めた集合から答える。
