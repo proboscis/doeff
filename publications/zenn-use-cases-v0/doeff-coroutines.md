@@ -222,7 +222,7 @@ yieldにも代償があります。awaitで足りる場面と合わせて書い�
 | 同じ処理を2回動かす | coroutineを作り直します | 同じProgramを何度でも動かせます |
 | 非同期SDK | そのままawaitします | Awaitで1操作ずつつなぎます |
 
-時間の依頼を仮想の時計で答える例は、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)にあります。次の10本目では、設計で決めた約束を、doeffのテストとして走らせます。
+時間の依頼を仮想の時計で答える例は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。次の10本目では、設計で決めた約束を、doeffのテストとして走らせます。
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
@@ -241,5 +241,5 @@ uv run --with "doeff==0.6.0" python coroutine_comparison.py  # PyPIのdoeff 0.6.
 - [Python公式: Event loop](https://docs.python.org/3/library/asyncio-eventloop.html)
 - [PEP 492 – Coroutines with async and await syntax](https://peps.python.org/pep-0492/)
 - [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- 前の回:[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)
-- 次の回:[ADRをpytestで走らせ、設計の約束を守らせる](doeff-adr.md)
+- 前の回:[公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md)
+- 次の回:[ADRを書いて終わりにするのをやめる](doeff-adr.md)

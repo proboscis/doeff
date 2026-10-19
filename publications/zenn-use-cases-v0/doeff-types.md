@@ -241,10 +241,12 @@ doeffでは、この2つのテストで、0.6.0の84個を0.7.0の5個にしま�
 ## 参考
 
 - [連載の1本目「処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは」](doeff-main.md)
-- [ADRをpytestで走らせ、設計の約束を守らせる](doeff-adr.md):決めた約束をpytestで守る、別の例です。
+- [ADRを書いて終わりにするのをやめる](doeff-adr.md):決めた約束をpytestで守る、別の例です。
 - [ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md):型の見本を含む、4つの網の全体です。
 - [pyrightの文書「Verifying Type Completeness」](https://github.com/microsoft/pyright/blob/main/docs/typed-libraries.md#verifying-type-completeness)
 - [PEP 561 — 型の情報を持つパッケージ(py.typed)](https://peps.python.org/pep-0561/)
 - [表のテストの全体 tests/test_public_name_types.py](https://github.com/proboscis/doeff/blob/main/tests/test_public_name_types.py)
 - [型の見本25個 tests/type_probes/](https://github.com/proboscis/doeff/tree/main/tests/type_probes)
 - [型の見本の道具 tools/verify_type_probes.py](https://github.com/proboscis/doeff/blob/main/tools/verify_type_probes.py)と[CIの設定](https://github.com/proboscis/doeff/blob/main/.github/workflows/type-probes.yml)
+- 前の回:[バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md)
+- 次の回:[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)

@@ -96,26 +96,24 @@ example = (Path(__file__).resolve().parents[1] / "examples/greet_handlers.py").r
 assert example.index(blocks[0]) < example.index(blocks[1]), "examples/greet_handlers.py が本文の枠と違う"
 
 expected_slugs = {
-    "agents", "llm", "image", "fleet", "games", "events", "traverse", "time", "backtest", "color",
+    "agents", "llm", "image", "games", "events", "traverse", "time", "backtest", "color",
     "di", "composition", "memo", "replay", "durable", "observe", "operations",
     "remote", "tooling", "boundaries", "hy", "vm", "handlers", "coroutines",
     "adr",  # 2026-10-17に足した10本目「設計の記録をテストとして走らせる」。
-    "hooks",  # 2026-10-17に足した8本目「AIに要る時だけ規則を見せるhook」。
-    "mergequeue",  # 2026-10-18に足した11本目からの候補1「マージキューでテストを走らせるのをやめた」。
-    "commits",  # 2026-10-18に足した11本目からの候補6「ライブラリのcommitの68%を、Claude Codeと書いた1年」。
-    "dispatch",  # 2026-10-18に足した11本目からの候補2「Claude Codeに仕事を配らせるのをやめ、関数で配る」。
-    "types",  # 2026-10-18に足した11本目からの候補7「公開APIの型の穴をテストで塞ぎ、黙って開かせない」。
-    "reports",  # 2026-10-18に足した11本目からの候補5「Claude Codeに報告のページを丸ごと作らせるのをやめた」。
-    "waitline",  # 2026-10-18に足した11本目からの候補4「Claude Codeが止まる前に、待っている物を1行書かせる」。
+    "commits",  # 2026-10-18に足した候補6で、2026-10-20に5本目にした「ライブラリのcommitの68%を、Claude Codeと書いた1年」。
+    "types",  # 2026-10-18に足した候補7で、2026-10-20に8本目にした「公開APIの型の穴をテストで塞ぎ、黙って開かせない」。
 }
+# AIエージェントの連載の回は表に置かず、その連載の1本目(fleet)へのリンク1行で案内する(2026-10-20に連載を2つに分けた)。
 all_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", article))
-assert all_slugs == expected_slugs, (expected_slugs - all_slugs, all_slugs - expected_slugs)
+linked_slugs = expected_slugs | {"fleet"}
+assert all_slugs == linked_slugs, (linked_slugs - all_slugs, all_slugs - linked_slugs)
 table_text = "\n".join(line for line in article.splitlines() if line.startswith("|"))
 table_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", table_text))
 assert table_slugs == expected_slugs, (expected_slugs - table_slugs, table_slugs - expected_slugs)
 
-# 連載の10本の一覧は、公開計画の「公開順」の表と同じ題と順にする(順を変えた時に1本目だけ古くなるのを防ぐ)。
-plan = (Path(__file__).resolve().parents[1] / "publication-plan.md").read_text()
+# 連載の10本の一覧は、公開計画の「公開順」のdoeffの連載の表と同じ題と順にする(順を変えた時に1本目だけ古くなるのを防ぐ)。
+plan_text = (Path(__file__).resolve().parents[1] / "publication-plan.md").read_text()
+plan = plan_text.split("\n### doeffの連載\n", 1)[1].split("\n### ", 1)[0]  # doeffの連載の節だけを読む。
 planned = re.findall(r"^\| (\d+) \| \[([^\]]+)\]\((doeff-[a-z]+\.md)\) \|", plan, re.M)
 listed = re.findall(
     r"^(\d+)\. (?:\[([^\]]+)\]\((doeff-[a-z]+\.md)\)|(.+)\(この記事\))$", article, re.M
@@ -126,5 +124,5 @@ listed_rows = [
 assert listed_rows == planned, (listed_rows, planned)
 print(
     f"main: 本文2例の順次実行、最小ハンドラ2個、担当外2種類の委譲、各行コメント、{len(expected_slugs)}記事の表、"
-    f"公開順の表と同じ{len(planned)}本の一覧を確認"
+    f"doeffの連載の表と同じ{len(planned)}本の一覧を確認"
 )

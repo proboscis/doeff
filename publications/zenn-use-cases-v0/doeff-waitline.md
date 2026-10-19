@@ -1,5 +1,5 @@
 ---
-title: "Claude Codeが止まる前に、待っている物を1行書かせる"
+title: "止まったClaude Codeを1つずつ開くのをやめた"
 emoji: "⏳"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "設計"]
@@ -14,7 +14,7 @@ Claude Codeの会話を何十も並べると、止まった会話のどれが自
 - 自分の次の作業を残したまま、止まっている会話もあります。
 - 全部を開いて最後の返事を読むと、確かめるだけで時間が消えます。
 
-この記事は、Claude CodeのStop hookで、ターンの終わりに待ちの1行を書かせた記録です。仕組みの全体は、5本目「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」です。hookの話は、8本目「[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)」です。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+この記事は、Claude CodeのStop hookで、ターンの終わりに待ちの1行を書かせた記録です。仕組みの全体は、この連載の1本目「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」です。hookの話は、3本目「[CLAUDE.mdに決まり851本を書き足すのをやめた](doeff-hooks.md)」です。doeffが初めての方は[doeffの連載の1本目](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 最後の行にWAITが無ければ、1度だけ止める
 
@@ -281,8 +281,9 @@ uv run --no-project --with "doeff==0.7.0" python turn_wait.py  # PyPIのdoeffを
 - [Claude Codeのhooksの説明(公式)](https://code.claude.com/docs/en/hooks)
 - [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/2d92f636b2acf457053ee4eb5c2a6ed6fe85c763)
 - [この記事のコードをまとめた完全な例](examples/turn_wait.py)
-- 関連する回:[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)
 - 関連する回:[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)
 - 関連する回:[Claude Codeに仕事を配らせるのをやめ、関数で配る](doeff-dispatch.md)
+- 前の回:[CLAUDE.mdに決まり851本を書き足すのをやめた](doeff-hooks.md)
+- 次の回:[Claude Codeに報告のページを丸ごと作らせるのをやめた](doeff-reports.md)
 
 数字は、非公開のリポジトリにある会話の待ちの記録と、1つの実行環境の会話の記録から数えました。読者は、数えた元を確かめられません。

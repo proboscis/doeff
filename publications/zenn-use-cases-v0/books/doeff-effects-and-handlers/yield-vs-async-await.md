@@ -10,4 +10,4 @@ source: "doeff-coroutines.md"
 
 ## 次の章へ
 
-ここまでは、doeffの書き方と仕組みの話でした。次の[章](doeff-fleet.md)からの3章は、doeffを使ってAIと開発した記録です。まず、Claude Codeの会話を最大50並べた時に、何が詰まったかを書きます。
+ここまでは、doeffの書き方と仕組みの話でした。次の[章](doeff-commits.md)からの3章は、doeffそのものの約束を機械で守る話です。まず、commitの68%をClaude Codeと書いた中で、何を網にしたかを書きます。

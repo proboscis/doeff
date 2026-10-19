@@ -107,18 +107,33 @@ def verify_article_figures(slug: str, text: str, caption: dict, missing: set[Pat
         assert len(png) < 3_000_000
 
 
+def series_names() -> dict[str, list[str]]:
+    """公開順の表の回(公開予定・公開済み)の原稿の名を、連載ごとに表の順で返す。"""
+    series: dict[str, list[str]] = {}
+    for row in read_rows((SOURCE / "publication-plan.md").read_text()):
+        series.setdefault(row.series, []).append(row.name)
+    return series
+
+
 def verify_series_links() -> int:
-    """読者がどの回からも前後の回へ辿れるよう、公開順の表の回(公開予定・公開済み)の参考の節を照らす。"""
-    names = [row.name for row in read_rows((SOURCE / "publication-plan.md").read_text())]
+    """読者がどの回からも前後の回へ辿れるよう、公開順の表の回(公開予定・公開済み)の参考の節を連載ごとに照らす。
+
+    連載の1本目には前の回を、最後の回には次の回を置かない。別の連載の回へは、前後の回のリンクを張らない。
+    """
+    series = series_names()
+    names = [name for members in series.values() for name in members]
     references = {}
     for name in names:
         _, heading, reference = (SOURCE / name).read_text().partition("\n## 参考")
         assert heading, (name, "参考の節が無い")
         references[name] = reference
-    for previous, following in pairwise(names):
-        for name, label, neighbor in ((following, "前の回", previous), (previous, "次の回", following)):
-            link = rf"^- {label}:\[[^\]]+\]\({re.escape(neighbor)}\)$"
-            assert re.search(link, references[name], re.M), (name, f"参考に{label}へのリンクが無い", neighbor)
+    for members in series.values():
+        for previous, following in pairwise(members):
+            for name, label, neighbor in ((following, "前の回", previous), (previous, "次の回", following)):
+                link = rf"^- {label}:\[[^\]]+\]\({re.escape(neighbor)}\)$"
+                assert re.search(link, references[name], re.M), (name, f"参考に{label}へのリンクが無い", neighbor)
+        for name, label in ((members[0], "前の回"), (members[-1], "次の回")):
+            assert not re.search(rf"^- {label}:", references[name], re.M), (name, f"連載の端の回に{label}がある")
     return len(names)
 
 
@@ -157,7 +172,10 @@ def verify() -> None:
         assert "```" in text
         if slug != "main":
             assert "doeff-main.md" in text
-            assert path.name in articles["main"].read_text(), (path.name, "メイン記事から案内していない")
+            # 別の連載の回は、メイン記事の代わりに、その連載の1本目(入口)から案内する。
+            entrance = next((members[0] for members in series_names().values() if path.name in members[1:]), None)
+            guides = [articles["main"].read_text()] + ([(SOURCE / entrance).read_text()] if entrance else [])
+            assert any(path.name in guide for guide in guides), (path.name, "メイン記事と連載の1本目から案内していない")
     main = articles["main"].read_text()
     hero = f'![{captions["main"]["hero_title"]}](/images/zenn-use-cases-v0/generated/main-hero.png)'
     assert main.split("---", 2)[2].lstrip().startswith(hero)

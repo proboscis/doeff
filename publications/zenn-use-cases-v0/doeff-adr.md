@@ -1,5 +1,5 @@
 ---
-title: "ADRをpytestで走らせ、設計の約束を守らせる"
+title: "ADRを書いて終わりにするのをやめる"
 emoji: "📐"
 type: "tech"
 topics: ["python", "doeff", "テスト", "設計", "semgrep"]
@@ -106,7 +106,7 @@ def is_overdue(due: datetime) -> EffectGenerator[bool]:  # 期限を過ぎたか
 - 時計のハンドラは、doeffの部品doeff-timeが持ちます。
 - そのため、このプロジェクトのコードにはOSの時計を読む行がありません。
 
-仕組みは、3本目の[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)で詳しく説明しています。
+仕組みは、3本目の[テストで20秒待つのをやめる](doeff-time.md)で詳しく説明しています。
 
 ## 1つ目の検査:時計を固定して答えを試す
 
@@ -298,8 +298,8 @@ ADRの規則が破れると、テストの失敗として出ます。失敗の�
 - 完全な例:[ADR](examples/adr_as_test/docs/adr/adr_billing_clock.hy)・[業務のコード](examples/adr_as_test/billing.py)・[conftest.py](examples/adr_as_test/conftest.py)・[Semgrepの規則](examples/adr_as_test/.semgrep.yaml)・[pyproject.toml](examples/adr_as_test/pyproject.toml)
 - 完全な例は、doeffのリポジトリの中に置いています。そのためADRのファイル名を`adr_billing_clock.hy`にし、`pyproject.toml`で集めます。
 - [doeff-adrのREADME](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-adr/README.md)
-- 時計のハンドラ:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
+- 時計のハンドラ:[テストで20秒待つのをやめる](doeff-time.md)
 - Hyの書き方:[同じdoeffを、Hyでもっと組み立てやすく書く](doeff-hy.md)
 - 索引やリンターなどの道具:[書く・見つける・検査する](doeff-tooling.md)
-- AIに規則を見せる仕組み:[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)
+- AIに規則を見せる仕組み:[CLAUDE.mdに決まり851本を書き足すのをやめた](doeff-hooks.md)
 - 前の回:[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)

@@ -11,7 +11,11 @@
   ],
   "doeff-main.md": [
     {
-      "from": "この記事は、doeffを週に1本ずつ紹介する連載の1本目です。10本の順は次のとおりで、公開した回からリンクを付けていきます。\n\n1. 処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは(この記事)\n2. [Claude CodeやCodexを呼ぶ処理を、起動せずにテストする](doeff-agents.md)\n3. [20秒待つ処理を、20秒待たずにテストする](doeff-time.md)\n4. [DIコンテナなしで、依存を引数でバケツリレーしない](doeff-di.md)\n5. [1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)\n6. [外部APIのテストを、通信せずに回す](doeff-replay.md)\n7. [バックテストと本番で、処理を2つ書かない](doeff-backtest.md)\n8. [CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)\n9. [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)\n10. [ADRをpytestで走らせ、設計の約束を守らせる](doeff-adr.md)\n\n",
+      "from": "この記事は、doeffを週に1本ずつ紹介する連載の1本目です。10本の順は次のとおりで、公開した回からリンクを付けていきます。\n\n1. 処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは(この記事)\n2. [Claude Codeを起動してテストするのをやめる](doeff-agents.md)\n3. [テストで20秒待つのをやめる](doeff-time.md)\n4. [依存を引数で引き回すのをやめる](doeff-di.md)\n5. [ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md)\n6. [外部APIのテストで通信するのをやめる](doeff-replay.md)\n7. [バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md)\n8. [公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md)\n9. [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)\n10. [ADRを書いて終わりにするのをやめる](doeff-adr.md)\n\n",
+      "to": ""
+    },
+    {
+      "from": "AIエージェントを何十も並べて開発する時の悩みは、別の連載に書きます。入口は[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)です。\n\n",
       "to": ""
     },
     {
@@ -41,33 +45,19 @@
       "to": "設計で決めた約束を、doeffのテストとして走らせる話は、[章](doeff-adr.md)で書きます。"
     }
   ],
-  "doeff-fleet.md": [
-    {
-      "from": "要る時だけ決まりを見せるhookの話は、連載の8本目で書きます。題は「[CLAUDE.mdに決まり851本を書かず、hookで要る時だけ見せる](doeff-hooks.md)」です。",
-      "to": "要る時だけ決まりを見せるhookの話は、次の[章](doeff-hooks.md)で書きます。"
-    },
-    {
-      "from": "AIの起動と結果待ちを処理として書く話は、[AIエージェントの起動と結果待ち](doeff-agents.md)にあります。",
-      "to": "AIの起動と結果待ちを処理として書く話は、[章](doeff-agents.md)にあります。"
-    },
-    {
-      "from": "この記事のcard自身が",
-      "to": "この章の元の記事のcard自身が"
-    }
-  ],
-  "doeff-hooks.md": [
-    {
-      "from": "全体の話は、連載の5本目「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」にあります。",
-      "to": "全体の話は、前の[章](doeff-fleet.md)にあります。"
-    },
-    {
-      "from": "次の9本目は「[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)」です。この記事の`AskJudge`のように、止まった所へ答える役を外側に置く理由を扱います。",
-      "to": "この章の`AskJudge`も、止まった所へ答える役を外側に置きました。そう置く理由は、[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で扱いました。"
-    }
-  ],
   "doeff-adr.md": [
     {
       "from": "連載はこの10本目で一区切りです。1本目の目次から、ほかの悩みに合う回を選べます。\n\n",
+      "to": ""
+    }
+  ],
+  "doeff-commits.md": [
+    {
+      "from": "この連載の掲載コードも、記事ごとの確かめのスクリプトで走らせています。",
+      "to": "この本の各章のコードも、章ごとの確かめのスクリプトで走らせています。"
+    },
+    {
+      "from": "AIの会話を並べる仕組みは、AIエージェントで開発した記録の連載の1本目に書きました。題は「[1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md)」です。\n\n",
       "to": ""
     }
   ]

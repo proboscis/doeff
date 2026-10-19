@@ -56,11 +56,15 @@ State = Published | Scheduled
 
 @dataclass(frozen=True)
 class PlanRow:
-    """公開計画の「公開順」の表の1行(原稿のファイル名・Zennのslug・公開状態)。"""
+    """公開計画の「公開順」の表の1行(原稿のファイル名・Zennのslug・公開状態・属する連載)。
+
+    seriesは、表の上の最も近い「### 」の見出しの名(doeffの連載・AIエージェントの連載)。前後の回は連載ごとに並ぶ。
+    """
 
     name: str
     slug: str
     state: State
+    series: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,7 +86,10 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
     書き損じを候補として黙って読まないよう例外にする。
     """
     rows: list[PlanRow] = []
+    series = ""
     for line in plan.splitlines():
+        if line.startswith("### "):
+            series = line.removeprefix("### ").strip()  # この見出しの下の表の行は、この連載の回。
         row = _STATE_ROW.match(line)
         if row is None:
             continue
@@ -93,9 +100,9 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
         if cell.startswith("公開済み") and url:
             if not url.group(0).endswith(f"/articles/{slug}"):
                 raise ValueError(f"{name}の公開済みのURLの末尾がslug「{slug}」と違います")
-            rows.append(PlanRow(name, slug, Published(url.group(0))))
+            rows.append(PlanRow(name, slug, Published(url.group(0)), series))
         elif cell.startswith("公開予定"):
-            rows.append(PlanRow(name, slug, Scheduled()))
+            rows.append(PlanRow(name, slug, Scheduled(), series))
         elif not cell.startswith("下書き"):
             raise ValueError(
                 f"{name}の公開状態「{cell}」は、公開済み <ZennのURL>・公開予定・下書きのどれかにしてください"
