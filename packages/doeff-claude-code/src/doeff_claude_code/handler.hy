@@ -255,8 +255,7 @@
   (defn closed-record [self #^ (| float None) cost-mark]
     "外す時に残す小さな記録を作るため(cost-mark = 次に起こす process の額の起点の控え — release-closed が前の process の終わり方から
      決めた物)。会話の lock の中で呼ぶ。"
-    (ClosedSession :session-id self.session-id :home self.home :canonical-cwd self.canonical-cwd :current-seq self.current-seq
-                   :next-line-seq self.next-line-seq :launches self.launches :stopped-because self.stopped-because
+    (ClosedSession :session-id self.session-id :current-seq self.current-seq :next-line-seq self.next-line-seq :launches self.launches :stopped-because self.stopped-because
                    :cost-mark cost-mark :warmed-fresh self.warmed-fresh)))
 
 
@@ -265,10 +264,11 @@
    同じに答えるのに要る物だけを持つ: 閉じた様子(ClaudeSessionStatus の Closed)・process の見え方(ClaudeLiveProcess の起こした数と
    降ろした訳)・使用済みの id(同じ id の FreshSession を断る — warmed-fresh = 入力の前に事前起動しただけで、まだ使っていない)と、
    続き(ResumeSession)・事前起動で生きた状態を作り直す材料(手番の番号・行の seq・額の起点 cost-mark — 前の process の終わり方で
-   決めた控え。transcript の最後の額が在ればそちらが先 — launch-cost-mark)。"
+   決めた控え。transcript の最後の額が在ればそちらが先 — launch-cost-mark)。
+   寿命 = ホストの寿命(同じ id の続きがいつ来るかを handler は知らないので消さない — doeff-codex の Continuation と同じ)。その代わり
+   数と小さな値だけを持ち、家(ClaudeHome — env の写しを持ち、借りた資格の token も入りうる)と cwd は持たない: 作り直す時は続きの
+   宣言の家と cwd を使う(reopen)。"
   (#^ str session-id)
-  (#^ ClaudeHome home)
-  (#^ str canonical-cwd)
   (#^ int current-seq)
   (#^ int next-line-seq)
   (#^ int launches)
@@ -337,16 +337,17 @@
           (.clear runtime.turns))))
     released)
 
-  (defn #^ SessionRuntime reopen [self #^ ClosedSession closed]
+  (defn #^ SessionRuntime reopen [self #^ ClosedSession closed #^ ClaudeHome home #^ str canonical-cwd]
     "外した会話の続き・事前起動のために、小さな記録から生きた状態(閉じた印つき・手番の記録なし)を作り直して覚えるため。手番の番号・
-     行の seq・起こした数は記録から続ける。並んだ要求が先に作り直していれば、その生きた状態を答える。"
+     行の seq・起こした数は記録から続け、家と cwd は続きの宣言の物(home・canonical-cwd)を使う。並んだ要求が先に作り直していれば、
+     その生きた状態を答える。"
     (with [self.lock]
       (setv known (.get self.runtimes closed.session-id))
       (when (is-not known None)
         (return known))
       (when (is (.get self.closed closed.session-id) closed)
         (del (get self.closed closed.session-id)))
-      (setv runtime (SessionRuntime closed.session-id closed.home closed.canonical-cwd :cost-mark closed.cost-mark))
+      (setv runtime (SessionRuntime closed.session-id home canonical-cwd :cost-mark closed.cost-mark))
       (setv runtime.closed True
             runtime.current-seq closed.current-seq
             runtime.next-line-seq closed.next-line-seq
@@ -1280,7 +1281,7 @@
   (when (isinstance ready LaunchFailed) (return ready))
   ;; 外した会話の続きは、記録から生きた状態を作り直す(手番の番号・行の seq・起こした数・額の起点の控えを続ける)。
   (when (is-not closed None)
-    (setv runtime (.reopen host closed)))
+    (setv runtime (.reopen host closed spec.home canonical)))
   ;; ターンを 1 度も始めていない会話(新しく作る・入力なしで事前起動しただけ)は、起動できなかった時に忘れる — 新しい会話の id は
   ;; 未使用の扱いに戻る。
   (val unused (or (is runtime None) runtime.warmed-fresh))
@@ -1332,7 +1333,7 @@
   (<- ready (prepare-launch host held spec origin canonical target-id decision True))
   (when (isinstance ready LaunchFailed) (return ready))
   ;; 外した会話は、記録から生きた状態を作り直す(start-turn と同じ)。
-  (val known (if (is closed None) held (.reopen host closed)))
+  (val known (if (is closed None) held (.reopen host closed spec.home canonical)))
   (val runtime (if (is known None)
                    (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) 0.0 None))
                    known))
