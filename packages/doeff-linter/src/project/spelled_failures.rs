@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use super::layers::TagReading;
 use super::rule::ProjectRule;
-use super::smells::{FailureLookup, FailureTypes};
+use super::smells::{failure_types_key, failure_types_of_source, has_failure_declaration_spelling, FailureLookup, FailureTypes, FAILURE_TYPES_KIND};
 use super::spelling::Spelling;
-use super::{facts_cache, failure_types_key, failure_types_of_source, has_failure_declaration_spelling, hy_files, FAILURE_TYPES_KIND};
+use super::{facts_cache, hy_files};
 
 /// 引かれた時に型の名を字面に含む宣言の file から集める失敗の型(1 file の実行)。
 pub struct SpelledFailures<'a> {
