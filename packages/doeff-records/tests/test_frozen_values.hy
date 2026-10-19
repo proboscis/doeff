@@ -53,6 +53,17 @@
   (assert (refuses? (fn [] (RecordsSchema :tables {"parts" (LAW-SCHEMA.table "tickets")})) ValueError) "名の食い違い"))
 
 
+(deftest test-a-descending-field-is-a-declared-field-and-stays-out-of-the-repr
+  ;; 上から読む欄(TableDecl.descending)は宣言した欄だけ。速さだけの宣言なので repr(表の要約 schema_digest の元)に出さない —
+  ;; 宣言を足しても使い手の表の要約が変わらない。等しさには入る。
+  (setv decl (LAW-SCHEMA.table "parts"))
+  (assert (= decl.descending #("note")) decl)
+  (setv plain (dataclasses.replace decl :descending #()))
+  (assert (= (repr plain) (repr decl)) "上から読む欄は repr に出ない")
+  (assert (!= plain decl) "等しさには入る")
+  (assert (refuses? (fn [] (dataclasses.replace decl :descending #("size"))) ValueError) "宣言の外の欄"))
+
+
 (deftest test-the-field-index-answers-like-scanning-every-field
   ;; #2670 根 E: 表の宣言は欄の名の索引を宣言 1 つに 1 度だけ作り、declares・writers-of・founders-of はそれで答える(書きの判断が
   ;; 行ごと・欄ごとに欄の tuple を全部なめ直さない)。失敗ケース = 索引の答えが欄の tuple を全部なめた答えと違う(宣言の内・外の

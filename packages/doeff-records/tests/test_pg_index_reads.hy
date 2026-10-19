@@ -16,7 +16,8 @@
 (import doeff_records.values [ListCursor])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
-                              event-by-key-statement list-rows-statement top-rows-statement table-field-index-name])
+                              event-by-key-statement list-rows-statement top-rows-statement table-field-index-name
+                              ordered-index-name ordered-expression])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -352,7 +353,7 @@
   (<- by-one (list-rows-statement "records_" "message" #("id") (frozenset) None {"id" (canonical-json "m1")} {} 10 None))
   (assert (in "key = :w0" by-one.text) by-one.text)
   (assert (= (lfor p by-one.params :if (= p.name "w0") p.value) ["[\"m1\"]"]) by-one.params)
-  (<- top (top-rows-statement "records_" "message" #("id") (frozenset) "n" None {"id" (canonical-json "m1")} {} 10 None))
+  (<- top (top-rows-statement "records_" "message" #("id") (frozenset) "n" False None {"id" (canonical-json "m1")} {} 10 None))
   (assert (in "key = :w0" top.text) top.text)
   ;; 文字列でない値が混ざる組・鍵でない欄・鍵の欄が 2 つの表は欄の式のまま。
   (<- mixed (list-rows-statement "records_" "message" #("id") (frozenset) None {} {"id" #((canonical-json "m1") (canonical-json 2))} 10 None))
@@ -500,11 +501,11 @@
   (assert (not (in "ledger = :ledger" any-of.text)) any-of.text)
   (assert (in "(CASE WHEN ledger = 'message' THEN ((payload::jsonb) -> 'in_reply_to') END) IN (:a0_0::jsonb, :a0_1::jsonb)" any-of.text)
           any-of.text)
-  (<- top (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" None {"kind" kind} {} 10 None))
+  (<- top (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" False None {"kind" kind} {} 10 None))
   (assert (not (in "ledger = :ledger" top.text)) top.text)
   (assert (not (in ":after" top.text)) top.text)
   ;; 上から読む読みの続き: (値, 鍵) が位置より小さい行(位置の値は文字列で渡して numeric に読む — int8 を越える整数も)・1 頁 + 1 行。
-  (<- below (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" (ListCursor 1 "[\"m9\"]" (** 10 20)) {"kind" kind} {}
+  (<- below (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" False (ListCursor 1 "[\"m9\"]" (** 10 20)) {"kind" kind} {}
                                 10 None))
   (assert (in "< CAST(:after_value AS numeric) OR" below.text) below.text)
   (assert (in "= CAST(:after_value AS numeric) AND key COLLATE \"C\" < :after)" below.text) below.text)
@@ -523,3 +524,132 @@
   ;; 絞りの無い読みは表の行に限る条件だけ。
   (<- bare (list-rows-statement "records_" "message" #("id") (frozenset #("kind")) None {} {} 10 None))
   (assert (in "WHERE ledger = :ledger ORDER BY" bare.text) bare.text))
+
+
+;; --- 上から読む読み(ListRows の descending-by)は、上から読む欄の並べる式の索引を 1 頁だけ辿る -------------------------------------
+;; 2026-10-19: 本番の表 message(4.7 万行・1 行 約 1.5 KB)を欄 at の新しい順に読む 1 頁が、表の全部の行の payload を jsonb に読み直して
+;; 並べ替え(同じ規模の置き場で 1 頁 0.6〜0.8 秒)、続きを辿る読みが負荷の下で読みの期限を越えた。表 parts の上から読む欄 note
+;; (LAW-SCHEMA の descending)の並べる式の索引で、上からの 1 頁と、続きの位置(真ん中)からの 1 頁が、置き場を TOP-ROWS 行と 2 倍の行で作っても
+;; 読んだ行を増やさない事を確かめる。置き場には並べない行(note が文字列の行 — 10 行に 1 行・他の表 tickets の note が整数の行)を混ぜ、
+;; 答えの行が並べる行だけな事も見る。前の形(全部の行の payload の式で並べる・続きの位置を OR で照らす)では Seq Scan か、表の行を全部
+;; 読んで並べ替え、2 倍の置き場で倍に読んで赤になる。
+(val TOP-ROWS 4000)
+(val TOP-PAGE 50)
+(val TOP-NOTE-BLOCKS 10)
+
+
+(defk top-rows-seed-statement [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "表 parts に count 行(鍵 t1 …・note は g・g が 10 の倍数の行は文字列 n{g}・label は本番の行の大きさに近い md5 の綴りの連なり)と、
+   表 tickets に note が整数の行 count 行をまとめて置く文を作るため。"
+  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
+                       SELECT t.ledger, t.key, t.payload, 1, CAST(:at AS bigint), 'maker', CAST(:origin AS text), 1
+                         FROM (SELECT 'parts' AS ledger, '[\"t' || g || '\"]' AS key,
+                                      json_build_object('id', 't' || g, 'color', 'c', 'state', 'open',
+                                                        'note', CASE WHEN g % 10 = 0 THEN to_jsonb('n' || g) ELSE to_jsonb(g) END,
+                                                        'label', (SELECT string_agg(md5(g || '-' || b), '')
+                                                                    FROM generate_series(1, CAST(:blocks AS integer)) AS b))::text AS payload
+                                 FROM generate_series(1, CAST(:count AS integer)) AS g
+                               UNION ALL
+                               SELECT 'tickets', '[\"g\", \"k' || g || '\"]',
+                                      json_build_object('group', 'g', 'id', 'k' || g, 'state', 'open', 'note', CAST(:count AS integer) + g)::text
+                                 FROM generate_series(1, CAST(:count AS integer)) AS g) AS t" :p prefix)
+             :params (tuple (gfor #(name value) #(#("count" count) #("blocks" TOP-NOTE-BLOCKS) #("at" YOUNG) #("origin" ORIGIN-HOST))
+                                  (SqlParam :name name :value value)))))
+
+
+(defk top-keys-expected [high]
+  {:pre [(: high int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "note の値 high 以下で並べる行(10 の倍数でない g)の鍵を、大きい順に TOP-PAGE + 1 行並べるため(1 頁 + 続きの有無を知る 1 行)。"
+  (tuple (cut (lfor g (range high 0 -1) :if (% g 10) (json.dumps [(.format "t{}" g)])) (+ TOP-PAGE 1))))
+
+
+(defk top-reads-on-seeded-store [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix に count 行ずつ置いて統計を取り、上からの 1 頁と真ん中からの 1 頁の #(走査の節 引いた索引の名 返した鍵 期待の鍵)
+   を {名 …} で返すため。"
+  (<- seed (top-rows-seed-statement prefix count))
+  (for [statement #(seed (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
+    (<- seeded (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  (val middle (+ (// count 2) 1))
+  (<- head (top-rows-statement prefix "parts" #("id") (frozenset) "note" True None {} {} TOP-PAGE None))
+  (<- below (top-rows-statement prefix "parts" #("id") (frozenset) "note" True (ListCursor 1 (json.dumps [(.format "t{}" middle)]) middle)
+                                {} {} TOP-PAGE None))
+  (<- head-expected (top-keys-expected count))
+  (<- below-expected (top-keys-expected (- middle 1)))
+  (var reads {})
+  (for [#(name statement expected) #(#("上から" head head-expected) #("真ん中から" below below-expected))]
+    (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+    (assert (isinstance answer SqlRows) (repr answer))
+    (val plan (get answer.rows 0 0))
+    (val explained (if (isinstance plan str) (json.loads plan) plan))
+    (<- scans (table-scans prefix explained))
+    (<- names (index-names explained))
+    (<- listed (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance listed SqlRows) (repr listed))
+    (:= reads (| reads {name #(scans names (tuple (gfor record listed.rows (get record 0))) expected)})))
+  reads)
+
+
+(defk top-reads-at [connections count]
+  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して count 行ずつ置き、上から読む読みを測るため(終わりに表を消す)。
+   答え = #(読みごとの測り parts の note の並べる式の索引の名)。"
+  (val store (prepared-store connections (fresh-prefix)))
+  (var reads {})
+  (try
+    (:= reads (run-sql connections (top-reads-on-seeded-store store.prefix count)))
+    (finally
+      (run-sql connections (drop-records-tables store))))
+  (<- note-index (ordered-index-name store.prefix "parts" "note"))
+  #(reads note-index))
+
+
+(deftest test-a-descending-page-reads-through-the-ordered-index-on-a-store-twice-as-large
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (try
+    (<- small (top-reads-at connections TOP-ROWS))
+    (<- large (top-reads-at connections (* 2 TOP-ROWS)))
+    (for [#(reads note-index) #(small large)
+          name #("上から" "真ん中から")]
+      (setv [scans names keys expected] (get reads name))
+      ;; 並べる行(note が整数の parts の行)だけを、(値, 鍵) の大きい順に 1 頁 + 1 行。
+      (assert (= keys expected) (repr #(name keys expected)))
+      ;; 並べる式の索引を引き、置き場の表を頭から読む節が無い。
+      (assert (in note-index names) (repr #(name note-index names scans)))
+      (assert (not (lfor #(kind table _) scans :if (= kind "Seq Scan") table)) (repr #(name scans))))
+    ;; 2 倍の置き場でも読んだ行は増えない(読むのは 1 頁 + 1 行と、その間の並べない行だけ — 置き場の行の数に依らない)。
+    (for [name #("上から" "真ん中から")]
+      (<- small-read (total-read (get (get (get small 0) name) 0)))
+      (<- large-read (total-read (get (get (get large 0) name) 0)))
+      (assert (<= large-read small-read) (repr #(name small-read large-read))))
+    (finally
+      (.close connections))))
+
+
+(deftest test-a-descending-read-of-a-declared-field-sorts-by-the-ordered-expression-and-compares-rows-for-the-cursor
+  ;; 表の上から読む欄(ordered)の文: 並べる式で並べ(NULL は後ろ)・式が NULL でない行だけ・続きの位置は行の比べ(索引の範囲になる形)・
+  ;; 条件 ledger = :ledger を置かない(式が NULL でない行は表の行だけ)。宣言の無い欄は前の形のまま。
+  (val kind (canonical-json "ask"))
+  (<- head (top-rows-statement "records_" "message" #("id") (frozenset #("kind")) "at" True None {"kind" kind} {} 10 None))
+  (<- ordered (ordered-expression "message" "at"))
+  (assert (in (+ ordered " IS NOT NULL") head.text) head.text)
+  (assert (in (.format "ORDER BY {} DESC NULLS LAST, key COLLATE \"C\" DESC LIMIT :limit" ordered) head.text) head.text)
+  (assert (not (in "ledger = :ledger" head.text)) head.text)
+  (assert (not (in ":after" head.text)) head.text)
+  (<- below (top-rows-statement "records_" "message" #("id") (frozenset) "at" True (ListCursor 1 "[\"m9\"]" (** 10 20)) {} {} 10 None))
+  (assert (in (.format "({}, key COLLATE \"C\") < (CAST(:after_value AS numeric), :after)" ordered) below.text) below.text)
+  (assert (not (in " OR " below.text)) below.text)
+  (assert (not (in "ledger = :ledger" below.text)) below.text)
+  (assert (= (lfor p below.params #(p.name p.value)) [#("after_value" "100000000000000000000") #("after" "[\"m9\"]") #("limit" 11)])
+          below.params)
+  ;; 宣言の無い欄は前の形。
+  (<- plain (top-rows-statement "records_" "message" #("id") (frozenset) "at" False None {} {} 10 None))
+  (assert (in "WHERE ledger = :ledger AND jsonb_typeof(((payload::jsonb) -> 'at')) = 'number'" plain.text) plain.text)
+  (assert (not (in "NULLS LAST" plain.text)) plain.text))
