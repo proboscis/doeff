@@ -4,7 +4,8 @@
 公開する本文では、publication-plan.mdの「公開順」の表の公開状態に従ってリンクを直す。
 
 - 公開済み: 表に書いたZennのURLへリンクする。
-- 公開予定: リンクを外し、題に「(公開予定)」を添える。
+- 公開予定: リンクを外し、題に「(公開予定)」を添える。公開の刻を書いた回(予約公開)も、表を公開済みに
+  直すまではリンクしない(刻の前にリンクすると、読者が開けないページへ案内する)。
 - 下書きの記事と表に無い記事(候補): リンクを外し、題だけを残す。
 - examples/などの相対パス: GitHubのmainのURLへ直す。画像の/images/はそのまま残す。
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
@@ -26,11 +28,14 @@ _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _ARTICLE_LINK = re.compile(r"\[([^\]]+)\]\((doeff-[a-z]+\.md)(#[^)]*)?\)")
 # 「公開順」の表の1行: | 週 | [題](原稿) | `slug` | 読者への入口 | 公開状態 |
-_STATE_ROW = re.compile(
+STATE_ROW = re.compile(
     r"^\|[^|]*\|\s*\[[^\]]+\]\((doeff-[a-z]+\.md)\)\s*\|\s*`([^`|]*)`\s*\|[^|]*\|\s*([^|]+?)\s*\|\s*$"
 )
 # Zennの記事のslug(articles/<slug>.mdのファイル名で、公開後のURLの末尾)。zenn-cliの検査と同じ規則。
 _ZENN_SLUG = re.compile(r"[0-9a-z_-]{12,50}")
+# 公開状態の欄の公開の刻(Zennのpublished_atと同じく日本時間)。「公開予定 2026-10-21 08:00 JST」の形で書く。
+JST = timezone(timedelta(hours=9))
+_RESERVED_AT = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) JST")
 # 文の終わりの記号(句点・全角の感嘆符と疑問符)と、その前に来る閉じ括弧。
 _SENTENCE_END = "\u3002\uff01\uff1f"
 _CLOSERS = "\u300d\u300f)\uff09"
@@ -41,14 +46,17 @@ _POLITE_END = re.compile(
 
 @dataclass(frozen=True)
 class Published:
-    """公開済みの記事。urlはZennの実際のURL。"""
+    """公開済みの記事。urlはZennの実際のURL。atは予約公開で出した回の公開の刻(手で出した回はNone)。"""
 
     url: str
+    at: datetime | None = None
 
 
 @dataclass(frozen=True)
 class Scheduled:
-    """公開予定の記事。URLはまだ無い。"""
+    """公開予定の記事。URLはまだ無い。atは公開の刻(予約公開 — 刻を書いていない回はNoneで、予約しない)。"""
+
+    at: datetime | None = None
 
 
 State = Published | Scheduled
@@ -90,7 +98,7 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
     for line in plan.splitlines():
         if line.startswith("### "):
             series = line.removeprefix("### ").strip()  # この見出しの下の表の行は、この連載の回。
-        row = _STATE_ROW.match(line)
+        row = STATE_ROW.match(line)
         if row is None:
             continue
         name, slug, cell = row.groups()
@@ -100,14 +108,37 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
         if cell.startswith("公開済み") and url:
             if not url.group(0).endswith(f"/articles/{slug}"):
                 raise ValueError(f"{name}の公開済みのURLの末尾がslug「{slug}」と違います")
-            rows.append(PlanRow(name, slug, Published(url.group(0)), series))
+            at = reserved_at(cell[url.end() :], name)
+            rows.append(PlanRow(name, slug, Published(url.group(0), at), series))
         elif cell.startswith("公開予定"):
-            rows.append(PlanRow(name, slug, Scheduled(), series))
+            at = reserved_at(cell.removeprefix("公開予定"), name)
+            rows.append(PlanRow(name, slug, Scheduled(at), series))
         elif not cell.startswith("下書き"):
             raise ValueError(
                 f"{name}の公開状態「{cell}」は、公開済み <ZennのURL>・公開予定・下書きのどれかにしてください"
             )
     return tuple(rows)
+
+
+def reserved_at(text: str, name: str) -> datetime | None:
+    """公開状態の欄の、状態とURLの後ろに書いた公開の刻を読む。無ければNoneを返す。
+
+    刻の書き損じを「刻なし」と黙って読むと、予約したつもりの回が出ないので、形が違えば例外にする。
+    """
+    rest = text.strip()
+    if not rest:
+        return None
+    found = _RESERVED_AT.fullmatch(rest)
+    if found is None:
+        raise ValueError(
+            f"{name}の公開の刻「{rest}」は、「YYYY-MM-DD hh:mm JST」の形で書いてください"
+        )
+    return datetime.strptime(found.group(1), "%Y-%m-%d %H:%M").replace(tzinfo=JST)
+
+
+def zenn_time(at: datetime) -> str:
+    """公開の刻を、Zennのpublished_atの形(日本時間のYYYY-MM-DD hh:mm)にする。"""
+    return at.astimezone(JST).strftime("%Y-%m-%d %H:%M")
 
 
 def state_of(rows: tuple[PlanRow, ...], name: str) -> State | None:

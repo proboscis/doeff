@@ -4,7 +4,9 @@
 
 - articles/<slug>.md: 名は表のZennのslug。本文はrender_release.pyが作る公開する本文。
   front matterはtitle・emoji・type・topicsを正本から写し、publishedを表の公開状態から決める
-  (公開済みだけtrue、公開予定はfalse。公開済みの記事を書き出し直しても非公開に戻さない)。
+  (公開済みと、公開の刻を書いた公開予定はtrue、刻の無い公開予定はfalse。公開済みの記事を書き出し直しても
+  非公開に戻さない)。公開の刻を書いた回はpublished_atに刻を書く — Zennはpublished: trueと未来の
+  published_atの組を予約公開として受け、刻を過ぎると自分で公開する(Zennの公式ガイドの「予約公開」)。
 - images/...: 本文が/images/...で参照する画像を、リポジトリのimages/から同じパスへ写す。
 
 全記事の食い違い(front matter・画像・公開先から開けないリンク)を先に集め、1つでもあれば
@@ -51,7 +53,10 @@ class Front:
 
 @dataclass(frozen=True)
 class Prepared:
-    """書き出す前の記事1本(原稿・slug・公開設定・記事のMarkdown・画像・食い違い)。"""
+    """書き出す前の記事1本(原稿・slug・公開設定・記事のMarkdown・画像・食い違い・公開の刻)。
+
+    published_atはZennのfront matterのpublished_at(日本時間のYYYY-MM-DD hh:mm)。刻の無い回はNone。
+    """
 
     name: str
     slug: str
@@ -59,6 +64,7 @@ class Prepared:
     article: str
     images: tuple[str, ...]
     problems: tuple[str, ...]
+    published_at: str | None = None
 
 
 def read_front(source: str) -> tuple[dict[str, object], str] | None:  # noqa: DOEFF006 — 道具の小さな組の戻り
@@ -155,34 +161,42 @@ def typed_front(fields: dict[str, object]) -> Front | None:
     return None
 
 
-def zenn_article(front: Front, body: str, published: bool) -> str:
-    """Zennの記事のMarkdownを作る(publishedは正本でなく公開状態から決める)。"""
+def zenn_article(front: Front, body: str, published: bool, published_at: str | None = None) -> str:
+    """Zennの記事のMarkdownを作る(publishedとpublished_atは正本でなく公開状態から決める)。"""
     head = (
         f"title: {json.dumps(front.title, ensure_ascii=False)}",
         f"emoji: {json.dumps(front.emoji, ensure_ascii=False)}",
         f"type: {json.dumps(front.kind)}",
         f"topics: {json.dumps(list(front.topics), ensure_ascii=False)}",
         f"published: {json.dumps(published)}",
+        # Zennの公式ガイドと同じく、引用符を付けずに書く(秒の無い日時はYAMLで文字列に読まれる)。
+        *((f"published_at: {published_at}",) if published_at else ()),
     )
     return "---\n{}\n---\n{}".format("\n".join(head), body)
 
 
+def published_at_of(state: release.State) -> str | None:
+    """公開状態の公開の刻を、Zennのpublished_atの形にする。刻の無い回はNoneを返す。"""
+    return release.zenn_time(state.at) if state.at else None
+
+
 def prepare(row: release.PlanRow, rows: tuple[release.PlanRow, ...]) -> Prepared:
     """公開順の表の1行の記事を、書き出す形にして食い違いを集める。"""
-    published = isinstance(row.state, release.Published)
+    at = published_at_of(row.state)
+    # 公開の刻の無い公開予定だけが非公開。刻を書いた公開予定は、Zennが刻に公開する予約になる。
+    published = isinstance(row.state, release.Published) or at is not None
     parsed = read_front((SOURCE / row.name).read_text())
     if parsed is None:
-        return Prepared(row.name, row.slug, published, "", (), ("front matterがありません",))
+        return Prepared(row.name, row.slug, published, "", (), ("front matterがありません",), at)
     fields, body = parsed
     released = release.release_text(body, rows)
     images = image_targets(released)
     problems = (*front_problems(fields), *body_problems(released))
     front = typed_front(fields)
     if problems or front is None:
-        return Prepared(row.name, row.slug, published, "", images, problems or ("型の誤り",))
-    return Prepared(
-        row.name, row.slug, published, zenn_article(front, released, published), images, ()
-    )
+        return Prepared(row.name, row.slug, published, "", images, problems or ("型の誤り",), at)
+    article = zenn_article(front, released, published, at)
+    return Prepared(row.name, row.slug, published, article, images, (), at)
 
 
 def write(item: Prepared, output: Path) -> None:
@@ -212,7 +226,10 @@ def prepare_all() -> Export:
 def summary(item: Prepared) -> str:
     """書き出した記事1本の1行(出力先のファイル・原稿・公開設定・画像の数)。"""
     state = "true" if item.published else "false"
-    return f"articles/{item.slug}.md ← {item.name}(published: {state}・画像 {len(item.images)}枚)"
+    at = f"・published_at: {item.published_at}" if item.published_at else ""
+    return (
+        f"articles/{item.slug}.md ← {item.name}(published: {state}{at}・画像 {len(item.images)}枚)"
+    )
 
 
 def main() -> None:
