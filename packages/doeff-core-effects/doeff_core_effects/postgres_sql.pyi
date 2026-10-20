@@ -34,6 +34,7 @@ from doeff_core_effects.sql_effects import SqlDropNotice as SqlDropNotice
 from doeff_core_effects.sql_effects import SqlRows as SqlRows
 from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
 from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
+from doeff_core_effects.sql_effects import SqlLock as SqlLock
 from doeff_core_effects.sql_effects import SqlSchemaApplied as SqlSchemaApplied
 from doeff_core_effects.sql_effects import SqlParam as SqlParam
 from doeff_core_effects.sql_effects import SqlColumnType as SqlColumnType
@@ -172,6 +173,13 @@ def postgres_insert(connection: Incomplete, request: SqlInsertRows) -> _Program[
 def postgres_ensure_tables(connection: Incomplete, tables: tuple) -> _Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, object]:
     ...
 LOCK_STATEMENT: str
+LOCK_SHARED_STATEMENT: str
+
+def transaction_locks(lock_key: str | None, locks: tuple) -> _Program[tuple, object]:
+    ...
+
+def lock_text(lock: SqlLock) -> _Program[str, object]:
+    ...
 NOTICE_STATEMENT: str
 
 @dataclass(frozen=True, kw_only=True)
@@ -204,7 +212,7 @@ class PostgresStep:
 def request_step(request: SqlQuery | SqlInsertRows) -> _Program[PostgresStep | None, object]:
     ...
 
-def flush_steps(lock_key: str | None, origin: str | None, flush: TransactionFlush) -> _Program[tuple, object]:
+def flush_steps(locks: tuple, origin: str | None, flush: TransactionFlush) -> _Program[tuple, object]:
     ...
 
 @runtime_checkable
@@ -230,10 +238,10 @@ def step_answer(step: PostgresStep | None, cursor: StatementCursor | None) -> _P
 def first_failure(error: Exception) -> _Program[Exception, object]:
     ...
 
-def postgres_flush(connection: PipelineConnection, lock_key: str | None, origin: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+def postgres_flush(connection: PipelineConnection, locks: tuple, origin: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
     ...
 
-def postgres_begin(connection: Incomplete, lock_key: str | None) -> _Program[SqlFailed | SqlUnreachable | None, object]:
+def postgres_begin(connection: Incomplete, locks: tuple) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
 
 def postgres_control(connection: Incomplete, statement: str) -> _Program[SqlFailed | SqlUnreachable | None, object]:
@@ -281,22 +289,22 @@ class TransactionAbandoned(Exception):
 def leased_here(driver: TransactionDriver) -> _Program[PipelineConnection | SqlUnreachable, object]:
     ...
 
-def flushed_here(driver: TransactionDriver, lock_key: str | None, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+def flushed_here(driver: TransactionDriver, locks: tuple, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
     ...
 
 def rolled_back_here(driver: TransactionDriver) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
 
-def run_batched_here(driver: TransactionDriver, lock_key: str | None, origin: str, raised: RaisedNotices, program: Program) -> Incomplete:
+def run_batched_here(driver: TransactionDriver, locks: tuple, origin: str, raised: RaisedNotices, program: Program) -> Incomplete:
     ...
 
 def abandoned_now(driver: TransactionDriver) -> Incomplete:
     ...
 
-def offloaded_batched_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None) -> _Program[Incomplete, object]:
+def offloaded_batched_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, locks: tuple) -> _Program[Incomplete, object]:
     ...
 
-def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None, batched: bool) -> _Program[Incomplete, object]:
+def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, locks: tuple, batched: bool) -> _Program[Incomplete, object]:
     ...
 
 def raised_commit(driver: TransactionDriver, raised: RaisedNotices) -> _Program[SqlFailed | SqlUnreachable | None, object]:

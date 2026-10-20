@@ -23,6 +23,7 @@ from doeff_core_effects.postgres_sql import postgres_insert as postgres_insert
 from doeff_core_effects.postgres_sql import postgres_ensure_tables as postgres_ensure_tables
 from doeff_core_effects.postgres_sql import offloaded_statement as offloaded_statement
 from doeff_core_effects.postgres_sql import offloaded_transaction as offloaded_transaction
+from doeff_core_effects.postgres_sql import transaction_locks as transaction_locks
 from doeff_core_effects.postgres_sql import notified as notified
 from doeff_core_effects.postgres_sql import hung_notice as hung_notice
 

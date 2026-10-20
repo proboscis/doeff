@@ -18,6 +18,9 @@ RETIRED_INDEX_PATTERN: Incomplete
 DEFAULT_PREFIX: str
 WRITER_LOCK_SUFFIX: str
 MIGRATE_LOCK_SUFFIX: str
+ROWS_UNIT: str
+STREAM_UNIT_PREFIX: str
+UNIT_LOCK_SEPARATOR: str
 INDEX_LOCK_SUFFIX: str
 STORE_RELATIONS: tuple[str, ...]
 INDEXED_RELATIONS: tuple[str, ...]
@@ -77,6 +80,12 @@ def checked_prefix(prefix: str) -> _Program[str, object]:
     ...
 
 def writer_lock_key(prefix: str) -> _Program[str, object]:
+    ...
+
+def stream_unit(stream: str) -> _Program[str, object]:
+    ...
+
+def unit_lock_key(prefix: str, unit: str) -> _Program[str, object]:
     ...
 
 def migrate_lock_key(prefix: str) -> _Program[str, object]:

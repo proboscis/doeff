@@ -99,7 +99,7 @@ def assert_http_callable_timed_out(abandoned):
 def records_config(connections, pool, observer, prefix, enabled):
     from doeff_records.http_server import records_server_config
     from doeff_records.laws import LAW_SCHEMA
-    from doeff_records.pg import pg_records_handler, prepare_records_store
+    from doeff_records.pg import pg_records_handler, prepare_records_store, writer_gates
     from doeff_records.pg_sql import writer_lock_key
 
     key = run(writer_lock_key(prefix))
@@ -114,12 +114,14 @@ def records_config(connections, pool, observer, prefix, enabled):
     config = run(
         records_server_config(
             LAW_SCHEMA,
-            lambda writer: pg_records_handler(store, writer, "local-test"),
+            lambda writer: pg_records_handler(store, writer, "local-test", gated=enabled),
+            # The records writer queue (writer-gates) admits writers per lock unit before they
+            # take a pooled connection; the held key below is the whole-store key, which every
+            # writer takes in shared mode, as an old-version writer would hold it exclusively.
             request_handlers=(
                 observer.handler,
-                pooled_postgres_sql_handler(
-                    connections, pool, serialized_lock_keys=(key,) if enabled else ()
-                ),
+                *((writer_gates,) if enabled else ()),
+                pooled_postgres_sql_handler(connections, pool),
             ),
         )
     )
