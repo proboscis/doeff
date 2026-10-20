@@ -3,12 +3,13 @@ title: "マージキューでテストを走らせるのをやめた"
 emoji: "🚦"
 type: "tech"
 topics: ["python", "doeff", "git", "ci", "claudecode"]
-published: false
+published: true
+published_at: 2026-10-31 08:00
 ---
 
 AIに書かせた変更を1日に何百件もmainへ入れると、マージの前のテストが列を詰まらせます。筆者の環境では、1語だけの修正でも、マージの前の確かめに517秒かかりました。確かめからテストを外した後の2026年10月16日は、433件がmainに入り、確かめは中央値5.3秒でした。
 
-その代わり、全体のテストが全部緑になる版は、この1週間に1つも出ていません。この記事は、マージの前の確かめからテストを外した得と失の両方の記録です。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+その代わり、全体のテストが全部緑になる版は、この1週間に1つも出ていません。この記事は、マージの前の確かめからテストを外した得と失の両方の記録です。doeffが初めての方は[doeffの連載の1本目](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 マージキューは、変更を1件ずつmainの先端へ積み直し、確かめてから入れる仕組みです。確かめの部分を、ここでは門(ゲート)と呼びます。門でテストを走らせる形はよくあり、1日に数件なら困りません。
 
@@ -243,7 +244,7 @@ for seconds in (517, 5):  # テストを走らせる門と、衝突の印だけ�
 
 会話を並べる仕組みの全体は、1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)で書きました。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

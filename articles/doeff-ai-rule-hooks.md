@@ -3,7 +3,8 @@ title: "CLAUDE.mdに決まり851本を書き足すのをやめた"
 emoji: "📏"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "llm"]
-published: false
+published: true
+published_at: 2026-10-25 08:00
 ---
 
 AIエージェントに守ってほしい決まりは、失敗のたびに増えます。私たちのCLAUDE.mdは、2026年7月21日の7,808字から、9月22日には39,821字になりました。10月17日の時点では、決まり851本をCLAUDE.mdの外に置き、hookで要る時だけAIに見せています。
@@ -15,7 +16,7 @@ CLAUDE.mdは、Claude Codeが毎回の会話の頭に読み込む指示のファ
 
 全部を読ませると長すぎます。削ると、要る時に手元にありません。この記事は、この悩みをClaude Codeのhookで解いた開発の記録です。決まりを「いつ見せるか」の条件つきで持ち、当たった時だけAIに見せます。
 
-この仕組みは、自作のAI開発の基盤agoraで動いています。agoraは、AIの会話を何十も並べて開発を進める仕組みです。全体の話は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+この仕組みは、自作のAI開発の基盤agoraで動いています。agoraは、AIの会話を何十も並べて開発を進める仕組みです。全体の話は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。doeffが初めての方は[doeffの連載の1本目](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード
 
@@ -276,7 +277,7 @@ def test_judged_rule_with_fixed_answers():  # 同じ処理を、判定器を替�
 
 この記事の`AskJudge`は、止まった所へ答える役を外側に置きました。その理由は、doeffの連載の9本目「async/awaitがあるのに、なぜyieldで書くのか(公開予定)」です。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

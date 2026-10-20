@@ -3,7 +3,8 @@ title: "止まったClaude Codeを1つずつ開くのをやめた"
 emoji: "⏳"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "設計"]
-published: false
+published: true
+published_at: 2026-10-27 08:00
 ---
 
 Claude Codeの会話を何十も並べると、止まった会話のどれが自分の番なのか、画面からは分かりません。筆者は、ターンの最後の行に待っている物を書かせ、書かずに止まる時はStop hookで1度だけ止めています。2026年10月18日に数えると、直近24時間に止まった会話520個のうち、筆者を待つのは16個でした。
@@ -14,7 +15,7 @@ Claude Codeの会話を何十も並べると、止まった会話のどれが自
 - 自分の次の作業を残したまま、止まっている会話もあります。
 - 全部を開いて最後の返事を読むと、確かめるだけで時間が消えます。
 
-この記事は、Claude CodeのStop hookで、ターンの終わりに待ちの1行を書かせた記録です。仕組みの全体は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。hookの話は、3本目「CLAUDE.mdに決まり851本を書き足すのをやめた(公開予定)」です。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+この記事は、Claude CodeのStop hookで、ターンの終わりに待ちの1行を書かせた記録です。仕組みの全体は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。hookの話は、3本目「CLAUDE.mdに決まり851本を書き足すのをやめた(公開予定)」です。doeffが初めての方は[doeffの連載の1本目](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 最後の行にWAITが無ければ、1度だけ止める
 
@@ -266,7 +267,7 @@ def test_sort_and_continue():  # 3つの会話の返事を、あなたの番・�
 - 読む側はdoeffのProgramにし、申告と続きを依頼にします。試験ではメモリの表が、本番では受付が答えます。
 - 外を待たない`work`には、人の代わりに「続けて」を置きます。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

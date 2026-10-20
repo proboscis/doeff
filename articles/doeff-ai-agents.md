@@ -3,7 +3,8 @@ title: "Claude Codeを起動してテストするのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "ai", "agent", "testing"]
-published: false
+published: true
+published_at: 2026-10-22 08:00
 ---
 
 Claude CodeやCodexにレビューを2つ並べて頼み、結果を合わせる処理を書いたとします。この処理のテストは、本物を起こすと遅く、答えも毎回変わります。この記事では、本物を起こさずに、入力待ちを挟む答えまで決めてテストします。
@@ -13,7 +14,7 @@ Claude CodeやCodexのように、自分で作業を進めるAIをAIエージェ
 - 入力待ちや時間切れの分岐は、狙って起こせません。
 - 起動のコードが処理に散ると、テストで差し替える所が増えます。
 
-doeffは、処理の読み書きや待ちを、外側の部品で差し替えるPythonのライブラリです。`doeff-agents`を使うと、エージェントの起動と結果待ちを、処理からの依頼として書けます。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+doeffは、処理の読み書きや待ちを、外側の部品で差し替えるPythonのライブラリです。`doeff-agents`を使うと、エージェントの起動と結果待ちを、処理からの依頼として書けます。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ```python
 from doeff import do  # 依頼を出す処理を定義する。
@@ -287,5 +288,5 @@ uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ $G/doeff-time" --
 - [セッションの仕様と、結果の型](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/effects/agent.py)
 - [テスト用のハンドラの実装](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/handlers/testing.hy)
 - [本番のハンドラの入口](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-agents/src/doeff_agents/handlers/__init__.py)
-- 前の回:処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは(公開予定)
+- 前の回:[処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは](https://zenn.dev/proboscis/articles/doeff-introduction)
 - 次の回:テストで20秒待つのをやめる(公開予定)

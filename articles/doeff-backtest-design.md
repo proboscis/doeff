@@ -3,7 +3,8 @@ title: "バックテストと本番で処理を2つ書くのをやめる"
 emoji: "📈"
 type: "tech"
 topics: ["python", "doeff", "バックテスト", "テスト"]
-published: false
+published: true
+published_at: 2026-11-01 08:00
 ---
 
 バックテスト用の処理と本番用の処理は、いつの間にか別物になりがちです。バックテストとは、売買の判断をする処理を、過去の相場のデータで動かして確かめることです。この記事では、1つの処理を、書き直さずにバックテストと本番の両方で動かします。
@@ -15,7 +16,7 @@ published: false
 - 書き直した2つの処理は、直すたびに少しずつずれていきます。
 - 1分ごとに動く処理の1週間分を確かめるのに、1週間は待てません。
 
-Pythonのライブラリdoeffで、時刻・値段・注文の3つを処理の外側へ出し、ハンドラで差し替えます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+Pythonのライブラリdoeffで、時刻・値段・注文の3つを処理の外側へ出し、ハンドラで差し替えます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 :::message
 この記事は、売買の判断そのものは扱いません。判断の処理は中身の無い置き物にし、値段も架空の数を使います。扱うのは、判断を包む処理の設計です。
@@ -67,7 +68,7 @@ def trading_loop(symbol: str, steps: int):  # 1分ごとに、steps回だけ判�
 
 ## 時刻・値段・注文を、外側への依頼にする
 
-`@do`を付けた関数は、呼んでもすぐには動かず、手順を表すProgramを返します。`yield`で外側へ渡す依頼をエフェクト(effect)、依頼に答える部品をハンドラ(handler)と呼びます。詳しくは1本目のdoeffとは？(公開予定)で説明しています。
+`@do`を付けた関数は、呼んでもすぐには動かず、手順を表すProgramを返します。`yield`で外側へ渡す依頼をエフェクト(effect)、依頼に答える部品をハンドラ(handler)と呼びます。詳しくは1本目の[doeffとは？](https://zenn.dev/proboscis/articles/doeff-introduction)で説明しています。
 
 - `GetPrice`と`PlaceOrder`は、この記事で定義したエフェクトです。`Effect`を継承すれば、自分で定義できます。
 - `GetTime`と`Delay`は、doeffの時間の部品doeff-timeが用意するエフェクトです。
@@ -244,7 +245,7 @@ def test_one_week_without_waiting():  # 1週間分の1分ごとの処理を、1�
 
 依存を外側から渡す考え方は、4本目の依存を引数で引き回すのをやめる(公開予定)で扱いました。外部のAPIを通信せずにテストする方法は、前の6本目の外部APIのテストで通信するのをやめる(公開予定)にあります。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

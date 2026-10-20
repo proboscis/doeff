@@ -3,7 +3,8 @@ title: "1人でClaude Codeを最大50並べたら、詰まるのは人だった"
 emoji: "🛰️"
 type: "tech"
 topics: ["python", "doeff", "claudecode", "ai", "開発手法"]
-published: false
+published: true
+published_at: 2026-10-21 08:00
 ---
 
 筆者は、Claude Codeの会話を最大50並べて、1人で開発しています。2026年9月12日からの35日で、3つのリポジトリのmainへ14,707個のcommitが入りました。並べるほど詰まったのは、AIではなく人の注意でした。
@@ -14,7 +15,7 @@ AIのコーディングエージェントを1つ動かすのは、もう難し�
 - 終わった仕事を確かめてmainへ入れる番が、人の前に溜まります。
 - ある会話が別の会話の結果を待つと、その待ちを人が覚えておくことになります。
 
-この記事は、この詰まりに向けて作った仕組みの記録です。作っているのはPythonのライブラリdoeffと、会話を並べる仕組みそのもので、配る判断もdoeffで書きました。AIエージェントで開発した記録の連載では、この記事が1本目です。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+この記事は、この詰まりに向けて作った仕組みの記録です。作っているのはPythonのライブラリdoeffと、会話を並べる仕組みそのもので、配る判断もdoeffで書きました。AIエージェントで開発した記録の連載では、この記事が1本目です。doeffが初めての方は[doeffの連載の1本目](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 配る判断をProgramにする
 
@@ -299,7 +300,7 @@ AIの起動と結果待ちを処理として書く話は、AIエージェント�
 5. Claude Codeに報告のページを丸ごと作らせるのをやめた(公開予定)
 6. マージキューでテストを走らせるのをやめた(公開予定)
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

@@ -3,7 +3,8 @@ title: "async/awaitがあるのに、なぜyieldで書くのか"
 emoji: "🔀"
 type: "tech"
 topics: ["python", "asyncio", "doeff", "設計"]
-published: false
+published: true
+published_at: 2026-11-03 08:00
 ---
 
 Pythonにはasync/awaitがあるのに、ライブラリdoeffは処理を`yield`で書きます。理由は、止まった所へ答える役を、呼ばれた関数ではなく外側に置けるからです。async/awaitで書いた処理を、テストで動かす場面で比べます。
@@ -14,7 +15,7 @@ Pythonにはasync/awaitがあるのに、ライブラリdoeffは処理を`yield`
 - テストで替えるには、`unittest.mock.patch`を当てるか、関数を引数で渡す形に直します。
 - 奥の関数が何を何回待ったかを外から見るには、待つ関数ごとに包みを足します。
 
-doeffは、処理の読み書きや待ちを、外側の部品で差し替えるPythonのライブラリです。doeffでは、この「止まって続きを待つ」所を`yield`で書きます。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+doeffは、処理の読み書きや待ちを、外側の部品で差し替えるPythonのライブラリです。doeffでは、この「止まって続きを待つ」所を`yield`で書きます。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 `yield`で渡すのは実装ではありません。「これをしてほしい」という依頼のデータです。同じ挨拶の処理を、2つの形で並べます。
 
@@ -224,7 +225,7 @@ yieldにも代償があります。awaitで足りる場面と合わせて書い�
 
 時間の依頼を仮想の時計で答える例は、3本目のテストで20秒待つのをやめる(公開予定)にあります。次の10本目では、設計で決めた約束を、doeffのテストとして走らせます。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

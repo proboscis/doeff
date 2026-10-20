@@ -3,7 +3,8 @@ title: "ライブラリのcommitの68%を、Claude Codeと書いた1年"
 emoji: "📈"
 type: "tech"
 topics: ["python", "doeff", "claudecode", "oss", "test"]
-published: false
+published: true
+published_at: 2026-10-28 08:00
 ---
 
 筆者は、PythonのライブラリdoeffをClaude Codeと書いています。最初のcommitから約13か月で、mainの5,566個のうち3,811個(68%)がClaudeとの共著です。人が差分を読み切れない量になっても、使う人との約束を崩さないためにした事を書きます。
@@ -16,7 +17,7 @@ AIに書かせると、commitは速く増えます。2026年10月は、18日間�
 - 文書のコードが、書いてある通りに動くこと
 - `pip install`で入る物が、書いた通りであること
 
-doeffは、処理の中の「読む」「待つ」といった依頼を、外側の部品で差し替えられるライブラリです。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+doeffは、処理の中の「読む」「待つ」といった依頼を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 共著のcommitを数える
 
@@ -229,7 +230,7 @@ def user_name() -> Generator[Ask, Any, str]:  # 名前の文字列を返す手�
 
 AIの会話を並べる仕組みは、AIエージェントで開発した記録の連載の1本目に書きました。題は「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

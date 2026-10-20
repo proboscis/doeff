@@ -3,14 +3,15 @@ title: "公開APIの型の穴をテストで塞ぎ、黙って開かせない"
 emoji: "🕳️"
 type: "tech"
 topics: ["python", "pyright", "mypy", "テスト", "doeff"]
-published: false
+published: true
+published_at: 2026-11-02 08:00
 ---
 
 型付きのPythonライブラリを出しても、使う人のpyrightでは型がUnknownになることがあります。私たちのライブラリdoeffでは、PyPIの0.6.0で、公開の名381個のうち84個の型が分かりませんでした。直した0.7.0では406個のうち5個になり、5個とも訳をテストの表に書いてあります。
 
 この記事では、型の穴をpyrightのverifytypesで数え、穴の名と訳の表をpytestのテストにします。表に無い穴が開いても、表の穴が塞がっても、テストは赤になります。型の誤りを誤りと言えるかは、使う人と同じ入れ方の環境で、別のテストに確かめさせます。
 
-doeffは、処理の中身と動かし方を分けて書けるPythonのライブラリです。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+doeffは、処理の中身と動かし方を分けて書けるPythonのライブラリです。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード
 
@@ -240,7 +241,7 @@ doeffでは、この2つのテストで、0.6.0の84個を0.7.0の5個にしま�
 
 ## 参考
 
-- 連載の1本目「処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは」(公開予定)
+- [連載の1本目「処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは」](https://zenn.dev/proboscis/articles/doeff-introduction)
 - ADRを書いて終わりにするのをやめる(公開予定):決めた約束をpytestで守る、別の例です。
 - ライブラリのcommitの68%を、Claude Codeと書いた1年(公開予定):型の見本を含む、4つの網の全体です。
 - [pyrightの文書「Verifying Type Completeness」](https://github.com/microsoft/pyright/blob/main/docs/typed-libraries.md#verifying-type-completeness)

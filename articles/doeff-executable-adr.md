@@ -3,14 +3,15 @@ title: "ADRを書いて終わりにするのをやめる"
 emoji: "📐"
 type: "tech"
 topics: ["python", "doeff", "テスト", "設計", "semgrep"]
-published: false
+published: true
+published_at: 2026-11-04 08:00
 ---
 
 設計で決めた約束を、ADRという文書に残すことがあります。ところが数か月たつと、コードが約束から外れていることがよくあります。この記事では、ADRに規則と反例と検査を持たせ、そのままpytestで走るファイルにします。
 
 たとえば「業務のコードは、今の時刻を直に読まない」と決めたとします。テストで時刻を固定できるようにするためです。それでも、誰かが`datetime.now()`を1行足します。レビューで見落とすと、テストはその日の日付で通ってしまいます。
 
-文書は、読まれた時にしか働きません。人も、AIのコーディングエージェントも、文書を読み落とします。使うのは、Pythonのライブラリdoeffの部品doeff-adrです。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+文書は、読まれた時にしか働きません。人も、AIのコーディングエージェントも、文書を読み落とします。使うのは、Pythonのライブラリdoeffの部品doeff-adrです。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード
 
@@ -289,7 +290,7 @@ ADRの規則が破れると、テストの失敗として出ます。失敗の�
 
 連載はこの10本目で一区切りです。1本目の目次から、ほかの悩みに合う回を選べます。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

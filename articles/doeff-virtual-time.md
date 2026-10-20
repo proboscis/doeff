@@ -3,7 +3,8 @@ title: "テストで20秒待つのをやめる"
 emoji: "⏱️"
 type: "tech"
 topics: ["python", "doeff", "テスト", "asyncio"]
-published: false
+published: true
+published_at: 2026-10-24 08:00
 ---
 
 20秒待ってから次へ進む処理は、テストでも20秒止まります。この記事では、本番と同じ処理のまま、仮想の時計でテストを20秒待たずに終わらせます。待ちを含む処理のテストには、よく次の悩みがあります。
@@ -12,7 +13,7 @@ published: false
 - `sleep`をモックで消すと速くなりますが、2つの待ちのどちらが先に終わるかは試せません。
 - 今の時刻を読む処理は、テストを走らせた時刻で結果が変わります。
 
-Pythonのライブラリdoeffを使い、この3つをまとめて解きます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+Pythonのライブラリdoeffを使い、この3つをまとめて解きます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード
 
@@ -207,7 +208,7 @@ def test_schedule_at_8_seconds():  # 3秒と8秒の流れを、待たずに確�
 
 時間以外の依頼との組み合わせは、ハンドラの合成で扱います。`await`との違いはcoroutineとの違い(公開予定)、ゲームの進行と組み合わせる例はカードゲームの記事にあります。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

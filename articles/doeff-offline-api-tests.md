@@ -3,7 +3,8 @@ title: "外部APIのテストで通信するのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "テスト", "pytest"]
-published: false
+published: true
+published_at: 2026-10-30 08:00
 ---
 
 外部のAPIを呼ぶ処理は、テストでも通信します。この記事では、本物の応答を一度だけ記録し、テストは通信せずに記録から答えます。通信するテストには、よく次の悩みがあります。
@@ -14,7 +15,7 @@ published: false
 
 Pythonのライブラリdoeffで、この3つを解きます。記録に無い依頼は、通信せずに失敗させます。
 
-doeffは、処理の中の「通信する」「待つ」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。まずは、通信の代わりに固定の応答を返すテストから始めます。
+doeffは、処理の中の「通信する」「待つ」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。まずは、通信の代わりに固定の応答を返すテストから始めます。
 
 ```python
 from doeff import Pass, Resume, do, handler, run, with_handlers  # 処理の定義・ハンドラ・実行を使う。
@@ -223,7 +224,7 @@ def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに�
 
 待ちを含む処理のテストは、3本目のテストで20秒待つのをやめる(公開予定)で扱いました。依存を外側から渡す話は、4本目の依存を引数で引き回すのをやめる(公開予定)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

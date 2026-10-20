@@ -3,7 +3,8 @@ title: "Claude Codeに仕事を配らせるのをやめ、関数で配る"
 emoji: "🚦"
 type: "tech"
 topics: ["python", "doeff", "claudecode", "ai", "設計"]
-published: false
+published: true
+published_at: 2026-10-23 08:00
 ---
 
 筆者は、作業ボードのcardをClaude Codeの会話へ配る役も、Claude Codeの会話に任せていました。2026年10月10日の1日、その配り役が配ったのは、配れたcard 445枚のうち289枚でした。配る判断を関数に移して同じ1日を模擬すると、385〜446枚を配りました。
@@ -16,7 +17,7 @@ AIの会話に配らせると、配る判断が会話の頭の中にあります
 - 別の配り方ならどうだったかを、同じ日で試し直せません。
 - 決まりを書き足しても、当てはめ方は会話の読み方しだいです。
 
-cardは作業ボードに1件ずつ書いた仕事で、会話1つはClaude Codeの1つのセッションです。この記事は、配る判断をAIの会話から関数へ移した記録です。仕組みの全体は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+cardは作業ボードに1件ずつ書いた仕事で、会話1つはClaude Codeの1つのセッションです。この記事は、配る判断をAIの会話から関数へ移した記録です。仕組みの全体は、この連載の1本目「1人でClaude Codeを最大50並べたら、詰まるのは人だった(公開予定)」です。doeffが初めての方は[doeffの連載の1本目](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 配る順を、純粋な関数にする
 
@@ -351,7 +352,7 @@ schedulerが数える待ちは、保留のタグが付いていた時間も含�
 - 配り方は、記録した1日の負荷で比べてから選びます。設定の値1つで、いつでも替えられます。
 - AIの会話は、詰まりの兆しを読む見張りに回します。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

@@ -3,12 +3,13 @@ title: "依存を引数で引き回すのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "設計"]
-published: false
+published: true
+published_at: 2026-10-26 08:00
 ---
 
 処理の奥で使う実装を、テストと本番で替えたいことがあります。引数で渡すと、自分では使わない途中の関数まで、依存をバケツリレーで運びます。DIのコンテナを入れると、今度は処理の書き方がコンテナに縛られます。
 
-この記事では、Pythonのライブラリdoeffで、コンテナを使わずに依存を外側から渡します。処理の側は「この実装がほしい」と依頼を書くだけです。どの実装を渡すかは、外側に取り付けたハンドラが決めます。最後に、この書き方が効く所と、儀式になる所を整理します。連載が初めての方は1本目の入門(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+この記事では、Pythonのライブラリdoeffで、コンテナを使わずに依存を外側から渡します。処理の側は「この実装がほしい」と依頼を書くだけです。どの実装を渡すかは、外側に取り付けたハンドラが決めます。最後に、この書き方が効く所と、儀式になる所を整理します。連載が初めての方は[1本目の入門](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 | 言葉 | この記事での意味 |
 | --- | --- |
@@ -194,7 +195,7 @@ with patch.dict("os.environ", {"ARTICLE_DEMO_greeting": "環境からの挨拶"}
 
 ---
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 

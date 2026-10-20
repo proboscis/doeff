@@ -3,7 +3,8 @@ title: "Claude Codeに報告のページを丸ごと作らせるのをやめた"
 emoji: "📄"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "html"]
-published: false
+published: true
+published_at: 2026-10-29 08:00
 ---
 
 Claude Codeに図つきの報告のページを頼むと、筆者の環境では開くまで42分かかっていました。ページ作りを丸ごと任せるのをやめ、中身・HTML・図の3つに分けると、次に試した報告は5分36秒で開きました。中身は話していた会話が書き、HTMLは決まったスクリプトが組み、図だけを別の作業役が描きます。
@@ -17,7 +18,7 @@ Claude Codeに図つきの報告のページを頼むと、筆者の環境では
 
 本文と図を書く時間は、3.5分だけでした。しかも最初のページは読みにくく、書き直して読める物になるまで74分かかりました。
 
-会話はClaude Codeの1つのセッションで、作業役は会話が起こすサブエージェントです。この記事は、報告のページを3つの役に分けた記録です。ページを組む処理は、doeffで書いて見せます。doeffは、処理の中の「読む」「頼む」といった操作を、外側の部品で差し替えられるPythonのライブラリです。doeffが初めての方はdoeffの連載の1本目(公開予定)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+会話はClaude Codeの1つのセッションで、作業役は会話が起こすサブエージェントです。この記事は、報告のページを3つの役に分けた記録です。ページを組む処理は、doeffで書いて見せます。doeffは、処理の中の「読む」「頼む」といった操作を、外側の部品で差し替えられるPythonのライブラリです。doeffが初めての方は[doeffの連載の1本目](https://zenn.dev/proboscis/articles/doeff-introduction)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
 ## まず短いコード — 図が無くても、ページを組む
 
@@ -312,7 +313,7 @@ run(with_handlers([not_yet, printed], checked_build(CONTENT)))  # 記録の依�
 - doeffでは、図を依頼にし、まだの図には外側のハンドラが作成中の枠で答えます。
 - 試しは5分36秒、毎日の中央値は図が揃うまで9.2分でした。図の数で延びる所が、次に直す所です。
 
-doeffとは？：メイン記事へ戻る(公開予定)
+[doeffとは？：メイン記事へ戻る](https://zenn.dev/proboscis/articles/doeff-introduction)
 
 ## 参考
 
