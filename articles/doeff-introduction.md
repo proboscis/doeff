@@ -3,7 +3,7 @@ title: "処理を書き換えずに、テストと本番で動かし方を替え
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "設計"]
-published: true
+published: false
 ---
 
 ![doeff — 処理を書く。動かし方は、選べる。](/images/zenn-use-cases-v0/generated/main-hero.png)
