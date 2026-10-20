@@ -241,7 +241,7 @@ def first_failure(error: Exception) -> _Program[Exception, object]:
 def postgres_flush(connection: PipelineConnection, locks: tuple, origin: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
     ...
 
-def postgres_begin(connection: Incomplete, locks: tuple) -> _Program[SqlFailed | SqlUnreachable | None, object]:
+def postgres_begin(connection: PipelineConnection, locks: tuple) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
 
 def postgres_control(connection: Incomplete, statement: str) -> _Program[SqlFailed | SqlUnreachable | None, object]:
