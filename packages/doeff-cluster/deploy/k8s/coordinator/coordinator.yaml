@@ -166,7 +166,12 @@ spec:
             # (Gather・Race)・pidfd-of の libc を 1 度だけ読む変更・doeff.result の型(doeff-vm の result.rs を含む — 準備で wheel を
             # 組み直す)。worker の準備の変更(L2515)は worker の内部だけ(coordinator との契約は変えない)。前の版 5ab25a28f(L2496)は
             # 9fe8c330b の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 9fe8c330bdd86f6d2ff5c36ea643344d62b1ca94 }
+            # d5ebd138d = 切り離した task の終わりを、終わりを決める coordinator の 1 か所から出口(outbox — GET /outbox・DELETE /outbox/<id>)へ
+            # 1 度だけ積み、task の行に知らせ先 notify を持たせる版(card ki-e7945a2b2d00・L2644)。上に載る系の腕がこの出口を読み、task を
+            # 置いた側へ結末を届ける。間の差で coordinator の process に効く物は、scheduled() の既定の scheduler を Rust の版にする変更
+            # (ec5b91d99 — 上に載る系の job は 4de77f941 から既にこの版)・止められた常駐の job の起こし直しの上限(523ffad35・2a117cd53)・
+            # worker の disk の名乗りの戻りの幅・handler は @handler の def だけ。前の版 9fe8c330b は d5ebd138d の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: d5ebd138dc230546a4940678e5340bc0d1ee190a }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
