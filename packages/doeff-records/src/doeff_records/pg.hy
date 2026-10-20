@@ -10,9 +10,11 @@
 ;;;   - 答え手の SqlUnreachable(接続できない・切れた — 読み分けは答え手の postgres-failure)を、公開 effect の答え Unreachable にする。
 ;;;   - 答え手の SqlFailed(engine の失敗 — 文と表の形の食い違い)は実装の誤りとして RecordsSqlFailed を上げる(旧い版で psycopg の
 ;;;     接続の失敗でない例外を上げたのと同じ扱い)。
-;;; 書きの手順(PutRow・PutRows・AppendEvent・版の繰り上げ・期限切れの回収・刈り取り)は SqlTransaction の lock-key = 置き場の書きの錠
-;;; (pg_sql.writer-lock-key — 旧い版と同じ錠の番号)の中で流す。transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に
-;;; 読んで渡す)。版の繰り上げ・回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
+;;; 書きの手順(PutRow・PutRows・AppendEvent・版の繰り上げ・期限切れの回収・刈り取り)は SqlTransaction の locks = 書きの錠の中で流す
+;;; (pg_sql.hy の頭の註の「書きの錠」— 置き場全体の錠〔旧い版と同じ錠の番号〕を共有で、触る錠の単位〔行の単位・列ごと〕を排他で持つ。
+;;; 版の繰り上げだけが置き場全体を排他 — writer-locks)。本番の組み立て(handler の gated)では、書きは接続を借りる前に同じ process の同じ
+;;; 単位の書きと 1 本ずつに並び(writer-gates)、並んだ秒と錠を持った秒を操作・単位ごとに計器に積む(locked-transaction)。
+;;; transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に読んで渡す)。版の繰り上げ・回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
 ;;; 書きの往復(#3605 — 記録の service と DB が別の機体に在ると、DB への往復 1 回が書き 1 回の待ちに乗る): PutRow・PutRows・AppendEvent・
 ;;; AppendEvents だけが往復をまとめる transaction(SqlTransaction の batched — batched-writing)を選び、DB へ 2 往復で書く(AppendEvents は束の
 ;;; 追記の数に依らず 2 往復 — 追記ごとの読みと書きを同じ往復に並べる・card ki-48c34994ed15)。1 往復目 = 判じるための読みの束
@@ -69,7 +71,7 @@
 ;;;     (pg_sql の頭の註の「旧い形の索引を外す」)。その前は前の文の形の読みが引くので外さず、INDEX-RETRY-SECONDS 秒の後に観測し直す。
 ;;;     宣言の索引が全部在る置き場でも、旧い形の索引が在れば記録の service は索引の用意の task を立てる(IndexBook の retired)。
 ;;;     旧い形でない宣言に無い索引(手で足した物)は外さない。
-(require doeff-hy.macros [defhandler defk <- val var])
+(require doeff-hy.macros [defeffect defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
 (import sys)
@@ -77,9 +79,11 @@
 (import doeff [Program])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [Delay GetMonotonic GetTime WaitWithin])
-(import doeff_core_effects.scheduler [ExternalPromise TaskCancelledError])
+(import doeff_core_effects.scheduler [ExternalPromise TaskCancelledError CreateSemaphore AcquireSemaphore ReleaseSemaphore])
+(import doeff_core_effects.meter_effects [ObserveSecondsBatch])
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
-                                        SqlUnreachable])
+                                        SqlUnreachable SqlLock])
+(import doeff_records.request_timing [lock-observations])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired
@@ -94,7 +98,7 @@
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
-                              writer-lock-statement schema-steps drop-statements
+                              unit-lock-key stream-unit ROWS-UNIT writer-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
                               concurrent-index-statement drop-index-statement analyze-statement retired-index?
                               index-lock-statement index-unlock-statement
@@ -270,13 +274,13 @@
     (SqlFailed :sqlstate sqlstate :reason reason) (raise (RecordsSqlFailed sqlstate reason))))
 
 
-(defk in-transaction [database lock-key program [batched False]]
-  {:pre [(: database str) (: lock-key str) (: program Program) (: batched bool)]
+(defk in-transaction [database lock-key program [batched False] [locks #()]]
+  {:pre [(: database str) (: lock-key (| str None)) (: program Program) (: batched bool) (: locks tuple)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "program を錠 lock-key の transaction 1 つで流すため(届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる)。batched =
-   往復をまとめる transaction を選ぶか(既定 False — 文 1 つずつ・頭の註)。"
-  (<- answer (SqlTransaction database program :lock-key lock-key :batched batched))
+  "program を錠 lock-key と錠の並び locks(SqlLock — 書きの錠は writer-locks)の transaction 1 つで流すため(届かなければ StoreUnreachable・
+   engine の失敗は RecordsSqlFailed を上げる)。batched = 往復をまとめる transaction を選ぶか(既定 False — 文 1 つずつ・頭の註)。"
+  (<- answer (SqlTransaction database program :lock-key lock-key :batched batched :locks locks))
   (match answer
     (SqlUnreachable :reason reason) (raise (StoreUnreachable reason))
     (SqlFailed :sqlstate sqlstate :reason reason) (raise (RecordsSqlFailed sqlstate reason))
@@ -351,26 +355,115 @@
   answer)
 
 
-(defk writing [store topics program]
-  {:pre [(: store PreparedStore) (: topics (| tuple None)) (: program Program)]
+(defk writer-locks [store units]
+  {:pre [(: store PreparedStore) (: units tuple)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "書き 1 回が取る錠の並び(SqlTransaction の locks — pg_sql.hy の頭の註の「書きの錠」)を作るため: units = 排他で持つ部分の錠の単位の名
+   (空 = 置き場全体を排他)。置き場全体の錠を先に(部分の書きは共有で)、部分の錠を単位の名の順に並べる。"
+  (<- whole (writer-lock-key store.prefix))
+  (when (not units)
+    (return #((SqlLock :key whole))))
+  (var locks #((SqlLock :key whole :shared True)))
+  (for [unit (sorted (set units))]
+    (<- key (unit-lock-key store.prefix unit))
+    (:= locks (+ locks #((SqlLock :key key)))))
+  locks)
+
+
+(defk locked-transaction [store gated operation units program batched]
+  {:pre [(: store PreparedStore) (: gated bool) (: operation str) (: units tuple) (: program Program) (: batched bool)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "program を置き場の書きの錠の transaction で流し、同じ transaction で名 topics(None = 全部に関わる)の書きの合図を出すため(旧い版の
-   lock-statement と同じ錠の番号 — pg_sql.hy の頭の註)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
-  (<- key (writer-lock-key store.prefix))
-  (<- answer (in-transaction store.database key (signalled store topics program)))
+  "program を書きの錠(writer-locks)の transaction で流すため。gated(本番の組み立て — pg-records-handler の註)なら、接続を借りる前に同じ
+   process の同じ単位の書きと 1 本ずつに並び(AdmitWriters — writer-gates)、並んで待った秒と錠を持った秒を操作 operation・単位ごとに
+   計器に積む(錠を持った秒 = 並びを通ってから transaction の答えまで — 接続の許可の待ち・DB の錠の待ち・文の往復・COMMIT を含む)。
+   置き場全体の書き(units が空)は並ばない(版の繰り上げ — 検の口だけ)。"
+  (<- locks (writer-locks store units))
+  (when (or (not gated) (not units))
+    (<- direct (in-transaction store.database None program :batched batched :locks locks))
+    (return direct))
+  (val gates (tuple (sorted (set units))))
+  (<- asked (GetMonotonic))
+  (<- (AdmitWriters gates))
+  ;; 通った後は、取り消し・例外でも必ず並びを返す(返さないと同じ単位の書きが止まり続ける)。
+  (try
+    (<- admitted (GetMonotonic))
+    (<- answer (in-transaction store.database None program :batched batched :locks locks))
+    (<- done (GetMonotonic))
+    (finally
+      (<- (ReleaseWriters gates))))
+  (<- observations (lock-observations operation gates (- admitted asked) (- done admitted)))
+  (<- (ObserveSecondsBatch observations))
   answer)
 
 
-(defk batched-writing [store topics program]
-  {:pre [(: store PreparedStore) (: topics tuple) (: program Program)]
+(defk writing [store gated operation units topics program]
+  {:pre [(: store PreparedStore) (: gated bool) (: operation str) (: units tuple) (: topics (| tuple None)) (: program Program)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)の program を、往復をまとめる(batched)書きの錠の transaction で流し、同じ transaction で書きが
-   触る名 topics の合図を出すため(頭の註の「書きの往復」— 錠の番号は writing と同じ)。"
-  (<- key (writer-lock-key store.prefix))
-  (<- answer (in-transaction store.database key (signalled-ahead store topics program) :batched True))
+  "program を錠の単位 units(空 = 置き場全体)の書きの錠の transaction で流し、同じ transaction で名 topics(None = 全部に関わる)の書きの
+   合図を出すため(pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
+  (<- answer (locked-transaction store gated operation units (signalled store topics program) False))
   answer)
+
+
+(defk batched-writing [store gated operation units topics program]
+  {:pre [(: store PreparedStore) (: gated bool) (: operation str) (: units tuple) (: topics tuple) (: program Program)]
+   :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
+   :tags {:context "records" :role "foundation"}}
+  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)の program を、往復をまとめる(batched)書きの錠の transaction(錠の単位 units)で流し、
+   同じ transaction で書きが触る名 topics の合図を出すため(頭の註の「書きの往復」— 錠は writing と同じ locked-transaction)。"
+  (<- answer (locked-transaction store gated operation units (signalled-ahead store topics program) True))
+  answer)
+
+
+;; --- 同じ process の書きの並び(card ki-0306f5a614b4)-----------------------------------------------------------------------------
+
+(defeffect AdmitWriters
+  "錠の単位 units(名の順)の書きを、同じ process の同じ単位の書きと 1 本ずつに並べるため、単位ごとの並びを名の順に通る(writer-gates が
+   答える — 通るまで待つ)。答え = None。通った書きは必ず ReleaseWriters で同じ単位を返す。"
+  {:fields [(: units (get tuple #(str ...)))]
+   :pre [(: units tuple) (= units (tuple (sorted (set units))))]
+   :answer None
+   :tags {:context "records" :role "foundation"}})
+
+
+(defeffect ReleaseWriters
+  "AdmitWriters で通った単位 units の並びを返すため。答え = None。"
+  {:fields [(: units (get tuple #(str ...)))]
+   :pre [(: units tuple)]
+   :answer None
+   :tags {:context "records" :role "foundation"}})
+
+
+(defhandler writer-gates
+  "同じ process の書きを、錠の単位ごとに 1 本ずつに並べる答え手(本番の組み立て — main.hy の records-connected が pg-records-handler と
+   SQL の答え手より外側に 1 つ置く)。単位の錠を DB で待つ書きが接続を持ったまま並び、読みの接続を使い切るのを防ぐ(DB の錠の前に、
+   接続を借りずに並ぶ — 同じ単位を DB で待つのは別の process の書きだけ)。違う単位の書きは互いを待たない。"
+  {:tags {:context "records" :role "foundation"}}
+  ;; gates = 錠の単位の名 → その単位の並び(scheduler の semaphore 1 つ — 初めて使う拍に作る)(session の値)。単位は宣言の表と列から
+  ;; 決まる有限の名なので、並びは消さない。
+  (session var gates {})
+  (AdmitWriters [units]
+    ;; 単位を名の順に 1 つずつ通る。途中で取り消されたら(後ろの単位を待つ間など)、通った単位を返してから取り消しを通す。
+    (var taken #())
+    (try
+      (for [unit units]
+        (when (not-in unit gates)
+          (<- created (CreateSemaphore 1))
+          ;; 作る間に他の書きが同じ単位の並びを作っていれば、先に置かれた並びを使う(右が勝つ合わせ)。
+          (:= gates (| {unit created} gates)))
+        (<- (AcquireSemaphore (get gates unit)))
+        (:= taken (+ taken #(unit))))
+      (except [BaseException]
+        (for [unit (reversed taken)]
+          (<- (ReleaseSemaphore (get gates unit))))
+        (raise)))
+    (resume None))
+  (ReleaseWriters [units]
+    (for [unit (reversed units)]
+      (<- (ReleaseSemaphore (get gates unit))))
+    (resume None)))
 
 
 (defk hung-bell [store topics]
@@ -928,20 +1021,22 @@
   (tuple (gfor record records (int (get record 0)))))
 
 
-(defk retire-stream [store stream expiry]
-  {:pre [(: store PreparedStore) (: stream str) (: expiry EventExpiry)] :post [(: % int)]
+(defk retire-stream [store gated stream expiry]
+  {:pre [(: store PreparedStore) (: gated bool) (: stream str) (: expiry EventExpiry)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "列 stream の保持の期限(境 expiry)を過ぎた出来事を、EXPIRE-BATCH 個ずつ書きの錠の transaction を分けて捨てるため(錠の外で候補の番号を
    読み、錠の中ではその番号の出来事だけを条件を読み直して捨てる — 錠を持つ間に触る行を EXPIRE-BATCH で縛る・pg_sql の頭の註)。候補が
    無ければ錠を取らない。候補が上限より少なかった回(残りが無い)か、錠の中で 1 つも捨てなかった回(候補を読んだ後に組へ新しい出来事が
    積まれた — 続きは次の SweepExpired)で終える。答え = 捨てた出来事の数。"
   (<- topics (notice-topics #() #(stream)))
+  (<- unit (stream-unit stream))
   (<- first (expiring-sequences store stream expiry))
   (var chosen first)
   (var total 0)
   (var going (bool chosen))
   (while going
-    (<- removed (writing store topics (retire-expired-events store stream expiry.before-at expiry.separator chosen)))
+    (<- removed (writing store gated "sweep-stream" #(unit) topics
+                         (retire-expired-events store stream expiry.before-at expiry.separator chosen)))
     (:= total (+ total removed))
     (:= going (and (= (len chosen) EXPIRE-BATCH) (> removed 0)))
     (when going
@@ -951,8 +1046,8 @@
   total)
 
 
-(defk purge-expired [store now-ms]
-  {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
+(defk purge-expired [store gated now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため(SweepExpired の掃除 — 読みは
    回収を待たずに期限を自分で見て、書きは自分が触る物だけを片付ける・頭の註)。候補が無ければ錠を取らない(行も出来事も、候補の読み 1 文の
@@ -965,12 +1060,12 @@
                                                :if (and (isinstance decl.retention KeepFor) decl.terminal)
                                                name))
                                   #()))
-    (<- count (writing store row-topics (remove-expired-rows store now-ms)))
+    (<- count (writing store gated "sweep-rows" #(ROWS-UNIT) row-topics (remove-expired-rows store now-ms)))
     (:= removed count))
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (<- expiry (event-expiry decl now-ms))
     (when (is-not expiry None)
-      (<- (retire-stream store name expiry))))
+      (<- (retire-stream store gated name expiry))))
   removed)
 
 
@@ -1449,20 +1544,21 @@
   (ChangeLog changes head.epoch))
 
 
-(defk swept-count [store now-ms]
-  {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % Swept)]
+(defk swept-count [store gated now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % Swept)]
    :tags {:context "records" :role "foundation"}}
   "SweepExpired の答え(消した行の数)を作るため。"
-  (<- removed (purge-expired store now-ms))
+  (<- removed (purge-expired store gated now-ms))
   (Swept removed))
 
 
 ;; --- handler ------------------------------------------------------------------------------------------------
 
-(defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host]
+(defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host [gated False]]
   ;; 引数に残す理由: store は用意し終えた置き場(prepare-records-store の答え — 表の用意を済ませた証)で、置き場ごとに違う。
   ;; writer は呼び手が名乗った書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名で、
-  ;; 組み立ての側の設定。
+  ;; 組み立ての側の設定。gated = 書きを同じ process の同じ錠の単位の書きと 1 本ずつに並べ(AdmitWriters)、並んだ秒と錠を持った秒を
+  ;; 計器に積むか(本番の組み立てだけが True で、外側に writer-gates と計器を置く — locked-transaction)。
   "PostgreSQL の置き場の答え手(頭の註)。SqlQuery / SqlTransaction を外側の答え手へ出す。"
   {:tags {:context "records" :role "foundation"}}
   ;; 源の工場の問い(ReadSignalSource)には本番の源 RECORDS-SIGNAL-SOURCE で答える(#3127 — 源の WatchChanges・WatchEvents はこの置き場が答える)。
@@ -1482,12 +1578,14 @@
   (PutRow [table key value expect]
     (<- now (GetTime))
     (<- topics (notice-topics #(table) #()))
-    (<- answer (reached (batched-writing store topics (put-row-locked store origin-host writer effect (epoch-ms now)))))
+    (<- answer (reached (batched-writing store gated "put-row" #(ROWS-UNIT) topics
+                                         (put-row-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (PutRows [writes]
     (<- now (GetTime))
     (<- topics (notice-topics (tuple (gfor write writes write.table)) #()))
-    (<- answer (reached (batched-writing store topics (put-rows-locked store origin-host writer effect (epoch-ms now)))))
+    (<- answer (reached (batched-writing store gated "put-rows" #(ROWS-UNIT) topics
+                                         (put-rows-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
     ;; 呼び鈴の名は頼んだ表だけ — 末尾を名指した列(streams)への追記では待ち手を起こさない(tails は答えを返す時点の末尾・#3718)。
@@ -1505,13 +1603,20 @@
   (AppendEvent [stream idempotency-key body]
     (<- now (GetTime))
     (<- topics (notice-topics #() #(stream)))
-    (<- answer (reached (batched-writing store topics (append-locked store origin-host writer effect (epoch-ms now)))))
+    (<- unit (stream-unit stream))
+    (<- answer (reached (batched-writing store gated "append-event" #(unit) topics
+                                         (append-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (AppendEvents [appends]
     ;; 束の追記を 1 つの書きの錠の transaction で 2 往復で積み、束が触る列の名を合図する(append-events-locked)。
     (<- now (GetTime))
     (<- topics (notice-topics #() (tuple (gfor one appends one.stream))))
-    (<- answer (reached (batched-writing store topics (append-events-locked store origin-host writer effect (epoch-ms now)))))
+    (var units #())
+    (for [one appends]
+      (<- unit (stream-unit one.stream))
+      (:= units (+ units #(unit))))
+    (<- answer (reached (batched-writing store gated "append-events" units topics
+                                         (append-events-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (ReadEvents [stream after limit]
     (<- now (GetTime))
@@ -1527,16 +1632,16 @@
     (resume answer))
   (AdvanceStoreEpoch []
     ;; 検の口: 届かなければ StoreUnreachable を上げる(答えの型は int だけ — 旧い版と同じ)。版は全部の待ち手に関わる(名の分からない合図)。
-    (<- epoch (writing store None (advance-epoch-locked store)))
+    (<- epoch (writing store gated "advance-epoch" #() None (advance-epoch-locked store)))
     (resume epoch))
   (SweepExpired []
     (<- now (GetTime))
-    (<- answer (reached (swept-count store (epoch-ms now))))
+    (<- answer (reached (swept-count store gated (epoch-ms now))))
     (resume answer))
   (PruneChanges [keep-seconds upto-seq]
     (<- now (GetTime))
     ;; 床は全部の表の待ち手の位置に関わる(名の分からない合図)。
-    (<- answer (reached (writing store None (prune-locked store effect (epoch-ms now)))))
+    (<- answer (reached (writing store gated "prune-changes" #(ROWS-UNIT) None (prune-locked store effect (epoch-ms now)))))
     (resume answer))
   (ReadChangeLog [after limit]
     (<- answer (reached (change-log store effect)))

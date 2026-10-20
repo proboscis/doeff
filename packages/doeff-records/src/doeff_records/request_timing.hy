@@ -40,7 +40,9 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import doeff_hy.frozen [FrozenMap])
+(import doeff_core_effects.meter_effects [SecondsObservation])
 (import doeff_records.wire [OPERATIONS])
+(import doeff_records.pg_sql [ROWS-UNIT stream-unit])
 
 (val MODULE-TAGS {:context "records" :role "judgment"})
 
@@ -156,3 +158,60 @@
                #(RequestStage.TOTAL (! (between (if (is received-at None) started received-at) sent)))
                #(RequestStage.WOKE (if slept (! (between wait.last-woke sent)) None))))
   (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
+
+
+;; --- 書きの錠の秒(card ki-0306f5a614b4)-------------------------------------------------------------------------------------------
+;; 記録の service の書き 1 回が、錠の単位(pg_sql.hy の頭の註の「書きの錠」— 行の単位 rows・列の単位 stream:<列>)ごとの同じ process の
+;; 並びを待った秒(wait)と、並びを通ってから transaction の答えまで錠を持った秒(hold — 接続の許可の待ち・DB の錠の待ち・文の往復・COMMIT)。
+;; 積むのは pg.hy の locked-transaction(本番の組み立てだけ)。計器の名: records_lock_<操作>_<単位>_<相>(名の - と : は _)。どの書きが錠を
+;; 長く持ち、どの単位の書きが待ったかを、2 回読んだ差を数の差で割って読む。系列は宣言の列の数で閉じる(LOCK-OPERATIONS × 単位 × 相)。
+(defenum LockPhase WAIT HOLD)
+(val LOCK-METRIC "records_lock_{}_{}_{}")
+;; 錠の単位ごとの書きの操作の名(pg.hy の handler と回収が名乗る — 単位の名は pg_sql の ROWS-UNIT と stream-unit)。
+(val ROWS-LOCK-OPERATIONS #("put-row" "put-rows" "sweep-rows" "prune-changes"))
+(val STREAM-LOCK-OPERATIONS #("append-event" "append-events" "sweep-stream"))
+
+
+(defk metric-word [text]
+  {:pre [(: text str)] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "操作や錠の単位の名を、計器の名の 1 語にするため(Prometheus の名に使えない - と : を _ にする)。"
+  (.replace (.replace text "-" "_") ":" "_"))
+
+
+(defk lock-metric [operation unit phase]
+  {:pre [(: operation str) (: unit str) (: phase LockPhase)] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "操作 operation が錠の単位 unit で待った秒(wait)か持った秒(hold)を積む計器の名を綴るため(LOCK-METRIC)。"
+  (.format LOCK-METRIC (! (metric-word operation)) (! (metric-word unit)) phase))
+
+
+(defk lock-observations [operation units waited held]
+  {:pre [(: operation str) (: units tuple) (: waited float) (: held float)] :post [(: % (get tuple #(SecondsObservation ...)))]
+   :tags {:context "records" :role "judgment"}}
+  "書き 1 回(操作 operation・錠の単位 units)の並んだ秒 waited と錠を持った秒 held を、単位ごとの秒の観測の列にするため(束の追記が列を
+   2 つ触れば、同じ秒を 2 つの列の単位に積む — どの列の書きが待ったかを列ごとに読む)。"
+  (var observations #())
+  (for [unit units]
+    (<- wait-name (lock-metric operation unit LockPhase.WAIT))
+    (<- hold-name (lock-metric operation unit LockPhase.HOLD))
+    (:= observations (+ observations #((SecondsObservation :name wait-name :seconds (max waited 0.0))
+                                       (SecondsObservation :name hold-name :seconds (max held 0.0))))))
+  observations)
+
+
+;; 相ごとの説明(計器の # HELP に載せる)。
+(val LOCK-PHASE-MEANINGS #(#(LockPhase.WAIT "同じ process の同じ単位の書きの並びを待った秒")
+                           #(LockPhase.HOLD "並びを通ってから transaction の答えまで錠を持った秒")))
+
+
+(defk lock-metric-helps [streams]
+  {:pre [(: streams tuple)] :post [(: % (get FrozenMap str))] :tags {:context "records" :role "judgment"}}
+  "宣言の列 streams の書きの錠の系列の全部 → 各系列の # HELP の説明(GET /metrics が描く — 行の単位と列ごとの単位)。"
+  (var units #(#(ROWS-UNIT ROWS-LOCK-OPERATIONS)))
+  (for [stream (sorted streams)]
+    (<- unit (stream-unit stream))
+    (:= units (+ units #(#(unit STREAM-LOCK-OPERATIONS)))))
+  (var helps {})
+  (for [#(unit operations) units operation operations #(phase meaning) LOCK-PHASE-MEANINGS]
+    (<- name (lock-metric operation unit phase))
+    (setv (get helps name) (.format "記録の service の書き {} が錠の単位 {} で{}(起動からの和と数)" operation unit meaning)))
+  (FrozenMap helps))

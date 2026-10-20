@@ -177,6 +177,37 @@ def late_append(harness: LawHarness) -> _Program[Appended, object]:
 
 def law_watch_events_waits_for_an_append(harness: LawHarness) -> _Program[list[object], object]:
     ...
+CONCURRENT_WRITERS: int
+CONCURRENT_ROUNDS: int
+FOLLOW_READS: int
+FOLLOW_LIMIT: int
+
+def concurrent_appender(harness: LawHarness, n: int) -> _Program[None, object]:
+    ...
+
+def concurrent_row_writer(harness: LawHarness, n: int) -> _Program[None, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class FollowedEvents:
+    sequences: tuple[int, ...]
+    after: int
+
+@dataclass(frozen=True, kw_only=True)
+class Followed:
+    events: tuple[int, ...]
+    after: int
+    changes: tuple[int, ...]
+    at: WatchCursor
+
+def followed_events(harness: LawHarness, after: int) -> _Program[FollowedEvents, object]:
+    ...
+
+def concurrent_follower(harness: LawHarness, cursor: WatchCursor) -> _Program[Followed, object]:
+    ...
+
+def law_concurrent_writes_appear_in_number_order(harness: LawHarness) -> _Program[list[object], object]:
+    ...
 
 def law_none_removes_a_field(harness: LawHarness) -> _Program[list[object], object]:
     ...

@@ -7,7 +7,7 @@
 ;;;   - driver の I/O(接続を開く・文を流す・COMMIT・ROLLBACK・接続を返す)だけを呼び手の pool の thread へ逃がし、外から完了させる promise
 ;;;     (CreateExternalPromise + Wait)で待つ(thread_pool_compute.hy と同じ作法)。待つのは撃った task だけ。
 ;;;   - SqlQuery / SqlInsertRows / SqlEnsureTables = 許可を取り、pool の仕事 1 つで「接続を借りる → 流す → 返す」。
-;;;   - SqlTransaction = 許可を取り、接続を 1 本借りて、BEGIN(lock-key が在れば pg_advisory_xact_lock(hashtext(:key)) — postgres-sql-handler と
+;;;   - SqlTransaction = 許可を取り、接続を 1 本借りて、BEGIN(錠 — lock-key と locks の順・postgres-sql-handler と
 ;;;     同じ文)→ program → COMMIT の各段を pool で流す。中の SqlQuery は transaction の scope の handler が同じ接続で pool へ回す(program 側の
 ;;;     約束は postgres-sql-handler と同じ)。batched = True を選んだ transaction だけは postgres-sql-handler と同じ往復のまとめ方(BEGIN と錠は
 ;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)で、借りる・全部の往復と間の program・返すを
@@ -34,7 +34,7 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice])
 (import doeff_core_effects.sql_transaction [stray-batch])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-ensure-tables offloaded-statement
-                                         offloaded-transaction notified hung-notice])
+                                         offloaded-transaction transaction-locks notified hung-notice])
 
 
 (defk permit-for [permits database size]
@@ -88,11 +88,12 @@
     (<- answer (permitted (get permits database)
                           (offloaded-statement connections pool database (fn [leased] (postgres-ensure-tables leased tables)))))
     (resume answer))
-  (SqlTransaction [database program lock-key batched] :when (in database (.names connections))
+  (SqlTransaction [database program lock-key batched locks] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))
+    (<- claims (transaction-locks lock-key locks))
     (val transaction (permitted (get permits database)
-                                (offloaded-transaction connections pool database program lock-key batched)))
+                                (offloaded-transaction connections pool database program claims batched)))
     (var admitted transaction)
     (when (and (is-not lock-key None) (in lock-key serialized-lock-keys))
       (val identity #(database lock-key))

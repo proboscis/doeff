@@ -10,6 +10,7 @@
 ;;; 手入れの法(law-maintenance-prunes-and-sweeps)と保持の読みの法(law-expired-records-are-unseen-before-a-sweep)は手入れの effect
 ;;; (maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
 (require doeff-hy.macros [defk <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
 (import itertools)
@@ -708,6 +709,115 @@
   [first moved idle ahead woke appended read])
 
 
+;; --- 法 8c: 並んで走る書きの番号は、読み手に積んだ順に見える(card ki-0306f5a614b4)---------------------------------
+
+;; 並んで走る書き手の数と 1 本ごとの書きの数・読み手が書きの間に読む回数(PostgreSQL の置き場では書き手の transaction が DB の中で並ぶ)。
+(val CONCURRENT-WRITERS 3)
+(val CONCURRENT-ROUNDS 5)
+(val FOLLOW-READS 12)
+(val FOLLOW-LIMIT 1000)
+
+(defk concurrent-appender [harness n]
+  {:pre [(: harness LawHarness) (: n int)] :post [(: % None)]
+   :tags {:context "records" :role "program"}}
+  "法 8c の追記の書き手 n: 列 journal と trails へ交互に積むため(2 つの列の追記は番号の bigserial を分け合い、列ごとの錠で並んで走る)。"
+  (for [round (range CONCURRENT-ROUNDS)]
+    (val stream (if (% round 2) "trails" "journal"))
+    (<- (as-writer harness MAKER (AppendEvent stream (.format "w{}#{}" n round) {"n" n "round" round})))
+    (<- (Delay 0.001)))
+  None)
+
+(defk concurrent-row-writer [harness n]
+  {:pre [(: harness LawHarness) (: n int)] :post [(: % None)]
+   :tags {:context "records" :role "program"}}
+  "法 8c の行の書き手 n: 表 parts と tickets へ交互に書くため(2 つの表の書きは変更の列の番号を分け合う — 行の単位の錠 1 つで並ぶ)。"
+  (for [round (range CONCURRENT-ROUNDS)]
+    (if (% round 2)
+        (<- (as-writer harness MAKER (PutRow "tickets" #("c" (.format "w{}-{}" n round)) (FrozenMap {"owner" (str n)}) (ExpectAny))))
+        (<- (as-writer harness MAKER (PutRow "parts" #((.format "w{}-{}" n round)) (FrozenMap {"label" (str round)}) (ExpectAny)))))
+    (<- (Delay 0.001)))
+  None)
+
+(defrecord FollowedEvents
+  "法 8c の列の追いの 1 回: sequences = 読んだ出来事の番号・after = 次に読む位置。"
+  {:tags {:context "records" :role "type"}}
+  (#^ (get tuple #(int ...)) sequences)
+  (#^ int after))
+
+(defrecord Followed
+  "法 8c の読み手が書きの間に追った物: events = 読んだ列の番号・after = 列の位置・changes = 読んだ変更の番号・at = 変更の位置。"
+  {:tags {:context "records" :role "type"}}
+  (#^ (get tuple #(int ...)) events)
+  (#^ int after)
+  (#^ (get tuple #(int ...)) changes)
+  (#^ WatchCursor at))
+
+(defk followed-events [harness after]
+  {:pre [(: harness LawHarness) (: after int)] :post [(: % FollowedEvents)]
+   :tags {:context "records" :role "program"}}
+  "列 journal の after より後の出来事を読み、読んだ番号と次の位置を返すため(読み手が位置を進めながら追う 1 回)。"
+  (<- page (as-writer harness MAKER (ReadEvents "journal" :after after :limit FOLLOW-LIMIT)))
+  (val sequences (tuple (gfor event page.items event.sequence)))
+  (FollowedEvents :sequences sequences :after (if sequences (get sequences -1) after)))
+
+(defk concurrent-follower [harness cursor]
+  {:pre [(: harness LawHarness) (: cursor WatchCursor)] :post [(: % Followed)]
+   :tags {:context "records" :role "program"}}
+  "法 8c の読み手: 書き手が走る間に、列 journal(位置 0 から)と表 parts・tickets の変更(位置 cursor から)を、位置を進めながら FOLLOW-READS
+   回追うため。"
+  (var events #())
+  (var after 0)
+  (var changes #())
+  (var at cursor)
+  (for [_ (range FOLLOW-READS)]
+    (<- followed (followed-events harness after))
+    (:= events (+ events followed.sequences))
+    (:= after followed.after)
+    (<- moved (as-writer harness MAKER (WatchChanges #("parts" "tickets") at :limit FOLLOW-LIMIT)))
+    (when (isinstance moved Changes)
+      (:= changes (+ changes (tuple (gfor item moved.items item.sequence))))
+      (:= at moved.cursor))
+    (<- (Delay 0.002)))
+  (Followed :events events :after after :changes changes :at at))
+
+(defk law-concurrent-writes-appear-in-number-order [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "番号の読みの約束の法(pg_sql.hy の頭の註の「書きの錠」): 並んで走る追記(2 つの列)と行の書き(2 つの表)の間に、位置を進めながら追う
+   読み手は、列の出来事も表の変更も番号の順に 1 回ずつ見て、どれも取りこぼさない — 書きが終わった後の追いつきの読みと合わせた並びが、
+   列の全部の読み・変更の全部の読みと同じ。PostgreSQL の置き場は書きの錠を列ごとと行の単位に分けており、番号(bigserial)を取ってから
+   commit するまでを、同じ読みが 1 つの位置で読む範囲(列 1 つ・表の全部)ごとに 1 本にしている事を確かめる。どの置き場の組も同じ。"
+  (val law "並んで走る書きの番号は、読み手に積んだ順に 1 回ずつ見える(取りこぼさない)")
+  (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start)))
+  (val cursor (WatchCursor start.epoch start.sequence))
+  (var writers #())
+  (for [n (range CONCURRENT-WRITERS)]
+    (<- appender (Spawn (concurrent-appender harness n)))
+    (<- row-writer (Spawn (concurrent-row-writer harness n)))
+    (:= writers (+ writers #(appender row-writer))))
+  (<- follower (Spawn (concurrent-follower harness cursor)))
+  (for [task writers]
+    (<- (Wait task)))
+  (<- followed (Wait follower))
+  (<- caught (followed-events harness followed.after))
+  (<- tail (collect-changes harness #("parts" "tickets") followed.at FOLLOW-LIMIT))
+  (val seen-events (+ followed.events caught.sequences))
+  (val seen-changes (+ followed.changes (tuple (gfor answer (get tail 0) :if (isinstance answer Changes) item answer.items item.sequence))))
+  (<- whole (as-writer harness MAKER (ReadEvents "journal" :limit FOLLOW-LIMIT)))
+  (val all-events (tuple (gfor event whole.items event.sequence)))
+  (<- every (collect-changes harness #("parts" "tickets") cursor FOLLOW-LIMIT))
+  (val all-changes (tuple (gfor answer (get every 0) :if (isinstance answer Changes) item answer.items item.sequence)))
+  (val expected (* CONCURRENT-WRITERS (// (+ CONCURRENT-ROUNDS 1) 2)))
+  (<- (require-law (= (len all-events) expected) law (.format "列 journal の出来事の数: {} ≠ {}" (len all-events) expected)))
+  (<- (require-law (= (len all-changes) (* CONCURRENT-WRITERS CONCURRENT-ROUNDS)) law
+                   (.format "表の変更の数: {} ≠ {}" (len all-changes) (* CONCURRENT-WRITERS CONCURRENT-ROUNDS))))
+  (<- (require-law (= seen-events all-events) law (.format "追った列の番号 {!r} と列の全部の番号 {!r} が違う" seen-events all-events)))
+  (<- (require-law (= seen-changes all-changes) law
+                   (.format "追った変更の番号 {!r} と変更の全部の番号 {!r} が違う" seen-changes all-changes)))
+  [(len seen-events) (len seen-changes)])
+
+
 ;; --- 法 9: 差分の None はその欄を消す(JSON merge patch の null)------------------------------------------------
 
 (defk law-none-removes-a-field [#^ LawHarness harness]
@@ -1319,6 +1429,7 @@
             "key-head-read-equals-filtered-scan" law-key-head-read-equals-filtered-scan
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append
+            "concurrent-writes-appear-in-number-order" law-concurrent-writes-appear-in-number-order
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
             "prune-stops-at-the-archived-seq" law-prune-stops-at-the-archived-seq

@@ -32,8 +32,8 @@ from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.pg import pg_records_handler as pg_records_handler
 from doeff_records.pg import prepare_records_store as prepare_records_store
 from doeff_records.pg import reconcile_indexes as reconcile_indexes
+from doeff_records.pg import writer_gates as writer_gates
 from doeff_records.pg_sql import DEFAULT_PREFIX as DEFAULT_PREFIX
-from doeff_records.pg_sql import writer_lock_key as writer_lock_key
 from doeff_records.http_server import MaintenancePlan as MaintenancePlan
 from doeff_records.http_server import RecordsServing as RecordsServing
 from doeff_records.http_server import RecordsListening as RecordsListening

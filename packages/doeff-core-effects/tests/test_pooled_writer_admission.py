@@ -1,6 +1,5 @@
 """Real scheduler/PG tests. Disposable DSN only; DB gates establish ordering."""
 
-import importlib.util
 import selectors
 import subprocess
 import sys
@@ -521,84 +520,3 @@ def cancel_during_handoff(batched, observer):
 def test_cancel_admission_receiver_during_handoff(batched):
     observer = AcquireObserver()
     execute(cancel_during_handoff(batched, observer), observer=observer.handler)
-
-
-@do
-def records_composition_probe(prefix, batched, gate, observer):
-    from doeff_core_effects.effects import Get
-    from doeff_hy.session import session_key
-    from doeff_records.pg_sql import writer_lock_key
-
-    key = yield writer_lock_key(prefix)
-    gate_sql = query("SELECT pg_advisory_xact_lock(812345)", database="records")
-    first = yield Spawn(
-        SqlTransaction(database="records", program=gate_sql, lock_key=key, batched=batched)
-    )
-    yield until(gate.waiting)
-    second = yield Spawn(
-        SqlTransaction(
-            database="records",
-            program=query("SELECT 1", database="records"),
-            lock_key=key,
-            batched=batched,
-        )
-    )
-    stored = yield Get(
-        session_key(
-            "doeff_core_effects.pooled_postgres_sql",
-            "pooled-postgres-sql-handler",
-            "transaction-permits",
-        )
-    )
-    admission = stored.value[("records", key)]
-    yield until(lambda: observer.attempts.get(admission.sem_id, 0) == 2)
-    gate.arm_timeout(3)
-    yield SqlQuery("records", "SELECT 1", ())
-    assert not gate.released.is_set(), "actual records composition did not opt in"
-    gate.release()
-    yield Wait(first)
-    yield Wait(second)
-    yield SqlTransaction(
-        database="records",
-        program=query("SELECT 1", database="records"),
-        lock_key="not-the-records-writer",
-        batched=batched,
-    )
-    stored = yield Get(
-        session_key(
-            "doeff_core_effects.pooled_postgres_sql",
-            "pooled-postgres-sql-handler",
-            "transaction-permits",
-        )
-    )
-    assert set(stored.value) == {("records", key)}, stored.value
-
-
-@pytest.mark.skipif(
-    importlib.util.find_spec("doeff_records") is None,
-    reason="records composition integration requires optional doeff-records package",
-)
-def test_actual_records_composition_opts_in_only_its_writer_key(batched, gate):
-    from doeff_core_effects.http_server_effects import HttpAddress
-    from doeff_records.http_server import MaintenancePlan
-    from doeff_records.main import RecordsSettings, records_connected
-
-    settings = RecordsSettings(
-        dsn=DSN,
-        prefix="admission_probe_",
-        origin_host="local-test",
-        pool_size=1,
-        address=HttpAddress(host="127.0.0.1", port=0),
-        maintenance=MaintenancePlan(interval_seconds=60.0, keep_seconds=600.0),
-    )
-    observer = AcquireObserver()
-    run(
-        scheduled(
-            with_handlers(
-                [state(), observer.handler],
-                records_connected(
-                    settings, records_composition_probe(settings.prefix, batched, gate, observer)
-                ),
-            )
-        )
-    )

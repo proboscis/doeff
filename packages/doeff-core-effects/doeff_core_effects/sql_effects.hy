@@ -34,6 +34,11 @@
 ;;;                      (3) program が例外を投げたら rollback して例外を通す
 ;;;                    lock-key(str | None)= 同じ鍵の transaction を直列にする(PostgreSQL = pg_advisory_xact_lock(hashtext(鍵))・
 ;;;                    sqlite = 1 接続で transaction が割り込まれないので要らない)。ClickHouse の答え手は SqlFailed(0A000)で断る。
+;;;                    locks(SqlLock の tuple・既定 空)= lock-key の後に並びの順に取る錠(shared = 共有の錠 — 共有どうしは並んで持て、
+;;;                    同じ鍵の排他の錠とだけ互いを待つ。PostgreSQL = pg_advisory_xact_lock_shared(hashtext(鍵)))。置き場全体の錠を共有で、
+;;;                    置き場の部分の錠を排他で持つ書きが、部分ごとに並んで走り、置き場全体の錠を排他で持つ手入れとは互いを待つ形に使う。
+;;;                    錠の順は呼び手が決める(同じ鍵の組を取る transaction は同じ順に並べる — 逆の順は deadlock になる)。答え手の扱いは
+;;;                    lock-key と同じ(sqlite は要らない・ClickHouse は断る)。
 ;;;                    batched(bool・既定 False)= 文の流し方の宣言(手順は sql_transaction.hy の頭の註):
 ;;;                      False  文 1 つを 1 回ずつ流す — BEGIN → 錠 → 文を出た順に → SqlNotify もその場で → COMMIT / ROLLBACK(SQL を出さない
 ;;;                             program でも BEGIN・錠・COMMIT を流す)
@@ -99,6 +104,12 @@
 
 
 ;; --- 値 ---------------------------------------------------------------------------------------------------------------------
+
+(defrecord SqlLock
+  "SqlTransaction の錠 1 つ(頭の註の locks): key = 錠の鍵・shared = 共有の錠か(既定 False = 排他)。"
+  (#^ str key)
+  (setv #^ bool shared False))
+
 
 (defrecord SqlParam
   "文の引数 1 つ(name = 文の `:name` の名・value = SqlValue の閉じた集合の値)。"
@@ -181,10 +192,13 @@
 
 (defeffect SqlTransaction
   "program を 1 つの transaction の中で走らせる(頭の註の約束 3 つ)。答え = program の答え(commit した後)| SqlFailed | SqlUnreachable。
-   batched = 文の流し方の宣言(既定 False = 文 1 つを 1 回ずつ・True = 往復をまとめる — 頭の註)。"
+   batched = 文の流し方の宣言(既定 False = 文 1 つを 1 回ずつ・True = 往復をまとめる — 頭の註)。locks = lock-key の後に並びの順に取る錠
+   (共有か排他 — 頭の註)。"
   {:tp [T]
-   :fields [(: database str) (: program (get Program #(T object))) (: lock-key (| str None) None) (: batched bool False)]
-   :pre [(: database str) (: program Program) (: lock-key (| str None)) (: batched bool)]
+   :fields [(: database str) (: program (get Program #(T object))) (: lock-key (| str None) None) (: batched bool False)
+            (: locks (get tuple #(SqlLock ...)) #())]
+   :pre [(: database str) (: program Program) (: lock-key (| str None)) (: batched bool) (: locks tuple)
+         (all (gfor lock locks (isinstance lock SqlLock)))]
    :answer (| T SqlFailed SqlUnreachable)
    :runs-carried [program]
    :tags {:context "sql" :role "foundation"}})

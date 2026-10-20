@@ -13,7 +13,8 @@
 ;;;   - 失敗: engine の SQLSTATE をそのまま SqlFailed に。SQLSTATE の無い driver の誤りは類の表(DRIVER-CLASS-SQLSTATES — agora-controllers
 ;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError・接続できない時・
 ;;;     接続の例外の SQLSTATE(class 08 と 57P01・57P02・57P03)は SqlUnreachable(postgres-failure)。
-;;;   - SqlTransaction = 接続 1 本で BEGIN → lock-key が在れば pg_advisory_xact_lock(hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
+;;;   - SqlTransaction = 接続 1 本で BEGIN → 錠(lock-key と locks の順 — 排他は pg_advisory_xact_lock・共有は pg_advisory_xact_lock_shared の
+;;;     hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
 ;;;     既定(batched = False)は文 1 つを 1 回ずつ流す(run-in-transaction — BEGIN・錠・文・合図・COMMIT がそれぞれ往復 1 回)。
 ;;;     batched = True を選んだ transaction だけ(agora-redesign #3605): 往復 1 回(TransactionFlush — BEGIN と錠・文・合図・COMMIT)を psycopg 3 の
 ;;;     pipeline mode の 1 つの pipeline で送り、出口の sync 1 度で答えを順に受ける(postgres-flush・run-in-batched-transaction)。途中の文が
@@ -67,7 +68,7 @@
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
-                                        SqlRows SqlFailed SqlUnreachable
+                                        SqlRows SqlFailed SqlUnreachable SqlLock
                                         SqlSchemaApplied SqlParam SqlColumnType SqlText SqlPlaceholder split-statement checked-params
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
@@ -461,8 +462,24 @@
   (SqlSchemaApplied :statements statements))
 
 
-;; 同じ鍵の transaction を直列にする錠の文(中立の記法)— transaction の最初の往復で BEGIN の次に流す。
+;; 同じ鍵の transaction を直列にする錠の文(中立の記法)— transaction の最初の往復で BEGIN の次に流す。共有の錠(SqlLock の shared)は
+;; LOCK-SHARED-STATEMENT(共有どうしは並んで持て、同じ鍵の排他の錠とだけ互いを待つ)。
 (val LOCK-STATEMENT "SELECT pg_advisory_xact_lock(hashtext(:key))")
+(val LOCK-SHARED-STATEMENT "SELECT pg_advisory_xact_lock_shared(hashtext(:key))")
+
+
+(defk transaction-locks [lock-key locks]
+  {:pre [(: lock-key (| str None)) (: locks tuple)] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
+  "SqlTransaction の錠(lock-key と locks — sql_effects.hy の頭の註)を、取る順の SqlLock の並びにするため(lock-key が先・排他)。"
+  (+ (if (is lock-key None) #() #((SqlLock :key lock-key))) locks))
+
+
+(defk lock-text [lock]
+  {:pre [(: lock SqlLock)] :post [(: % str)]
+   :tags {:context "sql" :role "foundation"}}
+  "錠 1 つを取る文の綴り(中立の記法・引数 :key = 錠の鍵 — 共有の錠は LOCK-SHARED-STATEMENT)を選ぶため。"
+  (if lock.shared LOCK-SHARED-STATEMENT LOCK-STATEMENT))
 
 
 ;; --- 合図(頭の註)------------------------------------------------------------------------------------------------------------
@@ -556,17 +573,18 @@
           (if rows (PostgresStep :text text :params None :rows rows :answered True) None))))
 
 
-(defk flush-steps [lock-key origin flush]
-  {:pre [(: lock-key (| str None)) (: origin (| str None)) (: flush TransactionFlush)] :post [(: % tuple)]
+(defk flush-steps [locks origin flush]
+  {:pre [(: locks tuple) (: origin (| str None)) (: flush TransactionFlush)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の往復 1 回(TransactionFlush)を pipeline に積む文の並びにするため(順 = BEGIN・錠・文・合図・COMMIT)。requests の位置は
-   答えの順と同じで、文を流さない request(行の無い SqlInsertRows)は None のまま並べる。合図の本文には貸し出しの印 origin を載せる
-   (頭の註 — None = 合図の後に同じ process の呼び鈴を鳴らす貸し出しが無い)。"
+  "transaction の往復 1 回(TransactionFlush)を pipeline に積む文の並びにするため(順 = BEGIN・錠(locks の順 — transaction-locks)・文・合図・
+   COMMIT)。requests の位置は答えの順と同じで、文を流さない request(行の無い SqlInsertRows)は None のまま並べる。合図の本文には貸し出しの
+   印 origin を載せる(頭の註 — None = 合図の後に同じ process の呼び鈴を鳴らす貸し出しが無い)。"
   (var opening #())
   (when flush.opening
     (:= opening #((PostgresStep :text "BEGIN" :params None :rows None :answered False)))
-    (when (is-not lock-key None)
-      (<- lock (postgres-statement LOCK-STATEMENT #((SqlParam :name "key" :value lock-key))))
+    (for [claim locks]
+      (<- text (lock-text claim))
+      (<- lock (postgres-statement text #((SqlParam :name "key" :value claim.key))))
       (:= opening (+ opening #((PostgresStep :text lock.text :params lock.params :rows None :answered False))))))
   (var requests #())
   (for [request flush.requests]
@@ -636,19 +654,19 @@
       error))
 
 
-(defk postgres-flush [connection lock-key origin flush]
-  {:pre [(: connection PipelineConnection) (: lock-key (| str None)) (: origin (| str None)) (: flush TransactionFlush)]
+(defk postgres-flush [connection locks origin flush]
+  {:pre [(: connection PipelineConnection) (: locks tuple) (: origin (| str None)) (: flush TransactionFlush)]
    :post [(: % (| tuple SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "transaction の往復 1 回(TransactionFlush)を 1 つの pipeline で送り、答えを順に受けるため(頭の註)。答え = requests と同じ順の SqlRows の
    tuple | 最初に落ちた文の失敗(BEGIN・錠・合図・COMMIT を含む — PostgreSQL は落ちた文から sync までを流さない)。driver の I/O なので
-   driver の thread で回す。origin = 合図の本文に載せる貸し出しの印(flush-steps)。
+   driver の thread で回す。locks = 最初の往復で BEGIN の次に取る錠の並び・origin = 合図の本文に載せる貸し出しの印(flush-steps)。
    sync は pipeline の出口(with の終わり)の 1 度だけ — 中で sync を呼ぶと出口がもう 1 度 sync して往復が 1 回増える。文を積む間に先の文の
    失敗が届けば、その場で積むのを止めて覚え、例外を with の外へ抜かない(抜くと psycopg が出口の後始末の失敗を warning の log に出す)。
    出口が上げる失敗は、最初に落ちた文の失敗か、それを __context__ に持つ後ろの文の PipelineAborted(first-failure)。pipeline は with で
    必ず出る(失敗の道でも — 出られずに残った接続は返す時に捨てる)。"
   (import psycopg)
-  (<- steps (flush-steps lock-key origin flush))
+  (<- steps (flush-steps locks origin flush))
   (var cursors #())
   (var failed None)
   (try
@@ -676,16 +694,19 @@
   answers)
 
 
-(defk postgres-begin [connection lock-key]
-  {:pre [(: connection "psycopg の接続") (: lock-key (| str None))] :post [(: % (| SqlFailed SqlUnreachable None))]
+(defk postgres-begin [connection locks]
+  {:pre [(: connection "psycopg の接続") (: locks tuple)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction を始め、lock-key が在れば同じ鍵の transaction を直列にする錠を取るため(成功は None — 既定の手順の BEGIN と錠の 2 往復)。"
+  "transaction を始め、錠の並び locks(transaction-locks)を順に取るため(成功は None — 既定の手順の BEGIN と錠 1 つずつの往復)。"
   (<- began (postgres-run connection "BEGIN" None))
-  (cond
-    (not (isinstance began SqlRows)) began
-    (is lock-key None) None
-    True (do (<- locked (postgres-query connection (SqlQuery "" LOCK-STATEMENT #((SqlParam :name "key" :value lock-key)))))
-             (if (isinstance locked SqlRows) None locked))))
+  (when (not (isinstance began SqlRows))
+    (return began))
+  (for [claim locks]
+    (<- text (lock-text claim))
+    (<- locked (postgres-query connection (SqlQuery "" text #((SqlParam :name "key" :value claim.key)))))
+    (when (not (isinstance locked SqlRows))
+      (return locked)))
+  None)
 
 
 (defk postgres-control [connection statement]
@@ -819,8 +840,8 @@
   driver.lease.connection)
 
 
-(defk flushed-here [driver lock-key origin raised flush]
-  {:pre [(: driver TransactionDriver) (: lock-key (| str None)) (: origin str) (: raised RaisedNotices) (: flush TransactionFlush)]
+(defk flushed-here [driver locks origin raised flush]
+  {:pre [(: driver TransactionDriver) (: locks tuple) (: origin str) (: raised RaisedNotices) (: flush TransactionFlush)]
    :post [(: % (| tuple SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "束ねた transaction の往復 1 回を、driver の thread の中でその場で流すため(offloaded-batched-transaction の註): 待ち手が去っていれば流さずに
@@ -834,7 +855,7 @@
     (return held))
   (when flush.closing
     (setv raised.sent True))
-  (<- answer (postgres-flush held lock-key origin flush))
+  (<- answer (postgres-flush held locks origin flush))
   answer)
 
 
@@ -849,8 +870,8 @@
   answer)
 
 
-(deff run-batched-here [driver lock-key origin raised program]  ; defk にできない: driver の thread で回す入口(VM の外から新しい VM を起こす)
-  {:pre [(: driver TransactionDriver) (: lock-key (| str None)) (: origin str) (: raised RaisedNotices) (: program Program)]
+(deff run-batched-here [driver locks origin raised program]  ; defk にできない: driver の thread で回す入口(VM の外から新しい VM を起こす)
+  {:pre [(: driver TransactionDriver) (: locks tuple) (: origin str) (: raised RaisedNotices) (: program Program)]
    :post [(: % "program の答え | SqlFailed | SqlUnreachable | None")]}
   "driver の thread の仕事 1 つで、錠 guard の下で、束ねた transaction の全部(program と往復・必要なら ROLLBACK)を新しい VM で回し、借りた
    接続を同じ仕事で返すため(offloaded-batched-transaction の註)。待ち手が始まる前に去っていれば何もしない(None — 答えは誰にも届かない)。"
@@ -860,7 +881,7 @@
       (return None))
     (try
       (run-detached (run-in-batched-transaction driver.database program
-                                                (fn [flush] (flushed-here driver lock-key origin raised flush))
+                                                (fn [flush] (flushed-here driver locks origin raised flush))
                                                 (fn [] (rolled-back-here driver))
                                                 :accepts-notices True))
       (finally
@@ -878,8 +899,8 @@
   None)
 
 
-(defk offloaded-batched-transaction [connections pool database program lock-key]
-  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None))]
+(defk offloaded-batched-transaction [connections pool database program locks]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: locks tuple)]
    :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
   "batched = True の transaction を、driver の thread の仕事 1 つ(借りる → program と往復 → 返す — run-batched-here)で回し、撃った task
@@ -894,7 +915,7 @@
   (val driver (TransactionDriver :connections connections :pool pool :database database :lease (TransactionLease) :guard (threading.Lock)))
   (setv driver.lease.submitted True)
   (try
-    (<- answer (offloaded pool (fn [] (run-batched-here driver lock-key connections.origin raised program)) keep-nothing
+    (<- answer (offloaded pool (fn [] (run-batched-here driver locks connections.origin raised program)) keep-nothing
                           (fn [] (abandoned-now driver))))
     answer
     (except [TaskCancelledError]
@@ -908,8 +929,8 @@
           (.ring-local connections database raised))))))
 
 
-(defk offloaded-transaction [connections pool database program lock-key batched]
-  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None)) (: batched bool)]
+(defk offloaded-transaction [connections pool database program locks batched]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: locks tuple) (: batched bool)]
    :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
   "接続 1 本を借りて program を 1 つの transaction で回し、必ず接続を返すため(driver の I/O は pool の thread で — 頭の註)。postgres-sql-handler と
@@ -926,7 +947,7 @@
    合図(頭の註): transaction が出した合図を覚え(raised)、接続を返した後に同じ process の呼び鈴を鳴らす — COMMIT を流した(流そうとした)
    transaction だけ。鳴らすのは finally の中なので、COMMIT の答えを受ける前・返却を待つ間に取り消されても鳴らす。"
   (when batched
-    (<- whole (offloaded-batched-transaction connections pool database program lock-key))
+    (<- whole (offloaded-batched-transaction connections pool database program locks))
     (return whole))
   (val raised (RaisedNotices))
   (val driver (TransactionDriver :connections connections :pool pool :database database :lease (TransactionLease) :guard (threading.Lock)))
@@ -934,7 +955,7 @@
     (<- answer (run-in-transaction database program
                                    (fn [request] (driven driver (fn [leased] (postgres-query leased request)) False))
                                    (fn [request] (driven driver (fn [leased] (postgres-insert leased request)) False))
-                                   (fn [] (driven driver (fn [leased] (postgres-begin leased lock-key)) False))
+                                   (fn [] (driven driver (fn [leased] (postgres-begin leased locks)) False))
                                    (fn [] (raised-commit driver raised))
                                    (fn [] (driven driver (fn [leased] (postgres-control leased "ROLLBACK")) True))
                                    :execute-notify (fn [request] (raised-notice driver connections.origin raised request))))
@@ -1035,8 +1056,9 @@
   (SqlEnsureTables [database tables] :when (in database (.names connections))
     (<- answer (offloaded-statement connections DRIVER-THREADS database (fn [leased] (postgres-ensure-tables leased tables))))
     (resume answer))
-  (SqlTransaction [database program lock-key batched] :when (in database (.names connections))
-    (<- answer (offloaded-transaction connections DRIVER-THREADS database program lock-key batched))
+  (SqlTransaction [database program lock-key batched locks] :when (in database (.names connections))
+    (<- claims (transaction-locks lock-key locks))
+    (<- answer (offloaded-transaction connections DRIVER-THREADS database program claims batched))
     (resume answer))
   ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
   (SqlBatch [database queries commit] :when (in database (.names connections))

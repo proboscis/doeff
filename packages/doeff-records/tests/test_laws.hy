@@ -8,7 +8,7 @@
                             law-append-events-answer-like-appends-in-order
                             law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-watch-waits-for-a-change
-                            law-watch-events-waits-for-an-append
+                            law-watch-events-waits-for-an-append law-concurrent-writes-appear-in-number-order
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
                             law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-expired-keys-are-remembered
@@ -142,6 +142,12 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-watch-events-waits-for-an-append harness))
+  (assert transcript))
+
+(deftest test-concurrent-writes-appear-in-number-order
+  {:interpreters ["memory" "pg" "pg-pooled" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-concurrent-writes-appear-in-number-order harness))
   (assert transcript))
 
 (deftest test-none-removes-a-field

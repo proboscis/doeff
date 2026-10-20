@@ -2,8 +2,8 @@
 ;;; 代役の host LocklessHost・FailingMidBatchHost・CountingConnection と同じ段の差し替え)。postgres-sql-handler と同じ部品
 ;;; (postgres_sql.hy の文の手順・往復 1 回を pipeline 1 つで送る postgres-flush と、sql_transaction.hy の run-in-transaction /
 ;;; run-in-batched-transaction)で答え、違うのは QueryProbe が決める 3 点だけ:
-;;;   keep-lock = False なら SqlTransaction の lock-key の錠も、transaction の中で錠を取る文(表の用意の書きの錠 — pg_sql.writer-lock-statement)も
-;;;               取らない(錠の検の反例)
+;;;   keep-lock = False なら SqlTransaction の錠(lock-key と locks)も、transaction の中で錠を取る文(表の用意の書きの錠 —
+;;;               pg_sql.writer-lock-statement)も取らない(錠の検の反例)
 ;;;   barrier   = 行の錠(FOR UPDATE)の読みを含む往復の後で待ち合わせる(2 本の書きが両方「行が無い」を読んでから書く反例)
 ;;;   fail-at   = state_rows への n 本目の INSERT を含む往復を流さずに SqlUnreachable を答える(書きの途中で接続が落ちる代役)
 ;;; counts = DB へ流れた往復(往復ごとに、その往復で流した文の綴りの tuple — 流れた順・thread の間で共有)と、流れた CREATE の文の数。
@@ -19,7 +19,8 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlRows SqlUnreachable])
 (import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-insert-statement postgres-begin postgres-flush
-                                         postgres-control postgres-notice LOCK-STATEMENT NOTICE-STATEMENT])
+                                         postgres-control postgres-notice transaction-locks lock-text LOCK-STATEMENT LOCK-SHARED-STATEMENT
+                                         NOTICE-STATEMENT])
 
 
 (defclass StatementCounts []
@@ -50,7 +51,7 @@
    :tags {:context "records" :role "foundation"}}
   "文 1 つ(往復 1 回 — transaction の外か、既定の transaction の中)を数え、決め事どおりに落とすか流して待ち合わせるため(keep-lock = False
    なら錠を取る文を流さず数えもしない)。"
-  (when (and (not probe.keep-lock) (= request.statement LOCK-STATEMENT))
+  (when (and (not probe.keep-lock) (in request.statement #(LOCK-STATEMENT LOCK-SHARED-STATEMENT)))
     (return (SqlRows :rows #() :rowcount 0)))
   (val nth (.record probe.counts #(request.statement)))
   (when (and (is-not probe.fail-at None) (in probe.fail-at nth))
@@ -71,15 +72,16 @@
   answer)
 
 
-(defk probed-begin [probe leased lock-key]
-  {:pre [(: probe QueryProbe) (: leased "psycopg の接続") (: lock-key (| str None))] :post [(: % "SqlFailed | SqlUnreachable | None")]
+(defk probed-begin [probe leased locks]
+  {:pre [(: probe QueryProbe) (: leased "psycopg の接続") (: locks tuple)] :post [(: % "SqlFailed | SqlUnreachable | None")]
    :tags {:context "records" :role "foundation"}}
-  "既定の transaction の始まり(BEGIN と、錠を取るなら錠の文 — 往復 2 回)を数えて流すため(keep-lock = False なら錠を取らず、錠の文も
-   数えない)。"
-  (val held (if probe.keep-lock lock-key None))
+  "既定の transaction の始まり(BEGIN と、錠を取るなら錠 1 つずつの文 — 往復 1 + 錠の数)を数えて流すため(keep-lock = False なら錠を取らず、
+   錠の文も数えない)。"
+  (val held (if probe.keep-lock locks #()))
   (.record probe.counts #("BEGIN"))
-  (when (is-not held None)
-    (.record probe.counts #(LOCK-STATEMENT)))
+  (for [claim held]
+    (<- text (lock-text claim))
+    (.record probe.counts #(text)))
   (<- began (postgres-begin leased held))
   began)
 
@@ -103,13 +105,16 @@
   answer)
 
 
-(defk flush-texts [lock-key flush]
-  {:pre [(: lock-key (| str None)) (: flush TransactionFlush)] :post [(: % tuple)]
+(defk flush-texts [locks flush]
+  {:pre [(: locks tuple) (: flush TransactionFlush)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
   "transaction の往復 1 回で流れる文の綴りを、流れる順(BEGIN・錠・文・合図・COMMIT — postgres-flush と同じ順)に並べるため(数えの綴り)。"
   (var texts #())
   (when flush.opening
-    (:= texts (+ texts #("BEGIN") (if (is lock-key None) #() #(LOCK-STATEMENT)))))
+    (:= texts (+ texts #("BEGIN")))
+    (for [claim locks]
+      (<- text (lock-text claim))
+      (:= texts (+ texts #(text)))))
   (for [request flush.requests]
     (match request
       (SqlQuery :statement statement) (:= texts (+ texts #(statement)))
@@ -120,13 +125,13 @@
   texts)
 
 
-(defk probed-flush [probe leased lock-key flush]
-  {:pre [(: probe QueryProbe) (: leased "psycopg の接続") (: lock-key (| str None)) (: flush TransactionFlush)]
+(defk probed-flush [probe leased locks flush]
+  {:pre [(: probe QueryProbe) (: leased "psycopg の接続") (: locks tuple) (: flush TransactionFlush)]
    :post [(: % "SqlRows の tuple | SqlFailed | SqlUnreachable")]
    :tags {:context "records" :role "foundation"}}
   "batched の transaction の往復 1 回を数え、本物の答え手と同じ postgres-flush で 1 つの pipeline として流すため(keep-lock = False なら錠を取らない・
    fail-at の INSERT を含む往復は流さずに SqlUnreachable・barrier は FOR UPDATE の読みを含む往復の後で待ち合わせる)。"
-  (val held (if probe.keep-lock lock-key None))
+  (val held (if probe.keep-lock locks #()))
   (<- texts (flush-texts held flush))
   (val nth (.record probe.counts texts))
   (when (and (is-not probe.fail-at None) (in probe.fail-at nth))
@@ -156,18 +161,19 @@
       (<- answer (probed-query probe leased (SqlQuery database statement params)))
       (finally (.release connections database leased)))
     (resume answer))
-  (SqlTransaction [database program lock-key batched] :when (= database answered)
+  (SqlTransaction [database program lock-key batched locks] :when (= database answered)
+    (<- claims (transaction-locks lock-key locks))
     (val leased (.acquire connections database))
     (try
       (<- answer (if batched
                      (run-in-batched-transaction database program
-                                                 (fn [flush] (probed-flush probe leased lock-key flush))
+                                                 (fn [flush] (probed-flush probe leased claims flush))
                                                  (fn [] (probed-rollback probe leased))
                                                  :accepts-notices True)
                      (run-in-transaction database program
                                          (fn [request] (probed-query probe leased request))
                                          (fn [request] (probed-insert probe leased request))
-                                         (fn [] (probed-begin probe leased lock-key))
+                                         (fn [] (probed-begin probe leased claims))
                                          (fn [] (probed-commit probe leased))
                                          (fn [] (probed-rollback probe leased))
                                          :execute-notify (fn [request] (probed-notice probe leased database request)))))

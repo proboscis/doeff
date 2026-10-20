@@ -10,7 +10,8 @@
 ;;;   records-process        本体の組み立て — 土台 foundation を引数で受け、serve-records を土台の下で走らせる(#834 の形・会話の記録の
 ;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
-;;;                          印字・PostgreSQL の答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
+;;;                          印字・書きの並び(pg.writer-gates — 書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる)・PostgreSQL の
+;;;                          答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
 ;;;                          pool の thread へ)の下で本体を走らせ、終われば接続と pool を閉じる。索引の用意(pg.hy の頭の註)の文は別の
 ;;;                          database の名 DDL-DATABASE の接続 1 本(文の上限なし — DDL-TIMEOUTS)へ流す。外側(scheduler・Await の橋・session の値の
 ;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
@@ -67,8 +68,8 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
-(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes])
-(import doeff_records.pg_sql [DEFAULT-PREFIX writer-lock-key])
+(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
+(import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
 
@@ -191,7 +192,7 @@
            :file sys.stderr :flush True))
   (when (or store.indexes.missing store.indexes.retired)
     (<- (Spawn (reconcile-indexes store) :daemon True)))
-  (fn [writer] (pg-records-handler store writer host)))
+  (fn [writer] (pg-records-handler store writer host :gated True)))
 
 
 (defhandler printed-listening [#^ str prefix]
@@ -223,9 +224,9 @@
   (val ddl-connections (PostgresConnections #((PostgresDatabase :name DDL-DATABASE :dsn settings.dsn)) :size 1 :timeouts DDL-TIMEOUTS))
   (val ddl-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-ddl"))
   (try
-    (<- writer-key (writer-lock-key settings.prefix))
-    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) (pooled-postgres-sql-handler connections pool :serialized-lock-keys #(writer-key))
-                               (pooled-postgres-sql-handler ddl-connections ddl-pool)]
+    ;; 書きの並び(writer-gates)は、同じ process の書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる(pg.hy の locked-transaction)。
+    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) writer-gates
+                               (pooled-postgres-sql-handler connections pool) (pooled-postgres-sql-handler ddl-connections ddl-pool)]
                  body))
     answer
     (finally

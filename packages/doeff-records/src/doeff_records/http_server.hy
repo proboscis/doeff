@@ -88,7 +88,7 @@
                                ReadEventByKey])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS request-stages stage-metric])
+(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS request-stages stage-metric lock-metric-helps])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric
                             operation-of])
@@ -500,10 +500,11 @@
 (defk metrics-answer [schema]
   {:pre [(: schema RecordsSchema)] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
   "GET /metrics に答えるため: 計器の断面(ReadMeter)を Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。
-   説明は固定の系列と、宣言の表 schema の一覧の読みの系列の分。"
+   説明は固定の系列と、宣言の表 schema の一覧の読みの系列と、宣言の列の書きの錠の系列の分(request_timing の lock-metric-helps)。"
   (<- snapshot MeterSnapshot (ReadMeter))
   (<- list-rows-helps (get FrozenMap str) (list-rows-metric-helps (tuple schema.tables)))
-  (<- text str (render-prometheus snapshot (.updated METRIC-HELPS list-rows-helps)))
+  (<- lock-helps (get FrozenMap str) (lock-metric-helps (tuple schema.streams)))
+  (<- text str (render-prometheus snapshot (.updated (.updated METRIC-HELPS list-rows-helps) lock-helps)))
   (TextAnswer :status 200 :content-type METRICS-CONTENT-TYPE :body text))
 
 

@@ -4,7 +4,10 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_core_effects.meter_effects import SecondsObservation as SecondsObservation
 from doeff_records.wire import OPERATIONS as OPERATIONS
+from doeff_records.pg_sql import ROWS_UNIT as ROWS_UNIT
+from doeff_records.pg_sql import stream_unit as stream_unit
 
 class RequestMark(StrEnum):
     STARTED = 'started'
@@ -63,4 +66,24 @@ def between(since: float | None, until: float | None) -> _Program[float | None, 
     ...
 
 def request_stages(received_at: float | None, marks: tuple[MarkAt, ...]) -> _Program[tuple[StageSeconds, ...], object]:
+    ...
+
+class LockPhase(StrEnum):
+    WAIT = 'wait'
+    HOLD = 'hold'
+LOCK_METRIC: str
+ROWS_LOCK_OPERATIONS: tuple[str, ...]
+STREAM_LOCK_OPERATIONS: tuple[str, ...]
+
+def metric_word(text: str) -> _Program[str, object]:
+    ...
+
+def lock_metric(operation: str, unit: str, phase: LockPhase) -> _Program[str, object]:
+    ...
+
+def lock_observations(operation: str, units: tuple, waited: float, held: float) -> _Program[tuple[SecondsObservation, ...], object]:
+    ...
+LOCK_PHASE_MEANINGS: tuple[tuple[LockPhase | str, ...], ...]
+
+def lock_metric_helps(streams: tuple) -> _Program[FrozenMap[str], object]:
     ...

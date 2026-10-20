@@ -74,12 +74,26 @@
 ;;; どれも IF NOT EXISTS / ON CONFLICT DO NOTHING なので、字面が変わっても旧い版へ戻せ(表の形は変わらない)、既に在る置き場の
 ;;; store_epoch の行(旧い版が作った epoch 1 を含む)には触らない。
 ;;;
-;;; 書きは置き場ごとの advisory lock 1 つで直列にする: bigserial の番号は commit の順と揃わない(番号 5 を取った書きより先に
-;;; 番号 6 の書きが commit すると、6 まで読んだ読み手は 5 を永久に取りこぼす)。番号を取ってから commit するまでを 1 つの lock の中に
-;;; 置くと、読み手が見た最大の番号より小さい番号は全部 commit 済み、が成り立つ(WatchChanges の「ちょうど 1 回」の土台)。
-;;; 代わりに書きの速さは置き場 1 つで 1 本に縛られる。錠は SqlTransaction の lock-key(答え手が pg_advisory_xact_lock(hashtext(鍵)) を
-;;; 流す)で、鍵の値は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / 接頭辞 + "records-migrate" — 区切りなし)。
-;;; 鍵の字面を変えると、旧い版と新しい版が同じ置き場に重なった時に別々の錠を取り、変更の列の番号を取りこぼす(戻せない)。
+;;; 書きの錠(card ki-0306f5a614b4 — 前は置き場の書き全部を advisory lock 1 つで直列にし、受付の列の追記が他の表の書きと手入れの後ろで
+;;; 待った): bigserial の番号は commit の順と揃わない(番号 5 を取った書きより先に番号 6 の書きが commit すると、6 まで読んだ読み手は 5 を
+;;; 永久に取りこぼす)。番号の読みの約束 = 「読み手が見た最大の番号より小さい番号は、読み手が読む範囲で全部 commit 済み」(WatchChanges の
+;;; 「ちょうど 1 回」と ReadEvents の位置の読みの土台)。約束が要るのは、同じ読みが 1 つの位置で読む範囲の中だけ:
+;;;   - 変更の列(row_changes.seq)は全部の表で 1 つの番号の列で、WatchChanges は頼んだ表の全部を 1 つの位置で読み、ReadChangeLog は表で
+;;;     絞らずに読み、置き場の頭(store-head-statement)は全部の表の最大の番号を読む → 行の書きは全部の表で 1 つの錠の単位(行の単位 ROWS-UNIT)
+;;;   - 追記の列(append_rows.seq)の番号は全部の列で 1 つの bigserial だが、読みは全部が列 1 つの中(ledger = :ledger と seq > :after・
+;;;     列の末尾・冪等キーの引き)→ 追記は列ごとの錠の単位(stream-unit)。他の列の番号が間に挟まっても、その列の読みには見えない
+;;; 書き 1 回は、番号を取ってから commit するまで、触る単位の錠(部分の錠 — unit-lock-key)を排他で持つ。部分の錠の前に置き場全体の錠
+;;; (writer-lock-key)を共有で持つ(SqlTransaction の locks — 共有どうしは並んで持てる)。置き場全体を変える書き(版の繰り上げ)と表の用意は
+;;; 置き場全体の錠を排他で持ち、全部の部分の書きと互いを待つ。錠の順は置き場全体(共有か排他)→ 部分の錠(単位の名の順)の 1 つで、
+;;; 束の追記(AppendEvents)が列を 2 つ以上触る時も名の順に取る(逆の順の取り合いを作らない)。
+;;; 単位ごとの書きと錠の単位:
+;;;   PutRow・PutRows・行の回収(SweepExpired の行)・変更の刈り取り(PruneChanges — 変更の列と床だけを触る)= 行の単位
+;;;   AppendEvent・AppendEvents・出来事の回収(SweepExpired の列ごと)= 触る列の単位(束は触る列の全部)
+;;;   版の繰り上げ(AdvanceStoreEpoch — 全部の行の版と変更の列を変える)= 置き場全体を排他
+;;; 置き場全体の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / 接頭辞 + "records-migrate" — 区切りなし)。旧い版は
+;;; 書きのたびに置き場全体の錠を排他で取るので、旧い版と新しい版が同じ置き場に重なった間(入れ替え)も、旧い版の書きは新しい版の全部の
+;;; 書きと互いを待ち、番号を取りこぼさない。鍵の字面を変えると、重なった間に別々の錠を取り、変更の列の番号を取りこぼす(戻せない)。
+;;; 部分の錠の鍵は置き場全体の鍵 + "/" + 単位の名(hashtext が 2 つの鍵を同じ数にしても、余計に待つだけで約束は破れない)。
 ;;;
 ;;; 配列の引数は持たない(SqlValue の閉じた集合に配列は無い): `= ANY(配列)` は `IN (:t0, :t1, …)` に展げる。空の組は文にできない
 ;;; (`IN ()` は構文の誤り)ので、in-list は空の組を断り、呼び手(pg.hy)が空の組なら文を流さない枝を持つ。
@@ -110,6 +124,11 @@
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
 (val MIGRATE-LOCK-SUFFIX "records-migrate")
+;; 置き場の部分の書きの錠の単位(頭の註): 行の単位(全部の表の行の書き — 変更の列の番号は全部の表で 1 つ)と、列の単位の名の頭(列ごと)。
+;; 部分の錠の鍵 = 置き場全体の書きの錠の鍵 + 区切り + 単位の名。
+(val ROWS-UNIT "rows")
+(val STREAM-UNIT-PREFIX "stream:")
+(val UNIT-LOCK-SEPARATOR "/")
 ;; 索引の用意の錠の鍵の接尾(session の advisory lock — 同じ置き場の索引を 2 つの process が同時に CONCURRENTLY で作らない)。
 (val INDEX-LOCK-SUFFIX "records-indexes")
 ;; 置き場の表(接頭辞の後ろの名)— 表の用意の観測(relations-statement)と索引の観測(indexes-statement)が引く。
@@ -206,8 +225,22 @@
 (defk writer-lock-key [prefix]
   {:pre [(: prefix str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "置き場の書きの錠の鍵(SqlTransaction の lock-key)を作るため。"
+  "置き場全体の書きの錠の鍵を作るため(頭の註 — 部分の書きは共有で、置き場全体を変える書きと表の用意は排他で持つ)。"
   (+ prefix WRITER-LOCK-SUFFIX))
+
+
+(defk stream-unit [stream]
+  {:pre [(: stream str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "列 stream の追記と回収が排他で持つ錠の単位の名を作るため(頭の註 — 列ごとに 1 つ)。"
+  (+ STREAM-UNIT-PREFIX stream))
+
+
+(defk unit-lock-key [prefix unit]
+  {:pre [(: prefix str) (: unit str) (or (= unit ROWS-UNIT) (.startswith unit STREAM-UNIT-PREFIX))] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の部分の書きの錠(錠の単位 unit — 行の単位 ROWS-UNIT か列の単位 stream-unit)の鍵を作るため(頭の註)。"
+  (+ prefix WRITER-LOCK-SUFFIX UNIT-LOCK-SEPARATOR unit))
 
 
 (defk migrate-lock-key [prefix]

@@ -25,6 +25,11 @@ TOKEN: re.Pattern[str]
 IDENTIFIER: re.Pattern[str]
 
 @dataclass(frozen=True, kw_only=True)
+class SqlLock:
+    key: str
+    shared: bool = False
+
+@dataclass(frozen=True, kw_only=True)
 class SqlParam:
     name: str
     value: SqlValue
@@ -102,6 +107,7 @@ class SqlTransaction[T](_doeff_effect_base[T | SqlFailed | SqlUnreachable]):
     program: Program[T, object]
     lock_key: str | None = None
     batched: bool = False
+    locks: tuple[SqlLock, ...] = ...
 
     def __post_init__(self) -> None:
         ...
