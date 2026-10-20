@@ -19,15 +19,15 @@
 | 週 | 原稿 | Zennのslug | 読者への入口 | 公開状態 |
 | --- | --- | --- | --- | --- |
 | 1 | [処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは](doeff-main.md) | `doeff-introduction` | エフェクトと最小ハンドラを実行し、用途の全体像を見る | 公開済み https://zenn.dev/proboscis/articles/doeff-introduction |
-| 2 | [Claude Codeを起動してテストするのをやめる](doeff-agents.md) | `doeff-ai-agents` | AIエージェントの仕事を、起動・待機・結果の契約で組み合わせる | 公開予定 2026-10-22 08:00 JST |
-| 3 | [テストで20秒待つのをやめる](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 2026-10-24 08:00 JST |
-| 4 | [依存を引数で引き回すのをやめる](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 2026-10-26 08:00 JST |
-| 5 | [ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md) | `doeff-claude-code-commits` | AIと書くライブラリの約束を、4つの網で毎日確かめる | 公開予定 2026-10-28 08:00 JST |
-| 6 | [外部APIのテストで通信するのをやめる](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 公開予定 2026-10-30 08:00 JST |
-| 7 | [バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 公開予定 2026-11-01 08:00 JST |
-| 8 | [公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md) | `doeff-public-api-types` | 型の分からない公開の名を表にし、増えても減ってもテストを赤にする | 公開予定 2026-11-02 08:00 JST |
-| 9 | [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 公開予定 2026-11-03 08:00 JST |
-| 10 | [ADRを書いて終わりにするのをやめる](doeff-adr.md) | `doeff-executable-adr` | 設計の決まりが崩れないよう、例と規則を書いた設計の記録をテストとして走らせる | 公開予定 2026-11-04 08:00 JST |
+| 2 | [Claude Codeを起動してテストするのをやめる](doeff-agents.md) | `doeff-ai-agents` | AIエージェントの仕事を、起動・待機・結果の契約で組み合わせる | 公開予定 |
+| 3 | [テストで20秒待つのをやめる](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 |
+| 4 | [依存を引数で引き回すのをやめる](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |
+| 5 | [ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md) | `doeff-claude-code-commits` | AIと書くライブラリの約束を、4つの網で毎日確かめる | 公開予定 |
+| 6 | [外部APIのテストで通信するのをやめる](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 公開予定 |
+| 7 | [バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 公開予定 |
+| 8 | [公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md) | `doeff-public-api-types` | 型の分からない公開の名を表にし、増えても減ってもテストを赤にする | 公開予定 |
+| 9 | [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 公開予定 |
+| 10 | [ADRを書いて終わりにするのをやめる](doeff-adr.md) | `doeff-executable-adr` | 設計の決まりが崩れないよう、例と規則を書いた設計の記録をテストとして走らせる | 公開予定 |
 
 ### AIエージェントの連載
 
@@ -35,16 +35,18 @@ AIエージェントで開発した記録の連載。1本目の会話を最大50
 
 | 週 | 原稿 | Zennのslug | 読者への入口 | 公開状態 |
 | --- | --- | --- | --- | --- |
-| 1 | [1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md) | `doeff-fifty-ai-conversations` | AIの会話を最大50並べて、1人でdoeffと周りの仕組みを開発した記録を読む | 公開予定 2026-10-21 08:00 JST |
-| 2 | [Claude Codeに仕事を配らせるのをやめ、関数で配る](doeff-dispatch.md) | `doeff-dispatch-by-function` | 配る順を純粋な関数にし、記録した1日の負荷で比べてから選ぶ | 公開予定 2026-10-23 08:00 JST |
-| 3 | [CLAUDE.mdに決まり851本を書き足すのをやめた](doeff-hooks.md) | `doeff-ai-rule-hooks` | AIが決まりを読み落とす時に、要る場面でだけ規則を見せる | 公開予定 2026-10-25 08:00 JST |
-| 4 | [止まったClaude Codeを1つずつ開くのをやめた](doeff-waitline.md) | `doeff-claude-code-wait-line` | ターンの最後に待つ物を1行書かせ、止まった会話のどれが自分の番かを読む | 公開予定 2026-10-27 08:00 JST |
-| 5 | [Claude Codeに報告のページを丸ごと作らせるのをやめた](doeff-reports.md) | `doeff-claude-code-report-pages` | 中身と図と組み立てを分け、図つきの報告を先に開く | 公開予定 2026-10-29 08:00 JST |
-| 6 | [マージキューでテストを走らせるのをやめた](doeff-mergequeue.md) | `doeff-merge-queue-without-tests` | 門は衝突だけを見て、全体のテストは別の周期で回す | 公開予定 2026-10-31 08:00 JST |
+| 1 | [1人でClaude Codeを最大50並べたら、詰まるのは人だった](doeff-fleet.md) | `doeff-fifty-ai-conversations` | AIの会話を最大50並べて、1人でdoeffと周りの仕組みを開発した記録を読む | 公開予定 |
+| 2 | [Claude Codeに仕事を配らせるのをやめ、関数で配る](doeff-dispatch.md) | `doeff-dispatch-by-function` | 配る順を純粋な関数にし、記録した1日の負荷で比べてから選ぶ | 公開予定 |
+| 3 | [CLAUDE.mdに決まり851本を書き足すのをやめた](doeff-hooks.md) | `doeff-ai-rule-hooks` | AIが決まりを読み落とす時に、要る場面でだけ規則を見せる | 公開予定 |
+| 4 | [止まったClaude Codeを1つずつ開くのをやめた](doeff-waitline.md) | `doeff-claude-code-wait-line` | ターンの最後に待つ物を1行書かせ、止まった会話のどれが自分の番かを読む | 公開予定 |
+| 5 | [Claude Codeに報告のページを丸ごと作らせるのをやめた](doeff-reports.md) | `doeff-claude-code-report-pages` | 中身と図と組み立てを分け、図つきの報告を先に開く | 公開予定 |
+| 6 | [マージキューでテストを走らせるのをやめた](doeff-mergequeue.md) | `doeff-merge-queue-without-tests` | 門は衝突だけを見て、全体のテストは別の周期で回す | 公開予定 |
 
 公開状態は「公開済み <ZennのURL>」「公開予定」「下書き」のどれかで書く。公開予定と公開済みの後ろには、公開の刻を「YYYY-MM-DD hh:mm JST」の形で書ける(例「公開予定 2026-10-21 08:00 JST」「公開済み https://zenn.dev/proboscis/articles/<slug> 2026-10-21 08:00 JST」)。刻を書いた公開予定は、Zennの予約公開になる。刻の無い公開予定は予約せず、Zennの下書きのまま置く。刻を過ぎた回は、`record_published.py`がZennで開けることを確かめてから公開済みに直す。公開済みの刻は、Zennの公開日時を変えないために残す。下書きは、まだ仕上げ基準を満たしていない原稿で、満たしたら公開予定に変える。`render_release.py`がこの2つの表を読み、公開する本文のリンクを作る。下書きの行と表に無い原稿は、候補として扱う。
 
 5〜10本目は、各回の担当が下の仕上げ基準を1項目ずつ照らし、掲載したコードを走らせた。その結果を受けて、2026-10-17に公開予定へ変えた。候補6本も2026-10-18に仕上げ基準を照らして下書きし、2026-10-20に2つの表へ移して公開予定にした。公開予定はZennへの登録ではない。AIエージェントの連載の4〜6本目は、公開の前に記事の数を数え直す(下の「数え直す回」)。
+
+2026-10-21 03:51 JSTの利用者の決定で、記事は1本ごとに、公開の前に本文と図を利用者に見せる依頼書を出し、許可が出た回だけを公開する。まとめて許可を取る形や、許可の前に予約する形にしない。許可が出るまで、公開予定の回に公開の刻を書かない(刻の無い公開予定はZennの下書きのまま置かれる)。この決定に合わせ、同じ日に2〜10本目とAIエージェントの連載の1〜6本目の予約の刻を外した。
 
 doeffの連載の1本目の「困りごとから選ぶ入口」は、doeffの連載の表の10本の題を同じ順の一覧で持つ。AIエージェントの連載の回は、表から外し、その連載の1本目へのリンク1行で案内する。表の順や題を変えたら、1本目の一覧も同じに直す。`reviews/main-check.py`が照らす。
 
