@@ -3,8 +3,7 @@ title: "公開APIの型の穴をテストで塞ぎ、黙って開かせない"
 emoji: "🕳️"
 type: "tech"
 topics: ["python", "pyright", "mypy", "テスト", "doeff"]
-published: true
-published_at: 2026-11-02 08:00
+published: false
 ---
 
 型付きのPythonライブラリを出しても、使う人のpyrightでは型がUnknownになることがあります。私たちのライブラリdoeffでは、PyPIの0.6.0で、公開の名381個のうち84個の型が分かりませんでした。直した0.7.0では406個のうち5個になり、5個とも訳をテストの表に書いてあります。

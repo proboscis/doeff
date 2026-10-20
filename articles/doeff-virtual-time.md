@@ -3,8 +3,7 @@ title: "テストで20秒待つのをやめる"
 emoji: "⏱️"
 type: "tech"
 topics: ["python", "doeff", "テスト", "asyncio"]
-published: true
-published_at: 2026-10-24 08:00
+published: false
 ---
 
 20秒待ってから次へ進む処理は、テストでも20秒止まります。この記事では、本番と同じ処理のまま、仮想の時計でテストを20秒待たずに終わらせます。待ちを含む処理のテストには、よく次の悩みがあります。

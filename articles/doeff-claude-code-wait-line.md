@@ -3,8 +3,7 @@ title: "止まったClaude Codeを1つずつ開くのをやめた"
 emoji: "⏳"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "設計"]
-published: true
-published_at: 2026-10-27 08:00
+published: false
 ---
 
 Claude Codeの会話を何十も並べると、止まった会話のどれが自分の番なのか、画面からは分かりません。筆者は、ターンの最後の行に待っている物を書かせ、書かずに止まる時はStop hookで1度だけ止めています。2026年10月18日に数えると、直近24時間に止まった会話520個のうち、筆者を待つのは16個でした。

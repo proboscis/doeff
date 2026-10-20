@@ -3,8 +3,7 @@ title: "マージキューでテストを走らせるのをやめた"
 emoji: "🚦"
 type: "tech"
 topics: ["python", "doeff", "git", "ci", "claudecode"]
-published: true
-published_at: 2026-10-31 08:00
+published: false
 ---
 
 AIに書かせた変更を1日に何百件もmainへ入れると、マージの前のテストが列を詰まらせます。筆者の環境では、1語だけの修正でも、マージの前の確かめに517秒かかりました。確かめからテストを外した後の2026年10月16日は、433件がmainに入り、確かめは中央値5.3秒でした。

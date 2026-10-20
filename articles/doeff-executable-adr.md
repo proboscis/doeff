@@ -3,8 +3,7 @@ title: "ADRを書いて終わりにするのをやめる"
 emoji: "📐"
 type: "tech"
 topics: ["python", "doeff", "テスト", "設計", "semgrep"]
-published: true
-published_at: 2026-11-04 08:00
+published: false
 ---
 
 設計で決めた約束を、ADRという文書に残すことがあります。ところが数か月たつと、コードが約束から外れていることがよくあります。この記事では、ADRに規則と反例と検査を持たせ、そのままpytestで走るファイルにします。

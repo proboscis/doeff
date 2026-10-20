@@ -3,8 +3,7 @@ title: "Claude Codeを起動してテストするのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "ai", "agent", "testing"]
-published: true
-published_at: 2026-10-22 08:00
+published: false
 ---
 
 Claude CodeやCodexにレビューを2つ並べて頼み、結果を合わせる処理を書いたとします。この処理のテストは、本物を起こすと遅く、答えも毎回変わります。この記事では、本物を起こさずに、入力待ちを挟む答えまで決めてテストします。

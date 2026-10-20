@@ -3,8 +3,7 @@ title: "async/awaitがあるのに、なぜyieldで書くのか"
 emoji: "🔀"
 type: "tech"
 topics: ["python", "asyncio", "doeff", "設計"]
-published: true
-published_at: 2026-11-03 08:00
+published: false
 ---
 
 Pythonにはasync/awaitがあるのに、ライブラリdoeffは処理を`yield`で書きます。理由は、止まった所へ答える役を、呼ばれた関数ではなく外側に置けるからです。async/awaitで書いた処理を、テストで動かす場面で比べます。

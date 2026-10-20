@@ -3,8 +3,7 @@ title: "CLAUDE.mdに決まり851本を書き足すのをやめた"
 emoji: "📏"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "llm"]
-published: true
-published_at: 2026-10-25 08:00
+published: false
 ---
 
 AIエージェントに守ってほしい決まりは、失敗のたびに増えます。私たちのCLAUDE.mdは、2026年7月21日の7,808字から、9月22日には39,821字になりました。10月17日の時点では、決まり851本をCLAUDE.mdの外に置き、hookで要る時だけAIに見せています。

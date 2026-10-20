@@ -3,8 +3,7 @@ title: "外部APIのテストで通信するのをやめる"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "テスト", "pytest"]
-published: true
-published_at: 2026-10-30 08:00
+published: false
 ---
 
 外部のAPIを呼ぶ処理は、テストでも通信します。この記事では、本物の応答を一度だけ記録し、テストは通信せずに記録から答えます。通信するテストには、よく次の悩みがあります。

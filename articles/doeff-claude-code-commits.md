@@ -3,8 +3,7 @@ title: "ライブラリのcommitの68%を、Claude Codeと書いた1年"
 emoji: "📈"
 type: "tech"
 topics: ["python", "doeff", "claudecode", "oss", "test"]
-published: true
-published_at: 2026-10-28 08:00
+published: false
 ---
 
 筆者は、PythonのライブラリdoeffをClaude Codeと書いています。最初のcommitから約13か月で、mainの5,566個のうち3,811個(68%)がClaudeとの共著です。人が差分を読み切れない量になっても、使う人との約束を崩さないためにした事を書きます。

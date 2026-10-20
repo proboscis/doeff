@@ -3,8 +3,7 @@ title: "Claude Codeに仕事を配らせるのをやめ、関数で配る"
 emoji: "🚦"
 type: "tech"
 topics: ["python", "doeff", "claudecode", "ai", "設計"]
-published: true
-published_at: 2026-10-23 08:00
+published: false
 ---
 
 筆者は、作業ボードのcardをClaude Codeの会話へ配る役も、Claude Codeの会話に任せていました。2026年10月10日の1日、その配り役が配ったのは、配れたcard 445枚のうち289枚でした。配る判断を関数に移して同じ1日を模擬すると、385〜446枚を配りました。

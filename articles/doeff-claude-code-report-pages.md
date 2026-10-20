@@ -3,8 +3,7 @@ title: "Claude Codeに報告のページを丸ごと作らせるのをやめた"
 emoji: "📄"
 type: "tech"
 topics: ["claudecode", "python", "doeff", "ai", "html"]
-published: true
-published_at: 2026-10-29 08:00
+published: false
 ---
 
 Claude Codeに図つきの報告のページを頼むと、筆者の環境では開くまで42分かかっていました。ページ作りを丸ごと任せるのをやめ、中身・HTML・図の3つに分けると、次に試した報告は5分36秒で開きました。中身は話していた会話が書き、HTMLは決まったスクリプトが組み、図だけを別の作業役が描きます。

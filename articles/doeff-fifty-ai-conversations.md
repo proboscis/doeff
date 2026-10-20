@@ -3,8 +3,7 @@ title: "1人でClaude Codeを最大50並べたら、詰まるのは人だった"
 emoji: "🛰️"
 type: "tech"
 topics: ["python", "doeff", "claudecode", "ai", "開発手法"]
-published: true
-published_at: 2026-10-21 08:00
+published: false
 ---
 
 筆者は、Claude Codeの会話を最大50並べて、1人で開発しています。2026年9月12日からの35日で、3つのリポジトリのmainへ14,707個のcommitが入りました。並べるほど詰まったのは、AIではなく人の注意でした。
