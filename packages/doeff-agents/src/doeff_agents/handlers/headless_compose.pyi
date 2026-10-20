@@ -21,6 +21,9 @@ from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
 from doeff_claude_code.lines import ModelRefusalHit as ModelRefusalHit
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import CompactTrigger as CompactTrigger
+from doeff_claude_code.lines import CompactEnded as CompactEnded
+from doeff_claude_code.lines import CompactOutcome as CompactOutcome
+from doeff_claude_code.lines import AssistantMessage as AssistantMessage
 from doeff_claude_code.lines import HookNotice as HookNotice
 from doeff_claude_code.lines import HookPhase as HookPhase
 from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded

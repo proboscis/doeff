@@ -93,12 +93,15 @@
   "assistant の message: 本文の text の block を連ねたものと、呼んだ道具(tool_use の block の id と名の組)の列 /
    usage = message.usage(この行を出した API の呼び 1 回の消費 — 1 つの呼びは content の block ごとに行を出し、どの行も同じ usage を
    名乗る。出力の token は呼びの途中の値。usage の object が無ければ None)/ model = message.model(無ければ None)/
-   parent-tool-use-id = subagent の行なら親の呼び(道具の呼び)の id、本体の会話の行は None(行の最上位の parent_tool_use_id)。#3744。"
+   parent-tool-use-id = subagent の行なら親の呼び(道具の呼び)の id、本体の会話の行は None(行の最上位の parent_tool_use_id)。#3744。
+   message-id = message.id(この行を出した API の呼びの id — 1 つの呼びの block ごとの行は同じ id を名乗る。subagent の行も持つ。
+   無ければ None)— 上の層が、並んで走る subagent の行が交互に来ても呼びごとに畳むため(ki-8239be27d5f6)。"
   (setv #^ str text "")
   (setv #^ (get tuple #(ToolCall ...)) tool-calls #())
   (setv #^ (| Usage None) usage None)
   (setv #^ (| str None) model None)
   (setv #^ (| str None) parent-tool-use-id None)
+  (setv #^ (| str None) message-id None)
   ;; error = 行の最上位の error(CLI が API の誤りを答えの代わりに出した時の語 — 例 rate_limit: 口座の限度に当たった・#3983。無ければ None)。
   (setv #^ (| str None) error None)
   ;; stop-reason = message.stop_reason(無ければ None)/ refusal-category = model の安全装置が答えを断った行(stop-reason refusal)の
@@ -358,14 +361,35 @@
    (要約を作る数十秒〜数分 — 実測 2026-10-10 の 2 分)会話の画面に圧縮中を出すため。終わりは CompactBoundary(compact_boundary)。
    行は token 数も起き方も持たない(それは終わりの行が持つ)。status の他の状態(requesting など)は今までどおり Other。")
 
+;; 会話の圧縮の終わり方(閉じた語彙 — ki-8239be27d5f6)。CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず
+;; system/status の行(status = null)を 1 つ出し、圧縮を試みた時は compact_result(success / failed)と、失敗なら compact_error(誤りの文)を
+;; 添える: SUCCEEDED = compact_result success / FAILED = compact_result failed(誤りの文は compact_error)/ INTERRUPTED = compact_result failed
+;; で、誤りの文が止めの文(COMPACT-ABORTED-ERROR — 圧縮の要求が止められた)/ NOT-COMPACTED = compact_result の無い status null(圧縮を
+;; 始めたが圧縮しなかった — PreCompact の hook が止めた・圧縮する物が無かった)。
+(defenum CompactOutcome SUCCEEDED FAILED INTERRUPTED (NOT-COMPACTED "not_compacted"))
+
+;; 圧縮の要求が止められた時の compact_error の文(CLI 2.1.292 の止めの誤りの文 — 同じ CLI は この文の失敗だけ圧縮の誤りの知らせ
+;; を出さない)。
+(val COMPACT-ABORTED-ERROR "API Error: Request was aborted.")
+
+(defrecord CompactEnded
+  "CLI が会話の context の圧縮を終えた行(system/status の status = null — ki-8239be27d5f6)。上の層が、圧縮の
+   成功だけでなく失敗・中断・圧縮しなかった事も手番の出来事として記録するため(成功の中身 — token 数・起き方 — は CompactBoundary が持つ)。
+   outcome = 終わり方(CompactOutcome)/ error = CLI が名乗った誤りの文(compact_error — 失敗と中断の時だけ・無ければ None)。
+   圧縮の要求 1 回の token(入力・出力・cache)は CLI 2.1.292 が stream-json のどの行にも名乗らない(この行にも compact_boundary の
+   compact_metadata にも usage の欄は無い — CLI の中では compactionUsage として持つが出さない)ので、この型も持たない。
+   CLI 2.1.292 の status null の行は圧縮の終わりでしか出ない(書き手の 9 か所はどれも圧縮の終わり)。"
+  (#^ CompactOutcome outcome)
+  (setv #^ (| str None) error None))
+
 (defclass [(dataclass :frozen True)] Other []
   "語彙の外の行(名前だけ持つ)。"
   (#^ str type)
   (setv #^ str subtype ""))
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
-                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactStarted CompactBoundary
-                        TurnResult Other))
+                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactStarted CompactEnded
+                        CompactBoundary TurnResult Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
   "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語。"
@@ -522,7 +546,7 @@
    input が無い・JSON の object でない tool_use の block を 1 つでも持つ行は、名指しの Other(type = assistant・subtype =
    tool_use_without_id / tool_use_without_name / tool_use_without_input)で断る — 空の id の ToolCall を作らない(結果の tool_use_id と
    突き合わせられない呼びを通さない)・命令の無い呼びを空の命令として通さない。
-   message.usage(object の時だけ — usage-of で読む)・message.model・行の最上位の parent_tool_use_id・message.stop_reason・
+   message.usage(object の時だけ — usage-of で読む)・message.model・message.id・行の最上位の parent_tool_use_id・message.stop_reason・
    message.stop_details.category も読む(無い・空なら None)。"
   (setv blocks (content-blocks record))
   (setv uses (tuple (gfor block blocks :if (= (.get block "type") "tool_use") block)))
@@ -539,6 +563,7 @@
            :usage (if (isinstance usage dict) (usage-of usage) None)
            :model (or (text-at message "model") None)
            :parent-tool-use-id (or (text-at record "parent_tool_use_id") None)
+           :message-id (or (text-at message "id") None)
            :error (or (text-at record "error") None)
            :stop-reason (or (text-at message "stop_reason") None)
            :refusal-category (or (text-at (object-at message "stop_details") "category") None))))
@@ -623,6 +648,20 @@
                           :cumulative-dropped-tokens (int-at metadata "cumulative_dropped_tokens")
                           :duration-ms (int-at metadata "duration_ms"))))
 
+(defk compact-ended-of [#^ dict record]
+  {:pre [(: record dict)] :post [(: % (| CompactEnded Other))] :tags {:context "claude-code" :role "foundation"}}
+  "上の層が圧縮の終わり方(成功・失敗・中断・圧縮しなかった)を手番の出来事として記録できるように、status null の system/status の行を
+   CompactEnded にするため。compact_result が語彙(success / failed)の外の行は、名指しの Other(subtype = compact_end_unknown_result)で
+   断る — 既定の終わり方を発明しない。"
+  (val result (.get record "compact_result"))
+  (val error (or (text-at record "compact_error") None))
+  (cond
+    (is result None) (CompactEnded :outcome CompactOutcome.NOT-COMPACTED)
+    (= result "success") (CompactEnded :outcome CompactOutcome.SUCCEEDED)
+    (and (= result "failed") (= error COMPACT-ABORTED-ERROR)) (CompactEnded :outcome CompactOutcome.INTERRUPTED :error error)
+    (= result "failed") (CompactEnded :outcome CompactOutcome.FAILED :error error)
+    True (Other :type "system" :subtype "compact_end_unknown_result")))
+
 (defn classify-system [#^ dict record]
   (setv subtype (text-at record "subtype"))
   (setv startup (object-at record "startup_timing"))
@@ -647,6 +686,8 @@
     (= subtype "compact_boundary") (run (compact-boundary-of record))
     ;; 圧縮の始まり(card ki-aeae6f9e643d)。status の他の状態は名前だけの Other のまま。
     (and (= subtype "status") (= (text-at record "status") COMPACTING-STATUS)) (CompactStarted)
+    ;; 圧縮の終わり(status が JSON の null — 鍵の無い行は数えない・card ki-8239be27d5f6)。
+    (and (= subtype "status") (in "status" record) (is (get record "status") None)) (run (compact-ended-of record))
     True (Other :type "system" :subtype subtype)))
 
 (defn classify-rate-limit [#^ dict record]

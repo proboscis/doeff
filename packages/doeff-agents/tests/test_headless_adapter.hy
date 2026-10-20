@@ -94,6 +94,9 @@
 ;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
 (val CALL-MODEL "claude-stub")
 (val SUBAGENT-MODEL "claude-stub-sub")
+;; fake の道具の呼びの id(doeff_claude_code.fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id(card ki-8239be27d5f6)。
+(val FAKE-TOOL-USE-ID "fake-tool")
+(val SUBAGENT-CALL-ID "msg_fake_sub")
 ;; Stop hook が最初の答えを 1 度差し戻す手番(agora-redesign #4020)。替え玉の CLI の規則(scenario_rules.hy の HOOK-FEEDBACK-PHRASE と
 ;; REJECTED-ANSWER)と同じ言葉と、差し戻される答えの本文。
 (val HOOK-REASON "add-one-more-line")
@@ -165,6 +168,13 @@
                               #())
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
+             ;; echo の道具の途中の subagent の行(替え玉の CLI と同じ model と usage・親は道具の呼び — card ki-8239be27d5f6)。
+             :subagent-calls (if echoed
+                                 #((compose.AssistantMessage :model SUBAGENT-MODEL :parent-tool-use-id FAKE-TOOL-USE-ID
+                                                             :message-id SUBAGENT-CALL-ID
+                                                             :usage (compose.Usage :input-tokens 1 :output-tokens 900
+                                                                                   :cache-read-input-tokens 50000)))
+                                 #())
              :last-call-usage (if echoed
                                   (compose.Usage :input-tokens 4 :output-tokens 1 :cache-creation-input-tokens 20
                                                  :cache-read-input-tokens 1010)
@@ -2232,3 +2242,83 @@
 
 (deftest test-headless-invents-no-compaction-start-stub [tmp-path]
   (<- (check-a-turn-without-compaction-has-no-compaction-start (run-on STUB tmp-path uncompacted-turn))))
+
+;; --- 圧縮の終わり方と subagent の呼びの usage(card acp:kanban-issue:ki-8239be27d5f6) -------------------------------------------
+;; 上の層(agora の turn-host)が rate limit の減りと実使用量を照合できるように、圧縮の終わり方(成功・失敗・中断・圧縮しなかった)と、
+;; subagent の呼びごとの usage を、本体の会話の呼びと分けて出来事で運ぶ。
+
+(defk check-the-compaction-end-closes-the-compaction [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "CLI が会話を 1 度圧縮した手番は、圧縮の終わりの出来事(AgentCompactionEndedEvent — status 行 null の compact_result success)を
+   ちょうど 1 つ、始まりの出来事の後に、終わり方 SUCCEEDED・誤りの文なしで運ぶ。終わりの行を捨てる adapter では 0 で赤 — 上の層は
+   失敗・中断した圧縮を記録できない(成功した圧縮だけが境目の行を持つ)。"
+  (import doeff_agents [AgentCompactionStartedEvent AgentCompactionEndedEvent CompactionOutcome])
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val started (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionStartedEvent) index))
+  (val ended (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionEndedEvent) #(index event)))
+  (assert (= (len ended) 1) (repr done.events))
+  (val at (get (get ended 0) 0))
+  (val event (get (get ended 0) 1))
+  (assert (= #(event.outcome event.error) #(CompactionOutcome.SUCCEEDED None)) (repr event))
+  (assert (< (get started 0) at) (repr done.events))
+  None)
+
+(defk check-a-turn-without-compaction-has-no-compaction-end [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "圧縮の行を出さない手番は、圧縮の終わりの出来事を 1 つも運ばない(出来事を発明しない)。"
+  (import doeff_agents [AgentCompactionEndedEvent])
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (= (lfor event done.events :if (isinstance event AgentCompactionEndedEvent) event) []) (repr done.events))
+  None)
+
+(deftest test-headless-carries-the-compaction-end-fake [tmp-path]
+  (<- (check-the-compaction-end-closes-the-compaction (run-on FAKE tmp-path compacting-turn))))
+
+(deftest test-headless-carries-the-compaction-end-stub [tmp-path]
+  (<- (check-the-compaction-end-closes-the-compaction (run-on STUB tmp-path compacting-turn))))
+
+(deftest test-headless-invents-no-compaction-end-fake [tmp-path]
+  (<- (check-a-turn-without-compaction-has-no-compaction-end (run-on FAKE tmp-path uncompacted-turn))))
+
+(deftest test-headless-invents-no-compaction-end-stub [tmp-path]
+  (<- (check-a-turn-without-compaction-has-no-compaction-end (run-on STUB tmp-path uncompacted-turn))))
+
+(deftest test-a-failed-and-an-interrupted-compaction-carry-their-ends
+  ;; 失敗・中断・圧縮しなかった圧縮の行(境目の行は無い)は、終わり方と CLI の誤りの文をそのまま運ぶ(層 2 の行 → 層 3 の出来事の写し)。
+  (import datetime [datetime timezone])
+  (import doeff_agents [AgentCompactionEndedEvent CompactionOutcome])
+  (import doeff_agents.handlers.headless [event-builders-of])
+  (val at (datetime 2026 10 20 12 0 :tzinfo timezone.utc))
+  (for [#(ended outcome) [#((compose.CompactEnded :outcome compose.CompactOutcome.FAILED :error "prompt is too long")
+                            CompactionOutcome.FAILED)
+                          #((compose.CompactEnded :outcome compose.CompactOutcome.INTERRUPTED :error "API Error: Request was aborted.")
+                            CompactionOutcome.INTERRUPTED)
+                          #((compose.CompactEnded :outcome compose.CompactOutcome.NOT-COMPACTED) CompactionOutcome.NOT-COMPACTED)]]
+    (assert (= (lfor build (event-builders-of ended at) (build 7))
+               [(AgentCompactionEndedEvent :seq 7 :at at :outcome outcome :error ended.error)]))))
+
+(defk check-a-subagent-call-carries-its-usage-apart [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "道具の途中に subagent が API を 1 回呼んだ手番は、その呼びの usage の出来事(AgentSubagentCallUsageEvent)をちょうど 1 つ運ぶ:
+   親 = その手番の道具の呼びの id・model = subagent の model・usage = 行の usage そのまま(cache の書きは名乗らないので None)・呼びの
+   id あり。本体の会話の呼びの usage の出来事(AgentCallUsageEvent)には入らない。subagent の行を捨てる adapter では 0 で赤 — 上の層は
+   rate limit を減らす subagent の消費を記録できない。"
+  (import doeff_agents [AgentSubagentCallUsageEvent])
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val calls (lfor event done.events :if (isinstance event AgentToolUseEvent) call event.tool-calls call.id))
+  (val subagent (lfor event done.events :if (isinstance event AgentSubagentCallUsageEvent) event))
+  (assert (= (len subagent) 1) (repr done.events))
+  (val event (get subagent 0))
+  (assert (= #(event.parent-tool-use-id event.model event.usage)
+             #((get calls 0) SUBAGENT-MODEL
+               (AgentTurnUsage :input-tokens 1 :output-tokens 900 :cache-write-tokens None :cache-read-tokens 50000)))
+          (repr event))
+  (assert event.call-id (repr event))
+  (assert (not-in SUBAGENT-MODEL (lfor other done.events :if (isinstance other AgentCallUsageEvent) other.model)) (repr done.events))
+  None)
+
+(deftest test-headless-carries-the-subagent-call-usage-fake [tmp-path]
+  (<- (check-a-subagent-call-carries-its-usage-apart (run-on FAKE tmp-path tool-turn-with-output))))
+
+(deftest test-headless-carries-the-subagent-call-usage-stub [tmp-path]
+  (<- (check-a-subagent-call-carries-its-usage-apart (run-on STUB tmp-path tool-turn-with-output))))

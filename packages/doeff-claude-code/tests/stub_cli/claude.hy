@@ -69,9 +69,9 @@
   (.flush sys.stdout))
 
 (defn #^ dict assistant-line [#^ str session-id #^ list content #^ dict usage [model MODEL] [parent None]]
-  "assistant の行(実物と同じ形 — message の model・usage と最上位の parent_tool_use_id を持つ)。"
+  "assistant の行(実物と同じ形 — message の id・model・usage と最上位の parent_tool_use_id を持つ。id は呼びごとに新しい)。"
   {"type" "assistant" "session_id" session-id "parent_tool_use_id" parent
-   "message" {"role" "assistant" "model" model "content" content "usage" usage}})
+   "message" {"id" (+ "msg_stub_" (. (uuid.uuid4) hex)) "role" "assistant" "model" model "content" content "usage" usage}})
 
 (defn stream-block [#^ str session-id #^ dict block #^ dict delta #^ int pieces]
   "1 つの content block を pieces 片の差分(--include-partial-messages の stream_event)で流す — 実物と同じく content_block_start と
@@ -262,6 +262,8 @@
       ;; status の行 → system/compact_boundary(compact_metadata は会話の記録の compactMetadata を snake の名へ写した物・
       ;; preserved_segment は残した区間の uuid の組)。
       (emit {"type" "system" "subtype" "status" "status" "compacting" "session_id" self.session-id})
+      ;; 圧縮の関数の終わりの status null の行(compact_result — CLI 2.1.292 は境目の行の前に出す・card ki-8239be27d5f6)。
+      (emit {"type" "system" "subtype" "status" "status" None "compact_result" "success" "session_id" self.session-id})
       (emit {"type" "system" "subtype" "compact_boundary" "session_id" self.session-id "uuid" (str (uuid.uuid4))
              "compact_metadata" (| COMPACT-METADATA {"preserved_segment" {"head_uuid" (str (uuid.uuid4)) "anchor_uuid" (str (uuid.uuid4))
                                                                           "tail_uuid" (str (uuid.uuid4))}})}))

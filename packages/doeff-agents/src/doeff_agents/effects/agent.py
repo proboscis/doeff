@@ -419,6 +419,37 @@ class AgentCompactionStartedEvent:
     at: datetime
 
 
+class CompactionOutcome(Enum):
+    """How a compaction the runtime started ended (agora card ki-8239be27d5f6).
+
+    ``SUCCEEDED``: the context was compacted (an ``AgentCompactionEvent`` carries the token counts).
+    ``FAILED``: the compaction failed (``error`` names why, as the runtime stated it).
+    ``INTERRUPTED``: the compaction's request was stopped before it finished (e.g. the turn was interrupted).
+    ``NOT_COMPACTED``: the runtime ended the compaction without compacting (e.g. a PreCompact hook blocked it).
+    """
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    NOT_COMPACTED = "not_compacted"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCompactionEndedEvent:
+    """The runtime ended a compaction it started in the middle of the turn; the turn goes on (agora card
+    ki-8239be27d5f6 — an upper layer records failed and interrupted compactions too, not only the successful
+    ones an ``AgentCompactionEvent`` carries).  ``outcome`` = how it ended, ``error`` = the runtime's error text
+    for a failed or interrupted compaction (``None`` when not stated).  The runtime does not state the token usage
+    of the compaction's own API request on any line, so no event carries it.  A turn that ends between an
+    ``AgentCompactionStartedEvent`` and this event (the process went away mid-compaction) carries no end: an
+    upper layer reads a start without an end as a compaction that never finished."""
+
+    seq: int
+    at: datetime
+    outcome: CompactionOutcome
+    error: str | None = None
+
+
 @dataclass(frozen=True, kw_only=True)
 class AgentHookEvent:
     """A hook the runtime ran in the turn answered (card acp:kanban-issue:ki-d8b473480303 — an upper layer shows the
@@ -448,7 +479,8 @@ class AgentCallUsageEvent:
     reads the conversation's current context size without waiting for the turn's end (its input side: input +
     cache_read + cache_write).  ``usage`` = that call's usage as the runtime stated it (``cost_usd`` is None — the
     runtime prices whole turns, not calls), ``model`` = that call's model (``None`` when not stated).  The line is
-    drawn where a turn end's ``last_call_usage`` draws it: subagent calls are not carried, and a line that states
+    drawn where a turn end's ``last_call_usage`` draws it: subagent calls are not carried (they come apart as
+    ``AgentSubagentCallUsageEvent``), and a line that states
     no usage carries no event (never an invented 0).  The runtime states one call's usage on each line of that
     call, so consecutive events may repeat the same value; the last event of a turn equals the turn end's
     ``last_call_usage`` / ``last_call_model``.  The model's context window is not in the event — the runtime
@@ -458,6 +490,26 @@ class AgentCallUsageEvent:
     at: datetime
     usage: AgentTurnUsage
     model: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSubagentCallUsageEvent:
+    """An API call of a subagent (an agent a tool call of the main conversation started) stated its usage while
+    the turn is running (agora card ki-8239be27d5f6 — an upper layer records what subagents consumed next to the
+    main conversation's calls, apart from them: a subagent's call is not the conversation's context).
+    ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent, ``call_id`` = the API
+    call's id (``None`` when not stated), ``usage`` = that call's usage as the runtime stated it (``cost_usd`` is
+    None), ``model`` = that call's model (``None`` when not stated).  As with ``AgentCallUsageEvent`` the runtime
+    states one call's usage on each line of that call, so events with the same ``call_id`` may repeat; subagents
+    running side by side interleave their calls, so an upper layer folds by ``call_id``, not by order.  A line
+    that states no usage carries no event (never an invented 0)."""
+
+    seq: int
+    at: datetime
+    parent_tool_use_id: str
+    usage: AgentTurnUsage
+    model: str | None = None
+    call_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -511,8 +563,10 @@ AgentEvent = (
     | AgentStopHookFeedbackEvent
     | AgentCompactionStartedEvent
     | AgentCompactionEvent
+    | AgentCompactionEndedEvent
     | AgentHookEvent
     | AgentCallUsageEvent
+    | AgentSubagentCallUsageEvent
     | AgentToolUseEvent
     | AgentToolResultEvent
     | AgentInputFateEvent

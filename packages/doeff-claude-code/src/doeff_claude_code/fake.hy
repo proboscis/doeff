@@ -24,7 +24,8 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactBoundary HookNotice HookPhase
+                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
+                                 HookNotice HookPhase
                                  ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -125,9 +126,14 @@
    答えの本文の行(AssistantMessage)→ 差し戻しの行(StopHookFeedback)を 1 つずつ — を最後の本文を書き始める前に出し、手番の終わりの
    本文は最後の本文だけ(本物の result の行と同じ)。上の層が差し戻された答えを見分けて画面から落とす事を模擬で確かめるため。本文で
    終わる手番だけ(fail・lose の手番は本文を出さない)・
-   compactions = CLI が会話を自動で圧縮する筋書き(CompactBoundary の列 — 圧縮 1 回に 1 つ・#4189)。偽の CLI は本物と
-   同じく、要求の前(init の後・考えている間の差分の前)に圧縮の始まりの行(CompactStarted)と終わりの行を 1 組ずつ出し、手番はそのまま続く。上の層が無人のターンの圧縮を
+   compactions = CLI が会話を自動で圧縮する筋書き(CompactBoundary か CompactEnded の列 — 圧縮 1 回に 1 つ・#4189)。偽の CLI は本物と
+   同じく、要求の前(init の後・考えている間の差分の前)に圧縮の始まりの行(CompactStarted)と終わりの行を 1 組ずつ出し、手番はそのまま続く。
+   CompactBoundary = 成功した圧縮(終わりの status null の行 CompactEnded SUCCEEDED と境目の行の 2 行)・CompactEnded = その終わり方で
+   終わった圧縮(失敗・中断・圧縮しなかった — 境目の行は出ない・card ki-8239be27d5f6)。上の層が無人のターンの圧縮を
    記録する事を模擬で確かめるため・
+   subagent-calls = 道具の途中に subagent が出す assistant の行の筋書き(AssistantMessage の列 — どれも parent-tool-use-id を持つ・
+   道具を走らせる手番だけ)。偽の CLI は道具の始まりの行の後に出す。本物の状態機械と同じく手番の最後の呼びには数えない。上の層が
+   subagent の呼びの使用量を記録する事を模擬で確かめるため(card ki-8239be27d5f6)・
    hooks = 要求の前に CLI が回す hook の行の筋書き(HookNotice の列 — 条件つきルールの助言を返す UserPromptSubmit の hook の応答ほか・
    ki-d8b473480303)。偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
    続く。Stop hook の差し戻し(stop-hook-rejections)の Stop の hook の応答の行は、差し戻しの筋書きが出す(stop-hook-notice-of)。上の層が
@@ -172,7 +178,9 @@
   ;; Stop hook が答えを差し戻す筋書き(差し戻さない = 空)。
   (setv #^ (get tuple #(StopHookRejection ...)) stop-hook-rejections #())
   ;; 要求の前に CLI が会話を自動で圧縮する筋書き(圧縮しない = 空)。
-  (setv #^ (get tuple #(CompactBoundary ...)) compactions #())
+  (setv #^ (get tuple #((| CompactBoundary CompactEnded) ...)) compactions #())
+  ;; 道具の途中に subagent が出す assistant の行の筋書き(出さない = 空・道具を走らせる手番だけ)。
+  (setv #^ (get tuple #(AssistantMessage ...)) subagent-calls #())
   ;; 要求の前に CLI が回す hook の行の筋書き(回さない = 空)。
   (setv #^ (get tuple #(HookNotice ...)) hooks #())
   (defn #^ None __post-init__ [self]
@@ -184,6 +192,10 @@
       (raise (ValueError "FakeReply の fail・lose・account-refusal・model-refusal は多くとも 1 つ")))
     (when (and (is self.lose None) (or (is-not self.lose-exit-code None) (is-not self.lose-stderr None)))
       (raise (ValueError "FakeReply の lose-exit-code・lose-stderr は lose の手番だけ(消える process の終わりの欄)")))
+    (when (and self.subagent-calls (<= self.tool-seconds 0))
+      (raise (ValueError "FakeReply の subagent-calls は道具を走らせる手番だけ(tool-seconds が正 — subagent は道具の途中に走る)")))
+    (when (any (gfor message self.subagent-calls (is message.parent-tool-use-id None)))
+      (raise (ValueError "FakeReply の subagent-calls の行は親の呼びの id(parent-tool-use-id)を持つ(持たない行は本体の会話の行)")))
     (when (< self.lines 0)
       (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))
     (when (< self.deltas 0)
@@ -577,9 +589,14 @@
                                :model "fake")))
   ;; 要求の前に CLI が回す hook の行(本物の CLI の --include-hook-events の system/hook_response ほか・ki-d8b473480303)。
   (<- (emit-all session turn (list reply.hooks)))
-  ;; 要求の前の会話の自動の圧縮(本物の CLI の 2 行 — 始まりの system/status compacting(card ki-aeae6f9e643d)→ 終わりの
-  ;; system/compact_boundary(#4189)— 圧縮 1 回に 1 組)。
-  (<- (emit-all session turn (lfor boundary reply.compactions line #((CompactStarted) boundary) line)))
+  ;; 要求の前の会話の自動の圧縮(本物の CLI 2.1.292 の行 — 始まりの system/status compacting(card ki-aeae6f9e643d)→ 終わりの
+  ;; system/status null(compact_result — card ki-8239be27d5f6)→ 成功なら system/compact_boundary(#4189)— 圧縮 1 回に 1 組)。
+  ;; 筋書きの CompactBoundary は成功した圧縮、CompactEnded はその終わり方で終わった圧縮(境目の行は出ない)。
+  (<- (emit-all session turn (lfor compaction reply.compactions
+                                   line (if (isinstance compaction CompactBoundary)
+                                            #((CompactStarted) (CompactEnded :outcome CompactOutcome.SUCCEEDED) compaction)
+                                            #((CompactStarted) compaction))
+                                   line)))
   ;; 答えの前に考えている間の差分(本物の CLI の thinking_delta の行 — 片ごとの考えの文字列は FAKE-THINKING-PIECE・替え玉の CLI と同じ)。
   ;; 差分の前に、考えの block の始まりの行を 1 つ(本物の CLI の content_block_start の thinking — #4186)。考えの無い返事では出さない。
   (<- (emit-all session turn (+ (if (> reply.thinking-deltas 0) [(PartialMessage :thinking-start True)] [])
@@ -604,7 +621,7 @@
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
-        (<- (emit-all session turn (+ call-lines [(TaskEvent "fake-task" "started")])))))
+        (<- (emit-all session turn (+ call-lines [(TaskEvent "fake-task" "started")] (list reply.subagent-calls))))))
   turn)
 
 

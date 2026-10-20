@@ -511,3 +511,37 @@
              (CompactStarted)))
   (assert (= (classify-record {"type" "system" "subtype" "status" "status" "requesting" "session_id" "s"})
              (Other :type "system" :subtype "status"))))
+
+(deftest test-a-status-null-line-is-compact-ended-with-its-outcome
+  ;; card ki-8239be27d5f6: CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず system/status の行(status = JSON の null)を出し、圧縮を
+  ;; 試みた時は compact_result(success / failed)と失敗の文 compact_error を添える(stream-json の書き手 = sdk_status の metadata の
+  ;; compactResult・compactError)。名前だけの Other に捨てると、上の層は失敗・中断した圧縮を記録できない(成功だけが compact_boundary を持つ)。
+  (import doeff_claude_code.lines [CompactEnded CompactOutcome COMPACT-ABORTED-ERROR])
+  (defn status-null [#** extra] (| {"type" "system" "subtype" "status" "status" None "session_id" "s"} extra))
+  (assert (= (classify-record (parse-record (json.dumps (status-null :compact_result "success"))))
+             (CompactEnded :outcome CompactOutcome.SUCCEEDED)))
+  (assert (= (classify-record (status-null :compact_result "failed" :compact_error "prompt is too long"))
+             (CompactEnded :outcome CompactOutcome.FAILED :error "prompt is too long")))
+  ;; 止められた圧縮の要求(手番の割り込み)の文は中断。
+  (assert (= COMPACT-ABORTED-ERROR "API Error: Request was aborted."))
+  (assert (= (classify-record (status-null :compact_result "failed" :compact_error COMPACT-ABORTED-ERROR))
+             (CompactEnded :outcome CompactOutcome.INTERRUPTED :error COMPACT-ABORTED-ERROR)))
+  ;; compact_result の無い status null = 圧縮を始めたが圧縮しなかった(PreCompact の hook が止めた・圧縮する物が無かった)。
+  (assert (= (classify-record (status-null)) (CompactEnded :outcome CompactOutcome.NOT-COMPACTED)))
+  ;; 語彙の外の compact_result は名指しの Other(終わり方を発明しない)。status の鍵の無い行は終わりではない。
+  (assert (= (classify-record (status-null :compact_result "partial"))
+             (Other :type "system" :subtype "compact_end_unknown_result")))
+  (assert (= (classify-record {"type" "system" "subtype" "status" "session_id" "s"}) (Other :type "system" :subtype "status")))
+  ;; CLI は圧縮の要求の token を名乗らない(この行にも compact_boundary の compact_metadata にも usage の欄は無い)ので、終わりの型は
+  ;; 終わり方と誤りの文だけを持つ — 名乗らない数を持つ欄を作らない。
+  (import dataclasses [fields])
+  (assert (= (lfor field (fields CompactEnded) field.name) ["outcome" "error"])))
+
+(deftest test-an-assistant-line-names-its-call-id
+  ;; card ki-8239be27d5f6: 1 つの API の呼びは content の block ごとに同じ message.id の行を出す。並んで走る subagent の行は交互に来るので、
+  ;; 上の層は呼びの id で畳む — 本体の行も subagent の行も message.id を持つ。無ければ None。
+  (val sub (classify-record {"type" "assistant" "parent_tool_use_id" "toolu_9"
+                             "message" {"id" "msg_sub_1" "model" "claude-sub" "content" [] "usage" {"input_tokens" 2}}}))
+  (assert (= #(sub.message-id sub.parent-tool-use-id) #("msg_sub_1" "toolu_9")) (repr sub))
+  (val main (classify-record {"type" "assistant" "parent_tool_use_id" None "message" {"model" "m" "content" []}}))
+  (assert (is main.message-id None) (repr main)))

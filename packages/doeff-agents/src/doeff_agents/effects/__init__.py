@@ -28,8 +28,11 @@ from doeff_agents.effects.agent import AgentStopHookFeedbackEvent as AgentStopHo
 from doeff_agents.effects.agent import AgentCompactionStartedEvent as AgentCompactionStartedEvent
 from doeff_agents.effects.agent import AgentCompactionEvent as AgentCompactionEvent
 from doeff_agents.effects.agent import CompactionTrigger as CompactionTrigger
+from doeff_agents.effects.agent import AgentCompactionEndedEvent as AgentCompactionEndedEvent
+from doeff_agents.effects.agent import CompactionOutcome as CompactionOutcome
 from doeff_agents.effects.agent import AgentHookEvent as AgentHookEvent
 from doeff_agents.effects.agent import AgentCallUsageEvent as AgentCallUsageEvent
+from doeff_agents.effects.agent import AgentSubagentCallUsageEvent as AgentSubagentCallUsageEvent
 from doeff_agents.effects.agent import AgentToolResultEvent as AgentToolResultEvent
 from doeff_agents.effects.agent import AgentToolUseEvent as AgentToolUseEvent
 from doeff_agents.effects.agent import ModelWindow as ModelWindow

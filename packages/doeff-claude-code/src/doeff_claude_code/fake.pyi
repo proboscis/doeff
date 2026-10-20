@@ -52,6 +52,8 @@ from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERRO
 from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
 from doeff_claude_code.lines import CompactStarted as CompactStarted
+from doeff_claude_code.lines import CompactEnded as CompactEnded
+from doeff_claude_code.lines import CompactOutcome as CompactOutcome
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import HookNotice as HookNotice
 from doeff_claude_code.lines import HookPhase as HookPhase
@@ -161,7 +163,8 @@ class FakeReply:
     account_refusal: AccountRefusalHit | None = None
     model_refusal: ModelRefusalHit | None = None
     stop_hook_rejections: tuple[StopHookRejection, ...] = ...
-    compactions: tuple[CompactBoundary, ...] = ...
+    compactions: tuple[CompactBoundary | CompactEnded, ...] = ...
+    subagent_calls: tuple[AssistantMessage, ...] = ...
     hooks: tuple[HookNotice, ...] = ...
 
     def __post_init__(self) -> None:

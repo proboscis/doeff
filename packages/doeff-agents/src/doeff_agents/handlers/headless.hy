@@ -48,6 +48,12 @@
 ;;;   CompactBoundary                  → AgentCompactionEvent(CLI が会話を圧縮した事実 — 行の欄 trigger・pre-tokens・post-tokens・
 ;;;                                      cumulative-dropped-tokens・duration-ms をそのまま写す。上の層がターンの出来事として記録するため・
 ;;;                                      agora-redesign #4189)
+;;;   CompactEnded                     → AgentCompactionEndedEvent(CLI が圧縮を終えた事実 — 終わり方 outcome〔成功・失敗・中断・圧縮
+;;;                                      しなかった〕と誤りの文 error を写す。上の層が失敗と中断も記録するため・card ki-8239be27d5f6。
+;;;                                      CLI は圧縮の要求の token を行に名乗らないので運ばない)
+;;;   AssistantMessage.usage / .model(subagent の行)→ AgentSubagentCallUsageEvent(parent-tool-use-id の在る行が usage を名乗るたびに、
+;;;                                      親の道具の呼びの id・呼びの id〔message.id〕・usage・model を運ぶ — 上の層が subagent の消費を本体の
+;;;                                      呼びと分けて記録するため・card ki-8239be27d5f6)
 ;;;   AssistantMessage.usage / .model  → AgentCallUsageEvent(本体の会話の行〔parent-tool-use-id が None〕が usage を名乗るたびに、その呼びの
 ;;;                                      usage と model を運ぶ — 上の層が手番の終わりを待たずに会話の今の context の大きさを読むため。
 ;;;                                      線引きは手番の終わりの last_call_usage と同じ: subagent の行は運ばず、usage を名乗らない行は
@@ -79,7 +85,7 @@
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent CompactionTrigger
-  AgentHookEvent AgentCallUsageEvent
+  AgentCompactionEndedEvent CompactionOutcome AgentHookEvent AgentCallUsageEvent AgentSubagentCallUsageEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentAccountRefusal AgentModelRefusal
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
@@ -90,7 +96,7 @@
   ReplacementCredentialUnavailable])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactBoundary
+(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactEnded CompactBoundary
                                  HookNotice HookPhase
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -143,8 +149,8 @@
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
     (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
-                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent AgentHookEvent
-                          AgentCallUsageEvent AgentTurnEndEvent))
+                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent
+                          AgentCompactionEndedEvent AgentHookEvent AgentCallUsageEvent AgentSubagentCallUsageEvent AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
@@ -211,13 +217,27 @@
       []
       [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model))]))
 
+(defk subagent-call-usage-builders-of [message at]
+  {:pre [(: message AssistantMessage) (: at datetime)] :post [(: % list)]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "上の層が subagent の消費を本体の会話の呼びと分けて記録できるように(card acp:kanban-issue:ki-8239be27d5f6 — rate limit の減りと
+   実使用量の照合の材料)、assistant の行から、subagent の呼びの usage の出来事を作る関数の列(0 か 1 つ)を作るため。subagent の行
+   (parent-tool-use-id が在る)が usage を名乗る時だけ 1 つ作り、親の道具の呼びの id・呼びの id(message.id)・model を添える。本体の
+   会話の行と、usage を名乗らない行・4 欄とも名乗らない行は出来事にしない(0 を発明しない — 線引きは call-usage-builders-of と同じ)。"
+  (val usage (if (is message.parent-tool-use-id None) None (last-call-of message.usage)))
+  (if (is usage None)
+      []
+      [(fn [seq] (AgentSubagentCallUsageEvent :seq seq :at at :parent-tool-use-id message.parent-tool-use-id :usage usage
+                                              :model message.model :call-id message.message-id))]))
+
 (defn #^ list event-builders-of [kind #^ datetime at]
   "層 2 の行の型 → 層 3 の出来事を作る関数(seq → 出来事)の列。出来事はその型の欄で直接作る(語彙の外の行は空)。"
   (cond
     (isinstance kind AssistantMessage)
       (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
          (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] [])
-         (run (call-usage-builders-of kind at)))
+         (run (call-usage-builders-of kind at))
+         (run (subagent-call-usage-builders-of kind at)))
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
     ;; 考えの block の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(agora-redesign #4186)。
@@ -241,6 +261,11 @@
     ;; ki-aeae6f9e643d。終わりは下の CompactBoundary)。
     (isinstance kind CompactStarted)
       [(fn [seq] (AgentCompactionStartedEvent :seq seq :at at))]
+    ;; CLI が会話の圧縮を終えた(status 行 null — 終わり方は同じ綴りの層 3 の語へ写し、語彙の外は ValueError で止める)— 上の層が成功だけでなく失敗・中断・圧縮
+    ;; しなかった事も手番の出来事として記録するため(card ki-8239be27d5f6。成功の token 数は下の CompactBoundary)。
+    (isinstance kind CompactEnded)
+      [(fn [seq] (AgentCompactionEndedEvent :seq seq :at at :outcome (CompactionOutcome kind.outcome.value)
+                                            :error kind.error))]
     ;; CLI が会話を圧縮した(行の欄そのまま — 起き方は同じ綴りの層 3 の語へ写し、語彙の外は ValueError で止める)— 上の層が無人の
     ;; ターンの圧縮をターンの出来事として記録するため(agora-redesign #4189)。
     (isinstance kind CompactBoundary)
