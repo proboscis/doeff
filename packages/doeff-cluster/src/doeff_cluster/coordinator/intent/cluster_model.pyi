@@ -17,6 +17,9 @@ from doeff_cluster.coordinator.intent.request_bodies import StatusRow as StatusR
 from doeff_cluster.coordinator.intent.request_bodies import DurationRow as DurationRow
 from doeff_cluster.shared.intent.detached_model import TaskLimit as TaskLimit
 from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
+from doeff_cluster.shared.intent.detached_model import DetachedEnded as DetachedEnded
+from doeff_cluster.shared.intent.detached_model import DetachedOutbox as DetachedOutbox
+from doeff_cluster.shared.intent.detached_model import DetachedOutboxAcked as DetachedOutboxAcked
 
 class ComponentVersion(NamedTuple):
     component: str
@@ -680,6 +683,7 @@ class TaskRecord:
     environ: tuple[tuple[str, str], ...] = ...
     priority: int = 0
     limits: tuple[TaskLimit, ...] = ...
+    notify: str = ''
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
@@ -715,6 +719,7 @@ class ClusterState:
     keep_marks: tuple[KeepMark, ...] = ...
     superseded_runs: tuple[SupersededRun, ...] = ...
     group_limits: Table[GroupLimit] = ...
+    outbox: Table[DetachedEnded] = ...
 
 @dataclass(frozen=True)
 class Fault:

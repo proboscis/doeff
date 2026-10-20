@@ -9,6 +9,7 @@ from doeff_cluster.coordinator.intent.cluster_model import HandoffWatch as Hando
 from doeff_cluster.coordinator.intent.cluster_model import ClusterNaming as ClusterNaming
 from doeff_cluster.coordinator.intent.cluster_model import TaskRecord as TaskRecord
 from doeff_cluster.coordinator.intent.cluster_model import ENDED_PHASES as ENDED_PHASES
+from doeff_cluster.shared.intent.detached_model import DetachedEnded as DetachedEnded
 from doeff_cluster.shared.core.capabilities import capabilities_of as capabilities_of
 from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
 from doeff_cluster.shared.core.detached_rules import task_limits_refusal as task_limits_refusal
@@ -26,6 +27,12 @@ def task_record_to_json(task: TaskRecord) -> dict:
     ...
 
 def task_record_from_json(data: dict[str, object]) -> _Program[TaskRecord, object]:
+    ...
+
+def ended_to_json(ended: DetachedEnded) -> dict:
+    ...
+
+def ended_from_json(data: dict[str, object]) -> _Program[DetachedEnded, object]:
     ...
 
 def stored_str(data: dict, key: str, default: str | None=None) -> str:
