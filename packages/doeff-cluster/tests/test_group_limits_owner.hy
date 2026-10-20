@@ -190,15 +190,16 @@
 (deftest test-the-sender-facing-fields-and-the-counting-inputs-are-pinned
   ;; 盲検 B: 送り手の名乗る欄を足して置き方がそれで数えると、提示の検を全部通りながら上限の値が送り手へ戻った。送り手の欄の集合と、数えの
   ;; 関数が受ける物を固定する — 足す時は、組の上限の数えに送り手の値を入れない事を確かめ(値と範囲の持ち主は系の宣言 GroupLimit だけ)、
-  ;; この表を直す。
+  ;; この表を直す。notify(終わりの知らせ先 — card ki-e7945a2b2d00)は出口へ積む判断(detached_policy.outbox-noted)だけが読み、下の数えの関数は
+  ;; 受けない。
   (assert (= (tuple (gfor f (fields TaskLimit) f.name)) #("group" "part"))
           "TaskLimit は組の名と区分だけ — 値・範囲・重さを task に名乗らせない(値の持ち主は系の宣言)")
   (assert (= (tuple (gfor f (fields SubmitDetached) f.name))
-             #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits"))
+             #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify"))
           "SubmitDetached の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   (assert (= (tuple (gfor f (fields TaskBody) f.name))
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
-               "retain_seconds" "priority" "limits" "format"))
+               "retain_seconds" "priority" "limits" "notify" "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・
   ;; 置いている数・系の宣言の表だけを受ける。task の行を読むのは、置いている task の名乗りを射影する placed-claims と tasks-placed の
