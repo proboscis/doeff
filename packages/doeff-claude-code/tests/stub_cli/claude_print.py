@@ -17,7 +17,7 @@ STUB:hang = 降ろされるまで待つ(信号を待つ — 時間で起きな�
 rate_limit_event の行・error rate_limit の答えの行・result の 429 — rc 1)。
 
 env STUB_PRINT_RECORD(file の path)が在れば、見た物(argv・cwd・設定 dir・その .credentials.json の access token と権限・
-MAX_THINKING_TOKENS・本文の長さ・pid)を JSON で書く — 検が handler の渡し方を確かめるため。
+MAX_THINKING_TOKENS・本文の長さと本文・pid)を JSON で書く — 検が handler の渡し方を確かめるため。
 """
 
 import json
@@ -32,7 +32,8 @@ FIRST_OPTION_ANSWER = 0.625
 LIMIT_TEXT = "You've hit your session limit · resets 12pm (Asia/Tokyo)"
 LIMIT_REJECTED = {"type": "rate_limit_event",
                   "rate_limit_info": {"status": "rejected", "resetsAt": 1791342000, "rateLimitType": "five_hour"}}
-FLAGS_WITH_VALUE = {"--output-format", "--json-schema", "--model", "--system-prompt", "--tools", "--setting-sources", "--effort"}
+FLAGS_WITH_VALUE = {"--input-format", "--output-format", "--json-schema", "--model", "--system-prompt", "--tools",
+                    "--setting-sources", "--effort"}
 
 
 def read_flags(argv: list[str]) -> dict[str, object]:
@@ -93,7 +94,7 @@ def main() -> int:
     if record:
         with open(record, "w", encoding="utf-8") as stream:
             json.dump({"argv": sys.argv[1:], "cwd": os.getcwd(), "config_dir": config_dir, "credential": credential,
-                       "max_thinking_tokens": os.environ.get("MAX_THINKING_TOKENS"), "input_chars": len(text),
+                       "max_thinking_tokens": os.environ.get("MAX_THINKING_TOKENS"), "input_chars": len(text), "input": text,
                        "pid": os.getpid()}, stream)
     if "STUB:hang" in text:
         while True:

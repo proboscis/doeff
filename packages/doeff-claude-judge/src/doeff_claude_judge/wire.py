@@ -12,7 +12,10 @@ output_config.format か、Claude Code の CLI の 1 回きりの実行の --sys
 - Schema は Messages API の構造化の答えが受ける部分だけを使う(minimum / maximum と配列の長さの制約は受けない)。範囲 0〜1 は
   説明の文で伝え、答えの読みで確かめる。choice を候補の数と同じ長さの配列でなく id の object にするのも同じ訳(配列の長さを
   Schema で縛れない・位置で候補を当てさせない)で、Verdict の probabilities(id → 確率)とも同じ形になる。
-- score の問いと画像(Judge の assets)は写さない(JudgeError の unsupported)。
+- 画像(Judge の assets)は、利用者の文を文字と画像の並びにして写す(`ClaudeQuery.user` が tuple)。state の欄の値が assets の鍵なら、
+  その欄の札の間に画像を置く(<欄の名>・画像・</欄の名>)。欄から指されない画像は state の後ろに、鍵を札の名にして置く(札の名に
+  できない鍵は unsupported)。画像の無い Judge の利用者の文は 1 つの文字列のまま(前と同じ綴り)。
+- score の問いは写さない(JudgeError の unsupported)。
 
 答えの読み: 答えが JSON でない・object でない・欄が欠ける・余る・数でない(真偽値も数と見ない)・有限でない・0〜1 の外の答えは、
 Verdict を作らずに `MalformedAnswer` で返す。確率は答えの値のまま運ぶ(丸めない・足して 1 に直さない — 床と比べるのは呼び手で、
@@ -24,15 +27,20 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import reduce
 from typing import Any
 
-from doeff_system_one import Answer, Judge, JudgeError, Question, Verdict
+from doeff_system_one import Answer, Image, Judge, JudgeError, Question, Verdict
 
 SUPPORTED_KINDS: tuple[str, ...] = ("noul", "choice")
 
 #: 欄の名をそのまま札の名にできる形(それ以外の鍵を持つ state は丸ごと <state> の JSON にする)。
 TAG_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*\Z")
 STATE_TAG = "state"
+BLOCK_SEPARATOR = "\n\n"
+
+#: Image の format → Messages API の image の block の media_type。
+MEDIA_TYPES: Mapping[str, str] = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
 SYSTEM = (
     "You are a careful judge. The user message holds the material to judge between tags, then a list of named questions. "
@@ -50,11 +58,27 @@ CHOICE_HEAD = "Choice questions (answer each with a probability for every option
 
 
 @dataclass(frozen=True)
+class QueryImage:
+    """利用者の文の中の画像 1 枚(Messages API の image の block の中身 — media_type と標準の base64)。"""
+
+    media_type: str
+    data_base64: str
+
+
+#: 利用者の文の 1 片(文字か画像)。
+UserPart = str | QueryImage
+
+
+@dataclass(frozen=True)
 class ClaudeQuery:
-    """Claude への 1 回の問いの部品。schema_json = 答えの JSON Schema の文(問いの名 → 欄)。"""
+    """Claude への 1 回の問いの部品。schema_json = 答えの JSON Schema の文(問いの名 → 欄)。
+
+    user = 利用者の文。画像の無い Judge は 1 つの文字列、画像の在る Judge は文字と画像を並べた順の tuple(隣り合う文字は 1 片に
+    まとめてある — 文字の片は空でない)。
+    """
 
     system: str
-    user: str
+    user: str | tuple[UserPart, ...]
     schema_json: str
 
 
@@ -70,13 +94,34 @@ class MalformedAnswer:
         return JudgeError("malformed", self.detail)
 
 
+def _tagged_fields(state: Any) -> Mapping[str, Any] | None:
+    """state が札の名にできる鍵の表ならその表、それ以外は None(丸ごと <state> 1 つにする形)。"""
+    if isinstance(state, Mapping) and state and all(isinstance(key, str) and TAG_NAME.match(key) for key in state):
+        return state
+    return None
+
+
+def _pictured_fields(judge: Judge) -> dict[str, Image]:
+    """札の間に画像を置く state の欄(欄の名 → 画像)— 欄の値が assets の鍵の欄。"""
+    fields = _tagged_fields(judge.state) or {}
+    return {key: judge.assets[value] for key, value in fields.items() if isinstance(value, str) and value in judge.assets}
+
+
+def _loose_assets(judge: Judge) -> dict[str, Image]:
+    """state の欄から指されない画像(鍵 → 画像)— state の後ろに鍵を札の名にして置く。"""
+    fields = _tagged_fields(judge.state) or {}
+    shown = {value for value in fields.values() if isinstance(value, str)}
+    return {name: asset for name, asset in judge.assets.items() if name not in shown}
+
+
 def _refuse_unsupported(judge: Judge) -> None:
-    """Claude の問いに写せない Judge(score の問い・画像)を、問いを作る前に断るため。"""
-    if judge.assets:
-        raise JudgeError("unsupported", "画像(assets)は Claude の問いの部品に写さない")
+    """Claude の問いに写せない Judge(score の問い・札の名にできない鍵の、欄から指されない画像)を、問いを作る前に断るため。"""
     unsupported = [name for name, question in judge.questions.items() if question.kind not in SUPPORTED_KINDS]
     if unsupported:
         raise JudgeError("unsupported", f"問い {unsupported} の種類は写さない(noul と choice だけ)")
+    untagged = [name for name in _loose_assets(judge) if not TAG_NAME.match(name)]
+    if untagged:
+        raise JudgeError("unsupported", f"画像 {untagged} は state の欄から指されず、鍵を札の名にできない")
 
 
 def _block(tag: str, value: Any) -> str:
@@ -87,10 +132,55 @@ def _block(tag: str, value: Any) -> str:
 
 def state_text(state: Any) -> str:
     """state を名の札で囲んだ本文にする(札の名にできる鍵の表なら欄ごとの札、それ以外は <state> 1 つ)。"""
-    if isinstance(state, Mapping) and state and all(
-            isinstance(key, str) and TAG_NAME.match(key) for key in state):
-        return "\n\n".join(_block(key, value) for key, value in state.items())
-    return _block(STATE_TAG, state)
+    fields = _tagged_fields(state)
+    if fields is None:
+        return _block(STATE_TAG, state)
+    return BLOCK_SEPARATOR.join(_block(key, value) for key, value in fields.items())
+
+
+def _query_image(asset: Image) -> QueryImage:
+    """Judge の画像 1 枚を、利用者の文の画像の片にするため(format → media_type)。"""
+    return QueryImage(media_type=MEDIA_TYPES[asset.format], data_base64=asset.data_base64)
+
+
+def _picture_block(tag: str, asset: Image) -> tuple[UserPart, ...]:
+    """画像 1 枚を、問いの文が名で指せる札の間に置いた片の並び(<tag>・画像・</tag>)にするため。"""
+    return (f"<{tag}>", _query_image(asset), f"</{tag}>")
+
+
+def _state_blocks(judge: Judge) -> list[tuple[UserPart, ...]]:
+    """state を片の並びの塊にするため(欄ごとの札 — 画像を指す欄は札の間に画像 — と、欄から指されない画像の札)。"""
+    fields = _tagged_fields(judge.state)
+    pictured = _pictured_fields(judge)
+    blocks: list[tuple[UserPart, ...]] = (
+        [(_block(STATE_TAG, judge.state),)] if fields is None else
+        [_picture_block(key, pictured[key]) if key in pictured else (_block(key, value),) for key, value in fields.items()])
+    return blocks + [_picture_block(name, asset) for name, asset in _loose_assets(judge).items()]
+
+
+def _merged(parts: tuple[UserPart, ...], part: UserPart) -> tuple[UserPart, ...]:
+    """片の並びの後ろに 1 片を足すため(前の片も足す片も文字なら 1 片につなぐ)。"""
+    match parts, part:
+        case (*head, str() as last), str():
+            return (*head, last + part)
+        case _:
+            return (*parts, part)
+
+
+def _joined(blocks: list[tuple[UserPart, ...]]) -> tuple[UserPart, ...]:
+    """塊を空行で区切って並べ、隣り合う文字を 1 片にまとめるため(画像の無い並びは文字 1 片になる)。"""
+    flat = (part for at, block in enumerate(blocks) for part in ((BLOCK_SEPARATOR,) if at else ()) + block)
+    return reduce(_merged, flat, ())
+
+
+def _user(judge: Judge) -> str | tuple[UserPart, ...]:
+    """利用者の文(state の塊と問いの並び)を作るため。画像が無ければ 1 つの文字列、在れば片の tuple。"""
+    parts = _joined([*_state_blocks(judge), (_questions_text(judge),)])
+    match parts:
+        case (str() as text,):
+            return text
+        case _:
+            return parts
 
 
 def _question_lines(name: str, question: Question) -> tuple[str, ...]:
@@ -137,9 +227,7 @@ def _answer_schema(judge: Judge) -> dict[str, Any]:
 def prepare(judge: Judge) -> ClaudeQuery:
     """Judge を Claude への 1 回の問いの部品(system の文・利用者の文・答えの JSON Schema)に写す。"""
     _refuse_unsupported(judge)
-    return ClaudeQuery(system=SYSTEM,
-                       user=state_text(judge.state) + "\n\n" + _questions_text(judge),
-                       schema_json=json.dumps(_answer_schema(judge), ensure_ascii=False))
+    return ClaudeQuery(system=SYSTEM, user=_user(judge), schema_json=json.dumps(_answer_schema(judge), ensure_ascii=False))
 
 
 def _probability(raw: object) -> float | None:

@@ -18,6 +18,7 @@ from doeff_claude_code.values import FreshSession as FreshSession
 from doeff_claude_code.values import ResumeSession as ResumeSession
 from doeff_claude_code.values import ForkSession as ForkSession
 from doeff_claude_code.values import LentCredential as LentCredential
+from doeff_claude_code.values import PrintContent as PrintContent
 from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code.lines import Completed as Completed
 from doeff_claude_code.lines import Failed as Failed
@@ -278,7 +279,7 @@ class ClaudePrintOnce(_doeff_effect_base[PrintOutcome]):
     model: str
     system_prompt: str
     json_schema: str
-    input: str
+    input: str | PrintContent
     timeout_seconds: float
     credential: LentCredential | None = None
     thinking_tokens: int | None = None

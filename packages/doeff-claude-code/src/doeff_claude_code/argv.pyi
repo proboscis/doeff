@@ -14,6 +14,7 @@ from doeff_claude_code.values import DenyUnlisted as DenyUnlisted
 from doeff_claude_code.values import HomeSettings as HomeSettings
 from doeff_claude_code.values import McpSse as McpSse
 from doeff_claude_code.values import McpStdio as McpStdio
+from doeff_claude_code.values import PrintContent as PrintContent
 from doeff_claude_code.values import AutocompactAuto as AutocompactAuto
 from doeff_claude_code.values import AutocompactTokens as AutocompactTokens
 from doeff_claude_code.values import FreshSession as FreshSession
@@ -75,6 +76,7 @@ def launch_key(command: tuple[str, ...], spec: ClaudeSessionSpec) -> _Program[st
     ...
 PRINT_ONCE_FLAGS: list[str]
 PRINT_ONCE_ISOLATION_FLAGS: list[str]
+PRINT_ONCE_CONTENT_FLAGS: list[str]
 
 def print_once_argv(command: tuple[str, ...], request: ClaudePrintOnce) -> list[str]:
     ...
