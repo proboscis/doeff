@@ -144,6 +144,13 @@ class ImageAttachment:
     data_base64: str
 
 @dataclass(frozen=True)
+class PrintContent:
+    parts: tuple[str | ImageAttachment, ...]
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
 class TurnInput:
     text: str
     ref: str

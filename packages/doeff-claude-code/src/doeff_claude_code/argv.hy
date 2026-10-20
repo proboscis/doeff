@@ -12,7 +12,7 @@
 (import re)
 (import doeff_hy.frozen [FrozenMap thaw-json])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome LentCredential BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
-                                  AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
+                                  PrintContent AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
 (import doeff_claude_code.effects [ClaudePrintOnce])
 
 ;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
@@ -160,11 +160,17 @@
 ;; card ki-eb4f8e1db64d)。答えは今までどおり最後の result の行。
 (setv PRINT-ONCE-FLAGS ["-p" "--output-format" "stream-json" "--verbose"])
 (setv PRINT-ONCE-ISOLATION-FLAGS ["--tools" "" "--setting-sources" "" "--strict-mcp-config" "--no-session-persistence"])
+;; 本文が PrintContent(画像を含む本文)の時だけ付ける旗: 標準入力は stream-json の user の 1 行(dialogue.hy の print-once-stdin)。
+;; 画像の block を開きと閉じの印の文の間に置いた 1 行で、CLI は構造化の答えを返す(CLI 2.1.292 の測り 2026-10-19)。素の文字の
+;; 本文には付けない。
+(setv PRINT-ONCE-CONTENT-FLAGS ["--input-format" "stream-json"])
 
 (defn #^ (get list str) print-once-argv [#^ (get tuple #(str ...)) command #^ ClaudePrintOnce request]
-  "1 回きりの print の argv: command + 頭の旗 + model・system の文・答えの Schema + 切り離しの旗 + effort(宣言した時だけ)。本文は
-   argv に載せない(標準入力 — 5 万字の本文が argv の長さの上限に当たらない・process の一覧に出ない)。"
+  "1 回きりの print の argv: command + 頭の旗 + 入力の形の旗(本文が PrintContent の時だけ)+ model・system の文・答えの Schema +
+   切り離しの旗 + effort(宣言した時だけ)。本文は argv に載せない(標準入力 — 5 万字の本文が argv の長さの上限に当たらない・process
+   の一覧に出ない)。"
   (+ (list command) PRINT-ONCE-FLAGS
+     (if (isinstance request.input PrintContent) PRINT-ONCE-CONTENT-FLAGS [])
      ["--model" request.model "--system-prompt" request.system-prompt "--json-schema" request.json-schema]
      PRINT-ONCE-ISOLATION-FLAGS
      (if request.effort ["--effort" request.effort] [])))

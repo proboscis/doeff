@@ -4,8 +4,9 @@
 ;;;   1. 資格の置き場: 宣言が借りた資格を持てば、家の設定 dir の下にその process だけの設定 dir を作って .credentials.json に置く
 ;;;      (credential_home.hy — 会話の process と同じ部品)。持たなければ家の設定 dir のまま。
 ;;;   2. 作業 dir: 使い捨ての空の dir(呼び手の作業 dir を CLI に見せない — 道具なしでも CLI は作業 dir を読む)。
-;;;   3. 起こす: argv.hy の print-once-argv・print-once-env。本文は標準入力。process は自分の組(新しい session)で起こし、待ちの上限
-;;;      (宣言の timeout-seconds)を越えたら組ごと SIGKILL して PrintTimedOut。
+;;;   3. 起こす: argv.hy の print-once-argv・print-once-env。本文は標準入力(dialogue.hy の print-once-stdin — 素の文字か、
+;;;      画像を含む本文なら stream-json の user の 1 行)。process は自分の組(新しい session)で起こし、待ちの上限(宣言の
+;;;      timeout-seconds)を越えたら組ごと SIGKILL して PrintTimedOut。
 ;;;   4. 片づけ: 降りたら(止めた時も、起こせなかった時も)作業 dir と資格の置き場を消す。
 ;;;   5. 読む: stdout(stream-json)の JSON の object の行を lines.hy の分類で読み、答えの和にする(print-outcome — 純関数。答えは最後の
 ;;;      result の行・口座の利用枠の尽きは前の行の拒まれた限度の行と限度の答え)。
@@ -26,7 +27,7 @@
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_claude_code.effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
 (import doeff_claude_code.lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
-(import doeff_claude_code.dialogue [limit-hit-after])
+(import doeff_claude_code.dialogue [limit-hit-after print-once-stdin])
 (import doeff_claude_code.argv [print-once-argv print-once-env])
 (import doeff_claude_code.credential_home [open-credential-home close-credential-home])
 
@@ -98,7 +99,7 @@
         (return (RanPrint :exit-code None :stdout "" :stderr "" :elapsed-ms (elapsed-ms-since started) :timed-out False
                           :launch-error (str error)))))
     (try
-      (setv #(stdout stderr) (.communicate process :input request.input :timeout request.timeout-seconds))
+      (setv #(stdout stderr) (.communicate process :input (print-once-stdin request.input) :timeout request.timeout-seconds))
       (return (RanPrint :exit-code process.returncode :stdout stdout :stderr stderr :elapsed-ms (elapsed-ms-since started)
                         :timed-out False :launch-error None))
       (except [subprocess.TimeoutExpired]

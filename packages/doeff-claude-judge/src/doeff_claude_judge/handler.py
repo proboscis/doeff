@@ -19,9 +19,15 @@ from collections.abc import Callable
 from typing import Any
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect は Hy の module doeff_claude_code に住む
-from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintFailed, PrintLimited, PrintTimedOut
+from doeff_claude_code.effects import (
+    ClaudePrintOnce,
+    PrintAnswered,
+    PrintFailed,
+    PrintLimited,
+    PrintTimedOut,
+)
 from doeff_claude_code.lines import Usage
-from doeff_claude_code.values import ClaudeHome, LentCredential
+from doeff_claude_code.values import ClaudeHome, ImageAttachment, LentCredential, PrintContent
 from doeff_core_effects import slog
 from doeff_hy.frozen import FrozenMap
 from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, Verdict
@@ -35,7 +41,14 @@ from doeff_claude_judge.target import (
     JudgeCredential,
     NoJudgeCredential,
 )
-from doeff_claude_judge.wire import ClaudeQuery, MalformedAnswer, parse, prepare
+from doeff_claude_judge.wire import (
+    ClaudeQuery,
+    MalformedAnswer,
+    QueryImage,
+    UserPart,
+    parse,
+    prepare,
+)
 
 LOG = "claude_judge"
 
@@ -102,11 +115,39 @@ def _answered_model(target: ClaudeJudgeTarget, answered: PrintAnswered) -> str:
     return models[0]
 
 
+def _content_part(part: UserPart) -> str | ImageAttachment:
+    """利用者の文の 1 片を、print の本文の片(文字か ImageAttachment)に写すため。"""
+    match part:
+        case str():
+            return part
+        case QueryImage(media_type=media_type, data_base64=data):
+            return ImageAttachment(mime=media_type, data_base64=data)
+
+
+def print_input(user: str | tuple[UserPart, ...]) -> str | PrintContent:
+    """利用者の文を print の本文に写すため: 文字列はそのまま(素の文字の道)・片の tuple は PrintContent(stream-json の 1 行の道)。"""
+    match user:
+        case str():
+            return user
+        case parts:
+            return PrintContent(tuple(_content_part(part) for part in parts))
+
+
+def query_user(content: str | PrintContent) -> str | tuple[UserPart, ...]:
+    """print の本文を利用者の文に戻すため(print_input の逆 — 検の fake が宣言から問いの部品を読み直す)。"""
+    match content:
+        case str():
+            return content
+        case PrintContent(parts=parts):
+            return tuple(part if isinstance(part, str) else QueryImage(media_type=part.mime, data_base64=part.data_base64)
+                         for part in parts)
+
+
 def print_request(target: ClaudeJudgeTarget, judge: Judge, query: ClaudeQuery,
                   credential: LentCredential | None) -> ClaudePrintOnce:
     """Judge 1 つ(とその問いの部品)を、宛先の CLI への 1 回きりの print の宣言に写すため。"""
     return ClaudePrintOnce(home=ClaudeHome(target.config_dir, FrozenMap(dict(target.env))), model=target.model,
-                           system_prompt=query.system, json_schema=query.schema_json, input=query.user,
+                           system_prompt=query.system, json_schema=query.schema_json, input=print_input(query.user),
                            timeout_seconds=judge.timeout_seconds, credential=credential,
                            thinking_tokens=target.thinking_tokens, effort=target.effort)
 

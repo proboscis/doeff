@@ -37,7 +37,7 @@
 (import doeff [run])
 (import typing [NamedTuple])
 (import doeff_hy.frozen [thaw-json])
-(import doeff_claude_code.values [TurnInput Allow Deny])
+(import doeff_claude_code.values [TurnInput ImageAttachment PrintContent Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
@@ -145,6 +145,22 @@
                (lfor attachment input.attachments (image-block attachment)))
             input.text))
   (dumps {"type" "user" "message" {"role" "user" "content" content} "uuid" input.ref}))
+
+(defn #^ dict content-block [part]
+  "PrintContent の 1 片 = Messages API の block(文字列 = text・ImageAttachment = image — 手番の添付と同じ image-block)。"
+  (match part
+    (str) {"type" "text" "text" part}
+    (ImageAttachment) (image-block part)
+    _ (raise (TypeError (.format "PrintContent の片が閉語彙の外: {!r}" part)))))
+
+(defn #^ str print-once-stdin [input]
+  "1 回きりの print(ClaudePrintOnce)の標準入力: 文字列の本文はそのまま、PrintContent は --input-format stream-json の user の 1 行
+   (片を並べた順の block の列 — 会話の id も uuid も持たない・改行で終える)。"
+  (match input
+    (str) input
+    (PrintContent :parts parts) (+ (dumps {"type" "user" "message" {"role" "user" "content" (lfor part parts (content-block part))}})
+                                   "\n")
+    _ (raise (TypeError (.format "1 回きりの print の本文が閉語彙の外: {!r}" input)))))
 
 (defn #^ str interrupt-request-line [#^ str request-id]
   (dumps {"type" "control_request" "request_id" request-id "request" {"subtype" "interrupt"}}))

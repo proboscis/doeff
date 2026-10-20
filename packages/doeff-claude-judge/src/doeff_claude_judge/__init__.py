@@ -22,6 +22,9 @@ from doeff_claude_judge.wire import (
     MalformedAnswer as MalformedAnswer,
 )
 from doeff_claude_judge.wire import (
+    QueryImage as QueryImage,
+)
+from doeff_claude_judge.wire import (
     parse as parse,
 )
 from doeff_claude_judge.wire import (

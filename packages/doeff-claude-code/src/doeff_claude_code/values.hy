@@ -229,6 +229,21 @@
   (#^ str mime)
   (#^ str data-base64))
 
+(defclass [(dataclass :frozen True)] PrintContent []
+  "1 回きりの print(ClaudePrintOnce)の本文を、stream-json の user の 1 行の content(block の列)で渡す形 — 画像を含む本文だけが使う
+   (画像の無い本文は素の文字列のまま標準入力へ書く)。parts = 並べた順のまま、文字列 = text の block・ImageAttachment = image の
+   block。空の列・空の文字列(API は空の text の block を断る)・閉語彙 IMAGE-MIMES の外の画像は作る時に断る。"
+  (#^ (get tuple #((| str ImageAttachment) ...)) parts)
+  (defn __post_init__ [self]
+    (when (not (and (isinstance self.parts tuple) self.parts))
+      (raise (ValueError "PrintContent.parts は空でない tuple")))
+    (for [part self.parts]
+      (match part
+        (str) (when (not part) (raise (ValueError "PrintContent.parts の文字列は空でない")))
+        (ImageAttachment :mime mime) (when (not-in mime IMAGE-MIMES)
+                                       (raise (ValueError (.format "PrintContent の画像の mime が閉語彙の外: {!r}" mime))))
+        _ (raise (TypeError (.format "PrintContent.parts は文字列と ImageAttachment だけ: {}" (. (type part) __name__))))))))
+
 (defclass [(dataclass :frozen True)] TurnInput []
   "手番の入力 1 つ。ref = 入力の行の名(stdin の行の uuid)— CLI が InputFate でこの綴りの運命を名乗る。"
   (#^ str text)

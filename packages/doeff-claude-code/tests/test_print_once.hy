@@ -14,9 +14,10 @@
 (import pytest)
 (import doeff [with_handlers])
 (import doeff_hy.frozen [thaw-json])
-(import doeff_claude_code.values [ClaudeHome LentCredential])
+(import doeff_claude_code.values [ClaudeHome LentCredential ImageAttachment PrintContent])
 (import doeff_claude_code.lines [AccountLimitHit Usage])
 (import doeff_claude_code.argv [print-once-argv print-once-env])
+(import doeff_claude_code.dialogue [print-once-stdin])
 (import doeff_claude_code.effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
 (import doeff_claude_code.print_once [claude-print-handler print-outcome])
 (import doeff_claude_code.fake [fake-claude-print-handler])
@@ -33,6 +34,14 @@
                                                "required" ["p0" "p1"] "additionalProperties" False}}
                          "required" ["plain" "pick"] "additionalProperties" False}))
 (val STUB-ANSWER {"plain" 0.8125 "pick" {"p0" 0.625 "p1" 0.375}})
+;; 画像 1 枚の本文(開きの印・画像・閉じの印と問い)と、その stdin の 1 行の期待(測り 2026-10-19 の probe_once.py と同じ形)。
+(val PNG-BASE64 "iVBORw0KGgo=")
+(val PICTURE (PrintContent #("<poster>" (ImageAttachment :mime "image/png" :data-base64 PNG-BASE64) "</poster>\n\nIs it a picture?")))
+(val PICTURE-LINE {"type" "user"
+                   "message" {"role" "user"
+                              "content" [{"type" "text" "text" "<poster>"}
+                                         {"type" "image" "source" {"type" "base64" "media_type" "image/png" "data" PNG-BASE64}}
+                                         {"type" "text" "text" "</poster>\n\nIs it a picture?"}]}})
 ;; 実物の CLI の答えの行(claude 2.1.292・2026-10-19 の測り — 欄は読む物だけに削った)。
 (val REAL-ANSWERED {"type" "result" "subtype" "success" "is_error" False "duration_ms" 2286 "duration_api_ms" 1616 "num_turns" 2
                     "result" "{\"yes\":1}" "structured_output" {"yes" 1} "total_cost_usd" 0.00155 "terminal_reason" "completed"
@@ -120,7 +129,29 @@
              ["claude" "-p" "--output-format" "stream-json" "--verbose" "--model" "claude-test" "--system-prompt" "Judge the material."
               "--json-schema" SCHEMA "--tools" "" "--setting-sources" "" "--strict-mcp-config" "--no-session-persistence"]))
   (assert (= (cut (print-once-argv #("claude") (request-of :effort "low")) -2 None) ["--effort" "low"]))
-  (assert (not-in "the material" (print-once-argv #("claude") (request-of)))))
+  (assert (not-in "the material" (print-once-argv #("claude") (request-of))))
+  ;; 素の文字の本文は --input-format を付けず、標準入力へそのまま書く(画像の無い判定の道は変わらない)。
+  (assert (not-in "--input-format" (print-once-argv #("claude") (request-of))))
+  (assert (= (print-once-stdin "the material") "the material")))
+
+(deftest test-the-print-once-argv-and-stdin-for-a-picture
+  ;; 画像を含む本文(PrintContent)は --input-format stream-json の user の 1 行: 開きの印・画像の block・閉じの印と問いを並べた順の
+  ;; block(測り 2026-10-19 の probe_once.py と同じ形)。他の旗は素の文字の本文と同じ。
+  (val request (request-of :input PICTURE))
+  (assert (= (print-once-argv #("claude") request)
+             ["claude" "-p" "--output-format" "stream-json" "--verbose" "--input-format" "stream-json" "--model" "claude-test"
+              "--system-prompt" "Judge the material." "--json-schema" SCHEMA "--tools" "" "--setting-sources" ""
+              "--strict-mcp-config" "--no-session-persistence"]))
+  (val stdin (print-once-stdin request.input))
+  (assert (.endswith stdin "\n"))
+  (assert (= (len (.splitlines stdin)) 1))
+  (assert (= (json.loads stdin) PICTURE-LINE)))
+
+(deftest test-a-print-content-refuses-what-the-api-cannot-take
+  ;; 空の列・空の文字列(API は空の text の block を断る)・閉語彙の外の mime・文字列と画像の外の片。
+  (for [parts [#() #("") #((ImageAttachment :mime "image/tiff" :data-base64 "AAAA")) #(1)]]
+    (with [(pytest.raises #(TypeError ValueError))]
+      (PrintContent parts))))
 
 (deftest test-the-print-once-env
   ;; 家の env ちょうど + CLAUDE_CONFIG_DIR = その process の設定 dir。thinking の token 数を宣言すれば MAX_THINKING_TOKENS(0 = 考えない)。
@@ -220,6 +251,17 @@
   (assert (not (os.path.exists (get seen "config_dir"))))
   (assert (not (os.path.exists (get seen "cwd"))))
   (assert (!= (os.path.realpath (get seen "cwd")) (os.path.realpath (os.getcwd)))))
+
+(deftest test-the-print-handler-writes-a-picture-as-one-stream-json-line [tmp-path]
+  ;; 画像を含む本文は、替え玉の CLI の標準入力に stream-json の user の 1 行で届き、argv に --input-format stream-json が在る。
+  (val record (/ tmp-path "record.json"))
+  (val request (request-of :home (stub-home tmp-path record) :input PICTURE :credential (lent "lent-token")))
+  (<- outcome (with_handlers [(claude-print-handler STUB)] (performed request)))
+  (assert (isinstance outcome PrintAnswered) outcome)
+  (val seen (seen-by-stub record))
+  (assert (= (get seen "argv") (cut (print-once-argv #("claude") request) 1 None)))
+  (assert (in "--input-format" (get seen "argv")))
+  (assert (= (json.loads (get seen "input")) PICTURE-LINE)))
 
 (deftest test-the-print-handler-uses-the-home-credential-when-none-is-lent [tmp-path]
   (val record (/ tmp-path "record.json"))

@@ -15,7 +15,7 @@
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenJson freeze-json])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
-                                  FreshSession ResumeSession ForkSession LentCredential])
+                                  FreshSession ResumeSession ForkSession LentCredential PrintContent])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage AccountLimitHit])
 
 
@@ -327,16 +327,17 @@
 (defeffect ClaudePrintOnce
   "CLI の print mode を 1 回だけ走らせ、答えの JSON Schema に合う構造化の答えを 1 つ受ける(会話の id も記録も残さない)。
    home = 家(設定 dir と子の env ちょうど)/ model = --model / system-prompt = --system-prompt(CLI の既定の system の文を替える)/
-   json-schema = --json-schema(答えの Schema の JSON の文 — object)/ input = 標準入力に渡す本文(argv に載せない)/ timeout-seconds =
+   json-schema = --json-schema(答えの Schema の JSON の文 — object)/ input = 標準入力に渡す本文(argv に載せない — 文字列 = 素の文字の
+   まま書く・PrintContent = --input-format stream-json の user の 1 行で書く。画像を含む本文だけが後者)/ timeout-seconds =
    待ちの上限(CLI の起動と終わりの秒を含む — 越えたら止めて PrintTimedOut)/ credential = 借りた資格(LentCredential — その process
    だけの設定 dir の .credentials.json に置き、降りたら dir ごと消す。None = 家の設定 dir の資格のまま)/ thinking-tokens = 子の env の
    MAX_THINKING_TOKENS(0 = 考えない。None = CLI の既定)/ effort = --effort(None = CLI の既定)。
    CLI は道具なし・設定の源なし・家の MCP なし・記録なしで起こす(argv.hy の PRINT-ONCE-FLAGS)。
    答え = PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut(失敗も値で返す — 例外にしない)。"
-  {:fields [(: home ClaudeHome) (: model str) (: system-prompt str) (: json-schema str) (: input str) (: timeout-seconds float)
-            (: credential (| LentCredential None) None) (: thinking-tokens (| int None) None) (: effort (| str None) None)]
-   :pre [(: home ClaudeHome) (: model str) (bool model) (: system-prompt str) (is-json-object-text json-schema) (: input str)
-         (: timeout-seconds float) (> timeout-seconds 0)
+  {:fields [(: home ClaudeHome) (: model str) (: system-prompt str) (: json-schema str) (: input (| str PrintContent))
+            (: timeout-seconds float) (: credential (| LentCredential None) None) (: thinking-tokens (| int None) None) (: effort (| str None) None)]
+   :pre [(: home ClaudeHome) (: model str) (bool model) (: system-prompt str) (is-json-object-text json-schema)
+         (: input (| str PrintContent)) (: timeout-seconds float) (> timeout-seconds 0)
          (: credential (| LentCredential None))
          (or (is thinking-tokens None) (and (isinstance thinking-tokens int) (not (isinstance thinking-tokens bool))
                                             (>= thinking-tokens 0)))

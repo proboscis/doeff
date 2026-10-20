@@ -7,10 +7,17 @@ from typing import TYPE_CHECKING
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect と fake は Hy の module doeff_claude_code に住む
 import pytest
-from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintFailed, PrintLimited, PrintTimedOut
+from doeff_claude_code.argv import print_once_argv
+from doeff_claude_code.effects import (
+    ClaudePrintOnce,
+    PrintAnswered,
+    PrintFailed,
+    PrintLimited,
+    PrintTimedOut,
+)
 from doeff_claude_code.fake import fake_claude_print_handler
 from doeff_claude_code.lines import AccountLimitHit, Usage
-from doeff_claude_code.values import LentCredential
+from doeff_claude_code.values import ImageAttachment, LentCredential, PrintContent
 from doeff_claude_judge import (
     BorrowJudgeCredential,
     ClaudeJudgeTarget,
@@ -23,8 +30,9 @@ from doeff_claude_judge import (
     run_judgment,
     scripted_printer,
 )
+from doeff_claude_judge.wire import NOUL_HEAD
 from doeff_hy.frozen import freeze_json
-from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, choice, noul, score
+from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, choice, noul, score
 from doeff_vm import Err
 
 from doeff import Pass, Resume, ResumeThrow, Try, do
@@ -122,6 +130,47 @@ def test_a_judge_becomes_one_print_and_a_verdict() -> None:
     # 待ちの上限 = Judge の timeout_seconds(CLI の起動と終わりの秒を含む)。
     assert request.timeout_seconds == 90.0
     assert (request.home.config_dir, dict(request.home.env)) == ("/h/.claude", {"PATH": "/bin", "HOME": "/h"})
+
+
+def test_a_judge_with_one_picture_prints_one_stream_json_user_line() -> None:
+    # 画像 1 枚の判定は、print の本文が PrintContent になり、CLI の argv に --input-format stream-json・標準入力に user の 1 行
+    # (開きの印・画像の block・閉じの印と問い — 測り 2026-10-19 の probe_once.py と同じ形)が載る。他の旗は文の判定と同じ。
+    # 失敗ケース(前の形): 画像の在る Judge は print の前に unsupported で断られた。
+    poster = Judge(state={"poster": "p-1"}, questions={"poster-picture": noul("Is the image `poster` an illustrated picture?")},
+                   assets={"p-1": Image(format="png", data_base64="iVBORw0KGgo=")}, timeout_seconds=60.0)
+    captured: dict[str, ClaudePrintOnce] = {}
+    verdict = _run(poster, printer=_printer(_answered({"poster-picture": 0.875}), captured), lender=_lender(LENT))
+    assert verdict.answer("poster-picture").value == 0.875
+    request = captured["request"]
+    query = prepare(poster)
+    assert print_once_argv(("claude",), request) == [
+        "claude", "-p", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
+        "--model", "claude-test", "--system-prompt", query.system, "--json-schema", query.schema_json,
+        "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--effort", "low"]
+    # 本文の片(この並びを stdin の 1 行の block の列に綴るのは doeff-claude-code の print-once-stdin — その test が 1 行を確かめる)。
+    assert request.input == PrintContent((
+        "<poster>", ImageAttachment(mime="image/png", data_base64="iVBORw0KGgo="),
+        "</poster>\n\n" + NOUL_HEAD + "\n- poster-picture: Is the image `poster` an illustrated picture?"))
+
+
+def test_a_judge_without_pictures_prints_its_text_as_before() -> None:
+    # 文の判定は素の文字の道のまま: --input-format を付けず、標準入力は利用者の文そのもの。
+    captured: dict[str, ClaudePrintOnce] = {}
+    _run(JUDGE, printer=_printer(_answered(ANSWER), captured), lender=_lender(LENT))
+    request = captured["request"]
+    assert "--input-format" not in print_once_argv(("claude",), request)
+    assert request.input == prepare(JUDGE).user
+
+
+def test_the_scripted_printer_reads_back_the_picture_query() -> None:
+    poster = Judge(state={"poster": "p-1"}, questions={"n": noul("Is `poster` a picture?")},
+                   assets={"p-1": Image(format="jpeg", data_base64="/9j/")})
+
+    def answer(query: ClaudeQuery, model: str) -> JsonIn:
+        assert query == prepare(poster)
+        return {"n": 0.5}
+
+    assert _run(poster, printer=scripted_printer(answer), lender=fixed_credential_lender(LENT)).answer("n").value == 0.5
 
 
 def test_the_borrowed_credential_is_handed_to_the_print_as_a_lent_credential() -> None:

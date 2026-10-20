@@ -22,7 +22,7 @@ from doeff_hy.frozen import freeze_json
 
 from doeff import Pass, Resume, do, run, with_handlers
 from doeff import handler as _program_handler
-from doeff_claude_judge.handler import claude_judge_handler
+from doeff_claude_judge.handler import claude_judge_handler, query_user
 from doeff_claude_judge.target import BorrowJudgeCredential, ClaudeJudgeTarget, JudgeCredential
 from doeff_claude_judge.wire import ClaudeQuery
 
@@ -43,7 +43,7 @@ def scripted_printer(answer: Callable[[ClaudeQuery, str], "JsonIn"]) -> Callable
 
     @do
     def respond(request: ClaudePrintOnce) -> Any:
-        query = ClaudeQuery(system=request.system_prompt, user=request.input, schema_json=request.json_schema)
+        query = ClaudeQuery(system=request.system_prompt, user=query_user(request.input), schema_json=request.json_schema)
         return PrintAnswered(structured_output=freeze_json(answer(query, request.model)), usage=Usage(), cost_usd=None, models=(),
                              elapsed_ms=0, api_ms=None)
 

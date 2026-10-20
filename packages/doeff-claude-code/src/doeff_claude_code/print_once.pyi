@@ -22,6 +22,7 @@ from doeff_claude_code.lines import parse_record as parse_record
 from doeff_claude_code.lines import classify_record as classify_record
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
+from doeff_claude_code.dialogue import print_once_stdin as print_once_stdin
 from doeff_claude_code.argv import print_once_argv as print_once_argv
 from doeff_claude_code.argv import print_once_env as print_once_env
 from doeff_claude_code.credential_home import open_credential_home as open_credential_home
