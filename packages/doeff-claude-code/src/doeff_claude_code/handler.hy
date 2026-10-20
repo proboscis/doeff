@@ -88,7 +88,9 @@
 ;; 読み、process も降りたら、生きた状態ごとホストから外して小さな記録(ClosedSession)だけを残す(ClaudeCodeHost.release)。16 本だった
 ;; 時は、生きた会話ごとに 16 手番分の行と、閉じた会話の 16 手番分の行をホストの process が持ち続けた(lt-KATGT933TATG1ESPPSW9QGFM7K)。
 ;; 最後の 1 本を持ち続けた時も、閉じた会話の数だけ行が溜まり、CLI の数が減っても turn-host の memory が減らなかった(10-19 の本番の
-;; pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB — lt-5611P8B4MJS6CZQZ1809H94JPQ)。
+;; pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB — lt-5611P8B4MJS6CZQZ1809H94JPQ)。走っている手番も、読み手に
+;; 渡した差分の行(PartialMessage)は終わりを待たずに捨てる(TurnLog.drop-read-deltas — card ki-27d4694258b0)。行の数に上限を置く形は
+;; 選ばない: 上限を越えた所で捨てる行は読み手がまだ読んでいない行で、答えの途中の本文や道具の呼びが上の層へ届かなくなる。
 (setv KEPT-TURNS 4)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 (setv COLD-RESUME-TIMEOUT-SECONDS 600.0)
@@ -135,13 +137,28 @@
     (for [bell bells]
       (.complete bell True))))
 
+(defrecord DeltaTally
+  "1 つの手番で CLI から受けた差分の行(PartialMessage)の種類ごとの数と、それぞれの最初の行を読み手の thread が読んだ刻(手番の終わりの
+   計時の行の材料 — note-turn-end)。text = 本文の差分(種類 TEXT で本文を持つ行)・thinking = 考えている間の差分(種類 THINKING)・
+   tool-input = 道具の命令の差分(種類 TOOL-INPUT)。行を足す時に数える(TurnLog.add)ので、読み手に渡した差分の行を捨てた後も数は変わらない。"
+  (setv #^ int text 0)
+  (setv #^ (| datetime None) text-at None)
+  (setv #^ int thinking 0)
+  (setv #^ (| datetime None) thinking-at None)
+  (setv #^ int tool-input 0)
+  (setv #^ (| datetime None) tool-input-at None))
+
 (defclass TurnLog []
   "1 つの手番の行と終わり(まだ終わっていなければ end は None)。launched-at = この手番で process を起こし始めた刻(GetMonotonic の
    読み — process を起こさずに続いた手番は None)・launched-wall = 同じ刻の壁の時刻(GetTime の読み — 読み手の thread が行に刻む at と
    比べる)・reply-noted = init の後の最初の行の計時の行を出したか・text-noted = 本文の最初の差分の計時の行を出したか・end-noted = 手番の
    終わりの計時の行を出したか(頭の註の計時の行)・end-read = 読み手がこの手番を読み終えた(終わりを頁で渡した — 頁は after-seq より
    後の行を全部載せるので、終わりを渡した時点で行も全部渡している。読み手は終わりの後にその手番を読まない)か、読み手がこの手番を
-   受けていない(起動の失敗 — 上の層は手番の参照でなく LaunchFailed を受ける)。"
+   受けていない(起動の失敗 — 上の層は手番の参照でなく LaunchFailed を受ける)。
+   計時の行の材料は、行を足す時(add)に目印として控える: init-line = 最初の init の行・reply-line = その次の行・stream-start = init の後の
+   最初の差分の行・first-text = 本文の最初の差分の行・deltas = 差分の種類ごとの数(DeltaTally)。読み手に渡した差分の行(PartialMessage)は、
+   手番が走っている間も捨てる(drop-read-deltas — 答えを組み立てる行〔assistant・道具の結果・result など〕は残す)ので、計時の行は
+   lines を探さずに目印を読む。"
   (defn __init__ [self]
     (setv #^ (get list ClaudeStreamLine) self.lines [])
     (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
@@ -150,7 +167,56 @@
     (setv #^ (| datetime None) self.launched-wall None)
     (setv #^ bool self.reply-noted False)
     (setv #^ bool self.text-noted False)
-    (setv #^ bool self.end-noted False)))
+    (setv #^ bool self.end-noted False)
+    (setv #^ (| ClaudeStreamLine None) self.init-line None)
+    (setv #^ (| ClaudeStreamLine None) self.reply-line None)
+    (setv #^ (| ClaudeStreamLine None) self.stream-start None)
+    (setv #^ (| ClaudeStreamLine None) self.first-text None)
+    (setv #^ DeltaTally self.deltas (DeltaTally)))
+
+  (defn add [self #^ ClaudeStreamLine line]
+    "行を末尾に足し、計時の行の目印を控える(on-line の 1 か所 — 会話の lock の中。lines は読み手の thread が伸ばす手番の記録そのもの
+     なので、写し直さずに末尾へ足す)。"
+    (.append self.lines line)
+    (setv after-init (and (is-not self.init-line None) (is-not self.init-line line)))
+    (when (and (is self.init-line None) (isinstance line.kind Init))
+      (setv self.init-line line))
+    (when (and after-init (is self.reply-line None))
+      (setv self.reply-line line))
+    (match line.kind
+      (PartialMessage :text_delta text)
+        (do
+          (when (and after-init (is self.stream-start None))
+            (setv self.stream-start line))
+          (when (and text (is self.first-text None))
+            (setv self.first-text line)))
+      _ None)
+    (.tally self line))
+
+  (defn tally [self #^ ClaudeStreamLine line]
+    "足した行が差分の行なら、その種類の数を 1 つ増やし、最初の行なら刻を控える(手番の終わりの計時の行が、捨てた行を数えずに済むため)。"
+    (setv seen self.deltas)
+    (setv self.deltas
+          (match line.kind
+            (PartialMessage :delta DeltaKind.TEXT :text_delta text) :if text
+              (replace seen :text (+ seen.text 1) :text-at (if (is seen.text-at None) line.at seen.text-at))
+            (PartialMessage :delta DeltaKind.THINKING)
+              (replace seen :thinking (+ seen.thinking 1) :thinking-at (if (is seen.thinking-at None) line.at seen.thinking-at))
+            (PartialMessage :delta DeltaKind.TOOL-INPUT)
+              (replace seen :tool-input (+ seen.tool-input 1)
+                       :tool-input-at (if (is seen.tool-input-at None) line.at seen.tool-input-at))
+            _ seen)))
+
+  (defn drop-read-deltas [self #^ int from-seq #^ int to-seq]
+    "読み手に 1 つの頁で渡した(seq が from-seq から to-seq まで)差分の行(PartialMessage — stream_event)を捨て、走っている手番が差分の
+     行を終わりまで持たないため。差分は答えの途中の写しで、同じ中身は後の assistant の行が運ぶ。読み手は渡された所より後しか読まない
+     (after-seq)ので、捨てた行を読み直さない。渡した頁ごとに捨てるので、渡した行はどれも渡した頁の読みで捨てられ、1 回の費用は頁の
+     大きさだけ(手番の長さに比例しない — tests/test_page_reads.hy)。走っている手番の差分の行を終わりまで全部持つと、本番の turn-host は
+     running の手番 1 本あたり約 900 行(その 8 割 余りが差分の行・1 行 約 2.3 KB)を持った(card ki-27d4694258b0)。会話の lock の中で呼ぶ。"
+    (setv start (bisect.bisect-left self.lines from-seq :key (attrgetter "seq")))
+    (setv stop (bisect.bisect-right self.lines to-seq :lo start :key (attrgetter "seq")))
+    (setv (cut self.lines start stop)
+          (lfor line (cut self.lines start stop) :if (not (isinstance line.kind PartialMessage)) line))))
 
 (defclass Binding []
   "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
@@ -243,11 +309,15 @@
     "読み手に渡した頁を手番の記録に記し、終わりまで渡した手番の行を捨てるため(終わりを渡したら、読み手はその手番をもう読まない — 閉じた
      会話を外してよいかの材料。生きた会話も、読み終えた手番の行を最近の KEPT-TURNS 本ぶん持ち続けない: 本番の turn-host では、running の
      手番が減っても ClaudeStreamLine が増え続けた — card ki-ff61c7e52cb9)。手番の記録と終わりは残すので、読み直しには行の無い頁と終わりを
-     答える(知らない手番にはしない)。計時の行(note-turn-end)は捨てる前に行を読み終えている(read-events の順)。会話の lock の中で呼ぶ。"
+     答える(知らない手番にはしない)。終わりの前の頁も、渡した差分の行は捨てる(TurnLog.drop-read-deltas — 走っている手番が差分の行を
+     終わりまで持たない・card ki-27d4694258b0)。計時の行(note-first-reply・note-first-text・note-turn-end)は行でなく、行を足す時に
+     控えた目印を読む(TurnLog.add)。会話の lock の中で呼ぶ。"
     (setv log (.get self.turns turn.turn-seq))
-    (when (and (is-not log None) (is-not page.end None))
-      (setv log.end-read True)
-      (.clear log.lines)))
+    (cond
+      (is log None) None
+      (is-not page.end None) (do (setv log.end-read True)
+                                 (.clear log.lines))
+      page.lines (.drop-read-deltas log (. (get page.lines 0) seq) page.next-seq)))
 
   (defn #^ bool drained [self]
     "閉じて、読み手が読み終えていない手番の記録が無く、process も降りたか(生きた状態をホストから外してよいか)。会話の lock の中で呼ぶ。"
@@ -397,7 +467,7 @@
     (when (is-not runtime.binding binding) (return None))
     (setv log (.get runtime.turns binding.turn-seq))
     (when (and (is-not log None) runtime.state.in-flight)
-      (.append log.lines (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
+      (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
       (+= runtime.next-line-seq 1))
     (setv transition (dialogue.on-record runtime.state kind))
     (apply-transition runtime binding transition)
@@ -761,9 +831,7 @@
   (<- at (GetTime))
   (val log (with [runtime.lock] (.get runtime.turns turn-seq)))
   (val launched (if (is log None) None log.launched-at))
-  (val init-line (if (is log None)
-                     None
-                     (with [runtime.lock] (next (gfor line log.lines :if (isinstance line.kind Init) line) None))))
+  (val init-line (if (is log None) None (with [runtime.lock] log.init-line)))
   (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms launched now))
   (<- line-at-ms (wall-ms-of (if (is init-line None) None init-line.at)))
@@ -780,12 +848,8 @@
   (with [runtime.lock]
     (when (or (is log.launched-at None) log.reply-noted)
       (return None))
-    (val lines (tuple log.lines))
-    (val init-index (next (gfor #(index line) (enumerate lines) :if (isinstance line.kind Init) index) None))
-    (when (or (is init-index None) (>= (+ init-index 1) (len lines)))
-      (return None))
-    (val reply (get lines (+ init-index 1)))
-    (when (> reply.seq next-seq)
+    (val reply log.reply-line)
+    (when (or (is reply None) (> reply.seq next-seq))
       (return None))
     (setv log.reply-noted True)
     reply))
@@ -828,16 +892,11 @@
   (with [runtime.lock]
     (when (or (is log.launched-at None) log.text-noted)
       (return None))
-    (val lines (tuple log.lines))
-    (val text (next (gfor line lines :if (and (isinstance line.kind PartialMessage) line.kind.text-delta) line) None))
+    (val text log.first-text)
     (when (or (is text None) (> text.seq next-seq))
       (return None))
-    (val init-index (next (gfor #(index line) (enumerate lines) :if (isinstance line.kind Init) index) None))
-    (val stream-start (if (is init-index None)
-                          None
-                          (next (gfor line (cut lines (+ init-index 1) None) :if (isinstance line.kind PartialMessage) line) None)))
     (setv log.text-noted True)
-    (FirstTextLines :text text :stream-start stream-start)))
+    (FirstTextLines :text text :stream-start log.stream-start)))
 
 (defk note-first-text [runtime turn page]
   {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
@@ -877,23 +936,24 @@
   (if (or (is since None) (is until None)) None (- (epoch-ms-of until) (epoch-ms-of since))))
 
 (defrecord TurnEndLines
-  "手番の終わりの計時の行の材料: deltas = その手番で CLI から受けた差分の行(PartialMessage — 受けた順)/ timing = その手番の最初の
-   result の行の計時の欄(RequestTiming — 入力を読んでから要求を送り、答え始めるまでを CLI が数えた分。result の行が無ければ None)。
-   最初の行を取るのは、送った入力で動き始めた CLI の手番の分だから(生き残った注入の手番の result は後に続く — #3855)。"
-  (#^ (get tuple #(ClaudeStreamLine ...)) deltas)
+  "手番の終わりの計時の行の材料: deltas = その手番で CLI から受けた差分の行の種類ごとの数と最初の刻(DeltaTally — 行を足す時に数えた物。
+   読み手に渡した差分の行は捨てているので、行からは数えない)/ timing = その手番の最初の result の行の計時の欄(RequestTiming — 入力を
+   読んでから要求を送り、答え始めるまでを CLI が数えた分。result の行が無ければ None)。最初の行を取るのは、送った入力で動き始めた CLI の
+   手番の分だから(生き残った注入の手番の result は後に続く — #3855)。"
+  (#^ DeltaTally deltas)
   (#^ (| RequestTiming None) timing))
 
 (defk claimed-turn-end [runtime log]
   {:pre [(: runtime SessionRuntime) (: log TurnLog)] :post [(: % (| TurnEndLines None))]
    :tags {:context "claude-code" :role "foundation"}}
-  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた差分の行(PartialMessage — 種類は DeltaKind)と最初の result の行の
+  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた差分の行の数え(DeltaTally — 種類は DeltaKind)と最初の result の行の
    計時の欄を 1 度だけ取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。手番の記録は手番ごとなので、生きた process を
-   使い回す手番でも前の手番の行は入らない。"
+   使い回す手番でも前の手番の行は入らない。result の行は差分の行でないので、終わりを渡すまで手番の記録に残る。"
   (with [runtime.lock]
     (when log.end-noted
       (return None))
     (setv log.end-noted True)
-    (TurnEndLines :deltas (tuple (gfor line log.lines :if (isinstance line.kind PartialMessage) line))
+    (TurnEndLines :deltas log.deltas
                   :timing (next (gfor line log.lines :if (isinstance line.kind TurnResult) line.kind.timing) None))))
 
 (defk request-timing-fields [timing]
@@ -932,16 +992,13 @@
   (when (is claimed None)
     (return None))
   (val deltas claimed.deltas)
-  (val partials (tuple (gfor line deltas :if (and (= line.kind.delta DeltaKind.TEXT) line.kind.text-delta) line)))
-  (val thinking (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.THINKING) line)))
-  (val tool-input (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.TOOL-INPUT) line)))
   (<- now (GetMonotonic))
   (<- at (GetTime))
   (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms log.launched-at now))
-  (<- first-partial-since-launch-ms (wall-elapsed-ms log.launched-wall (if partials (. (get partials 0) at) None)))
-  (<- first-thinking-since-launch-ms (wall-elapsed-ms log.launched-wall (if thinking (. (get thinking 0) at) None)))
-  (<- first-tool-input-since-launch-ms (wall-elapsed-ms log.launched-wall (if tool-input (. (get tool-input 0) at) None)))
+  (<- first-partial-since-launch-ms (wall-elapsed-ms log.launched-wall deltas.text-at))
+  (<- first-thinking-since-launch-ms (wall-elapsed-ms log.launched-wall deltas.thinking-at))
+  (<- first-tool-input-since-launch-ms (wall-elapsed-ms log.launched-wall deltas.tool-input-at))
   ;; 最初の刻の欄は差分が在る時だけ出す(本文の差分の欄 first_partial_since_launch_ms は今までどおり None でも出す)。
   (val firsts (dfor #(name ms) [#("first_thinking_since_launch_ms" first-thinking-since-launch-ms)
                                 #("first_tool_input_since_launch_ms" first-tool-input-since-launch-ms)]
@@ -949,8 +1006,8 @@
                     name ms))
   (<- cli-timing (request-timing-fields claimed.timing))
   (<- (slog CLI-TIMING-LOG :level "info" :event "turn-end" :wall-ms wall-ms :since-launch-ms since-launch-ms
-            :partial-lines (len partials) :first-partial-since-launch-ms first-partial-since-launch-ms
-            :thinking-deltas (len thinking) :tool-input-deltas (len tool-input)
+            :partial-lines deltas.text :first-partial-since-launch-ms first-partial-since-launch-ms
+            :thinking-deltas deltas.thinking :tool-input-deltas deltas.tool-input
             :session-id turn.session-id :turn-seq turn.turn-seq #** firsts #** cli-timing))
   None)
 

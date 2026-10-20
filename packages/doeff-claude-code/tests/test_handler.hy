@@ -36,7 +36,7 @@
                               reply-prompt sleep-prompt])
 (import doeff_claude_code [lines])
 (import doeff_claude_code [handler :as handler-module])
-(import tests.scenario_steps [TurnRecord live-process-until read-to-end read-to-tool-start])
+(import tests.scenario_steps [TurnRecord live-process-until read-to-end read-to-tool-start read-until])
 
 
 (defn host-of [command [live-limit 8] [floor 7200.0] [launch-timeout 30.0]]
@@ -687,6 +687,59 @@
                                          line)))
              [THINKING-PIECES SECOND-THINKING-PIECES 0])
           (repr reads)))
+
+
+(defrecord DeltasReadMidTurn
+  "走っている手番を途中まで読んだ観測: delivered = 道具が始まるまでに読み手へ渡した行・held = その時に手番の記録が持っていた行・
+   rest = 終わりまで読んだ残りの行と終わり。"
+  (#^ tuple delivered)
+  (#^ tuple held)
+  (#^ TurnRecord rest))
+
+(defk deltas-read-mid-turn [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % DeltasReadMidTurn)]
+   :tags {:context "claude-code-test" :role "program"}}
+  "考えの差分と道具の命令の差分を流してから道具を数秒走らせ、本文も差分で流す手番を、道具が始まるまで読み(手番はまだ走っている)、
+   その時に手番の記録が持つ行を控えてから終わりまで読むため。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec
+                               (TurnInput (.join " . " [(sleep-prompt 2 "DRAINED") (.format THINKING-PIECES-PHRASE THINKING-PIECES)
+                                                        (.format TOOL-INPUT-PIECES-PHRASE TOOL-INPUT-PIECES)
+                                                        (.format STREAM-PHRASE STREAMED-PIECES)])
+                                          (str (uuid.uuid4)))))
+  (<- head TurnRecord (read-to-tool-start started.turn 30.0))
+  (val runtime (.runtime host sid))
+  (val held (with [runtime.lock] (tuple (. (get runtime.turns started.turn.turn-seq) lines))))
+  (<- rest TurnRecord (read-until started.turn (fn [lines end] (is-not end None)) 30.0 head.after))
+  (<- (ClaudeCloseSession sid "test"))
+  (DeltasReadMidTurn :delivered head.lines :held held :rest rest))
+
+(deftest test-a-running-turn-drops-the-delta-lines-it-has-handed-to-the-reader [tmp-path]
+  ;; 走っている手番も、読み手に渡した差分の行(PartialMessage — stream_event)を終わりまで持たない(card ki-27d4694258b0)。差分は答えの
+  ;; 途中の写しで、同じ中身は後の assistant の行が運び、読み手は渡された所より後しか読まない。本番の turn-host は running の手番 1 本
+  ;; あたり約 900 行を持ち、その 8 割 余りが差分の行だった(10-20 の pid 3619915 の heap-census: ClaudeStreamLine 14,721・PartialMessage
+  ;; 12,399・running 16)。答えを組み立てる行(init・道具の呼びの assistant の行)は残し、まだ渡していない行も残す。手番の終わりの計時の行の
+  ;; 差分の数と最初の刻は、行を捨てた後も、捨てない時と同じに数える。失敗ケース = 直す前は渡した差分の行を全部持っていて赤。
+  (val host (host-of STUB-COMMAND))
+  (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler host)]
+              (Listen (deltas-read-mid-turn host (spec-in tmp-path) (str (uuid.uuid4))) :types #(SlogEffect))))
+  (val seen (get heard 0))
+  (val delivered-seqs (sfor line seen.delivered line.seq))
+  (val delivered-deltas (lfor line seen.delivered :if (isinstance line.kind PartialMessage) line))
+  (assert (>= (len delivered-deltas) (+ THINKING-PIECES TOOL-INPUT-PIECES)) (repr seen.delivered))
+  (val held-deltas (lfor line seen.held :if (and (in line.seq delivered-seqs) (isinstance line.kind PartialMessage)) line))
+  (assert (= held-deltas []) (.format "渡した差分の行を {} 本持っている" (len held-deltas)))
+  (val kept (lfor line seen.delivered :if (not (isinstance line.kind PartialMessage)) line.seq))
+  (assert (= (lfor line seen.held :if (in line.seq delivered-seqs) line.seq) kept) (repr seen.held))
+  (assert (isinstance seen.rest.end Completed) (repr seen.rest.end))
+  (val ends (lfor effect (get heard 1) :if (and (= effect.msg CLI-TIMING-LOG) (= (.get effect.kwargs "event") "turn-end"))
+                  effect.kwargs))
+  (assert (= (len ends) 1) (repr ends))
+  (val end (get ends 0))
+  (assert (= #((get end "thinking_deltas") (get end "tool_input_deltas") (get end "partial_lines"))
+             #(THINKING-PIECES TOOL-INPUT-PIECES STREAMED-PIECES))
+          (repr end))
+  (for [name ["first_thinking_since_launch_ms" "first_tool_input_since_launch_ms" "first_partial_since_launch_ms"]]
+    (assert (and (isinstance (get end name) int) (<= 0 (get end name) (get end "since_launch_ms"))) (repr end))))
 
 
 (val THINK-SECONDS 0.6)
