@@ -31,7 +31,7 @@
 (import doeff_cluster.shared.protocol.remote [program-put])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
-(import doeff_cluster.shared.core.detached_rules [task-placing-json])
+(import doeff_cluster.shared.core.detached_rules [task-placing-json task-notify-json])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer AwaitWarm WarmReady WarmFailed
@@ -46,7 +46,9 @@
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
                          ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire
                          ReadDetachedTiming DetachedTiming StateTasksWire DetachedTimingAnswer
-                         ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedQueueAnswer StateQueueWire DetachedGroupWire DetachedLimitWire])
+                         ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedQueueAnswer StateQueueWire DetachedGroupWire DetachedLimitWire
+                         AwaitDetachedOutbox AckDetachedOutbox DetachedEnded DetachedOutbox DetachedOutboxWire DetachedOutboxAnswer
+                         DetachedOutboxAcked DetachedAckAnswer])
 (import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
@@ -617,18 +619,98 @@
   answer)
 
 
+;; --- 終わりの出口(AwaitDetachedOutbox・AckDetachedOutbox — 2026-10-21・card ki-e7945a2b2d00)の本番の答え -----------------------------
+
+;; 出口の読み直しの間(秒)。出口は終わった task の数だけしか動かず、知らせは数秒遅れてよい(待つ側の上限 timeout-seconds の内で回す)。
+(val OUTBOX-POLL-SECONDS 5.0)
+
+
+(defk outbox-answer [read]
+  {:pre [(: read (| dict str))] :post [(: % DetachedOutboxAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "GET /outbox の 1 回の読み read(本文の JSON の object か、届かなかった・断られた理由の文)を AwaitDetachedOutbox の答えにするため。
+   形の違う返事は DetachedUnreachable で合わない欄を挙げる(出口の行は消えない — 呼び手は待ち直す)。本番の client と sim の宿が同じ判断を読む。"
+  (when (isinstance read str)
+    (return (DetachedUnreachable :detail (.format "coordinator の出口を読めない: {}" read))))
+  (<- wire (| DetachedOutboxWire Malformed) (parse DetachedOutboxWire read))
+  (if (isinstance wire Malformed)
+      (DetachedUnreachable :detail (.format "coordinator の GET /outbox の返事を読めない: {}"
+                                            (.join "・" (gfor f wire.fields (+ f.field " " f.reason)))))
+      (DetachedOutbox :entries (tuple (gfor e wire.entries
+                                            (DetachedEnded :id e.id :key e.key :notify e.notify :phase e.phase :detail e.detail
+                                                           :failure-kind e.failure-kind :finished-ms e.finished-ms))))))
+
+
+(deff outbox-ack-answer [#^ str id #^ (| dict str) read]  ; defk にできない: 本番の client と sim の宿が同じ判断で受領の返事を答えにする
+  {:pre [(: id str) (: read (| dict str))] :post [(: % DetachedAckAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "DELETE /outbox/<id> の返事 read(本文の JSON の object か、届かなかった・断られた理由の文)を AckDetachedOutbox の答えにするため。"
+  (if (isinstance read str)
+      (DetachedUnreachable :detail (.format "coordinator へ出口の受領を届けられない: {}" read))
+      (DetachedOutboxAcked :id id :acked (is (.get read "acked") True))))
+
+
+(deff outbox-path [#^ str id]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: id str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "出口の行 1 つの受領の path(id は path の 1 節に収まるよう quote する)を作るため。"
+  (+ "/outbox/" (url-quote id :safe "")))
+
+
+(defk outbox-response [answer]
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % (| dict str))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "出口の口の答えを、本文の JSON の object か理由の文にするため(届かない・200 でない・object でない本文は理由の文 — 出口の口を知らない
+   旧い coordinator の 404 も読み手の待ちを止めない)。"
+  (match answer
+    (HttpFailed :detail detail) detail
+    (HttpResponse :status 200)
+      (let [body (try (json.loads answer.text) (except [e ValueError] None))]
+        (if (isinstance body dict) body (.format "本文が JSON の object でない: {!r}" (cut answer.text 0 200))))
+    (HttpResponse :status status) (.format "status {}: {}" status (cut answer.text 0 200))
+    _ "答えが無い"))
+
+
+(defk outbox-awaited [cell options sender prefix timeout-seconds poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: prefix str) (: timeout-seconds float) (: poll-seconds float)]
+   :post [(: % DetachedOutboxAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "知らせ先の頭 prefix の出口の行を、在るまで timeout-seconds 待って読むため(AwaitDetachedOutbox の本番の答え)。poll-seconds ごとに
+   GET /outbox を読み直し(眠りは Delay — 同じ VM の他の task を塞がない)、行が在れば待たずに答える。上限まで無ければ最後の読み
+   (空の DetachedOutbox か、届かなかった DetachedUnreachable)。"
+  (var waited 0.0)
+  (while True
+    (<- read (resent-answer cell options "GET" "/outbox" {"prefix" prefix} None sender.deadline-seconds))
+    (<- view (| dict str) (outbox-response read))
+    (<- answer DetachedOutboxAnswer (outbox-answer view))
+    (when (or (and (isinstance answer DetachedOutbox) answer.entries) (>= waited timeout-seconds))
+      (return answer))
+    (<- (Delay poll-seconds))
+    (:= waited (+ waited poll-seconds))))
+
+
+(defk outbox-acked [cell options sender id]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: id str)] :post [(: % DetachedAckAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "知らせ終えた出口の行 1 つを受領するため(AckDetachedOutbox の本番の答え — 何度送っても同じ意味なので期限まで送り直す)。"
+  (<- sent (resent-answer cell options "DELETE" (outbox-path id) None None sender.deadline-seconds))
+  (<- view (| dict str) (outbox-response sent))
+  (outbox-ack-answer id view))
+
+
 ;; 本物の切り離した task: coordinator の /programs・/detached・/state・/watch へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に
 ;; 持っていた DetachedClient を替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す
 ;; 入れ物(RouteCell)。出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
 (defhandler detached-cluster [#^ RouteCell cell #^ RouteOptions options #^ DetachedSender sender #^ float [poll-seconds 1.0]]
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
     ;; effect の EnvVar の tuple を、coordinator への本文の形(名 → 値の object)へ綴る(#2179)。
     (<- environ-body dict (env-mapping environ))
     (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body
-                                      (task-placing-json priority limits)))
+                                      (| (task-placing-json priority limits) (task-notify-json notify))))
     (resume submitted))
+  (AwaitDetachedOutbox [prefix timeout-seconds]
+    (<- outbox DetachedOutboxAnswer (outbox-awaited cell options sender prefix (float timeout-seconds) OUTBOX-POLL-SECONDS))
+    (resume outbox))
+  (AckDetachedOutbox [id]
+    (<- acked DetachedAckAnswer (outbox-acked cell options sender id))
+    (resume acked))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-cluster cell options sender key timeout-seconds poll-seconds))
     (resume outcome))

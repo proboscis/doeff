@@ -88,6 +88,8 @@ from doeff_cluster.coordinator.core.detached_policy import submit_detached as su
 from doeff_cluster.coordinator.core.detached_policy import detached_read as detached_read
 from doeff_cluster.coordinator.core.detached_policy import cancel_detached as cancel_detached
 from doeff_cluster.coordinator.core.detached_policy import release_detached as release_detached
+from doeff_cluster.coordinator.core.detached_policy import outbox_read as outbox_read
+from doeff_cluster.coordinator.core.detached_policy import outbox_ack as outbox_ack
 from doeff_cluster.coordinator.core.rollout_policy import rollout_step as rollout_step
 from doeff_cluster.coordinator.core.rollout_policy import rollout_targets as rollout_targets
 from doeff_cluster.coordinator.core.rollout_policy import target_key as target_key

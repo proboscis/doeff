@@ -36,6 +36,7 @@ class SubmitDetached(EffectBase):
     environ: tuple[EnvVar, ...] = ...
     priority: int = 0
     limits: tuple[TaskLimit, ...] = ...
+    notify: str = ''
 
     def __post_init__(self) -> None:
         ...
@@ -285,6 +286,50 @@ DetachedQueueAnswer: TypeAlias = DetachedQueueReason | DetachedUnknown | Detache
 @_doeff_dataclass(frozen=True)
 class ReadDetachedQueue(_doeff_effect_base[DetachedQueueAnswer]):
     key: str
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedEnded:
+    id: str
+    key: str
+    notify: str
+    phase: str
+    detail: str
+    failure_kind: str
+    finished_ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedOutbox:
+    entries: tuple[DetachedEnded, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedEndedWire:
+    id: str
+    key: str
+    notify: str
+    phase: str
+    detail: str
+    failure_kind: str
+    finished_ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedOutboxWire:
+    entries: tuple[DetachedEndedWire, ...]
+DetachedOutboxAnswer: TypeAlias = DetachedOutbox | DetachedUnreachable
+
+@_doeff_dataclass(frozen=True)
+class AwaitDetachedOutbox(_doeff_effect_base[DetachedOutboxAnswer]):
+    prefix: str
+    timeout_seconds: float
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedOutboxAcked:
+    id: str
+    acked: bool
+DetachedAckAnswer: TypeAlias = DetachedOutboxAcked | DetachedUnreachable
+
+@_doeff_dataclass(frozen=True)
+class AckDetachedOutbox(_doeff_effect_base[DetachedAckAnswer]):
+    id: str
 
 class DetachedRefused(Exception):
     status: int

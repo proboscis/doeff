@@ -20,6 +20,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.core.detached_policy [outbox-noted])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [spec-program-file])
@@ -131,7 +132,7 @@
 
 (defclass MemoryCoordinator []
   "本物の api_policy.respond / tick を httpx の MockTransport の後ろに置く。時刻は仮想の時計。要求の前に tick する(本物の調停
-   ループは要求の無い拍に tick する)。"
+   ループは要求の無い拍に tick する)。答えた後は本物の 1 歩と同じく終わりの出口へ積む(detached_policy.outbox-noted)。"
   (defn #^ None __init__ [self #^ SimClock clock #^ ClusterTiming [timing (ClusterTiming)]]
     (setv self.clock clock self.state (ClusterState) self.timing timing))
 
@@ -139,11 +140,13 @@
     (setv now (run (clock-ms self.clock))
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
+    (setv before self.state)
     (setv self.state (run (tick self.state now self.timing)))
     (setv #(state status reply) (responded self.state (run (http-request request.method split.path (dict (parse-qsl split.query)) body
                                                              :actor (.get request.headers "x-actor")))
                                          now self.timing))
-    (setv self.state state)
+    ;; 本物の調停ループの 1 歩と同じく、保存の前に終わりの出口へ積む(program.coordinator-step — card ki-e7945a2b2d00)。
+    (setv self.state (outbox-noted before state now))
     (httpx.Response status :json reply)))
 
 

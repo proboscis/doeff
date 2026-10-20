@@ -7,6 +7,8 @@
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
 ;;;   POST   /detached/<key>/cancel   取り消す → {"key" "cancelled" "phase"}(終わっていれば cancelled = false・結果は保持)
 ;;;   DELETE /detached/<key>          終わった task の保持を解く → {"key" "released"}。まだ終わっていなければ 409
+;;;   GET    /outbox?prefix=<頭>       終わりの出口の行を読む(知らせ先の頭で選ぶ・外さない)→ {"entries" [{id key notify phase detail failureKind finishedMs}]}
+;;;   DELETE /outbox/<id>             出口の行を受領して外す → {"id" "acked"}(知らない id は acked = false)
 ;;;
 ;;; 寿命の規則(置く・lease を worker が延ばす・worker の死 = lost・保持の期限)は cluster_policy の task の節(settle-detached・
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
@@ -18,13 +20,14 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
+(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
                                                      limits-undeclared-refusal scan-rows])
-(import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
+(import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
+                                                    DetachedEnded DetachedOutbox DetachedOutboxAcked])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
 (setv DETACHED-MAX-RETAIN-SECONDS (* 30 24 3600))
@@ -37,7 +40,8 @@
    (答えの型の値 — JSON は coordinator/protocol/replies が綴る・#2614)。"
   (#^ ClusterState state)
   (#^ int status)
-  (#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased ErrorReply) body))
+  (#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedOutbox DetachedOutboxAcked
+         ErrorReply) body))
 
 
 (defn #^ (| TaskRecord None) task-by-key [#^ ClusterState state #^ str key]
@@ -74,6 +78,7 @@
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)
                     (task-priority-refusal body.priority)
                     (task-limits-refusal body.limits)
+                    (task-notify-refusal body.notify)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ — card ki-b0e8028c8c8d)。
                     (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
@@ -101,7 +106,8 @@
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ
-                         :priority (or body.priority 0) :limits (task-limits-of body.limits)))
+                         :priority (or body.priority 0) :limits (task-limits-of body.limits)
+                         :notify (or body.notify "")))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
@@ -147,3 +153,58 @@
       (Reply state 409 (ErrorReply :message (.format "key {} はまだ終わっていない({})— 先に取り消す" key task.phase)))
     True (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite task.id None)))) 200
                 (DetachedReleased :key key :released True))))
+
+
+;; --- 終わりの出口(outbox — 2026-10-21・card ki-e7945a2b2d00)-----------------------------------------------------------
+;; 知らせ先を名乗った切り離した task の結末を、終わりを決めた所から 1 度だけ読み手へ渡す出口(型と読み手の契約は detached_model の頭の註の出口)。
+;; 積むのは coordinator の 1 歩が状態を保存する直前の 1 点(program.coordinator-step が outbox-noted を呼ぶ)— 終わりへの道は取り消し
+;; (cancel-detached)・担い手の途絶(settle-detached・absorb-task-reports-into)・走らなかった(place-tasks・absorb-detached-report)・
+;; 実行環境を用意できない(end-env-failed)・値か例外の報告(task-finished)と散っているが、どの道もその歩の前後の task の行の差に現れる。
+;; 道ごとに積まないので、道を足しても出口へ積み忘れない。task の process は知らせに関わらない(process の外で決まる終わりも同じ 1 点を通る)。
+
+;; 出口の行の保持の長さ(読み手が受領しないまま — 知らせの係が止まっていた間の結末を失わない長さ)。
+(setv OUTBOX-RETAIN-MS (* 7 24 3600 1000))
+
+
+(defn #^ (| DetachedEnded None) ended-of [#^ (| TaskRecord None) before #^ (| TaskRecord None) after #^ int now]
+  "純粋: 1 歩の前後の task の行 1 つから、出口へ積む行を知るため(None = 積まない)。積むのは、知らせ先を名乗った切り離した task が
+   この歩で終わりへ移った時だけ — 前の行が無いか開いていて、後の行が終わりの phase(DETACHED-TERMINAL)。開いたまま行が消えた時
+   (DELETE /tasks/<id>)は lost として積む(終わりを知らせずに失わない)。"
+  (setv was-open (or (is before None) (not-in before.phase DETACHED-TERMINAL))
+        row (if (is after None) before after))
+  (cond
+    (or (is row None) (not row.detached) (not row.notify) (not was-open)) None
+    (is after None)
+      (DetachedEnded :id row.id :key (or row.key "") :notify row.notify :phase "lost" :detail "終わりを記録する前に task の行が消された"
+                     :failure-kind "" :finished-ms now)
+    (in after.phase DETACHED-TERMINAL)
+      (DetachedEnded :id after.id :key (or after.key "") :notify after.notify :phase after.phase :detail after.detail
+                     :failure-kind after.failure-kind :finished-ms (or after.finished-ms now))
+    True None))
+
+
+(defn #^ ClusterState outbox-noted [#^ ClusterState before #^ ClusterState after #^ int now]
+  "1 歩の前後の状態 before・after から、この歩で終わりへ移った知らせ先つきの task を出口へ 1 行ずつ積み、出口の保持の期限
+   (OUTBOX-RETAIN-MS)を過ぎた行を外すため(節の頭の註 — 終わりへの移りが通る 1 点)。同じ結末の id の行が出口に在れば積み直さない。
+   変わらなければ after をそのまま返す。"
+  (setv noted (tuple (gfor key (.changed-keys before.tasks after.tasks)
+                           :setv ended (ended-of (.row before.tasks key) (.row after.tasks key) now)
+                           :if (and (is-not ended None) (is (.row after.outbox ended.id) None))
+                           (TableWrite ended.id ended)))
+        expired (tuple (gfor e (.rows after.outbox) :if (< (+ e.finished-ms OUTBOX-RETAIN-MS) now) (TableWrite e.id None))))
+  (if (or noted expired)
+      (replace after :outbox (.with-writes after.outbox (+ noted expired)))
+      after))
+
+
+(defn #^ Reply outbox-read [#^ ClusterState state #^ str prefix]
+  "GET /outbox?prefix=<頭>: 知らせ先が prefix で始まる出口の行(終わった刻・結末の id の順)。行を外さない(外すのは受領だけ)。"
+  (Reply state 200 (DetachedOutbox :entries (tuple (sorted (gfor e (.rows state.outbox) :if (.startswith e.notify prefix) e)
+                                                           :key (fn [e] #(e.finished-ms e.id)))))))
+
+
+(defn #^ Reply outbox-ack [#^ ClusterState state #^ str id]
+  "DELETE /outbox/<id>: 知らせ終えた出口の行を外す(受領 — 何度送っても同じ意味)。知らない id(受領済み・期限で外れた)は acked = False。"
+  (if (is (.row state.outbox id) None)
+      (Reply state 200 (DetachedOutboxAcked :id id :acked False))
+      (Reply (replace state :outbox (.with-writes state.outbox #((TableWrite id None)))) 200 (DetachedOutboxAcked :id id :acked True))))

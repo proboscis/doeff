@@ -23,6 +23,8 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 (import doeff_cluster.shared.core.detached_rules [group-limit-spec task-limits-json])
+(import doeff_cluster.shared.intent.detached_model [DetachedOutbox DetachedOutboxAcked])
+(import doeff_cluster.coordinator.protocol.cluster_json [ended-to-json])
 
 
 (defk spelled-each [#^ Callable spell #^ Iterable items]
@@ -305,7 +307,8 @@
 (defk reply-json [body]
   {:pre [(: body (| EventsView StateReply HeartbeatReply WorkerDrainView ErrorReply BoardRead BoardWritten BoardConflict BoardRefused
                     LeaseAnswer WarmState ProgramStored ProgramRow TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
-                    DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased ResourceView
+                    DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
+                    DetachedOutbox DetachedOutboxAcked ResourceView
                     ResourceList PlainText dict list tuple str int float bool None))]
    :post [(: % (| PlainText dict list tuple str int float bool None))] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "返事の本文の型の値を、外へ見せる JSON の形にする(#2595 の前に core が組んでいた形と同じ)。型にしていない本文(JSON の値と、文字のまま
@@ -328,6 +331,9 @@
     (isinstance body ProgramRow) {"blob" body.blob "versions" body.versions}
     (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (! (task-answer-json body))
     (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (! (detached-answer-json body))
+    ;; 切り離した task の終わりの出口(card ki-e7945a2b2d00 — 読み手の DetachedOutboxWire と同じ形)。
+    (isinstance body DetachedOutbox) {"entries" (lfor e body.entries (ended-to-json e))}
+    (isinstance body DetachedOutboxAcked) {"id" body.id "acked" body.acked}
     (isinstance body ResourceView) (! (resource-view-json body))
     (isinstance body ResourceList)
       {"kind" body.kind "revision" body.revision "items" (! (spelled-each resource-view-json body.items))}

@@ -128,8 +128,12 @@ from doeff_cluster.shared.protocol.detached import services_unreachable as servi
 from doeff_cluster.shared.protocol.detached import detached_timing_of_state as detached_timing_of_state
 from doeff_cluster.shared.protocol.detached import unknown_timing_confirmed as unknown_timing_confirmed
 from doeff_cluster.shared.protocol.detached import detached_queue_of_state as detached_queue_of_state
+from doeff_cluster.shared.protocol.detached import outbox_answer as outbox_answer
+from doeff_cluster.shared.protocol.detached import outbox_ack_answer as outbox_ack_answer
+from doeff_cluster.shared.protocol.detached import outbox_path as outbox_path
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
+from doeff_cluster.shared.core.detached_rules import task_notify_json as task_notify_json
 from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
 from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
 from doeff_cluster.shared.intent.detached_model import CancelDetached as CancelDetached
@@ -154,6 +158,11 @@ from doeff_cluster.shared.intent.detached_model import DetachedTimingAnswer as D
 from doeff_cluster.shared.intent.detached_model import DetachedUnknown as DetachedUnknown
 from doeff_cluster.shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
 from doeff_cluster.shared.intent.detached_model import DetachedQueueAnswer as DetachedQueueAnswer
+from doeff_cluster.shared.intent.detached_model import AwaitDetachedOutbox as AwaitDetachedOutbox
+from doeff_cluster.shared.intent.detached_model import AckDetachedOutbox as AckDetachedOutbox
+from doeff_cluster.shared.intent.detached_model import DetachedOutbox as DetachedOutbox
+from doeff_cluster.shared.intent.detached_model import DetachedOutboxAnswer as DetachedOutboxAnswer
+from doeff_cluster.shared.intent.detached_model import DetachedAckAnswer as DetachedAckAnswer
 from doeff_cluster.worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
 from doeff_cluster.worker.core.drain_client import DRAIN_TTL_MARGIN_SECONDS as DRAIN_TTL_MARGIN_SECONDS
 from doeff_cluster.worker.protocol.drain_requests import drain_request as drain_request
@@ -1004,8 +1013,15 @@ def read_detached_timing(link: SimLink, key: str) -> _Program[DetachedTimingAnsw
 
 def read_detached_queue(link: SimLink, key: str) -> _Program[DetachedQueueAnswer, object]:
     ...
+OUTBOX_BELL: str
 
 def ended_task_keys(writes: tuple) -> _Program[frozenset, object]:
+    ...
+
+def outbox_read_of(answer: tuple) -> dict | str:
+    ...
+
+def await_detached_outbox(link: SimLink, prefix: str, timeout_seconds: float) -> _Program[DetachedOutboxAnswer, object]:
     ...
 
 def ring_ended_tasks(queue: RequestQueue, writes: tuple) -> _Program[int, object]:

@@ -187,13 +187,14 @@
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
-                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state])
+                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state outbox-answer outbox-ack-answer outbox-path])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
-(import doeff_cluster.shared.core.detached_rules [task-placing-json])
+(import doeff_cluster.shared.core.detached_rules [task-placing-json task-notify-json])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
-                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer])
+                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer
+                         AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAnswer DetachedAckAnswer])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
@@ -1457,15 +1458,59 @@
   queue)
 
 
+;; 終わりの出口(card ki-e7945a2b2d00)の待ち手の呼び鈴の鍵(task の key は呼び手が決める語で、NUL を含まない — 重ならない)。
+(val OUTBOX-BELL "\u0000outbox")
+
+
 (defk ended-task-keys [writes]
   {:pre [(: writes tuple)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
   "coordinator の 1 回の Persist の書き(TableWrite の組)から、終わりの phase(cluster_model.ENDED-PHASES)を書いた切り離した task の
-   key を読むため(その key の呼び鈴を鳴らす)。"
-  (frozenset (gfor w writes
-                   :setv row w.value
-                   :if (and (.startswith w.key "task/") (isinstance row dict) (.get row "detached") (.get row "key")
-                            (in (.get row "phase") ENDED-PHASES))
-                   (get row "key"))))
+   key を読むため(その key の呼び鈴を鳴らす)。終わりの出口の行を書いた書きが在れば、出口の待ち手の呼び鈴 OUTBOX-BELL も鳴らす。"
+  (| (frozenset (gfor w writes
+                      :setv row w.value
+                      :if (and (.startswith w.key "task/") (isinstance row dict) (.get row "detached") (.get row "key")
+                               (in (.get row "phase") ENDED-PHASES))
+                      (get row "key")))
+     (if (any (gfor w writes (and (.startswith w.key "outbox/") (is-not w.value None)))) (frozenset #(OUTBOX-BELL)) (frozenset))))
+
+
+(deff outbox-read-of [#^ tuple answer]  ; defk にできない: 答えの節が返事を読む純粋な判断
+  {:pre [(: answer tuple)] :post [(: % (| dict str))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "出口の口の返事 #(status 本文) を、本番の outbox-response と同じく本文の object か理由の文にするため(届かない・200 でない・object でない
+   本文は理由の文)。"
+  (setv #(status body) answer)
+  (cond (is status None) (unreached-reason answer)
+        (and (= status 200) (isinstance body dict)) body
+        (= status 200) (.format "本文が JSON の object でない: {!r}" body)
+        True (.format "status {}: {!r}" status body)))
+
+
+(defk await-detached-outbox [link prefix timeout-seconds]
+  {:pre [(: link SimLink) (: prefix str) (: timeout-seconds float)] :post [(: % DetachedOutboxAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitDetachedOutbox を本番の outbox-awaited と同じ読み(GET /outbox・outbox-answer)で待つため: 行が在れば待たずに答え、無ければ読む前に
+   掛けた出口の呼び鈴 OUTBOX-BELL(模擬の coordinator が出口の行を書いた時に鳴らす)か期限で起きて読み直す。届かない間だけ
+   DETACHED-POLL-SECONDS ごとに読み直す。上限まで無ければ最後の読み(空の出口か DetachedUnreachable)。"
+  (<- started int (now-epoch-ms))
+  (val bells link.queue.bells)
+  (var answer None)
+  (while (is answer None)
+    (<- bell Promise (CreatePromise))
+    ;; 読む前に掛ける(読みの返事と出口の書きの間に鳴らしを取りこぼさない)。
+    (setv (get bells OUTBOX-BELL) (+ (.get bells OUTBOX-BELL #()) #(bell)))
+    (<- read tuple (send-resent link "GET" "/outbox" {"prefix" prefix} None))
+    (<- now int (now-epoch-ms))
+    (val waited (/ (- now started) 1000.0))
+    (<- got DetachedOutboxAnswer (outbox-answer (outbox-read-of read)))
+    (when (or (and (isinstance got DetachedOutbox) got.entries) (>= waited timeout-seconds))
+      (:= answer got))
+    (when (is answer None)
+      (val left-seconds (max 0.0 (- timeout-seconds waited)))
+      (<- (promise-or-timeout bell.future (if (isinstance got DetachedOutbox) left-seconds (min DETACHED-POLL-SECONDS left-seconds)))))
+    ;; 鳴らなかった呼び鈴を外す(鳴った物は鳴らした側が外している)。
+    (val left (tuple (gfor b (.get bells OUTBOX-BELL #()) :if (is-not b bell) b)))
+    (if left (setv (get bells OUTBOX-BELL) left) (.pop bells OUTBOX-BELL None)))
+  answer)
 
 
 (defk ring-ended-tasks [queue writes]
@@ -1756,12 +1801,19 @@
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify]
     ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
     (<- environ-body dict (env-mapping environ))
     (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
-                                   (task-placing-json priority limits)))
+                                   (| (task-placing-json priority limits) (task-notify-json notify))))
     (resume submitted))
+  (AwaitDetachedOutbox [prefix timeout-seconds]
+    (<- outbox DetachedOutboxAnswer (await-detached-outbox link prefix (float timeout-seconds)))
+    (resume outbox))
+  (AckDetachedOutbox [id]
+    ;; 本番の outbox-acked と同じ要求(DELETE /outbox/<id>)を同じ送り直しで送り、同じ読み(outbox-ack-answer)で答える。
+    (<- answer tuple (send-resent link "DELETE" (outbox-path id) {} None))
+    (resume (outbox-ack-answer id (outbox-read-of answer))))
   (AwaitDetached [key timeout-seconds]
     (<- awaited (await-detached link key timeout-seconds))
     (resume awaited))

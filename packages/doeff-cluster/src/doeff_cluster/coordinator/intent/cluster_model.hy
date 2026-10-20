@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -1019,7 +1019,11 @@
   ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 名乗った同時数の上限の組(TaskLimit の tuple — 値と範囲は系の宣言の
   ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
   (setv #^ int priority 0)
-  (setv #^ (get tuple #(TaskLimit ...)) limits #()))
+  (setv #^ (get tuple #(TaskLimit ...)) limits #())
+  ;; --- 終わりの知らせ先(2026-10-21・card ki-e7945a2b2d00)---
+  ;; notify = 送り手の名乗った知らせ先(空 = 知らせない)。終わりへ移った歩で出口(ClusterState.outbox)に 1 度だけ積む(detached_policy.outbox-noted)。
+  ;; この欄の無い旧い行は空で読む。
+  (setv #^ str notify ""))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -1104,7 +1108,11 @@
   ;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d): 組の名で引く、系が宣言した GroupLimit の表(資源 GroupLimit — 宣言の道具が
   ;; 書く・書き換えない表 Table — 写像として持ち回らない)。task は組の名だけを名乗り、置き方(cluster_policy.task-misfit)はこの値で
   ;; 数える。受け口は宣言に無い組を名乗る task を断る。保存する(durable_kv の grouplimit/<名>)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get Table GroupLimit) group-limits (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table GroupLimit) group-limits (field :default-factory (partial table-of #())))
+  ;; 終わりの出口(2026-10-21・card ki-e7945a2b2d00): 結末の id(task の id)→ DetachedEnded。知らせ先を名乗った切り離した task が終わりへ
+  ;; 移った歩で 1 行積み(detached_policy.outbox-noted — 終わりへの移りが通る 1 点)、読み手の受領(DELETE /outbox/<id>)か出口の保持の期限で
+  ;; 外す。task の行の解放・保持の期限とは別(行が消えても出口の行は残る)。保存する(durable_kv の outbox/<id>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table DetachedEnded) outbox (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []

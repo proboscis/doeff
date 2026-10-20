@@ -18,6 +18,7 @@ from doeff_cluster.shared.protocol.remote import program_put as program_put
 from doeff_cluster.shared.intent.protocol import PROTOCOL_FORMAT as PROTOCOL_FORMAT
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
+from doeff_cluster.shared.core.detached_rules import task_notify_json as task_notify_json
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
 from doeff_cluster.shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv
@@ -81,6 +82,14 @@ from doeff_cluster.shared.intent.detached_model import DetachedQueueAnswer as De
 from doeff_cluster.shared.intent.detached_model import StateQueueWire as StateQueueWire
 from doeff_cluster.shared.intent.detached_model import DetachedGroupWire as DetachedGroupWire
 from doeff_cluster.shared.intent.detached_model import DetachedLimitWire as DetachedLimitWire
+from doeff_cluster.shared.intent.detached_model import AwaitDetachedOutbox as AwaitDetachedOutbox
+from doeff_cluster.shared.intent.detached_model import AckDetachedOutbox as AckDetachedOutbox
+from doeff_cluster.shared.intent.detached_model import DetachedEnded as DetachedEnded
+from doeff_cluster.shared.intent.detached_model import DetachedOutbox as DetachedOutbox
+from doeff_cluster.shared.intent.detached_model import DetachedOutboxWire as DetachedOutboxWire
+from doeff_cluster.shared.intent.detached_model import DetachedOutboxAnswer as DetachedOutboxAnswer
+from doeff_cluster.shared.intent.detached_model import DetachedOutboxAcked as DetachedOutboxAcked
+from doeff_cluster.shared.intent.detached_model import DetachedAckAnswer as DetachedAckAnswer
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
@@ -222,6 +231,25 @@ def process_watch_step(statuses: dict, job: str, watched: ProcessEnded | None) -
     ...
 
 def await_process_cluster(cell: RouteCell, options: RouteOptions, sender: DetachedSender, job: str, timeout_seconds: float | int | None, poll_seconds: float) -> _Program[ProcessEnded | ProcessWaitExpired, object]:
+    ...
+OUTBOX_POLL_SECONDS: float
+
+def outbox_answer(read: dict | str) -> _Program[DetachedOutboxAnswer, object]:
+    ...
+
+def outbox_ack_answer(id: str, read: dict | str) -> DetachedAckAnswer:
+    ...
+
+def outbox_path(id: str) -> str:
+    ...
+
+def outbox_response(answer: HttpResponse | HttpFailed | None) -> _Program[dict | str, object]:
+    ...
+
+def outbox_awaited(cell: RouteCell, options: RouteOptions, sender: DetachedSender, prefix: str, timeout_seconds: float, poll_seconds: float) -> _Program[DetachedOutboxAnswer, object]:
+    ...
+
+def outbox_acked(cell: RouteCell, options: RouteOptions, sender: DetachedSender, id: str) -> _Program[DetachedAckAnswer, object]:
     ...
 
 def detached_cluster(cell: RouteCell, options: RouteOptions, sender: DetachedSender, poll_seconds: float=1.0) -> _Handler:

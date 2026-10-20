@@ -47,7 +47,8 @@
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused
-                                      DetachedUnreachable DetachedAwaited])
+                                      DetachedUnreachable DetachedAwaited DetachedUnrunnable
+                                      AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster.shared.protocol.detached [detached-cluster])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
@@ -580,6 +581,93 @@
   (assert (isinstance rig-name str) rig-name)
   (<- rig Rig (open-named rig-name tmp-path request OTHER-VERSIONS))
   (<- ok (run-scenario rig versions-differ))
+  (assert ok))
+
+
+;; --- 終わりの出口(card ki-e7945a2b2d00 — detached_model の頭の註の出口)--------------------------------------------------
+;; 知らせ先を名乗った task は、どの道で終わっても(値・例外・取り消し・走らなかった・担い手の死)出口に 1 行だけ積まれ、読みでは消えず、
+;; 受領で消え、受領した行は戻らない。知らせ先の無い task と、別の頭の知らせ先の task は、その頭の読みに出ない。
+
+(defk outbox-ends [rig prefix]
+  {:pre [(: rig Rig) (: prefix str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "知らせ先の頭 prefix の出口の行を待たずに読み、key → #(phase notify id) の表にするため(同じ key が 2 行在れば赤 — 1 度だけ)。"
+  (<- outbox (AwaitDetachedOutbox prefix 0.0))
+  (assert (isinstance outbox DetachedOutbox) outbox)
+  (val keys (lfor e outbox.entries e.key))
+  (assert (= (len keys) (len (set keys))) keys)
+  (dfor e outbox.entries e.key #(e.phase e.notify e.id)))
+
+
+(defk outbox-tells-each-end-once [rig]
+  {:pre [(: rig Rig)] :post [(: % bool)]}
+  (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-ob-done" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- done (AwaitDetached "k-ob-done"))
+  (assert (= done (DetachedSucceeded 101)) done)
+  (<- (submit-detached-task (boom) :needs LOCAL :key "k-ob-boom" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- boomed (AwaitDetached "k-ob-boom"))
+  (assert (isinstance boomed DetachedFailed) boomed)
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :needs LOCAL :key "k-ob-cancel" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- cancelled bool (CancelDetached "k-ob-cancel"))
+  (assert cancelled)
+  ;; 置き先の無い能力を要る task は走らずに終わる(place-tasks — task の process は 1 度も起きない)。
+  (<- (submit-detached-task (slow-add 0.0 1) :needs (frozenset #{"nobody-provides"}) :key "k-ob-unrun" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- unrun (AwaitDetached "k-ob-unrun"))
+  (assert (isinstance unrun DetachedUnrunnable) unrun)
+  (<- (submit-detached-task (slow-add 0.0 2) :needs LOCAL :key "k-ob-silent" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add 0.0 3) :needs LOCAL :key "k-ob-other" :lease-seconds rig.lease :notify "u:c-b"))
+  (<- (AwaitDetached "k-ob-silent"))
+  (<- (AwaitDetached "k-ob-other"))
+  (<- ends dict (outbox-ends rig "t:"))
+  (assert (= (sorted ends) ["k-ob-boom" "k-ob-cancel" "k-ob-done" "k-ob-unrun"]) ends)
+  (assert (= (get (get ends "k-ob-done") 0) "finished") ends)
+  (assert (= (get (get ends "k-ob-boom") 0) "finished") ends)
+  (assert (= (get (get ends "k-ob-cancel") 0) "cancelled") ends)
+  (assert (in (get (get ends "k-ob-unrun") 0) #("failed" "code-failed")) ends)
+  (assert (all (gfor #(phase notify id) (.values ends) (= notify "t:c-a"))) ends)
+  ;; 読みは行を外さない。
+  (<- again dict (outbox-ends rig "t:"))
+  (assert (= again ends) again)
+  ;; 終わった task への取り消しは出口に何も足さない(終わりへの移りは 1 度だけ)。
+  (<- late bool (CancelDetached "k-ob-done"))
+  (assert (not late))
+  (for [#(key #(phase notify id)) (.items ends)]
+    (<- acked (AckDetachedOutbox id))
+    (assert (= acked (DetachedOutboxAcked :id id :acked True)) acked)
+    (<- twice (AckDetachedOutbox id))
+    (assert (= twice (DetachedOutboxAcked :id id :acked False)) twice))
+  (<- after dict (outbox-ends rig "t:"))
+  (assert (= after {}) after)
+  (<- other dict (outbox-ends rig "u:"))
+  (assert (= (sorted other) ["k-ob-other"]) other)
+  True)
+
+(deftest test-outbox-tells-each-end-once [rig-name tmp-path request]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig Rig (open-named rig-name tmp-path request None))
+  (<- ok (run-scenario rig outbox-tells-each-end-once))
+  (assert ok))
+
+
+(defk outbox-tells-a-lost-task [rig]
+  {:pre [(: rig Rig)] :post [(: % bool)]}
+  ;; 担い手の死(task の process の外で決まる終わり)も出口に積まれる。出口の待ちは、終わりを待たずに掛けても終わった時に起きる。
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-ob-lost" :lease-seconds rig.lease :notify "l:c-a"))
+  (<- (await-observed rig "k-ob-lost" held-or-none "担い手の task の起こし"))
+  (<- empty (AwaitDetachedOutbox "l:" 0.0))
+  (assert (= empty (DetachedOutbox :entries #())) empty)
+  (<- lost int (KillWorker RUNNER))
+  (assert (= lost 1))
+  (<- told (AwaitDetachedOutbox "l:" (* rig.lease 8)))
+  (assert (isinstance told DetachedOutbox) told)
+  (assert (= (lfor e told.entries #(e.key e.phase)) [#("k-ob-lost" "lost")]) told)
+  True)
+
+(deftest test-outbox-tells-a-lost-task [rig-name tmp-path request]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig Rig (open-named rig-name tmp-path request None))
+  (<- ok (run-scenario rig outbox-tells-a-lost-task))
   (assert ok))
 
 

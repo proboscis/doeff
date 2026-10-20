@@ -8,6 +8,8 @@
 ;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
+;;;   outbox/<結末の id>(2026-10-21・card ki-e7945a2b2d00 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
+;;;   coordinator はこの鍵を読まずに無視する — 出口を持たない今までの振る舞い)
 ;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 印を約束しない今までの振る舞い)
 ;;;   superseded/<名>/<世代>(AL-D2 — 退いた世代が走らせている入れ替えの job の組 SupersededRun {worker boot jobs seen_ms}。無い置き場は
@@ -31,7 +33,7 @@
 (import functools [partial])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark SupersededRun])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
-(import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
+(import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes board-tally-of value-size
 ] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
                                                group-limit-from-json])
@@ -46,6 +48,8 @@
 (val SUPERSEDED "superseded/")
 ;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d — 資源 GroupLimit 1 つに鍵 1 つ)。
 (val GROUP-LIMIT "grouplimit/")
+;; 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00 — 出口の行 1 つに鍵 1 つ。鍵 = 結末の id)。
+(val OUTBOX "outbox/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -144,6 +148,7 @@
     (table-group "warms" (fn [k w] #((+ WARM k) #(#(w) (partial warm-entry-to-json w)))))
     (table-group "programs" (fn [k p] #((+ PROGRAM k) #(#(p) (partial program-row-to-json p)))))
     (table-group "handoffs" (fn [k w] #((+ HANDOFF k) #(#(w) w.to-json))))
+    (table-group "outbox" (fn [k e] #((+ OUTBOX k) #(#(e) (partial ended-to-json e)))))
     (SourceGroup :fields #("keep_marks")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor m state.keep-marks (+ KEEP m.job) #(#(m) (partial asdict m)))))
@@ -246,6 +251,7 @@
   (<- warms tuple (read-each warm-entry-from-json (tuple (part WARM))))
   (<- programs tuple (read-each program-row-from-json (tuple (part PROGRAM))))
   (<- audit tuple (read-each audit-event-from-json (tuple (part "audit/"))))
+  (<- outbox tuple (read-each ended-from-json (tuple (part OUTBOX))))
   (ClusterState
     :jobs (get service-rows 0)
     :refused (get service-rows 1)
@@ -274,6 +280,7 @@
     :warms (table-of (tuple (gfor #(k entry) warms (TableWrite k entry))))
     :programs (table-of (tuple (gfor #(k p) programs (TableWrite k p))))
     :handoffs (table-of (tuple (gfor #(k v) (part HANDOFF) (TableWrite k (handoff-watch-from-json v)))))
+    :outbox (table-of (tuple (gfor #(k e) outbox (TableWrite k e))))
     :keep-marks (tuple (gfor #(_ v) (part KEEP) (KeepMark #** v)))
     :superseded-runs (tuple (gfor #(_ v) (part SUPERSEDED) (SupersededRun #** (| v {"jobs" (tuple (get v "jobs"))}))))
     :audit (tuple (gfor #(_ event) audit event))

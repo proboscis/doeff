@@ -81,6 +81,9 @@
   ;; 形の検めは構築関数。
   (setv #^ int priority 0)
   (setv #^ (get tuple #(TaskLimit ...)) limits #())
+  ;; 知らせ先(2026-10-21・card ki-e7945a2b2d00): 終わった時に結末を知らせる先を呼び手が決めた 1 語で名乗る(空 = 知らせない)。coordinator は
+  ;; 中身を読まず、task が終わりへ移った歩で 1 度だけ出口(outbox — 下の節)へ積む。同じ key の送り直しの比べには入れない。
+  (setv #^ str notify "")
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
@@ -478,6 +481,80 @@
    queued でない task にも答える(groups は名乗った組の今の読み)。lease に触らない。"
   {:fields [(: key str)]
    :answer DetachedQueueAnswer
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+;; --- 終わりの出口(outbox — 2026-10-21・card ki-e7945a2b2d00)--------------------------------------------------------
+;; 知らせ先(SubmitDetached の notify)を名乗った task が終わりへ移ると(値か例外を返した・取り消された・lost・走らなかった・実行環境を
+;; 用意できない — どの道で終わっても)、coordinator はその移りを状態に書く歩の中で出口に行を 1 つ積む(task の id ごとに 1 度だけ —
+;; coordinator/core/detached_policy.hy の outbox-noted)。読み手は出口だけを読んで知らせ、知らせ終えた行を受領(AckDetachedOutbox)して外す。
+;; 出口の行は task の行の解放・保持の期限と別に残る(受領か出口の保持の期限 — detached_policy の OUTBOX-RETAIN-MS — まで)。
+
+(defrecord DetachedEnded
+  "出口の行 1 つ: id = 結末の id(task の id — coordinator の中で一意。読み手が重なりを除く鍵)・key = task の key・notify = 名乗った知らせ先・
+   phase = 終わりの phase(finished | code-failed | failed | version-mismatch | lost | cancelled | env-failed)・detail = coordinator の理由の文・
+   failure-kind = 実行環境の失敗の種類(env-failed の時だけ)・finished-ms = 終わった刻(epoch ミリ秒)。結果の値は運ばない(値の復元には task の
+   module が要る — 値を読む呼び手は key で AwaitDetached する)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str id)
+  (#^ str key)
+  (#^ str notify)
+  (#^ str phase)
+  (#^ str detail)
+  (#^ str failure-kind)
+  (#^ int finished-ms))
+
+
+(defrecord DetachedOutbox
+  "AwaitDetachedOutbox の答え: entries = 知らせ先の頭が合う出口の行(結末の id の順)。待ちの上限まで 1 つも無ければ空。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ (get tuple #(DetachedEnded ...)) entries))
+
+
+(defwire DetachedEndedWire
+  "coordinator の GET /outbox の行(DetachedEnded の綴り — 欄の名は camel)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str id)
+  (#^ str key)
+  (#^ str notify)
+  (#^ str phase)
+  (#^ str detail)
+  (#^ str failure-kind)
+  (#^ int finished-ms))
+
+
+(defwire DetachedOutboxWire
+  "coordinator の GET /outbox の返事: entries(出口の行の列)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(DetachedEndedWire ...)) entries))
+
+
+(val DetachedOutboxAnswer (| DetachedOutbox DetachedUnreachable))
+
+(defeffect AwaitDetachedOutbox
+  "出口の行のうち、知らせ先 notify が prefix で始まる物を読む(頭の註の出口)。在れば待たずに答え、無ければ在るまで timeout-seconds 待つ
+   (上限で空の DetachedOutbox)。答え = DetachedOutbox・DetachedUnreachable(coordinator に届かない・形の違う返事 — 出口の行は消えない。
+   呼び手は待ち直す)。読みは行を外さない — 外すのは受領 AckDetachedOutbox だけ。"
+  {:fields [(: prefix str) (: timeout-seconds float)]
+   :answer DetachedOutboxAnswer
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defrecord DetachedOutboxAcked
+  "AckDetachedOutbox の答え: id = 結末の id・acked = この頼みで出口の行を外したか(False = 知らない id — すでに受領した・出口の保持の
+   期限で外れた)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str id)
+  (#^ bool acked))
+
+
+(val DetachedAckAnswer (| DetachedOutboxAcked DetachedUnreachable))
+
+(defeffect AckDetachedOutbox
+  "知らせ終えた出口の行 1 つを受領して外す(頭の註の出口 — 何度送っても同じ意味)。答え = DetachedOutboxAcked・DetachedUnreachable
+   (coordinator に届かない — 外せたかは分からない。行が残れば次の読みにまた出るので、読み手は結末の id で重なりを除く)。"
+  {:fields [(: id str)]
+   :answer DetachedAckAnswer
    :tags {:context "doeff-cluster" :role "intent"}})
 
 

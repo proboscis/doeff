@@ -9,7 +9,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_hy.wire [parse Malformed])
 (import doeff_traverse.helpers [sequence])
-(import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
+(import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of board-tally-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
@@ -58,7 +58,8 @@
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
-   "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))})
+   "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))
+   "outbox" (dfor #(k e) (.items state.outbox) k (ended-to-json e))})
 
 
 (deff worker-generations-json [#^ WorkerInfo worker]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
@@ -208,6 +209,7 @@
   (<- board-rows (get Table BoardRow) (board-rows-of (if (is board None) (.get data "board" {}) board) (or board-versions {})))
   (<- audit tuple (read-each audit-event-from-json (tuple (enumerate (.get data "audit" [])))))
   (<- warms tuple (read-each warm-entry-from-json (tuple (.items (.get data "warms" {})))))
+  (<- outbox tuple (read-each ended-from-json (tuple (.items (.get data "outbox" {})))))
   (ClusterState
     :jobs (get service-rows 0)
     :refused (get service-rows 1)
@@ -241,6 +243,8 @@
     :warms (table-of (tuple (gfor #(k entry) warms (TableWrite k entry))))
     ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。
     :handoffs (table-of (tuple (gfor #(k v) (.items (.get data "handoffs" {})) (TableWrite k (handoff-watch-from-json v)))))
+    ;; 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00)は、それより前の file には無い(空として読む)。
+    :outbox (table-of (tuple (gfor #(k e) outbox (TableWrite k e))))
     :started-ms now))
 
 
