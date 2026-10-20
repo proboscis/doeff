@@ -26,7 +26,7 @@ from doeff_events import (
     SourceStarted,
     subscribed_event_handler,
 )
-from doeff_events.effects.events import Publish, WaitForEvent
+from doeff_events.effects.events import Publish, PublishGap, PublishGapEffect, WaitForEvent
 from doeff_events.effects.notices import Announce, AwaitBrokerBack, BrokerUnreachable
 from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
 from doeff_events.handlers.notice_events import (
@@ -51,6 +51,7 @@ from doeff_events.notice_laws import (
     law_routes,
     law_start_and_return_are_told_once,
     law_start_is_told_after_the_subscription,
+    law_unsure_send_is_told_as_a_gap,
 )
 from doeff_time import Delay, GetTime
 from event_signal_invariants import (
@@ -66,6 +67,7 @@ from notice_law_support import (
     T0,
     SenderOutage,
     gap_harness,
+    gap_harness_over,
     memory_harness,
     never_tells_the_return,
     refuses_senders,
@@ -74,7 +76,7 @@ from notice_law_support import (
     swallows,
 )
 
-from doeff import K, Pass, Program, Pure, do
+from doeff import K, Pass, Program, Pure, Resume, do
 from doeff import handler as program_handler
 
 if TYPE_CHECKING:
@@ -209,6 +211,65 @@ def test_not_telling_the_return_breaks_the_missed_notice_law() -> None:
     harness = gap_harness(MemoryBroker(), below_events=never_tells_the_return())
     with pytest.raises(SchedulerDeadlockError):
         run_on_virtual_clock(law_missed_notice_is_told_once_the_broker_is_back(harness))
+
+
+def _sends_the_event_instead_of_a_gap() -> "ProgramHandler":
+    """Broken sender: a ``PublishGap`` is sent as its event (sits between the program and ``notice_events_handler``)
+    — the receivers get an event for what may not have happened, and no gap to catch up from."""
+
+    @do
+    def handler(effect: PublishGapEffect, k: K) -> "EffectGenerator[object]":
+        """Publish the gap's event instead."""
+        return (yield Resume(k, (yield Publish(effect.event))))
+
+    return program_handler(handler)
+
+
+def test_sending_the_event_instead_of_a_gap_breaks_the_unsure_send_law() -> None:
+    broker = MemoryBroker()
+    harness = gap_harness_over(
+        lambda layer: memory_harness(broker, inside_events=_sends_the_event_instead_of_a_gap(), below_events=layer).as_party
+    )
+    with pytest.raises(LawBroken, match="unsure-send-is-told-as-a-gap"):
+        run_on_virtual_clock(law_unsure_send_is_told_as_a_gap(harness))
+
+
+def test_a_gap_of_a_dropped_route_is_not_kept_and_says_so() -> None:
+    # Guard: a route declared Drop keeps no gap — PublishGap answers NoticeDropped and nothing is told.
+    @do
+    def unsure_on_a_dropped_route() -> "EffectGenerator[object]":
+        answer = yield PublishGap(LawNote("stale"))
+        yield Publish(LawNote("end"))
+        return (answer, (yield WaitForEvent(SourceMissed, LawNote)))
+
+    channel = f"{PREFIX}:note"
+    reading = tuple(NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, Drop(), (channel,))
+                    for r in law_routes(PREFIX))
+    events = notice_events_handler("dropper", reading, PATIENCE_SECONDS)
+    queue = subscribed_event_handler(EventBus(), "dropper", (SourceMissed, LawNote))
+    answer, first = run_on_virtual_clock(queue(memory_notice_handler(MemoryBroker())(events(unsure_on_a_dropped_route()))))
+    assert isinstance(answer, NoticeDropped), answer
+    assert first == LawNote("end"), first
+
+
+def test_a_gap_of_an_unrouted_event_goes_outward() -> None:
+    # Guard: a wrapper names no channel for a type it does not route — the PublishGap reaches the handler outside it.
+    class Local:
+        pass
+
+    @do
+    def answers_outside(effect: PublishGapEffect, k: K) -> "EffectGenerator[object]":
+        return (yield Resume(k, ("outside", type(effect.event))))
+
+    @do
+    def unsure_of_a_local() -> "EffectGenerator[object]":
+        return (yield PublishGap(Local()))
+
+    wrapped = memory_notice_handler(MemoryBroker())(
+        notice_events_handler("sender", _sender_only(MarkGap()), PATIENCE_SECONDS)(unsure_of_a_local())
+    )
+    outside = program_handler(answers_outside)
+    assert run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(outside(wrapped))) == ("outside", Local)
 
 
 def test_a_dropped_route_marks_nothing_and_says_so() -> None:
