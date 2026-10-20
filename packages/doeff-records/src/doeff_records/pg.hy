@@ -1,4 +1,4 @@
-;;; PostgreSQL の handler — 公開 effect 9 つに PostgreSQL の表で答える(本番の置き場)。
+;;; PostgreSQL の handler — 公開 effect 10 個に PostgreSQL の表で答える(本番の置き場)。
 ;;; PutRows は PutRow と同じ置き場の錠と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
@@ -13,8 +13,9 @@
 ;;; 書きの手順(PutRow・PutRows・AppendEvent・版の繰り上げ・期限切れの回収・刈り取り)は SqlTransaction の lock-key = 置き場の書きの錠
 ;;; (pg_sql.writer-lock-key — 旧い版と同じ錠の番号)の中で流す。transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に
 ;;; 読んで渡す)。版の繰り上げ・回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
-;;; 書きの往復(#3605 — 記録の service と DB が別の機体に在ると、DB への往復 1 回が書き 1 回の待ちに乗る): PutRow・PutRows・AppendEvent だけが
-;;; 往復をまとめる transaction(SqlTransaction の batched — batched-writing)を選び、DB へ 2 往復で書く。1 往復目 = 判じるための読みの束
+;;; 書きの往復(#3605 — 記録の service と DB が別の機体に在ると、DB への往復 1 回が書き 1 回の待ちに乗る): PutRow・PutRows・AppendEvent・
+;;; AppendEvents だけが往復をまとめる transaction(SqlTransaction の batched — batched-writing)を選び、DB へ 2 往復で書く(AppendEvents は束の
+;;; 追記の数に依らず 2 往復 — 追記ごとの読みと書きを同じ往復に並べる・card ki-48c34994ed15)。1 往復目 = 判じるための読みの束
 ;;; (置き場の頭・錠つきの行 | 冪等キーの引き・鍵の覚え・組の期限を過ぎた出来事 —
 ;;; BEGIN と書きの錠は答え手が同じ往復の先頭に流す)、2 往復目 = 書きの束(片付け・行の書きと変更の列 | 出来事の書き — 合図と COMMIT も同じ
 ;;; 往復)。判じる事(Conflict・ExpectAbsent・断り・期限を過ぎた物の片付け)は 1 往復目の答えで決め、片付けの文は 2 往復目の先頭に入れる
@@ -80,11 +81,11 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
-                              RowRemoved Changes Appended Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
+                              RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired
                               StreamTail StreamTailEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
@@ -234,9 +235,25 @@
 
 (defrecord EarlierUse
   "追記の冪等キーの前の使い(1 往復目の読みから — earlier-use): previous = 生きた出来事 | 保持の期限で消した鍵の覚え | None /
-   cleanup = 追記が触る単位の期限を過ぎた出来事を捨てて鍵の覚えへ移す文(2 往復目の先頭に流す — 片付けが要らなければ空)。"
+   cleanup = 追記が触る単位の期限を過ぎた出来事を捨てて鍵の覚えへ移す文(2 往復目の先頭に流す — 片付けが要らなければ空)/
+   removed = 追記が触る単位の期限を過ぎた出来事の番号(束の後の追記が同じ出来事を重ねて片付けないため — append-events-locked)。"
   (#^ (| Event RetiredKey None) previous)
-  (#^ (get tuple #(Statement ...)) cleanup))
+  (#^ (get tuple #(Statement ...)) cleanup)
+  (#^ (get frozenset int) removed))
+
+
+(defrecord AppendReads
+  "束の追記 1 つの、1 往復目の読みの束の中の在りか(append-events-locked): decl = 列の宣言・expiry = 期限の境(期限の無い列は None)・
+   at = 鍵の生きた出来事の引きの位置(次が鍵の覚えの引き・その後に組の期限を過ぎた出来事の読みが grouped 個 — touched-reads)。"
+  (#^ StreamDecl decl)
+  (#^ (| EventExpiry None) expiry)
+  (#^ int at)
+  (#^ int grouped))
+
+
+(defrecord InsertAt
+  "束の追記のうち今積む物の、2 往復目の文の束の中の書きの文の位置(答えの番号はその文の答えの行から読む — append-events-locked)。"
+  (#^ int index))
 
 
 ;; --- 文を流す ----------------------------------------------------------------------------------------------
@@ -349,7 +366,7 @@
   {:pre [(: store PreparedStore) (: topics tuple) (: program Program)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "書きの効果(PutRow・PutRows・AppendEvent)の program を、往復をまとめる(batched)書きの錠の transaction で流し、同じ transaction で書きが
+  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)の program を、往復をまとめる(batched)書きの錠の transaction で流し、同じ transaction で書きが
    触る名 topics の合図を出すため(頭の註の「書きの往復」— 錠の番号は writing と同じ)。"
   (<- key (writer-lock-key store.prefix))
   (<- answer (in-transaction store.database key (signalled-ahead store topics program) :batched True))
@@ -1209,9 +1226,9 @@
   #(delete retire))
 
 
-(defk earlier-use [store decl expiry idempotency-key found kept grouped]
+(defk earlier-use [store decl expiry idempotency-key found kept grouped [scheduled (frozenset)]]
   {:pre [(: store PreparedStore) (: decl StreamDecl) (: expiry (| EventExpiry None)) (: idempotency-key str) (: found tuple) (: kept tuple)
-         (: grouped tuple)]
+         (: grouped tuple) (: scheduled frozenset)]
    :post [(: % EarlierUse)]
    :tags {:context "records" :role "foundation"}}
   "冪等キーの前の使いと、追記が触る単位の片付けの文を、追記の 1 往復目の読み(書きの錠の中)から判じるため(#3605 の D — 書きは置き場の
@@ -1220,7 +1237,8 @@
    捨てる物 = 出来事ごとに数える列は鍵の出来事が境の刻(event-expiry — 回収と読みと同じ境)以前に積まれていればそれ・組で数える列は組の
    読みの答え。前の使い = 捨てずに残る生きた出来事・無ければ鍵の覚え(在った覚えは書き換えない — 回収の ON CONFLICT DO NOTHING と同じ)・
    それも無く鍵の出来事を今捨てるならその覚え・どれも無ければ None。出来事を消して覚えを入れる刈りも同じ書きの錠の transaction なので、
-   読みと書きの間に刈りは挟まらない。"
+   読みと書きの間に刈りは挟まらない。scheduled = 同じ transaction の前の追記(束の前の追記)が既に片付ける出来事の番号 — 片付けの文から
+   外す(前の使いの判じには数える — 束の順に AppendEvent を撃てば、前の追記の片付けの後の断面で判じるのと同じ)。"
   (val stream decl.name)
   (var live None)
   (when found
@@ -1231,15 +1249,15 @@
                  (is-not expiry.separator None) (get grouped 0)
                  (and (is-not live None) (<= live.at expiry.before-at)) found
                  True #()))
-  (<- cleanup (retired-events-statements store stream removed))
-  (val removed-sequences (sfor record removed (int (get record 0))))
+  (<- cleanup (retired-events-statements store stream (tuple (gfor record removed :if (not-in (int (get record 0)) scheduled) record))))
+  (val removed-sequences (frozenset (gfor record removed (int (get record 0)))))
   (val previous (cond
                   (and (is-not live None) (not-in live.sequence removed-sequences)) live
                   kept (RetiredKey :idempotency-key idempotency-key :sequence (int (get kept 0 0)) :body-digest (get kept 0 1))
                   (is-not live None) (RetiredKey :idempotency-key live.idempotency-key :sequence live.sequence
                                                  :body-digest (body-digest live.body))
                   True None))
-  (EarlierUse :previous previous :cleanup cleanup))
+  (EarlierUse :previous previous :cleanup cleanup :removed removed-sequences))
 
 
 (defk append-locked [store origin-host writer ask now-ms]
@@ -1268,6 +1286,54 @@
   (<- insert (insert-event-statement store.prefix ask.stream now-ms payload origin-host head.epoch))
   (<- rows (batch-rows store.database (+ use.cleanup #(insert)) True))
   (Appended (int (get (get rows -1) 0 0)) False))
+
+
+(defk append-events-locked [store origin-host writer ask now-ms]
+  {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask AppendEvents) (: now-ms int)]
+   :post [(: % AppendedEvents)]
+   :tags {:context "records" :role "foundation"}}
+  "AppendEvents の束を、追記の数に依らず 2 往復で積むため(頭の註の「書きの往復」・card ki-48c34994ed15): 1 往復目に置き場の頭と、追記ごとの
+   冪等キーの引き・鍵の覚え・(組で数える列は)組の期限を過ぎた出来事を読み、追記ごとに前の使いを判じ(earlier-use — 束の前の追記が片付ける
+   出来事は重ねて片付けない)、2 往復目に片付けと今積む追記の書きを束の順に COMMIT と同じ往復で流す(書きの錠の中なので番号は束の順に増え、
+   間に他の書きは入らない)。束の冪等キーは互いに違う(AppendEvents が作る時に断る)ので、追記ごとの判断は束の前の断面で決まり、束の順に
+   AppendEvent を撃った答えと同じになる。断られた追記は他の追記を止めない。"
+  (<- head-statement (store-head-statement store.prefix))
+  (var reads #(head-statement))
+  (var spans #())
+  (for [one ask.appends]
+    (val decl (store.schema.stream one.stream))
+    (<- expiry (event-expiry decl now-ms))
+    (<- find (find-event-statement store.prefix one.stream one.idempotency-key))
+    (<- lookup (find-retired-key-statement store.prefix one.stream one.idempotency-key))
+    (<- grouping (touched-reads store decl expiry one.idempotency-key))
+    (:= spans (+ spans #((AppendReads :decl decl :expiry expiry :at (len reads) :grouped (len grouping)))))
+    (:= reads (+ reads #(find lookup) grouping)))
+  (<- read (batch-rows store.database reads False))
+  (<- head (head-of (get read 0)))
+  (var scheduled (frozenset))
+  (var statements #())
+  (var answers #())
+  (for [#(one span) (zip ask.appends spans :strict True)]
+    (val start (+ span.at 2))
+    (<- use (earlier-use store span.decl span.expiry one.idempotency-key (get read span.at) (get read (+ span.at 1))
+                         (tuple (cut read start (+ start span.grouped))) scheduled))
+    (:= scheduled (| scheduled use.removed))
+    (:= statements (+ statements use.cleanup))
+    (val verdict (judge-append span.decl one.body use.previous))
+    (when (isinstance verdict Refused)
+      (:= answers (+ answers #(verdict)))
+      (continue))
+    (when (isinstance verdict AppendReplay)
+      (:= answers (+ answers #((Appended verdict.sequence True))))
+      (continue))
+    (<- insert (insert-event-statement store.prefix one.stream now-ms
+                                       (canonical-json {"idempotencyKey" one.idempotency-key "writer" writer "body" one.body})
+                                       origin-host head.epoch))
+    (:= answers (+ answers #((InsertAt :index (len statements)))))
+    (:= statements (+ statements #(insert))))
+  (<- rows (batch-rows store.database statements True))
+  (AppendedEvents (tuple (gfor answer answers
+                               (if (isinstance answer InsertAt) (Appended (int (get (get rows answer.index) 0 0)) False) answer)))))
 
 
 (defk pg-read-events [store ask now-ms]
@@ -1440,6 +1506,12 @@
     (<- now (GetTime))
     (<- topics (notice-topics #() #(stream)))
     (<- answer (reached (batched-writing store topics (append-locked store origin-host writer effect (epoch-ms now)))))
+    (resume answer))
+  (AppendEvents [appends]
+    ;; 束の追記を 1 つの書きの錠の transaction で 2 往復で積み、束が触る列の名を合図する(append-events-locked)。
+    (<- now (GetTime))
+    (<- topics (notice-topics #() (tuple (gfor one appends one.stream))))
+    (<- answer (reached (batched-writing store topics (append-events-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (ReadEvents [stream after limit]
     (<- now (GetTime))

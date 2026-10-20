@@ -413,6 +413,14 @@
   (#^ int sequence)
   (#^ bool replayed))
 
+(defclass [(dataclass :frozen True)] AppendedEvents []
+  "AppendEvents の束の答え(card ki-48c34994ed15): items = 束の順の、追記 1 つごとの答え(Appended | Refused — 束の i 番目の追記の答え =
+   items の i 番目)。断られた追記が在っても他の追記は積まれている(全部か 0 ではない — AppendEvents の註)。"
+  (#^ tuple items)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.items tuple) self.items (all (gfor item self.items (isinstance item #(Appended Refused))))))
+      (raise (TypeError (.format "AppendedEvents.items は Appended | Refused の空でない tuple: {!r}" self.items))))))
+
 (defclass [(dataclass :frozen True)] Event []
   "追記の列の出来事 1 つ。body = JSON の値(深く凍らせる)/ at = 積んだ時刻(epoch ミリ秒)/ writer = 積んだ書き手の名。"
   (#^ str stream)
@@ -527,3 +535,4 @@
 (val ReadStreamEndAnswer (| StreamEnd StreamEmpty Unreachable))
 (val ReadEventByKeyAnswer (| Event EventAbsent EventRetired Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))
+(val AppendEventsAnswer (| AppendedEvents Unreachable))

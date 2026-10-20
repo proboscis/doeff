@@ -37,6 +37,7 @@ from doeff_records.values import Changes as Changes
 from doeff_records.values import RowChanged as RowChanged
 from doeff_records.values import RowRemoved as RowRemoved
 from doeff_records.values import Appended as Appended
+from doeff_records.values import AppendedEvents as AppendedEvents
 from doeff_records.values import Events as Events
 from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
@@ -58,6 +59,8 @@ from doeff_records.effects import RowWrite as RowWrite
 from doeff_records.effects import WatchChanges as WatchChanges
 from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
+from doeff_records.effects import AppendEvents as AppendEvents
+from doeff_records.effects import EventAppend as EventAppend
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records.effects import ReadEventByKey as ReadEventByKey
@@ -153,6 +156,9 @@ def law_any_of_list_equals_the_union_of_equal_lists(harness: LawHarness) -> _Pro
     ...
 
 def law_append_is_idempotent(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_append_events_answer_like_appends_in_order(harness: LawHarness) -> _Program[list[object], object]:
     ...
 TRAIL_KEYS: tuple[str, ...]
 TRAIL_HEADS: tuple[str, ...]

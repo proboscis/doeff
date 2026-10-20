@@ -1,4 +1,4 @@
-;;; memory の handler — 公開 effect 9 つと列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 10 個と列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
@@ -48,12 +48,12 @@
 (import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
+                              AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
                               EventAbsent EventRetired])
 (import doeff_records.watching [closing-wake?])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey
-                               AwaitRecordsBack ReadSourcePatience])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
+                               ReadStreamEnd ReadEventByKey AwaitRecordsBack ReadSourcePatience])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
 (import doeff_records.store_choice [StoreChoice])
@@ -665,6 +665,22 @@
              (Appended event.sequence False))))
 
 
+(defn #^ object memory-append-one [#^ MemoryStore store #^ str writer #^ EventAppend one #^ (| StoreFault None) fault #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-append-events が束の順に呼ぶ)
+  "束の追記 1 つを、同じ追記の AppendEvent として memory-append で判じて積むため。故障 fault の当たった追記は、lands でなければ積まずに
+   故障の答え・lands なら積んでから故障の答え(answered と同じ差し替えを追記ごとに)。"
+  (setv single (AppendEvent one.stream one.idempotency-key one.body))
+  (cond
+    (is fault None) (memory-append store writer single now-ms)
+    (not fault.lands) fault.answer
+    True (do (memory-append store writer single now-ms) fault.answer)))
+
+
+(defn #^ AppendedEvents memory-append-events [#^ MemoryStore store #^ str writer #^ AppendEvents ask #^ tuple faults #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-append と同じ作法)
+  "AppendEvents の束に答えるため(card ki-48c34994ed15): 錠の内で束の順に追記 1 つずつを memory-append-one で判じて積む(間に他の書きは
+   入らない — 番号は束の順に増え、断られた追記は他の追記を止めない)。faults = 追記ごとに当たる故障(append-faults の答え — 無ければ None)。"
+  (AppendedEvents (tuple (gfor #(one fault) (zip ask.appends faults :strict True) (memory-append-one store writer one fault now-ms)))))
+
+
 (defn #^ (| Events NotIndexed) memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ReadEvents に答えるため: 刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない(上限の前に除く)。key-head を付けた読みは、
    冪等キーの頭が key-head の出来事だけを数える(列が頭で引けなければ NotIndexed)。"
@@ -787,7 +803,7 @@
 
 (defk answered [store operation names ask program]
   {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
-   ;; 答え = 公開 effect 9 つと WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
+   ;; 答え = 公開 effect 10 個と WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
                   Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty Event EventAbsent EventRetired))]
    :tags {:context "records" :role "foundation"}}
@@ -803,13 +819,44 @@
   (if (is fault None) answer fault.answer))
 
 
+(defk append-faults [store appends]
+  {:pre [(: store MemoryStore) (: appends (get tuple #(EventAppend ...)))] :post [(: % (get tuple #((| StoreFault None) ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "束の追記ごとに当たる故障(無ければ None)を、同じ追記を 1 つ撃った AppendEvent として探すため(故障の matching は AppendEvent を受ける —
+   束にしても、追記 1 つに置いた故障は同じ追記に当たる)。"
+  (var found #())
+  (for [one appends]
+    (<- fault (| StoreFault None) (fault-for store StoreOperation.WRITE #(one.stream) (AppendEvent one.stream one.idempotency-key one.body)))
+    (:= found (+ found #(fault))))
+  found)
+
+
+(defk answered-appends [store writer ask]
+  {:pre [(: store MemoryStore) (: writer str) (: ask AppendEvents)] :post [(: % (| AppendedEvents Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "AppendEvents の束の答え(answered の束の形 — card ki-48c34994ed15): 届かない状態(SetStoreOutage)が束の列のどれかに当たれば Unreachable・
+   次に追記ごとの故障を探し、置き場に着けない Unreachable の故障が 1 つでも当たれば束のどれも積まずに Unreachable(束は 1 つの書き —
+   AppendEvents の註)・そうでなければ錠の内で束を積み(memory-append-events — Refused の故障は追記ごとに差し替える)、置き場に着けてから
+   答える Unreachable の故障が当たっていれば全部を積んだ後に Unreachable で答える。"
+  (val down (unreachable-for store (tuple (gfor one ask.appends one.stream))))
+  (when down
+    (return down))
+  (<- faults (get tuple #((| StoreFault None) ...)) (append-faults store ask.appends))
+  (val cut (next (gfor fault faults :if (and (is-not fault None) (not fault.lands) (isinstance fault.answer Unreachable)) fault) None))
+  (when (is-not cut None)
+    (return cut.answer))
+  (<- answer (at-now store (fn [now-ms] (memory-append-events store writer ask faults now-ms))))
+  (val landed-cut (next (gfor fault faults :if (and (is-not fault None) (isinstance fault.answer Unreachable)) fault) None))
+  (if (is landed-cut None) answer landed-cut.answer))
+
+
 (defk at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
    ;; 答え = 置き場の操作の答え(公開 effect の答えの型のどれか)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended Events StreamEnd StreamEmpty))]
+                  Changes Appended AppendedEvents Events StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
-  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(書きの節 PutRow・PutRows・AppendEvent の置き場の
+  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(書きの節 PutRow・PutRows・AppendEvent・AppendEvents の置き場の
    操作の形 — 回収は走らせない。書きの操作が自分の触る物だけを片付ける・頭の註・#3605 の D。回収は SweepExpired だけ。読みの節は
    read-at-now)。"
   (<- now (GetTime))
@@ -893,6 +940,10 @@
     (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- answer (answered store WRITE #(stream) effect (at-now store (fn [now-ms] (memory-append store writer effect now-ms)))))
+    (resume answer))
+  (AppendEvents [appends]
+    ;; 届かない状態と故障は束の追記ごとに当てる(answered-appends — 追記 1 つに置いた故障は束の中の同じ追記に当たる)。
+    (<- answer (answered-appends store writer effect))
     (resume answer))
   (ReadEvents [stream after limit]
     (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-events store effect now-ms)))))

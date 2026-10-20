@@ -22,6 +22,8 @@ from doeff import Program
 from doeff_records.values import RetiredKey
 from doeff_records.effects import (
     AppendEvent,
+    AppendEvents,
+    EventAppend,
     ListRows,
     PutRow,
     PutRows,
@@ -38,6 +40,7 @@ from doeff_records.store_choice import StoreChoice
 from doeff_records.event_source import ChangedRow, SignalSourceFactory, SignalTables
 from doeff_records.values import (
     Appended,
+    AppendedEvents,
     Changes,
     Conflict,
     Event,
@@ -120,7 +123,7 @@ class MemoryStore:
     def __init__(self, schema: RecordsSchema) -> None: ...
     def __deepcopy__(self, memo: dict[int, object]) -> MemoryStore: ...
 
-#: 公開 effect 9 つと WatchEvents の答えの型のどれか(answered・at-now の :post)。
+#: 公開 effect 10 個と WatchEvents の答えの型のどれか(answered・at-now の :post)。
 _StoreAnswer = (
     Row
     | Missing
@@ -136,6 +139,7 @@ _StoreAnswer = (
     | RowsRefused
     | Changes
     | Appended
+    | AppendedEvents
     | Events
     | EventsMoved
     | EventsQuiet
@@ -161,6 +165,12 @@ def memory_put_rows(
 ) -> WrittenRows | RowsConflict | RowsRefused: ...
 def memory_watch_scan(store: MemoryStore, ask: WatchChanges, now_ms: int) -> object: ...
 def memory_append(store: MemoryStore, writer: str, ask: AppendEvent, now_ms: int) -> object: ...
+def memory_append_one(
+    store: MemoryStore, writer: str, one: EventAppend, fault: StoreFault | None, now_ms: int
+) -> object: ...
+def memory_append_events(
+    store: MemoryStore, writer: str, ask: AppendEvents, faults: tuple[StoreFault | None, ...], now_ms: int
+) -> AppendedEvents: ...
 def memory_read_events(store: MemoryStore, ask: ReadEvents, now_ms: int) -> Events: ...
 def memory_read_stream_end(store: MemoryStore, ask: ReadStreamEnd, now_ms: int) -> StreamEnd | StreamEmpty: ...
 def memory_read_event_by_key(store: MemoryStore, ask: ReadEventByKey, now_ms: int) -> Event | EventAbsent | EventRetired: ...
@@ -183,6 +193,9 @@ def answered(
     ask: object,
     program: Program[_StoreAnswer, object],
 ) -> Program[_StoreAnswer, object]: ...
+# 追記の束の故障の当て方と答え(card ki-48c34994ed15 — 故障は束の追記ごとに、同じ追記の AppendEvent として当たる)。
+def append_faults(store: MemoryStore, appends: tuple[EventAppend, ...]) -> Program[tuple[StoreFault | None, ...], object]: ...
+def answered_appends(store: MemoryStore, writer: str, ask: AppendEvents) -> Program[AppendedEvents | Unreachable, object]: ...
 # 書きの節の形(保持の回収の後に operation)と読みの節の形(回収しない — 読みの関数が期限を見る・#3561)。
 def at_now(store: MemoryStore, operation: Callable[[int], _StoreAnswer]) -> Program[_StoreAnswer, object]: ...
 def read_at_now(store: MemoryStore, operation: Callable[[int], _StoreAnswer]) -> Program[_StoreAnswer, object]: ...

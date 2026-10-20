@@ -20,10 +20,10 @@
 (import doeff_time [Delay GetTime])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
-                              Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused
+                              Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
-                               ReadEventByKey])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
+                               ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
 (import doeff_records.admission [row-matches? epoch-ms key-text])
@@ -565,6 +565,49 @@
   (<- tail (as-writer harness MAKER (ReadEvents "journal" :after a1.sequence)))
   (<- (require-law (= (lfor e tail.items e.idempotency-key) ["k2" "k3"]) law (.format "after より後: {!r}" tail)))
   [a1 a2 again other stranger big read tail])
+
+
+;; --- 法 7c: 追記の束は束の順の追記と同じ答え(card ki-48c34994ed15)----------------------------------------------
+
+(defk law-append-events-answer-like-appends-in-order [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "追記の束(AppendEvents)の法: 束の答えは、束の順に AppendEvent を 1 つずつ撃った答えと同じ — 追記ごとに冪等キーの再送は前の番号
+   (replayed)・別の本文と上限は Refused で、断られた追記は束の他の追記を止めない。今積んだ追記の番号は束の順に増え、束の前の出来事より
+   大きい。列をまたぐ束も 1 つで積み、読みは列ごとに束の順の出来事を返す。同じ束の再送は追記ごとに再送と名乗る。1 つの要求で原因と本体の
+   出来事を積む書き手が、2 回の追記を 1 回の束に替えても答えが変わらないため。どの置き場の組も同じ答えを返すことを確かめる。"
+  (val law "追記の束は束の順に AppendEvent を撃った答えと同じ(断りは他の追記を止めない・番号は束の順)")
+  (<- seed (as-writer harness MAKER (AppendEvent "journal" "b1" {"n" 1})))
+  (val appends #((EventAppend "pairs" "ask:b" {"n" 2})
+                 (EventAppend "journal" "b1" {"n" 1})
+                 (EventAppend "journal" "b-big" {"n" (* "x" 300)})
+                 (EventAppend "journal" "b2" {"n" 3})))
+  (<- batch (as-writer harness MAKER (AppendEvents appends)))
+  (<- (require-law (and (isinstance batch AppendedEvents) (= (len batch.items) (len appends))) law (.format "束の答え: {!r}" batch)))
+  (val ask (get batch.items 0))
+  (val fresh (get batch.items 3))
+  (<- (require-law (and (isinstance seed Appended) (isinstance ask Appended) (is ask.replayed False) (> ask.sequence seed.sequence)
+                        (! (replay-of (get batch.items 1) seed)) (isinstance (get batch.items 2) Refused)
+                        (isinstance fresh Appended) (is fresh.replayed False) (> fresh.sequence ask.sequence))
+                   law (.format "追記ごとの答えと番号の順: {!r}(種 {!r})" batch seed)))
+  (<- again (as-writer harness MAKER (AppendEvents appends)))
+  (<- (require-law (and (isinstance again AppendedEvents) (= (len again.items) (len appends))) law (.format "同じ束の再送の答え: {!r}" again)))
+  (<- (require-law (and (! (replay-of (get again.items 0) ask)) (! (replay-of (get again.items 1) seed))
+                        (isinstance (get again.items 2) Refused) (! (replay-of (get again.items 3) fresh)))
+                   law (.format "同じ束の再送は追記ごとに再送と名乗る: {!r}" again)))
+  (<- mixed (as-writer harness MAKER (AppendEvents #((EventAppend "journal" "b2" {"n" 9}) (EventAppend "journal" "b3" {"n" 4})))))
+  (<- (require-law (and (isinstance mixed AppendedEvents) (= (len mixed.items) 2) (isinstance (get mixed.items 0) Refused)
+                        (isinstance (get mixed.items 1) Appended) (is (. (get mixed.items 1) replayed) False)
+                        (> (. (get mixed.items 1) sequence) fresh.sequence))
+                   law (.format "前の追記の断りは後の追記を止めない: {!r}" mixed)))
+  (<- journal (as-writer harness MAKER (ReadEvents "journal")))
+  (<- (require-law (= (lfor e journal.items #(e.idempotency-key e.body e.writer))
+                      [#("b1" {"n" 1} MAKER) #("b2" {"n" 3} MAKER) #("b3" {"n" 4} MAKER)])
+                   law (.format "列 journal の出来事: {!r}" journal)))
+  (<- pairs (as-writer harness MAKER (ReadEvents "pairs")))
+  (<- (require-law (= (lfor e pairs.items #(e.idempotency-key e.sequence)) [#("ask:b" ask.sequence)])
+                   law (.format "列 pairs の出来事: {!r}" pairs)))
+  [seed batch again mixed journal pairs])
 
 
 ;; --- 法 7b: 冪等キーの頭で引く ReadEvents は全部の出来事を読んで頭で絞った列と同じ ------------------------------
@@ -1259,8 +1302,9 @@
 
 
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
-;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
-;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
+;; law-put-rows-is-all-or-nothing と law-append-events-answer-like-appends-in-order は SHARED-LAWS に入れない — SHARED-LAWS は前からの
+;; 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを
+;; 比べている。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
             "epoch-change-resets" law-epoch-change-resets
@@ -1271,6 +1315,7 @@
             "descending-pages-follow-the-sorted-scan" law-descending-pages-follow-the-sorted-scan
             "any-of-list-equals-the-union-of-equal-lists" law-any-of-list-equals-the-union-of-equal-lists
             "append-is-idempotent" law-append-is-idempotent
+            "append-events-answer-like-appends-in-order" law-append-events-answer-like-appends-in-order
             "key-head-read-equals-filtered-scan" law-key-head-read-equals-filtered-scan
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append

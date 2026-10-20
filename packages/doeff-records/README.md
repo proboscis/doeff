@@ -19,6 +19,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence)`(列に今ある、保持の期限を過ぎていない最後の出来事の番号)か `StreamEmpty()`(そういう出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
 | `ReadEventByKey(stream, idempotency_key)` | 追記の列・冪等キー | `Event`(その鍵で積んだ出来事 — `ReadEvents` が出すのと同じ)か `EventAbsent()`(その鍵ではまだ積んでいない)か `EventRetired(sequence)`(積まれたが保持の期限を過ぎた — 消えた出来事の番号)。列を辿らず、置き場の (列, 冪等キー) の一意の索引で答える(#3750) | `Unreachable` |
 | `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
+| `AppendEvents(appends)` | 追記の束 = `EventAppend(stream, idempotency_key, body)`(欄と意味は `AppendEvent` と同じ)の空でない tuple。同じ列の同じ冪等キーが 2 度出る束は作る時に `ValueError` | `AppendedEvents(items)`(束の順の、追記ごとの `Appended` か `Refused`) | `Unreachable`(束の全部が積まれたか、どれも積まれていない) |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
 (`doeff_cluster.shared.intent.semaphore_model`)をそのまま使う。
@@ -61,6 +62,11 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   先に見て(合わない行があれば束の順で最初の行の `RowsConflict`)、次に全部の行の書きの判定を見る(最初に断られた行の `RowsRefused`)。
   確定した束は変更の列に束の順で 1 行ずつ、続いた番号で積む。PostgreSQL の handler は `PutRow` と同じ置き場の lock と
   transaction 1 つの中で全部の行を検めてから書くので、書きの途中の失敗は transaction ごと戻る。
+- `AppendEvents` は追記の束を置き場への 1 往復で積む(card ki-48c34994ed15 — 1 つの要求で原因と本体の 2 つの出来事を積む書き手が、書きの錠と
+  往復を 2 回順に待たないため)。答えは束の順に `AppendEvent` を 1 つずつ、間に他の書きを挟まずに撃った答えと同じ: 追記ごとに冪等キーの
+  再送は前の番号・別の本文と上限は `Refused` で、断られた追記は束の他の追記を止めない(`PutRows` と違い全部か 0 ではない)。今積んだ追記の
+  番号は束の順に増える。PostgreSQL の handler は追記の数に依らず `AppendEvent` と同じ書きの錠の transaction 1 つ・2 往復で積む(法
+  `law_append_events_answer_like_appends_in_order`)。
 - `WatchChanges` は確定した変更を、番号の順にちょうど 1 回ずつ返す(断られた書き・衝突した書きは出ない)。位置の `epoch` が置き場の版と
   違えば `Reset` を返すので、一覧から読み直す。
 - `WatchChanges` の `streams` に追記の列を名指すと、答えの `tails` に名指した順で列ごとの末尾が載る(最後の生きている出来事の番号と刻 —
@@ -148,6 +154,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
 | `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
 | `POST /v1/records/read-event-by-key` | `{stream, idempotencyKey}` | `event`(`event` = `read-events` の `items` と同じ形の出来事 1 つ)/ `eventAbsent` / `eventRetired`(`sequence`) |
+| `POST /v1/records/append-events` | `{appends: [{stream, idempotencyKey, body}, …]}`(1 つ以上・同じ列の同じ冪等キーは 1 度だけ — 外れれば 400。古い service は操作を知らず 404 なので、束で積む client より先に service を新しい版で起こす) | `appendedEvents`(`items` = 束の順の `appended` / `refused` の列) |
 | `GET /healthz` | — | `{status: "ok"}` |
 | `GET /metrics` | — | Prometheus の text(`text/plain; version=0.0.4`)— 身元を問わない |
 | `GET /served` | — | `{commits: {<repo>: <sha>} \| null, instance: <世代> \| null, schemaDigests: {<表>: <sha256>}}` — 身元も表の用意も置き場も問わない(#2742) |
@@ -173,7 +180,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   `StoreUnreachable(reason)`(`RecordsServing.readiness` が届かないと答えた・503)/ `StoreSilent(seconds)`(上限 1 秒の内に答えない・503)。
   `readiness` が None の置き場は届く。memory の置き場の選び(`memory-store-choice`)の `readiness` は、置き場全体の止まり(名の無い
   `faults.SetStoreOutage`)の間だけ届かない(名を限った止まりは届く — PostgreSQL の `SELECT 1` と同じ意味)。
-- 計器(#2709): 要求の task は答えを送った直後に、要求の種(`write` = put-row・put-rows・append-event / `read` = 残りの記録の操作 /
+- 計器(#2709): 要求の task は答えを送った直後に、要求の種(`write` = put-row・put-rows・append-event・append-events / `read` = 残りの記録の操作 /
   `other` = 記録の操作でない route)と実際に送った答えの status ごとの counter `records_requests_<種>_<status>` を doeff の `CountMetric` で
   1 つ数える(本文の断りの 400・答えの途中で落ちた 500 も同じ 1 か所)。答えの送りが例外になれば、標準の誤りへ 1 行名指して 500 internal を
   1 度だけ送り直し、500 として数える(送れなかった答えの status は数えない)。`GET /metrics` は身元を引く前に答え、`ReadMeter` の断面を
@@ -274,6 +281,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
 | `law_none_removes_a_field` | 差分の値 None はその欄を消し、行の値は None を持たない |
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
+| `law_append_events_answer_like_appends_in_order` | `AppendEvents` の答えは束の順に `AppendEvent` を撃った答えと同じ — 追記ごとの再送・断り・新しい番号を返し、断られた追記は他の追記を止めず、今積んだ番号は束の順に増え、列をまたぐ束も 1 つで積む |
 | `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
 | `law_expired_keys_are_remembered` | 保持の期限で出来事を消した後も冪等キーは忘れない: 同じ本文の再送は前の番号で列の出来事を増やさず、別の本文は `Refused` |
 | `law_expired_records_are_unseen_before_a_sweep` | 保持の期限を過ぎた行と出来事(出来事ごと・組ごとの列)は、回収の前でも 6 つの読みのどれにも出ない。期限を過ぎた行の `RowRemoved` は別の表への書きでは積まれず、回収(`SweepExpired`)が 1 回だけ積む |
@@ -282,7 +290,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも
-確かめられる(`SHARED_LAWS` は時間を進めない法のうち、前からの 6 つの effect だけで回る法 — `PutRows` を答えない handler の組でも回せる)。置き場の版を進める検の口は `doeff_records.faults.AdvanceStoreEpoch`(公開 effect ではない)。置き場に届かない状態を起こす・戻す検の口は `doeff_records.faults.SetStoreOutage`(届かない理由 detail と、対象の表と追記の列の名 names — None で全部)で、memory の置き場が答える: 届かない間、名に当たる公開 effect は `Unreachable(detail)` を答え、置き場を変えない(本番の記録の口が service に届かない時と同じ答え)。記録の service の不達を筋書きにする検と模擬は、業務の effect に答える偽の handler を書かず、この口で正典の置き場を届かなくする。置き場の一部だけの断りを起こす・外す検の口は `doeff_records.faults.AddStoreFault(StoreFault(...))` と `ClearStoreFaults(names)`(names と名が重なる故障を外す — None で全部)で、これも memory の置き場が答える。`StoreFault` は名 names(表と追記の列の名の frozenset)・操作 operation(`StoreOperation.READ` = `ReadRow`・`ListRows`・`WatchChanges`・`ReadEvents`・`ReadStreamEnd` / `StoreOperation.WRITE` = `PutRow`・`PutRows`・`AppendEvent`)・答え answer(`Refused` か `Unreachable`)・lands(True なら書きを置き場に着けてから答えを差し替える — 書きは届いたが答えが切れた形)・matching(effect を受けて当たるかを返す関数 — None で名と操作に当たる全部)を持つ。`PutRows` は束の中に当たる表が 1 つでもあれば束ごと当たる。故障は置いた順に探して最初の 1 つが答え、置き場全体の不達(`SetStoreOutage`)がそれより先に答える。doeff の実行の外で筋書きを組む使い手は、同じ書きの同期の口 `doeff_records.memory.memory-add-fault` / `memory-clear-faults` を使う。
+確かめられる(`SHARED_LAWS` は時間を進めない法のうち、前からの 6 つの effect だけで回る法 — `PutRows` を答えない handler の組でも回せる)。置き場の版を進める検の口は `doeff_records.faults.AdvanceStoreEpoch`(公開 effect ではない)。置き場に届かない状態を起こす・戻す検の口は `doeff_records.faults.SetStoreOutage`(届かない理由 detail と、対象の表と追記の列の名 names — None で全部)で、memory の置き場が答える: 届かない間、名に当たる公開 effect は `Unreachable(detail)` を答え、置き場を変えない(本番の記録の口が service に届かない時と同じ答え)。記録の service の不達を筋書きにする検と模擬は、業務の effect に答える偽の handler を書かず、この口で正典の置き場を届かなくする。置き場の一部だけの断りを起こす・外す検の口は `doeff_records.faults.AddStoreFault(StoreFault(...))` と `ClearStoreFaults(names)`(names と名が重なる故障を外す — None で全部)で、これも memory の置き場が答える。`StoreFault` は名 names(表と追記の列の名の frozenset)・操作 operation(`StoreOperation.READ` = `ReadRow`・`ListRows`・`WatchChanges`・`ReadEvents`・`ReadStreamEnd` / `StoreOperation.WRITE` = `PutRow`・`PutRows`・`AppendEvent`・`AppendEvents`)・答え answer(`Refused` か `Unreachable`)・lands(True なら書きを置き場に着けてから答えを差し替える — 書きは届いたが答えが切れた形)・matching(effect を受けて当たるかを返す関数 — None で名と操作に当たる全部)を持つ。`PutRows` は束の中に当たる表が 1 つでもあれば束ごと当たる。`AppendEvents` は束の追記ごとに、同じ追記の `AppendEvent` として当たる(置き場に着けない `Unreachable` の故障が 1 つでも当たれば束のどれも積まずに `Unreachable`・`Refused` の故障はその追記だけを断る)。故障は置いた順に探して最初の 1 つが答え、置き場全体の不達(`SetStoreOutage`)がそれより先に答える。doeff の実行の外で筋書きを組む使い手は、同じ書きの同期の口 `doeff_records.memory.memory-add-fault` / `memory-clear-faults` を使う。
 
 ## 検
 

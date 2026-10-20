@@ -5,6 +5,7 @@
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
+                            law-append-events-answer-like-appends-in-order
                             law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
@@ -115,6 +116,13 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-append-is-idempotent harness))
+  (assert transcript))
+
+(deftest test-append-events-answer-like-appends-in-order
+  ;; card ki-48c34994ed15: 追記の束は束の順に AppendEvent を撃った答えと同じ(断りは他の追記を止めない・番号は束の順)— 4 つの組で。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-append-events-answer-like-appends-in-order harness))
   (assert transcript))
 
 (deftest test-key-head-read-equals-filtered-scan

@@ -749,7 +749,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/effects.hy"
       ],
-      "responsibility": "記録の公開 effect 9 つ(ReadRow・ListRows・PutRow・WatchChanges・AppendEvent・ReadEvents・PutRows・ReadStreamEnd・ReadEventByKey)と PutRows の書きの束の 1 行 RowWrite の宣言。書き手の身元は引数にしない",
+      "responsibility": "記録の公開 effect 10 個(ReadRow・ListRows・PutRow・WatchChanges・AppendEvent・ReadEvents・PutRows・ReadStreamEnd・ReadEventByKey・AppendEvents)と PutRows の書きの束の 1 行 RowWrite・AppendEvents の追記の束の 1 つ EventAppend の宣言。書き手の身元は引数にしない",
       "layer": "effects",
       "public": [
         "packages/doeff-records/src/doeff_records/effects.hy"

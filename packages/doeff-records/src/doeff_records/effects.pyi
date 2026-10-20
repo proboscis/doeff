@@ -13,6 +13,7 @@ from doeff import EffectBase
 from doeff_hy.frozen import FrozenMap
 from doeff_records.values import (
     AppendEventAnswer,
+    AppendEventsAnswer,
     Expectation,
     ListCursor,
     ListRowsAnswer,
@@ -35,6 +36,7 @@ WHERE_ANY_LIMIT: int
 def checked_key(key: object, what: str) -> tuple[str, ...]: ...
 def checked_limit(limit: object, what: str) -> int: ...
 def check_row_write(write: PutRow | RowWrite, what: str) -> None: ...
+def check_event_append(append: AppendEvent | EventAppend, what: str) -> None: ...
 @dataclass(frozen=True)
 class ReadRow(EffectBase[ReadRowAnswer]):
     table: str
@@ -81,6 +83,16 @@ class AppendEvent(EffectBase[AppendEventAnswer]):
     stream: str
     idempotency_key: str
     body: object
+
+@dataclass(frozen=True)
+class EventAppend:
+    stream: str
+    idempotency_key: str
+    body: object
+
+@dataclass(frozen=True)
+class AppendEvents(EffectBase[AppendEventsAnswer]):
+    appends: tuple[EventAppend, ...]
 
 @dataclass(frozen=True)
 class WatchEvents(EffectBase[WatchEventsAnswer]):

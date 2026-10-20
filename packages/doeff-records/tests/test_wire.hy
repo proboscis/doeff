@@ -7,9 +7,9 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
                               WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved
-                              EventsQuiet EventAbsent EventRetired])
+                              EventsQuiet EventAbsent EventRetired AppendedEvents])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
-                               ReadEventByKey WHERE-ANY-LIMIT])
+                               ReadEventByKey AppendEvents EventAppend WHERE-ANY-LIMIT])
 (import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
@@ -42,7 +42,10 @@
    (ReadEventByKey "journal" "k1")
    (PutRows #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
               (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))
-              (RowWrite "parts" #("p2") {} (ExpectAny))))])
+              (RowWrite "parts" #("p2") {} (ExpectAny))))
+   ;; 追記の束(card ki-48c34994ed15)— 列をまたぐ束・文字列の本文。
+   (AppendEvents #((EventAppend "pairs" "cause:r1" {"n" [1 {"m" None}]})
+                   (EventAppend "journal" "k1" "a string body")))])
 
 ;; 答え → それを答えてよい操作。
 (setv ANSWERS
@@ -77,7 +80,8 @@
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
    #("put-rows" (RowsConflict 1 "tickets" #("g1" "t1") ROW))
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
-   #("put-rows" (RowsRefused 2 "parts" #("p2") "書き手でない"))])
+   #("put-rows" (RowsRefused 2 "parts" #("p2") "書き手でない"))
+   #("append-events" (AppendedEvents #((Appended 7 False) (Refused "別の本文") (Appended 3 True))))])
 
 
 (defn through-json [value]
@@ -177,6 +181,13 @@
                            #("put-rows" {"writes" [{"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "any"}}
                                                    {"table" "parts" "key" ["p1"] "value" {"label" "b"} "expect" {"kind" "any"}}]})
                            #("put-rows" {"writes" [] "extra" 1})
+                           ;; 追記の束: 空の束・配列でない束・欄の足りない追記・同じ列の同じ冪等キーが 2 度・知らない鍵は断る。
+                           #("append-events" {"appends" []})
+                           #("append-events" {"appends" {"stream" "journal"}})
+                           #("append-events" {"appends" [{"stream" "journal" "idempotencyKey" "k1"}]})
+                           #("append-events" {"appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}
+                                                         {"stream" "journal" "idempotencyKey" "k1" "body" 2}]})
+                           #("append-events" {"appends" [] "extra" 1})
                            #("drop-table" {})
                            #("read-row" ["not" "an" "object"])]]
     (try
@@ -192,6 +203,10 @@
                            #("put-rows" {"kind" "rowsConflict" "index" 0 "table" "parts" "key" ["p1"]
                                          "current" {"kind" "refused" "reason" "x"}})
                            #("put-rows" {"kind" "rowsRefused" "index" "0" "table" "parts" "key" ["p1"] "reason" "x"})
+                           ;; 追記の束の答えの items は appended | refused の列だけ。
+                           #("append-events" {"kind" "appended" "sequence" 1 "replayed" False})
+                           #("append-events" {"kind" "appendedEvents" "items" [{"kind" "missing"}]})
+                           #("append-events" {"kind" "appendedEvents" "items" {"kind" "appended"}})
                            ;; 確定の刻 at の無い変更は、刻を黙って既定に倒さず断る。
                            #("watch-changes" {"kind" "changes" "cursor" {"epoch" 1 "sequence" 5}
                                               "items" [{"kind" "rowChanged" "table" "parts" "key" ["p1"] "version" 1

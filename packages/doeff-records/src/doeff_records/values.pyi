@@ -196,6 +196,10 @@ class Appended:
     replayed: bool
 
 @dataclass(frozen=True)
+class AppendedEvents:
+    items: tuple[Appended | Refused, ...]
+
+@dataclass(frozen=True)
 class Event:
     stream: str
     sequence: int
@@ -290,4 +294,5 @@ WatchEventsAnswer: TypeAlias = EventsMoved | EventsQuiet | Unreachable
 ReadStreamEndAnswer: TypeAlias = StreamEnd | StreamEmpty | Unreachable
 ReadEventByKeyAnswer: TypeAlias = Event | EventAbsent | EventRetired | Unreachable
 PutRowsAnswer: TypeAlias = WrittenRows | RowsConflict | RowsRefused | Unreachable
+AppendEventsAnswer: TypeAlias = AppendedEvents | Unreachable
 

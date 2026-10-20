@@ -9,13 +9,14 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
-                              StreamEnd StreamEmpty Event EventAbsent EventRetired])
-(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadEvents ReadStreamEnd ReadEventByKey])
+                              StreamEnd StreamEmpty Event EventAbsent EventRetired AppendedEvents])
+(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
+                            law-append-events-answer-like-appends-in-order
                             law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
@@ -171,6 +172,40 @@
     (<- answer (AppendEvent stream (. (uuid.uuid4) hex) body))
     (resume answer)))
 
+(defk appended-until-refused [appends]
+  {:pre [(: appends tuple)] :post [(: % AppendedEvents)]}
+  "束を追記 1 つずつ撃ち、最初の断りから後を積まずに断る — 断りで束を止める handler の顔の答え(card ki-48c34994ed15)。"
+  (var items #())
+  (var stopped False)
+  (for [one appends]
+    (if stopped
+        (:= items (+ items #((Refused "前の追記の断りで束を止めた"))))
+        (do (<- answer (AppendEvent one.stream one.idempotency-key one.body))
+            (:= stopped (isinstance answer Refused))
+            (:= items (+ items #(answer))))))
+  (AppendedEvents items))
+
+(defhandler stop-appends-at-a-refusal []
+  ;; 断りで束を止める handler の顔: 断られた追記の後の追記を積まない(束を全部か 0 に近づけた形)。
+  (AppendEvents [appends]
+    (<- answer (appended-until-refused appends))
+    (resume answer)))
+
+(defk appended-in-reverse [appends]
+  {:pre [(: appends tuple)] :post [(: % AppendedEvents)]}
+  "束を後ろから 1 つずつ撃ち、答えだけを束の順に並べ直す — 番号を束の順に振らない handler の顔の答え。"
+  (var answers #())
+  (for [one (reversed appends)]
+    (<- answer (AppendEvent one.stream one.idempotency-key one.body))
+    (:= answers (+ #(answer) answers)))
+  (AppendedEvents answers))
+
+(defhandler appends-in-reverse []
+  ;; 番号を束の逆の順に振る handler の顔: 束の後の追記が前の追記より小さい番号になる。
+  (AppendEvents [appends]
+    (<- answer (appended-in-reverse appends))
+    (resume answer)))
+
 (defk end-over-every-stream []
   {:pre [] :post [(: % (| StreamEnd StreamEmpty))]}
   "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。"
@@ -249,6 +284,8 @@
                       #(law-any-of-list-equals-the-union-of-equal-lists ignore-where-any)
                       #(law-any-of-list-equals-the-union-of-equal-lists first-of-any)
                       #(law-append-is-idempotent (forget-idempotency))
+                      #(law-append-events-answer-like-appends-in-order (stop-appends-at-a-refusal))
+                      #(law-append-events-answer-like-appends-in-order (appends-in-reverse))
                       #(law-key-head-read-equals-filtered-scan (ignore-key-head))
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))

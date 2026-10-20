@@ -1,16 +1,18 @@
-;;; 記録の仕組みの公開 effect 9 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
+;;; 記録の仕組みの公開 effect 10 個(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
 ;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。WatchChanges は名指した列(streams)の末尾の
 ;;; 番号と刻も答えに載せる(Changes.tails — #3718)。
 ;;; 9 つ目の ReadEventByKey は追記の列の出来事を冪等キーで 1 つ引く(列を頭から読まずに、置き場の (列, 冪等キー) の一意の索引で答える —
 ;;; 出自の issue は #3750)。
+;;; 10 個目の AppendEvents は追記の束(束の追記 1 つ = EventAppend — AppendEvent と同じ欄)を置き場への 1 往復で積む(1 つの要求で原因と
+;;; 本体の 2 つの出来事を積む書き手が、置き場の書きの錠と往復を 2 回順に待たないため — card ki-48c34994ed15)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
 ;;;
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
-;;; 欄 → 値の写像(PutRow.value・ListRows.where・ListRows.where-any)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を
-;;; 渡してもよい — where-any の組の配列は tuple になる)。
+;;; 欄 → 値の写像(PutRow.value・ListRows.where・ListRows.where-any)と出来事の本文(AppendEvent.body・EventAppend.body)は、作る時に深く
+;;; 凍らせる(dict を渡してもよい — where-any の組の配列は tuple になる)。
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
@@ -167,6 +169,14 @@
       (raise (ValueError (.format "WatchChanges.streams に同じ列が 2 度出る: {!r}" self.streams))))))
 
 
+(defn #^ None check-event-append [#^ object append #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+  "追記 1 つの欄(stream・idempotency-key・body)を作る時に検め、body を深く凍らせる — AppendEvent と EventAppend の検めを 1 つにするため。"
+  (object.__setattr__ append "body" (freeze-json append.body))
+  (checked-table-name append.stream (+ what ".stream"))
+  (when (not (and (isinstance append.idempotency-key str) append.idempotency-key))
+    (raise (ValueError (+ what ".idempotency_key は空でない文字列")))))
+
+
 (defclass [(dataclass :frozen True)] AppendEvent [EffectBase]
   "追記の列に出来事を 1 つ積む。body = JSON の値(作る時に深く凍らせる — object は FrozenMap・array は tuple)。
    同じ冪等キーの再送は前の sequence を返す(本文が違えば Refused)。答え = Appended | Refused | Unreachable。"
@@ -174,10 +184,34 @@
   (#^ str idempotency-key)
   (#^ object body)
   (defn #^ None __post_init__ [self]
-    (object.__setattr__ self "body" (freeze-json self.body))
-    (checked-table-name self.stream "AppendEvent.stream")
-    (when (not (and (isinstance self.idempotency-key str) self.idempotency-key))
-      (raise (ValueError "AppendEvent.idempotency_key は空でない文字列")))))
+    (check-event-append self "AppendEvent")))
+
+
+(defclass [(dataclass :frozen True)] EventAppend []
+  "AppendEvents の束の追記 1 つ。欄と意味は AppendEvent と同じ(stream・idempotency-key・body — body は作る時に深く凍らせる)。
+   effect ではない(束の data)— 束ごと AppendEvents で撃つ。"
+  (#^ str stream)
+  (#^ str idempotency-key)
+  (#^ object body)
+  (defn #^ None __post_init__ [self]
+    (check-event-append self "EventAppend")))
+
+
+(defclass [(dataclass :frozen True)] AppendEvents [EffectBase]
+  "追記の束を置き場への 1 往復で積む(card ki-48c34994ed15)。appends = EventAppend の空でない tuple(同じ列の同じ冪等キーは 1 度だけ —
+   2 度出たら作る時に ValueError)。答え = AppendedEvents(items = 束の順の、追記 1 つごとの答え Appended | Refused)| Unreachable。
+   束の答えは、束の順に AppendEvent を 1 つずつ、間に他の書きを挟まずに撃った答えと同じ: 追記 1 つの判断は AppendEvent と同じ(冪等キーの
+   再送は前の番号・別の本文と上限は Refused)で、断られた追記は束の他の追記を止めない(PutRows と違い全部か 0 ではない)。今積んだ追記の
+   番号は束の順に増える。届かない(Unreachable)時は束の全部が積まれたか、どれも積まれていない(どの置き場も束を 1 つの書きで積む —
+   冪等キーつきなので同じ束を撃ち直してよい)。書き手の名は欄に無い(AppendEvent と同じく handler を組む時に入る)。"
+  (#^ tuple appends)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.appends tuple) self.appends (all (gfor a self.appends (isinstance a EventAppend)))))
+      (raise (TypeError (.format "AppendEvents.appends は EventAppend の空でない tuple: {!r}" self.appends))))
+    (setv slots (lfor a self.appends #(a.stream a.idempotency-key))
+          repeated (sorted (sfor slot slots :if (> (.count slots slot) 1) slot)))
+    (when repeated
+      (raise (ValueError (.format "AppendEvents.appends に同じ追記が 2 度出る(列・冪等キー): {!r}" repeated))))))
 
 
 (defclass [(dataclass :frozen True)] WatchEvents [EffectBase]
