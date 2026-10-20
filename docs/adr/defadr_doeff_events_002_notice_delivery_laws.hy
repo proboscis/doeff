@@ -42,7 +42,8 @@
      (rule R3 "待ちは blocking の取り(期限なし — 止めるのは task の Cancel)と、broker の戻りを待つ期限つきの待ち 1 つ(WaitWithin)だけ。間隔で起きて確かめる形を足さない(唯一の例外は R6 の 1 か所)。")
      (rule R4 "backend は受けた知らせを黙って捨てない: 受けた知らせは全部 process の中の購読者の列へ Publish し、道の表で読めない知らせは源を名指しで落とす。出した知らせの受け手の数(PUBLISH の答え)は Publish の答え NoticeSent に載せて出し手へ返す。")
      (rule R5 "出し損ねの扱いは notice_events_handler の 1 か所だけ(2026-10-07・agora-redesign #3864 — cisco-c8 の見直しの答え #3850 issuecomment-6021750691): Publish は届かなくても例外を上げず、閉じた型の 3 つ(NoticeSent・NoticeGapMarked・NoticeDropped)で答える。道は必須の欄 when_unsent で MarkGap(channel に欠けの印)か Drop(持たない)を選ぶ。持つのは channel の印だけで出来事は持たない。欠けは定まった知らせ GAP_NOTICE 1 通で、broker が戻った時・次に通る Publish の前・出し手の起動の時(MarkGap.start_channels)に出し、受ける包みは SourceMissed にする(受け手は記録から 1 度追いつく)。本体の送り(本体が Spawn した task の送りを含む)と欠けの知らせは 1 本の出口を先着順に通り、例外や取り消しの時も出口を返す(見直し 2026-10-07 の直す点 A・C・D)。次の Publish が欠けを全部出したら戻りを待つ task は止まる。出し手は Publish の答えを見て自分で出し直さない。")
-     (rule R6 "Redis の戻りの知り方(2026-10-07 の Mac の調整役の決定・agora-redesign #3850 の comment): 欠けの印か止まった購読が戻りを待つ間だけ、broker_back_by_retry(redis_notices.py の 1 か所)が組み立ての名指す間隔(既定なし)で ProbeBroker(繋がるかだけ — Redis では PING・data を読み書きしない)を試し、繋がった所で AwaitBrokerBack に答える。前に答えてから間隔が経つ前にまた問われたら、先に残りの間隔を待つ(PING は通るが送りが断られ続ける時に間隔なしで繰り返さない — 直す点 B)。待つ者が居ない間の試しは 0。Redis の送る client は、繋ぐ・送るの答えを組み立ての名指す時間切れ(既定なし)まで待つ(答えない server や黙った網が出し手を止めない — 直す点 A)。採らなかった案 = Kubernetes の EndpointSlice の watch(本番の権限を変える)。利用者の原文 2026-10-06 \"so anything that require polling, are to be fixed. polling is a last resort\" を「落ちた相手からは知らせが来ない場合は最後の手段に当たる」と読んだのは Mac の調整役の解釈で、利用者の言葉そのものではない。戻し方 = broker_back_by_retry を消し、AwaitBrokerBack に答える別の物を組み立てに置く。")]
+     (rule R6 "Redis の戻りの知り方(2026-10-07 の Mac の調整役の決定・agora-redesign #3850 の comment): 欠けの印か止まった購読が戻りを待つ間だけ、broker_back_by_retry(redis_notices.py の 1 か所)が組み立ての名指す間隔(既定なし)で ProbeBroker(繋がるかだけ — Redis では PING・data を読み書きしない)を試し、繋がった所で AwaitBrokerBack に答える。前に答えてから間隔が経つ前にまた問われたら、先に残りの間隔を待つ(PING は通るが送りが断られ続ける時に間隔なしで繰り返さない — 直す点 B)。待つ者が居ない間の試しは 0。Redis の送る client は、繋ぐ・送るの答えを組み立ての名指す時間切れ(既定なし)まで待つ(答えない server や黙った網が出し手を止めない — 直す点 A)。採らなかった案 = Kubernetes の EndpointSlice の watch(本番の権限を変える)。利用者の原文 2026-10-06 \"so anything that require polling, are to be fixed. polling is a last resort\" を「落ちた相手からは知らせが来ない場合は最後の手段に当たる」と読んだのは Mac の調整役の解釈で、利用者の言葉そのものではない。戻し方 = broker_back_by_retry を消し、AwaitBrokerBack に答える別の物を組み立てに置く。")
+     (rule R7 "結末の分からない書きの欠け(2026-10-20・agora の card ki-a93fc14956e3): 書きの答えが期限内に来ず、書きが着いたか分からない出し手は、出すはずだった出来事を PublishGap に渡す。包みは出来事を送らず、その道の channel に欠けの印を付け、R5 と同じ 1 本の出口ですぐ出す。答えは閉じた型の 3 つ(NoticeGapTold・NoticeGapMarked・NoticeDropped)で、broker が受けられない時の扱いは R5 と同じ。表に無い型の PublishGap は外の handler へ出す(包みは channel を知らない)。出自 = 2026-10-19 12:24 UTC、記録の service が遅く、画像つきの送りの書きの答えが来なかった。行は記録に着いていたのに出来事も欠けの印も出ず、配る担当は 57 分その入力を知らなかった(R5 の欠けは broker が受けられなかった時と出し手の起動の時だけで、書きの結末不明を覆っていなかった)。")]
   :laws
     [(law subscription-precedes-the-body
        :statement "for_all 読み手 r: r の購読は、包んだ Program の最初の effect より前に、broker の側で成っている — Program が最初に出した知らせを、Program 自身が受ける。"
@@ -101,6 +102,18 @@
                      "packages/doeff-events/tests/test_notice_laws_redis.py::test_a_sender_cut_off_alone_tells_its_gap_to_a_connected_reader_when_it_reaches_the_server_on_redis"
                      "test-adr-doe-events-002-laws-are-declared"]
        :wiring "配線済み(2026-10-07)— 筋書き notice_laws の GAP_LAWS 5 本を、出し手の側だけ broker を失う層(tests の refuses_senders — 読み手は繋がったまま)の下で memory で回す。戻りを知らせない層では行き止まりで赤。本物の redis-server では、出し手だけをテストの TCP の中継で切って戻し(読み手は直に繋がったまま)、欠けが SourceMissed で届く事を確かめる(redis-server の無い機体では理由つきの skip)。")
+     (law unsure-send-is-told-as-a-gap
+       :statement "for_all 出し手 s・出来事 e: s が PublishGap(e) を出したら、e は届かず、e の道の channel を読んで繋がったままの読み手へ欠け(SourceMissed)が届く — broker が送りを受ける間はすぐ(NoticeGapTold)、受けない間は broker が戻った時か次に s の Publish が通る時(NoticeGapMarked)。"
+       :counterexamples
+         [(counterexample "結末の分からない書きの出来事を、書けた時と同じく送る上の層 — 読み手は着いていない行の出来事を受け、行が無いまま仕事を始める(書きを先に済ませる送りの意味が壊れる)")
+          (counterexample "結末の分からない書きでは何も出さない出し手 — 書きが着いていても読み手は次の起動まで行を知らない(2026-10-19 の 57 分)")]
+       :enforced-by ["packages/doeff-events/tests/test_notice_laws_memory.py::test_gap_law_holds_on_memory"
+                     "packages/doeff-events/tests/test_notice_laws_memory.py::test_sending_the_event_instead_of_a_gap_breaks_the_unsure_send_law"
+                     "packages/doeff-events/tests/test_notice_laws_memory.py::test_a_gap_of_a_dropped_route_is_not_kept_and_says_so"
+                     "packages/doeff-events/tests/test_notice_laws_memory.py::test_a_gap_of_an_unrouted_event_goes_outward"
+                     "packages/doeff-events/tests/test_notice_laws_redis.py::test_gap_law_holds_on_redis"
+                     "test-adr-doe-events-002-laws-are-declared"]
+       :wiring "配線済み(2026-10-20)— 筋書き notice_laws.law_unsure_send_is_told_as_a_gap を GAP_LAWS に載せ、memory と本物の redis-server で回す(redis-server の無い機体では理由つきの skip)。PublishGap を出来事の Publish に替える層では赤。")
      (law broker-return-is-tried-only-while-waited
        :statement "for_all 時刻の区間 I: I の間に AwaitBrokerBack を待つ者が居なければ、broker_back_by_retry の試し(ProbeBroker)は 0 度。待つ者が居る間は組み立ての名指す間隔ごとに 1 度試し、繋がった最初の試しで答える。次の Publish が欠けを全部出した後は試さない。"
        :counterexamples
@@ -123,7 +136,8 @@
        (for [name ["law_subscription_precedes_the_body" "law_start_is_told_after_the_subscription"
                    "law_start_and_return_are_told_once" "law_notice_reaches_only_current_subscribers"
                    "law_missed_notice_is_told_once_the_broker_is_back" "law_gap_is_told_before_the_next_notice"
-                   "law_latest_state_wins_after_a_gap" "law_gap_keeps_the_order_of_later_notices" "law_gap_survives_a_second_cut"]]
+                   "law_latest_state_wins_after_a_gap" "law_gap_keeps_the_order_of_later_notices" "law_gap_survives_a_second_cut"
+                   "law_unsure_send_is_told_as_a_gap"]]
          (assert (in (+ "def " name "(") text)
                  (+ "配達の法の筋書きが notice_laws.py に無い(ADR-DOE-EVENTS-002 R1): " name))
          (assert (in (+ name ",") text)

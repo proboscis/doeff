@@ -26,6 +26,8 @@ from doeff_events.effects.timers import (
 from .events import (
     Publish,
     PublishEffect,
+    PublishGap,
+    PublishGapEffect,
     SourceFailed,
     SourceMissed,
     SourceResumed,
@@ -38,6 +40,7 @@ from .events import (
     WaitForEventsEffect,
     publish,
     publish_effect_type,
+    publish_gap,
     wait_for_event,
     wait_for_events,
 )
@@ -66,6 +69,8 @@ __all__ = [
     "ProbeBroker",
     "Publish",
     "PublishEffect",
+    "PublishGap",
+    "PublishGapEffect",
     "SourceFailed",
     "SourceMissed",
     "SourceResumed",
@@ -80,6 +85,7 @@ __all__ = [
     "WaitForEventsEffect",
     "publish",
     "publish_effect_type",
+    "publish_gap",
     "wait_for_event",
     "wait_for_events",
 ]

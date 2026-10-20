@@ -26,6 +26,9 @@ agora-redesign #3864, ADR-DOE-EVENTS-002 R5):
   receiver that catches up from its records on ``SourceMissed``.
 - ``law_gap_keeps_the_order_of_later_notices`` — a notice published at the return never arrives before the gap.
 - ``law_gap_survives_a_second_cut`` — a gap not told because the broker went away again is told at the next return.
+- ``law_unsure_send_is_told_as_a_gap`` — ``PublishGap(event)`` (the sender cannot tell whether what ``event``
+  announces happened) sends no event and tells the receivers the channel's gap: at once while the broker takes
+  sends, and once it is back when it does not.
 
 The law of the lower layer (the broker's operations — what the upper layer relies on):
 
@@ -48,6 +51,7 @@ from typing import TYPE_CHECKING, Final
 from doeff import Program, do
 from doeff_events.effects.events import (
     Publish,
+    PublishGap,
     SourceMissed,
     SourceResumed,
     SourceStalled,
@@ -55,7 +59,7 @@ from doeff_events.effects.events import (
     WaitForEvent,
 )
 from doeff_events.effects.notices import Announce, Announcement, NextAnnouncement, SubscribeChannels
-from doeff_events.handlers.notice_events import MarkGap, NoticeGapMarked, NoticeRoute, NoticeSent
+from doeff_events.handlers.notice_events import MarkGap, NoticeGapMarked, NoticeGapTold, NoticeRoute, NoticeSent
 
 if TYPE_CHECKING:
     from doeff import EffectGenerator
@@ -348,6 +352,31 @@ def law_gap_survives_a_second_cut(harness: GapLawHarness) -> "EffectGenerator[No
     yield harness.as_party("law-flap", (SourceMissed, LawNote), misses_through_a_flap())
 
 
+@do
+def law_unsure_send_is_told_as_a_gap(harness: GapLawHarness) -> "EffectGenerator[None]":
+    """A sender that cannot tell whether what an event announces happened (its write's answer did not come)
+    publishes ``PublishGap(event)``: the event itself never arrives, and a subscriber that stayed connected is told
+    the channel's gap (``SourceMissed``) — at once while the broker takes sends (``NoticeGapTold``), and once the
+    broker is back when it does not (``NoticeGapMarked``)."""
+    law = "unsure-send-is-told-as-a-gap"
+
+    @do
+    def unsure_twice() -> "EffectGenerator[None]":
+        """Publish a gap while sends go through, then one while they are refused, and list what arrives."""
+        told = yield PublishGap(LawNote("maybe"))
+        _require(told == NoticeGapTold(harness.channel), f"{law} (answer while the broker takes sends)", told)
+        heard = yield _heard_until_end(SourceMissed)
+        _require(heard == (SourceMissed("law-unsure", harness.channel),), f"{law} (told at once)", heard)
+        yield harness.cut()
+        marked = yield PublishGap(LawNote("maybe-again"))
+        _require(isinstance(marked, NoticeGapMarked), f"{law} (answer while unreachable)", marked)
+        yield harness.restore()
+        heard = yield _heard_until_end(SourceMissed)
+        _require(heard == (SourceMissed("law-unsure", harness.channel),), f"{law} (told after the return)", heard)
+
+    yield harness.as_party("law-unsure", (SourceMissed, LawNote), unsure_twice())
+
+
 EVENT_LAWS: Final = (
     law_subscription_precedes_the_body,
     law_start_is_told_after_the_subscription,
@@ -361,6 +390,7 @@ GAP_LAWS: Final = (
     law_latest_state_wins_after_a_gap,
     law_gap_keeps_the_order_of_later_notices,
     law_gap_survives_a_second_cut,
+    law_unsure_send_is_told_as_a_gap,
 )
 """The laws of a sender the broker could not take a notice from (each takes a ``GapLawHarness``)."""
 

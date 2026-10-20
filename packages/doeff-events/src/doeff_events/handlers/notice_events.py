@@ -34,6 +34,12 @@ What the wrapper does:
   next ``Publish`` told every gap, the task waiting for the return is stopped. When nothing can answer
   ``AwaitBrokerBack``, that task fails, the marks stay for the next ``Publish``, and the failure is raised when
   the body ends. When the body ends, the waiting task is stopped and the marks are gone.
+- What the sender cannot tell happened (agora card ki-a93fc14956e3). ``PublishGap(event)`` marks the channel
+  ``event`` would travel on, without sending ``event``, and tells the marks at once through the same exit
+  (answers ``NoticeGapTold``). What the broker cannot take stays marked like the gap of a missed ``Publish``
+  (answers ``NoticeGapMarked``); a ``Drop`` route keeps nothing (``NoticeDropped``). A sender uses it when the
+  answer of a write did not come: the write may have landed, and its receivers would otherwise not learn of it
+  before their next start.
 - Receiving. Before the body runs, the wrapper subscribes the channels its routes read and — only after the
   broker confirmed the subscription — publishes ``SourceStarted`` on the bus. Then one task waits for notices
   and publishes each received event on the bus; the body receives them one at a time with ``WaitForEvent``, or
@@ -88,6 +94,7 @@ from doeff import handler as _program_handler
 from doeff_events.effects.events import (
     Publish,
     PublishEffect,
+    PublishGapEffect,
     SourceFailed,
     SourceMissed,
     SourceResumed,
@@ -179,13 +186,28 @@ class NoticeGapMarked:
 
 @dataclass(frozen=True)
 class NoticeDropped:
-    """What ``Publish`` of a ``Drop`` route answers when the broker could not take the event: it is gone."""
+    """What ``Publish`` of a ``Drop`` route answers when the broker could not take the event: it is gone. Also what
+    ``PublishGap`` of a ``Drop`` route answers: such a route keeps no gap."""
 
     detail: str
 
 
 PublishAnswer = NoticeSent | NoticeGapMarked | NoticeDropped
 """Everything ``Publish`` of a routed event answers (it never raises for a broker it cannot reach)."""
+
+
+@dataclass(frozen=True)
+class NoticeGapTold:
+    """What ``PublishGap`` of a ``MarkGap`` route answers when the gap was told: ``channel``'s gap notice reached
+    the broker (with every older gap of the body), and its connected readers are told ``SourceMissed``."""
+
+    channel: str
+
+
+GapAnswer = NoticeGapTold | NoticeGapMarked | NoticeDropped
+"""Everything ``PublishGap`` of a routed event answers (it never raises for a broker it cannot reach):
+``NoticeGapTold``, ``NoticeGapMarked`` (the broker could not take the gap notice — told later like the gap of a
+missed ``Publish``), or ``NoticeDropped`` (a ``Drop`` route)."""
 
 
 @final
@@ -297,7 +319,10 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience
     # A wrapper that reads nothing has no source whose failure could end the body's wait: the waits go outward as
     # they are, without it.
     waits = (WaitForEventEffect, WaitForEventsEffect) if channels else ()
-    answered = (*(publish_effect_type(route.event_type) for route in routes), *waits)
+    # ``PublishGap`` has one class for every event type: a wrapper with routes answers it and passes on the types it
+    # does not route.
+    gap = (PublishGapEffect,) if routes else ()
+    answered = (*(publish_effect_type(route.event_type) for route in routes), *gap, *waits)
     return _Plan(
         source=source, routes=routes, channels=channels, patience_seconds=float(patience_seconds), answered=answered
     )
@@ -584,6 +609,26 @@ def _sent_in_exit(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: o
 
 
 @do
+def _gap_told_in_exit(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -> "EffectGenerator[GapAnswer]":
+    """Tell the gap of ``event``'s channel while holding the exit, with every older gap first (``PublishGap``): the
+    channel is marked like a missed send, and the marks are told now. What the broker cannot take stays marked for
+    the return or the next ``Publish`` (``MarkGap``); a ``Drop`` route keeps nothing."""
+    channel = route.channel(event)
+    match route.when_unsent:
+        case Drop():
+            return NoticeDropped(detail=f"the route {route.wire_name!r} drops what it misses: no gap is kept")
+        case MarkGap():
+            gaps.mark(channel)
+            refused = yield _gaps_told(plan, gaps)
+            if refused is not None:
+                return (yield _marked(plan, gaps, channel, refused.detail))
+            failed = yield _stopped_tasks(gaps.running())
+            gaps._mut_waiter = None
+            gaps._mut_failure = gaps._mut_failure if gaps._mut_failure is not None else failed
+            return NoticeGapTold(channel=channel)
+
+
+@do
 def _sent(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -> "EffectGenerator[PublishAnswer]":
     """Send one routed event through the body's one exit, so sends leave in the order they came and nothing
     overtakes a gap being told (the sends of tasks the body spawned queue there too)."""
@@ -621,6 +666,13 @@ def _body_handler(plan: _Plan, gaps: _Gaps) -> "ProgramHandler":
                     return None
                 answer = yield _sent(plan, gaps, route, event)
                 return (yield Resume(k, answer))
+            case PublishGapEffect(event=event):
+                route = plan.route_of(event)
+                if route is None:
+                    yield Pass(effect, k)
+                    return None
+                told = yield _through_exit(gaps, _gap_told_in_exit(plan, gaps, route, event))
+                return (yield Resume(k, told))
             case WaitForEventEffect(event_types=wanted):
                 came = yield WaitForEventEffect((*wanted, SourceFailed))
                 while _foreign_failure(plan, wanted, came):

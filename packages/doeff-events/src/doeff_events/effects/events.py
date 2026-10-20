@@ -149,6 +149,27 @@ def publish_effect_type(event_type: type[Any]) -> type[PublishEffect]:
     return _PUBLISH_EFFECT_TYPES.setdefault(event_type, made)
 
 
+class PublishGapEffect(EffectBase):
+    """Tell the receivers of ``event``'s channel that what ``event`` announces may have happened without the event:
+    the sender cannot learn whether it did (the answer of its write did not come in time — the write may have
+    landed). ``event`` is not sent; it is built as it would have been published, and only its route and channel are
+    read.
+
+    ``notice_events_handler`` tells the channel's gap like one a ``Publish`` left (``SourceMissed`` at the receivers,
+    who catch up once from their records): at once, behind the sends already queued, or — when the broker cannot
+    take it — by marking the channel. A sender publishes it when it gives up on learning the outcome, so that a
+    write that landed without its event is never left for the receivers' next start (agora card ki-a93fc14956e3).
+    An event of a type no wrapper routes has no channel to tell: the effect goes outward and nothing answers it.
+    """
+
+    def __init__(self, event: Any):
+        super().__init__()
+        self.event = event
+
+    def __repr__(self):
+        return f"PublishGap({self.event!r})"
+
+
 class WaitForEventEffect(EffectBase):
     """Wait for the next event matching any of the configured event types."""
 
@@ -183,6 +204,10 @@ def publish(event: Any) -> PublishEffect:
     return PublishEffect(event=event)
 
 
+def publish_gap(event: Any) -> PublishGapEffect:
+    return PublishGapEffect(event=event)
+
+
 def wait_for_event(*event_types: type[Any]) -> WaitForEventEffect:
     return WaitForEventEffect(event_types=tuple(event_types))
 
@@ -193,6 +218,7 @@ def wait_for_events(*event_types: type[Any]) -> WaitForEventsEffect:
 
 # Capitalized aliases
 Publish = publish
+PublishGap = publish_gap
 WaitForEvent = wait_for_event
 WaitForEvents = wait_for_events
 
@@ -200,6 +226,8 @@ WaitForEvents = wait_for_events
 __all__ = [
     "Publish",
     "PublishEffect",
+    "PublishGap",
+    "PublishGapEffect",
     "SourceFailed",
     "SourceResumed",
     "SourceStalled",
@@ -211,6 +239,7 @@ __all__ = [
     "WaitForEventsEffect",
     "publish",
     "publish_effect_type",
+    "publish_gap",
     "wait_for_event",
     "wait_for_events",
 ]

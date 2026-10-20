@@ -480,6 +480,7 @@
     "ADR-DOE-EVENTS-002 start-and-return-are-told-once",
     "ADR-DOE-EVENTS-002 start-is-told-after-the-subscription",
     "ADR-DOE-EVENTS-002 subscription-precedes-the-body",
+    "ADR-DOE-EVENTS-002 unsure-send-is-told-as-a-gap",
     "ADR-DOE-HY-001 statement-discard-impossible",
     "ADR-DOE-HY-002 deftest-params-are-honored",
     "ADR-DOE-HY-003 bang-impossible-position-loud",
