@@ -28,7 +28,7 @@ import pytest
 from doeff_core_effects.scheduler import scheduled
 
 import doeff._effectful_rewrite as rewrite
-from doeff import Effects, Pass, Resume, Transfer, do, effectful, handler, run, with_handlers
+from doeff import Effects, Pass, Resume, Transfer, effectful, handler, run, with_handlers
 from doeff.cli import effectful_check
 from tests.effectful_cases import programs
 from tests.test_static_typing import _pyright
@@ -37,7 +37,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @handler
-@do
 def board(effect: object, k: Any):
     if isinstance(effect, programs.ReadClock):
         return (yield Resume(k, 1000))
@@ -90,7 +89,6 @@ def test_cancel_runs_finally_of_an_effectful_task() -> None:
     notes: list[str] = []
 
     @handler
-    @do
     def keep_notes(effect: programs.Note, k: Any):
         notes.append(effect.text)
         return (yield Resume(k, None))
@@ -109,7 +107,6 @@ def test_unrun_program_travels_by_cloudpickle_to_another_process() -> None:
         program = cloudpickle.loads(sys.stdin.buffer.read())
 
         @handler
-        @do
         def board(effect, k):
             if type(effect).__name__ == "ReadClock":
                 return (yield Resume(k, 7))

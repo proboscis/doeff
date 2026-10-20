@@ -54,14 +54,12 @@ calls: list[str] = []
 
 
 @handler
-@do
 def alpha_only(effect: Alpha, k):
     calls.append(f"alpha_only:{type(effect).__name__}")
     return (yield Resume(k, f"alpha:{effect.value}"))
 
 
 @handler
-@do
 def catch_all(effect: Effect, k):
     calls.append(f"catch_all:{type(effect).__name__}")
     return (yield Resume(k, f"fallback:{type(effect).__name__}:{effect.value}"))
@@ -91,16 +89,15 @@ def test_typed_do_handler_is_not_called_for_other_effects() -> None:
     assert calls == ["alpha_only:Alpha", "catch_all:Beta", "alpha_only:Alpha"]
 
 
-def test_typed_plain_function_is_not_a_handler() -> None:
-    # A handler is a @do function (ADR-DOE-CORE-003): a plain function with a typed effect
-    # parameter is refused where it is made a handler, before any effect reaches it.
-    def alpha_plain(effect: Alpha, k):
-        calls.append("alpha_plain")
-        return Resume(k, f"plain:{effect.value}")
+def test_typed_def_is_made_a_do_function_and_keeps_its_filter() -> None:
+    # @handler makes a def a @do function (ADR-DOE-CORE-003): the effect annotation of the def as
+    # written still filters, so Beta skips it without a call.
+    def alpha_def(effect: Alpha, k):
+        calls.append("alpha_def")
+        return (yield Resume(k, f"def:{effect.value}"))
 
-    with pytest.raises(TypeError, match="alpha_plain is not a @do function"):
-        _stack(alpha_plain, alpha_then_beta())
-    assert calls == []
+    assert run(_stack(alpha_def, alpha_then_beta())) == ("def:1", "fallback:Beta:2", "def:3")
+    assert calls.count("alpha_def") == 2, calls
 
 
 def test_union_annotation_admits_each_member() -> None:
@@ -127,8 +124,8 @@ def test_partial_bound_method_and_callable_instance_use_the_effect_parameter() -
     expected_tail = "fallback:Beta:2"
     assert run(_stack(functools.partial(prefixed, "p:"), alpha_then_beta()))[1] == expected_tail
     assert run(_stack(Holder().method, alpha_then_beta()))[1] == expected_tail
-    # A callable instance is not a @do function, whatever its __call__ is annotated with.
-    with pytest.raises(TypeError, match="Holder is not a @do function"):
+    # A callable instance is not a handler body, whatever its __call__ is annotated with.
+    with pytest.raises(TypeError, match="Holder is not a handler body"):
         _stack(Holder(), alpha_then_beta())
 
 
@@ -167,7 +164,6 @@ def test_parameterised_generic_parent_annotation() -> None:
 
 def test_skipped_handler_between_pass_chain() -> None:
     @handler
-    @do
     def passes_everything(effect: Effect, k):
         calls.append("passes")
         yield Pass(effect, k)
@@ -188,7 +184,6 @@ def test_typed_handler_is_reinstalled_with_its_filter_in_spawned_tasks() -> None
         return (yield Wait(task))
 
     @handler
-    @do
     def beta_fallback(effect: Beta, k):
         return (yield Resume(k, f"fallback:Beta:{effect.value}"))
 

@@ -152,13 +152,13 @@ def now_ms() -> int:
     return 1_000
 
 
-@do
+@handler
 def clock(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
     return (yield typed_resume(effect, k, now_ms()))   # value must be an int
 
 
-print(run(handler(clock)(elapsed(400))))               # 600
-print(run(scheduled(handler(clock)(both(400)))))       # [600, '600 ms', 600]
+print(run(clock(elapsed(400))))               # 600
+print(run(scheduled(clock(both(400)))))       # [600, '600 ms', 600]
 ```
 
 `typed_resume(effect, k, value)` / `typed_transfer(effect, k, value)` are
@@ -170,14 +170,13 @@ runtime filter — see "Typed handlers" in [Core Concepts](02-core-concepts.md).
 `handler(raw)` takes a raw handler `(effect, k: K)` whose effect annotation is
 an `EffectBase` class, a union of them, `EffectBase` itself, or open (no
 annotation, `Any`, `object`). A handler no effect can reach is a type error in
-pyright and mypy, as it is a `TypeError` when `handler()` runs:
+pyright and mypy, as it is a `TypeError` when `@handler` runs:
 
 ```python excerpt
-@do
+@handler                                     # refused here
 def wrong(effect: str, k: K):                # no effect is a str
     return (yield Resume(k, None))
 
-handler(wrong)
 # pyright: Argument of type "(effect: str, k: K) -> ..." cannot be assigned to
 #          parameter "raw_handler" of type "(_HandledEffect@handler, K) -> object"
 # mypy:    Value of type variable "_HandledEffect" of "handler" cannot be "str"

@@ -41,7 +41,6 @@ def raises_at(n: int) -> Generator[object, int, int]:
 
 
 @handler
-@do
 def answer_probe(effect: Probe, k: K) -> Generator[object, object, object]:
     return (yield Resume(k, 100))
 

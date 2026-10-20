@@ -9,8 +9,8 @@ end the program with a value of its own. State, logging, errors, concurrency and
 way. Continuations are **one-shot**: a handler resumes each `k` at most once. A VM written in
 Rust runs the programs and the handlers.
 
-This page installs doeff, runs a program on the built-in handlers, then writes an effect and a
-handler of your own. [What doeff Is](positioning/what-doeff-is.md) defines the mechanism in full.
+This page installs doeff, runs a program on the reference handlers of `doeff_core_effects`, then
+writes an effect and a handler of your own. [What doeff Is](positioning/what-doeff-is.md) defines the mechanism in full.
 
 ## Installation
 
@@ -101,8 +101,8 @@ Read the collected log with `yield writer_log()` (from `doeff_core_effects.handl
 
 ## Your First Effect and Handler
 
-An effect of your own is a frozen dataclass under `EffectBase`, and a handler is a `@do` function
-of `(effect, k)`; the annotation of `effect` picks the effects it receives. `shrink_all` reports its
+An effect of your own is a frozen dataclass under `EffectBase`, and a handler is a `def` of
+`(effect, k)` marked with `@handler`; the annotation of `effect` picks the effects it receives. `shrink_all` reports its
 progress with an effect and leaves the meaning of that report to a handler:
 
 ```python
@@ -124,22 +124,22 @@ def shrink_all(images):                  # yields Progress; knows nothing about 
 
 shown = []
 
-@do
+@handler
 def show(effect: Progress, k):           # one meaning: note it, and resume k
     shown.append(f"{effect.done}/{effect.total}")
     return (yield Resume(k, None))
 
 def stop_after(limit):                   # another meaning: stop the work after `limit` steps
-    @do
+    @handler
     def on_progress(effect: Progress, k):
         if effect.done >= limit:
             return f"stopped after {effect.done} of {effect.total}"   # drops k
         return (yield Resume(k, None))
 
-    return handler(on_progress)
+    return on_progress
 
 images = [(640, 480), (1024, 768), (800, 600)]
-print(run(handler(show)(shrink_all(images))))  # [(320, 240), (512, 384), (400, 300)]
+print(run(show(shrink_all(images))))  # [(320, 240), (512, 384), (400, 300)]
 print(shown)  # ['1/3', '2/3', '3/3']
 print(run(stop_after(2)(shrink_all(images))))  # stopped after 2 of 3
 ```
@@ -148,8 +148,9 @@ print(run(stop_after(2)(shrink_all(images))))  # stopped after 2 of 3
   rest finishes, `yield Resume(...)` gives the handler its result, and the handler returns it.
 - A handler that returns without resuming `k` drops the rest: `shrink_all` stops at the `yield`,
   the third image is never shrunk, and the handler's return value is the result of the run.
-- `handler(fn)` turns the function into a handler that you apply to a program, the same way as
-  `writer` and `state()`. The built-in handlers are written like this too.
+- `@handler` makes the `def` a handler that you apply to a program, the same way as `writer` and
+  `state()`. A handler body yields what it hands to doeff (`Resume`, `Pass`, an effect of its own)
+  and returns what that gives back.
 
 `shrink_all` has no cancel flag and no callback parameter: how it goes on is decided by the handler
 installed around it. Other handlers can throw an error into `k` with `ResumeThrow(k, error)`, pass
@@ -591,23 +592,28 @@ run(state()(writer()(my_program())))  # Error!
 run(state()(writer(my_program())))
 ```
 
-### "TypeError: fetch_handler takes (effect, k): it is a handler, not a function that builds a program"
+### "TypeError: fetch_handler takes (effect, k): it is a handler body, not a function that builds a program"
 
-A function you write with the parameters `(effect, k)` handles effects; it does not take
-the program. Wrap it with `handler()` to get the handler that applies it to a program:
+A `def` with the parameters `(effect, k)` handles effects; under `@do` alone it does not take
+the program. Mark the `def` with `@handler` in place of `@do` to get the handler that applies it
+to a program:
 
 ```python excerpt
 from doeff import Resume, do, handler, run
 
+# Wrong - @do makes a handler body, not a handler
 @do
 def fetch_handler(effect: Fetch, k):
     return (yield Resume(k, f"got {effect.url}"))
 
-# Wrong - calls the handler with the program
 run(fetch_handler(my_program()))  # Error!
 
-# Right - wraps the handler, then applies it to the program
-run(handler(fetch_handler)(my_program()))
+# Right - @handler makes the def a handler, which applies to the program
+@handler
+def fetch_handler(effect: Fetch, k):
+    return (yield Resume(k, f"got {effect.url}"))
+
+run(fetch_handler(my_program()))
 ```
 
 ### "TypeError: unsupported operand type(s) for +: 'Get' and 'int'"

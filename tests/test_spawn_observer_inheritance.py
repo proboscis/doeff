@@ -34,7 +34,6 @@ class HandlerNoise(EffectBase):
 
 
 @handler
-@do
 def mark_handler(effect, k):
     if isinstance(effect, Mark):
         return (yield Resume(k, None))
@@ -42,7 +41,6 @@ def mark_handler(effect, k):
 
 
 @handler
-@do
 def noisy_mark_handler(effect, k):
     """Handles Mark and emits HandlerNoise from its own body."""
     if isinstance(effect, Mark):
@@ -52,7 +50,6 @@ def noisy_mark_handler(effect, k):
 
 
 @handler
-@do
 def noise_sink_handler(effect, k):
     if isinstance(effect, HandlerNoise):
         return (yield Resume(k, None))
@@ -207,7 +204,6 @@ def make_probe_handler(captured):
     from doeff.handler_utils import get_inner_boundaries
 
     @handler
-    @do
     def probe_handler(effect, k):
         if isinstance(effect, Probe):
             boundaries = yield get_inner_boundaries(k)

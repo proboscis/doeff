@@ -411,7 +411,6 @@ class AcquireObserver:
         from doeff.program import Pass, handler
 
         @handler
-        @do
         def observe(effect, continuation):
             if isinstance(effect, AcquireSemaphore):
                 sid = effect.semaphore.sem_id

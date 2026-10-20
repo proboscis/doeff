@@ -6,7 +6,7 @@ functools.partial を返し、handler() が ``raw_handler.__name__`` を読ん�
 AttributeError で落ちた(with_handlers と、Spawn の境目で handler を包み直す
 scheduler の両方)。名前は partial なら中の関数・bound method なら method から取る。
 
-handler は @do 関数だけ(ADR-DOE-CORE-003)。呼べる instance は @do 関数でないので断る。
+handler の body は def か @do 関数だけ(ADR-DOE-CORE-003)。呼べる instance はどちらでもないので断る。
 """
 
 import functools
@@ -67,7 +67,7 @@ def test_spawn_reinstalls_a_partial_handler_in_the_child_task() -> None:
 
 def test_handler_accepts_a_bound_do_method_and_refuses_a_callable_instance() -> None:
     assert run(handler(PrefixHandler("m:").method)(body())) == "m:1"
-    with pytest.raises(TypeError, match=r"PrefixHandler is not a @do function"):
+    with pytest.raises(TypeError, match=r"PrefixHandler is not a handler body"):
         handler(PrefixHandler("c:"))
 
 

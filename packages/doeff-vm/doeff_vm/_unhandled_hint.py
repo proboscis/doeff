@@ -43,8 +43,8 @@ def _install_a_handler(effect: object) -> str:
     """How to install a handler for an effect no package names a handler for."""
     name = type(effect).__name__
     return (
-        f"install a handler for {name}: run(handler(fn)(prog)), where fn is a @do function "
-        f"(effect: {name}, k) that returns (yield Resume(k, value))"
+        f"install a handler for {name}: run(fn(prog)), where fn is a def (effect: {name}, k) "
+        f"marked with @handler that returns (yield Resume(k, value))"
     )
 
 

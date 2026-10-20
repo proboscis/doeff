@@ -63,7 +63,7 @@ def pay(bills):                      # yields Withdraw (yours) and Tell (built i
     return paid, (yield writer_log())
 
 def account(balance):                # one meaning of Withdraw: an account with a balance
-    @do
+    @handler
     def on_withdraw(effect: Withdraw, k):
         nonlocal balance
         if effect.amount > balance:
@@ -71,15 +71,15 @@ def account(balance):                # one meaning of Withdraw: an account with 
         balance -= effect.amount
         return (yield Resume(k, None))
 
-    return handler(on_withdraw)
+    return on_withdraw
 
 bills = [("rent", 80), ("phone", 30), ("water", 15)]
 print(run(state()(writer(account(100)(pay(bills))))))  # (['rent', 'water'], ['skipped phone: not enough money'])
 ```
 
-The built-in handlers are written the same way as `account`: `writer` is a `@do` function of
-`(effect, k)` that answers `Tell`, and it keeps its log by yielding `Get` and `Put`, which `state`
-answers. Another handler could give `Withdraw` another meaning without changing `pay`: one that
+The handlers in `doeff_core_effects` are reference implementations, written the same way as
+`account`: the body of `writer` is a `@do` function of `(effect, k)` that answers `Tell`, and it
+keeps its log by yielding `Get` and `Put`, which `state` answers. Another handler could give `Withdraw` another meaning without changing `pay`: one that
 records every withdrawal and passes it on, or one that drops `k` and ends the run at the first bill
 it refuses.
 

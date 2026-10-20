@@ -75,7 +75,6 @@ def naming(name):
     """A handler that answers Who with `name`, after performing Noise from its own body."""
 
     @handler
-    @do
     def answer(effect, k):
         if isinstance(effect, Who):
             yield Noise(f"{name}-body")
@@ -89,7 +88,6 @@ def noise_sink(seen):
     """Records every Noise that reaches it, so where handler-body effects travel is visible."""
 
     @handler
-    @do
     def sink(effect, k):
         if isinstance(effect, Noise):
             seen.record(("sink", effect.label))
@@ -132,7 +130,6 @@ def reinstall_one_step(program, boundaries):
 
 
 @handler
-@do
 def capturing(effect, k):
     """Runs Rerun.program under the boundaries between the perform site and here."""
     if isinstance(effect, Rerun):
@@ -196,7 +193,6 @@ def test_a_reversed_stack_answers_from_the_other_end():
     """Failure case: the stack order is what decides the answer — reversing it changes it."""
 
     @handler
-    @do
     def reversing(effect, k):
         if isinstance(effect, Rerun):
             boundaries = yield get_inner_boundaries(k)

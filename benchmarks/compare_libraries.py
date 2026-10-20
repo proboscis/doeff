@@ -302,21 +302,18 @@ class Unrelated(EffectBase[int]):
 
 
 @handler
-@do
 def _doeff_resume_handler(effect: GetOne, k: K) -> EffectGenerator[int]:
     """The usual handler shape: a @do generator that resumes the continuation."""
     return (yield Resume(k, 1))
 
 
 @handler
-@do
 def _doeff_unrelated_handler(effect: Unrelated, k: K) -> EffectGenerator[int]:
     """A handler typed for another effect: the VM skips it by its annotation."""
     return (yield Resume(k, 2))
 
 
 @handler
-@do
 def _doeff_pass_handler(effect: EffectBase, k: K) -> EffectGenerator[int]:
     """An untyped handler that sees every effect and forwards the ones it does not answer."""
     if isinstance(effect, Unrelated):

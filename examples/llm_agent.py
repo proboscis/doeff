@@ -53,7 +53,6 @@ def openai_chat(model: str):
     client = OpenAI()  # reads OPENAI_API_KEY, and OPENAI_BASE_URL when it is set
 
     @handler
-    @do
     def ask_model(effect: Complete, k):
         response = client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": effect.prompt}]
@@ -70,7 +69,6 @@ def fake_model(reply: Callable[[str], str]):
     """Tests: answer each Complete with reply(prompt). No client, no key, no network."""
 
     @handler
-    @do
     def answer(effect: Complete, k):
         return (yield Resume(k, reply(effect.prompt)))
 
@@ -86,7 +84,6 @@ def budget(max_calls: int):
     calls = 0
 
     @handler
-    @do
     def count(effect: Complete, k):
         nonlocal calls
         calls += 1

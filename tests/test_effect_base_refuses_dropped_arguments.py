@@ -111,7 +111,6 @@ def test_handler_reads_the_fields_of_an_effect_class() -> None:
         return (yield Fetch(url="api.example.com"))
 
     @handler
-    @do
     def fake_fetch(effect: Fetch, k):
         return (yield Resume(k, f"response from {effect.url}"))
 

@@ -157,7 +157,6 @@ def _append(stream: str, key: str) -> EffectGenerator[int]:
 
 
 @handler
-@do
 def _publish_as_write(effect: EffectBase, k: K) -> EffectGenerator[object]:
     """筋書きの書き手の Publish(Changed(keys)) を、合図の所の行への書きにする(この world で「発する」= 結んだ表へ書く)。"""
     if isinstance(effect, PublishEffect):

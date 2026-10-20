@@ -193,7 +193,6 @@ POLLS = (WatchChanges, WatchEvents, DelayEffect)
 
 
 @handler
-@do
 def _no_polls(effect: EffectBase, k: K) -> EffectGenerator[object]:
     """源と本体が外へ出す effect のうち、poll の effect(WatchChanges・WatchEvents・Delay)を見つけたら赤にする見張り。"""
     if isinstance(effect, POLLS):

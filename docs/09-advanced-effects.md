@@ -380,13 +380,13 @@ class Audit(EffectBase):
     message: str
 
 
-@do
+@handler
 def abort_handler(effect: Abort, k):
     # Not resuming k ends the body here; this value becomes the result.
     return f"aborted: {effect.reason}"
 
 
-@do
+@handler
 def audit_handler(effect: Audit, k):
     print(f"audit: {effect.message}")
     return (yield Resume(k, None))
@@ -401,7 +401,7 @@ def checkout(stock: int):
 
 
 def with_policies(program):
-    return handler(abort_handler)(handler(audit_handler)(program))
+    return abort_handler(audit_handler(program))
 
 
 print(run(with_policies(checkout(3))))  # ordered

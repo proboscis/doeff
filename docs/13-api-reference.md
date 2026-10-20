@@ -163,9 +163,11 @@ print(result)  # 43
 **Returns:** `Callable[..., Expand]`
 
 Accepts an optional `non_tail` keyword argument to suppress warnings about non-tail
-`Resume`/`ResumeThrow` usage in handler functions:
+`Resume`/`ResumeThrow` usage in handler bodies. A handler body needs `@do` only for this option:
+`@handler` alone makes its `def` a `@do` function, and keeps `@do(non_tail=True)` under it:
 
 ```python
+@handler
 @do(non_tail=True)
 def my_handler(effect, k):
     value = yield Resume(k, 42)
@@ -367,12 +369,12 @@ class Double(EffectBase):
     value: int
 
 
-@do
+@handler
 def doubles(effect: Double, k):
     return (yield Resume(k, effect.value * 2))
 
 
-@do
+@handler
 def gives_up(effect: Double, k):
     return "gave up"  # no Resume: the rest of compute() never runs
 
@@ -383,8 +385,8 @@ def compute():
     return f"answer={doubled}"
 
 
-print(run(handler(doubles)(compute())))  # answer=42
-print(run(handler(gives_up)(compute())))  # gave up
+print(run(doubles(compute())))  # answer=42
+print(run(gives_up(compute())))  # gave up
 ```
 
 **Signature:** `Resume(k, value)`. `Transfer(k, value)` resumes the same way when the
@@ -416,14 +418,14 @@ class Double(EffectBase):
     value: int
 
 
-@do
+@handler
 def my_handler(effect, k):
     if isinstance(effect, Double):
         return (yield Resume(k, effect.value * 2))
     yield Pass(effect, k)  # forward everything else (here: Ask)
 
 
-@do
+@handler
 def without_pass(effect, k):
     if isinstance(effect, Double):
         return (yield Resume(k, effect.value * 2))
@@ -435,8 +437,8 @@ def compute():
     return (yield Double(base))
 
 
-print(run(reader(env={"base": 21})(handler(my_handler)(compute()))))  # 42
-print(run(reader(env={"base": 21})(handler(without_pass)(compute()))))  # None
+print(run(reader(env={"base": 21})(my_handler(compute()))))  # 42
+print(run(reader(env={"base": 21})(without_pass(compute()))))  # None
 ```
 
 **Signature:** `Pass(effect, k)`
@@ -464,6 +466,31 @@ so the Rust VM can invoke it.
 
 ---
 
+### @handler
+
+Makes a `def (effect, k)` a handler: `@handler` makes the `def` a `@do` function (the handler
+body) and returns the `Program -> Program` installer that runs a program under it.
+
+```python excerpt
+from doeff import Resume, handler, run
+
+@handler
+def doubles(effect: Double, k):
+    return (yield Resume(k, effect.value * 2))
+
+print(run(doubles(compute())))  # answer=42
+```
+
+- The body yields what it hands to doeff and returns what that gives back:
+  `return (yield Resume(k, v))`. A body that returns `Resume(...)` (or `Transfer`, `Pass` and
+  the other control expressions) without yielding it raises `TypeError` when it runs.
+- `handler(f)` is the same call without the decorator. It also takes a `@do` function, or a
+  `functools.partial` or bound method of one, as it is. A lambda, a `functools.partial` or bound
+  method of a plain function, a callable instance and a builtin raise `TypeError`
+  ("… is not a handler body").
+- `@handler` over `@do` is deprecated: write `@handler` alone, and keep `@do(...)` under it only
+  for its options (`@do(non_tail=True)`).
+
 ### Handler Installer Call
 
 Run a scoped sub-program under a custom handler by calling a `Program -> Program`
@@ -477,7 +504,7 @@ scoped = reader(env={"name": "override"})(worker())
 
 **Shape:** `handler(program: DoExpr) -> DoExpr`
 
-Handlers built with `doeff.program.handler()` have this `Program -> Program` shape.
+Handlers made with `@handler` have this `Program -> Program` shape.
 Compose them by nesting calls:
 
 ```python excerpt
@@ -491,12 +518,12 @@ result = run(scheduled(prog))
 ### with_handlers(handlers, program) and stacked_handlers(*handlers)
 
 `with_handlers([h1, h2], program)` applies a handler list in scope order: `h1` is outermost,
-`h2` innermost. Every entry must be a handler: a `@do` function marked with `@handler`, a
-`defhandler`, or a `stacked_handlers` bundle. Anything else — a plain function, a `@do` function
+`h2` innermost. Every entry must be a handler: a `def` marked with `@handler` (which makes it a
+`@do` function), a `defhandler`, or a `stacked_handlers` bundle. Anything else — a plain function, a `@do` function
 without `@handler`, a lambda — is refused with a `TypeError` naming it when the list is applied,
 before anything runs; `with_handlers` does not turn it into a handler (ADR-DOE-CORE-003).
-`handler(f)` likewise takes only a `@do` function (or a partial or bound method of one) and
-refuses anything else where the handler is made. To pass several handlers as one, bundle them with
+`handler(f)` likewise takes only a `def` or a `@do` function (or a partial or bound method of
+one) and refuses anything else where the handler is made. To pass several handlers as one, bundle them with
 `stacked_handlers(h1, h2)`: the result is a marked installer with the same order, and an
 empty `stacked_handlers()` is the identity.
 

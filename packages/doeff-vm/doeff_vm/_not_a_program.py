@@ -111,9 +111,9 @@ def handler_applied_as_a_program(
     function: object, args: tuple[object, ...], kwargs: dict[str, object] | None
 ) -> str | None:
     """The message of the TypeError for a failed call of ``function``, a ``@do`` definition's
-    function, when it is an ``(effect, k)`` handler called with one argument that is not an
-    effect — applied to a program without ``handler()`` (``fetch_handler(prog())``, meant as
-    ``handler(fetch_handler)(prog())``); ``None`` for any other failed call (its own error stands).
+    function, when it is an ``(effect, k)`` handler body called with one argument that is not an
+    effect — applied to a program while its def has ``@do`` instead of ``@handler``
+    (``fetch_handler(prog())``); ``None`` for any other failed call (its own error stands).
     """
     if len(args) != 1 or kwargs or isinstance(args[0], EffectBase):
         return None
@@ -122,7 +122,7 @@ def handler_applied_as_a_program(
     name = getattr(function, "__name__", "handler")
     shown = program_shown(args[0])
     return (
-        f"{name} takes (effect, k): it is a handler, not a function that builds a program, "
-        f"so {name}({shown}) cannot run. Wrap it with handler() and apply that to the "
-        f"program: handler({name})({shown})"
+        f"{name} takes (effect, k): it is a handler body, not a function that builds a program, "
+        f"so {name}({shown}) cannot run. Mark its def with @handler in place of @do: then "
+        f"{name}({shown}) runs the program under it"
     )

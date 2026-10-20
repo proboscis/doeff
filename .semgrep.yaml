@@ -5669,32 +5669,52 @@ rules:
         - /packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
         - /tests/semgrep/fixtures/python/packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
 
-  # ADR-DOE-CORE-003: a handler is a @do function marked with @handler (the owner's decision
-  # 2026-10-20 13:07 JST). handler() and with_handlers refuse anything else at run time; these
-  # three rules refuse the same shapes where the code is written. Tests are out of scope: they
-  # build the refused shapes on purpose to check the refusals.
-  - id: doeff-handler-requires-do
+  # ADR-DOE-CORE-003: a handler is a def marked with @handler, which makes it a @do function (the
+  # owner's decisions 2026-10-20 13:07 and 16:26 JST). handler() and with_handlers refuse other
+  # shapes at run time; these four rules refuse the same shapes where the code is written. Tests
+  # are out of scope: they build the refused shapes on purpose to check the refusals.
+  - id: doeff-handler-over-do-is-deprecated
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-003: a handler is a @do function marked with @handler. Put @do under
-      @handler on this def (@handler / @do / def f(effect, k)): handler() refuses a function
-      without @do where the handler is made, and doeff takes no function without @do.
+      ADR-DOE-CORE-003: @handler makes the def under it a @do function, so @do under @handler is
+      redundant and deprecated. Write @handler alone (@handler / def f(effect, k)). @do with
+      options (@do(...)) stays where the options are needed.
+    pattern: |
+      @handler
+      @do
+      def $F(...):
+        ...
+    paths:
+      # The daily checks run these two directories on the doeff of PyPI (tools/verify_core_install.py
+      # --pypi・publications/zenn-use-cases-v0/verify_pypi.py), and 0.7.0 refuses a def without @do as
+      # a handler. They keep @handler over @do until a release with @handler alone is on PyPI.
+      exclude:
+        - "/tests/**"
+        - "**/tests/**"
+        - "/docs/design/**"
+        - "/docs/design-checks/**"
+        - "/examples/testing_without_mocks/**"
+        - "/publications/zenn-use-cases-v0/**"
+
+  - id: doeff-handler-yields-its-control
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-003: the body of a @handler def is a @do function, so returning a control node
+      hands it back as a value instead of running it. Yield it and return what it gives back:
+      return (yield Resume(k, value)).
     patterns:
-      - pattern: |
+      - pattern-inside: |
           @handler
           def $F(...):
             ...
-      - pattern-not: |
-          @handler
-          @do
-          def $F(...):
-            ...
-      - pattern-not: |
-          @handler
-          @do(...)
-          def $F(...):
-            ...
+      - pattern-either:
+          - pattern: return Resume(...)
+          - pattern: return Transfer(...)
+          - pattern: return Pass(...)
+          - pattern: return ResumeThrow(...)
+          - pattern: return TransferThrow(...)
     paths:
       exclude:
         - "/tests/**"
@@ -5706,8 +5726,8 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-003: a lambda is not a handler. Write the handler as a def with @handler
-      above @do, and pass that: handler(), with_handlers and stacked_handlers refuse a lambda.
+      ADR-DOE-CORE-003: a lambda is not a handler. Write the handler as a def with @handler above
+      it, and pass that: handler(), with_handlers and stacked_handlers refuse a lambda.
     pattern-either:
       - pattern: 'handler(lambda $...ARGS: $BODY)'
       - pattern: 'with_handlers([..., lambda $...ARGS: $BODY, ...], ...)'
@@ -5719,25 +5739,15 @@ rules:
         - "/docs/design/**"
         - "/docs/design-checks/**"
 
-  - id: doeff-handler-target-is-a-do-function
+  - id: doeff-handler-stack-takes-only-handlers
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-003: $F is a function without @do. A handler is a @do function marked with
-      @handler: put @handler and @do on its def. handler() refuses a function without @do, and
-      with_handlers and stacked_handlers take handlers only.
+      ADR-DOE-CORE-003: $F is a def without @handler. with_handlers and stacked_handlers take
+      handlers only and do not make one on the way in: put @handler on its def, or pass
+      handler($F).
     patterns:
       - pattern-inside: |
-          def $F(...):
-            ...
-          ...
-      - pattern-not-inside: |
-          @do
-          def $F(...):
-            ...
-          ...
-      - pattern-not-inside: |
-          @do(...)
           def $F(...):
             ...
           ...
@@ -5747,7 +5757,6 @@ rules:
             ...
           ...
       - pattern-either:
-          - pattern: handler($F)
           - pattern: with_handlers([..., $F, ...], ...)
           - pattern: stacked_handlers(..., $F, ...)
     paths:

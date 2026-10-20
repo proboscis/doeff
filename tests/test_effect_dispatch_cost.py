@@ -24,7 +24,6 @@ def body():
 
 def test_do_handler_generator_runs_as_the_handler_stream() -> None:
     @handler
-    @do
     def answer(effect: Ping, k):
         value = yield Resume(k, "pong")
         return f"after:{value}"
@@ -34,7 +33,6 @@ def test_do_handler_generator_runs_as_the_handler_stream() -> None:
 
 def test_do_handler_that_does_not_yield_returns_its_value() -> None:
     @handler
-    @do
     def abort(effect: Ping, k):
         return "aborted"
 
@@ -43,7 +41,6 @@ def test_do_handler_that_does_not_yield_returns_its_value() -> None:
 
 def test_do_handler_raising_before_its_first_yield_reaches_the_perform_site() -> None:
     @handler
-    @do
     def refuse(effect: Ping, k):
         raise PermissionError("no")
 
@@ -66,7 +63,6 @@ def test_twice_decorated_handler_keeps_the_outer_wrapper_semantics() -> None:
     outer = do(inner)  # the outer "generator function" returns a Call, not a generator
 
     @handler
-    @do
     def fallback(effect: Ping, k):
         return (yield Resume(k, "fallback"))
 
