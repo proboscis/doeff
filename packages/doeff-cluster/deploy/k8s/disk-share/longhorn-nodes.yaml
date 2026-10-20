@@ -1,0 +1,51 @@
+# 導いた物 — derive.py が shares.yaml から書く(手で直さない)。Longhorn の Node の disk の予約 storageReserved だけを書く — Flux は
+# server-side apply で書いた欄だけを持ち、Node の他の欄(path・tags・allowScheduling ほか)は Longhorn の物のまま。
+# prune: disabled — この file から機体を外しても、Flux は Longhorn の Node を消さない(消すと Longhorn がその機体の disk を失う)。
+---
+# k3s-0: Longhorn の分 34.64 GB → 予約 = 105.49 - 34.64 × 100 / 200 = 88.17 GB
+#   (Longhorn が受ける写しの名目の合計の上限 34.64 GB)
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: k3s-0
+  namespace: longhorn-system
+  annotations: { kustomize.toolkit.fluxcd.io/prune: disabled }
+spec:
+  disks:
+    default-disk-e4ac800743aec705: { storageReserved: 88171963136 }
+---
+# k3s-1: Longhorn の分 32.34 GB → 予約 = 105.49 - 32.34 × 100 / 200 = 89.32 GB
+#   (Longhorn が受ける写しの名目の合計の上限 32.34 GB)
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: k3s-1
+  namespace: longhorn-system
+  annotations: { kustomize.toolkit.fluxcd.io/prune: disabled }
+spec:
+  disks:
+    default-disk-e4ac800743aec705: { storageReserved: 89321963136 }
+---
+# k3s-2: Longhorn の分 16.24 GB → 予約 = 105.49 - 16.24 × 100 / 200 = 97.37 GB
+#   (Longhorn が受ける写しの名目の合計の上限 16.24 GB)
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: k3s-2
+  namespace: longhorn-system
+  annotations: { kustomize.toolkit.fluxcd.io/prune: disabled }
+spec:
+  disks:
+    default-disk-e4ac800743aec705: { storageReserved: 97371963136 }
+---
+# k3s-3: Longhorn の分 23.74 GB → 予約 = 105.49 - 23.74 × 100 / 200 = 93.62 GB
+#   (Longhorn が受ける写しの名目の合計の上限 23.74 GB)
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: k3s-3
+  namespace: longhorn-system
+  annotations: { kustomize.toolkit.fluxcd.io/prune: disabled }
+spec:
+  disks:
+    default-disk-e4ac800743aec705: { storageReserved: 93621963136 }

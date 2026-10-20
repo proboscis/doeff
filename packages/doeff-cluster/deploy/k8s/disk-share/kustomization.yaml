@@ -1,0 +1,7 @@
+# 根の disk を worker と Longhorn が分け合う機体の、Longhorn の disk の予約(longhorn-nodes.yaml — derive.py が shares.yaml から導く)。
+# worker の組(../workers)が resources に並べ、Flux は worker と同じ Kustomization で当てる — 同じ宣言から導いた worker の env
+# (../nodes/<機体>/disk-share.yaml)と Longhorn の予約が、同じ main の版で同時に替わる。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - longhorn-nodes.yaml
