@@ -11,6 +11,7 @@ class ReadClock(EffectBase[int]):
     pass
 
 
+@handler
 @do
 def clock(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
     return (yield typed_resume(effect, k, 1700))
@@ -26,6 +27,7 @@ def untyped_resume(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
     return (yield Resume(k, "now"))  # Resume は値の型を見ない — docs/23 の決まり(型を見るのは typed_resume)
 
 
+@handler
 @do
 def wrong_filter(effect: str, k: K) -> Generator[Any, Any, Any]:
     return (yield Resume(k, 1))

@@ -3,14 +3,36 @@ that needs to capture and reinstall inner handlers from a continuation.
 """
 
 from collections.abc import Callable, Generator
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
-from doeff_vm import K
+from doeff_vm import K, WithHandler
 
 from doeff.do import do
 from doeff.program import GetBoundaries, GetHandlers
 
 _Handler = TypeVar("_Handler")
+
+
+def reinstaller(captured: Callable[..., object]) -> Callable[[object], object]:
+    """The installer that puts a captured handler back around a program — for an entry of
+    ``GetHandlers(k)``, not for making a new handler.
+
+    The VM holds the raw dispatcher of every installed handler: the ``@do`` function a
+    ``@handler`` was made from, the clause data of a ``defhandler``, or a handler object of the
+    Rust scheduler (``SchedulerPrompt``). Those were judged when they were first installed, so a
+    handler that captures its inner handlers (``try_handler``, ``local_handler``, Spawn,
+    doeff-traverse) reinstalls them with this, on the VM node itself. ``handler()`` is the door
+    for making a handler and takes only a ``@do`` function (ADR-DOE-CORE-003); it would refuse a
+    Rust handler object here. An entry that already carries the installer marker is called with
+    the program, as ``with_handlers`` calls it.
+    """
+    if getattr(captured, "_doeff_is_handler_fn", False) is True:
+        return cast(Callable[[object], object], captured)  # 印を確かめた installer は program だけを取る
+
+    def install(body: object) -> object:
+        return WithHandler(captured, body)
+
+    return install
 
 
 def inner_of(handlers: list[_Handler]) -> list[_Handler]:
@@ -42,7 +64,7 @@ def get_inner_handlers(
     Usage in a handler:
         inner_hs = yield get_inner_handlers(k)
         for h in inner_hs:
-            prog = handler(h)(prog)
+            prog = reinstaller(h)(prog)
     """
     return inner_of((yield GetHandlers(k)))
 

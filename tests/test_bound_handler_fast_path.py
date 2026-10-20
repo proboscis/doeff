@@ -5,7 +5,7 @@ from types import MethodType
 from typing import NamedTuple
 
 import pytest
-from doeff_vm import K
+from doeff_vm import K, WithHandler
 from doeff_vm._effect_types import handler_spec
 
 from doeff import EffectBase, Pure, Resume, do, handler, run
@@ -71,16 +71,21 @@ def test_bound_classmethod_keeps_class_as_receiver() -> None:
     assert run(handler(Answers.class_read)(ReadNumber())) == 19
 
 
-def test_ordinary_bound_method_keeps_program_returning_convention() -> None:
+def test_ordinary_bound_method_is_not_a_handler() -> None:
+    # A handler is a @do function (ADR-DOE-CORE-003): a bound method of a plain method is refused
+    # where it is made a handler. The VM still reads it as a raw dispatcher (no generator to run).
     owner: Answers = Answers(23)
     assert handler_spec(owner.plain).generator_function is None
-    assert run(handler(owner.plain)(ReadNumber())) == 23
+    with pytest.raises(TypeError, match=r"Answers\.plain is not a @do function"):
+        handler(owner.plain)
 
 
 def test_bound_handler_filter_still_passes_unrelated_effects() -> None:
+    @handler
+    @do
     def outer(effect: OtherNumber, k: K) -> Resume:
         assert isinstance(effect, OtherNumber)
-        return Resume(k, 31)
+        return (yield Resume(k, 31))
 
     owner: Answers = Answers(7)
     assert run(handler(outer)(handler(owner.read)(OtherNumber()))) == 31
@@ -112,18 +117,28 @@ def compare_path(legacy: bool, monkeypatch: pytest.MonkeyPatch) -> PathOutcome:
 
         seen: list[str] = []
 
+        @handler
+        @do
         def outer(effect: OtherNumber, k: K) -> Resume:
             assert isinstance(effect, OtherNumber)
             seen.append("outer")
-            return Resume(k, 31)
+            return (yield Resume(k, 31))
+
+        def install(bound: object) -> object:
+            """The installer of a bound @do method. Without the direct-run mark the method is no
+            @do function to handler() (ADR-DOE-CORE-003), so the legacy path installs it on the VM
+            node itself — the route handler() took before the mark existed."""
+            if legacy:
+                return lambda body: WithHandler(bound, body)
+            return handler(bound)
 
         owner: Answers = Answers(7)
-        value = run(handler(owner.read)(ReadNumber()))
-        unrelated = run(handler(outer)(handler(owner.read)(OtherNumber())))
-        emitted = run(handler(outer)(handler(owner.translate)(ReadNumber())))
+        value = run(install(owner.read)(ReadNumber()))
+        unrelated = run(handler(outer)(install(owner.read)(OtherNumber())))
+        emitted = run(handler(outer)(install(owner.translate)(ReadNumber())))
         broken: Answers = Answers(-1)
         with pytest.raises(ValueError, match="negative number") as raised:
-            run(handler(broken.read)(ReadNumber()))
+            run(install(broken.read)(ReadNumber()))
         rendered = format_default(raised.value)
         assert isinstance(rendered, str)
         assert "read()" in rendered
@@ -146,7 +161,7 @@ def test_rewrapping_an_installed_handler_returns_it_without_walking_the_protocol
     #2593: 181k such checks in one screen test)."""
     import typing
 
-    installed = handler(Answers(7).plain)
+    installed = handler(Answers(7).read)
     checked: list[type] = []
     original = typing._ProtocolMeta.__instancecheck__  # pyright: ignore[reportAttributeAccessIssue] - the private metaclass hook is what this test counts
 

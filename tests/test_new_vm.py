@@ -270,8 +270,12 @@ class TestErrors:
             raise RuntimeError("boom")
             yield Perform(None)
 
+        @do
+        def never_entered(_e, _k):
+            return (yield Pure(None))
+
         with pytest.raises(RuntimeError):
-            doeff_run(_install_raw_handler(lambda _e, _k: Pure(None))(program(body)))
+            doeff_run(_install_raw_handler(never_entered)(program(body)))
 
     def test_no_handler_error(self):
         """Performing without a handler raises an error."""
@@ -343,13 +347,11 @@ class TestTraceback:
 
         captured_traceback = [None]
 
+        @do
         def handler(effect, k):
-            @do
-            def handle():
-                captured_traceback[0] = yield GetTraceback(k)
-                result = yield Resume(k, 42)
-                return result
-            return handle()
+            captured_traceback[0] = yield GetTraceback(k)
+            result = yield Resume(k, 42)
+            return result
 
         def leaf():
             return (yield Ask())

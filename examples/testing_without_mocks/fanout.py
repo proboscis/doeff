@@ -28,8 +28,9 @@ def titles(urls: list[str]):
 
 
 @handler
+@do
 def fake_web(effect: FetchPage, k):  # test: answers at once
-    return Resume(k, f"<h1>{effect.url}</h1>")
+    return (yield Resume(k, f"<h1>{effect.url}</h1>"))
 
 
 async def slow_get(url: str) -> str:  # stand-in for an async HTTP client

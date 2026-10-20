@@ -397,8 +397,10 @@ Compose by calling it on the program: ``gemini_image_handler(program)``.
 
 
 @do
-def default_gemini_cost_handler(effect: Any, k: Any):
-    """Default cost handler backed by built-in pricing for known Gemini models."""
+def _default_gemini_cost_dispatch(effect: Any, k: Any):
+    """Raw ``(effect, k)`` dispatcher behind :data:`default_gemini_cost_handler`: built-in pricing
+    for known Gemini models. It is the default ``cost_handler`` of :func:`production_handlers`,
+    which delegates ``GeminiCalculateCost`` to it."""
     if isinstance(effect, GeminiCalculateCost):
         estimate = calculate_known_model_cost(effect.call_result)
         if estimate is not None:
@@ -409,6 +411,15 @@ def default_gemini_cost_handler(effect: Any, k: Any):
         yield Pass(effect, k)
         return None
     yield Pass(effect, k)
+
+
+default_gemini_cost_handler = _program_handler(_default_gemini_cost_dispatch)
+"""Program -> Program handler with the built-in pricing for known Gemini models.
+
+Put it in a handler stack (``handlers=[default_gemini_cost_handler, ...]``) or call it on the
+program. A handler is a ``@do`` function marked with ``@handler`` (ADR-DOE-CORE-003), so the raw
+dispatcher stays private.
+"""
 
 
 def production_handlers(
@@ -423,7 +434,7 @@ def production_handlers(
     | None = None,
     image_generate_impl: Callable[[ImageGenerate], Generator[ImageResult]] | None = None,
     image_edit_impl: Callable[[ImageEdit], Generator[ImageResult]] | None = None,
-    cost_handler: ProtocolHandler | None = default_gemini_cost_handler,
+    cost_handler: ProtocolHandler | None = _default_gemini_cost_dispatch,
 ) -> ProtocolHandler:
     """Build a protocol handler backed by real Gemini API integrations."""
 
@@ -490,7 +501,7 @@ def production_handlers(
 def _gemini_production_dispatch(effect: Any, k: Any):
     """Raw ``(effect, k)`` dispatcher behind :data:`gemini_production_handler`."""
     if isinstance(effect, GeminiCalculateCost):
-        return (yield default_gemini_cost_handler(effect, k))
+        return (yield _default_gemini_cost_dispatch(effect, k))
     if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
         if _is_gemini_model(effect.model):
             value = yield _streaming_chat_impl(effect)

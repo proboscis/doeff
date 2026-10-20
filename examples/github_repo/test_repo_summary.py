@@ -32,6 +32,7 @@ def fake_github(answers):
     """A handler that answers each HttpRequest from ``answers`` ({url: (status, JSON body)}).
     It never opens a connection."""
 
+    @handler
     @do
     def answer(effect: HttpRequest, k):  # the annotation picks the effects it answers
         status, body = answers[effect.url]  # a URL the test did not expect: KeyError

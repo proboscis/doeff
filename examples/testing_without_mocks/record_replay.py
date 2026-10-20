@@ -28,8 +28,9 @@ def recording(tape: dict):
 
 def replaying(tape: dict):
     @handler
+    @do
     def replay(effect: Complete, k):
-        return Resume(k, tape[effect.prompt])  # no model call at all
+        return (yield Resume(k, tape[effect.prompt]))  # no model call at all
 
     return replay
 
@@ -38,9 +39,10 @@ model_calls = []
 
 
 @handler
+@do
 def fake_model(effect: Complete, k):  # stand-in for your real model client
     model_calls.append(effect.prompt)
-    return Resume(k, f"<answer {len(model_calls)}>")
+    return (yield Resume(k, f"<answer {len(model_calls)}>"))
 
 
 if __name__ == "__main__":

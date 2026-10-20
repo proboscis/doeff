@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from doeff import EffectBase, Pass, Resume, do, run, with_handlers
+from doeff import EffectBase, Pass, Resume, do, handler, run, with_handlers
 
 
 class Ping(EffectBase[str]):
@@ -23,6 +23,7 @@ def body():
 
 
 def test_do_handler_generator_runs_as_the_handler_stream() -> None:
+    @handler
     @do
     def answer(effect: Ping, k):
         value = yield Resume(k, "pong")
@@ -32,6 +33,7 @@ def test_do_handler_generator_runs_as_the_handler_stream() -> None:
 
 
 def test_do_handler_that_does_not_yield_returns_its_value() -> None:
+    @handler
     @do
     def abort(effect: Ping, k):
         return "aborted"
@@ -40,6 +42,7 @@ def test_do_handler_that_does_not_yield_returns_its_value() -> None:
 
 
 def test_do_handler_raising_before_its_first_yield_reaches_the_perform_site() -> None:
+    @handler
     @do
     def refuse(effect: Ping, k):
         raise PermissionError("no")
@@ -62,6 +65,7 @@ def test_twice_decorated_handler_keeps_the_outer_wrapper_semantics() -> None:
     inner = do(forward)
     outer = do(inner)  # the outer "generator function" returns a Call, not a generator
 
+    @handler
     @do
     def fallback(effect: Ping, k):
         return (yield Resume(k, "fallback"))
@@ -69,7 +73,7 @@ def test_twice_decorated_handler_keeps_the_outer_wrapper_semantics() -> None:
     # outer(effect, k) returns inner's program as a value: the handler's result is that
     # program object, exactly as the wrapper path evaluates it. An @do call is the single
     # instruction Call since 48d7d073 (it was an Expand before).
-    result = run(with_handlers([fallback, outer], body()))
+    result = run(with_handlers([fallback, handler(outer)], body()))
     assert type(result).__name__ == "Call"
 
 

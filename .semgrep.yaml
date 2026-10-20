@@ -5668,3 +5668,91 @@ rules:
       include:
         - /packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
         - /tests/semgrep/fixtures/python/packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
+
+  # ADR-DOE-CORE-003: a handler is a @do function marked with @handler (the owner's decision
+  # 2026-10-20 13:07 JST). handler() and with_handlers refuse anything else at run time; these
+  # three rules refuse the same shapes where the code is written. Tests are out of scope: they
+  # build the refused shapes on purpose to check the refusals.
+  - id: doeff-handler-requires-do
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-003: a handler is a @do function marked with @handler. Put @do under
+      @handler on this def (@handler / @do / def f(effect, k)): handler() refuses a function
+      without @do where the handler is made, and doeff takes no function without @do.
+    patterns:
+      - pattern: |
+          @handler
+          def $F(...):
+            ...
+      - pattern-not: |
+          @handler
+          @do
+          def $F(...):
+            ...
+      - pattern-not: |
+          @handler
+          @do(...)
+          def $F(...):
+            ...
+    paths:
+      exclude:
+        - "/tests/**"
+        - "**/tests/**"
+        - "/docs/design/**"
+        - "/docs/design-checks/**"
+
+  - id: doeff-handler-is-not-a-lambda
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-003: a lambda is not a handler. Write the handler as a def with @handler
+      above @do, and pass that: handler(), with_handlers and stacked_handlers refuse a lambda.
+    pattern-either:
+      - pattern: 'handler(lambda $...ARGS: $BODY)'
+      - pattern: 'with_handlers([..., lambda $...ARGS: $BODY, ...], ...)'
+      - pattern: 'stacked_handlers(..., lambda $...ARGS: $BODY, ...)'
+    paths:
+      exclude:
+        - "/tests/**"
+        - "**/tests/**"
+        - "/docs/design/**"
+        - "/docs/design-checks/**"
+
+  - id: doeff-handler-target-is-a-do-function
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-003: $F is a function without @do. A handler is a @do function marked with
+      @handler: put @handler and @do on its def. handler() refuses a function without @do, and
+      with_handlers and stacked_handlers take handlers only.
+    patterns:
+      - pattern-inside: |
+          def $F(...):
+            ...
+          ...
+      - pattern-not-inside: |
+          @do
+          def $F(...):
+            ...
+          ...
+      - pattern-not-inside: |
+          @do(...)
+          def $F(...):
+            ...
+          ...
+      - pattern-not-inside: |
+          @handler
+          def $F(...):
+            ...
+          ...
+      - pattern-either:
+          - pattern: handler($F)
+          - pattern: with_handlers([..., $F, ...], ...)
+          - pattern: stacked_handlers(..., $F, ...)
+    paths:
+      exclude:
+        - "/tests/**"
+        - "**/tests/**"
+        - "/docs/design/**"
+        - "/docs/design-checks/**"

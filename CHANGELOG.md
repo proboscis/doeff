@@ -4,6 +4,18 @@
 
 ### Changed
 
+- **Breaking:** a handler is a `@do` function marked with `@handler`, and nothing else (ADR-DOE-CORE-003). `handler(f)`
+  takes a `@do` function, or a `functools.partial` or bound method of one, and raises `TypeError` ("… is not a @do
+  function") for a plain function, a lambda or a callable instance. `with_handlers` and `stacked_handlers` no longer
+  pass an unmarked callable through `handler()`: anything that is not a handler (made with `@handler` or `defhandler`)
+  raises `TypeError` ("… is not a handler") where the stack is built. To port a plain-function handler, put `@handler`
+  and `@do` on its `def` and yield what it returned: `return Resume(k, v)` becomes `return (yield Resume(k, v))`. A
+  handler that reinstalls the inner handlers it read with `GetHandlers(k)` uses `doeff.handler_utils.reinstaller(h)`
+  instead of `handler(h)`. Three semgrep rules in `.semgrep.yaml` refuse the same shapes outside the tests: `@handler`
+  on a `def` without `@do`, a lambda given to `handler` or `with_handlers`, and a plain function of the same file given
+  to them. The README's cost table drops its plain-function row. `doeff_gemini.default_gemini_cost_handler` is now a
+  handler, so `handlers=[default_gemini_cost_handler, ...]` keeps working; the raw dispatcher behind it is private, and
+  `production_handlers(cost_handler=...)` still takes a raw `(effect, k)` dispatcher.
 - `python -m doeff demo` runs its `digest` program under four handlers instead of two, to show that a handler decides
   what an effect means, not only where I/O goes: `canned` resumes the continuation `k` with made-up values,
   `trace` sees every effect and passes it on, `budget(1)` lets one effect through and then drops `k`, so `digest` stops

@@ -73,7 +73,7 @@ from doeff_gemini.client import track_api_call
 from doeff_gemini.effects import GeminiCalculateCost
 from doeff_gemini.handlers import default_gemini_cost_handler
 
-from doeff import Effect, Pass, Resume, do
+from doeff import Effect, Pass, Resume, do, handler
 
 
 def _fake_response(usage: dict[str, int]) -> Any:
@@ -116,7 +116,7 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
 
     result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler],
+        handlers=[handler(default_gemini_cost_handler)],
     )
 
     assert result.is_ok()
@@ -149,7 +149,7 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
 
     result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler],
+        handlers=[handler(default_gemini_cost_handler)],
     )
 
     assert result.is_ok()
@@ -187,7 +187,7 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
 
     result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler],
+        handlers=[handler(default_gemini_cost_handler)],
     )
 
     assert result.is_ok()
@@ -241,7 +241,7 @@ async def test_custom_cost_calculator_overrides_default() -> None:
 
     result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, custom_cost_handler],
+        handlers=[handler(default_gemini_cost_handler), handler(custom_cost_handler)],
     )
 
     assert result.is_ok()
@@ -280,7 +280,7 @@ async def test_cost_calculation_failure_raises() -> None:
 
     result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, failing_cost_handler],
+        handlers=[handler(default_gemini_cost_handler), handler(failing_cost_handler)],
     )
 
     assert result.is_err()

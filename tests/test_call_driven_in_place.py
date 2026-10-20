@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import pytest
 from doeff_vm import K, PyVM
 
-from doeff import EffectBase, Resume, do, run, with_handlers
+from doeff import EffectBase, Resume, do, handler, run, with_handlers
 
 
 class Probe(EffectBase[int]):
@@ -40,6 +40,7 @@ def raises_at(n: int) -> Generator[object, int, int]:
     return (yield raises_at(n - 1))
 
 
+@handler
 @do
 def answer_probe(effect: Probe, k: K) -> Generator[object, object, object]:
     return (yield Resume(k, 100))

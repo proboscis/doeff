@@ -39,6 +39,7 @@ from doeff import (  # noqa: E402 - late import preserves existing import/setup 
     Pass,
     Resume,
     do,
+    handler,
     run,
     with_handlers,
 )
@@ -98,6 +99,7 @@ def _build_handler(
     state = {} if initial_state is None else dict(initial_state)
     event_log: list[tuple[str, str, Any]] = [] if events is None else events
 
+    @handler
     @do
     def mock_handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect):

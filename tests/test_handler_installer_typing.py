@@ -22,6 +22,7 @@ from tests.test_static_typing import _pyright_python
 _T = TypeVar("_T")
 
 
+@handler
 @do
 def _forward(effect: EffectBase, k: K) -> Generator[Program, object, None]:
     yield Pass(effect, k)

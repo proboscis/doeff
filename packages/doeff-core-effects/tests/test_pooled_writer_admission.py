@@ -410,6 +410,7 @@ class AcquireObserver:
         self.releases = {}
         from doeff.program import Pass, handler
 
+        @handler
         @do
         def observe(effect, continuation):
             if isinstance(effect, AcquireSemaphore):

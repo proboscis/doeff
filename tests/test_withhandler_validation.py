@@ -1,4 +1,4 @@
-"""handler() must reject non-callable raw handlers at construction time."""
+"""handler() must reject non-callable raw handlers, and callables that are not @do functions, at construction time."""
 
 import pytest
 
@@ -36,13 +36,14 @@ def test_handler_accepts_do_handler():
     assert ctrl.handler is raw_handler
 
 
-def test_handler_accepts_plain_callable():
+def test_handler_refuses_plain_callable():
+    # handler は @do 関数だけ(ADR-DOE-CORE-003)。素の関数は作る所で断る。
     def raw_handler(effect, k):
         from doeff import Resume
         return Resume(k, "ok")
 
-    ctrl = make_handler(raw_handler)(_body())
-    assert ctrl.handler is raw_handler
+    with pytest.raises(TypeError, match="raw_handler is not a @do function"):
+        make_handler(raw_handler)
 
 
 def test_handler_is_idempotent_for_installed_handler():

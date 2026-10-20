@@ -17,7 +17,7 @@ import pytest
 from doeff_core_effects.scheduler import scheduled
 from doeff_vm._effect_types import handler_effect_types
 
-from doeff import Effect, EffectBase, Pass, Resume, Spawn, Wait, do, run, with_handlers
+from doeff import Effect, EffectBase, Pass, Resume, Spawn, Wait, do, handler, run, with_handlers
 
 T = TypeVar("T")
 
@@ -53,12 +53,14 @@ class WriteFlag(GenericWrite[bool]):
 calls: list[str] = []
 
 
+@handler
 @do
 def alpha_only(effect: Alpha, k):
     calls.append(f"alpha_only:{type(effect).__name__}")
     return (yield Resume(k, f"alpha:{effect.value}"))
 
 
+@handler
 @do
 def catch_all(effect: Effect, k):
     calls.append(f"catch_all:{type(effect).__name__}")
@@ -66,7 +68,9 @@ def catch_all(effect: Effect, k):
 
 
 def _stack(inner, program):
-    return with_handlers([catch_all, inner], program)
+    """``inner`` made a handler with ``handler()`` (a @do function, or a partial or bound method of one),
+    under the catch-all: ``handler()`` is where a handler body is judged (ADR-DOE-CORE-003)."""
+    return with_handlers([catch_all, handler(inner)], program)
 
 
 @do
@@ -87,13 +91,16 @@ def test_typed_do_handler_is_not_called_for_other_effects() -> None:
     assert calls == ["alpha_only:Alpha", "catch_all:Beta", "alpha_only:Alpha"]
 
 
-def test_typed_plain_function_handler() -> None:
+def test_typed_plain_function_is_not_a_handler() -> None:
+    # A handler is a @do function (ADR-DOE-CORE-003): a plain function with a typed effect
+    # parameter is refused where it is made a handler, before any effect reaches it.
     def alpha_plain(effect: Alpha, k):
         calls.append("alpha_plain")
         return Resume(k, f"plain:{effect.value}")
 
-    assert run(_stack(alpha_plain, alpha_then_beta())) == ("plain:1", "fallback:Beta:2", "plain:3")
-    assert calls.count("alpha_plain") == 2
+    with pytest.raises(TypeError, match="alpha_plain is not a @do function"):
+        _stack(alpha_plain, alpha_then_beta())
+    assert calls == []
 
 
 def test_union_annotation_admits_each_member() -> None:
@@ -120,7 +127,9 @@ def test_partial_bound_method_and_callable_instance_use_the_effect_parameter() -
     expected_tail = "fallback:Beta:2"
     assert run(_stack(functools.partial(prefixed, "p:"), alpha_then_beta()))[1] == expected_tail
     assert run(_stack(Holder().method, alpha_then_beta()))[1] == expected_tail
-    assert run(_stack(Holder(), alpha_then_beta())) == ("instance:1", expected_tail, "instance:3")
+    # A callable instance is not a @do function, whatever its __call__ is annotated with.
+    with pytest.raises(TypeError, match="Holder is not a @do function"):
+        _stack(Holder(), alpha_then_beta())
 
 
 def test_parent_type_annotation_catches_subclasses_defined_later() -> None:
@@ -157,6 +166,7 @@ def test_parameterised_generic_parent_annotation() -> None:
 
 
 def test_skipped_handler_between_pass_chain() -> None:
+    @handler
     @do
     def passes_everything(effect: Effect, k):
         calls.append("passes")
@@ -177,6 +187,7 @@ def test_typed_handler_is_reinstalled_with_its_filter_in_spawned_tasks() -> None
         task = yield Spawn(alpha_then_beta())
         return (yield Wait(task))
 
+    @handler
     @do
     def beta_fallback(effect: Beta, k):
         return (yield Resume(k, f"fallback:Beta:{effect.value}"))

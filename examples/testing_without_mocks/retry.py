@@ -39,11 +39,12 @@ def flaky_api(failures: int):  # stand-in for an API that returns 503 a few time
     left = [failures]
 
     @handler
+    @do
     def api(effect: FetchPrice, k):
         if left[0] > 0:
             left[0] -= 1
             raise Flaky("503")
-        return Resume(k, 9.5)
+        return (yield Resume(k, 9.5))
 
     return api
 

@@ -1,6 +1,6 @@
 # Not shown in the article: proves the "forget one handler" snippet and its message.
 import pytest
-from doeff import Resume, UnhandledEffect, run, with_handlers
+from doeff import Resume, UnhandledEffect, do, handler, run, with_handlers
 
 import infra
 from infra import User
@@ -12,8 +12,10 @@ MISSING_SEND_MAIL = (
 )
 
 
+@handler
+@do
 def fake_load_user(effect: LoadUser, k):
-    return Resume(k, User("Ada", "ada@example.com"))
+    return (yield Resume(k, User("Ada", "ada@example.com")))
 
 
 def test_forgetting_a_handler_is_an_error_and_nothing_real_runs():
@@ -26,8 +28,10 @@ def test_forgetting_a_handler_is_an_error_and_nothing_real_runs():
 
 def test_untyped_fake_swallows_the_other_effect():
     # Limits section: "A handler without an annotation receives every effect."
+    @handler
+    @do
     def untyped_fake(effect, k):
-        return Resume(k, User("Ada", "ada@example.com"))
+        return (yield Resume(k, User("Ada", "ada@example.com")))
 
     # SendMail was answered by the fake too, so the run still returns.
     assert run(with_handlers([untyped_fake], welcome(1))) == "Welcome, Ada!"

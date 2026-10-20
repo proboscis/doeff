@@ -15,7 +15,7 @@ import pytest
 from doeff_vm import _effect_types
 from doeff_vm._effect_types import PassedEffects, declare_passes, handler_spec
 
-from doeff import EffectBase, Pass, Resume, do, run, with_handlers
+from doeff import EffectBase, Pass, Resume, do, handler, run, with_handlers
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class Beta(EffectBase):
     value: str
 
 
+@handler
 @do
 def fallback(effect: EffectBase, k):
     """どの handler も受けなかった effect の行き先(外側の総受け)。"""
@@ -100,13 +101,13 @@ def alpha_then_beta():
 
 def test_a_a_closure_made_again_from_the_same_code_resolves_nothing(resolutions: Resolutions) -> None:
     first = alpha_handler("one")
-    assert run(with_handlers([fallback, first], alpha_then_beta())) == ("one:1", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(first)], alpha_then_beta())) == ("one:1", "fallback:Beta")
     resolved_by_the_first = resolutions.count
     assert resolved_by_the_first >= 1, "1 つ目の閉包の註は解く"
 
     second = alpha_handler("two")
     assert second is not first and second.__wrapped__.__code__ is first.__wrapped__.__code__
-    assert run(with_handlers([fallback, second], alpha_then_beta())) == ("two:1", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(second)], alpha_then_beta())) == ("two:1", "fallback:Beta")
     assert resolutions.count == resolved_by_the_first, "同じ code で同じ註の閉包を 2 回目に据える時は解き直さない"
     assert handler_spec(second).effect_types == (Alpha,)
 
@@ -116,22 +117,22 @@ def test_b_closures_of_one_code_that_admit_different_types_do_not_mix(resolution
     betas = kind_handler(Beta, "betas")
     assert alphas.__wrapped__.__code__ is betas.__wrapped__.__code__
 
-    assert run(with_handlers([fallback, alphas], alpha_then_beta())) == ("alphas:1", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(alphas)], alpha_then_beta())) == ("alphas:1", "fallback:Beta")
     # 同じ code の 2 つ目は Beta だけを受ける — Alpha の答えを借りると Beta が素通りして fallback に落ち、Alpha が入ってくる
-    assert run(with_handlers([fallback, betas], alpha_then_beta())) == ("fallback:Alpha", "betas:2")
+    assert run(with_handlers([fallback, handler(betas)], alpha_then_beta())) == ("fallback:Alpha", "betas:2")
     assert handler_spec(alphas).effect_types == (Alpha,)
     assert handler_spec(betas).effect_types == (Beta,)
     # 1 つ目に戻っても 2 つ目の答えを借りない
-    assert run(with_handlers([fallback, kind_handler(Alpha, "again")], alpha_then_beta())) == ("again:1", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(kind_handler(Alpha, "again"))], alpha_then_beta())) == ("again:1", "fallback:Beta")
 
 
 def test_b_a_union_annotation_shares_only_when_its_members_are_the_same(resolutions: Resolutions) -> None:
     both = kind_handler(Alpha | Beta, "both")
-    assert run(with_handlers([fallback, both], alpha_then_beta())) == ("both:1", "both:2")
+    assert run(with_handlers([fallback, handler(both)], alpha_then_beta())) == ("both:1", "both:2")
     resolved = resolutions.count
-    assert run(with_handlers([fallback, kind_handler(Alpha | Beta, "again")], alpha_then_beta())) == ("again:1", "again:2")
+    assert run(with_handlers([fallback, handler(kind_handler(Alpha | Beta, "again"))], alpha_then_beta())) == ("again:1", "again:2")
     assert resolutions.count == resolved, "評価の度に新しい Alpha | Beta のオブジェクトでも、同じ型の組なら解き直さない"
-    assert run(with_handlers([fallback, kind_handler(Beta, "betas")], alpha_then_beta())) == ("fallback:Alpha", "betas:2")
+    assert run(with_handlers([fallback, handler(kind_handler(Beta, "betas"))], alpha_then_beta())) == ("fallback:Alpha", "betas:2")
 
 
 def test_b_the_passed_effects_of_closures_of_one_code_do_not_mix() -> None:
@@ -150,14 +151,14 @@ def test_b_the_passed_effects_of_closures_of_one_code_do_not_mix() -> None:
     betas = fence(Beta)
     assert handler_spec(alphas).passed == PassedEffects((Alpha,), ())
     assert handler_spec(betas).passed == PassedEffects((Beta,), ())
-    assert run(with_handlers([fallback, alphas], alpha_then_beta())) == ("fallback:Alpha", "fenced:Beta")
-    assert run(with_handlers([fallback, betas], alpha_then_beta())) == ("fenced:Alpha", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(alphas)], alpha_then_beta())) == ("fallback:Alpha", "fenced:Beta")
+    assert run(with_handlers([fallback, handler(betas)], alpha_then_beta())) == ("fenced:Alpha", "fallback:Beta")
 
 
 def test_c_a_handler_of_another_code_is_resolved_on_its_own(resolutions: Resolutions) -> None:
-    assert run(with_handlers([fallback, alpha_handler("one")], alpha_then_beta())) == ("one:1", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(alpha_handler("one"))], alpha_then_beta())) == ("one:1", "fallback:Beta")
     resolved = resolutions.count
-    assert run(with_handlers([fallback, other_alpha_handler("x")], alpha_then_beta())) == ("other-x:1", "fallback:Beta")
+    assert run(with_handlers([fallback, handler(other_alpha_handler("x"))], alpha_then_beta())) == ("other-x:1", "fallback:Beta")
     assert resolutions.count == resolved + 1, "別の code は同じ註でも別に解く"
 
 

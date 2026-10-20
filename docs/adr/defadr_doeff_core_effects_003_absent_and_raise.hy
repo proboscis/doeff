@@ -109,6 +109,7 @@
 (import typing [Never get-args])
 (import pathlib [Path])
 (import doeff [run with-handlers Ok Err Some Nothing Pass Try EffectBase DoExpr K])
+(import doeff [do :as doeff-do handler :as make-handler])
 (import doeff.result [Maybe])
 (import doeff_vm [UnhandledEffect])
 (import doeff-core-effects.handlers [try-handler])
@@ -144,24 +145,23 @@
 (defk probe-ending [value]
   {:pre [(: value (| str (type Nothing)))] :post [(: % (| str (type Nothing)))]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "受け手が再開せずにスコープを終える時の値を返す Program — 素の handler 関数がその値でスコープを終えるため。"
+  "受け手が再開せずにスコープを終える時の値を返す Program — 受け手の @do 関数がその値でスコープを終えるため。"
   value)
 
-(deff probe-maybe-handler [effect k]  ; defk にできない: defk は引数 (effect k) を handler と読んで断る — VM が素の handler 関数を受けることを見せる見本(defhandler では (finish 値) で書ける — R15)
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % DoExpr)]
-   :tags {:context "doeff-core-effects-adr" :role "foundation"}}
+;; defk にできない: defk は引数 (effect k) を handler と読んで断る。handler は @handler を付けた @do 関数だけ(ADR-DOE-CORE-003)なので、
+;; VM が再開しない受け手を受けることを @do 関数の見本で見せる(defhandler では (finish 値) で書ける — R15)。
+(defn [make-handler doeff-do] probe-maybe-handler [#^ EffectBase effect #^ K k]
   "R2 の maybe の受け手の見本: ProbeAbsent を受けたら再開せず Nothing でスコープを終える(続きは捨てる)。ほかは外へ渡す。"
   (if (isinstance effect ProbeAbsent)
-      (probe-ending Nothing)
-      (Pass effect k)))
+      (return (yield (probe-ending Nothing)))
+      (yield (Pass effect k))))
 
-(deff probe-outer-handler [effect k]  ; defk にできない: probe-maybe-handler と同じ(VM が素の handler 関数を受けることを見せる見本)
-  {:pre [(: effect EffectBase) (: k K)] :post [(: % DoExpr)]
-   :tags {:context "doeff-core-effects-adr" :role "foundation"}}
+;; defk にできない: probe-maybe-handler と同じ(VM が再開しない受け手を受けることを見せる見本)。
+(defn [make-handler doeff-do] probe-outer-handler [#^ EffectBase effect #^ K k]
   "土台の handler より外側に置く受け手の見本: ProbeAbsent を受けたら印の文でスコープを終える — どの受け手が受けたかを見分けるため。"
   (if (isinstance effect ProbeAbsent)
-      (probe-ending "外側が受けた")
-      (Pass effect k)))
+      (return (yield (probe-ending "外側が受けた")))
+      (yield (Pass effect k))))
 
 (defhandler probe-read-handler
   "R4 の落とし穴の見本: ProbeRead に答える handler が、節の中で ProbeAbsent を出す(してはいけない形)。"

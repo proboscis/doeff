@@ -34,13 +34,14 @@ from doeff_core_effects.scheduler import (
     scheduled,
 )
 
-from doeff import EffectBase, Resume, do, run, with_handlers
+from doeff import EffectBase, Resume, do, handler, run, with_handlers
 
 
 class Outside(EffectBase[int]):
     """scheduler の外側の handler が解く effect(scheduler を素通りする費用)。"""
 
 
+@handler
 @do
 def outside_handler(effect: Outside, k: Any):
     return (yield Resume(k, 1))

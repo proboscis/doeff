@@ -71,7 +71,7 @@ from tests.test_event_source import (
     assert_resumed_promptly,
 )
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Resume, do, run, with_handlers
+from doeff import EffectBase, EffectGenerator, K, Pass, Program, Resume, do, handler, run, with_handlers
 from doeff.program import ProgramHandler
 
 # 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。
@@ -192,6 +192,7 @@ def test_a_write_from_another_handler_stack_signals() -> None:
 POLLS = (WatchChanges, WatchEvents, DelayEffect)
 
 
+@handler
 @do
 def _no_polls(effect: EffectBase, k: K) -> EffectGenerator[object]:
     """源と本体が外へ出す effect のうち、poll の effect(WatchChanges・WatchEvents・Delay)を見つけたら赤にする見張り。"""

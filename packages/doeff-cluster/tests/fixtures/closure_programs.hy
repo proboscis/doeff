@@ -4,7 +4,7 @@
 ;;; 外の世界の effect(Raw)に訳し、土台(本体を受けて包む defk)が Raw・時計・設定に答え、scheduler が Spawn に答える。
 (require doeff-hy.macros [defk defhandler <- val])
 (import collections.abc [Callable])
-(import doeff [EffectBase DoExpr with-handlers])
+(import doeff [EffectBase DoExpr do :as doeff-do with-handlers])
 (import doeff.program [handler :as program-handler])
 (import doeff_core_effects.effects [Ask Try])
 (import doeff_core_effects.handlers [state try-handler])
@@ -31,8 +31,8 @@
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
   (Ask [key] (resume "1")))
 
-;; 本当に読めない handler — 節も __doeff_handles__ の宣言も持たない(source の無い組み込みの関数を包んだだけ)。
-(val opaque-world (program-handler print))
+;; 本当に読めない handler — 節も __doeff_handles__ の宣言も持たない(source の無い組み込みの関数を @do で包んだだけ — handler は @do 関数だけ・ADR-DOE-CORE-003)。
+(val opaque-world (program-handler (doeff-do print)))
 
 
 (defk child []

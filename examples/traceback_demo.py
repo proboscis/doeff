@@ -69,6 +69,7 @@ def check_mode():
 # -- custom handlers ----------------------------------------------------------
 
 
+@handler
 @do
 def auth_handler(effect, k):
     if isinstance(effect, Ask) and effect.key == "auth_token":
@@ -76,6 +77,7 @@ def auth_handler(effect, k):
     yield Pass(effect, k)
 
 
+@handler
 @do
 def production_mode(effect, k):
     if isinstance(effect, Ask) and effect.key == "mode":
@@ -83,6 +85,7 @@ def production_mode(effect, k):
     yield Pass(effect, k)
 
 
+@handler
 @do
 def debug_mode(effect, k):
     if isinstance(effect, Ask) and effect.key == "mode":
