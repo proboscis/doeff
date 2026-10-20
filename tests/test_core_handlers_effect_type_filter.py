@@ -30,7 +30,7 @@ from doeff_core_effects.handlers import (
 )
 from doeff_vm._effect_types import handler_effect_types
 
-from doeff import do, with_handlers
+from doeff import do, handler, with_handlers
 from doeff import run as doeff_run
 
 
@@ -118,7 +118,7 @@ def test_the_answers_and_the_types_it_answers_are_unchanged() -> None:
 
         yield Pass(effect, k)
 
-    stack = [reader({"a": 1, "b": 2, "c": 3}), state(), passes_everything]
+    stack = [reader({"a": 1, "b": 2, "c": 3}), state(), handler(passes_everything)]
     code = passes_everything.__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
     seen = _entries(code, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
     assert seen.result == 6

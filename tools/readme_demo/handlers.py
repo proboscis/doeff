@@ -15,6 +15,7 @@ def trace(effect, k):               # see every effect, then pass it on
     return (yield Pass(effect, k))
 
 def budget(n):                      # let n effects through, then drop k
+    @handler
     @do
     def spend(effect, k):
         nonlocal n

@@ -33,6 +33,7 @@ from doeff import (
     Pure,
     do,
     effect_result_type,
+    handler,
     program_signature,
     run,
     typed_resume,
@@ -56,6 +57,7 @@ class WriteShared(WriteEffect[bool]):
     key: str
 
 
+@handler
 @do
 def board(effect: ReadClock | WriteShared, k):
     if isinstance(effect, ReadClock):
@@ -93,6 +95,7 @@ def test_yield_and_yield_from_are_interchangeable() -> None:
 
 
 def test_handler_error_raises_at_the_yield_from_site() -> None:
+    @handler
     @do
     def refuse(effect: WriteShared, k):
         raise PermissionError(effect.key)

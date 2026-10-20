@@ -31,6 +31,7 @@ from doeff import Pass, do, handler, run  # 手順をProgramへ組み立て、�
 
 
 def notifications_only(raw_handler):  # 通知以外を現在のPass APIで委譲するハンドラを組み立てる。
+    @handler
     @do  # effectの選別と継続の受け渡しをProgramにする。
     def dispatch(effect, k):  # 依頼と、その結果を待つ継続を受け取る。
         if isinstance(effect, (Notify, NotifyThread, Acknowledge)):  # 通知の3種類だけを渡す。

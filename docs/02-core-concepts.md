@@ -216,7 +216,6 @@ a plain Python function call is 0.03 µs):
 |---|---|
 | `@do` handler answering with `Transfer` | 0.95 |
 | `@do` handler answering with `Resume` | 1.16 |
-| plain function handler returning `Resume(k, v)` (no generator) | 0.69 |
 | each typed handler skipped by its annotation | ~0.14 |
 | each handler that runs and yields `Pass` | ~0.9 |
 

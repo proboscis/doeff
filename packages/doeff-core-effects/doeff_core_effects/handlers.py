@@ -27,6 +27,7 @@ from typing import Any
 from doeff_vm._not_a_program import program_shown, uncalled_do_function_call
 
 from doeff import do
+from doeff.handler_utils import reinstaller
 from doeff.program import Pass, ProgramHandler, Transfer, TransferThrow, _named_handler
 from doeff.program import handler as _program_handler
 from doeff_core_effects.effects import (
@@ -183,7 +184,7 @@ def _try_handler(effect: Try, k):
             # Reinstall inner handlers + try_handler itself so nested
             # Try effects and inner-handler effects are reachable.
             for h in inner_hs:
-                prog = _program_handler(h)(prog)
+                prog = reinstaller(h)(prog)
             prog = try_handler(prog)
             try:
                 value = yield prog
@@ -277,7 +278,7 @@ def _local_handler(effect: Local, k):
         # then scope_reader innermost
         prog = effect.program
         for h in inner_handlers:
-            prog = _program_handler(h)(prog)
+            prog = reinstaller(h)(prog)
         prog = local_handler(prog)
         prog = _program_handler(scope_reader)(prog)
 
@@ -318,7 +319,7 @@ def _listen_handler(effect: Listen, k):
 
         prog = effect.program
         for h in inner_handlers:
-            prog = _program_handler(h)(prog)
+            prog = reinstaller(h)(prog)
         prog = _program_handler(observer_handler)(prog)
         # Reinstall listen_handler itself, outermost, so a nested Listen is reachable.
         prog = listen_handler(prog)
@@ -682,7 +683,7 @@ def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> P
                 inner_hs = yield get_inner_handlers(k)
                 wrapped = raw
                 for h in inner_hs:
-                    wrapped = _program_handler(h)(wrapped)
+                    wrapped = reinstaller(h)(wrapped)
                 eval_stack.append(set())
                 error = None
                 value = None
@@ -714,7 +715,7 @@ def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> P
                 inner_hs = yield get_inner_handlers(k)
                 prog = effect.program
                 for h in inner_hs:
-                    prog = _program_handler(h)(prog)
+                    prog = reinstaller(h)(prog)
 
                 error = None
                 inner_result = None
@@ -825,7 +826,7 @@ def env_var_ask(*, prefix: str = "DOEFF_") -> ProgramHandler:
                 inner_hs = yield get_inner_handlers(k)
                 wrapped = value
                 for h in inner_hs:
-                    wrapped = _program_handler(h)(wrapped)
+                    wrapped = reinstaller(h)(wrapped)
                 resolved = yield wrapped
             else:
                 resolved = value

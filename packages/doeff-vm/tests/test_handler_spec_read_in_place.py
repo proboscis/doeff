@@ -33,7 +33,7 @@ et.handler_spec = counting  # VM は規則の関数を最初に据える時に 1
 
 from dataclasses import dataclass
 
-from doeff import EffectBase, Resume, do, run, with_handlers
+from doeff import EffectBase, Resume, do, handler, run, with_handlers
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ class Ping(EffectBase):
     n: int
 
 
+@handler
 @do
 def answer(effect: Ping, k):
     return (yield Resume(k, effect.n + 1))
@@ -64,7 +65,7 @@ def body():
         total += yield with_handlers([answer], ask(n))
     owner = Owner()
     for n in range(3):
-        total += yield with_handlers([owner.answer], ask(n))
+        total += yield with_handlers([handler(owner.answer)], ask(n))
     return total
 
 

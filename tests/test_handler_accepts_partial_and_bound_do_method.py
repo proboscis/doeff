@@ -1,16 +1,19 @@
-"""handler() / with_handlers / Spawn は callable なら何でも handler として受ける。
+"""handler() は @do 関数の partial と、@do の method を束縛した bound method も受ける。
+with_handlers / Spawn は、それで作った handler を受ける。
 
 実測(agora-controllers の予算の controller・2026-09-23): runtime の handler が
 functools.partial を返し、handler() が ``raw_handler.__name__`` を読んで
 AttributeError で落ちた(with_handlers と、Spawn の境目で handler を包み直す
-scheduler の両方)。VM が要るのは callable であることだけなので、名前は
-partial なら中の関数・呼べる instance なら class から取る。
+scheduler の両方)。名前は partial なら中の関数・bound method なら method から取る。
+
+handler は @do 関数だけ(ADR-DOE-CORE-003)。呼べる instance は @do 関数でないので断る。
 """
 
 import functools
 import types
 from dataclasses import dataclass
 
+import pytest
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import EffectBase, Pass, Resume, Spawn, Wait, do, handler, run, with_handlers
@@ -35,8 +38,11 @@ class PrefixHandler:
     def __call__(self, effect, k):
         return prefixed(self.prefix, effect, k)
 
+    @do
     def method(self, effect, k):
-        return prefixed(self.prefix, effect, k)
+        if isinstance(effect, Ping):
+            return (yield Resume(k, f"{self.prefix}{effect.n}"))
+        yield Pass(effect, k)
 
 
 @do
@@ -50,18 +56,19 @@ def spawner():
     return (yield Wait(task))
 
 
-def test_with_handlers_accepts_partial() -> None:
-    assert run(with_handlers([functools.partial(prefixed, "p:")], body())) == "p:1"
+def test_with_handlers_accepts_a_handler_made_from_a_partial() -> None:
+    assert run(with_handlers([handler(functools.partial(prefixed, "p:"))], body())) == "p:1"
 
 
-def test_spawn_reinstalls_partial_handler_in_the_child_task() -> None:
-    program = scheduled(with_handlers([functools.partial(prefixed, "p:")], spawner()))
+def test_spawn_reinstalls_a_partial_handler_in_the_child_task() -> None:
+    program = scheduled(with_handlers([handler(functools.partial(prefixed, "p:"))], spawner()))
     assert run(program) == "p:1"
 
 
-def test_handler_accepts_callable_instance_and_bound_method() -> None:
-    assert run(handler(PrefixHandler("c:"))(body())) == "c:1"
+def test_handler_accepts_a_bound_do_method_and_refuses_a_callable_instance() -> None:
     assert run(handler(PrefixHandler("m:").method)(body())) == "m:1"
+    with pytest.raises(TypeError, match=r"PrefixHandler is not a @do function"):
+        handler(PrefixHandler("c:"))
 
 
 def _installer_name(install: object) -> str:
@@ -75,5 +82,4 @@ def test_installer_is_labelled_by_the_wrapped_function() -> None:
     assert (
         _installer_name(handler(functools.partial(functools.partial(prefixed), "p:"))) == "prefixed"
     )
-    assert _installer_name(handler(PrefixHandler("c:"))) == "PrefixHandler"
     assert _installer_name(handler(PrefixHandler("m:").method)) == "method"

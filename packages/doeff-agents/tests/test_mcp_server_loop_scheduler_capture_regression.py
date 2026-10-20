@@ -51,7 +51,7 @@ from doeff_core_effects.scheduler import (
     scheduled,
 )
 
-from doeff import EffectBase, GetHandlers, GetOuterHandlers, Pass, Resume, do, run
+from doeff import EffectBase, GetHandlers, GetOuterHandlers, Pass, Resume, do, handler, run
 from doeff.mcp import McpToolDef
 from doeff.program import with_handlers
 
@@ -119,6 +119,7 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         wakeup_ep = server.wakeup_mailbox.get()
         wakeup_ep.complete(None)
 
+    @handler
     @do
     def plan_handler(effect, k):
         nonlocal tool_parked_promise
@@ -152,6 +153,7 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         result = yield Pass(effect, k)
         return result
 
+    @handler
     @do
     def notification_handler(effect, k):
         if isinstance(effect, TradingEventE):

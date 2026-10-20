@@ -69,19 +69,23 @@ def fetch_program():
     return (yield Fetch("https://example.com"))
 
 
+@handler
 @do
 def catch_all(effect: Effect, k):
     return (yield Resume(k, f"fallback:{type(effect).__name__}"))
 
 
 def _annotated(annotation):
-    """A plain handler whose effect parameter carries ``annotation`` (a type or its text)."""
+    """A @do handler body whose effect parameter carries ``annotation`` (a type or its text).
+
+    A handler is a @do function (ADR-DOE-CORE-003): the annotation is set on the generator
+    function before @do wraps it, as a def with that annotation would have it."""
 
     def annotated_handler(effect, k):
-        return Resume(k, f"got {effect}")
+        return (yield Resume(k, f"got {effect}"))
 
     annotated_handler.__annotations__ = {"effect": annotation}
-    return annotated_handler
+    return do(annotated_handler)
 
 
 def _message(program) -> str:
@@ -114,8 +118,10 @@ class TestAnnotationThatNoEffectMatchesIsRefused:
         assert f"{__file__}:" in message
         assert message.endswith(_REFUSAL)
 
-    def test_with_handlers_refuses_it_too(self):
-        with pytest.raises(TypeError, match="names str, which no effect can be an instance of"):
+    def test_with_handlers_refuses_it_as_not_a_handler(self):
+        # with_handlers takes handlers only (ADR-DOE-CORE-003 R2): the unmarked @do function is
+        # refused before its annotation is read; handler() above is where the annotation is judged.
+        with pytest.raises(TypeError, match="fetch_handler is not a handler"):
             with_handlers([fetch_handler], fetch_program())
 
     def test_a_raw_with_handler_is_refused_when_it_is_installed(self):
@@ -161,6 +167,7 @@ class TestAnnotationsThatStayAccepted:
         handler(_annotated(annotation))
 
     def test_a_marker_base_is_a_filter_even_before_an_effect_inherits_it(self):
+        @handler
         @do
         def marked(effect: Marker, k):
             return (yield Resume(k, f"marked:{type(effect).__name__}"))
@@ -178,6 +185,7 @@ class TestAnnotationsThatStayAccepted:
         assert run(with_handlers([catch_all, install], body())) == ("marked:Tagged", "fallback:Other")
 
     def test_a_runtime_checkable_protocol_is_a_filter(self):
+        @handler
         @do
         def with_url(effect: HasUrl, k):
             return (yield Resume(k, f"url:{effect.url}"))
@@ -227,26 +235,31 @@ class TestAnnotationsThatStayAccepted:
 _SKIPPED_TAIL = " — a handler only sees the effects its effect parameter is annotated with"
 
 
+@handler
 @do
 def store_handler(effect: Store, k):
     return (yield Resume(k, None))
 
 
+@handler
 @do
 def store_or_other(effect: Store | Other, k):
     return (yield Resume(k, None))
 
 
+@handler
 @do
 def pass_through(effect, k):
     yield Pass(effect, k)
 
 
+@handler
 @do
 def fetch_passer(effect: Fetch, k):
     yield Pass(effect, k)
 
 
+@handler
 @do
 def many(effect: Store | Other | MyEffectA | MyEffectB, k):
     return (yield Resume(k, None))
@@ -321,6 +334,7 @@ class TestUserEffectHint:
         assert _message(handler(pass_through)(fetch_program())).splitlines()[-1] == _GENERAL_HINT
 
     def test_following_the_hint_runs_the_program(self):
+        @handler
         @do
         def fn(effect: Fetch, k):
             value = f"body of {effect.url}"

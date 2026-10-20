@@ -20,7 +20,7 @@
 ;;; WaitUntil, GetTime, and other time-sensitive effects actually work.
 
 (require doeff-hy.macros [<- defk val])
-(import doeff [handler :as _program-handler])
+(import doeff.handler_utils [reinstaller])
 (import doeff_core_effects.scheduler [
   CreateExternalPromise Wait Spawn Race Cancel PRIORITY_IDLE])
 (import doeff_agents.mcp-server [
@@ -72,9 +72,10 @@
     ;; continuations unwind their exceptions into THIS task's except
     ;; below — the pipeline error is swallowed as a tool error while the
     ;; orphaned tool value becomes the run() result (2026-07-07 SBI live
-    ;; exit-0 incident).
+    ;; exit-0 incident). The others are the VM's raw dispatchers, so they go back through the
+    ;; reinstalling door, not the door that makes a handler from a @do function (ADR-DOE-CORE-003 R3).
     (when (not (_scheduler-prompt? h))
-      (setv program ((_program-handler h) program))))
+      (setv program ((reinstaller h) program))))
   (setv ok True)
   (setv result None)
   (setv error-msg None)

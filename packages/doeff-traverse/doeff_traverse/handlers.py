@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from doeff_vm import WithBoundaries
 
 from doeff import do, handler_effect_types
+from doeff.handler_utils import reinstaller
 from doeff.program import GetHandlers, Pass, Resume, ResumeThrow, WithHandlerType, _named_handler
 from doeff.program import handler as _program_handler
 from doeff_traverse.collection import Collection, HistoryEntry, ItemResult
@@ -268,7 +269,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                 else:
                     if inner_installs is None:
                         inner_handlers = inner_of((yield GetHandlers(k)))
-                        inner_installs = [_program_handler(h) for h in inner_handlers]
+                        inner_installs = [reinstaller(h) for h in inner_handlers]
                         report_under = _report_boundaries(inner_handlers)
                         if report_under is not None:
                             # A report carries this run's identity and its item count; an
@@ -348,7 +349,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
             for value in values_iter:
                 prog = effect.f(acc, value)
                 for h in inner_hs:
-                    prog = _program_handler(h)(prog)
+                    prog = reinstaller(h)(prog)
                 prog = _program_handler(handler)(prog)
                 acc = yield prog
             return (yield Resume(k, acc))
@@ -496,7 +497,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
                     raise TaskCancelledError
                 prog = effect.f(item.value)
                 for h in inner_hs:
-                    prog = _program_handler(h)(prog)
+                    prog = reinstaller(h)(prog)
                 prog = _program_handler(handler)(prog)
 
                 @do
@@ -563,7 +564,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
             for value in values_iter:
                 prog = effect.f(acc, value)
                 for h in inner_hs:
-                    prog = _program_handler(h)(prog)
+                    prog = reinstaller(h)(prog)
                 prog = _program_handler(handler)(prog)
                 acc = yield prog
             return (yield Resume(k, acc))
@@ -703,7 +704,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                     raise TaskCancelledError
                 prog = effect.f(item.value)
                 for h in inner_hs:
-                    prog = _program_handler(h)(prog)
+                    prog = reinstaller(h)(prog)
                 prog = _program_handler(handler)(prog)
                 # NO Try wrapper — exceptions propagate to Gather
                 try:
@@ -770,7 +771,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
             for value in values_iter:
                 prog = effect.f(acc, value)
                 for h in inner_hs:
-                    prog = _program_handler(h)(prog)
+                    prog = reinstaller(h)(prog)
                 prog = _program_handler(handler)(prog)
                 acc = yield prog
             return (yield Resume(k, acc))

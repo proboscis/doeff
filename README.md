@@ -270,7 +270,7 @@ would answer `SendMail` too, and the test without `fake_mail` would pass.
 
 ## Performance
 
-An effect costs about 3 to 5 µs. A network request or a model call takes milliseconds, so in I/O
+An effect costs about 4 to 5 µs. A network request or a model call takes milliseconds, so in I/O
 code the cost does not show. In a tight numeric loop it does: keep such a loop in plain Python and
 yield effects around it.
 
@@ -281,7 +281,6 @@ One effect round trip: perform an effect and get the handler's answer back (µs 
 | --- | ---: | ---: | ---: |
 | Plain Python: a function call | 0.13 | 0.20 | 1 |
 | Plain Python: a generator and a driver loop | 0.38 | 0.61 | 3 |
-| doeff: plain function handler that returns `Resume` | 3.0 | 4.5 | 23 |
 | doeff: `@do` handler and `Resume` | 4.3 | 6.0 | 34 |
 | doeff: built-in `reader` (`Ask`) | 4.9 | 6.7 | 38 |
 | [effect](https://github.com/python-effect/effect) 1.1.0: `@do` and a sync performer | 12.7 | 14.6 | 99 |

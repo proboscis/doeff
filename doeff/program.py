@@ -181,12 +181,68 @@ def _called_without_program(name: str) -> str:
     )
 
 
+def _is_do_function(value: object) -> bool:
+    """Whether ``value`` is a ``@do`` function: the wrapper ``@do`` returns, carrying
+    ``__doeff_generator_function__`` (``doeff.do.program_factory``), seen through the bindings that
+    keep it a ``@do`` Kleisli — a bound method of a ``@do`` method (``self`` or ``cls`` bound) and a
+    ``functools.partial`` of a ``@do`` function (arguments bound). A plain function, a lambda and a
+    callable instance are not (ADR-DOE-CORE-003). Read from attributes only, as
+    ``_positional_capacity`` is (``with_handlers`` is a hot path)."""
+    current: object = value
+    while True:
+        if type(current) is types.FunctionType:
+            return "__doeff_generator_function__" in current.__dict__
+        if isinstance(current, types.MethodType):
+            current = current.__func__
+        elif isinstance(current, functools.partial):
+            current = current.func
+        else:
+            return False
+
+
+def _refuse_non_do(raw_handler: object, caller: str) -> None:
+    """Refuse a handler body that is not a ``@do`` function, where the handler is built.
+
+    A handler is a ``@do`` function marked with ``@handler`` (ADR-DOE-CORE-003 R1 — the
+    owner's decision 2026-10-20 13:07 JST: a value not made correctly with ``@handler`` is an
+    error at once, and doeff does not take a function without ``@do``). A plain function, a
+    lambda, a partial, a bound method or a callable instance is refused with a TypeError that
+    says how to write it instead of running as a raw ``(effect, k)`` dispatcher.
+    """
+    if _is_do_function(raw_handler):
+        return
+    raise TypeError(
+        f"{caller}: {_handler_label(raw_handler).qualname} is not a @do function. A handler is "
+        "a @do function (effect, k) marked with @handler: write @handler above @do on its def "
+        "(ADR-DOE-CORE-003)"
+    )
+
+
+def _refuse_unmarked(value: object, caller: str) -> None:
+    """Refuse a value without the installer marker in a handler stack (ADR-DOE-CORE-003 R2).
+
+    ``with_handlers`` and ``stacked_handlers`` take handlers only — installers made by
+    ``@handler`` on a ``@do`` function, by ``defhandler``, or a ``stacked_handlers`` bundle. They
+    do not turn anything else into a handler on the way in.
+    """
+    if not callable(value):
+        raise TypeError(f"{caller}: handler must be callable, got {type(value).__name__}")
+    if getattr(value, "_doeff_is_handler_fn", False) is True:
+        return
+    raise TypeError(
+        f"{caller}: {_handler_label(value).qualname} is not a handler. Make it with @handler on "
+        "a @do function (effect, k), or with defhandler, before putting it in a handler stack "
+        "(ADR-DOE-CORE-003)"
+    )
+
+
 def _install_raw(
     raw_handler: Callable[..., object], caller: str, name: str | None = None
 ) -> _InstalledHandler:
-    """The installer for an unmarked handler value: a raw ``(effect, k)`` dispatcher.
+    """The installer for a ``@do`` function ``(effect, k)``: what ``@handler`` makes of it.
 
-    A value without the installer marker is called by the VM with
+    Anything but a ``@do`` function is refused first (``_refuse_non_do``). The
+    ``@do`` function is called by the VM with
     ``(effect, k)``. One that cannot take two positional arguments is almost
     always a Program -> Program function passed without the marker; it is
     refused here, when the stack is built, instead of failing with a
@@ -205,6 +261,7 @@ def _install_raw(
     The installer is named after the raw handler (``_handler_label``), or
     ``name`` when given (``_named_handler``).
     """
+    _refuse_non_do(raw_handler, caller)
     taken = _positional_capacity(raw_handler)
     if taken is not None and taken < 2:
         raise TypeError(
@@ -240,14 +297,16 @@ def handler(raw_handler: Callable[[_HandledEffect, K], object]) -> ProgramHandle
 
 
 def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
-    """Wrap a raw effect dispatcher as a Program -> Program handler.
+    """Make a ``@do`` function ``(effect, k)`` a Program -> Program handler.
 
-    ``raw_handler`` may be any callable ``(effect, k) -> Program``: a ``@do``
-    function, a plain function, a bound method, a ``functools.partial`` or a
-    callable instance. An installer that already carries the handler marker
-    is returned as is. An unmarked value that cannot take ``(effect, k)``, or
-    whose effect annotation no effect can match (``effect: str``), is refused
-    with a ``TypeError`` naming it (see ``_install_raw``).
+    A handler is a ``@do`` function marked with ``@handler`` (ADR-DOE-CORE-003):
+    ``raw_handler`` must be a ``@do`` function, or an installer that already
+    carries the handler marker (returned as is). Anything else — a plain
+    function, a lambda, a bound method, a ``functools.partial`` or a callable
+    instance — is refused with a ``TypeError`` here, before the program runs. A
+    ``@do`` function that cannot take ``(effect, k)``, or whose effect annotation
+    no effect can match (``effect: str``), is refused the same way (see
+    ``_install_raw``).
 
     The type checker refuses the same mistakes before the program runs: a raw
     handler is typed ``(effect, k: K)``, its effect parameter annotated with an
@@ -297,45 +356,29 @@ def with_handlers(handlers: Iterable[Callable[..., object]], program: object) ->
     """Apply a handler stack to a Program.
 
     Handler order is scope order: the first handler is outermost, the last
-    handler is innermost. Raw effect dispatchers are normalized through
-    ``handler``; handler factories already marked as Program -> Program are
-    called directly. Empty runtime lists are accepted as identity so callers can
+    handler is innermost. Empty runtime lists are accepted as identity so callers can
     compose dynamically discovered stacks.
 
-    A value without the handler marker is a raw dispatcher, called with
-    ``(effect, k)``. A Program -> Program function passed without the marker
-    (``lambda program: ...``, or a factory returning one) is refused here with
-    a ``TypeError`` naming it, before anything runs: make it with
-    ``defhandler``, or bundle several handlers into one marked installer with
-    ``stacked_handlers``. Shapes whose arguments cannot be read from
-    attributes (a callable instance, a builtin) are installed as before.
+    Every element must be a handler: an installer made by ``@handler`` on a
+    ``@do`` function, by ``defhandler``, or a ``stacked_handlers`` bundle. A value
+    without the handler marker — a plain function, a ``@do`` function without
+    ``@handler``, a lambda — is refused with a ``TypeError`` naming it before
+    anything runs; it is not turned into a handler on the way in
+    (ADR-DOE-CORE-003 R2).
     """
+    stack = tuple(handlers)
+    for install in stack:
+        _refuse_unmarked(install, "with_handlers")
     wrapped = program
-    for install in reversed(tuple(handlers)):
-        if not callable(install):
-            raise TypeError(
-                f"with_handlers: handler must be callable, got {type(install).__name__}"
-            )
-        install_meta = cast(Any, install)
-        try:
-            is_handler_fn = install_meta._doeff_is_handler_fn
-        except AttributeError:
-            is_handler_fn = False
-        wrapped = (
-            install(wrapped)
-            if is_handler_fn is True
-            else _install_raw(install, "with_handlers")(wrapped)
-        )
+    for install in reversed(stack):
+        wrapped = install(wrapped)
     return wrapped
 
 
 def _bundled_installer(value: Callable[..., object]) -> _InstalledHandler:
-    """One handler of a ``stacked_handlers`` bundle as an installer, normalized as ``with_handlers`` does."""
-    if not callable(value):
-        raise TypeError(f"stacked_handlers: handler must be callable, got {type(value).__name__}")
-    if getattr(value, "_doeff_is_handler_fn", False) is True:
-        return cast(_InstalledHandler, value)
-    return _install_raw(value, "stacked_handlers")
+    """One handler of a ``stacked_handlers`` bundle: a handler already, as ``with_handlers`` requires."""
+    _refuse_unmarked(value, "stacked_handlers")
+    return cast(_InstalledHandler, value)
 
 
 def stacked_handlers(*handlers: Callable[..., object]) -> ProgramHandler:

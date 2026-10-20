@@ -1,20 +1,24 @@
 # test_welcome.py
-from doeff import Resume, run, with_handlers
+from doeff import Resume, do, handler, run
 
 from infra import User
 from welcome import LoadUser, SendMail, welcome
 
 
+@handler
+@do
+def fake_load_user(effect: LoadUser, k):
+    return (yield Resume(k, User("Ada", "ada@example.com")))
+
+
 def test_welcome():
     sent = []
 
-    def fake_load_user(effect: LoadUser, k):
-        return Resume(k, User("Ada", "ada@example.com"))
-
+    @handler
+    @do
     def fake_send_mail(effect: SendMail, k):
         sent.append((effect.to, effect.body))
-        return Resume(k, None)
+        return (yield Resume(k, None))
 
-    program = with_handlers([fake_load_user, fake_send_mail], welcome(1))
-    assert run(program) == "Welcome, Ada!"
+    assert run(fake_send_mail(fake_load_user(welcome(1)))) == "Welcome, Ada!"
     assert sent == [("ada@example.com", "Welcome, Ada!")]

@@ -77,7 +77,7 @@ from doeff_records.values import Appended, ExpectAny, FieldDecl, RecordsSchema, 
 from doeff_time import Delay, GetTime, SimClock, WaitWithin, sim_time_handler
 from doeff_time.effects.time import WaitWithinEffect
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, run, with_handlers
+from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, handler, run, with_handlers
 from doeff.program import ProgramHandler
 
 # 共有の不変条件の関数の置き場(doeff-events の tests — package ではないので path で読む)。
@@ -156,6 +156,7 @@ def _append(stream: str, key: str) -> EffectGenerator[int]:
     return appended.sequence
 
 
+@handler
 @do
 def _publish_as_write(effect: EffectBase, k: K) -> EffectGenerator[object]:
     """筋書きの書き手の Publish(Changed(keys)) を、合図の所の行への書きにする(この world で「発する」= 結んだ表へ書く)。"""

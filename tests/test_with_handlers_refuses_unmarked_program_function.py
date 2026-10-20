@@ -1,13 +1,12 @@
-"""with_handlers / handler() は、handler の印の無い Program → Program の関数を組む時に名指しで断る(agora-redesign #3724)。
+"""with_handlers / stacked_handlers / handler() は、handler でない物を組む時に名指しで断る(agora-redesign #3724・ADR-DOE-CORE-003)。
 
-印 ``_doeff_is_handler_fn`` の無い callable は生の (effect, k) の dispatcher と読まれ、``handler()`` で包まれる。
-Program → Program の関数を印なしで渡す取り違えは、直す前は組む時に何も言わず、最初の effect で 2 引数で
-呼ばれて TypeError になった。落ちる時期がテストの時刻の運で揺れるので、失敗ケースのテストが「落ちて画面が
-暗い」のを緑と数えうる(agora-controllers の日次 t548 の deaf-records-handler)。複数の handler を 1 つの
-installer に束ねる時は、印を自分で付けずに公開の口 ``stacked_handlers`` を使う。
+handler は ``@handler`` を付けた ``@do`` 関数だけ(持ち主の決定 2026-10-20 13:07 JST)。``with_handlers`` と ``stacked_handlers`` は
+印 ``_doeff_is_handler_fn`` の無い物を「not a handler」で断り、中で ``handler()`` に通さない。``handler()`` は ``@do`` 関数でない物
+(素の関数・lambda・partial・bound method・callable の instance)を「not a @do function」で断る。``@do`` 関数でも引数を 1 つしか
+取らない物(Program → Program の取り違え)は、前と同じく組む時に断る — 最初の effect で 2 引数で呼ばれて落ちる時期がテストの
+時刻の運で揺れ、失敗ケースのテストが緑に数えられうるため(agora-controllers の日次 t548 の deaf-records-handler)。
 
-判定は属性の読みだけで行う(``inspect.signature`` を呼ばない — with_handlers は熱い道)。callable の instance・
-builtin など ``__code__`` を読めない形は判じずに今どおり通す。
+判定は属性の読みだけで行う(``inspect.signature`` を呼ばない — with_handlers は熱い道)。
 """
 
 import functools
@@ -15,7 +14,7 @@ import inspect
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import doeff_hy  # noqa: F401  # Hy の import hook(http の handler と検の部品は Hy)
 import pytest
@@ -27,6 +26,8 @@ from doeff_core_effects.scheduler import scheduled
 from doeff import EffectBase, Pass, Pure, Resume, do, handler, run, stacked_handlers, with_handlers
 
 REFUSAL = r"Program -> Program function without the handler marker"
+NOT_A_HANDLER = r"is not a handler"
+NOT_DO = r"is not a @do function"
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class Ping(EffectBase):
     value: str
 
 
+@handler
 @do
 def outer(effect, k):
     if isinstance(effect, Ping):
@@ -41,6 +43,7 @@ def outer(effect, k):
     yield Pass(effect, k)
 
 
+@handler
 @do
 def relay_inner(effect, k):
     """Ping を外へ 1 度送り直してから答える — 外と内のどちらが先に答えたかが答えの綴りに残る。"""
@@ -116,60 +119,88 @@ class MarkedPassThrough:
 
 
 def test_with_handlers_refuses_an_unmarked_lambda_before_run() -> None:
-    with pytest.raises(TypeError, match=REFUSAL + r": .*<lambda>"):
+    with pytest.raises(TypeError, match=r"^with_handlers: .*<lambda> " + NOT_A_HANDLER):
         with_handlers([lambda program: program], body())
 
 
 def test_handler_refuses_an_unmarked_lambda() -> None:
-    with pytest.raises(TypeError, match=r"^handler: " + REFUSAL):
+    with pytest.raises(TypeError, match=r"^handler: .*<lambda> " + NOT_DO):
         handler(lambda program: program)
 
 
-def test_refusal_names_the_function_and_the_two_public_ways() -> None:
-    with pytest.raises(TypeError, match=r"^with_handlers: " + REFUSAL) as caught:
+def test_refusal_names_the_function_and_the_public_ways() -> None:
+    with pytest.raises(TypeError, match=r"^with_handlers: wrap_program " + NOT_A_HANDLER) as caught:
         with_handlers([outer, wrap_program], body())
     message = str(caught.value)
-    assert "wrap_program" in message
+    assert "@handler" in message
+    assert "@do" in message
     assert "defhandler" in message
-    assert "stacked_handlers" in message
+
+
+def test_handler_refuses_a_do_function_that_takes_one_positional() -> None:
+    with pytest.raises(TypeError, match=r"^handler: " + REFUSAL + r": .*wrap_program_with_do"):
+        handler(wrap_program_with_do)
+
+
+@pytest.mark.parametrize(
+    "not_do",
+    [
+        answer_ping,
+        forward_all,
+        PrefixHandler("m:").wrap,
+        PrefixHandler("m").method,
+        PrefixHandler("c"),
+    ],
+    ids=["plain-def", "star-args", "bound-method-one-positional", "bound-method", "callable-instance"],
+)
+def test_handler_refuses_what_is_not_a_do_function(not_do) -> None:
+    with pytest.raises(TypeError, match=NOT_DO):
+        handler(not_do)
+    with pytest.raises(TypeError, match=NOT_A_HANDLER):
+        with_handlers([not_do], body())
+
+
+@pytest.mark.parametrize(
+    ("bound", "expected"),
+    [
+        (functools.partial(prefixed, "p"), "start>p"),
+        (functools.partial(suffixed, suffix="kw"), "start>kw"),
+    ],
+    ids=["partial", "partial-keyword-after-k"],
+)
+def test_handler_takes_a_partial_of_a_do_function(bound, expected) -> None:
+    # A partial of a @do function is still a @do Kleisli with some arguments bound.
+    assert run(handler(bound)(body())) == expected
+    with pytest.raises(TypeError, match=NOT_A_HANDLER):
+        with_handlers([bound], body())
 
 
 @pytest.mark.parametrize(
     "one_argument",
     [
-        wrap_program_with_do,
-        PrefixHandler("m:").wrap,
         functools.partial(prefixed, "p:", Ping("bound")),
-        functools.partial(suffixed, k=None),
         functools.partial(functools.partial(prefixed, "p:"), Ping("bound")),
     ],
-    ids=["do-function", "bound-method", "partial-positional", "partial-keyword", "nested-partial"],
+    ids=["partial-positional", "nested-partial"],
 )
-def test_refuses_every_judged_shape_that_takes_one_positional(one_argument) -> None:
-    with pytest.raises(TypeError, match=REFUSAL):
-        with_handlers([one_argument], body())
+def test_handler_refuses_a_partial_left_with_one_positional(one_argument) -> None:
+    with pytest.raises(TypeError, match=r"^handler: " + REFUSAL):
+        handler(one_argument)
 
 
-# --- 今どおり通る形 ---------------------------------------------------------------------------
+def test_with_handlers_refuses_a_do_function_without_the_handler_mark() -> None:
+    with pytest.raises(TypeError, match=r"^with_handlers: prefixed " + NOT_A_HANDLER):
+        with_handlers([prefixed], body())
 
 
-@pytest.mark.parametrize(
-    ("dispatcher", "expected"),
-    [
-        (answer_ping, "start>plain"),
-        (forward_all, "start>outer"),
-        (outer, "start>outer"),
-        (functools.partial(prefixed, "p"), "start>p"),
-        (functools.partial(suffixed, suffix="kw"), "start>kw"),
-        (PrefixHandler("m").method, "start>m"),
-        (PrefixHandler("c"), "start>c"),
-    ],
-    ids=["plain-def", "star-args", "do-function", "partial", "partial-keyword-after-k",
-         "bound-method", "callable-instance"],
-)
-def test_raw_dispatchers_still_install(dispatcher, expected) -> None:
-    assert run(with_handlers([dispatcher], body())) == expected
-    assert run(handler(dispatcher)(body())) == expected
+# --- 通る形: @handler を付けた @do 関数 ------------------------------------------------------------
+
+
+def test_a_handler_installs_through_every_public_way() -> None:
+    assert run(outer(body())) == "start>outer"
+    assert handler(outer) is outer
+    assert run(with_handlers([outer], body())) == "start>outer"
+    assert run(stacked_handlers(outer)(body())) == "start>outer"
 
 
 def test_http_production_handler_installs_and_closes_its_client() -> None:
@@ -233,7 +264,7 @@ def test_empty_stacked_handlers_is_identity() -> None:
 
 
 def test_stacked_handlers_refuses_an_unmarked_program_function_when_bundling() -> None:
-    with pytest.raises(TypeError, match=r"^stacked_handlers: " + REFUSAL + r": .*wrap_program"):
+    with pytest.raises(TypeError, match=r"^stacked_handlers: wrap_program " + NOT_A_HANDLER):
         stacked_handlers(outer, wrap_program)
 
 
@@ -265,12 +296,14 @@ class Tick(EffectBase):
 def declared_dispatcher(handles: tuple[type, ...], effects: tuple[type, ...]):
     """答える効果と出す効果を印で宣言した生の dispatcher(節を静的に読めない handler の宣言 — http の handler と同じ形)。"""
 
+    @handler
     @do
     def dispatch(effect, k):
         yield Pass(effect, k)
 
-    dispatch.__doeff_handles__ = handles
-    dispatch.__doeff_effects__ = effects
+    marks = cast(Any, dispatch)  # 宣言の印は installer の属性(http の handler と同じ置き場)
+    marks.__doeff_handles__ = handles
+    marks.__doeff_effects__ = effects
     return dispatch
 
 
@@ -305,17 +338,12 @@ def test_installing_does_not_call_inspect_signature(monkeypatch: pytest.MonkeyPa
         raise AssertionError("with_handlers / handler() must not call inspect.signature")
 
     monkeypatch.setattr(inspect, "signature", broken_signature)
-    installers = [
-        handler(outer),
-        stacked_handlers(outer),
-        outer,
-        answer_ping,
-        forward_all,
-        functools.partial(prefixed, "p"),
-        PrefixHandler("m").method,
-        PrefixHandler("c"),
-    ]
+    installers = [handler(outer), stacked_handlers(outer), outer]
     with_handlers(installers, body())
     stacked_handlers(*installers)
-    with pytest.raises(TypeError, match=REFUSAL):
+    with pytest.raises(TypeError, match=NOT_A_HANDLER):
         with_handlers([wrap_program], body())
+    with pytest.raises(TypeError, match=NOT_DO):
+        handler(answer_ping)
+    with pytest.raises(TypeError, match=REFUSAL):
+        handler(wrap_program_with_do)

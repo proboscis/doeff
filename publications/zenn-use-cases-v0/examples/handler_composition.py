@@ -36,6 +36,7 @@ class ReadCurrency(Effect):  # 通貨コードを要求する専用の操作を�
     pass  # この依頼には追加の引数がないため、属性を増やさない
 
 
+@handler
 @do  # 依頼を受けて続きへ値を返せる価格ハンドラにする
 def base_price(effect, k):  # 価格の依頼に100を返し、呼び出し元を再開する
     if isinstance(effect, ReadPrice):  # 価格の依頼だけを、このハンドラの処理対象にする
@@ -43,6 +44,7 @@ def base_price(effect, k):  # 価格の依頼に100を返し、呼び出し元�
     return (yield Pass(effect, k))  # 担当外の依頼と元の続きを外側へ渡し、ここでは再開しない
 
 
+@handler
 @do  # 外側への再依頼と手数料加算後の再開を合成するハンドラにする
 def add_fee(effect, k):  # 外側が返す価格へ手数料10を足して返す
     if isinstance(effect, ReadPrice):  # 価格の依頼だけを、このハンドラの処理対象にする
@@ -51,6 +53,7 @@ def add_fee(effect, k):  # 外側が返す価格へ手数料10を足して返す
     return (yield Pass(effect, k))  # 担当外の依頼と元の続きを外側へ渡し、ここでは再開しない
 
 
+@handler
 @do  # 外側への再依頼と割引後の再開を合成するハンドラにする
 def discount(effect, k):  # 外側が返す価格を2割引きして、元の依頼へ返す
     if isinstance(effect, ReadPrice):  # 価格の依頼だけを、このハンドラの処理対象にする
@@ -59,6 +62,7 @@ def discount(effect, k):  # 外側が返す価格を2割引きして、元の依
     return (yield Pass(effect, k))  # 担当外の依頼と元の続きを外側へ渡し、ここでは再開しない
 
 
+@handler
 @do  # 依頼を受けて続きへ値を返せる通貨ハンドラにする
 def yen(effect, k):  # 通貨の依頼にJPYを返し、呼び出し元を再開する
     if isinstance(effect, ReadCurrency):  # 通貨の依頼だけを、このハンドラの処理対象にする
@@ -88,6 +92,7 @@ def read_delayed_price():  # 状態の価格を読み、仮想時間で2秒後�
     return price  # 待機が終わったら、先ほど読んだ価格100を返す
 
 
+@handler
 @do  # 補助計算からの価格取得で依頼に応じるハンドラにする
 def stored_price(effect, k):  # 価格の依頼を、状態取得と待機を行う手順へ翻訳する
     if isinstance(effect, ReadPrice):  # 価格の依頼だけを、このハンドラの処理対象にする

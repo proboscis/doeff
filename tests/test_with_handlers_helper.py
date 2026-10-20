@@ -10,6 +10,7 @@ class Ping(EffectBase):
     value: str
 
 
+@handler
 @do
 def outer(effect, k):
     if isinstance(effect, Ping):
@@ -17,6 +18,7 @@ def outer(effect, k):
     yield Pass(effect, k)
 
 
+@handler
 @do
 def inner(effect, k):
     if isinstance(effect, Ping):

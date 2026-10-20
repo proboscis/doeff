@@ -87,14 +87,15 @@ def test_a_handler_without_declared_types_still_sees_every_effect() -> None:
   (<- b (Ping :value "b"))
   (+ a b))
 """)
-    from doeff import Pass, do, with_handlers
+    from doeff import Pass, do, handler, with_handlers
 
     @do
     def plain(effect, k):  # 型の註の無い素の handler
         yield Pass(effect, k)
 
     # 列の最後が一番内側: plain → everything → pings → pongs の順に effect が届く
-    stack = [ns[name].__doeff_handler_data__ for name in ("pongs", "pings", "everything")] + [plain]  # type: ignore[attr-defined] — defhandler の値が持つ欄(handle.hy)
+    # with_handlers は handler だけを取る(ADR-DOE-CORE-003): defhandler の値と、@do 関数を handler に通した物
+    stack = [ns[name] for name in ("pongs", "pings", "everything")] + [handler(plain)]
     codes = (_body_code(ns["everything"]), plain.__wrapped__.__code__)
     (everything, bare), result = _entries(codes, lambda: ns["doeff_run"](with_handlers(stack, ns["body"])))
     assert result == "a:pongb:ping"

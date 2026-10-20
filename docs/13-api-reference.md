@@ -491,11 +491,12 @@ result = run(scheduled(prog))
 ### with_handlers(handlers, program) and stacked_handlers(*handlers)
 
 `with_handlers([h1, h2], program)` applies a handler list in scope order: `h1` is outermost,
-`h2` innermost. An entry that carries the handler marker (made by `defhandler` or
-`doeff.handler()`) is called with the program; an entry without it is a raw effect dispatcher
-and is called with `(effect, k)`. A `Program -> Program` function passed without the marker —
-`lambda program: ...`, or a factory that returns one — is refused with a `TypeError` naming it
-when the list is applied, before anything runs. To pass several handlers as one, bundle them with
+`h2` innermost. Every entry must be a handler: a `@do` function marked with `@handler`, a
+`defhandler`, or a `stacked_handlers` bundle. Anything else — a plain function, a `@do` function
+without `@handler`, a lambda — is refused with a `TypeError` naming it when the list is applied,
+before anything runs; `with_handlers` does not turn it into a handler (ADR-DOE-CORE-003).
+`handler(f)` likewise takes only a `@do` function (or a partial or bound method of one) and
+refuses anything else where the handler is made. To pass several handlers as one, bundle them with
 `stacked_handlers(h1, h2)`: the result is a marked installer with the same order, and an
 empty `stacked_handlers()` is the identity.
 

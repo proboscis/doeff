@@ -56,7 +56,7 @@ from doeff_core_effects.scheduler import (
     resolve_implementation,
 )
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Resume, do, run, with_handlers
+from doeff import EffectBase, EffectGenerator, K, Pass, Resume, do, handler, run, with_handlers
 
 if TYPE_CHECKING:
     from doeff_core_effects.scheduler import Future, Promise, Task
@@ -301,23 +301,21 @@ class Unrelated(EffectBase[int]):
     """An effect no scenario performs; its handlers only stand in the way."""
 
 
+@handler
 @do
 def _doeff_resume_handler(effect: GetOne, k: K) -> EffectGenerator[int]:
     """The usual handler shape: a @do generator that resumes the continuation."""
     return (yield Resume(k, 1))
 
 
-def _doeff_function_handler(effect: GetOne, k: K) -> Resume:
-    """The cheapest documented shape: a plain function returning Resume (no generator)."""
-    return Resume(k, 1)
-
-
+@handler
 @do
 def _doeff_unrelated_handler(effect: Unrelated, k: K) -> EffectGenerator[int]:
     """A handler typed for another effect: the VM skips it by its annotation."""
     return (yield Resume(k, 2))
 
 
+@handler
 @do
 def _doeff_pass_handler(effect: EffectBase, k: K) -> EffectGenerator[int]:
     """An untyped handler that sees every effect and forwards the ones it does not answer."""
@@ -420,15 +418,6 @@ def _doeff_cases(config: CompareConfig) -> list[Case]:
             "effect",
             n,
             lambda: run(with_handlers([_doeff_resume_handler], _doeff_round_trip(n))),
-            n,
-        ),
-        Case(
-            "round_trip",
-            "doeff: plain function handler",
-            "doeff",
-            "effect",
-            n,
-            lambda: run(with_handlers([_doeff_function_handler], _doeff_round_trip(n))),
             n,
         ),
         Case(

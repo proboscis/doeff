@@ -28,6 +28,7 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
+(import doeff.handler_utils [reinstaller])
 (import collections.abc [Callable Generator])
 (import typing [Protocol TypeVar])
 (import doeff [Program])
@@ -60,12 +61,13 @@
   (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error] None))
 
 
-(defn #^ (get Callable #([EffectBase K] Pass)) task-marker [#^ TaskTap tap #^ str label]
-  "子の Program の一番内側に置く印。自分より内側の印(孫の task)が先に書いた effect は書き換えない。"
-  (defn #^ Pass effect-task-marker [#^ EffectBase effect #^ K k]
+(defn #^ (get Callable #([EffectBase K] (get Program T))) task-marker [#^ TaskTap tap #^ str label]
+  "子の Program の一番内側に置く印。自分より内側の印(孫の task)が先に書いた effect は書き換えない。
+   handler は @do 関数だけ(ADR-DOE-CORE-003)なので、印も @do 関数で書く。"
+  (defn [do] #^ (get Generator #(Pass T T)) effect-task-marker [#^ EffectBase effect #^ K k]
     (when (is-not tap.marked effect)
       (setv tap.marked effect tap.marked-label label))
-    (Pass effect k))
+    (yield (Pass effect k)))
   effect-task-marker)
 
 
@@ -87,10 +89,11 @@
 
 
 (defn #^ (get Program T) rewrap [#^ (get Program T) program #^ list chain]
-  "GetBoundaries の並び(内側が先・最後は受けた handler 自身)で program を包み直す(scheduler の Spawn と同じ張り直し)。"
+  "GetBoundaries の並び(内側が先・最後は受けた handler 自身)で program を包み直す(scheduler の Spawn と同じ張り直し)。
+   並びの handler は VM が持つ生の受け手なので、作る口(handler)ではなく入れ直しの口(reinstaller)で入れる(ADR-DOE-CORE-003 R3)。"
   (setv prog program)
   (for [#(kind cb) chain]
-    (setv prog (if (= kind "handler") ((program-handler cb) prog) (WithObserve (VmCallable cb) prog))))
+    (setv prog (if (= kind "handler") ((reinstaller cb) prog) (WithObserve (VmCallable cb) prog))))
   prog)
 
 

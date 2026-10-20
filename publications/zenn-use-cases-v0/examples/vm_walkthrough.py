@@ -18,6 +18,7 @@ def greet():  # 名前を要求して挨拶文字列を返す計算を定義す�
     return f"こんにちは、{name}さん"  # 取得した名前を挨拶に埋め込み、計算の結果として返す。
 
 
+@handler
 @do  # 関数の呼び出しで、実行前の計算を組み立てられるようにする。
 def supply_name(effect, k):  # 依頼と停止中の継続を受け取り、名前を供給するハンドラを定義する。
     if isinstance(effect, ReadName):  # 名前の取得依頼だけをこのハンドラで処理する。
@@ -51,6 +52,7 @@ def verify() -> None:  # 実VMで各動作を検証し、不一致ならassert�
 
     forwarded: list[str] = []  # 内側のハンドラを通過した依頼の型を観測する記録を用意する。
 
+    @handler
     @do  # 関数の呼び出しで、実行前の計算を組み立てられるようにする。
     def forward(effect, k):  # 依頼を観測して外側へ渡すハンドラを定義する。
         forwarded.append(type(effect).__name__)  # 配送先を確認するため、受け取った型名を記録する。
@@ -69,6 +71,7 @@ def verify() -> None:  # 実VMで各動作を検証し、不一致ならassert�
         trace.append(f"本体: {name}で再開")  # 渡された名前で本体が再開したことを記録する。
         return name  # 受け取った名前を、この計算の完了結果として返す。
 
+    @handler
     @do(non_tail=True)  # 継続の完了後もハンドラで処理を続けることを明示する。
     def traced(effect, k):  # 継続を再開し、その完了後にも記録するハンドラを定義する。
         if isinstance(effect, ReadName):  # 名前の取得依頼だけをこのハンドラで処理する。
@@ -86,6 +89,7 @@ def verify() -> None:  # 実VMで各動作を検証し、不一致ならassert�
 
     transferred: list[str] = []  # Transferを使うハンドラの呼び出し回数を観測する記録を用意する。
 
+    @handler
     @do  # 関数の呼び出しで、実行前の計算を組み立てられるようにする。
     def tail_name(effect, k):  # 名前を供給した後は自分へ戻らず継続へ移るハンドラを定義する。
         if isinstance(effect, ReadName):  # 名前の取得依頼だけをこのハンドラで処理する。
@@ -103,6 +107,7 @@ def verify() -> None:  # 実VMで各動作を検証し、不一致ならassert�
     assert run(handler(tail_name)(two_names())) == ("花子", "花子")
     assert transferred == ["名前を渡す", "名前を渡す"]  # ハンドラが2回呼ばれたことを記録でも確認する。
 
+    @handler
     @do(non_tail=True)  # 継続の完了後もハンドラで処理を続けることを明示する。
     def resume_twice(effect, k):  # 二重再開の拒否を検証するため、意図的に誤ったハンドラを定義する。
         if isinstance(effect, ReadName):  # 名前の取得依頼だけをこのハンドラで処理する。

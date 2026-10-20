@@ -62,6 +62,7 @@ def trace(effect, k):          # sees every effect first, then passes it on
 def budget(effects):           # drops k after this many effects
     left = effects
 
+    @handler
     @do
     def spend(effect, k):
         nonlocal left
