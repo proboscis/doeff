@@ -695,7 +695,7 @@
 
 
 (defk postgres-begin [connection locks]
-  {:pre [(: connection "psycopg の接続") (: locks tuple)] :post [(: % (| SqlFailed SqlUnreachable None))]
+  {:pre [(: connection PipelineConnection) (: locks tuple)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
   "transaction を始め、錠の並び locks(transaction-locks)を順に取るため(成功は None — 既定の手順の BEGIN と錠 1 つずつの往復)。"
   (<- began (postgres-run connection "BEGIN" None))

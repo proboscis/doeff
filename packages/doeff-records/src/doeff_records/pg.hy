@@ -1554,7 +1554,7 @@
 
 ;; --- handler ------------------------------------------------------------------------------------------------
 
-(defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host [gated False]]
+(defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host #^ bool [gated False]]
   ;; 引数に残す理由: store は用意し終えた置き場(prepare-records-store の答え — 表の用意を済ませた証)で、置き場ごとに違う。
   ;; writer は呼び手が名乗った書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名で、
   ;; 組み立ての側の設定。gated = 書きを同じ process の同じ錠の単位の書きと 1 本ずつに並べ(AdmitWriters)、並んだ秒と錠を持った秒を
