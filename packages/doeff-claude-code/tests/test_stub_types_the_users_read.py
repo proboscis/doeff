@@ -94,6 +94,11 @@ EXPECTED: dict[str, dict[str, Declared]] = {
                 "duration_ms": "int | None",
             }
         ),
+        "CompactOutcome": Declared(
+            bases=("StrEnum",),
+            members={"SUCCEEDED": "succeeded", "FAILED": "failed", "INTERRUPTED": "interrupted", "NOT_COMPACTED": "not_compacted"},
+        ),
+        "CompactEnded": Declared(fields={"outcome": "CompactOutcome", "error": "str | None"}),
     },
     "faults": {
         "ClaudeDropProcess": Declared(bases=("EffectBase[bool]",), fields={"session_id": "str"}),
@@ -187,7 +192,8 @@ EXPECTED: dict[str, dict[str, Declared]] = {
                 "account_refusal": "AccountRefusalHit | None",
                 "stop_hook_rejections": "tuple[StopHookRejection, ...]",
                 "account_limit": "AccountLimitHit | None",
-                "compactions": "tuple[CompactBoundary, ...]",
+                "compactions": "tuple[CompactBoundary | CompactEnded, ...]",
+                "subagent_calls": "tuple[AssistantMessage, ...]",
             }
         ),
         "FakeClaudeWorld": Declared(

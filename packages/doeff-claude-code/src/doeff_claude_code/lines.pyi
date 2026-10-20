@@ -61,6 +61,7 @@ class AssistantMessage:
     usage: Usage | None = None
     model: str | None = None
     parent_tool_use_id: str | None = None
+    message_id: str | None = None
     error: str | None = None
     stop_reason: str | None = None
     refusal_category: str | None = None
@@ -234,11 +235,23 @@ COMPACTING_STATUS: str
 class CompactStarted:
     ...
 
+class CompactOutcome(StrEnum):
+    SUCCEEDED = 'succeeded'
+    FAILED = 'failed'
+    INTERRUPTED = 'interrupted'
+    NOT_COMPACTED = 'not_compacted'
+COMPACT_ABORTED_ERROR: str
+
+@dataclass(frozen=True, kw_only=True)
+class CompactEnded:
+    outcome: CompactOutcome
+    error: str | None = None
+
 @dataclass(frozen=True)
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactBoundary | TurnResult | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactEnded | CompactBoundary | TurnResult | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:
@@ -347,6 +360,9 @@ def request_timing_of(record: dict) -> _Program[RequestTiming, object]:
     ...
 
 def compact_boundary_of(record: dict) -> _Program[CompactBoundary | Other, object]:
+    ...
+
+def compact_ended_of(record: dict) -> _Program[CompactEnded | Other, object]:
     ...
 
 def classify_system(record: dict) -> Incomplete:
