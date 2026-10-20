@@ -11,7 +11,6 @@ class Ping(EffectBase):
 
 
 @handler
-@do
 def outer(effect, k):
     if isinstance(effect, Ping):
         return (yield Resume(k, f"{effect.value}:outer"))
@@ -19,7 +18,6 @@ def outer(effect, k):
 
 
 @handler
-@do
 def inner(effect, k):
     if isinstance(effect, Ping):
         return (yield Resume(k, f"{effect.value}:inner"))

@@ -8,7 +8,7 @@ import functools
 import types
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
-from inspect import CO_VARARGS
+from inspect import CO_GENERATOR, CO_VARARGS
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -200,20 +200,53 @@ def _is_do_function(value: object) -> bool:
             return False
 
 
-def _refuse_non_do(raw_handler: object, caller: str) -> None:
-    """Refuse a handler body that is not a ``@do`` function, where the handler is built.
+def _yields_its_control(function: Callable[..., object]) -> Callable[..., object]:
+    """``function`` refusing to hand back a program node or an effect as its value.
 
-    A handler is a ``@do`` function marked with ``@handler`` (ADR-DOE-CORE-003 R1 — the
-    owner's decision 2026-10-20 13:07 JST: a value not made correctly with ``@handler`` is an
-    error at once, and doeff does not take a function without ``@do``). A plain function, a
-    lambda, a partial, a bound method or a callable instance is refused with a TypeError that
-    says how to write it instead of running as a raw ``(effect, k)`` dispatcher.
+    The body of a handler written without ``yield`` is a ``@do`` function that returns a value:
+    the value ends the handled block. ``return Resume(k, v)`` there hands the ``Resume`` back as
+    that value instead of resuming — the form a plain-function handler of 0.7.0 used, where the
+    VM ran the returned node. The node is refused here with the form that runs it,
+    ``return (yield Resume(k, v))`` (ADR-DOE-CORE-003 R1).
+    """
+    from doeff import DoExpr, EffectBase  # doeff imports this module, so read them when called
+
+    @functools.wraps(function)
+    def answer(*args: object, **kwargs: object) -> object:
+        value = function(*args, **kwargs)
+        if isinstance(value, (DoExpr, EffectBase)):
+            node = type(value).__name__
+            raise TypeError(
+                f"{_handler_label(function).qualname} returned {node}(...) without yielding it. "
+                f"A handler body is a @do function: yield the {node} to run it and return what "
+                f"it gives back — return (yield {node}(...)) (ADR-DOE-CORE-003)"
+            )
+        return value
+
+    return answer
+
+
+def _as_do_function(raw_handler: object, caller: str) -> Callable[..., object]:
+    """The ``@do`` function a handler runs: ``raw_handler`` itself when it is one, or the
+    ``def`` written under ``@handler`` made one here.
+
+    ``@handler`` makes the ``def`` under it a ``@do`` function, so ``@do`` is not written
+    under it (ADR-DOE-CORE-003 R1 — the owner's decisions 2026-10-20 13:07 JST "@doがついて
+    いない関数をdoeffは基本的に受け付けるべきではない" and 16:26 JST "@handlerだけを許可して、
+    @handler def...と書けるようにして、@handler@doはdeprecatedにしよう"). A ``@do`` function,
+    or a partial or bound method of one, is taken as it is. A lambda, a callable instance and
+    any other callable are refused with a TypeError: a handler is a ``def``.
     """
     if _is_do_function(raw_handler):
-        return
+        return cast(Callable[..., object], raw_handler)  # _is_do_function saw a function, or a partial or method of one
+    if type(raw_handler) is types.FunctionType and raw_handler.__name__ != "<lambda>":
+        from doeff.do import do  # doeff.do imports this module
+
+        generator = raw_handler.__code__.co_flags & CO_GENERATOR
+        return do(raw_handler if generator else _yields_its_control(raw_handler))
     raise TypeError(
-        f"{caller}: {_handler_label(raw_handler).qualname} is not a @do function. A handler is "
-        "a @do function (effect, k) marked with @handler: write @handler above @do on its def "
+        f"{caller}: {_handler_label(raw_handler).qualname} is not a handler body. A handler is "
+        "a def (effect, k) marked with @handler, which makes it a @do function "
         "(ADR-DOE-CORE-003)"
     )
 
@@ -222,7 +255,7 @@ def _refuse_unmarked(value: object, caller: str) -> None:
     """Refuse a value without the installer marker in a handler stack (ADR-DOE-CORE-003 R2).
 
     ``with_handlers`` and ``stacked_handlers`` take handlers only — installers made by
-    ``@handler`` on a ``@do`` function, by ``defhandler``, or a ``stacked_handlers`` bundle. They
+    ``@handler`` on a def, by ``defhandler``, or a ``stacked_handlers`` bundle. They
     do not turn anything else into a handler on the way in.
     """
     if not callable(value):
@@ -231,7 +264,7 @@ def _refuse_unmarked(value: object, caller: str) -> None:
         return
     raise TypeError(
         f"{caller}: {_handler_label(value).qualname} is not a handler. Make it with @handler on "
-        "a @do function (effect, k), or with defhandler, before putting it in a handler stack "
+        "its def (effect, k), or with defhandler, before putting it in a handler stack "
         "(ADR-DOE-CORE-003)"
     )
 
@@ -239,11 +272,11 @@ def _refuse_unmarked(value: object, caller: str) -> None:
 def _install_raw(
     raw_handler: Callable[..., object], caller: str, name: str | None = None
 ) -> _InstalledHandler:
-    """The installer for a ``@do`` function ``(effect, k)``: what ``@handler`` makes of it.
+    """The installer for a handler body ``(effect, k)``: what ``@handler`` makes of it.
 
-    Anything but a ``@do`` function is refused first (``_refuse_non_do``). The
-    ``@do`` function is called by the VM with
-    ``(effect, k)``. One that cannot take two positional arguments is almost
+    The body is a ``def`` (made a ``@do`` function here) or a ``@do`` function; anything else
+    is refused first (``_as_do_function``). The ``@do`` function is called by the VM with
+    ``(effect, k)``. The checks below read the body as written, before it is wrapped. One that cannot take two positional arguments is almost
     always a Program -> Program function passed without the marker; it is
     refused here, when the stack is built, instead of failing with a
     ``TypeError`` at the first effect — which a test could miss when the
@@ -261,7 +294,7 @@ def _install_raw(
     The installer is named after the raw handler (``_handler_label``), or
     ``name`` when given (``_named_handler``).
     """
-    _refuse_non_do(raw_handler, caller)
+    body = _as_do_function(raw_handler, caller)
     taken = _positional_capacity(raw_handler)
     if taken is not None and taken < 2:
         raise TypeError(
@@ -273,10 +306,10 @@ def _install_raw(
         )
     check_handler_annotation(raw_handler)
 
-    def install(body: object = _NO_PROGRAM) -> WithHandlerType:
-        if body is _NO_PROGRAM:
+    def install(program: object = _NO_PROGRAM) -> WithHandlerType:
+        if program is _NO_PROGRAM:
             raise TypeError(_called_without_program(install.__name__))
-        return WithHandlerType(raw_handler, body)
+        return WithHandlerType(body, program)
 
     label = _handler_label(raw_handler)
     install.__name__ = label.name if name is None else name
@@ -284,7 +317,7 @@ def _install_raw(
     install.__doc__ = label.doc
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
-    install_meta.__doeff_handler_data__ = raw_handler
+    install_meta.__doeff_handler_data__ = body
     return cast(_InstalledHandler, install)  # the marker is set on it just above
 
 
@@ -297,16 +330,21 @@ def handler(raw_handler: Callable[[_HandledEffect, K], object]) -> ProgramHandle
 
 
 def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
-    """Make a ``@do`` function ``(effect, k)`` a Program -> Program handler.
+    """Make a ``def`` ``(effect, k)`` a Program -> Program handler: ``@handler`` above the def.
 
-    A handler is a ``@do`` function marked with ``@handler`` (ADR-DOE-CORE-003):
-    ``raw_handler`` must be a ``@do`` function, or an installer that already
-    carries the handler marker (returned as is). Anything else — a plain
-    function, a lambda, a bound method, a ``functools.partial`` or a callable
-    instance — is refused with a ``TypeError`` here, before the program runs. A
-    ``@do`` function that cannot take ``(effect, k)``, or whose effect annotation
-    no effect can match (``effect: str``), is refused the same way (see
-    ``_install_raw``).
+    ``@handler`` makes the def a ``@do`` function, so its body yields effects and control
+    like any ``@do`` function, and ``@do`` is not written under it (ADR-DOE-CORE-003 —
+    ``@handler`` over ``@do`` is deprecated, and refused in this repo by semgrep). A ``@do``
+    function, or a ``functools.partial`` or bound method of one, is taken as it is, and an
+    installer that already carries the handler marker is returned as is. A lambda, a
+    callable instance or any other callable is refused with a ``TypeError`` here, before the
+    program runs. A body that cannot take ``(effect, k)``, or whose effect annotation no
+    effect can match (``effect: str``), is refused the same way (see ``_install_raw``).
+
+    A body without ``yield`` ends the handled block with the value it returns. Returning a
+    control node unrun — ``return Resume(k, v)`` — is refused when it happens: write
+    ``return (yield Resume(k, v))``, which resumes ``k`` and returns what the rest of the
+    program gave back.
 
     The type checker refuses the same mistakes before the program runs: a raw
     handler is typed ``(effect, k: K)``, its effect parameter annotated with an
@@ -360,7 +398,7 @@ def with_handlers(handlers: Iterable[Callable[..., object]], program: object) ->
     compose dynamically discovered stacks.
 
     Every element must be a handler: an installer made by ``@handler`` on a
-    ``@do`` function, by ``defhandler``, or a ``stacked_handlers`` bundle. A value
+    def, by ``defhandler``, or a ``stacked_handlers`` bundle. A value
     without the handler marker — a plain function, a ``@do`` function without
     ``@handler``, a lambda — is refused with a ``TypeError`` naming it before
     anything runs; it is not turned into a handler on the way in

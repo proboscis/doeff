@@ -109,7 +109,7 @@
 (import typing [Never get-args])
 (import pathlib [Path])
 (import doeff [run with-handlers Ok Err Some Nothing Pass Try EffectBase DoExpr K])
-(import doeff [do :as doeff-do handler :as make-handler])
+(import doeff [handler :as make-handler])
 (import doeff.result [Maybe])
 (import doeff_vm [UnhandledEffect])
 (import doeff-core-effects.handlers [try-handler])
@@ -150,14 +150,14 @@
 
 ;; defk にできない: defk は引数 (effect k) を handler と読んで断る。handler は @handler を付けた @do 関数だけ(ADR-DOE-CORE-003)なので、
 ;; VM が再開しない受け手を受けることを @do 関数の見本で見せる(defhandler では (finish 値) で書ける — R15)。
-(defn [make-handler doeff-do] probe-maybe-handler [#^ EffectBase effect #^ K k]
+(defn [make-handler] probe-maybe-handler [#^ EffectBase effect #^ K k]
   "R2 の maybe の受け手の見本: ProbeAbsent を受けたら再開せず Nothing でスコープを終える(続きは捨てる)。ほかは外へ渡す。"
   (if (isinstance effect ProbeAbsent)
       (return (yield (probe-ending Nothing)))
       (yield (Pass effect k))))
 
 ;; defk にできない: probe-maybe-handler と同じ(VM が再開しない受け手を受けることを見せる見本)。
-(defn [make-handler doeff-do] probe-outer-handler [#^ EffectBase effect #^ K k]
+(defn [make-handler] probe-outer-handler [#^ EffectBase effect #^ K k]
   "土台の handler より外側に置く受け手の見本: ProbeAbsent を受けたら印の文でスコープを終える — どの受け手が受けたかを見分けるため。"
   (if (isinstance effect ProbeAbsent)
       (return (yield (probe-ending "外側が受けた")))

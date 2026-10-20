@@ -70,7 +70,6 @@ def fetch_program():
 
 
 @handler
-@do
 def catch_all(effect: Effect, k):
     return (yield Resume(k, f"fallback:{type(effect).__name__}"))
 
@@ -168,7 +167,6 @@ class TestAnnotationsThatStayAccepted:
 
     def test_a_marker_base_is_a_filter_even_before_an_effect_inherits_it(self):
         @handler
-        @do
         def marked(effect: Marker, k):
             return (yield Resume(k, f"marked:{type(effect).__name__}"))
 
@@ -186,7 +184,6 @@ class TestAnnotationsThatStayAccepted:
 
     def test_a_runtime_checkable_protocol_is_a_filter(self):
         @handler
-        @do
         def with_url(effect: HasUrl, k):
             return (yield Resume(k, f"url:{effect.url}"))
 
@@ -236,31 +233,26 @@ _SKIPPED_TAIL = " — a handler only sees the effects its effect parameter is an
 
 
 @handler
-@do
 def store_handler(effect: Store, k):
     return (yield Resume(k, None))
 
 
 @handler
-@do
 def store_or_other(effect: Store | Other, k):
     return (yield Resume(k, None))
 
 
 @handler
-@do
 def pass_through(effect, k):
     yield Pass(effect, k)
 
 
 @handler
-@do
 def fetch_passer(effect: Fetch, k):
     yield Pass(effect, k)
 
 
 @handler
-@do
 def many(effect: Store | Other | MyEffectA | MyEffectB, k):
     return (yield Resume(k, None))
 
@@ -318,8 +310,8 @@ class TestUnhandledEffectNamesTheSkippedHandlers:
 
 
 _GENERAL_HINT = (
-    "  hint: install a handler for Fetch: run(handler(fn)(prog)), where fn is a @do function "
-    "(effect: Fetch, k) that returns (yield Resume(k, value))"
+    "  hint: install a handler for Fetch: run(fn(prog)), where fn is a def (effect: Fetch, k) "
+    "marked with @handler that returns (yield Resume(k, value))"
 )
 
 
@@ -335,7 +327,6 @@ class TestUserEffectHint:
 
     def test_following_the_hint_runs_the_program(self):
         @handler
-        @do
         def fn(effect: Fetch, k):
             value = f"body of {effect.url}"
             return (yield Resume(k, value))

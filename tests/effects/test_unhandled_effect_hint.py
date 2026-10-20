@@ -179,8 +179,8 @@ class TestHintPlacement:
         message = _message(program())
         assert message.splitlines()[0].endswith("(no handlers in scope)")
         assert _hint_line(message) == (
-            "hint: install a handler for NoHintEffect: run(handler(fn)(prog)), where fn is a "
-            "@do function (effect: NoHintEffect, k) that returns (yield Resume(k, value))"
+            "hint: install a handler for NoHintEffect: run(fn(prog)), where fn is a def "
+            "(effect: NoHintEffect, k) marked with @handler that returns (yield Resume(k, value))"
         )
 
     def test_a_failing_hint_lookup_keeps_the_unhandled_effect(self):

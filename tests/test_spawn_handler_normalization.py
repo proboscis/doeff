@@ -15,7 +15,6 @@ class ReadNumber(EffectBase[int]):
 
 
 @handler
-@do
 def answer_number(effect: object, k: K) -> Resume | Pass:
     if isinstance(effect, ReadNumber):
         return (yield Resume(k, 7))

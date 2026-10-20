@@ -42,7 +42,6 @@ class Ping(EffectBase):
 
 
 @handler
-@do
 def answer(effect: Ping, k):
     return (yield Resume(k, effect.n + 1))
 

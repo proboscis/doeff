@@ -55,7 +55,6 @@ def _fallback_handler(value: str):
     """Outer catch-all that answers any image effect a provider passed on."""
 
     @handler
-    @do
     def _handler(effect, k):
         if isinstance(effect, (ImageGenerate, ImageEdit)):
             return (yield Resume(k, value))

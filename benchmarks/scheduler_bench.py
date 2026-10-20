@@ -42,7 +42,6 @@ class Outside(EffectBase[int]):
 
 
 @handler
-@do
 def outside_handler(effect: Outside, k: Any):
     return (yield Resume(k, 1))
 

@@ -74,7 +74,7 @@ def research(topics):           # yields effects; knows nothing about budgets
 def budget(limit):              # one meaning of Spend: stop when the budget runs out
     left = limit
 
-    @do
+    @handler
     def on_spend(effect: Spend, k):     # k: the rest of research, paused at the yield
         nonlocal left
         if effect.cost > left:
@@ -82,7 +82,7 @@ def budget(limit):              # one meaning of Spend: stop when the budget run
         left -= effect.cost
         return (yield Resume(k, None))   # resume k: research goes on
 
-    return handler(on_spend)
+    return on_spend
 
 print(run(budget(10)(research(["tides", "moons"]))))                      # ['notes on tides', 'notes on moons']
 print(run(budget(10)(research(["tides", "moons", "comets", "stars"]))))  # over budget
@@ -133,7 +133,7 @@ def digest(url):               # the program: it only yields effects
     page = yield Fetch(url)
     return (yield Summarize(page))
 
-@do
+@handler
 def canned(effect, k):         # a handler: resumes k with made-up values
     if isinstance(effect, Fetch):
         return (yield Resume(k, "<h1>Hello</h1>"))
@@ -141,7 +141,7 @@ def canned(effect, k):         # a handler: resumes k with made-up values
         return (yield Resume(k, f"{len(effect.text)} chars"))
     yield Pass(effect, k)      # anything else goes to the next handler
 
-print(run(handler(canned)(digest("https://example.com"))))  # 14 chars
+print(run(canned(digest("https://example.com"))))  # 14 chars
 ```
 
 To go live, replace `canned` with handlers that call your HTTP client and
@@ -159,12 +159,12 @@ A handler can watch every effect without touching `digest`. Add this below the e
 ```python continues
 seen: list[object] = []
 
-@do
+@handler
 def trace(effect, k):          # sees every effect first, then passes it on
     seen.append(effect)
     return (yield Pass(effect, k))
 
-print(run(handler(canned)(handler(trace)(digest("https://example.com")))))  # 14 chars
+print(run(canned(trace(digest("https://example.com")))))  # 14 chars
 print(seen)  # [Fetch(url='https://example.com'), Summarize(text='<h1>Hello</h1>')]
 ```
 
@@ -227,16 +227,16 @@ def welcome(user_id):
 
 sent: list[str] = []
 
-@do
+@handler
 def fake_db(effect: LoadUser, k):      # the annotation picks the effects it answers
     return (yield Resume(k, User("Alice", "alice@example.com")))
 
-@do
+@handler
 def fake_mail(effect: SendMail, k):    # keeps the mail instead of sending it
     sent.append(effect.to)
     return (yield Resume(k, None))
 
-print(run(handler(fake_db)(handler(fake_mail)(welcome(1)))))  # Welcome, Alice!
+print(run(fake_db(fake_mail(welcome(1)))))  # Welcome, Alice!
 print(sent)  # ['alice@example.com']
 ```
 
@@ -245,7 +245,7 @@ names it. Add this below the example above:
 
 ```python continues
 try:
-    run(handler(fake_db)(welcome(1)))  # fake_mail left out
+    run(fake_db(welcome(1)))  # fake_mail left out
 except Exception as error:
     print(type(error).__name__)  # UnhandledEffect
 ```
@@ -281,7 +281,7 @@ One effect round trip: perform an effect and get the handler's answer back (µs 
 | --- | ---: | ---: | ---: |
 | Plain Python: a function call | 0.13 | 0.20 | 1 |
 | Plain Python: a generator and a driver loop | 0.38 | 0.61 | 3 |
-| doeff: `@do` handler and `Resume` | 4.3 | 6.0 | 34 |
+| doeff: `@handler` and `Resume` | 4.3 | 6.0 | 34 |
 | doeff: built-in `reader` (`Ask`) | 4.9 | 6.7 | 38 |
 | [effect](https://github.com/python-effect/effect) 1.1.0: `@do` and a sync performer | 12.7 | 14.6 | 99 |
 | [effectful](https://github.com/BasisResearch/effectful) 0.4.0: `@defop` and `handler` | 57.9 | 62.3 | 452 |
@@ -446,7 +446,7 @@ Scheduler effects (from `doeff_core_effects.scheduler`):
 
 ## Handlers
 
-Built-in handlers (from `doeff_core_effects.handlers`):
+Reference handlers (from `doeff_core_effects.handlers`), written like any other handler:
 
 | Handler | Installer | Effects handled |
 | --- | --- | --- |
@@ -514,13 +514,13 @@ def digest(url: str) -> Generator[Fetch | Summarize, Any, str]:
     page = yield from Fetch(url)  # page: str (plain yield gives Any)
     return (yield from Summarize(page))
 
-@do
+@handler
 def canned(effect: Fetch | Summarize, k: K) -> Generator[Resume, Any, Any]:
     if isinstance(effect, Fetch):
         return (yield typed_resume(effect, k, "<h1>Hello</h1>"))  # must be a str
     return (yield typed_resume(effect, k, f"{len(effect.text)} chars"))
 
-summary = run(handler(canned)(digest("https://example.com")))  # summary: str
+summary = run(canned(digest("https://example.com")))  # summary: str
 print(summary)  # 14 chars
 ```
 

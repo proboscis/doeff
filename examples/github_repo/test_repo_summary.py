@@ -14,7 +14,7 @@ import pytest
 from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse
 from repo_summary import GITHUB_API, RepoNotFoundError, RepoSummary, repo_summary
 
-from doeff import Resume, do, handler, run
+from doeff import Resume, handler, run
 
 REPO_URL = f"{GITHUB_API}/repos/octo/hello"
 RELEASE_URL = f"{REPO_URL}/releases/latest"
@@ -33,7 +33,6 @@ def fake_github(answers):
     It never opens a connection."""
 
     @handler
-    @do
     def answer(effect: HttpRequest, k):  # the annotation picks the effects it answers
         status, body = answers[effect.url]  # a URL the test did not expect: KeyError
         text = json.dumps(body)

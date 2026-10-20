@@ -1,9 +1,11 @@
-"""A handler is a @do function marked with @handler (ADR-DOE-CORE-003).
+"""A handler is a def marked with @handler, which makes it a @do function (ADR-DOE-CORE-003).
 
-``handler`` accepts only a @do function (or an installer that already carries the
-handler marker), and ``with_handlers`` accepts only installers made that way. Anything
-else is refused with a TypeError where the handler or the stack is built, before the
-program runs: there is no fallback that turns a plain function into a handler.
+``@handler`` takes the def as written and makes it a ``@do`` function, so ``@do`` is not
+written under it (``@handler`` over ``@do`` is deprecated and still runs). A ``@do`` function
+is taken as it is. A lambda and a callable instance are refused where the handler is made,
+and ``with_handlers`` takes only installers: there is no fallback that turns an unmarked
+function into a handler on the way into a stack. A body without ``yield`` that returns a
+control node unrun (``return Resume(k, v)``) is refused when it runs, with the form to write.
 """
 
 from __future__ import annotations
@@ -27,29 +29,44 @@ def asks() -> object:
     return (yield Ping())
 
 
-@do
-def answer_pong(effect: Ping, k):
-    """A @do function that answers Ping, before @handler makes it a handler."""
+def answer_def(effect: Ping, k):
+    """A def that answers Ping, before @handler makes it a handler."""
     return (yield Resume(k, "pong"))
 
 
-def plain_answer(effect: Ping, k):
-    """A plain function shaped like a handler, without @do."""
+@do
+def answer_pong(effect: Ping, k):
+    """A @do function that answers Ping, also used as a Kleisli elsewhere."""
+    return (yield Resume(k, "pong"))
+
+
+def unrun_answer(effect: Ping, k):
+    """A def without yield that returns its Resume instead of yielding it."""
     return Resume(k, "pong")
 
 
 class CallableAnswer:
-    """A callable instance shaped like a handler, without @do."""
+    """A callable instance shaped like a handler."""
 
     def __call__(self, effect: Ping, k):
         return Resume(k, "pong")
 
 
-def test_handler_installs_a_do_function() -> None:
+def test_handler_alone_makes_the_def_a_do_function() -> None:
+    @handler
+    def pong(effect: Ping, k):
+        return (yield Resume(k, "pong"))
+
+    assert run(pong(asks())) == "pong"
+    assert run(handler(answer_def)(asks())) == "pong"
+
+
+def test_handler_takes_a_do_function_as_it_is() -> None:
     assert run(handler(answer_pong)(asks())) == "pong"
+    assert run(handler(functools.partial(answer_pong))(asks())) == "pong"
 
 
-def test_decorated_handler_installs_itself() -> None:
+def test_handler_over_do_still_runs() -> None:
     @handler
     @do
     def pong(effect: Ping, k):
@@ -58,37 +75,37 @@ def test_decorated_handler_installs_itself() -> None:
     assert run(pong(asks())) == "pong"
 
 
+def test_a_body_without_yield_ends_the_block_with_its_value() -> None:
+    @handler
+    def refuse(effect: Ping, k):
+        return "refused"
+
+    assert run(refuse(asks())) == "refused"
+
+
+def test_a_body_returning_its_resume_unrun_is_refused_with_the_form_to_write() -> None:
+    with pytest.raises(TypeError, match=r"returned Resume\(\.\.\.\) without yielding it.*return \(yield Resume"):
+        run(handler(unrun_answer)(asks()))
+
+
 @pytest.mark.parametrize(
-    "not_do",
-    [
-        plain_answer,
-        lambda _effect, k: Resume(k, "pong"),
-        functools.partial(plain_answer),
-        CallableAnswer(),
-    ],
-    ids=["plain function", "lambda", "partial", "callable instance"],
+    "not_a_def",
+    [lambda _effect, k: Resume(k, "pong"), CallableAnswer(), functools.partial(unrun_answer), print],
+    ids=["lambda", "callable instance", "partial of a plain function", "builtin"],
 )
-def test_handler_refuses_what_is_not_a_do_function(not_do) -> None:
-    with pytest.raises(TypeError, match="not a @do function"):
-        handler(not_do)
-
-
-def test_handler_decorator_refuses_a_plain_function() -> None:
-    with pytest.raises(TypeError, match="not a @do function"):
-
-        @handler
-        def pong(effect: Ping, k):
-            return Resume(k, "pong")
+def test_handler_refuses_what_is_not_a_def(not_a_def) -> None:
+    with pytest.raises(TypeError, match="is not a handler body"):
+        handler(not_a_def)
 
 
 def test_with_handlers_installs_handlers() -> None:
-    assert run(with_handlers([handler(answer_pong)], asks())) == "pong"
+    assert run(with_handlers([handler(answer_def)], asks())) == "pong"
 
 
 @pytest.mark.parametrize(
     "not_a_handler",
-    [plain_answer, answer_pong, lambda _effect, k: Resume(k, "pong")],
-    ids=["plain function", "@do function without @handler", "lambda"],
+    [answer_def, answer_pong, lambda _effect, k: Resume(k, "pong")],
+    ids=["def without @handler", "@do function without @handler", "lambda"],
 )
 def test_with_handlers_refuses_what_is_not_a_handler(not_a_handler) -> None:
     with pytest.raises(TypeError, match="not a handler"):

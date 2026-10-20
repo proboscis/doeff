@@ -70,7 +70,6 @@ def check_mode():
 
 
 @handler
-@do
 def auth_handler(effect, k):
     if isinstance(effect, Ask) and effect.key == "auth_token":
         return (yield Resume(k, "Bearer sk-demo-1234"))
@@ -78,7 +77,6 @@ def auth_handler(effect, k):
 
 
 @handler
-@do
 def production_mode(effect, k):
     if isinstance(effect, Ask) and effect.key == "mode":
         return (yield Resume(k, "production"))
@@ -86,7 +84,6 @@ def production_mode(effect, k):
 
 
 @handler
-@do
 def debug_mode(effect, k):
     if isinstance(effect, Ask) and effect.key == "mode":
         return (yield Resume(k, "debug"))

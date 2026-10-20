@@ -72,17 +72,17 @@ def test_bound_classmethod_keeps_class_as_receiver() -> None:
 
 
 def test_ordinary_bound_method_is_not_a_handler() -> None:
-    # A handler is a @do function (ADR-DOE-CORE-003): a bound method of a plain method is refused
-    # where it is made a handler. The VM still reads it as a raw dispatcher (no generator to run).
+    # A handler is a def under @handler, or a @do function (ADR-DOE-CORE-003): a bound method of a
+    # plain method is neither, and is refused where it is made a handler. The VM still reads it as
+    # a raw dispatcher (no generator to run).
     owner: Answers = Answers(23)
     assert handler_spec(owner.plain).generator_function is None
-    with pytest.raises(TypeError, match=r"Answers\.plain is not a @do function"):
+    with pytest.raises(TypeError, match=r"Answers\.plain is not a handler body"):
         handler(owner.plain)
 
 
 def test_bound_handler_filter_still_passes_unrelated_effects() -> None:
     @handler
-    @do
     def outer(effect: OtherNumber, k: K) -> Resume:
         assert isinstance(effect, OtherNumber)
         return (yield Resume(k, 31))
@@ -118,7 +118,6 @@ def compare_path(legacy: bool, monkeypatch: pytest.MonkeyPatch) -> PathOutcome:
         seen: list[str] = []
 
         @handler
-        @do
         def outer(effect: OtherNumber, k: K) -> Resume:
             assert isinstance(effect, OtherNumber)
             seen.append("outer")

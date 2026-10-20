@@ -120,7 +120,6 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         wakeup_ep.complete(None)
 
     @handler
-    @do
     def plan_handler(effect, k):
         nonlocal tool_parked_promise
         if isinstance(effect, GetPlan):
@@ -154,7 +153,6 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         return result
 
     @handler
-    @do
     def notification_handler(effect, k):
         if isinstance(effect, TradingEventE):
             # slack post: external wait completing while the tool poll is

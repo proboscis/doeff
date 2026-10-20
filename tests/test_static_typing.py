@@ -58,7 +58,6 @@ class WriteShared(WriteEffect[bool]):
 
 
 @handler
-@do
 def board(effect: ReadClock | WriteShared, k):
     if isinstance(effect, ReadClock):
         return (yield typed_resume(effect, k, 1000))
@@ -96,7 +95,6 @@ def test_yield_and_yield_from_are_interchangeable() -> None:
 
 def test_handler_error_raises_at_the_yield_from_site() -> None:
     @handler
-    @do
     def refuse(effect: WriteShared, k):
         raise PermissionError(effect.key)
         yield

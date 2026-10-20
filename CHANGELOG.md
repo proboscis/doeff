@@ -4,18 +4,34 @@
 
 ### Changed
 
-- **Breaking:** a handler is a `@do` function marked with `@handler`, and nothing else (ADR-DOE-CORE-003). `handler(f)`
-  takes a `@do` function, or a `functools.partial` or bound method of one, and raises `TypeError` ("… is not a @do
-  function") for a plain function, a lambda or a callable instance. `with_handlers` and `stacked_handlers` no longer
-  pass an unmarked callable through `handler()`: anything that is not a handler (made with `@handler` or `defhandler`)
-  raises `TypeError` ("… is not a handler") where the stack is built. To port a plain-function handler, put `@handler`
-  and `@do` on its `def` and yield what it returned: `return Resume(k, v)` becomes `return (yield Resume(k, v))`. A
-  handler that reinstalls the inner handlers it read with `GetHandlers(k)` uses `doeff.handler_utils.reinstaller(h)`
-  instead of `handler(h)`. Three semgrep rules in `.semgrep.yaml` refuse the same shapes outside the tests: `@handler`
-  on a `def` without `@do`, a lambda given to `handler` or `with_handlers`, and a plain function of the same file given
-  to them. The README's cost table drops its plain-function row. `doeff_gemini.default_gemini_cost_handler` is now a
-  handler, so `handlers=[default_gemini_cost_handler, ...]` keeps working; the raw dispatcher behind it is private, and
-  `production_handlers(cost_handler=...)` still takes a raw `(effect, k)` dispatcher.
+- **Breaking:** a handler is a `def (effect, k)` marked with `@handler`, which makes it a `@do` function, and nothing
+  else (ADR-DOE-CORE-003). Write `@handler` alone on the `def`: `@handler @do` is deprecated — it still runs, and the
+  repository's semgrep refuses it outside the tests. `handler(f)` makes a `def` a `@do` function, takes a `@do`
+  function, or a `functools.partial` or bound method of one, as it is, and raises `TypeError` ("… is not a handler
+  body") for a lambda, a `functools.partial` or bound method of a plain function, a callable instance or a builtin. A
+  handler body yields what it hands to the VM and returns what that gives back: `return (yield Resume(k, v))`. A `def`
+  without `yield` still answers the handled block with what it returns, but when it returns `Resume`, `Transfer`,
+  `Pass` or another control expression without yielding it, the run raises `TypeError` ("… returned Resume(...)
+  without yielding it") rather than end the block with the unrun expression as its value. 0.7.0 refused a generator
+  `def` under `@handler` ("handler must return DoExpr … got: <class 'generator'>") and ran a returned `Resume` for
+  you; under 0.7.0 write `@handler @do`. `with_handlers` and `stacked_handlers` no longer pass an unmarked callable
+  through `handler()`: anything that is not a handler (made with `@handler` or `defhandler`) raises `TypeError` ("… is
+  not a handler") where the stack is built. A handler that reinstalls the inner handlers it read with `GetHandlers(k)`
+  uses `doeff.handler_utils.reinstaller(h)` instead of `handler(h)`. Four semgrep rules in `.semgrep.yaml` refuse the
+  same shapes outside the tests: `@handler` over `@do`, a `return Resume(...)` (or another control expression) under
+  `@handler` without `yield`, a lambda given to `handler` or `with_handlers`, and a function of the same file without
+  `@handler` given to `with_handlers` or `stacked_handlers`. `examples/testing_without_mocks` and
+  `publications/zenn-use-cases-v0` keep `@handler @do`, since they run daily against the doeff on PyPI; they move to
+  `@handler` alone with the next release. The README's cost table drops its plain-function row.
+  `doeff_gemini.default_gemini_cost_handler` is now a handler, so `handlers=[default_gemini_cost_handler, ...]` keeps
+  working; the raw dispatcher behind it is private, and `production_handlers(cost_handler=...)` still takes a raw
+  `(effect, k)` dispatcher.
+- The messages that name how to write a handler say `@handler` on the `def`: an `(effect, k)` `@do` function applied
+  to a program (`fetch_handler(prog())`) raises "… it is a handler body, not a function that builds a program … Mark
+  its def with @handler in place of @do", and the hint of an `UnhandledEffect` reads "install a handler for Fetch:
+  run(fn(prog)), where fn is a def (effect: Fetch, k) marked with @handler …". The README and the docs write every
+  handler as `@handler` on its `def`, and call the reference handlers of `doeff_core_effects` reference handlers,
+  not built-in ones.
 - `python -m doeff demo` runs its `digest` program under four handlers instead of two, to show that a handler decides
   what an effect means, not only where I/O goes: `canned` resumes the continuation `k` with made-up values,
   `trace` sees every effect and passes it on, `budget(1)` lets one effect through and then drops `k`, so `digest` stops

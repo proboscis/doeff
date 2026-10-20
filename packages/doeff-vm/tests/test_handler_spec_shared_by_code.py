@@ -29,7 +29,6 @@ class Beta(EffectBase):
 
 
 @handler
-@do
 def fallback(effect: EffectBase, k):
     """どの handler も受けなかった effect の行き先(外側の総受け)。"""
     return (yield Resume(k, f"fallback:{type(effect).__name__}"))

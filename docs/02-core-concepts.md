@@ -39,12 +39,13 @@ def job():
     yield Step("train")
     return "model"
 
+@handler
 @do(non_tail=True)                       # the handler goes on after the resumed k returns
 def after(effect: Step, k):              # receives both Steps: it stays installed around k
     result = yield Resume(k, None)       # the rest of job runs here, under this handler
     return f"{result} after {effect.name}"
 
-print(run(handler(after)(job())))  # model after train after load
+print(run(after(job())))  # model after train after load
 ```
 
 What a handler can do with `k` ([Handler Contract](#handler-contract) has the rules):
@@ -274,11 +275,14 @@ Handlers use `yield Resume(k, value)` to resume the continuation with a value
 returns without resuming, transferring or passing `k` ends the program it
 handles (see below).
 
-If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
-before continuing.
+A handler body that returns `Resume(...)`, `Pass(...)` or an effect without
+yielding it raises a `TypeError` when it runs: yield it, and return what it gives back.
 
-A handler is any callable `(effect, k) -> DoExpr`: a `@do` function, a plain
-function, a bound method, a `functools.partial`, or a callable instance.
+A handler is a `def (effect, k)` marked with `@handler`, which makes it a `@do`
+function (the handler body). `handler(f)` also takes a `@do` function, or a
+`functools.partial` or bound method of one. A lambda, a `functools.partial` or
+bound method of a plain function, and a callable instance are not handler bodies:
+they are refused with a `TypeError` where the handler is made (ADR-DOE-CORE-003).
 
 ### Returning without `Resume` ends the program under the handler
 
@@ -300,12 +304,12 @@ class Fetch(EffectBase):
     url: str
 
 
-@do
+@handler
 def answers(effect: Fetch, k):
     return (yield Resume(k, f"got {effect.url}"))
 
 
-@do
+@handler
 def stops(effect: Fetch, k):
     return f"stopped at {effect.url}"  # no Resume: the rest of page() never runs
 
@@ -318,12 +322,12 @@ def page():
 
 @do
 def site(fetch_handler):
-    inner = yield handler(fetch_handler)(page())
+    inner = yield fetch_handler(page())
     return f"site got {inner}"
 
 
-print(run(handler(answers)(page())))  # body=got https://example.com
-print(run(handler(stops)(page())))  # stopped at https://example.com
+print(run(answers(page())))  # body=got https://example.com
+print(run(stops(page())))  # stopped at https://example.com
 print(run(site(stops)))  # site got stopped at https://example.com
 ```
 
@@ -345,11 +349,11 @@ type — exactly as if the handler had begun with
 `if not isinstance(effect, T): yield Pass(effect, k)` — without calling it.
 
 ```python excerpt
-@do
+@handler
 def clock(effect: ReadClock | Sleep, k):      # sees ReadClock and Sleep only
     ...
 
-@do
+@handler
 def audit(effect: EffectBase, k):             # sees every effect (no filter)
     ...
 ```
@@ -366,9 +370,9 @@ Rules (single definition: `doeff_vm/_effect_types.py`):
   falls back to every effect
 - a type no effect can be an instance of — `str`, `int`, `dict`, `list[...]`,
   `None`, `Exception` or a class built on one of them — is refused with a
-  `TypeError` where the handler is made (`handler(fn)`, `with_handlers`; a raw
-  `WithHandler` when it is installed), because the handler would never be called.
-  pyright and mypy refuse `handler(fn)` for it before the program runs (see
+  `TypeError` where the handler is made (`@handler` on the `def`, or `handler(fn)`;
+  a raw `WithHandler` when it is installed), because the handler would never be called.
+  pyright and mypy refuse `@handler` on it before the program runs (see
   "Handler answers" in [Static Typing](23-static-typing.md)):
 
 ```python
@@ -379,12 +383,10 @@ from doeff import EffectBase, Resume, do, handler
 class Fetch(EffectBase):
     url: str
 
-@do
-def fetch_handler(effect: str, k):
-    return (yield Resume(k, f"got {effect}"))
-
 try:
-    handler(fetch_handler)
+    @handler
+    def fetch_handler(effect: str, k):
+        return (yield Resume(k, f"got {effect}"))
 except TypeError as error:
     # the message starts with "handler fetch_handler (defined at <file>:<line>): "
     print(str(error).partition("): ")[2])  # the annotation of effect parameter 'effect' names str, which no effect can be an instance of, so the handler would never be called. Annotate it with the effect class it handles (a subclass of EffectBase, e.g. effect: MyEffect), or with EffectBase to receive every effect.
@@ -410,7 +412,7 @@ class Fetch(EffectBase):
 class Store(EffectBase):
     key: str
 
-@do
+@handler
 def store_handler(effect: Store, k):
     return (yield Resume(k, None))
 
@@ -419,13 +421,13 @@ def prog():
     return (yield Fetch("https://example.com"))
 
 try:
-    run(handler(store_handler)(prog()))
+    run(store_handler(prog()))
 except UnhandledEffect as error:
     found, in_scope, skipped, hint = str(error).splitlines()
     print(found)  # no handler found for effect: Fetch (Fetch(url='https://example.com'))
     print(in_scope.strip())  # handlers in scope (innermost→outermost): store_handler
     print(skipped.strip())  # skipped by annotation: store_handler (effect: Store) — a handler only sees the effects its effect parameter is annotated with
-    print(hint.strip())  # hint: install a handler for Fetch: run(handler(fn)(prog)), where fn is a @do function (effect: Fetch, k) that returns (yield Resume(k, value))
+    print(hint.strip())  # hint: install a handler for Fetch: run(fn(prog)), where fn is a def (effect: Fetch, k) marked with @handler that returns (yield Resume(k, value))
 ```
 
 A class of the same name from another module (a script imported both as
@@ -453,21 +455,21 @@ class Fetch(EffectBase):
     url: str
 
 
-@do
+@handler
 def swallows(effect, k):
     if isinstance(effect, Fetch):
         return (yield Resume(k, f"got {effect.url}"))
     # Ask("name") falls off the end here: greeting() ends with None
 
 
-@do
+@handler
 def passes(effect, k):
     if isinstance(effect, Fetch):
         return (yield Resume(k, f"got {effect.url}"))
     yield Pass(effect, k)
 
 
-@do
+@handler
 def typed(effect: Fetch, k):
     return (yield Resume(k, f"got {effect.url}"))
 
@@ -480,7 +482,7 @@ def greeting():
 
 
 def under(fetch_handler):
-    return reader(env={"name": "ada"})(handler(fetch_handler)(greeting()))
+    return reader(env={"name": "ada"})(fetch_handler(greeting()))
 
 
 print(run(under(swallows)))  # None
@@ -506,7 +508,7 @@ class WriteRow(WriteEffect):
     key: str
     value: dict
 
-@do
+@handler
 def read_only_guard(effect: WriteEffect, k):
     raise PermissionError(f"read-only job emitted {type(effect).__name__}")
     yield
@@ -520,7 +522,7 @@ a new write effect must derive from `WriteEffect`. An effect can belong to
 several families (`class DeleteRow(WriteEffect, AuditEffect)`).
 
 A base that does not derive from `EffectBase` filters the same way at run
-time, but the type checker then refuses `handler(read_only_guard)`: it cannot
+time, but the type checker then refuses `@handler` on `read_only_guard`: it cannot
 tell such a class from `str`, which no effect can be (see "Handler answers"
 in [Static Typing](23-static-typing.md)).
 
@@ -567,7 +569,7 @@ program = Perform(Ask("key"))
 print(run(reader(env={"key": "value"})(program)))  # value
 ```
 
-Handler composition uses the `handler(body)` pattern:
+Handlers compose by nesting: each one is applied to the program the next one returns:
 
 ```python
 from doeff import do, run

@@ -63,7 +63,6 @@ def budget(effects):           # drops k after this many effects
     left = effects
 
     @handler
-    @do
     def spend(effect, k):
         nonlocal left
         if left == 0:          # return, and k is never resumed

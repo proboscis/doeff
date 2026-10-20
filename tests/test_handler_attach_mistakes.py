@@ -7,7 +7,7 @@ Before (first-look report 2026-10-17, table rows 4, 5 and 8 — the same in 0.5.
   ``ValueError: dictionary update sequence element #0 has length 1; 2 is required``;
 - ``writer()(prog())`` — a handler called as if it were a factory — with
   ``TypeError: writer() missing 1 required positional argument: 'body'``;
-- ``fetch_handler(prog())`` — an ``(effect, k)`` handler applied without ``handler()`` — with
+- ``fetch_handler(prog())`` — an ``(effect, k)`` handler body under ``@do`` instead of ``@handler`` — with
   ``TypeError: fetch_handler() missing 1 required positional argument: 'k'``.
 
 None of them said how to attach the handler (card ki-8152466e96ad's list).
@@ -150,26 +150,26 @@ def test_a_handler_still_takes_the_program() -> None:
     assert run(state()(writer(tells_hello()))) == ["hello"]
 
 
-# --- 3. an (effect, k) handler applied without handler(): fetch_handler(prog) ---
+# --- 3. an (effect, k) handler body under @do instead of @handler: fetch_handler(prog) ---
 
 
-def test_an_effect_handler_called_with_the_program_says_to_wrap_it_with_handler() -> None:
+def test_an_effect_handler_called_with_the_program_says_to_mark_it_with_handler() -> None:
     message = str(_type_error(lambda: fetch_handler(fetches())))
     assert message == (
-        "fetch_handler takes (effect, k): it is a handler, not a function that builds a "
-        "program, so fetch_handler(fetches()) cannot run. Wrap it with handler() and apply "
-        "that to the program: handler(fetch_handler)(fetches())"
+        "fetch_handler takes (effect, k): it is a handler body, not a function that builds a "
+        "program, so fetch_handler(fetches()) cannot run. Mark its def with @handler in place "
+        "of @do: then fetch_handler(fetches()) runs the program under it"
     )
 
 
 def test_an_unannotated_effect_handler_says_the_same() -> None:
     message = str(_type_error(lambda: unannotated_handler(fetches())))
-    assert message.endswith(": handler(unannotated_handler)(fetches())")
+    assert message.endswith(": then unannotated_handler(fetches()) runs the program under it")
 
 
 def test_a_handler_given_the_uncalled_do_function_says_to_call_it_too() -> None:
     message = str(_type_error(lambda: fetch_handler(fetches)))
-    assert message.endswith(": handler(fetch_handler)(fetches())")
+    assert message.endswith(": then fetch_handler(fetches()) runs the program under it")
 
 
 def test_the_same_error_at_a_yield_of_the_misapplied_handler() -> None:
@@ -181,7 +181,7 @@ def test_the_same_error_at_a_yield_of_the_misapplied_handler() -> None:
             return f"caught: {exc}"
         return "not raised"
 
-    assert run(body()).endswith(": handler(fetch_handler)(fetches())")
+    assert run(body()).endswith(": then fetch_handler(fetches()) runs the program under it")
 
 
 def test_a_function_that_is_not_a_handler_keeps_the_missing_argument_error() -> None:
@@ -194,5 +194,11 @@ def test_a_handler_called_with_an_effect_keeps_the_missing_argument_error() -> N
     assert message == "fetch_handler() missing 1 required positional argument: 'k'"
 
 
-def test_the_handler_wrapped_with_handler_runs() -> None:
+def test_the_handler_body_marked_with_handler_runs() -> None:
+    @handler
+    def marked(effect: Fetch, k):
+        return (yield Resume(k, f"got {effect.url}"))
+
+    assert run(marked(fetches())) == "got https://example.com"
+    # handler() of the @do function is the same handler.
     assert run(handler(fetch_handler)(fetches())) == "got https://example.com"
