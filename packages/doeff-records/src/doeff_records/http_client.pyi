@@ -29,6 +29,7 @@ from doeff_records.effects import PutRows as PutRows
 from doeff_records.effects import WatchChanges as WatchChanges
 from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
+from doeff_records.effects import AppendEvents as AppendEvents
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records.effects import ReadEventByKey as ReadEventByKey
@@ -108,10 +109,10 @@ def request_patience_handler(patience: RequestPatience) -> _Handler:
     ...
 records_unwaited: _Handler
 
-def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[tuple[str, ...], object]:
+def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[tuple[str, ...], object]:
     ...
 
-def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[WireAnswer | Unreachable, object]:
+def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[WireAnswer | Unreachable, object]:
     ...
 
 def long_poll(endpoint: RecordsEndpoint, ask: WatchChanges | WatchEvents) -> _Program[Changes | Reset | EventsMoved | EventsQuiet | Unreachable, object]:
