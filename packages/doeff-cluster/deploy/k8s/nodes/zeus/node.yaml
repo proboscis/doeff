@@ -31,6 +31,13 @@ spec:
           # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て・証拠 lt-TJC2AQWJXZMGCYX6K7MM3DKVNQ)。
           # CPU の取り分(重み)は requests の 4 のまま。memory の上限 100Gi は変えない。戻す時は limits に cpu: "16" を足す。
           resources: { requests: { cpu: "4", memory: 8Gi }, limits: { memory: 100Gi } }
+          # USB の SSD の上の、作業の root の外の dir 2 つ(claude-projects・service-workers)を、作業の root の下の host-usb/ に置く(card
+          # ki-f79f4b324835・利用者 2026-10-12 15:51 の答え — 上に載る系の job が USB の SSD の 3 つの置き場〔作業の root・この 2 つ〕を日次に刈る。
+          # 機体の利用者の home の下は置かない)。作業の root の下に置くので、上に載る系の刈りの決まりは作業の root からの名のまま書け、root の外を
+          # 指さない。type は Directory: dir が無ければ黙って作らず、新しい Pod が起動で止まる(RollingUpdate なので旧い Pod は動いたまま)。
+          volumeMounts:
+            - { name: usb-claude-projects, mountPath: /work/host-usb/claude-projects }
+            - { name: usb-service-workers, mountPath: /work/host-usb/service-workers }
       # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(2026-10-10 15:0x の利用者の決定 原文 "the strategy is to replace the volume
       # consuming part with usb ssd on zeus" — 同じ日の 13:39 JST に root の disk の空きが準備の最低 25 GiB を切り、新しい版の準備が全部
       # 止まった)。type は Directory: SSD が外れて mount の点が無ければ、root の disk へ黙って dir を作らず起動で止まる。中身は切り替えの前に
@@ -45,3 +52,8 @@ spec:
       volumes:
         - name: work
           hostPath: { path: /mnt/fast_ssd_usb/agent-worker, type: Directory }
+        # 作業の root の下の host-usb/ に置く 2 つ(上の volumeMounts の註)。
+        - name: usb-claude-projects
+          hostPath: { path: /mnt/fast_ssd_usb/claude-projects, type: Directory }
+        - name: usb-service-workers
+          hostPath: { path: /mnt/fast_ssd_usb/service-workers, type: Directory }

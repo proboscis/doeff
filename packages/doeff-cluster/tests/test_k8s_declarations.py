@@ -755,6 +755,34 @@ def test_zeus_worker_work_root_is_on_the_usb_ssd(zeus_worker: Manifest) -> None:
     assert work == {"path": ZEUS_WORK_ROOT, "type": "Directory"}
 
 
+# zeus の worker は、USB の SSD の上で作業の root の外に在る dir 2 つを、作業の root の下の host-usb/ に置く(利用者 2026-10-12 15:51 の答え —
+# 上に載る系の job が USB の SSD の 3 つの置き場を日次に刈る。機体の利用者の home の下は置かない)。type は Directory(dir が無ければ新しい Pod が
+# 起動で止まり、黙って空の dir を作らない)。
+ZEUS_USB_MOUNTS = {
+    "/work/host-usb/claude-projects": {"path": "/mnt/fast_ssd_usb/claude-projects", "type": "Directory"},
+    "/work/host-usb/service-workers": {"path": "/mnt/fast_ssd_usb/service-workers", "type": "Directory"},
+}
+
+
+def test_zeus_worker_puts_the_two_usb_dirs_under_the_work_root(zeus_worker: Manifest) -> None:
+    """zeus の worker は USB の SSD の dir 2 つだけを作業の root の下の host-usb/ に置き、機体の利用者の home の下は置かない。"""
+    spec = _mapping(_mapping(_mapping(zeus_worker["spec"], "spec")["template"], "template")["spec"], "template.spec")
+    volumes = {
+        str(_mapping(v, "volume")["name"]): _mapping(v, "volume").get("hostPath")
+        for v in _sequence(spec["volumes"], "volumes")
+    }
+    worker = [_mapping(c, "container") for c in _sequence(spec["containers"], "containers") if _mapping(c, "container")["name"] == "worker"]
+    assert len(worker) == 1
+    mounts = {
+        str(_mapping(m, "volumeMount")["mountPath"]): volumes.get(str(_mapping(m, "volumeMount")["name"]))
+        for m in _sequence(worker[0]["volumeMounts"], "volumeMounts")
+        if str(_mapping(m, "volumeMount")["mountPath"]).startswith("/work/host-usb/")
+    }
+    assert mounts == ZEUS_USB_MOUNTS
+    host_paths = [str(_mapping(p, "hostPath")["path"]) for p in volumes.values() if p is not None]
+    assert not [p for p in host_paths if p.startswith("/mnt/fast_ssd_usb/kento")], host_paths
+
+
 def test_other_workers_keep_the_default_work_root(rendered: list[Manifest]) -> None:
     """zeus 以外の機体の worker の作業の root は今のまま(機体ごとの差は機体の dir だけが持つ)。"""
     others = [doc for doc in rendered if doc.get("kind") == "Deployment" and _mapping(doc["metadata"], "metadata").get("name") not in (
