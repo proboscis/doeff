@@ -350,7 +350,10 @@ checked. What it does not catch yet (effect result types, env / effect sets) and
   imports a macro instead of requiring it.
 - **A compiled-code cache.** Compiled Hy code is also kept in a shared directory:
   `$DOEFF_HY_CODE_STORE`, by default `$XDG_CACHE_HOME/doeff-hy/code-store`
-  (`~/.cache/doeff-hy/code-store`). Set `DOEFF_HY_CODE_STORE=off` to turn it off.
+  (`~/.cache/doeff-hy/code-store`). Set `DOEFF_HY_CODE_STORE=off` to turn it off. When
+  `DOEFF_HY_CODE_STORE` names the directory, the macro-expanded syntax tree of every module
+  that gets compiled is kept there too (compressed, next to its code), so that
+  doeff-effect-analyzer does not expand the same source again.
 - **Partial Hy type stubs** (`hy-stubs`), so that pyright in strict mode accepts the
   `import hy` lines that Hy's expansion always emits.
 

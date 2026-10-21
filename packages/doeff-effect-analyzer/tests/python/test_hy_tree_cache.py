@@ -51,16 +51,27 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def import_leaves_no_tree(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests count the analyzer's own expansions and entries, so a module they import must not also leave
     its tree for the analysis (``doeff_hy_bytecode_guard.expansion_trees``); the tests that ask for
-    ``import_trees_on`` are the ones about that."""
-    if "import_trees_on" not in request.fixturenames:
+    ``real_import_trees`` (or ``import_trees_on``, which builds on it) are the ones about that."""
+    if "real_import_trees" not in request.fixturenames:
         from doeff_hy_bytecode_guard import expansion_trees
 
         monkeypatch.setattr(expansion_trees, "add_import_tree", lambda *args, **kwargs: None)
 
 
 @pytest.fixture
-def import_trees_on() -> None:
-    """Asked for by a test about the trees an import leaves (see ``import_leaves_no_tree``)."""
+def real_import_trees() -> None:
+    """Asked for by a test about the trees an import leaves: the import's compile writes them as it does outside
+    these tests (see ``import_leaves_no_tree``)."""
+
+
+@pytest.fixture
+def import_trees_on(real_import_trees: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """``real_import_trees`` with a bytecode store named, as the shared one of a worker's jobs is. The trees lie in
+    the store the compiling process names (``DOEFF_HY_CODE_STORE`` — ki-5c1fc605c17d), so this names one and returns
+    it; the analyzer's own variable is not what decides where an import leaves a tree."""
+    store = tmp_path / "code-store"
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
+    return store
 
 
 def expansions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -1024,7 +1035,7 @@ def import_compiling(root: Path, package: str, files: dict[str, str], monkeypatc
 
 
 def test_a_module_the_import_compiled_is_not_expanded_again(
-    import_trees_on: None, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    import_trees_on: Path, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ki-e053a847c515: a changed module was expanded by the session's import and again by the analysis
     (58 % of the closure tests' seconds in the daily run). The import's compile leaves its tree and the macros
@@ -1039,7 +1050,7 @@ def test_a_module_the_import_compiled_is_not_expanded_again(
 
 
 def test_a_changed_macro_after_the_import_expands_the_module_again(
-    import_trees_on: None, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    import_trees_on: Path, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The tree the import left is read only while the macros it used are this environment's."""
     seen = expansions(monkeypatch)
@@ -1055,10 +1066,52 @@ def test_a_changed_macro_after_the_import_expands_the_module_again(
     assert seen == [f"{package}.m"]
 
 
-def test_an_import_leaves_no_tree_when_the_cache_is_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_module_compiled_by_a_process_without_the_analyzers_variable_is_not_expanded_again(
+    import_trees_on: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """ki-5c1fc605c17d: a job that shares the bytecode store compiles a changed module without
+    ``DOEFF_EFFECT_ANALYZER_CACHE`` (the worker does not pass it on), and the daily run then hits that bytecode,
+    compiles nothing, and its analysis expanded the same source again. The tree lies in the bytecode store the
+    compiling process names, whatever the analyzer's variable was there, and the analysis — with a place of its
+    own — reads it from there."""
+    seen = expansions(monkeypatch)
+    monkeypatch.delenv("DOEFF_EFFECT_ANALYZER_CACHE", raising=False)
+    package = f"imported_{uuid.uuid4().hex[:8]}"
+    path = import_compiling(tmp_path, package, {"m.hy": SOURCE}, monkeypatch)
+    assert len(list(import_trees_on.rglob("*.tree"))) == 1
+    a_new_process()
+    monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", str(tmp_path / "analyzer"))
+    read = pe._compile_hy(SOURCE, str(path), f"{package}.m")
+    assert seen == []
+    assert ast.dump(read.tree) == ast.dump(hy_expansion._expand_hy(SOURCE, str(path), f"{package}.m").tree)
+
+
+def test_an_analysis_with_its_cache_off_expands_the_module_itself(
+    import_trees_on: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``DOEFF_EFFECT_ANALYZER_CACHE=off`` keeps each analysis expanding for itself — the trees an import left are
+    not read."""
+    seen = expansions(monkeypatch)
+    package = f"imported_{uuid.uuid4().hex[:8]}"
+    path = import_compiling(tmp_path, package, {"m.hy": SOURCE}, monkeypatch)
+    a_new_process()
     monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", "off")
+    pe._compile_hy(SOURCE, str(path), f"{package}.m")
+    assert seen == [f"{package}.m"]
+
+
+@pytest.mark.parametrize("store", ["off", None])
+def test_an_import_leaves_no_tree_when_no_bytecode_store_is_named(
+    real_import_trees: None, store: str | None, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store that is off or not named (the user's default cache) gets no tree, and the analyzer's own place
+    (``cache_dir`` names it) does not take the store's place."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    if store is None:
+        monkeypatch.delenv("DOEFF_HY_CODE_STORE", raising=False)
+    else:
+        monkeypatch.setenv("DOEFF_HY_CODE_STORE", store)
     package = f"imported_{uuid.uuid4().hex[:8]}"
     import_compiling(tmp_path, package, {"m.hy": SOURCE}, monkeypatch)
+    assert not list(tmp_path.rglob("*.tree"))
     assert not list(tmp_path.rglob("import-trees"))

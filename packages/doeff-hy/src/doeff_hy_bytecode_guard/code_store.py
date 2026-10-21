@@ -1,7 +1,7 @@
 """source の中身で引く bytecode の保存先 — 引く・足す・使った印・壊れた entry の扱いの入口はこの module 1 つ(agora-redesign #1753・
 #2799・#3858)。
 
-使い手は 5 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
+使い手は 6 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
   - dataclass が型ごとに作る関数の source の compile(:mod:`doeff_hy_bytecode_guard.dataclass_code`): 文の中身で code を引き、
     compile したら足す(card ki-e77d44aa61e5)。
   - import の読みの口(:mod:`doeff_hy_bytecode_guard.loader_hooks`): 作業木の .pyc が使えない Hy の module の code を、鍵に並ぶ entry の
@@ -12,6 +12,10 @@
   - .pyc の記録の照らしの code の読み(:mod:`doeff_hy_bytecode_guard.macro_use`): macro の閉包の digest の歩みが読む関数の code の
     読み(名の表・文字列の定数・import・digest の形 — code の中身で決まる純な読み)を、歩み 1 つの entry に並べて引き、読み直した
     時は足す(agora-redesign card ki-be596ac8276f)。
+  - import の compile が展開した木(:mod:`doeff_hy_bytecode_guard.expansion_trees`): 変わった Hy の module を compile した process が、展開した
+    木と展開が依った macro の記録を、その code の隣に足す(:func:`add_tree`)。doeff-effect-analyzer が同じ source を展開し直す前に、今の
+    環境の macro で照らして引く(:func:`tree_entries`)。bytecode の保存先は worker の上の job が全部で共有するので、どの job が compile
+    しても、後から読む analyzer(日次の閉じの検)が同じ保存先から引ける(card ki-5c1fc605c17d)。
   - doeff-cluster の worker の bytecode の道具(worker/entry/code_prepare.hy と foundation/bytecode_pool.hy): 版をまたいで、中身の同じ
     source の code(:func:`current_code`・:func:`add_code`)と import の名を引き、無い物だけを compile して足す。道具は準備する root の venv の python で走るので、root の版の
     doeff-hy でなく worker の版のこの file を path で読む — だから標準 library だけを import する(この package の他の module も読まない)。
@@ -21,7 +25,8 @@ script は既定を ``$WORK_DIR/state/doeff-hy-code-store`` に置く(日次の�
 
 並び: ``<dir>/<鍵の頭 2 字>/<鍵の残り><種類の末尾>``。種類 = ``.code``(marshal した code object — dataclass の関数の code)と
 ``.imports``(worker の道具の閉包の歩みが読む import の名 — 形は道具が持つ)と ``.binding`` ・ ``.facts``(.pyc の記録の照らしの source の
-読みと code の読み — 形は bound_source・macro_use が持つ)。鍵は source の中身の sha256 と、中身の読みを変える物(:func:`code_key` の欄)
+読みと code の読み — 形は bound_source・macro_use が持つ)と ``.tree``(import の compile が展開した木と macro の記録 — 形は expansion_trees が持つ)。
+鍵は source の中身の sha256 と、中身の読みを変える物(:func:`code_key` の欄)
 だけで決まり、path と版(commit)に依らない。``.pyc``(worker の道具が木へ置く .pyc の中身そのもの)だけは鍵が中身の sha256 で、木の
 .pyc はこの file への hardlink(:func:`link_pyc` — card ki-d51b7baa38bc)。
 
@@ -35,6 +40,11 @@ zeus — 実行環境の準備は同じ版の source でも 1 回に 100〜600 �
 並びの後ろに居て、上限を越えた時に先に除かれる。だから一度きりの環境(macro を直している作業木の検)の entry は互いを除き合い、使い
 続けている書き手の entry を押し出さない。上限を越える数の環境が同じ鍵を順に使っても、外れるのは上限を越えた分だけ(全部が外れる崖に
 ならない — 設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 A)。
+
+木(``.tree``)も同じ並び — 鍵 1 つの dir に macro の環境ごとの entry(名 = 記録の指紋)を持ち、足した entry を後ろに置き、上限は
+:data:`TREE_ENTRIES_PER_KEY` 個。木は同じ source の code の数倍の大きさ(2026-10-21 の実測、screen の job の import で compile した module:
+展開の木 634 本の pickle は平均 約 196 KB・code 1,306 本は平均 約 30 KB)なので、置く側(expansion_trees)が圧縮して足す。鍵は木の側の印と module の名・source の中身で決まり、code の鍵とは
+別の dir に並ぶ(同じ dir を分け合わない)。
 
 使った印: 引いて当たるたびに entry の時刻を今にする(source の code は、照らして使う entry だけ)。worker の掃除(env_store の
 sweep-leftovers)は 7 日使われない entry と、中が全部 7 日動いていない dir を消す — native の wheel の保存先(.used の印で dir の時刻を
@@ -69,8 +79,15 @@ CODE_ENTRIES_PER_KEY = 16
 #: entry が、照らして使われないまま掃除の閾を越えた時刻に置かれて、すぐ消されないため。
 NEW_ENTRY_FLOOR_SECONDS = 24 * 3600
 
+#: import の compile が展開した木の鍵 1 つに持つ entry の数の上限(足して越えたら、時刻の古い物から除く — 除き方は code の entry と同じ)。
+#: 木は同じ source の code の数倍の大きさ(圧縮して置いても code と同じほど)で、使い手は同じ source を展開し直さないための引き 1 回なので、
+#: 照らして使い続ける macro の環境は少ない(検証の job と日次と手元)— code の上限より小さくする。
+TREE_ENTRIES_PER_KEY = 4
+
 #: entry の種類の末尾。
 CODE_SUFFIX = ".code"
+#: import の compile が展開した木と、その展開が依った macro の記録(doeff_hy_bytecode_guard.expansion_trees — 中身の形はそこが持つ)。
+TREE_SUFFIX = ".tree"
 IMPORTS_SUFFIX = ".imports"
 #: macro の閉包の digest の歩みが、辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard.bound_source — 中身と名で決まる
 #: 純な読み。形は bound_source が持つ)。
@@ -179,13 +196,13 @@ def _used_at(item: os.DirEntry[str]) -> int | None:
         return None
 
 
-def _stamped_entries(store: str, key: str) -> tuple[tuple[int, str], ...]:
-    """source の code の鍵 key の entry の #(時刻 ns path) の列 — 時刻の新しい順(同じ時刻は名の順)。鍵の dir が無ければ空。書きかけの
-    一時の file(末尾が CODE_SUFFIX でない)は数えない。読めない dir は名指しの 1 行を出して空(呼び手は compile する)。"""
+def _stamped_entries(store: str, key: str, suffix: str = CODE_SUFFIX) -> tuple[tuple[int, str], ...]:
+    """鍵 key の entry(種類 suffix — code か木)の #(時刻 ns path) の列 — 時刻の新しい順(同じ時刻は名の順)。鍵の dir が無ければ空。
+    書きかけの一時の file(末尾が suffix でない)は数えない。読めない dir は名指しの 1 行を出して空(呼び手は作り直す)。"""
     directory = _code_dir(store, key)
     try:
         with os.scandir(directory) as listing:
-            stamped = [(_used_at(item), item.path) for item in listing if item.name.endswith(CODE_SUFFIX)]
+            stamped = [(_used_at(item), item.path) for item in listing if item.name.endswith(suffix)]
     except FileNotFoundError:
         return ()
     except OSError as error:
@@ -198,6 +215,12 @@ def code_entries(store: str, key: str) -> tuple[str, ...]:
     """source の code の鍵 key の entry の path の列 — 時刻の新しい順(照らして使った entry が前・足しただけの entry は後ろ — 読み手は
     この順に照らす)。鍵の dir が無ければ空。"""
     return tuple(path for _, path in _stamped_entries(store, key))
+
+
+def tree_entries(store: str, key: str) -> tuple[str, ...]:
+    """import の compile が展開した木の鍵 key の entry の path の列 — :func:`code_entries` と同じ並び(使った entry が前・足しただけの entry は
+    後ろ)。木の鍵と中身の形は doeff_hy_bytecode_guard.expansion_trees が持ち、読み手はこの順に macro の記録を照らして使う。"""
+    return tuple(path for _, path in _stamped_entries(store, key, TREE_SUFFIX))
 
 
 def current_code(store: str, key: str, is_current: Callable[[CodeType], bool]) -> CodeType | None:
@@ -229,13 +252,27 @@ def add_code(store: str, key: str, code: CodeType, data: bytes | None = None) ->
     marshal する)。答え = 書けなかった理由(:func:`write_entry` と同じ — 書けたら None)。"""
     import marshal  # 保存先へ足す時だけ読む
 
-    path = os.path.join(_code_dir(store, key), code_fingerprint(code) + CODE_SUFFIX)
-    problem = write_entry(path, marshal.dumps(code) if data is None else data)
+    return _add_entry(
+        store, key, code_fingerprint(code), CODE_SUFFIX, CODE_ENTRIES_PER_KEY, marshal.dumps(code) if data is None else data
+    )
+
+
+def add_tree(store: str, key: str, name: str, data: bytes) -> str | None:
+    """import の compile が展開した木の entry を鍵 key に足す(名 = name — 展開が依った macro の記録の指紋・同じ名の entry は書き直す)。
+    足した entry の時刻の置き方と、鍵の entry の数の上限(:data:`TREE_ENTRIES_PER_KEY`)の守り方は :func:`add_code` と同じ。答え = 書けなかった
+    理由(:func:`write_entry` と同じ — 書けたら None)。"""
+    return _add_entry(store, key, name, TREE_SUFFIX, TREE_ENTRIES_PER_KEY, data)
+
+
+def _add_entry(store: str, key: str, name: str, suffix: str, limit: int, data: bytes) -> str | None:
+    """鍵 key の entry(種類 suffix)を name で足す — 足した entry を並びの後ろに置き、種類ごとの上限 limit を越えた分を除く(:func:`add_code`)。"""
+    path = os.path.join(_code_dir(store, key), name + suffix)
+    problem = write_entry(path, data)
     if problem is not None:
         return problem
-    others = tuple(pair for pair in _stamped_entries(store, key) if pair[1] != path)
+    others = tuple(pair for pair in _stamped_entries(store, key, suffix) if pair[1] != path)
     _place_after(path, others)
-    for _, stale in others[CODE_ENTRIES_PER_KEY - 1 :]:
+    for _, stale in others[limit - 1 :]:
         try:
             os.unlink(stale)
         except FileNotFoundError:
