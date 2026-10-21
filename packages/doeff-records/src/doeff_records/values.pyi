@@ -54,6 +54,22 @@ class ByKeySuffix:
 RetentionGroup: TypeAlias = EachEvent | ByKeySuffix
 
 @dataclass(frozen=True)
+class RememberKeysForever:
+    ...
+
+@dataclass(frozen=True)
+class RememberKeysFor:
+    seconds: float
+
+@dataclass(frozen=True)
+class RememberNoKeys:
+    ...
+
+KeyMemory: TypeAlias = RememberKeysForever | RememberKeysFor | RememberNoKeys
+
+def key_memory_ms(memory: KeyMemory) -> int | None: ...
+
+@dataclass(frozen=True)
 class ByKeyHead:
     separator: str
 
@@ -93,6 +109,7 @@ class StreamDecl:
     retention_group: RetentionGroup = ...
     key_lookup: ByKeyHead | None = None
     archive_before_retire: bool = False
+    key_memory: KeyMemory = ...
 
 @dataclass(frozen=True)
 class RecordsSchema:

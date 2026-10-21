@@ -100,6 +100,39 @@
 
 (setv RetentionGroup (| EachEvent ByKeySuffix))
 
+;; 保持の期限で置き場を去った出来事の冪等キーの覚え方(StreamDecl.key-memory — 覚えの行 RetiredKey を置き場にどれだけ残すか)。覚えは
+;; 期限の後に同じ鍵で送り直された追記を、新しい出来事として積まずに前の番号(か断り)で答えるためだけに在る。送り直しの来うる幅を書き手が
+;; 宣言し、その幅を過ぎた覚えは回収(SweepExpired)が外す — 外した後の同じ鍵の追記は、置き場がその鍵を知らないので新しい出来事になる
+;; (ReadEventByKey は EventAbsent)。覚え方を限った列の書き手は「宣言した幅の外では同じ鍵を送り直さない」を守る。
+(defclass [(dataclass :frozen True)] RememberKeysForever []
+  "覚えを外さない(既定 — 覚えの行は列に積んだ出来事の数だけ育つ)。")
+
+(defclass [(dataclass :frozen True)] RememberKeysFor []
+  "覚えを、覚えた刻(出来事が置き場を去った刻か、送ってから外す列で書きが鍵を覚えた刻 — どちらも出来事の期限の刻より後)から少なくとも
+   seconds 秒残し、その後の回収で外す。送ってから外す列(StreamDecl.archive-before-retire)の覚えは、出来事が送り先に在ると確かめて
+   置き場から外れるまで外さない(覚えの中身 — 鍵・番号・本文 — は送り先の出来事の行がそのまま持つ)。"
+  (#^ float seconds)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.seconds bool) (not (isinstance self.seconds #(int float))) (<= self.seconds 0))
+      (raise (ValueError (.format "RememberKeysFor.seconds は正の数: {!r}" self.seconds))))))
+
+(defclass [(dataclass :frozen True)] RememberNoKeys []
+  "出来事が置き場を去った時に覚えを残さない(期限の後に同じ鍵で送り直されない列 — 例えば鍵が単調に増える番号を含む列)。期限を過ぎた
+   鍵への追記は、出来事が置き場を去った後は新しい出来事。送ってから外す列は、書きが期限を過ぎた鍵を覚えた後、出来事を外すまでの間だけ
+   覚えを持つ(出来事が置き場に残る間の答えは他の覚え方と同じ)。")
+
+(setv KeyMemory (| RememberKeysForever RememberKeysFor RememberNoKeys))
+
+
+(defn #^ (| int None) key-memory-ms [#^ object memory]  ; defk にできない: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ値の読み
+  "置き場の覚えの外し(memory・PG の回収と出来事の外し)が覚え方を 1 つの数で読めるように、覚えを残す長さ(ミリ秒 — 切り捨て)にするため。
+   None = 外さない(RememberKeysForever)・0 = 残さない(RememberNoKeys)。"
+  (match memory
+    (RememberKeysForever) None
+    (RememberKeysFor :seconds seconds) (int (* 1000 seconds))
+    (RememberNoKeys) 0
+    _ (raise (TypeError (.format "覚え方ではない: {!r}" memory)))))
+
 ;; 追記の列を冪等キーの頭で引く読み(StreamDecl.key-lookup・ReadEvents.key-head)— 列に多くの書き手の出来事が混ざって積まれる時に、読み手が
 ;; 1 つの頭(例: 1 つの仕事)の出来事だけを、列の他の出来事の数に依らずに読むため。
 (defclass [(dataclass :frozen True)] ByKeyHead []
@@ -231,7 +264,9 @@
    KeepFor の列だけ)/ key-lookup = 冪等キーの頭で引く読みの区切り(ByKeyHead | None — None の列は頭で引けない)/
    archive-before-retire = 保持の期限を過ぎた出来事を、手入れの送りの関数(maintenance.hy の頭の註の「出来事を送ってから外す」)が
    送り先に在ると確かめた後にだけ置き場から外すか(True は KeepFor の列だけ。False = 期限を過ぎた出来事を回収と書きがそのまま外す —
-   前からの形)。True の列でも読みは期限の刻から出来事を出さず、冪等キーの答えも False の列と同じ。"
+   前からの形)。True の列でも読みは期限の刻から出来事を出さず、冪等キーの答えも False の列と同じ。
+   key-memory = 置き場を去った出来事の冪等キーの覚え方(RememberKeysForever | RememberKeysFor | RememberNoKeys — 既定は外さない・
+   外す 2 つは KeepFor の列だけ。上の KeyMemory の註)。"
   (#^ str name)
   (#^ tuple writers)
   (setv #^ object retention (KeepForever))
@@ -239,6 +274,7 @@
   (setv #^ object retention-group (EachEvent))
   (setv #^ (| ByKeyHead None) key-lookup None)
   (setv #^ bool archive-before-retire False)
+  (setv #^ object key-memory (RememberKeysForever))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
@@ -255,6 +291,10 @@
       (raise (TypeError (.format "StreamDecl.archive_before_retire は真偽: {!r}" self.archive-before-retire))))
     (when (and self.archive-before-retire (not (isinstance self.retention KeepFor)))
       (raise (ValueError "StreamDecl.archive_before_retire は KeepFor の列だけ(消えない列は送ってから外す物が無い)")))
+    (when (not (isinstance self.key-memory #(RememberKeysForever RememberKeysFor RememberNoKeys)))
+      (raise (TypeError (.format "StreamDecl.key_memory は RememberKeysForever | RememberKeysFor | RememberNoKeys: {!r}" self.key-memory))))
+    (when (and (not (isinstance self.key-memory RememberKeysForever)) (not (isinstance self.retention KeepFor)))
+      (raise (ValueError "StreamDecl.key_memory の RememberKeysFor・RememberNoKeys は KeepFor の列だけ(消えない列は鍵を覚えない)")))
     (when (and (is-not self.size-budget None)
                (or (isinstance self.size-budget bool) (not (isinstance self.size-budget int)) (<= self.size-budget 0)))
       (raise (ValueError (.format "StreamDecl.size_budget は正の整数か None: {!r}" self.size-budget))))))
@@ -442,8 +482,9 @@
 
 (defrecord RetiredKey
   "保持の期限で出来事を消した冪等キーの覚え(#3022): idempotency-key = 冪等キー / sequence = 消した出来事の番号 /
-   body-digest = その本文の指紋(admission.body-digest)。置き場(memory・PG)は出来事を消しても鍵の覚えは消さない — 消した後の
-   同じ鍵の追記を、生きた出来事と同じ規則(admission.judge-append)で判じるため(覚えは育ち続けてよい — 消す仕組みは持たない)。
+   body-digest = その本文の指紋(admission.body-digest)。置き場(memory・PG)は出来事を消した後も鍵を覚える — 消した後の
+   同じ鍵の追記を、生きた出来事と同じ規則(admission.judge-append)で判じるため。覚えをいつまで残すかは列の宣言の覚え方
+   (StreamDecl.key-memory — 既定は外さない。外す覚え方の列は、覚えた刻から宣言の長さの後の回収が外す — KeyMemory の註)。
    置き場の判断(admission)と SQL の文(pg_sql)の両方が読む値なので、この値の module に置く。"
   #^ str idempotency-key
   #^ int sequence

@@ -49,6 +49,9 @@
 ;;; 送り先に在ると確かめた番号の RetireArchivedEvents だけ(回収と同じ文 — retire-expired-events)。組で数える列は、鍵を覚えただけの
 ;;; 出来事を読みの条件が期限を過ぎた物に数える(event-expiry の remembered — 組に新しい鍵が積まれて組の最後の刻が動いても、覚えた
 ;;; 出来事は読みに戻らない)。鍵の引きは覚えを先に見る(earlier-use・pg-read-event-by-key — 覚えた鍵の出来事がまだ置き場に在る)。
+;;; 鍵の覚えの外し(card ki-4ebaefac6668 — maintenance.hy の頭の註の「鍵の覚えを外す」): 出来事を捨てる transaction は、列の覚え方
+;;; (StreamDecl.key-memory)に従って覚えを刻つきで入れるか(departed-keys-statements)、覚えを残さない列は入れずに外す。回収
+;;; (SweepExpired)は長さを限った列ごとに、覚えた刻から長さを過ぎた覚えを錠の単位の transaction を分けて外す(forget-expired-keys)。
 ;;; 索引の用意(card ki-954c58540d0f — 2026-10-18 13:18〜14:26 JST に、索引を 1 つ宣言した配備で起動が落ち続けた): 表の用意
 ;;; (prepare-records-store)は宣言と置き場の差を観測して埋める形で、置き場の大きさに比例する仕事を起動の道に置かない。
 ;;;   - 移行の transaction は、表と行の文(CREATE TABLE IF NOT EXISTS・store_epoch の行)を流し、その transaction で生まれた表の索引だけを
@@ -91,7 +94,7 @@
 (import doeff_records.request_timing [lock-observations])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
-                              EventAbsent EventRetired
+                              EventAbsent EventRetired key-memory-ms
                               StreamTail StreamTailEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
@@ -113,7 +116,8 @@
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
                               insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
                               expire-chosen-events-statement touched-events-statement delete-events-statement expiring-candidates-statement
-                              retire-keys-statement find-retired-key-statement expired-page-statement])
+                              retire-keys-statement find-retired-key-statement expired-page-statement
+                              SchemaStep columns-statement drop-keys-statement forget-keys-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 
@@ -561,11 +565,27 @@
   (<- present (query-rows database relations))
   (val existing (frozenset (gfor record present (get record 0))))
   (for [step steps]
-    (when (or (is step.index None) (not-in (+ prefix step.index.relation) existing))
+    (<- wanted (step-wanted? database prefix existing step))
+    (when wanted
       (<- (query-rows database step.statement))))
   (<- observing (indexes-statement prefix))
   (<- found (query-rows database observing))
   found)
+
+
+(defk step-wanted? [database prefix existing step]
+  {:pre [(: database str) (: prefix str) (: existing frozenset) (: step SchemaStep)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "移行の transaction が表の用意の段 step を流すかを決めるため: 索引の段はその表がこの transaction で生まれた時だけ(existing = 頭で
+   在った表)・列を足す段は表にその列が無い時だけ(前の段が表を作った後に表の列を読む — 在る列へ足す文も表の排他の錠を取るので、
+   起動のたびに流さない・pg_sql.SchemaStep の column)・他の段はいつも。"
+  (when (is-not step.index None)
+    (return (not-in (+ prefix step.index.relation) existing)))
+  (when (is step.column None)
+    (return True))
+  (<- reading (columns-statement prefix step.column.relation))
+  (<- columns (query-rows database reading))
+  (not-in step.column.column (frozenset (gfor record columns (get record 0)))))
 
 
 (defk observed-indexes [found]
@@ -1005,21 +1025,36 @@
   kept)
 
 
-(defk retire-expired-events [store stream before-at separator sequences [remembered False]]
+(defk departed-keys-statements [store stream removed now-ms]
+  {:pre [(: store PreparedStore) (: stream str) (: removed tuple) (: now-ms int)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場を去る出来事(append_rows の行 seq at payload の組 removed)の冪等キーの覚えを、列の覚え方(StreamDecl.key-memory — values.hy の
+   KeyMemory の註)に従って残す文を作るため(出来事を捨てる文と同じ transaction に流す): 覚えを残さない列は覚えを外す文(送ってから外す列で
+   書きが覚えた鍵 — 入れない)・他の列は刻 now-ms に覚える文(長さを限った列の覚えは回収が外す — forget-expired-keys)。去る物が無ければ空。"
+  (when (not removed)
+    (return #()))
+  (<- kept (retired-keys stream removed))
+  (if (= (key-memory-ms (. (store.schema.stream stream) key-memory)) 0)
+      (do (<- drop (drop-keys-statement store.prefix stream (tuple (gfor key kept key.idempotency-key))))
+          #(drop))
+      (do (<- retire (retire-keys-statement store.prefix stream kept now-ms))
+          #(retire))))
+
+
+(defk retire-expired-events [store stream before-at separator sequences now-ms [remembered False]]
   {:pre [(: store PreparedStore) (: stream str) (: before-at int) (: separator (| str None)) (: sequences tuple) (> (len sequences) 0)
-         (: remembered bool)]
+         (: now-ms int) (: remembered bool)]
    :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "書きの錠の transaction の中で、列 stream の回収の候補(番号 sequences — 錠の外で読んだ expiring-sequences の答えか、送り先に在ると
-   確かめた番号)のうち今も保持の期限を過ぎた出来事を捨て、同じ transaction で冪等キーの覚えへ移すため(回収と送った出来事の外し —
-   retired-keys)。separator = None は出来事ごとに数える列・str は組で数える列の区切り。remembered = 覚えた出来事も期限を過ぎた物に数えるか
-   (pg_sql.EventExpiry の註)。答え = 捨てた出来事の数。"
+   確かめた番号)のうち今も保持の期限を過ぎた出来事を捨て、同じ transaction で冪等キーの覚えを列の覚え方に従って刻 now-ms に残すため
+   (回収と送った出来事の外し — departed-keys-statements)。separator = None は出来事ごとに数える列・str は組で数える列の区切り。
+   remembered = 覚えた出来事も期限を過ぎた物に数えるか(pg_sql.EventExpiry の註)。答え = 捨てた出来事の数。"
   (<- delete (expire-chosen-events-statement store.prefix stream before-at separator sequences remembered))
   (<- removed (query-rows store.database delete))
-  (<- kept (retired-keys stream removed))
-  (when kept
-    (<- retire (retire-keys-statement store.prefix stream kept))
-    (<- (query-rows store.database retire)))
+  (<- settles (departed-keys-statements store stream (tuple removed) now-ms))
+  (for [statement settles]
+    (<- (query-rows store.database statement)))
   (len removed))
 
 
@@ -1032,8 +1067,8 @@
   (tuple (gfor record records (int (get record 0)))))
 
 
-(defk retire-stream [store gated stream expiry]
-  {:pre [(: store PreparedStore) (: gated bool) (: stream str) (: expiry EventExpiry)] :post [(: % int)]
+(defk retire-stream [store gated stream expiry now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: stream str) (: expiry EventExpiry) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "列 stream の保持の期限(境 expiry)を過ぎた出来事を、EXPIRE-BATCH 個ずつ書きの錠の transaction を分けて捨てるため(錠の外で候補の番号を
    読み、錠の中ではその番号の出来事だけを条件を読み直して捨てる — 錠を持つ間に触る行を EXPIRE-BATCH で縛る・pg_sql の頭の註)。候補が
@@ -1047,7 +1082,7 @@
   (var going (bool chosen))
   (while going
     (<- removed (writing store gated "sweep-stream" #(unit) topics
-                         (retire-expired-events store stream expiry.before-at expiry.separator chosen)))
+                         (retire-expired-events store stream expiry.before-at expiry.separator chosen now-ms)))
     (:= total (+ total removed))
     (:= going (and (= (len chosen) EXPIRE-BATCH) (> removed 0)))
     (when going
@@ -1077,7 +1112,7 @@
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (<- expiry (event-expiry decl now-ms))
     (when (and (is-not expiry None) (not decl.archive-before-retire))
-      (<- (retire-stream store gated name expiry))))
+      (<- (retire-stream store gated name expiry now-ms))))
   removed)
 
 
@@ -1320,30 +1355,33 @@
       #()))
 
 
-(defk retired-events-statements [store stream removed]
-  {:pre [(: store PreparedStore) (: stream str) (: removed tuple)] :post [(: % tuple)]
+(defk retired-events-statements [store stream removed now-ms]
+  {:pre [(: store PreparedStore) (: stream str) (: removed tuple) (: now-ms int)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "追記が触る単位の期限を過ぎた出来事(1 往復目に読んだ行 removed)を捨てて冪等キーの覚えへ移す文を作るため(2 往復目の先頭に流す —
-   回収と同じく、出来事だけ消えて覚えが無い断面を作らない・#3022)。捨てる物が無ければ空。送ってから外す列(頭の註の「出来事を送って
-   から外す」)は捨てずに鍵を覚えるだけ — 出来事は手入れの送りが確かめた後に外す(覚えた出来事は読みの条件が期限を過ぎた物に数える)。"
+  "追記が触る単位の期限を過ぎた出来事(1 往復目に読んだ行 removed)を捨てて冪等キーの覚えを列の覚え方に従って刻 now-ms に残す文を作るため
+   (2 往復目の先頭に流す — 回収と同じく、出来事だけ消えて覚えが無い断面を作らない・#3022・departed-keys-statements)。捨てる物が無ければ空。
+   送ってから外す列(頭の註の「出来事を送ってから外す」)は捨てずに鍵を覚えるだけ(覚え方に依らない — 覚えは読みと鍵の引きの印で、
+   出来事を外すまで外さない)— 出来事は手入れの送りが確かめた後に外す(覚えた出来事は読みの条件が期限を過ぎた物に数える)。"
   (when (not removed)
     (return #()))
-  (<- kept (retired-keys stream removed))
-  (<- retire (retire-keys-statement store.prefix stream kept))
   (when (. (store.schema.stream stream) archive-before-retire)
+    (<- kept (retired-keys stream removed))
+    (<- retire (retire-keys-statement store.prefix stream kept now-ms))
     (return #(retire)))
   (<- delete (delete-events-statement store.prefix stream (tuple (gfor record removed (int (get record 0))))))
-  #(delete retire))
+  (<- settles (departed-keys-statements store stream removed now-ms))
+  (+ #(delete) settles))
 
 
-(defk earlier-use [store decl expiry idempotency-key found kept grouped [scheduled (frozenset)]]
+(defk earlier-use [store decl expiry idempotency-key found kept grouped now-ms [scheduled (frozenset)]]
   {:pre [(: store PreparedStore) (: decl StreamDecl) (: expiry (| EventExpiry None)) (: idempotency-key str) (: found tuple) (: kept tuple)
-         (: grouped tuple) (: scheduled frozenset)]
+         (: grouped tuple) (: now-ms int) (: scheduled frozenset)]
    :post [(: % EarlierUse)]
    :tags {:context "records" :role "foundation"}}
   "冪等キーの前の使いと、追記が触る単位の片付けの文を、追記の 1 往復目の読み(書きの錠の中)から判じるため(#3605 の D — 書きは置き場の
    全部を回収しない。答えは回収の後の追記と同じ: 期限を過ぎた鍵は覚えで判じ、期限を過ぎた組に新しい鍵を積んでも組の古い出来事は読みに
-   戻らない)。found = 鍵の生きた出来事の引きの行・kept = 鍵の覚えの引きの行・grouped = touched-reads の答え(組で数える列だけ)。
+   戻らない)。found = 鍵の生きた出来事の引きの行・kept = 鍵の覚えの引きの行・grouped = touched-reads の答え(組で数える列だけ)・
+   now-ms = 書きの刻(片付けが鍵を覚える刻)。
    捨てる物 = 出来事ごとに数える列は鍵の出来事が境の刻(event-expiry — 回収と読みと同じ境)以前に積まれていればそれ・組で数える列は組の
    読みの答え。前の使い = 捨てずに残る生きた出来事・無ければ鍵の覚え(在った覚えは書き換えない — 回収の ON CONFLICT DO NOTHING と同じ)・
    それも無く鍵の出来事を今捨てるならその覚え・どれも無ければ None。出来事を消して覚えを入れる刈りも同じ書きの錠の transaction なので、
@@ -1359,15 +1397,19 @@
                  (is-not expiry.separator None) (get grouped 0)
                  (and (is-not live None) (<= live.at expiry.before-at)) found
                  True #()))
-  (<- cleanup (retired-events-statements store stream (tuple (gfor record removed :if (not-in (int (get record 0)) scheduled) record))))
+  (<- cleanup (retired-events-statements store stream (tuple (gfor record removed :if (not-in (int (get record 0)) scheduled) record))
+                                         now-ms))
   (val removed-sequences (frozenset (gfor record removed (int (get record 0)))))
+  ;; 今捨てる鍵の出来事は、片付けが覚えを残す時だけ前の使いに数える — 覚えを残さない列(values.RememberNoKeys)で送ってから外す列でない
+  ;; 列は、片付けの後の断面に鍵が無い(回収の後の追記と同じく新しい出来事 — departed-keys-statements)。
+  (val remembers (or decl.archive-before-retire (!= (key-memory-ms decl.key-memory) 0)))
   ;; 鍵の覚えが在れば覚えで判じる: 送ってから外す列は、書きが鍵を覚えただけの期限を過ぎた出来事を置き場に残すので、鍵の引きが出来事を
   ;; 見つけても退いた鍵として答える(頭の註の「出来事を送ってから外す」— 他の列では覚えと出来事は同じ鍵で両方は無い)。
   (val previous (cond
                   kept (RetiredKey :idempotency-key idempotency-key :sequence (int (get kept 0 0)) :body-digest (get kept 0 1))
                   (and (is-not live None) (not-in live.sequence removed-sequences)) live
-                  (is-not live None) (RetiredKey :idempotency-key live.idempotency-key :sequence live.sequence
-                                                 :body-digest (body-digest live.body))
+                  (and (is-not live None) remembers) (RetiredKey :idempotency-key live.idempotency-key :sequence live.sequence
+                                                                 :body-digest (body-digest live.body))
                   True None))
   (EarlierUse :previous previous :cleanup cleanup :removed removed-sequences))
 
@@ -1386,7 +1428,7 @@
   (<- grouping (touched-reads store decl expiry ask.idempotency-key))
   (<- read (batch-rows store.database (+ #(head-statement find lookup) grouping) False))
   (<- head (head-of (get read 0)))
-  (<- use (earlier-use store decl expiry ask.idempotency-key (get read 1) (get read 2) (cut read 3 None)))
+  (<- use (earlier-use store decl expiry ask.idempotency-key (get read 1) (get read 2) (cut read 3 None) now-ms))
   (val verdict (judge-append decl ask.body use.previous))
   (when (isinstance verdict Refused)
     (<- refused (committed store use.cleanup verdict))
@@ -1428,7 +1470,7 @@
   (for [#(one span) (zip ask.appends spans :strict True)]
     (val start (+ span.at 2))
     (<- use (earlier-use store span.decl span.expiry one.idempotency-key (get read span.at) (get read (+ span.at 1))
-                         (tuple (cut read start (+ start span.grouped))) scheduled))
+                         (tuple (cut read start (+ start span.grouped))) now-ms scheduled))
     (:= scheduled (| scheduled use.removed))
     (:= statements (+ statements use.cleanup))
     (val verdict (judge-append span.decl one.body use.previous))
@@ -1621,17 +1663,52 @@
   (for [start (range 0 (len ask.sequences) EXPIRE-BATCH)]
     (val chosen (tuple (cut ask.sequences start (+ start EXPIRE-BATCH))))
     (<- removed (writing store gated "retire-archived" #(unit) topics
-                         (retire-expired-events store ask.stream expiry.before-at expiry.separator chosen True)))
+                         (retire-expired-events store ask.stream expiry.before-at expiry.separator chosen (epoch-ms ask.at) True)))
     (:= total (+ total removed)))
   (RetiredEvents total))
+
+
+(defk forget-stream-keys [store gated stream keep now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: stream str) (: keep int) (>= keep 0) (: now-ms int)] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "列 stream の、覚えた刻から長さ keep(ミリ秒)を過ぎた鍵の覚えを、EXPIRE-BATCH 個ずつ列の書きの錠の transaction を分けて外すため
+   (pg_sql.forget-keys-statement — 錠を持つ間に触る行を EXPIRE-BATCH で縛る。送ってから外す列は鍵の出来事が置き場に残る覚えを外さない)。
+   上限より少なく外した回で終える。合図は名の無い待ち手だけに関わる(覚えの外しは列の読みと待ちの答えを変えない — 名の空の並び)。
+   答え = 外した覚えの数。"
+  (val decl (store.schema.stream stream))
+  (<- unit (stream-unit stream))
+  (<- statement (forget-keys-statement store.prefix stream (- now-ms keep) decl.archive-before-retire EXPIRE-BATCH))
+  (var total 0)
+  (var going True)
+  (while going
+    (<- rows (writing store gated "forget-keys" #(unit) #() (query-rows store.database statement)))
+    (:= total (+ total (int (get rows 0 0))))
+    (:= going (= (int (get rows 0 0)) EXPIRE-BATCH)))
+  total)
+
+
+(defk forget-expired-keys [store gated now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "覚え方の長さを限った列(StreamDecl.key-memory の RememberKeysFor・RememberNoKeys)ごとに、長さを過ぎた鍵の覚えを外すため(SweepExpired の
+   覚えの外し — maintenance.hy の頭の註の「鍵の覚えを外す」。覚えを残さない列は出来事を捨てる transaction が覚えを入れないが、列の覚え方を
+   替える前の覚えと、送ってから外す列で書きが覚えた鍵の覚えをここで外す)。答え = 外した覚えの数。"
+  (var forgotten 0)
+  (for [#(name decl) (sorted (.items store.schema.streams))]
+    (val keep (key-memory-ms decl.key-memory))
+    (when (is-not keep None)
+      (<- count (forget-stream-keys store gated name keep now-ms))
+      (:= forgotten (+ forgotten count))))
+  forgotten)
 
 
 (defk swept-count [store gated now-ms]
   {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % Swept)]
    :tags {:context "records" :role "foundation"}}
-  "SweepExpired の答え(消した行の数)を作るため。"
+  "SweepExpired の答え(消した行の数と外した覚えの数)を作るため — 回収が今捨てた出来事の覚えも、長さが過ぎていれば同じ回に外れる。"
   (<- removed (purge-expired store gated now-ms))
-  (Swept removed))
+  (<- forgotten (forget-expired-keys store gated now-ms))
+  (Swept removed forgotten))
 
 
 ;; --- handler ------------------------------------------------------------------------------------------------

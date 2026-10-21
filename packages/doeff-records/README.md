@@ -98,7 +98,13 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
-番号と本文の指紋だけを残して忘れない — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。
+番号と本文の指紋だけを覚える — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。
+覚えをいつまで残すかは `key_memory`(`KeepFor` の列だけが既定から替えられる・card ki-4ebaefac6668):
+`RememberKeysForever()`(既定 — 外さない)・`RememberKeysFor(seconds)`(覚えた刻から少なくとも `seconds` 秒残し、その後の `SweepExpired` が外す)・
+`RememberNoKeys()`(出来事が置き場を去る時に覚えを残さない — 期限の後に同じ鍵で送り直されない列)。外れた鍵(と覚えを残さない列の
+去った鍵)の再送は、置き場がその鍵を知らないので新しい出来事になり、`ReadEventByKey` は `EventAbsent`。覚え方を限る書き手は「宣言した幅の
+外では同じ鍵を送り直さない」を守る。送ってから外す列の覚えは、出来事が送り先に在ると確かめて外れるまで外れない(送り先に届かない間の
+答えは変わらない)。
 `archive_before_retire=True`(`KeepFor` の列だけ)の列は、期限を過ぎた出来事を回収も書きも置き場から外さず、手入れの出来事の送りの関数が
 送り先に在ると確かめた出来事だけを外す(下の「置き場の手入れ」— 読みは期限の刻から出さず、冪等キーの答えも印の無い列と同じ)。
 置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
@@ -222,7 +228,9 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 
 公開 effect ではない 2 つの effect と、それを回す Program。memory と PostgreSQL の handler が答える。
 
-- `SweepExpired()` → `Swept(rows)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨てる。回収はこの
+- `SweepExpired()` → `Swept(rows, forgotten)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨て、覚え方
+  (`StreamDecl.key_memory`)の長さを過ぎた鍵の覚えを外す(`forgotten` = 外した覚えの数 — PostgreSQL は列ごとに覚えた刻の索引を辿り、
+  500 個ずつ列の書きの錠の transaction を分ける。送ってから外す列は鍵の出来事が置き場に残る覚えを外さない)。回収はこの
   effect の時だけ走る(手入れの係が実行する)。読みは回収せず期限を自分で見る。書き(`PutRow`・`PutRows`・`AppendEvent`)も回収せず、
   自分が触る行と出来事だけを同じ transaction で片付けてから判じる — 期限を過ぎた行への書きはその行の `RowRemoved` を積んでから無い行として
   判じ、期限を過ぎた鍵への追記は鍵の覚えで答える(答えは回収の後の書きと同じ)。PostgreSQL の書き 1 回は書きの transaction の文だけを流す。
@@ -303,6 +311,8 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_only_confirmed_events_are_retired` | 送ってから外す列の期限を過ぎた出来事は、回収(`SweepExpired`)でも送り先に届かない回でも外れず、送り先に在ると確かめた出来事だけが外れる(出来事ごと・組ごとの列)。外す前も後も読みに出ず、冪等キーの答えは同じ |
 | `law_retirement_keeps_the_read_boundary` | 送りの読みの後に期限を過ぎた出来事は、送りの関数がその番号を答えても同じ回の外しで外れない(外しの境は読みと同じ刻 T) |
 | `law_a_write_keeps_the_unarchived_event_it_touches` | 送ってから外す列の期限を過ぎた鍵・組に触る追記は出来事を外さないが、答えは印の無い列と同じ(同じ本文は前の番号・別の本文は同じ文の断り・期限を過ぎた組の古い出来事は新しい鍵の追記で読みに戻らない) |
+| `law_keys_are_forgotten_after_their_memory` | 覚えを長さで限った列の去った鍵は、長さの間は覚えで答え(前の番号・断り・`EventRetired`)、長さの後の回収で覚えが外れて再送は新しい出来事(`EventAbsent`)。覚えを残さない列の去った鍵の再送は、回収の後も、回収の前に書きが片付けた時も新しい出来事 |
+| `law_unarchived_keys_are_kept_until_retired` | 覚え方を限った送ってから外す列の覚えは、送り先に届かない間は長さを過ぎても外れず答えも変わらない。確かめて外した後、残さない列の覚えは同じ外しで、長さの列の覚えは覚えた刻から長さの後の回収で外れる |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも

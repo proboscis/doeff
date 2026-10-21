@@ -52,6 +52,8 @@ from doeff_records.values import Event as Event
 from doeff_records.values import EventAbsent as EventAbsent
 from doeff_records.values import EventRetired as EventRetired
 from doeff_records.values import Unreachable as Unreachable
+from doeff_records.values import RememberKeysFor as RememberKeysFor
+from doeff_records.values import RememberNoKeys as RememberNoKeys
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -91,6 +93,8 @@ TICKET_KEEP_SECONDS: int
 PAIR_KEEP_SECONDS: int
 PULSE_KEEP_SECONDS: int
 RELAY_KEEP_SECONDS: int
+BEAT_KEEP_SECONDS: int
+BEAT_MEMORY_SECONDS: int
 LAW_SCHEMA: RecordsSchema
 
 class LawBroken(AssertionError):
@@ -292,6 +296,15 @@ def relay_answers(harness: LawHarness) -> _Program[tuple, object]:
     ...
 
 def law_a_write_keeps_the_unarchived_event_it_touches(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def hyx_fresh_appendXquestion_markX(answer: Appended | Refused | Unreachable, earlier: Appended | Refused | Unreachable) -> _Program[bool, object]:
+    ...
+
+def law_keys_are_forgotten_after_their_memory(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_unarchived_keys_are_kept_until_retired(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

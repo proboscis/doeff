@@ -114,6 +114,8 @@ class MemoryStore:
     events: list[Event]
     by_idempotency: dict[tuple[str, str], Event]
     retired_keys: dict[tuple[str, str], RetiredKey]
+    remembered_at: dict[tuple[str, str], int]
+    key_forgets: list[tuple[int, int, tuple[str, str]]]
     outage: SetStoreOutage | None
     faults: tuple[StoreFault, ...]
     purge_due_ms: int | None

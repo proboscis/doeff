@@ -23,7 +23,8 @@
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
-                              StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable])
+                              StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable
+                              RememberKeysFor RememberNoKeys])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -39,6 +40,10 @@
 (val PULSE-KEEP-SECONDS 60)
 ;; relays・relay-pairs = 送ってから外す列(法 19〜21 — maintenance.hy の頭の註の「出来事を送ってから外す」)。
 (val RELAY-KEEP-SECONDS 60)
+;; beats・ticks・relay-beats・relay-ticks = 鍵の覚え方を限った列(法 22・23 — maintenance.hy の頭の註の「鍵の覚えを外す」)。
+;; 出来事の保持の秒と、長さを限った覚えの秒(RememberKeysFor)。
+(val BEAT-KEEP-SECONDS 60)
+(val BEAT-MEMORY-SECONDS 30)
 
 (setv LAW-SCHEMA
   (RecordsSchema
@@ -74,7 +79,16 @@
                          "relays" (StreamDecl :name "relays" :writers #(MAKER) :retention (KeepFor RELAY-KEEP-SECONDS)
                                               :archive-before-retire True)
                          "relay-pairs" (StreamDecl :name "relay-pairs" :writers #(MAKER) :retention (KeepFor RELAY-KEEP-SECONDS)
-                                                   :retention-group (ByKeySuffix ":") :archive-before-retire True)})
+                                                   :retention-group (ByKeySuffix ":") :archive-before-retire True)
+                         ;; beats・ticks = 覚えを長さで限る列・覚えを残さない列 — 法 22。relay-beats・relay-ticks = その送ってから外す列 — 法 23。
+                         "beats" (StreamDecl :name "beats" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
+                                             :key-memory (RememberKeysFor BEAT-MEMORY-SECONDS))
+                         "ticks" (StreamDecl :name "ticks" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
+                                             :key-memory (RememberNoKeys))
+                         "relay-beats" (StreamDecl :name "relay-beats" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
+                                                   :archive-before-retire True :key-memory (RememberKeysFor BEAT-MEMORY-SECONDS))
+                         "relay-ticks" (StreamDecl :name "relay-ticks" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
+                                                   :archive-before-retire True :key-memory (RememberNoKeys))})
     :operators #(OVERSEER)))
 
 
@@ -1595,6 +1609,111 @@
   (+ [beat ask side] (list before) [done read by-key end kept archived] (list after) [side-again end-after]))
 
 
+;; --- 法 22・23: 鍵の覚え方を限った列(maintenance.hy の頭の註の「鍵の覚えを外す」— card ki-4ebaefac6668)---------------------------
+
+(defk fresh-append? [answer earlier]
+  {:pre [(: answer (| Appended Refused Unreachable)) (: earlier (| Appended Refused Unreachable))] :post [(: % bool)]}
+  "追記の答え answer が、earlier より後の番号で今積んだ新しい出来事かを判じるため(覚えの外れた鍵・覚えを残さない列の鍵の追記の答え)。"
+  (and (isinstance answer Appended) (isinstance earlier Appended) (is answer.replayed False) (> answer.sequence earlier.sequence)))
+
+
+(defk law-keys-are-forgotten-after-their-memory [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "鍵の覚え方の法(card ki-4ebaefac6668): 覚えを長さで限った列(beats — RememberKeysFor)の置き場を去った出来事の鍵は、覚えた刻から長さの
+   間は覚えで答え(同じ本文は前の番号・別の本文は断り・鍵の引きは退いた)、長さの後の回収(SweepExpired)が覚えを外す — 外れた鍵の追記は
+   新しい出来事で、鍵の引きは来ていない(EventAbsent)。覚えを残さない列(ticks — RememberNoKeys)は、置き場を去った鍵を覚えない —
+   回収の後も、回収の前に書きが触って片付けた時も、同じ鍵の追記は新しい出来事。"
+  (val law "長さを限った覚えは長さの後の回収で外れ、覚えの無い鍵の追記は新しい出来事")
+  (<- beat (as-writer harness MAKER (AppendEvent "beats" "b-1" {"n" 1})))
+  (<- tick (as-writer harness MAKER (AppendEvent "ticks" "t-1" {"n" 1})))
+  (<- touched-beat (as-writer harness MAKER (AppendEvent "beats" "b-2" {"n" 2})))
+  (<- touched-tick (as-writer harness MAKER (AppendEvent "ticks" "t-2" {"n" 2})))
+  (<- (Delay (+ BEAT-KEEP-SECONDS 1)))
+  ;; 回収の前に書きが期限を過ぎた鍵に触る: 長さを限った列は覚えで答え、覚えを残さない列は新しい出来事(回収の後と同じ答え)。
+  (<- beat-touched (as-writer harness MAKER (AppendEvent "beats" "b-2" {"n" 2})))
+  (<- tick-touched (as-writer harness MAKER (AppendEvent "ticks" "t-2" {"n" 2})))
+  (<- (require-law (and (! (replay-of beat-touched touched-beat)) (! (fresh-append? tick-touched touched-tick))) law
+                   (.format "回収の前に書きが触った鍵の答えが違う: {!r} {!r}" beat-touched tick-touched)))
+  (<- swept (as-writer harness MAKER (SweepExpired)))
+  (<- (require-law (= swept.forgotten 0) law (.format "長さの内の覚えが外れた: {!r}" swept)))
+  ;; 長さの内: 長さを限った列は覚えで答え、覚えを残さない列は鍵を知らない。
+  (<- beat-again (as-writer harness MAKER (AppendEvent "beats" "b-1" {"n" 1})))
+  (<- beat-other (as-writer harness MAKER (AppendEvent "beats" "b-1" {"n" 9})))
+  (<- beat-key (as-writer harness MAKER (ReadEventByKey "beats" "b-1")))
+  (<- tick-key (as-writer harness MAKER (ReadEventByKey "ticks" "t-1")))
+  (<- tick-again (as-writer harness MAKER (AppendEvent "ticks" "t-1" {"n" 1})))
+  (<- (require-law (and (! (replay-of beat-again beat)) (isinstance beat-other Refused) (in "冪等キー" beat-other.reason)
+                        (= beat-key (EventRetired beat.sequence)) (= tick-key (EventAbsent)) (! (fresh-append? tick-again tick-touched)))
+                   law (.format "長さの内の答えが違う: {!r} {!r} {!r} {!r} {!r}" beat-again beat-other beat-key tick-key tick-again)))
+  ;; 長さの後: 回収が覚えを外す(回収が捨てた b-1 と書きが片付けた b-2 の 2 つ)— 外れた鍵の追記は新しい出来事。
+  (<- (Delay (+ BEAT-MEMORY-SECONDS 1)))
+  (<- forgot (as-writer harness MAKER (SweepExpired)))
+  (<- beat-gone (as-writer harness MAKER (ReadEventByKey "beats" "b-1")))
+  (<- beat-new (as-writer harness MAKER (AppendEvent "beats" "b-1" {"n" 9})))
+  (<- read (as-writer harness MAKER (ReadEvents "beats")))
+  (<- (require-law (and (= forgot.forgotten 2) (= beat-gone (EventAbsent)) (! (fresh-append? beat-new tick-again))
+                        (isinstance read Events) (= (lfor e read.items #(e.idempotency-key (get e.body "n"))) [#("b-1" 9)]))
+                   law (.format "長さの後の覚えが外れない・外れた鍵の追記が新しい出来事でない: {!r} {!r} {!r} {!r}" forgot beat-gone beat-new read)))
+  [beat tick touched-beat touched-tick beat-touched tick-touched swept beat-again beat-other beat-key tick-key tick-again
+   forgot beat-gone beat-new read])
+
+
+(defk law-unarchived-keys-are-kept-until-retired [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "送ってから外す列の鍵の覚えの法(card ki-4ebaefac6668): 覚え方を限った送ってから外す列(relay-beats — 長さ・relay-ticks — 残さない)の
+   覚えは、送り先に届かない間は覚えの長さを過ぎても外れない(出来事も覚えも置き場に残り、答えは変わらない)。送り先に在ると確かめて
+   出来事を外した後、残さない列の覚えは同じ外しで外れ(鍵の追記は新しい出来事)、長さの列の覚えは覚えた刻から長さの後の回収で外れる
+   (書きが前に覚えた鍵は外しの後の最初の回収・外しの時に覚えた鍵は外した刻から長さの後)。"
+  (val law "送ってから外す列の覚えは、送り先に在ると確かめて出来事を外すまで外れない")
+  (<- held (as-writer harness MAKER (AppendEvent "relay-beats" "rb-1" {"n" 1})))
+  (<- spare (as-writer harness MAKER (AppendEvent "relay-beats" "rb-2" {"n" 2})))
+  (<- mark (as-writer harness MAKER (AppendEvent "relay-ticks" "rt-1" {"n" 3})))
+  (<- (Delay (+ BEAT-KEEP-SECONDS 1)))
+  ;; 書きが期限を過ぎた鍵に触る: 鍵を覚えるだけで出来事は置き場に残る(答えは覚えで前の番号)。
+  (<- held-touched (as-writer harness MAKER (AppendEvent "relay-beats" "rb-1" {"n" 1})))
+  (<- mark-touched (as-writer harness MAKER (AppendEvent "relay-ticks" "rt-1" {"n" 3})))
+  (<- (require-law (and (! (replay-of held-touched held)) (! (replay-of mark-touched mark))) law
+                   (.format "期限を過ぎた鍵の同じ本文の再送が前の番号でない: {!r} {!r}" held-touched mark-touched)))
+  ;; 送り先に届かない回は外さず、覚えの長さを過ぎた後の回収も覚えを外さない(出来事が置き場に残る)。
+  (<- down (as-writer harness MAKER (archive-expired-events unreachable-destination)))
+  (<- (Delay (+ BEAT-MEMORY-SECONDS 1)))
+  (<- kept (as-writer harness MAKER (SweepExpired)))
+  (<- held-late (as-writer harness MAKER (AppendEvent "relay-beats" "rb-1" {"n" 1})))
+  (<- held-other (as-writer harness MAKER (AppendEvent "relay-beats" "rb-1" {"n" 9})))
+  (<- mark-late (as-writer harness MAKER (AppendEvent "relay-ticks" "rt-1" {"n" 3})))
+  (<- held-key (as-writer harness MAKER (ReadEventByKey "relay-beats" "rb-1")))
+  (<- mark-key (as-writer harness MAKER (ReadEventByKey "relay-ticks" "rt-1")))
+  (<- (require-law (and (= down.retired 0) (isinstance down.halted Unreachable) (= kept.forgotten 0)
+                        (! (replay-of held-late held)) (isinstance held-other Refused) (in "冪等キー" held-other.reason)
+                        (! (replay-of mark-late mark))
+                        (= held-key (EventRetired held.sequence)) (= mark-key (EventRetired mark.sequence)))
+                   law (.format "送り先に届かない間に覚えが外れた: {!r} {!r} {!r} {!r} {!r} {!r} {!r}"
+                                down kept held-late held-other mark-late held-key mark-key)))
+  ;; 送り先に在ると確かめて外す: 残さない列の覚えは同じ外しで外れる。
+  (<- sent (as-writer harness MAKER (archive-expired-events (partial confirm-keys (frozenset #("rb-1" "rb-2" "rt-1"))))))
+  (<- mark-gone (as-writer harness MAKER (ReadEventByKey "relay-ticks" "rt-1")))
+  (<- held-retired (as-writer harness MAKER (ReadEventByKey "relay-beats" "rb-1")))
+  (<- (require-law (and (= sent.retired 3) (= mark-gone (EventAbsent)) (= held-retired (EventRetired held.sequence))) law
+                   (.format "外しの後の覚えの答えが違う: {!r} {!r} {!r}" sent mark-gone held-retired)))
+  ;; 長さの列: 書きが前に覚えた rb-1 は次の回収で外れ、外しの時に覚えた rb-2 は外した刻から長さの間残る。
+  (<- forgot (as-writer harness MAKER (SweepExpired)))
+  (<- held-gone (as-writer harness MAKER (ReadEventByKey "relay-beats" "rb-1")))
+  (<- spare-again (as-writer harness MAKER (AppendEvent "relay-beats" "rb-2" {"n" 2})))
+  (<- (require-law (and (= forgot.forgotten 1) (= held-gone (EventAbsent)) (! (replay-of spare-again spare))) law
+                   (.format "外しの後の回収の覚えの外しが違う: {!r} {!r} {!r}" forgot held-gone spare-again)))
+  (<- (Delay (+ BEAT-MEMORY-SECONDS 1)))
+  (<- last (as-writer harness MAKER (SweepExpired)))
+  (<- spare-gone (as-writer harness MAKER (ReadEventByKey "relay-beats" "rb-2")))
+  (<- mark-new (as-writer harness MAKER (AppendEvent "relay-ticks" "rt-1" {"n" 3})))
+  (<- (require-law (and (= last.forgotten 1) (= spare-gone (EventAbsent)) (! (fresh-append? mark-new spare))) law
+                   (.format "外しの時に覚えた鍵が長さの後に外れない・覚えの無い鍵の追記が新しい出来事でない: {!r} {!r} {!r}"
+                            last spare-gone mark-new)))
+  [held spare mark held-touched mark-touched down kept held-late held-other mark-late held-key mark-key sent mark-gone held-retired
+   forgot held-gone spare-again last spare-gone mark-new])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing と law-append-events-answer-like-appends-in-order は SHARED-LAWS に入れない — SHARED-LAWS は前からの
 ;; 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを
@@ -1630,6 +1749,8 @@
             "short-page-ends-the-stream" law-short-page-ends-the-stream
             "only-confirmed-events-are-retired" law-only-confirmed-events-are-retired
             "retirement-keeps-the-read-boundary" law-retirement-keeps-the-read-boundary
-            "a-write-keeps-the-unarchived-event-it-touches" law-a-write-keeps-the-unarchived-event-it-touches})
+            "a-write-keeps-the-unarchived-event-it-touches" law-a-write-keeps-the-unarchived-event-it-touches
+            "keys-are-forgotten-after-their-memory" law-keys-are-forgotten-after-their-memory
+            "unarchived-keys-are-kept-until-retired" law-unarchived-keys-are-kept-until-retired})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

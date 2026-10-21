@@ -5,8 +5,9 @@
 ;;;
 ;;;   SweepExpired   期限を過ぎた行を消して変更の列に RowRemoved を積み、期限を過ぎた出来事を捨てる。回収はこの effect の時だけ
 ;;;                  走る — 読みは回収せず期限を自分で見て(#3561)、書き(PutRow・PutRows・AppendEvent)は自分が触る行と出来事だけを
-;;;                  片付ける(#3605 の D)。触られない期限を過ぎた行の RowRemoved は、係が撃つこの回収が積む
-;;;   PruneChanges   keep-seconds より古い変更を変更の列から消し、floor(これより前の位置は Reset)を上げる。変更の列が際限なく
+;;;                  片付ける(#3605 の D)。触られない期限を過ぎた行の RowRemoved は、係が撃つこの回収が積む。同じ回収が、覚え方
+;;;                  (StreamDecl.key-memory)の長さを過ぎた鍵の覚えを外す(下の「鍵の覚えを外す」)
+;;;   PruneChanges  keep-seconds より古い変更を変更の列から消し、floor(これより前の位置は Reset)を上げる。変更の列が際限なく
 ;;;                  伸びないようにする。floor より前の位置で WatchChanges を頼んだ読み手は Reset を受けて一覧から読み直す
 ;;;                  (keep-seconds は読み手の遅れの許容 — これより遅れた読み手だけが読み直す)。upto-seq を持てば、消すのはその番号まで
 ;;;                  (送りの答え — 下)
@@ -26,6 +27,13 @@
 ;;; 送り先に在ると確かめた出来事だけ。手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を頁で読み(ReadExpiredEvents)、
 ;;; 頁ごとに送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す(RetireArchivedEvents — 読みと外しの間に新しく期限を
 ;;; 過ぎた出来事は頁に無く、境の読み直しでも外れない)。送りが Unreachable の頁で回を終える(その頁と残りは次の回)。
+;;;
+;;; 鍵の覚えを外す(card ki-4ebaefac6668): 置き場を去った出来事の冪等キーの覚え(values.RetiredKey)は、前は外さず、列に積んだ出来事の数
+;;; だけ際限なく育った。列の宣言の覚え方 StreamDecl.key-memory(values.hy の KeyMemory の註)が RememberKeysFor の列は、覚えた刻から
+;;; 宣言の長さを過ぎた覚えを SweepExpired が外し(答え Swept.forgotten)、RememberNoKeys の列は出来事が置き場を去る時に覚えを残さない。
+;;; 送ってから外す列の覚えは、出来事が送り先に在ると確かめて外れるまで外さない — 送り先に届かない間は出来事も覚えも置き場に残り、
+;;; 送り直しの答えは変わらない。外れた覚えの中身(鍵・番号・本文)は送り先の出来事の行が持つので、覚えの行は送らずに外す(送り先の無い
+;;; 列の覚えは、出来事を送らずに捨てた列の物で、送る先が無い)。外した後の同じ鍵の追記は新しい出来事(置き場がその鍵を知らない)。
 ;;;
 ;;;   ReadExpiredEvents    印の列の、刻 at の境で期限を過ぎた出来事(書きが覚えた鍵の出来事を含む)を、列の名の順・列の中は
 ;;;                        積んだ刻と番号の順に limit 件まで読む(1 頁 = 1 つの列)。after = 前の頁の続きの位置(None = 頭から)
@@ -82,8 +90,10 @@
 
 
 (defclass [(dataclass :frozen True)] Swept []
-  "回収の結果: rows = 消した行の数(変更の列に RowRemoved を積んだ数)。"
-  (#^ int rows))
+  "回収の結果: rows = 消した行の数(変更の列に RowRemoved を積んだ数)/ forgotten = 外した鍵の覚えの数(覚え方の長さを過ぎた覚え —
+   values.hy の KeyMemory の註)。"
+  (#^ int rows)
+  (setv #^ int forgotten 0))
 
 
 (defclass [(dataclass :frozen True)] Pruned []

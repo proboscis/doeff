@@ -12,8 +12,12 @@
 ;;;                新しい置き場の番号が古い位置を越えた後でも Reset になる)。版を進める文(advance-epoch-statement)は +1 のまま。
 ;;;   冪等キーの一意の索引(append_rows の ledger × payload の idempotencyKey)と、宣言した索引の欄の式の索引
 ;;;   retired_keys 保持の期限で出来事を消した冪等キーの覚え — PK = (ledger, idempotency_key)・seq = 消した出来事の番号・
-;;;                body_digest = 本文の指紋(admission.body-digest)。出来事を消す transaction が同じ transaction で入れ、消さない(#3022)。
-;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。
+;;;                body_digest = 本文の指紋(admission.body-digest)。出来事を消す transaction が同じ transaction で入れる(#3022)。
+;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。remembered_at = 覚えた刻(epoch ミリ秒 — card ki-4ebaefac6668・
+;;;                表の後に足した列で、列の無い表にだけ足す — SchemaStep の column。既定 = 足す文を流した刻・旧い版の書きの覚えも既定で刻を持つ)。
+;;;                覚え方(StreamDecl.key-memory)の長さを限った列の覚えは、回収(SweepExpired)が覚えた刻の順に外す
+;;;                (forget-keys-statement — 索引 (ledger, remembered_at))。覚えを残さない列は出来事を消す transaction で入れない・外す
+;;;                (drop-keys-statement)。送ってから外す列の覚えは、鍵の出来事が置き場に在る間は外さない。
 ;;; 旧い版より後に足した索引(#3614 — どれも宣言から作る CREATE INDEX IF NOT EXISTS・旧い版の文の後ろ):
 ;;;   append_rows (ledger, at)        期限の境(at <= 境)で引く文 — 回収の候補の読み・組の「新しい出来事」の照らし・読みの期限の条件
 ;;;   append_rows (ledger, 組の名の式) 組で数える列(ByKeySuffix)の区切りごとに 1 つ — 書きが触る組の読み(touched-events-statement)と
@@ -22,6 +26,7 @@
 ;;;   append_rows (ledger, 頭の式, seq) 頭で引ける列(key-lookup の ByKeyHead)の区切りごとに 1 つ — 頭で引く読み(read-events-statement の
 ;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
+;;;   retired_keys (ledger, remembered_at)  覚えの外し(forget-keys-statement の remembered_at <= 境 — 覚えた刻の順に limit 個)
 ;;;   state_rows (表の状態の欄の式)    保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ表の欄の式 —
 ;;;                                  終端の行の読み terminal-rows-statement が引く)
 ;;;   state_rows (並べる式 DESC NULLS LAST, key DESC)  表の上から読む欄(TableDecl.descending)ごとに 1 つ — 上から読む読み
@@ -136,7 +141,7 @@
 (val INDEX-LOCK-SUFFIX "records-indexes")
 ;; 置き場の表(接頭辞の後ろの名)— 表の用意の観測(relations-statement)と索引の観測(indexes-statement)が引く。
 (val STORE-RELATIONS #("state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys"))
-(val INDEXED-RELATIONS #("state_rows" "append_rows" "row_changes"))
+(val INDEXED-RELATIONS #("state_rows" "append_rows" "row_changes" "retired_keys"))
 
 
 (defrecord Statement
@@ -203,11 +208,20 @@
   (#^ bool sampled))
 
 
+(defrecord AddedColumn
+  "旧い版より後に表へ足した列 1 つ(表の用意の段の印 — 移行の transaction は、表にその列が無い時だけ足す文を流す): relation = 表
+   (接頭辞の後ろの名 — STORE-RELATIONS のどれか)/ column = 列の名。"
+  (#^ str relation)
+  (#^ str column))
+
+
 (defrecord SchemaStep
   "表の用意の文 1 つ(schema-steps の並び): statement = 流す文 / index = 索引を作る文ならその索引(表と行の文は None — 移行の
-   transaction は、表がその transaction で生まれた時だけ索引の文を流す)。"
+   transaction は、表がその transaction で生まれた時だけ索引の文を流す)/ column = 列を足す文ならその列(None = いつも流す文 — 移行の
+   transaction は、表にその列が無い時だけ流す。在る列へ足す文〔ADD COLUMN IF NOT EXISTS〕も表の排他の錠を取るので、起動のたびには流さない)。"
   (#^ Statement statement)
-  (#^ (| DeclaredIndex None) index))
+  (#^ (| DeclaredIndex None) index)
+  (setv #^ (| AddedColumn None) column None))
 
 
 (val NO-CLAUSE (Clause :text "" :params #()))
@@ -489,12 +503,37 @@
   (for [index added]
     (<- added-made (index-steps index))
     (:= added-steps (+ added-steps added-made)))
+  ;; 覚えた刻の列(card ki-4ebaefac6668 — 頭の註の retired_keys)は表の後ろ・索引の前(覚えの外しの索引がこの列を引く)。
   (+ tables
      indexes
      #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
-           PRIMARY KEY (ledger, idempotency_key))" :p p))))
+           PRIMARY KEY (ledger, idempotency_key))" :p p)))
+       (! (remembered-at-step p)))
      added-steps))
+
+
+(defk remembered-at-step [prefix]
+  {:pre [(: prefix str)] :post [(: % SchemaStep)]
+   :tags {:context "records" :role "foundation"}}
+  "覚えの表に覚えた刻の列 remembered_at(epoch ミリ秒)を足す表の用意の段を作るため(頭の註の retired_keys — 列が無い表にだけ流す)。
+   既定の値は文を流した刻(now() — 揮発しない式なので、PostgreSQL は既に在る行を書き直さず、表の定義に 1 つの値として持つ)で、足す前に
+   在った覚えはどれもこの刻に覚えた物として数える(覚え方の長さを限った列の古い覚えは、足した刻から長さの後に外れる)。既定は残す —
+   列を知らない旧い版の書きが入れる覚えも、入れた刻を持つ。"
+  (SchemaStep :statement (Statement :text (.format "ALTER TABLE {p}retired_keys
+           ADD COLUMN remembered_at bigint NOT NULL DEFAULT (extract(epoch from now()) * 1000)::bigint" :p prefix)
+                                    :params #())
+              :index None
+              :column (AddedColumn :relation "retired_keys" :column "remembered_at")))
+
+
+(defk columns-statement [prefix relation]
+  {:pre [(: prefix str) (: relation str) (in relation STORE-RELATIONS)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の表 relation(接頭辞の後ろの名)に在る列の名を読む文を作るため(移行の transaction が、列を足す段を流すかを決める —
+   SchemaStep の column)。表は search_path で引く(表を作る文と同じ引き方)。"
+  (Statement :text "SELECT a.attname FROM pg_attribute AS a WHERE a.attrelid = to_regclass(:relation) AND a.attnum > 0 AND NOT a.attisdropped"
+             :params (! (params-of #(#("relation" (+ prefix relation)))))))
 
 
 (defk schema-statements [prefix schema]
@@ -524,7 +563,8 @@
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
    無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。続いて表の名の順・欄の名の順の上から読む欄の索引(頭の註)。
-   最後に鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。"
+   続いて鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。最後に覚えの外しの索引 retired_keys (ledger, remembered_at)
+   (頭の註の retired_keys — forget-keys-statement が引く)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
@@ -559,7 +599,9 @@
      states
      ordered
      #((! (fixed-index (+ p "state_rows_key_c") "state_rows"
-                       (.format "CREATE INDEX IF NOT EXISTS {p}state_rows_key_c ON {p}state_rows (ledger, key COLLATE \"C\")" :p p))))))
+                       (.format "CREATE INDEX IF NOT EXISTS {p}state_rows_key_c ON {p}state_rows (ledger, key COLLATE \"C\")" :p p)))
+       (! (fixed-index (+ p "retired_keys_remembered") "retired_keys"
+                       (.format "CREATE INDEX IF NOT EXISTS {p}retired_keys_remembered ON {p}retired_keys (ledger, remembered_at)" :p p))))))
 
 
 (defk relation-names [prefix relations]
@@ -1199,21 +1241,60 @@
              :params (! (params-of #(#("ledger" stream) #("idempotency_key" idempotency-key))))))
 
 
-(defk retire-keys-statement [prefix stream keys]
-  {:pre [(: prefix str) (: stream str) (: keys tuple) (> (len keys) 0) (all (gfor key keys (isinstance key RetiredKey)))]
+(defk retire-keys-statement [prefix stream keys remembered-at]
+  {:pre [(: prefix str) (: stream str) (: keys tuple) (> (len keys) 0) (all (gfor key keys (isinstance key RetiredKey)))
+         (: remembered-at int)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "保持の期限で消した出来事の冪等キーの覚え keys(values.RetiredKey の組)を鍵だけの表へ入れる文を作るため(#3022)。配列の引数は
-   持たないので、覚えを JSON の配列の引数 1 つ(要素 = idempotency_key・seq・body_digest の object)で運び、jsonb_to_recordset で行に展げる
-   (消した出来事の数に依らず文 1 つ)。覚えが既に在る鍵は書き換えない(ON CONFLICT DO NOTHING — memory の drop-events と同じ)。
-   空の組は文にしない(呼び手が枝で避ける)。"
+  "保持の期限で消した出来事の冪等キーの覚え keys(values.RetiredKey の組)を、覚えた刻 remembered-at(epoch ミリ秒)と一緒に鍵だけの表へ
+   入れる文を作るため(#3022)。配列の引数は持たないので、覚えを JSON の配列の引数 1 つ(要素 = idempotency_key・seq・body_digest の
+   object)で運び、jsonb_to_recordset で行に展げる(消した出来事の数に依らず文 1 つ)。覚えが既に在る鍵は書き換えない(覚えた刻も —
+   ON CONFLICT DO NOTHING・memory の remember-events と同じ)。空の組は文にしない(呼び手が枝で避ける)。"
   (val retired (json.dumps (lfor key keys {"idempotency_key" key.idempotency-key "seq" key.sequence "body_digest" key.body-digest})
                            :separators #("," ":") :ensure-ascii False))
-  (Statement :text (.format "INSERT INTO {p}retired_keys (ledger, idempotency_key, seq, body_digest)
-                       SELECT CAST(:ledger AS text), kept.idempotency_key, kept.seq, kept.body_digest
+  (Statement :text (.format "INSERT INTO {p}retired_keys (ledger, idempotency_key, seq, body_digest, remembered_at)
+                       SELECT CAST(:ledger AS text), kept.idempotency_key, kept.seq, kept.body_digest, CAST(:remembered_at AS bigint)
                          FROM jsonb_to_recordset(CAST(:retired AS jsonb)) AS kept(idempotency_key text, seq bigint, body_digest text)
                        ON CONFLICT (ledger, idempotency_key) DO NOTHING" :p prefix)
-             :params (! (params-of #(#("ledger" stream) #("retired" retired))))))
+             :params (! (params-of #(#("ledger" stream) #("retired" retired) #("remembered_at" remembered-at))))))
+
+
+(defk drop-keys-statement [prefix stream keys]
+  {:pre [(: prefix str) (: stream str) (: keys tuple) (> (len keys) 0) (all (gfor key keys (isinstance key str)))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "覚えを残さない列(values.RememberNoKeys)の、今置き場を去る出来事の冪等キー keys の覚え(送ってから外す列で書きが覚えた鍵)を外す文を
+   作るため(出来事を捨てる transaction と同じ transaction — 頭の註の retired_keys)。鍵は JSON の配列の引数 1 つで運ぶ
+   (retire-keys-statement と同じ訳)。主キー (ledger, idempotency_key) で引く。空の組は文にしない(呼び手が枝で避ける)。"
+  (Statement :text (.format "DELETE FROM {p}retired_keys AS kept
+                       WHERE kept.ledger = :ledger
+                         AND kept.idempotency_key IN (SELECT jsonb_array_elements_text(CAST(:keys AS jsonb)))" :p prefix)
+             :params (! (params-of #(#("ledger" stream) #("keys" (json.dumps (list keys) :separators #("," ":") :ensure-ascii False)))))))
+
+
+(defk forget-keys-statement [prefix stream forget-before archived limit]
+  {:pre [(: prefix str) (: stream str) (: forget-before int) (: archived bool) (: limit int) (> limit 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "列 stream の、覚えた刻が forget-before(今 − 覚え方の長さ)以下の覚えを、覚えた刻の順に limit 個まで外し、外した数を 1 行で返す文を
+   作るため(回収 SweepExpired の覚えの外し — 頭の註の retired_keys)。archived = 送ってから外す列で、鍵の出来事がまだ置き場に在る覚え
+   (書きが期限を過ぎた鍵を覚えただけ — 送り先に在ると確かめるまで外さない)は外さない。候補は (ledger, remembered_at) の索引を頭から
+   辿り、limit 個で止まる(書きの錠の中の文が触る行を limit で縛る)。出来事の照らしは冪等キーの一意の索引の引き 1 つの値の副問い合わせ
+   (NOT EXISTS にしない — expired-event-condition の註の訳)。"
+  (val present (if archived
+                   (.format " AND (
+                         SELECT 1 FROM {p}append_rows AS old
+                          WHERE old.ledger = kept.ledger AND ((old.payload::jsonb) ->> 'idempotencyKey') = kept.idempotency_key
+                          LIMIT 1) IS NULL" :p prefix)
+                   ""))
+  (Statement :text (.format "WITH gone AS (
+                       DELETE FROM {p}retired_keys AS doomed
+                        WHERE (doomed.ledger, doomed.idempotency_key) IN (
+                          SELECT kept.ledger, kept.idempotency_key FROM {p}retired_keys AS kept
+                           WHERE kept.ledger = :ledger AND kept.remembered_at <= :forget_before{a}
+                           ORDER BY kept.remembered_at LIMIT :limit)
+                       RETURNING 1)
+                     SELECT count(*) FROM gone" :p prefix :a present)
+             :params (! (params-of #(#("ledger" stream) #("forget_before" forget-before) #("limit" limit))))))
 
 
 (defk expired-event-condition [prefix separator bound [remembered False]]

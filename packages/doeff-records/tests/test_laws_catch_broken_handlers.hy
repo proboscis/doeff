@@ -26,7 +26,8 @@
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
                             law-watch-tails-match-last-events law-event-by-key-reads-the-same-event
                             law-short-page-ends-the-stream law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
-                            law-a-write-keeps-the-unarchived-event-it-touches])
+                            law-a-write-keeps-the-unarchived-event-it-touches
+                            law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired])
 (import doeff_records.maintenance [PruneChanges Pruned ReadChangeLog ChangeLog ReadExpiredEvents ExpiredCursor RetireArchivedEvents])
 
 
@@ -397,3 +398,35 @@
   (assert (breaks? law-only-confirmed-events-are-retired
                    (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :streams unmarked)) None))
           "印の無い列(回収が送らずに外す)"))
+
+
+(defn forget-every-due-key [store now-ms]  ; defk にできない: memory.forget-keys-locked の差し替え(錠の内で同期に呼ばれる置き場の書き)
+  ;; 出来事が置き場に残るかを見ない覚えの外しの顔(card ki-4ebaefac6668): 覚えた刻から列の長さを過ぎた覚えを全部外す — 送ってから外す列で
+  ;; 送り先に届かない間の覚えも外れる。
+  (setv forgotten 0)
+  (for [slot (list store.remembered-at)]
+    (setv keep (memory.key-memory-ms (. (store.schema.stream (get slot 0)) key-memory)))
+    (when (and (is-not keep None) (<= (+ (get store.remembered-at slot) keep) now-ms))
+      (del (get store.retired-keys slot))
+      (del (get store.remembered-at slot))
+      (+= forgotten 1)))
+  forgotten)
+
+
+(defn test-the-key-memory-laws-turn-red-when-keys-are-forgotten-wrongly [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+  ;; card ki-4ebaefac6668: 鍵の覚え方の関門を破る置き場で法 22・23 が赤になる — 覚えを外さない置き場(前の形)・覚え方を読まずに全部の列で
+  ;; 覚え続ける置き場・送り先に届かない間の覚えも外す置き場。壊していない置き場では緑(比べの基準)。
+  (for [law [law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired]]
+    (assert (not (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) None))) law.__name__))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "forget_keys_locked" (fn [store now-ms] 0))
+    (assert (breaks? law-keys-are-forgotten-after-their-memory (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "覚えを外さない置き場"))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "key_memory_ms" (fn [memory-kind] None))
+    (assert (breaks? law-keys-are-forgotten-after-their-memory (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "覚え方を読まずに覚え続ける置き場"))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "forget_keys_locked" forget-every-due-key)
+    (assert (breaks? law-unarchived-keys-are-kept-until-retired (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "送り先に届かない間の覚えを外す置き場")))

@@ -15,7 +15,8 @@
                             law-expired-records-are-unseen-before-a-sweep law-a-write-clears-the-expired-row-it-touches
                             law-an-expired-key-answers-the-same-before-and-after-a-sweep law-short-page-ends-the-stream
                             law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
-                            law-a-write-keeps-the-unarchived-event-it-touches])
+                            law-a-write-keeps-the-unarchived-event-it-touches
+                            law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired])
 (import tests.interpreters [LawSetup])
 
 
@@ -208,4 +209,18 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-a-write-keeps-the-unarchived-event-it-touches harness))
+  (assert transcript))
+
+(deftest test-keys-are-forgotten-after-their-memory
+  ;; card ki-4ebaefac6668: 覚えを長さで限った列の覚えは長さの後の回収で外れ、外れた鍵と覚えを残さない列の鍵の追記は新しい出来事。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-keys-are-forgotten-after-their-memory harness))
+  (assert transcript))
+
+(deftest test-unarchived-keys-are-kept-until-retired
+  ;; card ki-4ebaefac6668: 送ってから外す列の覚えは、送り先に届かない間は長さを過ぎても外れず、確かめて外した後に外れる。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-unarchived-keys-are-kept-until-retired harness))
   (assert transcript))
