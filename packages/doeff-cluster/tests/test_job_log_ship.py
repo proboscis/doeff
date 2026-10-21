@@ -59,6 +59,8 @@ from doeff_cluster.worker.entry.line_stamp import (
     worker_log_plan,
 )
 
+from tests.warm_child_rig import StartWarmChild, wait_ready_file
+
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "program"}
 
 # この module の主題は本物の thread(送りの thread・受け手の server)と本物の process(shim・待ちの子)の時間 — 受けた行と終わりを
@@ -619,29 +621,21 @@ def test_the_endpoint_names_pass_from_the_worker_to_every_child() -> None:
     assert set(JOB_LOG_ENV_NAMES) == {JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR, *CONTEXT}
 
 
-WARM = "doeff_cluster.worker.entry.warm_child"
 WARM_JOB = "tests.fixtures.warm_job"
 
 
 @LINUX_ONLY
-def test_a_job_forked_from_the_warm_child_ships_its_lines(tmp_path: Path, collector: Collector) -> None:
+def test_a_job_forked_from_the_warm_child_ships_its_lines(
+    tmp_path: Path, collector: Collector, start_warm_child: StartWarmChild
+) -> None:
     """待ちの子から分かれた子 A も、頼みの env に送り先が在れば同じ部品で行を送る(job の名は task/<id>)。socket の path が AF_UNIX の
     上限に収まるよう、置き場は /tmp の下の短い dir。"""
     short = Path(tempfile.mkdtemp(prefix="wl-", dir="/tmp"))
-    root = short / "root"
-    root.mkdir(exist_ok=True)
-    argv = [sys.executable, "-B", "-m", WARM, "--root", str(root), "--socket", str(short / "s"), "--ready", str(short / "r.json")]
-    search = ":".join([str(PACKAGE), *(entry for entry in sys.path if entry)])
-    warm = subprocess.Popen(
-        [*argv, "--preload", WARM_JOB], stdin=subprocess.PIPE, stderr=subprocess.PIPE, cwd=PACKAGE, env={"PYTHONPATH": search},
-        start_new_session=True,
-    )
+    warm = start_warm_child(short / "root", short / "s", short / "r.json", (WARM_JOB,))
     try:
+        # 準備は温めた Hy の code の置き場で数秒(冷たい compile は 25 秒以上)— 期限は目安の READY_SECONDS で、越えたら置き場の名で落とす。
+        wait_ready_file(warm, short / "r.json")
         deadline = time.monotonic() + END_LIMIT_SECONDS
-        while not (short / "r.json").exists():
-            assert warm.poll() is None, "待ちの子が準備の前に終わった"
-            assert time.monotonic() < deadline, "待ちの子が準備できない"
-            time.sleep(0.05)
         env = {**CONTEXT, JOB_LOG_OTLP_VAR: collector.base()}
         request = {
             "entry": WARM_JOB,

@@ -139,3 +139,12 @@ def job_child_code_store(tmp_path_factory: pytest.TempPathFactory) -> None:
         check=True,
         timeout=300,
     )
+
+
+@pytest.fixture
+def start_warm_child(job_child_code_store: None) -> Callable[..., subprocess.Popen[bytes]]:
+    """待ちの子を起こす関数(tests/warm_child_rig.launch)— 温めた Hy の code の置き場を env に渡すため、job_child_code_store を要求する。
+    待ちの子を起こす検は subprocess.Popen を直に使わず、これを通す(tests/test_warm_child_rig.py が止める)。"""
+    from tests.warm_child_rig import launch
+
+    return launch
