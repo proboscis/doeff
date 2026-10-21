@@ -439,6 +439,27 @@ tests = ["tests/test_docs_page_examples.py", "tests/test_docs_typing_chapter_exa
 prefix = "docs/faq.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+# 英語の記事 1 本目(algebraic effects の紹介)と、その例の file の全部(examples/effects_tour/)を変えた便は、記事の囲みが例の
+# file と印字のままである事の検を払う(取り組み doeff-publish・card ki-6f2a58632d02)。記事は審査で ok の版のまま置き、囲みを
+# page の例の検の約束に書き換えないので、記事だけの検が受け持つ。記事の test_welcome.py は examples/testing_without_mocks の
+# welcome.py・infra.py と並べて走らせるので、その 2 つの変更も選ぶ。検は例を path で読むので、import の逆依存では選ばれない。
+# 秒は 2.0 秒(14 本・子 6 本・pytest の計・load 約 39 の下・2026-10-22 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/articles/algebraic-effects-in-python.md"
+tests = ["tests/test_docs_article_algebraic_effects.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/effects_tour/"
+tests = ["tests/test_docs_article_algebraic_effects.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/testing_without_mocks/welcome.py"
+tests = ["tests/test_docs_article_algebraic_effects.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/testing_without_mocks/infra.py"
+tests = ["tests/test_docs_article_algebraic_effects.py"]
+
 # doeff の説明の軸の定義の page(何が algebraic effects で、何が使い方の例か — 取り組み doeff-publish の区切り 17・
 # card ki-3a3b13c1d16e)の例を走らせる。
 [[tool.doeff.contract-tests]]
