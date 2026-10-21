@@ -1112,7 +1112,14 @@
   ;; 終わりの出口(2026-10-21・card ki-e7945a2b2d00): 結末の id(task の id)→ DetachedEnded。知らせ先を名乗った切り離した task が終わりへ
   ;; 移った歩で 1 行積み(detached_policy.outbox-noted — 終わりへの移りが通る 1 点)、読み手の受領(DELETE /outbox/<id>)か出口の保持の期限で
   ;; 外す。task の行の解放・保持の期限とは別(行が消えても出口の行は残る)。保存する(durable_kv の outbox/<id>)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get Table DetachedEnded) outbox (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table DetachedEnded) outbox (field :default-factory (partial table-of #())))
+  ;; 起き直しの後、まだ heartbeat を 1 つも受けていない間の、経過に数えなかった最後の刻(2026-10-21・card ki-439a73dc075c — None =
+  ;; 受けた後・起き直していない)。受付を始めてから Pod が Ready になり Service に載るまで(readinessProbe の周期 — 最大 10 秒)は、
+  ;; worker の heartbeat が届かない。その間を沈黙に数えると、止まっていた長さだけずらした最後の連絡が lease で切れ、全 worker が
+  ;; WorkerGone になって Service に載った後に WorkerBack で戻った(rev 47 2026-10-17 15:25 の実測)。読み直し(api_policy.resume-after-downtime)
+  ;; が今の刻を置き、調停の歩ごとにその刻からの長さだけ時計をずらし(api_policy.unreached-shifted)、最初の heartbeat を受けた歩か
+  ;; 待ちの上限(api_policy.REACH-WAIT-MS)で None に戻す。保存しない(起き直すたびに読み直しが置く)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (| int None) unreached-ms None))
 
 
 (defclass [(dataclass :frozen True)] Fault []
