@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code.lines
 from doeff import EffectBase
+from doeff_claude_code.lines import ModelUsage as ModelUsage
+from doeff_claude_code.lines import ModelUsageGap as ModelUsageGap
 from doeff_claude_code.lines import ModelWindow as ModelWindow
 from doeff_claude_code.lines import ToolAnswer as ToolAnswer
 from doeff_claude_code.lines import ToolCall as ToolCall
@@ -172,6 +174,15 @@ class AgentTurnUsage:
 # that call's model, ``model_windows`` = each model's context window and output limit as the runtime
 # stated them in the turn.  A turn that ended early carries what was read so far (``None`` / ``()``
 # when nothing was — never an invented 0).
+#
+# A turn the runtime finished (``AgentTurnCompleted`` / ``AgentTurnFailed``) also carries what each model used
+# in it (card ki-1d986d4f0007): ``model_usage`` = the turn's share of each model's tokens, web searches and
+# cost (``ModelUsage`` — the runtime reports running totals for the whole conversation; the runtime's layer
+# turns them into the turn's share from the same starting point as ``usage.cost_usd``; only the models the turn
+# used; ``None`` when it cannot be worked out), ``model_usage_gap`` = why the models' costs could not be
+# checked against ``usage.cost_usd`` within 0.01 USD (``ModelUsageGap`` — ``None`` when they add up;
+# ``NOT_NAMED`` when the runtime reports no per-model usage).  A stopped or lost turn carries neither, as
+# it carries no cost.
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -234,6 +245,8 @@ class AgentTurnCompleted:
     last_call_usage: AgentTurnUsage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ModelUsageGap.NOT_NAMED
     account_limit: AgentAccountLimit | None = None
     account_refusal: AgentAccountRefusal | None = None
     model_refusal: AgentModelRefusal | None = None
@@ -262,6 +275,8 @@ class AgentTurnFailed:
     last_call_usage: AgentTurnUsage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ModelUsageGap.NOT_NAMED
     account_limit: AgentAccountLimit | None = None
     account_refusal: AgentAccountRefusal | None = None
     model_refusal: AgentModelRefusal | None = None

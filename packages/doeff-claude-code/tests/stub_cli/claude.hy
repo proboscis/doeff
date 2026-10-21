@@ -22,9 +22,10 @@
 ;;; - --input-format の無い -p <prompt>(冷えた続きの前の 1 回きりの命令)は transcript に印を 1 行足して rc 0。
 ;;; - 額(実測 2.1.283・#883): result の行の total_cost_usd は会話の累積(CLI の手番 1 回 = TURN-COST)で、usage は
 ;;;   その手番の分だけ。stdin の EOF・SIGINT で降りる時に累積の額を transcript に実物と同じ形の 1 行で記し
-;;;   ({"type":"cost-state","sessionId":…,"totalCostUSD":…} — handler が続きの起点として読む)、--resume の process と
+;;;   ({"type":"cost-state","sessionId":…,"totalCostUSD":…,"modelUsage":{…}} — handler が続きの起点として読む)、--resume の process と
 ;;;   --fork-session の枝は最後に記した額から数え続ける。SIGKILL で消えた process は額を記さない(実物と同じ — 次の process は
-;;;   前に記した額から数える)。
+;;;   前に記した額から数える)。modelUsage も実物 2.1.292 と同じく会話の累積で、model ごとの costUSD の和は total_cost_usd と同じ
+;;;   (card ki-1d986d4f0007 — charged)。
 (import datetime [datetime timezone])
 (import json)
 (import os)
@@ -97,9 +98,25 @@
   (| usage {"output_tokens" output
             "cache_creation" {"ephemeral_5m_input_tokens" 0 "ephemeral_1h_input_tokens" (get usage "cache_creation_input_tokens")}}))
 
-(defn #^ dict model-usage [#^ bool subagent]
-  "result の行の modelUsage(本体の model と、subagent を走らせた手番は subagent の model)。"
-  (if subagent {MODEL MAIN-WINDOW SUBAGENT-MODEL SUBAGENT-WINDOW} {MODEL MAIN-WINDOW}))
+(defn #^ dict model-usage [#^ dict models]
+  "result の行の modelUsage(実物 2.1.292 と同じく会話の累積 — models = model ごとの累積の数。窓の欄を足す)。"
+  (dfor #(model counts) (.items models) model (| (if (= model MODEL) MAIN-WINDOW SUBAGENT-WINDOW) counts)))
+
+;; CLI の手番 1 回で model ごとに足す数(実物と同じ欄の名 — 額は手番の額 TURN-COST を本体と subagent で分ける)。検の env
+;; STUB_CLI_MODEL_USAGE で実物と違う形を作る: drift = model ごとの額を半分にして名乗る(和が total_cost_usd と合わない)/
+;; bare-cost-state = 降りる時の cost-state の行に modelUsage を書かない(modelUsage を記さない古い CLI の形)。
+(setv MAIN-TURN-COUNTS {"inputTokens" 7 "outputTokens" 6 "cacheReadInputTokens" 1010 "cacheCreationInputTokens" 20 "webSearchRequests" 0})
+(setv SUBAGENT-TURN-COUNTS {"inputTokens" 1 "outputTokens" 900 "cacheReadInputTokens" 50000 "cacheCreationInputTokens" 0
+                            "webSearchRequests" 1})
+
+(defn #^ dict charged [#^ dict models #^ bool subagent]
+  "CLI の手番 1 回の model ごとの数を累積に足した新しい累積(subagent を走らせた手番は額を本体と subagent で半分ずつ)。"
+  (setv share (if subagent (/ TURN-COST 2) TURN-COST)
+        drift (if (= (.get os.environ "STUB_CLI_MODEL_USAGE") "drift") 0.5 1.0)
+        turn (| {MODEL (| MAIN-TURN-COUNTS {"costUSD" (* share drift)})}
+                (if subagent {SUBAGENT-MODEL (| SUBAGENT-TURN-COUNTS {"costUSD" (* share drift)})} {})))
+  (| models (dfor #(model counts) (.items turn)
+                  model (dfor #(key value) (.items counts) key (+ (.get (.get models model {}) key 0) value)))))
 
 (defn option [#^ list args #^ str name]
   (if (in name args) (get args (+ (.index args name) 1)) None))
@@ -173,9 +190,15 @@
     (setv records (if (os.path.exists path)
                       (lfor line (.splitlines (.read-text (Path path) :encoding "utf-8")) :if (.strip line) (json.loads line))
                       []))
-    (setv self.cost (next (gfor record (reversed records) :if (= (.get record "type") "cost-state")
-                                (.get record "totalCostUSD"))
-                          0.0)))
+    (setv last-state (next (gfor record (reversed records) :if (= (.get record "type") "cost-state") record) {}))
+    (setv self.cost (.get last-state "totalCostUSD" 0.0)
+          self.models (dfor #(model counts) (.items (.get last-state "modelUsage" {})) model counts)))
+
+  (defn charge [self #^ bool subagent]
+    "CLI の手番 1 回の額と model ごとの数を会話の累積に足し、result の行の modelUsage を返す。"
+    (+= self.cost TURN-COST)
+    (setv self.models (charged self.models subagent))
+    (model-usage self.models))
 
   (defn call [self #^ list content #^ dict usage]
     "本体の会話の API の呼び 1 回の行を出す。3 段で流す手番(self.streamed)は message_start → 途中の値の assistant の行 → message_delta
@@ -278,10 +301,10 @@
       (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
              "event" {"type" "content_block_stop" "index" 0}}))
     (.call self [{"type" "text" "text" text}] FINAL-CALL-USAGE)
-    (+= self.cost TURN-COST)
+    (setv charged-usage (.charge self subagent))
     (emit (| {"type" "result" "subtype" "success" "is_error" False "result" text "terminal_reason" "completed"
               "session_id" self.session-id "total_cost_usd" self.cost "usage" (.turn-usage self)
-              "user_message_uuids" refs "modelUsage" (model-usage subagent)}
+              "user_message_uuids" refs "modelUsage" charged-usage}
              (.timing-fields self stream-ms))))
 
   (defn elapsed-ms [self]
@@ -387,10 +410,10 @@
         (setv queued (lfor record injections :if (.get record "uuid") (.get record "uuid")))
         (emit {"type" "control_response"
                "response" {"subtype" "success" "request_id" stop "response" {"still_queued" queued}}})
-        (+= self.cost TURN-COST)
+        (setv charged-usage (.charge self True))
         (emit {"type" "result" "subtype" "error_during_execution" "is_error" True "terminal_reason" "aborted_tools"
                "session_id" self.session-id "total_cost_usd" self.cost "user_message_uuids" refs
-               "modelUsage" (model-usage True)})
+               "modelUsage" charged-usage})
         (for [ref refs] (.lifecycle self ref "cancelled"))
         (when injections (.run-turn self injections))
         (return None))
@@ -481,16 +504,19 @@
     (.serve session)
     (except [Stop] (sys.exit 0))
     (except [KeyboardInterrupt]
-      (+= session.cost TURN-COST)
+      (setv charged-usage (.charge session False))
       (emit {"type" "result" "subtype" "error_during_execution" "is_error" True "terminal_reason" "aborted_streaming"
-             "session_id" session.session-id "total_cost_usd" session.cost "modelUsage" (model-usage False)})
+             "session_id" session.session-id "total_cost_usd" session.cost "modelUsage" charged-usage})
       (sys.exit 0))
     (finally
       ;; 終了する時に累積の額を transcript に記録する(SIGKILL では実行されない — 実物と同じ)。入力を 1 つも受けずに終了した新しい
       ;; 会話は transcript が無いので記録しない(記録を作らない — 同じ id の --session-id で再起動できる)。
       (when (os.path.exists session.path)
         (with [handle (open session.path "a" :encoding "utf-8")]
-          (.write handle (+ (json.dumps {"type" "cost-state" "sessionId" session.session-id "totalCostUSD" session.cost}
+          (.write handle (+ (json.dumps (| {"type" "cost-state" "sessionId" session.session-id "totalCostUSD" session.cost}
+                                           (if (= (.get os.environ "STUB_CLI_MODEL_USAGE") "bare-cost-state")
+                                               {}
+                                               {"modelUsage" session.models}))
                                         :separators #("," ":"))
                             "\n")))))))
 

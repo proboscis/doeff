@@ -10,7 +10,7 @@
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 (import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
                                  RateLimit TurnResult PartialMessage Other ControlResponse Usage StopHookFeedback CompactBoundary CompactTrigger
-                                 recorded-cost])
+                                 recorded-cost CostMark ModelUsage])
 (import doeff_claude_code.values [Allow])
 (import doeff_claude_code [lines])
 
@@ -406,7 +406,7 @@
                 {"type" "cost-state" "sessionId" sid "totalCostUSD" 0.038911299999999996 "hasUnknownModelCost" False}
                 {"type" "user" "message" {"role" "user" "content" "\"cost-state\" と書いた発話"}}])
   (<- found (recorded-cost (.join "\n" (gfor record records (json.dumps record :ensure-ascii False :separators #("," ":"))))))
-  (assert (= found 0.038911299999999996) found)
+  (assert (= found (CostMark 0.038911299999999996 None)) found)
   ;; 額の行が無い・空の本文 = None(0 を発明しない)。
   (<- absent (recorded-cost "{\"type\":\"user\",\"text\":\"x\"}\n"))
   (assert (is absent None))
@@ -419,7 +419,7 @@
   (assert (is flag None))
   ;; 壊れた(JSON にならない)行は行として数えない。
   (<- torn (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCo"))
-  (assert (= torn 0.5) torn))
+  (assert (= torn (CostMark 0.5 None)) torn))
 
 
 (deftest test-open-maps-are-frozen-when-built
@@ -545,3 +545,24 @@
   (assert (= #(sub.message-id sub.parent-tool-use-id) #("msg_sub_1" "toolu_9")) (repr sub))
   (val main (classify-record {"type" "assistant" "parent_tool_use_id" None "message" {"model" "m" "content" []}}))
   (assert (is main.message-id None) (repr main)))
+
+
+(deftest test-the-recorded-cost-carries-the-model-usage-of-the-same-line
+  ;; card ki-1d986d4f0007: CLI 2.1.292 の cost-state の行は額と同じ点の model ごとの累積(modelUsage — result の行と同じ欄の名・窓の欄は
+  ;; 無い)を持つ。起点は額と model ごとの累積の組で、同じ 1 行から取る。modelUsage の無い古い形の行は額だけの起点(models None)。
+  (val line {"type" "cost-state" "sessionId" "s" "totalCostUSD" 0.75 "totalAPIDuration" 10
+             "modelUsage" {"claude-opus-5-5" {"inputTokens" 12 "outputTokens" 340 "thinkingTokens" 0 "cacheReadInputTokens" 9000
+                                              "cacheCreationInputTokens" 800 "webSearchRequests" 2 "costUSD" 0.5}
+                           "claude-sonnet-5-5" {"inputTokens" 3 "outputTokens" 40 "cacheReadInputTokens" 0
+                                               "cacheCreationInputTokens" 0 "webSearchRequests" 0 "costUSD" 0.25}}
+             "hasUnknownModelCost" False})
+  (<- found (recorded-cost (json.dumps line)))
+  (assert (= found (CostMark 0.75 #((ModelUsage "claude-opus-5-5" :input-tokens 12 :output-tokens 340 :cache-read-input-tokens 9000
+                                                :cache-creation-input-tokens 800 :web-search-requests 2 :cost-usd 0.5)
+                                    (ModelUsage "claude-sonnet-5-5" :input-tokens 3 :output-tokens 40 :cache-read-input-tokens 0
+                                                :cache-creation-input-tokens 0 :web-search-requests 0 :cost-usd 0.25))))
+          found)
+  (<- empty (recorded-cost (json.dumps {"type" "cost-state" "totalCostUSD" 0.0 "modelUsage" {}})))
+  (assert (= empty (CostMark 0.0 #())) empty)
+  (<- bare (recorded-cost (json.dumps {"type" "cost-state" "totalCostUSD" 0.5})))
+  (assert (= bare (CostMark 0.5 None)) bare))

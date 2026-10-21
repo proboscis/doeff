@@ -43,6 +43,8 @@ from doeff_claude_code.lines import ClaudeLineKind as ClaudeLineKind
 from doeff_claude_code.lines import ClaudeTurnEnd as ClaudeTurnEnd
 from doeff_claude_code.lines import Usage as Usage
 from doeff_claude_code.lines import ModelWindow as ModelWindow
+from doeff_claude_code.lines import ModelUsage as ModelUsage
+from doeff_claude_code.lines import model_cost_gap as model_cost_gap
 from doeff_claude_code.lines import merged_windows as merged_windows
 from doeff_claude_code.lines import DeltaKind as DeltaKind
 from doeff_claude_code.lines import RateLimit as RateLimit
@@ -62,6 +64,7 @@ from doeff_claude_code.lines import SUBAGENT_TASK_TYPE as SUBAGENT_TASK_TYPE
 from doeff_claude_code.lines import ModelRefusalHit as ModelRefusalHit
 from doeff_claude_code.lines import STOP_REASON_REFUSAL as STOP_REASON_REFUSAL
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
+from doeff_claude_code.lines import CallClosed as CallClosed
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
 from doeff_claude_code.dialogue import model_refusal_after as model_refusal_after
@@ -150,6 +153,7 @@ class FakeReply:
     lose_stderr: str | None = None
     usage: Usage = ...
     cost_usd: float | None = None
+    model_usage: tuple[ModelUsage, ...] | None = None
     lines: int = 0
     think_seconds: float = 0.0
     interrupt_receipt: bool = True
@@ -201,6 +205,8 @@ class FakeTurn:
     refusal_hit: AccountRefusalHit | None
     model_refusal_hit: ModelRefusalHit | None
     subagent_due: SubagentTranscript | None
+    call_id: str
+    call_usage: Usage | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -249,7 +255,7 @@ def reply_of(world: FakeClaudeWorld, text: str, memory: tuple) -> _Program[FakeR
 def ring_turn(turn: FakeTurn) -> _Program[None, object]:
     ...
 
-def said_by_reply(reply: FakeReply, kind: ClaudeLineKind) -> _Program[ClaudeLineKind, object]:
+def said_by_reply(reply: FakeReply, kind: ClaudeLineKind, call_id: str) -> _Program[ClaudeLineKind, object]:
     ...
 
 def emit(session: FakeSession, turn: FakeTurn, kind: ClaudeLineKind) -> _Program[None, object]:

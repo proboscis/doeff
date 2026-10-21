@@ -2,8 +2,9 @@
 ;; 状態機械は lines.hy が分類した型を読む — 検は実物の形の行を classify-record に通してから渡す(本番の handler と同じ道)。
 (require doeff-hy.macros [deftest val])
 (import json)
+(import dataclasses [replace])
 (import doeff_claude_code.values [TurnInput ImageAttachment Allow Deny])
-(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Usage classify-record])
+(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Usage CostMark FRESH-MARK ModelUsage ModelUsageGap classify-record])
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState StopSignal StopControl NoStop])
 (import doeff_claude_code.faults [StopReason])
@@ -40,8 +41,8 @@
   "実物の形の 1 行を分類して状態機械へ渡す(handler の on-line と同じ道)。"
   (dialogue.on-record state (classify-record record)))
 
-(defn started [#^ (| float None) [cost-mark 0.0]]
-  "init を読んだ後の手番の途中の状態。cost-mark = 手番の額の起点(既定は新しい会話の 0 — None は分からない起点)。"
+(defn started [#^ (| CostMark None) [cost-mark FRESH-MARK]]
+  "init を読んだ後の手番の途中の状態。cost-mark = 手番の額の起点(CostMark — 既定は新しい会話の 0。models None は model ごとの累積を知らない起点・None は分からない起点)。"
   (setv begun (dialogue.begin-turn (DialogueState :cost-mark cost-mark :start-mark cost-mark) (TurnInput "hello" "msg-1")))
   (. (read-record begun.state INIT) state))
 
@@ -196,28 +197,28 @@
   ;; 誤りで終えた手番も額を運ぶ: 累積の額 − 手番の起点(0.75 − 0.25)。
   (val capped {"type" "result" "subtype" "error_max_turns" "is_error" True "result" "" "total_cost_usd" 0.75
                "usage" {"output_tokens" 6}})
-  (val read (read-record (started 0.25) capped))
+  (val read (read-record (started (CostMark 0.25)) capped))
   (assert (isinstance read.end Failed) (repr read.end))
   (assert (= read.end.cost-usd 0.5) (repr read.end))
   (assert (= read.end.usage (Usage :output-tokens 6)) (repr read.end))
   ;; result の行が額を名乗らなければ None(0 を発明しない)。
-  (val silent (read-record (started 0.25) {"type" "result" "subtype" "error_during_execution" "is_error" True}))
+  (val silent (read-record (started (CostMark 0.25)) {"type" "result" "subtype" "error_during_execution" "is_error" True}))
   (assert (is silent.end.cost-usd None) (repr silent.end)))
 
 
 (deftest test-a-fresh-session-costs-its-whole-total
   ;; 新しい会話の起点は 0: 最初の手番の額は result の行の累積ちょうど。手番を閉じた行の累積が次の起点になる。
-  (val read (read-record (started 0.0) MEASURED-FIRST))
+  (val read (read-record (started FRESH-MARK) MEASURED-FIRST))
   (assert (= read.end.cost-usd 0.0322929) (repr read.end))
   (assert (= read.end.usage (Usage :input-tokens 10 :output-tokens 54 :cache-creation-input-tokens 15322
                                    :cache-read-input-tokens 13689))
           (repr read.end))
-  (assert (= read.state.cost-mark 0.0322929)))
+  (assert (= read.state.cost-mark.total-usd 0.0322929)))
 
 
 (deftest test-a-resumed-turn-costs-the-total-minus-the-mark
   ;; --resume の process の最初の result の行は前の process の額から数えた累積(実測)。手番の額はその差で、累積そのものではない。
-  (val read (read-record (started 0.035648) MEASURED-RESUMED))
+  (val read (read-record (started (CostMark 0.035648)) MEASURED-RESUMED))
   (assert (isinstance read.end Completed) (repr read.end))
   (assert (< (abs (- read.end.cost-usd 0.0032633)) 1e-12) (repr read.end))
   (assert (= read.end.usage (Usage :input-tokens 10 :output-tokens 30 :cache-creation-input-tokens 96
@@ -238,7 +239,7 @@
 
 (deftest test-a-total-below-the-mark-gives-no-cost
   ;; 累積が起点より小さい = CLI が起点の額から数えていない(起点の読み違い)。負の額を作らず None。
-  (val read (read-record (started 0.5) SUCCESS-RESULT))
+  (val read (read-record (started (CostMark 0.5)) SUCCESS-RESULT))
   (assert (isinstance read.end Completed) (repr read.end))
   (assert (is read.end.cost-usd None) (repr read.end)))
 
@@ -246,7 +247,7 @@
 (deftest test-a-swallowed-result-and-the-next-result-are-one-turn
   ;; 注入を待って飲んだ result の行と、注入を走らせた CLI の手番の result の行は 1 つの host の手番: 額は最後の行の累積 − 起点、
   ;; usage は 2 行の和(額と同じ行の集まり)。
-  (val injected (dialogue.inject (started 0.0) (TurnInput "late" "inj-1")))
+  (val injected (dialogue.inject (started FRESH-MARK) (TurnInput "late" "inj-1")))
   (val swallowed (read-record injected.state MEASURED-FIRST))
   (assert (is swallowed.end None))
   (val running (. (read-record swallowed.state (lifecycle "inj-1" "started")) state))
@@ -257,14 +258,14 @@
                                    :cache-read-input-tokens 42700))
           (repr done.end))
   (assert (= done.state.turn-usage (Usage)))
-  (assert (= done.state.cost-mark 0.035648)))
+  (assert (= done.state.cost-mark.total-usd 0.035648)))
 
 
 (deftest test-a-cli-own-result-counts-in-the-turn
   ;; 手番の途中に CLI が自分で起こした手番の result の行は終わりではないが、その額は累積に入るので usage も手番に足す。
   (val own {"type" "result" "subtype" "success" "is_error" False "result" "" "origin" {"kind" "task-notification"}
             "total_cost_usd" 0.25 "usage" {"output_tokens" 3}})
-  (val noted (read-record (started 0.0) own))
+  (val noted (read-record (started FRESH-MARK) own))
   (assert (is noted.end None))
   (val done (read-record noted.state (| SUCCESS-RESULT {"total_cost_usd" 0.75})))
   (assert (= done.end.cost-usd 0.75) (repr done.end))
@@ -274,7 +275,7 @@
 (deftest test-an-interrupted-turn-moves-the-mark-so-the-next-turn-costs-only-itself
   ;; 止めた手番(Interrupted — 額の欄が無い)を閉じた result の行の累積が次の手番の起点: 生き残った入力の手番の額と usage は
   ;; その手番の分だけ(止めた手番の分を混ぜない)。
-  (val injected (dialogue.inject (started 0.0) (TurnInput "also this" "inj-1")))
+  (val injected (dialogue.inject (started FRESH-MARK) (TurnInput "also this" "inj-1")))
   (val plan (dialogue.interrupt injected.state "rid-9"))
   (val answered (read-record plan.state {"type" "control_response"
                                          "response" {"subtype" "success" "request_id" "rid-9"
@@ -283,7 +284,7 @@
                                             "terminal_reason" "aborted_tools" "total_cost_usd" 0.25
                                             "usage" {"output_tokens" 5}}))
   (assert aborted.continues)
-  (assert (= aborted.state.cost-mark 0.25))
+  (assert (= aborted.state.cost-mark.total-usd 0.25))
   (assert (= aborted.state.turn-usage (Usage)))
   (val running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
   (val done (read-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"] "total_cost_usd" 0.75})))
@@ -652,3 +653,125 @@
   (val again (dialogue.begin-turn refused.state (TurnInput "again" "msg-2")))
   (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
   (assert (and (isinstance second.end Completed) (is second.end.model-refusal None)) (repr second.end)))
+
+
+;; --- 手番の model ごとの使用量(card ki-1d986d4f0007) -----------------------------------------------------
+;; result の行と cost-state の行の modelUsage は会話の累積(実測 CLI 2.1.292 + 偽の Messages API — 親 card ki-290ec664737d の会話)。
+;; 欄は実物と同じ名(窓の欄も添える)。額は 2 進で割り切れる値にして、和の比べに端数を出さない。
+(setv MAIN "claude-opus-5-5" SUB "claude-sonnet-5-5")
+
+(defn usage-line [#^ float total #^ dict models [subtype "success"] [is-error False] [refs ["msg-1"]]]
+  "累積の額 total と model ごとの累積 models(model → #(入力 出力 cache 読み cache 書き 検索 額))の result の行。"
+  {"type" "result" "subtype" subtype "is_error" is-error "result" "ok" "total_cost_usd" total "usage" {"output_tokens" 1}
+   "user_message_uuids" refs
+   "modelUsage" (dfor #(model #(i o r w s c)) (.items models)
+                      model {"inputTokens" i "outputTokens" o "cacheReadInputTokens" r "cacheCreationInputTokens" w
+                             "webSearchRequests" s "costUSD" c "thinkingTokens" 0 "contextWindow" 200000 "maxOutputTokens" 32000})})
+
+(defn next-turn [state ref]
+  "閉じた手番の後に同じ process で次の手番を始め、init を読んだ状態。"
+  (. (read-record (. (dialogue.begin-turn state (TurnInput "next" ref)) state) INIT) state))
+
+(setv TURN-1 (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.5)}))
+(setv TURN-2 (usage-line 1.25 {MAIN #(15 160 2500 260 1 1.0) SUB #(4 40 0 0 2 0.25)} :refs ["msg-2"]))
+
+
+(deftest test-the-second-turn-of-a-process-carries-only-its-own-model-usage
+  ;; 同じ process の 2 手番目の modelUsage は 1 手番目との和。手番の分 = 累積 − 1 手番目を閉じた行の累積(額と同じ起点)。新しく
+  ;; 使った model(SUB)は 0 から数える。和(0.5 + 0.25)= 手番の額 0.75 で照合が合う(訳 None)。
+  (val first (read-record (started) TURN-1))
+  (assert (= first.end.model-usage #((ModelUsage MAIN :input-tokens 10 :output-tokens 100 :cache-read-input-tokens 1000
+                                                 :cache-creation-input-tokens 200 :web-search-requests 1 :cost-usd 0.5)))
+          first.end)
+  (assert (is first.end.model-usage-gap None) first.end)
+  (val second (read-record (next-turn first.state "msg-2") TURN-2))
+  (assert (= second.end.cost-usd 0.75) second.end)
+  (assert (= second.end.model-usage #((ModelUsage MAIN :input-tokens 5 :output-tokens 60 :cache-read-input-tokens 1500
+                                                  :cache-creation-input-tokens 60 :web-search-requests 0 :cost-usd 0.5)
+                                      (ModelUsage SUB :input-tokens 4 :output-tokens 40 :cache-read-input-tokens 0
+                                                  :cache-creation-input-tokens 0 :web-search-requests 2 :cost-usd 0.25)))
+          second.end)
+  (assert (is second.end.model-usage-gap None) second.end)
+  ;; 反例: 額の起点だけが動き model ごとの起点が動かない(2 つの起点がずれた)と、MAIN の増分の額は累積の 1.0 になり、和 1.25 が
+  ;; 手番の額 0.75 と合わない — 照合がそのずれを SUM-MISMATCH で捕まえる。
+  (val stale (read-record (next-turn (replace first.state :cost-mark (CostMark 0.5 #())) "msg-2") TURN-2))
+  (assert (= stale.end.cost-usd 0.75) stale.end)
+  (assert (= stale.end.model-usage-gap ModelUsageGap.SUM-MISMATCH) stale.end))
+
+
+(deftest test-a-model-used-only-before-is-left-out-of-the-turn
+  ;; 前の手番だけで使った model(累積が動かない)は手番の分に入れない(全部 0 の行を作らない)。
+  (val first (read-record (started) TURN-2))
+  (val second (read-record (next-turn first.state "msg-3")
+                           (usage-line 1.5 {MAIN #(20 200 3000 300 1 1.25) SUB #(4 40 0 0 2 0.25)} :refs ["msg-3"])))
+  (assert (= (lfor usage second.end.model-usage usage.model) [MAIN]) second.end)
+  (assert (is second.end.model-usage-gap None) second.end))
+
+
+(deftest test-a-resumed-process-counts-model-usage-from-the-recorded-cost-state
+  ;; --resume の process は前の process が降りる時に記した cost-state の行の累積から数え続ける。handler はその行を起点(額と model
+  ;; ごとの累積の組)にし、手番の分はその差。
+  (val mark (lines.CostMark 0.5 #((ModelUsage MAIN :input-tokens 10 :output-tokens 100 :cache-read-input-tokens 1000
+                                              :cache-creation-input-tokens 200 :web-search-requests 1 :cost-usd 0.5))))
+  (val read (read-record (started mark) TURN-2))
+  (assert (= read.end.cost-usd 0.75) read.end)
+  (assert (= (sum (gfor usage read.end.model-usage usage.cost-usd)) 0.75) read.end)
+  (assert (is read.end.model-usage-gap None) read.end))
+
+
+(deftest test-a-stopped-turn-moves-the-model-mark-with-the-cost-mark
+  ;; 止めた手番(Interrupted — 額も model ごとの使用量も持たない)を閉じた result の行の累積が、額と同じく次の手番の起点: 生き残った
+  ;; 入力の手番の model ごとの使用量はその手番の分だけ(止めた手番の分を混ぜない)。
+  (val injected (dialogue.inject (started) (TurnInput "also this" "inj-1")))
+  (val plan (dialogue.interrupt injected.state "rid-9"))
+  (val answered (read-record plan.state {"type" "control_response"
+                                         "response" {"subtype" "success" "request_id" "rid-9"
+                                                     "response" {"still_queued" ["inj-1"]}}}))
+  (val aborted (read-record answered.state (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.5)} :subtype "error_during_execution"
+                                                       :is-error True)))
+  (assert aborted.continues)
+  (assert (isinstance aborted.end Interrupted) aborted.end)
+  (assert (= aborted.state.cost-mark.models (. (lines.CostMark 0.5 (. (classify-record TURN-1) model-usage)) models)) aborted.state)
+  (val running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
+  (val done (read-record running (usage-line 1.25 {MAIN #(15 160 2500 260 1 1.0) SUB #(4 40 0 0 2 0.25)} :refs ["inj-1"])))
+  (assert (= done.end.cost-usd 0.75) done.end)
+  (assert (= (lfor usage done.end.model-usage #(usage.model usage.cost-usd)) [#(MAIN 0.5) #(SUB 0.25)]) done.end)
+  (assert (is done.end.model-usage-gap None) done.end))
+
+
+(deftest test-an-unknown-mark-gives-no-model-usage-and-says-why
+  ;; 起点が分からない(額の起点 None)・額だけの起点(modelUsage の無い古い cost-state — models None)の手番は、増分を推測で作らず
+  ;; 訳 UNKNOWN-MARK を出す。後者の額は今までどおり数える。次の手番からは閉じた行の累積で数え直す。
+  (val lost (read-record (started None) TURN-1))
+  (assert (is lost.end.model-usage None) lost.end)
+  (assert (= lost.end.model-usage-gap ModelUsageGap.UNKNOWN-MARK) lost.end)
+  (val bare (read-record (started (CostMark 0.25)) TURN-1))
+  (assert (= bare.end.cost-usd 0.25) bare.end)
+  (assert (is bare.end.model-usage None) bare.end)
+  (assert (= bare.end.model-usage-gap ModelUsageGap.UNKNOWN-MARK) bare.end)
+  (val again (read-record (next-turn lost.state "msg-2") TURN-2))
+  (assert (is again.end.model-usage-gap None) again.end))
+
+
+(deftest test-a-result-without-model-usage-and-a-counter-that-went-back-say-why
+  ;; result の行が modelUsage を名乗らない → NOT-NAMED。model ごとの累積が起点より減った・起点の model が消えた(CLI が起点から数えて
+  ;; いない)→ COUNTED-BACK(負の増分を作らない)。
+  (val silent (read-record (started) SUCCESS-RESULT))
+  (assert (is silent.end.model-usage None) silent.end)
+  (assert (= silent.end.model-usage-gap ModelUsageGap.NOT-NAMED) silent.end)
+  (val mark (lines.CostMark 0.25 (. (classify-record TURN-2) model-usage)))
+  (val back (read-record (started mark) TURN-1))
+  (assert (is back.end.model-usage None) back.end)
+  (assert (= back.end.model-usage-gap ModelUsageGap.COUNTED-BACK) back.end))
+
+
+(deftest test-model-costs-that-do-not-add-up-to-the-turn-cost-say-why
+  ;; model ごとの額の和(0.25)が手番の額(0.5)と 0.01 USD を越えて違う → SUM-MISMATCH(増分は運ぶ)。0.01 以内は合う。
+  ;; ある model の額が無い・手番の額が無い → UNPRICED。
+  (val drift (read-record (started) (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.25)})))
+  (assert (= drift.end.model-usage-gap ModelUsageGap.SUM-MISMATCH) drift.end)
+  (assert (= (len drift.end.model-usage) 1) drift.end)
+  (val close (read-record (started) (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.4921875)})))
+  (assert (is close.end.model-usage-gap None) close.end)
+  (val unpriced (read-record (started) (| TURN-1 {"modelUsage" {MAIN {"inputTokens" 10 "outputTokens" 100}}})))
+  (assert (= unpriced.end.model-usage-gap ModelUsageGap.UNPRICED) unpriced.end))

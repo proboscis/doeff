@@ -67,6 +67,10 @@
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read・
 ;;;                                      cache_creation の寿命の内訳 ephemeral_5m / ephemeral_1h → cache_write_5m / cache_write_1h〔寿命で単価が違うので
 ;;;                                      上の層が寿命ごとに値を付ける・card ki-75d813bebc27〕。CLI が名乗らない欄は None のまま・欄がどれも無ければ usage = None)
+;;;   Completed / Failed の model-usage・model-usage-gap → AgentTurnCompleted / AgentTurnFailed.model_usage・model_usage_gap(手番の
+;;;                                      model ごとの使用量 — 層 2 が CLI の会話の累積の modelUsage を額と同じ起点の差で手番の分に直した値と、
+;;;                                      model ごとの額の和を手番の額と照合できなかった訳。型は層 2 の ModelUsage・ModelUsageGap のまま・
+;;;                                      card ki-1d986d4f0007)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
 ;;;                                      分からなければ None。token の 4 欄と額がすべて無ければ usage = None・agora-redesign #883)
 ;;;   WarmSessionEffect                → ClaudeWarmSession(次のターンと同じ始まり方 — 1 度もターンを始めていない新しい文脈は同じ id の
@@ -369,6 +373,7 @@
       (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id
                           :usage (usage-of end.usage end.cost-usd)
                           :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
+                          :model-usage end.model-usage :model-usage-gap end.model-usage-gap
                           :account-limit (account-limit-of end.account-limit)
                           :account-refusal (run (account-refusal-of end.account-refusal))
                           :model-refusal (run (model-refusal-of end.model-refusal)))
@@ -376,6 +381,7 @@
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
                        :usage (usage-of end.usage end.cost-usd)
                        :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
+                       :model-usage end.model-usage :model-usage-gap end.model-usage-gap
                        :account-limit (account-limit-of end.account-limit)
                        :account-refusal (run (account-refusal-of end.account-refusal))
                        :model-refusal (run (model-refusal-of end.model-refusal))

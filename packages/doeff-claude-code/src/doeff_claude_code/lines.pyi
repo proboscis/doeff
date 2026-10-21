@@ -88,6 +88,13 @@ class DeltaKind(StrEnum):
     OTHER = 'other'
     NO_DELTA = 'no-delta'
 
+@dataclass(frozen=True, kw_only=True)
+class CallOpened:
+    message_id: str
+    model: str | None
+    parent_tool_use_id: str | None
+    usage: Usage
+
 @dataclass(frozen=True)
 class PartialMessage:
     text_delta: str = ''
@@ -97,9 +104,36 @@ class PartialMessage:
     tool_start: ToolCall | None = None
     ttft_ms: int | None = None
     thinking_start: bool = False
+    call_opened: CallOpened | None = None
+    call_end_usage: Usage | None = None
+    parent_tool_use_id: str | None = None
 
     def __post_init__(self) -> None:
         ...
+
+@dataclass(frozen=True, kw_only=True)
+class CallClosed:
+    message_id: str
+    model: str | None
+    parent_tool_use_id: str | None
+    usage: Usage
+
+@dataclass(frozen=True, kw_only=True)
+class CallStep:
+    open: tuple[CallOpened, ...]
+    closed: CallClosed | None
+
+def positive_or(stated: int | None, earlier: int | None) -> _Program[int | None, object]:
+    ...
+
+def stated_or(stated: int | str | None, earlier: int | str | None) -> _Program[int | str | None, object]:
+    ...
+
+def closed_usage(start: Usage | None, end: Usage | None) -> _Program[Usage | None, object]:
+    ...
+
+def call_step(open: tuple, kind: ClaudeLineKind) -> _Program[CallStep, object]:
+    ...
 
 @dataclass(frozen=True)
 class ThinkingTokens:
@@ -211,6 +245,48 @@ class ModelWindow:
     context_window: int | None = None
     max_output_tokens: int | None = None
 
+@dataclass(frozen=True)
+class ModelUsage:
+    model: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    web_search_requests: int | None = None
+    cost_usd: float | None = None
+
+@dataclass(frozen=True)
+class CostMark:
+    total_usd: float
+    models: tuple[ModelUsage, ...] | None = None
+FRESH_MARK: CostMark
+MODEL_COST_TOLERANCE_USD: float
+
+class ModelUsageGap(StrEnum):
+    UNKNOWN_MARK = 'unknown-mark'
+    NOT_NAMED = 'not-named'
+    COUNTED_BACK = 'counted-back'
+    UNPRICED = 'unpriced'
+    SUM_MISMATCH = 'sum-mismatch'
+
+@dataclass(frozen=True, kw_only=True)
+class ModelUsageTally:
+    models: tuple[ModelUsage, ...] | None
+    gap: ModelUsageGap | None
+MODEL_USAGE_COUNTS: tuple[str, ...]
+
+def model_cost_gap(models: tuple | None, cost: float | None) -> _Program[ModelUsageGap | None, object]:
+    ...
+
+def usage_at_mark(marked: tuple[ModelUsage, ...], model: str) -> _Program[ModelUsage, object]:
+    ...
+
+def model_usage_increment(before: ModelUsage, after: ModelUsage) -> _Program[ModelUsage | None, object]:
+    ...
+
+def per_turn_model_usage(mark: CostMark | None, now: tuple[ModelUsage, ...] | None, cost: float | None) -> _Program[ModelUsageTally, object]:
+    ...
+
 def merged_windows(earlier: tuple, later: tuple) -> _Program[tuple[ModelWindow, ...], object]:
     ...
 
@@ -236,6 +312,7 @@ class TurnResult:
     api_error_status: int | None = None
     input_refs: tuple[str, ...] = ...
     model_windows: tuple[ModelWindow, ...] = ...
+    model_usage: tuple[ModelUsage, ...] | None = None
     timing: RequestTiming = ...
     structured_output: FrozenJson = None
 STOP_HOOK_FEEDBACK_HEAD: str
@@ -277,7 +354,7 @@ class CompactEnded:
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactEnded | CompactBoundary | TurnResult | SubagentTranscript | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactEnded | CompactBoundary | TurnResult | SubagentTranscript | CallClosed | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:
@@ -295,6 +372,8 @@ class Completed:
     result_text: str = ''
     usage: Usage = ...
     cost_usd: float | None = None
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ...
     input_refs: tuple[str, ...] = ...
     last_call_usage: Usage | None = None
     last_call_model: str | None = None
@@ -310,6 +389,8 @@ class Failed:
     terminal_reason: str = ''
     usage: Usage = ...
     cost_usd: float | None = None
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ...
     input_refs: tuple[str, ...] = ...
     last_call_usage: Usage | None = None
     last_call_model: str | None = None
@@ -406,6 +487,9 @@ def classify_control_response(record: dict) -> Incomplete:
 def model_windows_of(model_usage: dict) -> _Program[tuple[ModelWindow, ...], object]:
     ...
 
+def model_usage_of(record: dict) -> _Program[tuple[ModelUsage, ...] | None, object]:
+    ...
+
 def classify_result(record: dict) -> Incomplete:
     ...
 
@@ -421,10 +505,19 @@ def tool_start_of(event: dict) -> Incomplete:
 def thinking_start_of(event: dict) -> Incomplete:
     ...
 
+def call_opened_of(event: dict, parent: str | None) -> _Program[CallOpened | None, object]:
+    ...
+
+def call_end_usage_of(event: dict) -> _Program[Usage | None, object]:
+    ...
+
 def classify_stream_event(record: dict) -> Incomplete:
     ...
 
-def recorded_cost(transcript_text: str) -> _Program[float | None, object]:
+def recorded_cost(transcript_text: str) -> _Program[CostMark | None, object]:
+    ...
+
+def mark_of_result(result: TurnResult) -> _Program[CostMark | None, object]:
     ...
 
 def instant_at(value: dict, key: str) -> _Program[datetime | None, object]:

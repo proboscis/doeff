@@ -19,7 +19,7 @@
 (import time)
 (import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler epoch-ms-of sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput LentCredential])
-(import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
+(import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage CostMark ModelUsage ModelUsageGap])
 (import doeff_claude_code.effects [ClaudeReplaceSessionCredential CredentialReplaced
                                    ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
                                    ClaudeSessionStatus ClaudeWarmSession TurnStarted LaunchFailed SessionExported SessionNotFound
@@ -48,6 +48,15 @@
   (.mkdir work :parents True :exist-ok True)
   (ClaudeSessionSpec :home (ClaudeHome (str (/ tmp-path "home")) (child-env ""))
                      :cwd (str work) :settings {"disableAllHooks" True} :cold-resume-prompt cold))
+
+;; 替え玉の CLI の手番 1 回の model ごとの増分(替え玉の charged — 道具なしの手番は本体の model だけ・額は手番の額 0.25 ちょうど —
+;; card ki-1d986d4f0007)。
+(val STUB-TURN-USAGE #((ModelUsage "claude-stub" :input-tokens 7 :output-tokens 6 :cache-read-input-tokens 1010
+                                   :cache-creation-input-tokens 20 :web-search-requests 0 :cost-usd 0.25)))
+
+(defn priced-like-one-stub-turn [end]
+  "手番の終わりが替え玉の 1 手番分の model ごとの使用量を持ち、手番の額と照合が合ったか。"
+  (and (= end.model-usage STUB-TURN-USAGE) (is end.model-usage-gap None) (= end.cost-usd 0.25)))
 
 (defn with-real-handler [host program]
   ;; 本番の handler の計時の行(slog)の答え手を外側に置く(#3605)。
@@ -255,6 +264,19 @@
   ends)
 
 
+(defk two-turns-on [origin #^ ClaudeSessionSpec spec]
+  {:pre [(: origin (| FreshSession ResumeSession)) (: spec ClaudeSessionSpec)] :post [(: % list)]
+   :tags {:context "claude-code" :role "program"}}
+  "origin から起こした process で同じ会話を 2 手番続けるため(2 手番目は同じ process を使い回す)。答え = 2 つの手番の終わり。"
+  (val sid origin.session-id)
+  (val ends [])
+  (for [#(next-origin word) [#(origin "ONE") #((ResumeSession sid) "TWO")]]
+    (<- started (ClaudeStartTurn next-origin spec (TurnInput (reply-prompt word) (str (uuid.uuid4)))))
+    (<- done (read-to-end started.turn 30.0))
+    (.append ends done.end))
+  ends)
+
+
 (defk two-turns-closed-between [#^ ClaudeSessionSpec spec #^ str sid]
   {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % list)]}
   "1 手番目の後に会話を閉じて(process が降りる)から続ける。答え = 2 つの手番の終わり。"
@@ -287,7 +309,10 @@
   (assert (all (gfor end ends (isinstance end Completed))) (repr ends))
   (assert (= (lfor end ends end.cost-usd) [0.25 0.25]) (repr ends))
   (assert (= (lfor end ends end.usage) [(Usage :input-tokens 1 :output-tokens 1) (Usage :input-tokens 1 :output-tokens 1)])
-          (repr ends)))
+          (repr ends))
+  ;; 同じ process の 2 手番目の modelUsage は 1 手番目との和(実物と同じ累積)。手番の model ごとの使用量は額と同じ起点の差で 1 手番分、
+  ;; 和は手番の額と合う(card ki-1d986d4f0007)。
+  (assert (all (gfor end ends (priced-like-one-stub-turn end))) (repr ends)))
 
 
 (defk killed-then-two-turns [#^ ClaudeSessionSpec spec #^ str sid]
@@ -312,7 +337,9 @@
   (val sid (str (uuid.uuid4)))
   (<- ends (with-real-handler (host-of #(sys.executable "-m" "hy" STUB-PATH)) (killed-then-two-turns (spec-in tmp-path) sid)))
   (assert (isinstance (get ends 0) BackendLost) (repr ends))
-  (assert (= (lfor end (cut ends 1 None) end.cost-usd) [0.25 0.25]) (repr ends)))
+  (assert (= (lfor end (cut ends 1 None) end.cost-usd) [0.25 0.25]) (repr ends))
+  ;; model ごとの起点も額と同じく消えた process の始まりへ戻る(card ki-1d986d4f0007)。
+  (assert (all (gfor end (cut ends 1 None) (priced-like-one-stub-turn end))) (repr ends)))
 
 
 (defk killed-after-a-result-then-resumed [#^ ClaudeSessionSpec spec #^ str sid]
@@ -341,7 +368,8 @@
                               (killed-after-a-result-then-resumed (spec-in tmp-path) (str (uuid.uuid4)))))
   (assert (isinstance (get ends 1) BackendLost) (repr ends))
   (assert (isinstance (get ends 2) Completed) (repr ends))
-  (assert (= (. (get ends 2) cost-usd) 0.25) (repr ends)))
+  (assert (= (. (get ends 2) cost-usd) 0.25) (repr ends))
+  (assert (priced-like-one-stub-turn (get ends 2)) (repr ends)))
 
 
 (defk turn-until-down [#^ ClaudeCodeHost host origin #^ ClaudeSessionSpec spec #^ str word]
@@ -375,7 +403,10 @@
   (assert (= [one.cost-usd two.cost-usd] [0.25 0.25]) (repr [one two]))
   (val third-host (host-of STUB-COMMAND))
   (<- three (with-real-handler third-host (turn-until-down third-host (ResumeSession sid) spec "THREE")))
-  (assert (= three.cost-usd 0.25) (repr three)))
+  (assert (= three.cost-usd 0.25) (repr three))
+  ;; --resume の process の modelUsage も前の process が記した累積から数え続ける。起点は cost-state の行の額と modelUsage の組で、
+  ;; どの手番の model ごとの使用量も 1 手番分(card ki-1d986d4f0007)。
+  (assert (all (gfor end [one two three] (priced-like-one-stub-turn end))) (repr [one two three])))
 
 
 (deftest test-a-new-host-resuming-a-transcript-without-a-cost-line-gives-no-cost [tmp-path]
@@ -390,9 +421,13 @@
   (<- two (with-real-handler host (turn-until-down host (ResumeSession sid) spec "TWO")))
   (assert (isinstance two Completed) (repr two))
   (assert (is two.cost-usd None) (repr two))
+  ;; model ごとの使用量も起点が分からないので出さず、訳を記す(card ki-1d986d4f0007)。
+  (assert (is two.model-usage None) (repr two))
+  (assert (= two.model-usage-gap ModelUsageGap.UNKNOWN-MARK) (repr two))
   (val next-host (host-of STUB-COMMAND))
   (<- three (with-real-handler next-host (turn-until-down next-host (ResumeSession sid) spec "THREE")))
-  (assert (= three.cost-usd 0.25) (repr three)))
+  (assert (= three.cost-usd 0.25) (repr three))
+  (assert (priced-like-one-stub-turn three) (repr three)))
 
 
 (deftest test-a-carried-transcript-and-a-fork-count-from-the-recorded-cost [tmp-path]
@@ -410,7 +445,64 @@
                 (turn-until-down carry-host (ResumeSession sid :carry (Rebuilt exported.jsonl-text)) elsewhere "CARRIED")))
   (val fork-host (host-of STUB-COMMAND))
   (<- forked (with-real-handler fork-host (turn-until-down fork-host (ForkSession sid) spec "FORKED")))
-  (assert (= [one.cost-usd carried.cost-usd forked.cost-usd] [0.25 0.25 0.25]) (repr [one carried forked])))
+  (assert (= [one.cost-usd carried.cost-usd forked.cost-usd] [0.25 0.25 0.25]) (repr [one carried forked]))
+  (assert (all (gfor end [one carried forked] (priced-like-one-stub-turn end))) (repr [one carried forked])))
+
+
+(defn spec-with-stub-model-usage [#^ Path tmp-path #^ str shape]
+  "替え玉の CLI に実物と違う modelUsage の形(env STUB_CLI_MODEL_USAGE — drift・bare-cost-state)を出させる会話の宣言。"
+  (setv base (spec-in tmp-path))
+  (replace base :home (ClaudeHome base.home.config-dir (| (dict base.home.env) {"STUB_CLI_MODEL_USAGE" shape}))))
+
+
+(defk signalled-then-resumed [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % list)]
+   :tags {:context "claude-code" :role "program"}}
+  "注入の無い手番を道具の途中で止め(SIGINT の形 — 替え玉は result の行を出し、累積を cost-state に記して降りる)、同じ会話を続けるため。
+   答え = 止めた手番と続きの手番の終わり。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (sleep-prompt 40 "NEVER") (str (uuid.uuid4)))))
+  (<- (read-to-tool-start started.turn 30.0))
+  (<- (ClaudeInterruptTurn started.turn))
+  (<- stopped (read-to-end started.turn 30.0))
+  (<- resumed (ClaudeStartTurn (ResumeSession sid) spec (TurnInput (reply-prompt "BACK") (str (uuid.uuid4)))))
+  (<- done (read-to-end resumed.turn 30.0))
+  [stopped.end done.end])
+
+
+(deftest test-a-stopped-turn-is-left-out-of-the-next-turns-model-usage [tmp-path]
+  ;; card ki-1d986d4f0007: 止めた手番(SIGINT の形)の額と model ごとの使用量は数えずに捨て、次の手番の起点へ動かす。続きの手番の
+  ;; model ごとの使用量はその手番の分だけ(止めた手番の分 — 替え玉では 1 手番分の累積 — を混ぜない)で、和は手番の額と合う。
+  (val host (host-of STUB-COMMAND))
+  (<- ends (with-real-handler host (signalled-then-resumed host (spec-in tmp-path) (str (uuid.uuid4)))))
+  (assert (isinstance (get ends 0) Interrupted) (repr ends))
+  (assert (priced-like-one-stub-turn (get ends 1)) (repr ends)))
+
+
+(deftest test-a-cost-state-without-model-usage-gives-the-cost-but-says-the-model-mark-is-unknown [tmp-path]
+  ;; card ki-1d986d4f0007: modelUsage を記さない cost-state の行(古い CLI の形)から続けた手番は、額は前と同じく数えるが、model ごとの
+  ;; 起点が分からないので増分を推測で作らず訳 UNKNOWN-MARK を記す。同じ process の次の手番は result の行の累積を起点に数え直す。
+  (val spec (spec-with-stub-model-usage tmp-path "bare-cost-state"))
+  (val sid (str (uuid.uuid4)))
+  (val first-host (host-of STUB-COMMAND))
+  (<- one (with-real-handler first-host (turn-until-down first-host (FreshSession sid) spec "ONE")))
+  (assert (priced-like-one-stub-turn one) (repr one))
+  (val second-host (host-of STUB-COMMAND))
+  (<- ends (with-real-handler second-host (two-turns-on (ResumeSession sid) spec)))
+  (assert (= (lfor end ends end.cost-usd) [0.25 0.25]) (repr ends))
+  (assert (is (. (get ends 0) model-usage) None) (repr ends))
+  (assert (= (. (get ends 0) model-usage-gap) ModelUsageGap.UNKNOWN-MARK) (repr ends))
+  (assert (priced-like-one-stub-turn (get ends 1)) (repr ends)))
+
+
+(deftest test-model-costs-that-drift-from-the-turn-cost-are-recorded-as-a-gap [tmp-path]
+  ;; card ki-1d986d4f0007: model ごとの額の和(替え玉の drift = 半分の 0.125)が手番の額 0.25 と 0.01 USD を越えて違う手番は、増分を
+  ;; そのまま運び、訳 SUM-MISMATCH を記す(合わせるために額を書き換えない)。
+  (val host (host-of STUB-COMMAND))
+  (<- one (with-real-handler host (turn-until-down host (FreshSession (str (uuid.uuid4))) (spec-with-stub-model-usage tmp-path "drift")
+                                                   "ONE")))
+  (assert (= one.cost-usd 0.25) (repr one))
+  (assert (= (lfor usage one.model-usage usage.cost-usd) [0.125]) (repr one))
+  (assert (= one.model-usage-gap ModelUsageGap.SUM-MISMATCH) (repr one)))
 
 
 (deftest test-a-missing-executable-is-a-launch-failure [tmp-path]
@@ -554,15 +646,15 @@
   (val none (str (uuid.uuid4)))
   (<- (written-transcript spec none filler))
   (<- near-mark (recorded-cost-mark spec.home canonical near))
-  (assert (= near-mark 1.25) (repr near-mark))
+  (assert (= near-mark (CostMark 1.25 None)) (repr near-mark))
   (<- far-mark (recorded-cost-mark spec.home canonical far))
-  (assert (= far-mark 0.5) (repr far-mark))
+  (assert (= far-mark (CostMark 0.5 None)) (repr far-mark))
   (<- none-mark (recorded-cost-mark spec.home canonical none))
   (assert (is none-mark None) (repr none-mark)))
 
 
 (defk cost-mark-while-another-runs [#^ ClaudeSessionSpec spec #^ str sid #^ threading.Event gate]
-  {:pre [(: spec ClaudeSessionSpec) (: sid str) (: gate threading.Event)] :post [(: % (| float None))]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str) (: gate threading.Event)] :post [(: % (| CostMark None))]
    :tags {:context "claude-code" :role "program"}}
   "合図まで止まる transcript の読みで費用の起点を別の task に読ませ、外の合図を待ってから合図を出し、起点の答えを返すため。読みが
    scheduler の thread で待つと、この task は外の合図の後に戻れず、読みの上限の秒まで合図を出せない。"
@@ -590,7 +682,7 @@
   (val started (time.monotonic))
   (<- mark (with-real-handler host (cost-mark-while-another-runs spec sid gate)))
   (val seconds (- (time.monotonic) started))
-  (assert (= mark 0.75) (repr mark))
+  (assert (= mark (CostMark 0.75 None)) (repr mark))
   (assert (< seconds (/ HELD-READ-SECONDS 2)) (.format "費用の起点の読みが scheduler の thread を {:.1f} 秒塞いだ" seconds)))
 
 

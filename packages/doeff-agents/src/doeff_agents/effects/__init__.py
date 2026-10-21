@@ -35,6 +35,8 @@ from doeff_agents.effects.agent import AgentCallUsageEvent as AgentCallUsageEven
 from doeff_agents.effects.agent import AgentSubagentCallUsageEvent as AgentSubagentCallUsageEvent
 from doeff_agents.effects.agent import AgentToolResultEvent as AgentToolResultEvent
 from doeff_agents.effects.agent import AgentToolUseEvent as AgentToolUseEvent
+from doeff_agents.effects.agent import ModelUsage as ModelUsage
+from doeff_agents.effects.agent import ModelUsageGap as ModelUsageGap
 from doeff_agents.effects.agent import ModelWindow as ModelWindow
 from doeff_agents.effects.agent import ToolAnswer as ToolAnswer
 from doeff_agents.effects.agent import ToolCall as ToolCall

@@ -794,6 +794,10 @@
   (val three (run-on STUB tmp-path (fn [s] (one-turn-then-stop s two.resume-from))))
   (assert (= [one.usage two.usage three.usage]
              (* [(AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25)] 3))
+          (repr [one two three]))
+  ;; model ごとの使用量も同じ起点で手番の分(stub の 1 手番 = 本体の model の 0.25)で、和が手番の額と合う(card ki-1d986d4f0007)。
+  (assert (= (lfor end [one two three] #((lfor usage end.model-usage #(usage.model usage.cost-usd)) end.model-usage-gap))
+             (* [#([#("claude-stub" 0.25)] None)] 3))
           (repr [one two three])))
 
 (deftest test-headless-failed-turn-carries-its-cost-fake [tmp-path]
@@ -2393,3 +2397,23 @@
 
 (deftest test-headless-carries-the-subagent-call-usage-stub [tmp-path]
   (<- (check-a-subagent-call-carries-its-usage-apart (run-on STUB tmp-path tool-turn-with-output))))
+
+
+(deftest test-the-model-usage-of-a-turn-end-reaches-the-agent-turn-end
+  ;; card ki-1d986d4f0007: 層 2(doeff-claude-code)の手番の終わりが運ぶ model ごとの使用量(手番の分の ModelUsage)と照合の訳
+  ;; (ModelUsageGap)を、層 3 の AgentTurnCompleted・AgentTurnFailed の欄 model_usage・model_usage_gap へそのまま写す。失敗ケース(前の
+  ;; 形): 層 3 の終わりに欄が無く、上の層(agora の手番の記録)が model ごとの額も照合の結末も記録できない。
+  (import doeff_claude_code.lines [Completed Failed ModelUsage ModelUsageGap])
+  (import doeff_agents.handlers.headless [end-of])
+  (import doeff_agents.effects.agent [AgentTurnCompleted AgentTurnFailed])
+  (val used #((ModelUsage "claude-opus-5-5" :input-tokens 5 :output-tokens 60 :cache-read-input-tokens 1500
+                          :cache-creation-input-tokens 60 :web-search-requests 1 :cost-usd 0.5)))
+  (val completed (end-of (Completed :result-text "ok" :cost-usd 0.5 :model-usage used :model-usage-gap None) "ctx-1"))
+  (assert (isinstance completed AgentTurnCompleted) completed)
+  (assert (= #(completed.model-usage completed.model-usage-gap) #(used None)) completed)
+  (val failed (end-of (Failed :detail "x" :cost-usd 0.75 :model-usage used :model-usage-gap ModelUsageGap.SUM-MISMATCH) "ctx-1"))
+  (assert (isinstance failed AgentTurnFailed) failed)
+  (assert (= #(failed.model-usage failed.model-usage-gap) #(used ModelUsageGap.SUM-MISMATCH)) failed)
+  ;; model ごとの使用量を名乗らない終わり(既定)は None と NOT-NAMED のまま運ぶ。
+  (val silent (end-of (Completed :result-text "ok") "ctx-1"))
+  (assert (= #(silent.model-usage silent.model-usage-gap) #(None ModelUsageGap.NOT-NAMED)) silent))

@@ -8,7 +8,7 @@
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
+(import doeff_claude_code.lines [FRESH-MARK AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
                                  InputFate Usage RateLimit AccountLimitHit RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
                                    SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning
@@ -416,7 +416,7 @@
              [#("success" True REFUSAL-TEXT)])
           refused.lines)
   ;; 本物の状態機械に同じ行を読ませると、同じ終わり(断りの欄・文)になる。
-  (var moved (dialogue.begin-turn (DialogueState :cost-mark 0.0) (typed "refused")))
+  (var moved (dialogue.begin-turn (DialogueState :cost-mark FRESH-MARK) (typed "refused")))
   (var real-end None)
   (for [line refused.lines]
     (:= moved (dialogue.on-record moved.state line.kind))
@@ -484,7 +484,7 @@
              [#("invalid_request" "refusal" "reasoning_extraction" "claude-fable-5-1")])
           flagged.lines)
   ;; 本物の状態機械に同じ行を読ませると、同じ終わり(断りの欄・文)になる。
-  (var moved (dialogue.begin-turn (DialogueState :cost-mark 0.0) (typed "flagged")))
+  (var moved (dialogue.begin-turn (DialogueState :cost-mark FRESH-MARK) (typed "flagged")))
   (var real-end None)
   (for [line flagged.lines]
     (:= moved (dialogue.on-record moved.state line.kind))

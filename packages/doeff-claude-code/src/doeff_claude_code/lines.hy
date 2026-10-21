@@ -419,6 +419,105 @@
   (setv #^ (| int None) context-window None)
   (setv #^ (| int None) max-output-tokens None))
 
+(defclass [(dataclass :frozen True)] ModelUsage []
+  "modelUsage の model 1 つの使用量(card ki-1d986d4f0007)。result の行と transcript の cost-state の行の modelUsage は会話の累積
+   (実測 CLI 2.1.292: 同じ process の 2 つ目の result の行は 1 つ目との和、--resume の process も前の値から数え続ける — costUSD の和は
+   total_cost_usd と同じ値)。TurnResult と CostMark はその累積を、手番の終わりは手番の分へ直した増分を持つ(per-turn-model-usage)。
+   model = modelUsage の鍵 / input-tokens = inputTokens / output-tokens = outputTokens / cache-read-input-tokens = cacheReadInputTokens /
+   cache-creation-input-tokens = cacheCreationInputTokens(5 分と 1 時間の内訳は CLI が名乗らない)/ web-search-requests =
+   webSearchRequests / cost-usd = costUSD。名乗らない欄は None(0 を発明しない)。窓の欄(contextWindow・maxOutputTokens)は ModelWindow。"
+  (#^ str model)
+  (setv #^ (| int None) input-tokens None)
+  (setv #^ (| int None) output-tokens None)
+  (setv #^ (| int None) cache-read-input-tokens None)
+  (setv #^ (| int None) cache-creation-input-tokens None)
+  (setv #^ (| int None) web-search-requests None)
+  (setv #^ (| float None) cost-usd None))
+
+(defclass [(dataclass :frozen True)] CostMark []
+  "手番の額の起点(CLI の会話の累積の 1 点 — 前の手番を閉じた result の行・transcript の最後の cost-state の行・新しい会話の 0)。
+   額と model ごとの使用量を同じ 1 点で持つ — 手番の額と model ごとの増分を必ず同じ起点から数えるため(card ki-1d986d4f0007)。
+   total-usd = 累積の額(total_cost_usd・totalCostUSD)/ models = その点の model ごとの累積(ModelUsage の列 — 新しい会話は空。
+   None = その点の modelUsage を知らない: 欄の無い行・古い CLI の cost-state の行)。"
+  (#^ float total-usd)
+  (setv #^ (| (get tuple #(ModelUsage ...)) None) models None))
+
+;; 新しい会話の起点: CLI は額も model ごとの使用量も 0 から数える。
+(val FRESH-MARK (CostMark 0.0 #()))
+
+;; model ごとの額の和と手番の額を照合する時の許し(USD)— CLI の costUSD と total_cost_usd は同じ和の丸めなので、越えるのは数え違い。
+(val MODEL-COST-TOLERANCE-USD 0.01)
+
+;; 手番の model ごとの使用量が手番の額と照合できなかった訳(閉じた語彙 — card ki-1d986d4f0007):
+;; UNKNOWN-MARK = 起点の model ごとの累積が分からない(額の起点が分からない・起点の行が modelUsage を持たない)/
+;; NOT-NAMED = 手番を閉じた result の行が modelUsage を名乗らない(result の行の無い終わりも)/
+;; COUNTED-BACK = model ごとの累積が起点より減った・起点に在った model が消えた(CLI が起点から数えていない)/
+;; UNPRICED = 手番の額か、ある model の額が名乗られず、和を比べられない /
+;; SUM-MISMATCH = model ごとの額の和と手番の額が MODEL-COST-TOLERANCE-USD を越えて違う。
+(defenum ModelUsageGap UNKNOWN-MARK NOT-NAMED COUNTED-BACK UNPRICED SUM-MISMATCH)
+
+(defrecord ModelUsageTally
+  "手番の model ごとの使用量と照合の結末: models = 手番の分の増分(この手番に使った model だけ — 増分が全部 0 の model は入れない。
+   増分を出せなければ None)/ gap = 照合できなかった訳(ModelUsageGap — 照合が合えば None)。"
+  (#^ (| (get tuple #(ModelUsage ...)) None) models)
+  (#^ (| ModelUsageGap None) gap))
+
+(val MODEL-USAGE-COUNTS #("input_tokens" "output_tokens" "cache_read_input_tokens" "cache_creation_input_tokens"
+                           "web_search_requests" "cost_usd"))
+
+(defk model-cost-gap [models #^ (| float None) cost]
+  {:pre [(: models (| tuple None)) (: cost (| float None))] :post [(: % (| ModelUsageGap None))]
+   :tags {:context "claude-code" :role "judgment"}}
+  "手番の model ごとの増分の額の和が手番の額と合うかを決めるため(状態機械と fake が同じ規則で照合する): 増分が無ければ NOT-NAMED・
+   手番の額か model の額が無ければ UNPRICED・差が MODEL-COST-TOLERANCE-USD を越えれば SUM-MISMATCH・合えば None。"
+  (cond
+    (is models None) ModelUsageGap.NOT-NAMED
+    (or (is cost None) (any (gfor usage models (is usage.cost-usd None)))) ModelUsageGap.UNPRICED
+    (> (abs (- (sum (gfor usage models usage.cost-usd)) cost)) MODEL-COST-TOLERANCE-USD) ModelUsageGap.SUM-MISMATCH
+    True None))
+
+(defk usage-at-mark [#^ (get tuple #(ModelUsage ...)) marked #^ str model]
+  {:pre [(: marked tuple) (: model str)] :post [(: % ModelUsage)] :tags {:context "claude-code" :role "foundation"}}
+  "起点の model ごとの累積から model 1 つの累積を引くため。起点に無い model はまだ使っていない model なので、どの欄も 0 の累積。"
+  (next (gfor usage marked :if (= usage.model model) usage)
+        (ModelUsage model #** (dfor name MODEL-USAGE-COUNTS name 0))))
+
+(defk model-usage-increment [#^ ModelUsage before #^ ModelUsage after]
+  {:pre [(: before ModelUsage) (: after ModelUsage)] :post [(: % (| ModelUsage None))]
+   :tags {:context "claude-code" :role "judgment"}}
+  "model 1 つの累積 2 点の差を手番の増分にするため: 欄ごとに後 − 前(どちらかが名乗らなければ None)。どれかの欄が減っていれば None
+   (CLI が前の点から数えていない)。"
+  (val diffs (dfor name MODEL-USAGE-COUNTS
+                   :setv b (getattr before name) :setv a (getattr after name)
+                   name (if (or (is a None) (is b None)) None (- a b))))
+  (if (any (gfor value (.values diffs) (and (is-not value None) (< value 0))))
+      None
+      (ModelUsage :model after.model #** diffs)))
+
+(defk per-turn-model-usage [#^ (| CostMark None) mark #^ (| (get tuple #(ModelUsage ...)) None) now #^ (| float None) cost]
+  {:pre [(: mark (| CostMark None)) (: now (| tuple None)) (: cost (| float None))] :post [(: % ModelUsageTally)]
+   :tags {:context "claude-code" :role "judgment"}}
+  "手番を閉じた result の行の model ごとの累積(now)を、手番の額と同じ起点(mark)からの増分へ直し、手番の額(cost — 同じ起点の差)と
+   照合するため(card ki-1d986d4f0007)。起点に無い model は 0 から数える。増分が全部 0 の model(前の手番だけで使った model)は
+   入れない。起点が分からない・now が無い・累積が減った時は増分を出さず、訳だけを返す(推測で埋めない)。"
+  (when (or (is mark None) (is mark.models None))
+    (return (ModelUsageTally :models None :gap ModelUsageGap.UNKNOWN-MARK)))
+  (when (is now None)
+    (return (ModelUsageTally :models None :gap ModelUsageGap.NOT-NAMED)))
+  (val named (frozenset (gfor usage now usage.model)))
+  (var increments [])
+  (for [usage now]
+    (<- start (usage-at-mark mark.models usage.model))
+    (<- increment (model-usage-increment start usage))
+    (.append increments increment))
+  (when (or (in None increments) (any (gfor usage mark.models (not-in usage.model named))))
+    (return (ModelUsageTally :models None :gap ModelUsageGap.COUNTED-BACK)))
+  (val used (tuple (gfor increment increments
+                         :if (any (gfor name MODEL-USAGE-COUNTS (not-in (getattr increment name) #(None 0))))
+                         increment)))
+  (<- gap (model-cost-gap used cost))
+  (ModelUsageTally :models used :gap gap))
+
 (defk merged-windows [#^ tuple earlier #^ tuple later]
   {:pre [(: earlier tuple) (: later tuple)] :post [(: % (get tuple #(ModelWindow ...)))] :tags {:context "claude-code" :role "foundation"}}
   "1 つの host の手番に読んだ result の行の窓を 1 つの列にするため(状態機械と fake が同じ規則で数える): model ごとに 1 つ、並びは最初に
@@ -450,7 +549,8 @@
    数え続ける — --fork-session の枝も親の transcript の額から数える)。手番の額へ直すのは状態機械(dialogue.hy)/
    api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)/
    model-windows = modelUsage の model ごとの窓(ModelWindow の列・object の鍵の順 — 無ければ空)/
-   timing = 計時の欄(RequestTiming)/ structured-output = structured_output(--json-schema を付けて起こした CLI の構造化の答え —
+   model-usage = modelUsage の model ごとの累積の使用量(ModelUsage の列・object の鍵の順 — 行が modelUsage の object を持たなければ
+   None。手番の分へ直すのは状態機械 — card ki-1d986d4f0007)/ timing = 計時の欄(RequestTiming)/ structured-output = structured_output(--json-schema を付けて起こした CLI の構造化の答え —
    深く凍らせた JSON の値。名乗らない・null なら None)。"
   (#^ str subtype)
   (#^ bool is-error)
@@ -462,6 +562,7 @@
   (setv #^ (| int None) api-error-status None)
   (setv #^ (get tuple #(str ...)) input-refs #())
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
+  (setv #^ (| (get tuple #(ModelUsage ...)) None) model-usage None)
   (setv #^ RequestTiming timing (field :default-factory RequestTiming))
   (setv #^ FrozenJson structured-output None))
 
@@ -548,6 +649,12 @@
 ;; model / model-windows = この手番に読んだ result の行の modelUsage の窓(model ごとに 1 つ)。手番の途中で終わった時は、それまでに
 ;; 読んだ値(本体の assistant の行が無ければ None・result の行が無ければ空 — 0 を発明しない)。
 ;;
+;; CLI が終えた手番(Completed・Failed)は、手番の model ごとの使用量と照合の結末を持つ(card ki-1d986d4f0007 — 状態機械 dialogue.hy の
+;; end-of-result が per-turn-model-usage の 1 か所で載せる): model-usage = 手番を閉じた result の行の modelUsage の累積を、額と同じ起点
+;; (CostMark)からの増分へ直した物(ModelUsage の列 — この手番に使った model だけ。出せなければ None)/ model-usage-gap = model ごとの額の
+;; 和と手番の額 cost-usd を照合できなかった訳(ModelUsageGap — 合えば None。既定は NOT-NAMED = modelUsage を名乗らない終わり)。止めた・
+;; 消えた手番は額と同じく持たない(止めた手番の分は次の手番の起点へ動かして捨てる)。
+;;
 ;; 手番の途中で CLI の process が降りた終わり(BackendLost と、注入を待って飲んだ result の Failed)は、process の終了 code と stderr の
 ;; 末尾を欄で持つ(#4207 — 文 detail の中だけでなく、上の層が型の欄で「なぜ降りたか」を読めるように)。欄の値は状態機械 dialogue.hy の
 ;; on-exit が 1 か所で載せる。stderr の末尾は STDERR-TAIL-CHARS 字まで(越えた分は頭を捨てる — stderr-tail-within)。
@@ -570,10 +677,13 @@
    数える)。始まりか終わりの額が分からなければ None(0 を発明しない)/ last-call-usage・last-call-model・model-windows は節の頭の註 /
    account-limit = この手番が口座の限度に当たった事実(AccountLimitHit — 当たっていなければ None・#3983)/
    account-refusal = この手番の要求を口座の側が断った事実(AccountRefusalHit — 断られていなければ None)/
-   model-refusal = この手番の要求を model の安全装置が断った事実(ModelRefusalHit — 断られていなければ None)。"
+   model-refusal = この手番の要求を model の安全装置が断った事実(ModelRefusalHit — 断られていなければ None)/
+   model-usage・model-usage-gap は節の頭の註。"
   (setv #^ str result-text "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
+  (setv #^ (| (get tuple #(ModelUsage ...)) None) model-usage None)
+  (setv #^ (| ModelUsageGap None) model-usage-gap ModelUsageGap.NOT-NAMED)
   (setv #^ (get tuple #(str ...)) input-refs #())
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
@@ -588,12 +698,15 @@
    cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)/
    last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit(#3983)・account-refusal・model-refusal は Completed と同じ /
    exit-code・stderr-tail = 注入を待って飲んだ result で終わる前に CLI の process が降りた時の、process の終了 code と stderr の末尾
-   (STDERR-TAIL-CHARS 字まで — #4207)。result の行で閉じた失敗(process は降りていない)・注入の断りの終わりは None。"
+   (STDERR-TAIL-CHARS 字まで — #4207)。result の行で閉じた失敗(process は降りていない)・注入の断りの終わりは None /
+   model-usage・model-usage-gap は節の頭の註(result の行の無い終わりは None と NOT-NAMED)。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
+  (setv #^ (| (get tuple #(ModelUsage ...)) None) model-usage None)
+  (setv #^ (| ModelUsageGap None) model-usage-gap ModelUsageGap.NOT-NAMED)
   (setv #^ (get tuple #(str ...)) input-refs #())
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
@@ -868,8 +981,26 @@
                             :context-window (int-at numbers "contextWindow")
                             :max-output-tokens (int-at numbers "maxOutputTokens")))))
 
+(defk model-usage-of [record]
+  {:pre [(: record dict)] :post [(: % (| (get tuple #(ModelUsage ...)) None))] :tags {:context "claude-code" :role "foundation"}}
+  "行(result の行・transcript の cost-state の行 — 同じ欄の名)の modelUsage を model ごとの累積の使用量(ModelUsage の列・object の鍵の順)
+   にするため(card ki-1d986d4f0007)。行が modelUsage の object を持たなければ None(空の object は空の列 — まだ何の model も使っていない)。
+   値が object でない model・空の名は飛ばす。"
+  (val model-usage (.get record "modelUsage"))
+  (if (isinstance model-usage dict)
+      (tuple (gfor #(model numbers) (.items model-usage) :if (and (isinstance model str) model (isinstance numbers dict))
+                   (ModelUsage :model model
+                               :input-tokens (int-at numbers "inputTokens")
+                               :output-tokens (int-at numbers "outputTokens")
+                               :cache-read-input-tokens (int-at numbers "cacheReadInputTokens")
+                               :cache-creation-input-tokens (int-at numbers "cacheCreationInputTokens")
+                               :web-search-requests (int-at numbers "webSearchRequests")
+                               :cost-usd (number-at numbers "costUSD"))))
+      None))
+
 (defn classify-result [#^ dict record]
   (TurnResult :model-windows (run (model-windows-of (object-at record "modelUsage")))
+              :model-usage (run (model-usage-of record))
               :subtype (text-at record "subtype")
               :is-error (is (.get record "is_error") True)
               :terminal-reason (text-at record "terminal_reason")
@@ -949,18 +1080,26 @@
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 
 (defk recorded-cost [#^ str transcript-text]
-  {:pre [(: transcript-text str)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
-  "--resume(--fork-session を含む)で起こした CLI が数え始める額を、handler がその会話の transcript(jsonl の本文)から知るため:
-   CLI は降りる時に会話の累積の額を {\"type\":\"cost-state\", \"totalCostUSD\": 数} の行で記し、続きの process と枝の process は
-   最後のその行の額から数え続ける(実測 2.1.283・#883)。読むのは最後の cost-state の行の totalCostUSD の 1 欄だけ。
-   行が無い・最後の行の値が数でない(bool は数えない)なら None(0 を発明しない — CLI の版で形が変わっても誤った額を出さない)。"
+  {:pre [(: transcript-text str)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
+  "--resume(--fork-session を含む)で起こした CLI が数え始める額と model ごとの使用量(CostMark)を、handler がその会話の transcript
+   (jsonl の本文)から知るため: CLI は降りる時に会話の累積を {\"type\":\"cost-state\", \"totalCostUSD\": 数, \"modelUsage\": {…}} の行で
+   記し、続きの process と枝の process は最後のその行から数え続ける(実測 2.1.283・#883・modelUsage は 2.1.292 — card ki-1d986d4f0007)。
+   読むのは最後の cost-state の行の totalCostUSD と modelUsage だけ。行が無い・最後の行の額が数でない(bool は数えない)なら None
+   (0 を発明しない — CLI の版で形が変わっても誤った額を出さない)。modelUsage の無い行は額だけの起点(models None)。"
   (val found (next (gfor line (reversed (.splitlines transcript-text))
                          :if (in "\"cost-state\"" line)
                          :setv record (parse-record line)
                          :if (and (is-not record None) (= (.get record "type") "cost-state"))
                          record)
                    None))
-  (if (is found None) None (number-at found "totalCostUSD")))
+  (val total (if (is found None) None (number-at found "totalCostUSD")))
+  (<- models (model-usage-of (or found {})))
+  (if (is total None) None (CostMark total models)))
+
+(defk mark-of-result [#^ TurnResult result]
+  {:pre [(: result TurnResult)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
+  "手番を閉じた result の行を次の手番の起点(CostMark)にするため — 額と model ごとの累積を同じ行から取る。額を名乗らない行は None。"
+  (if (is result.cost-usd None) None (CostMark result.cost-usd result.model-usage)))
 
 ;; --- subagent の transcript の呼び(純関数 — card ki-e798888dce4e) ------------------------------------------
 

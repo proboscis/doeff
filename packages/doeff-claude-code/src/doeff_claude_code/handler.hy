@@ -66,7 +66,7 @@
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
                                  TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SubagentTranscript SubagentTranscriptProblem
-                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step])
+                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
@@ -243,7 +243,7 @@
 (defclass SessionRuntime []
   "1 つの会話の状態(handler の中だけ)。session-id は ForkSession の init を読むまで空。
    cost-mark = 最初の process の手番の額の起点(CLI の累積の額がどこから数えるか — 新しい会話は 0・知らない続きは None)。"
-  (defn __init__ [self #^ str session-id #^ ClaudeHome home #^ str canonical-cwd #^ (| float None) [cost-mark None]]
+  (defn __init__ [self #^ str session-id #^ ClaudeHome home #^ str canonical-cwd #^ (| CostMark None) [cost-mark None]]
     (setv self.session-id session-id
           self.home home
           self.canonical-cwd canonical-cwd
@@ -338,7 +338,7 @@
          (all (gfor log (.values self.turns) log.end-read))
          (or (is self.process None) (not (.alive self.process)))))
 
-  (defn closed-record [self #^ (| float None) cost-mark]
+  (defn closed-record [self #^ (| CostMark None) cost-mark]
     "外す時に残す小さな記録を作るため(cost-mark = 次に起こす process の額の起点の控え — release-closed が前の process の終わり方から
      決めた物)。会話の lock の中で呼ぶ。"
     (ClosedSession :session-id self.session-id :current-seq self.current-seq :next-line-seq self.next-line-seq :launches self.launches :stopped-because self.stopped-because
@@ -359,7 +359,7 @@
   (#^ int next-line-seq)
   (#^ int launches)
   (#^ (| StopReason None) stopped-because)
-  (#^ (| float None) cost-mark)
+  (#^ (| CostMark None) cost-mark)
   (#^ bool warmed-fresh))
 
 
@@ -409,7 +409,7 @@
       (when (is (.get self.runtimes session-id) runtime)
         (del (get self.runtimes session-id)))))
 
-  (defn #^ bool release [self #^ SessionRuntime runtime #^ (| float None) cost-mark]
+  (defn #^ bool release [self #^ SessionRuntime runtime #^ (| CostMark None) cost-mark]
     "閉じて読み終えた会話の生きた状態を外し、小さな記録(ClosedSession)だけを残すため(頭の註の KEPT-TURNS)。外した状態の手番の記録も
      空にする — 降りた process の stdout に残った行を読み手の thread が後から渡しても、記録に積まない(on-line は手番の記録が無ければ
      積まない)。外す前に lock の中で drained を読み直す(間に続きが同じ状態で手番を始めていれば外さない)。答え = 外したか。"
@@ -679,7 +679,7 @@
     (except [FileNotFoundError] None)))
 
 (defk transcript-cost-mark [#^ str path]
-  {:pre [(: path str)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
+  {:pre [(: path str)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
   "transcript の file path を読み、最後の cost-state の額を読むため(recorded-cost-mark が TRANSCRIPT-THREADS の thread の新しい VM で回す —
    読みも行の解きも scheduler の thread の外)。読むのは末尾だけ(COST-TAIL-BYTES の幅を狭い順に — card ki-a264a73efcce。前は 200 MB の
    transcript を丸ごと読み、詰まった disk の上で起こすたびに 15〜74 秒かかった)。file が無い・読めない・最後の幅にも行が無い・値が数で
@@ -701,13 +701,13 @@
   None)
 
 (defk recorded-cost-mark [#^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
-  {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| float None))]
+  {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| CostMark None))]
    :tags {:context "claude-code" :role "foundation"}}
   "手番の額の起点を、この handler が前の process を見ていない会話(新しい host での続き・持ち込んだ transcript・枝の親)でも知るため、
    CLI が数え始める額 = その会話の transcript の最後の cost-state の額を読む(置き場は transcript-present と同じ transcript-path)。
    読むのは TRANSCRIPT-THREADS の thread(頭の註の下の値の註)。file が無い・読めない・行が無い・値が数でなければ None。"
   (val path (transcript-path home.config-dir canonical-cwd session-id))
-  (<- mark (| float None) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (transcript-cost-mark path))) keep-nothing))
+  (<- mark (| CostMark None) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (transcript-cost-mark path))) keep-nothing))
   mark)
 
 (defk rotate-before-resume [#^ ClaudeCodeHost host #^ ClaudeHome home #^ str canonical-cwd #^ str session-id]
@@ -1163,27 +1163,27 @@
                 :session-id turn.session-id :turn-seq turn.turn-seq))))
   None)
 
-(defk launch-cost-mark [origin #^ (| float None) recorded #^ bool had-previous #^ (| int None) previous-exit
-                        #^ (| float None) cost-mark #^ (| float None) start-mark]
-  {:pre [(: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| float None)) (: had-previous bool)
-         (: previous-exit (| int None)) (: cost-mark (| float None)) (: start-mark (| float None))]
-   :post [(: % (| float None))] :tags {:context "claude-code" :role "judgment"}}
+(defk launch-cost-mark [origin #^ (| CostMark None) recorded #^ bool had-previous #^ (| int None) previous-exit
+                        #^ (| CostMark None) cost-mark #^ (| CostMark None) start-mark]
+  {:pre [(: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| CostMark None)) (: had-previous bool)
+         (: previous-exit (| int None)) (: cost-mark (| CostMark None)) (: start-mark (| CostMark None))]
+   :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "judgment"}}
   "新しく起動する process の CLI が数え始める額(ターンの費用の起点)を、ターンの process と入力なしで起動する process の両方で 1 か所
-   で決めるため。CLI は終了する時に会話の累積の額を transcript に記録し、--resume・--fork-session の process は最後に記録した額から
+   で決めるため(起点は額と model ごとの累積の組 CostMark — card ki-1d986d4f0007)。CLI は終了する時に会話の累積の額を transcript に記録し、--resume・--fork-session の process は最後に記録した額から
    数え続ける(実測 2.1.283・#883 — ターンごとには記録せず、終了する時に 1 回)。新しい会話(FreshSession)は 0(何も使っていない —
    入力の前に停止した事前起動の process の後も 0)。ほかは recorded(transcript の最後の cost-state の額 — CLI が数え始める額そのもの)
    が在ればそれ。無ければ前の process の終わり方で決める: 前の process が無い・終了コード 0 = 今の起点(cost-mark)/ SIGKILL(額を
    記録できずに消えた — CLI は前の process が始まった時の額から数える)= 前の process の始まりの起点(start-mark)/ ほか(期限の
    SIGTERM・誤りの終了)= 分からないので None(そのターンの費用は None。次のターンからは読んだ行の累積で数え直す)。"
   (match origin
-    (FreshSession) 0.0
+    (FreshSession) FRESH-MARK
     _ (if (is-not recorded None)
           recorded
           (<- (process-cost-mark had-previous previous-exit cost-mark start-mark)))))
 
-(defk process-cost-mark [#^ bool had-previous #^ (| int None) previous-exit #^ (| float None) cost-mark #^ (| float None) start-mark]
-  {:pre [(: had-previous bool) (: previous-exit (| int None)) (: cost-mark (| float None)) (: start-mark (| float None))]
-   :post [(: % (| float None))] :tags {:context "claude-code" :role "judgment"}}
+(defk process-cost-mark [#^ bool had-previous #^ (| int None) previous-exit #^ (| CostMark None) cost-mark #^ (| CostMark None) start-mark]
+  {:pre [(: had-previous bool) (: previous-exit (| int None)) (: cost-mark (| CostMark None)) (: start-mark (| CostMark None))]
+   :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "judgment"}}
   "transcript に額の記録が無い時の、次の process の CLI が数え始める額を、前の process の終わり方から決めるため(launch-cost-mark の
    後半 — 閉じた会話を外す時に、生きた状態の代わりに残す控えもこれで決める・release-closed)。"
   (cond
@@ -1191,9 +1191,9 @@
     (= previous-exit (- signal.SIGKILL)) start-mark
     True None))
 
-(defk launch-mark-of [#^ SessionRuntime runtime origin #^ (| float None) recorded]
-  {:pre [(: runtime SessionRuntime) (: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| float None))]
-   :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
+(defk launch-mark-of [#^ SessionRuntime runtime origin #^ (| CostMark None) recorded]
+  {:pre [(: runtime SessionRuntime) (: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| CostMark None))]
+   :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
   "会話の前の process の終わり方と今の状態機械の起点を読み、新しく起動する process の費用の起点(launch-cost-mark)を出すため。"
   (val previous (with [runtime.lock] runtime.process))
   (val state (with [runtime.lock] runtime.state))
@@ -1202,9 +1202,9 @@
   mark)
 
 (defk spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
-                  #^ (| float None) recorded #^ str key]
+                  #^ (| CostMark None) recorded #^ str key]
   {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: spec ClaudeSessionSpec)
-         (: origin (| FreshSession ResumeSession ForkSession)) (: input TurnInput) (: recorded (| float None)) (: key str)]
+         (: origin (| FreshSession ResumeSession ForkSession)) (: input TurnInput) (: recorded (| CostMark None)) (: key str)]
    :post [(: % (| int LaunchFailed))] :tags {:context "claude-code" :role "foundation"}}
   "ターンの process を起動して入力を書くため。key = この process の起動条件のキー(次のターンの使い回しの判断が読む)。
    結果 = ターンの番号か LaunchFailed(実行ファイルが無い等)。新しい process の状態機械へ引き継ぐのは会話の id と費用の起点
@@ -1241,10 +1241,10 @@
     (apply-transition runtime binding transition)
     turn-seq))
 
-(defk spawn-idle [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ (| float None) recorded
+(defk spawn-idle [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ (| CostMark None) recorded
                   #^ str key]
   {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: spec ClaudeSessionSpec) (: origin (| FreshSession ResumeSession))
-         (: recorded (| float None)) (: key str)]
+         (: recorded (| CostMark None)) (: key str)]
    :post [(: % (| LaunchFailed None))] :tags {:context "claude-code" :role "foundation"}}
   "会話の process を、入力を書かずに起動して待たせるため(ClaudeWarmSession — ターンは開かない)。状態機械は最初の入力を待つマーク
    (awaiting-first-input)つきで新しくする — 最初の入力までは SessionStart の hook の行だけをターンの外の出力と数えない(dialogue.hy)。
@@ -1418,7 +1418,7 @@
 (defrecord LaunchReady
   "新しい process を起動する前の準備が済んだ: recorded = 続き・枝の親の transcript の最後の cost-state の額(CLI が数え始める額 —
    無ければ None)・unrotatable = 続きの transcript が上限を越えるのに置き直せなかった(起動が期限を越えた時に訳を足す — 無ければ None)。"
-  (#^ (| float None) recorded)
+  (#^ (| CostMark None) recorded)
   (#^ (| TranscriptUnrotatable None) unrotatable))
 
 (defk prepare-launch [#^ ClaudeCodeHost host runtime #^ ClaudeSessionSpec spec origin #^ str canonical #^ str target-id
@@ -1499,7 +1499,7 @@
     ;; transcript に額の行が無い時の起点: 新しい会話の CLI は 0 から数える。この handler が前の process を見ていない続き・枝は
     ;; 分からない(None — 最初の手番の額は None)。
     (setv runtime (SessionRuntime (if (isinstance origin ForkSession) "" target-id) spec.home canonical
-                                  :cost-mark (if (isinstance origin FreshSession) 0.0 None)))
+                                  :cost-mark (if (isinstance origin FreshSession) FRESH-MARK None)))
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
   (<- launching (GetMonotonic))
   (<- launching-wall (GetTime))
@@ -1544,7 +1544,7 @@
   ;; 外した会話は、記録から生きた状態を作り直す(start-turn と同じ)。
   (val known (if (is closed None) held (.reopen host closed spec.home canonical)))
   (val runtime (if (is known None)
-                   (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) 0.0 None))
+                   (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) FRESH-MARK None))
                    known))
   (when (is known None) (.register host runtime))
   ;; ターンを 1 度も始めていない会話(新しく作る・事前起動しただけ)は、起動できなかった時に忘れる(start-turn と同じ)。

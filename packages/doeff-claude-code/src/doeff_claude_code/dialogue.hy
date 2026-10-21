@@ -28,6 +28,9 @@
 ;;;   transcript へ記した額から数え続ける)。だから host の手番の額 = 手番を閉じた result の行の累積 − 手番の起点(cost-mark = 前の手番を
 ;;;   閉じた result の行の累積)、usage = 手番の途中に読んだ result の行の usage の和 — 額と usage を同じ行の集まりで数える。
 ;;;   起点が分からなければ額は None(次の手番からは読んだ行の累積で数え直す)。起点を次の process へ引き継ぐのは handler(spawn-turn)。
+;;;   result の行の modelUsage も会話の累積(実測 2.1.292)なので、model ごとの使用量も同じ起点(cost-mark は額と model ごとの累積の組
+;;;   CostMark)からの差で手番の分へ直し、model ごとの額の和を手番の額と照合する(card ki-1d986d4f0007 — 起点・再起動・止めた手番の扱いは
+;;;   額と同じ 1 つの値が運ぶので、2 つの起点がずれない)。
 ;;;
 ;;; stdout の行は lines.hy が分類した型(ClaudeLineKind)で受ける — JSON の読みは lines.hy の 1 か所だけ。
 ;;; stdin へ書く行の綴り(JSON へ書く境界)はこの file の dumps の 1 か所。
@@ -42,7 +45,7 @@
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT AccountRefusalHit ACCOUNT-REFUSAL-ERRORS ModelRefusalHit
-                                 STOP-REASON-REFUSAL stderr-tail-within])
+                                 STOP-REASON-REFUSAL stderr-tail-within CostMark mark-of-result per-turn-model-usage])
 (import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
@@ -81,8 +84,8 @@
    turn-refs = この host の手番に入れた入力の ref / injections = 足した入力(Injection)の列 /
    stop = 止めるの求め / deferred-result = 注入を待って飲んだ result の行(TurnResult)/
    permissions = 答え待ちの許可の問い(PermissionRequested)/
-   cost-mark = 手番の額の起点(CLI の累積の額 total_cost_usd の、前の手番を閉じた result の行の値。process の始まりは handler が
-   引き継いだ値 — None = 分からない)/ start-mark = この process の始まりの cost-mark(この process が額を記さずに消えた時、次の
+   cost-mark = 手番の額の起点(CostMark — CLI の累積の額 total_cost_usd と model ごとの累積 modelUsage の、前の手番を閉じた result の
+   行の値。process の始まりは handler が引き継いだ値 — None = 分からない)/ start-mark = この process の始まりの cost-mark(この process が額を記さずに消えた時、次の
    process の CLI が数え始める額 — handler が読む)/ turn-usage = この host の手番の途中に読んだ result の行の usage の和 /
    last-call-usage・last-call-model = この host の手番に読んだ本体の会話(parent_tool_use_id が null)の最後の assistant の行の usage と
    model(まだ無ければ None)/ turn-windows = この host のターンに読んだ result の行の model ごとの窓(ターンの終わりの 3 欄 — #3744)/
@@ -102,8 +105,8 @@
   (setv #^ (| NoStop StopSignal StopControl) stop (NoStop))
   (setv #^ (| TurnResult None) deferred-result None)
   (setv #^ (get tuple #(PermissionRequested ...)) permissions #())
-  (setv #^ (| float None) cost-mark None)
-  (setv #^ (| float None) start-mark None)
+  (setv #^ (| CostMark None) cost-mark None)
+  (setv #^ (| CostMark None) start-mark None)
   (setv #^ Usage turn-usage (field :default-factory Usage))
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
@@ -200,20 +203,27 @@
 (defn end-of-result [#^ TurnResult result #^ DialogueState state]
   "result の行 → Completed | Failed。誤りの detail は CLI が名乗った文ちょうど(無ければ subtype)。
    usage = 手番の途中に読んだ result の行の usage の和(state.turn-usage — この行の分を足した後の状態を渡す)・
-   cost-usd = この行の累積の額 − 手番の起点(state.cost-mark)。どちらかが分からない・差が負(CLI が起点の額から数えていない)なら None。"
+   cost-usd = この行の累積の額 − 手番の起点(state.cost-mark)。どちらかが分からない・差が負(CLI が起点の額から数えていない)なら None。
+   model-usage・model-usage-gap = この行の model ごとの累積を同じ起点からの増分へ直し、額と照合した結末(per-turn-model-usage —
+   card ki-1d986d4f0007)。"
   (setv refs (result-input-refs result state))
   (setv total result.cost-usd mark state.cost-mark)
-  (setv cost (if (or (is total None) (is mark None) (< total mark)) None (- total mark)))
+  (setv cost (if (or (is total None) (is mark None) (< total mark.total-usd)) None (- total mark.total-usd)))
+  (setv tally (run (per-turn-model-usage mark result.model-usage cost)))
   (if result.is-error
       (Failed :detail (or (.strip result.result-text) result.subtype "error")
               :api-error-status result.api-error-status
               :terminal-reason result.terminal-reason
               :usage state.turn-usage
               :cost-usd cost
+              :model-usage tally.models
+              :model-usage-gap tally.gap
               :input-refs refs)
       (Completed :result-text result.result-text
                  :usage state.turn-usage
                  :cost-usd cost
+                 :model-usage tally.models
+                 :model-usage-gap tally.gap
                  :input-refs refs)))
 
 (defn #^ DialogueState closed-turn [#^ DialogueState state]
@@ -239,7 +249,7 @@
    閉じた result の行(在ればその行の累積の額が次の手番の額の起点 — 止めた手番の額は数えずに捨て、次の手番へ混ぜない。行が無い
    終わりは起点を動かさない)。終わりには閉じる前の state の最後の呼びと窓を載せる(with-last-call)。"
   (setv closed (closed-turn state))
-  (Transition :state (if (is priced-by None) closed (replace closed :cost-mark priced-by.cost-usd))
+  (Transition :state (if (is priced-by None) closed (replace closed :cost-mark (run (mark-of-result priced-by))))
               :end (with-last-call end state) :retire retire))
 
 
@@ -380,7 +390,7 @@
         (if survivors
             (Transition :state (replace (closed-turn open-closed) :in-flight True :turn-refs survivors
                                         :injections (tuple (gfor ref survivors (Injection ref "queued")))
-                                        :cost-mark result.cost-usd)
+                                        :cost-mark (run (mark-of-result result)))
                         :end (with-last-call (Interrupted :process-kept True :surviving-refs survivors :dropped-refs dropped)
                                              open-closed)
                         :continues True)

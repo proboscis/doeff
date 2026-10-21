@@ -23,7 +23,7 @@
                                   IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
-                                 ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
+                                 ModelWindow ModelUsage model-cost-gap merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
                                  HookNotice HookPhase SubagentTranscript SUBAGENT-TASK-TYPE
                                  ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed])
@@ -156,6 +156,9 @@
   (setv #^ (| str None) lose-stderr None)
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
+  ;; Completed / Failed に載せる手番の model ごとの使用量(本番の handler が modelUsage の累積の差から数える増分の代わり — None = 名乗らない)。
+  ;; 照合の訳は本番と同じ規則(model-cost-gap)で cost-usd と比べて決める(card ki-1d986d4f0007)。
+  (setv #^ (| (get tuple #(ModelUsage ...)) None) model-usage None)
   (setv #^ int lines 0)
   ;; 道具なしで考える秒(0 = 既定の短い手番)。本文の行だけで、道具の行を出さずにこの秒まで走る。
   (setv #^ float think-seconds 0.0)
@@ -506,6 +509,8 @@
   (for [injection turn.injections]
     (<- (emit session turn (InputFate injection.ref "completed"))))
   (<- (finish session turn (Completed :result-text text :usage turn.reply.usage :cost-usd turn.reply.cost-usd
+                                      :model-usage turn.reply.model-usage
+                                      :model-usage-gap (! (model-cost-gap turn.reply.model-usage turn.reply.cost-usd))
                                       :input-refs (tuple turn.refs))))
   None)
 
@@ -539,6 +544,7 @@
   (<- (emit-all session turn [(AssistantMessage :text refusal.text :error refusal.error :model SYNTHETIC-MODEL :usage SYNTHETIC-USAGE)
                               (TurnResult REFUSAL-RESULT-SUBTYPE True :result-text refusal.text :usage reply.usage)]))
   (<- (finish session turn (Failed (or (.strip refusal.text) REFUSAL-RESULT-SUBTYPE) :usage reply.usage :cost-usd reply.cost-usd
+                                   :model-usage reply.model-usage :model-usage-gap (! (model-cost-gap reply.model-usage reply.cost-usd))
                                    :input-refs (tuple turn.refs))))
   None)
 
@@ -554,6 +560,7 @@
                                                 :stop-reason STOP-REASON-REFUSAL :refusal-category refusal.category)
                               (TurnResult REFUSAL-RESULT-SUBTYPE True :result-text refusal.text :usage reply.usage)]))
   (<- (finish session turn (Failed (or (.strip refusal.text) REFUSAL-RESULT-SUBTYPE) :usage reply.usage :cost-usd reply.cost-usd
+                                   :model-usage reply.model-usage :model-usage-gap (! (model-cost-gap reply.model-usage reply.cost-usd))
                                    :input-refs (tuple turn.refs))))
   None)
 
@@ -572,6 +579,8 @@
         (<- (emit-limit session turn))
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "failed" :usage reply.usage)))
         (<- (finish session turn (Failed reply.fail :terminal-reason "failed" :usage reply.usage :cost-usd reply.cost-usd
+                                         :model-usage reply.model-usage
+                                         :model-usage-gap (! (model-cost-gap reply.model-usage reply.cost-usd))
                                          :input-refs (tuple turn.refs)))))
     True
       (<- (finish session turn (BackendLost reply.lose :exit-code reply.lose-exit-code
