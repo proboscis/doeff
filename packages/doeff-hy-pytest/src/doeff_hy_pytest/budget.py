@@ -47,6 +47,15 @@
   (``time.process_time`` — 自分の process の全 thread だけ)には出ない(card ki-f35bb95eddda・agora-redesign #3858 — 上限
   60 秒の頃に 105 秒かかった印 real_world の検が CPU 秒では赤にならなかった)。壁の時計は機体の負荷(並べて走る他の検・席)で
   伸びるので、日次の Pod の秒は手元より大きく出る。
+- 検ごとの宣言 ``declare_process_tree_cpu(検, 理由)`` — 印の上限に当たる検のうち、重さが子 process(と自分の thread)の CPU に在り
+  外を待たない検(型検査の道具を子で撃つ検など)だけが、壁の時計の代わりに process の木の CPU 秒(自分と子孫の user+sys —
+  ``doeff_hy_pytest.tree_cpu``)を同じ秒の上限で判じると宣言する(agora-redesign card ki-ef6d57782313)。壁の時計は機体の混み
+  (CPU の待ちと disk の待ち)で伸び、同じ検が混んだ回だけ赤になる — 日次 2026-10-22 04:00 JST の回で、子で型検査を撃つ検が
+  壁の時計 33 秒・自分の CPU 0.96 秒で上限 30 秒を越え、上限を外すと緑だった。木の CPU 秒は検がした仕事の量で、混みでは
+  ほとんど変わらない。壁の時計は CPU を使わずに止まった検を切る安全弁(上限 × ``TREE_CPU_WALL_BACKSTOP_FACTOR``)に退く
+  (agora-controllers の全体 linter の上限を CPU 秒にした形と同じ — 9c1a6659f7)。木の CPU 秒を読めない機体(``/proc`` の無い
+  macOS)では宣言した検も壁の時計の上限で判じる(今までより緩くならない)。外を待つ検(socket・HTTP・待ち受け)は宣言しない —
+  待ちは CPU 秒に出ない。
 - 収集の判定は CPU 時間(``time.process_time``)のまま行い、壁の時計を併記する。import は子 process も待ちも持たない前提なので、
   遅さはほぼ CPU 時間に出て、CPU 時間は機体の混み具合で合否が変わりにくい。
 - 実行は call の段階だけを測り、setup と teardown(fixture)は含めない。session / module の範囲の fixture の準備は、
@@ -112,6 +121,7 @@ from doeff_hy_pytest.python_calls import (
     summary_line,
     unmeasurable_line,
 )
+from doeff_hy_pytest.tree_cpu import TreeCpu, TreeCpuSampler, TreeCpuUnmeasured
 
 MARKER_CALL_BUDGET_INI = "doeff_test_call_budget_by_marker"
 COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
@@ -133,8 +143,9 @@ DEFAULT_CALL_BUDGET_STEPS = 100_000
 # #2670 issuecomment-5967500669)が 10 倍では赤になったため。空回りは 30 秒で数十億歩まで行くので、20 倍でも 1〜2 秒で捕まる。
 # repo は ini の step_budget_multiplier で替えられる(#3147)。
 DEFAULT_RUNAWAY_STEPS_MULTIPLIER = 20
-# 判定の単位(上限・登録・文の書き方が分かれる)— 収集の上限は CPU 秒・印ごとの実行の上限は壁の時計の秒・印の無い実行は歩数。
-Unit = Literal["cpu-seconds", "wall-seconds", "steps"]
+# 判定の単位(上限・登録・文の書き方が分かれる)— 収集の上限は CPU 秒・印ごとの実行の上限は壁の時計の秒(木の CPU 秒を宣言した検は
+# process の木の CPU 秒)・印の無い実行は歩数。
+Unit = Literal["cpu-seconds", "wall-seconds", "tree-cpu-seconds", "steps"]
 
 Phase = Literal["call", "collect"]
 # 測りから引く区間の種類(CompileCounter)。
@@ -148,6 +159,11 @@ Mode = Literal["report", "fail"]
 STALE_RATIO = 0.5
 # 検の関数に付ける「要る歩数」の宣言の属性 — declare_step_budget が付け、実行の判定が読む(agora-redesign #2670 の 3)。
 DECLARED_STEPS_ATTRIBUTE = "__doeff_step_budget__"
+# 検の関数に付ける「process の木の CPU 秒で判じる」宣言の属性 — declare_process_tree_cpu が付け、実行の判定が読む(card ki-ef6d57782313)。
+DECLARED_TREE_CPU_ATTRIBUTE = "__doeff_process_tree_cpu__"
+# 木の CPU 秒で判じる検の壁の時計の安全弁の倍率 — 印の秒 × この値を壁の時計で越えた検は、CPU 秒が上限の内でも赤(CPU を使わずに
+# 止まった・待った検を通さない)。2 = agora-controllers の全体 linter の安全弁と同じ値(9c1a6659f7 の WALL-BACKSTOP-FACTOR)。
+TREE_CPU_WALL_BACKSTOP_FACTOR = 2
 
 
 @dataclass(frozen=True)
@@ -408,7 +424,7 @@ class Budgets:
         """その単位の超過を赤にするか。歩数は不変条件の検査の有無で変わらない(検査は歩の中で走り、歩を足さない)ので、
         検査つきの build でも fail の形なら赤にする — 秒では判じられなかった doeff 自身の走行も歩数なら判じられる。"""
         match unit:
-            case "cpu-seconds" | "wall-seconds":
+            case "cpu-seconds" | "wall-seconds" | "tree-cpu-seconds":
                 return self.fails_over_budget
             case "steps":
                 return self.mode == "fail"
@@ -490,6 +506,8 @@ class Measurement:
     # 区間の Python の呼び出しの数(sys.monitoring の CALL 事象 — 印 --doeff-python-calls の走りで歩数を宣言した検だけ・他は None)。
     # 数えた検の CPU 秒は監視の上乗せ(1.5〜1.7 倍)を含むので、CPU 秒の比べ(CPU 秒 ÷ 歩数)からは除く。
     python_calls: int | None = None
+    # 区間の process の木の CPU 秒(木の CPU 秒で判じると宣言した検だけ — 他の検・収集は None。読めない機体では測れない訳)。
+    tree: TreeCpu | TreeCpuUnmeasured | None = None
 
     @property
     def judged_steps(self) -> int:
@@ -511,6 +529,14 @@ class Measurement:
         待ちの時間は残る — 印の付いた検の重さはそこに在る)。"""
         return self.wall_seconds - self.compile.wall_seconds - self.imports.wall_seconds - self.gc.wall_seconds
 
+    @property
+    def judged_tree_cpu_seconds(self) -> float:
+        """木の CPU 秒で判じる時の値 = 自分と子孫の CPU 秒の和から、変換と依存の初回の import と GC の CPU 秒(どれも自分の process の分)
+        を引いた値。木を測っていない測りを木の CPU 秒で判じない。"""
+        if not isinstance(self.tree, TreeCpu):
+            raise AssertionError(f"木の CPU 秒の無い測りを木の CPU 秒で判じた: {self.key}")
+        return self.tree.seconds - self.compile.cpu_seconds - self.imports.cpu_seconds - self.gc.cpu_seconds
+
 
 @dataclass(frozen=True)
 class WithinBudget:
@@ -525,6 +551,8 @@ def judged_value(measurement: Measurement, unit: Unit) -> float:
             return measurement.judged_cpu_seconds
         case "wall-seconds":
             return measurement.judged_wall_seconds
+        case "tree-cpu-seconds":
+            return measurement.judged_tree_cpu_seconds
         case "steps":
             return float(measurement.judged_steps)
 
@@ -586,6 +614,31 @@ def declared_steps_of(test: object) -> StepDeclaration | None:
     """検の関数に付いた宣言(無ければ None)。"""
     declaration = getattr(test, DECLARED_STEPS_ATTRIBUTE, None)
     return declaration if isinstance(declaration, StepDeclaration) else None
+
+
+@dataclass(frozen=True)
+class TreeCpuDeclaration:
+    """検 1 本の「印の秒の上限を process の木の CPU 秒で判じる」宣言と理由(1 行 — 重さが子 process の CPU に在り外を待たない訳)。"""
+
+    reason: str
+
+
+def declare_process_tree_cpu(test: Callable[..., object], reason: str) -> None:
+    """印の秒の上限に当たる検 1 本を、壁の時計でなく process の木の CPU 秒(自分と子孫の user+sys)で判じると宣言する
+    (card ki-ef6d57782313 — 頭の註の「検ごとの宣言 declare_process_tree_cpu」)。上限の値は印の秒のまま変えない。
+
+    重さが子 process(と自分の thread)の CPU に在り、外(socket・HTTP・待ち受け)を待たない検だけに置く — 待ちは CPU 秒に出ない。
+    壁の時計は安全弁として残る(印の秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)。印の上限に当たらない検に置いても判定は変わらない。
+    Hy の検では deftest の直後に ``(declare-process-tree-cpu test-名 "理由")`` と書く。読めない値は import の時に止める。"""
+    if not isinstance(reason, str) or not reason.strip() or "\n" in reason.strip():
+        raise ValueError(f"理由は空でない 1 行: {reason!r}")
+    setattr(test, DECLARED_TREE_CPU_ATTRIBUTE, TreeCpuDeclaration(reason.strip()))
+
+
+def declared_tree_cpu_of(test: object) -> TreeCpuDeclaration | None:
+    """検の関数に付いた木の CPU 秒の宣言(無ければ None)。"""
+    declaration = getattr(test, DECLARED_TREE_CPU_ATTRIBUTE, None)
+    return declaration if isinstance(declaration, TreeCpuDeclaration) else None
 
 
 @dataclass(frozen=True)
@@ -725,14 +778,24 @@ def call_budget_for(markers: Iterable[str], by_marker: Mapping[str, float]) -> f
 
 
 def judge_call(
-    budgets: Budgets, markers: Sequence[str], measurement: Measurement, declaration: StepDeclaration | None
+    budgets: Budgets,
+    markers: Sequence[str],
+    measurement: Measurement,
+    declaration: StepDeclaration | None,
+    tree_cpu: TreeCpuDeclaration | None = None,
 ) -> Verdict | None:
     """通った検 1 本の実行(call)を判じる(None = 測らない)。印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、
     歩数に重さが出ないので壁の時計の秒で判じる(重さは子 process と待ちに在り、process の CPU 秒には出ない — card
     ki-f35bb95eddda・agora-redesign #3858)。それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も
-    当たらない検は判じない。"""
+    当たらない検は判じない。印の上限に当たり木の CPU 秒を宣言した検(tree_cpu)は、木を測れた時だけ同じ秒を木の CPU 秒で判じ、
+    壁の時計が安全弁(秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)を越えれば CPU 秒に依らず赤(card ki-ef6d57782313)。"""
     marker_seconds = call_budget_for(markers, budgets.call_seconds_by_marker)
     if marker_seconds is not None:
+        if tree_cpu is not None and isinstance(measurement.tree, TreeCpu):
+            backstop = marker_seconds * TREE_CPU_WALL_BACKSTOP_FACTOR
+            if measurement.judged_wall_seconds > backstop and measurement.key not in budgets.registry:
+                return OverBudget(measurement, backstop, "wall-seconds")
+            return judge(measurement, marker_seconds, budgets.registry, "tree-cpu-seconds")
         return judge(measurement, marker_seconds, budgets.registry, "wall-seconds")
     match budgets.call_steps:
         case None:
@@ -784,7 +847,17 @@ def _seconds_text(measurement: Measurement) -> str:
         if measurement.work is not None
         else None
     )
-    parts = tuple(part for part in (compile_part, imports_part, gc_part, work_part) if part is not None) or (
+    match measurement.tree:
+        case TreeCpu() as tree:
+            tree_part = (
+                f"process の木の CPU {measurement.judged_tree_cpu_seconds:.3f} 秒(自分 {tree.own_seconds:.3f} 秒・"
+                f"子孫 {tree.processes} 本 {tree.descendants_seconds:.3f} 秒)"
+            )
+        case TreeCpuUnmeasured(reason=reason):
+            tree_part = f"process の木の CPU 秒は測れない({reason})— 壁の時計で判じた"
+        case None:
+            tree_part = None
+    parts = tuple(part for part in (tree_part, compile_part, imports_part, gc_part, work_part) if part is not None) or (
         "引いた区間なし",
     )
     return (
@@ -801,6 +874,8 @@ def _limit_text(budget: float, unit: Unit) -> str:
             return f"CPU {budget:.3f} 秒"
         case "wall-seconds":
             return f"壁の時計 {budget:.3f} 秒"
+        case "tree-cpu-seconds":
+            return f"process の木の CPU {budget:.3f} 秒"
         case "steps":
             return f"歩数 {int(budget)}"
 
@@ -1018,6 +1093,7 @@ class CallMeasured:
     gc: GcTally = NO_GC
     world: WorldSteps | None = None
     python_calls: int | None = None
+    tree: TreeCpu | TreeCpuUnmeasured | None = None
 
 
 _BUDGETS_KEY = pytest.StashKey[Budgets]()
@@ -1337,9 +1413,23 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     calls_counter = python_calls if isinstance(python_calls, CallCounter) and declaration is not None else None
     if calls_counter is not None:
         calls_counter.start()
+    # 木の CPU 秒は、印の秒の上限に当たり木の CPU 秒を宣言した Hy の検の call の間だけ読む(他の検は読みの thread を起こさない)。
+    tree_sampler = (
+        TreeCpuSampler()
+        if item.path.suffix == ".hy"
+        and declared_tree_cpu_of(getattr(item, "obj", None)) is not None
+        and call_budget_for([marker.name for marker in item.iter_markers()], budgets.call_seconds_by_marker) is not None
+        else None
+    )
+    tree_unmeasured = tree_sampler.start() if tree_sampler is not None else None
     try:
         return (yield)
     finally:
+        tree = (
+            tree_unmeasured
+            if tree_unmeasured is not None
+            else (tree_sampler.stop() if tree_sampler is not None else None)
+        )
         calls = calls_counter.stop() if calls_counter is not None else None
         if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
             guard.disarm()
@@ -1365,6 +1455,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
                 else None
             ),
             python_calls=calls,
+            tree=tree,
         )
 
 
@@ -1397,8 +1488,10 @@ def pytest_runtest_makereport(
         gc=measured.gc,
         world=measured.world,
         python_calls=measured.python_calls,
+        tree=measured.tree,
     )
-    verdict = judge_call(budgets, markers, measurement, declared_steps_of(getattr(item, "obj", None)))
+    test = getattr(item, "obj", None)
+    verdict = judge_call(budgets, markers, measurement, declared_steps_of(test), declared_tree_cpu_of(test))
     if verdict is None:
         return report
     if _record(config, verdict):
