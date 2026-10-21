@@ -473,15 +473,15 @@ class _AwaitedValue:
     table keeps an empty box and the value lives as long as the awaiter keeps it.
     """
 
-    __slots__ = ("value",)
+    __slots__ = ("_mut_value",)
 
     def __init__(self, value: object) -> None:
-        self.value = value
+        self._mut_value = value
 
     def take(self) -> object:
         """Hand the value over once and drop the box's reference to it."""
-        value = self.value
-        self.value = None
+        value = self._mut_value
+        self._mut_value = None
         return value
 
 
