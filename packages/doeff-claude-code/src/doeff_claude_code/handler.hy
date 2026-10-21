@@ -52,8 +52,10 @@
 (import operator [attrgetter])
 (import os)
 (import os.path)
+(import re)
 (import signal)
 (import threading)
+(import time)
 (import uuid)
 (import doeff [run])
 (import doeff_core_effects.effects [slog])
@@ -63,7 +65,8 @@
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
-                                 TimedPhase TurnResult parse-record classify-record recorded-cost])
+                                 TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SubagentTranscript SubagentTranscriptProblem
+                                 parse-record classify-record recorded-cost subagent-transcript-of])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
@@ -77,7 +80,7 @@
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState])
 (import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision retire-time credential-due])
-(import doeff_claude_code.argv [transcript-dir transcript-path launch-argv launch-key cold-resume-argv process-env])
+(import doeff_claude_code.argv [transcript-dir transcript-path subagent-transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 (import doeff_claude_code.credential_home [open-credential-home replace-credential close-credential-home])
 (import doeff_claude_code.rotation [ROTATE-ABOVE-BYTES TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed
@@ -261,7 +264,14 @@
     ;; 名前の欄 — 最初のターンは同じ id の FreshSession。ターンを始めると消える)。
     (setv #^ bool self.warmed-fresh False)
     (setv #^ (| Binding None) self.binding None)
-    (setv #^ (get dict #(int TurnLog)) self.turns {}))
+    (setv #^ (get dict #(int TurnLog)) self.turns {})
+    ;; subagent の transcript の読み(subagent の節 — card ki-e798888dce4e): agent-parents = この会話の CLI が起こした subagent の task の id →
+    ;; 起こした道具の呼びの id(task_started の SUBAGENT-TASK-TYPE)/ unread-subagents = まだ transcript を読んでいない subagent
+    ;; (SubagentTask)/ subagent-read-to = transcript を読み終えた所(byte — 同じ subagent の続きは伸びた分だけ読む)。読み手の thread と
+    ;; on-exit だけが会話の lock の中で書く。
+    (setv #^ (get dict #(str str)) self.agent-parents {})
+    (setv #^ dict self.unread-subagents {})
+    (setv #^ (get dict #(str int)) self.subagent-read-to {}))
 
   (defn [property] #^ (| ClaudeProcess None) process [self]
     (if (is self.binding None) None self.binding.process))
@@ -456,16 +466,129 @@
     (.retire (process-of binding)))
   (.ring runtime.doorbell))
 
+;; --- subagent の transcript(card ki-e798888dce4e) ------------------------------------------------------
+;;
+;; 背景の task を止めた CLI(argv.hy の PER-TURN-SETTINGS-ENV — 本番の起こし方)は、subagent の API の呼びの行を stdout に出さない(実測
+;; 2.1.292: 出るのは subagent の task の始まり・進み・報せの行だけで、報せの usage は最後の呼びの 4 種 token の和 total_tokens だけ)。
+;; 呼びごとの model と 4 種の token は、CLI が subagent ごとに書く transcript(argv.hy の subagent-transcript-path)にだけ在る。
+;; CLI は transcript を非同期に書き足し、報せの行を出した時点の file にはまだ最後の呼びの行が無い(実測 2.1.292: 報せの行の 30〜50 ms
+;; 後に書かれた)。そこで読み手の thread は、task_started の local_agent で subagent の task の id と親の道具の呼びの id を覚え、報せの
+;; 行で報せの total_tokens を控え、CLI の手番の終わり(result の行)を受けた所で、報せを受けた subagent の transcript の伸びた分を読み、
+;; result の行の直前に SubagentTranscript の行として手番の記録へ足す。読んだ最後の呼びの和が報せの total_tokens と合わない・file が
+;; まだ無い間は、CLI が書き終えるのを SUBAGENT-SETTLE-SECONDS まで読み直して待つ(file の書き足しには待てる出来事が無い — 読み手の
+;; thread の中だけで待ち、会話の lock は持たない)。報せの前に process が降りた subagent は on-exit で読む(待たない — 書き手はもう居ない)。
+;; 読めなかった時(file が無い・読めない・書き切っていない)は呼びを載せずに訳を載せ、上の層へ渡す所で log の行
+;; (SUBAGENT-TRANSCRIPT-LOG)に残す。手番の記録を外した会話(ClaudeCodeHost.release)は読んだ所を持ち越さない — 外した後に同じ
+;; subagent が続きで報せると、頭から読み直す。
+
+(val SUBAGENT-TRANSCRIPT-LOG "claude CLI の subagent の transcript の読み")
+;; task の id として file の名に入れてよい綴り(CLI の id は英数字 — 外の綴りは path を作らずに読めなかった事にする)。
+(val AGENT-ID-SHAPE (re.compile "[A-Za-z0-9_-]+"))
+;; CLI が報せた subagent の transcript を書き終えるのを待つ上限の秒と、読み直しの間(上の註 — 待つのは書き切っていない時だけ)。
+(val SUBAGENT-SETTLE-SECONDS 2.0)
+(val SUBAGENT-REREAD-SECONDS 0.05)
+;; 書き手がまだ書いている間は読み直す訳(file がまだ無い・書き切っていない)。
+(val UNSETTLED-PROBLEMS #{SubagentTranscriptProblem.ABSENT SubagentTranscriptProblem.TRUNCATED})
+
+(defrecord SubagentTask
+  "起こした subagent 1 つの、まだ読んでいない transcript: parent = 起こした道具の呼びの id / notified = 報せの行を受けたか /
+   total = 報せの行の total_tokens(最後の呼びの 4 種 token の和 — 書き切ったかを比べる。名乗らなければ None)。"
+  (#^ str parent)
+  (setv #^ bool notified False)
+  (setv #^ (| int None) total None))
+
+(defrecord SubagentRead
+  "subagent 1 つの transcript の読み: transcript = 手番の記録へ足す行の中身 / read-to = 読み終えた所(byte — 読めなかった時は None で、
+   読んだ所を進めない)。"
+  (#^ SubagentTranscript transcript)
+  (#^ (| int None) read-to))
+
+(defn #^ SubagentRead read-subagent [#^ str config-dir #^ str canonical-cwd #^ str session-id #^ str agent-id #^ SubagentTask task
+                                     #^ int from-byte]
+  "subagent の呼びごとの消費を上の層へ渡すため、その subagent の transcript の from-byte から後ろを 1 度読んで SubagentTranscript にする
+   (読み手の thread と on-exit が会話の lock の外で呼ぶ — 例外を外へ出さない: file が無い = ABSENT・OS の誤り・file の名にできない
+   id = UNREADABLE)。"
+  (setv unread (fn [problem detail] (SubagentRead :transcript (SubagentTranscript :agent-id agent-id :parent-tool-use-id task.parent
+                                                                                    :problem problem :detail detail)
+                                                  :read-to None)))
+  (when (not (.fullmatch AGENT-ID-SHAPE agent-id))
+    (return (unread SubagentTranscriptProblem.UNREADABLE "the task id is not a file name")))
+  (setv path (run (subagent-transcript-path config-dir canonical-cwd session-id agent-id)))
+  (try
+    (with [handle (open path "rb")]
+      (.seek handle from-byte)
+      (setv data (.read handle)))
+    (except [FileNotFoundError]
+      (return (unread SubagentTranscriptProblem.ABSENT path)))
+    (except [error OSError]
+      (return (unread SubagentTranscriptProblem.UNREADABLE (.format "{}: {}" path error)))))
+  (setv transcript (run (subagent-transcript-of agent-id task.parent data task.total)))
+  (SubagentRead :transcript transcript :read-to (if (is transcript.problem None) (+ from-byte (len data)) None)))
+
+(defn #^ SubagentRead settled-subagent [#^ str config-dir #^ str canonical-cwd #^ str session-id #^ str agent-id #^ SubagentTask task
+                                        #^ int from-byte]
+  "報せを受けた subagent の transcript を、CLI が書き終えた所まで読むため: 読みが書き手の途中(UNSETTLED-PROBLEMS)なら
+   SUBAGENT-SETTLE-SECONDS まで SUBAGENT-REREAD-SECONDS ごとに読み直し、上限を越えたら最後の読み(訳つき)を答える(上の註)。"
+  (setv deadline (+ (time.monotonic) SUBAGENT-SETTLE-SECONDS)
+        read (read-subagent config-dir canonical-cwd session-id agent-id task from-byte))
+  (while (and (in read.transcript.problem UNSETTLED-PROBLEMS) (< (time.monotonic) deadline))
+    (time.sleep SUBAGENT-REREAD-SECONDS)
+    (setv read (read-subagent config-dir canonical-cwd session-id agent-id task from-byte)))
+  read)
+
+(defn #^ tuple due-subagents [#^ SessionRuntime runtime #^ bool at-exit]
+  "まだ読んでいない subagent の transcript を読むため(会話の lock の外 — 読む相手と読んだ所だけを lock の中で写す)。CLI の手番の
+   終わり(at-exit が偽)は報せを受けた subagent を書き終えるまで待って読み、process が降りた時(at-exit が真)は残りを全部 1 度読む。
+   答え = 読み(SubagentRead)の組(task の id の順)。"
+  (with [runtime.lock]
+    (setv due (tuple (gfor #(agent-id task) (sorted (.items runtime.unread-subagents))
+                           :if (or at-exit task.notified)
+                           #(agent-id task (.get runtime.subagent-read-to agent-id 0))))
+          session-id runtime.session-id))
+  (setv reader (if at-exit read-subagent settled-subagent))
+  (tuple (gfor #(agent-id task from-byte) due
+               (reader runtime.home.config-dir runtime.canonical-cwd session-id agent-id task from-byte))))
+
+(defn note-subagent-task [#^ SessionRuntime runtime kind]
+  "subagent の task の始まり(task_started の SUBAGENT-TASK-TYPE で、親の道具の呼びの id を名乗る行)を読む相手として覚え、報せの行で
+   報せを受けた印と total_tokens を控えるため(同じ subagent の続きの報せは、読み終えた後でも読む相手に戻す)。会話の lock の中で呼ぶ。"
+  (when (isinstance kind TaskEvent)
+    (cond
+      (and (= kind.status "started") (= kind.task-type SUBAGENT-TASK-TYPE) (is-not kind.tool-use-id None))
+        (setv (get runtime.agent-parents kind.task-id) kind.tool-use-id
+              (get runtime.unread-subagents kind.task-id) (SubagentTask :parent kind.tool-use-id))
+      (and (!= kind.status "started") (in kind.task-id runtime.agent-parents))
+        (setv (get runtime.unread-subagents kind.task-id)
+              (SubagentTask :parent (or kind.tool-use-id (get runtime.agent-parents kind.task-id)) :notified True
+                            :total kind.total-tokens)))))
+
+(defn add-subagent-lines [#^ SessionRuntime runtime #^ (| TurnLog None) log #^ datetime at #^ tuple reads]
+  "読んだ subagent の transcript を手番の記録の行として足し(手番が走っていれば)、読み終えた所を進めて読む相手から外すため。読み手の
+   居ない所(手番の外)で読んだ物も外す — 後の手番の記録に混ぜない。会話の lock の中で呼ぶ。"
+  (for [read reads]
+    (setv agent-id read.transcript.agent-id)
+    (when (and (is-not log None) runtime.state.in-flight)
+      (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind read.transcript :raw ""))
+      (+= runtime.next-line-seq 1))
+    (when (is-not read.read-to None)
+      (setv (get runtime.subagent-read-to agent-id) read.read-to))
+    (.pop runtime.unread-subagents agent-id None)))
+
 (defn on-line [#^ SessionRuntime runtime #^ Binding binding #^ (get Callable #([] datetime)) clock #^ str raw]
   "stdout の 1 行を、今の process の行なら手番の記録に足して状態機械を進めるため。host の手番の外の行(前の process の行・手番の
-   外の出力)は手番の記録に足さない — 終わった手番の頁に誰の物でもない行を混ぜない(手番の外の出力は状態機械が降ろす訳に変える)。"
+   外の出力)は手番の記録に足さない — 終わった手番の頁に誰の物でもない行を混ぜない(手番の外の出力は状態機械が降ろす訳に変える)。
+   CLI の手番の終わり(result の行)なら、その直前に、報せを受けた subagent の transcript の読み(SubagentTranscript)を足す(上の
+   subagent の節)。"
   (setv record (parse-record raw))
   (when (is record None) (return None))
   (setv kind (classify-record record))
+  (setv reads (if (isinstance kind TurnResult) (due-subagents runtime False) #()))
   (setv #^ datetime at (clock))
   (with [runtime.lock]
     (when (is-not runtime.binding binding) (return None))
+    (note-subagent-task runtime kind)
     (setv log (.get runtime.turns binding.turn-seq))
+    (add-subagent-lines runtime log at reads)
     (when (and (is-not log None) runtime.state.in-flight)
       (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
       (+= runtime.next-line-seq 1))
@@ -477,9 +600,14 @@
       (setv runtime.stopped-because StopReason.CREDENTIAL-FLOOR)
       (.retire (process-of binding)))))
 
-(defn on-exit [#^ SessionRuntime runtime #^ Binding binding exit-code #^ str stderr-tail]
+(defn on-exit [#^ SessionRuntime runtime #^ Binding binding #^ (get Callable #([] datetime)) clock exit-code #^ str stderr-tail]
+  "process が降りた事を状態機械へ渡すため。まだ読んでいない subagent(報せの前に降りた・報せの後の CLI の手番の終わりを出す前に
+   降りた)は、その transcript を手番の終わりの前に読んで足す — 降りる前に subagent が使った分も記録に残す(上の subagent の節)。"
+  (setv reads (due-subagents runtime True))
+  (setv #^ datetime at (clock))
   (with [runtime.lock]
     (when (is runtime.binding binding)
+      (add-subagent-lines runtime (.get runtime.turns binding.turn-seq) at reads)
       (apply-transition runtime binding (dialogue.on-exit runtime.state exit-code stderr-tail)))))
 
 (deff on-down [#^ SessionRuntime runtime #^ Binding binding]  ; defk にできない: process の見張りの thread が呼ぶ callback(ClaudeProcess の on-down)
@@ -1014,6 +1142,18 @@
 
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
+(defk note-unread-subagents [turn page]
+  {:pre [(: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
+  "読めなかった subagent の transcript(上の subagent の節 — 呼びを載せない)を、上の層へ渡す所で log の行に残すため(subagent の消費が
+   記録に無い訳を、無かった事と分けて読めるように — card ki-e798888dce4e)。欄は訳の語・手がかり(path・誤りの文)・subagent の task の
+   id と親の道具の呼びの id だけで、transcript の中身は載せない。"
+  (for [line page.lines]
+    (when (and (isinstance line.kind SubagentTranscript) (is-not line.kind.problem None))
+      (<- (slog SUBAGENT-TRANSCRIPT-LOG :level "warning" :event "unread" :problem line.kind.problem.value :detail line.kind.detail
+                :agent-id line.kind.agent-id :parent-tool-use-id line.kind.parent-tool-use-id
+                :session-id turn.session-id :turn-seq turn.turn-seq))))
+  None)
+
 (defk launch-cost-mark [origin #^ (| float None) recorded #^ bool had-previous #^ (| int None) previous-exit
                         #^ (| float None) cost-mark #^ (| float None) start-mark]
   {:pre [(: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| float None)) (: had-previous bool)
@@ -1075,7 +1215,7 @@
       (setv binding.process
             (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home (or home spec.home.config-dir))
                            (fn [raw] (on-line runtime binding host.clock raw))
-                           (fn [code tail] (on-exit runtime binding code tail))
+                           (fn [code tail] (on-exit runtime binding host.clock code tail))
                            (fn [] (on-down runtime binding))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
@@ -1116,7 +1256,7 @@
       (setv binding.process
             (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home (or home spec.home.config-dir))
                            (fn [raw] (on-line runtime binding host.clock raw))
-                           (fn [code tail] (on-exit runtime binding code tail))
+                           (fn [code tail] (on-exit runtime binding host.clock code tail))
                            (fn [] (on-down runtime binding))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
@@ -1479,6 +1619,7 @@
     (<- (note-first-reply runtime turn page))
     (<- (note-first-text runtime turn page))
     (<- (note-turn-end runtime turn page))
+    (<- (note-unread-subagents turn page))
     ;; 終わりを渡した手番は読み終えた — 閉じた会話の最後の手番なら、ここで会話ごと外す(閉じた時に走っていた手番の終わりは、上の層が
     ;; 閉じた後に読む)。
     (with [runtime.lock]

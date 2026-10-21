@@ -24,10 +24,11 @@
 ;; CLI が会話を自動で圧縮する筋書き(compactions)の行の型と起き方の語(agora-redesign #4189)。呼び手が doeff_claude_code を import せずに
 ;; 返事を組めるように、FakeReply と並べてここから読ませる。
 ;; CLI が回す hook の行の筋書き(hooks)の行の型と段階の語も同じ(card acp:kanban-issue:ki-d8b473480303)。圧縮の終わり方の筋書き
-;; (compactions の CompactEnded)と、道具の途中の subagent の行の筋書き(subagent-calls の AssistantMessage)の型も同じ(card
-;; acp:kanban-issue:ki-8239be27d5f6)。
+;; (compactions の CompactEnded)の型も同じ(card acp:kanban-issue:ki-8239be27d5f6)。道具が走らせる subagent の筋書き(subagent-transcript
+;; の SubagentTranscript とその呼び SubagentCall — card ki-e798888dce4e)の型も同じ。AssistantMessage は前の subagent の筋書きの型で、
+;; 呼び手の読みのために残す。
 (import doeff_claude_code.lines [Usage AccountRefusalHit ModelRefusalHit CompactBoundary CompactTrigger CompactEnded CompactOutcome
-                                 AssistantMessage HookNotice HookPhase])
+                                 AssistantMessage HookNotice HookPhase SubagentTranscript SubagentCall])
 ;; 層 2 が生かす CLI の本数の上限を越える起動をホストへ伝える知らせ(ホストが答える — 呼び手が doeff_claude_code を import せずに答え手を
 ;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
 (import doeff_claude_code.effects [ClaudeLiveLimitExceeded])

@@ -7,7 +7,7 @@
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val <-])
 (require doeff-hy.record [defenum defrecord])
-(import dataclasses [dataclass field fields])
+(import dataclasses [dataclass field fields replace])
 (import datetime [datetime])
 (import enum [StrEnum])
 (import json)
@@ -217,9 +217,51 @@
   (setv #^ str outcome ""))
 
 (defclass [(dataclass :frozen True)] TaskEvent []
-  "CLI の道具の task の開始と報せ(system/task_started・task_notification)。"
+  "CLI の道具の task の開始と報せ(system/task_started・task_notification)。tool-use-id = task を起こした道具の呼びの id(行の
+   tool_use_id — 名乗らなければ None)/ task-type = task の種類(task_started の task_type — subagent は SUBAGENT-TASK-TYPE。報せの行は
+   名乗らないので空)/ total-tokens = 報せの行の usage.total_tokens(subagent の最後の API の呼びの 4 種 token の和 — 実測 2.1.292:
+   呼び 2 回の subagent の報せは 2 回目の呼びの input + cache_creation + cache_read + output。始まりの行と名乗らない行は None)。
+   subagent の task の id は、CLI がその subagent の transcript を書く file の名(agent-<id>.jsonl)の id と同じ(実測 2.1.292・
+   card ki-e798888dce4e)。"
   (#^ str task-id)
-  (#^ str status))
+  (#^ str status)
+  (setv #^ (| str None) tool-use-id None)
+  (setv #^ str task-type "")
+  (setv #^ (| int None) total-tokens None))
+
+;; task_started の task_type のうち、subagent(Agent の道具が起こした agent)を名乗る語(実測 2.1.292・card ki-e798888dce4e)。
+(val SUBAGENT-TASK-TYPE "local_agent")
+;; CLI が API を呼ばずに書く assistant の行の model の名(誤りの知らせ — 呼びではないので subagent の呼びに数えない)。
+(val SYNTHETIC-MODEL "<synthetic>")
+
+;; subagent の transcript を読めなかった訳(閉じた語彙 — card ki-e798888dce4e): ABSENT = file が無い / UNREADABLE = 読めない(OS の誤り・
+;; UTF-8 でない・途中の行が JSON の object でない・呼びの行が時差つきの刻を名乗らない・task の id が file の名にできない)/
+;; TRUNCATED = 書きの途中で切れた(最後の行が改行で終わっていない・最後の呼びの 4 種 token の和が報せの行の total_tokens と合わない
+;; — CLI は transcript を報せの行より後に書き足す。実測 2.1.292: 報せの行を出した時点の file には最後の呼びの行がまだ無かった)。
+(defenum SubagentTranscriptProblem ABSENT UNREADABLE TRUNCATED)
+
+(defrecord SubagentCall
+  "subagent の API の呼び 1 回の消費(transcript の assistant の行を呼びの id で畳んだ物 — 1 つの呼びは content の block ごとに行を書き、
+   出力の token は呼びの途中の値なので、usage と model は最後の行の物・刻は最初の行の物)。at = 最初の行の timestamp(CLI の壁の時刻)/
+   usage = message.usage / model = message.model(無ければ None)/ call-id = message.id(無ければ None — 無い行は畳まずに 1 回と数える)。"
+  (#^ datetime at)
+  (#^ Usage usage)
+  (setv #^ (| str None) model None)
+  (setv #^ (| str None) call-id None))
+
+(defrecord SubagentTranscript
+  "subagent 1 つの transcript(<設定 dir>/projects/<cwd>/<会話の id>/subagents/agent-<task の id>.jsonl)を、その subagent の task の
+   報せの行(task_notification)を受けた所で読んだ結果(card ki-e798888dce4e)。stdout の行ではなく、handler が報せの行の直後に手番の記録へ
+   足す行の種類(raw は空)。背景の task を止めた CLI(argv.hy の PER-TURN-SETTINGS-ENV)は subagent の呼びの行を stdout に出さないので、
+   subagent の呼びの消費はここからだけ読む。
+   agent-id = task の id / parent-tool-use-id = subagent を起こした道具の呼びの id / calls = 読めた呼び(書かれた順 — 前の報せの後に
+   伸びた分だけ)/ problem = 読めなかった訳(読めたら None)/ detail = 読めなかった時の手がかり(path・誤りの文 — 読めたら空)。
+   読めなかった時は calls を空にする(途中まで読めた分も載せない — 呼びを発明しない)。"
+  (#^ str agent-id)
+  (#^ str parent-tool-use-id)
+  (setv #^ (get tuple #(SubagentCall ...)) calls #())
+  (setv #^ (| SubagentTranscriptProblem None) problem None)
+  (setv #^ str detail ""))
 
 (defclass [(dataclass :frozen True)] RateLimit []
   "rate_limit_event の行: window = rateLimitType / utilization = その窓の使った割合 / resets-at = resetsAt(epoch 秒)/ status = 限度の
@@ -389,10 +431,11 @@
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
                         PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactStarted CompactEnded
-                        CompactBoundary TurnResult Other))
+                        CompactBoundary TurnResult SubagentTranscript Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
-  "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語。"
+  "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語(stdout の行でない
+   SubagentTranscript は空)。"
   (#^ int seq)
   (#^ datetime at)
   (#^ ClaudeLineKind kind)
@@ -678,9 +721,12 @@
     (= subtype "thinking_tokens")
       (ThinkingTokens :estimated (or (int-at record "estimated_tokens") 0))
     (= subtype "task_started")
-      (TaskEvent :task-id (text-at record "task_id") :status "started")
+      (TaskEvent :task-id (text-at record "task_id") :status "started" :tool-use-id (or (text-at record "tool_use_id") None)
+                 :task-type (text-at record "task_type"))
     (= subtype "task_notification")
-      (TaskEvent :task-id (text-at record "task_id") :status (or (text-at record "status") "notified"))
+      (TaskEvent :task-id (text-at record "task_id") :status (or (text-at record "status") "notified")
+                 :tool-use-id (or (text-at record "tool_use_id") None)
+                 :total-tokens (int-at (object-at record "usage") "total_tokens"))
     (= subtype "hook_started") (run (hook-notice-of record HookPhase.STARTED))
     (= subtype "hook_response") (run (hook-notice-of record HookPhase.RESPONSE))
     (= subtype "compact_boundary") (run (compact-boundary-of record))
@@ -795,6 +841,90 @@
                          record)
                    None))
   (if (is found None) None (number-at found "totalCostUSD")))
+
+;; --- subagent の transcript の呼び(純関数 — card ki-e798888dce4e) ------------------------------------------
+
+(defk instant-at [#^ dict value #^ str key]
+  {:pre [(: value dict) (: key str)] :post [(: % (| datetime None))] :tags {:context "claude-code" :role "foundation"}}
+  "subagent の呼びの刻を transcript の行から読むため: ISO 8601 の刻の文字列(末尾の Z も)→ 時差つきの datetime。無い・読めない・時差の
+   無い刻は None(刻を発明しない)。"
+  (val text (text-at value key))
+  (when (not text) (return None))
+  (try
+    (val instant (datetime.fromisoformat text))
+    (except [ValueError] (return None)))
+  (if (is instant.tzinfo None) None instant))
+
+(defk decoded-text [#^ bytes data]
+  {:pre [(: data bytes)] :post [(: % (| str None))] :tags {:context "claude-code" :role "foundation"}}
+  "読んだ transcript の byte を行に割れる文字列にするため(UTF-8 でなければ None — 読めなかった事にする)。"
+  (try
+    (.decode data "utf-8")
+    (except [UnicodeDecodeError] None)))
+
+(defk subagent-calls-of [#^ tuple records]
+  {:pre [(: records tuple)] :post [(: % (| tuple None))] :tags {:context "claude-code" :role "foundation"}}
+  "subagent の transcript の行(JSON の object の列)から、API の呼びごとの消費を書かれた順に読むため(SubagentCall の註の畳み方)。
+   数えるのは message.usage が object の assistant の行だけで、CLI が呼ばずに書いた行(model が SYNTHETIC-MODEL)は数えない。数える行が
+   時差つきの刻(timestamp)を名乗らなければ None(刻を発明しない — 読めなかった事にする)。"
+  (val called (lfor record records
+                    :setv message (object-at record "message")
+                    :if (and (= (text-at record "type") "assistant") (isinstance (.get message "usage") dict)
+                             (!= (text-at message "model") SYNTHETIC-MODEL))
+                    #(record message)))
+  ;; 呼びの id ごとに 1 つ(id の無い行は行の番号で 1 つずつ)。組の列から作る dict は、鍵の順が最初に出た順で値が最後の物になる —
+  ;; usage と model は最後の行・刻は最初の行(逆順から作った dict)の物。
+  (var keyed #())
+  (for [#(index #(record message)) (enumerate called)]
+    (<- at (instant-at record "timestamp"))
+    (when (is at None) (return None))
+    (val call-id (or (text-at message "id") None))
+    (:= keyed (+ keyed #(#((if (is call-id None) index call-id)
+                           (SubagentCall :at at :usage (usage-of (get message "usage")) :model (or (text-at message "model") None)
+                                         :call-id call-id))))))
+  (val firsts (dict (reversed keyed)))
+  (tuple (gfor #(key call) (.items (dict keyed)) (replace call :at (. (get firsts key) at)))))
+
+(defk last-call-total [#^ tuple records]
+  {:pre [(: records tuple)] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
+  "subagent の transcript を書き切ったかを報せの行の total_tokens と比べるため、最後の usage つきの assistant の行(SYNTHETIC-MODEL の
+   行も — CLI の最後の呼びの記録)の 4 種 token の和を読む。そういう行が無い・4 欄のどれかが整数でなければ None。"
+  (val usages (lfor record records
+                    :setv usage (.get (object-at record "message") "usage")
+                    :if (and (= (text-at record "type") "assistant") (isinstance usage dict))
+                    usage))
+  (when (not usages) (return None))
+  (val counts (lfor name #("input_tokens" "cache_creation_input_tokens" "cache_read_input_tokens" "output_tokens")
+                    (int-at (get usages -1) name)))
+  (if (in None counts) None (sum counts)))
+
+(defk subagent-transcript-of [#^ str agent-id #^ str parent-tool-use-id #^ bytes data #^ (| int None) expected-total]
+  {:pre [(: agent-id str) (: parent-tool-use-id str) (: data bytes) (: expected-total (| int None))] :post [(: % SubagentTranscript)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "上の層が subagent の呼びごとの消費を記録できるように、subagent の transcript の読んだ byte(前の読みの後に伸びた分)を
+   SubagentTranscript にするため。expected-total = 報せの行の total_tokens(None = 名乗らない・報せの前に process が降りた — 比べない)。
+   最後の行が改行で終わらない・最後の呼びの 4 種 token の和が expected-total と合わない = TRUNCATED・UTF-8 でない・JSON の object
+   でない行が在る・数える行が刻を名乗らない = UNREADABLE で、どれも calls を空にする(途中まで読めた分も載せない — 呼びを発明しない)。
+   空の byte は、expected-total が無ければ呼びの無い読み。"
+  (<- text (decoded-text data))
+  (val unread (fn [problem detail] (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id
+                                                       :problem problem :detail detail)))
+  (when (is text None)
+    (return (unread SubagentTranscriptProblem.UNREADABLE "the transcript is not UTF-8")))
+  (when (and text (not (.endswith text "\n")))
+    (return (unread SubagentTranscriptProblem.TRUNCATED "the last line of the transcript has no newline")))
+  (val records (tuple (gfor line (.splitlines text) :if (.strip line) (parse-record line))))
+  (when (in None records)
+    (return (unread SubagentTranscriptProblem.UNREADABLE "a line of the transcript is not a JSON object")))
+  (<- last-total (last-call-total records))
+  (when (and (is-not expected-total None) (!= last-total expected-total))
+    (return (unread SubagentTranscriptProblem.TRUNCATED
+                    (.format "the last call of the transcript totals {} tokens, the task notification reported {}"
+                             last-total expected-total))))
+  (<- calls (subagent-calls-of records))
+  (if (is calls None)
+      (unread SubagentTranscriptProblem.UNREADABLE "an assistant line with usage has no timestamp with a UTC offset")
+      (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id :calls calls)))
 
 (defn classify-record [#^ dict record]
   "stream-json の 1 行 → ClaudeLineKind(純関数・語彙の外は Other)。"

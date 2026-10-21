@@ -42,6 +42,13 @@
 (defn #^ str transcript-path [#^ str config-dir #^ str canonical-cwd #^ str session-id]
   (.format "{}/{}.jsonl" (transcript-dir config-dir canonical-cwd) session-id))
 
+(defk subagent-transcript-path [#^ str config-dir #^ str canonical-cwd #^ str session-id #^ str agent-id]
+  {:pre [(: config-dir str) (: canonical-cwd str) (: session-id str) (: agent-id str)] :post [(: % str)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "subagent の呼びごとの消費を読む file を名指すため(CLI の規則 — 実測 2.1.292・card ki-e798888dce4e): 会話の transcript と同じ dir の
+   <会話の id>/subagents/agent-<subagent の task の id>.jsonl。"
+  (.format "{}/{}/subagents/agent-{}.jsonl" (transcript-dir config-dir canonical-cwd) session-id agent-id))
+
 ;; 計時の handler の物理: CLI に起動の区間(init の行の startup_timing)と、要求を送るまでの区間(result の行の
 ;; time_to_request_phases_ms)を出させる env(実測 2.1.292 — 無いと CLI は区間を出さない)。送ってから最初の字までのうち、CLI の
 ;; 起動と入力ごとの hook を区間ごとに割るため(#3855・lines.hy の TimedPhase)。process の env に置く — 区間は設定を読む前から数える。

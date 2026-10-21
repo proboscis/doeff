@@ -51,9 +51,11 @@
 ;;;   CompactEnded                     → AgentCompactionEndedEvent(CLI が圧縮を終えた事実 — 終わり方 outcome〔成功・失敗・中断・圧縮
 ;;;                                      しなかった〕と誤りの文 error を写す。上の層が失敗と中断も記録するため・card ki-8239be27d5f6。
 ;;;                                      CLI は圧縮の要求の token を行に名乗らないので運ばない)
-;;;   AssistantMessage.usage / .model(subagent の行)→ AgentSubagentCallUsageEvent(parent-tool-use-id の在る行が usage を名乗るたびに、
-;;;                                      親の道具の呼びの id・呼びの id〔message.id〕・usage・model を運ぶ — 上の層が subagent の消費を本体の
-;;;                                      呼びと分けて記録するため・card ki-8239be27d5f6)
+;;;   SubagentTranscript.calls        → AgentSubagentCallUsageEvent(層 2 が subagent の task の報せで読んだ transcript の呼びごとに 1 つ —
+;;;                                      親の道具の呼びの id・呼びの id〔message.id〕・usage・model・呼びの刻を運ぶ。上の層が subagent の
+;;;                                      消費を本体の呼びと分けて記録するため・card ki-8239be27d5f6。背景の task を止めた CLI は subagent の
+;;;                                      呼びの行を stdout に出さないので、stdout の subagent の行〔parent-tool-use-id の在る assistant の行〕
+;;;                                      からは運ばない — 拾う元は transcript の 1 つ・card ki-e798888dce4e)
 ;;;   AssistantMessage.usage / .model  → AgentCallUsageEvent(本体の会話の行〔parent-tool-use-id が None〕が usage を名乗るたびに、その呼びの
 ;;;                                      usage と model を運ぶ — 上の層が手番の終わりを待たずに会話の今の context の大きさを読むため。
 ;;;                                      線引きは手番の終わりの last_call_usage と同じ: subagent の行は運ばず、usage を名乗らない行は
@@ -97,7 +99,7 @@
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactEnded CompactBoundary
-                                 HookNotice HookPhase
+                                 HookNotice HookPhase SubagentTranscript SubagentCall
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
@@ -217,18 +219,29 @@
       []
       [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model))]))
 
-(defk subagent-call-usage-builders-of [message at]
-  {:pre [(: message AssistantMessage) (: at datetime)] :post [(: % list)]
+(defk subagent-call-builder [#^ str parent-tool-use-id #^ SubagentCall call #^ AgentTurnUsage usage]
+  {:pre [(: parent-tool-use-id str) (: call SubagentCall) (: usage AgentTurnUsage)] :post [(: % Callable)]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "subagent の呼び 1 回の usage の出来事を、seq を受けて作る関数にするため(subagent-call-usage-builders-of が呼びごとに 1 つ作る —
+   関数は自分の呼びの値だけを持つ)。刻は呼びの刻(transcript の最初の行の物)。"
+  (fn [seq] (AgentSubagentCallUsageEvent :seq seq :at call.at :parent-tool-use-id parent-tool-use-id :usage usage
+                                         :model call.model :call-id call.call-id)))
+
+(defk subagent-call-usage-builders-of [transcript]
+  {:pre [(: transcript SubagentTranscript)] :post [(: % list)]
    :tags {:context "headless-adapter" :role "foundation"}}
   "上の層が subagent の消費を本体の会話の呼びと分けて記録できるように(card acp:kanban-issue:ki-8239be27d5f6 — rate limit の減りと
-   実使用量の照合の材料)、assistant の行から、subagent の呼びの usage の出来事を作る関数の列(0 か 1 つ)を作るため。subagent の行
-   (parent-tool-use-id が在る)が usage を名乗る時だけ 1 つ作り、親の道具の呼びの id・呼びの id(message.id)・model を添える。本体の
-   会話の行と、usage を名乗らない行・4 欄とも名乗らない行は出来事にしない(0 を発明しない — 線引きは call-usage-builders-of と同じ)。"
-  (val usage (if (is message.parent-tool-use-id None) None (last-call-of message.usage)))
-  (if (is usage None)
-      []
-      [(fn [seq] (AgentSubagentCallUsageEvent :seq seq :at at :parent-tool-use-id message.parent-tool-use-id :usage usage
-                                              :model message.model :call-id message.message-id))]))
+   実使用量の照合の材料)、層 2 が subagent の transcript から読んだ呼び(SubagentTranscript の calls — card ki-e798888dce4e。背景の task を
+   止めた CLI は subagent の呼びの行を stdout に出さないので、subagent の呼びはここからだけ運ぶ)ごとに、その呼びの usage の出来事を作る
+   関数の列を作るため。親の道具の呼びの id・呼びの id(message.id)・model・呼びの刻を添える。usage の 4 欄とも名乗らない呼びと、読め
+   なかった transcript(calls が空 — 訳は層 2 が log に残す)は出来事にしない(0 を発明しない)。"
+  (var builders [])
+  (for [call transcript.calls]
+    (val usage (last-call-of call.usage))
+    (when (is-not usage None)
+      (<- build (subagent-call-builder transcript.parent-tool-use-id call usage))
+      (:= builders (+ builders [build]))))
+  builders)
 
 (defn #^ list event-builders-of [kind #^ datetime at]
   "層 2 の行の型 → 層 3 の出来事を作る関数(seq → 出来事)の列。出来事はその型の欄で直接作る(語彙の外の行は空)。"
@@ -236,8 +249,10 @@
     (isinstance kind AssistantMessage)
       (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
          (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] [])
-         (run (call-usage-builders-of kind at))
-         (run (subagent-call-usage-builders-of kind at)))
+         (run (call-usage-builders-of kind at)))
+    ;; 層 2 が subagent の transcript から読んだ呼び — 呼びごとの usage の出来事(card ki-e798888dce4e)。
+    (isinstance kind SubagentTranscript)
+      (run (subagent-call-usage-builders-of kind))
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
     ;; 考えの block の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(agora-redesign #4186)。

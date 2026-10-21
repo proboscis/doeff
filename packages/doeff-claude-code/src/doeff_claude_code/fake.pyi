@@ -57,6 +57,8 @@ from doeff_claude_code.lines import CompactOutcome as CompactOutcome
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import HookNotice as HookNotice
 from doeff_claude_code.lines import HookPhase as HookPhase
+from doeff_claude_code.lines import SubagentTranscript as SubagentTranscript
+from doeff_claude_code.lines import SUBAGENT_TASK_TYPE as SUBAGENT_TASK_TYPE
 from doeff_claude_code.lines import ModelRefusalHit as ModelRefusalHit
 from doeff_claude_code.lines import STOP_REASON_REFUSAL as STOP_REASON_REFUSAL
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
@@ -135,6 +137,7 @@ class StopHookRejection:
 
 def hyx_scripted_endXquestion_markX(reply: Incomplete) -> bool:
     ...
+FAKE_TASK_ID: str
 
 @dataclass(frozen=True)
 class FakeReply:
@@ -164,7 +167,7 @@ class FakeReply:
     model_refusal: ModelRefusalHit | None = None
     stop_hook_rejections: tuple[StopHookRejection, ...] = ...
     compactions: tuple[CompactBoundary | CompactEnded, ...] = ...
-    subagent_calls: tuple[AssistantMessage, ...] = ...
+    subagent_transcript: SubagentTranscript | None = None
     hooks: tuple[HookNotice, ...] = ...
 
     def __post_init__(self) -> None:
@@ -197,6 +200,7 @@ class FakeTurn:
     limit_hit: AccountLimitHit | None
     refusal_hit: AccountRefusalHit | None
     model_refusal_hit: ModelRefusalHit | None
+    subagent_due: SubagentTranscript | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -294,6 +298,9 @@ def model_refuse_turn(session: FakeSession, turn: FakeTurn, refusal: ModelRefusa
     ...
 
 def end_scripted(session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
+    ...
+
+def task_lines_of(reply: FakeReply, started: bool) -> _Program[list, object]:
     ...
 
 def advance(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[None, object]:

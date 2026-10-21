@@ -6,6 +6,7 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from dataclasses import fields as fields
+from dataclasses import replace as replace
 from datetime import datetime as datetime
 from enum import StrEnum as StrEnum
 from doeff import run as run
@@ -147,6 +148,31 @@ class HookNotice:
 class TaskEvent:
     task_id: str
     status: str
+    tool_use_id: str | None = None
+    task_type: str = ''
+    total_tokens: int | None = None
+SUBAGENT_TASK_TYPE: str
+SYNTHETIC_MODEL: str
+
+class SubagentTranscriptProblem(StrEnum):
+    ABSENT = 'absent'
+    UNREADABLE = 'unreadable'
+    TRUNCATED = 'truncated'
+
+@dataclass(frozen=True, kw_only=True)
+class SubagentCall:
+    at: datetime
+    usage: Usage
+    model: str | None = None
+    call_id: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class SubagentTranscript:
+    agent_id: str
+    parent_tool_use_id: str
+    calls: tuple[SubagentCall, ...] = ...
+    problem: SubagentTranscriptProblem | None = None
+    detail: str = ''
 
 @dataclass(frozen=True)
 class RateLimit:
@@ -251,7 +277,7 @@ class CompactEnded:
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactEnded | CompactBoundary | TurnResult | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactEnded | CompactBoundary | TurnResult | SubagentTranscript | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:
@@ -399,6 +425,21 @@ def classify_stream_event(record: dict) -> Incomplete:
     ...
 
 def recorded_cost(transcript_text: str) -> _Program[float | None, object]:
+    ...
+
+def instant_at(value: dict, key: str) -> _Program[datetime | None, object]:
+    ...
+
+def decoded_text(data: bytes) -> _Program[str | None, object]:
+    ...
+
+def subagent_calls_of(records: tuple) -> _Program[tuple | None, object]:
+    ...
+
+def last_call_total(records: tuple) -> _Program[int | None, object]:
+    ...
+
+def subagent_transcript_of(agent_id: str, parent_tool_use_id: str, data: bytes, expected_total: int | None) -> _Program[SubagentTranscript, object]:
     ...
 
 def classify_record(record: dict) -> Incomplete:

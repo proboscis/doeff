@@ -11,6 +11,7 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
+(import datetime)
 (import os)
 (import pathlib [Path])
 (import json)
@@ -97,6 +98,8 @@
 ;; fake の道具の呼びの id(doeff_claude_code.fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id(card ki-8239be27d5f6)。
 (val FAKE-TOOL-USE-ID "fake-tool")
 (val SUBAGENT-CALL-ID "msg_fake_sub")
+;; fake の subagent の呼びの刻(transcript の行の刻 — 出来事はこの刻を運ぶ・card ki-e798888dce4e)。
+(val SUBAGENT-CALL-AT (datetime.datetime.fromisoformat "2026-10-21T09:34:23.797+00:00"))
 ;; Stop hook が最初の答えを 1 度差し戻す手番(agora-redesign #4020)。替え玉の CLI の規則(scenario_rules.hy の HOOK-FEEDBACK-PHRASE と
 ;; REJECTED-ANSWER)と同じ言葉と、差し戻される答えの本文。
 (val HOOK-REASON "add-one-more-line")
@@ -168,13 +171,16 @@
                               #())
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
-             ;; echo の道具の途中の subagent の行(替え玉の CLI と同じ model と usage・親は道具の呼び — card ki-8239be27d5f6)。
-             :subagent-calls (if echoed
-                                 #((compose.AssistantMessage :model SUBAGENT-MODEL :parent-tool-use-id FAKE-TOOL-USE-ID
-                                                             :message-id SUBAGENT-CALL-ID
-                                                             :usage (compose.Usage :input-tokens 1 :output-tokens 900
-                                                                                   :cache-read-input-tokens 50000)))
-                                 #())
+             ;; echo の道具が走らせる subagent(替え玉の CLI と同じ model と usage・親は道具の呼び — card ki-8239be27d5f6)。本番の handler が
+             ;; subagent の transcript から読む物と同じ形(card ki-e798888dce4e)。
+             :subagent-transcript (if echoed
+                                      (compose.SubagentTranscript
+                                        :agent-id "afakesubagent0001" :parent-tool-use-id FAKE-TOOL-USE-ID
+                                        :calls #((compose.SubagentCall :at SUBAGENT-CALL-AT :model SUBAGENT-MODEL :call-id SUBAGENT-CALL-ID
+                                                                       :usage (compose.Usage :input-tokens 1 :output-tokens 900
+                                                                                             :cache-creation-input-tokens 0
+                                                                                             :cache-read-input-tokens 50000))))
+                                      None)
              :last-call-usage (if echoed
                                   (compose.Usage :input-tokens 4 :output-tokens 1 :cache-creation-input-tokens 20
                                                  :cache-read-input-tokens 1010)
@@ -2300,9 +2306,9 @@
 (defk check-a-subagent-call-carries-its-usage-apart [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "道具の途中に subagent が API を 1 回呼んだ手番は、その呼びの usage の出来事(AgentSubagentCallUsageEvent)をちょうど 1 つ運ぶ:
-   親 = その手番の道具の呼びの id・model = subagent の model・usage = 行の usage そのまま(cache の書きは名乗らないので None)・呼びの
-   id あり。本体の会話の呼びの usage の出来事(AgentCallUsageEvent)には入らない。subagent の行を捨てる adapter では 0 で赤 — 上の層は
-   rate limit を減らす subagent の消費を記録できない。"
+   親 = その手番の道具の呼びの id・model = subagent の model・usage = transcript の呼びの usage そのまま(4 欄)・呼びの id あり・刻は
+   時差つき。本体の会話の呼びの usage の出来事(AgentCallUsageEvent)には入らない。層 2 が subagent の transcript から読んだ行
+   (SubagentTranscript — card ki-e798888dce4e)を捨てる adapter では 0 で赤 — 上の層は rate limit を減らす subagent の消費を記録できない。"
   (import doeff_agents [AgentSubagentCallUsageEvent])
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val calls (lfor event done.events :if (isinstance event AgentToolUseEvent) call event.tool-calls call.id))
@@ -2311,9 +2317,10 @@
   (val event (get subagent 0))
   (assert (= #(event.parent-tool-use-id event.model event.usage)
              #((get calls 0) SUBAGENT-MODEL
-               (AgentTurnUsage :input-tokens 1 :output-tokens 900 :cache-write-tokens None :cache-read-tokens 50000)))
+               (AgentTurnUsage :input-tokens 1 :output-tokens 900 :cache-write-tokens 0 :cache-read-tokens 50000)))
           (repr event))
   (assert event.call-id (repr event))
+  (assert (is-not event.at.tzinfo None) (repr event))
   (assert (not-in SUBAGENT-MODEL (lfor other done.events :if (isinstance other AgentCallUsageEvent) other.model)) (repr done.events))
   None)
 

@@ -25,7 +25,7 @@
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
-                                 HookNotice HookPhase
+                                 HookNotice HookPhase SubagentTranscript SUBAGENT-TASK-TYPE
                                  ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -84,6 +84,9 @@
   (any (gfor end #(reply.fail reply.lose reply.account-refusal reply.model-refusal) (is-not end None))))
 
 
+;; 偽の手番の道具の task の id(subagent を走らせない手番 — 走らせる手番は subagent の transcript の agent-id)。
+(val FAKE-TASK-ID "fake-task")
+
 (defclass [(dataclass :frozen True)] FakeReply []
   "筋書きの 1 手番の返事: text = 最後の本文・tool-seconds = 道具が走る秒数(0 = 道具なし)・
    needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
@@ -131,9 +134,11 @@
    CompactBoundary = 成功した圧縮(終わりの status null の行 CompactEnded SUCCEEDED と境目の行の 2 行)・CompactEnded = その終わり方で
    終わった圧縮(失敗・中断・圧縮しなかった — 境目の行は出ない・card ki-8239be27d5f6)。上の層が無人のターンの圧縮を
    記録する事を模擬で確かめるため・
-   subagent-calls = 道具の途中に subagent が出す assistant の行の筋書き(AssistantMessage の列 — どれも parent-tool-use-id を持つ・
-   道具を走らせる手番だけ)。偽の CLI は道具の始まりの行の後に出す。本物の状態機械と同じく手番の最後の呼びには数えない。上の層が
-   subagent の呼びの使用量を記録する事を模擬で確かめるため(card ki-8239be27d5f6)・
+   subagent-transcript = 道具が subagent を走らせる筋書き(SubagentTranscript — 本番の handler が subagent の task の報せで transcript
+   から読む物そのもの・親の道具の呼びの id は FAKE-TOOL-USE-ID・道具を走らせる手番だけ)。偽の CLI は本番の CLI(背景の task を止めた
+   2.1.292)と同じく subagent の呼びの行を出さず、道具の始まりに subagent の task の始まり(TaskEvent・SUBAGENT-TASK-TYPE)を、道具の終わりに
+   その報せを出し、報せの直後に本番の handler と同じくこの行を出す(道具の途中で止めた手番は出さない)。上の層が subagent の呼びの使用量を
+   記録する事を模擬で確かめるため(card ki-8239be27d5f6・ki-e798888dce4e)・
    hooks = 要求の前に CLI が回す hook の行の筋書き(HookNotice の列 — 条件つきルールの助言を返す UserPromptSubmit の hook の応答ほか・
    ki-d8b473480303)。偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
    続く。Stop hook の差し戻し(stop-hook-rejections)の Stop の hook の応答の行は、差し戻しの筋書きが出す(stop-hook-notice-of)。上の層が
@@ -179,8 +184,8 @@
   (setv #^ (get tuple #(StopHookRejection ...)) stop-hook-rejections #())
   ;; 要求の前に CLI が会話を自動で圧縮する筋書き(圧縮しない = 空)。
   (setv #^ (get tuple #((| CompactBoundary CompactEnded) ...)) compactions #())
-  ;; 道具の途中に subagent が出す assistant の行の筋書き(出さない = 空・道具を走らせる手番だけ)。
-  (setv #^ (get tuple #(AssistantMessage ...)) subagent-calls #())
+  ;; 道具が走らせる subagent の transcript の読みの筋書き(走らせない = None・道具を走らせる手番だけ)。
+  (setv #^ (| SubagentTranscript None) subagent-transcript None)
   ;; 要求の前に CLI が回す hook の行の筋書き(回さない = 空)。
   (setv #^ (get tuple #(HookNotice ...)) hooks #())
   (defn #^ None __post-init__ [self]
@@ -192,10 +197,11 @@
       (raise (ValueError "FakeReply の fail・lose・account-refusal・model-refusal は多くとも 1 つ")))
     (when (and (is self.lose None) (or (is-not self.lose-exit-code None) (is-not self.lose-stderr None)))
       (raise (ValueError "FakeReply の lose-exit-code・lose-stderr は lose の手番だけ(消える process の終わりの欄)")))
-    (when (and self.subagent-calls (<= self.tool-seconds 0))
-      (raise (ValueError "FakeReply の subagent-calls は道具を走らせる手番だけ(tool-seconds が正 — subagent は道具の途中に走る)")))
-    (when (any (gfor message self.subagent-calls (is message.parent-tool-use-id None)))
-      (raise (ValueError "FakeReply の subagent-calls の行は親の呼びの id(parent-tool-use-id)を持つ(持たない行は本体の会話の行)")))
+    (when (and (is-not self.subagent-transcript None) (<= self.tool-seconds 0))
+      (raise (ValueError "FakeReply の subagent-transcript は道具を走らせる手番だけ(tool-seconds が正 — subagent は道具の途中に走る)")))
+    (when (and (is-not self.subagent-transcript None) (!= self.subagent-transcript.parent-tool-use-id FAKE-TOOL-USE-ID))
+      (raise (ValueError (.format "FakeReply の subagent-transcript の親は偽の手番の道具の呼び {}: {!r}" FAKE-TOOL-USE-ID
+                                  self.subagent-transcript.parent-tool-use-id))))
     (when (< self.lines 0)
       (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))
     (when (< self.deltas 0)
@@ -251,7 +257,9 @@
     (setv #^ (get tuple #(ModelWindow ...)) self.model-windows #())
     (setv #^ (| AccountLimitHit None) self.limit-hit None)
     (setv #^ (| AccountRefusalHit None) self.refusal-hit None)
-    (setv #^ (| ModelRefusalHit None) self.model-refusal-hit None)))
+    (setv #^ (| ModelRefusalHit None) self.model-refusal-hit None)
+    ;; 報せを出して、まだ出していない subagent の transcript の読み(本番の handler と同じく次の result の行の直前に出す)。
+    (setv #^ (| SubagentTranscript None) self.subagent-due None)))
 
 
 (defclass FakeSession []
@@ -350,6 +358,11 @@
   {:pre [(: session FakeSession) (: turn FakeTurn) (: kind ClaudeLineKind)] :post [(: % (type None))]}
   "手番の行を 1 つ出すため。出した行から、本番の状態機械(dialogue.hy の on-assistant・on-result)と同じ規則で本体の最後の呼びと
    model ごとの窓を手番に覚える(終わりに載せるのは finish)。"
+  ;; 報せを受けた subagent の transcript の読みは、本番の handler と同じく CLI の手番の終わり(result の行)の直前に足す。
+  (when (and (isinstance kind TurnResult) (is-not turn.subagent-due None))
+    (val due turn.subagent-due)
+    (setv turn.subagent-due None)
+    (<- (emit session turn due)))
   (<- at (GetTime))
   (<- said (said-by-reply turn.reply kind))
   (.append turn.lines (ClaudeStreamLine :seq session.next-line-seq :at at :kind said :raw (repr said)))
@@ -550,6 +563,21 @@
                                                              (! (stderr-tail-within reply.lose-stderr)))))))
   None)
 
+(defk task-lines-of [#^ FakeReply reply #^ bool started]
+  {:pre [(: reply FakeReply) (: started bool)] :post [(: % list)] :tags {:context "claude-code" :role "foundation"}}
+  "道具を走らせる偽の手番の、道具の task の始まり(started)か終わりの行を、本番と同じ形で出すため。subagent を走らせる手番
+   (subagent-transcript が在る)は本物の CLI 2.1.292 と同じく subagent の task(id = transcript の agent-id・親 = 道具の呼び・始まりは
+   SUBAGENT-TASK-TYPE)の行(本番の handler が足す transcript の読みの行は、emit が次の result の行の直前に出す — FakeTurn の
+   subagent-due)。走らせない手番は FAKE-TASK-ID の行だけ。"
+  (val transcript reply.subagent-transcript)
+  (cond
+    (is transcript None)
+      [(TaskEvent FAKE-TASK-ID (if started "started" "completed"))]
+    started
+      [(TaskEvent transcript.agent-id "started" :tool-use-id FAKE-TOOL-USE-ID :task-type SUBAGENT-TASK-TYPE)]
+    True
+      [(TaskEvent transcript.agent-id "completed" :tool-use-id FAKE-TOOL-USE-ID)]))
+
 (defk advance [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
   {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
   "今の時刻まで筋書きを進める。"
@@ -558,9 +586,12 @@
     (<- (emit-due-lines session turn now)))
   (when (and (in turn.phase #("quick" "tool")) (>= (+ now CLOCK-TICK) turn.due-at))
     (when (= turn.phase "tool")
-      (<- (emit-all session turn [(ToolResult :answers #((ToolAnswer :id FAKE-TOOL-USE-ID :text turn.reply.tool-output
-                                                                      :is-error turn.reply.tool-error)))
-                                  (TaskEvent "fake-task" "completed")])))
+      ;; 本物の CLI 2.1.292 の順: task の報せ → 道具の結果。subagent の transcript の読みは、本番の handler と同じく次の result の行の
+      ;; 直前に出す(emit)。
+      (<- ended (task-lines-of turn.reply False))
+      (setv turn.subagent-due turn.reply.subagent-transcript)
+      (<- (emit-all session turn (+ ended [(ToolResult :answers #((ToolAnswer :id FAKE-TOOL-USE-ID :text turn.reply.tool-output
+                                                                               :is-error turn.reply.tool-error)))]))))
     (if (scripted-end? turn.reply)
         (<- (end-scripted session turn))
         (<- (begin-text world session turn now))))
@@ -621,7 +652,7 @@
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
-        (<- (emit-all session turn (+ call-lines [(TaskEvent "fake-task" "started")] (list reply.subagent-calls))))))
+        (<- (emit-all session turn (+ call-lines (! (task-lines-of reply True)))))))
   turn)
 
 
