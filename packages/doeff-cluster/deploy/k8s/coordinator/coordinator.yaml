@@ -171,7 +171,11 @@ spec:
             # 置いた側へ結末を届ける。間の差で coordinator の process に効く物は、scheduled() の既定の scheduler を Rust の版にする変更
             # (ec5b91d99 — 上に載る系の job は 4de77f941 から既にこの版)・止められた常駐の job の起こし直しの上限(523ffad35・2a117cd53)・
             # worker の disk の名乗りの戻りの幅・handler は @handler の def だけ。前の版 9fe8c330b は d5ebd138d の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: d5ebd138dc230546a4940678e5340bc0d1ee190a }
+            # 5b0b15780 = 起き直しの後、Pod が Service に載って最初の heartbeat が届くまでを worker の沈黙に数えない版(card ki-439a73dc075c・
+            # L2652 — 入れ替えのたびに全 worker が WorkerGone になり、Service に載った直後に WorkerBack で戻っていた)。この版の coordinator が
+            # 起きた入れ替えの次から効く。間の差で coordinator の process に効く物は無い(子の cgroup の置き場は worker の内部・disk の
+            # 分け前は配備の宣言だけ)。前の版 d5ebd138d は 5b0b15780 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 5b0b157802596713a950c8e678466f6358e78b22 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
