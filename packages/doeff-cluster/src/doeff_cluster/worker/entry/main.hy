@@ -17,7 +17,7 @@
 (import pathlib [Path])
 (import doeff [run with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
-(import doeff_core_effects.file_effects [WriteText file-done])
+(import doeff_core_effects.file_effects [FileFailed PathKind PathStat ReadText StatPath WriteText file-done])
 (import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler offloaded-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
@@ -56,6 +56,8 @@
 (import doeff_cluster.worker.protocol.memory_observer [memory-observer])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
+(import doeff_cluster.worker.core.job_cgroup [job-cgroup-procs])
+(import doeff_cluster.worker.protocol.job_cgroup [job-cgroup-placer])
 (import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
@@ -66,6 +68,8 @@
 
 ;; この process の世代を書く Pod の中の file の名(無ければ書かない — readinessProbe が読む)。
 (val BOOT-FILE-VAR "DOEFF_WORKER_BOOT_FILE")
+;; 子の job を置く兄弟の cgroup の名(無ければ子を本体と同じ cgroup で起こす — card ki-ed9dca403f58・worker/core/job_cgroup)。
+(val JOB-CGROUP-VAR "DOEFF_WORKER_JOB_CGROUP")
 
 
 (defk boot-file-written [path boot]
@@ -76,6 +80,23 @@
   (when path
     (<- (file-done (WriteText path (+ boot "\n") :replace True))))
   None)
+
+
+(defk job-cgroup-placed [sibling]
+  {:pre [(: sibling (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
+  "子の job を置く兄弟の cgroup の cgroup.procs の path を起動の時に 1 度だけ決めるため(JOB-CGROUP-VAR の値 — 無ければ None で、
+   子を包まない)。自分の cgroup は /proc/self/cgroup を file の効果で読む(答え手は入口が並べる os-file-handler)。読めない・兄弟が
+   無い起動は断る(ValueError — 子を本体の cgroup で黙って走らせない。機体の配備が兄弟を作り忘れた事を起動の失敗で見せる)。"
+  (if (is sibling None)
+      None
+      (do (<- own (| str FileFailed) (ReadText "/proc/self/cgroup"))
+          (when (isinstance own FileFailed)
+            (raise (ValueError (.format "{} を読めない: {}" own.path own.detail))))
+          (<- procs str (job-cgroup-procs own sibling))
+          (<- seen (| PathStat FileFailed) (StatPath procs))
+          (when (or (isinstance seen FileFailed) (!= seen.kind PathKind.FILE))
+            (raise (ValueError (.format "{}={} の兄弟の cgroup が無い({})— 機体の配備が作る" JOB-CGROUP-VAR sibling procs))))
+          procs)))
 
 
 (defk pass-env-names [names]
@@ -118,10 +139,11 @@
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
-(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file memory-cell]
+(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file memory-cell
+                           [job-procs None]]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
          (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings)
-         (: warm WarmSettings) (: boot-file (| str None)) (: memory-cell MemoryCell)]
+         (: warm WarmSettings) (: boot-file (| str None)) (: memory-cell MemoryCell) (: job-procs (| str None))]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
@@ -134,12 +156,16 @@
    印の書き手と形の module leaving_mark は読まない)。機体の memory の見張りが読む process の表と、止める SignalPid は os-proc-table-handler
    が答える(card ki-7b934e2538f9 — 見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。
    機体の memory の逼迫の観測(ObserveMemoryTight — local-host が問う)は memory-observer が、見張りと分ける入れ物 memory-cell の様子で答える
-   (task の起動の見送り — policy の ready-tree-step)。"
-  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler os-proc-table-handler
+   (task の起動の見送り — policy の ready-tree-step)。子の job を置く兄弟の cgroup(job-procs — card ki-ed9dca403f58)が在れば、
+   job-cgroup-placer を subprocess-handler のすぐ内側に置き、内側の宿が起こす子をすべて兄弟の cgroup へ入れる(本体は残る)。"
+  (+
+  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler]
+  (if (is job-procs None) [] [(job-cgroup-placer job-procs)])
+  [os-warm-process-handler os-proc-table-handler
    process-exit-handler
    os-file-handler offloaded-tree-handler offloaded-file-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses])
+   (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
 
 
 (defk timing-checked [fence-ms policy timing]
@@ -276,7 +302,7 @@
         ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
-                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR) WORKER-LOG-ENV-NAMES))))
+                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR) WORKER-LOG-ENV-NAMES))))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
@@ -335,10 +361,13 @@
   ;; 機体の memory の見張り(card ki-7b934e2538f9 — 5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)の入れ物は、
   ;; 見張りの背景の task と、逼迫の観測の答え手 memory-observer(本番の組)が分けるので、組より先に作る。
   (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
-        memory-cell (MemoryCell))
+        memory-cell (MemoryCell)
+        ;; 子の job を置く兄弟の cgroup(card ki-ed9dca403f58 — 機体の配備が名を渡した時だけ)。
+        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR)))))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
-                                           places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell)))
+                                           places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
+                                           :job-procs job-procs)))
   ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
   (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
