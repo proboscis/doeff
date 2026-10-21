@@ -131,13 +131,16 @@ name = "doeff"
 # ⇒ 費用(実測): 最初の日次(2026-10-13 00:03 JST・commit 03236c441eff)で hy-floor は 579 秒・緑(748 通過・1 skip)。ただし全段の合計が 7200 秒に尽き、後ろの lint が 312 秒で切られて未実行(budget-exhausted)になった(この日の段 = build 6・root 1961・packages 3953・hy-floor 579・rust 364・vscode 24)。ので full_timeout_s を 7200 → 9000 に上げた(下の値)。
 # ⇒ 戻し方: hy-floor の行と Makefile の test-hy-floor を消し、full_timeout_s を 7200 へ戻し、R8 の母集団の一覧と deftest の hy-floor を外す。
 full = [
+# 2026-10-22(card acp:kanban-issue:ki-c6f0ffd50502): lint と vscode を build の直後へ移した。10-21 の日次で root 2323 秒・packages 5281 秒が
+# 全体の上限 full_timeout_s を使い切り、最後に置いた lint が 240 秒で切られて未実行(budget-exhausted)になり、直した lint が緑になるかを測れなかった。
+# lint(基点の確かめ)と vscode は短い(実測 5〜25 秒、linter の組み直しでも数分)ので、重い root・packages より前に置く。戻すには 2 行を末尾へ戻す。
   { name = "build", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync", blocks_rest = true, pytest = false },
+  { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false },
+  { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
   { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' --durations=0 --durations-min=10", pytest = true },
   { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
   { name = "hy-floor", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-hy-floor PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
-  { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false },
-  { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
-  { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false }
+  { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false }
 ]
 # 日次の外の物(Mac の調整役の決め (b)・cisco-c8 の中継 2026-10-05 18:3x・agora-redesign #3167・#3571): 名と未実行の種類の両方が一致した
 # 申告だけを、検証の本体(merge-queue の verify_main — L274)が結論の計算の直前に分け、残りの処理ステージの結果で結論を出す。分けた物は
