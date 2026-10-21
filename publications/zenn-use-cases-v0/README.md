@@ -47,7 +47,7 @@
 
 - メインは冒頭キービジュアル→悩み→定義→Askと最小ハンドラのコード→ハンドラの交換と概念図→仕組み→悩みと解法の表→まとめ→参考。AIエージェントは用途紹介の先頭に置く。
 - 公開する本文は`render_release.py`で正本から作り、記事間のリンクを公開状態に合わせる。字数・コードの枠・図・文の長さも同じ道具で測る。
-- Zennに置く`articles/`と`images/`の組は`export_zenn.py`で書き出し、`zenn-check/check.mjs`で崩れを数え、`zenn-check/screenshot.mjs`でプレビューの画面を記事ごとに写す。公開順の表に公開の刻を書いた回は、`push_zenn_branch.py`がZennの予約公開として記事のbranchに置き、刻の後に`record_published.py`が表を公開済みに直す。手順は[公開計画](publication-plan.md)の「公開の準備と手順」に書いた。
+- Zennに置く`articles/`と`images/`の組は`export_zenn.py`で書き出し、`zenn-check/check.mjs`で崩れを数え、`zenn-check/screenshot.mjs`でプレビューの画面を記事ごとに写す。公開順の表に公開の刻を書いた回は、`push_zenn_branch.py`がZennの予約公開として記事のbranchに置き、刻の後に`record_published.py`が表を公開済みに直す。毎日8:10 JSTに、agoraの同期のjobが`record_sweep.py`で直しとリンクの張り直しを行う。手順は[公開計画](publication-plan.md)の「公開の準備と手順」に書いた。
 - 連載10本をまとめる無料のZennの本の下書きは、`books/<本のslug>/`に章立て・章のつなぎ・表紙だけを置く。章の本文は`export_zenn_book.py`が書き出すたびに原稿から作るので、原稿だけを直す。手順は[公開計画](publication-plan.md)の「1冊の本にまとめる下書き」に書いた。
 - 中心は「エフェクトの解釈はハンドラ次第」。HTTP取得、Memo保存、時計などを独立に合成する。
 - 合成する補助関数は`@do`、呼び出しは`yield helper(...)`。SDKの非同期primitiveに接続する地点だけ`Await`を使う。

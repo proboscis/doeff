@@ -24,6 +24,11 @@ branchの先端の上の1つのcommitにしてpushする。mainの木も、こ�
 - --resync: Zennは連携の後のpushで変わった.mdだけを同期する。連携の直後に1度、記事を外すcommitと
   置き直すcommitを別々のpushで送り、全記事を同期させる。Zennは記事の削除をダッシュボードからしか
   受けないので、外すpushでZennの記事は消えない。
+- --keep-schedule: 予約と公開の設定(publishedとpublished_at)を、branchのまま変えない書き出しだけを送る。
+  変える記事が1本でもあれば、変える所を表示し、何もpushせずに終わる(終わりのcodeは0)。branchに無い記事は、
+  下書き(published: false)で置く時だけ送る。刻を過ぎた回を公開済みに直した後に、他の回の本文のリンクだけを
+  張り直す1回(record_sweep.py — agoraの同期のjobが走らせるプログラムのreconcile)が使う。その1回は予約も
+  公開もしない(card ki-9c84cc3b4e19)。
 """
 
 from __future__ import annotations
@@ -190,6 +195,34 @@ def published_problems(
     return (*changed, *dropped)
 
 
+def setting_text(published: bool | None, published_at: str | None) -> str:
+    """記事の予約と公開の設定を、表示の1語にする。"""
+    return f"published: {published}" + (f" published_at: {published_at}" if published_at else "")
+
+
+def changes_schedule(item: export_zenn.Prepared, before: Placed | None) -> bool:
+    """書き出す記事1本が、branchの予約と公開の設定(beforeはbranchの値・無ければNone)を変えるか。
+
+    branchに無い記事は、下書き(published: false)で置く時だけ変えないと数える。
+    """
+    if before is None:
+        return item.published
+    return (before.published, before.published_at) != (item.published, item.published_at)
+
+
+def schedule_changes(
+    items: tuple[export_zenn.Prepared, ...], branch: dict[str, Placed]
+) -> tuple[str, ...]:
+    """書き出しが、branchの記事の予約と公開の設定(publishedとpublished_at)を変える所を全部返す(--keep-schedule)。"""
+    return tuple(
+        f"articles/{item.slug}.md: "
+        + (setting_text(before.published, before.published_at) if before else "branchに無い")
+        + f" → {setting_text(item.published, item.published_at)}"
+        for item in items
+        if changes_schedule(item, before := branch.get(item.slug))
+    )
+
+
 def tree_of(directory: Path, repo: Path = ROOT) -> str:
     """ディレクトリの中身を、repoのgitの木にして、その名を返す。"""
     git_dir = git("rev-parse", "--absolute-git-dir", cwd=repo)
@@ -263,6 +296,11 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true", help="commitを作って表示し、pushしない")
     parser.add_argument(
+        "--keep-schedule",
+        action="store_true",
+        help="予約と公開の設定をbranchのまま変えない書き出しだけを送る(変える記事があれば何もpushしない)",
+    )
+    parser.add_argument(
         "--now",
         type=now_of,
         default=None,
@@ -283,6 +321,15 @@ def main() -> None:
     )
     if problems:
         sys.exit("\n".join(problems))
+    changes = (
+        schedule_changes(export.items, branch.placed if branch else {})
+        if args.keep_schedule
+        else ()
+    )
+    if changes:
+        print("\n".join(changes))
+        print(f"{args.branch}: 予約と公開の設定を変える書き出しなので、送りません(--keep-schedule)")
+        return
     with tempfile.TemporaryDirectory() as output:
         for item in export.items:
             export_zenn.write(item, Path(output))
