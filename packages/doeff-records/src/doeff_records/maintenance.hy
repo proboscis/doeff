@@ -27,9 +27,9 @@
 ;;; 頁ごとに送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す(RetireArchivedEvents — 読みと外しの間に新しく期限を
 ;;; 過ぎた出来事は頁に無く、境の読み直しでも外れない)。送りが Unreachable の頁で回を終える(その頁と残りは次の回)。
 ;;;
-;;;   ReadExpiredEvents    印の列の、刻 at-ms の境で期限を過ぎた出来事(書きが覚えた鍵の出来事を含む)を、列の名の順・列の中は
+;;;   ReadExpiredEvents    印の列の、刻 at の境で期限を過ぎた出来事(書きが覚えた鍵の出来事を含む)を、列の名の順・列の中は
 ;;;                        積んだ刻と番号の順に limit 件まで読む(1 頁 = 1 つの列)。after = 前の頁の続きの位置(None = 頭から)
-;;;   RetireArchivedEvents 列 stream の番号 sequences の出来事のうち、刻 at-ms の境で今も期限を過ぎた物だけを外し、冪等キーを覚える
+;;;   RetireArchivedEvents 列 stream の番号 sequences の出来事のうち、刻 at の境で今も期限を過ぎた物だけを外し、冪等キーを覚える
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
@@ -37,7 +37,7 @@
 (import doeff [EffectBase])
 (import doeff_time [Delay GetTime])
 (import doeff_records.values [Event RowChanged RowRemoved Unreachable])
-(import doeff_records.admission [epoch-ms])
+(import datetime [datetime])
 
 ;; 出来事の送りの 1 頁の出来事の数の上限(送りの関数に渡す 1 回の量 — 外しの書きの錠の中で触る行もこの数で縛る)。
 (val ARCHIVE-PAGE 500)
@@ -103,14 +103,14 @@
 
 
 (defclass [(dataclass :frozen True)] ReadExpiredEvents [EffectBase]
-  "印(StreamDecl.archive-before-retire)の列の、刻 at-ms(epoch ミリ秒)の境で保持の期限を過ぎた出来事を、after の位置から limit 件まで
+  "印(StreamDecl.archive-before-retire)の列の、刻 at(GetTime の答え — 境の秒は handler が epoch ミリ秒にする)の境で保持の期限を過ぎた出来事を、after の位置から limit 件まで
    読む(頭の註)。答え = ExpiredEvents | Unreachable。"
-  (#^ int at-ms)
+  (#^ datetime at)
   (setv #^ (| ExpiredCursor None) after None)
   (setv #^ int limit ARCHIVE-PAGE)
   (defn #^ None __post_init__ [self]
-    (when (or (isinstance self.at-ms bool) (not (isinstance self.at-ms int)))
-      (raise (ValueError (.format "ReadExpiredEvents.at_ms は epoch ミリ秒の整数: {!r}" self.at-ms))))
+    (when (not (isinstance self.at datetime))
+      (raise (TypeError (.format "ReadExpiredEvents.at は datetime: {!r}" self.at))))
     (when (not (or (is self.after None) (isinstance self.after ExpiredCursor)))
       (raise (TypeError (.format "ReadExpiredEvents.after は ExpiredCursor | None: {!r}" self.after))))
     (when (or (isinstance self.limit bool) (not (isinstance self.limit int)) (< self.limit 1))
@@ -125,14 +125,14 @@
 
 
 (defclass [(dataclass :frozen True)] RetireArchivedEvents [EffectBase]
-  "列 stream の番号 sequences(送り先に在ると確かめた出来事)のうち、刻 at-ms の境で今も保持の期限を過ぎた出来事だけを置き場から外し、
+  "列 stream の番号 sequences(送り先に在ると確かめた出来事)のうち、刻 at の境で今も保持の期限を過ぎた出来事だけを置き場から外し、
    冪等キーを覚える。答え = RetiredEvents | Unreachable。"
   (#^ str stream)
-  (#^ int at-ms)
+  (#^ datetime at)
   (#^ (get tuple #(int ...)) sequences)
   (defn #^ None __post_init__ [self]
-    (when (or (isinstance self.at-ms bool) (not (isinstance self.at-ms int)))
-      (raise (ValueError (.format "RetireArchivedEvents.at_ms は epoch ミリ秒の整数: {!r}" self.at-ms))))
+    (when (not (isinstance self.at datetime))
+      (raise (TypeError (.format "RetireArchivedEvents.at は datetime: {!r}" self.at))))
     (when (not (and (isinstance self.sequences tuple)
                     (all (gfor n self.sequences (and (isinstance n int) (not (isinstance n bool)) (> n 0))))))
       (raise (ValueError (.format "RetireArchivedEvents.sequences は正の番号の tuple: {!r}" self.sequences))))))
@@ -183,9 +183,9 @@
     _ (raise (TypeError (.format "手入れの送りの答えが ArchivedThrough でも Unreachable でもない: {!r}" archived)))))
 
 
-(defk archived-page [archive-events at-ms page]
-  {:pre [(: archive-events Callable) (: at-ms int) (: page ExpiredEvents)] :post [(: % EventsArchiveReport)]}
-  "期限を過ぎた出来事の頁 1 つを送りの関数で送り、送り先に在ると確かめた番号のうち頁に在った物だけを、読みと同じ刻 at-ms の境で外すため
+(defk archived-page [archive-events at page]
+  {:pre [(: archive-events Callable) (: at datetime) (: page ExpiredEvents)] :post [(: % EventsArchiveReport)]}
+  "期限を過ぎた出来事の頁 1 つを送りの関数で送り、送り先に在ると確かめた番号のうち頁に在った物だけを、読みと同じ刻 at の境で外すため
    (頭の註の「出来事を送ってから外す」— 頁に無い番号を答えても外さない)。送りが届かなければ外さず、halted に Unreachable を置く。"
   (<- answer (archive-events page.items))
   (match answer
@@ -195,7 +195,7 @@
           (val confirmed (tuple (sorted (frozenset (gfor n sequences :if (in n read) n)))))
           (when (not confirmed)
             (return (EventsArchiveReport :sent (len page.items) :confirmed 0 :unreached 0 :retired 0)))
-          (<- retired (RetireArchivedEvents (. (get page.items 0) stream) at-ms confirmed))
+          (<- retired (RetireArchivedEvents (. (get page.items 0) stream) at confirmed))
           (match retired
             (RetiredEvents :count count) (EventsArchiveReport :sent (len page.items) :confirmed (len confirmed) :unreached 0 :retired count)
             (Unreachable) (EventsArchiveReport :sent (len page.items) :confirmed (len confirmed) :unreached 0 :retired 0 :halted retired)
@@ -208,16 +208,15 @@
   "印の列の期限を過ぎた出来事を、刻 T を 1 度読んで、その境で頁ごとに送って確かめた物だけ外すため(頭の註の「出来事を送ってから外す」)。
    置き場か送り先に届かない頁で回を終える(残りは次の回 — 外していないので、次の回の読みにまた出る)。"
   (<- now (GetTime))
-  (val at-ms (epoch-ms now))
   (var after None)
   (var total (EventsArchiveReport :sent 0 :confirmed 0 :unreached 0 :retired 0))
   (while True
-    (<- page (ReadExpiredEvents at-ms :after after))
+    (<- page (ReadExpiredEvents now :after after))
     (when (isinstance page Unreachable)
       (return (EventsArchiveReport :sent total.sent :confirmed total.confirmed :unreached total.unreached :retired total.retired
                                    :halted page)))
     (when page.items
-      (<- done (archived-page archive-events at-ms page))
+      (<- done (archived-page archive-events now page))
       (:= total (EventsArchiveReport :sent (+ total.sent done.sent) :confirmed (+ total.confirmed done.confirmed)
                                      :unreached (+ total.unreached done.unreached) :retired (+ total.retired done.retired)
                                      :halted done.halted))

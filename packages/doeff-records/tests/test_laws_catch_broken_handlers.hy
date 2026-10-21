@@ -8,7 +8,6 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
-(import doeff_records.admission [epoch-ms])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty Event EventAbsent EventRetired AppendedEvents])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey])
@@ -362,17 +361,17 @@
 
 (defhandler retire-every-expired-event []
   ;; 送り先に在ると確かめた番号を見ない外しの顔(card ki-707aad0f88e8 の前の回収の形): 列の期限を過ぎた出来事を全部外す。
-  (RetireArchivedEvents [stream at-ms sequences]
-    (<- page (ReadExpiredEvents at-ms :after (ExpiredCursor stream) :limit 1000))
-    (<- answer (RetireArchivedEvents stream at-ms (tuple (gfor event page.items event.sequence))))
+  (RetireArchivedEvents [stream at sequences]
+    (<- page (ReadExpiredEvents at :after (ExpiredCursor stream) :limit 1000))
+    (<- answer (RetireArchivedEvents stream at (tuple (gfor event page.items event.sequence))))
     (resume answer)))
 
 
 (defhandler retire-at-the-latest-boundary []
   ;; 読みの境 T を見ない外しの顔(card ki-707aad0f88e8): 外す時の今の刻の境で外す — 送りの読みの後に期限を過ぎた出来事も外れる。
-  (RetireArchivedEvents [stream at-ms sequences]
+  (RetireArchivedEvents [stream at sequences]
     (<- now (GetTime))
-    (<- answer (RetireArchivedEvents stream (epoch-ms now) sequences))
+    (<- answer (RetireArchivedEvents stream now sequences))
     (resume answer)))
 
 

@@ -1583,7 +1583,7 @@
 (defk pg-read-expired-events [store ask]
   {:pre [(: store PreparedStore) (: ask ReadExpiredEvents)] :post [(: % ExpiredEvents)]
    :tags {:context "records" :role "foundation"}}
-  "ReadExpiredEvents に答えるため(頭の註の「出来事を送ってから外す」— 錠の外の読み): 続きの位置の列の、刻 ask.at-ms の境で期限を
+  "ReadExpiredEvents に答えるため(頭の註の「出来事を送ってから外す」— 錠の外の読み): 続きの位置の列の、刻 ask.at の境で期限を
    過ぎた出来事を 1 頁読む(pg_sql.expired-page-statement)。頁が満ちればその列の続き、満ちなければ次の列の頭(最後の列なら None)を
    続きの位置にする。"
   (<- names (archived-stream-names store))
@@ -1593,7 +1593,7 @@
   (when (is start None)
     (return (ExpiredEvents #() None)))
   (<- decl (archived-decl store start.stream))
-  (<- expiry (event-expiry decl ask.at-ms))
+  (<- expiry (event-expiry decl (epoch-ms ask.at)))
   (<- statement (expired-page-statement store.prefix start.stream expiry.before-at expiry.separator start.at start.sequence ask.limit))
   (<- records (query-rows store.database statement))
   (var items #())
@@ -1611,10 +1611,10 @@
   {:pre [(: store PreparedStore) (: gated bool) (: ask RetireArchivedEvents)] :post [(: % RetiredEvents)]
    :tags {:context "records" :role "foundation"}}
   "RetireArchivedEvents に答えるため(頭の註の「出来事を送ってから外す」): 送り先に在ると確かめた番号を EXPIRE-BATCH 個ずつ、列の書きの錠の
-   transaction で、刻 ask.at-ms の境で今も期限を過ぎた出来事(覚えた出来事を含む)だけ捨てて冪等キーを覚える(回収と同じ文 —
+   transaction で、刻 ask.at の境で今も期限を過ぎた出来事(覚えた出来事を含む)だけ捨てて冪等キーを覚える(回収と同じ文 —
    retire-expired-events)。答え = 外した出来事の数。"
   (<- decl (archived-decl store ask.stream))
-  (<- expiry (event-expiry decl ask.at-ms))
+  (<- expiry (event-expiry decl (epoch-ms ask.at)))
   (<- topics (notice-topics #() #(ask.stream)))
   (<- unit (stream-unit ask.stream))
   (var total 0)
@@ -1729,10 +1729,10 @@
     (<- answer (reached (change-log store effect)))
     (resume answer))
   ;; 送ってから外す列の送りの読み(錠の外)と、送り先に在ると確かめた出来事の外し(列の書きの錠 — 頭の註の「出来事を送ってから外す」)。
-  (ReadExpiredEvents [at-ms after limit]
+  (ReadExpiredEvents [at after limit]
     (<- answer (reached (pg-read-expired-events store effect)))
     (resume answer))
-  (RetireArchivedEvents [stream at-ms sequences]
+  (RetireArchivedEvents [stream at sequences]
     (<- answer (reached (pg-retire-archived-events store gated effect)))
     (resume answer)))
 

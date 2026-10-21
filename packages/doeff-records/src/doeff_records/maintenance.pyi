@@ -10,7 +10,7 @@ from doeff_records.values import Event as Event
 from doeff_records.values import RowChanged as RowChanged
 from doeff_records.values import RowRemoved as RowRemoved
 from doeff_records.values import Unreachable as Unreachable
-from doeff_records.admission import epoch_ms as epoch_ms
+from datetime import datetime as datetime
 ARCHIVE_PAGE: int
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ class ExpiredCursor:
 
 @dataclass(frozen=True)
 class ReadExpiredEvents(EffectBase):
-    at_ms: int
+    at: datetime
     after: ExpiredCursor | None = None
     limit: int = ...
 
@@ -77,7 +77,7 @@ class ExpiredEvents:
 @dataclass(frozen=True)
 class RetireArchivedEvents(EffectBase):
     stream: str
-    at_ms: int
+    at: datetime
     sequences: tuple[int, ...]
 
     def __post_init__(self) -> None:
@@ -109,7 +109,7 @@ class MaintenanceReport:
 def prune_after_archive(keep_seconds: int | float, archive: Callable | None) -> _Program[MaintenanceReport, object]:
     ...
 
-def archived_page(archive_events: Callable, at_ms: int, page: ExpiredEvents) -> _Program[EventsArchiveReport, object]:
+def archived_page(archive_events: Callable, at: datetime, page: ExpiredEvents) -> _Program[EventsArchiveReport, object]:
     ...
 
 def archive_expired_events(archive_events: Callable) -> _Program[EventsArchiveReport, object]:

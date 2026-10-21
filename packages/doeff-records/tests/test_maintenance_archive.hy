@@ -90,12 +90,12 @@
     (resume (Swept 0)))
   (PruneChanges [keep-seconds upto-seq]
     (resume (Pruned 0 0)))
-  (ReadExpiredEvents [at-ms after limit]
+  (ReadExpiredEvents [at after limit]
     (setv shelf.asked (+ shelf.asked #(effect))
           page (get shelf.pages 0)
           shelf.pages (tuple (cut shelf.pages 1 None)))
     (resume page))
-  (RetireArchivedEvents [stream at-ms sequences]
+  (RetireArchivedEvents [stream at sequences]
     (setv shelf.asked (+ shelf.asked #(effect)))
     (resume (RetiredEvents (len sequences)))))
 
@@ -125,7 +125,7 @@
   (val reads (tuple (gfor ask shelf.asked :if (isinstance ask ReadExpiredEvents) ask)))
   (val retires (tuple (gfor ask shelf.asked :if (isinstance ask RetireArchivedEvents) ask)))
   (assert (= (lfor ask reads ask.after) [None (ExpiredCursor "a" 2000 2) (ExpiredCursor "b")]) reads)
-  (assert (= (len (frozenset (gfor ask shelf.asked ask.at-ms))) 1) shelf.asked)
+  (assert (= (len (frozenset (gfor ask shelf.asked ask.at))) 1) shelf.asked)
   (assert (= (lfor ask retires #(ask.stream ask.sequences)) [#("a" #(2)) #("b" #(5))]) retires)
   (assert (= report.events (EventsArchiveReport :sent 3 :confirmed 2 :unreached 0 :retired 2)) report))
 

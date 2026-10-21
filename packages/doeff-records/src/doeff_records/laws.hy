@@ -13,6 +13,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
+(import datetime [datetime])
 (import itertools)
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
@@ -1422,29 +1423,22 @@
 
 ;; --- 法 19〜21: 送ってから外す列(maintenance.hy の頭の註の「出来事を送ってから外す」— card ki-707aad0f88e8)--------------------------
 
-(defk expired-keys [harness at-ms]
-  {:pre [(: harness LawHarness) (: at-ms int)] :post [(: % tuple)]
+(defk expired-keys [harness at]
+  {:pre [(: harness LawHarness) (: at datetime)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
-  "送ってから外す列の、刻 at-ms の境で期限を過ぎて置き場に残る出来事を ReadExpiredEvents の頁で読み切り、#(列 冪等キー) を読んだ順に
+  "送ってから外す列の、刻 at の境で期限を過ぎて置き場に残る出来事を ReadExpiredEvents の頁で読み切り、#(列 冪等キー) を読んだ順に
    並べるため(法 19〜21 が「置き場に残るか」を読む口 — 読みの effect は期限を過ぎた出来事を出さない)。"
   (var found #())
   (var after None)
   (var going True)
   (while going
-    (<- page (as-writer harness MAKER (ReadExpiredEvents at-ms :after after :limit 2)))
+    (<- page (as-writer harness MAKER (ReadExpiredEvents at :after after :limit 2)))
     (when (not (isinstance page ExpiredEvents))
       (raise (LawBroken (.format "法 19〜21 の基準: ReadExpiredEvents が ExpiredEvents でない: {!r}" page))))
     (:= found (+ found (tuple (gfor event page.items #(event.stream event.idempotency-key)))))
     (:= after page.next)
     (:= going (is-not after None)))
   found)
-
-
-(defk now-ms []
-  {:pre [] :post [(: % int)] :tags {:context "records" :role "program"}}
-  "法の時計の今の刻を epoch ミリ秒で読むため(送りの読みと外しの境の刻)。"
-  (<- now (GetTime))
-  (epoch-ms now))
 
 
 (defk confirm-keys [keys events]
@@ -1476,20 +1470,20 @@
   (val all-keys #(#("relay-pairs" "ask:k") #("relay-pairs" "done:k") #("relays" "r-1") #("relays" "r-2")))
   ;; 回収は送ってから外す列を外さない。読みには出ない。
   (<- swept (as-writer harness MAKER (SweepExpired)))
-  (<- t1 (now-ms))
+  (<- t1 (GetTime))
   (<- kept (expired-keys harness t1))
   (<- (require-law (= kept all-keys) law (.format "回収が送っていない出来事を外した: {!r} {!r}" swept kept)))
   (<- read (as-writer harness MAKER (ReadEvents "relays")))
   (<- (require-law (and (isinstance read Events) (= read.items #())) law (.format "期限を過ぎた出来事が読みに出た: {!r}" read)))
   ;; 送り先に届かない回は外さない(最初の頁 — 組の列の 2 つ — で回を終える)。
   (<- down (as-writer harness MAKER (archive-expired-events unreachable-destination)))
-  (<- t2 (now-ms))
+  (<- t2 (GetTime))
   (<- still (expired-keys harness t2))
   (<- (require-law (and (= still all-keys) (= #(down.unreached down.retired) #(2 0)) (isinstance down.halted Unreachable)) law
                    (.format "送り先に届かない回に出来事が外れた: {!r} {!r}" down still)))
   ;; 確かめた番号の出来事だけが外れる(r-1・ask:k)。組の残り(done:k)と確かめていない r-2 は残る。
   (<- part (as-writer harness MAKER (archive-expired-events (partial confirm-keys (frozenset #("r-1" "ask:k"))))))
-  (<- t3 (now-ms))
+  (<- t3 (GetTime))
   (<- left (expired-keys harness t3))
   (<- (require-law (and (= left #(#("relay-pairs" "done:k") #("relays" "r-2")))
                         (= #(part.sent part.confirmed part.unreached part.retired) #(4 2 0 2)) (is part.halted None))
@@ -1507,7 +1501,7 @@
                    (.format "外した鍵・残る期限を過ぎた鍵の引きが退いた でない: {!r} {!r}" by-key-1 by-key-2)))
   ;; 残りを確かめれば全部外れる。
   (<- rest (as-writer harness MAKER (archive-expired-events (partial confirm-keys (frozenset #("r-2" "done:k"))))))
-  (<- t4 (now-ms))
+  (<- t4 (GetTime))
   (<- gone (expired-keys harness t4))
   (<- (require-law (and (= gone #()) (= rest.retired 2)) law (.format "確かめた残りが外れない: {!r} {!r}" rest gone)))
   [r1 r2 ask done swept kept read down still part left again-r1 other-r2 again-ask by-key-1 by-key-2 rest gone])
@@ -1534,16 +1528,16 @@
   (<- late (as-writer harness MAKER (AppendEvent "relays" "edge-late" {"n" 2})))
   ;; 刻 T: early は期限を過ぎ、late はまだ(early の 2 秒後に積んだ)。
   (<- (Delay (- RELAY-KEEP-SECONDS 1)))
-  (<- t (now-ms))
+  (<- t (GetTime))
   (<- report (as-writer harness MAKER (archive-expired-events (partial confirm-with-a-late-guess late.sequence))))
-  (<- t-after (now-ms))
+  (<- t-after (GetTime))
   (<- left (expired-keys harness t-after))
   (<- (require-law (and (= #(report.sent report.confirmed report.retired) #(1 1 1))
                         (= left #(#("relays" "edge-late"))))
                    law (.format "読みの後に期限を過ぎた出来事が同じ回に外れた・送られた: {!r} {!r}" report left)))
   ;; 外しの effect の境: T の境では late は期限を過ぎていないので外れない(今の刻では過ぎている)。
   (<- direct (as-writer harness MAKER (RetireArchivedEvents "relays" t #(late.sequence))))
-  (<- t-direct (now-ms))
+  (<- t-direct (GetTime))
   (<- still (expired-keys harness t-direct))
   (<- (require-law (and (= direct (RetiredEvents 0)) (= still #(#("relays" "edge-late")))) law
                    (.format "境 T の外しが T の後に期限を過ぎた出来事を外した: {!r} {!r}" direct still)))
@@ -1587,7 +1581,7 @@
                         (= end (StreamEnd done.sequence)))
                    law (.format "期限を過ぎた組の古い出来事が新しい鍵の追記で読みに戻った: {!r} {!r} {!r} {!r}" done read by-key end)))
   ;; 書きは触った出来事を外さない: 送りの読みにまだ出る(新しい鍵の出来事は期限の前なので出ない)。
-  (<- t (now-ms))
+  (<- t (GetTime))
   (<- kept (expired-keys harness t))
   (<- (require-law (= kept #(#("relay-pairs" "ask:t21") #("relay-pairs" "ask:u21") #("relays" "beat-21"))) law
                    (.format "期限を過ぎた鍵に触る追記が、送っていない出来事を外した: {!r}" kept)))
