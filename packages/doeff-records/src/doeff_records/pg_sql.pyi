@@ -257,7 +257,7 @@ def list_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: froz
 def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, ordered: bool, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
 
-def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple, scoped: bool) -> _Program[Statement, object]:
+def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple, scoped: bool, before_at: int) -> _Program[Statement, object]:
     ...
 
 def upsert_row_statement(prefix: str, table: str, key: str, payload: str, version: int, at: int, writer: str, origin_host: str, epoch: int) -> _Program[Statement, object]:

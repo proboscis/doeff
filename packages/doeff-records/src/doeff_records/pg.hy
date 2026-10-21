@@ -966,13 +966,15 @@
 (defk expired-rows [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "期限を過ぎた行(ExpiredRow)の列(表の名の順・鍵の順)を読むため。判断は admission.row-expired?。
+  "期限を過ぎた行(ExpiredRow)の列(表の名の順・鍵の順)を読むため。判断は admission.row-expired?(文も同じ境 retention-cutoff-ms で
+   期限の前の終端の行を返さない — 読んで値を解くのは期限を過ぎた行だけ・pg_sql.terminal-rows-statement)。
    終端の語が空の表は文を流さない(`IN ()` は文にできない — 宣言は KeepFor の表に終端の語を求めるので、今は起きない)。"
   (var found [])
   (for [#(name decl) (sorted (.items store.schema.tables))]
     (when (and (isinstance decl.retention KeepFor) decl.terminal)
       (val scoped (in decl.state-field (.scoped-fields store.indexes name)))
-      (<- statement (terminal-rows-statement store.prefix name decl.state-field decl.terminal scoped))
+      (<- statement (terminal-rows-statement store.prefix name decl.state-field decl.terminal scoped
+                                             (retention-cutoff-ms decl now-ms)))
       (<- records (query-rows store.database statement))
       (for [record records]
         (val value (decoded-value (get record 1)))

@@ -117,7 +117,7 @@
    結末の付いた組の結末(受付の列で一番多い、要求の後の結末の追記の形)。"
   (<- pulse-probe (expiring-candidates-statement prefix "pulses" BEFORE None CANDIDATE-LIMIT))
   (<- pair-probe (expiring-candidates-statement prefix "pairs" BEFORE ":" CANDIDATE-LIMIT))
-  (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done") True))
+  (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done") True BEFORE))
   (<- touched (touched-events-statement prefix "pairs" BEFORE ":" "done:m-1"))
   ;; WatchChanges の頭の文に列の末尾を並べた形(#3718 — 列ごとの副問い合わせ stream-tail-statement): (ledger, seq) の索引を後ろから 1 行。
   ;; pulses の出来事は pairs より前に積んである — 主鍵 seq を後ろから読む道なら pairs の出来事を全部読む(等号の照らしの形がそうだった)。
