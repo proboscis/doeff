@@ -47,7 +47,9 @@
 ;; CLI — write-subagent-transcript)。道具の手番は、道具の呼びの行と最後の本文の行で別の呼びの usage を名乗る(最後の呼びは最後の本文の行)。
 (setv MODEL "claude-stub" SUBAGENT-MODEL "claude-stub-sub")
 (setv TOOL-CALL-USAGE {"input_tokens" 3 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 1000 "output_tokens" 5})
-(setv FINAL-CALL-USAGE {"input_tokens" 4 "cache_creation_input_tokens" 20 "cache_read_input_tokens" 1010 "output_tokens" 1})
+;; 最後の呼びは cache の書きの寿命の内訳(5 分・1 時間 — 実物 2.1.292 の usage.cache_creation)も名乗る(card ki-75d813bebc27)。
+(setv FINAL-CALL-USAGE {"input_tokens" 4 "cache_creation_input_tokens" 20 "cache_read_input_tokens" 1010 "output_tokens" 1
+                        "cache_creation" {"ephemeral_5m_input_tokens" 5 "ephemeral_1h_input_tokens" 15}})
 (setv SUBAGENT-USAGE {"input_tokens" 1 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 50000 "output_tokens" 900})
 (setv MAIN-WINDOW {"inputTokens" 7 "outputTokens" 6 "contextWindow" 200000 "maxOutputTokens" 32000})
 (setv SUBAGENT-WINDOW {"inputTokens" 1 "contextWindow" 100000})

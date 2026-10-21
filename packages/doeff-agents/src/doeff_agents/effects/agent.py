@@ -142,7 +142,13 @@ class AgentTurnUsage:
     """Tokens one turn used, and what it cost, as the agent runtime counted them.
 
     ``cache_write_tokens`` = tokens written to the prompt cache,
-    ``cache_read_tokens`` = tokens read from it.  ``cost_usd`` = what this
+    ``cache_read_tokens`` = tokens read from it.  ``cache_write_5m_tokens`` /
+    ``cache_write_1h_tokens`` = the part of ``cache_write_tokens`` written with
+    a 5-minute / 1-hour lifetime, as the runtime stated them (Claude's
+    ``cache_creation.ephemeral_5m_input_tokens`` / ``ephemeral_1h_input_tokens``
+    — the two lifetimes are priced differently, so a reader prices each
+    separately; a runtime that does not state the split leaves both ``None``,
+    and a reader must not assume either lifetime).  ``cost_usd`` = what this
     turn cost in USD, as the agent runtime (the CLI) itself priced it — for
     Claude Code, the turn's share of the CLI's own ``total_cost_usd``, which
     the CLI reports as a running total for the whole conversation.  A count or
@@ -155,6 +161,8 @@ class AgentTurnUsage:
     cache_write_tokens: int | None = None
     cache_read_tokens: int | None = None
     cost_usd: float | None = None
+    cache_write_5m_tokens: int | None = None
+    cache_write_1h_tokens: int | None = None
 
 
 # Every turn end also carries what the conversation's current context size is read from

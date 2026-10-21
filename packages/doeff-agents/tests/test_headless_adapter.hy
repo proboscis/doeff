@@ -183,7 +183,8 @@
                                       None)
              :last-call-usage (if echoed
                                   (compose.Usage :input-tokens 4 :output-tokens 1 :cache-creation-input-tokens 20
-                                                 :cache-read-input-tokens 1010)
+                                                 :cache-read-input-tokens 1010 :cache-creation-5m-input-tokens 5
+                                                 :cache-creation-1h-input-tokens 15)
                                   None)
              :last-call-model (if echoed CALL-MODEL None)
              :model-windows (if echoed
@@ -1029,11 +1030,12 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "手番の終わり(AgentTurnCompleted — 頁の end と AgentTurnEndEvent の end)が、本体の会話の最後の呼びの usage(AgentTurnUsage — 額は
    呼びごとには分からないので None)と model、model ごとの窓(context の大きさの上限・出力の上限)を運ぶ。道具の呼びの行の後の最後の
-   本文の行の usage を取り、subagent の行(替え玉の CLI は道具の途中に 1 行出す)は取らない(#3744)。"
+   本文の行の usage を取り、subagent の行(替え玉の CLI は道具の途中に 1 行出す)は取らない(#3744)。cache の書きの寿命の内訳(5 分・1 時間)も
+   名乗られたまま運ぶ(card ki-75d813bebc27 — 失敗ケース: 内訳を総数の 1 欄に潰すと、上の層は寿命ごとの単価を当てられない)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (assert (= (ends-of done.events) [done.end]) (repr done.events))
   (assert (= done.end.last-call-usage (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20
-                                                      :cache-read-tokens 1010))
+                                                      :cache-read-tokens 1010 :cache-write-5m-tokens 5 :cache-write-1h-tokens 15))
           (repr done.end))
   (assert (= done.end.last-call-model CALL-MODEL) (repr done.end))
   (assert (= (lfor window done.end.model-windows #(window.model window.context-window window.max-output-tokens))
@@ -1068,7 +1070,8 @@
    出来事が 0 で赤 — 上の層は、最初の手番が走っている会話の context の大きさを知れない。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (<- usages list (call-usages-of done.events))
-  (val final-call (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010))
+  (val final-call (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010
+                                  :cache-write-5m-tokens 5 :cache-write-1h-tokens 15))
   (assert (= (lfor #(_ event) usages #(event.usage event.model)) [#(first-call CALL-MODEL) #(final-call CALL-MODEL)])
           (repr done.events))
   (val results (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolResultEvent) index))
@@ -1080,7 +1083,8 @@
 (deftest test-headless-carries-each-main-call-usage-while-the-turn-runs-fake [tmp-path]
   (<- (check-a-running-turn-carries-each-main-call-usage
         (run-on FAKE tmp-path tool-turn-with-output)
-        (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010))))
+        (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010
+                        :cache-write-5m-tokens 5 :cache-write-1h-tokens 15))))
 
 (deftest test-headless-carries-each-main-call-usage-while-the-turn-runs-stub [tmp-path]
   (<- (check-a-running-turn-carries-each-main-call-usage
@@ -2203,6 +2207,30 @@
           lost)
   (for [plain [(end-of (Failed :detail "capped") "ctx-1") (end-of (BackendLost "gone") "ctx-1")]]
     (assert (= #(plain.exit-code plain.stderr-tail) #(None None)) plain)))
+
+
+;; --- cache の書きの寿命の内訳(card ki-75d813bebc27)------------------------------------------------------------------
+;; 失敗ケース(前の形): 層 2 の Usage は cache_creation の 5 分・1 時間の内訳を持つのに、層 3 の AgentTurnUsage は書きの総数 1 欄に潰し、
+;; 上の層(agora の記録と単価)は書きを全部 1 時間の単価で数えた — subagent の 5 分の書きを高く見積もった。
+
+(deftest test-the-cache-write-lifetimes-of-a-turn-end-reach-the-agent-turn-usage
+  ;; 層 2 の手番の終わりの usage(手番の和)と最後の呼びの usage の寿命の内訳を、層 3 の AgentTurnUsage の欄 cache_write_5m_tokens・
+  ;; cache_write_1h_tokens へそのまま写す。内訳を名乗らない usage は両欄 None のまま(どちらの寿命も発明しない)。
+  (import doeff_claude_code.lines [Completed Usage])
+  (import doeff_agents.handlers.headless [end-of])
+  (val split (Usage :input-tokens 6 :output-tokens 30 :cache-creation-input-tokens 700 :cache-read-input-tokens 9000
+                    :cache-creation-5m-input-tokens 200 :cache-creation-1h-input-tokens 500))
+  (val done (end-of (Completed :result-text "ok" :usage split :cost-usd 0.5 :last-call-usage split) "ctx-1"))
+  (assert (= done.usage (AgentTurnUsage :input-tokens 6 :output-tokens 30 :cache-write-tokens 700 :cache-read-tokens 9000
+                                        :cache-write-5m-tokens 200 :cache-write-1h-tokens 500 :cost-usd 0.5))
+          done)
+  (assert (= done.last-call-usage (AgentTurnUsage :input-tokens 6 :output-tokens 30 :cache-write-tokens 700 :cache-read-tokens 9000
+                                                  :cache-write-5m-tokens 200 :cache-write-1h-tokens 500))
+          done)
+  (val unsplit (end-of (Completed :result-text "ok" :usage (Usage :input-tokens 6 :cache-creation-input-tokens 700)) "ctx-1"))
+  (assert (= #(unsplit.usage.cache-write-tokens unsplit.usage.cache-write-5m-tokens unsplit.usage.cache-write-1h-tokens)
+             #(700 None None))
+          unsplit))
 
 
 (defhandler launch-fails [#^ (| int None) exit-code #^ str stderr-tail]

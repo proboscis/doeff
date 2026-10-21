@@ -60,8 +60,9 @@
 ;;;                                      usage と model を運ぶ — 上の層が手番の終わりを待たずに会話の今の context の大きさを読むため。
 ;;;                                      線引きは手番の終わりの last_call_usage と同じ: subagent の行は運ばず、usage を名乗らない行は
 ;;;                                      出来事にしない・card ki-a2e985c009ae)
-;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
-;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
+;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read・
+;;;                                      cache_creation の寿命の内訳 ephemeral_5m / ephemeral_1h → cache_write_5m / cache_write_1h〔寿命で単価が違うので
+;;;                                      上の層が寿命ごとに値を付ける・card ki-75d813bebc27〕。CLI が名乗らない欄は None のまま・欄がどれも無ければ usage = None)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
 ;;;                                      分からなければ None。token の 4 欄と額がすべて無ければ usage = None・agora-redesign #883)
 ;;;   WarmSessionEffect                → ClaudeWarmSession(次のターンと同じ始まり方 — 1 度もターンを始めていない新しい文脈は同じ id の
@@ -302,18 +303,20 @@
         (build (+ first-seq index))))
 
 (defn #^ (| AgentTurnUsage None) usage-of [#^ Usage usage #^ (| float None) cost-usd]
-  "層 2 の手番の usage と額 → 層 3 の AgentTurnUsage。手番の消費と額を記録へ運ぶための写しで、token の 4 欄と額がすべて
-   名乗られなければ None(0 を発明しない)。"
+  "層 2 の手番の usage と額 → 層 3 の AgentTurnUsage。手番の消費と額を記録へ運ぶための写しで、cache の書きの寿命の内訳(5 分・1 時間 —
+   寿命で単価が違う・card ki-75d813bebc27)も名乗られたまま運ぶ。token の欄と額がすべて名乗られなければ None(0 を発明しない)。"
   (setv turn-usage (AgentTurnUsage :input-tokens usage.input-tokens
                                    :output-tokens usage.output-tokens
                                    :cache-write-tokens usage.cache-creation-input-tokens
+                                   :cache-write-5m-tokens usage.cache-creation-5m-input-tokens
+                                   :cache-write-1h-tokens usage.cache-creation-1h-input-tokens
                                    :cache-read-tokens usage.cache-read-input-tokens
                                    :cost-usd cost-usd))
   (if (= turn-usage (AgentTurnUsage)) None turn-usage))
 
 (defn #^ (| AgentTurnUsage None) last-call-of [#^ (| Usage None) usage]
   "層 2 の手番の最後の呼びの usage → 層 3 の AgentTurnUsage(会話の今の context の大きさを記録へ運ぶため — #3744)。呼びごとの額は
-   CLI が名乗らないので None。usage が無い・4 欄とも名乗られなければ None。"
+   CLI が名乗らないので None。usage が無い・欄がどれも名乗られなければ None。"
   (if (is usage None) None (usage-of usage None)))
 
 (defn #^ (| AgentAccountLimit None) account-limit-of [hit]
