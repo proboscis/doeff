@@ -153,17 +153,19 @@ uv run --no-sync python publications/zenn-use-cases-v0/push_zenn_branch.py --dry
 | その場の公開 | しない。`published: true`で刻が無いか過ぎた書き出しが、刻の前の記事を変える時は止まる。branchに無い記事も、`false`か未来の刻の予約で置く |
 | 表から外した記事 | branchで公開済みか予約の在る記事が表に無ければ止まる。branchから外しても、Zennの公開と予約は残る |
 | `--now` | 公開の刻と比べる今。既定は今の刻で、確かめのために過去や未来を渡せる |
+| `--keep-schedule` | 予約と公開の設定(`published`と`published_at`)をbranchのまま変えない書き出しだけを送る。変える記事が1本でもあれば、変える所を表示して何もpushしない。branchに無い記事は、下書きで置く時だけ送る(刻の後にリンクだけを張り直す`record_sweep.py`が使う) |
 | 変わった記事が無い時 | pushしない |
 | 原稿か画像に未commitの変更がある時 | 止まる。branchのcommitは、書き出したcommitを名乗る |
 | `--resync` | Zennは連携の後のpushで変わった`.md`だけを同期する。記事を外すcommitと置き直すcommitを、別々のpushで送る。Zennは記事の削除をダッシュボードからしか受けないので、外すpushでZennの記事は消えない |
 | pushの資格 | 呼んだ人のgitの資格で`origin`へpushする。agoraの会話では`GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=agora-lease GIT_CONFIG_KEY_1=credential.useHttpPath GIT_CONFIG_VALUE_1=true`を付けて走らせる |
 
 4. その1本の公開の許可が出たら、公開順の表の公開状態に刻と許可を「公開予定 <刻> JST 許可 <依頼書のid>」で書く。表をmainに入れて手順3の命令を走らせると、branchの`articles/<slug>.md`が`published: true`と`published_at`の組になり、Zennが刻に公開する。
-5. 刻の後に`record_published.py`を走らせる。刻を過ぎた回のZennのURLが開けることを確かめ、公開順の表の公開状態を「公開済み <URL> <刻>」へ直す。表をmainに入れてから手順3の命令を走らせると、他の回の本文のその回へのリンクが、ZennのURLへのリンクになる。
+5. 刻の後に`record_published.py`を走らせる。刻を過ぎた回のZennのURLが開けることを確かめ、公開順の表の公開状態を「公開済み <URL> <刻>」へ直す。表をmainに入れてから手順3の命令を走らせると、他の回の本文のその回へのリンクが、ZennのURLへのリンクになる。この手順は、agoraの担当の道具の組の同期のjobが、毎日8:10 JSTと起動の時に`record_sweep.py`で人の手なしに行う。刻を過ぎて開ける回を直し、表だけのcommitをマージの列に載せ、mainに入ったら`push_zenn_branch.py --keep-schedule`でリンクを張り直す(予約も公開もしない。直す回の無い日は送らない)。8:10の直しは、agoraの見回りのjob(プログラムのreconcile)の段「閲覧の数」が9時にmainの表を読む前にmainに入る。訳は[決定記録](../../docs/design/decisions/2026-10-22-zenn-record-sweep.md)。
 
 ```bash
 uv run --no-sync python publications/zenn-use-cases-v0/record_published.py --dry-run  # 刻を過ぎた回と、Zennで開けるかを表示し、表を書かない。
 uv run --no-sync python publications/zenn-use-cases-v0/record_published.py  # 刻を過ぎて開ける回を、公開済みに直す。開けない回があれば終わりのcodeは1。
+uv run --no-project python publications/zenn-use-cases-v0/record_sweep.py --notify <m-…>  # 直し・mainへの登記・リンクの張り直しの1回(mainの先端の作業木で)。
 ```
 
 6. 読者からの質問や分かりにくかった点を記録し、次の回と11本目からの題材へ反映する。
