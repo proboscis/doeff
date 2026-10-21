@@ -5,6 +5,7 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
+from doeff import Program as Program
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
@@ -23,11 +24,16 @@ from doeff_core_effects.sql_effects import checked_identifier as checked_identif
 from doeff_core_effects.sql_effects import checked_identifiers as checked_identifiers
 from doeff_core_effects.sql_effects import checked_rows as checked_rows
 from doeff_core_effects.sql_effects import normalized_rows as normalized_rows
+from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects.offloaded_call import offloaded as offloaded
+from doeff_core_effects.offloaded_call import run_detached as run_detached
+from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
 CLICKHOUSE_TYPES: Incomplete
 CLICKHOUSE_COLUMN_TYPES: dict[SqlColumnType, str]
 ANSWER_FORMAT: str
 QUERY_SETTINGS: tuple[tuple[str, ...], ...]
 NOT_SUPPORTED_SQLSTATE: str
+CLICKHOUSE_THREADS: ThreadPerCall
 ESCAPES: tuple[tuple[bytes, ...], ...]
 
 @dataclass(frozen=True, kw_only=True)
@@ -107,6 +113,9 @@ def clickhouse_answer(request: ClickHouseRequest, timeout: float, insert: bool) 
     ...
 
 def clickhouse_ensure_tables(database: ClickHouseDatabase, tables: tuple) -> _Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, object]:
+    ...
+
+def off_scheduler(program: Program) -> _Program[SqlRows | SqlFailed | SqlUnreachable | SqlSchemaApplied, object]:
     ...
 
 def clickhouse_http_sql_handler(databases: tuple) -> _Handler:

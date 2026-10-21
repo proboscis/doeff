@@ -9,6 +9,11 @@
 ;;;   - SqlTransaction は SqlFailed(0A000)で断る(transaction の無い置き場 — program を走らせない)。
 ;;;   - 失敗: X-ClickHouse-Exception-Code の在る答えは SqlFailed(sqlstate = None — ClickHouse は SQLSTATE を持たない・reason に code と文)。
 ;;;     HTTP が届かない・code の無い 5xx(前段の proxy)は SqlUnreachable。
+;;;   - scheduler を塞がない: HTTP の往復(問い合わせ・投入・表の宣言の DDL の列)は scheduler の thread で撃たず、呼び 1 つに thread 1 本
+;;;     (offloaded_call.hy の ThreadPerCall)の新しい VM で回し、撃った task だけが外から完了させる promise で待つ(postgres-sql-handler と
+;;;     同じ作法)。遅い問い合わせの間も、同じ run の他の task(別の置き場への文・待ち受けの /healthz・時計の刻み)は回る。外側に scheduled が
+;;;     要る。接続も貸し出しも持たないので、取り消された待ちに届かなかった答えの後始末は要らない(keep-nothing)— 走っている往復は
+;;;     ClickHouseDatabase の timeout の秒で終わる。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import functools)
@@ -17,9 +22,11 @@
 (import urllib.parse)
 (import urllib.request)
 (import dataclasses [dataclass field])
+(import doeff [Program])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
+(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
 ;; 値の Python の型 → 引数の ClickHouse の型(閉じた表・bool は int より先に引く)。None は型が分からないので Nullable(String)。
 (val CLICKHOUSE-TYPES #(#(bool "Bool") #(int "Int64") #(float "Float64") #(str "String") #(bytes "String") #((type None) "Nullable(String)")))
@@ -31,6 +38,8 @@
 (val QUERY-SETTINGS #(#("default_format" ANSWER-FORMAT) #("output_format_json_quote_64bit_integers" "0") #("wait_end_of_query" "1")))
 ;; ClickHouse に無い機能(transaction・一意の索引)を断る時の SQLSTATE(feature_not_supported)。
 (val NOT-SUPPORTED-SQLSTATE "0A000")
+;; HTTP の往復を回す Executor(頭の註 — 呼び 1 つに thread 1 本)。
+(val CLICKHOUSE-THREADS (ThreadPerCall))
 ;; 引数の値の escaped の形で escape する byte(ClickHouse の TabSeparated と同じ)。
 (val ESCAPES #(#(b"\\" b"\\\\") #(b"\t" b"\\t") #(b"\n" b"\\n") #(b"\r" b"\\r")))
 
@@ -261,6 +270,14 @@
   (SqlSchemaApplied :statements statements))
 
 
+(defk off-scheduler [program]
+  {:pre [(: program Program)] :post [(: % (| SqlRows SqlFailed SqlUnreachable SqlSchemaApplied))]
+   :tags {:context "sql" :role "foundation"}}
+  "HTTP の往復を持つ Program を scheduler の thread の外(CLICKHOUSE-THREADS の新しい VM)で値にし、撃った task だけが待つため(頭の註)。"
+  (<- answer (offloaded CLICKHOUSE-THREADS (fn [] (run-detached program)) keep-nothing))
+  answer)
+
+
 (defhandler clickhouse-http-sql-handler [#^ tuple databases]
   ;; 引数に残す理由: database の宣言(URL と資格)は組み立ての側が渡す値で、答える database の名で PostgreSQL の答え手と同じ組に並べ分ける。
   "本物の ClickHouse の答え手(頭の註)。databases = ClickHouseDatabase の tuple(宣言した名にだけ答え、他の名は外側へ回す)。"
@@ -268,18 +285,18 @@
   (SqlQuery [database statement params] :when (any (gfor d databases (= d.name database)))
     (val declared (next (gfor d databases :if (= d.name database) d)))
     (<- request (clickhouse-query-request declared statement params))
-    (<- answer (clickhouse-answer request declared.timeout False))
+    (<- answer (off-scheduler (clickhouse-answer request declared.timeout False)))
     (resume answer))
   (SqlInsertRows [database table columns rows] :when (any (gfor d databases (= d.name database)))
     (val declared (next (gfor d databases :if (= d.name database) d)))
     (if (not rows)
         (resume (SqlRows :rows #() :rowcount 0))
         (do (<- request (clickhouse-insert-request declared table columns rows))
-            (<- answer (clickhouse-answer request declared.timeout True))
+            (<- answer (off-scheduler (clickhouse-answer request declared.timeout True)))
             (resume answer))))
   (SqlEnsureTables [database tables] :when (any (gfor d databases (= d.name database)))
     (val declared (next (gfor d databases :if (= d.name database) d)))
-    (<- answer (clickhouse-ensure-tables declared tables))
+    (<- answer (off-scheduler (clickhouse-ensure-tables declared tables)))
     (resume answer))
   (SqlTransaction [database program lock-key] :when (any (gfor d databases (= d.name database)))
     (resume (SqlFailed :sqlstate NOT-SUPPORTED-SQLSTATE

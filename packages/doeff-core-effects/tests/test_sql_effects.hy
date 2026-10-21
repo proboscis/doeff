@@ -12,13 +12,14 @@
 ;;;     往復 0(偽の答え手で数える)。束の途中の文が落ちたら後ろは流れず ROLLBACK・commit の束の後の SQL は断る・transaction の外の束は断る
 ;;;     (sqlite と実 PG)。pipeline の中で文が落ちた接続を、次の transaction が同じ接続のまま使える(pooled)。pipeline mode の無い環境では
 ;;;     接続の貸し出しを作る所で落ちる。
-(require doeff-hy.macros [deftest defk <- val var with-handler])
+(require doeff-hy.macros [deftest defk deff <- val var with-handler])
 (import os)
 (import json)
 (import importlib.util)
 (import threading)
 (import time)
 (import socket)
+(import http.server)
 (import collections.abc [Callable])
 (import concurrent.futures [Future ThreadPoolExecutor])
 (import dataclasses [dataclass])
@@ -681,6 +682,58 @@
   (val unreachable (get answers 1))
   (assert (and (isinstance refused SqlFailed) (= refused.sqlstate "0A000")) refused)
   (assert (isinstance unreachable SqlUnreachable) unreachable))
+
+
+(defclass SlowClickHouse [http.server.BaseHTTPRequestHandler]
+  "問い合わせの POST に delay 秒の後で 1 行 [1] を答える偽の ClickHouse の HTTP の口(答え手が scheduler を塞ぐかを見る検のため)。"
+  (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
+    {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
+    "本文を読み捨て、1 秒の後で JSONCompactEachRow の 1 行を答えるため。"
+    (.read self.rfile (int (.get self.headers "Content-Length" "0")))
+    (time.sleep 1.0)
+    (setv body b"[1]\n")
+    (.send-response self 200)
+    (.send-header self "Content-Length" (str (len body)))
+    (.end-headers self)
+    (.write self.wfile body)
+    None)
+
+  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+    {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
+    "検の出力に要求の行を出さないため。"
+    None))
+
+
+(defk clickhouse-finished-at []
+  {:pre [] :post [(: % float)]
+   :tags {:context "sql" :role "program"}}
+  "ClickHouse へ問い合わせ 1 つを流し、終わった拍の単調時計を答えるため。"
+  (<- answer SqlRows (SqlQuery "cold" "SELECT 1" #()))
+  (time.monotonic))
+
+
+(defk slow-clickhouse-beside-ticks []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "1 秒かかる ClickHouse の問い合わせの横で、別の task が刻めるかを見るため(塞がれていれば刻みは問い合わせの後になる)。"
+  (<- slow (Spawn (clickhouse-finished-at)))
+  (<- seen (ticks 5 0.05))
+  (<- finished (Wait slow))
+  #(seen finished))
+
+
+(deftest test-clickhouse-does-not-block-the-scheduler
+  (val server (http.server.ThreadingHTTPServer #("127.0.0.1" 0) SlowClickHouse))
+  (.start (threading.Thread :target server.serve-forever :daemon True))
+  (try
+    (val declared (ClickHouseDatabase :name "cold" :url (.format "http://127.0.0.1:{}" (get server.server-address 1)) :database "default"
+                                      :user "default" :password "" :timeout 10.0))
+    (<- answer (with-handler [(clickhouse-http-sql-handler #(declared))] (slow-clickhouse-beside-ticks)))
+    (finally (.shutdown server) (.server-close server)))
+  (val seen (get answer 0))
+  (val finished (get answer 1))
+  ;; 刻み 5 つ(0.25 秒)は 1 秒の問い合わせが終わる前に終わる(塞がれていれば全部が終わりの後)。
+  (assert (< (get seen -1) finished) #(seen finished)))
 
 
 ;; --- 実 DB との結合(環境変数が無ければ skip) --------------------------------------------------------------------------------
