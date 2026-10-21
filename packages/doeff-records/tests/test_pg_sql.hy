@@ -140,11 +140,17 @@
   (<- hidden (postgres-statement hiding.text hiding.params))
   (assert (in "ledger IN (%(t0)s, %(t1)s)" hidden.text) hidden.text)
   (assert (in "IN (%(x0t0)s::jsonb)" hidden.text) hidden.text)
-  (<- terminal (terminal-rows-statement "records_" "parts" "state" #("closed") False))
+  (<- terminal (terminal-rows-statement "records_" "parts" "state" #("closed") False 5))
   (assert (in "IN (:t0::jsonb)" terminal.text) terminal.text)
+  ;; 回収の候補の読みは、最後に書いた刻が境の刻以下の終端の行だけを返す(期限の前の終端の行を値ごと返さない — 読みの文と同じ境)。
+  (assert (in "AND updated_at <= :before_at" terminal.text) terminal.text)
+  (assert (in (SqlParam :name "before_at" :value 5) terminal.params) terminal.params)
   ;; 表の状態の欄の表の欄の式の索引が在れば、表の欄の式の IN だけで照らす(ledger = :ledger を置かない — pg_sql の頭の註)。
-  (<- scoped (terminal-rows-statement "records_" "parts" "state" #("closed") True))
-  (assert (in "WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'state') END) IN (:t0::jsonb)" scoped.text) scoped.text)
+  (<- scoped (terminal-rows-statement "records_" "parts" "state" #("closed") True 5))
+  (assert (in "WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'state') END) IN (:t0::jsonb) AND updated_at <= :before_at"
+              scoped.text)
+          scoped.text)
+  (assert (in (SqlParam :name "before_at" :value 5) scoped.params) scoped.params)
   (assert (not (in ":ledger" scoped.text)) scoped.text)
   ;; 空の組は `IN ()`(構文の誤り)にしない — 組み立てが断り、呼び手の枝(pg.hy)が文を流さない。
   (var refused False)
