@@ -171,7 +171,12 @@ spec:
             # 置いた側へ結末を届ける。間の差で coordinator の process に効く物は、scheduled() の既定の scheduler を Rust の版にする変更
             # (ec5b91d99 — 上に載る系の job は 4de77f941 から既にこの版)・止められた常駐の job の起こし直しの上限(523ffad35・2a117cd53)・
             # worker の disk の名乗りの戻りの幅・handler は @handler の def だけ。前の版 9fe8c330b は d5ebd138d の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: d5ebd138dc230546a4940678e5340bc0d1ee190a }
+            # 69c3dc8d1 = worker が起こす子を、機体の配備が名を渡した兄弟の cgroup へ置く版(card ki-ed9dca403f58・L2651)。zeus の機体の
+            # worker zeus-native を同じ版へ上げるため、版の向きに合わせて先に上げる。間の doeff-cluster の code の差は worker の入口と
+            # worker/core・protocol の job_cgroup だけ(環境変数 DOEFF_WORKER_JOB_CGROUP が無い worker と coordinator は今のまま)で、
+            # coordinator の process に効く差は無い(他は k3s の disk の分け前の宣言・claude-code の package・記事)。前の版 d5ebd138d は
+            # 69c3dc8d1 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 69c3dc8d1053c34dc1f2f99b0f5c0d4a76460452 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
