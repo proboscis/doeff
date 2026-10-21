@@ -19,6 +19,7 @@ from doeff_events.effects import (
     PublishEffect,
     SourceFailed,
     StopArrived,
+    TimerFired,
     WaitForEventEffect,
     WaitForEventsEffect,
 )
@@ -133,9 +134,7 @@ def _require_types(event_types: tuple[type, ...]) -> tuple[type, ...]:
     # 型の注記の無い呼び手(Hy・素の Python)からの入力を、組み立てた時に確かめる(合図を渡す時まで遅らせない)。
     for event_type in event_types:
         if not inspect.isclass(event_type):
-            raise TypeError(
-                f"SubscriberQueue event types must be type objects, got {event_type!r}"
-            )
+            raise TypeError(f"SubscriberQueue event types must be type objects, got {event_type!r}")
     return event_types
 
 
@@ -229,7 +228,19 @@ class SubscriberQueue:
         return None
 
     def _place(self, event: object) -> None:
-        """待ち手の居ない ``event`` を列に置く: 同じ型のまとめてよい合図が在ればその位置でまとめ、無ければ末尾に積む。"""
+        """待ち手の居ない ``event`` を列に置く: 期限(``TimerFired``)は列に在る期限の後・ほかの合図の前に置き、同じ型のまとめてよい
+        合図が在ればその位置でまとめ、無ければ末尾に積む。
+
+        期限を前に置く訳: 期限の刻はもう過ぎている。末尾に積むと、受け手が処理するより速く積まれる合図(記録の書き 1 回ごとの出来事)の
+        後ろで、期限がいつまでも渡らない(card ki-7d2a9efa8320 — job agent-toolset-sync の日次の刈りの期限)。期限どうしは来た順。
+        """
+        if isinstance(event, TimerFired):
+            ahead = next(
+                (i for i, queued in enumerate(self._pending) if not isinstance(queued, TimerFired)),
+                None,
+            )
+            self._pending.insert(len(self._pending) if ahead is None else ahead, event)
+            return
         if _coalescible(event):
             for index, queued in enumerate(self._pending):
                 if _coalescible(queued) and _same_apart_from_keys(queued, event):
@@ -309,7 +320,9 @@ def subscribed_event_handler(
 
     購読者の名前・列・``bus`` はこの組み立ての引数だけに出て、Program には出ない。ack も cursor も無い。
     """
-    queue = bus.subscribe(subscriber, (*event_types, StopArrived, SourceFailed) if event_types else ())
+    queue = bus.subscribe(
+        subscriber, (*event_types, StopArrived, SourceFailed) if event_types else ()
+    )
 
     def outside_error(wanted: tuple[type, ...]) -> ValueError | None:
         """``wanted`` に購読の型の外の型が在れば、それを名指す ``ValueError``。無ければ ``None``(2 つの待ちの共有の検め)。"""
