@@ -36,8 +36,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff import run
 from doeff_core_effects.process_exit import exit_fd_of
+
+from doeff import run
+from tests.warm_child_rig import READY_SECONDS, WARM, StartWarmChild
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "program"}
 
@@ -48,9 +50,7 @@ pytestmark = pytest.mark.skipif(not (LINUX or DARWIN), reason="待ちの子は f
 # 待ちの子の木 = この package の dir(tests.fixtures.warm_job として読める)。
 PACKAGE = Path(__file__).resolve().parent.parent
 JOB = "tests.fixtures.warm_job"
-WARM = "doeff_cluster.worker.entry.warm_child"
-# 待ちの子の準備(module の読み込み)を待つ上限・job の進みと終わりを待つ上限(秒)。
-READY_LIMIT_SECONDS = 60.0
+# job の進みと終わりを待つ上限(秒)— 待ちの子の準備を待つ上限は tests/warm_child_rig の READY_SECONDS。
 END_LIMIT_SECONDS = 20.0
 SECRET_NAME = "WARM_CHILD_TEST_SECRET"
 SECRET_VALUE = "s3cr3t-value-that-must-not-leak"
@@ -97,26 +97,10 @@ def place() -> Iterator[Path]:
     shutil.rmtree(directory, ignore_errors=True)
 
 
-def search_path() -> str:
-    """待ちの子の探し道(この package の dir + 検の process の探し道)— 環境変数は読まずに、検が今 読めている所を渡すため。"""
-    return os.pathsep.join([str(PACKAGE), *(entry for entry in sys.path if entry)])
-
-
-def started(place: Path, preload: tuple[str, ...] = (JOB,)) -> Warm:
-    """待ちの子を worker と同じ持ち方(stdin を pipe・自分の session)で起こすため。env は探し道だけ(資格も値も渡さない)。
-    作業木に bytecode を書かない(-B — 根の conftest の固定と、worker が shim を起こす形と同じ)。"""
+def started(place: Path, launch: StartWarmChild, preload: tuple[str, ...] = (JOB,)) -> Warm:
+    """待ちの子を worker と同じ持ち方で起こすため(起こし方は tests/warm_child_rig — 温めた Hy の code の置き場を env に渡す)。"""
     root = place / "root"
-    root.mkdir(exist_ok=True)
-    argv = [sys.executable, "-B", "-m", WARM, "--root", str(root), "--socket", str(place / "s"), "--ready", str(place / "ready.json")]
-    argv += [word for name in preload for word in ("--preload", name)]
-    process = subprocess.Popen(
-        argv,
-        stdin=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=PACKAGE,
-        env={"PYTHONPATH": search_path()},
-        start_new_session=True,
-    )
+    process = launch(root, place / "s", place / "ready.json", preload)
     return Warm(process, root, place / "s", place / "ready.json", place)
 
 
@@ -142,7 +126,7 @@ def stderr_until(warm: Warm, needle: str, limit: float) -> str:
 
 def readied(warm: Warm) -> dict[str, object]:
     """準備完了の 1 行を待って、印を読むため(待ちの子が先に終わったら、その stderr を添えて AssertionError)。"""
-    seen = stderr_until(warm, "準備完了", READY_LIMIT_SECONDS)
+    seen = stderr_until(warm, "準備完了", READY_SECONDS)
     if not warm.ready.exists():
         raise AssertionError(f"待ちの子が準備の前に終わった: {seen}")
     facts: dict[str, object] = json.loads(warm.ready.read_text())
@@ -238,9 +222,9 @@ def stopped(warm: Warm) -> None:
     warm.process.wait(timeout=10)
 
 
-def test_the_ready_mark_shows_one_thread_and_no_vm_before_any_fork(place: Path) -> None:
+def test_the_ready_mark_shows_one_thread_and_no_vm_before_any_fork(place: Path, start_warm_child: StartWarmChild) -> None:
     """分かれる前の待ちの子は thread 1 本・doeff の VM 0 個・入口と前もって読む module を読み込み済み。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         facts = readied(warm)
         assert facts["threads"] == 1, facts
@@ -251,11 +235,11 @@ def test_the_ready_mark_shows_one_thread_and_no_vm_before_any_fork(place: Path) 
         stopped(warm)
 
 
-def test_the_warm_child_freezes_its_loaded_heap_so_a_forked_job_starts_with_it_frozen(place: Path) -> None:
+def test_the_warm_child_freezes_its_loaded_heap_so_a_forked_job_starts_with_it_frozen(place: Path, start_warm_child: StartWarmChild) -> None:
     """待ちの子は module を読み込んだ後・受け付けの前に GC で 1 回掃いて heap を凍らせ(準備完了の印の gcFrozen が 0 より大きい)、分かれた子は
     その凍った object を受け継ぐ(#3765 — 凍らせないと、待ちの子の GC の数えを受け継いだ子が最初の行の前に GC を走らせ、読み込んだ約 100 MB の
     heap の頁を写して 271 ms 遅れた)。前の形では両方とも 0 で赤。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         frozen = readied(warm)["gcFrozen"]
         assert isinstance(frozen, int) and frozen > 0, frozen
@@ -268,9 +252,9 @@ def test_the_warm_child_freezes_its_loaded_heap_so_a_forked_job_starts_with_it_f
         stopped(warm)
 
 
-def test_a_forked_job_runs_the_loaded_entry_in_process_and_writes_its_exit_code(place: Path) -> None:
+def test_a_forked_job_runs_the_loaded_entry_in_process_and_writes_its_exit_code(place: Path, start_warm_child: StartWarmChild) -> None:
     """分かれた子は exec せずに読み込み済みの入口を走らせ(命令行は待ちの子のまま)、終了コードを exit の file に書く。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         out = place / "facts.json"
@@ -286,9 +270,9 @@ def test_a_forked_job_runs_the_loaded_entry_in_process_and_writes_its_exit_code(
         stopped(warm)
 
 
-def test_two_forked_jobs_inherit_neither_the_socket_nor_the_other_log(place: Path) -> None:
+def test_two_forked_jobs_inherit_neither_the_socket_nor_the_other_log(place: Path, start_warm_child: StartWarmChild) -> None:
     """並んで走る 2 本の分かれた子は、待ちの子の socket(聞く側も頼みの接続も)と、もう 1 本の log を継がない。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         first, second = place / "first.json", place / "second.json"
@@ -307,9 +291,9 @@ def test_two_forked_jobs_inherit_neither_the_socket_nor_the_other_log(place: Pat
         stopped(warm)
 
 
-def test_a_running_job_outlives_the_warm_child(place: Path) -> None:
+def test_a_running_job_outlives_the_warm_child(place: Path, start_warm_child: StartWarmChild) -> None:
     """待ちの子が KILL で落ちても、走っている job は走り切り、終了コードを書く。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         marker = place / "marker"
@@ -327,9 +311,9 @@ def test_a_running_job_outlives_the_warm_child(place: Path) -> None:
         stopped(warm)
 
 
-def test_a_request_out_of_the_contract_is_refused_by_the_field_names(place: Path) -> None:
+def test_a_request_out_of_the_contract_is_refused_by_the_field_names(place: Path, start_warm_child: StartWarmChild) -> None:
     """約束の形でない頼み(知らない欄・欄の欠け)は、合わない欄の場所だけを名乗って断り、子を分けない。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         stray = request_line("stray", place, ["exit", "0"], {}) | {"root": str(place / "other-root")}
@@ -345,9 +329,9 @@ def test_a_request_out_of_the_contract_is_refused_by_the_field_names(place: Path
         stopped(warm)
 
 
-def test_the_warm_child_keeps_no_request_env(place: Path) -> None:
+def test_the_warm_child_keeps_no_request_env(place: Path, start_warm_child: StartWarmChild) -> None:
     """頼みの env は分かれた子にだけ在る — 待ちの子の環境・log・断りの文に、その値は出ない。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         out = place / "facts.json"
@@ -367,11 +351,11 @@ def test_the_warm_child_keeps_no_request_env(place: Path) -> None:
         stopped(warm)
 
 
-def test_an_unreadable_preload_refuses_the_start_by_name(place: Path) -> None:
+def test_an_unreadable_preload_refuses_the_start_by_name(place: Path, start_warm_child: StartWarmChild) -> None:
     """前もって読めない module は、名を挙げて起動を断る(準備完了の印を書かない)。"""
-    warm = started(place, preload=("tests.fixtures.no_such_module_for_warm_child",))
+    warm = started(place, start_warm_child, preload=("tests.fixtures.no_such_module_for_warm_child",))
     try:
-        assert warm.process.wait(timeout=READY_LIMIT_SECONDS) == 3
+        assert warm.process.wait(timeout=READY_SECONDS) == 3
         assert not warm.ready.exists()
         assert warm.process.stderr is not None
         assert "tests.fixtures.no_such_module_for_warm_child" in warm.process.stderr.read().decode(errors="replace")
@@ -379,9 +363,9 @@ def test_an_unreadable_preload_refuses_the_start_by_name(place: Path) -> None:
         stopped(warm)
 
 
-def test_the_warm_child_ends_when_the_worker_goes(place: Path) -> None:
+def test_the_warm_child_ends_when_the_worker_goes(place: Path, start_warm_child: StartWarmChild) -> None:
     """worker が消えたら(stdin の EOF)待ちの子は 0 で終わる。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         assert warm.process.stdin is not None
@@ -391,9 +375,9 @@ def test_the_warm_child_ends_when_the_worker_goes(place: Path) -> None:
         stopped(warm)
 
 
-def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path) -> None:
+def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path, start_warm_child: StartWarmChild) -> None:
     """分かれた子の log(task の log — worker の job-start の via=warm)も、1 行ごとに刻の頭を持つ(中身はそのまま)。"""
-    warm = started(place)
+    warm = started(place, start_warm_child)
     try:
         readied(warm)
         ended(forked_job(warm, "stamped", ["exit", "5"]))
