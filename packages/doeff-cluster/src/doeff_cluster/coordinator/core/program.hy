@@ -468,10 +468,10 @@
     ;; いなければ期限の関数が今すぐを返す)。今すぐが続けば、変わり続けた欄を名指して落ちる(count-unsettled)。
     (val woke (get stepped 3))
     (:= judged woke)
-    (<- planned (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
+    (<- next-due (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
     (val took (> (get stepped 1) 0))
     (val base (get stepped 4))
-    (<- following (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after base))))
+    (<- following (| DueAt DueNow DueNever) (after-step next-due (and (not took) (!= after base))))
     (<- counted int (count-unsettled streak following base after))
     (:= streak counted)
     (:= due following)
