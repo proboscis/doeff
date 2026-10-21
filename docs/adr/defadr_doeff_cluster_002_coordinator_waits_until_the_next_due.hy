@@ -19,6 +19,7 @@
 (require doeff-hy.macros [deftest val])
 (import doeff [run])
 (import pathlib [Path])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming BoardRow])
 (import doeff_cluster.shared.intent.due_model [DueNow DueNever])
@@ -162,7 +163,7 @@
        ;; 期限の関数は、期限の無い状態に DueNever・落ち着いていない状態に DueNow を返す(数の None・now + 1 ではない — R3)。
        (val timing (ClusterTiming))
        (val empty (ClusterState))
-       (val expired (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms 100 :size 1)}))
+       (val expired (ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms 100 :size 1))))))
        (val answers [(run (liveness-due empty 0 timing)) (run (task-due empty 0 timing)) (run (sweep-due empty 0 timing))
                      (run (tick-due empty 0 timing)) (run (next-wake empty 0 timing (ClusterNaming) #()))])
        (assert (= answers [(DueNever) (DueNever) (DueNever) (DueNever) (DueNever)]) answers)

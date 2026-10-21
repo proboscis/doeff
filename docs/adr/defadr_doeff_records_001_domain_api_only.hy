@@ -19,9 +19,11 @@
 
 ;; wire が /v1/records/ の下に出す生の操作の一覧(2026-10-07 の doeff の main で 10)。足す変更はこの一覧に無い物として赤になる。
 ;; 減らす変更は、同じ変更でこの一覧から削る。
+;; 2026-10-22: append-events(追記の束を 1 往復で積む — append-event の束ね。冪等キー・上限・断りは append-event と同じ答え)を足した。
+;; 日次の root の failing を直す変更で、AppendEvents の追加(README の記述あり)が一覧を更新しないまま本線に入っていたのを揃える。
 (val RAW-OPERATIONS
   (frozenset #("read-row" "list-rows" "put-row" "put-rows" "watch-changes"
-               "append-event" "read-events" "read-event-by-key" "read-stream-end" "watch-events")))
+               "append-event" "append-events" "read-events" "read-event-by-key" "read-stream-end" "watch-events")))
 
 
 (defadr ADR-DOE-RECORDS-001

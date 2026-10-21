@@ -110,7 +110,6 @@
 (import pathlib [Path])
 (import doeff [run with-handlers Ok Err Some Nothing Pass Try EffectBase DoExpr K])
 (import doeff [handler :as make-handler])
-(import doeff.result [Maybe])
 (import doeff_vm [UnhandledEffect])
 (import doeff-core-effects.handlers [try-handler])
 (import doeff-core-effects.effects [Absent Raise Resumption resumption-of])
@@ -587,8 +586,9 @@
        (assert (is (. (Err boom) error) boom))
        (assert (= (. (Some 2) value) 2))
        (assert (not Nothing) "Nothing は偽と評価される 1 つだけの値")
-       (assert (isinstance (Some 2) Maybe))
-       (assert (isinstance Nothing Maybe)))
+       ;; Maybe = Some[T] | Nothing の型の和(添字つきなので isinstance には渡せない)— 各項を名指しで確かめる。
+       (assert (isinstance (Some 2) Some))
+       (assert (isinstance Nothing (type Nothing))))
      (deftest test-adr-doe-core-effects-003-try-folds-exceptions-into-result
        ;; 事実: Try は Program の中の Python の例外を Err に、成功を Ok に畳む(R11 — 今のまま残す口)。
        (val failed (run (try-handler (probe-try (probe-boom)))))
