@@ -66,7 +66,7 @@
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
                                  TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SubagentTranscript SubagentTranscriptProblem
-                                 parse-record classify-record recorded-cost subagent-transcript-of])
+                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
@@ -224,11 +224,14 @@
 (defclass Binding []
   "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
    process は起こすまで None。credential-home = その process だけの資格の家の path(借りた資格で起こした時だけ — 家の資格なら None。
-   process が降りて消したら None に戻す)。書き換えるのは会話の lock の中だけ。"
+   process が降りて消したら None に戻す)。open-calls = その process の stdout で始まりを読み、まだ終わりを読んでいない API の呼び
+   (lines.hy の call-step — 呼びの最終の usage を組むため・card ki-290ec664737d。process ごとに持つ — 降りた process の開いた呼びを
+   次の process の終わりと組まない)。書き換えるのは会話の lock の中だけ。"
   (defn __init__ [self #^ int turn-seq #^ (| str None) [credential-home None]]
     (setv #^ (| ClaudeProcess None) self.process None)
     (setv #^ int self.turn-seq turn-seq)
-    (setv #^ (| str None) self.credential-home credential-home)))
+    (setv #^ (| str None) self.credential-home credential-home)
+    (setv #^ (get tuple #(CallOpened ...)) self.open-calls #())))
 
 (defn #^ ClaudeProcess process-of [#^ Binding binding]
   "binding の process。起こす前に読むのは handler の実装の誤り(RuntimeError)。"
@@ -578,7 +581,8 @@
   "stdout の 1 行を、今の process の行なら手番の記録に足して状態機械を進めるため。host の手番の外の行(前の process の行・手番の
    外の出力)は手番の記録に足さない — 終わった手番の頁に誰の物でもない行を混ぜない(手番の外の出力は状態機械が降ろす訳に変える)。
    CLI の手番の終わり(result の行)なら、その直前に、報せを受けた subagent の transcript の読み(SubagentTranscript)を足す(上の
-   subagent の節)。"
+   subagent の節)。呼びの終わり(message_delta)の行なら、その直後に、その呼びの最終の usage(CallClosed — lines.hy の call-step)を
+   足す(card ki-290ec664737d)。"
   (setv record (parse-record raw))
   (when (is record None) (return None))
   (setv kind (classify-record record))
@@ -591,6 +595,11 @@
     (add-subagent-lines runtime log at reads)
     (when (and (is-not log None) runtime.state.in-flight)
       (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
+      (+= runtime.next-line-seq 1))
+    (setv step (run (call-step binding.open-calls kind)))
+    (setv binding.open-calls step.open)
+    (when (and (is-not step.closed None) (is-not log None) runtime.state.in-flight)
+      (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind step.closed :raw ""))
       (+= runtime.next-line-seq 1))
     (setv transition (dialogue.on-record runtime.state kind))
     (apply-transition runtime binding transition)

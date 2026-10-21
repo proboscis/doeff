@@ -59,7 +59,11 @@
 ;;;   AssistantMessage.usage / .model  → AgentCallUsageEvent(本体の会話の行〔parent-tool-use-id が None〕が usage を名乗るたびに、その呼びの
 ;;;                                      usage と model を運ぶ — 上の層が手番の終わりを待たずに会話の今の context の大きさを読むため。
 ;;;                                      線引きは手番の終わりの last_call_usage と同じ: subagent の行は運ばず、usage を名乗らない行は
-;;;                                      出来事にしない・card ki-a2e985c009ae)
+;;;                                      出来事にしない・card ki-a2e985c009ae。呼びの id〔message.id〕を添え、final = False — 行の usage の
+;;;                                      出力は呼びの途中の値・agora card ki-290ec664737d)
+;;;   CallClosed                       → AgentCallUsageEvent(層 2 が本体の呼びの始まり〔message_start〕と終わり〔message_delta〕から組んだ
+;;;                                      呼びの最終の usage — 呼びの id・model を添え、final = True。上の層が呼びごとの使用量を最終の値で
+;;;                                      記録するため・agora card ki-290ec664737d)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read・
 ;;;                                      cache_creation の寿命の内訳 ephemeral_5m / ephemeral_1h → cache_write_5m / cache_write_1h〔寿命で単価が違うので
 ;;;                                      上の層が寿命ごとに値を付ける・card ki-75d813bebc27〕。CLI が名乗らない欄は None のまま・欄がどれも無ければ usage = None)
@@ -100,7 +104,7 @@
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactEnded CompactBoundary
-                                 HookNotice HookPhase SubagentTranscript SubagentCall
+                                 HookNotice HookPhase SubagentTranscript SubagentCall CallClosed
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
@@ -218,7 +222,19 @@
   (val usage (if (is message.parent-tool-use-id None) (last-call-of message.usage) None))
   (if (is usage None)
       []
-      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model))]))
+      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model :call-id message.message-id :final False))]))
+
+(defk closed-call-builders-of [closed at]
+  {:pre [(: closed CallClosed) (: at datetime)] :post [(: % list)]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "上の層が本体の会話の呼びごとの使用量を最終の値で記録できるように(agora card ki-290ec664737d — assistant の行の usage の出力は呼びの
+   途中の値)、層 2 が呼びの始まりと終わりから組んだ最終の usage(CallClosed)から、その呼びの最終の usage の出来事を作る関数の列(0 か
+   1 つ)を作るため。本体の会話の呼び(parent-tool-use-id が None)だけ — subagent の呼びは transcript から読む
+   (subagent-call-usage-builders-of)。4 欄とも名乗らない呼びは出来事にしない(0 を発明しない)。"
+  (val usage (if (is closed.parent-tool-use-id None) (last-call-of closed.usage) None))
+  (if (is usage None)
+      []
+      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model closed.model :call-id closed.message-id :final True))]))
 
 (defk subagent-call-builder [#^ str parent-tool-use-id #^ SubagentCall call #^ AgentTurnUsage usage]
   {:pre [(: parent-tool-use-id str) (: call SubagentCall) (: usage AgentTurnUsage)] :post [(: % Callable)]
@@ -251,6 +267,9 @@
       (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
          (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] [])
          (run (call-usage-builders-of kind at)))
+    ;; 層 2 が呼びの始まりと終わりから組んだ呼びの最終の usage(agora card ki-290ec664737d)。
+    (isinstance kind CallClosed)
+      (run (closed-call-builders-of kind at))
     ;; 層 2 が subagent の transcript から読んだ呼び — 呼びごとの usage の出来事(card ki-e798888dce4e)。
     (isinstance kind SubagentTranscript)
       (run (subagent-call-usage-builders-of kind))

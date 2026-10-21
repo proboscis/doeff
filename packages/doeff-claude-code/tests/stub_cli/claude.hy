@@ -53,6 +53,11 @@
 (setv SUBAGENT-USAGE {"input_tokens" 1 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 50000 "output_tokens" 900})
 (setv MAIN-WINDOW {"inputTokens" 7 "outputTokens" 6 "contextWindow" 200000 "maxOutputTokens" 32000})
 (setv SUBAGENT-WINDOW {"inputTokens" 1 "contextWindow" 100000})
+;; 呼びを 3 段で流す手番(scenario_rules の STREAMED-CALLS-PHRASE — card ki-290ec664737d)の usage: 始まりと assistant の行の出力は
+;; STREAMED-PARTIAL-OUTPUT(本物の CLI 2.1.292 の stdout と同じく途中の値)、message_delta の最終の出力は呼びの usage の出力に
+;; STREAMED-EXTRA-OUTPUT を足した値。cache の書きは全部 1 時間の寿命(本体の会話の書きの実測)。result の行の usage は本体の呼びの
+;; 最終の usage の和(本物と同じく subagent の分を入れない — 実測 2.1.292)。
+(setv STREAMED-PARTIAL-OUTPUT 1 STREAMED-EXTRA-OUTPUT 400)
 ;; 計時の欄(実測 2.1.292・#3855 — 実物と同じ欄の名): message_start の行は ttft_ms(要求を送ってから message_start まで — 替え玉は
 ;; API を呼ばないので決まった値)を名乗り、result の行は手番の時計(入力を読んだ刻)からの time_to_request_ms などを名乗る。env
 ;; CLAUDE_CODE_EMIT_STARTUP_TIMING が在る process だけ、最初の init の行に起動の区間(startup_timing)を、result の行に要求までの区間
@@ -86,6 +91,11 @@
            "event" {"type" "content_block_delta" "index" 0 "delta" delta}}))
   (emit {"type" "stream_event" "session_id" session-id "parent_tool_use_id" None
          "event" {"type" "content_block_stop" "index" 0}}))
+
+(defn #^ dict streamed-usage [#^ dict usage #^ int output]
+  "3 段で流す呼びの usage(出力を output に替え、cache の書きの寿命の内訳を足す)。"
+  (| usage {"output_tokens" output
+            "cache_creation" {"ephemeral_5m_input_tokens" 0 "ephemeral_1h_input_tokens" (get usage "cache_creation_input_tokens")}}))
 
 (defn #^ dict model-usage [#^ bool subagent]
   "result の行の modelUsage(本体の model と、subagent を走らせた手番は subagent の model)。"
@@ -156,7 +166,9 @@
     (setv self.session-id session-id self.path path self.ask ask
           self.pending b""
           ;; 計時の欄の材料(手番の時計の起点・要求を送るまで・そのうち入力ごとの hook)と、起動の区間を名乗ったか。
-          self.turn-started 0.0 self.request-ms 0 self.hook-ms 0 self.startup-told False)
+          self.turn-started 0.0 self.request-ms 0 self.hook-ms 0 self.startup-told False
+          ;; 呼びを 3 段で流す手番か・その手番の本体の呼びの最終の usage(result の行の usage の和の材料)。
+          self.streamed False self.finals [])
     ;; 会話の累積の額は transcript に最後に記した額から数え続ける(無ければ 0)。
     (setv records (if (os.path.exists path)
                       (lfor line (.splitlines (.read-text (Path path) :encoding "utf-8")) :if (.strip line) (json.loads line))
@@ -164,6 +176,30 @@
     (setv self.cost (next (gfor record (reversed records) :if (= (.get record "type") "cost-state")
                                 (.get record "totalCostUSD"))
                           0.0)))
+
+  (defn call [self #^ list content #^ dict usage]
+    "本体の会話の API の呼び 1 回の行を出す。3 段で流す手番(self.streamed)は message_start → 途中の値の assistant の行 → message_delta
+     (最終の usage)、ほかの手番は usage を名乗る assistant の行 1 本(card ki-290ec664737d)。"
+    (if (not self.streamed)
+        (emit (assistant-line self.session-id content usage))
+        (do
+          (setv partial (streamed-usage usage STREAMED-PARTIAL-OUTPUT)
+                final (streamed-usage usage (+ (get usage "output_tokens") STREAMED-EXTRA-OUTPUT))
+                line (assistant-line self.session-id content partial))
+          (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+                 "event" {"type" "message_start" "message" {"id" (get line "message" "id") "type" "message" "role" "assistant"
+                                                            "model" MODEL "content" [] "usage" partial}}})
+          (emit line)
+          (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+                 "event" {"type" "message_delta" "delta" {"stop_reason" "end_turn"} "usage" final}})
+          (.append self.finals final))))
+
+  (defn turn-usage [self]
+    "result の行の usage: 3 段で流す手番は本体の呼びの最終の usage の和、ほかの手番は決まった値。"
+    (if (not self.streamed)
+        {"input_tokens" 1 "output_tokens" 1}
+        (dfor key #("input_tokens" "output_tokens" "cache_creation_input_tokens" "cache_read_input_tokens")
+              key (sum (gfor final self.finals (get final key))))))
 
   (defn lifecycle [self uuid state]
     (when uuid
@@ -241,10 +277,10 @@
                                  "text" (cut text (// (* piece (len text)) deltas) (// (* (+ piece 1) (len text)) deltas))}}}))
       (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
              "event" {"type" "content_block_stop" "index" 0}}))
-    (emit (assistant-line self.session-id [{"type" "text" "text" text}] FINAL-CALL-USAGE))
+    (.call self [{"type" "text" "text" text}] FINAL-CALL-USAGE)
     (+= self.cost TURN-COST)
     (emit (| {"type" "result" "subtype" "success" "is_error" False "result" text "terminal_reason" "completed"
-              "session_id" self.session-id "total_cost_usd" self.cost "usage" {"input_tokens" 1 "output_tokens" 1}
+              "session_id" self.session-id "total_cost_usd" self.cost "usage" (.turn-usage self)
               "user_message_uuids" refs "modelUsage" (model-usage subagent)}
              (.timing-fields self stream-ms))))
 
@@ -273,7 +309,7 @@
   (defn run-turn [self #^ list records]
     "1 手番(records = この手番の入力の行 — 普通は 1 つ・生き残った注入の手番は複数)。"
     (import time)
-    (setv self.turn-started (time.monotonic))
+    (setv self.turn-started (time.monotonic) self.finals [])
     (setv refs (lfor record records :if (.get record "uuid") (.get record "uuid")))
     (for [ref refs] (.lifecycle self ref "started"))
     (emit (| {"type" "system" "subtype" "init" "session_id" self.session-id "capabilities" CAPABILITIES
@@ -282,6 +318,7 @@
     (setv self.startup-told True)
     (setv text (.join "\n" (gfor record records (user-text record))))
     (setv rule (reply-for text (memory-of self.path)))
+    (setv self.streamed (get rule "streamed_calls"))
     (setv hook-started (.elapsed-ms self))
     (when (> (get rule "hook_seconds") 0)
       ;; 実物と同じく、init の直後に入力ごとの hook の知らせ(stream でない system の行)を出し、hook の秒だけ待ってから答え始める(#3696 の直し)。
@@ -312,9 +349,9 @@
     (setv words [(get rule "text")])
     (when (and (get rule "permission") self.ask)
       (setv request-id (str (uuid.uuid4)))
-      (emit (assistant-line self.session-id [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
-                                               "input" {"command" (.format "touch {}" (get rule "touch"))}}]
-                            TOOL-CALL-USAGE))
+      (.call self [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
+                    "input" {"command" (.format "touch {}" (get rule "touch"))}}]
+             TOOL-CALL-USAGE)
       (emit {"type" "control_request" "request_id" request-id
              "request" {"subtype" "can_use_tool" "tool_name" "Bash"
                         "input" {"command" (.format "touch {}" (get rule "touch"))} "permission_suggestions" []}})
@@ -329,9 +366,9 @@
       (when (> (get rule "tool_input_deltas") 0)
         (stream-block self.session-id {"type" "tool_use" "id" "toolu_stub" "name" "Bash" "input" {}}
                       {"type" "input_json_delta" "partial_json" "{\"c"} (get rule "tool_input_deltas")))
-      (emit (assistant-line self.session-id [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
-                                               "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]
-                            TOOL-CALL-USAGE))
+      (.call self [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
+                    "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]
+             TOOL-CALL-USAGE)
       ;; 道具の途中に subagent を 1 つ走らせる(親 = 道具の呼び・別の model と usage)。実物(背景の task を止めた CLI 2.1.292 — 本番の
       ;; 起こし方・card ki-e798888dce4e)と同じく subagent の呼びの行は stdout に出さず、subagent の task の始まりと報せの行だけを出し、
       ;; 呼びは subagent の transcript に書く。
@@ -366,7 +403,7 @@
     (when (get rule "hook_feedback")
       ;; Stop hook が最初の答えを差し戻す(#4020)— 実物(CLI 2.1.292・旗なし)と同じ 3 行: 差し戻される答えの assistant の行 →
       ;; isSynthetic の user の行(本文「Stop hook feedback:\n<理由>」)→ system/notification(key stop-hook-error)。その後に答え直す。
-      (emit (assistant-line self.session-id [{"type" "text" "text" REJECTED-ANSWER}] FINAL-CALL-USAGE))
+      (.call self [{"type" "text" "text" REJECTED-ANSWER}] FINAL-CALL-USAGE)
       ;; --include-hook-events の CLI は差し戻しの前に Stop の hook の開始と応答の行を出す(exit code 2 で差し戻す hook — 理由は stderr・
       ;; ki-d8b473480303)。
       (.hook-lines self "Stop" "Stop" "" (get rule "hook_feedback") 2 "error")

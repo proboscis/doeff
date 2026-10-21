@@ -26,7 +26,7 @@
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
                                  HookNotice HookPhase SubagentTranscript SUBAGENT-TASK-TYPE
-                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within])
+                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -259,7 +259,12 @@
     (setv #^ (| AccountRefusalHit None) self.refusal-hit None)
     (setv #^ (| ModelRefusalHit None) self.model-refusal-hit None)
     ;; 報せを出して、まだ出していない subagent の transcript の読み(本番の handler と同じく次の result の行の直前に出す)。
-    (setv #^ (| SubagentTranscript None) self.subagent-due None)))
+    (setv #^ (| SubagentTranscript None) self.subagent-due None)
+    ;; fake の手番の本体の API の呼び(返事 1 つ = 呼び 1 つ): call-id = 本体の assistant の行が名乗る呼びの id / call-usage = その呼びの
+    ;; 行が名乗った usage で、まだ閉じていない物(閉じた・名乗っていなければ None)— 本番の handler と同じく、呼びの最終の usage
+    ;; (CallClosed)を手番の終わりの行の前に出すため(card ki-290ec664737d)。
+    (setv #^ str self.call-id (.format "msg_fake_{}" seq))
+    (setv #^ (| Usage None) self.call-usage None)))
 
 
 (defclass FakeSession []
@@ -342,15 +347,20 @@
     (.complete bell None))
   None)
 
-(defk said-by-reply [#^ FakeReply reply kind]
-  {:pre [(: reply FakeReply) (: kind ClaudeLineKind)] :post [(: % ClaudeLineKind)] :tags {:context "claude-code" :role "foundation"}}
+(defk said-by-reply [#^ FakeReply reply kind #^ str call-id]
+  {:pre [(: reply FakeReply) (: kind ClaudeLineKind) (: call-id str)] :post [(: % ClaudeLineKind)]
+   :tags {:context "claude-code" :role "foundation"}}
   "fake の CLI がこの手番の行で名乗る呼びの値を行に載せるため(本物の CLI が全部の assistant の行で usage と model を、result の行で
    modelUsage を名乗るのと同じ — #3744): assistant の行には返事の last-call-usage と last-call-model、result の行には返事の
    model-windows。CLI が答えの代わりに自分で作る assistant の行(model を自分で名乗る行 — 口座の断りの行の SYNTHETIC-MODEL)と
-   ほかの行はそのまま。"
+   ほかの行はそのまま。usage を名乗る本体の会話の assistant の行には手番の呼びの id(call-id — 本番の CLI の message.id と同じ役)も載せる(card
+   ki-290ec664737d)。"
   (cond
     (and (isinstance kind AssistantMessage) (is kind.model None))
-      (replace kind :usage reply.last-call-usage :model reply.last-call-model)
+      (replace kind :usage reply.last-call-usage :model reply.last-call-model
+                    :message-id (if (and (is kind.parent-tool-use-id None) (is-not reply.last-call-usage None))
+                                    call-id
+                                    kind.message-id))
     (isinstance kind TurnResult) (replace kind :model-windows reply.model-windows)
     True kind))
 
@@ -363,13 +373,20 @@
     (val due turn.subagent-due)
     (setv turn.subagent-due None)
     (<- (emit session turn due)))
+  ;; 本体の呼びの最終の usage は、本番の CLI の message_delta と同じく手番の終わりの行より前に出す。止めた手番の終わり(terminal-reason
+  ;; aborted_*)は、本番の CLI が終わりを受けずに止めるので出さない(card ki-290ec664737d)。
+  (when (and (isinstance kind TurnResult) (is-not turn.call-usage None) (not (.startswith kind.terminal-reason "aborted")))
+    (val closed (CallClosed :message-id turn.call-id :model turn.last-call-model :parent-tool-use-id None :usage turn.call-usage))
+    (setv turn.call-usage None)
+    (<- (emit session turn closed)))
   (<- at (GetTime))
-  (<- said (said-by-reply turn.reply kind))
+  (<- said (said-by-reply turn.reply kind turn.call-id))
   (.append turn.lines (ClaudeStreamLine :seq session.next-line-seq :at at :kind said :raw (repr said)))
   (+= session.next-line-seq 1)
   (cond
     (and (isinstance said AssistantMessage) (is said.parent-tool-use-id None))
-      (setv turn.last-call-usage said.usage turn.last-call-model said.model)
+      (setv turn.last-call-usage said.usage turn.last-call-model said.model
+            turn.call-usage (if (= said.message-id turn.call-id) said.usage turn.call-usage))
     (isinstance said TurnResult)
       (setv turn.model-windows (! (merged-windows turn.model-windows said.model-windows))))
   (setv turn.limit-hit (limit-hit-after turn.limit-hit said)

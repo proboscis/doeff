@@ -492,12 +492,23 @@ class AgentCallUsageEvent:
     no usage carries no event (never an invented 0).  The runtime states one call's usage on each line of that
     call, so consecutive events may repeat the same value; the last event of a turn equals the turn end's
     ``last_call_usage`` / ``last_call_model``.  The model's context window is not in the event — the runtime
-    states windows only at the turn's end (``model_windows``)."""
+    states windows only at the turn's end (``model_windows``).
+
+    ``call_id`` = the API call's id (the message id) when the runtime states it, so an upper layer folds the events of
+    one call into one response by id rather than by equal values (agora card ki-290ec664737d).  ``final`` tells which
+    value the event carries: ``False`` = a value the runtime stated while the call was still streaming (Claude Code
+    2.1.292 states the call's ``message_start`` usage on every assistant line of the call — its output is a mid-call
+    value such as 16); ``True`` = the call's final usage (Claude Code: ``message_start`` overlaid with the call's
+    ``message_delta``, the way the CLI itself merges them).  A call that never closes (interrupted, the process went
+    down, the stream broke and the CLI resent the request) has no final event — its output stays a mid-call value and
+    the upper layer must not read it as the call's whole output."""
 
     seq: int
     at: datetime
     usage: AgentTurnUsage
     model: str | None = None
+    call_id: str | None = None
+    final: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
