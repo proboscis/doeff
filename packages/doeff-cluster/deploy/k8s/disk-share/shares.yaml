@@ -26,6 +26,14 @@
 # - systemBytes を越える image や log の育ちは、何も止めない。越えた時は worker の near(見回りの検査)が最後に知らせる。
 # - 既に置かれた写しは、予約を上げても動かない。名目の合計が分を越えている機体は、写しを退かせて分の内へ戻す(volume の持ち主の可が要る)。
 #
+# Longhorn の置き方(longhornScheduling・longhornDiskTags)— Flux の server-side apply は、kubectl の manager(kubectl-edit・kubectl-patch
+# ほか)が持っていた欄を自分へ引き取ってから当て、宣言に無い欄を消す。だから手で入れた allowScheduling や disk の札は、宣言に無ければ
+# 次の当て直しで消える(2026-10-21 05:18Z に k3s-0・k3s-1・k3s-3 の allowScheduling と札 warm が消え、写しを受けなくなった —
+# card ki-c37ae82751bf)。Node の置き方の欄は全部ここで宣言し、導いた Node が全部書く:
+#   longhornScheduling  true = 写しを受ける(Node と disk の allowScheduling true・evictionRequested false)。
+#                       false = Longhorn を外した機体(allowScheduling false・evictionRequested true — 写しを受けず、在る写しを退かせる)
+#   longhornDiskTags    disk の札(StorageClass の diskSelector が引く — longhorn-warm は warm)。Node の札は持たない([] を書く)
+#
 # overProvisioningPercent は Longhorn の設定 storage-over-provisioning-percentage(cluster 全体の値)の写し。設定を替える時はここも直す
 # (替えると導く予約が変わる)。atlas・eos・zeus はこの宣言の外 — atlas と eos の根の disk の Longhorn の disk は写しを受けず
 # (allowScheduling false)、zeus の worker は USB の SSD に在る(根の disk を分け合わない)。
@@ -41,6 +49,8 @@ overProvisioningPercent: 200
 shapes:
   k3s-vps: &k3s-vps
     longhornDisk: default-disk-e4ac800743aec705
+    longhornScheduling: true
+    longhornDiskTags: [warm]
     diskBytes: 105_490_411_520
     filesystemReservedBytes: 4_526_161_920
     systemBytes: 22_000_000_000
@@ -59,6 +69,9 @@ nodes:
     otherResidentsBytes: 2_300_000_000
   k3s-2:
     <<: *k3s-vps
+    # Longhorn を外した機体(写しは 0 本 — 2026-10-21 の読み)
+    longhornScheduling: false
+    longhornDiskTags: []
     # merge-queue-land 12.88・merge-queue-ledger 1.08・旧い worker の state 4.35 GB
     otherResidentsBytes: 18_400_000_000
   k3s-3:

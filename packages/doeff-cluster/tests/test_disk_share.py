@@ -11,7 +11,10 @@ Longhorn の disk の予約がその宣言から導かれている事の検(card
   (3) Flux が当てる組み立て(kubectl kustomize workers)の worker の env と Longhorn の予約が宣言の値 — 予約を手で下げた file は、
       Longhorn が分を越えて受けるので赤。
   (4) worker の分の空き(最低 + near の幅 + 戻りの幅)は、worker が near から ok へ戻る線と同じ — 幅は worker の code から読む。
-失敗ケース(赤になる事の検): 分け前の合計が disk を越える宣言・Longhorn の既定の予約(30%)のままの Node・綴りの誤った鍵。
+  (5) Flux が当てる Longhorn の Node は置き方の欄(Node と disk の allowScheduling・evictionRequested・tags)を全部書き、値は宣言の通り
+      (card ki-c37ae82751bf — 予約の欄だけを書いた Node から、Flux が手で入れた allowScheduling と札 warm を引き取って消した)。
+失敗ケース(赤になる事の検): 分け前の合計が disk を越える宣言・Longhorn の既定の予約(30%)のままの Node・綴りの誤った鍵・予約の欄だけを
+書く Node・文字で書いた longhornScheduling。
 """
 
 from __future__ import annotations
@@ -117,6 +120,29 @@ def _applied(docs: list[dict[str, object]]) -> tuple[Applied, ...]:
     )
 
 
+def _longhorn_nodes(docs: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    """組み立ての Longhorn の Node の spec(機体の名から)— Flux が当てる欄を読むため。"""
+    return {
+        doc["metadata"]["name"]: doc["spec"]
+        for doc in docs
+        if doc["kind"] == "Node" and doc["apiVersion"].startswith("longhorn.io/")
+    }
+
+
+def _unwritten(spec: dict[str, object]) -> tuple[str, ...]:
+    """Longhorn の Node の spec が書かない置き方の欄(spec.<欄> と spec.disks.<disk>.<欄>)。Flux は kubectl の manager が持っていた欄を
+    引き取ってから当てるので、ここに出た欄は手で入れても次の当て直しで消える。"""
+    disks = spec.get("disks", {})
+    return (
+        *(f"spec.{field}" for field in sorted(derive.FLUX_NODE_FIELDS - set(spec))),
+        *(
+            f"spec.disks.{disk}.{field}"
+            for disk, disk_spec in sorted(disks.items())
+            for field in sorted(derive.FLUX_DISK_FIELDS - set(disk_spec))
+        ),
+    )
+
+
 def _applied_on(applied: tuple[Applied, ...], node: str) -> Applied:
     """組み立てから読んだ機体 node の値(ちょうど 1 つ)— 宣言の機体ごとに当てる値を引くため。"""
     found = [a for a in applied if a.node == node]
@@ -142,8 +168,13 @@ def margins() -> object:
 
 
 @pytest.fixture(scope="module")
-def applied() -> tuple[Applied, ...]:
-    return _applied(_build_workers())
+def built() -> list[dict[str, object]]:
+    return _build_workers()
+
+
+@pytest.fixture(scope="module")
+def applied(built: list[dict[str, object]]) -> tuple[Applied, ...]:
+    return _applied(built)
 
 
 def test_each_declared_share_fits_its_disk(declaration: object, margins: object) -> None:
@@ -184,6 +215,31 @@ def test_longhorn_admits_no_more_than_its_share_as_applied(
             _over_share(share, got.storage_reserved, declaration.over_provisioning_percent, margins)
             <= 0
         ), f"{share.node}: 予約 {got.storage_reserved} の下で Longhorn は分を越えて受ける"
+
+
+def test_flux_writes_every_placement_field_of_the_longhorn_nodes(
+    declaration: object, built: list[dict[str, object]]
+) -> None:
+    """Flux が当てる Longhorn の Node は置き方の欄を全部書き(欠けた欄は Flux の当て直しで消える — 2026-10-21 05:18Z に k3s-0・k3s-1・
+    k3s-3 の allowScheduling と札 warm が消えた)、値は宣言の通り: 写しを受ける機体は置き・退かせず、Longhorn を外した機体は置かず・
+    退かせる。disk の札は宣言の札。"""
+    nodes = _longhorn_nodes(built)
+    for share in declaration.nodes:
+        spec = nodes[share.node]
+        assert _unwritten(spec) == (), share.node
+        assert set(spec) == derive.FLUX_NODE_FIELDS, share.node
+        assert list(spec["disks"]) == [share.longhorn_disk], share.node
+        disk = spec["disks"][share.longhorn_disk]
+        assert set(disk) == derive.FLUX_DISK_FIELDS, share.node
+        placed = share.longhorn_scheduling
+        assert (spec["allowScheduling"], spec["evictionRequested"]) == (placed, not placed), (
+            share.node
+        )
+        assert (disk["allowScheduling"], disk["evictionRequested"]) == (placed, not placed), (
+            share.node
+        )
+        assert spec["tags"] == [], share.node
+        assert disk["tags"] == list(share.longhorn_disk_tags), share.node
 
 
 def test_worker_free_share_is_the_line_where_the_worker_returns_to_ok(
@@ -235,4 +291,26 @@ def test_a_misspelled_key_is_refused() -> None:
     """鍵の綴りの誤り(rootGiB)は、既定の値で埋めずに読む所で断る。"""
     text = derive.SHARES.read_text(encoding="utf-8").replace("rootsGiB:", "rootGiB:")
     with pytest.raises(ValueError, match="知らない鍵"):
+        derive.parse(text)
+
+
+def test_a_node_that_writes_only_the_reserve_is_red() -> None:
+    """予約の欄だけを書く Longhorn の Node(card ki-3dfe8e9d820a の宣言の形)は、置き方の欄を欠くので赤 — Flux はその欄を引き取って消す。"""
+    spec = {"disks": {"default-disk-e4ac800743aec705": {"storageReserved": 88_171_963_136}}}
+    assert _unwritten(spec) == (
+        "spec.allowScheduling",
+        "spec.evictionRequested",
+        "spec.tags",
+        "spec.disks.default-disk-e4ac800743aec705.allowScheduling",
+        "spec.disks.default-disk-e4ac800743aec705.evictionRequested",
+        "spec.disks.default-disk-e4ac800743aec705.tags",
+    )
+
+
+def test_a_scheduling_flag_that_is_not_a_bool_is_refused() -> None:
+    """longhornScheduling を文字で書いた宣言は、真偽を推し量らずに読む所で断る。"""
+    text = derive.SHARES.read_text(encoding="utf-8").replace(
+        "longhornScheduling: false", 'longhornScheduling: "false"'
+    )
+    with pytest.raises(ValueError, match="longhornScheduling は true か false"):
         derive.parse(text)

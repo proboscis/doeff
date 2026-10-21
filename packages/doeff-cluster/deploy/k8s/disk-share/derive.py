@@ -12,6 +12,7 @@ test(packages/doeff-cluster/tests/test_disk_share.py)がこの module を読み�
 """
 
 import argparse
+import json
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -31,6 +32,8 @@ TOP_KEYS = frozenset({"overProvisioningPercent", "shapes", "nodes"})
 NODE_KEYS = frozenset(
     {
         "longhornDisk",
+        "longhornScheduling",
+        "longhornDiskTags",
         "diskBytes",
         "filesystemReservedBytes",
         "systemBytes",
@@ -39,6 +42,10 @@ NODE_KEYS = frozenset(
     }
 )
 WORKER_KEYS = frozenset({"minFreeGiB", "rootsGiB", "stateBytes"})
+# 導いた Longhorn の Node が書く欄の全部(Node の spec と disk の 1 つ)。Flux の server-side apply は kubectl の manager が持っていた欄を
+# 引き取ってから当て、宣言に無い欄を消す — 人が置き方を替える欄(置くか・退かせるか・札・予約)は、全部を宣言から書く(card ki-c37ae82751bf)。
+FLUX_NODE_FIELDS = frozenset({"allowScheduling", "evictionRequested", "tags", "disks"})
+FLUX_DISK_FIELDS = frozenset({"allowScheduling", "evictionRequested", "tags", "storageReserved"})
 
 
 @dataclass(frozen=True)
@@ -52,10 +59,13 @@ class WorkerShare:
 
 @dataclass(frozen=True)
 class NodeShare:
-    """機体 1 つの分け前(byte)。Longhorn の分は残り — longhorn_bytes。"""
+    """機体 1 つの分け前(byte)。Longhorn の分は残り — longhorn_bytes。longhorn_scheduling が偽の機体は Longhorn を外した機体
+    (写しを受けず、在る写しを退かせる)。"""
 
     node: str
     longhorn_disk: str
+    longhorn_scheduling: bool
+    longhorn_disk_tags: tuple[str, ...]
     disk_bytes: int
     filesystem_reserved_bytes: int
     system_bytes: int
@@ -132,9 +142,17 @@ def _node_share(name: str, raw: object) -> NodeShare:
     disk = entry["longhornDisk"]
     if not isinstance(disk, str) or not disk:
         raise ValueError(f"{where}.longhornDisk は Longhorn の disk の名: {disk!r}")
+    scheduling = entry["longhornScheduling"]
+    if not isinstance(scheduling, bool):
+        raise ValueError(f"{where}.longhornScheduling は true か false: {scheduling!r}")
+    tags = entry["longhornDiskTags"]
+    if not isinstance(tags, list) or not all(isinstance(tag, str) and tag for tag in tags):
+        raise ValueError(f"{where}.longhornDiskTags は札の名の list: {tags!r}")
     return NodeShare(
         node=name,
         longhorn_disk=disk,
+        longhorn_scheduling=scheduling,
+        longhorn_disk_tags=tuple(tags),
         disk_bytes=_count(entry["diskBytes"], f"{where}.diskBytes"),
         filesystem_reserved_bytes=_count(
             entry["filesystemReservedBytes"], f"{where}.filesystemReservedBytes"
@@ -248,20 +266,30 @@ spec:
 
 
 LONGHORN_NODES_HEAD = """\
-# 導いた物 — derive.py が shares.yaml から書く(手で直さない)。Longhorn の Node の disk の予約 storageReserved だけを書く — Flux は
-# server-side apply で書いた欄だけを持ち、Node の他の欄(path・tags・allowScheduling ほか)は Longhorn の物のまま。
+# 導いた物 — derive.py が shares.yaml から書く(手で直さない)。Longhorn の Node の置き方の欄(Node と disk の allowScheduling・
+# evictionRequested・tags と disk の予約 storageReserved)を全部書く — Flux の server-side apply は kubectl の manager(kubectl-edit・
+# kubectl-patch ほか)が持っていた欄を引き取ってから当て、ここに無い欄を消す。手で kubectl から替えた置き方は次の当て直しで戻るので、
+# 替える時は shares.yaml を直す。path・diskType ほか Longhorn が自分で書く欄は Longhorn の物のまま。
 # prune: disabled — この file から機体を外しても、Flux は Longhorn の Node を消さない(消すと Longhorn がその機体の disk を失う)。
 """
 
 
 def _longhorn_node(share: NodeShare, margins: Margins, percent: int) -> str:
-    """機体 1 つの Longhorn の Node の文書(予約の欄だけ)— 予約の式と、その下で受ける名目の上限を註に残す。"""
+    """機体 1 つの Longhorn の Node の文書(置き方の欄の全部 — FLUX_NODE_FIELDS・FLUX_DISK_FIELDS)— 予約の式と、その下で受ける名目の
+    上限を註に残す。"""
     room = longhorn_bytes(share, margins)
     reserved = storage_reserved(share, margins, percent)
     admits = longhorn_admits(share.disk_bytes, reserved, percent)
+    schedule = "true" if share.longhorn_scheduling else "false"
+    evict = "false" if share.longhorn_scheduling else "true"
+    role = (
+        "写しを受ける"
+        if share.longhorn_scheduling
+        else "Longhorn を外した機体 — 写しを受けず、在る写しを退かせる"
+    )
     return f"""\
 # {share.node}: Longhorn の分 {room / GB:.2f} GB → 予約 = {share.disk_bytes / GB:.2f} - {room / GB:.2f} × 100 / {percent} = {reserved / GB:.2f} GB
-#   (Longhorn が受ける写しの名目の合計の上限 {admits / GB:.2f} GB)
+#   (Longhorn が受ける写しの名目の合計の上限 {admits / GB:.2f} GB)。{role}
 apiVersion: longhorn.io/v1beta2
 kind: Node
 metadata:
@@ -269,8 +297,15 @@ metadata:
   namespace: {LONGHORN_NAMESPACE}
   annotations: {{ kustomize.toolkit.fluxcd.io/prune: disabled }}
 spec:
+  allowScheduling: {schedule}
+  evictionRequested: {evict}
+  tags: []
   disks:
-    {share.longhorn_disk}: {{ storageReserved: {reserved} }}
+    {share.longhorn_disk}:
+      allowScheduling: {schedule}
+      evictionRequested: {evict}
+      tags: {json.dumps(list(share.longhorn_disk_tags))}
+      storageReserved: {reserved}
 """
 
 
