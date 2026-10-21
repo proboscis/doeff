@@ -40,6 +40,7 @@ from doeff_cluster.coordinator.core.api_policy import stamp_alive as stamp_alive
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_ACTOR as ROLLOUT_ACTOR
 from doeff_cluster.coordinator.core.api_policy import stall_of as stall_of
 from doeff_cluster.coordinator.core.api_policy import clocks_shifted as clocks_shifted
+from doeff_cluster.coordinator.core.api_policy import unreached_shifted as unreached_shifted
 from doeff_cluster.coordinator.intent.due_model import StepPace as StepPace
 from doeff_cluster.coordinator.intent.due_model import Stall as Stall
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
@@ -128,6 +129,13 @@ def watch_answer_json(answer: WatchAnswer) -> _Program[dict, object]:
 STALL_LOG: str
 
 def stall_resumed(state: ClusterState, now: int, stall: Stall | None) -> _Program[ClusterState, object]:
+    ...
+REACH_LOG: str
+
+def reach_resumed(state: ClusterState, now: int) -> _Program[ClusterState, object]:
+    ...
+
+def reach_noted(state: ClusterState, now: int, heard: bool) -> _Program[ClusterState, object]:
     ...
 
 def announce_liveness(events: tuple) -> _Program[int, object]:
