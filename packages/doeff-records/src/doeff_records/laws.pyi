@@ -3,6 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
+from datetime import datetime as datetime
 from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
@@ -269,10 +270,7 @@ def short_page_is_the_end(harness: LawHarness, stream: str, page: Events, limit:
 def law_short_page_ends_the_stream(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def expired_keys(harness: LawHarness, at_ms: int) -> _Program[tuple, object]:
-    ...
-
-def now_ms() -> _Program[int, object]:
+def expired_keys(harness: LawHarness, at: datetime) -> _Program[tuple, object]:
     ...
 
 def confirm_keys(keys: frozenset, events: tuple) -> _Program[EventsArchived, object]:

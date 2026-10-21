@@ -228,11 +228,11 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
   判じ、期限を過ぎた鍵への追記は鍵の覚えで答える(答えは回収の後の書きと同じ)。PostgreSQL の書き 1 回は書きの transaction の文だけを流す。
 - `PruneChanges(keep_seconds)` → `Pruned(floor, removed)` — `keep_seconds` より古い変更を変更の列から消し、floor を上げる。
   floor より前の位置の `WatchChanges` は `Reset(epoch, floor)`(`WatchCursor(epoch, floor)` から読めば残った変更を頭から全部読める)。
-- `ReadExpiredEvents(at_ms, after, limit)` → `ExpiredEvents(items, next)` — 送ってから外す列(`StreamDecl.archive_before_retire`)の、
-  刻 `at_ms` の境で期限を過ぎた出来事(書きが冪等キーを覚えただけの出来事を含む)を、列の名の順・列の中は積んだ刻と番号の順に 1 頁
+- `ReadExpiredEvents(at, after, limit)` → `ExpiredEvents(items, next)` — 送ってから外す列(`StreamDecl.archive_before_retire`)の、
+  刻 `at`(`GetTime` の時刻)の境で期限を過ぎた出来事(書きが冪等キーを覚えただけの出来事を含む)を、列の名の順・列の中は積んだ刻と番号の順に 1 頁
   (1 頁 = 1 つの列)。`next` = 続きの位置 `ExpiredCursor(stream, at, sequence)`(None = 読み終えた)。
-- `RetireArchivedEvents(stream, at_ms, sequences)` → `RetiredEvents(count)` — 番号 `sequences`(送り先に在ると確かめた出来事)のうち、
-  刻 `at_ms` の境で今も期限を過ぎた出来事だけを外し、冪等キーを覚える。
+- `RetireArchivedEvents(stream, at, sequences)` → `RetiredEvents(count)` — 番号 `sequences`(送り先に在ると確かめた出来事)のうち、
+  刻 `at` の境で今も期限を過ぎた出来事だけを外し、冪等キーを覚える。
 - `maintenance_loop(interval_seconds, keep_seconds, archive, ticks, archive_events)` — 手入れの係の本体(`ticks=None` で止めるまで)。
   `archive_events` = 出来事の送りの関数(期限を過ぎた出来事の頁 → `EventsArchived(sequences)` | `Unreachable` の Program・None = 送らない)。
   手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を頁で読んで送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す
