@@ -34,6 +34,9 @@ def transcript_dir(config_dir: str, canonical_cwd: str) -> str:
 
 def transcript_path(config_dir: str, canonical_cwd: str, session_id: str) -> str:
     ...
+
+def subagent_transcript_path(config_dir: str, canonical_cwd: str, session_id: str, agent_id: str) -> _Program[str, object]:
+    ...
 STARTUP_TIMING_ENV: FrozenMap
 
 def process_env(home: ClaudeHome, config_dir: str) -> dict[str, str]:

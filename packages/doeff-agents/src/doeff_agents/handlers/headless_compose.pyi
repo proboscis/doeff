@@ -26,6 +26,8 @@ from doeff_claude_code.lines import CompactOutcome as CompactOutcome
 from doeff_claude_code.lines import AssistantMessage as AssistantMessage
 from doeff_claude_code.lines import HookNotice as HookNotice
 from doeff_claude_code.lines import HookPhase as HookPhase
+from doeff_claude_code.lines import SubagentTranscript as SubagentTranscript
+from doeff_claude_code.lines import SubagentCall as SubagentCall
 from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
 from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
 from doeff_agents.handlers.headless import HeadlessState as HeadlessState

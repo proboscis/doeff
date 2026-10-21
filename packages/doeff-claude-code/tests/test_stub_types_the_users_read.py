@@ -193,7 +193,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
                 "stop_hook_rejections": "tuple[StopHookRejection, ...]",
                 "account_limit": "AccountLimitHit | None",
                 "compactions": "tuple[CompactBoundary | CompactEnded, ...]",
-                "subagent_calls": "tuple[AssistantMessage, ...]",
+                "subagent_transcript": "SubagentTranscript | None",
             }
         ),
         "FakeClaudeWorld": Declared(
