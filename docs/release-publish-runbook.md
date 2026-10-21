@@ -84,6 +84,7 @@ root の tag でも単独でも出さない。どれかを公開すると決め�
 | `doeff-validation` | 独立した確かめを束ねる部品 | 2026-09-26 に新設(96b5de54)。公開の入れ方がまだ無い |
 | `doeff-jev` | 判断の provider の部品(`doeff-system-one` の TypeSafe Jev の handler) | 2026-09-22 に新設(e190a8c6)。公開の入れ方がまだ無い |
 | `doeff-system-one` | 判断の effect の部品 | 2026-09-22 に新設(e190a8c6)。公開の入れ方がまだ無い |
+| `doeff-claude-judge` | 判断の provider の部品(`doeff-system-one` の Judge を Claude Code の CLI の 1 回の実行で答える) | 公開の入れ方がまだ無い |
 | `doeff-domain` | 語彙の凝集の domain の部品 | ADR-DOE-DOMAIN-001(status proposed)の E1 の部品。公開の入れ方がまだ無い |
 | `doeff-ml-nexus` | 試しの実行の adapter | 公開の入れ方がまだ無い |
 | `doeff-effect-analyzer` | native の解析の道具 | 開発の道具で、PyPI の利用者の面ではない |

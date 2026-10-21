@@ -69,7 +69,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 は家と一緒に消える。形は本物の codex 0.162.1 で確かめた(家を消した後に別の家から同じ thread を続け、続きの呼びが前の
 ターンの発言と答えを運んだ)。`CodexHome` の env と auth-json は repr に出さない。
 
-状態の DB(`state_5.sqlite` ほか codex の sqlite — thread の一覧と rollout の置き場の索引)は家の外に 1 つ持つ(card ki-f316f508a6a5)。
+状態の DB(`state_5.sqlite` ほか codex の sqlite — thread の一覧と rollout の置き場の索引)は家の外に 1 つ持つ。
 空の DB の codex は起動の時に sessions の全部を読んで DB を埋める(backfill)ので、DB を家に置くと起動のたびに記録の全部を読み直す。
 
 | 決まり | 形 | 訳(本物の codex 0.162.1 で測った事) |

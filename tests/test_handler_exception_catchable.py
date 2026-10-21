@@ -221,12 +221,12 @@ def test_pass_delegation_handler_error_caught():
 
     def inner_handler(effect, k):
         # Doesn't handle Ping, passes to outer
-        return Pass(effect, k)
+        return (yield Pass(effect, k))
 
     def outer_handler(effect, k):
         if isinstance(effect, Ping):
             raise RuntimeError("outer handler failed")
-        return Pass(effect, k)
+        return (yield Pass(effect, k))
 
     @do
     def body():

@@ -85,6 +85,7 @@
 "packages/doeff-records/tests/test_memory_watch_wakes.hy::test_a_write_from_another_thread_wakes_a_waiter_on_the_wall_clock" = "別の本物の thread の待ち手が呼び鈴を掛けるのを締め切りつきで待ち、壁の時計の上で書きが待ち手を起こす事を見る(本物の thread が対象)"
 "packages/doeff-records/tests/test_memory_watch_wakes.hy::test_an_append_from_another_thread_wakes_a_stream_waiter_on_the_wall_clock" = "別の本物の thread の待ち手が呼び鈴を掛けるのを締め切りつきで待ち、壁の時計の上で書きが待ち手を起こす事を見る(本物の thread が対象)"
 "packages/doeff-records/tests/test_pg_sql.hy::test_a_write_waits_while_the_version_before_880_holds_the_writer_lock" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待つ(外の process の実時間が対象)"
+"packages/doeff-records/tests/test_pg_reconcile_indexes.hy" = "本物の PostgreSQL の lock の待ちと、索引の作りが書きの代役を待つ実時間が対象(外の process の実時間が対象)"
 "packages/doeff-records/tests/test_pg_sql.hy::test_the_readyz_pressure_counts_a_connection_waiting_on_a_held_lock" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-records/tests/test_pg_wakes_by_name.hy" = "本物の PostgreSQL の LISTEN の thread が合図を数え終えるまでの実時間を置く(外の process と本物の thread の実時間が対象)"
 "packages/doeff-records/tests/test_pg_prepare_deadlock.hy" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待ち、deadlock の見つけ(deadlock_timeout)を待つ(外の process の実時間が対象)"

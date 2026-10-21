@@ -102,7 +102,7 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
   追いつきます(何度来てもよい)。別の task が欠けを出している間の `Publish` は、それが終わるのを待ってから出ます(順が入れ替わらない)。
   次の `Publish` が欠けを全部出したら、戻りを待つ task は止まります。`AwaitBrokerBack` に誰も答えられない時、その task は止まり、印は
   次の `Publish` まで残り、その失敗は本体が終わる時に上がります。本体が終われば印は消えます(次の起動の欠けの知らせで埋める)。
-- 結末の分からない書き(agora の card ki-a93fc14956e3): 書きの答えが期限内に来ず、書きが着いたか分からない出し手は、出すはずだった
+- 結末の分からない書き: 書きの答えが期限内に来ず、書きが着いたか分からない出し手は、出すはずだった
   出来事を `PublishGap(event)` に渡します。出来事は送らず、その道の channel に欠けの印を付けて、同じ出口ですぐに出します(答え
   `NoticeGapTold(channel)`)。broker が受けられなければ、`Publish` の出し損ねと同じく印が残ります(`NoticeGapMarked`)。`Drop` の道は
   持たない(`NoticeDropped`)。表に無い型の `PublishGap` は外の handler へ出ます(包みは channel を知らない)。

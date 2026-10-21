@@ -35,6 +35,7 @@ from doeff_core_effects.scheduler import (
 
 from doeff import EffectBase, Pass, Resume, do, run
 from doeff import handler as install_handler
+from doeff.handler_utils import reinstaller
 from doeff.program import GetOuterHandlers
 
 pytestmark = pytest.mark.usefixtures("scheduler_index_self_check")
@@ -140,7 +141,7 @@ def test_captured_scheduler_prompt_is_marked_and_reinstallable(
         assert len(prompts) == 1
         # Reinstall the captured prompt around a spawning program: the
         # innermost scheduler prompt handles its Spawn / Wait.
-        inner = install_handler(prompts[0])(_spawn_and_wait(child(21)))
+        inner = reinstaller(prompts[0])(_spawn_and_wait(child(21)))
         return (yield inner)
 
     program = scheduled(install_handler(capture)(body()), implementation=implementation)
