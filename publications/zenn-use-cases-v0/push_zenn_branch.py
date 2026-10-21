@@ -8,6 +8,10 @@ branchの先端の上の1つのcommitにしてpushする。mainの木も、こ�
 - 公開は予約で行う: 公開順の表に公開の刻を書いた回(「公開予定 2026-10-21 08:00 JST」)は、
   published: trueとpublished_atの組で置く。Zennはこの組を予約公開として受け、刻を過ぎると自分で公開する。
   刻の後に、公開順の表の公開状態を「公開済み <URL> <刻>」に直す(record_published.py)。
+- 許可の無い回を予約も公開もしない: 公開順の表の公開状態に、その1本の公開の許可を問うた依頼書のid
+  (「許可 lt-…」)が無い回を、published: true(予約か公開)で書き出そうとしたら止まる(2026-10-21 03:51 JSTの
+  利用者の決定 — 1本ずつ本文と図を見せる依頼書で許可を得てから公開する)。読者に見えている回は、下の
+  決まりのまま変えない(許可の決まりの前に出た回も止めない)。
 - 読者に見えている回を変えない: branchでpublishedがtrueで、公開の刻が無いか過ぎた記事は、publishedと
   published_atがbranchのままでなければ止まる(公開済みの記事を非公開に戻さず、公開日時を変えない)。
 - その場で公開しない: 刻の前の記事(published: falseか、未来のpublished_at)は、published: falseか
@@ -156,6 +160,12 @@ def item_problem(item: export_zenn.Prepared, before: Placed | None, now: datetim
             not shown and visible(item.published, item.published_at, now),
             f"{path}: この命令は記事をその場で公開しません。"
             "公開は、公開順の表に未来の公開の刻を書いて予約してください",
+        ),
+        (
+            not shown and item.published and item.permit is None,
+            f"{path}: 公開の許可がありません(published_at {item.published_at or 'なし'})。"
+            "この1本の本文と図を見せる依頼書で利用者の許可を得て、公開順の表の公開状態に"
+            "「許可 <依頼書のid lt-…>」を書いてから予約してください",
         ),
     )
     return next((message for failed, message in checks if failed), None)

@@ -33,9 +33,13 @@ STATE_ROW = re.compile(
 )
 # Zennの記事のslug(articles/<slug>.mdのファイル名で、公開後のURLの末尾)。zenn-cliの検査と同じ規則。
 _ZENN_SLUG = re.compile(r"[0-9a-z_-]{12,50}")
-# 公開状態の欄の公開の刻(Zennのpublished_atと同じく日本時間)。「公開予定 2026-10-21 08:00 JST」の形で書く。
+# 公開状態の欄の、状態とURLの後ろに書く公開の刻と公開の許可。「公開予定 2026-10-21 08:00 JST 許可 lt-…」の形で書き、
+# どちらも省ける。刻はZennのpublished_atと同じく日本時間。許可は、その1本の本文と図を見せて公開の可否を問うた依頼書のid
+# (2026-10-21 03:51 JSTの利用者の決定 — 許可の答えの無い回は予約も公開もしない)。
 JST = timezone(timedelta(hours=9))
-_RESERVED_AT = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) JST")
+_CELL_TAIL = re.compile(
+    r"(?:(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) JST)?\s*(?:許可 (lt-[0-9A-HJKMNP-TV-Z]{26}))?"
+)
 # 文の終わりの記号(句点・全角の感嘆符と疑問符)と、その前に来る閉じ括弧。
 _SENTENCE_END = "\u3002\uff01\uff1f"
 _CLOSERS = "\u300d\u300f)\uff09"
@@ -64,15 +68,25 @@ State = Published | Scheduled
 
 @dataclass(frozen=True)
 class PlanRow:
-    """公開計画の「公開順」の表の1行(原稿のファイル名・Zennのslug・公開状態・属する連載)。
+    """公開計画の「公開順」の表の1行(原稿のファイル名・Zennのslug・公開状態・属する連載・公開の許可)。
 
     seriesは、表の上の最も近い「### 」の見出しの名(doeffの連載・AIエージェントの連載)。前後の回は連載ごとに並ぶ。
+    permitは、その1本の公開の許可を問うた依頼書のid(lt-…)。許可の答えが出るまでNoneで、予約も公開もしない。
     """
 
     name: str
     slug: str
     state: State
     series: str = ""
+    permit: str | None = None
+
+
+@dataclass(frozen=True)
+class CellTail:
+    """公開状態の欄の、状態とURLの後ろ(公開の刻・公開の許可の依頼書のid — 書いていなければNone)。"""
+
+    at: datetime | None
+    permit: str | None
 
 
 @dataclass(frozen=True)
@@ -91,7 +105,8 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
 
     slugがZennの規則に合わない行と、公開済みのURLの末尾がslugと違う行は、誤った公開先へ
     リンクしないよう例外にする。公開状態が公開済み<URL>・公開予定・下書きのどれでもない行も、
-    書き損じを候補として黙って読まないよう例外にする。
+    書き損じを候補として黙って読まないよう例外にする。依頼書1通は記事1本の許可なので、同じ許可のidを
+    2つの行に書いた表も例外にする(別の記事の許可を流用しない)。
     """
     rows: list[PlanRow] = []
     series = ""
@@ -108,32 +123,40 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
         if cell.startswith("公開済み") and url:
             if not url.group(0).endswith(f"/articles/{slug}"):
                 raise ValueError(f"{name}の公開済みのURLの末尾がslug「{slug}」と違います")
-            at = reserved_at(cell[url.end() :], name)
-            rows.append(PlanRow(name, slug, Published(url.group(0), at), series))
+            tail = cell_tail(cell[url.end() :], name)
+            rows.append(PlanRow(name, slug, Published(url.group(0), tail.at), series, tail.permit))
         elif cell.startswith("公開予定"):
-            at = reserved_at(cell.removeprefix("公開予定"), name)
-            rows.append(PlanRow(name, slug, Scheduled(at), series))
+            tail = cell_tail(cell.removeprefix("公開予定"), name)
+            rows.append(PlanRow(name, slug, Scheduled(tail.at), series, tail.permit))
         elif not cell.startswith("下書き"):
             raise ValueError(
                 f"{name}の公開状態「{cell}」は、公開済み <ZennのURL>・公開予定・下書きのどれかにしてください"
             )
+    permits = [row.permit for row in rows if row.permit]
+    reused = sorted({permit for permit in permits if permits.count(permit) > 1})
+    if reused:
+        raise ValueError(
+            f"公開の許可「{'・'.join(reused)}」を2つ以上の回に書いています。依頼書1通は記事1本の許可です"
+        )
     return tuple(rows)
 
 
-def reserved_at(text: str, name: str) -> datetime | None:
-    """公開状態の欄の、状態とURLの後ろに書いた公開の刻を読む。無ければNoneを返す。
+def cell_tail(text: str, name: str) -> CellTail:
+    """公開状態の欄の、状態とURLの後ろに書いた公開の刻と公開の許可を読む。無い方はNoneにする。
 
-    刻の書き損じを「刻なし」と黙って読むと、予約したつもりの回が出ないので、形が違えば例外にする。
+    刻の書き損じを「刻なし」と黙って読むと、予約したつもりの回が出ない。許可の書き損じを「許可なし」と
+    黙って読むと、許可の在る回が止まる訳が見えない。どちらも形が違えば例外にする。
     """
     rest = text.strip()
-    if not rest:
-        return None
-    found = _RESERVED_AT.fullmatch(rest)
+    found = _CELL_TAIL.fullmatch(rest)
     if found is None:
         raise ValueError(
-            f"{name}の公開の刻「{rest}」は、「YYYY-MM-DD hh:mm JST」の形で書いてください"
+            f"{name}の公開状態の後ろ「{rest}」は、公開の刻を「YYYY-MM-DD hh:mm JST」、"
+            "公開の許可を「許可 lt-…」(依頼書のid)の形で、刻・許可の順に書いてください"
         )
-    return datetime.strptime(found.group(1), "%Y-%m-%d %H:%M").replace(tzinfo=JST)
+    at, permit = found.groups()
+    moment = datetime.strptime(at, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if at else None
+    return CellTail(moment, permit)
 
 
 def zenn_time(at: datetime) -> str:

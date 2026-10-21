@@ -4,6 +4,10 @@
 zenn-contentにpublished: trueとpublished_atの組で置き、Zennが刻に公開する。確かめは偽の時刻(nowを
 引数で渡す)と偽のrepo(一時のbare repoをremoteに見立てる)で行い、本物のZennとGitHubには触れない。
 訳は docs/design/decisions/2026-10-21-zenn-reserved-publish.md。
+
+予約と公開は、公開状態に「許可 lt-…」(その1本の公開の許可を問うた依頼書のid)を書いた回だけにする
+(2026-10-21 03:51 JSTの利用者の決定・card ki-d8609b0df9b8)。確かめは末尾の「公開の許可」の節。
+訳は docs/design/decisions/2026-10-21-zenn-publish-permit.md。
 """
 
 from __future__ import annotations
@@ -44,11 +48,20 @@ def plan_text(*cells: tuple[str, str]) -> str:
     return f"### doeffの連載\n\n| 週 | 原稿 | Zennのslug | 読者への入口 | 公開状態 |\n| --- | --- | --- | --- | --- |\n{rows}"
 
 
-def item(slug: str, published: bool, published_at: str | None = None) -> export_zenn.Prepared:
-    """書き出す記事1本の偽物(本文は公開設定だけのfront matter)。"""
+def item(
+    slug: str, published: bool, published_at: str | None = None, permit: str | None = None
+) -> export_zenn.Prepared:
+    """書き出す記事1本の偽物(本文は公開設定だけのfront matter・permitは表に書いた公開の許可)。"""
     at = f"published_at: {published_at}\n" if published_at else ""
     article = f'---\ntitle: "{slug}"\npublished: {str(published).lower()}\n{at}---\n本文\n'
-    return export_zenn.Prepared(f"doeff-{slug}.md", slug, published, article, (), (), published_at)
+    return export_zenn.Prepared(
+        f"doeff-{slug}.md", slug, published, article, (), (), published_at, permit
+    )
+
+
+# 偽の公開の許可の依頼書のid(lt-とCrockfordのbase32の26字 — 本物の依頼書のidではない)。
+PERMIT = "lt-" + "1" * 26
+OTHER_PERMIT = "lt-" + "2" * 26
 
 
 # ---- 表の読み ----
@@ -114,12 +127,12 @@ AFTER = jst("2026-10-21 08:00")
     [
         (
             push.Placed(False, None),
-            item("doeff-x-article", True, "2026-10-21 08:00"),
+            item("doeff-x-article", True, "2026-10-21 08:00", PERMIT),
             BEFORE,
         ),  # 予約を置く
         (
             push.Placed(True, "2026-10-21 08:00"),
-            item("doeff-x-article", True, "2026-10-22 08:00"),
+            item("doeff-x-article", True, "2026-10-22 08:00", PERMIT),
             BEFORE,
         ),  # 刻を変える
         (
@@ -135,7 +148,7 @@ AFTER = jst("2026-10-21 08:00")
         (push.Placed(True, None), item("doeff-x-article", True), AFTER),  # 手で出した回をそのまま
         (
             None,
-            item("doeff-x-article", True, "2026-10-21 08:00"),
+            item("doeff-x-article", True, "2026-10-21 08:00", PERMIT),
             BEFORE,
         ),  # branchに無い記事を予約で置く
         (None, item("doeff-x-article", False), AFTER),  # branchに無い記事を下書きで置く
@@ -258,7 +271,7 @@ def test_reservation_reaches_the_fake_remote_and_holds_after_the_time(
 
     # 刻の前: 1本目を予約し、2本目は下書きのまま。
     reserved = (
-        item("doeff-first-article", True, "2026-10-21 08:00"),
+        item("doeff-first-article", True, "2026-10-21 08:00", PERMIT),
         item("doeff-second-article", False),
     )
     assert push_export(reserved, fake_repo, tmp_path / "out1", BEFORE) == ()
@@ -270,7 +283,7 @@ def test_reservation_reaches_the_fake_remote_and_holds_after_the_time(
     assert push_export(reserved, fake_repo, tmp_path / "out2", AFTER) == ()
     assert run_git(remote, "rev-parse", "zenn-content") == tip
     moved = (
-        item("doeff-first-article", True, "2026-10-22 08:00"),
+        item("doeff-first-article", True, "2026-10-22 08:00", PERMIT),
         item("doeff-second-article", False),
     )
     (problem,) = push_export(moved, fake_repo, tmp_path / "out3", AFTER)
@@ -337,3 +350,165 @@ def test_current_plan_reserves_each_series_in_table_order_one_at_a_time() -> Non
         assert ordered == sorted(ordered), f"{series}の表の順と公開の刻の順が違う"
     # 始め方の答え(2026-10-20 14:06 JST)の前の刻で予約した回は無い。
     assert all(at > jst("2026-10-20 14:06") for at in times)
+    # 公開の刻を書いた公開予定の回は、どれもその1本の公開の許可を持つ(2026-10-21 03:51 JSTの決定)。
+    unpermitted = [
+        row.slug
+        for row in rows
+        if isinstance(row.state, release.Scheduled) and row.state.at and row.permit is None
+    ]
+    assert unpermitted == [], f"許可の無い回に公開の刻がある: {unpermitted}"
+
+
+# ---- 公開の許可(2026-10-21 03:51 JSTの利用者の決定・card ki-d8609b0df9b8) ----
+
+
+def test_plan_cells_carry_permits_after_the_time() -> None:
+    rows = release.read_rows(
+        plan_text(
+            ("doeff-introduction", f"公開済み {URL}doeff-introduction"),
+            ("doeff-ai-agents", f"公開予定 2026-10-22 08:00 JST 許可 {PERMIT}"),
+            ("doeff-virtual-time", f"公開予定 許可 {OTHER_PERMIT}"),
+            ("doeff-dependency-injection", "公開予定 2026-10-23 08:00 JST"),
+        )
+    )
+    assert [(row.state, row.permit) for row in rows] == [
+        (release.Published(f"{URL}doeff-introduction"), None),  # 決まりの前に手で出した回
+        (release.Scheduled(jst("2026-10-22 08:00")), PERMIT),  # 許可の在る予約
+        (release.Scheduled(), OTHER_PERMIT),  # 許可が出て、刻はまだ決めていない回
+        (
+            release.Scheduled(jst("2026-10-23 08:00")),
+            None,
+        ),  # 刻だけで許可の無い回(書き出すと止まる)
+    ]
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "公開予定 2026-10-22 08:00 JST 許可 lt-abc",  # idの形でない
+        f"公開予定 2026-10-22 08:00 JST {PERMIT}",  # 「許可」の語が無い
+        f"公開予定 許可 {PERMIT.removeprefix('lt-')}",  # lt-が無い
+        f"公開予定 許可 {PERMIT} 2026-10-22 08:00 JST",  # 刻と許可の順が逆
+        f"公開予定 2026-10-22 08:00 JST 許可 {PERMIT.replace('1', 'I')}",  # Crockfordの外の字
+    ],
+)
+def test_misspelled_permit_is_refused(cell: str) -> None:
+    # 許可の書き損じを「許可なし」と黙って読むと、許可の在る回が止まる訳が見えないので止める。
+    with pytest.raises(ValueError, match="許可 lt-"):
+        release.read_rows(plan_text(("doeff-ai-agents", cell)))
+
+
+def test_one_permit_cannot_cover_two_articles() -> None:
+    # 依頼書1通は記事1本の許可。別の記事の許可を流用した表は読まない。
+    plan = plan_text(
+        ("doeff-ai-agents", f"公開予定 2026-10-22 08:00 JST 許可 {PERMIT}"),
+        ("doeff-virtual-time", f"公開予定 2026-10-24 08:00 JST 許可 {PERMIT}"),
+    )
+    with pytest.raises(ValueError, match="依頼書1通は記事1本の許可"):
+        release.read_rows(plan)
+
+
+def test_export_carries_the_permit_of_its_row() -> None:
+    permitted = release.PlanRow(
+        "doeff-fleet.md",
+        "doeff-fifty-ai-conversations",
+        release.Scheduled(jst("2026-10-22 08:00")),
+        permit=PERMIT,
+    )
+    out = export_zenn.prepare(permitted, (permitted,))
+    assert (out.published, out.published_at, out.permit) == (True, "2026-10-22 08:00", PERMIT)
+    assert f"許可 {PERMIT}" in export_zenn.summary(out)
+    # 公開の許可は書き出しの記事に入れない(Zennのfront matterの項目でない)。
+    assert PERMIT not in out.article
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        (push.Placed(False, None), item("doeff-x-article", True, "2026-10-22 08:00")),  # 予約を置く
+        (None, item("doeff-x-article", True, "2026-10-22 08:00")),  # branchに無い記事を予約で置く
+        (
+            push.Placed(True, "2026-10-21 09:00"),
+            item("doeff-x-article", True, "2026-10-21 09:00"),
+        ),  # 許可の無いまま、branchに残る予約を保つ
+        (
+            push.Placed(True, "2026-10-21 09:00"),
+            item("doeff-x-article", True, "2026-10-22 08:00"),
+        ),  # 許可の無いまま、予約の刻を変える
+    ],
+)
+def test_unpermitted_reservation_is_refused(
+    before: push.Placed | None, after: export_zenn.Prepared
+) -> None:
+    branch = {} if before is None else {after.slug: before}
+    (problem,) = push.published_problems((after,), branch, BEFORE)
+    assert "公開の許可がありません" in problem
+    # 同じ書き出しに、その1本の許可を足すと通る。
+    permitted = item(after.slug, True, after.published_at, PERMIT)
+    assert push.published_problems((permitted,), branch, BEFORE) == ()
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "now"),
+    [
+        (
+            push.Placed(True, "2026-10-21 09:00"),
+            item("doeff-x-article", False),
+            BEFORE,
+        ),  # 許可の無い予約を刻の前に解く
+        (None, item("doeff-x-article", False), BEFORE),  # 下書きで置く
+        (
+            push.Placed(True, None),
+            item("doeff-x-article", True),
+            AFTER,
+        ),  # 許可の決まりの前に読者に見えた回(doeffの連載の1本目の形)は、今の決まりのまま保つ
+        (
+            push.Placed(True, "2026-10-21 08:00"),
+            item("doeff-x-article", True, "2026-10-21 08:00"),
+            AFTER,
+        ),  # 刻を過ぎて読者に見えている回を保つ
+    ],
+)
+def test_drafts_unreserving_and_visible_articles_need_no_permit(
+    before: push.Placed | None, after: export_zenn.Prepared, now: datetime
+) -> None:
+    branch = {} if before is None else {after.slug: before}
+    assert push.published_problems((after,), branch, now) == ()
+
+
+def test_unpermitted_reservation_never_reaches_the_fake_remote(
+    fake_repo: FakeRepo, tmp_path: Path
+) -> None:
+    remote = fake_repo.remote
+    drafts = (item("doeff-first-article", False), item("doeff-second-article", False))
+    assert push_export(drafts, fake_repo, tmp_path / "out0", jst("2026-10-20 12:00")) == ()
+    tip = run_git(remote, "rev-parse", "zenn-content")
+
+    # 許可の無い2本目を予約しようとすると、1本目の許可が在っても何もpushしない。
+    mixed = (
+        item("doeff-first-article", True, "2026-10-21 08:00", PERMIT),
+        item("doeff-second-article", True, "2026-10-22 08:00"),
+    )
+    (problem,) = push_export(mixed, fake_repo, tmp_path / "out1", BEFORE)
+    assert problem.startswith("articles/doeff-second-article.md: 公開の許可がありません")
+    assert run_git(remote, "rev-parse", "zenn-content") == tip
+    assert front_of(remote, "doeff-first-article") == push.Placed(False, None)
+    assert front_of(remote, "doeff-second-article") == push.Placed(False, None)
+
+    # 許可の在る1本だけを予約すると、その1本だけが予約になる。
+    permitted = (
+        item("doeff-first-article", True, "2026-10-21 08:00", PERMIT),
+        item("doeff-second-article", False),
+    )
+    assert push_export(permitted, fake_repo, tmp_path / "out2", BEFORE) == ()
+    assert front_of(remote, "doeff-first-article") == push.Placed(True, "2026-10-21 08:00")
+    assert front_of(remote, "doeff-second-article") == push.Placed(False, None)
+
+
+def test_record_keeps_the_permit_when_marking_published() -> None:
+    plan = plan_text(("doeff-due-reachable", f"公開予定 2026-10-21 08:00 JST 許可 {PERMIT}"))
+    done = record_published.record(plan, jst("2026-10-21 09:00"), lambda _url: True)
+    (row,) = release.read_rows(done.plan)
+    assert row.state == release.Published(f"{URL}doeff-due-reachable", jst("2026-10-21 08:00"))
+    assert row.permit == PERMIT
+    assert f"| 公開済み {URL}doeff-due-reachable 2026-10-21 08:00 JST 許可 {PERMIT} |" in done.plan
