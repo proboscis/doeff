@@ -153,5 +153,5 @@
   (<- sending (unsent-streams LAW-SCHEMA (MaintenancePlan :interval-seconds 60.0 :keep-seconds 60.0
                                                           :archive-events unreachable-events)))
   (<- unplanned (unsent-streams LAW-SCHEMA None))
-  (assert (= bare #("relay-pairs" "relays")) bare)
+  (assert (= bare #("relay-beats" "relay-pairs" "relay-ticks" "relays")) bare)
   (assert (= #(sending unplanned) #(#() #())) #(sending unplanned)))

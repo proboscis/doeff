@@ -69,9 +69,15 @@ class DeclaredIndex:
     sampled: bool
 
 @dataclass(frozen=True, kw_only=True)
+class AddedColumn:
+    relation: str
+    column: str
+
+@dataclass(frozen=True, kw_only=True)
 class SchemaStep:
     statement: Statement
     index: DeclaredIndex | None
+    column: AddedColumn | None = None
 NO_CLAUSE: Clause
 
 def params_of(pairs: tuple) -> _Program[tuple, object]:
@@ -147,6 +153,12 @@ def index_steps(index: DeclaredIndex) -> _Program[tuple[SchemaStep, ...], object
     ...
 
 def schema_steps(prefix: str, schema: RecordsSchema) -> _Program[tuple[SchemaStep, ...], object]:
+    ...
+
+def remembered_at_step(prefix: str) -> _Program[SchemaStep, object]:
+    ...
+
+def columns_statement(prefix: str, relation: str) -> _Program[Statement, object]:
     ...
 
 def schema_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
@@ -313,7 +325,13 @@ def watch_head_statement(prefix: str, tails: tuple) -> _Program[Statement, objec
 def find_retired_key_statement(prefix: str, stream: str, idempotency_key: str) -> _Program[Statement, object]:
     ...
 
-def retire_keys_statement(prefix: str, stream: str, keys: tuple) -> _Program[Statement, object]:
+def retire_keys_statement(prefix: str, stream: str, keys: tuple, remembered_at: int) -> _Program[Statement, object]:
+    ...
+
+def drop_keys_statement(prefix: str, stream: str, keys: tuple) -> _Program[Statement, object]:
+    ...
+
+def forget_keys_statement(prefix: str, stream: str, forget_before: int, archived: bool, limit: int) -> _Program[Statement, object]:
     ...
 
 def expired_event_condition(prefix: str, separator: str | None, bound: str, remembered: bool=False) -> _Program[str, object]:
