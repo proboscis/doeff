@@ -71,6 +71,13 @@ from doeff_records.maintenance import ReadChangeLog as ReadChangeLog
 from doeff_records.maintenance import ChangeLog as ChangeLog
 from doeff_records.maintenance import Swept as Swept
 from doeff_records.maintenance import Pruned as Pruned
+from doeff_records.maintenance import ReadExpiredEvents as ReadExpiredEvents
+from doeff_records.maintenance import ExpiredEvents as ExpiredEvents
+from doeff_records.maintenance import RetireArchivedEvents as RetireArchivedEvents
+from doeff_records.maintenance import RetiredEvents as RetiredEvents
+from doeff_records.maintenance import EventsArchived as EventsArchived
+from doeff_records.maintenance import archive_expired_events as archive_expired_events
+from functools import partial as partial
 from doeff_records.admission import hyx_row_matchesXquestion_markX as hyx_row_matchesXquestion_markX
 from doeff_records.admission import epoch_ms as epoch_ms
 from doeff_records.admission import key_text as key_text
@@ -82,6 +89,7 @@ OVERSEER: str
 TICKET_KEEP_SECONDS: int
 PAIR_KEEP_SECONDS: int
 PULSE_KEEP_SECONDS: int
+RELAY_KEEP_SECONDS: int
 LAW_SCHEMA: RecordsSchema
 
 class LawBroken(AssertionError):
@@ -259,6 +267,33 @@ def short_page_is_the_end(harness: LawHarness, stream: str, page: Events, limit:
     ...
 
 def law_short_page_ends_the_stream(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def expired_keys(harness: LawHarness, at_ms: int) -> _Program[tuple, object]:
+    ...
+
+def now_ms() -> _Program[int, object]:
+    ...
+
+def confirm_keys(keys: frozenset, events: tuple) -> _Program[EventsArchived, object]:
+    ...
+
+def unreachable_destination(events: tuple) -> _Program[Unreachable, object]:
+    ...
+
+def law_only_confirmed_events_are_retired(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def confirm_with_a_late_guess(late: int, events: tuple) -> _Program[EventsArchived, object]:
+    ...
+
+def law_retirement_keeps_the_read_boundary(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def relay_answers(harness: LawHarness) -> _Program[tuple, object]:
+    ...
+
+def law_a_write_keeps_the_unarchived_event_it_touches(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

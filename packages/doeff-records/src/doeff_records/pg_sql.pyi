@@ -51,6 +51,7 @@ class RowExpiry:
 class EventExpiry:
     before_at: int
     separator: str | None
+    remembered: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class IndexedField:
@@ -315,10 +316,10 @@ def find_retired_key_statement(prefix: str, stream: str, idempotency_key: str) -
 def retire_keys_statement(prefix: str, stream: str, keys: tuple) -> _Program[Statement, object]:
     ...
 
-def expired_event_condition(prefix: str, separator: str | None, bound: str) -> _Program[str, object]:
+def expired_event_condition(prefix: str, separator: str | None, bound: str, remembered: bool=False) -> _Program[str, object]:
     ...
 
-def expiring_where(prefix: str, separator: str | None) -> _Program[str, object]:
+def expiring_where(prefix: str, separator: str | None, remembered: bool=False) -> _Program[str, object]:
     ...
 
 def expiring_params(stream: str, before_at: int) -> _Program[tuple, object]:
@@ -327,7 +328,7 @@ def expiring_params(stream: str, before_at: int) -> _Program[tuple, object]:
 def expiring_candidates_statement(prefix: str, stream: str, before_at: int, separator: str | None, limit: int) -> _Program[Statement, object]:
     ...
 
-def expire_chosen_events_statement(prefix: str, stream: str, before_at: int, separator: str | None, sequences: tuple) -> _Program[Statement, object]:
+def expire_chosen_events_statement(prefix: str, stream: str, before_at: int, separator: str | None, sequences: tuple, remembered: bool=False) -> _Program[Statement, object]:
     ...
 
 def key_suffix_of(key: str, separator: str) -> _Program[str, object]:
@@ -339,8 +340,11 @@ def key_suffix_expression(payload: str, separator: str) -> _Program[str, object]
 def key_head_expression(payload: str, separator: str) -> _Program[str, object]:
     ...
 
-def touched_events_statement(prefix: str, stream: str, before_at: int, separator: str | None, idempotency_key: str) -> _Program[Statement, object]:
+def touched_events_statement(prefix: str, stream: str, before_at: int, separator: str | None, idempotency_key: str, remembered: bool=False) -> _Program[Statement, object]:
     ...
 
 def delete_events_statement(prefix: str, stream: str, sequences: tuple) -> _Program[Statement, object]:
+    ...
+
+def expired_page_statement(prefix: str, stream: str, before_at: int, separator: str | None, after_at: int | None, after_seq: int | None, limit: int) -> _Program[Statement, object]:
     ...
