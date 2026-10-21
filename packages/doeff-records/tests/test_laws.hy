@@ -13,7 +13,9 @@
                             law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-expired-keys-are-remembered
                             law-expired-records-are-unseen-before-a-sweep law-a-write-clears-the-expired-row-it-touches
-                            law-an-expired-key-answers-the-same-before-and-after-a-sweep law-short-page-ends-the-stream])
+                            law-an-expired-key-answers-the-same-before-and-after-a-sweep law-short-page-ends-the-stream
+                            law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
+                            law-a-write-keeps-the-unarchived-event-it-touches])
 (import tests.interpreters [LawSetup])
 
 
@@ -184,4 +186,26 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-short-page-ends-the-stream harness))
+  (assert transcript))
+
+
+(deftest test-only-confirmed-events-are-retired
+  ;; card ki-707aad0f88e8: 送ってから外す列は、回収でも送り先に届かない回でも外れず、送り先に在ると確かめた出来事だけが外れる。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-only-confirmed-events-are-retired harness))
+  (assert transcript))
+
+(deftest test-retirement-keeps-the-read-boundary
+  ;; card ki-707aad0f88e8: 送りの読みの後に期限を過ぎた出来事は、同じ回の外しで外れない。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-retirement-keeps-the-read-boundary harness))
+  (assert transcript))
+
+(deftest test-a-write-keeps-the-unarchived-event-it-touches
+  ;; card ki-707aad0f88e8: 送ってから外す列の期限を過ぎた鍵・組に触る追記は出来事を外さず、答えは前と同じ。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-a-write-keeps-the-unarchived-event-it-touches harness))
   (assert transcript))

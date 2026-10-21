@@ -99,6 +99,8 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
 番号と本文の指紋だけを残して忘れない — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。
+`archive_before_retire=True`(`KeepFor` の列だけ)の列は、期限を過ぎた出来事を回収も書きも置き場から外さず、手入れの出来事の送りの関数が
+送り先に在ると確かめた出来事だけを外す(下の「置き場の手入れ」— 読みは期限の刻から出さず、冪等キーの答えも印の無い列と同じ)。
 置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
 operator の主体の名の tuple。`operator_paths` の欄の書き手に operator の主体が 1 人も居ない宣言は、作る時に `ValueError`)。
 
@@ -226,7 +228,18 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
   判じ、期限を過ぎた鍵への追記は鍵の覚えで答える(答えは回収の後の書きと同じ)。PostgreSQL の書き 1 回は書きの transaction の文だけを流す。
 - `PruneChanges(keep_seconds)` → `Pruned(floor, removed)` — `keep_seconds` より古い変更を変更の列から消し、floor を上げる。
   floor より前の位置の `WatchChanges` は `Reset(epoch, floor)`(`WatchCursor(epoch, floor)` から読めば残った変更を頭から全部読める)。
-- `maintenance_loop(interval_seconds, keep_seconds, ticks)` — 手入れの係の本体(`ticks=None` で止めるまで)。
+- `ReadExpiredEvents(at_ms, after, limit)` → `ExpiredEvents(items, next)` — 送ってから外す列(`StreamDecl.archive_before_retire`)の、
+  刻 `at_ms` の境で期限を過ぎた出来事(書きが冪等キーを覚えただけの出来事を含む)を、列の名の順・列の中は積んだ刻と番号の順に 1 頁
+  (1 頁 = 1 つの列)。`next` = 続きの位置 `ExpiredCursor(stream, at, sequence)`(None = 読み終えた)。
+- `RetireArchivedEvents(stream, at_ms, sequences)` → `RetiredEvents(count)` — 番号 `sequences`(送り先に在ると確かめた出来事)のうち、
+  刻 `at_ms` の境で今も期限を過ぎた出来事だけを外し、冪等キーを覚える。
+- `maintenance_loop(interval_seconds, keep_seconds, archive, ticks, archive_events)` — 手入れの係の本体(`ticks=None` で止めるまで)。
+  `archive_events` = 出来事の送りの関数(期限を過ぎた出来事の頁 → `EventsArchived(sequences)` | `Unreachable` の Program・None = 送らない)。
+  手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を頁で読んで送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す
+  (読みと外しの間に新しく期限を過ぎた出来事は外れない)。送りが `Unreachable` の頁で回を終える(外さない)。結果
+  `MaintenanceReport.events` = `EventsArchiveReport(sent, confirmed, unreached, retired, halted)`(送った・確かめた・届かなかった・外した数と、
+  途中で終えた訳)。記録の service の手入れの計画 `MaintenancePlan` の `archive_events` がこの関数で、送ってから外す列を宣言した置き場に
+  `archive_events` の無い手入れを立てると、`serve_records` は起動の前に `ValueError` で断る。
 
 ## 記録の service を起動する(`doeff_records.main`)
 
@@ -287,6 +300,9 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_expired_records_are_unseen_before_a_sweep` | 保持の期限を過ぎた行と出来事(出来事ごと・組ごとの列)は、回収の前でも 6 つの読みのどれにも出ない。期限を過ぎた行の `RowRemoved` は別の表への書きでは積まれず、回収(`SweepExpired`)が 1 回だけ積む |
 | `law_a_write_clears_the_expired_row_it_touches` | 回収されていない期限を過ぎた行への `PutRow`・`PutRows` は、その行を消して `RowRemoved` を積んでから無い行として判じる(`ExpectAbsent` は版 1 で生まれ、消えた行の版の `ExpectVersion` は `Conflict(Missing)`)— 回収の後の書きと同じ答え |
 | `law_an_expired_key_answers_the_same_before_and_after_a_sweep` | 回収されていない期限を過ぎた冪等キーへの追記は、回収の後と同じ答え(同じ本文は前の番号・別の本文は同じ文の断り)。期限を過ぎた組に新しい鍵を積んでも、組の古い出来事は読みに戻らない |
+| `law_only_confirmed_events_are_retired` | 送ってから外す列の期限を過ぎた出来事は、回収(`SweepExpired`)でも送り先に届かない回でも外れず、送り先に在ると確かめた出来事だけが外れる(出来事ごと・組ごとの列)。外す前も後も読みに出ず、冪等キーの答えは同じ |
+| `law_retirement_keeps_the_read_boundary` | 送りの読みの後に期限を過ぎた出来事は、送りの関数がその番号を答えても同じ回の外しで外れない(外しの境は読みと同じ刻 T) |
+| `law_a_write_keeps_the_unarchived_event_it_touches` | 送ってから外す列の期限を過ぎた鍵・組に触る追記は出来事を外さないが、答えは印の無い列と同じ(同じ本文は前の番号・別の本文は同じ文の断り・期限を過ぎた組の古い出来事は新しい鍵の追記で読みに戻らない) |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも

@@ -21,6 +21,8 @@
 ;;; 自分が触る物だけを回収と同じく片付けてから判じる(PostgreSQL の handler と同じ順): 行の書きは今の行が期限を過ぎていれば消して
 ;;; RowRemoved を積み、無い行として判じる(writable-row)。追記は冪等キーの単位(出来事ごとに数える列は鍵の出来事・組で数える列は鍵の組)の
 ;;; 期限を過ぎた出来事を捨てて覚えへ移してから、前の使いを引く(retire-touched-events)。触らない物は SweepExpired まで残る(読みには出ない)。
+;;; 送ってから外す列(StreamDecl.archive-before-retire — maintenance.hy の頭の註の「出来事を送ってから外す」)は、回収が外さず(期限の索引に
+;;; 項を積まない)、書きは鍵を覚えるだけで、手入れの送りが確かめた出来事だけを RetireArchivedEvents が外す(PostgreSQL の handler と同じ形)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 ;;;
@@ -55,7 +57,8 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
                                ReadStreamEnd ReadEventByKey AwaitRecordsBack ReadSourcePatience])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
-(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
+(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
+                                   RetireArchivedEvents RetiredEvents])
 (import doeff_records.store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
@@ -241,9 +244,13 @@
 (defn #^ bool stored-event-expired? [#^ MemoryStore store #^ StreamDecl decl #^ Event event #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で出来事ごとに呼ぶ)
   "置き場の出来事 event(列 decl)が刻 now-ms で保持の期限を過ぎたか — 回収の前の読みに出さないため(回収と同じ判定
    admission.event-expired?。組で数える列は組の最後の出来事の刻 StoredGroup.last-at で数える — 回収の GroupDue と同じ)。読みの関数
-   (追記の読み・列の待ち・列の末尾)の期限の見えはこの 1 つ。"
+   (追記の読み・列の待ち・列の末尾)の期限の見えはこの 1 つ。送ってから外す列(StreamDecl.archive-before-retire)は、書きが冪等キーを
+   覚えただけで置き場に残した出来事も期限を過ぎた物に数える(組に新しい鍵が積まれて組が作り直されても読みに戻らない — PostgreSQL の
+   handler の event-expiry の remembered と同じ・maintenance.hy の頭の註の「出来事を送ってから外す」)。"
   (when (not (isinstance decl.retention KeepFor))
     (return False))
+  (when (and decl.archive-before-retire (in #(event.stream event.idempotency-key) store.retired-keys))
+    (return True))
   (setv group (retention-group-of decl event.idempotency-key))
   (event-expired? decl (if (is group None) event.at (. (get store.groups #(event.stream group)) last-at)) now-ms))
 
@@ -282,11 +289,14 @@
 
 (defn #^ None note-event-due [#^ MemoryStore store #^ StreamDecl decl #^ Event event]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
   "期限つき(KeepFor)の列に積んだ出来事 1 つを期限の索引に入れる。出来事ごとに数える列は出来事の項・組で数える列は組の最後の刻が
-   動いた時(組が生まれた時を含む)だけ組の項を積む — 前の組の項は last-at が合わなくなり、取り出した時に読み捨てる。"
+   動いた時(組が生まれた時を含む)だけ組の項を積む — 前の組の項は last-at が合わなくなり、取り出した時に読み捨てる。送ってから外す列
+   (StreamDecl.archive-before-retire)は回収が外さないので項を積まない(組の最後の刻は読みの期限の見えに要るので数える)。"
   (setv keep (keep-ms decl.retention))
   (setv group (retention-group-of decl event.idempotency-key))
+  (setv sweeps (not decl.archive-before-retire))
   (when (is group None)
-    (push-due store (+ event.at keep) (EventDue :event event))
+    (when sweeps
+      (push-due store (+ event.at keep) (EventDue :event event)))
     (return None))
   (setv slot #(event.stream group))
   (setv held (.get store.groups slot))
@@ -297,7 +307,8 @@
   (.append held.events event)
   (when (or fresh (> event.at held.last-at))
     (setv held.last-at (max held.last-at event.at))
-    (push-due store (+ held.last-at keep) (GroupDue :stream event.stream :group group :last-at held.last-at)))
+    (when sweeps
+      (push-due store (+ held.last-at keep) (GroupDue :stream event.stream :group group :last-at held.last-at))))
   None)
 
 
@@ -365,17 +376,26 @@
   None)
 
 
+(defn #^ None remember-events [#^ MemoryStore store #^ list events]  ; defk にできない: drop-events と retire-touched-events が錠の内で同期に呼ぶ置き場の書き
+  "保持の期限を過ぎた出来事の冪等キーを覚え(retired-keys — 番号と本文の指紋だけ)、消した後か、送ってから外す列で置き場に残した
+   出来事の同じ鍵の追記を、覚えで判じられるようにするため(#3022)。覚えが既に在る鍵は書き換えない(PostgreSQL の鍵だけの表の
+   ON CONFLICT DO NOTHING と同じ)。"
+  (for [event events]
+    (setv slot #(event.stream event.idempotency-key))
+    (when (not-in slot store.retired-keys)
+      (setv (get store.retired-keys slot) (RetiredKey :idempotency-key event.idempotency-key :sequence event.sequence
+                                                       :body-digest (body-digest event.body)))))
+  None)
+
+
 (defn #^ None drop-events [#^ MemoryStore store #^ list events]  ; defk にできない: purge-expired-scan が錠の内で同期に呼ぶ置き場の書き
   "期限の来た出来事を冪等キーの引きと出来事の列から外し、鍵の覚え(retired-keys)へ番号と本文の指紋だけを移す(#3022 — 消した後の
    同じ鍵の追記も memory-append が同じ規則で判じる)。覚えが既に在る鍵は書き換えない(PostgreSQL の鍵だけの表の ON CONFLICT DO NOTHING と
    同じ)。列は番号の順なので、1 つずつ番号で二分探索して外す。列は差し替える
    (写しは 1 回の C の複写 — 錠の外で前の列を読んでいる読み手の走査を壊さないため。前の形も差し替えていた)。"
   (for [event events]
-    (setv slot #(event.stream event.idempotency-key))
-    (.pop store.by-idempotency slot None)
-    (when (not-in slot store.retired-keys)
-      (setv (get store.retired-keys slot) (RetiredKey :idempotency-key event.idempotency-key :sequence event.sequence
-                                                       :body-digest (body-digest event.body)))))
+    (.pop store.by-idempotency #(event.stream event.idempotency-key) None))
+  (remember-events store events)
   (setv kept (list store.events))
   (for [sequence (sorted (gfor event events event.sequence) :reverse True)]
     (setv at (bisect.bisect-left kept sequence :key (fn [event] event.sequence)))
@@ -628,18 +648,21 @@
   "追記が触る単位(出来事ごとに数える列は冪等キーの出来事・組で数える列は鍵の組)の保持の期限を過ぎた出来事を、回収と同じく捨てて冪等キーの
    覚えへ移すため(#3605 の D — 書きは置き場の全部を回収しない。答えは回収の後の追記と同じ: 期限を過ぎた鍵は覚えで判じ、期限を過ぎた組に
    新しい鍵を積んでも組の古い出来事は読みに戻らない。PostgreSQL の handler の earlier-use と同じ単位)。期限の判定は読みと回収と
-   同じ(出来事は stored-event-expired?・組は組の最後の刻の event-expired?)。期限の無い列では何もしない。"
+   同じ(出来事は stored-event-expired?・組は組の最後の刻の event-expired?)。期限の無い列では何もしない。送ってから外す列
+   (StreamDecl.archive-before-retire)は捨てずに鍵を覚えるだけ — 出来事は手入れの送りが確かめた後に外す(覚えた出来事は
+   stored-event-expired? が期限を過ぎた物に数える。期限を過ぎた組は外し、後の鍵は新しい組になる — 捨てる形と同じ)。"
   (when (not (isinstance decl.retention KeepFor))
     (return None))
-  (setv group (retention-group-of decl idempotency-key))
+  (setv group (retention-group-of decl idempotency-key)
+        settle (if decl.archive-before-retire remember-events drop-events))
   (if (is group None)
       (do (setv event (.get store.by-idempotency #(decl.name idempotency-key)))
           (when (and (is-not event None) (stored-event-expired? store decl event now-ms))
-            (drop-events store [event])))
+            (settle store [event])))
       (do (setv held (.get store.groups #(decl.name group)))
           (when (and (is-not held None) (event-expired? decl held.last-at now-ms))
             (.pop store.groups #(decl.name group))
-            (drop-events store held.events))))
+            (settle store held.events))))
   None)
 
 
@@ -649,8 +672,9 @@
   (setv decl (store.schema.stream ask.stream)
         slot #(ask.stream ask.idempotency-key))
   (retire-touched-events store decl ask.idempotency-key now-ms)
-  (setv earlier (.get store.by-idempotency slot)
-        verdict (judge-append decl ask.body (if (is earlier None) (.get store.retired-keys slot) earlier)))
+  ;; 鍵の覚えが在れば覚えで判じる(送ってから外す列は、鍵を覚えただけの出来事が置き場に残る — 他の列では覚えと出来事は同じ鍵で両方は無い)。
+  (setv retired (.get store.retired-keys slot)
+        verdict (judge-append decl ask.body (if (is retired None) (.get store.by-idempotency slot) retired)))
   (cond
     (isinstance verdict Refused) verdict
     (isinstance verdict AppendReplay) (Appended verdict.sequence True)
@@ -758,6 +782,85 @@
     (ring-bells store None))
   (setv store.changes (lfor change store.changes :if (> change.sequence store.floor) change))
   (Pruned store.floor (len old)))
+
+
+(defk archived-streams [store]
+  {:pre [(: store MemoryStore)] :post [(: % (get tuple #(str ...)))] :tags {:context "records" :role "foundation"}}
+  "送ってから外す列(StreamDecl.archive-before-retire)の名を名の順に並べるため(送りの読みが列を辿る順・届かない状態と故障を当てる名)。"
+  (tuple (sorted (gfor #(name decl) (.items store.schema.streams) :if decl.archive-before-retire name))))
+
+
+(defn #^ ExpiredEvents expired-page-locked [#^ MemoryStore store #^ tuple names #^ ReadExpiredEvents ask]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の読み
+  "ReadExpiredEvents の中身(呼び手が錠を持つ — PostgreSQL の handler の pg-read-expired-events と同じ頁): 続きの位置の列の、刻 ask.at-ms
+   の境で期限を過ぎた出来事(覚えた出来事を含む — stored-event-expired?)を、積んだ刻と番号の順に位置より後から 1 頁。頁が満ちれば
+   その列の続き、満ちなければ次の列の頭(最後の列なら None)を続きの位置にする。"
+  (setv start (if (is ask.after None) (if names (ExpiredCursor (get names 0)) None) ask.after))
+  (when (is start None)
+    (return (ExpiredEvents #() None)))
+  (setv decl (store.schema.stream start.stream))
+  (when (not decl.archive-before-retire)
+    (raise (ValueError (.format "列 {} は送ってから外す列(StreamDecl.archive-before-retire)でない" start.stream))))
+  (setv ordered (sorted (gfor event store.events
+                              :if (and (= event.stream start.stream) (stored-event-expired? store decl event ask.at-ms)
+                                       (or (is start.at None) (> #(event.at event.sequence) #(start.at start.sequence))))
+                              event)
+                        :key (fn [event] #(event.at event.sequence)))
+        items (tuple (cut ordered ask.limit))
+        later (tuple (gfor name names :if (> name start.stream) name)))
+  (ExpiredEvents items (cond
+                         (= (len items) ask.limit) (ExpiredCursor start.stream (. (get items -1) at) (. (get items -1) sequence))
+                         later (ExpiredCursor (get later 0))
+                         True None)))
+
+
+(defn #^ RetiredEvents retire-archived-locked [#^ MemoryStore store #^ RetireArchivedEvents ask]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の書き
+  "RetireArchivedEvents の中身(呼び手が錠を持つ): 送り先に在ると確かめた番号の出来事のうち、列 ask.stream の物で刻 ask.at-ms の境で今も
+   期限を過ぎた物だけを外して鍵を覚え(drop-events)、組からも外す(空になった組は外す)。答え = 外した出来事の数。"
+  (setv decl (store.schema.stream ask.stream))
+  (when (not decl.archive-before-retire)
+    (raise (ValueError (.format "列 {} は送ってから外す列(StreamDecl.archive-before-retire)でない" ask.stream))))
+  (setv wanted (frozenset ask.sequences)
+        chosen (lfor event store.events
+                     :if (and (in event.sequence wanted) (= event.stream ask.stream) (stored-event-expired? store decl event ask.at-ms))
+                     event))
+  (for [event chosen]
+    (setv group (retention-group-of decl event.idempotency-key))
+    (when (is-not group None)
+      (setv slot #(ask.stream group)
+            held (.get store.groups slot))
+      (when (is-not held None)
+        (setv held.events (lfor kept held.events :if (is-not kept event) kept))
+        (when (not held.events)
+          (.pop store.groups slot)))))
+  (when chosen
+    (drop-events store chosen))
+  (RetiredEvents (len chosen)))
+
+
+(defk memory-read-expired-events [store names ask]
+  {:pre [(: store MemoryStore) (: names tuple) (: ask ReadExpiredEvents)] :post [(: % ExpiredEvents)]
+   :tags {:context "records" :role "foundation"}}
+  "ReadExpiredEvents に答えるため(maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の expired-page-locked)。"
+  (guarded store (fn [] (expired-page-locked store names ask))))
+
+
+(defk memory-retire-archived-events [store ask]
+  {:pre [(: store MemoryStore) (: ask RetireArchivedEvents)] :post [(: % RetiredEvents)]
+   :tags {:context "records" :role "foundation"}}
+  "RetireArchivedEvents に答えるため(maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の retire-archived-locked)。"
+  (guarded store (fn [] (retire-archived-locked store ask))))
+
+
+(defk expired-or-down [store names program]
+  {:pre [(: store MemoryStore) (: names tuple) (: program Program)] :post [(: % (| ExpiredEvents RetiredEvents Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "送りの読みと外し(手入れの effect)を、names の列が届かない状態(faults.SetStoreOutage)なら置き場に触らずに Unreachable で答えるため
+   (公開 effect の answered と同じ届かない状態の当て方 — 故障の口は公開 effect だけ)。"
+  (val down (unreachable-for store names))
+  (when down
+    (return down))
+  (<- answer program)
+  answer)
 
 
 (defn #^ (| Unreachable None) unreachable-for [#^ MemoryStore store #^ tuple names]  ; defk にできない: handler の節の頭で同期に置き場の状態を読む(guarded と同じ位置)
@@ -981,7 +1084,15 @@
     (resume pruned))
   (ReadChangeLog [after limit]
     (<- log (memory-change-log store effect))
-    (resume log)))
+    (resume log))
+  ;; 送ってから外す列の送りの読みと外し(maintenance.hy の頭の註の「出来事を送ってから外す」)— 届かない状態(SetStoreOutage)は列の名で当てる。
+  (ReadExpiredEvents [at-ms after limit]
+    (<- names (archived-streams store))
+    (<- page (expired-or-down store names (memory-read-expired-events store names effect)))
+    (resume page))
+  (RetireArchivedEvents [stream at-ms sequences]
+    (<- retired (expired-or-down store #(stream) (memory-retire-archived-events store effect)))
+    (resume retired)))
 
 
 ;; --- 置き場の選び(records-serving に渡す値)----------------------------------------------------------------

@@ -26,7 +26,9 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
-(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
+(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents
+                                   RetireArchivedEvents RetiredEvents EventsArchived archive-expired-events])
+(import functools [partial])
 (import doeff_records.admission [row-matches? epoch-ms key-text])
 
 ;; OVERSEER = 宣言の operators に入る書き手(宣言の形の例 — 置き場は書き手の名では断らない・#2994)。
@@ -34,6 +36,8 @@
 (setv TICKET-KEEP-SECONDS 60 PAIR-KEEP-SECONDS 60)
 ;; pulses = 出来事ごとに数える期限つきの列(法 15 — 組で数える列 pairs と並べて、出来事ごとの境も読みが見ることを確かめる)。
 (val PULSE-KEEP-SECONDS 60)
+;; relays・relay-pairs = 送ってから外す列(法 19〜21 — maintenance.hy の頭の註の「出来事を送ってから外す」)。
+(val RELAY-KEEP-SECONDS 60)
 
 (setv LAW-SCHEMA
   (RecordsSchema
@@ -64,7 +68,12 @@
                          "pairs" (StreamDecl :name "pairs" :writers #(MAKER) :retention (KeepFor PAIR-KEEP-SECONDS)
                                              :retention-group (ByKeySuffix ":"))
                          "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor PULSE-KEEP-SECONDS))
-                         "trails" (StreamDecl :name "trails" :writers #(MAKER) :key-lookup (ByKeyHead "#"))})
+                         "trails" (StreamDecl :name "trails" :writers #(MAKER) :key-lookup (ByKeyHead "#"))
+                         ;; relays・relay-pairs = 送ってから外す列(出来事ごと・組ごと)— 法 19〜21。
+                         "relays" (StreamDecl :name "relays" :writers #(MAKER) :retention (KeepFor RELAY-KEEP-SECONDS)
+                                              :archive-before-retire True)
+                         "relay-pairs" (StreamDecl :name "relay-pairs" :writers #(MAKER) :retention (KeepFor RELAY-KEEP-SECONDS)
+                                                   :retention-group (ByKeySuffix ":") :archive-before-retire True)})
     :operators #(OVERSEER)))
 
 
@@ -1411,6 +1420,187 @@
   (+ appended [full short whole] full-checked short-checked whole-checked))
 
 
+;; --- 法 19〜21: 送ってから外す列(maintenance.hy の頭の註の「出来事を送ってから外す」— card ki-707aad0f88e8)--------------------------
+
+(defk expired-keys [harness at-ms]
+  {:pre [(: harness LawHarness) (: at-ms int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "送ってから外す列の、刻 at-ms の境で期限を過ぎて置き場に残る出来事を ReadExpiredEvents の頁で読み切り、#(列 冪等キー) を読んだ順に
+   並べるため(法 19〜21 が「置き場に残るか」を読む口 — 読みの effect は期限を過ぎた出来事を出さない)。"
+  (var found #())
+  (var after None)
+  (var going True)
+  (while going
+    (<- page (as-writer harness MAKER (ReadExpiredEvents at-ms :after after :limit 2)))
+    (when (not (isinstance page ExpiredEvents))
+      (raise (LawBroken (.format "法 19〜21 の基準: ReadExpiredEvents が ExpiredEvents でない: {!r}" page))))
+    (:= found (+ found (tuple (gfor event page.items #(event.stream event.idempotency-key)))))
+    (:= after page.next)
+    (:= going (is-not after None)))
+  found)
+
+
+(defk now-ms []
+  {:pre [] :post [(: % int)] :tags {:context "records" :role "program"}}
+  "法の時計の今の刻を epoch ミリ秒で読むため(送りの読みと外しの境の刻)。"
+  (<- now (GetTime))
+  (epoch-ms now))
+
+
+(defk confirm-keys [keys events]
+  {:pre [(: keys frozenset) (: events tuple)] :post [(: % EventsArchived)]
+   :tags {:context "records" :role "program"}}
+  "送り先の顔: 渡された頁 events のうち、冪等キーが keys に在る出来事だけを送り先に在ると答えるため(法 19・21 の送りの関数 —
+   partial で keys を束ねて渡す)。"
+  (EventsArchived (tuple (gfor event events :if (in event.idempotency-key keys) event.sequence))))
+
+
+(defk unreachable-destination [events]
+  {:pre [(: events tuple)] :post [(: % Unreachable)] :tags {:context "records" :role "program"}}
+  "送り先に届かない送りの関数(法 19)。"
+  (Unreachable "送り先に届かない"))
+
+
+(defk law-only-confirmed-events-are-retired [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "送ってから外す列の回収の法(card ki-707aad0f88e8): 期限を過ぎた出来事は回収(SweepExpired)では置き場から外れず、手入れの送りの関数が
+   送り先に在ると確かめた出来事だけが外れる — 送り先に届かない回は 1 つも外れず、確かめた番号に無い出来事は残る(出来事ごとの列 relays と
+   組の列 relay-pairs の両方)。外れる前も後も読みには出ず、外した鍵は覚えている(同じ本文は前の番号・別の本文は断り)。"
+  (val law "送ってから外す列の期限を過ぎた出来事は、送り先に在ると確かめた物だけが外れる")
+  (<- r1 (as-writer harness MAKER (AppendEvent "relays" "r-1" {"n" 1})))
+  (<- r2 (as-writer harness MAKER (AppendEvent "relays" "r-2" {"n" 2})))
+  (<- ask (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:k" {"n" 3})))
+  (<- done (as-writer harness MAKER (AppendEvent "relay-pairs" "done:k" {"n" 4})))
+  (<- (Delay (+ RELAY-KEEP-SECONDS 1)))
+  (val all-keys #(#("relay-pairs" "ask:k") #("relay-pairs" "done:k") #("relays" "r-1") #("relays" "r-2")))
+  ;; 回収は送ってから外す列を外さない。読みには出ない。
+  (<- swept (as-writer harness MAKER (SweepExpired)))
+  (<- t1 (now-ms))
+  (<- kept (expired-keys harness t1))
+  (<- (require-law (= kept all-keys) law (.format "回収が送っていない出来事を外した: {!r} {!r}" swept kept)))
+  (<- read (as-writer harness MAKER (ReadEvents "relays")))
+  (<- (require-law (and (isinstance read Events) (= read.items #())) law (.format "期限を過ぎた出来事が読みに出た: {!r}" read)))
+  ;; 送り先に届かない回は外さない(最初の頁 — 組の列の 2 つ — で回を終える)。
+  (<- down (as-writer harness MAKER (archive-expired-events unreachable-destination)))
+  (<- t2 (now-ms))
+  (<- still (expired-keys harness t2))
+  (<- (require-law (and (= still all-keys) (= #(down.unreached down.retired) #(2 0)) (isinstance down.halted Unreachable)) law
+                   (.format "送り先に届かない回に出来事が外れた: {!r} {!r}" down still)))
+  ;; 確かめた番号の出来事だけが外れる(r-1・ask:k)。組の残り(done:k)と確かめていない r-2 は残る。
+  (<- part (as-writer harness MAKER (archive-expired-events (partial confirm-keys (frozenset #("r-1" "ask:k"))))))
+  (<- t3 (now-ms))
+  (<- left (expired-keys harness t3))
+  (<- (require-law (and (= left #(#("relay-pairs" "done:k") #("relays" "r-2")))
+                        (= #(part.sent part.confirmed part.unreached part.retired) #(4 2 0 2)) (is part.halted None))
+                   law (.format "確かめた番号の出来事だけが外れない: {!r} {!r}" part left)))
+  ;; 外した鍵も外していない鍵も、冪等の答えは前と同じ(覚えで答える)。
+  (<- again-r1 (as-writer harness MAKER (AppendEvent "relays" "r-1" {"n" 1})))
+  (<- other-r2 (as-writer harness MAKER (AppendEvent "relays" "r-2" {"n" 9})))
+  (<- again-ask (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:k" {"n" 3})))
+  (<- (require-law (and (! (replay-of again-r1 r1)) (! (replay-of again-ask ask))
+                        (isinstance other-r2 Refused) (in "冪等キー" other-r2.reason))
+                   law (.format "送って外した鍵の冪等の答えが違う: {!r} {!r} {!r}" again-r1 other-r2 again-ask)))
+  (<- by-key-1 (as-writer harness MAKER (ReadEventByKey "relays" "r-1")))
+  (<- by-key-2 (as-writer harness MAKER (ReadEventByKey "relays" "r-2")))
+  (<- (require-law (and (= by-key-1 (EventRetired r1.sequence)) (= by-key-2 (EventRetired r2.sequence))) law
+                   (.format "外した鍵・残る期限を過ぎた鍵の引きが退いた でない: {!r} {!r}" by-key-1 by-key-2)))
+  ;; 残りを確かめれば全部外れる。
+  (<- rest (as-writer harness MAKER (archive-expired-events (partial confirm-keys (frozenset #("r-2" "done:k"))))))
+  (<- t4 (now-ms))
+  (<- gone (expired-keys harness t4))
+  (<- (require-law (and (= gone #()) (= rest.retired 2)) law (.format "確かめた残りが外れない: {!r} {!r}" rest gone)))
+  [r1 r2 ask done swept kept read down still part left again-r1 other-r2 again-ask by-key-1 by-key-2 rest gone])
+
+
+(defk confirm-with-a-late-guess [late events]
+  {:pre [(: late int) (: events tuple)] :post [(: % EventsArchived)]
+   :tags {:context "records" :role "program"}}
+  "送り先の顔(法 20): 送りの間に時計を 2 秒進め(読みの後に別の出来事が期限を過ぎる)、頁の番号と頁に無い番号 late を送り先に在ると
+   答えるため(partial で late を束ねて渡す)。"
+  (<- (Delay 2))
+  (EventsArchived (+ (tuple (gfor event events event.sequence)) #(late))))
+
+
+(defk law-retirement-keeps-the-read-boundary [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "送りの読みの境の法(card ki-707aad0f88e8): 手入れの回は刻 T の境で期限を過ぎた出来事を読んで送り、外しも同じ刻 T の境で行う —
+   読みの後(送りの間)に新しく期限を過ぎた出来事は、送りの関数がその番号を答えても、同じ回では外れない。外しの effect に境 T と
+   T の後に期限を過ぎた出来事の番号を直に渡しても外れない。"
+  (val law "送りの読みの後に期限を過ぎた出来事は、同じ回の外しで外れない")
+  (<- early (as-writer harness MAKER (AppendEvent "relays" "edge-early" {"n" 1})))
+  (<- (Delay 2))
+  (<- late (as-writer harness MAKER (AppendEvent "relays" "edge-late" {"n" 2})))
+  ;; 刻 T: early は期限を過ぎ、late はまだ(early の 2 秒後に積んだ)。
+  (<- (Delay (- RELAY-KEEP-SECONDS 1)))
+  (<- t (now-ms))
+  (<- report (as-writer harness MAKER (archive-expired-events (partial confirm-with-a-late-guess late.sequence))))
+  (<- t-after (now-ms))
+  (<- left (expired-keys harness t-after))
+  (<- (require-law (and (= #(report.sent report.confirmed report.retired) #(1 1 1))
+                        (= left #(#("relays" "edge-late"))))
+                   law (.format "読みの後に期限を過ぎた出来事が同じ回に外れた・送られた: {!r} {!r}" report left)))
+  ;; 外しの effect の境: T の境では late は期限を過ぎていないので外れない(今の刻では過ぎている)。
+  (<- direct (as-writer harness MAKER (RetireArchivedEvents "relays" t #(late.sequence))))
+  (<- t-direct (now-ms))
+  (<- still (expired-keys harness t-direct))
+  (<- (require-law (and (= direct (RetiredEvents 0)) (= still #(#("relays" "edge-late")))) law
+                   (.format "境 T の外しが T の後に期限を過ぎた出来事を外した: {!r} {!r}" direct still)))
+  [early late report left direct still])
+
+
+(defk relay-answers [harness]
+  {:pre [(: harness LawHarness)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "法 21 の追記 4 つ(出来事ごとの列 relays と組の列 relay-pairs の期限を過ぎた鍵へ、前と同じ本文と別の本文)を撃ち、答えを並べるため。"
+  (<- beat (as-writer harness MAKER (AppendEvent "relays" "beat-21" {"n" 1})))
+  (<- beat-other (as-writer harness MAKER (AppendEvent "relays" "beat-21" {"n" 9})))
+  (<- ask (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:t21" {"n" 2})))
+  (<- ask-other (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:t21" {"n" 9})))
+  #(beat beat-other ask ask-other))
+
+
+(defk law-a-write-keeps-the-unarchived-event-it-touches [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "送ってから外す列の書きの法(card ki-707aad0f88e8): 期限を過ぎた鍵(出来事ごと)と期限を過ぎた組(組ごと)に触る追記は、出来事を
+   置き場から外さない(送りの関数が確かめるまで残る)が、答えは前の形と同じ — 同じ本文は前の番号・別の本文は同じ文の断り。期限を過ぎた
+   組に新しい鍵を積んでも組の古い出来事は読みに戻らず、鍵の引きは退いたと答える。送って外した後の答えも同じ(法 17 の送ってから外す形)。"
+  (val law "送ってから外す列の期限を過ぎた鍵への追記は出来事を外さず、答えは前と同じ")
+  (<- beat (as-writer harness MAKER (AppendEvent "relays" "beat-21" {"n" 1})))
+  (<- ask (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:t21" {"n" 2})))
+  (<- side (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:u21" {"n" 3})))
+  (<- (Delay (+ RELAY-KEEP-SECONDS 1)))
+  (<- before (relay-answers harness))
+  (<- (require-law (and (! (replay-of (get before 0) beat)) (! (replay-of (get before 2) ask))) law
+                   (.format "期限を過ぎた鍵の同じ本文の再送が前の番号でない: {!r} {!r} {!r}" before beat ask)))
+  (<- (require-law (all (gfor answer #((get before 1) (get before 3)) (and (isinstance answer Refused) (in "冪等キー" answer.reason))))
+                   law (.format "期限を過ぎた鍵の別の本文が断られない: {!r}" before)))
+  ;; 期限を過ぎた組 u21 に新しい鍵を積む: 新しい出来事で、組の古い出来事(ask:u21)は読みに戻らず、鍵の引きは退いた。
+  (<- done (as-writer harness MAKER (AppendEvent "relay-pairs" "done:u21" {"n" 4})))
+  (<- read (as-writer harness MAKER (ReadEvents "relay-pairs")))
+  (<- by-key (as-writer harness MAKER (ReadEventByKey "relay-pairs" "ask:u21")))
+  (<- end (as-writer harness MAKER (ReadStreamEnd "relay-pairs")))
+  (<- (require-law (and (isinstance done Appended) (> done.sequence side.sequence) (isinstance read Events)
+                        (= (lfor e read.items e.idempotency-key) ["done:u21"]) (= by-key (EventRetired side.sequence))
+                        (= end (StreamEnd done.sequence)))
+                   law (.format "期限を過ぎた組の古い出来事が新しい鍵の追記で読みに戻った: {!r} {!r} {!r} {!r}" done read by-key end)))
+  ;; 書きは触った出来事を外さない: 送りの読みにまだ出る(新しい鍵の出来事は期限の前なので出ない)。
+  (<- t (now-ms))
+  (<- kept (expired-keys harness t))
+  (<- (require-law (= kept #(#("relay-pairs" "ask:t21") #("relay-pairs" "ask:u21") #("relays" "beat-21"))) law
+                   (.format "期限を過ぎた鍵に触る追記が、送っていない出来事を外した: {!r}" kept)))
+  ;; 送って外した後の答えは、外す前と同じ。
+  (<- archived (as-writer harness MAKER (archive-expired-events (partial confirm-keys (frozenset #("ask:t21" "ask:u21" "beat-21"))))))
+  (<- after (relay-answers harness))
+  (<- side-again (as-writer harness MAKER (AppendEvent "relay-pairs" "ask:u21" {"n" 3})))
+  (<- end-after (as-writer harness MAKER (ReadStreamEnd "relay-pairs")))
+  (<- (require-law (and (= archived.retired 3) (= after before) (! (replay-of side-again side)) (= end-after (StreamEnd done.sequence))) law
+                   (.format "送って外した前と後で答えが違う: 前 {!r} / 後 {!r} {!r} {!r} {!r}" before after archived side-again end-after)))
+  (+ [beat ask side] (list before) [done read by-key end kept archived] (list after) [side-again end-after]))
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing と law-append-events-answer-like-appends-in-order は SHARED-LAWS に入れない — SHARED-LAWS は前からの
 ;; 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを
@@ -1443,6 +1633,9 @@
             "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep
             "watch-tails-match-last-events" law-watch-tails-match-last-events
             "event-by-key-reads-the-same-event" law-event-by-key-reads-the-same-event
-            "short-page-ends-the-stream" law-short-page-ends-the-stream})
+            "short-page-ends-the-stream" law-short-page-ends-the-stream
+            "only-confirmed-events-are-retired" law-only-confirmed-events-are-retired
+            "retirement-keeps-the-read-boundary" law-retirement-keeps-the-read-boundary
+            "a-write-keeps-the-unarchived-event-it-touches" law-a-write-keeps-the-unarchived-event-it-touches})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

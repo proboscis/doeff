@@ -92,6 +92,7 @@ class StreamDecl:
     size_budget: int | None = None
     retention_group: RetentionGroup = ...
     key_lookup: ByKeyHead | None = None
+    archive_before_retire: bool = False
 
 @dataclass(frozen=True)
 class RecordsSchema:

@@ -7,7 +7,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_time [SimClock sim-time-handler GetTimeEffect])
+(import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
+(import doeff_records.admission [epoch-ms])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty Event EventAbsent EventRetired AppendedEvents])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey])
@@ -25,8 +26,9 @@
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
                             law-watch-tails-match-last-events law-event-by-key-reads-the-same-event
-                            law-short-page-ends-the-stream])
-(import doeff_records.maintenance [PruneChanges Pruned ReadChangeLog ChangeLog])
+                            law-short-page-ends-the-stream law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
+                            law-a-write-keeps-the-unarchived-event-it-touches])
+(import doeff_records.maintenance [PruneChanges Pruned ReadChangeLog ChangeLog ReadExpiredEvents ExpiredCursor RetireArchivedEvents])
 
 
 (defhandler ignore-expectation []
@@ -356,3 +358,43 @@
     (.setattr patched memory "retire_touched_events" (fn [store decl idempotency-key now-ms] None))
     (assert (breaks? law-an-expired-key-answers-the-same-before-and-after-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))
             "期限を過ぎた出来事を片付けない追記")))
+
+
+(defhandler retire-every-expired-event []
+  ;; 送り先に在ると確かめた番号を見ない外しの顔(card ki-707aad0f88e8 の前の回収の形): 列の期限を過ぎた出来事を全部外す。
+  (RetireArchivedEvents [stream at-ms sequences]
+    (<- page (ReadExpiredEvents at-ms :after (ExpiredCursor stream) :limit 1000))
+    (<- answer (RetireArchivedEvents stream at-ms (tuple (gfor event page.items event.sequence))))
+    (resume answer)))
+
+
+(defhandler retire-at-the-latest-boundary []
+  ;; 読みの境 T を見ない外しの顔(card ki-707aad0f88e8): 外す時の今の刻の境で外す — 送りの読みの後に期限を過ぎた出来事も外れる。
+  (RetireArchivedEvents [stream at-ms sequences]
+    (<- now (GetTime))
+    (<- answer (RetireArchivedEvents stream (epoch-ms now) sequences))
+    (resume answer)))
+
+
+(defn test-the-archive-laws-turn-red-when-unsent-events-are-retired [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+  ;; card ki-707aad0f88e8: 送ってから外す列の関門を破る置き場で法 19〜21 が赤になる — 確かめた番号を見ずに外す・読みの境 T を見ずに外す・
+  ;; 書きが触った期限を過ぎた出来事を送らずに外す(retire-touched-events に印の無い宣言を渡し、覚えるだけの片付けを捨てる片付けにする)・
+  ;; 印の無い列(前からの形 — 回収が送らずに外す)。壊していない置き場では緑(比べの基準)。
+  (for [law [law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary law-a-write-keeps-the-unarchived-event-it-touches]]
+    (assert (not (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) None))) law.__name__))
+  (assert (breaks? law-only-confirmed-events-are-retired (broken-harness (MemoryStore LAW-SCHEMA) (retire-every-expired-event)))
+          "確かめた番号を見ない外し")
+  (assert (breaks? law-retirement-keeps-the-read-boundary (broken-harness (MemoryStore LAW-SCHEMA) (retire-at-the-latest-boundary)))
+          "読みの境を見ない外し")
+  (setv touched memory.retire-touched-events)
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "retire_touched_events"
+              (fn [store decl idempotency-key now-ms]
+                (touched store (dataclasses.replace decl :archive-before-retire False) idempotency-key now-ms)))
+    (assert (breaks? law-a-write-keeps-the-unarchived-event-it-touches (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "書きが送っていない出来事を外す"))
+  (setv unmarked (dfor #(name decl) (.items LAW-SCHEMA.streams)
+                       name (if decl.archive-before-retire (dataclasses.replace decl :archive-before-retire False) decl)))
+  (assert (breaks? law-only-confirmed-events-are-retired
+                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :streams unmarked)) None))
+          "印の無い列(回収が送らずに外す)"))

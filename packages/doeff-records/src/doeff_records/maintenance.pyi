@@ -5,9 +5,13 @@ from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff_time import Delay as Delay
+from doeff_time import GetTime as GetTime
+from doeff_records.values import Event as Event
 from doeff_records.values import RowChanged as RowChanged
 from doeff_records.values import RowRemoved as RowRemoved
 from doeff_records.values import Unreachable as Unreachable
+from doeff_records.admission import epoch_ms as epoch_ms
+ARCHIVE_PAGE: int
 
 @dataclass(frozen=True)
 class SweepExpired(EffectBase):
@@ -48,16 +52,71 @@ class Pruned:
     removed: int
 
 @dataclass(frozen=True)
+class ExpiredCursor:
+    stream: str
+    at: int | None = None
+    sequence: int | None = None
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ReadExpiredEvents(EffectBase):
+    at_ms: int
+    after: ExpiredCursor | None = None
+    limit: int = ...
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ExpiredEvents:
+    items: tuple[Event, ...]
+    next: ExpiredCursor | None
+
+@dataclass(frozen=True)
+class RetireArchivedEvents(EffectBase):
+    stream: str
+    at_ms: int
+    sequences: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class RetiredEvents:
+    count: int
+
+@dataclass(frozen=True)
+class EventsArchived:
+    sequences: tuple[int, ...]
+
+@dataclass(frozen=True)
+class EventsArchiveReport:
+    sent: int
+    confirmed: int
+    unreached: int
+    retired: int
+    halted: Unreachable | None = None
+
+@dataclass(frozen=True)
 class MaintenanceReport:
     swept: Swept | Unreachable
     pruned: Pruned | Unreachable
     archived: ArchivedThrough | Unreachable | None = None
+    events: EventsArchiveReport | None = None
 
 def prune_after_archive(keep_seconds: int | float, archive: Callable | None) -> _Program[MaintenanceReport, object]:
     ...
 
-def maintenance_tick(keep_seconds: int | float, archive: Callable | None) -> _Program[MaintenanceReport, object]:
+def archived_page(archive_events: Callable, at_ms: int, page: ExpiredEvents) -> _Program[EventsArchiveReport, object]:
     ...
 
-def maintenance_loop(interval_seconds: int | float, keep_seconds: int | float, archive: Callable | None, ticks: int | None) -> _Program[list, object]:
+def archive_expired_events(archive_events: Callable) -> _Program[EventsArchiveReport, object]:
+    ...
+
+def maintenance_tick(keep_seconds: int | float, archive: Callable | None, archive_events: Callable | None=None) -> _Program[MaintenanceReport, object]:
+    ...
+
+def maintenance_loop(interval_seconds: int | float, keep_seconds: int | float, archive: Callable | None, ticks: int | None, archive_events: Callable | None=None) -> _Program[list, object]:
     ...

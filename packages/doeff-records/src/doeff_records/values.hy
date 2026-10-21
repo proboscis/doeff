@@ -228,13 +228,17 @@
 (defclass [(dataclass :frozen True)] StreamDecl []
   "追記の列の宣言。writers = 積んでよい書き手の名 / retention = KeepForever | KeepFor(積んでから秒)/
    size-budget = 本文の JSON の byte の上限(None = 無し)/ retention-group = 保持を数える単位(EachEvent | ByKeySuffix — ByKeySuffix は
-   KeepFor の列だけ)/ key-lookup = 冪等キーの頭で引く読みの区切り(ByKeyHead | None — None の列は頭で引けない)。"
+   KeepFor の列だけ)/ key-lookup = 冪等キーの頭で引く読みの区切り(ByKeyHead | None — None の列は頭で引けない)/
+   archive-before-retire = 保持の期限を過ぎた出来事を、手入れの送りの関数(maintenance.hy の頭の註の「出来事を送ってから外す」)が
+   送り先に在ると確かめた後にだけ置き場から外すか(True は KeepFor の列だけ。False = 期限を過ぎた出来事を回収と書きがそのまま外す —
+   前からの形)。True の列でも読みは期限の刻から出来事を出さず、冪等キーの答えも False の列と同じ。"
   (#^ str name)
   (#^ tuple writers)
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
   (setv #^ object retention-group (EachEvent))
   (setv #^ (| ByKeyHead None) key-lookup None)
+  (setv #^ bool archive-before-retire False)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
@@ -247,6 +251,10 @@
       (raise (ValueError "StreamDecl.retention_group の ByKeySuffix は KeepFor の列だけ(消えない列に組は要らない)")))
     (when (not (or (is self.key-lookup None) (isinstance self.key-lookup ByKeyHead)))
       (raise (TypeError "StreamDecl.key_lookup は ByKeyHead | None")))
+    (when (not (isinstance self.archive-before-retire bool))
+      (raise (TypeError (.format "StreamDecl.archive_before_retire は真偽: {!r}" self.archive-before-retire))))
+    (when (and self.archive-before-retire (not (isinstance self.retention KeepFor)))
+      (raise (ValueError "StreamDecl.archive_before_retire は KeepFor の列だけ(消えない列は送ってから外す物が無い)")))
     (when (and (is-not self.size-budget None)
                (or (isinstance self.size-budget bool) (not (isinstance self.size-budget int)) (<= self.size-budget 0)))
       (raise (ValueError (.format "StreamDecl.size_budget は正の整数か None: {!r}" self.size-budget))))))

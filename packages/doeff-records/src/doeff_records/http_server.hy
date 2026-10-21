@@ -132,10 +132,13 @@
 (defrecord MaintenancePlan
   "手入れの周期の設定: interval-seconds = 拍の秒・keep-seconds = 変更の列に残す秒(maintenance.hy の PruneChanges)・archive = 刈る前に
    古い変更を送る関数(keep-seconds → 答えが ArchivedThrough | Unreachable の Program — 刈りはその番号まで・None = 送らない置き場。
-   maintenance.hy の頭の註の「消す前に送る」)。"
+   maintenance.hy の頭の註の「消す前に送る」)・archive-events = 印(StreamDecl.archive-before-retire)の列の期限を過ぎた出来事を送る
+   関数(出来事の頁 → 答えが EventsArchived | Unreachable の Program — 確かめた出来事だけを外す・None = 送らない。印の列を宣言した
+   置き場では要る — unsent-streams。maintenance.hy の頭の註の「出来事を送ってから外す」)。"
   (#^ float interval-seconds)
   (#^ float keep-seconds)
-  (setv #^ (| Callable None) archive None))
+  (setv #^ (| Callable None) archive None)
+  (setv #^ (| Callable None) archive-events None))
 
 
 (defrecord RepoCommit
@@ -739,8 +742,20 @@
 (defk maintain [handler-for plan]
   {:pre [(: handler-for Callable) (: plan MaintenancePlan)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "手入れの係: 止めるまで maintenance-loop を手入れの係の書き手の handler の下で回すため(置き場に届かない回は Unreachable の値で次の回へ)。"
-  (<- (with-handlers [(handler-for MAINTAINER)] (maintenance-loop plan.interval-seconds plan.keep-seconds plan.archive None)))
+  (<- (with-handlers [(handler-for MAINTAINER)] (maintenance-loop plan.interval-seconds plan.keep-seconds plan.archive None
+                                                                  plan.archive-events)))
   None)
+
+
+(defk unsent-streams [schema plan]
+  {:pre [(: schema RecordsSchema) (: plan (| MaintenancePlan None))] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "records" :role "entry"}}
+  "印(StreamDecl.archive-before-retire)の列を宣言したのに、手入れの計画が出来事の送りの関数を持たない列の名(名の順)を挙げるため —
+   印の列の期限を過ぎた出来事は送って確かめた物しか外れないので、送りの無い手入れでは置き場に溜まり続ける(serve-records が起動の前に
+   断る)。手入れを立てない組み立て(plan = None — 検の殻・模擬)は回収もしないので挙げない。"
+  (if (or (is plan None) (is-not plan.archive-events None))
+      #()
+      (tuple (sorted (gfor #(name decl) (.items schema.streams) :if decl.archive-before-retire name)))))
 
 
 (defk serve-records [serving]
@@ -764,6 +779,10 @@
 (defk serving-body [serving]
   {:pre [(: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
   "serve-records の本体(prepared-slot と計器の内側 — 用意の task と要求の task が同じ session の値と計器を読む)。"
+  (<- unsent (unsent-streams serving.schema serving.maintenance))
+  (when unsent
+    (raise (ValueError (.format "手入れの計画が出来事の送りの関数(MaintenancePlan.archive-events)を持たないのに、送ってから外す列が在る: {}"
+                                (.join "・" unsent)))))
   (<- (place-answer-metrics serving))
   ;; 待ち受けは port の共有(share-port — SO_REUSEPORT)で開く: 同じ置き場を答える口が同じ port に何本並んでも答えは同じなので、
   ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(ki-a4f46b3d98c5 — 2026-10-09 23:08 の

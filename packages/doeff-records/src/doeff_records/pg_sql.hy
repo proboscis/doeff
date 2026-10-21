@@ -106,6 +106,9 @@
 ;;; その番号の出来事だけを、条件を読み直して捨てる(expire-chosen-events-statement)。錠の中の文が触る行は番号の数で縛られ、列の行の数の
 ;;; 見積もりに依らない(2026-10-18 — 列の全部を条件で消す 1 文は、planner が ledger と at の相関を知らず期限を過ぎた出来事を実際の数百倍に
 ;;; 見積もって列の生きた出来事を全部読む計画を選び、書きの錠を 13〜21 秒持って記録の service の要求を切らせた)。
+;;; 送ってから外す列(card ki-707aad0f88e8 — maintenance.hy の頭の註): 送りの頁の読み(expired-page-statement)は期限の条件を
+;;; expiring-where で書き、(ledger, at) の索引を位置から境まで辿る(積んだ刻と番号の順)。外しは回収と同じ expire-chosen-events-statement。
+;;; 組で数える列は、冪等キーを覚えた出来事(retired_keys に鍵の在る出来事)も期限を過ぎた物に数える(EventExpiry の remembered)。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -168,9 +171,13 @@
 (defrecord EventExpiry
   "追記の列 1 つの出来事の保持の期限の境(読みの文の条件 — 回収と同じ expired-event-condition・#3561): before-at = 境の刻
    (admission.retention-cutoff-ms — 積んだ刻〔組で数える列は組の最後の出来事の刻〕がこれ以下の出来事は期限を過ぎた)/
-   separator = 組で数える列(ByKeySuffix)の区切り(None = 出来事ごとに数える — 文に直に置く宣言の値・字は values.SEPARATOR-PATTERN)。"
+   separator = 組で数える列(ByKeySuffix)の区切り(None = 出来事ごとに数える — 文に直に置く宣言の値・字は values.SEPARATOR-PATTERN)/
+   remembered = 冪等キーを覚えた出来事(retired_keys に鍵の在る出来事)も期限を過ぎた物に数えるか(送ってから外す組で数える列 — 書きは
+   期限を過ぎた組の鍵を覚えるだけで出来事を置き場に残すので、組に新しい鍵が積まれて組の最後の刻が動いても、覚えた出来事は期限を過ぎた
+   ままにする。expired-event-condition の註)。"
   (#^ int before-at)
-  (#^ (| str None) separator))
+  (#^ (| str None) separator)
+  (setv #^ bool remembered False))
 
 
 (defrecord IndexedField
@@ -1073,7 +1080,7 @@
    引数の名(1 つの文に列を並べる読み — watch-head-statement — が列ごとに別の名を使う)。"
   (when (is expiry None)
     (return NO-CLAUSE))
-  (<- expired (expired-event-condition prefix expiry.separator bound))
+  (<- expired (expired-event-condition prefix expiry.separator bound expiry.remembered))
   (<- named (params-of #(#(bound expiry.before-at))))
   (Clause :text (.format " AND NOT ({})" expired) :params named))
 
@@ -1124,7 +1131,7 @@
   (var expired "false")
   (var bounds #())
   (when (is-not expiry None)
-    (<- condition (expired-event-condition prefix expiry.separator "before_at"))
+    (<- condition (expired-event-condition prefix expiry.separator "before_at" expiry.remembered))
     (:= expired condition)
     (<- named (params-of #(#("before_at" expiry.before-at))))
     (:= bounds named))
@@ -1209,8 +1216,8 @@
              :params (! (params-of #(#("ledger" stream) #("retired" retired))))))
 
 
-(defk expired-event-condition [prefix separator bound]
-  {:pre [(: prefix str) (: separator (| str None)) (: bound str)] :post [(: % str)]
+(defk expired-event-condition [prefix separator bound [remembered False]]
+  {:pre [(: prefix str) (: separator (| str None)) (: bound str) (: remembered bool)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "出来事 old が保持の期限を過ぎた条件の文を作るため(境の刻の引数 :{bound} — 回収と 1 列の読みは before_at・列を並べる読みは列ごとの名。
    列の照らし old.ledger は含まない)。
@@ -1221,24 +1228,36 @@
    組の「新しい出来事」の照らしは値の副問い合わせ(`(SELECT 1 … LIMIT 1) IS NULL`)で書き、NOT EXISTS にしない: NOT EXISTS は planner が
    anti join に引き上げ、見積もりしだいで列の生きた出来事を全部読んで hash にする(ledger と at の相関を知らないので、期限を過ぎた
    出来事を実際の数百倍に見積もると選ぶ — 2026-10-18)。値の副問い合わせは join に引き上げられず、照らす出来事ごとに組の名の式の索引を
-   引いて最初の 1 行で止まる(計画が見積もりに依らない)。"
+   引いて最初の 1 行で止まる(計画が見積もりに依らない)。
+   remembered(送ってから外す組で数える列 — EventExpiry の註)は、組に新しい出来事が在っても、冪等キーを覚えた出来事(書きが期限を
+   過ぎた組に触って鍵だけを覚え、置き場に残した出来事)を期限を過ぎた物に数える。覚えた出来事はどれも覚えた時の境以下に積まれたので、
+   刻の照らし old.at <= 境 は外さない。覚えの照らしは retired_keys の主キー (ledger, idempotency_key) の引き 1 つ(値の副問い合わせ —
+   組の照らしと同じ訳)。出来事ごとに数える列では覚えた出来事はどれも刻で期限を過ぎているので、照らしを足さない。"
   (if (is separator None)
       (.format "old.at <= :{b}" :b bound)
-      (.format "old.at <= :{b} AND (
+      (do
+        (val young (.format "(
                          SELECT 1 FROM {p}append_rows AS young
                           WHERE young.ledger = old.ledger AND young.at > :{b} AND {young} = {old}
                           LIMIT 1) IS NULL"
-               :b bound :p prefix :young (! (key-suffix-expression "young.payload" separator))
-               :old (! (key-suffix-expression "old.payload" separator)))))
+                            :b bound :p prefix :young (! (key-suffix-expression "young.payload" separator))
+                            :old (! (key-suffix-expression "old.payload" separator))))
+        (if remembered
+            (.format "old.at <= :{b} AND ({y} OR (
+                         SELECT 1 FROM {p}retired_keys AS kept
+                          WHERE kept.ledger = old.ledger AND kept.idempotency_key = ((old.payload::jsonb) ->> 'idempotencyKey')
+                          LIMIT 1) IS NOT NULL)"
+                     :b bound :y young :p prefix)
+            (.format "old.at <= :{b} AND {y}" :b bound :y young)))))
 
 
-(defk expiring-where [prefix separator]
-  {:pre [(: prefix str) (: separator (| str None))] :post [(: % str)]
+(defk expiring-where [prefix separator [remembered False]]
+  {:pre [(: prefix str) (: separator (| str None)) (: remembered bool)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "保持の期限を過ぎた列 :ledger の出来事 old の条件の文を作るため(引数 :ledger・:before_at — 期限の条件は
-   expired-event-condition)。刈りの候補の読み(expiring-candidates-statement)と刈り(expire-chosen-events-statement)と書きが触る単位の
-   読み(touched-events-statement)が同じ条件を使う。"
-  (<- expired (expired-event-condition prefix separator "before_at"))
+   expired-event-condition・remembered はその註)。刈りの候補の読み(expiring-candidates-statement)と刈り(expire-chosen-events-statement)と
+   書きが触る単位の読み(touched-events-statement)と送りの頁の読み(expired-page-statement)が同じ条件を使う。"
+  (<- expired (expired-event-condition prefix separator "before_at" remembered))
   (+ "old.ledger = :ledger AND " expired))
 
 
@@ -1263,16 +1282,18 @@
              :params (+ params named)))
 
 
-(defk expire-chosen-events-statement [prefix stream before-at separator sequences]
-  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: sequences tuple) (> (len sequences) 0)]
+(defk expire-chosen-events-statement [prefix stream before-at separator sequences [remembered False]]
+  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: sequences tuple) (> (len sequences) 0)
+         (: remembered bool)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "回収の候補(番号 sequences — expiring-candidates-statement の答え)のうち、今も保持の期限を過ぎた出来事を捨て、捨てた出来事(番号・刻・
    payload — read-events-statement と同じ列の並び)を返す文を作るため(書きの錠の transaction の中で流す。before-at = 今 − 保持の秒 —
    admission.event-expired? と同じ境界・separator は expiring-where と同じ)。条件は錠の中で読み直す(候補を読んだ後に組へ新しい出来事が
    積まれた組は捨てない)。番号は主鍵で引くので、触る行は番号の数で縛られる(列の行の数の見積もりに依らない — 頭の註)。返した行から
-   鍵の覚えを作り、同じ transaction で retire-keys-statement が入れる(#3022)。空の組は文にできないので :pre が断る(呼び手が枝で避ける)。"
-  (<- where (expiring-where prefix separator))
+   鍵の覚えを作り、同じ transaction で retire-keys-statement が入れる(#3022)。空の組は文にできないので :pre が断る(呼び手が枝で避ける)。
+   送ってから外す列の外し(remembered — expired-event-condition の註)も同じ文で、sequences は送り先に在ると確かめた番号。"
+  (<- where (expiring-where prefix separator remembered))
   (<- params (expiring-params stream before-at))
   (<- numbers (in-list "s" sequences))
   (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE old.seq IN ({s}) AND {w} RETURNING old.seq, old.at, old.payload"
@@ -1312,16 +1333,18 @@
   (.format "split_part((({}::jsonb) ->> 'idempotencyKey'), '{}', 1)" payload separator))
 
 
-(defk touched-events-statement [prefix stream before-at separator idempotency-key]
-  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: idempotency-key str)] :post [(: % Statement)]
+(defk touched-events-statement [prefix stream before-at separator idempotency-key [remembered False]]
+  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: idempotency-key str) (: remembered bool)]
+   :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "書き(AppendEvent)が触る単位の保持の期限を過ぎた出来事(番号・刻・payload — read-events-statement と同じ列の並び)を読む文を作るため
    (#3605 の D — 書きは置き場の全部を回収せず、自分が触る単位だけを片付ける。書きの錠の transaction の 1 往復目に読み、読んだ物を 2 往復目の
    delete-events-statement で捨てて鍵の覚えへ移す — 同じ錠の中なので、読んだ物がそのまま捨てる物)。単位 = 出来事ごとに数える列
    (separator None)は冪等キー idempotency-key の出来事・組で数える列(ByKeySuffix)はその鍵の組の出来事(組の名の式 key-suffix-of を鍵の
    引数にも当てる)。期限の条件は回収と読みと同じ expiring-where。単位の照らしは索引に当たる: 出来事ごとは冪等キーの一意の索引・組は
-   (ledger, 組の名の式) の索引(#3614 — 受付の列への追記ごとに流れるので、列の全部を読まない事が要る)。"
-  (<- where (expiring-where prefix separator))
+   (ledger, 組の名の式) の索引(#3614 — 受付の列への追記ごとに流れるので、列の全部を読まない事が要る)。送ってから外す列(remembered —
+   expired-event-condition の註)は覚えた出来事も読む(2 往復目は捨てずに鍵を覚えるだけ)。"
+  (<- where (expiring-where prefix separator remembered))
   (<- params (expiring-params stream before-at))
   (val unit (if (is separator None)
                 "(old.payload::jsonb) ->> 'idempotencyKey' = :idempotency_key"
@@ -1341,3 +1364,27 @@
   (<- numbers (in-list "s" sequences))
   (Statement :text (.format "DELETE FROM {p}append_rows WHERE ledger = :ledger AND seq IN ({s})" :p prefix :s numbers.text)
              :params (+ (! (params-of #(#("ledger" stream)))) numbers.params)))
+
+
+(defk expired-page-statement [prefix stream before-at separator after-at after-seq limit]
+  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: after-at (| int None)) (: after-seq (| int None))
+         (: limit int) (> limit 0) (= (is after-at None) (is after-seq None))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "送ってから外す列 stream の、境 before-at で保持の期限を過ぎた出来事(覚えた出来事を含む — expiring-where の remembered)の 1 頁
+   (番号・刻・payload — read-events-statement と同じ列の並び)を、積んだ刻と番号の順に位置 (after-at, after-seq) より後から limit 件まで
+   読む文を作るため(手入れの送りの読み — maintenance.ReadExpiredEvents・錠の外)。順を刻にするのは (ledger, at) の索引を位置から境まで
+   辿らせるため: 頁の読みが触る行は頁の大きさで縛られ、送り先に届かずに溜まった期限を過ぎた出来事の数に依らない(番号の順にすると、
+   頁ごとに溜まった出来事の全部を読んで並べ替える)。位置の刻と同じ刻の出来事は番号で続ける。"
+  (<- where (expiring-where prefix separator True))
+  (<- params (expiring-params stream before-at))
+  (var position "")
+  (var after #())
+  (when (is-not after-at None)
+    (:= position " AND old.at >= :after_at AND (old.at > :after_at OR old.seq > :after_seq)")
+    (<- named (params-of #(#("after_at" after-at) #("after_seq" after-seq))))
+    (:= after named))
+  (<- bound (params-of #(#("limit" limit))))
+  (Statement :text (.format "SELECT old.seq, old.at, old.payload FROM {p}append_rows AS old WHERE {w}{a} ORDER BY old.at, old.seq LIMIT :limit"
+                            :p prefix :w where :a position)
+             :params (+ params after bound)))
