@@ -113,8 +113,9 @@
    置き場から外れるまで外さない(覚えの中身 — 鍵・番号・本文 — は送り先の出来事の行がそのまま持つ)。"
   (#^ float seconds)
   (defn #^ None __post_init__ [self]
-    (when (or (isinstance self.seconds bool) (not (isinstance self.seconds #(int float))) (<= self.seconds 0))
-      (raise (ValueError (.format "RememberKeysFor.seconds は正の数: {!r}" self.seconds))))))
+    ;; 置き場はミリ秒(切り捨て — key-memory-ms)で数えるので、1 ミリ秒より短い長さは「残さない」(0)に化ける — 作る時に断る。
+    (when (or (isinstance self.seconds bool) (not (isinstance self.seconds #(int float))) (< self.seconds 0.001))
+      (raise (ValueError (.format "RememberKeysFor.seconds は 0.001 以上の秒: {!r}" self.seconds))))))
 
 (defclass [(dataclass :frozen True)] RememberNoKeys []
   "出来事が置き場を去った時に覚えを残さない(期限の後に同じ鍵で送り直されない列 — 例えば鍵が単調に増える番号を含む列)。期限を過ぎた

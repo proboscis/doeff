@@ -1654,16 +1654,18 @@
    :tags {:context "records" :role "foundation"}}
   "RetireArchivedEvents に答えるため(頭の註の「出来事を送ってから外す」): 送り先に在ると確かめた番号を EXPIRE-BATCH 個ずつ、列の書きの錠の
    transaction で、刻 ask.at の境で今も期限を過ぎた出来事(覚えた出来事を含む)だけ捨てて冪等キーを覚える(回収と同じ文 —
-   retire-expired-events)。答え = 外した出来事の数。"
+   retire-expired-events)。覚えた刻は外す今の刻(境 ask.at = 送りの読みの刻ではない — 覚えの長さは出来事が置き場を去った刻から数える・
+   values.RememberKeysFor の註)。答え = 外した出来事の数。"
   (<- decl (archived-decl store ask.stream))
   (<- expiry (event-expiry decl (epoch-ms ask.at)))
   (<- topics (notice-topics #() #(ask.stream)))
   (<- unit (stream-unit ask.stream))
+  (<- now (GetTime))
   (var total 0)
   (for [start (range 0 (len ask.sequences) EXPIRE-BATCH)]
     (val chosen (tuple (cut ask.sequences start (+ start EXPIRE-BATCH))))
     (<- removed (writing store gated "retire-archived" #(unit) topics
-                         (retire-expired-events store ask.stream expiry.before-at expiry.separator chosen (epoch-ms ask.at) True)))
+                         (retire-expired-events store ask.stream expiry.before-at expiry.separator chosen (epoch-ms now) True)))
     (:= total (+ total removed)))
   (RetiredEvents total))
 

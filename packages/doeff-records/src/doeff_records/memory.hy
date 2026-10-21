@@ -864,9 +864,9 @@
                          True None)))
 
 
-(defn #^ RetiredEvents retire-archived-locked [#^ MemoryStore store #^ RetireArchivedEvents ask]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の書き
+(defn #^ RetiredEvents retire-archived-locked [#^ MemoryStore store #^ RetireArchivedEvents ask #^ int now-ms]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の書き
   "RetireArchivedEvents の中身(呼び手が錠を持つ): 送り先に在ると確かめた番号の出来事のうち、列 ask.stream の物で刻 ask.at の境で今も
-   期限を過ぎた物だけを外して鍵を覚え(drop-events)、組からも外す(空になった組は外す)。答え = 外した出来事の数。"
+   期限を過ぎた物だけを外して鍵を刻 now-ms に覚え(drop-events)、組からも外す(空になった組は外す)。答え = 外した出来事の数。"
   (setv decl (store.schema.stream ask.stream))
   (when (not decl.archive-before-retire)
     (raise (ValueError (.format "列 {} は送ってから外す列(StreamDecl.archive-before-retire)でない" ask.stream))))
@@ -885,7 +885,7 @@
         (when (not held.events)
           (.pop store.groups slot)))))
   (when chosen
-    (drop-events store chosen bound))
+    (drop-events store chosen now-ms))
   (RetiredEvents (len chosen)))
 
 
@@ -899,8 +899,11 @@
 (defk memory-retire-archived-events [store ask]
   {:pre [(: store MemoryStore) (: ask RetireArchivedEvents)] :post [(: % RetiredEvents)]
    :tags {:context "records" :role "foundation"}}
-  "RetireArchivedEvents に答えるため(maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の retire-archived-locked)。"
-  (guarded store (fn [] (retire-archived-locked store ask))))
+  "RetireArchivedEvents に答えるため(maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の retire-archived-locked)。覚えた刻は外す
+   今の刻(PostgreSQL の handler の pg-retire-archived-events と同じ)。"
+  (<- now (GetTime))
+  (val now-ms (epoch-ms now))
+  (guarded store (fn [] (retire-archived-locked store ask now-ms))))
 
 
 (defk expired-or-down [store names program]

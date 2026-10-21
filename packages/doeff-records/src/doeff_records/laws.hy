@@ -85,6 +85,8 @@
                                              :key-memory (RememberKeysFor BEAT-MEMORY-SECONDS))
                          "ticks" (StreamDecl :name "ticks" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
                                              :key-memory (RememberNoKeys))
+                         "tick-pairs" (StreamDecl :name "tick-pairs" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
+                                                  :retention-group (ByKeySuffix ":") :key-memory (RememberNoKeys))
                          "relay-beats" (StreamDecl :name "relay-beats" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
                                                    :archive-before-retire True :key-memory (RememberKeysFor BEAT-MEMORY-SECONDS))
                          "relay-ticks" (StreamDecl :name "relay-ticks" :writers #(MAKER) :retention (KeepFor BEAT-KEEP-SECONDS)
@@ -1623,18 +1625,25 @@
   "鍵の覚え方の法(card ki-4ebaefac6668): 覚えを長さで限った列(beats — RememberKeysFor)の置き場を去った出来事の鍵は、覚えた刻から長さの
    間は覚えで答え(同じ本文は前の番号・別の本文は断り・鍵の引きは退いた)、長さの後の回収(SweepExpired)が覚えを外す — 外れた鍵の追記は
    新しい出来事で、鍵の引きは来ていない(EventAbsent)。覚えを残さない列(ticks — RememberNoKeys)は、置き場を去った鍵を覚えない —
-   回収の後も、回収の前に書きが触って片付けた時も、同じ鍵の追記は新しい出来事。"
+   回収の後も、回収の前に書きが触って片付けた時も、同じ鍵の追記は新しい出来事(組で数える列 tick-pairs は、書きが片付けた組の他の鍵も
+   覚えない)。"
   (val law "長さを限った覚えは長さの後の回収で外れ、覚えの無い鍵の追記は新しい出来事")
   (<- beat (as-writer harness MAKER (AppendEvent "beats" "b-1" {"n" 1})))
   (<- tick (as-writer harness MAKER (AppendEvent "ticks" "t-1" {"n" 1})))
   (<- touched-beat (as-writer harness MAKER (AppendEvent "beats" "b-2" {"n" 2})))
   (<- touched-tick (as-writer harness MAKER (AppendEvent "ticks" "t-2" {"n" 2})))
+  (<- asked (as-writer harness MAKER (AppendEvent "tick-pairs" "ask:g" {"n" 3})))
+  (<- settled (as-writer harness MAKER (AppendEvent "tick-pairs" "done:g" {"n" 4})))
   (<- (Delay (+ BEAT-KEEP-SECONDS 1)))
-  ;; 回収の前に書きが期限を過ぎた鍵に触る: 長さを限った列は覚えで答え、覚えを残さない列は新しい出来事(回収の後と同じ答え)。
+  ;; 回収の前に書きが期限を過ぎた鍵に触る: 長さを限った列は覚えで答え、覚えを残さない列は新しい出来事(回収の後と同じ答え)。組で数える
+  ;; 覚えを残さない列は、書きが触った鍵の組の出来事を全部片付け、どの鍵も覚えない(組の他の鍵の引きも来ていない)。
   (<- beat-touched (as-writer harness MAKER (AppendEvent "beats" "b-2" {"n" 2})))
   (<- tick-touched (as-writer harness MAKER (AppendEvent "ticks" "t-2" {"n" 2})))
-  (<- (require-law (and (! (replay-of beat-touched touched-beat)) (! (fresh-append? tick-touched touched-tick))) law
-                   (.format "回収の前に書きが触った鍵の答えが違う: {!r} {!r}" beat-touched tick-touched)))
+  (<- asked-touched (as-writer harness MAKER (AppendEvent "tick-pairs" "ask:g" {"n" 3})))
+  (<- settled-key (as-writer harness MAKER (ReadEventByKey "tick-pairs" "done:g")))
+  (<- (require-law (and (! (replay-of beat-touched touched-beat)) (! (fresh-append? tick-touched touched-tick))
+                        (! (fresh-append? asked-touched tick-touched)) (= settled-key (EventAbsent)))
+                   law (.format "回収の前に書きが触った鍵の答えが違う: {!r} {!r} {!r} {!r}" beat-touched tick-touched asked-touched settled-key)))
   (<- swept (as-writer harness MAKER (SweepExpired)))
   (<- (require-law (= swept.forgotten 0) law (.format "長さの内の覚えが外れた: {!r}" swept)))
   ;; 長さの内: 長さを限った列は覚えで答え、覚えを残さない列は鍵を知らない。
@@ -1655,7 +1664,7 @@
   (<- (require-law (and (= forgot.forgotten 2) (= beat-gone (EventAbsent)) (! (fresh-append? beat-new tick-again))
                         (isinstance read Events) (= (lfor e read.items #(e.idempotency-key (get e.body "n"))) [#("b-1" 9)]))
                    law (.format "長さの後の覚えが外れない・外れた鍵の追記が新しい出来事でない: {!r} {!r} {!r} {!r}" forgot beat-gone beat-new read)))
-  [beat tick touched-beat touched-tick beat-touched tick-touched swept beat-again beat-other beat-key tick-key tick-again
+  [beat tick touched-beat touched-tick asked settled beat-touched tick-touched asked-touched settled-key swept beat-again beat-other beat-key tick-key tick-again
    forgot beat-gone beat-new read])
 
 

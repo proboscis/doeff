@@ -15,7 +15,7 @@
 ;;;                body_digest = 本文の指紋(admission.body-digest)。出来事を消す transaction が同じ transaction で入れる(#3022)。
 ;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。remembered_at = 覚えた刻(epoch ミリ秒 — card ki-4ebaefac6668・
 ;;;                表の後に足した列で、列の無い表にだけ足す — SchemaStep の column。既定 = 足す文を流した刻・旧い版の書きの覚えも既定で刻を持つ)。
-;;;                覚え方(StreamDecl.key-memory)の長さを限った列の覚えは、回収(SweepExpired)が覚えた刻の順に外す
+;;;                覚え方(StreamDecl.key-memory)の長さを限った列の覚えは、回収(SweepExpired)が覚えた刻の境までを limit 個ずつ外す
 ;;;                (forget-keys-statement — 索引 (ledger, remembered_at))。覚えを残さない列は出来事を消す transaction で入れない・外す
 ;;;                (drop-keys-statement)。送ってから外す列の覚えは、鍵の出来事が置き場に在る間は外さない。
 ;;; 旧い版より後に足した索引(#3614 — どれも宣言から作る CREATE INDEX IF NOT EXISTS・旧い版の文の後ろ):
@@ -26,7 +26,7 @@
 ;;;   append_rows (ledger, 頭の式, seq) 頭で引ける列(key-lookup の ByKeyHead)の区切りごとに 1 つ — 頭で引く読み(read-events-statement の
 ;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
-;;;   retired_keys (ledger, remembered_at)  覚えの外し(forget-keys-statement の remembered_at <= 境 — 覚えた刻の順に limit 個)
+;;;   retired_keys (ledger, remembered_at)  覚えの外し(forget-keys-statement の remembered_at <= 境 — 境の内を limit 個)
 ;;;   state_rows (表の状態の欄の式)    保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ表の欄の式 —
 ;;;                                  終端の行の読み terminal-rows-statement が引く)
 ;;;   state_rows (並べる式 DESC NULLS LAST, key DESC)  表の上から読む欄(TableDecl.descending)ごとに 1 つ — 上から読む読み
@@ -1275,10 +1275,13 @@
 (defk forget-keys-statement [prefix stream forget-before archived limit]
   {:pre [(: prefix str) (: stream str) (: forget-before int) (: archived bool) (: limit int) (> limit 0)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "列 stream の、覚えた刻が forget-before(今 − 覚え方の長さ)以下の覚えを、覚えた刻の順に limit 個まで外し、外した数を 1 行で返す文を
+  "列 stream の、覚えた刻が forget-before(今 − 覚え方の長さ)以下の覚えを limit 個まで外し、外した数を 1 行で返す文を
    作るため(回収 SweepExpired の覚えの外し — 頭の註の retired_keys)。archived = 送ってから外す列で、鍵の出来事がまだ置き場に在る覚え
-   (書きが期限を過ぎた鍵を覚えただけ — 送り先に在ると確かめるまで外さない)は外さない。候補は (ledger, remembered_at) の索引を頭から
-   辿り、limit 個で止まる(書きの錠の中の文が触る行を limit で縛る)。出来事の照らしは冪等キーの一意の索引の引き 1 つの値の副問い合わせ
+   (書きが期限を過ぎた鍵を覚えただけ — 送り先に在ると確かめるまで外さない)は外さない。候補は (ledger, remembered_at) の索引の境までの
+   範囲を辿り、limit 個で止まる(書きの錠の中の文が触る行を limit で縛る)。候補を覚えた刻で並べない: 既に在る置き場では索引の用意が
+   この索引を起動の後に作るので、作り終えるまでの読みは主キー (ledger, idempotency_key) を辿る — 並べると、列の全部の覚えを読んで並べて
+   から上の limit 個を取る(前からの覚えが全部境の内の列では、外しの回ごとに列の全部を錠の中で読む)。並べなければ境の内の覚えを limit 個
+   見つけた所で止まる(外す順は答えを変えない)。出来事の照らしは冪等キーの一意の索引の引き 1 つの値の副問い合わせ
    (NOT EXISTS にしない — expired-event-condition の註の訳)。"
   (val present (if archived
                    (.format " AND (
@@ -1291,7 +1294,7 @@
                         WHERE (doomed.ledger, doomed.idempotency_key) IN (
                           SELECT kept.ledger, kept.idempotency_key FROM {p}retired_keys AS kept
                            WHERE kept.ledger = :ledger AND kept.remembered_at <= :forget_before{a}
-                           ORDER BY kept.remembered_at LIMIT :limit)
+                           LIMIT :limit)
                        RETURNING 1)
                      SELECT count(*) FROM gone" :p prefix :a present)
              :params (! (params-of #(#("ledger" stream) #("forget_before" forget-before) #("limit" limit))))))
