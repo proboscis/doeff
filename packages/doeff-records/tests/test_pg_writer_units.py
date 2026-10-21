@@ -89,7 +89,7 @@ class Hold:
         lock = "pg_advisory_lock_shared" if shared else "pg_advisory_lock"
         self.unlock = "pg_advisory_unlock_shared" if shared else "pg_advisory_unlock"
         self.db.execute(f"SELECT {lock}(hashtext(%s))", (key,))
-        self.released = False
+        self._mut_released = False
 
     def waiters(self):
         """この鍵の錠を DB の中で待っている接続の数を読むため。"""
@@ -99,8 +99,8 @@ class Hold:
         ).fetchone()[0]
 
     def release(self):
-        if not self.released:
-            self.released = True
+        if not self._mut_released:
+            self._mut_released = True
             self.db.execute(f"SELECT {self.unlock}(hashtext(%s))", (self.key,))
 
     def close(self):
@@ -228,8 +228,8 @@ def test_a_held_stream_unit_holds_only_its_own_appends(store):
 
 
 @do
-def queued_writers_leave_a_read_slot(store, hold, gated, outcome):
-    """同じ単位の書き 3 本を、止めが単位の錠を持つ間に撃ち、読みが接続を得るかを outcome に書くため(接続 3 本)。"""
+def queued_writers_leave_a_read_slot(store, hold, gated):
+    """同じ単位の書き 3 本を、止めが単位の錠を持つ間に撃ち、読みが接続を得たか(止めが持つ間に答えたか)を返すため(接続 3 本)。"""
     tasks = ()
     for n in range(store.size):
         task = yield Spawn(store.as_writer(PutRow("parts", (f"q{n}",), FrozenMap({"label": "a"}), ExpectAny()), gated=gated))
@@ -246,28 +246,28 @@ def queued_writers_leave_a_read_slot(store, hold, gated, outcome):
     yield Spawn(watch())
     if gated:
         yield until(done.is_set)
-        outcome["read_while_held"] = True
+        read_while_held = True
         assert hold.waiters() == 1, "並びの後ろの書きが DB の錠を待っている"
     else:
         yield until(lambda: hold.waiters() >= store.size)
         yield stays_false(done.is_set)
-        outcome["read_while_held"] = False
+        read_while_held = False
     hold.release()
     for task in tasks:
         written = yield Wait(task)
         assert isinstance(written, Written), written
     yield until(done.is_set)
+    return read_while_held
 
 
 @pytest.mark.parametrize("gated", [True, False], ids=["gated", "counterexample-ungated"])
 def test_same_unit_writers_queue_before_taking_a_connection(store, gated):
     hold = Hold(rows_key(store))
-    outcome = {}
     try:
-        store.run(queued_writers_leave_a_read_slot(store, hold, gated, outcome), gated=gated)
+        read_while_held = store.run(queued_writers_leave_a_read_slot(store, hold, gated), gated=gated)
     finally:
         hold.close()
-    assert outcome["read_while_held"] is gated
+    assert read_while_held is gated
 
 
 @do

@@ -97,24 +97,30 @@ def _synthetic_document() -> str:
     return head + "\n".join(sections)
 
 
+def _runner_environment() -> dict[str, str]:
+    """検を走らせた人の env(e2e の入力の env を読む入口はここ 1 か所)。"""
+    return dict(os.environ)  # noqa: DOEFF004 — 検が走らせた人の env から e2e の入力を読む 1 か所
+
+
 def _document() -> str:
-    given = os.environ.get(DOCUMENT_ENV)
+    given = _runner_environment().get(DOCUMENT_ENV)
     return Path(given).read_text(encoding="utf-8") if given else _synthetic_document()
 
 
 def _child_env(home: Path) -> dict[str, str]:
     """子の CLI の env: PATH と検の HOME と、更新の確かめを止める値だけ(この process の資格・hook の印を継がせない)。"""
-    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "DISABLE_AUTOUPDATER": "1",
+    return {"PATH": _runner_environment().get("PATH", "/usr/bin:/bin"), "HOME": str(home), "DISABLE_AUTOUPDATER": "1",
             "LANG": "C.UTF-8"}
 
 
-@pytest.mark.skipif(REAL_CLI is None or not os.environ.get(CREDENTIALS_ENV),
+@pytest.mark.skipif(REAL_CLI is None or not _runner_environment().get(CREDENTIALS_ENV),
                     reason=f"本物の claude と env {CREDENTIALS_ENV}(CLI の .credentials.json の path)が在る時だけ走る")
 def test_a_fifty_thousand_character_document_is_judged_by_the_real_cli(tmp_path: Path, record_property) -> None:
     document = _document()
     assert len(document) >= FIFTY_THOUSAND
-    thinking = os.environ.get(THINKING_ENV)
-    target = ClaudeJudgeTarget(model=os.environ.get(MODEL_ENV, "claude-sonnet-5-5"), config_dir=str(tmp_path / "home"),
+    environment = _runner_environment()
+    thinking = environment.get(THINKING_ENV)
+    target = ClaudeJudgeTarget(model=environment.get(MODEL_ENV, "claude-sonnet-5-5"), config_dir=str(tmp_path / "home"),
                                env=_child_env(tmp_path), thinking_tokens=None if thinking is None else int(thinking))
     judge = Judge(state={"document": document}, questions=QUESTIONS, timeout_seconds=WAIT_SECONDS, cacheable=False)
 
@@ -123,7 +129,7 @@ def test_a_fifty_thousand_character_document_is_judged_by_the_real_cli(tmp_path:
         return (yield judge)
 
     started = time.monotonic()
-    verdict = run_judgment(flow(), target=target, lender=fixed_credential_lender(_lent_credential(os.environ[CREDENTIALS_ENV])))
+    verdict = run_judgment(flow(), target=target, lender=fixed_credential_lender(_lent_credential(environment[CREDENTIALS_ENV])))
     seconds = time.monotonic() - started
     record_property("seconds", round(seconds, 2))
     record_property("chars", len(document))

@@ -88,13 +88,14 @@ def main() -> int:
     flags = read_flags(sys.argv[1:])
     text = sys.stdin.read()
     model = str(flags.get("--model", ""))
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    environment = dict(os.environ)  # noqa: DOEFF004 — 替え玉の CLI が、実物と同じく起こされた process の環境を読む 1 か所
+    config_dir = environment.get("CLAUDE_CONFIG_DIR", "")
     credential = credential_seen(config_dir) if config_dir else None
-    record = os.environ.get("STUB_PRINT_RECORD")
+    record = environment.get("STUB_PRINT_RECORD")
     if record:
         with open(record, "w", encoding="utf-8") as stream:
             json.dump({"argv": sys.argv[1:], "cwd": os.getcwd(), "config_dir": config_dir, "credential": credential,
-                       "max_thinking_tokens": os.environ.get("MAX_THINKING_TOKENS"), "input_chars": len(text), "input": text,
+                       "max_thinking_tokens": environment.get("MAX_THINKING_TOKENS"), "input_chars": len(text), "input": text,
                        "pid": os.getpid()}, stream)
     if "STUB:hang" in text:
         while True:
