@@ -960,25 +960,30 @@
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
-(defk terminal-rows-statement [prefix table state-field terminal scoped]
-  {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0) (: scoped bool)] :post [(: % Statement)]
+(defk terminal-rows-statement [prefix table state-field terminal scoped before-at]
+  {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0) (: scoped bool) (: before-at int)]
+   :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "終端の状態の行(保持の期限の候補 — 期限の判断は admission.row-expired?)を読む文を作るため(terminal が空なら呼ばない)。状態の欄の条件は
+  "保持の期限を過ぎた終端の状態の行(回収の候補 — 期限の判断は admission.row-expired?)を読む文を作るため(terminal が空なら呼ばない)。状態の欄の条件は
    索引に当たる形で、表の終端でない行を読まない(#3614): scoped = 表の状態の欄の表の欄の式の索引が在る(索引は宣言した索引の欄か
-   added-indexes が作る)なら表の欄の式の IN だけ・無ければ前の形(ledger = :ledger と欄の式の IN — 旧い形の索引か前の部分索引が引く)。"
+   added-indexes が作る)なら表の欄の式の IN だけ・無ければ前の形(ledger = :ledger と欄の式の IN — 旧い形の索引か前の部分索引が引く)。
+   最後に書いた刻の条件(updated_at ≦ 境の刻 before-at — 読みの文の expired-row-part と同じ境)で、期限の前の終端の行を返さない: 前の形は
+   表の終端の行を全部、値ごと返し、記録の service が回収のたびに全部の値を解いてから期限を判じた(本番で回収 1 回が SQL の thread と
+   scheduler の thread をそれぞれ 5〜9 秒塞ぎ、その間の要求が全部待った)。"
   (<- words (terminal-words terminal))
+  (<- bound (params-of #(#("before_at" before-at))))
   (if scoped
       (do (<- expression (table-field-expression "" table state-field))
           (<- states (field-in-condition expression "t" words))
           (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
-                       WHERE {s} ORDER BY key COLLATE \"C\""
+                       WHERE {s} AND updated_at <= :before_at ORDER BY key COLLATE \"C\""
                                     :p prefix :s states.text)
-                     :params states.params))
+                     :params (+ states.params bound)))
       (do (<- states (terminal-state-condition "payload" state-field "t" terminal))
           (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
-                       WHERE ledger = :ledger AND {s} ORDER BY key COLLATE \"C\""
+                       WHERE ledger = :ledger AND {s} AND updated_at <= :before_at ORDER BY key COLLATE \"C\""
                                     :p prefix :s states.text)
-                     :params (+ (! (params-of #(#("ledger" table)))) states.params)))))
+                     :params (+ (! (params-of #(#("ledger" table)))) states.params bound)))))
 
 
 (defk upsert-row-statement [prefix table key payload version at writer origin-host epoch]
