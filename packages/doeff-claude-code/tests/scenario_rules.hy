@@ -43,6 +43,10 @@
 ;; 印の綴りは替え玉の CLI だけの物なので、数を当てにする検は替え玉の CLI に置く。言い方の無い入力でも、文字が空で画像だけの入力は数えて答える
 ;; (利用者が画像だけを貼って送る形)。
 (val IMAGES-PHRASE "Count the attached images.")
+;; 本体の会話の API の呼びを、本物の CLI 2.1.292 と同じく message_start(始まりの usage)→ assistant の行(出力は途中の値)→
+;; message_delta(最終の usage)の 3 段で流させる言い方(card ki-290ec664737d)。本物の claude は呼びの出力の値を選べないので、途中の値と
+;; 最終の値の違いを当てにする検は替え玉の CLI に置く。
+(val STREAMED-CALLS-PHRASE "Stream each call's usage.")
 (val IMAGE-MARK "[stub:image]")
 
 (defn #^ str advice-stdout [#^ str advice]
@@ -79,7 +83,8 @@
    \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))
    \"hook_feedback\" Stop hook が最初の答え(REJECTED-ANSWER)を差し戻す理由(HOOK-FEEDBACK-PHRASE・無ければ None — #4020)
    \"compact\" 答えの前に CLI が会話を 1 度自動で圧縮するか(COMPACT-PHRASE — 圧縮の行の compact_metadata は COMPACT-METADATA・#4189)
-   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None — ki-d8b473480303)}。
+   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None — ki-d8b473480303)
+   \"streamed_calls\" 本体の呼びを始まり・途中・終わりの 3 段で流すか(STREAMED-CALLS-PHRASE — 替え玉の CLI だけが読む・card ki-290ec664737d)}。
    memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
@@ -118,6 +123,7 @@
    "hook_feedback" (if sent-back (.group sent-back 1) None)
    "compact" (in COMPACT-PHRASE text)
    "advice" (if advised (.group advised 1) None)
+   "streamed_calls" (in STREAMED-CALLS-PHRASE text)
    "deltas" (if streamed (int (.group streamed 1)) 0)
    "think_seconds" (if think (float (.group think 1)) 0.0)
    "hook_seconds" (if hooks (float (.group hooks 1)) 0.0)})

@@ -1058,19 +1058,26 @@
   "出来事の列から、呼びの usage の出来事を (列の中の位置, 出来事) の組で抜き出すため。"
   (lfor #(index event) (enumerate events) :if (isinstance event AgentCallUsageEvent) #(index event)))
 
-(defk check-a-running-turn-carries-each-main-call-usage [#^ Read done #^ AgentTurnUsage first-call]
-  {:pre [(: done Read) (: first-call AgentTurnUsage)] :post [(: % (type None))]
+(defk check-a-running-turn-carries-each-main-call-usage [#^ Read done #^ AgentTurnUsage first-call #^ int closed-calls]
+  {:pre [(: done Read) (: first-call AgentTurnUsage) (: closed-calls int)] :post [(: % (type None))]
    :tags {:context "headless-adapter-test" :role "judgment"}}
   "道具を 1 度呼ぶ手番は、本体の会話の呼び 2 回(道具の呼びの行・最後の本文の行)の usage と model を、行の順に出来事で運ぶ。1 つ目は
    道具の結果の出来事より前に在る(手番の終わりを待たずに読める)。subagent の行(替え玉の CLI は道具の途中に 1 行出す — 別の model と
    usage)は出来事にならない。最後の出来事の値は、手番の終わりの last_call_usage・last_call_model と同じ。first-call = 道具の呼びの行が
    名乗る usage(替え玉の CLI は最後の本文の行と別の値・fake はどの行も同じ値)。呼びの usage を終わりでしか運ばない adapter では
-   出来事が 0 で赤 — 上の層は、最初の手番が走っている会話の context の大きさを知れない。"
+   出来事が 0 で赤 — 上の層は、最初の手番が走っている会話の context の大きさを知れない。行の名乗りの出来事は final が偽で、呼びの
+   id(message.id)を運ぶ。closed-calls = 層 2 が呼びの始まりと終わりから組んだ最終の出来事(final が真)の数(fake は返事 1 つ = 呼び
+   1 つを result の行の前に閉じる・替え玉の CLI の既定の手番は message_delta を出さないので 0 — agora card ki-290ec664737d)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
-  (<- usages list (call-usages-of done.events))
+  (<- every list (call-usages-of done.events))
+  (val usages (lfor #(index event) every :if (not event.final) #(index event)))
+  (val finals (lfor #(_ event) every :if event.final event))
   (val final-call (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010))
   (assert (= (lfor #(_ event) usages #(event.usage event.model)) [#(first-call CALL-MODEL) #(final-call CALL-MODEL)])
           (repr done.events))
+  (assert (all (gfor #(_ event) usages event.call-id)) (repr usages))
+  (assert (= (len finals) closed-calls) (repr finals))
+  (assert (all (gfor event finals (in event.call-id (sfor #(_ streamed) usages streamed.call-id)))) (repr finals))
   (val results (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolResultEvent) index))
   (assert (and results (< (get (get usages 0) 0) (get results 0))) (repr done.events))
   (val last (get (get usages -1) 1))
@@ -1080,12 +1087,41 @@
 (deftest test-headless-carries-each-main-call-usage-while-the-turn-runs-fake [tmp-path]
   (<- (check-a-running-turn-carries-each-main-call-usage
         (run-on FAKE tmp-path tool-turn-with-output)
-        (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010))))
+        (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010)
+        1)))
 
 (deftest test-headless-carries-each-main-call-usage-while-the-turn-runs-stub [tmp-path]
   (<- (check-a-running-turn-carries-each-main-call-usage
         (run-on STUB tmp-path tool-turn-with-output)
-        (AgentTurnUsage :input-tokens 3 :output-tokens 5 :cache-write-tokens 0 :cache-read-tokens 1000))))
+        (AgentTurnUsage :input-tokens 3 :output-tokens 5 :cache-write-tokens 0 :cache-read-tokens 1000)
+        0)))
+
+;; 本体の呼びを本物の CLI 2.1.292 と同じく message_start → 途中の値の assistant の行 → message_delta の 3 段で流させる言い方
+;; (替え玉の CLI の規則 scenario_rules.hy の STREAMED-CALLS-PHRASE と同じ言葉 — agora card ki-290ec664737d)。
+(val STREAMED-CALLS-PHRASE "Stream each call's usage.")
+
+(defk streamed-tool-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "呼びを 3 段で流す道具の手番を最後まで読む(呼びの最終の usage が出来事に載るかを見るため)。"
+  (<- prompt str (echo-prompt ECHO-OUTPUT "ECHOED"))
+  (<- handle (launch s "adapter-streamed-calls" (+ prompt " " STREAMED-CALLS-PHRASE) None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(deftest test-headless-carries-each-main-call-final-usage-and-the-finals-sum-to-the-turn-output-stub [tmp-path]
+  ;; agora card ki-290ec664737d: 本体の呼びごとに、行の名乗り(final 偽 — 出力は途中の値 1)の後に最終の出来事(final 真)が 1 つ・呼びの
+  ;; id は同じ・最終の出力の和が手番の usage の出力と一致する。失敗ケース = 行の名乗りだけを運ぶ adapter(最終の出来事が 0 で、行の出力の
+  ;; 和 2 は手番の出力 806 と合わない)。
+  (val done (run-on STUB tmp-path streamed-tool-turn))
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (<- every list (call-usages-of done.events))
+  (val streamed (lfor #(_ event) every :if (not event.final) event))
+  (val finals (lfor #(_ event) every :if event.final event))
+  (assert (= (lfor event streamed event.usage.output-tokens) [1 1]) (repr streamed))
+  (assert (= (lfor event finals event.usage.output-tokens) [405 401]) (repr finals))
+  (assert (= (lfor event finals event.call-id) (lfor event streamed event.call-id)) (repr every))
+  (assert (= (sum (gfor event finals event.usage.output-tokens)) done.end.usage.output-tokens) (repr done.end)))
 
 (defk call-usage-read-before-the-turn-ends [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-adapter-test" :role "entry"}}

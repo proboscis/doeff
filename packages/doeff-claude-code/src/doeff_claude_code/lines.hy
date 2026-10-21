@@ -136,6 +136,15 @@
 ;; stop・message_delta)。
 (defenum DeltaKind TEXT THINKING TOOL-INPUT OTHER NO-DELTA)
 
+(defrecord CallOpened
+  "API の呼び 1 回の始まり(stream_event の message_start — card ki-290ec664737d): message-id = message.id / model = message.model
+   (無ければ None)/ parent-tool-use-id = 行の最上位の parent_tool_use_id(本体の会話は None)/ usage = message.usage(始まりの usage —
+   出力は途中の値。実測 CLI 2.1.292: stdout の message_start も、その呼びの assistant の行も、出力 16 を名乗る)。"
+  (#^ str message-id)
+  (#^ (| str None) model)
+  (#^ (| str None) parent-tool-use-id)
+  (#^ Usage usage))
+
 (defclass [(dataclass :frozen True)] PartialMessage []
   "stream_event(--include-partial-messages)。text-delta = text_delta なら本文の差分(ほかは空)/ delta = delta の種類(DeltaKind —
    考えている間や道具の命令を書いている間の行を、本文の空の行と分けて数えるため)/ thinking-delta = thinking_delta なら考えの差分の
@@ -146,7 +155,11 @@
    上の層が「考えている」の表示をその時に出せる(#4186・ほかは偽)。本文の差分は種類 TEXT の行だけ、考えの差分は種類 THINKING の行だけ、命令の切れ端は種類 TOOL-INPUT の
    行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。ttft-ms = 行の最上位の ttft_ms(message_start の行だけが名乗る —
    CLI が API へ要求を送ってから message_start を受けるまでのミリ秒。実測 2.1.292 で result の ttft_stream_ms − time_to_request_ms と
-   1 ms 以内で同じ・名乗らなければ None — #3855)。"
+   1 ms 以内で同じ・名乗らなければ None — #3855)。
+   call-opened = message_start の行なら、その呼びの始まり(CallOpened — id の無い message_start とほかの行は None)/ call-end-usage =
+   message_delta の行なら、その event の usage(呼びの終わりの usage — 実測 CLI 2.1.292 は最終の出力と入力の側・cache の寿命の内訳・
+   server_tool_use を名乗る。名乗らない欄は None・ほかの行は None)/ parent-tool-use-id = 行の最上位の parent_tool_use_id(本体の会話は
+   None)。後の 3 つは、上の層が呼びの最終の usage を始まりと終わりの対から組むため(call-step — card ki-290ec664737d)。"
   (setv #^ str text-delta "")
   (setv #^ DeltaKind delta DeltaKind.NO-DELTA)
   (setv #^ str thinking-delta "")
@@ -154,6 +167,9 @@
   (setv #^ (| ToolCall None) tool-start None)
   (setv #^ (| int None) ttft-ms None)
   (setv #^ bool thinking-start False)
+  (setv #^ (| CallOpened None) call-opened None)
+  (setv #^ (| Usage None) call-end-usage None)
+  (setv #^ (| str None) parent-tool-use-id None)
   (defn __post_init__ [self]
     (when (and self.tool-input-delta (!= self.delta DeltaKind.TOOL-INPUT))
       (raise (ValueError (.format "PartialMessage の命令の切れ端は種類 TOOL-INPUT の行だけ: delta {!r}" self.delta))))
@@ -161,6 +177,88 @@
       (raise (ValueError (.format "PartialMessage の本文の差分は種類 TEXT の行だけ: delta {!r}" self.delta))))
     (when (and self.thinking-delta (!= self.delta DeltaKind.THINKING))
       (raise (ValueError (.format "PartialMessage の考えの差分は種類 THINKING の行だけ: delta {!r}" self.delta))))))
+
+;; --- 呼びの最終の usage(card ki-290ec664737d) ------------------------------------------------------
+;;
+;; CLI の stdout の assistant の行の usage は、その呼びの message_start の値のまま(出力は途中の値 — 実測 CLI 2.1.292 は block ごとの行が
+;; どれも出力 16 を名乗る)。呼びの出力の全部と、終わりに確かになる入力の側は、その呼びの message_delta の stream_event だけが名乗る。
+;; 上の層が呼びごとの使用量を最終の値で記録できるように、同じ親(本体の会話か subagent の道具の呼び)の message_start と message_delta の
+;; 対を 1 つの「閉じた呼び」(CallClosed)へ組む。重ね方は CLI が自分の記録に使う規則と同じ(closed-usage)。message_delta の来ない呼び
+;; (止めた・process が降りた・stream が切れて CLI が送り直した)は閉じない — 上の層はその呼びの出力を途中の値として扱う(0 も最終の値も
+;; 発明しない)。
+
+(defrecord CallClosed
+  "API の呼び 1 回の最終の消費: 同じ親の最後の message_start(CallOpened)の usage に、その呼びの message_delta の usage を重ねた物
+   (closed-usage)。stdout の行ではなく、handler と fake が message_delta の行の直後に手番の記録へ足す行の種類(raw は空)。
+   message-id・model = その呼びの message_start の値 / parent-tool-use-id = 本体の会話は None / usage = 最終の usage。"
+  (#^ str message-id)
+  (#^ (| str None) model)
+  (#^ (| str None) parent-tool-use-id)
+  (#^ Usage usage))
+
+(defrecord CallStep
+  "1 行を読んだ後の呼びの組み: open = 開いている呼び(親ごとに高々 1 つ — CLI は 1 つの親の呼びを順に送る)/ closed = この行で閉じた
+   呼び(閉じなければ None)。"
+  (#^ (get tuple #(CallOpened ...)) open)
+  (#^ (| CallClosed None) closed))
+
+(defk positive-or [#^ (| int None) stated #^ (| int None) earlier]
+  {:pre [(: stated (| int None)) (: earlier (| int None))] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
+  "終わりの usage の入力の側の 1 欄を、始まりの値へ重ねるため(CLI と同じ — 終わりが 0 より大きい数を名乗った時だけ採り、名乗らない・0 は
+   始まりの値)。"
+  (if (and (is-not stated None) (> stated 0)) stated earlier))
+
+(defk stated-or [stated earlier]
+  {:pre [(: stated (| int str None)) (: earlier (| int str None))] :post [(: % (| int str None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "終わりの usage の 1 欄を、始まりの値へ重ねるため(CLI と同じ — 終わりが名乗れば 0 でもその値・名乗らなければ始まりの値)。"
+  (if (is-not stated None) stated earlier))
+
+(defk closed-usage [start end]
+  {:pre [(: start (| Usage None)) (: end (| Usage None))] :post [(: % (| Usage None))] :tags {:context "claude-code" :role "judgment"}}
+  "呼びの始まり(message_start)の usage に終わり(message_delta)の usage を重ねた、呼びの最終の usage を返すため。規則は CLI 2.1.292 が
+   自分の記録に使う重ね方と同じ: 入力・cache の読み・cache の書きは終わりが 0 より大きい数を名乗った時だけ終わりの値(cache の書きの
+   総数を名乗らずに寿命の内訳だけを名乗れば内訳の和)・cache の書きの 5 分 / 1 時間の内訳は終わりが内訳を名乗った時(和が 0 より大きい)
+   だけ終わりの値(欄ごとに名乗らなければ始まり)・出力・web 検索の数・service tier は終わりが名乗れば終わりの値。始まりか終わりの
+   無い呼びは閉じない(None — 読まなかった側の usage を発明しない)。"
+  (when (or (is start None) (is end None))
+    (return None))
+  (val end-5m (or end.cache-creation-5m-input-tokens 0))
+  (val end-1h (or end.cache-creation-1h-input-tokens 0))
+  (val lifetimes-stated (> (+ end-5m end-1h) 0))
+  (<- input (positive-or end.input-tokens start.input-tokens))
+  (<- write (positive-or end.cache-creation-input-tokens (if lifetimes-stated (+ end-5m end-1h) start.cache-creation-input-tokens)))
+  (<- read (positive-or end.cache-read-input-tokens start.cache-read-input-tokens))
+  (<- write-5m (stated-or end.cache-creation-5m-input-tokens start.cache-creation-5m-input-tokens))
+  (<- write-1h (stated-or end.cache-creation-1h-input-tokens start.cache-creation-1h-input-tokens))
+  (<- output (stated-or end.output-tokens start.output-tokens))
+  (<- searches (stated-or end.web-search-requests start.web-search-requests))
+  (<- tier (stated-or end.service-tier start.service-tier))
+  (Usage :input-tokens input
+         :output-tokens output
+         :cache-creation-input-tokens write
+         :cache-read-input-tokens read
+         :cache-creation-5m-input-tokens (if lifetimes-stated write-5m start.cache-creation-5m-input-tokens)
+         :cache-creation-1h-input-tokens (if lifetimes-stated write-1h start.cache-creation-1h-input-tokens)
+         :web-search-requests searches
+         :service-tier tier))
+
+(defk call-step [#^ tuple open kind]
+  {:pre [(: open (get tuple #(CallOpened ...))) (: kind ClaudeLineKind)] :post [(: % CallStep)] :tags {:context "claude-code" :role "judgment"}}
+  "1 行(分類した行の種類 kind)を読んだ後の呼びの組みを返すため(節の頭の註): message_start の行は、その親の開いた呼びを新しい呼びに
+   替える(前の呼びは閉じずに捨てる — 終わりの来なかった呼び)・message_delta の行は、その親の開いた呼びを閉じる(開いた呼びが無ければ
+   何も閉じない — 始まりを読まなかった呼びの usage を発明しない)・ほかの行は組みを変えない。"
+  (val partial (isinstance kind PartialMessage))
+  (val parent (if partial kind.parent-tool-use-id None))
+  (val others (tuple (gfor call open :if (!= call.parent-tool-use-id parent) call)))
+  (val started (next (gfor call open :if (= call.parent-tool-use-id parent) call) None))
+  (<- usage (closed-usage (if (is started None) None started.usage) (if partial kind.call-end-usage None)))
+  (cond
+    (and partial (is-not kind.call-opened None)) (CallStep :open (+ others #(kind.call-opened)) :closed None)
+    (is usage None) (CallStep :open open :closed None)
+    True (CallStep :open others
+                   :closed (CallClosed :message-id started.message-id :model started.model :parent-tool-use-id parent
+                                       :usage usage))))
 
 (defclass [(dataclass :frozen True)] ThinkingTokens []
   (setv #^ int estimated 0))
@@ -431,7 +529,7 @@
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
                         PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactStarted CompactEnded
-                        CompactBoundary TurnResult SubagentTranscript Other))
+                        CompactBoundary TurnResult SubagentTranscript CallClosed Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
   "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語(stdout の行でない
@@ -815,16 +913,38 @@
    ほかの event・ほかの種類の block は偽。"
   (and (= (text-at event "type") "content_block_start") (= (text-at (object-at event "content_block") "type") "thinking")))
 
+(defk call-opened-of [#^ dict event #^ (| str None) parent]
+  {:pre [(: event dict) (: parent (| str None))] :post [(: % (| CallOpened None))] :tags {:context "claude-code" :role "foundation"}}
+  "stream_event の event が呼びの始まり(message_start)なら、その呼びの id・model・始まりの usage を読むため(呼びの最終の usage を
+   終わりの usage と組むため — card ki-290ec664737d)。ほかの event・message.id の無い始まり(どの呼びか分からない)は None。"
+  (val message (object-at event "message"))
+  (val usage (.get message "usage"))
+  (if (and (= (text-at event "type") "message_start") (text-at message "id"))
+      (CallOpened :message-id (text-at message "id") :model (or (text-at message "model") None) :parent-tool-use-id parent
+                  :usage (if (isinstance usage dict) (usage-of usage) (Usage)))
+      None))
+
+(defk call-end-usage-of [#^ dict event]
+  {:pre [(: event dict)] :post [(: % (| Usage None))] :tags {:context "claude-code" :role "foundation"}}
+  "stream_event の event が呼びの終わり(message_delta)で usage を名乗れば、その usage を読むため(card ki-290ec664737d)。ほかの event・
+   usage の無い終わりは None。"
+  (val usage (.get event "usage"))
+  (if (and (= (text-at event "type") "message_delta") (isinstance usage dict)) (usage-of usage) None))
+
 (defn classify-stream-event [#^ dict record]
   (setv event (object-at record "event"))
   (setv delta (object-at event "delta"))
   (setv kind (run (delta-kind-of (text-at delta "type"))))
+  (setv parent (or (text-at record "parent_tool_use_id") None))
   (PartialMessage :text-delta (if (= kind DeltaKind.TEXT) (text-at delta "text") "") :delta kind
                   :thinking-delta (if (= kind DeltaKind.THINKING) (text-at delta "thinking") "")
                   :tool-input-delta (if (= kind DeltaKind.TOOL-INPUT) (text-at delta "partial_json") "")
                   :tool-start (tool-start-of event)
                   :ttft-ms (int-at record "ttft_ms")
-                  :thinking-start (thinking-start-of event)))
+                  :thinking-start (thinking-start-of event)
+                  :call-opened (run (call-opened-of event parent))
+                  :call-end-usage (run (call-end-usage-of event))
+                  :parent-tool-use-id parent))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 
