@@ -169,9 +169,14 @@ ATLAS_MACHINE_JOBS = 1
 ATLAS_OVERLAY_RESIDENT_JOBS = 8
 ATLAS_TASK_RESERVE = 3
 ATLAS_KEPT_ROOM = 0
+# eos の受ける数の内訳: 機体の仕事 1 + 上に載る系の常駐の job で eos の能力(host-eos)を要る物 2(2026-10-22 に 1 → 2 — 上に載る系が
+# 記録の写しを古い側へ移す常駐の job を 1 つ足す)。task は来ない。
+EOS_MACHINE_JOBS = 1
+EOS_OVERLAY_RESIDENT_JOBS = 2
 # 受ける数が既定(WORKER_CAPACITY 2・WORKER_TASK_RESERVE 0)と違う機体 — (受ける数, task に空けておく数)。
 HOST_ONLY_ROOM = {
     "atlas": (str(ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM), str(ATLAS_TASK_RESERVE)),
+    "eos": (str(EOS_MACHINE_JOBS + EOS_OVERLAY_RESIDENT_JOBS), "0"),
 }
 # atlas の worker が job の子へ足して渡す env の名: Rust の toolchain の置き場(image の env)。task は Rust の部品を組むので、継がないと
 # rustup が toolchain を選べない。道具の cache の置き場は task が機体の事実 WORK_DIR から自分で作る(worker は上に載る系の置き場を知らない)。
