@@ -18,7 +18,7 @@
 
 | 週 | 原稿 | Zennのslug | 読者への入口 | 公開状態 |
 | --- | --- | --- | --- | --- |
-| 1 | [処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは](doeff-main.md) | `doeff-introduction` | エフェクトと最小ハンドラを実行し、用途の全体像を見る | 公開予定 |
+| 1 | [Pythonの代数的エフェクトで、変えない処理にハンドラを重ねる](doeff-main.md) | `doeff-introduction` | 英語の1本目「Algebraic effects for Python」の訳。1つの処理に、予算・リトライ・観察・仮想時間のハンドラを重ねる | 公開予定 |
 | 2 | [Claude Codeを起動してテストするのをやめる](doeff-agents.md) | `doeff-ai-agents` | AIエージェントの仕事を、起動・待機・結果の契約で組み合わせる | 公開予定 |
 | 3 | [テストで20秒待つのをやめる](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 |
 | 4 | [依存を引数で引き回すのをやめる](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |

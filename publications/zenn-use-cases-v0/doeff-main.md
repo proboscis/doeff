@@ -1,101 +1,534 @@
 ---
-title: "処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは"
+title: "Pythonの代数的エフェクトで、変えない処理にハンドラを重ねる"
 emoji: "🔁"
 type: "tech"
-topics: ["python", "doeff", "設計"]
+topics: ["python", "doeff", "algebraiceffects", "設計"]
 published: false
 ---
 
-![doeff — 処理を書く。動かし方は、選べる。](/images/zenn-use-cases-v0/generated/main-hero.png)
+![doeff — 1つの処理に、ハンドラを重ねる。](/images/zenn-use-cases-v0/generated/main-hero.png)
 
 ## doeffとは？
 
-テストのためだけに、処理へ引数や`if`を足したことはありませんか。[doeff](https://github.com/proboscis/doeff)は、処理を書き換えずに、テストと本番で動かし方を替えるPythonのライブラリです。この記事では、同じ挨拶の処理に付けるハンドラを替え、「花子」にも「太郎」にも挨拶させます。
+*AIエージェントが、メンテナの[@proboscis](https://github.com/proboscis)のもとでdoeffの開発を手伝いながら書きました。*
 
-たとえば、本番では設定から名前を読み、テストでは決めた名前を渡したい場面です。そのたびに引数や`if`を足すと、処理の本体が実行環境の都合で膨らんでいきます。doeffでは、**「何をするか」と「どう実行するか」を分けて書けます。**
+Pythonの代数的エフェクト(algebraic effects)を、[doeff](https://github.com/proboscis/doeff)で紹介します。doeffは、中核をRustで書いたオープンソースのライブラリです。関数はエフェクト、つまり名前を付けた操作を`yield`します。ハンドラは、そのエフェクトを関数の残りの部分と一緒に受け取り、関数をどう進めるかを決めます。
 
-処理の本体は、必要な操作を`yield`で外側へ依頼します。依頼にどう答え、いつ処理を再開するかは、外側に取り付けるハンドラが決めます。
+その決めごとの1つ1つは、別の方法でも手に入ります。テストのモック、偽の時計、リトライのデコレータ、自作のイベントループです。エフェクトは、そのすべてを1つの仕組みで扱えるようにします。だから同じコードの周りにいくつも重ねられ、コードに触れずにどれか1つを入れ替えられます。ここでは小さなプログラムを1つ作り、その周りに層を1つずつ足していきます。
 
-まずは、名前を依頼する処理と、その依頼に「花子」を返すハンドラを一緒に見てみます。最後の行でハンドラを取り付け、挨拶が返るところまで実行できます。
+理論は要りません。`yield`が何をするかを知っていれば、必要なことの大半はもう分かっています。
 
-```python
-from doeff import Pass, Resume, do, handler, run, with_handlers  # 依頼の委譲・再開・処理の定義と実行を使う。
-from doeff_core_effects import Ask  # キーを指定して値を依頼するエフェクトを使う。
+## 考え方:ハンドラが再開できる例外
 
-@do  # greet()を呼ぶと、実行する手順を表すProgramができる。
-def greet():  # 名前の取得方法を決めずに、挨拶を組み立てる。
-    name = yield Ask("name")  # 名前を依頼し、ハンドラから返された値を受け取る。
-    return f"こんにちは、{name}さん"  # 受け取った名前を含む挨拶を返す。
+例外を知っているなら、エフェクトは「ハンドラが答えられる例外」だと考えてください。答えた後、コードは例外を投げた行から続きます。OCaml 5も、エフェクトハンドラを「再開できる例外」として紹介しています。Pythonのジェネレータは元から止まったり再開したりできるので、残りはライブラリが補います。エフェクトごとにハンドラを探し、止まったコードを覚えておくRustのVMです。
 
-@handler  # この処理をProgramに取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで再開や委譲を指示する。
-def handle_ask_effect(effect, k):  # effectは届いた依頼、kは中断した処理の続き。
-    if isinstance(effect, Ask) and effect.key == "name":  # 名前を求める依頼だけを担当する。
-        return (yield Resume(k, "花子"))  # nameに「花子」を渡してgreetを再開する。
-    return (yield Pass(effect, k))  # 担当外の依頼は、外側のハンドラへ渡す。
+- **エフェクト**は、`Spend(3)`・`Fetch(url)`・`Spawn(task)`のように、操作に名前を付けたただの値です。それ自体は何もしません。自分でクラスとして定義することも、doeffのパッケージが定義した物を使うこともできます。
+- **プログラム**は、`@do`を付けたジェネレータ関数です。エフェクトを`yield`するたびに止まります。
+- **ハンドラ**は、`@handler`を付けた`(effect, k)`の関数です。`@handler`で、ハンドラは`@do`の関数にもなります。エフェクトと、関数の残り(継続)である`k`を一緒に受け取り、何が起きるかを決めます。
+- どのハンドラを付けるかは、**呼び出す側**が選びます。だから同じ関数が、ハンドラごとに違う意味になります。
 
-assert run(with_handlers([handle_ask_effect], greet())) == "こんにちは、花子さん"  # 取り付けて実行し、挨拶を確認する。
-```
+| ハンドラが | 書き方 | プログラムは |
+|---|---|---|
+| 答えて、残りを走らせる | `yield Resume(k, value)` | `value`を受け取って進み、終わるとハンドラがその結果を受け取って、そのままか別の値を返す |
+| 答えて、手を離す | `yield Transfer(k, value)` | `value`を受け取って進み、ハンドラに制御は戻らない |
+| 例外を投げ込む | `yield ResumeThrow(k, error)` | `yield`の所で`error`が起き、自分の`try`で捕まえられる |
+| エフェクトを外へ渡す | `yield Pass(effect, k)` | 1つ外のハンドラの答えを受け取る |
+| 後のために取っておく | `k`をしまい、後のエフェクトを扱う時に`yield Transfer(k, value)` | ハンドラが続きを走らせるまで待つ |
+| 捨てる | `k`を再開せずに`return value` | `yield`で止まったままで、`value`がそのハンドラの下の全体の結果になる |
 
-**`yield Ask("name")`と`yield Resume(k, "花子")`が対になっています。** 前者で名前を依頼し、後者で「花子」を渡して処理を再開します。その値が`name`に入り、次の`return`で挨拶になります。
-
-`k`は、依頼を出して中断した処理の続きで、**継続**と呼びます。`Resume`は、その続きを指定した値で再開する指示です。`Pass`は、担当しない依頼を外側のハンドラへ任せる指示です。
-
-- **エフェクト**（effect）：`Ask("name")`のような、外側へ依頼する操作
-- **ハンドラ**（handler）：`handle_ask_effect`のような、依頼を受けて値と再開の仕方を決める処理
-- **`@do`と`yield`**：普通のPythonの制御構文のまま、依頼や別の処理をつなぐ書き方
-- **`Program`**：`greet()`のように`@do`の関数を呼ぶとできる、まだ動いていない手順
-
-最後の行は、3つの段階でできています。`greet()`で`Program`を作り、`with_handlers`でハンドラを取り付け、`run`で実行します。
-
-`greet`には、名前を設定から読むのか、テスト用の値にするのかを書いていません。その選択をハンドラに任せています。
-
-## ハンドラを替えると、同じ処理の動きが変わる
-
-今度は「太郎」を返すハンドラを定義します。上のコードに続けて実行してください。`greet`の定義を変える必要はありません。
+いちばん小さな形です。`research`は話題ごとに`Spend`を1つ`yield`し、お金を使うとはどういうことかを何も知りません。
 
 ```python
-@handler  # 同じエフェクトを別の方法で扱うハンドラを作る。
-@do  # 再開と委譲を、最初のハンドラと同じ書き方で指示する。
-def handle_test_ask_effect(effect, k):  # 依頼の型と再開する値の契約を保つ。
-    if isinstance(effect, Ask) and effect.key == "name":  # 同じ名前の依頼を受け取る。
-        return (yield Resume(k, "太郎"))  # 今度はnameへ「太郎」を渡す。
-    return (yield Pass(effect, k))  # 担当外の依頼は外側へ渡す。
+# spend.py
+from dataclasses import dataclass  # エフェクトを、値を持つクラスとして書く。
 
-assert run(with_handlers([handle_test_ask_effect], greet())) == "こんにちは、太郎さん"  # 本体を変えず、ハンドラ交換で結果が変わる。
+from doeff import EffectBase, Resume, Transfer, do, handler, run  # エフェクトの基底・再開・手放し・定義・実行を使う。
+
+
+@dataclass(frozen=True)  # 変わらない値にする。
+class Spend(EffectBase):  # エフェクト:「次の一歩にこれだけかかる」。
+    cost: int  # かかる額。
+
+
+@do  # researchを、yieldのたびに止まるプログラムにする。
+def research(topics: list[str]):  # yieldのたびに止まる。お金のことは何も知らない。
+    notes = []  # 調べたメモをためる。
+    for topic in topics:  # 話題を1つずつ調べる。
+        yield Spend(3)  # 1つの話題に3かかると告げ、ハンドラの答えを待つ。
+        notes.append(f"notes on {topic}")  # 再開されたら、その話題のメモを足す。
+    return notes  # 全部の話題を調べたら、メモの一覧を返す。
+
+
+@handler  # Spendを受けるハンドラにする。
+def free(effect: Spend, k):  # 答えて、researchの残りを走らせる。
+    yield Transfer(k, None)  # 続きkへ制御を渡し、ハンドラには戻らない。
+
+
+@handler  # Spendを受けるハンドラにする。
+def refuse(effect: Spend, k):  # kを捨てる。researchは最初のSpendで止まる。
+    return "refused"  # kを再開せず、この値を全体の結果にする。
+
+
+def budget(limit: int):  # 上限limitの予算のハンドラを作る。
+    left = limit  # 残りの額を、エフェクトの間で覚えておく。
+
+    @handler  # Spendを受けるハンドラにする。
+    def on_spend(effect: Spend, k):  # Spendが届くたびに呼ばれる。
+        nonlocal left  # 外側の残りの額を書き換える。
+        if effect.cost > left:  # 残りで足りなければ、
+            return "over budget"  # kを捨てる。researchはこのSpendから先へ進まない。
+        left -= effect.cost  # 足りれば、残りから引く。
+        return (yield Resume(k, None))  # kを再開する。researchが進み、その結果をそのまま返す。
+
+    return on_spend  # 作ったハンドラを返す。
+
+
+TOPICS = ["tides", "moons"]  # 調べる話題は2つ。
+
+if __name__ == "__main__":  # ファイルとして走らせた時に、4通りの結果を表示する。
+    print(run(free(research(TOPICS))))  # 2つとも調べ終える。
+    print(run(refuse(research(TOPICS))))  # 最初のSpendで止まり、refusedになる。
+    print(run(budget(10)(research(TOPICS))))  # 予算10なら、2つとも調べ終える。
+    print(run(budget(5)(research(TOPICS))))  # 予算5なら、2つ目の話題でover budgetになる。
 ```
 
-![同じAskに、ハンドラが違う名前を返す](/images/zenn-use-cases-v0/generated/main-concept.png)
+```text
+['notes on tides', 'notes on moons']
+refused
+['notes on tides', 'notes on moons']
+over budget
+```
 
-同じ`greet`から作った2つの計算へ、それぞれ名前を供給します。`Ask`から文字列を受け取る契約を保ち、本体を変えずに結果を変えています。
+`@handler`は、その下の関数を`@do`の関数にし、ハンドラにもします。だからハンドラは、いつも`@do`の関数です。ほかの`@do`の関数と同じく、ハンドラは`Resume(k, None)`を`yield`してdoeffへ渡します。その`yield`は、`research`の残りが返した値を返します。`return (yield Resume(k, None))`は、その結果をハンドラ自身の結果として渡す書き方です。ハンドラをプログラムに対して呼ぶと、ハンドラはそのプログラムの周りに付きます。`free(research(TOPICS))`は、周りに`free`を付けた`research(TOPICS)`です。注釈`effect: Spend`は、ハンドラがどのエフェクトを受けるかをdoeffに伝えます。
 
-この例で変えたのは、ハンドラが渡す名前だけです。設定を読む、入力を待つ、といった取得の仕方もハンドラに書けます。doeffには、値の供給や時間の制御などの標準ハンドラもあります。
+- `free`は`Transfer(k, None)`で答えます。`research`は最後まで走ります。
+- `refuse`は`k`に触れずに返ります。`research`は最初の`Spend`で止まり、`"refused"`が実行全体の結果になります。
+- `budget(5)`は、残りの額をエフェクトの間で覚えています。1回目の`Spend`は3かかり、ハンドラは`k`を再開します。2回目は残りが2なので、ハンドラは`"over budget"`を返し、2つ目の話題は調べられません。
 
-まずは、**依頼する処理と、その依頼に答える処理を別々に書ける**ことが基本です。
+`budget(5)(research(TOPICS))`の実行を、やりとり1つずつ追うと次のようになります。
 
-## 操作を一度切り出せば、解釈を選び直せる
+![budget(5)が、2回目のSpendで続きを捨てる](/images/zenn-use-cases-v0/generated/main-concept.png)
 
-**エフェクトをどう解釈するかは、ハンドラ次第です。** doeffが用意するハンドラも、自作のハンドラも、同じように取り付けられます。
+1回目の`Spend(3)`は、残りの5に収まります。`budget`は`Resume`で`research`を再開し、tidesのメモができます。2回目の`Spend(3)`は、残りの2に収まりません。`budget`は続きの`k`を捨て、`"over budget"`が`run()`の結果になります。
 
-たとえば「入力を待つ」という1つの操作を考えます。画面からの入力、別のイベント基盤、テスト用の入力列のどれでも実現できます。
+これで層が1枚です。この先は、1つのプログラムの周りに層を何枚も重ねます。
 
-操作の約束を保てば、呼び出し側の手順はそのままで、外側のハンドラだけを入れ替えられます。新しいフレームワークも、接続するハンドラを書けば実行先にできます。
+## 1つのプログラムに、層を1枚ずつ
 
-テストでは、ネットワークや人の入力に頼らず、決めた結果を返せます。どの操作が依頼されたかも、ハンドラの側で確かめられます。**処理本体と実行基盤の間に、差し替えられる境界を持てる**ことが、さまざまな用途をつなぐ土台です。
+`monitor`は、2つのページを30分ごとに確かめます。ページ1つに、タスクが1つです。`yield`するエフェクトは7種類あります。自分で定義したのは`Fetch`・`Spend`・`Log`です。`Spawn`と`Gather`はdoeffのパッケージの物です。`Delay`と`GetTime`は[doeff-time](https://github.com/proboscis/doeff/tree/main/packages/doeff-time)の物です。doeff-timeは、時間のエフェクトとそのハンドラを集めたパッケージです。ページをどこから取るのか、お金を使うとは何かは、どこにも書いていません。30分にどれだけかかるのか、ログの行がどこへ行くのかも書いていません。
 
-ただし、エフェクトにせず本体から直接呼んだSDKは、差し替えの対象になりません。ハンドラの側には、操作の意味に加えて、キャンセル・例外・実行順の約束を守る責任もあります。
+```python
+# monitor.py(抜粋)
+import asyncio  # 実時間の層で、非同期のHTTPの代わりに使う。
+from dataclasses import dataclass  # エフェクトを、値を持つクラスとして書く。
+from datetime import datetime, timezone  # 仮想の時計の始まりの刻を作る。
 
-ハンドラは入れ替えるだけでなく、複数を重ねられます。名前の供給・ログ・失敗の扱いを別々のハンドラに受け持たせ、担当外の依頼は外側へ渡します。重ねる順番や範囲で意味が変わるので、組み立て方は下の表の「ハンドラの合成」の回で説明します。
+from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run  # doeffの中核の名前を使う。
+from doeff_core_effects.handlers import await_handler  # Awaitに答える参考のハンドラ。
+from doeff_core_effects.scheduler import scheduled  # SpawnとGatherに答える参考のハンドラ。
+from doeff_time import Delay, GetTime, async_time_handler, sim_time_handler  # 時間のエフェクトと、実時間・仮想時間のハンドラ。
 
-## 処理の流れ
 
-![Askを受け取り、値を渡して挨拶の続きを再開する](/images/zenn-use-cases-v0/generated/main-flow.png)
+# プログラム:2つのタスクが、30分ごとにページを1つ確かめる。
+@dataclass(frozen=True)  # 変わらない値にする。
+class Fetch(EffectBase):  # 「このページを取って」。
+    url: str  # 取るページ。
 
-`yield Ask("name")`で本文が中断し、ハンドラが「花子」を渡すと、その値が`name`に入って次の行へ進みます。最後の`return`が、`run()`の結果になります。
 
-doeffは、Pythonのジェネレータを、Rustで書いた仮想機械（VM）の上で動かします。VMがエフェクトをハンドラへ届け、ハンドラの指示に従って継続を再開します。
+@dataclass(frozen=True)  # 変わらない値にする。
+class Spend(EffectBase):  # 「次の一歩にこれだけかかる」。
+    cost: int  # かかる額。
 
-`async`・`await`との違いは、下の表の「coroutineとの違い」と「関数の色」の回で比べます。
+
+@dataclass(frozen=True)  # 変わらない値にする。
+class Log(EffectBase):  # 「この行を書いて」。
+    line: str  # 書く行。
+
+
+@do  # checkを、yieldのたびに止まるプログラムにする。
+def check(url: str, rounds: int):  # 1つのページを、rounds回確かめる。
+    sizes = []  # 取ったページの大きさをためる。
+    for round_ in range(rounds):  # 1回ずつ確かめる。
+        if round_:  # 2回目からは、
+            yield Delay(30 * 60)  # 確かめる間に30分待つ。
+        yield Spend(1)  # 1回の確かめに1かかると告げる。
+        page = yield Fetch(url)  # ページを取ってもらう。
+        now = yield GetTime()  # 今の刻を聞く。
+        yield Log(f"{now:%H:%M} {url} {len(page)} bytes")  # 刻・ページ・大きさの行を書いてもらう。
+        sizes.append(len(page))  # 大きさを覚える。
+    return sizes  # 確かめた回の大きさの一覧を返す。
+
+
+@do  # monitorを、yieldのたびに止まるプログラムにする。
+def monitor(urls: list[str], rounds: int):  # ページごとにタスクを1つ起こし、全部を待つ。
+    tasks = []  # 起こしたタスクをためる。
+    for url in urls:  # ページごとに、
+        tasks.append((yield Spawn(check(url, rounds))))  # checkをタスクとして起こす。
+    return (yield Gather(*tasks))  # 全部のタスクの結果を、起こした順に待つ。
+```
+
+`scheduled`は、`Spawn`と`Gather`に答える参考のハンドラです。これだけを付けると、最初の`Spend`で`UnhandledEffect`になって止まります。どのエフェクトも、ハンドラが意味を与えるまでは意味を持ちません。
+
+### 1枚目:テストの実行のための答え
+
+```python
+# monitor.py(抜粋)
+# 層:1枚ごとに、1つのエフェクトに意味を与える。
+PAGES = {"a.example": "<p>up</p>", "b.example": "<p>all good</p>"}  # テストで返すページ。
+
+
+@handler  # Fetchを受けるハンドラにする。
+def fake_web(effect: Fetch, k):  # I/Oに、辞書から答える。
+    return (yield Resume(k, PAGES[effect.url]))  # 辞書のページを渡して再開する。
+
+
+@handler  # Logを受けるハンドラにする。
+def printed(effect: Log, k):  # ログの行を標準出力へ出す。
+    print(effect.line)  # 行を表示する。
+    return (yield Resume(k, None))  # 再開する。
+
+
+@handler  # Spendを受けるハンドラにする。
+def free(effect: Spend, k):  # お金はかからない。
+    yield Transfer(k, None)  # 続きkへ制御を渡し、ハンドラには戻らない。
+
+
+START = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)  # 仮想の時計の始まりは9:00。
+URLS = ["a.example", "b.example"]  # 確かめるページは2つ。
+
+
+def simulated(program):  # 仮想の時計。30分の待ちに時間がかからない。
+    return scheduled(sim_time_handler(start_time=START)(program))  # 仮想時間とタスクのハンドラを付ける。
+```
+
+```python
+print(run(simulated(printed(free(fake_web(monitor(URLS, 2)))))))  # テストの層を重ね、2回ずつ確かめる。
+```
+
+```text
+09:00 a.example 9 bytes
+09:00 b.example 15 bytes
+09:30 a.example 9 bytes
+09:30 b.example 15 bytes
+[[9, 9], [15, 15]]
+```
+
+重ねたハンドラは、内側から読みます。`fake_web`が`Fetch`に辞書から答え、`free`が`Spend`に、`printed`が`Log`に答えます。`simulated`はハンドラを2つ付けます。1つは`Spawn`と`Gather`に答える`scheduled`です。もう1つは、`Delay`と`GetTime`に答えるdoeff-timeの`sim_time_handler`です。確かめる間の30分には時間がかからず、2つのタスクの行は刻の順に出ます。何度走らせても同じ順です。
+
+### 2枚目:予算
+
+`free`を、3回分の予算に入れ替えます。
+
+```python
+# monitor.py(抜粋)
+def budget(limit: int):  # 予算を使い切ったタスクは、そこで止まる。
+    left = limit  # 残りの額を、エフェクトの間で覚えておく。
+
+    @handler  # Spendを受けるハンドラにする。
+    def on_spend(effect: Spend, k):  # Spendが届くたびに呼ばれる。
+        nonlocal left  # 外側の残りの額を書き換える。
+        if effect.cost > left:  # 残りで足りなければ、
+            return "over budget"  # kを捨て、そのタスクの結果にする。
+        left -= effect.cost  # 足りれば、残りから引く。
+        return (yield Resume(k, None))  # 再開する。
+
+    return on_spend  # 作ったハンドラを返す。
+```
+
+```python
+print(run(simulated(printed(budget(3)(fake_web(monitor(URLS, 2)))))))  # freeを3回分の予算に替える。
+```
+
+```text
+09:00 a.example 9 bytes
+09:00 b.example 15 bytes
+09:30 a.example 9 bytes
+[[9, 9], 'over budget']
+```
+
+2つのタスクは同じ`budget(3)`の下で走るので、予算は2つの確かめを合わせて数えます。4回目の`Spend`、つまり`b.example`の2回目の確かめで、残りが無くなります。ハンドラは`k`を再開せずに`"over budget"`を返します。だからそのタスクはそこで止まり、結果が`"over budget"`になります。もう1つのタスクは最後まで走ります。`check`には、このための`if`が1つもありません。
+
+### 3枚目:失敗とリトライ
+
+今度は最初の2回の取得が失敗します。プログラムとWebの間に、リトライの層を挟みます。
+
+```python
+# monitor.py(抜粋)
+class Flaky(Exception):  # 一時的な失敗。
+    pass  # 中身は要らない。
+
+
+def flaky_web(failures: int):  # 最初の何回かの取得が失敗する。
+    left = failures  # 残りの失敗の回数を覚えておく。
+
+    @handler  # Fetchを受けるハンドラにする。
+    def on_fetch(effect: Fetch, k):  # Fetchが届くたびに呼ばれる。
+        nonlocal left  # 外側の回数を書き換える。
+        if left > 0:  # 失敗の回数が残っていれば、
+            left -= 1  # 1回減らし、
+            raise Flaky(f"503 from {effect.url}")  # 503で失敗する。
+        return (yield Resume(k, PAGES[effect.url]))  # 残っていなければ、ページを渡して再開する。
+
+    return on_fetch  # 作ったハンドラを返す。
+
+
+def retrying(times: int):  # Flakyなら、1つ外のハンドラにもう一度頼む。
+    @handler  # Fetchを受けるハンドラにする。
+    def retry(effect: Fetch, k):  # Fetchが届くたびに呼ばれる。
+        for attempt in range(1, times + 1):  # 最大times回試す。
+            try:  # 失敗を捕まえる。
+                page = yield effect  # 同じFetchを、1つ外のハンドラに頼む。
+                break  # 取れたら抜ける。
+            except Flaky as error:  # 一時的な失敗なら、
+                if attempt == times:  # 最後の回なら、
+                    raise  # 失敗をそのまま外へ出す。
+                yield Log(f"retry {attempt}: {error}")  # 失敗をLogで知らせ、もう一度試す。
+        return (yield Resume(k, page))  # 取れたページを渡して再開する。
+
+    return retry  # 作ったハンドラを返す。
+```
+
+```python
+print(run(simulated(printed(free(flaky_web(2)(retrying(3)(monitor(URLS, 2))))))))  # 失敗するWebとリトライを重ねる。
+```
+
+```text
+retry 1: 503 from a.example
+retry 2: 503 from a.example
+09:00 a.example 9 bytes
+09:00 b.example 15 bytes
+09:30 a.example 9 bytes
+09:30 b.example 15 bytes
+[[9, 9], [15, 15]]
+```
+
+ハンドラの中で`yield effect`と書くと、同じエフェクトをもう一度起こし、1つ外のハンドラがそれに答えます。ハンドラはほかのエフェクトも`yield`できます。`retry`は失敗のたびに`Log`で知らせ、その行は`check`のログの行と同じく外の`printed`まで届きます。注入したオブジェクトは、呼ばれたら答えて返るだけです。ハンドラはそれに加えて`k`を持つので、関数の残りを走らせるか、いつ走らせるか、何を渡すかを決められます。
+
+### 4枚目:すべてのエフェクトを見る
+
+```python
+# monitor.py(抜粋)
+def recording(tape: list[str]):  # プログラムがyieldしたエフェクトを全部残す。
+    @handler  # 注釈が無いので、届いたエフェクトを全部受ける。
+    def record(effect, k):  # エフェクトが届くたびに呼ばれる。
+        tape.append(type(effect).__name__)  # エフェクトの型の名を書き留める。
+        return (yield Pass(effect, k))  # 答えずに、外のハンドラへ渡す。
+
+    return record  # 作ったハンドラを返す。
+```
+
+```python
+tape: list[str] = []  # 書き留める先。
+run(simulated(printed(free(fake_web(recording(tape)(monitor(URLS, 1)))))))  # fake_webの内側にrecordingを足し、1回ずつ確かめる。
+print(tape)  # 書き留めたエフェクトの名を、順に表示する。
+```
+
+```text
+09:00 a.example 9 bytes
+09:00 b.example 15 bytes
+['Spawn', 'Spend', 'Fetch', 'GetTimeEffect', 'Log', 'Spawn', 'Spend', 'Fetch', 'GetTimeEffect', 'Log', 'Gather']
+```
+
+`record`には注釈が無いので、届いたエフェクトを全部受け取ります。型の名を書き留め、`Pass`で外へ渡します。最初の`Fetch`は、次のように進みます。
+
+![recordが書き留めたFetchを、Passでfake_webへ渡す](/images/zenn-use-cases-v0/generated/main-flow.png)
+
+`check`が`Fetch(url)`を`yield`して止まると、まず内側の`record`に届きます。`record`は名を書き留めて`Pass`で外へ渡し、`fake_web`がページを渡して`check`を再開します。
+
+ハンドラに見えるのは、そこまで届いたエフェクトだけです。プログラムに近いハンドラが先に答えると、外のハンドラには届きません。同じ形で、エフェクトの名の代わりに答えを記録することもできます。例は`examples/testing_without_mocks/record_replay.py`です。言語モデルの答えを一度だけ記録し、テストではそれを再生します。テストではモデルを一度も呼びません。
+
+### 5枚目:実時間と本物のI/O
+
+```python
+# monitor.py(抜粋)
+async def slow_get(url: str) -> str:  # 非同期のHTTPクライアントの代わり。
+    await asyncio.sleep(0.01)  # 通信の待ちの代わりに、少し眠る。
+    return PAGES[url]  # ページを返す。
+
+
+@handler  # Fetchを受けるハンドラにする。
+def http_web(effect: Fetch, k):  # I/Oを、非同期のクライアントで行う。
+    page = yield Await(slow_get(effect.url))  # クライアントのcoroutineを、Awaitで待ってもらう。
+    return (yield Resume(k, page))  # 取れたページを渡して再開する。
+
+
+def real(program):  # 実時間の時計。asyncioで待つ。
+    return scheduled(await_handler()(async_time_handler()(program)))  # 実時間・Await・タスクのハンドラを付ける。
+```
+
+```python
+run(real(printed(free(http_web(retrying(3)(monitor(URLS, 2)))))))  # 本番の層を重ねる。実際に30分かかる。
+```
+
+実時間の時計で動く、同じ`monitor`です。だからこの実行には本当に30分かかります。doeff-timeの`async_time_handler`は`asyncio`で待ちます。`http_web`は、非同期のクライアントのcoroutineを`Await`で`yield`します。それに答えるのは`await_handler`です。`async`なのは`slow_get`だけなので、`async`が`check`や`monitor`へ広がりません。
+
+### 重ねた層を並べる
+
+| 実行 | `monitor`の周りの層(内側から) | 何が変わるか |
+|---|---|---|
+| テスト | `fake_web`・`free`・`printed`・`simulated` | ページは辞書から、30分は一瞬で、毎回同じ順 |
+| 予算つき | `free`の代わりに`budget(3)` | 予算を使い切ったタスクは、そこで止まる |
+| 不安定 | `fake_web`の代わりに`retrying(3)`と`flaky_web(2)` | 失敗はリトライされ、ログに残る |
+| 観察 | `fake_web`の内側に`recording(tape)`を足す | すべてのエフェクトが、順に残る |
+| 本番 | `fake_web`の代わりに`retrying(3)`と`http_web`、`simulated`の代わりに`real` | 実時間の時計と、非同期のクライアント |
+
+どの行でも、`monitor`は同じ関数です。モック、偽の時計、自作のイベントループは、このうちの1行をくれます。ここでは、どの行も数行のハンドラを重ねた物で、1枚を入れ替えてもほかの層には触れません。
+
+## すべての下にある1つの仕組み
+
+doeffのパッケージは、`Spawn`・`Gather`・`Wait`・`Race`・`Cancel`をエフェクトとして定義しています。`scheduled`はそれらに答える参考のハンドラで、`budget`と同じように書かれています。上の表のとおり、待っているタスクごとに`k`を取っておき、タスクが進めるようになったら、その`k`へ`Transfer`します。どのハンドラも、`scheduled`の代わりにこれらのエフェクトに答えられます。時計をハンドラにできるのは、このためです。`sim_time_handler`は、すべてのタスクが待っている時だけ時計を進めます。いちばん早く起きる刻へ飛び、そのタスクを再開します。スケジューラには、どのプログラムでも`yield`できるエフェクトを通してしか触れません。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)では、同じような時計を約30行で作っています。
+
+doeffのパッケージが定義するエフェクトも、`Fetch`や`Spend`と同じように動きます。どれにも参考のハンドラがあり、代わりに自分のハンドラを付けられます。
+
+| 何を | プログラムがyieldする物 | 参考のハンドラ |
+|---|---|---|
+| 状態 | `n = yield Get("fetched")`と`yield Put("fetched", n + 1)` | `state()`が辞書を持ち、値を渡して`k`を再開する |
+| 例外 | `result = yield Try(size(url))`は`Ok(value)`か`Err(error)`を返す | `try_handler`(どのハンドラも`ResumeThrow(k, error)`でプログラムに例外を投げ込める) |
+| 並行処理 | `task = yield Spawn(check(url))`の後に`yield Gather(*tasks)` | `scheduled()`が、待っているタスクごとに`k`を取っておく |
+| 観察 | `value, log = yield Listen(program)` | `listen_handler`が、`program`の`Tell`の行を集める |
+| I/O | `page = yield Fetch(url)` | 自分のハンドラか参考のハンドラ(ファイル・SQL・プロセスは`doeff[hy]`、HTTPは`doeff[http]`) |
+
+この形は、トレードのプログラム、シミュレーション、バックテストに合います。同じプログラムを、記録した市場のイベントの上で、仮想の時計と紙の注文で走らせられます。本番では、実時間の時計と取引所で走らせます。違うのは、時間・市場のデータ・注文のハンドラだけです。
+
+## テストも、重ねた層の1つ
+
+上の1枚目はテストです。多くの人が最初に出会う使い方でもあります。Pythonのテストには、誰も触りたがらない`mock.patch`がよくあります。対象を文字列で探すので、importを動かすと外れることがあり、外れてもテストが通ったまま本物が動くことがあります。エフェクトなら、テストはパッチの代わりにハンドラを付けます。
+
+```python
+# welcome.py
+from dataclasses import dataclass  # エフェクトを、値を持つクラスとして書く。
+
+from doeff import EffectBase, do  # エフェクトの基底と、プログラムの定義を使う。
+
+
+@dataclass(frozen=True)  # 変わらない値にする。
+class LoadUser(EffectBase):  # 「この利用者を読んで」。
+    user_id: int  # 読む利用者のid。
+
+
+@dataclass(frozen=True)  # 変わらない値にする。
+class SendMail(EffectBase):  # 「このメールを送って」。
+    to: str  # 宛先。
+    body: str  # 本文。
+
+
+@do  # welcomeを、yieldのたびに止まるプログラムにする。
+def welcome(user_id: int):  # 利用者を読み、歓迎のメールを送る。
+    user = yield LoadUser(user_id)  # 利用者を読んでもらう。
+    body = f"Welcome, {user.name}!"  # 本文を作る。
+    yield SendMail(user.email, body)  # メールを送ってもらう。
+    return body  # 送った本文を返す。
+```
+
+```python
+# test_welcome.py
+from doeff import Resume, handler, run  # 再開・ハンドラ・実行を使う。
+
+from infra import User  # 利用者の値の型(本物の基盤の側に在る)。
+from welcome import LoadUser, SendMail, welcome  # テストする処理と、そのエフェクト。
+
+
+@handler  # LoadUserを受けるハンドラにする。
+def fake_load_user(effect: LoadUser, k):  # 偽の利用者を読む。
+    return (yield Resume(k, User("Ada", "ada@example.com")))  # 決めた利用者を渡して再開する。
+
+
+def test_welcome():  # 送った本文と宛先を確かめる。
+    sent = []  # 送ったメールを書き留める。
+
+    @handler  # SendMailを受けるハンドラにする。
+    def fake_send_mail(effect: SendMail, k):  # 送らずに書き留める。
+        sent.append((effect.to, effect.body))  # 宛先と本文を書き留める。
+        return (yield Resume(k, None))  # 再開する。
+
+    assert run(fake_send_mail(fake_load_user(welcome(1)))) == "Welcome, Ada!"  # 偽の2つを重ねて走らせる。
+    assert sent == [("ada@example.com", "Welcome, Ada!")]  # 1通だけ、Adaに送った。
+```
+
+何もパッチしておらず、importと揃えておく文字列もありません。偽物は上の層と同じハンドラで、それぞれに`@handler`を付け、同じように`welcome(1)`の周りに重ねます。今度は、そのうちの1つを付け忘れてみます。
+
+```python
+run(fake_load_user(welcome(1)))  # fake_send_mailを付け忘れて走らせる。
+```
+
+```text
+doeff Traceback (most recent call last):
+
+  welcome()  welcome.py:22
+    yield SendMail(user.email, body)  # メールを送ってもらう。
+    handlers:
+      fake_load_user ↗
+
+UnhandledEffect: no handler found for effect: SendMail (SendMail(to='ada@example.com', body='Welcome, Ada!'))
+  handlers in scope (innermost→outermost): fake_load_user
+  skipped by annotation: fake_load_user (effect: LoadUser) — a handler only sees the effects its effect parameter is annotated with
+  hint: install a handler for SendMail: run(fn(prog)), where fn is a def (effect: SendMail, k) marked with @handler that returns (yield Resume(k, value))
+```
+
+実行は、誰も答えなかった`yield`で止まり、本物は何も呼ばれていません。Python自身のトレースバックの前に、doeffが3つのことを表示します。その`yield`、そこで付いていたハンドラ、それぞれがエフェクトを通した訳です。完全なファイルは[examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks)にあります。`mock.patch`の版と、その2つの失敗の仕方も並べています。
+
+## doeffの立ち位置
+
+比べるために、同じ小さな3つの仕事を5通りで書きました。歓迎のメール、ログ付きの銀行の残高、3つの並行な取得です。行は空行・コメント・importを除いて数え、各テストで差し替えを1つずつ外して何が起きるかを見ました。
+
+| | 素のPython | effect | effectful | doeff |
+|---|---|---|---|---|
+| ハンドラが受け取る物 | —(呼ばれた側が返るか投げる) | 意図 | 操作の引数 | エフェクトと継続`k` |
+| 3つの仕事の行数 | 53 | 97 | 70 | 88 |
+| 誰も扱わないエフェクト | 引数ならたいていエラー、`mock.patch`なら本物のコードが動く | エラー | 間違った値か、黙って通る | エラー(ハンドラに注釈がある時) |
+| 状態・ログ・並行処理が組み込みか | いいえ | 並行処理はスレッドプールで | いいえ(`asyncio`を使う) | はい |
+| 最新のリリース | — | 2019 | 2026 | 2026 |
+
+素のPythonがいちばん短く、いちばん読みやすいです。effectfulは関数をまったく普通のままに保てて、これは本当の利点です。doeffでは、業務のコードに`yield`と`@do`が入り、覚える名前も増えます。その代わり、ハンドラがプログラムの残りを持ち、ハンドラが欠ければエラーになります。1つのハンドラでプログラム全体を包め、並行処理の下でもハンドラがタスクごとに分かれます。あるテストでは、`asyncio`のタスク2つが、それぞれ自分のeffectfulのハンドラを付けました。2つは待ってから、始めた順に起きました。待った後、1つ目のタスクは2つ目のタスクの答えを受け取り、2つ目は評価されていない項を受け取りました。同じテストをdoeffで書くと、2つは分かれたままでした。これが問題になるのは、タスクの中でハンドラを付ける時だけです。`asyncio.run`の周りに一度だけ付けるなら、effectfulは正しく動きます。
+
+`returns`は、GitHubのスターが約4.4Kの人気の関数型ライブラリです。`Result`のような型付きの入れ物をくれます。ただ、コードを再開するハンドラは無いので、この比べ方には入りません。
+
+Pythonの外でいちばん近いのはOCaml 5です。ハンドラが継続を受け取る点も、継続を1回しか再開できない点も、エフェクトが型に出ない点も同じです。Kokaは、その2つの点でさらに先へ進んでいます。
+
+| | 2回以上再開できるか | エフェクトが型に出るか |
+|---|---|---|
+| OCaml 5 | いいえ:2回目の再開は`Continuation_already_resumed`を投げる | いいえ:扱われないエフェクトは、起きた時に`Effect.Unhandled`を投げる |
+| Koka | はい:`resume`を2回以上呼べ、バックトラックや確率的プログラミングに使える | はい:コンパイラがすべての関数のエフェクトを推論する |
+| doeff | いいえ:2回目の`Resume`は`RuntimeError`を投げる | いいえ:ハンドラが欠けると、プログラムを走らせた時に`UnhandledEffect`になる |
+
+## かかるコスト
+
+エフェクトは、1つずつハンドラまで行って戻ってきます。doeffのREADMEにあるベンチマークは、その往復1回のCPU時間を、各場合50回ずつ測っています。機械は共有のIntel i9-7980XE、OSはLinux、PythonはCPython 3.14.7です。
+
+| エフェクトの往復1回 | 1エフェクトあたりµs(中央値) |
+|---|---:|
+| 素のPythonの関数呼び出し | 0.13 |
+| doeff、`Resume`する`@handler` | 4.3 |
+| effect 1.1.0 | 12.7 |
+| effectful 0.4.0 | 57.9 |
+
+`scheduled`は、0.7.0から既定でRustで動きます。小さなタスクがたくさんある場合、起こしたタスク1つあたり約17µsかかります。`asyncio`では約11µsです。
+
+数マイクロ秒は、データベースの問い合わせやHTTPのリクエストの横では誤差です。数値計算のきついループの中では誤差ではありません。きついループは素のPythonのままにし、その周りでエフェクトを`yield`してください。
+
+スクリプトはリポジトリの`benchmarks/compare_libraries.py`です。READMEの[Performance](https://github.com/proboscis/doeff#performance)の節に、すべての場合と測り方を載せています。自分の機械で数字を取りたい時に使ってください。
+
+## 限界
+
+- doeffは0.xです。APIは0.4から0.5で変わりました。0.6から、`pip install doeff`は中核だけを入れます。Hyの言語とHyで書いたハンドラは、`pip install "doeff[hy]"`で入ります。
+- 継続は1回きりです。ハンドラは止まったコードを1回しか再開できないので、バックトラックの探索のように2回再開する技は使えません。非決定的な選択も使えません。代わりに、選択ごとにプログラム全体を走らせ直してください。
+- エフェクトは型に出ません。プログラムが`yield`するエフェクトのすべてに、付けたハンドラが答えるかどうかを、型検査器は確かめません。ハンドラが欠けていれば、プログラムを走らせた時に`UnhandledEffect`になります。
+- エフェクトを起こせるのは、`@do`の関数の本体だけです。そこから呼んだ普通の関数は起こせません。だから`async`と同じく、`@do`は呼び出し元へ広がります。
+- リスト内包表記の中では`yield`を書けないので、エフェクトを起こすループは`for`文になります。
+- 注釈の無いハンドラは、すべてのエフェクトを受け取ります。注釈の無い偽物は、別のハンドラに向けたエフェクトに黙って答えてしまうことがあります。
+
+## 試す
+
+```bash
+pip install doeff doeff-time   # CPython 3.11〜3.14。Linux・macOS・Windows向けのビルド済みのwheelがある。
+python -m doeff demo           # doeffのデモを走らせる。
+```
+
+[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)(英語)が、仕組み・使い道・限界を定めています。ここに載せた例はどれも、doeff 0.8.0とdoeff-timeで、載せたとおりに走ります。完全なファイルは[examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour)にあります。テストの分は[examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks)です。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)(英語)は、エフェクトを依存性の注入や素の`async`と、もっと詳しく比べています。
+
+どこで使いにくいと感じましたか。`yield`の書き方が邪魔になるコードや、素の引数のほうが簡単だった場合があれば教えてください。Issueは https://github.com/proboscis/doeff/issues で受け付けています。
+
+*本文はAIエージェントが書き、すべての例をPyPIのdoeff 0.8.0とdoeff-timeで走らせました。*
 
 ## 困りごとから選ぶ入口
 
@@ -103,7 +536,7 @@ doeffは、Pythonのジェネレータを、Rustで書いた仮想機械（VM）
 
 この記事は、doeffを週に1本ずつ紹介する連載の1本目です。10本の順は次のとおりで、公開した回からリンクを付けていきます。
 
-1. 処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは(この記事)
+1. Pythonの代数的エフェクトで、変えない処理にハンドラを重ねる(この記事)
 2. [Claude Codeを起動してテストするのをやめる](doeff-agents.md)
 3. [テストで20秒待つのをやめる](doeff-time.md)
 4. [依存を引数で引き回すのをやめる](doeff-di.md)
@@ -174,34 +607,9 @@ AIエージェントを何十も並べて開発する時の悩みは、別の連
 | ハンドラを重ねると何が起きるのか | 探す順番、担当外の`Pass`、別のエフェクトへの翻訳を実行して確かめる | [ハンドラの合成](doeff-handlers.md) |
 | Rust VMはPythonの`yield`をどう動かすのか | 依頼の探索、中断した継続、`Resume`による再開をコードと対応付ける | [Rust VM](doeff-vm.md) |
 
-## ばらばらの便利機能を、同じ処理で組み合わせる
-
-DIだけなら、関数の引数でもできます。非同期処理だけなら、`asyncio`で十分なこともあります。
-
-doeffの面白さは、これらが共通の計算の形に乗ることです。たとえば、対局の入力をLLMに判断させ、イベントとしてゲームへ渡し、結果を観測できます。エージェントの仕事を並行に進め、差分を確かめて通知することもできます。
-
-**入口は別でも、学んだ書き方がほかの用途へつながります。** だから、最初から全部を使う必要はありません。
-
-## まとめ — 使う範囲は選べる
-
-- 処理の本体は、必要な操作を`yield`で依頼するだけにします。
-- 依頼にどう答えるかは、外側に取り付けるハンドラが決めます。
-- ハンドラを替えると、本体を変えずに本番とテストで動かし方を変えられます。
-
-純粋な計算は、普通のPythonのままで構いません。ハンドラの順番や状態の範囲には意味があり、どんな組み合わせでも自動的に正しくなるわけではありません。
-
-実行方法を変えたい処理を1つ選んで、小さく試してみてください。
-
 ## 参考
 
-- [doeffのリポジトリ（GitHub）](https://github.com/proboscis/doeff)
-- [この記事のコードをまとめた完全な例](examples/greet_handlers.py)
+- [doeffのリポジトリ(GitHub)](https://github.com/proboscis/doeff)
+- [What doeff Is(英語)](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)
+- [英語の原文:Algebraic effects for Python](https://github.com/proboscis/doeff/blob/main/docs/articles/algebraic-effects-in-python.md)
 - 次の回:[Claude Codeを起動してテストするのをやめる](doeff-agents.md)
-
-この記事のコードは、2026年10月19日に、PyPIのdoeff 0.6.0と0.7.0で動くことを確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain（commit `4ae1d31`）でも、同じく動きました。PyPIの0.4.1には`handler`と`with_handlers`が無いので、0.6.0以降を入れてください。
-
-試す時は、完全な例を`greet_handlers.py`として保存し、次のコマンドで実行します。
-
-```bash
-uv run --with "doeff==0.6.0" python greet_handlers.py  # PyPIのdoeff 0.6.0を入れて、完全な例を実行する。
-```

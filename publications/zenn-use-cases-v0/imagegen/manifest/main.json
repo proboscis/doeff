@@ -5,11 +5,11 @@
     "generation_prompt": "main-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "ee41a06d9b5e8791722beb3501d234db9c9325d09bc3af35e5761dc6f079e77f",
+    "sha256": "4b465594dc0d04bea1cb09cf6d60fe139345546a48c95ea9e28780e9575da23c",
     "width": 1080,
-    "height": 960,
-    "bytes": 120652,
-    "review": "2026-10-16：週1の仕上げで、失われたimagegen版の代わりにSVGで描き直した。greetのAsk、2つのハンドラの名前とResumeの値、run()の結果を本文のコードと照合。携帯の幅でも字が読める大きさにした。"
+    "height": 1560,
+    "bytes": 197677,
+    "review": "2026-10-22：英語の1本目の訳に置き換えた時に、英語の記事のsequenceDiagramをSVGで描き直した。Spend(3)・Resume(k, None)・left = 2・return \"over budget\"・moonsが調べられない事を、本文のspend.pyと印字に照合。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "main-flow",
@@ -17,11 +17,11 @@
     "generation_prompt": "main-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "779135208427c946c264f3629b4ab2c5f9fd65ea23659761fd1f2631b6311337",
+    "sha256": "018b0a52b00c616a0f0814619b77e848b2d589202ddcee205370092c5834b57d",
     "width": 1080,
-    "height": 1330,
-    "bytes": 147416,
-    "review": "2026-10-16：週1の仕上げで、失われたimagegen版の代わりにSVGで描き直した。Askでの中断、VMが届ける依頼と継続k、Resumeでの再開、run()の結果の順を本文のコードと照合。携帯の幅でも字が読める大きさにした。"
+    "height": 1300,
+    "bytes": 156101,
+    "review": "2026-10-22：英語の1本目の訳に置き換えた時に、英語の記事の4枚目の層のsequenceDiagramをSVGで描き直した。Fetch(url)・tape.append(\"Fetch\")・Pass(Fetch(url), k)・Resume(k, page)の順を、本文のmonitor.pyの抜粋に照合。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "main-hero",
@@ -29,10 +29,10 @@
     "generation_prompt": "main-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "ff18b258c423169d336ca7a5e69dbfb17a39003f200fe317d630f4751d3e380f",
+    "sha256": "5c12b9618b950126cdd9d213cf80148f8980a31bbd52d4cda8aec339bad0a440",
     "width": 1080,
     "height": 1060,
-    "bytes": 102409,
-    "review": "2026-10-16：週1の仕上げで、失われたimagegen版の代わりにSVGで描き直した。doeffの文字、AskとResumeのコード、往復の矢印、用途の表記、白背景を目視確認。携帯の幅でも字が読める大きさにした。"
+    "bytes": 102131,
+    "review": "2026-10-22：英語の1本目の訳に置き換えた時に描き直した。Askと花子の往復を、本文のspend.pyのyield Spend(3)とyield Resume(k, None)の往復に替え、題を「1つの処理に、ハンドラを重ねる。」、下の札を本文で重ねる層(予算・リトライ・仮想時間・観察・テスト)にした。携帯の幅でも字が読める大きさにした。"
   }
 ]

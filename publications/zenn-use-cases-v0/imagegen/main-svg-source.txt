@@ -1,11 +1,11 @@
 メイン記事（doeff-main.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-16）。
 
 - 正本：../visuals/main-hero.svg・../visuals/main-concept.svg・../visuals/main-flow.svg。
-- 図の内容：同じdirのmain-hero-flat-code-v1.txt・main-concept-flat-code-v3.txt・main-flow-flat-code-v3.txtの指定に沿い、本文のコードの名前・値・順と揃えた。
+- 図の内容：main-heroは、2026-10-22に本文のspend.pyのSpendとResumeの往復と、本文で重ねる層の札に描き直した(それまでは同じdirのmain-hero-flat-code-v1.txtの指定に沿っていた)。main-conceptとmain-flowは、2026-10-22に記事を英語の1本目の訳に置き換えた時、英語の記事の2つのsequenceDiagram(budget(5)の実行・4枚目の層のFetchの進み)を日本語の図にした。仕様は../reviews/main-visuals.json。
 - PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
   - main-hero：幅1080・高さ1060。
-  - main-concept：幅1080・高さ960。
-  - main-flow：幅1080・高さ1330。
+  - main-concept：幅1080・高さ1560。
+  - main-flow：幅1080・高さ1300。
 - 字の大きさ：幅1080の図で36px以上。携帯の本文の幅（約340px）に縮めても約11px以上で読める。
 - 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
 

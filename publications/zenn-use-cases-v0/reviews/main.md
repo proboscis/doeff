@@ -51,3 +51,12 @@ uv run --no-sync ruff check publications/zenn-use-cases-v0/reviews/main-check.py
 画像の生成・目視確認、画像台帳、プレビューとの整合は親担当の検証範囲。この検査は画像内の文字の正しさを保証しない。
 
 外部接続は実行していない。LLM、エージェントの起動、Docker、SSH、有料API、通知、公開操作は含まない。詳細記事のコードは各記事の担当が別途検証する。
+
+## 2026-10-22 英語の1本目の訳への置き換え
+
+`doeff-main.md`を、英語の1本目「Algebraic effects for Python」(`docs/articles/algebraic-effects-in-python.md`)の訳に置き換えた。上の節までの指摘は、前の本文(`greet`と`Ask`)への物である。
+
+- 軸と例: 軸は英語の版と同じ代数的エフェクト(ハンドラが継続`k`を受け取り、同じ処理の周りに層を重ねる)。Python・bashの枠22個は、コメントを除くと英語の版の枠と1つずつ同じ。コメントは各行の日本語にした(この連載の決まり)。
+- 英語の版との違い: 本文の`monitor`のエフェクトの数を、英語の版の「five kinds」でなく、名を挙げた7種類と書いた。付け忘れのtracebackは、doeffが写すソースの行に日本語コメントが入る(読み手が実際に見る印字)。冒頭の画像・概念図・処理図は、英語の版のmermaidの2つの図を日本語のSVGで描いた。末尾に、Zennの1本目の役目の目次(困りごとから選ぶ入口・連載10本の一覧)と参考の節を置いた。
+- 確かめ(`main-check.py`を書き直した): 枠が英語の版と同じ事、spend.pyとmonitor.pyの抜粋の実行の印字が直後のtextの枠と同じ事(仮想時間の3回とも同じ)、実時間の行を1回ずつの確かめに替えて待ち無しで走る事、scheduledだけで最初のSpendが`UnhandledEffect`になる事、test_welcome.pyが通る事、付け忘れのtracebackの頭が本文と同じ事、目次が公開計画の表と同じ事。本文の印字・コード・tracebackをわざと壊した5か所は、どれも赤になった。
+- PyPI: 記事が前提にするdoeff 0.8.0とdoeff-timeは、2026-10-22の時点でPyPIに無い(doeffは0.7.0まで・doeff-timeは未登録)。`verify_pypi.py main`は、doeff-timeが解けずに落ちる。0.7.0では`@handler`だけの書き方が通らない。2つが出るまで、この本文をmainへ入れない。
