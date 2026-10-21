@@ -126,6 +126,10 @@ def mark_alive(state: ClusterState, now: int) -> _Program[ClusterState, object]:
 
 def resume_after_downtime(state: ClusterState, now: int) -> tuple:
     ...
+REACH_WAIT_MS: int
+
+def unreached_shifted(state: ClusterState, now: int) -> _Program[ClusterState, object]:
+    ...
 STALL_SHIFTED_FIELDS: frozenset[str]
 STALL_UNSHIFTED_FIELDS: frozenset[str]
 

@@ -153,9 +153,37 @@
    沈黙のまま(再起動で「いま連絡があった」に戻さない)。止まっていた長さは沈黙に数えない(担い手が一斉に沈黙に倒れ、最初に
    heartbeat を送った worker へ全 job が移ると、元の担い手と二重に動く — 実測 2026-09-23)。"
   (setv gap (if (> state.alive-ms 0) (max 0 (- now state.alive-ms)) 0))
+  ;; 受付が worker から届き得るようになるまで(最初の heartbeat)の長さも沈黙に数えない — 起点の刻を置く(unreached-shifted)。
   (if (= gap 0)
-      #((replace state :alive-ms now) 0)
-      #((run (clocks-shifted state now gap)) gap)))
+      #((replace state :alive-ms now :unreached-ms now) 0)
+      #((replace (run (clocks-shifted state now gap)) :unreached-ms now) gap)))
+
+
+;; --- 起き直しの後、worker から届き得るようになるまで(2026-10-21・card ki-439a73dc075c) ------------------------------------
+;; 読み直しは止まっていた長さを「読み直した刻」までしか数えないが、worker の heartbeat が届き始めるのは Pod が Ready になり Service に
+;; 載った刻から(readinessProbe の tcpSocket の周期 10 秒 — 受付を始めてから最大 10 秒 = lease と同じ長さ)。その差を沈黙に数えると、
+;; ずらした最後の連絡が lease で切れ、配備のたびに全 worker が WorkerGone になって Service に載った直後に WorkerBack で戻った
+;; (rev 47 2026-10-17 15:24:57Z〜15:25:14Z の実測・card ki-a7f26191a164 の形 A)。起き直しから最初の heartbeat を受けるまでを止まりと
+;; 同じく経過・沈黙に数えない(clocks-shifted でずらす)。
+;; 待ちの上限: 起き直しから REACH-WAIT-MS の内に heartbeat が 1 つも来なければ、その後は従来どおり数える(worker が全部死んでいる時に、
+;; Rollout の段・盤の TTL・drain の期限を止め続けない)。上限は Ready までの最長(周期 10 秒)+ Service の endpoint の伝わり + worker の
+;; heartbeat の間隔(lease の 1/4 = 2.5 秒)と接続の打ち切りを越える長さ。代償: 全 worker が止まりの間に死んでいた時だけ、その
+;; WorkerGone が最大この長さ遅れる(1 つでも生きた worker が届けば、そこから従来どおり数える)。
+(setv REACH-WAIT-MS 30000)
+
+(defk unreached-shifted [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "起き直しの後まだ heartbeat を受けていない(unreached-ms が在る)状態から、その刻から now まで(待ちの上限 REACH-WAIT-MS の刻まで)の
+   長さを経過・沈黙に数えないように時計をずらし(clocks-shifted)、起点を now へ進めた状態を作るため。上限の刻を越えたら起点を
+   None に戻す(以後は従来どおり数える)。受けた後・起き直していない(None)なら同じ状態。最初の heartbeat を受けた歩の後に起点を
+   None に戻すのは調停の歩(program.coordinator-step)— 受けた heartbeat の前の判断(tick)はこの関数でずらした時計で判じる。"
+  (val since state.unreached-ms)
+  (when (is since None)
+    (return state))
+  (val limit (+ state.started-ms REACH-WAIT-MS))
+  (val gap (- (min now limit) since))
+  (val shifted (if (> gap 0) (! (clocks-shifted state now gap)) state))
+  (replace shifted :unreached-ms (if (< now limit) (max since now) None)))
 
 
 ;; ClusterState の欄ごとの、止まっていた長さのずらし方の分け方(2026-10-16・card ki-d033e5f969cf の設計検証)。止まっていた間は、頼み手が
@@ -184,7 +212,8 @@
                "events" "audit" "audit_seq" "meta" "revision"  ; 出来事と版の記録 — 事実
                "next_task" "task_prefix" "env_cold_starts"     ; 数と名
                "outbox"                                  ; 終わった刻 finished-ms は事実(出口の保持の期限は受領されない行の掃除だけ)
-               "derivable" "running_commit")))                 ; 導く能力の名・走っている版
+               "derivable" "running_commit"                    ; 導く能力の名・走っている版
+               "unreached_ms")))                               ; 届かない間の起点 — ずらしの起点そのもの(unreached-shifted が進める)
 
 
 (defk clocks-shifted [state now gap]

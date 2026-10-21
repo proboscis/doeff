@@ -7,6 +7,10 @@
 ;;   3 起動の最初の歩(刻み無し)と、期限なしの待ちの長い眠りは止まりでない。
 ;;   4 止まりの長さだけ時計をずらすと、止まる前に生きていた worker は止まりの直後の歩で沈黙にならず(WorkerGone 無し)、その後
 ;;     heartbeat が無ければ、止まる前の沈黙の残りの後に従来どおり WorkerGone になる。
+;;   5 起き直し(card ki-439a73dc075c — rev 47 2026-10-17 15:25 の配備で全 worker が WorkerGone になり、Service に載った後に WorkerBack
+;;     で戻った): 読み直しから Pod が Service に載るまで(readinessProbe の周期 — lease と同じ 10 秒)worker の heartbeat は届かない。その
+;;     間も経過に数えず、Service に載った後の歩で WorkerGone を出さない。heartbeat が待ちの上限(REACH-WAIT-MS)まで 1 つも来なければ、
+;;     その後は従来どおり数える。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_hy.table [TableWrite table-of])
 (import doeff [run])
@@ -16,7 +20,8 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState BoardRow Drain WarmEntry SupersededRun])
 (import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerGone])
-(import doeff_cluster.coordinator.core.api_policy [tick stall-of clocks-shifted STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS])
+(import doeff_cluster.coordinator.core.api_policy [tick stall-of clocks-shifted resume-after-downtime unreached-shifted REACH-WAIT-MS
+                                                   STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-moves])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 
@@ -87,6 +92,51 @@
   (assert (= (! (liveness-moves first at-deadline T)) #()) "猶予の期限の刻ちょうどまでは生きている")
   (assert (= (! (liveness-moves at-deadline past T)) #((WorkerGone :worker "w" :boot "b1" :deadline-ms deadline)))
           "猶予が明けたら WorkerGone を 1 つ"))
+
+
+;; --- 起き直しの後、Service に載るまで(card ki-439a73dc075c)---------------------------------------------------------------
+;; 刻 JUDGED の印の後に coordinator が止まり、刻 BOOT に読み直した。受付は BOOT に始まるが、Pod が Service に載る刻 READY まで worker の
+;; heartbeat は届かない(rev 47 の実測: 受付の 15:25:04 から Service の 15:25:12 まで 8 秒・戻した最後の連絡は 15:25:00〜02)。
+(val BOOT (+ JUDGED 60000))
+(val READY (+ BOOT T.lease-ms 2000))
+
+
+(defk restarted []
+  {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "w が刻 SEEN に名乗り、刻 JUDGED に生きていた印を付けて止まった coordinator を、刻 BOOT に読み直した状態を組むため(読み直しが
+   状態を読んだ刻 started-ms は durable_kv.state-from-kv と同じく BOOT)。"
+  (val stopped (replace (! (tick (! (named)) JUDGED T)) :alive-ms JUDGED :started-ms BOOT))
+  (get (resume-after-downtime stopped BOOT) 0))
+
+
+(deftest test-the-wait-for-the-service-after-a-restart-tells-no-worker-gone
+  (val resumed (! (restarted)))
+  (assert (= resumed.unreached-ms BOOT) "読み直しが届かない間の起点を置く")
+  (assert (= (. (.row resumed.workers "w") last-seen-ms) (- BOOT (- JUDGED SEEN))) "止まっていた長さは読み直しがずらす")
+  (assert (= (len (! (liveness-moves resumed (! (tick resumed READY T)) T))) 1)
+          "Service に載るまでを沈黙に数えれば w を WorkerGone にする(直す前の形)")
+  (val reached (! (unreached-shifted resumed READY)))
+  (assert (= reached.unreached-ms READY) "まだ heartbeat を受けていない — 起点を今へ進める")
+  (val first (! (tick reached READY T)))
+  (assert (= (! (liveness-moves resumed first T)) #()) "Service に載った歩で WorkerGone を出さない")
+  (assert (= (. (.row first.workers "w") last-seen-ms) (- READY (- JUDGED SEEN))) "止まる前の沈黙のまま"))
+
+
+(deftest test-the-wait-for-the-service-is-counted-again-after-the-limit
+  ;; heartbeat が 1 つも来ないまま待ちの上限を越えた: 上限の刻までをずらし、以後は従来どおり数える(止まる前の沈黙の残りの後に WorkerGone)。
+  (val resumed (! (restarted)))
+  (val limit (+ BOOT REACH-WAIT-MS))
+  (val midway (! (unreached-shifted resumed (- limit 5000))))
+  (val past (! (unreached-shifted midway (+ limit 5000))))
+  (assert (is past.unreached-ms None) "上限を越えたら起点を外す")
+  (val deadline (+ limit (- T.lease-ms (- JUDGED SEEN))))
+  (assert (= (. (.row past.workers "w") last-seen-ms) (- deadline T.lease-ms)) "ずらすのは上限の刻まで")
+  (assert (is (! (unreached-shifted past (+ deadline 1))) past) "外した後はずらさない")
+  (val at-deadline (! (tick past deadline T)))
+  (assert (= (! (liveness-moves past at-deadline T)) #()) "沈黙の残りの期限の刻ちょうどまでは生きている")
+  (assert (= (! (liveness-moves at-deadline (! (tick at-deadline (+ deadline 1) T)) T))
+             #((WorkerGone :worker "w" :boot "b1" :deadline-ms deadline)))
+          "上限の後は従来どおり WorkerGone を 1 つ"))
 
 
 ;; 盲検 A(card ki-d033e5f969cf の設計検証): 止まりの間にずらす欄の一覧が api_policy.clocks-shifted に在るので、期限を持つ欄を足す人が

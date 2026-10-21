@@ -16,7 +16,8 @@
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
 (import doeff_cluster.shared.intent.cluster_control [KillWorker])
-(import doeff_cluster.sim.local [sim-cluster SimParts PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps])
+(import doeff_cluster.sim.local [sim-cluster SimParts PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps CutWorker])
+(import doeff_cluster.shared.intent.cluster_control [StopCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 
@@ -142,3 +143,70 @@
   (val gone-at (get heard 0 1))
   (assert (< thawed gone-at (+ thawed T.lease-ms 1001)) #("WorkerGone は明けた後の lease の内" thawed gone-at))
   (assert (is w1-live True) "生きている w1 は生きたまま"))
+
+
+;; --- 起き直しの後、Service に載るまで(card ki-439a73dc075c)---------------------------------------------------------------
+;; 配備で coordinator の Pod が作り直されると、読み直して受付を始めてから Pod が Ready になり Service に載るまで(readinessProbe の周期 —
+;; 最大 10 秒)worker の heartbeat は届かない(rev 47 2026-10-17 15:25 の実測: 全 worker が WorkerGone になり、Service に載った直後に
+;; WorkerBack で戻った)。筋書きは両 worker の網を、止めてから作り直した coordinator の Service に載るまでの長さだけ切って、その形を作る。
+;;   3 作り直しの後に Service に載るまでの間も、明けた後も WorkerGone は 0 回(起動の時の生死の 1 度の知らせの WorkerBack だけ)・pulse の
+;;     置き先は同じ worker の同じ世代のまま。直す前は、作り直しから lease の内に w1・w2 の WorkerGone が出る。
+;; 止めている秒(配備の Pod の入れ替えの間)と、作り直してから Service に載るまでの秒(lease の 10 秒を越える — 実測は 8 秒 + 戻した最後の
+;; 連絡の 2〜4 秒前)。網を切る長さは足して 15 秒 — worker の fence(20 秒)の内なので、worker は job を止めない。
+(val DOWN-SECONDS 3.0)
+(val UNREACHED-SECONDS 12.0)
+
+
+(defk heard-until-back-of [name after]
+  {:pre [(: name str) (: after int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "受けた生死の出来事を、受けた刻と組にして、刻 after より後の name の WorkerBack まで並べるため。"
+  (var heard #())
+  (while True
+    (<- came (WaitForEvent WorkerGone WorkerBack))
+    (<- at int (now-epoch-ms))
+    (:= heard (+ heard #(#(came at))))
+    (when (and (isinstance came WorkerBack) (= came.worker name) (> at after))
+      (return heard))))
+
+
+(defk restart-unreached []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "受け手として: 両 worker の網を切って coordinator を止め、作り直して Service に載り、移し替えの期限を越えるまで待ち、終わりの印に
+   w1 の処理を止めて戻るまでに受けた出来事と、止める前後の pulse の置き先と、印を付けた刻を返すため。"
+  (<- before tuple (pulse-placement))
+  (for [w WORKERS]
+    (<- (CutWorker w.name (+ DOWN-SECONDS UNREACHED-SECONDS))))
+  (<- (StopCoordinator DOWN-SECONDS))
+  (<- (Delay (+ DOWN-SECONDS UNREACHED-SECONDS AFTER-SECONDS)))
+  (<- after tuple (pulse-placement))
+  (<- marked int (now-epoch-ms))
+  (<- (StallWorker "w1" MARK-STALL-SECONDS))
+  (<- heard tuple (heard-until-back-of "w1" marked))
+  #(heard before after marked))
+
+
+(defk restarted-unreached []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "worker が名乗って pulse が置かれた後に受け手に成り、作り直しの後に Service に載るまで届かない筋書きを回し、coordinator の Pod の
+   一生の数も添えて返すため。"
+  (<- (Delay 5.0))
+  (<- parts SimParts (PartsOf))
+  (<- seen tuple (as-reader parts.broker (restart-unreached)))
+  (<- runs tuple (CoordinatorRuns))
+  #(#* seen (len runs)))
+
+
+(deftest test-a-restarted-coordinator-tells-no-worker-gone-before-the-service-takes-it
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (restarted-unreached) :timing T :workers WORKERS))
+  (val heard (get seen 0))
+  (val before (get seen 1))
+  (val after (get seen 2))
+  (val marked (get seen 3))
+  (assert (= (get seen 4) 2) "止めて作り直した(一生 2 つ)")
+  ;; 受け手は筋書きの待ちが明けてから読むので、受けた刻ではなく並びと期限で分ける: 作り直した coordinator の起動の時の生死の 1 度の
+  ;; 知らせ(どちらも生きている)の後は、終わりの印の WorkerGone・WorkerBack だけ。
+  (val names (lfor #(event _at) heard #((type event) event.worker)))
+  (assert (= (sorted (cut names 0 2) :key str) (sorted [#(WorkerBack "w1") #(WorkerBack "w2")] :key str)) heard)
+  (assert (= (cut names 2 None) [#(WorkerGone "w1") #(WorkerBack "w1")]) heard)
+  (assert (> (. (get heard 2 0) deadline-ms) marked) #("WorkerGone は印の後の期限" heard marked))
+  (assert (= after before) #("pulse の置き先は同じ worker の同じ世代のまま" before after)))

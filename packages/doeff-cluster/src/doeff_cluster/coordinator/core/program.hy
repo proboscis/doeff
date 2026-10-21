@@ -46,7 +46,7 @@
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-follow with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-follow scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR
-                                                   stall-of clocks-shifted])
+                                                   stall-of clocks-shifted unreached-shifted])
 (import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable HeartbeatBody])
@@ -280,6 +280,33 @@
           shifted)))
 
 
+
+;; 起き直しの後、worker から届くまでの長さを経過に数えなかった事の行の名(2026-10-21・card ki-439a73dc075c — 名 + 欄 at = 数えるのを
+;; 止めた歩の刻(ISO)・waited-ms = 読み直しからその歩までの長さ・by = 止めた訳(heartbeat = 最初の heartbeat を受けた・limit = 待ちの
+;; 上限 api_policy.REACH-WAIT-MS を越えた)。配備の後に、Service に載るまでの長さと、その間に誰も消えたと数えなかった事を log から読む。
+(val REACH-LOG "coordinator: 起き直しの後、worker から届くまでを経過に数えなかった")
+
+
+(defk reach-resumed [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "program"}}
+  "起き直しの後まだ heartbeat を受けていない間なら、その長さを経過・沈黙に数えないように時計をずらし(api_policy.unreached-shifted)、
+   待ちの上限を越えて数え始めた歩で 1 行の log を出すため。受けた後なら同じ状態。"
+  (<- shifted ClusterState (unreached-shifted state now))
+  (when (and (is-not state.unreached-ms None) (is shifted.unreached-ms None))
+    (<- (slog REACH-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms now)) :waited-ms (- now state.started-ms) :by "limit")))
+  shifted)
+
+
+(defk reach-noted [state now heard]
+  {:pre [(: state ClusterState) (: now int) (: heard bool)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "program"}}
+  "起き直しの後まだ heartbeat を受けていない間に、この歩で heartbeat を受けた(heard)なら、以後は従来どおり経過を数える状態にし、1 行の
+   log を出すため。それ以外は同じ状態。"
+  (if (or (is state.unreached-ms None) (not heard))
+      state
+      (do (<- (slog REACH-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms now)) :waited-ms (- now state.started-ms) :by "heartbeat"))
+          (replace state :unreached-ms None))))
+
+
 (defk announce-liveness [events]
   {:pre [(: events tuple)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
   "worker の生死の出来事(WorkerGone・WorkerBack — #3864)を process の外へ出すため。届かなかった物は doeff-events が channel の欠けの
@@ -317,7 +344,9 @@
   ;; watchers = 返事を待たせている版の変化の待ち(Watcher の tuple — watch_policy)。永続化の後に、前からの待ちとこのまとまりで
   ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の歩へ持ち越す。
   ;; pace = 前の歩の刻み(StepPace — 起動の最初の歩は None)。止まりの検出(api_policy.stall-of)の材料。
-  ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
+  ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple 歩の刻 時計をずらした後の歩の前の状態)。最後の物は、要求の無い歩が
+  ;; 状態を変えたか(wake_policy.after-step)を比べる相手 — 届かない間のずらしは、それだけでは次の判断を変えない(ずらした時計で同じ歩の
+  ;; tick が判じ済み)ので変化に数えない(数えると、歩ごとに数 ms ずらして今すぐの歩が続く)。
   (<- batch list (NextRequests wait))
   (<- now int (now-epoch-ms))
   ;; 返事の遅れの計りの起点: 要求を取った歩でだけ単調な時計を読む(区間は単調な時計の差で計る — HEARTBEAT-LAG-MS の註)。壁の時計の読みは
@@ -326,7 +355,12 @@
   ;; coordinator が process の中で止まっていた(機体ごとの止まり・保存の fsync の詰まり — card ki-d033e5f969cf)なら、調停の前にその
   ;; 長さだけ時計をずらす: 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに数えず、job を移さない。保存(SaveState)は
   ;; 歩の前の状態との差を書くので、ずらした値も同じ 1 回で耐久になる。
-  (<- resumed ClusterState (stall-resumed state now (! (stall-of pace now timing))))
+  ;; 起き直しの後まだ heartbeat を受けていない間(card ki-439a73dc075c — Pod が Service に載るまで worker から届かない)は、前の歩から
+  ;; 今までを同じく経過に数えない(reach-resumed — この間は止まりの検出を重ねない: 起点が前の歩の刻なので同じ長さを 2 度ずらす)。
+  (<- resumed ClusterState (if (is state.unreached-ms None)
+                               (stall-resumed state now (! (stall-of pace now timing)))
+                               (reach-resumed state now)))
+  (val base (if (is state.unreached-ms None) state resumed))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎歩調停する(2026-09-25)。
   ;; 以前は要求の無い歩だけだったので、読みの要求(GET)が続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
@@ -348,6 +382,9 @@
             (val sender (get answered 3))
             (when (is-not sender None)
               (:= heard (+ heard #((HeardBeat :worker sender :queued-ms request.queued-ms))))))))
+  ;; 最初の heartbeat を受けた歩の後は、従来どおり経過を数える(届き得るようになった)。
+  (<- noted ClusterState (reach-noted next now (bool heard)))
+  (:= next noted)
   ;; 返事の遅れの計り: heartbeat の在る歩でだけ区間の切れ目の単調な時計の読みを読む(区間の名は HEARTBEAT-LAG-MS の註)。
   (val measuring (bool heard))
   (<- judged-ms int (lap-ms measuring))
@@ -377,7 +414,7 @@
         (:= kept (+ kept #(judged.watcher)))
         (do (<- body dict (watch-answer-json judged.answer))
             (<- (Reply watcher.request 200 body)))))
-  #(next (len batch) kept now))
+  #(next (len batch) kept now base))
 
 
 (defk release-watchers [state watchers]
@@ -404,7 +441,9 @@
   ;; 起動の時に、名簿の全部の今の生死を 1 度出す(#3864 — 沈黙の集合は保存の形に無いので、ここで今の刻から求める。保存する欄は
   ;; 変わらない。受け手の追いつきにも成る)。以後の歩は、変わった所だけを出す。
   (<- started int (now-epoch-ms))
-  (:= current (note-liveness current started timing))
+  ;; 読み直しからここまでも、worker から届く前の長さとして経過に数えない(reach-resumed — 最初の生死の判断の前)。
+  (<- reaching ClusterState (reach-resumed current started))
+  (:= current (note-liveness reaching started timing))
   (<- (announced-aside (! (liveness-now current timing))))
   (while True
     (<- stopping bool (CoordinatorStopRequested))
@@ -431,8 +470,9 @@
     (:= judged woke)
     (<- planned (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
     (val took (> (get stepped 1) 0))
-    (<- following (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after current))))
-    (<- counted int (count-unsettled streak following current after))
+    (val base (get stepped 4))
+    (<- following (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after base))))
+    (<- counted int (count-unsettled streak following base after))
     (:= streak counted)
     (:= due following)
     (:= current after)))
