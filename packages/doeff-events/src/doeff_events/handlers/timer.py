@@ -16,19 +16,26 @@ deadline it already has, or arming a deadline later than the earliest, costs no 
 deadline armed the task waits for ``wake`` alone. Deadlines of the same instant fire in the order they were
 armed.
 
+The task fires only when the scheduler gives it a turn, so it can wake late. Woken, it fires every deadline that has
+come by the clock's time then, not only those up to the one it waited for. And a program's ``WaitForEvent(s)`` passes
+through this handler: while the task is parked, the deadlines strictly behind the clock are published first, then the
+wait goes on to the event handler — a subscriber queue that answers every wait from queued events never gives the task
+a turn, and a busy worker would never see its deadlines (card ki-7d2a9efa8320). On the virtual clock the task is woken
+at its deadline before the clock moves on, so neither changes the order there.
+
 Install it inside the event handler and the clock handler (the timer task's ``Publish`` / ``WaitWithin`` /
 ``GetTime`` go to the handlers outside this one), inside ``scheduled``.
 
 A ``TimerFired`` is delivered as the event handler delivers any event. With the in-memory ``event_handler()``
 that means only to the programs waiting for it at that moment: **a fire while no program waits is lost**, so a
-worker that is busy (in another wait, or processing) when its deadline passes never sees that deadline. A
-worker must not rely on ``ArmTimer`` until its event handler keeps a queue per subscriber (agora-controllers
-docs/design/event-waits/README.md 2 (b) — agora-redesign #3075).
+worker that is busy (in another wait, or processing) when its deadline passes never sees that deadline, nor the
+overdue ones published just before its wait. A worker must not rely on ``ArmTimer`` until its event handler keeps a
+queue per subscriber (agora-controllers docs/design/event-waits/README.md 2 (b) — agora-redesign #3075).
 """
 
 from collections.abc import Hashable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import count
 from typing import Any
 
@@ -45,10 +52,15 @@ from doeff_events.effects import (
     DisarmTimerEffect,
     Publish,
     TimerFired,
+    WaitForEventEffect,
+    WaitForEventsEffect,
 )
 
 # The value the handler completes the task's wake promise with: WaitWithin answers None only when its deadline passes.
 _WOKEN = True
+# A program's wait fires the deadlines strictly behind the clock (``_fire_overdue``): one at the clock's very instant is
+# left to the task, as the virtual clock leaves it.
+_JUST_BEFORE = timedelta(microseconds=1)
 
 
 @dataclass(frozen=True)
@@ -85,6 +97,33 @@ def _due(armed: dict[Hashable, _Arming], reached: datetime) -> tuple[tuple[Hasha
     return tuple((tag, arming) for tag, arming in _in_order(armed) if arming.at <= reached)
 
 
+@do
+def _fire_due(armed: dict[Hashable, _Arming], reached: datetime):
+    """Take the armed deadlines that have come by ``reached`` out of ``armed`` and publish their ``TimerFired``, in
+    firing order."""
+    for tag, arming in _due(armed, reached):
+        # A deadline moved or disarmed while an earlier fire was being published is not fired.
+        if armed.get(tag) is arming:
+            del armed[tag]
+            yield Publish(TimerFired(tag))
+
+
+@do
+def _fire_overdue(armed: dict[Hashable, _Arming]):
+    """Fire the armed deadlines strictly behind the clock; answer whether any fired.
+
+    A program's WaitForEvent(s) does this while the task is parked in its wait: the task runs only when the scheduler
+    gets a turn, and a wait the subscriber queue answers at once never gives it one — a program kept busy by queued
+    events would never see its deadlines (card ki-7d2a9efa8320). Strictly behind: on the virtual clock the task is
+    woken at its deadline before the clock moves on, so nothing fires here and the virtual clock's order is unchanged.
+    """
+    now = yield GetTime()
+    if not any(arming.at < now for arming in armed.values()):
+        return False
+    _ = yield _fire_due(armed, now - _JUST_BEFORE)
+    return True
+
+
 def timer_handler() -> ProgramHandler:
     """Create a timer handler: ``ArmTimer`` / ``DisarmTimer`` change one queue, one task fires its deadlines."""
 
@@ -119,11 +158,11 @@ def timer_handler() -> ProgramHandler:
             task = replace(task, waiting=False)
             if woken is not None or target is None:
                 continue
-            for tag, arming in _due(armed, target.at):
-                # A deadline moved or disarmed while an earlier fire was being published is not fired.
-                if armed.get(tag) is arming:
-                    del armed[tag]
-                    yield Publish(TimerFired(tag))
+            # Every deadline that has come by now, not only those up to the one waited for: a task woken late (the
+            # scheduler ran it after its deadline) fires the later ones that also passed in the same round. On the
+            # virtual clock now is the deadline waited for.
+            reached = yield GetTime()
+            _ = yield _fire_due(armed, max(target.at, reached))
 
     @do
     def queue_changed():
@@ -143,9 +182,25 @@ def timer_handler() -> ProgramHandler:
         return None
 
     @do
-    def handler(effect: ArmTimerEffect | DisarmTimerEffect | ArmedTimersEffect, k: Any):
+    def handler(
+        effect: ArmTimerEffect
+        | DisarmTimerEffect
+        | ArmedTimersEffect
+        | WaitForEventEffect
+        | WaitForEventsEffect,
+        k: Any,
+    ):
         # Every clause performs its final Transfer/Pass from THIS frame (ADR-DOE-CORE-EFFECTS-002);
         # the sub-programs above complete before it.
+        if (
+            isinstance(effect, WaitForEventEffect | WaitForEventsEffect)
+            and task.waiting
+            and armed
+            and (yield _fire_overdue(armed))
+        ):
+            # The wait itself is the event handler's (the Pass below); the overdue deadlines went into the subscriber's
+            # queue first. The task waits for a deadline that has just fired: wake it to wait for the next one.
+            _ = yield queue_changed()
         if isinstance(effect, ArmTimerEffect):
             current = armed.get(effect.tag)
             if current is not None and current.at == effect.at:
