@@ -53,9 +53,10 @@ class Front:
 
 @dataclass(frozen=True)
 class Prepared:
-    """書き出す前の記事1本(原稿・slug・公開設定・記事のMarkdown・画像・食い違い・公開の刻)。
+    """書き出す前の記事1本(原稿・slug・公開設定・記事のMarkdown・画像・食い違い・公開の刻・公開の許可)。
 
     published_atはZennのfront matterのpublished_at(日本時間のYYYY-MM-DD hh:mm)。刻の無い回はNone。
+    permitは公開順の表に書いた、その1本の公開の許可の依頼書のid(lt-…)。許可の無い回はNone。
     """
 
     name: str
@@ -65,6 +66,7 @@ class Prepared:
     images: tuple[str, ...]
     problems: tuple[str, ...]
     published_at: str | None = None
+    permit: str | None = None
 
 
 def read_front(source: str) -> tuple[dict[str, object], str] | None:  # noqa: DOEFF006 — 道具の小さな組の戻り
@@ -187,16 +189,18 @@ def prepare(row: release.PlanRow, rows: tuple[release.PlanRow, ...]) -> Prepared
     published = isinstance(row.state, release.Published) or at is not None
     parsed = read_front((SOURCE / row.name).read_text())
     if parsed is None:
-        return Prepared(row.name, row.slug, published, "", (), ("front matterがありません",), at)
+        missing = ("front matterがありません",)
+        return Prepared(row.name, row.slug, published, "", (), missing, at, row.permit)
     fields, body = parsed
     released = release.release_text(body, rows)
     images = image_targets(released)
     problems = (*front_problems(fields), *body_problems(released))
     front = typed_front(fields)
     if problems or front is None:
-        return Prepared(row.name, row.slug, published, "", images, problems or ("型の誤り",), at)
+        found = problems or ("型の誤り",)
+        return Prepared(row.name, row.slug, published, "", images, found, at, row.permit)
     article = zenn_article(front, released, published, at)
-    return Prepared(row.name, row.slug, published, article, images, (), at)
+    return Prepared(row.name, row.slug, published, article, images, (), at, row.permit)
 
 
 def write(item: Prepared, output: Path) -> None:
@@ -224,12 +228,11 @@ def prepare_all() -> Export:
 
 
 def summary(item: Prepared) -> str:
-    """書き出した記事1本の1行(出力先のファイル・原稿・公開設定・画像の数)。"""
+    """書き出した記事1本の1行(出力先のファイル・原稿・公開設定・公開の許可・画像の数)。"""
     state = "true" if item.published else "false"
     at = f"・published_at: {item.published_at}" if item.published_at else ""
-    return (
-        f"articles/{item.slug}.md ← {item.name}(published: {state}{at}・画像 {len(item.images)}枚)"
-    )
+    permit = f"・許可 {item.permit}" if item.permit else ""
+    return f"articles/{item.slug}.md ← {item.name}(published: {state}{at}{permit}・画像 {len(item.images)}枚)"
 
 
 def main() -> None:

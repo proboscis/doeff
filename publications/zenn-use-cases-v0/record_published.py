@@ -6,7 +6,7 @@ Zennが刻に公開する)。この命令は刻の後に走らせ、publication-
 - 直すのは、公開の刻を書いた公開予定の行のうち、刻が今(--now)以前で、Zennの記事のURLが開ける回だけ。
   刻の前の回と、刻を過ぎてもZennで開けない回は直さない(開けない回は表示して、終わりのcodeを1にする)。
 - 公開の刻は「公開済み <URL> <刻>」の形で残す。書き出しは同じpublished_atを書き続け、Zennの公開日時を
-  変えない。
+  変えない。公開の許可の依頼書のid(「許可 lt-…」)も、刻の後ろに残す。
 - 表を直した後は、表をmainに入れてからpush_zenn_branch.pyを走らせる。他の回の本文の、直した回への
   リンクが、ZennのURLへのリンクになる。
 """
@@ -78,9 +78,9 @@ def opens(url: str) -> bool:
         return False
 
 
-def published_cell(url: str, at: datetime) -> str:
-    """公開済みに直した公開状態の欄の文(公開の刻を残す)。"""
-    return f"公開済み {url} {release.zenn_time(at)} JST"
+def published_cell(url: str, at: datetime, permit: str | None) -> str:
+    """公開済みに直した公開状態の欄の文(公開の刻と公開の許可の依頼書のidを残す)。"""
+    return f"公開済み {url} {release.zenn_time(at)} JST" + (f" 許可 {permit}" if permit else "")
 
 
 def record_line(
@@ -96,7 +96,7 @@ def record_line(
     if not reachable(url):
         return Line(line, unreachable=Unreachable(row.name, url, at))
     start, end = found.span(3)
-    edited = line[:start] + published_cell(url, at) + line[end:]
+    edited = line[:start] + published_cell(url, at, row.permit) + line[end:]
     return Line(edited, recorded=Recorded(row.name, row.slug, url, at))
 
 
