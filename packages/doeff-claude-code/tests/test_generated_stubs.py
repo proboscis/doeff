@@ -54,7 +54,7 @@ USED = (
     ),
     UsedModule(
         "lines",
-        ("Usage", "ModelWindow", "AccountRefusalHit", "AccountLimitHit", "CompactBoundary", "CompactTrigger"),
+        ("Usage", "ModelWindow", "ModelUsage", "ModelUsageGap", "AccountRefusalHit", "AccountLimitHit", "CompactBoundary", "CompactTrigger"),
     ),
 )
 
