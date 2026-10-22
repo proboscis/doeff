@@ -44,6 +44,7 @@ card ki-909e814cc835)。
 """
 
 from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION as TYPE_CHECK_EXPANSION
+from doeff_hy_bytecode_guard.import_scope import SharedScope as SharedScope
 from doeff_hy_bytecode_guard.loader_hooks import bytecode_is_current as bytecode_is_current
 from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import gensym_renaming as gensym_renaming

@@ -42,6 +42,7 @@ packages/doeff-hy/docs/static-check.md)。
 import argparse
 import ast
 import dataclasses
+import functools
 import json
 import multiprocessing
 import os
@@ -60,7 +61,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING
 
 import hy
-from doeff_hy_bytecode_guard import gensym_renaming, macro_recording, value_reference
+from doeff_hy_bytecode_guard import SharedScope, gensym_renaming, macro_recording, value_reference
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 from hy.models import Object
@@ -726,6 +727,15 @@ def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:
     )
 
 
+def _file_names(directory: Path) -> frozenset[str]:
+    """dir の直下の file の名(dir が無い・読めない時は空 — Path.is_file と同じく、無い物は file でない)。"""
+    try:
+        with os.scandir(directory) as entries:
+            return frozenset(entry.name for entry in entries if entry.is_file())
+    except OSError:
+        return frozenset()
+
+
 def _module_candidates(dirs: list[Path], name: str) -> list[Path]:
     """import の名 name が dirs の下で当たりうる .hy(dir ごとに <名>.hy と <名>/__init__.hy)— 依存の展開が探す file。"""
     found: list[Path] = []
@@ -813,6 +823,7 @@ def _to_cache(projection: Projection) -> CachedProjection:
             for f in projection.findings
         ),
         projection.used,
+        tuple(sorted(imported_modules(projection))),
     )
 
 
@@ -836,9 +847,10 @@ class ExpansionWorkerLostError(RuntimeError):
 
 @dataclass(frozen=True)
 class _Hit:
-    """保存から引けた展開。"""
+    """保存から引けた展開と、それが import する module の名。"""
 
     projection: Projection
+    imports: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -857,7 +869,13 @@ def _looked_up(root: Path, roots: list[Path], source: Path, cache_dir: Path | No
     key = place(source.read_text(encoding="utf-8"), module, str(source.relative_to(root)))
     match load(cache_dir, key):
         case CachedProjection() as cached:
-            return _Hit(_from_cache(source, module, cached))
+            projection = _from_cache(source, module, cached)
+            if cached.imports is not None:
+                return _Hit(projection, frozenset(cached.imports))
+            # import の名を持たない古い entry — 一度読んで書き足し、次の実行から展開の text を読み直さない。
+            imports = imported_modules(projection)
+            store(cache_dir, key, _to_cache(projection))
+            return _Hit(projection, frozenset(imports))
         case CacheMiss():
             return _Miss(source, key)
 
@@ -942,9 +960,13 @@ def project_closure(
     呼び手が expander_limit(枠の正本が答えた数)で決める)。"""
     projections: dict[Path, Projection] = {}
     failures: list[CompileFailure] = []
+    # 候補の path の有無は、実行の間に変わらない物として dir ごとに 1 度だけ引く(候補ごとに stat すると、10 file の検めで 10 万回になった)。
+    listing = functools.cache(_file_names)
     seen: set[Path] = set(targets)
     wave = list(dict.fromkeys(targets))
-    with _Expanders(limit) as expanders:
+    # 展開の cache の「今の環境に合うか」の照らしは、file の状態を実行の間 1 度だけ stat する(照らしごとに覚えを捨てると、
+    # 10 file の検めで stat が 10 万回・CPU 10 秒になった — card ki-0f0542a69a78)。
+    with SharedScope(), _Expanders(limit) as expanders:
         while wave:
             looked = {source: _looked_up(root, roots, source, cache_dir) for source in wave}
             misses = [miss for miss in looked.values() if isinstance(miss, _Miss)]
@@ -954,16 +976,19 @@ def project_closure(
             found: list[Path] = []
             for source, lookup in looked.items():
                 result = lookup.projection if isinstance(lookup, _Hit) else fresh[source]
+                imports = lookup.imports if isinstance(lookup, _Hit) else None
                 if isinstance(result, CompileFailure):
                     failures.append(result)
                     continue
                 projections[source] = result
                 # import の .hy は import の根と、import する file の dir から根までの親で探す(pyright の探し方 — search_dirs)。
                 dirs = search_dirs(root, roots, source)
-                for name in imported_modules(result):
+                for name in imports if imports is not None else imported_modules(result):
                     for candidate in _module_candidates(dirs, name):
+                        if candidate.name not in listing(candidate.parent):
+                            continue
                         absolute = _absolute(candidate)
-                        if candidate.is_file() and absolute not in seen:
+                        if absolute not in seen:
                             seen.add(absolute)
                             found.append(absolute)
             wave = found

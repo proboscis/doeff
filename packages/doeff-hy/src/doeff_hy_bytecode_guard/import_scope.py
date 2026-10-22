@@ -15,7 +15,7 @@ ki-be596ac8276f)。読みの口の包み(:mod:`doeff_hy_bytecode_guard.loader_ho
 """
 
 from _thread import get_ident  # threading は起動時に読まれていない — 同じ関数の元
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 
 
 class ImportScope:
@@ -51,3 +51,29 @@ def current_scope() -> ImportScope | None:
     if scope is None or scope.closed or scope.owner != get_ident():
         return None
     return scope
+
+
+class SharedScope:
+    """複数の照らしにまたがって 1 つの覚えを置く口(``with`` で使う)— 道具が直に照らす場合(型検査の展開の cache の引き)でも、
+    照らしごとに覚えを捨てず、file の状態を道具の 1 回の実行の中で 1 度だけ stat する。実行の間 file は変わらない物として扱う。
+    読み込みの中ですでに覚えがあれば(入れ子)それをそのまま使う。"""
+
+    __slots__ = ("_mut_scope", "_mut_token")
+
+    def __init__(self) -> None:
+        self._mut_scope: ImportScope | None = None
+        self._mut_token: Token[ImportScope | None] | None = None
+
+    def __enter__(self) -> ImportScope:
+        existing = current_scope()
+        if existing is not None:
+            return existing
+        scope = self._mut_scope = ImportScope()
+        self._mut_token = IMPORT_SCOPE.set(scope)
+        return scope
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._mut_scope is None or self._mut_token is None:
+            return
+        self._mut_scope.close()
+        IMPORT_SCOPE.reset(self._mut_token)

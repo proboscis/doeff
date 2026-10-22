@@ -78,6 +78,9 @@ class CachedProjection:
     spans: tuple[CachedSpan, ...]
     findings: tuple[CachedFinding, ...]
     used: "MacroRecord"
+    # 展開した Python が import する module の名(辿り先を決める — 引くたびに展開の text を ast で読み直さないため。
+    # 古い entry は持たない = None・引いた側が一度読んで書き足す)。
+    imports: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -138,11 +141,21 @@ def _read_entry(path: Path) -> CachedProjection | CacheMiss:
                     tuple(CachedSpan((s[0], s[1]), (s[2], s[3]), s[4], s[5]) for s in spans),
                     tuple(CachedFinding(**f) for f in findings),
                     record,
+                    _imports_of(loaded),
                 )
             except (TypeError, IndexError) as error:
                 return CacheMiss(f"欄の形が違う: {error}")
         case _:
             return CacheMiss("版か形が違う")
+
+
+def _imports_of(loaded: object) -> tuple[str, ...] | None:
+    """entry の import の名(無い古い entry・形が違う時は None)。"""
+    match loaded:
+        case {"imports": list(names)}:
+            return tuple(str(name) for name in names)
+        case _:
+            return None
 
 
 def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
@@ -155,6 +168,8 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
         "spans": [[*s.start, *s.end, s.hy_line, s.hy_column] for s in projection.spans],
         "findings": [vars(f) for f in projection.findings],
     }
+    if projection.imports is not None:
+        payload["imports"] = list(projection.imports)
     # 一時の file は書き手ごとの名(pid と時刻)— 保存先を共有する 2 台の worker が同じ entry を同時に書いても、互いの一時の file へ
     # 書き込まずに済み、どちらかの中身がそのまま rename される(agora-redesign #3863 の (b))。書けなければ一時の file を残さない。
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")

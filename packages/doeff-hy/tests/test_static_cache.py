@@ -583,3 +583,53 @@ def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: py
         static_cache.store(tmp_path, "b" * 64, static_cache.CachedProjection("t", (), (), used))
     assert len(written) == 2
     assert written[0] != written[1], written
+
+
+# ---- 引く速さ(card ki-0f0542a69a78 — 10 file の検めで stat 10 万回・CPU 10 秒)-----------------------------------------------
+
+
+def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> None:
+    # import の名を entry が持つ(引くたびに展開の text を ast で読み直さない)。名を持たない古い entry は None で読める。
+    from doeff_hy import static_cache
+    from doeff_hy_bytecode_guard.records import MacroRecord
+
+    used = MacroRecord("probe", (), (), (), (), ())
+    static_cache.store(tmp_path, "c" * 64, static_cache.CachedProjection("t", (), (), used, ("a", "a.b")))
+    static_cache.store(tmp_path, "d" * 64, static_cache.CachedProjection("t", (), (), used))
+    [with_imports] = (tmp_path / "cc" / ("c" * 64)).glob("*.json")
+    [without] = (tmp_path / "dd" / ("d" * 64)).glob("*.json")
+    kept = static_cache._read_entry(with_imports)
+    old = static_cache._read_entry(without)
+    assert isinstance(kept, static_cache.CachedProjection) and kept.imports == ("a", "a.b")
+    assert isinstance(old, static_cache.CachedProjection) and old.imports is None
+
+
+def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 候補の有無は dir ごとに 1 度だけ引く(候補ごとに stat しない)。dir が無くても空で、file でない名(dir)は数えない。
+    from doeff_hy import static_check
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.hy").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "sub.hy").mkdir()
+    assert static_check._file_names(tmp_path / "pkg") == {"a.hy"}
+    assert static_check._file_names(tmp_path / "missing") == frozenset()
+
+
+def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None:
+    # 照らしごとに覚えを捨てず、SharedScope の間は同じ file の状態を 1 度だけ読む。閉じた後は覚えが残らない。
+    from doeff_hy_bytecode_guard import SharedScope
+    from doeff_hy_bytecode_guard.import_scope import current_scope
+    from doeff_hy_bytecode_guard import macro_use
+
+    probe = tmp_path / "x.py"
+    probe.write_text("1", encoding="utf-8")
+    assert current_scope() is None
+    with SharedScope() as scope:
+        assert current_scope() is scope
+        first = macro_use._state_now(str(probe))
+        probe.write_text("22", encoding="utf-8")  # 実行の間は変わらない物として扱う
+        assert macro_use._state_now(str(probe)) == first
+        with SharedScope() as inner:  # 入れ子は外の覚えをそのまま使う
+            assert inner is scope
+    assert current_scope() is None
+    assert macro_use._state_now(str(probe)) != first
