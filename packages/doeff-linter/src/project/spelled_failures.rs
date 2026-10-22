@@ -28,17 +28,27 @@ pub struct SpelledFailures<'a> {
     /// 宣言の file ごとの失敗の型(根からの path → その file が宣言する型)。file の中身と読み方だけで決まり、引く型の名に依らないので、名が変わっても同じ file を読み解き直さない
     /// (match の腕の型が違う名で何度も引かれると、`|` のように全部の宣言の file を綴る名では 246 file の読み解きが名の数だけ繰り返された)。
     parsed: Mutex<HashMap<String, Arc<FailureTypes>>>,
+    /// repo の defeffect の宣言(effect ごとの不在・失敗の型)の全部 — DOEFF175 が effect の名で引く。effect の宣言を持つ file は `(defeffect` の綴りを含むので、
+    /// 宣言の file の中からそれを含む物だけを読み解いて 1 度だけ作る(effect の名ごとに宣言の file を探し直さない — 1 file に 40 の名があると 40 回の探し直しだった)。
+    effects: OnceLock<FailureTypes>,
 }
 
 impl<'a> SpelledFailures<'a> {
     pub fn new(root: &'a Path, enabled: &'a BTreeSet<ProjectRule>, reading: &'a TagReading) -> Self {
-        SpelledFailures { root, enabled, reading, memo: Mutex::new(HashMap::new()), declarations: OnceLock::new(), parsed: Mutex::new(HashMap::new()) }
+        SpelledFailures {
+            root,
+            enabled,
+            reading,
+            memo: Mutex::new(HashMap::new()),
+            declarations: OnceLock::new(),
+            parsed: Mutex::new(HashMap::new()),
+            effects: OnceLock::new(),
+        }
     }
 
-    /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
-    fn declared_with(&self, name: &str) -> FailureTypes {
-        let spelling = Spelling::of(name);
-        let declarations = self.declarations.get_or_init(|| {
+    /// 宣言を持つ file(`:failure` か `:absent` を含む file)の(根からの path・中身)— 最初の問いで 1 度だけ repo から集める。
+    fn declaration_sources(&self) -> &Vec<(String, String)> {
+        self.declarations.get_or_init(|| {
             // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
             let sources: Vec<(String, PathBuf, Option<String>)> = crate::timing::timed("failure-types.collect", || {
                 hy_files::collect_reading(self.root, |path| {
@@ -47,9 +57,19 @@ impl<'a> SpelledFailures<'a> {
                 })
             });
             sources.into_iter().filter_map(|(rel, _, source)| source.map(|source| (rel, source))).collect()
-        });
+        })
+    }
+
+    /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
+    fn declared_with(&self, name: &str) -> FailureTypes {
+        let spelling = Spelling::of(name);
         let kept: Vec<(&str, &str)> =
-            declarations.iter().filter(|(_, source)| spelling.in_source(source)).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
+            self.declaration_sources().iter().filter(|(_, source)| spelling.in_source(source)).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
+        self.merged(&kept)
+    }
+
+    /// 宣言の file(根からの path・中身)の列を読み解いて 1 つの集合に束ねる(file ごとの読み解きは覚える)。
+    fn merged(&self, kept: &[(&str, &str)]) -> FailureTypes {
         let mut parsed = self.parsed.lock().expect("失敗の型の file ごとの memo");
         let fresh: Vec<(&str, &str)> = kept.iter().filter(|(rel, _)| !parsed.contains_key(*rel)).copied().collect();
         if !fresh.is_empty() {
@@ -63,10 +83,19 @@ impl<'a> SpelledFailures<'a> {
             }
         }
         let mut all = FailureTypes::default();
-        for (rel, _) in &kept {
+        for (rel, _) in kept {
             all.extend(parsed[*rel].as_ref().clone());
         }
         all
+    }
+
+    /// repo の defeffect の宣言の全部(最初の問いで 1 度だけ作る)。宣言の file のうち `(defeffect` を綴る物だけを読み解く。
+    fn all_effects(&self) -> &FailureTypes {
+        self.effects.get_or_init(|| {
+            let kept: Vec<(&str, &str)> =
+                self.declaration_sources().iter().filter(|(_, source)| source.contains("(defeffect")).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
+            crate::timing::timed("failure-types.effects", || self.merged(&kept))
+        })
     }
 }
 
@@ -97,7 +126,7 @@ impl FailureLookup for SpelledFailures<'_> {
         if !self.enabled.contains(&ProjectRule::StaleOutcomeBranch) {
             return None;
         }
-        self.declared_for(qualified_effect).effect_outcomes(qualified_effect)
+        self.all_effects().effect_outcomes(qualified_effect)
     }
 }
 
@@ -185,6 +214,35 @@ mod tests {
         ] {
             assert_eq!(lookup.is_failure(qualified), whole.contains(qualified), "{qualified}");
         }
+    }
+
+    /// effect ごとの宣言は、全体の実行が集める物と同じ(宣言した effect も、宣言の無い effect も、別の module の同じ名も)。
+    #[test]
+    fn the_effect_declarations_equal_the_whole_repo() {
+        let dir = repo(&sample());
+        let reading = tag_reading(None, None);
+        let enabled = BTreeSet::from([ProjectRule::StaleOutcomeBranch]);
+        let whole = {
+            let mut all = FailureTypes::default();
+            for path in collect_hy_files(dir.path()) {
+                let (Some(rel), Ok(source)) = (relative_path(dir.path(), &path), std::fs::read_to_string(&path)) else { continue };
+                if !(source.contains(":failure") || source.contains(":absent")) {
+                    continue;
+                }
+                let module = module_of(&rel);
+                let facts = read_facts(Language::Hy, &source, &module, &reading);
+                all.extend(failure_types_in(&source, Scope { module: &module, bindings: &facts.bindings }));
+            }
+            all
+        };
+        let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
+        for effect in ["app.effs.ReadRow", "app.long.Z", "app.use.ReadRow", "app.effs.Nothing", "ReadRow"] {
+            assert_eq!(lookup.effect_outcomes(effect), whole.effect_outcomes(effect), "{effect}");
+        }
+        let read_row = lookup.effect_outcomes("app.effs.ReadRow").expect("ReadRow は宣言つき");
+        assert!(read_row.absent.contains("app.effs.Missing") && read_row.failure.contains("app.errs.Unreachable") && read_row.failure.contains("app.store.Gone"), "{read_row:?}");
+        // 規則が無効なら、effect の宣言も集めない(全体の実行と同じ)。
+        assert_eq!(SpelledFailures::new(dir.path(), &BTreeSet::new(), &reading).effect_outcomes("app.effs.ReadRow"), None);
     }
 
     /// 規則が無効なら、宣言があっても失敗の型は無い(全体の実行と同じ)。

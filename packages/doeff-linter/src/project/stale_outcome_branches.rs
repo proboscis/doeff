@@ -243,7 +243,10 @@ impl Walker<'_> {
         let call = if through_bang { self.bang_argument(value)? } else { value };
         let items = live(call)?;
         let head = self.hy.symbol(items.first()?)?;
-        (!head.starts_with('.') && head != "!").then(|| head.to_string())
+        // effect は class なので名の最後の段が大文字で始まる(`ReadRow`・`effects.ReadRow`)。defk の呼び(`read-typed`)・method の呼び(`.get`)・
+        // `!` は effect でない — 宣言を引く前に外す(1 file の実行は、宣言を引くたびに repo の宣言の file を読むので、引く数を減らす)。
+        let is_effect_name = head.rsplit('.').next().and_then(|last| last.chars().next()).is_some_and(char::is_uppercase);
+        is_effect_name.then(|| head.to_string())
     }
 
     /// `(! e)` の e。
@@ -497,6 +500,9 @@ mod tests {
   (<- r (ReadRow k))
   (match (other) (Row :value r) (isinstance r Missing) _ 1))
 (defk f [r]
+  (isinstance r Missing))
+(defk h [k]
+  (<- r (read-typed k))
   (isinstance r Missing))
 (defk g [k]
   (<- r (ReadRow k))

@@ -1228,7 +1228,7 @@ isinstance)は決して通らず、黙って次の枝(多くは成功の枝)に�
   宣言を持たない effect — 何も当てない。全体の実行は file ごとの cache(`failure-types`)から、1 file の実行(エディタ)は引く effect の名を綴る宣言の file だけから集める
   (`SpelledFailures` — DOEFF122 と同じ作りで、答えは同じ)。
 - **束ねた名**: 定義の中を前から順に読み、名を覚える。
-  - `(<- x (E …))`・`(<- x T (E …))`・`(<- x (E …) :absent F)`: 右辺の頭が `E` の記号なら x は E の答え。頭が effect でない呼び(defk・`maybe`・`on-raise` …)は x を別の値と覚える。
+  - `(<- x (E …))`・`(<- x T (E …))`・`(<- x (E …) :absent F)`: 右辺の頭が `E` の記号なら x は E の答え。effect は class なので、頭の名の最後の段が大文字で始まる物だけを effect と数える(`ReadRow`・`effects.ReadRow`。defk の呼び `read-typed`・method の呼びは数えない — 1 file の実行は宣言を引くたびに repo の宣言の file を読むので、引く数を減らす。小文字で始まる defeffect は読めない)。頭が effect でない呼び(defk・`maybe`・`on-raise` …)は x を別の値と覚える。
   - `(val|var|setv|setx|:= x (! (E …)))`: x は E の答え。ほかの右辺は別の値。
   - 別の値に束ね直した名・`fn` や `defk` の引数・`for` / `with` / `let` / `except` の名・match の pattern で束ねた名と `:as` の名・組み立ての束ねで束ねた名は、effect の答えでなくなる
     (覚えを捨てる。`for` と `with` の名は後ろの文でも捨てる)。comprehension(`lfor`・`gfor`・`sfor`・`dfor`)の中は何も覚えない。誤って当てるより見逃す方に倒す。
