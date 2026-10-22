@@ -358,14 +358,31 @@
    (偽 = 新しい世代が名乗った時に止める今どおりの形 — Recreate・突然の停止の後)。leaving = この世代の Pod の止まりが始まった(その世代の
    preStop の drain か、止まり始めの名乗りが届いた — AL-D2k)。重なりの組は、この印が付くまで job を新しい世代へ渡さない: Service は
    worker の Pod を振り先にし、Terminating の Pod を振り先から外すので、印の前に渡すと、渡した job へは新しい Pod が Ready になるまで
-   届かず、印の後まで残すと、残した job へは届かない。保存する(durable_kv の superseded/<名>/<世代>)。"
+   届かず、印の後まで残すと、残した job へは届かない。since-ms = この組を初めて書いた刻(重なりの組では受け渡しの待ちの始まり —
+   status.handover の sinceMs と止まりの知らせ HANDOVER-STALL-MS の起点・card ki-d8e594fe934d。この欄の前に保存した行は None)。
+   保存する(durable_kv の superseded/<名>/<世代>)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
   (#^ str boot)
   (#^ (get tuple #(str ...)) jobs)
   (#^ int seen-ms)
   (setv #^ bool overlapped False)
-  (setv #^ bool leaving False))
+  (setv #^ bool leaving False)
+  (setv #^ (| int None) since-ms None))
+
+
+(defrecord HandoverBlocker
+  "世代をまたぐ受け渡し(AL-D2k — cluster_policy.handover-pending)を止めている job 1 つ(card ki-d8e594fe934d): 今の世代がまだ受け取れない
+   job の名 job・入れ替えの形 update(handoff = 今の世代の process が Ready と数えられていない・recreate = 状態の行の phase が
+   HANDOVER-SETTLED-PHASES に無い)と、今の世代の状態の行の最後の結末(phase・続けて落ちた回数 failures・最後の終わりの code
+   last-exit-code・detail — 行が無ければ phase は None)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ str update)
+  (#^ (| str None) phase)
+  (#^ (| int None) failures)
+  (#^ (| int None) last-exit-code)
+  (#^ str detail))
 
 
 (defrecord GroupHeld

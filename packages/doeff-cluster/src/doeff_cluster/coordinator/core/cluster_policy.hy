@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun])
+(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker])
 (import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
@@ -789,7 +789,7 @@
 (defn #^ tuple jobs-for [#^ ClusterState state #^ str worker #^ (| dict None) [ready-instances None]]
   "worker に割り当てた job の spec。割り当ての世代(placement)を載せる — worker は起こす process へ渡し、process は readiness と
    計器の報告に載せる(比べない欄なので、世代だけが変わっても worker は process を起こし直さない)。
-   ready-instances = Service の名 → Ready と数えている process の世代の名(入れ替えの job に載せる・api_policy が求める)。
+   ready-instances = Service の名 → Ready と数えている process の世代の名(入れ替えの job に載せる・resource_policy.ready-instances が求める)。
    drain で並べた置き先(surge)がこの worker に在る job も載せる(新しい process を起こし、standby で lease を待つ)。
    入れ替えを諦めた job(state.handoffs の ABANDONED — handoff_policy)には諦めの印を載せる(worker は新を止めて旧を残す)。"
   (tuple (gfor job state.jobs
@@ -1857,12 +1857,16 @@
         overlap (if (is overlapped None) (and (is-not prior None) prior.overlapped) overlapped)
         ;; 止まりの始まりの印(AL-D2k)は前の組から引き継ぐ(drain_policy.request-drain が付ける)。
         leaving (and (is-not prior None) prior.leaving)
+        ;; 組を初めて書いた刻(受け渡しの待ちの始まり — card ki-d8e594fe934d)も引き継ぐ。欄の前に保存した組は、次の報告の刻から数える。
+        since (if (and (is-not prior None) (is-not prior.since-ms None)) prior.since-ms now)
         counted (frozenset (gfor j state.jobs :if (if overlap (not j.spec.once) j.spec.handoff) j.spec.name))
         jobs (tuple (sorted (& (running-names statuses) counted)))
         others (tuple (gfor r state.superseded-runs
                             :if (not (and (= r.worker name) (or (= r.boot boot) (not-in r.boot kept))))
                             r)))
-  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now :overlapped overlap :leaving leaving)) #()))
+  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now :overlapped overlap :leaving leaving
+                                                           :since-ms since))
+                           #()))
                  :key (fn [r] #(r.worker r.boot)))))
 
 
@@ -2011,30 +2015,75 @@
 (defn #^ bool handover-pending [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
                                 #^ (| dict None) ready-instances]
   ;; defk にできない: coordinator の純粋な判断(heartbeat-reply の値・drain_policy.worker-view — defn)が呼ぶ
-  "純粋: 名 name の今の世代 boot が、同じ名の前の世代がまだ動かしている常駐の job をまだ受け取れないか(AL-D2k)。数えるのは、
-   重なりを名乗った前の世代(overlapped)のうち、止まりがまだ始まっていない(leaving でない)組の job だけ。recreate の job = 今の世代の
-   状態の行が HANDOVER-SETTLED-PHASES に無い。handoff の job = Ready と数えている process(ready-instance)が今の世代の報告の行に無い
-   (入れ替えを諦めた handoff-abandoned は数えない)。真の間、worker は Pod の ready の file を書かず、Deployment は前の世代の Pod の削除を
+  "純粋: 名 name の今の世代 boot が、同じ名の前の世代がまだ動かしている常駐の job をまだ受け取れないか(AL-D2k)。止めている job の
+   判断は handover-blockers(この関数はその有無だけを読む — 止まりの名指しと同じ判断)。真の間、worker は Pod の ready の file を
+   書かず、Deployment は前の世代の Pod の削除を
    始めない — Service は worker の Pod を振り先にし、Terminating の Pod を振り先から外すので、前の世代で動く job へ届かなくなる前に、
    今の世代が全部を受け取れる姿にしておく。"
-  (setv waiting (frozenset (gfor r state.superseded-runs
-                                 :if (and r.overlapped (not r.leaving) (= r.worker name) (!= r.boot boot)
-                                          (< (- now r.seen-ms) timing.lease-ms))
-                                 job r.jobs
-                                 job)))
-  (when (not waiting) (return False))
+  (bool (handover-blockers state name boot now timing ready-instances)))
+
+
+;; 受け渡しの止まりの知らせの上限(card ki-d8e594fe934d): 待ちの始まり(SupersededRun.since-ms)からこの長さを越えても止めている
+;; job(handover-blockers)が残れば、Worker の status.handover の stalled と GET /metrics の doeff_worker_handover_stalled{worker} を
+;; 1 にする。根拠: 今の世代が job を受け取れるまでに要るのは、Pod の起動と最初の heartbeat・job ごとの実行環境の準備(世代をまたいで
+;; 同じ node の root を共有するので、ふつうは準備済み — 進まない準備は 600 秒で止めてやり直す・worker の PrepareLimits.stall-seconds)・
+;; handoff の job の Ready(新しい process が動き出してから Ready までの上限の既定 300 秒 — readiness の handoffTimeoutSeconds)。
+;; 止めてやり直す準備 1 回と Ready の待ちの和 900 秒に、Pod の起動と readiness の窓の 300 秒を足した 20 分。2026-10-22 の zeus は
+;; 新しい世代の handoff の job が落ち続け、15:45:30 の始まりから 16:08:39 に人が手で外すまで 23 分止まった(この上限なら 16:05:30 に
+;; 知らせる)。知らせるだけで諦めない: 待ちを外すと Deployment が前の世代の Pod を消し、まだ動いている前の世代の process まで止まる
+;; (k8s の Deployment も progressDeadlineSeconds で Progressing=False を付けるだけで、旧い ReplicaSet を動かし続ける)。
+(setv HANDOVER-STALL-MS 1200000)
+
+
+(defn #^ tuple handover-blockers [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
+                                  #^ (| dict None) ready-instances]
+  ;; defk にできない: coordinator の純粋な判断(handover-pending・資源の行 resource_policy.handover-of — defn)が呼ぶ
+  "純粋: 名 name の今の世代 boot の受け渡しを止めている job(HandoverBlocker の列・job の名の順 — card ki-d8e594fe934d)。handover-pending
+   は空でない時に真 — 止める判断の定義点はここ 1 つ。数えるのは、重なりを名乗った前の世代(overlapped)のうち、止まりがまだ始まって
+   いない(leaving でない)・最後の報告が lease の内の組の job だけ。recreate の job = 今の世代の状態の行が HANDOVER-SETTLED-PHASES に
+   無い。handoff の job = Ready と数えている process(ready-instance)が今の世代の報告の行に無い(入れ替えを諦めた handoff-abandoned は
+   数えない)。"
+  (setv waiting (handover-waiting state name boot now timing))
+  (when (not waiting) (return #()))
   ;; 状態の報告(statuses)は今の世代の物だけを持つ — 名乗りの世代(WorkerInfo.boot)が boot の時だけ読む。
   (setv info (.row state.workers name)
         current (.row state.observations.statuses name)
         rows (if (and (is-not current None) (is-not info None) (= info.boot boot)) current.jobs #())
         own (frozenset (gfor row rows :if row.instance row.instance)))
-  ;; job の phase = 同じ名の行のうち最後の物(無ければ None)。
-  (any (gfor spec (jobs-for state name ready-instances)
-             :if (in spec.name waiting)
-             :setv phase (next (gfor row (reversed rows) :if (= row.name spec.name) row.phase) None)
-             (if spec.handoff
-                 (not (or (in spec.ready-instance own) (= phase "handoff-abandoned")))
-                 (not-in phase HANDOVER-SETTLED-PHASES)))))
+  ;; job の結末 = 同じ名の行のうち最後の物(無ければ None)。
+  (tuple (sorted (gfor spec (jobs-for state name ready-instances)
+                       :if (in spec.name waiting)
+                       :setv row (next (gfor row (reversed rows) :if (= row.name spec.name) row) None)
+                       :setv phase (if (is row None) None row.phase)
+                       :if (if spec.handoff
+                               (not (or (in spec.ready-instance own) (= phase "handoff-abandoned")))
+                               (not-in phase HANDOVER-SETTLED-PHASES))
+                       (HandoverBlocker :job spec.name :update (if spec.handoff "handoff" "recreate") :phase phase
+                                        :failures (if (is row None) None row.failures)
+                                        :last-exit-code (if (is row None) None row.last-exit-code)
+                                        :detail (if (is row None) "" row.detail)))
+                 :key (fn [b] b.job))))
+
+
+(defn #^ frozenset handover-waiting [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
+  "純粋: 名 name の今の世代 boot がまだ受け取っていない、前の世代の常駐の job の名(重なりを名乗った・leaving でない・最後の報告が
+   lease の内の組 — handover-blockers の母集団)。"
+  (frozenset (gfor r (handover-runs state name boot now timing) job r.jobs job)))
+
+
+(defn #^ tuple handover-runs [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
+  "純粋: 名 name の今の世代 boot が受け渡しを待っている前の世代の組(SupersededRun — 重なりを名乗った・leaving でない・最後の報告が
+   lease の内)。"
+  (tuple (gfor r state.superseded-runs
+               :if (and r.overlapped (not r.leaving) (= r.worker name) (!= r.boot boot)
+                        (< (- now r.seen-ms) timing.lease-ms))
+               r)))
+
+
+(defn #^ (| int None) handover-since [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
+  "純粋: 名 name の今の世代 boot の受け渡しの待ちの始まりの刻(待っている組の since-ms の最小 — card ki-d8e594fe934d)。待っている組が
+   無いか、始まりを持たない(欄の前に保存した)組だけなら None。"
+  (min (gfor r (handover-runs state name boot now timing) :if (is-not r.since-ms None) r.since-ms) :default None))
 
 
 (defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]

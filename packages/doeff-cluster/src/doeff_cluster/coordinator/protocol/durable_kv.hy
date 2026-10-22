@@ -12,8 +12,8 @@
 ;;;   coordinator はこの鍵を読まずに無視する — 出口を持たない今までの振る舞い)
 ;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 印を約束しない今までの振る舞い)
-;;;   superseded/<名>/<世代>(AL-D2 — 退いた世代が走らせている入れ替えの job の組 SupersededRun {worker boot jobs seen_ms}。無い置き場は
-;;;   空として読む。旧い版の coordinator はこの鍵を読まずに無視する — 旧い Pod の preStop が入れ替えの job を待たない今までの振る舞い)
+;;;   superseded/<名>/<世代>(AL-D2 — 退いた世代が走らせている入れ替えの job の組 SupersededRun {worker boot jobs seen_ms overlapped leaving since_ms}。無い置き場は
+;;;   空として読む。旧い版の coordinator はこの鍵を読まずに無視する — 旧い Pod の preStop が入れ替えの job を待たない今までの振る舞い。since_ms の無い行は None として読む — card ki-d8e594fe934d)
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。

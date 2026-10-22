@@ -48,7 +48,7 @@
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
-                          legacy-put-jobs COORDINATOR])
+                          legacy-put-jobs COORDINATOR ready-instances])
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
 (import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
@@ -199,7 +199,7 @@
                "board"             ; 盤の lease の担い手の期限と、TTL の行の expires-ms — 頼み手が書き直して延ばす
                "drains"            ; drain の until-ms — 頼み直すたびに延びる
                "warms"             ; 温める表の行の until-ms — 頼み直すたびに延びる
-               "superseded_runs"   ; 退いた世代の最後の報告の刻 — 沈黙を lease で数える
+               "superseded_runs"   ; 退いた世代の最後の報告の刻 — 沈黙を lease で数える・受け渡しの待ちの始まり — 止まりの知らせの起点
                "alive_ms")))       ; 生きていた刻 — now にする(止まりの直後の再起動で二重にずらさない)
 (val STALL-UNSHIFTED-FIELDS
   (frozenset #("jobs" "refused" "group_limits"            ; 宣言 — 刻を持たない
@@ -240,7 +240,10 @@
                                                 (TableWrite k (replace w :since-ms (min now (+ w.since-ms gap)))))))
            :drains (.with-writes state.drains (tuple (gfor #(k d) (.items state.drains) (TableWrite k (replace d :until-ms (+ d.until-ms gap))))))
            :warms (.with-writes state.warms (tuple (gfor #(k w) (.items state.warms) (TableWrite k (replace w :until-ms (+ w.until-ms gap))))))
-           :superseded-runs (tuple (gfor r state.superseded-runs (replace r :seen-ms (min now (+ r.seen-ms gap)))))
+           ;; 受け渡しの待ちの始まり(since-ms)も、Ready を待つ入れ替えの期限の起点と同じく止まっていた間を数えない(card ki-d8e594fe934d)。
+           :superseded-runs (tuple (gfor r state.superseded-runs
+                                         (replace r :seen-ms (min now (+ r.seen-ms gap))
+                                                    :since-ms (if (is r.since-ms None) None (min now (+ r.since-ms gap))))))
            :alive-ms now))
 
 
@@ -308,24 +311,6 @@
           (TargetView :ready (if ready "Ready" "NotReady") :stopped stopped :spec-replicas want
                       :reason (.format "宣言 {}{}・Pod {}・ready {}" want (if (and dry (is-not simulated None)) "(dry-run の値)" "")
                                        fresh.replicas ready-n)))))
-
-
-(defn #^ dict ready-instances [#^ ClusterState state #^ str worker #^ int now #^ ClusterTiming timing]
-  "worker に割り当てた入れ替え(handoff)の Service の名 → Ready と数えている process の世代の名(Ready でなければ None)。
-   worker はこれが新しい process の世代の名になった後に、退いた旧い process を止める。"
-  (dfor job state.jobs
-        :setv a (.row state.placements job.spec.name)
-        :if (and a (= a.worker worker) job.spec.handoff)
-        job.spec.name
-        (ready-instance state job.spec.name now timing)))
-
-
-(defn #^ (| str None) ready-instance [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  "Service name の走っている process の世代の名(Service が Ready と数えられている時だけ・そうでなければ None)。"
-  (setv proc (running-process state name now timing))
-  (if (and (get proc "ok") (= (get (service-readiness state name now timing) "state") "Ready"))
-      (get proc "instance")
-      None))
 
 
 (defk deployments-to-follow [state]

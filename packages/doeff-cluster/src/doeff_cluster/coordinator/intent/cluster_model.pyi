@@ -236,6 +236,16 @@ class SupersededRun:
     seen_ms: int
     overlapped: bool = False
     leaving: bool = False
+    since_ms: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class HandoverBlocker:
+    job: str
+    update: str
+    phase: str | None
+    failures: int | None
+    last_exit_code: int | None
+    detail: str
 
 @dataclass(frozen=True, kw_only=True)
 class GroupHeld:

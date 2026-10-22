@@ -22,11 +22,12 @@
 (import typing [NoReturn])
 (import doeff_hy.table [Table TableWrite draft-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of warms-for])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of warms-for
+                                                       handover-blockers handover-since HANDOVER-STALL-MS])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
@@ -123,7 +124,7 @@
   "Service を今動かしている process。ok = 担い手の worker が今の宣言の spec(版と設定の指紋・割り当ての世代)で running と
    報告している。ok でなければ state(NotReady | Unknown)と reason と、理由の種類 kind(NotReadyKind — 版の判定 version-state が
    文を読まずに分けるため)を持つ。kind が NOT-RUNNING なら担い手の行 row(行に載っていなければ None)も持つ。
-   ok・state・reason の意味は readiness・入れ替えの合図(api_policy.ready-instance)・drain・計器が読むので変えない。
+   ok・state・reason の意味は readiness・入れ替えの合図(ready-instance)・drain・計器が読むので変えない。
    placement = 見る置き先(既定 = いまの置き先。drain で並べた置き先(surge)の process を見る時はそれを渡す — drain_policy)。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
   ;; extra = 答えに添える欄(担い手の行 :row)。
@@ -528,22 +529,66 @@
    "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}})
 
 
-(deff handover-of [#^ ClusterState state #^ str name]  ; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
-  {:pre [(: state ClusterState) (: name str)] :post [(: % (| dict None))] :tags {:context "coordinator" :role "judgment"}}
-  "worker name の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
+(defn #^ dict ready-instances [#^ ClusterState state #^ str worker #^ int now #^ ClusterTiming timing]
+  "worker に割り当てた入れ替え(handoff)の Service の名 → Ready と数えている process の世代の名(Ready でなければ None)。
+   worker はこれが新しい process の世代の名になった後に、退いた旧い process を止める。"
+  (dfor job state.jobs
+        :setv a (.row state.placements job.spec.name)
+        :if (and a (= a.worker worker) job.spec.handoff)
+        job.spec.name
+        (ready-instance state job.spec.name now timing)))
+
+
+(defn #^ (| str None) ready-instance [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+  "Service name の走っている process の世代の名(Service が Ready と数えられている時だけ・そうでなければ None)。"
+  (setv proc (running-process state name now timing))
+  (if (and (get proc "ok") (= (get (service-readiness state name now timing) "state") "Ready"))
+      (get proc "instance")
+      None))
+
+
+(deff handover-of [#^ ClusterState state #^ WorkerInfo w #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
+  {:pre [(: state ClusterState) (: w WorkerInfo) (: now int) (: timing ClusterTiming)] :post [(: % (| dict None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "worker w の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
    起こせると報告した job・leaving = 前の世代の Pod の止まりが始まった(AL-D2k — 受け渡しはここから。印が付いた拍で版を進め、前の世代の
-   名指しの待ちを起こす)。前の世代が動かしている job が無ければ None。"
-  (setv runs (tuple (gfor r state.superseded-runs :if (and r.overlapped (= r.worker name)) r))
+   名指しの待ちを起こす)。前の世代が動かしている job が無ければ None。
+   受け渡しを止めている間(card ki-d8e594fe934d — heartbeat の返事の handoverPending と同じ判断 cluster_policy.handover-blockers)は、
+   blocking = 止めている job ごとの名・入れ替えの形・今の世代の最後の結末、sinceMs = 待ちの始まりの刻、stalled = 始まりから
+   HANDOVER-STALL-MS を越えた(読み手の知らせの材料 — 計器 doeff_worker_handover_stalled と同じ値)を載せる。"
+  (setv runs (tuple (gfor r state.superseded-runs :if (and r.overlapped (= r.worker w.name)) r))
         elder (sorted (sfor r runs job r.jobs job)))
   (when (not elder)
     (return None))
-  (setv report (.row state.observations.statuses name)
-        ready (sorted (sfor row (if (is report None) #() report.jobs) :if (= row.phase "elder-runs") row.name)))
-  {"elder" elder "ready" ready "leaving" (any (gfor r runs r.leaving))})
+  (setv report (.row state.observations.statuses w.name)
+        ready (sorted (sfor row (if (is report None) #() report.jobs) :if (= row.phase "elder-runs") row.name))
+        blockers (if (is w.boot None)
+                     #()
+                     (handover-blockers state w.name w.boot now timing (ready-instances state w.name now timing)))
+        since (if blockers (handover-since state w.name w.boot now timing) None))
+  (| {"elder" elder "ready" ready "leaving" (any (gfor r runs r.leaving))
+      "stalled" (and (is-not since None) (>= (- now since) HANDOVER-STALL-MS))}
+     (if blockers {"blocking" (lfor b blockers (blocker-json b))} {})
+     (if (is-not since None) {"sinceMs" since} {})))
 
 
-(defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w #^ int now]
-  "worker 1 つの {spec status}。now = 温める表の行のうち、この worker に当たる行(期限の内)を選ぶ刻。"
+(defn #^ dict blocker-json [#^ HandoverBlocker b]
+  "受け渡しを止めている job 1 つの status.handover.blocking の行(結末の欄は値の在る物だけ — detail は長さ BLOCKER-DETAIL-CHARS で切る)。"
+  (| {"job" b.job "update" b.update}
+     (if (is-not b.phase None) {"phase" b.phase} {})
+     (if (is-not b.failures None) {"failures" b.failures} {})
+     (if (is-not b.last-exit-code None) {"lastExitCode" b.last-exit-code} {})
+     (if b.detail {"detail" (cut b.detail 0 BLOCKER-DETAIL-CHARS)} {})))
+
+
+;; status.handover.blocking の detail の長さの上限(字)。worker の detail は落ちた訳の 1 行(例外の名と文)で、資源の行の版の比べと
+;; 出来事の記録に入る — 長い traceback を行ごとに運ばない。
+(setv BLOCKER-DETAIL-CHARS 300)
+
+
+(defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w #^ int now #^ ClusterTiming timing]
+  "worker 1 つの {spec status}。now = 温める表の行のうち、この worker に当たる行(期限の内)を選ぶ刻と、受け渡しの止まりを数える刻
+   (timing の lease で前の世代の沈黙を数える — handover-of)。"
   {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "taskReserve" w.task-reserve
            "versions" (dict w.versions)}
    ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
@@ -573,7 +618,7 @@
                ;; SupersededRun)と、今の世代が起こせると報告した job(状態の行の phase が elder-runs)。受け渡しが進むたびに版が進み、
                ;; この worker を名指した 2 つの世代の GET /watch が起きる(前の世代は外す返事を、今の世代は印の外れを次の heartbeat を
                ;; 待たずに受ける — watch_policy.worker-mark)。受け渡しの間だけ載せる(無い worker の status の形・版は以前と同じ)。
-               (if (setx handover (handover-of state w.name)) {"handover" handover} {})
+               (if (setx handover (handover-of state w now timing)) {"handover" handover} {})
                (if (setx offers (warms-for state w.name now))
                    {"warm" (sorted (gfor o offers o.key))}
                    {}))})
@@ -603,7 +648,7 @@
    行が両方在れば受け付けない行(後に書く)が勝つ — row-of と同じ順。"
   (| (dfor job state.jobs (key-of "Service" job.spec.name) (service-row state job now timing))
      (dfor r (.rows state.refused) (key-of "Service" r.name) (refused-row state r now timing))
-     (dfor w (.rows state.workers) (key-of "Worker" w.name) (worker-row state w now))
+     (dfor w (.rows state.workers) (key-of "Worker" w.name) (worker-row state w now timing))
      (dfor t (.rows state.tasks) (key-of "Task" t.id) (task-row t))
      (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))
      (dfor #(name l) (.items state.group-limits) (key-of "GroupLimit" name) (group-limit-row l))))
@@ -616,7 +661,7 @@
     "Service" (cond (setx refused-job (.row state.refused name)) (refused-row state refused-job now timing)
                     (in name jobs) (service-row state (get jobs name) now timing)
                     True None)
-    "Worker" (if (setx worker (.row state.workers name)) (worker-row state worker now) None)
+    "Worker" (if (setx worker (.row state.workers name)) (worker-row state worker now timing) None)
     "Task" (if (setx task (.row state.tasks name)) (task-row task) None)
     "Rollout" (if (setx rollout (.row state.rollouts name)) (rollout-row rollout) None)
     "GroupLimit" (if (setx limit (.row state.group-limits name)) (group-limit-row limit) None)

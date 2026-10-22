@@ -71,6 +71,7 @@ from doeff_cluster.coordinator.core.resource_policy import update_resource as up
 from doeff_cluster.coordinator.core.resource_policy import delete_resource as delete_resource
 from doeff_cluster.coordinator.core.resource_policy import legacy_put_jobs as legacy_put_jobs
 from doeff_cluster.coordinator.core.resource_policy import COORDINATOR as COORDINATOR
+from doeff_cluster.coordinator.core.resource_policy import ready_instances as ready_instances
 from doeff_cluster.coordinator.core.drain_policy import advance_drains as advance_drains
 from doeff_cluster.coordinator.core.drain_policy import request_drain as request_drain
 from doeff_cluster.coordinator.core.drain_policy import absorb_stopping as absorb_stopping
@@ -140,12 +141,6 @@ def stall_of(pace: StepPace | None, now: int, timing: ClusterTiming) -> _Program
     ...
 
 def target_view(state: ClusterState, target: RolloutTarget, status: RolloutStatus, now: int, timing: ClusterTiming) -> TargetView:
-    ...
-
-def ready_instances(state: ClusterState, worker: str, now: int, timing: ClusterTiming) -> dict:
-    ...
-
-def ready_instance(state: ClusterState, name: str, now: int, timing: ClusterTiming) -> str | None:
     ...
 
 def deployments_to_follow(state: ClusterState) -> _Program[tuple, object]:

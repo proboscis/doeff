@@ -13,7 +13,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
-(import doeff_cluster.coordinator.core.api_policy [ready-instances])
+(import doeff_cluster.coordinator.core.resource_policy [ready-instances])
 (import doeff_cluster.shared.core.lease_rules [lease-full-until semaphore-key])
 
 ;; 見え方に数えない返事の欄は版(revision — 版が進むたびに変わる)だけ。worker-mark が 0 にして比べる。
