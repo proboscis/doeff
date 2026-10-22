@@ -13,6 +13,13 @@ uv が入れ直し、uninstall でも消える)。source は作業木の maturin
 その有無を知らず、次の uv sync が組み直さず import が落ちた(tests/test_editable_native_survives_tree_prune.py)。成果物の dir を先に
 探すので、前の形が source の木に残した成果物は使われない。
 
+wheel(_source_wheel): maturin の python-source を持つ package の wheel の hook も、保存先の wheel から組み立ての成果物・data・dist-info
+だけを取り、python-source の package の file は作業木から入れて RECORD を書き直す(editable と同じ分け方 — ADR-DOE-BUILD-001 R2b)。
+理由(card ki-0b68af4154d6): 鍵は tool.uv.cache-keys の宣言の file だけを見るので、宣言に python-source を並べない package
+(doeff-effect-analyzer — 宣言が無く既定の glob)では、Rust の同じ前の版の wheel が前の Python のまま引かれ、git の依存で入れた
+解析器が新しい版を名乗りながら古い Python を持った。作業木の __pycache__ と .pyc、前の形が木に残した成果物は入れない。python-source を
+持たない package は保存先の wheel をそのまま渡す。
+
 鍵(_wheel_slot): 組みに効く物の sha256 — tool.uv.cache-keys の file(宣言が無ければ DEFAULT_SOURCE_GLOBS)の中身と相対 path・maturin の
 版・機体・libc の名と版(置き場の wheel は CI の glibc で組むので、それより古い glibc の機体が取って import で落ちないように — ADR-DOE-BUILD-001
 R4 の追補 2)・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と作業木の
@@ -132,7 +139,8 @@ class StoredWheel:
 
 @dataclass(frozen=True)
 class WheelEntry:
-    """editable の wheel に書く file 1 つ: name = wheel の中の path・data = 中身・mode = 入れた file の許可の bit(CLI の binary は実行の bit)。"""
+    """口が書く wheel(editable・python-source を作業木から入れた wheel)の file 1 つ: name = wheel の中の path・data = 中身・mode = 入れた
+    file の許可の bit(CLI の binary は実行の bit)。"""
 
     name: str
     data: bytes
@@ -303,10 +311,17 @@ def _write_report(package: Path, stored: StoredWheel) -> StoredWheel:
 
 
 def wheel_from_store(wheel_directory: str, config_settings: ConfigSettings | None, compile_wheel: Compile) -> str:
-    """wheel の hook の本体: cwd の package の保存先の wheel を wheel_directory へ写し、その名を返すため。"""
-    stored = stored_wheel(Path.cwd(), config_settings, compile_wheel)
-    shutil.copy2(stored.path, Path(wheel_directory) / stored.path.name)
-    return stored.path.name
+    """wheel の hook の本体: cwd の package の保存先の wheel から wheel を wheel_directory に書き、その名を返すため。maturin の
+    python-source を持つ package は python-source の file を作業木から入れ(頭の註の wheel)、持たない package は保存先の wheel を写す。"""
+    package = Path.cwd()
+    stored = stored_wheel(package, config_settings, compile_wheel)
+    config = _maturin_config(package)
+    match config.get("python-source"):
+        case str() as source:
+            return _source_wheel(stored.path, package, (package / source).resolve(), _wheel_includes(config), Path(wheel_directory))
+        case _:
+            shutil.copy2(stored.path, Path(wheel_directory) / stored.path.name)
+            return stored.path.name
 
 
 def editable_from_store(wheel_directory: str, config_settings: ConfigSettings | None, compile_wheel: Compile) -> str:
@@ -329,7 +344,8 @@ def build_wheel(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """uv sync・uv build が wheel を求めた時に、保存先の同じ source の wheel を渡すため(無ければ組んで置く — 頭の註)。"""
+    """uv sync・uv build が wheel を求めた時に、保存先の同じ source の wheel から答えるため(無ければ組んで置く・python-source は作業木
+    から入れる — 頭の註)。"""
     return wheel_from_store(wheel_directory, config_settings, _maturin_wheel)
 
 
@@ -569,18 +585,69 @@ def _editable_wheel(stored: Path, package: Path, source_root: Path, includes: tu
         WheelEntry(name=f"{finder}.py", data=EDITABLE_FINDER.format(native=native, packages=packages, pth=f"{distribution}.pth").encode("utf-8"), mode=0o644),
         WheelEntry(name=f"{distribution}.pth", data=pth.encode("utf-8"), mode=0o644),
     )
+    _write_wheel(wheel_directory / stored.name, dist_info, entries)
+    return stored.name
+
+
+def _source_wheel(stored: Path, package: Path, source_root: Path, includes: tuple[str, ...], wheel_directory: Path) -> str:
+    """保存先の wheel と作業木の python-source から wheel を作るため(頭の註の wheel): 保存先の wheel からは組み立ての成果物・data・
+    dist-info(RECORD を除く)だけを取り、保存先の wheel が持つ python の package(と根の module)の file は作業木の source_root から
+    入れ直し、RECORD を書き直した wheel を wheel_directory に書く。答え = 書いた wheel の名(保存先の wheel と同じ名 — 同じ tag)。"""
+    with zipfile.ZipFile(stored) as archive:
+        (dist_info,) = {name.split("/", 1)[0] for name in archive.namelist() if name.split("/", 1)[0].endswith(".dist-info")}
+        members = tuple(
+            WheelEntry(name=info.filename, data=archive.read(info), mode=(info.external_attr >> 16) & 0o777)
+            for info in archive.infolist()
+            if not info.filename.endswith("/") and info.filename != f"{dist_info}/RECORD"
+        )
+    kept = tuple(entry for entry in members if not _source_member(entry.name, package, source_root, includes))
+    packages = frozenset(
+        top for entry in members if "/" in entry.name and not (top := entry.name.split("/", 1)[0]).endswith((".dist-info", ".data"))
+    )
+    modules = frozenset(entry.name for entry in members if "/" not in entry.name and _source_member(entry.name, package, source_root, includes))
+    sources = tuple(
+        WheelEntry(name=relative, data=path.read_bytes(), mode=path.stat().st_mode & 0o777)
+        for path in _python_source_files(source_root, packages | modules)
+        if not _built_member(relative := path.relative_to(source_root).as_posix(), package, source_root, includes)
+    )
+    _write_wheel(wheel_directory / stored.name, dist_info, (*sources, *kept))
+    return stored.name
+
+
+def _source_member(member: str, package: Path, source_root: Path, includes: tuple[str, ...]) -> bool:
+    """wheel の file 1 つが python-source の source か(dist-info・data の下でも組み立ての成果物でもない — 作業木から入れ直す物)。"""
+    return not member.split("/", 1)[0].endswith((".dist-info", ".data")) and not _built_member(member, package, source_root, includes)
+
+
+def _python_source_files(source_root: Path, tops: frozenset[str]) -> list[Path]:
+    """作業木の python-source の、名 tops の package の dir の下の file と根の module の file を、wheel の中の path の順で並べるため。
+    __pycache__ の下と .pyc・.pyo は入れない(組む作業木に無い物 — 使う側の Python が作り直す)。tops のうち作業木に無い物は入れない
+    (その版で消えた module)。"""
+    found = (
+        hit
+        for top in tops
+        for hit in ((source_root / top).rglob("*") if (source_root / top).is_dir() else [source_root / top])
+        if hit.is_file()
+        and "__pycache__" not in hit.relative_to(source_root).parts
+        and hit.suffix not in (".pyc", ".pyo")
+    )
+    return sorted(found, key=lambda path: path.relative_to(source_root).as_posix())
+
+
+def _write_wheel(path: Path, dist_info: str, entries: tuple[WheelEntry, ...]) -> None:
+    """entries と、その file の hash を並べた RECORD(dist_info の下・最後)を持つ wheel を path に書くため(時刻は固定 — 同じ中身は
+    同じ zip)。"""
     text = io.StringIO()
     csv.writer(text, lineterminator="\n").writerows(
         (*((entry.name, f"sha256={_urlsafe_digest('sha256', entry.data)}", str(len(entry.data))) for entry in entries), (f"{dist_info}/RECORD", "", ""))
     )
-    with zipfile.ZipFile(wheel_directory / stored.name, "w", compression=zipfile.ZIP_DEFLATED) as editable:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as wheel:
         for entry in entries:
             info = zipfile.ZipInfo(entry.name, date_time=(1980, 1, 1, 0, 0, 0))
             info.external_attr = (0o100000 | (entry.mode or 0o644)) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            editable.writestr(info, entry.data)
-        editable.writestr(f"{dist_info}/RECORD", text.getvalue())
-    return stored.name
+            wheel.writestr(info, entry.data)
+        wheel.writestr(f"{dist_info}/RECORD", text.getvalue())
 
 
 def build_sdist(sdist_directory: str, config_settings: ConfigSettings | None = None) -> str:

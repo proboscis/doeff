@@ -40,10 +40,10 @@ include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 # `uv run` は古い doeff_vm/*.so をそのまま使い続ける(2026-09-23 22:42〜23:17 に pod の
 # controller が古い .so で 35 分落ちた — card acp:kanban-issue:ki-3965aa5188ae)。
 # ここに列挙すると既定の鍵は置き換わるので pyproject.toml も自分で並べる。
-# この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある(agora-redesign #3860)。保存先の wheel は
-# python-source(この dir の doeff_vm/)の .py・.pyi・py.typed も持つので、それも並べる — 並べないと Python だけを変えた後の
-# 非 editable の入れ(worker の uv build)が、前の Python の入った wheel を保存先から引く。同じ訳で、wheel の dist-info に入る
-# license-files(LICENSE)も並べる。
+# この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある(agora-redesign #3860)。python-source
+# (この dir の doeff_vm/)の .py・.pyi・py.typed も並べる — 口はどちらの hook でも Python を保存先の wheel から取らず作業木から
+# 入れる(ADR-DOE-BUILD-001 R2b)が、uv はここに並べた file の変化でだけ非 editable の path の入れを作り直す。wheel の
+# dist-info に入る license-files(LICENSE)は保存先の wheel から渡るので並べる。
 # build の口の file そのもの(editable の組み方を決める)と、口が保存先の鍵に入れる組みを変える環境変数(口の BUILD_ENV_NAMES と、
 # 接頭辞 CARGO_PROFILE_・CARGO_BUILD_・MATURIN_・PYO3_ のうち使う名)も並べる — 取り込みの作業と make sync は
 # --reinstall-package を付けないので、uv が気づかない変化では口が呼ばれない(#3860 の 2)。

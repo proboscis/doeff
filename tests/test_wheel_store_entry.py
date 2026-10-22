@@ -44,8 +44,8 @@ def _digest(data: bytes) -> str:
 
 @dataclass(frozen=True)
 class FakeCompile:
-    """偽の組み方: 呼ばれるたびに渡された target を記録し(度数 = 記録の数)、source の lib.rs の中身を native の file に入れた wheel を
-    出す(組んだ中身を後で読めるように)。"""
+    """偽の組み方: 呼ばれるたびに渡された target を記録し(度数 = 記録の数)、source の lib.rs の中身を native の file に入れ、maturin と
+    同じく組んだ時の作業木の python-source の package の .py を入れた wheel を出す(組んだ中身を後で読めるように)。"""
 
     package: Path
     _mut_targets: list[Path] = field(default_factory=list)
@@ -61,8 +61,12 @@ class FakeCompile:
     def __call__(self, target: Path, wheel_directory: str, config_settings: object) -> str:
         self._mut_targets.append(target)
         native = (self.package / "src" / "lib.rs").read_bytes()
+        python = tuple(
+            (path.relative_to(self.package / "python").as_posix(), path.read_bytes())
+            for path in sorted((self.package / "python" / "probe").rglob("*.py"))
+        )
         files = (
-            ("probe/__init__.py", b"from probe._native import *\n"),
+            *python,
             (NATIVE, native),
             ("probe-0.1.0.dist-info/METADATA", b"Metadata-Version: 2.1\nName: probe\nVersion: 0.1.0\n"),
             ("probe-0.1.0.dist-info/WHEEL", b"Wheel-Version: 1.0\nGenerator: fake\nRoot-Is-Purelib: false\nTag: cp314-cp314-linux_x86_64\n"),
@@ -135,6 +139,50 @@ def test_the_wheel_hook_and_the_editable_hook_read_one_store(backend: ModuleType
     compile_second = FakeCompile(second)
     _call(backend, "editable_from_store", second, tmp_path / "out-2", compile_second)
     assert compile_second.calls == 0
+
+
+def test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build_products_from_the_store(
+    backend: ModuleType, tmp_path: Path
+) -> None:
+    # 失敗ケース(card ki-0b68af4154d6): 鍵は Rust の入力だけ(python-source の .py は鍵に無い — doeff-effect-analyzer は cache-keys を
+    # 宣言せず既定の glob)なので、Python だけを替えた版の wheel の hook は前の版の wheel を保存先から引く。直す前の hook はそれを
+    # そのまま写し、git の依存で入れた doeff-effect-analyzer が 38bd248df を名乗りながら bba41285 の Python を持った(merge-queue の閉じの
+    # 検 6 本が赤)。hook は保存先から組み立ての成果物と dist-info だけを取り、python-source の file は作業木から入れる(R2b)— 書き換えた
+    # module は作業木の中身・足した module は入り・消した module は残らず・作業木の __pycache__ と前の形が残した native は入らない。
+    first = _checkout(tmp_path / "wt-1")
+    (first / "python" / "probe" / "gone.py").write_text("GONE = 1\n")
+    _call(backend, "wheel_from_store", first, tmp_path / "out-1", FakeCompile(first))
+    second = _checkout(tmp_path / "wt-2")
+    (second / "python" / "probe" / "__init__.py").write_text("VERSION = 2\n")
+    (second / "python" / "probe" / "added.py").write_text("ADDED = 1\n")
+    (second / "python" / "probe" / "__pycache__").mkdir()
+    (second / "python" / "probe" / "__pycache__" / "added.cpython-314.pyc").write_bytes(b"\0stale")
+    (second / "python" / NATIVE).write_bytes(b"left by an old layout\n")
+    compile_second = FakeCompile(second)
+    wheel = _call(backend, "wheel_from_store", second, tmp_path / "out-2", compile_second)
+    assert compile_second.calls == 0, "Python だけの変更で Rust を組み直した"
+    with zipfile.ZipFile(wheel) as archive:
+        assert sorted(archive.namelist()) == sorted([
+            "probe/__init__.py", "probe/added.py", NATIVE,
+            "probe-0.1.0.dist-info/METADATA", "probe-0.1.0.dist-info/WHEEL", "probe-0.1.0.dist-info/RECORD",
+        ])
+        assert archive.read("probe/__init__.py") == b"VERSION = 2\n"
+        assert archive.read("probe/added.py") == b"ADDED = 1\n"
+        assert archive.read(NATIVE) == b"pub fn probe() {}\n"
+        assert (archive.getinfo(NATIVE).external_attr >> 16) & 0o111, "native の拡張 module の実行の bit が落ちた"
+    assert backend._wheel_problem(wheel) is None
+
+
+def test_the_wheel_hook_hands_over_the_stored_wheel_of_a_package_without_python_source(
+    backend: ModuleType, tmp_path: Path
+) -> None:
+    # python-source を持たない package(bin の binary・Python の source を持たない拡張)は、作業木から入れる物が無いので保存先の
+    # wheel そのものを渡す(editable と同じ — R2)。
+    package = _checkout(tmp_path / "wt")
+    (package / "pyproject.toml").write_text('[project]\nname = "probe"\nversion = "0.1.0"\n')
+    wheel = _call(backend, "wheel_from_store", package, tmp_path / "out", FakeCompile(package))
+    stored = backend.stored_wheel(package, None, FakeCompile(package)).path
+    assert wheel.read_bytes() == stored.read_bytes()
 
 
 @dataclass(frozen=True)
