@@ -23,6 +23,7 @@ USED = (
     UsedModule("shared.protocol.checkout_reads", ("SENDER-SOURCE-DIR", "checkout-reads", "checkout-root", "checkout-state-at", "file-sha256")),
     UsedModule("shared.protocol.inbox", ("http-request",)),
     UsedModule("sim.checkout_git_script", ("GitCheckout", "GitRemote", "GitRev", "git-command")),
+    UsedModule("sim.worktree_git_script", ("OriginBranch", "sha-of", "worktree-git-answer", "worktree-git-command")),
     UsedModule("shared.core.job_rules", ("spec-hash",)),
     UsedModule("shared.intent.env_marker_model", ("ENV-MARKER", "FileSha256")),
     UsedModule("shared.entry.cluster_foundation", ("lease-holder-of", "with-cluster-handlers")),

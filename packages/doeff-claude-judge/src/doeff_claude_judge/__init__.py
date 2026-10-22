@@ -37,6 +37,9 @@ from doeff_claude_judge.wiring import (
     DEFAULT_COMMAND as DEFAULT_COMMAND,
 )
 from doeff_claude_judge.wiring import (
+    AccountLimitHit as AccountLimitHit,
+)
+from doeff_claude_judge.wiring import (
     claude_judge_stack as claude_judge_stack,
 )
 from doeff_claude_judge.wiring import (

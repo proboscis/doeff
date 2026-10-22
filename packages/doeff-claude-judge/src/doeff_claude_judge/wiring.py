@@ -12,9 +12,9 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # .hy import hook — print の handler と fake は Hy の module doeff_claude_code に住む
-from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered
+from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintLimited
 from doeff_claude_code.fake import fake_claude_print_handler
-from doeff_claude_code.lines import Usage
+from doeff_claude_code.lines import AccountLimitHit, Usage
 from doeff_claude_code.print_once import claude_print_handler
 from doeff_core_effects import slog_discard_handler, slog_handler, try_handler
 from doeff_core_effects.scheduler import scheduled
@@ -38,12 +38,21 @@ def production_printer(command: Sequence[str] = DEFAULT_COMMAND) -> Callable[[An
     return claude_print_handler(tuple(command))
 
 
-def scripted_printer(answer: Callable[[ClaudeQuery, str], "JsonIn"]) -> Callable[[Any], Any]:
-    """使い手の検の print の実体: CLI を起こさず、answer(問いの部品, model) が返す構造化の答えで答える(fake)。"""
+def scripted_printer(answer: Callable[[ClaudeQuery, str], "JsonIn"],
+                     limited: Callable[[ClaudeQuery, str], AccountLimitHit | None] | None = None) -> Callable[[Any], Any]:
+    """使い手の検の print の実体: CLI を起こさず、answer(問いの部品, model) が返す構造化の答えで答える(fake)。
+
+    limited(問いの部品, model) が尽きの事実(AccountLimitHit — 使い手は doeff_claude_judge から読む)を返す print は、answer を呼ばずに
+    CLI が口座の利用枠の尽きを名乗って答えずに降りた答え(PrintLimited — 判定は JudgeUsageLimited)で答える(尽きた口座の筋書き)。
+    None を返す print と、limited を渡さない時は answer で答える。
+    """
 
     @do
     def respond(request: ClaudePrintOnce) -> Any:
         query = ClaudeQuery(system=request.system_prompt, user=query_user(request.input), schema_json=request.json_schema)
+        hit = None if limited is None else limited(query, request.model)
+        if hit is not None:
+            return PrintLimited(limit=hit, exit_code=1, stderr_tail="")
         return PrintAnswered(structured_output=freeze_json(answer(query, request.model)), usage=Usage(), cost_usd=None, models=(),
                              elapsed_ms=0, api_ms=None)
 

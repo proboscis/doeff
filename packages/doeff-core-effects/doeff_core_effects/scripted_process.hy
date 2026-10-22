@@ -31,6 +31,12 @@
 ;;;   WorkingDirectory  聞かれるたびに新しい空の dir(<work-root>/job-<n>)を作って答える — worker が job ごとに空の作業 dir を作って子を
 ;;;                     起こすのの代役(同じ VM で task を走らせる模擬では task ごとに 1 回聞かれる)。
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
+;;;
+;;; scripted-command-peer = 名指した命令だけの外の世界: argv[0] の名(basename)が台本に在る RunProcess だけに、scripted-process-handler と同じ
+;;; 答え(scripted-answer — 無い cwd の断り・output-path への足し)で答え、ほかの子 process の呼びと process の効果(環境変数の読み・実行できるか
+;;; の問い・作業 dir・立てた子の問い …)は外側へ渡す。外側の本物か別の答え手の内側に重ねる時に使う(scripted-process-handler は process の効果の
+;;; 全部に答えるので、外側の環境の答え手より内側に置くとその答えを隠す)。env は要求のまま台本へ渡す(継ぐ環境は外側の答え手が持ち、この peer
+;;; は環境を持たない)。外側に file の答え手が要るのは scripted-process-handler と同じ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (require doeff-hy.record [defrecord])
@@ -112,6 +118,19 @@
   outcome)
 
 
+(defk scripted-answer [commands request]
+  {:pre [(: commands (of tuple ScriptedCommand ...)) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process" :role "program"}}
+  "RunProcess 1 つの台本の答えを作るため(scripted-process-handler と scripted-command-peer の答えの 1 点): run-scripted で走らせ、
+   output-path の在る要求は台本の出力をその file の末尾へ足す。足せない output-path は本物と同じく例外で上げる(本物は子の後の open が
+   OSError を上げ、答えは返らない)。"
+  (<- outcome ProcessOutcome (run-scripted commands request))
+  (when (is-not request.output-path None)
+    (<- appended (AppendText request.output-path (+ outcome.stdout outcome.stderr)))
+    (when (isinstance appended FileFailed)
+      (raise (OSError appended.detail))))
+  outcome)
+
+
 ;; 台本の世界で立てた子の pid の始まり(本物の pid と混ざらない大きさ)と、止めた子の終了 code(SIGTERM で終わった子 — 本物と同じ負の値)。
 (val SCRIPTED-FIRST-PID 50000)
 (val SCRIPTED-STOPPED-CODE -15)
@@ -169,14 +188,9 @@
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
     ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
     (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
-    (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
-                                                                          :output-path output-path :process-group process-group
-                                                                          :stop-grace stop-grace :stream-output stream-output)))
-    ;; 足せない output-path は本物と同じく例外で上げる(本物は子の後の open が OSError を上げ、答えは返らない)。
-    (when (is-not output-path None)
-      (<- appended (AppendText output-path (+ outcome.stdout outcome.stderr)))
-      (when (isinstance appended FileFailed)
-        (raise (OSError appended.detail))))
+    (<- outcome ProcessOutcome (scripted-answer script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
+                                                                             :output-path output-path :process-group process-group
+                                                                             :stop-grace stop-grace :stream-output stream-output)))
     (resume outcome))
   (ExecutableAt [path]
     (<- found bool (scripted-executable-at script.commands path))
@@ -241,3 +255,13 @@
     (match (.get started pid)
       None (resume (ProcessNotChild :pid pid))
       state (resume (ProcessInputWritten :pid pid :delivered (and (= state SCRIPTED-RUNNING) (in pid held)))))))
+
+
+(defhandler scripted-command-peer [#^ (get tuple #(ScriptedCommand ...)) commands]
+  ;; 名指した命令だけの外の世界を、外側の process の答え手の内側に重ねるため(頭の註の scripted-command-peer): argv[0] の名(basename)が台本に
+  ;; 在る RunProcess だけに scripted-process-handler と同じ答えで答え、ほかの呼びと process の効果は外側へ渡す。
+  ;; 引数に残す理由: 台本の表は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
+    :when (and argv (in (posixpath.basename (get argv 0)) (frozenset (gfor c commands c.name))))
+    (<- outcome ProcessOutcome (scripted-answer commands effect))
+    (resume outcome)))
