@@ -201,6 +201,9 @@ exclude = ["fixtures", "design", "design-checks"]
 # 定義の書き方の規則(DOEFF110 defn・111 deff の理由・112 タグ・119 class・126 素の defk 呼び ほか)の母集団(agora-redesign #2909・
 # #2877)。以前はこの節が無く、doeff の package の src に defn・class・素の defk 呼びを足しても鳴らなかった。今効くのは
 # DOEFF112(頭の MODULE-TAGS で補う)・DOEFF126(critical)と当たり 0 の規則。
+# DOEFF175(critical・登録簿で下げない — 宣言を切り替えた effect の古い分岐。ADR-DOE-CORE-EFFECTS-003 R14 (4))もこの母集団に当たる。
+# ADR(docs/adr)と doeff-core-effects の probe の検は、この paths の外(全部の Hy に広げても今は当たり 0 — 2026-10-23 の測り)。本番の code の
+# 0 件は packages/doeff-linter/tests/stale_outcome_branch.rs(cargo test)が見る。
 [tool.doeff-linter.definitions]
 paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effects/doeff_core_effects", "packages/doeff-hy/src/doeff_hy"]
 

@@ -95,6 +95,10 @@ pub enum ProjectRule {
     DefkCalledBare,
     /// DOEFF127: defk の `:effects` の宣言が推論と合わない(宣言に無い effect を起こす・宣言した effect を起こさない)。
     EffectsDisagreeWithInference,
+    /// DOEFF175: effect が defeffect で不在・失敗と宣言した型を、その effect の答えを束ねた変数に対して値として分ける枝(match の腕・isinstance)—
+    /// `<-` と `!` はその型を束ねず Absent / Raise として逃がすので、枝は決して通らない(ADR-DOE-CORE-EFFECTS-003 R14 (4) — effect を切り替えた版の
+    /// 後に残る古い分岐。当たりが 0 になるまでその版を着地させない)。登録簿で下げない。
+    StaleOutcomeBranch,
     /// DOEFF130: 翻訳の層の handler が業務の intent(層 intent の型の effect)を出す — import した defk の先まで辿る。
     TranslationEmitsIntent,
     /// DOEFF174: 業務の層(設定の translation_effects.domain_layers — 既定 core・intent)の定義が、architecture.hy の :business-fakes の
@@ -278,6 +282,7 @@ impl ProjectRule {
         ProjectRule::RebuiltAccumulator,
         ProjectRule::DefkCalledBare,
         ProjectRule::EffectsDisagreeWithInference,
+        ProjectRule::StaleOutcomeBranch,
         ProjectRule::TranslationEmitsIntent,
         ProjectRule::LowerLayerInDomain,
         ProjectRule::EnvironmentBranch,
@@ -362,6 +367,7 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "DOEFF125",
             ProjectRule::DefkCalledBare => "DOEFF126",
             ProjectRule::EffectsDisagreeWithInference => "DOEFF127",
+            ProjectRule::StaleOutcomeBranch => "DOEFF175",
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
             ProjectRule::LowerLayerInDomain => "DOEFF174",
             ProjectRule::EnvironmentBranch => "DOEFF168",
@@ -486,6 +492,8 @@ impl ProjectRule {
             | ProjectRule::EnvironmentBranch
             // 決して当たらない match の節(#2036 — 黙って既定の枝に倒れる誤り)。
             | ProjectRule::MatchFieldHyphen
+            // 宣言を切り替えた effect の古い分岐(決して通らない枝 — ADR-DOE-CORE-EFFECTS-003 R14 (4)・毎回の切り替えの門)。
+            | ProjectRule::StaleOutcomeBranch
             // 値を型だけで渡す層の defwire と素の写像(operator 2026-10-01 13:0x〜13:2x の決め・#2143)。
             | ProjectRule::WireInWireFreeLayer
             | ProjectRule::BareMapInWireFreeLayer
@@ -546,6 +554,8 @@ impl ProjectRule {
             | ProjectRule::RawSideEffectVia
             | ProjectRule::ClassWithBehaviour
             | ProjectRule::FailureRethrow
+            // 別の file の defeffect が宣言する不在・失敗の型を引く(DOEFF122 と同じ宣言の集め)。
+            | ProjectRule::StaleOutcomeBranch
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference
             | ProjectRule::HandlerArgumentHoldsState
@@ -682,6 +692,7 @@ impl ProjectRule {
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference
+            | ProjectRule::StaleOutcomeBranch
             // file 1 つずつの宣言の規則。
             | ProjectRule::JsonValueOutsideWire
             | ProjectRule::EnvironmentName
@@ -734,7 +745,8 @@ impl ProjectRule {
         }
     }
 
-    /// 登録簿(既知の当たりの表)に載った当たりを warning へ下げてよい規則か。DOEFF206 は下げない — 違反を通す表を作らせない規則が、
+    /// 登録簿(既知の当たりの表)に載った当たりを warning へ下げてよい規則か。DOEFF175 も下げない — 切り替えの門で、当たりが 0 になるまで
+    /// その版を着地させない(law declarations-switch-one-effect-at-a-time)ので、既知の一覧で通せては門が空く。DOEFF206 は下げない — 違反を通す表を作らせない規則が、
     /// 別の表で通せては穴が残る(agora-redesign #3405・利用者 2026-10-04「おなじ穴が二度とあかないように」)。DOEFF207・208・209 も下げない —
     /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209 = agora-redesign #3834)。DOEFF211 も下げない — 検の眠りの規則の外へ出る道は
     /// realtime の名乗り(と、名乗りを理由と一緒に載せる repo の名簿)だけにする(card ki-bb3ee40d0af2)。
@@ -746,6 +758,7 @@ impl ProjectRule {
                 | ProjectRule::RecordChangeWakesJob
                 | ProjectRule::PollingOnTimer
                 | ProjectRule::LowerLayerInDomain
+                | ProjectRule::StaleOutcomeBranch
                 | ProjectRule::TestSleepsOnWallClock
         )
     }
@@ -873,6 +886,7 @@ impl ProjectRule {
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference
+            | ProjectRule::StaleOutcomeBranch
             | ProjectRule::SemanticMixedConcerns
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => false,
@@ -916,6 +930,7 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "ループの中で蓄えを作り直す",
             ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
             ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
+            ProjectRule::StaleOutcomeBranch => "宣言した不在・失敗の型を値として分ける古い分岐",
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
             ProjectRule::LowerLayerInDomain => "業務の層が下の層の効果か handler を直に使う",
             ProjectRule::EnvironmentBranch => "業務の層が環境の名や dry-run の印で分岐する",
@@ -1030,6 +1045,7 @@ impl ProjectRule {
             | ProjectRule::IntentFakedInVerification
             | ProjectRule::RegistryEntryStale
             | ProjectRule::DefkCalledBare
+            | ProjectRule::StaleOutcomeBranch
             | ProjectRule::EffectsDisagreeWithInference => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
             ProjectRule::JsonValueOutsideWire => RuleFamily::Wire,
@@ -1083,6 +1099,7 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "Rebuilt Accumulator",
             ProjectRule::DefkCalledBare => "defk Called Bare",
             ProjectRule::EffectsDisagreeWithInference => "Effects Disagree With Inference",
+            ProjectRule::StaleOutcomeBranch => "Stale Branch On A Declared Absent Or Failure",
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
             ProjectRule::LowerLayerInDomain => "Lower Layer In Domain",
             ProjectRule::EnvironmentBranch => "Environment Branch In Business Code",
@@ -1170,6 +1187,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
+            ProjectRule::StaleOutcomeBranch => "defeffect が :absent / :failure で宣言した型を、その effect の答えを束ねた変数((<- x (E …))・(val x (! (E …))))に対して値として分けない — match の腕・isinstance(型の tuple・cond の枝も)。<- と ! はその型を束ねず Absent / Raise として逃がすので、枝は決して通らない(ADR-DOE-CORE-EFFECTS-003 R14 (4))",
             ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない(operator 2026-09-27「検は deftest だけ」)。file は architecture.hy の :test-forms の綴りの型で選ぶ",
             ProjectRule::VocabularyOutsideSinglePoint => "ある語彙(job の phase・turn の state・担い手の欄 等)の判定は 1 つの file(architecture.hy の :single-point-vocabulary の :except)に閉じ込める — 他の file が同じ正規表現に当たる綴りを読むと、そこが第 2 の判定点になり、直す時に片方だけ直して食い違う",
             ProjectRule::SpellingOutsideItsFiles => "architecture.hy の :confined-spellings の群の綴り(正規表現)は :except の file にだけ書く(:except が空なら :files のどこにも書かない)— :files に当たる Hy・Python の file の、註を落とした本文(文字列の中も数える)を読む。:files に当たる file が 1 つも無い群も当たる(母集団 0 を緑にしない)",
@@ -1255,6 +1273,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
+            ProjectRule::StaleOutcomeBranch => "枝を消して成功の道だけにする — 不在で何かしたい所は (<- x (E …) :absent <失敗>) か absent-as、失敗で何かしたい所は on-raise、不在や失敗を値として持ち回る所は (maybe (E …)) で包んで Nothing を受ける形にする(R14 (3))",
             ProjectRule::TestFormNotDeftest => "deftest に書き直す(判定の関数は同じ process で呼ぶ)— 守る物が消えたなら file ごと消す。module ごとの skip は足りない物を直すか、その検だけを skip する",
             ProjectRule::VocabularyOutsideSinglePoint => "群の :instead が名指す判定の1点(:except の file)の答えを読む — 直せない既存の当たりは登録簿に載せる",
             ProjectRule::SpellingOutsideItsFiles => "綴りを :except の file へ移し、外の file はその file の口を通す — 書いてよい file を増やすなら、理由を :why に書いて :except に足す",
@@ -1372,6 +1391,7 @@ mod tests {
         ("DOEFF205", RuleFamily::Smell),
         ("DOEFF126", RuleFamily::Definition),
         ("DOEFF127", RuleFamily::Definition),
+        ("DOEFF175", RuleFamily::Definition),
         ("DOEFF130", RuleFamily::Layer),
         ("DOEFF174", RuleFamily::Layer),
         ("DOEFF168", RuleFamily::Layer),
