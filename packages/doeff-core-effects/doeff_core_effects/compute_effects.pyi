@@ -22,6 +22,7 @@ class ComputeLoad:
     running: int
     started: int
     waited_seconds: float
+    ran_seconds: float
 
     def __post_init__(self) -> None:
         ...

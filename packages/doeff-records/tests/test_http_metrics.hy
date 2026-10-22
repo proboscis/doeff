@@ -21,7 +21,8 @@
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.wire [STATUS-OF-ERROR LIST-LIMIT-MAX])
+(import doeff_records.wire [STATUS-OF-ERROR])
+(import doeff_records.effects [LIST-LIMIT-MAX])
 (import doeff_records.http_server [records-server-config start-records-server metrics-answer])
 (import tests.interpreters [sim-request-handlers])
 
@@ -293,27 +294,35 @@
   (assert (= seen.listed 200) seen)
   (assert (= seen.above 400) seen)
   (assert (in "malformed" seen.above-text) seen.above-text)
-  (for [series ["# HELP records_compute_queued " "# HELP records_compute_running " "# HELP records_compute_wait_seconds "]]
+  (for [series ["# HELP records_compute_queued " "# HELP records_compute_running " "# HELP records_compute_wait_seconds "
+                 "# HELP records_compute_run_seconds " "# HELP records_compute_workers "]]
     (assert (in series seen.before.text) series))
   (<- started float (grew seen.before seen.after "records_compute_wait_seconds_count"))
   (assert (>= started 1.0) #(started seen.after.text))
   (<- queued float (series-count seen.after "records_compute_queued"))
   (<- running float (series-count seen.after "records_compute_running"))
-  (assert (= #(queued running) #(0.0 0.0)) seen.after.text))
+  (assert (= #(queued running) #(0.0 0.0)) seen.after.text)
+  ;; 殻の pool の thread の数(利用率の割る数)を名乗り、回り終えた計算の数は回り始めた数と同じ(走りが 0)。
+  (<- workers float (series-count seen.after "records_compute_workers"))
+  (assert (= workers 2.0) seen.after.text)
+  (<- finished float (series-count seen.after "records_compute_run_seconds_count"))
+  (<- began float (series-count seen.after "records_compute_wait_seconds_count"))
+  (assert (= finished began) seen.after.text))
 
 
 (defhandler clogged-pool
-  ;; 計算の pool が塞がった断面(並び 3・走り 2・回り始め 7・待ちの累計 1.5 秒)を答える Compute の答え手の代役 — 塞がった pool の数が
+  ;; 計算の pool が塞がった断面(並び 3・走り 2・回り始め 7・待ちの累計 1.5 秒・回り終えた 5 つの回った秒 4.25)を答える Compute の答え手の代役 — 塞がった pool の数が
   ;; /metrics の系列にそのまま出ることを確かめるため。
   {:tags {:context "records" :role "foundation"}}
   (ReadComputeLoad []
-    (resume (ComputeLoad :queued 3 :running 2 :started 7 :waited-seconds 1.5))))
+    (resume (ComputeLoad :queued 3 :running 2 :started 7 :waited-seconds 1.5 :ran-seconds 4.25))))
 
 
 (deftest test-metrics-name-a-clogged-pool
-  ;; 塞がった pool の負荷は、並びと走りの今の値と、待ちの秒の合計と回数として GET /metrics の本文に出る(拍ごとの差で待ちの平均と
-  ;; 並びの時間の平均を読む)。
-  (<- answer (with_handlers [(state) (memory-meter-handler (MeterSettings)) clogged-pool] (metrics-answer LAW-SCHEMA)))
+  ;; 塞がった pool の負荷は、並びと走りと thread の数の今の値と、待ちと回りの秒の合計と回数として GET /metrics の本文に出る(拍ごとの差で待ちの平均と
+  ;; 並びの時間の平均と利用率を読む)。
+  (<- answer (with_handlers [(state) (memory-meter-handler (MeterSettings)) clogged-pool] (metrics-answer LAW-SCHEMA 4)))
   (for [line ["records_compute_queued 3.0" "records_compute_running 2.0" "records_compute_wait_seconds_sum 1.5"
-              "records_compute_wait_seconds_count 7"]]
+              "records_compute_wait_seconds_count 7" "records_compute_workers 4.0" "records_compute_run_seconds_sum 4.25"
+              "records_compute_run_seconds_count 5"]]
     (assert (in line (.splitlines answer.body)) #(line answer.body))))

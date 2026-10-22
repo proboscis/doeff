@@ -339,7 +339,9 @@
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
                   :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
-                  :pressure choice.pressure :callers settings.callers))
+                  :pressure choice.pressure :callers settings.callers
+                  ;; 土台の口 records-connected が開く計算の pool の thread の数(GET /metrics の利用率の割る数)。
+                  :compute-workers COMPUTE-WORKERS))
 
 
 (defk records-process [foundation serving]

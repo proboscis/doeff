@@ -20,6 +20,12 @@
                               checked-field-name freeze-field])
 
 (setv DEFAULT-LIST-LIMIT 500)
+;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
+;; pool の thread を塞ぐ — 1 要求の計算の量を「頁の行の数 × 行の大きさ」の両側で縛るため、行の数の側をこの数で縛る(行の大きさの側は表の
+;; size-budget)。型が作る時に断るので、memory の置き場の模擬と検も、PostgreSQL の置き場も、HTTP の口(本文の読みの断り = 400 malformed)も
+;; 同じ所で断る。呼び手は大きな一覧をこの数までの頁に割り、続きの位置(next_cursor)で送る。値は使い手の一番大きな頁(全行の一覧の 1 頁
+;; 5,000 行 — 1 回の要求の固定費との釣り合いで選ばれた頁)に合わせた。
+(setv LIST-LIMIT-MAX 5000)
 (setv DEFAULT-WATCH-LIMIT 1000)
 (setv DEFAULT-READ-EVENTS-LIMIT 1000)
 ;; ListRows の値の組の絞り(where-any)1 つの読みに載せる値の数の上限(全部の欄の組の値の和)— PostgreSQL の置き場は値を 1 つずつ文の
@@ -60,7 +66,8 @@
 
 (defclass [(dataclass :frozen True)] ListRows [EffectBase]
   "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値の凍らせた写像(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
-   cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限。答え = Page | Reset | Unreachable | NotIndexed。
+   cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限(1 以上 LIST-LIMIT-MAX 以下 — 外は作る時に ValueError)。
+   答え = Page | Reset | Unreachable | NotIndexed。
    descending-by = 欄の名(None = 鍵の綴りの順): 値が整数の行だけを、その値の大きい順(同じ値は鍵の綴りの逆順)に上から limit 件読む
    (値が整数でない行・欄の無い行は出さない)。続きが在れば答えの next-cursor は頁の最後の行の (値, 鍵の綴り) を持つ位置(ListCursor の
    after-value と after-key — keyset)で、それを cursor に渡した読みは (値, 鍵の綴り) がその組より小さい行から次の頁を読む(呼び手が新しい
@@ -98,6 +105,9 @@
     (when (not (or (is self.cursor None) (isinstance self.cursor ListCursor)))
       (raise (TypeError "ListRows.cursor は ListCursor か None")))
     (checked-limit self.limit "ListRows.limit")
+    (when (> self.limit LIST-LIMIT-MAX)
+      (raise (ValueError (.format "ListRows.limit {} が上限 {} を越える(一覧は続きの位置 next_cursor で {} 行までの頁に割って読む)"
+                                  self.limit LIST-LIMIT-MAX LIST-LIMIT-MAX))))
     (when (is-not self.descending-by None)
       (checked-field-name self.descending-by "ListRows.descending_by"))
     (when (and (is-not self.cursor None) (!= (is self.descending-by None) (is self.cursor.after-value None)))

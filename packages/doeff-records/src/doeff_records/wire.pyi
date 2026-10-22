@@ -69,7 +69,6 @@ OP_READ_EVENT_BY_KEY: str
 OP_APPEND_EVENTS: str
 OPERATIONS: tuple[str, ...]
 WATCH_MAX_SECONDS: float
-LIST_LIMIT_MAX: int
 WRITE_OPERATIONS: frozenset[str]
 
 class RequestKind(StrEnum):
@@ -199,9 +198,6 @@ def json_object_in(value: JsonValue, what: str) -> _Program[dict, object]:
     ...
 
 def malformed(what: str, error: Exception) -> _Program[WireMalformed, object]:
-    ...
-
-def checked_list_limit(limit: int) -> _Program[int, object]:
     ...
 
 def watch_cursor_json(cursor: WatchCursor) -> _Program[dict, object]:

@@ -9,7 +9,7 @@
 ;;;             どちらの答え手でも同じ)。成否の解釈は呼び手が持つ(raise しない)。
 ;;;   ReadComputeLoad
 ;;;             答え手が今 抱えている計算の負荷の断面(ComputeLoad)を読む: 並び(出して、まだ回り始めていない数)・走り(回っている数)・
-;;;             回り始めた数の累計と、その仕事が出されてから回り始めるまで待った秒の累計。pool の詰まり(大きな計算が pool の全部の
+;;;             回り始めた数の累計と、その仕事が出されてから回り始めるまで待った秒の累計と、回り終えた仕事が回った秒の累計。pool の詰まり(大きな計算が pool の全部の
 ;;;             thread を塞ぎ、後の計算が列で待つ)を、使い手の計器(例 GET /metrics)へ数で出すため。累計は答え手を組んだ時からの物で、
 ;;;             2 回読んだ差を数の差で割れば、その間に回り始めた仕事の待ちの平均の秒になる。その場で回す答え手は列を持たないので全部 0。
 ;;;
@@ -36,12 +36,14 @@
 
 (defrecord ComputeLoad
   "ReadComputeLoad の答え — 答え手が今 抱えている計算の負荷の断面: queued = 出して、まだ回り始めていない仕事の数・running = 回っている
-   仕事の数・started = 回り始めた仕事の累計・waited-seconds = 回り始めた仕事が出されてから回り始めるまで待った秒の累計(started 個の和)。"
-  {:check [(>= queued 0) (>= running 0) (>= started 0) (>= waited-seconds 0.0)]}
+   仕事の数・started = 回り始めた仕事の累計・waited-seconds = 回り始めた仕事が出されてから回り始めるまで待った秒の累計(started 個の和)・
+   ran-seconds = 回り終えた仕事が pool の thread で回った秒の累計(started − running 個の和 — 2 回読んだ差 ÷ 間の秒 ÷ thread の数 = 利用率)。"
+  {:check [(>= queued 0) (>= running 0) (>= started 0) (>= waited-seconds 0.0) (>= ran-seconds 0.0)]}
   (#^ int queued)
   (#^ int running)
   (#^ int started)
-  (#^ float waited-seconds))
+  (#^ float waited-seconds)
+  (#^ float ran-seconds))
 
 
 (defclass [(dataclass :frozen True)] ReadComputeLoad [EffectBase]

@@ -29,6 +29,7 @@ from doeff_records.values import (
 )
 
 DEFAULT_LIST_LIMIT: int
+LIST_LIMIT_MAX: int
 DEFAULT_WATCH_LIMIT: int
 DEFAULT_READ_EVENTS_LIMIT: int
 WHERE_ANY_LIMIT: int
