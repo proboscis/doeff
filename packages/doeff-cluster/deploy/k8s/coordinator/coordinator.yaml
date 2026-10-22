@@ -175,7 +175,14 @@ spec:
             # L2652 — 入れ替えのたびに全 worker が WorkerGone になり、Service に載った直後に WorkerBack で戻っていた)。この版の coordinator が
             # 起きた入れ替えの次から効く。間の差で coordinator の process に効く物は無い(子の cgroup の置き場は worker の内部・disk の
             # 分け前は配備の宣言だけ)。前の版 d5ebd138d は 5b0b15780 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 5b0b157802596713a950c8e678466f6358e78b22 }
+            # 6f5ca0ed8 = 世代をまたぐ受け渡しを止めている job(名・入れ替えの形・今の世代の最後の結末)と待ちの始まりを Worker の
+            # status.handover(blocking・sinceMs・stalled)に載せ、始まりから 20 分を越えたら GET /metrics の doeff_worker_handover_stalled
+            # を 1 にする版(card ki-d8e594fe934d・L2689 — 10-22 の zeus の入れ替えは新しい世代の handoff の job が落ち続けて 23 分 黙って
+            # 止まった)。保存の行 superseded/<名>/<世代> に since_ms が足る(前の版の coordinator へ戻すと、この欄を持つ行を読めない —
+            # 受け渡しの間だけ在る行)。間の差で coordinator の process に効く物は、doeff-hy の <- と ! が字面の値の式を展開の時に断る変更
+            # (afaf956cd — coordinator/protocol/kube.hy を合わせ済み)と、import の compile が展開した木を bytecode の置き場に残す変更
+            # (7b8d71041)。前の版 5b0b15780 は 6f5ca0ed8 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 6f5ca0ed836a2a6e90d00ffc210f59e5184dd7b6 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
