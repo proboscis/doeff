@@ -13,7 +13,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [StreamDecl KeepFor ExpectAbsent ExpectAny])
 (import doeff_records.effects [AppendEvent ReadEvents PutRow])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records.memory [MemoryStore memory-records-handler new-store-lock])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 
 ;; 直す前の code では、この大きさで 5 回走らせて 5 回とも赤になった(出来事 400 個のうち 168〜219 個だけ残る・変更の番号が重なる)。
@@ -132,6 +132,34 @@
     (assert (is-not back.lock store.lock))
     ;; 戻した置き場の錠は使える(入れ子も通る RLock)。
     (with [back.lock] (with [back.lock] None))))
+
+
+;; --- 錠の作り方は置き場の外から受ける(#2950 — MemoryStore の class が thread に直に触らない・DOEFF119)------------------
+;; 置き場は錠を自分では作らず、受けた make-lock(既定は土台の new-store-lock)で作る。pickle と copy から戻す時の新しい錠も同じ make-lock。
+;; 反例 = class が threading.RLock を直に呼ぶ置き場は、渡した make-lock を無視して自分で錠を作る(作り手が呼ばれず、置き場の錠が渡した物でない)。
+
+(deftest test-a-store-makes-its-lock-with-the-maker-it-was-given
+  ;; 作り手は用意した錠を順に 1 つずつ返す — 置き場・deepcopy・copy の錠が、順に 3 つの錠のどれかを言い当てる(4 度目の呼びは StopIteration)。
+  (val locks (tuple (gfor _ (range 3) (threading.RLock))))
+  (val queue (iter locks))
+  (val given (fn [] (next queue)))
+  (val store (MemoryStore LAW-SCHEMA :make-lock given))
+  (assert (is store.make-lock given))
+  (assert (is store.lock (get locks 0)) "置き場の錠は渡した作り手が 1 度だけ呼ばれて作った物")
+  ;; deepcopy と copy から戻す時も同じ作り手で新しい錠を作る(錠は置き場ごと・写しと元で共有しない)。
+  (val deep (copy.deepcopy store))
+  (assert (is deep.lock (get locks 1)) "deepcopy は作り手で新しい錠を作る")
+  (val shallow (copy.copy store))
+  (assert (is shallow.lock (get locks 2)) "copy は作り手で新しい錠を作る")
+  (assert (is shallow.make-lock given)))
+
+(deftest test-a-store-without-a-maker-uses-the-foundation-lock-maker-and-keeps-it-across-pickle
+  (val store (MemoryStore LAW-SCHEMA))
+  (assert (is store.make-lock new-store-lock))
+  (val back (pickle.loads (pickle.dumps store)))
+  (assert (is back.make-lock new-store-lock) "pickle が運ぶのは作り手の参照(名で引ける関数)")
+  (assert (is-not back.lock store.lock))
+  (with [back.lock] (with [back.lock] None)))
 
 
 ;; --- 置き場の写しは書き換える入れ物だけを写す(#2670 根 E の (a)) --------------------------------------------------------
