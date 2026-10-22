@@ -50,7 +50,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
@@ -138,14 +138,9 @@ class Diagnostic:
         return f"{self.path}:{self.line}:{self.column} - {self.severity}: {self.message}{rule}"
 
 
-@dataclass(frozen=True)
-class Span:
-    """展開した Python の範囲(0 始まりの行・列、終わりは含まない)と、対応する Hy の位置(1 始まり)。"""
-
-    start: tuple[int, int]
-    end: tuple[int, int]
-    hy_line: int
-    hy_column: int
+#: 展開した Python の範囲(0 始まりの行・列、終わりは含まない)と、対応する Hy の位置(1 始まり)。保存の形と同じ 1 つの型 —
+#: 引いた保存から Projection へ戻す時に、十数万の位置を作り直さない。
+Span = CachedSpan
 
 
 @dataclass(frozen=True)
@@ -153,7 +148,7 @@ class Projection:
     source: Path
     module: str
     text: str
-    spans: tuple[Span, ...]
+    spans: Sequence[Span]
     # macro が展開の時に出した所見(val / var の検査 — ADR-DOE-HY-006)を Hy の位置の診断にした物。
     findings: tuple[Diagnostic, ...] = ()
     # 展開が通った file の記録(Hy の版・macro と補助と型検査の後処理の file と sha256 — 保存を照らす・agora-redesign #3862)。
@@ -727,22 +722,46 @@ def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:
     )
 
 
-def _file_names(directory: Path) -> frozenset[str]:
-    """dir の直下の file の名(dir が無い・読めない時は空 — Path.is_file と同じく、無い物は file でない)。"""
+@dataclass(frozen=True)
+class _Listing:
+    """dir の直下の file の名と dir の名(dir が無い・読めない時は両方空 — Path.is_file と同じく、無い物は file でない)。"""
+
+    files: frozenset[str]
+    dirs: frozenset[str]
+
+
+def _listing(directory: Path) -> _Listing:
     try:
         with os.scandir(directory) as entries:
-            return frozenset(entry.name for entry in entries if entry.is_file())
+            scanned = list(entries)
+        return _Listing(
+            frozenset(entry.name for entry in scanned if entry.is_file()),
+            frozenset(entry.name for entry in scanned if entry.is_dir()),
+        )
     except OSError:
-        return frozenset()
+        return _Listing(frozenset(), frozenset())
 
 
-def _module_candidates(dirs: list[Path], name: str) -> list[Path]:
-    """import の名 name が dirs の下で当たりうる .hy(dir ごとに <名>.hy と <名>/__init__.hy)— 依存の展開が探す file。"""
-    found: list[Path] = []
+def _present_candidates(
+    dirs: tuple[Path, ...], name: str, listing: Callable[[Path], _Listing]
+) -> tuple[Path, ...]:
+    """import の名 name の候補(<名>.hy と <名>/__init__.hy)のうち、実在する file の絶対 path。dir を 1 つずつ下りて、無い dir から
+    先は引かない(候補ごとに stat しない・同じ dir の一覧は呼び手の覚えが 1 度だけ引く)。"""
+    *packages, leaf = name.split(".")
+    present: list[Path] = []
     for directory in dirs:
-        base = directory.joinpath(*name.split("."))
-        found += [base.with_suffix(".hy"), base / "__init__.hy"]
-    return found
+        current = directory
+        for part in packages:
+            if part not in listing(current).dirs:
+                break
+            current = current / part
+        else:
+            here = listing(current)
+            if f"{leaf}.hy" in here.files:
+                present.append(_absolute(current / f"{leaf}.hy"))
+            if leaf in here.dirs and "__init__.hy" in listing(current / leaf).files:
+                present.append(_absolute(current / leaf / "__init__.hy"))
+    return tuple(present)
 
 
 def search_dirs(root: Path, roots: list[Path], source: Path) -> list[Path]:
@@ -804,7 +823,7 @@ def _from_cache(source: Path, module: str, cached: CachedProjection) -> Projecti
         source,
         module,
         cached.text,
-        tuple(Span(s.start, s.end, s.hy_line, s.hy_column) for s in cached.spans),
+        cached.spans,
         tuple(
             Diagnostic(f.path, f.line, f.column, f.severity, f.rule, f.message)
             for f in cached.findings
@@ -817,7 +836,7 @@ def _to_cache(projection: Projection) -> CachedProjection:
     """展開の結果を保存の形にする(次の実行で依存を展開し直さないため)。"""
     return CachedProjection(
         projection.text,
-        tuple(CachedSpan(s.start, s.end, s.hy_line, s.hy_column) for s in projection.spans),
+        projection.spans,
         tuple(
             CachedFinding(f.path, f.line, f.column, f.severity, f.rule, f.message)
             for f in projection.findings
@@ -961,7 +980,8 @@ def project_closure(
     projections: dict[Path, Projection] = {}
     failures: list[CompileFailure] = []
     # 候補の path の有無は、実行の間に変わらない物として dir ごとに 1 度だけ引く(候補ごとに stat すると、10 file の検めで 10 万回になった)。
-    listing = functools.cache(_file_names)
+    listing = functools.cache(_listing)
+    resolved = functools.cache(_present_candidates)
     seen: set[Path] = set(targets)
     wave = list(dict.fromkeys(targets))
     # 展開の cache の「今の環境に合うか」の照らしは、file の状態を実行の間 1 度だけ stat する(照らしごとに覚えを捨てると、
@@ -982,12 +1002,9 @@ def project_closure(
                     continue
                 projections[source] = result
                 # import の .hy は import の根と、import する file の dir から根までの親で探す(pyright の探し方 — search_dirs)。
-                dirs = search_dirs(root, roots, source)
+                dirs = tuple(search_dirs(root, roots, source))
                 for name in imports if imports is not None else imported_modules(result):
-                    for candidate in _module_candidates(dirs, name):
-                        if candidate.name not in listing(candidate.parent):
-                            continue
-                        absolute = _absolute(candidate)
+                    for absolute in resolved(dirs, name, listing):
                         if absolute not in seen:
                             seen.add(absolute)
                             found.append(absolute)
@@ -1048,7 +1065,7 @@ class SpanIndex:
     赤が 1,402 件の file で locate が 26 秒)。lines = 展開した Python の行・covering = 行の番号 → その行に掛かる範囲の
     番号(projection.spans の元の順)。範囲は始まりの行から終わりの行まで(終わりの行も含む)の全部の行に載る。"""
 
-    spans: tuple[Span, ...]
+    spans: Sequence[Span]
     lines: tuple[str, ...]
     covering: tuple[tuple[int, ...], ...]
 

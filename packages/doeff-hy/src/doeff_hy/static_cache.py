@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,13 +50,54 @@ CACHE_VERSION = 3
 
 
 @dataclass(frozen=True)
-class CachedSpan:
-    """保存した位置の対応(static_check.Span と同じ欄)。"""
+class Span:
+    """展開した Python の範囲(0 始まりの行・列、終わりは含まない)と、対応する Hy の位置(1 始まり)— static_check.Span と同じ型。"""
 
     start: tuple[int, int]
     end: tuple[int, int]
     hy_line: int
     hy_column: int
+
+
+#: 保存の形の呼び名(Span と同じ型 — repr の型名が運びの digest に入るので、型の名は Span のまま)。
+CachedSpan = Span
+
+
+class LazySpans(Sequence[Span]):
+    """entry から読んだ位置の対応を、使われる時まで Span にしない列(1 file で千個を超え、使うのは検める file だけ — 引く側が
+    依存の数百 file の分を作らずに済む)。tuple と同じ中身・同じ repr・同じ等しさで読める。"""
+
+    __slots__ = ("_mut_items", "_raw")
+
+    def __init__(self, raw: list[object]) -> None:
+        self._raw = raw
+        self._mut_items: tuple[Span, ...] | None = None
+
+    def _items(self) -> tuple[Span, ...]:
+        if self._mut_items is None:
+            self._mut_items = tuple(
+                Span((s[0], s[1]), (s[2], s[3]), s[4], s[5])  # type: ignore[index]
+                for s in self._raw
+            )
+        return self._mut_items
+
+    def __len__(self) -> int:
+        return len(self._raw)
+
+    def __getitem__(self, index: int | slice) -> "Span | tuple[Span, ...]":  # type: ignore[override]
+        return self._items()[index]
+
+    def __iter__(self) -> Iterator[Span]:
+        return iter(self._items())
+
+    def __eq__(self, other: object) -> bool:
+        return self._items() == (other._items() if isinstance(other, LazySpans) else other)
+
+    def __hash__(self) -> int:
+        return hash(self._items())
+
+    def __repr__(self) -> str:
+        return repr(self._items())
 
 
 @dataclass(frozen=True)
@@ -75,7 +117,7 @@ class CachedProjection:
     """1 つの .hy の展開の結果のうち、保存して読み戻す部分と、展開が使った macro の記録。"""
 
     text: str
-    spans: tuple[CachedSpan, ...]
+    spans: Sequence[Span]
     findings: tuple[CachedFinding, ...]
     used: "MacroRecord"
     # 展開した Python が import する module の名(辿り先を決める — 引くたびに展開の text を ast で読み直さないため。
@@ -108,13 +150,33 @@ def load(cache_dir: Path, name: str) -> CachedProjection | CacheMiss:
     directory = _place_dir(cache_dir, name)
     if not directory.is_dir():
         return CacheMiss("無い")
-    for entry in sorted(directory.glob("*.json")):
+    for entry in _newest_first(directory):
         match _read_entry(entry):
             case CachedProjection() as cached if record_is_current_here(cached.used):
                 return cached
             case _:
                 continue
     return CacheMiss("今の環境に合う記録の entry が無い")
+
+
+def _newest_first(directory: Path) -> list[Path]:
+    """場所の中の entry を新しい順に並べる — 今の環境に合う entry は、普通は一番新しく書かれた物なので、古い版の entry を読まずに
+    済む(1 つしか無い場所は stat しない)。"""
+    try:
+        with os.scandir(directory) as scanned:
+            found = [entry for entry in scanned if entry.name.endswith(".json")]
+    except OSError:
+        return []
+    if len(found) > 1:
+        found.sort(key=lambda entry: (-_mtime_ns(entry), entry.name))
+    return [Path(entry.path) for entry in found]
+
+
+def _mtime_ns(entry: os.DirEntry[str]) -> int:
+    try:
+        return entry.stat().st_mtime_ns
+    except OSError:
+        return 0
 
 
 def _read_entry(path: Path) -> CachedProjection | CacheMiss:
@@ -138,7 +200,7 @@ def _read_entry(path: Path) -> CachedProjection | CacheMiss:
             try:
                 return CachedProjection(
                     text,
-                    tuple(CachedSpan((s[0], s[1]), (s[2], s[3]), s[4], s[5]) for s in spans),
+                    LazySpans(spans),
                     tuple(CachedFinding(**f) for f in findings),
                     record,
                     _imports_of(loaded),
