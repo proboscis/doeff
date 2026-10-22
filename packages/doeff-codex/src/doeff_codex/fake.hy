@@ -11,7 +11,7 @@
 (import doeff_time [Delay])
 (import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
-                           UsageLimitHit USAGE-LIMIT-KIND])
+                           UsageLimitHit USAGE-LIMIT-KIND ServerOverloadedHit SERVER-OVERLOADED-KIND])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
@@ -25,12 +25,15 @@
   "筋書きの答え 1 つ: pieces = 答えの文字の途中の欠片(順に TextDelta になり、連ねると答えの全文)/ hold = 真なら終わりを出さずに
    止め(CodexInterruptTurn)を待つ(途中で止める筋書きのため)/ usage-limit = 口座の利用枠切れの事実(在れば、欠片の後に答えの全文を
    出さず、誤りの種類 USAGE-LIMIT-KIND の誤りと失敗の終わりで終える — 終わりは本番の handler が枠の知らせから作るのと同じ事実を運ぶ)/
+   server-overloaded = 提供側の混雑の事実(在れば、欠片の後に答えの全文を出さず、誤りの種類 SERVER-OVERLOADED-KIND の誤りと失敗の
+   終わりで終える — 終わりは本番の行の分類が作るのと同じ事実を運ぶ。process は降ろさない — 次のターンは同じ process で続く)/
    tools-lost = 道具を呼べない process の筋書き(在れば codex の警告の文 — 始まりの後に、欠片を出さずその文の ToolsUnavailable で終え、
    process を降ろした数えにする。本番の handler が code mode の使えない警告で終えるのと同じ終わり)。"
   {:tags {:context "codex" :role "type"}}
   (#^ (get tuple #(str ...)) pieces)
   (setv #^ bool hold False)
   (setv #^ (| UsageLimitHit None) usage-limit None)
+  (setv #^ (| ServerOverloadedHit None) server-overloaded None)
   (setv #^ (| str None) tools-lost None))
 
 
@@ -81,8 +84,8 @@
 (defk fake-start [#^ FakeCodexWorld world #^ CodexStartTurn asked]
   {:pre [(: world FakeCodexWorld) (: asked CodexStartTurn)] :post [(: % (| TurnStarted ThreadUnknown TurnInFlight))]
    :tags {:context "codex" :role "process"}}
-  "ターンを始めるため: 筋書きの答えの欠片を TextDelta に並べ、hold でなければ、利用枠切れの事実が在れば誤りと失敗の終わり(FAILED)、
-   無ければ全文と終わり(COMPLETED)まで出す。道具を呼べない筋書き(tools-lost)は始まりの後すぐ ToolsUnavailable で終え、process を
+  "ターンを始めるため: 筋書きの答えの欠片を TextDelta に並べ、hold でなければ、利用枠切れか提供側の混雑の事実が在れば誤りと失敗の
+   終わり(FAILED)、無ければ全文と終わり(COMPLETED)まで出す。道具を呼べない筋書き(tools-lost)は始まりの後すぐ ToolsUnavailable で終え、process を
    降ろした数えにする(次のターンは起こし直す)。続きは同じ宣言で生きた process が在れば使い回した数え(起こし直しは launches を
    増やす)。"
   (val origin asked.origin)
@@ -122,6 +125,12 @@
                                      :http-status None :will-retry False))
         (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.FAILED :error-message hit.text
                                      :error-kind USAGE-LIMIT-KIND :usage-limit hit)))
+    (is-not reply.server-overloaded None)
+    (do (val busy reply.server-overloaded)
+        (.add thread turn (TurnError :thread-id thread-id :turn-id turn-id :message busy.text :error-kind SERVER-OVERLOADED-KIND
+                                     :http-status None :will-retry False))
+        (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.FAILED :error-message busy.text
+                                     :error-kind SERVER-OVERLOADED-KIND :server-overloaded busy)))
     True
     (do (.add thread turn (AgentMessageDone :thread-id thread-id :turn-id turn-id :item-id item-id :text (.join "" reply.pieces)))
         (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.COMPLETED))))

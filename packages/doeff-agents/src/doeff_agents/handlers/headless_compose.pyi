@@ -42,6 +42,7 @@ from doeff_codex.fake import FakeCodexWorld as FakeCodexWorld
 from doeff_codex.fake import FakeReply as FakeCodexReply
 from doeff_codex.fake import fake_codex_handler as fake_codex_handler
 from doeff_codex.lines import UsageLimitHit as CodexUsageLimitHit
+from doeff_codex.lines import ServerOverloadedHit as CodexServerOverloadedHit
 from doeff_agents.handlers.headless_codex import HeadlessCodexConfig as HeadlessCodexConfig
 from doeff_agents.handlers.headless_codex import HeadlessCodexState as HeadlessCodexState
 from doeff_agents.handlers.headless_codex import headless_codex_handler as headless_codex_handler

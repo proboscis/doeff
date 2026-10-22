@@ -19,6 +19,7 @@ class TurnStatus(StrEnum):
     FAILED = 'failed'
     IN_PROGRESS = 'inProgress'
 USAGE_LIMIT_KIND: str
+SERVER_OVERLOADED_KIND: str
 CODE_MODE_UNAVAILABLE_HEAD: str
 CODE_MODE_FAIL_CLOSED: str
 
@@ -416,6 +417,10 @@ class UsageLimitHit:
     text: str
 
 @dataclass(frozen=True, kw_only=True)
+class ServerOverloadedHit:
+    text: str
+
+@dataclass(frozen=True, kw_only=True)
 class TurnEnded:
     thread_id: str
     turn_id: str
@@ -424,6 +429,7 @@ class TurnEnded:
     error_kind: str | UnknownValue | None = None
     http_status: int | None = None
     usage_limit: UsageLimitHit | None = None
+    server_overloaded: ServerOverloadedHit | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class RateLimitWindow:

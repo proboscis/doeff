@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/scratch-codex-rec-ki843475/cwd", "approvalPolicy": "never", "sandbox": "read-only"}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a163f5-fc91-7363-b859-f0cb943cdc2a", "input": [{"type": "text", "text": "SERVER-OVERLOADED please"}]}}
+{"jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": {"threadId": "01a163f5-fc91-7363-b859-f0cb943cdc2a", "input": [{"type": "text", "text": "hello again"}]}}

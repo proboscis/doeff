@@ -17,8 +17,8 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - SPANNING の目印(BG-COMMAND・BG-WAIT)が在れば、2 つのターンにまたがる録り(後ろで走る命令の始まりのターンと、その命令が終わる
     次のターン)のうち、目印のターンの通知を流す。前のターンを名乗る遅れた行(命令の終わり)は、この process が前のターンに振った id へ
     差し替える。
-  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS・OTHER-TOOLS・CODE-MODE)が在れば、その目印で録ったターンの通知
-    (turn/start の答えの後 〜 そのターンの turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と
+  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS・OTHER-TOOLS・CODE-MODE・SERVER-OVERLOADED)が在れば、その目印で録ったターンの通知
+    (turn/start の答えの後 〜 そのターンの turn/completed)をそのまま流す(利用枠切れ・429 の断り・提供側の混雑の断りで失敗したターン・命令の成功と失敗と
     apply_patch と web 検索の道具の item を持つターン・MCP と動的な道具と画像を見る道具と子の agent の道具の item を持つターン・code
     mode の host を使えない codex の、文だけを返すターン — 子の agent の thread の行(子のターンの始まりと終わりを含む)も録った順の
     まま混ぜて流す)。
@@ -72,7 +72,7 @@ BACKFILL_PACE = threading.Event()
 STEERED_PREFIX = "steered:"
 # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
 REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls", "OTHER-TOOLS": "other-tools",
-            "CODE-MODE": "code-mode-unavailable"}
+            "CODE-MODE": "code-mode-unavailable", "SERVER-OVERLOADED": "server-overloaded"}
 # 入力の目印 → 2 つのターンにまたがる録りの名と、そのターンを始めた録りの要求の id(turn/start)。
 SPANNING = {"BG-COMMAND": ("background-command", 3), "BG-WAIT": ("background-command", 4)}
 # 入力の目印 → 録った筋書きの名(1 つ目のターンの前の警告を turn/start の答えより先に書く — そのターンの通知は REPLAYED が流す)。

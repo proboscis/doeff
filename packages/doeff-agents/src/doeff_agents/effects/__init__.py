@@ -50,6 +50,7 @@ from doeff_agents.effects.agent import AgentTurnUsage as AgentTurnUsage
 from doeff_agents.effects.agent import AgentAccountLimit as AgentAccountLimit
 from doeff_agents.effects.agent import AgentAccountRefusal as AgentAccountRefusal
 from doeff_agents.effects.agent import AgentModelRefusal as AgentModelRefusal
+from doeff_agents.effects.agent import AgentProviderCapacity as AgentProviderCapacity
 from doeff_agents.effects.agent import AgentValidationErrorKind as AgentValidationErrorKind
 from doeff_agents.effects.agent import AgentValidationFailure as AgentValidationFailure
 from doeff_agents.effects.agent import AttachAgentSession as AttachAgentSession
