@@ -50,7 +50,8 @@
 
 ;; 土台の語彙と、その defhandler 製の答え手(注釈せず __doeff_body__ から導出 — D6)。
 (import doeff_core_effects.file-effects [StatPath ReadText ReadBytes WriteText
-                                         WriteBytes AppendText MakeDirectory
+                                         WriteBytes AppendText AppendBytes TruncateFile
+                                         SyncDirectory MakeDirectory
                                          ListDirectory WalkTree StatTree RemoveTree
                                          RenamePath CopyFile CopyTree
                                          AcquireLock ReleaseLock ReadDiskFree
@@ -275,6 +276,7 @@
 (defdomain doeff-file
   :title "File 語彙 — 汎用の file system の読み書き"
   :effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText
+            AppendBytes TruncateFile SyncDirectory
             MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath
             CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree
             ReadDiskUsage MeasureTree LinkFile MakeSymlink CompilePythonSources

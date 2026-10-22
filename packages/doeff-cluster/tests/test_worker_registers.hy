@@ -15,6 +15,7 @@
 (import httpx)
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist])
+(import tests.wal_rig [on-wal-files])
 (import tests.served_fixtures [ROOT HY start-coordinator])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff [with-handlers])
@@ -42,16 +43,14 @@
   (val store (WalStore (str (/ tmp-path "wal"))))
   ;; 旧い coordinator は 1 分前まで生きていた。
   (val alive (- (int (* 1000 (time.time))) 60000))
-  (<- (durable-load store))
-  (<- (durable-persist store {"counter" {"nextTask" 1 "revision" 900 "auditSeq" 0 "aliveMs" alive}
+  (<- (on-wal-files (durable-load store)))
+  (<- (on-wal-files (durable-persist store {"counter" {"nextTask" 1 "revision" 900 "auditSeq" 0 "aliveMs" alive}
                    (+ "worker/" NAME) {"name" NAME "capacity" 1 "labels" {"host" NAME "role" "agent"} "versions" {}
                                        "lastSeenMs" alive}
                    (+ "meta/Worker/" NAME) STALE-META
                    (+ "service/" SERVICE) {"name" SERVICE "revision" "r1" "needs" ["net"] "replicas" 1 "readiness" None
                                            "owner" None "run" {"kind" "service" "factory" "m:f" "env" "m:e" "config" {}}}
-                   (+ "meta/Service/" SERVICE) (| STALE-META {"createdBy" "old-declarer" "updatedBy" "old-declarer"})}))
-  (assert (is-not store.handle None) "開いた置き場は log の handle を持つ")
-  (.close store.handle)
+                   (+ "meta/Service/" SERVICE) (| STALE-META {"createdBy" "old-declarer" "updatedBy" "old-declarer"})})))
   None)
 
 

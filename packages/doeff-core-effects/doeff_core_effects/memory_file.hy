@@ -17,7 +17,7 @@
 (import dataclasses [replace :as with-fields])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
-                                         StatPath MakeSymlink
+                                         StatPath MakeSymlink Appended AppendBytes TruncateFile SyncDirectory
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
                                          MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
@@ -36,7 +36,7 @@
 ;; 1 つの path を辿る symlink の数の上限(Linux の MAXSYMLINKS と同じ)。
 (val MAX-HOPS 40)
 ;; file の effect の答えの型の和(断りを渡された path へ戻す as-asked が受ける — 断り以外はそのまま通す)。
-(val ANSWER (| FileFailed PathStat LockHeld MemoryFiles str bytes tuple int None))
+(val ANSWER (| FileFailed PathStat LockHeld MemoryFiles Appended str bytes tuple int None))
 
 
 (defk refused [reason path]
@@ -402,6 +402,21 @@
   (AppendText [path text]
     (<- answer (on-path store path True (fn [s at] (appended-in s at text))))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
+  ;; 追記の bytes の sync も落とす先が無いので読まず、fsync に掛かった秒は常に 0.0(頭の註)。答えの大きさは足した後の file の大きさ。
+  (AppendBytes [path content]
+    (<- answer (on-path store path True (fn [s at] (appended-in s at content))))
+    (if (isinstance answer FileFailed)
+        (resume answer)
+        (do (:= store answer)
+            (<- stat (| PathStat FileFailed) (on-path store path True stat-in))
+            (resume (Appended :size stat.size :synced-seconds 0.0)))))
+  (TruncateFile [path size]
+    (<- answer (on-path store path True (fn [s at] (truncated-in s at size))))
+    (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
+  ;; dir の変更を落とす先が無いので、答えは dir が在るかだけ(dir でなければ本物の O_DIRECTORY の open と同じく断る)。
+  (SyncDirectory [path]
+    (<- refusal (on-path store path True dir-refusal))
+    (resume refusal))
   (MakeDirectory [path mode]
     (<- answer (on-path store path True with-dirs))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
@@ -510,10 +525,26 @@
 
 
 (defk appended-in [store path text]
-  {:pre [(: store MemoryFiles) (: path str) (: text str)] :post [(: % (| MemoryFiles FileFailed))]}
-  "file の末尾に text を足した置き場を作るため(無ければ作る)。"
+  {:pre [(: store MemoryFiles) (: path str) (: text (| str bytes))] :post [(: % (| MemoryFiles FileFailed))]}
+  "file の末尾に text(str は UTF-8 の byte にして)を足した置き場を作るため(無ければ作る)。"
   (<- before (content-of store path))
-  (<- answer (with-file store path (+ (if (isinstance before bytes) before b"") (.encode text "utf-8")) None))
+  (val added (if (isinstance text bytes) text (.encode text "utf-8")))
+  (<- answer (with-file store path (+ (if (isinstance before bytes) before b"") added) None))
+  answer)
+
+
+(defk truncated-in [store path size]
+  {:pre [(: store MemoryFiles) (: path str) (: size int)] :post [(: % (| MemoryFiles FileFailed))]}
+  "在る file を size byte に切り詰めた置き場を作るため(無い path・dir は content-of と同じ所で断る・今の大きさより大きい size は延ばさず
+   本物の ftruncate の延ばしを断る側に合わせて Invalid argument で断る・mode は残す)。"
+  (<- before (content-of store path))
+  (when (isinstance before FileFailed)
+    (return before))
+  (when (or (< size 0) (> size (len before)))
+    (<- answer FileFailed (refused INVALID path))
+    (return answer))
+  (val mode (next (gfor f store.files :if (= f.path path) f.mode)))
+  (<- answer (with-file store path (cut before 0 size) mode))
   answer)
 
 

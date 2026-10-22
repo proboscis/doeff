@@ -1,62 +1,41 @@
-;;; coordinator の耐久の置き場の file の I/O: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)の byte を書き・読み・切り詰める。
-;;; 行と写しの形(checksum つきの JSON の綴りと検め・読み直しの当て方)は coordinator/protocol/wal_format.hy、両方を組んで Persist に
-;;; 答えるのは coordinator/protocol/store.hy の置き場の口(#2785 — この module は形を持たず、層 protocol の module を読まない)。
+;;; coordinator の耐久の置き場(追記の log wal.jsonl + まとめ直した写し snapshot.json)の帳簿: どの dir の置き場か・log と写しの path・まとめ直しの上限・
+;;; いま耐久になっている全部のキーの表と最後のまとまりの番号・読み直しで捨てた最後の行の記録・直近の fsync の秒。
+;;; 行と写しの形(checksum つきの JSON の綴りと検め・読み直しの当て方)は coordinator/protocol/wal_format.hy、帳簿と file を組んで Persist に
+;;; 答えるのは coordinator/protocol/store.hy の置き場の口(#2785)。
 ;;;
-;;; - Persist 1 回 = log へ綴った 1 行を追記して fsync 1 回(append-line)。調停ループはこれが戻ってから返事をする(group commit:
+;;; この module は file に触らない(#2943 — 以前は open と fsync と rename を持つ class だった)。読み・追記・切り詰め・写しの置き換え・dir の
+;;; fsync は file の effect(AppendBytes・TruncateFile・WriteBytes・SyncDirectory ほか)で、置き場の口の defk(coordinator/protocol/wal_files.hy)が出し、
+;;; 答えるのは入口が並べる答え手(本番は os-file-handler)。fsync に掛かった秒は AppendBytes の答えに載って届き、帳簿は直近の 200 回を持つ。
+;;;
+;;; - Persist 1 回 = log へ綴った 1 行を追記して fsync 1 回(wal_files の wal-append-line)。調停ループはこれが戻ってから返事をする(group commit:
 ;;;   fsync の間に届いた要求は次のまとまりに入り、まとめて 1 回の fsync で済む)。
-;;; - log が max-log-bytes を超えたら、置き場の口が全部のキーを写しに綴り直し、この module が一時 file → fsync → rename → dir の fsync で
-;;;   置いてから log を空にする(write-snapshot)。写しは「どのまとまりまで含むか」(seq)を持つので、空にする前に落ちても読み直しで
-;;;   二重に当てない。
-;;; - 読み直し: 写しと log の byte を返し(check-place・read-snapshot-bytes・read-log-lines)、置き場の口が検めた後で、最後の読めない 1 行だけをその手前で切り詰める
-;;;   (drop-tail)。途中の破損では何も書き換えない(置き場の口が起動を断る)。
-;;; I/O はこの module の中だけ(調停ループの Program は Persist の effect しか知らない)。scheduler の外の thread は作らない。
+;;; - log が max-log-bytes を超えたら、置き場の口が全部のキーを写しに綴り直し、一時 file → fsync → rename → dir の fsync で置いてから log を空にする
+;;;   (wal-write-snapshot)。写しは「どのまとまりまで含むか」(seq)を持つので、空にする前に落ちても読み直しで二重に当てない。
+;;; - 読み直し: 写しと log の byte を読み(wal-read-snapshot・wal-read-log-lines)、置き場の口が検めた後で、最後の読めない 1 行だけをその手前で切り詰める
+;;;   (wal-drop-tail)。途中の破損では何も書き換えない(置き場の口が起動を断る)。
+;;; sync = False は fsync を落とす(検が disk を待たずに置き場の口を回すため — 本番は True)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
-(import os)
-(import sys)
-(import time)
-(import collections.abc [Callable])
-(import typing [BinaryIO])
-(import pathlib [Path])
+(import posixpath)
 
 (setv MAX-LOG-BYTES (* 32 1024 1024))
-(setv SLOW-FSYNC-SECONDS 0.5)
-(setv MOVED-MARK "MOVED")
+;; 直近の fsync の秒を持つ数(log の遅さを測る)。
+(setv FSYNC-WINDOW 200)
 
-
-(defn #^ None write-durably [#^ Path target #^ bytes data]
-  "一時 file に書いて fsync し、rename してから dir を fsync する。"
-  (setv tmp (Path (+ (str target) ".tmp")))
-  (with [handle (open tmp "wb")]
-    (.write handle data)
-    (.flush handle)
-    (os.fsync (.fileno handle)))
-  (os.replace tmp target)
-  (fsync-dir target.parent))
-
-
-(defn #^ None fsync-dir [#^ Path d]
-  (setv fd (os.open (str d) os.O_RDONLY))
-  (try (os.fsync fd) (finally (os.close fd))))
-
-
-;; --- 置き場(I/O)---------------------------------------------------------------------------------
 
 (defclass WalStore []
-  "dir の中の snapshot.json と wal.jsonl の byte の I/O。kv / seq = いま耐久になっている全部のキーと最後のまとまりの番号(まとめ直しの
-   材料 — 置き場の口が読み直しと書きの後に進める。表は method table / replace-table で受け渡す)。recovered = 読み直しで最後の読めない
-   行を捨てた時の記録(捨てた byte 数・理由・残した byte 数 — coordinator が起動の行と計器に出す・method recovery)。fsync-seconds =
-   直近の fsync の時間(秒)の記録(log の遅さを測る)。"
-  (defn #^ None __init__ [self #^ str directory #^ int [max-log-bytes MAX-LOG-BYTES] #^ Callable [fsync os.fsync]]
+  "dir の置き場の帳簿(頭の註)。directory・snapshot・log = 置き場の dir と、写しと log の file の path(file の effect に渡す綴り)・
+   kv / seq = いま耐久になっている全部のキーと最後のまとまりの番号(まとめ直しの材料 — 置き場の口が読み直しと書きの後に進める。表は
+   method table / replace-table で受け渡す)。recovered = 読み直しで最後の読めない行を捨てた時の記録(捨てた byte 数・理由・残した byte 数 —
+   coordinator が起動の行と計器に出す・method recovery)。fsync-seconds = 直近の fsync の時間(秒)の記録(log の遅さを測る)。"
+  (defn #^ None __init__ [self #^ str directory #^ int [max-log-bytes MAX-LOG-BYTES] #^ bool [sync True]]
     ;; 欄の注記は型の宣言(.pyi)が欄を読むため — 置き場の口の形 ByteLog(coordinator/protocol/store)が欄 seq・max-log-bytes・
     ;; snapshot・log を求める(注記が無いと .pyi に欄の型が出ず、使い手の型検査で WalStore が ByteLog を満たさない — #2972)。
-    (setv #^ Path self.dir (Path directory) self.max-log-bytes max-log-bytes self.fsync fsync
-          #^ Path self.snapshot (/ self.dir "snapshot.json") #^ Path self.log (/ self.dir "wal.jsonl")
-          #^ (get dict #(str object)) self.kv {} #^ int self.seq 0 #^ (| BinaryIO None) self.handle None
+    (setv #^ str self.directory directory #^ int self.max-log-bytes max-log-bytes #^ bool self.sync sync
+          #^ str self.snapshot (posixpath.join directory "snapshot.json") #^ str self.log (posixpath.join directory "wal.jsonl")
+          #^ (get dict #(str object)) self.kv {} #^ int self.seq 0
           #^ (get list float) self.fsync-seconds []
           #^ (| (get dict #(str (| int str))) None) self.recovered None))
-
-  (defn #^ bool exists [self] (or (.exists self.snapshot) (.exists self.log)))
 
   (defn #^ (get dict #(str object)) table [self]
     "いま耐久になっている全部のキーの表(写さない — 置き場の口がその場で当てて進める)。"
@@ -70,72 +49,17 @@
     "読み直しで最後の読めない行を捨てた時の記録(捨てていなければ None)— 起動が 1 行の報告に出すため。"
     self.recovered)
 
-  (defn #^ None check-place [self]
-    "読み直しの前に置き場の dir を作り、移した後の古い置き場なら起動を断る。中身は書き換えない。"
-    (.mkdir self.dir :parents True :exist-ok True)
-    ;; 置き場を別の volume へ移した後の古い置き場には印(MOVED)を置く。古い置き場から起動すると、移した後の書き
-    ;; (版の番号を含む)が巻き戻るので、起動を断る(docs/experiment-log.md の「coordinator の置き場」)。
-    (setv moved (/ self.dir MOVED-MARK))
-    (when (.exists moved)
-      (raise (RuntimeError (.format "この置き場は移した後の古い物です({}): {}" moved
-                                    (.strip (.read-text moved :encoding "utf-8")))))))
+  (defn #^ None note-recovered [self #^ int kept #^ int size #^ str reason]
+    "読み直しで最後の読めない 1 行(size byte)を捨てて log を kept byte に切り詰める時に、その記録を recovered に残すため。"
+    (setv self.recovered {"dropped" size "reason" reason "kept" kept}))
 
-  (defn #^ (| bytes None) read-snapshot-bytes [self]
-    "写しの byte(写しがまだ無ければ None)。"
-    (if (.exists self.snapshot) (.read-bytes self.snapshot) None))
-
-  (defn #^ (get list bytes) read-log-lines [self]
-    "log の行(改行つきの byte の list・log がまだ無ければ空)。最後の行は改行を持たないことがある(fsync の途中で落ちた)。"
-    (if (.exists self.log)
-        (with [handle (open self.log "rb")] (list handle))
-        []))
-
-  (defn #^ None drop-tail [self #^ int kept #^ int size #^ str reason]
-    "読み直しで最後の読めない 1 行(size byte)を捨てる: log を kept byte で切り詰めて fsync し、捨てた記録を recovered に残して 1 行出す。"
-    (setv self.recovered {"dropped" size "reason" reason "kept" kept})
-    (print (.format "coordinator: log の最後の読めない行を捨てた({} byte・{})" size reason) :file sys.stderr :flush True)
-    (with [handle (open self.log "r+b")]
-      (.truncate handle kept)
-      (.flush handle)
-      (self.fsync (.fileno handle))))
-
-  (defn #^ BinaryIO open-log [self]
-    "追記用の handle を返す(まだ開いていなければ開く)。返り値は開いている handle で、None を含まない。"
-    (when (is self.handle None)
-      (setv self.handle (open self.log "ab")))
-    self.handle)
-
-  (defn #^ int append-line [self #^ bytes line]
-    "綴った 1 行(seq のまとまり)を log へ追記し、fsync してから戻る。返り値 = 追記の後の log の大きさ(byte — まとめ直しの判断に使う)。"
-    (setv handle (.open-log self))
-    (.write handle line)
-    (.flush handle)
-    (setv started (time.monotonic))
-    (self.fsync (.fileno handle))
-    (setv took (- (time.monotonic) started))
-    (.append self.fsync-seconds took)
-    (setv self.fsync-seconds (cut self.fsync-seconds -200 None))
-    ;; 遅い fsync は 1 回ずつ出す(置き場の詰まりの時刻と大きさを、返事の遅さの記録と突き合わせられるように)。
-    (when (>= took SLOW-FSYNC-SECONDS)
-      (print (.format "coordinator: 遅い fsync {:.2f} 秒({} byte・まとまり {})" took (len line) self.seq)
-             :file sys.stderr :flush True))
-    ;; 200 まとまりごとに fsync の時間を 1 行出す(返事の遅さの内訳を後から測れるように)。
-    (when (= (% self.seq 200) 0)
-      (print (.format "coordinator: fsync {}" (.fsync-stats self)) :file sys.stderr :flush True))
-    (.tell handle))
-
-  (defn #^ None write-snapshot [self #^ bytes data]
-    "綴った写し(全部のキー・checksum つき)を置き(fsync 済み)、その後で log を空にする。"
-    (setv started (time.monotonic))
-    (write-durably self.snapshot data)
-    (when self.handle (.close self.handle) (setv self.handle None))
-    (with [handle (open self.log "wb")]
-      (.flush handle)
-      (self.fsync (.fileno handle)))
-    (print (.format "coordinator: log をまとめ直した({:.2f} 秒・キー {})" (- (time.monotonic) started) (len self.kv))
-           :file sys.stderr :flush True))
+  (defn #^ None note-fsync [self #^ float seconds]
+    "追記 1 回の fsync に掛かった秒を記録に足すため(直近の FSYNC-WINDOW 回だけ持つ)。"
+    (.append self.fsync-seconds seconds)
+    (setv self.fsync-seconds (cut self.fsync-seconds (- FSYNC-WINDOW) None)))
 
   (defn #^ dict fsync-stats [self]
+    "直近の fsync の回数・中央値・最大(まだ無ければ回数 0 だけ)。"
     (setv xs (sorted self.fsync-seconds))
     (if xs
         {"count" (len xs) "p50" (get xs (// (len xs) 2)) "max" (get xs -1)}

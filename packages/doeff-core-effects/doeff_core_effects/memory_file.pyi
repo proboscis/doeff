@@ -21,6 +21,10 @@ from doeff_core_effects.file_effects import MemoryFiles as MemoryFiles
 from doeff_core_effects.file_effects import ReadMemoryFiles as ReadMemoryFiles
 from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
+from doeff_core_effects.file_effects import Appended as Appended
+from doeff_core_effects.file_effects import AppendBytes as AppendBytes
+from doeff_core_effects.file_effects import TruncateFile as TruncateFile
+from doeff_core_effects.file_effects import SyncDirectory as SyncDirectory
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import WriteText as WriteText
@@ -56,7 +60,7 @@ INVALID: str
 NOT_PERMITTED: str
 LOOP: str
 MAX_HOPS: int
-ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | MemoryFiles | str | bytes | tuple | int | None
+ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | MemoryFiles | Appended | str | bytes | tuple | int | None
 
 def refused(reason: str, path: str) -> _Program[FileFailed, object]:
     ...
@@ -142,7 +146,10 @@ def on_path(store: MemoryFiles, path: str, follow_last: bool, op: Callable) -> _
 def on_pair(store: MemoryFiles, source: str, target: str, follow_last: bool, op: Callable) -> _Program[ANSWER, object]:
     ...
 
-def appended_in(store: MemoryFiles, path: str, text: str) -> _Program[MemoryFiles | FileFailed, object]:
+def appended_in(store: MemoryFiles, path: str, text: str | bytes) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def truncated_in(store: MemoryFiles, path: str, size: int) -> _Program[MemoryFiles | FileFailed, object]:
     ...
 
 def walk_in(store: MemoryFiles, path: str) -> _Program[tuple[DirEntry, ...] | FileFailed, object]:
