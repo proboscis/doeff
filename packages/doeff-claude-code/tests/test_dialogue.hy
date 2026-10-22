@@ -272,9 +272,10 @@
   (assert (= done.end.usage (Usage :output-tokens 10)) (repr done.end)))
 
 
-(deftest test-an-interrupted-turn-moves-the-mark-so-the-next-turn-costs-only-itself
-  ;; 止めた手番(Interrupted — 額の欄が無い)を閉じた result の行の累積が次の手番の起点: 生き残った入力の手番の額と usage は
-  ;; その手番の分だけ(止めた手番の分を混ぜない)。
+(deftest test-a-continued-turn-counts-from-the-interrupted-turns-mark
+  ;; 止めて生き残った入力の手番が同じ process で続く時(continues)、止めた区切り(Interrupted — 額の欄が無い)を閉じた result の行で
+  ;; 起点を進めない: 続いた手番の額と usage は止めた区切りの始まりから数え、止めた区切りの分を含む(card ki-9246ea31f98d — 上の層は
+  ;; 2 つの区切りを 1 つの手番として読み、続いた手番の終わりの額だけを手番の額にする)。
   (val injected (dialogue.inject (started FRESH-MARK) (TurnInput "also this" "inj-1")))
   (val plan (dialogue.interrupt injected.state "rid-9"))
   (val answered (read-record plan.state {"type" "control_response"
@@ -284,12 +285,14 @@
                                             "terminal_reason" "aborted_tools" "total_cost_usd" 0.25
                                             "usage" {"output_tokens" 5}}))
   (assert aborted.continues)
-  (assert (= aborted.state.cost-mark.total-usd 0.25))
-  (assert (= aborted.state.turn-usage (Usage)))
+  (assert (= aborted.state.cost-mark FRESH-MARK))
+  (assert (= aborted.state.turn-usage (Usage :output-tokens 5)))
   (val running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
   (val done (read-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"] "total_cost_usd" 0.75})))
-  (assert (= done.end.cost-usd 0.5) (repr done.end))
-  (assert (= done.end.usage (Usage :output-tokens 7)) (repr done.end)))
+  (assert (= done.end.cost-usd 0.75) (repr done.end))
+  (assert (= done.end.usage (Usage :output-tokens 12)) (repr done.end))
+  ;; 続いた手番を閉じた行が次の手番の起点(次の手番へは混ぜない)。
+  (assert (= done.state.cost-mark.total-usd 0.75)))
 
 
 (deftest test-an-interrupt-with-unread-input-uses-control-request-and-continues
@@ -719,9 +722,10 @@
   (assert (is read.end.model-usage-gap None) read.end))
 
 
-(deftest test-a-stopped-turn-moves-the-model-mark-with-the-cost-mark
-  ;; 止めた手番(Interrupted — 額も model ごとの使用量も持たない)を閉じた result の行の累積が、額と同じく次の手番の起点: 生き残った
-  ;; 入力の手番の model ごとの使用量はその手番の分だけ(止めた手番の分を混ぜない)。
+(deftest test-a-continued-turn-counts-model-usage-from-the-same-mark-as-the-cost
+  ;; 止めて生き残った入力の手番が同じ process で続く時、止めた区切り(Interrupted — 額も model ごとの使用量も持たない)を閉じた
+  ;; result の行で起点を進めない: 続いた手番の model ごとの使用量は額と同じく止めた区切りの始まりから数え、照合が合う
+  ;; (card ki-9246ea31f98d)。
   (val injected (dialogue.inject (started) (TurnInput "also this" "inj-1")))
   (val plan (dialogue.interrupt injected.state "rid-9"))
   (val answered (read-record plan.state {"type" "control_response"
@@ -731,11 +735,11 @@
                                                        :is-error True)))
   (assert aborted.continues)
   (assert (isinstance aborted.end Interrupted) aborted.end)
-  (assert (= aborted.state.cost-mark.models (. (lines.CostMark 0.5 (. (classify-record TURN-1) model-usage)) models)) aborted.state)
+  (assert (= aborted.state.cost-mark FRESH-MARK) aborted.state)
   (val running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
   (val done (read-record running (usage-line 1.25 {MAIN #(15 160 2500 260 1 1.0) SUB #(4 40 0 0 2 0.25)} :refs ["inj-1"])))
-  (assert (= done.end.cost-usd 0.75) done.end)
-  (assert (= (lfor usage done.end.model-usage #(usage.model usage.cost-usd)) [#(MAIN 0.5) #(SUB 0.25)]) done.end)
+  (assert (= done.end.cost-usd 1.25) done.end)
+  (assert (= (lfor usage done.end.model-usage #(usage.model usage.cost-usd)) [#(MAIN 1.0) #(SUB 0.25)]) done.end)
   (assert (is done.end.model-usage-gap None) done.end))
 
 
