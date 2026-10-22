@@ -35,6 +35,11 @@
 ;;; handler の書きの節(at-now)と読みの節(read-at-now)は操作を、SweepExpired は保持の刈り(purge-expired)を、錠の内で 1 つずつ行う
 ;;; (guarded)。WatchChanges と WatchEvents の待ち(呼び鈴で眠る間)は
 ;;; 錠を持たない — 走査と呼び鈴を掛けるのを同じ錠の内で 1 回にする(間に積まれた変更を取りこぼさない・持ったまま眠ると他の書きが止まる)。
+;;;
+;;; 錠を作る(thread の取り決めに触る)のは土台の関数 new-store-lock ちょうど 1 つで、MemoryStore の class は錠の作り方 make-lock を
+;;; 受けて呼ぶだけ(既定は new-store-lock — `(MemoryStore schema)` の使い方は変わらない)。class が外の世界に触らないのは
+;;; DOEFF119(ADR-DOE-HY-007 R3・R4)の決まりで、pickle と copy から戻す時の新しい錠も同じ make-lock で作る(形を決めた理由は
+;;; MemoryStore の docstring)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (require doeff-hy.record [defrecord])
@@ -42,6 +47,7 @@
 (import heapq)
 (import threading)
 (import collections.abc [Callable])
+(import contextlib [AbstractContextManager])
 (import dataclasses [dataclass])
 (import datetime [timedelta])
 (import doeff [EffectBase Program with-handlers])
@@ -105,16 +111,33 @@
   #^ int last-at)
 
 
+(deff new-store-lock []  ; defk にできない: 置き場を同期に組む呼び(MemoryStore の組み立てと、pickle・copy から戻す所が呼ぶ — 錠は thread の間の取り決めで effect にならない)
+  {:pre [] :post [(: % AbstractContextManager)] :tags {:context "records" :role "foundation"}}
+  "置き場 1 つの錠を作るため(同じ thread の入れ子は通す RLock)。thread に触るのはこの関数だけで、MemoryStore の class は作らずに
+   make-lock として受ける(既定がこの関数 — 頭の註の最後の段)。"
+  (threading.RLock))
+
+
 (defclass MemoryStore []
   "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/
    lock = 置き場を読み書きする操作を 1 つずつにする錠(thread の間で置き場を共有するため — 同じ thread の入れ子は通す RLock)/
+   make-lock = lock の作り方(引数なしの関数 — 既定は土台の new-store-lock。pickle と copy から戻す時の新しい錠も同じ関数で作るので、
+   pickle する置き場に渡す物は pickle できる関数にする)/
    bells = WatchChanges と WatchEvents の待ち手が掛けた呼び鈴(外の promise → 待つ名の frozenset の dict — 掛けた順。名は #(\"table\" 表)と
    #(\"stream\" 列)の組で、表と列が同じ綴りでも混ざらない。書きは待つ名が重なる呼び鈴を掛けた順に鳴らして外す。
    set にしないのは、set の順は object の番地で決まり、走らせるたびに待ち手の起きる順が変わって模擬の結果が揺れるため)。
-   待ちは読み直さず呼び鈴で起きるので、見回りの刻みは受けない(使い手が渡すのをやめたので 2026-09-29 に外した — 出自の issue は #1017)。"
-  (defn #^ None __init__ [self #^ RecordsSchema schema]
+   待ちは読み直さず呼び鈴で起きるので、見回りの刻みは受けない(使い手が渡すのをやめたので 2026-09-29 に外した — 出自の issue は #1017)。
+
+   形の理由(#2950・DOEFF119 の error は class が thread に直に触る証拠 — 錠の RLock):
+   錠の作りを class の外へ出し、class は受けた make-lock を呼ぶだけにした。名 MemoryStore を作る関数にして欄の defrecord を返す形にしないのは、
+   (1) 使い手は MemoryStore を型としても使う(注記・契約・isinstance — 使い手の repo で数百か所)ので、関数にすると型の位置が全部壊れる/
+   (2) 使い手は番号の頭と版(head・event-head・epoch)を、動く値として置き場の欄から直に読むので、凍らせた defrecord の欄では動きが見えない/
+   (3) 検は pickle と copy の後の錠が新しい錠であることを求める(test_memory_threads)— 錠は置き場ごとに持つ/
+   (4) make-lock の既定で `(MemoryStore schema)` の字面を変えずに済み、使い手の repo(2 つ)の pin を替えずに着地できる。"
+  (defn #^ None __init__ [self #^ RecordsSchema schema #^ Callable [make-lock new-store-lock]]
     (setv self.schema schema
-          self.lock (threading.RLock)
+          self.make-lock make-lock
+          self.lock (make-lock)
           self.bells {}
           self.epoch 1
           self.floor 0
@@ -151,9 +174,9 @@
     "pickle / copy が運ぶ中身を返すため(錠と呼び鈴を除く)。"
     (dfor [name value] (.items self.__dict__) :if (not-in name #("lock" "bells")) name value))
   (defn #^ None __setstate__ [self #^ dict state]
-    "pickle / copy から戻す時に中身を入れ、新しい錠を作るため。"
+    "pickle / copy から戻す時に中身を入れ、運んだ make-lock で新しい錠を作るため。"
     (.update self.__dict__ state)
-    (setv self.lock (threading.RLock)
+    (setv self.lock (self.make-lock)
           self.bells {}))
   (deff __deepcopy__ [self memo]  ; defk にできない: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
     {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
