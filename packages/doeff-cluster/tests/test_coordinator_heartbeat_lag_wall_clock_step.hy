@@ -29,7 +29,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
 
 (val VERSIONS {"python" "3.14.0" "doeff" "1"})
 ;; 検の coordinator は k8s を持たない(本番の手元の coordinator と同じ答え手 — 調停ループは毎歩 Deployment と Node の見張りを揃える)。
@@ -131,7 +131,7 @@
   ;; 仮想の時計の眠り(Delay)は scheduler の上で進む。
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) wall-clock-stepped (stepped-heartbeat inbox) request-bodies reply-bodies]
                     (with-handlers (memory-notices (MemoryBroker))
-                      ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                      ((kube-unavailable NO-KUBE)
                         (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming)))))))
   (StepSeen :lags (tuple inbox.lags) :started inbox.started))
 

@@ -180,7 +180,7 @@
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory memory-relabel memory-settle])
 ;; 宣言の本文を組む body-of は別名で受ける — coordinator の要求の本文の解き(request_bodies.body-of)と取り違えないため。
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs
                                                              body-of :as service-body-of group-limit-write RestartPlan restart-read])
@@ -3627,7 +3627,7 @@
   (KubeReads []
     (resume parts.kube.reads))
   (SettleDeployment [namespace name ready]
-    (.settle parts.kube (+ namespace "/" name) ready)
+    (<- (memory-settle parts.kube (+ namespace "/" name) ready))
     ;; 本番の見張りは Deployment の変化の刻に受付の箱を起こす(#3868)。待っている coordinator を起こし、変化を伝えさせる(歩の途中なら、
     ;; 次の取りで kube-memory が伝えていない変化を見て待たずに返る)。
     (<- (nudge-takers parts.queue))
@@ -3635,7 +3635,7 @@
   (NodeReads []
     (resume parts.kube.node-reads))
   (RelabelNode [name labels]
-    (.relabel parts.kube name labels)
+    (<- (memory-relabel parts.kube name labels))
     ;; 本番の Node の見張りは label の変化の刻に受付の箱を起こす(#4070)。待っている coordinator を起こす(SettleDeployment と同じ)。
     (<- (nudge-takers parts.queue))
     (resume None))

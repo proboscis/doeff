@@ -6,6 +6,8 @@ from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from collections.abc import Mapping as Mapping
 from dataclasses import dataclass as dataclass
+from dataclasses import field as field
+import queue as queue
 from typing import Protocol as Protocol
 from doeff import Pure as Pure
 from doeff_hy.wire import parse as parse
@@ -55,26 +57,22 @@ class KubeCalls(Protocol):
     def annotate(self, namespace: str, name: str, annotations: dict) -> None:
         ...
 
-class ObjectWatches:
-    stops: Incomplete
-    noted: Incomplete
-    passed: Incomplete
+@dataclass(frozen=True, kw_only=True)
+class Watching:
+    key: str
+    stop: Callable
 
-    def __init__(self) -> None:
-        ...
+def watch_mark(seen: OpaqueJson | str) -> tuple:
+    ...
 
-    @staticmethod
-    def mark(seen: OpaqueJson | str) -> tuple:
-        ...
+def watch_reporter(box: queue.SimpleQueue, key: str, wake: Callable) -> Callable:
+    ...
 
-    def note(self, key: str, seen: OpaqueJson | str) -> bool:
-        ...
+def watch_follow(watching: tuple, keys: tuple, start: Callable) -> _Program[tuple, object]:
+    ...
 
-    def follow(self, keys: tuple[str, ...], start: Callable[[str], Callable[[], None]]) -> None:
-        ...
-
-    def take(self) -> tuple:
-        ...
+def watch_take(box: queue.SimpleQueue, watching: tuple) -> _Program[tuple, object]:
+    ...
 
 @dataclass(frozen=True, kw_only=True)
 class KubeBodyRead:
@@ -101,10 +99,10 @@ def node_labels_observation_of(result: KubeBodyRead | KubeReadFailed, at: int) -
 def node_writes(changes: tuple, at: int) -> _Program[tuple, object]:
     ...
 
-def kube_api(client: KubeCalls, deployments: ObjectWatches, nodes: ObjectWatches, wake: Callable[[], None]) -> _Handler:
+def kube_api(client: KubeCalls, wake: Callable[[], None]) -> _Handler:
     ...
 
-def kube_unavailable(reason: str, deployments: ObjectWatches, nodes: ObjectWatches) -> _Handler:
+def kube_unavailable(reason: str) -> _Handler:
     ...
 
 class KubeMemory:
@@ -134,43 +132,43 @@ class KubeMemory:
     def node_seen_at(self, node: str, now_ms: int) -> OpaqueJson | str:
         ...
 
-    def relabel(self, node: str, labels: dict) -> None:
-        ...
+def memory_relabel(kube: KubeMemory, node: str, labels: dict) -> _Program[None, object]:
+    ...
 
-    def settle(self, key: str, ready: int | None=None) -> None:
-        ...
+def memory_settle(kube: KubeMemory, key: str, ready: int | None) -> _Program[None, object]:
+    ...
 
+@dataclass(frozen=True, kw_only=True)
+class MemoryWatching:
+    key: str
+    delivered: tuple | None
+
+@dataclass(frozen=True, kw_only=True)
 class MemoryWatch:
-    following: Incomplete
-    delivered: Incomplete
+    watching: list = ...
 
-    def __init__(self) -> None:
-        ...
+def memory_watch_changes(watch: MemoryWatch, seen: Callable) -> _Program[tuple, object]:
+    ...
 
-    def changes(self, seen: Callable[[str], OpaqueJson | str]) -> tuple:
-        ...
+def memory_watch_follow(watch: MemoryWatch, seen: Callable, keys: tuple) -> _Program[tuple, object]:
+    ...
 
-    def follow(self, seen: Callable[[str], OpaqueJson | str], keys: tuple[str, ...]) -> tuple:
-        ...
-
+@dataclass(frozen=True, kw_only=True)
 class MemoryFollows:
-    deployments: Incomplete
-    nodes: Incomplete
+    deployments: MemoryWatch = ...
+    nodes: MemoryWatch = ...
 
-    def __init__(self) -> None:
-        ...
+def follows_deployments(follows: MemoryFollows, kube: KubeMemory, keys: tuple, now_ms: int) -> _Program[tuple, object]:
+    ...
 
-    def follow_deployments(self, kube: KubeMemory, keys: tuple[str, ...], now_ms: int) -> tuple:
-        ...
+def follows_nodes(follows: MemoryFollows, kube: KubeMemory, names: tuple, now_ms: int) -> _Program[tuple, object]:
+    ...
 
-    def follow_nodes(self, kube: KubeMemory, names: tuple[str, ...], now_ms: int) -> tuple:
-        ...
+def follows_changed(follows: MemoryFollows, kube: KubeMemory, now_ms: int) -> _Program[bool, object]:
+    ...
 
-    def changed(self, kube: KubeMemory, now_ms: int) -> bool:
-        ...
-
-    def change_at(self, kube: KubeMemory, now_ms: int) -> int | None:
-        ...
+def follows_change_at(follows: MemoryFollows, kube: KubeMemory, now_ms: int) -> _Program[int | None, object]:
+    ...
 
 def follow_wait(kube: KubeMemory, follows: MemoryFollows, timeout_seconds: float | None, now: int) -> _Program[float | None, object]:
     ...

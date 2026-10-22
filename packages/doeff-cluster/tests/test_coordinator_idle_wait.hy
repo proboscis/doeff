@@ -7,6 +7,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import datetime [timedelta])
 (import doeff [run with-handlers])
+(import doeff_core_effects.handlers [state])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_events [MemoryBroker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
@@ -20,7 +21,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
 (import doeff_cluster.sim.local [wall-sim-cluster ClientLink SimLink SimWorker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.clock_fixtures [clock-ms])
@@ -81,7 +82,7 @@
   (<- final ClusterState ((sim-time-handler :clock inbox.clock)
                            ((timed-requests inbox)
                              (request-bodies (durable-states (reply-bodies (with-handlers (memory-notices (MemoryBroker))
-                                                                              ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                                                                              (with-handlers [(state) (kube-unavailable NO-KUBE)]
                                                                                 (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming))))))))))
   final)
 
