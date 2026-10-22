@@ -22,7 +22,8 @@ macro の名は ``MACRO_HOMES`` の 1 か所(提供元の module の名 → ``(r
 packages/doeff-hy/tests/test_macro_hints.py が測る。doeff-conductor の macro など、利用者が自分の語と区別しにくい名の物は入れない。
 
 venv の全ての Python の起動時に読まれる :mod:`doeff_hy_bytecode_guard` の一部だが、この module は Hy の module を初めて読む時に
-読む(起動時に読まない — ``hy`` は名の表を作る時だけ読む)。正しい module では記録の名の照合だけで終わり、bytecode を歩かない。
+読む(起動時に読まない — ``hy`` は名の表を作る時だけ読む)。正しい module では記録の名と co_names の照合だけで終わり、
+bytecode を歩かない(macro と同じ綴りを局所の名にだけ使う module も)。
 """
 
 import dis
@@ -196,7 +197,13 @@ def _forgotten_requires(
     code: CodeType, candidates: frozenset[str], table: MacroTable
 ) -> Iterator[Hint]:
     """候補の名のうち、module の code が束縛せずに読む物を、require の 1 行(提供元ごと)つきの警告にするため。"""
-    instructions = tuple(ins for unit in _units(code) for ins in dis.get_instructions(unit))
+    units = tuple(_units(code))
+    # 読み(LOAD_NAME・LOAD_GLOBAL)の名も束縛(STORE_NAME・STORE_GLOBAL など)の名も co_names から引くので、候補が co_names の
+    # 和に無ければ警告は出ない — 局所の名として同じ綴りを使う module(``(check row)`` は LOAD_FAST)では命令を歩かない
+    # (大きな module で 1 本 1 秒前後 — free-threaded の dis は遅い・card ki-ef8a3e593353)。
+    if candidates.isdisjoint(name for unit in units for name in unit.co_names):
+        return
+    instructions = tuple(ins for unit in units for ins in dis.get_instructions(unit))
     if any(ins.opname == "IMPORT_STAR" for ins in instructions):
         return  # 何が入るか分からない module は、束縛が無いと言い切れない
     bound = frozenset(ins.argval for ins in instructions if ins.opname in _BINDS)
