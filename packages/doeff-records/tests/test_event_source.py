@@ -514,6 +514,67 @@ def test_a_store_that_stays_unreachable_past_the_patience_brings_the_process_dow
         assert named in message, message
 
 
+@do
+def _stream_outage_for_good() -> EffectGenerator[IntakeMoved]:
+    """列に結んだ源の版の _outage_for_good: 受け手が走り出す時から置き場に届かないまま戻らない(列の始まりの位置は ReadStreamEnd で読む —
+    ReadStreamEnd の Unreachable は失敗と宣言した答えで、<- は Raise にするので、源が値の Unreachable に戻して止まりを越える)。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (IntakeMoved,))
+    source = records_signal_handler((INTAKE_ON_INTAKE,), "worker")
+    yield SetStoreOutage(DETAIL)
+    signal: IntakeMoved = yield with_handlers([waiting, source], WaitForEvent(IntakeMoved))
+    return signal
+
+
+def test_a_stream_source_that_stays_unreachable_past_the_patience_brings_the_process_down_by_name() -> None:
+    # 失敗ケース: 始まりの位置の ReadStreamEnd の Unreachable が Raise のまま源を抜けると、止まりを越える待ちに入らず、名指しの落ち方
+    # (SignalSourceUnreachable)ではなく答え手の無い Raise で落ちる。
+    with pytest.raises(SignalSourceUnreachable) as raised:
+        _run_on(MemoryStore(SCHEMA), _stream_outage_for_good())
+    message = str(raised.value)
+    for named in ("worker", "intake", f"{PATIENCE.seconds} 秒", DETAIL):
+        assert named in message, message
+
+
+@dataclass(frozen=True)
+class StreamStartOutcome:
+    """列の始まりの位置を読む時に止まっていた筋書きの結果: 画面の代役が受けた止まりと戻りの合図・本体が受けた合図・戻った後に積んだ出来事の番号。"""
+
+    seen: tuple[object, object]
+    received: IntakeMoved
+    sequence: int
+
+
+@do
+def _stream_outage_then_recovery() -> EffectGenerator[StreamStartOutcome]:
+    """受け手が走り出す時から置き場が OUTAGE_SECONDS 秒届かず(列の始まりの位置の ReadStreamEnd が止まりを越える)、戻ってから intake へ積む。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (IntakeMoved,))
+    screen = subscribed_event_handler(bus, "screen", (SourceStalled, SourceResumed))
+    source = records_signal_handler((INTAKE_ON_INTAKE,), "worker")
+    observer = yield Spawn(with_handlers([screen], _stall_and_resume()))
+    yield SetStoreOutage(DETAIL)
+    receiver = yield Spawn(with_handlers([waiting, source], WaitForEvent(IntakeMoved)))
+    yield Delay(OUTAGE_SECONDS)
+    yield SetStoreOutage(None)
+    seen: tuple[object, object] = yield Wait(observer)
+    sequence = yield _append("intake", "after")
+    received: IntakeMoved = yield Wait(receiver)
+    return StreamStartOutcome(seen=seen, received=received, sequence=sequence)
+
+
+def test_a_stream_source_waits_out_a_store_that_is_down_when_it_reads_the_start() -> None:
+    # 失敗ケース: ReadStreamEnd の Unreachable が Raise のまま源を抜けると、止まりの合図を出さずに落ちる。
+    outcome = _run_on(MemoryStore(SCHEMA), _stream_outage_then_recovery())
+
+    assert isinstance(outcome, StreamStartOutcome), outcome
+    stalled, resumed = outcome.seen
+    assert isinstance(stalled, SourceStalled), outcome.seen
+    assert (stalled.source, stalled.detail) == ("worker", DETAIL)
+    assert resumed == SourceResumed(source="worker")
+    assert outcome.received == IntakeMoved((ChangedRow(table="intake", key=str(outcome.sequence)),)), outcome
+
+
 def test_a_foundation_that_forgets_the_patience_is_named_at_the_stall() -> None:
     # 上限の答え手(source_patience_handler)を置き忘れた組は、既定の値で黙って待たず、止まりの拍に答え手の無い問い ReadSourcePatience で落ちる。
     stack = [sim_time_handler(clock=SimClock()), memory_records_handler(MemoryStore(SCHEMA), WRITER)]

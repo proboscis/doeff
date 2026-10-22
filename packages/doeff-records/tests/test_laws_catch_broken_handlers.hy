@@ -1,6 +1,6 @@
 ;; 反例: 法は壊れた handler で赤になる — 法ごとに、その法だけを破る包みを memory の handler の内側に被せて回し、LawBroken を確かめる
 ;; (法が何も確かめずに緑になる形を外す)。
-(require doeff-hy.macros [deftest defhandler defk <- val])
+(require doeff-hy.macros [deftest defhandler defk <- val on-raise])
 (import dataclasses)
 (import datetime [datetime timezone])
 (import uuid)
@@ -9,7 +9,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
-                              StreamEnd StreamEmpty Event EventAbsent EventRetired AppendedEvents])
+                              StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -231,9 +231,10 @@
 
 (defk end-over-every-stream []
   {:pre [] :post [(: % (| StreamEnd StreamEmpty))]}
-  "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。"
-  (<- journal (ReadStreamEnd "journal"))
-  (<- pairs (ReadStreamEnd "pairs"))
+  "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。handler の節で走らせる Program なので、失敗と宣言した
+   Unreachable(<- は Raise にする)は on-raise で値へ戻してここで閉じ、節から Raise を出さない(R4・R9)。届かない列は末尾に数えない。"
+  (<- journal (on-raise (ReadStreamEnd "journal") (Unreachable detail) (Unreachable detail)))
+  (<- pairs (on-raise (ReadStreamEnd "pairs") (Unreachable detail) (Unreachable detail)))
   (val ends (lfor end #(journal pairs) :if (isinstance end StreamEnd) end.sequence))
   (if ends (StreamEnd (max ends)) (StreamEmpty)))
 
