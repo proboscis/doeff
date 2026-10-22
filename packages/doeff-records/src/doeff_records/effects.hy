@@ -13,11 +13,12 @@
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
 ;;; 欄 → 値の写像(PutRow.value・ListRows.where・ListRows.where-any)と出来事の本文(AppendEvent.body・EventAppend.body)は、作る時に深く
 ;;; 凍らせる(dict を渡してもよい — where-any の組の配列は tuple になる)。
+(require doeff-hy.macros [defeffect])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
-                              checked-field-name freeze-field])
+                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -257,12 +258,18 @@
       (raise (ValueError (.format "ReadEvents.key_head は空でない文字列か None: {!r}" self.key-head))))))
 
 
-(defclass [(dataclass :frozen True)] ReadStreamEnd [EffectBase]
+(defeffect ReadStreamEnd
   "追記の列 stream の末尾(今ある最後の出来事の番号)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため。
-   答え = StreamEnd(sequence)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
-  (#^ str stream)
-  (defn #^ None __post_init__ [self]
-    (checked-table-name self.stream "ReadStreamEnd.stream")))
+   答え = StreamEnd(sequence)| StreamEmpty(出来事が 1 つも無い)| Unreachable。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): StreamEnd = 成功 / StreamEmpty = 値(列に出来事が 1 つも無いという事実を持つ
+   答えで、番号 0 と混ぜない — 不在にして Absent で飛ばさず、呼び手が分けて扱う)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。
+   答える handler は今までどおり 3 つとも値で答える(R4)。"
+  {:fields [(: stream str)]
+   :pre [(checked-table-name stream "ReadStreamEnd.stream")]
+   :answer (| StreamEnd StreamEmpty Unreachable)
+   :failure [Unreachable]
+   :value [StreamEmpty]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defclass [(dataclass :frozen True)] ReadEventByKey [EffectBase]

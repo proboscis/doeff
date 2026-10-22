@@ -36,7 +36,7 @@
 ;;;                 (外の再起動が拾う)。業務の Program には Unreachable を見せない。
 ;;; 上限の待ちと long-poll の長さは、記録の service との境界にあるこの源の中だけの待ち(業務の Program に時間の待ちを出さない)。
 ;;; 1 つの購読者の列(bus)に源を 1 つ置く形が前提 — 同じ bus に同じ表を見る源を 2 つ置くと、同じ変化の合図が 2 度届く(冪等なので壊れない)。
-(require doeff-hy.macros [defhandler defk deff <- val var])
+(require doeff-hy.macros [defhandler defk deff <- val var on-raise])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
@@ -199,7 +199,8 @@
     (when (not back)
       (raise (SignalSourceUnreachable (.format "購読者 {!r} の合図の源(記録の {})が {} 秒 待っても届かない: {}"
                                                subscriber (.join ", " names) patience.seconds answer.detail))))
-    (<- reread again)
+    ;; again が失敗と宣言した Unreachable(ReadStreamEnd — <- は Raise にする)でも、この待ち直しは Unreachable を値で受けて待つ。
+    (<- reread (on-raise again (Unreachable detail) (Unreachable detail)))
     (:= answer reread))
   (<- (Publish (SourceResumed :source subscriber)))
   answer)
@@ -218,7 +219,9 @@
    ままだと、戻った後に書きが無い間はその秒(WATCH-SECONDS)を待ち切ってから SourceResumed が出た(受信停止の戻りの遅れ・W の条件 5)。
    待たない読みの答え(変化が在れば Changes・EventsMoved、無ければ空の Changes・EventsQuiet、Reset)は long-poll の答えと同じ型なので、
    呼び手は今までどおり答えの位置から long-poll に戻る。他の読み(ListRows・ReadStreamEnd)は待たないので、そのまま撃ち直す。"
-  (<- answered ask)
+  ;; ask が失敗と宣言した Unreachable(ReadStreamEnd — <- は Raise にする)でも、この越え方は Unreachable を値で受けて待つ(on-raise で戻す)。
+  ;; 宣言の無い読み(ListRows・WatchChanges・WatchEvents)は Unreachable が元から値で、そのまま通る。
+  (<- answered (on-raise ask (Unreachable detail) (Unreachable detail)))
   (when (not (isinstance answered Unreachable))
     (return answered))
   (val again (match ask
