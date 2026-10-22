@@ -7,6 +7,11 @@
 ;;;   Compute   program を handler を 1 つも付けない新しい VM で回し、答えを Computed(値)か ComputeFailed(例外)で返す。
 ;;;             program は純粋であること — effect を出すと届く handler が無く ComputeFailed になる(呼び手の handler には届かない。
 ;;;             どちらの答え手でも同じ)。成否の解釈は呼び手が持つ(raise しない)。
+;;;   ReadComputeLoad
+;;;             答え手が今 抱えている計算の負荷の断面(ComputeLoad)を読む: 並び(出して、まだ回り始めていない数)・走り(回っている数)・
+;;;             回り始めた数の累計と、その仕事が出されてから回り始めるまで待った秒の累計。pool の詰まり(大きな計算が pool の全部の
+;;;             thread を塞ぎ、後の計算が列で待つ)を、使い手の計器(例 GET /metrics)へ数で出すため。累計は答え手を組んだ時からの物で、
+;;;             2 回読んだ差を数の差で割れば、その間に回り始めた仕事の待ちの平均の秒になる。その場で回す答え手は列を持たないので全部 0。
 ;;;
 ;;; 時刻で起こす事(後で起こす・遅らせて回す)はこの effect の範囲ではない — doeff-time の ScheduleAt / Delay を使う。
 (require doeff-hy.record [defrecord])
@@ -27,3 +32,17 @@
 (defclass [(dataclass :frozen True)] Compute [EffectBase]
   "純粋な program を回して答えを値で受ける(頭の註)。答え = Computed | ComputeFailed。"
   (#^ DoExpr program))
+
+
+(defrecord ComputeLoad
+  "ReadComputeLoad の答え — 答え手が今 抱えている計算の負荷の断面: queued = 出して、まだ回り始めていない仕事の数・running = 回っている
+   仕事の数・started = 回り始めた仕事の累計・waited-seconds = 回り始めた仕事が出されてから回り始めるまで待った秒の累計(started 個の和)。"
+  {:check [(>= queued 0) (>= running 0) (>= started 0) (>= waited-seconds 0.0)]}
+  (#^ int queued)
+  (#^ int running)
+  (#^ int started)
+  (#^ float waited-seconds))
+
+
+(defclass [(dataclass :frozen True)] ReadComputeLoad [EffectBase]
+  "答え手が今 抱えている計算の負荷の断面を読む(頭の註)。答え = ComputeLoad。")

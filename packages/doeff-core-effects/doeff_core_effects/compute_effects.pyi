@@ -15,3 +15,17 @@ class ComputeFailed:
 @dataclass(frozen=True)
 class Compute(EffectBase):
     program: DoExpr
+
+@dataclass(frozen=True, kw_only=True)
+class ComputeLoad:
+    queued: int
+    running: int
+    started: int
+    waited_seconds: float
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ReadComputeLoad(EffectBase):
+    ...
