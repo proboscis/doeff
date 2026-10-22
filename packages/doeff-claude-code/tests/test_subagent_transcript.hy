@@ -71,6 +71,16 @@
           (repr first))
   (assert (is-not first.at.tzinfo None) (repr first)))
 
+(deftest test-a-subagent-call-names-its-request-id
+  ;; card ki-b99ace070bf0: transcript の行は requestId(API の呼びの要求の id — CLI の telemetry の api_request の request_id と
+  ;; 同じ値)を持つ。呼びに畳んでも残す。無い行の呼びは None。
+  (val data (.encode (.join "" [(line-of (| (assistant "msg_1" "claude-opus-5-5" FIRST-USAGE AT) {"requestId" "req_1"}))
+                                (line-of (| (assistant "msg_1" "claude-opus-5-5" FINAL-USAGE LATER) {"requestId" "req_1"}))
+                                (line-of (assistant "msg_2" "claude-haiku-5-5" OTHER-USAGE LATER))])
+                     "utf-8"))
+  (val read (read-of data))
+  (assert (= (lfor call read.calls #(call.call-id call.request-id)) [#("msg_1" "req_1") #("msg_2" None)]) (repr read.calls)))
+
 (deftest test-lines-without-a-call-id-are-each-their-own-call
   ;; message.id の無い行は畳まない(どの呼びと同じか分からない — 1 行を 1 回と数える)。
   (val bare (assistant "" "m" OTHER-USAGE AT))

@@ -546,6 +546,16 @@
   (val main (classify-record {"type" "assistant" "parent_tool_use_id" None "message" {"model" "m" "content" []}}))
   (assert (is main.message-id None) (repr main)))
 
+(deftest test-an-assistant-line-names-its-request-id
+  ;; card ki-b99ace070bf0: stream-json の assistant の行は最上位に request_id を持つ(実測 CLI 2.1.292 — 偽の API が答えの頭
+  ;; request-id に置いた値がそのまま出た)。CLI の telemetry の api_request が同じ呼びを同じ id で名指すので、上の層は telemetry にだけ出る
+  ;; 呼びを足す時にこの id で重ねる。無ければ None。
+  (val line (classify-record {"type" "assistant" "parent_tool_use_id" None "session_id" "s" "request_id" "req_011CgHq2"
+                              "message" {"id" "msg_1" "model" "m" "content" [] "usage" {"input_tokens" 2}}}))
+  (assert (= #(line.message-id line.request-id) #("msg_1" "req_011CgHq2")) (repr line))
+  (val bare (classify-record {"type" "assistant" "parent_tool_use_id" None "message" {"model" "m" "content" []}}))
+  (assert (is bare.request-id None) (repr bare)))
+
 
 (deftest test-the-recorded-cost-carries-the-model-usage-of-the-same-line
   ;; card ki-1d986d4f0007: CLI 2.1.292 の cost-state の行は額と同じ点の model ごとの累積(modelUsage — result の行と同じ欄の名・窓の欄は
