@@ -15,7 +15,7 @@ from doeff_core_effects.file_effects import RemoveTree as RemoveTree
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
 from doeff_core_effects.process_effects import RunProcess as RunProcess
 from doeff_core_effects.scripted_process import ScriptedCommand as ScriptedCommand
-from doeff_traverse import sequence as sequence
+from doeff_traverse.helpers import sequence as sequence
 GIT_DIR: str
 ORIGIN: str
 DEFAULT_BRANCH: str
