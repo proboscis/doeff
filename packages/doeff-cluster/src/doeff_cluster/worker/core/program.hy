@@ -18,13 +18,16 @@
 (import doeff_cluster.worker.core.worker_due [plan-due wakes-with])
 (import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
-  declared-warm sweep-actions])
+  declared-warm sweep-actions exit-notes])
 
 ;; 拍の action の後に、同じ拍のうちに揃いを追う回数の上限(#2719・#3646): 1 回目 = 木が揃った job と root の待ちの子の起こし・2 回目 =
 ;; 起こした刻に揃った待ちの子から分ける task。揃いの連なりはこれより長くならない(3 回目に進める物の形が無い)。
 (val FOLLOWUP-ROUNDS 2)
 ;; 起こしの見送りの行の名(#3713 — 名 + 欄 job・reason の形。reason = StartHold の値)。
 (val START-HOLD-LOG "worker: job の起こしの見送り")
+;; 止めを求めていない終わりの行の名(card ki-cb9f34c49f83 — 名 + 欄 job・pid・exit-code・signal・ran-ms・backoff-ms・memory-killed の形。
+;; 欄は policy の ExitNote)。0 でない終了 code の終わりは warning(落ちた)、0 の終わり(task の済み・退いた process の自分での終わり)は info。
+(val JOB-EXIT-LOG "worker: job の止めを求めていない終わり")
 ;; 拍の遅れの行の名と閾(#3715 — 名 + 欄 elapsed-ms = 拍の頭から終わりまでの ms・slowest = その拍でいちばん長かった区間の名・
 ;; slowest-ms = その区間の ms)。閾は coordinator との途絶の柵(本番 20 秒)より小さく、柵を越える前に遅れを名指す。
 (val TICK-LAG-LOG "worker: 拍の遅れ")
@@ -175,6 +178,11 @@
   (var fired (tuple actions))
   (<- counted dict (records-after now state.records actions policy))
   (var records counted)
+  ;; 止めを求めていない終わりの回収を 1 行ずつ(card ki-cb9f34c49f83 — 止めた終わりの行は process-host の止めの計時の行)。
+  (<- exits tuple (exit-notes now world counted actions policy))
+  (for [e exits]
+    (<- (slog JOB-EXIT-LOG :level (if (= e.exit-code 0) "info" "warning") :job e.name :pid e.pid :exit-code e.exit-code :signal e.signal
+              :ran-ms e.ran-ms :backoff-ms e.backoff-ms :memory-killed e.memory-killed)))
   ;; 状態の表示は action の後の観測から作る(起動・回収を 1 拍遅れで見せない)。
   (var after world)
   (when actions

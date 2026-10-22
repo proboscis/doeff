@@ -25,6 +25,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
+(import signal)
 (import doeff [run])
 (import doeff_traverse.helpers [sequence])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
@@ -650,6 +651,49 @@
     (when (and (isinstance action ReapJob) (in RETIRED-MARK action.name))
       (:= result (dfor #(k v) (.items result) :if (!= k action.name) k v))))
   result)
+
+;; 止めを求めていない終わりの行(card ki-cb9f34c49f83): 回収した拍に 1 行。以前は止めた終わりの計時の行(process_host の STOP-TIMING-LOG)
+;; しか無く、job が SIGSEGV で落ちても worker の log に落ち方が残らなかった(終了 code は状態の file の lastExitCode を読むまで分からない)。
+(defrecord ExitNote
+  "止めを求めていない job の終わり 1 つ(回収の拍の行の欄): name = job の名(退いた process は退いた名)・pid = 子の pid・exit-code = 終了 code・
+   signal = 終わらせた signal の名(exit-signal — signal で終わっていなければ None)・ran-ms = 起こしてから回収までの ms・backoff-ms = 起こし
+   直すまでの間(起こし直さない終わり — task・退いた process・memory の見張りで起こし直しを止めた job — は None)・memory-killed = 機体の
+   memory の見張りがこの process の木を止めたか。"
+  (#^ str name)
+  (#^ int pid)
+  (#^ int exit-code)
+  (#^ (| str None) signal)
+  (#^ int ran-ms)
+  (#^ (| int None) backoff-ms)
+  (#^ bool memory-killed))
+
+(defn #^ (| str None) exit-signal [#^ int exit-code]  ; defk にできない: 回収の行の欄を作る素の関数(exit-notes の gfor の中)
+  "終了 code を、終わらせた signal の名にする(signal で終わっていなければ None)。負の code = 子が直に signal で終わった(subprocess の
+   returncode・待ちの子の exit の file — -1 は待ちの子の終わりの印が無い時の値 WarmLost と重なるので読まない)。128 + 番号 = 入れ物 shim が
+   job の signal の終わりを写した値(shim.exit-status — 139 = SIGSEGV)。名の無い番号は SIG<番号>。"
+  (setv number (cond (< exit-code -1) (- exit-code)
+                     (< 128 exit-code (+ 128 signal.NSIG)) (- exit-code 128)
+                     True None))
+  (cond (is number None) None
+        (in number (sfor s signal.Signals s.value)) (. (signal.Signals number) name)
+        True (.format "SIG{}" number)))
+
+(defk exit-notes [now world records actions policy]
+  {:pre [(: now int) (: world WorldView) (: records (get dict #(str JobRecord))) (: actions tuple) (: policy WorkerPolicy)]
+   :post [(: % (get tuple #(ExitNote ...)))] :tags {:context "worker" :role "judgment"}}
+  "撃った action のうち止めを求めていない終わりの回収(ReapJob の Outcome.EXITED)を、回収の拍の行の欄にするため。world = 回収を決めた観測
+   (終わった子の起こした刻と spec)・records = その action を数えた後の記憶(起こし直すまでの間は数えた後の続けて終わった回数で決まる)。"
+  (tuple
+    (gfor action actions
+          :if (and (isinstance action ReapJob) (= action.outcome Outcome.EXITED))
+          :setv process (next (gfor p world.processes :if (and (= p.name action.name) (= p.pid action.pid)) p) None)
+          :if (is-not process None)
+          :setv record (.get records action.name (JobRecord action.name))
+          :setv restarts (not (or process.spec.once (is-not process.retired-from None) (in RETIRED-MARK action.name)
+                                  (memory-given-up process.spec record policy)))
+          (ExitNote :name action.name :pid action.pid :exit-code action.exit-code :signal (exit-signal action.exit-code)
+                    :ran-ms (- now process.started-ms) :backoff-ms (if restarts (backoff-ms record policy) None)
+                    :memory-killed (is-not action.memory-killed-spec None)))))
 
 (defk start-holds [now desired world records policy]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]

@@ -1,8 +1,9 @@
 ;;; worker の smoke 用の job。拍を file へ書き続け、SIGTERM で後始末して終わる。
 ;;;
-;;; 引数: <拍の file> [--ignore-term] [--grandchild] [--detached-grandchild] [--once]
+;;; 引数: <拍の file> [--ignore-term] [--grandchild] [--detached-grandchild] [--once] [--segfault]
 (require doeff-hy.macros [deff])
 (import os)
+(import resource)
 (import signal)
 (import subprocess)
 (import sys)
@@ -44,6 +45,12 @@
   ;; --once: 止めの合図を待たずに自分で終わる(残した孫は shim が片づける・#2940)。
   (when (in "--once" sys.argv)
     (setv flag.stopping True))
+  ;; --segfault: 拍を 1 度書いた後、止めの合図を待たずに SIGSEGV で落ちる(止めを求めていない signal の終わり — card ki-cb9f34c49f83)。
+  ;; core の file は残さない。
+  (when (in "--segfault" sys.argv)
+    (.write-text beat (str (time.time)))
+    (resource.setrlimit resource.RLIMIT-CORE #(0 0))
+    (os.kill (os.getpid) signal.SIGSEGV))
   (while (not flag.stopping)
     (.write-text beat (.format "{} {}" (time.time) (os.environ.get "DOEFF_WORKER_REVISION")))
     (time.sleep 0.1))

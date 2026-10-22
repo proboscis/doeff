@@ -3,6 +3,7 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
+import signal as signal
 from doeff import run as run
 from doeff_traverse.helpers import sequence as sequence
 from doeff_cluster.worker.intent.worker_model import Action as Action
@@ -220,6 +221,22 @@ def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPoli
     ...
 
 def records_after(now: int, records: dict[str, JobRecord], actions: tuple[Action, ...], policy: WorkerPolicy=...) -> _Program[dict[str, JobRecord], object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class ExitNote:
+    name: str
+    pid: int
+    exit_code: int
+    signal: str | None
+    ran_ms: int
+    backoff_ms: int | None
+    memory_killed: bool
+
+def exit_signal(exit_code: int) -> str | None:
+    ...
+
+def exit_notes(now: int, world: WorldView, records: dict[str, JobRecord], actions: tuple, policy: WorkerPolicy) -> _Program[tuple[ExitNote, ...], object]:
     ...
 
 def start_holds(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
