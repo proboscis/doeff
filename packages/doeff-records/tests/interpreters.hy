@@ -34,6 +34,8 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
 (import doeff_core_effects.handlers [state])
+;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を、仮想の時計の上でその場で回す(本番は thread の pool)。
+(import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.sql_effects [SqlQuery])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
@@ -126,7 +128,8 @@
 
 (defn interpreter-over [harness stack close]
   (BuiltInterpreter (fn [program]
-                      (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))] stack [(law-setup harness)])
+                      (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock)) inline-compute-handler] stack
+                                                        [(law-setup harness)])
                                                      program))))
                     close
                     (fn [] harness)))
@@ -165,7 +168,7 @@
   ;; 止まりの上限は待たない 0 秒を名で選ぶ(法は届かない答えをそのまま読む — 止まりを越える待ちの検は test_client_rides_stall.hy が
   ;; 自分の上限を内側に置く・#3557)。
   (BuiltInterpreter (fn [program]
-                      (run (scheduled (with_handlers (+ [(sim-time-handler :clock clock)] answerers
+                      (run (scheduled (with_handlers (+ [(sim-time-handler :clock clock) inline-compute-handler] answerers
                                                         [records-unwaited (in-process-records-http service) (law-setup harness)])
                                                      program))))
                     close-store

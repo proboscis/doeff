@@ -1,0 +1,36 @@
+{
+  "include": [
+    "packages/doeff-records/src/doeff_records/loop_work.hy"
+  ],
+  "module_extensions": {
+    "records-pg": {
+      "allow": [
+        "records-loop-work"
+      ]
+    },
+    "records-service": {
+      "allow": [
+        "records-loop-work"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "records-values",
+        "records-wire",
+        "doeff-core-effects-effects"
+      ],
+      "layer": "effects",
+      "name": "records-loop-work",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/loop_work.hy"
+      ],
+      "public": [
+        "packages/doeff-records/src/doeff_records/loop_work.hy"
+      ],
+      "responsibility": "記録の service の scheduler の thread の仕事の分けの 1 点(ADR-DOE-RECORDS-002): wire の答えの型を、束の読みの答え(Page・Changes・Events — 綴りを scheduler の thread の外で回す)とほかの答え(その場で綴る)の 2 つの組に閉じて分け、純粋な program を Compute で thread の外で回して答えの値に戻す口(off-loop)と、答え 1 つの綴りを外で回すかの判断(off-loop-answer?)を持つ。答え手は持たない(組み立ての側が置く)",
+      "typed": true
+    }
+  ]
+}

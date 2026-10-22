@@ -8,6 +8,8 @@
 (import dataclasses [dataclass])  ; defeffect の展開が名指す
 (import pytest)
 (import doeff [EffectBase Program run with_handlers])
+;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
+(import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.sql_effects [SqlQuery SqlHangNotice SqlDropNotice])
@@ -75,7 +77,7 @@
   (val connections (postgres-connections))
   (val store (prepared-store connections (fresh-prefix)))
   (try
-    (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections) (state) sql-tallied
+    (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) inline-compute-handler (postgres-sql-handler connections) (state) sql-tallied
                                     (pg-records-handler store MAKER ORIGIN-HOST)]
                                    (watch-at-head-and-behind))))
     (finally

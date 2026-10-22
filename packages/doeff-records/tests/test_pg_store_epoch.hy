@@ -11,6 +11,8 @@
 (import json)
 (import pathlib [Path])
 (import doeff [EffectBase Program with_handlers])
+;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
+(import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.values [ExpectAbsent Reset WatchCursor])
@@ -49,7 +51,7 @@
    :post [(: % T)]
    :tags {:context "records" :role "foundation"}}
   "program(Program か effect)を置き場 store の書き手 maker の handler の下で走らせ、その答え(型の引数 T)を返すため。"
-  (<- answer (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)
+  (<- answer (with_handlers [(sim-time-handler :clock (SimClock)) inline-compute-handler (postgres-sql-handler connections)
                              (pg-records-handler store MAKER ORIGIN-HOST)]
                             program))
   answer)

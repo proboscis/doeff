@@ -17,6 +17,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import collections.abc [Callable])
 (import doeff [Program EffectBase run with-handlers])
+;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
+(import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn scheduled])
 (import doeff_core_effects.stop_signal_effects [RaiseStop])
@@ -223,7 +225,7 @@
 (defk on-memory [program]
   {:pre [(: program (| Program EffectBase))] :post [(: % "program の答え")] :tags {:context "records" :role "foundation"}}
   "memory の置き場の筋書きの土台: scheduler・session の値の置き場・仮想の時計・台本の止めの合図。"
-  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler] program))))
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler scripted-stop-handler] program))))
 
 
 (deftest test-stop-answers-pending-long-polls-at-once-on-memory
@@ -265,7 +267,7 @@
 (defk on-postgres [connections program]
   {:pre [(: connections PostgresConnections) (: program (| Program EffectBase))] :post [(: % "program の答え")] :tags {:context "records" :role "foundation"}}
   "PostgreSQL の置き場の筋書きの土台: memory の土台に本物の SQL の答え手を足した物。"
-  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler (postgres-sql-handler connections)]
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler scripted-stop-handler (postgres-sql-handler connections)]
                                  program))))
 
 
