@@ -21,7 +21,7 @@
 (import doeff_vm [UnhandledEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName])
+(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName ReadEnvironment])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
@@ -30,7 +30,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])
-(import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler run-scripted])
+(import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler scripted-command-peer run-scripted])
 
 
 ;; on が回す program の答えの型(筋書きごとに違う)。
@@ -93,6 +93,36 @@
   (<- shown ProcessOutcome (with_handlers [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)]
                              (RunProcess :argv #("show"))))
   (assert (= shown.stdout "None") shown))
+
+
+(defk outer-show [commands request]
+  {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
+  "外側の台本の命令の答え(どの呼びにも印 outer で答える — 名指した命令だけの peer が答えたか、外側が答えたかを見分けるため)。"
+  (ProcessOutcome :exit-code 0 :stdout "outer" :stderr ""))
+
+
+(defk peer-journey []
+  {:pre [] :post [(: % tuple)] :tags {:context "process-test" :role "program"}}
+  "名指した命令の呼び(path つきの argv[0])・名指さない命令の呼び・環境の読みを 1 つずつ出す筋(scripted-command-peer の検)。"
+  (<- named ProcessOutcome (RunProcess :argv #("/usr/bin/show" "x")))
+  (<- other ProcessOutcome (RunProcess :argv #("other")))
+  (<- env tuple (ReadEnvironment :names #("DOEFF_OUTER") :prefixes #()))
+  #(named.stdout other.stdout env))
+
+
+(deftest test-the-scripted-command-peer-answers-only-its-commands-and-passes-the-rest
+  ;; scripted-command-peer は台本に名の在る命令(argv[0] の basename)だけに台本で答え(env は要求のまま — 継ぐ印 None)、ほかの命令の
+  ;; 呼びと環境の読みは外側の答え手へ渡す(外側の環境の答え手より内側に重ねても、その答えを隠さない)。
+  ;; 失敗ケース: peer を外すと、名指した命令も外側が答える(印 outer)。
+  (val outer (scripted-process-handler (ProcessScript :commands #((ScriptedCommand :name "show" :run outer-show)
+                                                                  (ScriptedCommand :name "other" :run outer-show))
+                                                      :env #((EnvEntry :name "DOEFF_OUTER" :value "外")))))
+  (val peer (scripted-command-peer #((ScriptedCommand :name "show" :run shown-env))))
+  (val outside #((EnvEntry :name "DOEFF_OUTER" :value "外")))
+  (<- layered tuple (with_handlers [(state) (memory-file-handler (MemoryFiles)) outer peer] (peer-journey)))
+  (assert (= layered #("None" "outer" outside)) layered)
+  (<- bare tuple (with_handlers [(state) (memory-file-handler (MemoryFiles)) outer] (peer-journey)))
+  (assert (= bare #("outer" "outer" outside)) bare))
 
 
 ;; --- file system: 本物と I/O なしで同じ答え -------------------------------------------------------------------------------

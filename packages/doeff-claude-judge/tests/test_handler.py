@@ -243,6 +243,35 @@ def test_the_scripted_printer_answers_from_the_query_without_the_cli() -> None:
     assert verdict.model == "claude-test"
 
 
+def test_the_scripted_printer_answers_a_limited_print_with_the_reset() -> None:
+    # 使い手の検の fake の口座の利用枠が尽きた筋書き: limited(問いの部品, model)が尽きの事実を返す print は、CLI が尽きを名乗って
+    # 答えずに降りた答えになり、判定は JudgeUsageLimited(枠の種類と戻る刻)で断られる。答えの callback は呼ばれない。
+    # limited が None を返す print は今までどおり answer で答える。使い手は尽きの事実の型を doeff_claude_judge から読む
+    # (doeff_claude_code を名指さない — wiring の頭の註)。
+    # 失敗ケース(前の形): scripted_printer は構造化の答えしか返せず、使い手は doeff_claude_code の ClaudePrintOnce と
+    # PrintLimited を名指す自前の handler を足していた。
+    from doeff_claude_judge import AccountLimitHit as JudgeLimitHit
+
+    assert JudgeLimitHit is AccountLimitHit
+    limit = JudgeLimitHit(window="seven_day", resets_at=1791342000, text="You've hit your weekly limit · resets Oct 25")
+
+    def unanswered(query: ClaudeQuery, model: str) -> JsonIn:
+        raise AssertionError(f"尽きた print は答えの callback を呼ばないはず: {model}")
+
+    def spent(query: ClaudeQuery, model: str) -> AccountLimitHit | None:
+        assert query == prepare(JUDGE)
+        assert model == "claude-test"
+        return limit
+
+    error = _refusal(JUDGE, printer=scripted_printer(unanswered, limited=spent), lender=fixed_credential_lender(LENT))
+    assert isinstance(error, JudgeUsageLimited), error
+    assert (error.window, error.resets_at) == ("seven_day", 1791342000)
+    assert "weekly limit" in error.detail
+    verdict = _run(JUDGE, printer=scripted_printer(lambda query, model: ANSWER, limited=lambda query, model: None),
+                   lender=fixed_credential_lender(LENT))
+    assert verdict.answer("plain").value == 0.8125
+
+
 def test_a_judge_credential_hides_its_token() -> None:
     assert "lent-token" not in repr(LENT)
     with pytest.raises(ValueError, match="access_token"):
