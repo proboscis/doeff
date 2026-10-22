@@ -41,10 +41,14 @@ Python の版ごとに:
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
 
 --pypi は 1 で checkout の代わりに PyPI の doeff を入れ(doeff-vm は wheel だけを受ける — 利用者の機体に Rust の道具は無い)、2 で
-doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。4・6・7 は走らせない — 期待(extra の文・試しの命令の
-答え・例の file)が checkout の物で、出した版より新しい事が在る。8 は走らせる — 記事は例が今日の `pip install doeff` で走ると
-約束するので、例の file が出した版より先へ進んだら(まだ出していない API を使ったら)赤にする。毎日の CI
-(.github/workflows/core-install-from-pypi.yml)が Linux・macOS・Windows で走らせる(card ki-e7b4a1b9e9f4)。
+doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。3 の後に、この checkout(CI では GitHub の main)の
+doeff と doeff-vm の README(初めて来た人が GitHub で読む物)の Python の例を、同じ約束で入った版の venv で走らせる — wheel の
+README は入った版と同じ時に書いた物なので、GitHub の README が出した版より先へ進んでも 3 は緑のまま食い違いを見ない
+(card ki-fd6aea147621)。wheel の README と GitHub の README は別々に「<組>の例 N 個のうち入った版で通るのは M 個」と数え、
+落ちた例の節の題と訳の 1 行を印字する。4・6・7 は走らせない — 期待(extra の文・試しの命令の答え・例の file)が checkout の物で、
+出した版より新しい事が在る。8 は走らせる — 記事は例が今日の `pip install doeff` で走ると約束するので、例の file が出した版より
+先へ進んだら(まだ出していない API を使ったら)赤にする。毎日の CI(.github/workflows/core-install-from-pypi.yml)が Linux・
+macOS・Windows で走らせる(card ki-e7b4a1b9e9f4)。
 
 終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
 """
@@ -505,16 +509,153 @@ def print_result(name: str, failure: str | None) -> None:
         print("        " + failure.replace("\n", "\n        "), flush=True)
 
 
-def check_readmes(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """CHECKED_READMES の Python の例を走らせ、落ちた事を言う文の列を返す — 核だけの利用者が写す例が動くかを見るため。"""
+@dataclass(frozen=True)
+class Readme:
+    """例を走らせる README 1 つ。"""
+
+    # 配布物の名(CHECKED_READMES の 1 つ)
+    package: str
+    # 囲みの名の頭 — 落ちた事を言う文で、読み手が README を探し当てる名(例 "doeff の README"・"README.md")
+    source: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ReadmeSet:
+    """例を走らせる README の組 — 入った wheel の metadata の本文か、checkout(CI では GitHub の main)の file。"""
+
+    # 印字の名(「<名> の例 N 個のうち…」の頭)
+    title: str
+    # 作業の dir の下の、例を走らせる dir の名
+    directory: str
+    # CHECKED_READMES と同じ並び
+    readmes: tuple[Readme, ...]
+
+
+# README の組の印字の名。
+WHEEL_READMES = "入った wheel の README"
+GITHUB_READMES = "GitHub の README"
+# 各配布物の README の file の名 — pyproject.toml の readme が wheel の metadata の本文に入れる物(tests/test_verify_core_install.py)。
+README_FILE = "README.md"
+
+
+def wheel_readmes(installed: Installed) -> ReadmeSet:
+    """入った wheel の metadata の README(PyPI の頁が見せる物)— 入った版と同じ時に書いた README。"""
+    return ReadmeSet(
+        WHEEL_READMES,
+        "examples",
+        tuple(
+            Readme(package, f"{package} の README", installed.readme(package))
+            for package in CHECKED_READMES
+        ),
+    )
+
+
+def checkout_readmes(repo: Path = REPO) -> ReadmeSet:
+    """この checkout の README(CI では GitHub の main — 初めて来た人が GitHub で読む物)。
+
+    PyPI から入れた版で走らせると、README が出した版より先へ進んだ(まだ出していない使い方を書いた)事を名指す — wheel の
+    README は入った版と同じ時に書いた物なので、それだけでは食い違いを見ない(card ki-fd6aea147621)。
+    """
+    directories = {package.name: package.directory for package in FROM_CHECKOUT}
+    paths = [(package, directories[package] / README_FILE) for package in CHECKED_READMES]
+    return ReadmeSet(
+        GITHUB_READMES,
+        "github-examples",
+        tuple(
+            Readme(package, path.as_posix(), (repo / path).read_text(encoding="utf-8"))
+            for package, path in paths
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ExampleResult:
+    """走らせた README の例 1 つの結末。"""
+
+    example: readme_examples.Example
+    # 落ちた事を言う文(通れば None)
+    failure: str | None
+
+
+@dataclass(frozen=True)
+class CheckedReadme:
+    """README 1 つの例を走らせた結末。"""
+
+    # 走らせた例ごとの結末
+    results: tuple[ExampleResult, ...]
+    # 落ちた事を言う文の全部(落ちた例の全文と、約束に合わない囲み・走らせる例の無い README)
+    failures: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FailedExample:
+    """入った版で落ちた README の例 1 つ。"""
+
+    # README と行(例 "README.md:42")
+    where: str
+    # 囲みの在る節の題
+    section: str
+    # 落ちた訳の 1 行(例外の行など)
+    error: str
+
+
+@dataclass(frozen=True)
+class ReadmeTally:
+    """README の組 1 つの例を、入った版で走らせた数え。"""
+
+    title: str
+    # 走らせた例の数
+    ran: int
+    failed: tuple[FailedExample, ...]
+    # 落ちた事を言う文の全部(落ちた例の全文と、約束に合わない囲み・走らせる例の無い README)
+    failures: tuple[str, ...]
+
+    def summary(self) -> list[str]:
+        """数えの行と、落ちた例ごとの節の題と訳の 1 行。"""
+        return [
+            f"{self.title} の例 {self.ran} 個のうち入った版で通るのは {self.ran - len(self.failed)} 個",
+            *(
+                f"  NG  節「{failed.section}」({failed.where}): {failed.error}"
+                for failed in self.failed
+            ),
+        ]
+
+
+def error_line(failure: str) -> str:
+    """落ちた事を言う文の、訳の 1 行 — 最後の空でない行(落ちた例は標準エラーの最後の行の例外・注記の違いは 1 行の文)。"""
+    return next((line.strip() for line in reversed(failure.splitlines()) if line.strip()), "")
+
+
+def check_readmes(
+    readmes: ReadmeSet, installed: Installed, place: Path, timeout: float
+) -> ReadmeTally:
+    """README の組の Python の例を走らせ、数えを印字して返す — 核だけの利用者が写す例が動くかを見るため。"""
     environment = verify_release_install.example_environment(place)
-    return [
-        failure
-        for package in CHECKED_READMES
-        for failure in _check_readme(
-            package, installed, place / "examples" / package, timeout, environment
+    checked = [
+        _check_readme(
+            readme, installed, place / readmes.directory / readme.package, timeout, environment
         )
+        for readme in readmes.readmes
     ]
+    results = [result for readme in checked for result in readme.results]
+    tally = ReadmeTally(
+        readmes.title,
+        ran=len(results),
+        failed=tuple(
+            FailedExample(
+                f"{result.example.source}:{result.example.line}",
+                result.example.section,
+                error_line(result.failure),
+            )
+            for result in results
+            if result.failure is not None
+        ),
+        failures=tuple(failure for readme in checked for failure in readme.failures),
+    )
+    for line in tally.summary():
+        print(f"    {line}", flush=True)
+    return tally
 
 
 def _imported_modules(code: str) -> set[str]:
@@ -553,38 +694,39 @@ def hy_extra_examples(examples: Sequence[readme_examples.Example]) -> list[readm
 
 
 def _check_readme(
-    package: str,
+    readme: Readme,
     installed: Installed,
     directory: Path,
     timeout: float,
     environment: dict[str, str],
-) -> list[str]:
-    """README 1 つの例(extra hy の要る囲みを除く)を、新しい dir で上から順に走らせ、落ちた事を言う文の列を返す。"""
-    fences = readme_examples.fences(installed.readme(package), f"{package} の README")
+) -> CheckedReadme:
+    """README 1 つの例(extra hy の要る囲みを除く)を、新しい dir で上から順に走らせ、結末を返す。"""
+    fences = readme_examples.fences(readme.text, readme.source)
     set_aside = hy_extra_examples(fences)
     examples = [fence for fence in fences if fence not in set_aside]
     directory.mkdir(parents=True)
-    print(f"  {package} の README の例", flush=True)
+    print(f"  {readme.source} の例", flush=True)
     # 黙って検から外れないよう、extra hy の例として走らせない囲みの名を見せる。
     for fence in set_aside:
         print(f"    --  {fence.name}(extra hy の例 — 走らせない)", flush=True)
+    results: list[ExampleResult] = []
+
+    def record(example: readme_examples.Example, failure: str | None) -> None:
+        results.append(ExampleResult(example, failure))
+        print_result(example.name, failure)
+
     failures = readme_examples.run_in_order(
-        examples,
-        directory,
-        installed.python,
-        timeout,
-        environment=environment,
-        on_result=lambda example, failure: print_result(example.name, failure),
+        examples, directory, installed.python, timeout, environment=environment, on_result=record
     )
     # 走らせる例が無い README は、確かめた事が無いので通さない(例を全部 excerpt か Hy にした時など)。
     empty = (
         []
         if any(example.runs() and not example.problems() for example in examples)
-        else [f"{package} の README に、核の 4 個だけで走らせる例が無い — 確かめた事が無い"]
+        else [f"{readme.source} に、核の 4 個だけで走らせる例が無い — 確かめた事が無い"]
     )
     for missing in empty:
-        print_result(f"{package} の README", missing)
-    return [*failures, *empty]
+        print_result(readme.source, missing)
+    return CheckedReadme(tuple(results), (*failures, *empty))
 
 
 def type_checked_examples(installed: Installed, package: str) -> list[readme_examples.Example]:
@@ -1080,18 +1222,21 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
         "\n".join(problems) or None,
     )
     if isinstance(source, PyPI):
-        # extra の文・試しの命令・LLM の例の期待は checkout の物で、出した版より新しい事が在る(README は入った wheel の物
-        # なので版に合う)。記事の例は出した版で走ると記事が約束する。
+        # extra の文・試しの命令・LLM の例の期待は checkout の物で、出した版より新しい事が在る。wheel の README は入った版と
+        # 同じ時に書いた物なので版に合う。GitHub の README と記事の例は、今日の pip install doeff で走ると読み手に約束する。
         return [
             *problems,
-            *check_readmes(installed, place, timeout),
+            *check_readmes(wheel_readmes(installed), installed, place, timeout).failures,
+            # 初めて来た人が読む GitHub の README を入った版で — README が出した版より先へ進むと落ちる(card ki-fd6aea147621)。
+            *check_readmes(checkout_readmes(), installed, place, timeout).failures,
             *check_public_names(installed, place, timeout),
             # venv に pytest を足すので最後に置く。
             *check_article_examples(installed, place, timeout),
         ]
     return [
         *problems,
-        *check_readmes(installed, place, timeout),
+        # checkout から組んだ wheel の README は checkout の README と同じ物なので、1 度だけ走らせる。
+        *check_readmes(wheel_readmes(installed), installed, place, timeout).failures,
         *check_public_names(installed, place, timeout),
         *check_extra_uses(installed, place, timeout),
         *check_demo(installed, place, timeout),
@@ -1129,7 +1274,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="VERSION",
         help=(
             f"checkout の代わりに PyPI の doeff の版を入れる({LATEST} は最新)— 入った版の README の例と型の check と、"
-            "紹介の記事の例だけを確かめる"
+            "この checkout(GitHub)の README の例と、紹介の記事の例だけを確かめる"
         ),
     )
     parser.add_argument("--keep", action="store_true", help="終わった後も作業の dir を消さない")

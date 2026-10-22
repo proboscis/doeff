@@ -1,10 +1,11 @@
 # 今日来た人と同じく、PyPI の doeff を Linux・macOS・Windows の新しい venv に extra 無しで入れ、README の Python の例が注記の通りに
 # 印字する事を毎日確かめる(取り組み doeff-publish の区切り 16・card ki-e7b4a1b9e9f4)。中身は tools/verify_core_install.py --pypi latest
 # (入った物がちょうど核の 4 個で、doeff の 3 個が PyPI から入った事・doeff と doeff-vm の README の Python の例 — README は入った
-# wheel の metadata の本文なので入った版の物・その例の import を型の check が公開の名と読む事)。checkout から組む確かめ
+# wheel の metadata の本文なので入った版の物・その例の import を型の check が公開の名と読む事・checkout の GitHub の main の
+# README の例 — 初めて来た人が読む物で、README が出した版より先へ進むとここが落ちる・card ki-fd6aea147621)。checkout から組む確かめ
 # (core-install-macos-windows.yml・python-compatibility.yml の core-only-install)と違い Rust の道具を入れず、doeff-vm は PyPI の wheel
 # だけを受ける — 機体と Python に合う wheel が PyPI に無ければ、install の段で落ちる。3.14 は素の 3.14 で頼む(core-install-macos-windows.yml
-# の頭の訳)。道具か workflow を変えた main の push でも走る。
+# の頭の訳)。道具か workflow か、例を走らせる README(doeff と doeff-vm)を変えた main の push でも走る。
 name: Core install from PyPI
 
 on:
@@ -19,6 +20,8 @@ on:
       - tools/verify_core_install.py
       - tools/verify_release_install.py
       - tools/readme_examples.py
+      - README.md
+      - packages/doeff-vm/README.md
 
 permissions:
   contents: read

@@ -497,6 +497,174 @@ def test_every_python_example_that_imports_hy_in_a_checked_readme_is_set_aside(
     assert remaining_importing_hy == []
 
 
+# --- GitHub の README を入った版で走らせる(card ki-fd6aea147621) ----------------------------------------------------------
+# --pypi は、入った wheel の README(入った版と同じ時に書いた物)の他に、checkout(CI では GitHub の main)の README を入った版の
+# venv で走らせる。wheel の README だけでは、GitHub の README が出した版より先へ進んでも緑のまま食い違いを見ない。
+
+# 入った版と同じ時に書いた README — 例は入った版で通る。
+_OLD_README = """# doeff
+
+## Quick Start
+
+```python
+print(1)  # 1
+```
+"""
+# 出した版より先へ進んだ README — 2 つ目の例は、入った版に無い使い方で落ちる。
+_NEW_README = """# doeff
+
+## Quick Start
+
+```python
+print(1)  # 1
+```
+
+## Writing a handler
+
+```python
+print(2)  # 2
+raise RuntimeError("handler must return DoExpr, got: <class 'generator'>")
+```
+"""
+
+
+def _checkout_with_readmes(repo: Path, text: str) -> None:
+    """CHECKED_READMES の配布物の README を、checkout の写しの repo に置く。"""
+    for readme in tool.checkout_readmes(ROOT).readmes:
+        (repo / readme.source).parent.mkdir(parents=True, exist_ok=True)
+        (repo / readme.source).write_text(text, encoding="utf-8")
+
+
+def _venv_with_readmes(text: str) -> object:
+    """README の例を走らせる interpreter(検の interpreter — 例は doeff を使わない)と、wheel の README の写し。"""
+    readmes = tuple(text for _ in tool.CHECKED_READMES)
+    return tool.Installed(Path(sys.executable), "3.12.14", False, (), readmes)
+
+
+def test_the_checkout_readmes_are_the_files_the_packages_put_in_their_wheels() -> None:
+    readmes = tool.checkout_readmes(ROOT)
+    assert [readme.package for readme in readmes.readmes] == list(tool.CHECKED_READMES)
+    directories = {package.name: package.directory for package in tool.FROM_CHECKOUT}
+    for readme in readmes.readmes:
+        project = tomllib.loads(
+            (ROOT / directories[readme.package] / "pyproject.toml").read_text(encoding="utf-8")
+        )["project"]
+        # wheel の metadata の本文に入る file と、GitHub の README として読む file が同じ。
+        assert project["readme"] == tool.README_FILE
+        assert readme.source == (directories[readme.package] / tool.README_FILE).as_posix()
+        assert readme.text == (ROOT / readme.source).read_text(encoding="utf-8")
+
+
+def test_the_wheel_and_the_github_readmes_are_counted_apart(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _checkout_with_readmes(repo, _NEW_README)
+    installed = _venv_with_readmes(_OLD_README)
+    wheel = tool.check_readmes(tool.wheel_readmes(installed), installed, tmp_path / "wheel", 60)
+    github = tool.check_readmes(tool.checkout_readmes(repo), installed, tmp_path / "github", 60)
+    # wheel の README は入った版に合うので通り、GitHub の README の先へ進んだ例だけが落ちる。
+    assert (wheel.title, wheel.ran, wheel.failed, wheel.failures) == (
+        tool.WHEEL_READMES,
+        2,
+        (),
+        (),
+    )
+    assert (github.title, github.ran) == (tool.GITHUB_READMES, 4)
+    assert github.failed == (
+        tool.FailedExample(
+            "README.md:11",
+            "Writing a handler",
+            "RuntimeError: handler must return DoExpr, got: <class 'generator'>",
+        ),
+        tool.FailedExample(
+            "packages/doeff-vm/README.md:11",
+            "Writing a handler",
+            "RuntimeError: handler must return DoExpr, got: <class 'generator'>",
+        ),
+    )
+    assert len(github.failures) == 2
+
+
+def test_the_count_says_how_many_github_examples_pass_on_the_installed_version() -> None:
+    tally = tool.ReadmeTally(
+        tool.GITHUB_READMES,
+        ran=7,
+        failed=(
+            tool.FailedExample("README.md:40", "Quick Start", "RuntimeError: handler must return"),
+            tool.FailedExample("README.md:80", "Handlers", "ImportError: cannot import name 'x'"),
+        ),
+        failures=("…", "…"),
+    )
+    assert tally.summary() == [
+        "GitHub の README の例 7 個のうち入った版で通るのは 5 個",
+        "  NG  節「Quick Start」(README.md:40): RuntimeError: handler must return",
+        "  NG  節「Handlers」(README.md:80): ImportError: cannot import name 'x'",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure", "line"),
+    [
+        (
+            "README.md:13(Writing a handler の python)が終了コード 1 で落ちた — 例を今の使い方に直す\n2\n"
+            'Traceback (most recent call last):\n  File "x.py", line 2\nRuntimeError: boom\n',
+            "RuntimeError: boom",
+        ),
+        ("README.md:5(Quick Start の python)の印字が print の行の注記と違う", None),
+        ("README.md:5(Quick Start の python)が 60 秒で終わらなかった", None),
+    ],
+    ids=["exception", "stated-output", "timeout"],
+)
+def test_the_error_line_is_the_exception_or_the_one_line_reason(
+    failure: str, line: str | None
+) -> None:
+    assert tool.error_line(failure) == (failure if line is None else line)
+
+
+def _check_python_titles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object
+) -> list[str]:
+    """check_python が例を走らせた README の組の名を、install と他の段を写しに替えて読む。"""
+    installed = _venv_with_readmes(_OLD_README)
+    titles: list[str] = []
+
+    def check_readmes(readmes: object, *_: object) -> object:
+        titles.append(readmes.title)
+        return tool.ReadmeTally(readmes.title, 0, (), ())
+
+    monkeypatch.setattr(tool, "install", lambda *_: installed)
+    monkeypatch.setattr(tool, "install_problems", lambda *_: [])
+    monkeypatch.setattr(tool, "check_readmes", check_readmes)
+    for stage in (
+        "check_public_names",
+        "check_extra_uses",
+        "check_demo",
+        "check_llm_example",
+        "check_article_examples",
+    ):
+        monkeypatch.setattr(tool, stage, lambda *_: [])
+    assert tool.check_python("3.12", tmp_path, 60, source) == []
+    return titles
+
+
+def test_the_pypi_check_runs_the_github_readmes_besides_the_wheel_ones(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    titles = _check_python_titles(monkeypatch, tmp_path, tool.PyPI(None))
+    assert titles == [tool.WHEEL_READMES, tool.GITHUB_READMES]
+
+
+def test_the_checkout_check_runs_the_readmes_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # checkout から組んだ wheel の README は checkout の README と同じ物。
+    assert _check_python_titles(monkeypatch, tmp_path, tool.Checkout()) == [tool.WHEEL_READMES]
+
+
+def test_a_push_that_changes_a_github_readme_runs_the_daily_pypi_check() -> None:
+    paths = yaml.safe_load(PYPI_WORKFLOW.read_text(encoding="utf-8"))[True]["push"]["paths"]
+    assert {readme.source for readme in tool.checkout_readmes(ROOT).readmes} <= set(paths)
+
+
 # --- 型の check が「公開していない名」を名指す(card ki-d1628b5046d1) ---------------------------------------------------
 # 核だけの venv で README の例を pyright と mypy --strict にかける段の、判じ方。本物の pyright・mypy の出力の写しで確かめる。
 
