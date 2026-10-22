@@ -3,12 +3,15 @@
 agoraの担当の道具の組の同期のjob(agora-controllersのagent-toolset-sync — プログラムのreconcile)が、毎日8:10 JSTと
 起動の時に、doeffのmainの先端の作業木でこの命令を走らせる。1回は次の2段で、何度走らせても同じ所に落ち着く。
 
-1. 直し: 公開の刻を過ぎた公開予定の回のうち、Zennで開ける回を「公開済み <URL> <刻>」に直す(record_published.record)。
+1. 直し: 前の回が列に残した直しの便(同じbranchの終わっていない便)があれば、終わるまで待つ(main入りを待つ秒まで —
+   入れば作業木をmainの先端へ進める)。終わらなければ直さない(同じ直しを2度載せない)。
+   公開の刻を過ぎた公開予定の回のうち、Zennで開ける回を「公開済み <URL> <刻>」に直す(record_published.record)。
    直した回があれば、公開順の表だけを変えるcommitをbranch(既定wt/zenn-record-sweep)へpushし、mainへのマージの列に
    載せ(知らせの宛先は--notifyの連絡のid)、main入りを待つ(既定600秒 — 列の便は普通は数十秒で入る)。
-   同じbranchの便が列に在る間は、直さない(同じ直しを2度載せない)。
-2. リンクの張り直し: 直しがmainに入った回だけ、mainの書き出しを`push_zenn_branch.py --keep-schedule`で
-   zenn-contentへ送る。公開済みに直した回への他の回の本文のリンクが、ZennのURLになる。直す回の無い日は送らない。
+2. リンクの張り直し: mainの表で公開済みの回のうち、zenn-contentの他の回の本文がまだそのZennのURLを含まない回が
+   在る時だけ、mainの書き出しを`push_zenn_branch.py --keep-schedule`でzenn-contentへ送る。公開済みに直した回への
+   他の回の本文のリンクが、ZennのURLになる。前の回が待ちの秒を越えて諦めた便が後でmainに入った時も、次の回が
+   張り直す。リンクが揃っている日は送らない(mainで直した公開済みの回の本文を、毎日勝手に読者へ出さない)。
    予約と公開の設定(publishedとpublished_at)を変える書き出しは送らない — この命令は予約も公開もしない
    (予約は、その1本の公開の許可を得た会話がpush_zenn_branch.pyで置き、その時にリンクも一緒に送られる)。
 
@@ -16,8 +19,8 @@ agoraの担当の道具の組の同期のjob(agora-controllersのagent-toolset-s
 数える。8:10の直しは9時の前にmainに入る。
 
 終わりのcode: 0 = 直す回が無いか、直してmainに入れてリンクを張った・1 = 刻を過ぎたのにZennで開けない回が在るか、
-前の直しの便がまだ列に在るか、便がmainに入らなかったか、リンクの張り直しが止まった(同期のjobが健康の帯の項を
-赤にし、見回りの検査が見回りの会話へ知らせる)。
+前の直しの便が待っても列に残るか、便がmainに入らなかったか、リンクの張り直しが止まった(同期のjobが続けた2回で
+健康の帯の項を赤にし、見回りの検査が見回りの会話へ知らせる)。
 """
 
 from __future__ import annotations
@@ -61,14 +64,6 @@ class LandItem:
 
     id: str
     status: str
-
-
-@dataclass(frozen=True)
-class Recorded:
-    """段1の結末(終わりのcodeと、直しがこの回でmainに入ったか)。"""
-
-    rc: int
-    landed: bool
 
 
 @dataclass(frozen=True)
@@ -121,8 +116,8 @@ def item_of(value: object) -> LandItem:
     return LandItem(value["id"], str(value.get("status")))
 
 
-def live_items(sweep: Sweep) -> tuple[LandItem, ...]:
-    """便のbranchの、列に在る便を返す(`agora land list --branch`)。"""
+def branch_items(sweep: Sweep) -> tuple[LandItem, ...]:
+    """便のbranchの便を、終わった便も含めて返す(`agora land list --branch`)。"""
     answer = land_json(sweep, "list", "--branch", sweep.land_branch)
     requests = answer.get("requests") if isinstance(answer, dict) else None
     if not isinstance(requests, list):
@@ -154,8 +149,32 @@ def commit_message(recorded: tuple[record_published.Recorded, ...]) -> str:
     )
 
 
-def land_recorded(sweep: Sweep, recorded: tuple[record_published.Recorded, ...]) -> Recorded:
-    """表を直したcommitを便のbranchへpushして列に載せ、main入りを待つ。
+def to_main(sweep: Sweep) -> None:
+    """作業木をremoteのmainの先端へ進める(直しと書き出しの元をmainにする)。"""
+    git(sweep, "fetch", "--quiet", sweep.remote, "main")
+    git(sweep, "checkout", "--quiet", "--detach", "FETCH_HEAD")
+
+
+def earlier_settled(sweep: Sweep) -> bool:
+    """前の回が列に残した直しの便を、終わるかland_wait秒まで待つ。どれかがmainに入れば作業木をmainの先端へ進める。
+
+    終わらない便が残れば偽(この回は直さない — 同じ直しを2度載せない)。
+    """
+    waiting = tuple(item for item in branch_items(sweep) if item.status not in ENDED)
+    ended = tuple(LandItem(item.id, wait_landed(sweep, item.id)) for item in waiting)
+    stuck = "・".join(f"{item.id}({item.status})" for item in ended if item.status not in ENDED)
+    if stuck:
+        print(f"前の直しの便が{sweep.land_wait:g}秒の内に終わらないので、直さない: {stuck}")
+        return False
+    landed = "・".join(item.id for item in ended if item.status in LANDED)
+    if landed:
+        to_main(sweep)
+        print(f"前の直しの便がmainに入った: {landed}")
+    return True
+
+
+def land_recorded(sweep: Sweep, recorded: tuple[record_published.Recorded, ...]) -> int:
+    """表を直したcommitを便のbranchへpushして列に載せ、main入りを待ち、終わりのcodeを返す。
 
     mainに入れば作業木をmainの先端へ進め(段2の書き出しの元をmainにする)、入らなければ直す前の木へ戻す。
     """
@@ -171,10 +190,9 @@ def land_recorded(sweep: Sweep, recorded: tuple[record_published.Recorded, ...])
     request = item_of(land_json(sweep, "request", *flags)).id
     status = wait_landed(sweep, request)
     if status in LANDED:
-        git(sweep, "fetch", "--quiet", sweep.remote, "main")
-        git(sweep, "checkout", "--quiet", "--detach", "FETCH_HEAD")
+        to_main(sweep)
         print(f"{request}: mainに入った({git(sweep, 'rev-parse', '--short=12', 'HEAD')})")
-        return Recorded(0, landed=True)
+        return 0
     git(sweep, "checkout", "--quiet", "--detach", base)
     reason = (
         f"便を{status}にした"
@@ -183,18 +201,15 @@ def land_recorded(sweep: Sweep, recorded: tuple[record_published.Recorded, ...])
     )
     print(
         f"{request}: マージの列が{reason}({sweep.land_branch})。"
-        "リンクは張り直していない — 便がmainに入った後に`push_zenn_branch.py`で送る"
+        "リンクは、便がmainに入った後の回が張り直す"
     )
-    return Recorded(1, landed=False)
+    return 1
 
 
-def record_step(sweep: Sweep) -> Recorded:
-    """段1: 刻を過ぎて開ける回を公開済みに直し、mainに入れる。"""
-    waiting = tuple(item for item in live_items(sweep) if item.status not in ENDED)
-    if waiting:
-        listed = "・".join(f"{item.id}({item.status})" for item in waiting)
-        print(f"前の直しの便がまだ列に在るので、直さない: {listed}")
-        return Recorded(1, landed=False)
+def record_step(sweep: Sweep) -> int:
+    """段1: 刻を過ぎて開ける回を公開済みに直し、mainに入れる。終わりのcodeを返す。"""
+    if not earlier_settled(sweep):
+        return 1
     result = record_published.record((sweep.root / PLAN).read_text(), sweep.now, sweep.reachable)
     for missing in result.unreachable:
         at = release.zenn_time(missing.at)
@@ -202,12 +217,34 @@ def record_step(sweep: Sweep) -> Recorded:
     rc = 1 if result.unreachable else 0
     if not result.recorded:
         print("公開済みに直す回は無い" if not result.unreachable else "公開済みに直した回は無い")
-        return Recorded(rc, landed=False)
+        return rc
     for done in result.recorded:
         print(f"{done.name}: 公開済み {done.url}(公開の刻 {release.zenn_time(done.at)} JST)")
     (sweep.root / PLAN).write_text(result.plan)
-    landed = land_recorded(sweep, result.recorded)
-    return Recorded(max(rc, landed.rc), landed.landed)
+    return max(rc, land_recorded(sweep, result.recorded))
+
+
+def linked(sweep: Sweep, row: release.PlanRow, url: str) -> bool:
+    """取り寄せたzenn-content(FETCH_HEAD)の、rowの他の回の本文のどれかがurlを含むか。"""
+    pathspec = ("--", "articles/", f":(exclude)articles/{row.slug}.md")
+    found = run(
+        ("git", "grep", "--quiet", "--fixed-strings", url, "FETCH_HEAD", *pathspec), sweep.root
+    )
+    if found.rc > 1:
+        sys.exit(f"{sweep.zenn_branch}の本文を読めませんでした:\n{found.out}")
+    return found.rc == 0
+
+
+def unlinked(sweep: Sweep) -> tuple[str, ...]:
+    """mainの表で公開済みの回のうち、zenn-contentの他の回の本文がまだそのZennのURLを含まない回のslug(段2の要否)。"""
+    rows = release.read_rows((sweep.root / PLAN).read_text())
+    published = tuple(
+        (row, row.state.url) for row in rows if isinstance(row.state, release.Published)
+    )
+    if not published:
+        return ()
+    git(sweep, "fetch", "--quiet", sweep.remote, sweep.zenn_branch)
+    return tuple(row.slug for row, url in published if not linked(sweep, row, url))
 
 
 def relink_step(sweep: Sweep) -> int:
@@ -221,9 +258,13 @@ def relink_step(sweep: Sweep) -> int:
 
 
 def sweep_once(sweep: Sweep) -> int:
-    """1回を走らせ、終わりのcodeを返す(リンクは、直しがこの回でmainに入った時だけ張り直す)。"""
-    recorded = record_step(sweep)
-    return max(recorded.rc, relink_step(sweep)) if recorded.landed else recorded.rc
+    """1回を走らせ、終わりのcodeを返す(リンクは、公開済みの回へのリンクが記事のbranchに揃っていない時だけ張り直す)。"""
+    rc = record_step(sweep)
+    missing = unlinked(sweep)
+    if not missing:
+        return rc
+    print(f"{sweep.zenn_branch}の本文がまだリンクしていない公開済みの回: {'・'.join(missing)}")
+    return max(rc, relink_step(sweep))
 
 
 def main() -> None:

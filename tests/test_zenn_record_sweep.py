@@ -24,6 +24,7 @@ IMAGES = Path(__file__).resolve().parents[1] / "images"
 sys.path.insert(0, str(TOOLS))
 
 import push_zenn_branch as push  # noqa: E402 — 道具は兄弟のmoduleを名で読むので、道具のdirを先に足す
+import record_published  # noqa: E402
 import record_sweep  # noqa: E402
 import render_release as release  # noqa: E402
 
@@ -139,7 +140,7 @@ args = sys.argv[1:]
 state["calls"] = [*state["calls"], args]
 verb = args[1]
 if verb == "list":
-    answer = {{"repo": "doeff", "scope": "live", "requests": state["live"]}}
+    answer = {{"repo": "doeff", "scope": "branch", "requests": state["live"]}}
 elif verb == "request":
     branch = args[args.index("--branch") + 1]
     if state["lands"]:
@@ -277,12 +278,54 @@ def test_sweep_after_the_time_records_lands_and_relinks(world: World) -> None:
     assert (world.remote_plan(), world.zenn_tip()) == (plan, tip)
 
 
-def test_sweep_does_not_record_again_while_the_previous_land_is_in_the_queue(world: World) -> None:
-    world.configure(live=[{"id": "L9", "status": "pending"}])
+def recorded_plan(plan: str) -> str:
+    """1本目を公開済みに直した公開計画の文(前の回の直しの便が入れる表)。"""
+    cell = record_published.published_cell(URL + FIRST, jst(RESERVED), PERMIT)
+    return set_state(plan, FIRST, cell)
+
+
+def test_sweep_does_not_record_again_while_the_previous_land_stays_in_the_queue(
+    world: World,
+) -> None:
+    world.configure(live=[{"id": "L9", "status": "pending"}], show="pending")
     plan, tip = world.remote_plan(), world.zenn_tip()
-    assert record_sweep.sweep_once(world.sweep("2026-11-02 08:10")) == 1
-    assert land_verbs(world.calls()) == ["list"]
+    assert record_sweep.sweep_once(world.sweep("2026-11-02 08:10", land_wait=30.0)) == 1
+    assert land_verbs(world.calls()) == ["list", "show", "show", "show", "show"]
     assert (world.remote_plan(), world.zenn_tip()) == (plan, tip)
+
+
+def test_sweep_waits_for_the_previous_land_and_relinks_when_it_lands(world: World) -> None:
+    # 前の回の直しの便L9が列に在る間に、この回の取り寄せが走った(作業木はL9の前のmain)。L9は待つ間にmainに入る。
+    world.commit_plan(recorded_plan(world.plan().read_text()), "前の回の直し(L9)")
+    run_git(world.work, "checkout", "--quiet", "--detach", "HEAD~1")
+    world.configure(live=[{"id": "L9", "status": "pending"}], show="landed")
+    assert URL + FIRST not in world.zenn_article(SECOND)
+    # 1本目は既に公開済み — 開きに来ず、同じ直しを2度載せず、リンクだけを張り直す。
+    assert record_sweep.sweep_once(world.sweep("2026-11-02 08:20")) == 0
+    assert land_verbs(world.calls()) == ["list", "show"]
+    assert run_git(world.work, "rev-parse", "HEAD") == run_git(world.remote, "rev-parse", "main")
+    assert URL + FIRST in world.zenn_article(SECOND)
+    assert push.placed_of(world.zenn_article(FIRST)) == push.Placed(True, RESERVED)
+
+
+def test_sweep_relinks_a_record_that_landed_after_an_earlier_run_gave_up(world: World) -> None:
+    # 前の回は待ちの秒を越えて諦め(リンクは張っていない)、その後に便L9がmainに入った。この回の作業木はL9の後のmain。
+    world.commit_plan(recorded_plan(world.plan().read_text()), "前の回の直し(L9)")
+    world.configure(live=[{"id": "L9", "status": "landed"}])
+    assert record_sweep.sweep_once(world.sweep("2026-11-02 09:00")) == 0
+    assert land_verbs(world.calls()) == ["list"]
+    assert URL + FIRST in world.zenn_article(SECOND)
+
+
+def test_sweep_after_the_relink_never_pushes_other_main_edits(world: World) -> None:
+    # 直しとリンクの張り直しの後、2本目の本文の直しがmainに入っても、次の回は送らない(リンクは揃っている)。
+    assert record_sweep.sweep_once(world.sweep("2026-11-02 08:10", opens_first)) == 0
+    article = world.work / record_sweep.TOOLS / "doeff-agents.md"
+    article.write_text(article.read_text() + "\n追記。\n")
+    world.commit_plan(world.plan().read_text(), "2本目の本文の直し")
+    tip = world.zenn_tip()
+    assert record_sweep.sweep_once(world.sweep("2026-11-03 08:10")) == 0
+    assert world.zenn_tip() == tip
 
 
 def test_sweep_without_a_record_never_pushes_other_main_edits(world: World) -> None:

@@ -160,7 +160,7 @@ uv run --no-sync python publications/zenn-use-cases-v0/push_zenn_branch.py --dry
 | pushの資格 | 呼んだ人のgitの資格で`origin`へpushする。agoraの会話では`GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=agora-lease GIT_CONFIG_KEY_1=credential.useHttpPath GIT_CONFIG_VALUE_1=true`を付けて走らせる |
 
 4. その1本の公開の許可が出たら、公開順の表の公開状態に刻と許可を「公開予定 <刻> JST 許可 <依頼書のid>」で書く。表をmainに入れて手順3の命令を走らせると、branchの`articles/<slug>.md`が`published: true`と`published_at`の組になり、Zennが刻に公開する。
-5. 刻の後に`record_published.py`を走らせる。刻を過ぎた回のZennのURLが開けることを確かめ、公開順の表の公開状態を「公開済み <URL> <刻>」へ直す。表をmainに入れてから手順3の命令を走らせると、他の回の本文のその回へのリンクが、ZennのURLへのリンクになる。この手順は、agoraの担当の道具の組の同期のjobが、毎日8:10 JSTと起動の時に`record_sweep.py`で人の手なしに行う。刻を過ぎて開ける回を直し、表だけのcommitをマージの列に載せ、mainに入ったら`push_zenn_branch.py --keep-schedule`でリンクを張り直す(予約も公開もしない。直す回の無い日は送らない)。8:10の直しは、agoraの見回りのjob(プログラムのreconcile)の段「閲覧の数」が9時にmainの表を読む前にmainに入る。訳は[決定記録](../../docs/design/decisions/2026-10-22-zenn-record-sweep.md)。
+5. 刻の後に`record_published.py`を走らせる。刻を過ぎた回のZennのURLが開けることを確かめ、公開順の表の公開状態を「公開済み <URL> <刻>」へ直す。表をmainに入れてから手順3の命令を走らせると、他の回の本文のその回へのリンクが、ZennのURLへのリンクになる。この手順は、agoraの担当の道具の組の同期のjobが、毎日8:10 JSTと起動の時に`record_sweep.py`で人の手なしに行う。刻を過ぎて開ける回を直し、表だけのcommitをマージの列に載せ、mainに入ったら`push_zenn_branch.py --keep-schedule`でリンクを張り直す(予約も公開もしない。公開済みの回へのリンクが記事のbranchに揃っている日は送らない)。8:10の直しは、agoraの見回りのjob(プログラムのreconcile)の段「閲覧の数」が9時にmainの表を読む前にmainに入る。訳は[決定記録](../../docs/design/decisions/2026-10-22-zenn-record-sweep.md)。
 
 ```bash
 uv run --no-sync python publications/zenn-use-cases-v0/record_published.py --dry-run  # 刻を過ぎた回と、Zennで開けるかを表示し、表を書かない。
