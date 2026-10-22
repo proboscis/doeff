@@ -17,6 +17,7 @@
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff [run with-handlers])
+(import doeff_core_effects.handlers [state])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
 (import doeff_events [MemoryBroker])
@@ -25,7 +26,7 @@
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
-(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
 
 (setv T (ClusterTiming))
 ;; 検の coordinator は k8s を持たない — 本番の手元の coordinator と同じく、Deployment と Node の見張りは k8s の無い理由を伝える
@@ -196,7 +197,7 @@
    無い(NO-KUBE)。"
   (fn [program] ((sim-time-handler :clock script.clock)
                  ((scripted-requests script) (request-bodies (durable-states (reply-bodies (with-handlers (memory-notices (MemoryBroker))
-                                                                                                           ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches)) program)))))))))
+                                                                                                           (with-handlers [(state) (kube-unavailable NO-KUBE)] program)))))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V}))
@@ -373,7 +374,7 @@
   (<- (durable-load store))
   (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}}))
                         (! (req "PUT" "/board/k" {"value" 1}))]))
-  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (with-handlers (memory-notices (MemoryBroker)) ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches)) (run-coordinator (ClusterState) T (ClusterNaming))))))))))
+  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (with-handlers (memory-notices (MemoryBroker)) (with-handlers [(state) (kube-unavailable NO-KUBE)] (run-coordinator (ClusterState) T (ClusterNaming))))))))))
   (setv back (! (state-from-kv (! (durable-load (WalStore d))) 99999)))
   (assert (= (! (durable-kv back)) (! (durable-kv final))))
   (assert (= (. back revision) (. final revision)))

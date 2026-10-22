@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (val MODULE-TAGS {:context "coordinator" :role "main"})
 (import copy)
-(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.handlers [await-handler slog-handler state])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
@@ -48,9 +48,10 @@
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube #^ list notices]
   "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。notices = 知らせの組
    (redis-notices か memory-notices — composition root が起動の引数で選ぶ・既定なし)。slog-handler = 調停ループの 1 行の
-   報告(k8s の読みが答えない時の名指し — #2807)を stderr へ出す。"
-  [slog-handler (await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies
-   durable-states reply-bodies #* notices])
+   報告(k8s の読みが答えない時の名指し — #2807)を stderr へ出す。state = kube の見張りの受け渡しの箱と見張っている相手を持つ session
+   の置き場(kube-api・kube-unavailable の session val / session var)。"
+  [slog-handler (await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults (state) kube
+   request-bodies durable-states reply-bodies #* notices])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------

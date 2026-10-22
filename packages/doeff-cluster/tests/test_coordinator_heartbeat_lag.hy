@@ -14,6 +14,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [run with-handlers])
+(import doeff_core_effects.handlers [state])
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [Delay SimClock sim-time-handler])
@@ -25,7 +26,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
 
 (val VERSIONS {"python" "3.14.0" "doeff" "1"})
 ;; 検の coordinator は k8s を持たない(本番の手元の coordinator と同じ答え手 — 調停ループは毎歩 Deployment と Node の見張りを揃える・
@@ -90,7 +91,7 @@
   (run (scheduled ((sim-time-handler :clock (SimClock))
                     ((one-heartbeat inbox)
                       (request-bodies (reply-bodies (with-handlers (memory-notices (MemoryBroker))
-                                                      ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                                                      (with-handlers [(state) (kube-unavailable NO-KUBE)]
                                                         (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming))))))))))
   inbox.lags)
 
