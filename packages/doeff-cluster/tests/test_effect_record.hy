@@ -33,7 +33,7 @@
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
 (import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY WatchedRef recorded-args])
 (import pathlib)
-(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report deliver-recorded
+(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog open-log effect-recorder ReplayState effect-replayer replay-report deliver-recorded
                                                   stall-divergence])
 
 
@@ -139,7 +139,7 @@
   (val clock (! (clock-at 1000000)))
   (val box [])
   (val store {})
-  (val log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (run (clock-ms clock)))))
+  (<- log EffectLog (open-log sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (run (clock-ms clock)))))
   (val program (with_handlers [(sim-time-handler :clock clock) (reader {"box" box}) #* (board-handlers store) (effect-recorder log)]
                               (system-program)))
   #(sink.lines program store))
@@ -568,10 +568,10 @@
   rows)
 
 (deftest test-a-declared-read-is-recorded-and-replayed
-  ;; ReadShared は登録表の行を持たず宣言だけで記録され、再生は記録の答えを返して違い 0。記録は本番の書き手(EffectLog と置き場)の
+  ;; ReadShared は登録表の行を持たず宣言だけで記録され、再生は記録の答えを返して違い 0。記録は本番の書き手(open-log が組む EffectLog と置き場)の
   ;; 行の形のまま(区切りの _chunk・問いと答えの行・大きな答えの内容参照 $ref と blob の行)。
   (val sink (MemorySink))
-  (val log (EffectLog sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
+  (<- log EffectLog (open-log sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
   (<- rows dict (with-handlers-list [(sim-time-handler :clock (! (clock-at 1000000))) #* (board-handlers {}) (effect-recorder log)]
                                     (read-after-writes)))
   (assert (= (len rows) 12) rows)
@@ -607,11 +607,74 @@
   ;; (入れ子も FrozenMap)を返して違い 0。記録を読む側(read-recording・effect-replayer)は書いた側と同じ版の codec で読む。
   ;; 失敗ケース(直す前の形): 答えの符号化が UnencodableValue で落ち、strict の記録係が業務へ投げて赤。
   (val sink (MemorySink))
-  (val log (EffectLog sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
+  (<- log EffectLog (open-log sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
   (<- rows list (with-handlers-list [frozen-rows (effect-recorder log)] (frozen-row-reads)))
-  (assert (is log.broken None) log.broken)
+  (assert (is log.cursor.broken None) log.cursor.broken)
   (val state (ReplayState (! (read-recording sink.lines))))
   (<- replayed list (with-handlers-list [(effect-replayer state)] (frozen-row-reads)))
   (assert (= replayed rows) #(replayed rows))
   (assert (all (gfor row replayed (and (isinstance row FrozenMap) (isinstance (get row "row") FrozenMap)))) (lfor row replayed (type row)))
   (assert (get (! (replay-report state "program-returned")) "identical")))
+
+
+;; --- 記録の係の値(EffectLog)と組み立て(open-log)---------------------------------------------------
+
+(deftest test-open-log-writes-the-run-header-first-with-the-clock-it-was-given
+  ;; 組み立て(open-log)が run の頭の行を置き場に書く — 時刻は渡した時計の読みで、壁時計には触れない。欄は header のとおり。
+  ;; (以前は class EffectLog の __init__ が書いた。値の EffectLog は組んだだけでは何も書かず、書くのは open-log。)
+  (import doeff_cluster.foundation.record_codec [FORMAT-VERSION])
+  (val sink (MemorySink))
+  (<- log EffectLog (open-log sink {"service" "s" "run" "r1" "worker" "w"} :wall-ms (fn [] 4242)))
+  (assert (= log.started 4242) log.started)
+  (assert (= (len sink.lines) 1) sink.lines)
+  (val head (get sink.lines 0))
+  (assert (= (.get head "k") "run") head)
+  (assert (= (.get head "startedMs") 4242) head)
+  (assert (= (.get head "format") FORMAT-VERSION) head)
+  (assert (and (= (.get head "service") "s") (= (.get head "run") "r1") (= (.get head "worker") "w")) head)
+  (assert (and (= log.cursor.chunk 0) (is log.cursor.broken None)) log.cursor))
+
+
+(deftest test-the-log-value-is-immutable-and-its-changes-live-in-the-cursor
+  ;; EffectLog は不変の値(欄を書き換えられない)。書き換わる物は cursor と入れ物の中身だけ — 出来事の番号は進み、区切りは書いた区切り。
+  (val sink (MemorySink))
+  (<- log EffectLog (open-log sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
+  (var refused False)
+  (try (setv log.strict False)
+       (except [dataclasses.FrozenInstanceError] (:= refused True)))
+  (assert refused "EffectLog の欄は書き換えられない")
+  (<- rows list (with-handlers-list [frozen-rows (effect-recorder log)] (frozen-row-reads)))
+  (assert (= (len rows) 2) rows)
+  (assert (= (next log.numbers) 4) "run の行は番号を使わない・問いと答えの 2 組で 0〜3 を使った")
+  (assert (= log.cursor.chunk 0) log.cursor))
+
+
+;; 登録も宣言も無い effect に、記録係の外側で答える(記録係が記録できずに素通しにした後でも業務は進む)。
+(defhandler undeclared-probes
+  (UndeclaredProbe [key]
+    (resume (+ "answer:" key))))
+
+(defk reads-around-an-unrecordable-probe []
+  {:pre [] :post [(: % list)]}
+  ;; 記録できる読み → 記録できない問い → 記録できる読み。
+  (<- before FrozenMap (FrozenRowRead "row/a"))
+  (<- probed str (UndeclaredProbe "k"))
+  (<- after FrozenMap (FrozenRowRead "row/b"))
+  [before probed after])
+
+(deftest test-a-non-strict-recorder-stops-at-an-unrecordable-effect-and-lets-the-program-go-on
+  ;; strict でない記録係(本番の形)は、記録できない effect に当たると業務へ投げず、broken の行を 1 行置いて以後を素通しにする。
+  ;; 業務は最後まで進み、止めた後の読み("row/b")は記録しない。
+  (val sink (MemorySink))
+  (<- log EffectLog (open-log sink {"service" "s" "run" "r1"} :strict False :wall-ms (fn [] 0)))
+  (<- result list (with-handlers-list [frozen-rows undeclared-probes (effect-recorder log)] (reads-around-an-unrecordable-probe)))
+  (assert (= (get result 1) "answer:k") result)
+  (assert (= (get (get result 2) "key") "row/b") result)
+  (assert (is-not log.cursor.broken None) "記録を止めた訳が残る")
+  (assert (in (type-name UndeclaredProbe) log.cursor.broken) log.cursor.broken)
+  (val broken (lfor l sink.lines :if (= (.get l "k") "broken") l))
+  (assert (= (len broken) 1) sink.lines)
+  (assert (= (get (get broken 0) "why") log.cursor.broken) broken)
+  (val asked (lfor l sink.lines :if (in (.get l "k") #("req" "call")) l))
+  (assert (= (len asked) 1) asked)
+  (assert (= (get (get asked 0) "ty") (type-name FrozenRowRead)) asked))
