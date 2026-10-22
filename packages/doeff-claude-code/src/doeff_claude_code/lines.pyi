@@ -14,6 +14,8 @@ from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import FrozenJson as FrozenJson
 from doeff_hy.frozen import freeze_json as freeze_json
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
+from doeff_hy.json_lines import jsonl_lines as jsonl_lines
+from doeff_hy.json_lines import whole_lines_end as whole_lines_end
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
 
 @dataclass(frozen=True)
@@ -444,13 +446,6 @@ def usage_of(usage: dict) -> Usage:
     ...
 
 def parse_record(line: str) -> dict | None:
-    ...
-JSONL_LINE_END: str
-
-def jsonl_lines(text: str) -> _Program[tuple, object]:
-    ...
-
-def whole_lines_end(data: bytes) -> _Program[int, object]:
     ...
 
 def content_blocks(record: dict) -> tuple:

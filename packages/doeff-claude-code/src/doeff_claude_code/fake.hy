@@ -26,7 +26,8 @@
                                  ModelWindow ModelUsage model-cost-gap merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
                                  HookNotice HookPhase SubagentTranscript SUBAGENT-TASK-TYPE
-                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed jsonl-lines])
+                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed])
+(import doeff_hy.json_lines [jsonl-lines])
 (import doeff [run])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents

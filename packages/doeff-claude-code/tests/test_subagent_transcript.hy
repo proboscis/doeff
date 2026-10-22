@@ -15,7 +15,8 @@
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult TurnResult
-                                 classify-record jsonl-lines recorded-cost subagent-transcript-of whole-lines-end])
+                                 classify-record recorded-cost subagent-transcript-of])
+(import doeff_hy.json_lines [jsonl-lines whole-lines-end])
 (import doeff_claude_code.effects [ClaudeStartTurn])
 (import doeff_claude_code.faults [ClaudeDropProcess])
 (import doeff_claude_code.clock [clock-of])

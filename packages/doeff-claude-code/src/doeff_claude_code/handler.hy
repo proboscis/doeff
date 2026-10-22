@@ -66,8 +66,8 @@
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
                                  TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
-                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of whole-lines-end call-step CostMark
-                                 FRESH-MARK])
+                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
+(import doeff_hy.json_lines [whole-lines-end])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed

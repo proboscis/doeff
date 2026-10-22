@@ -3,8 +3,8 @@
 ;;; 分類(classify-record)は純関数: stream-json の 1 行(JSON の object)→ ClaudeLineKind。語彙の外の行は捨てずに
 ;;; Other { type, subtype } へ名前だけ持つ(発明しない)。1 行の逐語は ClaudeStreamLine.raw に残る。
 ;;;
-;;; JSON の境界はこの file の 1 か所(JSON Lines を行に割る jsonl-lines・parse-record と classify-*、transcript の額の行を読む
-;;; recorded-cost)。状態機械(dialogue.hy)も
+;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost — JSON Lines を行に割るのは
+;;; doeff_hy.json_lines の jsonl-lines)。状態機械(dialogue.hy)も
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val <-])
 (require doeff-hy.record [defenum defrecord])
@@ -15,6 +15,7 @@
 (import math)
 (import doeff [run])
 (import doeff_hy.frozen [FrozenMap FrozenJson freeze-json frozen-json-object])
+(import doeff_hy.json_lines [jsonl-lines whole-lines-end])
 (import doeff_claude_code.values [ClaudeTurn])
 
 
@@ -810,25 +811,6 @@
     (setv value (json.loads stripped))
     (except [ValueError] (return None)))
   (if (isinstance value dict) value None))
-
-;; JSON Lines の行の終わり(card ki-3d45f5857239 — 割るのはこの 1 字だけ)。
-(val JSONL-LINE-END "\n")
-
-(defk jsonl-lines [#^ str text]
-  {:pre [(: text str)] :post [(: % tuple)] :tags {:context "claude-code" :role "foundation"}}
-  "CLI が書く JSON Lines(会話と subagent の transcript・stream-json の stdout)の本文を行の列にする唯一の所(transcript を読む上の層も
-   これで割る)。割るのは改行(JSONL-LINE-END)だけ: str.splitlines は JSON の文字列の中に生の
-   まま書かれた U+2028・U+2029(JSON は escape を求めない — web の本文に在る)や \\x1c〜\\x1e・\\x85・\\v・\\f でも割り、正しい
-   JSON の行を読めない 2 行にする(実測: 本番の subagent の transcript agent-a20aa06… の U+2028 4 つで、読みが UNREADABLE になった)。
-   空白だけの行は落とす。最後の改行の後の切れ端も 1 行として答える(書き切ったかは読み手が見る — whole-lines-end)。"
-  (tuple (gfor line (.split text JSONL-LINE-END) :if (.strip line) line)))
-
-(defk whole-lines-end [#^ bytes data]
-  {:pre [(: data bytes)] :post [(: % int)] :tags {:context "claude-code" :role "foundation"}}
-  "書き足されている JSON Lines の byte のうち、改行で閉じた行の終わり(最後の JSONL-LINE-END の次の byte の位置 — 無ければ 0)を
-   知るため。読み手はここまでを読み終えた所とし、後ろの切れ端(書きの途中の行)は次の読みで頭から読む。UTF-8 の多 byte の字は
-   0x0A を含まないので、byte で探して字の途中を切らない。"
-  (+ (.rfind data (.encode JSONL-LINE-END "utf-8")) 1))
 
 (defn #^ tuple content-blocks [#^ dict record]
   (setv content (.get (object-at record "message") "content"))
