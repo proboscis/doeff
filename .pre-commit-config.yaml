@@ -65,6 +65,9 @@ repos:
         exclude: '\.(py|hy|hyp|hyk)$'
         pass_filenames: true
 
+      # 素の commit の hook(scripts/git-hooks/pre-commit — agora の担当の Pod が入れる物)もこの項を id doeff-linter で撃つ。項の id を
+      # 替える便は素の hook の呼びも直す(tests/test_lint_entrypoint_wiring.py の
+      # test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config が赤にする・card ki-c6f026ac047e)。
       - id: doeff-linter
         name: doeff-linter(Python・基点に無い error だけ止める)
         entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check doeff-linter
