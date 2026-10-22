@@ -23,11 +23,12 @@
 (import doeff_core_effects.file_effects [ListDirectory WriteText RemoveTree])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Gather])
-(import doeff_time [SimClock sim-time-handler GetMonotonic])
+(import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key repo-source-material key-material runtime-env->json runtime-env-of-json])
-(import doeff_cluster.worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster.worker.core.env_upkeep [PrepareLimits prepare-overdue])
+(import doeff_cluster.worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted MaterializeTree] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
@@ -1145,3 +1146,49 @@
   (<- world EnvWorld (base-world))
   (<- shadow RuntimeEnv (env-of "app-shadow" "lib-1" (+ LOCK "vendor-shadow==1.0 top=app\n")))
   (<- (expect-failure world shadow EnvFailureKind.ENV-INCOMPATIBLE False)))
+
+
+(defclass StallMarks []
+  "slow-trees の記録: stamps = 進みの印(StageStarted)を出した刻(GetMonotonic の秒・出した順)。"
+  (defn #^ None __init__ [self]
+    (setv #^ (get tuple #(str ...)) self.names #())
+    (setv #^ (get tuple #(float ...)) self.stamps #())
+    None))
+
+
+(defhandler slow-trees [#^ StallMarks marks #^ float seconds]
+  ;; 引数に残す理由: 検ごとに別の記録と秒を持つ。木 1 本の展開に seconds かかる世界の代役: 木を置く前に眠り、進みの印を出した刻を記録して通す。
+  (MaterializeTree [mirror commit dest source]
+    (<- (Delay seconds))
+    (<- placed effect)
+    (resume placed))
+  (StageStarted [name]
+    (<- now float (GetMonotonic))
+    (setv marks.names (+ marks.names #(name)))
+    (setv marks.stamps (+ marks.stamps #(now)))
+    (<- effect)
+    (resume None)))
+
+
+(deftest test-three-slow-trees-are-never-stalled-when-each-one-is-within-the-window
+  ;; 条 c54593ac6: repo 3 本の tree が 1 本 400 秒(合計 1200 秒 > stall-seconds 600)かかっても、印は repo ごとに触り直されるので、
+  ;; 印と印の間は 1 本ぶんの 400 秒で、停滞の期限(prepare-overdue)に当たらない。repo ごとの印を外すと tree の頭の 1 回だけになり、
+  ;; 次の印(lock の頭)まで 1200 秒空いて赤になる。
+  (<- world EnvWorld (base-world))
+  (<- tools WorldCommit (lib-commit "tools-1" ""))
+  (val tools-commit (replace tools :files #((WorldFile :path "src/tool/__init__.py" :text "Z = 3\n"))))
+  (val marks (StallMarks))
+  (val limits (PrepareLimits))
+  (<- handlers list (env-world (replace world :remotes (+ world.remotes #((WorldRemote :url "file:///remotes/tools.git"
+                                                                                       :commits #(tools-commit)))))))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock))
+                         (with-handlers (+ handlers [(slow-trees marks 400.0)]) (three-repos-scenario)))))
+  (assert ok)
+  (val tree-at (.index marks.names "tree"))
+  (val after-tree (cut marks.stamps tree-at None))
+  (assert (> (- (get marks.stamps (+ (.index marks.names "lock") 0)) (get marks.stamps tree-at)) limits.stall-seconds)
+          "tree の処理ステージ全体は stall-seconds を越える")
+  (for [#(before after) (zip marks.stamps (cut marks.stamps 1 None))]
+    (<- overdue bool (prepare-overdue before after limits))
+    (assert (not overdue) (.format "印の間が {} 秒空いた" (- after before))))
+  (assert after-tree))
