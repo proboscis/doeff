@@ -17,12 +17,13 @@
 ;;; thread の背景の heartbeat も一緒に止まった。待つ間も本体は他の task を回す)。置き場は offloaded-tree-handler と同じ。
 ;;; 2026-10-18 に file 1 つと木の写しの効果(ReadBytes・WriteBytes・AppendText・CopyFile・CopyTree・WalkTree・LinkFile・MakeSymlink・
 ;;; ReadDiskUsage)も受けるようにした(card ki-24ee30105583 — agora の turn-host が scheduler の thread で会話の記録を読み・写し、待ち行列の
-;;; 浅い詰まった disk の上で全部の手番が止まった)。受けないのは、錠の取り(offloaded-lock-handler — 取り消しの後の錠を返す後始末が要る)・
+;;; 浅い詰まった disk の上で全部の手番が止まった)。追記の log の書き手の AppendBytes・TruncateFile・SyncDirectory も同じく受ける。受けないのは、錠の取り(offloaded-lock-handler — 取り消しの後の錠を返す後始末が要る)・
 ;;; 錠の返し(disk を待たない)・木の数えと消しと様子つきの歩き(offloaded-tree-handler — IO 優先度を下げる)・bytecode の作り(自分の
 ;;; process の組で回す)。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import ctypes)
+(import errno)
 (import fcntl)
 (import collections.abc [Callable])
 (import os)
@@ -31,9 +32,11 @@
 (import stat)
 (import sys)
 (import tempfile)
+(import time)
 (import pathlib [Path])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage StatPath ReadText ReadBytes WriteText
-                                         WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree
+(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage Appended StatPath ReadText ReadBytes
+                                         WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory
+                                         WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 (import doeff_core_effects.python_bytecode [compile-python-sources])
@@ -256,6 +259,58 @@
   (os.fsync (.fileno handle)))
 
 
+(defn #^ float _timed-sync [handle sync]  ; defk にできない: 書きの with の中から呼ぶ手続き(Program を返すと実行されない)
+  "handle の中身を flush し、sync なら fsync して、その秒を返す(sync でなければ 0.0)。"
+  (.flush handle)
+  (if sync
+      (do (setv started (time.monotonic))
+          (os.fsync (.fileno handle))
+          (- (time.monotonic) started))
+      0.0))
+
+
+(defk append-bytes [path content sync]
+  {:pre [(: path str) (: content bytes) (: sync bool)] :post [(: % (| Appended FileFailed))]}
+  "file の末尾に bytes を足すため(無ければ作る・sync = 足した後に fsync して、その秒を答えに載せる)。"
+  (try
+    (with [out (open path "ab")]
+      (.write out content)
+      (val seconds (_timed-sync out sync))
+      (Appended :size (.tell out) :synced-seconds seconds))
+    (except [error OSError]
+      (<- answer FileFailed (failed path error))
+      answer)))
+
+
+(defk truncate-file [path size sync]
+  {:pre [(: path str) (: size int) (: sync bool)] :post [(: % (| FileFailed None))]}
+  "在る file を size byte に切り詰めるため(今の大きさより大きい size は延ばさず Invalid argument で断る・sync = 切り詰めた後に fsync)。"
+  (try
+    (with [handle (open path "r+b")]
+      (when (or (< size 0) (> size (. (os.fstat (.fileno handle)) st-size)))
+        (raise (OSError errno.EINVAL (os.strerror errno.EINVAL) path)))
+      (.truncate handle size)
+      (_timed-sync handle sync))
+    None
+    (except [error OSError]
+      (<- answer FileFailed (failed path error))
+      answer)))
+
+
+(defk sync-directory [path]
+  {:pre [(: path str)] :post [(: % (| FileFailed None))]}
+  "dir の変更(中の file の作成・改名)を disk へ落とすため(dir を開いて fsync — dir でない path は Not a directory で断る)。"
+  (try
+    (val fd (os.open path (| os.O-RDONLY os.O-DIRECTORY)))
+    (try
+      (os.fsync fd)
+      (finally (os.close fd)))
+    None
+    (except [error OSError]
+      (<- answer FileFailed (failed path error))
+      answer)))
+
+
 (defn _append [path text sync]  ; defk にできない: guarded に渡す callback
   (with [handle (open path "a" :encoding "utf-8")]
     (.write handle text)
@@ -338,6 +393,15 @@
     (resume answer))
   (AppendText [path text sync]
     (<- answer (guarded path (fn [] (_append path text sync))))
+    (resume answer))
+  (AppendBytes [path content sync]
+    (<- answer (append-bytes path content sync))
+    (resume answer))
+  (TruncateFile [path size sync]
+    (<- answer (truncate-file path size sync))
+    (resume answer))
+  (SyncDirectory [path]
+    (<- answer (sync-directory path))
     (resume answer))
   (MakeDirectory [path mode]
     (<- answer (make-directory path mode))
@@ -453,6 +517,15 @@
     (resume answer))
   (AppendText [path text sync]
     (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded path (fn [] (_append path text sync))))) keep-nothing))
+    (resume answer))
+  (AppendBytes [path content sync]
+    (<- answer (| Appended FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (append-bytes path content sync))) keep-nothing))
+    (resume answer))
+  (TruncateFile [path size sync]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (truncate-file path size sync))) keep-nothing))
+    (resume answer))
+  (SyncDirectory [path]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (sync-directory path))) keep-nothing))
     (resume answer))
   (CopyFile [source target]
     (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded source (fn [] (shutil.copyfile source target)))))

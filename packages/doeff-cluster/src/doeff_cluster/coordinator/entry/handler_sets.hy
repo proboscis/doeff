@@ -2,7 +2,7 @@
 ;;; "such environmental changes are to be all done via handler swapping")。調停ループの Program(coordinator.run-coordinator)は
 ;;; 環境を知らない。
 ;;;
-;;;   production-handlers  本番: HTTP の受付(RequestInbox — 別 thread の HTTP server)・追記の log の置き場(WalStore — file と fsync)・
+;;;   production-handlers  本番: HTTP の受付(RequestInbox — 別 thread の HTTP server)・追記の log の置き場(WalStore の帳簿 + file の effect に答える os-file-handler)・
 ;;;                        k8s の API(ServiceAccount の token が在る時)・doeff-time の async-time-handler。
 ;;;   emulated-handlers    手元のまねた環境(業務の側の模擬環境): 要求は process の中の列(RequestQueue — 模擬の
 ;;;                        worker・client が並べ、返事は promise で受ける)・置き場は memory(MemoryWalStore — 再起動の模擬は同じ
@@ -11,12 +11,14 @@
 ;;;                        持たない。
 ;;;
 ;;; 組は with_handlers に渡す list(外側が先)。選ぶのは composition root(coordinator.main・業務の側の模擬環境)だけ。
+;;; 追記の log の置き場の file の読み書きは file の effect(protocol/wal_files.hy)なので、本番の組は wal-store の外側に os-file-handler を並べる(#2943)。
 ;;; 本番の受付の handler は shared/protocol/inbox.hy(箱は foundation/coordinator_inbox.hy・CoordinatorFault は coordinator/protocol/faults.hy — coordinator.hy から分けた — この module と coordinator.hy の循環を作らない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (val MODULE-TAGS {:context "coordinator" :role "main"})
 (import copy)
 (import doeff_core_effects.handlers [await-handler slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
@@ -50,7 +52,7 @@
    (redis-notices か memory-notices — composition root が起動の引数で選ぶ・既定なし)。slog-handler = 調停ループの 1 行の
    報告(k8s の読みが答えない時の名指し — #2807)を stderr へ出す。state = kube の見張りの受け渡しの箱と見張っている相手を持つ session
    の置き場(kube-api・kube-unavailable の session val / session var)。"
-  [slog-handler (await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults (state) kube
+  [slog-handler (await-handler) (async-time-handler) os-file-handler (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults (state) kube
    request-bodies durable-states reply-bodies #* notices])
 
 

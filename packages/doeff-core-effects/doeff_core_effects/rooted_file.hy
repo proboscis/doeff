@@ -15,17 +15,18 @@
 (import posixpath)
 (import dataclasses [replace])
 (import doeff [EffectBase])
-(import doeff_core_effects.file_effects [FileFailed PathStat LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText
+(import doeff_core_effects.file_effects [FileFailed PathStat LockHeld Appended StatPath ReadText ReadBytes WriteText WriteBytes AppendText
+                                         AppendBytes TruncateFile SyncDirectory
                                          MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 
 ;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
-(val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree RemoveTree
-                    AcquireLock ReadDiskFree ReadDiskUsage MeasureTree))
+(val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory
+                    ListDirectory WalkTree StatTree RemoveTree AcquireLock ReadDiskFree ReadDiskUsage MeasureTree))
 (val MOVE-EFFECTS #(CopyFile LinkFile CopyTree RenamePath))
-;; file の effect の答えの型の和(失敗・様子・錠・総量と空き・中身・一覧・空きと大きさの byte・答えの無い書き)。
-(val ANSWER (| FileFailed PathStat LockHeld DiskUsage str bytes tuple int None))
+;; file の effect の答えの型の和(失敗・様子・錠・総量と空き・追記の結果・中身・一覧・空きと大きさの byte・答えの無い書き)。
+(val ANSWER (| FileFailed PathStat LockHeld DiskUsage Appended str bytes tuple int None))
 
 
 (defk outer-path [root path]

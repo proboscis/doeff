@@ -12,6 +12,13 @@
 ;;;                  空の bytes)・limit は offset から先の limit byte だけを読む(None = 終わりまで — 大きな file の頭の 1 行だけが要る読み手のため)
 ;;;   WriteText / WriteBytes  file を書く。replace = True は別名に書いてから置き換える(書きかけを読ませない)。mode は書いた後に与える。答え = None
 ;;;   AppendText     file の末尾に足す(無ければ作る)。答え = None
+;;;   AppendBytes    file の末尾に bytes を足す(無ければ作る)。sync = True は足した後に fsync してから答える。答え = Appended(足した後の file の
+;;;                  大きさ byte と、sync に掛かった秒 — sync = False は 0.0。追記の log の書き手が、次のまとめ直しの判断と fsync の遅さの測りに使う)
+;;;   TruncateFile   在る file を size byte に切り詰める(size は今の大きさ以下)。sync = True は切り詰めた後に fsync する。答え = None。
+;;;                  最後の読めない 1 行を捨てる log の読み直しのため(file を作り直さず、前の部分をそのまま残す)
+;;;   SyncDirectory  dir の変更(中の file の作成・改名)を disk へ落とす(dir を開いて fsync)。答え = None。WriteBytes の置き換え(replace = True・
+;;;                  sync = True)は中身を落としてから置き換えるだけで、置き換えた名が機体の停止の後も残るかは dir を落とした後に決まる —
+;;;                  置き換えの後に別の書きを進めてよい書き手(snapshot を置いてから log を空にする置き場)がこの後に撃つ
 ;;;   (書きの 3 つの sync = True は、答える前に中身を disk へ落とす(fsync — replace では置き換える前)。返事を済ませた中身が機体の停止で
 ;;;    消えては困る書き手のため。memory の置き場には落とす先が無いので、答えは sync に依らない)
 ;;;   MakeDirectory  dir を親ごと作る(在ってもよい)。mode は新しく作った最後の dir に与える。答え = None
@@ -99,6 +106,13 @@
   (#^ int token))
 
 
+(defrecord Appended
+  "AppendBytes の答え。size = 足した後の file の大きさ(byte)・synced-seconds = fsync に掛かった秒(sync = False は 0.0 — memory の置き場には
+   落とす先が無いので常に 0.0)。"
+  (#^ int size)
+  (#^ float synced-seconds))
+
+
 (defclass [(dataclass :frozen True)] StatPath [(get EffectBase (| PathStat FileFailed))]
   "path の様子(頭の註)。follow-symlinks = False は symlink を辿らない(壊れた先の symlink も kind SYMLINK)。"
   (#^ str path)
@@ -143,6 +157,25 @@
   (#^ str path)
   (#^ str text)
   (setv #^ bool sync False))
+
+
+(defclass [(dataclass :frozen True)] AppendBytes [(get EffectBase (| Appended FileFailed))]
+  "bytes を末尾に足す(頭の註)。"
+  (#^ str path)
+  (#^ bytes content)
+  (setv #^ bool sync False))
+
+
+(defclass [(dataclass :frozen True)] TruncateFile [(get EffectBase (| FileFailed None))]
+  "在る file を size byte に切り詰める(頭の註)。size は 0 以上で、今の大きさ以下。"
+  (#^ str path)
+  (#^ int size)
+  (setv #^ bool sync False))
+
+
+(defclass [(dataclass :frozen True)] SyncDirectory [(get EffectBase (| FileFailed None))]
+  "dir の変更を disk へ落とす(頭の註)。"
+  (#^ str path))
 
 
 (defclass [(dataclass :frozen True)] MakeDirectory [(get EffectBase (| FileFailed None))]
