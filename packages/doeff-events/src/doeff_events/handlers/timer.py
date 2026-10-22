@@ -58,7 +58,7 @@ from doeff_events.effects import (
 
 # The value the handler completes the task's wake promise with: WaitWithin answers None only when its deadline passes.
 _WOKEN = True
-# A program's wait fires the deadlines strictly behind the clock (``_fire_overdue``): one at the clock's very instant is
+# A program's wait fires the deadlines strictly behind the clock (``fire_overdue``): one at the clock's very instant is
 # left to the task, as the virtual clock leaves it.
 _JUST_BEFORE = timedelta(microseconds=1)
 
@@ -97,33 +97,6 @@ def _due(armed: dict[Hashable, _Arming], reached: datetime) -> tuple[tuple[Hasha
     return tuple((tag, arming) for tag, arming in _in_order(armed) if arming.at <= reached)
 
 
-@do
-def _fire_due(armed: dict[Hashable, _Arming], reached: datetime):
-    """Take the armed deadlines that have come by ``reached`` out of ``armed`` and publish their ``TimerFired``, in
-    firing order."""
-    for tag, arming in _due(armed, reached):
-        # A deadline moved or disarmed while an earlier fire was being published is not fired.
-        if armed.get(tag) is arming:
-            del armed[tag]
-            yield Publish(TimerFired(tag))
-
-
-@do
-def _fire_overdue(armed: dict[Hashable, _Arming]):
-    """Fire the armed deadlines strictly behind the clock; answer whether any fired.
-
-    A program's WaitForEvent(s) does this while the task is parked in its wait: the task runs only when the scheduler
-    gets a turn, and a wait the subscriber queue answers at once never gives it one — a program kept busy by queued
-    events would never see its deadlines (card ki-7d2a9efa8320). Strictly behind: on the virtual clock the task is
-    woken at its deadline before the clock moves on, so nothing fires here and the virtual clock's order is unchanged.
-    """
-    now = yield GetTime()
-    if not any(arming.at < now for arming in armed.values()):
-        return False
-    _ = yield _fire_due(armed, now - _JUST_BEFORE)
-    return True
-
-
 def timer_handler() -> ProgramHandler:
     """Create a timer handler: ``ArmTimer`` / ``DisarmTimer`` change one queue, one task fires its deadlines."""
 
@@ -132,6 +105,32 @@ def timer_handler() -> ProgramHandler:
     armed: dict[Hashable, _Arming] = {}
     orders = count()
     task = _TaskState()
+
+    @do
+    def fire_due(reached: datetime):
+        """Take the armed deadlines that have come by ``reached`` out of the queue and publish their ``TimerFired``,
+        in firing order. The queue is the handler's own cache (a closure), not a caller's argument."""
+        for tag, arming in _due(armed, reached):
+            # A deadline moved or disarmed while an earlier fire was being published is not fired.
+            if armed.get(tag) is arming:
+                del armed[tag]
+                yield Publish(TimerFired(tag))
+
+    @do
+    def fire_overdue():
+        """Fire the armed deadlines strictly behind the clock; answer whether any fired.
+
+        A program's WaitForEvent(s) does this while the task is parked in its wait: the task runs only when the
+        scheduler gets a turn, and a wait the subscriber queue answers at once never gives it one — a program kept busy
+        by queued events would never see its deadlines (card ki-7d2a9efa8320). Strictly behind: on the virtual clock
+        the task is woken at its deadline before the clock moves on, so nothing fires here and the virtual clock's
+        order is unchanged.
+        """
+        now = yield GetTime()
+        if not any(arming.at < now for arming in armed.values()):
+            return False
+        _ = yield fire_due(now - _JUST_BEFORE)
+        return True
 
     @do
     def run_queue():
@@ -162,7 +161,7 @@ def timer_handler() -> ProgramHandler:
             # scheduler ran it after its deadline) fires the later ones that also passed in the same round. On the
             # virtual clock now is the deadline waited for.
             reached = yield GetTime()
-            _ = yield _fire_due(armed, max(target.at, reached))
+            _ = yield fire_due(max(target.at, reached))
 
     @do
     def queue_changed():
@@ -196,7 +195,7 @@ def timer_handler() -> ProgramHandler:
             isinstance(effect, WaitForEventEffect | WaitForEventsEffect)
             and task.waiting
             and armed
-            and (yield _fire_overdue(armed))
+            and (yield fire_overdue())
         ):
             # The wait itself is the event handler's (the Pass below); the overdue deadlines went into the subscriber's
             # queue first. The task waits for a deadline that has just fired: wake it to wait for the next one.
