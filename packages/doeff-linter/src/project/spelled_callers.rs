@@ -23,7 +23,9 @@ use std::thread::JoinHandle;
 use rayon::prelude::*;
 
 use super::bare_calls::{defk_names_in, defk_names_over, DefkNames};
-use super::facts_cache::Reach;
+use super::blob_spell::BlobSpell;
+use super::facts_cache::{BlobFacts, Reach};
+use super::git_index::{self, GitIndex};
 use super::names::module_of;
 use super::param_calls::{asked_callees, candidates_in, Candidate, PassedProgram, ProgramParamsLookup};
 use super::rule::ProjectRule;
@@ -70,20 +72,65 @@ struct Scan {
     mentions_defk: bool,
 }
 
+/// 作業木の git の index と、blob の id で引く覚えの置き場(card ki-d56ba76422ba)— 冷えた作業木で、別の作業木が読んだ file の中身を読み直さない。
+struct BlobScans {
+    index: GitIndex,
+    facts: BlobFacts,
+}
+
+impl BlobScans {
+    fn open(root: &Path) -> Option<BlobScans> {
+        Some(BlobScans { facts: BlobFacts::open(root, "blob-spell")?, index: GitIndex::read(root)? })
+    }
+}
+
+/// file 1 つの読み。index の行と stat が同じ file は blob の id で覚えを引き、どの呼び先の名も綴らないと分かれば中身を読まない。
+/// 引けない・綴るかもしれない file は読む(読んだ中身から index の id と同じ blob の id が作れる時は、覚えを置く)。
+fn scan_file(root: &Path, blobs: Option<&BlobScans>, needles: &[Needle], path: &Path, read: &AtomicUsize) -> Scan {
+    let trusted = blobs.and_then(|blobs| {
+        let meta = std::fs::metadata(path).ok()?;
+        let rel = super::paths::relative_path(root, path)?;
+        let oid = blobs.index.blob_of(&rel, &meta)?;
+        Some((blobs, oid, meta))
+    });
+    let mut remembered = false;
+    if let Some((blobs, oid, _)) = &trusted {
+        if let Some(spell) = blobs.facts.get::<BlobSpell>(&git_index::hex(oid)) {
+            if !needles.iter().any(|needle| spell.may_spell(&needle.spelling)) {
+                return Scan { source: None, mentions_defk: spell.defk };
+            }
+            remembered = true;
+        }
+    }
+    read.fetch_add(1, Ordering::Relaxed);
+    match std::fs::read_to_string(path) {
+        Ok(source) => {
+            let mentions_defk = source.contains("(defk");
+            let spelled = needles.iter().any(|needle| needle.spelling.in_source(&source));
+            if let (Some((blobs, oid, meta)), false) = (&trusted, remembered) {
+                // 読んでいる間に file が変わっていない事と、中身が index の blob と同じ事(clean の filter や改行の変換が在れば違う)を確かめてから置く。
+                let unchanged = std::fs::metadata(path).is_ok_and(|now| now.len() == meta.len() && now.modified().ok() == meta.modified().ok());
+                if unchanged && git_index::blob_id(source.as_bytes()) == *oid {
+                    blobs.facts.put(&git_index::hex(oid), &BlobSpell::of(&source));
+                }
+            }
+            Scan { source: spelled.then_some(source), mentions_defk }
+        }
+        Err(_) => Scan::default(),
+    }
+}
+
 /// repo の tree を歩きながら file の中身を読む(dir を開く待ちと file を読む待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。
-/// 字面が合った file の中身だけ持つ。
+/// 字面が合った file の中身だけ持つ。別の作業木が読んだ中身は、git の blob の id で覚えを引いて読まない(`scan_file`)。
 fn read_scans(root: &Path, callees: &[String]) -> Vec<(String, PathBuf, Scan)> {
     let needles: Vec<Needle> = callees.iter().map(|callee| Needle::of(callee)).collect();
-    crate::timing::timed("program-params.scan", || {
-        hy_files::collect_reading(root, |path| match std::fs::read_to_string(path) {
-            Ok(source) => {
-                let mentions_defk = source.contains("(defk");
-                let spelled = needles.iter().any(|needle| needle.spelling.in_source(&source));
-                Scan { source: spelled.then_some(source), mentions_defk }
-            }
-            Err(_) => Scan::default(),
-        })
-    })
+    let blobs = BlobScans::open(root);
+    let read = AtomicUsize::new(0);
+    let scans = crate::timing::timed("program-params.scan", || {
+        hy_files::collect_reading(root, |path| scan_file(root, blobs.as_ref(), &needles, path, &read))
+    });
+    crate::timing::count("program-params.scan", "read", read.load(Ordering::Relaxed));
+    scans
 }
 
 impl<'a> SpelledCallers<'a> {

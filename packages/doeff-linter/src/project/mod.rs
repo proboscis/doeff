@@ -8,10 +8,12 @@
 
 pub mod affected_tests;
 pub mod architecture;
+pub mod blob_spell;
 pub mod bulk_read;
 pub mod dir_stamp;
 pub mod explain;
 pub mod facts_cache;
+pub mod git_index;
 pub mod facts;
 pub mod deferred;
 pub mod hy_files;

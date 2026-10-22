@@ -345,6 +345,34 @@ where
     resolved.into_iter().map(|(value, _)| value).collect()
 }
 
+/// 中身が git の blob の id で決まる事実の置き場(card ki-d56ba76422ba)— 中身を読まずに、別の作業木が置いた事実を引く。
+/// 鍵は linter の印・種類・blob の id。事実は blob の中身だけで決まること(`rel` も根も読まない)を呼び手が保つ。置き場と上限の片づけは他の事実と同じ。
+pub struct BlobFacts {
+    place: Place,
+    identity: String,
+}
+
+impl BlobFacts {
+    /// `root` の `kind` の置き場を開く。cache を使わない時(`DOEFF_LINTER_NO_CACHE`・試験)は None。
+    pub fn open(root: &Path, kind: &str) -> Option<BlobFacts> {
+        Some(BlobFacts { place: place(root, kind, Format::Compact)?, identity: format!("{}/", identity(kind)) })
+    }
+
+    fn key(&self, blob: &str) -> ObjectKey {
+        object_key(&[self.identity.as_bytes(), b"blob", blob.as_bytes()])
+    }
+
+    /// blob の事実を読む(無い・壊れた物は None)。
+    pub fn get<T: DeserializeOwned>(&self, blob: &str) -> Option<T> {
+        read_object::<T>(&self.place.objects, &self.key(blob), Format::Compact)
+    }
+
+    /// blob の事実を置く。
+    pub fn put<T: Serialize>(&self, blob: &str, value: &T) {
+        note_object_bytes(write_object(&self.place.objects, &self.key(blob), value, Format::Compact, &self.place.guard));
+    }
+}
+
 /// 1 つの値を、呼び手が材料から作った鍵 `key` で覚える(file ごとではなく、repo 全体の事実から導いた値 — 例: effect の推論の不動点)。
 /// 置いた値の鍵が `key` と同じなら読み、違えば(無い・壊れた・linter が組み直された時も)`compute` で作って置く。答えは変えない —
 /// 鍵が材料を漏れなく覆うことは呼び手が保つ。値は根をまたいで分け合う(根の絶対 path を持たない値だけ)。形は binary(bincode)。
