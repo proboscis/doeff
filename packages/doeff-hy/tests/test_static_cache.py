@@ -611,8 +611,23 @@ def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "a.hy").write_text("", encoding="utf-8")
     (tmp_path / "pkg" / "sub.hy").mkdir()
-    assert static_check._file_names(tmp_path / "pkg") == {"a.hy"}
-    assert static_check._file_names(tmp_path / "missing") == frozenset()
+    listing = static_check._listing(tmp_path / "pkg")
+    assert listing.files == {"a.hy"} and listing.dirs == {"sub.hy"}
+    assert static_check._listing(tmp_path / "missing") == static_check._Listing(frozenset(), frozenset())
+    # 無い dir から先は引かない・package の下の <名>.hy と <名>/__init__.hy を見つける
+    (tmp_path / "pkg" / "inner").mkdir()
+    (tmp_path / "pkg" / "inner" / "__init__.hy").write_text("", encoding="utf-8")
+    asked: list[Path] = []
+
+    def listing_of(directory: Path) -> object:
+        asked.append(directory)
+        return static_check._listing(directory)
+
+    found = static_check._present_candidates((tmp_path,), "pkg.inner", listing_of)  # type: ignore[arg-type]
+    assert found == (tmp_path / "pkg" / "inner" / "__init__.hy",)
+    asked.clear()
+    assert static_check._present_candidates((tmp_path,), "nope.deeper.mod", listing_of) == ()  # type: ignore[arg-type]
+    assert asked == [tmp_path]
 
 
 def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None:
