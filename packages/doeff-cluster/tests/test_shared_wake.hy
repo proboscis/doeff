@@ -17,7 +17,7 @@
 (import time)
 (import typing [Callable])
 (import doeff [run with-handlers])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.handlers [await-handler state])
 (import doeff_core_effects.scheduler [ExternalPromise scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
@@ -28,7 +28,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
 (import doeff_time [SimClock sim-time-handler])
 (import datetime [timedelta])
 
@@ -235,7 +235,7 @@ run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_
   ;; 直す前は、印の間隔に届かないので 1 度も保存されず、起き直しが止まっていた長さを多く数える。
   (val script (QuietScript 3000))
   (<- _ ClusterState ((sim-time-handler :clock script.clock)
-                       ((quiet-script script) (request-bodies (durable-states (reply-bodies ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                       ((quiet-script script) (request-bodies (durable-states (reply-bodies (with-handlers [(state) (kube-unavailable NO-KUBE)]
                                                                                               (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming)))))))))
   (val marks (lfor d script.saved :if (in "counter" d) (get (get d "counter") "aliveMs")))
   (assert marks script.saved)

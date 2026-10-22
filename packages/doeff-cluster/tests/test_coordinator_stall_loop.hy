@@ -14,6 +14,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import datetime [datetime timezone])
 (import doeff [run with-handlers])
+(import doeff_core_effects.handlers [state])
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [Delay SimClock sim-time-handler])
@@ -25,7 +26,7 @@
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
 
 (val T (ClusterTiming))
 (val VERSIONS {"python" "3.14.0" "doeff" "1"})
@@ -85,7 +86,7 @@
   (run (scheduled ((sim-time-handler :clock (SimClock :current-time START))
                     ((scripted script)
                       (request-bodies (reply-bodies (with-handlers (memory-notices (MemoryBroker))
-                                                      ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                                                      (with-handlers [(state) (kube-unavailable NO-KUBE)]
                                                         (run-coordinator (ClusterState) T (ClusterNaming))))))))))
   script.stalls)
 

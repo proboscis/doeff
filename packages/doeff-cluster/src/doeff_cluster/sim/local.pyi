@@ -98,6 +98,8 @@ from doeff_cluster.coordinator.protocol.request_queue import nudge_takers as nud
 from doeff_cluster.coordinator.protocol.request_queue import await_answer as await_answer
 from doeff_cluster.shared.core.promise_wait import promise_or_timeout as promise_or_timeout
 from doeff_cluster.coordinator.protocol.kube import KubeMemory as KubeMemory
+from doeff_cluster.coordinator.protocol.kube import memory_relabel as memory_relabel
+from doeff_cluster.coordinator.protocol.kube import memory_settle as memory_settle
 from doeff_cluster.shared.protocol.declaration_requests import ServiceRead as ServiceRead
 from doeff_cluster.shared.protocol.declaration_requests import CONFLICT_REREADS as CONFLICT_REREADS
 from doeff_cluster.shared.protocol.declaration_requests import service_read as service_read
