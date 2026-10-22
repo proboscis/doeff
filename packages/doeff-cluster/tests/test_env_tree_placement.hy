@@ -338,6 +338,26 @@
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                      (materialized mirror v1 (/ tmp-path "root" "app") None)))
   (assert (= placed.how TREE-EXPAND) placed)
-  ;; 子が速く終わるので、読み直しの間(5 秒)に印を触る機会は無い — 触れるのは子が走っている間に量が増えた時だけ。ここでは触らずに終わる。
-  (assert (not (.exists progress)) "子が読み直しの前に終わる木は、印を触らない")
+  ;; 子が速く終わるので、読み直しの間(5 秒)に量が増えて触る機会は無い。それでも git archive の後・tar の展開の前の区切りで 1 回触る。
+  (assert (= (.read-text progress) "tree\n") "git archive の後・tar の前に印を触る")
+  None)
+
+
+(deftest test-a-copied-tree-touches-the-progress-mark-between-linking-and-placing [tmp-path]
+  (val repo (/ tmp-path "app-repo"))
+  (<- v1 str (commit-files repo {"a.py" "A = 1\n"}))
+  (val mirror (/ tmp-path "app.git"))
+  (<- (bare-mirror repo mirror))
+  (val progress (/ tmp-path "mark.progress"))
+  (val settings {"runtime-env.state" (str (/ tmp-path "state")) "runtime-env.shared" (str (/ tmp-path "state"))
+                 "runtime-env.uv-cache" (str (/ tmp-path "uv-cache")) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
+                 "runtime-env.uv" "uv" "runtime-env.progress" (str progress) "runtime-env.notes" "/dev/null"})
+  (val src (/ tmp-path "root-1" "app"))
+  (<- (place mirror v1 src None tmp-path))
+  ;; 同じ commit を写すと置き直す path が無く、git archive も tar も起きない — 触れるのは写した後・置く前の区切りだけ。
+  (<- placed TreePlaced
+      (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
+                     (materialized mirror v1 (/ tmp-path "root-2" "app") (TreeSource :dir (str src) :commit v1))))
+  (assert (= placed.how TREE-COPY) placed)
+  (assert (= (.read-text progress) "tree\n") "写しの link-unchanged の後・place-paths の前に印を触る")
   None)

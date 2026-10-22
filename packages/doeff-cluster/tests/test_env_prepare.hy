@@ -981,7 +981,7 @@
   ;; 失敗ケース(c): 焼く根を持つ repo の木 3 つを、bytecode の焼きの子 process 1 回で焼く — 木ごとに起こすと、木 1 つの終わりを待つ間
   ;; ほかの core が遊ぶ。木ごとの呼びに戻すと、模擬の数え(焼きの呼びの回数)が 3 になって赤。
   ;; 進みの印: 1 回の焼きの前と後に触り直す(#3515 — 頭の印だけでは、bytecode を 267.9 秒焼いている準備も worker から停滞に見えた)。
-  ;; = 頭の印 1 つ + 前と後の 2 つ。ほかの処理ステージは頭の印だけ。
+  ;; = 頭の印 1 つ + 前と後の 2 つ。tree は頭の印 1 つ + repo ごとの頭(3 つ)。ほかの処理ステージは頭の印だけ。
   (<- world EnvWorld (base-world))
   (<- tools WorldCommit (lib-commit "tools-1" ""))
   (val tools-commit (replace tools :files #((WorldFile :path "src/tool/__init__.py" :text "Z = 3\n"))))
@@ -990,7 +990,7 @@
                                                                                        :commits #(tools-commit)))))))
   (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (+ handlers [(seen-stages marks)]) (one-bake-scenario)))))
   (assert ok)
-  (assert (= marks.names #("disk" "mirror" "tree" "lock" "native" "sync" "wheels" "roots" "bytecode" "bytecode" "bytecode" "probe"))
+  (assert (= marks.names #("disk" "mirror" "tree" "tree" "tree" "tree" "lock" "native" "sync" "wheels" "roots" "bytecode" "bytecode" "bytecode" "probe"))
           marks.names))
 
 
