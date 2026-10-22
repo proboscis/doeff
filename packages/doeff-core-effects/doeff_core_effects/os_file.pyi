@@ -12,12 +12,16 @@ from doeff_core_effects.file_effects import DirEntry as DirEntry
 from doeff_core_effects.file_effects import EntryStat as EntryStat
 from doeff_core_effects.file_effects import LockHeld as LockHeld
 from doeff_core_effects.file_effects import DiskUsage as DiskUsage
+from doeff_core_effects.file_effects import Appended as Appended
 from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import WriteText as WriteText
 from doeff_core_effects.file_effects import WriteBytes as WriteBytes
 from doeff_core_effects.file_effects import AppendText as AppendText
+from doeff_core_effects.file_effects import AppendBytes as AppendBytes
+from doeff_core_effects.file_effects import TruncateFile as TruncateFile
+from doeff_core_effects.file_effects import SyncDirectory as SyncDirectory
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects.file_effects import ListDirectory as ListDirectory
 from doeff_core_effects.file_effects import WalkTree as WalkTree
@@ -92,6 +96,18 @@ def read_file(path: str, binary: bool, limit: int | None, offset: int) -> _Progr
     ...
 
 def _sync(handle: Incomplete) -> Incomplete:
+    ...
+
+def _timed_sync(handle: Incomplete, sync: Incomplete) -> float:
+    ...
+
+def append_bytes(path: str, content: bytes, sync: bool) -> _Program[Appended | FileFailed, object]:
+    ...
+
+def truncate_file(path: str, size: int, sync: bool) -> _Program[FileFailed | None, object]:
+    ...
+
+def sync_directory(path: str) -> _Program[FileFailed | None, object]:
     ...
 
 def _append(path: Incomplete, text: Incomplete, sync: Incomplete) -> Incomplete:

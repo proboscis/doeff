@@ -8,12 +8,16 @@ from doeff import EffectBase as EffectBase
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects.file_effects import LockHeld as LockHeld
+from doeff_core_effects.file_effects import Appended as Appended
 from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import WriteText as WriteText
 from doeff_core_effects.file_effects import WriteBytes as WriteBytes
 from doeff_core_effects.file_effects import AppendText as AppendText
+from doeff_core_effects.file_effects import AppendBytes as AppendBytes
+from doeff_core_effects.file_effects import TruncateFile as TruncateFile
+from doeff_core_effects.file_effects import SyncDirectory as SyncDirectory
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects.file_effects import ListDirectory as ListDirectory
 from doeff_core_effects.file_effects import WalkTree as WalkTree
@@ -33,7 +37,7 @@ from doeff_core_effects.file_effects import CompilePythonSources as CompilePytho
 from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
 PATH_EFFECTS: tuple[type, ...]
 MOVE_EFFECTS: tuple[type, ...]
-ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | DiskUsage | str | bytes | tuple | int | None
+ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | DiskUsage | Appended | str | bytes | tuple | int | None
 
 def outer_path(root: str, path: str) -> _Program[str, object]:
     ...

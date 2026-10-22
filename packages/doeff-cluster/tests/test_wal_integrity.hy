@@ -1,7 +1,8 @@
 ;;; WAL の整合(2026-09-25): 行と snapshot の checksum・壊れた末尾の扱い。
 ;;; 捨ててよいのは「最後の 1 行が読めない」時だけ(fsync の途中で落ちた = 返事をしていないまとまり)。途中の破損・checksum の不一致・
 ;;; seq の飛びは WalCorrupted で起動を断る(黙って切り詰めると、返事を済ませた書きが巻き戻った状態で起動する)。
-;;; 行と写しの形は coordinator/protocol/wal_format.hy、file の I/O は foundation/wal_store.hy の WalStore、両方を組むのは
+;;; 行と写しの形は coordinator/protocol/wal_format.hy、帳簿は foundation/wal_store.hy の WalStore、file の読み書きは file の effect
+;;; (coordinator/protocol/wal_files.hy — 本物の file system の答え手は検の足場 tests/wal_rig.hy)、全部を組むのは
 ;;; coordinator/protocol/store.hy の置き場の口(durable-load・durable-persist・durable-checkpoint — #2785)。
 (require doeff-hy.macros [deftest defk <- val])
 (import json)
@@ -11,13 +12,14 @@
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.wal_format [WalCorrupted GoodLine DroppedTail LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
+(import tests.wal_rig [on-wal-files])
 
 
 (defk fresh [tmp-path]
   {:pre [(: tmp-path Path)] :post [(: % WalStore)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "空の dir に読み直し済みの置き場を作る — 検が書きから始めるため。"
   (val store (WalStore (str tmp-path) :max-log-bytes 10000000))
-  (<- (durable-load store))
+  (<- (on-wal-files (durable-load store)))
   store)
 
 
@@ -36,7 +38,7 @@
 
 (deftest test-every-line-carries-a-checksum-that-is-checked [tmp-path]
   (<- store WalStore (fresh tmp-path))
-  (<- (durable-persist store {"board/a" {"value" "日本語" "resourceVersion" 1}}))
+  (<- (on-wal-files (durable-persist store {"board/a" {"value" "日本語" "resourceVersion" 1}})))
   (<- line bytes (log-bytes tmp-path))
   (val record (json.loads line))
   (assert (= (sorted record) ["crc" "delta" "seq"]))
@@ -48,13 +50,14 @@
 (deftest test-a-flipped-byte-in-the-last-line-is-dropped-and-the-log-truncated [tmp-path]
   ;; 最後の行が改行まで書けていても、中身が化けていれば(fsync の途中で落ちた page)捨てる。返事をしていないまとまり。
   (<- store WalStore (fresh tmp-path))
-  (<- (durable-persist store {"k/1" 1}))
-  (<- (durable-persist store {"k/2" 2}))
+  (<- (on-wal-files (durable-persist store {"k/1" 1})))
+  (<- (on-wal-files (durable-persist store {"k/2" 2})))
   (<- data bytes (log-bytes tmp-path))
   (val first-len (+ (.index data b"\n") 1))
   (<- (write-log tmp-path (+ (cut data 0 first-len) (.replace (cut data first-len None) b"\"k/2\":2" b"\"k/2\":3"))))
   (val again (WalStore (str tmp-path)))
-  (assert (= (! (durable-load again)) {"k/1" 1}))
+  (<- loaded dict (on-wal-files (durable-load again)))
+  (assert (= loaded {"k/1" 1}))
   (assert (= again.seq 1))
   (assert (= (len (! (log-bytes tmp-path))) first-len))
   (assert (is-not again.recovered None) "壊れた行を捨てて読み直した記録がある")
@@ -63,12 +66,12 @@
 
 (deftest test-a-broken-line-in-the-middle-refuses-to-start-and-changes-nothing [tmp-path]
   (<- store WalStore (fresh tmp-path))
-  (for [i (range 3)] (<- (durable-persist store {(+ "k/" (str i)) i})))
+  (for [i (range 3)] (<- (on-wal-files (durable-persist store {(+ "k/" (str i)) i}))))
   (<- data bytes (log-bytes tmp-path))
   (val broken (.replace data b"\"k/1\":1" b"\"k/1\":9"))
   (<- (write-log tmp-path broken))
   (with [raised (pytest.raises WalCorrupted)]
-    (<- (durable-load (WalStore (str tmp-path)))))
+    (<- (on-wal-files (durable-load (WalStore (str tmp-path))))))
   (assert (in "2 行目" (str raised.value)))
   ;; 何も書き換えない(人が調べられるように)
   (assert (= (! (log-bytes tmp-path)) broken)))
@@ -77,7 +80,7 @@
 (deftest test-a-gap-in-seq-refuses-to-start [tmp-path]
   (<- (write-log tmp-path (+ (! (encode-line 1 {"a" 1})) (! (encode-line 3 {"b" 2})) (! (encode-line 4 {"c" 3})))))
   (with [raised (pytest.raises WalCorrupted)]
-    (<- (durable-load (WalStore (str tmp-path)))))
+    (<- (on-wal-files (durable-load (WalStore (str tmp-path))))))
   (assert (in "続きでない" (str raised.value))))
 
 
@@ -85,7 +88,7 @@
   (val old (.encode (+ (json.dumps {"seq" 2 "delta" {"b" 2}}) "\n") "utf-8"))
   (<- (write-log tmp-path (+ (! (encode-line 1 {"a" 1})) old (! (encode-line 3 {"c" 3})))))
   (with [(pytest.raises WalCorrupted)]
-    (<- (durable-load (WalStore (str tmp-path))))))
+    (<- (on-wal-files (durable-load (WalStore (str tmp-path)))))))
 
 
 (deftest test-a-log-written-before-checksums-still-loads [tmp-path]
@@ -93,19 +96,21 @@
   (.write-text (/ tmp-path "snapshot.json") (json.dumps {"seq" 1 "kv" {"a" 1}}) :encoding "utf-8")
   (<- (write-log tmp-path (.encode (+ (json.dumps {"seq" 2 "delta" {"b" 2}}) "\n") "utf-8")))
   (val store (WalStore (str tmp-path)))
-  (assert (= (! (durable-load store)) {"a" 1 "b" 2}))
-  (<- (durable-persist store {"c" 3}))
-  (assert (= (! (durable-load (WalStore (str tmp-path)))) {"a" 1 "b" 2 "c" 3})))
+  (<- loaded dict (on-wal-files (durable-load store)))
+  (assert (= loaded {"a" 1 "b" 2}))
+  (<- (on-wal-files (durable-persist store {"c" 3})))
+  (<- reloaded dict (on-wal-files (durable-load (WalStore (str tmp-path)))))
+  (assert (= reloaded {"a" 1 "b" 2 "c" 3})))
 
 
 (deftest test-a-snapshot-with-a-bad-checksum-refuses-to-start [tmp-path]
   (<- store WalStore (fresh tmp-path))
-  (<- (durable-persist store {"a" 1}))
-  (<- (durable-checkpoint store))
+  (<- (on-wal-files (durable-persist store {"a" 1})))
+  (<- (on-wal-files (durable-checkpoint store)))
   (val snap (/ tmp-path "snapshot.json"))
   (.write-bytes snap (.replace (.read-bytes snap) b"\"a\":1" b"\"a\":2"))
   (with [raised (pytest.raises WalCorrupted)]
-    (<- (durable-load (WalStore (str tmp-path)))))
+    (<- (on-wal-files (durable-load (WalStore (str tmp-path))))))
   (assert (in "checksum" (str raised.value))))
 
 

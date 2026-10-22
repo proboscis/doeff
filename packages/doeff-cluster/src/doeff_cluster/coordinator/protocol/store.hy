@@ -1,7 +1,8 @@
 ;;; coordinator の保存の effect に答える handler。
 ;;;   durable-states = SaveState(調停の前後の状態)を KV の差分(durable_kv の durable-delta)に綴り、変化があれば Persist を出す(#2446)。
 ;;;   wal-store      = Persist を耐久の置き場(foundation/wal_store の WalStore・memory の MemoryWalStore — 層 protocol は foundation を
-;;;                    読めないので、置き場は下の DurableStore の形で受け、組み立ては entry が持つ)へ書く。
+;;;                    読めないので、置き場は下の DurableStore の形で受け、組み立ては entry が持つ)へ書く。file の置き場の file の読み書きは
+;;;                    file の effect(wal_files.hy — #2943)なので、本番の組は wal-store の外側に file の答え手(os-file-handler)を置く。
 ;;;   memory-store   = まとまりごとの差分(キー → 新しい値)を list に積むテストの置き場。
 ;;; Persist は KV の書きの組を耐久の置き場へ書く手前の effect(答え手 = wal-store・模擬の宿 — sim/local の coordinator の handler・テストの台本)。
 ;;; 書きは doeff-hy の表の書き TableWrite(key = キー・value = 新しい値・消えたキーは None — #2722)。層 protocol と foundation の両方が読める
@@ -10,7 +11,6 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [dataclass])
-(import pathlib [Path])
 (import abc [ABC])
 (import types [NotImplementedType])
 (import doeff [EffectBase])
@@ -18,6 +18,8 @@
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
 (import doeff_cluster.coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log writes-of])
+(import doeff_cluster.coordinator.protocol.wal_files [wal-append-line wal-check-place wal-drop-tail wal-exists wal-read-log-lines wal-read-snapshot
+                                                      wal-write-snapshot])
 
 
 (defclass [(dataclass :frozen True)] Persist [EffectBase]
@@ -29,7 +31,8 @@
 
 ;; --- 置き場の 2 つの形と、それを切り分けて読み書きする口(#2785)------------------------------------------------
 ;; 置き場は 2 つの形のどちらか(閉じた和 DurableStore):
-;;   ByteLog    = file の置き場(foundation/wal_store の WalStore)— byte の I/O だけを持ち、行と写しの形(wal_format)はこの口が綴り・検める。
+;;   ByteLog    = file の置き場の帳簿(foundation/wal_store の WalStore)— dir と path・表と番号・捨てた行と fsync の記録だけを持ち、file の
+;;                読み書きは持たない。行と写しの形(wal_format)と file の effect(wal_files)はこの口が出す。
 ;;   DeltaStore = memory の置き場(entry の MemoryWalStore と、それを継いだ模擬の壊れた置き場)— file を持たないので形を綴らず、
 ;;                差分と表をそのまま受け渡す。
 ;; 層 protocol は foundation も entry も読めず、foundation も protocol を読めないので、名前のある共通の基底は置けない。形は method の名で
@@ -46,24 +49,21 @@
 
 
 (defclass ByteLog [MethodShape]
-  "file の置き場の形(foundation/wal_store の WalStore)— 読み書きの口が写しと log の byte を受け渡す相手。"
+  "file の置き場の帳簿の形(foundation/wal_store の WalStore)— 読み書きの口が dir と path・表と番号・捨てた行と fsync の記録を受け渡す相手。"
+  (#^ str directory)
   (#^ int seq)
   (#^ int max-log-bytes)
-  (#^ Path snapshot)
-  (#^ Path log)
-  (setv METHODS #("exists" "check_place" "read_snapshot_bytes" "read_log_lines" "drop_tail" "append_line" "write_snapshot"
-                  "table" "replace_table" "recovery"))
+  (#^ bool sync)
+  (#^ str snapshot)
+  (#^ str log)
+  (setv METHODS #("table" "replace_table" "recovery" "note_recovered" "note_fsync" "fsync_stats"))
   ;; 表と読み直しの記録は欄に持たず method で受け渡す(写像を欄に持たない — DOEFF172)。
   (defn #^ (get dict #(str object)) table [self] (raise NotImplementedError))
   (defn #^ None replace-table [self #^ (get dict #(str object)) kv] (raise NotImplementedError))
   (defn #^ (| (get dict #(str (| int str))) None) recovery [self] (raise NotImplementedError))
-  (defn #^ bool exists [self] (raise NotImplementedError))
-  (defn #^ None check-place [self] (raise NotImplementedError))
-  (defn #^ (| bytes None) read-snapshot-bytes [self] (raise NotImplementedError))
-  (defn #^ (get list bytes) read-log-lines [self] (raise NotImplementedError))
-  (defn #^ None drop-tail [self #^ int kept #^ int size #^ str reason] (raise NotImplementedError))
-  (defn #^ int append-line [self #^ bytes line] (raise NotImplementedError))
-  (defn #^ None write-snapshot [self #^ bytes data] (raise NotImplementedError)))
+  (defn #^ None note-recovered [self #^ int kept #^ int size #^ str reason] (raise NotImplementedError))
+  (defn #^ None note-fsync [self #^ float seconds] (raise NotImplementedError))
+  (defn #^ dict fsync-stats [self] (raise NotImplementedError)))
 
 
 (defclass DeltaStore [MethodShape]
@@ -89,7 +89,10 @@
   ;; linter の判定の側では小さく直せないので warning のまま置く(#2671): Path.exists も store.exists も引数 0 で、引数の数では分けられない。
   ;; 受け手の型(:pre の DurableStore = ByteLog と DeltaStore の和)で分けるには file をまたいで型を解く仕組みが要り、証拠を見る範囲を
   ;; 定義の中に絞ると、名に Path を書かずに受け取った値の .exists を見逃す側に倒れる。
-  (.exists store))
+  (match store
+    (ByteLog) (do (<- found bool (wal-exists store))
+                  found)
+    (DeltaStore) (.exists store)))
 
 
 (defk durable-load [store]
@@ -98,17 +101,18 @@
    file の置き場は写し → log の行を検めて当て、読めない最後の 1 行だけを捨てて切り詰める。途中の破損は WalCorrupted で何も書き換えない。"
   (match store
     (ByteLog)
-      (do (.check-place store)
-          (val snapshot (.read-snapshot-bytes store))
+      (do (<- (wal-check-place store))
+          (<- snapshot (| bytes None) (wal-read-snapshot store))
           ;; 写しが無ければ空の表・番号 0 から当てる。
           (val base (if (is snapshot None)
                         (SnapshotRead :seq 0 :rows #())
-                        (! (read-snapshot snapshot (str store.snapshot)))))
+                        (! (read-snapshot snapshot store.snapshot))))
           ;; 写しの書きを表に組み、log の行をその表の上へその場で当てる。
           (val table (dfor row base.rows row.key row.value))
-          (<- scan LogScan (scan-log (.read-log-lines store) base.seq table (str store.log)))
+          (<- lines (get list bytes) (wal-read-log-lines store))
+          (<- scan LogScan (scan-log lines base.seq table store.log))
           (match scan.dropped
-            (DroppedTail :kept kept :size size :reason reason) (.drop-tail store kept size reason)
+            (DroppedTail :kept kept :size size :reason reason) (<- (wal-drop-tail store kept size reason))
             None None)
           (.replace-table store table)
           (setv store.seq scan.seq)
@@ -125,7 +129,7 @@
       (when delta
         (setv store.seq (+ store.seq 1))
         (<- line bytes (encode-line store.seq delta))
-        (val size (.append-line store line))
+        (<- size int (wal-append-line store line))
         (<- writes (get tuple #((get TableWrite object) ...)) (writes-of delta))
         (<- (apply-delta (.table store) writes))
         (when (> size store.max-log-bytes)
@@ -141,7 +145,7 @@
   (match store
     (ByteLog)
       (do (<- data bytes (encode-snapshot store.seq (.table store)))
-          (.write-snapshot store data))
+          (<- (wal-write-snapshot store data)))
     (DeltaStore) (.checkpoint store))
   None)
 

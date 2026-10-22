@@ -1,6 +1,7 @@
 ;;; coordinator の耐久の置き場(追記の log wal.jsonl + まとめ直した写し snapshot.json)の行と写しの形 — 綴り・検め・読み直しの当て方
 ;;; (#2785・#2680 の (イ))。I/O を持たない: byte を受けて読み、byte を綴って返すだけ。file の I/O は
-;;; foundation/wal_store.hy の WalStore(追記と fsync・rename・切り詰め)で、両方を組むのは coordinator/protocol/store.hy の置き場の口。
+;;; file の effect(coordinator/protocol/wal_files.hy — 追記と fsync・rename・切り詰め)で、帳簿は foundation/wal_store.hy の WalStore、全部を組むのは
+;;; coordinator/protocol/store.hy の置き場の口。
 ;;;
 ;;; 形(2026-09-25・docs/decision-2026-09-25-coordinator-review-fixes.md の「WAL」):
 ;;; - 行 = {"crc", "delta", "seq"}。crc = {"delta", "seq"} を正規化した JSON(鍵を並べ替え・区切りの空白なし・utf-8)の crc32(16 進 8 桁)。
