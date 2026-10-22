@@ -1,5 +1,5 @@
 ;;; coordinator の kube_model の effect に答える handler。kube-api = Pod の中から k8s の API へ(foundation/kube_client の
-;;; KubeClient — 層 protocol は foundation を読めないので、client は下の KubeCalls の形で受け、組み立ては entry が持つ)・
+;;; KubeClient の 4 つの口 — 層 protocol は foundation を読めないので、client は下の KubeCalls の形で受け、組み立ては entry が持つ)・
 ;;; kube-memory = テストの dict・kube-unavailable = 資格の無い所(手元の coordinator)で全部 KubeUnavailable を返す。
 ;;; 見張りが伝えた物(Deployment の観測・Node の label)を k8s の JSON から型の値へ解くのはこの module の 1 点(deployment-reading・
 ;;; node-labels-table — #2728)。本物と検の答え手が同じ解きを通り、core は型の値だけを受ける。
@@ -79,18 +79,14 @@
 
 
 (defclass KubeCalls [Protocol]
-  "kube-api が呼ぶ k8s の client の形(foundation/kube_client の KubeClient がこの形を持つ)。届かない時は KubeUnavailable を投げる。"
-  ;; Deployment 1 つを list の後の watch で見張る daemon の thread を始める(#3868)。on-body = Deployment の object・on-error = 届かない・
+  "kube-api が呼ぶ k8s の client の形(foundation/kube_client の KubeClient の 4 つの欄がこの形を持つ — 欄は関数)。届かない時は KubeUnavailable を投げる。"
+  ;; follow = Deployment 1 つを list の後の watch で見張る daemon の thread を始める(#3868)。on-body = Deployment の object・on-error = 届かない・
   ;; 断られた・消された理由(どちらも見張りの thread から呼ぶ)。答え = 見張りを止める関数。
-  (defn #^ (get Callable #([] None)) follow [self #^ str namespace #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
-                                             #^ (get Callable #([str] None)) on-error]
-    (raise NotImplementedError))
-  ;; Node 1 つを同じ形で見張る(#4070)。on-body = Node の object(中を読まずに運ぶ — label の読みは node-labels-view の 1 点)。
-  (defn #^ (get Callable #([] None)) follow-node [self #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
-                                                  #^ (get Callable #([str] None)) on-error]
-    (raise NotImplementedError))
-  (defn #^ int scale [self #^ str namespace #^ str name #^ int replicas #^ bool dry-run] (raise NotImplementedError))
-  (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations] (raise NotImplementedError)))
+  (#^ (get Callable #([str str (get Callable #([OpaqueJson] None)) (get Callable #([str] None))] (get Callable #([] None)))) follow)
+  ;; follow-node = Node 1 つを同じ形で見張る(#4070)。on-body = Node の object(中を読まずに運ぶ — label の読みは node-labels-view の 1 点)。
+  (#^ (get Callable #([str (get Callable #([OpaqueJson] None)) (get Callable #([str] None))] (get Callable #([] None)))) follow-node)
+  (#^ (get Callable #([str str int bool] int)) scale)
+  (#^ (get Callable #([str str dict] None)) annotate))
 
 
 ;; --- 見張り(時間で読みに行かない — 頭の註・#3868・#4070)---------------------------------------------------------

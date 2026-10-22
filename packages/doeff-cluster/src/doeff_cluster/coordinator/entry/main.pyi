@@ -41,7 +41,8 @@ from doeff_cluster.coordinator.core.api_policy import resume_after_downtime as r
 from doeff_cluster.coordinator.core.resource_policy import adopt_legacy as adopt_legacy
 from doeff_cluster.coordinator.protocol.kube import kube_api as kube_api
 from doeff_cluster.coordinator.protocol.kube import kube_unavailable as kube_unavailable
-from doeff_cluster.foundation.kube_client import KubeClient as KubeClient
+from doeff_cluster.foundation.kube_client import kube_available as kube_available
+from doeff_cluster.foundation.kube_client import kube_client as kube_client
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox as RequestInbox
 from doeff_cluster.foundation.coordinator_inbox import StopState as StopState

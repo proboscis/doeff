@@ -44,18 +44,10 @@ def node_labels_table(labels: Mapping[str, object]) -> _Program[Table[str], obje
     ...
 
 class KubeCalls(Protocol):
-
-    def follow(self, namespace: str, name: str, on_body: Callable[[OpaqueJson], None], on_error: Callable[[str], None]) -> Callable[[], None]:
-        ...
-
-    def follow_node(self, name: str, on_body: Callable[[OpaqueJson], None], on_error: Callable[[str], None]) -> Callable[[], None]:
-        ...
-
-    def scale(self, namespace: str, name: str, replicas: int, dry_run: bool) -> int:
-        ...
-
-    def annotate(self, namespace: str, name: str, annotations: dict) -> None:
-        ...
+    follow: Callable[[str, str, Callable[[OpaqueJson], None], Callable[[str], None]], Callable[[], None]]
+    follow_node: Callable[[str, Callable[[OpaqueJson], None], Callable[[str], None]], Callable[[], None]]
+    scale: Callable[[str, str, int, bool], int]
+    annotate: Callable[[str, str, dict], None]
 
 @dataclass(frozen=True, kw_only=True)
 class Watching:
