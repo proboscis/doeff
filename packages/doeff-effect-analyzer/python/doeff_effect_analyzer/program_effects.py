@@ -677,9 +677,8 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
         for observer in tuple(_EXPANSION_OBSERVERS):
             observed.enter_context(observer())
         expanded = _expansion(source, filename, module_name, _hy_cache_dir())
-        if place is not None:
-            _write_cached_tree(place, expanded)
-    return _WholeTree(expanded.tree)
+        built = None if place is None else _build_and_write(place, expanded)
+    return _WholeTree(expanded.tree) if built is None else built
 
 
 # Who wants to know when an expansion missed the cache (the expansion and writing the
@@ -832,17 +831,44 @@ class _CachedTree:
     spans: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class _Derived:
+    """What ``_derived`` builds from an expanded tree: the index and the pickle of each chunk (the two parts
+    of an entry), and the definitions of each chunk as the nodes of the tree itself — what the process that
+    built them reads from (``_ChunkedTree.built``), instead of reading back what it wrote."""
+
+    index: _CachedTree
+    chunks: tuple[bytes, ...]
+    definitions: tuple[tuple[ast.AST, ...], ...]
+
+
 class _ChunkedTree:
     """A cached tree read one top-level definition at a time: ``find`` chooses the candidate
     from the index (as ``_find_function`` would) and builds only the chunk that holds it."""
 
-    def __init__(self, cached: _CachedTree, payload: bytes, whole: Callable[[], ast.Module]) -> None:
+    def __init__(
+        self,
+        cached: _CachedTree,
+        payload: bytes,
+        whole: Callable[[], ast.Module],
+        *,
+        loaded: Mapping[int, tuple[ast.AST, ...]] = types.MappingProxyType({}),
+        tree: ast.Module | None = None,
+    ) -> None:
         self._cached = cached
         self._payload = payload
         self._starts = tuple(itertools.accumulate(cached.spans, initial=0))
         self._whole = whole
-        self._loaded: dict[int, tuple[ast.AST, ...]] = {}
-        self._tree: ast.Module | None = None
+        self._loaded: dict[int, tuple[ast.AST, ...]] = dict(loaded)
+        self._tree: ast.Module | None = tree
+
+    @classmethod
+    def built(cls, derived: _Derived, tree: ast.Module) -> "_ChunkedTree":
+        """The tree of what this process has just built from ``tree``: every chunk is already in hand, as the
+        nodes of ``tree`` with their derived values in the per-process memos. Before, this process read the
+        module through ``_WholeTree`` and built a second definition index over the whole tree to find a def
+        (``_definitions_by_path``), beside the one it had just built for the entry."""
+        return cls(derived.index, b"", lambda: tree, loaded=dict(enumerate(derived.definitions)), tree=tree)
 
     def find(self, function: types.FunctionType) -> FunctionNode | None:
         """The def of ``function`` — the same one ``_find_function`` picks from the whole tree."""
@@ -929,40 +955,59 @@ def _read_cached_tree(path: Path, whole: Callable[[], ast.Module]) -> _ChunkedTr
     return _ChunkedTree(cached, payload, whole)
 
 
-def _derived(tree: ast.Module) -> tuple[_CachedTree, tuple[bytes, ...]]:  # noqa: DOEFF006 — 内部の小さな組の戻り
+def _members_of(definition: ast.AST) -> list[ast.AST]:
+    """The defs, classes and lambdas written directly in the body of a def, a lambda or a class (not
+    in another one nested in it), in the order ``_direct_definitions`` finds them. A def's body is listed
+    for the chunk anyway (``_body_nodes`` — what the reader walks), so they are taken from that list
+    and the body is not walked a second time."""
+    if isinstance(definition, ast.ClassDef):
+        return list(_direct_definitions(definition.body))
+    return [node for node in _body_nodes(definition) if isinstance(node, _SCOPE_NODES)]
+
+
+def _definitions_under(definition: ast.AST, path: tuple[str, ...]) -> list[tuple[ast.AST, tuple[str, ...]]]:
+    """``definition`` and every def, class and lambda nested in it, each with its name path, depth-first in the
+    order ``_definitions_by_path`` lists them (``path`` is the name path of the scope ``definition`` is written in)."""
+    name = "<lambda>" if isinstance(definition, ast.Lambda) else definition.name
+    here = (*path, name)
+    placed = [(definition, here)]
+    for inner in _members_of(definition):
+        placed.extend(_definitions_under(inner, here))
+    return placed
+
+
+def _derived(tree: ast.Module) -> _Derived:
     """The tree cut into its top-level definitions, each with its body nodes and body facts
     (a def the reader cannot read is left out and read on demand as before), and the index
     that names where each definition is. The index keeps ``_definitions_by_path``'s order,
-    so ties in ``find`` resolve as they do on the whole tree. Returns the index with the chunks'
-    pickles, which the entry holds after it."""
+    so ties in ``find`` resolve as they do on the whole tree.
+
+    The definitions of a chunk are found through the body nodes of its defs — the lists
+    that are kept for the chunk anyway — and not by walking the chunk again for them, and once more
+    for its defs (ki-56e063c79150: the changed modules of the screen job's closure took 17-19 s of 32 s
+    to build, and the walks were most of what was not the facts themselves). A lambda written in the
+    decorators or the defaults of a def is not one of the chunk's defs, and is read when followed,
+    as any def the reader finds elsewhere is."""
     from doeff_effect_analyzer import handler_effects  # the handler reader imports this module
 
     index: dict[tuple[str, ...], list[_Definition]] = {}
     chunks: list[bytes] = []
+    loaded: list[tuple[ast.AST, ...]] = []
     for number, root in enumerate(_direct_definitions(tree.body)):
-        definitions: list[ast.AST] = []
-
-        def walk(definition: ast.AST, path: tuple[str, ...]) -> None:
-            if not isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-                return
-            name = "<lambda>" if isinstance(definition, ast.Lambda) else definition.name
-            here = (*path, name)
+        placed = _definitions_under(root, ())
+        definitions = [definition for definition, _ in placed]
+        for position, (definition, here) in enumerate(placed):
+            is_class = isinstance(definition, ast.ClassDef)
             index.setdefault(here, []).append(
                 _Definition(
                     chunk=number,
-                    position=len(definitions),
-                    is_class=isinstance(definition, ast.ClassDef),
-                    lines=() if isinstance(definition, ast.ClassDef) else _definition_lines(definition),
-                    params=() if isinstance(definition, ast.ClassDef) else _definition_params(definition),
+                    position=position,
+                    is_class=is_class,
+                    lines=() if is_class else _definition_lines(definition),
+                    params=() if is_class else _definition_params(definition),
                 )
             )
-            definitions.append(definition)
-            members = [definition.body] if isinstance(definition, ast.Lambda) else definition.body
-            for inner in _direct_definitions(members):
-                walk(inner, here)
-
-        walk(root, ())
-        functions = [node for node in ast.walk(root) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+        functions = [node for node in definitions if isinstance(node, FunctionNode)]
         facts: list[tuple[FunctionNode, _BodyFacts]] = []
         for function in functions:
             try:
@@ -976,23 +1021,39 @@ def _derived(tree: ast.Module) -> tuple[_CachedTree, tuple[bytes, ...]]:  # noqa
             dispatch=handler_effects.read_dispatch(functions),
         )
         chunks.append(pickle.dumps(chunk, protocol=pickle.HIGHEST_PROTOCOL))
-    return _CachedTree(
-        index={path: tuple(entries) for path, entries in index.items()},
-        spans=tuple(len(chunk) for chunk in chunks),
-    ), tuple(chunks)
+        loaded.append(chunk.definitions)
+    return _Derived(
+        index=_CachedTree(
+            index={path: tuple(entries) for path, entries in index.items()},
+            spans=tuple(len(chunk) for chunk in chunks),
+        ),
+        chunks=tuple(chunks),
+        definitions=tuple(loaded),
+    )
 
 
-def _write_cached_tree(place: Path, expanded: _Expanded) -> None:
+def _build_and_write(place: Path, expanded: _Expanded) -> _ChunkedTree | None:
+    """Build what is derived from the expanded tree, write it as the entry of the macros the
+    expansion used in ``place``, and return the tree to read from in this process (None when what is
+    derived cannot be built — the whole tree is read, as before)."""
+    try:
+        derived = _derived(expanded.tree)
+    except (pickle.PicklingError, RecursionError):
+        return None
+    _write_cached_tree(place, expanded, derived)
+    return _ChunkedTree.built(derived, expanded.tree)
+
+
+def _write_cached_tree(place: Path, expanded: _Expanded, derived: _Derived) -> None:
     """Write the entry of the macros the expansion used in ``place`` — their record, the index, then
     the chunks — atomically; a cache that cannot be written only costs the next expansion."""
     try:
-        cached, chunks = _derived(expanded.tree)
         place.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(dir=place, suffix=".tmp")
         with os.fdopen(handle, "wb") as out:
             pickle.dump(expanded.macros, out, protocol=pickle.HIGHEST_PROTOCOL)
-            pickle.dump(cached, out, protocol=pickle.HIGHEST_PROTOCOL)
-            for chunk in chunks:
+            pickle.dump(derived.index, out, protocol=pickle.HIGHEST_PROTOCOL)
+            for chunk in derived.chunks:
                 out.write(chunk)
         os.replace(temporary, place / _entry_name(expanded.macros))
     except (OSError, pickle.PicklingError, RecursionError):
@@ -1904,23 +1965,50 @@ def _body_nodes(function: FunctionNode) -> tuple[ast.AST, ...]:
     cached = _BODY_NODES.get(id(function))
     if cached is not None and cached[0] is function:
         return cached[1]
-    nodes = tuple(_walk_body_nodes(function))
+    nodes = _walk_body_nodes(function)
     _BODY_NODES[id(function)] = (function, nodes)
     return nodes
 
 
-def _walk_body_nodes(function: FunctionNode) -> Iterator[ast.AST]:
+_SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+# The fields of each class of node, as ``ast.iter_fields`` reads them; kept per class so that a walk does not ask a
+# generator for each node (``_children_of``).
+_NODE_FIELDS: dict[type, tuple[str, ...]] = {}
+
+
+def _children_of(node: ast.AST) -> list[ast.AST]:
+    """The child nodes of ``node``, the ones ``ast.iter_child_nodes`` yields and in its order, read from the
+    fields of the node's class directly: the reader walks the nodes of every def of every module whose derived
+    values are built (ki-56e063c79150), and asking a generator for each node costs more than reading its fields."""
+    kind = type(node)
+    fields = _NODE_FIELDS.get(kind)
+    if fields is None:
+        fields = _NODE_FIELDS[kind] = tuple(kind._fields)
+    children: list[ast.AST] = []
+    for name in fields:
+        value = getattr(node, name, None)
+        if isinstance(value, ast.AST):
+            children.append(value)
+        elif isinstance(value, list):
+            children.extend(item for item in value if isinstance(item, ast.AST))
+    return children
+
+
+def _walk_body_nodes(function: FunctionNode) -> tuple[ast.AST, ...]:
     """Walk the body depth-first in source order (the order ``_body_nodes`` keeps)."""
     body: list[ast.AST] = (
         [function.body] if isinstance(function, ast.Lambda) else list(function.body)
     )
-    stack: list[ast.AST] = list(reversed(body))
+    listed: list[ast.AST] = []
+    stack: list[ast.AST] = body[::-1]
     while stack:
         node = stack.pop()
-        yield node
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        listed.append(node)
+        if isinstance(node, _SCOPE_NODES):
             continue
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+        stack.extend(reversed(_children_of(node)))
+    return tuple(listed)
 
 
 def _positional_params(function: FunctionNode) -> list[str]:
@@ -2010,6 +2098,29 @@ def _body_facts(function: FunctionNode) -> _BodyFacts:
     return facts
 
 
+# The classes of node the facts of a body are read from: what ``_bound_names``, ``_import_bindings``, ``_assignments``
+# and ``_unpacked_places`` find, and the loops and defs ``_read_body_facts`` takes by their class, are in nodes of
+# these classes and no others — and of a name, only one that is stored. Most nodes of a body (calls, attributes,
+# constants, names that are read) are none of them and are not asked at all — asking each one five questions was
+# two thirds of building the facts of a changed module (ki-56e063c79150). A test asks the helpers of the nodes of every
+# other class in real sources, so a rule added for another class cannot slip by.
+_BINDING_NODES = frozenset(
+    {
+        ast.Name,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Import,
+        ast.ImportFrom,
+        ast.Assign,
+        ast.NamedExpr,
+        ast.AnnAssign,
+        ast.For,
+        ast.AsyncFor,
+    }
+)
+
+
 def _read_body_facts(function: FunctionNode) -> _BodyFacts:
     """Walk the body once and collect what it binds (parameters, assignments, loops, defs)."""
     arguments = function.args
@@ -2022,9 +2133,14 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
     imports: dict[str, tuple[str, str | None]] = {}
     functions: dict[str, list[FunctionNode]] = {}
     loops: dict[str, list[ast.expr]] = {}
+    places: list[_Unpacked] = []
     for node in _body_nodes(function):
+        kind = type(node)
+        if kind not in _BINDING_NODES or (kind is ast.Name and not isinstance(node.ctx, ast.Store)):
+            continue
         names |= _bound_names(node)
         imports.update(_import_bindings(node))
+        places.extend(_unpacked_places(node))
         for assignment in _assignments(node):
             match assignment:
                 case _Assignment(target=ast.Name(id=name), value=value):
@@ -2066,7 +2182,6 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         for name, exprs in assigned.items()
         if len(exprs) > 1 and (seeds := _rewrapped_seeds(exprs, name))
     }
-    places = [place for node in _body_nodes(function) for place in _unpacked_places(node)]
     times = collections.Counter(place.name for place in places)
     # A name unpacked once and bound nowhere else holds that element.
     unpacked = {
@@ -3218,7 +3333,7 @@ def _direct_definitions(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             yield node
             continue
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+        stack.extend(reversed(_children_of(node)))
 
 
 # --------------------------------------------------------------------------- report

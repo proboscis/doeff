@@ -85,6 +85,7 @@ from doeff_effect_analyzer.program_effects import (
     _Bound,
     _bound_operand,
     _call_bindings,
+    _children_of,
     _do_decorator,
     _Facts,
     _function_of,
@@ -433,14 +434,25 @@ def _nested_functions(parent: FunctionNode) -> Iterator[FunctionNode]:
     Breadth-first from the body like ``ast.walk``, but stopping at every def / class / lambda,
     so each level reads its own body only — walking the whole subtree at every level read a
     node once per function enclosing it (agora-redesign #1586). Leaving out the other fields
-    (arguments, decorators) and the subtrees below does not reorder the nodes kept."""
+    (arguments, decorators) and the subtrees below does not reorder the nodes kept.
+
+    The defs and lambdas are the ones the body's node list holds (``_body_nodes`` — listed for the facts anyway, and
+    stopping at the same scopes), in that list's depth-first order. That is the breadth-first order when there is
+    at most one, or when each is a statement of the body itself; any other layout is walked breadth-first as above
+    (ki-56e063c79150: building what a changed module's entry holds, this walk was the largest part of the dispatch
+    reading)."""
+    listed = [node for node in _body_nodes(parent) if isinstance(node, FunctionNode)]
+    statements = () if isinstance(parent, ast.Lambda) else {id(statement) for statement in parent.body}
+    if len(listed) < 2 or all(id(node) in statements for node in listed):
+        yield from listed
+        return
     queue: deque[ast.AST] = deque([parent.body] if isinstance(parent, ast.Lambda) else parent.body)
     while queue:
         node = queue.popleft()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             yield node
         elif not isinstance(node, ast.ClassDef):
-            queue.extend(ast.iter_child_nodes(node))
+            queue.extend(_children_of(node))
 
 
 def _effect_param(node: FunctionNode) -> str | None:
@@ -448,21 +460,22 @@ def _effect_param(node: FunctionNode) -> str | None:
     positional = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args)]
     if len(positional) < 2:
         return None
-    for param in positional:
-        if any(_isinstance_target(test, param) is not None for test in _tests_in(node)):
-            return param
-        if any(
-            isinstance(child, ast.Match) and _is_name(child.subject, param)
-            for child in _body_nodes(node)
-        ):
-            return param
-    return None
-
-
-def _tests_in(node: FunctionNode) -> Iterator[ast.expr]:
+    # The tests of the body's ifs and the subjects of its matches are listed once and asked of each parameter in
+    # turn: a def takes many parameters and has a long body, and asking the body for each of them was most of the
+    # dispatch reading of a changed module (ki-56e063c79150).
+    tests: list[ast.expr] = []
+    subjects: list[ast.expr] = []
     for child in _body_nodes(node):
         if isinstance(child, (ast.If, ast.IfExp)):
-            yield child.test
+            tests.append(child.test)
+        elif isinstance(child, ast.Match):
+            subjects.append(child.subject)
+    for param in positional:
+        if any(_isinstance_target(test, param) is not None for test in tests):
+            return param
+        if any(_is_name(subject, param) for subject in subjects):
+            return param
+    return None
 
 
 def _is_name(expr: ast.expr, name: str | None) -> bool:

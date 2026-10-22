@@ -706,14 +706,17 @@ def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, mo
         finally:
             state["observing"] = False
 
-    real = pe._write_cached_tree
-    monkeypatch.setattr(pe, "_write_cached_tree", lambda path, tree: inside.append(state["observing"]) or real(path, tree))
+    real_derived, real_write = pe._derived, pe._write_cached_tree
+    monkeypatch.setattr(pe, "_derived", lambda tree: inside.append(state["observing"]) or real_derived(tree))
+    monkeypatch.setattr(
+        pe, "_write_cached_tree", lambda *args: inside.append(state["observing"]) or real_write(*args)
+    )
     stop = pe.observe_expansions(watching)
     try:
         pe._compile_hy(SOURCE, "/src/w.hy", "w")
     finally:
         stop()
-    assert inside == [True]
+    assert inside == [True, True]
 
 
 ChangeFile = Callable[..., None]
