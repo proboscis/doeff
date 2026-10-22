@@ -31,6 +31,7 @@ from doeff_records.values import (
     RowChanged,
     RowRemoved,
     Unreachable,
+    WatchCursor,
 )
 
 M = TypeVar("M")
@@ -59,6 +60,7 @@ class TypedPage(Generic[M]):
 class TypedWritten(Generic[M]):
     version: int
     value: M
+    position: WatchCursor | None = None
 
 @dataclass(frozen=True)
 class TypedConflict(Generic[M]):

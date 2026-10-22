@@ -520,7 +520,7 @@
   (setv decl (store.schema.table table))
   (when (and (isinstance decl.retention KeepFor) (terminal-row? decl value))
     (push-due store (+ now-ms (keep-ms decl.retention)) (RowDue :table table :text text :stored stored)))
-  (Written version value))
+  (Written version value (WatchCursor store.epoch store.head)))
 
 
 (defn #^ (| Row None) writable-row [#^ MemoryStore store #^ TableDecl decl #^ tuple key #^ int now-ms]

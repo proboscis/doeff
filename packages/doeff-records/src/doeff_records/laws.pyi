@@ -110,6 +110,9 @@ def require_law(holds: bool, law: str, detail: str) -> _Program[None, object]:
 def replay_of(again: Appended | Refused | Unreachable, first: Appended | Refused | Unreachable) -> _Program[bool, object]:
     ...
 
+def unplaced(answer: Written | Conflict | Refused | Unreachable | WrittenRows | RowsConflict | RowsRefused) -> _Program[Written | Conflict | Refused | Unreachable | WrittenRows | RowsConflict | RowsRefused, object]:
+    ...
+
 def as_writer[T](harness: LawHarness, writer: str, program: Program[T, object] | EffectBase[T]) -> _Program[T, object]:
     ...
 
@@ -305,6 +308,9 @@ def law_keys_are_forgotten_after_their_memory(harness: LawHarness) -> _Program[l
     ...
 
 def law_unarchived_keys_are_kept_until_retired(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_a_write_names_its_change_position(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

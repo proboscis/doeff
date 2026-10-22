@@ -8,7 +8,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
-(import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
+(import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty Event EventAbsent EventRetired AppendedEvents])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.memory :as memory)
@@ -27,7 +27,8 @@
                             law-watch-tails-match-last-events law-event-by-key-reads-the-same-event
                             law-short-page-ends-the-stream law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
                             law-a-write-keeps-the-unarchived-event-it-touches
-                            law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired])
+                            law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired
+                            law-a-write-names-its-change-position])
 (import doeff_records.maintenance [PruneChanges Pruned ReadChangeLog ChangeLog ReadExpiredEvents ExpiredCursor RetireArchivedEvents])
 
 
@@ -77,6 +78,26 @@
   (ListRows [table where fields cursor limit descending-by]
     (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit))
     (resume answer)))
+
+(defhandler drop-write-positions
+  ;; 書きの位置を名乗らない handler の顔(位置を足す前の書きの答えの形): Written と束の各項の position を捨てる。
+  (PutRow [table key value expect]
+    (<- written (PutRow table key value expect))
+    (resume (if (isinstance written Written) (Written written.version written.value) written)))
+  (PutRows [writes]
+    (<- rows (PutRows writes))
+    (resume (if (isinstance rows WrittenRows)
+                (WrittenRows (tuple (gfor item rows.items (Written item.version item.value))))
+                rows))))
+
+(defhandler write-positions-one-behind
+  ;; 書きの前の位置を名乗る handler の顔(書く前に読んだ置き場の頭を答えに載せる形): position の番号を 1 つ戻す — その位置から読む
+  ;; WatchChanges が自分の書きを返し、書き手が自分の書きを「後の変更」と取り違える。
+  (PutRow [table key value expect]
+    (<- written (PutRow table key value expect))
+    (resume (if (isinstance written Written)
+                (Written written.version written.value (WatchCursor written.position.epoch (- written.position.sequence 1)))
+                written))))
 
 (defhandler hide-descending-cursor
   ;; 上から読む読みの続きを返さない handler の顔(続きの位置を足す前の 1 頁だけの形): 上から読む頁の next-cursor を捨てる。
@@ -299,7 +320,9 @@
                       #(law-event-by-key-reads-the-same-event (retired-as-absent))
                       #(law-watch-tails-match-last-events drop-tails)
                       #(law-watch-tails-match-last-events tails-in-name-order)
-                      #(law-short-page-ends-the-stream (cap-below-limit))]]
+                      #(law-short-page-ends-the-stream (cap-below-limit))
+                      #(law-a-write-names-its-change-position drop-write-positions)
+                      #(law-a-write-names-its-change-position write-positions-one-behind)]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手の名で断る置き場(欄の書き手でない stranger の書きを断る)— #2994 の前の置き場の形。
   (setv strict-store (MemoryStore LAW-SCHEMA))

@@ -171,6 +171,7 @@ class Page:
 class Written:
     version: int
     value: FrozenMap
+    position: WatchCursor | None = None
 
 @dataclass(frozen=True)
 class WrittenRows:

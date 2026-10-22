@@ -12,13 +12,13 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 |---|---|---|---|
 | `ReadRow(table, key)` | 表・キー | `Row(key, value, version)` か `Missing()` | `Unreachable` |
 | `ListRows(table, where, fields, cursor, limit, descending_by, where_any)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限・上から読む欄(下の註)・索引の欄の値の組(下の註) | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
-| `PutRow(table, key, value, expect)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)。書き手の名は欄に無く、handler を組む時に身元から入る | `Written(version, value)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
+| `PutRow(table, key, value, expect)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)。書き手の名は欄に無く、handler を組む時に身元から入る | `Written(version, value, position)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
 | `WatchChanges(tables, cursor, timeout, limit, streams)` | 表の列・位置・待つ秒・上限・末尾を知りたい追記の列(既定 = 無し) | `Changes(items, cursor, tails)`(`tails` = 名指した列ごとの末尾 `StreamTail(stream, sequence, at)` か `StreamTailEmpty(stream)` — 名指した順・名指さなければ空) | `Reset(epoch, floor)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
 | `ReadEvents(stream, after, limit)` | 追記の列・この番号より後・上限 | `Events(items, last_sequence)` | `Unreachable` |
 | `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence)`(列に今ある、保持の期限を過ぎていない最後の出来事の番号)か `StreamEmpty()`(そういう出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
 | `ReadEventByKey(stream, idempotency_key)` | 追記の列・冪等キー | `Event`(その鍵で積んだ出来事 — `ReadEvents` が出すのと同じ)か `EventAbsent()`(その鍵ではまだ積んでいない)か `EventRetired(sequence)`(積まれたが保持の期限を過ぎた — 消えた出来事の番号)。列を辿らず、置き場の (列, 冪等キー) の一意の索引で答える(#3750) | `Unreachable` |
-| `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
+| `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written` — 各項の `position` は束の順に 1 つずつ続く) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
 | `AppendEvents(appends)` | 追記の束 = `EventAppend(stream, idempotency_key, body)`(欄と意味は `AppendEvent` と同じ)の空でない tuple。同じ列の同じ冪等キーが 2 度出る束は作る時に `ValueError` | `AppendedEvents(items)`(束の順の、追記ごとの `Appended` か `Refused`) | `Unreachable`(束の全部が積まれたか、どれも積まれていない) |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
@@ -31,6 +31,10 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   `PutRow.value`・`ListRows.where`・`ListRows.where_any`、出来事の本文は、作る時に受けた写像を凍らせる(作った後に変えられない)。JSON へ書く所は
   `doeff_hy.frozen.thaw_json` で dict / list へ戻す。
 - 版(`version`)は生まれた行が 1 で、書くたびに 1 増える。
+- 書きの答え `Written` の `position`(`WatchCursor(epoch, sequence)`)は、その書きが変更の列に積んだ変更の位置(`sequence` = `WatchChanges` の
+  `RowChanged.sequence` と同じ番号・`epoch` = 置き場の版)。その位置から `WatchChanges` を読むと、その書きより後の変更だけが来る。memory・
+  PostgreSQL・HTTP の口越しで同じ値(`law_a_write_names_its_change_position`)。HTTP の口の `written` の鍵 `position` は省ける鍵で、
+  位置を持たない `Written`(読み直した行から作った答え)は `position = None`。
 - `ListRows` の頁はキーの綴り(`admission.key_text`)の順。最初の頁の `epoch` と `sequence` から `WatchChanges` を始めると、
   一覧の後の変更を取りこぼさない。
 - `ListRows` の絞りは 2 つの形を AND で重ねる。どちらも索引の欄(定義の `indexes` かキーの欄)だけで、他の欄は `NotIndexed`(欄の名の順)。
@@ -121,7 +125,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `RowType(table, model)` | 表 1 つの行の型(欄の名 = 表の定義の欄の名・alias が在れば alias。写しは pydantic の `TypeAdapter`) |
 | `read_typed(row_type, key)` | `TypedRow(key, value, version)` か `Missing`・`Unreachable` |
 | `list_typed(row_type, where=, cursor=, limit=, where_any=)` | `TypedPage(rows, next_cursor, epoch, sequence)` か `Reset`・`Unreachable`・`NotIndexed` |
-| `put_typed(row_type, key, value, expect)` | `TypedWritten(version, value)` か `TypedConflict(current)`・`Refused`・`Unreachable` |
+| `put_typed(row_type, key, value, expect)` | `TypedWritten(version, value, position)` か `TypedConflict(current)`・`Refused`・`Unreachable` |
 | `typed_change(row_type, change)` | `RowChanged` → `TypedRowChanged`(`RowRemoved` はそのまま) |
 
 `put_typed` は行の全体の像を書く: 行の型の欄を全部載せ、値が None の欄は消す。値の変わらない欄は書き手の名簿で照らさないので、
@@ -305,6 +309,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
 | `law_append_events_answer_like_appends_in_order` | `AppendEvents` の答えは束の順に `AppendEvent` を撃った答えと同じ — 追記ごとの再送・断り・新しい番号を返し、断られた追記は他の追記を止めず、今積んだ番号は束の順に増え、列をまたぐ束も 1 つで積む |
 | `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
+| `law_a_write_names_its_change_position` | `PutRow` の `Written` と `PutRows` の各項の `position` は、その書きの変更が `WatchChanges` に現れる番号と置き場の版。束の中は束の順に続き、最後の書きの位置は書いた直後の一覧の頭と同じ。位置から読む `WatchChanges` はその後の変更だけを返し、版を上げた置き場の書きは新しい版を名乗る |
 | `law_expired_keys_are_remembered` | 保持の期限で出来事を消した後も冪等キーは忘れない: 同じ本文の再送は前の番号で列の出来事を増やさず、別の本文は `Refused` |
 | `law_expired_records_are_unseen_before_a_sweep` | 保持の期限を過ぎた行と出来事(出来事ごと・組ごとの列)は、回収の前でも 6 つの読みのどれにも出ない。期限を過ぎた行の `RowRemoved` は別の表への書きでは積まれず、回収(`SweepExpired`)が 1 回だけ積む |
 | `law_a_write_clears_the_expired_row_it_touches` | 回収されていない期限を過ぎた行への `PutRow`・`PutRows` は、その行を消して `RowRemoved` を積んでから無い行として判じる(`ExpectAbsent` は版 1 で生まれ、消えた行の版の `ExpectVersion` は `Conflict(Missing)`)— 回収の後の書きと同じ答え |

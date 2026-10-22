@@ -741,7 +741,10 @@
       (do (setv encoded [])
           (for [row rows] (.append encoded (! (row-json row))))
           {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence})
-    (Written :version version :value value) {"kind" "written" "version" version "value" (thaw-json value)}
+    ;; 鍵 position は書きの変更の位置を持つ答えの時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。
+    (Written :version version :value value :position position)
+      (| {"kind" "written" "version" version "value" (thaw-json value)}
+         (if (is position None) {} {"position" (! (watch-cursor-json position))}))
     (Conflict :current current) {"kind" "conflict" "current" (! (encode-answer current))}
     (Refused :reason reason) {"kind" "refused" "reason" reason}
     (NotIndexed :fields fields) {"kind" "notIndexed" "fields" (list fields)}
@@ -909,8 +912,9 @@
             (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor" True))
                   (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))))
       {"kind" "written"}
-        (do (<- (answer-object-of value "written" #("kind" "version" "value") #()))
-            (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))))
+        (do (<- (answer-object-of value "written" #("kind" "version" "value") #("position")))
+            (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))
+                     (if (in "position" value) (! (watch-cursor-from (get value "position") "written.position" True)) None)))
       {"kind" "conflict"}
         (do (<- (answer-object-of value "conflict" #("kind" "current") #()))
             (<- current (answer-from (get value "current")))

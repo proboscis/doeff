@@ -57,6 +57,8 @@
    #("list-rows" (Reset 3 0))
    #("list-rows" (NotIndexed #("note")))
    #("put-row" (Written 2 {"id" "p1"}))
+   ;; 書きの変更の位置を持つ答え(鍵 position — 省ける鍵)。
+   #("put-row" (Written 2 {"id" "p1"} (WatchCursor 3 41)))
    #("put-row" (Conflict ROW))
    #("put-row" (Conflict (Missing)))
    #("put-row" (Refused "書き手でない"))
@@ -78,6 +80,7 @@
    #("read-event-by-key" (EventAbsent))
    #("read-event-by-key" (EventRetired 3))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
+   #("put-rows" (WrittenRows #((Written 2 {"id" "p1"} (WatchCursor 3 42)) (Written 1 {"group" "g1" "id" "t1"} (WatchCursor 3 43)))))
    #("put-rows" (RowsConflict 1 "tickets" #("g1" "t1") ROW))
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
    #("put-rows" (RowsRefused 2 "parts" #("p2") "書き手でない"))

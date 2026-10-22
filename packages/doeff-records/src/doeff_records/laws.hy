@@ -117,6 +117,17 @@
        (is again.replayed True) (is first.replayed False)))
 
 
+(defk unplaced [answer]
+  {:pre [(: answer (| Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused))]
+   :post [(: % (| Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused))]}
+  "書きの答え answer から変更の位置(Written.position)を外した値を返すため — 版と値だけを比べる法の等しさの検めが、置き場の版と番号で
+   決まる位置に縛られないため(位置は法 law-a-write-names-its-change-position が見る)。書きの答えでない値はそのまま返す。"
+  (match answer
+    (Written) (Written answer.version answer.value)
+    (WrittenRows) (WrittenRows (tuple (gfor item answer.items (Written item.version item.value))))
+    _ answer))
+
+
 (defk as-writer [harness writer program]
   {:tp [T] :pre [(: harness LawHarness) (: writer str) (: program (| (get Program #(T object)) (get EffectBase T)))] :post [(: % T)]}
   "program(Program か effect)を書き手 writer の handler で包んで走らせ、その答えを返すため(法の筋書きが書き手を替えて
@@ -154,7 +165,7 @@
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "古い版の PutRow は Conflict" t [])
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
-  (<- (require-law (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "生まれる行: {!r}" born)))
+  (<- (require-law (= (! (unplaced born)) (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "生まれる行: {!r}" born)))
   (<- second (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1))))
   (<- (require-law (and (isinstance second Written) (= second.version 2)) law (.format "版 1 への書き: {!r}" second)))
   (setv now (Row #("p1") (FrozenMap {"id" "p1" "label" "b" "state" "open"}) 2))
@@ -850,9 +861,9 @@
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "PutRow の差分の値 None はその欄を消し、行の値は None を持たない")
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a" "color" "red"}) (ExpectAbsent))))
-  (<- (require-law (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "color" "red" "state" "open"}))) law (.format "生まれる行: {!r}" born)))
+  (<- (require-law (= (! (unplaced born)) (Written 1 (FrozenMap {"id" "p1" "label" "a" "color" "red" "state" "open"}))) law (.format "生まれる行: {!r}" born)))
   (<- uncolored (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" None}) (ExpectVersion 1))))
-  (<- (require-law (= uncolored (Written 2 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "欄を消す書き: {!r}" uncolored)))
+  (<- (require-law (= (! (unplaced uncolored)) (Written 2 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "欄を消す書き: {!r}" uncolored)))
   (<- read (as-writer harness MAKER (ReadRow "parts" #("p1"))))
   (<- (require-law (= read (Row #("p1") (FrozenMap {"id" "p1" "label" "a" "state" "open"}) 2)) law (.format "消した欄が読める: {!r}" read)))
   (<- keyless (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"id" None}) (ExpectVersion 2))))
@@ -860,9 +871,9 @@
   (<- stateless (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"state" None}) (ExpectVersion 2))))
   (<- (require-law (isinstance stateless Refused) law (.format "状態の欄を消せた: {!r}" stateless)))
   (<- nothing (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"note" None}) (ExpectVersion 2))))
-  (<- (require-law (= nothing (Written 3 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "無い欄を消す書き: {!r}" nothing)))
+  (<- (require-law (= (! (unplaced nothing)) (Written 3 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "無い欄を消す書き: {!r}" nothing)))
   (<- fresh (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "b" "color" None}) (ExpectAbsent))))
-  (<- (require-law (= fresh (Written 1 (FrozenMap {"id" "p2" "label" "b" "state" "open"}))) law (.format "None の欄を持って生まれる行: {!r}" fresh)))
+  (<- (require-law (= (! (unplaced fresh)) (Written 1 (FrozenMap {"id" "p2" "label" "b" "state" "open"}))) law (.format "None の欄を持って生まれる行: {!r}" fresh)))
   (<- listed (as-writer harness MAKER (ListRows "parts")))
   (<- (require-law (and (isinstance listed Page) (not (any (gfor row listed.rows v (.values row.value) (is v None)))))
                law (.format "一覧の行が None を持つ: {!r}" listed)))
@@ -979,12 +990,12 @@
   (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
   (<- (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start)))
   (<- seed (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
-  (<- (require-law (= seed (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "種の行: {!r}" seed)))
+  (<- (require-law (= (! (unplaced seed)) (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "種の行: {!r}" seed)))
   (<- batch (as-writer harness MAKER
               (PutRows #((RowWrite "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1))
                          (RowWrite "parts" #("p2") (FrozenMap {"label" "c"}) (ExpectAbsent))
                          (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))))
-  (<- (require-law (= batch (WrittenRows #((Written 2 (FrozenMap {"id" "p1" "label" "b" "state" "open"}))
+  (<- (require-law (= (! (unplaced batch)) (WrittenRows #((Written 2 (FrozenMap {"id" "p1" "label" "b" "state" "open"}))
                                        (Written 1 (FrozenMap {"id" "p2" "label" "c" "state" "open"}))
                                        (Written 1 (FrozenMap {"group" "g1" "id" "t1" "owner" "o1" "state" "open"})))))
                law (.format "全部通る束: {!r}" batch)))
@@ -1201,7 +1212,7 @@
   (<- (Delay (+ TICKET-KEEP-SECONDS 1)))
   ;; ExpectAbsent の書き: 無い行として版 1 で生まれる。
   (<- reborn (as-writer harness MAKER (PutRow "tickets" #("g7" "u1") (FrozenMap {"owner" "o2"}) (ExpectAbsent))))
-  (<- (require-law (= reborn (Written 1 (FrozenMap {"group" "g7" "id" "u1" "owner" "o2" "state" "open"}))) law
+  (<- (require-law (= (! (unplaced reborn)) (Written 1 (FrozenMap {"group" "g7" "id" "u1" "owner" "o2" "state" "open"}))) law
                (.format "期限を過ぎた行への ExpectAbsent の書き: {!r}" reborn)))
   ;; 消えた行の版(2)を期待する書き: Conflict(Missing)で、行は戻らない。
   (<- stale (as-writer harness MAKER (PutRow "tickets" #("g7" "u2") (FrozenMap {"owner" "o3"}) (ExpectVersion 2))))
@@ -1210,7 +1221,7 @@
   (<- (require-law (= gone (Missing)) law (.format "Conflict の後に期限を過ぎた行が読めた: {!r}" gone)))
   ;; PutRows の束の行も同じ。
   (<- batch (as-writer harness MAKER (PutRows #((RowWrite "tickets" #("g7" "u3") (FrozenMap {"owner" "o4"}) (ExpectAbsent))))))
-  (<- (require-law (= batch (WrittenRows #((Written 1 (FrozenMap {"group" "g7" "id" "u3" "owner" "o4" "state" "open"}))))) law
+  (<- (require-law (= (! (unplaced batch)) (WrittenRows #((Written 1 (FrozenMap {"group" "g7" "id" "u3" "owner" "o4" "state" "open"}))))) law
                (.format "期限を過ぎた行への束の書き: {!r}" batch)))
   (<- collected (collect-changes harness #("tickets") (WatchCursor mark.epoch mark.sequence) 100))
   (val items (tuple (gfor answer (get collected 0) :if (isinstance answer Changes) item answer.items item)))
@@ -1723,6 +1734,55 @@
    forgot held-gone spare-again last spare-gone mark-new])
 
 
+;; --- 法 24: 書きの答えは、その書きが変更の列に積んだ変更の位置を名乗る -----------------------------------------
+
+(defk law-a-write-names-its-change-position [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
+  "書き手が自分の書きの入った位置を答えから知り、次の読みでその位置まで追いついた答えを求められるための法: PutRow の Written と
+   PutRows の束の各項の position は、その書きの変更が WatchChanges に現れる番号と置き場の版(epoch)で、束の中では束の順に 1 つずつ続き、
+   最後の書きの位置は書いた直後の一覧の頭(Page の epoch・sequence)と同じ。位置から読む WatchChanges はその書きより後の変更だけを返し、
+   版を上げた置き場の書きは新しい版を名乗る。断り・衝突の答えは位置を持たない(書いていない)。答えの列は memory・PostgreSQL・HTTP の口越しで
+   等しい(test_parity_memory_pg.hy — 位置まで同じ値)。"
+  (val law "書きの答えは、その書きが変更の列に積んだ変更の位置を名乗る")
+  (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start)))
+  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (<- (require-law (and (isinstance w1 Written) (= w1.position (WatchCursor start.epoch (+ start.sequence 1)))) law
+                   (.format "最初の書きの位置: {!r} (一覧の頭 {!r} {!r})" w1 start.epoch start.sequence)))
+  (<- refused (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"size" 1}) (ExpectAny))))
+  (<- conflict (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectAbsent))))
+  (<- (require-law (and (isinstance refused Refused) (isinstance conflict Conflict)) law
+                   (.format "断る書きと衝突する書き: {!r} {!r}" refused conflict)))
+  (<- batch (as-writer harness MAKER
+              (PutRows #((RowWrite "parts" #("p1") (FrozenMap {"label" "c"}) (ExpectVersion 1))
+                         (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))
+                         (RowWrite "parts" #("p2") (FrozenMap {"label" "d"}) (ExpectAbsent))))))
+  (<- (require-law (and (isinstance batch WrittenRows)
+                        (= (lfor item batch.items item.position)
+                           (lfor n [1 2 3] (WatchCursor start.epoch (+ w1.position.sequence n)))))
+                   law (.format "束の各項の位置が束の順に続かない: {!r}" batch)))
+  (val written [#("parts" #("p1") w1) #("parts" #("p1") (get batch.items 0)) #("tickets" #("g1" "t1") (get batch.items 1))
+                #("parts" #("p2") (get batch.items 2))])
+  (<- collected (collect-changes harness #("parts" "tickets") (WatchCursor start.epoch start.sequence) 100))
+  (val items (tuple (gfor answer (get collected 0) :if (isinstance answer Changes) item answer.items item)))
+  (<- (require-law (= (lfor item items #(item.table item.key item.version item.sequence))
+                      (lfor #(table key one) written #(table key one.version one.position.sequence)))
+                   law (.format "書きの位置と WatchChanges の変更の番号が違う: {!r}" items)))
+  (val last (get batch.items -1))
+  (<- head (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- (require-law (and (isinstance head Page) (= (WatchCursor head.epoch head.sequence) last.position)) law
+                   (.format "最後の書きの位置が書いた直後の一覧の頭でない: {!r} {!r}" last head)))
+  (<- beyond (as-writer harness MAKER (WatchChanges #("parts" "tickets") w1.position)))
+  (<- (require-law (and (isinstance beyond Changes)
+                        (= (lfor item beyond.items item.sequence) (lfor item batch.items item.position.sequence)))
+                   law (.format "最初の書きの位置から読んだ変更が、その後の書きの変更だけでない: {!r}" beyond)))
+  (<- epoch (as-writer harness MAKER (AdvanceStoreEpoch)))
+  (<- after-epoch (as-writer harness MAKER (PutRow "parts" #("p3") (FrozenMap {"label" "e"}) (ExpectAbsent))))
+  (<- (require-law (and (isinstance after-epoch Written) (= after-epoch.position (WatchCursor epoch (+ last.position.sequence 1))))
+                   law (.format "版を上げた置き場の書きの位置: {!r} (新しい版 {!r})" after-epoch epoch)))
+  [start w1 refused conflict batch #* (get collected 0) head beyond epoch after-epoch])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing と law-append-events-answer-like-appends-in-order は SHARED-LAWS に入れない — SHARED-LAWS は前からの
 ;; 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを
@@ -1760,6 +1820,7 @@
             "retirement-keeps-the-read-boundary" law-retirement-keeps-the-read-boundary
             "a-write-keeps-the-unarchived-event-it-touches" law-a-write-keeps-the-unarchived-event-it-touches
             "keys-are-forgotten-after-their-memory" law-keys-are-forgotten-after-their-memory
-            "unarchived-keys-are-kept-until-retired" law-unarchived-keys-are-kept-until-retired})
+            "unarchived-keys-are-kept-until-retired" law-unarchived-keys-are-kept-until-retired
+            "a-write-names-its-change-position" law-a-write-names-its-change-position})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

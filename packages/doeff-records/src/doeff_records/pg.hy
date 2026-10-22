@@ -242,9 +242,11 @@
 
 
 (defrecord StagedRow
-  "判定を通った 1 行の書き(staged-row): statements = 行の書きと変更の列に 1 つ積む文(2 往復目に流す)/ written = その書きの答え。"
+  "判定を通った 1 行の書き(staged-row): statements = 行の書きと変更の列に 1 つ積む文(2 往復目に流す — 変更の列に積む文が最後)/
+   version・value = その書きの版と確定する行の値(答えの Written の変更の位置は、2 往復目の変更の文の答えの番号から読む — written-of)。"
   (#^ (get tuple #(Statement ...)) statements)
-  (#^ Written written))
+  (#^ int version)
+  (#^ FrozenMap value))
 
 
 (defrecord EarlierUse
@@ -307,11 +309,11 @@
 
 
 (defk committed [store statements answer]
-  {:pre [(: store PreparedStore) (: statements tuple) (: answer (| Written WrittenRows Appended Conflict Refused RowsConflict RowsRefused))]
-   :post [(: % (| Written WrittenRows Appended Conflict Refused RowsConflict RowsRefused))]
+  {:pre [(: store PreparedStore) (: statements tuple) (: answer (| Appended Conflict Refused RowsConflict RowsRefused))]
+   :post [(: % (| Appended Conflict Refused RowsConflict RowsRefused))]
    :tags {:context "records" :role "foundation"}}
-  "書きの 2 往復目: statements(片付けと書き)を合図と COMMIT と同じ往復で流し、書きの答え answer を返すため(頭の註 — 断り・衝突の時も
-   片付けと COMMIT を流す)。"
+  "書かない時の 2 往復目: statements(片付け)を合図と COMMIT と同じ往復で流し、前もって決まった答え answer を返すため(頭の註 — 断り・衝突・
+   追記の再送の時も片付けと COMMIT を流す)。行を書く時は、変更の番号を答えの行から読むので batch-rows を直に流す(written-of)。"
   (<- (batch-rows store.database statements True))
   answer)
 
@@ -1209,13 +1211,23 @@
          (: value FrozenMap) (: now-ms int) (: epoch int)]
    :post [(: % StagedRow)]
    :tags {:context "records" :role "foundation"}}
-  "判定を通った 1 行の書き(行の書きと変更の列に 1 つ積む文 — 2 往復目に流す)と、その答えを作るため(PutRow と PutRows の書きを 1 つにし、
+  "判定を通った 1 行の書き(行の書きと変更の列に 1 つ積む文 — 2 往復目に流す)を作るため(PutRow と PutRows の書きを 1 つにし、
    版と番号の採り方を揃える)。"
   (val version (if (is current None) 1 (+ current.version 1)))
   (val payload (canonical-json value))
   (<- upsert (upsert-row-statement store.prefix table text payload version now-ms writer origin-host epoch))
   (<- change (append-change-statement store.prefix table text version payload now-ms epoch))
-  (StagedRow :statements #(upsert change) :written (Written version value)))
+  (StagedRow :statements #(upsert change) :version version :value value))
+
+
+(defk written-of [staged rows end epoch]
+  {:pre [(: staged StagedRow) (: rows tuple) (: end int) (: epoch int)] :post [(: % Written)]
+   :tags {:context "records" :role "foundation"}}
+  "判定を通った 1 行の書き staged の答えに、その書きが変更の列に積んだ変更の位置を載せるため(Written.position — memory の置き場と同じ
+   位置を返す)。rows = 2 往復目の文ごとの答えの行・end = staged の文が終わる位置(rows の中で staged の最後の文 = 変更の列に積む文の次の
+   位置)・epoch = 変更に刻んだ置き場の版(書きの錠の中の 1 往復目に読んだ頭)。番号は変更の文の答え(RETURNING seq)。"
+  (val sequence (int (get (get rows (- end 1)) 0 0)))
+  (Written staged.version staged.value (WatchCursor epoch sequence)))
 
 
 (defk put-row-locked [store origin-host writer ask now-ms]
@@ -1240,7 +1252,9 @@
     (<- refused (committed store found.cleanup verdict))
     (return refused))
   (<- staged (staged-row store origin-host writer ask.table text found.current verdict.value now-ms head.epoch))
-  (<- written (committed store (+ found.cleanup staged.statements) staged.written))
+  (val statements (+ found.cleanup staged.statements))
+  (<- rows (batch-rows store.database statements True))
+  (<- written (written-of staged rows (len statements) head.epoch))
   written)
 
 
@@ -1271,13 +1285,20 @@
     (<- refused (committed store cleanup verdict))
     (return refused))
   (var statements cleanup)
-  (var written #())
+  (var stageds #())
+  ;; 束の書きごとの、その書きの文が終わる位置(答えの変更の番号を 2 往復目の答えから読む — written-of)。
+  (var ends #())
   (for [#(write text current admitted) (zip ask.writes texts currents verdict :strict True)]
     (<- staged (staged-row store origin-host writer write.table text current admitted.value now-ms head.epoch))
     (:= statements (+ statements staged.statements))
-    (:= written (+ written #(staged.written))))
-  (<- rows (committed store statements (WrittenRows written)))
-  rows)
+    (:= stageds (+ stageds #(staged)))
+    (:= ends (+ ends #((len statements)))))
+  (<- rows (batch-rows store.database statements True))
+  (var written #())
+  (for [#(staged end) (zip stageds ends :strict True)]
+    (<- one (written-of staged rows end head.epoch))
+    (:= written (+ written #(one))))
+  (WrittenRows written))
 
 
 (defk table-expiries [store tables now-ms]

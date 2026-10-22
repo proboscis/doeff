@@ -16,7 +16,8 @@
                             law-an-expired-key-answers-the-same-before-and-after-a-sweep law-short-page-ends-the-stream
                             law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
                             law-a-write-keeps-the-unarchived-event-it-touches
-                            law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired])
+                            law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired
+                            law-a-write-names-its-change-position])
 (import tests.interpreters [LawSetup])
 
 
@@ -223,4 +224,11 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-unarchived-keys-are-kept-until-retired harness))
+  (assert transcript))
+
+(deftest test-a-write-names-its-change-position
+  ;; 書きの答えは、その書きの変更の位置(置き場の版と変更の番号)を名乗る — 書き手が次の読みでその位置まで追いついた答えを求めるため。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-a-write-names-its-change-position harness))
   (assert transcript))

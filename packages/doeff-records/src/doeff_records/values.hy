@@ -401,13 +401,22 @@
   (#^ int sequence))
 
 (defclass [(dataclass :frozen True)] Written []
-  "PutRow が確定した: version = 新しい版・value = 確定した行の値(凍らせた写像)。"
+  "PutRow が確定した: version = 新しい版・value = 確定した行の値(凍らせた写像)/ position = その書きが変更の列に積んだ変更の位置
+   (epoch = 置き場の版・sequence = その変更の番号 — WatchChanges の RowChanged.sequence と同じ番号。この位置から WatchChanges を読むと、
+   この書きの後の変更だけが来る)。position は書きの答えにだけ載り、置き場はどの組(memory・PostgreSQL・HTTP の口越し)でも同じ値を返す
+   (法 law-a-write-names-its-change-position)。None = 位置を持たない(読み直した行から作った答え・位置を知らない版の書き手 —
+   HTTP の口の綴りでは省く欄)。"
   (#^ int version)
   (#^ FrozenMap value)
-  (defn #^ None __post_init__ [self] (freeze-field self "value" "Written.value")))
+  (setv #^ (| WatchCursor None) position None)
+  (defn #^ None __post_init__ [self]
+    (freeze-field self "value" "Written.value")
+    (when (not (or (is self.position None) (isinstance self.position WatchCursor)))
+      (raise (TypeError (.format "Written.position は WatchCursor か None: {!r}" self.position))))))
 
 (defclass [(dataclass :frozen True)] WrittenRows []
-  "PutRows の束が全部確定した: items = 束の順の Written の tuple(束の i 番目の書きの答え = items の i 番目)。"
+  "PutRows の束が全部確定した: items = 束の順の Written の tuple(束の i 番目の書きの答え = items の i 番目 — 各項の position は
+   その行の変更の位置で、束の中で番号が 1 つずつ増える。束の最後の変更の位置は最後の項の position)。"
   (#^ tuple items)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.items tuple) (all (gfor item self.items (isinstance item Written)))))

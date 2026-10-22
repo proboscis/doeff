@@ -17,7 +17,7 @@
 (import typing [Generic TypeVar])
 (import pydantic [TypeAdapter])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
-(import doeff_records.values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor ExpectAbsent
+(import doeff_records.values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
                               ExpectVersion ExpectAny checked-table-name])
 (import doeff_records.effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
 
@@ -53,9 +53,11 @@
   (#^ int sequence))
 
 (defclass [(dataclass :frozen True)] TypedWritten [(get Generic M)]
-  "put-typed が確定した: version = 新しい版 / value = 確定した行の行の型の値。"
+  "put-typed が確定した: version = 新しい版 / value = 確定した行の行の型の値 / position = その書きの変更の位置(Written.position と同じ —
+   None = 位置を持たない答え)。"
   (#^ int version)
-  (#^ M value))
+  (#^ M value)
+  (setv #^ (| WatchCursor None) position None))
 
 (defclass [(dataclass :frozen True)] TypedConflict [(get Generic M)]
   "put-typed の期待が今の行と合わない(Conflict の今の行を行の型にした物)。current = TypedRow | Missing。"
@@ -145,6 +147,6 @@
    答え = TypedWritten | TypedConflict | Refused | Unreachable。"
   (<- answer (PutRow row-type.table key (fields-of-value row-type value) expect))
   (cond
-    (isinstance answer Written) (TypedWritten answer.version (value-of-fields row-type answer.value))
+    (isinstance answer Written) (TypedWritten answer.version (value-of-fields row-type answer.value) answer.position)
     (isinstance answer Conflict) (TypedConflict (typed-current row-type answer.current))
     True answer))
