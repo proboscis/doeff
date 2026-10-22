@@ -11,6 +11,7 @@ doeff_hy を変えないため)。
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -648,3 +649,118 @@ def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None
             assert inner is scope
     assert current_scope() is None
     assert macro_use._state_now(str(probe)) != first
+
+
+# --- closure 単位の束(card ki-2829daea29fa)-------------------------------------------------------------------------
+
+
+def _closure(tree: Tree) -> static_check.Closure:
+    closure = static_check.project_closure(tree.root, [tree.root], [tree.user], tree.cache, 1)
+    _forget(PACKAGE)
+    return closure
+
+
+def _opened_during(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """closure を引く間に open した、根と cache の下の file の path(source の読みと entry の読みを数える)。"""
+    import builtins
+    import io
+
+    opened: list[str] = []
+    real = io.open
+
+    def counting(file: object, *args: object, **kwargs: object) -> object:
+        text = str(file)
+        if text.startswith(str(tree.root.parent)):
+            opened.append(text)
+        return real(file, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(io, "open", counting)
+    monkeypatch.setattr(builtins, "open", counting)
+    try:
+        _closure(tree)
+    finally:
+        monkeypatch.undo()
+    return opened
+
+
+def _age(tree: Tree) -> None:
+    """全部の source の更新時刻を十分に古くする(束は書いた直後に更新された file を、中身を読んで照らす)。"""
+    for path in tree.root.rglob("*"):
+        if path.is_file():
+            os.utime(path, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+
+
+def test_a_warm_closure_opens_one_bundle_not_every_entry(
+    tree: Tree, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _age(tree)
+    first = _closure(tree)
+    second = _closure(tree)  # 2 回目で束を書く(1 回目の書きは更新直後の file を信じない)
+    opened = _opened_during(tree, monkeypatch)
+    sources = [p for p in opened if p.endswith(".hy")]
+    entries = [p for p in opened if p.endswith(".json")]
+    assert sources == [], f"温まった closure が source を読み直した: {sources}"
+    assert len(entries) == 1, f"温まった closure が束 1 つでなく entry を読んだ: {entries}"
+    assert {p: q.text for p, q in second.projections.items()} == {p: q.text for p, q in first.projections.items()}
+
+
+def test_a_bundle_gives_the_same_projections_and_findings_as_expanding(tree: Tree) -> None:
+    _age(tree)
+    fresh = static_check.project_closure(tree.root, [tree.root], [tree.user], None, 1)
+    _forget(PACKAGE)
+    _closure(tree)
+    bundled = _closure(tree)
+    assert list(bundled.projections) == list(fresh.projections)
+    for path, projection in fresh.projections.items():
+        other = bundled.projections[path]
+        assert (other.text, tuple(other.spans), other.findings) == (
+            projection.text,
+            tuple(projection.spans),
+            projection.findings,
+        )
+
+
+def test_a_changed_source_is_not_served_from_the_bundle(tree: Tree, expansions: list[Path]) -> None:
+    _age(tree)
+    _closure(tree)
+    _closure(tree)
+    before = len(expansions)
+    _rewrite(tree.user, USER + "(setv d 1)\n")
+    changed = _closure(tree)
+    assert tree.user in expansions[before:], "変えた source を束から引いた"
+    assert "d = 1" in changed.projections[tree.user].text
+
+
+def test_a_touched_but_unchanged_source_keeps_the_bundle(tree: Tree, expansions: list[Path]) -> None:
+    _age(tree)
+    _closure(tree)
+    _closure(tree)
+    before = len(expansions)
+    os.utime(tree.user, None)  # 更新時刻だけ新しくする
+    _closure(tree)
+    assert expansions[before:] == [], "中身が同じなのに展開し直した"
+
+
+def test_a_changed_macro_expands_again_even_from_a_bundle(tree: Tree, expansions: list[Path]) -> None:
+    _age(tree)
+    _closure(tree)
+    _closure(tree)
+    before = len(expansions)
+    _rewrite(tree.package / "words.py", 'def word() -> str:\n    return "newer"\n')
+    changed = _closure(tree)
+    assert tree.user in expansions[before:], "macro が呼ぶ補助を変えたのに束の展開を引いた"
+    assert "'newer'" in changed.projections[tree.user].text
+
+
+def test_a_source_changed_right_after_the_bundle_was_written_is_read_again(
+    tree: Tree, expansions: list[Path]
+) -> None:
+    # 束を書いた直後(更新時刻が新しい)の file は、大きさと更新時刻を信じず中身で照らす(同じ刻みの中の書き換えを逃さない)。
+    _closure(tree)
+    _closure(tree)
+    before = len(expansions)
+    stat = tree.user.stat()
+    tree.user.write_text(USER.replace(" b ", " z "), encoding="utf-8")  # 同じ大きさ
+    os.utime(tree.user, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    changed = _closure(tree)
+    assert "z =" in changed.projections[tree.user].text
