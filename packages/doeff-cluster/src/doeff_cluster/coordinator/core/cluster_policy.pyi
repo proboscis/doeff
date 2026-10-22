@@ -53,6 +53,7 @@ from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as Nod
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
 from doeff_cluster.coordinator.intent.cluster_model import SupersededRun as SupersededRun
+from doeff_cluster.coordinator.intent.cluster_model import HandoverBlocker as HandoverBlocker
 from doeff_cluster.shared.intent.detached_model import TaskLimit as TaskLimit
 from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
@@ -500,6 +501,19 @@ def heartbeat_reply(state: ClusterState, name: str, timing: ClusterTiming, ready
 HANDOVER_SETTLED_PHASES: set[str]
 
 def handover_pending(state: ClusterState, name: str, boot: str, now: int, timing: ClusterTiming, ready_instances: dict | None) -> bool:
+    ...
+HANDOVER_STALL_MS: int
+
+def handover_blockers(state: ClusterState, name: str, boot: str, now: int, timing: ClusterTiming, ready_instances: dict | None) -> tuple:
+    ...
+
+def handover_waiting(state: ClusterState, name: str, boot: str, now: int, timing: ClusterTiming) -> frozenset:
+    ...
+
+def handover_runs(state: ClusterState, name: str, boot: str, now: int, timing: ClusterTiming) -> tuple:
+    ...
+
+def handover_since(state: ClusterState, name: str, boot: str, now: int, timing: ClusterTiming) -> int | None:
     ...
 
 def elder_held(state: ClusterState, name: str, boot: str, now: int, window_ms: int) -> frozenset:

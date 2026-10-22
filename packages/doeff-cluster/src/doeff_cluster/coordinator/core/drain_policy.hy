@@ -235,7 +235,7 @@
                                      #^ (| dict None) [ready-instances None]]
   "GET /workers/<名>: 生存・世代・drain の進み。ready = 生きていて drain 中でなく、同じ名の前の世代がまだ動かしている job を全部
    受け取れる(handover-pending でない — AL-D2k・heartbeat の返事で worker が ready の file を書く判断と同じ)。ready-instances = handoff の
-   Service の Ready と数えている process(api_policy.ready-instances)。"
+   Service の Ready と数えている process(resource_policy.ready-instances)。"
   (setv w (.row state.workers name))
   (when (is w None) (refuse 404 (+ "知らない worker: " name)))
   (setv drain (drain-view state name now timing)
