@@ -11,7 +11,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `doeff_codex.effects` | 上の層が codex のターンを effect で頼むため(公開の口) | 下の「公開 effect」の表 |
 | `doeff_codex.values` | effect の欄の値 | `CodexSessionSpec`(環境・作業の dir・model・許可の方針・sandbox・考えの深さ・圧縮の閾値)・`CodexHome`・`CodexInput`(文字と画像)・`CodexImage`・`FreshThread`・`ResumeThread`・`CodexTurn`・`CodexEvent` |
 | `doeff_codex.handler` | 本番の handler — 公開 effect に app-server の子 process で答えるため | `codex-handler`・`CodexHost`(composition root が 1 つ作る状態の持ち主) |
-| `doeff_codex.fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply`(`usage-limit` = 利用枠切れの事実 `UsageLimitHit` — 在れば誤りの種類 `usageLimitExceeded` の失敗で終える) |
+| `doeff_codex.fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply`(`usage-limit` = 利用枠切れの事実 `UsageLimitHit` — 在れば誤りの種類 `usageLimitExceeded` の失敗で終える・`server-overloaded` = 提供側の混雑の事実 `ServerOverloadedHit` — 在れば誤りの種類 `serverOverloaded` の失敗で終える) |
 | `doeff_codex.limits` | ターンの中の枠の知らせを重ね、利用枠切れで終わったターンの事実を作るため(純粋 — handler が使う) | `merged-limits`・`usage-limit-hit-of` |
 | `doeff_codex.rpc` | app-server を起こす argv と、stdin へ書く要求・答えの 1 行を作るため | `app-server-argv`・`initialize-request`・`initialized-notification`・`thread-start-request`・`thread-resume-request`・`turn-start-request`・`turn-steer-request`・`turn-interrupt-request`・`server-response-line`・閉じた語彙 `ApprovalPolicy`・`SandboxMode` |
 | `doeff_codex.lines` | stdout の 1 行を、上の層が読む型つきの記録へ分けるため | `classify-line`(1 行 → `CodexLine`)と記録の型 |
@@ -89,7 +89,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `AgentMessageDone` | `item/completed`(item の種類 agentMessage) | 答えの全文 |
 | `ReasoningDelta` | `item/reasoning/textDelta`・`item/reasoning/summaryTextDelta` | 考えている間の差分(要約か本文か) |
 | `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料)と、道具の種類の item の中身 `tool`(下の表・ほかの種類は None) |
-| `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status、利用枠切れの事実 `usage-limit` — 下の段落) |
+| `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status、利用枠切れの事実 `usage-limit`・提供側の混雑の事実 `server-overloaded` — 下の段落) |
 | `TurnError` | `error` | ターンの誤り(文・誤りの種類・HTTP の status・codex が繰り返すか) |
 | `TokenUsage` | `thread/tokenUsage/updated` | この呼びの分(last)と thread の累積(total)の token の数 |
 | `RateLimits` | `account/rateLimits/updated` | 口座の利用枠の名と窓(`RateLimitWindow` = 使った割合・長さ〔分〕・戻りの刻〔epoch 秒〕— 名乗らない窓は None)。thread もターンも名乗らない口座の通知で、handler は走っているターンに積む(turn/start の答えを読んだ時点でそのターンを走っているターンにする)。利用枠切れ(誤りの種類 `usageLimitExceeded`)では誤りの通知より先に届く(実測 `tests/recorded/codex-0.162.1/usage-limit`) |
@@ -117,6 +117,8 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 
 利用枠切れの事実 `UsageLimitHit`(`minutes` = 口座が待つ窓の長さ〔分〕・`resets-at` = その窓が戻る刻〔epoch 秒〕・`text` = codex の誤りの文)は、handler がターンの終わり(`TurnEnded.usage-limit`)に載せる。行の分類では None。誤りの種類が `usageLimitExceeded` の時だけ作り、窓と刻はそのターンの枠の知らせ(枠の名ごとに重ねる — 名乗らない窓は前の値を消さない)のうち使った割合 100 以上の窓から読む。尽きた窓が 2 つ以上なら遅く戻る方。尽きた窓が無い・戻りの刻を名乗らない・知らせが無ければ長さも刻も None(刻を発明しない)。窓は長さで名乗る(窓の名は上の層の語)。fake は `FakeReply.usage-limit` の事実をそのまま終わりに載せる。
 
+提供側の混雑の事実 `ServerOverloadedHit`(`text` = codex の誤りの文 — 「Selected model is at capacity. Please try a different model.」)は、行の分類がターンの終わり(`TurnEnded.server-overloaded`)に載せる。誤りの種類が `serverOverloaded`(codex 0.162.1 の `CodexErrorInfo::ServerOverloaded` — 上流が 503 と `error.code` `server_is_overloaded` で断った時)の時だけ作る。codex は上流が待ちの刻を名乗らなければ繰り返さず(誤りの通知の `willRetry` 偽)、ターンを失敗で終える。口座も thread も使えるままで、同じ process・同じ thread の次のターンは答える(実測 `tests/recorded/codex-0.162.1/server-overloaded`)— 上の層は少し後に同じ thread で試し直せる。fake は `FakeReply.server-overloaded` の事実をそのまま終わりに載せる。
+
 この版の語彙に無い値(版で増えたターンの状態・道具の状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
 行も落とさない — 知らない状態でもターンの終わり(`TurnEnded`)は必ず届く(上の層がターンの終わりを待ち続けないため)。
 
@@ -141,7 +143,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> packages/doeff-codex/tests/recorded/codex-<版> <作業の dir> [筋書き…]
 ```
 
-筋書きの名(two-turns・interrupt・rate-limit・usage-limit・tool-calls・background-command・other-tools)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
+筋書きの名(two-turns・interrupt・rate-limit・usage-limit・server-overloaded・tool-calls・background-command・other-tools)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
 
 ## 検
 

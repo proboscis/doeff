@@ -13,7 +13,7 @@
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
                              Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight RequestRefused BackendLost ToolsUnavailable])
 (import tests.scenario_steps [settings read-until read-to-end read-to-first-delta records-of])
-(import tests.interpreters [USAGE-LIMIT-HIT CODE-MODE-WARNING])
+(import tests.interpreters [USAGE-LIMIT-HIT CODE-MODE-WARNING OVERLOADED-HIT])
 
 
 (deftest test-the-text-deltas-reach-the-page-in-order-and-the-turn-ends-once
@@ -51,6 +51,29 @@
   (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.FAILED) (= end.error-kind "usageLimitExceeded")) end)
   (assert (= end.usage-limit USAGE-LIMIT-HIT) end)
   (assert (= end.error-message USAGE-LIMIT-HIT.text) end))
+
+
+(deftest test-a-turn-refused-by-provider-capacity-ends-failed-with-the-fact-and-the-same-process-takes-the-next-turn
+  ;; 提供側の混雑(codex の「Selected model is at capacity」)で断られたターンは、誤りの種類 serverOverloaded の失敗で終わり、その終わりが
+  ;; 混雑の事実(codex の文)を運ぶ — 上の層が「少し後に同じ thread で試し直せる」と知る材料(card ki-843475dd8f8b・本番 2026-10-22 21:59 JST
+  ;; の会話 c-QM2DD91FG7T13716VSC9C6GKV2)。process は降ろさず、同じ thread の次のターン(試し直し)は同じ process が受けて終わりまで走る。
+  ;; stub は録った codex 0.162.1 の混雑のターン(上流の 503・server_is_overloaded)を流す。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "SERVER-OVERLOADED please")))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (val end so-far.end)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.FAILED) (= end.error-kind "serverOverloaded")) end)
+  (assert (= end.server-overloaded OVERLOADED-HIT) end)
+  (assert (is end.usage-limit None) end)
+  (<- again (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec (CodexInput :text "say hello")))
+  (assert (isinstance again TurnStarted) again)
+  (<- finished (read-to-end again.turn s.turn-timeout))
+  (assert (and (isinstance finished.end TurnEnded) (= finished.end.status TurnStatus.COMPLETED)) finished.end)
+  (assert (is finished.end.server-overloaded None) finished.end)
+  (<- launches (CodexLaunchCount started.turn.thread-id))
+  (assert (= launches 1) launches))
 
 
 (deftest test-a-turn-whose-process-cannot-call-tools-ends-tools-unavailable-and-the-next-turn-gets-a-new-process

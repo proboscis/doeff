@@ -12,7 +12,7 @@
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_codex.lines [classify-line TextDelta AgentMessageDone ReasoningDelta TurnStarted TurnEnded TurnStatus TurnError
                            ThreadStarted TokenUsage Response ErrorResponse ServerRequest Other Unparsed ItemStarted ItemDone
-                           UnknownValue RateLimits RateLimitWindow])
+                           UnknownValue RateLimits RateLimitWindow ServerOverloadedHit])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
 ;; 利用枠切れの録りで、偽の上流が枠の header で名乗った戻りの刻(scripts/record_app_server_lines.py の USAGE_RESETS_AT・
@@ -110,6 +110,30 @@
                         "error" {#** (get error-line "params" "error") "codexErrorInfo" "usageLimitExceeded"}}})
   (<- refused (classify-line (json.dumps named)))
   (assert (and (isinstance refused TurnError) (= refused.error-kind "usageLimitExceeded") (is refused.http-status None)) refused))
+
+
+(deftest test-a-provider-capacity-refusal-ends-the-turn-with-the-overloaded-fact
+  ;; 提供側の混雑(上流の 503 と error.code server_is_overloaded)のターン: codex は繰り返さない誤りの通知(willRetry 偽)と失敗の終わりで
+  ;; 種類 serverOverloaded と自分の文「Selected model is at capacity. …」を名乗り、行の分類はその終わりに混雑の事実を載せる(本番
+  ;; 2026-10-22 21:59 JST の会話 c-QM2DD91FG7T13716VSC9C6GKV2 の turn と同じ文・card ki-843475dd8f8b)。同じ thread の次のターンは答える
+  ;; (試し直しは同じ thread で通る)。ほかの失敗の終わり(429・利用枠切れ)は混雑の事実を持たない。
+  (<- records (recorded-records "server-overloaded"))
+  (val errors (tuple (gfor record records :if (isinstance record TurnError) record)))
+  (assert (= (tuple (gfor error errors #(error.error-kind error.http-status error.will-retry))) #(#("serverOverloaded" None False)))
+          errors)
+  (val ends (tuple (gfor record records :if (isinstance record TurnEnded) record)))
+  (assert (= (tuple (gfor end ends end.status)) #(TurnStatus.FAILED TurnStatus.COMPLETED)) ends)
+  (val refused (get ends 0))
+  (assert (= refused.error-message "Selected model is at capacity. Please try a different model.") refused)
+  (assert (= refused.server-overloaded (ServerOverloadedHit :text refused.error-message)) refused)
+  (assert (is refused.usage-limit None) refused)
+  (assert (is (. (get ends 1) server-overloaded) None) ends)
+  (val answers (tuple (gfor record records :if (isinstance record AgentMessageDone) record.text)))
+  (assert (= answers #("Hello, world.")) answers)
+  (for [name #("rate-limit" "usage-limit")]
+    (<- others (recorded-records name))
+    (val failed (tuple (gfor record others :if (isinstance record TurnEnded) record)))
+    (assert (and failed (all (gfor end failed (is end.server-overloaded None)))) #(name failed))))
 
 
 (deftest test-a-usage-limit-names-its-windows-and-its-kind

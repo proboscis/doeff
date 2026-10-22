@@ -2,13 +2,15 @@
 
 版を固定した本物の codex の binary を、手元に立てた偽の上流(OpenAI の Responses API の SSE を返す HTTP server)につなぎ、JSON-RPC の
 要求を stdin へ書いて、stdout の行をそのまま file に書く。口座も network の外も要らない — model の答えだけが偽物で、行の形は本物の
-binary が出した物。録る筋書きは 7 つと比べの 1 つ:
+binary が出した物。録る筋書きと比べ:
 
 - two-turns: 1 つの process で thread を始め、ターンを 2 回走らせる(答えの文字の途中・答えの全文・ターンの終わり)。
 - interrupt: 遅い答えの途中で turn/interrupt を送る(状態 interrupted の終わり)。
 - rate-limit: 上流が 429 で断る(誤りの通知と状態 failed の終わり)。
 - usage-limit: 上流が口座の利用枠切れ(429 の usage_limit_reached と枠の header)で断る(codexErrorInfo usageLimitExceeded の誤りと
   枠の通知と状態 failed の終わり)。
+- server-overloaded: 上流が提供側の混雑(503 の server_is_overloaded)で断り(codexErrorInfo serverOverloaded の誤りと状態 failed の
+  終わり — 文「Selected model is at capacity. …」)、同じ thread の次のターンは答える(混雑の後の試し直しの形)。
 - tool-calls: 上流が道具の呼びを順に返す(命令の成功・命令の失敗・apply_patch でのファイルの追加・web 検索)— 道具の item
   (commandExecution・fileChange・webSearch)の始まりと終わりの形。
 - background-command: 1 つ目のターンで、短い待ち(yield_time_ms)で戻って後ろで走り続ける命令を呼び、2 つ目のターン(遅い答え)の
@@ -101,6 +103,10 @@ CODE_MODE_DONE = ("Code ", "done.")
 # 起動できない host の中身(在るが、起こすとすぐ code 1 で終わる)。
 CODE_MODE_HOST = "codex-code-mode-host"
 BROKEN_HOST = "#!/bin/sh\nexit 1\n"
+# 提供側の混雑の筋書きの目印(最後の入力に在れば、上流は 503 と error.code server_is_overloaded で断る — codex 0.162.1 の
+# codex-api/src/api_bridge.rs が CodexErr::ServerOverloaded に読む形)と、断りの body の文(codex は自分の文で名乗るので、中身は偽物)。
+OVERLOADED_MARK = "SERVER-OVERLOADED"
+OVERLOADED_BODY = {"error": {"code": "server_is_overloaded", "message": "The server is overloaded."}}
 
 
 def sse_event(stream: IO[bytes], event: JsonObject) -> None:
@@ -286,6 +292,15 @@ class Upstream(http.server.BaseHTTPRequestHandler):
             return
         if "USAGE-LIMIT" in said:
             self.refuse_usage_limit()
+            return
+        # 混雑の目印は最後の入力の item だけで見る(同じ thread の次のターンの要求は、前のターンの入力を履歴に持つ)。
+        if OVERLOADED_MARK in json.dumps(body.get("input", [])[-1:], ensure_ascii=False):
+            refusal = json.dumps(OVERLOADED_BODY).encode()
+            self.send_response(503)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(refusal)))
+            self.end_headers()
+            self.wfile.write(refusal)
             return
         slow = "SLOW" in said or BACKGROUND_WAIT_MARK in said
         tools = TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
@@ -510,6 +525,14 @@ def usage_limit(send: Send, wait: Wait, cwd: Path) -> None:
     wait(turn_ended(start_turn(send, wait, 3, thread_id, "USAGE-LIMIT please")), WAIT_SECONDS * 1.5)
 
 
+def server_overloaded(send: Send, wait: Wait, cwd: Path) -> None:
+    """上流が混雑(503・server_is_overloaded)で断ったターンの誤りと終わりの形と、同じ process・同じ thread の次のターンが続けられる
+    事を録るため(混雑の断りの後の試し直しは同じ thread の次のターン)。"""
+    thread_id = start_thread(send, wait, cwd)
+    wait(turn_ended(start_turn(send, wait, 3, thread_id, f"{OVERLOADED_MARK} please")), WAIT_SECONDS * 1.5)
+    wait(turn_ended(start_turn(send, wait, 4, thread_id, "hello again")), WAIT_SECONDS)
+
+
 def tool_calls(send: Send, wait: Wait, cwd: Path) -> None:
     """道具を呼ぶターン(命令の成功・失敗・apply_patch・web 検索の後に答え)の道具の item の形を録るため。命令が本当に走り、ファイルを
     書けるように、sandbox は会話の担当の既定と同じ danger-full-access(機体の sandbox の有無で行が変わらない)。"""
@@ -579,7 +602,8 @@ class Scenario:
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario("two-turns", two_turns), Scenario("interrupt", interrupt), Scenario("rate-limit", rate_limit),
-    Scenario("usage-limit", usage_limit), Scenario("tool-calls", tool_calls), Scenario("background-command", background_command),
+    Scenario("usage-limit", usage_limit), Scenario("server-overloaded", server_overloaded), Scenario("tool-calls", tool_calls),
+    Scenario("background-command", background_command),
     Scenario("other-tools", other_tools, mcp_server=True),
     Scenario("code-mode-unavailable", code_mode_turns, code_mode_only=True, host="absent"),
     Scenario("code-mode-host-broken", code_mode_turns, code_mode_only=True, host="broken"))

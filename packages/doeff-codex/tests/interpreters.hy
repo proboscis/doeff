@@ -19,6 +19,7 @@
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.handler [CodexHost codex-handler])
 (import doeff_codex.fake [FakeCodexWorld FakeReply UsageLimitHit fake-codex-handler])
+(import doeff_codex.lines [ServerOverloadedHit])
 
 (val PLAIN "plain")
 (val FAKE "fake")
@@ -42,6 +43,10 @@
 (val CODE-MODE-WARNING (+ "Code Mode is unavailable because failed to spawn code-mode host "
                           "/home/ubuntu/.codex-rec-cm15/codex-host-absent/codex-code-mode-host: host executable was not found. "
                           "Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."))
+;; 提供側の混雑で断られる筋書きの言葉と、その終わりが運ぶ事実(stub は録った codex 0.162.1 の server-overloaded の 1 つ目のターンを
+;; 流し、本番の行の分類が誤りの文から作る — 文は codex が自分で名乗る文。fake は同じ事実を筋書きで受ける)。
+(val OVERLOADED-WORD "SERVER-OVERLOADED")
+(val OVERLOADED-HIT (ServerOverloadedHit :text "Selected model is at capacity. Please try a different model."))
 ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)。
 (val CODEX-HOME-DIR "codex-home")
 
@@ -69,6 +74,7 @@
     (in SLOW-WORD input.text) (FakeReply :pieces #("slow-0 " "slow-1 ") :hold True)
     (in IMAGES-PHRASE input.text) (FakeReply :pieces #((.format "IMAGES {}" (len input.images))))
     (in USAGE-LIMIT-WORD input.text) (FakeReply :pieces #() :usage-limit USAGE-LIMIT-HIT)
+    (in OVERLOADED-WORD input.text) (FakeReply :pieces #() :server-overloaded OVERLOADED-HIT)
     (in CODE-MODE-WORD input.text) (FakeReply :pieces #() :tools-lost CODE-MODE-WARNING)
     True (FakeReply :pieces ANSWER-PIECES)))
 

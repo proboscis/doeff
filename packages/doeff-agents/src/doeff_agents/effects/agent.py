@@ -227,6 +227,19 @@ class AgentModelRefusal:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentProviderCapacity:
+    """The model's provider was temporarily at capacity and refused the turn's request: the runtime ended the
+    turn with the provider's refusal instead of the model's answer (codex's ``serverOverloaded`` — "Selected
+    model is at capacity. Please try a different model.", the production refusal of 2026-10-22 21:59 JST).
+    Neither the account nor the transcript is at fault: the same session can be continued a little later.
+    ``model`` = the model the turn asked for (``None`` when not stated), ``text`` = the runtime's refusal
+    message.  The layer that started the turn decides how long to wait and how many times to try again."""
+
+    model: str | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
     """The turn finished.  ``resume_from`` continues this agent's context.
 
@@ -261,7 +274,9 @@ class AgentTurnFailed:
     turn ran into the account's usage limit (``None`` when it did not — #3983).
     ``account_refusal`` = the account refused the turn's request (``None`` when
     it did not).  ``model_refusal`` = the model's safeguards refused the turn's
-    request (``None`` when they did not).
+    request (``None`` when they did not).  ``provider_capacity`` = the model's
+    provider was at capacity and refused the turn's request (``None`` when it
+    was not — only a failed turn carries it).
 
     ``exit_code`` / ``stderr_tail`` = 手番の終わりの前に agent の CLI の process が降りた時(手番を起こす前に降りて手番を
     始められなかった時も)の、process の終了 code と stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。
@@ -280,6 +295,7 @@ class AgentTurnFailed:
     account_limit: AgentAccountLimit | None = None
     account_refusal: AgentAccountRefusal | None = None
     model_refusal: AgentModelRefusal | None = None
+    provider_capacity: AgentProviderCapacity | None = None
     exit_code: int | None = None
     stderr_tail: str | None = None
 

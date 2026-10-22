@@ -24,6 +24,10 @@
 (defenum TurnStatus COMPLETED INTERRUPTED FAILED (IN-PROGRESS "inProgress"))
 ;; 口座の利用枠切れの誤りの種類(codexErrorInfo の綴り — codex 0.162.1)。綴りの定義はここ 1 か所(handler の判定と fake の終わりが読む)。
 (val USAGE-LIMIT-KIND "usageLimitExceeded")
+;; 提供側の混雑の誤りの種類(codexErrorInfo の綴り — codex 0.162.1 の CodexErrorInfo::ServerOverloaded。上流が 503 と error.code
+;; server_is_overloaded で断った時に、codex は文「Selected model is at capacity. Please try a different model.」で名乗る — 録り
+;; tests/recorded/codex-0.162.1/server-overloaded)。綴りの定義はここ 1 か所(turn-ended-of の判定と fake の終わりが読む)。
+(val SERVER-OVERLOADED-KIND "serverOverloaded")
 ;; code mode が使えない警告の文の頭と、道具の呼びを閉じた(fail closed)と名乗る句(codex 0.162.1 の codex-rs/core の
 ;; CodeModeService.take_unavailable_warning — 「Code Mode is unavailable because <訳>. <振る舞い>; enable …」)。振る舞いは道具の出し方で
 ;; 2 つ: code mode だけで道具を呼ぶ形(gpt-6-astra)は「Code mode will fail closed」で道具を 1 つも呼べず、code mode と直の道具の両方を
@@ -533,10 +537,20 @@
   (#^ (| int None) resets-at)
   (#^ str text))
 
+(defrecord ServerOverloadedHit
+  "ターンが提供側の混雑で断られた事実(誤りの種類 SERVER-OVERLOADED-KIND の終わり — model の提供側が一時的に混んで要求を受けなかった):
+   text = codex の誤りの文(例 Selected model is at capacity. Please try a different model.)。口座は使える — 少し後に同じ thread で
+   試し直せる(録り server-overloaded の 2 つ目のターン)。codex は上流が待ちの刻を名乗った時だけ自分で繰り返し(willRetry 真の誤りの
+   通知)、名乗らなければ繰り返さずにターンを終える — この事実はその終わりに載る。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str text))
+
 (defrecord TurnEnded
   "ターンの終わり(turn/completed — ターンごとにちょうど 1 つ): status = 終わりの状態(この版に無い綴りは UnknownValue — 知らない状態でも
    終わりは届く)/ error-message・error-kind・http-status = 失敗の終わりの誤り(turn.error — 無ければ None・種類は TurnError と同じ)/
-   usage-limit = 口座の利用枠切れの事実(行の分類では None。handler がそのターンの枠の知らせから埋める・fake は筋書きから)。"
+   usage-limit = 口座の利用枠切れの事実(行の分類では None。handler がそのターンの枠の知らせから埋める・fake は筋書きから)/
+   server-overloaded = 提供側の混雑の事実(誤りの種類が SERVER-OVERLOADED-KIND の終わりに、行の分類が誤りの文から埋める・fake は
+   筋書きから。ほかの終わりは None)。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
   (#^ str turn-id)
@@ -544,7 +558,8 @@
   (setv #^ (| str None) error-message None)
   (setv #^ (| str UnknownValue None) error-kind None)
   (setv #^ (| int None) http-status None)
-  (setv #^ (| UsageLimitHit None) usage-limit None))
+  (setv #^ (| UsageLimitHit None) usage-limit None)
+  (setv #^ (| ServerOverloadedHit None) server-overloaded None))
 
 (defrecord RateLimitWindow
   "口座の利用枠の窓 1 つ: used-percent = 使った割合(百分率 — 100 以上で尽きた)/ minutes = 窓の長さ(分)/ resets-at = 窓が戻る刻
@@ -672,12 +687,15 @@
 
 (defk turn-ended-of [#^ TurnParamsWire params]
   {:pre [(: params TurnParamsWire)] :post [(: % TurnEnded)] :tags {:context "codex" :role "foundation"}}
-  "turn/completed を、状態と失敗の誤りを持つターンの終わりにするため(知らない状態・誤りの種類でも終わりは作る)。"
+  "turn/completed を、状態と失敗の誤りを持つターンの終わりにするため(知らない状態・誤りの種類でも終わりは作る)。誤りの種類が提供側の
+   混雑(SERVER-OVERLOADED-KIND)なら、その誤りの文で混雑の事実(ServerOverloadedHit)も載せる。"
   (val failure params.turn.error)
   (<- facts (error-facts-of (if (is failure None) None failure.codex-error-info)))
   (<- status (turn-status-of params.turn.status))
+  (val overloaded (if (and (is-not failure None) (= facts.kind SERVER-OVERLOADED-KIND)) (ServerOverloadedHit :text failure.message) None))
   (TurnEnded :thread-id params.thread-id :turn-id params.turn.id :status status
-             :error-message (if (is failure None) None failure.message) :error-kind facts.kind :http-status facts.http-status))
+             :error-message (if (is failure None) None failure.message) :error-kind facts.kind :http-status facts.http-status
+             :server-overloaded overloaded))
 
 
 (defk turn-error-of [#^ ErrorParamsWire params]

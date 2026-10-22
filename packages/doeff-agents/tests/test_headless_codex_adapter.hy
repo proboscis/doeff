@@ -26,7 +26,7 @@
   SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow
   AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent
   AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent
-  AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
+  AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentProviderCapacity
   AgentCapabilityUnsupportedError NoTurnInFlightError
   RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents.effects.agent [AutocompactTokens])
@@ -34,7 +34,8 @@
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
-                                                CodexUsageLimitHit codex-process-layer fake-codex-process-layer codex-adapter])
+                                                CodexUsageLimitHit CodexServerOverloadedHit codex-process-layer fake-codex-process-layer
+                                                codex-adapter])
 
 (val FAKE "fake")
 (val STUB "stub")
@@ -62,6 +63,11 @@
 (val USAGE-RESETS-AT 1893456000)
 (val USAGE-LIMIT-TEXT (+ "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
                          "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM."))
+;; 提供側の混雑で断られたターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の server-overloaded の 1 つ目のターンを流す)と、
+;; codex が名乗る文・会話の宣言の model(codex の誤りは model を名乗らない — adapter は宣言の model を運ぶ)。
+(val OVERLOADED-PROMPT "SERVER-OVERLOADED please")
+(val OVERLOADED-TEXT "Selected model is at capacity. Please try a different model.")
+(val OVERLOADED-MODEL "gpt-6-astra")
 ;; 道具を呼ぶターンの言い方(替え玉の規則 — 録った codex 0.162.1 の道具の呼びのターン tool-calls を流す)。
 (val TOOLS-PROMPT "TOOL-CALLS please")
 ;; code mode の host を使えない codex のターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の code-mode-unavailable の、ターンの
@@ -107,6 +113,8 @@
     (in USAGE-LIMIT-PROMPT input.text) (FakeCodexReply :pieces #()
                                                        :usage-limit (CodexUsageLimitHit :minutes 300 :resets-at USAGE-RESETS-AT
                                                                                         :text USAGE-LIMIT-TEXT))
+    ;; 提供側の混雑: 層 2 の事実(codex の文)を筋書きで渡す — 替え玉は録った行から本番の行の分類が同じ事実を作る。
+    (in OVERLOADED-PROMPT input.text) (FakeCodexReply :pieces #() :server-overloaded (CodexServerOverloadedHit :text OVERLOADED-TEXT))
     ;; 道具を呼べない process: 層 2 の終わり(codex の警告の文)を筋書きで渡す — 替え玉は録った警告から本番の handler が同じ終わりを作る。
     (in CODE-MODE-PROMPT input.text) (FakeCodexReply :pieces #() :tools-lost CODE-MODE-WARNING)
     True (FakeCodexReply :pieces ANSWER-PIECES)))
@@ -695,6 +703,56 @@
   {:pre [(: events tuple) (: end PageEnd)] :post [(: % bool)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "頁の終わりが完了の終わりか(失敗の終わりの後の、次の入力のターンを読み終える止めの条件)。"
   (isinstance end AgentTurnCompleted))
+
+
+(defk overloaded-turn-then-retry [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "提供側の混雑で断られたターンを最後まで読み、同じ session の次の入力(上の層の試し直し)が次のターンとして完了するのを読むため。"
+  (<- handle (launch s "codex-overloaded" OVERLOADED-PROMPT {"model" OVERLOADED-MODEL}))
+  (<- failed (read-until handle ended s.timeout -1))
+  (<- (FollowUp handle "say hello" :input-ref "ref-retry" :mode TurnInputMode.NEXT-TURN))
+  (<- after (read-until handle completed-end s.timeout failed.after))
+  (<- (Stop handle))
+  {"failed" failed "after" after})
+
+(defk check-overloaded-turn [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "提供側の混雑で断られたターンの終わりが、会話の宣言の model と codex の文を AgentProviderCapacity で運び(口座の利用枠切れでない)、
+   同じ session の次の入力のターンが完了する事を確かめるため — agora は混雑の事実の在る失敗を、少し後に同じ session で試し直す
+   (card ki-843475dd8f8b・本番 2026-10-22 21:59 JST の会話 c-QM2DD91FG7T13716VSC9C6GKV2)。"
+  (val end (. (get seen "failed") end))
+  (assert (isinstance end AgentTurnFailed) end)
+  (assert (= end.provider-capacity (AgentProviderCapacity :model OVERLOADED-MODEL :text OVERLOADED-TEXT)) end)
+  (assert (is end.account-limit None) end)
+  (assert (= end.detail OVERLOADED-TEXT) end)
+  (val after (. (get seen "after") end))
+  (assert (isinstance after AgentTurnCompleted) after)
+  (assert (= after.result-text ANSWER) after)
+  (assert (= after.resume-from end.resume-from) #(after end))
+  None)
+
+(deftest test-headless-codex-provider-capacity-is-carried-and-the-session-retries-stub [tmp-path]
+  ;; 失敗ケース(card ki-843475dd8f8b): 録った codex 0.162.1 の混雑のターン(誤り serverOverloaded・失敗の終わり)が
+  ;; AgentTurnFailed.provider_capacity に届き、同じ session の試し直しが完了する。
+  (<- seen (run-on STUB tmp-path overloaded-turn-then-retry))
+  (<- (check-overloaded-turn seen)))
+
+(deftest test-the-public-codex-handlers-carry-the-provider-capacity-stub [tmp-path]
+  ;; agora が組む公開の口でも同じ。
+  (<- seen (run-on PUBLIC-STUB tmp-path overloaded-turn-then-retry))
+  (<- (check-overloaded-turn seen)))
+
+(deftest test-headless-codex-provider-capacity-is-carried-and-the-session-retries-fake [tmp-path]
+  ;; 層 2 の fake が筋書きの混雑の事実で失敗のターンを出せば、adapter は本番と同じ AgentProviderCapacity を出す。
+  (<- seen (run-on FAKE tmp-path overloaded-turn-then-retry))
+  (<- (check-overloaded-turn seen)))
+
+(deftest test-headless-codex-rate-limit-is-not-provider-capacity-stub [tmp-path]
+  ;; 上流の 429・口座の利用枠切れのターンは、提供側の混雑を名乗らない(試し直しの訳にしない)。
+  (for [refused #(rate-limited-turn usage-limited-turn)]
+    (<- done (run-on STUB tmp-path refused))
+    (assert (isinstance done.end AgentTurnFailed) done.end)
+    (assert (is done.end.provider-capacity None) done.end)))
 
 (defk toolless-turn-then-next [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
