@@ -6,14 +6,14 @@ store.hy は Hy の module なので、pyright は中を読めず、名が全部
 
 - Persist は凍った dataclass の EffectBase[None](欄 writes = 変わったキーごとの書き TableWrite — value は新しい値・消えたキーは None・#2722)。
 - 置き場は 2 つの形の閉じた和 DurableStore(#2785):
-  ByteLog    = file の置き場(foundation/wal_store の WalStore)— byte の I/O だけを持つ。行と写しの形は durable-* の口が綴り・検める。
+  ByteLog    = file の置き場の帳簿(foundation/wal_store の WalStore)— dir と path・表と番号・捨てた行と fsync の記録だけを持ち、file の読み書きは
+             持たない。行と写しの形と file の effect(wal_files.hy)は durable-* の口が出す。
   DeltaStore = memory の置き場(entry の MemoryWalStore と、それを継いだ模擬の壊れた置き場)— 差分と表をそのまま受け渡す。
 - durable-exists・durable-load・durable-persist・durable-checkpoint は置き場の形を切り分けて読み書きする defk(Program を返す)。
 - durable-states は handler の値。wal-store と memory-store は置き場を受けて handler を返す関数(handler の型は Any)。
 """
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from doeff import EffectBase, Program
@@ -27,20 +27,18 @@ class Persist(EffectBase[None]):
 
 @runtime_checkable
 class ByteLog(Protocol):
+    directory: str
     seq: int
     max_log_bytes: int
-    snapshot: Path
-    log: Path
-    def exists(self) -> bool: ...
-    def check_place(self) -> None: ...
-    def read_snapshot_bytes(self) -> bytes | None: ...
-    def read_log_lines(self) -> list[bytes]: ...
-    def drop_tail(self, kept: int, size: int, reason: str) -> None: ...
-    def append_line(self, line: bytes) -> int: ...
-    def write_snapshot(self, data: bytes) -> None: ...
+    sync: bool
+    snapshot: str
+    log: str
     def table(self) -> dict[str, object]: ...
     def replace_table(self, kv: dict[str, object]) -> None: ...
     def recovery(self) -> dict[str, int | str] | None: ...
+    def note_recovered(self, kept: int, size: int, reason: str) -> None: ...
+    def note_fsync(self, seconds: float) -> None: ...
+    def fsync_stats(self) -> dict[str, float | int]: ...
 
 @runtime_checkable
 class DeltaStore(Protocol):

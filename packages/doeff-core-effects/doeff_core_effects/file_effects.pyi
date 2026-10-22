@@ -51,6 +51,11 @@ class LockHeld:
     path: str
     token: int
 
+@dataclass(frozen=True, kw_only=True)
+class Appended:
+    size: int
+    synced_seconds: float
+
 @dataclass(frozen=True)
 class StatPath(EffectBase[PathStat | FileFailed]):
     path: str
@@ -90,6 +95,22 @@ class AppendText(EffectBase[FileFailed | None]):
     path: str
     text: str
     sync: bool = False
+
+@dataclass(frozen=True)
+class AppendBytes(EffectBase[Appended | FileFailed]):
+    path: str
+    content: bytes
+    sync: bool = False
+
+@dataclass(frozen=True)
+class TruncateFile(EffectBase[FileFailed | None]):
+    path: str
+    size: int
+    sync: bool = False
+
+@dataclass(frozen=True)
+class SyncDirectory(EffectBase[FileFailed | None]):
+    path: str
 
 @dataclass(frozen=True)
 class MakeDirectory(EffectBase[FileFailed | None]):
