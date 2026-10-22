@@ -61,7 +61,13 @@ from types import ModuleType
 from typing import TYPE_CHECKING
 
 import hy
-from doeff_hy_bytecode_guard import SharedScope, gensym_renaming, macro_recording, value_reference
+from doeff_hy_bytecode_guard import (
+    SharedScope,
+    gensym_renaming,
+    macro_recording,
+    record_is_current_here,
+    value_reference,
+)
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 from hy.models import Object
@@ -83,14 +89,22 @@ from doeff_hy.static_baseline import (
     split,
 )
 from doeff_hy.static_cache import (
+    BundleRow,
     CachedFinding,
     CachedProjection,
     CachedSpan,
+    FileStat,
     CacheMiss,
+    bundle_key,
+    bundle_signature,
     default_cache_dir,
     load,
+    load_bundle,
     place,
+    row_is_current,
+    stat_of,
     store,
+    store_bundle,
 )
 from doeff_hy.static_carry import (
     DEFAULT_REFRESH_RUNS,
@@ -866,44 +880,75 @@ class ExpansionWorkerLostError(RuntimeError):
 
 @dataclass(frozen=True)
 class _Hit:
-    """保存から引けた展開と、それが import する module の名。"""
+    """保存から引けた展開と、それが import する module の名と、束に書く行。"""
 
     projection: Projection
     imports: frozenset[str]
+    relative: str
+    row: BundleRow
 
 
 @dataclass(frozen=True)
 class _Miss:
-    """保存から引けなかった source と、展開した後に保存する鍵(保存しない実行では None)。"""
+    """保存から引けなかった source と、展開した後に保存する鍵(保存しない実行では None)・束の行に要る物。"""
 
     source: Path
     key: str | None
+    relative: str = ""
+    module: str = ""
+    stat: FileStat | None = None
 
 
-def _looked_up(root: Path, roots: list[Path], source: Path, cache_dir: Path | None) -> _Hit | _Miss:
-    """保存から引く(引けなければ、展開した後に保存する鍵を持った _Miss)。"""
+def _looked_up(
+    root: Path,
+    roots: list[Path],
+    source: Path,
+    cache_dir: Path | None,
+    bundle: dict[str, BundleRow] | None = None,
+) -> _Hit | _Miss:
+    """保存から引く(引けなければ、展開した後に保存する鍵を持った _Miss)。束に載る行は、source の stat が書いた時と同じなら
+    source も entry も open せずに引く(card ki-2829daea29fa)。"""
     if cache_dir is None:
         return _Miss(source, None)
     module = module_name(roots, source)
-    key = place(source.read_text(encoding="utf-8"), module, str(source.relative_to(root)))
+    relative = str(source.relative_to(root))
+    stat = stat_of(source)  # 読む前に取る(読む間に変わっても、次の実行は食い違いとして読み直す)
+    row = (bundle or {}).get(relative)
+    if row is not None and row_is_current(row, module, stat):
+        return _hit(source, relative, module, row.cached, row.place, stat)
+    key = place(source.read_text(encoding="utf-8"), module, relative)
+    if row is not None and row.place == key and row.module == module and record_is_current_here(row.cached.used):
+        return _hit(source, relative, module, row.cached, key, stat)
     match load(cache_dir, key):
         case CachedProjection() as cached:
-            projection = _from_cache(source, module, cached)
-            if cached.imports is not None:
-                return _Hit(projection, frozenset(cached.imports))
-            # import の名を持たない古い entry — 一度読んで書き足し、次の実行から展開の text を読み直さない。
-            imports = imported_modules(projection)
-            store(cache_dir, key, _to_cache(projection))
-            return _Hit(projection, frozenset(imports))
+            if cached.imports is None:
+                # import の名を持たない古い entry — 一度読んで書き足し、次の実行から展開の text を読み直さない。
+                cached = _to_cache(_from_cache(source, module, cached))
+                store(cache_dir, key, cached)
+            return _hit(source, relative, module, cached, key, stat)
         case CacheMiss():
-            return _Miss(source, key)
+            return _Miss(source, key, relative, module, stat)
 
 
-def _kept(cache_dir: Path | None, miss: _Miss, result: Projection | CompileFailure) -> None:
+def _hit(
+    source: Path, relative: str, module: str, cached: CachedProjection, key: str, stat: FileStat | None
+) -> _Hit:
+    return _Hit(
+        _from_cache(source, module, cached),
+        frozenset(cached.imports or ()),
+        relative,
+        BundleRow(module, key, stat, cached),
+    )
+
+
+def _kept(cache_dir: Path | None, miss: _Miss, result: Projection | CompileFailure) -> BundleRow | None:
     """展開した結果を保存する(保存の書きはこの 1 か所 — 子の process は書かない)。展開に失敗した source は保存しない
-    (直した時に作り直す・失敗の文言は展開の度に出す)。"""
+    (直した時に作り直す・失敗の文言は展開の度に出す)。保存した展開の束の行を返す。"""
     if cache_dir is not None and miss.key is not None and isinstance(result, Projection):
-        store(cache_dir, miss.key, _to_cache(result))
+        cached = _to_cache(result)
+        store(cache_dir, miss.key, cached)
+        return BundleRow(miss.module, miss.key, miss.stat, cached)
+    return None
 
 
 def project_cached(
@@ -911,7 +956,7 @@ def project_cached(
 ) -> Projection | CompileFailure:
     """展開の cache(static_cache)を引き、無ければ展開して保存する。cache_dir が None なら毎回展開する。"""
     match _looked_up(root, roots, source, cache_dir):
-        case _Hit(projection):
+        case _Hit(projection=projection):
             return projection
         case _Miss() as miss:
             result = project(root, roots, source)
@@ -984,17 +1029,24 @@ def project_closure(
     resolved = functools.cache(_present_candidates)
     seen: set[Path] = set(targets)
     wave = list(dict.fromkeys(targets))
+    # closure 全体を 1 file に束ねた保存(温まった実行は束 1 つだけ読む)。束の行で引けない file は今までの引き方で引く。
+    bundle_name = bundle_key(root, [str(t.relative_to(root)) for t in wave]) if cache_dir is not None else ""
+    bundle = load_bundle(cache_dir, bundle_name) if cache_dir is not None else {}
+    rows: dict[str, BundleRow] = {}
     # 展開の cache の「今の環境に合うか」の照らしは、file の状態を実行の間 1 度だけ stat する(照らしごとに覚えを捨てると、
     # 10 file の検めで stat が 10 万回・CPU 10 秒になった — card ki-0f0542a69a78)。
     with SharedScope(), _Expanders(limit) as expanders:
         while wave:
-            looked = {source: _looked_up(root, roots, source, cache_dir) for source in wave}
+            looked = {source: _looked_up(root, roots, source, cache_dir, bundle) for source in wave}
             misses = [miss for miss in looked.values() if isinstance(miss, _Miss)]
             fresh = expanders.expanded(root, roots, [miss.source for miss in misses])
             for miss in misses:
-                _kept(cache_dir, miss, fresh[miss.source])
+                if (row := _kept(cache_dir, miss, fresh[miss.source])) is not None:
+                    rows[miss.relative] = row
             found: list[Path] = []
             for source, lookup in looked.items():
+                if isinstance(lookup, _Hit):
+                    rows[lookup.relative] = lookup.row
                 result = lookup.projection if isinstance(lookup, _Hit) else fresh[source]
                 imports = lookup.imports if isinstance(lookup, _Hit) else None
                 if isinstance(result, CompileFailure):
@@ -1009,6 +1061,8 @@ def project_closure(
                             seen.add(absolute)
                             found.append(absolute)
             wave = found
+    if cache_dir is not None and bundle_signature(rows) != bundle_signature(bundle):
+        store_bundle(cache_dir, bundle_name, rows)
     return Closure(projections, failures)
 
 
