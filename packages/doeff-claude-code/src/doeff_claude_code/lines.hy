@@ -672,7 +672,8 @@
 ;; end-of-result が per-turn-model-usage の 1 か所で載せる): model-usage = 手番を閉じた result の行の modelUsage の累積を、額と同じ起点
 ;; (CostMark)からの増分へ直した物(ModelUsage の列 — この手番に使った model だけ。出せなければ None)/ model-usage-gap = model ごとの額の
 ;; 和と手番の額 cost-usd を照合できなかった訳(ModelUsageGap — 合えば None。既定は NOT-NAMED = modelUsage を名乗らない終わり)。止めた・
-;; 消えた手番は額と同じく持たない(止めた手番の分は次の手番の起点へ動かして捨てる)。
+;; 消えた手番は額と同じく持たない(止めた手番の分は次の手番の起点へ動かして捨てる。ただし生き残った入力の手番が同じ process で続く
+;; 止め — Interrupted の continued-by — は起点を動かさず、止めた区切りの分を続いた手番の終わりに含める・card ki-9246ea31f98d)。
 ;;
 ;; 手番の途中で CLI の process が降りた終わり(BackendLost と、注入を待って飲んだ result の Failed)は、process の終了 code と stderr の
 ;; 末尾を欄で持つ(#4207 — 文 detail の中だけでなく、上の層が型の欄で「なぜ降りたか」を読めるように)。欄の値は状態機械 dialogue.hy の

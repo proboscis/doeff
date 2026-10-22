@@ -31,6 +31,10 @@
 ;;;   result の行の modelUsage も会話の累積(実測 2.1.292)なので、model ごとの使用量も同じ起点(cost-mark は額と model ごとの累積の組
 ;;;   CostMark)からの差で手番の分へ直し、model ごとの額の和を手番の額と照合する(card ki-1d986d4f0007 — 起点・再起動・止めた手番の扱いは
 ;;;   額と同じ 1 つの値が運ぶので、2 つの起点がずれない)。
+;;;   control_request で止めて生き残った入力の手番が同じ process で続く時(continues)は、止めた区切りを閉じた result の行で起点を進めず、
+;;;   usage の和も持ち越す — 続いた手番の額と usage と model ごとの使用量は、止めた区切りの始まりの起点から数える(card ki-9246ea31f98d —
+;;;   上の層はこの 2 つの区切りを 1 つの手番として読み、続いた手番の終わりの額だけを手番の額にする。止めた区切りの Interrupted は額の欄を
+;;;   持たないので、額は二重に数えない)。
 ;;;
 ;;; stdout の行は lines.hy が分類した型(ClaudeLineKind)で受ける — JSON の読みは lines.hy の 1 か所だけ。
 ;;; stdin へ書く行の綴り(JSON へ書く境界)はこの file の dumps の 1 か所。
@@ -390,7 +394,7 @@
         (if survivors
             (Transition :state (replace (closed-turn open-closed) :in-flight True :turn-refs survivors
                                         :injections (tuple (gfor ref survivors (Injection ref "queued")))
-                                        :cost-mark (run (mark-of-result result)))
+                                        :turn-usage open-closed.turn-usage)
                         :end (with-last-call (Interrupted :process-kept True :surviving-refs survivors :dropped-refs dropped)
                                              open-closed)
                         :continues True)
