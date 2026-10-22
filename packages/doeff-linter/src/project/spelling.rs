@@ -13,13 +13,21 @@ use super::names::is_identifier;
 pub struct Spelling {
     /// 名の綴りに、後ろの区切りを足した正規表現。None = 綴りを決められない名 — どの file も合う物として扱う。
     pattern: Option<Regex>,
+    /// 綴りを決められる名の、`-` を `_` に畳んだ綴り(= 名そのもの — mangle 済みの名に `-` は無い)。覚えの引き(`blob_spell`)が使う。
+    folded: Option<String>,
 }
 
 impl Spelling {
     /// mangle 済みの名(module の段を除いた最後の段)の綴り。
     pub fn of(name: &str) -> Spelling {
         let pattern = spelling_pattern(name).and_then(|spelling| Regex::new(&format!("{spelling}{SYMBOL_END}")).ok());
-        Spelling { pattern }
+        let folded = pattern.as_ref().map(|_| name.to_string());
+        Spelling { pattern, folded }
+    }
+
+    /// 綴りを決められる名の綴り(決められない名は None — どの file も合う)。
+    pub fn folded_name(&self) -> Option<&str> {
+        self.folded.as_deref()
     }
 
     /// source に、記号の最後の段として名を綴った所が在るか。綴りで始まる正規表現は頭の字が定まって速く探せるので(前の区切りまで

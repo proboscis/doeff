@@ -31,3 +31,10 @@ pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
     eprintln!("doeff-linter-timing: {label} wall={:.3} cpu={spent}", wall.elapsed().as_secs_f64());
     out
 }
+
+/// 計器が有効なら `doeff-linter-timing: <label> <欄>=<数>` を 1 行 stderr へ出す(段の時間でなく、数えた物の数 — 例: 中身を実際に読んだ file の数)。
+pub fn count(label: &str, field: &str, value: usize) {
+    if std::env::var_os(ENV).is_some() {
+        eprintln!("doeff-linter-timing: {label} {field}={value}");
+    }
+}
