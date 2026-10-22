@@ -7,6 +7,7 @@ from collections.abc import Callable as Callable
 from collections.abc import Mapping as Mapping
 from dataclasses import dataclass as dataclass
 from typing import Protocol as Protocol
+from doeff import Pure as Pure
 from doeff_hy.wire import parse as parse
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.json_value import OpaqueJson as OpaqueJson
