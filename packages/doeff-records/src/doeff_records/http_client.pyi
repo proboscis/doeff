@@ -7,9 +7,11 @@ from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from datetime import datetime as datetime
 from doeff import with_handlers as with_handlers
+from doeff_core_effects.effects import slog as slog
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
+from doeff_core_effects.http_effects import HttpPhases as HttpPhases
 from doeff_core_effects.meter_effects import CountMetric as CountMetric
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
@@ -22,6 +24,8 @@ from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
 from doeff_records.values import Reset as Reset
 from doeff_records.values import Unreachable as Unreachable
+from doeff_records.request_timing import RequestStage as RequestStage
+from doeff_records.request_timing import stages_of_server_timing as stages_of_server_timing
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -51,6 +55,7 @@ from doeff_records.wire import WRITER_HEADER as WRITER_HEADER
 from doeff_records.wire import CALLER_HEADER as CALLER_HEADER
 from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 DEFAULT_REQUEST_TIMEOUT: float
+EXCHANGE_LOG: str
 
 class WireError(RuntimeError):
     ...
@@ -62,11 +67,14 @@ class RecordsEndpoint:
     meter: Callable[..., object] | None = None
     writer: str | None = None
     caller: str | None = None
+    timed_operations: frozenset[str] = ...
 
 @dataclass(frozen=True)
 class RawReply:
     status: int
     payload: bytes
+    phases: HttpPhases | None = None
+    server_timing: str | None = None
 
 def service_url(endpoint: RecordsEndpoint, operation: str) -> _Program[str, object]:
     ...
@@ -93,6 +101,18 @@ def zero_client_metrics(endpoint: RecordsEndpoint) -> _Program[None, object]:
     ...
 
 def counted_reply(endpoint: RecordsEndpoint, operation: str, reply: RawReply | Unreachable) -> _Program[None, object]:
+    ...
+
+def ms_of(seconds: float) -> _Program[float, object]:
+    ...
+
+def tables_named(ask: PublicEffect) -> _Program[str, object]:
+    ...
+
+def logged_exchange(ask: PublicEffect, operation: str, reply: RawReply | Unreachable, asked: float, answered: float, decoded: float) -> _Program[None, object]:
+    ...
+
+def reply_answer(endpoint: RecordsEndpoint, ask: PublicEffect, operation: str, reply: RawReply | Unreachable) -> _Program[WireAnswer | Unreachable, object]:
     ...
 
 def call_service(endpoint: RecordsEndpoint, ask: PublicEffect) -> _Program[WireAnswer | Unreachable, object]:

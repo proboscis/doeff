@@ -64,6 +64,14 @@ def waited(marks: tuple[MarkAt, ...]) -> _Program[WaitSum, object]:
 
 def between(since: float | None, until: float | None) -> _Program[float | None, object]:
     ...
+SERVER_TIMING_HEADER: str
+SERVER_TIMING_STAGES: tuple[RequestStage, ...]
+
+def server_timing_of(stages: tuple[StageSeconds, ...]) -> _Program[str, object]:
+    ...
+
+def stages_of_server_timing(value: str | None) -> _Program[tuple[StageSeconds, ...], object]:
+    ...
 
 def request_stages(received_at: float | None, marks: tuple[MarkAt, ...]) -> _Program[tuple[StageSeconds, ...], object]:
     ...
