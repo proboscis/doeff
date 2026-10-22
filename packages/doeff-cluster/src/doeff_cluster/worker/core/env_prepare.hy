@@ -252,12 +252,13 @@
 (defk stage-trees [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
   "repo ごとのツリーを root の下に兄弟で並べる(同じ repo を持つ完成済みの root が在れば、その木を hardlink で写して変わった path だけ新しく
-   置く — 無ければ mirror から展開する)。repo ごとの秒と置き方(写し・展開)と file の数の内訳(写した・消した・置き直した)を区切りとして
+   置く — 無ければ mirror から展開する)。repo ごとの頭で進みの印を触り直す(StageStarted を同じ名で)。repo ごとの秒と置き方(写し・展開)と file の数の内訳(写した・消した・置き直した)を区切りとして
    印へ渡し、この処理ステージが root に書いた file の数は新しく置いた数の合計(hardlink は書かない・#3677)。写し元を渡したのに展開した
    木はその理由を、写し元が無くて展開した木はそのことを記録に残す。"
   (val mirrors (dfor m state.mirrors m.name m.mirror))
   (var parts #())
   (for [repo request.env.repos]
+    (<- (StageStarted "tree"))
     (<- source (| TreeSource None) (tree-source request repo))
     (<- started float (GetMonotonic))
     (<- placed TreePlaced (MaterializeTree (get mirrors repo.name) repo.commit (.format "{}/{}" request.root repo.name) source))

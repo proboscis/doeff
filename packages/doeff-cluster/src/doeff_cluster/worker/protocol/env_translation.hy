@@ -31,6 +31,7 @@
 ;;; 中身を APFS の local snapshot が 24 時間持った — card ki-d51b7baa38bc)。写し元が無い・写せない時は git archive と tar で全部を展開する。
 ;;; git archive と tar は StartProcess/PollProcess で起こし、待つ間 WATCH-SECONDS ごとに子の書いた量(archive の大きさ・tar -v の一覧の大きさ)を読んで、
 ;;; 増えた時だけ進みの印(runtime-env.progress)を触る。量が増えない子は印を触らず、worker が停滞の窓で止める(時間だけで触る heartbeat は入れない)。
+;;; 子の間の区切りでも触る: git archive の後・tar の展開の前、写しの link-unchanged の後・place-paths の前(stage-trees は repo ごとにも触る)。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -486,12 +487,19 @@
       _ (do (<- now-bytes int (written-bytes watched))
             (when (> now-bytes seen-bytes)
               (:= seen-bytes now-bytes)
-              (when progress
-                (<- (write-replacing progress (+ TREE-STAGE "\n")))))
+              (<- (touch-progress progress)))
             (<- (Delay poll-seconds)))))
   (<- (remove-if-present out-path))
   (<- (remove-if-present err-path))
   result)
+
+
+(defk touch-progress [progress]
+  {:pre [(: progress str)] :post [(: % None)]}
+  "進みの印(progress — 空なら書かない)を触るため。区切りで 1 回だけ触り、時間で触り続けはしない。"
+  (when progress
+    (<- (write-replacing progress (+ TREE-STAGE "\n"))))
+  None)
 
 
 (defk archive-into [mirror commit dest pathspec progress]
@@ -507,6 +515,7 @@
   (<- packed CommandResult (run-watched git-argv literal (+ archive ".git-out") (+ archive ".git-err") #(archive) progress WATCH-SECONDS))
   (when (!= packed.code 0)
     (raise (RuntimeError (.format "git archive {} に失敗: {}" commit packed.stderr))))
+  (<- (touch-progress progress))
   (val tar-out (+ archive ".tar-out"))
   (val tar-err (+ archive ".tar-err"))
   (<- unpacked CommandResult (run-watched #("tar" "-xvf" archive "-C" dest) None tar-out tar-err #(tar-out tar-err) progress WATCH-SECONDS))
@@ -558,7 +567,8 @@
         (<- linked (| None CopyRefused) (link-unchanged source.dir dest linkable))
         (match linked
           (CopyRefused) linked
-          _ (do (<- (place-paths mirror commit dest fresh progress))
+          _ (do (<- (touch-progress progress))
+                (<- (place-paths mirror commit dest fresh progress))
                 (TreePlaced :how TREE-COPY :copied (len linkable) :removed (- (len tracked) (len kept)) :replaced (len fresh)))))))
 
 
