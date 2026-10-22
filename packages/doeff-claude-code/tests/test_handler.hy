@@ -8,6 +8,7 @@
 (import stat)
 (import os)
 (import os.path)
+(import pytest)
 (import pathlib [Path])
 (import sys)
 (import threading)
@@ -520,6 +521,70 @@
   (<- outcome (with-real-handler host (ClaudeStartTurn (FreshSession sid) spec (TurnInput "x" "r"))))
   (assert (= outcome (LaunchFailed 3 "boom")) (repr outcome))
   (assert (is (.runtime host sid) None)))
+
+
+;; 読み手の thread の死(card ki-bd3aa18e3e71): on-line が例外を投げた process は降ろされ、持ち主は期限を待たずに訳つきの失敗を受ける。
+;; 失敗ケース = 読み手が try / finally だけで生きた CLI を待つ形では、init の前は launch-timeout の「no init line」、使い回しの process
+;; の手番は終わりの行が来ないまま読みの期限まで返らない(10-18 の scheduled() の RuntimeError の形)。どちらの CLI も、読み手が死んだ
+;; 行の後は stdout へ書かずに stdin を待って生きる(本物の CLI と同じ — 書けば broken pipe で自分から降り、期限の待ちを写せない)。
+(val READER-DEATH-DEADLINE 60.0)
+(val READER-DEATH-WITHIN 30.0)
+(val READER-DEATH-REASON "stdout reader failed: RuntimeError: scheduled() outside the scheduler")
+;; init の前の行を 1 行だけ書き、stdin の EOF まで生きる CLI。
+(val HOOK-THEN-WAIT
+     (+ "import sys\n"
+        "sys.stdout.write('{\"type\":\"system\",\"subtype\":\"hook_started\"}\\n'); sys.stdout.flush()\n"
+        "sys.stdin.read()\n"))
+
+(defn reader-dies [#* args]
+  (raise (RuntimeError "scheduled() outside the scheduler")))
+
+(val on-line-of-handler handler-module.on-line)
+
+(defn reader-dies-at-the-result [runtime binding clock raw]
+  ;; 手番の終わりの行(替え玉はその後 stdin を待つ)で死ぬ読み手。
+  (if (= (.get (json.loads raw) "type") "result")
+      (reader-dies)
+      (on-line-of-handler runtime binding clock raw)))
+
+(deftest test-a-reader-that-dies-before-init-is-a-launch-failure-with-its-reason [tmp-path monkeypatch]
+  (.setattr monkeypatch handler-module "on_line" reader-dies)
+  (val sid (str (uuid.uuid4)))
+  (val host (host-of #(sys.executable "-c" HOOK-THEN-WAIT) :launch-timeout READER-DEATH-DEADLINE))
+  (val started (time.monotonic))
+  (<- outcome (with-real-handler host (ClaudeStartTurn (FreshSession sid) (spec-in tmp-path) (TurnInput (reply-prompt "ONE") "r1"))))
+  (val seconds (- (time.monotonic) started))
+  (assert (isinstance outcome LaunchFailed) (repr outcome))
+  (assert (in READER-DEATH-REASON outcome.stderr-tail) (repr outcome))
+  (assert (< seconds READER-DEATH-WITHIN) (.format "読み手の死の後 {:.1f} 秒 待った" seconds))
+  (assert (is (.runtime host sid) None)))
+
+(defk turn-then-reader-dies [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid #^ pytest.MonkeyPatch monkeypatch]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str) (: monkeypatch pytest.MonkeyPatch)] :post [(: % tuple)]
+   :tags {:context "claude-code-test" :role "program"}}
+  "1 手番を読み終えてから読み手を死なせ、同じ process を使い回す 2 手番目を読むため。答え = 2 手番目の記録・その読みの秒数・
+   2 手番目が 1 手番目と同じ process で始まったか。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "ONE") "r1")))
+  (<- done (read-to-end started.turn 30.0))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (val first-process (. (.runtime host sid) process))
+  (.setattr monkeypatch handler-module "on_line" reader-dies-at-the-result)
+  (val begun (time.monotonic))
+  (<- again (ClaudeStartTurn (ResumeSession sid) spec (TurnInput (reply-prompt "TWO") "r2")))
+  (val same (is (. (.runtime host sid) process) first-process))
+  (<- second (read-to-end again.turn READER-DEATH-DEADLINE))
+  #(second (- (time.monotonic) begun) same))
+
+(deftest test-a-reader-that-dies-in-a-reused-process-fails-the-turn-with-its-reason [tmp-path monkeypatch]
+  (val host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
+  (<- outcome (with-real-handler host (turn-then-reader-dies host (spec-in tmp-path) (str (uuid.uuid4)) monkeypatch)))
+  (val second (get outcome 0))
+  (val seconds (get outcome 1))
+  (val same (get outcome 2))
+  (assert same "2 手番目が process を使い回さなかった")
+  (assert (isinstance second.end BackendLost) (repr second.end))
+  (assert (in READER-DEATH-REASON second.end.stderr-tail) (repr second.end))
+  (assert (< seconds READER-DEATH-WITHIN) (.format "読み手の死の後 {:.1f} 秒 待った" seconds)))
 
 
 (deftest test-export-reads-the-transcript-of-the-real-path-of-the-cwd [tmp-path]

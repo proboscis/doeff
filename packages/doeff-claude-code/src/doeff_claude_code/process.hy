@@ -64,7 +64,8 @@
           self.stderr-lines (deque :maxlen STDERR-TAIL-LINES)
           self.retire-lock (threading.Lock)
           self.retiring None
-          self.went-down None)
+          self.went-down None
+          self.reader-failure None)
     (setv self.process (subprocess.Popen argv :cwd cwd :env env
                                          :stdin subprocess.PIPE :stdout subprocess.PIPE :stderr subprocess.PIPE
                                          :text True :encoding "utf-8" :errors "replace" :bufsize 1))
@@ -82,7 +83,12 @@
 
   (defn exit-code [self] (.poll self.process))
 
-  (defn #^ str stderr-tail [self] (.strip (.join "" (list self.stderr-lines))))
+  (defn #^ str stderr-tail [self]
+    "stderr の末尾。stdout の読み手が例外で死んだ process は、その訳を最後の行に足す(末尾を残す上限で切られても訳は残る)。"
+    (setv tail (.strip (.join "" (list self.stderr-lines))))
+    (if (is self.reader-failure None)
+        tail
+        (.strip (.join "\n" [tail self.reader-failure]))))
 
   ;; -- 運ぶ ------------------------------------------------------------------------------------
 
@@ -149,14 +155,23 @@
       (.append self.stderr-lines raw)))
 
   (defn read-stdout [self]
+    "stdout の行を on-line へ渡す。on-line が例外を投げたら、その型と文を reader-failure に控えて process を降ろす(読み手の居ない
+     process を生かさない — 持ち主は「process が降りた」で待ちを解き、stderr-tail の訳で読み手の死を知る。card ki-bd3aa18e3e71)。
+     on-exit は降ろす梯子の後に 1 度だけ呼ぶ(梯子は有界 — 生きた process を無期限に待たない)。"
     (setv stream self.process.stdout)
     (when (is stream None) (raise (RuntimeError "claude の process の stdout を pipe で開いていない")))
     (try
       (for [raw stream]
         (self.on-line raw))
+      (except [error Exception]
+        (setv self.reader-failure (.format "stdout reader failed: {}: {}" (. (type error) __name__) error))
+        (with [(contextlib.suppress OSError)]
+          (.close stream))
+        (.retire self)
+        (.join self.retiring))
       (finally
         (with [(contextlib.suppress OSError)]
           (.close stream))
-        (setv code (.wait self.process))
+        (setv code (if (is self.reader-failure None) (.wait self.process) (.poll self.process)))
         (.join self.stderr-reader 2.0)
         (self.on-exit code (.stderr-tail self))))))
