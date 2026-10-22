@@ -84,6 +84,7 @@ def scripted_executable_at(commands: tuple[ScriptedCommand, ...], path: str) -> 
 
 def scripted_process_handler(script: ProcessScript) -> _Handler:
     ...
+SCRIPTED_COMMAND_EFFECTS: tuple[type, ...]
 
 def scripted_command_peer(commands: tuple[ScriptedCommand, ...]) -> _Handler:
     ...
