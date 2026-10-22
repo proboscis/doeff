@@ -19,7 +19,11 @@
 (import certifi)
 (import httpx)
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_cluster.foundation.kube_client [KubeClient])
+(import doeff_cluster.foundation.kube_client [KubeClient keepalive-options kube-client])
+(import doeff [with-handlers])
+(import pytest)
+(import doeff_cluster.coordinator.intent.kube_model [AnnotateDeployment ScaleDeployment])
+(import doeff_cluster.coordinator.protocol.kube [kube-api])
 
 
 (val NAMESPACE "prod")
@@ -186,13 +190,14 @@
     None))
 
 
-(defk kube-client [sa-dir kube retry-seconds]
+(defk client-for [sa-dir kube retry-seconds]
   {:pre [(: sa-dir Path) (: kube FakeKube) (: retry-seconds float)] :post [(: % KubeClient)] :tags {:context "doeff-cluster-test" :role "program"}}
   "模擬の k8s の API(kube)へ繋いだ client を作るため。ServiceAccount の dir は検の一時の dir で、token だけを置く(transport を渡すので
    httpx は ca.crt を読まない)。"
   (.write-text (/ sa-dir "token") "test-token" :encoding "utf-8")
-  (KubeClient RuntimeError :sa-dir (str sa-dir) :transport (httpx.MockTransport kube.handle)
-              :retry-seconds retry-seconds :watch-seconds WATCH-SECONDS))
+  (<- client KubeClient (kube-client RuntimeError :sa-dir (str sa-dir) :transport (httpx.MockTransport kube.handle)
+                                     :retry-seconds retry-seconds :watch-seconds WATCH-SECONDS))
+  client)
 
 
 (defk listed [version items]
@@ -211,7 +216,7 @@
   (<- first-list httpx.Response (listed "10" #(DEP-A)))
   (<- first-watch httpx.Response (watched #({"type" "MODIFIED" "object" DEP-B}) True))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -232,7 +237,7 @@
   (<- first-list httpx.Response (listed "10" #(DEP-A)))
   (<- first-watch httpx.Response (watched #({"type" "DELETED" "object" DEP-B}) True))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -250,7 +255,7 @@
   (<- first-list httpx.Response (listed "10" #()))
   (<- first-watch httpx.Response (watched #({"type" "ADDED" "object" DEP-A}) True))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -270,7 +275,7 @@
                False))
   (<- second-list httpx.Response (listed "20" #(DEP-B)))
   (val kube (FakeKube #(first-list first-watch second-list)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -291,7 +296,7 @@
       (watched #({"type" "ERROR" "object" {"kind" "Status" "code" 500 "message" "etcd が答えない"}}) True))
   (<- second-list httpx.Response (listed "20" #(DEP-B)))
   (val kube (FakeKube #(first-list first-watch second-list)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -308,7 +313,7 @@
   (val forbidden (httpx.Response 403 :json {"kind" "Status" "code" 403 "message" "deployments.apps is forbidden"}))
   (<- second-list httpx.Response (listed "10" #(DEP-A)))
   (val kube (FakeKube #(forbidden second-list)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -333,7 +338,7 @@
                False))
   (<- second-watch httpx.Response (watched #({"type" "MODIFIED" "object" DEP-C}) True))
   (val kube (FakeKube #(first-list first-watch second-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -355,7 +360,7 @@
                                                       :after-close #({"type" "MODIFIED" "object" DEP-C}
                                                                      {"type" "DELETED" "object" DEP-C}))))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val before (frozenset (threading.enumerate)))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
@@ -375,7 +380,7 @@
   (<- first-list httpx.Response (listed "30" #(NODE-A)))
   (<- first-watch httpx.Response (watched #({"type" "MODIFIED" "object" NODE-B}) True))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow-node client NODE received.on-body received.on-error))
   (try
@@ -396,7 +401,7 @@
   (<- first-list httpx.Response (listed "30" #()))
   (<- first-watch httpx.Response (watched #({"type" "ADDED" "object" NODE-A}) True))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow-node client NODE received.on-body received.on-error))
   (try
@@ -411,7 +416,7 @@
   (<- first-list httpx.Response (listed "30" #(NODE-A)))
   (<- first-watch httpx.Response (watched #({"type" "DELETED" "object" NODE-B}) True))
   (val kube (FakeKube #(first-list first-watch)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow-node client NODE received.on-body received.on-error))
   (try
@@ -426,10 +431,11 @@
   ;; watch の stream を、読みの打ち切り(watch-seconds + 余白)より早く切れた接続として見つけ、見張りが理由を伝える(#3868 のレビュー)。
   (.write-text (/ tmp-path "token") "test-token" :encoding "utf-8")
   (.write-bytes (/ tmp-path "ca.crt") (.read-bytes (Path (certifi.where))))
-  (val client (KubeClient RuntimeError :sa-dir (str tmp-path)))
+  (<- client KubeClient (kube-client RuntimeError :sa-dir (str tmp-path)))
+  (<- options tuple (keepalive-options))
   ;; httpx は transport の socket の設定を公開の API で見せないので、接続の pool の欄を読む。
-  (assert (= client.client._transport._pool._socket_options (list (KubeClient.keepalive-options)))
-          client.client._transport._pool._socket_options))
+  (assert (= client.settings.client._transport._pool._socket_options (list options))
+          client.settings.client._transport._pool._socket_options))
 
 
 (deftest test-an-unexpected-error-in-the-watch-thread-reaches-on-error-and-lists-again [tmp-path]
@@ -441,7 +447,7 @@
   (val broken (TypeError "'>' not supported between instances of 'float' and 'NoneType'"))
   (<- second-list httpx.Response (listed "20" #(DEP-B)))
   (val kube (FakeKube #(first-list broken second-list)))
-  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
   (val received (Received))
   (val stop (.follow client NAMESPACE NAME received.on-body received.on-error))
   (try
@@ -465,8 +471,8 @@
   (.write-text (/ tmp-path "token") "test-token" :encoding "utf-8")
   (.write-bytes (/ tmp-path "ca.crt") (.read-bytes (Path (certifi.where))))
   (val kube (LocalKube))
-  (val client (KubeClient RuntimeError :base (.url kube) :sa-dir (str tmp-path) :retry-seconds RETRY-SECONDS
-                          :watch-seconds WATCH-SECONDS))
+  (<- client KubeClient (kube-client RuntimeError :base (.url kube) :sa-dir (str tmp-path) :retry-seconds RETRY-SECONDS
+                                     :watch-seconds WATCH-SECONDS))
   (val deployment (Received))
   (val node (Received))
   (var stops #())
@@ -485,3 +491,46 @@
       (for [stop stops]
         (stop))
       (.close kube))))
+
+
+(defk patched [replicas]
+  {:pre [(: replicas int)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "scale の PATCH への k8s の答え(宣言の台数 replicas を返す)。"
+  (httpx.Response 200 :json {"spec" {"replicas" replicas}}))
+
+
+(deftest test-kube-api-sends-the-scale-and-annotation-patches-through-the-client [tmp-path]
+  ;; 本番の組(entry の main)と同じに、kube-api の答え手へ client を渡す: 台数の変更は scale の subresource への merge patch(dry-run は query)で、
+  ;; 答えの宣言の台数を返し、annotation の書きは Deployment への merge patch。token は要求ごとに file から読んで Bearer に載せる。
+  (<- scaled httpx.Response (patched 3))
+  (<- annotated httpx.Response (patched 3))
+  (val kube (FakeKube #(scaled annotated)))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
+  (<- replicas int (with-handlers [(kube-api client (fn [] None))]
+                     (ScaleDeployment NAMESPACE NAME 3 True)))
+  (<- (with-handlers [(kube-api client (fn [] None))]
+        (AnnotateDeployment NAMESPACE NAME {"doeff.dev/step" "2" "doeff.dev/old" None})))
+  (assert (= replicas 3) replicas)
+  (val sent (lfor #(_ request) kube.seen request))
+  (assert (= (len sent) 2) sent)
+  (assert (= (lfor request sent #(request.method request.url.path (dict request.url.params)))
+             [#("PATCH" (+ LIST-PATH "/" NAME "/scale") {"dryRun" "All"})
+              #("PATCH" (+ LIST-PATH "/" NAME) {})])
+          sent)
+  (assert (= (json.loads (. (get sent 0) content)) {"spec" {"replicas" 3}}))
+  (assert (= (json.loads (. (get sent 1) content)) {"metadata" {"annotations" {"doeff.dev/step" "2" "doeff.dev/old" None}}}))
+  (assert (= (lfor request sent #((.get request.headers "authorization") (.get request.headers "content-type")))
+             [#("Bearer test-token" "application/merge-patch+json") #("Bearer test-token" "application/merge-patch+json")])
+          sent))
+
+
+(deftest test-kube-api-raises-the-failure-type-the-client-was-given-when-the-api-refuses [tmp-path]
+  ;; 断られた(2xx でない)台数の変更は、client に渡した例外の型(本番は KubeUnavailable)で、状態と本文の頭を名指して上がる。
+  (val refused (httpx.Response 503 :text "etcd is down"))
+  (val kube (FakeKube #(refused)))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
+  (with [raised (pytest.raises RuntimeError)]
+    (<- (with-handlers [(kube-api client (fn [] None))]
+          (ScaleDeployment NAMESPACE NAME 2 False))))
+  (assert (in "503" (str raised.value)) (str raised.value))
+  (assert (in "etcd is down" (str raised.value)) (str raised.value)))
