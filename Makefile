@@ -15,7 +15,7 @@ help:
 	@echo "  make install           Install all dependencies (including dev)"
 	@echo "  make sync              Install deps + rebuild Rust VM extension"
 	@echo "  make pre-commit-install Install pre-commit hooks"
-	@echo "  make hooks-install     Install raw git pre-commit hook (semgrep rules on staged files + enforcement ledger, ADR-DOE-ENFORCE-001 R7)"
+	@echo "  make hooks-install     Install raw git pre-commit hook (semgrep rules and the doeff-linter baseline compare on staged files + enforcement ledger, ADR-DOE-ENFORCE-001 R7)"
 	@echo ""
 	@echo "Linting (make lint runs all):"
 	@echo "  make lint              Run ALL linters (core + packages)"

@@ -320,10 +320,13 @@ VOCABULARY_RULE: str = "doeff-packages-have-no-application-vocabulary"
 FAKE_LOCKED: dict[str, str] = {"semgrep": FAKE_VERSIONS["semgrep"], "pre-commit": "0.0.0-fake"}
 
 
-def _plain_hook_repository(directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = ()) -> Path:
+def _plain_hook_repository(
+    directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = (), *, fake_linter: bool = False,
+) -> Path:
     """素の hook が読む物(scripts/ の追跡している file・hook の設定・木の python の宣言)と、業務の語の規則だけの .semgrep.yaml を
     写して commit した repo に、changed だけを stage するため(台帳の突合は docs/adr と .semgrep.yaml に触れた commit だけが撃つ)。
-    rule_packages = 検の repo の規則の paths.include にだけ足す package(項は写したまま — 規則に package を足す便の形)。"""
+    rule_packages = 検の repo の規則の paths.include にだけ足す package(項は写したまま — 規則に package を足す便の形)。
+    fake_linter = 偽の linter の crate を commit し、その鍵を基点(空)に書く(_tool で置いた偽の linter が開発版として見つかる)。"""
     repository: Path = directory / "repository"
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
@@ -348,6 +351,10 @@ def _plain_hook_repository(directory: Path, changed: str, source: str, rule_pack
     (repository / "scripts" / "hook_finding_baseline" / "semgrep.json").write_text(
         json.dumps({"version": FAKE_VERSIONS["semgrep"], "counts": {}}), encoding="utf-8",
     )
+    if fake_linter:
+        (repository / "scripts" / "hook_finding_baseline" / "doeff-linter.json").write_text(
+            json.dumps({"version": _commit_fake_crate(repository, directory), "counts": {}}), encoding="utf-8",
+        )
     subprocess.run(["/usr/bin/git", "add", "."], cwd=repository, check=True)
     subprocess.run(["/usr/bin/git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"],
                    cwd=repository, check=True)
@@ -356,6 +363,27 @@ def _plain_hook_repository(directory: Path, changed: str, source: str, rule_pack
     changed_path.write_text(source, encoding="utf-8")
     subprocess.run(["/usr/bin/git", "add", changed], cwd=repository, check=True)
     return repository
+
+
+def _plain_hook_with_a_linter(directory: Path, changed: str, report: str) -> _HookRun:
+    """素の hook を、偽の doeff-linter(report を答える)と、その鍵を名乗る空の基点のある検の repo で走らせ、偽の道具が受けた
+    呼びの列も返すため(linter の所見が基点を越えるかを、素の hook が commit の時に比べるかを見る)。"""
+    _tool(directory, "doeff-linter", 0, report=report)
+    executable: str | None = shutil.which("semgrep")
+    assert executable is not None, "実検体の検査には dev 依存の semgrep が必要です"
+    (directory / "semgrep").symlink_to(executable)
+    repository: Path = _plain_hook_repository(directory, changed, "value = 1\n", fake_linter=True)
+    uv: str | None = shutil.which("uv")
+    assert uv is not None, "uv が要る(hook の script を走らせる)"
+    result: ProcessOutcome = _run_child(
+        ("/bin/sh", str(PLAIN_HOOK)), repository,
+        _environment(directory, f"{directory}:{Path(uv).parent}:/usr/bin:/bin"), ("SKIP", "VIRTUAL_ENV"),
+    )
+    calls_path: Path = directory / "calls.jsonl"
+    calls: list[list[str]] = (
+        [json.loads(line) for line in calls_path.read_text().splitlines()] if calls_path.exists() else []
+    )
+    return _HookRun(result=result, calls=calls)
 
 
 def _plain_hook(directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = ()) -> ProcessOutcome:
@@ -443,6 +471,39 @@ def test_plain_hook_runs_every_semgrep_hook_of_the_config() -> None:
     assert semgrep_hooks
     assert aliased == semgrep_hooks
     assert f"run {PLAIN_HOOK_ALIAS}" in PLAIN_HOOK.read_text(encoding="utf-8")
+
+
+# 素の hook は doeff-linter の基点の比べの項も撃つ(card ki-c6f026ac047e)— 10-18 の 3 commit は Pod(素の hook だけ)から入り、
+# 検の file 2 つに DOEFF004 の所見を 9 件足したのに、素の hook が linter の項を撃たず、日次(10-19 04:05 JST)で初めて見つかった。
+# 着地の門は衝突の印だけを見る(operator 裁定 land-gate-runs-no-tests)ので、基点を越える所見を止められる最初の点は commit の時。
+PLAIN_HOOK_LINTER_ID: str = "doeff-linter"
+
+
+def test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config() -> None:
+    # 基点の比べ(hook_finding_baseline.py check doeff-linter)を持つ項は 1 つで、素の hook はその項を id で撃つ。項の id を
+    # 替えた便が素の hook の呼びを直し忘れると、素の hook だけの機体(agora の担当の Pod)で linter の項が黙って抜ける。
+    hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
+    linter_hooks: list[str] = [hook["id"] for hook in hooks if "hook_finding_baseline.py check doeff-linter" in hook["entry"]]
+    assert linter_hooks == [PLAIN_HOOK_LINTER_ID]
+    assert f"run {PLAIN_HOOK_LINTER_ID}" in PLAIN_HOOK.read_text(encoding="utf-8")
+
+
+def test_plain_hook_stops_a_staged_python_file_with_a_linter_finding_not_in_the_baseline(tmp_path: Path) -> None:
+    # 基点(空)に無い error が stage した file に 1 つ在る → 素の hook が止める(失敗ケース — 素の hook が linter の項を撃たない時は通る)。
+    report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
+    result: ProcessOutcome = _plain_hook_with_a_linter(tmp_path, "doeff/example.py", report).result
+    output: str = result.stdout + result.stderr
+    assert result.exit_code != 0, f"素の hook が基点を越える linter の所見を通した:\n{output}"
+    assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in output, output
+
+
+def test_plain_hook_runs_the_linter_once_on_only_the_staged_python_file(tmp_path: Path) -> None:
+    hook: _HookRun = _plain_hook_with_a_linter(tmp_path, "doeff/example.py", "[]")
+    assert hook.result.exit_code == 0, hook.result.stdout + hook.result.stderr
+    runs: list[list[str]] = [call for call in hook.calls if call[0] == "doeff-linter" and "--version" not in call]
+    assert len(runs) == 1, hook.calls
+    assert runs[0][-1] == "doeff/example.py"
+    assert "doeff/" not in runs[0]
 
 
 def test_every_uv_hook_declares_the_hook_python() -> None:
