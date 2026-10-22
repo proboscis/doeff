@@ -11,7 +11,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | effect | 入力 | 成功の答え | 失敗の答え(値で返す) |
 |---|---|---|---|
 | `ReadRow(table, key)` | 表・キー | `Row(key, value, version)` か `Missing()` | `Unreachable` |
-| `ListRows(table, where, fields, cursor, limit, descending_by, where_any)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限・上から読む欄(下の註)・索引の欄の値の組(下の註) | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
+| `ListRows(table, where, fields, cursor, limit, descending_by, where_any)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限(1 以上 `LIST_LIMIT_MAX` = 5,000 以下 — 外は作る時に `ValueError`)・上から読む欄(下の註)・索引の欄の値の組(下の註) | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
 | `PutRow(table, key, value, expect)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)。書き手の名は欄に無く、handler を組む時に身元から入る | `Written(version, value, position)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
 | `WatchChanges(tables, cursor, timeout, limit, streams)` | 表の列・位置・待つ秒・上限・末尾を知りたい追記の列(既定 = 無し) | `Changes(items, cursor, tails)`(`tails` = 名指した列ごとの末尾 `StreamTail(stream, sequence, at)` か `StreamTailEmpty(stream)` — 名指した順・名指さなければ空) | `Reset(epoch, floor)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
@@ -159,7 +159,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | route | 本文 | 200 の答えの `kind` |
 |---|---|---|
 | `POST /v1/records/read-row` | `{table, key}` | `row` / `missing` |
-| `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}`(`limit` は `wire.LIST_LIMIT_MAX` = 5,000 まで — 越えた要求は 400 malformed。client の綴りも送らずに `WireMalformed` で断る。大きな一覧は続きの位置 `next_cursor` で頁に割る — ADR-DOE-RECORDS-002 R6 (f)) | `page` / `reset` / `notIndexed` |
+| `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}`(`limit` は `effects.LIST_LIMIT_MAX` = 5,000 まで — `ListRows` が作る時に断り、越えた本文は 400 malformed。大きな一覧は続きの位置 `next_cursor` で頁に割る — ADR-DOE-RECORDS-002 R6 (f)) | `page` / `reset` / `notIndexed` |
 | `POST /v1/records/put-row` | `{table, key, value, expect}`(`approval` は廃止 — null だけ読み飛ばし、値があれば 400) | `written` / `conflict` / `refused` |
 | `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?, streams?}`(`streams` は列を名指す時だけ・1 つ以上 — 空の配列は 400。古い service は鍵を知らず 400 なので、名指す client より先に service を新しい版で起こす) | `changes`(`items, cursor` と、`streams` を名指した要求の答えだけ `tails` = 名指した順の `{kind: streamTail, stream, sequence, at}` / `{kind: streamTailEmpty, stream}` の列 — 名指さない要求の答えに鍵は無い)/ `reset` |
 | `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
@@ -202,10 +202,10 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   含む)・答えの途中で落ちた数 = `*_500_total`。`other` には kubelet の `/healthz`・`/readyz` と `/metrics` 自身の読みが入る。値は
   process の再起動で 0 に戻る(読み手は区間の差で数える)。計器の答え手は doeff の `memory-meter-handler`(差し替えの欄 `RecordsServing.meter` が在れば、その内側に被せる)。
 - 計算の pool の負荷(ADR-DOE-RECORDS-002 R6 (g)): `GET /metrics` は描きの時に Compute の答え手の負荷(`ReadComputeLoad`)を読み、
-  断面に足して描く(計器へは積まない): `records_compute_queued`(束の読みの読み解きと綴りの計算のうち、pool の thread を待って列に並んで
+  断面に足して描く(計器へは積まない): `records_compute_workers`(pool の thread の数 — `RecordsServing.compute_workers`)・`records_compute_queued`(束の読みの読み解きと綴りの計算のうち、pool の thread を待って列に並んで
   いる数 — 今の値)・`records_compute_running`(回っている数 — 今の値)・`records_compute_wait_seconds_sum` と `_count`(回り始めた計算が
-  出されてから回り始めるまで待った秒の合計と回数 — 起動からの累計)。拍ごとに読んだ 2 つの断面の差で、その拍の待ちの平均(合計の差 ÷
-  回数の差)と、列に並んでいた数の時間の平均(合計の差 ÷ 拍の秒)が出る — 要求の遅れが跳ねた刻と同じ拍で並べて読む。その場で回す答え手
+  出されてから回り始めるまで待った秒の合計と回数 — 起動からの累計)・`records_compute_run_seconds_sum` と `_count`(回り終えた計算が回った秒の合計と回数 — 起動からの累計)。拍ごとに読んだ 2 つの断面の差で、その拍の待ちの平均(合計の差 ÷
+  回数の差)と、列に並んでいた数の時間の平均(合計の差 ÷ 拍の秒)と、pool の利用率(回りの合計の差 ÷ 拍の秒 ÷ thread の数)が出る — 要求の遅れが跳ねた刻と同じ拍で並べて読む。その場で回す答え手
   (`inline-compute-handler` — 台本の検と模擬)は列を持たないので全部 0。
 - 走っている木と表の要約(#2742): `GET /served` は、動いている process が走っている木の commit と世代(`RecordsServing.served` の
   `ServedBuild` — 使い手の入口が土台の実行の文脈から読んで渡す・無ければ `null`)と、配っている表の宣言の要約(`schemaDigests` =

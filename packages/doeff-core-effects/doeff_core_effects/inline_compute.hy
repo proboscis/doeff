@@ -9,7 +9,7 @@
 (import doeff_core_effects.compute_effects [Compute Computed ComputeFailed ComputeLoad ReadComputeLoad])
 
 ;; その場で回す答え手の負荷(並びも走りも、待った仕事も無い)。
-(val INLINE-LOAD (ComputeLoad :queued 0 :running 0 :started 0 :waited-seconds 0.0))
+(val INLINE-LOAD (ComputeLoad :queued 0 :running 0 :started 0 :waited-seconds 0.0 :ran-seconds 0.0))
 
 
 (defk computed [program]

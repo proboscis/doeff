@@ -55,13 +55,6 @@
 ;; timeout をこの秒で切り、service は置き場の待ちへそのまま渡す — 変化が無ければこの秒で空の答え(changes の空・eventsQuiet)を返す。
 ;; client は待ちをこの秒ごとの要求に分けて撃ち直す(眠らない)。間に立つ口の要求の時間切れより短く置く。
 (val WATCH-MAX-SECONDS 25.0)
-;; 一覧の読み(list-rows)1 回の要求の limit の上限(ADR-DOE-RECORDS-002 R6)。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に
-;; 比例して計算の pool の thread を塞ぐ — 1 要求の計算の量を「頁の行の数 × 行の大きさ」の両側で縛るため、行の数の側をこの数で縛る(行の
-;; 大きさの側は表の size-budget)。越えた要求は client の綴り(encode-request — 送らずに WireMalformed)と service の読み(decode-request —
-;; 400 malformed)の両方で断る。呼び手は大きな一覧をこの数までの頁に割り、続きの位置(next_cursor)で送る。値は使い手の一番大きな頁
-;; (全行の一覧の 1 頁 5,000 行 — 1 回の要求の固定費との釣り合いで選ばれた頁)に合わせた。memory の置き場と置き場の handler を直に呼ぶ
-;; 読み(wire を通らない — 模擬と検)は縛らない。
-(val LIST-LIMIT-MAX 5000)
 ;; 書きの操作(行か出来事を書く — 計器の要求の種 write)。OPERATIONS の残りは読み(read)。
 (val WRITE-OPERATIONS (frozenset #(OP-PUT-ROW OP-PUT-ROWS OP-APPEND-EVENT OP-APPEND-EVENTS)))
 
@@ -406,16 +399,6 @@
   (WireMalformed (.format "{}: {}" what error)))
 
 
-(defk checked-list-limit [limit]
-  {:pre [(: limit int)] :post [(: % int) (<= % LIST-LIMIT-MAX)]}
-  "一覧の読み 1 回の limit が wire の上限 LIST-LIMIT-MAX の内かを検めるため — 越えれば WireMalformed(client の綴りは送らずに断り、
-   service の読みは 400 malformed で断る。1 要求の計算の量を行の数で縛る — ADR-DOE-RECORDS-002 R6)。"
-  (when (> limit LIST-LIMIT-MAX)
-    (raise (WireMalformed (.format "list-rows の limit {} が上限 {} を越える(一覧は続きの位置 next_cursor で {} 行までの頁に割って読む)"
-                                   limit LIST-LIMIT-MAX LIST-LIMIT-MAX))))
-  limit)
-
-
 ;; --- 位置・期待・承認 ----------------------------------------------------------------------------------------
 
 (defk watch-cursor-json [cursor]
@@ -545,10 +528,9 @@
       (WireRequest OP-READ-ROW {"table" table "key" (list key)})
     (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by :where_any where-any)
       ;; 鍵 descendingBy は上から読む読みの時だけ・鍵 whereAny(欄 → 値の組の配列)は値の組で絞る時だけ送る(どちらも使わない読みは前の
-      ;; 形のまま。古い記録の service は知らない鍵を 400 で断るので、使う client より先に service を新しい版で起こす)。limit が wire の
-      ;; 上限を越える読みは送らずに断る(checked-list-limit — service も同じ数で断る)。
+      ;; 形のまま。古い記録の service は知らない鍵を 400 で断るので、使う client より先に service を新しい版で起こす)。
       (WireRequest OP-LIST-ROWS (| {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
-                                    "cursor" (! (list-cursor-json cursor)) "limit" (! (checked-list-limit limit))}
+                                    "cursor" (! (list-cursor-json cursor)) "limit" limit}
                                    (if (is descending-by None) {} {"descendingBy" descending-by})
                                    (if where-any {"whereAny" (thaw-json where-any)} {})))
     (PutRow :table table :key key :value value :expect expect)
@@ -600,9 +582,8 @@
             (when (in "fields" body)
               (setv (get keywords "fields") (if (is (get body "fields") None) None (! (strings-of (get body "fields") "fields")))))
             (when (in "cursor" body) (setv (get keywords "cursor") (! (list-cursor-from (get body "cursor") "cursor" False))))
-            ;; limit は wire の上限 LIST-LIMIT-MAX まで(越えれば 400 malformed — ADR-DOE-RECORDS-002 R6)。
-            (when (in "limit" body)
-              (setv (get keywords "limit") (! (checked-list-limit (! (integer-of (get body "limit") "limit"))))))
+            ;; limit の上限 LIST-LIMIT-MAX(effects.hy)は ListRows が作る時に断る — 越えた本文は malformed(400)に写る(ADR-DOE-RECORDS-002 R6)。
+            (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
             (when (in "descendingBy" body)
               (setv (get keywords "descending_by") (! (string-of (get body "descendingBy") "descendingBy"))))
             ;; 鍵 whereAny は値の組で絞る時だけ在る(encode-request は空の写像を送らない)— 空の object は綴りの外として断る。組の配列の
