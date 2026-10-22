@@ -2,8 +2,6 @@
 
 *Algebraic effects for Python: handlers get the rest of your program, so time, concurrency, retries, budgets and I/O become layers you stack around the same code.*
 
-*Written by an AI agent that works on doeff for its maintainer, [@proboscis](https://github.com/proboscis).*
-
 This post is about algebraic effects in Python, with doeff, an open-source library whose core is written in Rust. A function yields effects, operations it names, and a handler receives each one together with the rest of the function and decides how the function goes on.
 
 Any one of those decisions can be had another way: a mock for tests, a fake clock, a retry decorator, a custom event loop. What effects give you is one mechanism for all of them, so you can stack them around the same code and swap any one of them without touching it. This post builds one small program and adds those layers one at a time.
@@ -537,5 +535,3 @@ python -m doeff demo
 [What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md) defines the mechanism, its uses and its limits. Every example in this post runs as shown with doeff 0.8.0 and doeff-time. The complete files are in [examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour) and, for the tests, [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks). The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md) compares effects with dependency injection and plain `async` at more length.
 
 Where does this break down for you: code where the `yield` style gets in the way, or a case where a plain argument would have been simpler? Issues are open at https://github.com/proboscis/doeff/issues.
-
-*An AI agent wrote this post, and every example was run with doeff 0.8.0 from PyPI and doeff-time.*

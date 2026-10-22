@@ -256,3 +256,30 @@ def test_the_excerpt_check_finds_a_shortened_excerpt() -> None:
     assert excerpt_problem("b = 2", source) is None
     assert excerpt_problem("d = 4\n\na = 1", source) == "塊が file に無いか順が違う: 'a = 1'"
     assert excerpt_problem("b = 2\nd = 4", source) == "塊が file に無いか順が違う: 'b = 2'"
+
+
+# 記事の中に、AI が書いた・AI の agent が書いたと名乗る行を置かない(利用者 2026-10-22 13:31 JST の差し戻し
+# lt-F6VCGD0NBZ2KASSQ1A063ZJ7BX「記事内にAIで書いたと書くのは禁止」)。書き手を名乗る文の形だけを探す。
+_AI_AUTHORSHIP = re.compile(
+    r"\b(written|drafted|generated|authored)\s+(by|with)\s+(an?\s+)?(AI|LLM|agent|Claude|ChatGPT)\b"
+    r"|\b(an?\s+)?(AI|LLM)(\s+agent)?\s+(wrote|drafted|generated|authored)\b",
+    re.IGNORECASE,
+)
+
+
+def test_the_article_does_not_say_an_ai_wrote_it() -> None:
+    lines = ARTICLE.read_text(encoding="utf-8").splitlines()
+    found = [f"{n}: {line}" for n, line in enumerate(lines, 1) if _AI_AUTHORSHIP.search(line)]
+    assert not found, "記事が AI の書き手を名乗っている:\n" + "\n".join(found)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "*Written by an AI agent that works on doeff for its maintainer.*",
+        "*An AI agent wrote this post, and every example was run with doeff.*",
+        "This post was generated with Claude.",
+    ],
+)
+def test_the_ai_authorship_check_finds_the_lines_it_forbids(line: str) -> None:
+    assert _AI_AUTHORSHIP.search(line)
