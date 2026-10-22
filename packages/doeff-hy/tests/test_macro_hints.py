@@ -229,3 +229,36 @@ def test_the_table_lists_the_providers_in_the_order_the_line_prefers() -> None:
     from doeff_hy_bytecode_guard import macro_hints
 
     assert list(macro_hints.MACRO_HOMES) == list(HOMES)
+
+
+def _record(*absent: str) -> records.MacroRecord:
+    """展開が表を引いて無かった名だけを持つ記録(ほかの欄は警告の見分けに使わない)。"""
+    return records.MacroRecord(
+        hy_version="", macros=(), absent=absent, providers=(), values=(), files=()
+    )
+
+
+def test_a_module_that_uses_a_macro_spelling_only_as_a_local_name_is_not_walked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``(defn f [check] (check 1))`` の形 — 記録の absent に check が在っても、読みは LOAD_FAST で co_names に無い。大きな
+    # module で命令を歩くと 1 本 1 秒前後かかる(card ki-ef8a3e593353)ので、co_names の照合だけで終わる事を測る。
+    import hy  # noqa: F401 — 表は Hy の mangle で作る
+    from doeff_hy_bytecode_guard import macro_hints
+
+    local = compile("def f(check):\n    return check(1)\n", "main.hy", "exec")
+    walked: list[object] = []
+    monkeypatch.setattr(macro_hints.dis, "get_instructions", lambda unit: walked.append(unit) or ())
+    assert list(macro_hints._hints(local, _record("check"))) == []
+    assert walked == []
+
+
+def test_a_macro_spelling_read_as_a_global_inside_a_function_is_still_reported() -> None:
+    # 絞りが入れ子の code の co_names も見る事 — 関数の中で束縛せずに読む check は require し忘れ。
+    import hy  # noqa: F401 — 表は Hy の mangle で作る
+    from doeff_hy_bytecode_guard import macro_hints
+
+    nested = compile("def f(row):\n    return check(row)\n", "main.hy", "exec")
+    hints = list(macro_hints._hints(nested, _record("check")))
+    assert [hint.line for hint in hints] == [2]
+    assert "(require doeff-hy.macros [check])" in hints[0].message
