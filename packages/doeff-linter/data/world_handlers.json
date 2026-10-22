@@ -116,9 +116,10 @@
   {
    "handler": "doeff_core_effects.thread_pool_compute:thread-pool-compute-handler",
    "touches": [
-    "thread"
+    "thread",
+    "clock"
    ],
-   "why": "pool.submit で別 thread の VM"
+   "why": "pool.submit で別 thread の VM。pool の負荷(ReadComputeLoad)の待ちの秒を time.monotonic で測り、process に 1 つの置き場を threading.Lock で pool の thread と共有する(thread_pool_compute.hy)"
   },
   {
    "handler": "doeff_core_effects.process_meter:process-meter-handler",

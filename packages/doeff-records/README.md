@@ -159,7 +159,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | route | 本文 | 200 の答えの `kind` |
 |---|---|---|
 | `POST /v1/records/read-row` | `{table, key}` | `row` / `missing` |
-| `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}` | `page` / `reset` / `notIndexed` |
+| `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}`(`limit` は `wire.LIST_LIMIT_MAX` = 5,000 まで — 越えた要求は 400 malformed。client の綴りも送らずに `WireMalformed` で断る。大きな一覧は続きの位置 `next_cursor` で頁に割る — ADR-DOE-RECORDS-002 R6 (f)) | `page` / `reset` / `notIndexed` |
 | `POST /v1/records/put-row` | `{table, key, value, expect}`(`approval` は廃止 — null だけ読み飛ばし、値があれば 400) | `written` / `conflict` / `refused` |
 | `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?, streams?}`(`streams` は列を名指す時だけ・1 つ以上 — 空の配列は 400。古い service は鍵を知らず 400 なので、名指す client より先に service を新しい版で起こす) | `changes`(`items, cursor` と、`streams` を名指した要求の答えだけ `tails` = 名指した順の `{kind: streamTail, stream, sequence, at}` / `{kind: streamTailEmpty, stream}` の列 — 名指さない要求の答えに鍵は無い)/ `reset` |
 | `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
@@ -201,6 +201,12 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   status)の 15 本で閉じていて、起動の時に全部を 0 で置く。置き場に届かなかった数 = `*_503_total`(表の用意の前と `/readyz` の不達を
   含む)・答えの途中で落ちた数 = `*_500_total`。`other` には kubelet の `/healthz`・`/readyz` と `/metrics` 自身の読みが入る。値は
   process の再起動で 0 に戻る(読み手は区間の差で数える)。計器の答え手は doeff の `memory-meter-handler`(差し替えの欄 `RecordsServing.meter` が在れば、その内側に被せる)。
+- 計算の pool の負荷(ADR-DOE-RECORDS-002 R6 (g)): `GET /metrics` は描きの時に Compute の答え手の負荷(`ReadComputeLoad`)を読み、
+  断面に足して描く(計器へは積まない): `records_compute_queued`(束の読みの読み解きと綴りの計算のうち、pool の thread を待って列に並んで
+  いる数 — 今の値)・`records_compute_running`(回っている数 — 今の値)・`records_compute_wait_seconds_sum` と `_count`(回り始めた計算が
+  出されてから回り始めるまで待った秒の合計と回数 — 起動からの累計)。拍ごとに読んだ 2 つの断面の差で、その拍の待ちの平均(合計の差 ÷
+  回数の差)と、列に並んでいた数の時間の平均(合計の差 ÷ 拍の秒)が出る — 要求の遅れが跳ねた刻と同じ拍で並べて読む。その場で回す答え手
+  (`inline-compute-handler` — 台本の検と模擬)は列を持たないので全部 0。
 - 走っている木と表の要約(#2742): `GET /served` は、動いている process が走っている木の commit と世代(`RecordsServing.served` の
   `ServedBuild` — 使い手の入口が土台の実行の文脈から読んで渡す・無ければ `null`)と、配っている表の宣言の要約(`schemaDigests` =
   表の名 → 表の宣言の `repr` を utf-8 にした sha256)を答える。要約の評価は `doeff_records.schema_digest.schema_digests` の 1 か所で、
