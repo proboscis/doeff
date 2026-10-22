@@ -22,6 +22,8 @@ macro を module 名から今の環境で引き直して digest を比べる)。
 doeff の版が違う作業木どうしは、互いの entry を上書きせずに並べて持つ。
 
 保存の形は 1 entry 1 file の JSON。壊れた file は読めない物として飛ばし、展開し直す。
+
+温まった実行の open を減らすため、検める file の組ごとに closure 全体を 1 file に束ねた写し(束 — 下の節)も持つ。束は写しで、正本は entry。
 """
 
 import hashlib
@@ -186,6 +188,11 @@ def _read_entry(path: Path) -> CachedProjection | CacheMiss:
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return CacheMiss(f"読めない: {error}")
+    return _entry_from_json(loaded)
+
+
+def _entry_from_json(loaded: object) -> CachedProjection | CacheMiss:
+    """JSON から読んだ entry 1 つを組む(形が違う時は CacheMiss — entry の file も束の行も同じ形)。"""
     match loaded:
         case {
             "version": int(version),
@@ -220,10 +227,8 @@ def _imports_of(loaded: object) -> tuple[str, ...] | None:
             return None
 
 
-def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
-    """展開を、場所の中の記録の entry に保存する。書けなくても検めは続ける(cache は速さのためだけ)。"""
-    path = _place_dir(cache_dir, name) / f"{record_fingerprint(projection.used)}.json"
-    payload = {
+def _entry_payload(projection: CachedProjection) -> dict[str, object]:
+    payload: dict[str, object] = {
         "version": CACHE_VERSION,
         "used": record_to_json(projection.used),
         "text": projection.text,
@@ -232,8 +237,19 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
     }
     if projection.imports is not None:
         payload["imports"] = list(projection.imports)
+    return payload
+
+
+def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
+    """展開を、場所の中の記録の entry に保存する。書けなくても検めは続ける(cache は速さのためだけ)。"""
+    path = _place_dir(cache_dir, name) / f"{record_fingerprint(projection.used)}.json"
+    payload = _entry_payload(projection)
     # 一時の file は書き手ごとの名(pid と時刻)— 保存先を共有する 2 台の worker が同じ entry を同時に書いても、互いの一時の file へ
     # 書き込まずに済み、どちらかの中身がそのまま rename される(agora-redesign #3863 の (b))。書けなければ一時の file を残さない。
+    _write_atomically(path, payload)
+
+
+def _write_atomically(path: Path, payload: object) -> None:
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +257,133 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
         temporary.replace(path)
     except OSError:
         temporary.unlink(missing_ok=True)
+
+
+# --- closure 単位の束(card ki-2829daea29fa) -------------------------------------------------------------------------
+#
+# 1 .hy ごとの entry は、引くたびに source の読みと entry の読みの 2 回 open する(367 file の closure で 700 回超)。束は、
+# 検める file の組ごとに closure 全体の行(場所の名・展開・展開が使った macro の記録)を 1 file にして、温まった実行の open を
+# 束 1 回にする。束は速さのためだけの写しで、正本は entry のまま: 束に無い・合わない file は今までの引き方(source の中身で
+# 場所を決め、entry を引く)に落ち、その実行の終わりに束を書き直す。
+#
+# 古い展開を使わない性質(entry の引きと同じ 2 つの照らし):
+# - source: 行は、束を書いた時の source の大きさと更新時刻を持つ。今の stat が同じなら中身が同じ物として信じ、違えば source の
+#   中身から場所の名を作り直して行の名と比べる(更新時刻だけ新しくなった file は、名が同じなら束の展開をそのまま使う)。
+#   大きさと更新時刻が同じまま中身が変わる書き換えを信じて逃さないため、束を書いた時に更新時刻が RACY_NS 以内に新しい file は
+#   stat を持たない行にして、毎回中身で照らす(git の index の racy 判定と同じ)。
+# - macro: 行ごとに ``record_is_current_here(used)`` で今の環境と照らす(entry と同じ)。
+BUNDLE_VERSION = 1
+#: 束を書く時刻からこの幅以内に更新された file は、更新時刻と大きさで信じない(粗い時計の同じ刻みの中の書き換え)。
+RACY_NS = 2_000_000_000
+
+
+@dataclass(frozen=True)
+class FileStat:
+    """束の行と比べる source の stat(大きさ・更新時刻の ns)。"""
+
+    size: int
+    mtime_ns: int
+
+
+@dataclass(frozen=True)
+class BundleRow:
+    """束の行 1 つ — 相対 path の file の module 名・場所の名・書いた時の stat(信じない時は None)・展開。"""
+
+    module: str
+    place: str
+    stat: FileStat | None
+    cached: CachedProjection
+
+
+def bundle_key(root: Path, targets: Sequence[str]) -> str:
+    """束の名(根・検める file の相対 path の組・保存の形の版で決まる)。"""
+    digest = hashlib.sha256()
+    for part in (str(BUNDLE_VERSION), str(CACHE_VERSION), str(root), *sorted(set(targets))):
+        digest.update(part.encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _bundle_path(cache_dir: Path, key: str) -> Path:
+    return cache_dir / "bundles" / f"{key}.json"
+
+
+def load_bundle(cache_dir: Path, key: str) -> dict[str, BundleRow]:
+    """束を読む(無い・読めない・形が違う時は空 — 呼び手は今までの引き方で引く。壊れた行だけ飛ばす)。"""
+    try:
+        loaded: object = json.loads(_bundle_path(cache_dir, key).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    match loaded:
+        case {"version": int(version), "rows": dict(rows)} if version == BUNDLE_VERSION:
+            pass
+        case _:
+            return {}
+    found: dict[str, BundleRow] = {}
+    for relative, row in rows.items():
+        match row:
+            case {"module": str(module), "place": str(place), "stat": stat, "entry": entry}:
+                cached = _entry_from_json(entry)
+                if isinstance(cached, CacheMiss):
+                    continue
+                match stat:
+                    case [int(size), int(mtime)]:
+                        found[relative] = BundleRow(module, place, FileStat(size, mtime), cached)
+                    case None:
+                        found[relative] = BundleRow(module, place, None, cached)
+    return found
+
+
+def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, str, FileStat | None]]:
+    """束の行の、書き直すかを決める比べ物(module 名・場所の名・展開が使った macro の記録の指紋・信じる stat — 更新時刻が新しい行の
+    stat は書かないので None)。記録の指紋を入れないと、macro を変えて展開し直した行が束に反映されず、毎回 entry へ落ちる。"""
+    horizon = time.time_ns() - RACY_NS
+    return {
+        relative: (
+            row.module,
+            row.place,
+            record_fingerprint(row.cached.used),
+            row.stat if row.stat is not None and row.stat.mtime_ns < horizon else None,
+        )
+        for relative, row in rows.items()
+    }
+
+
+def store_bundle(cache_dir: Path, key: str, rows: dict[str, BundleRow]) -> None:
+    """束を書く(書けなくても検めは続ける)。"""
+    signature = bundle_signature(rows)
+    payload = {
+        "version": BUNDLE_VERSION,
+        "rows": {
+            relative: {
+                "module": signature[relative][0],
+                "place": signature[relative][1],
+                "stat": [stat.size, stat.mtime_ns] if (stat := signature[relative][3]) is not None else None,
+                "entry": _entry_payload(row.cached),
+            }
+            for relative, row in rows.items()
+        },
+    }
+    _write_atomically(_bundle_path(cache_dir, key), payload)
+
+
+def stat_of(path: Path) -> FileStat | None:
+    """束の行と比べる file の stat(大きさ・更新時刻の ns — 読めなければ None)。"""
+    try:
+        status = path.stat()
+    except OSError:
+        return None
+    return FileStat(status.st_size, status.st_mtime_ns)
+
+
+def row_is_current(row: BundleRow, module: str, stat: FileStat | None) -> bool:
+    """行を、source を読まずに信じてよいか(module 名と stat が書いた時と同じで、展開が使った macro が今の環境に合う)。"""
+    return (
+        row.stat is not None
+        and row.stat == stat
+        and row.module == module
+        and record_is_current_here(row.cached.used)
+    )
 
 
 def default_cache_dir() -> Path:
