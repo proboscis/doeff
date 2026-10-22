@@ -68,6 +68,7 @@
 "packages/doeff-cluster/tests/test_entry_probe.hy" = "本物の子 process の入口の検め: 子と孫の pid の file・process の消え・時間切れの片づけを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_env_sweep_nonblocking.hy" = "掃除の prune(本物の子 process の fake の uv)が worker のループを止めない事を、経過の実時間と子が書く印の file で確かめる"
 "packages/doeff-cluster/tests/test_heartbeat_link.hy" = "本番の coordinator への口の heartbeat の切り離し: 生存の窓 400 ms・間隔 100 ms の実時間の中で、偽の coordinator が長い待ちに実時間で答える"
+"packages/doeff-cluster/tests/test_job_exit_lines.hy" = "本物の shim の下で SIGSEGV で落ちる本物の job の process を、本物の調整ループが観測して回収するまでを実時間で回す(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_record_store_wait.hy" = "本物の記録の service の process が、起動の保守を終えて次の期限までの長い待ちに入るまでの実時間を置く(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_retirement_pipe.hy" = "本物の shim と job の process: 退きの知らせが file に書かれるのと、塞がった pipe が空くのを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_served_program.hy" = "通しの検: 本物の coordinator と worker の process の間で、返事に job が載るのを締め切りつきで待つ(外の process の実時間が対象)"
