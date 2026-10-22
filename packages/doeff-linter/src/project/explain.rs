@@ -305,6 +305,8 @@ pub enum Explain {
     BareDefkCall { call: super::bare_calls::BareCall },
     /// DOEFF126: 引数で受けた関数を素で呼んでいる(呼び手が defk か fnk を渡している)。
     ParamCalledBare { call: super::param_calls::ParamCall },
+    /// DOEFF175: effect が不在・失敗と宣言した型を、その答えを束ねた変数に対して値として分ける古い分岐。
+    StaleBranch { branch: super::stale_outcome_branches::StaleBranch },
     /// DOEFF127: defk の `:effects` の宣言が推論と合わない。
     EffectMismatch { mismatch: super::signatures::EffectMismatch },
     /// DOEFF130: 翻訳の層の handler が業務の intent を出す(層の名は設定から)。
@@ -811,6 +813,23 @@ impl<'a> Narrator<'a> {
                     found.qualified
                 ),
             ),
+            Explain::StaleBranch { branch } => (
+                format!("定義 {} の {}({} は {} を{}と宣言した)", branch.definition, branch.form.word(), branch.effect, branch.ty, branch.declared_word()),
+                format!(
+                    "{} は {} を{}と宣言した。<- と ! は {} の答えのうち宣言した型を束ねず、{}として呼び手のスコープへ逃がす(束ねる {} は成功の値だけ)ので、{} を値として分けるこの枝({})は通らない。effect を宣言つきに切り替えた版の後に残る古い分岐で、通らないまま黙って次の枝(多くは成功の枝)に倒れる。",
+                    branch.effect,
+                    branch.ty,
+                    branch.declared_word(),
+                    branch.effect,
+                    match branch.declared {
+                        super::smells::DeclaredAs::Absent => "Absent",
+                        super::smells::DeclaredAs::Failure => "Raise",
+                    },
+                    branch.subject,
+                    branch.ty,
+                    branch.form.word()
+                ),
+            ),
             Explain::BareDefkCall { call } => (
                 format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
                 format!(
@@ -1043,6 +1062,16 @@ impl<'a> Narrator<'a> {
                 instead
             )),
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
+            Explain::StaleBranch { branch } => Some(match branch.declared {
+                super::smells::DeclaredAs::Absent => format!(
+                    "{} の枝を消して成功の道だけにする — 不在で何かしたい所は (<- {} ({} …) :absent <失敗>) か absent-as、不在を値として持ち回る所は {} を (maybe ({} …)) で包んで Nothing を受ける(R14 (3))",
+                    branch.ty, branch.subject, branch.effect, branch.effect, branch.effect
+                ),
+                super::smells::DeclaredAs::Failure => format!(
+                    "{} の枝を消して成功の道だけにする — 失敗で何かしたい所は on-raise (on-raise 本文 ({} d) 写し先)、値として持ち回る所は (result ({} …)) で包んで Err を受ける(R14 (3))",
+                    branch.ty, branch.ty, branch.effect
+                ),
+            }),
             Explain::MatchFieldHyphen { field, .. } => Some(format!(":{} を :{} と書くか、その match を defk の中へ移す(defk は欄の名を属性名へ直す)— 直すと今まで当たらなかった節が当たるようになるので、その定義の検を実行する", field, field.replace('-', "_"))),
             Explain::WireFree { wire: true, .. } => Some("defwire を翻訳の層(protocol)へ移し、この層には欄名を持たない defrecord を置いて protocol が読んで渡す".to_string()),
             Explain::WireFree { .. } => Some("写像は欄の名前と型を持つ defrecord にするか、データを引く写像(索引・表)はキー → 値の関数か効果にする".to_string()),

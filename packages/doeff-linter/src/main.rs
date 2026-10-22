@@ -290,6 +290,8 @@ impl Setup {
                 ProjectRule::ClassWithBehaviour => self.settings.definitions.is_some(),
                 ProjectRule::DefkCalledBare => self.settings.definitions.is_some(),
                 ProjectRule::EffectsDisagreeWithInference => self.settings.definitions.is_some(),
+                // DOEFF175 は定義の規則の母集団(definitions の paths と test_paths)の宣言を要る — 無ければ判じていない(0 件を「守れている」と読ませない)。
+                ProjectRule::StaleOutcomeBranch => self.settings.definitions.is_some(),
                 ProjectRule::TranslationEmitsIntent => self.settings.layers.is_some() && self.settings.translation.is_some(),
                 // DOEFF174 は業務の層と :lower-layer-modules の宣言の両方が在る repo だけ(無ければ母集団が空 — 判じていない)。
                 ProjectRule::LowerLayerInDomain => {
