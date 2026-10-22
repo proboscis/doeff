@@ -1324,7 +1324,9 @@
   "WatchChanges の 1 回ぶんの読み(待たない)を流すため。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の変わりは、回収の
    前でも出さない(文の条件・頭の註)。頼んだ表が空なら文を流さない(`IN ()` は文にできない — WatchChanges は空の組を作る時に断るので、
    今は起きない)。名指した列(ask.streams)の末尾は、置き場の頭と同じ 1 文(watch-head-statement — 同じ断面)で読み、変更の列は頭の番号
-   までを読む(変更と末尾が同じ断面の物になる・往復は増えない — #3718)。"
+   までを読む(変更と末尾が同じ断面の物になる・往復は増えない — #3718)。位置が頭そのもの(cursor.sequence = head)なら、読む変更の範囲
+   (位置, 頭] は空なので変更の列の文を流さない(答えは同じ空の変更 — 追いついた読み手の待たない読みは、頭の 1 文だけで答える・
+   ki-ca4b41612e2e)。"
   (for [name ask.tables] (store.schema.table name))
   (<- reads tuple (tail-reads store ask.streams now-ms))
   (<- head-statement Statement (watch-head-statement store.prefix reads))
@@ -1334,7 +1336,7 @@
   (when (or (!= cursor.epoch head.epoch) (< cursor.sequence head.floor) (> cursor.sequence head.head))
     (return (Reset head.epoch head.floor)))
   (var items [])
-  (when ask.tables
+  (when (and ask.tables (< cursor.sequence head.head))
     (<- expiries (table-expiries store (tuple ask.tables) now-ms))
     (<- statement (changes-statement store.prefix cursor.sequence head.head ask.tables ask.limit expiries))
     (<- records (query-rows store.database statement))
