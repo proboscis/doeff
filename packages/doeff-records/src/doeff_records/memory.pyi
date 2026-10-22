@@ -100,8 +100,11 @@ class GroupDue:
     group: str
     last_at: int
 
+def new_store_lock() -> threading.RLock: ...
+
 class MemoryStore:
     schema: RecordsSchema
+    make_lock: Callable[[], threading.RLock]
     lock: threading.RLock
     bells: dict[object, frozenset[tuple[str, str]]]
     epoch: int
@@ -122,7 +125,7 @@ class MemoryStore:
     expiry: list[tuple[int, int, RowDue | EventDue | GroupDue]]
     expiry_order: int
     groups: dict[tuple[str, str], StoredGroup]
-    def __init__(self, schema: RecordsSchema) -> None: ...
+    def __init__(self, schema: RecordsSchema, make_lock: Callable[[], threading.RLock] = ...) -> None: ...
     def __deepcopy__(self, memo: dict[int, object]) -> MemoryStore: ...
 
 #: 公開 effect 10 個と WatchEvents の答えの型のどれか(answered・at-now の :post)。
