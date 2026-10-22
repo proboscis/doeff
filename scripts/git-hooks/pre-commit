@@ -56,6 +56,15 @@ if [ -f "$RULES" ]; then
   }
 fi
 
+# (3a) .hy の隣の .pyi の作り直し忘れ(card ki-5755818ef0d8)。項は .pre-commit-config.yaml の別名 hy-stubs の 1 つ。
+# 木の環境(uv run)で doeff_hy を呼ぶので、入口の無い古い断面は塞がない。
+if [ -f "$TOP/scripts/check_hy_stubs.py" ]; then
+  (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run hy-stubs) || {
+    echo "doeff の commit の hook: .hy の隣の .pyi が古い(上の出力)。作り直して stage し直す。" >&2
+    exit 1
+  }
+fi
+
 # (3) enforcement 台帳の著述時突合。
 CHECK="$TOP/scripts/check_enforcement_ledger.py"
 # 古い断面には機構が無い — 塞がない。

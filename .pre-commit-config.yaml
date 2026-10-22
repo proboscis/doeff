@@ -87,6 +87,17 @@ repos:
         files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
         pass_filenames: true
 
+      # .hy を変える commit は、その隣の .pyi(doeff_hy.static_stub が .hy から作る生成物)を同じ commit で作り直す。各 package の
+      # test_generated_stubs が日次に同じ照らしを撃つが、commit の時に止めないと、作り直し忘れが main に入ってから failing になる
+      # (afaf956cd が kube.hy に import を足して kube.pyi を直し忘れた — card ki-5755818ef0d8)。素の commit の hook も別名 hy-stubs で撃つ。
+      - id: hy-stub-fresh
+        alias: hy-stubs
+        name: .hy の隣の .pyi が作り直した物と同じか
+        entry: uv run --no-project --python 3.12 python scripts/check_hy_stubs.py
+        language: system
+        files: '^packages/[^/]+/src/.*\.hy$'
+        pass_filenames: true
+
       # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement 資産と台帳は同じ commit で動く。
       # 勘定の家 = scripts/check_enforcement_ledger.py(stdlib 単独)。台帳は生成物 —
       # 落ちたら `make enforcement-ledger` で作り直し、消えた項目を確かめて stage する。
