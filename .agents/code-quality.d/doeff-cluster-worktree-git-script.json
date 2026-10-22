@@ -1,8 +1,17 @@
 {
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-worktree-git-script"
+      ]
+    }
+  },
   "modules": [
     {
-      "allow": [],
-      "layer": "pure",
+      "allow": [
+        "doeff-traverse-effects"
+      ],
+      "layer": "domain",
       "name": "doeff-cluster-worktree-git-script",
       "paths": [
         "packages/doeff-cluster/src/doeff_cluster/sim/worktree_git_script.hy"
