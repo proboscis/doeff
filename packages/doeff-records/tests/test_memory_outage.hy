@@ -4,7 +4,7 @@
 ;;   届かない間: 名に当たる公開 effect 8 つは Unreachable(detail)・置き場は変わらない / 名に当たらない表と列は今までどおり
 ;;   戻した後: 届かない間に撃った書きは 1 つも残っていない・読み書きは今までどおり
 ;;   /readyz の問い(memory の置き場の選びの readiness): 置き場全体の止まりの間だけ届かない
-(require doeff-hy.macros [deftest defk <- val])
+(require doeff-hy.macros [deftest defk <- val on-raise])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 (import doeff_time [Delay GetTime])
@@ -31,7 +31,8 @@
 
 (defk every-public-effect []
   {:pre [] :post [(: % tuple)]}
-  "公開 effect 8 つを parts と journal へ 1 つずつ撃ち、答えを並べる。"
+  "公開 effect 8 つを parts と journal へ 1 つずつ撃ち、答えを並べる(ReadStreamEnd は失敗と宣言した Unreachable が <- で Raise になるので、
+   on-raise で Unreachable の値へ戻して他の 7 つと並べる)。"
   (<- p1 FrozenMap (part "p1"))
   (<- p2 FrozenMap (part "p2"))
   (<- read (ReadRow "parts" #("p1")))
@@ -41,7 +42,7 @@
   (<- watched (WatchChanges #("parts") (WatchCursor 1 0)))
   (<- appended (AppendEvent "journal" "k1" {"n" 1}))
   (<- events (ReadEvents "journal" 0))
-  (<- end (ReadStreamEnd "journal"))
+  (<- end (on-raise (ReadStreamEnd "journal") (Unreachable detail) (Unreachable detail)))
   #(read listed put rows watched appended events end))
 
 
