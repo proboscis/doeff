@@ -47,7 +47,13 @@ from doeff_core_effects.scheduler import (
     Wait,
     scheduled,
 )
-from doeff_events import EventBus, SourceMissed, SourceStarted, subscribed_event_handler
+from doeff_events import (
+    EventBus,
+    SourceMissed,
+    SourceStalled,
+    SourceStarted,
+    subscribed_event_handler,
+)
 from doeff_events.effects.events import Publish, WaitForEvent
 from doeff_events.effects.notices import (
     Announce,
@@ -67,6 +73,7 @@ from doeff_events.handlers.notice_events import (
     notice_events_handler,
 )
 from doeff_events.handlers.redis_notices import (
+    SUBSCRIPTION_SILENCE_SECONDS,
     BrokerConnectionsExhausted,
     broker_back_by_retry,
     redis_notice_handler,
@@ -749,3 +756,96 @@ def test_a_server_that_stops_answering_cannot_hold_a_publish_past_the_timeout_on
     assert isinstance(first, NoticeSent), first
     assert isinstance(stopped, NoticeGapMarked), stopped
     assert seconds < 2 * TIMEOUT_SECONDS + 1.0, f"the Publish was held {seconds:.2f} s"
+
+
+# --- a subscription's connection that went half-open (card ki-227ad148680d) -----------------------------------------
+# A subscriber hears nothing from a silent server, so a connection whose peer stopped answering (the network cut, the
+# host gone, the process stopped) looked alive until TCP keep-alive's OS defaults gave up (Linux: about 2 h 11 min).
+# The subscriptions' connection now asks PING while it is quiet; no answer within the silence makes it lost.
+
+
+def test_a_half_open_subscription_is_told_as_stalled_within_the_default_silence_on_redis(
+    tmp_path: Path, redis_server: str
+) -> None:
+    """The server keeps the reader's connection but answers nothing (SIGSTOP — the peer's kernel still holds the TCP
+    connection, so TCP keep-alive would not tell it). The reader's source publishes SourceStalled within the
+    handler's default silence (7 s — the target of the read replica's keeper in agora), instead of waiting without
+    a limit for a notice that cannot come."""
+    port = _free_port()
+    url = f"redis://127.0.0.1:{port}/0"
+    server = _started_server(redis_server, port, str(tmp_path))
+    stopped = False
+    try:
+
+        @do
+        def stalls_when_the_server_stops() -> "EffectGenerator[tuple[object, float]]":
+            nonlocal stopped
+            yield WaitForEvent(SourceStarted)
+            os.kill(server.pid, signal.SIGSTOP)
+            stopped = True
+            started = time.monotonic()
+            stalled = yield WaitForEvent(SourceStalled)
+            return (stalled, time.monotonic() - started)
+
+        events = notice_events_handler("law-half-open", law_routes(_prefix()), PATIENCE_SECONDS)
+        program = subscribed_event_handler(EventBus(), "law-half-open", (SourceStarted, SourceStalled))(
+            redis_notice_handler(url, TIMEOUT_SECONDS)(
+                broker_back_by_retry(RETRY_SECONDS)(events(stalls_when_the_server_stops()))
+            )
+        )
+        stalled, seconds = _run_on_wall_clock(program)
+    finally:
+        if stopped:
+            os.kill(server.pid, signal.SIGCONT)
+        server.terminate()
+        server.wait(timeout=20)
+    assert isinstance(stalled, SourceStalled), stalled
+    assert stalled.source == "law-half-open", stalled
+    assert seconds <= SUBSCRIPTION_SILENCE_SECONDS + 1.0, f"the half-open connection was told after {seconds:.2f} s"
+
+
+QUIET_SILENCE_SECONDS: Final = 0.5
+QUIET_SECONDS: Final = 3.0
+
+
+def _pings_answered(url: str) -> int:
+    """How many PING the server has answered since it started (``INFO commandstats``)."""
+    with redis.Redis.from_url(url) as admin:
+        stats = admin.info("commandstats")
+    return int(stats.get("cmdstat_ping", {}).get("calls", 0))
+
+
+@pytest.mark.parametrize("protocol", [2, 3], ids=["resp2", "resp3"])
+def test_a_quiet_subscription_that_answers_its_pings_stays_subscribed_on_redis(redis_url: str, protocol: int) -> None:
+    """A subscription that hears no notice for many times its silence, on a server that answers, is not dropped:
+    each quiet stretch ends with a PING the server answers, no SourceStalled is published, and the next notice
+    arrives on the same subscription. Under both protocols: the answer to PING on a subscribed connection is
+    ``["pong", ""]`` under RESP2 and ``PONG`` under RESP3 (redis-py's default since 8)."""
+    prefix = _prefix()
+    url = f"{redis_url}?protocol={protocol}"
+    pings_before = _pings_answered(redis_url)
+
+    @do
+    def stays_quiet() -> "EffectGenerator[object]":
+        yield WaitForEvent(SourceStarted)
+        yield Delay(QUIET_SECONDS)
+        yield Publish(LawNote("after the quiet"))
+        return (yield WaitForEvent(SourceStalled, LawNote))
+
+    events = notice_events_handler("law-quiet", law_routes(prefix), PATIENCE_SECONDS)
+    program = subscribed_event_handler(EventBus(), "law-quiet", (SourceStarted, SourceStalled, LawNote))(
+        redis_notice_handler(url, TIMEOUT_SECONDS, QUIET_SILENCE_SECONDS)(
+            broker_back_by_retry(RETRY_SECONDS)(events(stays_quiet()))
+        )
+    )
+    heard = _run_on_wall_clock(program)
+    pings = _pings_answered(redis_url) - pings_before
+    assert heard == LawNote("after the quiet"), heard
+    # One PING per quiet stretch of half the silence (answered at once), so about QUIET_SECONDS / (silence / 2).
+    assert pings >= QUIET_SECONDS / QUIET_SILENCE_SECONDS, f"the quiet subscription asked {pings} PING"
+
+
+@pytest.mark.parametrize("silence", [0, -1.0, True, "7"], ids=["zero", "negative", "bool", "text"])
+def test_the_silence_must_be_a_positive_number(silence: object) -> None:
+    with pytest.raises(ValueError, match="silence_seconds"):
+        redis_notice_handler("redis://127.0.0.1:9/0", TIMEOUT_SECONDS, silence)  # type: ignore[arg-type]
