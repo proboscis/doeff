@@ -24,8 +24,6 @@ from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
 from doeff_records.values import Reset as Reset
 from doeff_records.values import Unreachable as Unreachable
-from doeff_records.request_timing import RequestStage as RequestStage
-from doeff_records.request_timing import stages_of_server_timing as stages_of_server_timing
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -54,6 +52,9 @@ from doeff_records.wire import client_status_outcome as client_status_outcome
 from doeff_records.wire import WRITER_HEADER as WRITER_HEADER
 from doeff_records.wire import CALLER_HEADER as CALLER_HEADER
 from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
+from doeff_records.wire import SERVER_TIMING_HEADER as SERVER_TIMING_HEADER
+from doeff_records.wire import SERVER_TIMING_QUEUE as SERVER_TIMING_QUEUE
+from doeff_records.wire import server_timing_spans as server_timing_spans
 DEFAULT_REQUEST_TIMEOUT: float
 EXCHANGE_LOG: str
 

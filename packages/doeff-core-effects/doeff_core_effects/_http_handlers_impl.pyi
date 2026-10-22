@@ -25,7 +25,6 @@ class HttpAsyncClient(Protocol):
         headers: Any = ...,
         timeout: Any = ...,
         follow_redirects: bool = ...,
-        extensions: Any = ...,
     ) -> Awaitable[Any]: ...
 
     def aclose(self) -> Awaitable[None]: ...

@@ -21,7 +21,8 @@
 (import doeff_records.http_server [records-server-config start-records-server])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.request_timing [RequestStage StageSeconds server-timing-of stages-of-server-timing])
+(import doeff_records.request_timing [RequestStage StageSeconds server-timing-of])
+(import doeff_records.wire [ServerSpan server-timing-spans])
 
 ;; 行の欄のうち、計時を頼んだ往復で必ず値を持つ物(内訳の全部 — http_client.hy の logged-exchange)。
 (val BREAKDOWN-FIELDS #("conn" "connect_ms" "acquire_ms" "send_ms" "service_queue_ms" "service_ms" "return_ms" "wait_ms" "receive_ms"
@@ -89,14 +90,14 @@
                 (StageSeconds :stage RequestStage.SEND :seconds 0.002) (StageSeconds :stage RequestStage.TOTAL :seconds 0.02)))
   (<- spelled str (server-timing-of stages))
   (assert (= spelled "queue;dur=1.200, handler;dur=10.500") spelled)
-  (<- read (get tuple #(StageSeconds ...)) (stages-of-server-timing spelled))
-  (assert (= (tuple (gfor s read s.stage)) #(RequestStage.QUEUE RequestStage.HANDLER)) read)
+  (<- read (get tuple #(ServerSpan ...)) (server-timing-spans spelled))
+  (assert (= (tuple (gfor s read s.name)) #("queue" "handler")) read)
   (assert (all (gfor #(got sent) (zip read stages) (< (abs (- got.seconds sent.seconds)) 1e-6))) read)
   ;; 読み飛ばす形: 見出しが無い・知らない名・dur の無い項・数でない dur・答えの後の区間の名。
-  (<- absent (get tuple #(StageSeconds ...)) (stages-of-server-timing None))
+  (<- absent (get tuple #(ServerSpan ...)) (server-timing-spans None))
   (assert (= absent #()) absent)
-  (<- odd (get tuple #(StageSeconds ...)) (stages-of-server-timing "db;dur=3, queue, handler;dur=x, total;dur=9, encode;desc=a;dur=0.5"))
-  (assert (= (tuple (gfor s odd #(s.stage s.seconds))) #(#(RequestStage.ENCODE 0.0005))) odd))
+  (<- odd (get tuple #(ServerSpan ...)) (server-timing-spans "db;dur=3, queue, handler;dur=x, total;dur=9, encode;desc=a;dur=0.5"))
+  (assert (= (tuple (gfor s odd #(s.name s.seconds))) #(#("encode" 0.0005))) odd))
 
 
 (deftest test-a-timed-change-read-logs-one-line-with-every-part-of-its-round-trip

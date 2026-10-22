@@ -91,6 +91,20 @@ CLIENT_KINDS: tuple[RequestKind, ...]
 CLIENT_OUTCOMES: tuple[str, ...]
 CLIENT_ANSWER_METRICS: tuple[str, ...]
 CALLER_HEADER: str
+SERVER_TIMING_HEADER: str
+SERVER_TIMING_QUEUE: str
+SERVER_TIMING_NAMES: tuple[str, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class ServerSpan:
+    name: str
+    seconds: float
+
+def server_timing_spelled(spans: tuple[ServerSpan, ...]) -> _Program[str, object]:
+    ...
+
+def server_timing_spans(value: str | None) -> _Program[tuple[ServerSpan, ...], object]:
+    ...
 LIST_ROWS_TABLE_METRIC: str
 LIST_ROWS_CALLER_METRIC: str
 LIST_ROWS_MEASURES: tuple[str, ...]
