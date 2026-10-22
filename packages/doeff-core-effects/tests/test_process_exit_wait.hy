@@ -15,6 +15,8 @@
 (import logging)
 (import os)
 (import platform)
+(import select)
+(import sys)
 (import subprocess)
 (import threading)
 (import time)
@@ -34,6 +36,8 @@
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_core_effects.process_exit [process-exit-handler exit-fd-of])
 (import doeff_core_effects.process_exit :as process-exit-module)
+(import doeff_core_effects.pidfd_exit [pidfd-of])
+(import doeff_core_effects.os_process [STARTED-CHILDREN])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
@@ -73,6 +77,90 @@
   (setv started (time.monotonic))
   (setv answer (handled program implementation))
   #(answer (- (time.monotonic) started)))
+
+
+;; 子の終わりの待ちがこの秒数を越えて続いた時に、証拠(子の state・waitid・pidfd・scheduler の待ちの列)を残し始める。
+(val EVIDENCE-AFTER 10.0)
+;; 証拠を取る間隔(秒)。
+(val EVIDENCE-EVERY 5.0)
+
+
+(defn #^ str child-evidence [#^ int pid]
+  "子 pid の今の様子を 1 行にするため(待ちを乱さない読みだけ — 回収しない・fd は取って閉じる): /proc/<pid>/stat の state・
+   waitid(WNOWAIT で回収しない)・pidfd の poll・Popen の returncode。"
+  (try (setv stat (. (open (.format "/proc/{}/stat" pid)) (read)))
+       (setv state (get (.split (get (.rsplit stat ")" 1) 1)) 0))
+       (except [error OSError] (setv state (.format "gone({!r})" error))))
+  (try (setv waited (os.waitid os.P_PID pid (| os.WEXITED os.WNOHANG os.WNOWAIT)))
+       (except [error OSError] (setv waited (.format "error({!r})" error))))
+  (try (setv fd (run (pidfd-of pid)))
+       (if (is fd None)
+           (setv polled "no-pidfd")
+           (try (setv poller (select.poll))
+                (.register poller fd select.POLLIN)
+                (setv polled (.poll poller 0))
+                (finally (os.close fd))))
+       (except [error Exception] (setv polled (.format "error({!r})" error))))
+  (setv found (.find STARTED-CHILDREN pid))
+  (.format "pid={} stat-state={} waitid={} pidfd-poll={} popen-returncode={}" pid state waited polled
+           (if (is found None) "not-in-table" (. (get found 0) returncode))))
+
+
+(defclass ChildWaitEvidence []
+  "走っている子の終わりの待ちが after 秒を越えた時に、子の様子と scheduler の待ちの列を lines に残すため(card ki-3a95051d3fb8 —
+   日次の回で約 60 秒止まって落ちた時に、1 回の失敗の記録から原因を決める)。待ちの上限も検の厳しさも変えない。"
+  (defn __init__ [self [after EVIDENCE-AFTER] [every EVIDENCE-EVERY]]
+    (setv self.after after self.every every self.lines [] self.pid None self.began (time.monotonic)
+          self.finished (threading.Event) self.lock (threading.Lock)))
+
+  (defn note [self text]
+    (setv line (.format "[+{:.1f}s] {}" (- (time.monotonic) self.began) text))
+    (with [self.lock] (.append self.lines line))
+    (.write sys.stderr (+ "child-wait-evidence " line "\n"))
+    (.flush sys.stderr))
+
+  (defn watch [self]
+    "別 thread: after 秒を越えても終わらなければ、every 秒ごとに子の様子を残す(終わったら止まる)。"
+    (when (not (.wait self.finished :timeout self.after))
+      (while (not (.is-set self.finished))
+        (.note self (if (is self.pid None) "pid not started yet" (child-evidence self.pid)))
+        (.wait self.finished :timeout self.every))))
+
+  (defn wrap-source-alive [self original]
+    "止まりの判定が呼ぶ「子はまだ終わっていないか」の読み(process_exit の child-running)を包み、after 秒を越えた読みごとに、
+     scheduler がその待ちを判じた時刻と読みの答えを残す(= scheduler の止まりの見張りが今見ている待ちの列。Python と Rust の
+     scheduler のどちらも、この読みを経由する)。"
+    (defn probe [pid]
+      (setv alive (run (original pid)))
+      (when (> (- (time.monotonic) self.began) self.after)
+        (.note self (.format "scheduler probes pending watched wait: pid={} source_alive={}" pid alive)))
+      (Pure alive))
+    probe)
+
+  (defn text [self]
+    (.join "\n" self.lines)))
+
+
+(defk started-then-awaited-watched [argv evidence]
+  {:pre [(: argv tuple) (: evidence ChildWaitEvidence)] :post [(: % tuple)]}
+  "started-then-awaited と同じ待ちで、立てた子の pid を evidence に教える。"
+  (<- started ProcessStarted (StartProcess :argv argv))
+  (setv evidence.pid started.pid)
+  (<- ended (| ProcessEnded ProcessNotChild) (AwaitProcessExit started.pid))
+  (<- polled (PollProcess started.pid))
+  #(ended polled))
+
+
+(defn #^ ChildWaitEvidence run-with-evidence [#^ object monkeypatch #^ tuple argv #^ str implementation #^ float after #^ float every]
+  "argv の子の終わりの待ちを回し、待ちが after 秒を越えた間の証拠を残した ChildWaitEvidence を返す(待った答えは .answers)。"
+  (setv evidence (ChildWaitEvidence after every))
+  (.setattr monkeypatch process-exit-module "child_running" (.wrap-source-alive evidence process-exit-module.child_running))
+  (setv watcher (threading.Thread :target evidence.watch :daemon True))
+  (.start watcher)
+  (try (setv evidence.answers (get (timed (started-then-awaited-watched argv evidence) implementation) 0))
+       (finally (.set evidence.finished)
+                (.join watcher)))
+  evidence)
 
 
 (defn #^ int stray-pid [#^ str seconds]
@@ -189,12 +277,26 @@
   {:params {"implementation" ["python" "rust"]}}
   ;; 条 S1: 走っている子の終わりの待ちは、終わりの知らせの出どころ(終わると読める fd)が登録され、子が生きている間は止まりでない。
   ;; 子の 0.5 秒は、縮めた止まりの見張りの周期の 10 倍。直す前は周期ごとに警告を書いた(courier の job で 30 秒ごと・card ki-6222e22d4179)。
+  ;; 待ちが EVIDENCE-AFTER 秒を越えたら、子の様子と scheduler の待ちの列を残す(失敗の記録に証拠が出る — card ki-3a95051d3fb8)。
   (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
   (.set-level caplog logging.WARNING :logger scheduler-module.__name__)
-  (val answers (get (timed (started-then-awaited #("sleep" "0.5")) implementation) 0))
+  (val evidence (run-with-evidence monkeypatch #("sleep" "0.5") implementation EVIDENCE-AFTER EVIDENCE-EVERY))
+  (val answers evidence.answers)
   (val reports (lfor record caplog.records :if (in "scheduler stalled" (.getMessage record)) (.getMessage record)))
-  (assert (isinstance (get answers 0) ProcessEnded) answers)
-  (assert (= reports []) reports))
+  (assert (isinstance (get answers 0) ProcessEnded) #(answers (.text evidence)))
+  (assert (= reports []) #(reports (.text evidence))))
+
+
+(deftest test-a-long-wait-on-a-child-leaves-evidence [implementation monkeypatch]
+  {:params {"implementation" ["python" "rust"]}}
+  ;; 証拠を残す仕組みの検: 1 秒の子の待ちを 0.3 秒で証拠を取り始める設定にして、子の state・waitid・pidfd・scheduler が見ている待ちの列が
+  ;; 残る事を見る(本番の閾は EVIDENCE-AFTER)。
+  (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
+  (val evidence (run-with-evidence monkeypatch #("sleep" "1") implementation 0.3 0.2))
+  (val text (.text evidence))
+  (assert (isinstance (get evidence.answers 0) ProcessEnded) text)
+  (for [needle ["stat-state=S" "waitid=None" "pidfd-poll=[]" "popen-returncode=None" "scheduler probes pending watched wait" "source_alive=True"]]
+    (assert (in needle text) #(needle text))))
 
 
 (deftest test-a-child-that-ended-without-its-exit-notice-is-a-stall [implementation monkeypatch caplog]
