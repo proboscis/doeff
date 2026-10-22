@@ -29,6 +29,7 @@ from doeff_core_effects.meter_effects import MeterSettings, ReadMeter
 from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
 from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase, postgres_sql_handler
 from doeff_core_effects.scheduler import Cancel, CreateExternalPromise, Spawn, Wait, scheduled
+from doeff_core_effects.thread_pool_compute import thread_pool_compute_handler
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow
 from doeff_records.laws import LAW_SCHEMA, MAKER
@@ -116,19 +117,22 @@ class Store:
         self.size = size
         self.connections = PostgresConnections((PostgresDatabase(name=DATABASE, dsn=dsn()),), size=size)
         self.pool = ThreadPoolExecutor(max_workers=size)
-        prefix = "u" + format(time.monotonic_ns() % (1 << 40), "x") + "_"
+        # 束の読みの読み解きを回す計算の pool(records-connected の compute-pool と同じ役 — ADR-DOE-RECORDS-002)。
+        self.compute_pool = ThreadPoolExecutor(max_workers=2)
+        prefix ="u" + format(time.monotonic_ns() % (1 << 40), "x") + "_"
         self.store = self.run_sql(prepare_records_store(DATABASE, DATABASE, LAW_SCHEMA, prefix))
 
     def run_sql(self, program):
         return run(scheduled(with_handlers([sim_time_handler(clock=SimClock()), postgres_sql_handler(self.connections)], program)))
 
     def run(self, program, gated=True):
-        """本番の組み立て(records-connected の writer-gates・pooled の答え手・計器)の下で program を走らせるため。gated = False は
-        並びを外した組(反例)。"""
+        """本番の組み立て(records-connected の writer-gates・pooled の答え手・計算の pool・計器)の下で program を走らせるため。
+        gated = False は並びを外した組(反例)。"""
         handlers = [state(), sync_time_handler(), memory_meter_handler(MeterSettings())]
         if gated:
             handlers.append(writer_gates)
         handlers.append(pooled_postgres_sql_handler(self.connections, self.pool))
+        handlers.append(thread_pool_compute_handler(self.compute_pool))
         return run(scheduled(with_handlers(handlers, program)))
 
     def as_writer(self, program, gated=True):
@@ -137,6 +141,7 @@ class Store:
     def close(self):
         self.run_sql(drop_records_tables(self.store))
         self.pool.shutdown()
+        self.compute_pool.shutdown()
         self.connections.close()
 
 

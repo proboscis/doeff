@@ -8,9 +8,12 @@ from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.values import Unreachable as Unreachable
 from doeff_records.principals import Principal as Principal
 from doeff_records.principals import writer_of as writer_of
+from doeff_records.loop_work import off_loop as off_loop
+from doeff_records.loop_work import hyx_off_loop_answerXquestion_markX as hyx_off_loop_answerXquestion_markX
 from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
 from doeff_records.wire import OPERATIONS as OPERATIONS
 from doeff_records.wire import PublicEffect as PublicEffect
+from doeff_records.wire import WireAnswer as WireAnswer
 from doeff_records.wire import WireRequest as WireRequest
 from doeff_records.wire import WireRefusal as WireRefusal
 from doeff_records.wire import WireMalformed as WireMalformed
@@ -38,6 +41,7 @@ class HttpRequest:
 class HttpAnswer:
     status: int
     body: str
+    data: bytes | None = None
 
 @dataclass(frozen=True)
 class RecordsService:
@@ -57,6 +61,15 @@ def undeclared_name(schema: RecordsSchema, ask: PublicEffect) -> _Program[str | 
     ...
 
 def serve_operation(service: RecordsService, principal: Principal, operation: str, body: bytes) -> _Program[HttpAnswer, object]:
+    ...
+
+def reply_of(answer: WireAnswer) -> _Program[HttpAnswer, object]:
+    ...
+
+def sendable_reply_of(answer: WireAnswer) -> _Program[HttpAnswer, object]:
+    ...
+
+def answer_reply(answer: WireAnswer) -> _Program[HttpAnswer, object]:
     ...
 
 def respond(service: RecordsService, request: HttpRequest) -> _Program[HttpAnswer, object]:

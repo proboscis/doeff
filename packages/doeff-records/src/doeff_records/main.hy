@@ -12,7 +12,9 @@
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
 ;;;                          印字・書きの並び(pg.writer-gates — 書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる)・PostgreSQL の
 ;;;                          答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
-;;;                          pool の thread へ)の下で本体を走らせ、終われば接続と pool を閉じる。索引の用意(pg.hy の頭の註)の文は別の
+;;;                          pool の thread へ)・計算の答え手(thread-pool-compute-handler — 束の読みの行の読み解きと答えの綴りの Compute を
+;;;                          COMPUTE-WORKERS 本の pool で scheduler の thread の外で回す・ADR-DOE-RECORDS-002)の下で本体を走らせ、終われば
+;;;                          接続と pool を閉じる。索引の用意(pg.hy の頭の註)の文は別の
 ;;;                          database の名 DDL-DATABASE の接続 1 本(文の上限なし — DDL-TIMEOUTS)へ流す。外側(scheduler・Await の橋・session の値の
 ;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
 ;;;   records-foundation     単独で起こす時の本番の土台の全部 = 外側(scheduler・Await の橋・session の値の置き場・async-time-handler
@@ -66,6 +68,7 @@
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts])
 (import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
@@ -104,6 +107,10 @@
                                     :unacknowledged-milliseconds DEFAULT-TIMEOUTS.unacknowledged-milliseconds
                                     :statement-milliseconds None
                                     :idle-transaction-milliseconds DEFAULT-TIMEOUTS.idle-transaction-milliseconds))
+;; 束の読みの行の読み解きと答えの綴り(Compute — loop_work.hy の頭の註)を回す pool の thread の数。1 頁 500 行の読み解きと綴りは CPU で
+;; 40〜125 ms(ADR-DOE-RECORDS-002 の測り)— 一覧の読みは 1 秒に 7〜18 本なので、重なる大きな頁は 2 本ほど。free-threaded の Python では
+;; 1 本が core 1 つを使う(機体の core を食い尽くさない数)。足りない時は pool の列で待つだけで、scheduler の thread は塞がない。
+(val COMPUTE-WORKERS 4)
 ;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
 (val STOP-POLL-SECONDS 0.5)
 (val DRAIN-SECONDS 0.0)
@@ -223,17 +230,21 @@
   (val pool (ThreadPoolExecutor :max-workers (+ settings.pool-size 1) :thread-name-prefix "records-pg"))
   (val ddl-connections (PostgresConnections #((PostgresDatabase :name DDL-DATABASE :dsn settings.dsn)) :size 1 :timeouts DDL-TIMEOUTS))
   (val ddl-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-ddl"))
+  (val compute-pool (ThreadPoolExecutor :max-workers COMPUTE-WORKERS :thread-name-prefix "records-compute"))
   (try
     ;; 書きの並び(writer-gates)は、同じ process の書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる(pg.hy の locked-transaction)。
+    ;; 計算の答え手は束の読みの読み解きと綴りを compute-pool で回す(頭の註・ADR-DOE-RECORDS-002)。
     (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) writer-gates
-                               (pooled-postgres-sql-handler connections pool) (pooled-postgres-sql-handler ddl-connections ddl-pool)]
+                               (pooled-postgres-sql-handler connections pool) (pooled-postgres-sql-handler ddl-connections ddl-pool)
+                               (thread-pool-compute-handler compute-pool)]
                  body))
     answer
     (finally
       (.close connections)
       (.close ddl-connections)
       (.shutdown pool :wait False :cancel-futures True)
-      (.shutdown ddl-pool :wait False :cancel-futures True))))
+      (.shutdown ddl-pool :wait False :cancel-futures True)
+      (.shutdown compute-pool :wait False :cancel-futures True))))
 
 
 (defk records-foundation [settings body]

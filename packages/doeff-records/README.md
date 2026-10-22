@@ -206,11 +206,20 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   表の名 → 表の宣言の `repr` を utf-8 にした sha256)を答える。要約の評価は `doeff_records.schema_digest.schema_digests` の 1 か所で、
   使い手の木の data(使い手の repo が木ごとに書く表の要約の file)も同じ関数で書く。身元を引く前・表の用意を問う前に答えるので、
   置き場に届かない間も読める。計器の種は `other`。`TableDecl` の形が doeff の版で変わると、全部の表の要約が一度に変わる。
+- scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — `doeff_records.loop_work` の頭の註): 受けの loop・要求の task・書きの門・
+  変化の待ちは 1 本の scheduler の thread の上で回るので、その thread は要求の受けと順の制御と、大きさが要求の本文か 1 行で決まる計算だけを
+  持つ。置き場に在る行の数で大きさが決まる計算 — 束の読み(一覧の頁・変更の列・出来事の列と手入れの送りの読み)の行の読み解きと、
+  束の読みの答え(`Page`・`Changes`・`Events` で行を 1 つ以上運ぶ答え)の綴り(JSON の文字列と UTF-8 の byte 列)— は doeff の
+  `Compute` を出して thread の外で回す。**記録の service を起こす組み立ては `Compute` の答え手を置く**: 本番の土台の口
+  `records-connected` と検の殻 `start_records_server` は thread の pool(`thread-pool-compute-handler` — free-threaded の Python では
+  scheduler の thread と並んで走る)を自分で開いて閉じる。`serve_records` と `respond` を自分の土台で回す台本の検と模擬は
+  `doeff_core_effects.inline_compute.inline-compute-handler` を置く(置かない組み立ては、行を運ぶ最初の束の読みで答え手の無い `Compute`
+  として 500 internal になる)。PostgreSQL の handler を直に組む組み立ても同じ(読み解きの `Compute` は置き場の handler が出す)。
 - 検と模擬の殻は `doeff_records.http_server.start_records_server(run(records_server_config(schema, handler_for, request_handlers=…)))`:
   入口の Program を別の thread の run で回し、表の用意の告知(`RecordsPrepared`)を待って `url` と `close()` を持つ `RunningServer` を返す
   (返った口は記録の操作に答えられる)。`handler_for` = 書き手の名 → 用意し終えた
   置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)、`meter` = 計器の
-  答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。
+  答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。束の読みの読み解きと綴りは殻が開く thread の pool で回る。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, writer=…))` は、同じ公開 effect に口越しで
 答える(書き手の名 `writer` を平文の見出し `X-Records-Writer`(綴りは `doeff_records.wire` の `WRITER-HEADER`)で送る。`Authorization` は送らない)。`404` は `UndeclaredTable` を上げる
@@ -278,7 +287,8 @@ Program で、答え = process の終わりの code。本番の土台(`records-f
 - `pg-url-file-dsn dsn-of` — DSN を接続 URL の file から得る `dsn-source`(env `RECORDS_PG_URL_FILE` の path の file を `ReadText` で読み、
   `dsn-of` で DSN にする)。単独の入口 `serve-records-service` は `(records-settings (pg-url-file-dsn dsn-of))` を使う
 - `records-serving schema settings choice` — 本体の設定 `RecordsServing` を作る。`choice` は置き場の選び `StoreChoice`(`doeff_records.store_choice` — 表の用意の作り手と /readyz の問い)で、PostgreSQL は `doeff_records.main` の `PG-STORE`、memory は `doeff_records.memory` の `memory-store-choice`
-- `records-connected settings body` — 土台の口(待ち受け・名乗りと用意の告知の印字・PostgreSQL の答え手。接続と pool を開き、終われば閉じる)。
+- `records-connected settings body` — 土台の口(待ち受け・名乗りと用意の告知の印字・PostgreSQL の答え手・束の読みの読み解きと綴りの
+  `Compute` を回す計算の pool〔`COMPUTE-WORKERS` 本〕。接続と pool を開き、終われば閉じる)。
   外側は持たない。用意の告知(`RecordsPrepared`)に別の答えを持つ使い手は、`body` を自分の答え手で包んで渡す(印字より内側が先に答える)
 - `records-process foundation serving` — 本体。`(records-process (fn [body] (<自分の外側> (records-connected settings body))) serving)` と撃つ
 
