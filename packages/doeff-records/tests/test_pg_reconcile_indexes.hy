@@ -29,6 +29,8 @@
 (import time)
 (import pytest)
 (import doeff [run with_handlers])
+;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
+(import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.handlers [await-handler state])
 (import doeff_core_effects.scheduler [scheduled])
@@ -80,7 +82,7 @@
 
 (defn run-on [quick ddl program]  ; defk にできない: 検の入口で run を撃つ
   "query 用と索引の用意の SQL の答え手と仮想の時計の下で program を 1 回走らせる。"
-  (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler quick) (postgres-sql-handler ddl)] program))))
+  (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) inline-compute-handler (postgres-sql-handler quick) (postgres-sql-handler ddl)] program))))
 
 
 (defn as-maker [store program]  ; defk にできない: 検の入口の組み立て

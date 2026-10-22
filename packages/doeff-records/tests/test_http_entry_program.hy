@@ -21,6 +21,8 @@
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import doeff [Program EffectBase run with-handlers])
+;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
+(import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
@@ -81,7 +83,7 @@
 (defk scripted-foundation [parts body]
   {:pre [(: parts ScriptedParts) (: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "records" :role "foundation"}}
   "records-process に渡す検の土台の関数: scheduler・session の値の置き場・仮想の時計・台本の止めの合図と待ち受けの下で本体を走らせるため。"
-  (<- answer (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler (scripted-http-server parts.script)]
+  (<- answer (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler scripted-stop-handler (scripted-http-server parts.script)]
                                        (noted parts body))))
   answer)
 
@@ -219,7 +221,7 @@
   "台本を入口の Program(serve-records)で 1 回走らせ、MeteredRun を run の結果として返すため(土台は他の台本の検と同じ — scheduler・
    session の値の置き場・仮想の時計・台本の止めの合図と待ち受け — に、断面を読むための計器の答え手を足した物)。"
   (<- serving RecordsServing (serving-of prepare None))
-  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler (scripted-http-server script)
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler scripted-stop-handler (scripted-http-server script)
                                   (memory-meter-handler (MeterSettings))]
                                  (served-then-read serving broken)))))
 
@@ -370,7 +372,7 @@
   (<- late HttpScript (read-script LATE-TICKET))
   (val script (HttpScript :arrivals (+ #((! (arrival "t-health" "GET" "/healthz" None None))) early.arrivals) :bodies early.bodies))
   (<- serving RecordsServing (serving-of prepare None))
-  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler (scripted-http-server script)
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler scripted-stop-handler (scripted-http-server script)
                                   (scripted-extras None) (arrivals-paced ARRIVAL-PACE-SECONDS) (prepared-noted late)]
                                  (noticed-body serving)))))
 

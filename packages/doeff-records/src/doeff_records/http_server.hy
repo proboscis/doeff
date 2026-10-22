@@ -58,6 +58,11 @@
 ;;;     undeclared・名乗りの無い要求は unnamed)。表ごとの系列は起動の時に 0 で置き、呼び手 × 表の系列は最初の答えで現れる(宣言の表 ×
 ;;;     呼び手の組は数千 — 全部を 0 で置くと /metrics の本文と、数えるたびの断面の写しが重くなる)。区間の秒の系列(records_stage_*)に表の
 ;;;     名は付けない(区間 9 × 表 80 の観測の列になる — 遅い表は呼びの数と行の数から絞り、区間は操作ごとに読む)
+;;;   - scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 受けの loop・要求の task・書きの門・変化の待ちは
+;;;     全部 1 本の scheduler の thread の上で回るので、その thread は要求の受けと順の制御と、大きさが要求の本文か 1 行で決まる計算だけを持つ。
+;;;     束の読みの行の読み解き(pg.hy の decoded-batch)と束の読みの答えの綴り(service.hy の answer-reply)は Compute を出す。入口の
+;;;     Program は Compute に答えない — 答え手は土台が置く(本番の土台の口 = main.hy の records-connected の thread の pool・検の殻 =
+;;;     start-records-server の thread の pool・台本の検と模擬 = inline-compute-handler)
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
 ;;; 要求の本文の上限は HttpReadBody の max-bytes(読む前に宣言の長さで、宣言の無い本文は流しながら判じる)だけが持つ。
@@ -69,9 +74,11 @@
 (import threading)
 (import traceback)
 (import collections.abc [Callable])
+(import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
 (import doeff [Program EffectBase run with-handlers])
 (import doeff_core_effects.handlers [await-handler state])
+(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
 (import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError
                                       Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
@@ -127,6 +134,8 @@
 (val SHELL-OPEN-SECONDS 30.0)
 (val SHELL-CLOSE-SECONDS 10.0)
 (val SHELL-STOP-REASON "検の殻の close")
+;; 検の殻の計算の pool の thread の数(束の読みの読み解きと綴り — 本番の土台の口は main.hy の COMPUTE-WORKERS)。
+(val SHELL-COMPUTE-WORKERS 2)
 
 
 ;; --- 入口の設定 -------------------------------------------------------------------------------------------------------------------
@@ -412,7 +421,10 @@
   (val content-type (match answer
                       (TextAnswer :content-type declared) declared
                       (HttpAnswer) JSON-CONTENT-TYPE))
-  (val data (.encode answer.body "utf-8"))
+  ;; 綴りと同じ所で作った byte 列が在れば綴り直さない(束の読みの答えは scheduler の thread の外で作る — loop_work.hy の頭の註)。
+  (val data (if (and (isinstance answer HttpAnswer) (is-not answer.data None))
+                answer.data
+                (.encode answer.body "utf-8")))
   (<- (HttpRespond :ticket ticket :status answer.status
                    :headers (+ #((HttpHeader :name "Content-Type" :value content-type)
                                  (HttpHeader :name "Content-Length" :value (str (len data))))
@@ -908,24 +920,30 @@
 (deff start-records-server [config]  ; defk にできない: 入口の run を別の thread で立てる検の殻(framework の入口 — 返す物が開いた口)
   {:pre [(: config RecordsServerConfig)] :post [(: % RunningServer)] :tags {:context "records" :role "entry"}}
   "入口の Program(serve-records)を別の thread の run で回して口を開き、表の用意の告知を待って RunningServer を返す。土台は本番と同じ
-   待ち受け・時計・Await の橋(aiohttp-http-server・async-time-handler・await-handler)で、止めの合図と名乗りと告知だけを shell-control が
-   答える。開けない・用意が落ちたなら例外を上げる。"
+   待ち受け・時計・Await の橋・計算の pool(aiohttp-http-server・async-time-handler・await-handler・thread-pool-compute-handler)で、
+   止めの合図と名乗りと告知だけを shell-control が答える。開けない・用意が落ちたなら例外を上げる。"
   (setv opened (queue.Queue)
-        ended (threading.Event))
+        ended (threading.Event)
+        ;; 束の読みの読み解きと綴り(Compute)を回す pool — 殻が開いて、殻の止めで閉じる(頭の註の scheduler の thread の仕事の分け)。
+        compute-pool (ThreadPoolExecutor :max-workers SHELL-COMPUTE-WORKERS :thread-name-prefix "doeff-records-compute"))
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
                                 :drain-seconds 0.0 :meter config.meter :served config.served :callers (tuple config.callers)))
-  (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server
+  (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server (thread-pool-compute-handler compute-pool)
                                 (shell-control opened.put (fn [] (if (.is-set ended) SHELL-STOP-REASON None)))]
                                (serve-records serving)))
   (setv thread (threading.Thread :target (fn [] (shell-run program opened)) :daemon True :name "doeff-records-http"))
   (.start thread)
   (setv bound (.get opened :timeout SHELL-OPEN-SECONDS))
   (when (isinstance bound BaseException)
+    (.shutdown compute-pool :wait False :cancel-futures True)
     (raise bound))
-  ;; 殻を閉じる同期の口(検の finally と atexit が呼ぶ — Program の外)。
-  (setv stop (fn [] (.set ended) (.join thread :timeout SHELL-CLOSE-SECONDS)))
+  ;; 殻を閉じる同期の口(検の finally と atexit が呼ぶ — Program の外)。入口の run が終わってから計算の pool を閉じる。
+  (setv stop (fn []
+               (.set ended)
+               (.join thread :timeout SHELL-CLOSE-SECONDS)
+               (.shutdown compute-pool :wait False :cancel-futures True)))
   ;; 登録は待ち受けが開いた後: atexit は後に登録した物から走るので、doeff の Await の橋の閉じより先に入口の run を終えられる。
   (atexit.register stop)
   (RunningServer (.format "http://{}:{}" bound.host bound.port) stop))

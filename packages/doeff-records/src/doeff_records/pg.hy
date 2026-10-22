@@ -23,6 +23,13 @@
 ;;; 往復)。判じる事(Conflict・ExpectAbsent・断り・期限を過ぎた物の片付け)は 1 往復目の答えで決め、片付けの文は 2 往復目の先頭に入れる
 ;;; (往復を増やさない)。断り・衝突の時も 2 往復目(片付けと COMMIT)を流す。
 ;;; 読みの手順(行・一覧・変更の列・追記の読み)は SqlQuery を 1 文ずつ流す(自動 commit — 旧い版と同じ断面)。
+;;; 束の読みの読み解き(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 錠の外の束の読み(一覧の頁・変更の列・出来事の列と、手入れの送りの
+;;; 読み — 長さは上限 limit までの、置き場に在る行の数で決まる)は、行の payload の読み解き(listed-rows-of・changes-of・events-of)を
+;;; decoded-batch が Compute で scheduler の thread の外へ出す — 答え手は組み立ての側が置く(本番 = main.hy の records-connected の
+;;; thread の pool)。1 行と 1 出来事の読み(ReadRow・ReadEventByKey・上から読む頁の位置の行)は大きさが 1 行の上限で決まるので
+;;; scheduler の thread で読む。書きの錠の transaction の中の読み解き(回収の期限を過ぎた行・捨てる出来事の鍵の覚え・追記の前の使い)は
+;;; 今は scheduler の thread に残す(transaction の program は SQL の effect と純粋な計算だけを出す — 下の註。走るのは手入れの拍の
+;;; SweepExpired と、書き 1 回が触る行と出来事の分だけ)。
 ;;; 変化の待ち(WatchChanges・WatchEvents — #3073): 書きの錠の transaction は置き場の通知の channel へ合図(SqlNotify)を出す(commit した時
 ;;; だけ届く — 巻き戻した書きの合図は届かない。batched の書きでは答え手が COMMIT と同じ往復で流す)。待ちは呼び鈴(SqlHangNotice)を掛けてから読み、静かなら呼び鈴か
 ;;; timeout を待って読み直す(watching.wait-for-signal)。読み直しの間隔で起きない。合図は中身を運ばず、待ち手が変更の列から読み直す。
@@ -92,6 +99,7 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable SqlLock])
 (import doeff_records.request_timing [lock-observations])
+(import doeff_records.loop_work [off-loop])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired key-memory-ms
@@ -910,27 +918,52 @@
    :tags {:context "records" :role "foundation"}}
   "ListRows の頁に出す行(返す欄だけ)を state_rows の行の列から作るため — 鍵の順の読みと上から読む読みが同じ形で行を出す 1 点。
    頁の行は内包表記で 1 度に tuple にする(行ごとに tuple を継ぎ足すと頁の行の数の 2 乗の写しになり、4 万行の頁で 1 回の答えの
-   7 割 — 10 秒 — をこの写しが使っていた。行ごとの Program の bind も 1 割を使っていた)。"
+   7 割 — 10 秒 — をこの写しが使っていた。行ごとの Program の bind も 1 割を使っていた)。純粋 — decoded-batch が scheduler の thread の
+   外で回す。"
   (tuple (gfor record records (listed-row decl fields (row-of record)))))
 
 
-(defk change-of [record]
-  {:pre [(: record tuple)] :post [(: % (| RowChanged RowRemoved))]
+(defk changes-of [records]
+  {:pre [(: records (| tuple list))] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "row_changes の行(seq ledger key version payload at)を RowChanged | RowRemoved にするため。"
-  (val payload (get record 4))
-  (val key (key-from-text (get record 2)))
-  (if (is payload None)
-      (RowRemoved (get record 1) key (int (get record 0)))
-      (RowChanged (get record 1) key (int (get record 3)) (decoded-value payload) (int (get record 0)) (int (get record 5)))))
+  "row_changes の行(seq ledger key version payload at — payload が NULL = 消えた)の列を、番号の順の変更(RowChanged | RowRemoved)の
+   tuple にするため(変更の列の読みと手入れの送りの読みが同じ形で変更を出す 1 点。内包表記で 1 度に組む — listed-rows-of と同じ。
+   純粋 — decoded-batch が scheduler の thread の外で回す)。"
+  (tuple (gfor record records
+               (if (is (get record 4) None)
+                   (RowRemoved (get record 1) (key-from-text (get record 2)) (int (get record 0)))
+                   (RowChanged (get record 1) (key-from-text (get record 2)) (int (get record 3)) (decoded-value (get record 4))
+                               (int (get record 0)) (int (get record 5)))))))
+
+
+(defk events-of [stream records]
+  {:pre [(: stream str) (: records (| tuple list))] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "append_rows の行(seq at payload)の列を、列 stream の番号の順の出来事(Event)の tuple にするため(出来事を出す読みの全部が通る 1 点 —
+   1 行の event-of もここを通る。内包表記で 1 度に組む・純粋 — 束の読みでは decoded-batch が scheduler の thread の外で回す)。"
+  (tuple (gfor #(record decoded) (gfor record records #(record (json.loads (get record 2))))
+               (Event stream (int (get record 0)) (get decoded "idempotencyKey") (get decoded "body") (get decoded "writer")
+                      (int (get record 1))))))
 
 
 (defk event-of [stream record]
   {:pre [(: stream str) (: record tuple)] :post [(: % Event)]
    :tags {:context "records" :role "foundation"}}
-  "append_rows の行(seq at payload)を Event にするため。"
-  (val decoded (json.loads (get record 2)))
-  (Event stream (int (get record 0)) (get decoded "idempotencyKey") (get decoded "body") (get decoded "writer") (int (get record 1))))
+  "append_rows の行 1 つ(seq at payload)を Event にするため(1 出来事の読み — 大きさが 1 出来事の上限で決まるので scheduler の thread で
+   読む・組み立ては events-of の 1 点)。"
+  (<- events (events-of stream #(record)))
+  (get events 0))
+
+
+(defk decoded-batch [records program]
+  {:pre [(: records (| tuple list)) (: program Program)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "束の読み(一覧の頁・変更の列・出来事の列 — 長さが上限 limit までの、置き場に在る行の数で決まる読み)の行 records の読み解き program
+   (listed-rows-of・changes-of・events-of)を、Compute で scheduler の thread の外で回すため(loop_work.hy の頭の註・ADR-DOE-RECORDS-002)。
+   行が無ければ回す物が無いので、program を回さずに空の tuple を返す(thread の受け渡しの上乗せを払わない)。"
+  (if records
+      (! (off-loop program))
+      #()))
 
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
@@ -1019,12 +1052,9 @@
   "保持の期限で捨てる出来事(append_rows の行 seq at payload の組 removed)の冪等キーの覚え(RetiredKey — 番号と本文の指紋)を作るため
    (#3022 — 捨てる transaction が同じ transaction で鍵だけの表へ入れ、消した後の同じ鍵の追記も append-locked が同じ規則で判じる。出来事
    だけ消えて覚えが無い断面を作らない)。回収(retire-expired-events)と書きの片付け(retired-events-statements)が使う。"
-  (var kept #())
-  (for [record removed]
-    (<- event (event-of stream record))
-    (:= kept (+ kept #((RetiredKey :idempotency-key event.idempotency-key :sequence event.sequence
-                                   :body-digest (body-digest event.body))))))
-  kept)
+  (<- events (events-of stream removed))
+  (tuple (gfor event events
+               (RetiredKey :idempotency-key event.idempotency-key :sequence event.sequence :body-digest (body-digest event.body)))))
 
 
 (defk departed-keys-statements [store stream removed now-ms]
@@ -1163,10 +1193,11 @@
                                           ask.cursor where-json where-any-json ask.limit expiry))
     (<- top-records (query-rows store.database top-statement))
     (val top-taken (cut top-records ask.limit))
-    (<- top-rows (listed-rows-of decl ask.fields top-taken))
+    (<- top-rows (decoded-batch top-taken (listed-rows-of decl ask.fields top-taken)))
     (when (<= (len top-records) ask.limit)
       (return (Page top-rows None head.epoch head.head)))
-    ;; 位置の値は頁の最後の行の全部の欄から読む(返す欄 fields が並べる欄を外しても)。
+    ;; 位置の値は頁の最後の行の全部の欄から読む(返す欄 fields が並べる欄を外しても)。1 行の読み解きは大きさが表の size-budget で
+    ;; 決まるので scheduler の thread で読む(loop_work.hy の頭の註の「持つ」)。
     (val last-row (row-of (get top-taken -1)))
     (return (Page top-rows
                   (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ask.descending-by))
@@ -1180,7 +1211,7 @@
                                      expiry))
   (<- records (query-rows store.database statement))
   (val taken (cut records ask.limit))
-  (<- rows (listed-rows-of decl ask.fields taken))
+  (<- rows (decoded-batch taken (listed-rows-of decl ask.fields taken)))
   (Page rows
         (if (> (len records) ask.limit) (ListCursor head.epoch (get (get taken -1) 0)) None)
         head.epoch
@@ -1335,16 +1366,14 @@
   (val cursor ask.cursor)
   (when (or (!= cursor.epoch head.epoch) (< cursor.sequence head.floor) (> cursor.sequence head.head))
     (return (Reset head.epoch head.floor)))
-  (var items [])
+  (var items #())
   (when (and ask.tables (< cursor.sequence head.head))
     (<- expiries (table-expiries store (tuple ask.tables) now-ms))
     (<- statement (changes-statement store.prefix cursor.sequence head.head ask.tables ask.limit expiries))
     (<- records (query-rows store.database statement))
-    (for [record records]
-      (<- change (change-of record))
-      (.append items change)))
+    (:= items (! (decoded-batch records (changes-of records)))))
   (<- tails tuple (tails-of ask.streams (tuple (cut (get head-rows 0) 3 None))))
-  (Changes (tuple items) (WatchCursor head.epoch (next-watch-sequence (tuple items) ask.limit head.head)) tails))
+  (Changes items (WatchCursor head.epoch (next-watch-sequence items ask.limit head.head)) tails))
 
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
@@ -1506,11 +1535,8 @@
                 None))
   (<- statement (read-events-statement store.prefix ask.stream ask.after ask.limit expiry head))
   (<- records (query-rows store.database statement))
-  (var items [])
-  (for [record records]
-    (<- event (event-of ask.stream record))
-    (.append items event))
-  (Events (tuple items) (if items (. (get items -1) sequence) ask.after)))
+  (<- items (decoded-batch records (events-of ask.stream records)))
+  (Events items (if items (. (get items -1) sequence) ask.after)))
 
 
 (defk pg-read-stream-end [store ask now-ms]
@@ -1602,10 +1628,7 @@
   (<- head (store-head store))
   (<- statement (change-log-statement store.prefix ask.after ask.limit))
   (<- rows (query-rows store.database statement))
-  (var changes #())
-  (for [record rows]
-    (<- change (change-of record))
-    (:= changes (+ changes #(change))))
+  (<- changes (decoded-batch rows (changes-of rows)))
   (ChangeLog changes head.epoch))
 
 
@@ -1642,10 +1665,7 @@
   (<- expiry (event-expiry decl (epoch-ms ask.at)))
   (<- statement (expired-page-statement store.prefix start.stream expiry.before-at expiry.separator start.at start.sequence ask.limit))
   (<- records (query-rows store.database statement))
-  (var items #())
-  (for [record records]
-    (<- event (event-of start.stream record))
-    (:= items (+ items #(event))))
+  (<- items (decoded-batch records (events-of start.stream records)))
   (val later (tuple (gfor name names :if (> name start.stream) name)))
   (ExpiredEvents items (cond
                          (= (len items) ask.limit) (ExpiredCursor start.stream (. (get items -1) at) (. (get items -1) sequence))
