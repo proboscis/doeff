@@ -66,6 +66,7 @@ class AssistantMessage:
     error: str | None = None
     stop_reason: str | None = None
     refusal_category: str | None = None
+    request_id: str | None = None
 
 @dataclass(frozen=True)
 class ToolAnswer:
@@ -199,6 +200,7 @@ class SubagentCall:
     usage: Usage
     model: str | None = None
     call_id: str | None = None
+    request_id: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SubagentTranscript:
