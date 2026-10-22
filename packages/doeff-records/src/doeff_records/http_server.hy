@@ -88,7 +88,8 @@
                                ReadEventByKey])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS request-stages stage-metric lock-metric-helps])
+(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS SERVER-TIMING-HEADER request-stages server-timing-of
+                                      stage-metric lock-metric-helps])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric
                             operation-of])
@@ -265,6 +266,10 @@
   "札 ticket の要求に打った刻の列(打った順の MarkAt)を読み、控えから外す(答え終えた要求の刻を残さない)。"
   {:fields [(: ticket str)] :answer (get tuple #(MarkAt ...)) :tags {:context "records" :role "entry"}})
 
+(defeffect ReadMarks
+  "札 ticket の要求に今までに打った刻の列(打った順の MarkAt)を、控えから外さずに読む(送る前の答えの見出し Server-Timing に区間を載せる)。"
+  {:fields [(: ticket str)] :answer (get tuple #(MarkAt ...)) :tags {:context "records" :role "entry"}})
+
 
 
 (defhandler request-ledger
@@ -369,7 +374,9 @@
   (TakeMarks [ticket]
     (val taken (.get marks ticket #()))
     (:= marks (dfor [k m] (.items marks) :if (!= k ticket) k m))
-    (resume taken)))
+    (resume taken))
+  (ReadMarks [ticket]
+    (resume (.get marks ticket #()))))
 
 
 (defhandler wait-stamps [#^ str ticket]
@@ -396,16 +403,19 @@
   None)
 
 
-(defk send-answer [ticket answer]
-  {:pre [(: ticket str) (: answer (| HttpAnswer TextAnswer))] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "答え(status と本文)を札の要求へ送るため。本文の種は答えの型が決める(記録の操作と断り = JSON・/metrics = 答えが名乗る text)。"
+(defk send-answer [ticket answer timing]
+  {:pre [(: ticket str) (: answer (| HttpAnswer TextAnswer)) (: timing (get tuple #(HttpHeader ...)))] :post [(: % None)]
+   :tags {:context "records" :role "entry"}}
+  "答え(status と本文)を札の要求へ送るため。本文の種は答えの型が決める(記録の操作と断り = JSON・/metrics = 答えが名乗る text)。
+   timing = 足して送る区間の見出し(記録の操作の答えの Server-Timing — timing-headers・他の答えは空)。"
   (val content-type (match answer
                       (TextAnswer :content-type declared) declared
                       (HttpAnswer) JSON-CONTENT-TYPE))
   (val data (.encode answer.body "utf-8"))
   (<- (HttpRespond :ticket ticket :status answer.status
-                   :headers #((HttpHeader :name "Content-Type" :value content-type)
-                              (HttpHeader :name "Content-Length" :value (str (len data))))
+                   :headers (+ #((HttpHeader :name "Content-Type" :value content-type)
+                                 (HttpHeader :name "Content-Length" :value (str (len data))))
+                               timing)
                    :body (HttpBodyBytes :data data)))
   None)
 
@@ -603,20 +613,35 @@
   None)
 
 
-(defk sent-answer [arrival answer]
-  {:pre [(: arrival HttpRequestArrived) (: answer (| HttpAnswer TextAnswer))] :post [(: % (| HttpAnswer TextAnswer))]
-   :tags {:context "records" :role "entry"}}
-  "答えを札へ送り、実際に送った答えを返すため。送りが例外になれば(答えを byte にする所・送りの effect の失敗)、標準の誤りへ 1 行
-   名指して 500 internal を 1 度だけ送り直す(答えの無い札を残さない)。"
+(defk timing-headers [arrival path]
+  {:pre [(: arrival HttpRequestArrived) (: path str)] :post [(: % (get tuple #(HttpHeader ...)))] :tags {:context "records" :role "entry"}}
+  "記録の操作の答えに、答えが決まった所までの区間の秒を見出し Server-Timing で載せるため(request_timing の server-timing-of — 呼び手が
+   往復 1 本のうち service の受けの列と中の分を要求ごとに名指せる)。記録の操作でない route(/metrics など)と、載せる区間が 1 つも無い
+   答えは見出しを足さない。"
+  (<- operation (| str None) (operation-of path))
+  (when (is operation None)
+    (return #()))
+  (<- marks (get tuple #(MarkAt ...)) (ReadMarks arrival.ticket))
+  (<- stages (get tuple #(StageSeconds ...)) (request-stages arrival.received-at marks))
+  (<- value str (server-timing-of stages))
+  (if value #((HttpHeader :name SERVER-TIMING-HEADER :value value)) #()))
+
+
+(defk sent-answer [arrival answer timing]
+  {:pre [(: arrival HttpRequestArrived) (: answer (| HttpAnswer TextAnswer)) (: timing (get tuple #(HttpHeader ...)))]
+   :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
+  "答えを札へ送り、実際に送った答えを返すため(timing = 足して送る区間の見出し — timing-headers)。送りが例外になれば(答えを byte に
+   する所・送りの effect の失敗)、標準の誤りへ 1 行名指して 500 internal を 1 度だけ送り直す(答えの無い札を残さない — 送り直しは見出しを
+   足さない)。"
   (try
-    (<- (send-answer arrival.ticket answer))
+    (<- (send-answer arrival.ticket answer timing))
     (return answer)
     (except [e Exception]
       (print (.format "記録の service: {} {} の答えを送れなかった — 500 internal で送り直す: {}: {}"
                       arrival.method arrival.target (. (type e) __name__) e)
              :file sys.stderr :flush True)))
   (<- internal HttpAnswer (refusal-answer ERROR-INTERNAL "答えを送る途中で落ちた"))
-  (<- (send-answer arrival.ticket internal))
+  (<- (send-answer arrival.ticket internal #()))
   internal)
 
 
@@ -649,7 +674,8 @@
    答えは送ってあり、台帳からは外す(誤りはそのまま上げる)。送り終えた刻を打ち、札の刻を控えから外して、記録の操作の要求なら区間の
    秒を計器に積む(observe-stages — 頭の註の要求ごとの計時)。"
   (try
-    (<- sent (| HttpAnswer TextAnswer) (sent-answer arrival answer))
+    (<- timing (get tuple #(HttpHeader ...)) (timing-headers arrival path))
+    (<- sent (| HttpAnswer TextAnswer) (sent-answer arrival answer timing))
     (<- (StampRequest :ticket arrival.ticket :mark RequestMark.SENT))
     (<- metric str (answer-metric path sent.status))
     (<- (CountMetric :name metric :amount 1.0))

@@ -25,6 +25,10 @@
    can send the request elsewhere when no connection was made (CONNECT-FAILED) sets it short, so an address that drops the handshake
    is given up quickly while a slow answer still has timeout-seconds (#2337).
 
+   trace-phases = True asks the handler to time the exchange's phases (HttpPhases on the response's phases — whether a new
+   connection was made, and the seconds to connect, send, wait for the answer's head and read its body). Off by default: a
+   caller that does not read them pays nothing (agora card ki-ca4b41612e2e).
+
    params and body are handed to the outside HTTP as they are (a query mapping; bytes / str sent as they are; a mapping sent as JSON),
    so their values are any value the outside accepts: the boundary type is `Mapping[str, object]` — covariant in the value, so
    a caller's `dict[str, str]` or `dict[str, Any]` is accepted (`dict[str, object]` is invariant and was not; `Any` is a type escape).
@@ -37,7 +41,7 @@
                           #^ (| bytes str (get Mapping #(str object)) None) [body None]
                           #^ float [timeout-seconds 30.0] #^ int [max-retries 3] #^ bool [follow-redirects True]
                           #^ bool [failures-as-values False] #^ bool [log-each-request False]
-                          #^ (| float None) [connect-timeout-seconds None]]
+                          #^ (| float None) [connect-timeout-seconds None] #^ bool [trace-phases False]]
     (.__init__ (super))
     (setv normalized-method (.upper method))
     (when (not-in normalized-method _HTTP-METHODS)
@@ -57,29 +61,50 @@
           self.follow-redirects follow-redirects
           self.failures-as-values failures-as-values
           self.log-each-request log-each-request
-          self.connect-timeout-seconds connect-timeout-seconds))
+          self.connect-timeout-seconds connect-timeout-seconds
+          self.trace-phases trace-phases))
 
   (defn #^ str __repr__ [self]
     (+ "HttpRequest(" self.method " " (repr self.url) ")")))
 
 
+(defrecord HttpPhases
+  "The phases of one exchange, timed when the request set trace-phases (agora card ki-ca4b41612e2e) — where the seconds of a
+   request went on the caller's side. new-connection = a connection was made for this request (False = a kept connection was
+   reused) · connect-seconds = making it (name lookup and TCP — 0 when reused) · acquire-seconds = from handing the request to
+   the client to the first byte written, without connect-seconds (waiting for the pool and the client's own steps) ·
+   send-seconds = writing the head and the body · wait-seconds = from the body written to the answer's head read (the server's
+   queue and work, the network both ways, and the caller's event loop noticing the answer) · receive-seconds = reading the
+   answer's body. Plain data -- not an effect."
+  {:check [(all (gfor seconds #(connect-seconds acquire-seconds send-seconds wait-seconds receive-seconds) (>= seconds 0.0)))]}
+  (#^ bool new-connection)
+  (#^ float connect-seconds)
+  (#^ float acquire-seconds)
+  (#^ float send-seconds)
+  (#^ float wait-seconds)
+  (#^ float receive-seconds))
+
+
 (defclass HttpResponse []
-  "Result of HttpRequest. Plain data -- not an effect."
+  "Result of HttpRequest. Plain data -- not an effect. phases = the exchange's timed phases when the request set trace-phases
+   (None otherwise)."
   (#^ int status)
   (#^ (get dict #(str str)) headers)
   (#^ bytes content)
   (#^ str text)
   (#^ str url)
   (#^ float elapsed-seconds)
+  (#^ (| HttpPhases None) phases)
 
   (defn #^ None __init__ [self #^ int status #^ (get dict #(str str)) headers #^ bytes content #^ str text #^ str url
-                          #^ float elapsed-seconds]
+                          #^ float elapsed-seconds * #^ (| HttpPhases None) [phases None]]
     (setv self.status status
           self.headers headers
           self.content content
           self.text text
           self.url url
-          self.elapsed-seconds elapsed-seconds))
+          self.elapsed-seconds elapsed-seconds
+          self.phases phases))
 
   (defn #^ None raise-for-status [self]
     (when (>= self.status 400)

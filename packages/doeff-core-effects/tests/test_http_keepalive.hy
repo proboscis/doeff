@@ -257,3 +257,32 @@
   (<- idle ServerIdle (doeff-server-idle))
   (assert (= idle.live idle.declared) idle)
   (assert (> idle.declared http-handlers.CLIENT-KEEPALIVE-SECONDS) idle))
+
+
+(defk traced-twice [url]
+  {:pre [(: url str)] :post [(: % tuple)] :tags {:context "http" :role "program"}}
+  "区間を割る旗 trace-phases つきの POST を 2 回(間を空けずに)と、旗の無い POST を 1 回出すため(撃ち直し 0 回・届かない失敗は値で受ける)。
+   答え = 3 つの答え。"
+  (<- first (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"1" :max-retries 0 :failures-as-values True :trace-phases True))
+  (<- second (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"2" :max-retries 0 :failures-as-values True :trace-phases True))
+  (<- plain (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"3" :max-retries 0 :failures-as-values True))
+  #(first second plain))
+
+
+(deftest test-a-traced-request-names-whether-it-made-a-connection-and-where-its-seconds-went
+  ;; 区間の割り(agora card ki-ca4b41612e2e — 記録の service への変更の読み 1 本の往復のどこで時間が過ぎるかを、呼び手の側で名指す):
+  ;; trace-phases の要求の答えは区間 HttpPhases を持つ。1 本目は接続を張り(new-connection・connect-seconds > 0)、間を空けない 2 本目は
+  ;; 同じ接続を使い回す(connect-seconds 0)。区間の和は答え手の測る elapsed を越えない(同じ要求の中の区間)。旗の無い要求は区間を
+  ;; 持たない(既定の呼び手は trace の費用を払わない)。直す前の答えは欄 phases を持たない。
+  (<- seen Observed (observed-through (http-production-handler) None traced-twice))
+  (assert (! (all-written seen)) seen)
+  (assert (= seen.connections 1) seen)
+  (val first (get seen.answers 0))
+  (val second (get seen.answers 1))
+  (assert (and first.phases.new-connection (> first.phases.connect-seconds 0.0)) first.phases)
+  (assert (and (not second.phases.new-connection) (= second.phases.connect-seconds 0.0)) second.phases)
+  (for [answer #(first second)]
+    (val phases answer.phases)
+    (assert (> phases.wait-seconds 0.0) phases)
+    (assert (<= (+ phases.connect-seconds phases.send-seconds phases.wait-seconds phases.receive-seconds) answer.elapsed-seconds) phases))
+  (assert (is (. (get seen.answers 2) phases) None) seen.answers))

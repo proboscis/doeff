@@ -42,6 +42,13 @@
 ;;; それ以外の status)を doeff の CountMetric で 1 つ数える(名の綴りは wire の CLIENT-ANSWER-METRIC)。記録の service に届かなかった
 ;;; 要求は service の計器に出ないので、client の側でだけ数えられる。meter の無い endpoint は計器の effect を出さない(答え手を持たない
 ;;; 使い手が壊れない)。書き手の job は、拍ごとに断面を送る計器と同じ答え手を渡す。
+;;;
+;;; 往復の計時の行(ki-ca4b41612e2e): endpoint の timed-operations に名指した操作(wire の操作の名 — 例 watch-changes)の要求は、HTTP の
+;;; 答え手に区間の計時(HttpRequest の trace-phases)を頼み、往復 1 本ごとに log の 1 行(EXCHANGE-LOG — slog)を出す。往復の秒を、接続
+;;; (新しい接続か使い回しか)・送る・service の受けの列・service の中(答えの見出し Server-Timing — request_timing.hy)・返す(service の外の
+;;; 待ち = 網の往き帰りと、この process の event loop が答えに気づくまで)・本文を受ける・読み解く(JSON と答えの型)と、HttpRequest の
+;;; effect を出してから戻るまでのうち HTTP の client の外の分(loop — scheduler が答え手の coroutine を回し、答えを呼び手へ戻すまで)に割る。
+;;; 名指さない endpoint(既定)は trace も行も出さない(log の答え手を持たない使い手が壊れない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "records" :role "foundation"})
@@ -50,11 +57,13 @@
 (import json)
 (import datetime [datetime])
 (import doeff [with-handlers])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
+(import doeff_core_effects.effects [slog])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpPhases])
 (import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
+(import doeff_records.request_timing [RequestStage stages-of-server-timing])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadRequestPatience])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
@@ -62,6 +71,8 @@
                             WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
+;; 往復の計時の行の名(file の頭の註)。
+(val EXCHANGE-LOG "記録の往復")
 
 
 (defclass WireError [RuntimeError]
@@ -75,18 +86,23 @@
    long-poll — #3074。前の欄 poll-seconds は使い手が渡すのをやめた後に消した)。要求は常に HttpRequest の effect で出す(file の頭の註)。
    meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
    writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)/
-   caller = 呼び手の job の名(在れば見出し X-Records-Caller で送る — service が一覧の読みを呼び手ごとに数える。許可には使わない)。"
+   caller = 呼び手の job の名(在れば見出し X-Records-Caller で送る — service が一覧の読みを呼び手ごとに数える。許可には使わない)/
+   timed-operations = 往復の計時の行を出す操作の名(wire の操作の名・空 = 出さない — file の頭の註)。"
   (#^ str base-url)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| str None) writer None)
-  (setv #^ (| str None) caller None))
+  (setv #^ (| str None) caller None)
+  (setv #^ (get frozenset str) timed-operations (frozenset)))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
-  "service の答え 1 つの生の形: status と本文の byte(JSON として読むのは計器に数えた後 — 間の proxy の本文は JSON とは限らない)。"
+  "service の答え 1 つの生の形: status と本文の byte(JSON として読むのは計器に数えた後 — 間の proxy の本文は JSON とは限らない)/
+   phases = HTTP の答え手が割った区間(計時を頼んだ要求だけ — 他は None)/ server-timing = 答えの見出し Server-Timing の値(無ければ None)。"
   (#^ int status)
-  (#^ bytes payload))
+  (#^ bytes payload)
+  (setv #^ (| HttpPhases None) phases None)
+  (setv #^ (| str None) server-timing None))
 
 
 (defk service-url [endpoint operation]
@@ -123,16 +139,19 @@
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float)]
    :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを HttpRequest の effect として出す。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
-   Unreachable にする。時間切れの秒 = request-timeout + waited(service の中で待ち得る秒 — long-poll の待ちを届かないと読まない)。"
+   Unreachable にする。時間切れの秒 = request-timeout + waited(service の中で待ち得る秒 — long-poll の待ちを届かないと読まない)。
+   endpoint の timed-operations に名指した操作は、HTTP の答え手に区間の計時を頼み、答えの区間と見出し Server-Timing を生の答えに写す。"
   (<- url str (service-url endpoint operation))
   (<- headers dict (request-headers endpoint))
   (<- data bytes (request-bytes body))
+  (val timed (in operation endpoint.timed-operations))
   (<- answer (| HttpResponse HttpFailed)
       (HttpRequest "POST" url :headers headers :body data :timeout-seconds (+ endpoint.request-timeout waited) :max-retries 0
-                   :follow-redirects False :failures-as-values True))
+                   :follow-redirects False :failures-as-values True :trace-phases timed))
   (when (isinstance answer HttpFailed)
     (return (Unreachable (.format "記録の service に届かない: {}" answer.detail))))
-  (RawReply answer.status answer.content))
+  (RawReply answer.status answer.content :phases answer.phases
+            :server-timing (if timed (next (gfor #(name value) (.items answer.headers) :if (= (.lower name) "server-timing") value) None) None)))
 
 
 (defk exchange [endpoint operation body waited]
@@ -174,24 +193,96 @@
   None)
 
 
-(defk call-service [endpoint ask]
-  {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect)] :post [(: % (| WireAnswer Unreachable))]}
-  "公開 effect(ask)1 つを service へ撃ち、答えの値にする(status の写し方は file の頭の表)。"
-  (<- request (encode-request ask))
-  (<- waited float (waited-seconds ask))
-  (<- reply (exchange endpoint request.operation request.body waited))
-  (<- (counted-reply endpoint request.operation reply))
+(defk ms-of [seconds]
+  {:pre [(: seconds float)] :post [(: % float)] :tags {:context "records" :role "foundation"}}
+  "往復の計時の行の欄のミリ秒(小数 2 桁)にするため。"
+  (round (* seconds 1000) 2))
+
+
+(defk tables-named [ask]
+  {:pre [(: ask PublicEffect)] :post [(: % str)] :tags {:context "records" :role "foundation"}}
+  "往復の計時の行の欄 tables を組むため: 要求が名指す表か列の最初の名と、残りの数(<名>+<残りの数> — 1 つなら名だけ・名指さなければ空)。
+   どの読み手の往復かを、長い名の列を行に載せずに分けられる。"
+  (val names (match ask
+               (WatchChanges :tables tables) (tuple tables)
+               (ListRows :table table) #(table)
+               (ReadRow :table table) #(table)
+               (WatchEvents :stream stream) #(stream)
+               (ReadEvents :stream stream) #(stream)
+               _ #()))
+  (cond (not names) ""
+        (= (len names) 1) (get names 0)
+        True (.format "{}+{}" (get names 0) (- (len names) 1))))
+
+
+(defk logged-exchange [ask operation reply asked answered decoded]
+  {:pre [(: ask PublicEffect) (: operation str) (: reply (| RawReply Unreachable)) (: asked float) (: answered float) (: decoded float)]
+   :post [(: % None)] :tags {:context "records" :role "foundation"}}
+  "計時を頼んだ往復 1 本の行(EXCHANGE-LOG — file の頭の註)を出すため。asked = HttpRequest を出す前・answered = 戻った後・decoded = 答えを
+   型に読み終えた後の単調時計の秒。区間(HTTP の答え手の HttpPhases)と service の区間(見出し Server-Timing)の在る分だけ欄に載せる —
+   返す = 答えの頭を待った秒 − service の受けの列と中の秒・loop = effect の往復 − HTTP の client の中の区間の和。"
+  (val reached (isinstance reply RawReply))
+  (val phases (if reached reply.phases None))
+  (val stages (! (stages-of-server-timing (if reached reply.server-timing None))))
+  (val queue (sum (gfor stage stages :if (= stage.stage RequestStage.QUEUE) stage.seconds)))
+  (val inside (sum (gfor stage stages :if (!= stage.stage RequestStage.QUEUE) stage.seconds)))
+  (val http (- answered asked))
+  (val inner (if (is phases None) None
+                 (+ phases.acquire-seconds phases.connect-seconds phases.send-seconds phases.wait-seconds phases.receive-seconds)))
+  (<- (slog EXCHANGE-LOG :level "info" :operation operation :tables (! (tables-named ask)) :timeout (! (waited-seconds ask))
+            :status (if reached reply.status "unreachable")
+            :conn (cond (is phases None) None phases.new-connection "new" True "reused")
+            :connect-ms (if (is phases None) None (! (ms-of phases.connect-seconds)))
+            :acquire-ms (if (is phases None) None (! (ms-of phases.acquire-seconds)))
+            :send-ms (if (is phases None) None (! (ms-of phases.send-seconds)))
+            :service-queue-ms (if stages (! (ms-of queue)) None)
+            :service-ms (if stages (! (ms-of inside)) None)
+            :return-ms (if (or (is phases None) (not stages)) None (! (ms-of (- phases.wait-seconds queue inside))))
+            :wait-ms (if (is phases None) None (! (ms-of phases.wait-seconds)))
+            :receive-ms (if (is phases None) None (! (ms-of phases.receive-seconds)))
+            :decode-ms (! (ms-of (- decoded answered)))
+            :loop-ms (if (is inner None) None (! (ms-of (- http inner))))
+            :http-ms (! (ms-of http))
+            :total-ms (! (ms-of (- decoded asked)))
+            :bytes (if reached (len reply.payload) 0)))
+  None)
+
+
+(defk reply-answer [endpoint ask operation reply]
+  {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect) (: operation str) (: reply (| RawReply Unreachable))]
+   :post [(: % (| WireAnswer Unreachable))]}
+  "service の生の答え reply を、撃った要求 ask の答えの値にするため(endpoint の計器に数えてから・status の写し方は file の頭の表)。"
+  (<- (counted-reply endpoint operation reply))
   (when (isinstance reply Unreachable) (return reply))
-  (<- body (reply-json request.operation reply))
+  (<- body (reply-json operation reply))
   (when (= reply.status 200)
     ;; 読んだ答えが撃った要求に合うかを照らす(WatchChanges の tails は名指した列と同じ数・同じ順 — 外れは WireMalformed・#3718)。
-    (<- decoded WireAnswer (decode-answer request.operation body))
+    (<- decoded WireAnswer (decode-answer operation body))
     (return (! (answer-for-request ask decoded))))
   (<- refusal (refusal-from body))
   (match refusal.error
     "store-unavailable" (Unreachable refusal.reason)
     "not-found" (raise (! (undeclared-refusal ask refusal.reason)))
-    _ (raise (WireError (.format "{} が {} で断られた: {} {}" request.operation reply.status refusal.error refusal.reason)))))
+    _ (raise (WireError (.format "{} が {} で断られた: {} {}" operation reply.status refusal.error refusal.reason)))))
+
+
+(defk call-service [endpoint ask]
+  {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect)] :post [(: % (| WireAnswer Unreachable))]}
+  "公開 effect(ask)1 つを service へ撃ち、答えの値にする(reply-answer)。endpoint の timed-operations に名指した操作だけは、往復の前後と
+   答えを読み終えた所で単調時計を読み、往復 1 本の計時の行を出す(logged-exchange — 断りで上がる答えは行を出さない)。名指さない操作は
+   時計を読まない(時計の答え手を持たない使い手が今までどおり動く)。"
+  (<- request (encode-request ask))
+  (<- waited float (waited-seconds ask))
+  (when (not-in request.operation endpoint.timed-operations)
+    (<- plain (| RawReply Unreachable) (exchange endpoint request.operation request.body waited))
+    (return (! (reply-answer endpoint ask request.operation plain))))
+  (<- asked float (GetMonotonic))
+  (<- reply (exchange endpoint request.operation request.body waited))
+  (<- answered float (GetMonotonic))
+  (<- answer (| WireAnswer Unreachable) (reply-answer endpoint ask request.operation reply))
+  (<- read-at float (GetMonotonic))
+  (<- (logged-exchange ask request.operation reply asked answered read-at))
+  answer)
 
 
 (defrecord RequestPatience

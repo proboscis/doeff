@@ -13,6 +13,7 @@
 (import hashlib)
 (import json)
 (import pickle)
+(import time)
 (import ssl)
 (import httpx)
 (import pathlib [Path])
@@ -20,7 +21,7 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
 (import doeff_core_effects.effects [Await HttpRequest HttpResponse SlogEffect slog])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind])
+(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpPhases])
 
 
 (defn _failure-detail [error]
@@ -171,11 +172,55 @@
               next-response))))))
 
 
+;; 区間を割る httpcore の trace の出来事の名(HttpRequest の trace-phases — agora card ki-ca4b41612e2e)。
+(val TRACE-CONNECT-STARTED "connection.connect_tcp.started")
+(val TRACE-CONNECT-COMPLETE "connection.connect_tcp.complete")
+(val TRACE-SEND-STARTED "http11.send_request_headers.started")
+(val TRACE-SEND-COMPLETE "http11.send_request_body.complete")
+(val TRACE-HEAD-COMPLETE "http11.receive_response_headers.complete")
+(val TRACE-BODY-COMPLETE "http11.receive_response_body.complete")
+
+
+(defclass PhaseTrace []
+  "The httpcore trace callback of one request that set trace-phases: it keeps when each event fired (marks — httpcore event name
+   -> time.monotonic()), so the handler can read the exchange's phases after the answer."
+  (defn #^ None __init__ [self]
+    "Start with no event seen."
+    (setv #^ (get dict #(str float)) self.marks {})
+    None)
+  (defn :async #^ None __call__ [self #^ str name #^ object info]
+    "Keep the time event name fired (httpcore awaits this for every event of the request)."
+    (setv (get self.marks name) (time.monotonic))
+    None))
+
+
+(defk _traced-phases [tracer started]
+  {:pre [(: tracer (| PhaseTrace None)) (: started float)] :post [(: % (| HttpPhases None))] :tags {:context "http" :role "foundation"}}
+  "Read one exchange's phases (HttpPhases) from its trace marks and the time the request was handed to the client — None when the
+   request did not set trace-phases (no tracer), or an event the phases need did not fire (an HTTP/2 or a non-httpcore transport
+   names its events otherwise)."
+  (when (is tracer None)
+    (return None))
+  (val marks tracer.marks)
+  (when (any (gfor name #(TRACE-SEND-STARTED TRACE-SEND-COMPLETE TRACE-HEAD-COMPLETE TRACE-BODY-COMPLETE) (not-in name marks)))
+    (return None))
+  (val new-connection (in TRACE-CONNECT-COMPLETE marks))
+  (val connect (if new-connection (- (get marks TRACE-CONNECT-COMPLETE) (get marks TRACE-CONNECT-STARTED)) 0.0))
+  (HttpPhases :new-connection new-connection
+              :connect-seconds connect
+              :acquire-seconds (max 0.0 (- (get marks TRACE-SEND-STARTED) started connect))
+              :send-seconds (- (get marks TRACE-SEND-COMPLETE) (get marks TRACE-SEND-STARTED))
+              :wait-seconds (- (get marks TRACE-HEAD-COMPLETE) (get marks TRACE-SEND-COMPLETE))
+              :receive-seconds (- (get marks TRACE-BODY-COMPLETE) (get marks TRACE-HEAD-COMPLETE))))
+
+
 (defn _perform-request-once [client request]
   (do!
     (setv request-parts (_request-headers-and-content request))
     (setv headers (get request-parts 0))
     (setv content (get request-parts 1))
+    (setv tracer (if request.trace-phases (PhaseTrace) None))
+    (setv started (time.monotonic))
     (<- response
         (Await (.request client
                          :method request.method
@@ -186,13 +231,17 @@
                          :timeout (if (is request.connect-timeout-seconds None)
                                       request.timeout-seconds
                                       (httpx.Timeout request.timeout-seconds :connect request.connect-timeout-seconds))
-                         :follow-redirects request.follow-redirects)))
+                         :follow-redirects request.follow-redirects
+                         ;; trace は旗の在る要求だけに渡す(引数 extensions を持たない代役の client も、旗の無い要求には今までどおり答える)。
+                         #** (if (is tracer None) {} {"extensions" {"trace" tracer}}))))
+    (<- phases (| HttpPhases None) (_traced-phases tracer started))
     (setv answer (HttpResponse :status response.status-code
                                :headers (dict response.headers)
                                :content response.content
                                :text response.text
                                :url (str response.url)
-                               :elapsed-seconds (.total-seconds response.elapsed)))
+                               :elapsed-seconds (.total-seconds response.elapsed)
+                               :phases phases))
     ;; httpx の応答と本文の流れの循環を外す(agora card ki-83d403d6e421)。httpx の client は応答に本文の流れを付け直し、その流れが応答を
     ;; 指し返す(Response.stream = BoundAsyncStream(..., response=self))ので、そのままでは応答と本文の bytes・str が参照の数で放されず、
     ;; cyclic GC の回まで残る。free-threading の CPython は GC の間隔を生きている物の数に応じて広げ、GC で放した memory を機体へ返さないので、

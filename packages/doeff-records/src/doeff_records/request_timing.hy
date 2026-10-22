@@ -135,6 +135,42 @@
   (if (or (is since None) (is until None)) None (- until since)))
 
 
+;; --- 答えに載せる区間の秒(ki-ca4b41612e2e)------------------------------------------------------------------------------------------
+;; 記録の操作の答えは、答えが決まった所までの区間の秒を見出し Server-Timing(W3C の形 <区間>;dur=<ミリ秒>, …)に載せる。呼び手の client は
+;; 往復 1 本の秒のうち service の受けの列(queue)と service の中(body・decode・handler・wait・encode)の分を要求ごとに名指し、残り
+;; (網の往き帰りと、呼び手の event loop が答えに気づくまで)と分けられる — 計器の和と数(GET /metrics)は平均しか言えず、p95 の要求の内訳を
+;; 言えない。send・total・woke は答えを送った後に決まるので載せない。
+(val SERVER-TIMING-HEADER "Server-Timing")
+;; 見出しに載せる区間(答えが決まる前に両端の刻が在る区間 — 並びは頭の註の区間の並び)。
+(val SERVER-TIMING-STAGES #(RequestStage.QUEUE RequestStage.BODY RequestStage.DECODE RequestStage.HANDLER RequestStage.WAIT RequestStage.ENCODE))
+
+
+(defk server-timing-of [stages]
+  {:pre [(: stages (get tuple #(StageSeconds ...)))] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing の値を綴るため: 区間の列のうち SERVER-TIMING-STAGES の区間を <区間>;dur=<ミリ秒(小数 3 桁)> の , 区切りにする。"
+  (.join ", " (gfor stage stages :if (in stage.stage SERVER-TIMING-STAGES) (.format "{};dur={:.3f}" stage.stage (* stage.seconds 1000)))))
+
+
+(defk stages-of-server-timing [value]
+  {:pre [(: value (| str None))] :post [(: % (get tuple #(StageSeconds ...)))] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing の値(server-timing-of の綴り)を区間の秒の列に読むため。見出しが無い(古い版の service)・知らない区間の名・
+   dur の無い項・数でない dur は読み飛ばす(呼び手は載った区間だけを名指す — 見出しの読み違いで答えを落とさない)。"
+  (when (is value None)
+    (return #()))
+  (val known (frozenset (gfor stage SERVER-TIMING-STAGES (str stage))))
+  (var read #())
+  (for [item (.split value ",")]
+    (val parts (tuple (gfor part (.split item ";") (.strip part))))
+    (val name (get parts 0))
+    (val durations (tuple (gfor part (cut parts 1 None) :if (.startswith part "dur=") (cut part 4 None))))
+    (when (and (in name known) durations)
+      (try
+        (:= read (+ read #((StageSeconds :stage (RequestStage name) :seconds (/ (float (get durations 0)) 1000)))))
+        (except [ValueError]
+          None))))
+  read)
+
+
 (defk request-stages [received-at marks]
   {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...)))] :post [(: % (get tuple #(StageSeconds ...)))]
    :tags {:context "records" :role "judgment"}}
