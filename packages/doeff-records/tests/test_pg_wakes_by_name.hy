@@ -268,10 +268,11 @@
     (val changes-before (get seen "before" 0))
     (val changes-after (get seen "after" 0))
     (assert (= (len (get seen "seen")) FOLLOWED-WRITES) (get seen "seen"))
-    ;; 前半: 書き 1 回ごとに、関係のある待ち手は 1 回起きて読み直し(変更を受ける)、続きの待ちを掛けて 1 回読む = 読み 2 回(最後の書きの後は
-    ;; 待ち直さない)。起きなければ変更を受けず、2 回起きれば読みが増える。
+    ;; 前半: 変更の列の文(row_changes AS c)を流すのは、起きて読み直す回だけ = 書き 1 回ごとに 1 回。続きの待ちを掛ける読みは、位置が
+    ;; 頭に追いついているので頭の 1 文だけで答え、変更の列の文を流さない(card ki-ca4b41612e2e)。だから数えるのは「起きて読み直した回数」で、
+    ;; 待ち直しの読みは数に入らない。関係の無い待ち手が読み直せば 0 より増え、2 回起きれば FOLLOWED-WRITES を越えるので、検出力は保たれる。
     (val scans (- (.get changes-after #("parts") 0) (.get changes-before #("parts") 0)))
-    (assert (= scans (- (* 2 FOLLOWED-WRITES) 1)) {"書きの回数" FOLLOWED-WRITES "読み直しの数" scans})
+    (assert (= scans FOLLOWED-WRITES) {"書きの回数" FOLLOWED-WRITES "読み直しの数" scans})
     ;; 後半: 変更の無い書き 1 回で、待ち続ける待ち手は多くて 1 回読み直す(自分の NOTIFY で起き直さない)。
     (val unchanged (- (.get (get seen "unchanged-after" 0) #("parts") 0) (.get (get seen "unchanged-before" 0) #("parts") 0)))
     (assert (<= unchanged FOLLOWED-WRITES) {"変更の無い書きの回数" FOLLOWED-WRITES "読み直しの数" unchanged})
