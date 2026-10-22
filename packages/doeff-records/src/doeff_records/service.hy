@@ -2,6 +2,9 @@
 ;;;
 ;;; 判断は持たない: 綴りの読み書きは wire.hy、書き手の名は principals.hy、書きの許可・期待・保持は記録の handler(admission)。
 ;;; ここが持つのは順序だけ — 書き手の名 → 本文の読み → 宣言に在る表か → effect を撃つ → 答えを綴る。
+;;; 答えの綴り(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 束の読みの答え(Page・Changes・Events で行を 1 つ以上運ぶ答え)は、綴り
+;;; (wire の object → JSON の文字列 → UTF-8 の byte 列 — reply-of)を Compute で scheduler の thread の外で回す(答え手は組み立ての側 —
+;;; 本番 = thread の pool・台本の検と模擬 = inline-compute-handler)。ほかの答えは大きさが要求の本文か 1 行の上限で決まり、その場で綴る。
 ;;; 書き手の名は effect の引数にしない: 呼び手の名乗り(X-Records-Writer)の名で handler を組み(handler-for)、その下で effect を撃つ。呼び手は断らない(#2988)。
 ;;;
 ;;;   POST /v1/records/<操作>   200 = effect の答え(kind で判別)/ 400 malformed / 404 not-found(宣言に無い表・
@@ -16,7 +19,8 @@
 (import doeff [with_handlers])
 (import doeff_records.values [RecordsSchema Unreachable])
 (import doeff_records.principals [Principal writer-of])
-(import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
+(import doeff_records.loop_work [off-loop off-loop-answer?])
+(import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireAnswer WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
                             decode-request encode-answer refusal-json undeclared-reason])
 
@@ -36,9 +40,11 @@
 
 
 (defclass [(dataclass :frozen True)] HttpAnswer []
-  "HTTP の口の答え 1 つ: status と JSON の本文(綴り)。"
+  "HTTP の口の答え 1 つ: status と JSON の本文(綴り)/ data = 本文の UTF-8 の byte 列(束の読みの答えは scheduler の thread の外で綴りと
+   一緒に作り、送りは綴り直さない — sendable-reply-of。None = 送る時に body から作る)。"
   (#^ int status)
-  (#^ str body))
+  (#^ str body)
+  (setv #^ (| bytes None) data None))
 
 
 (defclass [(dataclass :frozen True)] RecordsService []
@@ -93,9 +99,33 @@
   (<- answer (with_handlers [(service.handler-for principal.name)] decoded.effect))
   (when (isinstance answer Unreachable)
     (return (! (refusal-answer ERROR-STORE-UNAVAILABLE answer.detail))))
+  (<- reply (answer-reply answer))
+  reply)
+
+
+(defk reply-of [answer]
+  {:pre [(: answer WireAnswer)] :post [(: % HttpAnswer)]}
+  "記録の handler の答え(Unreachable を除く)を 200 の答え(綴り)にするため。"
   (<- encoded (encode-answer answer))
   (<- reply (json-answer 200 encoded))
   reply)
+
+
+(defk sendable-reply-of [answer]
+  {:pre [(: answer WireAnswer)] :post [(: % HttpAnswer)]}
+  "束の読みの答えを、送る byte 列(data)まで作った 200 の答えにするため(純粋 — answer-reply が Compute の program にして scheduler の
+   thread の外で回す。送りは綴り直さない)。"
+  (<- reply (reply-of answer))
+  (HttpAnswer reply.status reply.body (.encode reply.body "utf-8")))
+
+
+(defk answer-reply [answer]
+  {:pre [(: answer WireAnswer)] :post [(: % HttpAnswer)]}
+  "答えを 200 の答えにするため(頭の註の答えの綴り): 行を運ぶ束の読みの答えは Compute で scheduler の thread の外で byte 列まで綴り、ほかは
+   その場で綴る(byte 列は送る時に作る)。"
+  (if (! (off-loop-answer? answer))
+      (! (off-loop (sendable-reply-of answer)))
+      (! (reply-of answer))))
 
 
 (defk respond [service request]
