@@ -19,7 +19,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import copy)
 (import dataclasses [dataclass])
-(import itertools [takewhile])
+(import itertools [takewhile count])
 (import json)
 (import os)
 (import sys)
@@ -73,18 +73,17 @@
 
 ;; 子の Program の答えの型。task-body・rewrap・spawn-program は答えを変えずに包むだけ。
 (val T (TypeVar "T"))
-;; effect の答えの型。記録係の answer は effect とその答えを対で受ける。
-(val A (TypeVar "A"))
 
 
-(defn [do] #^ (get Generator #((get Program T) T T)) task-body [#^ TaskTap tap #^ str label #^ (get Program T) program]
-  "子の Program を走らせ、終わった(成功・失敗)ことを記憶に知らせる。"
+(defn [do] #^ (get Generator #((get Program T) T T)) task-body [#^ Callable ended #^ str label #^ (get Program T) program]
+  "子の Program を走らせ、終わった(成功・失敗)ことを ended(task の名・成功か・失敗の例外 → Program)で記録の側に知らせる。
+   記録係(log-task-ended)と再生係(replay-task-ended)がそれぞれの ended を渡す。"
   (try
     (setv result (yield program))
     (except [e Exception]
-      (.task-ended tap label False e)
+      (yield (ended label False e))
       (raise)))
-  (.task-ended tap label True None)
+  (yield (ended label True None))
   result)
 
 
@@ -97,9 +96,9 @@
   prog)
 
 
-(defn #^ (get Program T) spawn-program [#^ TaskTap tap #^ str child #^ (get Program T) program #^ list chain]
-  "Spawn し直す子の Program = 印 → 終わりの知らせ → 受けた handler までの並び。"
-  (rewrap (task-body tap child ((program-handler (task-marker tap child)) program)) chain))
+(defn #^ (get Program T) spawn-program [#^ TaskTap tap #^ Callable ended #^ str child #^ (get Program T) program #^ list chain]
+  "Spawn し直す子の Program = 印 → 終わりの知らせ(ended — task-body) → 受けた handler までの並び。"
+  (rewrap (task-body ended child ((program-handler (task-marker tap child)) program)) chain))
 
 
 ;; --- 記録の置き場 ------------------------------------------------------------------------------
@@ -321,147 +320,210 @@
 
 ;; --- 記録 -------------------------------------------------------------------------------------
 
-(defclass EffectLog [TaskTap]
-  "1 つの process の記録の係。header = run の行の欄(service・run・版・設定 …)。wall-ms = 壁時計(ms)を返す関数。
-   形の版 2: 大きな値は内容参照(record_codec.intern-json)にし、中身は run の中で初めて出た時に blob の行で書く。問いの直後に
-   (他の出来事を挟まずに)答えが返ったら、問いと答えを 1 行(call)にまとめる — 問いは答えが返るか他の出来事が来るまで手元に持つ。"
-  (defn #^ None __init__ [self #^ RecordSink sink #^ dict header #^ bool [strict False] #^ float [chunk-seconds 3600.0]
-                          #^ (| Callable None) [wall-ms None] #^ int [intern-min INTERN-MIN-CHARS] #^ int [blob-memory BLOB-MEMORY-MAX]]
-    (.__init__ (super))
-    (setv self.sink sink self.header header self.strict strict self.chunk-ms (int (* 1000 chunk-seconds))
-          self.wall-ms (or wall-ms (fn [] (int (* 1000 (time.time)))))
-          self.handles (HandleTable) self.e 0 self.chunk -1 self.seen (BlobMemory blob-memory) self.watched [] self.watched-ids {}
-          self.broken None self.held None self.intern-min intern-min)
-    (setv self.started (self.wall-ms))
-    (.emit self (| {"k" "run" "format" FORMAT-VERSION "startedMs" self.started} header) :numbered False))
+;; 壁時計(ms)— 記録の係へ渡す時計の既定。本番は recording-handler が渡し、検は仮想の時計の読みを渡す。時計を読むのはここだけ:
+;; 記録の係の値 EffectLog は時計を欄に持つだけで、読む手順を持たない(ADR-DOE-HY-007 R3)。
+(val SYSTEM-WALL-MS (fn [] (int (* 1000 (time.time)))))
 
-  (defn #^ int next-e [self]
-    (setv e self.e)
-    (+= self.e 1)
-    e)
 
-  (defn #^ None roll [self #^ bool numbered]
-    "区切りが変わったら区切りの頭を書く(区切りは読む範囲の目印。内容参照の記憶は run の間ずっと持つ)。"
-    (setv now (self.wall-ms) chunk (max 0 (// (- now self.started) (max 1 self.chunk-ms))))
-    (when (!= chunk self.chunk)
-      (setv self.chunk chunk)
-      (when numbered
-        (.write self.sink chunk {"k" "chunk" "n" chunk "at" now "run" (.get self.header "run")}))))
+(defclass [(dataclass)] LogCursor []
+  "記録の係(EffectLog)の書き換わる欄の置き場: chunk = いまの区切り(-1 = まだ無い)・held = 手元に持つ問い #(区切り 行)(答えが続けば
+   1 行にまとめる)・broken = 記録を止めた訳(None = 止めていない)。EffectLog は不変の値にし、書き換わる欄はこの置き場と、中身が変わる
+   入れ物(numbers・seen・handles・watched・tap)にだけ置く — 書くのはこの file の log-* の関数だけ。置き場を effect-recorder の session var
+   に置かないのは、同じ欄を effect-recorder の本体のほかに、子 task の終わり(log-task-ended — task-body が Spawn した子の中で呼ぶ)と
+   記録の終わり(close-log — handler の外)も読み書きするため(doeff-core-effects の process_meter.hy の MeterPlace と同じく、置き場は
+   値に持たせて渡す)。"
+  (setv #^ int chunk -1)
+  (setv #^ (| tuple None) held None)
+  (setv #^ (| str None) broken None))
 
-  (defn #^ None release-held [self]
-    "手元に持っている問いを 1 行で書く(答えより先に他の出来事が来た・記録を止める)。"
-    (when (is-not self.held None)
-      (setv #(chunk line) self.held self.held None)
-      (.write self.sink chunk line)))
 
-  (defn #^ None emit [self #^ dict line #^ bool [numbered True]]
-    "行を書く(持っている問いがあれば先に書く)。"
-    (.release-held self)
-    (.roll self numbered)
-    (.write self.sink self.chunk line)
-    (.check-lost self))
+(defrecord EffectLog
+  "1 つの process の記録の係の値(組み立ては open-log)。run = run の名(区切りの行に載せる)。wall-ms = 壁時計(ms)を返す関数・
+   started = 組み立てた時の壁時計。strict = 記録できない型・値に当たったら業務の Program へ投げる(テスト)か、
+   記録を止めて素通しにする(本番)か。形の版 2: 大きな値は内容参照(record_codec.intern-json)にし、中身は run の中で初めて出た時に blob の
+   行(write-blob)で書く(seen が既出の記憶)。問いの直後に(他の出来事を挟まずに)答えが返ったら、問いと答えを 1 行(call)にまとめる — 問いは
+   答えが返るか他の出来事が来るまで手元に持つ(cursor.held)。numbers = 出来事の番号の数列(問い・答え・出来事の行が 1 つの数列を共有する)・
+   tap = task の名の記憶・handles = handle の名の表・watched = 共有の箱(Ask で渡した物)の断面の行 #(箱を答えた問いの番号 箱 断面)。
+   欄は不変で、書き換わるのは cursor の欄と numbers・seen・handles・watched・tap の中身だけ。振る舞いは下の log-* の defk。"
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  (#^ RecordSink sink)
+  (#^ (| str None) run)
+  (#^ bool strict)
+  (#^ int chunk-ms)
+  (#^ Callable wall-ms)
+  (#^ int started)
+  (#^ int intern-min)
+  (#^ Callable write-blob)
+  (#^ count numbers)
+  (#^ HandleTable handles)
+  (#^ BlobMemory seen)
+  (#^ TaskTap tap)
+  (#^ LogCursor cursor)
+  (#^ list watched))
 
-  (defn #^ None check-lost [self]
-    (when (> self.sink.lost 0)
-      (.break self (.format "記録の置き場に届かず {} 行を捨てた" self.sink.lost))))
 
-  (defn #^ dict big [self #^ str tag #^ object value]
-    "値の欄 {tag: 値}。大きな節は内容参照にし、記憶に無い中身は blob の行で先に書く。"
-    (defn #^ None blob [#^ str h #^ object form]
-      (.write self.sink self.chunk {"k" "blob" "h" h "v" form}))
-    {tag (intern-json value self.seen blob self.intern-min)})
+(defk log-roll [log numbered]
+  {:pre [(: log EffectLog) (: numbered bool)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "区切りが変わったら区切りの頭を書くため(区切りは読む範囲の目印。内容参照の記憶は run の間ずっと持つ)。"
+  (val now (log.wall-ms))
+  (val chunk (max 0 (// (- now log.started) (max 1 log.chunk-ms))))
+  (when (!= chunk log.cursor.chunk)
+    (setv log.cursor.chunk chunk)
+    (when numbered
+      (.write log.sink chunk {"k" "chunk" "n" chunk "at" now "run" log.run})))
+  None)
 
-  (defn #^ None break [self #^ str why]
-    "ここから先は記録しない(印を 1 行置く)。"
-    (when (is self.broken None)
-      (setv self.broken why)
-      (try (.release-held self)
-           (.write self.sink (max self.chunk 0) {"k" "broken" "e" (.next-e self) "at" (self.wall-ms) "why" why})
-           (except [Exception] None))
-      (print (+ "recorder: 記録を止めた: " why) :file sys.stderr :flush True)))
 
-  (defn #^ int request [self #^ str label #^ EffectBase effect #^ dict args #^ str mode #^ (| str None) subject]
-    "問いを 1 行作って手元に持ち、問いの番号を返す(答えが続けば call の 1 行にまとめる)。"
-    (.refresh-watched self)
-    (.release-held self)
-    (.roll self True)
-    (setv e (.next-e self) codec (codec-of effect))
-    ;; 空の欄は書かない(読む側は sj = None・a = {}・dt = 0 と読む)。時計の読みのように 1 秒に何十回も出る問いの行を短くする。
-    (setv line {"k" "req" "e" e "t" label "at" (self.wall-ms) "ty" codec.name "m" mode})
-    (when (is-not subject None) (setv (get line "sj") subject))
-    (when args (.update line (.big self "a" args)))
-    (setv self.held #(self.chunk line))
-    e)
+(defk log-release-held [log]
+  {:pre [(: log EffectLog)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "手元に持っている問いを 1 行で書くため(答えより先に他の出来事が来た・記録を止める・記録の終わり)。持っていなければ何もしない。"
+  (val held log.cursor.held)
+  (when (is-not held None)
+    (setv log.cursor.held None)
+    (.write log.sink (get held 0) (get held 1)))
+  None)
 
-  (defn #^ None settle [self #^ int s #^ dict fields]
-    "答えの欄を書く: 手元の問いが s なら 1 行(call・答えの番号は s + 1)に、そうでなければ ans の行に。"
-    (setv e (.next-e self) at (self.wall-ms))
-    (if (and (is-not self.held None) (= (get (get self.held 1) "e") s) (= e (+ s 1)) (= (get self.held 0) self.chunk))
-        (do (setv #(chunk line) self.held self.held None)
-            (setv dt (- at (get line "at")))
-            (.write self.sink chunk (| line {"k" "call"} (if dt {"dt" dt} {}) fields))
-            (.check-lost self))
-        (.emit self (| {"k" "ans" "e" e "s" s "at" at} fields))))
 
-  (defn #^ None answer [self #^ int s #^ (get EffectBase A) effect #^ A value #^ dict args #^ (| str None) child]
-    (setv codec (codec-of effect))
-    (when (is-not codec.binds None)
-      (.bind self.handles value codec.binds (if (= codec.binds "task") child (.format "{}" s))))
-    (if (and codec.watch (isinstance value #(dict list)) (in (id value) self.watched-ids))
-        (setv encoded {"$w" (get self.watched-ids (id value))})
-        (do (setv encoded (encode-value value self.handles))
-            (when (and codec.watch (isinstance value #(dict list)))
-              (setv (get self.watched-ids (id value)) s)
-              (.append self.watched [s value encoded]))))
-    (.settle self s (| {"ok" True} (.big self "v" encoded)))
-    (.check-watched self))
+(defk log-break [log why]
+  {:pre [(: log EffectLog) (: why str)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "ここから先は記録しない印を 1 行置くため(以後の effect は素通しにする)。"
+  (when (is log.cursor.broken None)
+    (setv log.cursor.broken why)
+    (try
+      (<- (log-release-held log))
+      (.write log.sink (max log.cursor.chunk 0) {"k" "broken" "e" (next log.numbers) "at" (log.wall-ms) "why" why})
+      (except [Exception] None))
+    (print (+ "recorder: 記録を止めた: " why) :file sys.stderr :flush True))
+  None)
 
-  (defn #^ None failed [self #^ int s #^ BaseException error]
-    (.settle self s {"ok" False "err" (encode-error error self.handles)})
-    (.check-watched self))
 
-  (defn #^ None refresh-watched [self]
-    "問いの直前: 直前までに走ったのは業務コード(この問いを出した task か、その前に動いた task)。業務コード自身の書き換えは
-     再生でも業務コードがもう一度するので記録しない — 断面だけ取り直す。"
-    (for [row self.watched]
-      (setv (get row 2) (encode-value (get row 1) self.handles))))
+(defk log-break-lost [log]
+  {:pre [(: log EffectLog)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "置き場が届かずに行を捨てたので、ここから先は記録しないと決めるため(捨てた後の記録は途切れていて、再生が読めない)。呼び手は
+   置き場の lost が 0 を超えた時だけ呼ぶ(行を書くたびの呼びを省く)。"
+  (<- (log-break log (.format "記録の置き場に届かず {} 行を捨てた" log.sink.lost)))
+  None)
 
-  (defn #^ None check-watched [self]
-    "答えの直前に走ったのは handler(Ask で渡した共有の箱を handler が書き換える — 書きの計器等)。前の断面から変わった所を
-     mut の 1 行(鍵ごとの差分)で書く。再生はその差分を同じ番号の位置で箱に当てる。"
-    (for [row self.watched]
-      (setv #(ref obj last) row)
-      (setv now (encode-value obj self.handles))
-      (when (!= (canonical now) (canonical last))
-        (setv (get row 2) now)
-        (setv patch (if (and (isinstance now dict) (isinstance last dict))
-                        {"set" (dfor #(k v) (.items now) :if (or (not-in k last) (!= (canonical v) (canonical (get last k)))) k v)
-                         "del" (lfor k last :if (not-in k now) k)}
-                        {"all" now}))
-        (.emit self {"k" "mut" "e" (.next-e self) "ref" ref "at" (self.wall-ms) "patch" patch}))))
 
-  (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error]
-    (when (is self.broken None)
-      (.emit self {"k" "end" "e" (.next-e self) "t" label "at" (self.wall-ms) "ok" ok}))))
+(defk log-emit [log line [numbered True]]
+  {:pre [(: log EffectLog) (: line dict) (: numbered bool)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "行を置き場に書くため(持っている問いがあれば先に書く)。"
+  (<- (log-release-held log))
+  (<- (log-roll log numbered))
+  (.write log.sink log.cursor.chunk line)
+  (when (> log.sink.lost 0) (<- (log-break-lost log)))
+  None)
+
+
+(defk open-log [sink header [strict False] [chunk-seconds 3600.0] [wall-ms None] [intern-min INTERN-MIN-CHARS] [blob-memory BLOB-MEMORY-MAX]]
+  {:pre [(: sink (| MemorySink BufferedSink)) (: header dict) (: strict bool) (: chunk-seconds (| float int)) (: wall-ms (| Callable None))
+         (: intern-min int) (: blob-memory int)]
+   :post [(: % EffectLog)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "1 つの process の記録の係を組み、run の頭の行を置き場に書くため(以前は class EffectLog の __init__ が組んで書いた)。wall-ms が
+   無ければ壁時計(SYSTEM-WALL-MS)。"
+  (val clock (or wall-ms SYSTEM-WALL-MS))
+  (val cursor (LogCursor))
+  (val log (EffectLog :sink sink :run (.get header "run") :strict strict :chunk-ms (int (* 1000 chunk-seconds)) :wall-ms clock :started (clock)
+                      :intern-min intern-min
+                      ;; 内容参照の中身を blob の行で書く手。区切りは書く時のいまの区切り(cursor)。
+                      :write-blob (fn [h form] (.write sink cursor.chunk {"k" "blob" "h" h "v" form}))
+                      :numbers (count) :handles (HandleTable) :seen (BlobMemory blob-memory) :tap (TaskTap) :cursor cursor
+                      :watched []))
+  (<- (log-emit log (| {"k" "run" "format" FORMAT-VERSION "startedMs" log.started} header) False))
+  log)
+
+
+(defk log-refresh-watched [log]
+  {:pre [(: log EffectLog)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "問いの直前に、共有の箱の断面を取り直すため: 直前までに走ったのは業務コード(この問いを出した task か、その前に動いた task)。業務コード
+   自身の書き換えは再生でも業務コードがもう一度するので記録しない。"
+  (for [row log.watched]
+    (setv (get row 2) (encode-value (get row 1) log.handles)))
+  None)
+
+
+(defk log-check-watched [log]
+  {:pre [(: log EffectLog)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "答えの直前に走ったのは handler(Ask で渡した共有の箱を handler が書き換える — 書きの計器等)なので、前の断面から変わった所を
+   mut の 1 行(鍵ごとの差分)で書くため。再生はその差分を同じ番号の位置で箱に当てる。"
+  (var last None)
+  (var now None)
+  (var patch None)
+  (for [row log.watched]
+    (:= last (get row 2))
+    (:= now (encode-value (get row 1) log.handles))
+    (when (!= (canonical now) (canonical last))
+      (setv (get row 2) now)
+      (:= patch (if (and (isinstance now dict) (isinstance last dict))
+                    {"set" (dfor #(k v) (.items now) :if (or (not-in k last) (!= (canonical v) (canonical (get last k)))) k v)
+                     "del" (lfor k last :if (not-in k now) k)}
+                    {"all" now}))
+      (<- (log-emit log {"k" "mut" "e" (next log.numbers) "ref" (get row 0) "at" (log.wall-ms) "patch" patch}))))
+  None)
+
+
+(defk log-request [log label codec args mode subject]
+  {:pre [(: log EffectLog) (: label str) (: codec EffectCodec) (: args dict) (: mode str) (: subject (| str None))]
+   :post [(: % int)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "問いを 1 行作って手元に持ち、問いの番号を返すため(答えが続けば call の 1 行にまとめる)。codec = この effect の型の登録。"
+  (when log.watched (<- (log-refresh-watched log)))
+  (<- (log-release-held log))
+  (<- (log-roll log True))
+  (val e (next log.numbers))
+  ;; 空の欄は書かない(読む側は sj = None・a = {}・dt = 0 と読む)。時計の読みのように 1 秒に何十回も出る問いの行を短くする。
+  (val line {"k" "req" "e" e "t" label "at" (log.wall-ms) "ty" codec.name "m" mode})
+  (when (is-not subject None) (setv (get line "sj") subject))
+  (when args (setv (get line "a") (intern-json args log.seen log.write-blob log.intern-min)))
+  (setv log.cursor.held #(log.cursor.chunk line))
+  e)
+
+
+(defk log-settle [log s fields]
+  {:pre [(: log EffectLog) (: s int) (: fields dict)] :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "答えの欄 fields(成功は {ok v}・失敗は {ok err})を書くため: 手元の問いが s なら 1 行(call・答えの番号は s + 1)に、そうでなければ
+   ans の行に。その後、共有の箱の変化があれば mut の行で書く(log-check-watched)。"
+  (val e (next log.numbers))
+  (val at (log.wall-ms))
+  (val held log.cursor.held)
+  (val joined (and (is-not held None) (= (get (get held 1) "e") s) (= e (+ s 1)) (= (get held 0) log.cursor.chunk)))
+  (if joined
+      (do (setv log.cursor.held None)
+          (val dt (- at (get (get held 1) "at")))
+          (.write log.sink (get held 0) (| (get held 1) {"k" "call"} (if dt {"dt" dt} {}) fields))
+          (when (> log.sink.lost 0) (<- (log-break-lost log))))
+      (<- (log-emit log (| {"k" "ans" "e" e "s" s "at" at} fields))))
+  (when log.watched (<- (log-check-watched log)))
+  None)
+
+
+(defk log-task-ended [log label ok error]
+  {:pre [(: log EffectLog) (: label str) (: ok bool) (: error (| BaseException None))]
+   :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "task が終わった(ok = 成功か・error = 失敗の例外)ことを end の行で書くため(記録を止めた後は書かない)。"
+  (when (is log.cursor.broken None)
+    (<- (log-emit log {"k" "end" "e" (next log.numbers) "t" label "at" (log.wall-ms) "ok" ok})))
+  None)
 
 
 (defhandler effect-recorder [#^ EffectLog log]
   (EffectBase []
-    (if (is-not log.broken None)
+    (if (is-not log.cursor.broken None)
         (reperform effect)
         (do
-          (val label (.current-label log effect))
+          (val label (.current-label log.tap effect))
           (var prepared None)
           ;; 問いの形を作る(登録の無い型・記録の形にできない値 → strict なら業務へ投げる・そうでなければ記録を止めて素通し)
           (try
             (val tried-codec (codec-of effect))
             (val tried-mode (mode-of effect log.handles))
-            (val tried-child (if (isinstance effect Spawn) (.child-label log label) None))
+            (val tried-child (if (isinstance effect Spawn) (.child-label log.tap label) None))
             (<- effect-args dict (args-of effect log.handles))
             (val tried-args (if (is tried-child None) effect-args (| effect-args {"child" tried-child})))
             (:= prepared #(tried-codec tried-mode tried-args (subject-of effect tried-args) tried-child))
             (except [e [UnrecordableEffect UnencodableValue]]
-              (if log.strict (:= prepared e) (.break log (.format "{}: {}" (. (type e) __name__) e)))))
+              (if log.strict
+                  (:= prepared e)
+                  (<- (log-break log (.format "{}: {}" (. (type e) __name__) e))))))
           (cond
             (isinstance prepared BaseException) (raise prepared)
             (is prepared None) (reperform effect)
@@ -472,23 +534,35 @@
                 (val args (get prepared 2))
                 (val subject (get prepared 3))
                 (val child (get prepared 4))
-                (val s (.request log label effect args mode subject))
+                (<- s int (log-request log label codec args mode subject))
                 (var answer None)
                 (var error None)
                 (if (is child None)
                     (try (do (<- performed effect) (:= answer performed)) (except [e Exception] (:= error e)))
                     (do (assert (isinstance effect Spawn) "子の名札は Spawn の時だけ付く")
                         (<- chain list (GetBoundaries k))
-                        (try (:= answer !(Spawn (spawn-program log child effect.program chain)
+                        (try (:= answer !(Spawn (spawn-program log.tap (fn [task ok failure] (log-task-ended log task ok failure)) child effect.program chain)
                                                :priority effect.priority :daemon effect.daemon))
                              (except [e Exception] (:= error e)))))
                 (try
-                  (if (is error None) (.answer log s effect answer args child) (.failed log s error))
+                  (if (is error None)
+                      (do
+                        ;; handle(Task・Semaphore …)の答えには記録の中の名を振る。
+                        (when (is-not codec.binds None)
+                          (.bind log.handles answer codec.binds (if (= codec.binds "task") child (.format "{}" s))))
+                        ;; 共有の箱(Ask で渡した物)が前に答えられていれば、その問いの番号で指す(watched は箱を持つので id は使い回されない)。
+                        (val boxed (and codec.watch (isinstance answer #(dict list))))
+                        (val first-at (if boxed (next (gfor row log.watched :if (is (get row 1) answer) (get row 0)) None) None))
+                        (val encoded (if (is-not first-at None) {"$w" first-at} (encode-value answer log.handles)))
+                        (when (and boxed (is first-at None))
+                          (.append log.watched [s answer encoded]))
+                        (<- (log-settle log s {"ok" True "v" (intern-json encoded log.seen log.write-blob log.intern-min)})))
+                      (<- (log-settle log s {"ok" False "err" (encode-error error log.handles)})))
                   (except [e [UnrecordableEffect UnencodableValue]]
-                    (if log.strict (:= error e) (.break log (.format "答え: {}: {}" (. (type e) __name__) e)))))
+                    (if log.strict (:= error e) (<- (log-break log (.format "答え: {}: {}" (. (type e) __name__) e))))))
                 ;; 送る時なら貯めた行を置き場へ送る(HttpRequest — この handler より外側の答え手が答える)。届かなくても業務は止めない。
                 (<- (send-records log.sink False))
-                (.check-lost log)
+                (when (> log.sink.lost 0) (<- (log-break-lost log)))
                 (if (is error None) (resume answer) (raise error))))))))
 
 
@@ -497,7 +571,7 @@
   "記録の終わり: 手元に持っている問いを書き、置き場に貯めた行を期限を待たずに送る。置き場の口(BufferedSink)は flush-seconds か
    max-lines に達した時にしか送らないので、これが無いと短い job の記録は 1 行も届かず、長く動く Program も終わる直前の行を失う
    (recorded-run が記録する Program の終わりに呼ぶ)。届かなければ置き場の口が理由を出して貯めたまま(業務は止めない)。"
-  (.release-held log)
+  (<- (log-release-held log))
   (<- (send-records log.sink True))
   None)
 
@@ -621,6 +695,14 @@
   {:pre [(: promises list)] :post [(: % (type None))]}
   (for [p promises]
     (<- (CompletePromise p None)))
+  None)
+
+
+(defk replay-task-ended [state label ok error]
+  {:pre [(: state ReplayState) (: label str) (: ok bool) (: error (| BaseException None))]
+   :post [(: % (type None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "再生で task が終わった(ok = 成功か・error = 失敗の例外)ことを再生の記憶(ReplayState)に知らせるため(task-body が終わりの知らせとして呼ぶ)。"
+  (.task-ended state label ok error)
   None)
 
 
@@ -761,7 +843,7 @@
                 (try (do (<- performed effect) (:= answer performed)) (except [e Exception] (:= error e)))
                 (do (assert (isinstance effect Spawn) "子の名札は Spawn の時だけ付く")
                     (<- chain list (GetBoundaries k))
-                    (try (:= answer !(Spawn (spawn-program state child effect.program chain)
+                    (try (:= answer !(Spawn (spawn-program state (fn [task ok failure] (replay-task-ended state task ok failure)) child effect.program chain)
                                            :priority effect.priority :daemon effect.daemon))
                          (except [e Exception] (:= error e)))))
             (when (and (is error None) (is-not codec.binds None))
@@ -808,16 +890,16 @@
    \"chunkSeconds\"・\"flushSeconds\"}。
    header = run の行に載せる欄(版・設定・process の世代 …)。置き場に届かなくても業務は止めない(HttpSink の説明)。
    置き場への送りは HttpRequest(send-records)— 答える handler(本番は http-production-handler)を記録係より外側に置く。"
-  (val started (int (* 1000 (time.time))))
+  (val started (SYSTEM-WALL-MS))
   (val run (run-name started (.get header "worker" "") (.get header "instance" "")))
   (val options {"flush_seconds" (float (.get record "flushSeconds" 2.0)) "max_buffer" (int (.get record "maxBufferLines" 200000))})
   ;; 置き場の口: otlp = OpenTelemetry の collector(2026-09-25 から)・store = 旧い置き場 effect-records(退役まで)。
   (val sink (if (in "otlp" record)
                 (OtlpSink (get record "otlp") service run #** options)
                 (HttpSink (get record "store") service run #** options)))
-  (val log (EffectLog sink (| header {"service" service "run" run})
-                      :chunk-seconds (float (.get record "chunkSeconds" 3600.0))
-                      :wall-ms (fn [] (int (* 1000 (time.time))))))
+  (<- log EffectLog (open-log sink (| header {"service" service "run" run})
+                              :chunk-seconds (float (.get record "chunkSeconds" 3600.0))
+                              :wall-ms SYSTEM-WALL-MS))
   (print (.format "recorder: {} の effect を記録します(run {}・置き場 {})" service run (or (.get record "otlp") (.get record "store"))) :file sys.stderr :flush True)
   ;; 記録する Program の終わりに残りの行を送る(close-log の説明)。
   (RecordingInstaller log))

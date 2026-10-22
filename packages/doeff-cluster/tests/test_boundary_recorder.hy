@@ -13,7 +13,7 @@
 ;; 受け口の fake をこの検の process の thread に立てて受ける(送りは記録係が出す HttpRequest に、土台の http-production-handler が答える)。
 ;; 子の process で走らせるのは、本番の worker の子と同じ終わり方(Program の終わりに残りの行を送る close-log)で記録が届くことも一緒に
 ;; 確かめるため。HTTP の答え手を差し替えて置き場を模擬する検は src/doeff_cluster/sim/test_recording_on_sim.hy。1 の replay の枝の検は、
-;; 渡す状態を作るためだけに test_effect_record と同じ形(EffectLog + MemorySink)で記録を作る(record の枝の検ではない)。
+;; 渡す状態を作るためだけに test_effect_record と同じ形(open-log が組む EffectLog + MemorySink)で記録を作る(record の枝の検ではない)。
 (require doeff-hy.macros [deftest defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
@@ -39,7 +39,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster.foundation.record_log [read-recording])
-(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState replay-report
+(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog open-log effect-recorder ReplayState replay-report
                                        RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
 (import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder recording-header])
 (import tests.fixtures.recorded_programs [ledger-program world-foundation ledger-translation-layer drifting-translation-layer])
@@ -204,7 +204,7 @@
 (deftest test-replay-mode-places-the-replayer-of-the-state-given-from-outside
   ;; 渡す状態を作るための記録(record の枝の検ではない — 頭の註)。
   (val sink (MemorySink))
-  (val log (EffectLog sink {"service" "rows" "run" "r1"} :strict True))
+  (<- log EffectLog (open-log sink {"service" "rows" "run" "r1"} :strict True))
   (<- recorded int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) (effect-recorder log)] (read-rows 4)))
   (val state (ReplayState (! (read-recording sink.lines))))
   (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "replay" REPLAY-STATE-KEY state})] (boundary-recorder HOST-CONTRACT)))
