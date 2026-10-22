@@ -257,6 +257,11 @@
       state (resume (ProcessInputWritten :pid pid :delivered (and (= state SCRIPTED-RUNNING) (in pid held)))))))
 
 
+;; scripted-command-peer が答える effect の型 — 使い手が、この peer を外側に置いた時に内側から外へ通す型(柵の一覧など)を、peer の答えと同じ
+;; 1 か所から読むため(peer が答える型を増やしたら、ここも同じ変更で足す)。
+(val SCRIPTED-COMMAND-EFFECTS #(RunProcess))
+
+
 (defhandler scripted-command-peer [#^ (get tuple #(ScriptedCommand ...)) commands]
   ;; 名指した命令だけの外の世界を、外側の process の答え手の内側に重ねるため(頭の註の scripted-command-peer): argv[0] の名(basename)が台本に
   ;; 在る RunProcess だけに scripted-process-handler と同じ答えで答え、ほかの呼びと process の効果は外側へ渡す。

@@ -30,7 +30,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])
-(import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler scripted-command-peer run-scripted])
+(import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler scripted-command-peer SCRIPTED-COMMAND-EFFECTS run-scripted])
 
 
 ;; on が回す program の答えの型(筋書きごとに違う)。
@@ -122,7 +122,9 @@
   (<- layered tuple (with_handlers [(state) (memory-file-handler (MemoryFiles)) outer peer] (peer-journey)))
   (assert (= layered #("None" "outer" outside)) layered)
   (<- bare tuple (with_handlers [(state) (memory-file-handler (MemoryFiles)) outer] (peer-journey)))
-  (assert (= bare #("outer" "outer" outside)) bare))
+  (assert (= bare #("outer" "outer" outside)) bare)
+  ;; peer が答える型の一覧(使い手の柵が読む)は、peer が答える RunProcess ちょうど。
+  (assert (= SCRIPTED-COMMAND-EFFECTS #(RunProcess)) SCRIPTED-COMMAND-EFFECTS))
 
 
 ;; --- file system: 本物と I/O なしで同じ答え -------------------------------------------------------------------------------
