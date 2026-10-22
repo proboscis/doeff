@@ -15,7 +15,7 @@
 ;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(service.hy)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "protocol"})
-(require doeff-hy.record [defenum])
+(require doeff-hy.record [defenum defrecord])
 (import re)
 (import collections [Counter])
 (import dataclasses [dataclass])
@@ -110,6 +110,45 @@
 
 ;; 呼び手が名乗る job の名の見出し(一覧の読みを呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
 (val CALLER-HEADER "X-Records-Caller")
+
+;; 答えの区間の秒の見出し(ki-ca4b41612e2e): service は記録の操作の答えに、答えが決まった所までの区間の秒を W3C の Server-Timing の形
+;; (<区間>;dur=<ミリ秒>, …)で載せ(request_timing.hy の server-timing-of)、client は往復 1 本のうち service の受けの列(queue)と service の
+;; 中(残りの区間)の秒を要求ごとに名指す(http_client.hy の往復の計時の行)。区間の名の並びは request_timing.hy の区間の並びと同じで、
+;; 答えを送った後に決まる区間(send・total・woke)は載せない。
+(val SERVER-TIMING-HEADER "Server-Timing")
+(val SERVER-TIMING-QUEUE "queue")
+(val SERVER-TIMING-NAMES #(SERVER-TIMING-QUEUE "body" "decode" "handler" "wait" "encode"))
+
+
+(defrecord ServerSpan
+  "答えの見出し Server-Timing の区間 1 つ: name = 区間の名(SERVER-TIMING-NAMES のどれか)/ seconds = 秒。"
+  {:tags {:context "records" :role "type"}}
+  (#^ str name)
+  (#^ float seconds))
+
+
+(defk server-timing-spelled [spans]
+  {:pre [(: spans (get tuple #(ServerSpan ...)))] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing の値を綴るため: 区間を <名>;dur=<ミリ秒(小数 3 桁)> の , 区切りにする(載せない名は呼び手が選ぶ)。"
+  (.join ", " (gfor span spans (.format "{};dur={:.3f}" span.name (* span.seconds 1000)))))
+
+
+(defk server-timing-spans [value]
+  {:pre [(: value (| str None))] :post [(: % (get tuple #(ServerSpan ...)))] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing の値を区間の列に読むため。見出しが無い(古い版の service)・SERVER-TIMING-NAMES に無い名・dur の無い項・数で
+   ない dur は読み飛ばす(呼び手は載った区間だけを名指す — 見出しの読み違いで答えを落とさない)。"
+  (when (is value None)
+    (return #()))
+  (var read #())
+  (for [item (.split value ",")]
+    (val parts (tuple (gfor part (.split item ";") (.strip part))))
+    (val durations (tuple (gfor part (cut parts 1 None) :if (.startswith part "dur=") (cut part 4 None))))
+    (when (and (in (get parts 0) SERVER-TIMING-NAMES) durations)
+      (try
+        (:= read (+ read #((ServerSpan :name (get parts 0) :seconds (/ (float (get durations 0)) 1000)))))
+        (except [ValueError]
+          None))))
+  read)
 ;; 一覧の読み(list-rows)の計器の counter の名の綴り: 一覧の答え 1 つごとに、表ごとの呼びの数(calls)と返した行の数(rows)を数える
 ;; (描く名は末尾に _total)。表と呼び手の名は Prometheus の名の字(英数字と _)へ畳んだ語(metric-word)にする。
 ;;   records_list_rows_table_<表>_<calls|rows>                全部の呼び手の和。宣言の表の全部を起動の時に 0 で置く

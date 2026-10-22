@@ -63,12 +63,12 @@
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
-(import doeff_records.request_timing [RequestStage stages-of-server-timing])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadRequestPatience])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
-                            WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS])
+                            WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS SERVER-TIMING-HEADER SERVER-TIMING-QUEUE
+                            server-timing-spans])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 ;; 往復の計時の行の名(file の頭の註)。
@@ -151,7 +151,7 @@
   (when (isinstance answer HttpFailed)
     (return (Unreachable (.format "記録の service に届かない: {}" answer.detail))))
   (RawReply answer.status answer.content :phases answer.phases
-            :server-timing (if timed (next (gfor #(name value) (.items answer.headers) :if (= (.lower name) "server-timing") value) None) None)))
+            :server-timing (if timed (next (gfor #(name value) (.items answer.headers) :if (= (.lower name) (.lower SERVER-TIMING-HEADER)) value) None) None)))
 
 
 (defk exchange [endpoint operation body waited]
@@ -223,9 +223,9 @@
    返す = 答えの頭を待った秒 − service の受けの列と中の秒・loop = effect の往復 − HTTP の client の中の区間の和。"
   (val reached (isinstance reply RawReply))
   (val phases (if reached reply.phases None))
-  (val stages (! (stages-of-server-timing (if reached reply.server-timing None))))
-  (val queue (sum (gfor stage stages :if (= stage.stage RequestStage.QUEUE) stage.seconds)))
-  (val inside (sum (gfor stage stages :if (!= stage.stage RequestStage.QUEUE) stage.seconds)))
+  (val stages (! (server-timing-spans (if reached reply.server-timing None))))
+  (val queue (sum (gfor span stages :if (= span.name SERVER-TIMING-QUEUE) span.seconds)))
+  (val inside (sum (gfor span stages :if (!= span.name SERVER-TIMING-QUEUE) span.seconds)))
   (val http (- answered asked))
   (val inner (if (is phases None) None
                  (+ phases.acquire-seconds phases.connect-seconds phases.send-seconds phases.wait-seconds phases.receive-seconds)))

@@ -88,12 +88,13 @@
                                ReadEventByKey])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS SERVER-TIMING-HEADER request-stages server-timing-of
-                                      stage-metric lock-metric-helps])
+(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS request-stages server-timing-of stage-metric
+                                      lock-metric-helps])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric
                             operation-of])
-(import doeff_records.wire [WRITER-HEADER CALLER-HEADER list-rows-caller list-rows-counts list-rows-metrics list-rows-metric-helps])
+(import doeff_records.wire [WRITER-HEADER CALLER-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
+                            list-rows-metric-helps])
 (import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation])
 (import doeff_core_effects.memory_meter [memory-meter-handler])

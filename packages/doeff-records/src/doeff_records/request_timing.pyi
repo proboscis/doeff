@@ -6,6 +6,9 @@ from enum import StrEnum as StrEnum
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_core_effects.meter_effects import SecondsObservation as SecondsObservation
 from doeff_records.wire import OPERATIONS as OPERATIONS
+from doeff_records.wire import SERVER_TIMING_NAMES as SERVER_TIMING_NAMES
+from doeff_records.wire import ServerSpan as ServerSpan
+from doeff_records.wire import server_timing_spelled as server_timing_spelled
 from doeff_records.pg_sql import ROWS_UNIT as ROWS_UNIT
 from doeff_records.pg_sql import stream_unit as stream_unit
 
@@ -64,13 +67,9 @@ def waited(marks: tuple[MarkAt, ...]) -> _Program[WaitSum, object]:
 
 def between(since: float | None, until: float | None) -> _Program[float | None, object]:
     ...
-SERVER_TIMING_HEADER: str
 SERVER_TIMING_STAGES: tuple[RequestStage, ...]
 
 def server_timing_of(stages: tuple[StageSeconds, ...]) -> _Program[str, object]:
-    ...
-
-def stages_of_server_timing(value: str | None) -> _Program[tuple[StageSeconds, ...], object]:
     ...
 
 def request_stages(received_at: float | None, marks: tuple[MarkAt, ...]) -> _Program[tuple[StageSeconds, ...], object]:
