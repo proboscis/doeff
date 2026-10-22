@@ -21,7 +21,7 @@
 
 
 (defk git [#* args]
-  {:pre [] :post [(: % ProcessOutcome)] :tags {:context "doeff-cluster-test" :role "program"}}
+  {:pre [(: args tuple)] :post [(: % ProcessOutcome)] :tags {:context "doeff-cluster-test" :role "program"}}
   "主 checkout MAIN へ git の呼び 1 つを出すため(作業場所の翻訳と同じ git -C <main> の形)。"
   (<- outcome ProcessOutcome (RunProcess :argv (+ #("git" "-C" MAIN) args)))
   outcome)
