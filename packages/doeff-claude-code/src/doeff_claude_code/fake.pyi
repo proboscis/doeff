@@ -146,6 +146,7 @@ FAKE_TASK_ID: str
 class FakeReply:
     text: str
     tool_seconds: float = 0.0
+    tool_repeats: int = 1
     needs_permission: bool = False
     fail: str | None = None
     lose: str | None = None
@@ -195,6 +196,7 @@ class FakeTurn:
     deltas_emitted: int
     injections: list[FakeInjection]
     permission: str | None
+    tools_run: int
     lines: list[ClaudeStreamLine]
     end: Completed | Failed | Interrupted | BackendLost | None
     bells: tuple[ExternalPromise[None], ...]
@@ -306,7 +308,16 @@ def model_refuse_turn(session: FakeSession, turn: FakeTurn, refusal: ModelRefusa
 def end_scripted(session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
     ...
 
-def task_lines_of(reply: FakeReply, started: bool) -> _Program[list, object]:
+def repeated_id(base: str, call: int) -> _Program[str, object]:
+    ...
+
+def tool_call_lines_of(reply: FakeReply, call: int) -> _Program[list, object]:
+    ...
+
+def task_lines_of(reply: FakeReply, call: int, started: bool) -> _Program[list, object]:
+    ...
+
+def call_tool(session: FakeSession, turn: FakeTurn, now: float) -> _Program[None, object]:
     ...
 
 def advance(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
