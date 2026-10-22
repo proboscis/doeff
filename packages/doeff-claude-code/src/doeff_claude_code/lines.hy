@@ -107,7 +107,12 @@
   ;; stop-reason = message.stop_reason(無ければ None)/ refusal-category = model の安全装置が答えを断った行(stop-reason refusal)の
   ;; message.stop_details.category(例 reasoning_extraction・cyber — 無ければ None)。
   (setv #^ (| str None) stop-reason None)
-  (setv #^ (| str None) refusal-category None))
+  (setv #^ (| str None) refusal-category None)
+  ;; request-id = 行の最上位の request_id(この行を出した API の呼びの要求の id — CLI の telemetry の api_request の request_id と同じ値。
+  ;; 1 つの呼びの block ごとの行は同じ id を名乗る。無ければ None)— 上の層が、CLI の telemetry にだけ出る呼び(道具の中の呼び・会話の
+  ;; 圧縮)を記録へ足す時に、stdout で読んだ呼びと 2 度数えないため(card ki-b99ace070bf0。実測 CLI 2.1.292 — stream-json の
+  ;; assistant の行が持つ)。
+  (setv #^ (| str None) request-id None))
 
 (defclass [(dataclass :frozen True)] ToolAnswer []
   "user の行の tool_result の block 1 つ(道具の結果 1 つ): id = 答えた呼びの id(tool_use_id — 前の ToolCall.id と同じ・空でない文字列)/
@@ -341,11 +346,16 @@
 (defrecord SubagentCall
   "subagent の API の呼び 1 回の消費(transcript の assistant の行を呼びの id で畳んだ物 — 1 つの呼びは content の block ごとに行を書き、
    出力の token は呼びの途中の値なので、usage と model は最後の行の物・刻は最初の行の物)。at = 最初の行の timestamp(CLI の壁の時刻)/
-   usage = message.usage / model = message.model(無ければ None)/ call-id = message.id(無ければ None — 無い行は畳まずに 1 回と数える)。"
+   usage = message.usage / model = message.model(無ければ None)/ call-id = message.id(無ければ None — 無い行は畳まずに 1 回と数える)/
+   request-id = 行の requestId(無ければ None)。"
   (#^ datetime at)
   (#^ Usage usage)
   (setv #^ (| str None) model None)
-  (setv #^ (| str None) call-id None))
+  (setv #^ (| str None) call-id None)
+  ;; request-id = 行の requestId(API の呼びの要求の id — CLI の telemetry の api_request の request_id と同じ値。無ければ None)— 上の層が
+  ;; telemetry にだけ出る呼びを記録へ足す時に、transcript で読んだ呼びと 2 度数えないため(card ki-b99ace070bf0)。1 つの呼びの行は
+  ;; どれも同じ id を名乗るので、usage と同じく最後の行の物。
+  (setv #^ (| str None) request-id None))
 
 (defrecord SubagentTranscript
   "subagent 1 つの transcript(<設定 dir>/projects/<cwd>/<会話の id>/subagents/agent-<task の id>.jsonl)を、その subagent の task の
@@ -820,7 +830,8 @@
            :message-id (or (text-at message "id") None)
            :error (or (text-at record "error") None)
            :stop-reason (or (text-at message "stop_reason") None)
-           :refusal-category (or (text-at (object-at message "stop_details") "category") None))))
+           :refusal-category (or (text-at (object-at message "stop_details") "category") None)
+           :request-id (or (text-at record "request_id") None))))
 
 (defk tool-answer-of [#^ dict block]
   {:pre [(: block dict)] :post [(: % ToolAnswer)] :tags {:context "claude-code" :role "foundation"}}
@@ -1140,7 +1151,7 @@
     (val call-id (or (text-at message "id") None))
     (:= keyed (+ keyed #(#((if (is call-id None) index call-id)
                            (SubagentCall :at at :usage (usage-of (get message "usage")) :model (or (text-at message "model") None)
-                                         :call-id call-id))))))
+                                         :call-id call-id :request-id (or (text-at record "requestId") None)))))))
   (val firsts (dict (reversed keyed)))
   (tuple (gfor #(key call) (.items (dict keyed)) (replace call :at (. (get firsts key) at)))))
 

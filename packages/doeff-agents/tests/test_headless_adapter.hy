@@ -98,6 +98,8 @@
 ;; fake の道具の呼びの id(doeff_claude_code.fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id(card ki-8239be27d5f6)。
 (val FAKE-TOOL-USE-ID "fake-tool")
 (val SUBAGENT-CALL-ID "msg_fake_sub")
+;; fake の subagent の呼びの要求の id(transcript の行の requestId — agora card ki-b99ace070bf0)。
+(val SUBAGENT-REQUEST-ID "req_fake_sub")
 ;; fake の subagent の呼びの刻(transcript の行の刻 — 出来事はこの刻を運ぶ・card ki-e798888dce4e)。
 (val SUBAGENT-CALL-AT (datetime.datetime.fromisoformat "2026-10-21T09:34:23.797+00:00"))
 ;; Stop hook が最初の答えを 1 度差し戻す手番(agora-redesign #4020)。替え玉の CLI の規則(scenario_rules.hy の HOOK-FEEDBACK-PHRASE と
@@ -177,6 +179,7 @@
                                       (compose.SubagentTranscript
                                         :agent-id "afakesubagent0001" :parent-tool-use-id FAKE-TOOL-USE-ID
                                         :calls #((compose.SubagentCall :at SUBAGENT-CALL-AT :model SUBAGENT-MODEL :call-id SUBAGENT-CALL-ID
+                                                                       :request-id SUBAGENT-REQUEST-ID
                                                                        :usage (compose.Usage :input-tokens 1 :output-tokens 900
                                                                                              :cache-creation-input-tokens 0
                                                                                              :cache-read-input-tokens 50000))))
@@ -1083,6 +1086,9 @@
   (assert (= (lfor #(_ event) usages #(event.usage event.model)) [#(first-call CALL-MODEL) #(final-call CALL-MODEL)])
           (repr done.events))
   (assert (all (gfor #(_ event) usages event.call-id)) (repr usages))
+  ;; 行の名乗りは呼びの要求の id(stream-json の assistant の行の request_id)も運ぶ — 上の層が CLI の telemetry にだけ出る呼びを足す時に
+  ;; この id で重ねる(agora card ki-b99ace070bf0)。最終の出来事は運ばない(層 2 の閉じた呼びは message_delta から組む)。
+  (assert (all (gfor #(_ event) usages event.request-id)) (repr usages))
   (assert (= (len finals) closed-calls) (repr finals))
   (assert (all (gfor event finals (in event.call-id (sfor #(_ streamed) usages streamed.call-id)))) (repr finals))
   (val results (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolResultEvent) index))
@@ -2388,6 +2394,8 @@
                (AgentTurnUsage :input-tokens 1 :output-tokens 900 :cache-write-tokens 0 :cache-read-tokens 50000)))
           (repr event))
   (assert event.call-id (repr event))
+  ;; 呼びの要求の id(transcript の requestId)も運ぶ — agora card ki-b99ace070bf0。
+  (assert event.request-id (repr event))
   (assert (is-not event.at.tzinfo None) (repr event))
   (assert (not-in SUBAGENT-MODEL (lfor other done.events :if (isinstance other AgentCallUsageEvent) other.model)) (repr done.events))
   None)

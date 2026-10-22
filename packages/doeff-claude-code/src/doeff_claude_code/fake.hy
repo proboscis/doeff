@@ -59,6 +59,9 @@
 ;; 結果の中身は手番の返事(FakeReply の tool-input・tool-output・tool-error)が決める。
 (val FAKE-TOOL-USE-ID "fake-tool")
 (val FAKE-TOOL-NAME "Bash")
+;; 偽の手番の本体の呼びの行が名乗る request_id の頭(本番の CLI の stream-json の assistant の行の request_id と同じ役 — 呼びの id の前に
+;; 付ける・card ki-b99ace070bf0)。
+(val FAKE-REQUEST-PREFIX "req_")
 ;; CLI が model の答えの代わりに自分で作って出す assistant の行(API の誤りの答え — 口座の側の断りの行など)が名乗る model の名(本番
 ;; 2026-10-08 22:32 の口座 cryptic-2 の断りの行)と、その行の usage(2026-10-07 の限度の答えの行が名乗った 0 — model を呼んでいない。
 ;; 断りの行も同じと推定)。
@@ -380,10 +383,11 @@
    ki-290ec664737d)。"
   (cond
     (and (isinstance kind AssistantMessage) (is kind.model None))
-      (replace kind :usage reply.last-call-usage :model reply.last-call-model
-                    :message-id (if (and (is kind.parent-tool-use-id None) (is-not reply.last-call-usage None))
-                                    call-id
-                                    kind.message-id))
+      (do
+        (val names-call (and (is kind.parent-tool-use-id None) (is-not reply.last-call-usage None)))
+        (replace kind :usage reply.last-call-usage :model reply.last-call-model
+                      :message-id (if names-call call-id kind.message-id)
+                      :request-id (if names-call (+ FAKE-REQUEST-PREFIX call-id) kind.request-id)))
     (isinstance kind TurnResult) (replace kind :model-windows reply.model-windows)
     True kind))
 

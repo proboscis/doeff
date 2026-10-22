@@ -20,14 +20,17 @@
 
 (defrecord AnsweredCall
   "偽の API が答えた /v1/messages の呼び 1 つ: role = main-tool(本体の Agent の呼び)・main-final(本体の最後の答え)・subagent /
-   message-id = 答えた message の id / model = 要求の model / input・cache-write・cache-read・output = 答えで名乗った 4 種の token。"
+   message-id = 答えた message の id / model = 要求の model / input・cache-write・cache-read・output = 答えで名乗った 4 種の token /
+   request-id = 答えの頭 request-id に置いた要求の id(本物の API と同じ頭 — CLI はこの値を stream-json の行の request_id と transcript の
+   requestId に書く・card ki-b99ace070bf0)。"
   (#^ str role)
   (#^ str message-id)
   (#^ str model)
   (#^ int input)
   (#^ int cache-write)
   (#^ int cache-read)
-  (#^ int output))
+  (#^ int output)
+  (#^ str request-id))
 
 
 (defn #^ str request-text [#^ dict request]
@@ -104,7 +107,8 @@
     (with [api.lock]
       (setv number (+ (len api.answered) 1))
       (setv call (AnsweredCall :role role :message-id (.format "msg_fake_{:04d}" number) :model model
-                               :input (+ 100 number) :cache-write (* 10 number) :cache-read (+ 1000 number) :output (+ 7 number)))
+                               :input (+ 100 number) :cache-write (* 10 number) :cache-read (+ 1000 number) :output (+ 7 number)
+                               :request-id (.format "req_fake_{:04d}" number)))
       (.append api.answered call))
     (if (.get request "stream")
         (.stream-answer self call (if (= role "main-tool") (.tool-blocks self) (.text-blocks self role)))
@@ -126,6 +130,7 @@
     (setv #(stop-reason parts) blocks)
     (.send-response self 200)
     (.send-header self "content-type" "text/event-stream")
+    (.send-header self "request-id" call.request-id)
     (.send-header self "cache-control" "no-cache")
     (.send-header self "connection" "close")
     (.end-headers self)

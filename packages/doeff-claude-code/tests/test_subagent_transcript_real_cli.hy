@@ -90,5 +90,12 @@
                (lfor call subagent-calls #(call.message-id call.model call.input call.output call.cache-write call.cache-read)))
             (repr #(transcript (.seen api))))
     (assert (all (gfor call transcript.calls (is-not call.at.tzinfo None))) (repr transcript))
+    ;; 呼びの要求の id(card ki-b99ace070bf0): 偽の API が答えの頭 request-id に置いた値を、本体の呼びは stream-json の assistant の
+    ;; 行の request_id で、subagent の呼びは transcript の requestId で名乗る — CLI の telemetry の api_request が同じ呼びを名指す id。
+    (assert (= (lfor call transcript.calls call.request-id) (lfor call subagent-calls call.request-id)) (repr transcript))
+    (val main-calls (lfor call (.seen api) :if (.startswith call.role "main") call))
+    (val named (sfor kind kinds :if (and (isinstance kind AssistantMessage) (is kind.parent-tool-use-id None) (is-not kind.usage None))
+                     #(kind.message-id kind.request-id)))
+    (assert (= named (sfor call main-calls #(call.message-id call.request-id))) (repr #(named main-calls)))
     (finally
       (.close api))))

@@ -226,7 +226,8 @@
   (val usage (if (is message.parent-tool-use-id None) (last-call-of message.usage) None))
   (if (is usage None)
       []
-      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model :call-id message.message-id :final False))]))
+      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model :call-id message.message-id :final False
+                                      :request-id message.request-id))]))
 
 (defk closed-call-builders-of [closed at]
   {:pre [(: closed CallClosed) (: at datetime)] :post [(: % list)]
@@ -246,7 +247,7 @@
   "subagent の呼び 1 回の usage の出来事を、seq を受けて作る関数にするため(subagent-call-usage-builders-of が呼びごとに 1 つ作る —
    関数は自分の呼びの値だけを持つ)。刻は呼びの刻(transcript の最初の行の物)。"
   (fn [seq] (AgentSubagentCallUsageEvent :seq seq :at call.at :parent-tool-use-id parent-tool-use-id :usage usage
-                                         :model call.model :call-id call.call-id)))
+                                         :model call.model :call-id call.call-id :request-id call.request-id)))
 
 (defk subagent-call-usage-builders-of [transcript]
   {:pre [(: transcript SubagentTranscript)] :post [(: % list)]

@@ -78,9 +78,11 @@
   (.flush sys.stdout))
 
 (defn #^ dict assistant-line [#^ str session-id #^ list content #^ dict usage [model MODEL] [parent None]]
-  "assistant の行(実物と同じ形 — message の id・model・usage と最上位の parent_tool_use_id を持つ。id は呼びごとに新しい)。"
-  {"type" "assistant" "session_id" session-id "parent_tool_use_id" parent
-   "message" {"id" (+ "msg_stub_" (. (uuid.uuid4) hex)) "role" "assistant" "model" model "content" content "usage" usage}})
+  "assistant の行(実物と同じ形 — message の id・model・usage と最上位の parent_tool_use_id・request_id を持つ。id は呼びごとに新しい —
+   request_id は message の id と同じ頭の後ろの字)。"
+  (setv call (. (uuid.uuid4) hex))
+  {"type" "assistant" "session_id" session-id "parent_tool_use_id" parent "request_id" (+ "req_stub_" call)
+   "message" {"id" (+ "msg_stub_" call) "role" "assistant" "model" model "content" content "usage" usage}})
 
 (defn stream-block [#^ str session-id #^ dict block #^ dict delta #^ int pieces]
   "1 つの content block を pieces 片の差分(--include-partial-messages の stream_event)で流す — 実物と同じく content_block_start と
@@ -133,14 +135,15 @@
   (setv folder (os.path.join (cut path 0 (- (len path) (len ".jsonl"))) "subagents"))
   (os.makedirs folder :exist-ok True)
   (setv now (.replace (.isoformat (datetime.now timezone.utc) :timespec "milliseconds") "+00:00" "Z")
-        message-id (+ "msg_stub_sub_" (cut (. (uuid.uuid4) hex) 0 12))
+        call (cut (. (uuid.uuid4) hex) 0 12)
+        message-id (+ "msg_stub_sub_" call)
         head {"isSidechain" True "agentId" agent-id "sessionId" session-id "timestamp" now})
   (setv lines [(| head {"type" "user" "message" {"role" "user" "content" "stub subagent task"}})
-               (| head {"type" "assistant"
+               (| head {"type" "assistant" "requestId" (+ "req_stub_sub_" call)
                         "message" {"id" message-id "model" SUBAGENT-MODEL "role" "assistant"
                                    "content" [{"type" "thinking" "thinking" "subagent"}]
                                    "usage" (| SUBAGENT-USAGE {"output_tokens" 3})}})
-               (| head {"type" "assistant"
+               (| head {"type" "assistant" "requestId" (+ "req_stub_sub_" call)
                         "message" {"id" message-id "model" SUBAGENT-MODEL "role" "assistant"
                                    "content" [{"type" "text" "text" "subagent done"}]
                                    "usage" SUBAGENT-USAGE}})])

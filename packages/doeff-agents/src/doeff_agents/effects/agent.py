@@ -532,7 +532,12 @@ class AgentCallUsageEvent:
     value such as 16); ``True`` = the call's final usage (Claude Code: ``message_start`` overlaid with the call's
     ``message_delta``, the way the CLI itself merges them).  A call that never closes (interrupted, the process went
     down, the stream broke and the CLI resent the request) has no final event — its output stays a mid-call value and
-    the upper layer must not read it as the call's whole output."""
+    the upper layer must not read it as the call's whole output.
+
+    ``request_id`` = the API request's id when the runtime states it (Claude Code 2.1.292 puts it on each assistant line
+    of the call; the final event of a call does not carry it — ``None``).  It is the id the runtime's own telemetry
+    names the same call by, so an upper layer that adds calls seen only in that telemetry (calls a tool or the
+    conversation's compaction makes inside the runtime) counts a call once (agora card ki-b99ace070bf0)."""
 
     seq: int
     at: datetime
@@ -540,6 +545,7 @@ class AgentCallUsageEvent:
     model: str | None = None
     call_id: str | None = None
     final: bool = False
+    request_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -552,7 +558,8 @@ class AgentSubagentCallUsageEvent:
     None), ``model`` = that call's model (``None`` when not stated).  As with ``AgentCallUsageEvent`` the runtime
     states one call's usage on each line of that call, so events with the same ``call_id`` may repeat; subagents
     running side by side interleave their calls, so an upper layer folds by ``call_id``, not by order.  A line
-    that states no usage carries no event (never an invented 0)."""
+    that states no usage carries no event (never an invented 0).  ``request_id`` = the API request's id when the
+    runtime states it (``AgentCallUsageEvent.request_id``)."""
 
     seq: int
     at: datetime
@@ -560,6 +567,7 @@ class AgentSubagentCallUsageEvent:
     usage: AgentTurnUsage
     model: str | None = None
     call_id: str | None = None
+    request_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
