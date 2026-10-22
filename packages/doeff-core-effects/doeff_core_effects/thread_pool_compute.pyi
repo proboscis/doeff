@@ -17,7 +17,7 @@ IDLE_LOAD: ComputeLoad
 LOADS: Incomplete
 LOADS_LOCK: Incomplete
 
-def shift_load(pool: Executor, queued: int, running: int, started: int, waited: float) -> None:
+def shift_load(pool: Executor, queued: int, running: int, started: int, waited: float, ran: float) -> None:
     ...
 
 def load_of(pool: Executor) -> ComputeLoad:

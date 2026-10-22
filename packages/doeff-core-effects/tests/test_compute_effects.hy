@@ -3,7 +3,7 @@
 ;;;     program(呼び手の handler には届かず ComputeFailed)。
 ;;;   - 本物は計算の間も scheduler の他の task を回す(計算が他の task の合図を待っても詰まらない)。
 ;;;   - 本物は同時に回す数を pool が決める。
-;;;   - 負荷の読み(ReadComputeLoad): 本物は pool の thread を待つ仕事の数(並び)・回っている数(走り)・回り始めた数と待った秒の累計を
+;;;   - 負荷の読み(ReadComputeLoad): 本物は pool の thread を待つ仕事の数(並び)・回っている数(走り)・回り始めた数と待った秒と回った秒の累計を
 ;;;     答え、始まる前に取り消された仕事を並びから外す。I/O なしは列を持たないので全部 0。反例: 前の形は pool が大きな計算で塞がった時の
 ;;;     待ちを測る計器を持たず、待ちは要求ごとの区間の秒に混ざって見分けられなかった(doeff-records の ADR-DOE-RECORDS-002 R6)。
 (require doeff-hy.macros [defk <- val])
@@ -184,7 +184,9 @@
   (assert (= (cut answers 0 2) #((Computed :value True) (Computed :value True))) answers)
   (assert (= #(busy.queued busy.running busy.started) #(1 1 1)) busy)
   (assert (= #(after.queued after.running after.started) #(0 0 2)) after)
-  (assert (> after.waited-seconds 0.0) after))
+  (assert (> after.waited-seconds 0.0) after)
+  ;; 回った秒の累計は 2 つの計算が pool の thread を塞いだ秒の和(1 つ目は覗きの task が門を開けるまで回り続けた)。
+  (assert (> after.ran-seconds 0.0) after))
 
 
 (defn #^ None test-thread-pool-load-drops-a-queued-job-that-is-cancelled []
@@ -223,4 +225,4 @@
     (<- (Compute (doubled 1)))
     (<- load ComputeLoad (ReadComputeLoad))
     load)
-  (assert (= (on [inline-compute-handler] (computed-then-load)) (ComputeLoad :queued 0 :running 0 :started 0 :waited-seconds 0.0))))
+  (assert (= (on [inline-compute-handler] (computed-then-load)) (ComputeLoad :queued 0 :running 0 :started 0 :waited-seconds 0.0 :ran-seconds 0.0))))

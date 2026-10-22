@@ -61,6 +61,7 @@ class RecordsServing:
     meter: Callable[..., object] | None = None
     served: ServedBuild | None = None
     callers: tuple[str, ...] = ()
+    compute_workers: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class TextAnswer:

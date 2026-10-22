@@ -524,7 +524,7 @@
     "ADR-DOE-PRESET-001 preset-stays-retired",
     "ADR-DOE-RECORDS-001 no-raw-operation-is-offered-outside",
     "ADR-DOE-RECORDS-001 the-raw-operation-list-does-not-grow",
-    "ADR-DOE-RECORDS-002 a-list-read-over-the-wire-asks-at-most-the-cap",
+    "ADR-DOE-RECORDS-002 a-list-read-asks-at-most-the-cap",
     "ADR-DOE-RECORDS-002 every-records-assembly-answers-compute",
     "ADR-DOE-RECORDS-002 every-wire-answer-has-one-spelling-place",
     "ADR-DOE-RECORDS-002 the-compute-pool-wait-is-on-metrics",
