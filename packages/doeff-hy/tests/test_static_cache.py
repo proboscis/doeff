@@ -764,3 +764,16 @@ def test_a_source_changed_right_after_the_bundle_was_written_is_read_again(
     os.utime(tree.user, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     changed = _closure(tree)
     assert "z =" in changed.projections[tree.user].text
+
+
+def test_a_bundle_follows_a_changed_macro_to_the_next_run(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> None:
+    # macro を変えて展開し直した行は束にも書き直す(束の行の記録が古いままだと、毎回 entry へ落ちて open が減らない)。
+    _age(tree)
+    _closure(tree)
+    _closure(tree)
+    _rewrite(tree.package / "words.py", 'def word() -> str:\n    return "newer"\n')
+    os.utime(tree.package / "words.py", ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+    _closure(tree)  # 展開し直して束を書き直す
+    opened = _opened_during(tree, monkeypatch)
+    assert [p for p in opened if p.endswith(".hy")] == []
+    assert len([p for p in opened if p.endswith(".json")]) == 1, opened
