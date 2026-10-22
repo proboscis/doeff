@@ -186,7 +186,9 @@ class TaskEvent:
     task_type: str = ''
     total_tokens: int | None = None
 SUBAGENT_TASK_TYPE: str
+SUBAGENT_ANSWERED_STATUS: str
 SYNTHETIC_MODEL: str
+CONTINUING_STOP_REASONS: set[str]
 
 class SubagentTranscriptProblem(StrEnum):
     ABSENT = 'absent'
@@ -441,6 +443,13 @@ def usage_of(usage: dict) -> Usage:
 
 def parse_record(line: str) -> dict | None:
     ...
+JSONL_LINE_END: str
+
+def jsonl_lines(text: str) -> _Program[tuple, object]:
+    ...
+
+def whole_lines_end(data: bytes) -> _Program[int, object]:
+    ...
 
 def content_blocks(record: dict) -> tuple:
     ...
@@ -523,16 +532,24 @@ def mark_of_result(result: TurnResult) -> _Program[CostMark | None, object]:
 def instant_at(value: dict, key: str) -> _Program[datetime | None, object]:
     ...
 
-def decoded_text(data: bytes) -> _Program[str | None, object]:
+def transcript_record(line: str) -> dict | None:
     ...
 
-def subagent_calls_of(records: tuple) -> _Program[tuple | None, object]:
+def transcript_records(data: bytes) -> _Program[tuple, object]:
     ...
 
-def last_call_total(records: tuple) -> _Program[int | None, object]:
+@dataclass(frozen=True, kw_only=True)
+class SubagentCalls:
+    calls: tuple[SubagentCall, ...]
+    undated: int
+
+def subagent_calls_of(records: tuple) -> _Program[SubagentCalls, object]:
     ...
 
-def subagent_transcript_of(agent_id: str, parent_tool_use_id: str, data: bytes, expected_total: int | None) -> _Program[SubagentTranscript, object]:
+def last_call_closed(records: tuple) -> _Program[bool, object]:
+    ...
+
+def subagent_transcript_of(agent_id: str, parent_tool_use_id: str, data: bytes, answered: bool) -> _Program[SubagentTranscript, object]:
     ...
 
 def classify_record(record: dict) -> Incomplete:

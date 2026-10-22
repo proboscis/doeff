@@ -3,7 +3,8 @@
 ;;; 分類(classify-record)は純関数: stream-json の 1 行(JSON の object)→ ClaudeLineKind。語彙の外の行は捨てずに
 ;;; Other { type, subtype } へ名前だけ持つ(発明しない)。1 行の逐語は ClaudeStreamLine.raw に残る。
 ;;;
-;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost)。状態機械(dialogue.hy)も
+;;; JSON の境界はこの file の 1 か所(JSON Lines を行に割る jsonl-lines・parse-record と classify-*、transcript の額の行を読む
+;;; recorded-cost)。状態機械(dialogue.hy)も
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val <-])
 (require doeff-hy.record [defenum defrecord])
@@ -317,8 +318,9 @@
 (defclass [(dataclass :frozen True)] TaskEvent []
   "CLI の道具の task の開始と報せ(system/task_started・task_notification)。tool-use-id = task を起こした道具の呼びの id(行の
    tool_use_id — 名乗らなければ None)/ task-type = task の種類(task_started の task_type — subagent は SUBAGENT-TASK-TYPE。報せの行は
-   名乗らないので空)/ total-tokens = 報せの行の usage.total_tokens(subagent の最後の API の呼びの 4 種 token の和 — 実測 2.1.292:
-   呼び 2 回の subagent の報せは 2 回目の呼びの input + cache_creation + cache_read + output。始まりの行と名乗らない行は None)。
+   名乗らないので空)/ total-tokens = 報せの行の usage.total_tokens(CLI の値のまま。始まりの行と名乗らない行は None。transcript の
+   最後の呼びの 4 種 token の和と合うとは限らない — 本番 2026-10-22 で書き切った transcript の和より +251〜+1,801 多い報せが 13 件中
+   10 件在った・card ki-3d45f5857239。transcript を書き切ったかの判定には使わない — subagent-transcript-of)。
    subagent の task の id は、CLI がその subagent の transcript を書く file の名(agent-<id>.jsonl)の id と同じ(実測 2.1.292・
    card ki-e798888dce4e)。"
   (#^ str task-id)
@@ -329,13 +331,19 @@
 
 ;; task_started の task_type のうち、subagent(Agent の道具が起こした agent)を名乗る語(実測 2.1.292・card ki-e798888dce4e)。
 (val SUBAGENT-TASK-TYPE "local_agent")
+;; 報せの行の status のうち、subagent が答え終えた事を名乗る語(実測 2.1.292 — 書き切った transcript は閉じた呼びで終わる)。
+(val SUBAGENT-ANSWERED-STATUS "completed")
 ;; CLI が API を呼ばずに書く assistant の行の model の名(誤りの知らせ — 呼びではないので subagent の呼びに数えない)。
 (val SYNTHETIC-MODEL "<synthetic>")
+;; 呼びの終わり方(message.stop_reason — API の語)のうち、呼びが続く物: 道具の答えを待つ・server の道具の途中で止めた。名乗らない
+;; (null)行も閉じていない。ほかの語(end_turn・max_tokens・stop_sequence・refusal ほか)は答えを閉じた呼び(last-call-closed)。
+(val CONTINUING-STOP-REASONS #{"tool_use" "pause_turn"})
 
-;; subagent の transcript を読めなかった訳(閉じた語彙 — card ki-e798888dce4e): ABSENT = file が無い / UNREADABLE = 読めない(OS の誤り・
-;; UTF-8 でない・途中の行が JSON の object でない・呼びの行が時差つきの刻を名乗らない・task の id が file の名にできない)/
-;; TRUNCATED = 書きの途中で切れた(最後の行が改行で終わっていない・最後の呼びの 4 種 token の和が報せの行の total_tokens と合わない
-;; — CLI は transcript を報せの行より後に書き足す。実測 2.1.292: 報せの行を出した時点の file には最後の呼びの行がまだ無かった)。
+;; subagent の transcript の読みの欠けの訳(閉じた語彙 — card ki-e798888dce4e・ki-3d45f5857239): ABSENT = file が無い / UNREADABLE =
+;; 読めない所が在る(OS の誤り・task の id が file の名にできない = 何も読めない。UTF-8 でない・JSON の object でない行・呼びの行が
+;; 時差つきの刻を名乗らない = その行だけ数えない)/ TRUNCATED = 書きの途中(最後の行が改行で終わっていない・答え終えた subagent の
+;; transcript が閉じた呼びで終わらない — CLI は transcript を報せの行より後に書き足す。実測 2.1.292: 報せの行を出した時点の file には
+;; 最後の呼びの行がまだ無かった)。
 (defenum SubagentTranscriptProblem ABSENT UNREADABLE TRUNCATED)
 
 (defrecord SubagentCall
@@ -353,8 +361,9 @@
    足す行の種類(raw は空)。背景の task を止めた CLI(argv.hy の PER-TURN-SETTINGS-ENV)は subagent の呼びの行を stdout に出さないので、
    subagent の呼びの消費はここからだけ読む。
    agent-id = task の id / parent-tool-use-id = subagent を起こした道具の呼びの id / calls = 読めた呼び(書かれた順 — 前の報せの後に
-   伸びた分だけ)/ problem = 読めなかった訳(読めたら None)/ detail = 読めなかった時の手がかり(path・誤りの文 — 読めたら空)。
-   読めなかった時は calls を空にする(途中まで読めた分も載せない — 呼びを発明しない)。"
+   伸びた分だけ)/ problem = 読みの欠けの訳(欠けが無ければ None)/ detail = 欠けの手がかり(path・誤りの文・欠けた行の数 — 欠けが
+   無ければ空)。欠けが在っても、読めた呼びは calls に載せる(捨てて 0 にしない — card ki-3d45f5857239)。読めなかった行の呼びは
+   発明しない。"
   (#^ str agent-id)
   (#^ str parent-tool-use-id)
   (setv #^ (get tuple #(SubagentCall ...)) calls #())
@@ -791,6 +800,25 @@
     (except [ValueError] (return None)))
   (if (isinstance value dict) value None))
 
+;; JSON Lines の行の終わり(card ki-3d45f5857239 — 割るのはこの 1 字だけ)。
+(val JSONL-LINE-END "\n")
+
+(defk jsonl-lines [#^ str text]
+  {:pre [(: text str)] :post [(: % tuple)] :tags {:context "claude-code" :role "foundation"}}
+  "CLI が書く JSON Lines(会話と subagent の transcript・stream-json の stdout)の本文を行の列にする唯一の所(transcript を読む上の層も
+   これで割る)。割るのは改行(JSONL-LINE-END)だけ: str.splitlines は JSON の文字列の中に生の
+   まま書かれた U+2028・U+2029(JSON は escape を求めない — web の本文に在る)や \\x1c〜\\x1e・\\x85・\\v・\\f でも割り、正しい
+   JSON の行を読めない 2 行にする(実測: 本番の subagent の transcript agent-a20aa06… の U+2028 4 つで、読みが UNREADABLE になった)。
+   空白だけの行は落とす。最後の改行の後の切れ端も 1 行として答える(書き切ったかは読み手が見る — whole-lines-end)。"
+  (tuple (gfor line (.split text JSONL-LINE-END) :if (.strip line) line)))
+
+(defk whole-lines-end [#^ bytes data]
+  {:pre [(: data bytes)] :post [(: % int)] :tags {:context "claude-code" :role "foundation"}}
+  "書き足されている JSON Lines の byte のうち、改行で閉じた行の終わり(最後の JSONL-LINE-END の次の byte の位置 — 無ければ 0)を
+   知るため。読み手はここまでを読み終えた所とし、後ろの切れ端(書きの途中の行)は次の読みで頭から読む。UTF-8 の多 byte の字は
+   0x0A を含まないので、byte で探して字の途中を切らない。"
+  (+ (.rfind data (.encode JSONL-LINE-END "utf-8")) 1))
+
 (defn #^ tuple content-blocks [#^ dict record]
   (setv content (.get (object-at record "message") "content"))
   (if (isinstance content list) (tuple (gfor block content :if (isinstance block dict) block)) #()))
@@ -1086,7 +1114,8 @@
    記し、続きの process と枝の process は最後のその行から数え続ける(実測 2.1.283・#883・modelUsage は 2.1.292 — card ki-1d986d4f0007)。
    読むのは最後の cost-state の行の totalCostUSD と modelUsage だけ。行が無い・最後の行の額が数でない(bool は数えない)なら None
    (0 を発明しない — CLI の版で形が変わっても誤った額を出さない)。modelUsage の無い行は額だけの起点(models None)。"
-  (val found (next (gfor line (reversed (.splitlines transcript-text))
+  (<- lines (jsonl-lines transcript-text))
+  (val found (next (gfor line (reversed lines)
                          :if (in "\"cost-state\"" line)
                          :setv record (parse-record line)
                          :if (and (is-not record None) (= (.get record "type") "cost-state"))
@@ -1114,18 +1143,33 @@
     (except [ValueError] (return None)))
   (if (is instant.tzinfo None) None instant))
 
-(defk decoded-text [#^ bytes data]
-  {:pre [(: data bytes)] :post [(: % (| str None))] :tags {:context "claude-code" :role "foundation"}}
-  "読んだ transcript の byte を行に割れる文字列にするため(UTF-8 でなければ None — 読めなかった事にする)。"
+(defn #^ (| dict None) transcript-record [#^ str line]
+  "surrogateescape で解いた transcript の 1 行 → JSON の object(UTF-8 でない byte を含む行・JSON の object でない行は None)。"
   (try
-    (.decode data "utf-8")
-    (except [UnicodeDecodeError] None)))
+    (.encode line "utf-8")
+    (except [UnicodeEncodeError] (return None)))
+  (parse-record line))
+
+(defk transcript-records [#^ bytes data]
+  {:pre [(: data bytes)] :post [(: % tuple)] :tags {:context "claude-code" :role "foundation"}}
+  "読んだ transcript の byte のうち改行で閉じた行(whole-lines-end まで)を、行ごとに JSON の object か None(UTF-8 でない・JSON の
+   object でない行)にするため。割るのは jsonl-lines(U+2028 で割らない)。UTF-8 でない byte は行ごとに見分ける — 1 行の壊れで
+   ほかの行を読み捨てない。"
+  (<- end (whole-lines-end data))
+  (<- lines (jsonl-lines (.decode (cut data 0 end) "utf-8" :errors "surrogateescape")))
+  (tuple (gfor line lines (transcript-record line))))
+
+(defrecord SubagentCalls
+  "subagent の transcript の行から読んだ呼び(subagent-calls-of の答え): calls = 呼びごとに畳んだ消費(書かれた順)/ undated = 時差つきの
+   刻を名乗らないので呼びに数えなかった行の数。"
+  (#^ (get tuple #(SubagentCall ...)) calls)
+  (#^ int undated))
 
 (defk subagent-calls-of [#^ tuple records]
-  {:pre [(: records tuple)] :post [(: % (| tuple None))] :tags {:context "claude-code" :role "foundation"}}
+  {:pre [(: records tuple)] :post [(: % SubagentCalls)] :tags {:context "claude-code" :role "foundation"}}
   "subagent の transcript の行(JSON の object の列)から、API の呼びごとの消費を書かれた順に読むため(SubagentCall の註の畳み方)。
-   数えるのは message.usage が object の assistant の行だけで、CLI が呼ばずに書いた行(model が SYNTHETIC-MODEL)は数えない。数える行が
-   時差つきの刻(timestamp)を名乗らなければ None(刻を発明しない — 読めなかった事にする)。"
+   数えるのは message.usage が object の assistant の行だけで、CLI が呼ばずに書いた行(model が SYNTHETIC-MODEL)は数えない。
+   時差つきの刻(timestamp)を名乗らない行は呼びに数えず、数だけを答える(刻を発明しない — ほかの行の呼びは捨てない)。"
   (val called (lfor record records
                     :setv message (object-at record "message")
                     :if (and (= (text-at record "type") "assistant") (isinstance (.get message "usage") dict)
@@ -1134,56 +1178,65 @@
   ;; 呼びの id ごとに 1 つ(id の無い行は行の番号で 1 つずつ)。組の列から作る dict は、鍵の順が最初に出た順で値が最後の物になる —
   ;; usage と model は最後の行・刻は最初の行(逆順から作った dict)の物。
   (var keyed #())
+  (var undated 0)
   (for [#(index #(record message)) (enumerate called)]
     (<- at (instant-at record "timestamp"))
-    (when (is at None) (return None))
+    (when (is at None)
+      (:= undated (+ undated 1))
+      (continue))
     (val call-id (or (text-at message "id") None))
     (:= keyed (+ keyed #(#((if (is call-id None) index call-id)
                            (SubagentCall :at at :usage (usage-of (get message "usage")) :model (or (text-at message "model") None)
                                          :call-id call-id))))))
   (val firsts (dict (reversed keyed)))
-  (tuple (gfor #(key call) (.items (dict keyed)) (replace call :at (. (get firsts key) at)))))
+  (SubagentCalls :calls (tuple (gfor #(key call) (.items (dict keyed)) (replace call :at (. (get firsts key) at))))
+                 :undated undated))
 
-(defk last-call-total [#^ tuple records]
-  {:pre [(: records tuple)] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
-  "subagent の transcript を書き切ったかを報せの行の total_tokens と比べるため、最後の usage つきの assistant の行(SYNTHETIC-MODEL の
-   行も — CLI の最後の呼びの記録)の 4 種 token の和を読む。そういう行が無い・4 欄のどれかが整数でなければ None。"
-  (val usages (lfor record records
-                    :setv usage (.get (object-at record "message") "usage")
-                    :if (and (= (text-at record "type") "assistant") (isinstance usage dict))
-                    usage))
-  (when (not usages) (return None))
-  (val counts (lfor name #("input_tokens" "cache_creation_input_tokens" "cache_read_input_tokens" "output_tokens")
-                    (int-at (get usages -1) name)))
-  (if (in None counts) None (sum counts)))
+(defk last-call-closed [#^ tuple records]
+  {:pre [(: records tuple)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
+  "subagent の transcript を書き切ったかを transcript そのものから知るため: 最後の usage つきの assistant の行(SYNTHETIC-MODEL の行も —
+   CLI が API の誤りで閉じた答え)の message.stop_reason が、呼びの続かない語(null でなく CONTINUING-STOP-REASONS の外)か。CLI は
+   呼びの行を、その呼びの終わり(message_delta)の後に最後の usage と stop_reason を載せて書く(実測 2.1.292: 本物の CLI と偽の API の
+   検・本番の会話の transcript)ので、答え終えた subagent の transcript は閉じた呼びで終わる。そういう行が無ければ偽。"
+  (val messages (lfor record records
+                      :setv message (object-at record "message")
+                      :if (and (= (text-at record "type") "assistant") (isinstance (.get message "usage") dict))
+                      message))
+  (when (not messages) (return False))
+  (val reason (text-at (get messages -1) "stop_reason"))
+  (and (bool reason) (not-in reason CONTINUING-STOP-REASONS)))
 
-(defk subagent-transcript-of [#^ str agent-id #^ str parent-tool-use-id #^ bytes data #^ (| int None) expected-total]
-  {:pre [(: agent-id str) (: parent-tool-use-id str) (: data bytes) (: expected-total (| int None))] :post [(: % SubagentTranscript)]
+(defk subagent-transcript-of [#^ str agent-id #^ str parent-tool-use-id #^ bytes data #^ bool answered]
+  {:pre [(: agent-id str) (: parent-tool-use-id str) (: data bytes) (: answered bool)] :post [(: % SubagentTranscript)]
    :tags {:context "claude-code" :role "foundation"}}
   "上の層が subagent の呼びごとの消費を記録できるように、subagent の transcript の読んだ byte(前の読みの後に伸びた分)を
-   SubagentTranscript にするため。expected-total = 報せの行の total_tokens(None = 名乗らない・報せの前に process が降りた — 比べない)。
-   最後の行が改行で終わらない・最後の呼びの 4 種 token の和が expected-total と合わない = TRUNCATED・UTF-8 でない・JSON の object
-   でない行が在る・数える行が刻を名乗らない = UNREADABLE で、どれも calls を空にする(途中まで読めた分も載せない — 呼びを発明しない)。
-   空の byte は、expected-total が無ければ呼びの無い読み。"
-  (<- text (decoded-text data))
-  (val unread (fn [problem detail] (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id
-                                                       :problem problem :detail detail)))
-  (when (is text None)
-    (return (unread SubagentTranscriptProblem.UNREADABLE "the transcript is not UTF-8")))
-  (when (and text (not (.endswith text "\n")))
-    (return (unread SubagentTranscriptProblem.TRUNCATED "the last line of the transcript has no newline")))
-  (val records (tuple (gfor line (.splitlines text) :if (.strip line) (parse-record line))))
-  (when (in None records)
-    (return (unread SubagentTranscriptProblem.UNREADABLE "a line of the transcript is not a JSON object")))
-  (<- last-total (last-call-total records))
-  (when (and (is-not expected-total None) (!= last-total expected-total))
-    (return (unread SubagentTranscriptProblem.TRUNCATED
-                    (.format "the last call of the transcript totals {} tokens, the task notification reported {}"
-                             last-total expected-total))))
-  (<- calls (subagent-calls-of records))
-  (if (is calls None)
-      (unread SubagentTranscriptProblem.UNREADABLE "an assistant line with usage has no timestamp with a UTC offset")
-      (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id :calls calls)))
+   SubagentTranscript にするため。answered = CLI が subagent の答え終えを報せた(報せの行の status が SUBAGENT-ANSWERED-STATUS)— 書き
+   切った transcript は閉じた呼び(last-call-closed)で終わる。偽 = 報せの前に process が降りた・答えずに終わった task(書き手が止めた
+   所までが全部)。書き切ったかは transcript だけで決め、報せの行の total_tokens とは比べない(実測: 本番で書き切った transcript の
+   最後の呼びの和より報せが +251〜+1,801 多い subagent が 13 件中 10 件在り、呼びを全部捨てていた — card ki-3d45f5857239)。
+   改行で閉じた行から読めた呼びは、訳が在っても全部載せる(捨てて 0 にしない)。訳(problem・detail)は欠けを名指す: 最後の行が改行で
+   終わらない・answered なのに最後の呼びが閉じていない = TRUNCATED(後ろの行がまだ書かれていない)/ UTF-8 でない・JSON の object
+   でない行・刻を名乗らない呼びの行が在る = UNREADABLE(その行は数えない)。両方なら TRUNCATED(書き手を待てば読める訳を先にする)。
+   空の byte は、answered でなければ呼びの無い読み。"
+  (<- records (transcript-records data))
+  (<- end (whole-lines-end data))
+  (val readable (tuple (gfor record records :if (is-not record None) record)))
+  (<- counted (subagent-calls-of readable))
+  (<- closed (last-call-closed readable))
+  (val tail (cut data end None))
+  (val broken (- (len records) (len readable)))
+  (val undated counted.undated)
+  (val truncations (+ (if (.strip tail) [(.format "the last line of the transcript has no newline ({} bytes)" (len tail))] [])
+                      (if (and answered (not closed))
+                          ["the transcript does not end with a closed call (no stop_reason that ends the answer)"]
+                          [])))
+  (val unreadables (+ (if broken [(.format "{} line(s) of the transcript are not UTF-8 JSON objects" broken)] [])
+                      (if undated [(.format "{} assistant line(s) with usage have no timestamp with a UTC offset" undated)] [])))
+  (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id :calls counted.calls
+                      :problem (cond truncations SubagentTranscriptProblem.TRUNCATED
+                                     unreadables SubagentTranscriptProblem.UNREADABLE
+                                     True None)
+                      :detail (.join "; " (+ truncations unreadables))))
 
 (defn classify-record [#^ dict record]
   "stream-json の 1 行 → ClaudeLineKind(純関数・語彙の外は Other)。"

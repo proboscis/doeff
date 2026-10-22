@@ -79,11 +79,10 @@
     (assert (= (len found) 1) kinds)
     (val transcript (get found 0))
     (assert (= #(transcript.parent-tool-use-id transcript.problem) #(AGENT-TOOL-USE-ID None)) (repr transcript))
-    ;; 報せの行の total_tokens は最後の呼びの 4 種 token の和(handler が書き切ったかを比べる値)。
-    (val last-call (get subagent-calls -1))
-    (assert (in (TaskEvent transcript.agent-id "completed" :tool-use-id AGENT-TOOL-USE-ID
-                           :total-tokens (+ last-call.input last-call.cache-write last-call.cache-read last-call.output))
-                kinds)
+    ;; 報せの行は答え終えを名乗る(status completed — handler が書き切ったかを transcript の閉じた呼びで判じる印)。total_tokens の値は
+    ;; 比べない(本番では最後の呼びの和より多い報せが在る — card ki-3d45f5857239)。
+    (assert (any (gfor kind kinds (and (isinstance kind TaskEvent) (= #(kind.task-id kind.status kind.tool-use-id)
+                                                                       #(transcript.agent-id "completed" AGENT-TOOL-USE-ID)))))
             kinds)
     (assert (= (lfor call transcript.calls #(call.call-id call.model call.usage.input-tokens call.usage.output-tokens
                                             call.usage.cache-creation-input-tokens call.usage.cache-read-input-tokens))

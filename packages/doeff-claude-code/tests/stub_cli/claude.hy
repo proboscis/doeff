@@ -52,6 +52,11 @@
 (setv FINAL-CALL-USAGE {"input_tokens" 4 "cache_creation_input_tokens" 20 "cache_read_input_tokens" 1010 "output_tokens" 1
                         "cache_creation" {"ephemeral_5m_input_tokens" 5 "ephemeral_1h_input_tokens" 15}})
 (setv SUBAGENT-USAGE {"input_tokens" 1 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 50000 "output_tokens" 900})
+;; subagent の task の報せの total_tokens が、transcript の最後の呼びの 4 種 token の和より多い分(本番の実測の形 — 2026-10-22 の
+;; session e088fc87… で、書き切った transcript の和より報せが +251〜+1,801 多い subagent が 13 件中 10 件在った・card ki-3d45f5857239)。
+(setv NOTICE-EXCESS-TOKENS 1801)
+;; subagent の答えの本文(JSON の文字列の中に生の U+2028 を含む — web の本文を写した実物の transcript と同じ・card ki-3d45f5857239)。
+(setv SUBAGENT-ANSWER "subagent\u2028done")
 (setv MAIN-WINDOW {"inputTokens" 7 "outputTokens" 6 "contextWindow" 200000 "maxOutputTokens" 32000})
 (setv SUBAGENT-WINDOW {"inputTokens" 1 "contextWindow" 100000})
 ;; 呼びを 3 段で流す手番(scenario_rules の STREAMED-CALLS-PHRASE — card ki-290ec664737d)の usage: 始まりと assistant の行の出力は
@@ -129,7 +134,8 @@
 (defn write-subagent-transcript [#^ str path #^ str session-id #^ str agent-id]
   "道具の途中に走らせた subagent の transcript を、実物(CLI 2.1.292)と同じ置き場と形で書く(card ki-e798888dce4e): 会話の transcript の
    隣の <会話の id>/subagents/agent-<id>.jsonl に、subagent への頼みの user の行と、API の呼び 1 回分の assistant の行 2 本(実物と同じく
-   content の block ごとに 1 行・同じ message の id。出力の token は 1 本目が呼びの途中の値・2 本目が最後の値)。"
+   content の block ごとに 1 行・同じ message の id。出力の token と stop_reason は 1 本目が呼びの途中の値(null)・2 本目が最後の値
+   (end_turn — 答えを閉じた呼び)。本文は JSON の文字列の中に生の U+2028 を含む)。"
   (setv folder (os.path.join (cut path 0 (- (len path) (len ".jsonl"))) "subagents"))
   (os.makedirs folder :exist-ok True)
   (setv now (.replace (.isoformat (datetime.now timezone.utc) :timespec "milliseconds") "+00:00" "Z")
@@ -138,11 +144,11 @@
   (setv lines [(| head {"type" "user" "message" {"role" "user" "content" "stub subagent task"}})
                (| head {"type" "assistant"
                         "message" {"id" message-id "model" SUBAGENT-MODEL "role" "assistant"
-                                   "content" [{"type" "thinking" "thinking" "subagent"}]
+                                   "content" [{"type" "thinking" "thinking" "subagent"}] "stop_reason" None
                                    "usage" (| SUBAGENT-USAGE {"output_tokens" 3})}})
                (| head {"type" "assistant"
                         "message" {"id" message-id "model" SUBAGENT-MODEL "role" "assistant"
-                                   "content" [{"type" "text" "text" "subagent done"}]
+                                   "content" [{"type" "text" "text" SUBAGENT-ANSWER}] "stop_reason" "end_turn"
                                    "usage" SUBAGENT-USAGE}})])
   ;; 検の env STUB_CLI_SUBAGENT_TRANSCRIPT で読めない transcript を作る: absent = 書かない / truncated = 最後の行の改行を書かない /
   ;; broken = 途中に JSON でない行を挟む。
@@ -401,10 +407,11 @@
              "session_id" self.session-id})
       (write-subagent-transcript self.path self.session-id agent-id)
       (setv stop (.wait-tool self (get rule "tool_seconds") injections))
-      ;; subagent の task の報せ(実物と同じく道具の結果の前・合計の token だけを名乗る)。止めた道具では killed。
+      ;; subagent の task の報せ(実物と同じく道具の結果の前・合計の token だけを名乗る — 値は本番の実測の形で最後の呼びの和より
+      ;; 多い)。止めた道具では killed。
       (emit {"type" "system" "subtype" "task_notification" "task_id" agent-id "tool_use_id" "toolu_stub"
              "status" (if (is stop None) "completed" "killed")
-             "usage" {"total_tokens" (sum (.values SUBAGENT-USAGE)) "tool_uses" 0 "duration_ms" 1}
+             "usage" {"total_tokens" (+ (sum (.values SUBAGENT-USAGE)) NOTICE-EXCESS-TOKENS) "tool_uses" 0 "duration_ms" 1}
              "session_id" self.session-id})
       (when (is-not stop None)
         (setv queued (lfor record injections :if (.get record "uuid") (.get record "uuid")))

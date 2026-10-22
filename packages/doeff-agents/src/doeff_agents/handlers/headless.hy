@@ -254,8 +254,9 @@
   "上の層が subagent の消費を本体の会話の呼びと分けて記録できるように(card acp:kanban-issue:ki-8239be27d5f6 — rate limit の減りと
    実使用量の照合の材料)、層 2 が subagent の transcript から読んだ呼び(SubagentTranscript の calls — card ki-e798888dce4e。背景の task を
    止めた CLI は subagent の呼びの行を stdout に出さないので、subagent の呼びはここからだけ運ぶ)ごとに、その呼びの usage の出来事を作る
-   関数の列を作るため。親の道具の呼びの id・呼びの id(message.id)・model・呼びの刻を添える。usage の 4 欄とも名乗らない呼びと、読め
-   なかった transcript(calls が空 — 訳は層 2 が log に残す)は出来事にしない(0 を発明しない)。"
+   関数の列を作るため。親の道具の呼びの id・呼びの id(message.id)・model・呼びの刻を添える。usage の 4 欄とも名乗らない呼びは
+   出来事にしない(0 を発明しない)。読みに欠けの在る transcript も、読めた呼び(calls)は出来事にする(欠けの訳は層 2 が log に残す —
+   card ki-3d45f5857239)。"
   (var builders [])
   (for [call transcript.calls]
     (val usage (last-call-of call.usage))

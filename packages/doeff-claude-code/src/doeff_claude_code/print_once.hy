@@ -26,7 +26,8 @@
 (import time)
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_claude_code.effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
-(import doeff_claude_code.lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
+(import doeff_claude_code.lines [AccountLimitHit TurnResult jsonl-lines parse-record classify-record
+                                 stderr-tail-within])
 (import doeff_claude_code.dialogue [limit-hit-after print-once-stdin])
 (import doeff_claude_code.argv [print-once-argv print-once-env])
 (import doeff_claude_code.credential_home [open-credential-home close-credential-home])
@@ -124,7 +125,8 @@
   "stream-json の stdout の行から、口座の利用枠が尽きた事実を読むため(純関数 — card ki-eb4f8e1db64d): 規則は会話の手番と同じ 1 点
    dialogue.hy の limit-hit-after(拒まれた rate_limit_event の行 = 枠の種類と戻る刻・本体の error rate_limit の答えの行 = 限度の文)。
    名乗る行が無ければ None。"
-  (val kinds (gfor line (.splitlines stdout) :setv record (parse-record line) :if (is-not record None) (classify-record record)))
+  (<- lines (jsonl-lines stdout))
+  (val kinds (gfor line lines :setv record (parse-record line) :if (is-not record None) (classify-record record)))
   (functools.reduce limit-hit-after kinds None))
 
 (defk print-outcome [exit-code #^ str stdout #^ str stderr #^ int elapsed-ms #^ bool timed-out #^ float seconds]
@@ -137,7 +139,8 @@
   (<- tail (stderr-tail-within stderr))
   (when timed-out
     (return (PrintTimedOut :seconds seconds :stderr-tail tail)))
-  (val last-line (next (gfor line (reversed (.splitlines stdout)) :if (.strip line) line) ""))
+  (<- lines (jsonl-lines stdout))
+  (val last-line (next (reversed lines) ""))
   (val record (parse-record last-line))
   (val result (if (is record None) None (classify-record record)))
   (val answered (and (isinstance result TurnResult) (not result.is-error) (= exit-code 0)
