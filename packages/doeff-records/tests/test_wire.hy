@@ -10,7 +10,8 @@
                               EventsQuiet EventAbsent EventRetired AppendedEvents])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
                                ReadEventByKey AppendEvents EventAppend WHERE-ANY-LIMIT])
-(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer decode-answer])
+(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS LIST-LIMIT-MAX encode-request decode-request encode-answer
+                            decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
 
@@ -267,3 +268,26 @@
   (assert (= (. (run (decode-request (WireRequest "put-row" (| body {"approval" None})))) effect)
              (PutRow "parts" #("p1") {"label" "a"} (ExpectAny))))
   (assert (not-in "approval" (. (run (encode-request (PutRow "parts" #("p1") {"label" "a"} (ExpectAny)))) body))))
+
+
+(deftest test-a-list-above-the-limit-cap-is-refused-on-both-sides
+  ;; 一覧の読み 1 回の limit は wire の上限 LIST-LIMIT-MAX まで(ADR-DOE-RECORDS-002 R6 — 1 要求の計算の量を行の数で縛る)。上限ちょうどは
+  ;; 往復する。反例: 前の形は limit に上限が無く、大きな limit の 1 回の読みが置き場の行の数だけ計算の pool の thread を塞いだ。
+  (setv at-cap (ListRows "parts" :limit LIST-LIMIT-MAX))
+  (setv sent (run (encode-request at-cap)))
+  (assert (= (. (run (decode-request (WireRequest sent.operation (through-json sent.body)))) effect) at-cap))
+  ;; service の読みは上限を越えた本文を WireMalformed で断る(口は 400 malformed で答える)。上から読む読みも値の組の読みも同じ。
+  (for [body [{"table" "parts" "limit" (+ LIST-LIMIT-MAX 1)}
+              {"table" "parts" "limit" (* LIST-LIMIT-MAX 20) "descendingBy" "note"}
+              {"table" "parts" "limit" (+ LIST-LIMIT-MAX 1) "whereAny" {"color" ["red"]}}]]
+    (try
+      (run (decode-request (WireRequest "list-rows" body)))
+      (assert False (.format "上限を越えた一覧の読みを読んだ: {!r}" body))
+      (except [refused WireMalformed]
+        (assert (in (str LIST-LIMIT-MAX) (str refused)) refused))))
+  ;; client の綴りは上限を越えた読みを送らずに断る(memory の置き場が直に答える ListRows は縛らない — 型そのものは作れる)。
+  (try
+    (run (encode-request (ListRows "parts" :limit (+ LIST-LIMIT-MAX 1))))
+    (assert False "上限を越えた一覧の読みを綴った")
+    (except [refused WireMalformed]
+      (assert (in "next_cursor" (str refused)) refused))))

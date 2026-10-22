@@ -11,16 +11,18 @@
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.handlers [await-handler state])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.http_effects [HttpRequest])
-(import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSnapshot ReadMeter counted])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ReadMeter counted])
+(import doeff_core_effects.memory_meter [memory-meter-handler])
+(import doeff_core_effects.compute_effects [ComputeLoad ReadComputeLoad])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.wire [STATUS-OF-ERROR])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records.wire [STATUS-OF-ERROR LIST-LIMIT-MAX])
+(import doeff_records.http_server [records-server-config start-records-server metrics-answer])
 (import tests.interpreters [sim-request-handlers])
 
 ;; 届かない時間枠に送る書きの数(筋書き meter-scenario の q1〜q3)と、届かない状態の理由。
@@ -243,3 +245,75 @@
   (assert (= (len (frozenset statuses)) (len statuses)) STATUS-OF-ERROR)
   (assert (= (get STATUS-OF-ERROR "store-unavailable") 503) STATUS-OF-ERROR)
   (assert (= (get STATUS-OF-ERROR "internal") 500) STATUS-OF-ERROR))
+
+
+;; --- 計算の pool の負荷の系列と一覧の読みの上限(ADR-DOE-RECORDS-002 R6・card ki-42c40cb6014d)-----------------------------------
+;; 反例: 前の形は pool の詰まり(大きな limit の束の読みが pool の全部の thread を塞ぐ)を測る計器を持たず、待ちは要求ごとの区間の秒の
+;; handler と encode に混ざって見分けられなかった。一覧の読みの limit にも上限が無かった。
+
+(defrecord LoadRun
+  "計算の pool の負荷の筋書きを 1 回走らせた読み: before と after = 一覧の読みの前と後の /metrics・listed = 行を返す一覧の読みの status・
+   above = 上限を越えた一覧の読みの status と本文。"
+  (#^ MetricsScrape before)
+  (#^ MetricsScrape after)
+  (#^ int listed)
+  (#^ int above)
+  (#^ str above-text))
+
+
+(defk post-list [url limit]
+  {:pre [(: url str) (: limit int)] :post [(: % HttpResponse)] :tags {:context "records" :role "foundation"}}
+  "表 parts の一覧の読みを limit で 1 件送り、答えを返すため(断りの status も答えとして返す)。"
+  (<- response (HttpRequest "POST" (+ url "/v1/records/list-rows") :headers {"X-Records-Writer" MAKER}
+                            :body {"table" "parts" "limit" limit} :max-retries 0))
+  response)
+
+
+(defk load-scenario [url]
+  {:pre [(: url str)] :post [(: % LoadRun)] :tags {:context "records" :role "foundation"}}
+  "口 url に書きを 2 件 → /metrics → 行を返す一覧の読み → 上限を越えた一覧の読み → /metrics を送るため。"
+  (<- (post-write url "p1"))
+  (<- (post-write url "p2"))
+  (<- before MetricsScrape (scrape url))
+  (<- listed (post-list url 10))
+  (<- above (post-list url (+ LIST-LIMIT-MAX 1)))
+  (<- after MetricsScrape (scrape url))
+  (LoadRun :before before :after after :listed listed.status :above above.status :above-text above.text))
+
+
+(deftest test-metrics-show-the-compute-pool-and-the-wire-refuses-a-list-above-the-cap
+  ;; 検の殻は束の読みの答えの綴りを thread の pool の Compute で回す — 行を返す一覧の読み 1 件の後、待ちの回数(回り始めた計算の数)が
+  ;; 増え、並びと走りの今の値は 0 に戻っている。上限を越えた一覧の読みは 400 malformed で断る(置き場へ渡さない)。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers (SimClock))))))
+  (try
+    (<- seen LoadRun (with_handlers [(await-handler) (http-production-handler)] (load-scenario server.url)))
+    (finally (.close server)))
+  (assert (= seen.listed 200) seen)
+  (assert (= seen.above 400) seen)
+  (assert (in "malformed" seen.above-text) seen.above-text)
+  (for [series ["# HELP records_compute_queued " "# HELP records_compute_running " "# HELP records_compute_wait_seconds "]]
+    (assert (in series seen.before.text) series))
+  (<- started float (grew seen.before seen.after "records_compute_wait_seconds_count"))
+  (assert (>= started 1.0) #(started seen.after.text))
+  (<- queued float (series-count seen.after "records_compute_queued"))
+  (<- running float (series-count seen.after "records_compute_running"))
+  (assert (= #(queued running) #(0.0 0.0)) seen.after.text))
+
+
+(defhandler clogged-pool
+  ;; 計算の pool が塞がった断面(並び 3・走り 2・回り始め 7・待ちの累計 1.5 秒)を答える Compute の答え手の代役 — 塞がった pool の数が
+  ;; /metrics の系列にそのまま出ることを確かめるため。
+  {:tags {:context "records" :role "foundation"}}
+  (ReadComputeLoad []
+    (resume (ComputeLoad :queued 3 :running 2 :started 7 :waited-seconds 1.5))))
+
+
+(deftest test-metrics-name-a-clogged-pool
+  ;; 塞がった pool の負荷は、並びと走りの今の値と、待ちの秒の合計と回数として GET /metrics の本文に出る(拍ごとの差で待ちの平均と
+  ;; 並びの時間の平均を読む)。
+  (<- answer (with_handlers [(state) (memory-meter-handler (MeterSettings)) clogged-pool] (metrics-answer LAW-SCHEMA)))
+  (for [line ["records_compute_queued 3.0" "records_compute_running 2.0" "records_compute_wait_seconds_sum 1.5"
+              "records_compute_wait_seconds_count 7"]]
+    (assert (in line (.splitlines answer.body)) #(line answer.body))))

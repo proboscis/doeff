@@ -98,7 +98,7 @@
 (import doeff_core_effects.process-exit [process-exit-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
 (import doeff_core_effects.scheduler-channel [scheduler-channel-handler])
-(import doeff_core_effects.compute-effects [Compute])
+(import doeff_core_effects.compute-effects [Compute ReadComputeLoad])
 (import doeff_core_effects.thread-pool-compute [thread-pool-compute-handler])
 (import doeff_core_effects.inline-compute [inline-compute-handler])
 (import doeff_core_effects.stop-signal-effects [StopRequested AwaitStop StopBell RaiseStop])
@@ -355,10 +355,10 @@
 
 (defdomain doeff-compute
   :title "Compute 語彙 — 純粋な計算を回して答えを値で受ける"
-  :effects [Compute]
+  :effects [Compute ReadComputeLoad]
   :handlers [thread-pool-compute-handler inline-compute-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "thread-pool-compute-handler(thread の pool)と inline-compute-handler(I/O なし・同期)が答える。")
+  :docs "thread-pool-compute-handler(thread の pool)と inline-compute-handler(I/O なし・同期)が 2 effect 全てに答える。負荷の読み ReadComputeLoad は pool の並び・走り・待ちの秒の累計(I/O なしは常に 0)。")
 
 
 (defdomain doeff-stop-signal

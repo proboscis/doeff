@@ -39,7 +39,8 @@
 ;;;     records_requests_<種>_<status> を doeff の計器の effect CountMetric で 1 つ数える(本文の断りの 400・落ちた時の 500・送りが落ちて
 ;;;     送り直した 500 も同じ 1 か所 — 答えを受け取った呼び手が次に読む /metrics には、その答えがもう入っている)。答え手は serving.meter(None = doeff の
 ;;;     memory-meter-handler — 検は壊した計器を差す)。名の綴りと閉じた系列は wire の ANSWER-METRICS で、起動の時に全部を 0 で置く。GET /metrics は
-;;;     身元を問わず(/readyz と同じく身元を引く前に答える)、ReadMeter の断面を doeff の render-prometheus で Prometheus の text に描く
+;;;     身元を問わず(/readyz と同じく身元を引く前に答える)、ReadMeter の断面に計算の pool の負荷(Compute の答え手の ReadComputeLoad —
+;;;     並び・走り・待ちの秒の累計の系列 records_compute_* — ADR-DOE-RECORDS-002 R6)を足し、doeff の render-prometheus で Prometheus の text に描く
 ;;   - GET /served(#2742)は、動いている process が走っている木の commit と世代(serving.served — 使い手の入口が渡す・無ければ null)と、
 ;;     配っている表の宣言の要約(schema_digest.schema-digests)を答える。身元も表の用意も置き場も問わない(置き場に届かない間も使い手が
 ;;     動いている版を読める)。計器では種 other に数える
@@ -79,6 +80,7 @@
 (import doeff [Program EffectBase run with-handlers])
 (import doeff_core_effects.handlers [await-handler state])
 (import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
+(import doeff_core_effects.compute_effects [ComputeLoad ReadComputeLoad])
 (import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError
                                       Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
@@ -103,7 +105,8 @@
 (import doeff_records.wire [WRITER-HEADER CALLER-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
 (import doeff_records.store_choice [StorePressure PressureUnread])
-(import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation])
+(import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation
+                                         SecondsTotal])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
 (import doeff_core_effects.meter_prometheus [render-prometheus CONTENT-TYPE :as METRICS-CONTENT-TYPE])
 
@@ -115,8 +118,23 @@
 (val PATH-METRICS "/metrics")
 ;; 動いている process の木と配っている表の要約の口(身元を問わず、表の用意と置き場に頼らない — #2742)。
 (val PATH-SERVED "/served")
-;; GET /metrics の # HELP の説明(要求の数の系列 + 区間の秒の系列 — #3688)。表ごとの一覧の読みの系列の説明は宣言の表から足す(metrics-answer)。
-(val METRIC-HELPS (FrozenMap (+ (tuple (.items ANSWER-METRIC-HELPS)) (tuple (.items STAGE-METRIC-HELPS)))))
+;; 計算の pool の負荷の系列(ADR-DOE-RECORDS-002 R6 — 束の読みの行の読み解きと答えの綴りを回す pool の詰まり)。GET /metrics の描きの時に
+;; 答え手の負荷(ReadComputeLoad)を読んで断面に足す(計器へは積まない — with-compute-load): 並びと走りは今の値(gauge)、待ちは回り始めた
+;; 仕事が pool の thread を待った秒の合計と回数(<名>_seconds_sum・_seconds_count — 答え手を組んだ時からの累計)。拍ごとに読んだ 2 つの断面の
+;; 差で、その間の待ちの平均(合計の差 ÷ 回数の差)と、列に並んでいた仕事の数の時間の平均(合計の差 ÷ 拍の秒)が出る — 要求の遅れが跳ねた刻と
+;; 同じ拍で並べて読む。
+(val COMPUTE-QUEUED-METRIC "records_compute_queued")
+(val COMPUTE-RUNNING-METRIC "records_compute_running")
+(val COMPUTE-WAIT-METRIC "records_compute_wait")
+(val COMPUTE-METRIC-HELPS
+  (FrozenMap {COMPUTE-QUEUED-METRIC "束の読みの読み解きと綴りの計算のうち、計算の pool の thread を待って列に並んでいる数(読んだ時の今の値)"
+              COMPUTE-RUNNING-METRIC "計算の pool の thread で回っている束の読みの読み解きと綴りの計算の数(読んだ時の今の値)"
+              COMPUTE-WAIT-METRIC (+ "回り始めた計算が、出されてから計算の pool の thread で回り始めるまで待った秒(合計と回数 — 起動からの累計。"
+                                     "2 回読んだ差の合計 ÷ 回数 = 待ちの平均・合計 ÷ 読みの間の秒 = 列に並んだ数の時間の平均)")}))
+;; GET /metrics の # HELP の説明(要求の数の系列 + 区間の秒の系列 — #3688 + 計算の pool の負荷の系列)。表ごとの一覧の読みの系列の説明は
+;; 宣言の表から足す(metrics-answer)。
+(val METRIC-HELPS (FrozenMap (+ (tuple (.items ANSWER-METRIC-HELPS)) (tuple (.items STAGE-METRIC-HELPS))
+                                (tuple (.items COMPUTE-METRIC-HELPS)))))
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -523,11 +541,25 @@
       (! (refusal-answer ERROR-STORE-UNAVAILABLE (.format "置き場が {} 秒の内に答えない" seconds)))))
 
 
+(defk with-compute-load [snapshot load]
+  {:pre [(: snapshot MeterSnapshot) (: load ComputeLoad)] :post [(: % MeterSnapshot)] :tags {:context "records" :role "entry"}}
+  "計器の断面に計算の pool の負荷の系列(COMPUTE-QUEUED-METRIC・COMPUTE-RUNNING-METRIC・COMPUTE-WAIT-METRIC)を足すため(GET /metrics の
+   描きの時だけ — 計器へは積まない。並びと走りは今の値・待ちは答え手を組んだ時からの累計)。"
+  (MeterSnapshot :counters snapshot.counters
+                 :gauges (.updated snapshot.gauges {COMPUTE-QUEUED-METRIC (float load.queued)
+                                                    COMPUTE-RUNNING-METRIC (float load.running)})
+                 :durations (.updated snapshot.durations {COMPUTE-WAIT-METRIC (SecondsTotal :total load.waited-seconds
+                                                                                            :count load.started)})))
+
+
 (defk metrics-answer [schema]
   {:pre [(: schema RecordsSchema)] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
-  "GET /metrics に答えるため: 計器の断面(ReadMeter)を Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。
-   説明は固定の系列と、宣言の表 schema の一覧の読みの系列と、宣言の列の書きの錠の系列の分(request_timing の lock-metric-helps)。"
-  (<- snapshot MeterSnapshot (ReadMeter))
+  "GET /metrics に答えるため: 計器の断面(ReadMeter)に計算の pool の負荷(ReadComputeLoad — with-compute-load)を足し、Prometheus の text に
+   描く(身元を問わない — 数だけで、行の中身を載せない)。説明は固定の系列と、宣言の表 schema の一覧の読みの系列と、宣言の列の書きの錠の
+   系列の分(request_timing の lock-metric-helps)。"
+  (<- meter MeterSnapshot (ReadMeter))
+  (<- load ComputeLoad (ReadComputeLoad))
+  (<- snapshot MeterSnapshot (with-compute-load meter load))
   (<- list-rows-helps (get FrozenMap str) (list-rows-metric-helps (tuple schema.tables)))
   (<- lock-helps (get FrozenMap str) (lock-metric-helps (tuple schema.streams)))
   (<- text str (render-prometheus snapshot (.updated (.updated METRIC-HELPS list-rows-helps) lock-helps)))
