@@ -65,8 +65,9 @@
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
-                                 TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SubagentTranscript SubagentTranscriptProblem
-                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
+                                 TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
+                                 CallOpened parse-record classify-record recorded-cost subagent-transcript-of whole-lines-end call-step CostMark
+                                 FRESH-MARK])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
@@ -472,16 +473,18 @@
 ;; --- subagent の transcript(card ki-e798888dce4e) ------------------------------------------------------
 ;;
 ;; 背景の task を止めた CLI(argv.hy の PER-TURN-SETTINGS-ENV — 本番の起こし方)は、subagent の API の呼びの行を stdout に出さない(実測
-;; 2.1.292: 出るのは subagent の task の始まり・進み・報せの行だけで、報せの usage は最後の呼びの 4 種 token の和 total_tokens だけ)。
+;; 2.1.292: 出るのは subagent の task の始まり・進み・報せの行だけで、報せの usage は total_tokens などの数だけ)。
 ;; 呼びごとの model と 4 種の token は、CLI が subagent ごとに書く transcript(argv.hy の subagent-transcript-path)にだけ在る。
 ;; CLI は transcript を非同期に書き足し、報せの行を出した時点の file にはまだ最後の呼びの行が無い(実測 2.1.292: 報せの行の 30〜50 ms
 ;; 後に書かれた)。そこで読み手の thread は、task_started の local_agent で subagent の task の id と親の道具の呼びの id を覚え、報せの
-;; 行で報せの total_tokens を控え、CLI の手番の終わり(result の行)を受けた所で、報せを受けた subagent の transcript の伸びた分を読み、
-;; result の行の直前に SubagentTranscript の行として手番の記録へ足す。読んだ最後の呼びの和が報せの total_tokens と合わない・file が
-;; まだ無い間は、CLI が書き終えるのを SUBAGENT-SETTLE-SECONDS まで読み直して待つ(file の書き足しには待てる出来事が無い — 読み手の
-;; thread の中だけで待ち、会話の lock は持たない)。報せの前に process が降りた subagent は on-exit で読む(待たない — 書き手はもう居ない)。
-;; 読めなかった時(file が無い・読めない・書き切っていない)は呼びを載せずに訳を載せ、上の層へ渡す所で log の行
-;; (SUBAGENT-TRANSCRIPT-LOG)に残す。手番の記録を外した会話(ClaudeCodeHost.release)は読んだ所を持ち越さない — 外した後に同じ
+;; 行で報せを受けた印と status を控え、CLI の手番の終わり(result の行)を受けた所で、報せを受けた subagent の transcript の伸びた分を
+;; 読み、result の行の直前に SubagentTranscript の行として手番の記録へ足す。書き切ったかは transcript だけで決める(lines.hy の
+;; subagent-transcript-of — 答え終えた subagent の transcript は閉じた呼びで終わる。報せの total_tokens とは比べない・card
+;; ki-3d45f5857239)。file がまだ無い・書き切っていない間は、CLI が書き終えるのを SUBAGENT-SETTLE-SECONDS まで読み直して待つ(file の
+;; 書き足しには待てる出来事が無い — 読み手の thread の中だけで待ち、会話の lock は持たない)。報せの前に process が降りた subagent は
+;; on-exit で読む(待たない — 書き手はもう居ない)。読みに欠けが在る時(file が無い・読めない行が在る・書き切っていない)も読めた
+;; 呼びは載せ、欠けの訳を添えて、上の層へ渡す所で log の行(SUBAGENT-TRANSCRIPT-LOG)に残す。読み終えた所は改行で閉じた行の終わり
+;; (whole-lines-end)まで進める — 載せた呼びを同じ subagent の続きの読みで 2 度数えない。手番の記録を外した会話(ClaudeCodeHost.release)は読んだ所を持ち越さない — 外した後に同じ
 ;; subagent が続きで報せると、頭から読み直す。
 
 (val SUBAGENT-TRANSCRIPT-LOG "claude CLI の subagent の transcript の読み")
@@ -495,14 +498,14 @@
 
 (defrecord SubagentTask
   "起こした subagent 1 つの、まだ読んでいない transcript: parent = 起こした道具の呼びの id / notified = 報せの行を受けたか /
-   total = 報せの行の total_tokens(最後の呼びの 4 種 token の和 — 書き切ったかを比べる。名乗らなければ None)。"
+   answered = 報せの行が答え終えを名乗ったか(status が SUBAGENT-ANSWERED-STATUS — 書き切った transcript は閉じた呼びで終わる)。"
   (#^ str parent)
   (setv #^ bool notified False)
-  (setv #^ (| int None) total None))
+  (setv #^ bool answered False))
 
 (defrecord SubagentRead
-  "subagent 1 つの transcript の読み: transcript = 手番の記録へ足す行の中身 / read-to = 読み終えた所(byte — 読めなかった時は None で、
-   読んだ所を進めない)。"
+  "subagent 1 つの transcript の読み: transcript = 手番の記録へ足す行の中身 / read-to = 読み終えた所(byte — 改行で閉じた行の終わり。
+   file を開けなかった時は None で、読んだ所を進めない)。"
   (#^ SubagentTranscript transcript)
   (#^ (| int None) read-to))
 
@@ -525,8 +528,8 @@
       (return (unread SubagentTranscriptProblem.ABSENT path)))
     (except [error OSError]
       (return (unread SubagentTranscriptProblem.UNREADABLE (.format "{}: {}" path error)))))
-  (setv transcript (run (subagent-transcript-of agent-id task.parent data task.total)))
-  (SubagentRead :transcript transcript :read-to (if (is transcript.problem None) (+ from-byte (len data)) None)))
+  (SubagentRead :transcript (run (subagent-transcript-of agent-id task.parent data task.answered))
+                :read-to (+ from-byte (run (whole-lines-end data)))))
 
 (defn #^ SubagentRead settled-subagent [#^ str config-dir #^ str canonical-cwd #^ str session-id #^ str agent-id #^ SubagentTask task
                                         #^ int from-byte]
@@ -554,7 +557,7 @@
 
 (defn note-subagent-task [#^ SessionRuntime runtime kind]
   "subagent の task の始まり(task_started の SUBAGENT-TASK-TYPE で、親の道具の呼びの id を名乗る行)を読む相手として覚え、報せの行で
-   報せを受けた印と total_tokens を控えるため(同じ subagent の続きの報せは、読み終えた後でも読む相手に戻す)。会話の lock の中で呼ぶ。"
+   報せを受けた印と答え終えたかを控えるため(同じ subagent の続きの報せは、読み終えた後でも読む相手に戻す)。会話の lock の中で呼ぶ。"
   (when (isinstance kind TaskEvent)
     (cond
       (and (= kind.status "started") (= kind.task-type SUBAGENT-TASK-TYPE) (is-not kind.tool-use-id None))
@@ -563,7 +566,7 @@
       (and (!= kind.status "started") (in kind.task-id runtime.agent-parents))
         (setv (get runtime.unread-subagents kind.task-id)
               (SubagentTask :parent (or kind.tool-use-id (get runtime.agent-parents kind.task-id)) :notified True
-                            :total kind.total-tokens)))))
+                            :answered (= kind.status SUBAGENT-ANSWERED-STATUS))))))
 
 (defn add-subagent-lines [#^ SessionRuntime runtime #^ (| TurnLog None) log #^ datetime at #^ tuple reads]
   "読んだ subagent の transcript を手番の記録の行として足し(手番が走っていれば)、読み終えた所を進めて読む相手から外すため。読み手の
@@ -1153,13 +1156,14 @@
 
 (defk note-unread-subagents [turn page]
   {:pre [(: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
-  "読めなかった subagent の transcript(上の subagent の節 — 呼びを載せない)を、上の層へ渡す所で log の行に残すため(subagent の消費が
-   記録に無い訳を、無かった事と分けて読めるように — card ki-e798888dce4e)。欄は訳の語・手がかり(path・誤りの文)・subagent の task の
-   id と親の道具の呼びの id だけで、transcript の中身は載せない。"
+  "欠けの在る subagent の transcript の読み(上の subagent の節 — 読めた呼びは載せ、欠けの訳を添える)を、上の層へ渡す所で log の行に
+   残すため(subagent の消費が記録に足りない訳を、無かった事と分けて読めるように — card ki-e798888dce4e・ki-3d45f5857239)。欄は訳の
+   語・手がかり(path・誤りの文・欠けた行の数)・載せた呼びの数・subagent の task の id と親の道具の呼びの id だけで、transcript の
+   中身は載せない。"
   (for [line page.lines]
     (when (and (isinstance line.kind SubagentTranscript) (is-not line.kind.problem None))
       (<- (slog SUBAGENT-TRANSCRIPT-LOG :level "warning" :event "unread" :problem line.kind.problem.value :detail line.kind.detail
-                :agent-id line.kind.agent-id :parent-tool-use-id line.kind.parent-tool-use-id
+                :calls (len line.kind.calls) :agent-id line.kind.agent-id :parent-tool-use-id line.kind.parent-tool-use-id
                 :session-id turn.session-id :turn-seq turn.turn-seq))))
   None)
 

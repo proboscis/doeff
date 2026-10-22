@@ -15,7 +15,7 @@
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult TurnResult
-                                 classify-record subagent-transcript-of])
+                                 classify-record jsonl-lines recorded-cost subagent-transcript-of whole-lines-end])
 (import doeff_claude_code.effects [ClaudeStartTurn])
 (import doeff_claude_code.faults [ClaudeDropProcess])
 (import doeff_claude_code.clock [clock-of])
@@ -31,19 +31,22 @@
 (val LATER "2026-10-21T09:34:24.100Z")
 
 (defn line-of [record]
-  (+ (json.dumps record) "\n"))
+  ;; 実物の CLI(JSON.stringify)と同じく、ASCII の外の字を escape せずに書く(U+2028・U+2029・U+0085 も生のまま)。
+  (+ (json.dumps record :ensure-ascii False) "\n"))
 
-(defn assistant [message-id model usage at [content None]]
-  ;; 実物(CLI 2.1.292 の subagent の transcript)と同じ形の assistant の行。
+(defn assistant [message-id model usage at [content None] [stop-reason None]]
+  ;; 実物(CLI 2.1.292 の subagent の transcript)と同じ形の assistant の行。stop-reason = message.stop_reason(実物は呼びの終わりの
+  ;; 後に書く行で end_turn・tool_use などを名乗る)。
   {"type" "assistant" "isSidechain" True "agentId" "a1" "timestamp" at
-   "message" {"id" message-id "model" model "role" "assistant" "content" (or content [{"type" "text" "text" "x"}]) "usage" usage}})
+   "message" {"id" message-id "model" model "role" "assistant" "content" (or content [{"type" "text" "text" "x"}])
+              "stop_reason" stop-reason "usage" usage}})
 
 (val FIRST-USAGE {"input_tokens" 2 "cache_creation_input_tokens" 23566 "cache_read_input_tokens" 0 "output_tokens" 5})
 (val FINAL-USAGE {"input_tokens" 2 "cache_creation_input_tokens" 23566 "cache_read_input_tokens" 0 "output_tokens" 209})
 (val OTHER-USAGE {"input_tokens" 3 "cache_creation_input_tokens" 10 "cache_read_input_tokens" 23566 "output_tokens" 40})
 
-(defn read-of [#^ bytes data [expected None]]
-  (run (subagent-transcript-of "a1" "toolu_parent" data expected)))
+(defn read-of [#^ bytes data [answered False]]
+  (run (subagent-transcript-of "a1" "toolu_parent" data answered)))
 
 
 (deftest test-the-calls-of-a-subagent-transcript-are-folded-per-api-call
@@ -87,37 +90,85 @@
   (val read (read-of (.encode (+ (line-of bare) (line-of bare)) "utf-8")))
   (assert (= (lfor call read.calls call.call-id) [None None]) (repr read)))
 
-(deftest test-a-transcript-is-whole-when-its-last-call-totals-what-the-notification-reported
-  ;; 報せの行の total_tokens は subagent の最後の呼びの 4 種 token の和(実測 2.1.292)。CLI は transcript を報せの後に書き足すので、
-  ;; 最後の呼びの和が合う読みだけを書き切った読みとし、合わない読み(最後の呼びの行がまだ無い)は TRUNCATED で呼びを載せない。
-  (val first-call (line-of (assistant "msg_1" "m" FINAL-USAGE AT)))
-  (val second-call (line-of (assistant "msg_2" "m" OTHER-USAGE LATER)))
-  (val whole (read-of (.encode (+ first-call second-call) "utf-8") (+ 3 10 23566 40)))
-  (assert (= #((len whole.calls) whole.problem) #(2 None)) (repr whole))
-  (val cut-short (read-of (.encode first-call "utf-8") (+ 3 10 23566 40)))
-  (assert (= #(cut-short.calls cut-short.problem) #(#() SubagentTranscriptProblem.TRUNCATED)) (repr cut-short))
-  (assert (in "23619" cut-short.detail) (repr cut-short))
-  (val nothing-yet (read-of b"" 5))
-  (assert (= #(nothing-yet.calls nothing-yet.problem) #(#() SubagentTranscriptProblem.TRUNCATED)) (repr nothing-yet)))
+(deftest test-a-finished-subagent-transcript-is-whole-when-its-last-call-is-closed
+  ;; 答え終えた subagent(報せの status completed)の transcript は、最後の呼びが答えを閉じた(stop_reason が end_turn など)所で書き
+  ;; 切った読み — 報せの行の total_tokens とは比べない(card ki-3d45f5857239)。最後の呼びが道具の答えを待つ(tool_use)・stop_reason を
+  ;; 名乗らない・呼びがまだ無い読みは TRUNCATED(CLI は報せの後に書き足す)で、それでも読めた呼びは載せる(捨てて 0 にしない)。
+  (val first-call (line-of (assistant "msg_1" "m" FINAL-USAGE AT :stop-reason "tool_use")))
+  (val last-call (line-of (assistant "msg_2" "m" OTHER-USAGE LATER :stop-reason "end_turn")))
+  (val whole (read-of (.encode (+ first-call last-call) "utf-8") True))
+  (assert (= #((lfor call whole.calls call.call-id) whole.problem whole.detail) #(["msg_1" "msg_2"] None "")) (repr whole))
+  (val waiting (read-of (.encode first-call "utf-8") True))
+  (assert (= #((lfor call waiting.calls call.call-id) waiting.problem) #(["msg_1"] SubagentTranscriptProblem.TRUNCATED))
+          (repr waiting))
+  (assert (in "closed call" waiting.detail) (repr waiting))
+  (val unnamed (read-of (.encode (line-of (assistant "msg_1" "m" FINAL-USAGE AT)) "utf-8") True))
+  (assert (= #((len unnamed.calls) unnamed.problem) #(1 SubagentTranscriptProblem.TRUNCATED)) (repr unnamed))
+  (val nothing-yet (read-of b"" True))
+  (assert (= #(nothing-yet.calls nothing-yet.problem) #(#() SubagentTranscriptProblem.TRUNCATED)) (repr nothing-yet))
+  ;; CLI が API の誤りで閉じた答え(<synthetic> の行・stop_sequence)も閉じた呼び(呼びには数えない)。
+  (val synthetic (line-of (assistant "msg_s" "<synthetic>" {"input_tokens" 0 "output_tokens" 0} LATER :stop-reason "stop_sequence")))
+  (val failed (read-of (.encode (+ first-call synthetic) "utf-8") True))
+  (assert (= #((len failed.calls) failed.problem) #(1 None)) (repr failed))
+  ;; 答えずに終わった task・報せの前に降りた process の読み(answered 偽)は、閉じていなくても書き手が止めた所までが全部。
+  (val stopped (read-of (.encode first-call "utf-8")))
+  (assert (= #((len stopped.calls) stopped.problem) #(1 None)) (repr stopped)))
+
+(deftest test-a-whole-transcript-keeps-every-call-whatever-total-the-notification-reported
+  ;; 本番の実測の形(2026-10-22 16:24 UTC・session e088fc87…・aj-GWH568QK64FWFDB9G08RG51HFK — 書き切った transcript の最後の行の usage は
+  ;; OTel の api_request と一致したのに、報せの total_tokens は最後の呼びの和より +251〜+1,801 多かった): 読みは報せの値を受けないので、
+  ;; 道具を挟んで呼ぶ subagent の呼びを全部載せる。失敗ケース = 変更前は報せの値と和が合わず TRUNCATED で呼びを全部捨てた。
+  (val usages (lfor n (range 1 14) {"input_tokens" n "cache_creation_input_tokens" (* 100 n) "cache_read_input_tokens" (* 20000 n)
+                                    "output_tokens" (* 7 n)}))
+  (val lines (lfor #(index usage) (enumerate usages)
+                   (line-of (assistant (.format "msg_{}" index) "claude-sonnet-5-5" usage AT
+                                       :stop-reason (if (= index (- (len usages) 1)) "end_turn" "tool_use")))))
+  (val read (read-of (.encode (.join "" lines) "utf-8") True))
+  (assert (= #((len read.calls) read.problem) #(13 None)) (repr read))
+  (assert (= (lfor call read.calls call.usage.cache-read-input-tokens) (lfor usage usages (get usage "cache_read_input_tokens")))
+          (repr read.calls)))
+
+(deftest test-a-line-with-a-line-separator-inside-a-json-string-is-one-line
+  ;; JSON の文字列の中に生の U+2028・U+2029・U+0085(str.splitlines が割る字 — 実物の CLI は escape しない)を持つ行も 1 行として読む
+  ;; (失敗ケース = 変更前は splitlines で割れて「a line of the transcript is not a JSON object」の UNREADABLE になり、呼びを全部捨てた —
+  ;; 本番 agent-a20aa06… の U+2028 4 つ)。
+  (val web [{"type" "text" "text" "web の本文 次の段 終わり\u0085"}])
+  (val data (.encode (+ (line-of {"type" "user" "timestamp" AT "message" {"role" "user" "content" web}})
+                        (line-of (assistant "msg_1" "m" FINAL-USAGE AT web "end_turn")))
+                     "utf-8"))
+  (assert (in (.encode " " "utf-8") data))
+  (val read (read-of data True))
+  (assert (= #((lfor call read.calls call.call-id) read.problem) #(["msg_1"] None)) (repr read))
+  ;; 割りの 1 か所(jsonl-lines)は改行だけで割り、空白だけの行を落とす。本体の transcript(recorded-cost の読み)も同じ割り。
+  (val text (.decode data "utf-8"))
+  (assert (= (lfor line (run (jsonl-lines (+ text "\n  \n"))) (get (json.loads line) "type")) ["user" "assistant"]))
+  (val main (+ text (line-of {"type" "cost-state" "totalCostUSD" 1.5 "note" "a b"})))
+  (assert (= (. (run (recorded-cost main)) total-usd) 1.5)))
+
+(deftest test-the-reader-stops-at-the-end-of-the-last-whole-line
+  ;; 読み終えた所は改行で閉じた行の終わり(書きの途中の行は次の読みで頭から読む — 載せた呼びを 2 度数えない)。
+  (assert (= (lfor data [b"" b"ab" b"ab\n" b"ab\ncd" (.encode "あ\nい" "utf-8")] (run (whole-lines-end data))) [0 0 3 3 4])))
+
+(deftest test-a-read-with-a-gap-keeps-the-calls-it-read-and-names-the-gap
+  ;; 失敗ケース: 最後の行が途中で切れた・途中の行が JSON でない・UTF-8 でない・呼びの行が時差つきの刻を名乗らない transcript も、
+  ;; 読めた行の呼びは載せ(捨てて 0 にしない — card ki-3d45f5857239)、欠けの訳と手がかりを添える。読めない行の呼びは発明しない。
+  (val good (line-of (assistant "msg_1" "m" FINAL-USAGE AT)))
+  (val other (line-of (assistant "msg_2" "m" OTHER-USAGE LATER)))
+  (val cases [#((.encode (+ good (.rstrip other "\n")) "utf-8") SubagentTranscriptProblem.TRUNCATED ["msg_1"])
+              #((.encode (+ good "{\"type\": \"assistant\", \"cut\n" other) "utf-8") SubagentTranscriptProblem.UNREADABLE ["msg_1" "msg_2"])
+              #((+ (.encode good "utf-8") b"\xff\xfe\n" (.encode other "utf-8")) SubagentTranscriptProblem.UNREADABLE ["msg_1" "msg_2"])
+              #((.encode (+ good (line-of (assistant "msg_2" "m" FINAL-USAGE "2026-10-21T09:34:23"))) "utf-8")
+                SubagentTranscriptProblem.UNREADABLE ["msg_1"])
+              #((.encode (line-of (assistant "msg_1" "m" FINAL-USAGE "")) "utf-8") SubagentTranscriptProblem.UNREADABLE [])])
+  (for [#(data problem ids) cases]
+    (val read (read-of data))
+    (assert (= #((lfor call read.calls call.call-id) read.problem) #(ids problem)) (repr #(data read)))
+    (assert read.detail (repr read))))
 
 (deftest test-an-empty-read-has-no-calls-and-no-problem
   ;; 前の報せの後に伸びた分が無い読み(続きの報せ)は、呼びの無い読み(読めなかった事ではない)。
   (val read (read-of b""))
   (assert (= #(read.calls read.problem) #(#() None)) (repr read)))
-
-(deftest test-an-unreadable-transcript-carries-no-calls-and-names-why
-  ;; 失敗ケース: 最後の行が途中で切れた・途中の行が JSON でない・UTF-8 でない・呼びの行が時差つきの刻を名乗らない transcript は、
-  ;; 途中まで読めた呼びも載せず(呼びを発明しない)、読めなかった訳を載せる。
-  (val good (line-of (assistant "msg_1" "m" FINAL-USAGE AT)))
-  (val cases [#((.encode (+ good (.rstrip good "\n")) "utf-8") SubagentTranscriptProblem.TRUNCATED)
-              #((.encode (+ good "{\"type\": \"assistant\", \"cut\n" good) "utf-8") SubagentTranscriptProblem.UNREADABLE)
-              #((+ (.encode good "utf-8") b"\xff\xfe\n") SubagentTranscriptProblem.UNREADABLE)
-              #((.encode (line-of (assistant "msg_1" "m" FINAL-USAGE "2026-10-21T09:34:23")) "utf-8") SubagentTranscriptProblem.UNREADABLE)
-              #((.encode (line-of (assistant "msg_1" "m" FINAL-USAGE "")) "utf-8") SubagentTranscriptProblem.UNREADABLE)])
-  (for [#(data problem) cases]
-    (val read (read-of data))
-    (assert (= #(read.calls read.problem) #(#() problem)) (repr #(data read)))
-    (assert read.detail (repr read))))
 
 (deftest test-the-task-lines-name-the-subagent-and-its-parent-call
   ;; 実物(CLI 2.1.292・本番と同じ引数で偽の API へ向けた実測)の subagent の task の始まりと報せの行: task の id(= transcript の file の
@@ -160,7 +211,9 @@
 (deftest test-a-subagent-call-is-read-from-its-transcript-before-the-turn-result [tmp-path]
   ;; 替え玉の CLI は本番の CLI と同じく subagent の呼びの行を stdout に出さず、transcript に書く。handler は subagent の task の報せの
   ;; 後の CLI の手番の終わり(result の行)の直前に SubagentTranscript の行を 1 つ足し、その呼び(実 model・4 種 token — 出力は最後の
-  ;; 値・呼びの id・親の道具の呼び・呼びの刻)を運ぶ。失敗ケース = 変更前は subagent の呼びがどの行にも無い。
+  ;; 値・呼びの id・親の道具の呼び・呼びの刻)を運ぶ。失敗ケース = 変更前は subagent の呼びがどの行にも無い。替え玉の報せの total_tokens
+  ;; は本番の実測の形で最後の呼びの和より多く(+1,801)、答えの本文は JSON の文字列の中に生の U+2028 を持つ — どちらでも呼びを捨てない
+  ;; (失敗ケース = card ki-3d45f5857239 の前は、報せの値と合わない TRUNCATED・U+2028 で割れた UNREADABLE で呼びを全部捨てた)。
   (<- done (with_handlers [(sync-time-handler) slog-discard-handler (claude-code-handler (host-of))] (tool-turn (spec-with tmp-path))))
   (assert (isinstance done.end Completed) (repr done.end))
   (val found (subagent-lines done))
@@ -171,6 +224,7 @@
   (assert (isinstance (get kinds (+ at 1)) TurnResult) (repr kinds))
   (val notified (lfor #(index kind) (enumerate kinds) :if (and (isinstance kind TaskEvent) (= kind.status "completed")) index))
   (assert (and notified (< (get notified 0) at)) (repr kinds))
+  (assert (> (. (get kinds (get notified 0)) total-tokens) (+ 1 0 50000 900)) (repr kinds))
   (assert (any (gfor kind (cut kinds 0 at) (isinstance kind ToolResult))) (repr kinds))
   (val transcript line.kind)
   (assert (= #(transcript.parent-tool-use-id transcript.problem line.raw) #("toolu_stub" None "")) (repr transcript))
@@ -184,22 +238,25 @@
   (assert (= call.at.tzinfo timezone.utc) (repr call)))
 
 
-(deftest test-an-unreadable-subagent-transcript-carries-no-calls-and-leaves-a-log-line [tmp-path]
-  ;; 失敗ケース: transcript が無い・途中で切れた・途中の行が壊れた時は、呼びを発明せず(calls は空)、訳を行に載せ、上の層へ渡す所で
-  ;; log の行(SUBAGENT-TRANSCRIPT-LOG・event unread)に訳と手がかりを残す。無い・切れた transcript は CLI が書き終えるのを待つ上限
-  ;; (SUBAGENT-SETTLE-SECONDS)まで読み直してから訳を載せる。手番そのものは成功のまま。
-  (for [#(shape problem) [#("absent" SubagentTranscriptProblem.ABSENT) #("truncated" SubagentTranscriptProblem.TRUNCATED)
-                          #("broken" SubagentTranscriptProblem.UNREADABLE)]]
+(deftest test-a-subagent-transcript-with-a-gap-carries-the-calls-it-read-and-leaves-a-log-line [tmp-path]
+  ;; 失敗ケース: transcript が無い・途中で切れた・途中の行が壊れた時は、読めない行の呼びを発明せず、読めた行の呼びは載せ(捨てて 0 に
+  ;; しない — card ki-3d45f5857239)、訳を行に載せ、上の層へ渡す所で log の行(SUBAGENT-TRANSCRIPT-LOG・event unread)に訳と手がかりと
+  ;; 載せた呼びの数を残す。無い・切れた transcript は CLI が書き終えるのを待つ上限(SUBAGENT-SETTLE-SECONDS)まで読み直してから訳を
+  ;; 載せる。手番そのものは成功のまま。切れた transcript の呼びは、閉じた行(呼びの途中の出力 3)の値で載る。
+  (for [#(shape problem outputs) [#("absent" SubagentTranscriptProblem.ABSENT [])
+                                  #("truncated" SubagentTranscriptProblem.TRUNCATED [3])
+                                  #("broken" SubagentTranscriptProblem.UNREADABLE [900])]]
     (val case-path (/ tmp-path shape))
     (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler (host-of))]
                 (Listen (tool-turn (spec-with case-path shape)) :types #(SlogEffect))))
     (val done (get heard 0))
     (assert (isinstance done.end Completed) (repr done.end))
     (val found (subagent-lines done))
-    (assert (= (lfor line found #(line.kind.calls line.kind.problem)) [#(#() problem)]) (repr found))
+    (assert (= (lfor line found #((lfor call line.kind.calls call.usage.output-tokens) line.kind.problem)) [#(outputs problem)])
+            (repr found))
     (val logged (lfor effect (get heard 1) :if (= effect.msg SUBAGENT-TRANSCRIPT-LOG) effect.kwargs))
-    (assert (= (lfor kwargs logged #((.get kwargs "event") (.get kwargs "problem") (.get kwargs "parent_tool_use_id")))
-               [#("unread" problem.value "toolu_stub")])
+    (assert (= (lfor kwargs logged #((.get kwargs "event") (.get kwargs "problem") (.get kwargs "calls") (.get kwargs "parent_tool_use_id")))
+               [#("unread" problem.value (len outputs) "toolu_stub")])
             (repr logged))
     (assert (.get (get logged 0) "detail") (repr logged))))
 

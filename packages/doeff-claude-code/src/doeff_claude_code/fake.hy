@@ -26,7 +26,8 @@
                                  ModelWindow ModelUsage model-cost-gap merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
                                  HookNotice HookPhase SubagentTranscript SUBAGENT-TASK-TYPE
-                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed])
+                                 ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed jsonl-lines])
+(import doeff [run])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -762,7 +763,7 @@
   (when (or (is carry None) (in key world.transcripts)) (return None))
   (cond
     (isinstance carry Rebuilt)
-      (setv (get world.transcripts key) (lfor line (.splitlines carry.jsonl-text) :if (.strip line) line))
+      (setv (get world.transcripts key) (list (run (jsonl-lines carry.jsonl-text))))
     (isinstance carry LinkFromHome)
       (do
         (setv source (transcript-of world carry.source-home cwd session-id))
