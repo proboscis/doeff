@@ -249,7 +249,7 @@
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory memory-relabel])
 (import doeff_core_effects.handlers [slog-discard-handler])
 
 (import doeff_hy.table [Table TableWrite table-of])
@@ -342,7 +342,7 @@
   (assert (= (. (.row (! (jobs-placed later secret T)) "secret") worker) "at-work"))
   ;; 届くようになり label が外れていれば、見張りがそれを伝えた歩で外す。
   (setv kube.down False)
-  (.relabel kube "node-company" {})
+  (<- (memory-relabel kube "node-company" {}))
   (<- back ClusterState (tick-with cut-off kube (+ later 1000)))
   (assert (= (. (.row back.workers "at-work") derived) #())))
 

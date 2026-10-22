@@ -21,7 +21,7 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker DeclareRollout ReadCoordinator ProcessesOf SIM-START-MS])
 (import doeff_cluster.coordinator.intent.kube_model [FollowDeployments])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows follow-wait])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows follow-wait follows-nodes])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 
@@ -133,6 +133,6 @@
   (val kube (KubeMemory {} {"n1" {"zone" "a"}}))
   (setv kube.stalled-until-ms 5000)
   (val follows (MemoryFollows))
-  (.follow-nodes follows kube #("n1") 1000)
+  (<- (follows-nodes follows kube #("n1") 1000))
   (<- wait (| float None) (follow-wait kube follows None 1000))
   (assert (= wait 4.0) wait))
