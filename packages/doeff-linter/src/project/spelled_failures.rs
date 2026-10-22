@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use super::layers::TagReading;
 use super::rule::ProjectRule;
-use super::smells::{failure_types_key, failure_types_of_source, has_failure_declaration_spelling, FailureLookup, FailureTypes, FAILURE_TYPES_KIND};
+use super::smells::{failure_types_key, failure_types_of_source, has_failure_declaration_spelling, EffectOutcomes, FailureLookup, FailureTypes, FAILURE_TYPES_KIND};
 use super::spelling::Spelling;
 use super::{facts_cache, hy_files};
 
@@ -70,20 +70,34 @@ impl<'a> SpelledFailures<'a> {
     }
 }
 
+impl SpelledFailures<'_> {
+    /// `qualified`(型か effect の名)の最後の段を綴る宣言の file から集めた宣言(同じ名は 2 度集めない)。
+    fn declared_for(&self, qualified: &str) -> Arc<FailureTypes> {
+        let name = qualified.rsplit('.').next().unwrap_or(qualified);
+        let known = self.memo.lock().expect("失敗の型の memo").get(name).map(Arc::clone);
+        known.unwrap_or_else(|| {
+            let collected = Arc::new(crate::timing::timed("failure-types", || self.declared_with(name)));
+            self.memo.lock().expect("失敗の型の memo").insert(name.to_string(), Arc::clone(&collected));
+            collected
+        })
+    }
+}
+
 impl FailureLookup for SpelledFailures<'_> {
     fn is_failure(&self, qualified: &str) -> bool {
         // 規則が無効なら宣言を集めない(全体の実行の `failure_types_for` と同じ)。
         if !self.enabled.contains(&ProjectRule::FailureRethrow) {
             return false;
         }
-        let name = qualified.rsplit('.').next().unwrap_or(qualified);
-        let known = self.memo.lock().expect("失敗の型の memo").get(name).map(Arc::clone);
-        let types = known.unwrap_or_else(|| {
-            let collected = Arc::new(crate::timing::timed("failure-types", || self.declared_with(name)));
-            self.memo.lock().expect("失敗の型の memo").insert(name.to_string(), Arc::clone(&collected));
-            collected
-        });
-        types.contains(qualified)
+        self.declared_for(qualified).contains(qualified)
+    }
+
+    fn effect_outcomes(&self, qualified_effect: &str) -> Option<EffectOutcomes> {
+        // DOEFF175 が無効なら effect ごとの宣言を集めない(全体の実行の `failure_types_for` と同じ)。
+        if !self.enabled.contains(&ProjectRule::StaleOutcomeBranch) {
+            return None;
+        }
+        self.declared_for(qualified_effect).effect_outcomes(qualified_effect)
     }
 }
 

@@ -59,11 +59,42 @@ impl Smell {
     }
 }
 
+/// 1 つの effect が defeffect で不在(`:absent`)・失敗(`:failure`)と宣言した型(module まで含めた名・mangle 済み)。
+/// `<-` と `!` はこの型を答えの値として束ねず、Absent / Raise として逃がす(ADR-DOE-CORE-EFFECTS-003 R5)。DOEFF175 が引く。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EffectOutcomes {
+    pub absent: BTreeSet<String>,
+    pub failure: BTreeSet<String>,
+}
+
+impl EffectOutcomes {
+    /// 型(module まで含めた名)が不在と宣言されていれば `Absent`、失敗と宣言されていれば `Failure`(宣言が無ければ None)。
+    pub fn declared(&self, qualified: &str) -> Option<DeclaredAs> {
+        if self.absent.contains(qualified) {
+            Some(DeclaredAs::Absent)
+        } else if self.failure.contains(qualified) {
+            Some(DeclaredAs::Failure)
+        } else {
+            None
+        }
+    }
+}
+
+/// 宣言の種類(defeffect の `:absent` か `:failure`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclaredAs {
+    Absent,
+    Failure,
+}
+
 /// 失敗の型の集合(module まで含めた名・mangle 済み — `controllers.core.kanban_write_rules.Refusal`)— 宣言から集める。
 /// 型の名から推し量らない。同じ名の型が別の module にあっても、宣言した方だけが失敗の型になる。
+/// `effects` は defeffect ごとの宣言(module まで含めた effect の名 → 不在と失敗の型)— DOEFF175 が使う。
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FailureTypes {
     names: BTreeSet<String>,
+    #[serde(default)]
+    effects: BTreeMap<String, EffectOutcomes>,
 }
 
 /// 名を解く材料 — file の module の綴りと、import の束縛(名 → module)。
@@ -93,18 +124,25 @@ impl Scope<'_> {
 pub trait FailureLookup {
     /// module まで含めた名が失敗の型か。
     fn is_failure(&self, qualified: &str) -> bool;
+
+    /// module まで含めた名の effect が defeffect で不在・失敗と宣言した型(宣言が無い effect・effect でない名は None)。
+    fn effect_outcomes(&self, qualified_effect: &str) -> Option<EffectOutcomes>;
 }
 
 impl FailureLookup for FailureTypes {
     fn is_failure(&self, qualified: &str) -> bool {
         self.contains(qualified)
     }
+
+    fn effect_outcomes(&self, qualified_effect: &str) -> Option<EffectOutcomes> {
+        self.effects.get(qualified_effect).cloned()
+    }
 }
 
 impl FailureTypes {
     /// module まで含めた名の列から作る(検のため)。
     pub fn of(names: &[&str]) -> Self {
-        FailureTypes { names: names.iter().map(|n| n.to_string()).collect() }
+        FailureTypes { names: names.iter().map(|n| n.to_string()).collect(), effects: BTreeMap::new() }
     }
 
     /// module まで含めた名が失敗の型か。
@@ -115,6 +153,11 @@ impl FailureTypes {
     /// 別の集合を足す。
     pub fn extend(&mut self, other: FailureTypes) {
         self.names.extend(other.names);
+        for (effect, outcomes) in other.effects {
+            let merged = self.effects.entry(effect).or_default();
+            merged.absent.extend(outcomes.absent);
+            merged.failure.extend(outcomes.failure);
+        }
     }
 
     /// 宣言の数(報告のため)。
@@ -124,7 +167,7 @@ impl FailureTypes {
 
     /// 空か。
     pub fn is_empty(&self) -> bool {
-        self.names.is_empty()
+        self.names.is_empty() && self.effects.is_empty()
     }
 }
 
@@ -166,6 +209,7 @@ pub fn failure_types_in(source: &str, scope: Scope<'_>) -> FailureTypes {
     let forms = reader.read_all();
     let hy = Hy { src: source };
     let mut names = BTreeSet::new();
+    let mut effects: BTreeMap<String, EffectOutcomes> = BTreeMap::new();
     let mut pending: Vec<&Form> = forms.iter().collect();
     while let Some(form) = pending.pop() {
         let Some(items) = live(form) else { continue };
@@ -181,15 +225,22 @@ pub fn failure_types_in(source: &str, scope: Scope<'_>) -> FailureTypes {
             }
             Some("defeffect") => {
                 let Some(contract) = items[2..].iter().take(2).find(|f| f.is_brace()) else { continue };
+                let mut outcomes = EffectOutcomes::default();
                 for key in [":failure", ":absent"] {
                     let types = hy.dict_value(contract, key).and_then(|v| v.bracket_items()).map(live_items).unwrap_or_default();
-                    names.extend(types.into_iter().filter_map(|t| hy.symbol(t)).map(|t| scope.qualify(t)));
+                    let qualified: BTreeSet<String> = types.into_iter().filter_map(|t| hy.symbol(t)).map(|t| scope.qualify(t)).collect();
+                    names.extend(qualified.iter().cloned());
+                    if key == ":failure" { outcomes.failure = qualified } else { outcomes.absent = qualified }
+                }
+                // effect ごとの宣言(DOEFF175 — どの effect がどの型を不在・失敗と宣言したか)。
+                if let (Some(effect), false) = (items.get(1).and_then(|n| hy.symbol(n)), outcomes.absent.is_empty() && outcomes.failure.is_empty()) {
+                    effects.insert(format!("{}.{}", scope.module, hy_mangle(effect)), outcomes);
                 }
             }
             _ => {}
         }
     }
-    FailureTypes { names }
+    FailureTypes { names, effects }
 }
 
 /// 1 つの source の臭いを全部拾う。`shape_checks` は DOEFF121 を当てるか(判断の層の file だけ)。scope は match の腕の型を解くため。

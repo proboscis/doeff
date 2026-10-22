@@ -54,6 +54,7 @@ pub mod effect_census;
 pub mod field_holders;
 pub mod env_branch;
 pub mod match_field_names;
+pub mod stale_outcome_branches;
 pub mod retired;
 pub mod blind;
 pub mod allowed_heads;
@@ -680,6 +681,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .map(|source| {
                                     let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
                                     found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
+                                    found.extend(judge_stale_branches(file, &source, definitions, enabled, &failure));
                                     // defk が 1 つも無い repo は、素の呼びも引数の呼びも当たらない(集合が空 — 1 file の実行は名指す module だけの集合なので、
                                     // 空でも他の module に defk が在りうる。ここで外すのは全体の実行だけ)。
                                     if !defks.is_empty() {
@@ -853,6 +855,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     };
                     let failure = spelled_failures::SpelledFailures::new(root, enabled, &definitions.tags);
                     found.extend(crate::timing::timed("single.smells", || judge_smells(&file, source, settings, definitions, enabled, &failure)));
+                    found.extend(crate::timing::timed("single.stale-branches", || judge_stale_branches(&file, source, definitions, enabled, &failure)));
                     let defks = crate::timing::timed("defk-names", || bare_calls::defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     found.extend(crate::timing::timed("single.bare-calls", || judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields)));
@@ -4516,6 +4519,7 @@ fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
     if enabled.iter().any(|rule| rule.is_smell())
         || enabled.contains(&ProjectRule::DefkCalledBare)
         || enabled.contains(&ProjectRule::EffectsDisagreeWithInference)
+        || enabled.contains(&ProjectRule::StaleOutcomeBranch)
     {
         return true;
     }
@@ -4735,7 +4739,8 @@ fn line_and_previous(source: &str, offset: usize) -> (String, String) {
 /// 含む file だけを読み、宣言の型は file の import と module で module まで含めた名に解く。読めない file は飛ばす。
 fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &layers::TagReading) -> smells::FailureTypes {
     let mut all = smells::FailureTypes::default();
-    if !enabled.contains(&ProjectRule::FailureRethrow) {
+    // 失敗の型は DOEFF122、effect ごとの宣言は DOEFF175 が引く — どちらも無効なら宣言を集めない。
+    if !enabled.contains(&ProjectRule::FailureRethrow) && !enabled.contains(&ProjectRule::StaleOutcomeBranch) {
         return all;
     }
     // file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋を印に含めて file ごとに覚え、
@@ -5118,6 +5123,47 @@ fn program_params_for(
 /// DOEFF121 の問いを当てる定義の種類(関数と handler)。
 fn is_judgment_kind(kind: DefinitionKind) -> bool {
     matches!(kind, DefinitionKind::Defk | DefinitionKind::Deff | DefinitionKind::Defn | DefinitionKind::DefnAsync | DefinitionKind::Defp | DefinitionKind::Defpp)
+}
+
+/// DOEFF175: 宣言を切り替えた effect の古い分岐(effect が不在・失敗と宣言した型を、その答えを束ねた変数に対して値として分ける枝)を判じる。
+/// 定義の規則の母集団(定義の置き場と検の置き場)の Hy の file 全部が対象 — 検の呼び手も effect の切り替えで古くなる。重さは error(critical)。
+fn judge_stale_branches(
+    file: &SourceFile,
+    source: &str,
+    definitions: &settings::DefinitionSettings,
+    enabled: &BTreeSet<ProjectRule>,
+    failure: &dyn smells::FailureLookup,
+) -> Vec<Draft> {
+    if !enabled.contains(&ProjectRule::StaleOutcomeBranch) || !(is_definition_file(&file.rel, definitions) || is_test_file(&file.rel, definitions)) {
+        return Vec::new();
+    }
+    let lines = LineIndex::new(source);
+    let module = module_of(&file.rel);
+    let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
+    stale_outcome_branches::stale_branches_in(source, smells::Scope { module: &module, bindings: &facts.bindings }, failure)
+        .into_iter()
+        .map(|branch| Draft {
+            rule: ProjectRule::StaleOutcomeBranch,
+            layer: None,
+            rel: file.rel.clone(),
+            path: file.path.clone(),
+            range: lines.range(branch.span.start, branch.span.end),
+            message: format!(
+                "{} の {} — {} は {} を{}と宣言した。<- は {} に {} を束ねないので、この枝({})は通らない — maybe / on-raise / :absent へ",
+                file.rel,
+                branch.definition,
+                branch.effect,
+                branch.ty,
+                branch.declared_word(),
+                branch.subject,
+                branch.ty,
+                branch.form.word()
+            ),
+            detail: Some(branch.detail()),
+            base: Severity::Error,
+            explain: Explain::StaleBranch { branch },
+        })
+        .collect()
 }
 
 /// DOEFF121〜125: 業務の Hy の file の臭いを判じる(重さの既定は warning — Absent / Raise が本線に入ったので info から上げた(ADR-DOE-HY-007 R9)。

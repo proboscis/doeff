@@ -107,6 +107,7 @@ skip_test_functions = true
 | DOEFF128 | Unreadable Hy File | 規則が読む Hy の file を読み取り器が最後まで読めない(有効な規則に関わらず error — 違反が欠けているのを黙らせない) |
 | DOEFF126 | defk Called Bare | defk の答えを値として使う所(比べ・演算・組み込みの関数・method・条件・繰り返しの元・record の欄)で defk を素で呼ぶ(error) |
 | DOEFF127 | Effects Disagree With Inference | `:effects` を書いた defk が、宣言に無い effect を起こす(位置 = 経由した呼び)か、宣言した effect を起こさない(位置 = `:effects` の中の名)(warning) |
+| DOEFF175 | Stale Branch On A Declared Absent Or Failure | defeffect が `:absent` / `:failure` で宣言した型を、その effect の答えを束ねた変数(`(<- x (E …))`・`(val x (! (E …)))`)に対して match の腕・isinstance(型の tuple・cond の枝も)で値として分ける古い分岐(critical・登録簿で下げない — `<-` はその型を束ねないので枝は通らない。maybe / on-raise / `:absent` へ) |
 | DOEFF130 | Translation Emits Intent | 翻訳の層(既定 protocol)の handler — defhandler と `[effect k]` を受ける関数 — が業務の intent(既定 層 intent の型)を出す。import した defk の先まで辿る(上限は `translation_effects.max_depth`)(error・仕様 21 節) |
 | DOEFF120 | JsonValue Outside Wire Modules | JsonValue・JsonObject を使ってよいのは汎用の解き手と、architecture.hy の `:wire-modules` に挙げた foundation の送受信の module だけ |
 
