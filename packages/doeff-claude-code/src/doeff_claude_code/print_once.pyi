@@ -18,6 +18,7 @@ from doeff_claude_code.effects import PrintLimited as PrintLimited
 from doeff_claude_code.effects import PrintTimedOut as PrintTimedOut
 from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
 from doeff_claude_code.lines import TurnResult as TurnResult
+from doeff_claude_code.lines import jsonl_lines as jsonl_lines
 from doeff_claude_code.lines import parse_record as parse_record
 from doeff_claude_code.lines import classify_record as classify_record
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within

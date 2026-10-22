@@ -65,6 +65,8 @@ from doeff_claude_code.lines import ModelRefusalHit as ModelRefusalHit
 from doeff_claude_code.lines import STOP_REASON_REFUSAL as STOP_REASON_REFUSAL
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
 from doeff_claude_code.lines import CallClosed as CallClosed
+from doeff_claude_code.lines import jsonl_lines as jsonl_lines
+from doeff import run as run
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
 from doeff_claude_code.dialogue import model_refusal_after as model_refusal_after
