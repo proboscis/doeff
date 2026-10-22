@@ -18,7 +18,7 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import doeff [with_handlers])
+(import doeff [EffectBase Program with_handlers])
 (import doeff_vm [UnhandledEffect])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects.handlers [state])
@@ -26,6 +26,7 @@
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.foundation.host_contract [environ-table-reader])
+(import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure])
 (import doeff_cluster.foundation.in_cluster_api [CLUSTER-API SERVICE-ACCOUNT-CA-PATH ClusterCaMissing cluster-ca-answer in-cluster-api-routed])
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-CA-FILE SERVICE-ACCOUNT-TOKEN-FILE supplied-directory
@@ -352,3 +353,29 @@
     (except [error ClusterCaMissing]
       (:= raised error)))
   (assert (and (isinstance raised ClusterCaMissing) (in ABSENT-CA (str raised)) (in url (str raised))) raised))
+
+
+(defk routed-foundation [body]
+  {:pre [(: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "外側の答え手の代役の内側に in-cluster-api-routed(CA の file は在らない)を並べ、その下で body を走らせる土台(閉じの検に束ねる)。"
+  (<- answer (with_handlers [(outer-client) (in-cluster-api-routed CLUSTER-API ABSENT-CA)] body))
+  answer)
+
+
+(defk api-request-under [foundation]
+  {:pre [(: foundation Callable)] :post [(: % (| HttpResponse HttpFailed))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "土台 foundation の下で API server 宛ての要求を 1 本出す job(閉じの検が in-cluster-api-routed の先を読む所)。"
+  (<- answer (| HttpResponse HttpFailed) (foundation (HttpRequest "GET" (+ CLUSTER-API "/api") :max-retries 0 :failures-as-values True)))
+  answer)
+
+
+(deftest test-the-closure-reading-follows-the-routed-request-and-the-ca-connected-body
+  ;; 失敗ケース(card ki-0b68af4154d6): 閉じの解析(foundation-closure)は in-cluster-api-routed の先を、節が受けた要求を routed-answer へ
+  ;; 渡して <- で外側へ渡し直す所(in_cluster_api.hy の request)と、in-cluster-api-connected が引数の body を区画の CA の client の
+  ;; with-handlers の本体に渡す所(同 body)まで追う。追えないと使い手の起動の閉じの検が「yielded a value that is not a call」で赤になる
+  ;; (merge-queue の閉じの検 6 本 — 古い解析器が入っていた)。外側へ渡し直した要求は外側の代役が答え、CA の client が出す effect だけが残る。
+  (<- closure FoundationClosure (foundation-closure api-request-under :foundation routed-foundation))
+  (assert (= #(closure.unknown closure.unresolved) #(#() #())) closure)
+  (assert (= (sorted (gfor g closure.gaps (get (.split g " ← ") 0))) ["doeff_core_effects.effects.Await" "doeff_core_effects.effects.SlogEffect"])
+          closure.gaps)
+  (assert (all (gfor g closure.gaps (in "verify=cluster_ca" g))) closure.gaps))
