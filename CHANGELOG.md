@@ -4,6 +4,13 @@
 
 ### Changed
 
+- **Breaking (doeff-hy):** `<-` and `!` refuse, when they expand, an expression whose value can be a plain literal —
+  `None`, `True`, `False`, a number, a string, a keyword, or a list / tuple / dict / set literal — written as the
+  expression itself, as a branch of `if`, as a value of `cond` (nested too), or as a `when` / `unless` (its value is
+  `None` when the test fails). Such a bind yields the literal whenever that branch is taken, and the VM stops the run
+  with `TypeError: yield got None …`. The refusal is a `SyntaxError` that names the literal and the fix: wrap the
+  value in `Pure` (`(<- x (if c (Pure None) (f)))`), or bind it without `<-` (`val`). A literal elsewhere, such as an
+  argument of a call (`(<- x (f (if c None 1)))`), is not refused.
 - **Breaking:** a handler is a `def (effect, k)` marked with `@handler`, which makes it a `@do` function, and nothing
   else (ADR-DOE-CORE-003). Write `@handler` alone on the `def`: `@handler @do` is deprecated — it still runs, and the
   repository's semgrep refuses it outside the tests. `handler(f)` makes a `def` a `@do` function, takes a `@do`

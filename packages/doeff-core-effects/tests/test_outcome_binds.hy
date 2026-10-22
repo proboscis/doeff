@@ -339,6 +339,32 @@
   (assert (in "知らない鍵" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)")))))
 
 
+(deftest test-bind-refuses-a-plain-value-in-the-value-position
+  ;; agora-controllers の card ki-de00c871fa53: (<- split (if (is existing None) None (observe-split …))) が、行の無い card で
+  ;; 素の None を yield し、VM が TypeError(yield got None)で落とした。値の位置(式そのもの・if の枝・cond の値の枝・
+  ;; when / unless の外れ)に字面の値を持つ束ねは、<- でも ! でも展開の時に断る。
+  (val head "(require doeff-hy.macros [<- do!]) (fn [c] ")
+  (val bad #(#("(<- x (if c None (f))) x)" "字面の値 None")
+             #("(<- x None) x)" "字面の値 None")
+             #("(<- x (if c (f) (if c (g) []))) x)" "字面の値 []")
+             #("(<- x (cond c (f) True False)) x)" "字面の値 False")
+             #("(<- (when c (f))))" "字面の値 (when c (f))")
+             #("(<- x {\"a\" 1}) x)" "Pure {\"a\" 1}")
+             #("(do! (+ 1 (! (if c 0 (g))))))" "束ねる式の値の位置に字面の値 0")))
+  (for [#(body said) bad]
+    (val refused (! (expansion-refusal (+ head body))))
+    (assert (in said refused) #(body refused)))
+  ;; 値を Pure で包んだ枝・字面の値が値の位置でない(呼びの引数)式・どの枝も Program の式は通る。
+  (val clean #("(<- x (if c (Pure None) (f))) x)"
+               "(<- x (f (if c None 1))) x)"
+               "(<- x (cond c (f) True (Pure False))) x)"
+               "(<- x (if c (g) (f))) x)"
+               "(do! (+ 1 (! (if c (Pure 0) (g))))))"))
+  (for [body clean]
+    (val passed (! (expansion-refusal (+ head body))))
+    (assert (= passed "") #(body passed))))
+
+
 (defk open-value [value]
   {:pre [(: value (| Ok Err Some (type Nothing)))] :post [(: % int)]
    :tags {:context "outcomes-test" :role "program"}}

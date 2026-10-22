@@ -57,7 +57,7 @@
 (import threading)
 (import time)
 (import uuid)
-(import doeff [run])
+(import doeff [Pure run])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
@@ -1056,7 +1056,7 @@
   (<- since-launch-ms (elapsed-ms log.launched-at now))
   (<- line-at-ms (wall-ms-of claimed.text.at))
   (val stream-start claimed.stream-start)
-  (<- stream-start-at-ms (if (is stream-start None) None (wall-ms-of stream-start.at)))
+  (<- stream-start-at-ms (if (is stream-start None) (Pure None) (wall-ms-of stream-start.at)))
   (<- after-stream-start-ms (wall-elapsed-ms (if (is stream-start None) None stream-start.at) claimed.text.at))
   (<- (slog CLI-TIMING-LOG :level "info" :event "first-text" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :line-at-ms line-at-ms :stream-start-at-ms stream-start-at-ms :after-stream-start-ms after-stream-start-ms

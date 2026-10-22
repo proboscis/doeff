@@ -17,6 +17,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import queue)
 (import typing [Protocol])
+(import doeff [Pure])
 (import doeff_hy.wire [parse Malformed])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.frozen [freeze-json-text thaw-json])
@@ -198,7 +199,7 @@
   (if (isinstance result KubeReadFailed)
       (NodeLabelsUnreadable :error result.error :at at)
       (do (val opened (thaw-json (freeze-json-text result.body.text)))
-          (<- labels (| (get Mapping #(str object)) None) (if (isinstance opened dict) (node-labels-view opened) None))
+          (<- labels (| (get Mapping #(str object)) None) (if (isinstance opened dict) (node-labels-view opened) (Pure None)))
           (if (is labels None)
               (NodeLabelsUnreadable :error "k8s の Node の答えが object でないか、label が object でない" :at at)
               (do (<- table (get Table str) (node-labels-table labels))

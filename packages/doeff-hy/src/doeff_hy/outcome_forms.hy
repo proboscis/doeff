@@ -16,7 +16,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import hy)
-(import hy.models [Expression Symbol Keyword List Tuple Dict FString FComponent Sequence Object])
+(import hy.models [Expression Symbol Keyword String List Tuple Dict Set FString FComponent Sequence Object Bytes Integer Float Complex])
 
 
 (defrecord SplitBind
@@ -62,6 +62,42 @@
       _ False)))
 
 
+;; 束ねる式の値の位置に書くと、yield した時に VM が TypeError(yield got …)で落とす字面の値の形
+;; (agora-controllers の card ki-de00c871fa53 — `(<- x (if c None (f)))` が c の時に素の None を yield した)。
+(setv PLAIN-VALUE-SYMBOLS #{"None" "True" "False"})
+
+
+(deff plain-value-of [expr]  ; defk にできない: macro の展開の時に呼ぶ関数
+  {:pre [(: expr Object)] :post [(: % (| Object None))]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "束ねる式 expr(`<-` の式・`!` の中身)の値になりうる字面の値 1 つ(無ければ None)— effect でも Program でもない値を
+   yield する束ねを展開の時に断るため。見るのは値の位置だけ: 式そのもの・if の 2 つの枝・cond の値の枝(入れ子も)。
+   when / unless は条件が外れると None になるので、式ごと返す。"
+  (let [head (head-name expr)
+        branches (match head
+                   "if" (cut expr 2 None)
+                   "cond" (cut expr 2 None 2)
+                   _ #())]
+    (match expr
+      (Symbol) :if (in (str expr) PLAIN-VALUE-SYMBOLS) expr
+      (| (Keyword) (String) (FString) (Bytes) (Integer) (Float) (Complex) (List) (Tuple) (Dict) (Set)) expr
+      (Expression) :if (in head #{"when" "unless"}) expr
+      (Expression) (next (gfor branch branches :setv found (plain-value-of branch) :if (is-not found None) found) None)
+      _ None)))
+
+
+(deff plain-value-refusal [expr]  ; defk にできない: macro の展開の時に呼ぶ関数
+  {:pre [(: expr Object)] :post [(: % (| str None))]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "束ねる式 expr の値の位置に字面の値が在れば断りの文、無ければ None — 束ねの形を作る open-form(<- と ! が通る 1 点)が
+   SyntaxError にする。"
+  (let [found (plain-value-of expr)]
+    (when (is-not found None)
+      (+ "<- / !: 束ねる式の値の位置に字面の値 " (source-of found) " が在る — effect でも Program でもない値を yield すると、"
+         "実行の時に TypeError(yield got …)で落ちる。値をそのまま束ねるなら (Pure " (source-of found)
+         ") で包むか、束ねずに val で置く: " (source-of expr)))))
+
+
 (deff split-absent [form]  ; defk にできない: macro の展開の時に呼ぶ関数
   {:pre [(: form Expression)] :post [(: % SplitBind)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
@@ -96,7 +132,12 @@
    `_doeff_outcomes`・HELPERS-NAME)。在れば `__import__` の代わりにその名で引く(1 回の束ねの `__import__` 約 0.2µs を
    消す — agora-redesign #844 の案 a)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。
    helpers は名の文字列で受け、差し込む所ごとに新しい Symbol を作る — 展開のあいだで 1 つの model を使い回すと、
-   locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる(agora-redesign #1004)。"
+   locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる(agora-redesign #1004)。
+   値の位置に字面の値を持つ式(`(if c None (f))` など)は、その枝で素の値を yield して実行の時に落ちるので、形を作る前に断る
+   (card ki-de00c871fa53)。"
+  (let [refused (plain-value-refusal expr)]
+    (when (is-not refused None)
+      (raise (SyntaxError refused))))
   (let [module (if (is helpers None) (hy.gensym "outcomes") (Symbol helpers))
         bound (hy.gensym "bound")
         imported (if (is helpers None)

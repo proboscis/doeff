@@ -1,7 +1,7 @@
 ;;; Test: duplicate bind names + index-based stage-of
 (require doeff-hy.macros [defk defp defhandler <-])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase run])
+(import doeff [EffectBase Pure run])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -14,7 +14,7 @@
   {:pre [] :post [(: % dict)]}
   (<- data (FetchRaw))
   (<- data (Enrich :data data))
-  (<- signal {"signal" data})
+  (<- signal (Pure {"signal" data}))
   signal)
 
 ;; Mock handlers — 節の外の effect は defhandler が外の handler へ渡す
