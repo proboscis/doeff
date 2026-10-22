@@ -89,10 +89,17 @@
 
 (defclass [(dataclass :frozen True)] FakeReply []
   "筋書きの 1 手番の返事: text = 最後の本文・tool-seconds = 道具が走る秒数(0 = 道具なし)・
+   tool-repeats = 同じ道具を続けて呼ぶ回数(1 以上・既定 1)。偽の CLI は道具の結果の直後に同じ道具(同じ名と命令 tool-input)をまた
+   呼び、呼びと結果の対を tool-repeats 組出す — どの呼びも tool-seconds 秒走る(道具の秒の和は tool-repeats × tool-seconds)。呼びの id は
+   1 番目が FAKE-TOOL-USE-ID、2 番目からは FAKE-TOOL-USE-ID-<n>(n = 2, 3, …)で、結果の行は同じ id を名指す(道具の task の id も同じ
+   付け方)。最後の結果の後は 1 回の手番と同じく本文か筋書きの終わりへ進む。上の層が模擬で、同じ命令を何度も走らせる長い手番(sleep 110 を
+   10 回 — card ki-85761baedba4)を数える事を確かめるため。2 以上は道具を走らせる手番(tool-seconds が正)だけで、許可の問い
+   (needs-permission)と subagent(subagent-transcript)とは組まない(どちらも最初の呼びだけの筋書き)・
    needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
    BackendLost(detail = この文)で終わる(fail・lose・account-refusal・model-refusal は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
    cost-usd = Completed / Failed に載せる手番の額(USD — 本番の handler が累積の額の差から数える値の代わり。None = 名乗らない)・
-   lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番)・
+   lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番 — 道具を続けて
+   呼ぶ手番の期限は最初の呼びの期限)・
    think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)・
    interrupt-receipt = この手番の CLI の process が init で interrupt_receipt_v1 を名乗るか(本物の handler は手番ごとに process を
    起こす)。偽 = 止めるは SIGINT の形で、読まれていない注入を捨てた入力(dropped-refs)として終える — 本物の対話の解釈
@@ -148,6 +155,8 @@
    ため。None = 名乗らない(欄も None — 今の形)。lose の無い手番は断る。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
+  ;; 同じ道具を続けて呼ぶ回数(どの呼びも tool-seconds 秒走る)。
+  (setv #^ int tool-repeats 1)
   (setv #^ bool needs-permission False)
   (setv #^ (| str None) fail None)
   (setv #^ (| str None) lose None)
@@ -205,6 +214,14 @@
     (when (and (is-not self.subagent-transcript None) (!= self.subagent-transcript.parent-tool-use-id FAKE-TOOL-USE-ID))
       (raise (ValueError (.format "FakeReply の subagent-transcript の親は偽の手番の道具の呼び {}: {!r}" FAKE-TOOL-USE-ID
                                   self.subagent-transcript.parent-tool-use-id))))
+    (when (< self.tool-repeats 1)
+      (raise (ValueError (+ "FakeReply の tool-repeats は 1 以上(道具を続けて呼ぶ回数): " (str self.tool-repeats)))))
+    (when (and (> self.tool-repeats 1) (<= self.tool-seconds 0))
+      (raise (ValueError (.format "FakeReply の tool-repeats が 2 以上は道具を走らせる手番だけ(tool-seconds が正): tool-repeats {} / tool-seconds {}"
+                                  self.tool-repeats self.tool-seconds))))
+    (when (and (> self.tool-repeats 1) (or self.needs-permission (is-not self.subagent-transcript None)))
+      (raise (ValueError (+ "FakeReply の tool-repeats が 2 以上の手番は needs-permission・subagent-transcript と組まない"
+                            "(許可の問いと subagent は最初の呼びだけの筋書き): tool-repeats " (str self.tool-repeats)))))
     (when (< self.lines 0)
       (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))
     (when (< self.deltas 0)
@@ -237,7 +254,9 @@
 
 (defclass FakeTurn []
   "fake の手番 1 つ: phase = quick / tool / permission / text(最後の本文を差分で書いている — 期限 due-at は確定の本文を出す時刻)/ done・
-   permission = 答え待ちの許可の問いの id(無ければ None)・text = 最後の本文(text の相に入る時に決まる)・deltas-emitted = 出した差分の片の数・
+   permission = 答え待ちの許可の問いの id(無ければ None)・tools-run = この手番で呼んだ道具の数(呼びの行を出した数 — 返事の
+   tool-repeats に届くまで、結果の直後に同じ道具を続けて呼ぶ。今の呼びは tools-run 番目)・text = 最後の本文(text の相に入る時に決まる)・
+   deltas-emitted = 出した差分の片の数・
    end = 手番の終わり(まだなら None)・bells = 出来事の読み(ClaudeReadTurnEvents)の待ち手が掛けた呼び鈴(新しい行か終わりで鳴らして外す)・
    last-call-usage・last-call-model・model-windows = 出した行から数えた本体の最後の呼びと窓(終わりに載せる — 本番の状態機械と同じ規則)。"
   (defn __init__ [self #^ int seq #^ float started-at #^ FakeReply reply #^ (get tuple #(str ...)) refs]
@@ -252,6 +271,7 @@
     (setv #^ int self.deltas-emitted 0)
     (setv #^ (get list FakeInjection) self.injections [])
     (setv #^ (| str None) self.permission None)
+    (setv #^ int self.tools-run 0)
     (setv #^ (get list ClaudeStreamLine) self.lines [])
     (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
     (setv #^ (get tuple #((get ExternalPromise None) ...)) self.bells #())
@@ -589,20 +609,53 @@
                                                              (! (stderr-tail-within reply.lose-stderr)))))))
   None)
 
-(defk task-lines-of [#^ FakeReply reply #^ bool started]
-  {:pre [(: reply FakeReply) (: started bool)] :post [(: % list)] :tags {:context "claude-code" :role "foundation"}}
-  "道具を走らせる偽の手番の、道具の task の始まり(started)か終わりの行を、本番と同じ形で出すため。subagent を走らせる手番
-   (subagent-transcript が在る)は本物の CLI 2.1.292 と同じく subagent の task(id = transcript の agent-id・親 = 道具の呼び・始まりは
-   SUBAGENT-TASK-TYPE)の行(本番の handler が足す transcript の読みの行は、emit が次の result の行の直前に出す — FakeTurn の
-   subagent-due)。走らせない手番は FAKE-TASK-ID の行だけ。"
+(defk repeated-id [#^ str base #^ int call]
+  {:pre [(: base str) (: call int) (>= call 1)] :post [(: % str)] :tags {:context "claude-code" :role "foundation"}}
+  "偽の手番の道具の呼び call 番目(1 から)の id(tool_use の id と道具の task の id)を決める 1 か所 — 同じ道具を続けて呼ぶ手番
+   (返事の tool-repeats)の呼びと結果の対を見分けるため。1 番目は base のまま(呼びが 1 回の手番の行は今までと同じ)、2 番目からは
+   base-<call>。"
+  (if (= call 1) base (.format "{}-{}" base call)))
+
+(defk tool-call-lines-of [#^ FakeReply reply #^ int call]
+  {:pre [(: reply FakeReply) (: call int)] :post [(: % list)] :tags {:context "claude-code" :role "foundation"}}
+  "偽の手番の道具の呼び call 番目(1 から)の行を、本物の CLI と同じ順で出すため: 命令の差分(tool-input-deltas)を出す返事は、道具の
+   block の始まり(content_block_start の tool_use — 呼びの id と道具の名・#3974 の 3)→ 命令を書いている間の差分(input_json_delta の行)、
+   最後に呼びの行。命令は返事の tool-input(許可の問いも同じ命令を問う — 本物の CLI の can_use_tool の input は tool_use の input)。"
+  (<- use-id (repeated-id FAKE-TOOL-USE-ID call))
+  (+ (if (> reply.tool-input-deltas 0)
+         [(PartialMessage :tool-start (ToolCall use-id FAKE-TOOL-NAME))]
+         [])
+     (lfor _ (range reply.tool-input-deltas)
+           (PartialMessage :delta DeltaKind.TOOL-INPUT :tool-input-delta FAKE-TOOL-INPUT-PIECE))
+     [(AssistantMessage :tool-calls #((ToolCall use-id FAKE-TOOL-NAME reply.tool-input)))]))
+
+(defk task-lines-of [#^ FakeReply reply #^ int call #^ bool started]
+  {:pre [(: reply FakeReply) (: call int) (: started bool)] :post [(: % list)] :tags {:context "claude-code" :role "foundation"}}
+  "道具を走らせる偽の手番の、道具の呼び call 番目(1 から)の task の始まり(started)か終わりの行を、本番と同じ形で出すため。subagent を
+   走らせる手番(subagent-transcript が在る — 呼びは 1 回だけ)は本物の CLI 2.1.292 と同じく subagent の task(id = transcript の
+   agent-id・親 = 道具の呼び・始まりは SUBAGENT-TASK-TYPE)の行(本番の handler が足す transcript の読みの行は、emit が次の result の行の
+   直前に出す — FakeTurn の subagent-due)。走らせない手番は FAKE-TASK-ID(2 番目からの呼びは repeated-id の付け方)の行だけ。"
   (val transcript reply.subagent-transcript)
   (cond
     (is transcript None)
-      [(TaskEvent FAKE-TASK-ID (if started "started" "completed"))]
+      [(TaskEvent (! (repeated-id FAKE-TASK-ID call)) (if started "started" "completed"))]
     started
       [(TaskEvent transcript.agent-id "started" :tool-use-id FAKE-TOOL-USE-ID :task-type SUBAGENT-TASK-TYPE)]
     True
       [(TaskEvent transcript.agent-id "completed" :tool-use-id FAKE-TOOL-USE-ID)]))
+
+(defk call-tool [#^ FakeSession session #^ FakeTurn turn #^ float now]
+  {:pre [(: session FakeSession) (: turn FakeTurn) (: now float)] :post [(: % (type None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "道具の呼びを 1 つ始めて道具を走らせる相(tool)に入るため: 呼びの数(tools-run)を 1 つ進め、期限を now から返事の tool-seconds 後に
+   置き、その呼びの行と道具の task の始まりの行を出す(結果の行は期限に advance が出す)。手番の最初の呼びも、返事の tool-repeats で
+   続けて呼ぶ 2 番目からの呼びも同じ形。"
+  (val call (+ turn.tools-run 1))
+  (setv turn.tools-run call turn.phase "tool" turn.due-at (+ now turn.reply.tool-seconds))
+  (<- called (tool-call-lines-of turn.reply call))
+  (<- started (task-lines-of turn.reply call True))
+  (<- (emit-all session turn (+ called started)))
+  None)
 
 (defk advance [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
   {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
@@ -612,14 +665,20 @@
     (<- (emit-due-lines session turn now)))
   (when (and (in turn.phase #("quick" "tool")) (>= (+ now CLOCK-TICK) turn.due-at))
     (when (= turn.phase "tool")
-      ;; 本物の CLI 2.1.292 の順: task の報せ → 道具の結果。subagent の transcript の読みは、本番の handler と同じく次の result の行の
-      ;; 直前に出す(emit)。
-      (<- ended (task-lines-of turn.reply False))
+      ;; 本物の CLI 2.1.292 の順: task の報せ → 道具の結果(今の呼び — tools-run 番目 — の id を名指す)。subagent の transcript の
+      ;; 読みは、本番の handler と同じく次の result の行の直前に出す(emit)。
+      (<- ended (task-lines-of turn.reply turn.tools-run False))
+      (<- answered (repeated-id FAKE-TOOL-USE-ID turn.tools-run))
       (setv turn.subagent-due turn.reply.subagent-transcript)
-      (<- (emit-all session turn (+ ended [(ToolResult :answers #((ToolAnswer :id FAKE-TOOL-USE-ID :text turn.reply.tool-output
+      (<- (emit-all session turn (+ ended [(ToolResult :answers #((ToolAnswer :id answered :text turn.reply.tool-output
                                                                                :is-error turn.reply.tool-error)))]))))
-    (if (scripted-end? turn.reply)
+    (cond
+      ;; 返事の tool-repeats に届くまで、結果の直後に同じ道具を続けて呼ぶ(相は tool のまま・期限は今から tool-seconds 後)。
+      (and (= turn.phase "tool") (< turn.tools-run turn.reply.tool-repeats))
+        (<- (call-tool session turn now))
+      (scripted-end? turn.reply)
         (<- (end-scripted session turn))
+      True
         (<- (begin-text world session turn now))))
   (when (= turn.phase "text")
     (<- (emit-due-deltas session turn now))
@@ -659,26 +718,17 @@
   (<- (emit-all session turn (+ (if (> reply.thinking-deltas 0) [(PartialMessage :thinking-start True)] [])
                                 (lfor _ (range reply.thinking-deltas)
                                       (PartialMessage :delta DeltaKind.THINKING :thinking-delta FAKE-THINKING-PIECE)))))
-  ;; 道具の呼び: 命令は返事の tool-input(許可の問いも同じ命令を問う — 本物の CLI の can_use_tool の input は tool_use の input)。
-  ;; 呼びの行の直前に、命令を書いている間の差分(input_json_delta の行)を出す。
-  (val call (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME reply.tool-input))
-  ;; 差分の前に、本物の CLI と同じく道具の block の始まり(content_block_start の tool_use — 呼びの id と道具の名)を 1 行(#3974 の 3)。
-  (val call-lines (+ (if (> reply.tool-input-deltas 0)
-                         [(PartialMessage :tool-start (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME))]
-                         [])
-                     (lfor _ (range reply.tool-input-deltas)
-                           (PartialMessage :delta DeltaKind.TOOL-INPUT :tool-input-delta FAKE-TOOL-INPUT-PIECE))
-                     [(AssistantMessage :tool-calls #(call))]))
+  ;; 道具の呼び(tool-call-lines-of — 最初の呼び): 許可の問いを出す手番は呼びの行の後に同じ命令の許可の問いを出して答えを待ち、
+  ;; ほかの道具の手番はそのまま道具を走らせる(call-tool — 続けて呼ぶ 2 番目からの呼びは advance が始める)。
   (cond
     reply.needs-permission
       (do
         (setv request-id (str (uuid.uuid4)))
-        (setv turn.phase "permission" turn.permission request-id)
+        (setv turn.phase "permission" turn.permission request-id turn.tools-run 1)
+        (<- call-lines (tool-call-lines-of reply 1))
         (<- (emit-all session turn (+ call-lines [(PermissionRequested request-id FAKE-TOOL-NAME reply.tool-input)]))))
     (> reply.tool-seconds 0)
-      (do
-        (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
-        (<- (emit-all session turn (+ call-lines (! (task-lines-of reply True)))))))
+      (<- (call-tool session turn now)))
   turn)
 
 

@@ -1,6 +1,6 @@
-;;; fake の handler だけが持つ筋書きの口(FakeReply の fail・lose・usage・lines・deltas と、検の口 ClaudeForgetSession・world.restarted)の検。
-;;; 上の層(doeff-agents の adapter と、その上の業務の模擬)が本番の翻訳 handler の下で、失敗の終わり・途中で消える process・usage・行数の多い本文・
-;;; 家を空にした形・process の作り直しを fake で起こすための口。本物の CLI に同じ振る舞いを起こす宣言は無いので、fake の世界を
+;;; fake の handler だけが持つ筋書きの口(FakeReply の fail・lose・usage・lines・deltas・tool-repeats と、検の口 ClaudeForgetSession・
+;;; world.restarted)の検。上の層(doeff-agents の adapter と、その上の業務の模擬)が本番の翻訳 handler の下で、失敗の終わり・途中で消える
+;;; process・usage・行数の多い本文・同じ道具を続けて呼ぶ長い手番・家を空にした形・process の作り直しを fake で起こすための口。本物の CLI に同じ振る舞いを起こす宣言は無いので、fake の世界を
 ;;; この file の中で組む(3 つの解釈器で同じ筋書きを走らせる test_scenarios.hy とは別)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [with_handlers Program EffectBase Ask])
@@ -497,3 +497,84 @@
     (var refused False)
     (try (bad) (except [ValueError] (:= refused True)))
     (assert refused)))
+
+
+;; --- 同じ道具を続けて呼ぶ手番(tool-repeats)— card ki-85761baedba4 ------------------------------------------------
+
+(val REPEATED-SECONDS 110.0)
+(val REPEATS 3)
+(val REPEATED-COMMAND "sleep 110")
+;; 読みの上限の秒(道具の秒の和 REPEATS × REPEATED-SECONDS より長い)。
+(val REPEATED-TIMEOUT 600.0)
+;; 仮想の時計の上の刻の比べの許し(秒)。
+(val CLOCK-SLACK 0.01)
+
+(defk repeated-reply [#^ str text #^ tuple memory]
+  {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)] :tags {:context "claude-code" :role "judgment"}}
+  "同じ道具(命令 REPEATED-COMMAND)を REPEATS 回続けて呼び、どの呼びも REPEATED-SECONDS 秒走ってから本文 text を返す手番の返事 —
+   上の層の模擬が同じ命令を何度も走らせる長い手番を数える材料(tool-repeats)の口を見るため。"
+  (FakeReply text :tool-seconds REPEATED-SECONDS :tool-repeats REPEATS :tool-input {"command" REPEATED-COMMAND} :tool-output "slept"))
+
+(defk run-repeated [#^ str text]
+  {:pre [(: text str)] :post [(: % TurnRecord)] :tags {:context "claude-code" :role "program"}}
+  "新しい会話で同じ道具を続けて呼ぶ手番を 1 つ走らせ、終わりまで読む(読みの上限は道具の秒の和より長い REPEATED-TIMEOUT 秒)。"
+  (<- started (begin text (FreshSession (new-id))))
+  (<- record (read-to-end started.turn REPEATED-TIMEOUT))
+  record)
+
+(deftest test-a-turn-calls-the-same-tool-repeatedly-and-each-call-runs-its-seconds
+  ;; tool-repeats の返事: 同じ道具(同じ名と命令)の呼びと結果の対を tool-repeats 組、呼び 1 つごとに tool-seconds 秒ずつ出す — 呼びは
+  ;; 仮想の 0・110・220 秒、結果は 110・220・330 秒。呼びの id はどれも違い(1 番目は今までと同じ fake-tool)、結果は同じ順に同じ id を
+  ;; 名指す。道具の task も呼びごとに別の id で始まって終わる。最後の結果の後に返事の本文で Completed(上の層が「sleep 110 を何度も
+  ;; 走らせる手番」を数える材料 — card ki-85761baedba4)。
+  (<- record TurnRecord (on-fake (FakeClaudeWorld :respond repeated-reply) (run-repeated "repeated")))
+  (assert (isinstance record.end Completed) (repr record.end))
+  (assert (= record.end.result-text "repeated") (repr record.end))
+  (val origin (. (get record.lines 0) at))
+  (val calls (lfor line record.lines :if (and (isinstance line.kind AssistantMessage) line.kind.tool-calls) line))
+  (val results (lfor line record.lines :if (isinstance line.kind ToolResult) line))
+  (val call-ids (lfor line calls call line.kind.tool-calls call.id))
+  (val answers (lfor line results answer line.kind.answers answer))
+  (assert (= call-ids ["fake-tool" "fake-tool-2" "fake-tool-3"]) call-ids)
+  (assert (= (lfor answer answers answer.id) call-ids) answers)
+  (assert (= (lfor answer answers #(answer.text answer.is-error)) (* [#("slept" False)] REPEATS)) answers)
+  (assert (= (lfor line calls call line.kind.tool-calls #(call.name (get call.input "command")))
+             (* [#("Bash" REPEATED-COMMAND)] REPEATS))
+          calls)
+  ;; 刻: 呼び k(0 から)は k × 110 秒、その結果は (k + 1) × 110 秒。
+  (val call-times (lfor line calls (.total-seconds (- line.at origin))))
+  (val result-times (lfor line results (.total-seconds (- line.at origin))))
+  (val want-calls (lfor k (range REPEATS) (* k REPEATED-SECONDS)))
+  (val want-results (lfor k (range REPEATS) (* (+ k 1) REPEATED-SECONDS)))
+  (assert (all (gfor #(got want) (zip call-times want-calls) (< (abs (- got want)) CLOCK-SLACK))) #(call-times want-calls))
+  (assert (all (gfor #(got want) (zip result-times want-results) (< (abs (- got want)) CLOCK-SLACK))) #(result-times want-results))
+  ;; 並び: 呼び → 結果 を 3 組、その後に最後の本文(最後の結果の刻)。
+  (val kinds (lfor line record.lines line.kind))
+  (val tool-order (lfor kind kinds :if (or (isinstance kind ToolResult) (and (isinstance kind AssistantMessage) kind.tool-calls))
+                        (type kind)))
+  (assert (= tool-order (* [AssistantMessage ToolResult] REPEATS)) tool-order)
+  (val final-index (.index kinds (AssistantMessage :text "repeated")))
+  (val last-result-index (max (lfor #(index kind) (enumerate kinds) :if (isinstance kind ToolResult) index)))
+  (assert (< last-result-index final-index) kinds)
+  (assert (< (abs (- (.total-seconds (- (. (get record.lines final-index) at) origin)) (* REPEATS REPEATED-SECONDS))) CLOCK-SLACK)
+          (. (get record.lines final-index) at))
+  ;; 道具の task は呼びごとに別の id(1 番目は今までと同じ fake-task)。
+  (assert (= (lfor kind (kinds-of record.lines lines.TaskEvent) #(kind.task-id kind.status))
+             [#("fake-task" "started") #("fake-task" "completed") #("fake-task-2" "started") #("fake-task-2" "completed")
+              #("fake-task-3" "started") #("fake-task-3" "completed")])
+          (kinds-of record.lines lines.TaskEvent)))
+
+(deftest test-tool-repeats-out-of-range-or-mixed-with-first-call-scripts-are-refused
+  ;; 続けて呼ぶ回数は 1 以上(0 は断る)。2 以上は道具を走らせる手番(tool-seconds が正)だけで、最初の呼びだけの筋書き(許可の問い・
+  ;; subagent)と組まない。既定は 1(呼びは 1 回 — 今までの手番)。
+  (for [bad [(fn [] (FakeReply "x" :tool-seconds 1.0 :tool-repeats 0))
+             (fn [] (FakeReply "x" :tool-seconds 1.0 :tool-repeats -1))
+             (fn [] (FakeReply "x" :tool-repeats 2))
+             (fn [] (FakeReply "x" :tool-seconds 1.0 :tool-repeats 2 :needs-permission True))
+             (fn [] (FakeReply "x" :tool-seconds 1.0 :tool-repeats 2
+                               :subagent-transcript (lines.SubagentTranscript :agent-id "agent-1" :parent-tool-use-id "fake-tool")))]]
+    (var refused False)
+    (try (bad) (except [ValueError] (:= refused True)))
+    (assert refused))
+  (assert (= (. (FakeReply "x") tool-repeats) 1))
+  (assert (= (. (FakeReply "x" :tool-seconds 1.0 :tool-repeats 2) tool-repeats) 2)))
