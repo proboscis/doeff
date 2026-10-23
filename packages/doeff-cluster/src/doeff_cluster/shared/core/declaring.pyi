@@ -9,5 +9,5 @@ from doeff_cluster.shared.core.service_rules import foundation_needs_refusal as 
 from doeff_cluster.shared.intent.service_model import RecordArgument as RecordArgument
 from doeff_cluster.shared.intent.service_model import System as System
 
-def declaring_refusal(build: Callable, foundation: Callable | RecordArgument, system: System, revision: str) -> _Program[str | None, object]:
+def declaring_refusal(build: Callable[..., object], foundation: Callable[..., object] | RecordArgument, system: System, revision: str) -> _Program[str | None, object]:
     ...
