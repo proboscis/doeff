@@ -597,3 +597,12 @@ fn format_strings_skip_strings_and_brackets_inside_replacement_fields() {
     reader.read_all();
     assert!(!reader.issues.is_empty());
 }
+
+#[test]
+fn defrecord_field_names_are_definitions_not_references() {
+    let file = index("(import app.board [old-serving])\n(defrecord Obs (#^ int old-serving) #^ str other bare)\n(defk use [] (old-serving))\n");
+    let lines: Vec<_> = file.references.iter().filter(|r| r.name == "old-serving").map(|r| r.range.start.line).collect();
+    // 欄の宣言(1 行目)は参照でない — import(0 行目)と呼ぶ側(2 行目)だけが残る。
+    assert_eq!(lines, vec![0, 2]);
+    assert!(file.definitions.iter().any(|d| d.name == "old-serving" && d.container.as_deref() == Some("Obs")));
+}
