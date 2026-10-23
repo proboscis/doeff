@@ -82,6 +82,7 @@ from doeff_events.effects.notices import (
     ProbeBroker,
     SubscribeChannels,
 )
+from doeff_events.handlers._kept_readers import KeptReaders
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Generator
@@ -486,15 +487,35 @@ def _client(url: str, repeats: int, timeout_seconds: float, *, calls_end: bool) 
 
 @do
 def _subscribed(
-    receiving: "Redis", effect: SubscribeChannels, readers: dict[str, _KeptReader], silence_seconds: float
+    receiving: "Redis", effect: SubscribeChannels, readers: KeptReaders[_KeptReader], silence_seconds: float
 ) -> "EffectGenerator[_Listening | _Failed]":
-    """Make one subscription: ``SUBSCRIBE`` its Pub/Sub channels (when it has any), and for its kept channels set
-    the reader's positions at the streams' ends where the reader has none yet (a later subscription of the same
-    reader goes on where it was)."""
+    """Make one subscription: ``SUBSCRIBE`` its Pub/Sub channels (when it has any), and for its kept channels take
+    a reader state (``KeptReaders.attach`` — a closed subscription's of the same name, or a fresh one) and set its
+    positions at the streams' ends where it has none yet. A subscription that cannot be made gives the state back."""
     subscription = ChannelSubscription(effect.channels, effect.kept, effect.reader)
-    reader: _KeptReader | None = None
-    if effect.reader is not None:
-        reader = readers.setdefault(effect.reader, _KeptReader())
+    name = effect.reader
+    reader = readers.attach(name) if name is not None else None
+    made = yield _reading(receiving, effect, subscription, reader, silence_seconds)
+    if isinstance(made, _Failed):
+        if name is not None and reader is not None:
+            readers.returned(name, reader)
+        return made
+    if reader is not None:
+        readers.held(subscription, reader)
+    return made
+
+
+@do
+def _reading(
+    receiving: "Redis",
+    effect: SubscribeChannels,
+    subscription: ChannelSubscription,
+    reader: _KeptReader | None,
+    silence_seconds: float,
+) -> "EffectGenerator[_Listening | _Failed]":
+    """The server's part of a subscription: the kept streams' ends for a reader that has no position yet, then
+    ``SUBSCRIBE`` of the Pub/Sub channels."""
+    if reader is not None:
         fresh = tuple(channel for channel in effect.kept if channel not in reader.positions)
         if fresh:
             ends = yield Await(_attempt(partial(_kept_positions, receiving, fresh)))
@@ -518,7 +539,7 @@ def _broker_handler(
     notes on the two clients and on a half-open connection), and kept channels' notices handed out again after
     ``redeliver_seconds`` without an acknowledgement."""
     listening: tuple[_Listening, ...] = ()
-    readers: dict[str, _KeptReader] = {}
+    readers: KeptReaders[_KeptReader] = KeptReaders(_KeptReader)
 
     @do
     def handler(
@@ -556,11 +577,13 @@ def _broker_handler(
                     raise LookupError(f"{wanted!r} reads no channel")
             case AckAnnouncement(subscription=acked, notice=notice):
                 # Kept by the handler only: nothing is sent to the server.
-                if acked.reader is not None and acked.reader in readers:
-                    readers[acked.reader].acknowledged(notice)
+                acking = readers.of(acked)
+                if acking is not None:
+                    acking.acknowledged(notice)
             case CloseSubscription(subscription=closing):
                 closed = tuple(entry for entry in listening if entry.subscription is closing)
                 listening = tuple(entry for entry in listening if entry.subscription is not closing)
+                readers.detach(closing)
                 for entry in closed:
                     entry.stop_reads()
                     if entry.pubsub is not None:

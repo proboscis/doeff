@@ -19,10 +19,11 @@ keeps ``Publish`` / ``WaitForEvent``, and ``notice_events_handler`` translates.
 A kept channel is the exception (agora card ki-86d11cadf3be — a notice a reader never handled left a conversation's
 input waiting until the reader's next start). ``Announce(kept=True)`` keeps the notice in the channel's log
 (Redis Streams — ``XADD`` with a bounded length). A subscription that names a ``reader`` reads its kept channels
-from that log: the handler keeps, for each reader name, the position it read up to in each kept channel and the
-notices it handed out that were not acknowledged (``AckAnnouncement``). A notice not acknowledged within the
-handler's redelivery time is handed out again, and a later subscription of the same reader (after a lost
-connection) goes on from where the previous one stopped. A reader's first subscription in a handler starts at the
+from that log: the handler keeps, for each open subscription, the position it read up to in each kept channel and
+the notices it handed out that were not acknowledged (``AckAnnouncement``). A notice not acknowledged within the
+handler's redelivery time is handed out again, and a later subscription of the same reader name (after a lost
+connection, once the dead one is closed) goes on from where the closed one stopped. Two subscriptions of one name
+open together each read every notice. A reader's first subscription in a handler starts at the
 end of the log, like a Pub/Sub subscription: what was announced before it is caught up from the reader's records.
 The position and the unacknowledged notices live in the handler (one process): a restarted process starts over.
 """
