@@ -655,6 +655,11 @@
     (except [TypeError])))
 
 
+(deftest test-clickhouse-answers-split-only-at-the-row-newline
+  ;; ClickHouse の JSON は U+0085(NEL)を生の C2 85 で出し、U+2028・U+2029 も生で来うる — 行の区切りは \n だけ。
+  (<- rows (clickhouse-rows (.encode "[1,\"a\u0085b\"]\n[2,\"c\u2028d\u2029e\"]\n" "utf-8")))
+  (assert (= rows #(#(1 "a\u0085b") #(2 "c\u2028d\u2029e"))) rows))
+
 (deftest test-clickhouse-draws-the-schema-and-refuses-what-it-lacks
   (<- statements (clickhouse-schema-statements
                    #((SqlTable :name "events" :columns #((SqlColumn :name "id" :type SqlColumnType.INTEGER)
