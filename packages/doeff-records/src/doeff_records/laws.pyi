@@ -55,6 +55,7 @@ from doeff_records.values import EventRetired as EventRetired
 from doeff_records.values import Unreachable as Unreachable
 from doeff_records.values import RememberKeysFor as RememberKeysFor
 from doeff_records.values import RememberNoKeys as RememberNoKeys
+from doeff_records.values import WRITE_KEY_MEMORY_SECONDS as WRITE_KEY_MEMORY_SECONDS
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -112,6 +113,9 @@ def replay_of(again: Appended | Refused | Unreachable, first: Appended | Refused
     ...
 
 def unplaced(answer: Written | Conflict | Refused | Unreachable | WrittenRows | RowsConflict | RowsRefused) -> _Program[Written | Conflict | Refused | Unreachable | WrittenRows | RowsConflict | RowsRefused, object]:
+    ...
+
+def unplaced_all(answers: list) -> _Program[list, object]:
     ...
 
 def as_writer[T](harness: LawHarness, writer: str, program: Program[T, object] | EffectBase[T]) -> _Program[T, object]:
@@ -312,6 +316,15 @@ def law_unarchived_keys_are_kept_until_retired(harness: LawHarness) -> _Program[
     ...
 
 def law_a_write_names_its_change_position(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_a_keyed_write_replays_its_answer(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_another_key_is_judged_by_its_expectation(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_write_keys_are_forgotten_after_their_memory(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

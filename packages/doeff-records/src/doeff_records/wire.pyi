@@ -5,6 +5,7 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from collections import Counter as Counter
 from dataclasses import dataclass as dataclass
+from dataclasses import replace as replace
 from enum import StrEnum as StrEnum
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import thaw_json as thaw_json
@@ -91,6 +92,7 @@ CLIENT_KINDS: tuple[RequestKind, ...]
 CLIENT_OUTCOMES: tuple[str, ...]
 CLIENT_ANSWER_METRICS: tuple[str, ...]
 CALLER_HEADER: str
+IDEMPOTENCY_HEADER: str
 SERVER_TIMING_HEADER: str
 SERVER_TIMING_QUEUE: str
 SERVER_TIMING_NAMES: tuple[str, ...]
@@ -240,6 +242,12 @@ def event_appends_from(body: JsonValue) -> _Program[tuple, object]:
     ...
 
 def encode_request(ask: PublicEffect) -> _Program[WireRequest, object]:
+    ...
+
+def request_key(ask: PublicEffect) -> _Program[str | None, object]:
+    ...
+
+def keyed_request(decoded: DecodedRequest, key: str | None) -> _Program[DecodedRequest, object]:
     ...
 
 def decode_request(request: WireRequest) -> _Program[DecodedRequest, object]:

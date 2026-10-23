@@ -1,0 +1,556 @@
+[
+ {
+  "answer": {
+   "key": [
+    "g1",
+    "t1"
+   ],
+   "kind": "row",
+   "value": {
+    "group": "g1",
+    "id": "t1",
+    "nested": {
+     "a": [
+      1,
+      2.5,
+      true,
+      null,
+      "x"
+     ]
+    }
+   },
+   "version": 3
+  },
+  "operation": "read-row"
+ },
+ {
+  "answer": {
+   "kind": "missing"
+  },
+  "operation": "read-row"
+ },
+ {
+  "answer": {
+   "epoch": 1,
+   "kind": "page",
+   "nextCursor": {
+    "afterKey": "[\"g1\",\"t1\"]",
+    "epoch": 1
+   },
+   "rows": [
+    {
+     "key": [
+      "g1",
+      "t1"
+     ],
+     "kind": "row",
+     "value": {
+      "group": "g1",
+      "id": "t1",
+      "nested": {
+       "a": [
+        1,
+        2.5,
+        true,
+        null,
+        "x"
+       ]
+      }
+     },
+     "version": 3
+    }
+   ],
+   "sequence": 9
+  },
+  "operation": "list-rows"
+ },
+ {
+  "answer": {
+   "epoch": 1,
+   "kind": "page",
+   "nextCursor": {
+    "afterKey": "[\"g1\",\"t1\"]",
+    "afterValue": 1760000000000,
+    "epoch": 1
+   },
+   "rows": [
+    {
+     "key": [
+      "g1",
+      "t1"
+     ],
+     "kind": "row",
+     "value": {
+      "group": "g1",
+      "id": "t1",
+      "nested": {
+       "a": [
+        1,
+        2.5,
+        true,
+        null,
+        "x"
+       ]
+      }
+     },
+     "version": 3
+    }
+   ],
+   "sequence": 9
+  },
+  "operation": "list-rows"
+ },
+ {
+  "answer": {
+   "epoch": 2,
+   "kind": "page",
+   "nextCursor": null,
+   "rows": [],
+   "sequence": 0
+  },
+  "operation": "list-rows"
+ },
+ {
+  "answer": {
+   "epoch": 3,
+   "floor": 0,
+   "kind": "reset"
+  },
+  "operation": "list-rows"
+ },
+ {
+  "answer": {
+   "fields": [
+    "note"
+   ],
+   "kind": "notIndexed"
+  },
+  "operation": "list-rows"
+ },
+ {
+  "answer": {
+   "kind": "written",
+   "value": {
+    "id": "p1"
+   },
+   "version": 2
+  },
+  "operation": "put-row"
+ },
+ {
+  "answer": {
+   "kind": "written",
+   "position": {
+    "epoch": 3,
+    "sequence": 41
+   },
+   "value": {
+    "id": "p1"
+   },
+   "version": 2
+  },
+  "operation": "put-row"
+ },
+ {
+  "answer": {
+   "kind": "written",
+   "position": {
+    "epoch": 3,
+    "sequence": 41
+   },
+   "replayed": true,
+   "value": {
+    "id": "p1"
+   },
+   "version": 2
+  },
+  "operation": "put-row"
+ },
+ {
+  "answer": {
+   "current": {
+    "key": [
+     "g1",
+     "t1"
+    ],
+    "kind": "row",
+    "value": {
+     "group": "g1",
+     "id": "t1",
+     "nested": {
+      "a": [
+       1,
+       2.5,
+       true,
+       null,
+       "x"
+      ]
+     }
+    },
+    "version": 3
+   },
+   "kind": "conflict"
+  },
+  "operation": "put-row"
+ },
+ {
+  "answer": {
+   "current": {
+    "kind": "missing"
+   },
+   "kind": "conflict"
+  },
+  "operation": "put-row"
+ },
+ {
+  "answer": {
+   "kind": "refused",
+   "reason": "書き手でない"
+  },
+  "operation": "put-row"
+ },
+ {
+  "answer": {
+   "cursor": {
+    "epoch": 1,
+    "sequence": 6
+   },
+   "items": [
+    {
+     "at": 1700000000123,
+     "key": [
+      "p1"
+     ],
+     "kind": "rowChanged",
+     "sequence": 5,
+     "table": "parts",
+     "value": {
+      "id": "p1"
+     },
+     "version": 1
+    },
+    {
+     "key": [
+      "g1",
+      "t1"
+     ],
+     "kind": "rowRemoved",
+     "sequence": 6,
+     "table": "tickets"
+    }
+   ],
+   "kind": "changes"
+  },
+  "operation": "watch-changes"
+ },
+ {
+  "answer": {
+   "cursor": {
+    "epoch": 1,
+    "sequence": 6
+   },
+   "items": [],
+   "kind": "changes",
+   "tails": [
+    {
+     "at": 1700000000123,
+     "kind": "streamTail",
+     "sequence": 4,
+     "stream": "journal"
+    },
+    {
+     "kind": "streamTailEmpty",
+     "stream": "pulses"
+    }
+   ]
+  },
+  "operation": "watch-changes"
+ },
+ {
+  "answer": {
+   "epoch": 2,
+   "floor": 41,
+   "kind": "reset"
+  },
+  "operation": "watch-changes"
+ },
+ {
+  "answer": {
+   "kind": "appended",
+   "replayed": false,
+   "sequence": 7
+  },
+  "operation": "append-event"
+ },
+ {
+  "answer": {
+   "kind": "appended",
+   "replayed": true,
+   "sequence": 7
+  },
+  "operation": "append-event"
+ },
+ {
+  "answer": {
+   "kind": "refused",
+   "reason": "別の本文"
+  },
+  "operation": "append-event"
+ },
+ {
+  "answer": {
+   "items": [
+    {
+     "at": 1000,
+     "body": {
+      "n": 1
+     },
+     "idempotencyKey": "k1",
+     "sequence": 1,
+     "stream": "journal",
+     "writer": "maker"
+    }
+   ],
+   "kind": "events",
+   "lastSequence": 1
+  },
+  "operation": "read-events"
+ },
+ {
+  "answer": {
+   "fields": [
+    "idempotencyKey"
+   ],
+   "kind": "notIndexed"
+  },
+  "operation": "read-events"
+ },
+ {
+  "answer": {
+   "kind": "streamEnd",
+   "sequence": 7
+  },
+  "operation": "read-stream-end"
+ },
+ {
+  "answer": {
+   "kind": "streamEmpty"
+  },
+  "operation": "read-stream-end"
+ },
+ {
+  "answer": {
+   "kind": "eventsMoved"
+  },
+  "operation": "watch-events"
+ },
+ {
+  "answer": {
+   "kind": "eventsQuiet"
+  },
+  "operation": "watch-events"
+ },
+ {
+  "answer": {
+   "event": {
+    "at": 1000,
+    "body": {
+     "n": [
+      1,
+      {
+       "m": null
+      }
+     ]
+    },
+    "idempotencyKey": "k1",
+    "sequence": 4,
+    "stream": "journal",
+    "writer": "maker"
+   },
+   "kind": "event"
+  },
+  "operation": "read-event-by-key"
+ },
+ {
+  "answer": {
+   "kind": "eventAbsent"
+  },
+  "operation": "read-event-by-key"
+ },
+ {
+  "answer": {
+   "kind": "eventRetired",
+   "sequence": 3
+  },
+  "operation": "read-event-by-key"
+ },
+ {
+  "answer": {
+   "items": [
+    {
+     "kind": "written",
+     "value": {
+      "id": "p1"
+     },
+     "version": 2
+    },
+    {
+     "kind": "written",
+     "value": {
+      "group": "g1",
+      "id": "t1"
+     },
+     "version": 1
+    }
+   ],
+   "kind": "writtenRows"
+  },
+  "operation": "put-rows"
+ },
+ {
+  "answer": {
+   "items": [
+    {
+     "kind": "written",
+     "position": {
+      "epoch": 3,
+      "sequence": 42
+     },
+     "value": {
+      "id": "p1"
+     },
+     "version": 2
+    },
+    {
+     "kind": "written",
+     "position": {
+      "epoch": 3,
+      "sequence": 43
+     },
+     "value": {
+      "group": "g1",
+      "id": "t1"
+     },
+     "version": 1
+    }
+   ],
+   "kind": "writtenRows"
+  },
+  "operation": "put-rows"
+ },
+ {
+  "answer": {
+   "items": [
+    {
+     "kind": "written",
+     "position": {
+      "epoch": 3,
+      "sequence": 42
+     },
+     "replayed": true,
+     "value": {
+      "id": "p1"
+     },
+     "version": 2
+    },
+    {
+     "kind": "written",
+     "position": {
+      "epoch": 3,
+      "sequence": 43
+     },
+     "replayed": true,
+     "value": {
+      "group": "g1",
+      "id": "t1"
+     },
+     "version": 1
+    }
+   ],
+   "kind": "writtenRows",
+   "replayed": true
+  },
+  "operation": "put-rows"
+ },
+ {
+  "answer": {
+   "current": {
+    "key": [
+     "g1",
+     "t1"
+    ],
+    "kind": "row",
+    "value": {
+     "group": "g1",
+     "id": "t1",
+     "nested": {
+      "a": [
+       1,
+       2.5,
+       true,
+       null,
+       "x"
+      ]
+     }
+    },
+    "version": 3
+   },
+   "index": 1,
+   "key": [
+    "g1",
+    "t1"
+   ],
+   "kind": "rowsConflict",
+   "table": "tickets"
+  },
+  "operation": "put-rows"
+ },
+ {
+  "answer": {
+   "current": {
+    "kind": "missing"
+   },
+   "index": 0,
+   "key": [
+    "p1"
+   ],
+   "kind": "rowsConflict",
+   "table": "parts"
+  },
+  "operation": "put-rows"
+ },
+ {
+  "answer": {
+   "index": 2,
+   "key": [
+    "p2"
+   ],
+   "kind": "rowsRefused",
+   "reason": "書き手でない",
+   "table": "parts"
+  },
+  "operation": "put-rows"
+ },
+ {
+  "answer": {
+   "items": [
+    {
+     "kind": "appended",
+     "replayed": false,
+     "sequence": 7
+    },
+    {
+     "kind": "refused",
+     "reason": "別の本文"
+    },
+    {
+     "kind": "appended",
+     "replayed": true,
+     "sequence": 3
+    }
+   ],
+   "kind": "appendedEvents"
+  },
+  "operation": "append-events"
+ }
+]
