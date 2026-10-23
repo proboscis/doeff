@@ -152,6 +152,13 @@
   (min policy.restart-backoff-max-ms
        (* policy.restart-backoff-ms (** 2 (max 0 (- record.unexpected-exits 1))))))
 
+(defk ran-stably? [now record policy]
+  {:pre [(: now int) (: record JobRecord) (: policy WorkerPolicy)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "job の名で最後に起こした process が stable-run-ms 以上動いたか — 続けて落ちた回数を数え直す境 — を 1 か所で決めるため。記憶の数え
+   record-after(終わりの回収 ReapJob と、名から外す RetireJob)と状態の報告 job-status が同じ述語を読む(card ki-3f4bbc55733a — 以前は
+   報告だけがこの境を持ち、入れ替えで名から外した後の新しい process は、前の process が長く動いた後でも前の落ち続けの回数を引き継いだ)。"
+  (and (is-not record.last-start-ms None) (>= (- now record.last-start-ms) policy.stable-run-ms)))
+
 (defn #^ bool in-backoff [#^ int now #^ JobRecord record #^ WorkerPolicy policy]
   (and (is-not record.last-exit-ms None)
        (= record.last-outcome Outcome.EXITED)
@@ -622,7 +629,7 @@
               ran-ms (if (is record.last-start-ms None) None (- now record.last-start-ms))
               killed (is-not action.memory-killed-spec None)
               worked (and (is-not ran-ms None) (>= ran-ms policy.memory-kill-reset-ms))
-              stable (if killed worked (and (is-not ran-ms None) (>= ran-ms policy.stable-run-ms))))
+              stable (if killed worked (run (ran-stably? now record policy))))
         (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
                  :stopping None
                  :unexpected-exits (cond (not exited) 0 stable 1 True (+ record.unexpected-exits 1))
@@ -631,6 +638,13 @@
                                      (or worked (!= action.memory-killed-spec record.memory-killed-spec)) 1
                                      True (+ record.memory-kills 1))
                  :memory-killed-spec (if killed action.memory-killed-spec record.memory-killed-spec)))
+    ;; 名から外す(入れ替えで新を同じ名で起こす・新しい世代へ退かせる): 外す process が stable-run-ms 以上動いていれば、続けて落ちた回数と
+    ;; 続けて終わった回数を 0 から数え直す — 報告の境(job-status)と同じ。退いた process の終わりは退いた名の記憶で回収して捨てるので、
+    ;; 二重には数えない。stable-run-ms に満たずに落ち続けている間の入れ替えは回数を引き継ぐ(落ち続けを隠さない)。
+    ;; 以前は外しが記憶に触れず、1 時間 48 分 安定して動いた process を入れ替えた後の新しい process が、起動から 60 秒の間 前の落ち続けの
+    ;; 回数 11 を報告した(card ki-3f4bbc55733a — 上に載る系の見張りが落ち続けと数えた)。
+    (isinstance action RetireJob)
+      (if (run (ran-stably? now record policy)) (replace record :failures 0 :unexpected-exits 0) record)
     True record))
 
 (defk records-after [now records actions [policy (WorkerPolicy)]]
@@ -643,7 +657,7 @@
   (for [action actions]
     (val name (match action
       (StartJob) action.spec.name
-      (| (SignalJob) (ReapJob)) action.name
+      (| (SignalJob) (ReapJob) (RetireJob)) action.name
       _ None))
     (when (is-not name None)
       (:= result (| result {name (record-after now (.get result name (JobRecord name)) action policy)})))
@@ -809,9 +823,10 @@
   ;; 機体の memory の見張りに続けて止められ、起こし直しを止めた常駐の job(動いている process が無い時だけ — phase-of と同じ述語)。
   (val given-up (and (is process None) (is-not want None) (memory-given-up want record policy)))
   ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
-  ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
-  (val stable (and (is-not process None) (is-not record.last-start-ms None)
-                   (>= (- now record.last-start-ms) policy.stable-run-ms)))
+  ;; 同じ境 ran-stably? — 拍ごとに組む報告から導くので、動いている間は記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。記憶を
+  ;; 0 に戻すのは、その process が終わった時(ReapJob)と名から外した時(RetireJob — card ki-3f4bbc55733a)の record-after。
+  (<- ran-stably bool (ran-stably? now record policy))
+  (val stable (and (is-not process None) ran-stably))
   (JobStatus name (phase-of now want process world record policy)
       (if (is want None) None want.revision)
       (if (is process None) None process.spec.revision)
