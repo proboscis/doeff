@@ -9,7 +9,8 @@
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
 (import doeff_claude_code.lines [FRESH-MARK AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
-                                 InputFate Usage RateLimit AccountLimitHit RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT])
+                                 InputFate Usage RateLimit AccountLimitHit RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT ModelUsageGap])
+(import dataclasses [replace])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
                                    SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning
                                    ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
@@ -41,7 +42,7 @@
     (= text "lines") (FakeReply "done" :tool-seconds 4.0 :lines 300)
     (= text "usage") (FakeReply "counted" :usage USAGE :cost-usd COST)
     (= text "think") (FakeReply "thought" :think-seconds 5.0)
-    (= text "no-receipt") (FakeReply "never" :tool-seconds 30.0 :interrupt-receipt False)
+    (= text "no-receipt") (FakeReply "never" :tool-seconds 30.0 :interrupt-receipt False :usage USAGE :cost-usd COST)
     (= text "deltas") (FakeReply "deltas" :tool-seconds 2.0 :thinking-deltas 3 :tool-input-deltas 2)
     (= text "limited") (FakeReply "" :fail "limit" :account-limit LIMIT)
     (= text "limited-done") (FakeReply "partial" :account-limit (AccountLimitHit :text LIMIT.text))
@@ -150,7 +151,11 @@
   (<- #(queued asked stopped done) (on-fake world (inject-then-stop)))
   (assert (= queued (InputQueued "inj-dropped")) (repr queued))
   (assert (isinstance asked InterruptRequested) (repr asked))
-  (assert (= stopped.end (Interrupted :process-kept False :dropped-refs #("inj-dropped"))) (repr stopped.end))
+  (assert (= (replace stopped.end :usage None :cost-usd None :model-usage None :model-usage-gap ModelUsageGap.NOT-NAMED)
+             (Interrupted :process-kept False :dropped-refs #("inj-dropped")))
+          (repr stopped.end))
+  ;; result の行で閉じた止めは、止めるまでの消費を運ぶ(本物の状態機械と同じ — card ki-47e64b7b642f)。
+  (assert (= #(stopped.end.usage stopped.end.cost-usd) #(USAGE COST)) (repr stopped.end))
   (assert (= (lfor kind (kinds-of stopped.lines Init) kind.capabilities) [#("msg_lifecycle_v1")]) stopped.lines)
   (assert (not-in (InputFate "inj-dropped" "started") (kinds-of stopped.lines InputFate)) stopped.lines)
   (assert (isinstance done.end Completed) (repr done.end)))

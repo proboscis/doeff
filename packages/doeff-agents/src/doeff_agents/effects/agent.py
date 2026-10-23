@@ -312,15 +312,24 @@ class AgentTurnInterrupted:
     producer states it.
     ``surviving_refs`` inputs run on as the next turn of the same session;
     ``dropped_refs`` inputs were never read.
+    ``usage`` / ``model_usage`` / ``model_usage_gap`` = what the stopped turn
+    used before the stop, counted the same way as a completed turn, when the
+    runtime closed the stopped turn with a cost-bearing record (``None`` /
+    ``None`` / ``NOT_NAMED`` otherwise — e.g. the process went down while
+    stopping, or the surviving inputs run on and their turn carries the
+    stopped turn's share).
     """
 
     cli_kept: bool
     surviving_refs: tuple[str, ...] = ()
     dropped_refs: tuple[str, ...] = ()
     resume_from: str
+    usage: AgentTurnUsage | None = None
     last_call_usage: AgentTurnUsage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ModelUsageGap.NOT_NAMED
 
 
 @dataclass(frozen=True, kw_only=True)

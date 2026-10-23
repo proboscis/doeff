@@ -902,7 +902,12 @@
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_streaming")))
-        (<- (finish session turn (Interrupted :process-kept False :dropped-refs (tuple (lfor injection queued injection.ref)))))
+        ;; result の行で閉じた止めは、止めるまでの消費を運ぶ(本物の interrupted-by-result と同じ — 偽は筋書きの額を名乗る・card
+        ;; ki-47e64b7b642f)。
+        (<- (finish session turn (Interrupted :process-kept False :dropped-refs (tuple (lfor injection queued injection.ref))
+                                              :usage turn.reply.usage :cost-usd turn.reply.cost-usd
+                                              :model-usage turn.reply.model-usage
+                                              :model-usage-gap (! (model-cost-gap turn.reply.model-usage turn.reply.cost-usd)))))
         ;; SIGINT の形の CLI は result の後に自分で降りる(本番の handler も降ろす — 訳 INTERRUPT-SIGNAL)。
         (setv session.alive False session.stopped-because StopReason.INTERRUPT-SIGNAL)))
   (InterruptRequested))

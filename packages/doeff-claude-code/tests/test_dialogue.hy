@@ -57,7 +57,8 @@
   (assert (= plan.sends #()))
   (assert (isinstance plan.state.stop StopSignal))
   (setv read (read-record plan.state SIGINT-RESULT))
-  (assert (= read.end (Interrupted :process-kept False)) (repr read.end))
+  ;; 実測の行は額も usage も名乗らない — 運ぶのは空の usage と額 None(0 を発明しない)。
+  (assert (= read.end (Interrupted :process-kept False :usage (Usage))) (repr read.end))
   ;; SIGINT の形の CLI は result の後に自分で降りるので、使い回さずに降ろす(#3672)。
   (assert (= read.retire StopReason.INTERRUPT-SIGNAL) (repr read.retire))
   (assert (not read.state.in-flight)))
@@ -295,6 +296,34 @@
   (assert (= done.state.cost-mark.total-usd 0.75)))
 
 
+(deftest test-a-stopped-turn-carries-what-it-used-from-the-result-that-closed-it
+  ;; 止めた手番を閉じた result の行(SIGINT の形・生き残りの無い control の形)は累積の額を名乗る — 止めるまでの消費を Completed と同じ
+  ;; 数え方で手番に載せ、起点はその行へ進める(次の手番へは混ぜない・card ki-47e64b7b642f。前は額を捨て、上の層は額の無い手番として
+  ;; 単価で推定した — 本番 10-23 の ticket の予備の割り込みで止めた手番 6 件)。
+  (val signalled (dialogue.interrupt (started) "rid-7"))
+  (val stopped (read-record signalled.state (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.5)} :subtype "error_during_execution"
+                                                        :is-error True)))
+  (assert (isinstance stopped.end Interrupted) stopped.end)
+  (assert (= stopped.end.cost-usd 0.5) stopped.end)
+  (assert (= (lfor usage stopped.end.model-usage #(usage.model usage.cost-usd)) [#(MAIN 0.5)]) stopped.end)
+  (assert (is stopped.end.model-usage-gap None) stopped.end)
+  (assert (= stopped.state.cost-mark.total-usd 0.5) stopped.state)
+  ;; control の形で生き残りが無い止めも同じ。
+  (val injected (dialogue.inject (started) (TurnInput "also this" "inj-1")))
+  (val asked (dialogue.interrupt injected.state "rid-8"))
+  (val answered (read-record asked.state {"type" "control_response"
+                                          "response" {"subtype" "success" "request_id" "rid-8"
+                                                      "response" {"still_queued" []}}}))
+  (val kept (read-record answered.state (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.5)} :subtype "error_during_execution"
+                                                    :is-error True)))
+  (assert (= #(kept.end.process-kept kept.end.cost-usd) #(True 0.5)) kept.end)
+  ;; 起点が分からない止めは額を作らない(訳を運ぶ)。
+  (val unknown (read-record (. (dialogue.interrupt (started None) "rid-9") state)
+                            (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.5)} :subtype "error_during_execution" :is-error True)))
+  (assert (is unknown.end.cost-usd None) unknown.end)
+  (assert (= unknown.end.model-usage-gap ModelUsageGap.UNKNOWN-MARK) unknown.end))
+
+
 (deftest test-an-interrupt-with-unread-input-uses-control-request-and-continues
   ;; 読まれていない注入が在り interrupt_receipt_v1 を名乗った CLI: control_request → 答えの still_queued の注入が生き残り、
   ;; 手番は Interrupted で終わって同じ process の次の手番(continues)へ。次の result で本当に閉じる。
@@ -352,7 +381,7 @@
                                                              "response" {"still_queued" []}}}))
   (setv ended (read-record answered.state {"type" "result" "subtype" "error_during_execution" "is_error" True
                                                   "terminal_reason" "aborted_tools"}))
-  (assert (= ended.end (Interrupted :process-kept True :dropped-refs #("inj-1"))) (repr ended.end))
+  (assert (= ended.end (Interrupted :process-kept True :dropped-refs #("inj-1") :usage (Usage))) (repr ended.end))
   (assert (is ended.retire None))
   ;; 会話を閉じる: 走っている手番は、降りる process の上で終わる。
   (setv closed (dialogue.close-session (started)))

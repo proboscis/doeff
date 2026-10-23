@@ -230,6 +230,14 @@
                  :model-usage-gap tally.gap
                  :input-refs refs)))
 
+(defn interrupted-by-result [#^ Interrupted end #^ TurnResult result #^ DialogueState state]
+  "止めた手番 end を閉じた result の行で、止めるまでの消費(usage・額・model ごとの使用量と照合の訳)を end に載せるため(card
+   ki-47e64b7b642f — 前は起点だけをこの行へ進めて額を捨て、上の層は額の無い手番として単価で推定した)。数え方は CLI が終えた手番と
+   同じ end-of-result の 1 か所(この行の分を足した後の state を渡す)。"
+  (setv priced (end-of-result result state))
+  (replace end :usage priced.usage :cost-usd priced.cost-usd :model-usage priced.model-usage
+           :model-usage-gap priced.model-usage-gap))
+
 (defn #^ DialogueState closed-turn [#^ DialogueState state]
   "host の手番を閉じた状態(会話の id・CLI の能力・額の起点は保つ。最後の呼びと窓は次の手番へ持ち越さない)。"
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
@@ -385,7 +393,8 @@
   (setv stop open-closed.stop)
   (cond
     (isinstance stop StopSignal)
-      (ended open-closed (Interrupted :process-kept False :dropped-refs queued) :priced-by result :retire StopReason.INTERRUPT-SIGNAL)
+      (ended open-closed (interrupted-by-result (Interrupted :process-kept False :dropped-refs queued) result open-closed)
+             :priced-by result :retire StopReason.INTERRUPT-SIGNAL)
     (isinstance stop StopControl)
       (do
         (setv survivors (if (is stop.still-queued None) queued
@@ -398,7 +407,8 @@
                         :end (with-last-call (Interrupted :process-kept True :surviving-refs survivors :dropped-refs dropped)
                                              open-closed)
                         :continues True)
-            (ended open-closed (Interrupted :process-kept True :dropped-refs dropped) :priced-by result)))
+            (ended open-closed (interrupted-by-result (Interrupted :process-kept True :dropped-refs dropped) result open-closed)
+                   :priced-by result)))
     queued
       (Transition :state (replace open-closed :deferred-result result))
     True

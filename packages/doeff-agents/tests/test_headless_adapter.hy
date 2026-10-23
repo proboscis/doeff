@@ -2255,6 +2255,27 @@
     (assert (= #(plain.exit-code plain.stderr-tail) #(None None)) plain)))
 
 
+;; --- 止めた手番の消費(card ki-47e64b7b642f)---------------------------------------------------------------------------
+;; 失敗ケース(前の形): 層 2 が止めた手番を閉じた result の行の額を数えても、層 3 の AgentTurnInterrupted は usage の欄を持たず、上の層
+;; (agora の記録)は止めた手番を額の無い手番として単価で推定した。
+
+(deftest test-the-usage-of-a-stopped-turn-reaches-the-agent-turn-interrupted
+  ;; 層 2 の Interrupted の usage・額・model ごとの使用量と照合の訳を、層 3 の AgentTurnInterrupted の欄 usage・model_usage・
+  ;; model_usage_gap へ写す。持たない止め(既定)は None・None・NOT_NAMED のまま。
+  (import doeff_claude_code.lines [Interrupted Usage ModelUsage])
+  (import doeff_agents.handlers.headless [end-of])
+  (import doeff_agents.effects.agent [ModelUsageGap])
+  (val used (ModelUsage "claude-opus-5-5" :input-tokens 2 :output-tokens 30 :cost-usd 0.25))
+  (val stopped (end-of (Interrupted :process-kept False :usage (Usage :input-tokens 2 :output-tokens 30) :cost-usd 0.25
+                                    :model-usage #(used) :model-usage-gap None)
+                       "ctx-1"))
+  (assert (isinstance stopped AgentTurnInterrupted) stopped)
+  (assert (= #(stopped.usage.output-tokens stopped.usage.cost-usd) #(30 0.25)) stopped)
+  (assert (= #(stopped.model-usage stopped.model-usage-gap) #(#(used) None)) stopped)
+  (val plain (end-of (Interrupted :process-kept True) "ctx-1"))
+  (assert (= #(plain.usage plain.model-usage plain.model-usage-gap) #(None None ModelUsageGap.NOT-NAMED)) plain))
+
+
 ;; --- cache の書きの寿命の内訳(card ki-75d813bebc27)------------------------------------------------------------------
 ;; 失敗ケース(前の形): 層 2 の Usage は cache_creation の 5 分・1 時間の内訳を持つのに、層 3 の AgentTurnUsage は書きの総数 1 欄に潰し、
 ;; 上の層(agora の記録と単価)は書きを全部 1 時間の単価で数えた — subagent の 5 分の書きを高く見積もった。
