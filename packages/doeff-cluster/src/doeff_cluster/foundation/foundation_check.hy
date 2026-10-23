@@ -21,9 +21,9 @@
 (defrecord FoundationClosure
   "閉じているかの答え: gaps = 答えの無い effect(`型の名 ← 出した所`)・unknown = 節を読めなかった handler・unresolved = analyzer が
    追えなかった所(理由と場所)。3 つとも空の時だけ閉じている。"
-  (#^ tuple gaps)
-  (#^ tuple unknown)
-  (#^ tuple unresolved))
+  (#^ (get tuple #(str ...)) gaps)
+  (#^ (get tuple #(str ...)) unknown)
+  (#^ (get tuple #(str ...)) unresolved))
 
 
 (deff closed? [#^ FoundationClosure closure]  ; defk にできない: 検と CLI が値を読むだけの純粋な判断
@@ -33,7 +33,7 @@
 
 
 (defk foundation-closure [job * [foundation None] [parameter "foundation"] [fold #()]]
-  {:pre [(: job Callable) (: foundation (| Callable None)) (: parameter str) (: fold tuple)] :post [(: % FoundationClosure)]
+  {:pre [(: job Callable) (: foundation (| Callable None)) (: parameter str) (: fold (get tuple #(str ...)))] :post [(: % FoundationClosure)]
    :tags {:context "doeff-cluster" :role "foundation"}}
   "job の関数(土台を引数 parameter で受けて本体を包む module の最上位の Program 関数)が、土台 foundation で閉じているかを実行せずに
    確かめる。foundation を渡さなければ束ねずに読む(土台の先を追えないので unresolved になる)。運ばれた Program は、運び手の effect が
