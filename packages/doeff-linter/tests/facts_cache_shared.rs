@@ -68,7 +68,7 @@ fn lint(root: &Path, cache: Option<&Path>) -> String {
         .env("DOEFF_LINTER_CHECK_SLOT", "1")
         .env_remove("DOEFF_LINTER_NO_CACHE");
     match cache {
-        Some(dir) => command.env("DOEFF_LINTER_CACHE_DIR", dir),
+        Some(dir) => command.env("DOEFF_LINTER_CACHE_DIR", dir).env("DOEFF_LINTER_SWEEP_INLINE", "1"),
         None => command.env("DOEFF_LINTER_NO_CACHE", "1"),
     };
     let output = command.output().unwrap();
@@ -214,7 +214,7 @@ fn module_dependencies_are_shared_between_checkouts_too() {
             .env("DOEFF_LINTER_CHECK_SLOT", "1")
             .env_remove("DOEFF_LINTER_NO_CACHE");
         match cache {
-            Some(dir) => command.env("DOEFF_LINTER_CACHE_DIR", dir),
+            Some(dir) => command.env("DOEFF_LINTER_CACHE_DIR", dir).env("DOEFF_LINTER_SWEEP_INLINE", "1"),
             None => command.env("DOEFF_LINTER_NO_CACHE", "1"),
         };
         let output = command.output().unwrap();

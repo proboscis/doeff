@@ -39,7 +39,7 @@ fn run(root: &Path, cache: &Path) {
         .env_remove("DOEFF_LINTER_NO_CACHE")
         // 機体の検の枠の再入の印 — この検は置き場の片づけを見るので、機体の枠(混んだ機体では数分待つ)を取らずに走らせる。
         .env("DOEFF_LINTER_CHECK_SLOT", "1")
-        .env("DOEFF_LINTER_CACHE_DIR", cache)
+        .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .output()
         .unwrap();
     assert!(output.status.code().is_some_and(|c| c <= 1), "{}", String::from_utf8_lossy(&output.stderr));
@@ -116,7 +116,7 @@ fn run_with_cap(root: &Path, cache: &Path, cap: u64) {
         .env_remove("DOEFF_LINTER_NO_CACHE")
         // 機体の検の枠の再入の印 — この検は置き場の片づけを見るので、機体の枠(混んだ機体では数分待つ)を取らずに走らせる。
         .env("DOEFF_LINTER_CHECK_SLOT", "1")
-        .env("DOEFF_LINTER_CACHE_DIR", cache)
+        .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .env("DOEFF_LINTER_CACHE_MAX_BYTES", cap.to_string())
         .output()
         .unwrap();
@@ -346,4 +346,43 @@ fn a_temporary_fact_left_by_a_cut_off_run_is_cleared_once_stale() {
     run_with_cap(live.path(), cache.path(), 1_000_000);
     assert!(!stale.exists(), "1 時間より古い一時 file(打ち切られた実行の残り)は片づけで消える");
     assert!(fresh.is_file(), "書いている最中かもしれない新しい一時 file は消さない");
+}
+
+// ── 事実の置き場を数える片づけは、実行の外の process で(card ki-40c8ca380713)──────────────────────────────
+// 事実の置き場(zeus で約 40 万の事実)を数える片づけは 3〜19 秒かかり、書き込み直後の hook の期限(4 秒)を越えていた。既定では最中の印を
+// 持ったまま別の process へ渡し、実行は待たない。渡された process が片づけを終え、終えた時刻を記録して印を外す。
+
+/// binary を root で、置き場 cache と全体の上限 cap(byte)で、片づけを渡す既定のまま走らせる(計器の出力 stderr を返す)。
+fn run_handing_the_sweep(root: &Path, cache: &Path, cap: u64) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .args(["--output-format", "editor-json", "--no-log"])
+        .current_dir(root)
+        .env_remove("DOEFF_LINTER_NO_CACHE")
+        .env_remove("DOEFF_LINTER_SWEEP_INLINE")
+        .env("DOEFF_LINTER_CHECK_SLOT", "1")
+        .env("DOEFF_LINTER_CACHE_DIR", cache)
+        .env("DOEFF_LINTER_CACHE_MAX_BYTES", cap.to_string())
+        .env("DOEFF_LINTER_TIMING", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.code().is_some_and(|c| c <= 1), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn the_sweep_over_the_facts_is_handed_to_a_process_that_finishes_it_after_the_run() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let idle = stale_object(cache.path(), "00000000000000000000000000f1", 10_000, 20 * 60);
+    let stderr = run_handing_the_sweep(live.path(), cache.path(), 1000);
+    assert!(stderr.contains("facts-cache.sweep handed=1"), "実行は片づけを別の process へ渡す(自分では数えない): {stderr}");
+    // 渡された process は実行の外で走るので、終えた時刻の記録が出て最中の印が外れるまで待つ(上限 60 秒)。
+    let done = |cache: &Path| cache.join(".swept-cap").is_file() && !cache.join(".swept-cap.lock").exists();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !done(cache.path()) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(done(cache.path()), "渡された process が片づけを終えた時刻を記録し、最中の印を外す");
+    assert!(!idle.exists(), "渡された process が、上限を越えた古い事実を消す");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "この実行の根の dir は残る");
 }
