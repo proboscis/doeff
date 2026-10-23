@@ -6,12 +6,14 @@
 (import json)
 (import dataclasses [replace])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StopProgress
-  StartJob SignalJob Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
+  StartJob JobNotStarted JobRecord SignalJob Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
         doeff_cluster.shared.intent.job_model [JobSpec JobPhase]
         doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind]
         doeff_cluster.shared.core.runtime_env_rules [runtime-env->json]
         doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.core.policy [plan statuses warm-child-step warm-child-actions])
+(import doeff_cluster.worker.core.policy [plan statuses warm-child-step warm-child-actions records-after])
+(import doeff_cluster.worker.core.worker_due [plan-due])
+(import doeff_cluster.shared.intent.due_model [DueAt])
 (import doeff_cluster.worker.core.warm_rules [refusals-after])
 (import doeff_cluster.worker.protocol.heartbeat [status-row])
 (import doeff_cluster.worker.core.policy :as policy-module)
@@ -183,11 +185,11 @@
   (assert (= (frozenset (gfor action broken action.spec.name)) #{"ta" "tb"}) broken))
 
 
-(defk stops-forked-tasks-with-their-child [now desired observed warm policy]
-  {:pre [(: now int) (: desired tuple) (: observed WorldView) (: warm tuple) (: policy WorkerPolicy)] :post [(: % tuple)]
+(defk stops-forked-tasks-with-their-child [now desired observed warm policy [records {}]]
+  {:pre [(: now int) (: desired tuple) (: observed WorldView) (: warm tuple) (: policy WorkerPolicy) (: records dict)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "条 WC2 の失敗ケースのための壊れた判断: 待ちの子が終わったら、その root から分かれて走っている task も止める(本物の答えに足す)。"
-  (<- base tuple (warm-child-actions now desired observed warm policy))
+  (<- base tuple (warm-child-actions now desired observed warm policy :records records))
   (+ base (tuple (gfor view observed.warm-children :if (is-not view.exit-code None)
                        p observed.processes :if (and (is p.exit-code None) (= (code-key p.spec) view.key))
                        (SignalJob p.name p.pid StopStage.TERM (Undeclared))))))
@@ -250,8 +252,84 @@
   (<- ended tuple (statuses NOW #(ta) (! (world :children #(refused))) {} POLICY))
   (assert (= (tuple (gfor s ended #(s.phase s.failure s.detail)))
              #(#(JobPhase.ENV-FAILED (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :detail REFUSAL :retryable False)
-                 (.format "待ちの子が {} 回続けて起動を断った: {}" limit REFUSAL))))
+                 (.format "待ちの子が {} 回続けて断った: {}" limit REFUSAL))))
           ended)
   ;; coordinator へ運ぶ行は、やり直さない env-failed(absorb-env-failure が task を終える)。
   (<- row dict (status-row (get ended 0)))
   (assert (= #((get row "phase") (get row "failureKind") (get row "retryable")) #("env-failed" "env-incompatible" False)) row))
+
+
+;; --- task を分けるのを断った待ちの子(card ki-e1612a12d0c3)-----------------------------------------------------------
+;; 待ちの子が task を分けるのを断った(混んだ機体で期限の内に答えない — 10-24 02:42 JST の本番)事は、StartJob の答え JobNotStarted で
+;; 届き、記憶の not-started に残る。判断は task だけを落ちた時と同じ failures と backoff に数え、その待ちの子を止めて断りに数える
+;; (起こし直しと上限で task を env-failed で終える道は、起動の断りと同じ)。前は宿が OSError に変え、worker の process ごと落ちた。
+
+(val LATE "待ちの子が分けるのを断った: 待ちの子が 5.0 秒のうちに答えない: /state/warm/env-a/sock")
+
+
+(deftest test-a-start-that-was-not-started-counts-as-the-jobs-failure-and-backs-off
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (val refusal (JobNotStarted :name "ta" :warm-key KEY-A :detail LATE :at-ms NOW))
+  (<- after dict (records-after NOW {} #((StartJob ta 1 ROOT-A :warm-key KEY-A)) POLICY #(refusal)))
+  (val record (get after "ta"))
+  ;; 落ちた時と同じ数え(failures・unexpected-exits)。起こした刻は書かず、task を終えた事にしない(last-outcome は None のまま)。
+  (assert (= #(record.attempts record.failures record.unexpected-exits record.not-started record.last-outcome record.last-start-ms)
+             #(1 1 1 refusal None None))
+          record)
+  ;; 断りの後に起こし直した待ちの子(断りより後に起こした子 — 止めの対象でない)の上で、backoff の間は起こさず、明けたら起こし直す。
+  (<- restarted WorldView (world :children #((replace (! (child KEY-A)) :started-ms (+ NOW 1)))))
+  (<- waiting tuple (plan (+ NOW 1999) #(ta) restarted after POLICY))
+  (assert (= waiting #()) waiting)
+  (<- due (plan-due NOW restarted after POLICY))
+  (assert (= due (DueAt :at (+ NOW 2000))) due)
+  (<- again tuple (plan (+ NOW 2000) #(ta) restarted after POLICY))
+  (assert (= again #((StartJob ta 2 ROOT-A :warm-key KEY-A))) again)
+  ;; 起こせた StartJob は not-started を消す。
+  (<- started dict (records-after (+ NOW 2000) after again POLICY))
+  (assert (is (. (get started "ta") not-started) None) started))
+
+
+(deftest test-a-task-refused-by-its-warm-child-backs-off-alone-and-the-child-is-stopped
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (<- tb JobSpec (task-on "tb" KEY-B))
+  (val refusal (JobNotStarted :name "ta" :warm-key KEY-A :detail LATE :at-ms NOW))
+  (val records {"ta" (JobRecord "ta" :attempts 1 :failures 1 :unexpected-exits 1 :not-started refusal)})
+  (<- observed WorldView (world :children #((! (child KEY-A)) (! (child KEY-B)))))
+  (<- got tuple (plan NOW #(ta tb) observed records POLICY))
+  ;; ta は backoff の間は起こさず、断った env-a の待ちの子を断りとして止める。tb は自分の待ちの子から今までどおり分かれる。
+  (assert (= got #((StartJob tb 1 ROOT-B :warm-key KEY-B) (StopWarmChild KEY-A StopStage.TERM LATE :refused True))) got)
+  (<- report tuple (statuses NOW #(ta) observed records POLICY))
+  (assert (= (tuple (gfor s report #(s.phase s.failures s.detail)))
+             #(#(JobPhase.BACKOFF 1 (.format "起こせなかった(warm:{}): {} — backoff=2000ms" KEY-A LATE))))
+          report))
+
+
+(deftest test-the-warm-child-table-stops-a-child-that-refused-a-fork-once
+  (val refusal (JobNotStarted :name "ta" :warm-key KEY-A :detail LATE :at-ms NOW))
+  (val term-now (StopProgress :requested-ms NOW :stage StopStage.TERM :signalled-ms NOW))
+  (val rows
+    #(#("断りの前に起こした子 → 断りとして止める" (! (child KEY-A)) #((StopWarmChild KEY-A StopStage.TERM LATE :refused True)))
+      #("断りの後に起こし直した子 → 何もしない" (replace (! (child KEY-A)) :started-ms (+ NOW 1)) #())
+      #("断りで止め始めた子・猶予の内 → 待つ(止めを出し直さない)" (replace (! (child KEY-A :stop term-now)) :fork-refused True) #())))
+  (for [#(label view expected) rows]
+    (<- got tuple (warm-child-step NOW KEY-A LAUNCH-A view POLICY :refusal refusal))
+    (assert (= got expected) (.format "{}: {}" label got))))
+
+
+(deftest test-fork-refusals-count-toward-the-warm-refusal-limit
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (val stopped (StopProgress :requested-ms (- NOW 30000) :stage StopStage.TERM :signalled-ms (- NOW 30000)))
+  (val ended (replace (! (child KEY-A :exit-code -15 :ended-ms (- NOW 30000) :stop stopped :detail LATE)) :fork-refused True))
+  ;; 断りで止めた子の終わりは、起こし直す時に断りの数えを 1 つ進める(断りの外で止めた子の後は 0 — 上の表の after-stop)。
+  (assert (= #((refusals-after ended) (refusals-after (replace ended :refusals 1))) #(1 2)))
+  ;; 上限の手前は間を置いて起こし直す。
+  (<- restart tuple (warm-child-step NOW KEY-A LAUNCH-A ended POLICY))
+  (assert (= restart #((StartWarmChild KEY-A LAUNCH-A))) restart)
+  ;; 上限に達したら起こし直さず、task は断りの訳で env-failed に終わる。
+  (val at-limit (replace ended :refusals (- POLICY.warm-refusal-limit 1)))
+  (<- held tuple (warm-child-step NOW KEY-A LAUNCH-A at-limit POLICY))
+  (assert (= held #()) held)
+  (<- report tuple (statuses NOW #(ta) (! (world :children #(at-limit))) {} POLICY))
+  (assert (= (tuple (gfor s report #(s.phase s.failure)))
+             #(#(JobPhase.ENV-FAILED (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :detail LATE :retryable False))))
+          report))

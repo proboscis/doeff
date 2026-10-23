@@ -31,6 +31,8 @@ from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.worker.intent.worker_model import CodeLayout as CodeLayout
 from doeff_cluster.worker.intent.worker_model import ProcessView as ProcessView
 from doeff_cluster.worker.intent.worker_model import StartJob as StartJob
+from doeff_cluster.worker.intent.worker_model import JobStarted as JobStarted
+from doeff_cluster.worker.intent.worker_model import JobNotStarted as JobNotStarted
 from doeff_cluster.worker.intent.worker_model import SignalJob as SignalJob
 from doeff_cluster.worker.intent.worker_model import ReapJob as ReapJob
 from doeff_cluster.worker.intent.worker_model import RetireJob as RetireJob
@@ -106,6 +108,7 @@ class StopMoment(StrEnum):
     KILL = 'kill'
     REAPED = 'reaped'
 STOP_TIMING_LOG: str
+JOB_NOT_STARTED_LOG: str
 
 def stop_reason_word(reason: StopReason) -> _Program[str, object]:
     ...
@@ -135,7 +138,7 @@ def job_log_stem(settings: HostSettings, name: str, attempt: int) -> _Program[st
 def process_instance(attempt: int, worker_pid: int, started_ms: int, name: str) -> _Program[str, object]:
     ...
 
-def start_job(settings: HostSettings, action: StartJob) -> _Program[Started, object]:
+def start_job(settings: HostSettings, action: StartJob) -> _Program[Started | JobNotStarted, object]:
     ...
 
 def process_host(settings: HostSettings) -> _Handler:

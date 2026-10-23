@@ -221,10 +221,27 @@ class WarmChildView:
     detail: str = ""
     stop: StopProgress | None = None
     refusals: int = 0
+    fork_refused: bool = False
 
 class Outcome(Enum):
     EXITED = "exited"
     STOPPED = "stopped"
+
+@dataclass(frozen=True, kw_only=True)
+class JobStarted:
+    """StartJob で子を起こした(job の名・子の pid)。"""
+
+    name: str
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class JobNotStarted:
+    """StartJob で子を起こせなかった(job の名・待ちの子の root のキーか None・訳・刻)。"""
+
+    name: str
+    warm_key: str | None
+    detail: str
+    at_ms: int
 
 @dataclass(frozen=True)
 class JobRecord:
@@ -241,6 +258,7 @@ class JobRecord:
     unexpected_exits: int = 0
     memory_kills: int = 0
     memory_killed_spec: str | None = None
+    not_started: JobNotStarted | None = None
     held: StartHold | None = None
 
 @dataclass(frozen=True)
@@ -353,7 +371,7 @@ class SweepEnvs(EffectBase[None]):
     pinned: frozenset[str]
 
 @dataclass(frozen=True)
-class StartJob(EffectBase[None]):
+class StartJob(EffectBase[JobStarted | JobNotStarted]):
     spec: JobSpec
     attempt: int
     code_path: str
@@ -410,6 +428,7 @@ class StopWarmChild(EffectBase[None]):
     key: str
     stage: StopStage
     reason: str
+    refused: bool = False
 
 @dataclass(frozen=True)
 class ForgetWarmChild(EffectBase[None]):

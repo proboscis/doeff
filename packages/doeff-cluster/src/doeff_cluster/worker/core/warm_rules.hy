@@ -49,17 +49,24 @@
        (not (and (is-not view.mark None) (warm-mark-clean view.mark)))))
 
 
+(defn #^ bool ended-refusing [#^ WarmChildView view]  ; defk にできない: 純粋な判断の refusals-after・warm-child-refused(Program の外の関数)が呼ぶ
+  "待ちの子が断って終わったか(断りの数えの 1 か所): 起動を断った(ended-before-ready)か、task を分けるのを断ったので worker が止め、
+   終わりを観測した(fork-refused — card ki-e1612a12d0c3)。"
+  (or (ended-before-ready view) (and (is-not view.exit-code None) view.fork-refused)))
+
+
 (defn #^ int refusals-after [#^ (| WarmChildView None) previous]  ; defk にできない: 待ちの子の宿(warm_host・sim の宿)の StartWarmChild の答え手が呼ぶ
-  "root の待ちの子を起こし直す時に、新しい観測が持つ「続けて起動を断った回数」を数えるため(数えの定義点はここ 1 つ — 本番の宿も
-   sim の宿も呼ぶ): 前の子が起動を断っていれば 1 つ増やし、準備済みになった子・worker が止めた子・初めての子の後は 0。"
-  (if (and (is-not previous None) (ended-before-ready previous)) (+ previous.refusals 1) 0))
+  "root の待ちの子を起こし直す時に、新しい観測が持つ「続けて断った回数」を数えるため(数えの定義点はここ 1 つ — 本番の宿も
+   sim の宿も呼ぶ): 前の子が断って終わっていれば(ended-refusing)1 つ増やし、準備済みになった子・断りの外で worker が止めた子・初めての
+   子の後は 0。"
+  (if (and (is-not previous None) (ended-refusing previous)) (+ previous.refusals 1) 0))
 
 
 (defn #^ bool warm-child-refused [#^ (| WarmChildView None) view #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の warm-child-step・phase-of が呼ぶ
-  "待ちの子が起動の断りの上限に達したか: 今の子も起動を断り、続けた回数が WorkerPolicy.warm-refusal-limit に届いた。届いたら起こし直さず、
-   その root から分かれる task を env-failed で終える(断りが決定的なら起こし直しても同じで、上限が無いと task は PREPARING のまま
-   worker の枠を取り続けた — 2026-10-10)。"
-  (and (is-not view None) (ended-before-ready view) (>= (+ view.refusals 1) policy.warm-refusal-limit)))
+  "待ちの子が断りの上限に達したか: 今の子も断って終わり(起動を断った・分けるのを断った — ended-refusing)、続けた回数が
+   WorkerPolicy.warm-refusal-limit に届いた。届いたら起こし直さず、その root から分かれる task を env-failed で終える(断りが決定的なら
+   起こし直しても同じで、上限が無いと task は PREPARING のまま worker の枠を取り続けた — 2026-10-10)。"
+  (and (is-not view None) (ended-refusing view) (>= (+ view.refusals 1) policy.warm-refusal-limit)))
 
 
 (defn #^ EnvFailure warm-refusal-failure [#^ WarmChildView view]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ

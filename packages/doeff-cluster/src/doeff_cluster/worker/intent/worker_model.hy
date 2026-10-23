@@ -245,7 +245,8 @@
   "root ごとの待ちの子 1 つの観測。key = root のキー(env-<キー>)・pid = 待ちの子の process・started-ms = 起こした刻・mark = 準備完了の印
    (まだ書いていなければ None)・exit-code = 終わりを観測した code(走っていれば None)・ended-ms = 終わりを観測した刻・detail = 終わりの理由
    (log の最後の 1 行か、worker が止めた訳)・stop = worker が止め始めた後の進み(止めていなければ None)・refusals = この子を起こす前に、
-   同じ root の待ちの子が準備完了の印を書く前に続けて終わった(起動を断った)回数(warm_rules の refusals-after が数える)。"
+   同じ root の待ちの子が続けて断った(起動を断った・分けるのを断った)回数(warm_rules の refusals-after が数える)・fork-refused = task を
+   分けるのを断ったので worker が止めた子(StopWarmChild の refused — card ki-e1612a12d0c3)。"
   (#^ str key)
   (#^ int pid)
   (#^ int started-ms)
@@ -254,12 +255,32 @@
   (setv #^ (| int None) ended-ms None)
   (setv #^ str detail "")
   (setv #^ (| StopProgress None) stop None)
-  (setv #^ int refusals 0))
+  (setv #^ int refusals 0)
+  (setv #^ bool fork-refused False))
 
 
 (defclass Outcome [Enum]
   ;; EXITED = 停止を求めていないのに終了した・STOPPED = 停止を求めて終了を確認した
   (setv EXITED "exited" STOPPED "stopped"))
+
+
+;; StartJob の答え(card ki-e1612a12d0c3): 起こせなかった事は例外でなく値で返す。待ちの子の混み(5 秒の内に答えない)や命令の無さで
+;; 普通に起きる答えで、例外にすると worker-tick を抜けて worker の process ごと落ち、機体の上の job を全部道連れにした(10-24 02:42 JST)。
+(defrecord JobStarted
+  "StartJob で子を起こした: name = job の名・pid = 起こした子の pid。"
+  (#^ str name)
+  (#^ int pid))
+
+
+(defrecord JobNotStarted
+  "StartJob で子を起こせなかった(子の表に載せない): name = job の名・warm-key = 待ちの子から分けようとした root のキー(None = 入れ物 shim の
+   道)・detail = 断りの訳・at-ms = 起こそうとした刻(epoch ms — 待ちの子が分けるのを断った時、その待ちの子より後の断りかを判断が照らす)。
+   判断は job だけの失敗(failures と backoff)に数え、待ちの子の道の断りはその待ちの子の断りにも数える(policy の record-after・
+   warm-child-actions)。"
+  (#^ str name)
+  (#^ (| str None) warm-key)
+  (#^ str detail)
+  (#^ int at-ms))
 
 
 (defclass [(dataclass :frozen True)] JobRecord []
@@ -283,6 +304,10 @@
   ;; 終わったら 0 に戻す(止められても、その前に仕事を回せた job は数え直す)。
   (setv #^ int memory-kills 0)
   (setv #^ (| str None) memory-killed-spec None)
+  ;; 最後の StartJob が起こせなかった答え(card ki-e1612a12d0c3 — 起こせた StartJob で None に戻す)。続けて落ちた回数(failures・
+  ;; unexpected-exits)にも数え、backoff はこの刻から数える(policy の in-backoff)。task は終わった事にしない(last-outcome を書かない —
+  ;; backoff の後に起こし直す)。
+  (setv #^ (| JobNotStarted None) not-started None)
   ;; 最後に名乗った起こしの見送りの訳(#3713 — 同じ訳が続く間は行を出さない・None = 見送っていない)。拍の Program が拍の終わりに書く。
   (setv #^ (| StartHold None) held None))
 
@@ -317,7 +342,8 @@
   (setv #^ int retired-limit 3)
   ;; 待ちの子が準備完了の印を書く前に終わる(起動を断る)事が同じ root で続いた時に、起こし直しを止めて、その root から分かれる task を
   ;; env-failed で終える回数(正の整数)。断りが決定的(import の失敗など)なら起こし直しても同じで、上限が無いと task は PREPARING のまま
-  ;; worker の枠を取り続けた(2026-10-10 に 1,092 回・10 時間)。
+  ;; worker の枠を取り続けた(2026-10-10 に 1,092 回・10 時間)。task を分けるのを断った待ちの子(worker が止める)も同じ数えに乗る
+  ;; (card ki-e1612a12d0c3 — warm_rules の ended-refusing)。
   (setv #^ int warm-refusal-limit 3)
   ;; 常駐の job が機体の memory の見張りに続けて止められた時に、起こし直しを止めて失敗(phase memory-killed)として報告する回数(正の整数)。
   ;; 起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められ、要求を 1 件も回さずに起き直し続けた(2026-10-19 の本番の
@@ -478,6 +504,7 @@
 
 
 (defclass [(dataclass :frozen True)] StartJob [EffectBase]
+  "job の子を起こす。答え = JobStarted か JobNotStarted(起こせなかった — 例外にしない・card ki-e1612a12d0c3)。"
   (#^ JobSpec spec)
   (#^ int attempt)
   (#^ str code-path)
@@ -557,10 +584,12 @@
 
 (defclass [(dataclass :frozen True)] StopWarmChild [EffectBase]
   "走っている待ちの子の process group へ stage の signal を送る(reason = 止めた訳 — 観測の detail に残る)。待ちの子から分かれた task には
-   何も送らない(task は分かれた時に自分の session と process group を持つ — 条 WC2)。"
+   何も送らない(task は分かれた時に自分の session と process group を持つ — 条 WC2)。refused = 分けるのを断った待ちの子を止める
+   (観測の fork-refused に残り、終わった後は断りに数える — card ki-e1612a12d0c3)。"
   (#^ str key)
   (#^ StopStage stage)
-  (#^ str reason))
+  (#^ str reason)
+  (setv #^ bool refused False))
 
 
 (defclass [(dataclass :frozen True)] ForgetWarmChild [EffectBase]
