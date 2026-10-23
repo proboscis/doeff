@@ -11,6 +11,11 @@
 ;;;
 ;;; process の世代の名(instance): <試行の番号>-<12 桁>。12 桁は worker の pid・起こした時刻・job の名・試行の番号の sha256 の頭
 ;;; (前の uuid4 の頭 12 桁と同じ形 — 乱数の効果を使わず、再起動した worker でも pid が違うので重ならない)。
+;;;
+;;; 実行環境の job の作業 dir(回収した job の物と、起こす前に残っていた前の job の物)は、拍の中では置き場(jobs-dir の下の
+;;; SET-ASIDE-DIR)へ名を付け替えるだけにし、木の消し(RemoveTree)は拍の外の task が行う(card ki-2158e6d6e304 — 作業 dir は 14 万
+;;; file・3.4 GiB に育ち、回収の拍が消しの終わりを 40〜250 秒待って、ほかの job の起動・止め・状態の報告を道連れに止めた)。消しの task は
+;;; 同時に 1 つで、置き場の中身を全部消す(前の process が残した物も拾う)。走っている間に退けた物は、task の終わりの後の拍が次の task に渡す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -18,8 +23,12 @@
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import hashlib)
 (import pathlib [Path])
+(import posixpath)
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [MakeDirectory RemoveTree WriteText file-done])
+(import doeff_core_effects.file_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat RemoveTree RenamePath StatPath WriteText
+                                         file-done])
+(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise FailPromise Promise])
+(import doeff_time [WaitWithin])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess
                                             ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild
                                             WriteProcessInput ProcessInputWritten])
@@ -96,6 +105,13 @@
 (val STOP-TIMING-LOG "worker: job の止めの計時")
 ;; 起こせなかった job の行の名(card ki-e1612a12d0c3 — 名 + 欄 job・via(shim か warm:<root のキー>)・detail の形)。
 (val JOB-NOT-STARTED-LOG "worker: job を起こせなかった")
+;; 退けた作業 dir の置き場の名(jobs-dir の下 — 名の付け替えが同じ file system の中の 1 手で済む。job の作業 dir の名は job-work-dir が
+;; job の名から作り、. で始まらない)。
+(val SET-ASIDE-DIR ".set-aside")
+;; 置き場の消しの終わりの行の名(名 + 欄 removed = 消した物の数・failed = 消せなかった物の数・took-ms = task の起こしから終わりまでの ms)。
+(val SET-ASIDE-CLEARED-LOG "worker: 退けた作業 dir の消しの終わり")
+;; 作業 dir を置き場へ退けられず、拍の中で消した時の行の名(名 + 欄 path・detail)。
+(val SET-ASIDE-FAILED-LOG "worker: 作業 dir を退けられず拍の中で消した")
 
 
 (defk stop-reason-word [reason]
@@ -174,6 +190,105 @@
   (+ settings.jobs-dir "/" (.replace name "/" "_")))
 
 
+(defrecord SetAsideClearing
+  "走っている置き場の消しの task(頭の註): done = task が消した物の数を渡す約束・started-ms = task を起こした刻(epoch ms)。"
+  (#^ Promise done)
+  (#^ int started-ms))
+
+
+(defrecord SetAside
+  "退けた作業 dir の置き場の記録(頭の註): clearing = 走っている(か最後に起こした)消しの task(None = まだ起こしていない)・
+   unhanded = その task を起こした後に退けた物が置き場に在るか(在れば task の終わりの後の拍が次の task を起こす)・count = この process で
+   退けた数(置き場の中の名を重ねない番号)。"
+  (setv #^ (| SetAsideClearing None) clearing None)
+  (setv #^ bool unhanded False)
+  (setv #^ int count 0))
+
+
+(defk set-aside-place [settings]
+  {:pre [(: settings HostSettings)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "退けた作業 dir の置き場の path を、退ける時と消す時が同じ綴りで作るため。"
+  (+ settings.jobs-dir "/" SET-ASIDE-DIR))
+
+
+(defk set-aside-work-dir [settings work serial]
+  {:pre [(: settings HostSettings) (: work str) (: serial int)] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
+  "作業 dir work を置き場へ退けるため(名の付け替え 1 回 — 木の消しは拍の外の task・頭の註)。serial = この process の中で退けた順の番号
+   (同じ job の名を同じ ms に 2 度退けても名が重ならない)。答え = 置き場へ退けたか(作業 dir が無ければ False)。退けられなかった
+   (付け替えの断り)時は、作業 dir を残さないよう拍の中で消し、その訳を 1 行出す(起こす job の cwd を空にする約束を守る)。"
+  (<- seen (| PathStat FileFailed) (StatPath work :follow-symlinks False))
+  (if (or (isinstance seen FileFailed) (= seen.kind PathKind.MISSING))
+      False
+      (do (<- place str (set-aside-place settings))
+          (<- (file-done (MakeDirectory place)))
+          (<- now int (now-epoch-ms))
+          (<- moved (| None FileFailed) (RenamePath work (.format "{}/{}.{}.{}" place (posixpath.basename work) now serial)))
+          (if (isinstance moved FileFailed)
+              (do (<- (slog SET-ASIDE-FAILED-LOG :level "warning" :path work :detail moved.detail))
+                  (<- (RemoveTree work))  ; 消せなかった断りは捨てる(前の形と同じ)
+                  False)
+              True))))
+
+
+(defk clearing-set-aside [settings started-ms done]
+  {:pre [(: settings HostSettings) (: started-ms int) (: done Promise)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "置き場の中身を全部消し(木の消しは本番の offloaded-tree-handler が thread で待つ)、消した物の数を done へ渡し、終わりの行を出すため
+   (拍の外の task — 頭の註)。消せなかった物は数えて残す(次の task が消し直す)。失敗も done へ渡す(渡さないと消しが走り続けていると
+   読まれ、次の task が起きない — 失敗は拍が答えを読んだ時に上がる)。"
+  (try
+    (<- place str (set-aside-place settings))
+    (<- entries (| tuple FileFailed) (ListDirectory place))
+    (var removed 0)
+    (var failed 0)
+    (when (not (isinstance entries FileFailed))
+      (for [entry entries]
+        (<- gone (| None FileFailed) (RemoveTree (posixpath.join place entry.name)))
+        (if (isinstance gone FileFailed)
+            (:= failed (+ failed 1))
+            (:= removed (+ removed 1)))))
+    (<- now int (now-epoch-ms))
+    (<- (slog SET-ASIDE-CLEARED-LOG :level "info" :removed removed :failed failed :took-ms (- now started-ms)))
+    (<- (CompletePromise done removed))
+    (except [error Exception]
+      (<- (FailPromise done error))))
+  None)
+
+
+(defk clearing-running [clearing]
+  {:pre [(: clearing (| SetAsideClearing None))] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
+  "置き場の消しの task が走っているかを、待たずに読むため(待つ秒 0 の WaitWithin — task が渡した失敗はここで上がる)。"
+  (if (is clearing None)
+      False
+      (do (<- answer (WaitWithin clearing.done.future 0.0))
+          (is answer None))))
+
+
+(defk clearing-progressed [settings aside]
+  {:pre [(: settings HostSettings) (: aside SetAside)] :post [(: % SetAside)] :tags {:context "worker" :role "protocol"}}
+  "置き場の消しを進めるため: 走っている task に渡していない物(aside.unhanded)が在って task が走っていなければ、新しい task を起こす
+   (拍は待たない — 頭の註)。答え = 次の記録。"
+  (if (not aside.unhanded)
+      aside
+      (do (<- running bool (clearing-running aside.clearing))
+          (if running
+              aside
+              (do (<- now int (now-epoch-ms))
+                  (<- done Promise (CreatePromise))
+                  (<- (Spawn (clearing-set-aside settings now done) :daemon True))
+                  (replace aside :clearing (SetAsideClearing :done done :started-ms now) :unhanded False))))))
+
+
+(defk work-dir-set-aside [settings work aside]
+  {:pre [(: settings HostSettings) (: work str) (: aside SetAside)] :post [(: % SetAside)] :tags {:context "worker" :role "protocol"}}
+  "作業 dir work を置き場へ退け、消しの task を進めるため(回収の時と、起こす前に前の job の作業 dir が残っていた時 — 頭の註)。
+   答え = 次の記録(work が無ければ aside のまま)。"
+  (<- moved bool (set-aside-work-dir settings work aside.count))
+  (if moved
+      (do (<- progressed SetAside (clearing-progressed settings (replace aside :count (+ aside.count 1) :unhanded True)))
+          progressed)
+      aside))
+
+
 (defk job-log-stem [settings name attempt]
   {:pre [(: settings HostSettings) (: name str) (: attempt int)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "job の子の出力の file と、待ちの子から分けた子の exit の file の共通の頭(<log-dir>/<job の名>.<世代の印>.<試みの番号> — task の名前
@@ -223,8 +338,8 @@
   (when plan.last-used
     ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
     (<- (file-done (WriteText plan.last-used "" :replace True))))
+  ;; 前の job の作業 dir は、呼び手(process-host の StartJob の節)が置き場へ退けた後なので、ここでは空の dir を作るだけ。
   (when plan.work-dir
-    (<- (RemoveTree plan.work-dir))  ; 無い dir の断りは捨てる(前の job の作業 dir が在れば消す)
     (<- (file-done (MakeDirectory plan.work-dir))))
   (<- stem str (job-log-stem settings spec.name action.attempt))
   (val log (+ stem ".log"))
@@ -258,8 +373,15 @@
   ;; 引数に残す理由: 置き場の dir と起こし方は worker の process ごとの設定(main が引数から作る)。
   ;; 起こした子の表(job の名 → Started — 観測と、待ちの子から分けた子の印。終わりを観測した子の観測は exit-code を持つ)。
   (session var table {})
+  ;; 退けた作業 dir の置き場と、その消しの task の記録(頭の註)。
+  (session var aside (SetAside))
   (StartJob [spec attempt code-path warm-key]
     (when (in spec.name table) (raise (RuntimeError f"{spec.name} は既に動いています")))
+    ;; 実行環境の job は空の作業 dir で起こす — 前の job の作業 dir が残っていれば置き場へ退ける(消しは拍の外)。
+    (when spec.runtime-env
+      (<- work str (job-work-dir settings spec.name))
+      (<- moved SetAside (work-dir-set-aside settings work aside))
+      (:= aside moved))
     ;; 起こせなかった子は表に載せず、その答えを返す(判断がその job だけの失敗に数える — card ki-e1612a12d0c3)。
     (<- begun (| Started JobNotStarted) (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
     (if (isinstance begun JobNotStarted)
@@ -303,10 +425,12 @@
       (when (is-not started.stop None)
         (<- now int (now-epoch-ms))
         (<- (noted-stop StopMoment.REAPED name pid started.stop now)))
-      ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に消す。
+      ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に置き場へ退け、拍の外の task が消す(頭の註 — 拍は消しの終わりを
+      ;; 待たない)。
       (when started.view.spec.runtime-env
         (<- work str (job-work-dir settings name))
-        (<- (RemoveTree work)))
+        (<- moved SetAside (work-dir-set-aside settings work aside))
+        (:= aside moved))
       (:= table (dfor #(k v) (.items table) :if (!= k name) k v)))
     (resume None))
   (RetireJob [name pid new-name]
@@ -347,6 +471,9 @@
                                         (replace started :view (replace started.view :exit-code polled.exit-code))
                                         started)))))
     (:= table seen)
+    ;; 消しの task が走っていた間に退けた物は、その task の終わりの後の観測で次の task に渡す(頭の註)。
+    (<- progressed SetAside (clearing-progressed settings aside))
+    (:= aside progressed)
     (resume (tuple (gfor started (.values seen) started.view))))
   (ObserveJobRoots []
     ;; 機体の memory の見張りの問い(card ki-7b934e2538f9): 終わりをまだ観測していない子の根を、表のまま答える(子を問い直さない)。
@@ -361,5 +488,7 @@
                             (if (is-not started.fork None)
                                 (AwaitWarmChildExit :pid started.view.pid :start-ticks started.fork.start-ticks)
                                 (AwaitProcessExit started.view.pid)))))
-    (<- merged WakeSet (wakes-with outer (DueNever) #() exits))
+    ;; 走っている消しの task に渡していない物が置き場に在れば、その task の終わりでも起きる(次の観測が次の task を起こす)。
+    (val bells (if (and aside.unhanded (is-not aside.clearing None)) #(aside.clearing.done.future) #()))
+    (<- merged WakeSet (wakes-with outer (DueNever) bells exits))
     (resume merged)))

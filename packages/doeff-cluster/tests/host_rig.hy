@@ -11,6 +11,7 @@
 (import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
 (import doeff_time [sync-time-handler])
@@ -80,6 +81,8 @@
   {:pre [(: settings HostSettings) (: program Program) (: around tuple)] :post [(: % (| int tuple ProcessView))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "Program を process-host と本物の答え手の下で回し、その答えを返すため。around = process-host と本物の答え手の間に置く handler(反例 —
    本物へ渡す前に StartProcess を書き換える壊した handler など)。"
-  ;; with-handlers の並びは先頭が外側。process-host の session の値(子の表)は外側の state が持つ。
-  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler #* around (process-host settings)] program))
+  ;; with-handlers の並びは先頭が外側。process-host の session の値(子の表)は外側の state が持つ。scheduler は本番と同じく外側に置く
+  ;; (process-host は回収した作業 dir の消しを拍の外の task で走らせる — card ki-2158e6d6e304)。
+  (<- answer (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler #* around (process-host settings)]
+                                       program)))
   answer)
