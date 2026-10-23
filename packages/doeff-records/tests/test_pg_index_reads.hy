@@ -17,7 +17,9 @@
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement list-rows-statement top-rows-statement table-field-index-name
-                              ordered-index-name ordered-expression])
+                              ordered-index-name ordered-expression ordered-within-index-name ordered-within-index table-field-expression
+                              declared-indexes retired-index?])
+(import doeff_records.laws [LAW-SCHEMA])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -746,3 +748,144 @@
       (assert (<= read (+ KEY-ORDER-PAGE 1)) (repr #(read scans))))
     (finally
       (.close connections))))
+
+
+;; --- 等号で絞った上から読む読みは、等号の欄 × 上から読む欄の組の索引を 1 頁だけ辿る -------------------------------------------------
+;; 2026-10-23: 本番の表で、欄 1 つの値 1 つ(表の 15%)の行を刻の欄の新しい順に読む続きの頁が、等号の欄の索引と上から読む欄の索引を組んで
+;; (BitmapAnd)位置より下の当たる行を全部引き、その全部の行の payload を jsonb に読み直して並べ替え(Sort)、冷えた buffer で読みの期限を
+;; 越えた。表 parts の組(LAW-SCHEMA の descending-within — color × note)の索引で、color = "hot" の上からの 1 頁と、続きの位置(真ん中)からの
+;; 1 頁が、組の索引の Index Scan だけで答え(BitmapAnd も Sort も無い)、置き場を TOP-ROWS 行と 2 倍の行で作っても読んだ行を増やさない事を
+;; 確かめる。置き場には絞りに合わない行(color が他の値)と並べない行(note が文字列の行 — 10 行に 1 行)を混ぜ、答えの行が絞りに合う並べる行
+;; だけな事も見る。組の索引が無い形では、引いた索引の名に組の索引が無く、続きの頁は BitmapAnd と Sort で赤になる。
+;; 絞りに合う行(color = hot)は HOT-EVERY 行に 1 行。note の値は行の置き順と関わらない並び(g × NOTE-STRIDE を NOTE-MODULUS で割った余り —
+;; どちらも素数で、g < NOTE-MODULUS の内は値が重ならない)— 置き順と並べる欄の順が揃う置き場では、planner は上から読む欄の索引を辿って
+;; 絞りの欄で濾す計画を安く見積もり、組の索引を測れない。
+(val HOT-EVERY 7)
+(val NOTE-STRIDE 7919)
+(val NOTE-MODULUS 100003)
+
+
+(defk within-seed-statement [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "表 parts に count 行(鍵 w1 …・color は g が HOT-EVERY の倍数なら hot・他は c{g mod 7}・note は g × NOTE-STRIDE mod NOTE-MODULUS・
+   g が 10 の倍数の行は文字列 n{g}・
+   label は本番の行の大きさに近い md5 の綴りの連なり)をまとめて置く文を作るため。"
+  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
+                       SELECT 'parts', '[\"w' || g || '\"]',
+                              json_build_object('id', 'w' || g, 'state', 'open',
+                                                'color', CASE WHEN g % CAST(:every AS integer) = 0 THEN 'hot' ELSE 'c' || (g % 7) END,
+                                                'note', CASE WHEN g % 10 = 0 THEN to_jsonb('n' || g)
+                                                             ELSE to_jsonb((g * CAST(:stride AS bigint)) % CAST(:modulus AS bigint)) END,
+                                                'label', (SELECT string_agg(md5(g || '-' || b), '')
+                                                            FROM generate_series(1, CAST(:blocks AS integer)) AS b))::text,
+                              1, CAST(:at AS bigint), 'maker', CAST(:origin AS text), 1
+                         FROM generate_series(1, CAST(:count AS integer)) AS g" :p prefix)
+             :params (tuple (gfor #(name value) #(#("count" count) #("every" HOT-EVERY) #("stride" NOTE-STRIDE) #("modulus" NOTE-MODULUS)
+                                                  #("blocks" TOP-NOTE-BLOCKS) #("at" YOUNG) #("origin" ORIGIN-HOST))
+                                  (SqlParam :name name :value value)))))
+
+
+(defk within-ranked [count]
+  {:pre [(: count int) (< count NOTE-MODULUS)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "置いた count 行のうち color = hot の並べる行(HOT-EVERY の倍数で 10 の倍数でない g)の #(note の値 鍵) を、大きい順に並べるため
+   (note の値は行ごとに違う — 鍵で並べ分ける行は無い)。"
+  (tuple (sorted (gfor g (range 1 (+ count 1)) :if (and (= (% g HOT-EVERY) 0) (% g 10))
+                       #((% (* g NOTE-STRIDE) NOTE-MODULUS) (json.dumps [(.format "w{}" g)])))
+                 :reverse True)))
+
+
+(defk plan-node-types [explained]
+  {:pre [(: explained list)] :post [(: % frozenset)]
+   :tags {:context "records" :role "program"}}
+  "EXPLAIN (FORMAT JSON) の答えの計画の木の節の種類を集めるため。"
+  (<- nodes (plan-nodes (get explained 0 "Plan")))
+  (frozenset (gfor node nodes (get node "Node Type"))))
+
+
+(defk within-reads-on-seeded-store [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix に count 行を置いて統計を取り、color = hot の上からの 1 頁と真ん中からの 1 頁の
+   #(走査の節 引いた索引の名 節の種類 返した鍵 期待の鍵) を {名 …} で返すため。"
+  (<- seed (within-seed-statement prefix count))
+  (for [statement #(seed (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
+    (<- seeded (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  (val hot {"color" (canonical-json "hot")})
+  (<- ranked (within-ranked count))
+  (val middle (// (len ranked) 2))
+  (setv [middle-value middle-key] (get ranked middle))
+  (<- head (top-rows-statement prefix "parts" #("id") PARTS-SCOPED "note" True None hot {} TOP-PAGE None))
+  (<- below (top-rows-statement prefix "parts" #("id") PARTS-SCOPED "note" True (ListCursor 1 middle-key middle-value) hot {} TOP-PAGE None))
+  (val head-expected (tuple (gfor #(_ key) (cut ranked (+ TOP-PAGE 1)) key)))
+  (val below-expected (tuple (gfor #(_ key) (cut ranked (+ middle 1) (+ middle TOP-PAGE 2)) key)))
+  (var reads {})
+  (for [#(name statement expected) #(#("上から" head head-expected) #("真ん中から" below below-expected))]
+    (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+    (assert (isinstance answer SqlRows) (repr answer))
+    (val plan (get answer.rows 0 0))
+    (val explained (if (isinstance plan str) (json.loads plan) plan))
+    (<- scans (table-scans prefix explained))
+    (<- names (index-names explained))
+    (<- kinds (plan-node-types explained))
+    (<- listed (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance listed SqlRows) (repr listed))
+    (:= reads (| reads {name #(scans names kinds (tuple (gfor record listed.rows (get record 0))) expected)})))
+  reads)
+
+
+(defk within-reads-at [connections count]
+  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して count 行を置き、等号で絞った上から読む読みを測るため(終わりに表を消す)。
+   答え = #(読みごとの測り parts の color × note の組の索引の名)。"
+  (val store (prepared-store connections (fresh-prefix)))
+  (var reads {})
+  (try
+    (:= reads (run-sql connections (within-reads-on-seeded-store store.prefix count)))
+    (finally
+      (run-sql connections (drop-records-tables store))))
+  (<- within-index (ordered-within-index-name store.prefix "parts" "color" "note"))
+  #(reads within-index))
+
+
+(deftest test-a-descending-page-within-an-equal-field-reads-through-the-pair-index-on-a-store-twice-as-large
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (try
+    (<- small (within-reads-at connections TOP-ROWS))
+    (<- large (within-reads-at connections (* 2 TOP-ROWS)))
+    (for [#(reads within-index) #(small large)
+          name #("上から" "真ん中から")]
+      (setv [scans names kinds keys expected] (get reads name))
+      ;; 絞りに合う並べる行だけを、(値, 鍵) の大きい順に 1 頁 + 1 行。
+      (assert (= keys expected) (repr #(name keys expected)))
+      ;; 組の索引の Index Scan で答え、索引を組む節(BitmapAnd)も並べ替えの節(Sort)も置き場の表を頭から読む節も無い。
+      (assert (= names (frozenset #(within-index))) (repr #(name within-index names scans)))
+      (assert (in "Index Scan" kinds) (repr #(name kinds)))
+      (assert (not (& kinds (frozenset #("BitmapAnd" "Bitmap Heap Scan" "Sort" "Incremental Sort" "Seq Scan")))) (repr #(name kinds scans))))
+    ;; 2 倍の置き場でも読んだ行は増えない(読むのは 1 頁 + 1 行と、その間の並べない行だけ — 絞りに合う行の数に依らない)。
+    (for [name #("上から" "真ん中から")]
+      (<- small-read (total-read (get (get (get small 0) name) 0)))
+      (<- large-read (total-read (get (get (get large 0) name) 0)))
+      (assert (<= large-read small-read) (repr #(name small-read large-read))))
+    (finally
+      (.close connections))))
+
+
+(deftest test-the-pair-index-uses-the-same-expressions-as-the-descending-read-within-an-equal-field
+  ;; 組の索引の式は、読みの文の等号の条件(表の欄の式)と並べる式と同じ字面(文を変えずに planner が選ぶ — pg_sql の頭の註)。
+  (<- index (ordered-within-index "records_" "parts" "color" "note"))
+  (<- equal (table-field-expression "" "parts" "color"))
+  (<- ordered (ordered-expression "parts" "note"))
+  (assert (in (.format "state_rows ({}, {} DESC NULLS LAST, key COLLATE \"C\" DESC)" equal ordered) index.text) index.text)
+  (<- read (top-rows-statement "records_" "parts" #("id") (frozenset #("color")) "note" True None {"color" (canonical-json "hot")} {} 10 None))
+  (assert (in (+ equal " = :w0::jsonb") read.text) read.text)
+  (assert (in (.format "ORDER BY {} DESC NULLS LAST, key COLLATE \"C\" DESC" ordered) read.text) read.text)
+  ;; 置き場に在るべき索引に、宣言の組ごとに 1 つ入る(旧い形の索引の名の形には当たらない — 索引の用意が外さない)。
+  (<- declared (declared-indexes "records_" LAW-SCHEMA))
+  (assert (in index declared) (repr (lfor d declared d.name)))
+  (<- retired (retired-index? "records_" index.name))
+  (assert (not retired) index.name))

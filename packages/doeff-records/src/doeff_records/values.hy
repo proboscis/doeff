@@ -162,6 +162,16 @@
       (raise (ValueError (.format "FieldDecl.founders[{!r}] は空でない文字列の tuple: {!r}" self.name self.founders))))))
 
 
+(defclass [(dataclass :frozen True)] DescendingWithin []
+  "等号の欄で絞って上から読む欄で並べる読み(ListRows の where の等号 + descending-by)の欄の組 1 つ(TableDecl.descending-within):
+   equal = 等号の欄(表の indexes に在る欄)/ descending = 上から読む欄(表の descending に在る欄)。"
+  (#^ str equal)
+  (#^ str descending)
+  (defn #^ None __post_init__ [self]
+    (checked-field-name self.equal "DescendingWithin.equal")
+    (checked-field-name self.descending "DescendingWithin.descending")))
+
+
 (defclass [(dataclass :frozen True)] TableDecl []
   "表の宣言(composition root で渡す data)。
    name = 表の名 / key-fields = 鍵の欄(順つき)/ fields = 欄の宣言(FieldDecl — 欄の名とその欄を書いてよい書き手)の tuple
@@ -170,6 +180,9 @@
    descending = ListRows の descending-by で上から読む欄(速さだけの宣言 — PostgreSQL の置き場が欄ごとに並べる式の索引を張り、上から読む
    読みの文がその式で並べる。宣言の無い欄も上から読めて答えは同じ。答えを変えないので repr に出さない — 表の要約〔schema_digest〕を
    変えない)/
+   descending-within = 等号の欄で絞って上から読む欄で並べる読み(ListRows の where の等号 + descending-by)の欄の組
+   (DescendingWithin)の tuple(速さだけの宣言 — PostgreSQL の置き場が組ごとに、等号の欄の式を前に置いた並べる式の索引を張り、絞った行の 1 頁だけを辿る。
+   等号の欄は indexes に・上から読む欄は descending に在る欄。答えを変えないので repr に出さない — 表の要約を変えない)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
    operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
   (#^ str name)
@@ -177,6 +190,7 @@
   (#^ tuple fields)
   (setv #^ tuple indexes #())
   (setv #^ tuple descending (field :default #() :repr False))
+  (setv #^ tuple descending-within (field :default #() :repr False))
   (setv #^ str state-field "state")
   (setv #^ tuple states #())
   (setv #^ tuple terminal #())
@@ -206,6 +220,15 @@
     (checked-names self.descending "TableDecl.descending")
     (for [name self.descending]
       (when (not (self.declares name)) (raise (ValueError (.format "上から読む欄 {!r} が fields に無い(宣言の外の欄)" name)))))
+    (when (not (and (isinstance self.descending-within tuple) (all (gfor pair self.descending-within (isinstance pair DescendingWithin)))))
+      (raise (TypeError (.format "TableDecl.descending_within は DescendingWithin の tuple: {!r}" self.descending-within))))
+    (when (!= (len self.descending-within) (len (set self.descending-within)))
+      (raise (ValueError (.format "TableDecl.descending_within の組が重なる: {!r}" self.descending-within))))
+    (for [pair self.descending-within]
+      (when (not-in pair.equal self.indexes)
+        (raise (ValueError (.format "組 {!r} の等号の欄が indexes に無い" pair))))
+      (when (not-in pair.descending self.descending)
+        (raise (ValueError (.format "組 {!r} の上から読む欄が descending に無い" pair)))))
     (checked-names self.operator-paths "TableDecl.operator_paths")
     (for [name self.operator-paths]
       (when (not (self.declares name)) (raise (ValueError (.format "承認の欄 {!r} が fields に無い" name))))

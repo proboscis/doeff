@@ -3,7 +3,7 @@
 ;;   - 表の用意の DDL は旧い版と同じ字面(tests/pg_ddl_before_880.json = 旧い版の schema-statements の "records_" の答えの写し)。
 ;;     答え手の方言への書き換え(postgres-statement)を通した後の、driver に渡る字面で比べる。旧い版より後に足した表と索引の文
 ;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022 とその覚えた刻の列・card ki-4ebaefac6668 と、期限の境と組と変更の列の刻と
-;;     状態の欄の索引・#3614 と覚えの外しの索引)は旧い版の文の後ろにだけ並び、
+;;     状態の欄の索引・#3614 と覚えの外しの索引・等号の欄 × 上から読む欄の組の索引)は旧い版の文の後ろにだけ並び、
 ;;     旧い版の文の字面と順を変えない。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632 — 行を作った時の
 ;;     server の時計の ms)。ON CONFLICT DO NOTHING なので既に在る置き場の行(旧い版が作った epoch 1 を含む)には触らず、表の形も
 ;;     変わらない(既に在る置き場の版が 1 のままなことは test_pg_store_epoch.hy が実 PostgreSQL で確かめる)。
@@ -61,7 +61,8 @@
                      TABLE-INDEXES))
 ;; 旧い版より後に足した表と索引の文("records_" の答え・旧い版の文の後ろに足した順)。索引は #3614: 列の期限の境 (ledger, at)・
 ;; 組で数える列 pairs の区切り「:」の組の名の式・頭で引ける列 trails の区切り「#」の頭の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(表 tickets の索引の欄に無い —
-;; 表の欄の式の索引)・表 parts の上から読む欄 note の並べる式の索引(pg_sql.hy の頭の註の上から読む欄の索引)・鍵の綴りの順の索引
+;; 表の欄の式の索引)・表 parts の上から読む欄 note の並べる式の索引(pg_sql.hy の頭の註の上から読む欄の索引)・表 parts の等号の欄 color ×
+;; 上から読む欄 note の組の索引(pg_sql.hy の頭の註の等号の欄 × 上から読む欄の組の索引)・鍵の綴りの順の索引
 ;; (照合順 "C" の (ledger, key) — 頁読みの順。pg_sql.hy の頭の註)。
 (val ADDED-AFTER-880
   ["CREATE TABLE IF NOT EXISTS records_retired_keys (
@@ -77,6 +78,7 @@
    "CREATE INDEX IF NOT EXISTS records_row_changes_at ON records_row_changes (at)"
    "CREATE INDEX IF NOT EXISTS records_fx_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END))"
    "CREATE INDEX IF NOT EXISTS records_ox_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"
+   "CREATE INDEX IF NOT EXISTS records_ow_0b920c6b8d1d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
    "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"])
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。

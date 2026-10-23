@@ -82,12 +82,18 @@ class FieldDecl:
     founders: tuple[str, ...] = ()
 
 @dataclass(frozen=True)
+class DescendingWithin:
+    equal: str
+    descending: str
+
+@dataclass(frozen=True)
 class TableDecl:
     name: str
     key_fields: tuple[str, ...]
     fields: tuple[FieldDecl, ...]
     indexes: tuple[str, ...] = ()
     descending: tuple[str, ...] = ()
+    descending_within: tuple[DescendingWithin, ...] = ()
     state_field: str = "state"
     states: tuple[str, ...] = ()
     terminal: tuple[str, ...] = ()

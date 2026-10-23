@@ -14,6 +14,7 @@ from doeff_time import Delay as Delay
 from doeff_time import GetTime as GetTime
 from doeff_records.values import FieldDecl as FieldDecl
 from doeff_records.values import TableDecl as TableDecl
+from doeff_records.values import DescendingWithin as DescendingWithin
 from doeff_records.values import StreamDecl as StreamDecl
 from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.values import KeepFor as KeepFor

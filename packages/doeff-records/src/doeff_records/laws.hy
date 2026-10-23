@@ -20,7 +20,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay GetTime])
-(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny
+(import doeff_records.values [FieldDecl TableDecl DescendingWithin StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable
@@ -54,6 +54,8 @@
                                 :indexes #("color" "label")
                                 ;; 上から読む欄(法の上から読む読みが並べる欄 — PostgreSQL の置き場は並べる式の索引で辿る)。
                                 :descending #("note")
+                                ;; 等号の欄 × 上から読む欄の組(color で絞って note の大きい順 — PostgreSQL の置き場は組の索引で辿る)。
+                                :descending-within #((DescendingWithin "color" "note"))
                                 :states #("open" "held" "closed") :terminal #("closed") :initial "open"
                                 :operator-paths #("grant") :size-budget 400)
              "tickets" (TableDecl :name "tickets" :key-fields #("group" "id")

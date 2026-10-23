@@ -31,6 +31,9 @@
 ;;;                                  終端の行の読み terminal-rows-statement が引く)
 ;;;   state_rows (並べる式 DESC NULLS LAST, key DESC)  表の上から読む欄(TableDecl.descending)ごとに 1 つ — 上から読む読み
 ;;;                                  (top-rows-statement)が索引の順に 1 頁だけ辿る。式は ordered-expression の 1 か所(下の註)
+;;;   state_rows (等号の欄の表の欄の式, 並べる式 DESC NULLS LAST, key DESC)  表の等号の欄 × 上から読む欄の組
+;;;                                  (TableDecl.descending-within)ごとに 1 つ — 等号で絞った上から読む読みが、絞った行の索引の順に 1 頁だけ
+;;;                                  辿る(下の註)
 ;;;   state_rows (ledger, key COLLATE "C")  鍵の綴りの順の頁読み(list-rows-statement の ledger = :ledger と key COLLATE "C" > :after・
 ;;;                                  ORDER BY key COLLATE "C")が索引の範囲を 1 頁 + 1 行だけ辿る(下の註)
 ;;; 欄の式の索引は表の欄の式の索引(card ki-2176012d1804): 宣言した表 1 つ × 欄 1 つに、表の欄の式
@@ -64,6 +67,11 @@
 ;;; payload を jsonb に読み直して並べ替える(2026-10-19 — 4.7 万行の表 message で 1 頁 0.6〜0.8 秒・負荷の下で読みの期限を越えた)。
 ;;; 索引の在る形は、索引の順に 1 頁 + 1 行だけを辿る(同じ置き場で 2〜7 ms)。続きの位置は行の比べ (式, key) < (値, 鍵) — OR に分けた形は
 ;;; 索引の範囲にならず、位置より下の行を全部読んで並べ替える。文は条件 ledger = :ledger を置かない(式が NULL でない行は表の行だけ)。
+;;; 等号の欄 × 上から読む欄の組の索引: 等号の欄で絞った上から読む読み(例: 欄 1 つの値 1 つの行を刻の欄の新しい順)は、上から読む欄の索引だけ
+;;; では、絞りの欄の索引と組んで(BitmapAnd)位置より下の絞りに合う行を全部引き、全部の行の payload を jsonb に読み直して並べ替えた
+;;; (2026-10-23 — 6 万行の表の 9 千行の値 1 つの続きの頁が 1.6 秒・本番の冷えた buffer で読みの期限を越えた)。等号の欄の表の欄の式
+;;; (table-field-expression)を前に置いた組の索引は、等号の値の範囲を並べる式の順に 1 頁 + 1 行だけ辿る(同じ置き場で 18 ms)。式は読みの文の
+;;; 等号の条件と並べる式と同じ 1 か所から作る(字面が揃うので、文を変えずに planner が選ぶ)。
 ;;; 鍵の綴りの順の索引: 列 key と主キー (ledger, key) の索引は database の既定の照合順(本番は en_US.utf8)で並び、頁読みの順
 ;;; key COLLATE "C"(memory の置き場と同じ符号点の順)では主キーを辿れない。索引の無い置き場の 1 頁は、表の全部の行を読んで並べ替えて
 ;;; 上から limit + 1 行を取る(2026-10-19 の本番 — 1.88 万行の表で 1 頁ごとに 1.88 万行・全頁の読みは行の数の 2 乗)。照合順 "C" の
@@ -393,6 +401,35 @@
                  :sampled True))
 
 
+(defk ordered-within-index-name [prefix table equal-field field-name]
+  {:pre [(: prefix str) (: table str) (: equal-field str) (: field-name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の等号の欄 equal-field × 上から読む欄 field-name の組の索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の
+   上限 63 字の内。欄の名は英数字と _ だけなので、区切り , で結んだ組の綴りは組ごとに違う)。"
+  (<- pair-digest (digest-of (.format "{},{}" equal-field field-name)))
+  (<- table-digest (digest-of table))
+  (.format "{}ow_{}_{}" prefix pair-digest table-digest))
+
+
+(defk ordered-within-index [prefix table equal-field field-name]
+  {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: equal-field str) (: field-name str)] :post [(: % DeclaredIndex)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の等号の欄 equal-field × 上から読む欄 field-name の組(TableDecl.descending-within)の索引 state_rows (表の欄の式, 並べる式
+   DESC NULLS LAST, key DESC) を作るため(頭の註 — 速さだけの索引: 無くても上から読む読みは同じ行を返すので、ListRows を待たせない)。
+   式は読みの文の等号の条件(where-condition の table-field-expression)と並べる式(ordered-expression)と同じ 1 か所から作る。見積もりは
+   索引の式の統計(sampled — 表の標本が取る)。"
+  (<- name (ordered-within-index-name prefix table equal-field field-name))
+  (<- equal (table-field-expression "" table equal-field))
+  (<- expression (ordered-expression table field-name))
+  (DeclaredIndex :name name :relation "state_rows"
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({q}, {e} DESC NULLS LAST, key COLLATE \"C\" DESC)"
+                                :i name :p prefix :q equal :e expression)
+                 :serves #()
+                 :scoped #()
+                 :aliases #()
+                 :sampled True))
+
+
 (defk field-index [prefix table field-name serves]
   {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (: serves bool)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
@@ -563,6 +600,7 @@
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
    無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。続いて表の名の順・欄の名の順の上から読む欄の索引(頭の註)。
+   続いて表の名の順・(等号の欄, 上から読む欄) の順の等号の欄 × 上から読む欄の組の索引(頭の註)。
    続いて鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。最後に覚えの外しの索引 retired_keys (ledger, remembered_at)
    (頭の註の retired_keys — forget-keys-statement が引く)。"
   (val p prefix)
@@ -591,6 +629,12 @@
   (for [#(table field) ordered-fields]
     (<- ordered-made (ordered-index p table field))
     (:= ordered (+ ordered #(ordered-made))))
+  (val within-pairs (lfor table (sorted schema.tables)
+                          pair (sorted (. (get schema.tables table) descending-within) :key (fn [pair] #(pair.equal pair.descending)))
+                          #(table pair.equal pair.descending)))
+  (for [#(table equal field) within-pairs]
+    (<- within-made (ordered-within-index p table equal field))
+    (:= ordered (+ ordered #(within-made))))
   (+ #((! (fixed-index (+ p "append_rows_ledger_at") "append_rows"
                        (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger_at ON {p}append_rows (ledger, at)" :p p))))
      groups
