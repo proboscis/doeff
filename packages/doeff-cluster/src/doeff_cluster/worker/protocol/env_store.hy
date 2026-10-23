@@ -262,6 +262,13 @@
       (max pending.started-ms (int (* 1000 seen.modified)))))
 
 
+(defk read-text-or-empty [path]
+  {:pre [(: path str)] :post [(: % str)]}
+  "止めた準備の進みの印と log の中身を失敗の文へ載せるため読む(無い・読めない file は空 — 理由を足すだけで、読めなくても止めは進める)。"
+  (<- read (ReadText path))
+  (if (isinstance read str) read ""))
+
+
 (defk ready-views [settings busy]
   {:pre [(: settings EnvSettings) (: busy frozenset)] :post [(: % tuple)]}
   "完成マーカーの在る root の観測(READY)を返すため(busy = 準備中か失敗の記録の在るキー — 除く)。"
@@ -708,7 +715,11 @@
                 (when overdue
                   (<- (StopProcess :pid p.pid :stop-grace 0.0))
                   (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
-                  (<- failure (overdue-failure p.warm settings.limits))
+                  (val log-path (+ settings.state "/env-requests/" key ".log"))
+                  (<- stage (read-text-or-empty p.progress))
+                  (<- log-tail (read-text-or-empty log-path))
+                  (<- failure (overdue-failure p.warm settings.limits stage log-path log-tail))
+                  (<- (slog "worker: 準備を止めた(進みが止まった)" :key key :kind (str failure.kind) :detail failure.detail))
                   (:= failures (| failures {key #(failure now-ms)})))))
         (do (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
             ;; 答えを書かずに終わった準備は、prepare-outcome が log の在処を添えた失敗にする。
@@ -716,6 +727,7 @@
             (val code (if (isinstance polled ProcessExited) polled.exit-code -1))
             (<- failure (prepare-outcome answer code (+ settings.state "/env-requests/" key ".log")))
             (when (is-not failure None)
+              (<- (slog "worker: 準備が失敗した" :key key :kind (str failure.kind) :detail failure.detail))
               (:= failures (| failures {key #(failure now-ms)}))))))
   (<- launched tuple (launch-waiting settings waiting running))
   (val left (get launched 0))

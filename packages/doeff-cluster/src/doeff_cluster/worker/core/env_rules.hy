@@ -94,12 +94,21 @@
                   :detail (.format "準備の process が答えを書かずに終わった(終了 {})— log: {}" exit-code log))))
 
 
-(defk overdue-failure [warm limits]
-  {:pre [(: warm bool) (: limits PrepareLimits)] :post [(: % EnvFailure)]}
+(val STALL-TAIL-CHARS 600)    ; 止めた準備の log の末尾のうち、失敗の文へ載せる長さ
+
+
+(defk overdue-failure [warm limits stage log log-tail]
+  {:pre [(: warm bool) (: limits PrepareLimits) (: stage str) (: log str) (: log-tail str)] :post [(: % EnvFailure)]}
   "期限を過ぎて止めた準備の失敗(やり直してよい)を返すため。先読みも job の準備も、進みの印が stall-seconds 動かなかった準備
-   (warm = 先読みの準備か — 失敗の文で名指す)。"
+   (warm = 先読みの準備か — 失敗の文で名指す)。どこで止まったか読めるように、最後に進んだ処理ステージ(stage — 進みの印の file の
+   中身・空なら「不明」)・log の在処・log の末尾(log-tail — 空なら載せない)を失敗の文へ添える(理由の行が無いと、止まった処理が
+   分からなかった)。"
+  (val seen (.strip stage))
+  (val tail (.strip log-tail))
   (EnvFailure :kind EnvFailureKind.PREPARE-TIMEOUT :retryable True
-              :detail (.format "{}準備が {} 秒進まない(止めた)" (if warm "先読みの" "") limits.stall-seconds)))
+              :detail (.format "{}準備が {} 秒進まない(止めた)— 最後に進んだ処理: {}・log: {}{}"
+                               (if warm "先読みの" "") limits.stall-seconds (or seen "不明") log
+                               (if tail (+ "・log の末尾: " (cut tail (- STALL-TAIL-CHARS) None)) ""))))
 
 
 (defk root-project [marker]
