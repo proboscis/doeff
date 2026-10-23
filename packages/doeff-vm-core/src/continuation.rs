@@ -127,9 +127,10 @@ impl DetachedFiberChain {
         let mut frames = Vec::new();
         let mut cursor = Some(self.head);
         let mut probes = 0;
+        let mut next = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
+            let Some(fiber) = self.fiber_from(fid, &mut next, &mut probes) else { break };
             for frame in fiber.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
@@ -150,9 +151,10 @@ impl DetachedFiberChain {
     pub fn first_source_location(&self) -> Option<StreamSourceLocation> {
         let mut cursor = Some(self.head);
         let mut probes = 0;
+        let mut next = 0;
         let mut found = None;
         'walk: while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
+            let Some(fiber) = self.fiber_from(fid, &mut next, &mut probes) else { break };
             for frame in fiber.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
@@ -171,9 +173,10 @@ impl DetachedFiberChain {
         let mut handlers = Vec::new();
         let mut cursor = Some(self.head);
         let mut probes = 0;
+        let mut next = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
+            let Some(fiber) = self.fiber_from(fid, &mut next, &mut probes) else { break };
             if let Some(handler) = &fiber.handler {
                 if let Some(prompt) = handler.prompt_boundary() {
                     handlers.push(prompt.handler.clone());
@@ -194,9 +197,10 @@ impl DetachedFiberChain {
         let mut boundaries = Vec::new();
         let mut cursor = Some(self.head);
         let mut probes = 0;
+        let mut next = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
+            let Some(fiber) = self.fiber_from(fid, &mut next, &mut probes) else { break };
             if let Some(handler) = &fiber.handler {
                 if let Some(prompt) = handler.prompt_boundary() {
                     boundaries.push((BoundaryKind::Handler, prompt.handler.clone()));
@@ -217,9 +221,10 @@ impl DetachedFiberChain {
         let mut first_boundary: Option<FiberId> = None;
         let mut cursor = Some(self.head);
         let mut probes = 0;
+        let mut next = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
+            let Some(fiber) = self.fiber_from(fid, &mut next, &mut probes) else { break };
 
             if first_boundary.is_none()
                 && fiber
@@ -291,21 +296,43 @@ impl DetachedFiberChain {
         frames
     }
 
-    /// The position of fiber `id` in `fibers`, adding the entries it looked
-    /// at to `probes` (memory_stats::chain_fiber_probes).
-    fn position(&self, id: FiberId, probes: &mut u64) -> Option<usize> {
+    /// The position of fiber `id` in `fibers`, looked for first at
+    /// `expected`; adds the entries it looked at to `probes`
+    /// (memory_stats::chain_fiber_probes).
+    ///
+    /// `fibers` is kept in chain order — `FiberArena::detach_chain` lays a
+    /// chain out from its head to its tail and `append` puts the next chain
+    /// behind — so the position is the id → index table: a walk from the head
+    /// finds each parent right after the fiber before it, and the tail is the
+    /// last entry. A linear find per fiber made every walk O(L²) under L
+    /// handlers (agora card ki-9de8d0a54408). Any other layout still answers,
+    /// through the linear search the count then shows.
+    fn position(&self, id: FiberId, expected: usize, probes: &mut u64) -> Option<usize> {
+        *probes += 1;
+        if self.fibers.get(expected).is_some_and(|entry| entry.id == id) {
+            return Some(expected);
+        }
         let found = self.fibers.iter().position(|entry| entry.id == id);
         *probes += found.map_or(self.fibers.len(), |index| index + 1) as u64;
         found
     }
 
-    fn fiber(&self, id: FiberId, probes: &mut u64) -> Option<&Fiber> {
-        self.position(id, probes).map(|index| &self.fibers[index].fiber)
+    /// Fiber `id` of a walk whose next fiber is expected at `*next`; moves
+    /// `*next` past the fiber found.
+    fn fiber_from(&self, id: FiberId, next: &mut usize, probes: &mut u64) -> Option<&Fiber> {
+        let index = self.position(id, *next, probes)?;
+        *next = index + 1;
+        Some(&self.fibers[index].fiber)
     }
 
     fn fiber_mut(&mut self, id: FiberId) -> Option<&mut Fiber> {
         let mut probes = 0;
-        let found = self.position(id, &mut probes);
+        let expected = if id == self.last_fiber {
+            self.fibers.len().saturating_sub(1)
+        } else {
+            0
+        };
+        let found = self.position(id, expected, &mut probes);
         crate::memory_stats::record_chain_fiber_probes(probes);
         found.map(|index| &mut self.fibers[index].fiber)
     }
@@ -314,9 +341,10 @@ impl DetachedFiberChain {
         let mut handlers = Vec::new();
         let mut cursor = Some(start);
         let mut probes = 0;
+        let mut next = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
+            let Some(fiber) = self.fiber_from(fid, &mut next, &mut probes) else { break };
             if let Some(handler) = &fiber.handler {
                 if let Some(prompt) = handler.prompt_boundary() {
                     handlers.push(prompt.handler.clone());

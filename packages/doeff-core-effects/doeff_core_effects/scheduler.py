@@ -126,7 +126,7 @@ _RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND}
 # park_waiter refuses anything else.
 _SINGLE_KEY_WAITER_KINDS = frozenset(("wait", "wait_external"))
 # Test switch (the scheduler tests turn it on through the scheduler_index_self_check
-# fixture of tests/conftest.py): every scheduler step
+# fixture of tests/conftest.py): every scheduler step — of both implementations —
 # recomputes the waiters index and the ready counts from the structures and
 # raises SchedulerIndexDriftError on a difference. Read once when a run starts.
 _INDEX_SELF_CHECK = False
@@ -1283,6 +1283,7 @@ def _rust_spec() -> dict[str, object]:
         "TaskCancelledError": TaskCancelledError,
         "ExternalPromiseCancelCallbackError": ExternalPromiseCancelCallbackError,
         "SchedulerDeadlockError": SchedulerDeadlockError,
+        "SchedulerIndexDriftError": SchedulerIndexDriftError,
         "not_a_waitable": _not_a_waitable,
         "enrich_exception_traceback": _enrich_exception_traceback,
         "describe_unretrieved_exception": _describe_unretrieved_exception,
@@ -1298,6 +1299,7 @@ def _rust_spec() -> dict[str, object]:
         "PRIORITY_IDLE": PRIORITY_IDLE,
         "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
         "PRIORITY_NORMAL": PRIORITY_NORMAL,
+        "CLAIMED_MARKS_COMPACT_MIN": _CLAIMED_MARKS_COMPACT_MIN,
     }
 
 
@@ -1328,6 +1330,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
             "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,
             "HANDLE_REFS_PRUNE_MIN": HANDLE_REFS_PRUNE_MIN,
             "UNRETRIEVED_EXCEPTIONS_NAMED": UNRETRIEVED_EXCEPTIONS_NAMED,
+            "INDEX_SELF_CHECK": _INDEX_SELF_CHECK,
             "trace_run": run_id,
         }
     )

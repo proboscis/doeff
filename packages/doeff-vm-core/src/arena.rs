@@ -447,6 +447,55 @@ mod tests {
     }
 
     #[test]
+    fn test_detached_chains_keep_their_fibers_in_chain_order() {
+        // DetachedFiberChain finds a fiber by its position (agora card
+        // ki-9de8d0a54408): a walk from the head expects each parent right
+        // after the fiber before it, and the tail last. A detached chain and
+        // the chain a Pass appends behind it keep that order.
+        let mut arena = FiberArena::new();
+        let outer = arena.alloc(Fiber::new(None));
+        let inner = arena.alloc(Fiber::new(Some(outer)));
+        let middle = arena.alloc(Fiber::new(Some(inner)));
+        let body = arena.alloc(Fiber::new(Some(middle)));
+
+        let mut chain = arena.detach_chain(body, middle).unwrap();
+        chain.append(arena.detach_chain(inner, outer).unwrap());
+        let ids: Vec<FiberId> = chain.fibers().iter().map(|entry| entry.id).collect();
+        assert_eq!(ids, vec![body, middle, inner, outer]);
+        let parents: Vec<Option<FiberId>> =
+            chain.fibers().iter().map(|entry| entry.fiber.parent).collect();
+        assert_eq!(parents, vec![Some(middle), Some(inner), Some(outer), None]);
+        assert_eq!(chain.last_fiber(), outer);
+    }
+
+    #[test]
+    fn test_a_chain_out_of_chain_order_still_finds_its_fibers() {
+        // The position is only where a fiber is looked for first: a chain
+        // laid out in another order still finds each one.
+        let tail = FiberId::from_index(0);
+        let head = FiberId::from_index(1);
+        let mut chain = DetachedFiberChain::new(
+            head,
+            tail,
+            vec![
+                DetachedFiber {
+                    id: tail,
+                    fiber: Fiber::new(None),
+                },
+                DetachedFiber {
+                    id: head,
+                    fiber: Fiber::new(Some(tail)),
+                },
+            ],
+        );
+        let reattach_to = FiberId::from_index(7);
+        assert!(chain.set_tail_parent(Some(reattach_to)));
+        assert!(chain.set_parent(head, Some(tail)));
+        assert_eq!(chain.fibers()[0].fiber.parent, Some(reattach_to));
+        assert_eq!(chain.fibers()[1].fiber.parent, Some(tail));
+    }
+
+    #[test]
     fn test_free_marks_follow_the_free_list() {
         // on_free_list is the O(1) answer attach_chain and slot_status read:
         // it must agree with free_list through free, reuse and reclaim.
