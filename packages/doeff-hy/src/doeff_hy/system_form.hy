@@ -27,9 +27,11 @@
 ;;;   "worker" か "cluster"、limit は 1 以上の整数の literal、"perPart" True は組を名乗る task が区分(part)ごとに数える組。task は組の名
 ;;;   だけを名乗り、値はここが持つ。静的な記述の task_limits に載る。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
+(import collections.abc :as abc)
 (import hy)
 (import itertools [takewhile])
-(import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
+(import typing [TypeAlias])
+(import hy.models [Dict Expression Float Integer Keyword List Object Set String Symbol])
 (import doeff-hy.declarations [needs-names])
 ;; 展開が import する doeff-cluster の module の綴り(型検査のための展開の掃除が重ねを畳む綴りと 1 つの定義元 — static_view.py)。
 (import doeff-hy.static-view [DEFSYSTEM-MODEL-MODULE DEFSYSTEM-BUILD-MODULE DEFSYSTEM-IMPORTS])
@@ -44,9 +46,18 @@
 ;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
 (setv REPLICAS-VALUES #(0 1))
 (setv CONSTANT-SYMBOLS #("True" "False" "None"))
+;; 静的な記述(__doeff_system__)に載せる値の型 — 文字列・数・真偽・None と、それを入れた列と文字列の鍵の対応(JSON と同じ形)。
+;; 列と対応は読むだけの型(abc.Sequence・abc.Mapping)で受ける — list[str] や dict[str, str] をそのまま載せられるように。
+(setv #^ TypeAlias StaticValue "abc.Mapping[str, StaticValue] | abc.Sequence[StaticValue] | str | int | float | bool | None")
+;; 静的な記述の 1 件(文字列の鍵 → 静的な値)— job の記述・組の上限の記述がこの形。
+(setv #^ TypeAlias StaticRecord "dict[str, StaticValue]")
+;; 組の上限 1 つ = #(名 範囲 上限 区分ごとか)。
+(setv #^ TypeAlias TaskLimit "tuple[str, str, int, bool]")
+;; isinstance に渡せる Hy の model の型(1 つか、その組)— 値の form の型の検めに使う。
+(setv #^ TypeAlias ModelTypes "type[Object] | tuple[type[Object], ...]")
 
 
-(defn literal? [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ bool literal? [#^ Object form]  ; defk にできない: macro の展開の時に呼ぶ関数
   "Program の引数に置ける literal か(静的に値が決まる form だけを通すため)。"
   (cond
     (isinstance form #(String Integer Float Keyword)) True
@@ -55,7 +66,7 @@
     True False))
 
 
-(defn string-dict [form #^ str where #^ str key value-types #^ str value-word]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list (get tuple #(Object Object))) string-dict [#^ Object form #^ str where #^ str key #^ ModelTypes value-types #^ str value-word]  ; defk にできない: macro の展開の時に呼ぶ関数
   "文字列の鍵の dict の literal を検め、鍵と値の form の組の list を返す(:readiness・:environ の共通の読み)。"
   (when (not (isinstance form Dict))
     (raise (SyntaxError (.format "{}: {} は文字列の鍵の dict の literal: {}" where key (hy.repr form)))))
@@ -68,7 +79,7 @@
   pairs)
 
 
-(defn record-names [form #^ str where #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list str) record-names [#^ Object form #^ str where #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
   "`:reads` / `:writes` / `:serves` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
    形は文字列の literal の集合だけ(空の集合 = 読み書きしないと宣言した)、綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。
    置き場の名が何かは照らさない(使い手の repo の語彙 — 頭注)。"
@@ -83,7 +94,7 @@
   (sorted (sfor item form (str item))))
 
 
-(defn static-value [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (| str int float) static-value [#^ Object form]  ; defk にできない: macro の展開の時に呼ぶ関数
   "literal の form → 静的な記述(__doeff_system__)に載せる Python の値。"
   (cond
     (isinstance form String) (str form)
@@ -92,7 +103,7 @@
     True (hy.repr form)))
 
 
-(defn read-job [row #^ list params #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #(str Expression (get dict #(str Object)) StaticRecord)) read-job [#^ Object row #^ (get list str) params #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
   "job の行 1 つを検め、#(名 Program の form 鍵 → 値の form の dict 静的な記述) を返す。"
   (when (not (and (isinstance row Expression) (>= (len row) 2) (isinstance (get row 0) Symbol)))
     (raise (SyntaxError (.format "defsystem {}: job の行は (名 (関数 引数…) :鍵 値 …): {}" system (hy.repr row)))))
@@ -107,7 +118,8 @@
       (raise (SyntaxError (.format "{}: Program の引数は系の引数 {} か literal: {}" where (or params "(無し)") (hy.repr arg))))))
   (when (% (len options) 2)
     (raise (SyntaxError (.format "{}: :鍵 値 の組が揃っていない: {}" where (hy.repr row)))))
-  (setv values {} static {"name" name "function" (str (get program 0))})
+  (setv #^ (get dict #(str Object)) values {}
+        #^ StaticRecord static {"name" name "function" (str (get program 0))})
   (for [#(k v) (zip (cut options None None 2) (cut options 1 None 2))]
     (setv key (str k))
     (when (not (and (isinstance k Keyword) (in key JOB-KEYS)))
@@ -143,7 +155,7 @@
   #(name program values static))
 
 
-(defn read-task-limit [group spec #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ TaskLimit read-task-limit [#^ Object group #^ Object spec #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "`:task-limits` の組の上限 1 つ(組の名の form と上限の dict の form)を展開の時に検め、#(名 範囲 上限 区分ごとか) を返すため。"
   (setv name (str group))
   (when (or (not name) (in "/" name))
@@ -165,7 +177,7 @@
   #(name (str scope) (int limit) (= (str per-part) "True")))
 
 
-(defn read-task-limits [form #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #((get list TaskLimit) (get dict #(str StaticRecord)))) read-task-limits [#^ Object form #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
   "系の頭の `:task-limits` の値の form を展開の時に検め、#(組の上限の #(名 範囲 上限 区分ごとか) の list 静的な記述の dict) を返すため —
    linter が実行せずに読めるように、形は組の名(「/」を含まない空でない文字列の literal)→ {\"scope\" 範囲 \"limit\" 1 以上の整数
    \"perPart\" True|False?} の dict の literal だけ。同じ規則で doeff-cluster の service_build.system-of がもう 1 度検める。"
@@ -178,7 +190,7 @@
   #(groups (dfor #(name scope limit per-part) groups name {"scope" scope "limit" limit "perPart" per-part})))
 
 
-(defn head-options [rows #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #((get dict #(str Object)) (get list Object))) head-options [#^ (get list Object) rows #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
   "系の本体の form の列(説明の文を除いた物)から、頭の `:鍵 値` の組(job の行の前 — SYSTEM-KEYS)を読み、#(鍵の綴り → 値の form の
    dict 残りの job の行) を返すため。知らない鍵・値の無い鍵・2 回目の鍵は展開の時の SyntaxError。"
   (setv count (len (list (takewhile (fn [i] (isinstance (get rows i) Keyword)) (range 0 (len rows) 2))))
@@ -193,19 +205,19 @@
   #((dfor i (range count) (get keys i) (get rows (+ (* 2 i) 1))) (list (cut rows (* 2 count) None))))
 
 
-(defn dotted [#^ str spelling]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression dotted [#^ str spelling]  ; defk にできない: macro の展開の時に呼ぶ関数
   "展開が import する module と、そこから引く型と構成子を、1 つの綴りの定義元(static_view.py)から書くため — 点つきの綴りを
    Hy の読み取り器が source から作るのと同じ形 `(. a b c)` にする(点つきの Symbol は作れない)。位置は持たせない — 展開の常として
    defsystem の form の位置が入る(hy.read で読むと読んだ文字列の 1 行目の位置が残り、この式の赤が file の頭を指す)。"
   (Expression [(Symbol ".") #* (gfor part (.split spelling ".") (Symbol part))]))
 
 
-(defn in-module [#^ str module #^ str name]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression in-module [#^ str module #^ str name]  ; defk にできない: macro の展開の時に呼ぶ関数
   "module の名を引く式を作るため — `(import a.b.c)` が束縛するのは根の名だけなので、module の綴りを頭に持つ点つきの式で引く。"
   (dotted (+ module "." name)))
 
 
-(defn call-shape-form [program]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression call-shape-form [#^ Expression program]  ; defk にできない: macro の展開の時に呼ぶ関数
   "Program の呼び出し (関数 引数… :鍵 値 …) → 実行時に CallShape(関数・位置の引数・名の引数の値)を作る form。
    defk の呼び出しの結果からは引数を読めないので、宣言の表示(describe)と土台の置き方の検めのために形を残す。"
   (setv positional [] named [] rest (list (cut program 1 None)))
@@ -218,7 +230,7 @@
   `(~(in-module DEFSYSTEM-MODEL-MODULE "CallShape") :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
-(defn param-parts [param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #(Symbol (| Symbol None))) param-parts [#^ Object param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
   "系の引数 1 つ → #(名の記号 型の記号か None)。引数は素の記号か、型の注記つき #^ T foundation(読み取り器の (annotate foundation T))。
    型は module の最上位の型の名(記号・点つきの記号)だけを受ける — 静的な記述に型の module:qualname を残し、汎用の模擬の検が型から
    模擬の土台を引くため。"
@@ -233,7 +245,7 @@
                                       system (hy.repr param))))))
 
 
-(defn defsystem-form [name params body]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression defsystem-form [#^ Object name #^ Object params #^ (get tuple #(Object ...)) body]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defsystem の展開: 土台を受けて doeff_cluster.shared.entry.service_build.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
    __doeff_tags__(役 entry)を置く form を作るため。引数に型の注記が在れば、記述の param_types(名 → 型の module:qualname)に残す。"
   (setv system (str name))

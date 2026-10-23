@@ -1,0 +1,27 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/positions.hy"
+  ],
+  "module_extensions": {
+    "doeff-hy-macros": {
+      "allow": [
+        "doeff-hy-positions"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-hy-positions",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/positions.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/positions.hy"
+      ],
+      "responsibility": "macro が合成した式に、包んでいる利用者の式の位置を付ける(traceback が落ちた行を指すため)— 位置を持たない Hy の model の列に、位置を持つ子の範囲を付け、位置を持つ式の子のうち位置の無い物に親の位置を付ける。macro の出力を返す前に呼ぶ 1 点 locate-synthesized が公開の口で、入力の model を書き換えて返す。",
+      "typed": true
+    }
+  ]
+}
