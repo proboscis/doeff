@@ -10,9 +10,13 @@
 (import doeff_core_effects.file_effects [PathKind PathStat ReadText StatPath])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess StartProcess])
+(import dataclasses)
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.core.job_cgroup [job-cgroup-procs placed-argv])
 (import doeff_cluster.worker.protocol.job_cgroup [job-cgroup-placer])
-(import doeff_cluster.worker.entry.main [job-cgroup-placed])
+(import doeff_cluster.worker.protocol.process_host [HostSettings shim-argv])
+(import doeff_cluster.worker.entry.main [CGROUP-DIR-VAR SERVICE-CGROUP-VAR cgroup-dir-environ job-cgroup-placed])
+(import tests.host_rig [host-settings])
 
 ;; 機体の worker の本体が居る cgroup(unit の DelegateSubgroup=main — dotfiles の doeff-agent-worker.service)。
 (val UNIT "/user.slice/user-1000.slice/user@1000.service/app.slice/doeff-agent-worker.service")
@@ -99,3 +103,71 @@
   (assert (= (! (with-handlers [(machine-files OWN PathKind.FILE)] (job-cgroup-placed "jobs"))) JOBS-PROCS))
   (with [(pytest.raises ValueError :match "兄弟の cgroup が無い")]
     (! (with-handlers [(machine-files OWN None)] (job-cgroup-placed "jobs")))))
+
+
+;; k8s の Pod の worker(card ki-cd8cb84fdcd2): 起動の script の層(deploy/boot.sh の WORKER_CGROUP_LAYOUT)が本体を自分の container の
+;; cgroup の子 worker へ移し、兄弟 jobs・services を作る。Pod の /sys/fs/cgroup は読み取りだけなので、兄弟の cgroup.procs は書ける見え
+;; (host の cgroupfs の mount の中の同じ dir — DOEFF_WORKER_CGROUP_DIR)の下に書く。
+(val POD-OWN "0::/worker\n")
+(val POD-DIR "/host/cgroup/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-podx.slice/cri-containerd-y.scope")
+
+
+(deftest test-a-pod-worker-places-its-children-under-the-writable-view-of-its-own-cgroup
+  ;; 失敗ケース: /sys/fs/cgroup の下に書くと、Pod の読み取りだけの見えで EROFS になり、置けない子は走らない(全部の job が落ちる)。
+  (<- jobs str (job-cgroup-procs POD-OWN "jobs" POD-DIR))
+  (<- services str (job-cgroup-procs POD-OWN "services" POD-DIR))
+  (assert (= jobs (+ POD-DIR "/jobs/cgroup.procs")) jobs)
+  (assert (= services (+ POD-DIR "/services/cgroup.procs")) services)
+  ;; 既定の根は今までどおり /sys/fs/cgroup(機体の systemd の unit の worker)。
+  (<- default str (job-cgroup-procs OWN "jobs"))
+  (assert (= default JOBS-PROCS) default))
+
+
+(val SERVICE-PROCS (+ POD-DIR "/services/cgroup.procs"))
+(val SHIM-ARGV #("python" "-m" "doeff_cluster.worker.entry.shim" "--" "uv" "run" "hy"))
+
+
+(deftest test-only-a-resident-job-is-placed-in-the-service-cgroup [#^ Path tmp-path]
+  ;; 常駐の job(once が偽)の shim だけを service の兄弟へ包み、task はそのまま(外の placer が jobs の兄弟へ置く)。
+  ;; 失敗ケース: task を service の兄弟に置くと、1 本の task の memory が守りの側に数えられ、上限が効かずに常駐の job を道連れにする。
+  ;; 逆に常駐の job を jobs の兄弟に残すと、task の上限の回収と OOM の対象に常駐の job が入る。
+  (<- base HostSettings (host-settings tmp-path))
+  (val placing (dataclasses.replace base :service-procs SERVICE-PROCS))
+  (val service (JobSpec "records" "doeff_cluster.worker.entry.job_entry" #() "r"))
+  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #() "r" :once True))
+  (<- placed tuple (shim-argv placing service SHIM-ARGV))
+  (assert (= placed (! (placed-argv SERVICE-PROCS SHIM-ARGV))) placed)
+  (<- kept tuple (shim-argv placing task SHIM-ARGV))
+  (assert (= kept SHIM-ARGV) kept)
+  ;; 置き分けない worker(名が無い — 機体の unit の worker・ほかの Pod)は argv のまま。
+  (assert (is base.service-procs None))
+  (<- plain tuple (shim-argv base service SHIM-ARGV))
+  (assert (= plain SHIM-ARGV) plain))
+
+
+(deftest test-a-resident-job-passes-through-the-job-cgroup-and-settles-in-the-service-cgroup [#^ Path tmp-path]
+  ;; 本物の sh: 外の placer(jobs)と内の包み(services)を重ねた子は、jobs を経て services に落ち着く(最後に pid を書くのは内の包み)。
+  (val jobs (/ tmp-path "jobs.procs"))
+  (val services (/ tmp-path "services.procs"))
+  (.write-text jobs "")
+  (.write-text services "")
+  (<- inner tuple (placed-argv (str services) #("sh" "-c" "echo $$")))
+  (<- outcome ProcessOutcome (with-handlers [subprocess-handler (job-cgroup-placer (str jobs))]
+                               (RunProcess :argv inner)))
+  (assert (= outcome.exit-code 0) outcome)
+  (assert (= (.strip (.read-text jobs)) (.strip (.read-text services)) (.strip outcome.stdout)) "同じ pid が jobs を経て services に書かれる"))
+
+
+(deftest test-the-worker-reads-its-service-cgroup-under-the-writable-view
+  ;; 入口: service の兄弟も job の兄弟と同じく起動の時に 1 度だけ決め、書ける見えの根の下の path を答える。兄弟が無ければ名(変数)を
+  ;; 名指して断る。
+  (assert (= (! (with-handlers [(machine-files POD-OWN PathKind.FILE)] (job-cgroup-placed "services" POD-DIR SERVICE-CGROUP-VAR)))
+             SERVICE-PROCS))
+  (with [(pytest.raises ValueError :match SERVICE-CGROUP-VAR)]
+    (! (with-handlers [(machine-files POD-OWN None)] (job-cgroup-placed "services" POD-DIR SERVICE-CGROUP-VAR)))))
+
+
+(deftest test-the-writable-view-is-passed-to-the-children-only-when-present
+  ;; 子が自分の子を機体の層へ置けるよう、書ける見えの根を子の env に渡す。層の無い worker は何も足さない。
+  (assert (= (! (cgroup-dir-environ POD-DIR)) {CGROUP-DIR-VAR POD-DIR}))
+  (assert (= (! (cgroup-dir-environ None)) {})))

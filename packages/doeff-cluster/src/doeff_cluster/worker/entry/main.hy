@@ -58,7 +58,7 @@
 (import doeff_cluster.worker.protocol.memory_observer [memory-observer])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
-(import doeff_cluster.worker.core.job_cgroup [job-cgroup-procs])
+(import doeff_cluster.worker.core.job_cgroup [CGROUP-ROOT job-cgroup-procs])
 (import doeff_cluster.worker.protocol.job_cgroup [job-cgroup-placer])
 (import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
@@ -72,6 +72,11 @@
 (val BOOT-FILE-VAR "DOEFF_WORKER_BOOT_FILE")
 ;; 子の job を置く兄弟の cgroup の名(無ければ子を本体と同じ cgroup で起こす — card ki-ed9dca403f58・worker/core/job_cgroup)。
 (val JOB-CGROUP-VAR "DOEFF_WORKER_JOB_CGROUP")
+;; 常駐の job の shim を置く兄弟の cgroup の名(無ければ置き分けない — card ki-cd8cb84fdcd2・worker/core/job_cgroup の service の類)。
+(val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
+;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
+;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
+(val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
 
 
 (defk boot-file-written [path boot]
@@ -84,21 +89,29 @@
   None)
 
 
-(defk job-cgroup-placed [sibling]
-  {:pre [(: sibling (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
-  "子の job を置く兄弟の cgroup の cgroup.procs の path を起動の時に 1 度だけ決めるため(JOB-CGROUP-VAR の値 — 無ければ None で、
-   子を包まない)。自分の cgroup は /proc/self/cgroup を file の効果で読む(答え手は入口が並べる os-file-handler)。読めない・兄弟が
-   無い起動は断る(ValueError — 子を本体の cgroup で黙って走らせない。機体の配備が兄弟を作り忘れた事を起動の失敗で見せる)。"
+(defk job-cgroup-placed [sibling [root CGROUP-ROOT] [var JOB-CGROUP-VAR]]
+  {:pre [(: sibling (| str None)) (: root str) (: var str)] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
+  "子の job を置く兄弟の cgroup の cgroup.procs の path を起動の時に 1 度だけ決めるため(var の値 — JOB-CGROUP-VAR か SERVICE-CGROUP-VAR・
+   無ければ None で、子を包まない)。root = 書ける cgroup v2 の見えの根(CGROUP-DIR-VAR)。自分の cgroup は /proc/self/cgroup を file の
+   効果で読む(答え手は入口が並べる os-file-handler)。読めない・兄弟が無い起動は断る(ValueError — 子を本体の cgroup で黙って走らせない。
+   機体の配備が兄弟を作り忘れた事を起動の失敗で見せる)。"
   (if (is sibling None)
       None
       (do (<- own (| str FileFailed) (ReadText "/proc/self/cgroup"))
           (when (isinstance own FileFailed)
             (raise (ValueError (.format "{} を読めない: {}" own.path own.detail))))
-          (<- procs str (job-cgroup-procs own sibling))
+          (<- procs str (job-cgroup-procs own sibling root))
           (<- seen (| PathStat FileFailed) (StatPath procs))
           (when (or (isinstance seen FileFailed) (!= seen.kind PathKind.FILE))
-            (raise (ValueError (.format "{}={} の兄弟の cgroup が無い({})— 機体の配備が作る" JOB-CGROUP-VAR sibling procs))))
+            (raise (ValueError (.format "{}={} の兄弟の cgroup が無い({})— 機体の配備が作る" var sibling procs))))
           procs)))
+
+
+(defk cgroup-dir-environ [cgroup-dir]
+  {:pre [(: cgroup-dir (| str None))] :post [(: % dict)] :tags {:context "worker" :role "main"}}
+  "書ける cgroup v2 の見えの根(CGROUP-DIR-VAR)を job の子へ渡す env にするため(card ki-cd8cb84fdcd2 — 子が自分の子を、機体の配備が
+   宣言した層へ置けるように)。無ければ渡さない。"
+  (if (is cgroup-dir None) {} {CGROUP-DIR-VAR cgroup-dir}))
 
 
 (defk pass-env-names [names]
@@ -304,14 +317,20 @@
         ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
-                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR) WORKER-LOG-ENV-NAMES))))
+                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR) WORKER-LOG-ENV-NAMES))))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
                           (read-boot-marks machine-env imported-ms)))
-        ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
+        ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。書ける cgroup の見えの根が在れば子へも渡す。
         host-env (| (run (passed-environment args.pass-env machine-env))
-                    (run (worker-context-environ args.coordinator args.name)))
+                    (run (worker-context-environ args.coordinator args.name))
+                    (run (cgroup-dir-environ (.get machine-env CGROUP-DIR-VAR))))
+        ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(card ki-cd8cb84fdcd2 — 起動の script の層が置く・無ければ /sys/fs/cgroup)。
+        cgroup-root (.get machine-env CGROUP-DIR-VAR CGROUP-ROOT)
+        ;; 常駐の job の shim を置く兄弟の cgroup(card ki-cd8cb84fdcd2 — 機体の配備が名を渡した時だけ)。
+        service-procs (run (with-handlers [os-file-handler]
+                             (job-cgroup-placed (.get machine-env SERVICE-CGROUP-VAR) cgroup-root SERVICE-CGROUP-VAR)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
@@ -319,7 +338,7 @@
                            :program-dir places.programs :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
-                           :notice-env HOST-CONTRACT.notice-env)
+                           :notice-env HOST-CONTRACT.notice-env :service-procs service-procs)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
@@ -365,7 +384,7 @@
   (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
         memory-cell (MemoryCell)
         ;; 子の job を置く兄弟の cgroup(card ki-ed9dca403f58 — 機体の配備が名を渡した時だけ)。
-        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR)))))
+        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root))))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell

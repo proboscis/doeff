@@ -63,6 +63,7 @@
 "packages/doeff-cluster/tests/host_rig.hy" = "検の道具: 本物の子 process の job の終わりを ObserveProcesses で締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/probe_rig.hy" = "検の道具: 本物の子 process で走る入口の検めの終わりを ObserveProbes で締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/served_fixtures.hy" = "検の道具: 本物の coordinator の process の起動(HTTP の /state が答えるまで)を締め切りつきで待つ(外の process の実時間が対象)"
+"packages/doeff-cluster/tests/test_cgroup_layout.hy::test_the_kernel_stops_a_runaway_child_while_the_guarded_child_keeps_beating" = "本物の cgroup で kernel が限る子を OOM で止める間、守る子の拍の実時間の間隔を測る(本物の kernel と外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_code_store.hy" = "本物の git の子 process で進むコードの準備の終わりを ObserveCode で締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_coordinator.hy::test_shim_stops_the_job_when_the_worker_goes_away" = "本物の shim の process が job を起こし終えるまでの実時間を置いてから stdin を閉じる(外の process の実時間が対象)"
 "packages/doeff-cluster/tests/test_entry_probe.hy" = "本物の子 process の入口の検め: 子と孫の pid の file・process の消え・時間切れの片づけを締め切りつきで待つ(外の process の実時間が対象)"

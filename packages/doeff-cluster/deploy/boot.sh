@@ -22,6 +22,8 @@
 #   ROLE=access      … 読み取りの鍵の表(WORKER_REPOS)の git / ssh の設定と鍵の表の JSON だけを書き、JSON の path を出す
 #   ROLE=ready       … worker の Pod の readinessProbe: この Pod の worker が coordinator へ heartbeat を届けていれば 0(drain 中かどうかは
 #                      見ない — drain は coordinator の配りの状態で Pod の健康ではなく、Pod の作り直しをまたいで残る・#4177)
+#   ROLE=cgroup      … WORKER_CGROUP_LAYOUT の cgroup の層(下の「cgroup の層」)だけを作り、書ける cgroup の dir を出して終わる — 検と、
+#                      手元で層を確かめるため。役 worker は起動の頭で同じ層を作る
 # 環境: WORK_DIR(既定 /work)。
 #
 # 自己起動(WORKER_DOEFF_COMMIT が在る時 — 土台だけの image・deploy/base/Dockerfile。設計 D13・E13):
@@ -62,6 +64,22 @@
 #   GIT_SSH_COMMAND では uv の git の依存(別の非公開 repo)を読めない。表は url に鍵を結ぶだけで url を断らない — 表に無い url は
 #   worker が鍵なしで clone する(公開の repo は通り、読めない非公開の repo は clone の失敗 repo-unreachable で返る)。
 #   WORKER_REPOS が無く /etc/worker-git/id が在れば、今までどおりそれを唯一の deploy key として使う。
+#
+# cgroup の層(WORKER_CGROUP_LAYOUT が在る時 — card ki-cd8cb84fdcd2):
+#   1 本の task の memory を kernel が抑え、常駐の job と worker の本体の memory を kernel が守るため、worker の cgroup の中に子の cgroup を
+#   作り、子ごとに memory の守り(memory.min・memory.low)か上限(memory.max・memory.high)を掛ける。worker はその子へ job を置き分ける
+#   (DOEFF_WORKER_JOB_CGROUP・DOEFF_WORKER_SERVICE_CGROUP — worker/core/job_cgroup)。
+#   WORKER_CGROUP_LAYOUT = 空白で並べた「<名>:<file>=<値>,…」(名は英小文字・数字・-。file は memory.min・memory.low・memory.high・
+#   memory.max のどれか。値は kernel の書式のまま)。最初の層に、今 worker の cgroup に居る process を全部移す(tini・この script・準備の残り)
+#   — cgroup v2 は process の居る cgroup の子に memory を掛けられないため。例:
+#     worker:memory.min=2G services:memory.min=24G jobs:memory.max=36G
+#   書ける見え: k8s の Pod の /sys/fs/cgroup は自分の container の cgroup を根とする読み取りだけの見えなので、機体の配備は host の cgroupfs を
+#   別の所に書ける形で置き、その場所を WORKER_CGROUP_HOST で渡す。script はその中から、名前空間の根(WORKER_CGROUP_NS_ROOT・既定
+#   /sys/fs/cgroup)と同じ inode の dir(= 自分の container の cgroup)を引く。WORKER_CGROUP_HOST が無ければ名前空間の根そのものに書く。
+#   委ね: 書く dir は worker の uid に委ねられている事(dir・cgroup.procs・cgroup.subtree_control が書ける)。Pod では同じ Pod の root の
+#   係が起動の直後に委ねるので、WORKER_CGROUP_WAIT 秒(既定 60)まで待つ。委ねられない・層を作れない・値を書けない時は起動しない
+#   (守りの無いまま黙って起動しない — RollingUpdate なら旧い Pod が動き続ける)。
+#   作った後、書ける dir を DOEFF_WORKER_CGROUP_DIR で worker へ渡す(worker は兄弟の cgroup.procs をその下に書き、job の子へも渡す)。
 set -eu
 WORK_DIR=${WORK_DIR:-/work}
 role=${ROLE:-worker}
@@ -80,9 +98,9 @@ export DOEFF_WHEEL_CACHE="$WORK_DIR/state/wheels"
 # 知らない役は、展開も準備もせず名指しで断る(worker の起動へ落とさない — 走っている worker の Pod の中で役 prepare を、その役を
 # 知らない版へ向けて撃っても、2 つ目の worker を起こさない)。
 case "$role" in
-  coordinator|records|worker|drain|access|ready|prepare) ;;
+  coordinator|records|worker|drain|access|ready|prepare|cgroup) ;;
   *)
-    echo "boot: 知らない役 ROLE=$role(coordinator・records・worker・drain・access・ready・prepare のどれか)" >&2
+    echo "boot: 知らない役 ROLE=$role(coordinator・records・worker・drain・access・ready・prepare・cgroup のどれか)" >&2
     exit 2 ;;
 esac
 if [ "$role" = prepare ] && [ -z "${WORKER_DOEFF_COMMIT:-}" ]; then
@@ -341,8 +359,101 @@ repo_access() {
   repo_keys=$dir/repo-keys.json
 }
 
-# ready は hy を起こさないので root を要らない。
-if [ -n "${WORKER_DOEFF_COMMIT:-}" ] && [ "$role" != ready ] && [ "$role" != access ]; then
+# cgroup の層を断る(頭の註の「cgroup の層」— 守りの無いまま起動しない)。
+cgroup_refused() {
+  echo "boot: cgroup の層: $1" >&2
+  exit 2
+}
+
+# 頭の註の「cgroup の層」を作るため: 宣言を全部検めてから、書ける dir を引き、委ねを待ち、層を作り、process を最初の層へ移して子に memory を
+# 掛け、層ごとの値を書く。書ける dir を cgroup_dir に置き、DOEFF_WORKER_CGROUP_DIR で export する。
+cgroup_layout() {
+  set -f
+  problems=""
+  first=""
+  for entry in $WORKER_CGROUP_LAYOUT; do
+    name=${entry%%:*}
+    case "$name" in
+      ''|*[!a-z0-9-]*) problems="$problems 層の名 '$name' は英小文字・数字・- で書く($entry)。" ;;
+    esac
+    [ -n "$first" ] || first=$name
+    case "$entry" in *:*) settings=${entry#*:} ;; *) settings="" ;; esac
+    old_ifs=$IFS
+    IFS=,
+    for setting in $settings; do
+      key=${setting%%=*}
+      value=${setting#*=}
+      case "$key" in
+        memory.min|memory.low|memory.high|memory.max) ;;
+        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max のどれかで書く。" ;;
+      esac
+      case "$value" in
+        max|[0-9]*) [ "$value" != "$setting" ] || problems="$problems 層 $name の $key に値が無い。" ;;
+        *) problems="$problems 層 $name の $key の値 '$value' は数(K・M・G を付けてよい)か max で書く。" ;;
+      esac
+    done
+    IFS=$old_ifs
+  done
+  set +f
+  [ -n "$first" ] || problems="$problems WORKER_CGROUP_LAYOUT に層が無い。"
+  [ -z "$problems" ] || cgroup_refused "宣言 WORKER_CGROUP_LAYOUT を読めない:$problems"
+  ns_root=${WORKER_CGROUP_NS_ROOT:-/sys/fs/cgroup}
+  if [ -n "${WORKER_CGROUP_HOST:-}" ]; then
+    ino=$(stat -c %i "$ns_root") || cgroup_refused "名前空間の根 $ns_root を読めない"
+    cgroup_dir=$(find "$WORKER_CGROUP_HOST" -maxdepth 6 -type d -inum "$ino" 2>/dev/null | head -n 1)
+    [ -n "$cgroup_dir" ] || cgroup_refused "$WORKER_CGROUP_HOST の中に名前空間の根 $ns_root(inode $ino)と同じ dir が無い"
+  else
+    cgroup_dir=$ns_root
+  fi
+  # ポーリングの訳: 委ねる係(同じ Pod の別の container)は file の持ち主を替えるだけで、替えた事を知らせる道を持たない(cgroupfs の
+  # 持ち主の変更は inotify にも出ない)。起動の 1 度だけ、上限つきで 1 秒ごとに書けるかを見る(試しの Pod では 1 秒で委ねられた)。
+  waited=0
+  until [ -w "$cgroup_dir" ] && [ -w "$cgroup_dir/cgroup.procs" ] && [ -w "$cgroup_dir/cgroup.subtree_control" ]; do
+    [ "$waited" -lt "${WORKER_CGROUP_WAIT:-60}" ] ||
+      cgroup_refused "$cgroup_dir が uid $(id -u) に委ねられていない(${WORKER_CGROUP_WAIT:-60} 秒待った — 機体の配備の委ねる係を見る)"
+    sleep 1
+    waited=$((waited + 1))
+  done
+  set -f
+  for entry in $WORKER_CGROUP_LAYOUT; do
+    name=${entry%%:*}
+    [ -d "$cgroup_dir/$name" ] || mkdir "$cgroup_dir/$name" || cgroup_refused "層 $name を作れない"
+  done
+  set +f
+  tries=0
+  while :; do
+    for pid in $(cat "$cgroup_dir/cgroup.procs"); do
+      # 読んだ後に終わった process は移せない(No such process)が、根にも残らないので飛ばす。
+      echo "$pid" >"$cgroup_dir/$first/cgroup.procs" 2>/dev/null || [ ! -d "/proc/$pid" ] ||
+        cgroup_refused "process $pid を層 $first へ移せない"
+    done
+    if echo +memory >"$cgroup_dir/cgroup.subtree_control" 2>/dev/null; then
+      break
+    fi
+    # 移した後に根へ入った process(readinessProbe の exec など)が居ると、子に memory を掛けられない — 移し直す。
+    tries=$((tries + 1))
+    [ "$tries" -lt 5 ] || cgroup_refused "$cgroup_dir の子に memory を掛けられない(根に process が残る)"
+    sleep 1
+  done
+  set -f
+  for entry in $WORKER_CGROUP_LAYOUT; do
+    name=${entry%%:*}
+    case "$entry" in *:*) settings=${entry#*:} ;; *) settings="" ;; esac
+    old_ifs=$IFS
+    IFS=,
+    for setting in $settings; do
+      printf '%s\n' "${setting#*=}" >"$cgroup_dir/$name/${setting%%=*}" 2>/dev/null ||
+        cgroup_refused "層 $name の ${setting%%=*} に ${setting#*=} を書けない"
+    done
+    IFS=$old_ifs
+  done
+  set +f
+  export DOEFF_WORKER_CGROUP_DIR="$cgroup_dir"
+  echo "boot: cgroup の層を $cgroup_dir に作った(${WORKER_CGROUP_LAYOUT}・委ねを ${waited} 秒待った)" >&2
+}
+
+# ready・access・cgroup は hy を起こさないので root を要らない。
+if [ -n "${WORKER_DOEFF_COMMIT:-}" ] && [ "$role" != ready ] && [ "$role" != access ] && [ "$role" != cgroup ]; then
   doeff_extract
   # image に焼いた script は展開までを受け持ち、準備と役の起動は宣言した commit の script へ引き継ぐ — 中身が同じでも引き継ぐ(準備の手順の
   # 持ち主は commit の側)。だから起動の script(準備の手順を含む)を直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい script で
@@ -370,6 +481,12 @@ case "$role" in
     # 鍵の表の設定(git / ssh の設定と worker の鍵の表の JSON)だけを書き、JSON の path を出す — 手元の機体と検で確かめるため。
     repo_access
     echo "$repo_keys"
+    exit 0 ;;
+  cgroup)
+    # cgroup の層だけを作り、書ける dir を出す(頭の註の「cgroup の層」)— 検と、手元で層を確かめるため。
+    [ -n "${WORKER_CGROUP_LAYOUT:-}" ] || cgroup_refused "ROLE=cgroup には WORKER_CGROUP_LAYOUT が要る"
+    cgroup_layout
+    echo "$cgroup_dir"
     exit 0 ;;
   ready)
     # hy を起こさず、この Pod の worker が heartbeat の返事ごとに書く file を読むだけ。Ready = file が在り、中身が ready
@@ -415,6 +532,10 @@ esac
 # (worker の --shared-dir — 重い cache と root を世代ごとに作り直さない・AL-D2g)。世代の dir の錠(fd 9)は exec した worker が終わるまで持ち、起きる時に、錠を誰も
 # 持たない(worker が終わった)前の世代の dir を消す。まだ走る前の世代(入れ替えの重なり)の dir は、脇の子がその錠を待って、前の世代の
 # worker が終わった時に消す(前の世代の root を次の入れ替えまで残さない)。POD_UID は downward API の metadata.uid。
+# cgroup の層(頭の註)は、下の脇の子を起こす前に作る — 起動の後に居る process は全部どれかの層に居る。
+if [ -n "${WORKER_CGROUP_LAYOUT:-}" ]; then
+  cgroup_layout
+fi
 state_dir=$WORK_DIR/state
 # 前の世代の worker がまだ走っている(その dir の錠が持たれている)なら、worker に --overlaps-elder を渡す — coordinator は新しい世代の
 # 名乗りを前の世代の終わりの印と数えず、前の世代の process の lease を外さない(AL-D2e)。

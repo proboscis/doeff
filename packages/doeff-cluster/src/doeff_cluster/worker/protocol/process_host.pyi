@@ -59,6 +59,8 @@ from doeff_cluster.worker.intent.worker_model import WorkerStopping as WorkerSto
 from doeff_cluster.worker.protocol.observations import ObserveProcesses as ObserveProcesses
 from doeff_cluster.worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
 from doeff_cluster.worker.core.memory_rules import JobRoot as JobRoot
+from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster.worker.core.job_cgroup import placed_argv as placed_argv
 from doeff_cluster.worker.intent.worker_model import WakeSet as WakeSet
 from doeff_cluster.worker.intent.worker_model import WorkerWakes as WorkerWakes
 from doeff_cluster.worker.core.worker_due import wakes_with as wakes_with
@@ -97,6 +99,7 @@ class HostSettings:
     shim: ShimSpans
     warm_dir: str
     notice_env: str
+    service_procs: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class ForkedFrom:
@@ -180,6 +183,9 @@ def job_log_stem(settings: HostSettings, name: str, attempt: int) -> _Program[st
     ...
 
 def process_instance(attempt: int, worker_pid: int, started_ms: int, name: str) -> _Program[str, object]:
+    ...
+
+def shim_argv(settings: HostSettings, spec: JobSpec, argv: tuple) -> _Program[tuple, object]:
     ...
 
 def start_job(settings: HostSettings, action: StartJob) -> _Program[Started | JobNotStarted, object]:

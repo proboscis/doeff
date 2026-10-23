@@ -38,6 +38,8 @@
                                                  StopReason SpecChanged Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveJobRoots])
 (import doeff_cluster.worker.core.memory_rules [JobRoot])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster.worker.core.job_cgroup [placed-argv])
 (import doeff_cluster.worker.intent.worker_model [WakeSet WorkerWakes])
 (import doeff_cluster.worker.core.worker_due [wakes-with])
 (import doeff_cluster.shared.intent.due_model [DueNever])
@@ -72,7 +74,11 @@
   (#^ str warm-dir)
   ;; 退きの知らせの pipe の読み口の fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — #3672)。shim がこの名で
   ;; job へ渡し、worker が標準入力へ書いた行をその pipe へ中継する。
-  (#^ str notice-env))
+  (#^ str notice-env)
+  ;; 常駐の job(JobSpec.once が偽)の shim を置く兄弟の cgroup の cgroup.procs(card ki-cd8cb84fdcd2 — worker/core/job_cgroup の
+  ;; service の類・入口 main が DOEFF_WORKER_SERVICE_CGROUP から 1 度だけ決める)。None = 置き分けない(子は外の job-cgroup-placer の置き場か、
+  ;; worker と同じ cgroup)。
+  (setv #^ (| str None) service-procs None))
 
 
 (defrecord ForkedFrom
@@ -304,6 +310,17 @@
   (.format "{}-{}" attempt (cut digest 0 12)))
 
 
+(defk shim-argv [settings spec argv]
+  {:pre [(: settings HostSettings) (: spec JobSpec) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
+  "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ移ってから起こす形に包むため(card ki-cd8cb84fdcd2 —
+   worker/core/job_cgroup の service の類)。task と、置き分けない worker(service-procs が None)は argv のまま。外の job-cgroup-placer
+   はこの後に全部の子を job の兄弟へ包むので、常駐の job の子は job の兄弟を経て service の兄弟に落ち着く(内の包みが後に走る)。"
+  (when (or spec.once (is settings.service-procs None))
+    (return argv))
+  (<- placed tuple (placed-argv settings.service-procs argv))
+  placed)
+
+
 (defk start-job [settings action]
   {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % (| Started JobNotStarted))] :tags {:context "worker" :role "protocol" :spells "env"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
@@ -354,7 +371,8 @@
                                          :at-ms started-ms)
                           (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
                                    :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path)))))
-      (do (<- answer (StartProcess :argv plan.argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
+      (do (<- argv tuple (shim-argv settings spec plan.argv))
+          (<- answer (StartProcess :argv argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
                                    :process-group True :hold-stdin True :reap-group True))
           (:= started (if (isinstance answer ProcessNotStarted)
                           (JobNotStarted :name spec.name :warm-key None :detail (+ "子を起こせない: " answer.detail) :at-ms started-ms)
