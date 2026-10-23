@@ -56,7 +56,7 @@ mod sweep;
 use store::{object_key, read_object, write_object, Format, LeakGuard, ObjectKey, OBJECTS_DIR};
 use sweep::{note_object_bytes, tend_roots};
 
-pub use sweep::mark_used;
+pub use sweep::{mark_used, run_handed_sweep, SWEEP_COMMAND, SWEEP_INLINE_ENV};
 
 const NO_CACHE_ENV: &str = "DOEFF_LINTER_NO_CACHE";
 const DIR_ENV: &str = "DOEFF_LINTER_CACHE_DIR";

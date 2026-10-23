@@ -277,7 +277,7 @@ fn the_commit_hook_and_its_child_linters_do_not_go_through_the_canon() {
     stage_in_git(&repo);
     let output = linter_under(&home, &repo)
         .arg("--commit-hook")
-        .env("DOEFF_LINTER_CACHE_DIR", tmp.path().join("cache"))
+        .env("DOEFF_LINTER_CACHE_DIR", tmp.path().join("cache")).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .env_remove("GIT_DIR")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_WORK_TREE")

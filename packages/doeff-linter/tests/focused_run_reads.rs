@@ -72,7 +72,7 @@ fn hit_keys(root: &Path, cache: &Path, paths: &[&str]) -> Vec<String> {
         .args(paths)
         .current_dir(root)
         .env_remove("DOEFF_LINTER_NO_CACHE")
-        .env("DOEFF_LINTER_CACHE_DIR", cache)
+        .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
