@@ -82,7 +82,11 @@ fn hash_of(token: &str) -> u64 {
     hash
 }
 
-const HASHES: u64 = 3;
+/// bit の位置の数と、語 1 つあたりの bit の数(2 の冪に切り上げる)。呼び先の名を 12 個探す file(requests_projection)では、前の 3 個・8 bit
+/// の誤った「在る」が名 1 つで約 1%・repo の Hy 4620 file の約 500 を読ませた(card ki-40c8ca380713 の実測)。8 個・16 bit なら名 1 つで
+/// 約 0.05% 以下(表は約 2 倍)。
+const HASHES: u64 = 8;
+const BITS_PER_WORD: usize = 16;
 
 /// bit の位置 `HASHES` 個(二重の hash — 1 つの hash の上下を使う)。`bits` は 2 の冪。
 fn positions(hash: u64, bits: usize) -> impl Iterator<Item = usize> {
@@ -110,7 +114,7 @@ impl BlobSpell {
             .collect();
         hashes.sort_unstable();
         hashes.dedup();
-        let bits = (hashes.len() * 8).next_power_of_two().max(256);
+        let bits = (hashes.len() * BITS_PER_WORD).next_power_of_two().max(256);
         let mut bloom = vec![0u8; bits / 8];
         for hash in hashes {
             for at in positions(hash, bits) {
@@ -162,6 +166,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 綴らない名を「綴るかもしれない」と誤る割合が小さい — 誤った「在る」は file を読ませるだけだが、名を多く探す file では読む数が
+    /// 名の数だけ増える(1 千語の file・綴らない名 1 万で、誤りは 0.1% 以下)。
+    #[test]
+    fn few_names_the_file_does_not_spell_are_taken_as_maybe_spelled() {
+        let source: String = (0..1000).map(|i| format!("(word-{i} x)\n")).collect();
+        let memory = BlobSpell::of(&source);
+        let wrong = (0..10_000).filter(|j| memory.may_spell(&Spelling::of(&format!("other_{j}")))).count();
+        assert!(wrong <= 10, "綴らない名 1 万のうち {wrong} を綴るかもしれないと誤った");
+        assert!((0..1000).all(|i| memory.may_spell(&Spelling::of(&format!("word_{i}")))), "綴る名を取りこぼさない");
     }
 
     #[test]
