@@ -116,9 +116,29 @@ type Owner = Option<Tid>;
 /// version holds `K` objects; a `KRef` whose slot was emptied behaves like a
 /// consumed `K` (resuming it is a one-shot violation).
 type KRef = u64;
-/// A shared "claimed" flag (the Python version's `claimed = [False]` cell)
-/// linking a `waiters` registration to its external-wait ready placeholder.
-type Claim = Arc<AtomicBool>;
+/// The mark shared by a `waiters` registration and its external-wait ready
+/// placeholder (the Python version's `_ClaimMark`): whether the registration
+/// was claimed (its placeholder is dead), and whether the placeholder sits in
+/// the ready heap — so a claim knows it leaves a dead entry there.
+struct ClaimMark {
+    claimed: AtomicBool,
+    in_ready: AtomicBool,
+}
+
+impl ClaimMark {
+    fn new() -> Claim {
+        Arc::new(ClaimMark {
+            claimed: AtomicBool::new(false),
+            in_ready: AtomicBool::new(false),
+        })
+    }
+
+    fn is_claimed(&self) -> bool {
+        self.claimed.load(Ordering::Relaxed)
+    }
+}
+
+type Claim = Arc<ClaimMark>;
 
 // ---------------------------------------------------------------------------
 // Effect kinds
@@ -210,6 +230,15 @@ struct Spec {
     handle_sweep_interval: u64,
     handle_refs_prune_min: usize,
     unretrieved_exceptions_named: usize,
+    /// Claimed external-wait placeholders are taken out of the ready heap
+    /// once there are at least this many and they are more than half of it
+    /// (`_CLAIMED_MARKS_COMPACT_MIN`).
+    claimed_marks_compact_min: usize,
+    /// Recompute the indexes and counts from `waiters` and `ready` at every
+    /// dispatch and fail on a difference (`_INDEX_SELF_CHECK`, read when a run
+    /// starts — the scheduler tests turn it on).
+    index_self_check: bool,
+    index_drift_error_cls: Py<PyAny>,
 }
 
 impl Spec {
@@ -254,6 +283,9 @@ impl Spec {
             handle_sweep_interval: get("HANDLE_SWEEP_INTERVAL")?.extract()?,
             handle_refs_prune_min: get("HANDLE_REFS_PRUNE_MIN")?.extract()?,
             unretrieved_exceptions_named: get("UNRETRIEVED_EXCEPTIONS_NAMED")?.extract()?,
+            claimed_marks_compact_min: get("CLAIMED_MARKS_COMPACT_MIN")?.extract()?,
+            index_self_check: get("INDEX_SELF_CHECK")?.extract()?,
+            index_drift_error_cls: get("SchedulerIndexDriftError")?.unbind(),
         })
     }
 
@@ -627,8 +659,9 @@ impl<V> OrderedMap<V> {
         Some(value)
     }
 
-    fn keys(&self) -> Vec<WKey> {
-        self.order.values().copied().collect()
+    /// The insertion number of `key` (its place in the iteration order).
+    fn seq_of(&self, key: &WKey) -> Option<u64> {
+        self.map.get(key).map(|(seq, _)| *seq)
     }
 
     fn iter(&self) -> impl Iterator<Item = (&WKey, &V)> {
@@ -646,8 +679,32 @@ struct State {
     promises: HashMap<u64, PromiseEntry>,
     /// Never swept; ids grow, so the BTreeMap order is insertion order.
     semaphores: BTreeMap<u64, SemEntry>,
+    /// Moved only through `park_waiter` / `unpark_key` / `unpark_at` /
+    /// `withdraw_group_at`, which keep `parked_keys_of` in step.
     waiters: OrderedMap<Vec<WaiterEntry>>,
+    /// The reverse index of `waiters`: owner → {key: how many of the owner's
+    /// entries are under it}, so a Cancel reads the keys its task is parked
+    /// on instead of walking every waiter (agora card ki-9de8d0a54408).
+    parked_keys_of: HashMap<Owner, HashMap<WKey, usize>>,
+    /// Moved only through `ready_push` / `ready_pop` / `ready_remove_at` /
+    /// `drop_claimed_marks`, which keep the counts below in step.
     ready: Vec<HeapItem>,
+    /// The live runnable entries (new / resume / raise / sem_resume whose
+    /// owner is not cancelled) in `ready`: by owner, in all, and those not
+    /// owned by a daemon — `has_live_ready_entry` reads the counts instead of
+    /// walking the heap. `finish_cancelled` uncounts the owner's entries:
+    /// cancelled is terminal, so an owner's entries are all counted or none.
+    /// Each owner keeps whether it is a daemon as its entries were counted.
+    live_ready_of: HashMap<Owner, (usize, bool)>,
+    live_ready: usize,
+    live_ready_non_daemon: usize,
+    /// The resume / raise / sem_resume entries in `ready` by owner, so a
+    /// Cancel walks the heap only when its task has one queued.
+    queued_conts_of: HashMap<Owner, usize>,
+    /// Claimed external-wait placeholders still in `ready` (dead entries
+    /// `pick_next` would only pop and skip — popped only when no NORMAL work
+    /// is queued, so a claim takes them out once they are many).
+    claimed_marks_in_ready: usize,
     handle_refs: HashMap<WKey, Vec<Py<PyWeakrefReference>>>,
     handle_prune_at: HashMap<WKey, usize>,
     conts: HashMap<KRef, Continuation>,
@@ -688,7 +745,13 @@ impl State {
             promises: HashMap::default(),
             semaphores: BTreeMap::new(),
             waiters: OrderedMap::new(),
+            parked_keys_of: HashMap::default(),
             ready: Vec::new(),
+            live_ready_of: HashMap::default(),
+            live_ready: 0,
+            live_ready_non_daemon: 0,
+            queued_conts_of: HashMap::default(),
+            claimed_marks_in_ready: 0,
             handle_refs: HashMap::default(),
             handle_prune_at: HashMap::default(),
             conts: HashMap::default(),
@@ -762,8 +825,6 @@ enum Scan {
     Ready,
     /// `waiters` keys and entries looked at.
     Waiters,
-    /// Task entries looked at.
-    Tasks,
     /// Semaphore wait-queue entries looked at.
     SemaphoreWaiters,
     /// The terminal-entry sweep (#502) — every HANDLE_SWEEP_INTERVAL ids, so
@@ -771,15 +832,14 @@ enum Scan {
     Sweep,
 }
 
-const SCANS: [(Scan, &str); 5] = [
+const SCANS: [(Scan, &str); 4] = [
     (Scan::Ready, "ready"),
     (Scan::Waiters, "waiters"),
-    (Scan::Tasks, "tasks"),
     (Scan::SemaphoreWaiters, "semaphore_waiters"),
     (Scan::Sweep, "sweep"),
 ];
 
-static SCAN_COUNTS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+static SCAN_COUNTS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
 /// Add `entries` looked at by one scan of `scan` (one Relaxed add per scan).
 fn record_scan(scan: Scan, entries: usize) {
@@ -1457,14 +1517,11 @@ impl Locked<'_> {
         let seq = self.insertion_seq;
         self.insertion_seq += 1;
         if !traced() {
-            heapq::push(
-                &mut self.ready,
-                HeapItem {
-                    neg_priority: -priority,
-                    seq,
-                    entry,
-                },
-            );
+            self.ready_push(HeapItem {
+                neg_priority: -priority,
+                seq,
+                entry,
+            });
             return;
         }
         // The wake is kept before the push, as the Python version counts it.
@@ -1477,15 +1534,310 @@ impl Locked<'_> {
         };
         let owner = entry.owner();
         self.wake_of_seq.insert(seq, wake);
-        heapq::push(
-            &mut self.ready,
-            HeapItem {
-                neg_priority: -priority,
-                seq,
-                entry,
-            },
-        );
+        self.ready_push(HeapItem {
+            neg_priority: -priority,
+            seq,
+            entry,
+        });
         Python::attach(|py| self.trace_enqueued(py, owner, wake, priority));
+    }
+
+    // --- the ready heap and its counts (agora card ki-9de8d0a54408) ----------
+    //
+    // The heap is moved only through these, so the live counts
+    // (`has_live_ready_entry`), the queued continuations by owner
+    // (`detach_from_ready`) and the claimed placeholders still queued stay in
+    // step with it; `check_indexes` recounts them while the self-check is on.
+
+    /// Push onto the ready heap (and count the entry in).
+    fn ready_push(&mut self, item: HeapItem) {
+        self.count_ready(&item, true);
+        heapq::push(&mut self.ready, item);
+    }
+
+    /// Pop the first ready entry (and count it out).
+    fn ready_pop(&mut self) -> Option<HeapItem> {
+        let item = heapq::pop(&mut self.ready)?;
+        self.count_ready(&item, false);
+        Some(item)
+    }
+
+    /// Take the ready entry at heap position `index` out (and count it out),
+    /// re-heapifying as the Python version does (`ready.pop(index)` then
+    /// `heapify`), so the heap keeps its array layout.
+    fn ready_remove_at(&mut self, index: usize) -> HeapItem {
+        let item = self.ready.remove(index);
+        record_scan(Scan::Ready, self.ready.len());
+        heapq::heapify(&mut self.ready);
+        self.count_ready(&item, false);
+        item
+    }
+
+    /// Keep the counts in step with `item` entering (`true`) or leaving the
+    /// heap. A runnable entry is counted live when its owner is not cancelled
+    /// as it enters; an owner's live entries leave the counts when they leave
+    /// the heap or when `finish_cancelled` makes the owner cancelled.
+    fn count_ready(&mut self, item: &HeapItem, entering: bool) {
+        let owner = match &item.entry {
+            ReadyEntry::WaitExternal { claimed, .. } => {
+                claimed.in_ready.store(entering, Ordering::Relaxed);
+                if claimed.is_claimed() {
+                    if entering {
+                        self.claimed_marks_in_ready += 1;
+                    } else {
+                        self.claimed_marks_in_ready -= 1;
+                    }
+                }
+                return;
+            }
+            ReadyEntry::New { tid } => Some(*tid),
+            ReadyEntry::Resume { owner, .. }
+            | ReadyEntry::Raise { owner, .. }
+            | ReadyEntry::SemResume { owner, .. } => {
+                let queued = self.queued_conts_of.entry(*owner).or_insert(0);
+                if entering {
+                    *queued += 1;
+                } else {
+                    *queued -= 1;
+                    if *queued == 0 {
+                        self.queued_conts_of.remove(owner);
+                    }
+                }
+                *owner
+            }
+        };
+        if entering {
+            if !self.entry_is_live(&item.entry, true) {
+                return;
+            }
+            let daemon = self.is_daemon(owner);
+            self.live_ready_of.entry(owner).or_insert((0, daemon)).0 += 1;
+            self.count_live(daemon, 1);
+            return;
+        }
+        let Some((counted, daemon)) = self.live_ready_of.get_mut(&owner) else {
+            // Its owner is cancelled: never counted, or counted out by finish_cancelled.
+            return;
+        };
+        let daemon = *daemon;
+        *counted -= 1;
+        if *counted == 0 {
+            self.live_ready_of.remove(&owner);
+        }
+        self.count_live(daemon, -1);
+    }
+
+    /// Move `has_live_ready_entry`'s counts by `delta` entries of an owner
+    /// that is (`daemon`) or is not a daemon task.
+    fn count_live(&mut self, daemon: bool, delta: isize) {
+        self.live_ready = self.live_ready.wrapping_add_signed(delta);
+        if !daemon {
+            self.live_ready_non_daemon = self.live_ready_non_daemon.wrapping_add_signed(delta);
+        }
+    }
+
+    /// Claim an external-wait registration: the waiters side owns its one
+    /// resume and the paired ready placeholder is dead from now on (#490/#505).
+    /// A dead placeholder still in the heap is popped only when no NORMAL work
+    /// is queued — in a busy run every timed wait whose future won left one
+    /// there, holding the deadline timer's registration (the Python version's
+    /// `claim`, card ki-1294af4fa525). Once there are many and they are most of
+    /// the heap, they are taken out together.
+    fn claim(&mut self, mark: &Claim) {
+        if mark.claimed.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        if !mark.in_ready.load(Ordering::Relaxed) {
+            return;
+        }
+        self.claimed_marks_in_ready += 1;
+        if self.claimed_marks_in_ready >= self.spec().claimed_marks_compact_min
+            && 2 * self.claimed_marks_in_ready > self.ready.len()
+        {
+            self.drop_claimed_marks();
+        }
+    }
+
+    /// Take every claimed placeholder out of the ready heap at once (pick_next
+    /// would only pop and skip each) — the work divided by the placeholders
+    /// taken out is constant.
+    fn drop_claimed_marks(&mut self) {
+        record_scan(Scan::Ready, self.ready.len());
+        let mut dropped: Vec<u64> = Vec::new();
+        self.ready.retain(|item| match &item.entry {
+            ReadyEntry::WaitExternal { claimed, .. } if claimed.is_claimed() => {
+                claimed.in_ready.store(false, Ordering::Relaxed);
+                dropped.push(item.seq);
+                false
+            }
+            ReadyEntry::WaitExternal { .. }
+            | ReadyEntry::New { .. }
+            | ReadyEntry::Resume { .. }
+            | ReadyEntry::Raise { .. }
+            | ReadyEntry::SemResume { .. } => true,
+        });
+        heapq::heapify(&mut self.ready);
+        self.claimed_marks_in_ready = 0;
+        for seq in dropped {
+            self.take_wake(seq);
+        }
+    }
+
+    /// Recompute the indexes and counts from `waiters` and `ready` and fail on
+    /// a difference — only while the self-check is on (the scheduler tests),
+    /// so a change that moves `waiters` or `ready` outside the entry functions
+    /// is caught by the first test that runs it, not by a later stall (the
+    /// Python version's `check_indexes`).
+    fn check_indexes(&self, py: Python<'_>) -> PyResult<()> {
+        let mut parked: HashMap<Owner, HashMap<WKey, usize>> = HashMap::default();
+        for (key, entries) in self.waiters.iter() {
+            for entry in entries {
+                *parked.entry(entry.owner()).or_default().entry(*key).or_insert(0) += 1;
+            }
+        }
+        let mut live_of: HashMap<Owner, usize> = HashMap::default();
+        let mut live = 0;
+        let mut live_non_daemon = 0;
+        let mut queued_conts: HashMap<Owner, usize> = HashMap::default();
+        let mut claimed_marks = 0;
+        let mut placed_marks = true;
+        for item in &self.ready {
+            match &item.entry {
+                ReadyEntry::WaitExternal { claimed, .. } => {
+                    placed_marks &= claimed.in_ready.load(Ordering::Relaxed);
+                    claimed_marks += usize::from(claimed.is_claimed());
+                    continue;
+                }
+                ReadyEntry::New { .. } => {}
+                ReadyEntry::Resume { owner, .. }
+                | ReadyEntry::Raise { owner, .. }
+                | ReadyEntry::SemResume { owner, .. } => {
+                    *queued_conts.entry(*owner).or_insert(0) += 1;
+                }
+            }
+            if self.entry_is_live(&item.entry, true) {
+                live += 1;
+                live_non_daemon += usize::from(self.entry_is_live(&item.entry, false));
+                *live_of.entry(item.entry.owner()).or_insert(0) += 1;
+            }
+        }
+        let held_live_of: HashMap<Owner, usize> = self
+            .live_ready_of
+            .iter()
+            .map(|(owner, (count, _))| (*owner, *count))
+            .collect();
+        let drifts: Vec<&str> = [
+            ("waiters index (parked_keys_of)", parked == self.parked_keys_of),
+            (
+                "live ready counts (live_ready_of, live_ready, live_ready_non_daemon)",
+                live_of == held_live_of
+                    && live == self.live_ready
+                    && live_non_daemon == self.live_ready_non_daemon,
+            ),
+            ("queued continuations (queued_conts_of)", queued_conts == self.queued_conts_of),
+            (
+                "claimed placeholders in ready (claimed_marks_in_ready)",
+                claimed_marks == self.claimed_marks_in_ready,
+            ),
+            ("placeholders in ready (ClaimMark::in_ready)", placed_marks),
+        ]
+        .into_iter()
+        .filter(|(_, matches)| !matches)
+        .map(|(name, _)| name)
+        .collect();
+        if drifts.is_empty() {
+            return Ok(());
+        }
+        let message = format!(
+            "scheduler index drifted from its structures: {} — waiters and ready move only \
+             through park_waiter/unpark_key/unpark_at/withdraw_group_at and \
+             ready_push/ready_pop/ready_remove_at/drop_claimed_marks",
+            drifts.join(", ")
+        );
+        let error = self.spec().index_drift_error_cls.bind(py).call1((message,))?;
+        Err(PyErr::from_value(error))
+    }
+
+    // --- waiters and its reverse index (agora card ki-9de8d0a54408) ----------
+
+    /// Register `entry` under `key`: the one way into `waiters`, so its
+    /// reverse index (`parked_keys_of`) stays in step.
+    fn park_waiter(&mut self, key: WKey, entry: WaiterEntry) {
+        let owner = entry.owner();
+        self.waiters.get_or_insert_with(key, Vec::new).push(entry);
+        *self
+            .parked_keys_of
+            .entry(owner)
+            .or_default()
+            .entry(key)
+            .or_insert(0) += 1;
+    }
+
+    /// Take every entry under `key` out of `waiters` (empty when none).
+    fn unpark_key(&mut self, key: &WKey) -> Vec<WaiterEntry> {
+        let entries = self.waiters.remove(key).unwrap_or_default();
+        for entry in &entries {
+            self.unindex_parked(entry.owner(), *key);
+        }
+        entries
+    }
+
+    /// Take the one entry at `index` under `key` out of `waiters`.
+    fn unpark_at(&mut self, key: WKey, index: usize) -> WaiterEntry {
+        let entries = self.waiters.get_mut(&key).expect("a parked key");
+        let entry = entries.remove(index);
+        if entries.is_empty() {
+            self.waiters.remove(&key);
+        }
+        self.unindex_parked(entry.owner(), key);
+        entry
+    }
+
+    /// Take the entries of Gather/Race `group` under `key` out of `waiters`;
+    /// answers the claim marks they held.
+    fn withdraw_group_at(&mut self, key: WKey, group: u64) -> Vec<Claim> {
+        let Some(entries) = self.waiters.get_mut(&key) else {
+            return Vec::new();
+        };
+        let mut removed: Vec<(Owner, Option<Claim>)> = Vec::new();
+        entries.retain(|entry| match entry {
+            WaiterEntry::Group {
+                group: g,
+                owner,
+                claimed,
+                ..
+            } if *g == group => {
+                removed.push((*owner, claimed.clone()));
+                false
+            }
+            WaiterEntry::Group { .. } | WaiterEntry::Wait { .. } | WaiterEntry::WaitExternal { .. } => true,
+        });
+        if entries.is_empty() {
+            self.waiters.remove(&key);
+        }
+        let mut claims = Vec::new();
+        for (owner, claimed) in removed {
+            self.unindex_parked(owner, key);
+            claims.extend(claimed);
+        }
+        claims
+    }
+
+    /// Drop one entry of `owner` just taken out of `waiters[key]` from the
+    /// reverse index.
+    fn unindex_parked(&mut self, owner: Owner, key: WKey) {
+        let Some(owned) = self.parked_keys_of.get_mut(&owner) else {
+            return;
+        };
+        if let Some(count) = owned.get_mut(&key) {
+            *count -= 1;
+            if *count == 0 {
+                owned.remove(&key);
+            }
+        }
+        if owned.is_empty() {
+            self.parked_keys_of.remove(&owner);
+        }
     }
 
     // --- the measurement hook (set_scheduler_trace) -------------------------
@@ -1704,13 +2056,16 @@ impl Locked<'_> {
         }
     }
 
+    /// True when the ready heap holds an entry that can still run;
+    /// `include_daemons=false` asks the narrower question the external-wait
+    /// shield needs (real, non-daemon work queued). Answered from the live
+    /// counts `ready_push` keeps, not by walking the heap.
     fn has_live_ready_entry(&self, include_daemons: bool) -> bool {
-        let found = self
-            .ready
-            .iter()
-            .position(|item| self.entry_is_live(&item.entry, include_daemons));
-        record_scan(Scan::Ready, found.map_or(self.ready.len(), |index| index + 1));
-        found.is_some()
+        if include_daemons {
+            self.live_ready > 0
+        } else {
+            self.live_ready_non_daemon > 0
+        }
     }
 
     fn is_live_daemon_entry(&self, entry: &ReadyEntry) -> bool {
@@ -1916,16 +2271,19 @@ impl Locked<'_> {
         Ok(())
     }
 
+    /// The waitable keys that hold an entry owned by `tid`, in `waiters`'
+    /// order — read from the reverse index, so a Cancel does not walk every
+    /// parked waiter.
     fn keys_parked_by(&self, tid: Tid) -> Vec<WKey> {
-        record_scan(
-            Scan::Waiters,
-            self.waiters.iter().map(|(_, entries)| 1 + entries.len()).sum(),
-        );
-        self.waiters
-            .iter()
-            .filter(|(_, entries)| entries.iter().any(|e| e.owner() == Some(tid)))
-            .map(|(key, _)| *key)
-            .collect()
+        let Some(owned) = self.parked_keys_of.get(&Some(tid)) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<(u64, WKey)> = owned
+            .keys()
+            .map(|key| (self.waiters.seq_of(key).unwrap_or(u64::MAX), *key))
+            .collect();
+        keys.sort_unstable();
+        keys.into_iter().map(|(_, key)| key).collect()
     }
 
     /// Returns the `on_cancel` callbacks to run (after the lock is released).
@@ -1952,9 +2310,8 @@ impl Locked<'_> {
             if live {
                 continue;
             }
-            if let Some(entries) = self.waiters.remove(key) {
-                self.bury_entries(entries);
-            }
+            let entries = self.unpark_key(key);
+            self.bury_entries(entries);
             let error = self.spec().cancelled_error(py)?;
             let promise = self.promises.get_mut(&key.id).expect("checked above");
             promise.status = Status::Cancelled;
@@ -1989,10 +2346,9 @@ impl Locked<'_> {
         self.detach_from_semaphores(tid)
     }
 
+    /// Only the keys `tid` is parked on are read (`keys_parked_by`).
     fn detach_from_waiters(&mut self, tid: Tid) -> Option<KRef> {
-        let keys = self.waiters.keys();
-        record_scan(Scan::Waiters, keys.len());
-        for key in keys {
+        for key in self.keys_parked_by(tid) {
             let Some(entries) = self.waiters.get(&key) else {
                 continue;
             };
@@ -2001,7 +2357,7 @@ impl Locked<'_> {
             let Some(index) = found else {
                 continue;
             };
-            match &entries[index] {
+            let mark = match &entries[index] {
                 WaiterEntry::Group { group, .. } => {
                     let group = *group;
                     let state = self.groups.remove(&group);
@@ -2012,16 +2368,13 @@ impl Locked<'_> {
                     // A resolved group (cannot be parked) — nothing held.
                     return None;
                 }
-                WaiterEntry::WaitExternal { claimed, .. } => {
-                    claimed.store(true, Ordering::Relaxed);
-                }
-                WaiterEntry::Wait { .. } => {}
+                WaiterEntry::WaitExternal { claimed, .. } => Some(claimed.clone()),
+                WaiterEntry::Wait { .. } => None,
+            };
+            if let Some(mark) = mark {
+                self.claim(&mark);
             }
-            let entries = self.waiters.get_mut(&key).expect("present");
-            let entry = entries.remove(index);
-            if entries.is_empty() {
-                self.waiters.remove(&key);
-            }
+            let entry = self.unpark_at(key, index);
             return match entry {
                 WaiterEntry::Wait { k, .. } | WaiterEntry::WaitExternal { k, .. } => Some(k),
                 WaiterEntry::Group { .. } => None,
@@ -2030,18 +2383,20 @@ impl Locked<'_> {
         None
     }
 
+    /// The heap is walked only when `tid` has a continuation queued
+    /// (`queued_conts_of`).
     fn detach_from_ready(&mut self, tid: Tid) -> Option<KRef> {
+        if !self.queued_conts_of.contains_key(&Some(tid)) {
+            return None;
+        }
         let found = self.ready.iter().position(|item| match &item.entry {
             ReadyEntry::Resume { owner, .. }
             | ReadyEntry::Raise { owner, .. }
             | ReadyEntry::SemResume { owner, .. } => *owner == Some(tid),
-            _ => false,
+            ReadyEntry::New { .. } | ReadyEntry::WaitExternal { .. } => false,
         });
         record_scan(Scan::Ready, found.map_or(self.ready.len(), |index| index + 1));
-        let index = found?;
-        let item = self.ready.remove(index);
-        record_scan(Scan::Ready, self.ready.len());
-        heapq::heapify(&mut self.ready);
+        let item = self.ready_remove_at(found?);
         self.take_wake(item.seq);
         match item.entry {
             ReadyEntry::Resume { k, value, .. } => {
@@ -2081,6 +2436,10 @@ impl Locked<'_> {
             if let Some(old) = task.result.replace(error) {
                 self.bury(old);
             }
+        }
+        // Its queued entries are dead from now on (has_live_ready_entry).
+        if let Some((counted, daemon)) = self.live_ready_of.remove(&Some(tid)) {
+            self.count_live(daemon, -(counted as isize));
         }
         self.wake_waiters(
             py,
@@ -2177,22 +2536,19 @@ impl Locked<'_> {
     }
 
     /// Live semaphore waiters (pruning cancelled ones): sid → waiting task ids.
+    /// Reads the task of each semaphore waiter, not every task row.
     fn live_semaphore_waiters(&mut self) -> BTreeMap<u64, Vec<Tid>> {
-        record_scan(Scan::Tasks, self.tasks.len());
-        let cancelled: HashSet<Tid> = self
-            .tasks
-            .iter()
-            .filter(|(_, t)| t.status == Status::Cancelled)
-            .map(|(tid, _)| *tid)
-            .collect();
+        let state: &mut State = &mut self.guard;
+        let tasks = &state.tasks;
+        let cancelled = |tid: Tid| tasks.get(&tid).is_some_and(|t| t.status == Status::Cancelled);
         let mut blocked = BTreeMap::new();
         let mut pruned_ks = Vec::new();
-        for (sid, sem) in self.semaphores.iter_mut() {
+        for (sid, sem) in state.semaphores.iter_mut() {
             let before = sem.waiters.len();
             record_scan(Scan::SemaphoreWaiters, before);
             let mut kept = VecDeque::with_capacity(before);
             for (owner, k) in sem.waiters.drain(..) {
-                if owner.is_some_and(|tid| cancelled.contains(&tid)) {
+                if owner.is_some_and(cancelled) {
                     pruned_ks.push(k);
                 } else {
                     kept.push_back((owner, k));
@@ -2294,7 +2650,10 @@ impl Locked<'_> {
         let mut held: Vec<HeapItem> = Vec::new();
         let result = self.pick_next_inner(py, &mut held);
         for item in held {
-            heapq::push(&mut self.ready, item);
+            self.ready_push(item);
+        }
+        if self.spec().index_self_check {
+            self.check_indexes(py)?;
         }
         result
     }
@@ -2303,7 +2662,7 @@ impl Locked<'_> {
         let mut shield_deferred = false;
         loop {
             self.drain(py)?;
-            while let Some(item) = heapq::pop(&mut self.ready) {
+            while let Some(item) = self.ready_pop() {
                 let wake = self.take_wake(item.seq);
                 if step_budget_armed() {
                     // Only when a budget is armed (#3143): the default never
@@ -2382,7 +2741,7 @@ impl Locked<'_> {
                         wk,
                         claimed,
                     } => {
-                        if claimed.load(Ordering::Relaxed) || self.is_owner_cancelled(owner) {
+                        if claimed.is_claimed() || self.is_owner_cancelled(owner) {
                             // A dead placeholder, popped only to be skipped.
                             record_scan(Scan::Ready, 1);
                             continue;
@@ -2407,7 +2766,7 @@ impl Locked<'_> {
                         }
                         self.drain_one_external(py)?;
                         self.drain(py)?;
-                        if !claimed.load(Ordering::Relaxed) {
+                        if !claimed.is_claimed() {
                             let priority = self.spec().priority_external_wait;
                             self.enqueue(
                                 ReadyEntry::WaitExternal {
@@ -2476,7 +2835,7 @@ impl Locked<'_> {
         let external = wk.kind == WKind::Promise
             && self.promises.get(&wk.id).is_some_and(|p| p.external);
         let claimed = if external && !park {
-            let claimed: Claim = Arc::new(AtomicBool::new(false));
+            let claimed = ClaimMark::new();
             let priority = self.spec().priority_external_wait;
             self.enqueue(
                 ReadyEntry::WaitExternal {
@@ -2490,36 +2849,23 @@ impl Locked<'_> {
         } else {
             None
         };
-        self.waiters
-            .get_or_insert_with(wk, Vec::new)
-            .push(WaiterEntry::Group {
+        self.park_waiter(
+            wk,
+            WaiterEntry::Group {
                 kind,
                 owner,
                 group,
                 claimed,
-            });
+            },
+        );
     }
 
     /// `remove_gather_waiters` / `remove_race_waiters`.
     fn remove_group_waiters(&mut self, group: u64, pending_keys: &[WKey]) {
         let keys: BTreeSet<WKey> = pending_keys.iter().copied().collect();
         for wk in keys {
-            let Some(entries) = self.waiters.get_mut(&wk) else {
-                continue;
-            };
-            entries.retain(|entry| match entry {
-                WaiterEntry::Group {
-                    group: g, claimed, ..
-                } if *g == group => {
-                    if let Some(claimed) = claimed {
-                        claimed.store(true, Ordering::Relaxed);
-                    }
-                    false
-                }
-                _ => true,
-            });
-            if entries.is_empty() {
-                self.waiters.remove(&wk);
+            for mark in self.withdraw_group_at(wk, group) {
+                self.claim(&mark);
             }
         }
     }
@@ -2583,7 +2929,7 @@ impl Locked<'_> {
     }
 
     fn wake_waiters(&mut self, py: Python<'_>, completed: WKey) -> PyResult<Option<i64>> {
-        let entries = self.waiters.remove(&completed).unwrap_or_default();
+        let entries = self.unpark_key(&completed);
         let mut woken_min: Option<i64> = None;
         for entry in entries {
             let queued_at = match entry {
@@ -2598,7 +2944,7 @@ impl Locked<'_> {
                     claimed,
                     wake_priority,
                 } => {
-                    claimed.store(true, Ordering::Relaxed);
+                    self.claim(&claimed);
                     self.resume_with_waitable_result(py, owner, k, completed, wake_priority)?
                 }
                 WaiterEntry::Group {
@@ -2608,7 +2954,7 @@ impl Locked<'_> {
                     ..
                 } => {
                     if let Some(claimed) = claimed {
-                        claimed.store(true, Ordering::Relaxed);
+                        self.claim(&claimed);
                     }
                     match kind {
                         GroupKind::Gather => self.wake_gather_waiter(py, group, completed)?,
@@ -2664,6 +3010,9 @@ impl Locked<'_> {
     // --- effect dispatch ----------------------------------------------------
 
     fn dispatch(&mut self, py: Python<'_>, current: Owner, kind: Kind, effect: &Bound<'_, PyAny>, k: KRef) -> PyResult<Outcome> {
+        if self.spec().index_self_check {
+            self.check_indexes(py)?;
+        }
         self.drain(py)?;
         match kind {
             Kind::Spawn => self.on_spawn(py, current, effect, k),
@@ -3025,23 +3374,25 @@ impl Locked<'_> {
             && self.promises.get(&wk.id).is_some_and(|p| p.external);
         if external {
             if priority == Some(self.spec().priority_idle) {
-                self.waiters
-                    .get_or_insert_with(wk, Vec::new)
-                    .push(WaiterEntry::Wait {
+                self.park_waiter(
+                    wk,
+                    WaiterEntry::Wait {
                         owner: current,
                         k,
                         wake_priority: None,
-                    });
+                    },
+                );
             } else {
-                let claimed: Claim = Arc::new(AtomicBool::new(false));
-                self.waiters
-                    .get_or_insert_with(wk, Vec::new)
-                    .push(WaiterEntry::WaitExternal {
+                let claimed = ClaimMark::new();
+                self.park_waiter(
+                    wk,
+                    WaiterEntry::WaitExternal {
                         owner: current,
                         k,
                         claimed: claimed.clone(),
                         wake_priority: priority,
-                    });
+                    },
+                );
                 let shield = self.spec().priority_external_wait;
                 self.enqueue(
                     ReadyEntry::WaitExternal {
@@ -3053,13 +3404,14 @@ impl Locked<'_> {
                 );
             }
         } else {
-            self.waiters
-                .get_or_insert_with(wk, Vec::new)
-                .push(WaiterEntry::Wait {
+            self.park_waiter(
+                wk,
+                WaiterEntry::Wait {
                     owner: current,
                     k,
                     wake_priority: priority,
-                });
+                },
+            );
         }
         Ok(Outcome::Ctrl(self.pick_next(py)?))
     }

@@ -44,7 +44,7 @@ pytestmark = [
 
 # The terminal-entry sweep (#502) walks every row once per HANDLE_SWEEP_INTERVAL ids — amortized by
 # design, so it is kept out of the per-step count.
-_PER_STEP_SCANS = ("ready", "waiters", "tasks", "semaphore_waiters")
+_PER_STEP_SCANS = ("ready", "waiters", "semaphore_waiters")
 
 
 class Unrelated(EffectBase[int]):
