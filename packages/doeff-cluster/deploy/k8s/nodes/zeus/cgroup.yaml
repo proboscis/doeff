@@ -1,0 +1,66 @@
+# zeus の worker の cgroup の memory の層(JSON patch — card ki-cd8cb84fdcd2)。
+#
+# 訳: worker の本体・常駐の job・task と、job の子が起こす命令が 1 つの cgroup(container の cgroup・memory.max 100Gi だけ)を分け合い、
+# 1 本の task(10-24 06:03 JST の 48 GB)や命令(05:36 JST の 28 GiB)の memory が上限の手前で回収を詰まらせて、本体も常駐の job も
+# 16.7 分止まった。container の cgroup の中に層を作り、守る層(memory.min)と限る層(memory.max)を分ける — 1 本が際限なく増えても、
+# kernel は限る層の中だけで回収して OOM で止め、守る層は回収されない。
+#
+# 層(WORKER_CGROUP_LAYOUT — boot.sh の「cgroup の層」): worker = tini・起動の script・worker の本体(と kubectl exec・readinessProbe・
+# preStop — runc は init の cgroup へ入れる)・services = 常駐の job の shim と子(DOEFF_WORKER_SERVICE_CGROUP)・jobs = task・待ちの子・
+# 実行環境と木の準備・入口の検め(DOEFF_WORKER_JOB_CGROUP)・commands = job の子が自分の子を置く層(上に載る系の命令 — 書ける dir は
+# worker が DOEFF_WORKER_CGROUP_DIR で job の子へ渡す)。守る層の memory.min の和と限る層の memory.max の和は container の上限 100Gi の内
+# (限る層が上限まで使っても、container の上限の回収は守る層の min の分に掛からない)。限る層に memory.high は掛けない — 10-24 の試しで、
+# high を max の際に掛けた子は止まるまで約 10 分這い、同じ層の他の子も遅くした(max だけでは 1.0 秒で止まった)。
+# 値の出どころ(10-24 07:2x JST の zeus): container の memory.current 60.0GiB(anon 39.0)・RSS の和 常駐の job 24.2GiB・その子の CLI と hook
+# 22.7GiB・task と待ちの子 12.0GiB・命令 1.9GiB・memory.peak 96.6GB。
+#
+# 書ける見え: Pod の /sys/fs/cgroup は container の cgroup を根とする読み取りだけの見え(containerd 2.0 は特権の無い container の cgroupfs
+# を ro で置く)。host の cgroupfs を /host/cgroup に置き(WORKER_CGROUP_HOST)、boot.sh が名前空間の根と同じ inode の dir を引く。
+# worker の container は特権を持たない(privileged の container は host の cgroup の名前空間で起き、/sys/fs/cgroup に host の木の全体が
+# 見えて、container の cgroup を読む memory の見張りが壊れる — 10-24 の試し)。
+#
+# 委ねる係(cgroup-delegate — native sidecar): root・privileged の container は host の cgroup の名前空間で起き、/sys/fs/cgroup に host の
+# 木が書ける形で見える。自分の cgroup の親(この Pod の slice)の下の container の cgroup のうち、memory の上限を持つ物(pause は持たない)
+# の dir と cgroup.procs・cgroup.subtree_control・cgroup.threads を worker の uid へ渡す(cgroup v2 の委ね)。worker の container が
+# 起こし直されると新しい cgroup ができるので、走り続けて渡し直す。
+# ポーリングの訳: containerd が container の cgroup を作った事を、同じ Pod の別の container へ知らせる道が無い(cgroupfs の dir の
+# 作成は inotify に出ない)。2 秒ごとに持ち主を見るだけで、渡し済みなら何もしない。
+#
+# 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう、足す物は全部末尾へ足す。
+- op: add
+  path: /spec/template/spec/initContainers/-
+  value:
+    name: cgroup-delegate
+    image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
+    restartPolicy: Always
+    securityContext: { privileged: true, runAsUser: 0, runAsNonRoot: false }
+    resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        own=$(sed -n 's/^0:://p' /proc/self/cgroup)
+        case "$own" in
+          /kubepods*/*.scope) ;;
+          *) echo "cgroup-delegate: 自分の cgroup '$own' が Pod の slice の下の container の cgroup でない(host の cgroup の名前空間で起きていない)" >&2
+             exit 1 ;;
+        esac
+        slice=/sys/fs/cgroup${own%/*}
+        echo "cgroup-delegate: $slice の container の cgroup を uid 1000 へ委ねる" >&2
+        while :; do
+          for d in "$slice"/*.scope; do
+            [ -d "$d" ] && [ "$d" != "/sys/fs/cgroup$own" ] || continue
+            [ "$(cat "$d/memory.max" 2>/dev/null)" != max ] || continue
+            [ "$(stat -c %u "$d")" != 1000 ] || continue
+            chown 1000:1000 "$d" "$d/cgroup.procs" "$d/cgroup.subtree_control" "$d/cgroup.threads" &&
+              echo "cgroup-delegate: $d を uid 1000 へ委ねた" >&2
+          done
+          sleep 2
+        done
+- { op: add, path: /spec/template/spec/volumes/-, value: { name: host-cgroup, hostPath: { path: /sys/fs/cgroup, type: Directory } } }
+- { op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: { name: host-cgroup, mountPath: /host/cgroup } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G services:memory.min=24G jobs:memory.max=36G commands:memory.max=28G" }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }

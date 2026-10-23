@@ -271,6 +271,91 @@ def test_generation_dirs_on_a_version_without_them_is_refused() -> None:
     assert not _same_or_ancestor(GENERATION_DIRS_SINCE, "44778ca69e9d101f757721c4b5d283c57f856d80")
 
 
+# cgroup の memory の層(card ki-cd8cb84fdcd2 — nodes/zeus/cgroup.yaml・boot.sh の「cgroup の層」): zeus の worker の container の cgroup の
+# 中に、守る層(memory.min — worker の本体と常駐の job)と限る層(memory.max — task と、job の子が置く命令)を作る。1 本の task や命令が
+# 際限なく memory を増やしても、kernel は限る層の中だけで回収して止め、守る層は回収されない(10-24 06:03 JST は 1 つの cgroup で
+# 16.7 分止まった)。層を知らない版の boot.sh と worker は宣言を読まず、名(DOEFF_WORKER_JOB_CGROUP)だけを読んで、根に居る worker の
+# 兄弟を置けずに起動で止まる — だから層を宣言する worker の版は CGROUP_LAYOUT_SINCE かその子孫。
+CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
+# 層の名: 最初の層(居た process の移り先)と、job の子が自分の子(上に載る系の命令)を置く層。
+CGROUP_FIRST_LAYER = "worker"
+CGROUP_CHILD_LAYER = "commands"
+_BYTE_UNITS = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}
+
+
+def _bytes(amount: str) -> int:
+    """kernel の書式(2G)と k8s の書式(100Gi)の量を byte にする(層の和を container の上限と比べるため)。"""
+    match = re.fullmatch(r"(\d+)([KMG]i?)?", amount)
+    assert match is not None, f"量 {amount!r} を読めない"
+    return int(match.group(1)) * _BYTE_UNITS[match.group(2) or ""]
+
+
+def _layout(deployment: Manifest) -> list[tuple[str, dict[str, str]]]:
+    """WORKER_CGROUP_LAYOUT(空白で並べた「<名>:<file>=<値>,…」)を、層の名と file → 値の並びにする。"""
+    entries = [entry.partition(":") for entry in str(_env_value(deployment, "WORKER_CGROUP_LAYOUT")["value"]).split()]
+    return [
+        (name, {key: value for key, _, value in (setting.partition("=") for setting in settings.split(",") if setting)})
+        for name, _, settings in entries
+    ]
+
+
+def test_zeus_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(zeus_worker: Manifest) -> None:
+    """守る層は worker の本体と常駐の job の 2 つ(memory.min)、限る層は task と命令の 2 つ(memory.max・memory.high は掛けない)。
+    守る層の min の和と限る層の max の和は container の memory の上限の内。失敗ケース: 限る層の max の和が上限を越えると、限る層が
+    上限まで使った時に container の上限の回収が起き、守る層の min を越えた分と kernel の回収の待ちが守る層にも掛かる。"""
+    layout = _layout(zeus_worker)
+    settings = dict(layout)
+    service = str(_env_value(zeus_worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
+    jobs = str(_env_value(zeus_worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    assert layout[0][0] == CGROUP_FIRST_LAYER, layout
+    guarded = {name for name, values in layout if "memory.min" in values}
+    limited = {name for name, values in layout if "memory.max" in values}
+    assert guarded == {CGROUP_FIRST_LAYER, service}, layout
+    assert limited == {jobs, CGROUP_CHILD_LAYER}, layout
+    assert all("memory.high" not in values for _, values in layout), layout
+    limits = _mapping(_mapping(_container(zeus_worker)["resources"], "resources")["limits"], "limits")
+    limit = _bytes(str(limits["memory"]))
+    total = sum(_bytes(settings[name]["memory.min"]) for name in guarded) + sum(_bytes(settings[name]["memory.max"]) for name in limited)
+    assert total <= limit, f"守る層の min と限る層の max の和 {total} が container の上限 {limit} を越える"
+
+
+def test_zeus_worker_cgroup_is_delegated_by_a_root_sidecar_while_the_worker_stays_unprivileged(zeus_worker: Manifest) -> None:
+    """委ねる係は root・privileged の native sidecar(restartPolicy Always — worker の container が起こし直されても渡し直す)で、image は
+    worker と同じ。worker の container は特権を持たず(privileged は host の cgroup の名前空間で起き、/sys/fs/cgroup の見えが変わる)、
+    host の cgroupfs を WORKER_CGROUP_HOST に置く。"""
+    sidecars = [
+        _mapping(c, "initContainer")
+        for c in _sequence(_pod_spec(zeus_worker)["initContainers"], "initContainers")
+        if _mapping(c, "initContainer")["name"] == "cgroup-delegate"
+    ]
+    assert len(sidecars) == 1, sidecars
+    sidecar = sidecars[0]
+    assert sidecar["restartPolicy"] == "Always"
+    assert sidecar["securityContext"] == {"privileged": True, "runAsUser": 0, "runAsNonRoot": False}
+    assert sidecar["image"] == _container(zeus_worker)["image"]
+    assert "privileged" not in _mapping(_container(zeus_worker).get("securityContext") or {}, "securityContext")
+    host = str(_env_value(zeus_worker, "WORKER_CGROUP_HOST")["value"])
+    assert _mount_at(zeus_worker, host)["name"] == "host-cgroup"
+    assert _volume(zeus_worker, "host-cgroup")["hostPath"] == {"path": "/sys/fs/cgroup", "type": "Directory"}
+
+
+@pytest.mark.parametrize("node", NODES)
+def test_worker_with_a_cgroup_layout_runs_a_boot_script_that_knows_it(rendered: list[Manifest], node: str) -> None:
+    """層を宣言する worker の版は、boot.sh と worker が層を知る版(CGROUP_LAYOUT_SINCE)かその子孫。"""
+    worker = _worker_on(rendered, node)
+    if not any(entry["name"] == "WORKER_CGROUP_LAYOUT" for entry in _env(worker)):
+        return
+    version = str(_env_value(worker, "WORKER_DOEFF_COMMIT")["value"])
+    assert _same_or_ancestor(CGROUP_LAYOUT_SINCE, version), (
+        f"{node} の worker の版 {version} は cgroup の層を知らない(CGROUP_LAYOUT_SINCE {CGROUP_LAYOUT_SINCE} の子孫でない)"
+    )
+
+
+def test_cgroup_layout_on_a_version_without_it_is_refused() -> None:
+    """層の前の版(10-24 朝の zeus の版 0e6081c18)で層を宣言する宣言を、版の判じが断る。"""
+    assert not _same_or_ancestor(CGROUP_LAYOUT_SINCE, "0e6081c18c0d58f665246c296944d8939d0a2dcd")
+
+
 # worker の doeff の版(WORKER_DOEFF_COMMIT)の定義元は機体の dir の version.yaml 1 つ(JSON patch の add 1 行)— 雛形には版の行を置かない。
 # 機体ごとに 1 台ずつ版を上げられるように(7 台が 1 行を共有すると、1 回の main 入りで 7 台が同時に替わる)。版の行は env の WORK_DIR の
 # 直後に入る(行の場所が変わると Pod の template が変わり、版を変えなくても Pod が作り直される)。
