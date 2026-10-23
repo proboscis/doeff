@@ -199,7 +199,8 @@
   {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
   元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
-  前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は同一性で比べる(cluster_policy.board-changes)。"
+  前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は Table の changed-keys が名乗る行だけ前後で見る
+  (cluster_policy.board-changes — 1 行の書きの歩で盤の全行を回らない)。"
   ;; 欄が前後で全部同じ object の組(SOURCE-GROUPS)は、鍵の部品を作らずに飛ばす(#2716 — 1 拍で変わるのは一握りの欄なので、拍の費用が
   ;; 変わらない欄の大きさに比例しない)。残りの組だけ前後の部品を作り、鍵ごとに以前と同じ比べ方をする。組ごとに鍵が重ならないので、
   ;; 答えは全部の組を作った時と同じ。

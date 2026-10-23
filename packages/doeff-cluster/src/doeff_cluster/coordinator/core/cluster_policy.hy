@@ -1690,12 +1690,12 @@
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
-  "書き直しが要る盤の行の鍵(書かれた・消えた)。変わらない行は同じ object のまま引き継がれるので、同一性で比べる(盤全体を
-   値で比べない — 大きな shadow の盤は 2.3 MB)。"
-  (if (is before.board after.board)
-      []
-      (+ (lfor #(k v) (.items after.board) :if (is-not (.row before.board k) v) k)
-         (lfor k (.keys before.board) :if (is (.row after.board k) None) k))))
+  "書き直しが要る盤の行の鍵(書かれた・消えた・中身の変わった行 — 鍵の昇順)。盤の表の changed-keys が名乗る行だけ: 基を分け合う
+   前後の盤(1 行を書いた歩)は差分と消した鍵の行だけを見るので、盤の全行を回らない(行の数に比例せず、書きの数に比例する — 全行を
+   回っていた時は 2,057 行の盤の 1 行の書きで 2.3 ms)。変わらない行は同じ object のまま引き継がれるので同一性を先に見て、違う
+   object だけ値で比べる(盤全体を値で比べない — 大きな shadow の盤は 2.3 MB)。作り直したが中身の同じ行は名乗らない
+   (durable_kv.durable-delta の「前と後を丸ごと耐久の形にして比べた答え」と同じ)。"
+  (list (.changed-keys before.board after.board)))
 
 
 ;; --- HTTP の要求への返事(判断の部品。要求の振り分けは api_policy) -----------------------------------
