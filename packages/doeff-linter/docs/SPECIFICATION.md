@@ -484,11 +484,39 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
   - 冷えた作業木(mincore で確かめた・旧新で別の作業木・共有 cache): 失敗の型を引く file の最初の 1 回 実時間 中央値 4.9 → 3.0 秒・CPU 15 → 1.1 秒。引数に渡された Program を引く file は 3.06 → 3.05 秒・CPU 2.6 → 2.8 秒(変わらない)。
   - 答え: 150 走行の出力は linter の版の欄を除いて 1 byte も違わない。破れを足した断片(平の defn・os.environ・素の sleep・タグの無い record・失敗の型の match・括弧の閉じない所)を 40 file × 7 の 280 走行に足した出力と、
     失敗の型を別の file から引く DOEFF122 の 13 走行も同じ。hook が返す助言の文は、実際の 139 走行で同じ(確かめ方の行の binary の path を除く)。
-- 残り: 冷えた作業木の最初の 1 回は、これでも hook の期限 4 秒を越える回が多い(Pod の load 85 以上で中央値 4.5〜5.4 秒)。残りは repo の Hy の 2839 file の読み 約 2〜3.5 秒(page cache を
-  追い出された作業木の file ごとの disk の待ち — 並列度を 128 から 256 に上げても縮まない)と、登録簿・prepare・effect の世界の冷えた読み(合わせて約 1.5 秒)。2 回目以降は約 0.6 秒。
-  - `facts-cache.roots`(置き場の根の掃除 — 1 時間ごとの 1 回、3〜19 秒)が、その時間の最初の 1 回に載る。別の直し。
-  - class の frozen を引く handler の引数(標本の約 0.7%)は、まだ repo 全体を読む(`handler-argument-classes`)。
-  - 更に縮めるなら、読む file 数を減らす案(git の index の blob id と作業木の stat で、変わっていない file の中身を読まずに別の場所の事実を引く)が要る。
+- 変わっていない file の中身を読まない(card ki-40c8ca380713): repo の file の全部を見る 3 つの所(引数に渡された Program の呼び手の綴り・失敗の型の宣言の綴り・class の frozen)と
+  登録簿は、git の index の行と作業木の stat(大きさ・更新時刻の ns・inode)が合う file の事実を、index の blob の id で引いて中身を読まない(`git_index.rs` — index の版 2・3 の
+  stage 0 の行。index の更新時刻と同じか後の行〔racy〕・index に無い file・stat の合わない file は中身を読む)。事実は blob の中身だけで決まるので、どの作業木の答えも中身を読んだ時と同じ。
+  - 事実は、index の並びを path の hash で区切った塊(約 64 行・上限 256 行)ごとに 1 つの表として置く(`blob_chunks.rs` — 置き場の名は塊の頭の path)。冷えた作業木でも置き場の
+    file を約 70 開くだけで、事実を 1 blob 1 file で置いた形の約 4,600 を開かない。file を変えても塊の名は変わらず、表に新しい blob の行が足されるだけ。表は塊の今の行の 3 倍まで
+    過去の版の行を持ち(古い commit の作業木も当たる)、表に無い blob は中身を読んで作り、読む間に file が変わらず中身が index の blob と同じ事を確かめてから、実行の終わりに表へ足す。
+  - 登録簿の dir の指紋は、index と合う file を blob の id で作る(`dir_stamp::by_blobs` — 同じ commit の別の作業木が読んだ結果を引き、登録簿を読まない)。index と外れた
+    少数の file は中身から blob の id を作る(多ければ前の stat の指紋に戻る)。
+  - 綴りの覚え(`blob_spell.rs` の Bloom filter)は語 1 つに 16 bit(2 の冪に切り上げ)・位置 8 個。名 1 つを「綴るかもしれない」と誤るのは約 0.05% 以下。前の 8 bit・3 個では
+    名 1 つで約 1〜3% 誤り、呼び先の名を 12 個探す `requests_projection.hy` は温まった作業木でも 4,620 file のうち約 500 を読み直していた(直した後は 19〜34)。
+  - 待ちを重ねる thread を増やすかは、その thread が disk の読みを頼んだか(`getrusage` の `RUSAGE_THREAD` の `ru_inblock`)で決める(`bulk_read::Widen` — 時間で見分けると、
+    混んだ機体で thread が止められただけの遅れでも増えた)。
+  - 事実の置き場を数える上限の片づけ(1 時間に 1 度・zeus で約 40 万の事実・3〜19 秒 — その番を引いた hook が期限で打ち切られた)は、最中の印を持ったまま linter 自身の
+    `sweep-facts-cache` の口へ渡して待たない(新しい session・標準の入出力なし・nice 10。渡せなければその実行で片づける)。根の dir だけを数える片づけと、根が消えた dir の片づけは
+    軽いのでその実行の中のまま。検は `DOEFF_LINTER_SWEEP_INLINE` で実行の中で片づけて結果を見る。
+- 実測(card ki-40c8ca380713・2026-10-23・agora-controllers の本線 Hy 4,620 file・LTO なしの release・事実の置き場は機体の共有の物):
+  - 答え: 旧(branch の基点 a16b2b97f)と新の editor-json は、実 repo の file × 書き換え 5 通り(そのまま・束縛を素の代入に・`:effects` を消す・撃たない effect を足す・
+    handler の引数に class の型を足す)の 1,240 走行(綴りの覚えを直した版)と、別の選び方の 1,195 走行(歩きを直した版)で、linter の版の欄を除いて 1 byte も違わない
+    (DOEFF122 の当たり 20・DOEFF126 77・DOEFF142 3 を含む)。
+  - page cache の冷えた古い作業木(mincore で確かめた・1 回ずつ撃つ): 塊の表の前の版(1 file 1 表)では load 122〜152 で 10 組中 4 組が 4 秒を越えた(2.6〜5.3 秒)。今の版では
+    load 30〜56 で 10 組とも 0.7〜2.8 秒。CPU は表に無かった blob の数に比例する(外れ 15 で 1.2 秒・1,327 で 29.7 秒)。
+  - 新しい作業木(origin/main から切り、file の中身を posix_fadvise で page cache から落として最初の 1 回・inode と dir の cache は落とせない): load 28〜35 で 10 組とも 0.4〜2.9 秒。
+    表から外れた blob は 0。
+  - 歩きの続きの仕事を thread の手元で済ませる前は、冷えた読みで thread が 128 本へ増えた後に小さな仕事(stat 1 回)を 1 つの lock で取り合い、新しい作業木の最初の 1 回の
+    CPU が sys だけで 10〜34 秒になる回があった(読んだ file 19・強制の context switch 2.5 万回)。直した後(`bulk_read::pipeline` — 遅い仕事の後だけ待つ thread へ渡す)は、
+    新しい作業木 10 組が 0.46〜2.9 秒・古い冷えた作業木 22 組が 0.05〜2.3 秒(load 29〜48)。冷えた回の CPU は表に無かった blob の数と機体の memory の詰まりで大きく揺れる
+    (外れ 500 前後で、同じ日の 10 分違いに 1.2〜11.8 秒)。
+  - 温まった作業木の 1 回の CPU は 0.35〜0.5 秒(user 0.23〜0.38 秒・sys 0.11〜0.14 秒 — 機体の memory が詰まった時は sys が 0.3〜1 秒)。そのうち repo の file の全部を歩いて
+    stat し表を引く段が 0.22〜0.30 秒。
+- 残り:
+  - 温まった実行の CPU の下限は、repo の file の全部の stat(index と合うかを確かめる)で決まる。1 回の CPU を 0.3 秒より下げるには、作業木ごとに歩きを覚えて変わりを
+    知らせで受ける常駐の process(git の fsmonitor の形)が要る。
+  - 冷えた回の CPU は、表に無かった blob ごとの中身の読みと、機体の memory の詰まりで決まる(1 回 1〜13 秒)。
 
 ## 7. 既存の判定との照合
 
