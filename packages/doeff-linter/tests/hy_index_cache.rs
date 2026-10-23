@@ -46,7 +46,7 @@ fn raw_keys(root: &Path, cache: Option<&Path>) -> Vec<String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_doeff-linter"));
     command.args(["--output-format", "editor-json", "--no-log"]).current_dir(root).env_remove("DOEFF_LINTER_NO_CACHE");
     match cache {
-        Some(dir) => command.env("DOEFF_LINTER_CACHE_DIR", dir),
+        Some(dir) => command.env("DOEFF_LINTER_CACHE_DIR", dir).env("DOEFF_LINTER_SWEEP_INLINE", "1"),
         None => command.env("DOEFF_LINTER_NO_CACHE", "1"),
     };
     let output = command.output().unwrap();

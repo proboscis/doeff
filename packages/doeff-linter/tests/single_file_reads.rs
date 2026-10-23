@@ -130,7 +130,7 @@ fn editor(root: &Path, cache: &Path, args: &[&str], stdin: Option<&str>) -> (Val
         .current_dir(root)
         .env("DOEFF_LINTER_CHECK_SLOT", "1")
         .env("DOEFF_LINTER_TIMING", "1")
-        .env("DOEFF_LINTER_CACHE_DIR", cache)
+        .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .env_remove("DOEFF_LINTER_NO_CACHE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

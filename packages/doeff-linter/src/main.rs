@@ -665,6 +665,10 @@ fn main() -> ExitCode {
     if argv.get(1).map(String::as_str) == Some("fix") {
         return run_fix(&argv);
     }
+    // 事実の cache の上限の片づけを渡された process(機体の検の枠を取らない — 待つ hook はいない)。
+    if argv.get(1).map(String::as_str) == Some(doeff_linter::project::facts_cache::SWEEP_COMMAND) {
+        return doeff_linter::project::facts_cache::run_handed_sweep(&argv[2..]);
+    }
     let args = Args::parse();
 
     if args.list_rules {

@@ -150,11 +150,68 @@ fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64, gro
         return;
     }
     let with_objects = due || growth == Growth::Objects;
+    // 事実の置き場を数える片づけ(zeus で約 40 万の事実・3〜19 秒)は、書き込み直後の hook の期限(4 秒)の内で待たない — 最中の印を
+    // 持ったまま別の process へ渡し、渡した process が終わりに印を外す(card ki-40c8ca380713)。渡せなければこの実行で片づける。
+    if with_objects && std::env::var_os(SWEEP_INLINE_ENV).is_none() && hand_off(base, root_dir, cap, now) {
+        crate::timing::count("facts-cache.sweep", "handed", 1);
+        return;
+    }
+    finish_sweep(base, root_dir, cap, now, with_objects);
+}
+
+/// 上限の片づけをして、事実の置き場まで数えたなら終えた時刻を記録し、最中の印を外す(この実行の中でも、渡された process でも同じ手順)。
+fn finish_sweep(base: &Path, root_dir: &Path, cap: u64, now: u64, with_objects: bool) {
     sweep_over_cap(base, root_dir, cap, now, with_objects);
     if with_objects {
-        let _ = std::fs::write(&stamp, now.to_string());
+        let _ = std::fs::write(base.join(CAP_SWEEP_RECORD), now.to_string());
     }
-    let _ = std::fs::remove_file(&lock);
+    let _ = std::fs::remove_file(base.join(CAP_SWEEP_LOCK));
+}
+
+/// 片づけを実行の中で行わせる環境変数(在れば)— 検が、実行の直後に置き場の片づけの結果を見るため。既定は別の process へ渡して待たない。
+pub const SWEEP_INLINE_ENV: &str = "DOEFF_LINTER_SWEEP_INLINE";
+/// 渡された片づけを走らせる、linter 自身の命令の口(`doeff-linter sweep-facts-cache <置き場> <根の dir> <上限> <時刻>` — main が見分ける)。
+pub const SWEEP_COMMAND: &str = "sweep-facts-cache";
+
+/// 事実の置き場まで数える片づけを、待たない別の process(linter 自身の `SWEEP_COMMAND`)へ渡す。渡した process は新しい session で、
+/// 標準の入出力を持たない — hook が自分の process の組を打ち切っても止まらず、hook の出力の終わりを待たせない。渡せたら真。
+fn hand_off(base: &Path, root_dir: &Path, cap: u64, now: u64) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let mut command = std::process::Command::new(exe);
+    command
+        .arg(SWEEP_COMMAND)
+        .arg(base)
+        .arg(root_dir)
+        .arg(cap.to_string())
+        .arg(now.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: fork の後・exec の前の子で呼ぶのは setsid だけ(async-signal-safe で、memory を触らない)。
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    command.spawn().is_ok()
+}
+
+/// `SWEEP_COMMAND` の本体 — 渡した実行が最中の印を持ったまま渡した片づけを、低い優先度で済ませて印を外す。引数が読めなければ 2。
+pub fn run_handed_sweep(args: &[String]) -> std::process::ExitCode {
+    let [base, root_dir, cap, now] = args else { return std::process::ExitCode::from(2) };
+    let (Ok(cap), Ok(now)) = (cap.parse::<u64>(), now.parse::<u64>()) else { return std::process::ExitCode::from(2) };
+    // SAFETY: nice は自分の process の優先度を変えるだけ(memory を触らない)。下げられなくても片づけは同じ。
+    #[cfg(unix)]
+    unsafe {
+        libc::nice(10);
+    }
+    finish_sweep(Path::new(base), Path::new(root_dir), cap, now, true);
+    std::process::ExitCode::SUCCESS
 }
 
 /// 置き場の全体が上限 cap を超えていれば、最後に使われた時刻の古い dir から消して上限の内へ戻し、それでも超えていれば事実を
