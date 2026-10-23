@@ -43,8 +43,21 @@ How it talks to Redis:
   within it, and a send (``Announce``, ``ProbeBroker``) must be answered within it, so a server that keeps the
   connection but stops answering never holds a sender. The subscriptions' wait for the next notice is held by
   ``silence_seconds`` instead (above); TCP keep-alive stays on with the OS's intervals.
+- Kept channels (agora card ki-86d11cadf3be) are Redis Streams under the key ``doeff-events:kept:<channel>``:
+  ``Announce(kept=True)`` is ``XADD`` with an approximate length bound (``KEPT_LOG_LENGTH``), and a subscription's
+  kept channels are read with ``XREAD BLOCK`` from the positions this handler keeps for the subscription's reader
+  (one process — no consumer group on the server, so a standby process does not take notices from the active one,
+  and nothing is left on the server when a process ends). A reader's first subscription starts at the last entry
+  of each stream (``XREVRANGE … COUNT 1``). The wait of a subscription that reads both kinds keeps both reads in
+  flight between ``NextAnnouncement``s (a read is never cancelled half-way, so no message is lost on the
+  connection) and answers whichever comes first; a ``XREAD`` that does not come back within its block plus
+  ``silence_seconds`` counts as a lost connection. A notice handed out and not acknowledged within
+  ``redeliver_seconds`` is handed out again — the third timed check (ADR-DOE-EVENTS-002 R8 names the others): it
+  reads no data and runs only while a ``NextAnnouncement`` waits and a notice is unacknowledged. Entries the bound
+  trimmed before a slow reader read them are gone, like Pub/Sub notices of a lost connection.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,6 +70,8 @@ from doeff_time import Delay, GetTime
 from doeff import K, Pass, Program, Resume, do
 from doeff import handler as _program_handler
 from doeff_events.effects.notices import (
+    KEPT_REDELIVERY_SECONDS,
+    AckAnnouncement,
     Announce,
     Announcement,
     AwaitBrokerBack,
@@ -86,6 +101,12 @@ _BODY: Final = "body"
 # read replica's keeper in agora must learn of a dead subscription within 7 s (its ADR R10).
 SUBSCRIPTION_SILENCE_SECONDS: Final = 7.0
 
+# The approximate number of entries a kept channel's stream holds (``XADD … MAXLEN ~``): a reader further behind
+# than this loses the oldest, as a Pub/Sub subscriber loses what was sent while it was away.
+KEPT_LOG_LENGTH: Final = 10000
+# The key of a kept channel's stream (a prefix keeps the streams apart from any other key of the database).
+KEPT_KEY_PREFIX: Final = "doeff-events:kept:"
+
 
 class BrokerAnswerMalformed(TypeError):
     """Redis (or the client library) answered in a shape this handler does not know — named instead of guessed."""
@@ -106,16 +127,77 @@ def _text(value: object, what: str) -> str:
     return value
 
 
+@dataclass(frozen=True)
+class _Handed:
+    """A kept channel's notice handed to its reader and not acknowledged yet, and when (the event loop's clock)."""
+
+    notice: Announcement
+    at: float
+
+
+@final
+class _KeptReader:
+    """What the handler keeps for one reader name: the id read up to in each kept channel's stream and the notices
+    handed out without an acknowledgement, oldest first."""
+
+    __slots__ = ("handed", "positions")
+
+    def __init__(self) -> None:
+        """Start a reader that has read nothing (its first subscription sets the positions at the streams' ends)."""
+        self.positions: dict[str, str] = {}
+        self.handed: tuple[_Handed, ...] = ()
+
+    def due(self, now: float, redeliver_seconds: float) -> _Handed | None:
+        """The oldest unacknowledged notice whose time to be handed out again has come, or ``None``."""
+        return next((held for held in self.handed if now - held.at >= redeliver_seconds), None)
+
+    def seconds_to_due(self, now: float, redeliver_seconds: float) -> float | None:
+        """How long until the oldest unacknowledged notice is due (``None`` = none is held)."""
+        if not self.handed:
+            return None
+        return max(0.0, redeliver_seconds - (now - self.handed[0].at))
+
+    def hand(self, notice: Announcement, now: float) -> Announcement:
+        """Hand ``notice`` out (again) at ``now``: it is the newest unacknowledged one from now on."""
+        kept = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
+        self.handed = (*kept, _Handed(notice, now))
+        return notice
+
+    def acknowledged(self, notice: Announcement) -> None:
+        """Forget ``notice``: it is not handed out again (nothing changes if it is not held)."""
+        self.handed = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
+
+
+def _same_notice(one: Announcement, other: Announcement) -> bool:
+    """Whether two notices are the same entry of a kept channel's stream (its channel and its id)."""
+    return one.channel == other.channel and one.receipt == other.receipt
+
+
 @final
 class _Listening:
-    """The client's side of one ``ChannelSubscription``: redis-py's ``PubSub`` connection. Matched by identity."""
+    """The client's side of one ``ChannelSubscription``: redis-py's ``PubSub`` connection for its Pub/Sub channels
+    (``None`` when it reads kept channels only), its reader's state for the kept ones, and the reads in flight
+    between two ``NextAnnouncement``s of a subscription that reads kept channels. Matched by identity."""
 
-    __slots__ = ("pubsub", "subscription")
+    __slots__ = ("pubsub", "pubsub_read", "reader", "stream_read", "subscription")
 
-    def __init__(self, subscription: ChannelSubscription, pubsub: "PubSub") -> None:
+    def __init__(
+        self, subscription: ChannelSubscription, pubsub: "PubSub | None", reader: _KeptReader | None
+    ) -> None:
         """Pair the subscription a program holds with the connection that receives for it."""
         self.subscription: Final = subscription
         self.pubsub: Final = pubsub
+        self.reader: Final = reader
+        self.pubsub_read: asyncio.Task[Announcement] | None = None
+        self.stream_read: asyncio.Task[Announcement | None] | None = None
+
+    def stop_reads(self) -> None:
+        """Cancel the reads in flight (the subscription is closed — its connection goes with it)."""
+        for read in (self.pubsub_read, self.stream_read):
+            if read is not None:
+                read.cancel()
+        self.pubsub_read = None
+        self.stream_read = None
 
 
 @dataclass(frozen=True)
@@ -218,6 +300,123 @@ async def _next_notice(pubsub: "PubSub", silence_seconds: float) -> Announcement
     )
 
 
+def _kept_key(channel: str) -> str:
+    """The key of a kept channel's stream."""
+    return f"{KEPT_KEY_PREFIX}{channel}"
+
+
+async def _announce_kept(client: "Redis", effect: Announce) -> int:
+    """``XADD`` of the notice's wire name and encoded event to the kept channel's stream (approximately bounded to
+    ``KEPT_LOG_LENGTH`` entries); ``1`` once the stream holds it."""
+    added: object = await client.xadd(
+        _kept_key(effect.channel), {_NAME: effect.name, _BODY: effect.body}, maxlen=KEPT_LOG_LENGTH, approximate=True
+    )
+    _text(added, "the id XADD answers")
+    return 1
+
+
+async def _kept_positions(client: "Redis", channels: tuple[str, ...]) -> dict[str, str]:
+    """The id of the last entry of each kept channel's stream (``"0-0"`` for a stream with none): where a reader's
+    first subscription starts, so that what is added after the answer is read."""
+    positions: dict[str, str] = {}
+    for channel in channels:
+        last: object = await client.xrevrange(_kept_key(channel), count=1)
+        if not isinstance(last, list):
+            raise BrokerAnswerMalformed(f"XREVRANGE must answer a list of entries, got {last!r}")
+        positions[channel] = "0-0" if not last else _entry_id(last[0])
+    return positions
+
+
+def _entry_id(entry: object) -> str:
+    """The id of one stream entry (``[id, fields]``) as Redis answers it."""
+    if not isinstance(entry, list | tuple) or len(entry) != 2:
+        raise BrokerAnswerMalformed(f"a stream entry must be [id, fields], got {entry!r}")
+    return _text(entry[0], "the id of a stream entry")
+
+
+def _kept_notice(key: object, entry: object) -> Announcement:
+    """The notice of one entry of a kept channel's stream (its id is the receipt)."""
+    stream = _text(key, "the key of a stream")
+    if not stream.startswith(KEPT_KEY_PREFIX):
+        raise BrokerAnswerMalformed(f"XREAD answered a stream that is not a kept channel: {stream!r}")
+    receipt = _entry_id(entry)
+    fields: object = entry[1]  # pyright: ignore[reportIndexIssue] — _entry_id checked the pair
+    if not isinstance(fields, dict):
+        raise BrokerAnswerMalformed(f"a stream entry's fields must be a mapping, got {fields!r}")
+    notice: dict[object, object] = fields
+    return Announcement(
+        channel=stream[len(KEPT_KEY_PREFIX) :],
+        name=_text(notice.get(_NAME), f"the field {_NAME!r} of a kept notice"),
+        body=_text(notice.get(_BODY), f"the field {_BODY!r} of a kept notice"),
+        receipt=receipt,
+    )
+
+
+def _first_entry(answer: object) -> Announcement | None:
+    """The first entry ``XREAD`` answered (``None`` when the block ended with none) — RESP2 answers a list of
+    ``[key, entries]``, RESP3 a mapping of key to entries."""
+    if answer is None:
+        return None
+    streams: object = list(answer.items()) if isinstance(answer, dict) else answer
+    if not isinstance(streams, list):
+        raise BrokerAnswerMalformed(f"XREAD must answer the streams it read, got {answer!r}")
+    for stream in streams:
+        if not isinstance(stream, list | tuple) or len(stream) != 2 or not isinstance(stream[1], list):
+            raise BrokerAnswerMalformed(f"XREAD must answer [key, entries] per stream, got {stream!r}")
+        if stream[1]:
+            return _kept_notice(stream[0], stream[1][0])
+    return None
+
+
+async def _next_kept_entry(client: "Redis", positions: dict[str, str], silence_seconds: float) -> Announcement | None:
+    """``XREAD BLOCK`` for the next entry after ``positions`` (one per stream at most — the first is taken; the
+    others are read again from their positions). Blocks half the silence; ``None`` = nothing came (a quiet stream is
+    not a lost connection). A server that does not answer within the block and the silence is a lost connection."""
+    half = silence_seconds / 2
+    streams = {_kept_key(channel): position for channel, position in positions.items()}
+    read = client.xread(streams, count=1, block=int(half * 1000))
+    try:
+        answer: object = await asyncio.wait_for(read, timeout=half + silence_seconds)
+    except TimeoutError:
+        raise _silent(silence_seconds, "the answer of XREAD BLOCK") from None
+    return _first_entry(answer)
+
+
+async def _next_with_kept(
+    receiving: "Redis", listening: _Listening, silence_seconds: float, redeliver_seconds: float
+) -> Announcement:
+    """The next notice of a subscription that reads kept channels: an unacknowledged notice that is due again, or
+    whichever read in flight answers first — the Pub/Sub connection's next notice or the streams' next entry. The
+    reads stay in flight across calls (a call cancelled by its task leaves them for the next one)."""
+    reader = listening.reader
+    if reader is None:
+        raise LookupError(f"{listening.subscription!r} reads no kept channel")
+    loop = asyncio.get_running_loop()
+    while True:
+        now = loop.time()
+        due = reader.due(now, redeliver_seconds)
+        if due is not None:
+            return reader.hand(due.notice, now)
+        if listening.pubsub is not None and listening.pubsub_read is None:
+            listening.pubsub_read = asyncio.ensure_future(_next_notice(listening.pubsub, silence_seconds))
+        if listening.stream_read is None:
+            positions = {channel: reader.positions[channel] for channel in listening.subscription.kept}
+            listening.stream_read = asyncio.ensure_future(_next_kept_entry(receiving, positions, silence_seconds))
+        reads = {read for read in (listening.pubsub_read, listening.stream_read) if read is not None}
+        done, _waiting = await asyncio.wait(
+            reads, timeout=reader.seconds_to_due(now, redeliver_seconds), return_when=asyncio.FIRST_COMPLETED
+        )
+        if listening.pubsub_read is not None and listening.pubsub_read in done:
+            read_notice, listening.pubsub_read = listening.pubsub_read, None
+            return read_notice.result()
+        if listening.stream_read is not None and listening.stream_read in done:
+            read_entry, listening.stream_read = listening.stream_read, None
+            entry = read_entry.result()
+            if entry is not None:
+                reader.positions = {**reader.positions, entry.channel: entry.receipt}
+                return reader.hand(entry, loop.time())
+
+
 async def _or_failed(call: "Awaitable[_T]") -> "_T | _Failed":
     """Run one broker call; a connection that cannot be made or was lost becomes ``_Failed`` (a value) instead
     of an exception, so that the handler answers ``BrokerUnreachable``. A full pool of connections is not that
@@ -285,42 +484,87 @@ def _client(url: str, repeats: int, timeout_seconds: float, *, calls_end: bool) 
     )
 
 
-def _broker_handler(sending: "Redis", receiving: "Redis", silence_seconds: float) -> "ProgramHandler":
+@do
+def _subscribed(
+    receiving: "Redis", effect: SubscribeChannels, readers: dict[str, _KeptReader], silence_seconds: float
+) -> "EffectGenerator[_Listening | _Failed]":
+    """Make one subscription: ``SUBSCRIBE`` its Pub/Sub channels (when it has any), and for its kept channels set
+    the reader's positions at the streams' ends where the reader has none yet (a later subscription of the same
+    reader goes on where it was)."""
+    subscription = ChannelSubscription(effect.channels, effect.kept, effect.reader)
+    reader: _KeptReader | None = None
+    if effect.reader is not None:
+        reader = readers.setdefault(effect.reader, _KeptReader())
+        fresh = tuple(channel for channel in effect.kept if channel not in reader.positions)
+        if fresh:
+            ends = yield Await(_attempt(partial(_kept_positions, receiving, fresh)))
+            if isinstance(ends, _Failed):
+                return ends
+            reader.positions = {**ends, **reader.positions}
+    plain = tuple(channel for channel in effect.channels if channel not in effect.kept)
+    pubsub: PubSub | _Failed | None = None
+    if plain:
+        pubsub = yield Await(_attempt(partial(_subscribe, receiving, ChannelSubscription(plain), silence_seconds)))
+        if isinstance(pubsub, _Failed):
+            return pubsub
+    return _Listening(subscription, pubsub, reader)
+
+
+def _broker_handler(
+    sending: "Redis", receiving: "Redis", silence_seconds: float, redeliver_seconds: float
+) -> "ProgramHandler":
     """The handler that answers the lower-layer effects: ``Announce`` from ``sending``, subscriptions from
     ``receiving`` whose connections count as lost after ``silence_seconds`` without an answer (see the module's
-    notes on the two clients and on a half-open connection)."""
+    notes on the two clients and on a half-open connection), and kept channels' notices handed out again after
+    ``redeliver_seconds`` without an acknowledgement."""
     listening: tuple[_Listening, ...] = ()
+    readers: dict[str, _KeptReader] = {}
 
     @do
     def handler(
-        effect: Announce | SubscribeChannels | NextAnnouncement | CloseSubscription | ProbeBroker, k: K
+        effect: Announce | SubscribeChannels | NextAnnouncement | AckAnnouncement | CloseSubscription | ProbeBroker,
+        k: K,
     ) -> "EffectGenerator[object]":
         """Answer one broker operation with one awaited call; ``BrokerUnreachable`` when the server is not there."""
         nonlocal listening
         answer: object = None
         match effect:
+            case Announce(kept=True):
+                answer = yield Await(_attempt(partial(_announce_kept, sending, effect)))
             case Announce():
                 answer = yield Await(_attempt(partial(_announce, sending, effect)))
             case ProbeBroker():
                 answer = yield Await(_attempt(partial(_reached, sending)))
-            case SubscribeChannels(channels=channels):
-                subscription = ChannelSubscription(channels)
-                pubsub = yield Await(_attempt(partial(_subscribe, receiving, subscription, silence_seconds)))
-                if isinstance(pubsub, _Failed):
-                    answer = pubsub
+            case SubscribeChannels():
+                made = yield _subscribed(receiving, effect, readers, silence_seconds)
+                if isinstance(made, _Failed):
+                    answer = made
                 else:
-                    listening = (*listening, _Listening(subscription, pubsub))
-                    answer = subscription
+                    listening = (*listening, made)
+                    answer = made.subscription
             case NextAnnouncement(subscription=wanted):
                 known = next((entry for entry in listening if entry.subscription is wanted), None)
                 if known is None:
                     raise LookupError(f"{wanted!r} was not made by this handler, or was closed")
-                answer = yield Await(_attempt(partial(_next_notice, known.pubsub, silence_seconds)))
+                if known.reader is not None:
+                    answer = yield Await(
+                        _attempt(partial(_next_with_kept, receiving, known, silence_seconds, redeliver_seconds))
+                    )
+                elif known.pubsub is not None:
+                    answer = yield Await(_attempt(partial(_next_notice, known.pubsub, silence_seconds)))
+                else:
+                    raise LookupError(f"{wanted!r} reads no channel")
+            case AckAnnouncement(subscription=acked, notice=notice):
+                # Kept by the handler only: nothing is sent to the server.
+                if acked.reader is not None and acked.reader in readers:
+                    readers[acked.reader].acknowledged(notice)
             case CloseSubscription(subscription=closing):
                 closed = tuple(entry for entry in listening if entry.subscription is closing)
                 listening = tuple(entry for entry in listening if entry.subscription is not closing)
                 for entry in closed:
-                    yield Await(_attempt(entry.pubsub.aclose))
+                    entry.stop_reads()
+                    if entry.pubsub is not None:
+                        yield Await(_attempt(entry.pubsub.aclose))
             case _:
                 yield Pass(effect, k)
                 return None
@@ -338,14 +582,16 @@ async def _close(sending: "Redis", receiving: "Redis") -> None:
 
 
 @do
-def _run(url: str, timeout_seconds: float, silence_seconds: float, body: "Program[_T]") -> "EffectGenerator[_T]":
+def _run(
+    url: str, timeout_seconds: float, silence_seconds: float, redeliver_seconds: float, body: "Program[_T]"
+) -> "EffectGenerator[_T]":
     """Make the clients, run the body under the handler, and close the clients when the body ends."""
     sending = _client(url, 1, timeout_seconds, calls_end=True)
     receiving = _client(url, 0, timeout_seconds, calls_end=False)
     # The close runs on an exception and on the normal end, not in ``finally``: yielding inside the GeneratorExit
     # of a discarded process is an error (the same reason as doeff-records' sources).
     try:
-        answer = yield _broker_handler(sending, receiving, silence_seconds)(body)
+        answer = yield _broker_handler(sending, receiving, silence_seconds, redeliver_seconds)(body)
     except Exception:
         yield Await(_OnAwait(partial(_close, sending, receiving)))
         raise
@@ -361,7 +607,10 @@ class _BodyWrapper(partial["Program"]):
 
 
 def redis_notice_handler(
-    url: str, timeout_seconds: float, silence_seconds: float = SUBSCRIPTION_SILENCE_SECONDS
+    url: str,
+    timeout_seconds: float,
+    silence_seconds: float = SUBSCRIPTION_SILENCE_SECONDS,
+    redeliver_seconds: float = KEPT_REDELIVERY_SECONDS,
 ) -> "ProgramHandler":
     """Build the handler that answers the lower-layer notice effects from the Redis server at ``url``
     (for example ``redis://agora-events:6379/0``). ``timeout_seconds`` = how long a connection may take to be made
@@ -370,14 +619,18 @@ def redis_notice_handler(
     default: the composition names it. ``silence_seconds`` = how long a subscription's connection may answer
     nothing (no notice, no answer to ``PING``) before it counts as lost — so a half-open connection is told as
     ``BrokerUnreachable`` within it (card ki-227ad148680d). The default ``SUBSCRIPTION_SILENCE_SECONDS`` (7 s) is
-    the target of agora's read replica keeper."""
+    the target of agora's read replica keeper. ``redeliver_seconds`` = how long a kept channel's notice handed to
+    its reader waits for the acknowledgement before it is handed out again (default ``KEPT_REDELIVERY_SECONDS``)."""
     if not isinstance(url, str) or not url:
         raise ValueError("redis_notice_handler: url must be a non-empty string")
-    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int | float) or timeout_seconds <= 0:
-        raise ValueError(f"redis_notice_handler: timeout_seconds must be a number > 0, got {timeout_seconds!r}")
-    if isinstance(silence_seconds, bool) or not isinstance(silence_seconds, int | float) or silence_seconds <= 0:
-        raise ValueError(f"redis_notice_handler: silence_seconds must be a number > 0, got {silence_seconds!r}")
-    return _BodyWrapper(_run, url, float(timeout_seconds), float(silence_seconds))
+    for name, seconds in (
+        ("timeout_seconds", timeout_seconds),
+        ("silence_seconds", silence_seconds),
+        ("redeliver_seconds", redeliver_seconds),
+    ):
+        if isinstance(seconds, bool) or not isinstance(seconds, int | float) or seconds <= 0:
+            raise ValueError(f"redis_notice_handler: {name} must be a number > 0, got {seconds!r}")
+    return _BodyWrapper(_run, url, float(timeout_seconds), float(silence_seconds), float(redeliver_seconds))
 
 
 def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":

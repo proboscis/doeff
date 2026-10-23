@@ -37,6 +37,9 @@ The law of the lower layer (the broker's operations — what the upper layer rel
 
 What no law promises: a notice announced while a subscriber is not subscribed or not connected is not delivered
 later. The program that needs it catches up once from its records on ``SourceStarted`` and ``SourceResumed``.
+Kept channels (``NoticeRoute(kept=True)``) are the exception within one process: a reader goes on from where it
+was after a lost connection and is handed again what it did not acknowledge (``tests/test_kept_notices_memory.py``
+and the kept tests of ``tests/test_notice_laws_redis.py`` pin it on both brokers).
 
 Upper-layer laws take an ``EventLawHarness`` (how to run a program as one process of the system, and how to take
 the broker away and bring it back); the lower-layer law takes the prefix of the names it may use and runs under

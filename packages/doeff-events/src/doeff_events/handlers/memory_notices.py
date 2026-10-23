@@ -14,16 +14,26 @@ A test can take the broker away and bring it back with ``cut_broker`` / ``restor
 subscription, as a lost connection does: waiting subscribers are answered ``BrokerUnreachable``, notices not yet
 taken are gone, and a subscription made before the cut answers ``BrokerUnreachable`` from then on (a new one must
 be made). While the broker is cut every operation answers ``BrokerUnreachable`` and ``AwaitBrokerBack`` waits.
+
+Kept channels (``Announce(kept=True)``): the broker keeps one log per channel, which a cut does not empty. Each
+handler (one process) keeps, per reader name, the position read up to in each kept channel and the notices handed
+out without an acknowledgement. A wait on a subscription that holds unacknowledged notices has a deadline (one
+``WaitWithin`` until the oldest is due, under the clock handler outside — a virtual clock in the emulated
+environment); the due notice is then handed out again.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Final, final
 
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
+from doeff_time import GetTime, WaitWithin
 
 from doeff import K, Pass, Pure, Resume, do
 from doeff import handler as _program_handler
 from doeff_events.effects.notices import (
+    KEPT_REDELIVERY_SECONDS,
+    AckAnnouncement,
     Announce,
     Announcement,
     AwaitBrokerBack,
@@ -70,12 +80,60 @@ class _Listener:
         self.waiter: Promise[object] | None = None
 
 
+@dataclass(frozen=True)
+class _Handed:
+    """A kept channel's notice handed to its reader and not acknowledged yet, and when it was handed out."""
+
+    notice: Announcement
+    at: datetime
+
+
+@final
+class _KeptReader:
+    """What one handler keeps for one reader name: the position read up to in each kept channel (the number of
+    the log's notices already handed out) and the notices handed out without an acknowledgement, oldest first."""
+
+    __slots__ = ("handed", "positions")
+
+    def __init__(self) -> None:
+        """Start a reader that has read nothing (its first subscription sets the positions at the logs' ends)."""
+        self.positions: dict[str, int] = {}
+        self.handed: tuple[_Handed, ...] = ()
+
+    def due(self, now: datetime, redeliver_seconds: float) -> _Handed | None:
+        """The oldest unacknowledged notice whose time to be handed out again has come, or ``None``."""
+        return next(
+            (held for held in self.handed if (now - held.at).total_seconds() >= redeliver_seconds), None
+        )
+
+    def seconds_to_due(self, now: datetime, redeliver_seconds: float) -> float | None:
+        """How long until the oldest unacknowledged notice is due (``None`` = none is held)."""
+        if not self.handed:
+            return None
+        return max(0.0, redeliver_seconds - (now - self.handed[0].at).total_seconds())
+
+    def hand(self, notice: Announcement, now: datetime) -> Announcement:
+        """Hand ``notice`` out (again) at ``now``: it is the newest unacknowledged one from now on."""
+        kept = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
+        self.handed = (*kept, _Handed(notice, now))
+        return notice
+
+    def acknowledged(self, notice: Announcement) -> None:
+        """Forget ``notice``: it is not handed out again (nothing changes if it is not held)."""
+        self.handed = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
+
+
+def _same_notice(one: Announcement, other: Announcement) -> bool:
+    """Whether two notices are the same notice of a kept channel's log (its channel and its receipt)."""
+    return one.channel == other.channel and one.receipt == other.receipt
+
+
 @final
 class MemoryBroker:
     """The state of an in-memory notice broker. Programs never see it; ``memory_notice_handler`` is its only
     user, and ``cut_broker`` / ``restore_broker`` / ``hold_broker`` / ``release_broker`` are the test controls."""
 
-    __slots__ = ("_mut_back_waiters", "_mut_down", "_mut_held", "_mut_listeners")
+    __slots__ = ("_mut_back_waiters", "_mut_down", "_mut_held", "_mut_listeners", "_mut_logs")
 
     def __init__(self) -> None:
         """Start a reachable broker with no subscriber."""
@@ -84,6 +142,8 @@ class MemoryBroker:
         self._mut_down: BrokerUnreachable | None = None
         # While held (``hold_broker``): the sends and tries waiting for an answer that does not come.
         self._mut_held: tuple[Promise[object], ...] | None = None
+        # The log of each kept channel, oldest first (a notice's receipt is its place in the log, from "1").
+        self._mut_logs: dict[str, tuple[Announcement, ...]] = {}
 
     @property
     def held(self) -> bool:
@@ -110,10 +170,16 @@ class MemoryBroker:
         return self._mut_down
 
     def announce(self, effect: Announce) -> _Announced:
-        """Give the notice to every current subscriber of the channel: its waiting task, or its queue."""
+        """Give the notice to every current subscriber of the channel: its waiting task, or its queue. A kept
+        channel's notice goes to the channel's log instead, and wakes the subscriptions waiting on it (they read the
+        log themselves)."""
+        if effect.kept:
+            return self._kept(effect)
         notice = Announcement(effect.channel, effect.name, effect.body)
         hearing = tuple(
-            listener for listener in self._mut_listeners if effect.channel in listener.subscription.channels
+            listener
+            for listener in self._mut_listeners
+            if effect.channel in listener.subscription.channels and effect.channel not in listener.subscription.kept
         )
         wakes = tuple(_Wake(listener.waiter, notice) for listener in hearing if listener.waiter is not None)
         for listener in hearing:
@@ -122,9 +188,34 @@ class MemoryBroker:
             listener.waiter = None
         return _Announced(len(hearing), wakes)
 
+    def _kept(self, effect: Announce) -> _Announced:
+        """Add a kept channel's notice to its log and wake every subscription waiting on that channel (``None`` =
+        read the log again). The answer counts the log, not the readers: whoever reads the channel reads it."""
+        log = self._mut_logs.get(effect.channel, ())
+        notice = Announcement(effect.channel, effect.name, effect.body, receipt=str(len(log) + 1))
+        self._mut_logs = {**self._mut_logs, effect.channel: (*log, notice)}
+        waking = tuple(
+            listener
+            for listener in self._mut_listeners
+            if effect.channel in listener.subscription.kept and listener.waiter is not None
+        )
+        wakes = tuple(_Wake(listener.waiter, None) for listener in waking if listener.waiter is not None)
+        for listener in waking:
+            listener.waiter = None
+        return _Announced(1, wakes)
+
+    def log_length(self, channel: str) -> int:
+        """How many notices the kept channel's log holds (where a reader's first subscription starts)."""
+        return len(self._mut_logs.get(channel, ()))
+
+    def kept_after(self, channel: str, position: int) -> Announcement | None:
+        """The notice of the kept channel's log after the first ``position`` ones, or ``None`` when none is."""
+        log = self._mut_logs.get(channel, ())
+        return log[position] if position < len(log) else None
+
     def subscribe(self, effect: SubscribeChannels) -> ChannelSubscription:
         """Start a subscription: notices announced from now on reach it."""
-        subscription = ChannelSubscription(effect.channels)
+        subscription = ChannelSubscription(effect.channels, effect.kept, effect.reader)
         self._mut_listeners = (*self._mut_listeners, _Listener(subscription))
         return subscription
 
@@ -195,15 +286,66 @@ def restore_broker(broker: MemoryBroker) -> "EffectGenerator[None]":
 _ENDED: Final = BrokerUnreachable("the subscription ended when the broker was cut")
 
 
-def memory_notice_handler(broker: MemoryBroker) -> "ProgramHandler":
+@do
+def _heard(listener: _Listener, seconds: float | None) -> "EffectGenerator[object]":
+    """Wait on ``listener`` for what the broker gives it — a Pub/Sub notice, a kept channel's wake (``None``), or
+    ``BrokerUnreachable`` — for at most ``seconds`` (``None`` = no limit; a timeout answers ``None``)."""
+    hearing: Promise[object] = yield CreatePromise()
+    listener.waiter = hearing
+    try:
+        if seconds is None:
+            return (yield Wait(hearing.future))
+        return (yield WaitWithin(hearing.future, seconds))
+    finally:
+        if listener.waiter is hearing:
+            listener.waiter = None
+
+
+@do
+def _next_kept(
+    broker: MemoryBroker, listener: _Listener, reader: _KeptReader, redeliver_seconds: float
+) -> "EffectGenerator[object]":
+    """The next notice of a subscription that reads kept channels: a queued Pub/Sub notice first, then an
+    unacknowledged notice that is due again, then the next notice of a kept log; otherwise wait — until the oldest
+    unacknowledged notice is due when one is held."""
+    while True:
+        if listener.queued:
+            notice, listener.queued = listener.queued[0], listener.queued[1:]
+            return notice
+        now: datetime = yield GetTime()
+        due = reader.due(now, redeliver_seconds)
+        if due is not None:
+            return reader.hand(due.notice, now)
+        for channel in listener.subscription.kept:
+            fresh = broker.kept_after(channel, reader.positions[channel])
+            if fresh is not None:
+                reader.positions = {**reader.positions, channel: reader.positions[channel] + 1}
+                return reader.hand(fresh, now)
+        heard = yield _heard(listener, reader.seconds_to_due(now, redeliver_seconds))
+        if heard is not None:
+            return heard
+
+
+def memory_notice_handler(broker: MemoryBroker, redeliver_seconds: float = KEPT_REDELIVERY_SECONDS) -> "ProgramHandler":
     """Build the handler that answers the lower-layer notice effects from ``broker``.
 
     Handlers built from the same broker exchange notices, as processes connected to one Redis do.
+    ``redeliver_seconds`` = how long a kept channel's notice handed to its reader waits for the acknowledgement
+    before it is handed out again. The readers of kept channels belong to this handler (one process).
     """
+    if isinstance(redeliver_seconds, bool) or not isinstance(redeliver_seconds, int | float) or redeliver_seconds <= 0:
+        raise ValueError(f"memory_notice_handler: redeliver_seconds must be a number > 0, got {redeliver_seconds!r}")
+    readers: dict[str, _KeptReader] = {}
 
     @do
     def handler(
-        effect: Announce | SubscribeChannels | NextAnnouncement | CloseSubscription | AwaitBrokerBack | ProbeBroker,
+        effect: Announce
+        | SubscribeChannels
+        | NextAnnouncement
+        | AckAnnouncement
+        | CloseSubscription
+        | AwaitBrokerBack
+        | ProbeBroker,
         k: K,
     ) -> "EffectGenerator[object]":
         """Answer one broker operation; while the broker is cut, answer ``BrokerUnreachable`` to all but the wait
@@ -228,27 +370,31 @@ def memory_notice_handler(broker: MemoryBroker) -> "ProgramHandler":
                 answer = broker.down
             case CloseSubscription(subscription=closing):
                 broker.close(closing)
+            case AckAnnouncement(subscription=acked, notice=notice):
+                # Kept by the handler only: it answers while the broker is cut too (nothing is sent).
+                if acked.reader is not None and acked.reader in readers:
+                    readers[acked.reader].acknowledged(notice)
             case Announce() | SubscribeChannels() | NextAnnouncement() if broker.down is not None:
                 answer = broker.down
             case Announce():
                 announced = broker.announce(effect)
                 answer, wakes = announced.receivers, announced.wakes
-            case SubscribeChannels():
+            case SubscribeChannels(kept=kept, reader=name):
+                if name is not None:
+                    reader = readers.setdefault(name, _KeptReader())
+                    # A reader's first subscription starts at the end of each log; a later one goes on where it was.
+                    reader.positions = {channel: broker.log_length(channel) for channel in kept} | reader.positions
                 answer = broker.subscribe(effect)
             case NextAnnouncement(subscription=subscription):
                 listener = broker.listener(subscription)
                 if listener is None:
                     answer = _ENDED
+                elif subscription.reader is not None:
+                    answer = yield _next_kept(broker, listener, readers[subscription.reader], redeliver_seconds)
                 elif listener.queued:
                     answer, listener.queued = listener.queued[0], listener.queued[1:]
                 else:
-                    hearing: Promise[object] = yield CreatePromise()
-                    listener.waiter = hearing
-                    try:
-                        answer = yield Wait(hearing.future)
-                    finally:
-                        if listener.waiter is hearing:
-                            listener.waiter = None
+                    answer = yield _heard(listener, None)
             case _:
                 yield Pass(effect, k)
                 return None

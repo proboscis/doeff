@@ -61,7 +61,7 @@ Generic publish/subscribe effects for doeff.
 
 業務の Program は今までどおり `Publish(event)` と `WaitForEvent(*types)` だけを書きます。出来事を別の process へ運ぶのは
 `notice_events_handler` で、運び方(channel の名・値の綴り方)はその引数の道の表にだけ書きます。Program には channel の名は
-出ません。運ぶのは保存しない知らせ(Redis の Pub/Sub)だけです。
+出ません。運ぶのは保存しない知らせ(Redis の Pub/Sub)と、道が名乗った時だけ残す知らせ(Redis Streams — 下の「残す channel」)です。
 
 ```python
 from doeff_events import (
@@ -113,6 +113,13 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
 - 届かない物: 知らせは、出された時に購読していて繋がっている読み手にだけ届きます。購読の前と、繋がっていない間の知らせは後から
   届きません。失った分は backend が埋めず、Program が `SourceStarted` と `SourceResumed` を受けた時に 1 度 記録から追いつく前提です
   (どちらも購読が成った後にだけ出るので、追いつきの読みの後に出た知らせは落ちません)。
+- 残す channel(`NoticeRoute(kept=True)` — agora card ki-86d11cadf3be): 出す側は `Announce(kept=True)` で channel の log(Redis は
+  Streams の `XADD`・長さの上限 `KEPT_LOG_LENGTH` は近似)へ足し、受ける側は reader の名(源の名)で log から読みます。源は出来事を
+  process の中の列へ出した後に `AckAnnouncement` を返し、broker の handler は ack の無い知らせを `redeliver_seconds`(既定
+  `KEPT_REDELIVERY_SECONDS` = 2 秒)の後に渡し直します。繋ぎ直しの後は、同じ reader の読んだ所の続きから読みます。broker と列の間で
+  失った知らせは、届かないのではなく後から届きます。同じ出来事が 2 度届く事が在るので、受け手は追いつきと同じく重なりを扱います。
+  読んだ所と ack の無い知らせは handler(process)が持ち、起き直した process は log の末尾から始めます(その前は記録から追いつく)。
+  1 つの channel の道は、出す側も受ける側も同じ `kept` を名乗ります(混ぜた読みは包みを作る時に断ります)。
 - 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限 `patience_seconds` の `WaitWithin` 1 つ —
   時間で読み直しません)。戻れば購読を作り直し、broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば
   `NoticeSourceUnreachable` で落ちます(`SourceFailed` が本体の待ちに届く)。`AwaitBrokerBack` に答えるのは、memory の handler では handler
