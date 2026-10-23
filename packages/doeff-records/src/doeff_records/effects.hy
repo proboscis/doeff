@@ -14,6 +14,7 @@
 ;;; 欄 → 値の写像(PutRow.value・ListRows.where・ListRows.where-any)と出来事の本文(AppendEvent.body・EventAppend.body)は、作る時に深く
 ;;; 凍らせる(dict を渡してもよい — where-any の組の配列は tuple になる)。
 (require doeff-hy.macros [defeffect])
+(import collections [Counter])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
@@ -159,8 +160,7 @@
     (checked-write-key self.idempotency-key "PutRows.idempotency_key")
     (when (not (and (isinstance self.writes tuple) self.writes (all (gfor w self.writes (isinstance w RowWrite)))))
       (raise (TypeError (.format "PutRows.writes は RowWrite の空でない tuple: {!r}" self.writes))))
-    (setv slots (lfor w self.writes #(w.table w.key))
-          repeated (sorted (sfor slot slots :if (> (.count slots slot) 1) slot)))
+    (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor w self.writes #(w.table w.key)))) :if (> times 1) slot)))
     (when repeated
       (raise (ValueError (.format "PutRows.writes に同じ行が 2 度出る(表・鍵): {!r}" repeated))))))
 
@@ -235,8 +235,7 @@
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.appends tuple) self.appends (all (gfor a self.appends (isinstance a EventAppend)))))
       (raise (TypeError (.format "AppendEvents.appends は EventAppend の空でない tuple: {!r}" self.appends))))
-    (setv slots (lfor a self.appends #(a.stream a.idempotency-key))
-          repeated (sorted (sfor slot slots :if (> (.count slots slot) 1) slot)))
+    (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor a self.appends #(a.stream a.idempotency-key)))) :if (> times 1) slot)))
     (when repeated
       (raise (ValueError (.format "AppendEvents.appends に同じ追記が 2 度出る(列・冪等キー): {!r}" repeated))))))
 
