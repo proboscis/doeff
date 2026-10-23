@@ -3,6 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
+import http.client
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import Program as Program
@@ -32,6 +33,11 @@ CLICKHOUSE_TYPES: Incomplete
 CLICKHOUSE_COLUMN_TYPES: dict[SqlColumnType, str]
 ANSWER_FORMAT: str
 QUERY_SETTINGS: tuple[tuple[str, ...], ...]
+TIMEOUT_OVERFLOW_MODE: str
+WAIT_MARGIN_SECONDS: float
+KILL_GRACE_SECONDS: float
+USER_AGENT: str
+QUERY_ID_SHAPE: Incomplete
 NOT_SUPPORTED_SQLSTATE: str
 CLICKHOUSE_THREADS: ThreadPerCall
 ESCAPES: tuple[tuple[bytes, ...], ...]
@@ -43,7 +49,19 @@ class ClickHouseDatabase:
     database: str
     user: str
     password: str = ...
-    timeout: float = 30.0
+    deadline: float = 30.0
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class ClickHouseWaits:
+    deadline: float
+    wait: float
+    grace: float
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True, kw_only=True)
 class ClickHouseParam:
@@ -62,6 +80,14 @@ class ClickHouseHeader:
 
 @dataclass(frozen=True, kw_only=True)
 class ClickHouseRequest:
+    url: str
+    body: bytes
+    headers: tuple[ClickHouseHeader, ...]
+    query_id: str
+    waits: ClickHouseWaits
+
+@dataclass(frozen=True, kw_only=True)
+class ClickHouseKill:
     url: str
     body: bytes
     headers: tuple[ClickHouseHeader, ...]
@@ -88,10 +114,25 @@ def clickhouse_url(database: ClickHouseDatabase, pairs: list) -> _Program[str, o
 def clickhouse_headers(database: ClickHouseDatabase) -> _Program[tuple, object]:
     ...
 
+def clickhouse_waits(database: ClickHouseDatabase) -> _Program[ClickHouseWaits, object]:
+    ...
+
+def clickhouse_seconds_text(seconds: float) -> _Program[str, object]:
+    ...
+
+def clickhouse_deadline_pairs(waits: ClickHouseWaits, query_id: str) -> _Program[list, object]:
+    ...
+
+def new_query_id() -> _Program[str, object]:
+    ...
+
 def clickhouse_query_request(database: ClickHouseDatabase, statement: str, params: tuple) -> _Program[ClickHouseRequest, object]:
     ...
 
 def clickhouse_insert_request(database: ClickHouseDatabase, table: str, columns: tuple, rows: tuple) -> _Program[ClickHouseRequest, object]:
+    ...
+
+def clickhouse_kill_request(request: ClickHouseRequest) -> _Program[ClickHouseKill, object]:
     ...
 
 def clickhouse_rows(body: bytes) -> _Program[tuple, object]:
@@ -106,10 +147,31 @@ def clickhouse_failure(response: ClickHouseResponse) -> _Program[SqlFailed | Sql
 def clickhouse_schema_statements(tables: tuple) -> _Program[tuple | SqlFailed, object]:
     ...
 
-def clickhouse_send(request: ClickHouseRequest, timeout: float) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+def clickhouse_connection(url: str, seconds: float) -> _Program[http.client.HTTPConnection, object]:
     ...
 
-def clickhouse_answer(request: ClickHouseRequest, timeout: float, insert: bool) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
+def clickhouse_path(url: str) -> _Program[str, object]:
+    ...
+
+def clickhouse_post(connection: http.client.HTTPConnection, url: str, body: bytes, headers: tuple) -> _Program[None, object]:
+    ...
+
+def answer_started(connection: http.client.HTTPConnection, seconds: float) -> _Program[bool, object]:
+    ...
+
+def clickhouse_read(connection: http.client.HTTPConnection) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+    ...
+
+def clickhouse_kill(kill: ClickHouseKill, seconds: float) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+    ...
+
+def clickhouse_abandon(connection: http.client.HTTPConnection, request: ClickHouseRequest, why: str) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+    ...
+
+def clickhouse_send(request: ClickHouseRequest) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+    ...
+
+def clickhouse_answer(request: ClickHouseRequest, insert: bool) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
     ...
 
 def clickhouse_ensure_tables(database: ClickHouseDatabase, tables: tuple) -> _Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, object]:
