@@ -10,7 +10,7 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-  PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+  PublishStatus EnvReport PrepareCode StartJob JobStarted JobNotStarted SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import tests.wake_fixtures [wakes-every])
@@ -23,12 +23,13 @@
 (defclass FakeWorld []
   "子 process とコードの展開を模す。TERM を無視する job と、KILL でも死なない job を指定できる。crashes = job の名 → 自分で落ちる刻
    (その刻の後の最初の観測で exit code 1 — 1 度だけ)・leaving-at = この宿の Pod の止まり(preStop)が始まる刻(その後の観測は
-   WorldView.leaving — AL-D2p)。"
-  (defn #^ None __init__ [self #^ tuple [ignore-term #()] #^ tuple [unkillable #()] #^ dict [crashes None] #^ (| int None) [leaving-at None]]
+   WorldView.leaving — AL-D2p)・refusals = job の名 → 起こすのを断る回数(StartJob の答えを JobNotStarted にする — card ki-e1612a12d0c3)。"
+  (defn #^ None __init__ [self #^ tuple [ignore-term #()] #^ tuple [unkillable #()] #^ dict [crashes None] #^ (| int None) [leaving-at None]
+                          #^ dict [refusals None]]
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。now = その epoch ミリ秒(記録の刻)。
     (setv self.clock (SimClock) self.codes {} self.procs {} self.next-pid 100 self.events []
           self.ignore-term ignore-term self.unkillable unkillable self.statuses []
-          self.crashes (dict (or crashes {})) self.leaving-at leaving-at))
+          self.crashes (dict (or crashes {})) self.leaving-at leaving-at self.refusals (dict (or refusals {}))))
   (defn [property] #^ int now [self] (run (clock-ms self.clock)))
   (defn #^ WorldView observe [self]
     ;; 展開は依頼の次の拍で終わる。
@@ -41,11 +42,17 @@
         (del (get self.crashes name))))
     (WorldView views (tuple (.values self.procs))
                :leaving (and (is-not self.leaving-at None) (>= self.now self.leaving-at))))
-  (defn #^ None start [self #^ StartJob action]
+  (defn #^ (| JobStarted JobNotStarted) start [self #^ StartJob action]
+    (setv name action.spec.name)
+    (when (> (.get self.refusals name 0) 0)
+      (setv (get self.refusals name) (- (get self.refusals name) 1))
+      (.append self.events #("refused" name action.spec.revision self.now))
+      (return (JobNotStarted :name name :warm-key None :detail "子を起こせない: 模擬の断り" :at-ms self.now)))
     (setv self.next-pid (+ self.next-pid 1))
-    (.append self.events #("start" action.spec.name action.spec.revision self.now))
-    (setv (get self.procs action.spec.name)
-      (ProcessView action.spec.name action.spec action.attempt self.next-pid self.now)))
+    (.append self.events #("start" name action.spec.revision self.now))
+    (setv (get self.procs name)
+      (ProcessView name action.spec action.attempt self.next-pid self.now))
+    (JobStarted :name name :pid self.next-pid))
   (defn #^ None signal [self #^ SignalJob action]
     (.append self.events #("signal" action.name action.stage.value self.now))
     (setv proc (get self.procs action.name))
@@ -70,7 +77,7 @@
   (PublishStatus [statuses note] (.append world.statuses #(world.now statuses note)) (resume None))
   (PrepareCode [revision]
     (setv (get world.codes revision) CodeState.PREPARING) (resume None))
-  (StartJob [spec attempt code-path] (.start world (StartJob spec attempt code-path)) (resume None))
+  (StartJob [spec attempt code-path] (resume (.start world (StartJob spec attempt code-path))))
   (SignalJob [name pid stage reason] (.signal world (SignalJob name pid stage reason)) (resume None))
   (ReapJob [name pid outcome exit-code] (.reap world (ReapJob name pid outcome exit-code)) (resume None)))
 
@@ -138,3 +145,21 @@
   (assert (in "b" world.procs))
   (setv #(_ last-statuses _) (get world.statuses -1))
   (assert (= (lfor s last-statuses :if (= s.name "b") s.phase) [JobPhase.STOP-UNCONFIRMED])))
+
+(deftest test-a-job-that-cannot-be-started-backs-off-alone-and-the-worker-keeps-running
+  ;; card ki-e1612a12d0c3: 宿が「起こせなかった」(StartJob の答え JobNotStarted)と答えても worker の拍は落ちず、その job だけを落ちた時と
+  ;; 同じ backoff の後に起こし直す。同じ拍の b は起こし、worker の停止まで触らない(前は宿の OSError が拍を抜けて worker ごと落ちた)。
+  (setv world (FakeWorld :refusals {"a" 2})
+        script #(#(0 (DesiredJobs #(A1 B1)))))
+  (<- (fake-host world script 20000 (run-worker POLICY)))
+  (assert (= (! (events-of world "a"))
+             [#("refused" "a" "rev1") #("refused" "a" "rev1") #("start" "a" "rev1") #("signal" "a" "term") #("reap" "a" "stopped")]))
+  (assert (= (! (events-of world "b")) [#("start" "b" "rev1") #("signal" "b" "term") #("reap" "b" "stopped")]))
+  ;; 2 度目の起こしは backoff(2 秒)の後、3 度目は倍の 4 秒の後。
+  (setv a-times (lfor e world.events :if (= (get e 1) "a") (get e 3)))
+  (assert (>= (- (get a-times 1) (get a-times 0)) 2000) a-times)
+  (assert (>= (- (get a-times 2) (get a-times 1)) 4000) a-times)
+  ;; 断りの間の状態の行は backoff と訳を名乗る。
+  (setv refused-rows (lfor #(_ rows _) world.statuses row rows :if (and (= row.name "a") (= row.phase JobPhase.BACKOFF)) row))
+  (assert refused-rows)
+  (assert (.startswith (. (get refused-rows 0) detail) "起こせなかった(shim): 子を起こせない: 模擬の断り") (. (get refused-rows 0) detail)))

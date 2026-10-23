@@ -25,8 +25,8 @@
                                             WriteProcessInput ProcessInputWritten])
 (import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
-                                                 Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob JobStarted JobNotStarted SignalJob ReapJob RetireJob StopStage
+                                                 StopReason SpecChanged Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveJobRoots])
 (import doeff_cluster.worker.core.memory_rules [JobRoot])
 (import doeff_cluster.worker.intent.worker_model [WakeSet WorkerWakes])
@@ -94,6 +94,8 @@
 (defenum StopMoment TERM KILL REAPED)
 ;; 止めの計時の行の名(他の計時の行と同じく、名 + 欄の形 — 本文は持たない)。
 (val STOP-TIMING-LOG "worker: job の止めの計時")
+;; 起こせなかった job の行の名(card ki-e1612a12d0c3 — 名 + 欄 job・via(shim か warm:<root のキー>)・detail の形)。
+(val JOB-NOT-STARTED-LOG "worker: job を起こせなかった")
 
 
 (defk stop-reason-word [reason]
@@ -188,12 +190,14 @@
 
 
 (defk start-job [settings action]
-  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % Started)] :tags {:context "worker" :role "protocol" :spells "env"}}
+  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % (| Started JobNotStarted))] :tags {:context "worker" :role "protocol" :spells "env"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから起こす。道は判断が決めた欄のとおり(黙って別の道へ倒れない): warm-key の在る task は、その root の待ちの子へ頼んで分ける
    (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と入口の後ろの引数は shim の道と同じ job-launch の値・env は shim の
    道で uv run が足す root の venv まで含めた job-launch の entry-env — card ki-b884608b96e4)、
-   それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ OSError(前の Popen と同じ)。"
+   それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ(待ちの子が分けるのを
+   断った・shim を起こせない)その訳の JobNotStarted を返す(card ki-e1612a12d0c3 — 例外にすると worker の process ごと落ち、機体の上の
+   job を全部道連れにした。断りの数えと起こし直しは判断の層 — policy の record-after・warm-child-actions)。"
   (val spec action.spec)
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- facts (ReadInterpreter))
@@ -230,20 +234,23 @@
           (val exit-path (+ stem ".exit"))
           (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)))
-          (when (isinstance forked WarmRefused)
-            (raise (OSError (+ "待ちの子が分けるのを断った: " forked.detail))))
-          (:= started (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
-                               :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path))))
+          (:= started (if (isinstance forked WarmRefused)
+                          (JobNotStarted :name spec.name :warm-key action.warm-key :detail (+ "待ちの子が分けるのを断った: " forked.detail)
+                                         :at-ms started-ms)
+                          (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
+                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path)))))
       (do (<- answer (StartProcess :argv plan.argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
                                    :process-group True :hold-stdin True :reap-group True))
-          (when (isinstance answer ProcessNotStarted)
-            (raise (OSError answer.detail)))
-          (:= started (Started :view (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance) :fork None))))
-  ;; 起こした job の記録(新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走ることを worker の記録で示すため):
-  ;; job の名・版・木の path・子の pid・worker の pid・道(shim か待ちの子か)・子の出力の file を 1 行。env と引数の値は書かない(資格を運びうる)。
-  (<- (slog (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={} via={} log={}"
-                     spec.name spec.revision action.code-path started.view.pid facts.pid
-                     (if (is action.warm-key None) "shim" (+ "warm:" action.warm-key)) log)))
+          (:= started (if (isinstance answer ProcessNotStarted)
+                          (JobNotStarted :name spec.name :warm-key None :detail (+ "子を起こせない: " answer.detail) :at-ms started-ms)
+                          (Started :view (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance) :fork None)))))
+  (val via (if (is action.warm-key None) "shim" (+ "warm:" action.warm-key)))
+  (match started
+    (JobNotStarted) (<- (slog JOB-NOT-STARTED-LOG :level "warning" :job spec.name :via via :detail started.detail))
+    ;; 起こした job の記録(新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走ることを worker の記録で示すため):
+    ;; job の名・版・木の path・子の pid・worker の pid・道(shim か待ちの子か)・子の出力の file を 1 行。env と引数の値は書かない(資格を運びうる)。
+    (Started) (<- (slog (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={} via={} log={}"
+                                 spec.name spec.revision action.code-path started.view.pid facts.pid via log))))
   started)
 
 
@@ -253,9 +260,12 @@
   (session var table {})
   (StartJob [spec attempt code-path warm-key]
     (when (in spec.name table) (raise (RuntimeError f"{spec.name} は既に動いています")))
-    (<- begun Started (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
-    (:= table (| table {spec.name begun}))
-    (resume None))
+    ;; 起こせなかった子は表に載せず、その答えを返す(判断がその job だけの失敗に数える — card ki-e1612a12d0c3)。
+    (<- begun (| Started JobNotStarted) (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
+    (if (isinstance begun JobNotStarted)
+        (resume begun)
+        (do (:= table (| table {spec.name begun}))
+            (resume (JobStarted :name spec.name :pid begun.view.pid)))))
   (SignalJob [name pid stage reason]
     ;; 孫 process まで届くよう process group へ送る(group で起こした子 — SignalProcess は立てた時の表で group へ送る)。待ちの子から
     ;; 分けた子は、分けた子 A(group の先頭)へ起動の刻を照らしてから送る(使い回された pid へ送らない)。

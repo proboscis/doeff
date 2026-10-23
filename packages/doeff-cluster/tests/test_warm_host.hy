@@ -12,14 +12,14 @@
 (import doeff_core_effects.file_effects [MemoryFiles WriteText ReadText StatPath PathKind])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
-(import doeff_core_effects.scripted_warm_process [WarmScript WarmSocket WarmRun scripted-warm-process-handler])
+(import doeff_core_effects.scripted_warm_process [WarmScript WarmSocket WarmSocketAnswer WarmRun scripted-warm-process-handler])
 (import doeff_core_effects.warm_effects [ForkFromWarm])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
-  StopStage StartJob SignalJob ProcessView])
+  StopStage StartJob JobNotStarted SignalJob ProcessView])
 (import doeff_cluster.worker.protocol.observations [ObserveWarmChildren ObserveProcesses])
 (import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster.worker.protocol.process_host [process-host])
@@ -187,24 +187,49 @@
   (assert (not-in "SECRET_TOKEN" env) env))
 
 
-(defk start-only [spec]
-  {:pre [(: spec JobSpec)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "warm-key の在る task を起こすため。"
-  (<- (StartJob spec 1 "/roots/env-a" :warm-key "env-a"))
-  None)
+(defk start-then-observe [spec]
+  {:pre [(: spec JobSpec)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "warm-key の在る task を起こし、起こしの答えと、その後の観測を返すため。"
+  (<- answer (StartJob spec 1 "/roots/env-a" :warm-key "env-a"))
+  (<- seen tuple (ObserveProcesses))
+  #(answer seen))
 
 
-(deftest test-a-warm-key-task-whose-warm-child-is-missing-is-refused-by-name [tmp-path]
-  ;; 待ちの子の socket が無い root の task は、shim の道へ倒れずに名指しで断る(判断の層が待ちの子の準備済みを見てから起こすので、
-  ;; 本番の拍でここに来るのは待ちの子が間で落ちた時だけ)。
-  (<- spec JobSpec (task-spec-on "env-a"))
+(defk refused-start [spec warm tmp-path]
+  {:pre [(: spec JobSpec) (: warm WarmScript) (: tmp-path Path)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "台本の待ちの子の世界 warm の上で warm-key の在る task を起こし、#(答え 観測) を返すため(例外は捕まえない — 断りが例外で運ばれれば
+   検が落ちる)。"
   (<- settings (host-settings tmp-path))
   (val script (ProcessScript :commands #() :env SCRIPT-ENV))
-  (var refused None)
-  (try
-    (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
-                         (scripted-warm-process-handler (WarmScript)) (process-host settings)]
-           (start-only spec)))
-    (except [error OSError]
-      (:= refused (str error))))
-  (assert (and (is-not refused None) (.startswith refused "待ちの子が分けるのを断った: ")) refused))
+  (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
+                       (scripted-warm-process-handler warm) (process-host settings)]
+         (start-then-observe spec))))
+
+
+(deftest test-a-warm-key-task-whose-warm-child-is-missing-is-refused-by-name-as-the-answer [tmp-path]
+  ;; 待ちの子の socket が無い root の task は、shim の道へ倒れずに名指しで断る(判断の層が待ちの子の準備済みを見てから起こすので、
+  ;; 本番の拍でここに来るのは待ちの子が間で落ちた時だけ)。断りは StartJob の答えの値で、子の表に載せない(card ki-e1612a12d0c3 —
+  ;; 例外だと worker の process ごと落ちた)。
+  (<- spec JobSpec (task-spec-on "env-a"))
+  (<- got tuple (refused-start spec (WarmScript) tmp-path))
+  (val answer (get got 0))
+  (val seen (get got 1))
+  (assert (isinstance answer JobNotStarted) answer)
+  (assert (= #(answer.name answer.warm-key) #("task/t1" "env-a")) answer)
+  (assert (.startswith answer.detail "待ちの子が分けるのを断った: ") answer.detail)
+  (assert (= seen #()) seen))
+
+
+(deftest test-a-warm-child-that-does-not-answer-in-time-refuses-the-task-as-the-answer [tmp-path]
+  ;; 10-24 02:42 JST の本番の形(card ki-e1612a12d0c3): 混んだ機体で待ちの子が期限の内に答えない。前は OSError が worker の拍を抜けて
+  ;; process ごと落ち、機体の上の job を全部道連れにした。今は JobNotStarted が答えで、宿は続けて観測に答える。
+  (<- spec JobSpec (task-spec-on "env-a"))
+  (<- settings (host-settings tmp-path))
+  (<- place WarmPlace (warm-place settings.warm-dir "env-a"))
+  (val warm (WarmScript :sockets #((WarmSocket :path place.socket :answer WarmSocketAnswer.SILENT))))
+  (<- got tuple (refused-start spec warm tmp-path))
+  (val answer (get got 0))
+  (val seen (get got 1))
+  (assert (isinstance answer JobNotStarted) answer)
+  (assert (in place.socket answer.detail) answer.detail)
+  (assert (= seen #()) seen))

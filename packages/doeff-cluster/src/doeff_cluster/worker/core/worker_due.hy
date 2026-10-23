@@ -28,8 +28,8 @@
 (import math)
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants earliest-due])
-(import doeff_cluster.worker.intent.worker_model [CodeState ProbeState StopStage Outcome WorldView WorkerPolicy WakeSet])
-(import doeff_cluster.worker.core.policy [backoff-ms])
+(import doeff_cluster.worker.intent.worker_model [CodeState ProbeState StopStage WorldView WorkerPolicy WakeSet])
+(import doeff_cluster.worker.core.policy [backoff-ms backoff-from])
 (import doeff_cluster.worker.core.env_upkeep [RootsTally PrepareLimits SWEEP-EVERY-MS])
 (import doeff_cluster.worker.core.warm_rules [warm-child-refused])
 
@@ -49,9 +49,11 @@
    records = 周の後の job ごとの記憶。"
   (val codes (tuple (gfor code world.codes :if (= code.state CodeState.FAILED) (+ (or code.failed-ms 0) policy.code-retry-ms))))
   (val probes (tuple (gfor probe world.probes :if (= probe.state ProbeState.FAILED) (+ (or probe.failed-ms 0) policy.code-retry-ms))))
+  ;; backoff の起点は終わりの刻か、起こせなかった刻(policy の backoff-from — card ki-e1612a12d0c3)。
   (val backoffs (tuple (gfor record (.values records)
-                             :if (and (is-not record.last-exit-ms None) (= record.last-outcome Outcome.EXITED))
-                             (+ record.last-exit-ms (backoff-ms record policy)))))
+                             :setv since (backoff-from record)
+                             :if (is-not since None)
+                             (+ since (backoff-ms record policy)))))
   (val stops (tuple (gfor record (.values records)
                           :if (is-not record.stopping None)
                           (+ record.stopping.signalled-ms (if (= record.stopping.stage StopStage.TERM) policy.stop-grace-ms policy.kill-grace-ms)))))

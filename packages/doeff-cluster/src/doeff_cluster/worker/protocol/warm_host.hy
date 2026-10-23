@@ -131,13 +131,15 @@
     ;; 同じ root の前の子が起動を断っていれば、続けた回数を引き継ぐ(数えの定義点は warm_rules の refusals-after)。
     (:= table (| table {key (replace started :refusals (refusals-after (.get table key)))}))
     (resume None))
-  (StopWarmChild [key stage reason]
+  (StopWarmChild [key stage reason refused]
     ;; 待ちの子の group へだけ送る(分けた子 A は別の session — 走っている task に届かない・条 WC2)。止めた訳は観測の detail に残す。
+    ;; 分けるのを断った子の止め(refused)は観測の fork-refused に残し、その後の KILL でも断りの訳を書き換えない(終わった後に断りの
+    ;; 数えと task の失敗の訳が読む — card ki-e1612a12d0c3)。
     (val view (.get table key))
     (when (and view (is view.exit-code None))
       (<- (SignalProcess :pid view.pid :signal (if (= stage StopStage.TERM) ProcessSignal.TERM ProcessSignal.KILL)))
       (<- now int (now-epoch-ms))
-      (:= table (| table {key (replace view :detail reason
+      (:= table (| table {key (replace view :detail (if view.fork-refused view.detail reason) :fork-refused (or view.fork-refused refused)
                                        :stop (StopProgress (if (is view.stop None) now view.stop.requested-ms) stage now))})))
     (resume None))
   (ForgetWarmChild [key]

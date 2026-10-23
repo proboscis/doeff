@@ -9,11 +9,11 @@ from doeff_cluster.shared.core.due_policy import earliest_due as earliest_due
 from doeff_cluster.worker.intent.worker_model import CodeState as CodeState
 from doeff_cluster.worker.intent.worker_model import ProbeState as ProbeState
 from doeff_cluster.worker.intent.worker_model import StopStage as StopStage
-from doeff_cluster.worker.intent.worker_model import Outcome as Outcome
 from doeff_cluster.worker.intent.worker_model import WorldView as WorldView
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster.worker.intent.worker_model import WakeSet as WakeSet
 from doeff_cluster.worker.core.policy import backoff_ms as backoff_ms
+from doeff_cluster.worker.core.policy import backoff_from as backoff_from
 from doeff_cluster.worker.core.env_upkeep import RootsTally as RootsTally
 from doeff_cluster.worker.core.env_upkeep import PrepareLimits as PrepareLimits
 from doeff_cluster.worker.core.env_upkeep import SWEEP_EVERY_MS as SWEEP_EVERY_MS

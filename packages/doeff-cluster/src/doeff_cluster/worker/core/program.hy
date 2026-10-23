@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes
-  WorkerUnsettled SweepEnvs TickMarks StartHold] doeff_cluster.shared.intent.job_model [JobPhase])
+  WorkerUnsettled SweepEnvs TickMarks StartHold JobNotStarted] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.worker_due [plan-due wakes-with])
 (import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
@@ -118,6 +118,21 @@
   (HeartbeatGap :gap-ms (- sent-at since) :slowest longest.name :slowest-ms longest.ms))
 
 
+;; 起こせなかった job の答えを集める(card ki-e1612a12d0c3)。
+(defk fired-not-started [actions]
+  {:pre [(: actions tuple)] :post [(: % (get tuple #(JobNotStarted ...)))] :tags {:context "worker" :role "program"}}
+  "拍の action を順に撃ち、StartJob が起こせなかった答え(JobNotStarted)を集めるため(card ki-e1612a12d0c3): 起こせない事は効果の答えの
+   値で、記憶の数え records-after がその job だけの失敗に数える — 同じ拍のほかの action と動いている job は続ける。以前は宿が例外に
+   変え、ここを抜けて worker の process ごと落ち、機体の上の job を全部道連れにした(10-24 02:42 JST)。想定しない例外(code の誤り)は
+   捕まえない。ほかの action の答えは読まない。"
+  (var refused #())
+  (for [action actions]
+    (<- answer action)
+    (when (isinstance answer JobNotStarted)
+      (:= refused (+ refused #(answer)))))
+  refused)
+
+
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None) 計画の期限 実行した action の名の列
@@ -174,9 +189,9 @@
   ;; 掃除は最後に読めた宣言で判じる(まだ読めていない拍は撃たない・止まる拍も宣言の root を消さない — #3731)。
   (<- sweeping tuple (sweep-actions declaration world))
   (val actions (+ planned sweeping))
-  (for [action actions] (<- action))
+  (<- not-started tuple (fired-not-started actions))
   (var fired (tuple actions))
-  (<- counted dict (records-after now state.records actions policy))
+  (<- counted dict (records-after now state.records actions policy not-started))
   (var records counted)
   ;; 止めを求めていない終わりの回収を 1 行ずつ(card ki-cb9f34c49f83 — 止めた終わりの行は process-host の止めの計時の行)。
   (<- exits tuple (exit-notes now world counted actions policy))
@@ -194,9 +209,9 @@
     (for [_ (range FOLLOWUP-ROUNDS)]
       (<- followups tuple (ready-followups now desired before after records policy :warm warm :absent absent))
       (when (not followups) (break))
-      (for [action followups] (<- action))
+      (<- followed-not-started tuple (fired-not-started followups))
       (:= fired (+ fired followups))
-      (<- followed dict (records-after now records followups policy))
+      (<- followed dict (records-after now records followups policy followed-not-started))
       (:= records followed)
       (:= before after)
       (<- settled WorldView (ObserveWorld))

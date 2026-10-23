@@ -243,7 +243,7 @@
 (import doeff_cluster.worker.entry.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
-                       PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
+                       PrepareCode PrepareEnv SweepEnvs StartJob JobStarted SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases EnvReport AwaitNextTick WakeSet WorkerWakes StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
                        ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
@@ -2273,14 +2273,15 @@
                                                    #((replace started :refusals
                                                               (refusals-after (next (gfor v truth.warm-children :if (= v.key key) v) None)))))))))
     (resume None))
-  (StopWarmChild [key stage reason]
+  (StopWarmChild [key stage reason refused]
     (<- now int (now-epoch-ms))
     (val code (if (= stage StopStage.TERM) -15 -9))
     (<- (change-live-truth worker.name boot
                            (fn [truth] (replace truth :warm-children
                                                 (tuple (gfor v truth.warm-children
                                                              (if (and (= v.key key) (is v.exit-code None))
-                                                                 (replace v :exit-code code :ended-ms now :detail reason
+                                                                 ;; 分けるのを断った子の止めは断りに数える(本番の宿 warm_host と同じ印)。
+                                                                 (replace v :exit-code code :ended-ms now :detail reason :fork-refused refused
                                                                           :stop (StopProgress now stage now))
                                                                  v)))))))
     (resume None))
@@ -2316,7 +2317,7 @@
                          :passable (+ plan.passable outside.effects) :outside outside.handlers))
     (<- task Task (Spawn (sim-process worker.name spec child (.get truth.programs spec.program))))
     (<- (KeepHandle pid task))
-    (resume None))
+    (resume (JobStarted :name spec.name :pid pid)))
   (SignalJob [name pid stage]
     ;; 本番の SignalProcess の代役(#3145): TERM は process の止めの合図の受け手へ理由を立てる(本番の os-signal-stop-handler が SIGTERM で
     ;; 理由を立てるのと同じ — process は止めの節を回して自分で終わる)。受け手を据えていない process(止めを問わない Program — 本番では

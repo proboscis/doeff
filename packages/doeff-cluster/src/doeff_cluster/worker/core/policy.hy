@@ -29,7 +29,7 @@
 (import doeff [run])
 (import doeff_traverse.helpers [sequence])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
-  Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
+  Outcome JobRecord JobNotStarted WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
   StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
@@ -159,10 +159,17 @@
    報告だけがこの境を持ち、入れ替えで名から外した後の新しい process は、前の process が長く動いた後でも前の落ち続けの回数を引き継いだ)。"
   (and (is-not record.last-start-ms None) (>= (- now record.last-start-ms) policy.stable-run-ms)))
 
+(defn #^ (| int None) backoff-from [#^ JobRecord record]  ; defk にできない: 純粋な判断の in-backoff(Program の外の関数)が呼ぶ
+  "起こし直しの間(backoff)を数える起点を 1 か所で決める(in-backoff と、期限の worker_due.plan-due が読む): 最後の StartJob が起こせ
+   なかった刻(card ki-e1612a12d0c3 — 終わりより後の出来事なので先に読む)、それ以外は停止を求めずに終わった刻。どちらも無ければ None。"
+  (cond
+    (is-not record.not-started None) record.not-started.at-ms
+    (and (is-not record.last-exit-ms None) (= record.last-outcome Outcome.EXITED)) record.last-exit-ms
+    True None))
+
 (defn #^ bool in-backoff [#^ int now #^ JobRecord record #^ WorkerPolicy policy]
-  (and (is-not record.last-exit-ms None)
-       (= record.last-outcome Outcome.EXITED)
-       (< (- now record.last-exit-ms) (backoff-ms record policy))))
+  (setv since (backoff-from record))
+  (and (is-not since None) (< (- now since) (backoff-ms record policy))))
 
 (defn #^ bool memory-given-up [#^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "常駐の job spec が機体の memory の見張りに続けて止められ、起こし直しを止めたか(起こしの段 start-step と状態の行の phase-of・job-status が
@@ -456,12 +463,14 @@
       #((StopWarmChild view.key StopStage.KILL "止めの合図の後も終わらない"))
       #()))
 
-(defk warm-child-step [now key launch view policy]
-  {:pre [(: now int) (: key str) (: launch (| WarmLaunch None)) (: view (| WarmChildView None)) (: policy WorkerPolicy)]
+(defk warm-child-step [now key launch view policy [refusal None]]
+  {:pre [(: now int) (: key str) (: launch (| WarmLaunch None)) (: view (| WarmChildView None)) (: policy WorkerPolicy)
+         (: refusal (| JobNotStarted None))]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "root のキー 1 つの待ちの子の action を決めるため(判断の表 — tests/test_warm_child_policy.hy が全行を撃つ)。launch = 要る root の待ちの子の
-   起こし方(要らない・root が READY でなければ None)・view = 待ちの子の観測。観測が変わらない限り同じ action を 2 度出さない(起こした・
-   止め始めた・忘れた事は次の観測に出る)。走っている task には何もしない(条 WC2)。"
+   起こし方(要らない・root が READY でなければ None)・view = 待ちの子の観測・refusal = この root から task を分けるのを断られた最後の答え
+   (無ければ None — card ki-e1612a12d0c3)。観測が変わらない限り同じ action を 2 度出さない(起こした・止め始めた・忘れた事は次の観測に
+   出る)。走っている task には何もしない(条 WC2)。"
   (cond
     ;; 要らない root: 走っていれば止め、終わっていれば観測から外す。
     (is launch None)
@@ -478,6 +487,11 @@
     (is-not view.exit-code None)
       (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key launch)) #())
     (is-not view.stop None) (! (warm-stop-step now view policy))
+    ;; 今の子を起こした後に task を分けるのを断った待ちの子(card ki-e1612a12d0c3)は止める。止めた子の終わりは断りに数え(fork-refused —
+    ;; warm_rules の ended-refusing)、起こし直しと上限は起動の断りと同じ道(上の枝)。task は shim の道へ倒さず、backoff の後にこの root の
+    ;; 次の待ちの子から分ける。
+    (and (is-not refusal None) (>= refusal.at-ms view.started-ms))
+      #((StopWarmChild key StopStage.TERM refusal.detail :refused True))
     ;; 印が分かれる前の形でない(条 WC3)待ちの子は、準備済みに数えずに止める(終わった後に起こし直す)。
     (and (is-not view.mark None) (not (warm-mark-clean view.mark)))
       #((StopWarmChild key StopStage.TERM (! (mark-refusal view.mark))))
@@ -490,18 +504,32 @@
   (val root (if (in key wanted) (ready-path (code-of world key)) None))
   (if (is root None) None (! (warm-launch key root desired warm))))
 
-(defk warm-child-actions [now desired world warm policy]
-  {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy)] :post [(: % tuple)]
+(defk fork-refusals [records]
+  {:pre [(: records dict)] :post [(: % (get dict #(str JobNotStarted)))] :tags {:context "worker" :role "judgment"}}
+  "root のキーごとに、task を分けるのを断られた最後の答えを job の記憶から集めるため(card ki-e1612a12d0c3 — 待ちの子の断りに数える
+   warm-child-step が読む)。起こせた StartJob は記憶の not-started を消すので、残るのは起こせていない task の断りだけ。"
+  (var found {})
+  (for [record (.values records)]
+    (val refusal record.not-started)
+    (when (and (is-not refusal None) (is-not refusal.warm-key None)
+               (or (not-in refusal.warm-key found) (> refusal.at-ms (. (get found refusal.warm-key) at-ms))))
+      (:= found (| found {refusal.warm-key refusal}))))
+  found)
+
+(defk warm-child-actions [now desired world warm policy [records {}]]
+  {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy) (: records dict)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
   "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root の
-   うち READY の物。要る root と観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。"
+   うち READY の物。要る root と観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。records = job の記憶(task を分ける
+   のを断った待ちの子を止める材料 — fork-refusals・card ki-e1612a12d0c3)。"
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
                             (tuple (gfor w warm w.key)))))
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
+  (<- refusals dict (fork-refusals records))
   (var actions #())
   (for [key keys]
     (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm))
-    (<- step tuple (warm-child-step now key launch (warm-child-of world key) policy))
+    (<- step tuple (warm-child-step now key launch (warm-child-of world key) policy :refusal (.get refusals key)))
     (:= actions (+ actions step)))
   actions)
 
@@ -581,7 +609,7 @@
   (<- per-job tuple (sequence (gfor name names (plan-job now name desired world (.get records name (JobRecord name)) policy absent))))
   (val jobs (tuple (gfor actions per-job action actions action)))
   (<- warming tuple (warm-actions now warm world jobs policy))
-  (<- children tuple (warm-child-actions now desired world warm policy))
+  (<- children tuple (warm-child-actions now desired world warm policy :records records))
   (<- forgetting tuple (forget-probe-actions desired world))
   ;; 退いた process への退きの知らせの変わり目(入れ替えの諦めと、その解け — #3672)。
   (<- noticing tuple (notice-actions desired world))
@@ -605,14 +633,22 @@
                                                       (warm-child-ready (warm-child-of after (warm-key-of spec))))))
                                     (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy absent))))
   (val jobs (tuple (gfor actions per-job action actions action)))
-  (<- children tuple (warm-child-actions now desired after warm policy))
+  (<- children tuple (warm-child-actions now desired after warm policy :records records))
   (+ jobs (tuple (gfor action children
                        :if (and (isinstance action StartWarmChild) (is (ready-path (code-of before action.key)) None))
                        action))))
 
-(defn #^ JobRecord record-after [#^ int now #^ JobRecord record #^ Action action #^ WorkerPolicy [policy (WorkerPolicy)]]
+(defn #^ JobRecord record-after [#^ int now #^ JobRecord record #^ Action action #^ WorkerPolicy [policy (WorkerPolicy)]
+                                 #^ (| JobNotStarted None) [not-started None]]
+  "撃った action 1 つを job の記憶に数える(not-started = その action が StartJob で、起こせなかった答え — card ki-e1612a12d0c3)。"
   (cond
-    (isinstance action StartJob) (replace record :attempts action.attempt :stopping None :last-start-ms now)
+    ;; 起こせなかった StartJob: 落ちた時と同じく続けて落ちた回数(failures・unexpected-exits)に数え、backoff を断りの刻から数える
+    ;; (backoff-from)。起こした刻は書かない(走った process が無い)・task を終えた事にしない(last-outcome を書かない — backoff の後に
+    ;; 起こし直す)。
+    (and (isinstance action StartJob) (is-not not-started None))
+      (replace record :attempts action.attempt :stopping None :not-started not-started
+               :failures (+ record.failures 1) :unexpected-exits (+ record.unexpected-exits 1))
+    (isinstance action StartJob) (replace record :attempts action.attempt :stopping None :last-start-ms now :not-started None)
     (isinstance action SignalJob)
       (replace record :stopping
         (JobStop :requested-ms (if (is record.stopping None) now record.stopping.requested-ms) :stage action.stage :signalled-ms now
@@ -647,10 +683,12 @@
       (if (run (ran-stably? now record policy)) (replace record :failures 0 :unexpected-exits 0) record)
     True record))
 
-(defk records-after [now records actions [policy (WorkerPolicy)]]
-  {:pre [(: now int) (: records (get dict #(str JobRecord))) (: actions (get tuple #(Action ...))) (: policy WorkerPolicy)]
+(defk records-after [now records actions [policy (WorkerPolicy)] [not-started #()]]
+  {:pre [(: now int) (: records (get dict #(str JobRecord))) (: actions (get tuple #(Action ...))) (: policy WorkerPolicy)
+         (: not-started (get tuple #(JobNotStarted ...)))]
    :post [(: % (get dict #(str JobRecord)))] :tags {:context "worker" :role "judgment"}}
-  "撃った action を job ごとの記憶(起こした回数・止め始め・終わり方)に数えた後の記憶を求めるため。1 つずつの数えは record-after
+  "撃った action を job ごとの記憶(起こした回数・止め始め・終わり方)に数えた後の記憶を求めるため。not-started = 撃った StartJob のうち
+   起こせなかった答え(card ki-e1612a12d0c3 — job の名で StartJob に結ぶ)。1 つずつの数えは record-after
    (効果を出さない純粋な畳み: 同じ job の action が続けば前の数えの答えを次が読むので、互いに独立な Program の列を順に走らせる
    sequence の形ではなく、素の関数のまま — #2812)。"
   (var result (dict records))
@@ -659,8 +697,9 @@
       (StartJob) action.spec.name
       (| (SignalJob) (ReapJob) (RetireJob)) action.name
       _ None))
+    (val refused (if (isinstance action StartJob) (next (gfor answer not-started :if (= answer.name name) answer) None) None))
     (when (is-not name None)
-      (:= result (| result {name (record-after now (.get result name (JobRecord name)) action policy)})))
+      (:= result (| result {name (record-after now (.get result name (JobRecord name)) action policy refused)})))
     ;; 退いた process の記憶は、回収した時に捨てる(名は世代ごとに違うので、残すと入れ替えのたびに溜まる)。
     (when (and (isinstance action ReapJob) (in RETIRED-MARK action.name))
       (:= result (dfor #(k v) (.items result) :if (!= k action.name) k v))))
@@ -853,7 +892,12 @@
         (and (is-not probing None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— {}" (probing-detail probing))
         (is-not probing None) (probing-detail probing)
         ;; 待ちの子が起動の断りの上限に達した task。
-        (is-not refused None) (.format "待ちの子が {} 回続けて起動を断った: {}" (+ refused.refusals 1) refused.detail)
+        (is-not refused None) (.format "待ちの子が {} 回続けて断った: {}" (+ refused.refusals 1) refused.detail)
+        ;; 最後の StartJob が起こせなかった(card ki-e1612a12d0c3 — backoff の後に起こし直す)。
+        (and (is process None) (is-not record.not-started None))
+          (.format "起こせなかった({}): {} — backoff={}ms"
+                   (if (is record.not-started.warm-key None) "shim" (+ "warm:" record.not-started.warm-key))
+                   record.not-started.detail (backoff-ms record policy))
         ;; 待ちの子の準備を待っている task(#3646)。
         (is-not warm-wait None) warm-wait
         ;; 退いた process の空き待ち(AL-D1): 新のコードも入口の検めも揃ったが、退いた process が上限 R に達しているので今の process を
