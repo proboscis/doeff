@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "count": 3,
+      "path": "packages/doeff-hy/src/doeff_hy/declarations.hy",
+      "reason": "declarations.hy の defeffect の展開(bound-answer-methods・answer-value-form・defeffect-form)が、型検査の展開かを static_view.py の static-view-enabled に問う既存の依存(static_view.py は doeff-hy-static-check の公開口 static_check.py の外)。macros.hy・system_form.hy が static_view.py を引く既存の登記と同じ。declarations.hy を品質検査の対象(include)に入れた時(card ki-d7ab768e7315)に初めて測られた。解くのは展開か否かの問いを公開口のある module へ移す便で、型の契約の便とは別。",
+      "rule": "private-module",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_view.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/declarations.hy",
+      "reason": "declarations.hy の defeffect の展開が出す form の中の `(import doeff_hy.record_runtime)`(展開先の module が読む実行時の補助)を、検査器が declarations.hy 自身の依存と数える既存の形。record_runtime.py に module の契約が無い。declarations.hy を品質検査の対象(include)に入れた時(card ki-d7ab768e7315)に初めて測られた。解くのは record_runtime.py に module の契約を与える便で、型の契約の便とは別。",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-hy/src/doeff_hy/record_runtime.py"
+    }
+  ]
+}

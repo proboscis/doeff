@@ -10,6 +10,10 @@
     "packages/doeff-records/src/doeff_records/admission.pyi",
     "packages/doeff-records/src/doeff_records/pg.hy",
     "packages/doeff-records/src/doeff_records/pg_sql.hy",
-    "packages/doeff-records/src/doeff_records/pg_sql.pyi"
+    "packages/doeff-records/src/doeff_records/pg_sql.pyi",
+    "packages/doeff-records/src/doeff_records/watching.hy",
+    "packages/doeff-records/src/doeff_records/watching.pyi",
+    "packages/doeff-records/src/doeff_records/faults.hy",
+    "packages/doeff-records/src/doeff_records/faults.pyi"
   ]
 }
