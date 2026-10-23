@@ -17,7 +17,8 @@
                             law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
                             law-a-write-keeps-the-unarchived-event-it-touches
                             law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired
-                            law-a-write-names-its-change-position])
+                            law-a-write-names-its-change-position law-a-keyed-write-replays-its-answer
+                            law-another-key-is-judged-by-its-expectation law-write-keys-are-forgotten-after-their-memory])
 (import tests.interpreters [LawSetup])
 
 
@@ -231,4 +232,25 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-a-write-names-its-change-position harness))
+  (assert transcript))
+
+(deftest test-a-keyed-write-replays-its-answer
+  ;; card ki-78c6d663491f: 冪等キーつきの書きの送り直しは、間に別の書き手が行を変えていても前の答え(Written・その時の版)を返し、行を変えない。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-a-keyed-write-replays-its-answer harness))
+  (assert transcript))
+
+(deftest test-another-key-is-judged-by-its-expectation
+  ;; card ki-78c6d663491f: 同じ値でも別の鍵・鍵の無い書きは、今までどおり期待で判じる(Conflict)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-another-key-is-judged-by-its-expectation harness))
+  (assert transcript))
+
+(deftest test-write-keys-are-forgotten-after-their-memory
+  ;; card ki-78c6d663491f: 行の書きの冪等キーの覚えは、決まった期間の後の回収で外れる(際限なく伸びない)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-write-keys-are-forgotten-after-their-memory harness))
   (assert transcript))

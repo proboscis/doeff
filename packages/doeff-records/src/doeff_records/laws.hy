@@ -24,7 +24,7 @@
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable
-                              RememberKeysFor RememberNoKeys])
+                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -128,6 +128,17 @@
     (Written) (Written answer.version answer.value)
     (WrittenRows) (WrittenRows (tuple (gfor item answer.items (Written item.version item.value))))
     _ answer))
+
+
+(defk unplaced-all [answers]
+  {:pre [(: answers list)] :post [(: % list)]}
+  "法の transcript の答えを並べたまま、書きの答えから位置と送り直しの名乗りを外すため(unplaced を 1 つずつ — 答えの比べが位置と
+   名乗りに縛られない。名乗りは法が自分で見る)。"
+  (var plain [])
+  (for [answer answers]
+    (<- one (unplaced answer))
+    (:= plain (+ plain [one])))
+  plain)
 
 
 (defk as-writer [harness writer program]
@@ -1785,6 +1796,119 @@
   [start w1 refused conflict batch #* (get collected 0) head beyond epoch after-epoch])
 
 
+;; --- 法 25〜27: 行の書きの冪等キー(card ki-78c6d663491f)-----------------------------------------------------------
+
+(defk law-a-keyed-write-replays-its-answer [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "答えの切れた書きを送り直す書き手が、自分の着いた書きの答えを受け取れるための法: 冪等キーつきの書き(PutRow・PutRows)の同じ鍵・同じ
+   本文の送り直しは、間に別の書き手が行を変えていても、期待(ExpectAbsent・ExpectVersion・ExpectAny)を見ずに前の答え(Written の
+   その時の版・値・位置 — 束は束の順の Written)を送り直しと名乗って(replayed)返し、行を変えず、変更の列に何も積まない。同じ鍵の
+   別の本文は冪等キーの断り(PutRow は Refused・PutRows は束の 0 行目の RowsRefused)で、これも行を変えない。"
+  (val law "冪等キーつきの書きの送り直しは、間に行が変わっても前の答えを返し、行を変えない")
+  ;; ExpectAbsent の書き → 別の書き手が版 2 へ → 同じ鍵の送り直しは版 1 の Written(Conflict でない)。
+  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "w-born")))
+  (<- (require-law (and (isinstance born Written) (= born.version 1) (is born.replayed False)) law (.format "生まれる書き: {!r}" born)))
+  (<- moved (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" "red"}) (ExpectVersion 1))))
+  (<- (require-law (and (isinstance moved Written) (= moved.version 2)) law (.format "間の別の書き: {!r}" moved)))
+  ;; ExpectAny の書き → 別の書き手が欄を書く → 同じ鍵の送り直しはその欄を書き戻さない。
+  (<- blind (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"color" "blue" "label" "b"}) (ExpectAny) :idempotency-key "w-blind")))
+  (<- painted (as-writer harness PAINTER (PutRow "parts" #("p2") (FrozenMap {"color" "green"}) (ExpectAny))))
+  ;; 束の書き → 束の行の 1 つを別の書き手が変える → 同じ鍵の送り直しは束の前の答え。
+  (<- batch (as-writer harness MAKER
+              (PutRows #((RowWrite "parts" #("p3") (FrozenMap {"label" "c"}) (ExpectAbsent))
+                         (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent)))
+                       :idempotency-key "w-batch")))
+  (<- (require-law (and (isinstance batch WrittenRows) (is batch.replayed False)) law (.format "束の書き: {!r}" batch)))
+  (<- moved-batch (as-writer harness PAINTER (PutRow "parts" #("p3") (FrozenMap {"color" "red"}) (ExpectVersion 1))))
+  (<- mark (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- again (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "w-born")))
+  (<- blind-again (as-writer harness MAKER
+                    (PutRow "parts" #("p2") (FrozenMap {"color" "blue" "label" "b"}) (ExpectAny) :idempotency-key "w-blind")))
+  (<- batch-again (as-writer harness MAKER
+                    (PutRows #((RowWrite "parts" #("p3") (FrozenMap {"label" "c"}) (ExpectAbsent))
+                               (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent)))
+                             :idempotency-key "w-batch")))
+  (<- (require-law (and (isinstance again Written) (is again.replayed True)
+                        (= #(again.version again.value again.position) #(born.version born.value born.position)))
+                   law (.format "ExpectAbsent の送り直しが前の答えでない: {!r}(前 {!r})" again born)))
+  (<- (require-law (and (isinstance blind-again Written) (is blind-again.replayed True)
+                        (= #(blind-again.version blind-again.value blind-again.position) #(blind.version blind.value blind.position)))
+                   law (.format "ExpectAny の送り直しが前の答えでない: {!r}(前 {!r})" blind-again blind)))
+  (<- (require-law (and (isinstance batch-again WrittenRows) (is batch-again.replayed True)
+                        (= (lfor item batch-again.items #(item.version item.value item.position item.replayed))
+                           (lfor item batch.items #(item.version item.value item.position True))))
+                   law (.format "束の送り直しが前の答えでない: {!r}(前 {!r})" batch-again batch)))
+  ;; 同じ鍵の別の本文は冪等キーの断り。
+  (<- other (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "z"}) (ExpectAbsent) :idempotency-key "w-born")))
+  (<- other-batch (as-writer harness MAKER
+                    (PutRows #((RowWrite "parts" #("p3") (FrozenMap {"label" "z"}) (ExpectAbsent)))
+                             :idempotency-key "w-batch")))
+  (<- (require-law (and (isinstance other Refused) (in "冪等キー" other.reason)
+                        (isinstance other-batch RowsRefused) (= #(other-batch.index other-batch.table other-batch.key) #(0 "parts" #("p3")))
+                        (in "冪等キー" other-batch.reason))
+                   law (.format "同じ鍵の別の本文が断られない: {!r} {!r}" other other-batch)))
+  ;; 送り直しと断りは行を変えず、変更の列に何も積まない。
+  (<- p1 (as-writer harness MAKER (ReadRow "parts" #("p1"))))
+  (<- p2 (as-writer harness MAKER (ReadRow "parts" #("p2"))))
+  (<- p3 (as-writer harness MAKER (ReadRow "parts" #("p3"))))
+  (<- (require-law (and (isinstance p1 Row) (= p1.version 2) (= (get p1.value "color") "red")
+                        (isinstance p2 Row) (= p2.version 2) (= (get p2.value "color") "green")
+                        (isinstance p3 Row) (= p3.version 2) (= (get p3.value "color") "red"))
+                   law (.format "送り直しが行を変えた: {!r} {!r} {!r}" p1 p2 p3)))
+  (<- after (as-writer harness MAKER (WatchChanges #("parts" "tickets") (WatchCursor mark.epoch mark.sequence))))
+  (<- (require-law (and (isinstance after Changes) (= after.items #())) law (.format "送り直しが変更を積んだ: {!r}" after)))
+  (! (unplaced-all [born moved blind painted batch moved-batch again blind-again batch-again other other-batch p1 p2 p3 after])))
+
+
+(defk law-another-key-is-judged-by-its-expectation [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "冪等キーが書きの身元で、値の一致ではないことを確かめる法: 前の書きと同じ値でも、別の鍵の書きと鍵の無い書きは今までどおり期待で判じる
+   (在る行への ExpectAbsent・古い版の ExpectVersion は Conflict)— 別の書き手の同じ値の行を、自分の書きと読まない。"
+  (val law "別の鍵と鍵の無い書きは、同じ値でも期待で判じる")
+  (<- first (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "k-first")))
+  (<- (require-law (and (isinstance first Written) (= first.version 1)) law (.format "最初の書き: {!r}" first)))
+  (val now (Row #("p1") (FrozenMap {"id" "p1" "label" "a" "state" "open"}) 1))
+  (<- other-key (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "k-other")))
+  (<- keyless (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (<- (require-law (and (= other-key (Conflict now)) (= keyless (Conflict now))) law
+                   (.format "別の鍵・鍵の無い同じ値の ExpectAbsent: {!r} {!r}" other-key keyless)))
+  (<- second (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1) :idempotency-key "k-second")))
+  (val later (Row #("p1") (FrozenMap {"id" "p1" "label" "b" "state" "open"}) 2))
+  (<- stale (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1) :idempotency-key "k-stale")))
+  (<- stale-batch (as-writer harness MAKER (PutRows #((RowWrite "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1)))
+                                                    :idempotency-key "k-stale-batch")))
+  (<- (require-law (and (isinstance second Written) (= stale (Conflict later)) (= stale-batch (RowsConflict 0 "parts" #("p1") later)))
+                   law (.format "別の鍵の同じ値の古い版の書き: {!r} {!r} {!r}" second stale stale-batch)))
+  ;; 衝突した書きは覚えない — 同じ鍵の送り直しも今の行で判じる(書いていない書きに答えを作らない)。
+  (<- stale-again (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 2) :idempotency-key "k-stale")))
+  (<- (require-law (and (isinstance stale-again Written) (= stale-again.version 3) (is stale-again.replayed False)) law
+                   (.format "衝突の後の同じ鍵の書きが今の行で判じられない: {!r}" stale-again)))
+  (! (unplaced-all [first other-key keyless second stale stale-batch stale-again])))
+
+
+(defk law-write-keys-are-forgotten-after-their-memory [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "行の書きの冪等キーの覚えが際限なく伸びないための法: 置き場は鍵の答えを覚えた刻から WRITE-KEY-MEMORY-SECONDS の間は送り直しに前の
+   答えを返し(その間の回収 SweepExpired は外さない)、過ぎた後の回収が覚えを外す(答え Swept.write-keys)— 外れた鍵の書きは新しい書きとして
+   期待で判じる。"
+  (val law "行の書きの冪等キーの覚えは、決まった期間の後の回収で外れる")
+  (<- first (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "m-1")))
+  (<- (Delay (- WRITE-KEY-MEMORY-SECONDS 1)))
+  (<- kept (as-writer harness MAKER (SweepExpired)))
+  (<- inside (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "m-1")))
+  (<- (require-law (and (= kept.write-keys 0) (isinstance inside Written) (is inside.replayed True) (= inside.version first.version))
+                   law (.format "期間の内の覚えが外れた: {!r} {!r}" kept inside)))
+  (<- (Delay 2))
+  (<- forgot (as-writer harness MAKER (SweepExpired)))
+  (<- outside (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent) :idempotency-key "m-1")))
+  (<- (require-law (and (= forgot.write-keys 1) (isinstance outside Conflict)) law
+                   (.format "期間の後の覚えが外れない・外れた鍵の書きが期待で判じられない: {!r} {!r}" forgot outside)))
+  (! (unplaced-all [first kept inside forgot outside])))
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing と law-append-events-answer-like-appends-in-order は SHARED-LAWS に入れない — SHARED-LAWS は前からの
 ;; 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを
@@ -1823,6 +1947,9 @@
             "a-write-keeps-the-unarchived-event-it-touches" law-a-write-keeps-the-unarchived-event-it-touches
             "keys-are-forgotten-after-their-memory" law-keys-are-forgotten-after-their-memory
             "unarchived-keys-are-kept-until-retired" law-unarchived-keys-are-kept-until-retired
-            "a-write-names-its-change-position" law-a-write-names-its-change-position})
+            "a-write-names-its-change-position" law-a-write-names-its-change-position
+            "a-keyed-write-replays-its-answer" law-a-keyed-write-replays-its-answer
+            "another-key-is-judged-by-its-expectation" law-another-key-is-judged-by-its-expectation
+            "write-keys-are-forgotten-after-their-memory" law-write-keys-are-forgotten-after-their-memory})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))
