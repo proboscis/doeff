@@ -17,6 +17,10 @@
 use std::collections::HashMap;
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+
+/// 根ごとに 1 度だけ読んだ index(読めなかった根は None を覚える)— 1 回の実行の中で、登録簿の読みと repo の Hy の読みが同じ index を 2 度読まない。
+static READ: OnceLock<Mutex<HashMap<PathBuf, Option<Arc<GitIndex>>>>> = OnceLock::new();
 
 /// index の行 1 つ(stage 0)。
 struct Entry {
@@ -42,6 +46,14 @@ impl GitIndex {
         let bytes = std::fs::read(&path).ok()?;
         let stamp = mtime_of(&meta)?;
         Some(GitIndex { entries: parse(&bytes)?, stamp })
+    }
+
+    /// `root` の index — 1 回の実行の中で根ごとに 1 度だけ読む(前提は `hy_files` と同じ: 実行の間に index は書き替わらないと見る。書き替わっていても、
+    /// 行の stat と今の file の比べが外れて「中身を読む」へ倒れるだけ)。並ぶ thread が同時に引いても、読むのは 1 度。
+    pub fn of(root: &Path) -> Option<Arc<GitIndex>> {
+        let memo = READ.get_or_init(Default::default);
+        let mut memo = memo.lock().unwrap_or_else(PoisonError::into_inner);
+        memo.entry(root.to_path_buf()).or_insert_with(|| crate::timing::timed("git-index.read", || GitIndex::read(root)).map(Arc::new)).clone()
     }
 
     /// `rel` の file の stat(`meta`)が index の行と同じなら、その blob の id。

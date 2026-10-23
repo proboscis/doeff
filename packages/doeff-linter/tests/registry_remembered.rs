@@ -156,6 +156,10 @@ fn repo_with_fresh_worktree() -> (tempfile::TempDir, tempfile::TempDir, std::pat
     let parent = tempfile::TempDir::new().unwrap();
     let fresh = parent.path().join("fresh");
     git(main.path(), &["worktree", "add", "-q", "--detach", fresh.to_str().unwrap()]);
+    // 作ったばかりの作業木の file は、更新から 2 秒の内で覚えない(読む間に書かれうる)。git が普段するように、時を経た file の stat を index に
+    // 載せ直しておく(作業木で `git status` などを撃った後の形)。
+    age_registry(&fresh);
+    git(&fresh, &["update-index", "-q", "--refresh"]);
     (main, parent, fresh)
 }
 
@@ -170,7 +174,21 @@ fn a_fresh_worktree_does_not_read_the_registry_another_worktree_read() {
     let (second, second_log) = single(&fresh, cache.path(), "app/core/untagged.hy");
     assert_eq!(reads(&second_log), 0, "新しい作業木が、別の作業木の読んだ登録簿を読み直した\n{second_log}");
     assert_eq!(violation(&second, "app/core/untagged.hy::DOEFF104")["registered"], true);
-    assert_eq!(second["violations"], first["violations"], "読まなくても答えは同じ");
+    assert_eq!(without_paths(&second), without_paths(&first), "読まなくても答えは同じ(作業木ごとに違う絶対 path を除く)");
+}
+
+/// 違反の列から、作業木ごとに違う絶対 path の欄を除いた物(作業木をまたいで答えを比べるため)。
+fn without_paths(report: &Value) -> Vec<Value> {
+    report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|violation| {
+            let mut violation = violation.clone();
+            violation.as_object_mut().unwrap().remove("path");
+            violation
+        })
+        .collect()
 }
 
 /// 新しい作業木で書き替えた登録簿の file(index の blob と違う中身)や、index に無い file は、別の作業木の結果を使わずに読む — 答えが付いてくる。
