@@ -1,0 +1,30 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/outcome_forms.hy"
+  ],
+  "module_extensions": {
+    "doeff-hy-macros": {
+      "allow": [
+        "doeff-hy-outcome-forms"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-hy-macros",
+        "doeff-hy-record"
+      ],
+      "layer": "io",
+      "name": "doeff-hy-outcome-forms",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/outcome_forms.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/outcome_forms.hy"
+      ],
+      "responsibility": "不在と失敗(ADR-DOE-CORE-EFFECTS-003)の展開の時の補助 — <- の :absent・束ねが yield する open-bind の形・on-raise と absent-as の展開。実行時の意味は doeff_core_effects.outcomes が持ち、ここは形だけを作る。macros.hy と handle.hy が展開の時に関数の中で import する。",
+      "typed": true
+    }
+  ]
+}

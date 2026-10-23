@@ -23,16 +23,16 @@
 
 (import hy.models [Object Sequence])
 
-(defn _positioned? [model]
+(defn #^ bool _positioned? [#^ Object model]
   (hasattr model "_start_line"))
 
-(defn _copy-position [target origin]
+(defn #^ None _copy-position [#^ Object target #^ Object origin]
   (setv (. target start-line) (. origin start-line)
         (. target start-column) (. origin start-column)
         (. target end-line) (. origin end-line)
         (. target end-column) (. origin end-column)))
 
-(defn _inherit-down [tree]
+(defn #^ None _inherit-down [#^ Sequence tree]
   "位置を持つ式の子のうち、位置の無い物(合成した葉・利用者の式を含まない合成)に親の位置を
    付ける。`(_guard-statement-value form ...)` の関数名や `(yield (Resume k v))` の `k` が
    macro 呼び出しの位置でなく、それを包む利用者の式の位置を持つように。"
@@ -44,7 +44,7 @@
     (when (isinstance child Sequence)
       (_inherit-down child))))
 
-(defn locate-synthesized [tree]
+(defn #^ Object locate-synthesized [#^ Object tree]
   "macro の出力に位置を付けて返す(その場で書き換える)。
 
    1. 下から: 位置の無い Sequence に、位置を持つ子の範囲を付ける(`_locate-up`)。
@@ -60,7 +60,7 @@
              (_inherit-down child))))
   tree)
 
-(defn _locate-up [tree]
+(defn #^ Object _locate-up [#^ Object tree]
   "位置を持たない Sequence に、位置を持つ子の範囲を付けて tree を返す(その場で書き換える)。
 
    位置を持つ利用者の式の中にも合成が在りうる(`_expand-bangs` が作り直した式の子)ので、
