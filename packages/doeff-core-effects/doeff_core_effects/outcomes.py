@@ -33,10 +33,10 @@ from doeff_core_effects.effects import Absent, Raise
 if TYPE_CHECKING:
     # doeff の最上位は doeff_core_effects.effects を読み込む途中でこの module に来るので、最上位の後半で定義される
     # 名前(DoExpr・EffectGenerator)は型の注記にだけ使う(文字列の注記 — 実行時に評価しない)。
-    from doeff import DoExpr, EffectGenerator
+    from doeff import DoExpr, EffectGenerator, Program
 
     # ``<-`` に渡せる物: Program・effect・Result / Maybe の値。
-    Bindable: TypeAlias = DoExpr | EffectBase | Ok | Err | Some | _NothingType
+    Bindable: TypeAlias = DoExpr | Program | EffectBase | Ok | Err | Some | _NothingType
 
 _D = TypeVar("_D")
 

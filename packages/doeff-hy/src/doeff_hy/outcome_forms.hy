@@ -210,7 +210,7 @@
         (.append cases
           `(_doeff-raise-case
              #(~@(pattern-types pattern))
-             (fn [~reason]
+             (fn [#^ object ~reason]
                (match ~reason
                  ~pattern ~@(if (is guard None) [] [(Keyword "if") guard]) (_doeff-some ~mapped)
                  _ _doeff-nothing))))))
