@@ -40,6 +40,14 @@ impl SlotReclaimQueue {
 pub struct FiberArena {
     fibers: Vec<Option<Fiber>>,
     free_list: Vec<usize>,
+    /// `on_free_list[idx]` is true exactly when `idx` is on `free_list` —
+    /// the O(1) answer to "was this vacant slot freed, or is it reserved for
+    /// a detached fiber?". `attach_chain` asks it for every fiber of every
+    /// resumed continuation; a linear `free_list.contains` there made each
+    /// resume cost (chain length) x (free slots), which grew with the peak
+    /// number of fibers a long-running process ever held (a 60-handler-deep
+    /// effect went from 34 us to 13.7 ms after 5,000 finished tasks).
+    on_free_list: Vec<bool>,
     /// Reclaim reports from detached chains dropped without reattachment
     /// (#497). Drained back into `free_list` before allocating. Replaced
     /// wholesale on `clear()` so a chain outliving its run session cannot
@@ -52,6 +60,7 @@ impl FiberArena {
         FiberArena {
             fibers: Vec::new(),
             free_list: Vec::new(),
+            on_free_list: Vec::new(),
             slot_reclaim: Arc::new(SlotReclaimQueue::default()),
         }
     }
@@ -59,11 +68,13 @@ impl FiberArena {
     pub fn alloc(&mut self, fiber: Fiber) -> FiberId {
         self.reclaim_dropped_chain_slots();
         if let Some(idx) = self.free_list.pop() {
+            self.on_free_list[idx] = false;
             self.fibers[idx] = Some(fiber);
             FiberId::from_index(idx)
         } else {
             let id = FiberId::from_index(self.fibers.len());
             self.fibers.push(Some(fiber));
+            self.on_free_list.push(false);
             id
         }
     }
@@ -84,18 +95,18 @@ impl FiberArena {
                          (single-location law violated by reclaim)"
                     );
                 }
-                if self.free_list.contains(&idx) {
+                if self.on_free_list[idx] {
                     panic!("arena: dropped-chain slot {idx} is already on the free list");
                 }
             }
-            self.free_list.push(idx);
+            self.push_free(idx);
         }
     }
 
     pub fn free(&mut self, id: FiberId) {
         if let Some(slot) = self.fibers.get_mut(id.index()) {
             if slot.take().is_some() {
-                self.free_list.push(id.index());
+                self.push_free(id.index());
             }
         }
     }
@@ -135,7 +146,7 @@ impl FiberArena {
 
         for DetachedFiber { id, fiber } in chain.into_fibers() {
             let idx = id.index();
-            if self.free_list.contains(&idx) {
+            if self.on_free_list.get(idx).copied().unwrap_or(false) {
                 return Err(VMError::internal(format!(
                     "attach_chain: fiber {} slot was released",
                     idx
@@ -215,6 +226,7 @@ impl FiberArena {
     pub fn clear(&mut self) {
         self.fibers.clear();
         self.free_list.clear();
+        self.on_free_list.clear();
         // Detach from chains that outlive this session: their late drops
         // report into the replaced queue, which nobody drains — a stale
         // index from a previous session must never reach the new free list.
@@ -224,6 +236,13 @@ impl FiberArena {
     pub fn shrink_to_fit(&mut self) {
         self.fibers.shrink_to_fit();
         self.free_list.shrink_to_fit();
+        self.on_free_list.shrink_to_fit();
+    }
+
+    /// Put a vacant slot on the free list, keeping `on_free_list` in step.
+    fn push_free(&mut self, idx: usize) {
+        self.on_free_list[idx] = true;
+        self.free_list.push(idx);
     }
 
     fn chain_ids(&self, head: FiberId, last_fiber: FiberId) -> Result<Vec<FiberId>, VMError> {
@@ -274,7 +293,7 @@ impl FiberArena {
             None => SlotStatus::OutOfRange,
             Some(Some(_)) => SlotStatus::Live,
             Some(None) => {
-                if self.free_list.contains(&idx) {
+                if self.on_free_list[idx] {
                     SlotStatus::VacantFree
                 } else {
                     SlotStatus::VacantReserved
@@ -291,6 +310,9 @@ impl FiberArena {
             if !seen.insert(idx) {
                 violations.push(format!("arena: free_list contains duplicate index {idx}"));
             }
+            if !self.on_free_list.get(idx).copied().unwrap_or(false) {
+                violations.push(format!("arena: free_list index {idx} is not marked on_free_list"));
+            }
             match self.fibers.get(idx) {
                 None => violations.push(format!("arena: free_list index {idx} out of range")),
                 Some(Some(_)) => violations.push(format!(
@@ -298,6 +320,13 @@ impl FiberArena {
                 )),
                 Some(None) => {}
             }
+        }
+        let marked = self.on_free_list.iter().filter(|&&on| on).count();
+        if marked != self.free_list.len() {
+            violations.push(format!(
+                "arena: {marked} slots marked on_free_list but free_list holds {}",
+                self.free_list.len()
+            ));
         }
         violations
     }
@@ -415,6 +444,54 @@ mod tests {
             arena.get(boundary).and_then(|fiber| fiber.parent),
             Some(unrelated)
         );
+    }
+
+    #[test]
+    fn test_free_marks_follow_the_free_list() {
+        // on_free_list is the O(1) answer attach_chain and slot_status read:
+        // it must agree with free_list through free, reuse and reclaim.
+        let mut arena = FiberArena::new();
+        let ids: Vec<FiberId> = (0..6).map(|_| arena.alloc(Fiber::new(None))).collect();
+        arena.free(ids[1]);
+        arena.free(ids[4]);
+        assert_eq!(arena.slot_status(ids[1]), SlotStatus::VacantFree);
+        assert_eq!(arena.slot_status(ids[0]), SlotStatus::Live);
+
+        let boundary = arena.alloc(Fiber::new(None));
+        let body = arena.alloc(Fiber::new(Some(boundary)));
+        let chain = arena.detach_chain(body, boundary).unwrap();
+        assert_eq!(arena.slot_status(body), SlotStatus::VacantReserved);
+        assert!(arena.free_list_violations().is_empty());
+
+        drop(chain);
+        let reused = arena.alloc(Fiber::new(None));
+        assert_eq!(arena.slot_status(reused), SlotStatus::Live);
+        assert!(arena.free_list_violations().is_empty());
+
+        arena.free(ids[0]);
+        arena.free(reused);
+        assert!(arena.free_list_violations().is_empty());
+        arena.clear();
+        assert!(arena.free_list_violations().is_empty());
+    }
+
+    #[test]
+    fn test_attach_chain_refuses_a_released_slot() {
+        // The O(1) mark keeps the refusal the linear search gave: a chain
+        // that names a slot already back on the free list is not attached.
+        let mut arena = FiberArena::new();
+        let released = arena.alloc(Fiber::new(None));
+        arena.free(released);
+        let chain = DetachedFiberChain::new(
+            released,
+            released,
+            vec![DetachedFiber {
+                id: released,
+                fiber: Fiber::new(None),
+            }],
+        );
+        let error = arena.attach_chain(chain, None).unwrap_err();
+        assert!(format!("{error:?}").contains("slot was released"), "{error:?}");
     }
 
     #[test]
