@@ -26,8 +26,8 @@
     True None))
 
 
-(deff capabilities-of [value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: value (| list tuple set frozenset dict str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff capabilities-of [#^ object value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: value "JSON の値 — 能力の名の列(list・tuple・set・frozenset)が正しい形") (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "JSON の能力の名の列(list・tuple・frozenset)→ 名の順の重なりの無い tuple(比べる時に順が揃う)。旧い形(label の object)や
    名として受けられない値は BodyInvalid(送り手の誤り — ValueError の子)(what = 誤りの文の欄の名)。"
   (when (isinstance value dict)

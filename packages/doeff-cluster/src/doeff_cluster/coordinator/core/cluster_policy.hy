@@ -3,6 +3,7 @@
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
 (require doeff-hy.macros [defk deff val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
+(import collections.abc [Mapping])
 (import dataclasses [replace])
 (import functools)
 (import hashlib)
@@ -11,6 +12,7 @@
 (import json)
 (import math [ceil])
 (import re)
+(import typing [TypeGuard])
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
@@ -54,39 +56,55 @@
 
 ;; --- 宣言の読み書き(JSON ⇄ 型) ----------------------------------------------------
 
-(defn #^ (| str None) declared-runtime-env [#^ dict item]
+(defn #^ (get TypeGuard (get dict #(str object))) json-object? [#^ object value]
+  "JSON の値が object(dict)か — 真の枝で値を dict[str, object] として読める型の門。JSON の object の鍵は文字列なので、鍵は検めない。
+   宣言の行(Mapping[str, object])の欄の値は object で入るので、dict を受ける部品へ渡す前にこの門で絞る(実行の検めは isinstance 1 つ)。"
+  (isinstance value dict))
+
+
+(defn #^ (get TypeGuard (get list object)) json-array? [#^ object value]
+  "JSON の値が array(list)か — 真の枝で値を list[object] として読める型の門。"
+  (isinstance value list))
+
+
+(defn #^ (| str None) declared-runtime-env [#^ (get Mapping #(str object)) item]
   "宣言 1 行の runtimeEnv(在れば)の正規化した JSON の文字列(JobSpec.runtime-env — 比べる欄)。無ければ None。"
   (setv value (.get item "runtimeEnv"))
   (if (is value None) None (json.dumps value :sort-keys True :ensure-ascii False)))
 
-(defn #^ JobSpec spec-of-declaration [#^ (get dict #(str object)) item]
+(defn #^ JobSpec spec-of-declaration [#^ (get Mapping #(str object)) item]
   "宣言 1 行 → worker が起動する形(job_entry の service 入口と詰めた Program の置き場のキー)。宣言の job は Program の job だけ —
    run の無い行(生の entry と args を worker に直に起こさせる形)は理由つきで断る(ADR-DOE-CLUSTER-001 R1・R7 — 移行の期間は置かない)。
-   runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
+   runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。
+   行は JSON の object の読み口 Mapping[str, object](行の型の TypedDict も渡せる)— 欄の値は検めを通った所で型を絞って取り出す。"
   (setv run (.get item "run") revision (required-field item "revision") runtime (declared-runtime-env item) name (.get item "name"))
   ;; 名前と revision の空は送り手の誤り(400)— JobSpec の不変条件(name・entry・revision が要る)の素の ValueError まで運ばない(#2796:
   ;; 本文の読みの中の ValueError が調停ループの外まで抜け、coordinator の process ごと落ちた)。
   (cond
     (not (and (isinstance name str) name)) (raise (BodyInvalid (.format "Service の名前は空でない文字列: {!r}" name)))
     (is run None) (raise (BodyInvalid (raw-entry-refusal item)))
-    (not (isinstance run dict)) (raise (BodyInvalid (.format "run は JSON の object: {!r}" run)))
+    (not (json-object? run)) (raise (BodyInvalid (.format "run は JSON の object: {!r}" run)))
     (not (and (isinstance revision str) revision)) (raise (BodyInvalid (.format "revision は空でない文字列: {!r}" revision)))
     (= (.get run "kind") "service")
-      (do (setv refusal (program-row-refusal item))
+      (do (setv refusal (program-row-refusal item run))
           (when refusal (raise (BodyInvalid refusal)))
-          (setv handoff (= (.get item "update") "handoff"))
+          ;; 欄の取り出し: program-row-refusal が run.program を 64 桁の sha の文字列・run.versions と environ を文字列の鍵と値の
+          ;; object と確かめた後なので、ここは型を絞るだけ(欄が無ければ空の組)。readiness は job-from-json が readiness-refusal で確かめる。
+          (setv handoff (= (.get item "update") "handoff") readiness (.get item "readiness")
+                program (.get run "program") versions (.get run "versions") environ (.get item "environ"))
+          (setv held (if (json-object? readiness) readiness None))
           (JobSpec name JOB-ENTRY #("service" "--identity" (identity-hash run))
                    revision
                    :handoff handoff :runtime-env runtime
                    ;; 退いた process の寿命の上限(#4072 の D-2 — 宣言の readiness の retiredSeconds・handoff の job だけ)。
-                   :retired-ms (if handoff (retired-lifetime-ms (.get item "readiness")) None)
+                   :retired-ms (if handoff (retired-lifetime-ms held) None)
                    ;; 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め — 宣言の readiness の retiredLimit・handoff の job だけ)。
-                   :retired-limit (if handoff (retired-limit-of (.get item "readiness")) None)
-                   :program (get run "program")
+                   :retired-limit (if handoff (retired-limit-of held) None)
+                   :program (if (isinstance program str) program None)
                    ;; 子の入口が比べる送り手の版 = 宣言の行の run.versions(宣言の道具が Program と一緒に置いた版)。worker は Program の
                    ;; cache の file をこの版ごとに分けるので、同じ sha の Program を別の版で宣言し直すと取り直す(card ki-172e63fed4c7)。
-                   :versions (environ-pairs (.get run "versions" {}))
-                   :environ (environ-pairs (.get item "environ" {}))))
+                   :versions (if (json-object? versions) (environ-pairs versions) #())
+                   :environ (if (json-object? environ) (environ-pairs environ) #())))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
 
@@ -99,16 +117,16 @@
 (val IMAGE-FOLLOW-KEYS #("baseFrom" "base" "overlay"))
 
 
-(deff raw-entry-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: item dict)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+(deff raw-entry-refusal [#^ (get Mapping #(str object)) item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: item Mapping)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "run の無い宣言の行(worker に module と引数を直に起こさせる生の entry の job)を断る理由の文 — 書きの口の 400・保存の読み直しの
    RefusedJob の理由に同じ文を出すため。宣言の job は Program の値 1 つだけ(ADR-DOE-CLUSTER-001 R1・R7)。"
   (.format "生の entry の job(entry {!r}・args {!r}・run が無い)は受け付けない — job は Program の値 1 つで宣言する(defsystem と declare・ADR-DOE-CLUSTER-001 R1)"
            (.get item "entry") (.get item "args")))
 
 
-(deff identity-hash [#^ dict run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: run dict)] :post [(: % str) (= (len %) 16)] :tags {:context "coordinator" :role "judgment"}}
+(deff identity-hash [#^ (get Mapping #(str object)) run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: run Mapping)] :post [(: % str) (= (len %) 16)] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の同一性の指紋 = identity(関数の参照と引数の正規 JSON)と versions の sha256 の頭 16 桁。job の引数に載り、
    spec-hash(revision・environ と一緒)の材料になる。詰めた Program の中身(program の sha)は入れない — 揺れるため(改訂 1 の A)。"
   (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps {"identity" (get run "identity") "versions" (.get run "versions" {})}
@@ -117,15 +135,20 @@
        0 16))
 
 
-(deff program-row-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
-  "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
+(deff program-row-refusal [#^ (get Mapping #(str object)) item #^ (get dict #(str object)) run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: item Mapping) (: run dict)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
+  "Program の job の宣言の行 item(run = 行の run — 呼び手が JSON の object と確かめた物)が受けられない理由(受けられれば None)。
+   旧い形(run.factory・run.env・run.config・requires)・
    image の版を追う欄(baseFrom・base・overlay — Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
    versions の形・environ の名(child-environ-refusal の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
-  (setv run (get item "run")
-        old (lfor k OLD-RUN-KEYS :if (in k run) k)
+  (setv old (lfor k OLD-RUN-KEYS :if (in k run) k)
         environ (.get item "environ" {})
-        declared (lfor v (.get (or (.get item "runtimeEnv") {}) "envVars" []) (get v "name")))
+        runtime-env (.get item "runtimeEnv")
+        env-vars (if (json-object? runtime-env) (.get runtime-env "envVars") None)
+        declared (if (json-array? env-vars) (lfor v env-vars :if (json-object? v) (get v "name")) [])
+        program (.get run "program")
+        identity (.get run "identity")
+        versions (.get run "versions" {}))
   (cond
     old (.format "旧い宣言の形(run の {})は受け付けない — Program の値 1 つで宣言し直す(ADR-DOE-CLUSTER-001 R1・R3b)"
                  (.join "・" old))
@@ -133,12 +156,12 @@
     (any (gfor k IMAGE-FOLLOW-KEYS (is-not (.get item k) None)))
       (.format "Program の job は {} を持たない(image の版を追う形 — 詰めた commit と別の commit で解くことになる)"
                (.join "・" (gfor k IMAGE-FOLLOW-KEYS :if (is-not (.get item k) None) k)))
-    (not (and (isinstance (.get run "program") str) (PROGRAM-SHA.fullmatch (get run "program"))))
-      (.format "run.program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" (.get run "program"))
-    (not (and (isinstance (.get run "identity") dict) (isinstance (.get (get run "identity") "function") str)))
+    (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
+      (.format "run.program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
+    (not (and (json-object? identity) (isinstance (.get identity "function") str)))
       "run.identity(呼んだ関数の参照と引数)が無い"
-    (not (text-map? (.get run "versions" {}))) (.format "run.versions は部品の名 → 版の文字列の object: {!r}" (.get run "versions"))
-    (not (isinstance environ dict)) (.format "environ は文字列の鍵と値の object: {!r}" environ)
+    (not (text-map? versions)) (.format "run.versions は部品の名 → 版の文字列の object: {!r}" versions)
+    (not (json-object? environ)) (.format "environ は文字列の鍵と値の object: {!r}" environ)
     True (environ-refusal environ declared)))
 
 
@@ -167,7 +190,16 @@
                                    []))))
 
 
-(defn #^ ClusterJob job-from-json [#^ dict item]
+(defn #^ (| str None) optional-text-field [#^ object value #^ str field]
+  "宣言の行の欄(文字列か null)の値 → 文字列か None。他の型は送り手の誤り(BodyInvalid — 400)。pin・owner のように、宣言の型が
+   文字列か None の欄を ClusterJob へ渡す前に検める。"
+  (cond
+    (is value None) None
+    (isinstance value str) value
+    True (raise (BodyInvalid (.format "{} は文字列か null: {!r}" field value)))))
+
+
+(defn #^ ClusterJob job-from-json [#^ (get Mapping #(str object)) item]
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
   (when (not-in replicas #(0 1))
     (raise (BodyInvalid (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
@@ -181,13 +213,15 @@
   (setv env-refusal (runtime-env-refusal item))
   (when (is-not env-refusal None)
     (raise (BodyInvalid env-refusal)))
-  (ClusterJob (spec-of-declaration item)
+  (setv spec (spec-of-declaration item) run (.get item "run"))
+  (ClusterJob spec
               (request-needs item "Service の needs")
-              (.get item "pin")
-              (.get item "run")
+              (optional-text-field (.get item "pin") "pin")
+              ;; 受け付けた job は run を持つ(spec-of-declaration が object と確かめた)・readiness は None か object(readiness-refusal)。
+              (if (json-object? run) run None)
               replicas
-              readiness
-              (.get item "owner")
+              (if (json-object? readiness) readiness None)
+              (optional-text-field (.get item "owner") "owner")
               update))
 
 
@@ -314,15 +348,15 @@
   #(provides exclusive))
 
 
-(deff request-needs [#^ dict body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: body dict) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+(deff request-needs [#^ (get Mapping #(str object)) body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: body Mapping) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は BodyInvalid(理由つき・ValueError の子)—
    旧い宣言は受け付けない(operator 2026-09-27)・要る能力は必ず書く(改訂 1 の I)。"
   (needs-named (.get body "needs") (.get body "requires") what))
 
 
-(deff needs-named [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+(deff needs-named [#^ object needs #^ object requires #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: needs "JSON の値 — 能力の名の列か、欄が無い None") (: requires "JSON の値 — 旧い形の欄の値か、欄が無い None") (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "要る能力の名乗り(needs と旧い形の requires の値 — None = 欄が無い)→ 名の順の tuple。宣言の行(request-needs)と本文の型(#2445)が
    同じ規則で読む: requires は BodyInvalid・空の needs は BodyInvalid。"
   (when (is-not requires None)
@@ -1666,8 +1700,8 @@
 
 ;; --- HTTP の要求への返事(判断の部品。要求の振り分けは api_policy) -----------------------------------
 
-(deff text-map? [value]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: value (| dict list str int float bool None))] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+(deff text-map? [#^ object value]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: value "JSON の値")] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "JSON の値が「名 → 文字列」の object か — heartbeat の versions・tools(component-versions-of が名の順に並べる)を写す前に確かめるため。"
   (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
 
@@ -2183,12 +2217,12 @@
              :group-limits (! (group-limit-views state))))
 
 
-(defn #^ (| str None) runtime-env-refusal [#^ dict body]
+(defn #^ (| str None) runtime-env-refusal [#^ (get Mapping #(str object)) body]
   "宣言の行の runtimeEnv(在れば)が宣言として読めなければ理由の文(送り手の誤り — 400)。"
   (runtime-env-value-refusal (.get body "runtimeEnv")))
 
 
-(defn #^ (| str None) runtime-env-value-refusal [#^ (| dict list tuple str int float bool None) value]
+(defn #^ (| str None) runtime-env-value-refusal [#^ object value]
   "runtimeEnv の値(None = 無い)が宣言として読めなければ理由の文 — 宣言の行と本文の型(#2445)が同じ規則で読む。"
   (cond
     (is value None) None
