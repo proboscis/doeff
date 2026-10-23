@@ -40,6 +40,9 @@
 (import doeff-hy.expansion-names [alias-symbol])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
 (import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
+;; macro の引数の型 — 展開の時に macro が受けるのは、Hy の compiler(`_hy-compiler`)と、書かれた form(`hy.models.Object`)
+(import hy.compiler [HyASTCompiler])
+(import hy.models [Object])
 
 ;; Re-export handle macros so users only need one require line.
 ;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes
@@ -993,19 +996,19 @@ defk {name}: :post type annotation cannot be an empty string.
       declaration
       `(do ~declaration ~item-record)))
 
-(defmacro val [_hy-compiler #* args]
+(defmacro val [#^ HyASTCompiler _hy-compiler #^ Object #* args]
   "module の直下の一度だけの束縛 (val 名前 式)。defk・deftest・defhandler の節の本体の中では本体の macro が扱う。"
   (_module-level _hy-compiler "val" args))
 
-(defmacro var [_hy-compiler #* args]
+(defmacro var [#^ HyASTCompiler _hy-compiler #^ Object #* args]
   "module の直下の書き換えられる束縛 (var 名前 式)。module の直下の書き換えは setv(Hy では := が macro を通らない)。"
   (_module-level _hy-compiler "var" args))
 
-(defmacro lazy [_hy-compiler #* args]
+(defmacro lazy [#^ HyASTCompiler _hy-compiler #^ Object #* args]
   "module の直下の (lazy val 名前 式) — 効果を使わない式だけ。初めて使った時に 1 回だけ評価して覚える。"
   (_module-level _hy-compiler "lazy" args))
 
-(defmacro session [_hy-compiler #* args]
+(defmacro session [#^ HyASTCompiler _hy-compiler #^ Object #* args]
   "(session val …) / (session var …) は defhandler の直下にだけ書ける(ここへ来たら誤りの案内)。"
   (_module-level _hy-compiler "session" args))
 
@@ -1014,7 +1017,7 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; defeffect — an effect type (frozen dataclass on EffectBase) with its answer type and tags
 ;; ---------------------------------------------------------------------------
 
-(defmacro defeffect [_hy-compiler name #* rest]
+(defmacro defeffect [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* rest]
   "Define an effect type: a frozen dataclass inheriting EffectBase (agora-redesign #800 —
    operator 2026-09-27 \"perhaps we want defeffect as well?\").
 
@@ -1079,7 +1082,7 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; deff — defn with :pre/:post contracts
 ;; ---------------------------------------------------------------------------
 
-(defmacro deff [_hy-compiler name params #* body]
+(defmacro deff [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object params #^ Object #* body]
   "Define a function with :pre/:post contracts.
 
    (deff my-fn [x y]
@@ -1135,7 +1138,7 @@ deff {name}: {{:post [...]}} is required.
 ;; defk — kleisli with :pre/:post contracts + bang expansion
 ;; ---------------------------------------------------------------------------
 
-(defmacro defk [_hy-compiler name params #* body]
+(defmacro defk [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object params #^ Object #* body]
   "Define a kleisli function (@do decorator) with :pre/:post contracts.
    Supports ! (bang) inline bind: (! expr) is rewritten IN PLACE to
    (yield expr), preserving the written evaluation position (conditionality,
@@ -1231,7 +1234,7 @@ defk {name}: {{:post [...]}} is required.
 ;; fnk — anonymous kleisli (lambda that returns DoExpr)
 ;; ---------------------------------------------------------------------------
 
-(defmacro fnk [params #* body]
+(defmacro fnk [#^ Object params #^ Object #* body]
   "Anonymous kleisli function. Like fn but returns a DoExpr.
    Supports <- (effect bind) and ! (bang) inline bind.
    No extra imports needed — macro injects its own runtime deps.
@@ -1260,7 +1263,7 @@ defk {name}: {{:post [...]}} is required.
 ;; do! — effectful let (returns a Program)
 ;; ---------------------------------------------------------------------------
 
-(defmacro do! [#* forms]
+(defmacro do! [#^ Object #* forms]
   "Effectful let — returns a Program (generator) that sequences effect bindings.
 
    (do!
@@ -1319,7 +1322,7 @@ defk {name}: {{:post [...]}} is required.
 ;; <- — perform effect with optional type contract
 ;; ---------------------------------------------------------------------------
 
-(defmacro <- [#* args]
+(defmacro <- [#^ Object #* args]
   "Perform an effect. Bind result if name given, optional type contract.
    (<- x (Ask \"key\"))              → (setv x (yield (Ask \"key\")))
    (<- x Type (Ask \"key\"))         → bind + isinstance assertion
@@ -1337,7 +1340,7 @@ defk {name}: {{:post [...]}} is required.
 ;;
 ;; maybe / result は関数(doeff_core_effects.outcomes)— パターンも字面も要らないので macro にしない。
 
-(defmacro on-raise [program #* clauses]
+(defmacro on-raise [#^ Object program #^ Object #* clauses]
   "(on-raise 本文 パターン [:if 番] 写し先 …) — 本文の中の Raise のうち、パターン(失敗の型の形)に合う物だけを写し先の
    業務の答えにしてスコープを終える。合わない Raise は外へ渡し、成功はそのまま返す。
 
@@ -1352,7 +1355,7 @@ defk {name}: {{:post [...]}} is required.
   (import doeff-hy.outcome-forms [on-raise-form])
   (locate-synthesized (on-raise-form program clauses)))
 
-(defmacro absent-as [default program]
+(defmacro absent-as [#^ Object default #^ Object program]
   "(absent-as 既定値 本文) — 本文の中の Absent を既定値に畳む。
 
    本文が (do! …) なら、その字面の中に直に書いた <- / ! が値の代わりに出した不在は既定値で**再開**する(その束ねが既定値を
@@ -1601,7 +1604,7 @@ defk {name}: {{:post [...]}} is required.
             `(_doeff_traverse_Traverse ~step ~items :label ~label)
             `(_doeff_traverse_Traverse ~step ~items)))))
 
-(defmacro traverse [#* forms]
+(defmacro traverse [#^ Object #* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
    Alias for for/do. Prefer for/do with From in new code.
 
@@ -1617,7 +1620,7 @@ defk {name}: {{:post [...]}} is required.
   (locate-synthesized (_gen-traverse-body bindings body-expr)))
 
 
-(defmacro for/do [#* forms]
+(defmacro for/do [#^ Object #* forms]
   "Collection comprehension — From/When/bind with handler-injected strategy.
 
    From: generator bind (like SQL FROM / Haskell <- on list)
@@ -1772,7 +1775,7 @@ the effect in the enclosing do-context.
    (<- …) outside a nested function — reach open_bind by that name instead of `__import__`
    (agora-redesign #844 — about 0.2µs a bind). Other callers pass None and keep their (<- …)
    forms for their own expansion."
-  (defn walk [node ctx]
+  (defn #^ Object walk [#^ Object node #^ (| (get tuple #(str str)) None) ctx]
     (cond
       (_is-bang node)
         (do
@@ -1981,7 +1984,7 @@ the effect in the enclosing do-context.
      `(setattr ~name "__doeff_module__" __name__)
      #* (declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))]))
 
-(defmacro defp [_hy-compiler name #* body]
+(defmacro defp [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
    :post is REQUIRED. Use defpp if Program[Program[T]] is intended.
 
@@ -1992,7 +1995,7 @@ the effect in the enclosing do-context.
      result)"
   (locate-synthesized (_build-defp _hy-compiler "defp" name body)))
 
-(defmacro defpp [_hy-compiler name #* body]
+(defmacro defpp [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* body]
   "Define a Program[Program[T]] constant. Errors if return is NOT a Program.
    :post is REQUIRED.
 
@@ -2083,7 +2086,7 @@ the effect in the enclosing do-context.
       written
       (hy.models.Symbol (deftest-fixture-annotation (hy.mangle (str param-name))))))
 
-(defmacro deftest [_hy-compiler name #* args]
+(defmacro deftest [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* args]
   "Define an effectful test that expands to a pytest-compatible function.
    The test body uses <- for effect binding, same as defk/defp.
    No :pre/:post contracts — use assert for validation.
@@ -2260,7 +2263,7 @@ the effect in the enclosing do-context.
 ;; defsystem — doeff-cluster の系の宣言(ADR-DOE-CLUSTER-001・形の読みは system_form.hy)
 ;; ---------------------------------------------------------------------------
 
-(defmacro defsystem [_hy-compiler name params #* body]
+(defmacro defsystem [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object params #^ Object #* body]
   "系を宣言する: 土台を引数に受け、名前 → Program と約束の組(doeff_cluster.shared.intent.service_model.System)を返す関数を定義する。
 
    (defsystem agora-land [foundation]
@@ -2296,7 +2299,7 @@ the effect in the enclosing do-context.
       (hy.models.FComponent (lfor child expr (_replace-stage-refs child stage-map)))
     True expr))
 
-(defmacro defpipeline [pipeline-name #* body]
+(defmacro defpipeline [#^ Object pipeline-name #^ Object #* body]
   "Define a pipeline as named stages. Each stage becomes a clickable defp.
 
    (defpipeline daily-cllm
@@ -2391,7 +2394,7 @@ defpipeline {pipeline}: no stages defined.
   (setv _thread-counter (+ _thread-counter 1))
   (hy.models.Symbol (+ "_thread_" (str _thread-counter))))
 
-(defmacro <-> [#* forms]
+(defmacro <-> [#^ Object #* forms]
   "Effectful first-arg threading macro.
 
    (<-> (f :k v) (g :k2 v2) (h))
@@ -2495,11 +2498,11 @@ defpipeline {pipeline}: no stages defined.
    tool の値を読むだけの参照(`(. name 欄)`・引数に渡す `name`)は呼びでないので数えない。綴りだけを見るので、本体の
    中で同じ名を束ね直して呼ぶ形も断る — tool の名を変えれば済む。"
   (setv own (hy.mangle (str name)))
-  (defn head-is? [node names]
-    (and node
+  (defn #^ bool head-is? [#^ hy.models.Expression node #^ (get tuple #(str ...)) names]
+    (and (> (len node) 0)
          (isinstance (get node 0) hy.models.Symbol)
          (in (hy.mangle (str (get node 0))) names)))
-  (defn walk [node]
+  (defn #^ (get list hy.models.Expression) walk [#^ Object node]
     (cond
       (and (isinstance node hy.models.Expression) (head-is? node #("quote" "quasiquote")))
         []
@@ -2512,7 +2515,7 @@ defpipeline {pipeline}: no stages defined.
         []))
   (lfor form body found (walk form) found))
 
-(defmacro defmcp-tool [_hy-compiler name description param-list #* body]
+(defmacro defmcp-tool [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object description #^ Object param-list #^ Object #* body]
   "Define an MCP tool backed by a doeff @do handler.
 
    The body uses <- for effect binding, same as defk.
@@ -2601,7 +2604,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 ;; set! — mutation macro for lazy-var
 ;; ---------------------------------------------------------------------------
 
-(defmacro set! [name val]
+(defmacro set! [#^ Object name #^ Object val]
   "Mutate a lazy-var: update local binding and write back to state.
 
    (set! items (+ items [new-item]))
@@ -2838,7 +2841,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 ;; マクロ
 ;; ---------------------------------------------------------------------------
 
-(defmacro validate [#* forms]
+(defmacro validate [#^ Object #* forms]
   "独立した項目(check と Program)を全部走らせ、落ちた項目の失敗を全部集める Program を作る。
 
    defk の本体では (! (validate …)) か (<- _ (validate …)) で実行する。
@@ -2850,7 +2853,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
        (_doeff_validation.validate ~@(lfor form forms (_validation-item form)))))
 
 
-(defmacro check [#* args]
+(defmacro check [#^ Object #* args]
   "check は validate の直下と defk / do! の :pre / :post にだけ書ける。それ以外の所で展開されたら誤り。"
   (raise (SyntaxError (+ "check: validate の直下と、defk / do! の :pre / :post にだけ書けます"
                          "(defk の本体・fn・内包表記の中は不可)\n\n"
