@@ -118,7 +118,8 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
   process の中の列へ出した後に `AckAnnouncement` を返し、broker の handler は ack の無い知らせを `redeliver_seconds`(既定
   `KEPT_REDELIVERY_SECONDS` = 2 秒)の後に渡し直します。繋ぎ直しの後は、同じ reader の読んだ所の続きから読みます。broker と列の間で
   失った知らせは、届かないのではなく後から届きます。同じ出来事が 2 度届く事が在るので、受け手は追いつきと同じく重なりを扱います。
-  読んだ所と ack の無い知らせは handler(process)が持ち、起き直した process は log の末尾から始めます(その前は記録から追いつく)。
+  読んだ所と ack の無い知らせは handler(process)が開いた購読ごとに持ちます。閉じた購読の分は同じ名の次の購読が引き継ぎ、同時に
+  開いた同じ名の購読は、どれも全部の知らせを読みます。起き直した process は log の末尾から始めます(その前は記録から追いつく)。
   1 つの channel の道は、出す側も受ける側も同じ `kept` を名乗ります(混ぜた読みは包みを作る時に断ります)。
 - 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限 `patience_seconds` の `WaitWithin` 1 つ —
   時間で読み直しません)。戻れば購読を作り直し、broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば

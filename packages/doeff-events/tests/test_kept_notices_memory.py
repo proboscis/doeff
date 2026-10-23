@@ -20,6 +20,7 @@ from doeff_events.effects.notices import (
     Announce,
     Announcement,
     BrokerUnreachable,
+    CloseSubscription,
     NextAnnouncement,
     SubscribeChannels,
 )
@@ -116,6 +117,8 @@ def test_a_reader_goes_on_from_where_it_was_after_a_lost_connection() -> None:
         held: Announcement = yield NextAnnouncement(subscription)
         yield cut_broker(broker, "cut")
         lost = yield NextAnnouncement(subscription)
+        # As the source does: give the dead subscription up before subscribing again (it leaves its reader state).
+        yield CloseSubscription(subscription)
         yield restore_broker(broker)
         yield Announce(CHANNEL, "law-note", "between", kept=True)
         again = yield SubscribeChannels((CHANNEL,), kept=(CHANNEL,), reader="reader")
@@ -129,6 +132,23 @@ def test_a_reader_goes_on_from_where_it_was_after_a_lost_connection() -> None:
     assert isinstance(lost, BrokerUnreachable), lost
     assert between == Announcement(CHANNEL, "law-note", "between", receipt="2"), between
     assert repeated == held, repeated
+
+
+def test_two_open_subscriptions_of_one_reader_each_receive_every_kept_notice() -> None:
+    # A process that remakes its readers (a screen server) may hold two subscriptions of one source name at once:
+    # neither takes a notice from the other, as two Pub/Sub subscriptions would both hear it.
+    @do
+    def two_readers() -> "EffectGenerator[object]":
+        one = yield SubscribeChannels((CHANNEL,), kept=(CHANNEL,), reader="screen")
+        two = yield SubscribeChannels((CHANNEL,), kept=(CHANNEL,), reader="screen")
+        yield Announce(CHANNEL, "law-note", "both", kept=True)
+        first: Announcement = yield NextAnnouncement(one)
+        yield AckAnnouncement(one, first)
+        second: Announcement = yield NextAnnouncement(two)
+        return first, second
+
+    first, second = run_on_virtual_clock(memory_notice_handler(MemoryBroker())(two_readers()))
+    assert first == second == Announcement(CHANNEL, "law-note", "both", receipt="1"), (first, second)
 
 
 def test_a_pubsub_notice_still_reaches_a_subscription_that_also_reads_a_kept_channel() -> None:
