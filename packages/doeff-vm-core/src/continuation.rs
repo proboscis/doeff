@@ -126,9 +126,10 @@ impl DetachedFiberChain {
     pub fn collect_traceback(&self) -> Vec<StreamSourceLocation> {
         let mut frames = Vec::new();
         let mut cursor = Some(self.head);
+        let mut probes = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid) else { break };
+            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
             for frame in fiber.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
@@ -138,6 +139,7 @@ impl DetachedFiberChain {
             }
             cursor = fiber.parent;
         }
+        crate::memory_stats::record_chain_fiber_probes(probes);
 
         frames
     }
@@ -147,26 +149,31 @@ impl DetachedFiberChain {
     /// for its location (each ask reads a Python generator's code and line).
     pub fn first_source_location(&self) -> Option<StreamSourceLocation> {
         let mut cursor = Some(self.head);
-        while let Some(fid) = cursor {
-            let fiber = self.fiber(fid)?;
+        let mut probes = 0;
+        let mut found = None;
+        'walk: while let Some(fid) = cursor {
+            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
             for frame in fiber.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
-                        return Some(loc);
+                        found = Some(loc);
+                        break 'walk;
                     }
                 }
             }
             cursor = fiber.parent;
         }
-        None
+        crate::memory_stats::record_chain_fiber_probes(probes);
+        found
     }
 
     pub fn handler_callables(&self) -> Vec<CallableRef> {
         let mut handlers = Vec::new();
         let mut cursor = Some(self.head);
+        let mut probes = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid) else { break };
+            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
             if let Some(handler) = &fiber.handler {
                 if let Some(prompt) = handler.prompt_boundary() {
                     handlers.push(prompt.handler.clone());
@@ -174,6 +181,7 @@ impl DetachedFiberChain {
             }
             cursor = fiber.parent;
         }
+        crate::memory_stats::record_chain_fiber_probes(probes);
 
         handlers
     }
@@ -185,9 +193,10 @@ impl DetachedFiberChain {
     pub fn boundary_callables(&self) -> Vec<(BoundaryKind, CallableRef)> {
         let mut boundaries = Vec::new();
         let mut cursor = Some(self.head);
+        let mut probes = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid) else { break };
+            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
             if let Some(handler) = &fiber.handler {
                 if let Some(prompt) = handler.prompt_boundary() {
                     boundaries.push((BoundaryKind::Handler, prompt.handler.clone()));
@@ -198,6 +207,7 @@ impl DetachedFiberChain {
             }
             cursor = fiber.parent;
         }
+        crate::memory_stats::record_chain_fiber_probes(probes);
 
         boundaries
     }
@@ -206,9 +216,10 @@ impl DetachedFiberChain {
         let mut raw: Vec<(String, String, u32)> = Vec::new();
         let mut first_boundary: Option<FiberId> = None;
         let mut cursor = Some(self.head);
+        let mut probes = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid) else { break };
+            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
 
             if first_boundary.is_none()
                 && fiber
@@ -230,6 +241,7 @@ impl DetachedFiberChain {
 
             cursor = fiber.parent;
         }
+        crate::memory_stats::record_chain_fiber_probes(probes);
 
         raw.reverse();
 
@@ -279,24 +291,32 @@ impl DetachedFiberChain {
         frames
     }
 
-    fn fiber(&self, id: FiberId) -> Option<&Fiber> {
-        self.fibers
-            .iter()
-            .find_map(|entry| (entry.id == id).then_some(&entry.fiber))
+    /// The position of fiber `id` in `fibers`, adding the entries it looked
+    /// at to `probes` (memory_stats::chain_fiber_probes).
+    fn position(&self, id: FiberId, probes: &mut u64) -> Option<usize> {
+        let found = self.fibers.iter().position(|entry| entry.id == id);
+        *probes += found.map_or(self.fibers.len(), |index| index + 1) as u64;
+        found
+    }
+
+    fn fiber(&self, id: FiberId, probes: &mut u64) -> Option<&Fiber> {
+        self.position(id, probes).map(|index| &self.fibers[index].fiber)
     }
 
     fn fiber_mut(&mut self, id: FiberId) -> Option<&mut Fiber> {
-        self.fibers
-            .iter_mut()
-            .find_map(|entry| (entry.id == id).then_some(&mut entry.fiber))
+        let mut probes = 0;
+        let found = self.position(id, &mut probes);
+        crate::memory_stats::record_chain_fiber_probes(probes);
+        found.map(|index| &mut self.fibers[index].fiber)
     }
 
     fn handler_callables_from(&self, start: FiberId) -> Vec<CallableRef> {
         let mut handlers = Vec::new();
         let mut cursor = Some(start);
+        let mut probes = 0;
 
         while let Some(fid) = cursor {
-            let Some(fiber) = self.fiber(fid) else { break };
+            let Some(fiber) = self.fiber(fid, &mut probes) else { break };
             if let Some(handler) = &fiber.handler {
                 if let Some(prompt) = handler.prompt_boundary() {
                     handlers.push(prompt.handler.clone());
@@ -304,6 +324,7 @@ impl DetachedFiberChain {
             }
             cursor = fiber.parent;
         }
+        crate::memory_stats::record_chain_fiber_probes(probes);
 
         handlers
     }
