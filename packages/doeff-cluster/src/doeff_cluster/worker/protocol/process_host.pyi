@@ -7,10 +7,22 @@ from dataclasses import replace as replace
 from enum import StrEnum as StrEnum
 from pathlib import Path as Path
 from doeff_core_effects import slog as slog
+from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff_core_effects.file_effects import ListDirectory as ListDirectory
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects.file_effects import PathKind as PathKind
+from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects.file_effects import RemoveTree as RemoveTree
+from doeff_core_effects.file_effects import RenamePath as RenamePath
+from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import WriteText as WriteText
 from doeff_core_effects.file_effects import file_done as file_done
+from doeff_core_effects.scheduler import Spawn as Spawn
+from doeff_core_effects.scheduler import CreatePromise as CreatePromise
+from doeff_core_effects.scheduler import CompletePromise as CompletePromise
+from doeff_core_effects.scheduler import FailPromise as FailPromise
+from doeff_core_effects.scheduler import Promise as Promise
+from doeff_time import WaitWithin as WaitWithin
 from doeff_core_effects.process_effects import EnvEntry as EnvEntry
 from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
@@ -109,6 +121,9 @@ class StopMoment(StrEnum):
     REAPED = 'reaped'
 STOP_TIMING_LOG: str
 JOB_NOT_STARTED_LOG: str
+SET_ASIDE_DIR: str
+SET_ASIDE_CLEARED_LOG: str
+SET_ASIDE_FAILED_LOG: str
 
 def stop_reason_word(reason: StopReason) -> _Program[str, object]:
     ...
@@ -130,6 +145,35 @@ def tell_retirement(started: Started, notice: Retired | HandoffAbandoned) -> _Pr
     ...
 
 def job_work_dir(settings: HostSettings, name: str) -> _Program[str, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class SetAsideClearing:
+    done: Promise
+    started_ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class SetAside:
+    clearing: SetAsideClearing | None = None
+    unhanded: bool = False
+    count: int = 0
+
+def set_aside_place(settings: HostSettings) -> _Program[str, object]:
+    ...
+
+def set_aside_work_dir(settings: HostSettings, work: str, serial: int) -> _Program[bool, object]:
+    ...
+
+def clearing_set_aside(settings: HostSettings, started_ms: int, done: Promise) -> _Program[None, object]:
+    ...
+
+def clearing_running(clearing: SetAsideClearing | None) -> _Program[bool, object]:
+    ...
+
+def clearing_progressed(settings: HostSettings, aside: SetAside) -> _Program[SetAside, object]:
+    ...
+
+def work_dir_set_aside(settings: HostSettings, work: str, aside: SetAside) -> _Program[SetAside, object]:
     ...
 
 def job_log_stem(settings: HostSettings, name: str, attempt: int) -> _Program[str, object]:
