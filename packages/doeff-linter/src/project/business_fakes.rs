@@ -164,6 +164,7 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
     let mut effect_names: Vec<&str> = if params.contains(&"effect") { Vec::new() } else { vec!["effect"] };
     while body.iter().fold(false, |grew, form| aliases(source, form, &mut effect_names) || grew) {}
     /// 出し直しの式か — effect の名か別名・節が受けた引数をそのまま並べた `(頭 …)` の呼び(`:欄` の語は数えない)・`(yield 出し直し)`・
+    /// `(Perform 出し直し)`(宣言を開かずに出し直す中継の書き方 — `(<- 名 (Perform effect))`・ADR-DOE-CORE-EFFECTS-003 R4)・
     /// 別の handler の下での出し直し `(with_handlers [...] 出し直し)`(綴り `with-handlers`・`with-handler` も同じ)。
     /// 出し直しなら Some(別の handler の下か)。
     fn reissue(source: &str, form: &Form, head: &str, params: &[&str], effect_names: &[&str]) -> Option<bool> {
@@ -174,7 +175,7 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
                     let args: Vec<&str> = items[1..].iter().map(|f| text(source, f)).filter(|t| !t.starts_with(':')).collect();
                     (args == params).then_some(false)
                 }
-                Some("yield") if items.len() == 2 => reissue(source, &items[1], head, params, effect_names),
+                Some("yield" | "Perform") if items.len() == 2 => reissue(source, &items[1], head, params, effect_names),
                 Some("with_handlers" | "with-handlers" | "with_handler" | "with-handler") if items.len() == 3 => {
                     reissue(source, &items[2], head, params, effect_names).map(|_| true)
                 }
@@ -780,6 +781,9 @@ mod tests {
   (ReadRow [key] (<- row (ReadRow key)) (resume row))
   (Tick [n] (<- seen int effect) (resume seen))
   (Log [line] (setv answer (yield effect)) (resume answer))
+  (Relayed [line] (<- answer (Perform effect)) (resume answer))
+  (RelayedAs [line] (val request effect) (<- answer (Perform request)) (resume answer))
+  (RelayedChanged [line] (<- answer (Perform (Other 2))) (resume answer))
   (Bend [n] (<- seen effect) (resume (+ seen 1)))
   (Swap [n] (<- seen effect) (<- other (Swap 2)) (resume other))
   (Keyed [key n] (<- row (Keyed :key key :n n)) (resume row))
@@ -811,6 +815,9 @@ mod tests {
         assert_eq!(at("ReadRow"), passes);
         assert_eq!(at("Tick"), passes);
         assert_eq!(at("Log"), passes);
+        assert_eq!(at("Relayed"), passes); // 宣言を開かない中継 (Perform effect) は (yield effect) と同じ出し直し
+        assert_eq!(at("RelayedAs"), passes); // 別名の中継
+        assert_eq!(at("RelayedChanged"), answers); // 別の effect の Perform は出し直しではない
         assert_eq!(at("Bend"), answers); // 答えを変えて resume
         assert_eq!(at("Swap"), answers); // 引数を変えて出し直した答え(同じ効果の出し直しではない)
         assert_eq!(at("Keyed"), passes); // :欄 の語つきでも、受けた引数をそのまま並べた出し直し
