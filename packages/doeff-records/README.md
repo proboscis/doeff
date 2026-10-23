@@ -89,11 +89,17 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 ## 表の定義
 
-`TableDecl(name, key_fields, fields, indexes, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
+`TableDecl(name, key_fields, fields, indexes, descending, descending_within, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
 
 - `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書く書き手の名の tuple)の tuple。定義した欄はこれで全部
   (載っていない欄への書きは断る)。`writers` は宣言だけで、置き場の書きの判断は書き手の名では断らない(#2994)。
   定義を尋ねる口は `decl.declares(name)`・`decl.writers_of(name)`・`decl.field_names()`。
+- `descending` / `descending_within`: 速さだけの宣言(答えを変えないので repr に出さず、表の要約を変えない)。`descending` は
+  `ListRows` の `descending_by` で上から読む欄で、PostgreSQL の置き場は欄ごとに並べる式の索引を張る。`descending_within` は
+  等号の欄で絞って上から読む読み(`where` の等号 + `descending_by`)の欄の組 `DescendingWithin(equal, descending)` の tuple
+  (`equal` は `indexes` の欄・`descending` は `descending` の欄)で、PostgreSQL の置き場は組ごとに等号の欄の式を前に置いた並べる式の
+  索引を張り、絞りに合う行の 1 頁だけを辿る(組の無い読みは、絞りの欄の索引と上から読む欄の索引を組んで位置より下の当たる行を全部
+  読み、並べ替える)。
 - `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
   終端の行はもう書けない。
 - `operator_paths`: operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)。

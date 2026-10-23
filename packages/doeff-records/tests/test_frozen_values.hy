@@ -5,7 +5,7 @@
 (import dataclasses)
 (import pickle)
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_records.values [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField FieldDecl TableDecl])
+(import doeff_records.values [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField FieldDecl TableDecl DescendingWithin])
 (import doeff_records.effects [PutRow ListRows AppendEvent ReadRow RowWrite])
 (import doeff_records.admission [canonical-json])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
@@ -58,10 +58,25 @@
   ;; 宣言を足しても使い手の表の要約が変わらない。等しさには入る。
   (setv decl (LAW-SCHEMA.table "parts"))
   (assert (= decl.descending #("note")) decl)
-  (setv plain (dataclasses.replace decl :descending #()))
+  (setv plain (dataclasses.replace decl :descending #() :descending-within #()))
   (assert (= (repr plain) (repr decl)) "上から読む欄は repr に出ない")
   (assert (!= plain decl) "等しさには入る")
-  (assert (refuses? (fn [] (dataclasses.replace decl :descending #("size"))) ValueError) "宣言の外の欄"))
+  (assert (refuses? (fn [] (dataclasses.replace decl :descending #("size") :descending-within #())) ValueError) "宣言の外の欄"))
+
+
+(deftest test-a-descending-within-pair-names-an-indexed-field-and-a-descending-field-and-stays-out-of-the-repr
+  ;; 等号の欄 × 上から読む欄の組(TableDecl.descending-within)は、等号の欄が索引の欄・上から読む欄が上から読む欄の組だけ。速さだけの
+  ;; 宣言なので repr(表の要約 schema_digest の元)に出さない — 宣言を足しても使い手の表の要約が変わらない。等しさには入る。
+  (setv decl (LAW-SCHEMA.table "parts"))
+  (assert (= decl.descending-within #((DescendingWithin "color" "note"))) decl)
+  (setv plain (dataclasses.replace decl :descending-within #()))
+  (assert (= (repr plain) (repr decl)) "組は repr に出ない")
+  (assert (!= plain decl) "等しさには入る")
+  (assert (refuses? (fn [] (dataclasses.replace decl :descending-within #((DescendingWithin "state" "note")))) ValueError) "索引の欄でない等号の欄")
+  (assert (refuses? (fn [] (dataclasses.replace decl :descending-within #((DescendingWithin "color" "label")))) ValueError) "上から読む欄でない欄")
+  (assert (refuses? (fn [] (dataclasses.replace decl :descending-within #(#("color" "note")))) TypeError) "型の無い組")
+  (assert (refuses? (fn [] (dataclasses.replace decl :descending-within (* 2 decl.descending-within))) ValueError) "重なる組")
+  (assert (refuses? (fn [] (DescendingWithin "color" "no-te")) ValueError) "欄の名の形"))
 
 
 (deftest test-the-field-index-answers-like-scanning-every-field
