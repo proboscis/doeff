@@ -11,11 +11,11 @@
 (import json)
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
 (import doeff_core_effects.postgres_sql [PostgresConnections])
-(import doeff_records.pg [drop-records-tables EXPIRE-BATCH])
+(import doeff_records.pg [drop-records-tables EXPIRE-BATCH PRUNE-BATCH])
 (import doeff_records.admission [canonical-json])
 (import doeff_records.values [ListCursor])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
-                              touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
+                              touched-events-statement prune-bound-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement list-rows-statement top-rows-statement table-field-index-name
                               ordered-index-name ordered-expression ordered-within-index-name ordered-within-index table-field-expression
                               declared-indexes retired-index?])
@@ -138,7 +138,12 @@
   (<- pair-chosen (sweep-sequences prefix "pairs"))
   (<- pulse-sweep (expire-chosen-events-statement prefix "pulses" BEFORE None pulse-chosen))
   (<- pair-sweep (expire-chosen-events-statement prefix "pairs" BEFORE ":" pair-chosen))
-  (<- prune (prune-changes-statement prefix BEFORE UNBOUNDED-SEQ))
+  ;; 変更の列の刈り(pg_sql の頭の註の「変更の列の刈り」): 錠の外の境の読み(刻の索引を頭から PRUNE-BATCH 行)と、錠の中の番号の
+  ;; DELETE(主鍵を頭から PRUNE-BATCH 行 — 境は境の読みの答え)。
+  (<- prune-bound (prune-bound-statement prefix BEFORE UNBOUNDED-SEQ PRUNE-BATCH))
+  (<- bound (SqlQuery DATABASE prune-bound.text prune-bound.params))
+  (assert (isinstance bound SqlRows) (repr bound))
+  (<- prune (prune-changes-statement prefix (int (get bound.rows 0 0)) PRUNE-BATCH))
   #(#("出来事ごとの列の回収の候補の読み" pulse-probe)
     #("組で数える列の回収の候補の読み" pair-probe)
     #("期限の在る表の終端の行の読み" terminal)
@@ -148,6 +153,7 @@
     #("組で数える列の冪等キーの読み" pair-key)
     #("出来事ごとの列の回収" pulse-sweep)
     #("組で数える列の回収" pair-sweep)
+    #("変更の列の刈りの境の読み" prune-bound)
     #("変更の列の刈り" prune)))
 
 
