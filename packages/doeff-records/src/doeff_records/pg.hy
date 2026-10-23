@@ -93,7 +93,10 @@
 ;;;     欄が全部表の欄の式で照らせる(retirement-ready?)ようになった回に、索引の用意が錠の中で 1 本ずつ DROP INDEX CONCURRENTLY で外す
 ;;;     (pg_sql の頭の註の「旧い形の索引を外す」)。その前は前の文の形の読みが引くので外さず、INDEX-RETRY-SECONDS 秒の後に観測し直す。
 ;;;     宣言の索引が全部在る置き場でも、旧い形の索引が在れば記録の service は索引の用意の task を立てる(IndexBook の retired)。
-;;;     旧い形でない宣言に無い索引(手で足した物)は外さない。
+;;;   - 宣言から外した表ごとの索引(pg_sql.table-shaped-index? の名の形 — 宣言が作る fx_・ox_・ow_ で今の宣言に無い物)も、旧い形の索引と
+;;;     同じ覚え(retired)に数え、同じ回に同じ道で外す(pg_sql の頭の註の「宣言から外した表ごとの索引を外す」— 2026-10-23 に本番の置き場の
+;;;     使われない表ごとの索引 11 本・874 MB が書きのたびに更新されていた)。
+;;;     名の形が旧い形でも宣言の作る形でもない宣言に無い索引(手で足した物)は外さない。
 (require doeff-hy.macros [defeffect defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
@@ -127,7 +130,7 @@
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
-                              concurrent-index-statement drop-index-statement analyze-statement retired-index?
+                              concurrent-index-statement drop-index-statement analyze-statement retired-index? table-shaped-index?
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
@@ -155,7 +158,7 @@
 ;; ポーリングの訳: 失敗の終わり(DB の戻り・断りの訳の解け)を知らせる出来事が無いので、間を置いて撃ち直す。他の process が作っている間は
 ;; その process が錠を放した合図(NOTIFY)で起き、この秒は合図を出さずに落ちた process の錠が外れた後の観測し直しの上限にだけ使う。
 ;; 旧い形の索引を外す前に表の欄の式の索引が見積もれるようになる(autovacuum の analyze が表の標本を取る)のを待つ間も、標本が取れた事を
-;; 知らせる出来事が無いので、同じ間で観測し直す。差も外す旧い形の索引も無くなれば task は終わる。
+;; 知らせる出来事が無いので、同じ間で観測し直す。差も外す宣言に無い索引も無くなれば task は終わる。
 (val INDEX-RETRY-SECONDS 30.0)
 ;; 索引の用意の錠を放した合図の名(置き場の通知の channel — 表と列の待ち手の名 "table:" / "stream:" とは重ならない)。
 (val INDEX-TOPIC "index-build")
@@ -174,7 +177,7 @@
    ListRows と回収が読む)。fields = 使える索引(表の欄の式の索引か、その aliases の旧い形の索引)の在る欄(IndexedField の集合)/
    scoped = 表の欄の式の索引が使える形で見積もれる (表, 欄)(IndexedField の集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/
    missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)/ retired = 最後の観測で置き場に在った
-   旧い形の索引の名の並び(名の順 — 索引の用意が外す・頭の註。空 = 無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。
+   宣言に無い索引(旧い形か宣言から外した表ごとの形)の名の並び(名の順 — 索引の用意が外す・頭の註。空 = 無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。
    書きも読みも scheduler の thread の上で、driver の thread は触らない。"
 
   (defn #^ None __init__ [self]  ; defk にできない: 資源の class の初期化
@@ -200,8 +203,8 @@
           self.retired retired)
     None)
 
-  (defn #^ None dropped [self #^ str name]  ; defk にできない: 旧い形の索引を外し終えた拍に同期に書き替える資源の覚え
-    "索引の用意が外し終えた旧い形の索引 name を、外す物の並びから除くため(次の観測を待たずに、回が外し残しを数える)。"
+  (defn #^ None dropped [self #^ str name]  ; defk にできない: 宣言に無い索引を外し終えた拍に同期に書き替える資源の覚え
+    "索引の用意が外し終えた宣言に無い索引 name を、外す物の並びから除くため(次の観測を待たずに、回が外し残しを数える)。"
     (setv self.retired (tuple (gfor retired self.retired :if (!= retired name) retired)))
     None)
 
@@ -667,7 +670,8 @@
    :tags {:context "records" :role "foundation"}}
   "置き場の索引の観測の行 found で覚え book を書き替え、宣言の索引との差を返すため(表の用意の終わりと、索引の用意の回の頭と終わり)。
    表の欄の式で照らす欄(scoped)は、表の欄の式の索引が使える形で、見積もれる(索引の式の統計が在る — 表の標本を取り直す前は前の文の形で
-   照らす・pg_sql.indexes-statement)欄だけ。外す旧い形の索引(retired)は、名が旧い形で宣言に無い観測の索引(使えない形を含む — 外しかけ)。"
+   照らす・pg_sql.indexes-statement)欄だけ。外す索引(retired)は、名が旧い形か宣言の作る表ごとの形で宣言に無い観測の索引(使えない形を
+   含む — 外しかけ)。"
   (<- declared (declared-indexes prefix schema))
   (<- observed (observed-indexes found))
   (<- gaps (index-gaps declared observed))
@@ -675,7 +679,8 @@
   (var retired #())
   (for [seen observed]
     (<- former (retired-index? prefix seen.name))
-    (when (and former (not-in seen.name declared-names))
+    (<- undeclared-shape (table-shaped-index? prefix seen.name))
+    (when (and (or former undeclared-shape) (not-in seen.name declared-names))
       (:= retired (+ retired #(seen.name)))))
   (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
   (val estimable (frozenset (gfor seen observed :if (and seen.valid seen.estimable) seen.name)))
@@ -707,8 +712,8 @@
 (defk reconcile-indexes [store]
   {:pre [(: store PreparedStore)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の task(頭の註の「索引の用意」): 宣言の索引と置き場の索引の差と、外す旧い形の索引が無くなるまで、観測して埋める回
-   (index-round)を繰り返すため。差を埋めきれなかった回(置き場に届かない・engine が断った・旧い形の索引をまだ外せない)の後は
+  "索引の用意の task(頭の註の「索引の用意」): 宣言の索引と置き場の索引の差と、外す宣言に無い索引が無くなるまで、観測して埋める回
+   (index-round)を繰り返すため。差を埋めきれなかった回(置き場に届かない・engine が断った・宣言に無い索引をまだ外せない)の後は
    INDEX-RETRY-SECONDS 秒待って観測し直す。置き場の失敗も思わぬ
    例外も上げない(service を終えない — 名乗って次の回へ)。取り消しだけは通す。"
   (while True
@@ -721,7 +726,7 @@
 (defk guarded-round [store]
   {:pre [(: store PreparedStore)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の 1 回を流し、落ちた回を名乗って「埋めきれなかった」にするため(取り消しは通す)。答え = 差と外す旧い形の索引が無くなったか。"
+  "索引の用意の 1 回を流し、落ちた回を名乗って「埋めきれなかった」にするため(取り消しは通す)。答え = 差と外す宣言に無い索引が無くなったか。"
   (try
     (<- settled (index-round store))
     settled
@@ -737,11 +742,11 @@
 (defk index-round [store]
   {:pre [(: store PreparedStore)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差か外す旧い形の索引が在れば索引の用意の錠を待たずに取りに行き(index-turn)、
-   取れたら錠の中で観測し直して残った差を CONCURRENTLY で埋め、旧い形の索引を外すため。他の process が錠を持つ間は、その process が錠を
+  "索引の用意の 1 回: 置き場の索引を観測して覚えに書き、差か外す宣言に無い索引が在れば索引の用意の錠を待たずに取りに行き(index-turn)、
+   取れたら錠の中で観測し直して残った差を CONCURRENTLY で埋め、宣言に無い索引を外すため。他の process が錠を持つ間は、その process が錠を
    放した合図か INDEX-RETRY-SECONDS の早い方まで待って観測し直す(待つ間に他の process が作った索引は作らない)。錠を PostgreSQL の錠の
    待ちで待たない訳は pg_sql.index-lock-statement の註(待つ側が snapshot を持ったまま待ち、作り手の CONCURRENTLY と deadlock になる)。
-   答え = 差と外す旧い形の索引が無くなったか(作れない索引か、まだ外せない旧い形の索引が在れば False — 後で観測し直す)。"
+   答え = 差と外す宣言に無い索引が無くなったか(作れない索引か、まだ外せない宣言に無い索引が在れば False — 後で観測し直す)。"
   (<- observing (indexes-statement store.prefix))
   (var claimed False)
   (while (not claimed)
@@ -770,8 +775,8 @@
   {:pre [(: store PreparedStore) (: observing Statement)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
   "索引の用意の錠の中: 置き場の索引を観測し直し、残った差を作って、式の索引を作った表の標本を取り直し、もう 1 度観測して覚えを書き
-   替え(標本を取り直した表の欄の式の索引の欄から、読みが表の欄の式で照らす — index-observed の scoped)、旧い形の索引を外してよい
-   断面なら(retirement-ready?)外して観測し直すため。答え = 全部を作り、外す旧い形の索引も残っていないか(まだ外せない断面は False)。"
+   替え(標本を取り直した表の欄の式の索引の欄から、読みが表の欄の式で照らす — index-observed の scoped)、宣言に無い索引を外してよい
+   断面なら(retirement-ready?)外して観測し直すため。答え = 全部を作り、外す宣言に無い索引も残っていないか(まだ外せない断面は False)。"
   (<- held (query-rows store.database observing))
   (<- remaining (index-observed store.indexes store.prefix store.schema held))
   (<- built (built-gaps store remaining))
@@ -793,7 +798,7 @@
 (defk retired-dropped [store]
   {:pre [(: store PreparedStore)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "旧い形の索引(覚えの retired)を名の順に 1 本ずつ CONCURRENTLY で外し、書きのたびの索引の更新を減らすため(DROP INDEX CONCURRENTLY は
+  "宣言に無い索引(覚えの retired — 旧い形か宣言から外した表ごとの形)を名の順に 1 本ずつ CONCURRENTLY で外し、書きのたびの索引の更新を減らすため(DROP INDEX CONCURRENTLY は
    表に SHARE UPDATE EXCLUSIVE だけを取り、その索引を見た transaction の終わりを待つ — 行の読み書きを止めない)。答え = 全部を外せたか
    (外せなかった索引は名乗り、残りは次の回へ — 錠を外す道を例外で飛ばさないよう、取り消しの外の例外を上げない)。"
   (for [name store.indexes.retired]
@@ -804,12 +809,12 @@
       (except [TaskCancelledError]
         (raise))
       (except [error Exception]
-        (print (.format "記録の service: 旧い形の索引 {} を外せなかった: {}: {}" name (. (type error) __name__) error)
+        (print (.format "記録の service: 宣言に無い索引 {} を外せなかった: {}: {}" name (. (type error) __name__) error)
                :file sys.stderr :flush True)
         (return False)))
     (<- done float (GetMonotonic))
     (.dropped store.indexes name)
-    (print (.format "記録の service: 旧い形の索引 {} を {} 秒で外した(CONCURRENTLY)" name (round (- done started) 1))
+    (print (.format "記録の service: 宣言に無い索引 {} を {} 秒で外した(CONCURRENTLY)" name (round (- done started) 1))
            :file sys.stderr :flush True))
   True)
 

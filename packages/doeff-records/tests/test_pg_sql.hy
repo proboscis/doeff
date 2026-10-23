@@ -35,7 +35,8 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables])
 (import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement RowExpiry
-                              declared-indexes index-name table-index-name retired-index?])
+                              declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name
+                              ordered-index-name ordered-within-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records.main [store-pressure-pg])
 (import doeff_records.store_choice [StorePressure])
@@ -124,6 +125,39 @@
   (for [index declared]
     (<- declared-hit (retired-index? "records_" index.name))
     (assert (not declared-hit) index.name)))
+
+
+(deftest test-the-table-shaped-index-names-are-the-three-forms-the-declaration-makes
+  ;; 宣言から外した表ごとの索引を外す(pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 fx_・上から読む欄 ox_・等号の欄 ×
+  ;; 上から読む欄の組 ow_)だけ。索引の用意はこの形で今の宣言に無い物を外すので、宣言の置き場の形の索引(append_rows_・row_changes_・
+  ;; state_rows_key_c など)と手の索引と旧い形の名に当たると、宣言の外の索引を外してしまう。
+  (<- field (table-field-index-name "records_" "parts" "role"))
+  (<- ordered (ordered-index-name "records_" "parts" "role"))
+  (<- within (ordered-within-index-name "records_" "parts" "color" "role"))
+  ;; 2026-10-23 の本番の置き場の使われない表ごとの索引の名の写しも当たる。
+  (for [name [field ordered within "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"]]
+    (<- hit (table-shaped-index? "records_" name))
+    (assert hit name))
+  (<- legacy (index-name "records_" "role"))
+  (<- partial (table-index-name "records_" "parts" "role"))
+  (for [name [legacy partial "records_state_rows_pkey" "records_fx_8dca46428d00" "records_fx_8dca46428d00_2c17ecd3ddd" "records_hand_fx_8dca46428d00_2c17ecd3ddd1"
+              "records_px_8dca46428d00_2c17ecd3ddd1"]]
+    (<- missed (table-shaped-index? "records_" name))
+    (assert (not missed) name))
+  (<- elsewhere (table-shaped-index? "app_" field))
+  (assert (not elsewhere) field)
+  ;; 宣言の置き場の形の索引(fixed-index)の名には当たらず、宣言の表ごとの索引の名には全部当たる。
+  (<- declared (declared-indexes "records_" LAW-SCHEMA))
+  (val fixed (lfor index declared :if (not index.sampled) index.name))
+  (val per-table (lfor index declared :if index.sampled index.name))
+  (assert (>= (len fixed) 5) (repr fixed))
+  (assert (>= (len per-table) 5) (repr per-table))
+  (for [name fixed]
+    (<- fixed-hit (table-shaped-index? "records_" name))
+    (assert (not fixed-hit) name))
+  (for [name per-table]
+    (<- per-table-hit (table-shaped-index? "records_" name))
+    (assert per-table-hit name)))
 
 
 (deftest test-the-lock-keys-have-the-text-of-the-version-before-880

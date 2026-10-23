@@ -186,7 +186,7 @@
 (defk pg-handlers-of [schema prefix host]
   {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
   "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
-   1 度だけ撃つ)。宣言の索引が置き場に足りないか、宣言に無い旧い形の索引が置き場に残っていれば、索引の用意の task(pg.reconcile-indexes)を
+   1 度だけ撃つ)。宣言の索引が置き場に足りないか、宣言に無い索引(旧い形か宣言から外した表ごとの形)が置き場に残っていれば、索引の用意の task(pg.reconcile-indexes)を
    serving と別の daemon の task で立てる — 用意の終わりも serving の生死も索引の作りと外しに縛られない(pg.hy の頭の註の「索引の用意」)。"
   (<- store (prepare-records-store DATABASE DDL-DATABASE schema prefix))
   (when store.indexes.missing
@@ -194,7 +194,7 @@
                     (len store.indexes.missing) (.join "・" store.indexes.missing))
            :file sys.stderr :flush True))
   (when store.indexes.retired
-    (print (.format "記録の service: 宣言に無い旧い形の索引 {} 本が置き場に在る — 索引の用意の task が外す({})"
+    (print (.format "記録の service: 宣言に無い索引(旧い形か宣言から外した表ごとの形) {} 本が置き場に在る — 索引の用意の task が外す({})"
                     (len store.indexes.retired) (.join "・" store.indexes.retired))
            :file sys.stderr :flush True))
   (when (or store.indexes.missing store.indexes.retired)

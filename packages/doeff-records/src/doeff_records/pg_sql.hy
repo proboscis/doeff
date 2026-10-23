@@ -69,6 +69,13 @@
 ;;; 旧い形 23 本・約 1.9 GB — state_rows の索引の 6 割・21 本は 13 時間 idx_scan 0)。索引の用意がその時から DROP INDEX CONCURRENTLY で外す
 ;;; (名の形で見分ける — retired-index?。宣言の索引の名には当たらない)。起動の道には置かない(表に SHARE UPDATE EXCLUSIVE だけを取り、
 ;;; 行の読み書きを止めない)。
+;;; 宣言から外した表ごとの索引を外す(2026-10-23): 宣言が作る名の形の索引(表の欄の式の索引 fx_・上から読む欄の索引 ox_・等号の欄 ×
+;;; 上から読む欄の組の索引 ow_ — table-shaped-index?)のうち今の宣言に無い物も、旧い形の索引と同じ回に同じ道で外す。宣言から欄を外しても
+;;; 置き場の索引は残り、読まれないまま payload を変える書きのたびに更新されていた(本番の置き場の state_rows の索引 60 本・6,025 MB のうち
+;;; 3 日半 idx_scan 0 の表ごとの索引 11 本・874 MB — うち 2 本は既に宣言に無かった)。名の形が宣言の作る形でない索引(手で足した物・
+;;; 置き場の形の索引)は外さない。同じ置き場に答える 2 つの process の宣言が違う間(入れ替えの途中)は、索引の用意を回す process の
+;;; 宣言が勝つ(索引の用意は起動から差が無くなるまで回って終わるので、走り続ける側は外された索引を作り直さず、その欄の読みは次の起動まで
+;;; 索引なしで同じ行を答える)。
 ;;; 上から読む欄の索引: 並べる式 ordered-expression は、表の行の欄の値が JSON の整数の時だけ numeric、他(他の表の行・欄の無い行・整数で
 ;;; ない値)は NULL(外の CASE が他の表の行の payload を開かない — 表の欄の式と同じ)。宣言の無い欄の上から読む読みは、表の全部の行の
 ;;; payload を jsonb に読み直して並べ替える(2026-10-19 — 4.7 万行の表 message で 1 頁 0.6〜0.8 秒・負荷の下で読みの期限を越えた)。
@@ -157,6 +164,9 @@
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
 ;; 旧い形の索引の名の接頭辞の後ろ(index-name の ix_<欄の指紋> と table-index-name の ix_<欄の指紋>_<表の指紋> — retired-index?)。
 (val RETIRED-INDEX-PATTERN (re.compile "ix_[0-9a-f]{12}(_[0-9a-f]{12})?"))
+;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fx_・ordered-index-name の ox_・ordered-within-index-name の ow_ —
+;; どれも <形>_<欄か欄の組の指紋>_<表の指紋> — table-shaped-index?)。
+(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fx|ox|ow)_[0-9a-f]{12}_[0-9a-f]{12}"))
 (val DEFAULT-PREFIX "records_")
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
@@ -393,6 +403,16 @@
    当たらない。"
   (and (.startswith name prefix)
        (is-not (.fullmatch RETIRED-INDEX-PATTERN (cut name (len prefix) None)) None)))
+
+
+(defk table-shaped-index? [prefix name]
+  {:pre [(: prefix str) (: name str)] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の索引の名 name が、宣言が作る表ごとの索引(表の欄の式の索引・上から読む欄の索引・等号の欄 × 上から読む欄の組の索引)の名の形
+   かを判じるため(頭の註の「宣言から外した表ごとの索引を外す」— 索引の用意は、この形で今の宣言に無い索引を外す)。手で足した索引と
+   置き場の形の索引(append_rows_・row_changes_・state_rows_key_c など)の名には当たらない。"
+  (and (.startswith name prefix)
+       (is-not (.fullmatch TABLE-SHAPED-INDEX-PATTERN (cut name (len prefix) None)) None)))
 
 
 (defk table-field-index-name [prefix table field-name]
@@ -767,8 +787,9 @@
 (defk drop-index-statement [name]
   {:pre [(: name str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "索引 name(使えない形で残った宣言の索引〔CONCURRENTLY の作りかけ〕か、旧い形の索引 — retired-index?)を、表の読み書きを止めずに
-   消す文を作るため(名は宣言から作った名か、旧い形の名の形を通った観測の名 — 英小文字・数字・_ だけなので文に直に置ける)。"
+  "索引 name(使えない形で残った宣言の索引〔CONCURRENTLY の作りかけ〕か、旧い形の索引 — retired-index? — か、宣言に無い表ごとの索引 —
+   table-shaped-index?)を、表の読み書きを止めずに消す文を作るため(名は宣言から作った名か、旧い形か表ごとの名の形を通った観測の名 —
+   英小文字・数字・_ だけなので文に直に置ける)。"
   (Statement :text (.format "DROP INDEX CONCURRENTLY IF EXISTS {}" name) :params #()))
 
 
