@@ -8,8 +8,10 @@
   },
   "modules": [
     {
-      "allow": [],
-      "layer": "domain",
+      "allow": [
+        "doeff-hy-static-check"
+      ],
+      "layer": "io",
       "name": "doeff-hy-declarations",
       "paths": [
         "packages/doeff-hy/src/doeff_hy/declarations.hy"
@@ -17,7 +19,7 @@
       "public": [
         "packages/doeff-hy/src/doeff_hy/declarations.hy"
       ],
-      "responsibility": "定義の頭の :effects と :tags を定義の属性(DefinitionTags など)として残す — defsystem の展開が系の関数の役を書く時に import する(#3366)",
+      "responsibility": "定義の頭の :effects と :tags を定義の属性(DefinitionTags など)として残す — defsystem の展開が系の関数の役を書く時に import する(#3366)。defeffect の展開は、型検査の展開かを doeff-hy-static-check の static_view に問い、展開の綴りに合わせて class の本体を書く(展開の時の読みなので io)。",
       "typed": true
     }
   ]
