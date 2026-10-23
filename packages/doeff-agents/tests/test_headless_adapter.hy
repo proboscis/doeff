@@ -2446,3 +2446,19 @@
   ;; model ごとの使用量を名乗らない終わり(既定)は None と NOT-NAMED のまま運ぶ。
   (val silent (end-of (Completed :result-text "ok") "ctx-1"))
   (assert (= #(silent.model-usage silent.model-usage-gap) #(None ModelUsageGap.NOT-NAMED)) silent))
+
+
+(deftest test-headless-carries-a-call-the-cli-stopped-as-not-final
+  ;; agora card ki-7498a039250d: 層 2 が止めた呼び(stopped 偽 — CLI が止めた呼びに自分で作った、止まった訳を名乗らない終わり)として
+  ;; 閉じた呼びは final 偽で運び、API の終わりで閉じた呼びは final 真で運ぶ。失敗ケース = 閉じた呼びを全部 final 真で運ぶ層 3(本番
+  ;; aj-P8G6EKP31ZKWS761MSKBCXK5PD — 今すぐ送るで止めた呼びが最終の値として記録され、CLI の額に無い呼びが 1 本増えた)。
+  (import doeff_claude_code.lines [CallClosed Usage])
+  (import doeff_agents.handlers.headless [event-builders-of])
+  (val usage (Usage :input-tokens 2 :output-tokens 1 :cache-creation-input-tokens 2373 :cache-read-input-tokens 347445))
+  (val at (datetime.datetime 2026 10 23 10 10 8 :tzinfo datetime.timezone.utc))
+  (val finals (lfor stopped [False True]
+                    builder (event-builders-of (CallClosed :message-id "msg_1" :model "claude-opus-5-5" :parent-tool-use-id None
+                                                           :usage usage :stopped stopped)
+                                               at)
+                    (. (builder 1) final)))
+  (assert (= finals [False True]) (repr finals)))
