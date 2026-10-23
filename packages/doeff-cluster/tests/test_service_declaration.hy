@@ -303,6 +303,58 @@
     (assert (in word (str raised.value)) (str raised.value))))
 
 
+;; --- 宣言の行を JSON の object の読み口(Mapping)で読む(型の境界)-------------------------------------------------
+;; 行は dict に限らず Mapping[str, object] で受ける(行の型の TypedDict も渡せる)。欄の値は検めを通った所で型を絞って取り出す。
+
+(import types [MappingProxyType])
+(import doeff_cluster.shared.intent.protocol [BodyInvalid])
+(import doeff_cluster.coordinator.core.cluster_policy [spec-of-declaration json-object? json-array?])
+(import tests.program_rows [SAMPLE-RUN])
+
+(val PROGRAM-ROW {"name" "w" "revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "environ" {"B" "1" "A" "2"}})
+
+
+(deftest test-a-declaration-row-is-read-through-the-mapping-reader
+  ;; 読み取り専用の写し(dict でない Mapping)でも、dict と同じ spec・同じ job・同じ同一性の指紋になる。
+  (val frozen (MappingProxyType PROGRAM-ROW))
+  (assert (= (spec-of-declaration frozen) (spec-of-declaration PROGRAM-ROW)))
+  (assert (= (job-from-json frozen) (job-from-json PROGRAM-ROW)))
+  (assert (= (. (spec-of-declaration frozen) environ) #(#("A" "2") #("B" "1"))))
+  (assert (= (identity-hash (MappingProxyType SAMPLE-RUN)) (identity-hash SAMPLE-RUN))))
+
+
+(deftest test-pin-and-owner-of-a-declaration-row-are-text-or-null
+  ;; pin(置き先の worker の名)と owner(宣言の所有者)は文字列か null。他の型は送り手の誤り(BodyInvalid — 400)で、欄の名を名乗る
+  ;; (型を絞るために足した検め。前は何でも ClusterJob へ運んだ)。
+  (val row (| PROGRAM-ROW {"pin" "mac" "owner" "lab"}))
+  (assert (= (. (job-from-json row) pin) "mac"))
+  (assert (= (. (job-from-json row) owner) "lab"))
+  (val absent (job-from-json PROGRAM-ROW))
+  (assert (and (is absent.pin None) (is absent.owner None)))
+  (val nulls (job-from-json (| row {"pin" None "owner" None})))
+  (assert (and (is nulls.pin None) (is nulls.owner None)))
+  (for [#(field bad) [#("pin" 5) #("pin" ["mac"]) #("owner" 7) #("owner" {"id" "lab"})]]
+    (with [raised (pytest.raises BodyInvalid)]
+      (job-from-json (| row {field bad})))
+    (assert (in field (str raised.value)) (str raised.value))))
+
+
+(deftest test-a-run-that-is-not-a-json-object-is-refused-with-the-reason
+  (with [raised (pytest.raises BodyInvalid)]
+    (spec-of-declaration (| PROGRAM-ROW {"run" ["x"]})))
+  (assert (in "run は JSON の object" (str raised.value)) (str raised.value))
+  (with [raised (pytest.raises BodyInvalid)]
+    (spec-of-declaration (dfor #(k v) (.items PROGRAM-ROW) :if (!= k "run") k v)))
+  (assert (in "run が無い" (str raised.value)) (str raised.value)))
+
+
+(deftest test-the-json-guards-tell-an-object-from-an-array
+  (assert (and (json-object? {"a" 1}) (json-object? {})))
+  (assert (not (or (json-object? ["a"]) (json-object? None) (json-object? "a"))))
+  (assert (and (json-array? ["a"]) (json-array? [])))
+  (assert (not (or (json-array? {"a" 1}) (json-array? #("a")) (json-array? None) (json-array? "a")))))
+
+
 ;; --- 旧い形を断る入口(計画 2.8)---------------------------------------------------------------
 
 (deftest test-entry-1-the-job-constructor-refuses-the-old-arguments

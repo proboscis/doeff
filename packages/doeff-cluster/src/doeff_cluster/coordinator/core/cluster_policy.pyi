@@ -2,10 +2,12 @@
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
+from collections.abc import Mapping as Mapping
 from dataclasses import replace as replace
 from itertools import groupby as groupby
 from operator import attrgetter as attrgetter
 from math import ceil as ceil
+from typing import TypeGuard as TypeGuard
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
@@ -107,22 +109,28 @@ BOARD_MAX_BYTES: int
 TASK_MAX_LEASE_SECONDS: int
 TASK_MAX_OPEN: int
 
-def declared_runtime_env(item: dict) -> str | None:
+def hyx_json_objectXquestion_markX(value: object) -> TypeGuard[dict[str, object]]:
     ...
 
-def spec_of_declaration(item: dict[str, object]) -> JobSpec:
+def hyx_json_arrayXquestion_markX(value: object) -> TypeGuard[list[object]]:
+    ...
+
+def declared_runtime_env(item: Mapping[str, object]) -> str | None:
+    ...
+
+def spec_of_declaration(item: Mapping[str, object]) -> JobSpec:
     ...
 PROGRAM_SHA: Incomplete
 OLD_RUN_KEYS: tuple[str, ...]
 IMAGE_FOLLOW_KEYS: tuple[str, ...]
 
-def raw_entry_refusal(item: dict) -> str:
+def raw_entry_refusal(item: Mapping[str, object]) -> str:
     ...
 
-def identity_hash(run: dict) -> str:
+def identity_hash(run: Mapping[str, object]) -> str:
     ...
 
-def program_row_refusal(item: dict) -> str | None:
+def program_row_refusal(item: Mapping[str, object], run: dict[str, object]) -> str | None:
     ...
 
 def environ_refusal(environ: dict, declared: list) -> str | None:
@@ -131,7 +139,10 @@ def environ_refusal(environ: dict, declared: list) -> str | None:
 def task_environ_refusal(environ: dict | list | tuple | str | int | float | bool | None, runtime: dict | list | tuple | str | int | float | bool | None) -> str | None:
     ...
 
-def job_from_json(item: dict) -> ClusterJob:
+def optional_text_field(value: object, field: str) -> str | None:
+    ...
+
+def job_from_json(item: Mapping[str, object]) -> ClusterJob:
     ...
 
 def job_to_json(job: ClusterJob) -> dict:
@@ -170,10 +181,10 @@ def placeable(needs: tuple[str, ...], worker: WorkerInfo) -> bool:
 def named_capabilities(provides: tuple | list | None, exclusive: tuple | list | None, old_labels: bool, what: str) -> tuple:
     ...
 
-def request_needs(body: dict, what: str) -> tuple:
+def request_needs(body: Mapping[str, object], what: str) -> tuple:
     ...
 
-def needs_named(needs: dict | list | tuple | str | int | float | bool | None, requires: dict | list | tuple | str | int | float | bool | None, what: str) -> tuple:
+def needs_named(needs: object, requires: object, what: str) -> tuple:
     ...
 
 def task_body_refusal(state: ClusterState, body: TaskBody) -> str | None:
@@ -450,7 +461,7 @@ def durable_changed(before: ClusterState, after: ClusterState) -> bool:
 def board_changes(before: ClusterState, after: ClusterState) -> list:
     ...
 
-def hyx_text_mapXquestion_markX(value: dict | list | str | int | float | bool | None) -> bool:
+def hyx_text_mapXquestion_markX(value: object) -> bool:
     ...
 
 def known_exits_after(previous: WorkerInfo | None, rows: tuple, order: GenerationOrder, boot_at: int | None, declared: frozenset) -> _Program[tuple, object]:
@@ -528,10 +539,10 @@ def superseded_reply(state: ClusterState, name: str, boot: str, statuses: tuple 
 def state_view(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[StateView, object]:
     ...
 
-def runtime_env_refusal(body: dict) -> str | None:
+def runtime_env_refusal(body: Mapping[str, object]) -> str | None:
     ...
 
-def runtime_env_value_refusal(value: dict | list | tuple | str | int | float | bool | None) -> str | None:
+def runtime_env_value_refusal(value: object) -> str | None:
     ...
 
 def submit_task(state: ClusterState, body: TaskBody, now: int, owner: str | None=None) -> _Program[tuple, object]:
