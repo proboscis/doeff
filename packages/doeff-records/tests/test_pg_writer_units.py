@@ -4,12 +4,15 @@
 旧い版の書きは置き場全体の錠を排他で持つ。本番の組み立て(pg-records-handler の gated・writer-gates・計器)を本物の PostgreSQL で回し、
 別の接続で錠を持つ「止め」(pg_advisory_lock — 本番の書きと同じ hashtext の鍵)で書きを DB の中に留めて、次を確かめる:
 
-- 列の追記は、行の単位の錠の後ろで待たない(列の追記が他の表の書きの後ろで待たない形)。行の書きは同じ単位の錠を待つ。
+- 列の追記は、番号の単位の錠の後ろで待たない(列の追記が他の表の書きの後ろで待たない形)。行の書きは番号の錠を待つ。
 - 置き場全体の錠を排他で持つ書き手(入れ替えの間に重なる旧い版の書き)が居る間は、行の書きも列の追記も待つ(番号の読みの約束を旧い版と
   重なった間も保つ)。
 - 同じ単位の書きは、同じ process の中では接続を借りる前に並ぶ(writer-gates): 単位の錠を DB で待つ書きが 1 本でも、後ろの書きは接続を
   持たず、読みは答える。並びを外した組(gated = False)は後ろの書きが接続を持ったまま待ち、読みが接続を待つ(反例)。
-- 書きが待った秒と錠を持った秒を、操作・単位ごとの計器の系列 records_lock_<操作>_<単位>_<wait|hold> に積む。
+- 書きが待った秒と錠を持った秒を、操作・単位ごとの計器の系列 records_lock_<操作>_<単位>_<wait|hold> に積む(行の書きの単位は表ごと)。
+
+行の書きの錠を表の単位と番号の錠に分けた形(card ki-f2888153ff62 — 1 つの表の束の書きが他の表の行の書きを待たせない・番号の読みの約束を
+保つ)は test_pg_table_units.hy が確かめる。
 
 番号の読みの約束そのもの(番号は積んだ順に見える)は、法 law-concurrent-writes-appear-in-number-order(laws.hy)が memory と PostgreSQL の
 両方で確かめる。
@@ -34,7 +37,7 @@ from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow
 from doeff_records.laws import LAW_SCHEMA, MAKER
 from doeff_records.pg import drop_records_tables, pg_records_handler, prepare_records_store, writer_gates
-from doeff_records.pg_sql import ROWS_UNIT, stream_unit, unit_lock_key, writer_lock_key
+from doeff_records.pg_sql import ROWS_UNIT, stream_unit, table_unit, unit_lock_key, writer_lock_key
 from doeff_records.values import Appended, ExpectAbsent, ExpectAny, Row, Written
 from doeff_time import SimClock, sim_time_handler, sync_time_handler
 
@@ -158,6 +161,10 @@ def rows_key(store):
     return run(unit_lock_key(store.store.prefix, ROWS_UNIT))
 
 
+def parts_key(store):
+    return run(unit_lock_key(store.store.prefix, run(table_unit("parts"))))
+
+
 def journal_key(store):
     return run(unit_lock_key(store.store.prefix, run(stream_unit("journal"))))
 
@@ -234,7 +241,7 @@ def test_a_held_stream_unit_holds_only_its_own_appends(store):
 
 @do
 def queued_writers_leave_a_read_slot(store, hold, gated):
-    """同じ単位の書き 3 本を、止めが単位の錠を持つ間に撃ち、読みが接続を得たか(止めが持つ間に答えたか)を返すため(接続 3 本)。"""
+    """同じ表の単位の書き 3 本を、止めが単位の錠を持つ間に撃ち、読みが接続を得たか(止めが持つ間に答えたか)を返すため(接続 3 本)。"""
     tasks = ()
     for n in range(store.size):
         task = yield Spawn(store.as_writer(PutRow("parts", (f"q{n}",), FrozenMap({"label": "a"}), ExpectAny()), gated=gated))
@@ -267,7 +274,7 @@ def queued_writers_leave_a_read_slot(store, hold, gated):
 
 @pytest.mark.parametrize("gated", [True, False], ids=["gated", "counterexample-ungated"])
 def test_same_unit_writers_queue_before_taking_a_connection(store, gated):
-    hold = Hold(rows_key(store))
+    hold = Hold(parts_key(store))
     try:
         read_while_held = store.run(queued_writers_leave_a_read_slot(store, hold, gated), gated=gated)
     finally:
@@ -288,8 +295,8 @@ def test_lock_seconds_are_metered_by_operation_and_unit(store):
     snapshot = store.run(metered_writes(store))
     durations = snapshot.durations
     for name in (
-        "records_lock_put_row_rows_wait",
-        "records_lock_put_row_rows_hold",
+        "records_lock_put_row_table_parts_wait",
+        "records_lock_put_row_table_parts_hold",
         "records_lock_append_event_stream_journal_wait",
         "records_lock_append_event_stream_journal_hold",
     ):

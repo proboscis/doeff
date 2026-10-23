@@ -20,6 +20,8 @@ WRITER_LOCK_SUFFIX: str
 MIGRATE_LOCK_SUFFIX: str
 ROWS_UNIT: str
 STREAM_UNIT_PREFIX: str
+TABLE_UNIT_PREFIX: str
+WRITE_KEY_UNIT_PREFIX: str
 UNIT_LOCK_SEPARATOR: str
 INDEX_LOCK_SUFFIX: str
 STORE_RELATIONS: tuple[str, ...]
@@ -92,7 +94,19 @@ def writer_lock_key(prefix: str) -> _Program[str, object]:
 def stream_unit(stream: str) -> _Program[str, object]:
     ...
 
+def table_unit(table: str) -> _Program[str, object]:
+    ...
+
+def write_key_unit(idempotency_key: str) -> _Program[str, object]:
+    ...
+
 def unit_lock_key(prefix: str, unit: str) -> _Program[str, object]:
+    ...
+
+def numbering_lock_statement(prefix: str) -> _Program[Statement, object]:
+    ...
+
+def write_key_lock_statement(prefix: str, idempotency_key: str) -> _Program[Statement, object]:
     ...
 
 def migrate_lock_key(prefix: str) -> _Program[str, object]:

@@ -99,15 +99,29 @@
 ;;; 永久に取りこぼす)。番号の読みの約束 = 「読み手が見た最大の番号より小さい番号は、読み手が読む範囲で全部 commit 済み」(WatchChanges の
 ;;; 「ちょうど 1 回」と ReadEvents の位置の読みの土台)。約束が要るのは、同じ読みが 1 つの位置で読む範囲の中だけ:
 ;;;   - 変更の列(row_changes.seq)は全部の表で 1 つの番号の列で、WatchChanges は頼んだ表の全部を 1 つの位置で読み、ReadChangeLog は表で
-;;;     絞らずに読み、置き場の頭(store-head-statement)は全部の表の最大の番号を読む → 行の書きは全部の表で 1 つの錠の単位(行の単位 ROWS-UNIT)
+;;;     絞らずに読み、置き場の頭(store-head-statement)は全部の表の最大の番号を読む → 変更の列に積む書きは全部の表で 1 つの錠の単位
+;;;     (番号の単位 ROWS-UNIT)を、番号を取ってから commit するまで持つ
 ;;;   - 追記の列(append_rows.seq)の番号は全部の列で 1 つの bigserial だが、読みは全部が列 1 つの中(ledger = :ledger と seq > :after・
 ;;;     列の末尾・冪等キーの引き)→ 追記は列ごとの錠の単位(stream-unit)。他の列の番号が間に挟まっても、その列の読みには見えない
 ;;; 書き 1 回は、番号を取ってから commit するまで、触る単位の錠(部分の錠 — unit-lock-key)を排他で持つ。部分の錠の前に置き場全体の錠
 ;;; (writer-lock-key)を共有で持つ(SqlTransaction の locks — 共有どうしは並んで持てる)。置き場全体を変える書き(版の繰り上げ)と表の用意は
-;;; 置き場全体の錠を排他で持ち、全部の部分の書きと互いを待つ。錠の順は置き場全体(共有か排他)→ 部分の錠(単位の名の順)の 1 つで、
-;;; 束の追記(AppendEvents)が列を 2 つ以上触る時も名の順に取る(逆の順の取り合いを作らない)。
+;;; 置き場全体の錠を排他で持ち、全部の部分の書きと互いを待つ。錠の順は置き場全体(共有か排他)→ transaction の初めに取る部分の錠(単位の
+;;; 名の順)→ 冪等キーの錠 → 番号の錠の 1 つで、束の追記(AppendEvents)が列を 2 つ以上触る時も名の順に取る(逆の順の取り合いを作らない)。
+;;; 行の書きの錠を表と番号に分ける(card ki-f2888153ff62 — 前は行の書き全部が行の単位 1 つを transaction の初めから持ち、1 つの表への束の
+;;; 書き〔派生の表の作り直し〕が索引の更新の IO 待ちで錠を 39 秒持つ間、関わりの無い表の 1 行の書きが全部その後ろで待った): 行の書きは
+;;; 触る表の単位(table-unit)を transaction の初めに取り、行の表の文(錠つきの読み・消す・書く — 索引の更新で IO を待つ文)を流してから、
+;;; 2 往復目の中で番号の錠(numbering-lock-statement)を取り、変更の列に積む文と冪等キーの覚え(変更の列の最大の番号を読む)を流して
+;;; COMMIT する(pg.hy の numbered-statements)。番号の錠を持つのは番号を取ってから commit するまでだけなので、番号の読みの約束は前と同じに
+;;; 保ち、IO を待つ行の表の文は表ごとに並ぶ。同じ表の書きは表の単位で 1 本ずつ(版の読み書きと行の錠は前と同じ)。鍵つきの行の書きは 1 往復目に
+;;; 冪等キーの錠(write-key-unit)も取る — 同じ鍵を別の表へ並んで撃った書きは表の単位では並ばず、覚えの引きと確定が重なると後の覚えが黙って
+;;; 捨てられるため(前は行の単位がこれも並べた)。
+;;; 番号の錠の鍵は旧い版の行の単位の鍵と同じ字面: 旧い版の行の書きは番号の錠を transaction の初めから持つので、重なった間も番号を取って
+;;; から commit するまでの区間は旧い版と新しい版の間で重ならない(取りこぼさない)。重なった間だけ、旧い版の書き(番号の錠を持って行の錠を
+;;; 待つ)と新しい版の同じ行への書き(行の錠を持って番号の錠を待つ)が deadlock(40P01 — PostgreSQL が片方を戻す)になり得る。新しい版
+;;; どうしでは、番号の錠を持つ書き(行の書きの終わり・変更の刈り取り・冪等キーの覚えの外し)は他の錠と行の錠を待たないので輪にならない。
 ;;; 単位ごとの書きと錠の単位:
-;;;   PutRow・PutRows・行の回収(SweepExpired の行)・変更の刈り取り(PruneChanges — 変更の列と床だけを触る)= 行の単位
+;;;   PutRow・PutRows・行の回収(SweepExpired の行)= 触る表の単位(束は触る表の全部・回収は期限と終端の語の在る表の全部)+ 番号の錠
+;;;   変更の刈り取り(PruneChanges — 変更の列と床だけを触る)・冪等キーの覚えの外し = 番号の単位
 ;;;   AppendEvent・AppendEvents・出来事の回収(SweepExpired の列ごと)= 触る列の単位(束は触る列の全部)
 ;;;   版の繰り上げ(AdvanceStoreEpoch — 全部の行の版と変更の列を変える)= 置き場全体を排他
 ;;; 置き場全体の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / 接頭辞 + "records-migrate" — 区切りなし)。旧い版は
@@ -147,10 +161,13 @@
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
 (val MIGRATE-LOCK-SUFFIX "records-migrate")
-;; 置き場の部分の書きの錠の単位(頭の註): 行の単位(全部の表の行の書き — 変更の列の番号は全部の表で 1 つ)と、列の単位の名の頭(列ごと)。
+;; 置き場の部分の書きの錠の単位(頭の註): 番号の単位 rows(変更の列の番号を取ってから commit するまで — 番号は全部の表で 1 つ。名は
+;; 旧い版の行の単位と同じ字面)と、列の単位・表の単位・行の書きの冪等キーの単位の名の頭。
 ;; 部分の錠の鍵 = 置き場全体の書きの錠の鍵 + 区切り + 単位の名。
 (val ROWS-UNIT "rows")
 (val STREAM-UNIT-PREFIX "stream:")
+(val TABLE-UNIT-PREFIX "table:")
+(val WRITE-KEY-UNIT-PREFIX "write-key:")
 (val UNIT-LOCK-SEPARATOR "/")
 ;; 索引の用意の錠の鍵の接尾(session の advisory lock — 同じ置き場の索引を 2 つの process が同時に CONCURRENTLY で作らない)。
 (val INDEX-LOCK-SUFFIX "records-indexes")
@@ -272,11 +289,47 @@
   (+ STREAM-UNIT-PREFIX stream))
 
 
-(defk unit-lock-key [prefix unit]
-  {:pre [(: prefix str) (: unit str) (or (= unit ROWS-UNIT) (.startswith unit STREAM-UNIT-PREFIX))] :post [(: % str)]
+(defk table-unit [table]
+  {:pre [(: table str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "置き場の部分の書きの錠(錠の単位 unit — 行の単位 ROWS-UNIT か列の単位 stream-unit)の鍵を作るため(頭の註)。"
+  "表 table の行の書きと行の回収が排他で持つ錠の単位の名を作るため(頭の註 — 表ごとに 1 つ)。"
+  (+ TABLE-UNIT-PREFIX table))
+
+
+(defk write-key-unit [idempotency-key]
+  {:pre [(: idempotency-key str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "行の書きの冪等キー idempotency-key の判じと確定を 1 本ずつにする錠の単位の名を作るため(頭の註 — 同じ鍵を別の表へ撃った書きは表の
+   単位では並ばない)。"
+  (+ WRITE-KEY-UNIT-PREFIX idempotency-key))
+
+
+(defk unit-lock-key [prefix unit]
+  {:pre [(: prefix str) (: unit str)
+         (or (= unit ROWS-UNIT) (.startswith unit STREAM-UNIT-PREFIX) (.startswith unit TABLE-UNIT-PREFIX)
+             (.startswith unit WRITE-KEY-UNIT-PREFIX))]
+   :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の部分の書きの錠(錠の単位 unit — 番号の単位 ROWS-UNIT・列の単位 stream-unit・表の単位 table-unit・冪等キーの単位
+   write-key-unit)の鍵を作るため(頭の註)。"
   (+ prefix WRITER-LOCK-SUFFIX UNIT-LOCK-SEPARATOR unit))
+
+
+(defk numbering-lock-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "行の書きの transaction の中で、変更の列に積む前に番号の錠(ROWS-UNIT の鍵 — 旧い版の行の書きが transaction の初めに取る錠と同じ鍵)を
+   取る文を作るため(頭の註の「書きの錠」— commit までの間、変更の列の番号を取る書きを 1 本にする)。"
+  (Statement :text "SELECT pg_advisory_xact_lock(hashtext(:key))"
+             :params (! (params-of #(#("key" (! (unit-lock-key prefix ROWS-UNIT))))))))
+
+
+(defk write-key-lock-statement [prefix idempotency-key]
+  {:pre [(: prefix str) (: idempotency-key str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "鍵つきの行の書きの 1 往復目に、冪等キーの錠(write-key-unit — 覚えの引きの前)を取る文を作るため(頭の註の「書きの錠」)。"
+  (Statement :text "SELECT pg_advisory_xact_lock(hashtext(:key))"
+             :params (! (params-of #(#("key" (! (unit-lock-key prefix (! (write-key-unit idempotency-key))))))))))
 
 
 (defk migrate-lock-key [prefix]

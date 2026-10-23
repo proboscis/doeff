@@ -569,12 +569,12 @@
   {:pre [(: schema RecordsSchema) (: workers (| int None))] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
   "GET /metrics に答えるため: 計器の断面(ReadMeter)に計算の pool の負荷(ReadComputeLoad と pool の thread の数 workers — with-compute-load)を
    足し、Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。説明は固定の系列と、宣言の表 schema の一覧の読みの
-   系列と、宣言の列の書きの錠の系列の分(request_timing の lock-metric-helps)。"
+   系列と、宣言の表と列の書きの錠の系列の分(request_timing の lock-metric-helps)。"
   (<- meter MeterSnapshot (ReadMeter))
   (<- load ComputeLoad (ReadComputeLoad))
   (<- snapshot MeterSnapshot (with-compute-load meter load workers))
   (<- list-rows-helps (get FrozenMap str) (list-rows-metric-helps (tuple schema.tables)))
-  (<- lock-helps (get FrozenMap str) (lock-metric-helps (tuple schema.streams)))
+  (<- lock-helps (get FrozenMap str) (lock-metric-helps (tuple schema.tables) (tuple schema.streams)))
   (<- text str (render-prometheus snapshot (.updated (.updated METRIC-HELPS list-rows-helps) lock-helps)))
   (TextAnswer :status 200 :content-type METRICS-CONTENT-TYPE :body text))
 
