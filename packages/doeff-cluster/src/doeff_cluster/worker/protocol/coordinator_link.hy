@@ -16,6 +16,13 @@
 ;;;   * 名指しの待ち(#1933)は背景の task(Spawn の daemon)で送り続け、「変わった」と答えたら次の拍で heartbeat を送らせる。
 ;;;   * 拍の外の送り(card ki-e38dbfca7671)も背景の task(Spawn の daemon)で、前の送りから送信間隔が過ぎたら拍を待たずに送る — 拍が
 ;;;     lease より長くかかっても、送りの間が拍の長さに依らない。拍の送りと背景の送りは 1 つの送り口(sent-beat)を通り、1 本ずつ送る。
+;;;   * 生存の合図(card ki-9b58446e2ad6): 背景の task は scheduler の上で回るので、拍が scheduler を塞ぐ間(同期の処理)や、scheduler の
+;;;     外の完了(HTTP の asyncio の橋・file の thread)が返らない間は送れない(zeus 2026-10-24 05:42〜05:46 JST — 拍の 250 秒の間、
+;;;     背景の task も外の完了を待ったまま、lease が切れて task を全部 lost にされた)。scheduler の外の OS の thread(foundation/lifeline
+;;;     — 入口が起こす)が、拍の側の送りが送信間隔 × beat_policy.LIFELINE-SLACK-RATIO を過ぎても来ない時に、拍が最後に送った本文を
+;;;     そのまま送り直す。返事は読まない(宣言の読みは拍の送りだけ — coordinator は同じ本文の送り直しで lease と生存だけを延ばし、
+;;;     置いた task を次の返事でも送る)。thread の送りに届いた返事の刻は沈黙の計りに入る(拍が戻った最初の周期で、coordinator が
+;;;     生きていると見ていた間を途絶と数えて自分の job を止めない)。分ける値は入れ物 LifeCell。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
@@ -28,12 +35,12 @@
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise Wait])
 (import doeff_time [Delay GetMonotonic])
-(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of datetime-of-epoch-ms])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
-                                               WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
+                                               lifeline-due WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence
                                                     silent-ms])
@@ -51,6 +58,9 @@
 ;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・
 ;; #3871 の単位 4)。
 (val RESEND-AFTER-MS 500)
+;; 生存の合図の thread の送りの事実を、拍の宣言の読みが受け取るまで持つ本数(card ki-9b58446e2ad6)。止まりの上限 30 分の間の送り
+;; (4 秒ごと)を覆う。越えた古い送りは heartbeat の間の計り(#3850)から落ちるだけ。
+(val LIFELINE-SENT-KEPT 512)
 
 
 (defclass WatchCell []
@@ -75,6 +85,25 @@
   (defn #^ None __init__ [self]
     (setv self.in-flight None self.started-at None self.started-mono-ms None self.unread #() self.running False self.closing False
           self.failure "")))
+
+
+(defclass LifeCell []
+  "生存の合図の thread(scheduler の外の OS の thread — 頭の註・card ki-9b58446e2ad6)と coordinator への口が分ける値。
+   post = 拍が最後に送った heartbeat の #(URL 本文の JSON の bytes)(None = まだ送っていない — thread は送らない)。拍が書き、thread が
+   1 つの欄として読む(組を 1 度に入れ替える)・started-at / started-mono-ms = thread が最後に送りを始めた刻の対・last-ok-ms /
+   last-ok-mono-ms = thread の送りに最後に返事(2xx)が届いた刻の対(初め 0 — 届いていない)・progress-at / progress-mono-ms = 拍が最後に
+   宣言を読みに来た刻の対(拍の進みの印 — 越えて止まったら thread は送らない・beat_policy.LIFELINE-STALL-LIMIT-MS)・sent = thread の
+   送りの #(通しの本数 直近の送りの事実の列)(HeartbeatSent — 直近 LIFELINE-SENT-KEPT 本。書くのは thread だけ)・read-total = 拍の
+   宣言の読みが受け取り済みの通しの本数(書くのは拍だけ)。欄ごとに書き手が 1 つなので錠を持たない・
+   failure = thread の最後の送りの失敗の理由(\"\" = 届いた)・told = 拍の口が最後に log に出した失敗の理由。
+   刻の対は書き手が 1 つの setv で書き、読み手は錠を取らずに読む: 別の thread の書きの間に読むと、前後 2 回の送りの刻が混ざった対に
+   なりうるが、沈黙の計り(heartbeat_rules.silent-ms — 2 つの差の長い方)は古い方の刻で計るので、沈黙を長く見る側(早く送る・早く
+   止める側)にしか外れない。"
+  (defn #^ None __init__ [self]
+    (setv self.post None self.started-at None self.started-mono-ms None
+          self.last-ok-ms 0 self.last-ok-mono-ms 0 self.progress-at None self.progress-mono-ms None self.sent #(0 #()) self.read-total 0
+          self.failure ""
+          self.told "")))
 
 
 (defclass LinkState []
@@ -125,6 +154,9 @@
           self.last-desired None self.sent-statuses None self.beat-interval-ms (beat-interval-ms None {})
           ;; 拍の外の送り(card ki-e38dbfca7671): beat-beside-enabled = 背景の task で送るか・beating = 送り口と背景の task が分ける値。
           self.beat-beside-enabled beat-beside self.beating (BeatCell)
+          ;; 生存の合図の thread と分ける値(card ki-9b58446e2ad6 — thread を起こすのは入口。起こさない組では書かれるだけで、読みは
+          ;; 前と同じ答えになる)。
+          self.life (LifeCell)
           ;; 止まり始め(#2819): stopping = 拍の Program が渡した止まり・sent-stopping = 前に届けた heartbeat に載せた止まり(違えば
           ;; 送る間隔を待たずに送る — 状態の報告の違いと同じ扱い)。
           self.stopping False self.sent-stopping False
@@ -144,8 +176,19 @@
   "最後に届いた返事からの沈黙の長さ(ms)を、今の壁の時計の読み now-ms と、ここで読む単調な時計とで計るため(計りは
    heartbeat_rules.silent-ms の 1 か所 — 途絶の柵・heartbeat を送る間隔・起きる期限がどれもこの値を使う)。"
   (<- mono float (GetMonotonic))
-  (<- silent int (silent-ms now-ms (monotonic-ms-of mono) state.last-ok-ms state.last-ok-mono-ms))
+  (<- silent int (heard-silence state now-ms (monotonic-ms-of mono)))
   silent)
+
+
+(defk heard-silence [state now-ms now-mono-ms]
+  {:pre [(: state LinkState) (: now-ms int) (: now-mono-ms int)] :post [(: % int)]}
+  "最後に届いた返事からの沈黙の長さ(ms)を、拍の側の送り(拍・拍の外の背景の task)の返事と、生存の合図の thread の送りの返事の新しい方
+   から計るため(card ki-9b58446e2ad6 — thread の送りが届いている間は coordinator が worker を生きていると見ているので、拍が戻った
+   最初の周期で途絶と数えて自分の job を止めない)。今の刻の対は呼び手が読む(2 つの時計の読みを足さない)。"
+  (val life state.life)
+  (<- by-tick int (silent-ms now-ms now-mono-ms state.last-ok-ms state.last-ok-mono-ms))
+  (<- by-lifeline int (silent-ms now-ms now-mono-ms life.last-ok-ms life.last-ok-mono-ms))
+  (min by-tick by-lifeline))
 
 
 (defk told-once [state outcome line]
@@ -404,6 +447,8 @@
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
                    (env-heartbeat-part state.env-report (current-platform)))))
+  ;; 生存の合図の thread が送り直す宛先と本文(card ki-9b58446e2ad6 — 組を 1 つの欄で入れ替え、thread が混ざった組を読まない)。
+  (setv state.life.post #((+ endpoint "/heartbeat") (.encode (json.dumps body :ensure-ascii False) "utf-8")))
   (<- reply RoutedReply (routed-request cell.route "POST" "/heartbeat" options None body))
   (setv cell.route reply.route)
   (<- now-ms int (now-epoch-ms))
@@ -463,7 +508,7 @@
       (<- (told-once state (repr error) (+ "worker: coordinator に名乗れない: " (repr error))))
       ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
       (setv state.last-desired None)
-      (<- silent int (silent-ms now-ms (monotonic-ms-of now-mono) state.last-ok-ms state.last-ok-mono-ms))
+      (<- silent int (heard-silence state now-ms (monotonic-ms-of now-mono)))
       (:= desired (desired-when-unreachable silent state.fence-ms state.keep-fence-ms
                                             (+ state.last-jobs state.last-tasks) state.last-warm (repr error)))))
   desired)
@@ -536,6 +581,85 @@
   None)
 
 
+(defk lifeline-turn [state]
+  {:pre [(: state LinkState)] :post [(: % (| tuple None))]}
+  "生存の合図の thread の 1 周で、heartbeat を送るかを決めるため(card ki-9b58446e2ad6 — thread の VM で走る。scheduler の効果は出さず、
+   時計の読みだけ)。拍の側の送り(拍・拍の外の背景の task)と thread の送りの新しい方の始めから送信間隔 × LIFELINE-SLACK-RATIO が
+   過ぎ、拍の進みが止まりの上限の内なら、送りの事実(HeartbeatSent)を溜め、送りの始めの刻を書いて、拍が最後に送った
+   #(URL 本文の bytes) を返す。送らない周は None。拍がまだ 1 度も送っていない・宣言をまだ読みに来ていない間は送らない。"
+  (val life state.life)
+  (val beating state.beating)
+  (val post life.post)
+  (<- now-ms int (now-epoch-ms))
+  (<- mono float (GetMonotonic))
+  (val now-mono-ms (monotonic-ms-of mono))
+  (if (or (is post None) (is life.progress-at None))
+      None
+      (do
+        ;; 前の送りの始めからの長さ: 拍の側と thread の新しい方(まだ送っていない側は数えない)。
+        (var since-sent None)
+        (when (is-not beating.started-at None)
+          (<- by-tick int (silent-ms now-ms now-mono-ms beating.started-at beating.started-mono-ms))
+          (:= since-sent by-tick))
+        (when (is-not life.started-at None)
+          (<- by-lifeline int (silent-ms now-ms now-mono-ms life.started-at life.started-mono-ms))
+          (:= since-sent (if (is since-sent None) by-lifeline (min since-sent by-lifeline))))
+        (<- stalled int (silent-ms now-ms now-mono-ms life.progress-at life.progress-mono-ms))
+        (if (lifeline-due True (if (is since-sent None) stalled since-sent) state.beat-interval-ms stalled)
+            (do (setv life.started-at now-ms life.started-mono-ms now-mono-ms)
+                ;; 組を 1 度だけ読み、1 度に入れ替える(書くのはこの thread だけ)。
+                (val before life.sent)
+                (val sent (HeartbeatSent :at now-ms :mono-ms now-mono-ms :worker state.name :lease-ms state.lease-ms))
+                (setv life.sent #((+ (get before 0) 1) (cut (+ (get before 1) #(sent)) (- LIFELINE-SENT-KEPT) None)))
+                post)
+            None))))
+
+
+(defk lifeline-settled [state status detail]
+  {:pre [(: state LinkState) (: status (| int None)) (: detail str)] :post [(: % None)]}
+  "生存の合図の thread の送り 1 本の答えを、拍の側が読む値に書くため(card ki-9b58446e2ad6 — thread の VM で走る)。status = 返事の
+   HTTP の status(None = 届かなかった)・detail = 届かない・断られた理由。2xx なら返事の刻の対を書き(沈黙の計りに入る —
+   heard-silence)、失敗の理由を空にする。それ以外は理由を書く(拍の口が変わり目を 1 行で出す — lifeline-told)。返事の本文は読まない
+   (宣言の読みは拍の送りだけ — 頭の註)。"
+  (val life state.life)
+  (if (and (is-not status None) (<= 200 status 299))
+      (do (<- now-ms int (now-epoch-ms))
+          (<- mono float (GetMonotonic))
+          (setv life.last-ok-ms now-ms life.last-ok-mono-ms (monotonic-ms-of mono))
+          (setv life.failure ""))
+      (setv life.failure (if (is status None) detail (.format "{}: {}" status detail))))
+  None)
+
+
+(defk progress-noted [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "拍が宣言を読みに来た刻の対を、拍の進みの印として生存の合図の thread に見せるため(card ki-9b58446e2ad6 — 印が
+   LIFELINE-STALL-LIMIT-MS を越えて古いと、thread は固まったループの代わりに送り続けない)。"
+  (<- now-ms int (now-epoch-ms))
+  (<- mono float (GetMonotonic))
+  (setv state.life.progress-at now-ms state.life.progress-mono-ms (monotonic-ms-of mono))
+  None)
+
+
+(defk lifeline-told [state sends]
+  {:pre [(: state LinkState) (: sends tuple)] :post [(: % None)]}
+  "生存の合図の thread の働きを拍の log に出すため(card ki-9b58446e2ad6): 前の読みの後に thread が送った本数(拍の側が送れなかった
+   間の代わり — sends = 受け取った thread の送りの事実)を 1 行、thread の送りの失敗の理由の変わり目(失敗した・理由が変わった・
+   戻った)を 1 行。thread は scheduler の外で走り、log の効果を出せないので、拍の口が代わりに出す。"
+  (val life state.life)
+  (when sends
+    (<- (slog "worker: 生存の合図の thread が拍の代わりに heartbeat を送りました" :level "info" :count (len sends)
+              :first (.isoformat (datetime-of-epoch-ms (. (get sends 0) at)))
+              :last (.isoformat (datetime-of-epoch-ms (. (get sends -1) at))))))
+  (val failure life.failure)
+  (when (!= failure life.told)
+    (setv life.told failure)
+    (<- (slog (if failure
+                  (+ "worker: 生存の合図の thread が heartbeat を届けられない: " failure)
+                  "worker: 生存の合図の thread の heartbeat が届くようになりました"))))
+  None)
+
+
 (defk polled [state cell options watch-cell]
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions) (: watch-cell RouteCell)]
    :post [(: % (| DesiredJobs DesiredUnreadable))]}
@@ -554,6 +678,10 @@
                                        (+ state.last-jobs state.last-tasks) state.last-warm))
   (when (is-not silenced None)
     (setv state.last-desired None)
+    ;; 自分で止める判断を 1 行で名指す(card ki-9b58446e2ad6 — 止めた job の行の訳 cut-off だけでは、拍の止まりの後の自己停止か
+    ;; 届かない途絶かを読み分けられない)。
+    (<- (slog "worker: coordinator からの返事が途絶の柵を越えて無い — 印の無い job と task を止めます" :level "warning"
+              :silent-ms silent :fence-ms state.fence-ms))
     (return silenced))
   (<- watching bool (watching? state))
   (var desired state.last-desired)
@@ -598,12 +726,23 @@
     (when state.handles-envs
       (setv state.env-report env-report))
     (setv state.stopping stopping)
+    ;; 拍の進みの印(生存の合図の thread が、固まったループの代わりに送り続けない — card ki-9b58446e2ad6)。
+    (<- (progress-noted state))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell desired bell))
     ;; 前の読みの後からの送りの事実を渡して空にする(拍の外の送りも — 拍の Program が送りの間を測る・#3850・card ki-e38dbfca7671)。
-    (val sends state.beating.unread)
+    ;; 生存の合図の thread の送りも足し、送った順に並べる(card ki-9b58446e2ad6)。
+    ;; 組を 1 度だけ読む(thread が間に入れ替えても、読んだ組の中は揃っている)。
+    (val sent-so-far state.life.sent)
+    (val total (get sent-so-far 0))
+    (val recent (get sent-so-far 1))
+    (val fresh (min (- total state.life.read-total) (len recent)))
+    (val by-lifeline (if (> fresh 0) (tuple (cut recent (- fresh) None)) #()))
+    (setv state.life.read-total total)
+    (<- (lifeline-told state by-lifeline))
+    (val sends (tuple (sorted (+ state.beating.unread by-lifeline) :key (fn [sent] sent.mono-ms))))
     (setv state.beating.unread #())
     (resume (replace belled :sends sends)))
   (WorkerWakes [began began-mono-ms]
@@ -615,7 +754,7 @@
     ;; 同じで、tick の途中や前の周の間に壁の時計が戻っていても、期限が戻った分だけ先へ延びない(card ki-069f4a5c07f7)。
     (<- now int (now-epoch-ms))
     (<- mono float (GetMonotonic))
-    (<- silent int (silent-ms now (monotonic-ms-of mono) state.last-ok-ms state.last-ok-mono-ms))
+    (<- silent int (heard-silence state now (monotonic-ms-of mono)))
     (<- ticking int (silent-ms now (monotonic-ms-of mono) began began-mono-ms))
     (val last-ok (- now silent))
     (val tick-began (- now ticking))

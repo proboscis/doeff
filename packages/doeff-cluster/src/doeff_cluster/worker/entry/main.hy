@@ -32,7 +32,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
-(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
+(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link lifeline-turn lifeline-settled])
+(import doeff_cluster.worker.core.beat_policy [LIFELINE-PERIOD-SECONDS])
+(import doeff_cluster.foundation.lifeline [LifelineSettings start-lifeline event-pause])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
@@ -368,13 +370,24 @@
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
                                            :job-procs job-procs)))
+  ;; 生存の合図の thread(card ki-9b58446e2ad6 — scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
+  ;; 拍が最後に送った本文を送り直す(判断は coordinator への口の lifeline-turn)。返事の上限は生存の窓の半分(遅い返事を待つ間に次の
+  ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。
+  (setv stop-lifeline (run (start-lifeline (LifelineSettings :turn (fn [] (lifeline-turn link))
+                                                             :settle (fn [status detail] (lifeline-settled link status detail))
+                                                             :handlers [(sync-time-handler)] :period-seconds LIFELINE-PERIOD-SECONDS
+                                                             :reply-seconds (/ (. (ClusterTiming) lease-ms) 2000.0)
+                                                             :connect-seconds CONNECT-SECONDS :headers {"X-Actor" args.name}
+                                                             :pause event-pause :transport None))))
   ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
   (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
     (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell)))
     (finally
       ;; 名指しの待ちと拍の外の送りと memory の見張りの背景の task を止める(worker の終わり — 次の待ちも heartbeat も読みも送らない)。
-      (setv link.watch.closing True link.beating.closing True memory-cell.closing True)))
+      ;; 生存の合図の thread も止める(全 job を回収した worker の lease を延ばさない)。
+      (setv link.watch.closing True link.beating.closing True memory-cell.closing True)
+      (stop-lifeline)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 
 
