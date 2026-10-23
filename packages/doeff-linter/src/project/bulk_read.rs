@@ -65,6 +65,14 @@ struct Began {
     reads: Option<u64>,
 }
 
+/// 仕事 1 つが済んだ時の見分け。
+struct Ended {
+    /// その仕事が遅かった(disk を読んだ・時間で見分ける時は `slow_item` 以上かかった)。
+    slow: bool,
+    /// thread を増やす時の最初の 1 回。
+    widen: bool,
+}
+
 /// 仕事ごとの印から、待ちが disk の待ちかを見分ける(全部の thread で数える)。
 struct Widen {
     slow_item: Duration,
@@ -100,11 +108,14 @@ impl Widen {
         Began { at: Instant::now(), reads: if self.by_disk { thread_reads() } else { None } }
     }
 
-    /// `began` で始めた仕事が済んだ。増やす時の最初の 1 回だけ true。
-    fn end(&self, began: Began) -> bool {
+    /// `began` で始めた仕事が済んだ。その仕事が遅かったか(disk を読んだか・`slow_item` 以上かかったか)と、増やす時の最初の 1 回か。
+    fn end(&self, began: Began) -> Ended {
         match began.reads.zip(thread_reads()) {
-            Some((before, after)) if self.by_disk => self.observe_reading(after > before),
-            _ => self.observe(began.at.elapsed()),
+            Some((before, after)) if self.by_disk => Ended { slow: after > before, widen: self.observe_reading(after > before) },
+            _ => {
+                let took = began.at.elapsed();
+                Ended { slow: took >= self.slow_item, widen: self.observe(took) }
+            }
         }
     }
 
@@ -216,7 +227,7 @@ impl<'a, X: Sync, R: Send> Spread<'a, X, R> {
             let began = self.widen.begin();
             let result = (self.run)(item);
             *self.slots[index].lock().expect("fan_out の結果の置き場") = Some(result);
-            if self.widen.end(began) {
+            if self.widen.end(began).widen {
                 self.add_readers(scope, self.readers - self.first);
             }
         }
@@ -253,7 +264,7 @@ where
 {
     let readers = readers.max(1);
     let crew = Crew {
-        queue: Queue { state: Mutex::new(Pending { tasks: seed, active: 0 }), wake: Condvar::new() },
+        queue: Queue { state: Mutex::new(Pending { tasks: seed, active: 0 }), wake: Condvar::new(), waiting: AtomicUsize::new(0), locks: AtomicUsize::new(0) },
         step: &step,
         widen,
         first: readers.min(WARM_READERS),
@@ -264,7 +275,15 @@ where
         crew.add_readers(scope, crew.first - 1);
         crew.work(scope);
     });
+    #[cfg(test)]
+    LAST_PIPELINE_LOCKS.with(|last| last.set(crew.queue.locks.load(Ordering::Relaxed)));
     crew.results.into_inner().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// この thread が最後に回した `pipeline` の、共有の列の lock を取った回数(検のため)。
+    static LAST_PIPELINE_LOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `pipeline` の仕事の置き場 — thread が仕事を引き、遅い待ちが続いたら引く thread を増やす。結果は thread が終わる時に `results` へ足す。
@@ -289,66 +308,89 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
         }
     }
 
-    /// 仕事が尽きる(待っている仕事も、仕事の中にいる thread も無くなる)まで引き続ける。
+    /// 仕事が尽きる(待っている仕事も、仕事を持つ thread も無くなる)まで引き続ける。
+    ///
+    /// 続きの仕事は手元(`mine`)に積んで自分で済ませ、共有の列の lock は手元が空になった時と、待っている thread へ仕事を渡す時だけ取る。仕事 1 つごとに
+    /// 共有の列を通すと、page cache から読める間の小さな仕事(stat 1 回)で 128 本の thread が 1 つの lock を取り合い、新しい作業木の最初の 1 回の CPU が
+    /// sys だけで 10〜34 秒になった(card ki-40c8ca380713)。遅い仕事(disk の待ち)の後に待っている thread が在れば手元の半分を共有の列へ渡すので、
+    /// 冷えた作業木の待ちは今までどおり重なる。
     fn work<'scope, 'env>(&'env self, scope: &'scope Scope<'scope, 'env>) {
-        let mut mine = Vec::new();
+        let mut results = Vec::new();
         loop {
-            let task = {
-                let mut state = locked(&self.queue);
-                loop {
-                    if let Some(task) = state.tasks.pop() {
-                        state.active += 1;
-                        break Some(task);
-                    }
-                    if state.active == 0 {
-                        break None;
-                    }
-                    state = self.queue.wake.wait(state).unwrap_or_else(PoisonError::into_inner);
-                }
-            };
-            let Some(task) = task else { break };
-            let in_step = InStep { queue: &self.queue };
-            let began = self.widen.begin();
-            let (more, result) = (self.step)(task);
-            mine.extend(result);
-            if !more.is_empty() {
-                // 続きの仕事を積んでから `active` を減らす(順が逆だと、仕事が残っているのに全部済んだと見える瞬間ができる)。
-                let added = more.len();
-                locked(&self.queue).tasks.extend(more);
-                for _ in 0..added {
+            let Some((mut mine, holding)) = self.take() else { break };
+            while let Some(task) = mine.pop() {
+                let began = self.widen.begin();
+                let (more, result) = (self.step)(task);
+                results.extend(result);
+                mine.extend(more);
+                let ended = self.widen.end(began);
+                // 遅い仕事(disk の待ち)の後だけ、待っている thread へ、後で拾う側(列の頭の方)の半分を渡す — 速い仕事は手元で済ませる方が CPU も lock も
+                // 少ない。手元に仕事が在る間は `active` を持ったままなので、渡す前に済んだと見えない。
+                if ended.slow && mine.len() > 1 && self.queue.waiting.load(Ordering::Relaxed) > 0 {
+                    let shared: Vec<T> = mine.drain(..mine.len() / 2).collect();
+                    locked(&self.queue).tasks.extend(shared);
                     self.queue.wake.notify_one();
                 }
+                if ended.widen {
+                    self.add_readers(scope, self.readers - self.first);
+                }
             }
-            drop(in_step);
-            if self.widen.end(began) {
-                self.add_readers(scope, self.readers - self.first);
-            }
+            drop(holding);
         }
-        self.results.lock().unwrap_or_else(PoisonError::into_inner).extend(mine);
+        self.results.lock().unwrap_or_else(PoisonError::into_inner).extend(results);
+    }
+
+    /// 共有の列から、次に拾う側の半分(少なくとも 1 つ)を手元へ引き、`active` を数える印と一緒に返す(並ぶ thread が残りを分ける — lock の回数は
+    /// 仕事の数でなく thread の数と分けた回数で決まる)。列が空でも仕事を持つ thread が在れば、渡されるか全部済むまで待つ。全部済んだら None。
+    fn take(&self) -> Option<(Vec<T>, Holding<'_, T>)> {
+        let mut state = locked(&self.queue);
+        loop {
+            if !state.tasks.is_empty() {
+                let keep = state.tasks.len() - (state.tasks.len() / 2).max(1);
+                let mine = state.tasks.split_off(keep);
+                state.active += 1;
+                // 残りが在れば、待っている thread を 1 本だけ起こす(起きた thread が残りの半分を引いて次を起こす — 全部を一度に起こして lock を取り合わない)。
+                if !state.tasks.is_empty() {
+                    self.queue.wake.notify_one();
+                }
+                return Some((mine, Holding { queue: &self.queue }));
+            }
+            if state.active == 0 {
+                return None;
+            }
+            self.queue.waiting.fetch_add(1, Ordering::Relaxed);
+            state = self.queue.wake.wait(state).unwrap_or_else(PoisonError::into_inner);
+            self.queue.waiting.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
 struct Queue<T> {
     state: Mutex<Pending<T>>,
     wake: Condvar,
+    /// 共有の列が空で待っている thread の数(仕事を持つ thread が手元の仕事を渡すかを、lock を取らずに決める)。
+    waiting: AtomicUsize,
+    /// 共有の列の lock を取った回数(検が、仕事の数より大きく少ない事を確かめる)。
+    locks: AtomicUsize,
 }
 
 struct Pending<T> {
     tasks: Vec<T>,
-    /// 今 `step` の中にいる thread の数。0 で `tasks` も空なら、仕事は全部済んだ。
+    /// 今 仕事を持つ(共有の列から引いて、手元の仕事を済ませている)thread の数。0 で `tasks` も空なら、仕事は全部済んだ。
     active: usize,
 }
 
 fn locked<T>(queue: &Queue<T>) -> MutexGuard<'_, Pending<T>> {
+    queue.locks.fetch_add(1, Ordering::Relaxed);
     queue.state.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// 仕事 1 つの間 `active` を数える印。終わり(`step` が panic した時も)で減らし、全部済んだなら待っている thread を起こす。
-struct InStep<'a, T> {
+/// thread が仕事を持つ間 `active` を数える印。手元の仕事が尽きた時(`step` が panic した時も)に減らし、全部済んだなら待っている thread を起こす。
+struct Holding<'a, T> {
     queue: &'a Queue<T>,
 }
 
-impl<T> Drop for InStep<'_, T> {
+impl<T> Drop for Holding<'_, T> {
     fn drop(&mut self) {
         let mut state = locked(self.queue);
         state.active -= 1;
@@ -462,6 +504,25 @@ mod tests {
         assert_eq!(ids.len(), 1111, "同じ仕事を 2 度済ませた");
         assert!(peak.load(Ordering::SeqCst) >= 8, "待ちが重なっていない(同時に進んだ最大 {} 件)", peak.load(Ordering::SeqCst));
         assert!(peak.load(Ordering::SeqCst) <= WIDE_READERS);
+    }
+
+    /// 速い仕事の木(1111 件)は、共有の列の lock を仕事の数より大きく少ない回数で済ませる。仕事ごとに lock を取り合う形は、新しい作業木の最初の 1 回で
+    /// 128 本の thread が stat 1 回ほどの仕事を回し、sys の CPU を 10〜34 秒使った(card ki-40c8ca380713)。遅い待ちで thread が増えた時も同じ。
+    #[test]
+    fn a_pipeline_takes_the_shared_queue_lock_far_fewer_times_than_there_are_tasks() {
+        let tree = |widen: Widen, hold: Duration| {
+            let results = pipeline_tuned(WIDE_READERS, widen, vec![(0usize, 0usize)], |(depth, id)| {
+                std::thread::sleep(hold);
+                let more = if depth < 3 { (0..10).map(|child| (depth + 1, id * 10 + child)).collect() } else { Vec::new() };
+                (more, Some((depth, id)))
+            });
+            assert_eq!(results.len(), 1111, "全部の仕事が 1 度ずつ済む");
+            LAST_PIPELINE_LOCKS.with(std::cell::Cell::get)
+        };
+        let quick = tree(Widen::new(Duration::from_secs(3600), SLOW_IN_ROW), Duration::ZERO);
+        assert!(quick < 1111 / 4, "速い仕事 1111 件で共有の列の lock を {quick} 回取った");
+        let slow = tree(Widen::new(Duration::ZERO, SLOW_IN_ROW), Duration::from_micros(300));
+        assert!(slow < 1111 * 2, "thread が増えた遅い仕事 1111 件で共有の列の lock を {slow} 回取った");
     }
 
     #[test]
