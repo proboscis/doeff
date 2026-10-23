@@ -297,20 +297,28 @@
 
 (defk handed-off-after [ran-ms]
   {:pre [(: ran-ms int)] :post [(: % HandedOff)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "10 回続けて落ちた後に起こした process を ran-ms 動かしてから入れ替えで名から外し、新を起こした所までを拍の判断で進めるため。"
-  (val crashed {"a" (JobRecord "a" :attempts 10 :last-exit-ms 0 :last-outcome Outcome.EXITED :last-exit-code 1 :failures 10
-                               :unexpected-exits 10)})
+  "11 回続けて落ちた(記憶の failures 11)後に起こした process を ran-ms 動かしてから入れ替えで名から外し、新を起こした所までを拍の判断で
+   進めるため。"
+  (val crashed {"a" (JobRecord "a" :attempts 11 :last-exit-ms 0 :last-outcome Outcome.EXITED :last-exit-code 1 :failures 11
+                               :unexpected-exits 11)})
   (val started (! (records-after 100000 crashed (! (plan 100000 #(H1) (! (world)) crashed POLICY)) POLICY)))
   (val retiring-at (+ 100000 ran-ms))
-  (val retire (! (plan retiring-at #(H2) (! (world (! (proc H1 10 "11-old")) :codes #(READY1 READY2))) started POLICY)))
-  (assert (= retire #((RetireJob "a" 10 (retired-name "a" "11-old")))) retire)
+  (val retire (! (plan retiring-at #(H2) (! (world (! (proc H1 10 "12-old")) :codes #(READY1 READY2))) started POLICY)))
+  (assert (= retire #((RetireJob "a" 10 (retired-name "a" "12-old")))) retire)
   (val retired (! (records-after retiring-at started retire POLICY)))
-  (val old (! (proc H1 10 "11-old" :retired-from "a" :name (retired-name "a" "11-old"))))
+  (val old (! (proc H1 10 "12-old" :retired-from "a" :name (retired-name "a" "12-old"))))
   (val start-at (+ retiring-at 1000))
   (val start (! (plan start-at #(H2) (! (world old :codes #(READY1 READY2))) retired POLICY)))
-  (assert (= start #((StartJob H2 12 "/c/rev2"))) start)
+  (assert (= start #((StartJob H2 13 "/c/rev2"))) start)
   (HandedOff :start-at start-at :records (! (records-after start-at retired start POLICY)) :old old
-             :new (replace (! (proc H2 11 "12-new")) :started-ms start-at)))
+             :new (replace (! (proc H2 11 "13-new")) :started-ms start-at)))
+
+(defk crashed-soon [h]
+  {:pre [(: h HandedOff)] :post [(: % JobRecord)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "入れ替えで起こした新が起動から 4 秒で exit code 1 で落ちた後の記憶(落ちた回数の数え — 起こし直しの側)を求めるため。"
+  (val dead (! (world h.old (replace h.new :exit-code 1) :codes #(READY1 READY2))))
+  (val now (+ h.start-at 4000))
+  (get (! (records-after now h.records (! (plan now #(H2) dead h.records POLICY)) POLICY)) "a"))
 
 (deftest test-retiring-a-process-that-ran-stably-counts-failures-from-zero
   ;; 失敗ケース(card ki-3f4bbc55733a): 落ち続けた後に起こした process が stable-run-ms 以上動いてから入れ替えで名から外されても、記憶の
@@ -323,19 +331,20 @@
   (val rows (dfor r reported r.name r))
   (assert (= (. (get rows "a") failures) 0) (get rows "a"))
   ;; 新がすぐ落ちれば、1 回目として数える(前の落ち続けに足さない)。起こし直しの間も 1 回目の間。
-  (val dead (! (world h.old (replace h.new :exit-code 1) :codes #(READY1 READY2))))
-  (val reaped (get (! (records-after (+ h.start-at 5000) h.records (! (plan (+ h.start-at 5000) #(H2) dead h.records POLICY)) POLICY)) "a"))
+  (val reaped (! (crashed-soon h)))
   (assert (= #(reaped.failures reaped.unexpected-exits) #(1 1)) reaped))
 
 (deftest test-retiring-a-process-that-keeps-crashing-keeps-the-streak
   ;; 外す process が stable-run-ms に満たなければ、落ち続けの回数を引き継ぐ(入れ替えで落ち続けを隠さない)。新の process は起動から
-  ;; stable-run-ms の間それを報告する。
+  ;; stable-run-ms の間それを報告し、新がすぐ落ちれば続きの回数に数える(起こし直しでも引き継ぐ)。
   (val h (! (handed-off-after (- POLICY.stable-run-ms 1))))
   (val record (get h.records "a"))
-  (assert (= #(record.failures record.unexpected-exits) #(10 10)) record)
+  (assert (= #(record.failures record.unexpected-exits) #(11 11)) record)
   (<- reported tuple (statuses (+ h.start-at 1000) #(H2) (! (world h.old h.new :codes #(READY1 READY2))) h.records POLICY))
   (val rows (dfor r reported r.name r))
-  (assert (= (. (get rows "a") failures) 10) (get rows "a")))
+  (assert (= (. (get rows "a") failures) 11) (get rows "a"))
+  (val reaped (! (crashed-soon h)))
+  (assert (= #(reaped.failures reaped.unexpected-exits) #(12 12)) reaped))
 
 (deftest test-handoff-retires-the-current-process-beside-a-retired-one
   ;; 失敗ケース(#4072 の D-3): 退いた旧が居る間に次の版が来ると、今の process を止めて(SpecChanged)から新を起こしていた — 今の process が
