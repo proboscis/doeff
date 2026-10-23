@@ -109,6 +109,7 @@ class PartialMessage:
     thinking_start: bool = False
     call_opened: CallOpened | None = None
     call_end_usage: Usage | None = None
+    call_end_reason: str | None = None
     parent_tool_use_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -120,6 +121,7 @@ class CallClosed:
     model: str | None
     parent_tool_use_id: str | None
     usage: Usage
+    stopped: bool
 
 @dataclass(frozen=True, kw_only=True)
 class CallStep:
@@ -519,6 +521,9 @@ def call_opened_of(event: dict, parent: str | None) -> _Program[CallOpened | Non
     ...
 
 def call_end_usage_of(event: dict) -> _Program[Usage | None, object]:
+    ...
+
+def call_end_reason_of(event: dict) -> str | None:
     ...
 
 def classify_stream_event(record: dict) -> Incomplete:
