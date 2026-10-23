@@ -345,8 +345,9 @@ where
     resolved.into_iter().map(|(value, _)| value).collect()
 }
 
-/// 中身が git の blob の id で決まる事実の置き場(card ki-d56ba76422ba)— 中身を読まずに、別の作業木が置いた事実を引く。
-/// 鍵は linter の印・種類・blob の id。事実は blob の中身だけで決まること(`rel` も根も読まない)を呼び手が保つ。置き場と上限の片づけは他の事実と同じ。
+/// 中身が git の blob の id で決まる事実の置き場(card ki-d56ba76422ba・ki-40c8ca380713)— 中身を読まずに、別の作業木が置いた事実を引く。
+/// 事実は塊ごとの(blob の id・事実)の表で置く(`blob_chunks`)。鍵は linter の印・種類・塊の名。事実は blob の中身だけで決まること(`rel` も根も
+/// 読まない)を呼び手が保つ。置き場と上限の片づけは他の事実と同じ。
 pub struct BlobFacts {
     place: Place,
     identity: String,
@@ -358,18 +359,21 @@ impl BlobFacts {
         Some(BlobFacts { place: place(root, kind, Format::Compact)?, identity: format!("{}/", identity(kind)) })
     }
 
-    fn key(&self, blob: &str) -> ObjectKey {
-        object_key(&[self.identity.as_bytes(), b"blob", blob.as_bytes()])
+    /// 塊の置き場(名 `slot` — 呼び手が index の並びの区切りで決める)の鍵。
+    fn slot_key(&self, slot: &str) -> ObjectKey {
+        object_key(&[self.identity.as_bytes(), b"slot", slot.as_bytes()])
     }
 
-    /// blob の事実を読む(無い・壊れた物は None)。
-    pub fn get<T: DeserializeOwned>(&self, blob: &str) -> Option<T> {
-        read_object::<T>(&self.place.objects, &self.key(blob), Format::Compact)
+    /// 塊の置き場の(blob の id・事実)の表を読む(無い・壊れた物は None)。1 file の事実を 1 つずつ置くと、冷えた新しい作業木で repo の Hy の数だけ
+    /// (約 4600)置き場の file を開いて disk を待つので、index の並びの塊ごとに 1 file にまとめて引く(card ki-40c8ca380713 — `blob_chunks`)。
+    pub fn get_slot<T: DeserializeOwned>(&self, slot: &str) -> Option<Vec<([u8; 20], T)>> {
+        read_object::<Vec<([u8; 20], T)>>(&self.place.objects, &self.slot_key(slot), Format::Compact)
     }
 
-    /// blob の事実を置く。
-    pub fn put<T: Serialize>(&self, blob: &str, value: &T) {
-        note_object_bytes(write_object(&self.place.objects, &self.key(blob), value, Format::Compact, &self.place.guard));
+    /// 塊の置き場の表を置き直す。事実は blob の中身だけで決まるので、表のどの行も、いつ置いた物でも同じ blob には同じ事実 — 置き場の事実の中で、
+    /// 同じ鍵の中身が替わる(行が増える・古い版の行が落ちる)のはこの種類だけ(一時 file からの rename なので、読む側は前か後の表を丸ごと読む)。
+    pub fn put_slot<T: Serialize>(&self, slot: &str, entries: &[([u8; 20], T)]) {
+        note_object_bytes(write_object(&self.place.objects, &self.slot_key(slot), &entries, Format::Compact, &self.place.guard));
     }
 }
 

@@ -8,6 +8,7 @@
 
 pub mod affected_tests;
 pub mod architecture;
+pub mod blob_chunks;
 pub mod blob_spell;
 pub mod bulk_read;
 pub mod dir_stamp;
@@ -926,8 +927,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
                 if enabled.contains(&ProjectRule::HandlerArgumentHoldsState) && handler_arguments::in_population(rel, decl) {
                     // class の frozen は名で引かれ、同じ名が frozen でない class が repo のどこかに在れば frozen でない(名指さない file の宣言が答えを変える)ので、
-                    // 型で判じる引数が在って引かれた時だけ repo 全体から作る(索引は Hy と Python の全 file — 3000 の事実)。
-                    let classes = deferred::Deferred::new(|| crate::timing::timed("handler-argument-classes", || handler_arguments::class_index(root, Some((rel.as_str(), source)))));
+                    // 型で判じる引数が在って引かれた時だけ repo 全体から作る(索引は Hy と Python の全 file — 3000 の事実)。変わっていない file の class は git の
+                    // blob の id で引き、中身を読まない(`class_index_by_blobs` — card ki-40c8ca380713)。
+                    let classes = deferred::Deferred::new(|| crate::timing::timed("handler-argument-classes", || handler_arguments::class_index_by_blobs(root, Some((rel.as_str(), source)))));
                     drafts.extend(crate::timing::timed("single.handler-arguments", || judge_handler_arguments(root, rel, source, decl, &classes)));
                 }
             }

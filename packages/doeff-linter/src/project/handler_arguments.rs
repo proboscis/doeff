@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Prefix, Reader};
 use rustpython_ast::{Expr, Mod, Stmt};
@@ -23,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use super::architecture::HandlerArguments;
+use super::blob_chunks::{ChunkedFacts, Lookup};
+use super::hy_files::{self, WalkRules};
 use super::facts::ByteSpan;
 use super::paths::glob_matches;
 
@@ -359,9 +362,72 @@ pub fn class_index(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
     let files = walk(root, &["hy", "py"]);
     let found: Vec<(String, Vec<ClassFrozen>)> = super::facts_cache::per_file(root, "handler-argument-classes", &files, |rel, path| {
         let source = std::fs::read_to_string(path).ok()?;
-        let classes = if rel.ends_with(".hy") { hy_classes(&source) } else { py_classes(&source) };
-        Some((rel.to_string(), classes))
+        Some((rel.to_string(), classes_in(rel, &source)))
     });
+    index_of(&found, overlay)
+}
+
+/// file 1 つの class(Hy か Python かは根からの path で決める)。
+fn classes_in(rel: &str, source: &str) -> Vec<ClassFrozen> {
+    if rel.ends_with(".hy") {
+        hy_classes(source)
+    } else {
+        py_classes(source)
+    }
+}
+
+/// 索引に入れる file の歩き方(`walk` と同じ集まり — 隠し dir と生成物の dir を降りず、Hy と Python の file を拾う)。
+const CLASS_WALK: WalkRules = WalkRules { descend: class_descends, take: class_takes };
+
+fn class_descends(name: &str) -> bool {
+    !(name.starts_with('.') || SKIPPED_DIRS.contains(&name))
+}
+
+fn class_takes(extension: &str) -> bool {
+    extension == "hy" || extension == "py"
+}
+
+/// 1 file の実行の class の索引(答えは `class_index` と同じ)。repo の Hy と Python の file を、dir を開く待ちを重ねて歩き(`walk` は順に歩くので、冷えた
+/// 作業木で約 2000 の dir を 1 つずつ待つ)、変わっていない file の class は git の blob の id で引いて中身を読まない(`ChunkedFacts` — card ki-40c8ca380713)。
+/// 同じ中身でも Hy と Python では読み方が違うので、覚えの種類を分ける。
+pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
+    let hy = ChunkedFacts::<Vec<ClassFrozen>>::open(root, "class-frozen-hy", |rel| rel.ends_with(".hy") && hy_files::walks_to(&CLASS_WALK, rel));
+    let py = ChunkedFacts::<Vec<ClassFrozen>>::open(root, "class-frozen-py", |rel| rel.ends_with(".py") && hy_files::walks_to(&CLASS_WALK, rel));
+    let read = AtomicUsize::new(0);
+    let classes_of = |path: &Path| -> Option<(String, Vec<ClassFrozen>)> {
+        let rel = super::paths::relative_path(root, path)?;
+        let memory = if rel.ends_with(".hy") { hy.as_ref() } else { py.as_ref() };
+        let looked = memory.and_then(|memory| {
+            let meta = std::fs::metadata(path).ok()?;
+            Some((memory, memory.lookup(&rel, &meta), meta))
+        });
+        let unknown = match looked {
+            Some((_, Lookup::Known(classes), _)) => return Some((rel, classes)),
+            Some((memory, Lookup::Unknown(oid), meta)) => Some((memory, oid, meta)),
+            Some((_, Lookup::Untrusted, _)) | None => None,
+        };
+        read.fetch_add(1, Ordering::Relaxed);
+        let source = std::fs::read_to_string(path).ok()?;
+        let classes = classes_in(&rel, &source);
+        if let Some((memory, oid, meta)) = unknown {
+            memory.learn_read(&rel, oid, path, &meta, source.as_bytes(), classes.clone());
+        }
+        Some((rel, classes))
+    };
+    let found: Vec<(String, Vec<ClassFrozen>)> = crate::timing::timed("handler-argument-classes.scan", || match hy_files::walk_reading_with(root, &CLASS_WALK, &classes_of) {
+        Some(walked) => walked.into_iter().filter_map(|(_, found)| found).collect(),
+        // 根が dir として開けない時は、歩く物(`walk`)に任せる。
+        None => walk(root, &["hy", "py"]).iter().filter_map(|(_, path)| classes_of(path)).collect(),
+    });
+    for memory in [&hy, &py].into_iter().flatten() {
+        memory.finish();
+    }
+    crate::timing::count("handler-argument-classes.scan", "read", read.load(Ordering::Relaxed));
+    index_of(&found, overlay)
+}
+
+/// file ごとの class から索引を作る(同じ名が frozen でない class が 1 つでも在れば frozen でない)。overlay の file は保存前の中身で数える。
+fn index_of(found: &[(String, Vec<ClassFrozen>)], overlay: Option<(&str, &str)>) -> ClassIndex {
     let mut index = ClassIndex::new();
     let mut add = |classes: &[ClassFrozen]| {
         for class in classes {
@@ -369,7 +435,7 @@ pub fn class_index(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
             *entry = *entry && class.frozen;
         }
     };
-    for (rel, classes) in &found {
+    for (rel, classes) in found {
         if overlay.is_some_and(|(o, _)| o == rel) {
             continue;
         }
@@ -465,5 +531,34 @@ mod tests {
         assert!(in_population("controllers/a/core/x.hy", &decl()));
         assert!(!in_population("controllers/a/tests/x.hy", &decl()));
         assert!(!in_population("scripts/x.hy", &decl()));
+    }
+
+    /// 1 file の実行の索引(並べて歩き、blob の id で引く)は、`class_index`(順に歩き、file ごとのキャッシュ)と同じ答え — 隠し dir・生成物の dir・
+    /// symlink・Hy でも Python でもない file・同じ名の frozen と frozen でない class・保存前の中身(overlay)も。
+    #[test]
+    fn the_index_made_while_walking_in_parallel_equals_the_plain_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: [(&str, &str); 9] = [
+            ("app/a.hy", "(defrecord Cfg [url])\n(defclass [(dataclass :frozen True)] Frozen [])\n"),
+            ("app/b.py", "import dataclasses\n@dataclasses.dataclass(frozen=True)\nclass Settings:\n    x: int\n\nclass Store:\n    pass\n"),
+            ("app/legacy.hy", "(defclass Cfg [] (setv x 1))\n"),
+            ("app/.hidden/c.hy", "(defclass Hidden [])\n"),
+            ("app/node_modules/d.py", "class Skipped:\n    pass\n"),
+            ("app/venv/e.py", "class Venv:\n    pass\n"),
+            ("app/notes.txt", "class NotCode:\n    pass\n"),
+            ("deep/x/y/z.hy", "(defclass [(dataclass :frozen True)] Deep [])\n"),
+            ("app/w.hy", "(defclass Written [])\n"),
+        ];
+        for (rel, text) in files {
+            std::fs::create_dir_all(dir.path().join(rel).parent().unwrap()).unwrap();
+            std::fs::write(dir.path().join(rel), text).unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.path().join("app"), dir.path().join("linked")).unwrap();
+        for overlay in [None, Some(("app/w.hy", "(defclass [(dataclass :frozen True)] Written [])\n"))] {
+            let plain = class_index(dir.path(), overlay);
+            assert!(plain.len() >= 6 && plain.get("Cfg") == Some(&false) && plain.get("Settings") == Some(&true), "検の材料が足りない: {plain:?}");
+            assert_eq!(class_index_by_blobs(dir.path(), overlay), plain);
+        }
     }
 }

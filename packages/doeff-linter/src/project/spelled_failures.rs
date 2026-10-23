@@ -4,16 +4,21 @@
 //! 約 2%)だが、全体の実行と同じに repo の Hy の全部から宣言を集めると、冷えた作業木の最初の 1 回が 19〜27 秒かかる(hook の期限は 4 秒)。
 //! 宣言(`defrecord` の `:failure True` と `defeffect` の `:failure` / `:absent` の列)を持つ file は、型の名(解いた名の最後の段)の綴りを字面に必ず
 //! 含む(`spelling`)ので、`:failure` か `:absent` を綴り、型の名も綴る file だけを読み解く。答えは全体の実行(`failure_types_for`)が作る集合を引いた時と同じ。
+//!
+//! 宣言の file を探す repo の歩きは、変わっていない file の中身を読まない(card ki-40c8ca380713 — 冷えた作業木で repo の Hy の全部を読む待ちが 3 秒):
+//! git の blob の id で綴りの覚え(`blob_spell` — 宣言の綴りを含むか・`(defeffect` を含むか・どの名を綴るかの Bloom filter)を引き、宣言の綴りを含む file
+//! でも、中身は名で引かれて覚えがその名を綴るかもしれないと言った時に初めて読む。
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use super::layers::TagReading;
 use super::rule::ProjectRule;
 use super::smells::{failure_types_key, failure_types_of_source, has_failure_declaration_spelling, EffectOutcomes, FailureLookup, FailureTypes, FAILURE_TYPES_KIND};
+use super::blob_spell::{self, BlobSpell, Seen};
 use super::spelling::Spelling;
-use super::{facts_cache, hy_files};
+use super::{bulk_read, facts_cache};
 
 /// 引かれた時に型の名を字面に含む宣言の file から集める失敗の型(1 file の実行)。
 pub struct SpelledFailures<'a> {
@@ -22,9 +27,11 @@ pub struct SpelledFailures<'a> {
     reading: &'a TagReading,
     /// 型の名(最後の段)ごとの、その名を綴る宣言の file から集めた失敗の型(同じ名は 2 度集めない)。
     memo: Mutex<HashMap<String, Arc<FailureTypes>>>,
-    /// 宣言を持つ file(`:failure` か `:absent` を含む file)の(根からの path・中身)— 型の名に依らないので、最初の問いで 1 度だけ repo から集める。
+    /// 宣言を持つ file(`:failure` か `:absent` を含む file)— 型の名に依らないので、最初の問いで 1 度だけ repo から集める。
     /// 名ごとに repo の Hy の全部を読み直すと、match の腕の型が多い file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
-    declarations: OnceLock<Vec<(String, String)>>,
+    declarations: OnceLock<Vec<(String, Declaring)>>,
+    /// 覚えで済んで中身をまだ読んでいない宣言の file の、名で引かれて読んだ中身(根からの path → 中身・読めなければ None)。
+    sources: Mutex<HashMap<String, Option<Arc<str>>>>,
     /// 宣言の file ごとの失敗の型(根からの path → その file が宣言する型)。file の中身と読み方だけで決まり、引く型の名に依らないので、名が変わっても同じ file を読み解き直さない
     /// (match の腕の型が違う名で何度も引かれると、`|` のように全部の宣言の file を綴る名では 246 file の読み解きが名の数だけ繰り返された)。
     parsed: Mutex<HashMap<String, Arc<FailureTypes>>>,
@@ -41,30 +48,61 @@ impl<'a> SpelledFailures<'a> {
             reading,
             memo: Mutex::new(HashMap::new()),
             declarations: OnceLock::new(),
+            sources: Mutex::new(HashMap::new()),
             parsed: Mutex::new(HashMap::new()),
             effects: OnceLock::new(),
         }
     }
 
-    /// 宣言を持つ file(`:failure` か `:absent` を含む file)の(根からの path・中身)— 最初の問いで 1 度だけ repo から集める。
-    fn declaration_sources(&self) -> &Vec<(String, String)> {
+    /// 宣言を持つ file — 最初の問いで 1 度だけ repo を歩いて集める(覚えで済む file は中身を読まない — `blob_spell::scan`)。
+    fn declarations(&self) -> &Vec<(String, Declaring)> {
         self.declarations.get_or_init(|| {
-            // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
-            let sources: Vec<(String, PathBuf, Option<String>)> = crate::timing::timed("failure-types.collect", || {
-                hy_files::collect_reading(self.root, |path| {
-                    let source = std::fs::read_to_string(path).ok()?;
-                    has_failure_declaration_spelling(&source).then_some(source)
+            blob_spell::scan(self.root, "failure-types.collect", |_| false)
+                .into_iter()
+                .filter_map(|(rel, path, seen)| match seen {
+                    Seen::Spell(spell) => spell.failure.then(|| (rel, Declaring::Spelled(path, spell))),
+                    Seen::Source(source) => has_failure_declaration_spelling(&source).then(|| (rel, Declaring::Read(Arc::from(source)))),
+                    Seen::Unreadable => None,
                 })
-            });
-            sources.into_iter().filter_map(|(rel, _, source)| source.map(|source| (rel, source))).collect()
+                .collect()
         })
+    }
+
+    /// 宣言の file のうち、覚え(中身を読んでいない file)か中身(読んだ file)が `keep` に当たる物の(根からの path・中身)。覚えで当たった file は
+    /// ここで中身を読み(待ちを重ねる・1 度読んだ中身は覚える)、`exact` で中身を確かめ直す(覚えは「当たるかもしれない」しか言わない)。
+    fn sources_where(&self, keep: impl Fn(&BlobSpell) -> bool, exact: impl Fn(&str) -> bool) -> Vec<(String, Arc<str>)> {
+        let declarations = self.declarations();
+        let unread: Vec<(&String, &PathBuf)> = {
+            let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+            declarations
+                .iter()
+                .filter_map(|(rel, declaring)| match declaring {
+                    Declaring::Spelled(path, spell) if keep(spell) && !sources.contains_key(rel) => Some((rel, path)),
+                    Declaring::Spelled(..) | Declaring::Read(_) => None,
+                })
+                .collect()
+        };
+        let read = crate::timing::timed("failure-types.read", || bulk_read::fan_out(&unread, |(_, path)| std::fs::read_to_string(path).ok().map(Arc::<str>::from)));
+        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        for ((rel, _), source) in unread.iter().zip(read) {
+            sources.insert((*rel).clone(), source);
+        }
+        declarations
+            .iter()
+            .filter_map(|(rel, declaring)| match declaring {
+                Declaring::Read(source) => Some((rel, Arc::clone(source))),
+                Declaring::Spelled(_, spell) => keep(spell).then(|| sources.get(rel).cloned().flatten()).flatten().map(|source| (rel, source)),
+            })
+            .filter(|(_, source)| exact(source))
+            .map(|(rel, source)| (rel.clone(), source))
+            .collect()
     }
 
     /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
     fn declared_with(&self, name: &str) -> FailureTypes {
         let spelling = Spelling::of(name);
-        let kept: Vec<(&str, &str)> =
-            self.declaration_sources().iter().filter(|(_, source)| spelling.in_source(source)).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
+        let kept = self.sources_where(|spell| spell.may_spell(&spelling), |source| spelling.in_source(source));
+        let kept: Vec<(&str, &str)> = kept.iter().map(|(rel, source)| (rel.as_str(), source.as_ref())).collect();
         self.merged(&kept)
     }
 
@@ -92,11 +130,17 @@ impl<'a> SpelledFailures<'a> {
     /// repo の defeffect の宣言の全部(最初の問いで 1 度だけ作る)。宣言の file のうち `(defeffect` を綴る物だけを読み解く。
     fn all_effects(&self) -> &FailureTypes {
         self.effects.get_or_init(|| {
-            let kept: Vec<(&str, &str)> =
-                self.declaration_sources().iter().filter(|(_, source)| source.contains("(defeffect")).map(|(rel, source)| (rel.as_str(), source.as_str())).collect();
+            let kept = self.sources_where(|spell| spell.defeffect, |source| source.contains("(defeffect"));
+            let kept: Vec<(&str, &str)> = kept.iter().map(|(rel, source)| (rel.as_str(), source.as_ref())).collect();
             crate::timing::timed("failure-types.effects", || self.merged(&kept))
         })
     }
+}
+
+/// 宣言を持つ file 1 つ — 歩く間に中身を読んだ物と、綴りの覚えで済んで中身をまだ読んでいない物。
+enum Declaring {
+    Read(Arc<str>),
+    Spelled(PathBuf, BlobSpell),
 }
 
 impl SpelledFailures<'_> {

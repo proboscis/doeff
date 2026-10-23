@@ -45,7 +45,7 @@ fn walked_once_reading<R: Send>(root: &Path, read: impl Fn(&Path) -> R + Sync) -
         let results = super::bulk_read::fan_out_wide(paths.as_slice(), |path| read(path));
         return paths.iter().cloned().zip(results).collect();
     }
-    let found = match walk_reading(root, &read) {
+    let found = match walk_reading_with(root, &HY_WALK, &read) {
         Some(found) => found,
         // 根が dir として開けない(file・無い path)なら歩く物に任せる。
         None => {
@@ -58,21 +58,49 @@ fn walked_once_reading<R: Send>(root: &Path, read: impl Fn(&Path) -> R + Sync) -
     found
 }
 
-/// 仕事 1 つ — dir を開くか、見つけた Hy の file に `read` を当てるか。
+/// 歩き方 — 降りる dir の名と、拾う file の拡張子(根は名に依らず降りる。symlink は辿らない)。
+pub struct WalkRules {
+    /// 降りる dir の名か。
+    pub descend: fn(&str) -> bool,
+    /// 拾う file の拡張子か。
+    pub take: fn(&str) -> bool,
+}
+
+/// repo の Hy の歩き方(`hy_index::collect_hy_files` と同じ — 降りない dir の名を除き、Hy の拡張子の file を拾う)。
+pub const HY_WALK: WalkRules = WalkRules { descend: hy_descends, take: hy_takes };
+
+/// 根からの path `rel`(`/` 区切り)の通常の file を、`rules` の歩きが拾うか — 途中の dir を全部降り、拡張子を拾う(git の index の行を、歩いて見る
+/// file と揃えて選ぶため)。
+pub fn walks_to(rules: &WalkRules, rel: &str) -> bool {
+    let (dirs, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+    let taken = Path::new(name).extension().and_then(|extension| extension.to_str()).is_some_and(rules.take);
+    taken && dirs.split('/').filter(|dir| !dir.is_empty()).all(rules.descend)
+}
+
+fn hy_descends(name: &str) -> bool {
+    !hy_index::SKIPPED_DIRS.contains(&name)
+}
+
+fn hy_takes(extension: &str) -> bool {
+    hy_index::HY_EXTENSIONS.contains(&extension)
+}
+
+/// 仕事 1 つ — dir を開くか、見つけた file に `read` を当てるか。
 enum Step {
     List(PathBuf),
     Read(PathBuf),
 }
 
-/// `hy_index::collect_hy_files` と同じ集合と順の一覧(各 file に `read` を当てた結果つき)を、dir を開く待ちと file を読む待ちを重ねて作る。
+/// `rules` で歩いた一覧(各 file に `read` を当てた結果つき — `HY_WALK` なら `hy_index::collect_hy_files` と同じ集合と順)を、dir を開く待ちと file を読む
+/// 待ちを重ねて作る。
 ///
 /// 順に歩くと dir ごとに disk を 1 回待つ(agora-controllers で約 1200 の dir — 混んだ Pod の冷えた作業木で 9〜15 秒・CPU は 0.1 秒)。
 /// 1 つの dir の中身は他の dir の中身に依らず、見つけた file の読みも他に依らないので、全部を待ちの重なる仕事として回す(`bulk_read::pipeline`)。
 /// 降りない dir の名・symlink を辿らない事・読めない dir を黙って飛ばす事・最後に path で並べる事は、歩く物と同じ。根が dir として開けない時は None。
-fn walk_reading<R: Send>(root: &Path, read: &(impl Fn(&Path) -> R + Sync)) -> Option<Vec<(PathBuf, R)>> {
-    let first = list_dir(root)?;
+pub fn walk_reading_with<R: Send>(root: &Path, rules: &WalkRules, read: &(impl Fn(&Path) -> R + Sync)) -> Option<Vec<(PathBuf, R)>> {
+    let first = list_dir(root, rules)?;
     let mut found = super::bulk_read::pipeline(super::bulk_read::WIDE_READERS, steps_of(first), |step| match step {
-        Step::List(dir) => (list_dir(&dir).map(steps_of).unwrap_or_default(), None),
+        Step::List(dir) => (list_dir(&dir, rules).map(steps_of).unwrap_or_default(), None),
         Step::Read(path) => {
             let result = read(&path);
             (Vec::new(), Some((path, result)))
@@ -93,17 +121,17 @@ struct Listing {
     files: Vec<PathBuf>,
 }
 
-/// dir を開いて中身を分ける。開けなければ None。
-fn list_dir(dir: &Path) -> Option<Listing> {
+/// dir を開いて中身を `rules` で分ける。開けなければ None。
+fn list_dir(dir: &Path, rules: &WalkRules) -> Option<Listing> {
     let mut listing = Listing { dirs: Vec::new(), files: Vec::new() };
     for entry in std::fs::read_dir(dir).ok()?.filter_map(Result::ok) {
         let Ok(kind) = entry.file_type() else { continue };
         let name = entry.file_name();
         if kind.is_dir() {
-            if !hy_index::SKIPPED_DIRS.contains(&name.to_string_lossy().as_ref()) {
+            if (rules.descend)(name.to_string_lossy().as_ref()) {
                 listing.dirs.push(entry.path());
             }
-        } else if kind.is_file() && Path::new(&name).extension().and_then(|extension| extension.to_str()).is_some_and(|extension| hy_index::HY_EXTENSIONS.contains(&extension)) {
+        } else if kind.is_file() && Path::new(&name).extension().and_then(|extension| extension.to_str()).is_some_and(rules.take) {
             listing.files.push(entry.path());
         }
     }
@@ -172,7 +200,7 @@ mod tests {
 
     /// 歩く物の代わりに使う一覧(根が dir でなければ歩く物に任せる)。
     fn overlapped(root: &Path) -> Vec<PathBuf> {
-        match walk_reading(root, &|_: &Path| ()) {
+        match walk_reading_with(root, &HY_WALK, &|_: &Path| ()) {
             Some(found) => found.into_iter().map(|(path, ())| path).collect(),
             None => hy_index::collect_hy_files(root),
         }

@@ -20,6 +20,7 @@
     "packages/doeff-linter/src/project/body_view.rs",
     "packages/doeff-linter/src/project/bound_names.rs",
     "packages/doeff-linter/src/project/broad_catches.rs",
+    "packages/doeff-linter/src/project/blob_chunks.rs",
     "packages/doeff-linter/src/project/blob_spell.rs",
     "packages/doeff-linter/src/project/bulk_read.rs",
     "packages/doeff-linter/src/project/business_fakes.rs",
@@ -143,6 +144,7 @@
     "packages/doeff-linter/tests/check_slot.rs",
     "packages/doeff-linter/tests/single_file_reads.rs",
     "packages/doeff-linter/tests/registry_remembered.rs",
+    "packages/doeff-linter/tests/blob_scan.rs",
     "packages/doeff-linter/tests/program_sleep.rs",
     "packages/doeff-linter/tests/stale_outcome_branch.rs",
     "packages/doeff-linter/tests/test_sleep.rs"
@@ -214,6 +216,7 @@
         "packages/doeff-linter/src/project/body_view.rs",
         "packages/doeff-linter/src/project/bound_names.rs",
         "packages/doeff-linter/src/project/broad_catches.rs",
+        "packages/doeff-linter/src/project/blob_chunks.rs",
         "packages/doeff-linter/src/project/blob_spell.rs",
         "packages/doeff-linter/src/project/bulk_read.rs",
         "packages/doeff-linter/src/project/business_fakes.rs",
@@ -461,6 +464,7 @@
         "packages/doeff-linter/tests/check_slot.rs",
         "packages/doeff-linter/tests/single_file_reads.rs",
         "packages/doeff-linter/tests/registry_remembered.rs",
+        "packages/doeff-linter/tests/blob_scan.rs",
         "packages/doeff-linter/tests/program_sleep.rs",
         "packages/doeff-linter/tests/stale_outcome_branch.rs",
         "packages/doeff-linter/tests/test_sleep.rs"
