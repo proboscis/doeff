@@ -504,19 +504,23 @@
   ;; 決まる有限の名なので、並びは消さない。
   (session var gates {})
   (AdmitWriters [units]
+    ;; 無い単位の並びを、どの並びも待つ前に全部作って 1 度に置く。session の値は節の入口で読んだ物で、並びを待つ間(AcquireSemaphore で
+    ;; 他の task に譲る間)に他の書きが置いた単位を知らない — 待った後に置き直すと、その単位を消して返す時の KeyError にし、同じ単位に
+    ;; 2 つ目の並びを作って 1 本ずつの約束を破る(card ki-2b1142ac9146)。並びを作る CreateSemaphore は譲らずに答える。
+    (for [unit units]
+      (when (not-in unit gates)
+        (<- created (CreateSemaphore 1))
+        (:= gates (| gates {unit created}))))
+    (val held gates)
     ;; 単位を名の順に 1 つずつ通る。途中で取り消されたら(後ろの単位を待つ間など)、通った単位を返してから取り消しを通す。
     (var taken #())
     (try
       (for [unit units]
-        (when (not-in unit gates)
-          (<- created (CreateSemaphore 1))
-          ;; 作る間に他の書きが同じ単位の並びを作っていれば、先に置かれた並びを使う(右が勝つ合わせ)。
-          (:= gates (| {unit created} gates)))
-        (<- (AcquireSemaphore (get gates unit)))
+        (<- (AcquireSemaphore (get held unit)))
         (:= taken (+ taken #(unit))))
       (except [BaseException]
         (for [unit (reversed taken)]
-          (<- (ReleaseSemaphore (get gates unit))))
+          (<- (ReleaseSemaphore (get held unit))))
         (raise)))
     (resume None))
   (ReleaseWriters [units]
