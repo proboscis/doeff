@@ -23,7 +23,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, final
+from typing import TYPE_CHECKING, Any, TypeAlias, cast, final
 
 if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
@@ -101,7 +101,7 @@ def _thawed(value: object) -> object:
     # 凍らせた JSON(doeff_hy.frozen の FrozenMap)を json.dumps が書ける形へ。tuple は json.dumps がそのまま配列にする。
     items = getattr(value, "items", None)
     if callable(items):
-        return dict(items())
+        return dict(cast("Any", items)())
     raise TypeError(f"JSON の値でない: {type(value).__name__}")
 
 
