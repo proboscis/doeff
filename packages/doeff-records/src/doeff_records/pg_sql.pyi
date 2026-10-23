@@ -15,6 +15,7 @@ from doeff_records.values import SEPARATOR_PATTERN as SEPARATOR_PATTERN
 from doeff_records.values import TABLE_NAME_PATTERN as TABLE_NAME_PATTERN
 PREFIX_PATTERN: Incomplete
 RETIRED_INDEX_PATTERN: Incomplete
+TABLE_SHAPED_INDEX_PATTERN: Incomplete
 DEFAULT_PREFIX: str
 WRITER_LOCK_SUFFIX: str
 MIGRATE_LOCK_SUFFIX: str
@@ -128,6 +129,9 @@ def table_index_name(prefix: str, table: str, field_name: str) -> _Program[str, 
     ...
 
 def hyx_retired_indexXquestion_markX(prefix: str, name: str) -> _Program[bool, object]:
+    ...
+
+def hyx_table_shaped_indexXquestion_markX(prefix: str, name: str) -> _Program[bool, object]:
     ...
 
 def table_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
@@ -302,7 +306,13 @@ def change_log_statement(prefix: str, after: int, limit: int) -> _Program[Statem
     ...
 UNBOUNDED_SEQ: int
 
-def prune_changes_statement(prefix: str, before_at: int, upto_seq: int) -> _Program[Statement, object]:
+def prune_bound_statement(prefix: str, before_at: int, upto_seq: int, limit: int) -> _Program[Statement, object]:
+    ...
+
+def prune_changes_statement(prefix: str, upto_seq: int, limit: int) -> _Program[Statement, object]:
+    ...
+
+def statement_limit_statement(milliseconds: int) -> _Program[Statement, object]:
     ...
 
 def forget_changes_statement(prefix: str) -> _Program[Statement, object]:
