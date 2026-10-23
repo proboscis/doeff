@@ -18,6 +18,7 @@ from doeff_cluster.worker.intent.worker_model import ProbeView as ProbeView
 from doeff_cluster.worker.intent.worker_model import ProbeStatus as ProbeStatus
 from doeff_cluster.worker.intent.worker_model import Outcome as Outcome
 from doeff_cluster.worker.intent.worker_model import JobRecord as JobRecord
+from doeff_cluster.worker.intent.worker_model import JobNotStarted as JobNotStarted
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster.worker.intent.worker_model import JobStatus as JobStatus
 from doeff_cluster.worker.intent.worker_model import PrepareCode as PrepareCode
@@ -113,6 +114,9 @@ def backoff_ms(record: JobRecord, policy: WorkerPolicy) -> int:
 def hyx_ran_stablyXquestion_markX(now: int, record: JobRecord, policy: WorkerPolicy) -> _Program[bool, object]:
     ...
 
+def backoff_from(record: JobRecord) -> int | None:
+    ...
+
 def in_backoff(now: int, record: JobRecord, policy: WorkerPolicy) -> bool:
     ...
 
@@ -184,13 +188,16 @@ def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, po
 def warm_stop_step(now: int, view: WarmChildView, policy: WorkerPolicy) -> _Program[tuple, object]:
     ...
 
-def warm_child_step(now: int, key: str, launch: WarmLaunch | None, view: WarmChildView | None, policy: WorkerPolicy) -> _Program[tuple, object]:
+def warm_child_step(now: int, key: str, launch: WarmLaunch | None, view: WarmChildView | None, policy: WorkerPolicy, refusal: JobNotStarted | None=None) -> _Program[tuple, object]:
     ...
 
 def launch_of(key: str, wanted: frozenset, desired: tuple, world: WorldView, warm: tuple) -> _Program[WarmLaunch | None, object]:
     ...
 
-def warm_child_actions(now: int, desired: tuple, world: WorldView, warm: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
+def fork_refusals(records: dict) -> _Program[dict[str, JobNotStarted], object]:
+    ...
+
+def warm_child_actions(now: int, desired: tuple, world: WorldView, warm: tuple, policy: WorkerPolicy, records: dict=...) -> _Program[tuple, object]:
     ...
 
 def pinned_env_keys(desired: tuple, world: WorldView, warm: tuple) -> _Program[frozenset, object]:
@@ -220,10 +227,10 @@ def plan(now: int, desired: tuple[JobSpec, ...], world: WorldView, records: dict
 def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=..., absent: StopReason=...) -> _Program[tuple, object]:
     ...
 
-def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPolicy=...) -> JobRecord:
+def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPolicy=..., not_started: JobNotStarted | None=None) -> JobRecord:
     ...
 
-def records_after(now: int, records: dict[str, JobRecord], actions: tuple[Action, ...], policy: WorkerPolicy=...) -> _Program[dict[str, JobRecord], object]:
+def records_after(now: int, records: dict[str, JobRecord], actions: tuple[Action, ...], policy: WorkerPolicy=..., not_started: tuple[JobNotStarted, ...]=...) -> _Program[dict[str, JobRecord], object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)

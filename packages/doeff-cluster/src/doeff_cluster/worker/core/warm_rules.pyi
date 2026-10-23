@@ -34,6 +34,9 @@ def warm_child_ready(view: WarmChildView | None) -> bool:
 def ended_before_ready(view: WarmChildView) -> bool:
     ...
 
+def ended_refusing(view: WarmChildView) -> bool:
+    ...
+
 def refusals_after(previous: WarmChildView | None) -> int:
     ...
 

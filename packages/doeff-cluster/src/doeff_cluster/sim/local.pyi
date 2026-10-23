@@ -294,6 +294,7 @@ from doeff_cluster.worker.intent.worker_model import PrepareCode as PrepareCode
 from doeff_cluster.worker.intent.worker_model import PrepareEnv as PrepareEnv
 from doeff_cluster.worker.intent.worker_model import SweepEnvs as SweepEnvs
 from doeff_cluster.worker.intent.worker_model import StartJob as StartJob
+from doeff_cluster.worker.intent.worker_model import JobStarted as JobStarted
 from doeff_cluster.worker.intent.worker_model import SignalJob as SignalJob
 from doeff_cluster.worker.intent.worker_model import ReapJob as ReapJob
 from doeff_cluster.worker.intent.worker_model import RetireJob as RetireJob
