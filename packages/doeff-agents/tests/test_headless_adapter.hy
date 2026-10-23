@@ -2462,3 +2462,33 @@
                                                at)
                     (. (builder 1) final)))
   (assert (= finals [False True]) (repr finals)))
+
+
+;; --- subagent の中の道具の答えの親(agora card ki-b25d579bf48b)-------------------------------------------------------------
+
+(val INNER-OUTPUT "agora exec: ticket x20261024000000-0a1b2c3d")
+
+(defk inner-reply [#^ str text #^ tuple memory]
+  {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)] :tags {:context "doeff-agents" :role "judgment"}}
+  "fake の返事(respond の形): 本体の道具を 1 度呼び、その道具が走らせた subagent の中の道具が INNER-OUTPUT を答える手番。"
+  (FakeReply "inner" :tool-seconds 1.0 :subagent-tool-output INNER-OUTPUT))
+
+(deftest test-headless-carries-the-parent-tool-call-of-subagent-tool-answers-fake [tmp-path]
+  ;; 層 2 の ToolResult の parent-tool-use-id(subagent の中の道具の答えなら親の本体の呼びの id)は、AgentToolResultEvent の
+  ;; parent_tool_use_id へそのまま運ばれ、本体の会話の答えと本体の道具の呼び(AgentToolUseEvent)は None。運ばない adapter では
+  ;; 上の層が subagent の中の Bash の答えを本体の手番の答えと取り違え、本体の手番を切る(agora card ki-b25d579bf48b)。
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val world (FakeClaudeWorld :respond inner-reply))
+  (val done (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))]
+                                              (fake-headless-claude-handlers None (str (/ tmp-path "home")) :world world
+                                                                             :env {} :settings {}))
+                                           (streamed-turn work "inner")))))
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val results (lfor event done.events :if (isinstance event AgentToolResultEvent) event))
+  (assert (= (lfor event results #(event.parent-tool-use-id (lfor answer event.answers #(answer.id answer.text))))
+             [#(FAKE-TOOL-USE-ID [#((+ FAKE-TOOL-USE-ID "-sub") INNER-OUTPUT)]) #(None [#(FAKE-TOOL-USE-ID "")])])
+          (repr results))
+  (val uses (lfor event done.events :if (isinstance event AgentToolUseEvent) event))
+  (assert (and uses (all (gfor event uses (is event.parent-tool-use-id None)))) (repr uses)))

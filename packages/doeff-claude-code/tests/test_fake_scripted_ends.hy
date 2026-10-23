@@ -583,3 +583,66 @@
     (assert refused))
   (assert (= (. (FakeReply "x") tool-repeats) 1))
   (assert (= (. (FakeReply "x" :tool-seconds 1.0 :tool-repeats 2) tool-repeats) 2)))
+
+
+;; --- subagent の中の道具の答えと、道具の境界で読む注入 — card ki-b25d579bf48b ------------------------------------------
+
+(val INNER-OUTPUT "ticket x20261024000000-0a1b2c3d — 命令は 60 秒を越えて実行中")
+
+(defk inner-reply [#^ str text #^ tuple memory]
+  {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)] :tags {:context "claude-code" :role "judgment"}}
+  "本文の語で筋書きを選ぶ返事: inner = 本体の道具を 2 回呼び、どの呼びも走らせた subagent の中の道具が INNER-OUTPUT を答える /
+   boundary = 本体の道具を 2 回呼び、道具の境界で読まれていない注入を読む / plain = 本体の道具を 2 回呼ぶだけ / ほか(足した入力)= 本文をそのまま返す。"
+  (cond
+    (= text "inner") (FakeReply "inner" :tool-seconds 10.0 :tool-repeats 2 :subagent-tool-output INNER-OUTPUT)
+    (= text "boundary") (FakeReply "boundary" :tool-seconds 10.0 :tool-repeats 2 :boundary-injections True)
+    (= text "plain") (FakeReply "plain" :tool-seconds 10.0 :tool-repeats 2)
+    True (FakeReply text)))
+
+(deftest test-a-subagent-tool-answer-comes-before-the-main-result-with-its-parent
+  ;; subagent-tool-output の返事: 本体の呼びごとに、その結果の行の直前に subagent の中の道具の答えの行(親 = 本体の呼びの id・答えた
+  ;; 呼びの id = <本体の呼びの id>-sub)を出し、本体の結果の行は親を持たない(None)。上の層が subagent の中の Bash の答えを本体の
+  ;; 会話の手番の答えと見分ける事を模擬で確かめる材料。
+  (<- record TurnRecord (on-fake (FakeClaudeWorld :respond inner-reply) (run-one "inner")))
+  (assert (isinstance record.end Completed) (repr record.end))
+  (val results (kinds-of record.lines ToolResult))
+  (assert (= (lfor result results #(result.parent-tool-use-id (lfor answer result.answers #(answer.id answer.text))))
+             [#("fake-tool" [#("fake-tool-sub" INNER-OUTPUT)]) #(None [#("fake-tool" "")])
+              #("fake-tool-2" [#("fake-tool-2-sub" INNER-OUTPUT)]) #(None [#("fake-tool-2" "")])])
+          results)
+  ;; 道具を走らせない手番の subagent-tool-output は断る(subagent は道具の途中に走る)。
+  (var refused False)
+  (try (FakeReply "x" :subagent-tool-output "y") (except [ValueError] (:= refused True)))
+  (assert refused))
+
+(deftest test-boundary-injections-are-taken-between-tool-calls
+  ;; boundary-injections の返事: 1 回目の道具の間に足した入力は、1 回目の結果の後・2 回目の呼びの前に読まれ(started の行)、その返事の
+  ;; 本文は最後の本文に続く。既定の返事(偽)は本文を書き始める時まで読まない(今の形 — 2 回目の呼びの後)。
+  (defk inject-during-first-tool [#^ str text]
+    {:pre [(: text str)] :post [(: % TurnRecord)]}
+    "最初の道具の呼びまで読み、入力を足してから終わりまで読む。"
+    (<- started (begin text (FreshSession (new-id))))
+    (<- _called (read-until started.turn (fn [lines end] (or (kinds-of lines ToolResult) (is-not end None)
+                                                             (any (gfor line lines (and (isinstance line.kind AssistantMessage)
+                                                                                        line.kind.tool-calls)))))
+                            TIMEOUT -1))
+    (<- queued (ClaudeInjectInput started.turn (typed "added" "inj-mid")))
+    (assert (= queued (InputQueued "inj-mid")) (repr queued))
+    (<- record (read-to-end started.turn TIMEOUT))
+    record)
+  (defk taken-between [#^ TurnRecord record]
+    {:pre [(: record TurnRecord)] :post [(: % bool)]}
+    "注入の started の行が、1 回目の結果の後・2 回目の呼びの前に在るか。"
+    (val kinds (lfor line record.lines line.kind))
+    (val taken (.index kinds (InputFate "inj-mid" "started")))
+    (val first-result (next (gfor #(index kind) (enumerate kinds) :if (isinstance kind ToolResult) index)))
+    (val second-call (get (lfor #(index kind) (enumerate kinds) :if (and (isinstance kind AssistantMessage) kind.tool-calls) index) 1))
+    (< first-result taken second-call))
+  (<- boundary TurnRecord (on-fake (FakeClaudeWorld :respond inner-reply) (inject-during-first-tool "boundary")))
+  (assert (isinstance boundary.end Completed) (repr boundary.end))
+  (assert (= boundary.end.result-text "boundary added") (repr boundary.end))
+  (<- taken bool (taken-between boundary))
+  (assert taken boundary.lines)
+  (<- plain TurnRecord (on-fake (FakeClaudeWorld :respond inner-reply) (inject-during-first-tool "plain")))
+  (<- late bool (taken-between plain))
+  (assert (not late) plain.lines))

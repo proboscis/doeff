@@ -134,8 +134,12 @@
       (raise (TypeError (.format "ToolAnswer.non_text_kinds は tuple: {!r}" self.non-text-kinds))))))
 
 (defclass [(dataclass :frozen True)] ToolResult []
-  "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順 — 答えた呼びの id は各答えの id)。"
-  (#^ (get tuple #(ToolAnswer ...)) answers))
+  "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順 — 答えた呼びの id は各答えの id)/
+   parent-tool-use-id = subagent の行なら親の呼び(subagent を走らせた本体の会話の道具の呼び)の id、本体の会話の行は None(行の最上位の
+   parent_tool_use_id — AssistantMessage の同じ名の欄と同じ読み)。上の層が、本体の会話の道具の答えと subagent の中の道具の答えを
+   見分けるため(card ki-b25d579bf48b — subagent の中の Bash の答えは本体の会話の手番を終えない)。"
+  (#^ (get tuple #(ToolAnswer ...)) answers)
+  (setv #^ (| str None) parent-tool-use-id None))
 
 ;; stream_event の delta の種類(#3746 (a) — 閉じた語彙): TEXT = text_delta(本文の差分)/ THINKING = thinking_delta(考えている間の
 ;; 差分)/ TOOL-INPUT = input_json_delta(道具の呼びの命令を書いている間の差分)/ OTHER = 種類の名の在るほかの delta(signature_delta・
@@ -885,7 +889,8 @@
 (defn classify-user [#^ dict record]
   "user の行 → ToolResult(tool_result の block ごとに ToolAnswer)。isSynthetic の行で本文が STOP-HOOK-FEEDBACK-HEAD で始まる行は
    StopHookFeedback(#4020)。どちらでもない行は Other(type = user)。tool_use_id が無い・空の tool_result を 1 つでも持つ行は、
-   名指しの Other(subtype = tool_result_without_id)で断る — どの呼びへの答えか分からない結果を通さない。"
+   名指しの Other(subtype = tool_result_without_id)で断る — どの呼びへの答えか分からない結果を通さない。行の最上位の
+   parent_tool_use_id も読む(無い・空なら None — subagent の中の道具の答えを本体の会話の答えと見分ける・card ki-b25d579bf48b)。"
   (setv results (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result") block))
         said (.join "\n" (gfor block (content-blocks record) :if (= (.get block "type") "text") (text-at block "text"))))
   (cond
@@ -893,7 +898,8 @@
     (StopHookFeedback :reason (.strip (cut said (len STOP-HOOK-FEEDBACK-HEAD) None)))
     (not results) (Other :type "user")
     (any (gfor block results (not (text-at block "tool_use_id")))) (Other :type "user" :subtype "tool_result_without_id")
-    True (ToolResult :answers (tuple (gfor block results (run (tool-answer-of block)))))))
+    True (ToolResult :answers (tuple (gfor block results (run (tool-answer-of block))))
+                     :parent-tool-use-id (or (text-at record "parent_tool_use_id") None))))
 
 (defk hook-notice-of [#^ dict record #^ HookPhase phase]
   {:pre [(: record dict) (: phase HookPhase)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}

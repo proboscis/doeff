@@ -235,6 +235,21 @@
   (with [(pytest.raises ValueError :match "ToolAnswer.id")]
     (lines.ToolAnswer "" "x" False)))
 
+(deftest test-tool-results-keep-the-parent-tool-call-of-a-subagent
+  ;; card ki-b25d579bf48b: subagent の中の道具の答えの user の行は、最上位に parent_tool_use_id(subagent を走らせた本体の会話の
+  ;; 道具の呼びの id)を持つ。ToolResult はそれを parent-tool-use-id に持ち、本体の会話の行(null・欄が無い・空)は None — 上の層が
+  ;; subagent の中の Bash の答えを本体の会話の手番の答えと見分ける材料。読まない分類は subagent の答えも本体の答えに見えて赤。
+  (val result {"type" "tool_result" "tool_use_id" "toolu_inner" "content" "ticket x1"})
+  (val inner (classify-record {"type" "user" "parent_tool_use_id" "toolu_agent" "message" {"content" [result]}}))
+  (assert (= inner (ToolResult :answers #((lines.ToolAnswer "toolu_inner" "ticket x1" False)) :parent-tool-use-id "toolu_agent"))
+          (repr inner))
+  (for [main [{"type" "user" "parent_tool_use_id" None "message" {"content" [result]}}
+              {"type" "user" "message" {"content" [result]}}
+              {"type" "user" "parent_tool_use_id" "" "message" {"content" [result]}}]]
+    (val answered (classify-record main))
+    (assert (isinstance answered ToolResult) (repr answered))
+    (assert (is answered.parent-tool-use-id None) #(main answered))))
+
 (deftest test-assistant-lines-keep-their-usage-model-and-parent-and-results-keep-the-model-windows
   ;; #3744: 会話の今の context の大きさを出すため、assistant の行の message.usage(名乗らない欄は None)・message.model・
   ;; parent_tool_use_id(null = 本体の会話・在れば subagent の行)と、result の行の modelUsage の model ごとの contextWindow・
