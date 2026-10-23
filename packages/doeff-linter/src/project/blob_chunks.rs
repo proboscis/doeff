@@ -23,6 +23,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::facts_cache::BlobFacts;
+use super::fsmonitor::{self, Session};
 use super::git_index::{self, GitIndex};
 
 /// 塊の大きさの目安(行の数)— path の hash がこれで割り切れる行で切る。塊の数は file の数 / これ。
@@ -83,6 +84,8 @@ pub enum Lookup<T> {
 pub struct ChunkedFacts<T> {
     facts: BlobFacts,
     index: Arc<GitIndex>,
+    /// 常駐の process(`fsmonitor`)の答え — file が index の行と同じかを、stat せずに引く(無ければ file ごとに stat する)。
+    session: Option<Arc<Session>>,
     chunks: Vec<Vec<(String, [u8; 20])>>,
     /// path → 塊。
     at: HashMap<String, usize>,
@@ -108,6 +111,7 @@ impl<T: Clone + Serialize + DeserializeOwned> ChunkedFacts<T> {
         Some(ChunkedFacts {
             facts,
             index,
+            session: fsmonitor::session(root),
             chunks,
             at,
             loaded,
@@ -122,9 +126,24 @@ impl<T: Clone + Serialize + DeserializeOwned> ChunkedFacts<T> {
         self.chunks[c].first().map_or("", |(path, _)| path.as_str())
     }
 
+    /// file 1 つ(根からの path `rel`・場所 `path`)の事実を引く。常駐の process が「index の行と同じ」と答えた file は stat せず、そうでなければ stat して
+    /// 引く。stat した時はその `Metadata` も返す(`learn_read` が、読む間に file が変わっていない事を確かめる)。
+    pub fn lookup_path(&self, rel: &str, path: &Path) -> Option<(Lookup<T>, Option<Metadata>)> {
+        if let Some(oid) = self.session.as_ref().and_then(|session| session.clean_oid(rel)) {
+            return Some((self.lookup_oid(rel, oid), None));
+        }
+        let meta = std::fs::metadata(path).ok()?;
+        Some((self.lookup(rel, &meta), Some(meta)))
+    }
+
     /// file 1 つ(根からの path `rel`・今の stat `meta`)の事実を引く。
     pub fn lookup(&self, rel: &str, meta: &Metadata) -> Lookup<T> {
         let Some(oid) = self.index.blob_of(rel, meta) else { return Lookup::Untrusted };
+        self.lookup_oid(rel, oid)
+    }
+
+    /// 中身が blob `oid` と同じと分かっている file の事実を引く。
+    fn lookup_oid(&self, rel: &str, oid: [u8; 20]) -> Lookup<T> {
         let known = self.at.get(rel).and_then(|&c| {
             let table = self.loaded[c].get_or_init(|| {
                 self.chunk_reads.fetch_add(1, Ordering::Relaxed);
@@ -149,9 +168,10 @@ impl<T: Clone + Serialize + DeserializeOwned> ChunkedFacts<T> {
     /// `lookup` が `Unknown(oid)` と答えた file(根からの path `rel`・`path`・引いた時の stat `meta`)の中身 `source` から作った事実を、読む間に file が
     /// 変わっていない事と、中身が index の blob と同じ事(clean の filter や改行の変換が在る作業木では違う)を確かめてから覚える。確かめられなければ
     /// 覚えない(答えは変わらない)。
-    pub fn learn_read(&self, rel: &str, oid: [u8; 20], path: &Path, meta: &Metadata, source: &[u8], value: T) {
+    /// `meta` が None(常駐の process が index の行と同じと答えた file)の時は stat の比べを省く — 中身が index の blob と同じ事は下の比べが確かめる。
+    pub fn learn_read(&self, rel: &str, oid: [u8; 20], path: &Path, meta: Option<&Metadata>, source: &[u8], value: T) {
         let Some(&c) = self.at.get(rel) else { return };
-        let unchanged = std::fs::metadata(path).is_ok_and(|now| now.len() == meta.len() && now.modified().ok() == meta.modified().ok());
+        let unchanged = meta.map_or(true, |meta| std::fs::metadata(path).is_ok_and(|now| now.len() == meta.len() && now.modified().ok() == meta.modified().ok()));
         if unchanged && git_index::blob_id(source) == oid {
             self.learned.lock().unwrap_or_else(PoisonError::into_inner).entry(c).or_default().push((oid, value));
         }

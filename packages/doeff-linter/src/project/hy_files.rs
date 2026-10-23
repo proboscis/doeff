@@ -98,6 +98,12 @@ enum Step {
 /// 1 つの dir の中身は他の dir の中身に依らず、見つけた file の読みも他に依らないので、全部を待ちの重なる仕事として回す(`bulk_read::pipeline`)。
 /// 降りない dir の名・symlink を辿らない事・読めない dir を黙って飛ばす事・最後に path で並べる事は、歩く物と同じ。根が dir として開けない時は None。
 pub fn walk_reading_with<R: Send>(root: &Path, rules: &WalkRules, read: &(impl Fn(&Path) -> R + Sync)) -> Option<Vec<(PathBuf, R)>> {
+    // 常駐の process(`fsmonitor`)が作業木の歩きを覚えていれば、dir を 1 つも開かずに一覧を受ける(答えは歩いた物と同じ集合と順)。
+    if let Some(session) = super::fsmonitor::session(root) {
+        let paths = session.listing(rules);
+        let results = super::bulk_read::fan_out_wide(&paths, |path| read(path));
+        return Some(paths.into_iter().zip(results).collect());
+    }
     let first = list_dir(root, rules)?;
     let mut found = super::bulk_read::pipeline(super::bulk_read::WIDE_READERS, steps_of(first), |step| match step {
         Step::List(dir) => (list_dir(&dir, rules).map(steps_of).unwrap_or_default(), None),
