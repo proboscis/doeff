@@ -170,8 +170,9 @@
 (defk clickhouse-rows [body]
   {:pre [(: body bytes)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "JSONCompactEachRow の答えの本文を行の tuple へ写すため(値は SqlValue へ正規化 — 配列・Map の欄は TypeError)。"
-  (! (normalized-rows (lfor line (.splitlines (.decode body "utf-8")) :if (.strip line) (json.loads line)))))
+  "JSONCompactEachRow の答えの本文を行の tuple へ写すため(値は SqlValue へ正規化 — 配列・Map の欄は TypeError)。
+   行の区切りは \\n だけ — splitlines は値に生で来る U+0085・U+2028・U+2029 でも切る。"
+  (! (normalized-rows (lfor line (.split (.decode body "utf-8") "\n") :if (.strip line) (json.loads line)))))
 
 
 (defk clickhouse-written-rows [summary]
