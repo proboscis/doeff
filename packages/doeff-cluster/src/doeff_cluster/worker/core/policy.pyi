@@ -110,6 +110,9 @@ def retired_at_of(process: ProcessView) -> int:
 def backoff_ms(record: JobRecord, policy: WorkerPolicy) -> int:
     ...
 
+def hyx_ran_stablyXquestion_markX(now: int, record: JobRecord, policy: WorkerPolicy) -> _Program[bool, object]:
+    ...
+
 def in_backoff(now: int, record: JobRecord, policy: WorkerPolicy) -> bool:
     ...
 
