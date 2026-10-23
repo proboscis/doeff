@@ -4,8 +4,8 @@
 ;;;                                呼び 1 つに thread 1 本で回し、遅い問い合わせの間も scheduler の他の task が回る(#1215)
 ;;;   pooled-postgres-sql-handler  同じ本物の PostgreSQL を、接続の許可を scheduler の semaphore で待ち driver の I/O だけを呼び手の pool の
 ;;;                                thread で回して答える版(pooled_postgres_sql.hy)。thread の数を呼び手が抑える
-;;;   clickhouse-http-sql-handler  本物の ClickHouse(urllib の HTTP 1 本 = 問い合わせ 1 つ・clickhouse_http_sql.hy)。transaction を持たない。
-;;;                                HTTP の往復は呼び 1 つに thread 1 本で回し、scheduler を塞がない
+;;;   clickhouse-http-sql-handler  本物の ClickHouse(http.client の HTTP 1 本 = 問い合わせ 1 つ・clickhouse_http_sql.hy)。transaction を持たない。
+;;;                                HTTP の往復は呼び 1 つに thread 1 本で回し、scheduler を塞がない。要求ごとに server 側の期限を送り、答えまで離れない
 ;;;   sqlite-sql-handler           I/O なし — stdlib の sqlite3 の memory の DB(sqlite_sql.hy)。仮想の時計の模擬で使う
 ;;; 答え手は自分が宣言した database の名にだけ答え、他の名の effect は外側へ回す(PostgreSQL と ClickHouse の答え手を重ねて置ける)。
 ;;; 接続の宣言(DSN・URL・資格)は答え手の引数で、組み立ての側(composition root)が渡す。業務が見るのは database の名だけ。
