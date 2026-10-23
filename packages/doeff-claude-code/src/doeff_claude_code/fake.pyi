@@ -177,6 +177,8 @@ class FakeReply:
     compactions: tuple[CompactBoundary | CompactEnded, ...] = ...
     subagent_transcript: SubagentTranscript | None = None
     hooks: tuple[HookNotice, ...] = ...
+    subagent_tool_output: str | None = None
+    boundary_injections: bool = False
 
     def __post_init__(self) -> None:
         ...
@@ -210,6 +212,7 @@ class FakeTurn:
     refusal_hit: AccountRefusalHit | None
     model_refusal_hit: ModelRefusalHit | None
     subagent_due: SubagentTranscript | None
+    boundary_extra: tuple[str, ...]
     call_id: str
     call_usage: Usage | None
 
