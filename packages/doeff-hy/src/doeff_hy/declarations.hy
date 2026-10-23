@@ -215,6 +215,28 @@
   out)
 
 
+(defn bound-answer-methods [answer outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "型検査のための展開で、答えの分け方(:absent・:failure)を宣言した effect の class に置く method `__bound_answer__` の form の list
+   (置かない時は空)。返り値の型 = :answer の union から :absent と :failure の要素を除いた物 — `<-` が束ねる名の型で、
+   doeff_hy/static_types.pyi の BoundAnswer を満たす(`_doeff_perform` の overload が読む)。実行時の `<-` は不在を Absent に・
+   失敗を Raise に変えて呼び手のスコープで出すので、束ねた名には成功と :value の要素だけが来る。effect の基底 `EffectBase[Answer]`
+   の Answer は宣言の全部のまま(handler は値で答える — R4)。:answer が union でも名前 1 つでもない時と、要素が全部外れる時は
+   置かない(束ねた名の型は答えの全部のまま)。"
+  (import doeff_hy.static_view [static-view-enabled])
+  (setv members (cond
+                  (and (isinstance answer hy.models.Expression) (> (len answer) 0) (= (str (get answer 0)) "|"))
+                    (list (cut answer 1 None))
+                  (isinstance answer Symbol) [answer]
+                  True None)
+        removed (sfor key #(":absent" ":failure") item (get outcome-types key) (hy.repr item)))
+  (if (and (static-view-enabled) removed (is-not members None))
+      (let [kept (lfor m members :if (not-in (hy.repr m) removed) m)]
+        (if kept
+            [`(defn [] #^ ~(if (= (len kept) 1) (get kept 0) `(| ~@kept)) __bound-answer__ [self] (raise NotImplementedError))]
+            []))
+      []))
+
+
 (defn effect-field-forms [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の `:fields [(: 名 型) (: 名 型 既定値) …]` を検め、dataclass の欄の form の list と欄の名前の list にするため
    (無ければ両方とも空)。既定値を持つ欄の後ろに既定値の無い欄は置けない(dataclass の順の決まりを展開の時に断る)。"
@@ -409,7 +431,8 @@
        (setv #^ (get _doeff-ClassVar object) __doeff-answer__ ~(answer-value-form answer))
        ~@fields
        ~@post-init
-       ~@methods)
+       ~@methods
+       ~@(bound-answer-methods answer outcome-types))
      ~@(if written
            [`(doeff_hy.record_runtime.seal-effect ~name #(~@(lfor s syms (String (hy.mangle (str s))))) ~(bool post-init))]
            [])

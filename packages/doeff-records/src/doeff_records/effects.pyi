@@ -23,6 +23,8 @@ from doeff_records.values import (
     ReadEventsAnswer,
     ReadRowAnswer,
     ReadStreamEndAnswer,
+    StreamEmpty,
+    StreamEnd,
     WatchChangesAnswer,
     WatchCursor,
     WatchEventsAnswer,
@@ -115,6 +117,8 @@ class ReadEvents(EffectBase[ReadEventsAnswer]):
 @dataclass(frozen=True)
 class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
     stream: str
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundAnswer)。
+    def __bound_answer__(self) -> StreamEnd | StreamEmpty: ...
 
 @dataclass(frozen=True)
 class ReadEventByKey(EffectBase[ReadEventByKeyAnswer]):
