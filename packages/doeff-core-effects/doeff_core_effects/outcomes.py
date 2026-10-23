@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from types import GeneratorType, NoneType, UnionType
-from typing import TYPE_CHECKING, Generic, Never, TypeAlias, TypeVar, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Never, TypeAlias, TypeVar, Union, get_args, get_origin
 
 from doeff_vm import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
 
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from doeff import DoExpr, EffectGenerator, Program
 
     # ``<-`` に渡せる物: Program・effect・Result / Maybe の値。
-    Bindable: TypeAlias = DoExpr | Program | EffectBase | Ok | Err | Some | _NothingType
+    Bindable: TypeAlias = DoExpr | Program[Any, Any] | EffectBase[Any] | Ok[Any] | Err[Any] | Some[Any] | _NothingType
 
 _D = TypeVar("_D")
 

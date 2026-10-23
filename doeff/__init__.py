@@ -144,9 +144,11 @@ if TYPE_CHECKING:
     # 変わらない — 変わるのは型検査器が `-> Program` を verify できるかだけ。
     # 段 7 lane 7c(agora-redesign 決定 1.3): driver 層が program を返す関数を
     # 持つようになり、`Expand` を `Program` へ返せない静的な穴が実害になった。
+    # 総称の node の型引数は Any で明示する — 素のまま書くと pyright は Unknown(`Pure[Unknown]`)に読み、DoExpr を返す・受ける
+    # 関数(on_raise・maybe など)を呼ぶ側の strict の型検査が「部分的に不明」の赤になる。
     DoExpr = (
-        Pure | Perform | Resume | Transfer | Apply | Expand | Pass
-        | WithHandlerType | WithObserveRaw | ResumeThrow | TransferThrow
+        Pure[Any] | Perform[Any] | Resume | Transfer | Apply | Expand[Any, Any] | Pass
+        | WithHandlerType[Any] | WithObserveRaw[Any] | ResumeThrow | TransferThrow
         | GetTraceback | GetExecutionContext | GetHandlers | GetBoundaries
         | GetOuterHandlers
     )

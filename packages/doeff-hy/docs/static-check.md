@@ -137,6 +137,19 @@ guard の method 不足・読みだけの job の書き)に当てると、Hy で
 - **答えの型を宣言していない effect**: `(<- x T (Eff …))` の突き合わせと handler の答えの突き合わせは、
   effect が `EffectBase[T]` の T を持つ時だけ効く。宣言の無い effect の答えは Any として通す。
 
+## 宣言を持つ effect の `<-` と中継 `Perform`(ADR-DOE-CORE-EFFECTS-003・card ki-6c774adfb8c7)
+
+- `(<- x e)` の x の型: 実行時の `<-` は :absent の答えを Absent に・:failure の答えを Raise に変えて呼び手のスコープで出すので、
+  束ねた名には来ない。defeffect が :absent / :failure を宣言した effect の class は、型検査の展開で
+  `def __bound_answer__(self) -> <:answer の union から :absent と :failure の要素を除いた物>` を持ち(declarations.hy の
+  `bound-answer-methods`・生成する stub も写す)、`_doeff_perform` の overload(static_types.pyi の `BoundAnswer`)がそれを読む。
+  effect の基底 `EffectBase[Answer]` の Answer は宣言の全部のまま(handler は 3 つとも値で答える — R4 — ので `typed_resume` は全部を受ける)。
+  手書きの `.pyi` は同じ method を宣言する(生成する stub と同じ形)。
+- 中継(宣言を開かずに effect を出し直す書き方): `(<- answer (Perform effect))`・`(! (Perform ask))` の 1 つに決める。`Perform[T]` は
+  答えに共変で、effect の union を受け(`Perform(ask)` の ask が `A | B` でよい)、`_doeff_perform` の最初の overload が
+  宣言の全部の答え T を返す。doeff-linter の中継の判定(DOEFF143・157 などが読む節の形 — `clause_shape`)も `(Perform effect)` を
+  `(yield effect)` と同じ出し直しとして読む。生の `(yield effect)` は defhandler の節の中でしか型が付かない(答えが `object`)ので使わない。
+
 ## 誤検出を出さないための決め
 
 - 文の位置の式(ADR-DOE-HY-001)は `macros.pyi` の deprecated の overload で捕まえる。pyright は型の
