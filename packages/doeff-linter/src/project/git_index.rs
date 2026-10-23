@@ -27,13 +27,14 @@ struct Entry {
     mtime_sec: u32,
     mtime_nsec: u32,
     ino: u32,
+    mode: u32,
     size: u32,
     oid: [u8; 20],
 }
 
-/// 作業木の index を読んだ物 — path(root からの綴り)→ 行。
+/// 作業木の index を読んだ物 — (path〔root からの綴り〕・行)を index の並び(path の byte の順)で。
 pub struct GitIndex {
-    entries: HashMap<String, Entry>,
+    entries: Vec<(String, Entry)>,
     /// index file 自身の更新時刻(秒・ns)。
     stamp: (u64, u32),
 }
@@ -58,11 +59,19 @@ impl GitIndex {
 
     /// `rel` の file の stat(`meta`)が index の行と同じなら、その blob の id。
     pub fn blob_of(&self, rel: &str, meta: &Metadata) -> Option<[u8; 20]> {
-        let entry = self.entries.get(rel)?;
+        // index の行は path の byte の順に並ぶ(git の決まり)。並んでいない壊れた index では引けないだけ — 「中身を読む」へ倒れる。
+        let at = self.entries.binary_search_by(|(path, _)| path.as_str().cmp(rel)).ok()?;
+        let entry = &self.entries[at].1;
         let (sec, nsec) = mtime_of(meta)?;
         let racy = (u64::from(entry.mtime_sec), entry.mtime_nsec) >= self.stamp;
         let same = u64::from(entry.mtime_sec) == sec && entry.mtime_nsec == nsec && u64::from(entry.size) == (meta.len() & 0xffff_ffff) && entry.ino == inode_of(meta);
         (same && !racy).then_some(entry.oid)
+    }
+
+    /// 通常の file(mode 100644・100755)の行の(path・blob の id)を、index の並びで。symlink(120000)と submodule(160000)は含めない
+    /// (repo を歩く所は symlink を辿らず、通常の file だけを拾う)。
+    pub fn files(&self) -> impl Iterator<Item = (&str, [u8; 20])> {
+        self.entries.iter().filter(|(_, entry)| entry.mode & 0o170_000 == 0o100_000).map(|(path, entry)| (path.as_str(), entry.oid))
     }
 }
 
@@ -105,8 +114,8 @@ fn be32(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// index file(版 2・3)の行を読む。版 4・分割 index は None。
-fn parse(bytes: &[u8]) -> Option<HashMap<String, Entry>> {
+/// index file(版 2・3)の行を読む(index の並びのまま)。版 4・分割 index は None。
+fn parse(bytes: &[u8]) -> Option<Vec<(String, Entry)>> {
     if bytes.get(..4)? != b"DIRC" {
         return None;
     }
@@ -115,13 +124,14 @@ fn parse(bytes: &[u8]) -> Option<HashMap<String, Entry>> {
         return None;
     }
     let count = be32(bytes, 8)? as usize;
-    let mut entries = HashMap::with_capacity(count);
+    let mut entries = Vec::with_capacity(count);
     let mut at = 12;
     for _ in 0..count {
         let start = at;
         let mtime_sec = be32(bytes, start + 8)?;
         let mtime_nsec = be32(bytes, start + 12)?;
         let ino = be32(bytes, start + 20)?;
+        let mode = be32(bytes, start + 24)?;
         let size = be32(bytes, start + 36)?;
         let oid: [u8; 20] = bytes.get(start + 40..start + 60)?.try_into().ok()?;
         let flags = u16::from_be_bytes(bytes.get(start + 60..start + 62)?.try_into().ok()?);
@@ -134,7 +144,7 @@ fn parse(bytes: &[u8]) -> Option<HashMap<String, Entry>> {
         // 行は 8 byte の倍数に、path の後ろの NUL を 1〜8 個で揃える。
         at = start + ((path_at - start + length + 8) & !7);
         if (flags >> 12) & 3 == 0 {
-            entries.insert(path.to_string(), Entry { mtime_sec, mtime_nsec, ino, size, oid });
+            entries.push((path.to_string(), Entry { mtime_sec, mtime_nsec, ino, mode, size, oid }));
         }
     }
     // 行の後ろの拡張。分割 index(`link`)は行が別の file にあるので信じない。

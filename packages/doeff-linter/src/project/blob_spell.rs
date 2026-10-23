@@ -5,9 +5,67 @@
 //! で覚えておけば、名の綴りを含まない file は、中身を読まずに「綴らない」と答えられる(Bloom filter は「在る」を誤って言うだけで、「無い」を誤って
 //! 言わない — 誤った「在る」は file を読み直すだけで答えは変わらない)。
 
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde::{Deserialize, Serialize};
 
+use super::blob_chunks::{ChunkedFacts, Lookup};
+use super::smells::has_failure_declaration_spelling;
 use super::spelling::Spelling;
+use super::{hy_files, paths};
+
+/// 覚えの置き場の種類の名。
+const KIND: &str = "blob-spell";
+
+/// repo の Hy の file 1 つを見た結果。
+pub enum Seen {
+    /// 覚えで済んだ(中身を読んでいない)。
+    Spell(BlobSpell),
+    /// 中身を読んだ(覚えが無い・index と外れた file・覚えが `wants_source` に当たった file)。
+    Source(String),
+    /// 読めなかった。
+    Unreadable,
+}
+
+/// repo の Hy の全部を歩きながら、file ごとに綴りの覚えを git の blob の id で引く(card ki-d56ba76422ba・ki-40c8ca380713)。覚えが在って
+/// `wants_source(覚え)` が偽の file は中身を読まない。覚えが無い・index と外れた file・`wants_source` が真の file は中身を読む(覚えの無い blob は、
+/// 読んだ中身から覚えを作って置く)。覚えは index の並びの塊ごとに 1 file で引く(`ChunkedFacts` — 冷えた作業木で置き場の file を 4600 開かない)。
+/// 計器へ段 `label` の時間と、中身を読んだ数(`<label> read=N`)を出す。並びは `hy_files::collect_reading` と同じ。
+pub fn scan(root: &Path, label: &str, wants_source: impl Fn(&BlobSpell) -> bool + Sync) -> Vec<(String, PathBuf, Seen)> {
+    let memory = ChunkedFacts::<BlobSpell>::open(root, KIND, |rel| hy_files::walks_to(&hy_files::HY_WALK, rel));
+    let read = AtomicUsize::new(0);
+    let seen = crate::timing::timed(label, || hy_files::collect_reading(root, |path| see(root, memory.as_ref(), &wants_source, path, &read)));
+    if let Some(memory) = &memory {
+        let (chunks, missed) = memory.reads();
+        crate::timing::count(label, "chunks", chunks);
+        crate::timing::count(label, "missed", missed);
+        crate::timing::timed(&format!("{label}.remember"), || memory.finish());
+    }
+    crate::timing::count(label, "read", read.load(Ordering::Relaxed));
+    seen
+}
+
+/// file 1 つを見る(`scan` の 1 件)。
+fn see(root: &Path, memory: Option<&ChunkedFacts<BlobSpell>>, wants_source: &(impl Fn(&BlobSpell) -> bool + Sync), path: &Path, read: &AtomicUsize) -> Seen {
+    let known = memory.and_then(|memory| {
+        let meta = std::fs::metadata(path).ok()?;
+        let rel = paths::relative_path(root, path)?;
+        let found = memory.lookup(&rel, &meta);
+        Some((memory, found, rel, meta))
+    });
+    let unknown = match known {
+        Some((_, Lookup::Known(spell), _, _)) if !wants_source(&spell) => return Seen::Spell(spell),
+        Some((memory, Lookup::Unknown(oid), rel, meta)) => Some((memory, oid, rel, meta)),
+        _ => None,
+    };
+    read.fetch_add(1, Ordering::Relaxed);
+    let Ok(source) = std::fs::read_to_string(path) else { return Seen::Unreadable };
+    if let Some((memory, oid, rel, meta)) = unknown {
+        memory.learn_read(&rel, oid, path, &meta, source.as_bytes(), BlobSpell::of(&source));
+    }
+    Seen::Source(source)
+}
 
 /// 記号の終わり(`spelling::SYMBOL_END` の字)。
 fn ends_symbol(c: char) -> bool {
@@ -33,10 +91,12 @@ fn positions(hash: u64, bits: usize) -> impl Iterator<Item = usize> {
     (0..HASHES).map(move |i| (first.wrapping_add(i.wrapping_mul(step)) as usize) & (bits - 1))
 }
 
-/// file 1 つが綴る名の覚えと、`(defk` の綴りを含むか。
+/// file 1 つが綴る名の覚えと、`(defk` の綴りを含むか・失敗の型の宣言の綴り(`smells::has_failure_declaration_spelling`)を含むか・`(defeffect` を含むか。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobSpell {
     pub defk: bool,
+    pub failure: bool,
+    pub defeffect: bool,
     bloom: Vec<u8>,
 }
 
@@ -57,7 +117,7 @@ impl BlobSpell {
                 bloom[at / 8] |= 1 << (at % 8);
             }
         }
-        BlobSpell { defk: source.contains("(defk"), bloom }
+        BlobSpell { defk: source.contains("(defk"), failure: has_failure_declaration_spelling(source), defeffect: source.contains("(defeffect"), bloom }
     }
 
     /// `spelling` を綴るかもしれないか。false なら必ず綴らない(`Spelling::in_source` が false)。
