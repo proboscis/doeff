@@ -136,8 +136,10 @@
    名乗りに縛られない。名乗りは法が自分で見る)。"
   (var plain [])
   (for [answer answers]
-    (<- one (unplaced answer))
-    (:= plain (+ plain [one])))
+    (if (isinstance answer #(Written WrittenRows))
+        (do (<- one (unplaced answer))
+            (:= plain (+ plain [one])))
+        (:= plain (+ plain [answer]))))
   plain)
 
 

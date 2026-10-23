@@ -59,6 +59,13 @@
 ;;; 鍵の覚えの外し(card ki-4ebaefac6668 — maintenance.hy の頭の註の「鍵の覚えを外す」): 出来事を捨てる transaction は、列の覚え方
 ;;; (StreamDecl.key-memory)に従って覚えを刻つきで入れるか(departed-keys-statements)、覚えを残さない列は入れずに外す。回収
 ;;; (SweepExpired)は長さを限った列ごとに、覚えた刻から長さを過ぎた覚えを錠の単位の transaction を分けて外す(forget-expired-keys)。
+;;; 行の書きの冪等キー(card ki-78c6d663491f — memory の置き場と同じ形): 鍵つきの PutRow・PutRows は、1 往復目の読みの束の後ろに同じ鍵の覚えの
+;;; 引き(pg_sql.find-write-key-statement — 表 write_keys)を足し、期待と書きの判定の前に admission.judge-write-replay で判じる。同じ鍵・同じ
+;;; 本文の送り直しは、片付けも行の書きも流さずに COMMIT だけを流して覚えた答えを送り直しと名乗って返す(行の単位の錠の中なので、送り直しの
+;;; 判じと元の書きの確定は重ならない)。覚えが無ければ今までどおり判じ、確定する時だけ 2 往復目の行の書きと変更の文の後ろに答えの覚えを入れる
+;;; 文を足す(remember-statements — 往復を増やさない。答えの変更の番号は同じ往復の変更の文が採るので、覚えの行は書きの最後の変更の番号を
+;;; 変更の列の最大の番号として同じ文で読む)。回収(SweepExpired)が覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた覚えを外す
+;;; (forget-write-keys)。
 ;;; 索引の用意(card ki-954c58540d0f — 2026-10-18 13:18〜14:26 JST に、索引を 1 つ宣言した配備で起動が落ち続けた): 表の用意
 ;;; (prepare-records-store)は宣言と置き場の差を観測して埋める形で、置き場の大きさに比例する仕事を起動の道に置かない。
 ;;;   - 移行の transaction は、表と行の文(CREATE TABLE IF NOT EXISTS・store_epoch の行)を流し、その transaction で生まれた表の索引だけを
@@ -103,17 +110,18 @@
 (import doeff_records.loop_work [off-loop])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
-                              EventAbsent EventRetired key-memory-ms
+                              EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey])
+                               ReadEventByKey write-parts])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
-                                 where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
+                                 where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
+                                 judge-write-replay write-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit ROWS-UNIT writer-lock-statement schema-steps drop-statements
@@ -126,7 +134,8 @@
                               insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
                               expire-chosen-events-statement touched-events-statement delete-events-statement expiring-candidates-statement
                               retire-keys-statement find-retired-key-statement expired-page-statement
-                              SchemaStep columns-statement drop-keys-statement forget-keys-statement])
+                              SchemaStep columns-statement drop-keys-statement forget-keys-statement
+                              find-write-key-statement remember-write-statement forget-write-keys-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 
@@ -318,11 +327,13 @@
 
 
 (defk committed [store statements answer]
-  {:pre [(: store PreparedStore) (: statements tuple) (: answer (| Appended Conflict Refused RowsConflict RowsRefused))]
-   :post [(: % (| Appended Conflict Refused RowsConflict RowsRefused))]
+  {:pre [(: store PreparedStore) (: statements tuple)
+         (: answer (| Appended Conflict Refused RowsConflict RowsRefused Written WrittenRows))]
+   :post [(: % (| Appended Conflict Refused RowsConflict RowsRefused Written WrittenRows))]
    :tags {:context "records" :role "foundation"}}
   "書かない時の 2 往復目: statements(片付け)を合図と COMMIT と同じ往復で流し、前もって決まった答え answer を返すため(頭の註 — 断り・衝突・
-   追記の再送の時も片付けと COMMIT を流す)。行を書く時は、変更の番号を答えの行から読むので batch-rows を直に流す(written-of)。"
+   追記の再送・行の書きの冪等キーの送り直し〔覚えた Written・WrittenRows — 片付けは流さない〕の時も COMMIT を流す)。行を書く時は、変更の
+   番号を答えの行から読むので batch-rows を直に流す(written-of)。"
   (<- (batch-rows store.database statements True))
   answer)
 
@@ -1263,17 +1274,71 @@
   (Written staged.version staged.value (WatchCursor epoch sequence)))
 
 
+(defk write-key-reads [store ask]
+  {:pre [(: store PreparedStore) (: ask (| PutRow PutRows))] :post [(: % (get tuple #(Statement ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "鍵つきの行の書きの 1 往復目に足す、同じ鍵の覚えの引き(鍵の無い書きは 0 文・鍵つきは 1 文 — 頭の註の「行の書きの冪等キー」)を作るため。"
+  (if (is ask.idempotency-key None)
+      #()
+      #((! (find-write-key-statement store.prefix ask.idempotency-key)))))
+
+
+(defk remembered-answer-json [rows epoch stageds]
+  {:pre [(: rows bool) (: epoch int) (: stageds (get tuple #(StagedRow ...)))] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "確定する行の書きの答えを、覚えの表の答えの綴りにするため(rows = 束の答え WrittenRows か・epoch = 変更に刻む置き場の版・stageds = 束の順の
+   判定を通った書き — 版と値。変更の番号は綴りに入れず、覚えの行の last_seq が持つ — pg_sql.remember-write-statement)。"
+  (canonical-json {"rows" rows "epoch" epoch
+                   "items" (lfor staged stageds {"version" staged.version "value" staged.value})}))
+
+
+(defk remembered-write-of [records]
+  {:pre [(: records tuple)] :post [(: % (| RememberedWrite None))]
+   :tags {:context "records" :role "foundation"}}
+  "1 往復目の覚えの引きの行(本文の指紋・答えの綴り・最後の変更の番号 — 無ければ空)から、覚え values.RememberedWrite を作り直すため
+   (答えの各項の変更の位置は、最後の変更の番号から束の順に遡る — 束の変更の番号は錠の中で続く)。"
+  (when (not records)
+    (return None))
+  (val record (get records 0))
+  (val body (json.loads (get record 1)))
+  (val items (get body "items"))
+  (val last (int (get record 2)))
+  (val written (tuple (gfor #(index item) (enumerate items)
+                            (Written (int (get item "version")) (frozen-json-object (get item "value") "write_keys.answer.items[].value")
+                                     (WatchCursor (int (get body "epoch")) (+ (- last (len items)) 1 index))))))
+  (RememberedWrite :body-digest (get record 0) :answer (if (get body "rows") (WrittenRows written) (get written 0))))
+
+
+(defk remember-statements [store ask epoch stageds now-ms]
+  {:pre [(: store PreparedStore) (: ask (| PutRow PutRows)) (: epoch int) (: stageds (get tuple #(StagedRow ...))) (: now-ms int)]
+   :post [(: % (get tuple #(Statement ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "確定する鍵つきの行の書きの答えを覚える文(2 往復目の行の書きと変更の文の後ろに流す — 鍵の無い書きは 0 文)を作るため(頭の註の「行の書きの
+   冪等キー」)。"
+  (when (is ask.idempotency-key None)
+    (return #()))
+  (<- answer str (remembered-answer-json (isinstance ask PutRows) epoch stageds))
+  #((! (remember-write-statement store.prefix ask.idempotency-key (write-digest (isinstance ask PutRows) (write-parts ask)) answer now-ms))))
+
+
 (defk put-row-locked [store origin-host writer ask now-ms]
   {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask PutRow) (: now-ms int)]
    :post [(: % (| Written Conflict Refused))]
    :tags {:context "records" :role "foundation"}}
-  "PutRow の書きの錠の中の手順を 2 往復で流すため(頭の註): 1 往復目に置き場の頭と今の行を錠つきで読み、判定し、2 往復目に片付けと
-   (通れば)行の書きを COMMIT と同じ往復で流す。"
+  "PutRow の書きの錠の中の手順を 2 往復で流すため(頭の註): 1 往復目に置き場の頭と今の行を錠つきで読み(鍵つきの書きは同じ鍵の覚えも)、
+   覚えで判じ(同じ鍵の送り直しは行に触らずに覚えた答え — 片付けも流さない)、判定し、2 往復目に片付けと(通れば)行の書きと(鍵つきなら)
+   答えの覚えを COMMIT と同じ往復で流す。"
   (val decl (store.schema.table ask.table))
   (val text (key-text ask.key))
   (<- head-statement (store-head-statement store.prefix))
   (<- lock-statement (lock-row-statement store.prefix decl.name text))
-  (<- read (batch-rows store.database #(head-statement lock-statement) False))
+  (<- key-reads (write-key-reads store ask))
+  (<- read (batch-rows store.database (+ #(head-statement lock-statement) key-reads) False))
+  (<- remembered (remembered-write-of (if key-reads (get read 2) #())))
+  (val replay (judge-write-replay ask.idempotency-key False #(ask) remembered))
+  (when (is-not replay None)
+    (<- replayed (committed store #() replay))
+    (return replayed))
   (<- head (head-of (get read 0)))
   (<- found (locked-row store decl text (get read 1) now-ms head.epoch))
   (val conflict (judge-expect ask.expect found.current))
@@ -1286,7 +1351,8 @@
     (return refused))
   (<- staged (staged-row store origin-host writer ask.table text found.current verdict.value now-ms head.epoch))
   (val statements (+ found.cleanup staged.statements))
-  (<- rows (batch-rows store.database statements True))
+  (<- remembers (remember-statements store ask head.epoch #(staged) now-ms))
+  (<- rows (batch-rows store.database (+ statements remembers) True))
   (<- written (written-of staged rows (len statements) head.epoch))
   written)
 
@@ -1296,8 +1362,9 @@
    :post [(: % (| WrittenRows RowsConflict RowsRefused))]
    :tags {:context "records" :role "foundation"}}
   "PutRows の束を全部か 0 で、行の数に依らず 2 往復で書くため(頭の註): 1 往復目に置き場の頭と全部の行を錠つきで読み(期限を過ぎた行は
-   片付けて無い行として — locked-row)、判定(admission.judge-put-rows)が全部通った時だけ、2 往復目に片付けと束の順の書き・変更を COMMIT と
-   同じ往復で流す(錠の中なので番号は束の中で続く)。往復の途中の失敗は transaction ごと戻る。"
+   片付けて無い行として — locked-row。鍵つきの束は同じ鍵の覚えも読み、PutRow と同じく覚えで先に判じる)、判定(admission.judge-put-rows)が
+   全部通った時だけ、2 往復目に片付けと束の順の書き・変更と(鍵つきなら)答えの覚えを COMMIT と同じ往復で流す(錠の中なので番号は束の中で
+   続く)。往復の途中の失敗は transaction ごと戻る。"
   (for [write ask.writes] (store.schema.table write.table))
   (val texts (tuple (gfor write ask.writes (key-text write.key))))
   (<- head-statement (store-head-statement store.prefix))
@@ -1305,10 +1372,16 @@
   (for [#(write text) (zip ask.writes texts :strict True)]
     (<- lock-statement (lock-row-statement store.prefix write.table text))
     (:= reads (+ reads #(lock-statement))))
-  (<- read (batch-rows store.database reads False))
+  (<- key-reads (write-key-reads store ask))
+  (<- read (batch-rows store.database (+ reads key-reads) False))
+  (<- remembered (remembered-write-of (if key-reads (get read (len reads)) #())))
+  (val replay (judge-write-replay ask.idempotency-key True ask.writes remembered))
+  (when (is-not replay None)
+    (<- replayed (committed store #() replay))
+    (return replayed))
   (<- head (head-of (get read 0)))
   (var found #())
-  (for [#(write text records) (zip ask.writes texts (cut read 1 None) :strict True)]
+  (for [#(write text records) (zip ask.writes texts (cut read 1 (len reads)) :strict True)]
     (<- one (locked-row store (store.schema.table write.table) text records now-ms head.epoch))
     (:= found (+ found #(one))))
   (val cleanup (tuple (gfor one found statement one.cleanup statement)))
@@ -1326,7 +1399,8 @@
     (:= statements (+ statements staged.statements))
     (:= stageds (+ stageds #(staged)))
     (:= ends (+ ends #((len statements)))))
-  (<- rows (batch-rows store.database statements True))
+  (<- remembers (remember-statements store ask head.epoch stageds now-ms))
+  (<- rows (batch-rows store.database (+ statements remembers) True))
   (var written #())
   (for [#(staged end) (zip stageds ends :strict True)]
     (<- answered (written-of staged rows end head.epoch))
@@ -1751,13 +1825,31 @@
   forgotten)
 
 
+(defk forget-write-keys [store gated now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを、EXPIRE-BATCH 個ずつ行の単位の書きの錠の transaction を
+   分けて外すため(SweepExpired — 頭の註の「行の書きの冪等キー」。行の書きが覚えを引いて入れるのと同じ錠の単位)。上限より少なく外した回で
+   終える。合図は名の無い待ち手だけに関わる(覚えの外しは読みと待ちの答えを変えない — 名の空の並び)。答え = 外した覚えの数。"
+  (<- statement (forget-write-keys-statement store.prefix (- now-ms (int (* 1000 WRITE-KEY-MEMORY-SECONDS))) EXPIRE-BATCH))
+  (var total 0)
+  (var going True)
+  (while going
+    (<- rows (writing store gated "forget-write-keys" #(ROWS-UNIT) #() (query-rows store.database statement)))
+    (:= total (+ total (int (get rows 0 0))))
+    (:= going (= (int (get rows 0 0)) EXPIRE-BATCH)))
+  total)
+
+
 (defk swept-count [store gated now-ms]
   {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % Swept)]
    :tags {:context "records" :role "foundation"}}
-  "SweepExpired の答え(消した行の数と外した覚えの数)を作るため — 回収が今捨てた出来事の覚えも、長さが過ぎていれば同じ回に外れる。"
+  "SweepExpired の答え(消した行の数と外した覚えの数と外した行の書きの冪等キーの覚えの数)を作るため — 回収が今捨てた出来事の覚えも、
+   長さが過ぎていれば同じ回に外れる。"
   (<- removed (purge-expired store gated now-ms))
   (<- forgotten (forget-expired-keys store gated now-ms))
-  (Swept removed forgotten))
+  (<- write-keys (forget-write-keys store gated now-ms))
+  (Swept removed forgotten write-keys))
 
 
 ;; --- handler ------------------------------------------------------------------------------------------------

@@ -55,6 +55,10 @@ from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 from doeff_records.wire import SERVER_TIMING_HEADER as SERVER_TIMING_HEADER
 from doeff_records.wire import SERVER_TIMING_QUEUE as SERVER_TIMING_QUEUE
 from doeff_records.wire import server_timing_spans as server_timing_spans
+from doeff_records.wire import IDEMPOTENCY_HEADER as IDEMPOTENCY_HEADER
+from doeff_records.wire import request_key as request_key
+from doeff_core_effects.random_effects import RandomBytes as RandomBytes
+from doeff_core_effects.os_random import os_random_handler as os_random_handler
 DEFAULT_REQUEST_TIMEOUT: float
 EXCHANGE_LOG: str
 
@@ -80,7 +84,7 @@ class RawReply:
 def service_url(endpoint: RecordsEndpoint, operation: str) -> _Program[str, object]:
     ...
 
-def request_headers(endpoint: RecordsEndpoint) -> _Program[dict[str, str], object]:
+def request_headers(endpoint: RecordsEndpoint, key: str | None) -> _Program[dict[str, str], object]:
     ...
 
 def request_bytes(body: dict[str, object]) -> _Program[bytes, object]:
@@ -89,10 +93,10 @@ def request_bytes(body: dict[str, object]) -> _Program[bytes, object]:
 def reply_json(operation: str, reply: RawReply) -> _Program[JsonValue, object]:
     ...
 
-def exchange_by_effect(endpoint: RecordsEndpoint, operation: str, body: dict[str, object], waited: float) -> _Program[RawReply | Unreachable, object]:
+def exchange_by_effect(endpoint: RecordsEndpoint, operation: str, body: dict[str, object], waited: float, key: str | None) -> _Program[RawReply | Unreachable, object]:
     ...
 
-def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object], waited: float) -> _Program[RawReply | Unreachable, object]:
+def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object], waited: float, key: str | None) -> _Program[RawReply | Unreachable, object]:
     ...
 
 def waited_seconds(ask: PublicEffect) -> _Program[float, object]:
@@ -131,6 +135,10 @@ def request_patience_handler(patience: RequestPatience) -> _Handler:
 records_unwaited: _Handler
 
 def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[tuple[str, ...], object]:
+    ...
+WRITE_KEY_BYTES: int
+
+def fresh_write_key(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[str | None, object]:
     ...
 
 def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey) -> _Program[WireAnswer | Unreachable, object]:

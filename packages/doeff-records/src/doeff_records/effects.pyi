@@ -59,6 +59,7 @@ class PutRow(EffectBase[PutRowAnswer]):
     key: tuple[str, ...]
     value: FrozenMap
     expect: Expectation
+    idempotency_key: str | None = None
 
 @dataclass(frozen=True)
 class RowWrite:
@@ -70,6 +71,9 @@ class RowWrite:
 @dataclass(frozen=True)
 class PutRows(EffectBase[PutRowsAnswer]):
     writes: tuple[RowWrite, ...]
+    idempotency_key: str | None = None
+
+def write_parts(ask: PutRow | PutRows) -> tuple[PutRow | RowWrite, ...]: ...
 
 @dataclass(frozen=True)
 class WatchChanges(EffectBase[WatchChangesAnswer]):

@@ -22,7 +22,7 @@
 (import doeff_records.loop_work [off-loop off-loop-answer?])
 (import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireAnswer WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
-                            decode-request encode-answer refusal-json undeclared-reason])
+                            decode-request encode-answer refusal-json undeclared-reason keyed-request])
 
 (setv METHOD-GET "GET" METHOD-POST "POST")
 (setv PATH-HEALTHZ "/healthz")
@@ -31,12 +31,15 @@
 (defclass [(dataclass :frozen True)] HttpRequest []
   "HTTP の口が受けた要求 1 つ: method・path(query を除く)・body = 本文の byte・
    writer = 呼び手が名乗る書き手の名 X-Records-Writer の見出し(無ければ None — 無ければ名無しの anonymous)/
-   caller = 呼び手が名乗る job の名 X-Records-Caller の見出し(無ければ None — 一覧の読みを呼び手ごとに数える計器だけが読む)。"
+   caller = 呼び手が名乗る job の名 X-Records-Caller の見出し(無ければ None — 一覧の読みを呼び手ごとに数える計器だけが読む)/
+   idempotency-key = 行の書きの冪等キーの見出し X-Records-Idempotency-Key(無ければ None — 撃つ PutRow・PutRows の鍵にする・wire の
+   IDEMPOTENCY-HEADER の註)。"
   (#^ str method)
   (#^ str path)
   (#^ bytes body)
   (setv #^ (| str None) writer None)
-  (setv #^ (| str None) caller None))
+  (setv #^ (| str None) caller None)
+  (setv #^ (| str None) idempotency-key None))
 
 
 (defclass [(dataclass :frozen True)] HttpAnswer []
@@ -82,18 +85,22 @@
   reason)
 
 
-(defk serve-operation [service principal operation body]
-  {:pre [(: service RecordsService) (: principal Principal) (: operation str) (: body bytes)] :post [(: % HttpAnswer)]}
+(defk serve-operation [service principal operation body idempotency-key]
+  {:pre [(: service RecordsService) (: principal Principal) (: operation str) (: body bytes) (: idempotency-key (| str None))]
+   :post [(: % HttpAnswer)]}
   "書き手の名を引いた要求 1 つを、その書き手の handler の下で公開 effect にして撃ち、答えを HTTP の答えにする(本文の上限は待ち受けの
-   HttpReadBody が読む前に判じる — http_server.hy)。"
+   HttpReadBody が読む前に判じる — http_server.hy)。idempotency-key = 見出しの冪等キー(行の書きの鍵にする — wire.keyed-request)。"
   (try
     (setv document (json.loads (.decode body "utf-8")))
     (except [error #(UnicodeDecodeError json.JSONDecodeError)]
       (return (! (refusal-answer ERROR-MALFORMED (.format "本文が UTF-8 の JSON でない: {}" error))))))
   (try
-    (<- decoded (decode-request (WireRequest operation document)))
+    (<- read-request (decode-request (WireRequest operation document)))
+    (<- decoded (keyed-request read-request idempotency-key))
     (except [error WireMalformed]
-      (return (! (refusal-answer ERROR-MALFORMED (str error))))))
+      (return (! (refusal-answer ERROR-MALFORMED (str error)))))
+    (except [error ValueError]
+      (return (! (refusal-answer ERROR-MALFORMED (.format "冪等キーの見出しが形の外: {}" error))))))
   (<- undeclared (undeclared-name service.schema decoded.effect))
   (when undeclared (return (! (refusal-answer ERROR-NOT-FOUND undeclared))))
   (<- answer (with_handlers [(service.handler-for principal.name)] decoded.effect))
@@ -139,5 +146,5 @@
   (when (!= request.method METHOD-POST)
     (return (! (refusal-answer ERROR-MALFORMED (.format "{} は POST だけ: {}" request.path request.method)))))
   (<- caller Principal (writer-of request.writer))
-  (<- reply (serve-operation service caller operation request.body))
+  (<- reply (serve-operation service caller operation request.body request.idempotency-key))
   reply)

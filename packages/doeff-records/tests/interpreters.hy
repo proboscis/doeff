@@ -44,7 +44,7 @@
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import doeff_records.http_client [records-unwaited])
 (import doeff_records.service [RecordsService respond HttpRequest :as ServiceRequest])
-(import doeff_records.wire [WRITER-HEADER])
+(import doeff_records.wire [WRITER-HEADER IDEMPOTENCY-HEADER])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_hy.frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
@@ -150,7 +150,8 @@
   ;; 答えるため(頭の註の http-memory / http-pg — service の中の待ちと法の書きを 1 つの仮想の時計の上で進める・#3074)。
   (HttpRequest []
     (<- answer (respond service (ServiceRequest effect.method (. (urlsplit effect.url) path) effect.body
-                                                (.get (or effect.headers {}) WRITER-HEADER))))
+                                                (.get (or effect.headers {}) WRITER-HEADER)
+                                                :idempotency-key (.get (or effect.headers {}) IDEMPOTENCY-HEADER))))
     (resume (HttpResponse answer.status {} (.encode answer.body "utf-8") answer.body effect.url 0.0))))
 
 

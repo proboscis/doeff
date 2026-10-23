@@ -358,6 +358,24 @@
     (get self.streams name)))
 
 
+;; --- 行の書きの冪等キー(card ki-78c6d663491f)-------------------------------------------------------------
+;; 行の書き(PutRow・PutRows)の冪等キーの答えを置き場が覚える長さ(秒)。覚えは、答えの切れた書きを送り直す client(http_client の
+;; answered-riding-stall)が同じ鍵で送り直しうる間、送り直しに前の答えを返すためだけに在る — 送り直しうる時間 = 止まりを待つ上限
+;; (RequestPatience — 使い手の job の土台は 15 分)+ 要求の期限(30 秒)より長く置く。回収(SweepExpired)が覚えた刻からこの長さを
+;; 過ぎた覚えを外す。使い手は RequestPatience をこの長さから要求の期限を引いた秒より短く選ぶ(長くすると、外れた鍵の送り直しが新しい書きとして
+;; 期待で判じられる — 直す前の Conflict に戻る)。
+(val WRITE-KEY-MEMORY-SECONDS 3600.0)
+;; 冪等キーの字数の上限(HTTP の見出しで運び、置き場の覚えの鍵になる — 呼び手の綴りで覚えを肥らせない)。
+(val WRITE-KEY-MAX-LENGTH 200)
+
+
+(defn #^ (| str None) checked-write-key [#^ object key #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め(effects.check-row-write と同じ位置)
+  "行の書きの冪等キーの欄を作る時に検めるため(None = 鍵の無い書き・空でない WRITE-KEY-MAX-LENGTH 字までの文字列)。"
+  (when (and (is-not key None) (not (and (isinstance key str) key (<= (len key) WRITE-KEY-MAX-LENGTH))))
+    (raise (ValueError (.format "{} は None か空でない {} 字までの文字列: {!r}" what WRITE-KEY-MAX-LENGTH key))))
+  key)
+
+
 ;; --- 書きの期待 -----------------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] ExpectAbsent []
@@ -432,18 +450,27 @@
   (#^ int version)
   (#^ FrozenMap value)
   (setv #^ (| WatchCursor None) position None)
+  ;; 冪等キーつきの書きの送り直しで、今は書いておらず、置き場が覚えた前の答えを返した(真)か、今書いた(偽)か(card ki-78c6d663491f —
+  ;; Appended.replayed と同じ名乗り。版・値・位置は前の答えのまま)。HTTP の口の綴りでは真の時だけ載せる欄。
+  (setv #^ bool replayed False)
   (defn #^ None __post_init__ [self]
     (freeze-field self "value" "Written.value")
     (when (not (or (is self.position None) (isinstance self.position WatchCursor)))
-      (raise (TypeError (.format "Written.position は WatchCursor か None: {!r}" self.position))))))
+      (raise (TypeError (.format "Written.position は WatchCursor か None: {!r}" self.position))))
+    (when (not (isinstance self.replayed bool))
+      (raise (TypeError (.format "Written.replayed は bool: {!r}" self.replayed))))))
 
 (defclass [(dataclass :frozen True)] WrittenRows []
   "PutRows の束が全部確定した: items = 束の順の Written の tuple(束の i 番目の書きの答え = items の i 番目 — 各項の position は
-   その行の変更の位置で、束の中で番号が 1 つずつ増える。束の最後の変更の位置は最後の項の position)。"
+   その行の変更の位置で、束の中で番号が 1 つずつ増える。束の最後の変更の位置は最後の項の position)/ replayed = 冪等キーつきの束の
+   送り直しで、置き場が覚えた前の答えを返したか(真なら各項の replayed も真 — Written.replayed と同じ名乗り)。"
   (#^ tuple items)
+  (setv #^ bool replayed False)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.items tuple) (all (gfor item self.items (isinstance item Written)))))
-      (raise (TypeError (.format "WrittenRows.items は Written の tuple: {!r}" self.items))))))
+      (raise (TypeError (.format "WrittenRows.items は Written の tuple: {!r}" self.items))))
+    (when (not (isinstance self.replayed bool))
+      (raise (TypeError (.format "WrittenRows.replayed は bool: {!r}" self.replayed))))))
 
 (defclass [(dataclass :frozen True)] RowChanged []
   "変更 1 つ: 行が書かれた(作られた・更新された)。value(凍らせた写像)と version は確定した後の値 /
@@ -522,6 +549,15 @@
   #^ str idempotency-key
   #^ int sequence
   #^ str body-digest)
+
+
+(defrecord RememberedWrite
+  "確定した行の書き(PutRow・PutRows)の冪等キーの覚え 1 つ(card ki-78c6d663491f): body-digest = 書きの本文の指紋(admission.write-digest)/
+   answer = 確定した時の答え(Written | WrittenRows — 版・値・位置)。置き場(memory・PG)は書きを確定するのと同じ錠・transaction で
+   鍵ごとに覚え、同じ鍵の次の書きを admission.judge-write-replay で判じる(覚えた刻は置き場が隣に持ち、WRITE-KEY-MEMORY-SECONDS の後の
+   回収が外す)。置き場の判断と 2 つの置き場の両方が読む値なので、この値の module に置く(RetiredKey と同じ)。"
+  #^ str body-digest
+  #^ (| Written WrittenRows) answer)
 
 (defclass [(dataclass :frozen True)] Events []
   "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。

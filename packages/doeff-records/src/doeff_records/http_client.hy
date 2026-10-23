@@ -34,9 +34,16 @@
 ;;; 止まりの日まで隠れない。待つかどうかは組み立てが値で名を選ぶ(待つ秒の request-patience-handler か、待たない 0 秒 = records-unwaited)—
 ;;; 待てない組み立てと呼び(処理ループ・coordinator の居ない process)は、client の外側に 0 秒の答え手を置く。合図の源の問いには答えない
 ;;; ので、同じ組の中で源は自分の時間だけ止まりに耐える。上限を越えたら、待った秒を名指した Unreachable を返す(呼び手の扱いは今までどおり)。撃ち直しの冪等: 書きは
-;;; 期待つき(ExpectVersion・ExpectAbsent — 1 回目が実は書けていれば Conflict)か冪等キーつき(AppendEvent・AppendEvents — 同じ鍵・同じ本文は前の
-;;; 番号を返す・laws.hy の law-append-is-idempotent)。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない — 合図の源が自分で
-;;; 止まりを越え、SourceStalled・SourceResumed を bus に出す(event_source.hy の ride-out-stall)。
+;;; どれも冪等キーつきで撃つ — 追記(AppendEvent・AppendEvents)は effect の鍵(同じ鍵・同じ本文は前の番号を返す・laws.hy の
+;;; law-append-is-idempotent)、行の書き(PutRow・PutRows)は下の「行の書きの冪等キー」。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない —
+;;; 合図の源が自分で止まりを越え、SourceStalled・SourceResumed を bus に出す(event_source.hy の ride-out-stall)。
+;;;
+;;; 行の書きの冪等キー(card ki-78c6d663491f — 前は行の書きに身元が無く、答えが要求の期限に間に合わず確定した書きの撃ち直しが、自分の着いた
+;;; 1 回目に負けて Conflict で返り、期待の無い書きは間の別の書き手の欄を書き戻した): 鍵の無い PutRow・PutRows には撃つ前に要求 1 つの鍵を
+;;; 乱数で作り(keyed-write)、1 回目と撃ち直しの全部に同じ鍵を見出し X-Records-Idempotency-Key(wire の IDEMPOTENCY-HEADER)で付ける。
+;;; 置き場は確定した鍵の答えを覚え、同じ鍵・同じ本文の撃ち直しに前の答え(Written・WrittenRows の replayed 真)を返す(laws.hy の
+;;; law-a-keyed-write-replays-its-answer)。呼び手が鍵を選んだ書き(effect の idempotency-key)はその鍵で撃つ。覚えは置き場が
+;;; values.WRITE-KEY-MEMORY-SECONDS の間持つ — 待つ時間(RequestPatience)はそれより短く選ぶ(values.hy の註)。
 ;;;
 ;;; 計器(#2740): endpoint に計器の答え手(meter)を渡すと、送った要求 1 つごとに要求の種 × 結果(service の答えの status・届かない・
 ;;; それ以外の status)を doeff の CountMetric で 1 つ数える(名の綴りは wire の CLIENT-ANSWER-METRIC)。記録の service に届かなかった
@@ -68,7 +75,9 @@
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
                             WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS SERVER-TIMING-HEADER SERVER-TIMING-QUEUE
-                            server-timing-spans])
+                            server-timing-spans IDEMPOTENCY-HEADER request-key])
+(import doeff_core_effects.random_effects [RandomBytes])
+(import doeff_core_effects.os_random [os-random-handler])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 ;; 往復の計時の行の名(file の頭の註)。
@@ -111,12 +120,13 @@
   (+ (.rstrip endpoint.base-url "/") PATH-PREFIX operation))
 
 
-(defk request-headers [endpoint]
-  {:pre [(: endpoint RecordsEndpoint)] :post [(: % (get dict #(str str)))]}
-  "要求の header(本文の型と、在れば書き手の名と呼び手の job の名)。"
+(defk request-headers [endpoint key]
+  {:pre [(: endpoint RecordsEndpoint) (: key (| str None))] :post [(: % (get dict #(str str)))]}
+  "要求の header(本文の型と、在れば書き手の名と呼び手の job の名と、行の書きの冪等キー key — wire の IDEMPOTENCY-HEADER)。"
   (| {"Content-Type" "application/json; charset=utf-8"}
      (if (is endpoint.writer None) {} {WRITER-HEADER endpoint.writer})
-     (if (is endpoint.caller None) {} {CALLER-HEADER endpoint.caller})))
+     (if (is endpoint.caller None) {} {CALLER-HEADER endpoint.caller})
+     (if (is key None) {} {IDEMPOTENCY-HEADER key})))
 
 
 (defk request-bytes [body]
@@ -135,14 +145,15 @@
       (raise (WireError (.format "{} の答え(status {})が JSON でない: {}" operation reply.status error))))))
 
 
-(defk exchange-by-effect [endpoint operation body waited]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float)]
+(defk exchange-by-effect [endpoint operation body waited key]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float) (: key (| str None))]
    :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを HttpRequest の effect として出す。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
    Unreachable にする。時間切れの秒 = request-timeout + waited(service の中で待ち得る秒 — long-poll の待ちを届かないと読まない)。
+   key = 行の書きの冪等キー(見出しで送る — None = 送らない)。
    endpoint の timed-operations に名指した操作は、HTTP の答え手に区間の計時を頼み、答えの区間と見出し Server-Timing を生の答えに写す。"
   (<- url str (service-url endpoint operation))
-  (<- headers dict (request-headers endpoint))
+  (<- headers dict (request-headers endpoint key))
   (<- data bytes (request-bytes body))
   (val timed (in operation endpoint.timed-operations))
   (<- answer (| HttpResponse HttpFailed)
@@ -154,11 +165,11 @@
             :server-timing (if timed (next (gfor #(name value) (.items answer.headers) :if (= (.lower name) (.lower SERVER-TIMING-HEADER)) value) None) None)))
 
 
-(defk exchange [endpoint operation body waited]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float)]
+(defk exchange [endpoint operation body waited key]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float) (: key (| str None))]
    :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は HttpRequest の effect 1 つ)。届かなければ Unreachable。"
-  (! (exchange-by-effect endpoint operation body waited)))
+  (! (exchange-by-effect endpoint operation body waited key)))
 
 
 (defk waited-seconds [ask]
@@ -273,11 +284,12 @@
    時計を読まない(時計の答え手を持たない使い手が今までどおり動く)。"
   (<- request (encode-request ask))
   (<- waited float (waited-seconds ask))
+  (<- key (| str None) (request-key ask))
   (when (not-in request.operation endpoint.timed-operations)
-    (<- plain (| RawReply Unreachable) (exchange endpoint request.operation request.body waited))
+    (<- plain (| RawReply Unreachable) (exchange endpoint request.operation request.body waited key))
     (return (! (reply-answer endpoint ask request.operation plain))))
   (<- asked float (GetMonotonic))
-  (<- reply (exchange endpoint request.operation request.body waited))
+  (<- reply (exchange endpoint request.operation request.body waited key))
   (<- answered float (GetMonotonic))
   (<- answer (| WireAnswer Unreachable) (reply-answer endpoint ask request.operation reply))
   (<- read-at float (GetMonotonic))
@@ -325,17 +337,38 @@
     (ReadEventByKey :stream stream) #(stream)))
 
 
+;; 行の書きの冪等キーの乱数の byte 数(16 進 32 字 — uuid4 の hex と同じ長さ)。
+(val WRITE-KEY-BYTES 16)
+
+
+(defk fresh-write-key [ask]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey))]
+   :post [(: % (| str None))]
+   :tags {:context "records" :role "foundation"}}
+  "鍵の無い行の書き(PutRow・PutRows)に付ける、要求 1 つの冪等キーを作るため(file の頭の註「行の書きの冪等キー」— 撃ち直しにも同じ鍵を
+   付け、置き場が送り直しを着いた 1 回目と見分ける)。鍵つきの書き(呼び手が身元を選んだ)と他の要求は None(付けない)。鍵は乱数の
+   RandomBytes を本物の答え手 os-random-handler で引く: client は外の世界(HTTP)の境目の答え手で、鍵の値は答えに出ない(模擬の種で
+   決まる値に替えても振る舞いは変わらない)— 組み立てに乱数の答え手を求めない。"
+  (when (or (not (isinstance ask #(PutRow PutRows))) (is-not ask.idempotency-key None))
+    (return None))
+  (<- noise bytes (with-handlers [os-random-handler] (RandomBytes WRITE-KEY-BYTES)))
+  (.hex noise))
+
+
 (defk answered-riding-stall [endpoint ask]
   {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey))]
    :post [(: % (| WireAnswer Unreachable))] :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask 1 つに、置き場の止まりを越えて答えるため(file の頭の註「置き場の止まり」— client の 1 か所)。待つ時間を要求のたびに
    問い、届けばその答え、届かなければ待つ時間(0 秒なら待たない)の残りまで置き場の戻りを待って同じ要求を撃ち直す。越えたら、待った秒と
-   上限と最後の届かなさを名指した Unreachable を返す。"
+   上限と最後の届かなさを名指した Unreachable を返す。鍵の無い行の書きには撃つ前に冪等キーを 1 つ付け(fresh-write-key)、撃ち直しも同じ
+   鍵で撃つ — 答えだけが切れて着いた書きの撃ち直しは、置き場が覚えた答え(Written・WrittenRows の送り直し)を返す。"
   (<- patience RequestPatience (ReadRequestPatience))
-  (<- first (| WireAnswer Unreachable) (call-service endpoint ask))
+  (<- fresh (| str None) (fresh-write-key ask))
+  (val keyed (if (is fresh None) ask (replace ask :idempotency-key fresh)))
+  (<- first (| WireAnswer Unreachable) (call-service endpoint keyed))
   (when (or (not (isinstance first Unreachable)) (<= patience.seconds 0))
     (return first))
-  (<- names (get tuple #(str ...)) (stall-names ask))
+  (<- names (get tuple #(str ...)) (stall-names keyed))
   (<- since datetime (GetTime))
   (var answer first)
   (while (isinstance answer Unreachable)
@@ -346,7 +379,7 @@
       (<- ended datetime (GetTime))
       (return (Unreachable (.format "記録の置き場({})が {:g} 秒 待っても戻らない(上限 {:g} 秒): {}"
                                     (.join ", " names) (.total-seconds (- ended since)) patience.seconds answer.detail))))
-    (<- again (| WireAnswer Unreachable) (call-service endpoint ask))
+    (<- again (| WireAnswer Unreachable) (call-service endpoint keyed))
     (:= answer again))
   answer)
 

@@ -18,7 +18,7 @@
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
-                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable])
+                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -120,13 +120,19 @@
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]
   "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
    expect = ExpectAbsent | ExpectVersion | ExpectAny。答え = Written | Conflict | Refused | Unreachable。
+   idempotency-key = 書き 1 つの身元(冪等キー — None = 鍵の無い書き。card ki-78c6d663491f): 置き場は確定した鍵つきの書きの答えを
+   WRITE-KEY-MEMORY-SECONDS の間覚え、同じ鍵・同じ本文(表・鍵・値・期待)の送り直しには期待を見ずに前の答え(Written の replayed 真)を
+   返す。同じ鍵の別の本文は Refused。衝突・断りの答えは覚えない(書いていない)。HTTP の client は鍵の無い書きに要求ごとの鍵を作り、
+   届かない書きの撃ち直しに同じ鍵を付ける(http_client.hy の頭の註)。
    書き手の名は欄に無い — handler を組む時に身元から入り、行と出来事に記録される(書きの判断には使わない・#2994)。"
   (#^ str table)
   (#^ tuple key)
   (#^ FrozenMap value)
   (#^ object expect)
+  (setv #^ (| str None) idempotency-key None)
   (defn #^ None __post_init__ [self]
-    (check-row-write self "PutRow")))
+    (check-row-write self "PutRow")
+    (checked-write-key self.idempotency-key "PutRow.idempotency_key")))
 
 
 (defclass [(dataclass :frozen True)] RowWrite []
@@ -144,15 +150,25 @@
   "複数の行を全部か 0 で書く(1 行でも通らなければ 1 行も書かない)。writes = RowWrite の空でない tuple(同じ表の同じ鍵は 1 度だけ —
    2 度出たら作る時に ValueError)。答え = WrittenRows(束の順の Written)| RowsConflict | RowsRefused(どちらも束の中の位置と行を持つ)|
    Unreachable。判定は PutRow と同じ admission で、全部の行の期待を先に見て、次に全部の行の書きの判定を見る。
-   確定した時は変更の列に束の順で 1 行ずつ、続いた番号で積む。書き手の名は欄に無い(PutRow と同じく handler を組む時に入る)。"
+   確定した時は変更の列に束の順で 1 行ずつ、続いた番号で積む。書き手の名は欄に無い(PutRow と同じく handler を組む時に入る)。
+   idempotency-key = 束 1 つの身元(PutRow と同じ — 同じ鍵・同じ束の送り直しは前の WrittenRows を replayed 真で返し、同じ鍵の別の束は
+   束の 0 行目の RowsRefused)。"
   (#^ tuple writes)
+  (setv #^ (| str None) idempotency-key None)
   (defn #^ None __post_init__ [self]
+    (checked-write-key self.idempotency-key "PutRows.idempotency_key")
     (when (not (and (isinstance self.writes tuple) self.writes (all (gfor w self.writes (isinstance w RowWrite)))))
       (raise (TypeError (.format "PutRows.writes は RowWrite の空でない tuple: {!r}" self.writes))))
     (setv slots (lfor w self.writes #(w.table w.key))
           repeated (sorted (sfor slot slots :if (> (.count slots slot) 1) slot)))
     (when repeated
       (raise (ValueError (.format "PutRows.writes に同じ行が 2 度出る(表・鍵): {!r}" repeated))))))
+
+
+(defn #^ tuple write-parts [#^ (| PutRow PutRows) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
+  "行の書き ask を、冪等キーの判じ(admission.write-digest・judge-write-replay)が読む書きの並びにするため(PutRow は自分 1 つ・PutRows は束 —
+   どれも欄 table・key・value・expect を持つ)。"
+  (if (isinstance ask PutRows) ask.writes #(ask)))
 
 
 (defclass [(dataclass :frozen True)] WatchChanges [EffectBase]

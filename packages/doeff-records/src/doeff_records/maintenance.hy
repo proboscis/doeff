@@ -91,9 +91,11 @@
 
 (defclass [(dataclass :frozen True)] Swept []
   "回収の結果: rows = 消した行の数(変更の列に RowRemoved を積んだ数)/ forgotten = 外した鍵の覚えの数(覚え方の長さを過ぎた覚え —
-   values.hy の KeyMemory の註)。"
+   values.hy の KeyMemory の註)/ write-keys = 外した行の書きの冪等キーの覚えの数(覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた
+   覚え — card ki-78c6d663491f)。"
   (#^ int rows)
-  (setv #^ int forgotten 0))
+  (setv #^ int forgotten 0)
+  (setv #^ int write-keys 0))
 
 
 (defclass [(dataclass :frozen True)] Pruned []

@@ -69,6 +69,11 @@ KeyMemory: TypeAlias = RememberKeysForever | RememberKeysFor | RememberNoKeys
 
 def key_memory_ms(memory: KeyMemory) -> int | None: ...
 
+WRITE_KEY_MEMORY_SECONDS: float
+WRITE_KEY_MAX_LENGTH: int
+
+def checked_write_key(key: object, what: str) -> str | None: ...
+
 @dataclass(frozen=True)
 class ByKeyHead:
     separator: str
@@ -178,10 +183,12 @@ class Written:
     version: int
     value: FrozenMap
     position: WatchCursor | None = None
+    replayed: bool = False
 
 @dataclass(frozen=True)
 class WrittenRows:
     items: tuple[Written, ...]
+    replayed: bool = False
 
 @dataclass(frozen=True)
 class RowChanged:
@@ -238,6 +245,11 @@ class RetiredKey:
     idempotency_key: str
     sequence: int
     body_digest: str
+
+@dataclass(frozen=True, kw_only=True)
+class RememberedWrite:
+    body_digest: str
+    answer: Written | WrittenRows
 
 @dataclass(frozen=True)
 class Events:

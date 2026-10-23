@@ -18,7 +18,7 @@
 (require doeff-hy.record [defenum defrecord])
 (import re)
 (import collections [Counter])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import enum [StrEnum])
 (import doeff_hy.frozen [FrozenMap thaw-json])
 ;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ — ここは import して、この module の読み手へも同じ名で見せる。
@@ -110,6 +110,11 @@
 
 ;; 呼び手が名乗る job の名の見出し(一覧の読みを呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
 (val CALLER-HEADER "X-Records-Caller")
+;; 行の書き(put-row・put-rows)の冪等キーの見出し(card ki-78c6d663491f): client は書きの要求ごとに鍵を 1 つ載せ、届かない書きの撃ち直しに
+;; 同じ鍵を載せる。service は見出しの鍵を撃つ PutRow・PutRows の idempotency-key にする(keyed-request)。本文の鍵にしない訳: 要求の本文の
+;; 知らない鍵は古い service が 400 で断る(頭の註)ので、鍵を本文に足すと service を先に新しい版で起こす順を求める — 見出しは古い service が
+;; 読み捨てるので、client と service をどの順で入れ替えても書きは通る(古い service の間は今までどおり鍵の無い書き)。他の操作の見出しは読まない。
+(val IDEMPOTENCY-HEADER "X-Records-Idempotency-Key")
 
 ;; 答えの区間の秒の見出し(ki-ca4b41612e2e): service は記録の操作の答えに、答えが決まった所までの区間の秒を W3C の Server-Timing の形
 ;; (<区間>;dur=<ミリ秒>, …)で載せ(request_timing.hy の server-timing-of)、client は往復 1 本のうち service の受けの列(queue)と service の
@@ -566,6 +571,26 @@
           (WireRequest OP-APPEND-EVENTS {"appends" append-items}))))
 
 
+(defk request-key [ask]
+  {:pre [(: ask PublicEffect)] :post [(: % (| str None))]}
+  "client が要求 ask の見出し IDEMPOTENCY-HEADER に載せる冪等キーを読むため(行の書きの鍵 — 他の操作と鍵の無い書きは None)。"
+  (match ask
+    (PutRow :idempotency_key key) key
+    (PutRows :idempotency_key key) key
+    _ None))
+
+
+(defk keyed-request [decoded key]
+  {:pre [(: decoded DecodedRequest) (: key (| str None))] :post [(: % DecodedRequest)]}
+  "service が読んだ要求 decoded に、見出し IDEMPOTENCY-HEADER の冪等キー key を付けるため(行の書きだけ — 他の操作と見出しの無い要求は
+   decoded のまま)。鍵の形の外(空・長すぎる)は作る時の検め(values.checked-write-key)が ValueError で断る — service は malformed にする。"
+  (match #(decoded.effect key)
+    #(_ None) decoded
+    #((PutRow) _) (DecodedRequest (replace decoded.effect :idempotency-key key))
+    #((PutRows) _) (DecodedRequest (replace decoded.effect :idempotency-key key))
+    _ decoded))
+
+
 (defk decode-request [request]
   {:pre [(: request WireRequest)] :post [(: % DecodedRequest)]}
   "HTTP の口が受けた操作の名と本文を、記録の handler へ撃つ公開 effect にする(形が違えば WireMalformed)。"
@@ -743,9 +768,11 @@
           (for [row rows] (.append encoded (! (row-json row))))
           {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence})
     ;; 鍵 position は書きの変更の位置を持つ答えの時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。
-    (Written :version version :value value :position position)
+    ;; 鍵 replayed は冪等キーの送り直しの答えの時だけ出す(省ける鍵 — 真の時だけ・card ki-78c6d663491f。1 版前の読み手は読み捨てる)。
+    (Written :version version :value value :position position :replayed replayed)
       (| {"kind" "written" "version" version "value" (thaw-json value)}
-         (if (is position None) {} {"position" (! (watch-cursor-json position))}))
+         (if (is position None) {} {"position" (! (watch-cursor-json position))})
+         (if replayed {"replayed" True} {}))
     (Conflict :current current) {"kind" "conflict" "current" (! (encode-answer current))}
     (Refused :reason reason) {"kind" "refused" "reason" reason}
     (NotIndexed :fields fields) {"kind" "notIndexed" "fields" (list fields)}
@@ -772,10 +799,11 @@
       (do (setv encoded [])
           (for [event items] (.append encoded (! (event-json event))))
           {"kind" "events" "items" encoded "lastSequence" last-sequence})
-    (WrittenRows :items items)
+    (WrittenRows :items items :replayed replayed)
       (do (val written-items [])
           (for [written items] (.append written-items (! (encode-answer written))))
-          {"kind" "writtenRows" "items" written-items})
+          (| {"kind" "writtenRows" "items" written-items}
+             (if replayed {"replayed" True} {})))
     (RowsConflict :index index :table table :key key :current current)
       {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (encode-answer current))}
     (RowsRefused :index index :table table :key key :reason reason)
@@ -866,12 +894,12 @@
 (defk written-rows-from [value]
   {:pre [(: value JsonValue)] :post [(: % WrittenRows)]}
   "wire の object から PutRows の確定(束の順の written の列)を読む。"
-  (<- (answer-object-of value "writtenRows" #("kind" "items") #()))
+  (<- (answer-object-of value "writtenRows" #("kind" "items") #("replayed")))
   (val items [])
   (for [item (! (list-in (get value "items") "writtenRows.items"))] (.append items (! (answer-from item))))
   (when (not (all (gfor item items (isinstance item Written))))
     (raise (WireMalformed (.format "writtenRows.items は written の列: {!r}" value))))
-  (WrittenRows (tuple items)))
+  (WrittenRows (tuple items) :replayed (if (in "replayed" value) (! (boolean-of (get value "replayed") "writtenRows.replayed")) False)))
 
 
 (defk appended-events-from [value]
@@ -913,9 +941,10 @@
             (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor" True))
                   (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))))
       {"kind" "written"}
-        (do (<- (answer-object-of value "written" #("kind" "version" "value") #("position")))
+        (do (<- (answer-object-of value "written" #("kind" "version" "value") #("position" "replayed")))
             (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))
-                     (if (in "position" value) (! (watch-cursor-from (get value "position") "written.position" True)) None)))
+                     (if (in "position" value) (! (watch-cursor-from (get value "position") "written.position" True)) None)
+                     :replayed (if (in "replayed" value) (! (boolean-of (get value "replayed") "written.replayed")) False)))
       {"kind" "conflict"}
         (do (<- (answer-object-of value "conflict" #("kind" "current") #()))
             (<- current (answer-from (get value "current")))

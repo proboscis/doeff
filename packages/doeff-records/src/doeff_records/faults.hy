@@ -38,12 +38,15 @@
   "置き場の故障 1 つ。names = 当たる表と追記の列の名(effect が触る名のどれかが入っていれば当たる — PutRows は束の中の表のどれか 1 つで
    束ごと当たる。AppendEvents は束の追記ごとに、同じ追記の AppendEvent として当たる — memory.answered-appends)/ operation = 当たる操作 / answer = 当たった effect の答え(Refused | Unreachable)/ lands = 書きを置き場に着けてから
    答えを answer に差し替えるか(False = 置き場を変えずに answer を返す。読みは置き場を変えないのでどちらでも同じ)/ matching = effect を
-   受けて当たるかを返す関数(None = 名と操作に当たる effect の全部)。"
+   受けて当たるかを返す関数(None = 名と操作に当たる effect の全部)/ times = 当たる回数(None = 外すまで当たり続ける。数を持つ故障は
+   当たるたびに 1 減り、尽きた拍に故障の列から外れる — lands と組むと「書きは確定したが答えが 1 度だけ切れた」形になり、撃ち直す
+   client の 2 度目の要求は置き場に届く・card ki-78c6d663491f)。"
   (#^ frozenset names)
   (#^ StoreOperation operation)
   (#^ (| Refused Unreachable) answer)
   (setv #^ bool lands False)
   (setv #^ (| Callable None) matching None)
+  (setv #^ (| int None) times None)
   (defn #^ None __post-init__ [self]
     ;; 誤った値を黙って受けない(名の綴りを 1 つの str で渡すと文字の集合になる等)。
     (when (not (and (isinstance self.names frozenset) (all (gfor name self.names (isinstance name str)))))
@@ -56,6 +59,8 @@
       (raise (TypeError (.format "StoreFault.lands は bool: {!r}" self.lands))))
     (when (not (or (is self.matching None) (callable self.matching)))
       (raise (TypeError (.format "StoreFault.matching は関数か None: {!r}" self.matching))))
+    (when (and (is-not self.times None) (or (isinstance self.times bool) (not (isinstance self.times int)) (< self.times 1)))
+      (raise (ValueError (.format "StoreFault.times は 1 以上の整数か None: {!r}" self.times))))
     None))
 
 

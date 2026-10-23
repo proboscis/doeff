@@ -2,7 +2,8 @@
 ;; 同じ表の形と同じ錠を使うこと。旧い版と新しい版が同じ置き場に重なっても(入れ替えの途中)壊れないための約束:
 ;;   - 表の用意の DDL は旧い版と同じ字面(tests/pg_ddl_before_880.json = 旧い版の schema-statements の "records_" の答えの写し)。
 ;;     答え手の方言への書き換え(postgres-statement)を通した後の、driver に渡る字面で比べる。旧い版より後に足した表と索引の文
-;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022 とその覚えた刻の列・card ki-4ebaefac6668 と、期限の境と組と変更の列の刻と
+;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022 とその覚えた刻の列・card ki-4ebaefac6668 と、行の書きの冪等キーの表 write_keys とその
+;;     覚えの外しの索引・card ki-78c6d663491f と、期限の境と組と変更の列の刻と
 ;;     状態の欄の索引・#3614 と覚えの外しの索引・等号の欄 × 上から読む欄の組の索引)は旧い版の文の後ろにだけ並び、
 ;;     旧い版の文の字面と順を変えない。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632 — 行を作った時の
 ;;     server の時計の ms)。ON CONFLICT DO NOTHING なので既に在る置き場の行(旧い版が作った epoch 1 を含む)には触らず、表の形も
@@ -70,6 +71,9 @@
            PRIMARY KEY (ledger, idempotency_key))"
    "ALTER TABLE records_retired_keys
            ADD COLUMN remembered_at bigint NOT NULL DEFAULT (extract(epoch from now()) * 1000)::bigint"
+   "CREATE TABLE IF NOT EXISTS records_write_keys (
+           idempotency_key text PRIMARY KEY, body_digest text NOT NULL, answer text NOT NULL, last_seq bigint NOT NULL,
+           remembered_at bigint NOT NULL)"
    "CREATE INDEX IF NOT EXISTS records_append_rows_ledger_at ON records_append_rows (ledger, at)"
    "CREATE INDEX IF NOT EXISTS records_append_rows_group_05a79f06cf3f ON records_append_rows (ledger, (CASE WHEN strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') > 0
                  THEN substr(((payload::jsonb) ->> 'idempotencyKey'), strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') + 1)
@@ -80,7 +84,8 @@
    "CREATE INDEX IF NOT EXISTS records_ox_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"
    "CREATE INDEX IF NOT EXISTS records_ow_0b920c6b8d1d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
-   "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"])
+   "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"
+   "CREATE INDEX IF NOT EXISTS records_write_keys_remembered ON records_write_keys (remembered_at)"])
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
 (val BEFORE-880-WRITER-KEY (fn [prefix] (+ prefix "records-writer")))

@@ -46,6 +46,7 @@ class ArchivedThrough:
 class Swept:
     rows: int
     forgotten: int = 0
+    write_keys: int = 0
 
 @dataclass(frozen=True)
 class Pruned:

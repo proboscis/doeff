@@ -102,7 +102,7 @@
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric
                             operation-of])
-(import doeff_records.wire [WRITER-HEADER CALLER-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
+(import doeff_records.wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
 (import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation
@@ -650,7 +650,8 @@
     (HttpAnswer) body
     _ (! (answer-with serving arrival.ticket (HttpRequest arrival.method path body
                                                           (! (header-value arrival.headers WRITER-HEADER))
-                                                          (! (header-value arrival.headers CALLER-HEADER)))))))
+                                                          (! (header-value arrival.headers CALLER-HEADER))
+                                                          (! (header-value arrival.headers IDEMPOTENCY-HEADER)))))))
 
 
 (defk final-answer [decided]

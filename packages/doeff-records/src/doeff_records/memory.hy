@@ -27,6 +27,11 @@
 ;;; 去った時に、覚えを残さない列(RememberNoKeys)は覚えを外し、長さを限った列(RememberKeysFor)は外してよい刻を覚えの外しの索引
 ;;; (key-forgets — 刻の heap)に積む。回収(SweepExpired)が索引の刻の来た覚えを、出来事が置き場に無く覚えた刻から長さを過ぎた時だけ外す
 ;;; (forget-keys-locked — PostgreSQL の handler の forget-keys と同じ判じ)。
+;;; 行の書きの冪等キー(card ki-78c6d663491f — PostgreSQL の handler と同じ形): 鍵つきの PutRow・PutRows は、錠の内で期待と書きの判定の前に
+;;; 同じ鍵の覚え(write-keys)を引いて判じ(admission.judge-write-replay — 同じ本文は覚えた答えを送り直しと名乗って返し、行にも変更の列にも
+;;; 触らない・別の本文は冪等キーの断り)、覚えが無ければ今までどおり判じて、確定した時だけ同じ錠の内で答えと本文の指紋を覚える
+;;; (remember-write)。覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた覚えは回収(SweepExpired)が外す(forget-write-keys-locked)。
+;;; 故障の口の当たる回数(faults.StoreFault.times)は当たるたびに 1 使い、尽きた故障は列から外れる(memory-spend-fault)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 ;;;
@@ -48,7 +53,7 @@
 (import threading)
 (import collections.abc [Callable])
 (import contextlib [AbstractContextManager])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import datetime [timedelta])
 (import doeff [EffectBase Program with-handlers])
 (import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task
@@ -62,10 +67,10 @@
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
-                              EventAbsent EventRetired key-memory-ms])
+                              EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS])
 (import doeff_records.watching [closing-wake?])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
-                               ReadStreamEnd ReadEventByKey AwaitRecordsBack ReadSourcePatience])
+                               ReadStreamEnd ReadEventByKey AwaitRecordsBack ReadSourcePatience write-parts])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
@@ -75,7 +80,7 @@
                                  retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
                                  listed-row key-text
                                  next-watch-sequence
-                                 epoch-ms terminal-row? body-digest row-expired? event-expired?])
+                                 epoch-ms terminal-row? body-digest row-expired? event-expired? judge-write-replay write-digest])
 
 (defclass StoredRow []
   "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
@@ -166,7 +171,12 @@
           self.expiry []
           self.expiry-order 0
           ;; 組で数える列の組(#(列 組) → StoredGroup)。
-          self.groups {}))
+          self.groups {}
+          ;; 行の書きの冪等キーの覚え(鍵 → values.RememberedWrite — card ki-78c6d663491f)と、覚えた刻(鍵 → epoch ミリ秒)と、覚えの外しの
+          ;; 索引(heap — 項は #(外してよい刻 積んだ順 鍵))。頭の註の「行の書きの冪等キー」。
+          self.write-keys {}
+          self.write-remembered-at {}
+          self.write-forgets []))
   ;; 錠と呼び鈴は置き場の中身ではなく、この process の thread と実行の間の取り決め — pickle と copy は錠と呼び鈴を除いた中身だけを運び、
   ;; 戻した側で新しい錠と空の呼び鈴を作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を壊さないため。
   ;; 呼び鈴は掛けた実行の中でしか意味を持たない)。
@@ -189,9 +199,9 @@
     (setv (get memo (id self)) copied)
     (setv state (.__getstate__ self))
     (setv (get state "rows") (dfor [table held] (.items self.rows) table (dict held)))
-    (for [name #("changes" "events" "expiry" "key_forgets")]
+    (for [name #("changes" "events" "expiry" "key_forgets" "write_forgets")]
       (setv (get state name) (list (get state name))))
-    (for [name #("changed_at" "by_idempotency" "retired_keys" "remembered_at")]
+    (for [name #("changed_at" "by_idempotency" "retired_keys" "remembered_at" "write_keys" "write_remembered_at")]
       (setv (get state name) (dict (get state name))))
     (setv groups {})
     (for [[slot group] (.items self.groups)]
@@ -270,7 +280,7 @@
    今捨てた出来事の覚えも、長さが過ぎていれば同じ回に外れる)。答え = 消した行の数と外した覚えの数。"
   (with [store.lock]
     (setv rows (purge-expired-locked store now-ms))
-    (Swept rows (forget-keys-locked store now-ms))))
+    (Swept rows (forget-keys-locked store now-ms) (forget-write-keys-locked store now-ms))))
 
 
 (defn #^ bool stored-row-expired? [#^ TableDecl decl #^ StoredRow stored #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
@@ -561,25 +571,68 @@
     True stored.row))
 
 
+(defn #^ (| Written WrittenRows Refused RowsRefused None) write-replay [#^ MemoryStore store #^ (| PutRow PutRows) ask]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(memory-put-row / memory-put-rows の頭)
+  "鍵つきの書き ask の、同じ鍵の覚えによる答え(送り直しの答え・別の本文の断り・覚えが無ければ None)を引くため(頭の註の「行の書きの
+   冪等キー」— 判じは admission.judge-write-replay の 1 か所)。"
+  (if (is ask.idempotency-key None)
+      None
+      (judge-write-replay ask.idempotency-key (isinstance ask PutRows) (write-parts ask) (.get store.write-keys ask.idempotency-key))))
+
+
+(defn #^ None remember-write [#^ MemoryStore store #^ (| PutRow PutRows) ask #^ (| Written WrittenRows) answer #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(書きの確定と同じ錠の内で覚える)
+  "確定した鍵つきの書き ask の答えを、本文の指紋と覚えた刻と一緒に覚え、外してよい刻を覚えの外しの索引に積むため(鍵の無い書きは覚えない)。"
+  (when (is-not ask.idempotency-key None)
+    (setv key ask.idempotency-key)
+    (setv (get store.write-keys key) (RememberedWrite :body-digest (write-digest (isinstance ask PutRows) (write-parts ask)) :answer answer)
+          (get store.write-remembered-at key) now-ms)
+    (+= store.expiry-order 1)
+    (heapq.heappush store.write-forgets #((+ now-ms (int (* 1000 WRITE-KEY-MEMORY-SECONDS))) store.expiry-order key)))
+  None)
+
+
+(defn #^ int forget-write-keys-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: SweepExpired の節が錠の内で同期に呼ぶ置き場の書き
+  "覚えた刻から WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを外すため(回収の一部 — PostgreSQL の handler の
+   forget-write-keys と同じ境: 覚えた刻 + 長さ ≤ 今)。答え = 外した覚えの数。"
+  (setv forgotten 0)
+  (while (and store.write-forgets (<= (get (get store.write-forgets 0) 0) now-ms))
+    (setv key (get (heapq.heappop store.write-forgets) 2))
+    (when (in key store.write-keys)
+      (del (get store.write-keys key))
+      (del (get store.write-remembered-at key))
+      (+= forgotten 1)))
+  forgotten)
+
+
 (defn #^ object memory-put-row [#^ MemoryStore store #^ str writer #^ PutRow ask #^ int now-ms]
+  "PutRow に答えるため: 鍵つきの書きは同じ鍵の覚えで先に判じ(送り直しは行に触らずに前の答え)、他は期待と書きの判定を通った時だけ
+   書いて、鍵つきなら答えを覚える。"
+  (setv replay (write-replay store ask))
+  (when (is-not replay None) (return replay))
   (setv decl (store.schema.table ask.table)
         current (writable-row store decl ask.key now-ms))
   (setv conflict (judge-expect ask.expect current))
   (when conflict (return conflict))
   (setv verdict (judge-put decl current ask.key ask.value))
   (when (isinstance verdict Refused) (return verdict))
-  (memory-store-row store ask.table ask.key current verdict.value now-ms))
+  (setv written (memory-store-row store ask.table ask.key current verdict.value now-ms))
+  (remember-write store ask written now-ms)
+  written)
 
 
 (defn #^ (| WrittenRows RowsConflict RowsRefused) memory-put-rows [#^ MemoryStore store #^ str writer #^ PutRows ask #^ int now-ms]  ; defk にできない: memory の handler が同期に呼ぶ置き場の書き(memory-put-row と同じ作法)
-  "PutRows の束を全部か 0 で書く: 全部の行を束の順に引き(期限を過ぎた行は消して無い行として — writable-row)、判定
-   (admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積む。"
+  "PutRows の束を全部か 0 で書く: 鍵つきの束は同じ鍵の覚えで先に判じ(memory-put-row と同じ)、他は全部の行を束の順に引き(期限を過ぎた
+   行は消して無い行として — writable-row)、判定(admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積み、鍵つきなら
+   答えを覚える。"
   (for [write ask.writes] (store.schema.table write.table))
+  (setv replay (write-replay store ask))
+  (when (is-not replay None) (return replay))
   (setv currents (tuple (gfor write ask.writes (writable-row store (store.schema.table write.table) write.key now-ms)))
         verdict (judge-put-rows store.schema ask.writes currents))
   (when (not (isinstance verdict tuple)) (return verdict))
-  (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
-                            (memory-store-row store write.table write.key current admitted.value now-ms)))))
+  (setv written (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
+                                          (memory-store-row store write.table write.key current admitted.value now-ms)))))
+  (remember-write store ask written now-ms)
+  written)
 
 
 (defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査
@@ -969,6 +1022,17 @@
   None)
 
 
+(defn #^ None memory-spend-fault [#^ MemoryStore store #^ StoreFault fault]  ; defk にできない: handler の節が置き場の錠の内で同期に呼ぶ故障の列の書き(memory-add-fault と同じ作法)
+  "当たった故障 fault の当たる回数(StoreFault.times)を 1 つ使うため: 回数の無い故障は何もしない・残り 1 回の故障は列から外し・他は
+   回数を 1 減らした故障に置き換える(置いた順は変えない — 列の中の同じ故障 object を探す)。"
+  (when (is-not fault.times None)
+    (with [store.lock]
+      (setv store.faults (tuple (gfor held store.faults
+                                      :if (not (and (is held fault) (<= fault.times 1)))
+                                      (if (is held fault) (replace fault :times (- fault.times 1)) held))))))
+  None)
+
+
 (defk fault-for [store operation names ask]
   {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase)]
    :post [(: % (| StoreFault None))]
@@ -994,6 +1058,8 @@
   (when down
     (return down))
   (<- fault (fault-for store operation names ask))
+  (when (is-not fault None)
+    (memory-spend-fault store fault))
   (when (and (is-not fault None) (not fault.lands))
     (return fault.answer))
   (<- answer program)
@@ -1012,6 +1078,14 @@
   found)
 
 
+(defn #^ tuple first-seen-faults [#^ tuple faults]  ; defk にできない: answered-appends の for が同期に読む純粋な並べ直し
+  "束の追記ごとに当たった故障の並び faults(当たらない追記は None)から、当たった故障を最初に当たった順に 1 つずつ並べるため(同じ故障
+   object は 1 度だけ — 束の故障の回数を 1 回ずつ使う)。"
+  (tuple (gfor #(index fault) (enumerate faults)
+               :if (and (is-not fault None) (not (any (gfor earlier (cut faults 0 index) (is earlier fault)))))
+               fault)))
+
+
 (defk answered-appends [store writer ask]
   {:pre [(: store MemoryStore) (: writer str) (: ask AppendEvents)] :post [(: % (| AppendedEvents Unreachable))]
    :tags {:context "records" :role "foundation"}}
@@ -1023,6 +1097,9 @@
   (when down
     (return down))
   (<- faults (get tuple #((| StoreFault None) ...)) (append-faults store ask.appends))
+  ;; 当たった故障は束 1 つにつき 1 回ずつ使う(束は 1 つの書き — 同じ故障が束の 2 つの追記に当たっても 1 回)。
+  (for [fault (first-seen-faults faults)]
+    (memory-spend-fault store fault))
   (val cut (next (gfor fault faults :if (and (is-not fault None) (not fault.lands) (isinstance fault.answer Unreachable)) fault) None))
   (when (is-not cut None)
     (return cut.answer))

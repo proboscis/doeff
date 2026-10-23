@@ -30,6 +30,7 @@ class StoreFault:
     answer: Refused | Unreachable
     lands: bool = False
     matching: Callable[[object], bool] | None = None
+    times: int | None = None
 
 @dataclass(frozen=True)
 class AddStoreFault(EffectBase[None]):

@@ -18,6 +18,12 @@
 ;;;                覚え方(StreamDecl.key-memory)の長さを限った列の覚えは、回収(SweepExpired)が覚えた刻の境までを limit 個ずつ外す
 ;;;                (forget-keys-statement — 索引 (ledger, remembered_at))。覚えを残さない列は出来事を消す transaction で入れない・外す
 ;;;                (drop-keys-statement)。送ってから外す列の覚えは、鍵の出来事が置き場に在る間は外さない。
+;;   write_keys   行の書き(PutRow・PutRows)の冪等キーの覚え(card ki-78c6d663491f)— PK = idempotency_key・body_digest = 書きの本文の指紋
+;;                (admission.write-digest)・answer = 確定した答えの綴り(版・値・置き場の版 — pg.hy の remembered-answer-json)・last_seq =
+;;                書きの最後の変更の番号(束の項の番号はそこから束の順に遡る — 同じ往復の変更の文が採る番号を、行の単位の錠の中の変更の列の
+;;                最大の番号として同じ文で読む)・remembered_at = 覚えた刻(epoch ミリ秒)。行の書きの transaction(行の単位の錠の中)が 1 往復目に鍵を引き(find-write-key-statement)、
+;;                確定した時だけ 2 往復目に入れる(remember-write-statement)。回収(SweepExpired)が覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を
+;;                過ぎた覚えを limit 個ずつ外す(forget-write-keys-statement — 索引 (remembered_at))。retired_keys の後ろに足した表。
 ;;; 旧い版より後に足した索引(#3614 — どれも宣言から作る CREATE INDEX IF NOT EXISTS・旧い版の文の後ろ):
 ;;;   append_rows (ledger, at)        期限の境(at <= 境)で引く文 — 回収の候補の読み・組の「新しい出来事」の照らし・読みの期限の条件
 ;;;   append_rows (ledger, 組の名の式) 組で数える列(ByKeySuffix)の区切りごとに 1 つ — 書きが触る組の読み(touched-events-statement)と
@@ -27,6 +33,7 @@
 ;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
 ;;;   retired_keys (ledger, remembered_at)  覚えの外し(forget-keys-statement の remembered_at <= 境 — 境の内を limit 個)
+;;   write_keys (remembered_at)      行の書きの冪等キーの覚えの外し(forget-write-keys-statement の remembered_at <= 境 — 境の内を limit 個)
 ;;;   state_rows (表の状態の欄の式)    保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ表の欄の式 —
 ;;;                                  終端の行の読み terminal-rows-statement が引く)
 ;;;   state_rows (並べる式 DESC NULLS LAST, key DESC)  表の上から読む欄(TableDecl.descending)ごとに 1 つ — 上から読む読み
@@ -148,8 +155,8 @@
 ;; 索引の用意の錠の鍵の接尾(session の advisory lock — 同じ置き場の索引を 2 つの process が同時に CONCURRENTLY で作らない)。
 (val INDEX-LOCK-SUFFIX "records-indexes")
 ;; 置き場の表(接頭辞の後ろの名)— 表の用意の観測(relations-statement)と索引の観測(indexes-statement)が引く。
-(val STORE-RELATIONS #("state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys"))
-(val INDEXED-RELATIONS #("state_rows" "append_rows" "row_changes" "retired_keys"))
+(val STORE-RELATIONS #("state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys" "write_keys"))
+(val INDEXED-RELATIONS #("state_rows" "append_rows" "row_changes" "retired_keys" "write_keys"))
 
 
 (defrecord Statement
@@ -541,12 +548,16 @@
     (<- added-made (index-steps index))
     (:= added-steps (+ added-steps added-made)))
   ;; 覚えた刻の列(card ki-4ebaefac6668 — 頭の註の retired_keys)は表の後ろ・索引の前(覚えの外しの索引がこの列を引く)。
+  ;; 行の書きの冪等キーの覚えの表(card ki-78c6d663491f — 頭の註の write_keys)は覚えた刻の列の後ろ・索引の前(覚えの外しの索引がこの表を引く)。
   (+ tables
      indexes
      #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
            PRIMARY KEY (ledger, idempotency_key))" :p p)))
-       (! (remembered-at-step p)))
+       (! (remembered-at-step p))
+       (! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}write_keys (
+           idempotency_key text PRIMARY KEY, body_digest text NOT NULL, answer text NOT NULL, last_seq bigint NOT NULL,
+           remembered_at bigint NOT NULL)" :p p))))
      added-steps))
 
 
@@ -601,8 +612,9 @@
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
    無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。続いて表の名の順・欄の名の順の上から読む欄の索引(頭の註)。
    続いて表の名の順・(等号の欄, 上から読む欄) の順の等号の欄 × 上から読む欄の組の索引(頭の註)。
-   続いて鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。最後に覚えの外しの索引 retired_keys (ledger, remembered_at)
-   (頭の註の retired_keys — forget-keys-statement が引く)。"
+   続いて鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。続いて覚えの外しの索引 retired_keys (ledger, remembered_at)
+   (頭の註の retired_keys — forget-keys-statement が引く)。最後に行の書きの冪等キーの覚えの外しの索引 write_keys (remembered_at)
+   (頭の註の write_keys — forget-write-keys-statement が引く)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
@@ -645,7 +657,9 @@
      #((! (fixed-index (+ p "state_rows_key_c") "state_rows"
                        (.format "CREATE INDEX IF NOT EXISTS {p}state_rows_key_c ON {p}state_rows (ledger, key COLLATE \"C\")" :p p)))
        (! (fixed-index (+ p "retired_keys_remembered") "retired_keys"
-                       (.format "CREATE INDEX IF NOT EXISTS {p}retired_keys_remembered ON {p}retired_keys (ledger, remembered_at)" :p p))))))
+                       (.format "CREATE INDEX IF NOT EXISTS {p}retired_keys_remembered ON {p}retired_keys (ledger, remembered_at)" :p p)))
+       (! (fixed-index (+ p "write_keys_remembered") "write_keys"
+                       (.format "CREATE INDEX IF NOT EXISTS {p}write_keys_remembered ON {p}write_keys (remembered_at)" :p p))))))
 
 
 (defk relation-names [prefix relations]
@@ -735,7 +749,7 @@
   {:pre [(: prefix str)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "検の後片付けの文(この接頭辞の表を消す)を作るため。"
-  (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys"]
+  (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys" "write_keys"]
                (Statement :text (.format "DROP TABLE IF EXISTS {}{}" prefix table) :params #()))))
 
 
@@ -1347,6 +1361,47 @@
                        RETURNING 1)
                      SELECT count(*) FROM gone" :p prefix :a present)
              :params (! (params-of #(#("ledger" stream) #("forget_before" forget-before) #("limit" limit))))))
+
+
+(defk find-write-key-statement [prefix idempotency-key]
+  {:pre [(: prefix str) (: idempotency-key str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "行の書きの冪等キーの覚え(本文の指紋・答えの綴り・書きの最後の変更の番号)を主鍵で 1 行引く文を作るため(書きの錠の中の 1 往復目 —
+   頭の註の write_keys)。"
+  (Statement :text (.format "SELECT body_digest, answer, last_seq FROM {p}write_keys WHERE idempotency_key = :idempotency_key" :p prefix)
+             :params (! (params-of #(#("idempotency_key" idempotency-key))))))
+
+
+(defk remember-write-statement [prefix idempotency-key body-digest answer remembered-at]
+  {:pre [(: prefix str) (: idempotency-key str) (: body-digest str) (: answer str) (: remembered-at int)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "確定した行の書きの冪等キーの覚え(本文の指紋・答えの綴り answer・覚えた刻)を入れる文を作るため(書きの錠の中の 2 往復目の、行の書きと
+   変更の文の後ろ — 行の書きと同じ transaction で入れる・頭の註の write_keys)。答えの変更の位置の番号は同じ往復の変更の文が採るので、
+   綴りに入れず、書きの最後の変更の番号を変更の列の最大の番号として同じ文で読む(行の単位の錠の中なので、変更の列の最大の番号はこの
+   transaction の最後の変更 — 頭の註の「書きの錠」)。同じ transaction の 1 往復目に鍵が無いと読んだ後なので、在る鍵には当たらない
+   (当たっても書き換えない — ON CONFLICT DO NOTHING)。"
+  (Statement :text (.format "INSERT INTO {p}write_keys (idempotency_key, body_digest, answer, last_seq, remembered_at)
+                       VALUES (:idempotency_key, :body_digest, :answer, (SELECT max(seq) FROM {p}row_changes), :remembered_at)
+                       ON CONFLICT (idempotency_key) DO NOTHING" :p prefix)
+             :params (! (params-of #(#("idempotency_key" idempotency-key) #("body_digest" body-digest) #("answer" answer)
+                                     #("remembered_at" remembered-at))))))
+
+
+(defk forget-write-keys-statement [prefix forget-before limit]
+  {:pre [(: prefix str) (: forget-before int) (: limit int) (> limit 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "覚えた刻が forget-before(今 − values.WRITE-KEY-MEMORY-SECONDS)以下の行の書きの冪等キーの覚えを limit 個まで外し、外した数を 1 行で
+   返す文を作るため(回収 SweepExpired — 頭の註の write_keys。候補は索引 (remembered_at) の境までの範囲を辿り、limit 個で止まる —
+   forget-keys-statement と同じ形)。"
+  (Statement :text (.format "WITH gone AS (
+                       DELETE FROM {p}write_keys AS doomed
+                        WHERE doomed.idempotency_key IN (
+                          SELECT kept.idempotency_key FROM {p}write_keys AS kept
+                           WHERE kept.remembered_at <= :forget_before
+                           LIMIT :limit)
+                       RETURNING 1)
+                     SELECT count(*) FROM gone" :p prefix)
+             :params (! (params-of #(#("forget_before" forget-before) #("limit" limit))))))
 
 
 (defk expired-event-condition [prefix separator bound [remembered False]]

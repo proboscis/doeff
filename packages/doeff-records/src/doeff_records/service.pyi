@@ -25,6 +25,7 @@ from doeff_records.wire import decode_request as decode_request
 from doeff_records.wire import encode_answer as encode_answer
 from doeff_records.wire import refusal_json as refusal_json
 from doeff_records.wire import undeclared_reason as undeclared_reason
+from doeff_records.wire import keyed_request as keyed_request
 METHOD_GET: str
 METHOD_POST: str
 PATH_HEALTHZ: str
@@ -36,6 +37,7 @@ class HttpRequest:
     body: bytes
     writer: str | None = None
     caller: str | None = None
+    idempotency_key: str | None = None
 
 @dataclass(frozen=True)
 class HttpAnswer:
@@ -60,7 +62,7 @@ def refusal_answer(error: str, reason: str) -> _Program[HttpAnswer, object]:
 def undeclared_name(schema: RecordsSchema, ask: PublicEffect) -> _Program[str | None, object]:
     ...
 
-def serve_operation(service: RecordsService, principal: Principal, operation: str, body: bytes) -> _Program[HttpAnswer, object]:
+def serve_operation(service: RecordsService, principal: Principal, operation: str, body: bytes, idempotency_key: str | None) -> _Program[HttpAnswer, object]:
     ...
 
 def reply_of(answer: WireAnswer) -> _Program[HttpAnswer, object]:

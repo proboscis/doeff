@@ -1,6 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = admission.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from dataclasses import dataclass as dataclass
+from dataclasses import replace as replace
 from datetime import datetime as datetime
 from datetime import timezone as timezone
 from collections.abc import Mapping as Mapping
@@ -24,6 +25,9 @@ from doeff_records.values import ExpectVersion as ExpectVersion
 from doeff_records.values import ExpectAny as ExpectAny
 from doeff_records.values import RowsConflict as RowsConflict
 from doeff_records.values import RowsRefused as RowsRefused
+from doeff_records.values import Written as Written
+from doeff_records.values import WrittenRows as WrittenRows
+from doeff_records.values import RememberedWrite as RememberedWrite
 
 def canonical_json(value: object) -> str:
     ...
@@ -75,6 +79,18 @@ def judge_put(decl: TableDecl, current: Row | None, key: tuple, diff: FrozenMap)
     ...
 
 def judge_put_rows(schema: RecordsSchema, writes: tuple, currents: tuple) -> tuple | RowsConflict | RowsRefused:
+    ...
+
+def expect_form(expect: object) -> dict:
+    ...
+
+def write_digest(rows: bool, writes: tuple) -> str:
+    ...
+
+def replayed_answer(answer: Written | WrittenRows) -> Written | WrittenRows:
+    ...
+
+def judge_write_replay(key: str | None, rows: bool, writes: tuple, remembered: RememberedWrite | None) -> Written | WrittenRows | Refused | RowsRefused | None:
     ...
 
 def retention_cutoff_ms(decl: TableDecl | StreamDecl, now_ms: int) -> int | None:

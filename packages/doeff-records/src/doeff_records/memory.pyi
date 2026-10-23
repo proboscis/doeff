@@ -19,7 +19,7 @@ from doeff_core_effects.scheduler import ExternalPromise
 from doeff_vm import WithHandler
 
 from doeff import Program
-from doeff_records.values import RetiredKey
+from doeff_records.values import RememberedWrite, RetiredKey
 from doeff_records.effects import (
     AppendEvent,
     AppendEvents,
@@ -125,6 +125,9 @@ class MemoryStore:
     expiry: list[tuple[int, int, RowDue | EventDue | GroupDue]]
     expiry_order: int
     groups: dict[tuple[str, str], StoredGroup]
+    write_keys: dict[str, RememberedWrite]
+    write_remembered_at: dict[str, int]
+    write_forgets: list[tuple[int, int, str]]
     def __init__(self, schema: RecordsSchema, make_lock: Callable[[], threading.RLock] = ...) -> None: ...
     def __deepcopy__(self, memo: dict[int, object]) -> MemoryStore: ...
 

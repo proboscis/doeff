@@ -6,14 +6,15 @@
 ;;; 書き手の名(欄の writers・founders・operator-paths・列の writers)では断らない — 書いてよい program は linter の規則と模擬環境の
 ;;; 失敗ケースで守る(#2994・#2989)。
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import datetime [datetime timezone])
 (import hashlib)
 (import json)
 (import collections.abc [Mapping])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
-                              RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused])
+                              RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused Written WrittenRows
+                              RememberedWrite])
 
 
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
@@ -165,6 +166,50 @@
     (when (isinstance verdict Refused) (return (RowsRefused index write.table write.key verdict.reason)))
     (.append admitted verdict))
   (tuple admitted))
+
+
+;; --- 行の書きの冪等キー(card ki-78c6d663491f)-------------------------------------------------------------------
+;; 置き場(memory・PG)は確定した鍵つきの書きの答えと本文の指紋を覚え(values.RememberedWrite)、同じ鍵の次の書きを、期待と書きの判定の
+;; 前にここで判じる: 同じ本文なら覚えた答えを送り直しと名乗って返し(行に触らない)、別の本文は冪等キーの断り。覚えの無い鍵と鍵の無い
+;; 書きは今までどおり期待と書きの判定へ進む。
+
+(defn #^ dict expect-form [#^ object expect]  ; defk にできない: write-digest が置き場の錠の内と transaction の中で同期に呼ぶ綴り(この file の判断はすべて純関数の defn)
+  "書きの期待を本文の指紋の綴りの形にするため(wire の expect の object と同じ形 — 期待の違う書きを別の本文と数える)。"
+  (match expect
+    (ExpectAbsent) {"kind" "absent"}
+    (ExpectVersion :version version) {"kind" "version" "version" version}
+    (ExpectAny) {"kind" "any"}
+    _ (raise (TypeError (.format "知らない期待: {!r}" expect)))))
+
+
+(defn #^ str write-digest [#^ bool rows #^ tuple writes]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
+  "行の書き 1 つの本文の指紋を作るため(同じ冪等キーの書きが同じ書きの送り直しか、鍵の使い回しかを見分ける — 鍵と書き手の名は含めず、
+   書きの種(rows = 束 PutRows か 1 行 PutRow か)と、書きの並び writes の表・鍵・値・期待を含める)。writes = PutRow 1 つの tuple か
+   PutRows の束(どちらも欄 table・key・value・expect を持つ — この file は effect の層に依らない)。"
+  (body-digest {"put" (if rows "rows" "row")
+                "writes" (lfor write writes
+                               {"table" write.table "key" (list write.key) "value" write.value "expect" (expect-form write.expect)})}))
+
+
+(defn #^ (| Written WrittenRows) replayed-answer [#^ (| Written WrittenRows) answer]  ; defk にできない: judge-write-replay が同期に呼ぶ値の作り直し(この file の判断はすべて純関数の defn)
+  "覚えた書きの答えを、送り直しと名乗る答えにするため(版・値・位置は前の答えのまま — 束は束の名乗りと各項の名乗りの両方)。"
+  (match answer
+    (Written) (replace answer :replayed True)
+    (WrittenRows :items items) (WrittenRows (tuple (gfor item items (replace item :replayed True))) :replayed True)))
+
+
+(defn #^ (| Written WrittenRows Refused RowsRefused None) judge-write-replay [#^ (| str None) key #^ bool rows #^ tuple writes
+                                                                              #^ (| RememberedWrite None) remembered]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+  "冪等キー key の書き(rows = 束か・writes = 書きの並び — write-digest と同じ)を、同じ鍵の覚え remembered(無ければ None)で判じるため
+   (memory と PostgreSQL の handler が同じ答えを返す 1 か所)。答え = 送り直しの答え(覚えた答えを replayed 真で — 期待も書きの判定も
+   見ない)/ 同じ鍵の別の本文の断り(1 行は Refused・束は束の 0 行目の RowsRefused — 断りの文は「冪等キー」を含む)/ None = 覚えが無い
+   (鍵の無い書きを含む — 期待と書きの判定へ進む)。"
+  (cond
+    (or (is key None) (is remembered None)) None
+    (= remembered.body-digest (write-digest rows writes)) (replayed-answer remembered.answer)
+    True (do (setv reason (.format "行の書きの冪等キー {!r} は別の本文の書きで既に使われた" key)
+                   head (get writes 0))
+             (if rows (RowsRefused 0 head.table head.key reason) (Refused reason)))))
 
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
