@@ -1,0 +1,15 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/declarations.hy",
+    "packages/doeff-hy/src/doeff_hy/declarations.pyi",
+    "packages/doeff-records/src/doeff_records/values.hy",
+    "packages/doeff-records/src/doeff_records/values.pyi",
+    "packages/doeff-records/src/doeff_records/effects.hy",
+    "packages/doeff-records/src/doeff_records/effects.pyi",
+    "packages/doeff-records/src/doeff_records/admission.hy",
+    "packages/doeff-records/src/doeff_records/admission.pyi",
+    "packages/doeff-records/src/doeff_records/pg.hy",
+    "packages/doeff-records/src/doeff_records/pg_sql.hy",
+    "packages/doeff-records/src/doeff_records/pg_sql.pyi"
+  ]
+}

@@ -20,7 +20,8 @@
 ;;; 値が文字列の literal でない・役が ROLES の外。どれも SyntaxError で、書いた file と定義の名を名指す。
 (import dataclasses [dataclass])
 (import hy)
-(import hy.models [Dict List Set Symbol String Keyword])
+(import collections.abc [Iterable])
+(import hy.models [Dict List Object Set Symbol String Keyword])
 (import doeff_hy.expansion_names [import-form])
 
 ;; 役の閉じた一覧(agora-redesign #780 の層の確定 — operator 2026-09-27 逐語 "core->intent->protocol"):
@@ -77,7 +78,7 @@
 
 ;; defrecord / defwire の欄の読み方の Hy 側の正本(Rust 側の正本は doeff-indexer の hy_index::fields — hy-index と doeff-linter が呼ぶ)。
 ;; 2 つの正本が同じ答えを出すことは、同じ入力の表 tests/data/record_field_cases.json を両側の検が読んで確かめる。
-(defn field-targets [forms]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list Symbol) field-targets [#^ (get Iterable Object) forms]  ; defk にできない: macro の展開の時に呼ぶ関数
   "record の body の form の列から欄の名(記号)を書いた順に返す — 裸の記号 x・#^ T x・(#^ T x)・(setv #^ T1 a v1 #^ T2 b v2 …) の
    注記つきの的(組ごとに 1 つ)。注記の無い (setv x v) の的は dataclass の欄ではない(class の属性)ので数えない。"
   (import hy.models [Expression])
@@ -96,7 +97,7 @@
   out)
 
 
-(defn declared-value [#^ Dict contract #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (| Object None) declared-value [#^ Dict contract #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
   "契約の辞書の key の値の form(無ければ None)。"
   (setv found None)
   (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
@@ -105,7 +106,7 @@
   found)
 
 
-(defn effects-form [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Object effects-form [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "`:effects` の値の form → 実行時に effect の型の tuple を作る form(無ければ None の form)。"
   (cond
     (is form None) 'None
@@ -119,7 +120,7 @@
         `(doeff_hy.declarations.effect-types ~where (tuple [~@form])))))
 
 
-(defn #^ (| str None) effect-refusal [item]  ; defk にできない: macro が展開した定義の頭が module の読み込みの時に呼ぶ(Program の外)
+(defn #^ (| str None) effect-refusal [#^ object item]  ; defk にできない: macro が展開した定義の頭が module の読み込みの時に呼ぶ(Program の外)
   "item を :effects に書けない理由(書ければ None)。書けるのは effect の型か、effect を作る関数(答えの注釈が effect の型 —
    doeff_time の GetTime・Delay や doeff の Tell の形)。"
   (import typing)
@@ -147,7 +148,7 @@
   items)
 
 
-(defn tags-form [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Object tags-form [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "`:tags` の値の form を変換の時に検め、実行時に DefinitionTags を作る form(無ければ None の form)を返す。"
   (when (is form None)
     (return 'None))
@@ -188,7 +189,7 @@
 (setv OUTCOME-KEYS #(":absent" ":failure" ":value"))
 
 
-(defn outcome-type-forms [contract answer #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(deff は doeff_hy.macros が定義し、macros.hy がこの module を import するので require できない)
+(defn #^ (get dict str (get list Object)) outcome-type-forms [#^ Dict contract #^ (| Object None) answer #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(deff は doeff_hy.macros が定義し、macros.hy がこの module を import するので require できない)
   "defeffect の :absent / :failure / :value を検め、鍵ごとの型の form の list にするため(書かなければ空)。
    要素は型の名か None。:answer が union の form (| A B …) か名前 1 つなら、要素がその中に在ることと、鍵どうしで重ならないことを
    展開の時に断る(それ以外の :answer は定義の時に Outcomes.declare が断る)。"
@@ -215,7 +216,7 @@
   out)
 
 
-(defn bound-answer-methods [answer outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list Object) bound-answer-methods [#^ Object answer #^ (get dict str (get list Object)) outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
   "型検査のための展開で、答えの分け方(:absent・:failure)を宣言した effect の class に置く method `__iter__` の form の list
    (置かない時は空)。返り値の型 = :answer の union から :absent と :failure の要素を除いた物 — `<-` が束ねる名の型で、
    返り値の型は doeff_hy/static_types.pyi の BoundRun(`Program[T, E]` が `__iter__` から T を読む)。実行時の `<-` は不在を Absent に・
@@ -237,7 +238,7 @@
       []))
 
 
-(defn effect-field-forms [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple (get list Object) (get list str)) effect-field-forms [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の `:fields [(: 名 型) (: 名 型 既定値) …]` を検め、dataclass の欄の form の list と欄の名前の list にするため
    (無ければ両方とも空)。既定値を持つ欄の後ろに既定値の無い欄は置けない(dataclass の順の決まりを展開の時に断る)。"
   (when (is form None)
@@ -265,7 +266,7 @@
   #(out names))
 
 
-(defn type-param-symbols [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defk・deff の契約の :tp も読む — macros.hy の _type-params)
+(defn #^ (get list Symbol) type-param-symbols [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defk・deff の契約の :tp も読む — macros.hy の _type-params)
   "契約の辞書の `:tp [T …]` の値の form(無ければ None)を、型の引数の記号の list にするため(書かなければ空)。形は重ならない記号の
    空でない list だけ — 名の並びでない値・重なる名は SyntaxError(defk・deff・defeffect の :tp が同じ規則で断る・agora-redesign #2893 / #2939)。"
   (cond
@@ -278,7 +279,7 @@
       (raise (SyntaxError (.format "{}: :tp は型の引数の名の並び(例 `:tp [T]`・重ならない名)— 受けたのは {}" where (hy.repr form))))))
 
 
-(defn runs-carried-names [form names #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list str) runs-carried-names [#^ (| Object None) form #^ (get list str) names #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の :runs-carried を検め、答え手が effect を出した所で走らせる Program の欄の名(Python の属性の名)の整列した list に
    するため(書かなければ空)。形は :fields の欄の名の list だけ — 無い欄の名は展開の時に断る。"
   (when (is form None)
@@ -291,7 +292,7 @@
   (sorted (sfor item form (hy.mangle (str item)))))
 
 
-(defn answer-value-form [answer]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Object answer-value-form [#^ Object answer]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の本体の __doeff_answer__ に置く値の form を作るため。実行時は :answer の式そのもの(handler が resume で返す値の型)。
    型検査の展開(doeff_hy/static_view.py)では `cast(object, (A, B, …))`(:answer の union の要素の tuple・union でなければ
    要素 1 つ)にする: pyright は値の位置の `A | B` も型として評価し、素の総称(`dict | X` — reportMissingTypeArgument)や
@@ -307,7 +308,7 @@
       answer))
 
 
-(defn defeffect-form [name docstring #^ Dict contract #^ str where pre-code]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Object defeffect-form [#^ Symbol name #^ (| String None) docstring #^ Dict contract #^ str where #^ (get list Object) pre-code]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の展開: EffectBase を継ぐ frozen の dataclass(本体に ClassVar の __doeff_answer__ = handler が resume で返す
    値の型)と、属性 __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。
    pre-code = :pre を defk と同じ規則で文にした列(macros.hy の _contract-code が作る)。空でなければ __post_init__ に置き、
@@ -444,7 +445,7 @@
      ~@outcomes))
 
 
-(defn needs-names [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defsystem も読む)
+(defn #^ (get list str) needs-names [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defsystem も読む)
   "`:needs` の値の form を変換の時に検め、能力の名の整列した list を返す。形は文字列の literal の集合 #{\"a\" \"b\"} だけ
    (名・式・空の文字列は断る — linter が実行せずに読めるように)。"
   (when (not (isinstance form Set))
@@ -455,14 +456,14 @@
   (sorted (sfor item form (str item))))
 
 
-(defn needs-form [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Object needs-form [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "`:needs` の値の form → 実行時に frozenset を作る form(無ければ None の form)。"
   (if (is form None)
       'None
       `(frozenset [~@(lfor n (needs-names form where) (String n))])))
 
 
-(defn declaration-setters [name contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list Object) declaration-setters [#^ Symbol name #^ (| Dict None) contract #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "定義 name の属性 __doeff_effects__ / __doeff_tags__ / __doeff_needs__ を置く form の list(contract = 頭の辞書か None)。"
   (setv effects (if (is contract None) None (declared-value contract ":effects"))
         tags (if (is contract None) None (declared-value contract ":tags"))
