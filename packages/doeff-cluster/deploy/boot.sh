@@ -328,6 +328,10 @@ repo_access() {
     [ "$json" = "{" ] || json="$json,"
     json="$json\"$url\":\"$key\""
   done
+  # 表に無い url(鍵なしで読む ssh の repo)は、鍵が無ければ問いや待ちで止まらず、すぐ断られて repo-unreachable の理由に出る
+  # (対話の問いに答えられない・届かない相手を待ち続けると、準備が進みの無いまま停滞の窓で止まり、理由の行が残らなかった)。
+  # 先に書いた Host が先に効くので、ここは鍵つきの項目の後ろに置く。
+  printf 'Host *\n  BatchMode yes\n  ConnectTimeout 30\n' >>"$dir/.ssh_config.$$"
   chmod 600 "$dir/.ssh_config.$$"
   printf '%s}\n' "$json" >"$dir/.repo-keys.json.$$"
   mv -f "$dir/.ssh_config.$$" "$dir/ssh_config"

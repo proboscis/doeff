@@ -48,12 +48,16 @@
   (assert (in "終了 -9" silent.detail) silent)
   (assert (in "/s/k.log" silent.detail) silent)
   ;; 期限で止めた準備: 先読みも job の準備も停滞の秒で止めた失敗(やり直してよい)・先読みは名指す。
-  (<- warm (overdue-failure True (PrepareLimits :stall-seconds 600.0)))
+  (<- warm (overdue-failure True (PrepareLimits :stall-seconds 600.0) "sync" "/s/k.log" ""))
   (assert (= #(warm.kind warm.retryable) #(EnvFailureKind.PREPARE-TIMEOUT True)) warm)
   (assert (and (in "先読み" warm.detail) (in "600" warm.detail)) warm)
-  (<- job (overdue-failure False (PrepareLimits :stall-seconds 600.0)))
+  (<- job (overdue-failure False (PrepareLimits :stall-seconds 600.0) "sync\n" "/s/k.log" "Permission denied (publickey)\n"))
   (assert (= #(job.kind job.retryable) #(EnvFailureKind.PREPARE-TIMEOUT True)) job)
-  (assert (and (not-in "先読み" job.detail) (in "600" job.detail)) job))
+  (assert (and (not-in "先読み" job.detail) (in "600" job.detail)) job)
+  ;; 理由: 最後に進んだ処理・log の在処・log の末尾が失敗の文に載る(進みの印も log も空なら「不明」)。
+  (assert (and (in "処理: sync・" job.detail) (in "/s/k.log" job.detail) (in "Permission denied" job.detail)) job)
+  (<- bare (overdue-failure False (PrepareLimits :stall-seconds 600.0) "" "/s/k.log" ""))
+  (assert (and (in "処理: 不明" bare.detail) (not-in "log の末尾" bare.detail)) bare))
 
 
 (deftest test-project-and-argv
