@@ -233,3 +233,27 @@
   (assert (isinstance answer JobNotStarted) answer)
   (assert (in place.socket answer.detail) answer.detail)
   (assert (= seen #()) seen))
+
+
+(defk shim-start-then-observe [spec]
+  {:pre [(: spec JobSpec)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "warm-key の無い job(shim の道)を起こし、起こしの答えと、その後の観測を返すため。"
+  (<- answer (StartJob spec 1 "/roots/env-a"))
+  (<- seen tuple (ObserveProcesses))
+  #(answer seen))
+
+
+(deftest test-a-shim-job-whose-command-cannot-start-is-refused-as-the-answer [tmp-path]
+  ;; shim の道で子を起こせない(ProcessNotStarted — 台本に命令が無い)時も、例外でなく StartJob の答え JobNotStarted(warm-key は None)で、
+  ;; 子の表に載せない(card ki-e1612a12d0c3 — 前は OSError で worker の process ごと落ちた)。
+  (val spec (JobSpec "svc" "jobs.svc" #() "rev-a"))
+  (<- settings (host-settings tmp-path))
+  (val script (ProcessScript :commands #() :env SCRIPT-ENV))
+  (val got (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
+                                (scripted-warm-process-handler (WarmScript)) (process-host settings)]
+                  (shim-start-then-observe spec))))
+  (val answer (get got 0))
+  (assert (isinstance answer JobNotStarted) answer)
+  (assert (= #(answer.name answer.warm-key) #("svc" None)) answer)
+  (assert (.startswith answer.detail "子を起こせない: ") answer.detail)
+  (assert (= (get got 1) #()) got))
