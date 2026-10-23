@@ -44,6 +44,7 @@ from doeff_events.effects.notices import (
     ProbeBroker,
     SubscribeChannels,
 )
+from doeff_events.handlers._kept_readers import KeptReaders
 
 if TYPE_CHECKING:
     from doeff import EffectGenerator
@@ -331,11 +332,13 @@ def memory_notice_handler(broker: MemoryBroker, redeliver_seconds: float = KEPT_
 
     Handlers built from the same broker exchange notices, as processes connected to one Redis do.
     ``redeliver_seconds`` = how long a kept channel's notice handed to its reader waits for the acknowledgement
-    before it is handed out again. The readers of kept channels belong to this handler (one process).
+    before it is handed out again. The readers of kept channels belong to this handler (one process): each open
+    subscription holds a reader state of its own, and a closed one leaves it to the next subscription of the same
+    reader name (``handlers/_kept_readers.py``).
     """
     if isinstance(redeliver_seconds, bool) or not isinstance(redeliver_seconds, int | float) or redeliver_seconds <= 0:
         raise ValueError(f"memory_notice_handler: redeliver_seconds must be a number > 0, got {redeliver_seconds!r}")
-    readers: dict[str, _KeptReader] = {}
+    readers: KeptReaders[_KeptReader] = KeptReaders(_KeptReader)
 
     @do
     def handler(
@@ -370,27 +373,32 @@ def memory_notice_handler(broker: MemoryBroker, redeliver_seconds: float = KEPT_
                 answer = broker.down
             case CloseSubscription(subscription=closing):
                 broker.close(closing)
+                readers.detach(closing)
             case AckAnnouncement(subscription=acked, notice=notice):
                 # Kept by the handler only: it answers while the broker is cut too (nothing is sent).
-                if acked.reader is not None and acked.reader in readers:
-                    readers[acked.reader].acknowledged(notice)
+                acking = readers.of(acked)
+                if acking is not None:
+                    acking.acknowledged(notice)
             case Announce() | SubscribeChannels() | NextAnnouncement() if broker.down is not None:
                 answer = broker.down
             case Announce():
                 announced = broker.announce(effect)
                 answer, wakes = announced.receivers, announced.wakes
             case SubscribeChannels(kept=kept, reader=name):
+                subscription = broker.subscribe(effect)
                 if name is not None:
-                    reader = readers.setdefault(name, _KeptReader())
+                    reader = readers.attach(name)
                     # A reader's first subscription starts at the end of each log; a later one goes on where it was.
                     reader.positions = {channel: broker.log_length(channel) for channel in kept} | reader.positions
-                answer = broker.subscribe(effect)
+                    readers.held(subscription, reader)
+                answer = subscription
             case NextAnnouncement(subscription=subscription):
                 listener = broker.listener(subscription)
+                reading = readers.of(subscription)
                 if listener is None:
                     answer = _ENDED
-                elif subscription.reader is not None:
-                    answer = yield _next_kept(broker, listener, readers[subscription.reader], redeliver_seconds)
+                elif reading is not None:
+                    answer = yield _next_kept(broker, listener, reading, redeliver_seconds)
                 elif listener.queued:
                     answer, listener.queued = listener.queued[0], listener.queued[1:]
                 else:
