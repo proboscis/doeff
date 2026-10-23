@@ -127,6 +127,9 @@ HANDLER_STATIC_NAMES: tuple[str, ...] = (
     "fell_through",
 )
 
+#: defeffect の型検査のための展開が参照する static_types の名(答えの分けを宣言した effect の `__iter__` の返り値 — declarations.hy)。
+DEFEFFECT_STATIC_NAMES: tuple[str, ...] = ("BoundRun",)
+
 #: for/do・traverse の型検査のための展開が参照する static_types の名(agora-redesign #2321)— 件の引数を items の要素の
 #: 型へ読み直す `traverse_item`(macros.hy の _traverse-form)。展開の中では `_doeff_<名>` で引く。
 TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
@@ -163,6 +166,7 @@ STATIC_HELPER_IMPORTS: str = (
         for name in (
             *sorted({entry.type_name for entry in DEFTEST_FIXTURE_TYPES}),
             *HANDLER_STATIC_NAMES,
+            *DEFEFFECT_STATIC_NAMES,
             *TRAVERSE_STATIC_NAMES,
         )
     )

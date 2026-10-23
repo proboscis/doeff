@@ -216,9 +216,9 @@
 
 
 (defn bound-answer-methods [answer outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "型検査のための展開で、答えの分け方(:absent・:failure)を宣言した effect の class に置く method `__bound_answer__` の form の list
+  "型検査のための展開で、答えの分け方(:absent・:failure)を宣言した effect の class に置く method `__iter__` の form の list
    (置かない時は空)。返り値の型 = :answer の union から :absent と :failure の要素を除いた物 — `<-` が束ねる名の型で、
-   doeff_hy/static_types.pyi の BoundAnswer を満たす(`_doeff_perform` の overload が読む)。実行時の `<-` は不在を Absent に・
+   返り値の型は doeff_hy/static_types.pyi の BoundRun(`Program[T, E]` が `__iter__` から T を読む)。実行時の `<-` は不在を Absent に・
    失敗を Raise に変えて呼び手のスコープで出すので、束ねた名には成功と :value の要素だけが来る。effect の基底 `EffectBase[Answer]`
    の Answer は宣言の全部のまま(handler は値で答える — R4)。:answer が union でも名前 1 つでもない時と、要素が全部外れる時は
    置かない(束ねた名の型は答えの全部のまま)。"
@@ -232,7 +232,7 @@
   (if (and (static-view-enabled) removed (is-not members None))
       (let [kept (lfor m members :if (not-in (hy.repr m) removed) m)]
         (if kept
-            [`(defn [] #^ ~(if (= (len kept) 1) (get kept 0) `(| ~@kept)) __bound-answer__ [self] (raise NotImplementedError))]
+            [`(defn [] #^ (get _doeff_BoundRun ~(if (= (len kept) 1) (get kept 0) `(| ~@kept))) __iter__ [self] (raise NotImplementedError))]
             []))
       []))
 
