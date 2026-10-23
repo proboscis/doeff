@@ -1,4 +1,7 @@
 {
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/expansion_names.py"
+  ],
   "module_extensions": {
     "doeff-hy-binding-forms": {
       "allow": [
@@ -29,6 +32,9 @@
   "modules": [
     {
       "allow": [],
+      "import_tables": [
+        "packages/doeff-hy/src/doeff_hy/expansion_names.py"
+      ],
       "layer": "pure",
       "name": "doeff-hy-expansion-names",
       "paths": [
@@ -37,7 +43,7 @@
       "public": [
         "packages/doeff-hy/src/doeff_hy/expansion_names.py"
       ],
-      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)と、型を建てる定義(defeffect・defwire・defrecord の :check)が型の本体で読む typing の ClassVar・cast の `_doeff_` の別名の綴り・置き場・import の唯一の定義元(閉じた表 — 表に無い名は断る)。書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。型検査の投影の後処理は、この表の綴りの import を展開の合成と見分けて module の段へ移す。節を回す関数の局所名 `_doeff_effect`・`_doeff_k` の綴りと、書き手が節に書いた `effect`・`k` を節の effect・続きとして読ませる名の表(WRITER_VISIBLE)も持つ — 書き手の節の欄・session の名と分け合わない(card ki-6af9862aed32)。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・declarations.hy・record.hy・static_view.py・static_check.py が引く純粋な表",
+      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)と、型を建てる定義(defeffect・defwire・defrecord の :check)が型の本体で読む typing の ClassVar・cast の `_doeff_` の別名の綴り・置き場・import の唯一の定義元(閉じた表 — 表に無い名は断る)。書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。型検査の投影の後処理は、この表の綴りの import を展開の合成と見分けて module の段へ移す。節を回す関数の局所名 `_doeff_effect`・`_doeff_k` の綴りと、書き手が節に書いた `effect`・`k` を節の effect・続きとして読ませる名の表(WRITER_VISIBLE)も持つ — 書き手の節の欄・session の名と分け合わない(card ki-6af9862aed32)。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・declarations.hy・record.hy・static_view.py・static_check.py が引く純粋な表。置き場の module の名の文字列(`_HOMES` の値)は、契約の import_tables でこの file を表と宣言しているので、repo の module の名に一致する値がこの module の依存として判じられる(置き場を repo の中の module にする行は、この module の allow に足す行が要る・card ki-b644bb2cbd02)",
       "typed": false
     }
   ]

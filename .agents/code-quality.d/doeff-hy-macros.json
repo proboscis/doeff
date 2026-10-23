@@ -26,6 +26,9 @@
         "doeff-hy-static-types",
         "pytest-item-records"
       ],
+      "import_tables": [
+        "packages/doeff-hy/src/doeff_hy/macros.hy"
+      ],
       "layer": "io",
       "name": "doeff-hy-macros",
       "paths": [
@@ -36,7 +39,7 @@
         "packages/doeff-hy/src/doeff_hy/macros.hy",
         "packages/doeff-hy/src/doeff_hy/macros.pyi"
       ],
-      "responsibility": "doeff-hy の標準の macro(do!・defk・deff・fnk・<-・defp・deftest・defhandler・traverse・for/do・defmcp-tool ほか)の定義 — 展開の時に契約の鍵を検め、Program を組む形へ写す。実行時の補助(guard の globals への据え付け)も持つ。",
+      "responsibility": "doeff-hy の標準の macro(do!・defk・deff・fnk・<-・defp・deftest・defhandler・traverse・for/do・defmcp-tool ほか)の定義 — 展開の時に契約の鍵を検め、Program を組む形へ写す。実行時の補助(guard の globals への据え付け)も持つ。import の form を組む module の名の文字列(`hy.models` で組む綴り)は、契約の import_tables でこの file を宣言しているので、repo の module の名に一致する物がこの module の依存として判じられる(card ki-b644bb2cbd02)。",
       "typed": false
     }
   ]
