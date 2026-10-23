@@ -9,8 +9,8 @@
 - `_doeff_perform(e)`: `(<- x e)` の x の型 = e の答えの型(Python の `@effectful` の
   `x = perform(e)` と同じ形・docs/24-effectful-perform.md)。effect は `EffectBase[T]` の T、
   Program(defk を呼んだ結果など)は `Program[T, E]` の T。答えの分け方(:absent・:failure)を宣言した effect は T から
-  その要素を除いた型(下の `BoundAnswer`)、中継 `Perform(e)` は宣言を開かないので e の答えの全部(card ki-6c774adfb8c7)。
-  宣言は具体的な型の overload だけで、`object -> Any` の受け皿を持たない(agora-redesign #3116・cisco-c8 2026-10-03 16:3x の決め):
+  その要素を除いた型(下の `BoundRun`)、中継 `Perform(e)` は宣言を開かないので e の答えの全部(card ki-6c774adfb8c7)。
+  宣言は `Program[_T, object] -> _T` の 1 つだけで、`object -> Any` の受け皿を持たない(agora-redesign #3116・cisco-c8 2026-10-03 16:3x の決め):
   受け皿の overload が在ると、module の中で最初の評価が union の期待型の下(`(<- x (| int None) …)`)
   だった時に pyright 1.1.414 が以後の `_doeff_perform` を全部受け皿へ落とし、答えが Any になって
   束ねの型の食い違いを黙って通していた(順に依る — tests/test_static_check.py の
@@ -22,10 +22,10 @@
 
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, ParamSpec, Protocol, TypeAlias, TypeVar, overload
+from typing import Any, ParamSpec, Protocol, TypeAlias, TypeVar
 
 import pytest
-from doeff_vm import K, Perform, WithHandler
+from doeff_vm import K, WithHandler
 
 from doeff import Program
 
@@ -37,27 +37,17 @@ from doeff import Program
 from doeff.do import do as do
 
 _T = TypeVar("_T")
-_Bound_co = TypeVar("_Bound_co", covariant=True)
+_Bound = TypeVar("_Bound")
 
-class BoundAnswer(Protocol[_Bound_co]):
-    """答えの分け方(:absent・:failure)を宣言した effect の、`<-` が束ねる名の型(ADR-DOE-CORE-EFFECTS-003 R5・R6)。
+#: 答えの分け方(:absent・:failure)を宣言した effect の `__iter__` の返り値(card ki-6c774adfb8c7)。defeffect の型検査のための展開
+#: (declarations.hy)と型の宣言の生成(static_stub.py)が、宣言した effect の class の `__iter__` をこの型に狭める — 型引数 = :answer の
+#: union から :absent と :failure の要素を除いた物。`Program[T, E]` は `__iter__` の返り値から T を読むので、`_doeff_perform(e)` は
+#: 追加の overload なしで `<-` の束ねた名の型(成功と :value の答え)を返す。実行時の `<-` は不在を Absent に・失敗を Raise に変えて
+#: 呼び手のスコープで出すので、束ねた名には来ない(ADR-DOE-CORE-EFFECTS-003 R5・R6)。effect の基底 `EffectBase[Answer]` の Answer は
+#: 宣言の全部のまま(handler は 3 つとも値で答える — R4 — ので `typed_resume` は全部を受ける)。overload にしないのは、注記が合わない時の
+#: 診断が reportAssignmentType から reportCallIssue(No overloads)に変わり、使い手の既知の赤の突き合わせが崩れるため。
+BoundRun: TypeAlias = Generator[Any, Any, _Bound]
 
-    defeffect の型検査のための展開(declarations.hy)と型の宣言の生成(static_stub.py)が、宣言した effect の class に
-    `__bound_answer__` を置く — 返り値の型 = :answer の union から :absent と :failure の要素を除いた物(:value と成功の要素)。
-    実行時の `<-` は不在を Absent に・失敗を Raise に変えて呼び手のスコープで出すので、束ねた名には来ない。effect の基底
-    `EffectBase[Answer]` の Answer は宣言の全部のまま(handler は 3 つとも値で答える — R4)。"""
-
-    def __bound_answer__(self) -> _Bound_co: ...
-
-# `<-` の束ねた名の型。3 つの overload は順に効く(どれも受け皿ではない — 先の宣言が本当に一致しない物だけが次へ落ちる):
-# 1. 中継 `Perform(effect)`: 宣言を開かずに effect を出し直す(R4)ので、答えは宣言の全部(effect の union も受ける)。
-# 2. 宣言を持つ effect: 答えの分け方で外した後の型。
-# 3. それ以外(宣言の無い effect・Program): `Program[T, E]` の T。
-@overload
-def _doeff_perform(effect: Perform[_T], /) -> _T: ...
-@overload
-def _doeff_perform(effect: BoundAnswer[_T], /) -> _T: ...
-@overload
 def _doeff_perform(effect: Program[_T, object], /) -> _T: ...
 
 # for/do・traverse の件の引数の型(agora-redesign #2321)。型検査のための展開(macros.hy の _traverse-form)は、

@@ -5,9 +5,10 @@ effect は `EffectBase[答えの型]` の部分型として宣言する — `(<-
 欄の名・順・既定値は実装と同じ。写像の欄(PutRow.value・ListRows.where)は FrozenMap(実装は作る時に凍らせる)。
 """
 
+from collections.abc import Generator
 from dataclasses import dataclass
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from doeff import EffectBase
 from doeff_hy.frozen import FrozenMap
@@ -113,8 +114,8 @@ class ReadEvents(EffectBase[ReadEventsAnswer]):
 @dataclass(frozen=True)
 class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
     stream: str
-    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundAnswer)。
-    def __bound_answer__(self) -> StreamEnd | StreamEmpty: ...
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    def __iter__(self) -> Generator[Any, Any, StreamEnd | StreamEmpty]: ...
 
 @dataclass(frozen=True)
 class ReadEventByKey(EffectBase[ReadEventByKeyAnswer]):

@@ -120,13 +120,10 @@ def test_the_stub_of_a_declared_effect_carries_the_bound_answer(tmp_path: Path) 
     lines = stub_of(tmp_path, [tmp_path], _write(tmp_path)).text.splitlines()
     # 基底の答えは宣言の全部のまま(handler の typed_resume は 3 つとも値で答える)。束ねた名の型は method が持つ。
     assert "class Read(_doeff_effect_base[Hit | Empty | Missing | Broken]):" in lines
-    assert "    def __bound_answer__(self) -> Hit | Empty:" in lines
-    assert "    def __bound_answer__(self) -> Hit:" in lines
-    # 答えの分け方を宣言しない effect は束ねた名の型を変えない(method は宣言した 2 つの effect だけ)。
-    assert [line for line in lines if "__bound_answer__" in line] == [
-        "    def __bound_answer__(self) -> Hit | Empty:",
-        "    def __bound_answer__(self) -> Hit:",
-    ]
+    assert "    def __iter__(self) -> _doeff_BoundRun[Hit | Empty]:" in lines
+    assert "    def __iter__(self) -> _doeff_BoundRun[Hit]:" in lines
+    # 答えの分け方を宣言しない effect は束ねた名の型を変えない(`__iter__` は宣言した 2 つの effect だけ)。
+    assert len([line for line in lines if "def __iter__" in line]) == 2
 
 
 def test_a_bind_reads_the_bound_answer_and_a_relay_reads_the_declared_one(tmp_path: Path) -> None:

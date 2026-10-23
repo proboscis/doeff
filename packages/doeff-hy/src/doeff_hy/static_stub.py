@@ -111,6 +111,7 @@ _HELPERS = (
     _Helper("_Never", "typing", "Never", "_Never"),
     _Helper("_doeff_effect_base", "doeff", "EffectBase", "_doeff_effect_base"),
     _Helper("_doeff_dataclass", "dataclasses", "dataclass", "_doeff_dataclass"),
+    _Helper("_doeff_BoundRun", "doeff_hy.static_types", "BoundRun", "_doeff_BoundRun"),
 )
 #: 補助の import が .pyi の頭に置ける名(隠す名でも、宣言に残してよい)。
 _HELPER_NAMES = frozenset(helper.asname or helper.name for helper in _HELPERS)
