@@ -32,7 +32,7 @@
       (.format "柵の余裕 {} ms が TTL {} ms の半分を越える(1 回の延長の遅れで書きが止まる)" margin-ms ttl-ms)
     True None))
 
-(defn #^ (| str None) fence-verdict [#^ (| dict None) hold #^ int now-ms #^ int margin-ms]
+(defn #^ (| str None) fence-verdict [#^ (| (get Mapping #(str object)) None) hold #^ int now-ms #^ int margin-ms]
   "純粋: 書いてよいか。答え = None(通す)か、断る理由の文字列。期限の margin-ms 前で締める(時計のずれと書きの往復の分)。"
   (cond
     (is hold None) "lease を持っていない(取る前か、失った)"
@@ -40,7 +40,7 @@
       (.format "lease の期限が近いか過ぎた(いま {} ・期限 {} ・余裕 {} ms)" now-ms (get hold "expiresMs") margin-ms)
     True None))
 
-(defn #^ tuple lease-op [#^ (| dict None) row #^ str op #^ str token #^ int permits #^ int ttl-ms #^ int now-ms]
+(defn #^ (get tuple #((| (get dict #(str object)) None) LeaseAnswer)) lease-op [#^ (| (get dict #(str object)) None) row #^ str op #^ str token #^ int permits #^ int ttl-ms #^ int now-ms]
   "純粋: lease の行と操作 → #(次の行 答え — LeaseAnswer)。行が変わらなければ同じ row を返す。時刻 now-ms は coordinator の時計。
    受けられない操作・期限・token は BodyInvalid(要求の誤り — coordinator の口では 400・ValueError の子)。"
   (when (not-in op LEASE-OPS) (raise (BodyInvalid (+ "知らない lease の操作: " (repr op)))))
@@ -70,7 +70,7 @@
 (defn #^ (| str None) semaphore-write-refusal [#^ object before #^ object after #^ int now-ms]
   "純粋: 盤への直の書き(旧い版の compare-and-set)が、coordinator の時計でまだ切れていない担い手を追い出して新しい担い手を
    足す・permits を越えて足すなら、断る理由の文。外すだけの書き(返す・worker の drop)は通す。形の読めない値は触らない(None)。"
-  (defn #^ (| dict None) holders-of [#^ object row] (if (and (isinstance row dict) (isinstance (.get row "holders") dict)) (get row "holders") None))
+  (defn #^ (| (get dict #(str object)) None) holders-of [#^ object row] (if (and (isinstance row dict) (isinstance (.get row "holders") dict)) (get row "holders") None))
   (when (not (isinstance after dict)) (return None))
   (setv old (or (holders-of before) {}) new (holders-of after))
   (when (is new None) (return None))
@@ -97,7 +97,7 @@
 
 
 (defk live-instances [row now-ms job]
-  {:pre [(: row (| Mapping None)) (: now-ms int) (: job str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: row (| (get Mapping #(str object)) None)) (: now-ms int) (: job str)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "行の期限が now より後の担い手のうち、job の process(担い手 = lease-holder job <世代の名>・token = <担い手>/<番号>)の世代の名を、
    重ねず名の順に並べた列を知るため(退きの保ちの持ち手を coordinator が worker への返事に載せる — card ki-e3531030eb37)。"
   (val head (lease-holder job ""))
@@ -105,7 +105,7 @@
                        (get (.rsplit (cut token (len head) None) "/" 1) 0)))))
 
 
-(defn #^ (| int None) lease-full-until [#^ (| dict None) row #^ int now-ms]
+(defn #^ (| int None) lease-full-until [#^ (| (get Mapping #(str object)) None) row #^ int now-ms]
   "純粋: 行が今の刻で満ちていれば(期限の切れていない担い手が permits 以上)、最初に空く刻(担い手の期限のいちばん早い物 — 期限の刻に
    その担い手は live-holders から落ちる)。空きがあれば None。GET /watch?lease=<名> の待ちが起きる条件と、coordinator が起きる刻の 1 か所。"
   (setv live (live-holders row now-ms))
@@ -114,7 +114,7 @@
       None))
 
 
-(defn #^ (| dict None) claim [#^ (| dict None) row #^ int permits #^ str token #^ int now-ms #^ int ttl-ms]
+(defn #^ (| (get dict #(str object)) None) claim [#^ (| (get Mapping #(str object)) None) row #^ int permits #^ str token #^ int now-ms #^ int ttl-ms]
   "純粋: permit を 1 つ取った後の行。空きが無ければ None。期限の切れた担い手はこの書きで落とす。
    同じ名前で permits が食い違えば BodyInvalid(要求の誤り・ValueError の子 — 同じ名前は同じ lock でなければならない)。"
   (when (and (is-not row None) (!= (get row "permits") permits))
@@ -125,7 +125,7 @@
       None))
 
 
-(defn #^ (| dict None) renew [#^ (| dict None) row #^ str token #^ int now-ms #^ int ttl-ms]
+(defn #^ (| (get dict #(str object)) None) renew [#^ (| (get Mapping #(str object)) None) row #^ str token #^ int now-ms #^ int ttl-ms]
   "純粋: 期限を延ばした後の行。token が行に無ければ None(= lease を失った)。
    行に残っている間は、期限が過ぎていても他の誰も書いていない(書きは期限切れを落とす)ので延ばしてよい。"
   (if (or (is row None) (not-in token (get row "holders")))
@@ -134,7 +134,7 @@
        "holders" (| (live-holders row now-ms) {token (+ now-ms ttl-ms)})}))
 
 
-(defn #^ tuple release [#^ (| dict None) row #^ str token #^ int now-ms]
+(defn #^ (get tuple #((| (get dict #(str object)) None) bool)) release [#^ (| (get dict #(str object)) None) row #^ str token #^ int now-ms]
   "純粋: permit を返した後の行と、token が行に在ったか。"
   (if (or (is row None) (not-in token (get row "holders")))
       #(row False)
@@ -145,7 +145,7 @@
 
 ;; row は盤の行の値そのもの(JSON の値 — BoardRow.value。形を確かめてから読む — 形の読めない値は触らず None)。
 (deff holders-shifted [#^ object row #^ int gap-ms]  ; defk にできない: coordinator の起き直し(api_policy.resume-after-downtime — Program の外の純粋な判断)が呼ぶ
-  {:pre [(: row (| dict list str int float bool None)) (: gap-ms int)] :post [(: % (| dict None))]
+  {:pre [(: row (| dict list str int float bool None)) (: gap-ms int)] :post [(: % (| (get dict #(str object)) None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "純粋: 担い手の期限を gap-ms だけ後へずらした行。coordinator が止まっていた長さ gap-ms を担い手の期限に数えないため(起き直した時に
    api_policy.resume-after-downtime が盤の lease の行に当てる — task の lease・worker の最後の連絡と同じ)。持ち主は止まっていた間に
@@ -158,7 +158,7 @@
 
 
 ;; row は盤の行の値そのもの(形を確かめてから読む — 形の読めない値は触らず None)。
-(defn #^ (| dict None) drop-holders [#^ object row #^ str prefix]
+(defn #^ (| (get dict #(str object)) None) drop-holders [#^ object row #^ str prefix]
   "純粋: token が prefix で始まる担い手を外した後の行。外す物が無ければ None。終了を確かめた process の lease を、期限を待たずに
    返すために worker が使う(prefix = holder-tokens-prefix(lease-holder job 世代の名) — 頭の註)。
    期限の判断は入れない(外すのは名指した担い手だけで、他の担い手の期限はそのまま)。"
