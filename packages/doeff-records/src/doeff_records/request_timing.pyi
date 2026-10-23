@@ -11,6 +11,7 @@ from doeff_records.wire import ServerSpan as ServerSpan
 from doeff_records.wire import server_timing_spelled as server_timing_spelled
 from doeff_records.pg_sql import ROWS_UNIT as ROWS_UNIT
 from doeff_records.pg_sql import stream_unit as stream_unit
+from doeff_records.pg_sql import table_unit as table_unit
 
 class RequestMark(StrEnum):
     STARTED = 'started'
@@ -79,6 +80,7 @@ class LockPhase(StrEnum):
     WAIT = 'wait'
     HOLD = 'hold'
 LOCK_METRIC: str
+TABLE_LOCK_OPERATIONS: tuple[str, ...]
 ROWS_LOCK_OPERATIONS: tuple[str, ...]
 STREAM_LOCK_OPERATIONS: tuple[str, ...]
 
@@ -92,5 +94,5 @@ def lock_observations(operation: str, units: tuple, waited: float, held: float) 
     ...
 LOCK_PHASE_MEANINGS: tuple[tuple[LockPhase | str, ...], ...]
 
-def lock_metric_helps(streams: tuple) -> _Program[FrozenMap[str], object]:
+def lock_metric_helps(tables: tuple, streams: tuple) -> _Program[FrozenMap[str], object]:
     ...
