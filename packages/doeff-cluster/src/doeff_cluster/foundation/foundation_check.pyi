@@ -6,12 +6,12 @@ from dataclasses import dataclass as dataclass
 
 @dataclass(frozen=True, kw_only=True)
 class FoundationClosure:
-    gaps: tuple
-    unknown: tuple
-    unresolved: tuple
+    gaps: tuple[str, ...]
+    unknown: tuple[str, ...]
+    unresolved: tuple[str, ...]
 
 def hyx_closedXquestion_markX(closure: FoundationClosure) -> bool:
     ...
 
-def foundation_closure(job: Callable, *, foundation: Callable | None=None, parameter: str='foundation', fold: tuple=...) -> _Program[FoundationClosure, object]:
+def foundation_closure(job: Callable, *, foundation: Callable | None=None, parameter: str='foundation', fold: tuple[str, ...]=...) -> _Program[FoundationClosure, object]:
     ...
