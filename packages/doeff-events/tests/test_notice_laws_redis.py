@@ -9,6 +9,8 @@ at the end of the module. Without one every test here is skipped as an unmet mac
 measured; the in-memory tests run regardless. The daily run's ``packages`` stage puts the declared redis-server
 on ``PATH`` first (``scripts/gate_tools.sh`` — agora-redesign #3870).
 
+The kept channels' tests at the end keep the promises of ``test_kept_notices_memory.py`` on the real server.
+
 An outage is made by killing every client connection on the server (``CLIENT KILL``): a subscriber's wait ends
 with a lost connection. ``AwaitBrokerBack`` is answered by the test (the composition's part) when the law
 restores the broker.
@@ -28,6 +30,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Final, final
 
 import pytest
@@ -56,11 +59,13 @@ from doeff_events import (
 )
 from doeff_events.effects.events import Publish, WaitForEvent
 from doeff_events.effects.notices import (
+    AckAnnouncement,
     Announce,
     Announcement,
     AwaitBrokerBack,
     BrokerUnreachable,
     ChannelSubscription,
+    CloseSubscription,
     NextAnnouncement,
     ProbeBroker,
     SubscribeChannels,
@@ -88,8 +93,9 @@ from doeff_events.notice_laws import (
 )
 from doeff_time import Delay, async_time_handler
 from notice_law_support import PATIENCE_SECONDS, PREFIX, Layer, PartyUnder, gap_harness_over
+from test_kept_notices_memory import _drops_the_first_kept_notice, kept_routes
 
-from doeff import K, Pass, Program, Resume, do, run
+from doeff import K, Pass, Program, Pure, Resume, do, run
 from doeff import handler as program_handler
 
 if TYPE_CHECKING:
@@ -849,3 +855,109 @@ def test_a_quiet_subscription_that_answers_its_pings_stays_subscribed_on_redis(r
 def test_the_silence_must_be_a_positive_number(silence: object) -> None:
     with pytest.raises(ValueError, match="silence_seconds"):
         redis_notice_handler("redis://127.0.0.1:9/0", TIMEOUT_SECONDS, silence)  # type: ignore[arg-type]
+
+
+# --- kept channels (agora card ki-86d11cadf3be — the same promises as test_kept_notices_memory.py) ------------------
+# Short, so the tests wait little on the wall clock.
+REDELIVER_SECONDS = 0.5
+
+
+def _kept_channel() -> str:
+    """A kept channel of a test's own on the shared server."""
+    return f"{_prefix()}:kept"
+
+
+def test_a_kept_notice_is_handed_out_again_until_it_is_acknowledged_on_redis(redis_url: str) -> None:
+    channel = _kept_channel()
+
+    @do
+    def reads_without_acknowledging() -> "EffectGenerator[object]":
+        subscription = yield SubscribeChannels((channel,), kept=(channel,), reader="reader")
+        kept = yield Announce(channel, "law-note", "one", kept=True)
+        first: Announcement = yield NextAnnouncement(subscription)
+        handed = time.monotonic()
+        again: Announcement = yield NextAnnouncement(subscription)
+        waited = time.monotonic() - handed
+        yield AckAnnouncement(subscription, again)
+        yield Announce(channel, "law-note", "two", kept=True)
+        after: Announcement = yield NextAnnouncement(subscription)
+        return kept, first, again, waited, after
+
+    handler = redis_notice_handler(redis_url, TIMEOUT_SECONDS, redeliver_seconds=REDELIVER_SECONDS)
+    kept, first, again, waited, after = _run_on_wall_clock(handler(reads_without_acknowledging()))
+    assert kept == 1, kept
+    assert (first.channel, first.name, first.body) == (channel, "law-note", "one"), first
+    assert first.receipt, first
+    assert again == first, again
+    assert waited >= REDELIVER_SECONDS, waited
+    assert (after.body, after.receipt != first.receipt) == ("two", True), after
+
+
+def test_a_readers_first_subscription_starts_at_the_end_of_the_stream_on_redis(redis_url: str) -> None:
+    channel = _kept_channel()
+
+    @do
+    def subscribes_late() -> "EffectGenerator[object]":
+        yield Announce(channel, "law-note", "before", kept=True)
+        subscription = yield SubscribeChannels((channel,), kept=(channel,), reader="reader")
+        yield Announce(channel, "law-note", "after", kept=True)
+        return (yield NextAnnouncement(subscription))
+
+    heard = _run_on_wall_clock(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(subscribes_late()))
+    assert heard.body == "after", heard
+
+
+def test_a_reader_goes_on_from_where_it_was_after_its_connections_were_killed_on_redis(redis_url: str) -> None:
+    channel = _kept_channel()
+
+    @do
+    def killed() -> "EffectGenerator[None]":
+        """Break every client connection of the server (the admin connection that asks is spared)."""
+        with redis.Redis.from_url(redis_url) as admin:
+            admin.client_kill_filter(_type="normal", skipme=True)
+            admin.client_kill_filter(_type="pubsub", skipme=True)
+        yield Pure(None)
+
+    @do
+    def rides_a_kill() -> "EffectGenerator[object]":
+        subscription = yield SubscribeChannels(("plain", channel), kept=(channel,), reader="reader")
+        yield Announce(channel, "law-note", "held", kept=True)
+        held: Announcement = yield NextAnnouncement(subscription)
+        yield killed()
+        lost = yield NextAnnouncement(subscription)
+        yield CloseSubscription(subscription)
+        yield Announce(channel, "law-note", "between", kept=True)
+        again = yield SubscribeChannels(("plain", channel), kept=(channel,), reader="reader")
+        between: Announcement = yield NextAnnouncement(again)
+        yield AckAnnouncement(again, between)
+        repeated: Announcement = yield NextAnnouncement(again)
+        return held, lost, between, repeated
+
+    # The default redelivery time: the killed connection must be told before the held notice is due again.
+    held, lost, between, repeated = _run_on_wall_clock(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(rides_a_kill()))
+    assert held.body == "held", held
+    assert isinstance(lost, BrokerUnreachable), lost
+    assert between.body == "between", between
+    assert repeated == held, repeated
+
+
+def test_a_kept_notice_lost_on_the_way_to_the_bus_is_received_on_redis(redis_url: str) -> None:
+    state = SimpleNamespace(dropped=False)
+    routes = kept_routes()
+
+    @do
+    def sends_and_waits() -> "EffectGenerator[object]":
+        yield WaitForEvent(SourceStarted)
+        yield Publish(LawNote("lost"))
+        first = yield WaitForEvent(LawNote)
+        yield Publish(LawNote("next"))
+        second = yield WaitForEvent(LawNote)
+        return first, second
+
+    events = notice_events_handler("law-kept-redis", routes, PATIENCE_SECONDS)
+    queue = subscribed_event_handler(EventBus(), "law-kept-redis", (SourceStarted, LawNote))
+    broker = redis_notice_handler(redis_url, TIMEOUT_SECONDS, redeliver_seconds=REDELIVER_SECONDS)
+    party = queue(broker(_drops_the_first_kept_notice(state)(events(sends_and_waits()))))
+    first, second = _run_on_wall_clock(party)
+    assert state.dropped
+    assert (first, second) == (LawNote("lost"), LawNote("next")), (first, second)

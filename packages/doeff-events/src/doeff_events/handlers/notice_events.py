@@ -51,6 +51,12 @@ What the wrapper does:
   the program that names ``SourceStarted`` / ``SourceResumed`` in its subscription catches up once from its
   records each time it receives one — both are published only after the subscription is in place, so nothing
   announced after the program's catch-up read is missed.
+- Kept routes (``NoticeRoute(kept=True)`` — agora card ki-86d11cadf3be). Their events are sent with
+  ``Announce(kept=True)`` (the broker keeps each in the channel's log) and their channels are read as the reader
+  named ``source``: the source acknowledges each notice once its event is on the bus (``AckAnnouncement``), and
+  the broker's handler hands out again a notice not acknowledged in time, and goes on from where the reader was
+  after a lost connection. A notice lost between the broker and the bus is therefore received later instead of
+  never; an event may then arrive twice (the reader handles repeats as it handles a catch-up).
 - Broker outages. When the wait for a notice answers ``BrokerUnreachable`` the source publishes
   ``SourceStalled``, waits for ``AwaitBrokerBack`` up to ``patience_seconds`` (one ``WaitWithin`` — no retry on
   a timer), subscribes again, and after the broker confirmed publishes ``SourceResumed`` once. Past the patience
@@ -105,6 +111,7 @@ from doeff_events.effects.events import (
     publish_effect_type,
 )
 from doeff_events.effects.notices import (
+    AckAnnouncement,
     Announce,
     Announcement,
     AwaitBrokerBack,
@@ -156,6 +163,9 @@ class NoticeRoute(Generic[_E]):
     ``encode`` = event → text (JSON by convention). ``decode`` = text → event.
     ``when_unsent`` = what is done with an event the broker could not take (``MarkGap`` or ``Drop``).
     ``reads`` = the channels this side receives the type from; ``()`` = this side only sends.
+    ``kept`` = the type travels on kept channels (``Announce(kept=True)``): the broker keeps each event in the
+    channel's log, and a reader that did not handle one is handed it again (the module's notes). Every side of a
+    channel names the same ``kept`` — a sender that does not would send where its readers never look.
     """
 
     event_type: type[_E]
@@ -165,6 +175,7 @@ class NoticeRoute(Generic[_E]):
     decode: Callable[[str], _E]
     when_unsent: WhenUnsent
     reads: tuple[str, ...] = ()
+    kept: bool = False
 
 
 @dataclass(frozen=True)
@@ -217,20 +228,25 @@ class _Gaps:
     served), the task waiting for the broker's return (``None`` = none), and the error of a waiting task that failed
     (raised when the body ends)."""
 
-    __slots__ = ("_mut_busy", "_mut_channels", "_mut_failure", "_mut_queued", "_mut_waiter")
+    __slots__ = ("_mut_busy", "_mut_channels", "_mut_failure", "_mut_kept", "_mut_queued", "_mut_waiter")
 
     def __init__(self) -> None:
         """Start with no gap and the exit free."""
         self._mut_channels: tuple[str, ...] = ()
+        # The marked channels that are kept channels: their gap notice goes to the channel's log too.
+        self._mut_kept: frozenset[str] = frozenset()
         self._mut_busy = False
         self._mut_queued: tuple[Promise[None], ...] = ()
         self._mut_waiter: Task[object] | None = None
         self._mut_failure: Exception | None = None
 
-    def mark(self, channel: str) -> None:
-        """Mark ``channel`` as having a gap (once — the marks are bounded by the channels)."""
+    def mark(self, channel: str, kept: bool) -> None:
+        """Mark ``channel`` as having a gap (once — the marks are bounded by the channels); ``kept`` = it is a kept
+        channel."""
         if channel not in self._mut_channels:
             self._mut_channels = (*self._mut_channels, channel)
+        if kept:
+            self._mut_kept = self._mut_kept | {channel}
 
     def running(self) -> "tuple[Task[object], ...]":
         """The waiting task, if one runs (the tasks to stop)."""
@@ -266,14 +282,20 @@ class UnroutedNotice(LookupError):
 @dataclass(frozen=True)
 class _Plan:
     """A checked set of arguments of one wrapper: the source's name, the routes, the channels it reads
-    (first-seen order, no repeats), its patience, and the effect classes its handler around the body answers (the
-    Publish class of each routed type, and the waits when it reads channels — ``()`` = it answers nothing)."""
+    (first-seen order, no repeats), those of them that are kept channels (read from their log as the reader named
+    ``source``), its patience, and the effect classes its handler around the body answers (the Publish class of each
+    routed type, and the waits when it reads channels — ``()`` = it answers nothing)."""
 
     source: str
     routes: tuple[NoticeRoute[object], ...]
     channels: tuple[str, ...]
+    kept: tuple[str, ...]
     patience_seconds: float
     answered: tuple[type[object], ...]
+
+    def subscribing(self) -> SubscribeChannels:
+        """The subscription of this wrapper's reads (its kept channels read as the reader ``source``)."""
+        return SubscribeChannels(self.channels, kept=self.kept, reader=self.source if self.kept else None)
 
     def route_of(self, event: object) -> NoticeRoute[object] | None:
         """The route an event is sent by (by its exact type), or ``None`` for an event that stays in the process."""
@@ -316,6 +338,13 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience
     if len(set(types)) != len(types) or len(set(names)) != len(names):
         raise ValueError(f"notice_events_handler({source!r}): an event type or a wire name is routed twice")
     channels = tuple(dict.fromkeys(name for route in routes for name in route.reads))
+    kept = tuple(dict.fromkeys(name for route in routes if route.kept for name in route.reads))
+    plain = frozenset(name for route in routes if not route.kept for name in route.reads)
+    if plain & frozenset(kept):
+        raise ValueError(
+            f"notice_events_handler({source!r}): the channels {sorted(plain & frozenset(kept))!r} are read both as kept "
+            "channels and as Pub/Sub channels — every route of a channel names the same kept"
+        )
     # A wrapper that reads nothing has no source whose failure could end the body's wait: the waits go outward as
     # they are, without it.
     waits = (WaitForEventEffect, WaitForEventsEffect) if channels else ()
@@ -324,7 +353,12 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience
     gap = (PublishGapEffect,) if routes else ()
     answered = (*(publish_effect_type(route.event_type) for route in routes), *gap, *waits)
     return _Plan(
-        source=source, routes=routes, channels=channels, patience_seconds=float(patience_seconds), answered=answered
+        source=source,
+        routes=routes,
+        channels=channels,
+        kept=kept,
+        patience_seconds=float(patience_seconds),
+        answered=answered,
     )
 
 
@@ -437,7 +471,7 @@ def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGe
                 f"source {plan.source!r}: the notice broker did not come back within {plan.patience_seconds} s: "
                 f"{answer.detail}"
             )
-        answer = yield SubscribeChannels(plan.channels)
+        answer = yield plan.subscribing()
     return answer
 
 
@@ -445,7 +479,7 @@ def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGe
 def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
     """Subscribe the channels before the body runs; a broker that is unreachable at the start is waited for like
     any outage. Answers once the broker confirmed the subscription."""
-    answer = yield SubscribeChannels(plan.channels)
+    answer = yield plan.subscribing()
     if isinstance(answer, BrokerUnreachable):
         answer = yield _subscribed_after_outage(plan, answer)
     return answer
@@ -478,6 +512,10 @@ def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Read
             yield Publish(SourceResumed(source=plan.source))
         else:
             yield Publish(plan.decoded(notice))
+            if notice.receipt:
+                # A kept channel's notice is acknowledged once it is on the bus: one that never got here (the task
+                # stopped, or it was lost on the way up) is handed out again by the broker's handler.
+                yield AckAnnouncement(current, notice)
 
 
 @do
@@ -552,7 +590,8 @@ def _gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[BrokerUnreachable |
     """Tell every marked gap, oldest first, and unmark each one told (the caller holds the exit). Answers ``None``
     when all were told, or the broker's refusal (the rest stay marked)."""
     while gaps._mut_channels:
-        receivers = yield Announce(gaps._mut_channels[0], GAP_NOTICE, plan.source)
+        channel = gaps._mut_channels[0]
+        receivers = yield Announce(channel, GAP_NOTICE, plan.source, kept=channel in gaps._mut_kept)
         if isinstance(receivers, BrokerUnreachable):
             return receivers
         gaps._mut_channels = gaps._mut_channels[1:]
@@ -573,9 +612,9 @@ def _gaps_told_on_return(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[None]":
 
 
 @do
-def _marked(plan: _Plan, gaps: _Gaps, channel: str, detail: str) -> "EffectGenerator[NoticeGapMarked]":
-    """Mark ``channel`` and make sure one task waits for the broker's return."""
-    gaps.mark(channel)
+def _marked(plan: _Plan, gaps: _Gaps, channel: str, kept: bool, detail: str) -> "EffectGenerator[NoticeGapMarked]":
+    """Mark ``channel`` (``kept`` = a kept channel) and make sure one task waits for the broker's return."""
+    gaps.mark(channel, kept)
     if gaps._mut_waiter is None:
         spawned = yield _spawned(_gaps_told_on_return(plan, gaps))
         gaps._mut_waiter = spawned.task
@@ -590,7 +629,7 @@ def _sent_in_exit(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: o
     channel = route.channel(event)
     match route.when_unsent:
         case Drop():
-            receivers = yield Announce(channel, route.wire_name, route.encode(event))
+            receivers = yield Announce(channel, route.wire_name, route.encode(event), kept=route.kept)
             if isinstance(receivers, BrokerUnreachable):
                 return NoticeDropped(detail=receivers.detail)
             return NoticeSent(receivers)
@@ -598,13 +637,13 @@ def _sent_in_exit(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: o
             if gaps._mut_channels:
                 refused = yield _gaps_told(plan, gaps)
                 if refused is not None:
-                    return (yield _marked(plan, gaps, channel, refused.detail))
+                    return (yield _marked(plan, gaps, channel, route.kept, refused.detail))
                 failed = yield _stopped_tasks(gaps.running())
                 gaps._mut_waiter = None
                 gaps._mut_failure = gaps._mut_failure if gaps._mut_failure is not None else failed
-            receivers = yield Announce(channel, route.wire_name, route.encode(event))
+            receivers = yield Announce(channel, route.wire_name, route.encode(event), kept=route.kept)
             if isinstance(receivers, BrokerUnreachable):
-                return (yield _marked(plan, gaps, channel, receivers.detail))
+                return (yield _marked(plan, gaps, channel, route.kept, receivers.detail))
             return NoticeSent(receivers)
 
 
@@ -618,10 +657,10 @@ def _gap_told_in_exit(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], even
         case Drop():
             return NoticeDropped(detail=f"the route {route.wire_name!r} drops what it misses: no gap is kept")
         case MarkGap():
-            gaps.mark(channel)
+            gaps.mark(channel, route.kept)
             refused = yield _gaps_told(plan, gaps)
             if refused is not None:
-                return (yield _marked(plan, gaps, channel, refused.detail))
+                return (yield _marked(plan, gaps, channel, route.kept, refused.detail))
             failed = yield _stopped_tasks(gaps.running())
             gaps._mut_waiter = None
             gaps._mut_failure = gaps._mut_failure if gaps._mut_failure is not None else failed
@@ -712,7 +751,7 @@ def _started_gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[None]":
     for route in plan.routes:
         if isinstance(route.when_unsent, MarkGap):
             for channel in route.when_unsent.start_channels:
-                gaps.mark(channel)
+                gaps.mark(channel, route.kept)
     if gaps._mut_channels:
         refused = yield _through_exit(gaps, _gaps_told(plan, gaps))
         if refused is not None:
@@ -784,7 +823,8 @@ def notice_events_handler(
 
 
 # Every effect one wrapper performs around the body: the subscription and the wait for notices (``SubscribeChannels``,
-# ``NextAnnouncement``, ``CloseSubscription``), sending a routed event (``Announce``), what the source task publishes
+# ``NextAnnouncement``, ``AckAnnouncement`` of a kept channel's notice, ``CloseSubscription``), sending a routed
+# event (``Announce``), what the source task publishes
 # on the bus (``PublishEffect`` — the received events and ``SourceStarted`` / ``SourceStalled`` / ``SourceResumed`` /
 # ``SourceFailed``), getting past an outage (``AwaitBrokerBack``, ``GetTimeEffect``, ``WaitWithinEffect``, the watcher
 # task's ``CreatePromise`` / ``CompletePromise``), and running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``).
@@ -793,6 +833,7 @@ def notice_events_handler(
 NOTICE_EVENTS_EFFECTS = (
     SubscribeChannels,
     NextAnnouncement,
+    AckAnnouncement,
     CloseSubscription,
     Announce,
     PublishEffect,
