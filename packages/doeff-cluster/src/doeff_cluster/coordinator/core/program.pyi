@@ -135,7 +135,7 @@ REACH_LOG: str
 def reach_resumed(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def reach_noted(state: ClusterState, now: int, heard: bool) -> _Program[ClusterState, object]:
+def reach_noted(state: ClusterState, now: int, heard: bool, reached: bool) -> _Program[ClusterState, object]:
     ...
 
 def announce_liveness(events: tuple) -> _Program[int, object]:

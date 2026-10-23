@@ -2610,6 +2610,8 @@
     ;; 篩い・報告の記録・覚えを、世界への問い 1 つで(#3054 の C-6)。
     (<- admitted Admission (AdmitBatch (tuple batch)))
     (val faults admitted.faults)
+    ;; Service に載った印(ServiceReached): 網の切れた worker が無い間 = 起き直した Pod が worker から届き得る。
+    (setattr queue "reached" (= (len faults.cut) 0))
     (val kept (list admitted.kept))
     (for [r batch]
       (cond
@@ -2695,6 +2697,7 @@
   (<- started ClusterState (with-handlers [(scripted-process-handler (ProcessScript :commands #() :env environ))]
                              (with-running-commit state)))
   (<- (CoordinatorStarted now))
+  (setattr parts.queue "reached" False)
   (setattr parts.queue "up" True)
   (try
     (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube parts.broker [(observe-requests (StepBook) parts.queue)])

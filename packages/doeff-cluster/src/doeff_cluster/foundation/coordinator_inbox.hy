@@ -87,6 +87,17 @@
   (#^ float since))
 
 
+(defclass AcceptingServer [ThreadingHTTPServer]
+  "接続を受けた最初の刻に、箱の reached を立てる HTTP server。kubelet の readinessProbe(tcpSocket)の接続が Pod を Ready にし Service に載せるので、
+   外からの最初の接続 = Service に載った印(起き直しの後の届かない間を終える証拠 — card ki-f9fd557e6ad0)。"
+  (defn #^ None __init__ [self #^ tuple address #^ object handler #^ object inbox]
+    (setv self.inbox inbox)
+    (.__init__ (super) address handler))
+  (defn #^ bool verify-request [self #^ object request #^ object client-address]
+    (setv self.inbox.reached True)
+    True))
+
+
 (defclass RequestInbox []
   "HTTP server(別 thread)が受けた要求を生の形で並べる箱。調停ループは 1 件ずつ取り出して返事を置く。
    formats = probe が名乗る本文の形の版の受け入れる範囲(coordinator の entry が cluster_model の ACCEPTED-FORMATS を渡す — この
@@ -99,7 +110,8 @@
     ;; いない)。錠を持たない: 並べる側は列へ入れてから呼び鈴を見て、取り手は呼び鈴を掛けてから列を見るので、どちらの順でも取り手は
     ;; 要求を見逃さない(呼び鈴を満たすのは reentrant な列への put — signal の受け手からも呼べる)。
     (setv self.queue (queue.SimpleQueue) self.port port self.server None self.clock clock self.phase None self.formats formats
-          self.reply-seconds reply-seconds self.bell None))
+          self.reply-seconds reply-seconds self.bell None
+          self.reached False))
 
   (defn #^ (| float None) stalled-seconds [self]
     "ループの止まりの秒を知るため(probe が読む): 歩の中なら歩に入ってからの秒・待っているなら待つと定めた刻を越えた秒(越えていなければ 0・
@@ -206,7 +218,7 @@
       (defn #^ None do-PUT [self] (._handle self "PUT"))
       (defn #^ None do-POST [self] (._handle self "POST"))
       (defn #^ None do-DELETE [self] (._handle self "DELETE")))
-    (setv self.server (ThreadingHTTPServer #("0.0.0.0" self.port) Handler))
+    (setv self.server (AcceptingServer #("0.0.0.0" self.port) Handler self))
     (setv self.server.daemon-threads True)
     (.start (threading.Thread :target self.server.serve-forever :daemon True))))
 

@@ -10,7 +10,7 @@
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
 (import doeff_cluster.coordinator.intent.cluster_model [CoordinatorFault]
-        doeff_cluster.shared.intent.protocol [NextRequests])
+        doeff_cluster.shared.intent.protocol [NextRequests ServiceReached])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 
 
@@ -22,6 +22,8 @@
    takers = 列の取り手(queued-requests の NextRequests)が、列が空の間に掛けた呼び鈴(doeff の Promise の list — 掛けた順)。送り手が
    列に積んだ時(enqueue-request)に全部鳴らして外す。列は読み直さない(前は仮想の 0.05 秒ごとに見直していた — 使い手の仮想の
    1700 秒の検で 37,222 回眠り、所要の大半になった)。
+   reached = Service に載った印(ServiceReached の答え — 本番の箱は外からの最初の接続で立つ。模擬は取りのたびに、網の切れた worker が
+   無ければ立てる = 起き直した Pod が worker から届き得る間。local.hy の observe-requests が立て、coordinator-life が起き直しで下ろす)。
    faults = coordinator の中の欠陥の log の行(CoordinatorFault の Fault — 出た順)。本番の受付が stderr へ出す 1 行の代わり。
    takes = 取り手が取った回数(coordinator の歩の数 — 検が読む)。crash-waiting = 落ちの注入(次の Persist で落とす — local.hy の
    CrashCoordinator)が待っているか(世界が立て、落ちで下ろす)。模擬の coordinator の書きの見張り(local.hy の observe-requests)は、
@@ -30,7 +32,7 @@
    いない)。世界が立て、模擬の coordinator の取りの見張り(local.hy の observe-requests)が、取りの後にこの刻まで調停ループを止めてから下ろす。"
   (defn #^ None __init__ [self]
     (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.takes 0 self.crash-waiting False
-          self.arrivals {} self.stalled-until 0)
+          self.arrivals {} self.stalled-until 0 self.reached False)
     None))
 
 
@@ -127,6 +129,8 @@
   (NextRequests [timeout-seconds limit]
     (<- batch list (take-requests queue timeout-seconds limit))
     (resume batch))
+  (ServiceReached []
+    (resume queue.reached))
   (Reply [request status body]
     ;; この組の要求の列は、返事の札を CreatePromise で作る(Request.slot は受け口ごとの札 — HTTP の受け口は ReplySlot)。
     ;; 札が Promise でなければ、別の受け口の要求がこの組に来た誤り — 返事を落とさず名指して落ちる。

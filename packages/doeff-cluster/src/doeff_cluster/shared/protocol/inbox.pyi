@@ -16,6 +16,7 @@ from doeff_cluster.shared.intent.protocol import Reply as Reply
 from doeff_cluster.shared.intent.protocol import CoordinatorStopRequested as CoordinatorStopRequested
 from doeff_cluster.shared.intent.protocol import PlainText as PlainText
 from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
+from doeff_cluster.shared.intent.protocol import ServiceReached as ServiceReached
 
 @runtime_checkable
 class ReplyTarget(Protocol):
@@ -32,6 +33,7 @@ class InboxQueue(Protocol):
 
     def taken(self, limit: int) -> list:
         ...
+    reached: bool = False
 
 class StopSignal(Protocol):
     requested: bool = False

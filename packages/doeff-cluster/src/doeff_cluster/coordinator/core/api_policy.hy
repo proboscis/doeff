@@ -165,10 +165,14 @@
 ;; ずらした最後の連絡が lease で切れ、配備のたびに全 worker が WorkerGone になって Service に載った直後に WorkerBack で戻った
 ;; (rev 47 2026-10-17 15:24:57Z〜15:25:14Z の実測・card ki-a7f26191a164 の形 A)。起き直しから最初の heartbeat を受けるまでを止まりと
 ;; 同じく経過・沈黙に数えない(clocks-shifted でずらす)。
-;; 待ちの上限: 起き直しから REACH-WAIT-MS の内に heartbeat が 1 つも来なければ、その後は従来どおり数える(worker が全部死んでいる時に、
+;; 終える証拠(card ki-f9fd557e6ad0): 最初の heartbeat か、外からの最初の接続(ServiceReached — Pod が Ready になり Service に載った印)。
+;; worker の heartbeat だけを待つと、全 worker が止まりの間に死んでいた時に、死んだ worker を上限まで生きていると答える(条 L1・L2 — 死んだ
+;; worker は lease の後に生きていると答えず、置き先にも選ばない)。coordinator の側からは「届かない worker」と「死んだ worker」を見分けられない
+;; (止まる直前の連絡の古さは heartbeat の間隔と重なる)ので、見分ける材料は Service に載ったかどうかにする: 載った後は、生きた worker は
+;; lease の内(10 秒 ≥ endpoint の伝わり + heartbeat の間隔 2.5 秒)に届くので、届かなければ従来どおり沈黙に数える。
+;; 待ちの上限(後ろ盾): 起き直しから REACH-WAIT-MS の内に証拠が 1 つも無ければ、その後は従来どおり数える(受付が接続を見られない時にも、
 ;; Rollout の段・盤の TTL・drain の期限を止め続けない)。上限は Ready までの最長(周期 10 秒)+ Service の endpoint の伝わり + worker の
-;; heartbeat の間隔(lease の 1/4 = 2.5 秒)と接続の打ち切りを越える長さ。代償: 全 worker が止まりの間に死んでいた時だけ、その
-;; WorkerGone が最大この長さ遅れる(1 つでも生きた worker が届けば、そこから従来どおり数える)。
+;; heartbeat の間隔と接続の打ち切りを越える長さ。
 (setv REACH-WAIT-MS 30000)
 
 (defk unreached-shifted [state now]

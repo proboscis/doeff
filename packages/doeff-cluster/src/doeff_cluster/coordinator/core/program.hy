@@ -40,7 +40,7 @@
 (import dataclasses [replace])
 (import doeff_time [GetMonotonic])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested Request])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested ServiceReached Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
                                                        DeploymentUnreadable NodeLabelsUnreadable])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
@@ -297,13 +297,16 @@
   shifted)
 
 
-(defk reach-noted [state now heard]
-  {:pre [(: state ClusterState) (: now int) (: heard bool)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "program"}}
-  "起き直しの後まだ heartbeat を受けていない間に、この歩で heartbeat を受けた(heard)なら、以後は従来どおり経過を数える状態にし、1 行の
-   log を出すため。それ以外は同じ状態。"
-  (if (or (is state.unreached-ms None) (not heard))
+(defk reach-noted [state now heard reached]
+  {:pre [(: state ClusterState) (: now int) (: heard bool) (: reached bool)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "program"}}
+  "起き直しの後まだ届いていない間に、この歩で heartbeat を受けた(heard)か、外から接続を受けた(reached — ServiceReached: Pod が Ready に
+   なり Service に載った印)なら、以後は従来どおり経過を数える状態にし、1 行の log を出すため。それ以外は同じ状態。
+   接続を証拠にするのは、worker が死んでいる時に heartbeat を待ち続けない(死んだ worker を生きていると答えない・置き先にも選ばない —
+   architecture.hy の条 L1・L2)ため: Service に載った後は、生きた worker は lease の内に届く。"
+  (if (or (is state.unreached-ms None) (not (or heard reached)))
       state
-      (do (<- (slog REACH-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms now)) :waited-ms (- now state.started-ms) :by "heartbeat"))
+      (do (<- (slog REACH-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms now)) :waited-ms (- now state.started-ms)
+                    :by (if heard "heartbeat" "service")))
           (replace state :unreached-ms None))))
 
 
@@ -361,6 +364,11 @@
                                (stall-resumed state now (! (stall-of pace now timing)))
                                (reach-resumed state now)))
   (val base (if (is state.unreached-ms None) state resumed))
+  ;; 届かない間だけ、Service に載った(外から接続を受けた)かを聞く — 聞くのは起き直した後の数十秒だけ。
+  (var reached False)
+  (when (is-not state.unreached-ms None)
+    (<- seen bool (ServiceReached))
+    (:= reached seen))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎歩調停する(2026-09-25)。
   ;; 以前は要求の無い歩だけだったので、読みの要求(GET)が続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
@@ -383,7 +391,7 @@
             (when (is-not sender None)
               (:= heard (+ heard #((HeardBeat :worker sender :queued-ms request.queued-ms))))))))
   ;; 最初の heartbeat を受けた歩の後は、従来どおり経過を数える(届き得るようになった)。
-  (<- noted ClusterState (reach-noted next now (bool heard)))
+  (<- noted ClusterState (reach-noted next now (bool heard) reached))
   (:= next noted)
   ;; 返事の遅れの計り: heartbeat の在る歩でだけ区間の切れ目の単調な時計の読みを読む(区間の名は HEARTBEAT-LAG-MS の註)。
   (val measuring (bool heard))

@@ -132,3 +132,9 @@
 
 (defclass [(dataclass :frozen True)] CoordinatorStopRequested [EffectBase]
   "結果は bool。")
+
+
+(defclass [(dataclass :frozen True)] ServiceReached [EffectBase]
+  "結果は bool: この coordinator が起きてから、外から接続を受けたか(Pod が Ready になり Service に載った印 — kubelet の readinessProbe の
+   接続・worker の接続・読み手の接続のどれでもよい。card ki-f9fd557e6ad0)。起き直しの後の届かない間(ClusterState.unreached-ms)を
+   終える証拠で、worker の heartbeat を待たずに、死んだ worker を生きているとは答えない。")
