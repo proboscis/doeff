@@ -1,0 +1,222 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "python:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 16,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/coordinator_invariants.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/drain_policy.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 7,
+      "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/core/launch_rules.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-cluster/src/doeff_cluster/sim/local.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-cluster/src/doeff_cluster/sim/machine.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/core/policy.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/protocol/memory_watch.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 9,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "python:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scripted_process.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/expansion_names.py",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "python:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-hy/src/doeff_hy/static_carry.py",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "python:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/static_stub.py",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "python:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/table.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-records/src/doeff_records/wire.hy",
+      "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
+      "rule": "full-scan-lookup",
+      "subject": "hy:full-scan-lookup"
+    }
+  ],
+  "version": 1
+}
