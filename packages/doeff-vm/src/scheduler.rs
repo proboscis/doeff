@@ -749,6 +749,55 @@ fn set_scheduler_step_budget_armed(armed: bool) {
 }
 
 // ---------------------------------------------------------------------------
+// The scan counts (`vm_scan_counts`, agora card ki-9de8d0a54408)
+// ---------------------------------------------------------------------------
+
+/// What a scheduler scan walks. Every place that looks at entries of a
+/// structure one by one (instead of reading an index or a count) adds the
+/// entries it looked at, so a test can judge by a load-independent count
+/// whether one step's work grows with the tasks parked elsewhere.
+#[derive(Clone, Copy)]
+enum Scan {
+    /// Ready-heap entries looked at, or popped only to be skipped.
+    Ready,
+    /// `waiters` keys and entries looked at.
+    Waiters,
+    /// Task entries looked at.
+    Tasks,
+    /// Semaphore wait-queue entries looked at.
+    SemaphoreWaiters,
+    /// The terminal-entry sweep (#502) — every HANDLE_SWEEP_INTERVAL ids, so
+    /// amortized by design; kept apart from the per-step scans.
+    Sweep,
+}
+
+const SCANS: [(Scan, &str); 5] = [
+    (Scan::Ready, "ready"),
+    (Scan::Waiters, "waiters"),
+    (Scan::Tasks, "tasks"),
+    (Scan::SemaphoreWaiters, "semaphore_waiters"),
+    (Scan::Sweep, "sweep"),
+];
+
+static SCAN_COUNTS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+
+/// Add `entries` looked at by one scan of `scan` (one Relaxed add per scan).
+fn record_scan(scan: Scan, entries: usize) {
+    if entries != 0 {
+        SCAN_COUNTS[scan as usize].fetch_add(entries as u64, Ordering::Relaxed);
+    }
+}
+
+/// The cumulative scan counts of every scheduler run in this process, by
+/// name — never decreasing; a test reads them before and after.
+pub(crate) fn scan_counts() -> Vec<(&'static str, u64)> {
+    SCANS
+        .iter()
+        .map(|(scan, name)| (*name, SCAN_COUNTS[*scan as usize].load(Ordering::Relaxed)))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // External completion queue (thread-safe)
 // ---------------------------------------------------------------------------
 
@@ -1245,6 +1294,12 @@ impl Locked<'_> {
                 }
             }
         }
+        record_scan(
+            Scan::Sweep,
+            self.waiters.iter().map(|(_, entries)| 1 + entries.len()).sum::<usize>()
+                + self.tasks.len()
+                + self.promises.len(),
+        );
         let mut dead: Vec<WKey> = Vec::new();
         for (tid, meta) in self.tasks.iter() {
             let settled_cancel = meta.status == Status::Cancelled && meta.settled;
@@ -1560,6 +1615,7 @@ impl Locked<'_> {
             return;
         };
         let mut ahead_by_wake: Vec<(&'static str, usize)> = Vec::new();
+        record_scan(Scan::Ready, self.ready.len());
         for item in &self.ready {
             if item.neg_priority > -priority {
                 continue;
@@ -1649,9 +1705,12 @@ impl Locked<'_> {
     }
 
     fn has_live_ready_entry(&self, include_daemons: bool) -> bool {
-        self.ready
+        let found = self
+            .ready
             .iter()
-            .any(|item| self.entry_is_live(&item.entry, include_daemons))
+            .position(|item| self.entry_is_live(&item.entry, include_daemons));
+        record_scan(Scan::Ready, found.map_or(self.ready.len(), |index| index + 1));
+        found.is_some()
     }
 
     fn is_live_daemon_entry(&self, entry: &ReadyEntry) -> bool {
@@ -1858,6 +1917,10 @@ impl Locked<'_> {
     }
 
     fn keys_parked_by(&self, tid: Tid) -> Vec<WKey> {
+        record_scan(
+            Scan::Waiters,
+            self.waiters.iter().map(|(_, entries)| 1 + entries.len()).sum(),
+        );
         self.waiters
             .iter()
             .filter(|(_, entries)| entries.iter().any(|e| e.owner() == Some(tid)))
@@ -1927,11 +1990,15 @@ impl Locked<'_> {
     }
 
     fn detach_from_waiters(&mut self, tid: Tid) -> Option<KRef> {
-        for key in self.waiters.keys() {
+        let keys = self.waiters.keys();
+        record_scan(Scan::Waiters, keys.len());
+        for key in keys {
             let Some(entries) = self.waiters.get(&key) else {
                 continue;
             };
-            let Some(index) = entries.iter().position(|e| e.owner() == Some(tid)) else {
+            let found = entries.iter().position(|e| e.owner() == Some(tid));
+            record_scan(Scan::Waiters, found.map_or(entries.len(), |index| index + 1));
+            let Some(index) = found else {
                 continue;
             };
             match &entries[index] {
@@ -1964,13 +2031,16 @@ impl Locked<'_> {
     }
 
     fn detach_from_ready(&mut self, tid: Tid) -> Option<KRef> {
-        let index = self.ready.iter().position(|item| match &item.entry {
+        let found = self.ready.iter().position(|item| match &item.entry {
             ReadyEntry::Resume { owner, .. }
             | ReadyEntry::Raise { owner, .. }
             | ReadyEntry::SemResume { owner, .. } => *owner == Some(tid),
             _ => false,
-        })?;
+        });
+        record_scan(Scan::Ready, found.map_or(self.ready.len(), |index| index + 1));
+        let index = found?;
         let item = self.ready.remove(index);
+        record_scan(Scan::Ready, self.ready.len());
         heapq::heapify(&mut self.ready);
         self.take_wake(item.seq);
         match item.entry {
@@ -1992,7 +2062,12 @@ impl Locked<'_> {
 
     fn detach_from_semaphores(&mut self, tid: Tid) -> Option<KRef> {
         for sem in self.semaphores.values_mut() {
-            if let Some(index) = sem.waiters.iter().position(|(owner, _)| *owner == Some(tid)) {
+            let found = sem.waiters.iter().position(|(owner, _)| *owner == Some(tid));
+            record_scan(
+                Scan::SemaphoreWaiters,
+                found.map_or(sem.waiters.len(), |index| index + 1),
+            );
+            if let Some(index) = found {
                 let (_, k) = sem.waiters.remove(index).expect("index valid");
                 return Some(k);
             }
@@ -2035,6 +2110,10 @@ impl Locked<'_> {
 
     fn live_parked_waiter_summary(&self, include_daemons: bool) -> Vec<String> {
         let mut parked = Vec::new();
+        record_scan(
+            Scan::Waiters,
+            self.waiters.iter().map(|(_, entries)| 1 + entries.len()).sum(),
+        );
         for (key, entries) in self.waiters.iter() {
             for entry in entries {
                 let owner = entry.owner();
@@ -2058,6 +2137,7 @@ impl Locked<'_> {
 
     fn abandoned_ready_summary(&self) -> Vec<String> {
         let mut abandoned = Vec::new();
+        record_scan(Scan::Ready, self.ready.len());
         for item in &self.ready {
             match &item.entry {
                 ReadyEntry::New { tid } => {
@@ -2098,6 +2178,7 @@ impl Locked<'_> {
 
     /// Live semaphore waiters (pruning cancelled ones): sid → waiting task ids.
     fn live_semaphore_waiters(&mut self) -> BTreeMap<u64, Vec<Tid>> {
+        record_scan(Scan::Tasks, self.tasks.len());
         let cancelled: HashSet<Tid> = self
             .tasks
             .iter()
@@ -2108,6 +2189,7 @@ impl Locked<'_> {
         let mut pruned_ks = Vec::new();
         for (sid, sem) in self.semaphores.iter_mut() {
             let before = sem.waiters.len();
+            record_scan(Scan::SemaphoreWaiters, before);
             let mut kept = VecDeque::with_capacity(before);
             for (owner, k) in sem.waiters.drain(..) {
                 if owner.is_some_and(|tid| cancelled.contains(&tid)) {
@@ -2185,21 +2267,27 @@ impl Locked<'_> {
     }
 
     fn has_pending_external_waiters(&self) -> bool {
-        for (key, entries) in self.waiters.iter() {
-            if key.kind != WKind::Promise {
-                continue;
-            }
-            let Some(promise) = self.promises.get(&key.id) else {
-                continue;
-            };
-            if !promise.external || promise.status.is_terminal() {
-                continue;
-            }
-            if entries.iter().any(|e| !self.is_owner_cancelled(e.owner())) {
-                return true;
-            }
+        let mut looked = 0;
+        let found = self.waiters.iter().any(|(key, entries)| {
+            looked += 1;
+            self.is_pending_external_waiter(key, entries)
+        });
+        record_scan(Scan::Waiters, looked);
+        found
+    }
+
+    /// A live waiter on a pending external promise is under `key`.
+    fn is_pending_external_waiter(&self, key: &WKey, entries: &[WaiterEntry]) -> bool {
+        if key.kind != WKind::Promise {
+            return false;
         }
-        false
+        let Some(promise) = self.promises.get(&key.id) else {
+            return false;
+        };
+        if !promise.external || promise.status.is_terminal() {
+            return false;
+        }
+        entries.iter().any(|e| !self.is_owner_cancelled(e.owner()))
     }
 
     fn pick_next(&mut self, py: Python<'_>) -> PyResult<DoCtrl> {
@@ -2295,6 +2383,8 @@ impl Locked<'_> {
                         claimed,
                     } => {
                         if claimed.load(Ordering::Relaxed) || self.is_owner_cancelled(owner) {
+                            // A dead placeholder, popped only to be skipped.
+                            record_scan(Scan::Ready, 1);
                             continue;
                         }
                         if self.has_live_ready_entry(false) {
