@@ -405,7 +405,8 @@
   ;; 本体の呼びの最終の usage は、本番の CLI の message_delta と同じく手番の終わりの行より前に出す。止めた手番の終わり(terminal-reason
   ;; aborted_*)は、本番の CLI が終わりを受けずに止めるので出さない(card ki-290ec664737d)。
   (when (and (isinstance kind TurnResult) (is-not turn.call-usage None) (not (.startswith kind.terminal-reason "aborted")))
-    (val closed (CallClosed :message-id turn.call-id :model turn.last-call-model :parent-tool-use-id None :usage turn.call-usage))
+    (val closed (CallClosed :message-id turn.call-id :model turn.last-call-model :parent-tool-use-id None :usage turn.call-usage
+                            :stopped True))
     (setv turn.call-usage None)
     (<- (emit session turn closed)))
   (<- at (GetTime))

@@ -63,7 +63,8 @@
 ;;;                                      出力は呼びの途中の値・agora card ki-290ec664737d)
 ;;;   CallClosed                       → AgentCallUsageEvent(層 2 が本体の呼びの始まり〔message_start〕と終わり〔message_delta〕から組んだ
 ;;;                                      呼びの最終の usage — 呼びの id・model を添え、final = True。上の層が呼びごとの使用量を最終の値で
-;;;                                      記録するため・agora card ki-290ec664737d)
+;;;                                      記録するため・agora card ki-290ec664737d。CLI が止めた呼び〔stopped が偽 — 止まった訳を名乗らない
+;;;                                      終わり〕は final = False・agora card ki-7498a039250d)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read・
 ;;;                                      cache_creation の寿命の内訳 ephemeral_5m / ephemeral_1h → cache_write_5m / cache_write_1h〔寿命で単価が違うので
 ;;;                                      上の層が寿命ごとに値を付ける・card ki-75d813bebc27〕。CLI が名乗らない欄は None のまま・欄がどれも無ければ usage = None)
@@ -235,11 +236,13 @@
   "上の層が本体の会話の呼びごとの使用量を最終の値で記録できるように(agora card ki-290ec664737d — assistant の行の usage の出力は呼びの
    途中の値)、層 2 が呼びの始まりと終わりから組んだ最終の usage(CallClosed)から、その呼びの最終の usage の出来事を作る関数の列(0 か
    1 つ)を作るため。本体の会話の呼び(parent-tool-use-id が None)だけ — subagent の呼びは transcript から読む
-   (subagent-call-usage-builders-of)。4 欄とも名乗らない呼びは出来事にしない(0 を発明しない)。"
+   (subagent-call-usage-builders-of)。4 欄とも名乗らない呼びは出来事にしない(0 を発明しない)。CLI が止めた呼び(closed.stopped が偽 —
+   止まった訳を名乗らない終わり・agora card ki-7498a039250d)は final 偽で運ぶ(出力は途中の値・CLI の額はこの呼びを数えない)。"
   (val usage (if (is closed.parent-tool-use-id None) (last-call-of closed.usage) None))
   (if (is usage None)
       []
-      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model closed.model :call-id closed.message-id :final True))]))
+      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model closed.model :call-id closed.message-id
+                                      :final closed.stopped))]))
 
 (defk subagent-call-builder [#^ str parent-tool-use-id #^ SubagentCall call #^ AgentTurnUsage usage]
   {:pre [(: parent-tool-use-id str) (: call SubagentCall) (: usage AgentTurnUsage)] :post [(: % Callable)]

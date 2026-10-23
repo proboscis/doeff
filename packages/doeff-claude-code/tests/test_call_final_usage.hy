@@ -69,7 +69,44 @@
   (val assistant (classify-record MEASURED-ASSISTANT))
   (assert (= assistant.usage.output-tokens 16) (repr assistant))
   (<- closed (steps-over [MEASURED-START MEASURED-ASSISTANT MEASURED-ASSISTANT MEASURED-DELTA]))
-  (assert (= closed [(CallClosed :message-id "msg_p1" :model "claude-opus-5-5" :parent-tool-use-id None :usage MEASURED-FINAL)])
+  (assert (= closed [(CallClosed :message-id "msg_p1" :model "claude-opus-5-5" :parent-tool-use-id None :usage MEASURED-FINAL
+                                 :stopped True)])
+          (repr closed)))
+
+
+;; 実測の行(2026-10-24・本物の CLI 2.1.292 を偽の Messages API へ向け、本体の呼びが thinking を流している間に利用者の入力を足して
+;; control_request interrupt で止めた計測 — card ki-7498a039250d)。CLI は「[Request interrupted by user]」の後に、止めた呼びの
+;; 終わりの行を自分で作る: message_delta は止まった訳を名乗らず(stop_reason null)、usage は始まりの値のまま(出力 1)。その手番の
+;; result の total_cost_usd はこの呼びを数えない(前の呼びの額だけ)。
+(val INTERRUPTED-START
+     {"type" "stream_event" "parent_tool_use_id" None "session_id" "s"
+      "event" {"type" "message_start"
+               "message" {"id" "msg_main2" "type" "message" "role" "assistant" "model" "claude-opus-5-5" "content" [] "stop_reason" None
+                          "usage" {"input_tokens" 2 "cache_read_input_tokens" 2000 "cache_creation_input_tokens" 200
+                                   "cache_creation" {"ephemeral_5m_input_tokens" 0 "ephemeral_1h_input_tokens" 200} "output_tokens" 1}}}})
+(val INTERRUPTED-THINKING
+     {"type" "stream_event" "parent_tool_use_id" None "session_id" "s"
+      "event" {"type" "content_block_delta" "index" 0 "delta" {"type" "thinking_delta" "thinking" "hmm "}}})
+(val INTERRUPTED-NOTE
+     {"type" "user" "parent_tool_use_id" None "session_id" "s"
+      "message" {"role" "user" "content" [{"type" "text" "text" "[Request interrupted by user]"}]}})
+(val INTERRUPTED-DELTA
+     {"type" "stream_event" "parent_tool_use_id" None "session_id" "s"
+      "event" {"type" "message_delta" "context_management" None
+               "delta" {"container" None "stop_details" None "stop_reason" None "stop_sequence" None}
+               "usage" {"output_tokens_details" {"thinking_tokens" 0} "cache_creation_input_tokens" 200 "cache_read_input_tokens" 2000
+                        "input_tokens" 2 "iterations" [] "output_tokens" 1
+                        "server_tool_use" {"web_search_requests" 0 "web_fetch_requests" 0} "fallback_credit" None}}})
+
+
+(deftest test-a-call-the-cli-stopped-closes-as-stopped-not-as-a-final-call
+  ;; card ki-7498a039250d: 止めた呼びの CLI が作った終わり(止まった訳を名乗らない message_delta)は、呼びを止めた呼び(stopped
+  ;; 偽・usage は始まりの値)として閉じ、API の終わり(止まった訳を名乗る)は最終の呼び(stopped 真)として閉じる。失敗ケース = 止まった
+  ;; 訳を読まずに閉じる読み(本番 aj-P8G6EKP31ZKWS761MSKBCXK5PD — 止めた呼びが最終の値として記録され、CLI の額に無い呼びが 1 本増えた)。
+  (<- closed (steps-over [INTERRUPTED-START INTERRUPTED-THINKING INTERRUPTED-NOTE INTERRUPTED-DELTA
+                          MEASURED-START MEASURED-ASSISTANT MEASURED-DELTA]))
+  (assert (= (lfor call closed #(call.message-id call.stopped call.usage.output-tokens call.usage.cache-read-input-tokens))
+             [#("msg_main2" False 1 2000) #("msg_p1" True 501 20001)])
           (repr closed)))
 
 
@@ -109,7 +146,7 @@
   (val sub-start {"type" "stream_event" "parent_tool_use_id" "toolu_1"
                   "event" {"type" "message_start" "message" {"id" "msg_sub" "model" "s" "usage" {"input_tokens" 2 "output_tokens" 1}}}})
   (val delta (fn [parent output] {"type" "stream_event" "parent_tool_use_id" parent
-                                  "event" {"type" "message_delta" "delta" {} "usage" {"output_tokens" output}}}))
+                                  "event" {"type" "message_delta" "delta" {"stop_reason" "end_turn"} "usage" {"output_tokens" output}}}))
   (<- closed (steps-over [(delta None 99)
                           (main-start "msg_lost" 16) (main-start "msg_resent" 16)
                           sub-start (delta "toolu_1" 40) (delta None 70) (delta None 71)]))

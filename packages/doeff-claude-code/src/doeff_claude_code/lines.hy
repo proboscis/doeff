@@ -165,8 +165,10 @@
    1 ms 以内で同じ・名乗らなければ None — #3855)。
    call-opened = message_start の行なら、その呼びの始まり(CallOpened — id の無い message_start とほかの行は None)/ call-end-usage =
    message_delta の行なら、その event の usage(呼びの終わりの usage — 実測 CLI 2.1.292 は最終の出力と入力の側・cache の寿命の内訳・
-   server_tool_use を名乗る。名乗らない欄は None・ほかの行は None)/ parent-tool-use-id = 行の最上位の parent_tool_use_id(本体の会話は
-   None)。後の 3 つは、上の層が呼びの最終の usage を始まりと終わりの対から組むため(call-step — card ki-290ec664737d)。"
+   server_tool_use を名乗る。名乗らない欄は None・ほかの行は None)/ call-end-reason = message_delta の行なら、その delta.stop_reason
+   (呼びの止まった訳 — API の終わりは必ず名乗る。null か名乗らない終わりと、ほかの行は None)/ parent-tool-use-id = 行の最上位の
+   parent_tool_use_id(本体の会話は None)。後の 4 つは、上の層が呼びの最終の usage を始まりと終わりの対から組むため(call-step —
+   card ki-290ec664737d・止めた呼びの見分けは card ki-7498a039250d)。"
   (setv #^ str text-delta "")
   (setv #^ DeltaKind delta DeltaKind.NO-DELTA)
   (setv #^ str thinking-delta "")
@@ -176,6 +178,7 @@
   (setv #^ bool thinking-start False)
   (setv #^ (| CallOpened None) call-opened None)
   (setv #^ (| Usage None) call-end-usage None)
+  (setv #^ (| str None) call-end-reason None)
   (setv #^ (| str None) parent-tool-use-id None)
   (defn __post_init__ [self]
     (when (and self.tool-input-delta (!= self.delta DeltaKind.TOOL-INPUT))
@@ -193,15 +196,26 @@
 ;; 対を 1 つの「閉じた呼び」(CallClosed)へ組む。重ね方は CLI が自分の記録に使う規則と同じ(closed-usage)。message_delta の来ない呼び
 ;; (止めた・process が降りた・stream が切れて CLI が送り直した)は閉じない — 上の層はその呼びの出力を途中の値として扱う(0 も最終の値も
 ;; 発明しない)。
+;;
+;; 止めた呼び(card ki-7498a039250d): CLI は流れている呼びを control_request interrupt で止めると、その呼びの終わりの行
+;; (content_block_stop・message_delta・message_stop)を自分で作って stdout に出す。その message_delta は止まった訳を名乗らず
+;; (delta.stop_reason が null)、usage は始まり(message_start)の値のまま(出力も始まりの値 — 実測 2026-10-24・本物の CLI 2.1.292 を偽の
+;; Messages API へ向けて thinking の途中で止めた計測)。CLI はこの呼びを result の額にも telemetry の api_request にも数えない。API は止める
+;; までに読んだ入力の側を数えるので、呼びは記録から消さず、止めた呼び(stopped が偽)として閉じる — 上の層は出力を途中の値として扱い、
+;; CLI の額と照らす呼びに入れない(本番 aj-P8G6EKP31ZKWS761MSKBCXK5PD: 今すぐ送るで止めた呼びを最終の値として記録し、呼びの見積りが
+;; 手番の額を 0.0885 USD 越えた)。
 
 (defrecord CallClosed
   "API の呼び 1 回の最終の消費: 同じ親の最後の message_start(CallOpened)の usage に、その呼びの message_delta の usage を重ねた物
    (closed-usage)。stdout の行ではなく、handler と fake が message_delta の行の直後に手番の記録へ足す行の種類(raw は空)。
-   message-id・model = その呼びの message_start の値 / parent-tool-use-id = 本体の会話は None / usage = 最終の usage。"
+   message-id・model = その呼びの message_start の値 / parent-tool-use-id = 本体の会話は None / usage = 最終の usage / stopped = 終わりが
+   止まった訳を名乗ったか(API の終わり — 真)。偽 = CLI が止めた呼びに自分で作った終わり(上の節の「止めた呼び」— usage の出力は途中の
+   値で、CLI の額と telemetry はこの呼びを数えない)。"
   (#^ str message-id)
   (#^ (| str None) model)
   (#^ (| str None) parent-tool-use-id)
-  (#^ Usage usage))
+  (#^ Usage usage)
+  (#^ bool stopped))
 
 (defrecord CallStep
   "1 行を読んだ後の呼びの組み: open = 開いている呼び(親ごとに高々 1 つ — CLI は 1 つの親の呼びを順に送る)/ closed = この行で閉じた
@@ -265,7 +279,7 @@
     (is usage None) (CallStep :open open :closed None)
     True (CallStep :open others
                    :closed (CallClosed :message-id started.message-id :model started.model :parent-tool-use-id parent
-                                       :usage usage))))
+                                       :usage usage :stopped (is-not kind.call-end-reason None)))))
 
 (defclass [(dataclass :frozen True)] ThinkingTokens []
   (setv #^ int estimated 0))
@@ -1093,6 +1107,13 @@
   (val usage (.get event "usage"))
   (if (and (= (text-at event "type") "message_delta") (isinstance usage dict)) (usage-of usage) None))
 
+(defn #^ (| str None) call-end-reason-of [#^ dict event]
+  "stream_event の event が呼びの終わり(message_delta)で止まった訳(delta.stop_reason)を名乗れば、その語を読むため(card
+   ki-7498a039250d — 名乗らない終わりは CLI が止めた呼びに自分で作った終わり)。ほかの event・null・空の訳は None。"
+  (if (= (text-at event "type") "message_delta")
+      (or (text-at (object-at event "delta") "stop_reason") None)
+      None))
+
 (defn classify-stream-event [#^ dict record]
   (setv event (object-at record "event"))
   (setv delta (object-at event "delta"))
@@ -1106,6 +1127,7 @@
                   :thinking-start (thinking-start-of event)
                   :call-opened (run (call-opened-of event parent))
                   :call-end-usage (run (call-end-usage-of event))
+                  :call-end-reason (call-end-reason-of event)
                   :parent-tool-use-id parent))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
