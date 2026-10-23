@@ -2371,6 +2371,39 @@ fn inspecting_a_value_does_not_reach_but_passing_or_calling_it_does() {
     );
 }
 
+/// defrecord の欄の名は宣言する名で、同じ名の import(関数)への名指しではない — 外の世界に届く関数と同じ名の欄を持つ record を
+/// 使うだけの検は届かない(偽の赤にしない)。本当にその関数を呼ぶ検は今までどおり届く。
+#[test]
+fn a_defrecord_field_named_like_a_world_function_does_not_reach_it() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/board.hy", tags("billing", "judgment") + "(import app.foundation.host [with-host])\n(defk old-serving [] (with-host 1))\n"),
+        (
+            "app/billing/core/obs.hy",
+            tags("billing", "judgment")
+                + "(import app.billing.core.board [old-serving])\n(defrecord Obs (#^ int old-serving))\n(defk make-obs [] (Obs 1))\n(defk call-it [] (old-serving))\n",
+        ),
+        (
+            "app/billing/tests/test_field.hy",
+            "(import app.billing.core.obs [make-obs call-it])\n\
+             (deftest test-local-builds-the-record (assert (make-obs)))\n\
+             (deftest test-edge-calls-the-function (assert (call-it)))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec!["app/billing/tests/test_field.hy::DOEFF133::test_edge_calls_the_function::edge"],
+        "欄の名では届かず、関数を呼ぶ検だけが届く: {}",
+        report
+    );
+}
+
 /// agora-redesign #1798: deftest が(Hy の定義を通して)名指す repo の中の Python の関数(`.py`)は、その中の子 process
 /// (`subprocess.run`・`os.system`)と、名前で決まる Python の呼び先(同じ module の関数・import した関数・class の構築と
 /// `self.m`)まで辿る — 届けば縁(印が要る)。型の注記と except の型の中の名は値の実行ではない(届かない)。Python の関数から

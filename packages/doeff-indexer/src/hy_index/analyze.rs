@@ -117,6 +117,7 @@ pub fn analyze(src: &str) -> FileAnalysis {
         calls: Vec::new(),
         call_suppression: 0,
         inspecting: 0,
+        declared_names: HashSet::new(),
     };
     for form in &forms {
         analyzer.visit_top(form);
@@ -249,6 +250,8 @@ struct Analyzer<'a> {
     call_suppression: u32,
     /// 0 より大きい間は、積む参照を値を検めるだけの名指し(`Reference::inspected`)にする(比べの form の被演算子の中)。
     inspecting: u32,
+    /// defrecord の欄の名の始まりの byte。宣言する名であって、同じ綴りの import(関数)への名指しではないので参照に積まない。
+    declared_names: HashSet<usize>,
 }
 
 /// 被演算子を検めるだけの form の頭 — 比べ(同一・等しさ・含み)と `assert`(真偽と失敗の時の表示の文を作るだけ)。
@@ -644,6 +647,7 @@ impl<'a> Analyzer<'a> {
         self.push_field_types(record_index, &targets);
         for target in targets {
             if !is_operator(self.text(target.name)) {
+                self.declared_names.insert(target.name.start);
                 self.push_def(target.name, DefinitionKind::Field, target.member, Some(&record), None, Vec::new());
             }
         }
@@ -1436,7 +1440,7 @@ impl<'a> Analyzer<'a> {
     /// 記号の出現を `.` で区切って参照に積む。member = 記号の全部の区切りが値の上の属性・method の名前。
     fn push_reference(&mut self, span: Span, member: bool) {
         let text = self.text(span);
-        if text.is_empty() || text == "_" || CONSTANTS.contains(&text) || is_operator(text) {
+        if text.is_empty() || text == "_" || CONSTANTS.contains(&text) || is_operator(text) || self.declared_names.contains(&span.start) {
             return;
         }
         let method_head = text.starts_with('.');
