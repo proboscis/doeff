@@ -15,7 +15,7 @@
 
 
 (defk declaring-refusal [build foundation system revision]
-  {:pre [(: build Callable) (: foundation (| Callable RecordArgument)) (: system System) (: revision str)] :post [(: % (| str None))]
+  {:pre [(: build (get Callable #(... object))) (: foundation (| (get Callable #(... object)) RecordArgument)) (: system System) (: revision str)] :post [(: % (| str None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "宣言してよいかを検めて、断る理由の文を返すため(よければ None — 頭の註の 2 つ)。build = 系の関数(その module の file の在る
    checkout を読む)・foundation = 系に渡した土台(土台の関数か、土台の関数を欄に持つ record — 型から本番の土台を引く宣言の道具が

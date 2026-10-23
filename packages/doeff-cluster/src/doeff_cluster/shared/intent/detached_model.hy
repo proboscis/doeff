@@ -69,7 +69,7 @@
    同じ key がまだ在れば何も作らない(created = False)。"
   (#^ Program program)
   (#^ str key)
-  (setv #^ frozenset needs (frozenset))
+  (setv #^ (get frozenset str) needs (frozenset))
   (setv #^ str name "")
   (setv #^ float lease-seconds DETACHED-DEFAULT-LEASE-SECONDS)
   (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)

@@ -184,12 +184,12 @@ class EffectCodec:
     mode: str | Callable
     args_fn: Callable | None
     subject_fn: Callable | None
-    unexecuted: _Diverge | bool | None
+    unexecuted: object
     binds: str | None
     watch: bool
     arg_names: tuple | None
 
-    def __init__(self, cls: type, mode: str | Callable, args: Callable | None=None, subject: Callable | None=None, unexecuted: _Diverge | bool | None=..., binds: str | None=None, watch: bool=False, arg_names: tuple | None=None) -> None:
+    def __init__(self, cls: type, mode: str | Callable, args: Callable | None=None, subject: Callable | None=None, unexecuted: object=..., binds: str | None=None, watch: bool=False, arg_names: tuple | None=None) -> None:
         ...
 
 def _fields_args(asked: EffectBase, handles: HandleTable) -> _Program[dict, object]:
