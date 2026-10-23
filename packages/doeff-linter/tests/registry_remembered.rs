@@ -133,3 +133,61 @@ fn a_registry_file_written_a_moment_ago_is_always_read() {
     let (_, second_log) = single(dir.path(), cache.path(), "app/core/untagged.hy");
     assert_eq!((reads(&first_log), reads(&second_log)), (1, 1), "{first_log}\n{second_log}");
 }
+
+/// git を撃つ(呼び手の env の `GIT_DIR` などに引かれない)。
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "core.autocrlf=false"])
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// `repo` を commit まで作り、同じ commit の新しい作業木を足す(作業木ごとに別の path・inode・更新時刻 — 冷えた新しい作業木の形)。
+fn repo_with_fresh_worktree() -> (tempfile::TempDir, tempfile::TempDir, std::path::PathBuf) {
+    let main = repo();
+    git(main.path(), &["init", "-q", "-b", "main"]);
+    git(main.path(), &["add", "-A"]);
+    git(main.path(), &["commit", "-q", "-m", "base"]);
+    let parent = tempfile::TempDir::new().unwrap();
+    let fresh = parent.path().join("fresh");
+    git(main.path(), &["worktree", "add", "-q", "--detach", fresh.to_str().unwrap()]);
+    (main, parent, fresh)
+}
+
+/// 新しい作業木の登録簿は、git の index の blob の id が別の作業木と同じなら、別の作業木が読んだ結果を使い、中身を読まない
+/// (card ki-40c8ca380713 — 冷えた新しい作業木で 449 file を読む待ちが 0.8〜4.8 秒)。答えは読んだ時と同じ。
+#[test]
+fn a_fresh_worktree_does_not_read_the_registry_another_worktree_read() {
+    let (main, _parent, fresh) = repo_with_fresh_worktree();
+    let cache = tempfile::TempDir::new().unwrap();
+    let (first, first_log) = single(main.path(), cache.path(), "app/core/untagged.hy");
+    assert_eq!(reads(&first_log), 1, "1 つ目の作業木は登録簿を読む\n{first_log}");
+    let (second, second_log) = single(&fresh, cache.path(), "app/core/untagged.hy");
+    assert_eq!(reads(&second_log), 0, "新しい作業木が、別の作業木の読んだ登録簿を読み直した\n{second_log}");
+    assert_eq!(violation(&second, "app/core/untagged.hy::DOEFF104")["registered"], true);
+    assert_eq!(second["violations"], first["violations"], "読まなくても答えは同じ");
+}
+
+/// 新しい作業木で書き替えた登録簿の file(index の blob と違う中身)や、index に無い file は、別の作業木の結果を使わずに読む — 答えが付いてくる。
+#[test]
+fn a_registry_file_changed_or_added_in_a_fresh_worktree_is_read() {
+    let (main, _parent, fresh) = repo_with_fresh_worktree();
+    let cache = tempfile::TempDir::new().unwrap();
+    single(main.path(), cache.path(), "app/core/untagged.hy");
+    std::fs::write(fresh.join("registry/BREACHES/k07.txt"), "app/core/untagged.hy::DOEFF105\n理由 7\n").unwrap();
+    let (changed, changed_log) = single(&fresh, cache.path(), "app/core/untagged.hy");
+    assert_eq!(reads(&changed_log), 1, "書き替えた登録簿を読まなかった\n{changed_log}");
+    assert_eq!(violation(&changed, "app/core/untagged.hy::DOEFF104")["registered"], false);
+    std::fs::write(fresh.join("registry/BREACHES/k07.txt"), "app/core/untagged.hy::DOEFF104\n理由 7\n").unwrap();
+    git(&fresh, &["checkout", "--", "registry/BREACHES/k07.txt"]);
+    std::fs::write(fresh.join("registry/BREACHES/k99.txt"), "app/core/untagged.hy::DOEFF104\n足した理由\n").unwrap();
+    std::fs::remove_file(fresh.join("registry/BREACHES/k07.txt")).unwrap();
+    let (added, added_log) = single(&fresh, cache.path(), "app/core/untagged.hy");
+    assert_eq!(reads(&added_log), 1, "index に無い登録簿の file を読まなかった\n{added_log}");
+    assert_eq!(violation(&added, "app/core/untagged.hy::DOEFF104")["registered"], true, "足した file の鍵が効かない");
+}
