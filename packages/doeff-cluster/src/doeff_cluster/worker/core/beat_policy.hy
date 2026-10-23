@@ -22,6 +22,15 @@
 (val DEFAULT-LEASE-MS (. (ClusterTiming) lease-ms))  ; 返事に timing の無い旧い coordinator の生存の窓
 (val WATCH-RETRY-SECONDS 1.0)       ; 届かない・断られた待ちを送り直すまでの間
 (val WAKE-HOLD-SECONDS 5.0)         ; 待ちが「変わった」と答えた後、heartbeat が版を進めるのを待つ上限(同じ版で待ち直して空回りしない)
+;; 生存の合図の thread(card ki-9b58446e2ad6 — scheduler の外の OS の thread)が送るまでの、前の送り(どの口でも)の始めからの長さ =
+;; 送信間隔 × この比。拍と拍の外の背景の task が送れている間は、それらが先に送る(thread は送らない)。送れない間の送りの間は
+;; 送信間隔 × 1.5 + thread の 1 周(LIFELINE-PERIOD-SECONDS)— 生存の窓 10 秒なら 3.75 + 0.25 = 4 秒で、窓の半分(5 秒)の内。
+(val LIFELINE-SLACK-RATIO 1.5)
+(val LIFELINE-PERIOD-SECONDS 0.25)  ; 生存の合図の thread が送るかを判じる間
+;; 拍の進み(調整ループが coordinator への口を最後に通った刻)が止まってから、生存の合図の thread が送り続ける上限。ループが本当に
+;; 固まった worker(戻らない)の lease を延ばし続けない — 越えたら送りを止め、coordinator が lease の切れで worker の死を判じる。
+;; 本番で見た最長の止まりは ObserveWorld の 986 秒(zeus 2026-10-24 06:22 JST)で、それを覆う 30 分。
+(val LIFELINE-STALL-LIMIT-MS (* 30 60 1000))
 
 (defenum WatchKind CHANGED UNCHANGED UNSUPPORTED FAILED)
 ;; 待ち 1 回の答えの種類。CHANGED = 名指しの worker の見え方が変わった・UNCHANGED = 期限まで変わらなかった(revision = 次の after)・
@@ -51,6 +60,19 @@
   "この拍で heartbeat を送るかを決めるため。watching = 待ちの口を使えている・fresh = 前の heartbeat が届いた・woken = 待ちが「変わった」
    と答えた・statuses-changed = 状態の報告が前に送った物と違う・silent-ms = 最後に届いた heartbeat からの時間。"
   (or (not watching) (not fresh) woken statuses-changed (>= silent-ms interval-ms)))
+
+
+(deff lifeline-due [#^ bool ready #^ int since-sent-ms #^ int interval-ms #^ int since-progress-ms]  ; defk にできない: 生存の合図の thread の 1 周(worker/protocol/coordinator_link の lifeline-turn — scheduler の外の thread の VM)が判じる純粋な判断
+  {:pre [(: ready bool) (: since-sent-ms int) (: interval-ms int) (: since-progress-ms int)] :post [(: % bool)]
+   :tags {:context "worker" :role "judgment"}}
+  "生存の合図の thread がこの周に heartbeat を送るかを決めるため(card ki-9b58446e2ad6)。ready = 送る本文が在り(拍が 1 度送った)、
+   thread が今 送っていない・止めの合図が無い・since-sent-ms = 前の送り(拍・拍の外の背景の task・thread のどれか)の始めからの長さ・
+   interval-ms = 送信間隔・since-progress-ms = 拍の進みが最後に見えてからの長さ。拍の側が送れている間は送らず(送信間隔 ×
+   LIFELINE-SLACK-RATIO まで待つ)、拍の進みが LIFELINE-STALL-LIMIT-MS を越えて止まったら送らない(固まった worker の lease を延ばし
+   続けない)。"
+  (and ready
+       (>= since-sent-ms (* interval-ms LIFELINE-SLACK-RATIO))
+       (<= since-progress-ms LIFELINE-STALL-LIMIT-MS)))
 
 
 
