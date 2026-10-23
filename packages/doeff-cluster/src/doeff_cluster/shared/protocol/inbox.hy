@@ -15,7 +15,7 @@
 (import urllib.parse [unquote :as url-unquote])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Promise Wait])
 (import doeff_time [WaitWithin])
-(import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText NextRequests])
+(import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText NextRequests ServiceReached])
 
 
 (defclass [runtime-checkable] ReplyTarget [Protocol]
@@ -28,7 +28,8 @@
    記し、既に何か(要求か起こし)が並んでいれば真を返す — 箱は以後、要求を並べた時と起こしの時に bell を満たす。taken = 並んでいる
    生の要求を limit 件まで待たずに取り、掛けていた呼び鈴を外す(起こしを受けたら、そこまでに取った要求だけ)。"
   (defn #^ bool arm [self #^ (| float None) timeout #^ ExternalPromise bell] (raise NotImplementedError))
-  (defn #^ list taken [self #^ int limit] (raise NotImplementedError)))
+  (defn #^ list taken [self #^ int limit] (raise NotImplementedError))
+  (setv #^ bool reached False))
 
 
 (defclass StopSignal [Protocol]
@@ -92,6 +93,8 @@
     (<- raws list (raw-requests inbox timeout-seconds limit))
     (<- requests (get tuple #(Request ...)) (requests-of raws))
     (resume (list requests)))
+  (ServiceReached []
+    (resume inbox.reached))
   (Reply [request status body]
     (setv slot request.slot)
     (assert (isinstance slot ReplyTarget) "http-requests の要求の札は受付の箱の ReplySlot")

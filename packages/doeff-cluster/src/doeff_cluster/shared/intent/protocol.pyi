@@ -5,7 +5,7 @@ protocol.hy は Hy の module なので、pyright は中を読めず、coordinat
 readiness_model.pyi と同じ形で宣言する。
 
 - ClusterTiming・Request・PlainText は凍った dataclass(Request は eq を持たない)。欄の名と順・既定値の有無は実装と同じ。
-- NextRequests・Reply・CoordinatorStopRequested は凍った dataclass の EffectBase(答え = Request の list・None・bool)。
+- NextRequests・Reply・CoordinatorStopRequested・ServiceReached は凍った dataclass の EffectBase(答え = Request の list・None・bool)。
 - BodyInvalid は ValueError の子(送り手の本文の誤り)。
 - 実装との食い違いは packages/doeff-cluster/tests/test_meter_report_static_types.py が検める。
 """
@@ -66,4 +66,8 @@ class Reply(EffectBase[None]):
 
 @dataclass(frozen=True)
 class CoordinatorStopRequested(EffectBase[bool]):
+    """答えは bool。"""
+
+@dataclass(frozen=True)
+class ServiceReached(EffectBase[bool]):
     """答えは bool。"""
