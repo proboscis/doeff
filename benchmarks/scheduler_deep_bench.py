@@ -9,6 +9,8 @@ handler を ``--layers`` 段 置き(scheduler の effect は全段を素通り�
 1 操作を ``--ops`` 回する:
 
 - ``timed_wait``: 外の約束を作って完了し、WaitWithin(park=True) で受ける(turn-host が CLI の 1 行ごとにする待ち)
+- ``blocking_wait``: 外の約束を park なしで待ち、scheduler が止まって別の thread からの完了を受ける
+  (止まっている間は thread の CPU に数えない)
 - ``spawn_wait``: 何もしない task を Spawn して Wait する
 
 1 操作の thread の CPU(time.thread_time の差 / 回数 — 中央値は repeat 回の中の値)を µs で出す。
@@ -20,6 +22,7 @@ import argparse
 import json
 import statistics
 import sys
+import threading
 import time
 import warnings
 from typing import Any
@@ -76,7 +79,14 @@ def spawn_wait():
     return (yield Wait((yield Spawn(noop()))))
 
 
-OPS = {"timed_wait": timed_wait, "spawn_wait": spawn_wait}
+@do
+def blocking_wait():
+    bell = yield CreateExternalPromise()
+    threading.Timer(0.0005, bell.complete, (True,)).start()
+    return (yield Wait(bell.future))
+
+
+OPS = {"timed_wait": timed_wait, "blocking_wait": blocking_wait, "spawn_wait": spawn_wait}
 
 
 def measure(op: str, layers: int, parked: int, ops: int, repeat: int, impl: str) -> tuple[float, ...]:

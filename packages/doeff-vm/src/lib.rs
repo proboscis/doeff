@@ -53,8 +53,8 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
 
     /// Return the entries every scan walked so far, by what it walked — the
-    /// Rust scheduler's structures (`ready`, `waiters`, `tasks`,
-    /// `semaphore_waiters`, and the amortized `sweep`) and the fibers looked
+    /// Rust scheduler's structures (`ready`, `waiters`, `semaphore_waiters`,
+    /// and the amortized `sweep`) and the fibers looked
     /// at to find one in a detached continuation chain (`chain_fibers`).
     /// Cumulative, never decreasing: a test reads it before and after, to
     /// judge by a load-independent count whether one step's work grows with
