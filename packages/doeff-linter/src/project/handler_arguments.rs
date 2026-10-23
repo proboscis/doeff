@@ -398,8 +398,8 @@ pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> Class
         let rel = super::paths::relative_path(root, path)?;
         let memory = if rel.ends_with(".hy") { hy.as_ref() } else { py.as_ref() };
         let looked = memory.and_then(|memory| {
-            let meta = std::fs::metadata(path).ok()?;
-            Some((memory, memory.lookup(&rel, &meta), meta))
+            let (found, meta) = memory.lookup_path(&rel, path)?;
+            Some((memory, found, meta))
         });
         let unknown = match looked {
             Some((_, Lookup::Known(classes), _)) => return Some((rel, classes)),
@@ -410,7 +410,7 @@ pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> Class
         let source = std::fs::read_to_string(path).ok()?;
         let classes = classes_in(&rel, &source);
         if let Some((memory, oid, meta)) = unknown {
-            memory.learn_read(&rel, oid, path, &meta, source.as_bytes(), classes.clone());
+            memory.learn_read(&rel, oid, path, meta.as_ref(), source.as_bytes(), classes.clone());
         }
         Some((rel, classes))
     };

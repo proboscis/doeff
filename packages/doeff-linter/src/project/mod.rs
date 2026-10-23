@@ -14,6 +14,7 @@ pub mod bulk_read;
 pub mod dir_stamp;
 pub mod explain;
 pub mod facts_cache;
+pub mod fsmonitor;
 pub mod git_index;
 pub mod facts;
 pub mod deferred;
