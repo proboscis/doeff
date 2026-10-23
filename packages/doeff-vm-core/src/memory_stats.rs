@@ -89,3 +89,22 @@ pub(crate) fn record_step() {
 pub(crate) fn record_handler_call() {
     HANDLER_CALLS.fetch_add(1, Ordering::Relaxed);
 }
+
+// ── 継続の fiber の鎖をなめた数(agora card ki-9de8d0a54408)──────────────────────────────
+// 切り離した fiber の鎖(DetachedFiberChain)の中で、id から fiber を引くたびに見た entry の数を積み上げる。鎖を
+// 1 度たどる仕事が鎖の長さ(handler の段の数)に比例するか、その 2 乗かを、時計でなく数で判じるため(検が前後の差を
+// 取る)。たどり 1 回に Relaxed の加算 1 回。
+
+static CHAIN_FIBER_PROBES: AtomicU64 = AtomicU64::new(0);
+
+/// 鎖の中で fiber を引くために見た entry の数の積み上げ。
+pub fn chain_fiber_probes() -> u64 {
+    CHAIN_FIBER_PROBES.load(Ordering::Relaxed)
+}
+
+/// 鎖を 1 度たどる間に見た entry の数 `probes` を足す。
+pub(crate) fn record_chain_fiber_probes(probes: u64) {
+    if probes != 0 {
+        CHAIN_FIBER_PROBES.fetch_add(probes, Ordering::Relaxed);
+    }
+}

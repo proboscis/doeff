@@ -52,6 +52,27 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         (c.steps, c.handler_calls)
     }
 
+    /// Return the entries every scan walked so far, by what it walked — the
+    /// Rust scheduler's structures (`ready`, `waiters`, `tasks`,
+    /// `semaphore_waiters`, and the amortized `sweep`) and the fibers looked
+    /// at to find one in a detached continuation chain (`chain_fibers`).
+    /// Cumulative, never decreasing: a test reads it before and after, to
+    /// judge by a load-independent count whether one step's work grows with
+    /// the parked tasks or the handler depth (agora card ki-9de8d0a54408).
+    /// Imported from `doeff_vm.doeff_vm`, like `vm_work_counts`.
+    #[pyfn(m)]
+    fn vm_scan_counts(py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyDict>> {
+        let counts = pyo3::types::PyDict::new(py);
+        for (name, count) in scheduler::scan_counts() {
+            counts.set_item(name, count)?;
+        }
+        counts.set_item(
+            "chain_fibers",
+            doeff_vm_core::memory_stats::chain_fiber_probes(),
+        )?;
+        Ok(counts)
+    }
+
     /// True when the per-step runtime conformance oracle is on in this
     /// process. Every build carries the checks; they run only when turned on
     /// (`DOEFF_VM_INVARIANT_CHECKS=1` or `set_invariant_checks(True)`).
