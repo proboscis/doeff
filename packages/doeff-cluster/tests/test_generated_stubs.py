@@ -47,6 +47,8 @@ USED = (
     UsedModule("coordinator.entry.handler_sets", ("MemoryWalStore",)),
     UsedModule("foundation.wal_store", ("WalStore",)),
     UsedModule("shared.core.lease_rules", ("live-holders", "semaphore-key")),
+    # worker の生死の出来事を運ぶ道の表(使い手の経路の表が足す — .pyi が無いと表の型が分からず、使い手の経路の表の型まで分からなくなる)。
+    UsedModule("coordinator.protocol.worker_notices", ("WORKER-NOTICE-READS", "WORKER-NOTICE-ROUTES")),
     UsedModule("shared.core.runtime_env", ("runtime-env-of-checkouts",)),
     UsedModule("shared.core.runtime_identity", ("check-runtime-identity",)),
     UsedModule("shared.intent.shared_model", ("WriteShared",)),
@@ -123,3 +125,25 @@ def test_the_wal_store_satisfies_the_byte_log_shape(tmp_path: Path) -> None:
     # 失敗ケース(#2972): 道具が WalStore の __init__ で置く欄(seq・max_log_bytes・snapshot・log)を .pyi に宣言せず、WalStore は
     # それらを求める ByteLog を満たさなかった — 使い手の repo の正しい渡し方に型の赤が 2 件(17 本目の pin)。
     assert strict_errors(tmp_path, WAL_STORE_AS_BYTE_LOG) == ()
+
+
+# 使い手の repo の渡し方(盤の行の写像を渡して 1 手の答えを受ける)を写した検の module — lease の行の判断が返す組と行の型を、使い手が
+# 分解した先まで型つきで読めるか。
+LEASE_STEP = """\
+(require doeff-hy.macros [defk])
+(import doeff_cluster.shared.core.lease_rules [lease-op lease-full-until])
+
+(defk lease-claim-passes [row]
+  {:pre [(: row (| (get dict #(str object)) None))] :post [(: % bool)] :tags {:context "probe" :role "judgment"}}
+  "lease の行 1 つへ取りの 1 手を当て、通ったか(通って満ちたら偽)を知るため。"
+  (setv #(after answer) (lease-op row "claim" "holder/1" 1 1000 0))
+  (setv until (lease-full-until after 0))
+  (and answer.ok (is until None)))
+"""
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_the_lease_step_reads_its_row_and_answer_with_types(tmp_path: Path) -> None:
+    # 失敗ケース: lease-op の答えが裸の tuple・行が裸の dict の間は、使い手が #(行 答え) へ分解した行と答えの欄が型の分からない値に
+    # なり、strict の型の門に使い手が直せない赤が出た(lease-op と lease-full-until を使う模擬の盤の代役に 8 件)。
+    assert strict_errors(tmp_path, LEASE_STEP) == ()

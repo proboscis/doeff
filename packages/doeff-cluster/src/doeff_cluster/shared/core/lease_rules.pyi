@@ -18,10 +18,10 @@ def holder_tokens_prefix(holder: str) -> str:
 def lease_timing_refusal(ttl_seconds: int | float, margin_ms: int) -> str | None:
     ...
 
-def fence_verdict(hold: dict | None, now_ms: int, margin_ms: int) -> str | None:
+def fence_verdict(hold: Mapping[str, object] | None, now_ms: int, margin_ms: int) -> str | None:
     ...
 
-def lease_op(row: dict | None, op: str, token: str, permits: int, ttl_ms: int, now_ms: int) -> tuple:
+def lease_op(row: dict[str, object] | None, op: str, token: str, permits: int, ttl_ms: int, now_ms: int) -> tuple[dict[str, object] | None, LeaseAnswer]:
     ...
 
 def semaphore_write_refusal(before: object, after: object, now_ms: int) -> str | None:
@@ -33,23 +33,23 @@ def semaphore_key(name: str) -> str:
 def live_holders(row: Mapping[str, object] | None, now_ms: int) -> dict[str, int]:
     ...
 
-def live_instances(row: Mapping | None, now_ms: int, job: str) -> _Program[tuple, object]:
+def live_instances(row: Mapping[str, object] | None, now_ms: int, job: str) -> _Program[tuple[str, ...], object]:
     ...
 
-def lease_full_until(row: dict | None, now_ms: int) -> int | None:
+def lease_full_until(row: Mapping[str, object] | None, now_ms: int) -> int | None:
     ...
 
-def claim(row: dict | None, permits: int, token: str, now_ms: int, ttl_ms: int) -> dict | None:
+def claim(row: Mapping[str, object] | None, permits: int, token: str, now_ms: int, ttl_ms: int) -> dict[str, object] | None:
     ...
 
-def renew(row: dict | None, token: str, now_ms: int, ttl_ms: int) -> dict | None:
+def renew(row: Mapping[str, object] | None, token: str, now_ms: int, ttl_ms: int) -> dict[str, object] | None:
     ...
 
-def release(row: dict | None, token: str, now_ms: int) -> tuple:
+def release(row: dict[str, object] | None, token: str, now_ms: int) -> tuple[dict[str, object] | None, bool]:
     ...
 
-def holders_shifted(row: object, gap_ms: int) -> dict | None:
+def holders_shifted(row: object, gap_ms: int) -> dict[str, object] | None:
     ...
 
-def drop_holders(row: object, prefix: str) -> dict | None:
+def drop_holders(row: object, prefix: str) -> dict[str, object] | None:
     ...
