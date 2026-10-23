@@ -134,7 +134,8 @@
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
-                              changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
+                              changes-statement change-log-statement advance-epoch-statement forget-changes-statement find-event-statement
+                              prune-bound-statement prune-changes-statement statement-limit-statement UNBOUNDED-SEQ
                               insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
                               expire-chosen-events-statement touched-events-statement delete-events-statement expiring-candidates-statement
                               retire-keys-statement find-retired-key-statement expired-page-statement
@@ -165,6 +166,15 @@
 ;; 回収(purge-expired)が書きの錠の transaction 1 つで捨てる出来事の数の上限(錠の外で読む候補の数 — 錠を持つ間に触る行をこの数で縛る)。
 ;; これより多く期限を過ぎた列は、錠を取り直して続きを捨てる(錠と錠の間に他の書きが入れる)。
 (val EXPIRE-BATCH 500)
+;; 変更の列の刈り(pruned-changes — pg_sql の頭の註の「変更の列の刈り」)が書きの錠の transaction 1 つで消す変更の数の上限と、1 周の境を
+;; 読む変更の数。本番の変更 1 つは本文を含めて約 3 KB(TOAST に出る)で、50 個の DELETE が触る page は約 550 回(索引の根を行ごとに数える上からの見積もり)— 冷えた cache で 1 page を
+;; 10 ms で読んでも PRUNE-STATEMENT-MILLISECONDS に収まる大きさ。
+(val PRUNE-BATCH 50)
+;; 刈りの文の上限(ミリ秒 — SET LOCAL statement_timeout)= 置き場の接続の文の上限(既定 60 秒)の 1/10。切れた周は答えを失敗にせず、消し
+;; 終えた所までを答えて次の周へ持ち越す(錠を待つ書きを道連れにせず、手入れの係も止めない)。
+(val PRUNE-STATEMENT-MILLISECONDS 6000)
+;; 文の上限で切られた文の SQLSTATE(query_canceled)。
+(val QUERY-CANCELED-SQLSTATE "57014")
 
 
 (defclass StoreUnreachable [Exception]
@@ -1763,16 +1773,78 @@
 
 ;; --- 手入れ ------------------------------------------------------------------------------------------------
 
-(defk prune-locked [store ask now-ms]
-  {:pre [(: store PreparedStore) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]
+(defk limited-rows [store statement]
+  {:pre [(: store PreparedStore) (: statement Statement)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "変更の列が際限なく伸びないように、keep-seconds より古い変更を(upto-seq が在ればその番号まで)消して floor を上げるため(書きの錠の
-   中 — 読み手の断面と揃える)。"
-  (<- statement (prune-changes-statement store.prefix (- now-ms (int (* 1000 ask.keep-seconds)))
-                                         (if (is ask.upto-seq None) UNBOUNDED-SEQ ask.upto-seq)))
+  "手入れの文 statement を、文の上限 PRUNE-STATEMENT-MILLISECONDS の下で流して行を返すため(呼び手が開いた transaction の中で流す —
+   SET LOCAL はその transaction の間だけ効き、置き場の接続の上限に戻る)。"
+  (<- limit (statement-limit-statement PRUNE-STATEMENT-MILLISECONDS))
+  (<- (query-rows store.database limit))
   (<- rows (query-rows store.database statement))
-  (val record (get rows 0))
-  (Pruned (int (get record 0)) (int (get record 1))))
+  rows)
+
+
+(defk prune-bound [store before-at upto-seq]
+  {:pre [(: store PreparedStore) (: before-at int) (: upto-seq int)] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "刈りの 1 周の境(pg_sql.prune-bound-statement — 0 = 刈る変更が無い)を、書きの錠の外の transaction で手入れの文の上限の下に読むため。"
+  (<- statement (prune-bound-statement store.prefix before-at upto-seq PRUNE-BATCH))
+  (<- rows (in-transaction store.database None (limited-rows store statement)))
+  (int (get rows 0 0)))
+
+
+(defk prune-batch [store gated bound]
+  {:pre [(: store PreparedStore) (: gated bool) (: bound int)] :post [(: % Pruned)]
+   :tags {:context "records" :role "foundation"}}
+  "番号 bound までの変更を番号の順に PRUNE-BATCH 個まで、番号の単位の書きの錠の transaction 1 つで消して floor を上げるため(手入れの文の
+   上限の下 — limited-rows)。合図は名の無い待ち手だけに出し、全部の待ち手は刈りの終わりに 1 度起こす(pruned-changes)。答え = その batch の
+   後の floor と消した数。"
+  (<- statement (prune-changes-statement store.prefix bound PRUNE-BATCH))
+  (<- rows (writing store gated "prune-changes" #(ROWS-UNIT) #() (limited-rows store statement)))
+  (Pruned (int (get rows 0 0)) (int (get rows 0 1))))
+
+
+(defk pruned-changes [store gated ask now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]
+   :tags {:context "records" :role "foundation"}}
+  "変更の列が際限なく伸びないように、keep-seconds より古い変更の最大の番号まで(upto-seq が在ればその番号まで)の前方の連なりを消して
+   floor を上げるため(pg_sql の頭の註の「変更の列の刈り」): 書きの錠の外で 1 周の境を読み、錠の中でその番号までを PRUNE-BATCH 個ずつ
+   消す周を、境が進まなくなるまで繰り返す(周ごとに境の読みが刻の順の頭の PRUNE-BATCH 個を消すので、境は進むか、upto-seq に止まる)。
+   手入れの文の上限で切られた周は失敗にせず、消し終えた所までを答える(残りは次の手入れの回)。消した変更が在れば、終わりに全部の待ち手へ
+   合図を 1 度出す(床は全部の表の位置を変える — 名の分からない合図)。刈る変更が無ければ錠を取らない(答えの floor は置き場の頭から読む)。"
+  (val before-at (- now-ms (int (* 1000 ask.keep-seconds))))
+  (val upto-seq (if (is ask.upto-seq None) UNBOUNDED-SEQ ask.upto-seq))
+  (var floor None)
+  (var removed 0)
+  (var cleared 0)
+  (var going True)
+  (var draining False)
+  (try
+    (while going
+      (<- bound (prune-bound store before-at upto-seq))
+      (:= going (> bound cleared))
+      (:= draining going)
+      (while draining
+        (<- batch (prune-batch store gated bound))
+        (:= floor batch.floor)
+        (:= removed (+ removed batch.removed))
+        ;; floor が境に届いた batch で周を終える(境までを消し終えた — 空の batch で錠を取り直さない)。
+        (:= draining (and (= batch.removed PRUNE-BATCH) (< batch.floor bound))))
+      (:= cleared bound))
+    (except [error RecordsSqlFailed]
+      (when (!= error.sqlstate QUERY-CANCELED-SQLSTATE)
+        (raise))
+      (print (.format "記録の置き場: 変更の列の刈りが文の上限 {} ms で切れた — {} 個を消した所で次の手入れの回へ持ち越す"
+                      PRUNE-STATEMENT-MILLISECONDS removed)
+             :file sys.stderr :flush True)))
+  (when (> removed 0)
+    (<- channel (notice-channel store))
+    (<- notified (SqlNotify store.database channel None))
+    (<- (notice-raised notified)))
+  (when (is floor None)
+    (<- head (store-head store))
+    (:= floor head.floor))
+  (Pruned floor removed))
 
 
 (defk change-log [store ask]
@@ -2000,8 +2072,8 @@
     (resume answer))
   (PruneChanges [keep-seconds upto-seq]
     (<- now (GetTime))
-    ;; 床は全部の表の待ち手の位置に関わる(名の分からない合図)。
-    (<- answer (reached (writing store gated "prune-changes" #(ROWS-UNIT) None (prune-locked store effect (epoch-ms now)))))
+    ;; 床は全部の表の待ち手の位置に関わる(名の分からない合図 — 刈りの終わりに 1 度・pruned-changes)。
+    (<- answer (reached (pruned-changes store gated effect (epoch-ms now))))
     (resume answer))
   (ReadChangeLog [after limit]
     (<- answer (reached (change-log store effect)))

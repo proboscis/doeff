@@ -31,7 +31,7 @@
 ;;;                                  文に直に置く(引数にすると文の式が索引の式と揃わず、索引に当たらない — 区切りの字は values.SEPARATOR-PATTERN)
 ;;;   append_rows (ledger, 頭の式, seq) 頭で引ける列(key-lookup の ByKeyHead)の区切りごとに 1 つ — 頭で引く読み(read-events-statement の
 ;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
-;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
+;;;   row_changes (at)                変更の列の刈りの境の読み(prune-bound-statement の at <= 境 — 刻の順に limit 件)
 ;;;   retired_keys (ledger, remembered_at)  覚えの外し(forget-keys-statement の remembered_at <= 境 — 境の内を limit 個)
 ;;   write_keys (remembered_at)      行の書きの冪等キーの覚えの外し(forget-write-keys-statement の remembered_at <= 境 — 境の内を limit 個)
 ;;;   state_rows (表の状態の欄の式)    保持の期限の在る表の状態の欄が、その表の索引の欄に無い時だけ(式は宣言した索引の欄と同じ表の欄の式 —
@@ -147,6 +147,13 @@
 ;;; その番号の出来事だけを、条件を読み直して捨てる(expire-chosen-events-statement)。錠の中の文が触る行は番号の数で縛られ、列の行の数の
 ;;; 見積もりに依らない(2026-10-18 — 列の全部を条件で消す 1 文は、planner が ledger と at の相関を知らず期限を過ぎた出来事を実際の数百倍に
 ;;; 見積もって列の生きた出来事を全部読む計画を選び、書きの錠を 13〜21 秒持って記録の service の要求を切らせた)。
+;;; 変更の列の刈り(PruneChanges)も同じ形: 書きの錠の外で 1 周の境(刻が境以下の変更を刻の順に limit 件読んだ中の最大の番号 —
+;;; prune-bound-statement)を読み、錠の中ではその番号までの変更を番号の順に limit 件ずつ消す(prune-changes-statement — 錠の transaction を
+;;; 分け、錠と錠の間に他の書きが入れる)。どの文も触る行は limit で縛られ、変更の列の長さに依らない。文の上限は置き場の接続の上限より短い
+;;; 手入れの上限(statement-limit-statement)で、切れた周は次の周へ持ち越す(pg.hy の pruned-changes)。2026-10-24 — 前の形は境の読み
+;;; `max(seq) WHERE at <= 境` を消す文の中に持ち、planner は主鍵を新しい方から辿って境より古い変更に当たるまで保持の窓の変更を全部読んだ
+;;; (本番 約 150 万行・heap 973 MB)。DB が起き直した直後の冷えた cache でこの 1 文が文の上限 60 秒を越え、その間 番号の錠を待つ書きが
+;;; 同じ上限で切られた。
 ;;; 送ってから外す列(card ki-707aad0f88e8 — maintenance.hy の頭の註): 送りの頁の読み(expired-page-statement)は期限の条件を
 ;;; expiring-where で書き、(ledger, at) の索引を位置から境まで辿る(積んだ刻と番号の順)。外しは回収と同じ expire-chosen-events-statement。
 ;;; 組で数える列は、冪等キーを覚えた出来事(retired_keys に鍵の在る出来事)も期限を過ぎた物に数える(EventExpiry の remembered)。
@@ -1207,22 +1214,40 @@
 (val UNBOUNDED-SEQ 9223372036854775807)
 
 
-(defk prune-changes-statement [prefix before-at upto-seq]
-  {:pre [(: prefix str) (: before-at int) (: upto-seq int)] :post [(: % Statement)]
+(defk prune-bound-statement [prefix before-at upto-seq limit]
+  {:pre [(: prefix str) (: before-at int) (: upto-seq int) (: limit int) (> limit 0)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "刻が before-at 以下の変更のうち最大の番号まで(ただし upto-seq — 送って確かめた番号の上限 — を越えない)を変更の列から消し(刈る範囲は
-   番号の前方の連なり — 刻が番号の順と揃わなくても floor の下に取り残しを作らない)、floor をそこまで上げ、#(floor 消した数) を返す文を
-   作るため(書きの錠の中で流す — 錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。上限の無い刈りは
-   呼び手が UNBOUNDED-SEQ を渡す。"
+  "刈りの 1 周の境 = 刻が before-at 以下の変更を刻の順に limit 件まで読んだ中の最大の番号(ただし upto-seq — 送って確かめた番号の上限 —
+   を越えない・無ければ 0)を読む文を作るため(書きの錠の外で流す — 頭の註の「変更の列の刈り」)。索引 row_changes (at) を頭から limit 件だけ
+   辿るので、読む行は変更の列の長さに依らない。"
+  (Statement :text (.format "SELECT least(:upto_seq, coalesce(max(seq), 0))
+                       FROM (SELECT seq FROM {p}row_changes WHERE at <= :before_at ORDER BY at LIMIT :limit) AS old" :p prefix)
+             :params (! (params-of #(#("before_at" before-at) #("upto_seq" upto-seq) #("limit" limit))))))
+
+
+(defk prune-changes-statement [prefix upto-seq limit]
+  {:pre [(: prefix str) (: upto-seq int) (: limit int) (> limit 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "番号 upto-seq(刈りの 1 周の境 — prune-bound-statement)以下の変更を番号の順に limit 件まで変更の列から消し(刈る範囲は番号の前方の
+   連なり — 刻が番号の順と揃わなくても floor の下に取り残しを作らない)、floor を消した最大の番号まで上げ、#(floor 消した数) を返す文を
+   作るため(書きの錠の中で流す — 錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。消す行は主鍵 seq の
+   索引を頭から limit 件だけ辿る(頭の註の「変更の列の刈り」)。"
   (Statement :text (.format "WITH removed AS (DELETE FROM {p}row_changes
-                                        WHERE seq <= least(:upto_seq,
-                                                           (SELECT coalesce(max(seq), 0) FROM {p}row_changes WHERE at <= :before_at))
+                                        WHERE seq IN (SELECT seq FROM {p}row_changes WHERE seq <= :upto_seq ORDER BY seq LIMIT :limit)
                                         RETURNING seq),
                             raised AS (UPDATE {p}store_epoch
                                        SET floor = greatest(floor, (SELECT coalesce(max(seq), 0) FROM removed))
                                        WHERE id = 1 RETURNING floor)
                        SELECT (SELECT floor FROM raised), (SELECT count(*) FROM removed)" :p prefix)
-             :params (! (params-of #(#("before_at" before-at) #("upto_seq" upto-seq))))))
+             :params (! (params-of #(#("upto_seq" upto-seq) #("limit" limit))))))
+
+
+(defk statement-limit-statement [milliseconds]
+  {:pre [(: milliseconds int) (> milliseconds 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "transaction 1 つの間だけ文の上限を milliseconds ミリ秒にする文(SET LOCAL statement_timeout — 置き場の接続の文の上限より短い手入れの
+   上限)を作るため(頭の註の「変更の列の刈り」)。値は引数にできない(SET は引数を取らない)ので、検めた整数を文に直に置く。"
+  (Statement :text (.format "SET LOCAL statement_timeout = {}" milliseconds) :params #()))
 
 
 (defk forget-changes-statement [prefix]
