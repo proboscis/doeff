@@ -405,20 +405,29 @@
                 {"type" "assistant"}
                 {"type" "cost-state" "sessionId" sid "totalCostUSD" 0.038911299999999996 "hasUnknownModelCost" False}
                 {"type" "user" "message" {"role" "user" "content" "\"cost-state\" と書いた発話"}}])
-  (<- found (recorded-cost (.join "\n" (gfor record records (json.dumps record :ensure-ascii False :separators #("," ":"))))))
+  (val text (.join "\n" (gfor record records (json.dumps record :ensure-ascii False :separators #("," ":")))))
+  (<- found (recorded-cost text True))
   (assert (= found (CostMark 0.038911299999999996 None)) found)
-  ;; 額の行が無い・空の本文 = None(0 を発明しない)。
-  (<- absent (recorded-cost "{\"type\":\"user\",\"text\":\"x\"}\n"))
-  (assert (is absent None))
-  (<- empty (recorded-cost ""))
-  (assert (is empty None))
-  ;; 最後の額の行の値が数でない(形が変わった)= None — 前の行の額へ倒れて誤った起点を作らない。bool も数えない。
-  (<- changed (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCostUSD\":\"0.7\"}\n"))
+  ;; 末尾だけの本文でも、在る行はそのまま起点。
+  (<- tail-found (recorded-cost text False))
+  (assert (= tail-found found) tail-found)
+  ;; 頭から全部読んで額の行が 1 つも無い = 0 から(CLI 2.1.292 の --resume は 0 から数える — card ki-4b9be8d95d9f)。発話の中の
+  ;; cost-state の語は行ではない。
+  (<- absent (recorded-cost "{\"type\":\"user\",\"text\":\"x\"}\n{\"type\":\"user\",\"text\":\"\\\"type\\\":\\\"cost-state\\\"\"}\n" True))
+  (assert (= absent (CostMark 0.0 #())) absent)
+  ;; 失敗ケース: 末尾だけの本文に額の行が無い = None — 切り口より前に行が在りうるので 0 にしない。
+  (<- absent-tail (recorded-cost "{\"type\":\"user\",\"text\":\"x\"}\n" False))
+  (assert (is absent-tail None))
+  (<- empty-tail (recorded-cost "" False))
+  (assert (is empty-tail None))
+  ;; 最後の額の行の値が数でない(形が変わった)= None — 前の行の額へ倒れて誤った起点を作らない。bool も数えない。頭から全部でも同じ
+  ;; (行は在るので 0 にもしない)。
+  (<- changed (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCostUSD\":\"0.7\"}\n" True))
   (assert (is changed None))
-  (<- flag (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":true}"))
+  (<- flag (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":true}" True))
   (assert (is flag None))
   ;; 壊れた(JSON にならない)行は行として数えない。
-  (<- torn (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCo"))
+  (<- torn (recorded-cost "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n{\"type\":\"cost-state\",\"totalCo" True))
   (assert (= torn (CostMark 0.5 None)) torn))
 
 
@@ -566,13 +575,13 @@
                            "claude-sonnet-5-5" {"inputTokens" 3 "outputTokens" 40 "cacheReadInputTokens" 0
                                                "cacheCreationInputTokens" 0 "webSearchRequests" 0 "costUSD" 0.25}}
              "hasUnknownModelCost" False})
-  (<- found (recorded-cost (json.dumps line)))
+  (<- found (recorded-cost (json.dumps line) True))
   (assert (= found (CostMark 0.75 #((ModelUsage "claude-opus-5-5" :input-tokens 12 :output-tokens 340 :cache-read-input-tokens 9000
                                                 :cache-creation-input-tokens 800 :web-search-requests 2 :cost-usd 0.5)
                                     (ModelUsage "claude-sonnet-5-5" :input-tokens 3 :output-tokens 40 :cache-read-input-tokens 0
                                                 :cache-creation-input-tokens 0 :web-search-requests 0 :cost-usd 0.25))))
           found)
-  (<- empty (recorded-cost (json.dumps {"type" "cost-state" "totalCostUSD" 0.0 "modelUsage" {}})))
+  (<- empty (recorded-cost (json.dumps {"type" "cost-state" "totalCostUSD" 0.0 "modelUsage" {}}) True))
   (assert (= empty (CostMark 0.0 #())) empty)
-  (<- bare (recorded-cost (json.dumps {"type" "cost-state" "totalCostUSD" 0.5})))
+  (<- bare (recorded-cost (json.dumps {"type" "cost-state" "totalCostUSD" 0.5}) True))
   (assert (= bare (CostMark 0.5 None)) bare))

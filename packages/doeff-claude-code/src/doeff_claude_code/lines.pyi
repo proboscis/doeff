@@ -524,7 +524,7 @@ def call_end_usage_of(event: dict) -> _Program[Usage | None, object]:
 def classify_stream_event(record: dict) -> Incomplete:
     ...
 
-def recorded_cost(transcript_text: str) -> _Program[CostMark | None, object]:
+def recorded_cost(transcript_text: str, whole: bool) -> _Program[CostMark | None, object]:
     ...
 
 def mark_of_result(result: TurnResult) -> _Program[CostMark | None, object]:

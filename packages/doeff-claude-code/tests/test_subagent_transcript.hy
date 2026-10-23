@@ -144,7 +144,7 @@
   (val text (.decode data "utf-8"))
   (assert (= (lfor line (run (jsonl-lines (+ text "\n  \n"))) (get (json.loads line) "type")) ["user" "assistant"]))
   (val main (+ text (line-of {"type" "cost-state" "totalCostUSD" 1.5 "note" "a b"})))
-  (assert (= (. (run (recorded-cost main)) total-usd) 1.5)))
+  (assert (= (. (run (recorded-cost main True)) total-usd) 1.5)))
 
 (deftest test-the-reader-stops-at-the-end-of-the-last-whole-line
   ;; 読み終えた所は改行で閉じた行の終わり(書きの途中の行は次の読みで頭から読む — 載せた呼びを 2 度数えない)。

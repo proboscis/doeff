@@ -643,8 +643,10 @@
 (defn #^ bool file-present [#^ str path] (os.path.exists path))
 
 ;; 費用の起点を探す transcript の末尾の幅(byte・狭い順 — card ki-a264a73efcce)。CLI は降りる時に cost-state の行を末尾へ書き、起点を読む
-;; のは前の process が降りた後なので、ふつうは最初の幅で見つかる。最後の幅にも無ければ None(分からない — 0 を発明しない)。
-(val COST-TAIL-BYTES #(65536 1048576 16777216))
+;; のは前の process が降りた後なので、ふつうは最初の幅で見つかる。最後の None = file の頭から全部: cost-state の行が 1 つも無い
+;; transcript の続きを CLI は 0 から数える(card ki-4b9be8d95d9f)ので、16 MiB の末尾に行が無い時は全部を読んで「1 つも無い」と
+;; 「もっと前に在る」を分ける(この読みに来るのは額を記す前に消えた process の続きだけ。CLI 自身も init の前に transcript を全部読む)。
+(val COST-TAIL-BYTES #(65536 1048576 16777216 None))
 
 (defrecord TranscriptBytes
   "transcript の jsonl の読み: data = 読んだ byte(末尾だけの読みは行の頭から)・whole = file の頭から読んだか。"
@@ -683,10 +685,10 @@
 
 (defk transcript-cost-mark [#^ str path]
   {:pre [(: path str)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
-  "transcript の file path を読み、最後の cost-state の額を読むため(recorded-cost-mark が TRANSCRIPT-THREADS の thread の新しい VM で回す —
-   読みも行の解きも scheduler の thread の外)。読むのは末尾だけ(COST-TAIL-BYTES の幅を狭い順に — card ki-a264a73efcce。前は 200 MB の
-   transcript を丸ごと読み、詰まった disk の上で起こすたびに 15〜74 秒かかった)。file が無い・読めない・最後の幅にも行が無い・値が数で
-   なければ None。"
+  "transcript の file path を読み、CLI が数え始める額(最後の cost-state の額・行が 1 つも無ければ 0)を読むため(recorded-cost-mark が
+   TRANSCRIPT-THREADS の thread の新しい VM で回す — 読みも行の解きも scheduler の thread の外)。読むのは末尾から(COST-TAIL-BYTES の幅を
+   狭い順に — card ki-a264a73efcce。前は 200 MB の transcript を起こすたびに丸ごと読み、詰まった disk の上で 15〜74 秒かかった)。全部を
+   読むのは 16 MiB の末尾に行が無い時だけ。file が無い・読めない・最後の行の値が数でなければ None。"
   (for [limit COST-TAIL-BYTES]
     (val read (try
                 (read-transcript-bytes path limit)
@@ -698,7 +700,7 @@
                 (except [UnicodeDecodeError] None)))
     (when (is text None)
       (return None))
-    (<- mark (recorded-cost text))
+    (<- mark (recorded-cost text read.whole))
     (when (or (is-not mark None) read.whole)
       (return mark)))
   None)
@@ -707,8 +709,9 @@
   {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| CostMark None))]
    :tags {:context "claude-code" :role "foundation"}}
   "手番の額の起点を、この handler が前の process を見ていない会話(新しい host での続き・持ち込んだ transcript・枝の親)でも知るため、
-   CLI が数え始める額 = その会話の transcript の最後の cost-state の額を読む(置き場は transcript-present と同じ transcript-path)。
-   読むのは TRANSCRIPT-THREADS の thread(頭の註の下の値の註)。file が無い・読めない・行が無い・値が数でなければ None。"
+   CLI が数え始める額 = その会話の transcript の最後の cost-state の額(行が 1 つも無ければ 0 — card ki-4b9be8d95d9f)を読む(置き場は
+   transcript-present と同じ transcript-path)。読むのは TRANSCRIPT-THREADS の thread(頭の註の下の値の註)。file が無い・読めない・
+   最後の行の値が数でなければ None。"
   (val path (transcript-path home.config-dir canonical-cwd session-id))
   (<- mark (| CostMark None) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (transcript-cost-mark path))) keep-nothing))
   mark)
@@ -1175,8 +1178,9 @@
   "新しく起動する process の CLI が数え始める額(ターンの費用の起点)を、ターンの process と入力なしで起動する process の両方で 1 か所
    で決めるため(起点は額と model ごとの累積の組 CostMark — card ki-1d986d4f0007)。CLI は終了する時に会話の累積の額を transcript に記録し、--resume・--fork-session の process は最後に記録した額から
    数え続ける(実測 2.1.283・#883 — ターンごとには記録せず、終了する時に 1 回)。新しい会話(FreshSession)は 0(何も使っていない —
-   入力の前に停止した事前起動の process の後も 0)。ほかは recorded(transcript の最後の cost-state の額 — CLI が数え始める額そのもの)
-   が在ればそれ。無ければ前の process の終わり方で決める: 前の process が無い・終了コード 0 = 今の起点(cost-mark)/ SIGKILL(額を
+   入力の前に停止した事前起動の process の後も 0)。ほかは recorded(transcript の最後の cost-state の額・行が 1 つも無ければ 0 —
+   CLI が数え始める額そのもの・card ki-4b9be8d95d9f)が在ればそれ。無ければ(transcript が読めない・最後の行の額が数でない)前の
+   process の終わり方で決める:前の process が無い・終了コード 0 = 今の起点(cost-mark)/ SIGKILL(額を
    記録できずに消えた — CLI は前の process が始まった時の額から数える)= 前の process の始まりの起点(start-mark)/ ほか(期限の
    SIGTERM・誤りの終了)= 分からないので None(そのターンの費用は None。次のターンからは読んだ行の累積で数え直す)。"
   (match origin
@@ -1188,7 +1192,7 @@
 (defk process-cost-mark [#^ bool had-previous #^ (| int None) previous-exit #^ (| CostMark None) cost-mark #^ (| CostMark None) start-mark]
   {:pre [(: had-previous bool) (: previous-exit (| int None)) (: cost-mark (| CostMark None)) (: start-mark (| CostMark None))]
    :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "judgment"}}
-  "transcript に額の記録が無い時の、次の process の CLI が数え始める額を、前の process の終わり方から決めるため(launch-cost-mark の
+  "transcript から額の起点を読めない時の、次の process の CLI が数え始める額を、前の process の終わり方から決めるため(launch-cost-mark の
    後半 — 閉じた会話を外す時に、生きた状態の代わりに残す控えもこれで決める・release-closed)。"
   (cond
     (or (not had-previous) (= previous-exit 0)) cost-mark
@@ -1421,7 +1425,7 @@
 
 (defrecord LaunchReady
   "新しい process を起動する前の準備が済んだ: recorded = 続き・枝の親の transcript の最後の cost-state の額(CLI が数え始める額 —
-   無ければ None)・unrotatable = 続きの transcript が上限を越えるのに置き直せなかった(起動が期限を越えた時に訳を足す — 無ければ None)。"
+   行が 1 つも無ければ 0・読めなければ None)・unrotatable = 続きの transcript が上限を越えるのに置き直せなかった(起動が期限を越えた時に訳を足す — 無ければ None)。"
   (#^ (| CostMark None) recorded)
   (#^ (| TranscriptUnrotatable None) unrotatable))
 
@@ -1500,8 +1504,8 @@
   (val unused (or (is runtime None) runtime.warmed-fresh))
   (setv fresh-runtime (is runtime None))
   (when fresh-runtime
-    ;; transcript に額の行が無い時の起点: 新しい会話の CLI は 0 から数える。この handler が前の process を見ていない続き・枝は
-    ;; 分からない(None — 最初の手番の額は None)。
+    ;; transcript から額の起点を読めない時の控え: 新しい会話の CLI は 0 から数える。この handler が前の process を見ていない続き・枝は
+    ;; 分からない(None — 読めた起点 recorded が先・launch-cost-mark)。
     (setv runtime (SessionRuntime (if (isinstance origin ForkSession) "" target-id) spec.home canonical
                                   :cost-mark (if (isinstance origin FreshSession) FRESH-MARK None)))
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
