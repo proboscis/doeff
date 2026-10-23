@@ -30,7 +30,7 @@
 (import doeff_claude_code.argv [launch-key transcript-path])
 (import doeff_claude_code.process [ClaudeProcess])
 (import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [CLI-TIMING-LOG KEPT-TURNS ClaudeCodeHost Doorbell SessionRuntime claude-code-handler elapsed-ms note-reused
+(import doeff_claude_code.handler [CLI-TIMING-LOG COST-TAIL-BYTES KEPT-TURNS ClaudeCodeHost Doorbell SessionRuntime claude-code-handler elapsed-ms note-reused
                                    recorded-cost-mark wait-until wall-elapsed-ms])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
@@ -410,9 +410,11 @@
   (assert (all (gfor end [one two three] (priced-like-one-stub-turn end))) (repr [one two three])))
 
 
-(deftest test-a-new-host-resuming-a-transcript-without-a-cost-line-gives-no-cost [tmp-path]
-  ;; 額の行が無い transcript(CLI が額を記す前の版・記す前に消えた会話)の、この host の知らない続き: 起点が分からないので額は None
-  ;; (0 から数えたことにしない)。次の手番は CLI が記した額から数える。
+(deftest test-a-new-host-resuming-a-transcript-without-a-cost-line-counts-from-zero [tmp-path]
+  ;; card ki-4b9be8d95d9f: 額の行が 1 つも無い transcript(額を記す前に消えた process の会話 — host の起き直しで切れた
+  ;; aj-667MHNMS57VHYM4NXBEPBWKHBD)の、この host の知らない続き。CLI は 0 から数える(実測 2.1.292: 偽の Messages API で、行を全部
+  ;; 消した transcript の続きの total_cost_usd はその呼びの分だけ。替え玉も同じ)ので、起点は 0 で手番の額はその手番の分。
+  ;; 失敗ケース = 行が無い時に起点を None にする形では、額も model ごとの使用量も出ない(UNKNOWN-MARK)。
   (val spec (spec-in tmp-path))
   (val sid (str (uuid.uuid4)))
   (val path (Path (transcript-path spec.home.config-dir (os.path.realpath spec.cwd) sid)))
@@ -421,10 +423,8 @@
   (val host (host-of STUB-COMMAND))
   (<- two (with-real-handler host (turn-until-down host (ResumeSession sid) spec "TWO")))
   (assert (isinstance two Completed) (repr two))
-  (assert (is two.cost-usd None) (repr two))
-  ;; model ごとの使用量も起点が分からないので出さず、訳を記す(card ki-1d986d4f0007)。
-  (assert (is two.model-usage None) (repr two))
-  (assert (= two.model-usage-gap ModelUsageGap.UNKNOWN-MARK) (repr two))
+  (assert (= two.cost-usd 0.25) (repr two))
+  (assert (priced-like-one-stub-turn two) (repr two))
   (val next-host (host-of STUB-COMMAND))
   (<- three (with-real-handler next-host (turn-until-down next-host (ResumeSession sid) spec "THREE")))
   (assert (= three.cost-usd 0.25) (repr three))
@@ -698,8 +698,9 @@
 
 
 (deftest test-the-recorded-cost-is-read-from-the-tail-and-widens-until-found [tmp-path]
-  ;; 費用の起点は transcript の末尾だけを読む(card ki-a264a73efcce)。最後の cost-state が最初の幅(64 KiB)に在ればそれ。末尾の 64 KiB に
-  ;; 無ければ幅を広げて探す(前の cost-state を見落とさない)。どの幅にも無ければ None。
+  ;; 費用の起点は transcript の末尾から読む(card ki-a264a73efcce)。最後の cost-state が最初の幅(64 KiB)に在ればそれ。末尾の 64 KiB に
+  ;; 無ければ幅を広げて探す(前の cost-state を見落とさない)。頭から全部読んでも行が無ければ 0(CLI が 0 から数える — card
+  ;; ki-4b9be8d95d9f)。file が無ければ None。
   (val spec (spec-in tmp-path))
   (val canonical (os.path.realpath spec.cwd))
   (val filler (* "{\"type\":\"assistant\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n" 2000))
@@ -715,7 +716,27 @@
   (<- far-mark (recorded-cost-mark spec.home canonical far))
   (assert (= far-mark (CostMark 0.5 None)) (repr far-mark))
   (<- none-mark (recorded-cost-mark spec.home canonical none))
-  (assert (is none-mark None) (repr none-mark)))
+  (assert (= none-mark (CostMark 0.0 #())) (repr none-mark))
+  (<- missing-mark (recorded-cost-mark spec.home canonical (str (uuid.uuid4))))
+  (assert (is missing-mark None) (repr missing-mark)))
+
+
+(deftest test-the-recorded-cost-beyond-the-widest-tail-is-read-from-the-whole-file [tmp-path]
+  ;; card ki-4b9be8d95d9f: 16 MiB の末尾に cost-state の行が無い transcript は、頭から全部を読んで「もっと前に在る」と「1 つも無い」を
+  ;; 分ける。失敗ケース = 末尾の幅だけで止める形では、どちらも None(続きの手番の額が出ない)。
+  (val spec (spec-in tmp-path))
+  (val canonical (os.path.realpath spec.cwd))
+  (val line "{\"type\":\"assistant\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n")
+  (val filler (* line (+ (// (get COST-TAIL-BYTES -2) (len line)) 2)))
+  (assert (> (len filler) (get COST-TAIL-BYTES -2)))
+  (val early (str (uuid.uuid4)))
+  (<- (written-transcript spec early (+ "{\"type\":\"cost-state\",\"totalCostUSD\":0.5}\n" filler)))
+  (val never (str (uuid.uuid4)))
+  (<- (written-transcript spec never filler))
+  (<- early-mark (recorded-cost-mark spec.home canonical early))
+  (assert (= early-mark (CostMark 0.5 None)) (repr early-mark))
+  (<- never-mark (recorded-cost-mark spec.home canonical never))
+  (assert (= never-mark (CostMark 0.0 #())) (repr never-mark)))
 
 
 (defk cost-mark-while-another-runs [#^ ClaudeSessionSpec spec #^ str sid #^ threading.Event gate]

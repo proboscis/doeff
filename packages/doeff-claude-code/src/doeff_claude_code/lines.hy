@@ -1110,13 +1110,17 @@
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 
-(defk recorded-cost [#^ str transcript-text]
-  {:pre [(: transcript-text str)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
+(defk recorded-cost [#^ str transcript-text #^ bool whole]
+  {:pre [(: transcript-text str) (: whole bool)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
   "--resume(--fork-session を含む)で起こした CLI が数え始める額と model ごとの使用量(CostMark)を、handler がその会話の transcript
    (jsonl の本文)から知るため: CLI は降りる時に会話の累積を {\"type\":\"cost-state\", \"totalCostUSD\": 数, \"modelUsage\": {…}} の行で
    記し、続きの process と枝の process は最後のその行から数え続ける(実測 2.1.283・#883・modelUsage は 2.1.292 — card ki-1d986d4f0007)。
-   読むのは最後の cost-state の行の totalCostUSD と modelUsage だけ。行が無い・最後の行の額が数でない(bool は数えない)なら None
-   (0 を発明しない — CLI の版で形が変わっても誤った額を出さない)。modelUsage の無い行は額だけの起点(models None)。"
+   cost-state の行が 1 つも無い transcript の続きは 0 から数える(実測 2.1.292 — card ki-4b9be8d95d9f: 偽の Messages API で、行を
+   全部消した transcript の続きの total_cost_usd は前の呼びを数えずその呼びの分だけ。本番の aj-667MHNMS57VHYM4NXBEPBWKHBD — host の
+   起き直しで額を記す前に消えた process の続き — の最初の cost-state の modelUsage も続きの呼びの和と 1 token も違わない)。
+   whole = 本文が transcript の頭から全部か。読むのは最後の cost-state の行の totalCostUSD と modelUsage だけ。行が無く whole なら
+   FRESH-MARK。行が無く末尾だけの本文(前に行が在りうる)・最後の行の額が数でない(bool は数えない)なら None(0 を発明しない — CLI の
+   版で形が変わっても誤った額を出さない)。modelUsage の無い行は額だけの起点(models None)。"
   (<- lines (jsonl-lines transcript-text))
   (val found (next (gfor line (reversed lines)
                          :if (in "\"cost-state\"" line)
@@ -1124,6 +1128,8 @@
                          :if (and (is-not record None) (= (.get record "type") "cost-state"))
                          record)
                    None))
+  (when (and (is found None) whole)
+    (return FRESH-MARK))
   (val total (if (is found None) None (number-at found "totalCostUSD")))
   (<- models (model-usage-of (or found {})))
   (if (is total None) None (CostMark total models)))
