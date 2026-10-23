@@ -1,6 +1,7 @@
 """Public API for generic doeff event effects and handlers."""
 
 from .effects import (
+    AckAnnouncement,
     Announce,
     Announcement,
     ArmedTimer,
@@ -70,6 +71,7 @@ from .handlers import (
 
 __all__ = [
     "GAP_NOTICE",
+    "AckAnnouncement",
     "Announce",
     "Announcement",
     "ArmTimer",

@@ -2,6 +2,7 @@
 
 from doeff_events.effects.files import CloseFileWatch, FilesChanged, FileWatch, NextFileChanges, WatchFiles, WatchRefused
 from doeff_events.effects.notices import (
+    AckAnnouncement,
     Announce,
     Announcement,
     AwaitBrokerBack,
@@ -52,6 +53,7 @@ __all__ = [
     "NextFileChanges",
     "WatchFiles",
     "WatchRefused",
+    "AckAnnouncement",
     "Announce",
     "Announcement",
     "ArmTimer",
