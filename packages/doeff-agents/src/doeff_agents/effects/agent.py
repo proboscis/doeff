@@ -583,22 +583,33 @@ class AgentSubagentCallUsageEvent:
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
     ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
-    Each id is the one a later AgentToolResultEvent's answer names (agora-redesign #3744)."""
+    Each id is the one a later AgentToolResultEvent's answer names (agora-redesign #3744).
+
+    ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent when the calls are a
+    subagent's (the line's top-level ``parent_tool_use_id``), ``None`` for the main conversation's own calls — so
+    an upper layer tells a subagent's work from the main turn's (agora card ki-b25d579bf48b)."""
 
     seq: int
     at: datetime
     tool_calls: tuple[ToolCall, ...]
+    parent_tool_use_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class AgentToolResultEvent:
     """Tool results went back to the agent: one ToolAnswer per result, in block order — ``id`` (the
     call it answers), ``text`` (the result's text), ``is_error`` and ``non_text_kinds`` (kinds of the
-    result's non-text blocks, e.g. images, that ``text`` leaves out) (agora-redesign #3744)."""
+    result's non-text blocks, e.g. images, that ``text`` leaves out) (agora-redesign #3744).
+
+    ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent when the results went back to
+    a subagent (the line's top-level ``parent_tool_use_id``), ``None`` when they went back to the main conversation
+    — an upper layer that ends the main turn on a tool's answer must not end it on a subagent's tool answer (agora
+    card ki-b25d579bf48b)."""
 
     seq: int
     at: datetime
     answers: tuple[ToolAnswer, ...]
+    parent_tool_use_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

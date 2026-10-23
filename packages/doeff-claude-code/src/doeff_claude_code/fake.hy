@@ -157,7 +157,15 @@
    hook の結果を記録して画面に出す事を模擬で確かめるため・
    lose-exit-code・lose-stderr = lose の手番で消える process の終了 code と stderr(#4207)。BackendLost の欄 exit-code・stderr-tail に
    載せる — stderr は本物の状態機械と同じ上限で切る(lines.hy の stderr-tail-within)。上の層が模擬で「CLI がなぜ降りたか」を受け取る
-   ため。None = 名乗らない(欄も None — 今の形)。lose の無い手番は断る。"
+   ため。None = 名乗らない(欄も None — 今の形)。lose の無い手番は断る・
+   subagent-tool-output = 道具(本体の会話の呼び)が subagent を走らせ、その subagent の中の道具が答えた出力(card
+   ki-b25d579bf48b)。偽の CLI は本体の呼びごとに、その結果の行の直前に subagent の中の道具の答えの行(ToolResult — 親 = その本体の
+   呼びの id・答えた呼びの id = <本体の呼びの id>-sub)を出す — 本物の CLI の stream-json が subagent の user の行を
+   parent_tool_use_id つきで出すのと同じ。上の層が subagent の中の道具の答えを本体の会話の答えと見分ける事を確かめるため。道具を
+   走らせる手番(tool-seconds が正)だけ。None = 出さない・
+   boundary-injections = 道具の結果の後、続けて呼ぶ次の道具の呼び(tool-repeats)の前に、読まれていない注入を読む(注入の started の
+   行を出す — 本物の CLI が道具の境界で足された入力を読み、同じ手番のまま続けるのと同じ。card ki-b25d579bf48b)。読んだ注入の
+   返事の本文は最後の本文に続ける。偽 = 今の形(本文を書き始める時と手番の終わりにだけ読む)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   ;; 同じ道具を続けて呼ぶ回数(どの呼びも tool-seconds 秒走る)。
@@ -205,6 +213,10 @@
   (setv #^ (| SubagentTranscript None) subagent-transcript None)
   ;; 要求の前に CLI が回す hook の行の筋書き(回さない = 空)。
   (setv #^ (get tuple #(HookNotice ...)) hooks #())
+  ;; 本体の道具の呼びが走らせた subagent の中の道具の答えの出力(出さない = None・道具を走らせる手番だけ)。
+  (setv #^ (| str None) subagent-tool-output None)
+  ;; 道具の境界(続けて呼ぶ次の呼びの前)で読まれていない注入を読むか。
+  (setv #^ bool boundary-injections False)
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
@@ -219,6 +231,8 @@
     (when (and (is-not self.subagent-transcript None) (!= self.subagent-transcript.parent-tool-use-id FAKE-TOOL-USE-ID))
       (raise (ValueError (.format "FakeReply の subagent-transcript の親は偽の手番の道具の呼び {}: {!r}" FAKE-TOOL-USE-ID
                                   self.subagent-transcript.parent-tool-use-id))))
+    (when (and (is-not self.subagent-tool-output None) (<= self.tool-seconds 0))
+      (raise (ValueError "FakeReply の subagent-tool-output は道具を走らせる手番だけ(tool-seconds が正 — subagent は道具の途中に走る)")))
     (when (< self.tool-repeats 1)
       (raise (ValueError (+ "FakeReply の tool-repeats は 1 以上(道具を続けて呼ぶ回数): " (str self.tool-repeats)))))
     (when (and (> self.tool-repeats 1) (<= self.tool-seconds 0))
@@ -288,6 +302,8 @@
     (setv #^ (| ModelRefusalHit None) self.model-refusal-hit None)
     ;; 報せを出して、まだ出していない subagent の transcript の読み(本番の handler と同じく次の result の行の直前に出す)。
     (setv #^ (| SubagentTranscript None) self.subagent-due None)
+    ;; 道具の境界で読んだ注入の返事の本文(返事の boundary-injections — 最後の本文に続ける)。
+    (setv #^ (get tuple #(str ...)) self.boundary-extra #())
     ;; fake の手番の本体の API の呼び(返事 1 つ = 呼び 1 つ): call-id = 本体の assistant の行が名乗る呼びの id / call-usage = その呼びの
     ;; 行が名乗った usage で、まだ閉じていない物(閉じた・名乗っていなければ None)— 本番の handler と同じく、呼びの最終の usage
     ;; (CallClosed)を手番の終わりの行の前に出すため(card ki-290ec664737d)。
@@ -482,7 +498,7 @@
     (<- notice HookNotice (stop-hook-notice-of rejection))
     (<- (emit-all session turn [(AssistantMessage :text rejection.answer) notice (StopHookFeedback :reason rejection.reason)])))
   (<- extra (read-injections world session turn))
-  (setv turn.text (.join " " (+ #(turn.reply.text) extra))
+  (setv turn.text (.join " " (+ #(turn.reply.text) turn.boundary-extra extra))
         turn.phase "text"
         turn.due-at (+ now (* DELTA-SECONDS turn.reply.deltas)))
   None)
@@ -677,12 +693,22 @@
       (<- ended (task-lines-of turn.reply turn.tools-run False))
       (<- answered (repeated-id FAKE-TOOL-USE-ID turn.tools-run))
       (setv turn.subagent-due turn.reply.subagent-transcript)
-      (<- (emit-all session turn (+ ended [(ToolResult :answers #((ToolAnswer :id answered :text turn.reply.tool-output
-                                                                               :is-error turn.reply.tool-error)))]))))
+      ;; subagent の中の道具の答え(返事の subagent-tool-output)は、本体の呼びの結果の前に、親 = 本体の呼びの行で出す。
+      (val inner (if (is turn.reply.subagent-tool-output None)
+                     []
+                     [(ToolResult :answers #((ToolAnswer :id (.format "{}-sub" answered) :text turn.reply.subagent-tool-output
+                                                         :is-error False))
+                                  :parent-tool-use-id answered)]))
+      (<- (emit-all session turn (+ ended inner [(ToolResult :answers #((ToolAnswer :id answered :text turn.reply.tool-output
+                                                                                     :is-error turn.reply.tool-error)))]))))
     (cond
-      ;; 返事の tool-repeats に届くまで、結果の直後に同じ道具を続けて呼ぶ(相は tool のまま・期限は今から tool-seconds 後)。
+      ;; 返事の tool-repeats に届くまで、結果の直後に同じ道具を続けて呼ぶ(相は tool のまま・期限は今から tool-seconds 後)。返事の
+      ;; boundary-injections なら、次の呼びの前に読まれていない注入を読む(本物の CLI の道具の境界)。
       (and (= turn.phase "tool") (< turn.tools-run turn.reply.tool-repeats))
-        (<- (call-tool session turn now))
+        (do (when turn.reply.boundary-injections
+              (<- extra (read-injections world session turn))
+              (setv turn.boundary-extra (+ turn.boundary-extra extra)))
+            (<- (call-tool session turn now)))
       (scripted-end? turn.reply)
         (<- (end-scripted session turn))
       True

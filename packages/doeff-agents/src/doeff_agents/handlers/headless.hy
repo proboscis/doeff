@@ -39,7 +39,9 @@
 ;;;   LaunchFailed の exit-code・stderr-tail → AgentLaunchError.exit_code・stderr_tail(stderr の末尾は層 2 と同じ上限 stderr-tail-within)。
 ;;;                                      待たせた入力の手番を起こせなかった時は AgentTurnFailed の同じ欄へ(start-failure)
 ;;;   AssistantMessage.tool-calls / ToolResult.answers → AgentToolUseEvent.tool_calls / AgentToolResultEvent.answers(道具の呼びの命令
-;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
+;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)。行の
+;;;                                      parent-tool-use-id(subagent の行なら親の呼びの id・本体の会話は None)も同じ名の欄へ運ぶ —
+;;;                                      上の層が subagent の中の道具の呼び・答えを本体の会話の物と見分けるため(agora card ki-b25d579bf48b)
 ;;;   StopHookFeedback.reason          → AgentStopHookFeedbackEvent.reason(Stop hook が答えを差し戻した事実 — 上の層が差し戻された
 ;;;                                      答えの本文を見分けるため・agora-redesign #4020)
 ;;;   HookNotice(段階 RESPONSE)       → AgentHookEvent(CLI が回した hook の応答 — 行の欄 event・name・hook-id・stdout・stderr・output・
@@ -274,7 +276,8 @@
   (cond
     (isinstance kind AssistantMessage)
       (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
-         (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] [])
+         (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls
+                                                              :parent-tool-use-id kind.parent-tool-use-id))] [])
          (run (call-usage-builders-of kind at)))
     ;; 層 2 が呼びの始まりと終わりから組んだ呼びの最終の usage(agora card ki-290ec664737d)。
     (isinstance kind CallClosed)
@@ -297,7 +300,7 @@
     (and (isinstance kind PartialMessage) (= kind.delta DeltaKind.TOOL-INPUT))
       [(fn [seq] (AgentToolInputDeltaEvent :seq seq :at at :text kind.tool-input-delta))]
     (isinstance kind ToolResult)
-      [(fn [seq] (AgentToolResultEvent :seq seq :at at :answers kind.answers))]
+      [(fn [seq] (AgentToolResultEvent :seq seq :at at :answers kind.answers :parent-tool-use-id kind.parent-tool-use-id))]
     ;; Stop hook が答えを差し戻した(理由つき)— 上の層が差し戻された答えの本文を見分けて画面から落とすため(agora-redesign #4020)。
     (isinstance kind StopHookFeedback)
       [(fn [seq] (AgentStopHookFeedbackEvent :seq seq :at at :reason kind.reason))]

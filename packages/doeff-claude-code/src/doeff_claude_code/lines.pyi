@@ -83,6 +83,7 @@ class ToolAnswer:
 @dataclass(frozen=True)
 class ToolResult:
     answers: tuple[ToolAnswer, ...]
+    parent_tool_use_id: str | None = None
 
 class DeltaKind(StrEnum):
     TEXT = 'text'
