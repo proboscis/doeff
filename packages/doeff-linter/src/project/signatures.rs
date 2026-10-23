@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::position::{LineIndex, Range};
 
+use super::blob_chunks::{ChunkedFacts, Lookup};
 use super::facts::form_bindings;
 use super::names::module_of;
 use super::smells::{live, Hy, Scope};
@@ -351,11 +352,57 @@ impl KeyedFacts {
 /// disk の file 1 つの事実(位置の path は空 — cache は作業木の絶対 path を置かず、読んだ後で今の根の path を付ける)。`(def` を持たない file は無い。
 fn disk_facts(rel: &str, path: &Path) -> Option<KeyedFacts> {
     let source = std::fs::read_to_string(path).ok()?;
+    source_facts(rel, &source)
+}
+
+/// 中身 `source` から file 1 つの事実を作る(位置の path は空 — 読んだ後で今の根の path を付ける)。`(def` を綴らない file は事実が無い。
+fn source_facts(rel: &str, source: &str) -> Option<KeyedFacts> {
     source.contains("(def").then(|| {
-        let mut keyed = KeyedFacts::of(rel, file_facts(Path::new(""), rel, &source));
+        let mut keyed = KeyedFacts::of(rel, file_facts(Path::new(""), rel, source));
         keyed.facts.set_path("");
         keyed
     })
+}
+
+/// 塊の表の 1 行 = (事実を作った時の根からの path・事実)。事実は path でも決まる(module の名・推論の鍵)ので、同じ blob が別の path に在る時は行を使わない。
+type BlobRow = (String, Option<KeyedFacts>);
+
+/// `files`(根からの path・場所)の事実を、変わっていない file は git の blob の id で引いて中身を読まずに返す(`ChunkedFacts` — card ki-9e7e85407b71)。
+/// 1 file の実行は届く module の file を 1 つずつ開いて hash を取っていた(sim の test で数百 file・冷えた作業木で CPU 9 秒)。
+/// 引けない file(表に無い・index と外れた・path が違う)は中身を読んで作る。`memory` が None の時は中身の hash で引く置き場を使う。
+fn named_facts(root: &Path, memory: Option<&ChunkedFacts<BlobRow>>, files: &[(String, std::path::PathBuf)]) -> Vec<KeyedFacts> {
+    use rayon::prelude::*;
+    let Some(memory) = memory else {
+        return super::facts_cache::per_file_compact_named_bound(root, "signature-facts", files, disk_facts, |keyed, rel, _path| {
+            keyed.facts.set_path(&root.join(rel).to_string_lossy())
+        });
+    };
+    let found: Vec<Option<KeyedFacts>> = files
+        .par_iter()
+        .map(|(rel, path)| {
+            let (learn, meta) = match memory.lookup_path(rel, path) {
+                Some((Lookup::Known((made_at, value)), _)) if made_at == *rel => return value,
+                Some((Lookup::Unknown(oid), meta)) => (Some(oid), meta),
+                _ => (None, None),
+            };
+            let source = std::fs::read_to_string(path).ok()?;
+            let value = source_facts(rel, &source);
+            if let Some(oid) = learn {
+                memory.learn_read(rel, oid, path, meta.as_ref(), source.as_bytes(), (rel.clone(), value.clone()));
+            }
+            value
+        })
+        .collect();
+    files
+        .iter()
+        .zip(found)
+        .filter_map(|((rel, _), value)| {
+            value.map(|mut keyed| {
+                keyed.facts.set_path(&root.join(rel).to_string_lossy());
+                keyed
+            })
+        })
+        .collect()
 }
 
 impl TypeSyntax {
@@ -462,6 +509,7 @@ impl World {
         wanted.extend(own.facts.referenced_modules(&known));
         let mut facts = vec![own];
         let mut loaded: BTreeSet<String> = BTreeSet::new();
+        let memory = ChunkedFacts::<BlobRow>::open(root, "signature-facts-blob", |rel| super::hy_files::walks_to(&super::hy_files::HY_WALK, rel));
         crate::timing::timed("effect-world.facts", || loop {
             let next: BTreeSet<String> = wanted.difference(&loaded).cloned().collect();
             if next.is_empty() {
@@ -469,14 +517,18 @@ impl World {
             }
             loaded.extend(next.iter().cloned());
             let files = super::named_modules::files_of(&known, &next, Some(rel));
-            let batch = super::facts_cache::per_file_compact_named_bound(root, "signature-facts", &files, disk_facts, |keyed, rel, _path| {
-                keyed.facts.set_path(&root.join(rel).to_string_lossy())
-            });
+            let batch = named_facts(root, memory.as_ref(), &files);
             for keyed in &batch {
                 wanted.extend(keyed.facts.referenced_modules(&known));
             }
             facts.extend(batch);
         });
+        if let Some(memory) = &memory {
+            let (chunks, missed) = memory.reads();
+            crate::timing::count("effect-world.facts", "chunks", chunks);
+            crate::timing::count("effect-world.facts", "missed", missed);
+            crate::timing::timed("effect-world.remember", || memory.finish());
+        }
         let mut world = World::default();
         for KeyedFacts { facts: file, .. } in facts {
             world.types.extend(file.types);
