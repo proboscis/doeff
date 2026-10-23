@@ -271,6 +271,7 @@
   (setv #^ (| int None) last-exit-code None)
   (setv #^ (| JobStop None) stopping None)
   ;; 続けて exit code が 0 でなく終わった回数(失敗の数え方・状態の表示に使う)。exit code 0 の終わりは失敗ではないので 0 に戻す。
+  ;; stable-run-ms 以上動いた process を入れ替えで名から外した時も 0 に戻す(unexpected-exits も — 報告の境と同じ・card ki-3f4bbc55733a)。
   (setv #^ int failures 0)
   ;; 最後に起動した時刻(十分長く動いた後の終了は数え直す)。
   (setv #^ (| int None) last-start-ms None)
