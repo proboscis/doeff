@@ -33,29 +33,79 @@ const SERIAL_BELOW: usize = 4;
 
 /// 待ちを重ねる thread は、**待ちが disk の待ちだと見えた時だけ**増やす。page cache から読めている間(1 件が数十マイクロ秒)は、thread を 128 本起こしても
 /// 仕事は速くならず、起動と待ち合わせの CPU だけが増える(混んだ機体〔load 80〕で repo の Hy 4,144 file を page cache から読むのに、128 本で CPU 7〜14 秒・
-/// 1 本で 0.4〜0.8 秒 — agora-redesign #1022)。そこで `WARM_READERS` 本で始め、1 件が `SLOW_ITEM` 以上かかる回が `SLOW_IN_ROW` 件続いたら(冷えた disk の
-/// 待ち。thread が止められた 1 回だけの遅れではなく、続く遅れ)、呼び手が決めた本数まで 1 度だけ増やす。冷えた作業木では最初の数件で増えるので、重なる待ちの数は変わらない。
+/// 1 本で 0.4〜0.8 秒 — agora-redesign #1022)。そこで `WARM_READERS` 本で始め、disk を読んだ仕事が `SLOW_IN_ROW` 件になったら、呼び手が決めた本数まで
+/// 1 度だけ増やす。冷えた作業木では最初の数件で増えるので、重なる待ちの数は変わらない。
+///
+/// disk を読んだかは、その thread が頼んだ block の読みの数(`getrusage` の RUSAGE_THREAD・ru_inblock — `thread_reads`)で見る: page cache から読めた仕事は
+/// 0 のまま、冷えた dir・inode・中身の読みは増える(2026-10-23 の実測: 冷えた dir の読み 1 回で 8〜544・inode の先読みが効いた後の stat は 0)。前は 1 件の時間
+/// (`SLOW_ITEM` 以上が `SLOW_IN_ROW` 件続く)で見ていたが、負荷 100 を越える Pod では CPU の順番待ちだけで 1 件が 500 マイクロ秒を越え、温まった作業木でも
+/// 128 本へ増えて、repo の Hy を集める段が sys の CPU を 0.6〜4.9 秒使っていた(card ki-40c8ca380713)。数を読めない機体だけ時間で見る。
 const WARM_READERS: usize = 4;
 const SLOW_ITEM: Duration = Duration::from_micros(500);
 const SLOW_IN_ROW: usize = 3;
 
-/// 1 件ごとの時間から、待ちが disk の待ちかを見分ける(全部の thread で数える)。
+/// この thread がこれまでに頼んだ block の読みの数(512 byte 単位 — `getrusage(RUSAGE_THREAD)` の ru_inblock)。読めない機体では None。
+#[cfg(target_os = "linux")]
+fn thread_reads() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: getrusage は渡した rusage を書くだけで、ほかの memory に触らない。0 が返った時だけ書かれた値を読む(zeroed で全欄が初期化済みでもある)。
+    let done = unsafe { libc::getrusage(libc::RUSAGE_THREAD, usage.as_mut_ptr()) } == 0;
+    // SAFETY: 上の zeroed で全 byte が初期化されていて、rusage は全欄が整数の型。
+    done.then(|| unsafe { usage.assume_init() }.ru_inblock).and_then(|reads| u64::try_from(reads).ok())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn thread_reads() -> Option<u64> {
+    None
+}
+
+/// 仕事 1 つを始めた時の印(時刻と、その thread の block の読みの数)。
+struct Began {
+    at: Instant,
+    reads: Option<u64>,
+}
+
+/// 仕事ごとの印から、待ちが disk の待ちかを見分ける(全部の thread で数える)。
 struct Widen {
     slow_item: Duration,
     slow_in_row: usize,
     seen_in_row: AtomicUsize,
+    /// disk を読んだ仕事の数(`by_disk` の時)。
+    seen_reading: AtomicUsize,
+    /// thread の block の読みの数で見分けるか(偽なら 1 件の時間で見分ける)。
+    by_disk: bool,
     widened: AtomicBool,
 }
 
 impl Widen {
-    /// 決まりの値(`SLOW_ITEM`・`SLOW_IN_ROW`)で見分ける。
+    /// 決まりの値で見分ける — thread の block の読みの数を読める機体ではそれで、読めなければ時間(`SLOW_ITEM`・`SLOW_IN_ROW`)で。
     fn standard() -> Self {
-        Widen::new(SLOW_ITEM, SLOW_IN_ROW)
+        Widen { by_disk: thread_reads().is_some(), ..Widen::new(SLOW_ITEM, SLOW_IN_ROW) }
     }
 
     /// 1 件が `slow_item` 以上かかる回が `slow_in_row` 件続いたら増やす時と見る(検が時計に頼らない値を差せるよう、決まりの値と分ける)。
     fn new(slow_item: Duration, slow_in_row: usize) -> Self {
-        Widen { slow_item, slow_in_row, seen_in_row: AtomicUsize::new(0), widened: AtomicBool::new(false) }
+        Widen {
+            slow_item,
+            slow_in_row,
+            seen_in_row: AtomicUsize::new(0),
+            seen_reading: AtomicUsize::new(0),
+            by_disk: false,
+            widened: AtomicBool::new(false),
+        }
+    }
+
+    /// 仕事 1 つを始める時の印。
+    fn begin(&self) -> Began {
+        Began { at: Instant::now(), reads: if self.by_disk { thread_reads() } else { None } }
+    }
+
+    /// `began` で始めた仕事が済んだ。増やす時の最初の 1 回だけ true。
+    fn end(&self, began: Began) -> bool {
+        match began.reads.zip(thread_reads()) {
+            Some((before, after)) if self.by_disk => self.observe_reading(after > before),
+            _ => self.observe(began.at.elapsed()),
+        }
     }
 
     /// 仕事 1 つが `took` かかった。遅い仕事が続いた最初の 1 回だけ true(増やす時)。
@@ -65,6 +115,15 @@ impl Widen {
             return false;
         }
         if self.seen_in_row.fetch_add(1, Ordering::Relaxed) + 1 < self.slow_in_row {
+            return false;
+        }
+        !self.widened.swap(true, Ordering::Relaxed)
+    }
+
+    /// 仕事 1 つが disk を読んだか(`read`)。disk を読んだ仕事が `slow_in_row` 件になった最初の 1 回だけ true。続いているかは問わない — 読みの数は
+    /// CPU の順番待ちで増えないので、1 回だけの遅れを外す必要が無い(冷えた dir の後の stat は inode の先読みで読まないので、続けて数えると冷えた歩きでも途切れる)。
+    fn observe_reading(&self, read: bool) -> bool {
+        if !read || self.seen_reading.fetch_add(1, Ordering::Relaxed) + 1 < self.slow_in_row {
             return false;
         }
         !self.widened.swap(true, Ordering::Relaxed)
@@ -106,6 +165,9 @@ where
 {
     #[cfg(test)]
     let watch = watch::current();
+    // 検の観測(`watch`)は sleep で disk の待ちを模すので、disk の読みの数でなく時間で見分ける(sleep は disk を読まない)。
+    #[cfg(test)]
+    let widen = if watch.is_some() { Widen { by_disk: false, ..widen } } else { widen };
     let run = |item: &X| -> R {
         #[cfg(test)]
         if let Some(watch) = &watch {
@@ -151,10 +213,10 @@ impl<'a, X: Sync, R: Send> Spread<'a, X, R> {
         loop {
             let index = self.next.fetch_add(1, Ordering::Relaxed);
             let Some(item) = self.items.get(index) else { break };
-            let began = Instant::now();
+            let began = self.widen.begin();
             let result = (self.run)(item);
             *self.slots[index].lock().expect("fan_out の結果の置き場") = Some(result);
-            if self.widen.observe(began.elapsed()) {
+            if self.widen.end(began) {
                 self.add_readers(scope, self.readers - self.first);
             }
         }
@@ -246,7 +308,7 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
             };
             let Some(task) = task else { break };
             let in_step = InStep { queue: &self.queue };
-            let began = Instant::now();
+            let began = self.widen.begin();
             let (more, result) = (self.step)(task);
             mine.extend(result);
             if !more.is_empty() {
@@ -258,7 +320,7 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
                 }
             }
             drop(in_step);
-            if self.widen.observe(began.elapsed()) {
+            if self.widen.end(began) {
                 self.add_readers(scope, self.readers - self.first);
             }
         }
@@ -357,10 +419,15 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 200);
     }
 
+    /// 時間で見分ける Widen — sleep で disk の待ちを模す test のため(sleep は disk を読まないので、決まりの見分け方では増えない)。
+    fn by_time() -> Widen {
+        Widen::new(SLOW_ITEM, SLOW_IN_ROW)
+    }
+
     #[test]
     fn it_overlaps_the_waits_of_many_items() {
         let items: Vec<usize> = (0..64).collect();
-        let (out, peak) = watching(Duration::from_millis(20), || fan_out(&items, |n| *n));
+        let (out, peak) = watching(Duration::from_millis(20), || fan_out_tuned(READERS, by_time(), &items, |n| *n));
         assert_eq!(out, items);
         assert!(peak >= 8, "待ちが重なっていない(同時に進んだ最大 {peak} 件 — 冷えた disk の待ちが足し算になる)");
         assert!(peak <= READERS, "起こす thread の数が上限 {READERS} を越えた({peak} 件)");
@@ -369,7 +436,7 @@ mod tests {
     #[test]
     fn the_wide_form_overlaps_more_waits_than_the_plain_form_and_stays_within_its_limit() {
         let items: Vec<usize> = (0..400).collect();
-        let (out, peak) = watching(Duration::from_millis(20), || fan_out_wide(&items, |n| *n));
+        let (out, peak) = watching(Duration::from_millis(20), || fan_out_tuned(WIDE_READERS, by_time(), &items, |n| *n));
         assert_eq!(out, items);
         assert!(peak > READERS, "待ちが READERS より広く重なっていない(同時に進んだ最大 {peak} 件)");
         assert!(peak <= WIDE_READERS, "起こす thread の数が上限 {WIDE_READERS} を越えた({peak} 件)");
@@ -380,7 +447,7 @@ mod tests {
     fn a_pipeline_runs_every_task_once_and_overlaps_the_waits_across_levels() {
         let in_flight = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
-        let results = pipeline(WIDE_READERS, vec![(0usize, 0usize)], |(depth, id)| {
+        let results = pipeline_tuned(WIDE_READERS, by_time(), vec![(0usize, 0usize)], |(depth, id)| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(3));
@@ -444,6 +511,48 @@ mod tests {
         assert!(!widen.observe(Duration::from_millis(5)));
         assert!(widen.observe(Duration::from_millis(5)), "続けて 3 件遅ければ増やす");
         assert!(!widen.observe(Duration::from_millis(5)), "増やすのは 1 度だけ");
+    }
+
+    /// 決まりの見分け方では、disk を読まない仕事は 1 件が遅くても(CPU の順番待ち・lock の待ち)増やさない — 負荷 100 を越える Pod で、温まった作業木の
+    /// repo の Hy の読みが 128 本へ増えて sys の CPU を 0.6〜4.9 秒使っていた(card ki-40c8ca380713)。thread の読みの数を読めない機体では確かめない。
+    #[test]
+    fn slow_items_that_read_nothing_from_disk_stay_within_the_warm_readers() {
+        if thread_reads().is_none() {
+            return;
+        }
+        let items: Vec<usize> = (0..200).collect();
+        let used = threads_used(&items, Widen::standard(), Duration::from_millis(2));
+        assert!(used <= WARM_READERS, "disk を読まない遅い仕事で {used} 本の thread が動いた(上限 {WARM_READERS})");
+        let seen = Mutex::new(std::collections::HashSet::new());
+        pipeline_tuned(WIDE_READERS, Widen::standard(), vec![(0usize, 0usize)], |(depth, id)| {
+            std::thread::sleep(Duration::from_millis(1));
+            seen.lock().unwrap().insert(std::thread::current().id());
+            ((if depth < 2 { (0..10).map(|child| (depth + 1, id * 10 + child)).collect() } else { Vec::new() }), Some(()))
+        });
+        let used = seen.into_inner().unwrap().len();
+        assert!(used <= WARM_READERS, "disk を読まない遅い歩きで {used} 本の thread が動いた(上限 {WARM_READERS})");
+    }
+
+    /// disk を読んだ仕事が `slow_in_row` 件になったら 1 度だけ増やす — 間に disk を読まない仕事が挟まっても数え直さない(冷えた dir の後の stat は
+    /// inode の先読みで disk を読まないので、続けて数えると冷えた歩きでも増えない)。
+    #[test]
+    fn items_that_read_from_disk_widen_once_even_with_cached_items_between() {
+        let widen = Widen { by_disk: true, ..Widen::new(Duration::from_secs(3600), 3) };
+        assert!(!widen.observe_reading(true));
+        assert!(!widen.observe_reading(false));
+        assert!(!widen.observe_reading(false));
+        assert!(!widen.observe_reading(true));
+        assert!(!widen.observe_reading(false));
+        assert!(widen.observe_reading(true), "disk を読んだ 3 件目で増やす");
+        assert!(!widen.observe_reading(true), "増やすのは 1 度だけ");
+    }
+
+    /// thread の読みの数は、読める機体では thread ごとに減らない数。
+    #[test]
+    fn the_reads_of_a_thread_never_go_down() {
+        let Some(first) = thread_reads() else { return };
+        let _ = std::fs::read(std::env::current_exe().unwrap());
+        assert!(thread_reads().is_some_and(|later| later >= first));
     }
 
     /// 仕事が仕事を生む形も、速い間は動く thread が少なく、遅い待ちが続けば増える。

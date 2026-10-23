@@ -339,6 +339,7 @@ dependencies = [
  "clap",
  "colored",
  "doeff-indexer",
+ "libc",
  "memchr",
  "mimalloc",
  "once_cell",
