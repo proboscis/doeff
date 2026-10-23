@@ -74,13 +74,13 @@ struct Scan {
 
 /// 作業木の git の index と、blob の id で引く覚えの置き場(card ki-d56ba76422ba)— 冷えた作業木で、別の作業木が読んだ file の中身を読み直さない。
 struct BlobScans {
-    index: GitIndex,
+    index: std::sync::Arc<GitIndex>,
     facts: BlobFacts,
 }
 
 impl BlobScans {
     fn open(root: &Path) -> Option<BlobScans> {
-        Some(BlobScans { facts: BlobFacts::open(root, "blob-spell")?, index: GitIndex::read(root)? })
+        Some(BlobScans { facts: BlobFacts::open(root, "blob-spell")?, index: GitIndex::of(root)? })
     }
 }
 
