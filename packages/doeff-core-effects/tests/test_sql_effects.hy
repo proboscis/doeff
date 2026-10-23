@@ -13,16 +13,19 @@
 ;;;     (sqlite と実 PG)。pipeline の中で文が落ちた接続を、次の transaction が同じ接続のまま使える(pooled)。pipeline mode の無い環境では
 ;;;     接続の貸し出しを作る所で落ちる。
 (require doeff-hy.macros [deftest defk deff <- val var with-handler])
+(require doeff-hy.record [defrecord])
 (import os)
 (import json)
 (import importlib.util)
 (import threading)
+(import queue)
 (import time)
 (import socket)
 (import http.server)
+(import urllib.parse)
 (import collections.abc [Callable])
 (import concurrent.futures [Future ThreadPoolExecutor])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import decimal [Decimal])
 (import doeff [Program])
 (import doeff_core_effects.handlers [state])
@@ -37,8 +40,10 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn Gather Cancel TaskCancelledError])
 (import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
-                                                clickhouse-insert-request clickhouse-rows clickhouse-written-rows clickhouse-failure
-                                                clickhouse-schema-statements ClickHouseDatabase ClickHouseResponse ClickHouseParam])
+                                                clickhouse-insert-request clickhouse-kill-request clickhouse-waits clickhouse-answer
+                                                clickhouse-rows clickhouse-written-rows clickhouse-failure clickhouse-schema-statements
+                                                ClickHouseDatabase ClickHouseWaits ClickHouseRequest ClickHouseResponse ClickHouseParam
+                                                WAIT-MARGIN-SECONDS KILL-GRACE-SECONDS USER-AGENT])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 (import pytest)
 
@@ -609,7 +614,7 @@
           statements))
 
 
-(val CLICKHOUSE (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "secret" :timeout 2.0))
+(val CLICKHOUSE (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "secret" :deadline 2.0))
 
 
 (deftest test-clickhouse-rewrites-to-typed-params
@@ -623,11 +628,60 @@
           bound.params)
   (<- request (clickhouse-query-request CLICKHOUSE "SELECT :i" #((SqlParam :name "i" :value 7))))
   (assert (= request.url (+ "http://127.0.0.1:9/?database=archive&default_format=JSONCompactEachRow"
-                            "&output_format_json_quote_64bit_integers=0&wait_end_of_query=1&param_i=7"))
+                            "&output_format_json_quote_64bit_integers=0&wait_end_of_query=1&max_execution_time=2"
+                            "&timeout_overflow_mode=throw&query_id=" request.query-id "&param_i=7"))
           request.url)
   (assert (= request.body b"SELECT {i:Int64}"))
   (assert (= (lfor h request.headers #(h.name h.value)) [#("X-ClickHouse-User" "reader") #("X-ClickHouse-Key" "secret")]))
   (assert (not-in "secret" (repr CLICKHOUSE)) "資格が repr に出た"))
+
+
+(defk url-settings [url]
+  {:pre [(: url str)] :post [(: % list)]
+   :tags {:context "sql" :role "program"}}
+  "要求の URL に載った設定の名と値の組を読むため(期限と query_id の検)。"
+  (urllib.parse.parse-qsl (. (urllib.parse.urlsplit url) query)))
+
+
+(deftest test-clickhouse-waits-outlast-the-server-deadline
+  ;; 失敗ケース(card ki-42d653b1470f): 宣言が client の待ち(timeout 30 秒)だけを持ち、server へ期限を送らなかった。遅い問い合わせの
+  ;; 途中で client が接続を捨て、ClickHouse 24.11 は離れた接続へ答えを書く所で落ちた。宣言は期限だけを持ち、待ちは期限から導く。
+  (try
+    (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "" :timeout 30.0)
+    (assert False "client の待ちだけの宣言が作れた")
+    (except [TypeError]))
+  (for [bad #(0 0.0 -1.0 (float "inf") (float "nan") True)]
+    (try
+      (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "" :deadline bad)
+      (assert False (.format "期限 {!r} の宣言が作れた(0 は ClickHouse の期限なし)" bad))
+      (except [ValueError])))
+  (for [#(deadline wait) #(#(30.0 30.0) #(30.0 29.0) #(0.0 1.0))]
+    (try
+      (ClickHouseWaits :deadline deadline :wait wait :grace 1.0)
+      (assert False (.format "待ち {} が期限 {} 以下の組が作れた" wait deadline))
+      (except [ValueError])))
+  (<- waits (clickhouse-waits CLICKHOUSE))
+  (assert (= waits (ClickHouseWaits :deadline 2.0 :wait (+ 2.0 WAIT-MARGIN-SECONDS) :grace KILL-GRACE-SECONDS)) waits)
+  (assert (> waits.wait waits.deadline) waits)
+  ;; 問い合わせ・投入・表の宣言の DDL のどの要求も、期限と、要求ごとに違う query_id を送る。
+  (<- query (clickhouse-query-request CLICKHOUSE "SELECT 1" #()))
+  (<- again (clickhouse-query-request CLICKHOUSE "SELECT 1" #()))
+  (<- insert (clickhouse-insert-request CLICKHOUSE "events" #("id") #(#(1))))
+  (for [request #(query again insert)]
+    (val settings (dict (! (url-settings request.url))))
+    (assert (= (get settings "max_execution_time") "2") settings)
+    (assert (= (get settings "timeout_overflow_mode") "throw") settings)
+    (assert (= (get settings "query_id") request.query-id) #(settings request.query-id))
+    (assert (= request.waits waits) request.waits))
+  (assert (!= query.query-id again.query-id) "query_id が要求の間で重なった")
+  (<- kill (clickhouse-kill-request query))
+  (assert (= kill.url "http://127.0.0.1:9/") kill.url)
+  (assert (= kill.body (.encode (.format "KILL QUERY WHERE query_id = '{}' ASYNC" query.query-id) "ascii")) kill.body)
+  (assert (= kill.headers query.headers) kill.headers)
+  (try
+    (<- (clickhouse-kill-request (replace query :query-id "x' OR 1 = 1 --")))
+    (assert False "形の外の query_id が KILL QUERY の文に載った")
+    (except [ValueError])))
 
 
 (deftest test-clickhouse-insert-is-one-json-body
@@ -732,13 +786,163 @@
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (try
     (val declared (ClickHouseDatabase :name "cold" :url (.format "http://127.0.0.1:{}" (get server.server-address 1)) :database "default"
-                                      :user "default" :password "" :timeout 10.0))
+                                      :user "default" :password "" :deadline 10.0))
     (<- answer (with-handler [(clickhouse-http-sql-handler #(declared))] (slow-clickhouse-beside-ticks)))
     (finally (.shutdown server) (.server-close server)))
   (val seen (get answer 0))
   (val finished (get answer 1))
   ;; 刻み 5 つ(0.25 秒)は 1 秒の問い合わせが終わる前に終わる(塞がれていれば全部が終わりの後)。
   (assert (< (get seen -1) finished) #(seen finished)))
+
+
+(defrecord Received
+  "偽の ClickHouse が受けた POST 1 本(kind = query か kill・query-id / deadline / overflow = URL の query_id・max_execution_time・
+   timeout_overflow_mode・body = 本文・agent = User-Agent・at = 受けた拍の単調時計)。"
+  (#^ str kind)
+  (#^ (| str None) query-id)
+  (#^ (| str None) deadline)
+  (#^ (| str None) overflow)
+  (#^ bytes body)
+  (#^ (| str None) agent)
+  (#^ float at))
+
+
+(defclass FakeClickHouse [http.server.BaseHTTPRequestHandler]
+  "期限と KILL QUERY を見る偽の ClickHouse の HTTP の口(server の欄 mode と cancels が振る舞いを決める)。
+     mode \"deadline\" = 期限を守る server: 問い合わせを URL の max_execution_time の秒より少し長く走らせ(server は期限を処理の区切りで
+                       しか読まない)、期限で断った答え(500・code 159 TIMEOUT_EXCEEDED)を返す。
+     mode \"stuck\"    = 止まった server: 問い合わせには KILL QUERY が来るまで答えず、KILL を受けたら(cancels が真の時)名指された問い合わせ
+                       へ取り消しの答え(500・code 394 QUERY_WAS_CANCELLED)を返す。cancels が偽なら KILL を受けても問い合わせは止まらない。
+   受けた POST を Received にして server の received(thread をまたぐ queue)へ入れる。"
+  (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
+    {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
+    "受けた POST を記し、mode の振る舞いで答えるため。"
+    (setv settings (dict (urllib.parse.parse-qsl (. (urllib.parse.urlsplit self.path) query)))
+          body (.read self.rfile (int (.get self.headers "Content-Length" "0")))
+          kind (if (.startswith body b"KILL QUERY") "kill" "query"))
+    (.put self.server.received (Received :kind kind :query-id (.get settings "query_id") :deadline (.get settings "max_execution_time")
+                                         :overflow (.get settings "timeout_overflow_mode") :body body
+                                         :agent (.get self.headers "User-Agent") :at (time.monotonic)))
+    (setv failure (cond
+                    (= kind "kill") (do (when self.server.cancels (.set self.server.killed)) None)
+                    (= self.server.mode "deadline")
+                      (do (time.sleep (+ (float (get settings "max_execution_time")) 0.3))
+                          #("159" b"Code: 159. DB::Exception: Timeout exceeded: elapsed 1.3 seconds, maximum: 1. (TIMEOUT_EXCEEDED)\n"))
+                    (.wait self.server.killed 10.0) #("394" b"Code: 394. DB::Exception: Query was cancelled. (QUERY_WAS_CANCELLED)\n")
+                    True None))
+    (cond
+      (= kind "kill") (do (.send-response self 200) (.send-header self "Content-Length" "0") (.end-headers self))
+      (is-not failure None) (do (.send-response self 500)
+                                (.send-header self "X-ClickHouse-Exception-Code" (get failure 0))
+                                (.send-header self "Content-Length" (str (len (get failure 1))))
+                                (.end-headers self)
+                                (.write self.wfile (get failure 1))))
+    None)
+
+  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+    {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
+    "検の出力に要求の行を出さないため。"
+    None))
+
+
+(defk fake-clickhouse [mode cancels]
+  {:pre [(: mode str) (: cancels bool)] :post [(: % http.server.ThreadingHTTPServer)]
+   :tags {:context "sql" :role "program"}}
+  "偽の ClickHouse(FakeClickHouse — mode と cancels は class の註)を立てるため。"
+  (val server (http.server.ThreadingHTTPServer #("127.0.0.1" 0) FakeClickHouse))
+  (setv server.mode mode
+        server.cancels cancels
+        server.killed (threading.Event)
+        server.received (queue.SimpleQueue))
+  (.start (threading.Thread :target server.serve-forever :daemon True))
+  server)
+
+
+(defk received-by [server]
+  {:pre [(: server http.server.ThreadingHTTPServer)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "偽の ClickHouse が受けた POST を受けた順に読むため。"
+  (tuple (lfor _ (range (.qsize server.received)) (.get-nowait server.received))))
+
+
+(defk fake-database [server deadline]
+  {:pre [(: server http.server.ThreadingHTTPServer) (: deadline float)] :post [(: % ClickHouseDatabase)]
+   :tags {:context "sql" :role "program"}}
+  "偽の ClickHouse の口を指す置き場 cold の宣言を作るため。"
+  (ClickHouseDatabase :name "cold" :url (.format "http://127.0.0.1:{}" (get server.server-address 1)) :database "default"
+                      :user "default" :password "" :deadline deadline))
+
+
+(defk ask-cold [statement]
+  {:pre [(: statement str)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "program"}}
+  "置き場 cold へ問い合わせ 1 つを流し、答え(失敗の値も)を返すため。"
+  (<- answer (SqlQuery "cold" statement #()))
+  answer)
+
+
+(deftest test-clickhouse-waits-for-the-server-to-refuse-at-its-deadline
+  ;; 失敗ケース(card ki-42d653b1470f): client が 30 秒の待ちで接続を捨て、server は離れた接続へ答えを書く所で落ちた。client は期限を
+  ;; 送り、期限より長く待つので、server が期限で断った答えを、接続を保ったまま SqlFailed として受ける(KILL QUERY は撃たない)。
+  (<- server (fake-clickhouse "deadline" False))
+  (try
+    (<- declared (fake-database server 1.0))
+    (<- answer (with-handler [(clickhouse-http-sql-handler #(declared))]
+                 (ask-cold "SELECT sleepEachRow(1) FROM numbers(10) SETTINGS max_block_size = 1")))
+    (finally (.shutdown server) (.server-close server)))
+  (assert (and (isinstance answer SqlFailed) (is answer.sqlstate None) (in "Code: 159" answer.reason) (in "TIMEOUT_EXCEEDED" answer.reason))
+          answer)
+  (<- received (received-by server))
+  (assert (= (lfor r received r.kind) ["query"]) (.format "期限で断る server へ KILL QUERY を撃った: {!r}" received))
+  (val asked (get received 0))
+  (assert (and (= asked.deadline "1") (= asked.overflow "throw") (is-not asked.query-id None)) asked)
+  (assert (= asked.agent USER-AGENT) asked))
+
+
+(defk stuck-request [server]
+  {:pre [(: server http.server.ThreadingHTTPServer)] :post [(: % ClickHouseRequest)]
+   :tags {:context "sql" :role "program"}}
+  "止まった偽の server への問い合わせ 1 つを、検の秒に縮めた待ちの組(待ち 0.5 秒・猶予 1 秒)で作るため。"
+  (<- declared (fake-database server 0.2))
+  (<- request (clickhouse-query-request declared "SELECT 1" #()))
+  (replace request :waits (ClickHouseWaits :deadline 0.2 :wait 0.5 :grace 1.0)))
+
+
+(deftest test-clickhouse-kills-the-query-before-leaving-a-stuck-server
+  ;; 失敗ケース(card ki-42d653b1470f): 待ちを越えた client が socket を閉じるだけで離れ、server の問い合わせが走ったまま残った。
+  ;; 待ちを越えたら、元の接続を閉じる前に別の接続で KILL QUERY を撃ち、元の接続で取り消しの答えを受ける。
+  (<- server (fake-clickhouse "stuck" True))
+  (try
+    (<- request (stuck-request server))
+    (<- answer (clickhouse-answer request False))
+    (finally (.set server.killed) (.shutdown server) (.server-close server)))
+  ;; 取り消しの答え(394)は KILL の後に元の接続へ書かれる — それを受けた事が、KILL の時に元の接続を閉じていなかった証。
+  (assert (and (isinstance answer SqlFailed) (in "QUERY_WAS_CANCELLED" answer.reason)) answer)
+  (<- received (received-by server))
+  (assert (= (lfor r received r.kind) ["query" "kill"]) received)
+  (val asked (get received 0))
+  (val kill (get received 1))
+  (assert (= asked.query-id request.query-id) #(asked request.query-id))
+  (assert (= kill.body (.encode (.format "KILL QUERY WHERE query_id = '{}' ASYNC" request.query-id) "ascii")) kill)
+  ;; KILL は待ち(0.5 秒)を越えてから撃つ(待ちの内に撃たない)。
+  (assert (>= (- kill.at asked.at) 0.45) #(asked kill)))
+
+
+(deftest test-clickhouse-leaves-unreachable-only-after-the-kill-and-grace
+  ;; KILL QUERY を受けても問い合わせが止まらない server からは、KILL を撃ち、猶予の間 元の接続で答えを待ってから SqlUnreachable で離れる。
+  (<- server (fake-clickhouse "stuck" False))
+  (val started (time.monotonic))
+  (try
+    (<- request (stuck-request server))
+    (<- answer (clickhouse-answer request False))
+    (finally (.set server.killed) (.shutdown server) (.server-close server)))
+  (val elapsed (- (time.monotonic) started))
+  (assert (isinstance answer SqlUnreachable) answer)
+  (assert (and (in request.query-id answer.reason) (in "KILL QUERY は受けられた" answer.reason)) answer.reason)
+  (<- received (received-by server))
+  (assert (= (lfor r received r.kind) ["query" "kill"]) received)
+  ;; 待ち 0.5 秒 + 猶予 1 秒は待つ(KILL の往復は速い)— 猶予を待たずに離れていない。
+  (assert (<= 1.4 elapsed 5.0) elapsed))
 
 
 ;; --- 実 DB との結合(環境変数が無ければ skip) --------------------------------------------------------------------------------
@@ -800,7 +1004,7 @@
    :skip-reason "DOEFF_SQL_TEST_CLICKHOUSE_URL が無い"}
   (val declared (ClickHouseDatabase :name "cold" :url (or CLICKHOUSE-URL "") :database (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_DATABASE" "default")
                                     :user (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_USER" "default")
-                                    :password (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_PASSWORD" "") :timeout 10.0))
+                                    :password (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_PASSWORD" "") :deadline 10.0))
   (<- answers (with-handler [(clickhouse-http-sql-handler #(declared))] (clickhouse-journey)))
   (val inserted (get answers 0))
   (val read (get answers 1))
@@ -808,6 +1012,22 @@
   (assert (= inserted (SqlRows :rows #() :rowcount 2)) inserted)
   (assert (= read (SqlRows :rows #(#(1 "a\tb" True) #(2 None False)) :rowcount None)) read)
   (assert (and (isinstance broken SqlFailed) (in "no_such_table" broken.reason)) broken))
+
+
+(deftest test-clickhouse-server-refuses-at-the-deadline-over-http
+  {:skip-if (is CLICKHOUSE-URL None)
+   :skip-reason "DOEFF_SQL_TEST_CLICKHOUSE_URL が無い"}
+  ;; 本物の ClickHouse が、送った期限(max_execution_time 1 秒)で 20 秒の問い合わせを断り、client はその答えを SqlFailed として受ける
+  ;; (待ち = 期限 + 余白 — client が先に離れない)。
+  (val declared (ClickHouseDatabase :name "cold" :url (or CLICKHOUSE-URL "") :database (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_DATABASE" "default")
+                                    :user (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_USER" "default")
+                                    :password (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_PASSWORD" "") :deadline 1.0))
+  (val started (time.monotonic))
+  (<- answer (with-handler [(clickhouse-http-sql-handler #(declared))]
+               (ask-cold "SELECT sleepEachRow(0.5) FROM numbers(40) SETTINGS max_block_size = 1")))
+  (val elapsed (- (time.monotonic) started))
+  (assert (and (isinstance answer SqlFailed) (in "TIMEOUT_EXCEEDED" answer.reason)) answer)
+  (assert (< elapsed (+ 1.0 WAIT-MARGIN-SECONDS)) elapsed))
 
 
 ;; --- scheduler を塞がない PostgreSQL の答え手(pooled-postgres-sql-handler — agora-redesign #880 U2)。実 PG が要る(環境変数が無ければ skip)---
