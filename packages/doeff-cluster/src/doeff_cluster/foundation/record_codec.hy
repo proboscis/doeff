@@ -450,10 +450,10 @@
 ;; --- effect の登録 -----------------------------------------------------------------------------
 
 (defclass EffectCodec []
-  ;; unexecuted = 記録に対の無い書きへ返す答え(True・None)か DIVERGE(返さずに分岐として止める)。
+  ;; unexecuted = 記録に対の無い書きへ返す答え(どの値でもよい — True・None・書きの型が決めた答えの record)か DIVERGE(返さずに分岐として止める)。
   ;; arg-names = args の関数を持たない型の、記録の引数に載せる欄の名(型の宣言の args — None = dataclass の全部の欄)。
   (defn #^ None __init__ [self #^ type cls #^ (| str Callable) mode #^ (| Callable None) [args None] #^ (| Callable None) [subject None]
-                  #^ (| _Diverge bool None) [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]
+                  #^ object [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]
                   #^ (| tuple None) [arg-names None]]
     (setv self.cls cls self.name (type-name cls) self.mode mode self.args-fn args self.subject-fn subject
           self.unexecuted unexecuted self.binds binds self.watch watch self.arg-names arg-names)))
