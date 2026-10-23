@@ -42,7 +42,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.meter_effects [SecondsObservation])
 (import doeff_records.wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
-(import doeff_records.pg_sql [ROWS-UNIT stream-unit])
+(import doeff_records.pg_sql [ROWS-UNIT stream-unit table-unit])
 
 (val MODULE-TAGS {:context "records" :role "judgment"})
 
@@ -175,14 +175,16 @@
 
 
 ;; --- 書きの錠の秒(card ki-0306f5a614b4)-------------------------------------------------------------------------------------------
-;; 記録の service の書き 1 回が、錠の単位(pg_sql.hy の頭の註の「書きの錠」— 行の単位 rows・列の単位 stream:<列>)ごとの同じ process の
+;; 記録の service の書き 1 回が、錠の単位(pg_sql.hy の頭の註の「書きの錠」— 表の単位 table:<表>・番号の単位 rows・列の単位 stream:<列>)ごとの同じ process の
 ;; 並びを待った秒(wait)と、並びを通ってから transaction の答えまで錠を持った秒(hold — 接続の許可の待ち・DB の錠の待ち・文の往復・COMMIT)。
 ;; 積むのは pg.hy の locked-transaction(本番の組み立てだけ)。計器の名: records_lock_<操作>_<単位>_<相>(名の - と : は _)。どの書きが錠を
-;; 長く持ち、どの単位の書きが待ったかを、2 回読んだ差を数の差で割って読む。系列は宣言の列の数で閉じる(LOCK-OPERATIONS × 単位 × 相)。
+;; 長く持ち、どの単位の書きが待ったかを、2 回読んだ差を数の差で割って読む。系列は宣言の表と列の数で閉じる(LOCK-OPERATIONS × 単位 × 相)。
+;; 行の書きの持った秒は、2 往復目の中で番号の錠を DB で待った秒も含む(番号の錠は同じ process の並びを通らない)。
 (defenum LockPhase WAIT HOLD)
 (val LOCK-METRIC "records_lock_{}_{}_{}")
-;; 錠の単位ごとの書きの操作の名(pg.hy の handler と回収が名乗る — 単位の名は pg_sql の ROWS-UNIT と stream-unit)。
-(val ROWS-LOCK-OPERATIONS #("put-row" "put-rows" "sweep-rows" "prune-changes"))
+;; 錠の単位ごとの書きの操作の名(pg.hy の handler と回収が名乗る — 単位の名は pg_sql の table-unit・ROWS-UNIT・stream-unit)。
+(val TABLE-LOCK-OPERATIONS #("put-row" "put-rows" "sweep-rows"))
+(val ROWS-LOCK-OPERATIONS #("prune-changes" "forget-write-keys"))
 (val STREAM-LOCK-OPERATIONS #("append-event" "append-events" "sweep-stream"))
 
 
@@ -217,10 +219,14 @@
                            #(LockPhase.HOLD "並びを通ってから transaction の答えまで錠を持った秒")))
 
 
-(defk lock-metric-helps [streams]
-  {:pre [(: streams tuple)] :post [(: % (get FrozenMap str))] :tags {:context "records" :role "judgment"}}
-  "宣言の列 streams の書きの錠の系列の全部 → 各系列の # HELP の説明(GET /metrics が描く — 行の単位と列ごとの単位)。"
+(defk lock-metric-helps [tables streams]
+  {:pre [(: tables tuple) (: streams tuple)] :post [(: % (get FrozenMap str))] :tags {:context "records" :role "judgment"}}
+  "宣言の表 tables と列 streams の書きの錠の系列の全部 → 各系列の # HELP の説明(GET /metrics が描く — 表ごとの単位と番号の単位と列ごとの
+   単位)。"
   (var units #(#(ROWS-UNIT ROWS-LOCK-OPERATIONS)))
+  (for [table (sorted tables)]
+    (<- unit (table-unit table))
+    (:= units (+ units #(#(unit TABLE-LOCK-OPERATIONS)))))
   (for [stream (sorted streams)]
     (<- unit (stream-unit stream))
     (:= units (+ units #(#(unit STREAM-LOCK-OPERATIONS)))))

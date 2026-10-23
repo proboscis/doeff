@@ -11,7 +11,8 @@
 ;;;   - 答え手の SqlFailed(engine の失敗 — 文と表の形の食い違い)は実装の誤りとして RecordsSqlFailed を上げる(旧い版で psycopg の
 ;;;     接続の失敗でない例外を上げたのと同じ扱い)。
 ;;; 書きの手順(PutRow・PutRows・AppendEvent・版の繰り上げ・期限切れの回収・刈り取り)は SqlTransaction の locks = 書きの錠の中で流す
-;;; (pg_sql.hy の頭の註の「書きの錠」— 置き場全体の錠〔旧い版と同じ錠の番号〕を共有で、触る錠の単位〔行の単位・列ごと〕を排他で持つ。
+;;; (pg_sql.hy の頭の註の「書きの錠」— 置き場全体の錠〔旧い版と同じ錠の番号〕を共有で、触る錠の単位〔表ごと・列ごと〕を排他で持ち、行の書きは
+;;; 変更の列に積む前に番号の錠も取る。
 ;;; 版の繰り上げだけが置き場全体を排他 — writer-locks)。本番の組み立て(handler の gated)では、書きは接続を借りる前に同じ process の同じ
 ;;; 単位の書きと 1 本ずつに並び(writer-gates)、並んだ秒と錠を持った秒を操作・単位ごとに計器に積む(locked-transaction)。
 ;;; transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に読んで渡す)。版の繰り上げ・回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
@@ -61,8 +62,8 @@
 ;;; (SweepExpired)は長さを限った列ごとに、覚えた刻から長さを過ぎた覚えを錠の単位の transaction を分けて外す(forget-expired-keys)。
 ;;; 行の書きの冪等キー(card ki-78c6d663491f — memory の置き場と同じ形): 鍵つきの PutRow・PutRows は、1 往復目の読みの束の後ろに同じ鍵の覚えの
 ;;; 引き(pg_sql.find-write-key-statement — 表 write_keys)を足し、期待と書きの判定の前に admission.judge-write-replay で判じる。同じ鍵・同じ
-;;; 本文の送り直しは、片付けも行の書きも流さずに COMMIT だけを流して覚えた答えを送り直しと名乗って返す(行の単位の錠の中なので、送り直しの
-;;; 判じと元の書きの確定は重ならない)。覚えが無ければ今までどおり判じ、確定する時だけ 2 往復目の行の書きと変更の文の後ろに答えの覚えを入れる
+;;; 本文の送り直しは、片付けも行の書きも流さずに COMMIT だけを流して覚えた答えを送り直しと名乗って返す(表の単位と冪等キーの錠の中なので、
+;;; 送り直しの判じと元の書きの確定は重ならない)。覚えが無ければ今までどおり判じ、確定する時だけ 2 往復目の行の書きと変更の文の後ろに答えの覚えを入れる
 ;;; 文を足す(remember-statements — 往復を増やさない。答えの変更の番号は同じ往復の変更の文が採るので、覚えの行は書きの最後の変更の番号を
 ;;; 変更の列の最大の番号として同じ文で読む)。回収(SweepExpired)が覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた覚えを外す
 ;;; (forget-write-keys)。
@@ -124,7 +125,7 @@
                                  judge-write-replay write-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
-                              unit-lock-key stream-unit ROWS-UNIT writer-lock-statement schema-steps drop-statements
+                              unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
                               concurrent-index-statement drop-index-statement analyze-statement retired-index?
                               index-lock-statement index-unlock-statement
@@ -252,19 +253,31 @@
   (#^ tuple record))
 
 
+(defrecord RowSteps
+  "行の書きの文の 2 つの組(pg_sql.hy の頭の註の「書きの錠」— 番号の錠の前と後): rows = 行の表の文(表の単位の錠の中で流す — 消す・書く)/
+   changes = 変更の列に積む文(番号の錠の中で流す — rows と同じ並びの順)。numbered-statements が 1 つの並びにする。"
+  (#^ (get tuple #(Statement ...)) rows)
+  (#^ (get tuple #(Statement ...)) changes))
+
+
 (defrecord LockedRow
   "書きの判定に渡す今の行(1 往復目の錠つきの読みから — locked-row): current = 今の行(無い行・期限を過ぎて片付ける行は None)/
-   cleanup = 期限を過ぎた行を消して「消えた」を積む文(2 往復目の先頭に流す — 片付けが要らなければ空)。"
+   cleanup = 期限を過ぎた行を消して「消えた」を積む文(2 往復目に流す — 片付けが要らなければ両方の組が空)。"
   (#^ (| Row None) current)
-  (#^ (get tuple #(Statement ...)) cleanup))
+  (#^ RowSteps cleanup))
 
 
 (defrecord StagedRow
-  "判定を通った 1 行の書き(staged-row): statements = 行の書きと変更の列に 1 つ積む文(2 往復目に流す — 変更の列に積む文が最後)/
-   version・value = その書きの版と確定する行の値(答えの Written の変更の位置は、2 往復目の変更の文の答えの番号から読む — written-of)。"
-  (#^ (get tuple #(Statement ...)) statements)
+  "判定を通った 1 行の書き(staged-row): upsert = 行の書きの文 / change = 変更の列に 1 つ積む文(2 往復目に流す — numbered-statements の
+   並びで、行の書きは番号の錠の前・変更は後)/ version・value = その書きの版と確定する行の値(答えの Written の変更の位置は、2 往復目の
+   変更の文の答えの番号から読む — written-of)。"
+  (#^ Statement upsert)
+  (#^ Statement change)
   (#^ int version)
   (#^ FrozenMap value))
+
+
+(val NO-STEPS (RowSteps :rows #() :changes #()))
 
 
 (defrecord EarlierUse
@@ -385,6 +398,17 @@
   (<- (notice-raised notified))
   (<- answer program)
   answer)
+
+
+(defk table-units [tables]
+  {:pre [(: tables tuple)] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "行の書き 1 回が触る表 tables の錠の単位の並び(名の順・重なりなし — writer-locks と AdmitWriters の並び)を作るため。"
+  (var units #())
+  (for [table (sorted (set tables))]
+    (<- unit (table-unit table))
+    (:= units (+ units #(unit))))
+  units)
 
 
 (defk writer-locks [store units]
@@ -1032,32 +1056,50 @@
 
 
 (defk removed-row-statements [store table text version now-ms epoch]
-  {:pre [(: store PreparedStore) (: table str) (: text str) (: version int) (: now-ms int) (: epoch int)] :post [(: % tuple)]
+  {:pre [(: store PreparedStore) (: table str) (: text str) (: version int) (: now-ms int) (: epoch int)] :post [(: % RowSteps)]
    :tags {:context "records" :role "foundation"}}
-  "保持の期限を過ぎた行 1 つ(版 version)を消し、変更の列に「消えた」を積む 2 文を作るため(回収 remove-row と、期限を過ぎた行へ書く書きの
-   片付け locked-row が同じ 2 文を使う)。"
+  "保持の期限を過ぎた行 1 つ(版 version)を消す文と、変更の列に「消えた」を積む文を作るため(回収 remove-expired-rows と、期限を過ぎた行へ
+   書く書きの片付け locked-row が同じ 2 文を使う — 消す文は番号の錠の前・積む文は後に流す)。"
   (<- delete (delete-row-statement store.prefix table text version))
   (<- change (append-change-statement store.prefix table text version None now-ms epoch))
-  #(delete change))
+  (RowSteps :rows #(delete) :changes #(change)))
 
 
-(defk remove-row [store table text version now-ms epoch]
-  {:pre [(: store PreparedStore) (: table str) (: text str) (: version int) (: now-ms int) (: epoch int)] :post [(: % None)]
+(defk joined-steps [steps]
+  {:pre [(: steps tuple)] :post [(: % RowSteps)]
    :tags {:context "records" :role "foundation"}}
-  "回収(SweepExpired)の書きの錠の transaction の中で、保持の期限を過ぎた行 1 つを消し、変更の列に「消えた」を積むため。"
-  (<- statements (removed-row-statements store table text version now-ms epoch))
-  (<- (run-statements store.database statements))
-  None)
+  "行の書きの文の組 steps(RowSteps の並び)を、行の表の文どうし・変更の文どうしを並びの順につないだ 1 つの組にするため。"
+  (RowSteps :rows (tuple (gfor one steps statement one.rows statement))
+            :changes (tuple (gfor one steps statement one.changes statement))))
+
+
+(defk numbered-statements [store steps after]
+  {:pre [(: store PreparedStore) (: steps RowSteps) (: after tuple)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "行の書きの transaction の残りの文の並びを作るため(pg_sql.hy の頭の註の「書きの錠」): 行の表の文 → 番号の錠 → 変更の列に積む文 → after
+   (変更の列の番号を読む文 — 行の書きの冪等キーの覚え)。番号を取ってから commit するまで番号の錠を持ち、行の表の文(索引の更新で IO を
+   待つ文)は表の単位の錠だけで流す。変更を積まなければ番号の錠を取らない(after も変更を積む書きだけが持つ)。答えの中の変更の文の位置は
+   (len steps.rows) + 1 から。"
+  (when (not steps.changes)
+    (return (+ steps.rows after)))
+  (<- lock (numbering-lock-statement store.prefix))
+  (+ steps.rows #(lock) steps.changes after))
 
 
 (defk remove-expired-rows [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "書きの錠の transaction の中で、期限を過ぎた行を読み直して消し、変更の列に「消えた」を積むため。答え = 消した行の数。"
+  "書きの錠の transaction の中で、期限を過ぎた行を読み直して消し、変更の列に「消えた」を積むため(消す文を全部流してから番号の錠を取って
+   積む — numbered-statements)。答え = 消した行の数。"
   (<- head (store-head store))
   (<- expired (expired-rows store now-ms))
+  (var steps #())
   (for [row expired]
-    (<- (remove-row store row.table (get row.record 0) (int (get row.record 2)) now-ms head.epoch)))
+    (<- one (removed-row-statements store row.table (get row.record 0) (int (get row.record 2)) now-ms head.epoch))
+    (:= steps (+ steps #(one))))
+  (<- joined (joined-steps steps))
+  (<- statements (numbered-statements store joined #()))
+  (<- (run-statements store.database statements))
   (len expired))
 
 
@@ -1148,12 +1190,14 @@
   (<- candidates (expired-rows store now-ms))
   (var removed 0)
   (when candidates
-    ;; 合図の名 = 行を消し得る表(期限と終端の語の在る表 — 消す行は transaction の中で読み直すので、候補の表でなく、読み直しが読む表の全部)。
-    (<- row-topics (notice-topics (tuple (gfor #(name decl) (sorted (.items store.schema.tables))
-                                               :if (and (isinstance decl.retention KeepFor) decl.terminal)
-                                               name))
-                                  #()))
-    (<- count (writing store gated "sweep-rows" #(ROWS-UNIT) row-topics (remove-expired-rows store now-ms)))
+    ;; 合図の名と錠の単位 = 行を消し得る表(期限と終端の語の在る表 — 消す行は transaction の中で読み直すので、候補の表でなく、読み直しが
+    ;; 読む表の全部)。
+    (val tables (tuple (gfor #(name decl) (sorted (.items store.schema.tables))
+                             :if (and (isinstance decl.retention KeepFor) decl.terminal)
+                             name)))
+    (<- row-topics (notice-topics tables #()))
+    (<- units (table-units tables))
+    (<- count (writing store gated "sweep-rows" units row-topics (remove-expired-rows store now-ms)))
     (:= removed count))
   ;; 送ってから外す列は回収しない — 外すのは手入れの送りが確かめた出来事だけ(頭の註の「出来事を送ってから外す」)。
   (for [#(name decl) (sorted (.items store.schema.streams))]
@@ -1241,13 +1285,13 @@
    文を片付けに添え(2 往復目の先頭に流す)、無い行として返す — 書きは回収の後と同じく無い行として判じる(#3605 の D・頭の註)。
    epoch = 「消えた」に刻む置き場の版。"
   (when (not records)
-    (return (LockedRow :current None :cleanup #())))
+    (return (LockedRow :current None :cleanup NO-STEPS)))
   (val record (get records 0))
   (val row (row-of record))
   (when (row-expired? decl row.value (int (get record 3)) now-ms)
     (<- cleanup (removed-row-statements store decl.name text row.version now-ms epoch))
     (return (LockedRow :current None :cleanup cleanup)))
-  (LockedRow :current row :cleanup #()))
+  (LockedRow :current row :cleanup NO-STEPS))
 
 
 (defk staged-row [store origin-host writer table text current value now-ms epoch]
@@ -1255,32 +1299,34 @@
          (: value FrozenMap) (: now-ms int) (: epoch int)]
    :post [(: % StagedRow)]
    :tags {:context "records" :role "foundation"}}
-  "判定を通った 1 行の書き(行の書きと変更の列に 1 つ積む文 — 2 往復目に流す)を作るため(PutRow と PutRows の書きを 1 つにし、
+  "判定を通った 1 行の書き(行の書きの文と変更の列に 1 つ積む文 — 2 往復目に流す)を作るため(PutRow と PutRows の書きを 1 つにし、
    版と番号の採り方を揃える)。"
   (val version (if (is current None) 1 (+ current.version 1)))
   (val payload (canonical-json value))
   (<- upsert (upsert-row-statement store.prefix table text payload version now-ms writer origin-host epoch))
   (<- change (append-change-statement store.prefix table text version payload now-ms epoch))
-  (StagedRow :statements #(upsert change) :version version :value value))
+  (StagedRow :upsert upsert :change change :version version :value value))
 
 
-(defk written-of [staged rows end epoch]
-  {:pre [(: staged StagedRow) (: rows tuple) (: end int) (: epoch int)] :post [(: % Written)]
+(defk written-of [staged rows at epoch]
+  {:pre [(: staged StagedRow) (: rows tuple) (: at int) (: epoch int)] :post [(: % Written)]
    :tags {:context "records" :role "foundation"}}
   "判定を通った 1 行の書き staged の答えに、その書きが変更の列に積んだ変更の位置を載せるため(Written.position — memory の置き場と同じ
-   位置を返す)。rows = 2 往復目の文ごとの答えの行・end = staged の文が終わる位置(rows の中で staged の最後の文 = 変更の列に積む文の次の
-   位置)・epoch = 変更に刻んだ置き場の版(書きの錠の中の 1 往復目に読んだ頭)。番号は変更の文の答え(RETURNING seq)。"
-  (val sequence (int (get (get rows (- end 1)) 0 0)))
+   位置を返す)。rows = 2 往復目の文ごとの答えの行・at = rows の中の staged の変更の文の答えの位置(numbered-statements の並び)・
+   epoch = 変更に刻んだ置き場の版(書きの錠の中の 1 往復目に読んだ頭)。番号は変更の文の答え(RETURNING seq)。"
+  (val sequence (int (get (get rows at) 0 0)))
   (Written staged.version staged.value (WatchCursor epoch sequence)))
 
 
 (defk write-key-reads [store ask]
   {:pre [(: store PreparedStore) (: ask (| PutRow PutRows))] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
-  "鍵つきの行の書きの 1 往復目に足す、同じ鍵の覚えの引き(鍵の無い書きは 0 文・鍵つきは 1 文 — 頭の註の「行の書きの冪等キー」)を作るため。"
+  "鍵つきの行の書きの 1 往復目に足す、同じ鍵の錠と覚えの引き(鍵の無い書きは 0 文・鍵つきは 2 文で引きが最後 — 頭の註の「行の書きの
+   冪等キー」)を作るため。鍵の錠は、同じ鍵を別の表へ並んで撃った書き(表の単位の錠では並ばない)の判じと確定を重ねないため。"
   (if (is ask.idempotency-key None)
       #()
-      #((! (find-write-key-statement store.prefix ask.idempotency-key)))))
+      #((! (write-key-lock-statement store.prefix ask.idempotency-key))
+        (! (find-write-key-statement store.prefix ask.idempotency-key)))))
 
 
 (defk remembered-answer-json [rows epoch stageds]
@@ -1327,33 +1373,36 @@
    :tags {:context "records" :role "foundation"}}
   "PutRow の書きの錠の中の手順を 2 往復で流すため(頭の註): 1 往復目に置き場の頭と今の行を錠つきで読み(鍵つきの書きは同じ鍵の覚えも)、
    覚えで判じ(同じ鍵の送り直しは行に触らずに覚えた答え — 片付けも流さない)、判定し、2 往復目に片付けと(通れば)行の書きと(鍵つきなら)
-   答えの覚えを COMMIT と同じ往復で流す。"
+   答えの覚えを COMMIT と同じ往復で流す(行の表の文 → 番号の錠 → 変更と覚え — numbered-statements)。"
   (val decl (store.schema.table ask.table))
   (val text (key-text ask.key))
   (<- head-statement (store-head-statement store.prefix))
   (<- lock-statement (lock-row-statement store.prefix decl.name text))
   (<- key-reads (write-key-reads store ask))
   (<- read (batch-rows store.database (+ #(head-statement lock-statement) key-reads) False))
-  (<- remembered (remembered-write-of (if key-reads (get read 2) #())))
+  (<- remembered (remembered-write-of (if key-reads (get read -1) #())))
   (val replay (judge-write-replay ask.idempotency-key False #(ask) remembered))
   (when (is-not replay None)
     (<- replayed (committed store #() replay))
     (return replayed))
   (<- head (head-of (get read 0)))
   (<- found (locked-row store decl text (get read 1) now-ms head.epoch))
+  (<- tidied (numbered-statements store found.cleanup #()))
   (val conflict (judge-expect ask.expect found.current))
   (when conflict
-    (<- collided (committed store found.cleanup conflict))
+    (<- collided (committed store tidied conflict))
     (return collided))
   (val verdict (judge-put decl found.current ask.key ask.value))
   (when (isinstance verdict Refused)
-    (<- refused (committed store found.cleanup verdict))
+    (<- refused (committed store tidied verdict))
     (return refused))
   (<- staged (staged-row store origin-host writer ask.table text found.current verdict.value now-ms head.epoch))
-  (val statements (+ found.cleanup staged.statements))
+  (<- steps (joined-steps #(found.cleanup (RowSteps :rows #(staged.upsert) :changes #(staged.change)))))
   (<- remembers (remember-statements store ask head.epoch #(staged) now-ms))
-  (<- rows (batch-rows store.database (+ statements remembers) True))
-  (<- written (written-of staged rows (len statements) head.epoch))
+  (<- statements (numbered-statements store steps remembers))
+  (<- rows (batch-rows store.database statements True))
+  ;; staged の変更は変更の文の最後(行の表の文と番号の錠の後 — numbered-statements の並び)。
+  (<- written (written-of staged rows (+ (len steps.rows) (len steps.changes)) head.epoch))
   written)
 
 
@@ -1363,8 +1412,8 @@
    :tags {:context "records" :role "foundation"}}
   "PutRows の束を全部か 0 で、行の数に依らず 2 往復で書くため(頭の註): 1 往復目に置き場の頭と全部の行を錠つきで読み(期限を過ぎた行は
    片付けて無い行として — locked-row。鍵つきの束は同じ鍵の覚えも読み、PutRow と同じく覚えで先に判じる)、判定(admission.judge-put-rows)が
-   全部通った時だけ、2 往復目に片付けと束の順の書き・変更と(鍵つきなら)答えの覚えを COMMIT と同じ往復で流す(錠の中なので番号は束の中で
-   続く)。往復の途中の失敗は transaction ごと戻る。"
+   全部通った時だけ、2 往復目に片付けと束の順の書き・変更と(鍵つきなら)答えの覚えを COMMIT と同じ往復で流す(行の表の文 → 番号の錠 →
+   変更と覚え — numbered-statements。番号の錠の中で積むので番号は束の中で続く)。往復の途中の失敗は transaction ごと戻る。"
   (for [write ask.writes] (store.schema.table write.table))
   (val texts (tuple (gfor write ask.writes (key-text write.key))))
   (<- head-statement (store-head-statement store.prefix))
@@ -1374,7 +1423,7 @@
     (:= reads (+ reads #(lock-statement))))
   (<- key-reads (write-key-reads store ask))
   (<- read (batch-rows store.database (+ reads key-reads) False))
-  (<- remembered (remembered-write-of (if key-reads (get read (len reads)) #())))
+  (<- remembered (remembered-write-of (if key-reads (get read -1) #())))
   (val replay (judge-write-replay ask.idempotency-key True ask.writes remembered))
   (when (is-not replay None)
     (<- replayed (committed store #() replay))
@@ -1384,26 +1433,26 @@
   (for [#(write text records) (zip ask.writes texts (cut read 1 (len reads)) :strict True)]
     (<- one (locked-row store (store.schema.table write.table) text records now-ms head.epoch))
     (:= found (+ found #(one))))
-  (val cleanup (tuple (gfor one found statement one.cleanup statement)))
+  (<- cleanup (joined-steps (tuple (gfor one found one.cleanup))))
   (val currents (tuple (gfor one found one.current)))
   (val verdict (judge-put-rows store.schema ask.writes currents))
   (when (not (isinstance verdict tuple))
-    (<- refused (committed store cleanup verdict))
+    (<- tidied (numbered-statements store cleanup #()))
+    (<- refused (committed store tidied verdict))
     (return refused))
-  (var statements cleanup)
   (var stageds #())
-  ;; 束の書きごとの、その書きの文が終わる位置(答えの変更の番号を 2 往復目の答えから読む — written-of)。
-  (var ends #())
   (for [#(write text current admitted) (zip ask.writes texts currents verdict :strict True)]
     (<- staged (staged-row store origin-host writer write.table text current admitted.value now-ms head.epoch))
-    (:= statements (+ statements staged.statements))
-    (:= stageds (+ stageds #(staged)))
-    (:= ends (+ ends #((len statements)))))
+    (:= stageds (+ stageds #(staged))))
+  (<- steps (joined-steps (+ #(cleanup) (tuple (gfor staged stageds (RowSteps :rows #(staged.upsert) :changes #(staged.change)))))))
   (<- remembers (remember-statements store ask head.epoch stageds now-ms))
-  (<- rows (batch-rows store.database (+ statements remembers) True))
+  (<- statements (numbered-statements store steps remembers))
+  (<- rows (batch-rows store.database statements True))
+  ;; 束の i 番目の変更の文の答えの位置: 行の表の文と番号の錠の後、片付けの変更の後の i 番目(numbered-statements の並び)。
+  (val first (+ (len steps.rows) 1 (len cleanup.changes)))
   (var written #())
-  (for [#(staged end) (zip stageds ends :strict True)]
-    (<- answered (written-of staged rows end head.epoch))
+  (for [#(index staged) (enumerate stageds)]
+    (<- answered (written-of staged rows (+ first index) head.epoch))
     (:= written (+ written #(answered))))
   (WrittenRows written))
 
@@ -1828,8 +1877,8 @@
 (defk forget-write-keys [store gated now-ms]
   {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを、EXPIRE-BATCH 個ずつ行の単位の書きの錠の transaction を
-   分けて外すため(SweepExpired — 頭の註の「行の書きの冪等キー」。行の書きが覚えを引いて入れるのと同じ錠の単位)。上限より少なく外した回で
+  "覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを、EXPIRE-BATCH 個ずつ番号の単位の書きの錠の transaction を
+   分けて外すため(SweepExpired — 頭の註の「行の書きの冪等キー」。行の書きが覚えを入れる時に持つ番号の錠と同じ錠の単位)。上限より少なく外した回で
    終える。合図は名の無い待ち手だけに関わる(覚えの外しは読みと待ちの答えを変えない — 名の空の並び)。答え = 外した覚えの数。"
   (<- statement (forget-write-keys-statement store.prefix (- now-ms (int (* 1000 WRITE-KEY-MEMORY-SECONDS))) EXPIRE-BATCH))
   (var total 0)
@@ -1878,13 +1927,15 @@
   (PutRow [table key value expect]
     (<- now (GetTime))
     (<- topics (notice-topics #(table) #()))
-    (<- answer (reached (batched-writing store gated "put-row" #(ROWS-UNIT) topics
+    (<- unit (table-unit table))
+    (<- answer (reached (batched-writing store gated "put-row" #(unit) topics
                                          (put-row-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (PutRows [writes]
     (<- now (GetTime))
     (<- topics (notice-topics (tuple (gfor write writes write.table)) #()))
-    (<- answer (reached (batched-writing store gated "put-rows" #(ROWS-UNIT) topics
+    (<- units (table-units (tuple (gfor write writes write.table))))
+    (<- answer (reached (batched-writing store gated "put-rows" units topics
                                          (put-rows-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
