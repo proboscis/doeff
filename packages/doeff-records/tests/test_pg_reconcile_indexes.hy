@@ -14,6 +14,8 @@
 ;;     DROP INDEX CONCURRENTLY で外す。見積もれない間は外さず、旧い形でない宣言に無い索引は外さない。宣言の索引が全部在る置き場でも、
 ;;     旧い形の索引が在れば記録の service は索引の用意の task を立てて外し、外す間も答える(2026-10-19 — 本番の置き場の state_rows の
 ;;     索引 72 本のうち旧い形の 23 本〔約 1.9 GB〕は読みに使われず、payload を変える書きのたびに更新されていた)
+;;   - 宣言から外した表ごとの索引(宣言の作る名の形 fx_・ox_・ow_ で今の宣言に無い物)も、表の用意(起動の道)では外さず、索引の用意が
+;;     同じ道で外す。名の形が宣言の作る形でない手の索引は外さない(2026-10-23 — 本番の置き場の使われない表ごとの索引 11 本・874 MB)
 ;;   - CONCURRENTLY の作りかけ(使えない形で残った同じ名の索引)は消してから作り直す・索引の用意の錠を他の process が持つ間は作らずに待ち、
 ;;     錠を放した合図で観測し直す
 ;;   - 錠を持つ process の作りの最中に別の process の回が錠を求めても、作りは deadlock で捨てられず、両方の回が差を埋めて終わる
@@ -44,7 +46,8 @@
 (import doeff_records.effects [ReadRow ListRows PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
-(import doeff_records.pg_sql [table-index-name table-field-index-name index-name index-lock-key migrate-lock-key schema-statements])
+(import doeff_records.pg_sql [table-index-name table-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key
+                              migrate-lock-key schema-statements])
 (import doeff_records.main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
 (import doeff_records.http_server [MaintenancePlan RecordsListening])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
@@ -298,6 +301,48 @@
         (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color note-after) (reads-of quick ddl store))
         (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
+        (finally
+          (.close watcher))))))
+
+
+(deftest test-table-shaped-indexes-dropped-from-the-declaration-are-dropped-off-the-startup-path
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 宣言から外した表ごとの索引を外す(pg_sql の頭の註 — 2026-10-23 に本番の置き場の使われない表ごとの索引 11 本・874 MB が書きのたびに
+  ;; 更新されていた): 宣言 NOTE-SCHEMA の索引の用意が作った表の欄の式の索引(欄 note)と、宣言の作る名の形の上から読む欄の索引・等号の
+  ;; 欄 × 上から読む欄の組の索引(欄 label — LAW-SCHEMA に無い)は、欄 note を外した宣言 LAW-SCHEMA で起こした表の用意(起動の道)では
+  ;; 外さず外す物に数え、索引の用意が DROP INDEX CONCURRENTLY で外す。宣言の索引と、名の形が宣言の作る形でない手の索引は外さない。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
+            label-ordered (run (ordered-index-name prefix "parts" "label"))
+            label-within (run (ordered-within-index-name prefix "parts" "color" "label"))
+            color-index (run (table-field-index-name prefix "parts" "color"))
+            note-ordered (run (ordered-index-name prefix "parts" "note"))
+            hand (+ prefix "hand_note")
+            watcher (open-postgres))
+      (try
+        (setv noted (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (run-on quick ddl (reconcile-indexes noted))
+        (assert (is (index-validity watcher note-index) True) note-index)
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (key)" :i label-ordered :p prefix))
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (key)" :i label-within :p prefix))
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows (version)" :i hand :p prefix))
+        (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE LAW-SCHEMA prefix)))
+        (assert (= store.indexes.missing #()) (repr store.indexes.missing))
+        (assert (= store.indexes.retired (tuple (sorted #(note-index label-ordered label-within)))) (repr store.indexes.retired))
+        ;; 起動の道(表の用意)は外さない。
+        (for [name #(note-index label-ordered label-within)]
+          (assert (is (index-validity watcher name) True) (.format "表の用意が {} を外した" name)))
+        (assert (= (run-on quick ddl (as-maker store (ListRows "parts" :where {"note" "n1"}))) (NotIndexed #("note"))))
+        (run-on quick ddl (reconcile-indexes store))
+        (for [name #(note-index label-ordered label-within)]
+          (assert (is (index-validity watcher name) None) (.format "宣言に無い表ごとの索引 {} を外さなかった" name)))
+        (assert (= store.indexes.retired #()) (repr store.indexes.retired))
+        (assert (is (index-validity watcher color-index) True) "宣言の表の欄の式の索引を外した")
+        (assert (is (index-validity watcher note-ordered) True) "宣言の上から読む欄の索引を外した")
+        (assert (is (index-validity watcher hand) True) "宣言の作る形でない手の索引を外した")
+        (setv by-color (run-on quick ddl (as-maker store (ListRows "parts" :where {"color" "red"}))))
+        (assert (= (listed-keys by-color) #(#("p1"))) (repr by-color))
         (finally
           (.close watcher))))))
 
