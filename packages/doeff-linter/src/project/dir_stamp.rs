@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use super::fsmonitor;
 use super::git_index::{self, GitIndex};
 use super::{bulk_read, facts_cache, paths};
 
@@ -65,6 +66,10 @@ fn fingerprint(root: &Path, files: &[PathBuf]) -> Option<u64> {
     if files.is_empty() {
         return None;
     }
+    // 常駐の process(`fsmonitor`)が全部の file を「index の行と同じ」と答えていれば、stat せずに blob の id の指紋を作る。
+    if let Some(key) = by_vouched(root, files) {
+        return Some(key);
+    }
     // 冷えた stat も待ちなので重ねる(冷えた 449 回で 0.02 秒でも、IO の圧迫が重い時は 1 回ずつ待つ)。
     let metas = bulk_read::fan_out(files, |file| std::fs::metadata(file).ok());
     by_blobs(root, files, &metas).or_else(|| by_stamps(files, &metas))
@@ -93,15 +98,28 @@ fn by_blobs(root: &Path, files: &[PathBuf], metas: &[Option<Metadata>]) -> Optio
     for (at, oid) in untrusted.iter().zip(read) {
         oids[*at] = Some(oid?);
     }
+    blob_fingerprint(&rels, oids)
+}
+
+/// `by_blobs` の指紋の hash(path と blob の id の並び)。
+fn blob_fingerprint(rels: &[String], oids: Vec<Option<[u8; 20]>>) -> Option<u64> {
     let mut hash = Fnv::new();
     hash.mix(b"git-blob\0");
-    hash.mix(&(files.len() as u64).to_le_bytes());
+    hash.mix(&(rels.len() as u64).to_le_bytes());
     for (rel, oid) in rels.iter().zip(oids) {
         hash.mix(rel.as_bytes());
         hash.mix(&[0]);
         hash.mix(&oid?);
     }
     Some(hash.0)
+}
+
+/// 全部の file を常駐の process が「index の行と同じ」と答えた時の blob の id の指紋(`by_blobs` と同じ値 — stat も読みも無い)。1 つでも違えば None。
+fn by_vouched(root: &Path, files: &[PathBuf]) -> Option<u64> {
+    let session = fsmonitor::session(root)?;
+    let rels: Vec<String> = files.iter().map(|file| paths::relative_path(root, file)).collect::<Option<_>>()?;
+    let oids: Vec<Option<[u8; 20]>> = rels.iter().map(|rel| session.clean_oid(rel)).collect();
+    oids.iter().all(Option::is_some).then(|| blob_fingerprint(&rels, oids)).flatten()
 }
 
 /// (path・大きさ・更新時刻・inode)の指紋。更新から `SETTLE_NS` 経っていない file・読めない file が在れば None。

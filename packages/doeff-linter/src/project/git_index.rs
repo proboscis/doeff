@@ -37,7 +37,12 @@ pub struct GitIndex {
     entries: Vec<(String, Entry)>,
     /// index file 自身の更新時刻(秒・ns)。
     stamp: (u64, u32),
+    /// index file の名乗り(更新時刻の秒・ns・大きさ・inode)— 読む前の stat から取る。常駐の process(`fsmonitor`)が読んだ index と今の index が同じ物かを比べる。
+    ident: Ident,
 }
+
+/// index file の名乗り(更新時刻の秒・ns・大きさ・inode)。git は index を書き直す時に新しい file へ rename するので、書き替わると inode と更新時刻が変わる。
+pub type Ident = (u64, u32, u64, u64);
 
 impl GitIndex {
     /// `root`(git の作業木の頂上)の index を読む。信じられなければ None。
@@ -46,7 +51,30 @@ impl GitIndex {
         let meta = std::fs::metadata(&path).ok()?;
         let bytes = std::fs::read(&path).ok()?;
         let stamp = mtime_of(&meta)?;
-        Some(GitIndex { entries: parse(&bytes)?, stamp })
+        let ident = ident_of(&meta)?;
+        Some(GitIndex { entries: parse(&bytes)?, stamp, ident })
+    }
+
+    /// 読んだ index file の名乗り。
+    pub fn ident(&self) -> Ident {
+        self.ident
+    }
+
+    /// path が `prefix`(`/` で終わる dir の綴り)で始まる通常の file の行の path — index の並びで。
+    pub fn paths_under<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        let from = self.entries.partition_point(|(path, _)| path.as_str() < prefix);
+        self.entries[from..]
+            .iter()
+            .take_while(move |(path, _)| path.starts_with(prefix))
+            .filter(|(_, entry)| entry.mode & 0o170_000 == 0o100_000)
+            .map(|(path, _)| path.as_str())
+    }
+
+    /// 通常の file の行(mode 100644・100755)の blob の id — file の今の stat は見ない(今の file がその行と同じかは、呼び手が別に知っている)。
+    pub fn regular_oid(&self, rel: &str) -> Option<[u8; 20]> {
+        let at = self.entries.binary_search_by(|(path, _)| path.as_str().cmp(rel)).ok()?;
+        let entry = &self.entries[at].1;
+        (entry.mode & 0o170_000 == 0o100_000).then_some(entry.oid)
     }
 
     /// `root` の index — 1 回の実行の中で根ごとに 1 度だけ読む(前提は `hy_files` と同じ: 実行の間に index は書き替わらないと見る。書き替わっていても、
@@ -76,7 +104,7 @@ impl GitIndex {
 }
 
 /// index の path — root/.git が dir ならその中、file(`gitdir: <path>`・作業木)ならその指す dir の中。
-fn index_path(root: &Path) -> Option<PathBuf> {
+pub(crate) fn index_path(root: &Path) -> Option<PathBuf> {
     let dot_git = root.join(".git");
     let meta = std::fs::metadata(&dot_git).ok()?;
     if meta.is_dir() {
@@ -86,6 +114,19 @@ fn index_path(root: &Path) -> Option<PathBuf> {
     let target = text.lines().find_map(|line| line.strip_prefix("gitdir:"))?.trim();
     let target = Path::new(target);
     Some(if target.is_absolute() { target.join("index") } else { root.join(target).join("index") })
+}
+
+/// 名乗り(更新時刻の秒・ns・大きさ・inode)。
+#[cfg(unix)]
+pub fn ident_of(meta: &Metadata) -> Option<Ident> {
+    use std::os::unix::fs::MetadataExt;
+    let (sec, nsec) = mtime_of(meta)?;
+    Some((sec, nsec, meta.len(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+pub fn ident_of(_meta: &Metadata) -> Option<Ident> {
+    None
 }
 
 #[cfg(unix)]

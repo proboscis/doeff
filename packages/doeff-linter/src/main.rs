@@ -669,6 +669,10 @@ fn main() -> ExitCode {
     if argv.get(1).map(String::as_str) == Some(doeff_linter::project::facts_cache::SWEEP_COMMAND) {
         return doeff_linter::project::facts_cache::run_handed_sweep(&argv[2..]);
     }
+    // 作業木の変わりを inotify で覚えて 1 file の実行の問いに答える常駐の process(card ki-9e7e85407b71)。
+    if argv.get(1).map(String::as_str) == Some(doeff_linter::project::fsmonitor::SERVE_COMMAND) {
+        return doeff_linter::project::fsmonitor::daemon::serve();
+    }
     let args = Args::parse();
 
     if args.list_rules {
@@ -710,6 +714,10 @@ fn main() -> ExitCode {
     // RAYON_NUM_THREADS が明示されていればそれに従う。
     if args.stdin && std::env::var_os("RAYON_NUM_THREADS").is_none() {
         let _ = rayon::ThreadPoolBuilder::new().num_threads(SINGLE_FILE_THREADS).build_global();
+    }
+    // 1 file の実行は、repo の全 file の stat と歩きを常駐の process に問う(無ければ今までどおり自分で歩く)。
+    if args.stdin {
+        doeff_linter::project::fsmonitor::enable();
     }
 
     if args.hook {

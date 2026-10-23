@@ -49,9 +49,8 @@ pub fn scan(root: &Path, label: &str, wants_source: impl Fn(&BlobSpell) -> bool 
 /// file 1 つを見る(`scan` の 1 件)。
 fn see(root: &Path, memory: Option<&ChunkedFacts<BlobSpell>>, wants_source: &(impl Fn(&BlobSpell) -> bool + Sync), path: &Path, read: &AtomicUsize) -> Seen {
     let known = memory.and_then(|memory| {
-        let meta = std::fs::metadata(path).ok()?;
         let rel = paths::relative_path(root, path)?;
-        let found = memory.lookup(&rel, &meta);
+        let (found, meta) = memory.lookup_path(&rel, path)?;
         Some((memory, found, rel, meta))
     });
     let unknown = match known {
@@ -62,7 +61,7 @@ fn see(root: &Path, memory: Option<&ChunkedFacts<BlobSpell>>, wants_source: &(im
     read.fetch_add(1, Ordering::Relaxed);
     let Ok(source) = std::fs::read_to_string(path) else { return Seen::Unreadable };
     if let Some((memory, oid, rel, meta)) = unknown {
-        memory.learn_read(&rel, oid, path, &meta, source.as_bytes(), BlobSpell::of(&source));
+        memory.learn_read(&rel, oid, path, meta.as_ref(), source.as_bytes(), BlobSpell::of(&source));
     }
     Seen::Source(source)
 }
