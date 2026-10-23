@@ -1,6 +1,4 @@
 {
-    // 視野は packages/*/src 全部(proboscis/doeff#617, card ki-f3f12e8e5a15)。
-    // ignore は 2026-10-23 計測時に error を持つ package の残債(error 数)。直したら行を外す。
     "include": [
         "doeff",
         "packages/doeff-adr/src",
@@ -43,25 +41,25 @@
         "packages/doeff-adr/tests"
     ],
     "ignore": [
-        "packages/doeff-agentic/src",  // 26
-        "packages/doeff-agents/src",  // 19
-        "packages/doeff-claude-code/src",  // 5
-        "packages/doeff-claude-judge/src",  // 1
-        "packages/doeff-cluster/src",  // 216
-        "packages/doeff-conductor/src",  // 19
-        "packages/doeff-events/src",  // 5
-        "packages/doeff-flow/src",  // 2
-        "packages/doeff-gemini/src",  // 12
-        "packages/doeff-git/src",  // 3
-        "packages/doeff-google-secret-manager/src",  // 16
-        "packages/doeff-hy-pytest/src",  // 4
-        "packages/doeff-hy/src",  // 119
-        "packages/doeff-jev/src",  // 2
-        "packages/doeff-openai/src",  // 172
-        "packages/doeff-openrouter/src",  // 3
-        "packages/doeff-records/src",  // 6
-        "packages/doeff-test-target/src",  // 26
-        "packages/doeff-validation/src"  // 1
+        "packages/doeff-agentic/src",
+        "packages/doeff-agents/src",
+        "packages/doeff-claude-code/src",
+        "packages/doeff-claude-judge/src",
+        "packages/doeff-cluster/src",
+        "packages/doeff-conductor/src",
+        "packages/doeff-events/src",
+        "packages/doeff-flow/src",
+        "packages/doeff-gemini/src",
+        "packages/doeff-git/src",
+        "packages/doeff-google-secret-manager/src",
+        "packages/doeff-hy-pytest/src",
+        "packages/doeff-hy/src",
+        "packages/doeff-jev/src",
+        "packages/doeff-openai/src",
+        "packages/doeff-openrouter/src",
+        "packages/doeff-records/src",
+        "packages/doeff-test-target/src",
+        "packages/doeff-validation/src"
     ],
     "extraPaths": [
         "packages/doeff-core-effects",
