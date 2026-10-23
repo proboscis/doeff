@@ -389,9 +389,12 @@
                        :model-refusal (run (model-refusal-of end.model-refusal))
                        :exit-code end.exit-code :stderr-tail end.stderr-tail)
     (isinstance end Interrupted)
+      ;; 止めた手番を閉じた result の行が在れば、止めるまでの消費も運ぶ(層 2 が持たない止めは None のまま — card ki-47e64b7b642f)。
       (AgentTurnInterrupted :cli-kept end.process-kept :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs
                             :resume-from context-id
-                            :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
+                            :usage (if (is end.usage None) None (usage-of end.usage end.cost-usd))
+                            :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
+                            :model-usage end.model-usage :model-usage-gap end.model-usage-gap)
     (isinstance end BackendLost)
       (AgentTurnLost :detail end.detail :resume-from context-id
                      :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows

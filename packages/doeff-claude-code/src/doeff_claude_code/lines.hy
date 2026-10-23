@@ -672,9 +672,10 @@
 ;; CLI が終えた手番(Completed・Failed)は、手番の model ごとの使用量と照合の結末を持つ(card ki-1d986d4f0007 — 状態機械 dialogue.hy の
 ;; end-of-result が per-turn-model-usage の 1 か所で載せる): model-usage = 手番を閉じた result の行の modelUsage の累積を、額と同じ起点
 ;; (CostMark)からの増分へ直した物(ModelUsage の列 — この手番に使った model だけ。出せなければ None)/ model-usage-gap = model ごとの額の
-;; 和と手番の額 cost-usd を照合できなかった訳(ModelUsageGap — 合えば None。既定は NOT-NAMED = modelUsage を名乗らない終わり)。止めた・
-;; 消えた手番は額と同じく持たない(止めた手番の分は次の手番の起点へ動かして捨てる。ただし生き残った入力の手番が同じ process で続く
-;; 止め — Interrupted の continued-by — は起点を動かさず、止めた区切りの分を続いた手番の終わりに含める・card ki-9246ea31f98d)。
+;; 和と手番の額 cost-usd を照合できなかった訳(ModelUsageGap — 合えば None。既定は NOT-NAMED = modelUsage を名乗らない終わり)。止めた
+;; 手番(Interrupted)は、止めた手番を閉じた result の行が在れば同じ数え方で持ち(起点はその行へ進む — 次の手番へは混ぜない・card
+;; ki-47e64b7b642f)、result の行の無い止めは持たない。ただし生き残った入力の手番が同じ process で続く止め — Interrupted の continued-by —
+;; は起点を動かさず持たず、止めた区切りの分を続いた手番の終わりに含める(card ki-9246ea31f98d)。消えた手番(BackendLost)は持たない。
 ;;
 ;; 手番の途中で CLI の process が降りた終わり(BackendLost と、注入を待って飲んだ result の Failed)は、process の終了 code と stderr の
 ;; 末尾を欄で持つ(#4207 — 文 detail の中だけでなく、上の層が型の欄で「なぜ降りたか」を読めるように)。欄の値は状態機械 dialogue.hy の
@@ -742,11 +743,19 @@
   "止めた手番の終わり。process-kept = 同じ CLI の process が会話に残り次の手番も使うか(control の止め — 真)、止めと一緒に
    process が降りたか(SIGINT の形・会話を閉じる止め・止めの途中で process が消えた — 偽。#3672 の決め 6)— 既定値を置かない
    (作り手が必ず名乗る)・surviving-refs = CLI が次の手番として走らせる入力(continued-by がその手番)・dropped-refs = 読まれずに
-   捨てられた入力 / last-call-usage・last-call-model・model-windows は節の頭の註。"
+   捨てられた入力 / last-call-usage・last-call-model・model-windows は節の頭の註 /
+   usage・cost-usd・model-usage・model-usage-gap = 止めた手番を閉じた result の行で数えた、止めるまでの消費(数え方は Completed・Failed と
+   同じ end-of-result — card ki-47e64b7b642f: 止めた手番も呼びの分を使っており、額を捨てると上の層は額の無い手番として単価で推定する)。
+   result の行の無い終わり(止めの途中で process が降りた・会話を閉じた)と、生き残った入力の手番が続く止め(continued-by — 止めた区切りの
+   分は続いた手番の終わりに含む・card ki-9246ea31f98d)は持たない(None・None・None・NOT-NAMED)。"
   (#^ bool process-kept)
   (setv #^ (get tuple #(str ...)) surviving-refs #())
   (setv #^ (get tuple #(str ...)) dropped-refs #())
   (setv #^ (| ClaudeTurn None) continued-by None)
+  (setv #^ (| Usage None) usage None)
+  (setv #^ (| float None) cost-usd None)
+  (setv #^ (| (get tuple #(ModelUsage ...)) None) model-usage None)
+  (setv #^ (| ModelUsageGap None) model-usage-gap ModelUsageGap.NOT-NAMED)
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
