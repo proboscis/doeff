@@ -19,6 +19,10 @@
 (import importlib.util)
 (import threading)
 (import queue)
+(import select)
+(import signal)
+(import subprocess)
+(import sys)
 (import time)
 (import socket)
 (import http.server)
@@ -43,7 +47,8 @@
                                                 clickhouse-insert-request clickhouse-kill-request clickhouse-waits clickhouse-answer
                                                 clickhouse-rows clickhouse-written-rows clickhouse-failure clickhouse-schema-statements
                                                 ClickHouseDatabase ClickHouseWaits ClickHouseRequest ClickHouseResponse ClickHouseParam
-                                                WAIT-MARGIN-SECONDS KILL-GRACE-SECONDS USER-AGENT])
+                                                WAIT-MARGIN-SECONDS KILL-GRACE-SECONDS USER-AGENT RoundTrips EXIT-SETTLE-SECONDS
+                                                EXIT-KILL-GRACE-SECONDS])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 (import pytest)
 
@@ -943,6 +948,157 @@
   (assert (= (lfor r received r.kind) ["query" "kill"]) received)
   ;; 待ち 0.5 秒 + 猶予 1 秒は待つ(KILL の往復は速い)— 猶予を待たずに離れていない。
   (assert (<= 1.4 elapsed 5.0) elapsed))
+
+
+;; --- process の終わりの読み終え(card ki-41b402ad072d)----------------------------------------------------------------------------
+
+;; SIGTERM で終わる子 process(問い合わせを撃つ・shape は file の註)。
+(val EXIT-CHILD (os.path.join (os.path.dirname (os.path.abspath __file__)) "clickhouse_exit_child.py"))
+;; 子の import と終わりを待つ上限の秒(import に数秒・読み終えは最長 EXIT-SETTLE-SECONDS + 2 × EXIT-KILL-GRACE-SECONDS)。
+(val EXIT-CHILD-LIMIT-SECONDS 60.0)
+
+
+(defrecord Seen
+  "process の終わりを見る偽の ClickHouse が見た出来事 1 つ(kind = query・kill・answered = 問い合わせの答えを書き終えた・closed = 問い合わせの
+   接続の閉じを見た・at = 見た拍の単調時計・answered-before-close = closed の時、答えを書き終えた後の閉じか)。"
+  (#^ str kind)
+  (#^ float at)
+  (#^ bool answered-before-close))
+
+
+(deff client-closed [connection seconds]  ; defk にできない: http.server が呼ぶ素の callback から呼ぶ socket の見張り
+  {:pre [(: connection socket.socket) (: seconds float)] :post [(: % bool)]
+   :tags {:context "sql" :role "program"}}
+  "問い合わせの接続を client が閉じたか(最長 seconds 秒見る)を、本文の後の byte を読まずに知るため(閉じた接続は読めて 0 byte)。"
+  (setv readable (. (select.select [connection] [] [] seconds) [0]))
+  (and (bool readable) (= (.recv connection 1 socket.MSG-PEEK) b"")))
+
+
+(defclass ExitWatchingClickHouse [http.server.BaseHTTPRequestHandler]
+  "process の終わりを見る偽の ClickHouse の HTTP の口(server の欄 mode が振る舞いを決める)。
+     mode \"slow\"  = 問い合わせに 1 秒の後で 1 行を答える(その間に client が閉じれば、答えを書かずに閉じを記す)。
+     mode \"stuck\" = 問い合わせには KILL QUERY が来るまで答えず、KILL を受けたら取り消しの答え(500・code 394)を返す。
+   答えの後は client の閉じを見て、答えを書き終えた後の閉じか(answered-before-close)を記す — 直す前は、答えを書く前に閉じる(本番の
+   ClickHouse は、その閉じた接続へ答えを書く所で落ちた)。見た出来事を Seen にして server の seen(thread をまたぐ queue)へ入れる。"
+  (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
+    {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
+    "受けた POST を記し、mode の振る舞いで答え、client の閉じを記すため。"
+    (setv body (.read self.rfile (int (.get self.headers "Content-Length" "0"))))
+    (when (.startswith body b"KILL QUERY")
+      (.put self.server.seen (Seen :kind "kill" :at (time.monotonic) :answered-before-close False))
+      (.set self.server.killed)
+      (.send-response self 200) (.send-header self "Content-Length" "0") (.end-headers self)
+      (return None))
+    (.put self.server.seen (Seen :kind "query" :at (time.monotonic) :answered-before-close False))
+    (setv until (+ (time.monotonic) (if (= self.server.mode "slow") 1.0 EXIT-CHILD-LIMIT-SECONDS)))
+    (while (and (< (time.monotonic) until) (not (.is-set self.server.killed)))
+      (when (client-closed self.connection 0.05)
+        (.put self.server.seen (Seen :kind "closed" :at (time.monotonic) :answered-before-close False))
+        (return None)))
+    (if (= self.server.mode "slow")
+        (do (setv answer b"[1]\n")
+            (.send-response self 200))
+        (do (setv answer b"Code: 394. DB::Exception: Query was cancelled. (QUERY_WAS_CANCELLED)\n")
+            (.send-response self 500)
+            (.send-header self "X-ClickHouse-Exception-Code" "394")))
+    (.send-header self "Content-Length" (str (len answer)))
+    (.end-headers self)
+    (.write self.wfile answer)
+    (.flush self.wfile)
+    (.put self.server.seen (Seen :kind "answered" :at (time.monotonic) :answered-before-close False))
+    (when (client-closed self.connection EXIT-CHILD-LIMIT-SECONDS)
+      (.put self.server.seen (Seen :kind "closed" :at (time.monotonic) :answered-before-close True)))
+    (setv self.close-connection True)
+    None)
+
+  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+    {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
+    "検の出力に要求の行を出さないため。"
+    None))
+
+
+(defrecord ExitWatch
+  "子 process を SIGTERM で終わらせた 1 回の観測(seen = 偽の server が見た出来事を見た順に・signalled = SIGTERM を送った拍・code = 子の
+   終わりの code・stderr = 子の stderr)。"
+  (#^ tuple seen)
+  (#^ float signalled)
+  (#^ int code)
+  (#^ str stderr))
+
+
+(defk terminate-mid-round-trip [mode shape]
+  {:pre [(: mode str) (: shape str)] :post [(: % ExitWatch)]
+   :tags {:context "sql" :role "program"}}
+  "偽の ClickHouse(mode)へ問い合わせる子 process(shape)を起こし、server が問い合わせを受けたらすぐ SIGTERM を送り、子の終わりまでに
+   server が見た出来事を集めるため。"
+  (val server (http.server.ThreadingHTTPServer #("127.0.0.1" 0) ExitWatchingClickHouse))
+  (setv server.mode mode
+        server.killed (threading.Event)
+        server.seen (queue.SimpleQueue))
+  (.start (threading.Thread :target server.serve-forever :daemon True))
+  (val child (subprocess.Popen [sys.executable EXIT-CHILD (.format "http://127.0.0.1:{}" (get server.server-address 1)) shape]
+                               :stderr subprocess.PIPE :text True))
+  (try
+    (val first (.get server.seen :timeout EXIT-CHILD-LIMIT-SECONDS))
+    (assert (= first.kind "query") first)
+    (.send-signal child signal.SIGTERM)
+    (val signalled (time.monotonic))
+    (val stderr (get (.communicate child :timeout EXIT-CHILD-LIMIT-SECONDS) 1))
+    ;; 子の終わりの後に server が書く出来事(答えの後の閉じ)を待つ。
+    (time.sleep 0.3)
+    (ExitWatch :seen (+ #(first) (tuple (lfor _ (range (.qsize server.seen)) (.get-nowait server.seen))))
+               :signalled signalled :code child.returncode :stderr stderr)
+    (finally
+      (when (is (.poll child) None) (.kill child) (.wait child))
+      (.set server.killed)
+      (.shutdown server)
+      (.server-close server))))
+
+
+(deftest test-clickhouse-reads-the-answer-before-a-stopped-service-ends
+  ;; 失敗ケース(card ki-41b402ad072d・10-24 08:23 JST): 止めの合図で service の Program が終わり、Python が終わると、daemon の往復の
+  ;; thread は待たれずに消え、OS が閉じた接続へ server が答えを書いて落ちた。終わりの読み終えが、答えを読み終えてから終わらせる。
+  (<- watch (terminate-mid-round-trip "slow" "stop"))
+  (assert (= watch.code 0) watch)
+  (assert (= (lfor s watch.seen s.kind) ["query" "answered" "closed"]) watch)
+  (val answered (get watch.seen 1))
+  (assert (. (get watch.seen 2) answered-before-close) watch)
+  ;; 答えは SIGTERM の後に書かれた(合図の時はまだ往復が走っていた — 読み終えが process の終わりを待たせた)。
+  (assert (> answered.at watch.signalled) watch))
+
+
+(deftest test-clickhouse-reads-the-answer-before-a-default-sigterm-ends-the-process
+  ;; SIGTERM の受け手を据えない process(既定の SIGTERM は atexit も走らせずに即座に終わる)も、往復を読み終えてから同じ SIGTERM で終わる。
+  (<- watch (terminate-mid-round-trip "slow" "plain"))
+  (assert (= watch.code (- signal.SIGTERM)) watch)
+  (assert (= (lfor s watch.seen s.kind) ["query" "answered" "closed"]) watch)
+  (assert (. (get watch.seen 2) answered-before-close) watch))
+
+
+(deftest test-clickhouse-kills-a-stuck-query-before-a-stopped-service-ends
+  ;; 終わりの読み終えの秒(EXIT-SETTLE-SECONDS)の内に終わらない往復は、接続を閉じる前に KILL QUERY を撃ち、取り消しの答えを読んでから
+  ;; 離れる(期限の 60 秒までは待たない — 止めの合図から KILL までの猶予の内に終わる)。
+  (<- watch (terminate-mid-round-trip "stuck" "stop"))
+  (assert (= watch.code 0) watch)
+  (assert (= (lfor s watch.seen s.kind) ["query" "kill" "answered" "closed"]) watch)
+  (val kill (get watch.seen 1))
+  (val closed (get watch.seen 3))
+  (assert closed.answered-before-close watch)
+  ;; KILL は読み終えの秒を待ってから撃ち、子は猶予(shim の 8.5 秒)の内に終わる。
+  (assert (>= (- kill.at watch.signalled) (- EXIT-SETTLE-SECONDS 0.5)) watch)
+  (assert (< (- closed.at watch.signalled) (+ EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS EXIT-KILL-GRACE-SECONDS 1.0)) watch))
+
+
+(deftest test-clickhouse-round-trips-refuse-to-start-once-settling-began
+  ;; 読み終えが始まった後に始まる往復は、台帳に載らない(process はその往復を置いて終わるので、接続も繋がない)。
+  (val trips (RoundTrips))
+  (<- request (clickhouse-query-request (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9" :database "default" :user "default"
+                                                            :password "") "SELECT 1" #()))
+  (val done (.enter trips request))
+  (assert (= (.close trips) #(#(request done))))
+  (assert (is (.enter trips request) None))
+  (.leave trips request done)
+  (assert (.is-set done)))
 
 
 ;; --- 実 DB との結合(環境変数が無ければ skip) --------------------------------------------------------------------------------

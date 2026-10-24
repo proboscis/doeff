@@ -4,6 +4,9 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 import http.client
+import threading as threading
+import types as types
+from concurrent.futures import Future as Future
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import Program as Program
@@ -36,6 +39,8 @@ QUERY_SETTINGS: tuple[tuple[str, ...], ...]
 TIMEOUT_OVERFLOW_MODE: str
 WAIT_MARGIN_SECONDS: float
 KILL_GRACE_SECONDS: float
+EXIT_SETTLE_SECONDS: float
+EXIT_KILL_GRACE_SECONDS: float
 USER_AGENT: str
 QUERY_ID_SHAPE: Incomplete
 NOT_SUPPORTED_SQLSTATE: str
@@ -98,6 +103,24 @@ class ClickHouseResponse:
     body: bytes
     exception_code: str | None
     summary: str | None
+
+class RoundTrips:
+    lock: Incomplete
+    running: Incomplete
+    closing: Incomplete
+
+    def __init__(self: RoundTrips) -> None:
+        ...
+
+    def enter(self: RoundTrips, request: ClickHouseRequest) -> threading.Event | None:
+        ...
+
+    def leave(self: RoundTrips, request: ClickHouseRequest, done: threading.Event) -> Incomplete:
+        ...
+
+    def close(self: RoundTrips) -> tuple:
+        ...
+ROUND_TRIPS: RoundTrips
 
 def clickhouse_type(value: int | float | str | bytes | bool | None) -> _Program[str, object]:
     ...
@@ -169,6 +192,30 @@ def clickhouse_abandon(connection: http.client.HTTPConnection, request: ClickHou
     ...
 
 def clickhouse_send(request: ClickHouseRequest) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+    ...
+
+def clickhouse_exit_kill(request: ClickHouseRequest, grace: float) -> _Program[ClickHouseResponse | SqlUnreachable, object]:
+    ...
+
+def submit_exit_kill(request: ClickHouseRequest, grace: float) -> Future:
+    ...
+
+def settle_round_trips(settle_seconds: float, grace: float) -> tuple:
+    ...
+
+def settle_at_exit() -> Incomplete:
+    ...
+
+class SettleThenTerminate:
+    received: Incomplete
+
+    def __init__(self: SettleThenTerminate) -> None:
+        ...
+
+    def receive(self: SettleThenTerminate, number: int, frame: types.FrameType | None) -> Incomplete:
+        ...
+
+def install_exit_settle() -> Incomplete:
     ...
 
 def clickhouse_answer(request: ClickHouseRequest, insert: bool) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:

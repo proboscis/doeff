@@ -23,16 +23,30 @@
 ;;;     同じ作法)。遅い問い合わせの間も、同じ run の他の task(別の置き場への文・待ち受けの /healthz・時計の刻み)は回る。外側に scheduled が
 ;;;     要る。接続も貸し出しも持たないので、取り消された待ちに届かなかった答えの後始末は要らない(keep-nothing)。待ち手が取り消されても
 ;;;     走っている往復は止めない(止めると server の問い合わせを置いて離れる)— 往復は上の待ちの約束の秒の内に終わる。
-(require doeff-hy.macros [defhandler defk <- val var])
+;;;   - process の終わりも往復を置いて離れない(card ki-41b402ad072d): 往復の thread は daemon なので、process が終わると往復の途中で
+;;;     消え、OS が socket を閉じた接続へ server が答えを書いて落ちた(10-24 08:23 JST — worker の Pod の入れ替えで終わった record の
+;;;     service の SELECT)。走っている往復は台帳(ROUND-TRIPS)に載せ、process の終わり(Python の終わりの atexit・既定のままの
+;;;     SIGTERM)に読み終える(settle-round-trips): EXIT-SETTLE-SECONDS の間 往復が自ら終わるのを待ち、残った往復へ KILL QUERY を撃ち、
+;;;     取り消しの答えを往復の thread が元の接続で読み終えるのを EXIT-KILL-GRACE-SECONDS の間 待つ。読み終えが始まった後の往復は
+;;;     始めない(SqlUnreachable)。全体の秒は、止めの合図から KILL までの猶予の内に収まる短さに置く(往復の期限までは待たない)。
+;;;     SIGTERM の受け手を据えた process(os-signal-stop-handler など)は、受け手が Program を終わらせた後の atexit で読み終える。
+(require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
+(import atexit)
 (import functools)
 (import http.client)
 (import json)
 (import math)
+(import os)
 (import re)
 (import selectors)
+(import signal)
+(import threading)
+(import time)
+(import types)
 (import uuid)
 (import urllib.parse)
+(import concurrent.futures [Future])
 (import dataclasses [dataclass field])
 (import doeff [Program])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
@@ -55,6 +69,11 @@
 (val WAIT-MARGIN-SECONDS 15.0)
 ;; 待ちを越えた後(頭の註)、KILL QUERY の往復を待つ秒と、元の接続で取り消しの答えを読む秒(それぞれ)。
 (val KILL-GRACE-SECONDS 15.0)
+;; process の終わりの読み終え(頭の註)で、走っている往復が自ら終わるのを待つ秒と、その後 KILL QUERY の往復と取り消しの答えの読みに
+;; それぞれ許す秒。和(6 秒)は、doeff-cluster の worker が job の process group へ止めの合図を送ってから KILL するまでの猶予(shim の
+;; 8.5 秒 = --stop-grace 10 秒 − 掃除の余裕 1.5 秒)の内に置く — 越えると読み終える前に KILL で接続が切れ、同じ落ちになる。
+(val EXIT-SETTLE-SECONDS 2.0)
+(val EXIT-KILL-GRACE-SECONDS 2.0)
 ;; client が名乗る User-Agent(server の query_log の http_user_agent — この client の要求を他の HTTP の client と見分ける)。
 (val USER-AGENT "doeff-clickhouse-http-sql")
 ;; query_id の形(client が作る uuid4 — KILL QUERY の文へ直に書くので、この形の外の値は断る)。
@@ -140,6 +159,48 @@
   (#^ bytes body)
   (#^ (| str None) exception-code)
   (#^ (| str None) summary))
+
+
+(defclass RoundTrips []
+  "走っている HTTP の往復の台帳(頭の註 — process の終わりに読み終えるため)。running = query_id → #(要求 終わりの印)・closing = 終わりの
+   読み終えが始まった印(その後の往復は台帳に載せない = 始めない)。往復の thread と終わりの手順の間で錠を取って触る。資源の係なので値の型では
+   ない。"
+
+  (deff __init__ [self]  ; defk にできない: 資源の class の初期化
+    {:pre [(: self RoundTrips)] :post [(: % "None")]}
+    "空の台帳で始めるため。"
+    (setv self.lock (threading.Lock)
+          self.running {}
+          self.closing False))
+
+  (deff enter [self request]  ; defk にできない: 往復の thread と終わりの手順が共に触る台帳の口(VM の外の資源)
+    {:pre [(: self RoundTrips) (: request ClickHouseRequest)] :post [(: % (| threading.Event None))]}
+    "往復を始める前に台帳へ載せ、往復の終わりに立てる印を受けるため(読み終えが始まった後は載せず None — 呼び手は往復を始めない)。"
+    (with [_ self.lock]
+      (if self.closing
+          None
+          (do (setv done (threading.Event))
+              (setv (get self.running request.query-id) #(request done))
+              done))))
+
+  (deff leave [self request done]  ; defk にできない: 往復の thread と終わりの手順が共に触る台帳の口(VM の外の資源)
+    {:pre [(: self RoundTrips) (: request ClickHouseRequest) (: done threading.Event)] :post [(: % "None")]}
+    "接続を閉じた往復を台帳から外し、終わりの印を立てるため。"
+    (with [_ self.lock]
+      (.pop self.running request.query-id None))
+    (.set done)
+    None)
+
+  (deff close [self]  ; defk にできない: 往復の thread と終わりの手順が共に触る台帳の口(VM の外の資源)
+    {:pre [(: self RoundTrips)] :post [(: % tuple)]}
+    "読み終えの始まりに、それより後の往復を断り、走っている往復(要求と終わりの印の組)を答えるため。"
+    (with [_ self.lock]
+      (setv self.closing True)
+      (tuple (.values self.running)))))
+
+
+;; process の往復の台帳(頭の註)。
+(val ROUND-TRIPS (RoundTrips))
 
 
 (defk clickhouse-type [value]
@@ -418,26 +479,112 @@
   {:pre [(: request ClickHouseRequest)] :post [(: % (| ClickHouseResponse SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "HTTP POST 1 本を送って答えを受けるため(頭の註の待ちの約束): 答えの始まりを waits.wait 秒待ち、越えたら clickhouse-abandon で
-   問い合わせを止めてから離れる。繋げなければ(server で何も走っていない)そのまま SqlUnreachable。"
-  (<- connection (clickhouse-connection request.url request.waits.wait))
+   問い合わせを止めてから離れる。繋げなければ(server で何も走っていない)そのまま SqlUnreachable。往復は接続を閉じるまで台帳
+   ROUND-TRIPS に載り、process の終わりの読み終えが始まった後は始めない(頭の註)。"
+  (val done (.enter ROUND-TRIPS request))
+  (when (is done None)
+    (return (SqlUnreachable :reason (.format "process が終わる所なので往復を始めない(query_id {})" request.query-id))))
   (try
+    (<- connection (clickhouse-connection request.url request.waits.wait))
     (try
-      (.connect connection)
-      (except [error OSError]
-        (return (SqlUnreachable :reason (.format "接続できない: {!r}" error)))))
-    (try
-      (<- (clickhouse-post connection request.url request.body request.headers))
-      (except [error OSError]
-        (<- broken (clickhouse-abandon connection request (.format "要求を送る途中で切れた: {!r}" error)))
-        (return broken)))
-    (<- started (answer-started connection request.waits.wait))
-    (if started
-        (do (<- answer (clickhouse-read connection))
-            answer)
-        (do (<- abandoned (clickhouse-abandon connection request
-                                              (.format "待ち {} 秒の内に答えが始まらない" (! (clickhouse-seconds-text request.waits.wait)))))
-            abandoned))
-    (finally (.close connection))))
+      (try
+        (.connect connection)
+        (except [error OSError]
+          (return (SqlUnreachable :reason (.format "接続できない: {!r}" error)))))
+      (try
+        (<- (clickhouse-post connection request.url request.body request.headers))
+        (except [error OSError]
+          (<- broken (clickhouse-abandon connection request (.format "要求を送る途中で切れた: {!r}" error)))
+          (return broken)))
+      (<- started (answer-started connection request.waits.wait))
+      (if started
+          (do (<- answer (clickhouse-read connection))
+              answer)
+          (do (<- abandoned (clickhouse-abandon connection request
+                                                (.format "待ち {} 秒の内に答えが始まらない" (! (clickhouse-seconds-text request.waits.wait)))))
+              abandoned))
+      (finally (.close connection)))
+    (finally (.leave ROUND-TRIPS request done))))
+
+
+(defk clickhouse-exit-kill [request grace]
+  {:pre [(: request ClickHouseRequest) (: grace float)] :post [(: % (| ClickHouseResponse SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "process の終わりの読み終え(頭の註)で、自ら終わらなかった往復の問い合わせを KILL QUERY で止めるため(取り消しの答えは往復の thread が
+   元の接続で読む)。"
+  (<- kill (clickhouse-kill-request request))
+  (<- answer (clickhouse-kill kill grace))
+  answer)
+
+
+(deff submit-exit-kill [request grace]  ; defk にできない: process の終わり(atexit・信号の受け手)に VM の外から呼ぶ入口の部品
+  {:pre [(: request ClickHouseRequest) (: grace float)] :post [(: % Future)]
+   :tags {:context "sql" :role "foundation"}}
+  "process の終わりの読み終えで、往復 1 つの KILL QUERY を CLICKHOUSE-THREADS の thread で撃ち、他の往復の KILL と並べるため。"
+  (.submit CLICKHOUSE-THREADS (fn [] (run-detached (clickhouse-exit-kill request grace)))))
+
+
+(deff settle-round-trips [settle-seconds grace]  ; defk にできない: process の終わり(atexit・信号の受け手)に VM の外から呼ぶ入口
+  {:pre [(: settle-seconds float) (: grace float)] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
+  "process が終わる前に、走っている往復を読み終えるため(頭の註): 後の往復を断り、settle-seconds の間 往復が自ら終わるのを待ち、残った往復へ
+   KILL QUERY を撃ち(1 本に最長 grace 秒・別々の thread で並べて)、取り消しの答えを往復の thread が読み終えるのを KILL から grace 秒の
+   後まで待つ。答え = それでも読み終えなかった往復の要求(process はそれを置いて終わる)。全体は最長 settle-seconds + 2 × grace 秒。"
+  (setv started (time.monotonic))
+  (setv running (.close ROUND-TRIPS))
+  (for [#(_ done) running]
+    (.wait done (max 0.0 (- (+ started settle-seconds) (time.monotonic)))))
+  (setv stuck (tuple (gfor #(request done) running :if (not (.is-set done)) #(request done))))
+  (setv asked (time.monotonic))
+  (for [#(request _) stuck]
+    (submit-exit-kill request grace))
+  (for [#(_ done) stuck]
+    (.wait done (max 0.0 (- (+ asked grace grace) (time.monotonic)))))
+  (tuple (gfor #(request done) stuck :if (not (.is-set done)) request)))
+
+
+(deff settle-at-exit []  ; defk にできない: Python の終わり(atexit)が呼ぶ素の callback
+  {:pre [] :post [(: % "None")]
+   :tags {:context "sql" :role "foundation"}}
+  "Program が終わって Python が終わる時に、走っている往復を読み終えるため(頭の註・daemon の往復の thread は待たれずに消える)。"
+  (settle-round-trips EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS)
+  None)
+
+
+(defclass SettleThenTerminate []
+  "既定のまま(受け手の無い)の SIGTERM で終わる process が、走っている往復を読み終えてから同じ SIGTERM で終わるための受け手(頭の註)。
+   受け手を据えた process(os-signal-stop-handler など)は受け手を置き換えるので、これは働かない(その時は atexit が読み終える)。資源の係
+   なので値の型ではない。"
+
+  (deff __init__ [self]  ; defk にできない: 資源の class の初期化
+    {:pre [(: self SettleThenTerminate)] :post [(: % "None")]}
+    "まだ信号を受けていない印で始めるため。"
+    (setv self.received False))
+
+  (deff receive [self number frame]  ; defk にできない: Python の信号の受け手(main の thread の素の callback)
+    {:pre [(: self SettleThenTerminate) (: number int) (: frame (| types.FrameType None))] :post [(: % "None")]}
+    "SIGTERM を受けたら往復を読み終え、既定の受け手に戻して同じ信号で終わるため(読み終えの間に届いた 2 つ目の SIGTERM は読み終えを
+     待たせるだけで、先に終わらせない)。"
+    (when (not self.received)
+      (setv self.received True)
+      (settle-round-trips EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS)
+      (signal.signal number signal.SIG-DFL)
+      (os.kill (os.getpid) number))
+    None))
+
+
+(deff install-exit-settle []  ; defk にできない: module を読む時に 1 度だけ Python の終わりと信号の受け手を据える入口
+  {:pre [] :post [(: % "None")]
+   :tags {:context "sql" :role "foundation"}}
+  "process の終わりの 2 つの道(Python の終わり・既定のままの SIGTERM)で、走っている往復を読み終えるため(頭の註)。SIGTERM の受け手は、
+   信号を据えられる main の thread で、受け手がまだ既定のままの時だけ据える(据えた受け手を持つ process の振る舞いは変えない)。"
+  (atexit.register settle-at-exit)
+  (when (and (is (threading.current-thread) (threading.main-thread)) (= (signal.getsignal signal.SIGTERM) signal.SIG-DFL))
+    (signal.signal signal.SIGTERM (. (SettleThenTerminate) receive)))
+  None)
+
+
+(install-exit-settle)
 
 
 (defk clickhouse-answer [request insert]
