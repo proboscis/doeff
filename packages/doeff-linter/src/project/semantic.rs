@@ -830,10 +830,27 @@ pub enum PeekedMany {
     Unreachable(String),
 }
 
+/// 呼び手の名を送る見出し(doeff の packages/doeff-jev/src/doeff_jev/wire.py の CALLER_HEADER と同じ名)。proxy が問いを呼び手と規則で
+/// 分けて数える。本文に入れると proxy の鍵(proxy_key)が変わるので見出しで送る。
+pub const CALLER_HEADER: &str = "x-jev-caller";
+/// 覚えている時だけの問いの束(peek)の呼び手の名(束は規則をまたぐので規則の id を付けない)。
+pub const PEEK_CALLER: &str = "doeff-linter/peek";
+
+/// 規則の問いの呼び手の名(`doeff-linter/DOEFF205` — doeff-jev の caller と同じ `<部品>/<規則>` の形)。
+pub fn caller_of(question: SemanticQuestion) -> String {
+    format!("doeff-linter/{}", question.id())
+}
+
+/// 較正の見張りの問いの呼び手の名(`doeff-linter/DOEFF205/calibration` — 規則の問いと分けて数える)。
+pub fn calibration_caller_of(question: SemanticQuestion) -> String {
+    format!("{}/calibration", caller_of(question))
+}
+
 /// Jev へ問う口(本物は HTTP・検では偽物)。
 pub trait Gateway: Sync {
-    /// 1 つの定義に 1 つの問いを撃つ(答えと、その回が上流に払わせた分)。
-    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Asked, String>;
+    /// 1 つの定義に 1 つの問いを撃つ(答えと、その回が上流に払わせた分)。caller = 見出し CALLER_HEADER で送る呼び手の名
+    /// (caller_of / calibration_caller_of の値・空なら送らない)。
+    fn ask(&self, state: &Value, question: &Value, freshness: Freshness, caller: &str) -> Result<Asked, String>;
     /// 問いの本文の代理の鍵(proxy_key)。宛先が代理でなければ None(覚えている時だけの問いは代理にだけ撃つ)。
     fn proxy_key(&self, state: &Value, question: &Value) -> Option<String>;
     /// 代理の鍵の束を代理に「覚えている時だけ」問う(本物の Jev を呼ばない・撃ち直さない)。代理でない宛先は Unreachable。
@@ -1028,13 +1045,16 @@ impl HttpGateway {
 impl Gateway for HttpGateway {
     /// 1 回問う(429・5xx は 3 回まで間を空けて撃ち直す)。代理には Fresh の時だけ Cache-Control: no-cache を付ける。代理の答えの
     /// 見出し x-jev-proxy が覚えた答え・相乗りを名乗れば、その回は上流を呼んでいない(費用と token を数えない)。
-    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Asked, String> {
+    fn ask(&self, state: &Value, question: &Value, freshness: Freshness, caller: &str) -> Result<Asked, String> {
         let body = self.body(state, question);
         let mut last = String::new();
         for attempt in 0..4u64 {
             let mut request = self.agent.post(&self.target.base_url).set("content-type", "application/json");
             if let Some(key) = &self.target.api_key {
                 request = request.set("authorization", &format!("Bearer {}", key));
+            }
+            if !caller.is_empty() {
+                request = request.set(CALLER_HEADER, caller);
             }
             if self.target.proxy && freshness == Freshness::Fresh {
                 request = request.set("cache-control", "no-cache");
@@ -1077,7 +1097,8 @@ impl Gateway for HttpGateway {
             return PeekedMany::Unreachable("宛先が代理でない(覚えている時だけの問いは代理にだけ撃つ)".to_string());
         }
         let url = format!("{}/peek", self.target.base_url.trim_end_matches('/'));
-        let request = self.agent.post(&url).timeout(timeout).set("content-type", "application/json");
+        let request =
+            self.agent.post(&url).timeout(timeout).set("content-type", "application/json").set(CALLER_HEADER, PEEK_CALLER);
         match request.send_string(&json!({ "keys": keys }).to_string()) {
             Ok(ok) => match ok.into_string().map_err(|e| e.to_string()).and_then(|text| parse_remembered(&text)) {
                 Ok(answers) => PeekedMany::Remembered(answers),
@@ -1373,7 +1394,12 @@ pub fn evaluate(
         match (gateway, &pool) {
             (Some(gateway), Ok(pool)) => {
                 let results: Vec<(bool, Result<Asked, String>)> = pool.install(|| {
-                    calibration.par_iter().map(|(c, expect)| (*expect, gateway.ask(&c.state, &c.question_json, Freshness::Fresh))).collect()
+                    calibration
+                        .par_iter()
+                        .map(|(c, expect)| {
+                            (*expect, gateway.ask(&c.state, &c.question_json, Freshness::Fresh, &calibration_caller_of(c.question)))
+                        })
+                        .collect()
                 });
                 summary.asked += results.len();
                 let mut drifted = Vec::new();
@@ -1424,7 +1450,7 @@ pub fn evaluate(
                 .into_par_iter()
                 .map(|item| {
                     if wants_ask(&item) {
-                        let result = match gateway.ask(&item.state, &item.question_json, Freshness::Remembered) {
+                        let result = match gateway.ask(&item.state, &item.question_json, Freshness::Remembered, &caller_of(item.question)) {
                             Ok(asked) => Resolved::Asked(asked),
                             Err(reason) => Resolved::Failed(reason),
                         };

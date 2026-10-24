@@ -320,7 +320,7 @@ fn ask_jev_the_line_examples_once() {
             }
             other => panic!("線引きを入れる問いの規則でない: {}", other),
         };
-        match gateway.ask(&item.state, &item.question_json, semantic::Freshness::Remembered) {
+        match gateway.ask(&item.state, &item.question_json, semantic::Freshness::Remembered, &semantic::caller_of(item.question)) {
             Ok(asked) => json!({
                 "name": name, "rule": rule, "expect": definition["expect"], "probability": asked.answer.probability,
                 "choice": asked.answer.choice, "probabilities": asked.answer.probabilities,
