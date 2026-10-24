@@ -893,6 +893,21 @@ def test_a_kept_notice_is_handed_out_again_until_it_is_acknowledged_on_redis(red
     assert (after.body, after.receipt != first.receipt) == ("two", True), after
 
 
+def test_a_notice_published_on_a_kept_channel_still_reaches_its_reader_on_redis(redis_url: str) -> None:
+    # A sender of the old version announces with PUBLISH on the channel the new reader reads as kept.
+    channel = _kept_channel()
+
+    @do
+    def hears_an_old_sender() -> "EffectGenerator[object]":
+        subscription = yield SubscribeChannels((channel,), kept=(channel,), reader="reader")
+        sent = yield Announce(channel, "law-note", "old")
+        return sent, (yield NextAnnouncement(subscription))
+
+    sent, heard = _run_on_wall_clock(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(hears_an_old_sender()))
+    assert sent == 1, sent
+    assert heard == Announcement(channel, "law-note", "old"), heard
+
+
 def test_a_readers_first_subscription_starts_at_the_end_of_the_stream_on_redis(redis_url: str) -> None:
     channel = _kept_channel()
 

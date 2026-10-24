@@ -120,7 +120,9 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
   失った知らせは、届かないのではなく後から届きます。同じ出来事が 2 度届く事が在るので、受け手は追いつきと同じく重なりを扱います。
   読んだ所と ack の無い知らせは handler(process)が開いた購読ごとに持ちます。閉じた購読の分は同じ名の次の購読が引き継ぎ、同時に
   開いた同じ名の購読は、どれも全部の知らせを読みます。起き直した process は log の末尾から始めます(その前は記録から追いつく)。
-  1 つの channel の道は、出す側も受ける側も同じ `kept` を名乗ります(混ぜた読みは包みを作る時に断ります)。
+  1 つの channel の道は、出す側も受ける側も同じ `kept` を名乗ります(混ぜた読みは包みを作る時に断ります)。残す channel を読む購読は
+  同じ channel の Pub/Sub も聞くので、宣言し直しの間にまだ古い版の出す側が `kept` 無しで出した知らせも届きます(receipt は無く、ack も
+  しない)。出す側と受ける側の宣言の順を問いません。
 - 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限 `patience_seconds` の `WaitWithin` 1 つ —
   時間で読み直しません)。戻れば購読を作り直し、broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば
   `NoticeSourceUnreachable` で落ちます(`SourceFailed` が本体の待ちに届く)。`AwaitBrokerBack` に答えるのは、memory の handler では handler
