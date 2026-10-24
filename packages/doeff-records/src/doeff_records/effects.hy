@@ -19,7 +19,8 @@
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
-                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet])
+                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
+                              Appended Refused])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -204,14 +205,24 @@
     (raise (ValueError (+ what ".idempotency_key は空でない文字列")))))
 
 
-(defclass [(dataclass :frozen True)] AppendEvent [EffectBase]
+(defn #^ bool checked-event-append [#^ object append #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め
+  "check-event-append を defeffect の :pre から呼ぶ形 — :pre は真偽の条件を assert するので、検めを通れば True を返す。body を深く凍らせる
+   ので、:pre には欄の値でなく effect 自身(self)を渡す。"
+  (check-event-append append what)
+  True)
+
+
+(defeffect AppendEvent
   "追記の列に出来事を 1 つ積む。body = JSON の値(作る時に深く凍らせる — object は FrozenMap・array は tuple)。
-   同じ冪等キーの再送は前の sequence を返す(本文が違えば Refused)。答え = Appended | Refused | Unreachable。"
-  (#^ str stream)
-  (#^ str idempotency-key)
-  (#^ object body)
-  (defn #^ None __post_init__ [self]
-    (check-event-append self "AppendEvent")))
+   同じ冪等キーの再送は前の sequence を返す(本文が違えば Refused)。答え = Appended | Refused | Unreachable。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17): Appended = 成功 / Refused = 失敗(相手が断った — <- は Raise(Refused) を出す)/
+   Unreachable = 失敗(置き場に届かない — <- は Raise(Unreachable) を出す)。不在と値の型は無い。答える handler は今までどおり
+   3 つとも値で答える(R4)。"
+  {:fields [(: stream str) (: idempotency-key str) (: body object)]
+   :pre [(checked-event-append self "AppendEvent")]
+   :answer (| Appended Refused Unreachable)
+   :failure [Refused Unreachable]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defclass [(dataclass :frozen True)] EventAppend []

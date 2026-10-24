@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from doeff import EffectBase
 from doeff_hy.frozen import FrozenMap
 from doeff_records.values import (
+    Appended,
     AppendEventAnswer,
     AppendEventsAnswer,
     EventsMoved,
@@ -44,6 +45,7 @@ def checked_limit(limit: object, what: str) -> int: ...
 def checked_watch_window(after: object, timeout: object) -> bool: ...
 def check_row_write(write: PutRow | RowWrite, what: str) -> None: ...
 def check_event_append(append: AppendEvent | EventAppend, what: str) -> None: ...
+def checked_event_append(append: AppendEvent | EventAppend, what: str) -> bool: ...
 @dataclass(frozen=True)
 class ReadRow(EffectBase[ReadRowAnswer]):
     table: str
@@ -94,6 +96,8 @@ class AppendEvent(EffectBase[AppendEventAnswer]):
     stream: str
     idempotency_key: str
     body: object
+    # `<-` が束ねる名の型 = 答えから :failure(Refused・Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    def __iter__(self) -> Generator[Any, Any, Appended]: ...
 
 @dataclass(frozen=True)
 class EventAppend:
