@@ -136,8 +136,9 @@
 (defn write-subagent-transcript [#^ str path #^ str session-id #^ str agent-id]
   "道具の途中に走らせた subagent の transcript を、実物(CLI 2.1.292)と同じ置き場と形で書く(card ki-e798888dce4e): 会話の transcript の
    隣の <会話の id>/subagents/agent-<id>.jsonl に、subagent への頼みの user の行と、API の呼び 1 回分の assistant の行 2 本(実物と同じく
-   content の block ごとに 1 行・同じ message の id。出力の token と stop_reason は 1 本目が呼びの途中の値(null)・2 本目が最後の値
-   (end_turn — 答えを閉じた呼び)。本文は JSON の文字列の中に生の U+2028 を含む)。"
+   content の block ごとに 1 行・同じ message の id。本番の CLI 2.1.292 の最後の答えの呼びと同じく、2 本とも stop_reason は null・出力の
+   token は呼びの途中の値(3)で、最終の usage は道具の結果の行の tool_use_result にだけ出す — 本番 10-23 の 5 件・card ki-3d45f5857239)。
+   本文は JSON の文字列の中に生の U+2028 を含む)。"
   (setv folder (os.path.join (cut path 0 (- (len path) (len ".jsonl"))) "subagents"))
   (os.makedirs folder :exist-ok True)
   (setv now (.replace (.isoformat (datetime.now timezone.utc) :timespec "milliseconds") "+00:00" "Z")
@@ -151,8 +152,8 @@
                                    "usage" (| SUBAGENT-USAGE {"output_tokens" 3})}})
                (| head {"type" "assistant" "requestId" (+ "req_stub_sub_" call)
                         "message" {"id" message-id "model" SUBAGENT-MODEL "role" "assistant"
-                                   "content" [{"type" "text" "text" SUBAGENT-ANSWER}] "stop_reason" "end_turn"
-                                   "usage" SUBAGENT-USAGE}})])
+                                   "content" [{"type" "text" "text" SUBAGENT-ANSWER}] "stop_reason" None
+                                   "usage" (| SUBAGENT-USAGE {"output_tokens" 3})}})])
   ;; 検の env STUB_CLI_SUBAGENT_TRANSCRIPT で読めない transcript を作る: absent = 書かない / truncated = 最後の行の改行を書かない /
   ;; broken = 途中に JSON でない行を挟む。
   (setv shape (.get os.environ "STUB_CLI_SUBAGENT_TRANSCRIPT" "")
@@ -427,9 +428,13 @@
         (for [ref refs] (.lifecycle self ref "cancelled"))
         (when injections (.run-turn self injections))
         (return None))
+      ;; 道具の結果の行は、実物の道具 Agent の結果(CLI 2.1.306 の実測)と同じく最上位に tool_use_result を持ち、subagent の task の id・
+      ;; 終わり方・最後の呼びの最終の usage(transcript の行には途中の値しか無い)を名乗る。
       (emit {"type" "user" "session_id" self.session-id
              "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" "toolu_stub" "content" (get rule "tool_output")
-                                                   "is_error" False}]}}))
+                                                   "is_error" False}]}
+             "tool_use_result" {"status" "completed" "agentId" agent-id "agentType" "general-purpose"
+                                "totalTokens" (sum (.values SUBAGENT-USAGE)) "usage" SUBAGENT-USAGE}}))
     (for [record injections]
       (.lifecycle self (.get record "uuid") "started")
       (.append words (get (reply-for (user-text record) (memory-of self.path)) "text")))

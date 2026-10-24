@@ -14,8 +14,8 @@
 (import doeff_core_effects.handlers [listen-handler slog-discard-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
-(import doeff_claude_code.lines [BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult TurnResult
-                                 classify-record recorded-cost subagent-transcript-of])
+(import doeff_claude_code.lines [AgentToolResult BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult
+                                 TurnResult classify-record recorded-cost subagent-transcript-of usage-of])
 (import doeff_hy.json_lines [jsonl-lines whole-lines-end])
 (import doeff_claude_code.effects [ClaudeStartTurn])
 (import doeff_claude_code.faults [ClaudeDropProcess])
@@ -46,8 +46,8 @@
 (val FINAL-USAGE {"input_tokens" 2 "cache_creation_input_tokens" 23566 "cache_read_input_tokens" 0 "output_tokens" 209})
 (val OTHER-USAGE {"input_tokens" 3 "cache_creation_input_tokens" 10 "cache_read_input_tokens" 23566 "output_tokens" 40})
 
-(defn read-of [#^ bytes data [answered False]]
-  (run (subagent-transcript-of "a1" "toolu_parent" data answered)))
+(defn read-of [#^ bytes data [answered False] [result None]]
+  (run (subagent-transcript-of "a1" "toolu_parent" data answered result)))
 
 
 (deftest test-the-calls-of-a-subagent-transcript-are-folded-per-api-call
@@ -128,6 +128,77 @@
   (assert (= #((len read.calls) read.problem) #(13 None)) (repr read))
   (assert (= (lfor call read.calls call.usage.cache-read-input-tokens) (lfor usage usages (get usage "cache_read_input_tokens")))
           (repr read.calls)))
+
+(defn agent-result [usage [status "completed"]]
+  ;; 道具 Agent の結果(user の行の tool_use_result を読んだ物)。
+  (AgentToolResult :agent-id "a1" :status status :usage (usage-of usage)))
+
+(deftest test-a-finished-answer-written-without-a-stop-reason-is-whole-by-the-agent-tool-result
+  ;; 本番の形 (A)(CLI 2.1.292・10-23 の agent-adfb8e3a4fee8440a): 答え終えた subagent の最後の答えの呼び(thinking と text の 2 行)は
+  ;; stop_reason null で、出力の token は途中の値 3 のまま書かれ、最終の usage(出力 10,060)は道具 Agent の結果にだけ在る。結果の
+  ;; 名乗る最後の呼び(入力の側 3 種が同じ)で終わる読みは書き切った読みで、最後の呼びの usage を結果の物にする。失敗ケース = 変更前は
+  ;; TRUNCATED(log「claude CLI の subagent の transcript の読み」の truncated・5 件中 2 件)で、出力を 3 と記録した。
+  (val tool-call (line-of (assistant "msg_1" "claude-opus-5-5" {"input_tokens" 1 "cache_creation_input_tokens" 900
+                                                                "cache_read_input_tokens" 150000 "output_tokens" 400}
+                                     AT [{"type" "tool_use" "id" "toolu_x" "name" "Read" "input" {}}] "tool_use")))
+  (val partial {"input_tokens" 2 "cache_creation_input_tokens" 1439 "cache_read_input_tokens" 161179 "output_tokens" 3})
+  (val answer (+ (line-of (assistant "msg_2" "claude-opus-5-5" partial LATER [{"type" "thinking" "thinking" "t"}]))
+                 (line-of (assistant "msg_2" "claude-opus-5-5" partial LATER [{"type" "text" "text" "report"}]))))
+  (val data (.encode (+ tool-call answer) "utf-8"))
+  (val reported (agent-result (| partial {"output_tokens" 10060})))
+  (val read (read-of data True reported))
+  (assert (= #((lfor call read.calls call.call-id) read.problem read.detail) #(["msg_1" "msg_2"] None "")) (repr read))
+  (assert (= (lfor call read.calls call.usage.output-tokens) [400 10060]) (repr read.calls))
+  (assert (= (. (get read.calls -1) model) "claude-opus-5-5") (repr read.calls))
+  ;; 結果が無ければ(結果の前の読み)前と同じく stop_reason で判じる。
+  (val unreported (read-of data True))
+  (assert (= #((lfor call unreported.calls call.usage.output-tokens) unreported.problem) #([400 3] SubagentTranscriptProblem.TRUNCATED))
+          (repr unreported))
+  ;; 最後の呼びの行がまだ書かれていない読み(入力の側が結果と合わない)は TRUNCATED のまま(書き手を待つ)で、usage を直さない。
+  (val early (read-of (.encode tool-call "utf-8") True reported))
+  (assert (= #((lfor call early.calls call.usage.output-tokens) early.problem) #([400] SubagentTranscriptProblem.TRUNCATED))
+          (repr early))
+  (assert (in "Agent tool result" early.detail) (repr early))
+  ;; 答え終えていない結果(status が completed でない)は書き切りの印にしない。
+  (val killed (read-of data True (agent-result (| partial {"output_tokens" 10060}) "killed")))
+  (assert (= killed.problem SubagentTranscriptProblem.TRUNCATED) (repr killed)))
+
+(deftest test-a-subagent-stopped-by-a-hook-after-a-tool-call-is-whole-by-the-agent-tool-result
+  ;; 本番の形 (B)(10-23 の agent-ad04402d3c4863166 ほか 3 件): 子の Bash の後に PostToolUse の hook が続きを止め、transcript は
+  ;; stop_reason tool_use の呼びと hook の attachment の行で終わる。道具 Agent の結果は completed で、usage は最後の呼びと同じ。書き
+  ;; 切った読み。失敗ケース = 変更前は TRUNCATED。
+  (val usage {"input_tokens" 2 "cache_creation_input_tokens" 767 "cache_read_input_tokens" 102555 "output_tokens" 265})
+  (val data (.encode (+ (line-of (assistant "msg_1" "claude-opus-5-5" usage AT [{"type" "tool_use" "id" "toolu_b" "name" "Bash"
+                                                                                  "input" {}}] "tool_use"))
+                        (line-of {"type" "user" "timestamp" LATER "message" {"role" "user" "content" [{"type" "tool_result"
+                                                                                                         "tool_use_id" "toolu_b"
+                                                                                                         "content" "x"}]}})
+                        (line-of {"type" "attachment" "timestamp" LATER
+                                  "attachment" {"type" "hook_stopped_continuation" "hookName" "PostToolUse:Bash"}}))
+                     "utf-8"))
+  (val read (read-of data True (agent-result usage)))
+  (assert (= #((lfor call read.calls call.usage.output-tokens) read.problem) #([265] None)) (repr read))
+  (assert (= (. (read-of data True) problem) SubagentTranscriptProblem.TRUNCATED)))
+
+(deftest test-the-agent-tool-result-line-names-the-subagent-and-its-final-usage
+  ;; 実物(CLI 2.1.306・偽の API へ向けた実測)の道具 Agent の結果の行: 最上位の tool_use_result が subagent の task の id・終わり方・
+  ;; 最後の呼びの最終の usage を名乗る。ほかの道具の結果(tool_use_result が文字列・agentId が無い)は agent-result が None。
+  (val line {"type" "user" "parent_tool_use_id" None
+             "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" "toolu_fake_agent"
+                                                   "content" [{"type" "text" "text" "sub done"}]}]}
+             "tool_use_result" {"status" "completed" "agentId" "a24f7431470b9215b" "agentType" "general-purpose" "totalTokens" 1133
+                                "usage" {"input_tokens" 102 "cache_creation_input_tokens" 20 "cache_read_input_tokens" 1002
+                                         "output_tokens" 9 "cache_creation" {"ephemeral_1h_input_tokens" 0
+                                                                              "ephemeral_5m_input_tokens" 0}}}})
+  (val kind (classify-record line))
+  (assert (isinstance kind ToolResult) (repr kind))
+  (val result kind.agent-result)
+  (assert (= #(result.agent-id result.status result.usage.output-tokens result.usage.cache-read-input-tokens)
+             #("a24f7431470b9215b" "completed" 9 1002))
+          (repr result))
+  (val bash (classify-record (| line {"tool_use_result" {"stdout" "x" "stderr" ""}})))
+  (assert (is bash.agent-result None) (repr bash))
+  (assert (is (. (classify-record (| line {"tool_use_result" "Error: x"})) agent-result) None)))
 
 (deftest test-a-line-with-a-line-separator-inside-a-json-string-is-one-line
   ;; JSON の文字列の中に生の U+2028・U+2029・U+0085(str.splitlines が割る字 — 実物の CLI は escape しない)を持つ行も 1 行として読む
@@ -214,7 +285,10 @@
   ;; 後の CLI の手番の終わり(result の行)の直前に SubagentTranscript の行を 1 つ足し、その呼び(実 model・4 種 token — 出力は最後の
   ;; 値・呼びの id・親の道具の呼び・呼びの刻)を運ぶ。失敗ケース = 変更前は subagent の呼びがどの行にも無い。替え玉の報せの total_tokens
   ;; は本番の実測の形で最後の呼びの和より多く(+1,801)、答えの本文は JSON の文字列の中に生の U+2028 を持つ — どちらでも呼びを捨てない
-  ;; (失敗ケース = card ki-3d45f5857239 の前は、報せの値と合わない TRUNCATED・U+2028 で割れた UNREADABLE で呼びを全部捨てた)。
+  ;; (失敗ケース = card ki-3d45f5857239 の前は、報せの値と合わない TRUNCATED・U+2028 で割れた UNREADABLE で呼びを全部捨てた)。替え玉の
+  ;; transcript は本番の CLI 2.1.292 と同じく最後の答えの呼びを stop_reason null・出力 3 で書き、最終の出力 900 は道具の結果の行の
+  ;; tool_use_result にだけ在る — handler はそれで書き切りを判じ、出力を 900 で運ぶ(失敗ケース = stop_reason だけで判じた版は、
+  ;; 書き切った transcript を TRUNCATED と誤り、出力を 3 で運んだ — 本番 10-23 の 5 件)。
   (<- done (with_handlers [(sync-time-handler) slog-discard-handler (claude-code-handler (host-of))] (tool-turn (spec-with tmp-path))))
   (assert (isinstance done.end Completed) (repr done.end))
   (val found (subagent-lines done))

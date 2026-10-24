@@ -65,7 +65,7 @@
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
-                                 TimedPhase TurnResult TaskEvent SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
+                                 TimedPhase TurnResult TaskEvent ToolResult AgentToolResult SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
                                  CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
 (import doeff_hy.json_lines [whole-lines-end])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -498,10 +498,12 @@
 
 (defrecord SubagentTask
   "起こした subagent 1 つの、まだ読んでいない transcript: parent = 起こした道具の呼びの id / notified = 報せの行を受けたか /
-   answered = 報せの行が答え終えを名乗ったか(status が SUBAGENT-ANSWERED-STATUS — 書き切った transcript は閉じた呼びで終わる)。"
+   answered = 報せの行が答え終えを名乗ったか(status が SUBAGENT-ANSWERED-STATUS)/ result = 道具 Agent の結果(user の行の
+   tool_use_result — 書き切りと最後の呼びの最終の usage を知る・lines.hy の subagent-transcript-of。まだ受けていなければ None)。"
   (#^ str parent)
   (setv #^ bool notified False)
-  (setv #^ bool answered False))
+  (setv #^ bool answered False)
+  (setv #^ (| AgentToolResult None) result None))
 
 (defrecord SubagentRead
   "subagent 1 つの transcript の読み: transcript = 手番の記録へ足す行の中身 / read-to = 読み終えた所(byte — 改行で閉じた行の終わり。
@@ -528,7 +530,7 @@
       (return (unread SubagentTranscriptProblem.ABSENT path)))
     (except [error OSError]
       (return (unread SubagentTranscriptProblem.UNREADABLE (.format "{}: {}" path error)))))
-  (SubagentRead :transcript (run (subagent-transcript-of agent-id task.parent data task.answered))
+  (SubagentRead :transcript (run (subagent-transcript-of agent-id task.parent data task.answered task.result))
                 :read-to (+ from-byte (run (whole-lines-end data)))))
 
 (defn #^ SubagentRead settled-subagent [#^ str config-dir #^ str canonical-cwd #^ str session-id #^ str agent-id #^ SubagentTask task
@@ -557,16 +559,22 @@
 
 (defn note-subagent-task [#^ SessionRuntime runtime kind]
   "subagent の task の始まり(task_started の SUBAGENT-TASK-TYPE で、親の道具の呼びの id を名乗る行)を読む相手として覚え、報せの行で
-   報せを受けた印と答え終えたかを控えるため(同じ subagent の続きの報せは、読み終えた後でも読む相手に戻す)。会話の lock の中で呼ぶ。"
-  (when (isinstance kind TaskEvent)
-    (cond
-      (and (= kind.status "started") (= kind.task-type SUBAGENT-TASK-TYPE) (is-not kind.tool-use-id None))
-        (setv (get runtime.agent-parents kind.task-id) kind.tool-use-id
-              (get runtime.unread-subagents kind.task-id) (SubagentTask :parent kind.tool-use-id))
-      (and (!= kind.status "started") (in kind.task-id runtime.agent-parents))
-        (setv (get runtime.unread-subagents kind.task-id)
-              (SubagentTask :parent (or kind.tool-use-id (get runtime.agent-parents kind.task-id)) :notified True
-                            :answered (= kind.status SUBAGENT-ANSWERED-STATUS))))))
+   報せを受けた印と答え終えたかを、道具 Agent の結果の行(tool_use_result — 報せの後・CLI の手番の終わりの前)でその結果を控えるため
+   (同じ subagent の続きの報せは、読み終えた後でも読む相手に戻す。報せと結果のどちらが先に来ても、先に控えた結果は消さない)。会話の
+   lock の中で呼ぶ。"
+  (cond
+    (and (isinstance kind TaskEvent) (= kind.status "started") (= kind.task-type SUBAGENT-TASK-TYPE) (is-not kind.tool-use-id None))
+      (setv (get runtime.agent-parents kind.task-id) kind.tool-use-id
+            (get runtime.unread-subagents kind.task-id) (SubagentTask :parent kind.tool-use-id))
+    (and (isinstance kind TaskEvent) (!= kind.status "started") (in kind.task-id runtime.agent-parents))
+      (setv earlier (.get runtime.unread-subagents kind.task-id)
+            (get runtime.unread-subagents kind.task-id)
+            (SubagentTask :parent (or kind.tool-use-id (get runtime.agent-parents kind.task-id)) :notified True
+                          :answered (= kind.status SUBAGENT-ANSWERED-STATUS)
+                          :result (if (is earlier None) None earlier.result)))
+    (and (isinstance kind ToolResult) (is-not kind.agent-result None) (in kind.agent-result.agent-id runtime.unread-subagents))
+      (setv (get runtime.unread-subagents kind.agent-result.agent-id)
+            (replace (get runtime.unread-subagents kind.agent-result.agent-id) :result kind.agent-result))))
 
 (defn add-subagent-lines [#^ SessionRuntime runtime #^ (| TurnLog None) log #^ datetime at #^ tuple reads]
   "読んだ subagent の transcript を手番の記録の行として足し(手番が走っていれば)、読み終えた所を進めて読む相手から外すため。読み手の

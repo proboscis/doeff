@@ -133,13 +133,26 @@
     (when (not (isinstance self.non-text-kinds tuple))
       (raise (TypeError (.format "ToolAnswer.non_text_kinds は tuple: {!r}" self.non-text-kinds))))))
 
+(defrecord AgentToolResult
+  "本体の会話の道具 Agent の結果(user の行の最上位の tool_use_result — CLI が subagent の答え終えに出す。実測 2.1.306: 報せの行
+   task_notification の後・手番の result の行の前)。subagent の transcript を書き切ったかと、その最後の呼びの最終の usage を知るため
+   (lines.hy の subagent-transcript-of・card ki-3d45f5857239)。agent-id = subagent の task の id(transcript の file の名の id)/
+   status = 終わり方(completed ほか)/ usage = subagent の最後の呼びの最終の usage(名乗らなければ None)。本番の実測(CLI 2.1.292・
+   10-23 の 5 件): transcript の最後の答えの呼びの行は stop_reason が null で出力の token が途中の値(3・8)のまま書かれ、最終の値
+   (10,060・2,843)はここにだけ在った。入力の側 3 種は transcript の最後の行と同じ。"
+  (#^ str agent-id)
+  (#^ str status)
+  (setv #^ (| Usage None) usage None))
+
 (defclass [(dataclass :frozen True)] ToolResult []
   "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順 — 答えた呼びの id は各答えの id)/
    parent-tool-use-id = subagent の行なら親の呼び(subagent を走らせた本体の会話の道具の呼び)の id、本体の会話の行は None(行の最上位の
    parent_tool_use_id — AssistantMessage の同じ名の欄と同じ読み)。上の層が、本体の会話の道具の答えと subagent の中の道具の答えを
-   見分けるため(card ki-b25d579bf48b — subagent の中の Bash の答えは本体の会話の手番を終えない)。"
+   見分けるため(card ki-b25d579bf48b — subagent の中の Bash の答えは本体の会話の手番を終えない)。agent-result = 道具 Agent の結果
+   (行の tool_use_result が subagent の task の id と終わり方を名乗る時だけ — ほかの道具の結果は None)。"
   (#^ (get tuple #(ToolAnswer ...)) answers)
-  (setv #^ (| str None) parent-tool-use-id None))
+  (setv #^ (| str None) parent-tool-use-id None)
+  (setv #^ (| AgentToolResult None) agent-result None))
 
 ;; stream_event の delta の種類(#3746 (a) — 閉じた語彙): TEXT = text_delta(本文の差分)/ THINKING = thinking_delta(考えている間の
 ;; 差分)/ TOOL-INPUT = input_json_delta(道具の呼びの命令を書いている間の差分)/ OTHER = 種類の名の在るほかの delta(signature_delta・
@@ -899,7 +912,21 @@
     (not results) (Other :type "user")
     (any (gfor block results (not (text-at block "tool_use_id")))) (Other :type "user" :subtype "tool_result_without_id")
     True (ToolResult :answers (tuple (gfor block results (run (tool-answer-of block))))
-                     :parent-tool-use-id (or (text-at record "parent_tool_use_id") None))))
+                     :parent-tool-use-id (or (text-at record "parent_tool_use_id") None)
+                     :agent-result (run (agent-tool-result-of record)))))
+
+(defk agent-tool-result-of [#^ dict record]
+  {:pre [(: record dict)] :post [(: % (| AgentToolResult None))] :tags {:context "claude-code" :role "foundation"}}
+  "subagent の transcript の書き切りと最後の呼びの最終の usage を知るため、user の行の最上位の tool_use_result を AgentToolResult に
+   する(subagent の task の id agentId と終わり方 status を名乗る object の時だけ — ほかの道具の結果・形の違う値は None。usage は
+   object の時だけ読む)。"
+  (val value (object-at record "tool_use_result"))
+  (val agent-id (text-at value "agentId"))
+  (val status (text-at value "status"))
+  (val usage (if (isinstance value dict) (.get value "usage") None))
+  (if (and agent-id status)
+      (AgentToolResult :agent-id agent-id :status status :usage (if (isinstance usage dict) (usage-of usage) None))
+      None))
 
 (defk hook-notice-of [#^ dict record #^ HookPhase phase]
   {:pre [(: record dict) (: phase HookPhase)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}
@@ -1243,33 +1270,62 @@
   (val reason (text-at (get messages -1) "stop_reason"))
   (and (bool reason) (not-in reason CONTINUING-STOP-REASONS)))
 
-(defk subagent-transcript-of [#^ str agent-id #^ str parent-tool-use-id #^ bytes data #^ bool answered]
-  {:pre [(: agent-id str) (: parent-tool-use-id str) (: data bytes) (: answered bool)] :post [(: % SubagentTranscript)]
+(defk reported-final-call [#^ tuple calls #^ (| AgentToolResult None) reported]
+  {:pre [(: calls tuple) (: reported (| AgentToolResult None))] :post [(: % (| SubagentCall None))]
    :tags {:context "claude-code" :role "foundation"}}
+  "subagent の transcript の最後の呼びが、道具 Agent の結果(reported — 答え終えた subagent の結果だけ)の名乗る最後の呼びかを知り、
+   そうならその呼びを最終の usage で答えるため(card ki-3d45f5857239)。同じ呼びか = 入力の側 3 種(input・cache_creation・
+   cache_read)の token が全部同じ(呼びごとに会話が伸びるので、前の呼びとは cache_read が違う — 最後の呼びの行がまだ書かれていない
+   読みは合わない)。本番の CLI 2.1.292 は最後の答えの呼びの行を出力の token が途中の値のまま書くので、usage は結果の物にする
+   (model・刻・呼びの id・要求の id は transcript の物)。合わない・結果や usage が無い・呼びが無い時は None。"
+  (when (or (is reported None) (is reported.usage None) (not calls))
+    (return None))
+  (val last (get calls -1))
+  (val usage reported.usage)
+  (if (and (is-not usage.input-tokens None)
+           (= #(last.usage.input-tokens last.usage.cache-creation-input-tokens last.usage.cache-read-input-tokens)
+              #(usage.input-tokens usage.cache-creation-input-tokens usage.cache-read-input-tokens)))
+      (replace last :usage usage)
+      None))
+
+(defk subagent-transcript-of [#^ str agent-id #^ str parent-tool-use-id #^ bytes data #^ bool answered
+                              #^ (| AgentToolResult None) result]
+  {:pre [(: agent-id str) (: parent-tool-use-id str) (: data bytes) (: answered bool) (: result (| AgentToolResult None))]
+   :post [(: % SubagentTranscript)] :tags {:context "claude-code" :role "foundation"}}
   "上の層が subagent の呼びごとの消費を記録できるように、subagent の transcript の読んだ byte(前の読みの後に伸びた分)を
-   SubagentTranscript にするため。answered = CLI が subagent の答え終えを報せた(報せの行の status が SUBAGENT-ANSWERED-STATUS)— 書き
-   切った transcript は閉じた呼び(last-call-closed)で終わる。偽 = 報せの前に process が降りた・答えずに終わった task(書き手が止めた
-   所までが全部)。書き切ったかは transcript だけで決め、報せの行の total_tokens とは比べない(実測: 本番で書き切った transcript の
-   最後の呼びの和より報せが +251〜+1,801 多い subagent が 13 件中 10 件在り、呼びを全部捨てていた — card ki-3d45f5857239)。
+   SubagentTranscript にするため。answered = CLI が subagent の答え終えを報せた(報せの行の status が SUBAGENT-ANSWERED-STATUS)。
+   偽 = 報せの前に process が降りた・答えずに終わった task(書き手が止めた所までが全部)。result = 道具 Agent の結果(AgentToolResult —
+   まだ受けていなければ None)。書き切ったかは、結果が答え終え(status が SUBAGENT-ANSWERED-STATUS)を名乗れば、transcript の最後の
+   呼びが結果の名乗る最後の呼び(reported-final-call)か、最後の呼びが閉じている(last-call-closed)かで決め、結果が無ければ
+   last-call-closed だけで決める。報せの行の total_tokens とは比べない(実測: 本番で書き切った transcript の最後の呼びの和より報せが
+   +251〜+1,801 多い subagent が 13 件中 10 件在り、呼びを全部捨てていた)。stop_reason だけでは決めない(実測 10-23 の本番 5 件・
+   CLI 2.1.292: 書き切った transcript が、最後の答えの呼びの行を stop_reason null のまま書いた 2 件と、PostToolUse の hook に止められて
+   tool_use の呼びで終わった 3 件で、5 件とも TRUNCATED と誤った — card ki-3d45f5857239)。結果の名乗る最後の呼びで書き切った読みは、
+   最後の呼びの usage を結果の物にする(transcript の行の出力の token は途中の値 — 改行で終わらない行が残る読みは直さない)。
    改行で閉じた行から読めた呼びは、訳が在っても全部載せる(捨てて 0 にしない)。訳(problem・detail)は欠けを名指す: 最後の行が改行で
-   終わらない・answered なのに最後の呼びが閉じていない = TRUNCATED(後ろの行がまだ書かれていない)/ UTF-8 でない・JSON の object
-   でない行・刻を名乗らない呼びの行が在る = UNREADABLE(その行は数えない)。両方なら TRUNCATED(書き手を待てば読める訳を先にする)。
+   終わらない・answered なのに書き切っていない = TRUNCATED(後ろの行がまだ書かれていない)/ UTF-8 でない・JSON の object でない行・
+   刻を名乗らない呼びの行が在る = UNREADABLE(その行は数えない)。両方なら TRUNCATED(書き手を待てば読める訳を先にする)。
    空の byte は、answered でなければ呼びの無い読み。"
   (<- records (transcript-records data))
   (<- end (whole-lines-end data))
   (val readable (tuple (gfor record records :if (is-not record None) record)))
   (<- counted (subagent-calls-of readable))
-  (<- closed (last-call-closed readable))
+  (<- stopped (last-call-closed readable))
+  (val reported (if (and (is-not result None) (= result.status SUBAGENT-ANSWERED-STATUS)) result None))
+  (<- final (reported-final-call counted.calls reported))
+  (val closed (or stopped (is-not final None)))
   (val tail (cut data end None))
+  (val calls (if (and (is-not final None) (not (.strip tail))) (+ (cut counted.calls 0 -1) #(final)) counted.calls))
   (val broken (- (len records) (len readable)))
   (val undated counted.undated)
   (val truncations (+ (if (.strip tail) [(.format "the last line of the transcript has no newline ({} bytes)" (len tail))] [])
-                      (if (and answered (not closed))
-                          ["the transcript does not end with a closed call (no stop_reason that ends the answer)"]
-                          [])))
+                      (cond (or (not answered) closed) []
+                            (is-not reported None)
+                            ["the last call of the transcript is not the last call the Agent tool result reports"]
+                            True ["the transcript does not end with a closed call (no stop_reason that ends the answer)"])))
   (val unreadables (+ (if broken [(.format "{} line(s) of the transcript are not UTF-8 JSON objects" broken)] [])
                       (if undated [(.format "{} assistant line(s) with usage have no timestamp with a UTC offset" undated)] [])))
-  (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id :calls counted.calls
+  (SubagentTranscript :agent-id agent-id :parent-tool-use-id parent-tool-use-id :calls calls
                       :problem (cond truncations SubagentTranscriptProblem.TRUNCATED
                                      unreadables SubagentTranscriptProblem.UNREADABLE
                                      True None)
