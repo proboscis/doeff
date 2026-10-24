@@ -148,18 +148,27 @@
 (val SERVER-TIMING-STAGES (tuple (gfor name SERVER-TIMING-NAMES (RequestStage name))))
 
 
+(defk server-timing-spans-of [stages]
+  {:pre [(: stages (get tuple #(StageSeconds ...)))] :post [(: % (get tuple #(ServerSpan ...)))] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing に載せる区間を選ぶため: 区間の列のうち SERVER-TIMING-STAGES の区間を、wire の区間(ServerSpan)の列にする
+   (綴るのは wire の server-timing-spelled — 要求の task が続けて呼ぶ。ここで綴りを呼ぶと、この関数が要求ごとに Program になる)。"
+  (tuple (gfor stage stages :if (in stage.stage SERVER-TIMING-STAGES)
+               (ServerSpan :name (str stage.stage) :seconds stage.seconds))))
+
+
 (defk server-timing-of [stages]
   {:pre [(: stages (get tuple #(StageSeconds ...)))] :post [(: % str)] :tags {:context "records" :role "judgment"}}
   "答えの見出し Server-Timing の値を綴るため: 区間の列のうち SERVER-TIMING-STAGES の区間を、wire の綴り(server-timing-spelled)にする。"
-  (! (server-timing-spelled (tuple (gfor stage stages :if (in stage.stage SERVER-TIMING-STAGES)
-                                         (ServerSpan :name (str stage.stage) :seconds stage.seconds))))))
+  (! (server-timing-spelled (! (server-timing-spans-of stages)))))
 
 
-(defk request-stages [received-at marks]
-  {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...)))] :post [(: % (get tuple #(StageSeconds ...)))]
-   :tags {:context "records" :role "judgment"}}
-  "要求 1 つの受けた刻と刻の列を、観測する区間の秒の列にするため(頭の註の区間 — 両端の刻が欠けた区間は入れない)。刻は名ごとの最初の
-   刻を 1 度の走りで引く(first-at と between の意味のまま、要求ごとに刻の数だけ Program を撃たない — card ki-1841b724d061)。"
+(defk request-stages [received-at marks wait]
+  {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...))) (: wait WaitSum)]
+   :post [(: % (get tuple #(StageSeconds ...)))] :tags {:context "records" :role "judgment"}}
+  "要求 1 つの受けた刻と、答えが決まるまでの刻の列 marks(と、その待ちの読み wait — waited)を、答えを送る前に決まる区間(queue・body・
+   decode・handler・wait・encode — 頭の註の区間)の秒の列にするため(両端の刻が欠けた区間は入れない)。送り終わりの刻で決まる区間は
+   sent-stages。刻は名ごとの最初の刻を 1 度の走りで引く(first-at と between の意味のまま、要求ごとに刻の数だけ Program を撃たない —
+   card ki-1841b724d061。他の defk を呼ばないので、この関数も Program にならない — card ki-5c3e73834e73)。"
   (val firsts {})
   (for [stamped marks]
     (.setdefault firsts stamped.mark stamped.at))
@@ -169,8 +178,6 @@
   (val handler-in (.get firsts RequestMark.HANDLER-IN))
   (val handler-out (.get firsts RequestMark.HANDLER-OUT))
   (val decided (.get firsts RequestMark.DECIDED))
-  (val sent (.get firsts RequestMark.SENT))
-  (val wait (! (waited marks)))
   (val handled (gap handler-in handler-out))
   (val slept (is-not wait.last-woke None))
   (val spans #(#(RequestStage.QUEUE (gap received-at started))
@@ -178,10 +185,26 @@
                #(RequestStage.DECODE (gap read handler-in))
                #(RequestStage.HANDLER (if (is handled None) None (- handled wait.seconds)))
                #(RequestStage.WAIT (if slept wait.seconds None))
-               #(RequestStage.ENCODE (gap handler-out decided))
-               #(RequestStage.SEND (gap decided sent))
-               #(RequestStage.TOTAL (gap (if (is received-at None) started received-at) sent))
-               #(RequestStage.WOKE (if slept (gap wait.last-woke sent) None))))
+               #(RequestStage.ENCODE (gap handler-out decided))))
+  (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
+
+
+(defk sent-stages [received-at marks wait sent-at]
+  {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...))) (: wait WaitSum) (: sent-at float)]
+   :post [(: % (get tuple #(StageSeconds ...)))] :tags {:context "records" :role "judgment"}}
+  "送り終えた刻 sent-at で決まる区間(send・total・woke — 頭の註の区間)の秒の列にするため。答えが決まるまでの刻の列 marks を
+   request-stages で 1 度割って答えの見出しに載せた要求の task が、送った後にこの区間だけを足して計器に積む(刻の列を送った後に割り直さない
+   — card ki-5c3e73834e73)。"
+  (val firsts {})
+  (for [stamped marks]
+    (.setdefault firsts stamped.mark stamped.at))
+  (val started (.get firsts RequestMark.STARTED))
+  (val decided (.get firsts RequestMark.DECIDED))
+  (val last-woke wait.last-woke)
+  (val gap (fn [since] (if (is since None) None (- sent-at since))))
+  (val spans #(#(RequestStage.SEND (gap decided))
+               #(RequestStage.TOTAL (gap (if (is received-at None) started received-at)))
+               #(RequestStage.WOKE (gap last-woke))))
   (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
 
 
