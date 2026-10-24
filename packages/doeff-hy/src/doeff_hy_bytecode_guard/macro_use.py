@@ -1065,7 +1065,8 @@ def _constant_text(value: object, strict: bool) -> str:
         case frozenset():
             return "{" + ",".join(sorted(_constant_text(item, strict) for item in value)) + "}"
         case _:
-            return f"{type(value).__name__}:{value!r}"
+            # 文字列の定数の中の ``_hy_…_N`` は名でなく値(振り直さない — :func:`_numbered_anon_names` が拾わない形にする)。
+            return f"{type(value).__name__}:{value!r}".replace("_hy_", "_hy\0_")
 
 
 #: 関数に付ける注釈の命令(3.14 の ``SET_FUNCTION_ATTRIBUTE`` の旗 — 0x10 = ``__annotate__``・0x08 = 閉包)。
@@ -1210,13 +1211,12 @@ class _Instructions:
             )
             for start, end, target, depth, lasti in _exception_table(code)
         ]
-        constants = sorted(
-            {
-                _constant_text(constant, strict)
-                for constant in code.co_consts
-                if not (isinstance(constant, CodeType) and self.dropped(constant))
-            }
-        )
+        # 定数の表の並びは残す(説明の文は命令に指されず、表の先頭の位置だけが印)— 除く注釈の code の分だけ詰める。
+        constants = [
+            _constant_text(constant, strict)
+            for constant in code.co_consts
+            if not (isinstance(constant, CodeType) and self.dropped(constant))
+        ]
         document = "\0".join(
             (
                 code.co_name,
@@ -1935,7 +1935,9 @@ class _Walker:
         self._texts.update(facts.texts)
         self._feed("function", module_name, function.__qualname__)
         self._slots[len(self._parts)] = _SlotPlace(
-            self._node(function), CodeSlot(function.__code__, facts.shape), _reads_code(facts)
+            self._node(function),
+            CodeSlot(function.__code__, facts.shape),
+            _reads_code(facts) or _reads_code_by_alias(function.__globals__, facts.names),
         )
         self._feed(facts.shape)
         # 展開の時か読み込みの時に、code が環境変数を読む・module の置き場を値として読む。
@@ -2383,6 +2385,13 @@ _CODE_READ_NAMES = frozenset(
         "Bytecode",
         "code_info",
         "show_code",
+        # 標準 library の中で注釈を読む物(中は歩かない — 名で出会った時に注釈ごとの digest にする)。
+        "singledispatch",
+        "singledispatchmethod",
+        "register",
+        "validate_call",
+        "validate_arguments",
+        "TypeAdapter",
     }
 )
 _CODE_READ_TEXTS = _CODE_READ_NAMES - {"__doc__"}
@@ -2392,6 +2401,16 @@ def _reads_code(facts: CodeFacts) -> bool:
     """関数の code が、関数の中身を値として読むか(:data:`_CODE_READ_NAMES`)。"""
     return not (
         _CODE_READ_NAMES.isdisjoint(facts.names) and _CODE_READ_TEXTS.isdisjoint(facts.texts)
+    )
+
+
+def _reads_code_by_alias(namespace: Mapping[str, object], names: tuple[str, ...]) -> bool:
+    """関数が大域の名で呼ぶ関数の本来の名が、関数の中身を読む名(:data:`_CODE_READ_NAMES`)か — ``from inspect import signature as sig``
+    の別名は、名の表に ``sig`` しか現れない。"""
+    return any(
+        isinstance(value := namespace.get(name), (FunctionType, types.BuiltinFunctionType, types.MethodType))
+        and getattr(value, "__name__", None) in _CODE_READ_NAMES
+        for name in names
     )
 
 
