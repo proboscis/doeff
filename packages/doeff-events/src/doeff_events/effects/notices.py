@@ -110,7 +110,9 @@ class SubscribeChannels(EffectBase["ChannelSubscription | BrokerUnreachable"]):
 
     ``kept`` = the channels among ``channels`` that are kept channels: they are read from their log as ``reader``
     (required when ``kept`` is not empty). The handler goes on from where the reader's previous subscription
-    stopped, and hands out again what the reader did not acknowledge (see the module's notes)."""
+    stopped, and hands out again what the reader did not acknowledge (see the module's notes). A kept channel is
+    heard over Pub/Sub too: a notice announced on it without ``kept`` (a sender that has not switched to the kept
+    channel yet, while a system is redeclared) still reaches the subscription, without a receipt."""
 
     channels: tuple[str, ...]
     kept: tuple[str, ...] = ()

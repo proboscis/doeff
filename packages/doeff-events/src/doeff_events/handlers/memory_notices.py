@@ -173,15 +173,12 @@ class MemoryBroker:
     def announce(self, effect: Announce) -> _Announced:
         """Give the notice to every current subscriber of the channel: its waiting task, or its queue. A kept
         channel's notice goes to the channel's log instead, and wakes the subscriptions waiting on it (they read the
-        log themselves)."""
+        log themselves). A notice announced without ``kept`` on a channel a subscription reads as kept still reaches
+        it (a sender that has not switched to the kept channel yet — the notice carries no receipt)."""
         if effect.kept:
             return self._kept(effect)
         notice = Announcement(effect.channel, effect.name, effect.body)
-        hearing = tuple(
-            listener
-            for listener in self._mut_listeners
-            if effect.channel in listener.subscription.channels and effect.channel not in listener.subscription.kept
-        )
+        hearing = tuple(listener for listener in self._mut_listeners if effect.channel in listener.subscription.channels)
         wakes = tuple(_Wake(listener.waiter, notice) for listener in hearing if listener.waiter is not None)
         for listener in hearing:
             if listener.waiter is None:

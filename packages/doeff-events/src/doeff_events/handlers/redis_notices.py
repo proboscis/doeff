@@ -514,7 +514,8 @@ def _reading(
     silence_seconds: float,
 ) -> "EffectGenerator[_Listening | _Failed]":
     """The server's part of a subscription: the kept streams' ends for a reader that has no position yet, then
-    ``SUBSCRIBE`` of the Pub/Sub channels."""
+    ``SUBSCRIBE`` of every channel — the kept ones too, so a notice a sender that has not switched to the kept
+    channel yet announces with ``PUBLISH`` still reaches the reader (without a receipt)."""
     if reader is not None:
         fresh = tuple(channel for channel in effect.kept if channel not in reader.positions)
         if fresh:
@@ -522,12 +523,9 @@ def _reading(
             if isinstance(ends, _Failed):
                 return ends
             reader.positions = {**ends, **reader.positions}
-    plain = tuple(channel for channel in effect.channels if channel not in effect.kept)
-    pubsub: PubSub | _Failed | None = None
-    if plain:
-        pubsub = yield Await(_attempt(partial(_subscribe, receiving, ChannelSubscription(plain), silence_seconds)))
-        if isinstance(pubsub, _Failed):
-            return pubsub
+    pubsub = yield Await(_attempt(partial(_subscribe, receiving, ChannelSubscription(effect.channels), silence_seconds)))
+    if isinstance(pubsub, _Failed):
+        return pubsub
     return _Listening(subscription, pubsub, reader)
 
 

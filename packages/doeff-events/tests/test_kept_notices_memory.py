@@ -151,6 +151,21 @@ def test_two_open_subscriptions_of_one_reader_each_receive_every_kept_notice() -
     assert first == second == Announcement(CHANNEL, "law-note", "both", receipt="1"), (first, second)
 
 
+def test_a_notice_announced_without_kept_on_a_kept_channel_still_reaches_its_reader() -> None:
+    # While a system is redeclared, a sender of the old version announces over Pub/Sub on the channel the new reader
+    # reads as kept: the reader still hears it (no receipt — nothing to acknowledge), so the order of the
+    # declarations loses nothing.
+    @do
+    def hears_an_old_sender() -> "EffectGenerator[object]":
+        subscription = yield SubscribeChannels((CHANNEL,), kept=(CHANNEL,), reader="reader")
+        sent = yield Announce(CHANNEL, "law-note", "old")
+        return sent, (yield NextAnnouncement(subscription))
+
+    sent, heard = run_on_virtual_clock(memory_notice_handler(MemoryBroker())(hears_an_old_sender()))
+    assert sent == 1, sent
+    assert heard == Announcement(CHANNEL, "law-note", "old"), heard
+
+
 def test_a_pubsub_notice_still_reaches_a_subscription_that_also_reads_a_kept_channel() -> None:
     @do
     def reads_both() -> "EffectGenerator[object]":
