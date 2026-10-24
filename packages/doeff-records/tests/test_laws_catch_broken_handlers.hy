@@ -5,7 +5,7 @@
 (import datetime [datetime timezone])
 (import uuid)
 (import doeff_hy.frozen [FrozenMap])
-(import doeff [run with_handlers])
+(import doeff [Perform run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
@@ -246,9 +246,11 @@
 
 (defk event-in-any-stream [idempotency-key]
   {:pre [(: idempotency-key str)] :post [(: % (| Event EventAbsent))]}
-  "置き場の全部の列(journal・pulses・pairs)から鍵の出来事を探した最初の答え — 列を問わない鍵の読みの handler の顔の答え。"
+  "置き場の全部の列(journal・pulses・pairs)から鍵の出来事を探した最初の答え — 列を問わない鍵の読みの handler の顔の答え。handler の節で走らせる
+   Program なので、不在と宣言した EventAbsent と失敗と宣言した Unreachable(<- は Absent / Raise にする)は宣言を開かずに(Perform)値のまま受け、
+   その列には無いものとして次の列へ進む(節から Absent / Raise を出さない — R4・R9)。"
   (for [stream #("journal" "pulses" "pairs")]
-    (<- answer (ReadEventByKey stream idempotency-key))
+    (<- answer (Perform (ReadEventByKey stream idempotency-key)))
     (when (isinstance answer Event)
       (return answer)))
   (EventAbsent))
@@ -262,7 +264,8 @@
 (defhandler retired-as-absent []
   ;; 消えた鍵と来ていない鍵を混ぜる handler の顔(#3750): EventRetired を EventAbsent で答える。
   (ReadEventByKey [stream idempotency-key]
-    (<- answer (ReadEventByKey stream idempotency-key))
+    ;; 中継は宣言を開かずに(Perform)値のまま受ける: <- だと EventAbsent が Absent・Unreachable が Raise になり、この節から出てしまう(R4)。
+    (<- answer (Perform (ReadEventByKey stream idempotency-key)))
     (resume (if (isinstance answer EventRetired) (EventAbsent) answer))))
 
 
