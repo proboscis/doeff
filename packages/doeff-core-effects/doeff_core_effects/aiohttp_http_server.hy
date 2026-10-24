@@ -12,7 +12,8 @@
 ;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
 ;;;                 長い中継が他の要求を止めない。列(Arrivals)に既に在る出来事は、HttpNextRequest の節が答え手の節の thread で待たずに
 ;;;                 取る(共有の loop へ入らない — 書き 1 回で起きた待ちの読みが列に溜まった時に 1 つずつ往復しない・agora-redesign #3688
-;;;                 の案 1)。列が空の時だけ共有の loop から待ち受けの loop で積まれるまで待つ
+;;;                 の案 1)。列が空の時は scheduler の外から完了させる promise を列に預け、待ち受けの loop が積んだ拍に完了させる(共有の
+;;;                 loop を経ない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない・agora card ki-5c3e73834e73)
 ;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
 ;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
 ;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
@@ -66,6 +67,7 @@
 (import aiohttp)
 (import aiohttp [web WSMsgType])
 (import doeff_core_effects.effects [Await])
+(import doeff_core_effects.scheduler [CreateExternalPromise Wait])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpEvent HttpHeader HttpRequestArrived HttpListen
                                                 HttpNextRequest HttpTakeQueued HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose HttpShutdown HttpStopListening
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
@@ -203,28 +205,37 @@
 
 (defclass Arrivals []
   "受け口の列(要求と ws の出来事・閉じの印)。待ち受けの loop だけが積み(put)、受け手はどの thread からでも列に在る出来事を待たずに
-   取れ(take-now — 共有の loop へ入らない・agora-redesign #3688 の案 1)、空なら待ち受けの loop の上で待つ(wait)。積んだ順に取れる。"
+   取れ(take-now — 共有の loop へ入らない・agora-redesign #3688 の案 1)、空なら scheduler の外から完了させる promise を預けて、積まれた
+   拍に起こされる(wake-on-arrival — 共有の loop も待ち受けの loop の coroutine も経ない・agora card ki-5c3e73834e73)。積んだ順に取れる。"
 
   (defn #^ None __init__ [self]
-    ;; ready = 積まれてまだ取られていない出来事(deque の append と popleft は thread をまたいで安全)。waiters = 空の列を待つ受け手の
-    ;; future(待ち受けの loop だけが触る)。
+    ;; ready = 積まれてまだ取られていない出来事(deque の append と popleft は thread をまたいで安全)。sleepers = 空の列を見て起こしを
+    ;; 待つ受け手の promise。lock = 「空を見て預ける」と「積んで起こす」を互いに割り込ませない錠(起こしを取りこぼさない)。
     (setv self.ready (deque)
-          self.waiters (deque))
+          self.sleepers #()
+          self.lock (threading.Lock))
     None)
 
   (defn #^ None put [self #^ HttpEvent event]
-    "出来事を列の末尾へ積み、空の列を待つ受け手を 1 つ起こすため(待ち受けの loop の上で)。"
+    "出来事を列の末尾へ積み、空の列を見て待つ受け手を全部起こすため(待ち受けの loop の上で)。起こされた受け手は列から自分で取り、
+     他の受け手が先に取っていれば預け直す(取り消された待ちの promise を起こしても起こしを失わない)。"
     (.append self.ready event)
-    (self.wake-one)
+    (with [_ self.lock]
+      (setv waking self.sleepers
+            self.sleepers #()))
+    (for [promise waking]
+      (.complete promise None))
     None)
 
-  (defn #^ None wake-one [self]
-    "空の列を待つ受け手のうち、まだ待っている先頭の 1 つを起こすため(取り消された待ちは飛ばす)。起こされた受け手は列から自分で取る。"
-    (while self.waiters
-      (setv waiter (.popleft self.waiters))
-      (when (not (.done waiter))
-        (.set-result waiter None)
-        (break)))
+  (defn #^ None wake-on-arrival [self promise]
+    "列が空なら、次に積まれた拍に promise(scheduler の外から完了させる promise)を None で完了させるため(受け手の thread で)。預ける
+     前に積まれていれば、すぐ完了させる。"
+    (with [_ self.lock]
+      (setv now (bool self.ready))
+      (when (not now)
+        (setv self.sleepers (+ self.sleepers #(promise)))))
+    (when now
+      (.complete promise None))
     None)
 
   (defn #^ (| HttpEvent None) take-now [self]
@@ -232,23 +243,7 @@
     (try
       (.popleft self.ready)
       (except [IndexError]
-        None)))
-
-  (defn :async #^ HttpEvent wait [self]
-    "列の先頭の出来事を取り、空なら積まれるまで待つため(待ち受けの loop の上で)。起こされた時に他の受け手が先に取っていれば待ち直す。
-     待ちが取り消された時に列に出来事が残っていれば、次に待つ受け手を起こす(asyncio.Queue と同じく起こしを取りこぼさない)。"
-    (while True
-      (setv event (self.take-now))
-      (when (is-not event None)
-        (return event))
-      (setv waiter (.create-future (asyncio.get-running-loop)))
-      (.append self.waiters waiter)
-      (try
-        (await waiter)
-        (except [asyncio.CancelledError]
-          (when self.ready
-            (self.wake-one))
-          (raise))))))
+        None))))
 
 
 (defclass WebEdge []
@@ -337,16 +332,9 @@
     (setv bound (get self.runner.addresses 0))
     (HttpAddress :host self.address.host :port (get bound 1)))
 
-  (defn :async #^ HttpEvent next-arrival [self]
-    "受け口の列の次の出来事を、積まれるまで待って本体へ渡すため(待ち受けの loop の上で — 閉じた後は列に何が残っていても
-     HttpServerClosed)。"
-    (when (is-not self.shut None)
-      (return (HttpServerClosed :reason self.shut)))
-    (self.closed-or (await (.wait self.arrivals))))
-
   (defn #^ (| HttpEvent None) take-arrival [self]
     "受け口の列に既に在る次の出来事を、答え手の節の thread で待たずに取るため(共有の loop へ入らない・agora-redesign #3688 の案 1 —
-     列が空なら None で、答え手の節が next-arrival で待つ)。閉じた後は next-arrival と同じく HttpServerClosed。"
+     列が空なら None で、答え手の節が wake-on-arrival に promise を預けて待つ)。閉じた後は HttpServerClosed(列に何が残っていても)。"
     (when (is-not self.shut None)
       (return (HttpServerClosed :reason self.shut)))
     (setv event (.take-now self.arrivals))
@@ -778,9 +766,13 @@
 (defk next-on-edge [edge]
   {:pre [(: edge WebEdge)] :post [(: % HttpEvent)]}
   "受け手へ次の出来事を渡すため: 受け口の列に既に在れば答え手の節の thread で待たずに取り(共有の loop へ入らない — 頭の註の待ち受け)、
-   空なら共有の loop から待ち受けの loop で積まれるまで待つ(across)。"
+   空なら scheduler の外から完了させる promise を列に預けて積まれるまで待ち、起きたら取り直す(待ちの間に共有の loop と待ち受けの loop を
+   往復しない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない・agora card ki-5c3e73834e73)。"
   (match (.take-arrival edge)
-    None (do (<- arrival HttpEvent (Await (.across edge (.next-arrival edge))))
+    None (do (<- promise (CreateExternalPromise))
+             (.wake-on-arrival edge.arrivals promise)
+             (<- (Wait promise.future))
+             (<- arrival HttpEvent (next-on-edge edge))
              arrival)
     event event))
 

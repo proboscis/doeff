@@ -12,6 +12,8 @@ import aiohttp as aiohttp
 from aiohttp import web as web
 from aiohttp import WSMsgType as WSMsgType
 from doeff_core_effects.effects import Await as Await
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.http_server_effects import HttpAddress as HttpAddress
 from doeff_core_effects.http_server_effects import HttpServerClosed as HttpServerClosed
 from doeff_core_effects.http_server_effects import HttpCommand as HttpCommand
@@ -117,7 +119,8 @@ class WsPeer:
 
 class Arrivals:
     ready: Incomplete
-    waiters: Incomplete
+    sleepers: Incomplete
+    lock: Incomplete
 
     def __init__(self) -> None:
         ...
@@ -125,13 +128,10 @@ class Arrivals:
     def put(self, event: HttpEvent) -> None:
         ...
 
-    def wake_one(self) -> None:
+    def wake_on_arrival(self, promise: Incomplete) -> None:
         ...
 
     def take_now(self) -> HttpEvent | None:
-        ...
-
-    def wait(self) -> HttpEvent:
         ...
 
 class WebEdge:
@@ -167,9 +167,6 @@ class WebEdge:
         ...
 
     def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple, share_port: bool) -> HttpAddress:
-        ...
-
-    def next_arrival(self) -> HttpEvent:
         ...
 
     def take_arrival(self) -> HttpEvent | None:
