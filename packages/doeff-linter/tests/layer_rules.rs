@@ -2555,7 +2555,7 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
 
 /// DOEFF137 の拡張(相手役の名簿 :stand-ins): 組(相手役・本物)ごとに、空でない :interpreters を持ち、相手役と本物の両方に届く
 /// deftest(契約の検 — verified fake・Pact の形)が要る。本物は索引の外(doeff などの package)でもよく、その時は本物を名指す定義から
-/// 辿る。片方にしか届かない :interpreters の検・両方に届いても :interpreters の無い検は数えない。理由つきの :contract-test (none …) の
+/// 辿る。解釈器を名の文字列(`"module:名"` / `"module:名@<変種>"`)で綴る定数も、その handler を名指す定義に数える。片方にしか届かない :interpreters の検・両方に届いても :interpreters の無い検は数えない。理由つきの :contract-test (none …) の
 /// 組は判じない・理由の無い none は鳴る。当たりの位置は名簿の要素・細目は「相手役->本物」・重さは critical。
 #[test]
 fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
@@ -2568,7 +2568,8 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
             "app/foundation/peers.hy",
             tags("shared", "foundation")
                 + "(defk with-fake-mail [body] body)\n(defk with-fake-llm [body] body)\n(defk with-fake-queue [body] body)\n\
-                   (defk with-fake-clock [body] body)\n(defk with-fake-disk [body] body)\n(defk with-fake-bare [body] body)\n",
+                   (defk with-fake-clock [body] body)\n(defk with-fake-disk [body] body)\n(defk with-fake-bare [body] body)\n\
+                   (defk with-fake-store [body] body)\n",
         ),
         // 解釈器の組み立ての定数(file の外の記号)が handler を名指す — 本物の LLM の handler は索引の外の package に在る。
         (
@@ -2579,17 +2580,19 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
              (val HOST (+ with-host.__module__ \":\" with-host.__name__))\n(val SIM \"sim-host\")\n\
              (val MAIL (+ with-mail.__module__ \":\" with-mail.__name__))\n(val FAKE-MAIL (+ with-fake-mail.__module__ \":\" with-fake-mail.__name__))\n\
              (val LIVE (+ with-live.__module__ \":\" with-live.__name__))\n(val FAKE-LIVE (+ with-fake-llm.__module__ \":\" with-fake-llm.__name__))\n\
-             (val FAKE-QUEUE (+ with-fake-queue.__module__ \":\" with-fake-queue.__name__))\n"
+             (val FAKE-QUEUE (+ with-fake-queue.__module__ \":\" with-fake-queue.__name__))\n\
+             (val STORE \"doeff_records.store:with-store@postgres\")\n(val FAKE-STORE \"app.foundation.peers:with-fake-store\")\n"
                 .to_string(),
         ),
         // 良い例: 本物と相手役を :interpreters に並べた検(本物が索引に在る組と、索引の外に在る組)。
         (
             "app/foundation/tests/test_peer_contracts.hy",
-            "(import app.foundation.tests.contract_handlers [HOST SIM MAIL FAKE-MAIL LIVE FAKE-LIVE FAKE-QUEUE])\n\
+            "(import app.foundation.tests.contract_handlers [HOST SIM MAIL FAKE-MAIL LIVE FAKE-LIVE FAKE-QUEUE STORE FAKE-STORE])\n\
              (deftest test-host-answers {:interpreters [HOST SIM] :marks [\"real_world\"]} (assert True))\n\
              (deftest test-mail-answers-alike {:interpreters [MAIL FAKE-MAIL] :marks [\"real_world\"]} (assert True))\n\
              (deftest test-live-answers-alike {:interpreters [LIVE FAKE-LIVE] :marks [\"real_world\"]} (assert True))\n\
-             (deftest test-queue-fake-alone {:interpreters [FAKE-QUEUE SIM]} (assert True))\n"
+             (deftest test-queue-fake-alone {:interpreters [FAKE-QUEUE SIM]} (assert True))\n\
+             (deftest test-store-answers-alike {:interpreters [STORE FAKE-STORE] :marks [\"real_world\"]} (assert True))\n"
                 .to_string(),
         ),
         // 悪い例: 時計の相手役と本物の両方に届くが :interpreters が無い。
@@ -2604,6 +2607,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
   :edge-mark "real_world"
   :stand-ins [(stand-in "app.foundation.peers:with-fake-mail" :real "app.foundation.host:with-mail")
               (stand-in "app.foundation.peers:with-fake-llm" :real "doeff_openai.live:with-live")
+              (stand-in "app.foundation.peers:with-fake-store" :real "doeff_records.store:with-store")
               (stand-in "app.foundation.peers:with-fake-queue" :real "app.foundation.host:with-queue")
               (stand-in "app.foundation.peers:with-fake-clock" :real "app.foundation.host:with-clock")
               (stand-in "app.foundation.peers:with-fake-disk" :real "doeff_core_effects.os_file:os-file-handler"
@@ -2620,7 +2624,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
             "architecture.hy::DOEFF137::app.foundation.peers:with-fake-queue->app.foundation.host:with-queue",
             "architecture.hy::DOEFF137::app.foundation.peers:with-ghost->doeff_openai.live:with-live",
         ],
-        "両方に届く契約の検の在る mail・live(本物が索引の外)と理由つきの disk は当てず、本物に届かない queue・:interpreters の無い clock・定義の無い ghost を当てる: {}",
+        "両方に届く契約の検の在る mail・live(本物が索引の外)・store(解釈器を名の文字列で綴る — 本物は @変種つき)と理由つきの disk は当てず、本物に届かない queue・:interpreters の無い clock・定義の無い ghost を当てる: {}",
         report
     );
     let clock = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-fake-clock->app.foundation.host:with-clock");
