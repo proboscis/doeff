@@ -1,0 +1,110 @@
+[
+ {
+  "id": "i1",
+  "text": "This is doeff: algebraic effects for Python."
+ },
+ {
+  "id": "i2",
+  "text": "Your code says what it wants. Handlers, stacked around it, decide how it happens."
+ },
+ {
+  "id": "y1",
+  "text": "A doeff program is a Python generator, marked with at-do."
+ },
+ {
+  "id": "y2",
+  "text": "yield Fetch fetches nothing by itself. It hands a request, called an effect, outward."
+ },
+ {
+  "id": "y3",
+  "text": "A handler answers it. The answer comes back as page, and the code goes on."
+ },
+ {
+  "id": "w1",
+  "text": "Here is monitor. It only says what it wants: a page, a line, and a thirty-minute wait."
+ },
+ {
+  "id": "w2",
+  "text": "Each yield hands an effect outward. The code never says how it is done."
+ },
+ {
+  "id": "l1",
+  "text": "Handlers wrap the program in layers. You choose the stack when you run it."
+ },
+ {
+  "id": "l2",
+  "text": "An effect travels outward until a layer that handles it catches it."
+ },
+ {
+  "id": "l3",
+  "text": "Delay reaches the virtual clock. What does that layer get?"
+ },
+ {
+  "id": "r1",
+  "text": "Along with the effect, the handler also gets k: the rest of your program."
+ },
+ {
+  "id": "r2",
+  "text": "Holding k, it decides when the rest runs: now, later, at nine thirty, or never."
+ },
+ {
+  "id": "r3",
+  "text": "The virtual clock sets the time to nine thirty and resumes k at once. No real wait."
+ },
+ {
+  "id": "s1",
+  "text": "A scheduler is a layer too. Spawn starts two monitors at once."
+ },
+ {
+  "id": "s2",
+  "text": "Each Delay parks its k. The virtual clock keeps them in wake-up order."
+ },
+ {
+  "id": "s3",
+  "text": "No task is ready, so the clock jumps to nine ten, and b's k runs."
+ },
+ {
+  "id": "s4",
+  "text": "Then nine thirty for a. The same four lines, in the same order, every run."
+ },
+ {
+  "id": "n1",
+  "text": "Now swap the stack, and keep the code."
+ },
+ {
+  "id": "n2",
+  "text": "Test handlers on the left. Production handlers on the right."
+ },
+ {
+  "id": "n3",
+  "text": "yield Fetch: the program asks for the page."
+ },
+ {
+  "id": "n4",
+  "text": "yield Log: it writes a line."
+ },
+ {
+  "id": "n5",
+  "text": "yield Delay, thirty minutes: each clock decides what waiting means."
+ },
+ {
+  "id": "n6",
+  "text": "Test skips the wait. Production really waits, shown in fast-forward."
+ },
+ {
+  "id": "n7",
+  "text": "Test is done. Production is still waiting out the thirty minutes."
+ },
+ {
+  "id": "n8",
+  "text": "The wait is over. Production checks again."
+ },
+ {
+  "id": "n9",
+  "text": "Same code, same output. Test: a few milliseconds. Production: thirty real minutes."
+ },
+ {
+  "id": "o1",
+  "text": "doeff: algebraic effects for Python. Stack the layers you need around the same code. pip install doeff."
+ }
+]
