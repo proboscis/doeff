@@ -253,10 +253,7 @@ def postgres_lease(connections: PostgresConnections, database: str) -> _Program[
 def lease_now(connections: PostgresConnections, database: str) -> Incomplete:
     ...
 
-def return_abandoned(connections: PostgresConnections, database: str, leased: Incomplete) -> Incomplete:
-    ...
-
-def run_then_return(connections: PostgresConnections, database: str, leased: Incomplete, claim: Incomplete, work: Incomplete) -> Incomplete:
+def lease_run_return(connections: PostgresConnections, database: str, claim: Incomplete, work: Incomplete) -> Incomplete:
     ...
 
 @dataclass(kw_only=True)
