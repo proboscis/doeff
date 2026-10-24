@@ -2461,8 +2461,8 @@ def _comprehension_names(expr: Comprehension) -> frozenset[str]:
 
 
 def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
-    """Whether ``expr`` builds a Program: a Program call, an effect, an install form, or
-    a name (or an element of a sequence) bound to one (so ``(x)(expr)`` installs a
+    """Whether ``expr`` builds a Program: a Program call (a local function's included),
+    an effect, an install form, or a name (or an element of a sequence) bound to one (so ``(x)(expr)`` installs a
     handler around it)."""
     match expr:
         case ast.Subscript():
@@ -2476,8 +2476,11 @@ def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
             if _install_form(expr, scope) is not None:
                 return True
             head = scope.resolve(func)
+            # A lambda / nested def called here (``(on-raise (do! …) …)`` expands to
+            # ``on_raise(<local def>(), …)``) is read as ``_local_call`` reads it.
             return head is not UNBOUND and (
                 _is_effect_class(head)
+                or isinstance(head, _LocalFunction)
                 or (not isinstance(head, type) and _function_of(head) is not None)
             )
         case _:

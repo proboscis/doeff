@@ -365,11 +365,12 @@ PROGRAMS_HY = """\
 
 
 OUTCOMES_HY = """\
-(require doeff-hy.macros [defk defeffect do! <- absent-as])
+(require doeff-hy.macros [defk defeffect do! <- absent-as on-raise])
 (import dataclasses [dataclass])
 (import doeff_vm [Ok Err])
 (import doeff_core_effects.effects [Absent])
 (import doeff_core_effects.outcomes [result])
+(import doeff_core_effects.outcomes :as outcomes)
 (import {pkg}.effects [Tick Ping])
 
 (defclass [(dataclass :frozen True)] Gone [] #^ str key)
@@ -421,6 +422,19 @@ OUTCOMES_HY = """\
 (defk defaulted-inline []
   {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
   (<- r (absent-as 0 (do! (<- (Ping)) (<- n (missing)) n)))
+  r)
+
+;; on-raise is a function: its body argument (do! …) is the call of the local def the
+;; do! made, handed to on_raise as its Program parameter.
+(defk recovered-inline []
+  {:pre [] :post [(: % str)] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (on-raise (do! (<- (Ping)) (<- v (looking)) v) (Down d) d))
+  r)
+
+;; The function absent_as called without the macro: nothing wraps the (do! …) it is handed.
+(defk defaulted-unmarked []
+  {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- r (outcomes.absent-as 0 (do! (<- (Ping)) (<- n (missing)) n)))
   r)
 """
 
@@ -810,3 +824,19 @@ def test_a_do_block_written_as_an_expression_is_read(pkg: str) -> None:
     assert inline.residual.unresolved == ()
     [scope] = inline.handled
     assert {"Tick", "Ping", "Absent"} <= _types(scope.program.effect_types)
+
+
+def test_a_do_block_handed_to_on_raise_is_read(pkg: str) -> None:
+    # (on-raise (do! …) …) expands to on_raise(<local def>(), case …): the call of the
+    # local def is the Program on_raise binds to its parameter and performs.  It used to
+    # be left unbound, and on_raise's body yielded "a value that is not a call program".
+    recovered = analyze_program(f"{pkg}.outcomes:recovered_inline")
+
+    assert recovered.residual.unresolved == ()
+    [scope] = recovered.handled
+    assert {"Ping", "Lookup", "Raise"} <= _types(scope.program.effect_types)
+    # absent_as takes its body the same way when no macro marks it.
+    defaulted = analyze_program(f"{pkg}.outcomes:defaulted_unmarked")
+
+    assert defaulted.residual.unresolved == ()
+    assert _types(defaulted.effect_types) == {"Tick", "Ping"}
