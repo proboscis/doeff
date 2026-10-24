@@ -22,6 +22,7 @@ class JobRequest:
     headers: tuple[JobField, ...] = ...
     body: bytes | None = None
     patience: float = 30.0
+    follow_redirects: bool = False
 
     def __post_init__(self) -> None:
         ...

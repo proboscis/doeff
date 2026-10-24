@@ -80,6 +80,23 @@
     (resume (HttpFailed :url url :detail "ConnectError: refused" :kind HttpFailureKind.CONNECT-FAILED))))
 
 
+(defhandler redirect-flag-echo
+  ;; 送る側が HttpRequest に渡した転送の旗を、答えの本文に写して返すため(転送を辿るのは HttpRequest の handler — 送る側は旗を渡すだけ)。
+  (HttpRequest [method url follow-redirects]
+    (resume (HttpFailed :url url :detail (.format "follow-redirects={}" follow-redirects) :kind HttpFailureKind.CONNECT-FAILED))))
+
+
+(deftest test-the-sender-follows-redirects-only-when-the-request-asks
+  ;; 本物だけの性質: 要求の follow-redirects を HttpRequest へそのまま渡す(既定は辿らない)。
+  (val destinations #((JobDestination :api NOTES-API :root NOTES-ROOT :environ NOTES-ENVIRON)))
+  (for [#(asked expected) [#(None "follow-redirects=False") #(True "follow-redirects=True") #(False "follow-redirects=False")]]
+    (val request (if (is asked None)
+                     (JobRequest :method "GET" :path "/items/k")
+                     (JobRequest :method "GET" :path "/items/k" :follow-redirects asked)))
+    (val answer (run (with_handlers [redirect-flag-echo fixed-environ (job-call-sender destinations)] (CallJob NOTES-API request))))
+    (assert (and (isinstance answer JobUnreachable) (in expected answer.reason)) #(asked answer))))
+
+
 (deftest test-an-empty-destination-is-unreachable-without-a-request
   (val destinations #((JobDestination :api NOTES-API :root NOTES-ROOT :environ NOTES-ENVIRON)))
   (val answer (run (with_handlers [no-request empty-environ (job-call-sender destinations)]
