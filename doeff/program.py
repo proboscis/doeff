@@ -41,6 +41,8 @@ from doeff_vm import WithObserve as WithObserve
 from doeff_vm._effect_types import check_handler_annotation
 
 if TYPE_CHECKING:
+    from doeff_vm.doeff_vm import StateHandler
+
     from doeff import Program
 
 
@@ -378,6 +380,31 @@ def _named_handler(raw_handler: Callable[..., object], name: str) -> ProgramHand
     a ``defhandler`` handler is one too.
     """
     return _install_raw(raw_handler, "handler", name)
+
+
+def _rust_handler_installer(raw_handler: "StateHandler") -> ProgramHandler:
+    """The installer of a handler the VM runs in Rust (``doeff_vm.StateHandler``).
+
+    The VM dispatches the handler object itself and ``GetHandlers`` answers that object,
+    so it is installed as it is — not made a ``@do`` function as ``@handler`` makes a def.
+    The installer carries the marker and the names the handler object gives. It also
+    declares what the handler answers (its effect types) and that it performs no effect,
+    since there is no source for doeff-effect-analyzer to read the clauses from.
+    """
+
+    def install(program: object = _NO_PROGRAM) -> WithHandlerType:
+        if program is _NO_PROGRAM:
+            raise TypeError(_called_without_program(install.__name__))
+        return WithHandlerType(raw_handler, program)
+
+    install.__name__ = raw_handler.__name__
+    install.__qualname__ = raw_handler.__qualname__
+    install_meta = cast(Any, install)
+    install_meta._doeff_is_handler_fn = True
+    install_meta.__doeff_handler_data__ = raw_handler
+    install_meta.__doeff_handles__ = raw_handler.effect_types
+    install_meta.__doeff_effects__ = ()
+    return cast(_InstalledHandler, install)
 
 
 @overload
