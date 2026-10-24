@@ -62,10 +62,11 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Final, Generic, TypeVar, final
+from typing import TYPE_CHECKING, Final, Generic, TypeAlias, TypeVar, final, get_args
 
 from doeff_core_effects.effects import Await
 from doeff_time import Delay, GetTime
+from doeff_time.effects.time import DelayEffect, GetTimeEffect
 
 from doeff import K, Pass, Program, Resume, do
 from doeff import handler as _program_handler
@@ -107,6 +108,20 @@ SUBSCRIPTION_SILENCE_SECONDS: Final = 7.0
 KEPT_LOG_LENGTH: Final = 10000
 # The key of a kept channel's stream (a prefix keeps the streams apart from any other key of the database).
 KEPT_KEY_PREFIX: Final = "doeff-events:kept:"
+
+# Every lower-layer effect the Redis handler answers: the annotation of ``_broker_handler``'s clauses (the VM skips the
+# handler for any other effect) and the declaration of the factory ``redis_notice_handler`` read this one union.
+RedisNoticeAnswer: TypeAlias = (
+    Announce | SubscribeChannels | NextAnnouncement | AckAnnouncement | CloseSubscription | ProbeBroker
+)
+REDIS_NOTICE_ANSWERS: Final[tuple[type, ...]] = get_args(RedisNoticeAnswer)
+# Every effect the Redis handler performs: each answer is one ``Await`` of a redis-py coroutine, and closing the
+# clients when the body ends is one more (``await_handler`` outside answers them).
+REDIS_NOTICE_EFFECTS: Final[tuple[type, ...]] = (Await,)
+# What ``broker_back_by_retry`` answers, and what it performs while answering: it reads the clock, waits the interval
+# and asks ``ProbeBroker`` (which ``redis_notice_handler`` outside answers).
+BROKER_BACK_ANSWERS: Final[tuple[type, ...]] = (AwaitBrokerBack,)
+BROKER_BACK_EFFECTS: Final[tuple[type, ...]] = (GetTimeEffect, DelayEffect, ProbeBroker)
 
 
 class BrokerAnswerMalformed(TypeError):
@@ -540,10 +555,7 @@ def _broker_handler(
     readers: KeptReaders[_KeptReader] = KeptReaders(_KeptReader)
 
     @do
-    def handler(
-        effect: Announce | SubscribeChannels | NextAnnouncement | AckAnnouncement | CloseSubscription | ProbeBroker,
-        k: K,
-    ) -> "EffectGenerator[object]":
+    def handler(effect: RedisNoticeAnswer, k: K) -> "EffectGenerator[object]":
         """Answer one broker operation with one awaited call; ``BrokerUnreachable`` when the server is not there."""
         nonlocal listening
         answer: object = None
@@ -654,6 +666,13 @@ def redis_notice_handler(
     return _BodyWrapper(_run, url, float(timeout_seconds), float(silence_seconds), float(redeliver_seconds))
 
 
+# The declaration doeff-effect-analyzer reads for the factory (it cannot read the handler made inside it): it answers
+# ``REDIS_NOTICE_ANSWERS`` and performs ``REDIS_NOTICE_EFFECTS``, so a user's closure check needs no copy of either.
+# ``tests/test_redis_notices_closure.py`` checks both against what ``_broker_handler`` and ``_run`` really do.
+redis_notice_handler.__doeff_handles__ = REDIS_NOTICE_ANSWERS
+redis_notice_handler.__doeff_effects__ = REDIS_NOTICE_EFFECTS
+
+
 def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":
     """Build the handler that answers ``AwaitBrokerBack`` for a broker that cannot tell its own return (Redis):
     try ``ProbeBroker`` (a connection only, no data), and while it fails, wait ``retry_seconds`` and try again
@@ -685,3 +704,9 @@ def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":
         return (yield Resume(k, None))
 
     return _program_handler(handler)
+
+
+# The declaration doeff-effect-analyzer reads for the factory (the handler is made inside it and is selected by its
+# annotation, with no clause to read); ``tests/test_redis_notices_closure.py`` checks it against the handler.
+broker_back_by_retry.__doeff_handles__ = BROKER_BACK_ANSWERS
+broker_back_by_retry.__doeff_effects__ = BROKER_BACK_EFFECTS
