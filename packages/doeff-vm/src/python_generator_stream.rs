@@ -388,11 +388,11 @@ const KEPT_VERDICTS: usize = 32;
 
 unsafe extern "C" {
     /// CPython 3.12+: give the type a version tag if it has none; 0 when none is left.
-    fn PyUnstable_Type_AssignVersionTag(type_: *mut pyo3::ffi::PyTypeObject) -> std::ffi::c_int;
+    pub(crate) fn PyUnstable_Type_AssignVersionTag(type_: *mut pyo3::ffi::PyTypeObject) -> std::ffi::c_int;
 }
 
 /// The type's version tag now (0 = none; CPython clears it when the type changes).
-fn version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -> u32 {
+pub(crate) fn version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -> u32 {
     // SAFETY: the type is alive (bound); the free-threaded build writes the tag
     // atomically, so it is read atomically here.
     unsafe {
@@ -405,7 +405,7 @@ fn version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -> u32 {
 /// effect's type: no class in its MRO but `object` defines `__class__` or
 /// `__getattribute__` (isinstance falls back to `effect.__class__` when the
 /// type is not a subclass, and those could answer per instance).
-fn answer_depends_on_type_only(effect_type: &Bound<'_, pyo3::types::PyType>) -> bool {
+pub(crate) fn answer_depends_on_type_only(effect_type: &Bound<'_, pyo3::types::PyType>) -> bool {
     let py = effect_type.py();
     let object = py.get_type::<PyAny>();
     effect_type.mro().iter().all(|class| {
