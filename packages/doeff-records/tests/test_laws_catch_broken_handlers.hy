@@ -5,7 +5,7 @@
 (import datetime [datetime timezone])
 (import uuid)
 (import doeff_hy.frozen [FrozenMap])
-(import doeff [run with_handlers])
+(import doeff [Perform run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
@@ -192,18 +192,20 @@
 
 (defhandler forget-idempotency []
   (AppendEvent [stream idempotency-key body]
-    (<- answer (AppendEvent stream (. (uuid.uuid4) hex) body))
+    ;; 中継は宣言を開かずに(Perform)値のまま受ける: <- だと Refused・Unreachable が Raise になり、この節から出てしまう(R4)。
+    (<- answer (Perform (AppendEvent stream (. (uuid.uuid4) hex) body)))
     (resume answer)))
 
 (defk appended-until-refused [appends]
   {:pre [(: appends tuple)] :post [(: % AppendedEvents)]}
-  "束を追記 1 つずつ撃ち、最初の断りから後を積まずに断る — 断りで束を止める handler の顔の答え(card ki-48c34994ed15)。"
+  "束を追記 1 つずつ撃ち、最初の断りから後を積まずに断る — 断りで束を止める handler の顔の答え(card ki-48c34994ed15)。handler の節で走らせる
+   Program なので、失敗と宣言した Refused・Unreachable(<- は Raise にする)は宣言を開かずに(Perform)値のまま受ける(節から Raise を出さない — R4・R9)。"
   (var items #())
   (var stopped False)
   (for [one appends]
     (if stopped
         (:= items (+ items #((Refused "前の追記の断りで束を止めた"))))
-        (do (<- answer (AppendEvent one.stream one.idempotency-key one.body))
+        (do (<- answer (Perform (AppendEvent one.stream one.idempotency-key one.body)))
             (:= stopped (isinstance answer Refused))
             (:= items (+ items #(answer))))))
   (AppendedEvents items))
@@ -216,10 +218,11 @@
 
 (defk appended-in-reverse [appends]
   {:pre [(: appends tuple)] :post [(: % AppendedEvents)]}
-  "束を後ろから 1 つずつ撃ち、答えだけを束の順に並べ直す — 番号を束の順に振らない handler の顔の答え。"
+  "束を後ろから 1 つずつ撃ち、答えだけを束の順に並べ直す — 番号を束の順に振らない handler の顔の答え。handler の節で走らせる Program なので、
+   AppendEvent は宣言を開かずに(Perform)値のまま受ける(<- だと Refused・Unreachable が Raise になり、節から出る — R4・R9)。"
   (var answers #())
   (for [one (reversed appends)]
-    (<- answer (AppendEvent one.stream one.idempotency-key one.body))
+    (<- answer (Perform (AppendEvent one.stream one.idempotency-key one.body)))
     (:= answers (+ #(answer) answers)))
   (AppendedEvents answers))
 

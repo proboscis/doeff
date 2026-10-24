@@ -40,7 +40,7 @@
   (<- put (PutRow "parts" #("p1") p1 (ExpectAbsent)))
   (<- rows (PutRows #((RowWrite "parts" #("p2") p2 (ExpectAbsent)))))
   (<- watched (WatchChanges #("parts") (WatchCursor 1 0)))
-  (<- appended (AppendEvent "journal" "k1" {"n" 1}))
+  (<- appended (on-raise (AppendEvent "journal" "k1" {"n" 1}) (Unreachable detail) (Unreachable detail)))
   (<- events (ReadEvents "journal" 0))
   (<- end (on-raise (ReadStreamEnd "journal") (Unreachable detail) (Unreachable detail)))
   #(read listed put rows watched appended events end))
