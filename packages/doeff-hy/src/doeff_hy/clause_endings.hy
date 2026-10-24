@@ -211,14 +211,23 @@
   None)
 
 
+;; 節の終わり方の照合を済ませた defhandler の定義(節の記述を作る関数 specs の code object — 定義 1 つに 1 つ)。照合は節の effect の型だけで
+;; 決まり、引数の在る handler の引数には依らない。済んだ印を handler の本体(data)に置くと、引数の在る handler は組むたびに本体が新しいので、
+;; 要求ごとに組む handler(記録の service の wait-stamps など)が組むたびに照合をやり直していた(card ki-1841b724d061 — 1 要求の
+;; scheduler の thread の CPU の 1 割ほど)。
+(setv CHECKED-DEFINITIONS (set))
+
+
 (deff check-clause-endings-once [data handler specs]  ; defk にできない: 展開した handler が本文に被さる時に呼ぶ検め(effect を出さない)
   {:pre [(: data Callable) (: handler str) (: specs Callable)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "defhandler の節の終わり方の照合を、handler を初めて本文に被せた時に 1 回だけ行うため(module を読み終えた後なので、
-   handler より後に定義した effect の型も引ける)。済んだ印は handler の本体(data)の属性に置く。"
-  (when (not (getattr data "__doeff_clause_endings_checked__" False))
+  "defhandler の節の終わり方の照合を、定義ごとに、handler を初めて本文に被せた時に 1 回だけ行うため(module を読み終えた後なので、
+   handler より後に定義した effect の型も引ける)。済んだ印は定義の印(CHECKED-DEFINITIONS — specs の code object)に置く。
+   data は展開の呼びの形を変えないために受ける。"
+  (setv definition specs.__code__)
+  (when (not-in definition CHECKED-DEFINITIONS)
     (check-clause-endings handler (specs))
-    (setattr data "__doeff_clause_endings_checked__" True))
+    (.add CHECKED-DEFINITIONS definition))
   None)
 
 

@@ -44,11 +44,15 @@
 ;;   - GET /served(#2742)は、動いている process が走っている木の commit と世代(serving.served — 使い手の入口が渡す・無ければ null)と、
 ;;     配っている表の宣言の要約(schema_digest.schema-digests)を答える。身元も表の用意も置き場も問わない(置き場に届かない間も使い手が
 ;;     動いている版を読める)。計器では種 other に数える
-;;;   - 要求ごとの計時(#3688): 要求の task は、task の始まり・本文の読み終わり・答えの決まり・送り終わりに札ごとの刻(StampRequest)を
-;;;     打つ。記録の操作の handler は包み(stamped-handling)で被せ、handler の入りと出と、handler の中の待ち(doeff-time の WaitWithin —
-;;;     変化の待ちの long-poll)の入りと起きにも刻を打つ。刻は受けの loop に request-ledger と並べて被せた控え(request-stamps)が、自分の
-;;;     外側の時計(土台の GetMonotonic — 要求ごとの外側の handler serving.request-handlers の時計ではない)で読んで札ごとに控えるので、受けた
-;;;     刻(received-at)と同じ物差しにそろう。送った後に札の刻を控えから外し(TakeMarks)、記録の操作の要求だけ、区間ごとの秒
+;;;   - 要求ごとの計時(#3688): 要求の task は、task の始まり・本文の読み終わり・答えの決まり・送り終わりの刻を、自分で土台の時計
+;;;     (GetMonotonic)から読んで持つ(控えを通さない — card ki-1841b724d061: 刻ごとに控えの session の値の Get と Put が土台まで往復し、
+;;;     1 要求の scheduler の thread の CPU の 1/4 ほどが計時だった)。要求の task は要求ごとの外側の handler(serving.request-handlers —
+;;;     検の仮想の時計)の外で走るので、読むのは土台の時計。記録の操作の handler は包み(stamped-handling)で被せ、handler の入りと出と、
+;;;     handler の中の待ち(doeff-time の WaitWithin — 変化の待ちの long-poll)の入りと起きに札ごとの刻(StampRequest)を打つ。包みは
+;;;     serving.request-handlers の内側で走るので、刻は受けの loop に request-ledger と並べて被せた控え(request-stamps)が、自分の外側の
+;;;     時計(土台の GetMonotonic)で読んで札ごとに控え、受けた刻(received-at)と同じ物差しにそろう。待ちの刻の控えと止めの切り手
+;;;     (wait-stamps・closing-cuts-waits)は、待つ操作(WatchChanges・WatchEvents — 記録の handler が待ちを撃つのはこの 2 つだけ)にだけ
+;;;     被せる。答えが決まった後に札の刻を控えから外して(TakeMarks)自分の刻と合わせ、記録の操作の要求だけ、区間ごとの秒
 ;;;     (request_timing.hy — queue・body・decode・handler・wait・encode・send・total・woke)を records_stage_<操作>_<区間> の観測の列にし、
 ;;;     doeff の計器の効果 ObserveSecondsBatch 1 回で積む(区間ごとに ObserveSeconds を撃つと 1 要求で 7〜9 回 — 書きのたびに起きた待ちの
 ;;;     要求が波で並ぶ時、その 1 本ずつの後ろに観測の往復が乗っていた・#3688)。GET /metrics が区間ごとの秒の和と数を描く。log には書かない
@@ -97,7 +101,7 @@
                                ReadEventByKey])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS request-stages server-timing-of stage-metric
+(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages server-timing-of
                                       lock-metric-helps])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric
@@ -151,6 +155,9 @@
 (val BODY-METHODS #("POST" "PUT"))
 ;; 用意の前の要求への答えの理由(503 store-unavailable の reason)。
 (val NOT-PREPARED-REASON "表の用意が済んでいない(起動の途中)")
+;; 記録の handler が中で待ち(doeff-time の WaitWithin — 変化の待ちの呼び鈴の待ち)を撃つ公開 effect(頭の註の止めの印と要求ごとの計時 —
+;; 待ちの刻の控えと止めの切り手はこの型の要求にだけ被せる)。
+(val WAITING-EFFECTS #(WatchChanges WatchEvents))
 ;; 手入れの係の書き手の名(手入れの effect は書き手の許可を通らない — 行を書かない)。
 (val MAINTAINER "records-maintenance")
 ;; 検の殻: 止めの合図を問い直す間隔・待ち受けが開いて表の用意を告げるのを待つ上限・閉じて run が終わるのを待つ上限の秒と、止めの理由。
@@ -302,31 +309,26 @@
   "札 ticket の要求に打った刻の列(打った順の MarkAt)を読み、控えから外す(答え終えた要求の刻を残さない)。"
   {:fields [(: ticket str)] :answer (get tuple #(MarkAt ...)) :tags {:context "records" :role "entry"}})
 
-(defeffect ReadMarks
-  "札 ticket の要求に今までに打った刻の列(打った順の MarkAt)を、控えから外さずに読む(送る前の答えの見出し Server-Timing に区間を載せる)。"
-  {:fields [(: ticket str)] :answer (get tuple #(MarkAt ...)) :tags {:context "records" :role "entry"}})
-
 
 
 (defhandler request-ledger
   "走り中の要求の Task を台帳に持ち、受けの loop が待ち受けの閉じの後に待てるようにするため。"
   {:tags {:context "records" :role "entry"}}
-  ;; held = 札 → 走り中の要求の Task(session の値)。early = Track より先に答え終えた札(Spawn の直後に子が先に走っても台帳に終わった
-  ;; task を残さない)。受けの loop は閉じた後に残りを Gather で待つ。
-  (session var held {})
-  (session var early (frozenset))
+  ;; tickets = 札 → 走り中の要求の Task か、Track より先に答え終えた札の None(Spawn の直後に子が先に走っても台帳に終わった task を残さない)
+  ;; (session の値 1 つ — 節ごとに読む値を 1 つにする・card ki-1841b724d061)。受けの loop は閉じた後に残りの Task を Gather で待つ。
+  (session var tickets {})
   (TrackRequest [ticket task]
-    (if (in ticket early)
-        (:= early (- early (frozenset [ticket])))
-        (:= held (| held {ticket task})))
+    (if (and (in ticket tickets) (is (get tickets ticket) None))
+        (:= tickets (dfor [k t] (.items tickets) :if (!= k ticket) k t))
+        (:= tickets (| tickets {ticket task})))
     (resume None))
   (SettleRequest [ticket]
-    (if (in ticket held)
-        (:= held (dfor [k t] (.items held) :if (!= k ticket) k t))
-        (:= early (| early (frozenset [ticket]))))
+    (if (in ticket tickets)
+        (:= tickets (dfor [k t] (.items tickets) :if (!= k ticket) k t))
+        (:= tickets (| tickets {ticket None})))
     (resume None))
   (PendingRequests []
-    (resume (tuple (.values held)))))
+    (resume (tuple (gfor task (.values tickets) :if (is-not task None) task)))))
 
 
 (defhandler waits-closing
@@ -398,21 +400,22 @@
 
 
 (defhandler request-stamps
-  "答えている要求の刻(StampRequest)を札ごとに、要求ごとの外側の handler の時計ではなく土台の時計(GetMonotonic — 受けた刻と同じ物差し)の
-   秒と組にして控え、送った後に区間の秒を割れるようにするため(頭の註の要求ごとの計時)。受けの loop に request-ledger と並べて被せる。"
+  "記録の handler の包みが打つ要求の刻(StampRequest — handler の入りと出と待ち)を札ごとに、要求ごとの外側の handler の時計ではなく土台の
+   時計(GetMonotonic — 受けた刻と同じ物差し)の秒と組にして控え、答えが決まった後に区間の秒を割れるようにするため(頭の註の要求ごとの
+   計時)。受けの loop に request-ledger と並べて被せる。"
   {:tags {:context "records" :role "entry"}}
-  ;; marks = 札 → 打った順の刻の列(session の値)。答え終えた札は TakeMarks が外す。
+  ;; marks = 札 → 打った順の刻の列(session の値)。答えの決まった札は TakeMarks が外す(刻の無い札は書き直さない)。
   (session var marks {})
   (StampRequest [ticket mark]
     (<- at float (GetMonotonic))
     (:= marks (| marks {ticket (+ (.get marks ticket #()) #((MarkAt :mark mark :at at)))}))
     (resume None))
   (TakeMarks [ticket]
-    (val taken (.get marks ticket #()))
+    (when (not-in ticket marks)
+      (return (resume #())))
+    (val taken (get marks ticket))
     (:= marks (dfor [k m] (.items marks) :if (!= k ticket) k m))
-    (resume taken))
-  (ReadMarks [ticket]
-    (resume (.get marks ticket #()))))
+    (resume taken)))
 
 
 (defhandler wait-stamps [#^ str ticket]
@@ -608,11 +611,14 @@
   {:pre [(: ticket str) (: caller str) (: record-handler Callable) (: body (| Program EffectBase))] :post [(: % "body の答え")]
    :tags {:context "records" :role "entry"}}
   "記録の handler record-handler の下で body(札 ticket の要求の公開 effect)を撃ち、handler の入りと出に刻を打つため(handler の中の
-   待ちの刻は wait-stamps — 頭の註の要求ごとの計時)。一覧の読みなら答えを呼び手 caller の名で数える(count-list-rows)。answer-with が
+   待ちの刻は wait-stamps — 頭の註の要求ごとの計時)。待ちの刻の控えと止めの切り手は、待つ操作(WAITING-EFFECTS)にだけ被せる(ほかの
+   操作に要求ごとの handler を組まない)。一覧の読みなら答えを呼び手 caller の名で数える(count-list-rows)。answer-with が
    書き手の名ごとの handler をこの包み(BodyWrapper)にして service へ渡す。"
   (<- (StampRequest :ticket ticket :mark RequestMark.HANDLER-IN))
   ;; 待ちの切り手は刻の控えの外側(刻の控えが待ちの入りと起きを、切り手の Race ごと測る)。
-  (<- answer (with-handlers [closing-cuts-waits (wait-stamps ticket) record-handler] body))
+  (val answer (if (isinstance body WAITING-EFFECTS)
+                  (! (with-handlers [closing-cuts-waits (wait-stamps ticket) record-handler] body))
+                  (! (with-handlers [record-handler] body))))
   (<- (StampRequest :ticket ticket :mark RequestMark.HANDLER-OUT))
   (when (isinstance body ListRows)
     (<- (count-list-rows caller body answer)))
@@ -672,16 +678,14 @@
   None)
 
 
-(defk timing-headers [arrival path]
-  {:pre [(: arrival HttpRequestArrived) (: path str)] :post [(: % (get tuple #(HttpHeader ...)))] :tags {:context "records" :role "entry"}}
-  "記録の操作の答えに、答えが決まった所までの区間の秒を見出し Server-Timing で載せるため(request_timing の server-timing-of — 呼び手が
-   往復 1 本のうち service の受けの列と中の分を要求ごとに名指せる)。記録の操作でない route(/metrics など)と、載せる区間が 1 つも無い
-   答えは見出しを足さない。"
-  (<- operation (| str None) (operation-of path))
+(defk timing-headers [operation stages]
+  {:pre [(: operation (| str None)) (: stages (get tuple #(StageSeconds ...)))] :post [(: % (get tuple #(HttpHeader ...)))]
+   :tags {:context "records" :role "entry"}}
+  "記録の操作 operation の答えに、答えが決まった所までの区間の秒 stages を見出し Server-Timing で載せるため(request_timing の
+   server-timing-of — 呼び手が往復 1 本のうち service の受けの列と中の分を要求ごとに名指せる)。記録の操作でない route(operation = None —
+   /metrics など)と、載せる区間が 1 つも無い答えは見出しを足さない。"
   (when (is operation None)
     (return #()))
-  (<- marks (get tuple #(MarkAt ...)) (ReadMarks arrival.ticket))
-  (<- stages (get tuple #(StageSeconds ...)) (request-stages arrival.received-at marks))
   (<- value str (server-timing-of stages))
   (if value #((HttpHeader :name SERVER-TIMING-HEADER :value value)) #()))
 
@@ -704,44 +708,47 @@
   internal)
 
 
-(defk observe-stages [path received-at marks]
-  {:pre [(: path str) (: received-at (| float None)) (: marks (get tuple #(MarkAt ...)))] :post [(: % None)]
+(defk observe-stages [operation stages]
+  {:pre [(: operation (| str None)) (: stages (get tuple #(StageSeconds ...)))] :post [(: % None)]
    :tags {:context "records" :role "entry"}}
-  "記録の操作の要求 1 つの区間の秒(request_timing の request-stages)を、操作ごと・区間ごとの秒の観測の列にして計器の効果 1 回
-   (ObserveSecondsBatch)で積み、GET /metrics でどの区間が遅いかを読めるようにするため(頭の註の要求ごとの計時 — 記録の操作でない route は
-   積まない)。"
-  (<- operation (| str None) (operation-of path))
+  "記録の操作 operation の要求 1 つの区間の秒 stages(request_timing の request-stages)を、操作ごと・区間ごとの秒の観測の列にして計器の
+   効果 1 回(ObserveSecondsBatch)で積み、GET /metrics でどの区間が遅いかを読めるようにするため(頭の註の要求ごとの計時 — 記録の操作で
+   ない route は積まない)。計器の名は STAGE-METRIC-NAMES から引く(区間ごとに綴らない)。"
   (when (is operation None)
     (return None))
-  (<- stages (get tuple #(StageSeconds ...)) (request-stages received-at marks))
-  (var observations #())
-  (for [stage stages]
-    (<- name str (stage-metric operation stage.stage))
-    (:= observations (+ observations #((SecondsObservation :name name :seconds stage.seconds)))))
+  (val observations (tuple (gfor stage stages (SecondsObservation :name (get (get STAGE-METRIC-NAMES operation) stage.stage)
+                                                                  :seconds stage.seconds))))
   (<- (ObserveSecondsBatch :observations observations))
   None)
 
 
-(defk deliver [arrival path answer]
-  {:pre [(: arrival HttpRequestArrived) (: path str) (: answer (| HttpAnswer TextAnswer))] :post [(: % None)]
-   :tags {:context "records" :role "entry"}}
+(defk deliver [arrival path answer marks]
+  {:pre [(: arrival HttpRequestArrived) (: path str) (: answer (| HttpAnswer TextAnswer)) (: marks (get tuple #(MarkAt ...)))]
+   :post [(: % None)] :tags {:context "records" :role "entry"}}
   "答え 1 つを札へ送り(sent-answer)、待ち受けへ渡した答えの status を計器に 1 つ数え、台帳から外すため。数えるのはこの 1 か所で、
    送り直した 500 も、ここで 500 として数える(渡せなかった答えの status は数えない)。待ち受けの側で後から落ちた送り(相手が先に切った・
    札が待ち受けに無い — 本物の待ち受けは答えを loop へ積むだけで戻る・#3688 の子 (3) の 3b)は、待ち受けが標準の誤りへ 1 行名乗るだけで、
    ここの数えは直さない(渡した答えの status のまま)。送りの effect は答えを待ち受けへ渡すだけで、
    この task は同じ scheduler の上で続けて数えるので、答えを受け取った呼び手が次に送る要求より先に数えが済む。計器が落ちても
-   答えは送ってあり、台帳からは外す(誤りはそのまま上げる)。送り終えた刻を打ち、札の刻を控えから外して、記録の操作の要求なら区間の
-   秒を計器に積む(observe-stages — 頭の註の要求ごとの計時)。"
+   答えは送ってあり、台帳からは外す(誤りはそのまま上げる)。marks = 要求の task が自分で読んだ刻(始まり・本文の読み終わり・答えの
+   決まり)。送る前に札の刻(handler の入りと出と待ち)を控えから外して合わせ、答えの見出しに載せ、送り終えた刻を読んで、記録の操作の
+   要求なら区間の秒を計器に積む(observe-stages — 頭の註の要求ごとの計時)。刻の列は名で引くので、合わせた列が刻の順でなくてよい
+   (待ちの入りと起きの組は控えの中の順のまま)。"
+  (<- operation (| str None) (operation-of path))
   (try
-    (<- timing (get tuple #(HttpHeader ...)) (timing-headers arrival path))
+    (<- handled (get tuple #(MarkAt ...)) (TakeMarks arrival.ticket))
+    (val known (+ marks handled))
+    (val timing (if (is operation None) #() (! (timing-headers operation (! (request-stages arrival.received-at known))))))
     (<- sent (| HttpAnswer TextAnswer) (sent-answer arrival answer timing))
-    (<- (StampRequest :ticket arrival.ticket :mark RequestMark.SENT))
+    (<- sent-at float (GetMonotonic))
     (<- metric str (answer-metric path sent.status))
     (<- (CountMetric :name metric :amount 1.0))
     (finally
-      (<- marks (get tuple #(MarkAt ...)) (TakeMarks arrival.ticket))
       (<- (SettleRequest arrival.ticket))))
-  (<- (observe-stages path arrival.received-at marks))
+  (when (is-not operation None)
+    (<- stages (get tuple #(StageSeconds ...))
+        (request-stages arrival.received-at (+ known #((MarkAt :mark RequestMark.SENT :at sent-at)))))
+    (<- (observe-stages operation stages)))
   None)
 
 
@@ -750,13 +757,15 @@
   "要求 1 つに答える task の本体: 本文を読み → answer-with で答えを決め → 送って計器に数える(deliver)。例外でも必ず答える(決まる前に
    落ちれば 500 internal・送りが落ちれば 500 internal で送り直す — 答えの無い札を残さない)。数えるのは実際に送った答えの 1 か所だけ
    (本文の断りの 400 も、落ちた時の 500 も同じ所)。実装の誤りの追跡は標準の誤りへ残す(黙って捨てない)。終われば台帳から外す。
-   task の始まり・本文の読み終わり・答えの決まりに刻を打つ(頭の註の要求ごとの計時)。"
-  (<- (StampRequest :ticket arrival.ticket :mark RequestMark.STARTED))
+   task の始まり・本文の読み終わり・答えの決まりの刻を土台の時計から読んで持つ(頭の註の要求ごとの計時 — 控えを通さない)。"
+  (<- started float (GetMonotonic))
   (val path (get (.split arrival.target "?" 1) 0))
   (var decided None)
+  (var read-marks #())
   (try
     (<- body (| bytes HttpAnswer) (request-body arrival serving.max-bytes))
-    (<- (StampRequest :ticket arrival.ticket :mark RequestMark.READ))
+    (<- read-at float (GetMonotonic))
+    (:= read-marks #((MarkAt :mark RequestMark.READ :at read-at)))
     (<- answer (| HttpAnswer TextAnswer) (body-answer serving arrival path body))
     (:= decided answer)
     (except [e Exception]
@@ -764,9 +773,10 @@
              :file sys.stderr :flush True)
       (traceback.print-exc))
     (finally
-      (<- (StampRequest :ticket arrival.ticket :mark RequestMark.DECIDED))
+      (<- decided-at float (GetMonotonic))
       (<- final (| HttpAnswer TextAnswer) (final-answer decided))
-      (<- (deliver arrival path final))))
+      (<- (deliver arrival path final (+ #((MarkAt :mark RequestMark.STARTED :at started)) read-marks
+                                         #((MarkAt :mark RequestMark.DECIDED :at decided-at)))))))
   None)
 
 

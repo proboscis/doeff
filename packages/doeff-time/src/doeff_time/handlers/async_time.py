@@ -32,6 +32,18 @@ from doeff_time.handlers._wall_ticks import (
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
+# The effects AsyncTimeRuntime.handle answers.
+AsyncTimeEffect = (
+    DelayEffect
+    | WaitUntilEffect
+    | GetTimeEffect
+    | GetMonotonicEffect
+    | WaitWithinEffect
+    | WaitTicksEffect
+    | RaceWithinEffect
+    | ScheduleAtEffect
+)
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -67,7 +79,10 @@ class AsyncTimeRuntime:
         return DEADLINE_PASSED
 
     @do
-    def handle(self, effect: Any, k: Any):
+    def handle(self, effect: AsyncTimeEffect, k: Any):
+        # The annotation lets the VM skip this handler for every other effect, instead of
+        # calling it to Pass each one (agora card ki-1841b724d061 — every effect a records
+        # request sends past the clock cost a call here).
         # Every clause performs its final Transfer/Pass from THIS frame.
         # Delegating to a sub-@do that transfers (the pre-2026-07-14 shape)
         # leaves this frame suspended mid-`yield` forever, pinning the

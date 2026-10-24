@@ -58,6 +58,7 @@ class StageMeaning:
     stage: RequestStage
     meaning: str
 STAGE_MEANINGS: tuple[StageMeaning, ...]
+STAGE_METRIC_NAMES: FrozenMap
 STAGE_METRIC_HELPS: FrozenMap
 
 def first_at(marks: tuple[MarkAt, ...], mark: RequestMark) -> _Program[float | None, object]:

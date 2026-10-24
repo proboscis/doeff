@@ -104,6 +104,12 @@
     (StageMeaning :stage RequestStage.TOTAL :meaning "受けた → 送った")
     (StageMeaning :stage RequestStage.WOKE :meaning "最後に起きた → 送った — 待った要求だけ")))
 
+;; 操作 → 区間 → 計器の名(STAGE-METRIC の綴り — 要求ごとに綴らずに引く・card ki-1841b724d061)。
+(val STAGE-METRIC-NAMES
+  (FrozenMap (gfor operation OPERATIONS
+                   #(operation (FrozenMap (gfor described STAGE-MEANINGS
+                                                #(described.stage (.format STAGE-METRIC (.replace operation "-" "_") described.stage))))))))
+
 ;; 閉じた系列の全部(操作 × 区間)→ 各系列の # HELP の説明。
 (val STAGE-METRIC-HELPS
   (FrozenMap (gfor operation OPERATIONS described STAGE-MEANINGS
@@ -152,25 +158,30 @@
 (defk request-stages [received-at marks]
   {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...)))] :post [(: % (get tuple #(StageSeconds ...)))]
    :tags {:context "records" :role "judgment"}}
-  "要求 1 つの受けた刻と刻の列を、観測する区間の秒の列にするため(頭の註の区間 — 両端の刻が欠けた区間は入れない)。"
-  (val started (! (first-at marks RequestMark.STARTED)))
-  (val read (! (first-at marks RequestMark.READ)))
-  (val handler-in (! (first-at marks RequestMark.HANDLER-IN)))
-  (val handler-out (! (first-at marks RequestMark.HANDLER-OUT)))
-  (val decided (! (first-at marks RequestMark.DECIDED)))
-  (val sent (! (first-at marks RequestMark.SENT)))
+  "要求 1 つの受けた刻と刻の列を、観測する区間の秒の列にするため(頭の註の区間 — 両端の刻が欠けた区間は入れない)。刻は名ごとの最初の
+   刻を 1 度の走りで引く(first-at と between の意味のまま、要求ごとに刻の数だけ Program を撃たない — card ki-1841b724d061)。"
+  (val firsts {})
+  (for [stamped marks]
+    (.setdefault firsts stamped.mark stamped.at))
+  (val gap (fn [since until] (if (or (is since None) (is until None)) None (- until since))))
+  (val started (.get firsts RequestMark.STARTED))
+  (val read (.get firsts RequestMark.READ))
+  (val handler-in (.get firsts RequestMark.HANDLER-IN))
+  (val handler-out (.get firsts RequestMark.HANDLER-OUT))
+  (val decided (.get firsts RequestMark.DECIDED))
+  (val sent (.get firsts RequestMark.SENT))
   (val wait (! (waited marks)))
-  (val handled (! (between handler-in handler-out)))
+  (val handled (gap handler-in handler-out))
   (val slept (is-not wait.last-woke None))
-  (val spans #(#(RequestStage.QUEUE (! (between received-at started)))
-               #(RequestStage.BODY (! (between started read)))
-               #(RequestStage.DECODE (! (between read handler-in)))
+  (val spans #(#(RequestStage.QUEUE (gap received-at started))
+               #(RequestStage.BODY (gap started read))
+               #(RequestStage.DECODE (gap read handler-in))
                #(RequestStage.HANDLER (if (is handled None) None (- handled wait.seconds)))
                #(RequestStage.WAIT (if slept wait.seconds None))
-               #(RequestStage.ENCODE (! (between handler-out decided)))
-               #(RequestStage.SEND (! (between decided sent)))
-               #(RequestStage.TOTAL (! (between (if (is received-at None) started received-at) sent)))
-               #(RequestStage.WOKE (if slept (! (between wait.last-woke sent)) None))))
+               #(RequestStage.ENCODE (gap handler-out decided))
+               #(RequestStage.SEND (gap decided sent))
+               #(RequestStage.TOTAL (gap (if (is received-at None) started received-at) sent))
+               #(RequestStage.WOKE (if slept (gap wait.last-woke sent) None))))
   (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
 
 
