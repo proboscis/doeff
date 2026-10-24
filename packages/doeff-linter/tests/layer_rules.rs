@@ -2553,6 +2553,102 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     assert!(stderr.contains("world-handler app.foundation.host:with-exempt の :contract-test は (none"), "{}", stderr);
 }
 
+/// DOEFF137 の拡張(相手役の名簿 :stand-ins): 組(相手役・本物)ごとに、空でない :interpreters を持ち、相手役と本物の両方に届く
+/// deftest(契約の検 — verified fake・Pact の形)が要る。本物は索引の外(doeff などの package)でもよく、その時は本物を名指す定義から
+/// 辿る。片方にしか届かない :interpreters の検・両方に届いても :interpreters の無い検は数えない。理由つきの :contract-test (none …) の
+/// 組は判じない・理由の無い none は鳴る。当たりの位置は名簿の要素・細目は「相手役->本物」・重さは critical。
+#[test]
+fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
+    let files = [
+        (
+            "app/foundation/host.hy",
+            tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-mail [body] body)\n(defk with-queue [body] body)\n(defk with-clock [body] body)\n",
+        ),
+        (
+            "app/foundation/peers.hy",
+            tags("shared", "foundation")
+                + "(defk with-fake-mail [body] body)\n(defk with-fake-llm [body] body)\n(defk with-fake-queue [body] body)\n\
+                   (defk with-fake-clock [body] body)\n(defk with-fake-disk [body] body)\n(defk with-fake-bare [body] body)\n",
+        ),
+        // 解釈器の組み立ての定数(file の外の記号)が handler を名指す — 本物の LLM の handler は索引の外の package に在る。
+        (
+            "app/foundation/tests/contract_handlers.hy",
+            "(import app.foundation.host [with-host with-mail with-queue])\n\
+             (import app.foundation.peers [with-fake-mail with-fake-llm with-fake-queue])\n\
+             (import doeff_openai.live [with-live])\n\
+             (val HOST (+ with-host.__module__ \":\" with-host.__name__))\n(val SIM \"sim-host\")\n\
+             (val MAIL (+ with-mail.__module__ \":\" with-mail.__name__))\n(val FAKE-MAIL (+ with-fake-mail.__module__ \":\" with-fake-mail.__name__))\n\
+             (val LIVE (+ with-live.__module__ \":\" with-live.__name__))\n(val FAKE-LIVE (+ with-fake-llm.__module__ \":\" with-fake-llm.__name__))\n\
+             (val FAKE-QUEUE (+ with-fake-queue.__module__ \":\" with-fake-queue.__name__))\n"
+                .to_string(),
+        ),
+        // 良い例: 本物と相手役を :interpreters に並べた検(本物が索引に在る組と、索引の外に在る組)。
+        (
+            "app/foundation/tests/test_peer_contracts.hy",
+            "(import app.foundation.tests.contract_handlers [HOST SIM MAIL FAKE-MAIL LIVE FAKE-LIVE FAKE-QUEUE])\n\
+             (deftest test-host-answers {:interpreters [HOST SIM] :marks [\"real_world\"]} (assert True))\n\
+             (deftest test-mail-answers-alike {:interpreters [MAIL FAKE-MAIL] :marks [\"real_world\"]} (assert True))\n\
+             (deftest test-live-answers-alike {:interpreters [LIVE FAKE-LIVE] :marks [\"real_world\"]} (assert True))\n\
+             (deftest test-queue-fake-alone {:interpreters [FAKE-QUEUE SIM]} (assert True))\n"
+                .to_string(),
+        ),
+        // 悪い例: 時計の相手役と本物の両方に届くが :interpreters が無い。
+        (
+            "app/foundation/tests/test_clock_plain.hy",
+            "(import app.foundation.host [with-clock])\n(import app.foundation.peers [with-fake-clock])\n\
+             (deftest test-clock-both {:marks [\"real_world\"]} (<- a (with-clock 1)) (<- b (with-fake-clock 1)) (assert (= a b)))\n"
+                .to_string(),
+        ),
+    ];
+    let extra = r#"]
+  :edge-mark "real_world"
+  :stand-ins [(stand-in "app.foundation.peers:with-fake-mail" :real "app.foundation.host:with-mail")
+              (stand-in "app.foundation.peers:with-fake-llm" :real "doeff_openai.live:with-live")
+              (stand-in "app.foundation.peers:with-fake-queue" :real "app.foundation.host:with-queue")
+              (stand-in "app.foundation.peers:with-fake-clock" :real "app.foundation.host:with-clock")
+              (stand-in "app.foundation.peers:with-fake-disk" :real "doeff_core_effects.os_file:os-file-handler"
+                :contract-test (none :doeff-test "packages/doeff-core-effects/tests/test_os_file.hy::test-os-file-contract"))
+              (stand-in "app.foundation.peers:with-ghost" :real "doeff_openai.live:with-live")"#;
+    let dir = world_repo_with(&files, extra, "[\"DOEFF137\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF137"),
+        vec![
+            "architecture.hy::DOEFF137::app.foundation.peers:with-fake-clock->app.foundation.host:with-clock",
+            "architecture.hy::DOEFF137::app.foundation.peers:with-fake-queue->app.foundation.host:with-queue",
+            "architecture.hy::DOEFF137::app.foundation.peers:with-ghost->doeff_openai.live:with-live",
+        ],
+        "両方に届く契約の検の在る mail・live(本物が索引の外)と理由つきの disk は当てず、本物に届かない queue・:interpreters の無い clock・定義の無い ghost を当てる: {}",
+        report
+    );
+    let clock = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-fake-clock->app.foundation.host:with-clock");
+    assert_eq!(clock["level"], "critical");
+    assert_eq!(clock["severity"], "error");
+    assert!(clock["message"].as_str().unwrap().contains("本物 app.foundation.host:with-clock と同じ契約の検"), "{}", clock);
+    let line = text.lines().position(|l| l.contains("app.foundation.peers:with-fake-clock")).unwrap();
+    assert_eq!(clock["range"]["start"]["line"], line);
+    let ghost = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-ghost->doeff_openai.live:with-live");
+    assert!(ghost["message"].as_str().unwrap().contains("相手役の定義が索引に無い"), "{}", ghost);
+
+    // 理由の無い記号 none は鳴る — 契約の検の届く mail に書いても当てる。
+    let bare = text.replace(":real \"app.foundation.host:with-mail\")", ":real \"app.foundation.host:with-mail\" :contract-test none)");
+    assert_ne!(bare, text);
+    std::fs::write(&arch_path, &bare).unwrap();
+    let (_, report) = editor(dir.path());
+    let mail = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-fake-mail->app.foundation.host:with-mail");
+    assert!(mail["message"].as_str().unwrap().contains(":contract-test none に理由が無い"), "{}", mail);
+
+    // 名簿の形の誤り(:real の無い組)は宣言の誤り(終了コード 2)。
+    let bad = text.replace("(stand-in \"app.foundation.peers:with-ghost\" :real \"doeff_openai.live:with-live\")", "(stand-in \"app.foundation.peers:with-ghost\")");
+    assert_ne!(bad, text);
+    std::fs::write(&arch_path, bad).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("stand-in app.foundation.peers:with-ghost に :real"), "{}", stderr);
+}
+
 /// #1564: 種つきの疑似乱数を使う性質の検は手元、OS の entropy を使う操作は縁のまま。
 #[test]
 fn test_kind_distinguishes_seeded_random_from_entropy() {

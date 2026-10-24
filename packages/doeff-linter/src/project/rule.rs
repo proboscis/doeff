@@ -941,7 +941,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
             ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
             ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
-            ProjectRule::WorldHandlerWithoutContractTest => "縁の検の無い許可名簿の handler",
+            ProjectRule::WorldHandlerWithoutContractTest => "縁の検の無い許可名簿の handler・相手役",
             ProjectRule::TestFormNotDeftest => "deftest 以外のテストの形",
             ProjectRule::VocabularyOutsideSinglePoint => "判定の1点の外で同じ語彙を読んでいる",
             ProjectRule::SpellingOutsideItsFiles => "書いてよい file の外の綴り",
@@ -1218,7 +1218,7 @@ impl ProjectRule {
             [removed]
             ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作([issue]・#1155)",
             [removed]
-            ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler には縁の検が 1 本以上在る — 空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。理由つきの :contract-test (none …) の handler は判じない・理由の無い :contract-test none は鳴る",
+            ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler と :stand-ins の組(相手役・本物)には縁の検が 1 本以上在る — 組は相手役と本物の両方に届く検だけを数える・空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。理由つきの :contract-test (none …) の handler は判じない・理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
@@ -1304,7 +1304,7 @@ impl ProjectRule {
             ProjectRule::TestSleepsOnWallClock => "実時間が対象でない待ちは外す — program の待ちは `(<- (Delay 秒))` にして検を sim-time-handler の仮想の時計で走らせる・相手の状態を待つなら出来事(threading.Event の set・queue の get・process の wait)を名指して待つ。実時間そのものが対象(本物の thread の重なり・本物の asyncio の loop・本物の外の process や socket の締め切りつきの待ち)なら名乗る: その検だけなら `(deftest 名 {:marks [\"realtime\"]} …)`(素の関数の検は `(defn [pytest.mark.realtime] 名 [] …)`)、helper や file の全体なら最上位に `(val pytestmark pytest.mark.realtime)`。名乗った検は repo の realtime の名簿(doeff は tests/realtime_tests.toml)に「実時間の何が対象か」の理由と一緒に載せる",
             ProjectRule::ProgramSleepsOnWallClock => "待ちを doeff-time の効果に替える — `(import doeff_time [Delay])` と `(<- (Delay 秒))`(期限まで待つなら WaitUntil・上限つきで待つなら WaitWithin)。program を走らせる所に時間の handler を置く(本番は sync-time-handler か async-time-handler・検は sim-time-handler)。handler からだけ呼ばれ、本物の相手(子 process・端末)の実時間を待つ helper なら、その定義の契約の辞書に `:tags {:context \"<文脈>\" :role \"foundation\"}` を書いて名乗り、訳を docstring に書く",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
-            ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
+            ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器(:stand-ins の組なら本物と相手役)を :interpreters に並べた deftest を書き、同じ検を両方に通す — 名簿の :stand-ins の組も同じ書き方で none を書ける・縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
