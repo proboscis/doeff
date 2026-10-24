@@ -81,7 +81,7 @@
 "packages/doeff-core-effects/tests/test_http_server.hy" = "本物の aiohttp の server と socket: 起動・相手の切り・拍の古さ・波の並び・遅い handshake を実時間で待つ(本物の asyncio の loop と thread が対象)"
 "packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy" = "取り消した本物の子 process が居なくなるのと、止めた thread が計器に数を書くのを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-core-effects/tests/test_process_exit_wait.hy" = "本物の子 process の終わりの待ち: 子が終わるまでの実時間・本物の asyncio の loop の上の 0.2 秒との競り・取り消しの後片づけの実時間が対象"
-"packages/doeff-core-effects/tests/test_sql_effects.hy" = "本物の PostgreSQL: 別の thread の問い合わせが pg_stat_activity に現れるのを締め切りつきで待って、その backend を切る(外の process の実時間が対象)"
+"packages/doeff-core-effects/tests/test_sql_effects.hy" = "本物の PostgreSQL: 別の thread の問い合わせが pg_stat_activity に現れるのを締め切りつきで待って、その backend を切る・本物の子 process が SIGTERM の後に偽の ClickHouse の答えを読み終えるまでの実時間(外の process の実時間が対象)"
 "packages/doeff-core-effects/tests/test_ws_client.hy" = "本物の aiohttp の client の session が、共有の asyncio の loop の上で閉じ終わるのを締め切りつきで待つ(本物の loop の実時間が対象)"
 "packages/doeff-core-effects/tests/ws_client_contract_handlers.hy" = "契約の検の相手役: 本物の aiohttp の server が ws の handshake の答えを実時間で遅らせる(同時に繋ぐ 2 本の重なりを作る — 本物の loop の実時間が対象)"
 "packages/doeff-records/tests/test_memory_watch_wakes.hy::test_a_write_from_another_thread_wakes_a_waiter_on_the_wall_clock" = "別の本物の thread の待ち手が呼び鈴を掛けるのを締め切りつきで待ち、壁の時計の上で書きが待ち手を起こす事を見る(本物の thread が対象)"
