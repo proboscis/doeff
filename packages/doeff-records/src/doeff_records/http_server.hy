@@ -15,7 +15,7 @@
 ;;;
 ;;; 入口の形(他の記録の service の入口と同じ形):
 ;;;   - 受けの loop(receive-requests)は HttpNextRequest で受け、要求ごとに Spawn した task(answer-arrival)が答える。loop は走り中の要求の
-;;;     Task を持ち(request-ledger)、HttpServerClosed の後に Gather で待ってから返る(答え途中の要求を捨てない)
+;;;     Task を自分の台帳(RequestLedger)に持ち、HttpServerClosed の後に Gather で待ってから返る(答え途中の要求を捨てない)
 ;;;   - 要求の task は例外でも必ず HttpRespond で終わる(try / finally — 答えていなければ 500 internal)。台本の検
 ;;;     (tests/test_http_entry_program.hy)が「答えの無い札が残らない」を固定する
 ;;;   - 表の用意は task(prepare-store — serving.prepare の Program が 書き手の名 → handler の関数を返す)。本体が Race(用意 / 受けの loop の
@@ -50,7 +50,7 @@
 ;;;     割合が計時だった)。要求の task は要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)の外で走るので、読むのは土台の
 ;;;     時計。記録の操作の handler は包み(stamped-handling)で被せ、handler の入りと出と、handler の中の待ち(doeff-time の WaitWithin —
 ;;;     変化の待ちの long-poll)の入りと起きの刻を、同じ帳面に打たせる(StampRequest)。包みは serving.request-handlers の内側で走るので、
-;;;     刻は受けの loop に request-ledger と並べて被せた刻の答え手(request-stamps)が、自分の外側の時計(土台の GetMonotonic)で読んで帳面に
+;;;     刻は受けの loop に被せた刻の答え手(request-stamps)が、自分の外側の時計(土台の GetMonotonic)で読んで帳面に
 ;;;     打ち、受けた刻(received-at)と同じ物差しにそろう。待ちの刻の答え手と止めの切り手(wait-stamps・closing-cuts-waits)は、待つ操作
 ;;;     (WatchChanges・WatchEvents — 記録の handler が待ちを撃つのはこの 2 つだけ)にだけ被せる。答えが決まったら、記録の操作の要求だけ、
 ;;;     帳面の刻を 1 度割って答えの見出しに載せ、送り終わりの刻で決まる区間(sent-stages)を足した区間ごとの秒
@@ -274,18 +274,6 @@
    seconds = 用意の所要の秒。本番の土台は 1 行を印字し、使い手の土台は準備の報告を立て、検の殻は開いた口を返す。答えは None。"
   {:fields [(: address HttpAddress) (: seconds float)] :answer None :tags {:context "records" :role "entry"}})
 
-(defeffect TrackRequest
-  "受けの loop が Spawn した要求の task を台帳に載せる。答えは None。"
-  {:fields [(: ticket str) (: task Task)] :answer None :tags {:context "records" :role "entry"}})
-
-(defeffect SettleRequest
-  "要求の task が答え終えた(台帳から外す)。答えは None。"
-  {:fields [(: ticket str)] :answer None :tags {:context "records" :role "entry"}})
-
-(defeffect PendingRequests
-  "台帳に残る走り中の要求の Task の列を読む。"
-  {:fields [] :answer tuple :tags {:context "records" :role "entry"}})
-
 (defeffect KeepPreparedHandlers
   "表の用意が済んだ — 書き手の名 → 記録の handler の関数を置く。答えは None。"
   {:fields [(: handler-for Callable)] :answer None :tags {:context "records" :role "entry"}})
@@ -324,24 +312,36 @@
   {:fields [] :answer (| WaitsClosed Promise) :tags {:context "records" :role "entry"}})
 
 
-(defhandler request-ledger
-  "走り中の要求の Task を台帳に持ち、受けの loop が待ち受けの閉じの後に待てるようにするため。"
-  {:tags {:context "records" :role "entry"}}
-  ;; tickets = 札 → 走り中の要求の Task か、Track より先に答え終えた札の None(Spawn の直後に子が先に走っても台帳に終わった task を残さない)
-  ;; (session の値 1 つ — 節ごとに読む値を 1 つにする・card ki-1841b724d061)。受けの loop は閉じた後に残りの Task を Gather で待つ。
-  (session var tickets {})
-  (TrackRequest [ticket task]
-    (if (and (in ticket tickets) (is (get tickets ticket) None))
-        (:= tickets (dfor [k t] (.items tickets) :if (!= k ticket) k t))
-        (:= tickets (| tickets {ticket task})))
-    (resume None))
-  (SettleRequest [ticket]
-    (if (in ticket tickets)
-        (:= tickets (dfor [k t] (.items tickets) :if (!= k ticket) k t))
-        (:= tickets (| tickets {ticket None})))
-    (resume None))
-  (PendingRequests []
-    (resume (tuple (gfor task (.values tickets) :if (is-not task None) task)))))
+(defclass RequestLedger []
+  "走り中の要求の Task の台帳(受けの loop が待ち受けの閉じの後に残りを待てるようにするため)。作るのは受けの loop(receive-requests)で、
+   受けの loop が Spawn した task を載せ(track)、要求の task が答え終えたら外す(settle)— どちらも同じ scheduler の thread の上の
+   task なので値の型ではなく帳面。session の値に控えて読み書きしない(要求ごとに Track と Settle の effect と控えの Get と Put が土台まで
+   往復していた — card ki-5c3e73834e73)。"
+
+  (deff __init__ [self]  ; defk にできない: 帳面の class の初期化
+    {:pre [(: self RequestLedger)] :post [(: % None)]}
+    "空の台帳にするため。tickets = 札 → 走り中の要求の Task か、track より先に答え終えた札の None(Spawn の直後に子が先に走っても台帳に
+     終わった task を残さない)。"
+    (setv self.tickets {}))
+
+  (deff track [self ticket task]  ; defk にできない: 受けの loop が要求の task を載せる帳面の口
+    {:pre [(: self RequestLedger) (: ticket str) (: task Task)] :post [(: % None)]}
+    "受けの loop が Spawn した要求の task を台帳に載せるため(先に答え終えた札なら外すだけ)。"
+    (setv self.tickets (if (and (in ticket self.tickets) (is (get self.tickets ticket) None))
+                           (dfor [k t] (.items self.tickets) :if (!= k ticket) k t)
+                           (| self.tickets {ticket task}))))
+
+  (deff settle [self ticket]  ; defk にできない: 要求の task が答え終えた事を書く帳面の口
+    {:pre [(: self RequestLedger) (: ticket str)] :post [(: % None)]}
+    "要求の task が答え終えた札を台帳から外すため(まだ載っていなければ、答え終えた印を置く)。"
+    (setv self.tickets (if (in ticket self.tickets)
+                           (dfor [k t] (.items self.tickets) :if (!= k ticket) k t)
+                           (| self.tickets {ticket None}))))
+
+  (deff pending [self]  ; defk にできない: 受けの loop が閉じの後に残りを読む帳面の口
+    {:pre [(: self RequestLedger)] :post [(: % tuple)]}
+    "台帳に残る走り中の要求の Task の列を読むため。"
+    (tuple (gfor task (.values self.tickets) :if (is-not task None) task))))
 
 
 (defhandler waits-closing
@@ -415,7 +415,7 @@
 (defhandler request-stamps
   "記録の handler の包みが打つ要求の刻(StampRequest — handler の入りと出と待ち)を、要求ごとの外側の handler の時計ではなく土台の時計
    (GetMonotonic — 受けた刻と同じ物差し)の秒と組にして要求の刻の帳面に打ち、答えが決まった後に区間の秒を割れるようにするため(頭の註の
-   要求ごとの計時)。受けの loop に request-ledger と並べて被せる。"
+   要求ごとの計時)。受けの loop に被せる。"
   {:tags {:context "records" :role "entry"}}
   (StampRequest [book mark]
     (<- at float (GetMonotonic))
@@ -653,27 +653,6 @@
   answer)
 
 
-(defk body-answer [serving arrival book path body]
-  {:pre [(: serving RecordsServing) (: arrival HttpRequestArrived) (: book MarkBook) (: path str) (: body (| bytes HttpAnswer))]
-   :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
-  "本文の読みの答えから要求の答えを決めるため: 入口が本文を断った答え(400)はそのまま、本文が読めれば answer-with で答える(刻は要求の
-   刻の帳面 book に打つ)。"
-  (match body
-    (HttpAnswer) body
-    _ (! (answer-with serving book (HttpRequest arrival.method path body
-                                                (! (header-value arrival.headers WRITER-HEADER))
-                                                (! (header-value arrival.headers CALLER-HEADER))
-                                                (! (header-value arrival.headers IDEMPOTENCY-HEADER)))))))
-
-
-(defk final-answer [decided]
-  {:pre [(: decided (| HttpAnswer TextAnswer None))] :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
-  "札に送る答えを決めるため: 決まった答えか、決まる前に落ちた札の 500 internal(答えの無い札を残さない)。"
-  (match decided
-    None (! (refusal-answer ERROR-INTERNAL "要求の task が答える前に落ちた"))
-    answer answer))
-
-
 (defk place-answer-metrics [serving]
   {:pre [(: serving RecordsServing)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "要求の数の系列(wire の ANSWER-METRICS)と表ごとの一覧の読みの系列(宣言の表と呼び手の閉じた組 — 名が重なる宣言は起動を止める)を
@@ -720,15 +699,16 @@
   (tuple (gfor stage stages (SecondsObservation :name (get names stage.stage) :seconds stage.seconds))))
 
 
-(defk deliver [arrival path answer marks]
-  {:pre [(: arrival HttpRequestArrived) (: path str) (: answer (| HttpAnswer TextAnswer)) (: marks (get tuple #(MarkAt ...)))]
+(defk deliver [arrival path answer marks ledger]
+  {:pre [(: arrival HttpRequestArrived) (: path str) (: answer (| HttpAnswer TextAnswer)) (: marks (get tuple #(MarkAt ...)))
+         (: ledger RequestLedger)]
    :post [(: % None)] :tags {:context "records" :role "entry"}}
   "答え 1 つを札へ送り(sent-answer)、待ち受けへ渡した答えの status を計器に 1 つ数え、台帳から外すため。数えるのはこの 1 か所で、
    送り直した 500 も、ここで 500 として数える(渡せなかった答えの status は数えない)。待ち受けの側で後から落ちた送り(相手が先に切った・
    札が待ち受けに無い — 本物の待ち受けは答えを loop へ積むだけで戻る・#3688 の子 (3) の 3b)は、待ち受けが標準の誤りへ 1 行名乗るだけで、
    ここの数えは直さない(渡した答えの status のまま)。送りの effect は答えを待ち受けへ渡すだけで、
    この task は同じ scheduler の上で続けて数えるので、答えを受け取った呼び手が次に送る要求より先に数えが済む。計器が落ちても
-   答えは送ってあり、台帳からは外す(誤りはそのまま上げる)。marks = 要求の刻の帳面の答えが決まるまでの刻(始まり・本文の読み終わり・
+   答えは送ってあり、台帳 ledger からは外す(誤りはそのまま上げる)。marks = 要求の刻の帳面の答えが決まるまでの刻(始まり・本文の読み終わり・
    handler の入りと出と待ち・答えの決まり — 打った順)。送る前に区間の秒を 1 度割って答えの見出しに載せ、送り終えた刻を読んで、記録の
    操作の要求なら、送り終えた刻で決まる区間(sent-stages)を足して計器に積む(stage-observations — 頭の註の要求ごとの計時・刻の列を送った
    後に割り直さない)。区間と見出しと数えの名の計算は、どれも他の defk を呼ばない関数をここから 1 段ずつ呼ぶ(要求ごとに Program を回さない
@@ -746,17 +726,19 @@
     (val metric (! (answer-metric (! (operation-kind operation)) sent.status)))
     (<- (CountMetric :name metric :amount 1.0))
     (finally
-      (<- (SettleRequest arrival.ticket))))
+      (.settle ledger arrival.ticket)))
   (when (is-not operation None)
     (<- (ObserveSecondsBatch :observations (! (stage-observations operation (+ stages (! (sent-stages arrival.received-at marks wait sent-at))))))))
   None)
 
 
-(defk answer-arrival [arrival serving]
-  {:pre [(: arrival HttpRequestArrived) (: serving RecordsServing)] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "要求 1 つに答える task の本体: 本文を読み → answer-with で答えを決め → 送って計器に数える(deliver)。例外でも必ず答える(決まる前に
-   落ちれば 500 internal・送りが落ちれば 500 internal で送り直す — 答えの無い札を残さない)。数えるのは実際に送った答えの 1 か所だけ
-   (本文の断りの 400 も、落ちた時の 500 も同じ所)。実装の誤りの追跡は標準の誤りへ残す(黙って捨てない)。終われば台帳から外す。
+(defk answer-arrival [arrival serving ledger]
+  {:pre [(: arrival HttpRequestArrived) (: serving RecordsServing) (: ledger RequestLedger)] :post [(: % None)]
+   :tags {:context "records" :role "entry"}}
+  "要求 1 つに答える task の本体: 本文を読み → 入口が本文を断った答え(400)はそのまま、読めれば answer-with で答えを決め → 送って計器に
+   数える(deliver)。例外でも必ず答える(決まる前に落ちれば 500 internal・送りが落ちれば 500 internal で送り直す — 答えの無い札を残さない)。
+   数えるのは実際に送った答えの 1 か所だけ(本文の断りの 400 も、落ちた時の 500 も同じ所)。実装の誤りの追跡は標準の誤りへ残す(黙って
+   捨てない)。終われば台帳 ledger から外す。
    task の始まり・本文の読み終わり・答えの決まりの刻を土台の時計から読んで、要求の刻の帳面に打つ(handler の入りと出と待ちの刻は
    包みが同じ帳面に打つ — 頭の註の要求ごとの計時)。"
   (<- started float (GetMonotonic))
@@ -768,8 +750,12 @@
     (<- body (| bytes HttpAnswer) (request-body arrival serving.max-bytes))
     (<- read-at float (GetMonotonic))
     (.stamp book RequestMark.READ read-at)
-    (<- answer (| HttpAnswer TextAnswer) (body-answer serving arrival book path body))
-    (:= decided answer)
+    (:= decided (if (isinstance body HttpAnswer)
+                    body
+                    (! (answer-with serving book (HttpRequest arrival.method path body
+                                                              (! (header-value arrival.headers WRITER-HEADER))
+                                                              (! (header-value arrival.headers CALLER-HEADER))
+                                                              (! (header-value arrival.headers IDEMPOTENCY-HEADER)))))))
     (except [e Exception]
       (print (.format "記録の service: {} {} の答えの途中で落ちた: {}: {}" arrival.method arrival.target (. (type e) __name__) e)
              :file sys.stderr :flush True)
@@ -777,8 +763,8 @@
     (finally
       (<- decided-at float (GetMonotonic))
       (.stamp book RequestMark.DECIDED decided-at)
-      (<- final (| HttpAnswer TextAnswer) (final-answer decided))
-      (<- (deliver arrival path final book.marks))))
+      (val final (if (is decided None) (! (refusal-answer ERROR-INTERNAL "要求の task が答える前に落ちた")) decided))
+      (<- (deliver arrival path final book.marks ledger))))
   None)
 
 
@@ -786,18 +772,20 @@
 
 (defk receive-requests [serving]
   {:pre [(: serving RecordsServing)] :post [(: % ServingEnded)] :tags {:context "records" :role "entry"}}
-  "待ち受けの出来事を受け、要求ごとに task を立てて台帳に載せる。待ち受けが閉じたら、走り中の要求を Gather で待ってから返るため。"
+  "待ち受けの出来事を受け、要求ごとに task を立てて台帳(RequestLedger — 受けの loop が持つ)に載せる。待ち受けが閉じたら、走り中の
+   要求を Gather で待ってから返るため。"
+  (val ledger (RequestLedger))
   (while True
     (<- event HttpEvent (HttpNextRequest))
     (match event
       (HttpServerClosed :reason reason)
-        (do (<- pending tuple (PendingRequests))
+        (do (val pending (.pending ledger))
             (when pending
               (<- (Gather #* pending)))
             (return (ServingEnded :reason reason)))
       (HttpRequestArrived :ticket ticket)
-        (do (<- task Task (Spawn (answer-arrival event serving)))
-            (<- (TrackRequest :ticket ticket :task task)))
+        (do (<- task Task (Spawn (answer-arrival event serving ledger)))
+            (.track ledger ticket task))
       _ (raise (TypeError (+ "記録の service の待ち受けに ws の出来事が来た: " (repr event)))))))
 
 
@@ -888,7 +876,7 @@
   (<- (RecordsListening :address bound))
   ;; 用意を受けの loop より先に立てる(同じ拍に並んだ時に用意が先に走る)。用意の告知は用意の task の終わりが出す(prepare-store)。
   (<- preparing Task (Spawn (prepare-store serving.prepare bound)))
-  (<- serving-task Task (Spawn (with-handlers [request-ledger request-stamps] (receive-requests serving))))
+  (<- serving-task Task (Spawn (with-handlers [request-stamps] (receive-requests serving))))
   (<- watcher Task (Spawn (watch-stop serving.stop-poll-seconds serving.drain-seconds) :daemon True))
   (<- first (| StorePrepared ServingEnded) (Race preparing serving-task))
   (match first
