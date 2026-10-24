@@ -63,8 +63,15 @@ impl VM {
         // Walk up parent chain to find a handler boundary.
         // No skip-self needed — handler code runs on the parent fiber (above
         // the boundary), so performs from handler code naturally find outer handlers.
-        let (handler_fiber_id, _handler_parent) = self
-            .find_handler_for_effect(current, effect)
+        // A typed handler that does not take the effect is passed over in the
+        // walk itself, so the chain is detached once up to the handler that
+        // takes it (`accepted`). When none takes it, the walk stops at the
+        // first handler, which the step machine passes over one at a time
+        // until the effect is reported unhandled.
+        let accepting = self.find_accepting_handler(current, effect);
+        let accepted = accepting.is_some();
+        let (handler_fiber_id, _handler_parent) = accepting
+            .or_else(|| self.find_handler_for_effect(current, effect))
             .ok_or_else(|| {
                 // Capture execution context before erroring so traceback is available.
                 StepResult::Error {
@@ -105,6 +112,7 @@ impl VM {
             continuation,
             handler_fiber_id,
             handler_callable,
+            accepted,
         })
     }
 
@@ -262,6 +270,29 @@ impl VM {
         None
     }
 
+    /// Find the first prompt (handler) boundary whose handler takes the effect
+    /// (`CallableRef::accepts`), skipping interceptors and the typed handlers
+    /// that would pass it on untouched. Passing over such a handler here is the
+    /// same as detaching the chain up to it and reperforming from its parent:
+    /// the chains detached one after another join into the one detached here.
+    pub(crate) fn find_accepting_handler(
+        &self,
+        start: FiberId,
+        effect: &DispatchEffect,
+    ) -> Option<(FiberId, Option<FiberId>)> {
+        let mut cursor = Some(start);
+        while let Some(fid) = cursor {
+            let seg = self.segments.get(fid)?;
+            if let Some(handler) = seg.prompt_handler() {
+                if handler.accepts(effect) {
+                    return Some((fid, seg.parent));
+                }
+            }
+            cursor = seg.parent;
+        }
+        None
+    }
+
     /// Find the fiber just before `target` in the chain starting from `start`.
     /// Returns None if start == target (single fiber).
     pub(crate) fn find_fiber_before(&self, start: FiberId, target: FiberId) -> Option<FiberId> {
@@ -288,4 +319,6 @@ pub struct PerformResult {
     pub continuation: Continuation,
     pub handler_fiber_id: FiberId,
     pub handler_callable: CallableRef,
+    /// The handler is known to take the effect (found by `find_accepting_handler`).
+    pub accepted: bool,
 }
