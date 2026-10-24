@@ -145,3 +145,48 @@ def test_a_closure_that_reads_annotations_digests_them() -> None:
     assert _digest(MACRO.format(annotation="", read=read)) != _digest(
         MACRO.format(annotation=": int", read=read)
     )
+
+
+def test_a_changed_docstring_changes_the_shape() -> None:
+    """説明の文は命令に指されず定数の表の先頭にだけ在る — 定数の並びを捨てると入れ替えが見えなくなる(盲検)。"""
+    source = 'def helper():\n    "{doc}"\n    return ["A", "B"]\n'
+    assert _shape(source.format(doc="A")) != _shape(source.format(doc="B"))
+
+
+def test_a_string_constant_that_looks_like_a_temporary_name_is_a_value() -> None:
+    """文字列の定数は名でない — 番号を振り直さない(盲検)。"""
+    source = 'def f():\n    return ("{a}", "{b}")\n'
+    assert _shape(source.format(a="_hy_anon_1", b="_hy_anon_2")) != _shape(
+        source.format(a="_hy_anon_2", b="_hy_anon_1")
+    )
+
+
+DISPATCH = """
+from functools import singledispatch
+def macro(form):
+    @singledispatch
+    def emit(x):
+        return "generic"
+    @emit.register
+    def _(x{annotation}):
+        return "typed"
+    return emit(1)
+"""
+
+
+def test_a_closure_that_registers_by_annotation_digests_it() -> None:
+    """標準 library の ``register`` は注釈から型を読む — 中を歩かないので名で出会った時に注釈ごとの digest にする(盲検)。"""
+    assert _digest(DISPATCH.format(annotation=": int")) != _digest(DISPATCH.format(annotation=": str"))
+
+
+ALIASED = """
+from inspect import signature as sig
+def macro(form):
+    def helper(x{annotation}):
+        return x
+    return str(sig(helper))
+"""
+
+
+def test_a_closure_that_reads_annotations_through_an_alias_digests_them() -> None:
+    assert _digest(ALIASED.format(annotation=": int")) != _digest(ALIASED.format(annotation=": str"))
