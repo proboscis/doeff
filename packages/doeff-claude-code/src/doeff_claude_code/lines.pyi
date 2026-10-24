@@ -80,10 +80,17 @@ class ToolAnswer:
     def __post_init__(self) -> None:
         ...
 
+@dataclass(frozen=True, kw_only=True)
+class AgentToolResult:
+    agent_id: str
+    status: str
+    usage: Usage | None = None
+
 @dataclass(frozen=True)
 class ToolResult:
     answers: tuple[ToolAnswer, ...]
     parent_tool_use_id: str | None = None
+    agent_result: AgentToolResult | None = None
 
 class DeltaKind(StrEnum):
     TEXT = 'text'
@@ -467,6 +474,9 @@ def tool_answer_of(block: dict) -> _Program[ToolAnswer, object]:
 def classify_user(record: dict) -> Incomplete:
     ...
 
+def agent_tool_result_of(record: dict) -> _Program[AgentToolResult | None, object]:
+    ...
+
 def hook_notice_of(record: dict, phase: HookPhase) -> _Program[HookNotice, object]:
     ...
 
@@ -556,7 +566,10 @@ def subagent_calls_of(records: tuple) -> _Program[SubagentCalls, object]:
 def last_call_closed(records: tuple) -> _Program[bool, object]:
     ...
 
-def subagent_transcript_of(agent_id: str, parent_tool_use_id: str, data: bytes, answered: bool) -> _Program[SubagentTranscript, object]:
+def reported_final_call(calls: tuple, reported: AgentToolResult | None) -> _Program[SubagentCall | None, object]:
+    ...
+
+def subagent_transcript_of(agent_id: str, parent_tool_use_id: str, data: bytes, answered: bool, result: AgentToolResult | None) -> _Program[SubagentTranscript, object]:
     ...
 
 def classify_record(record: dict) -> Incomplete:
