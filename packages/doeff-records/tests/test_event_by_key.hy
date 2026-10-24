@@ -5,16 +5,20 @@
 ;;     列の長さに応じて要求が増えた)。PostgreSQL の文が読む行の数が置き場の大きさに依らない事は test_pg_index_reads.hy。
 ;;   - 置き場に届かない時は Unreachable(memory の置き場の不達・一部の断り、HTTP の口の 503)。
 (require doeff-hy.macros [deftest defhandler defk <- val])
+(import pytest)
 (import doeff [run with_handlers])
+(import doeff.result [Nothing Some])
+(import doeff_vm [Err Ok])
+(import doeff_core_effects.outcomes [maybe result])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
-(import doeff_time [SimClock sim-time-handler])
-(import doeff_records.values [Event EventAbsent Unreachable Appended])
+(import doeff_time [Delay SimClock sim-time-handler])
+(import doeff_records.values [Event EventAbsent EventRetired Unreachable Appended])
 (import doeff_records.effects [AppendEvent ReadEventByKey])
 (import doeff_records.faults [SetStoreOutage StoreFault StoreOperation AddStoreFault])
-(import doeff_records.laws [LAW-SCHEMA MAKER law-event-by-key-reads-the-same-event])
+(import doeff_records.laws [LAW-SCHEMA MAKER PULSE-KEEP-SECONDS law-event-by-key-reads-the-same-event])
 (import doeff_records.http_client [records-unwaited])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [records-server-config start-records-server])
@@ -112,3 +116,45 @@
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (SetStoreOutage DETAIL))
   (assert (= (read-over-http store [] (ReadEventByKey "journal" "k1")) (Unreachable DETAIL))))
+
+
+(defk opened-read [stream key]
+  {:pre [(: stream str) (: key str)] :post [(: % (| Ok Err))]
+   :tags {:context "records" :role "foundation"}}
+  "鍵の読みを宣言どおりに開き、不在は Nothing・失敗は Err に畳んで返すため(maybe を内側・result を外側 — R2 の入れ子の順)。"
+  (<- opened (result (maybe (ReadEventByKey stream key))))
+  opened)
+
+
+(defk read-opened-in-all-shapes []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "pulses(出来事ごとに PULSE-KEEP-SECONDS 秒で消える列)に積んだ鍵を、在る時・保持の期限を過ぎた後・積んでいない鍵で、開いて読むため。"
+  (<- appended (AppendEvent "pulses" "p1" {"n" 1}))
+  (<- found (ReadEventByKey "pulses" "p1"))
+  (<- present (opened-read "pulses" "p1"))
+  (<- absent (opened-read "pulses" "p-never"))
+  (<- (Delay (+ PULSE-KEEP-SECONDS 1)))
+  (<- retired (opened-read "pulses" "p1"))
+  #(appended found present absent retired))
+
+
+(deftest test-read-event-by-key-is-opened-by-its-declaration
+  ;; 宣言(:absent [EventAbsent]・:failure [Unreachable]・:value [EventRetired])どおり、本文の中の <- は不在を Absent に・失敗を Raise に変える
+  ;; (maybe が Absent を Nothing に、result が Raise を Err に畳む)。成功の Event と値の EventRetired は束ねた答えのまま。
+  ;; 答える handler は今までどおり値で答える(R4)— 上の test-read-event-by-key-is-unreachable-when-the-store-is-down は effect を直に撃つので、
+  ;; 開かれない値(Unreachable・EventAbsent)をそのまま受ける。
+  (val store (MemoryStore LAW-SCHEMA))
+  (setv #(appended found present absent retired) (in-store store (read-opened-in-all-shapes)))
+  (assert (isinstance appended Appended) (repr appended))
+  (assert (and (isinstance found Event) (= found.sequence appended.sequence)) (repr found))
+  (assert (= (repr retired) (repr (Ok (Some (EventRetired appended.sequence))))) (repr retired))
+  (assert (= (repr absent) (repr (Ok Nothing))) (repr absent))
+  (assert (= (repr present) (repr (Ok (Some found)))) (repr present))
+  ;; 失敗: 置き場に届かない間は Err(Unreachable)。
+  (in-store store (SetStoreOutage DETAIL))
+  (assert (= (repr (in-store store (opened-read "pulses" "p1"))) (repr (Err (Unreachable DETAIL)))))
+  ;; 作る時の検め: 列の名と冪等キーは空にできない(defeffect の :pre に移しても ValueError のまま)。
+  (for [#(stream key) #(#("" "k1") #("journal" "") #("journal" None))]
+    (with [(pytest.raises ValueError)]
+      (ReadEventByKey stream key))))

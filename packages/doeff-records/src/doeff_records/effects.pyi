@@ -15,6 +15,8 @@ from doeff_hy.frozen import FrozenMap
 from doeff_records.values import (
     AppendEventAnswer,
     AppendEventsAnswer,
+    Event,
+    EventRetired,
     EventsMoved,
     EventsQuiet,
     Expectation,
@@ -44,6 +46,7 @@ def checked_limit(limit: object, what: str) -> int: ...
 def checked_watch_window(after: object, timeout: object) -> bool: ...
 def check_row_write(write: PutRow | RowWrite, what: str) -> None: ...
 def check_event_append(append: AppendEvent | EventAppend, what: str) -> None: ...
+def checked_event_key(idempotency_key: object, what: str) -> str: ...
 @dataclass(frozen=True)
 class ReadRow(EffectBase[ReadRowAnswer]):
     table: str
@@ -130,6 +133,8 @@ class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
 class ReadEventByKey(EffectBase[ReadEventByKeyAnswer]):
     stream: str
     idempotency_key: str
+    # `<-` が束ねる名の型 = 答えから :absent(EventAbsent)と :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ)。
+    def __iter__(self) -> Generator[Any, Any, Event | EventRetired]: ...
 
 # 源の工場の問い(#3127)— 答えは doeff_records.event_source の SignalSourceFactory。event_source は effects を読むので、ここでは型を文字列で名指す。
 @dataclass(frozen=True)

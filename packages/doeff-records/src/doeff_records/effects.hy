@@ -19,7 +19,8 @@
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
-                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet])
+                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
+                              Event EventAbsent EventRetired])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -196,6 +197,13 @@
       (raise (ValueError (.format "WatchChanges.streams に同じ列が 2 度出る: {!r}" self.streams))))))
 
 
+(defn #^ str checked-event-key [#^ object idempotency-key #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは ValueError で上げ、通れば鍵(空でない文字列 = 真)を返す)
+  "冪等キーの欄を作る時に検める(空でない文字列)— ReadEventByKey の検め。AppendEvent と EventAppend は check-event-append が同じ検めを持つ。"
+  (when (not (and (isinstance idempotency-key str) idempotency-key))
+    (raise (ValueError (+ what ".idempotency_key は空でない文字列"))))
+  idempotency-key)
+
+
 (defn #^ None check-event-append [#^ object append #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
   "追記 1 つの欄(stream・idempotency-key・body)を作る時に検め、body を深く凍らせる — AppendEvent と EventAppend の検めを 1 つにするため。"
   (object.__setattr__ append "body" (freeze-json append.body))
@@ -298,16 +306,21 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defclass [(dataclass :frozen True)] ReadEventByKey [EffectBase]
+(defeffect ReadEventByKey
   "追記の列 stream の、冪等キー idempotency-key で積んだ出来事を 1 つ引く — 使い手が鍵 1 つの問いのために列を頭から読み切らないため
    (置き場は追記の重複を断るための (列, 冪等キー) の一意の索引を持つ)。答え = Event(在る)| EventAbsent(その鍵では積まれていない)|
-   EventRetired(積まれたが保持の期限で消えた — 消えた出来事の番号)| Unreachable。"
-  (#^ str stream)
-  (#^ str idempotency-key)
-  (defn #^ None __post_init__ [self]
-    (checked-table-name self.stream "ReadEventByKey.stream")
-    (when (not (and (isinstance self.idempotency-key str) self.idempotency-key))
-      (raise (ValueError "ReadEventByKey.idempotency_key は空でない文字列")))))
+   EventRetired(積まれたが保持の期限で消えた — 消えた出来事の番号)| Unreachable。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): Event = 成功 / EventAbsent = 不在(その鍵では積まれていない — ReadRow の Missing と
+   同じ意味で、<- は Absent を出す)/ EventRetired = 値(積まれたが保持の期限で消えた出来事の番号を持つ、呼び手が扱う普通の答え)/
+   Unreachable = 失敗(<- は Raise(Unreachable) を出す)。答える handler は今までどおり 4 つとも値で答える(R4)。"
+  {:fields [(: stream str) (: idempotency-key str)]
+   :pre [(checked-table-name stream "ReadEventByKey.stream")
+         (checked-event-key idempotency-key "ReadEventByKey")]
+   :answer (| Event EventAbsent EventRetired Unreachable)
+   :absent [EventAbsent]
+   :failure [Unreachable]
+   :value [EventRetired]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defclass [(dataclass :frozen True)] ReadSignalSource [EffectBase]
