@@ -5,7 +5,7 @@
 ;;   lands = False: 置き場を変えずに故障の答え / lands = True: 書きを置き場に着けてから故障の答え
 ;;   PutRows: 束の中に当たる表が 1 つでもあれば束ごと(lands なら束ごと着く)
 ;;   外す: 名が重なる故障だけ / None で全部。置き場全体の不達(SetStoreOutage)が故障より先に答える
-(require doeff-hy.macros [deftest defk <- val])
+(require doeff-hy.macros [deftest defk <- val on-raise])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
@@ -31,11 +31,12 @@
 
 (defk reads []
   {:pre [] :post [(: % tuple)]}
-  "読みの 4 つ(parts の ReadRow・ListRows・WatchChanges と journal の ReadEvents)の答え。"
+  "読みの 4 つ(parts の ReadRow・ListRows・WatchChanges と journal の ReadEvents)の答え(ReadEvents は失敗と宣言した Unreachable が <- で
+   Raise になるので、on-raise で Unreachable の値へ戻して他の 3 つと並べる)。"
   (<- read (ReadRow "parts" #("p1")))
   (<- listed (ListRows "parts"))
   (<- watched (WatchChanges #("parts") (WatchCursor 1 0) :timeout 0.0))
-  (<- events (ReadEvents "journal" 0))
+  (<- events (on-raise (ReadEvents "journal" 0) (Unreachable detail) (Unreachable detail)))
   #(read listed watched events))
 
 

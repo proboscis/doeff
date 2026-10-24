@@ -19,7 +19,7 @@
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
-                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet])
+                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet Events NotIndexed])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -266,22 +266,31 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defclass [(dataclass :frozen True)] ReadEvents [EffectBase]
+(defn #^ bool checked-read-window [#^ object after #^ object limit #^ object key-head]
+  "ReadEvents の after(0 以上の整数)・limit(1 以上の整数)・key-head(空でない文字列か None)を作る時に検める。defeffect の :pre は
+   真偽の条件を assert するので、検めを通れば True を返す(after = 0 の値を返すと偽になる)。"
+  (when (or (isinstance after bool) (not (isinstance after int)) (< after 0))
+    (raise (ValueError (.format "ReadEvents.after は 0 以上の整数: {!r}" after))))
+  (checked-limit limit "ReadEvents.limit")
+  (when (not (or (is key-head None) (and (isinstance key-head str) key-head)))
+    (raise (ValueError (.format "ReadEvents.key_head は空でない文字列か None: {!r}" key-head))))
+  True)
+
+
+(defeffect ReadEvents
   "追記の列の after より後の出来事を limit まで読む。答え = Events | Unreachable | NotIndexed。
    key-head = 冪等キーの頭(None = 列の全部の出来事): 列の宣言の key-lookup(ByKeyHead)の区切りより前が key-head と等しい出来事だけを、
    after より後から番号の順に limit まで読む(列の他の出来事は数えない — 上限より短い頁は、その頭の出来事の終わり)。key-lookup を
-   宣言していない列への頭の読みは NotIndexed(欄の名 idempotencyKey)。"
-  (#^ str stream)
-  (setv #^ int after 0)
-  (setv #^ int limit DEFAULT-READ-EVENTS-LIMIT)
-  (setv #^ (| str None) key-head None)
-  (defn #^ None __post_init__ [self]
-    (checked-table-name self.stream "ReadEvents.stream")
-    (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
-      (raise (ValueError (.format "ReadEvents.after は 0 以上の整数: {!r}" self.after))))
-    (checked-limit self.limit "ReadEvents.limit")
-    (when (not (or (is self.key-head None) (and (isinstance self.key-head str) self.key-head)))
-      (raise (ValueError (.format "ReadEvents.key_head は空でない文字列か None: {!r}" self.key-head))))))
+   宣言していない列への頭の読みは NotIndexed(欄の名 idempotencyKey)。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): Events = 成功 / Unreachable = 失敗(<- は Raise(Unreachable) を出す)/
+   NotIndexed = 失敗(<- は Raise(NotIndexed) を出す — key-lookup を宣言していない列に頭の読みを求めた誤りで、続きが無い。ListRows の
+   NotIndexed と同じ割り当て)。不在と値は無い。答える handler は今までどおり 3 つとも値で答える(R4)。"
+  {:fields [(: stream str) (: after int 0) (: limit int DEFAULT-READ-EVENTS-LIMIT) (: key-head (| str None) None)]
+   :pre [(checked-table-name stream "ReadEvents.stream")
+         (checked-read-window after limit key-head)]
+   :answer (| Events Unreachable NotIndexed)
+   :failure [Unreachable NotIndexed]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defeffect ReadStreamEnd
