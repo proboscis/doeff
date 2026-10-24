@@ -66,7 +66,7 @@ import warnings
 import weakref
 from typing import Annotated, Any, NamedTuple, Union, get_args, get_origin
 
-from doeff_vm.doeff_vm import EffectBase, HandlerSpec
+from doeff_vm.doeff_vm import EffectBase, HandlerSpec, StateHandler
 
 EffectTypes = tuple[type, ...] | None
 
@@ -168,7 +168,10 @@ def handler_effect_types(handler: object) -> EffectTypes:
     """Types the handler's effect parameter admits, or None for every effect.
 
     Raises ``TypeError`` when the annotation names a class no effect can be an instance of.
+    The state handler runs in Rust and has no annotation: it answers its own types.
     """
+    if isinstance(handler, StateHandler):
+        return handler.effect_types
     function, position = _effect_parameter(handler)
     if function is None:
         return None

@@ -282,7 +282,8 @@ impl PyVM {
                 let types = handler
                     .as_any()
                     .downcast_ref::<PythonCallable>()
-                    .and_then(|python| python.effect_types(py));
+                    .and_then(|python| python.effect_types(py))
+                    .or_else(|| crate::state_handler::PyStateHandler::effect_types_of(py, handler));
                 if let Some(types) = types {
                     let name = handler
                         .name()

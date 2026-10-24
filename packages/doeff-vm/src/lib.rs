@@ -16,6 +16,7 @@ pub mod python_generator_stream;
 pub mod pyvm;
 pub mod result;
 pub mod scheduler;
+pub mod state_handler;
 pub mod typing_support;
 pub mod unhandled_hint;
 
@@ -32,6 +33,7 @@ pub use doeff_vm_core::{
 fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyvm::register_pyvm(m)?;
     scheduler::register(m)?;
+    state_handler::register(m)?;
 
     /// Return (live_segments, live_continuations, live_ir_streams).
     #[pyfn(m)]
