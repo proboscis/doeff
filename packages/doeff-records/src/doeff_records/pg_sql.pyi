@@ -70,6 +70,7 @@ class DeclaredIndex:
     scoped: tuple[IndexedField, ...]
     aliases: tuple[str, ...]
     sampled: bool
+    peers: tuple[str, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class AddedColumn:
@@ -135,6 +136,9 @@ def hyx_table_shaped_indexXquestion_markX(prefix: str, name: str) -> _Program[bo
     ...
 
 def table_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
+    ...
+
+def former_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
 def field_expression(payload: str, field_name: str) -> _Program[str, object]:
