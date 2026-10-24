@@ -93,7 +93,7 @@
 ;;;     欄が全部表の欄の式で照らせる(retirement-ready?)ようになった回に、索引の用意が錠の中で 1 本ずつ DROP INDEX CONCURRENTLY で外す
 ;;;     (pg_sql の頭の註の「旧い形の索引を外す」)。その前は前の文の形の読みが引くので外さず、INDEX-RETRY-SECONDS 秒の後に観測し直す。
 ;;;     宣言の索引が全部在る置き場でも、旧い形の索引が在れば記録の service は索引の用意の task を立てる(IndexBook の retired)。
-;;;   - 宣言から外した表ごとの索引(pg_sql.table-shaped-index? の名の形 — 宣言が作る fx_・ox_・ow_ で今の宣言に無い物)も、旧い形の索引と
+;;;   - 宣言から外した表ごとの索引(pg_sql.table-shaped-index? の名の形 — 宣言が作る ft_・op_・wp_ と前の形の fx_・ox_・ow_ で今の宣言に無い物)も、旧い形の索引と
 ;;;     同じ覚え(retired)に数え、同じ回に同じ道で外す(pg_sql の頭の註の「宣言から外した表ごとの索引を外す」— 2026-10-23 に本番の置き場の
 ;;;     使われない表ごとの索引 11 本・874 MB が書きのたびに更新されていた)。
 ;;;     名の形が旧い形でも宣言の作る形でもない宣言に無い索引(手で足した物)は外さない。
@@ -185,8 +185,9 @@
 (defclass IndexBook []
   "宣言した索引の欄のうち、置き場に使える索引が在ると観測した欄の覚え(頭の註の「索引の用意」— 表の用意と索引の用意の task が書き、
    ListRows と回収が読む)。fields = 使える索引(表の欄の式の索引か、その aliases の旧い形の索引)の在る欄(IndexedField の集合)/
-   scoped = 表の欄の式の索引が使える形で見積もれる (表, 欄)(IndexedField の集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/
-   missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)/ retired = 最後の観測で置き場に在った
+   scoped = 表の欄の式の索引(か、作り終えるまで同じ読みに答える前の形の索引 — peers)が使える形で見積もれる (表, 欄)(IndexedField の
+   集合 — 読みの文がその欄を表の欄の式で照らす・pg_sql の頭の註)/ settled = scoped のうち宣言の名の索引そのものが見積もれる (表, 欄)
+   (前の形の索引を外してよいかの判断 — retirement-ready?)/ missing = 最後の観測で置き場に無かった宣言の索引の名の並び(空 = 宣言と置き場の差が無い)/ retired = 最後の観測で置き場に在った
    宣言に無い索引(旧い形か宣言から外した表ごとの形)の名の並び(名の順 — 索引の用意が外す・頭の註。空 = 無い)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。
    書きも読みも scheduler の thread の上で、driver の thread は触らない。"
 
@@ -194,6 +195,7 @@
     "観測の前の覚え(使える索引の在る欄は無い)を作るため。"
     (setv self.fields (frozenset)
           self.scoped (frozenset)
+          self.settled (frozenset)
           self.missing #()
           self.retired #()))
 
@@ -205,10 +207,11 @@
     "表 table の欄のうち、表の欄の式の索引が在ると観測した欄の名の集合を読むため(読みの文の条件の形を決める — pg_sql.row-filter)。"
     (frozenset (gfor indexed self.scoped :if (= indexed.table table) indexed.field)))
 
-  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ tuple missing #^ tuple retired]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
+  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ frozenset settled #^ tuple missing #^ tuple retired]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
     "置き場の索引を観測した断面で、覚えを書き替えるため(消えた索引の欄は外れる)。"
     (setv self.fields fields
           self.scoped scoped
+          self.settled settled
           self.missing missing
           self.retired retired)
     None)
@@ -684,8 +687,9 @@
    :tags {:context "records" :role "foundation"}}
   "置き場の索引の観測の行 found で覚え book を書き替え、宣言の索引との差を返すため(表の用意の終わりと、索引の用意の回の頭と終わり)。
    表の欄の式で照らす欄(scoped)は、表の欄の式の索引が使える形で、見積もれる(索引の式の統計が在る — 表の標本を取り直す前は前の文の形で
-   照らす・pg_sql.indexes-statement)欄だけ。外す索引(retired)は、名が旧い形か宣言の作る表ごとの形で宣言に無い観測の索引(使えない形を
-   含む — 外しかけ)。"
+   照らす・pg_sql.indexes-statement)欄と、作り終えるまで同じ読みに答える前の形の索引(DeclaredIndex の peers)が見積もれる欄。
+   settled は宣言の名の索引そのものが見積もれる欄だけ(前の形を外してよいかの判断 — retirement-ready?)。外す索引(retired)は、名が
+   旧い形か宣言の作る表ごとの形で宣言に無い観測の索引(使えない形を含む — 外しかけ)。"
   (<- declared (declared-indexes prefix schema))
   (<- observed (observed-indexes found))
   (<- gaps (index-gaps declared observed))
@@ -703,11 +707,17 @@
     (<- answers (usable-index? index usable))
     (when answers
       (:= served (+ served index.serves))))
-  (val scoped (frozenset (gfor index declared
-                               :if (in index.name (if index.sampled estimable usable))
+  ;; 宣言の名の索引そのもので見積もれる欄(settled — 前の形を外してよいかの判断)と、作り終えるまで前の形の索引(peers — 先頭の式が
+  ;; 同じ・前の形も見積もりは索引の式の統計)でも見積もれる欄(scoped — 読みの文の形)。
+  (val settled (frozenset (gfor index declared
+                                :if (in index.name (if index.sampled estimable usable))
+                                indexed index.scoped
+                                indexed)))
+  (val peered (frozenset (gfor index declared
+                               :if (any (gfor peer index.peers (in peer estimable)))
                                indexed index.scoped
                                indexed)))
-  (.observed book (frozenset served) scoped (tuple (gfor gap gaps gap.index.name)) (tuple (sorted retired)))
+  (.observed book (frozenset served) (| settled peered) settled (tuple (gfor gap gaps gap.index.name)) (tuple (sorted retired)))
   gaps)
 
 
@@ -715,10 +725,11 @@
   {:pre [(: book IndexBook) (: prefix str) (: schema RecordsSchema)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
   "旧い形の索引を外してよい断面かを判じるため(頭の註): 最後の観測で宣言の索引が全部使える形で在り(missing が空)、表の欄の式の索引の
-   欄が全部表の欄の式で照らせる(scoped — 見積もれる)。崩れている間は、前の文の形の読み(ledger = :ledger と欄の式)が旧い形の索引を引く。"
+   欄が全部、宣言の名の索引そのもので表の欄の式で照らせる(settled — 見積もれる。前の形の索引〔peers〕で照らせるだけの欄は数えない)。
+   崩れている間は、前の文の形の読み(ledger = :ledger と欄の式)が旧い形の索引を引き、表の欄の式の条件の読みが前の形の索引を引く。"
   (<- declared (declared-indexes prefix schema))
   (and (not book.missing)
-       (all (gfor index declared (<= (frozenset index.scoped) book.scoped)))))
+       (all (gfor index declared (<= (frozenset index.scoped) book.settled)))))
 
 
 ;; --- 索引の用意 --------------------------------------------------------------------------------------------

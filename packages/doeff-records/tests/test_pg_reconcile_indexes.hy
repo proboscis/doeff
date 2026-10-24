@@ -14,7 +14,7 @@
 ;;     DROP INDEX CONCURRENTLY で外す。見積もれない間は外さず、旧い形でない宣言に無い索引は外さない。宣言の索引が全部在る置き場でも、
 ;;     旧い形の索引が在れば記録の service は索引の用意の task を立てて外し、外す間も答える(2026-10-19 — 本番の置き場の state_rows の
 ;;     索引 72 本のうち旧い形の 23 本〔約 1.9 GB〕は読みに使われず、payload を変える書きのたびに更新されていた)
-;;   - 宣言から外した表ごとの索引(宣言の作る名の形 fx_・ox_・ow_ で今の宣言に無い物)も、表の用意(起動の道)では外さず、索引の用意が
+;;   - 宣言から外した表ごとの索引(宣言の作る名の形 ft_・op_・wp_ と前の形 fx_・ox_・ow_ で今の宣言に無い物)も、表の用意(起動の道)では外さず、索引の用意が
 ;;     同じ道で外す。名の形が宣言の作る形でない手の索引は外さない(2026-10-23 — 本番の置き場の使われない表ごとの索引 11 本・874 MB)
 ;;   - CONCURRENTLY の作りかけ(使えない形で残った同じ名の索引)は消してから作り直す・索引の用意の錠を他の process が持つ間は作らずに待ち、
 ;;     錠を放した合図で観測し直す
@@ -46,7 +46,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
-(import doeff_records.pg_sql [table-index-name table-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key
+(import doeff_records.pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key
                               migrate-lock-key schema-statements])
 (import doeff_records.main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
 (import doeff_records.http_server [MaintenancePlan RecordsListening])
@@ -285,7 +285,7 @@
             watcher (open-postgres))
       (try
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
                                    :i note-index :p prefix))
         (setv #(legacy partial _hand) (create-former-indexes watcher prefix))
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
@@ -298,6 +298,44 @@
         (assert (is (run-on quick ddl (index-round store)) True) "標本の後の回が埋めなかった")
         (assert (is (index-validity watcher legacy) None) "標本の後に旧い形の索引を外さなかった")
         (assert (is (index-validity watcher partial) None) "標本の後に前の部分索引を外さなかった")
+        (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (setv #(_row _color note-after) (reads-of quick ddl store))
+        (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
+        (finally
+          (.close watcher))))))
+
+
+(deftest test-the-former-table-field-index-answers-the-table-field-form-until-the-new-shape-is-sampled
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 表の欄の式の索引の項を書きの刻の順に並べる(pg_sql.hy の頭の註): 前の形の索引(式 1 つ — fx_)は先頭の式が新しい形(ft_)と同じ
+  ;; なので、新しい形を作り終えて見積もれるようになるまで、表の欄の式の条件の読みに答える(scoped に数え、NotIndexed にも前の文の形にも
+  ;; しない — 前の文の形を引く索引は無く、表の行を全部読む)。新しい形が見積もれない間は前の形を外さず(settled に数えない)、標本の
+  ;; 後の回が外す。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
+            former (run (former-field-index-name prefix "parts" "note"))
+            watcher (open-postgres))
+      (try
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+                                   :i former :p prefix))
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (assert (= store.indexes.missing #(note-index)) (repr store.indexes.missing))
+        (assert (= store.indexes.retired #(former)) (repr store.indexes.retired))
+        (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (setv #(_row _color by-note) (reads-of quick ddl store))
+        (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
+        ;; 新しい形が在っても標本の前(見積もれない)は前の形を外さない。
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
+                                   :i note-index :p prefix))
+        (assert (is (run-on quick ddl (index-round store)) False) "新しい形が見積もれない間の回が埋めたと答えた")
+        (assert (is (index-validity watcher former) True) "新しい形が見積もれない間に前の形を外した")
+        (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (assert (not-in (IndexedField :table "parts" :field "note") store.indexes.settled) (repr store.indexes.settled))
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (assert (is (run-on quick ddl (index-round store)) True) "標本の後の回が埋めなかった")
+        (assert (is (index-validity watcher former) None) "標本の後に前の形を外さなかった")
         (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color note-after) (reads-of quick ddl store))
         (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
@@ -358,7 +396,7 @@
             watcher (open-postgres))
       (try
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
                                    :i note-index :p prefix))
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
         (assert (= store.indexes.missing #()) (repr store.indexes.missing))
@@ -388,7 +426,7 @@
         (hold-writer writer prefix)
         (.execute builder "SET statement_timeout = 300")
         (try
-          (.execute builder (.format "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+          (.execute builder (.format "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
                                      :i note-index :p prefix))
           (except [error Exception]
             (assert (= (getattr error "sqlstate" None) "57014") (repr error))))
@@ -615,7 +653,7 @@
             ended (queue.Queue)
             stopping (threading.Event))
       (try
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END))"
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
                                    :i note-index :p prefix))
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
         (setv #(legacy partial hand) (create-former-indexes watcher prefix))
