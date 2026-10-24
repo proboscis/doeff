@@ -26,8 +26,8 @@ def mapped(source: str) -> Object:
         ("(of tuple str ...)", "tuple"),
         ("(of dict str int)", "dict"),
         ("(get dict #(str int))", "dict"),
-        ("(| (get tuple #(str ...)) None)", "(| tuple None)"),
-        ("(| int None)", "(| int None)"),
+        ("(| (get tuple #(str ...)) None)", "#(tuple (. None __class__))"),
+        ("(| int None)", "#(int (. None __class__))"),
         ("#((get tuple #(int int)) None)", "#(tuple (. None __class__))"),
     ],
 )
@@ -57,6 +57,6 @@ def test_the_mapped_form_is_accepted_by_isinstance(source: str, value: object, h
 def test_a_form_that_needs_no_mapping_is_returned_as_the_same_object(source: str) -> None:
     form: Object = hy.read(source)
     if source == "(| int str)":
-        assert mapped(source) == hy.read(source)
+        assert mapped(source) == hy.read("#(int str)")
     else:
         assert runtime_type_form(form) is form
