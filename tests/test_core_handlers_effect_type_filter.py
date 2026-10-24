@@ -14,7 +14,17 @@ from types import CodeType, FrameType
 
 import pytest
 from doeff_core_effects import cache_handlers
-from doeff_core_effects.effects import Ask, Await, Get, Listen, Local, Put, Slog, Try, WriterTellEffect
+from doeff_core_effects.effects import (
+    Ask,
+    Await,
+    Get,
+    Listen,
+    Local,
+    Put,
+    Slog,
+    Try,
+    WriterTellEffect,
+)
 from doeff_core_effects.handlers import (
     await_handler,
     env_var_ask,
@@ -29,6 +39,7 @@ from doeff_core_effects.handlers import (
     writer,
 )
 from doeff_vm._effect_types import handler_effect_types
+from doeff_vm.doeff_vm import vm_work_counts
 
 from doeff import do, handler, with_handlers
 from doeff import run as doeff_run
@@ -102,12 +113,14 @@ def _asks_then_state():
 
 
 def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
-    # 列の最後が一番内側: Ask は state を飛ばして外の reader に届く
+    # 列の最後が一番内側: Ask は state を飛ばして外の reader に届く。state は VM の中の Rust の handler で
+    # Python の本体を持たないので(card ki-83236a21466e)、VM が handler を呼んだ回数で数える。
     stack = [reader({"a": 1, "b": 2, "c": 3}), state()]
-    body = _raw(stack[1]).__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
-    seen = _entries(body, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
-    assert seen.result == 6
-    assert seen.entered == 2, "state の本体に入るのは Put と Get の 2 回だけ(Ask 3 回は飛ばす)"
+    _, calls_before = vm_work_counts()
+    result = doeff_run(with_handlers(stack, _asks_then_state()))
+    _, calls_after = vm_work_counts()
+    assert result == 6
+    assert calls_after - calls_before == 5, "handler を呼ぶのは reader の Ask 3 回と state の Put・Get の 2 回だけ(Ask は state を飛ばす)"
 
 
 def test_the_answers_and_the_types_it_answers_are_unchanged() -> None:

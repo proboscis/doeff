@@ -1453,6 +1453,10 @@ fn wrap_handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Value, Str
     if let Ok(prompt) = handler.downcast::<crate::scheduler::PySchedulerPrompt>() {
         return Ok(Value::Callable(prompt.get().callable.clone()));
     }
+    // The state handler (Rust handler), made by state() or reinstalled from a captured stack.
+    if let Ok(state) = handler.downcast::<crate::state_handler::PyStateHandler>() {
+        return Ok(Value::Callable(crate::state_handler::PyStateHandler::callable(state)));
+    }
     let callable = PythonCallable::handler(py, handler)?;
     Ok(Value::Callable(
         std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef
@@ -1979,6 +1983,10 @@ pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
     if let Ok(prompt) = obj.downcast::<crate::scheduler::PySchedulerPrompt>() {
         return Value::Callable(prompt.get().callable.clone());
     }
+    // State handler → its Rust handler
+    if let Ok(state) = obj.downcast::<crate::state_handler::PyStateHandler>() {
+        return Value::Callable(crate::state_handler::PyStateHandler::callable(state));
+    }
     // PyK → Value::Continuation
     if let Ok(k) = obj.downcast::<doeff_vm_core::continuation::PyK>() {
         let mut k_borrowed = k.borrow_mut();
@@ -2030,6 +2038,8 @@ pub fn value_to_python(py: Python<'_>, value: Value) -> Bound<'_, PyAny> {
                 Bound::new(py, crate::scheduler::PySchedulerPrompt { callable: c })
                     .expect("allocate SchedulerPrompt")
                     .into_any()
+            } else if let Some(state) = crate::state_handler::PyStateHandler::of(py, &c) {
+                state
             } else {
                 "<callable>".into_pyobject(py).unwrap().into_any()
             }

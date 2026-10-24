@@ -25,10 +25,18 @@ from collections.abc import Mapping
 from typing import Any
 
 from doeff_vm._not_a_program import program_shown, uncalled_do_function_call
+from doeff_vm.doeff_vm import StateHandler
 
 from doeff import do
 from doeff.handler_utils import reinstaller
-from doeff.program import Pass, ProgramHandler, Transfer, TransferThrow, _named_handler
+from doeff.program import (
+    Pass,
+    ProgramHandler,
+    Transfer,
+    TransferThrow,
+    _named_handler,
+    _rust_handler_installer,
+)
 from doeff.program import handler as _program_handler
 from doeff_core_effects.effects import (
     Ask,
@@ -100,17 +108,15 @@ def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     """
     _refuse_program("state", initial, "the initial state")
     store = dict(initial) if initial else {}
+    # The VM answers Get / Put from the store itself, without a Python generator per
+    # effect (card ki-83236a21466e); the store stays this dict.
+    return _rust_handler_installer(StateHandler(store, Get, Put))
 
-    @do
-    def handler(effect: Get | Put, k):
-        if isinstance(effect, Get):
-            return (yield Transfer(k, store.get(effect.key)))
-        elif isinstance(effect, Put):
-            store[effect.key] = effect.value
-            return (yield Transfer(k, None))
-        yield Pass(effect, k)
 
-    return _program_handler(handler)
+# The declaration doeff-effect-analyzer reads for the state handler: it runs in Rust, so there are no
+# clauses to read inside the factory — it answers Get and Put and performs nothing.
+state.__doeff_handles__ = (Get, Put)  # type: ignore[attr-defined] — the analyzer's mark on a function (no typed slot)
+state.__doeff_effects__ = ()  # type: ignore[attr-defined] — the analyzer's mark on a function (no typed slot)
 
 
 _WRITER_LOG_KEY = "__doeff_writer_log__"
