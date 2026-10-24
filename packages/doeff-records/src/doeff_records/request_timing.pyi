@@ -71,10 +71,16 @@ def between(since: float | None, until: float | None) -> _Program[float | None, 
     ...
 SERVER_TIMING_STAGES: tuple[RequestStage, ...]
 
+def server_timing_spans_of(stages: tuple[StageSeconds, ...]) -> _Program[tuple[ServerSpan, ...], object]:
+    ...
+
 def server_timing_of(stages: tuple[StageSeconds, ...]) -> _Program[str, object]:
     ...
 
-def request_stages(received_at: float | None, marks: tuple[MarkAt, ...]) -> _Program[tuple[StageSeconds, ...], object]:
+def request_stages(received_at: float | None, marks: tuple[MarkAt, ...], wait: WaitSum) -> _Program[tuple[StageSeconds, ...], object]:
+    ...
+
+def sent_stages(received_at: float | None, marks: tuple[MarkAt, ...], wait: WaitSum, sent_at: float) -> _Program[tuple[StageSeconds, ...], object]:
     ...
 
 class LockPhase(StrEnum):

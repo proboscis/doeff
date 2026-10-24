@@ -148,10 +148,13 @@ class NamedStores:
 def operation_of(path: str) -> _Program[str | None, object]:
     ...
 
+def operation_kind(operation: str | None) -> _Program[RequestKind, object]:
+    ...
+
 def request_kind(path: str) -> _Program[RequestKind, object]:
     ...
 
-def answer_metric(path: str, status: int) -> _Program[str, object]:
+def answer_metric(kind: RequestKind, status: int) -> _Program[str, object]:
     ...
 
 def client_answer_metric(operation: str, outcome: str) -> _Program[str, object]:

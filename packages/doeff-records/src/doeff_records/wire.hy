@@ -233,21 +233,27 @@
   (if (in named OPERATIONS) named None))
 
 
-(defk request-kind [path]
-  {:pre [(: path str)] :post [(: % RequestKind)]}
-  "要求の path(query を除く)を要求の種にする(計器が書きと読みを分けて数えるため)。method は問わない — POST でない記録の操作の
-   400 も、その操作の種で数える。"
-  (<- operation (| str None) (operation-of path))
+(defk operation-kind [operation]
+  {:pre [(: operation (| str None))] :post [(: % RequestKind)]}
+  "記録の操作の名 operation(operation-of の答え — 記録の操作の route でなければ None)を要求の種にする(計器が書きと読みを分けて数える
+   ため)。他の defk を呼ばない(答えを送る要求の task が要求ごとに Program を回さない — card ki-5c3e73834e73)。"
   (match operation
     None RequestKind.OTHER
     name :if (in name WRITE-OPERATIONS) RequestKind.WRITE
     _ RequestKind.READ))
 
 
-(defk answer-metric [path status]
-  {:pre [(: path str) (: status int)] :post [(: % str)]}
-  "path の要求に status で答えた数の counter の名を作るため(ANSWER-METRIC の綴り — 種は request-kind)。"
-  (<- kind RequestKind (request-kind path))
+(defk request-kind [path]
+  {:pre [(: path str)] :post [(: % RequestKind)]}
+  "要求の path(query を除く)を要求の種にする(計器が書きと読みを分けて数えるため)。method は問わない — POST でない記録の操作の
+   400 も、その操作の種で数える。"
+  (<- operation (| str None) (operation-of path))
+  (! (operation-kind operation)))
+
+
+(defk answer-metric [kind status]
+  {:pre [(: kind RequestKind) (: status int)] :post [(: % str)]}
+  "種 kind の要求に status で答えた数の counter の名を作るため(ANSWER-METRIC の綴り — 種は request-kind か operation-kind)。"
   (.format ANSWER-METRIC kind status))
 
 
