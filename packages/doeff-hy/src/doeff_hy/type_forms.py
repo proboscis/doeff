@@ -15,8 +15,11 @@ Hy の投影)も、束縛の実行時の保証を写す時にこの関数を呼�
   ``isinstance`` が受けない(``TypeError: isinstance() argument 2 cannot be a parameterized generic``)ので外側の型
   (tuple・dict)へ写す。実行時に確かめるのは外側の型だけで、要素の型は静的な型検査(doeff-hy-check の注記)が見る
   (#1790 の決め: 要素まで実行時に見ると確かめのたびに全要素を回し、入れ子の型の再帰も要る)。
-- ``(| A B)``: 中の総称型を写す(``(| (get tuple #(str ...)) None)`` を ``(| tuple None)`` にする — 総称型を含む和も
-  ``isinstance`` は断る)。和の中の ``None`` は写さない(Python 3.10 以降の ``isinstance`` が ``int | None`` をそのまま受ける)。
+- ``(| A B)``: 組 ``#(A B)`` へ写す(中の総称型・``None`` も上の規則で写す: ``(| (get tuple #(str ...)) None)`` は
+  ``#(tuple (. None __class__))``)。``isinstance`` は組も和も同じに受けるが、和は契約を確かめるたびに ``A | B`` を
+  組み直し(``_Py_union_type_or`` — 記録の service の scheduler の thread の CPU の 1.5%・card ki-08b447d2f71d)、
+  組は名を読んで並べるだけで済む。名の値は呼ぶたびに読むので、後で定義される名・閉包や引数の名も今までどおり解ける
+  (定義の時に 1 度評価して覚える形は、この 2 つを壊すので取らない)。
 - それ以外の form はそのまま返す(同じ object)。
 """
 
@@ -39,8 +42,8 @@ def runtime_type_form(tp: Object) -> Object:
         case Expression() if (base := _generic_base(tp)) is not None:
             return runtime_type_form(base)
         case Expression() if _head(tp) == "|" and len(tp) >= 2:
-            head, *members = _children(tp)
-            return Expression([head, *(item if _is_none(item) else runtime_type_form(item) for item in members)])
+            _, *members = _children(tp)
+            return Tuple([runtime_type_form(item) for item in members])
         case _:
             return tp
 
@@ -102,8 +105,3 @@ def _generic_base(node: Expression) -> Symbol | None:
             return base
         case _:
             return None
-
-
-def _is_none(node: Object) -> bool:
-    """記号 ``None`` か。"""
-    return isinstance(node, Symbol) and str(node) == "None"
