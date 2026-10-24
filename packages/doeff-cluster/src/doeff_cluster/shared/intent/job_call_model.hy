@@ -4,7 +4,9 @@
 ;;; 差し替えた相手が本物の job の答えとずれる。
 ;;;
 ;;;   JobField        名と値の組 1 つ(要求の query・見出しと答えの見出し)
-;;;   JobRequest      API へ渡す要求 1 つ — method・path(API の根の後ろ・%-encode する前の綴り)・query・headers・body・patience = 答えを待つ上限の秒
+;;;   JobRequest      API へ渡す要求 1 つ — method・path(API の根の後ろ・%-encode する前の綴り)・query・headers・body・patience = 答えを待つ上限の秒・
+;;;                   follow-redirects = 相手の転送(3xx の Location)を送る handler が辿るか(既定 = 辿らない。公開の網の口の読みのように、改名した口の
+;;;                   旧い名へ 301 で新しい口を答える相手を読む時だけ辿る — 直に渡す handler の相手は辿った後の答えを答える)
 ;;;   JobAnswer       API の答え 1 つ — status・content-type・body・headers
 ;;;   JobUnreachable  答えが届かなかった(宛先が無い・接続できない・待ちの上限を越えた)— reason = 人と log が読む理由の 1 行
 ;;;   CallJob         API api(使い手の repo が名付けた API の名)へ要求 request を 1 つ渡す(答え = JobAnswer か JobUnreachable)
@@ -30,14 +32,15 @@
 
 (defrecord JobRequest
   "API へ渡す要求 1 つ(頭の註): method・path(API の根の後ろ・`/` で始まる %-encode する前の綴り)・query・headers・body(None = 本文なし)・
-   patience = 答えを待つ上限の秒。宛先は持たない。"
+   patience = 答えを待つ上限の秒・follow-redirects = 送る handler が相手の転送を辿るか(既定 False)。宛先は持たない。"
   {:tags {:context "doeff-cluster" :role "intent"} :check [(.strip method) (.startswith path "/") (> patience 0)]}
   (#^ str method)
   (#^ str path)
   (setv #^ (get tuple #(JobField ...)) query #()
         #^ (get tuple #(JobField ...)) headers #()
         #^ (| bytes None) body None
-        #^ float patience 30.0))
+        #^ float patience 30.0
+        #^ bool follow-redirects False))
 
 
 (defrecord JobAnswer

@@ -3,7 +3,7 @@
 ;;;   job-target        API の根 root と要求の path・query → 要求の行の target(根の URL の後ろ — path は PATH-SAFE の外を %-encode・query は要求の順の
 ;;;                     まま、同じ名の 2 つ目も落とさない)。送る側の URL も、直に渡された相手が読む要求の綴りもこの 1 点
 ;;;   job-call-sender   cluster の handler: 宛先の表(JobDestination — API の名・根・宛先の URL を持つ環境変数の名)で、要求を <URL><target> へ HTTP の
-;;;                     要求 1 本で送る(待ちは patience 秒・やり直しなし・redirect を辿らない・届かない時は値で受ける)。答えは HttpResponse →
+;;;                     要求 1 本で送る(待ちは patience 秒・やり直しなし・redirect は要求の follow-redirects の時だけ辿る・届かない時は値で受ける)。答えは HttpResponse →
 ;;;                     JobAnswer・HttpFailed → JobUnreachable。環境変数の値が空なら送らずに JobUnreachable。表に無い API の CallJob は外側へ回す
 ;;;   job-call-handover 模擬の handler: 相手の表(Counterpart — API の名と、要求 1 つへの相手の job の答えの 1 点)で、要求を相手へ直に渡す
 ;;;                     (HTTP も宛先も通らない)。表に無い API の CallJob は外側へ回す
@@ -78,7 +78,7 @@
   (<- response (| HttpResponse HttpFailed)
       (HttpRequest request.method (+ (.rstrip (.strip base) "/") target)
                    :headers (if request.headers (dfor field request.headers field.name field.value) None)
-                   :body request.body :timeout-seconds request.patience :max-retries 0 :follow-redirects False
+                   :body request.body :timeout-seconds request.patience :max-retries 0 :follow-redirects request.follow-redirects
                    :failures-as-values True :log-each-request False))
   (<- answer (| JobAnswer JobUnreachable) (job-answer-of response))
   answer)
