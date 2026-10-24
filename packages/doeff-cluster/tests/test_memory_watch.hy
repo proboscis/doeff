@@ -11,10 +11,15 @@
 ;;     process は表から消え、他は残る。
 ;;   - guard を切った見張りは様子の行だけで、何も止めない。
 ;;   - /proc/meminfo が読めない機体では訳を 1 度だけ言い、数えない・止めない。
+;;   - 平常の大きさ(card ki-649b1b2f5838 — 10-24 atlas で、機体の空きを worker の外の Pod が食った 2 時間に、平常の約 950 MiB で動く
+;;     常駐の job が 11 回止められ、起こし直されては同じ大きさに戻った): 平常の大きさで動く常駐の job は尽きかけの機体でも止めず、
+;;     止めなかった job と worker の外の使用量を 1 行で言う。平常の 2 倍の常駐の job と大きい task は止める。止めた job の間の最大は
+;;     平常の大きさに残さない。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import pytest)
 (import doeff [with-handlers])
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.handlers [state])
@@ -24,7 +29,8 @@
 (import doeff_core_effects.scripted_proc_table [scripted-proc-table-handler])
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.core.memory_rules [JobRoot KillUnit MemoryLevel MemoryLimits MIB UnitKind kill-units victim-of])
+(import doeff_cluster.worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind job-uses kill-units
+                                                spared-steady steady-sizes victim-of])
 (import doeff_cluster.worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
                                                    MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG])
@@ -118,7 +124,14 @@
   {:pre [(: settings MemoryWatchSettings) (: files MemoryFiles) (: task-ends-ms (| int None)) (: run-until-ms int)] :post [(: % WatchSeen)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の見張りを偽の世界と仮想時計の下で止めの合図まで回し、log の行と止めた後の表を返すため。"
-  (val cell (MemoryCell))
+  (<- seen WatchSeen (watched-in settings files task-ends-ms run-until-ms (MemoryCell)))
+  seen)
+
+
+(defk watched-in [settings files task-ends-ms run-until-ms cell]
+  {:pre [(: settings MemoryWatchSettings) (: files MemoryFiles) (: task-ends-ms (| int None)) (: run-until-ms int) (: cell MemoryCell)]
+   :post [(: % WatchSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "watched と同じ事を、前の読みを持った入れ物 cell(平常の大きさの元を置いた物)で回すため。"
   (<- rows tuple (world-rows))
   (<- seen WatchSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (scripted-proc-table-handler rows)
                                      (memory-world cell task-ends-ms run-until-ms)]
@@ -212,7 +225,7 @@
   (<- tool ProcRow (row 34 33 3000 "cargo"))
   (<- units tuple (kill-units #(shim uv body child tool) #((JobRoot :name "solo" :pid 30))))
   (assert (= (tuple (gfor u units #(u.kind u.head.pid (len u.members) (// u.bytes MIB)))) #(#(UnitKind.LEAF 34 1 3000))) units)
-  (<- victim (| KillUnit None) (victim-of units (MemoryLimits)))
+  (<- victim (| KillUnit None) (victim-of units #() #() (MemoryLimits)))
   (assert (= victim.head.pid 34) victim))
 
 
@@ -225,10 +238,10 @@
   (<- big ProcRow (row 43 41 700 "node"))
   (val roots #((JobRoot :name "svc" :pid 40)))
   (<- alone tuple (kill-units #(shim body small) roots))
-  (<- body-first (| KillUnit None) (victim-of alone (MemoryLimits)))
+  (<- body-first (| KillUnit None) (victim-of alone #() #() (MemoryLimits)))
   (assert (= #(body-first.kind body-first.head.pid) #(UnitKind.BODY 41)) alone)
   (<- with-big tuple (kill-units #(shim body small big) roots))
-  (<- branch-first (| KillUnit None) (victim-of with-big (MemoryLimits)))
+  (<- branch-first (| KillUnit None) (victim-of with-big #() #() (MemoryLimits)))
   (assert (= #(branch-first.kind branch-first.head.pid) #(UnitKind.BRANCH 43)) with-big))
 
 
@@ -245,5 +258,103 @@
   (assert (= (tuple (gfor u units #(u.kind u.head.pid (// u.bytes MIB))))
              #(#(UnitKind.BODY 52 3000) #(UnitKind.BRANCH 53 900) #(UnitKind.BRANCH 54 800) #(UnitKind.BRANCH 55 600)))
           units)
-  (<- victim (| KillUnit None) (victim-of units (MemoryLimits)))
+  (<- victim (| KillUnit None) (victim-of units #() #() (MemoryLimits)))
   (assert (= victim.head.pid 53) victim))
+
+
+(defk resident-rows [body-mib]
+  {:pre [(: body-mib int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "常駐の job dispatch(shim 60 → uv 61 → 本体 62 — 本体は body-mib)と task/7(shim 70 → 本体 71 の 700 MiB)の表を作るため。dispatch の
+   平常の大きさは本体 950 MiB の時の 965 MiB。"
+  (<- shim ProcRow (row 60 1 10 "python"))
+  (<- uv ProcRow (row 61 60 5 "uv"))
+  (<- body ProcRow (row 62 61 body-mib "hy"))
+  (<- task-shim ProcRow (row 70 1 10 "python"))
+  (<- task-body ProcRow (row 71 70 700 "python"))
+  #(shim uv body task-shim task-body))
+
+
+(defk resident-victim [rows roots]
+  {:pre [(: rows tuple) (: roots tuple)] :post [(: % (| KillUnit None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "dispatch の平常の大きさ(965 MiB)を持つ見張りが、表 rows・根 roots の時に止める単位を選ぶため。"
+  (<- units tuple (kill-units rows roots))
+  (<- uses tuple (job-uses rows roots))
+  (<- victim (| KillUnit None) (victim-of units uses #((JobSteady :job "dispatch" :bytes (* 965 MIB))) (MemoryLimits)))
+  victim)
+
+
+(deftest test-a-resident-job-at-its-steady-size-is-not-killed
+  ;; 機体が尽きかけでも(victim-of は DANGER の時に呼ばれる)、平常の大きさで動く常駐の job は止める候補でない — 不足は worker の外から。
+  (val roots #((JobRoot :name "dispatch" :pid 60)))
+  (<- rows tuple (resident-rows 950))
+  (<- victim (| KillUnit None) (resident-victim rows roots))
+  (assert (is victim None) victim)
+  ;; 止めなかった job を名指す。
+  (<- units tuple (kill-units rows roots))
+  (<- uses tuple (job-uses rows roots))
+  (<- spared tuple (spared-steady units uses #((JobSteady :job "dispatch" :bytes (* 965 MIB))) (MemoryLimits)))
+  (assert (= (tuple (gfor s spared s.job)) #("dispatch")) spared))
+
+
+(deftest test-a-resident-job-at-twice-its-steady-size-is-killed
+  (val roots #((JobRoot :name "dispatch" :pid 60)))
+  (<- rows tuple (resident-rows 1900))
+  (<- victim (| KillUnit None) (resident-victim rows roots))
+  (assert (= #(victim.job victim.kind victim.head.pid) #("dispatch" UnitKind.LEAF 62)) victim))
+
+
+(deftest test-a-large-task-is-killed-beside-a-larger-resident-job-at-its-steady-size
+  ;; task は平常の大きさに依らず止める候補: 平常の大きさの dispatch(950 MiB)より小さい task/7(700 MiB)を止める。
+  (val roots #((JobRoot :name "dispatch" :pid 60) (JobRoot :name "task/7" :pid 70)))
+  (<- rows tuple (resident-rows 950))
+  (<- victim (| KillUnit None) (resident-victim rows roots))
+  (assert (= #(victim.job victim.kind victim.head.pid) #("task/7" UnitKind.TASK 71)) victim))
+
+
+(deftest test-a-resident-job-without-a-steady-size-yet-is-still-a-candidate
+  ;; 平常の大きさがまだ無い job(起こしてから最大の行の間が 1 つも閉じていない)は、前と同じく止める候補。
+  (val roots #((JobRoot :name "dispatch" :pid 60)))
+  (<- rows tuple (resident-rows 950))
+  (<- units tuple (kill-units rows roots))
+  (<- uses tuple (job-uses rows roots))
+  (<- victim (| KillUnit None) (victim-of units uses #() (MemoryLimits)))
+  (assert (= victim.head.pid 62) victim))
+
+
+(deftest test-the-steady-size-is-the-largest-window-maximum-per-job
+  (<- steadies tuple (steady-sizes #(#((JobSteady :job "b" :bytes 5) (JobSteady :job "a" :bytes 3)) #() #((JobSteady :job "a" :bytes 9)))))
+  (assert (= (tuple (gfor s steadies #(s.job s.bytes))) #(#("a" 9) #("b" 5))) steadies)
+  (with [(pytest.raises ValueError)] (MemoryLimits :steady-ratio 1.0)))
+
+
+(deftest test-a-node-short-of-memory-outside-the-worker-spares-the-steady-job-and-names-the-outside-use
+  ;; svc の平常の大きさ(前の間の最大)は今と同じ 2835 MiB: 尽きかけの機体で svc を止めず、平常の大きさの無い task/1 だけを止め、残りは
+  ;; 止めずに 1 度言う — 機体の使用量(32 GiB − 1.6 GiB)と container の 4 GiB の差が worker の外の使用量。
+  (<- files MemoryFiles (node-files 1.6))
+  (val cell (MemoryCell))
+  (setv cell.steady #(#((JobSteady :job "svc" :bytes (* 2835 MIB)))))
+  (<- seen WatchSeen (watched-in (MemoryWatchSettings) files None 16000 cell))
+  (val lines seen.lines)
+  (<- kills tuple (lines-named lines MEMORY-KILL-LOG))
+  (assert (= (tuple (gfor k kills #((get k "job") (get k "pid") (get k "unit_mib")))) #(#("task/1" 21 700))) kills)
+  (<- spared tuple (lines-named lines MEMORY-NO-VICTIM-LOG))
+  (assert (= (len spared) 1) spared)
+  (val told (get spared 0))
+  (val used (// (- (* 32 GIB) (* (int (* 1.6 1024 1024)) 1024)) MIB))
+  (assert (= #((get told "spared_steady") (get told "node_used_mib") (get told "container_current_mib") (get told "outside_worker_mib"))
+             #("svc=2835/2835" used 4096 (- used 4096)))
+          told)
+  ;; svc の process は 1 つも止めていない。
+  (assert (= (sorted (gfor r seen.table r.pid)) [1 10 11 12 13 14 15 16 20]) seen.table))
+
+
+(deftest test-the-maximum-of-a-job-killed-in-a-window-is-not-kept-as-its-steady-size
+  ;; 10 秒の間: 0 秒に svc の道具・10 秒に task/1 を止めた間の最大は残さない。次の間(15〜25 秒)の止めた後の大きさを残す。
+  (<- files MemoryFiles (node-files 1.6))
+  (val cell (MemoryCell))
+  (<- seen WatchSeen (watched-in (MemoryWatchSettings :window-seconds 10.0) files None 26000 cell))
+  (<- kills tuple (lines-named seen.lines MEMORY-KILL-LOG))
+  (assert (= (tuple (gfor k kills (get k "job"))) #("svc" "task/1")) kills)
+  (assert (= (tuple (gfor window cell.steady (tuple (gfor s window #(s.job (// s.bytes MIB))))))
+             #(#() #(#("svc" 835) #("task/1" 10))))
+          cell.steady))
