@@ -14,12 +14,13 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 偽の代理に届いた問い 1 つ(path・見出し Cache-Control・Authorization・定義の名・束の鍵の数)。
+/// 偽の代理に届いた問い 1 つ(path・見出し Cache-Control・Authorization・x-jev-caller・定義の名・束の鍵の数)。
 #[derive(Debug, Clone)]
 struct Seen {
     path: String,
     cache_control: String,
     authorization: String,
+    caller: String,
     name: String,
     keys: usize,
 }
@@ -70,7 +71,7 @@ fn fake_proxy_with_cost(cost: Option<&'static str>) -> FakeProxy {
                 let mut request_line = String::new();
                 reader.read_line(&mut request_line).unwrap();
                 let path = request_line.split_whitespace().nth(1).unwrap_or("").to_string();
-                let (mut length, mut cache_control, mut authorization) = (0usize, String::new(), String::new());
+                let (mut length, mut cache_control, mut authorization, mut caller) = (0usize, String::new(), String::new(), String::new());
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
@@ -83,6 +84,8 @@ fn fake_proxy_with_cost(cost: Option<&'static str>) -> FakeProxy {
                         cache_control = value.trim().to_string();
                     } else if lower.starts_with("authorization:") {
                         authorization = line["authorization:".len()..].trim().to_string();
+                    } else if lower.starts_with("x-jev-caller:") {
+                        caller = line["x-jev-caller:".len()..].trim().to_string();
                     }
                 }
                 let mut raw = vec![0u8; length];
@@ -90,14 +93,14 @@ fn fake_proxy_with_cost(cost: Option<&'static str>) -> FakeProxy {
                 let body: Value = serde_json::from_slice(&raw).unwrap();
                 let (status, marker, answer) = if path.ends_with("/peek") {
                     let keys: Vec<String> = body["keys"].as_array().unwrap().iter().map(|k| k.as_str().unwrap().to_string()).collect();
-                    log.lock().unwrap().push(Seen { path: path.clone(), cache_control, authorization, name: String::new(), keys: keys.len() });
+                    log.lock().unwrap().push(Seen { path: path.clone(), cache_control, authorization, caller, name: String::new(), keys: keys.len() });
                     let remembered = memory.lock().unwrap();
                     let found: serde_json::Map<String, Value> =
                         keys.iter().filter_map(|k| remembered.get(k).map(|a| (k.clone(), a.clone()))).collect();
                     ("200 OK", "peek", serde_json::json!({ "answers": found }))
                 } else {
                     let name = body["state"]["definition"]["name"].as_str().unwrap_or("").to_string();
-                    log.lock().unwrap().push(Seen { path: path.clone(), cache_control: cache_control.clone(), authorization, name, keys: 0 });
+                    log.lock().unwrap().push(Seen { path: path.clone(), cache_control: cache_control.clone(), authorization, caller, name, keys: 0 });
                     let key = proxy_key(&body);
                     let remembered = memory.lock().unwrap().get(&key).cloned();
                     match (cache_control.as_str(), remembered) {
@@ -470,4 +473,31 @@ fn an_upstream_without_a_cost_is_counted_as_unreported_not_as_zero() {
     assert_eq!(summary["cost_usd"].as_f64(), Some(0.0), "{}", summary);
     assert_eq!(summary["input_tokens"].as_u64(), Some(100 * calls), "{}", summary);
     assert_eq!(one_cached_answer(dir.path())["reported_cost_usd"], Value::Null);
+}
+
+#[test]
+fn each_question_names_its_caller_and_rule_in_the_caller_header() {
+    // proxy が問いを呼び手と規則で分けて数えられるよう、問いごとに見出し x-jev-caller で `doeff-linter/<規則>` を名乗る。較正は
+    // `/calibration` を付けて規則の問いと分け、覚えている時だけの問いの束は `doeff-linter/peek`。
+    let proxy = fake_proxy();
+    let first = repo(FILES, &proxy.url);
+    let _ = run(first.path(), &["--semantic-all"], None, &[]);
+    let seen = proxy.take();
+    let calibration = ["may-manage?", "classifier-call", "post-json", "wake"];
+    let caller = |name: &str| seen.iter().find(|s| s.name == name).map(|s| s.caller.as_str()).unwrap_or("");
+    assert_eq!(caller("may-post?"), "doeff-linter/DOEFF201", "{:?}", seen);
+    assert_eq!(caller("read-body"), "doeff-linter/DOEFF201", "{:?}", seen);
+    assert_eq!(caller("route"), "doeff-linter/DOEFF202", "{:?}", seen);
+    assert_eq!(caller("decide"), "doeff-linter/DOEFF202", "{:?}", seen);
+    let calibrated: Vec<&Seen> = seen.iter().filter(|s| calibration.contains(&s.name.as_str())).collect();
+    assert!(!calibrated.is_empty());
+    assert!(
+        calibrated.iter().all(|s| s.caller.starts_with("doeff-linter/DOEFF20") && s.caller.ends_with("/calibration")),
+        "{:?}",
+        calibrated
+    );
+    let second = repo(FILES, &proxy.url);
+    let _ = run(second.path(), &[], None, &[]);
+    let peeked = proxy.take();
+    assert_eq!(peeked.iter().map(|s| (s.path.as_str(), s.caller.as_str())).collect::<Vec<_>>(), vec![("/v1/systemone/peek", "doeff-linter/peek")]);
 }
