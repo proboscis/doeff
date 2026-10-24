@@ -69,8 +69,8 @@
 ;;; 旧い形 23 本・約 1.9 GB — state_rows の索引の 6 割・21 本は 13 時間 idx_scan 0)。索引の用意がその時から DROP INDEX CONCURRENTLY で外す
 ;;; (名の形で見分ける — retired-index?。宣言の索引の名には当たらない)。起動の道には置かない(表に SHARE UPDATE EXCLUSIVE だけを取り、
 ;;; 行の読み書きを止めない)。
-;;; 宣言から外した表ごとの索引を外す(2026-10-23): 宣言が作る名の形の索引(表の欄の式の索引 fx_・上から読む欄の索引 ox_・等号の欄 ×
-;;; 上から読む欄の組の索引 ow_ — table-shaped-index?)のうち今の宣言に無い物も、旧い形の索引と同じ回に同じ道で外す。宣言から欄を外しても
+;;; 宣言から外した表ごとの索引を外す(2026-10-23): 宣言が作る名の形の索引(表の欄の式の索引 fx_・上から読む欄の索引 op_・等号の欄 ×
+;;; 上から読む欄の組の索引 wp_ と、その前の形 ox_・ow_ — table-shaped-index?)のうち今の宣言に無い物も、旧い形の索引と同じ回に同じ道で外す。宣言から欄を外しても
 ;;; 置き場の索引は残り、読まれないまま payload を変える書きのたびに更新されていた(本番の置き場の state_rows の索引 60 本・6,025 MB のうち
 ;;; 3 日半 idx_scan 0 の表ごとの索引 11 本・874 MB — うち 2 本は既に宣言に無かった)。名の形が宣言の作る形でない索引(手で足した物・
 ;;; 置き場の形の索引)は外さない。同じ置き場に答える 2 つの process の宣言が違う間(入れ替えの途中)は、索引の用意を回す process の
@@ -86,6 +86,14 @@
 ;;; (2026-10-23 — 6 万行の表の 9 千行の値 1 つの続きの頁が 1.6 秒・本番の冷えた buffer で読みの期限を越えた)。等号の欄の表の欄の式
 ;;; (table-field-expression)を前に置いた組の索引は、等号の値の範囲を並べる式の順に 1 頁 + 1 行だけ辿る(同じ置き場で 18 ms)。式は読みの文の
 ;;; 等号の条件と並べる式と同じ 1 か所から作る(字面が揃うので、文を変えずに planner が選ぶ)。
+;;; 上から読む索引を部分索引にする(2026-10-24): 上から読む欄の索引と組の索引は述語 `<並べる式> IS NOT NULL` の部分索引(名 = op_・wp_)。
+;;; 前の形(ox_・ow_)は全部の行の索引で、他の表の行の項 (NULL, key) が鍵の綴りの位置に入るので、どの表の行の書きも 1 本ごとに索引の
+;;; 葉の 1 頁をばらばらの位置で触った(本番の 150 万行の置き場で 9 本・2.5 GB — 同じ置き場の表ごとの索引の 3 割・読みは 2 日で 47 回。
+;;; 書きの待ちは buffer に無い頁の読み〔DataFileRead〕だった)。部分索引は並べる行だけを持ち、他の表の行の書きは述語の CASE が NULL を
+;;; 返すだけで索引に触らない(手元の 43 万行で 9 本 117 MB → 3.9 MB・他の表の行の書き 1 本の buffer の触り 57 → 18)。読みの文は並べる
+;;; 行を絞る条件 `<並べる式> IS NOT NULL` を既に持つので、文を変えずに planner が部分索引を選ぶ(generic と custom の両方の計画)。表の
+;;; 欄の式の索引を部分索引にしない訳(上の註 — 組みと式の統計)は、索引の順に辿るだけの上から読む読みには当たらない。前の形の索引は
+;;; 今の宣言に無い表ごとの索引として、索引の用意が新しい形を作り終えた後に外す。
 ;;; 鍵の綴りの順の索引: 列 key と主キー (ledger, key) の索引は database の既定の照合順(本番は en_US.utf8)で並び、頁読みの順
 ;;; key COLLATE "C"(memory の置き場と同じ符号点の順)では主キーを辿れない。索引の無い置き場の 1 頁は、表の全部の行を読んで並べ替えて
 ;;; 上から limit + 1 行を取る(2026-10-19 の本番 — 1.88 万行の表で 1 頁ごとに 1.88 万行・全頁の読みは行の数の 2 乗)。照合順 "C" の
@@ -171,9 +179,10 @@
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
 ;; 旧い形の索引の名の接頭辞の後ろ(index-name の ix_<欄の指紋> と table-index-name の ix_<欄の指紋>_<表の指紋> — retired-index?)。
 (val RETIRED-INDEX-PATTERN (re.compile "ix_[0-9a-f]{12}(_[0-9a-f]{12})?"))
-;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fx_・ordered-index-name の ox_・ordered-within-index-name の ow_ —
-;; どれも <形>_<欄か欄の組の指紋>_<表の指紋> — table-shaped-index?)。
-(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fx|ox|ow)_[0-9a-f]{12}_[0-9a-f]{12}"))
+;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fx_・ordered-index-name の op_・ordered-within-index-name の wp_ —
+;; どれも <形>_<欄か欄の組の指紋>_<表の指紋> — table-shaped-index?)。ox_・ow_ は上から読む索引の前の形(全部の行の索引 — 頭の註の
+;; 「上から読む索引を部分索引にする」)の名で、今の宣言は作らないので、索引の用意が今の宣言に無い物として外す。
+(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fx|ox|ow|op|wp)_[0-9a-f]{12}_[0-9a-f]{12}"))
 (val DEFAULT-PREFIX "records_")
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
@@ -406,7 +415,7 @@
   {:pre [(: prefix str) (: name str)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
   "置き場の索引の名 name が、宣言が張らなくなった旧い形の索引(index-name の全部の行の (ledger, 欄の式)・table-index-name の前の部分索引)の
-   名かを判じるため(頭の註の「旧い形の索引を外す」— 索引の用意が外す物を見分ける)。宣言の索引の名(fx_・ox_・置き場の形の索引)には
+   名かを判じるため(頭の註の「旧い形の索引を外す」— 索引の用意が外す物を見分ける)。宣言の索引の名(fx_・op_・wp_・置き場の形の索引)には
    当たらない。"
   (and (.startswith name prefix)
        (is-not (.fullmatch RETIRED-INDEX-PATTERN (cut name (len prefix) None)) None)))
@@ -469,7 +478,7 @@
   "表 table の上から読む欄 field-name の索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
   (<- field-digest (digest-of field-name))
   (<- table-digest (digest-of table))
-  (.format "{}ox_{}_{}" prefix field-digest table-digest))
+  (.format "{}op_{}_{}" prefix field-digest table-digest))
 
 
 (defk ordered-index [prefix table field-name]
@@ -480,7 +489,7 @@
   (<- name (ordered-index-name prefix table field-name))
   (<- expression (ordered-expression table field-name))
   (DeclaredIndex :name name :relation "state_rows"
-                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e} DESC NULLS LAST, key COLLATE \"C\" DESC)"
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e} DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE {e} IS NOT NULL"
                                 :i name :p prefix :e expression)
                  :serves #()
                  :scoped #()
@@ -495,7 +504,7 @@
    上限 63 字の内。欄の名は英数字と _ だけなので、区切り , で結んだ組の綴りは組ごとに違う)。"
   (<- pair-digest (digest-of (.format "{},{}" equal-field field-name)))
   (<- table-digest (digest-of table))
-  (.format "{}ow_{}_{}" prefix pair-digest table-digest))
+  (.format "{}wp_{}_{}" prefix pair-digest table-digest))
 
 
 (defk ordered-within-index [prefix table equal-field field-name]
@@ -509,7 +518,7 @@
   (<- equal (table-field-expression "" table equal-field))
   (<- expression (ordered-expression table field-name))
   (DeclaredIndex :name name :relation "state_rows"
-                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({q}, {e} DESC NULLS LAST, key COLLATE \"C\" DESC)"
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({q}, {e} DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE {e} IS NOT NULL"
                                 :i name :p prefix :q equal :e expression)
                  :serves #()
                  :scoped #()
