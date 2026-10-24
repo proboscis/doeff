@@ -114,13 +114,23 @@ def _expansion_key(source: str, module_name: str) -> _ExpansionKey:
     from doeff_hy_bytecode_guard.records import RECORD_TAG
 
     return _ExpansionKey(
-        python=sys.version,
+        python=_python_series(),
         hy=hy.__version__,
         expander=_expander_digest(),
         record_format=RECORD_TAG,
         module_name=module_name,
         source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
     )
+
+
+def _python_series() -> str:
+    """The Python the place is keyed by: implementation, ``major.minor`` and the ABI flags (``t`` = free-threaded), not the patch
+    version. The stored tree is the ``ast.Module`` Hy builds from the source (Hy makes the nodes itself; Python's parser does not
+    take part) and pickles by node class and field. The node classes and their fields change only between minor versions (the
+    ``ast`` grammar is fixed within one), so a patch update (3.14.3 -> 3.14.7) reads the same trees. Unlike the analyzer's result
+    cache (``result_cache._place``, which keeps ``sys.version`` because its answers read bytecode), nothing here depends on the
+    interpreter's code generation (card ki-968309595391)."""
+    return f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}{getattr(sys, 'abiflags', '')}"
 
 
 @functools.cache

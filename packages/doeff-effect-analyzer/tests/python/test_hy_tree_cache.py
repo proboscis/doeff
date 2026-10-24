@@ -1118,3 +1118,17 @@ def test_an_import_leaves_no_tree_when_no_bytecode_store_is_named(
     import_compiling(tmp_path, package, {"m.hy": SOURCE}, monkeypatch)
     assert not list(tmp_path.rglob("*.tree"))
     assert not list(tmp_path.rglob("import-trees"))
+
+
+def test_a_patch_version_update_keeps_the_place_of_the_trees(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The place is keyed by Python's minor version, not the patch (card ki-968309595391): 3.14.3 -> 3.14.7 reads the same trees,
+    3.14 -> 3.15 and a free-threaded build do not."""
+
+    def place(version: tuple[int, int, int], flags: str) -> Path:
+        monkeypatch.setattr(sys, "version_info", SimpleNamespace(major=version[0], minor=version[1], micro=version[2]))
+        monkeypatch.setattr(sys, "abiflags", flags, raising=False)
+        return hy_expansion._expansion_key("(print 1)", "m").place(Path("/x"))
+
+    assert place((3, 14, 3), "t") == place((3, 14, 7), "t")
+    assert place((3, 14, 3), "t") != place((3, 15, 0), "t")
+    assert place((3, 14, 3), "t") != place((3, 14, 3), "")
