@@ -5,7 +5,7 @@ import json
 
 import pytest
 from doeff_jev import JevTarget, cache_key, parse, prepare
-from doeff_jev.wire import IMAGES_HEADER
+from doeff_jev.wire import CALLER_HEADER, IMAGES_HEADER, PROXY_HEADER
 from doeff_system_one import Image, Judge, JudgeError, choice, noul, score
 
 DIRECT = JevTarget("https://api.typesafe.ai/v1/systemone", "jev-latest", "direct", "k-direct", "default")
@@ -133,3 +133,25 @@ def test_image_and_judge_refuse_malformed_assets() -> None:
         Image(format="png", data_base64="")
     with pytest.raises(TypeError):
         Judge(state="s", questions={"n": noul("x")}, assets={"p": {"format": "png"}})  # type: ignore[dict-item]
+
+
+def test_caller_travels_as_a_header_and_not_in_the_body() -> None:
+    judge = Judge(state="s", questions={"n": noul("x")})
+    prepared = prepare(DIRECT, judge, caller="rulebook-advisor/Stop")
+    assert prepared.headers[CALLER_HEADER] == "rulebook-advisor/Stop"
+    assert "caller" not in json.dumps(prepared.body)
+    assert CALLER_HEADER not in prepare(DIRECT, judge).headers
+    # 見出しの値は ASCII に限る — 日本語の名は %XX に写して要求を壊さない。
+    assert prepare(DIRECT, judge, caller="部品/問い").headers[CALLER_HEADER] == "%E9%83%A8%E5%93%81/%E5%95%8F%E3%81%84"
+    # 呼び手の名は答えの鍵に入らない(同じ問いは呼び手が違っても中継と手元の cache で当たる)。
+    assert cache_key(DIRECT, judge) == cache_key(DIRECT, Judge(state="s", questions={"n": noul("x")}))
+
+
+def test_parse_reads_the_proxy_header_case_insensitively() -> None:
+    judge = Judge(state="s", questions={"n": noul("x")})
+    text = json.dumps({"answers": {"n": {"type": "noul", "noul": 0.9}}, "usage": {"input_tokens": 7}})
+    assert parse(DIRECT, judge, 200, text, headers={PROXY_HEADER: "hit"}).proxy == "hit"
+    assert parse(DIRECT, judge, 200, text, headers={"X-Jev-Proxy": "Coalesced"}).proxy == "coalesced"
+    assert parse(DIRECT, judge, 200, text, headers={"content-type": "application/json"}).proxy is None
+    verdict = parse(DIRECT, judge, 200, text)
+    assert (verdict.proxy, verdict.cached) == (None, False)

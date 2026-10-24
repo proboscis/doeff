@@ -1,12 +1,13 @@
 """jev_handler / jev_memo_handler / journal_handler — HTTP は台本の handler で答える(通信なし)。"""
 
 import json
+import pickle
 
 from doeff_core_effects import HttpRequest, HttpResponse
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
 from doeff_jev import JevTarget, jev_handler, judge_stack
 from doeff_jev.wiring import run_judgment
-from doeff_system_one import JudgeError, choice, judge, noul
+from doeff_system_one import JudgeError, Verdict, choice, judge, noul
 from doeff_vm import Err, Ok
 
 from doeff import Pass, Resume, ResumeThrow, Try, do, run, with_handlers
@@ -36,13 +37,15 @@ class HttpScript:
             step = script.steps.pop(0) if script.steps else (200, json.dumps(ANSWER))
             if isinstance(step, BaseException):
                 return (yield ResumeThrow(k, step))
-            status, text = step
-            return (yield Resume(k, HttpResponse(status, {}, text.encode(), text, effect.url, 0.01)))
+            status, text, *rest = step
+            headers = rest[0] if rest else {}
+            return (yield Resume(k, HttpResponse(status, headers, text.encode(), text, effect.url, 0.01)))
         return _program_handler(raw)
 
 
-def _run(program, target, script, journal=None):
-    layers = judge_stack(target, http=script.handler(), cache=in_memory_cache_handler(), journal=journal)
+def _run(program, target, script, journal=None, caller=""):
+    layers = judge_stack(target, http=script.handler(), cache=in_memory_cache_handler(), journal=journal,
+                         caller=caller)
     return run_judgment(program, target=target, layers=layers)
 
 
@@ -154,3 +157,66 @@ def test_handler_passes_unrelated_effects() -> None:
 
     program = with_handlers([state(), writer, jev_handler(DIRECT)], flow())
     assert run(program) == ["hello"]
+
+
+def test_caller_header_proxy_outcome_and_cache_mark_reach_the_verdict_and_the_journal(tmp_path) -> None:
+    script = HttpScript((200, json.dumps(ANSWER), {"x-jev-proxy": "miss"}))
+    path = tmp_path / "journal.log"
+
+    @do
+    def flow():
+        asked = yield judge("a", {"n": noul("is"), "c": choice("w", ["a", "b"])})
+        remembered = yield judge("a", {"n": noul("is"), "c": choice("w", ["a", "b"])})   # 手元の cache
+        return asked, remembered
+
+    asked, remembered = _run(flow(), DIRECT, script, journal=str(path), caller="rulebook-advisor/Stop")
+    assert script.requests[0].headers["x-jev-caller"] == "rulebook-advisor/Stop"
+    assert len(script.requests) == 1
+    assert (asked.proxy, asked.cached) == ("miss", False)
+    assert (remembered.proxy, remembered.cached) == (None, True)
+    assert remembered.input_tokens == asked.input_tokens  # 問うた時の値のまま — 数える側が cached を除く
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [(line["caller"], line["keys"], line.get("proxy"), line["cached"]) for line in lines] == [
+        ("rulebook-advisor/Stop", ["n", "c"], "miss", False),
+        ("rulebook-advisor/Stop", ["n", "c"], None, True),
+    ]
+
+
+def test_failure_rows_carry_the_caller_and_the_question_keys(tmp_path) -> None:
+    script = HttpScript((502, "bad gateway", {"x-jev-proxy": "upstream-error"}))
+    path = tmp_path / "journal.log"
+
+    @do
+    def flow():
+        return (yield Try(judge("s", {"n": noul("is")}, cacheable=False)))
+
+    outcome = _run(flow(), DIRECT, script, journal=str(path), caller="agora-messaging/land-classification")
+    assert isinstance(outcome, Err)
+    (line,) = [json.loads(line) for line in path.read_text().splitlines()]
+    assert (line["ok"], line["caller"], line["keys"], line["status"], line["proxy"]) == (
+        False, "agora-messaging/land-classification", ["n"], 502, "upstream-error")
+
+
+def test_without_a_journal_the_row_reaches_the_outer_slog_sink_with_caller_and_keys(capsys) -> None:
+    script = HttpScript((200, json.dumps(ANSWER), {"x-jev-proxy": "hit"}))
+
+    @do
+    def flow():
+        return (yield judge("s", {"n": noul("is"), "c": choice("w", ["a", "b"])}, cacheable=False))
+
+    layers = judge_stack(DIRECT, http=script.handler(), cache=in_memory_cache_handler(), journal=None,
+                         caller="land-notice/notice_lead", log_stderr=True)
+    verdict = run_judgment(flow(), target=DIRECT, layers=layers)
+    assert verdict.proxy == "hit"
+    (line,) = [line for line in capsys.readouterr().err.splitlines() if "jev_judge" in line]
+    assert "caller=land-notice/notice_lead" in line
+    assert "keys=['n', 'c']" in line
+    assert "proxy=hit" in line
+
+
+def test_answers_cached_before_the_marks_existed_still_read() -> None:
+    # 前の版の答え(欄 proxy・cached の無い Verdict の pickle)は、欄の既定値で読める。
+    old = Verdict.__new__(Verdict)
+    old.__dict__.update({"answers": {}, "model": "jev-1.13.0", "input_tokens": 3, "elapsed_ms": 4})
+    restored = pickle.loads(pickle.dumps(old))
+    assert (restored.model, restored.proxy, restored.cached) == ("jev-1.13.0", None, False)

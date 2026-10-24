@@ -40,6 +40,8 @@ def judge_stack(
     """本番の handler の列(外側が先)。`http` / `cache` を差し替えるとテストや別の実体になる。
 
     journal=None で記録なし。cache=None で in-memory(process 内だけ)。
+    caller = 呼び手の名(`<部品>/<出来事か規則>` の形 — 例 `rulebook-advisor/Stop`)。見出し x-jev-caller で宛先へ送り、
+    jev_judge の行に載せる。
     """
     sink = slog_handler if log_stderr else slog_discard_handler
     # 効果は内側から外へ流れる: jev の slog("jev_judge") は journal(内)が消費し、
@@ -49,8 +51,8 @@ def judge_stack(
         layers.append(journal_handler(os.path.expanduser(journal), caller=caller))
     layers.append(http if http is not None else http_production_handler())
     layers.append(cache if cache is not None else in_memory_cache_handler())
-    layers.append(jev_handler(target))
-    layers.append(jev_memo_handler(target))
+    layers.append(jev_handler(target, caller=caller))
+    layers.append(jev_memo_handler(target, caller=caller))
     return layers
 
 

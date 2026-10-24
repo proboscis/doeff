@@ -114,12 +114,20 @@ class Answer:
 
 @dataclass(frozen=True)
 class Verdict:
-    """1 回の判定の結果(問いの名前 → 答え)と、provider が名乗った model・費用・所要。"""
+    """1 回の判定の結果(問いの名前 → 答え)と、provider が名乗った model・費用・所要。
+
+    proxy: 答えを返した中継(jev-proxy)が名乗った答えの出所(hit / miss / coalesced / refreshed — 中継の語のまま)。
+      中継を通らない宛先・名乗らない宛先・宛先を呼ばなかった判定は None。
+    cached: 手元の答えの cache が答えた(宛先を呼んでいない)。input_tokens・elapsed_ms は答えを問うた時の値のままなので、
+      費用と待ち時間を数える読み手は cached の答えを除く。
+    """
 
     answers: Mapping[str, Answer]
     model: str = ""
     input_tokens: int = 0
     elapsed_ms: int = 0
+    proxy: str | None = None
+    cached: bool = False
 
     def answer(self, name: str) -> Answer | None:
         return self.answers.get(name)
