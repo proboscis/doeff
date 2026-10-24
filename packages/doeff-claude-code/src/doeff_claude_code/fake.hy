@@ -74,6 +74,8 @@
 (val REFUSAL-RESULT-SUBTYPE "success")
 ;; model の安全装置の断りの行の最上位の error(CLI の code — 断りの行を error invalid_request の API の誤りの行として作る)。
 (val MODEL-REFUSAL-ERROR "invalid_request")
+;; 500 以上の status の API の誤りの行の最上位の error(CLI の code — 混雑 529 ほかの誤りの行を error server_error の行として作る)。
+(val API-ERROR-SERVER "server_error")
 
 
 (defrecord StopHookRejection
@@ -100,7 +102,9 @@
    付け方)。最後の結果の後は 1 回の手番と同じく本文か筋書きの終わりへ進む。上の層が模擬で、同じ命令を何度も走らせる長い手番(sleep 110 を
    10 回 — card ki-85761baedba4)を数える事を確かめるため。2 以上は道具を走らせる手番(tool-seconds が正)だけで、許可の問い
    (needs-permission)と subagent(subagent-transcript)とは組まない(どちらも最初の呼びだけの筋書き)・
-   needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
+   needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・fail-api-status = fail の手番を
+   API の誤りの答えの形で終える HTTP status(本物の CLI と同じ誤りの行と api_error_status つきの result の行を出し、Failed の
+   api-error-status に載せる — 混雑 529 で終わる手番を上の層が見分ける事を模擬で確かめるため・api-error-turn。None = 今の形)・lose = 期限で process が消えて
    BackendLost(detail = この文)で終わる(fail・lose・account-refusal・model-refusal は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
    cost-usd = Completed / Failed に載せる手番の額(USD — 本番の handler が累積の額の差から数える値の代わり。None = 名乗らない)・
    lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番 — 道具を続けて
@@ -173,6 +177,8 @@
   (setv #^ bool needs-permission False)
   (setv #^ (| str None) fail None)
   (setv #^ (| str None) lose None)
+  ;; fail の手番を API の誤りの答えの形(誤りの行と api_error_status つきの result の行)で終える時の HTTP status(None = 今の形)。
+  (setv #^ (| int None) fail-api-status None)
   ;; lose の手番で消える process の終了 code と stderr(名乗らない = None)。
   (setv #^ (| int None) lose-exit-code None)
   (setv #^ (| str None) lose-stderr None)
@@ -224,6 +230,8 @@
                                   self.thinking-deltas self.tool-input-deltas))))
     (when (> (len (lfor end #(self.fail self.lose self.account-refusal self.model-refusal) :if (is-not end None) end)) 1)
       (raise (ValueError "FakeReply の fail・lose・account-refusal・model-refusal は多くとも 1 つ")))
+    (when (and (is self.fail None) (is-not self.fail-api-status None))
+      (raise (ValueError "FakeReply の fail-api-status は fail の手番だけ(API の誤りで終わる手番の status)")))
     (when (and (is self.lose None) (or (is-not self.lose-exit-code None) (is-not self.lose-stderr None)))
       (raise (ValueError "FakeReply の lose-exit-code・lose-stderr は lose の手番だけ(消える process の終わりの欄)")))
     (when (and (is-not self.subagent-transcript None) (<= self.tool-seconds 0))
@@ -607,6 +615,23 @@
                                    :input-refs (tuple turn.refs))))
   None)
 
+(defk api-error-turn [#^ FakeSession session #^ FakeTurn turn #^ str text #^ int status]
+  {:pre [(: session FakeSession) (: turn FakeTurn) (: text str) (: status int)] :post [(: % (type None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "API の誤りで終わる筋書きの手番(返事の fail と fail-api-status)を、本物の CLI と同じ行を出して Failed で終えるため: 本体の assistant の
+   行(model SYNTHETIC-MODEL・error API-ERROR-SERVER・誤りの文)→ result の行(subtype REFUSAL-RESULT-SUBTYPE・is_error true・本文 = 誤りの
+   文・api_error_status = status)。本物の CLI は 500 以上の status の誤りを「API Error: <status> <訳>. This is a server-side issue, …」の
+   文と error server_error の行にする(実測 CLI 2.1.292 の code — 本番 2026-10-24 09:26 JST の 529 Overloaded)。失敗の文は result の本文。"
+  (val reply turn.reply)
+  (<- (emit-limit session turn))
+  (<- (emit-all session turn [(AssistantMessage :text text :error API-ERROR-SERVER :model SYNTHETIC-MODEL :usage SYNTHETIC-USAGE)
+                              (TurnResult REFUSAL-RESULT-SUBTYPE True :result-text text :api-error-status status :usage reply.usage)]))
+  (<- (finish session turn (Failed (or (.strip text) REFUSAL-RESULT-SUBTYPE) :api-error-status status :usage reply.usage
+                                   :cost-usd reply.cost-usd :model-usage reply.model-usage
+                                   :model-usage-gap (! (model-cost-gap reply.model-usage reply.cost-usd))
+                                   :input-refs (tuple turn.refs))))
+  None)
+
 (defk end-scripted [#^ FakeSession session #^ FakeTurn turn]
   {:pre [(: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
   "筋書きが失敗・口座の側の断り・process の消失で終わる手番の終わり(注入は読まない)。process の消失の終わりには、台本が名乗った
@@ -617,6 +642,8 @@
       (<- (refuse-turn session turn reply.account-refusal))
     (is-not reply.model-refusal None)
       (<- (model-refuse-turn session turn reply.model-refusal))
+    (and (is-not reply.fail None) (is-not reply.fail-api-status None))
+      (<- (api-error-turn session turn reply.fail reply.fail-api-status))
     (is-not reply.fail None)
       (do
         (<- (emit-limit session turn))
