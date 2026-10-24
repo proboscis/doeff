@@ -1652,15 +1652,18 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
         if name in seen:
             continue
         seen.add(name)
-        function = vars(macro_use)[name]
-        assert function.__module__ == macro_use.__name__, (
-            f"code の読みが呼ぶ {name} が {function.__module__} に在る — _own_digest がその file を覆わない"
+        value = vars(macro_use)[name]
+        assert value.__module__ == macro_use.__name__, (
+            f"code の読みが呼ぶ {name} が {value.__module__} に在る — _own_digest がその file を覆わない"
         )
-        pending.extend(
-            called
-            for called in names(function.__code__)
-            if isinstance(vars(macro_use).get(called), FunctionType)
-        )
+        # class(``_Instructions``)は method の code を読む。
+        functions = [v for v in vars(value).values() if isinstance(v, FunctionType)] if isinstance(value, type) else [value]
+        for function in functions:
+            pending.extend(
+                called
+                for called in names(function.__code__)
+                if isinstance(vars(macro_use).get(called), (FunctionType, type))
+            )
     assert {"_code_facts", "_constant_text", "_called_modules", "_reference_module", "_mangle"} <= seen, seen
 
 
