@@ -82,8 +82,8 @@
    "CREATE INDEX IF NOT EXISTS records_append_rows_head_d08f88df745f ON records_append_rows (ledger, split_part(((payload::jsonb) ->> 'idempotencyKey'), '#', 1), seq)"
    "CREATE INDEX IF NOT EXISTS records_row_changes_at ON records_row_changes (at)"
    "CREATE INDEX IF NOT EXISTS records_fx_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END))"
-   "CREATE INDEX IF NOT EXISTS records_ox_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"
-   "CREATE INDEX IF NOT EXISTS records_ow_0b920c6b8d1d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC)"
+   "CREATE INDEX IF NOT EXISTS records_op_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) IS NOT NULL"
+   "CREATE INDEX IF NOT EXISTS records_wp_0b920c6b8d1d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
    "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"
    "CREATE INDEX IF NOT EXISTS records_write_keys_remembered ON records_write_keys (remembered_at)"])
@@ -128,14 +128,16 @@
 
 
 (deftest test-the-table-shaped-index-names-are-the-three-forms-the-declaration-makes
-  ;; 宣言から外した表ごとの索引を外す(pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 fx_・上から読む欄 ox_・等号の欄 ×
-  ;; 上から読む欄の組 ow_)だけ。索引の用意はこの形で今の宣言に無い物を外すので、宣言の置き場の形の索引(append_rows_・row_changes_・
+  ;; 宣言から外した表ごとの索引を外す(pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 fx_・上から読む欄 op_・等号の欄 ×
+  ;; 上から読む欄の組 wp_)と、上から読む索引の前の形(ox_・ow_)だけ。索引の用意はこの形で今の宣言に無い物を外すので、宣言の置き場の形の索引(append_rows_・row_changes_・
   ;; state_rows_key_c など)と手の索引と旧い形の名に当たると、宣言の外の索引を外してしまう。
   (<- field (table-field-index-name "records_" "parts" "role"))
   (<- ordered (ordered-index-name "records_" "parts" "role"))
   (<- within (ordered-within-index-name "records_" "parts" "color" "role"))
-  ;; 2026-10-23 の本番の置き場の使われない表ごとの索引の名の写しも当たる。
-  (for [name [field ordered within "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"]]
+  ;; 2026-10-23 の本番の置き場の使われない表ごとの索引の名の写しと、上から読む索引の前の形(全部の行の索引 ox_・ow_ — 今の宣言は作らない
+  ;; ので、索引の用意が外す)の名の写しも当たる。
+  (for [name [field ordered within "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"
+              "records_ox_27e90dfa57c3_6f9b9af3cd6e" "records_ow_bd51f9a00add_6f9b9af3cd6e"]]
     (<- hit (table-shaped-index? "records_" name))
     (assert hit name))
   (<- legacy (index-name "records_" "role"))
