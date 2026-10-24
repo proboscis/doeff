@@ -123,6 +123,11 @@
     (.write-text (/ limited "memory.max") "64M")
     (:= beat (subprocess.Popen (list (! (placed-argv (str (/ guarded "cgroup.procs"))
                                                        #("sh" "-c" (.format "while :; do date +%s.%N >> {}; sleep 0.05; done" beats)))))))
+    ;; ポーリングの訳: 拍の子(sh の loop)は始まりの知らせを持たないので、最初の拍が file に出るまで(5 秒まで)読んでから限る子を始める。読まずに始めると、64M は
+    ;; 0.13 秒で満ち、最初の拍より先に限る子が止まる(10-24 11:39 JST の本番の zeus の worker)。
+    (val first-beat (+ (time.monotonic) 5))
+    (while (and (not (and (.exists beats) (.strip (.read-text beats)))) (< (time.monotonic) first-beat))
+      (time.sleep 0.01))
     (val started (time.time))
     (val hog (subprocess.run (list (! (placed-argv (str (/ limited "cgroup.procs")) #("sh" "-c" "head -c 4G /dev/zero | tail > /dev/null"))))
                              :timeout 120 :capture-output True :text True))
@@ -138,9 +143,16 @@
     (assert (and stamps (< (get stamps 0) started) (> (get stamps -1) ended)) #(started ended (cut stamps 0 3) (cut stamps -3 None)))
     (assert (< (max gaps) 1.0) (max gaps))
     (finally
+      ;; 拍の子の sh を止めても、その子の date・sleep が cgroup に残り、rmdir が EBUSY になる(10-24 11:39 JST)。組の cgroup.kill で子孫を
+      ;; 全部止め、cgroup.events が populated 0 になるまで(5 秒まで)読んでから消す。ポーリングの訳: 子孫の退きの知らせは inotify の
+      ;; cgroup.events の変更だけで、検の後片付けの 1 度に読み手を足すほどの物でない。
+      (.write-text (/ group "cgroup.kill") "1")
       (when (is-not beat None)
         (.kill beat)
         (.wait beat))
+      (val emptied (+ (time.monotonic) 5))
+      (while (and (in "populated 1" (.read-text (/ group "cgroup.events"))) (< (time.monotonic) emptied))
+        (time.sleep 0.01))
       (for [child #(guarded limited group)]
         (when (.exists child)
           (.rmdir child)))
