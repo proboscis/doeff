@@ -6,7 +6,7 @@
 ;;   PutRows: 束の中に当たる表が 1 つでもあれば束ごと(lands なら束ごと着く)
 ;;   外す: 名が重なる故障だけ / None で全部。置き場全体の不達(SetStoreOutage)が故障より先に答える
 (require doeff-hy.macros [deftest defk <- val on-raise])
-(import doeff [run with_handlers])
+(import doeff [Perform run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
@@ -42,10 +42,11 @@
 
 (defk writes []
   {:pre [] :post [(: % tuple)]}
-  "書きの 3 つ(parts の PutRow・PutRows と journal の AppendEvent)の答え。"
+  "書きの 3 つ(parts の PutRow・PutRows と journal の AppendEvent)の答え。AppendEvent は失敗(Refused・Unreachable)を <- が Raise にするので、
+   handler が値で答える事(R4)を見るために宣言を開かずに(Perform)値のまま受ける。"
   (<- put (PutRow "parts" #("p1") (part "p1") (ExpectAbsent)))
   (<- rows (PutRows #((RowWrite "parts" #("p2") (part "p2") (ExpectAbsent)))))
-  (<- appended (AppendEvent "journal" "k1" {"n" 1}))
+  (<- appended (Perform (AppendEvent "journal" "k1" {"n" 1})))
   #(put rows appended))
 
 
