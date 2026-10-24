@@ -29,6 +29,7 @@ class MemoryLimits:
     tight_available: float = 0.2
     tight_full_avg10: float = 10.0
     min_victim_bytes: int = ...
+    steady_ratio: float = 1.5
 
     def __post_init__(self) -> None:
         ...
@@ -70,6 +71,20 @@ class KillUnit:
     head: ProcRow
     bytes: int
     members: tuple[ProcRow, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class JobSteady:
+    job: str
+    bytes: int
+
+def steady_sizes(windows: tuple) -> _Program[tuple, object]:
+    ...
+
+def hyx_beyond_steadyXquestion_markX(unit: KillUnit, uses: tuple, steadies: tuple, limits: MemoryLimits) -> _Program[bool, object]:
+    ...
+
+def spared_steady(units: tuple, uses: tuple, steadies: tuple, limits: MemoryLimits) -> _Program[tuple, object]:
+    ...
 
 def mib_of(size: int) -> _Program[int, object]:
     ...
@@ -136,5 +151,5 @@ def units_of_job(tree: ProcTree, root_row: ProcRow, root: JobRoot) -> _Program[t
 def kill_units(rows: tuple, roots: tuple) -> _Program[tuple, object]:
     ...
 
-def victim_of(units: tuple, limits: MemoryLimits) -> _Program[KillUnit | None, object]:
+def victim_of(units: tuple, uses: tuple, steadies: tuple, limits: MemoryLimits) -> _Program[KillUnit | None, object]:
     ...

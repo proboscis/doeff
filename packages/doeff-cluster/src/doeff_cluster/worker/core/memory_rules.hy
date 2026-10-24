@@ -13,6 +13,11 @@
 ;;;               process だけ(子が在れば BODY — job の本体・子が無ければ LEAF — 食った道具そのもの)。
 ;;; 止める順(victim-of): BRANCH・LEAF・TASK のいちばん大きい物が先(job の本体を止めると、その job の子が全部止まる)。それが
 ;;; min-victim-bytes 未満の時だけ BODY のいちばん大きい物。
+;;; 止める候補(card ki-649b1b2f5838): task の単位は全部。常駐の job の単位は、その job の今の memory が平常の大きさ(JobSteady — 前の
+;;; 最大の行の間ごとの最大のいちばん大きい物)の steady-ratio 倍以上の時か、平常の大きさがまだ無い時だけ。平常の大きさで動く常駐の
+;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
+;;; だけだから(10-24 atlas で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
+;;; 後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
@@ -43,16 +48,18 @@
   "見張りの閾: danger-available = 空き(MemAvailable)/ 総量 がこれ未満なら DANGER・danger-pressured-available と danger-full-avg10 =
    空き / 総量 がこれ未満で、memory の PSI の full avg10(%)がこれ以上でも DANGER(reclaim で全 process が止まり始めた)・
    tight-available と tight-full-avg10 = どちらかを越えたら TIGHT・min-victim-bytes = これより小さい単位は止めない(食った物が job の外の
-   時に、小さい job を次々に止めない)。既定の値の根拠: atlas の 3 回は空き 1.5〜2.5 GiB / 28.3 GiB(5〜9%)・zeus は 7 GB / 125 GiB(5.6%)
+   時に、小さい job を次々に止めない)・steady-ratio = 常駐の job の今の memory が平常の大きさのこの倍以上の時だけ、その job の単位を
+   止める候補にする(頭の註)。既定の値の根拠: atlas の 3 回は空き 1.5〜2.5 GiB / 28.3 GiB(5〜9%)・zeus は 7 GB / 125 GiB(5.6%)
    で止まり、ふだんの最低は atlas 6.2 GiB(22%)・zeus 52 GiB(41%)。"
   {:check [(< 0 danger-available danger-pressured-available 1) (< 0 danger-available tight-available 1) (> danger-full-avg10 0)
-           (> tight-full-avg10 0) (>= min-victim-bytes 0)]}
+           (> tight-full-avg10 0) (>= min-victim-bytes 0) (> steady-ratio 1)]}
   (setv #^ float danger-available 0.10)
   (setv #^ float danger-pressured-available 0.20)
   (setv #^ float danger-full-avg10 25.0)
   (setv #^ float tight-available 0.20)
   (setv #^ float tight-full-avg10 10.0)
-  (setv #^ int min-victim-bytes (* 512 MIB)))
+  (setv #^ int min-victim-bytes (* 512 MIB))
+  (setv #^ float steady-ratio 1.5))
 
 
 (defrecord NodeMemory
@@ -99,6 +106,49 @@
   (#^ ProcRow head)
   (#^ int bytes)
   (#^ (get tuple #(ProcRow ...)) members))
+
+
+(defrecord JobSteady
+  "job 1 つ(名ごと)の平常の大きさ: job = job の名・bytes = 前の最大の行の間ごとの job の memory の最大のいちばん大きい物(見張りが
+   止めた間の最大は入れない — 跳ねた大きさを平常にしない)。"
+  (#^ str job)
+  (#^ int bytes))
+
+
+(defk steady-sizes [windows]
+  {:pre [(: windows tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "前の最大の行の間ごとの job の最大(windows = 間ごとの JobSteady の列の列)を、job の名ごとの平常の大きさ(いちばん大きい物 — 名の
+   昇順)にするため。"
+  (val names (sorted (sfor window windows steady window steady.job)))
+  (tuple (gfor name names
+               (JobSteady :job name :bytes (max (gfor window windows steady window :if (= steady.job name) steady.bytes))))))
+
+
+(defk beyond-steady? [unit uses steadies limits]
+  {:pre [(: unit KillUnit) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % bool)]
+   :tags {:context "worker" :role "judgment"}}
+  "単位が止める候補かを判じるため(頭の註): TASK は候補。常駐の job の単位は、その job の今の memory(uses の同じ名の和)が平常の大きさ
+   (steadies の同じ名)の steady-ratio 倍以上か、平常の大きさがまだ無い時に候補。"
+  (when (= unit.kind UnitKind.TASK)
+    (return True))
+  (val steady (next (gfor s steadies :if (= s.job unit.job) s) None))
+  (when (is steady None)
+    (return True))
+  (val now (sum (gfor use uses :if (= use.job unit.job) use.bytes)))
+  (>= now (* limits.steady-ratio steady.bytes)))
+
+
+(defk spared-steady [units uses steadies limits]
+  {:pre [(: units tuple) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "min-victim-bytes 以上の単位を持つのに、平常の大きさで動くので止める候補にしなかった job の平常の大きさ(JobSteady — 名の昇順)を
+   並べるため(止める単位が無い時の log に、止めなかった job を名指す)。"
+  (var names (frozenset))
+  (for [unit units]
+    (<- candidate bool (beyond-steady? unit uses steadies limits))
+    (when (and (not candidate) (>= unit.bytes limits.min-victim-bytes))
+      (:= names (| names #{unit.job}))))
+  (tuple (gfor s steadies :if (in s.job names) s)))
 
 
 (defk mib-of [size]
@@ -305,12 +355,19 @@
   (tuple (sorted units :key (fn [unit] #((- unit.bytes) unit.job unit.head.pid)))))
 
 
-(defk victim-of [units limits]
-  {:pre [(: units tuple) (: limits MemoryLimits)] :post [(: % (| KillUnit None))] :tags {:context "worker" :role "judgment"}}
-  "DANGER の時に止める単位を選ぶため(頭の註の順): BRANCH・LEAF・TASK のいちばん大きい物、それが min-victim-bytes 未満なら BODY の
-   いちばん大きい物。どれも未満なら止めない(None — 食った物は job の外)。units は大きい順。"
-  (val leaves (tuple (gfor u units :if (and (!= u.kind UnitKind.BODY) (>= u.bytes limits.min-victim-bytes)) u)))
-  (val bodies (tuple (gfor u units :if (and (= u.kind UnitKind.BODY) (>= u.bytes limits.min-victim-bytes)) u)))
+(defk victim-of [units uses steadies limits]
+  {:pre [(: units tuple) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % (| KillUnit None))]
+   :tags {:context "worker" :role "judgment"}}
+  "DANGER の時に止める単位を選ぶため(頭の註の順): 止める候補(beyond-steady? — uses = job ごとの今の memory・steadies = job ごとの平常の
+   大きさ)の中で、BRANCH・LEAF・TASK のいちばん大きい物、それが min-victim-bytes 未満なら BODY のいちばん大きい物。どれも無ければ止めない
+   (None — 食った物は job の外か、平常の大きさで動く常駐の job だけ)。units は大きい順。"
+  (var candidates #())
+  (for [unit units]
+    (<- candidate bool (beyond-steady? unit uses steadies limits))
+    (when (and candidate (>= unit.bytes limits.min-victim-bytes))
+      (:= candidates (+ candidates #(unit)))))
+  (val leaves (tuple (gfor u candidates :if (!= u.kind UnitKind.BODY) u)))
+  (val bodies (tuple (gfor u candidates :if (= u.kind UnitKind.BODY) u)))
   (cond leaves (get leaves 0)
         bodies (get bodies 0)
         True None))
