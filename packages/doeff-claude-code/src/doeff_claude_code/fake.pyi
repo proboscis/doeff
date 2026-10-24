@@ -135,6 +135,7 @@ SYNTHETIC_MODEL: str
 SYNTHETIC_USAGE: Usage
 REFUSAL_RESULT_SUBTYPE: str
 MODEL_REFUSAL_ERROR: str
+API_ERROR_SERVER: str
 
 @dataclass(frozen=True, kw_only=True)
 class StopHookRejection:
@@ -153,6 +154,7 @@ class FakeReply:
     needs_permission: bool = False
     fail: str | None = None
     lose: str | None = None
+    fail_api_status: int | None = None
     lose_exit_code: int | None = None
     lose_stderr: str | None = None
     usage: Usage = ...
@@ -309,6 +311,9 @@ def refuse_turn(session: FakeSession, turn: FakeTurn, refusal: AccountRefusalHit
     ...
 
 def model_refuse_turn(session: FakeSession, turn: FakeTurn, refusal: ModelRefusalHit) -> _Program[None, object]:
+    ...
+
+def api_error_turn(session: FakeSession, turn: FakeTurn, text: str, status: int) -> _Program[None, object]:
     ...
 
 def end_scripted(session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
