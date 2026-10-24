@@ -34,6 +34,10 @@
 ;;;                                      口座の側が要求を断った事実・本番 2026-10-08 22:32 の口座 cryptic-2 の oauth_org_not_allowed)
 ;;;   Completed / Failed の model-refusal(ModelRefusalHit)→ AgentTurnCompleted / AgentTurnFailed.model_refusal(AgentModelRefusal —
 ;;;                                      model の安全装置が要求を断った事実・本番 2026-10-20 の Fable 5.1 の reasoning_extraction)
+;;;   Failed の api-error-status 529(API の混雑 — 本番 2026-10-24 09:26 JST の「API Error: 529 Overloaded. This is a server-side issue,
+;;;                                      usually temporary — try again in a moment.」)→ AgentTurnFailed.provider_capacity(AgentProviderCapacity —
+;;;                                      model = 会話の宣言の model・text = CLI の文)。待つ秒と試し直す回数は上の層が持ち、ここは見分けて
+;;;                                      運ぶだけ(provider-capacity-of・agora card ki-0f5382d587a0)
 ;;;   Failed / BackendLost の exit-code・stderr-tail → AgentTurnFailed / AgentTurnLost.exit_code・stderr_tail(手番の途中で降りた CLI の
 ;;;                                      process の終了 code と stderr の末尾・agora-redesign #4207)
 ;;;   LaunchFailed の exit-code・stderr-tail → AgentLaunchError.exit_code・stderr_tail(stderr の末尾は層 2 と同じ上限 stderr-tail-within)。
@@ -101,7 +105,7 @@
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent CompactionTrigger
   AgentCompactionEndedEvent CompactionOutcome AgentHookEvent AgentCallUsageEvent AgentSubagentCallUsageEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
-  AgentAccountRefusal AgentModelRefusal
+  AgentAccountRefusal AgentModelRefusal AgentProviderCapacity
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError
@@ -368,9 +372,25 @@
    (ModelRefusalHit か None)を層 3 の AgentModelRefusal へ写すため(欄はそのまま写す)。"
   (if (is hit None) None (AgentModelRefusal :category hit.category :model hit.model :text hit.text)))
 
-(defn end-of [end #^ str context-id]
+;; API の誤りの HTTP status のうち、API の提供側が混んで要求を断った事を名乗る status(Anthropic の API の overloaded_error — CLI は
+;; 自分の試し直しを使い切った後に「API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.」の
+;; 文と result の行の api_error_status 529 で手番を失敗で終える・実測 CLI 2.1.292 の code・本番 2026-10-24 09:26〜09:30 JST に 8 本)。
+(val API-STATUS-OVERLOADED 529)
+
+(defk provider-capacity-of [end model]
+  {:pre [(: end Failed) (: model (| str None))] :post [(: % (| AgentProviderCapacity None))]
+   :tags {:context "headless-adapter" :role "judgment"}}
+  "純粋: 上の層が少し後に同じ会話で試し直せるように、CLI が API の混雑(api-error-status が API-STATUS-OVERLOADED)で終えた失敗を
+   AgentProviderCapacity にするため(混雑でない失敗は None)。文は CLI の失敗の文そのまま、model は会話の宣言の model(None なら None)。
+   口座の限度・口座の断り・model の安全装置の断りの失敗は、混雑より先にそれぞれの事実で運ぶので混雑と言わない。"
+  (if (and (= end.api-error-status API-STATUS-OVERLOADED)
+           (is end.account-limit None) (is end.account-refusal None) (is end.model-refusal None))
+      (AgentProviderCapacity :model model :text end.detail)
+      None))
+
+(defn end-of [end #^ str context-id #^ (| str None) [model None]]
   "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。どの終わりも本体の最後の呼びの usage と model・
-   model ごとの窓を運ぶ(#3744)。"
+   model ごとの窓を運ぶ(#3744)。model = 会話の宣言の model(API の混雑の失敗の事実が名乗る — provider-capacity-of)。"
   (when (not (isinstance end #(Completed Failed Interrupted BackendLost)))
     (raise (TypeError (.format "層 2 の手番の終わりが閉語彙の外: {!r}" end))))
   (setv last-call-usage (last-call-of end.last-call-usage)
@@ -393,6 +413,7 @@
                        :account-limit (account-limit-of end.account-limit)
                        :account-refusal (run (account-refusal-of end.account-refusal))
                        :model-refusal (run (model-refusal-of end.model-refusal))
+                       :provider-capacity (run (provider-capacity-of end model))
                        :exit-code end.exit-code :stderr-tail end.stderr-tail)
     (isinstance end Interrupted)
       ;; 止めた手番を閉じた result の行が在れば、止めるまでの消費も運ぶ(層 2 が持たない止めは None のまま — card ki-47e64b7b642f)。
@@ -526,7 +547,7 @@
    ほかは待たせた入力の手番を始める。時刻を読んで戻った後に、別の task が同じ手番を既に閉じていれば何もしない。"
   (<- at (GetTime))
   (when (!= session.turn turn) (return None))
-  (setv mapped (end-of end session.context-id))
+  (setv mapped (end-of end session.context-id session.spec.model))
   (.append session.events (AgentTurnEndEvent :seq (len session.events) :at at :end mapped))
   (setv session.last-end mapped)
   (if (and (isinstance end Interrupted) (is-not end.continued-by None) (not session.stopped))

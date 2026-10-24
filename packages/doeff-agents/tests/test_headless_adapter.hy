@@ -123,13 +123,19 @@
 ;; 口座の側の断りで答えない手番の CLI の文(本番 2026-10-08 22:32 の口座 cryptic-2)。
 (val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
                      "or ask your admin to enable access"))
+;; API の混雑で CLI が手番を失敗で終える文(本番 2026-10-24 09:26 JST の aj-D6Z2YWEWTCTT0TX4NNWZ6238RB の failure_detail)。
+(val OVERLOADED-TEXT "API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.")
 
 (defn fake-responder [#^ str text #^ tuple memory]
   "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。
    fake にだけ在る規則: 「Fail after spending <額>」= 額を使った後に誤りで終える手番(失敗の手番の額の写しを見る検のため)/
-   「Refuse as the account with <語>」= CLI が口座の側の断り(error = <語>)で答えずに終える手番(断りの写しを見る検のため)。"
+   「Refuse as the account with <語>」= CLI が口座の側の断り(error = <語>)で答えずに終える手番(断りの写しを見る検のため)/
+   「Fail with API status <数>」= CLI が API の誤りの答え(api_error_status = <数>・文 OVERLOADED-TEXT)で終える手番(混雑の写しを見る検のため)。"
   (setv spent (re.search r"Fail after spending (\S+)" text)
-        refused (re.search r"Refuse as the account with (\S+)" text))
+        refused (re.search r"Refuse as the account with (\S+)" text)
+        api-failed (re.search r"Fail with API status (\d+)" text))
+  (when api-failed
+    (return (FakeReply "" :fail OVERLOADED-TEXT :fail-api-status (int (.group api-failed 1)))))
   (when spent
     (return (FakeReply "" :tool-seconds 2.0 :fail "spent then failed" :cost-usd (float (.group spent 1)))))
   (when refused
@@ -310,6 +316,15 @@
   "CLI が口座の側の断り(oauth_org_not_allowed)で答えずに終える手番を 1 つ最後まで読む(断りが層 3 の終わりまで届くかを見るため —
    fake の規則)。"
   (<- handle (launch s "adapter-refused" "Refuse as the account with oauth_org_not_allowed" None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk turn-the-api-overloads [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "foundation"}}
+  "CLI が API の混雑(api_error_status 529)で答えずに終える手番を 1 つ最後まで読む(混雑の事実が層 3 の終わりまで届くかを見るため —
+   fake の規則)。"
+  (<- handle (launch s "adapter-overloaded" "Fail with API status 529" None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -2232,6 +2247,37 @@
   (val calm (end-of (Completed :result-text "ok") "ctx-1"))
   (assert (and (isinstance calm AgentTurnCompleted) (is calm.model-refusal None)) calm))
 
+
+
+(deftest test-a-turn-the-api-overloads-carries-the-provider-capacity-on-its-end
+  ;; agora card ki-0f5382d587a0: CLI が API の混雑(api_error_status 529 — 「API Error: 529 Overloaded. …」)で失敗で終えた手番を、層 3 の
+  ;; AgentTurnFailed.provider_capacity(AgentProviderCapacity — 会話の宣言の model・CLI の文)へ写す。ほかの status の失敗・status の無い
+  ;; 失敗・口座の限度の失敗(429)は混雑と言わない。失敗ケース(前の形): 欄は codex の終わりだけが持ち、claude の 529 は上の層(turn-host)が
+  ;; 一時の混雑と知れずに cli-failed で落とした(本番 2026-10-24 09:26〜09:30 JST に 8 本)。
+  (import doeff_claude_code.lines [AccountLimitHit Failed])
+  (import doeff_agents.handlers.headless [end-of])
+  (import doeff_agents.effects.agent [AgentProviderCapacity AgentTurnFailed])
+  (val busy (end-of (Failed :detail OVERLOADED-TEXT :api-error-status 529) "ctx-1" "claude-opus-5-5"))
+  (assert (isinstance busy AgentTurnFailed) busy)
+  (assert (= busy.provider-capacity (AgentProviderCapacity :model "claude-opus-5-5" :text OVERLOADED-TEXT)) busy)
+  (assert (is (. (end-of (Failed :detail OVERLOADED-TEXT :api-error-status 529) "ctx-1") provider-capacity model) None))
+  (for [other #((Failed :detail "API Error: 500 Internal server error." :api-error-status 500)
+                (Failed :detail "boom")
+                (Failed :detail "You've hit your session limit" :api-error-status 529
+                        :account-limit (AccountLimitHit :window "five_hour" :text "You've hit your session limit")))]
+    (assert (is (. (end-of other "ctx-1" "claude-opus-5-5") provider-capacity) None) other)))
+
+
+(deftest test-headless-overloaded-turn-carries-the-provider-capacity-fake [tmp-path]
+  ;; 偽の CLI が API の混雑(誤りの行と api_error_status 529 の result の行)で終えた手番は、headless の handler を通って層 3 の
+  ;; AgentTurnFailed.provider_capacity に届く(偽の CLI の行 → 層 2 の終わり → 層 3 の終わりの全部の道)。model は会話の宣言の model。
+  (import doeff_agents.effects.agent [AgentProviderCapacity])
+  (val done (run-on FAKE tmp-path turn-the-api-overloads))
+  (assert (isinstance done.end AgentTurnFailed) (repr done.end))
+  (assert (= done.end.detail OVERLOADED-TEXT) (repr done.end))
+  (assert (= done.end.provider-capacity.text OVERLOADED-TEXT) (repr done.end))
+  (assert (is done.end.account-limit None) (repr done.end))
+  (assert (is done.end.account-refusal None) (repr done.end)))
 
 ;; --- CLI の process の終了 code と stderr の末尾(#4207)--------------------------------------------------------------
 ;; 失敗ケース(前の形): 終了 code と stderr の末尾は層 3 の終わりの文 detail の中にだけ在り、上の層(agora の手番の宿)は文を読み解かないと
