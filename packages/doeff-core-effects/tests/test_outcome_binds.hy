@@ -205,9 +205,11 @@
   (with [spy (mock.patch.object outcomes "_opened" :wraps outcomes._opened)]
     (assert (is (open-bind program) program) "束ねは呼びそのものを yield する")
     (assert (= spy.call-count 0) f"効果を出す defk の呼びは Python の振り分けへ入らない: {spy.call-count}")
+    ;; 変換の宣言の無い effect も、型ごとに覚えた答え(_passes-through)で振り分けへ入らずに同じ物を yield する
+    ;; (card ki-5c3e73834e73)。変換の宣言の在る effect は振り分けへ渡す(test-declared-bind-opens-the-answer)。
     (val effect (PlainRead "a"))
-    (assert (is (open-bind effect) effect) "ほかの物は今までどおり振り分けへ渡し、同じ物を yield する")
-    (assert (= spy.call-count 1) spy.call-count))
+    (assert (is (open-bind effect) effect) "変換の宣言の無い effect の束ねは同じ物を yield する")
+    (assert (= spy.call-count 0) f"変換の宣言の無い effect の束ねは Python の振り分けへ入らない: {spy.call-count}"))
   (<- got (table-rows (read-plain "a")))
   (assert (= got (Row "A")) got))
 

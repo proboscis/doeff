@@ -169,6 +169,53 @@ def test_bind_opener_calls_a_non_yielding_call_in_place_and_hands_the_rest_to_it
     assert [len(args) for args in seen] == [1, 1, 2, 2]
 
 
+def test_bind_opener_hands_back_an_operand_whose_type_passes_through_without_its_fallback() -> None:
+    """A no-``absent`` operand of a type ``passes_through`` answered True is handed back
+    unchanged without the Python dispatch (card ki-5c3e73834e73 — every bind of an effect paid
+    ``_open_bind`` → ``_opened``). The answer is asked once per type and kept while the type is
+    unchanged: changing the class makes the opener ask again. A type answered False, an
+    ``absent``, and an opener without ``passes_through`` still reach the fallback.
+    """
+    seen: list[tuple] = []
+    asked: list[type] = []
+
+    def fallback(*args):
+        seen.append(args)
+        return ("fallback", args)
+
+    class Plain:
+        pass
+
+    class Converting:
+        pass
+
+    def passes_through(kind):
+        asked.append(kind)
+        return kind is Plain and not getattr(kind, "converts", False)
+
+    opener = doeff_vm.BindOpener(fallback, lambda gen: gen, passes_through)
+    plain = Plain()
+    assert opener(plain) is plain
+    assert opener(Plain()) is not None
+    assert seen == []
+    assert asked == [Plain]
+
+    converting = Converting()
+    assert opener(converting) == ("fallback", (converting,))
+    assert opener(converting) == ("fallback", (converting,))
+    assert asked == [Plain, Converting]
+
+    absent = lambda: "why"  # noqa: E731
+    assert opener(plain, absent) == ("fallback", (plain, absent))
+
+    Plain.converts = True
+    assert opener(plain) == ("fallback", (plain,))
+    assert asked == [Plain, Converting, Plain]
+
+    bare = doeff_vm.BindOpener(fallback, lambda gen: gen)
+    assert bare(plain) == ("fallback", (plain,))
+
+
 def test_apply_resolves_doexpr_args() -> None:
     vm = doeff_vm.PyVM()
     adder = doeff_vm.Callable(lambda left, right: left + right)

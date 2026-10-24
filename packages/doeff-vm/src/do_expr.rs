@@ -420,23 +420,101 @@ impl PyCall {
 /// no `absent` wraps it) — the VM runs it when the bind yields it (agora-redesign #2449:
 /// such calls were 13.8k of the 16.3k binds of the custody contract examples that
 /// reached the Python dispatch, each paying `_open_bind` → `_opened` → `_settled` for an
-/// answer that is the operand). Everything else (an `absent`, any other operand) goes to
-/// `fallback(expr[, absent])`, the Python dispatch, unchanged.
+/// answer that is the operand). With no `absent`, an operand of a type for which
+/// `passes_through(type)` answered True — the Python dispatch hands such an operand back
+/// unchanged (an effect without a converting outcome declaration) — is answered here too:
+/// the operand itself. The answer is kept per type while the type is unchanged since
+/// (its version tag), and only when it depends on the type alone (card ki-5c3e73834e73 —
+/// every bind of an effect went through `_open_bind` → `_opened` in Python, about 3% of a
+/// records request's scheduler-thread CPU). Everything else (an `absent`, any other
+/// operand) goes to `fallback(expr[, absent])`, the Python dispatch, unchanged.
 #[pyclass(name = "BindOpener", frozen, module = "doeff_vm.doeff_vm")]
 pub struct PyBindOpener {
     #[pyo3(get)]
     pub fallback: Py<PyAny>,
     #[pyo3(get)]
     pub generator_program: Py<PyAny>,
+    /// `passes_through(type) -> bool`, or None (every non-`Call` operand goes to the fallback).
+    #[pyo3(get)]
+    pub passes_through: Option<Py<PyAny>>,
+    passing: std::sync::Mutex<Vec<Passing>>,
+}
+
+/// One operand type's answer of `passes_through`, valid while the type's version tag is
+/// `version`.
+struct Passing {
+    operand_type: Py<pyo3::types::PyType>,
+    version: u32,
+    passes: bool,
+}
+
+/// At most this many operand types are kept per opener; one that sees more starts over.
+const KEPT_PASSINGS: usize = 256;
+
+impl PyBindOpener {
+    /// Whether a no-`absent` operand of `operand_type` is handed back unchanged: the kept
+    /// answer while the type is unchanged, else `passes_through(type)` (kept when it depends
+    /// on the type alone). None when there is no `passes_through`.
+    fn passes(&self, operand_type: &Bound<'_, pyo3::types::PyType>) -> PyResult<Option<bool>> {
+        let Some(passes_through) = &self.passes_through else {
+            return Ok(None);
+        };
+        if let Ok(passing) = self.passing.lock() {
+            if let Some(found) = passing
+                .iter()
+                .find(|kept| kept.operand_type.as_ptr() == operand_type.as_ptr())
+            {
+                let version = crate::python_generator_stream::version_tag(operand_type);
+                if version != 0 && version == found.version {
+                    return Ok(Some(found.passes));
+                }
+            }
+        }
+        let passes = passes_through
+            .bind(operand_type.py())
+            .call1((operand_type,))?
+            .is_truthy()?;
+        self.keep(operand_type, passes);
+        Ok(Some(passes))
+    }
+
+    fn keep(&self, operand_type: &Bound<'_, pyo3::types::PyType>, passes: bool) {
+        if !crate::python_generator_stream::answer_depends_on_type_only(operand_type) {
+            return;
+        }
+        // SAFETY: the type is alive (bound).
+        if unsafe { crate::python_generator_stream::PyUnstable_Type_AssignVersionTag(operand_type.as_type_ptr()) } == 0 {
+            return;
+        }
+        let version = crate::python_generator_stream::version_tag(operand_type);
+        if version == 0 {
+            return;
+        }
+        let Ok(mut passing) = self.passing.lock() else {
+            return;
+        };
+        passing.retain(|kept| kept.operand_type.as_ptr() != operand_type.as_ptr());
+        if passing.len() >= KEPT_PASSINGS {
+            passing.clear();
+        }
+        passing.push(Passing {
+            operand_type: operand_type.clone().unbind(),
+            version,
+            passes,
+        });
+    }
 }
 
 #[pymethods]
 impl PyBindOpener {
     #[new]
-    fn new(fallback: Py<PyAny>, generator_program: Py<PyAny>) -> Self {
+    #[pyo3(signature = (fallback, generator_program, passes_through=None))]
+    fn new(fallback: Py<PyAny>, generator_program: Py<PyAny>, passes_through: Option<Py<PyAny>>) -> Self {
         Self {
             fallback,
             generator_program,
+            passes_through,
+            passing: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -472,6 +550,9 @@ impl PyBindOpener {
                 // A yielding definition: the bind yields the call itself and the VM runs it.
                 return Ok(expr.clone().unbind());
             }
+            if self.passes(&expr.get_type())? == Some(true) {
+                return Ok(expr.clone().unbind());
+            }
         }
         match absent {
             None => Ok(self.fallback.bind(py).call1((expr,))?.unbind()),
@@ -486,7 +567,11 @@ impl PyBindOpener {
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit_py_field(&visit, &self.fallback)?;
-        visit_py_field(&visit, &self.generator_program)
+        visit_py_field(&visit, &self.generator_program)?;
+        if let Some(passes_through) = &self.passes_through {
+            visit_py_field(&visit, passes_through)?;
+        }
+        Ok(())
     }
 }
 

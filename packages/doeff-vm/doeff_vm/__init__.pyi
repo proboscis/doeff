@@ -212,12 +212,18 @@ class Call(Expand[_T_co, _E_co]):
 class BindOpener:
     """What ``outcomes.open_bind`` is: a no-``absent`` bind of a ``Call`` whose definition
     does not yield is called in place (``Pure(answer)``, or ``generator_program(gen)`` for a
-    generator answer); every other bind goes to ``fallback(expr[, absent])``."""
+    generator answer); a no-``absent`` operand of a type for which ``passes_through(type)``
+    answered True is handed back unchanged (kept per type while the type is unchanged);
+    every other bind goes to ``fallback(expr[, absent])``."""
 
     fallback: _CallableT[..., Any]
     generator_program: _CallableT[[Generator[Any, Any, Any]], Any]
+    passes_through: _CallableT[[type], bool] | None
     def __init__(
-        self, fallback: _CallableT[..., Any], generator_program: _CallableT[[Generator[Any, Any, Any]], Any]
+        self,
+        fallback: _CallableT[..., Any],
+        generator_program: _CallableT[[Generator[Any, Any, Any]], Any],
+        passes_through: _CallableT[[type], bool] | None = None,
     ) -> None: ...
     def __call__(self, expr: Any, absent: _CallableT[[], Any] | None = None) -> Any: ...
     def __repr__(self) -> str: ...
