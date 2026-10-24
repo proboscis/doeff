@@ -82,6 +82,7 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   関数が参照する module の file を足す(欄の名 ``x.vars`` は読みではない)。
 """
 
+import bisect
 import contextvars
 import dataclasses
 import dis
@@ -107,6 +108,7 @@ from types import CodeType, FunctionType, ModuleType
 from doeff_hy_bytecode_guard import bound_source, called_code, loader_hooks
 from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, current_scope
 from doeff_hy_bytecode_guard.records import (
+    ANON_VAR_NAME,
     ENVIRONMENT_READ,
     LOCAL_MACRO_TABLE,
     MACRO_TABLE,
@@ -505,6 +507,9 @@ class ClosureWalk:
     reads_code: int
     #: 印ごとの digest の覚え(process の中 — 同じ印の使い手を照らす度に、材料を hash し直さない)。
     digests: dict[int, str] = dataclasses.field(default_factory=dict, compare=False, repr=False)
+    #: 閉包に、関数の中身を値として読む関数が在る時の、注釈ごとの読み(:func:`_code_facts` の ``strict``)で歩き直した歩み。覆う関数に
+    #: 読む関数が入る時の digest はこちらで作る(関数の型注釈は、読まない閉包の digest には入らない)。
+    strict: "ClosureWalk | None" = dataclasses.field(default=None, compare=False, repr=False)
 
     @property
     def everything(self) -> int:
@@ -528,6 +533,9 @@ class ClosureWalk:
         known = self.digests.get(covered)
         if known is not None:
             return known
+        if self.strict is not None and covered & self.reads_code:
+            # 覆う関数が中身を値として読む時は全部の関数の中身を覆う(:meth:`covered_by`)— 注釈ごとの読みの歩みの digest。
+            return self.digests.setdefault(covered, self.strict.digest(self.strict.everything))
         pieces = [self.segments[0]]
         for index, slot in enumerate(self.slots):
             text = (slot.shape if covered >> index & 1 else _UNCOVERED).encode("utf-8")
@@ -584,23 +592,34 @@ def _remembered(
     if remembered is not None and remembered.subject is subject and _confirmed(key, remembered):
         return remembered.closure
     entry = _facts_entry(key)
-    walker = _Walker(sha256_of, CodeReadings(_stored_facts(entry) if entry is not None else {}))
+    stored = _stored_facts(entry) if entry is not None else {}
+    walker = _Walker(sha256_of, CodeReadings(stored))
     walk(walker)
     walked = walker.walked()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
-    if entry is not None and walker.readings.missed:
-        _write_facts(entry, walker.readings.used)  # 次の process の同じ macro の歩みが code を読み直さない
-    modules = tuple(sorted({*walker.files, *walker.unimportable}))
-    if walker._mut_environment:
+    walkers = [walker]
+    if walked.reads_code:
+        # 関数の中身を値として読む関数が閉包に在る: 注釈ごとの読みで歩き直し、覆う関数にその関数が入る digest はこちらで作る。
+        strict_walker = _Walker(sha256_of, CodeReadings(stored, strict=True))
+        walk(strict_walker)
+        walked = dataclasses.replace(walked, strict=strict_walker.walked())
+        walkers.append(strict_walker)
+    if entry is not None and any(each.readings.missed for each in walkers):
+        # 次の process の同じ macro の歩みが code を読み直さない
+        _write_facts(entry, {sha: facts for each in walkers for sha, facts in each.readings.used.items()})
+    modules = tuple(sorted({name for each in walkers for name in (*each.files, *each.unimportable)}))
+    if any(each._mut_environment for each in walkers):
         # 環境変数の読みに当たった digest は環境変数の値を写さない — 照らせない印にし、覚えない。import の途中の状態より先に判じる
         # (途中の状態の行は file で比べ、環境変数の違いに気づかない)。
         return ClosureDigest(ENVIRONMENT_READ, modules)
-    if walker._mut_partial:
+    if any(each._mut_partial for each in walkers):
         # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
         # 違う process と置き場の entry を書き直し合う(card ki-464fa307a62b)。
         return ClosureDigest(None, modules)
     closure = ClosureDigest(walked.digest(walked.everything), modules, walked, walked.everything)
     states = tuple(
-        state for path in sorted(walker.files.values()) if (state := _state_now(path)) is not None
+        state
+        for path in sorted({path for each in walkers for path in each.files.values()})
+        if (state := _state_now(path)) is not None
     )
     _REMEMBERED[key] = RememberedDigest(subject, states, closure)
     return closure
@@ -974,41 +993,41 @@ class CodeFacts:
 
 
 #: process の中の code の読みの覚え(code object の id → (code・読んだ物) — code を生かしておき id の使い回しを防ぐ)。
+#: 意味に効かない物(関数の型注釈・Hy の一時変数の名の番号)を除いた読み。
 _FACTS: dict[int, tuple[CodeType, CodeFacts]] = {}
 
+#: 注釈ごとの読み(:func:`_code_facts` の ``strict``)の覚え。注釈を値として読む閉包(:data:`_CODE_READ_NAMES`)の歩みだけが使う。
+_STRICT_FACTS: dict[int, tuple[CodeType, CodeFacts]] = {}
 
-def _code_facts(code: CodeType) -> CodeFacts:
-    """code object から digest に要る物を読む(行番号と位置を除く — process の中で code ごとに 1 度だけ読む)。"""
-    remembered = _FACTS.get(id(code))
+
+def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
+    """code object から digest に要る物を読む(行番号と位置を除く — process の中で code ごとに 1 度だけ読む)。
+
+    ``strict`` が偽の読みは、展開の結果に効かない 2 つを除く(card ki-968309595391 — 型注釈を足しただけの変更や、前に関数が増えて
+    Hy の一時変数の番号がずれただけの変更で、macro の閉包の digest が変わり、使い手の module が全部展開し直されていた):
+
+    - 関数の型注釈(3.14 の ``__annotate__`` の入れ子の code と、それを関数に付ける命令 — :func:`_function_annotations`)。注釈の中だけに
+      現れる名・import なども、その code の読み(名の表・文字列・import …)に入れない。class の本体の注釈(``__annotate_func__`` を
+      束縛する物 — dataclass の欄)は除かない。
+    - Hy の一時変数の名の番号(``_hy_anon_46`` → ``_hy_anon_48``)。code 1 つごとに、命令の出現順の通し番号へ振り直す
+      (:func:`_numbered_anon_names`)。
+
+    ``strict`` が真の読みは注釈も入れる(番号の振り直しは同じ)。"""
+    cache = _STRICT_FACTS if strict else _FACTS
+    remembered = cache.get(id(code))
     if remembered is not None and remembered[0] is code:
         return remembered[1]
+    instructions = _Instructions(code, drop_annotations=not strict)
     nested = tuple(
-        _code_facts(constant) for constant in code.co_consts if isinstance(constant, CodeType)
+        _code_facts(constant, strict)
+        for constant in code.co_consts
+        if isinstance(constant, CodeType) and not instructions.dropped(constant)
     )
-    digest = hashlib.sha256()
-    for part in (
-        code.co_name,
-        code.co_qualname,
-        str(code.co_argcount),
-        str(code.co_posonlyargcount),
-        str(code.co_kwonlyargcount),
-        str(code.co_flags),
-        str(code.co_stacksize),
-        code.co_code.hex(),
-        code.co_exceptiontable.hex(),
-        repr(code.co_names),
-        repr(code.co_varnames),
-        repr(code.co_freevars),
-        repr(code.co_cellvars),
-        *(_constant_text(constant) for constant in code.co_consts),
-    ):
-        digest.update(part.encode("utf-8", "surrogatepass"))
-        digest.update(b"\0")
     texts = tuple(
         constant for constant in code.co_consts if isinstance(constant, str)
     )  # 定数の順のまま
     facts = CodeFacts(
-        shape=digest.hexdigest(),
+        shape=instructions.shape(strict),
         names=tuple(sorted({*code.co_names, *(name for inner in nested for name in inner.names)})),
         texts=tuple(sorted({*texts, *(text for inner in nested for text in inner.texts)})),
         imports=(*_imports(code), *(i for inner in nested for i in inner.imports)),
@@ -1020,7 +1039,7 @@ def _code_facts(code: CodeType) -> CodeFacts:
         reads=_widest((_namespace_read(code), *(inner.reads for inner in nested))),
         reads_location=_reads_location(code, texts) or any(inner.reads_location for inner in nested),
     )
-    _FACTS[id(code)] = (code, facts)
+    cache[id(code)] = (code, facts)
     return facts
 
 
@@ -1036,17 +1055,241 @@ def _reads_location(code: CodeType, texts: tuple[str, ...]) -> bool:
     )
 
 
-def _constant_text(value: object) -> str:
+def _constant_text(value: object, strict: bool) -> str:
     """code の定数 1 つの文(入れ子の code は行番号を除いた digest・集合は並びに依らない形)。"""
     match value:
         case CodeType():
-            return f"code:{_code_facts(value).shape}"
+            return f"code:{_code_facts(value, strict).shape}"
         case tuple():
-            return "(" + ",".join(_constant_text(item) for item in value) + ")"
+            return "(" + ",".join(_constant_text(item, strict) for item in value) + ")"
         case frozenset():
-            return "{" + ",".join(sorted(_constant_text(item) for item in value)) + "}"
+            return "{" + ",".join(sorted(_constant_text(item, strict) for item in value)) + "}"
         case _:
             return f"{type(value).__name__}:{value!r}"
+
+
+#: 関数に付ける注釈の命令(3.14 の ``SET_FUNCTION_ATTRIBUTE`` の旗 — 0x10 = ``__annotate__``・0x08 = 閉包)。
+_ANNOTATE_ATTRIBUTE = 0x10
+_CLOSURE_ATTRIBUTE = 0x08
+#: 閉包の組を作る前に cell を積む命令(1 つ積む物と 2 つ積む物)。
+_CELL_LOADS = frozenset({"LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_FAST_CHECK", "LOAD_DEREF"})
+_CELL_PAIR_LOADS = frozenset({"LOAD_FAST_LOAD_FAST", "LOAD_FAST_BORROW_LOAD_FAST_BORROW"})
+#: 引数が番号でなく、番号の指す名・定数・jump 先に替えて数える命令の類(番号は定数の表・名の表の並びで変わるため)。
+_NAMED_OPCODES = frozenset((*dis.hasname, *dis.haslocal, *dis.hasfree))
+_JUMP_OPCODES = frozenset(dis.hasjump) if hasattr(dis, "hasjump") else frozenset((*dis.hasjrel, *dis.hasjabs))
+_CONST_OPCODES = frozenset(dis.hasconst)
+
+
+def _function_annotations(instructions: list[dis.Instruction]) -> tuple[set[int], list[CodeType]]:
+    """命令の並びのうち、関数に型注釈を付ける命令の位置と、その ``__annotate__`` の code を挙げる。
+
+    3.14 は関数の注釈を、注釈の関数を作る命令(閉包が要れば cell を積んで組にする命令・``LOAD_CONST`` の code・``MAKE_FUNCTION``・
+    閉包なら ``SET_FUNCTION_ATTRIBUTE`` の閉包)を関数本体の作りの前に置き、関数を作ったあと ``SET_FUNCTION_ATTRIBUTE`` の
+    ``__annotate__`` で付ける。この形に完全に合う時だけ挙げ、合わない形(class の本体の ``__annotate_func__`` を束縛する物・
+    型引数の関数・読めない並び)は挙げない — 挙げないと注釈ごと digest に入るだけで、古い展開を合うと判じる向きには倒れない。"""
+    dropped: set[int] = set()
+    codes: list[CodeType] = []
+    count = len(instructions)
+    for index, instruction in enumerate(instructions):
+        if (
+            instruction.opname != "LOAD_CONST"
+            or not isinstance(instruction.argval, CodeType)
+            or instruction.argval.co_name != "__annotate__"
+        ):
+            continue
+        end = index + 1
+        if end >= count or instructions[end].opname != "MAKE_FUNCTION":
+            continue
+        end += 1
+        start = index
+        if end < count and _sets_attribute(instructions[end], _CLOSURE_ATTRIBUTE):
+            end += 1
+            start = _closure_tuple_start(instructions, index)
+            if start < 0:
+                continue
+        attach = _annotate_attachment(instructions, end)
+        if attach < 0:
+            continue
+        dropped.update(range(start, end))
+        dropped.add(attach)
+        codes.append(instruction.argval)
+    return dropped, codes
+
+
+def _sets_attribute(instruction: dis.Instruction, flag: int) -> bool:
+    """命令が関数の属性 ``flag`` を付ける ``SET_FUNCTION_ATTRIBUTE`` か。"""
+    return instruction.opname == "SET_FUNCTION_ATTRIBUTE" and instruction.arg == flag
+
+
+def _closure_tuple_start(instructions: list[dis.Instruction], at: int) -> int:
+    """位置 ``at`` の命令が積む関数の閉包の組を作る命令の始まり(``BUILD_TUPLE n`` と、cell を n 個積む命令。読めなければ -1)。"""
+    last = at - 1
+    if last < 0 or instructions[last].opname != "BUILD_TUPLE" or not isinstance(
+        instructions[last].arg, int
+    ):
+        return -1
+    wanted = instructions[last].arg
+    taken = 0
+    position = last - 1
+    while taken < wanted:
+        if position < 0:
+            return -1
+        name = instructions[position].opname
+        if name in _CELL_LOADS:
+            taken += 1
+        elif name in _CELL_PAIR_LOADS:
+            taken += 2
+        else:
+            return -1
+        position -= 1
+    return position + 1 if taken == wanted else -1
+
+
+def _annotate_attachment(instructions: list[dis.Instruction], start: int) -> int:
+    """注釈の関数を積んだ後(位置 ``start``)から、その関数を付ける関数の作り(閉包の組・``LOAD_CONST`` の code・``MAKE_FUNCTION``・
+    閉包の ``SET_FUNCTION_ATTRIBUTE``)を読み、続く ``SET_FUNCTION_ATTRIBUTE`` の ``__annotate__`` の位置を返す(合わなければ -1)。"""
+    count = len(instructions)
+    position = start
+    while position < count and instructions[position].opname in (
+        *_CELL_LOADS,
+        *_CELL_PAIR_LOADS,
+        "BUILD_TUPLE",
+    ):
+        position += 1
+    if (
+        position + 1 >= count
+        or instructions[position].opname != "LOAD_CONST"
+        or not isinstance(instructions[position].argval, CodeType)
+        or instructions[position + 1].opname != "MAKE_FUNCTION"
+    ):
+        return -1
+    position += 2
+    if position < count and _sets_attribute(instructions[position], _CLOSURE_ATTRIBUTE):
+        position += 1
+    if position < count and _sets_attribute(instructions[position], _ANNOTATE_ATTRIBUTE):
+        return position
+    return -1
+
+
+class _Instructions:
+    """code 1 つ(入れ子を除く)の命令の並びと、意味に効かない物を除いた中身の digest(:func:`_code_facts`)。"""
+
+    def __init__(self, code: CodeType, drop_annotations: bool) -> None:
+        self._code = code
+        listed = [
+            instruction
+            for instruction in dis.get_instructions(code, adaptive=False)
+            if instruction.opname != "EXTENDED_ARG"
+        ]
+        dropped, self._annotations = (
+            _function_annotations(listed) if drop_annotations else (set(), [])
+        )
+        self._kept = [
+            instruction for index, instruction in enumerate(listed) if index not in dropped
+        ]
+
+    def dropped(self, constant: CodeType) -> bool:
+        """定数の code が、除いた注釈の code か。"""
+        return any(constant is annotation for annotation in self._annotations)
+
+    def shape(self, strict: bool) -> str:
+        """行番号と位置を除いた中身の digest。命令は番号でなく指す名・定数・jump 先の命令の順で数え(定数の表と名の表の並びが
+        変わっても変わらない)、除いた注釈の命令と code は入れず、Hy の一時変数の名の番号は出現順に振り直す。"""
+        code = self._code
+        offsets = [instruction.offset for instruction in self._kept]
+        lines = [self._line(instruction, offsets, strict) for instruction in self._kept]
+        handlers = [
+            ",".join(
+                (
+                    str(bisect.bisect_left(offsets, start)),
+                    str(bisect.bisect_left(offsets, end)),
+                    str(bisect.bisect_left(offsets, target)),
+                    str(depth),
+                    str(lasti),
+                )
+            )
+            for start, end, target, depth, lasti in _exception_table(code)
+        ]
+        constants = sorted(
+            {
+                _constant_text(constant, strict)
+                for constant in code.co_consts
+                if not (isinstance(constant, CodeType) and self.dropped(constant))
+            }
+        )
+        document = "\0".join(
+            (
+                code.co_name,
+                code.co_qualname,
+                str(code.co_argcount),
+                str(code.co_posonlyargcount),
+                str(code.co_kwonlyargcount),
+                str(code.co_flags),
+                "\n".join(lines),
+                "\n".join(handlers),
+                repr(code.co_names),
+                repr(code.co_varnames),
+                repr(code.co_freevars),
+                repr(code.co_cellvars),
+                *constants,
+            )
+        )
+        return hashlib.sha256(
+            _numbered_anon_names(document).encode("utf-8", "surrogatepass")
+        ).hexdigest()
+
+    @staticmethod
+    def _line(instruction: dis.Instruction, offsets: list[int], strict: bool) -> str:
+        """命令 1 つの文(名・引数 — 番号の指す物で数える)。"""
+        opcode = instruction.opcode
+        if opcode in _JUMP_OPCODES:
+            argument = f"@{bisect.bisect_left(offsets, instruction.argval)}"
+        elif opcode in _CONST_OPCODES:
+            argument = _constant_text(instruction.argval, strict)
+        elif opcode in _NAMED_OPCODES:
+            argument = instruction.argrepr
+        else:
+            argument = str(instruction.arg)
+        return f"{instruction.opname} {argument}"
+
+
+def _exception_table(code: CodeType) -> Iterator[tuple[int, int, int, int, bool]]:
+    """code の例外表の行(始まり・終わり・handler の位置・深さ・lasti。位置は byte の offset — ``dis`` の非公開の読みと同じ varint)。"""
+    iterator = iter(code.co_exceptiontable)
+
+    def varint() -> int:
+        byte = next(iterator)
+        value = byte & 63
+        while byte & 64:
+            value <<= 6
+            byte = next(iterator)
+            value |= byte & 63
+        return value
+
+    try:
+        while True:
+            start = varint() * 2
+            end = start + varint() * 2
+            target = varint() * 2
+            depth_and_lasti = varint()
+            yield start, end, target, depth_and_lasti >> 1, bool(depth_and_lasti & 1)
+    except StopIteration:
+        return
+
+
+def _numbered_anon_names(document: str) -> str:
+    """文の中の Hy の一時変数の名(:data:`doeff_hy_bytecode_guard.records.ANON_VAR_NAME` — ``_hy_anon_46``・``_hy_anon_fn_12``)の番号を、
+    文に現れる順の通し番号へ振り直す。Hy は一時変数の番号を module の通し番号で振るので、前に関数が 1 つ増えるだけで後ろの関数の
+    番号がずれる。同じ名は同じ番号・違う名は違う番号になる(1 対 1 — code の中の変数の同一性は保たれる)。"""
+    ranks: dict[str, str] = {}
+
+    def renumber(found: re.Match[str]) -> str:
+        name = found.group(0)
+        if name not in ranks:
+            ranks[name] = f"{found.group(1)}_#{len(ranks) + 1}"
+        return ranks[name]
+
+    return ANON_VAR_NAME.sub(renumber, document)
 
 
 # ---- code の読みを process をまたいで覚える(agora-redesign card ki-be596ac8276f)-------------------------------------
@@ -1064,7 +1307,8 @@ def _constant_text(value: object) -> str:
 #: 入れるこの module の file の sha256(:func:`_own_digest`)が覆い、読みが呼ぶ Hy の関数(``hy.mangle``・``slashes2dots``)の変更は
 #: 鍵に入れる Hy の版が覆う。
 #: 2 = 置き場を値として読むかの欄を足した形(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。
-FACTS_TAG = "doeff-hy/code-facts/2"
+#: 3 = 関数の型注釈と Hy の一時変数の番号を除いた読みと、注釈ごとの読み(行の鍵の末尾に ``!``)を並べる形(card ki-968309595391)。
+FACTS_TAG = "doeff-hy/code-facts/3"
 
 #: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
 _READS = frozenset(read.value for read in NamespaceRead)
@@ -1073,22 +1317,26 @@ _READS = frozenset(read.value for read in NamespaceRead)
 class CodeReadings:
     """歩み 1 つが使う code の読み — 置き場から読んだ物(code の sha256 → 読み)・この歩みが使った物・置き場に無く読み直したか。"""
 
-    def __init__(self, stored: dict[str, CodeFacts]) -> None:
+    def __init__(self, stored: dict[str, CodeFacts], strict: bool = False) -> None:
         self._stored = stored
+        #: 注釈ごとの読みを使うか(注釈を値として読む閉包の歩み — :func:`_code_facts`)。置き場の行の鍵は、注釈ごとの読みなら
+        #: code の sha256 の末尾に ``!`` を付ける(同じ code の 2 つの読みを 1 つの entry に並べる)。
+        self._strict = strict
         self.used: dict[str, CodeFacts] = {}
         self._mut_missed = False
 
     def facts(self, code: CodeType) -> CodeFacts:
         """関数の code の読み — process の中の覚え・置き場の覚え(前の process が同じ中身の code を読んだ物)・読み直しの順。"""
-        sha = _code_sha256(code)
-        remembered = _FACTS.get(id(code))
+        sha = _code_sha256(code) + ("!" if self._strict else "")
+        cache = _STRICT_FACTS if self._strict else _FACTS
+        remembered = cache.get(id(code))
         if remembered is not None and remembered[0] is code:
             facts = remembered[1]
         elif sha in self._stored:
             facts = self._stored[sha]
-            _FACTS[id(code)] = (code, facts)
+            cache[id(code)] = (code, facts)
         else:
-            facts = _code_facts(code)
+            facts = _code_facts(code, self._strict)
             self._mut_missed = True
         self.used[sha] = facts
         return facts
