@@ -20,7 +20,7 @@
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
-                              Event EventAbsent EventRetired])
+                              Event EventAbsent EventRetired Changes Reset])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -172,29 +172,39 @@
   (if (isinstance ask PutRows) ask.writes #(ask)))
 
 
-(defclass [(dataclass :frozen True)] WatchChanges [EffectBase]
+(defn #^ bool checked-watch-changes [#^ object tables #^ object cursor #^ object timeout #^ object limit #^ object streams]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+  "WatchChanges の欄(tables・cursor・timeout・limit・streams)を作る時に検める — tables は空でない tuple で表の名・cursor は WatchCursor・
+   timeout は 0 以上の秒・limit は 1 以上の整数・streams は列の名の tuple で同じ列を 2 度含まない。断りの型と文言は defclass の時から変えない。"
+  (when (not (and (isinstance tables tuple) tables)) (raise (TypeError "WatchChanges.tables は空でない tuple")))
+  (for [name tables] (checked-table-name name "WatchChanges.tables の表"))
+  (when (not (isinstance cursor WatchCursor)) (raise (TypeError "WatchChanges.cursor は WatchCursor")))
+  (when (or (isinstance timeout bool) (not (isinstance timeout #(int float))) (< timeout 0))
+    (raise (ValueError (.format "WatchChanges.timeout は 0 以上の秒: {!r}" timeout))))
+  (checked-limit limit "WatchChanges.limit")
+  (when (not (isinstance streams tuple))
+    (raise (TypeError (.format "WatchChanges.streams は列の名の tuple: {!r}" streams))))
+  (for [name streams] (checked-table-name name "WatchChanges.streams の列"))
+  (when (!= (len streams) (len (set streams)))
+    (raise (ValueError (.format "WatchChanges.streams に同じ列が 2 度出る: {!r}" streams))))
+  True)
+
+
+(defeffect WatchChanges
   "cursor より後の確定した変更を、頼んだ表の分だけ返す。無ければ timeout 秒まで待つ。limit = 1 回に返す変更の上限。
    streams = 末尾を知りたい追記の列の名(同じ名は 1 度だけ・既定 = 無し — #3718)。答えの Changes.tails に、名指した順で列ごとの末尾
    (StreamTail = 最後の生きている出来事の位置と刻 | StreamTailEmpty = 生きている出来事が無い)が載る。
    tails は答えを返す時点の名指した列の末尾。列への追記では待ち手を起こさない — 起こしたい呼び手は列を源に別に待つ。
-   答え = Changes | Reset(cursor の epoch が置き場の版と違う)| Unreachable。"
-  (#^ tuple tables)
-  (#^ WatchCursor cursor)
-  (setv #^ float timeout 0.0)
-  (setv #^ int limit DEFAULT-WATCH-LIMIT)
-  (setv #^ (get tuple #(str ...)) streams #())
-  (defn #^ None __post_init__ [self]
-    (when (not (and (isinstance self.tables tuple) self.tables)) (raise (TypeError "WatchChanges.tables は空でない tuple")))
-    (for [name self.tables] (checked-table-name name "WatchChanges.tables の表"))
-    (when (not (isinstance self.cursor WatchCursor)) (raise (TypeError "WatchChanges.cursor は WatchCursor")))
-    (when (or (isinstance self.timeout bool) (not (isinstance self.timeout #(int float))) (< self.timeout 0))
-      (raise (ValueError (.format "WatchChanges.timeout は 0 以上の秒: {!r}" self.timeout))))
-    (checked-limit self.limit "WatchChanges.limit")
-    (when (not (isinstance self.streams tuple))
-      (raise (TypeError (.format "WatchChanges.streams は列の名の tuple: {!r}" self.streams))))
-    (for [name self.streams] (checked-table-name name "WatchChanges.streams の列"))
-    (when (!= (len self.streams) (len (set self.streams)))
-      (raise (ValueError (.format "WatchChanges.streams に同じ列が 2 度出る: {!r}" self.streams))))))
+   答え = Changes | Reset(cursor の epoch が置き場の版と違う)| Unreachable。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): Changes = 成功 / Reset = 値(cursor の世代が置き場の版と違うという普通の答えで、
+   呼び手が (epoch, floor) から読み直して続ける — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Unreachable = 失敗(<- は
+   Raise(Unreachable) を出す)。不在は無い。答える handler は今までどおり 3 つとも値で答える(R4)。"
+  {:fields [(: tables tuple) (: cursor WatchCursor) (: timeout float 0.0) (: limit int DEFAULT-WATCH-LIMIT)
+            (: streams (get tuple #(str ...)) #())]
+   :pre [(checked-watch-changes tables cursor timeout limit streams)]
+   :answer (| Changes Reset Unreachable)
+   :failure [Unreachable]
+   :value [Reset]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defn #^ str checked-event-key [#^ object idempotency-key #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは ValueError で上げ、通れば鍵(空でない文字列 = 真)を返す)

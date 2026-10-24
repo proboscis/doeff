@@ -199,7 +199,7 @@
     (when (not back)
       (raise (SignalSourceUnreachable (.format "購読者 {!r} の合図の源(記録の {})が {} 秒 待っても届かない: {}"
                                                subscriber (.join ", " names) patience.seconds answer.detail))))
-    ;; again が失敗と宣言した Unreachable(ReadStreamEnd・WatchEvents — <- は Raise にする)でも、この待ち直しは Unreachable を値で受けて待つ。
+    ;; again が失敗と宣言した Unreachable(ReadStreamEnd・WatchEvents・WatchChanges — <- は Raise にする)でも、この待ち直しは Unreachable を値で受けて待つ。
     (<- reread (on-raise again (Unreachable detail) (Unreachable detail)))
     (:= answer reread))
   (<- (Publish (SourceResumed :source subscriber)))
@@ -219,8 +219,8 @@
    ままだと、戻った後に書きが無い間はその秒(WATCH-SECONDS)を待ち切ってから SourceResumed が出た(受信停止の戻りの遅れ・W の条件 5)。
    待たない読みの答え(変化が在れば Changes・EventsMoved、無ければ空の Changes・EventsQuiet、Reset)は long-poll の答えと同じ型なので、
    呼び手は今までどおり答えの位置から long-poll に戻る。他の読み(ListRows・ReadStreamEnd)は待たないので、そのまま撃ち直す。"
-  ;; ask が失敗と宣言した Unreachable(ReadStreamEnd・WatchEvents — <- は Raise にする)でも、この越え方は Unreachable を値で受けて待つ(on-raise で戻す)。
-  ;; 宣言の無い読み(ListRows・WatchChanges)は Unreachable が元から値で、そのまま通る。
+  ;; ask が失敗と宣言した Unreachable(ReadStreamEnd・WatchEvents・WatchChanges — <- は Raise にする)でも、この越え方は Unreachable を値で受けて待つ(on-raise で戻す)。
+  ;; 宣言の無い読み(ListRows)は Unreachable が元から値で、そのまま通る。
   (<- answered (on-raise ask (Unreachable detail) (Unreachable detail)))
   (when (not (isinstance answered Unreachable))
     (return answered))

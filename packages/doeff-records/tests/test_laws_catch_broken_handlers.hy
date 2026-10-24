@@ -39,19 +39,20 @@
 
 (defhandler repeat-changes []
   (WatchChanges [tables cursor timeout limit streams]
-    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    ;; 中継は宣言を開かずに(Perform)値のまま受ける: <- だと Unreachable が Raise になり、この節から出てしまう(R4)。WatchChanges の中継 4 つは同じ。
+    (<- answer (Perform (WatchChanges tables cursor :timeout timeout :limit limit :streams streams)))
     (resume (if (isinstance answer Changes) (Changes (+ answer.items answer.items) answer.cursor answer.tails) answer))))
 
 (defhandler hide-reset []
   (WatchChanges [tables cursor timeout limit streams]
-    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    (<- answer (Perform (WatchChanges tables cursor :timeout timeout :limit limit :streams streams)))
     ;; 置き場の版を見ない handler の顔: Reset の代わりに「変更なし」を返す。
     (resume (if (isinstance answer Reset) (Changes #() cursor #()) answer))))
 
 (defhandler drop-tails
   ;; 列の末尾を運ばない handler の顔(#3718): 名指した列の tails を捨て、名指さない答えと同じ形で返す。
   (WatchChanges [tables cursor timeout limit streams]
-    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    (<- answer (Perform (WatchChanges tables cursor :timeout timeout :limit limit :streams streams)))
     (resume (match answer
               (Changes :items items :cursor moved) (Changes items moved #())
               _ answer))))
@@ -59,7 +60,7 @@
 (defhandler tails-in-name-order
   ;; 名指した順を守らない handler の顔(#3718): tails を列の名の順に並べ替えて返す(名指した順で照らす使い手が列を取り違える)。
   (WatchChanges [tables cursor timeout limit streams]
-    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    (<- answer (Perform (WatchChanges tables cursor :timeout timeout :limit limit :streams streams)))
     (resume (match answer
               (Changes :items items :cursor moved :tails tails) (Changes items moved (tuple (sorted tails :key (fn [tail] tail.stream))))
               _ answer))))
