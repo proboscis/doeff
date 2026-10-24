@@ -210,6 +210,8 @@ struct Spec {
     external_wake_of: Py<PyAny>,
     /// `_external_wait_is_stall`: invariant S1 — whether a block is a stall.
     external_wait_is_stall: Py<PyAny>,
+    /// `_stall_waiters_digest`: the parked-waiter part of the stall line.
+    stall_waiters_digest: Py<PyAny>,
     /// The Python scheduler module: settings a test may monkeypatch
     /// (`EXTERNAL_STALL_LOG_INTERVAL_SECONDS`) are read from it when used.
     module: Py<PyAny>,
@@ -272,6 +274,7 @@ impl Spec {
             logger: get("logger")?.unbind(),
             external_wake_of: get("external_wake_of")?.unbind(),
             external_wait_is_stall: get("external_wait_is_stall")?.unbind(),
+            stall_waiters_digest: get("stall_waiters_digest")?.unbind(),
             module: get("module")?.unbind(),
             trace: get("trace")?.unbind(),
             trace_step_boundary: get("trace_step_boundary")?.unbind(),
@@ -2194,11 +2197,14 @@ impl Locked<'_> {
             }
             let parked = self.live_parked_waiter_summary(true);
             let blocked = self.live_semaphore_waiters();
-            let parked_obj: Py<PyAny> = if parked.is_empty() {
-                "none".into_pyobject(py)?.into_any().unbind()
-            } else {
-                PyList::new(py, parked)?.into_any().unbind()
-            };
+            // The Python scheduler's one digest (`_stall_waiters_digest`):
+            // counts and the first few waiters, not every one of them.
+            let parked_obj: Py<PyAny> = self
+                .spec()
+                .stall_waiters_digest
+                .bind(py)
+                .call1((PyList::new(py, parked)?,))?
+                .unbind();
             let blocked_obj: Py<PyAny> = if blocked.is_empty() {
                 "none".into_pyobject(py)?.into_any().unbind()
             } else {

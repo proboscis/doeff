@@ -1778,6 +1778,59 @@ class TestDeadlockDiagnostics:
 
     @pytest.mark.realtime
     @pytest.mark.parametrize("implementation", ["python", "rust"])
+    def test_stall_diagnostic_counts_many_waiters_instead_of_naming_each(
+        self, implementation, monkeypatch, caplog
+    ):
+        """agora card ki-1706e931a46c: a stalled service with 57,003 parked
+        waiters wrote every one of them into each stall line (~2.7 MB, twice
+        per interval). The line names the first STALL_LOG_WAITERS_SHOWN
+        waiters and only counts the rest, by waiter type."""
+        import logging
+        import time
+
+        import doeff_core_effects.scheduler as sched_module
+
+        monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+        waiting = 300
+
+        @do
+        def child(ep):
+            return (yield Wait(ep.future))
+
+        @do
+        def body():
+            promises = ()
+            for _ in range(waiting):
+                promises = (*promises, (yield CreateExternalPromise()))
+            tasks = ()
+            for ep in promises:
+                tasks = (*tasks, (yield Spawn(child(ep))))
+
+            def completer():
+                time.sleep(0.3)
+                for index, ep in enumerate(promises):
+                    ep.complete(index)
+
+            threading.Thread(target=completer, daemon=True).start()
+            return (yield Gather(*tasks))
+
+        result = doeff_run(scheduled(body(), implementation=implementation))
+        assert result == list(range(waiting))
+        stall_messages = [
+            record.getMessage()
+            for record in caplog.records
+            if "scheduler stalled" in record.getMessage()
+        ]
+        assert stall_messages, "expected a stall warning while blocked >50ms"
+        message = stall_messages[0]
+        assert len(message) < 4096, f"stall line is {len(message)} chars"
+        assert f"wait_external {waiting}" in message
+        assert message.count(") on ") == sched_module.STALL_LOG_WAITERS_SHOWN
+        assert " more; semaphore waiters" in message
+
+    @pytest.mark.realtime
+    @pytest.mark.parametrize("implementation", ["python", "rust"])
     def test_watched_external_wait_with_a_live_source_is_not_stalled(
         self, implementation, monkeypatch, caplog
     ):

@@ -86,6 +86,12 @@ _T6 = TypeVar("_T6")
 # scheduler logs the parked-waiter summary and keeps waiting.
 EXTERNAL_STALL_LOG_INTERVAL_SECONDS = 30.0
 
+# How many parked waiters the stall diagnostic names one by one; the rest are
+# only counted (by waiter type). A long-running service can hold tens of
+# thousands of parked waiters: naming every one made each stall line ~2.7 MB,
+# written twice per interval (agora card ki-1706e931a46c — 57,003 waiters).
+STALL_LOG_WAITERS_SHOWN = 20
+
 # How many fresh_id allocations pass between two sweeps of terminal,
 # unobserved task/promise entries (#502). The sweep runs synchronously inside
 # the scheduler's own dispatch path (fresh_id is only called from effect
@@ -945,6 +951,25 @@ def _external_wait_is_stall(wakes: Iterable[_ExternalWake], grace: float) -> boo
     return not scheduled
 
 
+def _stall_waiters_digest(parked: list[str]) -> str:
+    """The parked-waiter part of the stall diagnostic: how many waiters are
+    parked, how many of each waiter type, and the first
+    ``STALL_LOG_WAITERS_SHOWN`` of them (``parked`` is in the scheduler's
+    waiter order, so the root's waits come first) — "none" when nothing is
+    parked. Both scheduler implementations call this one function, so the
+    line stays a few hundred bytes however many waiters are parked (agora
+    card ki-1706e931a46c).
+    """
+    if not parked:
+        return "none"
+    kinds = Counter(entry.partition(" (")[2].partition(")")[0] for entry in parked)
+    by_kind = ", ".join(f"{kind} {count}" for kind, count in kinds.most_common())
+    shown = parked[:STALL_LOG_WAITERS_SHOWN]
+    hidden = len(parked) - len(shown)
+    rest = f" and {hidden} more" if hidden else ""
+    return f"{len(parked)} ({by_kind}): {shown}{rest}"
+
+
 class _SchedulerIntrospection(EffectBase):
     """Diagnostic effect: resume with the row counts of the scheduler's state tables.
 
@@ -1291,6 +1316,7 @@ def _rust_spec() -> dict[str, object]:
         "module": sys.modules[__name__],
         "external_wake_of": _external_wake_of,
         "external_wait_is_stall": _external_wait_is_stall,
+        "stall_waiters_digest": _stall_waiters_digest,
         # 測りの口: 出来事の dict と時計は Python の版と同じ helper で作る(sink が据えてある時だけ呼ばれる)。
         "trace": _trace,
         "trace_step_boundary": _trace_step_boundary,
@@ -2094,7 +2120,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     "scheduler stalled %.0fs waiting on external completions; "
                     "parked waiters: %s; semaphore waiters: %s",
                     waited,
-                    live_parked_waiter_summary() or "none",
+                    _stall_waiters_digest(live_parked_waiter_summary()),
                     live_semaphore_waiters() or "none",
                 )
         settle_external(action, pid, value)
