@@ -2995,11 +2995,16 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
             explain: Explain::WorldHandlerWithoutContractTest { handler: spelling, breach },
         });
     }
-    // 名の定義(索引に在れば)と、その名を直に名指す定義(呼ぶ・値として渡す・属性を読む — 検めるだけの名指しと import は除く)を種に
-    // して逆向きに辿る。索引の外の本物(doeff の handler など)は定義の節が無いので、名指す定義だけが種になる。
+    // 名の定義(索引に在れば)と、その名を直に名指す定義(呼ぶ・値として渡す・属性を読む — 検めるだけの名指しと import は除く)と、
+    // その名を解釈器の名の文字列(`"module:名"` / `"module:名@<変種>"`)で綴る定義を種にして逆向きに辿る。索引の外の本物(doeff の
+    // handler など)は定義の節が無いので、名指す定義だけが種になる。
+    let spelled = if judged_stand_ins.is_empty() { HashMap::new() } else { spelled_handlers(root, &graph, hy) };
     let reach_of = |target: &str| -> Vec<bool> {
         let mut seeds = vec![false; graph.nodes.len()];
         if let Some(&node) = node_of.get(target) {
+            seeds[node] = true;
+        }
+        for &node in spelled.get(target).into_iter().flatten() {
             seeds[node] = true;
         }
         for rel in &graph.rels {
@@ -3050,6 +3055,46 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
         });
     }
     drafts
+}
+
+/// 定義の中の文字列 literal のうち、解釈器の名の綴り `"module:名"` / `"module:名@<変種>"` の物 — 完全修飾名 → その文字列を持つ節
+/// (DOEFF137 の相手役の組)。契約の検の組み立ては解釈器を名の文字列の定数で名指し、名 → 組み立ての表で handler に繋ぐので、
+/// 定数の定義は handler を参照しない(`(val OS-CONSOLE "controllers.foundation.console:os-console")`)— 綴りそのものを名指しに数える。
+fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>) -> HashMap<String, Vec<usize>> {
+    use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
+    let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+    for rel in &graph.rels {
+        let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
+        let definitions = &hy[*rel].definitions;
+        let first = graph.base[rel.as_str()];
+        let starts: Vec<usize> = std::iter::once(0).chain(source.match_indices('\n').map(|(at, _)| at + 1)).collect();
+        let forms = Reader::new(&source, 0, source.len()).read_all();
+        let mut stack: Vec<&Form> = forms.iter().collect();
+        while let Some(form) = stack.pop() {
+            let body = match &form.node {
+                Node::Seq { items, .. } => {
+                    stack.extend(items.iter());
+                    continue;
+                }
+                Node::Str { kind: StrKind::Plain, body } => source.get(body.start..body.end).unwrap_or(""),
+                _ => continue,
+            };
+            let spelling = body.split_once('@').map_or(body, |(head, _)| head);
+            let Some(named) = architecture::DefinitionRef::parse(spelling) else { continue };
+            // 文字列の行を囲む一番内の定義(始まりの最も遅い物)。
+            let line = starts.partition_point(|start| *start <= form.span.start).saturating_sub(1);
+            let owner = definitions
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| (d.full_range.start.line as usize) <= line && line <= d.full_range.end.line as usize)
+                .max_by_key(|(_, d)| d.full_range.start)
+                .map(|(index, _)| index);
+            if let Some(owner) = owner {
+                out.entry(named.target()).or_default().push(first + owner);
+            }
+        }
+    }
+    out
 }
 
 /// handler 1 つの縁の検の宣言と、縁の検が届くか(求める時だけ問う)から、DOEFF137 の当たりを決める(agora-redesign #1796)。
