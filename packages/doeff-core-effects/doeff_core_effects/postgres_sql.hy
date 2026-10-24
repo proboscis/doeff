@@ -737,23 +737,19 @@
   (run-detached (postgres-lease connections database)))
 
 
-(deff return-abandoned [connections database leased]  ; defk にできない: driver の thread で回す後始末の入口
-  {:pre [(: connections PostgresConnections) (: database str) (: leased "psycopg の接続 | SqlUnreachable")] :post [(: % "None")]}
-  "取り消された待ち手に届かなかった接続を返すため(借りられなかった答え SqlUnreachable は返す物が無い)。"
-  (when (not (isinstance leased SqlUnreachable))
-    (.release connections database leased)))
-
-
-(deff run-then-return [connections database leased claim work]  ; defk にできない: driver の thread で回す入口
-  {:pre [(: connections PostgresConnections) (: database str) (: leased "psycopg の接続") (: claim "threading.Lock")
-         (: work "(接続) → Program の callable")]
-   :post [(: % "work の答え | None")]}
-  "driver の thread の仕事 1 つで、借りた接続で work(接続 → Program)を流し、必ず返すため(文 1 つの effect の答え)。claim を先に取れた
-   時だけ流す — 取れなければ、待ち手が文の始まる前に取り消され、offloaded-statement がもう接続を返している(答えは誰にも届かないので None)。"
-  (when (.acquire claim :blocking False)
-    (try
-      (run-detached (work leased))
-      (finally (.release connections database leased)))))
+(deff lease-run-return [connections database claim work]  ; defk にできない: driver の thread で回す入口
+  {:pre [(: connections PostgresConnections) (: database str) (: claim "threading.Lock") (: work "(接続) → Program の callable")]
+   :post [(: % "work の答え | SqlUnreachable | None")]}
+  "driver の thread の仕事 1 つで、接続を借り、借りた接続で work(接続 → Program)を流し、必ず返すため(文 1 つの effect の答え —
+   offloaded-statement の註)。借りられなければ SqlUnreachable。借りた後に claim を先に取れた時だけ流す — 取れなければ、待ち手が文の
+   始まる前に取り消されているので、文を流さずにすぐ返す(答えは誰にも届かないので None)。"
+  (setv leased (lease-now connections database))
+  (cond
+    (isinstance leased SqlUnreachable) leased
+    (not (.acquire claim :blocking False)) (do (.release connections database leased) None)
+    True (try
+           (run-detached (work leased))
+           (finally (.release connections database leased)))))
 
 
 (defclass [(dataclass :kw-only True)] TransactionLease []
@@ -993,21 +989,20 @@
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: work "(接続) → Program の callable")]
    :post [(: % "work の答え | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つの effect を、transaction と同じく pool の仕事 2 つで答えるため(待つのは撃った task だけ — agora-redesign #2792)。
-     1. 接続を借りる。許可を待っている間に取り消された要求は、許可が取れても文を流さず、return-abandoned ですぐ返す(DB が止まった間に
-        取り消された要求が、DB が戻った時にまとめて文を流して後から来た要求を待たせない)。
-     2. 文と返却を 1 つの仕事(run-then-return)で流す。走り出した文は止めず、終わった thread が返す(取り消された task は文の終わりを
-        待たない)。借りた後で文の仕事が走り出す前に取り消されたら、finally が接続を返す — 返すのは claim(錠)を先に取った側の 1 度だけ。"
-  (<- leased (offloaded pool (fn [] (lease-now connections database)) (fn [value] (return-abandoned connections database value))))
-  (match leased
-    (SqlUnreachable) leased
-    _ (do (val claim (threading.Lock))
-          (try
-            (<- answer (offloaded pool (fn [] (run-then-return connections database leased claim work)) keep-nothing))
-            answer
-            (finally
-              (when (.acquire claim :blocking False)
-                (.submit pool return-abandoned connections database leased)))))))
+  "文 1 つの effect を、接続の借りと文と返却を pool の仕事 1 つ(lease-run-return)で答えるため(待つのは撃った task だけ — agora-redesign
+   #2792)。借りと文を別の仕事にすると、scheduler の thread が外から完了させる promise の往復を文ごとに 2 度払う(transaction が借りを最初の
+   driver の呼びと同じ仕事にするのと同じ訳 — agora card ki-5c3e73834e73)。
+     - 許可を待っている間(借りの途中)に取り消された要求は、許可が取れても文を流さず、すぐ返す(DB が止まった間に取り消された要求が、
+       DB が戻った時にまとめて文を流して後から来た要求を待たせない)。取り消しで抜ける finally が claim(錠)を先に取り、借りた仕事は
+       claim を取れずに文を流さず返す。
+     - 走り出した文は止めず、終わった thread が返す(取り消された task は文の終わりを待たない — 仕事が先に claim を取っている)。
+     - 始まっていない仕事は offloaded が外す(借りない — 返す物も無い)。"
+  (val claim (threading.Lock))
+  (try
+    (<- answer (offloaded pool (fn [] (lease-run-return connections database claim work)) keep-nothing))
+    answer
+    (finally
+      (.acquire claim :blocking False))))
 
 
 (defk notified [connections pool database notify]

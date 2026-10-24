@@ -6,7 +6,8 @@
 ;;;     8 件は許可を待つ。要求の上限(10 秒)で 12 件とも取り消し、その後で止まりが解けて許可が戻る。数える物 = 許可を待っている間に
 ;;;     取り消された要求が、許可を取った後に流した文の数。直す前は 8(許可が取れると取り消しを見ずに文を流した)・直した後は 0。走り出して
 ;;;     いた 4 件の文は止めない(直しの外)。
-;;;   - 借りた後で文の仕事が始まる前に取り消された要求も、文を流さずに接続を返す(返す係が居ないと許可が 1 本ずつ減り続ける)。
+;;;   - 借りと文の仕事が始まる前に取り消された要求は、仕事が外れて接続を借りない(返す物も無い)。
+;;;   - 文 1 つは借りと文と返却を pool の仕事 1 つで答える(agora card ki-5c3e73834e73 — 以前は借りと文の 2 つ)。
 (require doeff-hy.macros [deftest defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -76,12 +77,12 @@
     (.tick self.returned)))
 
 
-(defclass HoldingSecondCall [ThreadPerCall]
-  "渡された仕事を ThreadPerCall と同じく thread で回し、2 つ目の仕事(借りの次の文の仕事)だけは始めずに持つ Executor(検の殻 — 資源
-   なので値の型ではない)。持った時に、持った Future で holding を完了させる。持った仕事は走らない。"
+(defclass HoldingFirstCall [ThreadPerCall]
+  "渡された仕事を ThreadPerCall と同じく thread で回し、1 つ目の仕事(文 1 つの借りと文と返却の仕事)だけは始めずに持つ Executor(検の殻 —
+   資源なので値の型ではない)。持った時に、持った Future で holding を完了させる。持った仕事は走らない。"
 
   (deff __init__ [self holding]  ; defk にできない: 検の殻の資源の初期化
-    {:pre [(: self HoldingSecondCall) (: holding "scheduler の ExternalPromise")] :post [(: % None)]}
+    {:pre [(: self HoldingFirstCall) (: holding "scheduler の ExternalPromise")] :post [(: % None)]}
     "持った事を知らせる promise を受け、他の仕事を回す ThreadPerCall の欄(on-start)も置くため。"
     (ThreadPerCall.__init__ self)
     (setv self.holding holding
@@ -89,16 +90,34 @@
           self.calls 0))
 
   (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
-    {:pre [(: self HoldingSecondCall) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "2 つ目の仕事だけを始めない Future にして持ち、他は ThreadPerCall と同じく回すため。"
+    {:pre [(: self HoldingFirstCall) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
+    "1 つ目の仕事だけを始めない Future にして持ち、他は ThreadPerCall と同じく回すため。"
     (with [_ self.lock]
       (setv self.calls (+ self.calls 1)
             nth self.calls))
     (match nth
-      2 (do (setv held (Future))
+      1 (do (setv held (Future))
             (.complete self.holding held)
             held)
       _ (ThreadPerCall.submit self call #* args))))
+
+
+(defclass CountingPool [ThreadPerCall]
+  "渡された仕事を ThreadPerCall と同じく thread で回し、渡された仕事の数を数える Executor(検の殻 — 資源なので値の型ではない)。"
+
+  (deff __init__ [self]  ; defk にできない: 検の殻の資源の初期化
+    {:pre [(: self CountingPool)] :post [(: % None)]}
+    "数える欄と、他の仕事を回す ThreadPerCall の欄(on-start)を置くため。"
+    (ThreadPerCall.__init__ self)
+    (setv self.lock (threading.Lock)
+          self.calls 0))
+
+  (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
+    {:pre [(: self CountingPool) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
+    "渡された仕事を数えてから ThreadPerCall と同じく回すため。"
+    (with [_ self.lock]
+      (setv self.calls (+ self.calls 1)))
+    (ThreadPerCall.submit self call #* args)))
 
 
 (defk read-on [lease stalls stall ran]
@@ -178,21 +197,39 @@
   (assert (= after-cancel 0) (.format "許可を待っている間に取り消された要求が流した文 {} 件" after-cancel)))
 
 
-(deftest test-a-read-cancelled-before-its-statement-starts-returns-the-connection
-  ;; 借りた後で文の仕事が始まる前に取り消された要求: 文は流れず、借りた接続は返る(返す係が居なければ許可が 1 本減ったまま残る)。
+(deftest test-a-read-cancelled-before-its-work-starts-leases-nothing
+  ;; 借りと文の仕事が始まる前に取り消された要求: 仕事は外れ、接続を借りず、文も流れない(借りが無いので返す物も無い)。
   (<- holding (CreateExternalPromise))
-  (<- settled (CreateExternalPromise))
   (val cancelled (threading.Event))
   (val stall (threading.Event))
   (.set stall)
   (val ran (Queue))
-  (val connections (StalledConnections (Countdown 1 (fn [] None)) cancelled (Countdown 1 (fn [] (.complete settled None)))))
-  (<- tasks (spawned-reads connections (HoldingSecondCall holding) (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran)) 1))
-  (<- held (within holding "借りの次の文の仕事"))
+  (val arrivals (Countdown 1 (fn [] None)))
+  (val returned (Countdown 1 (fn [] None)))
+  (val connections (StalledConnections arrivals cancelled returned))
+  (<- tasks (spawned-reads connections (HoldingFirstCall holding) (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran)) 1))
+  (<- held (within holding "借りと文の仕事"))
   (.set cancelled)
   (<- (Cancel (get tasks 0)))
   (<- ended (ended-by-cancel (get tasks 0)))
   (assert ended tasks)
-  (<- (within settled "借りた接続の返却"))
   (assert (.cancelled held) held)
+  (assert (= arrivals.left 1) "始まる前に取り消された仕事が接続を借りた")
+  (assert (= returned.left 1) "借りていない接続を返した")
   (assert (= (tuple ran.queue) #()) (tuple ran.queue)))
+
+
+(deftest test-a-statement-is-one-pool-job
+  ;; 文 1 つの effect は、借りと文と返却を pool の仕事 1 つで答える(scheduler の thread が外から完了させる promise の往復を文ごとに
+  ;; 1 度だけ払う — agora card ki-5c3e73834e73)。借りた接続は答えの後に返っている。
+  (<- settled (CreateExternalPromise))
+  (val stall (threading.Event))
+  (.set stall)
+  (val ran (Queue))
+  (val connections (StalledConnections (Countdown 1 (fn [] None)) (threading.Event) (Countdown 1 (fn [] (.complete settled None)))))
+  (val pool (CountingPool))
+  (<- answer (offloaded-statement connections pool DB (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran))))
+  (assert (= answer (SqlRows :rows #() :rowcount 0)) answer)
+  (<- (within settled "借りた接続の返却"))
+  (assert (= pool.calls 1) (.format "文 1 つの pool の仕事が {} 個" pool.calls))
+  (assert (= (len (tuple ran.queue)) 1) (tuple ran.queue)))
