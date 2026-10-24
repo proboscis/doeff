@@ -31,8 +31,8 @@
 
 (defk every-public-effect []
   {:pre [] :post [(: % tuple)]}
-  "公開 effect 8 つを parts と journal へ 1 つずつ撃ち、答えを並べる(ReadStreamEnd と WatchChanges は失敗と宣言した Unreachable が <- で
-   Raise になるので、on-raise で Unreachable の値へ戻して他の 6 つと並べる)。"
+  "公開 effect 8 つを parts と journal へ 1 つずつ撃ち、答えを並べる(ReadStreamEnd・WatchChanges・AppendEvent・ReadEvents は失敗と宣言した
+   Unreachable が <- で Raise になるので、on-raise で Unreachable の値へ戻して他の 4 つと並べる)。"
   (<- p1 FrozenMap (part "p1"))
   (<- p2 FrozenMap (part "p2"))
   (<- read (ReadRow "parts" #("p1")))
@@ -41,7 +41,7 @@
   (<- rows (PutRows #((RowWrite "parts" #("p2") p2 (ExpectAbsent)))))
   (<- watched (on-raise (WatchChanges #("parts") (WatchCursor 1 0)) (Unreachable detail) (Unreachable detail)))
   (<- appended (on-raise (AppendEvent "journal" "k1" {"n" 1}) (Unreachable detail) (Unreachable detail)))
-  (<- events (ReadEvents "journal" 0))
+  (<- events (on-raise (ReadEvents "journal" 0) (Unreachable detail) (Unreachable detail)))
   (<- end (on-raise (ReadStreamEnd "journal") (Unreachable detail) (Unreachable detail)))
   #(read listed put rows watched appended events end))
 
