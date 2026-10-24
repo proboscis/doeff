@@ -1,4 +1,4 @@
-// Renders a page's video for the docs: docs/assets/videos/<id>.mp4 (h264 at CRF 27 with AAC audio, moov atom at
+// Renders a page's video for the docs: docs/assets/videos/<id>.mp4 (h264 at CRF 29 with AAC audio, moov atom at
 // the front so a browser can start playing before the whole file is in) and <id>.jpg, the still shown on GitHub
 // and as the player's poster. The still is the frame given (default: 2 s in).
 // Usage: node render.mjs <composition id> [<poster frame>]
@@ -22,7 +22,7 @@ const composition = await selectComposition({...options, id});
 const raw = path.join(work, `${id}.mp4`);
 let shown = -1;
 await renderMedia({
-  ...options, composition, codec: 'h264', crf: 27, audioBitrate: '96k', pixelFormat: 'yuv420p', outputLocation: raw, concurrency: 12,
+  ...options, composition, codec: 'h264', crf: 29, audioBitrate: '96k', pixelFormat: 'yuv420p', outputLocation: raw, concurrency: 12,
   onProgress: ({progress}) => {
     const percent = Math.floor(progress * 4) * 25;
     if (percent > shown) console.log(`${(shown = percent)}%`);
