@@ -19,7 +19,7 @@
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
-                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key])
+                              checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -240,19 +240,30 @@
       (raise (ValueError (.format "AppendEvents.appends に同じ追記が 2 度出る(列・冪等キー): {!r}" repeated))))))
 
 
-(defclass [(dataclass :frozen True)] WatchEvents [EffectBase]
+(defn #^ bool checked-watch-window [#^ object after #^ object timeout]
+  "WatchEvents の after(0 以上の整数)と timeout(0 以上の秒)を作る時に検める。defeffect の :pre は真偽の条件を assert するので、
+   検めを通れば True を返す(after = 0 や timeout = 0.0 の値を返すと偽になる)。"
+  (when (or (isinstance after bool) (not (isinstance after int)) (< after 0))
+    (raise (ValueError (.format "WatchEvents.after は 0 以上の整数: {!r}" after))))
+  (when (or (isinstance timeout bool) (not (isinstance timeout #(int float))) (< timeout 0))
+    (raise (ValueError (.format "WatchEvents.timeout は 0 以上の秒: {!r}" timeout))))
+  True)
+
+
+(defeffect WatchEvents
   "追記の列 stream の頭が after より進むのを、timeout 秒まで待つ(出来事を読むのは呼び手 — 起きた後に ReadEvents で読む)。
    答え = EventsMoved(進んだ — もう進んでいれば待たずに返る)| EventsQuiet(timeout まで進まなかった — after が頭より先でも誤りに
-   しない)| Unreachable。列には版が無いので Reset は無い。出来事の番号は置き場の全部の列で 1 本。timeout 0 は待たずに 1 回だけ見る。"
-  (#^ str stream)
-  (setv #^ int after 0)
-  (setv #^ float timeout 0.0)
-  (defn #^ None __post_init__ [self]
-    (checked-table-name self.stream "WatchEvents.stream")
-    (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
-      (raise (ValueError (.format "WatchEvents.after は 0 以上の整数: {!r}" self.after))))
-    (when (or (isinstance self.timeout bool) (not (isinstance self.timeout #(int float))) (< self.timeout 0))
-      (raise (ValueError (.format "WatchEvents.timeout は 0 以上の秒: {!r}" self.timeout))))))
+   しない)| Unreachable。列には版が無いので Reset は無い。出来事の番号は置き場の全部の列で 1 本。timeout 0 は待たずに 1 回だけ見る。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): EventsMoved = 成功 / EventsQuiet = 値(期限まで進まなかったという普通の答えで、
+   待つ呼び手が毎回分けて扱う — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Unreachable = 失敗(<- は Raise(Unreachable) を
+   出す)。答える handler は今までどおり 3 つとも値で答える(R4)。"
+  {:fields [(: stream str) (: after int 0) (: timeout float 0.0)]
+   :pre [(checked-table-name stream "WatchEvents.stream")
+         (checked-watch-window after timeout)]
+   :answer (| EventsMoved EventsQuiet Unreachable)
+   :failure [Unreachable]
+   :value [EventsQuiet]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defclass [(dataclass :frozen True)] ReadEvents [EffectBase]

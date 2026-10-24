@@ -15,6 +15,8 @@ from doeff_hy.frozen import FrozenMap
 from doeff_records.values import (
     AppendEventAnswer,
     AppendEventsAnswer,
+    EventsMoved,
+    EventsQuiet,
     Expectation,
     ListCursor,
     ListRowsAnswer,
@@ -39,6 +41,7 @@ WHERE_ANY_LIMIT: int
 
 def checked_key(key: object, what: str) -> tuple[str, ...]: ...
 def checked_limit(limit: object, what: str) -> int: ...
+def checked_watch_window(after: object, timeout: object) -> bool: ...
 def check_row_write(write: PutRow | RowWrite, what: str) -> None: ...
 def check_event_append(append: AppendEvent | EventAppend, what: str) -> None: ...
 @dataclass(frozen=True)
@@ -107,6 +110,8 @@ class WatchEvents(EffectBase[WatchEventsAnswer]):
     stream: str
     after: int = 0
     timeout: float = 0.0
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    def __iter__(self) -> Generator[Any, Any, EventsMoved | EventsQuiet]: ...
 
 @dataclass(frozen=True)
 class ReadEvents(EffectBase[ReadEventsAnswer]):
