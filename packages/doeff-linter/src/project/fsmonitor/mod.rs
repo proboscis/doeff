@@ -14,7 +14,13 @@
 //!
 //! 使う側は `session(root)` で一覧を受け、`Session::clean_oid` で file の blob の id を(stat せずに)引き、`Session::listing` で歩きの結果を引く。
 //! 有効にするのは `enable()` を呼んだ実行だけ(`--stdin` の 1 file の実行)。`DOEFF_LINTER_NO_FSMONITOR` が在れば使わない。
+//! 常駐の process は inotify(Linux だけの口)で作業木を見張るので、Linux の外(macOS の機体)では組まず、`enable()` も効かない —
+//! 1 file の実行は常駐の process が居ない時と同じく自分で stat して歩く(答えは同じ・card ki-1bcd5b34cbb3)。
 
+#[cfg(target_os = "linux")]
+pub mod daemon;
+#[cfg(not(target_os = "linux"))]
+#[path = "unsupported.rs"]
 pub mod daemon;
 
 use std::collections::{HashMap, HashSet};
@@ -68,7 +74,7 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// この実行で常駐の process に問うことを許す(`--stdin` の 1 file の実行だけが呼ぶ)。
 pub fn enable() {
-    if std::env::var_os(OFF_ENV).is_none() {
+    if cfg!(target_os = "linux") && std::env::var_os(OFF_ENV).is_none() {
         ENABLED.store(true, Ordering::Relaxed);
     }
 }

@@ -1,4 +1,5 @@
 //! 常駐の process(`fsmonitor`)の答えが、作業木の変わりを追う事の試験(card ki-9e7e85407b71)。
+#![cfg(target_os = "linux")]
 //! 一時 git repo を作り、編集・追加・削除・dir の増減・index の書き替えを起こして、問いの答えを見る。
 
 use std::path::{Path, PathBuf};
