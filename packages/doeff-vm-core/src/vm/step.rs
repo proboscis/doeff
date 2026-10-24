@@ -553,7 +553,7 @@ impl VM {
         let k = result.continuation;
         let handler_callable = result.handler_callable;
 
-        if !handler_callable.accepts(&effect) {
+        if !result.accepted && !handler_callable.accepts(&effect) {
             // Typed handler whose declared effect types exclude this effect:
             // reperform from the handler's parent (current_segment already
             // points there), as if the handler had yielded Pass first thing.
@@ -767,9 +767,12 @@ impl VM {
             }
         };
 
-        // Find handler walking up from current
+        // Find handler walking up from current, passing over the typed
+        // handlers that do not take the effect (see perform_effect).
+        let accepting = self.find_accepting_handler(current, &effect);
+        let accepted = accepting.is_some();
         let (handler_fiber_id, _handler_parent) =
-            match self.find_handler_for_effect(current, &effect) {
+            match accepting.or_else(|| self.find_handler_for_effect(current, &effect)) {
                 Some(result) => result,
                 None => {
                     let mut context = k.collect_rich_context().unwrap_or_default();
@@ -818,7 +821,7 @@ impl VM {
         // Switch to outer handler's parent
         self.current_segment = boundary_parent;
 
-        if !handler_callable.accepts(&effect) {
+        if !accepted && !handler_callable.accepts(&effect) {
             // Typed handler that does not take this effect — keep walking
             // outward with the extended continuation (see eval_perform).
             return self.eval_perform_with_k(effect, k, error_context);

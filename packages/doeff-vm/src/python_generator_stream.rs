@@ -350,6 +350,12 @@ impl doeff_vm_core::value::Callable for CallRaised {
 /// handler passes on untouched (`PassedEffects(passes, keeps)`: an instance of
 /// `passes` that is not an instance of `keeps`), or `None`. The fields are checked
 /// once, when the spec is made.
+///
+/// `verdicts`: whether the handler takes an effect, kept per effect type, so the VM
+/// passes over a typed handler without calling isinstance for every effect
+/// (card ki-65239b222437). Kept only when the answer depends on the effect's type
+/// alone (`by_type_only`, `answer_depends_on_type_only`), and read only while the
+/// type is unchanged since (its version tag).
 #[pyclass(frozen, name = "HandlerSpec", module = "doeff_vm.doeff_vm")]
 #[derive(Debug)]
 pub struct PyHandlerSpec {
@@ -359,6 +365,103 @@ pub struct PyHandlerSpec {
     passed: Option<(Py<pyo3::types::PyTuple>, Py<pyo3::types::PyTuple>)>,
     /// `passed` as it was given (the `PassedEffects` value), for Python readers.
     passed_value: Py<PyAny>,
+    /// Every class in `effect_types` and `passed` is made by `type` itself, so
+    /// isinstance() against them reads only the instance's type (no
+    /// `__instancecheck__`: an ABC or a runtime-checkable Protocol answers per
+    /// instance).
+    by_type_only: bool,
+    verdicts: std::sync::Mutex<Vec<Verdict>>,
+}
+
+/// One effect type's answer of `accepts`, valid while the type's version tag is
+/// `version` (CPython clears the tag when the type or one of its bases changes).
+#[derive(Debug)]
+struct Verdict {
+    effect_type: Py<pyo3::types::PyType>,
+    version: u32,
+    accepts: bool,
+}
+
+/// At most this many effect types are kept per spec; a handler that sees more
+/// starts over (a handler sees a few effect types).
+const KEPT_VERDICTS: usize = 32;
+
+unsafe extern "C" {
+    /// CPython 3.12+: give the type a version tag if it has none; 0 when none is left.
+    fn PyUnstable_Type_AssignVersionTag(type_: *mut pyo3::ffi::PyTypeObject) -> std::ffi::c_int;
+}
+
+/// The type's version tag now (0 = none; CPython clears it when the type changes).
+fn version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -> u32 {
+    // SAFETY: the type is alive (bound); the free-threaded build writes the tag
+    // atomically, so it is read atomically here.
+    unsafe {
+        std::sync::atomic::AtomicU32::from_ptr(&raw mut (*effect_type.as_type_ptr()).tp_version_tag)
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Whether isinstance(effect, T) for a class `T` made by `type` reads only the
+/// effect's type: no class in its MRO but `object` defines `__class__` or
+/// `__getattribute__` (isinstance falls back to `effect.__class__` when the
+/// type is not a subclass, and those could answer per instance).
+fn answer_depends_on_type_only(effect_type: &Bound<'_, pyo3::types::PyType>) -> bool {
+    let py = effect_type.py();
+    let object = py.get_type::<PyAny>();
+    effect_type.mro().iter().all(|class| {
+        if class.is(&object) {
+            return true;
+        }
+        let Ok(class) = class.cast_into::<pyo3::types::PyType>() else {
+            return false;
+        };
+        class
+            .getattr(pyo3::intern!(py, "__dict__"))
+            .and_then(|namespace| {
+                Ok(!namespace.contains(pyo3::intern!(py, "__class__"))?
+                    && !namespace.contains(pyo3::intern!(py, "__getattribute__"))?)
+            })
+            .unwrap_or(false)
+    })
+}
+
+impl PyHandlerSpec {
+    /// The kept answer for this effect type, if the type is unchanged since.
+    fn kept_verdict(&self, effect_type: &Bound<'_, pyo3::types::PyType>) -> Option<bool> {
+        let verdicts = self.verdicts.lock().ok()?;
+        let found = verdicts
+            .iter()
+            .find(|verdict| verdict.effect_type.as_ptr() == effect_type.as_ptr())?;
+        let version = version_tag(effect_type);
+        (version != 0 && version == found.version).then_some(found.accepts)
+    }
+
+    /// Keep the answer for this effect type when it depends on the type alone.
+    fn keep_verdict(&self, effect_type: &Bound<'_, pyo3::types::PyType>, accepts: bool) {
+        if !self.by_type_only || !answer_depends_on_type_only(effect_type) {
+            return;
+        }
+        // SAFETY: the type is alive (bound).
+        if unsafe { PyUnstable_Type_AssignVersionTag(effect_type.as_type_ptr()) } == 0 {
+            return;
+        }
+        let version = version_tag(effect_type);
+        if version == 0 {
+            return;
+        }
+        let Ok(mut verdicts) = self.verdicts.lock() else {
+            return;
+        };
+        verdicts.retain(|verdict| verdict.effect_type.as_ptr() != effect_type.as_ptr());
+        if verdicts.len() >= KEPT_VERDICTS {
+            verdicts.clear();
+        }
+        verdicts.push(Verdict {
+            effect_type: effect_type.clone().unbind(),
+            version,
+            accepts,
+        });
+    }
 }
 
 #[pymethods]
@@ -403,6 +506,17 @@ impl PyHandlerSpec {
             };
             Some((tuple(0)?, tuple(1)?))
         };
+        let py = effect_types.py();
+        let made_by_type = |classes: &Py<pyo3::types::PyTuple>| {
+            classes
+                .bind(py)
+                .iter()
+                .all(|class| class.get_type().is(&py.get_type::<pyo3::types::PyType>()))
+        };
+        let by_type_only = types.iter().all(made_by_type)
+            && pair
+                .iter()
+                .all(|(passes, keeps)| made_by_type(passes) && made_by_type(keeps));
         Ok(Self {
             effect_types: types,
             generator_function: (!generator_function.is_none())
@@ -410,6 +524,8 @@ impl PyHandlerSpec {
             tail_resume_lines: lines,
             passed: pair,
             passed_value: passed.clone().unbind(),
+            by_type_only,
+            verdicts: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -448,6 +564,11 @@ impl PyHandlerSpec {
         if let Some((passes, keeps)) = &self.passed {
             visit_py_field(&visit, passes)?;
             visit_py_field(&visit, keeps)?;
+        }
+        if let Ok(verdicts) = self.verdicts.try_lock() {
+            for verdict in verdicts.iter() {
+                visit_py_field(&visit, &verdict.effect_type)?;
+            }
         }
         visit_py_field(&visit, &self.passed_value)
     }
@@ -593,17 +714,25 @@ impl doeff_vm_core::value::Callable for PythonCallable {
             // __instancecheck__) must not hide the effect: deliver it and let
             // the handler body decide, as without a filter.
             let effect = obj.bind(py);
-            if let Some((passes, keeps)) = &spec.passed {
-                let passed = effect.is_instance(passes.bind(py)).unwrap_or(false)
-                    && !effect.is_instance(keeps.bind(py)).unwrap_or(true);
-                if passed {
-                    return false;
+            let effect_type = effect.get_type();
+            if let Some(accepts) = spec.kept_verdict(&effect_type) {
+                return accepts;
+            }
+            let accepts = (|| {
+                if let Some((passes, keeps)) = &spec.passed {
+                    let passed = effect.is_instance(passes.bind(py)).unwrap_or(false)
+                        && !effect.is_instance(keeps.bind(py)).unwrap_or(true);
+                    if passed {
+                        return false;
+                    }
                 }
-            }
-            match &spec.effect_types {
-                Some(types) => effect.is_instance(types.bind(py)).unwrap_or(true),
-                None => true,
-            }
+                match &spec.effect_types {
+                    Some(types) => effect.is_instance(types.bind(py)).unwrap_or(true),
+                    None => true,
+                }
+            })();
+            spec.keep_verdict(&effect_type, accepts);
+            accepts
         })
     }
 
