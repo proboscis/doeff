@@ -1,0 +1,4 @@
+# Installed by npm ci; the narration is made by tts.py and the videos are written to docs/assets/videos/.
+node_modules/
+out/
+public/

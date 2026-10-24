@@ -1,4 +1,4 @@
-"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 2 つを直す。
+"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 3 つを直す。
 
 1. site の外の repo の file へ張る相対の link を、GitHub の main の file への link に書き換える。docs の page は repo の file
    (packages/*/README.md・examples/・docs/history/ の仕様)へ相対の link を張るが、site に入るのは docs/index.md から辿る page
@@ -6,24 +6,33 @@
    書き換えない — mkdocs が warning を出し、--strict の build が落ちる。囲みのコードと `` ` `` の中は書き換えない。
 2. 囲みの頭の言語の後の語を落とす。docs の例の検は ```python excerpt・```hy file=greet.hy の印を読むが、pymdownx.superfences は
    言語の後の素の語を読めず、その囲みを囲みと見ないので、後ろの見出しまで崩れる。file=<名> は囲みの題(title)にする。
+3. 章の動画を再生できるようにする。page は動画を `[![<説明>](assets/videos/<名>.jpg)](assets/videos/<名>.mp4)` と書く —
+   GitHub は markdown の video の要素を消すので、repo の画面では 1 こまの画像が mp4 への link になる。site では、その link を
+   1 こまの画像を poster にした video の要素に替える(動画は tools/docs-video で作る)。
 """
 
 from __future__ import annotations
 
+import html
 import re
 from itertools import accumulate
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
-from mkdocs.config.defaults import MkDocsConfig
-from mkdocs.structure.files import Files
-from mkdocs.structure.pages import Page
+if TYPE_CHECKING:
+    from mkdocs.config.defaults import MkDocsConfig
+    from mkdocs.structure.files import Files
+    from mkdocs.structure.pages import Page
 
 GITHUB_BRANCH = "main"
 FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})(.*)$")
 CODE_SPAN = re.compile(r"(`+[^`]*`+)")
 INLINE_LINK = re.compile(r"(\]\()([^)\s]+)(\s+\"[^\"]*\")?(\))")
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# 1 こまの画像を mp4 への link にした形(markdown から組んだ後の HTML)。img の属性の順は問わない。
+VIDEO_LINK = re.compile(r'<a href="([^"]+\.mp4)">(<img\b[^>]*>)</a>')
+IMG_ATTR = re.compile(r'\b(src|alt)="([^"]*)"')
 
 
 def _github_url(
@@ -86,3 +95,26 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
         _fence_line(line) if is_fence else line if fences_so_far % 2 else rewrite_line(line)
         for line, is_fence, fences_so_far in zip(lines, fences, accumulate(fences), strict=True)
     )
+
+
+def videos_to_players(content: str) -> str:
+    """mp4 への link にした 1 こまの画像を、その画像を poster にして再生する video の要素に替えるため(module の頭の 3)。"""
+
+    def player(match: re.Match[str]) -> str:
+        """1 つの link を video に替える。説明(alt)は読み上げの名にする。"""
+        attrs = dict(IMG_ATTR.findall(match.group(2)))
+        return (
+            f'<video class="docs-video" controls preload="metadata" playsinline src="{match.group(1)}" '
+            f'poster="{attrs.get("src", "")}" aria-label="{attrs.get("alt", "")}" '
+            f'style="width: 100%; height: auto;">{html.escape(html.unescape(attrs.get("alt", "")))}</video>'
+        )
+
+    return VIDEO_LINK.sub(player, content)
+
+
+def on_page_content(content: str, page: Page, config: MkDocsConfig, files: Files) -> str:
+    """組んだ page の HTML で、章の動画の link を video の要素に替えるため(mkdocs の hook)。
+
+    mkdocs が link と画像の相対の path を site の path に直した後に呼ばれるので、path はそのまま使える。
+    """
+    return videos_to_players(content)
