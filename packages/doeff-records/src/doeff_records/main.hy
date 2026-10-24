@@ -54,6 +54,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (require doeff-hy.record [defrecord])
 (import sys)
+(import functools)
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import concurrent.futures [ThreadPoolExecutor])
@@ -111,6 +112,8 @@
 ;; 40〜125 ms(ADR-DOE-RECORDS-002 の測り)— 一覧の読みは 1 秒に 7〜18 本なので、重なる大きな頁は 2 本ほど。free-threaded の Python では
 ;; 1 本が core 1 つを使う(機体の core を食い尽くさない数)。足りない時は pool の列で待つだけで、scheduler の thread は塞がない。
 (val COMPUTE-WORKERS 4)
+;; 書き手の名 → 記録の handler の覚えの上限(pg-handlers-of — 本番の書き手の名は job の数ほど。越えた名は古い方から組み直す)。
+(val WRITER-HANDLERS-KEPT 256)
 ;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
 (val STOP-POLL-SECONDS 0.5)
 (val DRAIN-SECONDS 0.0)
@@ -199,7 +202,10 @@
            :file sys.stderr :flush True))
   (when (or store.indexes.missing store.indexes.retired)
     (<- (Spawn (reconcile-indexes store) :daemon True)))
-  (fn [writer] (pg-records-handler store writer host :gated True)))
+  ;; 書き手の名ごとの handler は 1 度だけ組んで使い回す(handler は用意した置き場と名と機体の名の値だけを持つ — 要求ごとに組むと、組むたびに
+  ;; 節の関数と型の注釈を作り直して、1 要求の scheduler の thread の CPU を使っていた・card ki-1841b724d061)。名は呼び手の名乗りなので、
+  ;; 覚える数に上限を置く(WRITER-HANDLERS-KEPT)。
+  ((functools.lru-cache :maxsize WRITER-HANDLERS-KEPT) (fn [writer] (pg-records-handler store writer host :gated True))))
 
 
 (defhandler printed-listening [#^ str prefix]
