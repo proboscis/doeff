@@ -564,7 +564,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         drafts.extend(found);
                         report.errors.extend(errors);
                     }
-                    if enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest) && !architecture.world_handlers.is_empty() {
+                    if enabled.contains(&ProjectRule::WorldHandlerWithoutContractTest)
+                        && (!architecture.world_handlers.is_empty() || !architecture.stand_ins.is_empty())
+                    {
                         drafts.extend(crate::timing::timed("contract-tests", || judge_contract_tests(root, architecture, hy)));
                     }
                     let fake_rules = [
@@ -2928,10 +2930,14 @@ fn judge_test_kinds(
 /// 同じ定義の辺の図を辿ってその handler の定義に届く物(`:interpreters` の要素は file の外の定数の記号なので読み解かない)。
 /// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `none` は縁の検が在っても鳴る。当たりの位置は architecture.hy の
 /// 名簿の要素・細目は名簿の綴り(agora-redesign #1363・#1796)。
+/// 相手役の名簿(:stand-ins)の組ごとにも、相手役と本物の両方に届く縁の検を数える(verified fake・Pact の形 — 同じ検を両方に流して
+/// 答えを照らす)。本物は索引の外(doeff などの package)に在ってよく、その時は本物を直に名指す定義から辿る。細目は「相手役->本物」。
 fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let judged: Vec<&architecture::WorldHandler> =
         architecture.world_handlers.iter().filter(|h| !matches!(h.contract_test, architecture::ContractTest::Waived(_))).collect();
-    if judged.is_empty() {
+    let judged_stand_ins: Vec<&architecture::StandIn> =
+        architecture.stand_ins.iter().filter(|s| !matches!(s.contract_test, architecture::ContractTest::Waived(_))).collect();
+    if judged.is_empty() && judged_stand_ins.is_empty() {
         return Vec::new();
     }
     let graph = definition_graph(architecture, hy);
@@ -2987,6 +2993,60 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
             detail: Some(spelling.clone()),
             base: Severity::Error,
             explain: Explain::WorldHandlerWithoutContractTest { handler: spelling, breach },
+        });
+    }
+    // 名の定義(索引に在れば)と、その名を直に名指す定義(呼ぶ・値として渡す・属性を読む — 検めるだけの名指しと import は除く)を種に
+    // して逆向きに辿る。索引の外の本物(doeff の handler など)は定義の節が無いので、名指す定義だけが種になる。
+    let reach_of = |target: &str| -> Vec<bool> {
+        let mut seeds = vec![false; graph.nodes.len()];
+        if let Some(&node) = node_of.get(target) {
+            seeds[node] = true;
+        }
+        for rel in &graph.rels {
+            let file = &hy[*rel];
+            let first = graph.base[rel.as_str()];
+            let in_import = |range: &Range| file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
+            let named = file
+                .references
+                .iter()
+                .filter(|r| r.target.as_deref() == Some(target) && !r.inspected && !in_import(&r.range))
+                .filter_map(|r| innermost_definition(&file.definitions, &r.range))
+                .chain(file.calls.iter().filter(|c| c.target.as_deref() == Some(target)).filter_map(|c| c.caller));
+            for owner in named {
+                seeds[first + owner] = true;
+            }
+        }
+        reach_seeds(&graph, &seeds, &no_carried, &running).reaches
+    };
+    for stand_in in judged_stand_ins {
+        let target = stand_in.definition.target();
+        let covered = || {
+            let (by_stand_in, by_real) = (reach_of(&target), reach_of(&stand_in.real.target()));
+            contract_tests.iter().any(|test| by_stand_in[*test] && by_real[*test])
+        };
+        let Some(breach) = contract_test_breach(&stand_in.contract_test, covered) else { continue };
+        let (spelling, real) = (stand_in.definition.spelling(), stand_in.real.spelling());
+        let message = match breach {
+            ContractTestBreach::NoEdgeTest => format!(
+                "相手役 {} に、本物 {} と同じ契約の検(空でない :interpreters を持ち、相手役と本物の両方に届く deftest)が無い{}",
+                spelling,
+                real,
+                if node_of.contains_key(target.as_str()) { "" } else { "(相手役の定義が索引に無い)" }
+            ),
+            ContractTestBreach::NoneWithoutReason => {
+                format!("相手役 {} の :contract-test none に理由が無い(契約の検を求めない理由のテストの名を書く)", spelling)
+            }
+        };
+        drafts.push(Draft {
+            rule: ProjectRule::WorldHandlerWithoutContractTest,
+            layer: None,
+            rel: rel.clone(),
+            path: architecture.path.clone(),
+            range: stand_in.range,
+            message,
+            detail: Some(format!("{}->{}", spelling, real)),
+            base: Severity::Error,
+            explain: Explain::StandInWithoutContractTest { stand_in: spelling, real, breach },
         });
     }
     drafts

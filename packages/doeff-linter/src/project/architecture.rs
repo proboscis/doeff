@@ -18,6 +18,8 @@
 //!                       :touches [http file clock env]           ; 触れる先(閉じた語 — WorldTouch)
 //!                       :answers [HttpRequest ReadText]          ; 答える effect(省略可)
 //!                       :wraps ["doeff_core_effects.os_file:os-file-handler"])]  ; 中で動かす doeff の実 I/O の handler(省略可)
+//!   :stand-ins [(stand-in "controllers.agora_sim.peers.live_session_peer:with-live-session-peer"  ; 模擬で本物の代わりに答える相手役
+//!                 :real "doeff_openai.live:with-live-session")]  ; 相手役が代わる本物の handler(DOEFF137 が組ごとに契約の検を数える)
 //!   :exclude ["tests" "__pycache__" "conftest.py"]
 //!   :shared "shared")
 //! (defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
@@ -303,6 +305,23 @@ pub struct WorldHandler {
     /// 中で動かす doeff の実 I/O の handler(書かなくてよい)。
     pub wraps: Vec<DefinitionRef>,
     /// 縁の検(`:interpreters` を持つ deftest)の宣言(`:contract-test` — 書かなければ求める・DOEFF137・agora-redesign #1363・#1796)。
+    pub contract_test: ContractTest,
+    /// architecture.hy の中の位置。
+    #[serde(skip)]
+    pub range: doeff_indexer::hy_index::Range,
+}
+
+/// 模擬の中で本物の代わりに答える相手役の handler と、それが代わる本物の handler の組 1 つ(`:stand-ins` の
+/// `(stand-in "module:名" :real "module:名" :contract-test …?)`)。DOEFF137 が組ごとに、本物と相手役の両方に届く縁の検(空でない
+/// `:interpreters` を持つ deftest)を数える — 同じ検を両方に流して答えを照らす(verified fake・Pact の形)。本物は索引の外(doeff などの
+/// package)に在ってよい。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StandIn {
+    /// 相手役の handler の定義。
+    pub definition: DefinitionRef,
+    /// 相手役が代わる本物の handler の定義。
+    pub real: DefinitionRef,
+    /// 契約の検の宣言(`:contract-test` — 書き方と読み方は :world-handlers と同じ・書かなければ求める)。
     pub contract_test: ContractTest,
     /// architecture.hy の中の位置。
     #[serde(skip)]
@@ -798,6 +817,8 @@ pub struct Architecture {
     pub wire_modules: Vec<String>,
     /// 外の世界に触れてよい定義の許可名簿(`:world-handlers` — 空 = 宣言していない)。
     pub world_handlers: Vec<WorldHandler>,
+    /// 相手役の名簿(`:stand-ins` — 空 = 宣言していない・DOEFF137)。
+    pub stand_ins: Vec<StandIn>,
     /// 模擬の環境から本物の外の世界へ届く境目の部品(`:boundary-parts` — 空 = 宣言していない・DOEFF106・agora-redesign #1797)。
     pub boundary_parts: Vec<BoundaryPart>,
     /// 許可名簿の規則(DOEFF106・131)を層の置き場の外の file にも当てる dir(repo の根からの綴りの列・`:raw-io-roots ["controllers" "services"]`)。
@@ -1211,6 +1232,7 @@ impl<'a> Parser<'a> {
             rejected_plain_callable_reasons: Vec::new(),
             wire_modules: Vec::new(),
             world_handlers: Vec::new(),
+            stand_ins: Vec::new(),
             boundary_parts: Vec::new(),
             raw_io_roots: None,
             edge_mark: None,
@@ -1278,6 +1300,7 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":stand-ins" => arch.stand_ins = self.stand_ins(value),
                 ":boundary-parts" => arch.boundary_parts = self.boundary_parts(value),
                 ":raw-io-roots" => {
                     let roots = self.names(value, ":raw-io-roots");
@@ -2756,7 +2779,7 @@ impl<'a> Parser<'a> {
                     // 縁の検を求めない handler(DOEFF137)— 値は (none :doeff-test|:repo-test "file::名") か記号 none(理由なし — 判じる時に
                     // 鳴る)だけ(ほかの値は読み違いを黙って通さない・#1796)。
                     ":contract-test" => {
-                        if let Some(declared) = self.contract_test(field, &handler.definition.spelling()) {
+                        if let Some(declared) = self.contract_test(field, &format!("world-handler {}", handler.definition.spelling())) {
                             handler.contract_test = declared;
                         }
                     }
@@ -2775,12 +2798,64 @@ impl<'a> Parser<'a> {
         out
     }
 
+    /// 相手役の名簿 `[(stand-in "module:名" :real "module:名" :contract-test …?) …]` を読む(DOEFF137)。
+    fn stand_ins(&mut self, value: &Form) -> Vec<StandIn> {
+        let entries = self.bracket(value).unwrap_or_else(|| {
+            self.problem(value, ":stand-ins は (stand-in \"module:名\" :real \"module:名\") の列");
+            Vec::new()
+        });
+        let mut out: Vec<StandIn> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("stand-in"));
+            let Some(parts) = parts else {
+                self.problem(entry, ":stand-ins の要素は (stand-in \"module:名\" :real \"module:名\" :contract-test …?)");
+                continue;
+            };
+            let Some(head) = parts.get(1) else {
+                self.problem(entry, "stand-in に \"module:名\" が無い");
+                continue;
+            };
+            let Some(definition) = self.definition_ref(head, "stand-in") else { continue };
+            let range = self.lines.range(head.span.start, head.span.end);
+            let subject = format!("stand-in {}", definition.spelling());
+            let mut real: Option<DefinitionRef> = None;
+            let mut contract_test = ContractTest::Required;
+            let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
+            for (key, field) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":real" => real = self.definition_ref(field, ":real"),
+                    ":contract-test" => {
+                        if let Some(declared) = self.contract_test(field, &subject) {
+                            contract_test = declared;
+                        }
+                    }
+                    _ => self.unknown_key(key, "stand-in"),
+                }
+            }
+            let Some(real) = real else {
+                self.problem(entry, &format!("{} に :real \"module:名\"(相手役が代わる本物の handler)が無い", subject));
+                continue;
+            };
+            if real == definition {
+                self.problem(entry, &format!("{} の :real が相手役そのもの(本物の handler を書く)", subject));
+                continue;
+            }
+            if out.iter().any(|s| s.definition == definition && s.real == real) {
+                self.problem(entry, &format!("{} と本物 {} の組が 2 度宣言されている", subject, real.spelling()));
+                continue;
+            }
+            out.push(StandIn { definition, real, contract_test, range });
+        }
+        out
+    }
+
     /// `:contract-test` の値を読む — 記号 none は理由なし、`(none :doeff-test "file::名")` / `(none :repo-test "file::名")` は理由つき。
-    /// ほかの形・鍵の数の違い・node id の形の違いは理由を積んで None(DOEFF137・agora-redesign #1796)。
-    fn contract_test(&mut self, field: &Form, handler: &str) -> Option<ContractTest> {
+    /// ほかの形・鍵の数の違い・node id の形の違いは理由を積んで None(DOEFF137・agora-redesign #1796)。subject = 名簿の要素の綴り
+    /// (`world-handler 名` / `stand-in 名`)。
+    fn contract_test(&mut self, field: &Form, subject: &str) -> Option<ContractTest> {
         let shape = format!(
-            "world-handler {} の :contract-test は (none {} \"file::テストの名\") か記号 none(理由の無い none は DOEFF137 が鳴る)",
-            handler,
+            "{} の :contract-test は (none {} \"file::テストの名\") か記号 none(理由の無い none は DOEFF137 が鳴る)",
+            subject,
             ContractTestWaiver::KEYS.join("|")
         );
         if self.symbol(field) == Some("none") {
@@ -3218,6 +3293,10 @@ impl<'a> Parser<'a> {
         }
         if arch.edge_mark.is_some() && arch.world_handlers.is_empty() {
             push(&mut self.problems, ":edge-mark を書くには :world-handlers が要る(縁のテストは名簿の定義に届くテスト)".to_string());
+        }
+        // 相手役の契約の検は DOEFF137 が :world-handlers の縁の検と同じ索引と図で数える(有効にする条件も同じ)— 判じない宣言は誤り。
+        if !arch.stand_ins.is_empty() && arch.edge_mark.is_none() {
+            push(&mut self.problems, ":stand-ins を書くには :edge-mark が要る(相手役の契約の検は DOEFF137 が :world-handlers の縁の検と同じく数える)".to_string());
         }
         for handler in &arch.world_handlers {
             for wrapped in &handler.wraps {

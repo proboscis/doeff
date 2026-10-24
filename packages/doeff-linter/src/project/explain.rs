@@ -181,6 +181,8 @@ pub enum Explain {
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
     /// DOEFF137: 許可名簿の handler(名簿の綴り)に届く縁の検(空でない :interpreters を持つ deftest)が無い。
     WorldHandlerWithoutContractTest { handler: String, breach: super::contract_breach::ContractTestBreach },
+    /// DOEFF137: 相手役の名簿の組(相手役・本物の綴り)の両方に届く契約の検(空でない :interpreters を持つ deftest)が無い。
+    StandInWithoutContractTest { stand_in: String, real: String, breach: super::contract_breach::ContractTestBreach },
     /// DOEFF135: deftest 以外のテストの形。
     TestFormNotDeftest { form: &'static str, detail: String },
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
@@ -473,6 +475,14 @@ impl<'a> Narrator<'a> {
             Explain::WorldHandlerWithoutContractTest { handler, breach: super::contract_breach::ContractTestBreach::NoneWithoutReason } => (
                 format!("許可名簿の handler {} の :contract-test none に理由が無い", handler),
                 "理由の無い none は、縁の検を求めない根拠を誰も確かめられない。契約を確かめるテストの名を理由として書く(書き方は DOEFF137 の直し方)。".to_string(),
+            ),
+            Explain::StandInWithoutContractTest { stand_in, real, breach: super::contract_breach::ContractTestBreach::NoEdgeTest } => (
+                format!("相手役 {} に、本物 {} と同じ契約の検が無い", stand_in, real),
+                "契約の検 = :interpreters に本物と相手役の解釈器を並べ、同じ deftest を両方に流して答えを照らす検(verified fake・Pact の形)。無いと、本物が変わっても相手役は古い答えのまま模擬が緑になり、通った code が本番で違う答えに会う。相手役の持ち主が検を保ち、本物が用意できない組だけ名簿の行に理由つきの :contract-test を書く(書き方は DOEFF137 の直し方)。".to_string(),
+            ),
+            Explain::StandInWithoutContractTest { stand_in, breach: super::contract_breach::ContractTestBreach::NoneWithoutReason, .. } => (
+                format!("相手役 {} の :contract-test none に理由が無い", stand_in),
+                "理由の無い none は、相手役の契約の検を求めない根拠を誰も確かめられない。契約を確かめるテストの名を理由として書く(書き方は DOEFF137 の直し方)。".to_string(),
             ),
             Explain::TestFormNotDeftest { form, detail } => (
                 format!("テストの形 {} — {}", form, detail),
