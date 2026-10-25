@@ -1,0 +1,18 @@
+run 1:
+   09:00:00 work got lease-1, waits for a reply
+   09:00:02 main Cancel(task) returned
+   09:00:02 work receives TaskCancelledError at its Wait
+   09:00:03 work finally: released lease-1
+   09:00:03 main Wait(task) -> TaskCancelledError
+run 2:
+   09:00:00 work got lease-1, waits for a reply
+   09:00:02 main Cancel(task) returned
+   09:00:02 work receives TaskCancelledError at its Wait
+   09:00:03 work finally: released lease-1
+   09:00:03 main Wait(task) -> TaskCancelledError
+run 3:
+   09:00:00 work got lease-1, waits for a reply
+   09:00:02 main Cancel(task) returned
+   09:00:02 work receives TaskCancelledError at its Wait
+   09:00:03 work finally: released lease-1
+   09:00:03 main Wait(task) -> TaskCancelledError

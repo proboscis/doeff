@@ -1,0 +1,30 @@
+run 1: 2.66 ms result ['A', 'B', 'C']
+run 2: 0.75 ms result ['A', 'B', 'C']
+run 3: 0.63 ms result ['A', 'B', 'C']
+run 4: 0.63 ms result ['A', 'B', 'C']
+run 5: 0.69 ms result ['A', 'B', 'C']
+run 6: 0.41 ms result ['A', 'B', 'C']
+run 7: 0.37 ms result ['A', 'B', 'C']
+run 8: 0.40 ms result ['A', 'B', 'C']
+run 9: 0.35 ms result ['A', 'B', 'C']
+run 10: 0.45 ms result ['A', 'B', 'C']
+run 11: 0.35 ms result ['A', 'B', 'C']
+run 12: 0.35 ms result ['A', 'B', 'C']
+run 13: 0.40 ms result ['A', 'B', 'C']
+run 14: 1.34 ms result ['A', 'B', 'C']
+run 15: 0.42 ms result ['A', 'B', 'C']
+run 16: 0.39 ms result ['A', 'B', 'C']
+run 17: 0.38 ms result ['A', 'B', 'C']
+run 18: 0.43 ms result ['A', 'B', 'C']
+run 19: 0.38 ms result ['A', 'B', 'C']
+run 20: 0.72 ms result ['A', 'B', 'C']
+run 21: 0.66 ms result ['A', 'B', 'C']
+1 distinct order(s) of lines in 21 runs:
+   09:00:00 a starts
+   09:00:00 b starts
+   09:00:00 c starts
+   09:00:00 main spawned a, b, c
+   09:00:01 b done
+   09:00:02 c done
+   09:00:03 a done
+   09:00:03 main Gather -> ['A', 'B', 'C']

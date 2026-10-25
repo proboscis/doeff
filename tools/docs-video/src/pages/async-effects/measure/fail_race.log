@@ -1,0 +1,48 @@
+run 1 gather_fails:
+   09:00:01 b raises ValueError
+   09:00:01 main Gather raised ValueError('boom')
+   09:00:02 c done
+   09:00:02 main Wait(c) -> 'c', c was not cancelled
+   09:00:02 main Cancel(a)
+run 1 race:
+   09:00:01 b done
+   09:00:01 main Race -> 'b'
+   09:00:03 a done
+   09:00:06 main after 5 more seconds
+run 1 race_then_cancel:
+   09:00:01 b done
+   09:00:01 main Race -> 'b'
+   09:00:01 main Cancel(a)
+   09:00:06 main after 5 more seconds
+run 2 gather_fails:
+   09:00:01 b raises ValueError
+   09:00:01 main Gather raised ValueError('boom')
+   09:00:02 c done
+   09:00:02 main Wait(c) -> 'c', c was not cancelled
+   09:00:02 main Cancel(a)
+run 2 race:
+   09:00:01 b done
+   09:00:01 main Race -> 'b'
+   09:00:03 a done
+   09:00:06 main after 5 more seconds
+run 2 race_then_cancel:
+   09:00:01 b done
+   09:00:01 main Race -> 'b'
+   09:00:01 main Cancel(a)
+   09:00:06 main after 5 more seconds
+run 3 gather_fails:
+   09:00:01 b raises ValueError
+   09:00:01 main Gather raised ValueError('boom')
+   09:00:02 c done
+   09:00:02 main Wait(c) -> 'c', c was not cancelled
+   09:00:02 main Cancel(a)
+run 3 race:
+   09:00:01 b done
+   09:00:01 main Race -> 'b'
+   09:00:03 a done
+   09:00:06 main after 5 more seconds
+run 3 race_then_cancel:
+   09:00:01 b done
+   09:00:01 main Race -> 'b'
+   09:00:01 main Cancel(a)
+   09:00:06 main after 5 more seconds
