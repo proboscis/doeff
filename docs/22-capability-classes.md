@@ -41,11 +41,34 @@ The required machinery is: effects-as-data (frozen dataclasses give canonical ke
 
 ### Retry under one-shot continuations (the correct formulation)
 
-doeff continuations are one-shot: each `k` resumes exactly once. A retry handler must therefore **never** loop over `Resume(k, ...)`. The correct shape is:
+doeff continuations are one-shot: each `k` resumes exactly once. A retry handler must therefore **never** loop over `Resume(k, ...)`. The correct shape re-yields the effect instead. Below, `retry` sits between the program and a `provider` handler that times out twice before it answers; `try_handler` (outermost) answers the `Try` effect:
 
 ```python
-@do
-def retry_handler(effect: Effect, k):
+from dataclasses import dataclass
+
+from doeff_core_effects.handlers import try_handler
+
+from doeff import EffectBase, Resume, Try, do, handler, run
+
+
+@dataclass(frozen=True)
+class Complete(EffectBase):
+    prompt: str
+
+
+attempts = []
+
+
+@handler
+def provider(effect: Complete, k):   # times out twice, then answers
+    attempts.append(effect.prompt)
+    if len(attempts) <= 2:
+        raise TimeoutError("provider timed out")
+    return (yield Resume(k, f"answer to {effect.prompt!r}"))
+
+
+@handler
+def retry(effect: Complete, k):
     last_err = None
     for attempt in range(3):
         safe = yield Try(effect)      # re-YIELD the effect: fresh continuation per attempt
@@ -53,6 +76,15 @@ def retry_handler(effect: Effect, k):
             return (yield Resume(k, safe.value))   # k resumed exactly once
         last_err = safe.error
     raise last_err
+
+
+@do
+def one_question():
+    return (yield Complete("plan"))
+
+
+print(run(try_handler(provider(retry(one_question())))))  # answer to 'plan'
+print(len(attempts))  # 3
 ```
 
 Retrying the *operation* is class 1. Retrying the *continuation* (re-running the rest of the program after a downstream failure) would require multi-shot and is impossible by design — see class 3 for the sanctioned approximation.

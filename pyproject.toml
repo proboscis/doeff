@@ -434,6 +434,10 @@ tests = ["tests/test_docs_page_examples.py"]
 prefix = "docs/20-why-effects-over-di.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+[[tool.doeff.contract-tests]]
+prefix = "docs/22-capability-classes.md"
+tests = ["tests/test_docs_page_examples.py"]
+
 # 型の章(23 と 24)は、page の例の検に加え、写した例が pyright の strict と mypy の --strict で赤を出さない検を払う
 # (card ki-b370d8d59e8c)。型の検の page の一覧(TYPED_PAGES)もこの表から読む。型の検の秒は 38 秒(7 本・子 4 本 — pyright 2・mypy 2・
 # 起動を含む壁時計・load 約 95 の下・2026-10-17 会話の Pod)。

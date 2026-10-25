@@ -141,8 +141,8 @@ const SUMMARIZE = ['@do', 'def summarize(text):', '    summary = yield Complete(
 const D = {x: 60, y: 130, w: 560, size: 19, line: 30};
 const DH = {x: 680, y: 130, w: 540, h: 200};
 const HANDLERS = [
-  {name: 'routed', about: 'routes by model prefix', at: 1.2, body: ['def routed(effect: Complete, k):', '    provider = PROVIDERS[effect.model.split("-")[0]]', '    return (yield Resume(k, f"{provider}: summary"))']},
-  {name: 'canned', about: 'a test handler', at: 10.0, body: ['def canned(effect: Complete, k):', '    return (yield Resume(k, "canned summary"))']},
+  {name: 'routed', about: 'routes by model prefix', at: 1.2, body: ['@handler', 'def routed(effect: Complete, k):', '    provider = PROVIDERS[effect.model.split("-")[0]]', '    return (yield Resume(k, f"{provider}: summary"))']},
+  {name: 'canned', about: 'a test handler', at: 10.0, body: ['@handler', 'def canned(effect: Complete, k):', '    return (yield Resume(k, "canned summary"))']},
 ];
 // The two runs of measure/dispatch.py: when the effect leaves, and what summarize() answered (dispatch.log).
 const RUNS = [
@@ -502,7 +502,7 @@ const MULTI_LINES: Lines = [
 const MULTI = f(25.4);
 const WHAT_IF = ['@do', 'def what_if():', '    plan = yield Complete("plan")', '    branch = yield Ask("branch")', '    return f"{plan} -> {branch}"'];
 const M = {x: 60, y: 130, w: 560, size: 19, line: 30};
-const TWICE = {x: 680, y: 130, w: 540, h: 174};
+const TWICE = {x: 680, y: 130, w: 540, h: 210};
 const BRANCHES = [
   {branch: 'a', y: 380, at: 12.8, hit: false},
   {branch: 'b', y: 480, at: 15.6, hit: true},
@@ -527,7 +527,7 @@ const MultiScene: React.FC = () => {
           <span style={{fontFamily: MONO}}>twice</span>
           <span style={{fontWeight: 400, color: MUTED, marginLeft: 14, fontSize: 19}}>resumes k two times</span>
         </div>
-        <Code lines={['def twice(effect: Complete, k):', '    yield Resume(k, "first")', '    return (yield Resume(k, "second"))']} x={20} y={56} size={16} line={27} />
+        <Code lines={['@handler', '@do(non_tail=True)', 'def twice(effect: Complete, k):', '    yield Resume(k, "first")', '    return (yield Resume(k, "second"))']} x={20} y={56} size={16} line={27} />
       </Box>
       <Trip a={yieldAt} b={handlerAt} from={1.0} to={1.7} text={'Complete("plan")'} color={ACCENT} />
       <Trip a={handlerAt} b={yieldAt} from={7.0} to={7.6} text={'"first"'} color={TEST} />
