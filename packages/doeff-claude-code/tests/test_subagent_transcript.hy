@@ -111,6 +111,46 @@
               {"requestId" "req_2"}))
   (assert (= (lfor call (. (read-of (.encode (line-of own) "utf-8")) calls) call.request-id) ["req_2"])))
 
+(deftest test-a-call-with-no-closed-line-is-named-as-a-mid-call-output
+  ;; 本番の形(CLI 2.1.306・2026-10-24 の session 2dd12560 の agent aa9ff76941f4f2afe の写し — card ki-edb2b5947d6a): 道具の呼びを
+  ;; 2 つ並べた途中の呼び req_011CgMywu8G1HrbmLVkxTaog は、thinking と 2 つの tool_use の block の行(transcript の行 86・87・89)を
+  ;; どれも stop_reason null・出力 6 のまま書き、message_delta の値(stop_reason tool_use・最終の出力 441 — OTel の api_request の値)を
+  ;; 載せた行が来なかった。読み手はその呼びを「出力が途中の値」と名指す(上の層が telemetry の同じ request_id の値で記録する)。閉じた
+  ;; 行で終わる呼び(最後の行が stop_reason を名乗る)と、道具 Agent の結果の最終の usage で直した最後の呼びは名指さない。失敗ケース =
+  ;; 変更前の読み手は印を持たず、出力 6 を最終の値として記録した(OTel より 435 token 少ない)。
+  (val partial {"input_tokens" 1 "cache_creation_input_tokens" 2310 "cache_read_input_tokens" 48211 "output_tokens" 6})
+  (val open-lines (lfor #(block at) [#({"type" "thinking" "thinking" "t"} AT)
+                                     #({"type" "tool_use" "id" "toolu_a" "name" "Read" "input" {}} AT)
+                                     #({"type" "tool_use" "id" "toolu_b" "name" "Grep" "input" {}} LATER)]
+                        (line-of (| (assistant "msg_open" "claude-opus-5-5" partial at [block])
+                                    {"requestId" "req_011CgMywu8G1HrbmLVkxTaog"}))))
+  (val answers (lfor tool-use-id ["toolu_a" "toolu_b"]
+                     (line-of {"type" "user" "timestamp" LATER
+                               "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" tool-use-id "content" "x"}]}})))
+  (val closed-usage {"input_tokens" 1 "cache_creation_input_tokens" 900 "cache_read_input_tokens" 50521 "output_tokens" 120})
+  (val data (.encode (.join "" [(get open-lines 0) (get open-lines 1) (get answers 0) (get open-lines 2) (get answers 1)
+                                (line-of (| (assistant "msg_closed" "claude-opus-5-5" (| closed-usage {"output_tokens" 3}) LATER)
+                                            {"requestId" "req_closed"}))
+                                (line-of (| (assistant "msg_closed" "claude-opus-5-5" closed-usage LATER :stop-reason "end_turn")
+                                            {"requestId" "req_closed"}))])
+                     "utf-8"))
+  (val read (read-of data True))
+  (assert (is read.problem None) (repr read))
+  (assert (= (lfor call read.calls #(call.request-id call.usage.output-tokens call.output-partial))
+             [#("req_011CgMywu8G1HrbmLVkxTaog" 6 True) #("req_closed" 120 False)])
+          (repr read.calls))
+  ;; 名指すのは出力だけ — 入力の側 3 種は transcript の値のまま(最終の値と同じ)。
+  (val named (get read.calls 0))
+  (assert (= #(named.usage.input-tokens named.usage.cache-creation-input-tokens named.usage.cache-read-input-tokens) #(1 2310 48211))
+          (repr named))
+  ;; 最後の呼びが閉じた行を持たなくても、道具 Agent の結果の名乗る最終の usage で直した呼びは途中の値ではない。
+  (val last-open (.encode (line-of (| (assistant "msg_last" "claude-opus-5-5" partial AT [{"type" "text" "text" "report"}])
+                                      {"requestId" "req_last"}))
+                          "utf-8"))
+  (val reported (read-of last-open True (AgentToolResult :agent-id "a1" :status "completed" :usage (usage-of (| partial {"output_tokens" 441})))))
+  (assert (= (lfor call reported.calls #(call.usage.output-tokens call.output-partial)) [#(441 False)]) (repr reported.calls))
+  (assert (= (lfor call (. (read-of last-open True) calls) call.output-partial) [True])))
+
 (deftest test-lines-without-a-call-id-are-each-their-own-call
   ;; message.id の無い行は畳まない(どの呼びと同じか分からない — 1 行を 1 回と数える)。
   (val bare (assistant "" "m" OTHER-USAGE AT))

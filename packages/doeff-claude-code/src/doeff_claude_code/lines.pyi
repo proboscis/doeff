@@ -215,6 +215,7 @@ class SubagentCall:
     model: str | None = None
     call_id: str | None = None
     request_id: str | None = None
+    output_partial: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SubagentTranscript:

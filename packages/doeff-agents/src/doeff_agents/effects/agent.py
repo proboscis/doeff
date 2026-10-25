@@ -568,7 +568,16 @@ class AgentSubagentCallUsageEvent:
     states one call's usage on each line of that call, so events with the same ``call_id`` may repeat; subagents
     running side by side interleave their calls, so an upper layer folds by ``call_id``, not by order.  A line
     that states no usage carries no event (never an invented 0).  ``request_id`` = the API request's id when the
-    runtime states it (``AgentCallUsageEvent.request_id``)."""
+    runtime states it (``AgentCallUsageEvent.request_id``).
+
+    ``output_partial`` = the output tokens in ``usage`` are a mid-call value, not the call's final output (agora card
+    ki-edb2b5947d6a).  Claude Code 2.1.306 writes a subagent's call to its transcript one line per content block and
+    puts the call's end (``message_delta`` — the stop reason and the final output tokens) on the last line; when the
+    last block's line is written before the ``message_delta`` arrives (side-by-side tool calls in one call, for
+    instance), no line of the call is closed: every line states no stop reason and a mid-call output such as 6.  The
+    final value is neither in the transcript nor in the Agent tool's result, so an upper layer records such a call's
+    usage from the runtime's own telemetry for the same ``request_id`` (its input side already equals the final
+    value).  ``False`` = the output is the call's final value."""
 
     seq: int
     at: datetime
@@ -577,6 +586,7 @@ class AgentSubagentCallUsageEvent:
     model: str | None = None
     call_id: str | None = None
     request_id: str | None = None
+    output_partial: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)

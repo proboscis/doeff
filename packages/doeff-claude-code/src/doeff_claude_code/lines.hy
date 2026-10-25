@@ -387,7 +387,7 @@
   "subagent の API の呼び 1 回の消費(transcript の assistant の行を呼びの id で畳んだ物 — 1 つの呼びは content の block ごとに行を書き、
    出力の token は呼びの途中の値なので、usage と model は最後の行の物・刻は最初の行の物)。at = 最初の行の timestamp(CLI の壁の時刻)/
    usage = message.usage / model = message.model(無ければ None)/ call-id = message.id(無ければ None — 無い行は畳まずに 1 回と数える)/
-   request-id = 行の requestId(無ければ None)。"
+   request-id = 行の requestId(無ければ None)/ output-partial = 出力が途中の値か(最後の行が stop_reason を名乗らない)。"
   (#^ datetime at)
   (#^ Usage usage)
   (setv #^ (| str None) model None)
@@ -395,7 +395,14 @@
   ;; request-id = 行の requestId(API の呼びの要求の id — CLI の telemetry の api_request の request_id と同じ値。無ければ None)— 上の層が
   ;; telemetry にだけ出る呼びを記録へ足す時に、transcript で読んだ呼びと 2 度数えないため(card ki-b99ace070bf0)。1 つの呼びの行は
   ;; どれも同じ id を名乗るので、usage と同じく最後の行の物。
-  (setv #^ (| str None) request-id None))
+  (setv #^ (| str None) request-id None)
+  ;; output-partial = usage の出力の token が呼びの途中の値か(呼びの最後の行が stop_reason を名乗らない — 閉じた行の無い呼び・card
+  ;; ki-edb2b5947d6a)。CLI は呼びの終わり(message_delta)の stop_reason と最終の output_tokens を呼びの最後の行に載せて書くが、並べた
+  ;; 道具の呼び(1 つの呼びで tool_use を 2 つ以上出す)などで最後の content block の行が message_delta より先に書かれると、その呼びの
+  ;; 行はどれも stop_reason null・出力は途中の値(実測 CLI 2.1.306・本番 2026-10-24〜25 の 24 時間で subagent の呼び 6,024 のうち 26 —
+  ;; 出力が 96〜1,866 token 少ない。入力の側 3 種は最終の値と同じ)。最終の値は transcript にも stdout にも無いので、上の層が同じ
+  ;; request-id の CLI の telemetry の値で記録する。偽 = 出力は呼びの最終の値(閉じた行か、道具 Agent の結果の名乗る最終の usage)。
+  (setv #^ bool output-partial False))
 
 (defrecord SubagentTranscript
   "subagent 1 つの transcript(<設定 dir>/projects/<cwd>/<会話の id>/subagents/agent-<task の id>.jsonl)を、その subagent の task の
@@ -1233,7 +1240,8 @@
   {:pre [(: records tuple)] :post [(: % SubagentCalls)] :tags {:context "claude-code" :role "foundation"}}
   "subagent の transcript の行(JSON の object の列)から、API の呼びごとの消費を書かれた順に読むため(SubagentCall の註の畳み方)。
    数えるのは message.usage が object の assistant の行だけで、CLI が呼ばずに書いた行(model が SYNTHETIC-MODEL)は数えない。
-   時差つきの刻(timestamp)を名乗らない行は呼びに数えず、数だけを答える(刻を発明しない — ほかの行の呼びは捨てない)。"
+   時差つきの刻(timestamp)を名乗らない行は呼びに数えず、数だけを答える(刻を発明しない — ほかの行の呼びは捨てない)。usage を読む
+   最後の行が stop_reason を名乗らない呼びは、出力が途中の値(output-partial — 閉じた行の無い呼び・card ki-edb2b5947d6a)と名指す。"
   (val called (lfor record records
                     :setv message (object-at record "message")
                     :if (and (= (text-at record "type") "assistant") (isinstance (.get message "usage") dict)
@@ -1251,7 +1259,8 @@
     (val call-id (or (text-at message "id") None))
     (:= keyed (+ keyed #(#((if (is call-id None) index call-id)
                            (SubagentCall :at at :usage (usage-of (get message "usage")) :model (or (text-at message "model") None)
-                                         :call-id call-id :request-id (or (text-at record "requestId") None)))))))
+                                         :call-id call-id :request-id (or (text-at record "requestId") None)
+                                         :output-partial (not (text-at message "stop_reason"))))))))
   (val firsts (dict (reversed keyed)))
   (SubagentCalls :calls (tuple (gfor #(key call) (.items (dict keyed)) (replace call :at (. (get firsts key) at))))
                  :undated undated))
@@ -1296,7 +1305,8 @@
    そうならその呼びを最終の usage で答えるため(card ki-3d45f5857239)。同じ呼びか = 入力の側 3 種(input・cache_creation・
    cache_read)の token が全部同じ(呼びごとに会話が伸びるので、前の呼びとは cache_read が違う — 最後の呼びの行がまだ書かれていない
    読みは合わない)。本番の CLI 2.1.292 は最後の答えの呼びの行を出力の token が途中の値のまま書くので、usage は結果の物にする
-   (model・刻・呼びの id・要求の id は transcript の物)。合わない・結果や usage が無い・呼びが無い時は None。"
+   (model・刻・呼びの id・要求の id は transcript の物 — 出力は最終の値なので output-partial は偽)。合わない・結果や usage が無い・呼びが
+   無い時は None。"
   (when (or (is reported None) (is reported.usage None) (not calls))
     (return None))
   (val last (get calls -1))
@@ -1304,7 +1314,7 @@
   (if (and (is-not usage.input-tokens None)
            (= #(last.usage.input-tokens last.usage.cache-creation-input-tokens last.usage.cache-read-input-tokens)
               #(usage.input-tokens usage.cache-creation-input-tokens usage.cache-read-input-tokens)))
-      (replace last :usage usage)
+      (replace last :usage usage :output-partial False)
       None))
 
 (defk subagent-transcript-of [#^ str agent-id #^ str parent-tool-use-id #^ bytes data #^ bool answered

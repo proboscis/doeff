@@ -2473,6 +2473,27 @@
 (deftest test-headless-carries-the-subagent-call-usage-stub [tmp-path]
   (<- (check-a-subagent-call-carries-its-usage-apart (run-on STUB tmp-path tool-turn-with-output))))
 
+(deftest test-headless-names-a-subagent-call-whose-output-is-a-mid-call-value
+  ;; agora card ki-edb2b5947d6a: 層 2 が閉じた行の無い呼び(出力が途中の値 — SubagentCall の output-partial)と名指した subagent の呼びは、
+  ;; usage の出来事に印 output_partial を付けて運び、閉じた呼びは付けない。失敗ケース = 印を捨てる adapter では、上の層が途中の出力 6 を
+  ;; 最終の値として記録し、telemetry の同じ request_id の値で記録し直せない。
+  (import datetime [datetime timezone])
+  (import doeff_agents [AgentSubagentCallUsageEvent])
+  (import doeff_agents.handlers.headless [subagent-call-usage-builders-of])
+  (import doeff_claude_code.lines [SubagentCall SubagentTranscript Usage])
+  (val at (datetime 2026 10 24 9 0 :tzinfo timezone.utc))
+  (val usage (Usage :input-tokens 1 :output-tokens 6 :cache-creation-input-tokens 2310 :cache-read-input-tokens 48211))
+  (val transcript (SubagentTranscript :agent-id "a1" :parent-tool-use-id "toolu_parent"
+                                      :calls #((SubagentCall :at at :usage usage :call-id "msg_open" :request-id "req_open" :output-partial True)
+                                               (SubagentCall :at at :usage (Usage :input-tokens 1 :output-tokens 120) :call-id "msg_closed"
+                                                             :request-id "req_closed"))))
+  (<- builders (subagent-call-usage-builders-of transcript))
+  (val events (lfor #(seq build) (enumerate builders) (build seq)))
+  (assert (all (gfor event events (isinstance event AgentSubagentCallUsageEvent))) (repr events))
+  (assert (= (lfor event events #(event.request-id event.usage.output-tokens event.output-partial))
+             [#("req_open" 6 True) #("req_closed" 120 False)])
+          (repr events)))
+
 
 (deftest test-the-model-usage-of-a-turn-end-reaches-the-agent-turn-end
   ;; card ki-1d986d4f0007: 層 2(doeff-claude-code)の手番の終わりが運ぶ model ごとの使用量(手番の分の ModelUsage)と照合の訳
