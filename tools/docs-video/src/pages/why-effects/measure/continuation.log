@@ -1,0 +1,12 @@
+resume at once: summary by gpt-4o | image by imagen-3
+  effects: ["Chat('gpt-4o', 'Summarize tides')", "Draw('imagen-3', 'summary by gpt-4o')"]
+cost_cap(10): summary by gpt-4o | image by imagen-3
+  cap saw: ['gpt-4o: spent 1 of 10', 'imagen-3: spent 5 of 10']
+cost_cap(3): stopped before imagen-3: over 3 cents
+  cap saw: ['gpt-4o: spent 1 of 3', 'imagen-3: spent 5 of 3']
+retry: summary by gpt-4o | image by imagen-3
+  retry saw: ['attempt 1: timed out', 'attempt 2: timed out', 'attempt 3: summary by gpt-4o', 'attempt 1: image by imagen-3'] provider calls: 3
+record: summary by gpt-4o | image by imagen-3
+  tape: ['Chat gpt-4o -> summary by gpt-4o', 'Draw imagen-3 -> image by imagen-3']
+replay: summary by gpt-4o | image by imagen-3
+replay waves: not recorded: Chat(model='gpt-4o', prompt='Summarize waves')
