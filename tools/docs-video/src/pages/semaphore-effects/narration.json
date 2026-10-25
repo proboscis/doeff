@@ -1,0 +1,66 @@
+[
+ {
+  "id": "i1",
+  "text": "A semaphore is a fixed number of permits that tasks take turns holding."
+ },
+ {
+  "id": "i2",
+  "text": "Create Semaphore, Acquire Semaphore and Release Semaphore are effects. The scheduler answers them, like Spawn and Wait."
+ },
+ {
+  "id": "i3",
+  "text": "A task that finds no permit is parked: the scheduler holds its k, and the other tasks run on. No thread blocks."
+ },
+ {
+  "id": "p1",
+  "text": "Create Semaphore of two: four calls share two permits, so at most two are inside at once."
+ },
+ {
+  "id": "p2",
+  "text": "C and D find no permit. Their k's wait in the semaphore's queue, in the order they asked."
+ },
+ {
+  "id": "p3",
+  "text": "Each release lets the next one in: C at one second, D at two. All four finish by four seconds."
+ },
+ {
+  "id": "f1",
+  "text": "With one permit, a semaphore is a mutex. Waiters are served first come, first served."
+ },
+ {
+  "id": "f2",
+  "text": "A release hands the permit straight to the oldest waiter. It never sits free for another task to grab."
+ },
+ {
+  "id": "f3",
+  "text": "So late, which asks right after the release, queues behind second and third."
+ },
+ {
+  "id": "c1",
+  "text": "Cancel a task while it waits for a permit, and the scheduler takes it out of the queue."
+ },
+ {
+  "id": "c2",
+  "text": "w1 resumes with a Task Cancelled Error at its Acquire. It never took a permit."
+ },
+ {
+  "id": "c3",
+  "text": "So when the holder releases at two seconds, the permit goes to w2."
+ },
+ {
+  "id": "l1",
+  "text": "A semaphore does not track who holds a permit. Fail before Release Semaphore, and that permit is lost."
+ },
+ {
+  "id": "l2",
+  "text": "Without try and finally, the next task is still waiting five seconds later, and would wait forever."
+ },
+ {
+  "id": "l3",
+  "text": "With try and finally, the release runs on failure too, and the next task enters at once."
+ },
+ {
+  "id": "o1",
+  "text": "doeff: permits are effects, and a waiting task is a parked k that the scheduler resumes in order. Another handler can answer the same effects, say, across a cluster. pip install doeff."
+ }
+]
