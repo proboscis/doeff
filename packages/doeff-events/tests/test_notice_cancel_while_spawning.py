@@ -35,9 +35,10 @@ from doeff_events import EventBus, subscribed_event_handler
 from doeff_events.effects.events import Publish
 from doeff_events.effects.notices import AwaitBrokerBack
 from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
-from doeff_events.handlers.notice_events import MarkGap, NoticeRoute, notice_events_handler
+from doeff_events.handlers.notice_events import MarkGap, NoticeRoute
 from doeff_events.notice_laws import LawNote, law_routes
 from doeff_time import Delay
+from events_test_support import patient_notice_events
 from notice_law_support import (
     PATIENCE_SECONDS,
     PREFIX,
@@ -181,7 +182,7 @@ def test_a_cancel_while_the_watcher_of_the_wait_for_the_return_is_spawned_leaves
     def cut_then_party(layer: Layer) -> "EffectGenerator[object]":
         yield cut_broker(broker, "the in-memory broker was cut")
         source = "law-watched"
-        events = notice_events_handler(source, law_routes(PREFIX), PATIENCE_SECONDS)
+        events = patient_notice_events(source, law_routes(PREFIX), PATIENCE_SECONDS)
         party = subscribed_event_handler(EventBus(), source)(
             memory_notice_handler(broker)(layer(events(Pure(None))))
         )
@@ -203,7 +204,7 @@ def test_a_cancel_while_the_gap_waiter_of_a_refused_send_is_spawned_leaves_it_no
 
     def party_under(layer: Layer) -> Program[object]:
         source = "law-marked"
-        events = notice_events_handler(source, law_routes(PREFIX), PATIENCE_SECONDS)
+        events = patient_notice_events(source, law_routes(PREFIX), PATIENCE_SECONDS)
         return subscribed_event_handler(EventBus(), source)(
             memory_notice_handler(broker)(refuses_senders(outage)(layer(events(publishes_while_refused()))))
         )
@@ -220,7 +221,7 @@ def test_a_cancel_while_the_gap_waiter_of_the_start_gaps_is_spawned_leaves_it_no
 
     def party_under(layer: Layer) -> Program[object]:
         source = "law-restarted"
-        events = notice_events_handler(source, _starting_routes(), PATIENCE_SECONDS)
+        events = patient_notice_events(source, _starting_routes(), PATIENCE_SECONDS)
         return subscribed_event_handler(EventBus(), source)(
             memory_notice_handler(broker)(refuses_senders(outage)(layer(events(Pure(None)))))
         )

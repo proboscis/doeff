@@ -62,6 +62,7 @@ from event_signal_invariants import (
     check_signal_between_read_and_wait_is_kept,
     check_wait_outside_subscription_is_rejected,
 )
+from events_test_support import patient_notice_events
 from notice_law_support import (
     PATIENCE_SECONDS,
     PREFIX,
@@ -126,7 +127,7 @@ def _signal_world(*, late_subscription: bool = False) -> SignalWorld:
 
     def subscribe(subscriber: str, event_types: tuple[type, ...] = (), /) -> Program["ProgramHandler"]:
         def wrap(body: Program[object]) -> Program[object]:
-            events = notice_events_handler(subscriber, (route,), PATIENCE_SECONDS)
+            events = patient_notice_events(subscriber, (route,), PATIENCE_SECONDS)
             queue = subscribed_event_handler(EventBus(), subscriber, event_types)
             if late_subscription and event_types:
                 broken = subscribes_when_the_program_waits_for(Changed)
@@ -178,7 +179,7 @@ def test_publish_answers_the_number_of_receivers() -> None:
         return (yield Publish(LawNote("to nobody")))
 
     wrapped = memory_notice_handler(MemoryBroker())(
-        notice_events_handler("sender", _sender_only(MarkGap()), PATIENCE_SECONDS)(publishes_alone())
+        notice_events_handler("sender", _sender_only(MarkGap()))(publishes_alone())
     )
     assert run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped)) == NoticeSent(0)
 
@@ -193,7 +194,7 @@ def test_publish_answers_a_marked_gap_with_the_brokers_words_and_the_body_goes_o
         return (answer, "went on")
 
     wrapped = memory_notice_handler(broker)(
-        notice_events_handler("sender", _sender_only(MarkGap()), PATIENCE_SECONDS)(publishes_into_an_outage())
+        notice_events_handler("sender", _sender_only(MarkGap()))(publishes_into_an_outage())
     )
     answer, went_on = run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped))
     assert isinstance(answer, NoticeGapMarked), answer
@@ -246,7 +247,7 @@ def test_a_gap_of_a_dropped_route_is_not_kept_and_says_so() -> None:
     channel = f"{PREFIX}:note"
     reading = tuple(NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, Drop(), (channel,))
                     for r in law_routes(PREFIX))
-    events = notice_events_handler("dropper", reading, PATIENCE_SECONDS)
+    events = patient_notice_events("dropper", reading, PATIENCE_SECONDS)
     queue = subscribed_event_handler(EventBus(), "dropper", (SourceMissed, LawNote))
     answer, first = run_on_virtual_clock(queue(memory_notice_handler(MemoryBroker())(events(unsure_on_a_dropped_route()))))
     assert isinstance(answer, NoticeDropped), answer
@@ -267,7 +268,7 @@ def test_a_gap_of_an_unrouted_event_goes_outward() -> None:
         return (yield PublishGap(Local()))
 
     wrapped = memory_notice_handler(MemoryBroker())(
-        notice_events_handler("sender", _sender_only(MarkGap()), PATIENCE_SECONDS)(unsure_of_a_local())
+        notice_events_handler("sender", _sender_only(MarkGap()))(unsure_of_a_local())
     )
     outside = program_handler(answers_outside)
     assert run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(outside(wrapped))) == ("outside", Local)
@@ -290,7 +291,7 @@ def test_a_dropped_route_marks_nothing_and_says_so() -> None:
         yield Publish(LawNote("end"))
         return (answer, (yield WaitForEvent(SourceMissed, LawNote)))
 
-    events = notice_events_handler("dropper", reading, PATIENCE_SECONDS)
+    events = patient_notice_events("dropper", reading, PATIENCE_SECONDS)
     queue = subscribed_event_handler(EventBus(), "dropper", (SourceMissed, LawNote))
     party = queue(memory_notice_handler(MemoryBroker())(refuses_senders(outage)(events(drops_one()))))
     answer, first = run_on_virtual_clock(party)
@@ -369,7 +370,7 @@ def test_a_sender_tells_a_gap_on_its_start_channels_when_it_starts() -> None:
         reader = yield Spawn(harness.as_party("law-reader", (SourceStarted, SourceMissed, LawNote), reads()))
         yield Wait(ready.future)
         sender = memory_notice_handler(broker)(
-            notice_events_handler("law-restarted", starting, PATIENCE_SECONDS)(Pure(None))
+            patient_notice_events("law-restarted", starting, PATIENCE_SECONDS)(Pure(None))
         )
         yield subscribed_event_handler(EventBus(), "law-restarted")(sender)
         return (yield Wait(reader))

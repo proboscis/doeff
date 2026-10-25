@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.core.program [announced-aside])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES back-of gone-of])
-(import doeff_cluster.coordinator.entry.handler_sets [NOTICE-SOURCE NOTICE-PATIENCE-SECONDS])
+(import doeff_cluster.coordinator.entry.handler_sets [NOTICE-SOURCE])
 
 ;; 起動の時の今の状態(coordinator の liveness-now の形): w1・w2 は生きている・w3 は沈黙。
 (val W1-BACK (WorkerBack :worker "w1" :boot "b1" :seen-ms 1000))
@@ -81,7 +81,7 @@
   (val sent (SentNotices))
   (<- seen tuple ((sim-time-handler :clock (SimClock))
                    (with-handlers [(await-handler) (http-requests (RequestInbox 0 30.0)) (network-broker sent)
-                                   (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES NOTICE-PATIENCE-SECONDS)]
+                                   (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES)]
                      (startup-then-move sent))))
   (val started (get seen 0))
   (val after-start (get seen 1))

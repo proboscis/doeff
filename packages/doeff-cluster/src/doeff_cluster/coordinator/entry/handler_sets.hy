@@ -28,10 +28,9 @@
 (import doeff_events [MemoryBroker broker-back-by-retry memory-notice-handler notice-events-handler redis-notice-handler])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES])
 
-;; coordinator が出来事(worker の生死 — #3864)を出す包みの源の名。出すだけ(channel を読まない)なので、broker の戻りを待つ上限
-;; NOTICE-PATIENCE-SECONDS は使われない(doeff-events の notice-events-handler が引数として求める — 既定値を持たない)。
+;; coordinator が出来事(worker の生死 — #3864)を出す包みの源の名。出すだけ(channel を読まない)なので、broker の戻りを待つ上限の
+;; 問い(doeff-events の ReadBrokerPatience — 読む包みだけが問う)は撃たず、組に上限の答え手を置かない。
 (val NOTICE-SOURCE "doeff-cluster-coordinator")
-(val NOTICE-PATIENCE-SECONDS 60.0)
 
 
 (defn #^ list redis-notices [#^ str url #^ float timeout-seconds #^ float retry-seconds]
@@ -39,12 +38,12 @@
    止めない)、届かない間は欠けの印を持ち、戻りは待っている間だけ retry-seconds ごとに繋がるかを試して知る(ADR-DOE-EVENTS-002 R5・R6)。
    await-handler と時計(Delay)は組の外側の本番の組が答える。"
   [(redis-notice-handler url timeout-seconds) (broker-back-by-retry retry-seconds)
-   (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES NOTICE-PATIENCE-SECONDS)])
+   (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES)])
 
 
 (defn #^ list memory-notices [#^ MemoryBroker broker]
   "process の中の知らせの組(外側が先): 同じ broker を持つ受け手へ出す(まねた環境・Redis の無い機体の本物の process のテスト)。"
-  [(memory-notice-handler broker) (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES NOTICE-PATIENCE-SECONDS)])
+  [(memory-notice-handler broker) (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES)])
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube #^ list notices]

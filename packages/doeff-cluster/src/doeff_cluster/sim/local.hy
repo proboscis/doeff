@@ -174,7 +174,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
-(import doeff_events [MemoryBroker EventBus WaitForEvent subscribed-event-handler memory-notice-handler notice-events-handler])
+(import doeff_events [MemoryBroker EventBus WaitForEvent BrokerPatience broker-patience-handler subscribed-event-handler memory-notice-handler notice-events-handler])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
 (import doeff_cluster.coordinator.protocol.store [Persist])
@@ -3899,8 +3899,9 @@
   "coordinator と同じ知らせの broker の受け手として worker の死の判断(WorkerGone)を待ち、来たら SimLivenessError で終わらせるため
    (比で延ばした世界だけで走る — sim-main が筋書きと競わせる)。"
   (<- came WorkerGone (with-handlers [(subscribed-event-handler (EventBus) GONE-READER #(WorkerGone))
+                                      (broker-patience-handler (BrokerPatience 3600.0))
                                       (memory-notice-handler broker)
-                                      (notice-events-handler GONE-READER WORKER-NOTICE-READS 3600.0)]
+                                      (notice-events-handler GONE-READER WORKER-NOTICE-READS)]
                         (WaitForEvent WorkerGone)))
   (raise (SimLivenessError (.format "比 {} で延ばした世界で worker {} の死の判断が出た — 生死を試す筋書きは :timing に本番の値を明示する"
                                     SIM-TIMING-RATIO came.worker)

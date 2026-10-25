@@ -34,10 +34,10 @@ from doeff_events.handlers.notice_events import (
     MarkGap,
     NoticeRoute,
     NoticeSent,
-    notice_events_handler,
 )
 from doeff_events.notice_laws import LawNote
 from doeff_time import GetTime
+from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, run_on_virtual_clock
 
 from doeff import K, Program, Resume, do
@@ -196,7 +196,7 @@ def _drops_the_first_kept_notice(state: SimpleNamespace) -> "ProgramHandler":
 
 def _kept_party(broker: MemoryBroker, body: "Program[object]", below: "ProgramHandler | None" = None) -> "Program[object]":
     """``body`` as one process on ``broker`` with the kept routes (``below`` between the wrapper and the broker)."""
-    events = notice_events_handler("law-kept", kept_routes(), PATIENCE_SECONDS)
+    events = patient_notice_events("law-kept", kept_routes(), PATIENCE_SECONDS)
     queue = subscribed_event_handler(EventBus(), "law-kept", (SourceStarted, LawNote))
     wrapped = events(body)
     return queue(memory_notice_handler(broker)(below(wrapped) if below is not None else wrapped))
@@ -254,7 +254,7 @@ def test_a_channel_read_both_kept_and_not_is_refused_when_the_wrapper_is_built()
         reads=(CHANNEL,),
     )
     with pytest.raises(ValueError, match=r"both as kept channels and as Pub/Sub channels"):
-        notice_events_handler("law-mixed", (*kept_routes(), plain), PATIENCE_SECONDS)
+        patient_notice_events("law-mixed", (*kept_routes(), plain), PATIENCE_SECONDS)
 
 
 def test_a_subscription_that_reads_kept_channels_must_name_its_reader() -> None:

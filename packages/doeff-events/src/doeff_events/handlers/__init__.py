@@ -23,6 +23,7 @@ from doeff_events.handlers.notice_events import (
     PublishAnswer,
     UnroutedNotice,
     WhenUnsent,
+    broker_patience_handler,
     notice_events_handler,
 )
 from doeff_events.handlers.os_files import os_file_watch_handler
@@ -58,6 +59,7 @@ __all__ = [
     "UnroutedNotice",
     "WhenUnsent",
     "broker_back_by_retry",
+    "broker_patience_handler",
     "cut_broker",
     "event_handler",
     "hold_broker",

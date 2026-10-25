@@ -12,14 +12,33 @@ from typing import TYPE_CHECKING, Any, final
 
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import CompletePromise, Promise, scheduled
-from doeff_events.effects import NextFileChanges, WaitForEventEffect, WaitForEventsEffect
+from doeff_events.effects import BrokerPatience, NextFileChanges, WaitForEventEffect, WaitForEventsEffect
+from doeff_events.handlers.notice_events import broker_patience_handler, notice_events_handler
 
 from doeff import K, Pass, do, run
 from doeff import handler as program_handler
 
 if TYPE_CHECKING:
-    from doeff import EffectGenerator
+    from collections.abc import Callable
+
+    from doeff_events.handlers.notice_events import NoticeRoute
+
+    from doeff import EffectGenerator, Program
     from doeff.program import ProgramHandler
+
+
+def patient_notice_events(
+    source: str, routes: "tuple[NoticeRoute[object], ...]", patience_seconds: float
+) -> "Callable[[Program[object]], Program[object]]":
+    """``notice_events_handler(source, routes)`` with the composition's answer to its ``ReadBrokerPatience``
+    (``patience_seconds``) placed right outside it — what a test's composition places once for its wrappers."""
+    events = notice_events_handler(source, routes)
+    patience = broker_patience_handler(BrokerPatience(patience_seconds))
+
+    def wrapped(body: "Program[object]") -> "Program[object]":
+        return patience(events(body))
+
+    return wrapped
 
 
 def run_scheduled(program: Any) -> Any:

@@ -33,7 +33,6 @@ from typing import Final, final
 
 from doeff import EffectBase
 
-
 # How long a handler waits for the acknowledgement of a kept channel's notice before it hands the notice out again
 # (the default of both handlers — the composition may name another). agora's target is a conversation's input taken
 # into a turn within 5 s of being placed (card ki-86d11cadf3be): 2 s leaves room for the reader's own work.
@@ -177,3 +176,28 @@ class ProbeBroker(EffectBase["None | BrokerUnreachable"]):
     """Try whether the broker can be reached right now: only a connection, no data is read or written. Answers
     ``None`` when it can, ``BrokerUnreachable`` when it cannot. Asked only while somebody waits in
     ``AwaitBrokerBack`` (agora-redesign #3864)."""
+
+
+@dataclass(frozen=True)
+class BrokerPatience:
+    """How long a notice source waits for an unreachable broker before it fails — the answer of
+    ``ReadBrokerPatience``. ``seconds`` is counted from the first failure; ``0`` = it does not wait (it fails at the
+    first outage). The composition chooses it in one place: this package has no default."""
+
+    seconds: float
+
+    def __post_init__(self) -> None:
+        if isinstance(self.seconds, bool) or not isinstance(self.seconds, int | float) or self.seconds < 0:
+            raise ValueError(f"BrokerPatience.seconds must be a number >= 0, got {self.seconds!r}")
+
+
+@dataclass(frozen=True)
+class ReadBrokerPatience(EffectBase["BrokerPatience"]):
+    """Ask how long a notice source waits for an unreachable broker (answers ``BrokerPatience``).
+
+    ``notice_events_handler`` asks it once, when a wrapper that reads channels begins — before its first
+    subscription — so a composition that placed no answer falls at its start, naming this effect, instead of at its
+    first outage. A wrapper that only sends never asks it: nothing it waits for has a deadline. The answer comes from
+    ``broker_patience_handler`` placed outside the wrapper (no default answer). It is its own question, not
+    ``Ask`` (a reader of settings inside the composition could take it) and not a question of another package (the
+    composition answers it from the same value as its other stores' patience — agora card ki-6b3c298bfee1)."""

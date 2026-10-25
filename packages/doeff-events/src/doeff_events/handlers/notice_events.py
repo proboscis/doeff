@@ -9,9 +9,10 @@ Order of handlers (outer → inner)::
 
     subscribed_event_handler(bus, subscriber, types)   # the one that answers WaitForEvent
       → clock handler (GetTime / WaitWithin)           # only used while the broker is unreachable
-        → memory_notice_handler(broker) | redis_notice_handler(url, timeout_seconds) → broker_back_by_retry(retry_seconds)
-          → notice_events_handler(source, routes, patience_seconds)
-            → business program
+        → broker_patience_handler(BrokerPatience(seconds))  # anywhere outside the wrapper: answers ReadBrokerPatience
+          → memory_notice_handler(broker) | redis_notice_handler(url, timeout_seconds) → broker_back_by_retry(retry_seconds)
+            → notice_events_handler(source, routes)
+              → business program
 
 What the wrapper does:
 
@@ -58,11 +59,15 @@ What the wrapper does:
   after a lost connection. A notice lost between the broker and the bus is therefore received later instead of
   never; an event may then arrive twice (the reader handles repeats as it handles a catch-up).
 - Broker outages. When the wait for a notice answers ``BrokerUnreachable`` the source publishes
-  ``SourceStalled``, waits for ``AwaitBrokerBack`` up to ``patience_seconds`` (one ``WaitWithin`` — no retry on
-  a timer), subscribes again, and after the broker confirmed publishes ``SourceResumed`` once. Past the patience
+  ``SourceStalled``, waits for ``AwaitBrokerBack`` up to its patience (one ``WaitWithin`` — no retry on a
+  timer), subscribes again, and after the broker confirmed publishes ``SourceResumed`` once. Past the patience
   it fails with ``NoticeSourceUnreachable`` (``SourceFailed`` reaches the body). The stall's start is one warning
   in the process's log. A broker unreachable at the first subscription is the same outage: ``SourceStalled``,
-  then ``SourceResumed`` and ``SourceStarted`` once the subscription is confirmed.
+  then ``SourceResumed`` and ``SourceStarted`` once the subscription is confirmed. The patience is the
+  composition's: a wrapper that reads channels asks ``ReadBrokerPatience`` once, before its first subscription, and
+  an outer ``broker_patience_handler`` answers it (no default — a composition that placed none falls at the start,
+  naming the effect; agora card ki-6b3c298bfee1: the composition answers it from the same value as its other
+  stores' patience, so no second copy of the seconds is kept beside the routes).
 - Stopping. The source task and the task waiting for the return end by ``Cancel`` when the body ends; their waits
   have no time limit of their own. Then the subscription the source held is closed (``CloseSubscription``) — when
   the body ends normally, by an error, or by a cancel from outside — so a process that wraps body after body under
@@ -116,10 +121,12 @@ from doeff_events.effects.notices import (
     Announce,
     Announcement,
     AwaitBrokerBack,
+    BrokerPatience,
     BrokerUnreachable,
     ChannelSubscription,
     CloseSubscription,
     NextAnnouncement,
+    ReadBrokerPatience,
     SubscribeChannels,
 )
 
@@ -271,8 +278,8 @@ class _Reading:
 
 
 class NoticeSourceUnreachable(RuntimeError):
-    """The broker did not come back within the patience the handler was built with — the process falls and its
-    restart starts over."""
+    """The broker did not come back within the patience the composition answered (``ReadBrokerPatience``) — the
+    process falls and its restart starts over."""
 
 
 class UnroutedNotice(LookupError):
@@ -284,14 +291,14 @@ class UnroutedNotice(LookupError):
 class _Plan:
     """A checked set of arguments of one wrapper: the source's name, the routes, the channels it reads
     (first-seen order, no repeats), those of them that are kept channels (read from their log as the reader named
-    ``source``), its patience, and the effect classes its handler around the body answers (the Publish class of each
-    routed type, and the waits when it reads channels — ``()`` = it answers nothing)."""
+    ``source``), and the effect classes its handler around the body answers (the Publish class of each routed type,
+    and the waits when it reads channels — ``()`` = it answers nothing). The patience is not part of it: the wrapper
+    asks it when it begins (``_asked_patience``)."""
 
     source: str
     routes: tuple[NoticeRoute[object], ...]
     channels: tuple[str, ...]
     kept: tuple[str, ...]
-    patience_seconds: float
     answered: tuple[type[object], ...]
 
     def subscribing(self) -> SubscribeChannels:
@@ -318,12 +325,10 @@ class _Plan:
         return route.decode(notice.body)
 
 
-def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience_seconds: float) -> _Plan:
+def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...]) -> _Plan:
     """Check the factory's arguments once, when the handler is built, and name what is wrong."""
     if not isinstance(source, str) or not source:
         raise ValueError("notice_events_handler: source must be a non-empty string")
-    if isinstance(patience_seconds, bool) or not isinstance(patience_seconds, int | float) or patience_seconds < 0:
-        raise ValueError(f"notice_events_handler: patience_seconds must be a number >= 0, got {patience_seconds!r}")
     for route in routes:
         if not isinstance(route, NoticeRoute):
             raise TypeError(f"notice_events_handler: routes must be NoticeRoute values, got {route!r}")
@@ -358,9 +363,20 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience
         routes=routes,
         channels=channels,
         kept=kept,
-        patience_seconds=float(patience_seconds),
         answered=answered,
     )
+
+
+@do
+def _asked_patience(plan: _Plan) -> "EffectGenerator[float]":
+    """Ask the composition how long this wrapper's source waits for an unreachable broker (seconds)."""
+    answer: object = yield ReadBrokerPatience()
+    if not isinstance(answer, BrokerPatience):
+        raise TypeError(
+            f"notice_events_handler({plan.source!r}): ReadBrokerPatience must be answered with a BrokerPatience, "
+            f"got {answer!r}"
+        )
+    return float(answer.seconds)
 
 
 @do
@@ -448,9 +464,11 @@ def _came_back_within(seconds: float) -> "EffectGenerator[bool]":
 
 
 @do
-def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGenerator[ChannelSubscription]":
-    """Get past a broker outage without falling: publish ``SourceStalled``, wait for the broker's return up to the
-    patience (counted from the first failure), and subscribe again. Each new attempt follows an answer of
+def _subscribed_after_outage(
+    plan: _Plan, patience: float, first: BrokerUnreachable
+) -> "EffectGenerator[ChannelSubscription]":
+    """Get past a broker outage without falling: publish ``SourceStalled``, wait for the broker's return up to
+    ``patience`` seconds (counted from the first failure), and subscribe again. Each new attempt follows an answer of
     ``AwaitBrokerBack`` — not a timer. Answers the new, confirmed subscription; past the patience raises
     ``NoticeSourceUnreachable``."""
     since: datetime = yield GetTime()
@@ -460,24 +478,23 @@ def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGe
         "notice source %r stalled: the broker is unreachable (%s); waiting up to %s s for its return",
         plan.source,
         first.detail,
-        plan.patience_seconds,
+        patience,
     )
     yield Publish(SourceStalled(source=plan.source, detail=first.detail, since=since))
     answer: ChannelSubscription | BrokerUnreachable = first
     while isinstance(answer, BrokerUnreachable):
         now: datetime = yield GetTime()
-        back = yield _came_back_within(plan.patience_seconds - (now - since).total_seconds())
+        back = yield _came_back_within(patience - (now - since).total_seconds())
         if not back:
             raise NoticeSourceUnreachable(
-                f"source {plan.source!r}: the notice broker did not come back within {plan.patience_seconds} s: "
-                f"{answer.detail}"
+                f"source {plan.source!r}: the notice broker did not come back within {patience} s: {answer.detail}"
             )
         answer = yield plan.subscribing()
     return answer
 
 
 @do
-def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
+def _first_subscription(plan: _Plan, patience: float) -> "EffectGenerator[ChannelSubscription]":
     """Subscribe the channels before the body runs; a broker that is unreachable at the start is waited for like
     any outage, and its end is told like any outage's: ``SourceResumed`` once the broker confirmed the new
     subscription (``SourceStalled`` promises it — a program that keeps the stalled sources until their return
@@ -485,13 +502,15 @@ def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
     broker confirmed the subscription."""
     answer = yield plan.subscribing()
     if isinstance(answer, BrokerUnreachable):
-        answer = yield _subscribed_after_outage(plan, answer)
+        answer = yield _subscribed_after_outage(plan, patience, answer)
         yield Publish(SourceResumed(source=plan.source))
     return answer
 
 
 @do
-def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Reading) -> "EffectGenerator[None]":
+def _read_notices(
+    plan: _Plan, patience: float, subscription: ChannelSubscription, reading: _Reading
+) -> "EffectGenerator[None]":
     """The source task: wait for the next notice and publish its event on the bus. When the connection is lost,
     give the dead subscription up, get past the outage, and tell ``SourceResumed`` — after the new subscription
     is confirmed. ``reading`` follows the subscription it holds. It ends only by ``Cancel`` (the wait has no time
@@ -508,7 +527,7 @@ def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Read
         if isinstance(notice, BrokerUnreachable):
             yield CloseSubscription(current)
             reading._mut_held = None
-            current = yield _subscribed_after_outage(plan, notice)
+            current = yield _subscribed_after_outage(plan, patience, notice)
             if reading._mut_ended:
                 # The wrapper ended while this source waited for the broker: nobody will close what it just made.
                 yield CloseSubscription(current)
@@ -772,11 +791,14 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     by an error, or by a cancel — stop the source and the task waiting for the return, then close the subscription
     the source held (card ki-aa9497a3a412: a process that wraps body after body holds one subscription at a time,
     not one per body). A wrapper that only sends has no source: nothing to subscribe, nothing to tell but its
-    start gaps."""
+    start gaps — and no patience to ask (nothing it waits for has a deadline)."""
     gaps = _Gaps()
     first: ChannelSubscription | None = None
+    patience = 0.0
     if plan.channels:
-        first = yield _first_subscription(plan)
+        # Asked before the first subscription: a composition with no answer falls here, not at its first outage.
+        patience = yield _asked_patience(plan)
+        first = yield _first_subscription(plan, patience)
     reading = _Reading(first)
     source: tuple[Task[object], ...] = ()
     # The stop runs on an exception and on the normal end, not in ``finally`` (see ``_came_back_within``). It covers
@@ -784,7 +806,7 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     try:
         if first is not None:
             yield Publish(SourceStarted(source=plan.source))
-            reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, first, reading)))
+            reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, patience, first, reading)))
             source = (reader,)
         yield _started_gaps_told(plan, gaps)
         # A wrapper with no route answers nothing around the body (the source alone is enough).
@@ -810,29 +832,61 @@ class _BodyWrapper(partial["Program"]):
     _doeff_is_handler_fn = True
 
 
+def _answered(answer: "ProgramHandler", wrapper: "ProgramHandler", body: "Program[_T]") -> "Program[_T]":
+    """``wrapper`` around ``body`` with ``answer`` right outside it."""
+    return answer(wrapper(body))
+
+
 def notice_events_handler(
-    source: str, routes: tuple[NoticeRoute[object], ...], patience_seconds: float
+    source: str, routes: tuple[NoticeRoute[object], ...], patience_seconds: float | None = None
 ) -> "ProgramHandler":
     """Build the wrapper that carries a body's events through the notice broker.
 
     ``source`` = this process's name for its source: the ``source`` of the ``SourceStarted`` / ``SourceStalled`` /
     ``SourceResumed`` / ``SourceFailed`` it publishes.
     ``routes`` = one ``NoticeRoute`` per event type that travels through the broker.
-    ``patience_seconds`` = how long the source waits for an unreachable broker before it fails (no default: the
-    composition chooses it in one place).
+
+    How long the source waits for an unreachable broker is the composition's answer: a wrapper that reads channels
+    asks ``ReadBrokerPatience`` when it begins, and the composition answers it with ``broker_patience_handler``
+    outside the wrapper (no default — the composition chooses it in one place, for every wrapper it places).
+
+    ``patience_seconds`` is only for the move to the question (agora card ki-6b3c298bfee1): a caller that still
+    passes the seconds gets the wrapper with its own answer right outside it, so a composition is not broken between
+    the landing of this package and of its callers. It goes once no caller passes it.
 
     The arguments are checked here; the subscription begins at the head of the wrapped body, before the body's
     first effect.
     """
-    return _BodyWrapper(_run, _checked_plan(source, routes, patience_seconds))
+    wrapper = _BodyWrapper(_run, _checked_plan(source, routes))
+    if patience_seconds is None:
+        return wrapper
+    if isinstance(patience_seconds, bool) or not isinstance(patience_seconds, int | float) or patience_seconds < 0:
+        raise ValueError(f"notice_events_handler: patience_seconds must be a number >= 0, got {patience_seconds!r}")
+    return _BodyWrapper(_answered, broker_patience_handler(BrokerPatience(float(patience_seconds))), wrapper)
+
+
+def broker_patience_handler(patience: BrokerPatience) -> "ProgramHandler":
+    """Build the handler that answers ``ReadBrokerPatience`` with ``patience`` — the composition's one answer of how
+    long every notice source under it waits for an unreachable broker. Placed anywhere outside the wrappers it
+    answers for (the question passes through the broker handlers and the clock)."""
+    if not isinstance(patience, BrokerPatience):
+        raise TypeError(f"broker_patience_handler: patience must be a BrokerPatience, got {patience!r}")
+
+    @do
+    def handler(effect: ReadBrokerPatience, k: K) -> "EffectGenerator[object]":
+        """Answer the composition's patience."""
+        return (yield Resume(k, patience))
+
+    return _program_handler(handler)
 
 
 # Every effect one wrapper performs around the body: the subscription and the wait for notices (``SubscribeChannels``,
 # ``NextAnnouncement``, ``AckAnnouncement`` of a kept channel's notice, ``CloseSubscription``), sending a routed
 # event (``Announce``), what the source task publishes
 # on the bus (``PublishEffect`` — the received events and ``SourceStarted`` / ``SourceStalled`` / ``SourceResumed`` /
-# ``SourceFailed``), getting past an outage (``AwaitBrokerBack``, ``GetTimeEffect``, ``WaitWithinEffect``, the watcher
-# task's ``CreatePromise`` / ``CompletePromise``), and running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``).
+# ``SourceFailed``), getting past an outage (``ReadBrokerPatience`` asked when a reading wrapper begins,
+# ``AwaitBrokerBack``, ``GetTimeEffect``, ``WaitWithinEffect``, the watcher task's ``CreatePromise`` /
+# ``CompletePromise``), and running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``).
 # The body's own ``WaitForEvent`` and its unrouted ``Publish`` go outward as the body's effects and are not counted.
 # ``tests/test_notice_events_closure.py`` checks that this is what the wrapper really performs.
 NOTICE_EVENTS_EFFECTS = (
@@ -842,6 +896,7 @@ NOTICE_EVENTS_EFFECTS = (
     CloseSubscription,
     Announce,
     PublishEffect,
+    ReadBrokerPatience,
     AwaitBrokerBack,
     GetTimeEffect,
     WaitWithinEffect,
@@ -857,3 +912,8 @@ NOTICE_EVENTS_EFFECTS = (
 # everything else the body performs goes outward) and performs ``NOTICE_EVENTS_EFFECTS`` around the body.
 notice_events_handler.__doeff_handles__ = ()
 notice_events_handler.__doeff_effects__ = NOTICE_EVENTS_EFFECTS
+
+# The same declaration for the answer of the patience (the handler is made inside the factory): it closes
+# ``ReadBrokerPatience`` and performs nothing.
+broker_patience_handler.__doeff_handles__ = (ReadBrokerPatience,)
+broker_patience_handler.__doeff_effects__ = ()

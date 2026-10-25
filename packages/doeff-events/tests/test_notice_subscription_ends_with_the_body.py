@@ -40,9 +40,9 @@ from doeff_events.handlers.notice_events import (
     GAP_NOTICE,
     MarkGap,
     NoticeRoute,
-    notice_events_handler,
 )
 from doeff_events.notice_laws import LawNote, law_routes
+from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, memory_harness, run_on_virtual_clock
 
 from doeff import K, Pass, Program, Pure, do
@@ -188,7 +188,7 @@ def test_a_cancel_while_the_start_gaps_are_told_leaves_no_subscription_behind() 
         for round_ in range(ROUNDS):
             seen: Promise[None] = yield CreatePromise()
             source = f"law-restarted-{round_}"
-            wrapped = notice_events_handler(source, starting, PATIENCE_SECONDS)(Pure(None))
+            wrapped = patient_notice_events(source, starting, PATIENCE_SECONDS)(Pure(None))
             party: Program[object] = subscribed_event_handler(EventBus(), source)(
                 memory_notice_handler(broker)(_sees_the_start_gap(seen)(wrapped))
             )
@@ -234,7 +234,7 @@ def test_readers_that_end_every_way_in_turn_on_one_broker_leave_no_subscription_
         body: Program[object],
     ) -> Program[object]:
         """A reader of the process with ``layer`` between its wrapper and the broker."""
-        wrapped = notice_events_handler(source, routes, PATIENCE_SECONDS)(body)
+        wrapped = patient_notice_events(source, routes, PATIENCE_SECONDS)(body)
         return subscribed_event_handler(EventBus(), source, (LawNote,))(
             memory_notice_handler(broker)(layer(wrapped))
         )
