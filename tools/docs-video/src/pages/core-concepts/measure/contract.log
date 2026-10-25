@@ -1,0 +1,27 @@
+
+doeff Traceback (most recent call last):
+
+  page()  contract.py:22
+    body = yield Fetch(url)
+    handlers:
+      throws ↗
+
+TimeoutError: slow
+
+resume:
+  page(): the code after the yield runs
+  answer: 'body=got https://example.com'
+throw:
+  answer: raises TimeoutError: slow
+pass:
+  page(): the code after the yield runs
+  answer: 'body=from the next handler out'
+hold:
+  other(): runs while k is held
+  page(): the code after the yield runs
+  answer: 'body=other task done'
+drop:
+  answer: 'stopped at https://example.com'
+resume twice:
+  page(): the code after the yield runs
+  answer: raises RuntimeError: internal error: Continuation: continuation already consumed (one-shot violation) (current fiber=0)

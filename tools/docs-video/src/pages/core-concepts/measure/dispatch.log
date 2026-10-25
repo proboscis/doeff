@@ -1,0 +1,4 @@
+yielded: Ask('name')
+yielded: Fetch(url='https://example.com')
+typed is called for: Fetch(url='https://example.com')
+answer: ada: got https://example.com

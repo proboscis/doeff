@@ -11,6 +11,8 @@ This chapter defines that model first, then the layer that runs it:
 - effect values are user-space data and dispatch through `Perform(effect)`
 - `@do` generators are lazy ASTs interpreted by the runtime
 
+[![A narrated video, under three minutes: an effect, a handler and k; an effect travelling out to the handler whose annotation matches it; a handler staying installed around k; resuming, throwing into, passing, holding and dropping k; the order of nested handlers; and how run evaluates a program yield by yield](assets/videos/core-concepts.jpg)](assets/videos/core-concepts.mp4)
+
 ## Effects, Handlers and Continuations
 
 - **An effect** is a plain value that names an operation: `Get("count")`, `Spawn(task)`, or an

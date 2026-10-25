@@ -1,0 +1,110 @@
+[
+ {
+  "id": "t1",
+  "text": "Core concepts. doeff is built from three pieces: effects, handlers, and continuations."
+ },
+ {
+  "id": "t2",
+  "text": "An effect is a plain value that names an operation. By itself, it does nothing."
+ },
+ {
+  "id": "t3",
+  "text": "A handler receives the effect together with k, the rest of the program, and decides what the effect means."
+ },
+ {
+  "id": "d1",
+  "text": "A program is a generator. It pauses at each yield and hands the effect outward."
+ },
+ {
+  "id": "d2",
+  "text": "The innermost handler whose annotation matches the effect receives it."
+ },
+ {
+  "id": "d3",
+  "text": "Ask is not a Fetch, so typed is skipped without a call, and Ask goes on out to the reader handler."
+ },
+ {
+  "id": "d4",
+  "text": "Fetch reaches typed. Both answers come back, and greeting returns."
+ },
+ {
+  "id": "a1",
+  "text": "A handler stays installed around k. The rest of the program still runs under it."
+ },
+ {
+  "id": "a2",
+  "text": "after receives Step load, and resumes k. Inside k, Step train reaches the same handler again."
+ },
+ {
+  "id": "a3",
+  "text": "Each Resume gives back the result of the rest, and after adds to it on the way out."
+ },
+ {
+  "id": "c1",
+  "text": "What a handler does with k decides what the effect means. Here is one program under six handlers."
+ },
+ {
+  "id": "c2",
+  "text": "Resume it, and the rest runs with the answer."
+ },
+ {
+  "id": "c3",
+  "text": "Throw into it, and the program sees the error at the yield."
+ },
+ {
+  "id": "c4",
+  "text": "Pass the effect on, and the next handler out answers instead."
+ },
+ {
+  "id": "c5",
+  "text": "Hold k while other tasks run, then resume it. The scheduler works this way."
+ },
+ {
+  "id": "c6",
+  "text": "Or drop it. The rest never runs, and the handler's value is the answer."
+ },
+ {
+  "id": "c7",
+  "text": "k is one-shot. Resuming it a second time raises a RuntimeError."
+ },
+ {
+  "id": "o1",
+  "text": "Handlers compose by nesting. Each one wraps the program the next one returns."
+ },
+ {
+  "id": "o2",
+  "text": "Ask stops at reader. Get and Put pass reader and writer, and reach state."
+ },
+ {
+  "id": "o3",
+  "text": "writer answers Tell by yielding a Get and a Put of its own, which travel out to state too."
+ },
+ {
+  "id": "o4",
+  "text": "So the order matters. Put state inside writer, and writer's Get finds no handler: an unhandled effect."
+ },
+ {
+  "id": "r1",
+  "text": "Calling an at-do function runs nothing yet. It builds a program, an Expand node."
+ },
+ {
+  "id": "r2",
+  "text": "run takes that one program, evaluates it, and returns its value."
+ },
+ {
+  "id": "r3",
+  "text": "Each yield splits the program in two: the expression, and the rest, waiting for its result."
+ },
+ {
+  "id": "r4",
+  "text": "A control node, the VM evaluates itself. An effect goes to the handlers, with the rest as k."
+ },
+ {
+  "id": "r5",
+  "text": "The answer is sent back into the generator until it returns, here with Ada."
+ },
+ {
+  "id": "z1",
+  "text": "Effects name operations. Handlers decide what they mean, by what they do with k. That is the core of doeff."
+ }
+]
