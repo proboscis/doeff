@@ -1,0 +1,14 @@
+python:
+  CreateNamedSemaphore -> Semaphore
+  Spawn -> doeff_core_effects.scheduler.Task
+  is Task True
+  is Promise True
+  Cancel then Wait raises TaskCancelledError
+  the same class True
+rust:
+  CreateNamedSemaphore -> Semaphore
+  Spawn -> doeff_core_effects.scheduler.Task
+  is Task True
+  is Promise True
+  Cancel then Wait raises TaskCancelledError
+  the same class True

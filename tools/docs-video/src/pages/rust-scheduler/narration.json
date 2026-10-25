@@ -1,0 +1,19 @@
+[
+ {"id": "a1", "text": "The Rust scheduler in doeff: one scheduler, with two implementations."},
+ {"id": "a2", "text": "In doeff, concurrency is effects too. The program yields Spawn and Gather, and scheduled is the handler that answers them, resuming k with each answer."},
+ {"id": "a3", "text": "That handler comes in Rust and in Python, with the same meaning. Rust is the default; Python is opt-in."},
+ {"id": "b1", "text": "Which one runs? The argument decides first, then the environment variable DOEFF SCHEDULER, then the default."},
+ {"id": "b2", "text": "The default is rust. Any other name is refused with a ValueError."},
+ {"id": "c1", "text": "Same meaning: here is one program, run under both implementations."},
+ {"id": "c2", "text": "Tasks a and b wait on one promise, and task b has high priority. Task slow waits on a promise that is never kept."},
+ {"id": "c3", "text": "The opener keeps the promise. Task b wakes first, then task a, in both implementations."},
+ {"id": "c4", "text": "Cancel unwinds task slow: its finally block runs, and then Wait raises TaskCancelledError."},
+ {"id": "c5", "text": "The same result, the same order, and the same sixty-four trace events."},
+ {"id": "d1", "text": "What moved to Rust is every decision the scheduler makes for an effect: task state, the ready queue, Cancel, and deadlock detection."},
+ {"id": "d2", "text": "What stays in Python is every class your code sees, raises, or subclasses, along with the warnings, the trace, and the step limit."},
+ {"id": "d3", "text": "So under both, a subclass of an effect resolves as its parent, and Spawn still gives back a Python Task."},
+ {"id": "e1", "text": "And it is faster. Here is the page's benchmark, run again: microseconds of CPU time per operation."},
+ {"id": "e2", "text": "Wherever the scheduler does the work, Rust takes six to twelve times less CPU time."},
+ {"id": "e3", "text": "An effect that only passes through gains least, because its time is spent outside the scheduler."},
+ {"id": "o1", "text": "The Rust scheduler: the same effects, the same handler, the same meaning, in a fraction of the time."}
+]

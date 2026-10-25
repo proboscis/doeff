@@ -1,0 +1,23 @@
+python: result ['A', 'B']
+  a starts
+  b starts
+  slow starts
+  opener completes the promise
+  b wakes with 42
+  a wakes with 42
+  slow finally
+  slow is cancelled
+  trace: 64 events, kinds ['enqueued', 'resumed', 'spawned', 'start', 'task-enter', 'task-leave']
+rust: result ['A', 'B']
+  a starts
+  b starts
+  slow starts
+  opener completes the promise
+  b wakes with 42
+  a wakes with 42
+  slow finally
+  slow is cancelled
+  trace: 64 events, kinds ['enqueued', 'resumed', 'spawned', 'start', 'task-enter', 'task-leave']
+same result: True
+same order: True
+same trace events: True
