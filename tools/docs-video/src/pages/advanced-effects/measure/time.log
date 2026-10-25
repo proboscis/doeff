@@ -1,0 +1,9 @@
+run 1 sync_time_handler, Delay(1.5): clock moved 1.50 s, wall 1503 ms
+run 1 sim_time_handler, Delay(1.5): clock moved 1.50 s, wall 0.50 ms
+run 1 sim_time_handler, Delay(3600): clock 09:00:00 -> 10:00:00, wall 0.82 ms
+run 2 sync_time_handler, Delay(1.5): clock moved 1.50 s, wall 1501 ms
+run 2 sim_time_handler, Delay(1.5): clock moved 1.50 s, wall 0.38 ms
+run 2 sim_time_handler, Delay(3600): clock 09:00:00 -> 10:00:00, wall 0.25 ms
+run 3 sync_time_handler, Delay(1.5): clock moved 1.50 s, wall 1501 ms
+run 3 sim_time_handler, Delay(1.5): clock moved 1.50 s, wall 0.54 ms
+run 3 sim_time_handler, Delay(3600): clock 09:00:00 -> 10:00:00, wall 0.39 ms

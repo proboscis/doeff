@@ -1,6 +1,7 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
+import {ADVANCED_EFFECTS} from './pages/advanced-effects/AdvancedEffects';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {CAPABILITY_CLASSES} from './pages/capability-classes/CapabilityClasses';
@@ -21,6 +22,7 @@ import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 export const Root: React.FC = () => (
   <>
     <Composition id="home" component={HOME.Video} durationInFrames={HOME.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="advanced-effects" component={ADVANCED_EFFECTS.Video} durationInFrames={ADVANCED_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="getting-started" component={GETTING_STARTED.Video} durationInFrames={GETTING_STARTED.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="basic-effects" component={BASIC_EFFECTS.Video} durationInFrames={BASIC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="error-handling" component={ERROR_HANDLING.Video} durationInFrames={ERROR_HANDLING.length} fps={FPS} width={WIDTH} height={HEIGHT} />

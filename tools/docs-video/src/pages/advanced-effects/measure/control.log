@@ -1,0 +1,30 @@
+run 1 checkout(3):
+   audit_handler got Audit('stock=3'), resumes k
+   checkout goes on after Audit
+   checkout returns 'ordered'
+   -> 'ordered'
+run 1 checkout(0):
+   audit_handler got Audit('stock=0'), resumes k
+   checkout goes on after Audit
+   abort_handler got Abort('out of stock'), does not resume k
+   -> 'aborted: out of stock'
+run 2 checkout(3):
+   audit_handler got Audit('stock=3'), resumes k
+   checkout goes on after Audit
+   checkout returns 'ordered'
+   -> 'ordered'
+run 2 checkout(0):
+   audit_handler got Audit('stock=0'), resumes k
+   checkout goes on after Audit
+   abort_handler got Abort('out of stock'), does not resume k
+   -> 'aborted: out of stock'
+run 3 checkout(3):
+   audit_handler got Audit('stock=3'), resumes k
+   checkout goes on after Audit
+   checkout returns 'ordered'
+   -> 'ordered'
+run 3 checkout(0):
+   audit_handler got Audit('stock=0'), resumes k
+   checkout goes on after Audit
+   abort_handler got Abort('out of stock'), does not resume k
+   -> 'aborted: out of stock'

@@ -1,0 +1,30 @@
+run 1:
+   observer saw Spawn
+   observer saw Ask('user')
+   observer saw WriterTellEffect('child 1 served ada')
+   observer saw Spawn
+   observer saw Ask('user')
+   observer saw WriterTellEffect('child 2 served ada')
+   observer saw Gather
+   result ['ada-1', 'ada-2']
+   log ['before the scope', 'child 1 served ada', 'child 2 served ada', 'after the scope']
+run 2:
+   observer saw Spawn
+   observer saw Ask('user')
+   observer saw WriterTellEffect('child 1 served ada')
+   observer saw Spawn
+   observer saw Ask('user')
+   observer saw WriterTellEffect('child 2 served ada')
+   observer saw Gather
+   result ['ada-1', 'ada-2']
+   log ['before the scope', 'child 1 served ada', 'child 2 served ada', 'after the scope']
+run 3:
+   observer saw Spawn
+   observer saw Ask('user')
+   observer saw WriterTellEffect('child 1 served ada')
+   observer saw Spawn
+   observer saw Ask('user')
+   observer saw WriterTellEffect('child 2 served ada')
+   observer saw Gather
+   result ['ada-1', 'ada-2']
+   log ['before the scope', 'child 1 served ada', 'child 2 served ada', 'after the scope']

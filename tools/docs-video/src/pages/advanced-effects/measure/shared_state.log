@@ -1,0 +1,33 @@
+run 1: no wait between Get and Put: count = 300 (3 tasks x 100)
+run 1: Delay(1) between Get and Put: count = 100 (3 tasks x 100)
+run 1: Delay(1) inside CreateSemaphore(1): count = 300 (3 tasks x 100)
+run 2: no wait between Get and Put: count = 300 (3 tasks x 100)
+run 2: Delay(1) between Get and Put: count = 100 (3 tasks x 100)
+run 2: Delay(1) inside CreateSemaphore(1): count = 300 (3 tasks x 100)
+run 3: no wait between Get and Put: count = 300 (3 tasks x 100)
+run 3: Delay(1) between Get and Put: count = 100 (3 tasks x 100)
+run 3: Delay(1) inside CreateSemaphore(1): count = 300 (3 tasks x 100)
+the steps of 3 tasks x 2 with no wait:
+   a read 0, wrote 1
+   a read 1, wrote 2
+   b read 2, wrote 3
+   b read 3, wrote 4
+   c read 4, wrote 5
+   c read 5, wrote 6
+   count = 6
+the steps of 3 tasks x 2 with Delay(1) between Get and Put:
+   a read 0, wrote 1
+   b read 0, wrote 1
+   c read 0, wrote 1
+   a read 1, wrote 2
+   b read 1, wrote 2
+   c read 1, wrote 2
+   count = 2
+the steps of 3 tasks x 2 with Delay(1) inside CreateSemaphore(1):
+   a read 0, wrote 1
+   b read 1, wrote 2
+   c read 2, wrote 3
+   a read 3, wrote 4
+   b read 4, wrote 5
+   c read 5, wrote 6
+   count = 6

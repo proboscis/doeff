@@ -2,6 +2,8 @@
 
 Advanced effects for parallel execution, shared-state coordination, and runtime-aware scheduling.
 
+[![A narrated video, about two and a half minutes: the page's effects and the stack of handlers that answers them; three spawned tasks sharing one count through the state handler, 300 with no wait between Get and Put, 100 with a Delay between them, and 300 again inside CreateSemaphore(1); WithObserve seeing every effect yielded in its scope, spawned tasks included, while each effect still reaches its handler; Audit and Abort handlers, one resuming k and one ending the body with its own value; and Delay as a real sleep or a virtual clock, depending on the time handler](assets/videos/advanced-effects.jpg)](assets/videos/advanced-effects.mp4)
+
 ## Gather Effects
 
 Execute multiple spawned tasks in parallel and collect results.

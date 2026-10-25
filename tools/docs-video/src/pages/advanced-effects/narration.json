@@ -1,0 +1,66 @@
+[
+ {
+  "id": "i1",
+  "text": "Advanced effects are still effects: tasks, shared state, observation, time, and control flow of your own."
+ },
+ {
+  "id": "i2",
+  "text": "Each one is answered by a handler. Stack the handlers, and they work on one program together."
+ },
+ {
+  "id": "s1",
+  "text": "Three tasks share one counter. The state handler sits outside the scheduler, so every task reads and writes the same store."
+ },
+ {
+  "id": "s2",
+  "text": "A task runs until it waits. A Get and its Put, with no wait between them, are never split. A hundred each makes three hundred."
+ },
+ {
+  "id": "s3",
+  "text": "Wait between the Get and the Put, and the other tasks read the same old value. Two of every three updates are lost: one hundred."
+ },
+ {
+  "id": "s4",
+  "text": "Hold a semaphore of one across the read and the write, and the count is three hundred again."
+ },
+ {
+  "id": "w1",
+  "text": "WithObserve shows you every effect that part of a program yields, without handling any of them."
+ },
+ {
+  "id": "w2",
+  "text": "It sees the effects of tasks spawned inside its scope, and nothing yielded outside it."
+ },
+ {
+  "id": "w3",
+  "text": "Each effect still goes on to its handler. The result and the log are the same as without the observer."
+ },
+ {
+  "id": "c1",
+  "text": "Control flow of your own is a handler for an effect of your own. Audit and Abort are plain data classes."
+ },
+ {
+  "id": "c2",
+  "text": "The Audit handler resumes k, so checkout goes on after the Audit."
+ },
+ {
+  "id": "c3",
+  "text": "The Abort handler never resumes k. The body ends right where it yielded Abort, and the handler's value is the result."
+ },
+ {
+  "id": "c4",
+  "text": "With stock, checkout returns ordered. Without, the result is: aborted, out of stock."
+ },
+ {
+  "id": "t1",
+  "text": "Time is effects too. Delay and GetTime mean what the time handler says."
+ },
+ {
+  "id": "t2",
+  "text": "Under the sync handler, a one and a half second Delay sleeps for real. Under the simulated clock, the clock moves, and the run takes under a millisecond, even for an hour."
+ },
+ {
+  "id": "o1",
+  "text": "doeff: tasks, state, observation, time and your own control flow are all effects, and the handlers you stack decide what each one does. pip install doeff."
+ }
+]
