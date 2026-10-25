@@ -1,0 +1,6 @@
+openrouter sees LLMStructuredQuery(model='gpt-4o', format=Analysis)
+openrouter sees LLMChat(model='gemini-1.5-pro', messages=[1 msgs])
+openrouter sees LLMChat(model='mistral-large-latest', messages=[1 msgs])
+answered by openai: []
+answered by openrouter: ['gpt-4o', 'gemini-1.5-pro', 'mistral-large-latest']
+analysis: Analysis(verdict='from openrouter', score=5)
