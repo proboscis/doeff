@@ -72,8 +72,11 @@ with tempfile.TemporaryDirectory() as root:
         ["semgrep", "--config", str(REPO / ".semgrep.yaml"), "--metrics=off", "--quiet", "--json", "examples/bad_program.py"],
         cwd=root, capture_output=True, text=True, check=False,
     )
-    found = [(r["check_id"].rsplit(".", 1)[-1], r["start"]["line"], r["extra"]["severity"]) for r in json.loads(scan.stdout)["results"]]
+    results = json.loads(scan.stdout)["results"]
+    found = [(r["check_id"].rsplit(".", 1)[-1], r["start"]["line"], r["extra"]["severity"]) for r in results]
     print(f"semgrep on bad_program: exit {scan.returncode}, findings {found}")
+    print("  message, first lines:")
+    print("\n".join(f"    {line}" for line in results[0]["extra"]["message"].splitlines()[:3]))
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,9 @@
-bad_program under sim_time_handler: 'done', virtual clock +0 s, wall clock 5.003 s
+bad_program under sim_time_handler: 'done', virtual clock +0 s, wall clock 5.006 s
 good_program under sim_time_handler: 'done', virtual clock +5 s, wall clock 0.001 s
 semgrep on bad_program: exit 0, findings [('doeff-no-sleep-in-programs', 9, 'ERROR')]
+  message, first lines:
+    A doeff program waits by yielding a doeff-time effect, not by calling time.sleep() or
+    asyncio.sleep() (Await(asyncio.sleep(...)) included). Use `yield Delay(seconds)` (or
+    WaitUntil / WaitWithin) from doeff_time: the caller's time handler decides what a second
 good_side_effects under write_to_disk: 'done', files ['file.txt']
 good_side_effects under record_writes: 'done', writes {'file.txt': 'data'}, cwd has file.txt: False
