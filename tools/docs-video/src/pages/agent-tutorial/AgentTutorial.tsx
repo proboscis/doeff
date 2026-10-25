@@ -13,10 +13,10 @@
 import React from 'react';
 import {AbsoluteFill, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp} from '../../kit/motion';
-import {narrate} from '../../kit/narrated';
+import {LEAD, narrate, Scene, TAIL} from '../../kit/narrated';
 import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
-import {useSceneFrame} from '../../kit/warp';
+import {useSceneFrame, WarpContext} from '../../kit/warp';
 import DURATIONS from './durations.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
@@ -113,8 +113,7 @@ const REVIEWED: ScreenLine[] = [
 // Scene 1 — what we build.
 
 const TITLE_LINES: Lines = [
-  [0, 'Agent Tutorial: a code review system built on doeff-agents.'],
-  [5.25, 'doeff-agents runs a coding agent, here Claude Code, in a terminal session your Python script drives.'],
+  [0, 'Agent Tutorial: a code review system on doeff-agents, which drives Claude Code in a terminal session.'],
   [12.5, "A scripted terminal plays Claude's screens: the runs shown need no tmux, no Claude, no login."],
 ];
 const TITLE = f(21);
@@ -172,7 +171,7 @@ const TitleScene: React.FC = () => {
 // Scene 2 — Step 1: launch, monitor until terminal, capture, stop (measure/lifecycle.py).
 
 const LIFE_LINES: Lines = [
-  [0, 'Step 1: launch a session, watch it until it ends, read its screen, stop it.'],
+  [0, 'Step 1: launch, watch until it ends, read the screen, stop.'],
   [5.85, 'launch_session types the claude command, waits for the ready screen, then pastes the prompt.'],
   [13.05, 'monitor_session reads the pane once a second. "esc to interrupt" on screen means running.'],
   [20.45, 'At 3.0 s the shell prompt is back: the agent exited, a terminal status. The loop ends.'],
@@ -386,7 +385,7 @@ const EffectsScene: React.FC = () => {
 // Scene 4 — Step 2: session_scope stops the session however the block is left (measure/cleanup.py).
 
 const CLEAN_LINES: Lines = [
-  [0, 'Step 2: session_scope launches the session and stops it on the way out of the with block.'],
+  [0, 'Step 2: session_scope stops the session on the way out of the with block.'],
   [6.65, 'The review finishes: the block returns, and stop_session runs.'],
   [12.05, 'A timeout returns early from inside the loop: stop_session still runs.'],
   [18.35, 'An exception leaves the block: stop_session runs, and the error goes on to the caller.'],
@@ -464,7 +463,7 @@ const CleanScene: React.FC = () => {
 // Scene 5 — Step 3: on_status_change runs on changes only; BLOCKED waits for input (measure/callbacks.py).
 
 const CB_LINES: Lines = [
-  [0, 'Step 3: monitor_session calls on_status_change only when the status changes.'],
+  [0, 'Step 3: on_status_change runs only when the status changes.'],
   [6.85, 'Eight polls, four changes: running, blocked, running again, exited.'],
   [13.0, 'Blocked: the agent waits for input. It asks to run the tests; the loop answers with send_message.'],
   [21.75, 'The callback keeps the history, with the second of each change.'],
@@ -585,7 +584,7 @@ const CallbackScene: React.FC = () => {
 // Scene 6 — Step 4: a Semaphore limits the batch, gather keeps the order (measure/batch.py).
 
 const BATCH_LINES: Lines = [
-  [0, 'Step 4: review many files at once, with asyncio and a limit.'],
+  [0, 'Step 4: many files at once, with asyncio and a limit.'],
   [6.25, 'A Semaphore of 2 lets two reviews run. The next one starts when a slot frees up.'],
   [13.15, 'Four reviews: 7.0 s two at a time, 13.1 s one at a time.'],
   [21.1, 'api.py finishes first, but gather returns the results in the order of the files.'],
@@ -771,13 +770,38 @@ const OutroScene: React.FC = () => {
   );
 };
 
+// The mp4 must stay within 6 MB (tests/test_docs_site_videos.py), so no headline holds the screen longer than its
+// line needs: each slot is cut to LEAD + line + TAIL, and the scene's design time is mapped onto the cut slots (the
+// motion inside a cut slot runs faster). A slot shorter than its line is still stretched by narrate.
+const said = DURATIONS as Record<string, number>;
+
+// Lets a scene keep its design times when its slots are cut: its frames go through toDesign after narrate's warp.
+const Retimed: React.FC<{toDesign: (frame: number) => number; children: React.ReactNode}> = ({toDesign, children}) => {
+  const outer = React.useContext(WarpContext);
+  return <WarpContext.Provider value={(real) => toDesign(outer(real))}>{children}</WarpContext.Provider>;
+};
+
+const tight = (scene: Scene): Scene => {
+  const ends = scene.starts.map((from, i) => (i + 1 < scene.starts.length ? scene.starts[i + 1] : scene.length));
+  const lengths = scene.starts.map((from, i) => {
+    const seconds = said[scene.ids[i]];
+    return seconds ? Math.min(ends[i] - from, f(LEAD + seconds + TAIL)) : ends[i] - from;
+  });
+  const starts = lengths.map((_, i) => lengths.slice(0, i).reduce((sum, length) => sum + length, 0));
+  const toDesign = (frame: number) => {
+    const i = starts.reduce((found, start, j) => (frame >= start ? j : found), 0);
+    return scene.starts[i] + ((frame - starts[i]) * (ends[i] - scene.starts[i])) / lengths[i];
+  };
+  return {...scene, starts, length: lengths.reduce((sum, length) => sum + length, 0), node: <Retimed toDesign={toDesign}>{scene.node}</Retimed>};
+};
+
 // The scenes in order; Root.tsx registers AGENT_TUTORIAL.length frames of AGENT_TUTORIAL.Video.
 export const AGENT_TUTORIAL = narrate('agent-tutorial', DURATIONS, [
-  {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
+  {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't3'], node: <TitleScene />},
   {length: LIFE, starts: startsOf(LIFE_LINES), ids: ['l1', 'l2', 'l3', 'l4', 'l5'], node: <LifeScene />},
   {length: EFFECTS, starts: startsOf(EFF_LINES), ids: ['e1', 'e2', 'e3', 'e4'], node: <EffectsScene />},
   {length: CLEAN, starts: startsOf(CLEAN_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <CleanScene />},
   {length: CALLBACKS, starts: startsOf(CB_LINES), ids: ['s1', 's2', 's3', 's4'], node: <CallbackScene />},
   {length: BATCH, starts: startsOf(BATCH_LINES), ids: ['b1', 'b2', 'b3', 'b4'], node: <BatchScene />},
   {length: OUTRO, starts: startsOf(OUTRO_LINES), ids: ['z1', 'z2'], node: <OutroScene />},
-]);
+].map(tight));

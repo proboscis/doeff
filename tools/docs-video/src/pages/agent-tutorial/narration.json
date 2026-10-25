@@ -1,11 +1,7 @@
 [
  {
   "id": "t1",
-  "text": "Agent tutorial. We build a code review system on doeff agents."
- },
- {
-  "id": "t2",
-  "text": "doeff agents runs a coding agent, here Claude Code, in a terminal session, and your Python script drives it."
+  "text": "Agent tutorial: a code review system on doeff agents, which drives a coding agent, here Claude Code, in a terminal session."
  },
  {
   "id": "t3",
@@ -13,7 +9,7 @@
  },
  {
   "id": "l1",
-  "text": "Step one. Launch a session, watch it until it ends, read its screen, and stop it."
+  "text": "Step one: launch, watch until it ends, read the screen, stop."
  },
  {
   "id": "l2",
@@ -49,7 +45,7 @@
  },
  {
   "id": "c1",
-  "text": "Step two. session scope launches the session, and stops it on the way out of the with block."
+  "text": "Step two. session scope stops the session on the way out of the with block."
  },
  {
   "id": "c2",
@@ -65,7 +61,7 @@
  },
  {
   "id": "s1",
-  "text": "Step three. monitor session calls on status change only when the status changes."
+  "text": "Step three. on status change runs only when the status changes."
  },
  {
   "id": "s2",
@@ -81,7 +77,7 @@
  },
  {
   "id": "b1",
-  "text": "Step four. Review many files at once, with asyncio and a limit."
+  "text": "Step four. Many files at once, with asyncio and a limit."
  },
  {
   "id": "b2",
