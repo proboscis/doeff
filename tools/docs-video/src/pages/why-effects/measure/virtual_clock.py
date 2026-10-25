@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from itertools import count
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, writer, writer_log
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     CompletePromise,
@@ -43,7 +45,7 @@ def virtual_clock():
             yield CompletePromise(promise, None)
         advancing = False
 
-    @do
+    @handler
     def clock(effect: Sleep | Now, k):
         nonlocal advancing
         if isinstance(effect, Now):
@@ -57,10 +59,7 @@ def virtual_clock():
         yield Wait(promise.future)
         return (yield Resume(k, None))
 
-    return handler(clock)
-
-
-log = []
+    return clock
 
 
 @do
@@ -68,7 +67,7 @@ def reminder(name, every_hours, times):
     for _ in range(times):
         yield Sleep(every_hours * 3600)
         hour = (yield Now()) / 3600
-        log.append(f"{hour:g}h {name}")
+        yield Tell(f"{hour:g}h {name}")
 
 
 @do
@@ -78,11 +77,16 @@ def day():
     yield Gather(tea, stretch)
 
 
+@do
+def logged(program):                    # runs program, then reads back what it told
+    yield program
+    return (yield writer_log())
+
+
 for i in range(7):
-    log.clear()
     trace.clear()
     started = time.perf_counter()
-    run(scheduled(virtual_clock()(day())))
+    log = run(scheduled(state()(writer(virtual_clock()(logged(day()))))))
     ms = (time.perf_counter() - started) * 1000
     print(f"run {i + 1}: {ms:.2f} ms {log}")
 print("trace of the last run:", trace)

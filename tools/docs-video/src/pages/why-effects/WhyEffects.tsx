@@ -554,7 +554,7 @@ const HoldScene: React.FC = () => {
         opacity={fadeAt(frame, 0.3)}
       />
       <div style={{position: 'absolute', left: 60, top: 560, width: 640, fontFamily: SANS, fontSize: 21, fontWeight: 700, lineHeight: '31px', color: TEST, opacity: fadeAt(frame, 18.0)}}>
-        7 runs: 0.47–14.23 ms each, the same five lines in the same order.
+        7 runs: 0.42–12.65 ms each, the same five lines in the same order.
       </div>
     </AbsoluteFill>
   );
