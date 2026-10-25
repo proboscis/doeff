@@ -11,6 +11,7 @@ import {HOME} from './pages/home/Home';
 import {KLEISLI_ARROWS} from './pages/kleisli-arrows/KleisliArrows';
 import {SEMAPHORE_EFFECTS} from './pages/semaphore-effects/SemaphoreEffects';
 import {RUST_SCHEDULER} from './pages/rust-scheduler/RustScheduler';
+import {STATIC_TYPING} from './pages/static-typing/StaticTyping';
 import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 
 // One composition per docs page, named after the page's video file in docs/assets/videos/ (home.mp4 is on
@@ -28,5 +29,6 @@ export const Root: React.FC = () => (
     <Composition id="cli-auto-discovery" component={CLI_AUTO_DISCOVERY.Video} durationInFrames={CLI_AUTO_DISCOVERY.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="semaphore-effects" component={SEMAPHORE_EFFECTS.Video} durationInFrames={SEMAPHORE_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="rust-scheduler" component={RUST_SCHEDULER.Video} durationInFrames={RUST_SCHEDULER.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="static-typing" component={STATIC_TYPING.Video} durationInFrames={STATIC_TYPING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
