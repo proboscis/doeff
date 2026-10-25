@@ -4,6 +4,7 @@ import {FPS, HEIGHT, WIDTH} from './kit/theme';
 import {ADVANCED_EFFECTS} from './pages/advanced-effects/AdvancedEffects';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
+import {CACHE_SYSTEM} from './pages/cache-system/CacheSystem';
 import {CAPABILITY_CLASSES} from './pages/capability-classes/CapabilityClasses';
 import {CLI_AUTO_DISCOVERY} from './pages/cli-auto-discovery/CliAutoDiscovery';
 import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
@@ -36,5 +37,6 @@ export const Root: React.FC = () => (
     <Composition id="rust-scheduler" component={RUST_SCHEDULER.Video} durationInFrames={RUST_SCHEDULER.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="patterns" component={PATTERNS.Video} durationInFrames={PATTERNS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="static-typing" component={STATIC_TYPING.Video} durationInFrames={STATIC_TYPING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="cache-system" component={CACHE_SYSTEM.Video} durationInFrames={CACHE_SYSTEM.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
