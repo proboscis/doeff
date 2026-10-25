@@ -52,15 +52,21 @@ EXAMPLE_TOOLS = ("pytest",)
 # 例 1 つの制限時間(秒)。初めての Hy の compile を含む(新しい置き場なので、doeff_core_effects の .hy も組む)。
 EXAMPLE_TIMEOUT_SECONDS = 300
 # 入れた venv の中で走らせ、入れた物の様子を JSON で印字する program。
+# README の本文は 3.14 までは metadata の payload に、3.15 からは Description の欄に在る(payload は空)。
 _DESCRIBE = """
 import importlib.metadata as metadata, json, sys, sysconfig
 names = sys.argv[1:]
+
+def readme(name):
+    found = metadata.metadata(name)
+    return found.get_payload() or found.get("Description", "")
+
 print(json.dumps({
     "version": sys.version.split()[0],
     "free_threaded": bool(sysconfig.get_config_var("Py_GIL_DISABLED")),
     "versions": {name: metadata.version(name) for name in names},
     "requires": [requirement for name in names for requirement in metadata.requires(name) or []],
-    "readmes": {name: metadata.metadata(name).get_payload() for name in names},
+    "readmes": {name: readme(name) for name in names},
 }))
 """
 _REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")

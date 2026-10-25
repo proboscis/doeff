@@ -104,18 +104,19 @@ def test_linux_aarch64_doeff_vm_wheels_build_natively_on_an_arm_runner() -> None
         assert runners == {"x86_64": "ubuntu-latest", "aarch64": "ubuntu-24.04-arm"}
 
 
-def test_linux_free_threaded_doeff_vm_wheels_name_only_python_3_14t() -> None:
+def test_linux_free_threaded_doeff_vm_wheels_name_only_python_3_14t_and_later() -> None:
     """maturin 1.15 refuses a named 3.13t interpreter in the manylinux images ("Free-threaded Python
-    interpreter is only supported on 3.14 and later" — Build doeff-vm run 38939832924)."""
+    interpreter is only supported on 3.14 and later" — Build doeff-vm run 38939832924), and PyO3 0.29
+    builds no free-threaded CPython below 3.14 (Build doeff-vm run 40220805725)."""
     jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "build-vm.yml").read_text(encoding="utf-8"))["jobs"]
     build = next(step for step in jobs["build-linux-freethreaded"]["steps"] if step.get("name") == "Build free-threaded wheels")
 
-    assert build["with"]["args"] == "--release --out dist -i python3.14t"
+    assert build["with"]["args"] == "--release --out dist -i python3.14t python3.15t"
 
 
-_GIL_WHEEL_TAGS = ("cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314")
-_FREE_THREADED_WHEEL_TAGS = ("cp313-cp313t", "cp314-cp314t")
-_UNSUPPORTED_WHEEL_TAGS = ("cp310-cp310", "cp315-cp315", "cp315-cp315t")
+_GIL_WHEEL_TAGS = ("cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315")
+_FREE_THREADED_WHEEL_TAGS = ("cp314-cp314t", "cp315-cp315t")
+_UNSUPPORTED_WHEEL_TAGS = ("cp310-cp310", "cp313-cp313t", "cp316-cp316", "cp316-cp316t")
 
 
 def test_doeff_vm_wheel_artifacts_never_share_a_file_name() -> None:
