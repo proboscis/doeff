@@ -4,7 +4,9 @@ Thanks for taking the time to help. This page is for people who change doeff its
 report, how to set up the development environment, how to run the tests and how to send a pull
 request. To use doeff, start from the [README](README.md).
 
-Issues and pull requests are written in English.
+Issues and pull requests are written in English. Everyone taking part follows the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report a security problem privately as described in
+[SECURITY.md](SECURITY.md), not in an issue.
 
 ## Ways to contribute
 

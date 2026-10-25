@@ -1,6 +1,6 @@
 """README・docs・PyPI の頁に出る README の link が切れていない事を確かめる(取り組み doeff-publish の区切り 11)。
 
-読む file(既定 — 初めて来た人が GitHub と PyPI で押す link の在る所): 根の README.md・CONTRIBUTING.md・CHANGELOG.md・
+読む file(既定 — 初めて来た人が GitHub と PyPI で押す link の在る所): 根の README.md・CONTRIBUTING.md・CHANGELOG.md・CODE_OF_CONDUCT.md・SECURITY.md・
 docs/ の下の全部の *.md・packages/*/README.md。git に載っている file だけを読む(載っていない file は GitHub に無い)。
 設計の記録の dir(根の pyproject.toml の `[tool.doeff] record-dirs`)の下は読まない — 記録はその時点の証拠で、写しの
 文を後から書き換えない。
@@ -63,7 +63,7 @@ REPO = Path(__file__).resolve().parents[1]
 GITHUB_REPO = "proboscis/doeff"
 DEFAULT_BRANCH = "main"
 # 根の決まった名の file。docs/ の下の *.md と packages/*/README.md は木から読む(default_files)。
-ROOT_FILES = ("README.md", "CONTRIBUTING.md", "CHANGELOG.md")
+ROOT_FILES = ("README.md", "CONTRIBUTING.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md", "SECURITY.md")
 # 例として書かれた host(送っても返事の来ない・来ても意味の無い物)。名か、その下の名なら当たる。
 EXAMPLE_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "example.com", "example.org", "example.net")
 EXAMPLE_HOST_SUFFIXES = (".local", ".localhost", ".test", ".invalid", ".example", ".internal")
