@@ -54,6 +54,7 @@
 (import doeff_cluster.worker.core.boot_timing [boot-line])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
+(import doeff_cluster.worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 
 ;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・
 ;; #3871 の単位 4)。
@@ -117,12 +118,15 @@
    boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡とみなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・
    started-mono-ms = 同じ刻の単調な時計の読み(ms — 沈黙は壁の時計と単調な時計の両方で計る・heartbeat_rules.silent-ms)・
    boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)・overlaps-elder = この世代は同じ名の
-   前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)。"
+   前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)・
+   token-file = ServiceAccount の token の file(None = 読まない — 本番の入口が標準の path を渡す。読んだ状態を heartbeat の
+   accountToken で名乗る・card ki-d31166f84ad0)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
-                          #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]]
+                          #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
+                          #^ (| str None) [token-file None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
           self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -161,7 +165,10 @@
           ;; 送る間隔を待たずに送る — 状態の報告の違いと同じ扱い)。
           self.stopping False self.sent-stopping False
           ;; 起動の内訳の刻(#3676 — 本番の入口が渡す・None = 出さない)と、その 1 行を出したか(最初の heartbeat の答えの後に 1 度だけ)。
-          self.boot-marks boot-marks self.boot-told False)))
+          self.boot-marks boot-marks self.boot-told False
+          ;; ServiceAccount の token の古さ(card ki-d31166f84ad0): token-file = 読む file(None = 読まない)・account-token = 最後に読んだ
+          ;; 状態(None = まだ読んでいない・読めない file — heartbeat に載せない)・token-read-ms = 最後に読んだ刻。
+          self.token-file token-file self.account-token None self.token-read-ms None)))
 
 
 
@@ -446,7 +453,9 @@
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
-                   (env-heartbeat-part state.env-report (current-platform)))))
+                   (env-heartbeat-part state.env-report (current-platform)))
+               ;; token の状態(card ki-d31166f84ad0)は読めた worker だけが名乗る(欄の無い本文は coordinator が ok と読む)。
+               (if (is state.account-token None) {} {"accountToken" state.account-token.value})))
   ;; 生存の合図の thread が送り直す宛先と本文(card ki-9b58446e2ad6 — 組を 1 つの欄で入れ替え、thread が混ざった組を読まない)。
   (setv state.life.post #((+ endpoint "/heartbeat") (.encode (json.dumps body :ensure-ascii False) "utf-8")))
   (<- reply RoutedReply (routed-request cell.route "POST" "/heartbeat" options None body))
@@ -641,6 +650,45 @@
   None)
 
 
+(defk token-noted [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "ServiceAccount の token の file を READ-EVERY-MS ごとに読み、heartbeat で名乗る状態(state.account-token)を更新し、状態が変わった
+   時に 1 行出すため(card ki-d31166f84ad0 — kubelet が置き直しを取り逃した worker を、401 が続く前に log と見回りが知る)。file の
+   読めない worker(Pod の外)は名乗らない。"
+  (when (is-not state.token-file None)
+    (<- now-ms int (now-epoch-ms))
+    (<- due bool (token-read-due state.token-read-ms now-ms))
+    (when due
+      (setv state.token-read-ms now-ms)
+      (<- text (ReadText state.token-file))
+      (var claims None)
+      (var named None)
+      (when (isinstance text str)
+        (<- read (| TokenClaims None) (token-claims text))
+        (<- judged TokenState (token-state read now-ms))
+        (:= claims read)
+        (:= named judged))
+      (when (!= named state.account-token)
+        (<- line str (token-line state.account-token named claims now-ms (if (isinstance text FileFailed) text.detail "")))
+        (<- (slog line)))
+      (setv state.account-token named)))
+  None)
+
+
+(defk token-line [before after claims now-ms failure]
+  {:pre [(: before (| TokenState None)) (: after (| TokenState None)) (: claims (| TokenClaims None)) (: now-ms int) (: failure str)]
+   :post [(: % str)]}
+  "token の状態の移りを、worker の log の 1 行にするため(発行からの分と期限までの分を添える — 読めない時は理由)。"
+  (val said (fn [s] (if (is s None) "名乗らない" s.value)))
+  (val detail (cond
+                (is-not claims None)
+                  (.format "発行から {} 分・期限まで {} 分" (// (- now-ms (* claims.issued-at 1000)) 60000)
+                           (// (- (* claims.expires-at 1000) now-ms) 60000))
+                failure (+ "読めない: " failure)
+                True "JWT の形でない"))
+  (.format "worker: ServiceAccount の token {} → {}({})" (said before) (said after) detail))
+
+
 (defk lifeline-told [state sends]
   {:pre [(: state LinkState) (: sends tuple)] :post [(: % None)]}
   "生存の合図の thread の働きを拍の log に出すため(card ki-9b58446e2ad6): 前の読みの後に thread が送った本数(拍の側が送れなかった
@@ -728,6 +776,8 @@
     (setv state.stopping stopping)
     ;; 拍の進みの印(生存の合図の thread が、固まったループの代わりに送り続けない — card ki-9b58446e2ad6)。
     (<- (progress-noted state))
+    ;; ServiceAccount の token の古さを読み直す(READ-EVERY-MS ごと — 次の heartbeat が名乗る・card ki-d31166f84ad0)。
+    (<- (token-noted state))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))

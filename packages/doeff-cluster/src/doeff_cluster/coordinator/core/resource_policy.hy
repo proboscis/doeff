@@ -614,6 +614,9 @@
                ;; disk の条件(heartbeat の envCapacity — near = 準備の最低に近い・exhausted = 最低を割った)。ok でない間だけ載せる(ok の worker の
                ;; status の形・版は以前と同じ)。切り替わりの拍で版が進み、読み手が GET /resources/Worker で予告を読む。
                (if (!= w.env-capacity "ok") {"envCapacity" w.env-capacity} {})
+               ;; ServiceAccount の token の状態(heartbeat の accountToken — stale = kubelet の置き直しが遅れた・expired = 期限が切れた・
+               ;; card ki-d31166f84ad0)。envCapacity と同じく ok でない間だけ載せ、切り替わりの拍で版が進む(読み手が 401 の前に知る)。
+               (if (!= w.account-token "ok") {"accountToken" w.account-token} {})
                ;; 世代をまたぐ recreate の job の受け渡し(AL-D2f): 前の世代がまだ動かしている job(重なりを名乗った新しい世代の間の
                ;; SupersededRun)と、今の世代が起こせると報告した job(状態の行の phase が elder-runs)。受け渡しが進むたびに版が進み、
                ;; この worker を名指した 2 つの世代の GET /watch が起きる(前の世代は外す返事を、今の世代は印の外れを次の heartbeat を
