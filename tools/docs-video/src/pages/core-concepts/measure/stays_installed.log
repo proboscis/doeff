@@ -1,0 +1,6 @@
+after receives Step('load') and resumes k
+after receives Step('train') and resumes k
+job returns "model"
+Resume gives after 'train' back 'model'
+Resume gives after 'load' back 'model after train'
+answer: model after train after load
