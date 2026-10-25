@@ -15,6 +15,10 @@
 ;;     常駐の job が 11 回止められ、起こし直されては同じ大きさに戻った): 平常の大きさで動く常駐の job は尽きかけの機体でも止めず、
 ;;     止めなかった job と worker の外の使用量を 1 行で言う。平常の 2 倍の常駐の job と大きい task は止める。止めた job の間の最大は
 ;;     平常の大きさに残さない。
+;;   - 群れの止め(card ki-d9953fe1d739 — 10-23 20:36〜20:46 UTC の zeus で、CLI を多数並べる常駐の job の木が約 64 GB に太ったのに、単位は
+;;     どれも 512 MiB 未満で見張りは何も止めず、機体ごと約 3 分止まった): 常駐の job が 300 MiB の CLI の木 40 本と、shim に引き取られた
+;;     200 MiB の孤児 40 本を持つ尽きかけの機体では、job の本体を残して、大きい単位から DANGER の線を戻す量まで まとめて止める。worker の
+;;     外の使用量がその job より大きい時は止めずに 1 度だけ言う。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -33,11 +37,11 @@
                                                 spared-steady steady-sizes victim-of])
 (import doeff_cluster.worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
-                                                   MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG])
+                                                   MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG MEMORY-SWARM-KILL-LOG])
 
 (val GIB (* 1024 MIB))
 ;; 見張りの log の行の名(数える行)。
-(val WATCH-LOGS #{MEMORY-WINDOW-LOG JOB-PEAK-LOG MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG})
+(val WATCH-LOGS #{MEMORY-WINDOW-LOG JOB-PEAK-LOG MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG MEMORY-SWARM-KILL-LOG})
 
 
 (defk row [pid ppid mib comm]
@@ -61,6 +65,45 @@
   (<- task-shim ProcRow (row 20 1 10 "python"))
   (<- task-body ProcRow (row 21 20 700 "python"))
   #(tini shim uv body child-a tool child-b orphan task-shim task-body))
+
+
+(defk swarm-rows []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "群れの台本の表: 常駐の job svc(shim 10 → uv 11 → 本体 12 の 200 MiB → CLI 100〜139 の 300 MiB ずつ。shim は引き取った道具の孤児
+   200〜239 の 200 MiB ずつも持つ)。svc の和 = 10 + 5 + 200 + 40 × 300 + 40 × 200 = 20215 MiB(32 GiB の 62%)。task/1 は無い。"
+  (<- tini ProcRow (row 1 0 1 "tini"))
+  (<- shim ProcRow (row 10 1 10 "python"))
+  (<- uv ProcRow (row 11 10 5 "uv"))
+  (<- body ProcRow (row 12 11 200 "python"))
+  (var rows #(tini shim uv body))
+  (for [n (range 40)]
+    (<- cli ProcRow (row (+ 100 n) 12 300 "cli"))
+    (<- orphan ProcRow (row (+ 200 n) 10 200 "bash"))
+    (:= rows (+ rows #(cli orphan))))
+  rows)
+
+
+(defk swarm-files [available-gib container-gib]
+  {:pre [(: available-gib float) (: container-gib int)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "機体 32 GiB・空き available-gib・container の memory.current container-gib の file(node-files と同じ形)。"
+  (<- files MemoryFiles (node-files available-gib))
+  (MemoryFiles :dirs files.dirs
+               :files (tuple (gfor file files.files
+                                   (if (= file.path "/sys/fs/cgroup/memory.current")
+                                       (MemoryFile :path file.path :content (.encode (str (* container-gib GIB))))
+                                       file)))))
+
+
+(defk watched-swarm [settings files run-until-ms]
+  {:pre [(: settings MemoryWatchSettings) (: files MemoryFiles) (: run-until-ms int)] :post [(: % WatchSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "watched と同じ事を、群れの台本の表(swarm-rows — task/1 は始めから終わっている)で回すため。"
+  (<- rows tuple (swarm-rows))
+  (val cell (MemoryCell))
+  (<- seen WatchSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (scripted-proc-table-handler rows)
+                                     (memory-world cell 0 run-until-ms)]
+                       (watch-then-seen settings cell)))
+  seen)
 
 
 (defk node-files [available-gib]
@@ -358,3 +401,33 @@
   (assert (= (tuple (gfor window cell.steady (tuple (gfor s window #(s.job (// s.bytes MIB))))))
              #(#() #(#("svc" 835) #("task/1" 10))))
           cell.steady))
+
+
+
+(deftest test-many-small-units-of-one-large-resident-job-are-killed-together-until-the-danger-line-returns
+  ;; 失敗ケース(card ki-d9953fe1d739): 空き 2.0 GiB / 32 GiB = 6%(DANGER)・container 28 GiB(worker の外 2 GiB)。単位はどれも 512 MiB
+  ;; 未満(CLI の木 300 MiB・孤児 200 MiB)で、直す前の見張りは「止める単位が無い」と言うだけで何も止めない。直した見張りは svc の本体を
+  ;; 残して、大きい単位(CLI の木)から、空きを DANGER の線(3.2 GiB)の上へ 512 MiB 戻す量(約 1741 MiB)まで 6 本を まとめて止める。
+  ;; 5 秒の読みは止めの間隔(10 秒)の中なので止めない(見張りは 5 秒の読みの後に止める)。
+  (<- files MemoryFiles (swarm-files 2.0 28))
+  (<- seen WatchSeen (watched-swarm (MemoryWatchSettings) files 4000))
+  (<- spared tuple (lines-named seen.lines MEMORY-NO-VICTIM-LOG))
+  (assert (= spared #()) spared)
+  (<- rows tuple (swarm-rows))
+  (val gone (sorted (- (sfor r rows r.pid) (sfor r seen.table r.pid))))
+  (assert (= gone [100 101 102 103 104 105]) gone)
+  (<- swarms tuple (lines-named seen.lines MEMORY-SWARM-KILL-LOG))
+  (assert (= (len swarms) 1) swarms)
+  (val told (get swarms 0))
+  (assert (= #((get told "job") (get told "units") (get told "units_mib") (get told "sent")) #("svc" 6 1800 6)) told))
+
+
+(deftest test-a-large-resident-job-is-not-swarmed-when-the-use-outside-the-worker-is-larger
+  ;; container 6 GiB(worker の外 24 GiB > svc 約 19.7 GiB): 不足は worker の外から来たので、svc の子を止めても戻らない — 止めずに 1 度だけ言う。
+  (<- files MemoryFiles (swarm-files 2.0 6))
+  (<- seen WatchSeen (watched-swarm (MemoryWatchSettings) files 4000))
+  (<- spared tuple (lines-named seen.lines MEMORY-NO-VICTIM-LOG))
+  (<- swarms tuple (lines-named seen.lines MEMORY-SWARM-KILL-LOG))
+  (assert (= #((len spared) swarms) #(1 #())) seen.lines)
+  (<- rows tuple (swarm-rows))
+  (assert (= (len seen.table) (len rows)) seen.table))
