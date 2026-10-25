@@ -310,6 +310,12 @@ tests = [
 prefix = "tools/check_links.py"
 tests = ["tests/test_check_links.py"]
 
+# subpackage の公開 API の目録の道具(tools/public_api_inventory.py — package ごとに子の process で import して名に種類を付ける)を
+# 変えた便は、道具の検の全部を払う。検は道具を path で読むので、import の逆依存では選ばれない。
+[[tool.doeff.contract-tests]]
+prefix = "tools/public_api_inventory.py"
+tests = ["tests/test_public_api_inventory.py"]
+
 # README の頭の GIF と、GIF に映る例の file(tools/readme_demo/digest.py と handlers.py)を変えた便は、例が今の doeff で走り、
 # GIF の 4 行が `python -m doeff demo` と同じ答えを返し、GIF が目安の大きさに収まる検を払う。例は path で読むので、import の
 # 逆依存では選ばれない(doeff/cli/demo.py を変えた便は、検が demo を import するので逆依存で選ばれる)。
