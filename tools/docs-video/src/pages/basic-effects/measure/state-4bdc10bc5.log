@@ -1,0 +1,4 @@
+returns: 3
+puts: ["Put('count', 0)", "Put('count', 1)", "Put('count', 2)", "Put('count', 3)"]
+second run, a new store: 3
+Get of a missing key: None
