@@ -1,7 +1,8 @@
 // The video on the Patterns page (docs/12-patterns.md): every pattern is a program that yields effects and a handler
 // stack that gives them their meaning. Five scenes and an outro, each with headlines a synthetic voice reads
 // (narration.json):
-//   1. Layered architecture: the layers' effects travel outward to the handler stack; Try keeps order 7's failure.
+//   1. Layered architecture: the layers' effects travel outward to the handler stack; the in-memory handler throws
+//      order 7's failure into the service and Try keeps it.
 //   2. Retry with backoff: Try, Tell and Delay in one loop; the time handler decides what a second is.
 //   3. State: the store lives in the state handler; the state machine steps; Try does not roll back, a snapshot does.
 //   4. Testing: a test is the same program under the stack it chooses, reading what its handlers kept.
@@ -75,9 +76,9 @@ const between = (frame: number, from: number, to: number) => frame >= f(from) &&
 
 const LAYER_LINES: Lines = [
   [0, 'Patterns: a program yields effects; a handler stack gives them meaning.'],
-  [9.5, 'Layered architecture: the domain computes, the service asks, the API tries.'],
+  [9.5, 'Layered architecture: the domain computes, the service yields, the API tries.'],
   [19.1, 'No layer reaches for its dependencies: the effects travel outward.'],
-  [31.3, 'Order 7 fails in the service. Try keeps the failure as a value.'],
+  [31.3, 'No order 7: the handler throws into the service. Try keeps the failure.'],
 ];
 const LAYER = f(40);
 const API = [
@@ -88,14 +89,15 @@ const API = [
 ];
 const SERVICE = [
   'def order_service(order_id):',
-  '    db = yield Ask("database")',
-  '    cache = yield Ask("cache")',
-  '    order = yield db.get_order(order_id)',
+  '    order = yield GetOrder(order_id)',
+  '    order.total = yield calculate_order_total(order.items)',
+  '    yield SaveOrder(order)',
+  '    yield CacheSet(f"order_{order_id}", order, ttl=300)',
 ];
 const DOMAIN = ['def calculate_order_total(items):', '    subtotal = sum(i.price * i.quantity for i in items)', '    return subtotal + subtotal * 0.1'];
 // The handler stack of measure/layers.py, outermost first.
 const STACK = [
-  {name: 'reader', note: 'env: database, cache', color: ACCENT},
+  {name: 'in_memory_store', note: 'answers GetOrder, SaveOrder, CacheSet', color: ACCENT},
   {name: 'state()', note: 'the store writer keeps its log in', color: TEST},
   {name: 'writer', note: 'answers Tell, keeps the log', color: TEST},
   {name: 'try_handler', note: 'answers Try with Ok or Err', color: TEST},
@@ -103,18 +105,19 @@ const STACK = [
 // The effects measure/layers.py saw, in order: [second, text, layer code (0 API, 1 service), line, handler index].
 const YIELDS: [number, string, number, number, number][] = [
   [20.0, 'Tell', 0, 1, 2],
-  [22.2, 'Try', 0, 2, 3],
-  [24.4, 'Ask("database")', 1, 1, 0],
-  [26.4, 'Ask("cache")', 1, 2, 0],
-  [28.6, 'Tell', 0, 3, 2],
+  [21.8, 'Try', 0, 2, 3],
+  [23.6, 'GetOrder(42)', 1, 1, 0],
+  [25.4, 'SaveOrder', 1, 3, 0],
+  [27.2, 'CacheSet', 1, 4, 0],
+  [29.0, 'Tell', 0, 3, 2],
 ];
 
 const LayerScene: React.FC = () => {
   const frame = useSceneFrame();
   const code = {x: 50, w: 600, size: 15, line: 24};
   const apiY = 124;
-  const serviceY = 284;
-  const domainY = 444;
+  const serviceY = 276;
+  const domainY = 464;
   const codeYs = [apiY, serviceY];
   const stackX = 730;
   const stackW = 500;
@@ -122,7 +125,7 @@ const LayerScene: React.FC = () => {
   const failing = frame >= f(31.3);
   // Which layer is being named in the second headline: domain, then service, then API.
   const named = between(frame, 10.4, 13.2) ? 2 : between(frame, 13.2, 16.0) ? 1 : between(frame, 16.0, 19.1) ? 0 : -1;
-  const roles = ['logs the request, tries the service', 'asks for its database and cache', 'a plain computation: yields nothing'];
+  const roles = ['logs the request, tries the service', 'yields GetOrder, SaveOrder, CacheSet', 'a plain computation: yields nothing'];
   const layers = [
     {name: 'API layer', y: apiY, lines: API},
     {name: 'Service layer', y: serviceY, lines: SERVICE},
@@ -131,10 +134,12 @@ const LayerScene: React.FC = () => {
   // The band of each layer: the line whose effect is on the move.
   const bandOf = (layer: number) => {
     const live = YIELDS.filter(([at, , l]) => l === layer && between(frame, at - 0.2, at + 1.4));
-    if (failing && layer === 1 && between(frame, 33.0, 35.6)) return 3;
+    if (failing && layer === 1 && between(frame, 32.0, 35.0)) return 1;
     return live.length ? live[0][3] : null;
   };
-  const handlerOn = (i: number) => YIELDS.some(([at, , , , h]) => h === i && between(frame, at + 0.9, at + 1.9)) || (failing && i === 3 && between(frame, 34.0, 36.4));
+  const handlerOn = (i: number) =>
+    YIELDS.some(([at, , , , h]) => h === i && between(frame, at + 0.9, at + 1.9)) ||
+    (failing && ((i === 0 && between(frame, 33.0, 34.0)) || (i === 3 && between(frame, 35.0, 36.4))));
   const logLines = failing
     ? [
         {text: 'get_order_handler(7)', color: MUTED},
@@ -144,7 +149,7 @@ const LayerScene: React.FC = () => {
     : [
         {text: 'get_order_handler(42)', color: MUTED},
         {text: frame >= f(21.0) ? 'Request: GET /orders/42' : ''},
-        {text: frame >= f(29.6) ? 'Response: Order(id=42, ..., total=55.0)' : '', color: TEST},
+        {text: frame >= f(30.0) ? 'Response: Order(id=42, ..., total=55.0)' : '', color: TEST},
       ];
   return (
     <AbsoluteFill>
@@ -161,8 +166,8 @@ const LayerScene: React.FC = () => {
           <div
             style={{
               position: 'absolute', left: code.x - 4, top: layer.y - 4, width: code.w + 8, height: PAD * 2 + layer.lines.length * code.line + 8, boxSizing: 'border-box',
-              borderRadius: 16, border: `3px solid ${failing && i === 1 && frame >= f(33.0) ? FAIL : LOOK}`,
-              opacity: named === i || (failing && i === 1 && between(frame, 33.0, 36.0)) ? 1 : 0,
+              borderRadius: 16, border: `3px solid ${failing && i === 1 && frame >= f(34.0) ? FAIL : LOOK}`,
+              opacity: named === i || (failing && i === 1 && between(frame, 34.0, 36.0)) ? 1 : 0,
             }}
           />
         </React.Fragment>
@@ -173,16 +178,19 @@ const LayerScene: React.FC = () => {
       {STACK.map((h, i) => (
         <HandlerBox key={h.name} x={stackX + i * 14} y={stackY(i)} w={stackW - i * 14} name={h.name} note={h.note} color={h.color} on={handlerOn(i)} opacity={fadeAt(frame, 3.0 + i * 0.5)} />
       ))}
-      <div style={{position: 'absolute', left: stackX + 4, top: 402, fontFamily: MONO, fontSize: 14, color: MUTED, whiteSpace: 'nowrap', opacity: fadeAt(frame, 5.2) * (1 - ramp(frame, 19.0, 19.4))}}>
-        run(reader(env)(state()(writer(try_handler(get_order_handler(42))))))
+      <div style={{position: 'absolute', left: stackX + 4, top: 400, fontFamily: MONO, fontSize: 14, lineHeight: '20px', color: MUTED, whiteSpace: 'pre', opacity: fadeAt(frame, 5.2) * (1 - ramp(frame, 19.0, 19.4))}}>
+        {'run(in_memory_store(orders)(state()(writer(try_handler(\n    get_order_handler(42))))))'}
       </div>
       {/* The effects of order 42, each to the handler that answers it. */}
       {YIELDS.map(([at, text, layer, line, h], i) => (
         <Fly key={i} at={at} from={[code.x + code.w - 60, lineMid(codeYs[layer], code.line, line)]} to={[stackX + stackW / 2, stackY(h) + 28]} text={text} color={ACCENT} />
       ))}
-      {/* Order 7: the failure inside the service is caught by try_handler and comes back to the API layer as Err. */}
-      <Fly at={33.4} length={1.0} from={[code.x + code.w - 120, lineMid(serviceY, code.line, 3)]} to={[stackX + stackW / 2, stackY(3) + 28]} text="LookupError('no order 7')" color={FAIL} />
-      <Fly at={34.8} length={1.2} from={[stackX + stackW / 2, stackY(3) + 28]} to={[code.x + code.w - 100, lineMid(apiY, code.line, 2)]} text="Err(LookupError(...))" color={FAIL} />
+      {/* Order 7: in_memory_store has no such order and throws LookupError into the service at its GetOrder (ResumeThrow);
+          try_handler catches it and the API layer gets it back as Err. */}
+      <Fly at={32.2} length={0.9} from={[code.x + code.w - 60, lineMid(serviceY, code.line, 1)]} to={[stackX + stackW / 2, stackY(0) + 28]} text="GetOrder(7)" color={ACCENT} />
+      <Fly at={33.2} length={0.9} from={[stackX + stackW / 2, stackY(0) + 28]} to={[code.x + code.w - 120, lineMid(serviceY, code.line, 1)]} text="LookupError('no order 7')" color={FAIL} />
+      <Fly at={34.3} length={0.8} from={[code.x + code.w - 120, lineMid(serviceY, code.line, 1)]} to={[stackX + stackW / 2, stackY(3) + 28]} text="LookupError('no order 7')" color={FAIL} />
+      <Fly at={35.3} length={1.0} from={[stackX + stackW / 2, stackY(3) + 28]} to={[code.x + code.w - 100, lineMid(apiY, code.line, 2)]} text="Err(LookupError(...))" color={FAIL} />
       <Terminal x={stackX} y={420} w={stackW} size={15} line={25} lines={[{text: 'log', color: MUTED}, ...logLines]} opacity={fadeAt(frame, 19.6)} />
       <Label x={code.x + 4} y={576} size={17} color={TEXT} opacity={fadeAt(frame, 19.6)}>
         effects yielded, in order <span style={{fontWeight: 400, color: MUTED}}>(measure/layers.log)</span>
@@ -192,7 +200,7 @@ const LayerScene: React.FC = () => {
           <div
             key={i}
             style={{
-              fontFamily: MONO, fontSize: 16, fontWeight: 700, color: ACCENT, padding: '5px 10px', borderRadius: 10, border: `2px solid ${ACCENT}`, background: PANEL,
+              fontFamily: MONO, fontSize: 15, fontWeight: 700, color: ACCENT, padding: '5px 9px', borderRadius: 10, border: `2px solid ${ACCENT}`, background: PANEL,
               whiteSpace: 'nowrap', opacity: fadeAt(frame, at + 0.9),
             }}
           >
