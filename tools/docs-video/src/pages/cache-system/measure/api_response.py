@@ -1,33 +1,42 @@
-# The API scene: the page's "API Response Caching" example as it is on the page. fetch_user(1) is called twice; the
-# stand-in server records every request it gets, and only the first call reaches it (docs/07-cache-system.md).
+# The API scene: the page's "API Response Caching" example as it is on the page. fetch_user(1) is called twice;
+# fetch_user yields GetJson, and fake_api answers it in place of the server and records every path it is asked for.
+# Only the first call reaches it (docs/07-cache-system.md).
+from dataclasses import dataclass
+
 import httpx
-from doeff import Await, do, run
+from doeff import EffectBase, Pass, Resume, do, handler, run
 from doeff_core_effects.cache_effects import CacheGet, CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import scheduled
 
+@dataclass(frozen=True)
+class GetJson(EffectBase):  # an effect: "GET this path and give me the JSON body"
+    path: str
+
+@handler
+def http_api(effect, k):  # the real handler: calls the server
+    if isinstance(effect, GetJson):
+        response = httpx.get(f"https://api.example.com{effect.path}")
+        response.raise_for_status()
+        return (yield Resume(k, response.json()))
+    return (yield Pass(effect, k))
+
 requested = []
 
-def users_api(request: httpx.Request) -> httpx.Response:
-    # Stands in for the real server so the example runs offline (drop transport= to call it).
-    requested.append(request.url.path)
-    return httpx.Response(200, json={"id": 1, "name": "Ada"})
-
-async def get_json(path: str):
-    async with httpx.AsyncClient(
-        base_url="https://api.example.com", transport=httpx.MockTransport(users_api)
-    ) as client:
-        response = await client.get(path)
-        response.raise_for_status()
-        return response.json()
+@handler
+def fake_api(effect, k):  # the fake: answers from memory and records the request
+    if isinstance(effect, GetJson):
+        requested.append(effect.path)
+        return (yield Resume(k, {"id": 1, "name": "Ada"}))
+    return (yield Pass(effect, k))
 
 @do
 def fetch_user(user_id: int):
     try:
         return (yield CacheGet(f"user_{user_id}"))
     except KeyError:
-        data = yield Await(get_json(f"/users/{user_id}"))
+        data = yield GetJson(f"/users/{user_id}")
         yield CachePut(f"user_{user_id}", data, ttl=60)
         return data
 
@@ -37,7 +46,7 @@ def program():
     second = yield fetch_user(1)  # served from the cache
     return first, second
 
-prog = in_memory_cache_handler()(program())
+prog = in_memory_cache_handler()(fake_api(program()))
 first, second = run(scheduled(await_handler()(prog)))
 print(first)  # {'id': 1, 'name': 'Ada'}
 print(second == first)  # True
