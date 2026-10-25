@@ -63,8 +63,8 @@ did not name the annotation.
   `doeff_vm._unhandled_hint.skipped_by_annotation`. A handler annotated for the effect that saw it
   and passed it on (an `Ask` whose key no handler holds) means the annotations are not the cause,
   so no line is written.
-- An effect no package registered a hint for ends with the general hint, how to install a handler
-  with `handler(fn)(prog)` (`doeff_vm._unhandled_hint.hint_for`).
+- An effect no package registered a hint for ends with the general hint, how to install a handler:
+  `run(fn(prog))`, where `fn` is a def marked with `@handler` (`doeff_vm._unhandled_hint.hint_for`).
 
 Tests: `tests/test_handler_annotation_messages.py`.
 
