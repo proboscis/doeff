@@ -1,0 +1,98 @@
+[
+ {
+  "id": "a1",
+  "text": "Effect combinations. In doeff, effects nest: a sub-program inside one effect performs other effects."
+ },
+ {
+  "id": "a2",
+  "text": "This matrix has the outer effect on each row, and the effect performed inside it on each column."
+ },
+ {
+  "id": "a3",
+  "text": "Each cell is a rule. Under Local, Ask is scoped, while Put passes straight through."
+ },
+ {
+  "id": "b1",
+  "text": "The same two effects, nested the other way around, give a different answer."
+ },
+ {
+  "id": "b2",
+  "text": "Try outside Listen: the error escapes Listen, and the two logs it collected are lost."
+ },
+ {
+  "id": "b3",
+  "text": "Listen outside Try: Try turns the error into Err first, so Listen returns that Err with both logs."
+ },
+ {
+  "id": "b4",
+  "text": "So the outer effect decides what the caller gets."
+ },
+ {
+  "id": "c1",
+  "text": "Scopes restore the environment. They never roll back the store."
+ },
+ {
+  "id": "c2",
+  "text": "Inside Local, key reads inner. After it, key is outer again, but the Put to counter stays."
+ },
+ {
+  "id": "c3",
+  "text": "The same holds when the sub-program fails inside Try. The environment comes back, and counter is still one."
+ },
+ {
+  "id": "c4",
+  "text": "Ask reads the scope you are in. Get and Put read one store that every scope shares."
+ },
+ {
+  "id": "d1",
+  "text": "WithObserve sees every effect in its body, including the effects of the children it spawns."
+ },
+ {
+  "id": "d2",
+  "text": "The observer only watches. What it returns goes nowhere, and the handlers still answer every effect."
+ },
+ {
+  "id": "d3",
+  "text": "It saw Spawn, Ask, Spawn, Ask, and Gather, and both children got the value."
+ },
+ {
+  "id": "e1",
+  "text": "Children under Gather share one store, and the scheduler runs one task at a time."
+ },
+ {
+  "id": "e2",
+  "text": "A child that does not suspend runs to its end before the next one starts, so each one sees the last write."
+ },
+ {
+  "id": "e3",
+  "text": "Gather gives zero, one, two, and counter is three."
+ },
+ {
+  "id": "e4",
+  "text": "Now each child suspends on Await, between its read and its write."
+ },
+ {
+  "id": "e5",
+  "text": "While one waits, the others run and read the same zero. Two of the three updates are lost."
+ },
+ {
+  "id": "e6",
+  "text": "The Rust scheduler and the Python scheduler give the same results."
+ },
+ {
+  "id": "f1",
+  "text": "When a child fails, Gather raises that error in the parent, and Try gives Err."
+ },
+ {
+  "id": "f2",
+  "text": "Gather does not cancel the other children. The third one still ran after the failure, and its write stays."
+ },
+ {
+  "id": "f3",
+  "text": "side effects is two. If a task must stop, cancel it yourself."
+ },
+ {
+  "id": "o1",
+  "text": "Effect combinations in doeff: the outer effect decides, scopes restore the environment, the store is shared, and tasks switch only where they suspend."
+ }
+]

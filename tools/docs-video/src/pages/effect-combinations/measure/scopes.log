@@ -1,0 +1,2 @@
+Local, success:   before (key, counter) = ('outer', 0)  inside key = 'inner'  after = ('outer', 1)
+Try(Local), raise: before (key, counter) = ('outer', 0)  caught = Err(ValueError('boom'))  after = ('outer', 1)
