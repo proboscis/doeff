@@ -1,0 +1,10 @@
+program yields Greet
+  h2 answers Greet
+program yields Lookup
+  h2 passes Lookup
+  h1 answers Lookup
+program yields Save
+  h2 passes Save
+  h1 passes Save
+  h0 answers Save
+result: ('hi bob', 'ada', 'saved')

@@ -1,0 +1,18 @@
+
+doeff Traceback (most recent call last):
+
+  two()  async_boundary.py:36
+    a = yield Spawn(worker("a"))
+    handlers:
+      recorded ↗
+      SimTimeRuntime.handle ↗
+
+UnhandledEffect: no handler found for effect: Spawn (<doeff_core_effects.scheduler.Spawn object at 0x2c69659a3d0>)
+  handlers in scope (innermost→outermost): recorded → handle
+  skipped by annotation: recorded (effect: Step), handle (effect: WriterTellEffect | DelayEffect | WaitUntilEffect | … (10 types)) — a handler only sees the effects its effect parameter is annotated with
+  hint: Spawn is handled by scheduled: run(scheduled(prog))
+
+run(scheduled(...)): ['a', 'b'] order ['a1', 'b1', 'a2', 'b2']
+without scheduled: raises UnhandledEffect:
+no handler found for effect: Spawn (<doeff_core_effects.scheduler.Spawn object at 0x2c69659a3d0>)
+hint: Spawn is handled by scheduled: run(scheduled(prog))
