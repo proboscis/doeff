@@ -1,0 +1,78 @@
+[
+ {
+  "id": "t1",
+  "text": "Effect boundaries. A doeff program runs in two zones: inside doeff, and outside it."
+ },
+ {
+  "id": "t2",
+  "text": "Inside, the handler stack answers each effect, with k, the rest of the program. Outside, Python's event loop runs your coroutines."
+ },
+ {
+  "id": "t3",
+  "text": "Almost every effect stays inside. Await is the one that crosses the line."
+ },
+ {
+  "id": "i1",
+  "text": "Here is the page's pipeline: Ask, Spawn, Gather, Wait and Try, and each worker's Get, Put and Tell."
+ },
+ {
+  "id": "i2",
+  "text": "An observer handler sees all fifteen effects go by. Each one is answered by a handler inside doeff."
+ },
+ {
+  "id": "i3",
+  "text": "All of it runs on one thread, with no event loop at all. Even the tasks are just the scheduler handler's work."
+ },
+ {
+  "id": "e1",
+  "text": "Await is different. Python's await is syntax, and it only runs under an event loop."
+ },
+ {
+  "id": "e2",
+  "text": "await handler hands each coroutine to an event loop on its own thread, the await bridge, and the scheduler parks the task's k."
+ },
+ {
+  "id": "e3",
+  "text": "While A and B are outside, task C's steps are still answered inside doeff, all before either coroutine returns."
+ },
+ {
+  "id": "e4",
+  "text": "B's coroutine returns at about a hundred milliseconds, and its k resumes. A follows at two hundred: about two hundred in all, not three."
+ },
+ {
+  "id": "s1",
+  "text": "Waiting inside doeff is scheduler suspension: a handler holds the task's k, and resumes it later."
+ },
+ {
+  "id": "s2",
+  "text": "A Wait on a promise another task completes takes under two milliseconds. A three second Delay on the virtual clock, under one."
+ },
+ {
+  "id": "s3",
+  "text": "An Await of a point three second sleep takes three hundred milliseconds of real time, answered on the bridge thread. Only that wait leaves doeff."
+ },
+ {
+  "id": "h1",
+  "text": "Your own handlers keep the boundary strict. Here is one program, Fetch a URL, under two handlers."
+ },
+ {
+  "id": "h2",
+  "text": "from table answers inside doeff. over async needs Python async, so it performs Await itself."
+ },
+ {
+  "id": "h3",
+  "text": "That Await travels outward, so await handler goes outside over async, and scheduled outside both."
+ },
+ {
+  "id": "h4",
+  "text": "Leave await handler out, or put it on the inside, and the Await finds no handler."
+ },
+ {
+  "id": "h5",
+  "text": "So answer domain effects in handlers, cross only for real async work, and leave task switching to the scheduler."
+ },
+ {
+  "id": "o1",
+  "text": "doeff: effects are answered by handlers, inside doeff. Await is the one door out, to Python's event loop. pip install doeff."
+ }
+]
