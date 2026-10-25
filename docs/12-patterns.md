@@ -738,7 +738,7 @@ def flat_structure():
 2. **Keep Programs pure**: Inject dependencies, don't create them
 3. **Handle errors explicitly**: Don't silently swallow errors
 4. **Prefer composition**: Small, focused Programs over large ones
-5. **Test with mocks**: Use Ask for testable dependency injection
+5. **Let handlers give the meaning**: Read dependencies with `Ask` and define your own effects; the handler stack around a Program decides what each effect does, so a test, a replay or a dry run is another stack over the same Program
 
 ## Next Steps
 

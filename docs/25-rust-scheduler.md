@@ -1,227 +1,264 @@
-# 25. Rust の scheduler
+# 25. The Rust Scheduler
 
-`scheduled()` の scheduler(Spawn・Wait・Gather・Race・Cancel・Discard・Semaphore・Promise・
-ExternalPromise)は Rust の版と Python の版の 2 つを持つ。意味は同じで、既定は Rust の版(Python の版は選んで使う)。
-Rust の版は `packages/doeff-vm/src/scheduler.rs`、Python の版は
-`packages/doeff-core-effects/doeff_core_effects/scheduler.py` の `_scheduled_python`。
+The scheduler behind `scheduled()` (Spawn, Wait, Gather, Race, Cancel, Discard, Semaphore, Promise,
+ExternalPromise) has two implementations, one in Rust and one in Python. They have the same semantics.
+**The Rust implementation is the default**; the Python implementation is opt-in.
+The Rust implementation lives in `packages/doeff-vm/src/scheduler.rs`, the Python one is
+`_scheduled_python` in `packages/doeff-core-effects/doeff_core_effects/scheduler.py`.
 
-## 切り替え
+## Choosing an implementation
 
 ```python
 from doeff_core_effects.scheduler import scheduled
 
-run(scheduled(main()))                              # 既定(DEFAULT_IMPLEMENTATION = "rust")
-run(scheduled(main(), implementation="python"))    # この呼び出しだけ Python の版
+run(scheduled(main()))                              # the default (DEFAULT_IMPLEMENTATION = "rust")
+run(scheduled(main(), implementation="python"))    # the Python implementation for this call only
 ```
 
 ```sh
-DOEFF_SCHEDULER=python python app.py                # process 全体を Python の版にする
+DOEFF_SCHEDULER=python python app.py                # the Python implementation for the whole process
 ```
 
-決まる順は「引数 → 環境変数 `DOEFF_SCHEDULER` → `DEFAULT_IMPLEMENTATION`」。
-環境変数は `scheduled()` を呼ぶたびに読むので、テストでは `monkeypatch.setenv` で切り替えられる。
-`python` / `rust` 以外の値は `ValueError` になる。
-Rust の版を選んだ(既定を含む)のに、読み込んだ Rust の拡張が古くて scheduler を持たない時は、黙って Python の版へ
-落とさず `ImportError`(Rust の拡張を build し直す、または `DOEFF_SCHEDULER=python`、と名指す)にする。
+The choice is made in this order: the argument, then the environment variable `DOEFF_SCHEDULER`, then
+`DEFAULT_IMPLEMENTATION`. The environment variable is read on every call to `scheduled()`, so a test can
+switch it with `monkeypatch.setenv`. Any value other than `python` or `rust` raises `ValueError`.
+When the Rust implementation is chosen (including by default) but the loaded Rust extension is too old
+to contain the scheduler, `scheduled()` does not fall back to Python silently: it raises `ImportError`,
+naming the two ways out (rebuild the Rust extension, or set `DOEFF_SCHEDULER=python`).
 
-## 既定を Rust の版にした理由と、Python の版を選ぶ時
+## Why Rust is the default, and when to choose Python
 
-- 決めたこと(2026-10-17・元に戻せる決定): 既定を `"rust"` にする。task 1 個の CPU の時間が約 9 分の 1 になり
-  (下の「既定を替えた時の測り」)、多くの task を回す時に asyncio の 1.4〜1.5 倍まで縮む。
-- 2026-09-23 の決め(既定を `"python"` に留める)の理由は、Python の source だけを本線に追随して Rust の拡張を
-  build し直さない環境で `scheduled()` が `ImportError` になる事だった。PyPI の 0.5.0 以降の doeff-vm の wheel と、
-  `make sync`(`uv sync`)で入れた checkout は Rust の scheduler を持つ。古い拡張のままの checkout は
-  `ImportError` の文に従って build し直すか、`DOEFF_SCHEDULER=python` を置く。
-- 意味が同じことの確認: 2026-09-23 に、scheduler に関係するテスト 1,382 件(scheduler・Cancel・Semaphore・外部 Promise・
-  Await・doeff-time の仮想の時計・doeff-agents・doeff-conductor・doeff-traverse ほか)と下流の worker のテスト 100 件が、
-  両方の版で 1 件ずつ同じ結果になった(合格・不合格・skip の組が完全に一致)。既定を替えた後は、版を名指さない
-  テストが Rust の版で走る(日次の全体の検が両方の版の違いを拾う)。版に依る振る舞いのテストは版を名指す。
-- 測りの口 `set_scheduler_trace` の出来事(歩の積算の答え手 `step-tally-handler` の `OpenStepTally`・
-  `OpenTaskTally` を含む)は、2026-10-18 から両方の版が出す — 同じ種類・同じ欄の出来事を同じ順で(下の
-  「測りの口」)。歩を数えるために Python の版を名指す要は無い。
-- 歩数の上限 `arm_step_budget`(#3143・doeff-hy-pytest の暴走の見張りが入れる)は、2026-10-18 から両方の版が読む
-  (下の「歩数の上限」)。既定を替えた 10-17 の main から 10-18 の直し(card ki-fee92eb0a840)までは Rust の版が
-  上限を読まず、上限を越えた走りが落ちずに回り続けた。
-- Python の版を選ぶ時:
-  1. scheduler の中を pdb で 1 行ずつ追う時(Rust の版の判断は Rust の中で、Python の frame が無い)。
-  2. Rust の拡張を build し直せない checkout を急いで動かす時。
-- 選び方と戻し方(どれも元に戻せる):
-  1. 1 つの process だけ: `DOEFF_SCHEDULER=python`。
-  2. 1 つの呼び出しだけ: `scheduled(..., implementation="python")`。
-  3. 既定そのもの: `scheduler.py` の `DEFAULT_IMPLEMENTATION` を `"python"` に戻す。
+- Decision (2026-10-17, reversible): the default is `"rust"`. The CPU time per task drops to about a
+  ninth (see "Measurements after changing the default" below), and with many tasks the cost comes down
+  to 1.4–1.5 times that of asyncio. doeff 0.7.0 is the first release with this default.
+- The earlier decision (2026-09-23) kept the default at `"python"`, because a checkout that follows the
+  Python sources without rebuilding the Rust extension raises `ImportError` from `scheduled()`. The
+  doeff-vm wheels on PyPI from 0.5.0 on, and a checkout installed with `make sync` (`uv sync`), contain
+  the Rust scheduler. A checkout with an old extension can rebuild it, as the `ImportError` message says,
+  or set `DOEFF_SCHEDULER=python`.
+- Evidence that the semantics are the same: on 2026-09-23, 1,382 scheduler-related tests (scheduler,
+  Cancel, Semaphore, external Promise, Await, the virtual clock of doeff-time, doeff-agents,
+  doeff-conductor, doeff-traverse and others) and 100 tests of a downstream worker gave the same result
+  one by one under both implementations (the same set of passed, failed and skipped tests). Since the
+  default changed, tests that do not name an implementation run on Rust, and the daily full run catches
+  differences between the two. Tests of behavior that depends on the implementation name it.
+- The trace events of `set_scheduler_trace` (including `OpenStepTally` and `OpenTaskTally` of the step
+  tally handler `step-tally-handler`) have come from both implementations since 2026-10-18: the same
+  kinds, with the same fields, in the same order (see "The trace hook" below). Counting steps no longer
+  requires choosing the Python implementation.
+- The step limit `arm_step_budget` (#3143, set by the runaway guard of doeff-hy-pytest) has been read by
+  both implementations since 2026-10-18 (see "The step limit" below). Between the change of the default
+  on 2026-10-17 and that fix, the Rust implementation ignored the limit, and a run over the limit kept
+  going instead of failing.
+- Choose the Python implementation:
+  1. To step through the scheduler line by line with pdb (the Rust implementation decides inside Rust,
+     where there is no Python frame).
+  2. To run a checkout in a hurry when its Rust extension cannot be rebuilt.
+- How to choose it, and how to go back (all reversible):
+  1. For one process: `DOEFF_SCHEDULER=python`.
+  2. For one call: `scheduled(..., implementation="python")`.
+  3. For the default itself: set `DEFAULT_IMPLEMENTATION` in `scheduler.py` back to `"python"`.
 
-## 何が Rust に移り、何が Python に残るか
+## What moved to Rust, and what stays in Python
 
-Rust に移ったもの: effect ごとの判断のすべて — task・promise・semaphore の状態、準備のできた
-task の優先度つきの列(CPython の `heapq` と同じ手順の移植なので、列の並びも Python の版と同じ)、
-Cancel、外部の完了の受け取り、行き詰まりの検出、#502 の掃除(後始末の済んだ取り消し済みの task を
-掃く #3504 も含む。`tests/test_scheduler.py::TestTerminalEntrySweep` が両方の版で確かめている)。
+Moved to Rust: every per-effect decision — the state of tasks, promises and semaphores; the priority
+queue of ready tasks (a port of the same algorithm as CPython's `heapq`, so the queue order matches the
+Python implementation); Cancel; receiving external completions; deadlock detection; and the sweep of
+#502 (including #3504, which sweeps cancelled tasks whose cleanup has finished;
+`tests/test_scheduler.py::TestTerminalEntrySweep` checks it under both implementations).
 
-Python に残したもの(利用者から見える形を変えないため):
+Kept in Python, so that nothing visible to users changes:
 
-- effect の class(`Spawn`・`Wait`・`AcquireSemaphore` など)。Rust の版は `isinstance` で
-  見分けるので、子 class(下の `CreateNamedSemaphore` など)は今までどおり親として扱われる。
-- handle の class(`Task`・`Future`・`Promise`・`ExternalPromise`・`Semaphore`)と例外の class。
-- 1 回の実行につき 1 回だけ走る、終わり際の警告(#501 と、誰も受け取らなかった task の例外の警告)と、
-  失敗した task ごとに 1 回だけ走る、traceback の補強と、受け取られていない例外の説明の文。
-- 測りの口の出来事の dict と時計(`_trace`・`_trace_step_boundary`)。下の「測りの口」。
-- 歩数の上限の確かめ(`_check_step_budget`)。下の「歩数の上限」。
+- The effect classes (`Spawn`, `Wait`, `AcquireSemaphore` and so on). The Rust implementation tells
+  them apart with `isinstance`, so subclasses (such as `CreateNamedSemaphore` below) are still handled
+  as their parent.
+- The handle classes (`Task`, `Future`, `Promise`, `ExternalPromise`, `Semaphore`) and the exception
+  classes.
+- The warnings issued once per run at the end (#501, and the warning for task exceptions nobody
+  retrieved), and, once per failed task, the traceback enrichment and the text that describes an
+  unretrieved exception.
+- The trace event dicts and the clock (`_trace`, `_trace_step_boundary`). See "The trace hook" below.
+- The step limit check (`_check_step_budget`). See "The step limit" below.
 
-### 測りの口(`set_scheduler_trace`)
+### The trace hook (`set_scheduler_trace`)
 
-- 両方の版が、sink が据えてある時だけ、同じ種類(start・enqueued・resumed・spawned・task-enter・task-leave・
-  external-complete・external-drained・external-ignored)・同じ欄の出来事を同じ順で出す。違うのは時計の値と
-  doeff-vm の歩数(`step_vm_steps`・`step_handler_calls` — Rust の版は少ない歩で同じ仕事をする)と run の番号だけ。
-  `tests/test_scheduler_trace.py` が場面ごとに両方の版の並びを照らし、歩の積算の test(`test_step_tally.py`・
-  `test_task_tally.py`)は両方の版で走り、同じ program の歩の数と task の木が両方の版で一致する事を確かめる。
-- 出来事の dict と時計は Python の版の helper を Rust の版も呼んで作る(定義は 1 つ)。Rust の版が自分で数えるのは、
-  起こされ方(wake)と前に並ぶ数(ahead・ahead_by_wake)と歩の境目の置き場だけ。
-- Python の版の handler は prompt を通る効果を全部受け、scheduler の効果でない物にも task-leave を出して外の完了を
-  drain してから `Pass` する。Rust の版は scheduler の効果でない物を `accepts` で断るので、sink がある時だけ、断る時に
-  同じ task-leave と drain をする(外の handler が答える効果も歩を区切る)。
-- sink が無い間の費用: 出し所ごとに process に 1 つの旗(`TRACE_INSTALLED`、`set_scheduler_trace` が sink と
-  一緒に切り替える)を 1 度読むだけで、dict も時計の読みも Python の呼び出しも無い。run の途中で据えても外しても
-  次の出来事から従う(Rust の版を組んだ後に据えた sink も出来事を受ける)。
-- sink が例外を上げた時: Rust の版の中の出し所は状態の書き換えの途中なので、そこから上げない — Exception は
-  `sys.unraisablehook` へ渡して run を続け、KeyboardInterrupt などは次に再開する task の yield へ投げ込む
-  (Python の版では出した所から上がる)。
+- When a sink is installed, and only then, both implementations emit the same kinds of events (start,
+  enqueued, resumed, spawned, task-enter, task-leave, external-complete, external-drained,
+  external-ignored) with the same fields in the same order. Only the clock values, the doeff-vm step
+  counts (`step_vm_steps`, `step_handler_calls` — the Rust implementation does the same work in fewer
+  steps) and the run number differ. `tests/test_scheduler_trace.py` compares the sequences of both
+  implementations case by case, and the step tally tests (`test_step_tally.py`, `test_task_tally.py`)
+  run under both and check that the same program gives the same step counts and the same task tree.
+- The Rust implementation builds the event dicts and reads the clock through the same Python helpers as
+  the Python implementation (one definition). What the Rust implementation computes itself is only how a
+  task was woken (wake), how many entries were ahead in the queue (ahead, ahead_by_wake), and where a
+  step boundary falls.
+- The Python handler receives every effect that crosses its prompt; for an effect that is not a
+  scheduler effect it still emits task-leave and drains external completions before it `Pass`es.
+  The Rust implementation declines non-scheduler effects through `accepts`, so when a sink is installed
+  it emits the same task-leave and drain at the moment it declines (an effect answered by an outer
+  handler also marks a step boundary).
+- Cost while no sink is installed: each emit point reads one process-wide flag (`TRACE_INSTALLED`,
+  switched together with the sink by `set_scheduler_trace`) once — no dict, no clock read, no Python
+  call. Installing or removing a sink in the middle of a run takes effect from the next event (a sink
+  installed after the Rust scheduler was built still receives events).
+- When the sink raises: the emit points inside the Rust implementation are in the middle of a state
+  update, so the exception is not raised there. An `Exception` goes to `sys.unraisablehook` and the run
+  continues; `KeyboardInterrupt` and the like are thrown into the `yield` of the next task to resume
+  (in the Python implementation, it is raised where the event was emitted).
 
-### handler の形の違い(意味は同じ)
+### The handler forms differ (the meaning does not)
 
-Python の版は `@do` の generator の handler、Rust の版は同期の handler(`call_handler` が
-すぐ次の命令を返す)。そのため次の 3 点だけ書き方が違うが、VM から見た結果は同じ。
+The Python implementation is a `@do` generator handler; the Rust implementation is a synchronous
+handler (`call_handler` returns the next instruction at once). So three things are written differently,
+with the same result as seen by the VM:
 
-- 別の task へ切り替える時、Python の版は `TailEval(Transfer(k, v))`、Rust の版は
-  `Resume(k, v)`。Python の版の `Transfer` は自分の handler の frame を外すための物で、
-  Rust の版には外す frame が無い(`Transfer` を使うと呼び手の frame を外してしまう)。
-- scheduler が扱わない effect は、Python の版は `yield Pass(effect, k)`、Rust の版は
-  `Callable::accepts` で断る。VM はどちらも「scheduler の外側から effect を出し直す」。
-- effect の処理中に起きた例外は、どちらの版も effect を出した側の `yield` の位置へ投げ込まれる
-  (Python の版は VM の handler 用の復旧で、Rust の版は保持している継続へ直接)。
+- To switch to another task, the Python implementation uses `TailEval(Transfer(k, v))` and the Rust one
+  `Resume(k, v)`. The Python `Transfer` exists to drop the handler's own frame; the Rust implementation
+  has no frame to drop (`Transfer` would drop the caller's frame instead).
+- For an effect the scheduler does not handle, the Python implementation does `yield Pass(effect, k)`,
+  the Rust one declines in `Callable::accepts`. In both cases the VM re-performs the effect outside the
+  scheduler.
+- An exception raised while an effect is handled is thrown into the `yield` that performed the effect,
+  in both implementations (the Python one through the VM's recovery for handlers, the Rust one directly
+  into the continuation it holds).
 
-## 下流が使う口(両方の版で保たれる)
+## Extension points downstream code relies on (kept in both implementations)
 
-`tests/test_scheduler_implementation.py` が両方の版で確かめている。
+`tests/test_scheduler_implementation.py` checks them under both implementations.
 
-1. **effect の子 class**: `class CreateNamedSemaphore(CreateSemaphore)` のような子 class は、
-   それを拾う handler が無ければ親の effect として scheduler が解く。
-2. **`scheduled` の内側に置く handler**: 名前付きの semaphore の handler(agora の worker の
-   `named-semaphore-local` / `cluster-semaphore`)のように、scheduler の effect を先に受けて
-   自分で答える、または `Pass` で scheduler へ回すことができる。scheduler は内側の handler が
-   回した effect だけを受ける。
-3. **捕まえた handler の列にある scheduler**: `GetHandlers` / `GetOuterHandlers` /
-   boundary の捕獲で得た scheduler は `__doeff_scheduler_prompt__` が真の object になる
-   (Rust の版は `doeff_vm.doeff_vm.SchedulerPrompt`)。`handler(h)(program)` で
-   そのまま付け直せる。doeff-agents の `mcp_server_loop` が
-   この印で scheduler を見分けている。
-4. **scheduler と協調する handler**: 仮想の時計の handler のように、handler の中から
-   `CreatePromise`・`Spawn(..., priority=PRIORITY_IDLE, daemon=True)`・`Wait` を出して
-   よい。優先度・daemon・外部待ちの盾(#505)の扱いは Python の版と同じ。
+1. **Effect subclasses**: a subclass such as `class CreateNamedSemaphore(CreateSemaphore)` is resolved
+   by the scheduler as its parent effect when no handler picks it up.
+2. **Handlers inside `scheduled`**: a handler for named semaphores (for example a downstream worker's
+   process-local and cluster-wide semaphore handlers) can receive scheduler effects first and answer
+   them itself, or `Pass` them on to the scheduler. The scheduler receives only the effects an inner
+   handler passed on.
+3. **The scheduler in a captured handler list**: a scheduler obtained from `GetHandlers`,
+   `GetOuterHandlers` or a boundary capture is an object whose `__doeff_scheduler_prompt__` is true
+   (for the Rust implementation, `doeff_vm.doeff_vm.SchedulerPrompt`). It can be reinstalled as it is
+   with `handler(h)(program)`. doeff-agents' `mcp_server_loop` recognizes the scheduler by this mark.
+4. **Handlers that cooperate with the scheduler**: a handler such as the virtual clock may perform
+   `CreatePromise`, `Spawn(..., priority=PRIORITY_IDLE, daemon=True)` and `Wait` from inside the
+   handler. Priorities, daemons and the shield for external waits (#505) behave as in the Python
+   implementation.
 
-## 意味が同じであることの要点
+## Key points of the shared semantics
 
-特に Cancel は Python の版と一行ずつ対応させてある(`scheduler.rs` の `on_cancel`)。
+Cancel in particular maps line by line to the Python implementation (`on_cancel` in `scheduler.rs`).
 
-- 巻き戻し中の task は生きている扱い(`cancelling`)。
-- 待っている側は巻き戻しが終わってから起きる。
-- 1 回の Cancel で例外は 1 回だけ投げ込まれる。握りつぶした task は次の Cancel まで走り続ける。
-- 後始末で別の例外が起きたら、それを隠さず `failed` として伝える。
-- まだ動いていない task は本体を走らせずに取り消す。
-- 取り消した task だけが待っていた外部の Promise は `on_cancel` を呼んで取り消す
-  (失敗は `ExternalPromiseCancelCallbackError` として Cancel を出した側へ)。
+- A task that is unwinding counts as alive (`cancelling`).
+- Waiters wake only after the unwinding finishes.
+- One Cancel throws the exception in once. A task that swallows it keeps running until the next Cancel.
+- If cleanup raises a different exception, it is reported as `failed`, not hidden.
+- A task that has not started yet is cancelled without running its body.
+- An external Promise that only cancelled tasks were waiting for is cancelled through its `on_cancel`
+  (a failure there reaches the side that issued Cancel as `ExternalPromiseCancelCallbackError`).
 
-Discard(巻き戻さずに捨てる・SIGKILL と同じ形)も Python の版と一行ずつ対応させてある(`scheduler.rs` の `on_discard`)。
-捨てた task の続きはどちらの版でも落とすだけで、finally の中の effect は走らない。
+Discard (drop without unwinding, the same shape as SIGKILL) also maps line by line to the Python
+implementation (`on_discard` in `scheduler.rs`). In both implementations the continuation of a
+discarded task is simply dropped, and effects inside its `finally` do not run.
 
-誰も受け取らなかった task の例外(card ki-84667a89b47a)も、両方の版で同じに扱う
-(`tests/test_scheduler_unretrieved_task_exception.py` が両方の版で確かめている)。
+Task exceptions that nobody retrieves are also handled the same way in both implementations
+(`tests/test_scheduler_unretrieved_task_exception.py` checks them under both).
 
-- Wait・Gather・Race・Cancel・Discard のどれかに渡された task は、終わる前でも後でも「受け取られた」とする。
-- 受け取られないまま例外(`TaskCancelledError` を除く)で終わった task は、終わった時に説明の文を作る。
-  文を作る関数は Python の `_describe_unretrieved_exception` の 1 つだけで、program の名は Spawn の時に
-  控えた関数(`@do` の呼びでなければ program の型)から取る。
-- run の終わりに、その文を 1 つの `RuntimeWarning` にまとめて出す。#502 の掃除で行が消えた task の文も
-  残しておき、名指すのは `UNRETRIEVED_EXCEPTIONS_NAMED` 個まで(残りは数だけ言う)。
+- A task passed to any of Wait, Gather, Race, Cancel or Discard counts as retrieved, whether before or
+  after it finishes.
+- When a task that was never retrieved ends with an exception (other than `TaskCancelledError`), a
+  description is written at that moment. The only function that writes it is the Python
+  `_describe_unretrieved_exception`; the program name comes from the function recorded at Spawn (or, if
+  it was not a `@do` call, from the program's type).
+- At the end of the run these descriptions are issued as one `RuntimeWarning`. Descriptions of tasks
+  whose rows were removed by the #502 sweep are kept too; up to `UNRETRIEVED_EXCEPTIONS_NAMED` tasks
+  are named, and the rest are only counted.
 
-### 歩数の上限(`arm_step_budget`)
+### The step limit (`arm_step_budget`)
 
-`arm_step_budget(N)` を入れた後に N 歩を越えて task を起こそうとした走りは、どちらの版でも同じ
-`StepBudgetExceeded`(`BaseException`)の同じ文「step budget exceeded: … doeff-vm steps since the budget was armed,
-limit N (while waking …)」で、走っている最中に落ちる(`tests/test_scheduler_step_budget.py` が両方の版で確かめている)。
+After `arm_step_budget(N)`, a run that tries to wake a task beyond N steps fails while it runs, in both
+implementations, with the same `StepBudgetExceeded` (a `BaseException`) and the same message
+"step budget exceeded: … doeff-vm steps since the budget was armed, limit N (while waking …)"
+(`tests/test_scheduler_step_budget.py` checks it under both).
 
-- 確かめる関数は Python の `_check_step_budget` の 1 つだけ。Rust の版は、`arm_step_budget` と `disarm_step_budget` が
-  上限と一緒に切り替える旗(`set_scheduler_step_budget_armed`)を、準備のできた列から 1 つ取り出すたびに読み、旗が
-  立っている時だけこの関数を呼ぶ。数え方・使い切った上限が後の起こしで同じ error を上げる事も同じになる。
-- 上限を入れない走り(本番)は歩数を読まない。Rust の版が起こすたびにするのは旗を 1 つ読む事だけ。
-- 上限を入れるには、旗を持つ doeff_vm の拡張が要る(古い拡張では `arm_step_budget` が build し直しを名指す
-  `ImportError` を上げる)。
+- The only function that checks is the Python `_check_step_budget`. The Rust implementation reads a
+  flag (`set_scheduler_step_budget_armed`, switched together with the limit by `arm_step_budget` and
+  `disarm_step_budget`) each time it takes an entry from the ready queue, and calls that function only
+  while the flag is set. So the counting, and the rule that an exhausted limit raises the same error on
+  later wakes, are the same too.
+- A run without a limit (production) does not read step counts. All the Rust implementation does per
+  wake is read one flag.
+- Setting a limit needs a doeff_vm extension that has the flag (with an old extension,
+  `arm_step_budget` raises an `ImportError` that says to rebuild it).
 
-Python の版から引き継いだ振る舞い(変えていない): root の本体が終わった時に置き去りに
-なった task(daemon の聞き手など)の継続は、実行の後も解放されず、その `finally` も走らない。
-Python の版でも同じ(継続の object が GC から見えない循環を作るため)。
+Behavior inherited from the Python implementation (unchanged): when the root body finishes, the
+continuations of tasks left behind (daemon listeners and the like) are not released after the run, and
+their `finally` does not run. The Python implementation does the same (the continuation objects form a
+cycle the garbage collector cannot see).
 
-## 測定
+## Measurements
 
-道具: `benchmarks/scheduler_bench.py`(`--impl python|rust`)。1 操作あたりの µs、
-出荷と同じ release build(LTO あり・VM の自己検査なし)、Apple M 系の Mac、
-free-threaded の Python 3.14、交互に 3 回ずつ走らせた最良値(2026-09-23)。
+Tool: `benchmarks/scheduler_bench.py` (`--impl python|rust`). Microseconds per operation, with the same
+release build as shipped (LTO on, no VM self-checks), on an Apple silicon Mac, free-threaded
+Python 3.14, best of 3 alternating runs each (2026-09-23).
 
-| 流れ | 1 操作 | Python の版 | Rust の版 | 倍 |
+| Flow | One operation | Python | Rust | Speedup |
 |---|---|---:|---:|---:|
 | spawn_wait | Spawn + Wait | 33.9 | 4.2 | 8.0 |
-| gather | Gather の子 1 つ(Spawn を含む) | 32.0 | 4.1 | 7.8 |
-| race | Race 1 回(Spawn 2 回を含む) | 64.3 | 8.1 | 7.9 |
+| gather | one Gather child (including its Spawn) | 32.0 | 4.1 | 7.8 |
+| race | one Race (including 2 Spawns) | 64.3 | 8.1 | 7.9 |
 | semaphore_uncontended | Acquire + Release | 13.1 | 1.1 | 12.0 |
-| semaphore_contended | Acquire + Spawn + Wait + Release(4 task) | 46.6 | 5.5 | 8.5 |
+| semaphore_contended | Acquire + Spawn + Wait + Release (4 tasks) | 46.6 | 5.5 | 8.5 |
 | promise | CreatePromise + Spawn(Complete) + Wait | 47.1 | 6.3 | 7.5 |
 | cancel | Spawn + Cancel + finally + Wait | 106.2 | 16.5 | 6.4 |
-| pass_through | scheduler を素通りする effect 1 回 | 4.2 | 1.1 | 3.7 |
+| pass_through | one effect that passes through the scheduler | 4.2 | 1.1 | 3.7 |
 
-### 時間の内訳
+### Where the time goes
 
-native の標本(macOS の `sample`)と Python の標本(`sys._current_frames`)を同じ process から
-取り、葉の関数で分けた(計測用に LTO を切った build。道具は
-`~/experiments/doeff-core-typing/scripts/profile_scheduler.py`)。割合は spawn_wait の例。
+Native samples (macOS `sample`) and Python samples (`sys._current_frames`) were taken from the same
+process and split by leaf function (with a build that has LTO off for profiling, and a profiling script
+kept outside this repository). The shares are for spawn_wait.
 
-| 区分 | Python の版 | Rust の版 |
+| Part | Python | Rust |
 |---|---:|---:|
-| Rust と Python の境の往復 | 26〜31% | 55〜60% |
-| scheduler の Python の処理 | 22〜27% | 6%(handle の class の生成) |
-| doeff の Python 側の部品(`@do` の包み・`get_inner_boundaries` など) | 20〜24% | 3〜4% |
-| scheduler の Rust の処理 | — | 7〜9% |
-| VM 本体 | 17〜20% | 12〜16% |
-| 利用者の program | 3〜5% | 2〜4% |
+| Round trips across the Rust–Python boundary | 26–31% | 55–60% |
+| Scheduler work in Python | 22–27% | 6% (creating handle objects) |
+| doeff's Python-side pieces (the `@do` wrapper, `get_inner_boundaries` and so on) | 20–24% | 3–4% |
+| Scheduler work in Rust | — | 7–9% |
+| The VM itself | 17–20% | 12–16% |
+| The user's program | 3–5% | 2–4% |
 
-- Python の版では、境の往復のうち大きな部分が、handler の `yield Resume(k, ...)` のたびに
-  「末尾の Resume か」を判定するため巨大な handler 関数の現在の行番号を数え直す処理だった
-  (競合なしの Semaphore では時間の 3 割)。Rust の版にはこの処理が無い。
-- Rust の版で残る時間の大半は、利用者の generator を動かす VM と Python の境
-  (`generator.send`・Python の thread 状態の取得・object の変換)で、scheduler の外にある。
-  scheduler 自身(Rust)は 1 往復あたり 0.4〜0.8 µs。
+- In the Python implementation, a large part of the boundary round trips was spent, on every
+  `yield Resume(k, ...)` in the handler, recounting the current line number of the large handler
+  function to decide whether the Resume was in tail position (30% of the time for an uncontended
+  Semaphore). The Rust implementation does not do this.
+- Most of the time left in the Rust implementation is the boundary between the VM and Python that
+  drives the user's generators (`generator.send`, getting the Python thread state, converting objects),
+  outside the scheduler. The scheduler itself (Rust) takes 0.4–0.8 µs per round trip.
 
-### 改善が小さい部分とその理由
+### Where the gain is small, and why
 
-- **pass_through(3.7 倍)**: この流れの時間の多くは scheduler ではなく、外側に置いた
-  Python の handler と VM の境で使われる。scheduler の分は「扱わない effect を型で断る」
-  だけになり、ほぼ消えた。
-- **cancel(6.4 倍)**: 取り消しは task へ例外を投げ込み、`finally` を走らせ、失敗した task の
-  traceback を Python の補助関数で補強する。この補強と例外の生成は Python の版と同じ意味を
-  保つため Python に残した。
-- **handle の生成**: `Task(...)`・`Promise(...)` は下流が子 class を作る Python の class なので、
-  生成は Python の呼び出しのまま(1 回あたり 0.1〜0.3 µs)。
+- **pass_through (3.7×)**: most of this flow's time is spent not in the scheduler but in the outer
+  Python handler and the VM boundary. The scheduler's share is now only "decline the effect by its
+  type", and has nearly vanished.
+- **cancel (6.4×)**: cancelling throws an exception into the task, runs `finally`, and enriches the
+  failed task's traceback with a Python helper. The enrichment and the exception creation stay in
+  Python to keep the same meaning as the Python implementation.
+- **Creating handles**: `Task(...)` and `Promise(...)` are Python classes that downstream code
+  subclasses, so creating them stays a Python call (0.1–0.3 µs each).
 
-### 既定を替えた時の測り
+### Measurements after changing the default
 
-道具: `benchmarks/compare_libraries.py --runs 30 --library python --library doeff`。`scheduled(body)` を版を名指さずに
-呼ぶ case(`default = <版> scheduler`)を、既定を替える前と後の同じ木で測った。task 1 個あたりの CPU の µs の中央
-(括弧は p90)。Linux の 36 論理 CPU(load average 96〜110 の混んだ機体)、free-threaded の Python 3.14.3、2026-10-17。
+Tool: `benchmarks/compare_libraries.py --runs 30 --library python --library doeff`. The case that calls
+`scheduled(body)` without naming an implementation (`default = <implementation> scheduler`) was measured
+on the same tree before and after the change. Median CPU µs per task (p90 in parentheses). Linux,
+36 logical CPUs (a busy machine, load average 96–110), free-threaded Python 3.14.3, 2026-10-17.
 
-| 流れ | 替える前(既定 = Python の版) | 替えた後(既定 = Rust の版) | 倍 | asyncio |
+| Flow | Before (default = Python) | After (default = Rust) | Speedup | asyncio |
 |---|---:|---:|---:|---:|
-| spawn_gather(何もしない task 1,000 個を出して集める) | 153.5(165.5) | 19.4(27.4) | 7.9 | 11.8〜11.9 |
-| fan_out_wait(1,000 個が 1 つの約束を待ち、一度に起きる) | 199.5(223.7) | 32.6(59.4) | 6.1 | 16.7〜17.4 |
+| spawn_gather (spawn 1,000 tasks that do nothing, then gather them) | 153.5 (165.5) | 19.4 (27.4) | 7.9 | 11.8–11.9 |
+| fan_out_wait (1,000 tasks wait on one promise and wake at once) | 199.5 (223.7) | 32.6 (59.4) | 6.1 | 16.7–17.4 |
 
-- 既定は asyncio の 13 倍と 12 倍から、1.6 倍と 1.9 倍になった。
-- 同じ走りで版を名指した case の中央は、Python の版 149〜152 と 193〜196、Rust の版 17.5〜19.2 と 30.2〜31.9。
-  既定の case は名指した case と同じ桁で、既定の選びの費用は見えない。
-- 混んでいない機体(load average 27〜30)では、Rust の版は spawn_gather 12.5・fan_out_wait 19.9 だった。
+- The default went from 13 and 12 times the cost of asyncio to 1.6 and 1.9 times.
+- In the same runs, the medians of the cases that name an implementation were 149–152 and 193–196 for
+  Python, and 17.5–19.2 and 30.2–31.9 for Rust. The default cases are in the same range as the named
+  ones, so choosing the default costs nothing measurable.
+- On a quiet machine (load average 27–30), the Rust implementation took 12.5 for spawn_gather and 19.9
+  for fan_out_wait.

@@ -179,7 +179,7 @@ print(run(prog))  # data from https://staging.example.com
 ```
 
 **Use cases:**
-- Testing with mock configuration
+- Running a sub-program against another environment, such as staging
 - Different settings for sub-operations
 - Scoped feature flags
 - Temporary overrides
