@@ -468,11 +468,12 @@ Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doe
 
 | 物 | 受け方 | 置く物 | 無い時 |
 |---|---|---|---|
-| ConfigMap `worker-env` | worker の envFrom | `WORKER_TASK_RESERVE`・`WORKER_CAPACITY`・`WORKER_REPOS` など boot.sh と job の子が読む値。`WORKER_PROVIDES_EXTRA`(能力の残り)と `WORKER_PASS_ENV_EXTRA`(job の子へ渡す残りの env の名)は空の値でも必ず置く | container が起動しない(CreateContainerConfigError) |
+| ConfigMap `worker-env` | worker の envFrom | `WORKER_REPOS` など boot.sh と job の子が読む値(枠 `WORKER_CAPACITY`・`WORKER_TASK_RESERVE` は置かない — 下の `worker-room`)。`WORKER_PROVIDES_EXTRA`(能力の残り)と `WORKER_PASS_ENV_EXTRA`(job の子へ渡す残りの env の名)は空の値でも必ず置く | container が起動しない(CreateContainerConfigError) |
 | ConfigMap `coordinator-env` | coordinator の envFrom | `NOTICE_BROKER` | container が起動しない(CreateContainerConfigError) |
 | ConfigMap `worker-prepare` | `/opt/worker-prepare` | 起動の前に 1 度実行する script(キー `prepare.sh`・非 0 なら起動しない) | 実行せずに起動する |
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
+| ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `capacity`・`taskReserve`。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
 worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`deploy/k8s/workers/worker-cluster-admin.yaml`・
