@@ -17,5 +17,7 @@ export const TEST = '#3ecfb2';
 export const PROD = '#ffb86b';
 // Whatever is at work right now: the "look here" ring and glow.
 export const LOOK = '#ffe14d';
+// Failures: a raised exception, an Err.
+export const FAIL = '#ff6b81';
 export const MONO = '"DejaVu Sans Mono", "Menlo", monospace';
 export const SANS = '"DejaVu Sans", "Helvetica", sans-serif';

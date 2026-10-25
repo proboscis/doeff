@@ -1,0 +1,3 @@
+result: Err(FileNotFoundError('config.toml')) is Err: True
+captured_traceback: None
+frames: ['attempt', 'boom', 'load']

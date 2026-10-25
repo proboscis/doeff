@@ -1,0 +1,2 @@
+Ok(5) bool: True match: Ok(value=5)
+Err(ValueError('boom')) bool: False match: Err(error=ValueError('boom'))

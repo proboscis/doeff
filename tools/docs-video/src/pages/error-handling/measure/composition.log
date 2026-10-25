@@ -1,0 +1,3 @@
+no rollback: ("Err(ValueError('boom'))", 1)
+Try(Local(...)): ('outer', True, 'outer')
+Try(Try(...)): (Ok(Ok(5)), Ok(Err(ValueError('inner failure'))))
