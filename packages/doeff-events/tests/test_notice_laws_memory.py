@@ -23,6 +23,7 @@ from doeff_events import (
     EventBus,
     SourceMissed,
     SourceResumed,
+    SourceStalled,
     SourceStarted,
     subscribed_event_handler,
 )
@@ -452,6 +453,35 @@ def test_notice_announced_during_an_outage_is_not_delivered_later() -> None:
 
     party = harness.as_party("law-outage", (SourceStarted, SourceResumed, LawNote), reader())
     assert run_on_virtual_clock(party) == LawNote("after")
+
+
+def test_a_stall_at_the_start_is_followed_by_its_return_before_the_start() -> None:
+    # agora card ki-b7aa8ddce32d: a broker unreachable when the source first subscribes is waited for like any
+    # outage, and its end is told like any outage's — ``SourceResumed`` once the subscription is confirmed, then
+    # ``SourceStarted``. Before, only ``SourceStarted`` came: a program that keeps the stalled sources until their
+    # return (agora's read replica) held the source as stalled until the process ended.
+    broker = MemoryBroker()
+    harness = memory_harness(broker)
+    told = (SourceStarted, SourceStalled, SourceResumed)
+
+    @do
+    def lists_what_was_told() -> "EffectGenerator[tuple[type, ...]]":
+        yield Publish(LawNote("end"))
+        heard: tuple[type, ...] = ()
+        while not isinstance(came := (yield WaitForEvent(*told, LawNote)), LawNote):
+            heard = (*heard, type(came))
+        return heard
+
+    @do
+    def starts_while_the_broker_is_away() -> "EffectGenerator[object]":
+        yield harness.cut()
+        party = yield Spawn(harness.as_party("law-late", (*told, LawNote), lists_what_was_told()))
+        yield Delay(1.0)
+        yield harness.restore()
+        return (yield Wait(party))
+
+    heard = run_on_virtual_clock(starts_while_the_broker_is_away())
+    assert heard == (SourceStalled, SourceResumed, SourceStarted), heard
 
 
 def test_source_fails_when_the_broker_stays_away_past_the_patience() -> None:

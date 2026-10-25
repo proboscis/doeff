@@ -61,7 +61,8 @@ What the wrapper does:
   ``SourceStalled``, waits for ``AwaitBrokerBack`` up to ``patience_seconds`` (one ``WaitWithin`` — no retry on
   a timer), subscribes again, and after the broker confirmed publishes ``SourceResumed`` once. Past the patience
   it fails with ``NoticeSourceUnreachable`` (``SourceFailed`` reaches the body). The stall's start is one warning
-  in the process's log.
+  in the process's log. A broker unreachable at the first subscription is the same outage: ``SourceStalled``,
+  then ``SourceResumed`` and ``SourceStarted`` once the subscription is confirmed.
 - Stopping. The source task and the task waiting for the return end by ``Cancel`` when the body ends; their waits
   have no time limit of their own. Then the subscription the source held is closed (``CloseSubscription``) — when
   the body ends normally, by an error, or by a cancel from outside — so a process that wraps body after body under
@@ -478,10 +479,14 @@ def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGe
 @do
 def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
     """Subscribe the channels before the body runs; a broker that is unreachable at the start is waited for like
-    any outage. Answers once the broker confirmed the subscription."""
+    any outage, and its end is told like any outage's: ``SourceResumed`` once the broker confirmed the new
+    subscription (``SourceStalled`` promises it — a program that keeps the stalled sources until their return
+    would otherwise hold this one as stalled until the process ends: agora card ki-b7aa8ddce32d). Answers once the
+    broker confirmed the subscription."""
     answer = yield plan.subscribing()
     if isinstance(answer, BrokerUnreachable):
         answer = yield _subscribed_after_outage(plan, answer)
+        yield Publish(SourceResumed(source=plan.source))
     return answer
 
 
