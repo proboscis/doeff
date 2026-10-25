@@ -1,0 +1,86 @@
+[
+ {
+  "id": "i1",
+  "text": "Basic effects: the batteries that come with doeff."
+ },
+ {
+  "id": "i2",
+  "text": "Each one is an effect your code yields, and a handler that ships with doeff answers it."
+ },
+ {
+  "id": "r1",
+  "text": "Reader. Ask, with a key, reads a value from the environment."
+ },
+ {
+  "id": "r2",
+  "text": "The environment lives in the reader handler. Your code only names the key it wants."
+ },
+ {
+  "id": "r3",
+  "text": "A key that is not there raises a missing env key error, and the message names the close key."
+ },
+ {
+  "id": "l1",
+  "text": "Local runs a sub-program over a changed environment."
+ },
+ {
+  "id": "l2",
+  "text": "Inside it, Ask sees the override. The code inside is the same as ever."
+ },
+ {
+  "id": "l3",
+  "text": "When the sub-program returns, the environment is back as it was."
+ },
+ {
+  "id": "s1",
+  "text": "State. Get and Put read and write a store."
+ },
+ {
+  "id": "s2",
+  "text": "The store lives in the state handler, not in your code."
+ },
+ {
+  "id": "s3",
+  "text": "Get, add one, Put, three times over. The program returns three."
+ },
+ {
+  "id": "w1",
+  "text": "Writer. Tell appends a message to a log."
+ },
+ {
+  "id": "w2",
+  "text": "A handler can perform effects too. Writer keeps its log in state, with its own Get and Put."
+ },
+ {
+  "id": "w3",
+  "text": "writer log reads the log back: four lines, in the order they were told."
+ },
+ {
+  "id": "g1",
+  "text": "slog emits a structured entry: a message, plus keyword data."
+ },
+ {
+  "id": "g2",
+  "text": "slog handler prints each entry on standard error. It is a separate effect from Tell."
+ },
+ {
+  "id": "g3",
+  "text": "Listen collects the entries as values, so a test can check them."
+ },
+ {
+  "id": "c1",
+  "text": "Now put them together: one program, three handlers stacked around it."
+ },
+ {
+  "id": "c2",
+  "text": "Each effect travels out to the layer that handles it. Ask to reader, Get and Put to state, Tell to writer."
+ },
+ {
+  "id": "c3",
+  "text": "The second attempt succeeds. The log holds every step, and the result is success."
+ },
+ {
+  "id": "o1",
+  "text": "Reader, State, Writer, and slog: effects your code yields, and handlers that come with doeff, stacked the way your program needs."
+ }
+]
