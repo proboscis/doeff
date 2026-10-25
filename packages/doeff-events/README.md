@@ -84,7 +84,7 @@ routes = (
 
 # 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
 program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStarted, SourceResumed))(
-    broker_patience_handler(BrokerPatience(seconds=900.0))(  # 読む包みの全部が問う上限 ReadBrokerPatience の答え(組み立ての 1 か所・既定なし)
+    broker_patience_handler(BrokerPatience(seconds=900.0))(  # 読む包みの源が止まりの時に問う上限 ReadBrokerPatience の答え(組み立ての 1 か所・既定なし)
         redis_notice_handler("redis://localhost:6379/0", timeout_seconds=2.0)(  # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
             broker_back_by_retry(retry_seconds=2.0)(             # Redis の戻りを、待っている間だけ繋がるかの試しで知る
                 notice_events_handler("screen", routes)(body)
@@ -127,9 +127,9 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
   同じ channel の Pub/Sub も聞くので、宣言し直しの間にまだ古い版の出す側が `kept` 無しで出した知らせも届きます(receipt は無く、ack も
   しない)。出す側と受ける側の宣言の順を問いません。
 - 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限の `WaitWithin` 1 つ —
-  時間で読み直しません)。上限は包みの引数ではなく、channel を読む包みが始まる時に 1 度 問う `ReadBrokerPatience` の答え
-  (`BrokerPatience`)で、包みの外に置く `broker_patience_handler` が答えます。既定は無く、答え手を置き忘れた組み立ては、broker の止まりを
-  待たずに包みの始まりで、答え手の無い effect として名指しで落ちます。出すだけの包みは問いません。戻れば購読を作り直し、
+  時間で読み直しません)。上限は包みの引数ではなく、源が止まりの始まりに 1 度 問う `ReadBrokerPatience` の答え
+  (`BrokerPatience`)で、包みの外に置く `broker_patience_handler` が答えます(doeff-records の源が `ReadSourcePatience` を問うのと同じ形)。
+  既定は無く、答え手を置き忘れた組み立ては、最初の止まりで答え手の無い effect として名指しで落ちます。出すだけの包みは問いません。戻れば購読を作り直し、
   broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば
   `NoticeSourceUnreachable` で落ちます(`SourceFailed` が本体の待ちに届く)。`AwaitBrokerBack` に答えるのは、memory の handler では handler
   自身、Redis では `broker_back_by_retry(retry_seconds)`(`redis_notice_handler` の内側・`notice_events_handler` の外側に置く)です —
