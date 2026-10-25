@@ -168,8 +168,8 @@ const DispatchScene: React.FC = () => {
         a generator: it pauses at each yield
       </Label>
       {frame >= f(6.0) && frame < f(12.2) && <Pill x={askAt} y={askY} text={'Ask("name")'} color={ACCENT} opacity={1 - ramp(frame, 11.9, 12.2)} />}
-      <Label x={880} y={askY - 52} size={17} bold color={MUTED} opacity={between(frame, 10.6, 13.0)}>
-        not a Fetch: skipped
+      <Label x={570} y={gLayer(0).y + 11} size={16} bold color={LOOK} opacity={between(frame, 10.6, 13.0)}>
+        ← Ask is not a Fetch: skipped
       </Label>
       {frame >= f(12.6) && frame < f(13.8) && <Pill x={mix(edge(1), startX, ramp(frame, 12.6, 13.4))} y={askY} text={'"ada"'} color={TEST} opacity={1 - ramp(frame, 13.5, 13.8)} />}
       {frame >= f(16.8) && frame < f(17.7) && <Pill x={mix(startX, edge(0), ramp(frame, 16.8, 17.4))} y={fetchY} text="Fetch(url)" color={ACCENT} opacity={1 - ramp(frame, 17.4, 17.7)} />}
@@ -188,7 +188,7 @@ const DispatchScene: React.FC = () => {
 const STAYS_LINES: Lines = [
   [0, 'A handler stays installed around k. The rest of the program still runs under it.'],
   [5.5, 'after receives Step("load") and resumes k. Inside k, Step("train") reaches after again.'],
-  [12, 'Each Resume gives back the result of the rest, and after adds to it on the way out.'],
+  [12, 'Resume gives back the result of the rest. after adds to it on the way out.'],
 ];
 const STAYS = f(19);
 const JOB = ['@do', 'def job():', '    yield Step("load")', '    yield Step("train")', '    return "model"'];
@@ -327,7 +327,7 @@ const ContractScene: React.FC = () => {
       </Label>
       <Box x={H.x} y={H.y} w={H.w} h={H.h} color={TEST} on={working} opacity={fadeAt(frame, 0.4)}>
         <div style={{position: 'absolute', left: 20, top: 12, fontFamily: SANS, fontSize: 22, fontWeight: 700, color: working ? LOOK : TEST}}>
-          {action ? `a handler that ${action.verb === 'resume twice' ? 'resumes twice' : action.verb === 'throw into' ? 'throws into k' : `${action.verb}s${action.kind === 'pass' ? ' the effect' : ' k'}`}` : 'a handler of Fetch'}
+          {action ? `a handler that ${{resume: 'resumes k', throw: 'throws into k', pass: 'passes the effect on', hold: 'holds k', drop: 'drops k', twice: 'resumes k twice'}[action.kind]}` : 'a handler of Fetch'}
         </div>
         <div style={{position: 'absolute', left: 20, top: 50, fontFamily: MONO, fontSize: 17, color: MUTED}}>{'@handler  def h(effect: Fetch, k):'}</div>
         {ACTIONS.map((a, i) => (
@@ -339,7 +339,7 @@ const ContractScene: React.FC = () => {
         ))}
       </Box>
       <Box x={OUT.x} y={OUT.y} w={OUT.w} h={OUT.h} color={action?.kind === 'hold' ? ACCENT : TEST} on={action?.kind === 'pass' && on(2.1, 2.7)} opacity={action && (action.kind === 'pass' || action.kind === 'hold') ? between(frame, s, s + 4.6) : 0}>
-        {action?.kind === 'pass' && <div style={{position: 'absolute', left: 20, top: 16, fontFamily: SANS, fontSize: 20, fontWeight: 700, color: TEST}}>the next handler out answers Fetch</div>}
+        {action?.kind === 'pass' && <div style={{position: 'absolute', left: 190, top: 16, fontFamily: SANS, fontSize: 20, fontWeight: 700, color: TEST}}>the next handler out answers Fetch</div>}
         {action?.kind === 'hold' && (
           <>
             <div style={{position: 'absolute', left: 20, top: 16, fontFamily: SANS, fontSize: 20, fontWeight: 700, color: ACCENT}}>other() runs</div>
@@ -403,7 +403,7 @@ const UPDATE = [
   '    yield Tell(f"counter updated: {current} -> {current + 1}")',
   '    return current + 1',
 ];
-const C = {cx: 640, cy: 382, w: 600, size: 16, line: 24, margin: 50};
+const C = {cx: 640, cy: 382, w: 664, size: 16, line: 24, margin: 46};
 const cH = PAD * 2 + UPDATE.length * C.line;
 const cCode = {x: C.cx - C.w / 2, y: C.cy - cH / 2};
 const cLayer = onion(C.cx, C.cy, C.w, cH, C.margin);
@@ -488,7 +488,7 @@ const ComposeScene: React.FC = () => {
         <div style={{position: 'absolute', left: 0, right: 0, opacity: swap}}>{'writer(state(initial={"count": 0})(reader(env=...)(update_counter())))'}</div>
       </div>
       <div style={{position: 'absolute', left: 0, right: 0, top: 680, textAlign: 'center', fontFamily: MONO, fontSize: 19, fontWeight: 700}}>
-        <div style={{position: 'absolute', left: 0, right: 0, color: ACCENT, opacity: fadeAt(frame, 16.0) * (1 - swap)}}>{'→ 1   log: counter updated: 0 -> 1'}</div>
+        <div style={{position: 'absolute', left: 0, right: 0, color: ACCENT, opacity: fadeAt(frame, 16.0) * (1 - swap)}}>{'→ 1 · log: counter updated: 0 -> 1'}</div>
         <div style={{position: 'absolute', left: 0, right: 0, color: PROD, opacity: fadeAt(frame, 21.4)}}>{'raises UnhandledEffect: unhandled effect: Get'}</div>
       </div>
     </AbsoluteFill>
@@ -511,8 +511,8 @@ const CHAR = 22 * 0.602;
 const GEN = {x: 660, y: 196, w: 220, h: 64};
 const VM = {x: 1000, y: 196, w: 220, h: 64};
 const ROWS = [
-  {y: 300, kind: 'control node', names: 'Pure · Expand · Resume · …', does: 'the VM evaluates it', color: ACCENT},
-  {y: 370, kind: 'effect', names: 'Ask · Get · Fetch · …', does: 'handlers get (effect, k)', color: TEST},
+  {y: 300, kind: 'control node', names: 'Pure · Expand · …', does: 'the VM evaluates it', color: ACCENT},
+  {y: 370, kind: 'effect', names: 'Ask · Get · …', does: 'handlers get (effect, k)', color: TEST},
 ];
 
 const RunScene: React.FC = () => {
@@ -578,7 +578,7 @@ const RunScene: React.FC = () => {
       ))}
       {frame >= f(16.2) && frame < f(18.6) && (
         <Pill
-          x={frame < f(17.6) ? mix(R.x + R.w + 20, VM.x + VM.w / 2, askOut) : VM.x + VM.w / 2}
+          x={frame < f(17.6) ? mix(R.x + R.w + 20, 940, askOut) : 940}
           y={frame < f(17.6) ? mix(lineMid(R.y, R.line, 2), GEN.y + 20, askOut) : mix(GEN.y + 20, ROWS[1].y + 28, askDown)}
           text={'Ask("db")'}
           color={ACCENT}
@@ -586,7 +586,7 @@ const RunScene: React.FC = () => {
         />
       )}
       {frame >= f(22.0) && frame < f(23.1) && (
-        <Pill x={mix(VM.x + VM.w / 2, R.x + R.w + 20, sentBack)} y={mix(ROWS[1].y + 28, lineMid(R.y, R.line, 2), sentBack)} text={'{42: "Ada"}'} color={TEST} opacity={1 - ramp(frame, 22.8, 23.1)} />
+        <Pill x={mix(940, R.x + R.w + 20, sentBack)} y={mix(ROWS[1].y + 28, lineMid(R.y, R.line, 2), sentBack)} text={'{42: "Ada"}'} color={TEST} opacity={1 - ramp(frame, 22.8, 23.1)} />
       )}
       <div style={{position: 'absolute', left: 0, right: 0, top: 488, textAlign: 'center', fontFamily: MONO, fontSize: 25, color: TEXT, opacity: fadeAt(frame, 10.4)}}>
         yield expr <span style={{color: MUTED}}>≡</span> Bind(<span style={{color: LOOK}}>expr</span>, <span style={{color: ACCENT}}>λresult. rest_of_program</span>)
