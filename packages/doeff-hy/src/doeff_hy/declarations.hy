@@ -189,7 +189,7 @@
 (setv OUTCOME-KEYS #(":absent" ":failure" ":value"))
 
 
-(defn #^ (get dict str (get list Object)) outcome-type-forms [#^ Dict contract #^ (| Object None) answer #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(deff は doeff_hy.macros が定義し、macros.hy がこの module を import するので require できない)
+(defn #^ (get dict #(str (get list Object))) outcome-type-forms [#^ Dict contract #^ (| Object None) answer #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(deff は doeff_hy.macros が定義し、macros.hy がこの module を import するので require できない)
   "defeffect の :absent / :failure / :value を検め、鍵ごとの型の form の list にするため(書かなければ空)。
    要素は型の名か None。:answer が union の form (| A B …) か名前 1 つなら、要素がその中に在ることと、鍵どうしで重ならないことを
    展開の時に断る(それ以外の :answer は定義の時に Outcomes.declare が断る)。"
@@ -216,7 +216,7 @@
   out)
 
 
-(defn #^ (get list Object) bound-answer-methods [#^ Object answer #^ (get dict str (get list Object)) outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list Object) bound-answer-methods [#^ Object answer #^ (get dict #(str (get list Object))) outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
   "型検査のための展開で、答えの分け方(:absent・:failure)を宣言した effect の class に置く method `__iter__` の form の list
    (置かない時は空)。返り値の型 = :answer の union から :absent と :failure の要素を除いた物 — `<-` が束ねる名の型で、
    返り値の型は doeff_hy/static_types.pyi の BoundRun(`Program[T, E]` が `__iter__` から T を読む)。実行時の `<-` は不在を Absent に・
@@ -238,7 +238,7 @@
       []))
 
 
-(defn #^ (get tuple (get list Object) (get list str)) effect-field-forms [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #((get list Object) (get list str))) effect-field-forms [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の `:fields [(: 名 型) (: 名 型 既定値) …]` を検め、dataclass の欄の form の list と欄の名前の list にするため
    (無ければ両方とも空)。既定値を持つ欄の後ろに既定値の無い欄は置けない(dataclass の順の決まりを展開の時に断る)。"
   (when (is form None)

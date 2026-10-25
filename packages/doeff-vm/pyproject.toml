@@ -55,6 +55,7 @@ cache-keys = [
     { file = "pyproject.toml" },
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },
+    { file = "build.rs" },
     { file = "src/**/*.rs" },
     { file = "doeff_vm/**/*.py" },
     { file = "doeff_vm/**/*.pyi" },

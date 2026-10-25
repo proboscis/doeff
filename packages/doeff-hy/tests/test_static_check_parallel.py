@@ -126,6 +126,22 @@ def load(cache_dir, name):
     seen["hit" if isinstance(answer, cache.CachedProjection) else "miss"] += 1
     return answer
 cache.load = load
+# 温まった実行は closure の束の行で引き、entry の load を呼ばない — 束の行で引いた数も数える。行は stat が書いた時と同じなら
+# row_is_current で、書いた直後で stat を信じない行は中身の場所の名と記録の照らし(入口が直に呼ぶ record_is_current_here)で
+# 引く。どちらも macro の記録を今の環境と照らす(入口の名と展開の子の名が食い違うと引けない)。
+import doeff_hy_bytecode_guard as guard
+real_row = cache.row_is_current
+def row_is_current(row, module, stat):
+    current = real_row(row, module, stat)
+    seen["hit"] += current
+    return current
+cache.row_is_current = row_is_current
+real_record = guard.record_is_current_here
+def record_is_current_here(used):
+    current = real_record(used)
+    seen["hit"] += current
+    return current
+guard.record_is_current_here = record_is_current_here
 root, cache_dir, pyright = sys.argv[1:4]
 sys.argv = ["doeff-hy-check", "--root", root, "--cache-dir", cache_dir, "--pyright", pyright, root]
 try:

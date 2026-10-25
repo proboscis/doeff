@@ -110,6 +110,7 @@ from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, curr
 from doeff_hy_bytecode_guard.records import (
     ANON_VAR_NAME,
     ENVIRONMENT_READ,
+    GENERATED_NAME_PREFIX,
     LOCAL_MACRO_TABLE,
     MACRO_TABLE,
     READER_TABLE,
@@ -1006,7 +1007,8 @@ def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
     ``strict`` が偽の読みは、展開の結果に効かない 2 つを除く(card ki-968309595391 — 型注釈を足しただけの変更や、前に関数が増えて
     Hy の一時変数の番号がずれただけの変更で、macro の閉包の digest が変わり、使い手の module が全部展開し直されていた):
 
-    - 関数の型注釈(3.14 の ``__annotate__`` の入れ子の code と、それを関数に付ける命令 — :func:`_function_annotations`)。注釈の中だけに
+    - 関数の型注釈(3.14 の ``__annotate__`` の入れ子の code と、それを関数に付ける命令 — :func:`_function_annotations`。3.13 までの、
+      関数を作る前に積む注釈の組とそれを付ける旗 — :func:`_inline_function_annotations`)。注釈の中だけに
       現れる名・import なども、その code の読み(名の表・文字列・import …)に入れない。class の本体の注釈(``__annotate_func__`` を
       束縛する物 — dataclass の欄)は除かない。
     - Hy の一時変数の名の番号(``_hy_anon_46`` → ``_hy_anon_48``)。code 1 つごとに、命令の出現順の通し番号へ振り直す
@@ -1020,15 +1022,15 @@ def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
     instructions = _Instructions(code, drop_annotations=not strict)
     nested = tuple(
         _code_facts(constant, strict)
-        for constant in code.co_consts
-        if isinstance(constant, CodeType) and not instructions.dropped(constant)
+        for constant in instructions.constants
+        if isinstance(constant, CodeType)
     )
     texts = tuple(
-        constant for constant in code.co_consts if isinstance(constant, str)
+        constant for constant in instructions.constants if isinstance(constant, str)
     )  # 定数の順のまま
     facts = CodeFacts(
         shape=instructions.shape(strict),
-        names=tuple(sorted({*code.co_names, *(name for inner in nested for name in inner.names)})),
+        names=tuple(sorted({*instructions.names, *(name for inner in nested for name in inner.names)})),
         texts=tuple(sorted({*texts, *(text for inner in nested for text in inner.texts)})),
         imports=(*_imports(code), *(i for inner in nested for i in inner.imports)),
         called_modules=tuple(
@@ -1065,18 +1067,25 @@ def _constant_text(value: object, strict: bool) -> str:
         case frozenset():
             return "{" + ",".join(sorted(_constant_text(item, strict) for item in value)) + "}"
         case _:
-            # 文字列の定数の中の ``_hy_…_N`` は名でなく値(振り直さない — :func:`_numbered_anon_names` が拾わない形にする)。
-            return f"{type(value).__name__}:{value!r}".replace("_hy_", "_hy\0_")
+            # 文字列の定数の中の Hy の一時の名(接頭辞 + ``…_N``)は名でなく値(振り直さない — :func:`_numbered_anon_names` が拾わない
+            # 形にするため、接頭辞の最後の ``_`` の前に NUL を挟む)。
+            return f"{type(value).__name__}:{value!r}".replace(
+                GENERATED_NAME_PREFIX, GENERATED_NAME_PREFIX[:-1] + "\0_"
+            )
 
 
 #: 関数に付ける注釈の命令(3.14 の ``SET_FUNCTION_ATTRIBUTE`` の旗 — 0x10 = ``__annotate__``・0x08 = 閉包)。
 _ANNOTATE_ATTRIBUTE = 0x10
 _CLOSURE_ATTRIBUTE = 0x08
+#: 3.13 までの、関数に注釈の組を付ける旗(3.13 の ``SET_FUNCTION_ATTRIBUTE``・3.11 と 3.12 の ``MAKE_FUNCTION``)。
+_ANNOTATIONS_ATTRIBUTE = 0x04
 #: 閉包の組を作る前に cell を積む命令(1 つ積む物と 2 つ積む物)。
 _CELL_LOADS = frozenset({"LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_FAST_CHECK", "LOAD_DEREF"})
 _CELL_PAIR_LOADS = frozenset({"LOAD_FAST_LOAD_FAST", "LOAD_FAST_BORROW_LOAD_FAST_BORROW"})
 #: 引数が番号でなく、番号の指す名・定数・jump 先に替えて数える命令の類(番号は定数の表・名の表の並びで変わるため)。
 _NAMED_OPCODES = frozenset((*dis.hasname, *dis.haslocal, *dis.hasfree))
+#: 名の表(``co_names``)の名を指す命令の類。
+_NAME_OPCODES = frozenset(dis.hasname)
 _JUMP_OPCODES = frozenset(dis.hasjump) if hasattr(dis, "hasjump") else frozenset((*dis.hasjrel, *dis.hasjabs))
 _CONST_OPCODES = frozenset(dis.hasconst)
 
@@ -1172,6 +1181,114 @@ def _annotate_attachment(instructions: list[dis.Instruction], start: int) -> int
     return -1
 
 
+def _inline_function_annotations(
+    instructions: list[dis.Instruction],
+) -> tuple[set[int], dict[int, dis.Instruction]]:
+    """命令の並びのうち、3.13 までの形で関数に型注釈を付ける命令の位置と、旗を外して数える ``MAKE_FUNCTION`` を挙げる。
+
+    3.13 までは関数の注釈を、名(文字列の定数)と注釈の式を交互に積んで ``BUILD_TUPLE`` で組にし、関数の本体の code の前
+    (閉包の組が在ればその前)に積む。3.13 は関数を作ったあと ``SET_FUNCTION_ATTRIBUTE`` の旗 0x04 で付け、3.11・3.12 は
+    ``MAKE_FUNCTION`` の旗 0x04 で付ける。組の積みを命令の stack の増減で読み、名がどれも文字列の定数の組に完全に合う時だけ挙げる
+    (合わない形 — 注釈の中の条件式・呼び出しなど — は挙げず、注釈ごと digest に入るだけ)。"""
+    dropped: set[int] = set()
+    unflagged: dict[int, dis.Instruction] = {}
+    for index, instruction in enumerate(instructions):
+        if (
+            instruction.opname != "MAKE_FUNCTION"
+            or index == 0
+            or instructions[index - 1].opname != "LOAD_CONST"
+            or not isinstance(instructions[index - 1].argval, CodeType)
+        ):
+            continue
+        attributes = _attribute_run(instructions, index + 1)
+        flags = (
+            functools.reduce(operator.or_, (instructions[position].arg or 0 for position in attributes), 0)
+            if attributes
+            else instruction.arg or 0
+        )
+        if not flags & _ANNOTATIONS_ATTRIBUTE:
+            continue
+        end = index - 2
+        if flags & _CLOSURE_ATTRIBUTE:
+            end = _value_start(instructions, end) - 1
+        start = _value_start(instructions, end)
+        if end < 0 or start < 0 or not _is_annotation_pairs(instructions, start, end):
+            continue
+        dropped.update(range(start, end + 1))
+        attach = [position for position in attributes if instructions[position].arg == _ANNOTATIONS_ATTRIBUTE]
+        if attributes:
+            dropped.update(attach)
+        else:
+            unflagged[index] = instruction._replace(arg=flags & ~_ANNOTATIONS_ATTRIBUTE)
+    return dropped, unflagged
+
+
+def _attribute_run(instructions: list[dis.Instruction], start: int) -> range:
+    """位置 ``start`` から続く ``SET_FUNCTION_ATTRIBUTE`` の並びの位置(3.12 までは空)。"""
+    end = next(
+        (
+            position
+            for position in range(start, len(instructions))
+            if instructions[position].opname != "SET_FUNCTION_ATTRIBUTE"
+        ),
+        len(instructions),
+    )
+    return range(start, end)
+
+
+def _value_start(instructions: list[dis.Instruction], end: int) -> int:
+    """位置 ``end`` で終わり、値をちょうど 1 つ積む命令の並びの始まり(stack の増減を後ろから足す。jump を含むか読めなければ -1)。"""
+    total = 0
+    for position in range(end, -1, -1):
+        instruction = instructions[position]
+        if instruction.opcode in _JUMP_OPCODES:
+            return -1
+        try:
+            total += dis.stack_effect(
+                instruction.opcode, instruction.arg if instruction.opcode >= dis.HAVE_ARGUMENT else None
+            )
+        except ValueError:
+            return -1
+        if total == 1:
+            return position
+        if total > 1:
+            return -1
+    return -1
+
+
+def _is_annotation_pairs(instructions: list[dis.Instruction], start: int, end: int) -> bool:
+    """位置 ``start``〜``end`` の命令が、名(文字列の定数)と注釈を交互に並べた組を積むか(畳まれた定数の組 1 つの形も含む)。"""
+    last = instructions[end]
+    if start == end:
+        value = last.argval
+        return (
+            last.opname == "LOAD_CONST"
+            and isinstance(value, tuple)
+            and len(value) % 2 == 0
+            and all(isinstance(name, str) for name in value[::2])
+        )
+    if last.opname != "BUILD_TUPLE" or not isinstance(last.arg, int) or last.arg % 2:
+        return False
+    starts = _value_starts(instructions, end - 1, last.arg)
+    return (
+        starts is not None
+        and starts[-1] == start
+        and all(  # 後ろから数えたので、奇数番目が名
+            instructions[at].opname == "LOAD_CONST" and isinstance(instructions[at].argval, str)
+            for at in starts[1::2]
+        )
+    )
+
+
+def _value_starts(instructions: list[dis.Instruction], end: int, count: int) -> tuple[int, ...] | None:
+    """位置 ``end`` から後ろへ並ぶ、値を 1 つずつ積む ``count`` 個の並びの始まり(後ろから。読めなければ None)。"""
+    if count == 0:
+        return ()
+    found = _value_start(instructions, end)
+    rest = None if found < 0 else _value_starts(instructions, found - 1, count - 1)
+    return None if rest is None else (found, *rest)
+
+
 class _Instructions:
     """code 1 つ(入れ子を除く)の命令の並びと、意味に効かない物を除いた中身の digest(:func:`_code_facts`)。"""
 
@@ -1185,8 +1302,37 @@ class _Instructions:
         dropped, self._annotations = (
             _function_annotations(listed) if drop_annotations else (set(), [])
         )
+        inline, unflagged = _inline_function_annotations(listed) if drop_annotations else (set(), {})
+        dropped |= inline
         self._kept = [
-            instruction for index, instruction in enumerate(listed) if index not in dropped
+            unflagged.get(index, instruction)
+            for index, instruction in enumerate(listed)
+            if index not in dropped
+        ]
+        removed = [listed[index] for index in dropped]
+        # 除いた命令だけが指す名と定数(3.13 までの注釈の名・引数の名の文字列)は、名の表・定数の表の読みからも除く。
+        kept_names = {instruction.argval for instruction in self._kept if instruction.opcode in _NAME_OPCODES}
+        self._removed_names = {
+            instruction.argval for instruction in removed if instruction.opcode in _NAME_OPCODES
+        } - kept_names
+        kept_constants = {instruction.arg for instruction in self._kept if instruction.opcode in _CONST_OPCODES}
+        self._removed_constants = {
+            instruction.arg for instruction in removed if instruction.opcode in _CONST_OPCODES
+        } - kept_constants
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """名の表のうち、除いた命令だけが指す名を除いた物(表の順のまま)。"""
+        return tuple(name for name in self._code.co_names if name not in self._removed_names)
+
+    @property
+    def constants(self) -> list[object]:
+        """定数の表のうち、除いた注釈の code と、除いた命令だけが指す定数を除いた物(表の順のまま)。"""
+        return [
+            constant
+            for index, constant in enumerate(self._code.co_consts)
+            if index not in self._removed_constants
+            and not (isinstance(constant, CodeType) and self.dropped(constant))
         ]
 
     def dropped(self, constant: CodeType) -> bool:
@@ -1211,12 +1357,8 @@ class _Instructions:
             )
             for start, end, target, depth, lasti in _exception_table(code)
         ]
-        # 定数の表の並びは残す(説明の文は命令に指されず、表の先頭の位置だけが印)— 除く注釈の code の分だけ詰める。
-        constants = [
-            _constant_text(constant, strict)
-            for constant in code.co_consts
-            if not (isinstance(constant, CodeType) and self.dropped(constant))
-        ]
+        # 定数の表の並びは残す(説明の文は命令に指されず、表の先頭の位置だけが印)— 除く注釈の code と定数の分だけ詰める。
+        constants = [_constant_text(constant, strict) for constant in self.constants]
         document = "\0".join(
             (
                 code.co_name,
@@ -1227,7 +1369,7 @@ class _Instructions:
                 str(code.co_flags),
                 "\n".join(lines),
                 "\n".join(handlers),
-                repr(code.co_names),
+                repr(self.names),
                 repr(code.co_varnames),
                 repr(code.co_freevars),
                 repr(code.co_cellvars),

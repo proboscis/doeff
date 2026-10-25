@@ -1658,11 +1658,13 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
         )
         # class(``_Instructions``)は method の code を読む。
         functions = [v for v in vars(value).values() if isinstance(v, FunctionType)] if isinstance(value, type) else [value]
+        # interpreter の組み込みの型(``CodeType``・``FunctionType`` — module は builtins)は file でなく Python の版が覆う。
         for function in functions:
             pending.extend(
                 called
                 for called in names(function.__code__)
                 if isinstance(vars(macro_use).get(called), (FunctionType, type))
+                and vars(macro_use)[called].__module__ != "builtins"
             )
     assert {"_code_facts", "_constant_text", "_called_modules", "_reference_module", "_mangle"} <= seen, seen
 

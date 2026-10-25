@@ -482,8 +482,7 @@ impl PyBindOpener {
         if !crate::python_generator_stream::answer_depends_on_type_only(operand_type) {
             return;
         }
-        // SAFETY: the type is alive (bound).
-        if unsafe { crate::python_generator_stream::PyUnstable_Type_AssignVersionTag(operand_type.as_type_ptr()) } == 0 {
+        if !crate::python_generator_stream::assign_version_tag(operand_type) {
             return;
         }
         let version = crate::python_generator_stream::version_tag(operand_type);
