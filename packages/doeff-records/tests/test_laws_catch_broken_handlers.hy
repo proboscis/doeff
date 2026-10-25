@@ -86,7 +86,8 @@
     (<- written (PutRow table key value expect))
     (resume (if (isinstance written Written) (Written written.version written.value) written)))
   (PutRows [writes]
-    (<- rows (PutRows writes))
+    ;; 中継は宣言を開かずに(Perform)値のまま受ける: <- だと RowsRefused・Unreachable が Raise になり、この節から出てしまう(R4)。
+    (<- rows (Perform (PutRows writes)))
     (resume (if (isinstance rows WrittenRows)
                 (WrittenRows (tuple (gfor item rows.items (Written item.version item.value))))
                 rows))))
