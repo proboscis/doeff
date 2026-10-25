@@ -40,6 +40,8 @@ FIXED_ENTRY_FILES = (
     "docs/index.md",
     "docs/README.md",
     "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "SECURITY.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
 )
 

@@ -614,6 +614,10 @@ Questions, bug reports and feature ideas are welcome as
 [good first issue](https://github.com/proboscis/doeff/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22);
 setting up the development environment, running the tests and opening a pull request are
 described in [CONTRIBUTING.md](https://github.com/proboscis/doeff/blob/main/CONTRIBUTING.md).
+Everyone taking part follows the
+[Code of Conduct](https://github.com/proboscis/doeff/blob/main/CODE_OF_CONDUCT.md); report a
+security problem privately as described in
+[SECURITY.md](https://github.com/proboscis/doeff/blob/main/SECURITY.md).
 
 ## License
 
