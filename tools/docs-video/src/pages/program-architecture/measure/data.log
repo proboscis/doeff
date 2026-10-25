@@ -1,0 +1,6 @@
+effect: Ask('key')
+program is a DoExpr: True
+body ran on call: []
+run(yield Ask): 'ada'
+run(yield Perform(Ask)): 'ada'
+bodies ran: ['short', 'lowered']
