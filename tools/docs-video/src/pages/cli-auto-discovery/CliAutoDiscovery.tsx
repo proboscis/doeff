@@ -6,7 +6,7 @@
 //   4. Env discovery: every marked env on the path is collected, root first, and merged left to right.
 //   5. The run: the chosen interpreter installs its handlers, and reader answers login()'s Asks from the merged env.
 //   6. Overrides: --env and --interpreter, what each turns off, their deprecation, and --hy.
-//   7. No marked interpreter on the path: the built-in default interpreter, which ignores envs.
+//   7. No marked interpreter on the path: the fallback interpreter, which ignores envs.
 //   8. The outro.
 // Every module path, value, order, result and error on screen is printed by measure/run.sh (discover.log and
 // cli.log next to it) over the example project in measure/project.
@@ -522,10 +522,10 @@ const OverrideScene: React.FC = () => {
   );
 };
 
-// Scene 7 — no marked interpreter on the path: the built-in default interpreter ignores envs (cli.log, other.job).
+// Scene 7 — no marked interpreter on the path: the fallback interpreter ignores envs (cli.log, other.job).
 
 const FALLBACK_LINES: Lines = [
-  [0, 'No marked interpreter on the path? doeff run does not stop. It uses its built-in default interpreter.'],
+  [0, 'No marked interpreter on the path? doeff run does not stop. It uses its fallback interpreter.'],
   [7, 'It ignores envs, so Ask("timeout") finds no handler. --format json shows what was chosen.'],
 ];
 const FALLBACK = f(15);

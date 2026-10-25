@@ -252,7 +252,7 @@ impl PyVM {
     /// The name the handler chain line shows for a handler's qualified name.
     ///
     /// Mirror the traceback renderer: take everything before the first
-    /// ``.<locals>.``. This surfaces the factory name for the core handler
+    /// ``.<locals>.``. This surfaces the factory name for the reference handler
     /// pattern (``lazy_ask.<locals>.handler`` → ``lazy_ask``) while keeping
     /// unqualified names intact. Module prefixes are dropped: ``pkg.mod.foo``
     /// → ``foo``.

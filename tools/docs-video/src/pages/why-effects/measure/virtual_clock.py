@@ -1,4 +1,4 @@
-# Hold it: the page's section 7, a virtual clock built on the stock scheduler, run 7 times. Prints each run's log,
+# Hold it: the page's section 7, a virtual clock built on the reference scheduler `scheduled`, run 7 times. Prints each run's log,
 # its wall time, and when each sleeper is parked and woken, to back the "hold k" scene of the video.
 import heapq
 import time

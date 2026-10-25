@@ -1,4 +1,4 @@
-"""Built-in handlers for provider-independent secret workflows."""
+"""Reference handlers for provider-independent secret workflows."""
 
 
 import os

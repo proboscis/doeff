@@ -322,7 +322,7 @@ A program that sleeps for hours is slow to run under a test. Answering `Sleep` a
 enough once several tasks sleep at the same time: whoever runs the clock must also decide which
 task wakes next, which is the scheduler's job.
 
-In doeff, the clock is a handler, and it works with the stock scheduler. The handler below parks
+In doeff, the clock is a handler, and it works with the reference scheduler `scheduled`. The handler below parks
 each sleeping task on a promise: it holds `k` until the promise completes. An idle-priority task,
 which runs only while every other task waits, moves the clock to the earliest wake-up and wakes
 that task:

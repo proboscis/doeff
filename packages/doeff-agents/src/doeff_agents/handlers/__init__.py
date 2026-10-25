@@ -556,7 +556,7 @@ def daemon_agent_handlers(
     time_handler: Any | None = None,
     max_running: int = 10,
 ) -> tuple[Any, ...]:
-    """Return standard handlers for doeff-agentd-backed workflows."""
+    """Return the reference handlers for doeff-agentd-backed workflows."""
     return (
         time_handler or sync_time_handler(),
         daemon_agent_handler(

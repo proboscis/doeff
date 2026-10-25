@@ -345,7 +345,7 @@ Judge from these facts:
 
 - doeff is at 0.7.0, and versions before 1.0 change the API: code written for 0.4 does not run on
   0.5 (`WithHandler` is gone from `doeff`), 0.6.0 changed what `pip install doeff` installs, and
-  0.7.0 changed the default scheduler to the Rust one.
+  0.7.0 changed the reference scheduler `scheduled` to the Rust one.
   The [changelog](../CHANGELOG.md) lists each change. Pin the version you test with.
 - One person maintains it, and uses it in their own projects.
 - Each push to `main` and each pull request runs the tests of the core packages on Linux with

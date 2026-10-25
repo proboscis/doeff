@@ -21,10 +21,10 @@ Gemini cost tracking is effect-based.
 
 The effect is handled via the normal handler stack.
 
-## Default handler
+## Reference handler
 
-Use `doeff_gemini.handlers.default_gemini_cost_handler` to enable built-in
-pricing for known models.
+Use the reference handler `doeff_gemini.handlers.default_gemini_cost_handler` for the
+pricing of known models that ships with it.
 
 - Known model: resume with `GeminiCostEstimate`.
 - Unknown model: `Delegate()` so another handler can handle it.

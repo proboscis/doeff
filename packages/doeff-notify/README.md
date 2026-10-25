@@ -10,7 +10,7 @@ Provider-agnostic notification effects for `doeff`.
 - `NotifyThread`: post a follow-up message to an existing thread.
 - `Acknowledge`: wait for or query acknowledgment state.
 
-## Built-In Handlers
+## Reference Handlers
 
 - `console_handler`: prints notifications to stdout.
 - `testing_handler`: captures notifications in-memory for assertions.
@@ -33,7 +33,7 @@ def workflow():
     )
     return result
 
-# The built-in handlers are `@handler` functions: apply one to a program.
+# The reference handlers are `@handler` functions: apply one to a program.
 run(console_handler(workflow()))
 ```
 

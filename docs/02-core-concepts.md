@@ -66,7 +66,7 @@ What a handler can do with `k` ([Handler Contract](#handler-contract) has the ru
 nondeterministic choice, cannot be written as handlers
 ([Continuations are one-shot](positioning/what-doeff-is.md#continuations-are-one-shot)).
 
-The built-in effects work the same way. `state()` answers `Get` and `Put` from a dict and resumes
+The effects of the reference implementation `doeff-core-effects` work the same way. `state()` answers `Get` and `Put` from a dict and resumes
 `k`; `writer` answers `Tell` by yielding `Get` and `Put` to `state()`; `try_handler` answers
 `Try(program)` with `Ok(value)` or `Err(error)`. State, exceptions, concurrency, observation and I/O are effects and handlers of this one
 kind, and a program uses any of them together.
