@@ -24,6 +24,7 @@
 
 [removed]
 3.11〜3.14 と決めた。それまで root の tag で出していた `doeff-agents`・`doeff-time`・`doeff-indexer` は、この決定で root の tag から外した。
+[removed]
 
 ## 出す部品の分類
 
