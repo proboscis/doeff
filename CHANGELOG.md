@@ -45,6 +45,11 @@
   midway (`'over budget at Summarize'`), and `live_world` fetches the page over real HTTP. It closes with one line for
   what stayed the same (`digest`) and one line per handler for what it did with `k` and the answer it gave. The
   recording at the top of the README shows the same four handlers.
+- `doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`: the PyPI metadata reads on the README's
+  axis. Each one-line summary starts with "Algebraic effects for Python:", the keywords are `algebraic-effects`,
+  `effects`, `effect-handlers`, `handlers` and `continuations` instead of `monad` and `free-monad`, each package links
+  its Documentation, Changelog and Issues, and every package gives a Development Status, an Intended Audience and a
+  Topic (`tests/test_core_packages_metadata.py`).
 
 ## 0.7.0 — 2026-10-18
 

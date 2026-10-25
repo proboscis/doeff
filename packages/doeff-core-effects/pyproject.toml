@@ -1,11 +1,22 @@
 [project]
 name = "doeff-core-effects"
 version = "0.7.0"
-description = "Standard effects and handlers for doeff: state, reader, writer, concurrency, HTTP, SQL, files and processes"
+description = "Algebraic effects for Python: the standard doeff effects and handlers for state, reader, writer, concurrency, HTTP, SQL, files and processes"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["algebraic-effects", "effects", "effect-handlers", "handlers", "continuations", "concurrency", "state"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 # 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
 # 既定は Python の核だけ — pip install doeff は doeff・doeff-vm・doeff-core-effects・frozendict の 4 個を入れる。Hy で書いた
 # effect と handler の Hy(doeff-hy)と、HTTP の client の httpx は下の extra で足す(tests/test_core_install_extras.py・card ki-006338b48f4b)。
@@ -18,6 +29,8 @@ dependencies = [
 Homepage = "https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects"
 Repository = "https://github.com/proboscis/doeff"
 Issues = "https://github.com/proboscis/doeff/issues"
+Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
+Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Hy で書いた effect と handler(file・process・sql・random・channel・meter など・cache)を読む Hy。

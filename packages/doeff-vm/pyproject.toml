@@ -8,24 +8,32 @@ backend-path = ["."]
 [project]
 name = "doeff-vm"
 version = "0.7.0"
-description = "The Rust virtual machine (a PyO3 extension) that runs doeff algebraic-effect programs"
+description = "Algebraic effects for Python: the Rust virtual machine (a PyO3 extension) that runs doeff programs, their handlers and continuations"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["algebraic-effects", "effects", "effect-handlers", "handlers", "continuations", "virtual-machine", "rust", "pyo3"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Interpreters",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff/tree/main/packages/doeff-vm"
 Repository = "https://github.com/proboscis/doeff"
 Issues = "https://github.com/proboscis/doeff/issues"
+Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
+Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
