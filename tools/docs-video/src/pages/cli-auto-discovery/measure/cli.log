@@ -1,0 +1,98 @@
+doeff 807d13011, doeff-indexer 0.1.3
+
+$ doeff run --program myapp.features.auth.login.login_program
+localhost, timeout 30
+
+$ doeff run --program myapp.features.auth.login.login_program --format json
+{"status": "ok", "program": "myapp.features.auth.login.login_program", "interpreter": "myapp.features.auth.auth_interpreter", "envs": ["myapp.base_env", "myapp.features.features_env", "myapp.features.auth.auth_env"], "result": "localhost, timeout 30", "result_type": "str"}
+
+$ doeff run --program myapp.features.auth.login.login_program --interpreter myapp.features.auth.auth_interpreter --env myapp.base_env --env myapp.features.features_env --env myapp.features.auth.auth_env --format json
+[doeff] DeprecationWarning: the following flags are deprecated and will be removed in a future release:
+--interpreter is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --interpreter myapp.sim_interpreter
+  # After (compose inline with Hy)
+  doeff run --hy '(import myapp [p]) (import myapp.sim [sim_interpreter]) (sim_interpreter p)'
+--env is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --env myapp.env_dict
+  # After — choose one:
+  #  (a) inline lazy-ask in Hy:
+  doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask]) ((lazy-ask :env myapp.env_dict) p)'
+  #  (b) string secrets via DOEFF_* env vars:
+  export DOEFF_OPENAI_API_KEY=sk-...; doeff run --program myapp.p
+{"status": "ok", "program": "myapp.features.auth.login.login_program", "interpreter": "myapp.features.auth.auth_interpreter", "envs": ["myapp.base_env", "myapp.features.features_env", "myapp.features.auth.auth_env"], "result": "localhost, timeout 30", "result_type": "str"}
+
+$ doeff run --program myapp.features.auth.login.login_program --env tests.fakes.test_env --format json
+[doeff] DeprecationWarning: the following flags are deprecated and will be removed in a future release:
+--env is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --env myapp.env_dict
+  # After — choose one:
+  #  (a) inline lazy-ask in Hy:
+  doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask]) ((lazy-ask :env myapp.env_dict) p)'
+  #  (b) string secrets via DOEFF_* env vars:
+  export DOEFF_OPENAI_API_KEY=sk-...; doeff run --program myapp.p
+{"status": "ok", "program": "myapp.features.auth.login.login_program", "interpreter": "myapp.features.auth.auth_interpreter", "envs": ["tests.fakes.test_env"], "result": "fake-db, timeout 1", "result_type": "str"}
+
+$ doeff run --program myapp.features.auth.login.login_program --interpreter tests.fakes.test_interpreter --format json
+[doeff] DeprecationWarning: the following flags are deprecated and will be removed in a future release:
+--interpreter is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --interpreter myapp.sim_interpreter
+  # After (compose inline with Hy)
+  doeff run --hy '(import myapp [p]) (import myapp.sim [sim_interpreter]) (sim_interpreter p)'
+doeff Traceback (most recent call last):
+  login()  myapp/features/auth/login.py:7
+    host = yield Ask("db_host")
+    handlers:
+      reader ↗
+      _writer_handler ↗
+      state ↗
+      scheduled ↗
+MissingEnvKeyError: Ask: key not found: 'db_host'
+  The env is empty.
+  To provide it, put the key in the env of the handler that answers Ask: reader(env={...}) or lazy_ask(env={...}).
+{"status": "error", "error": "MissingEnvKeyError", "message": "Ask: key not found: 'db_host'\n  The env is empty.\n  To provide it, put the key in the env of the handler that answers Ask: reader(env={...}) or lazy_ask(env={...}).", "hint": "From the CLI, compose the env inline with --hy (README, CLI):\n  doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask]) ((lazy-ask :env {\"db_host\" VALUE}) p)'"}
+
+$ doeff run --program myapp.features.auth.login.login_program --interpreter tests.fakes.test_interpreter --env tests.fakes.test_env --format json
+[doeff] DeprecationWarning: the following flags are deprecated and will be removed in a future release:
+--interpreter is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --interpreter myapp.sim_interpreter
+  # After (compose inline with Hy)
+  doeff run --hy '(import myapp [p]) (import myapp.sim [sim_interpreter]) (sim_interpreter p)'
+--env is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --env myapp.env_dict
+  # After — choose one:
+  #  (a) inline lazy-ask in Hy:
+  doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask]) ((lazy-ask :env myapp.env_dict) p)'
+  #  (b) string secrets via DOEFF_* env vars:
+  export DOEFF_OPENAI_API_KEY=sk-...; doeff run --program myapp.p
+{"status": "ok", "program": "myapp.features.auth.login.login_program", "interpreter": "tests.fakes.test_interpreter", "envs": ["tests.fakes.test_env"], "result": "fake-db, timeout 1", "result_type": "str"}
+
+$ doeff run --format json --hy (import myapp.features.auth.login [login-program]) (import doeff-core-effects.handlers [reader]) ((reader :env {"db_host" "fake-db" "timeout" 1}) login-program)
+{"status": "ok", "program": null, "interpreter": null, "envs": [], "result": "fake-db, timeout 1", "result_type": "str"}
+
+$ doeff run --program other.job.job_program --format json
+doeff Traceback (most recent call last):
+  job()  other/job.py:8
+    return (yield Ask("timeout"))
+    handlers:
+      await_handler ↗
+      _listen_handler ↗
+      _slog_handler ↗
+      _try_handler ↗
+      _writer_handler ↗
+      state ↗
+      lazy_ask ↗
+      scheduled ↗
+UnhandledEffect: no handler found for effect: Ask (Ask('timeout'))
+  handlers in scope (innermost→outermost): await_handler → _listen_handler → _slog_handler → _try_handler → _writer_handler → state → lazy_ask → scheduled
+  hint: Ask is handled by reader(env={...}) or lazy_ask(env={...}) holding the key: run(reader(env={...})(prog))
+{"status": "error", "error": "UnhandledEffect", "message": "no handler found for effect: Ask (Ask('timeout'))\n  handlers in scope (innermost\u2192outermost): await_handler \u2192 _listen_handler \u2192 _slog_handler \u2192 _try_handler \u2192 _writer_handler \u2192 state \u2192 lazy_ask \u2192 scheduled\n  hint: Ask is handled by reader(env={...}) or lazy_ask(env={...}) holding the key: run(reader(env={...})(prog))"}
+
+$ doeff run --program other.job.ping_program --format json
+{"status": "ok", "program": "other.job.ping_program", "interpreter": "doeff.cli.run_services:default_interpreter", "envs": [], "result": "pong", "result_type": "str"}
+

@@ -1,0 +1,102 @@
+[
+ {
+  "id": "t1",
+  "text": "CLI auto-discovery. doeff run finds the interpreter and the environments for your program."
+ },
+ {
+  "id": "t2",
+  "text": "A program only yields effects. Which handlers answer them is decided when it runs."
+ },
+ {
+  "id": "t3",
+  "text": "Without discovery, every command names the interpreter and the environments. With markers, the program is enough."
+ },
+ {
+  "id": "m1",
+  "text": "Mark a function with the comment: doeff, interpreter, default. It becomes a default interpreter."
+ },
+ {
+  "id": "m2",
+  "text": "Mark a variable that has a type annotation with: doeff, default. It becomes a default environment."
+ },
+ {
+  "id": "m3",
+  "text": "doeff-indexer scans the source and lists every marked symbol. A variable without an annotation is skipped."
+ },
+ {
+  "id": "i1",
+  "text": "doeff run cuts the program's module path into a hierarchy, from the root package down."
+ },
+ {
+  "id": "i2",
+  "text": "It keeps only the interpreters marked on that path: in the program's own module, or in a package above it."
+ },
+ {
+  "id": "i3",
+  "text": "Two are on the path. base interpreter, at index zero, and auth interpreter, at index two."
+ },
+ {
+  "id": "i4",
+  "text": "The closest one, the deepest, wins. auth interpreter will run the program."
+ },
+ {
+  "id": "e1",
+  "text": "Environments are not chosen. Every marked environment on the path is collected, root first."
+ },
+ {
+  "id": "e2",
+  "text": "They merge from left to right. A later value overrides an earlier one."
+ },
+ {
+  "id": "e3",
+  "text": "timeout is ten in base env, twenty in features env, and thirty in auth env. Thirty wins."
+ },
+ {
+  "id": "e4",
+  "text": "The merged environment keeps every key from all three."
+ },
+ {
+  "id": "r1",
+  "text": "Then doeff run calls auth interpreter with the program, and the merged environment as env."
+ },
+ {
+  "id": "r2",
+  "text": "The interpreter installs its handlers around the program. reader holds the merged environment."
+ },
+ {
+  "id": "r3",
+  "text": "login yields Ask for the database host, then Ask for the timeout. reader answers each one, and k resumes."
+ },
+ {
+  "id": "r4",
+  "text": "The program never named a handler or a config file. It returns: localhost, timeout thirty."
+ },
+ {
+  "id": "o1",
+  "text": "To run the same program with something else, say so on the command line."
+ },
+ {
+  "id": "o2",
+  "text": "The env flag replaces the discovered environments. auth interpreter is still discovered, and answers from the fake one."
+ },
+ {
+  "id": "o3",
+  "text": "The interpreter flag turns off discovery of both. With no env flag, the first Ask fails."
+ },
+ {
+  "id": "o4",
+  "text": "Both flags warn that they are deprecated. The hy flag composes the handlers inline instead."
+ },
+ {
+  "id": "f1",
+  "text": "And if no marked interpreter is on the path? doeff run does not stop. It uses its built-in default interpreter."
+ },
+ {
+  "id": "f2",
+  "text": "It ignores environments, so Ask for the timeout finds no handler. format json shows what was chosen."
+ },
+ {
+  "id": "z1",
+  "text": "Markers keep handlers next to the code. doeff run finds them by where the program lives."
+ }
+]
