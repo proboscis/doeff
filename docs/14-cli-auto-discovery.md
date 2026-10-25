@@ -813,13 +813,13 @@ doeff run \
 ```bash
 doeff run \
   --program myapp.features.auth.login_program \
-  --interpreter tests.mock_interpreter \
-  --env tests.mock_env
+  --interpreter tests.test_interpreter \
+  --env tests.test_env
 ```
 
 **Result**:
-- Interpreter: `tests.mock_interpreter` (manual)
-- Envs: `mock_env` only (manual)
+- Interpreter: `tests.test_interpreter` (manual)
+- Envs: `test_env` only (manual)
 
 ---
 

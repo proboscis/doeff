@@ -149,7 +149,7 @@ components are listed separately under
 ### Design Notes
 
 - **[Static Typing](23-static-typing.md)** - Typed effects (`EffectBase[T]`), typed `@do` programs, typed handler answers, and runtime readers of the same types
-- **[Rust Scheduler](25-rust-scheduler.md)** - The scheduler implemented in Python (default) and in Rust (opt-in): switching, the condition for making Rust the default, downstream extension points, measurements
+- **[Rust Scheduler](25-rust-scheduler.md)** - The scheduler implemented in Rust (default since 0.7.0) and in Python (opt-in): switching, why Rust is the default and when to choose Python, downstream extension points, measurements
 - **[Capability Classes](22-capability-classes.md)** - A four-class taxonomy predicting where effects pay off, retry under one-shot continuations, and adoption anti-patterns
 - **[CLI Architecture](cli-run-command-architecture.md)** - Run command pipeline design
 

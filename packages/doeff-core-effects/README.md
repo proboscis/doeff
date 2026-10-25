@@ -3,8 +3,9 @@
 The standard effects and handlers for [doeff](https://github.com/proboscis/doeff).
 
 **This README is for** Python developers who write doeff programs. After reading it
-you can install the package, run a program with the standard handlers, swap a
-production handler for a test handler, and find the effect family you need.
+you can install the package, run a program with the standard handlers, choose the handler that gives
+an effect its meaning (a test handler in place of a production one is one such choice),
+and find the effect family you need.
 
 ## What it does
 

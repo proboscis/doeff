@@ -70,11 +70,11 @@ def my_interpreter(program):  # doeff: interpreter
 
 
    @do
-   def fake_fetch(effect: Fetch, k):
+   def canned_fetch(effect: Fetch, k):
        return (yield Resume(k, f"response from {effect.url}"))
 
 
-   print(run(handler(fake_fetch)(fetch_data())))  # response from https://api.example.com/users
+   print(run(handler(canned_fetch)(fetch_data())))  # response from https://api.example.com/users
    ```
 
    The arguments of an effect are the fields of its class, so the handler reads `effect.url`.
