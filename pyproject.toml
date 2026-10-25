@@ -437,6 +437,12 @@ tests = [
 prefix = "docs/18-effect-combinations.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+# 19 章(agent の tutorial)は、doeff-agents の effect を yield する @do の Program を test 用の handler で走らせる(取り組み
+# doeff-publish の区切り 26・card ki-04da29e4b673)。本番の handler の段は session host を要るので excerpt。
+[[tool.doeff.contract-tests]]
+prefix = "docs/19-agent-tutorial.md"
+tests = ["tests/test_docs_page_examples.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "docs/20-why-effects-over-di.md"
 tests = ["tests/test_docs_page_examples.py"]
