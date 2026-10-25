@@ -9,6 +9,7 @@ import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
 import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
 import {HOME} from './pages/home/Home';
 import {KLEISLI_ARROWS} from './pages/kleisli-arrows/KleisliArrows';
+import {RUST_SCHEDULER} from './pages/rust-scheduler/RustScheduler';
 import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 
 // One composition per docs page, named after the page's video file in docs/assets/videos/ (home.mp4 is on
@@ -24,5 +25,6 @@ export const Root: React.FC = () => (
     <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="kleisli-arrows" component={KLEISLI_ARROWS.Video} durationInFrames={KLEISLI_ARROWS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="cli-auto-discovery" component={CLI_AUTO_DISCOVERY.Video} durationInFrames={CLI_AUTO_DISCOVERY.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="rust-scheduler" component={RUST_SCHEDULER.Video} durationInFrames={RUST_SCHEDULER.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );

@@ -1,0 +1,6 @@
+DEFAULT_IMPLEMENTATION = 'rust'
+scheduled(main())                          -> rust
+scheduled(main(), implementation="python") -> python
+DOEFF_SCHEDULER=python  scheduled(main())  -> python
+DOEFF_SCHEDULER=python  implementation="rust" -> rust
+DOEFF_SCHEDULER=go -> ValueError: scheduler implementation must be 'python' or 'rust', got 'go' (argument or $DOEFF_SCHEDULER)
