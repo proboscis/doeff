@@ -42,10 +42,10 @@
 
 (defk writes []
   {:pre [] :post [(: % tuple)]}
-  "書きの 3 つ(parts の PutRow・PutRows と journal の AppendEvent)の答え。AppendEvent は失敗(Refused・Unreachable)を <- が Raise にするので、
-   handler が値で答える事(R4)を見るために宣言を開かずに(Perform)値のまま受ける。"
+  "書きの 3 つ(parts の PutRow・PutRows と journal の AppendEvent)の答え。PutRows と AppendEvent は失敗(PutRows は RowsRefused・Unreachable、
+   AppendEvent は Refused・Unreachable)を <- が Raise にするので、handler が値で答える事(R4)を見るために宣言を開かずに(Perform)値のまま受ける。"
   (<- put (PutRow "parts" #("p1") (part "p1") (ExpectAbsent)))
-  (<- rows (PutRows #((RowWrite "parts" #("p2") (part "p2") (ExpectAbsent)))))
+  (<- rows (Perform (PutRows #((RowWrite "parts" #("p2") (part "p2") (ExpectAbsent))))))
   (<- appended (Perform (AppendEvent "journal" "k1" {"n" 1})))
   #(put rows appended))
 

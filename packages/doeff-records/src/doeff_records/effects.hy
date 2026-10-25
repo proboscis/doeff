@@ -21,7 +21,7 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
-                              Appended Refused Events NotIndexed])
+                              Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -149,22 +149,35 @@
     (check-row-write self "RowWrite")))
 
 
-(defclass [(dataclass :frozen True)] PutRows [EffectBase]
+(defn #^ bool checked-put-rows [#^ object writes #^ object idempotency-key]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+  "PutRows の欄(writes・idempotency-key)を作る時に検める — 冪等キーは None か空でない文字列・writes は RowWrite の空でない tuple で、
+   同じ表の同じ鍵を 2 度含まない。断りの型と文言と順は defclass の時から変えない。"
+  (checked-write-key idempotency-key "PutRows.idempotency_key")
+  (when (not (and (isinstance writes tuple) writes (all (gfor w writes (isinstance w RowWrite)))))
+    (raise (TypeError (.format "PutRows.writes は RowWrite の空でない tuple: {!r}" writes))))
+  (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor w writes #(w.table w.key)))) :if (> times 1) slot)))
+  (when repeated
+    (raise (ValueError (.format "PutRows.writes に同じ行が 2 度出る(表・鍵): {!r}" repeated))))
+  True)
+
+
+(defeffect PutRows
   "複数の行を全部か 0 で書く(1 行でも通らなければ 1 行も書かない)。writes = RowWrite の空でない tuple(同じ表の同じ鍵は 1 度だけ —
    2 度出たら作る時に ValueError)。答え = WrittenRows(束の順の Written)| RowsConflict | RowsRefused(どちらも束の中の位置と行を持つ)|
    Unreachable。判定は PutRow と同じ admission で、全部の行の期待を先に見て、次に全部の行の書きの判定を見る。
    確定した時は変更の列に束の順で 1 行ずつ、続いた番号で積む。書き手の名は欄に無い(PutRow と同じく handler を組む時に入る)。
    idempotency-key = 束 1 つの身元(PutRow と同じ — 同じ鍵・同じ束の送り直しは前の WrittenRows を replayed 真で返し、同じ鍵の別の束は
-   束の 0 行目の RowsRefused)。"
-  (#^ tuple writes)
-  (setv #^ (| str None) idempotency-key None)
-  (defn #^ None __post_init__ [self]
-    (checked-write-key self.idempotency-key "PutRows.idempotency_key")
-    (when (not (and (isinstance self.writes tuple) self.writes (all (gfor w self.writes (isinstance w RowWrite)))))
-      (raise (TypeError (.format "PutRows.writes は RowWrite の空でない tuple: {!r}" self.writes))))
-    (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor w self.writes #(w.table w.key)))) :if (> times 1) slot)))
-    (when repeated
-      (raise (ValueError (.format "PutRows.writes に同じ行が 2 度出る(表・鍵): {!r}" repeated))))))
+   束の 0 行目の RowsRefused)。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): WrittenRows = 成功 / RowsConflict = 値(束のある行の期待が今の行と合わないという
+   版の負けで、PutRow の Conflict と同じ — 呼び手が読み直して撃ち直す普通の答えなので、失敗にして Raise で飛ばさず、不在にして Absent で
+   飛ばさない)/ RowsRefused = 失敗(束のある行を宣言が許さない・同じ鍵の別の束 — PutRow の Refused と同じで、<- は Raise(RowsRefused) を
+   出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。不在は無い。答える handler は今までどおり 4 つとも値で答える(R4)。"
+  {:fields [(: writes (get tuple #(RowWrite ...))) (: idempotency-key (| str None) None)]
+   :pre [(checked-put-rows writes idempotency-key)]
+   :answer (| WrittenRows RowsConflict RowsRefused Unreachable)
+   :failure [RowsRefused Unreachable]
+   :value [RowsConflict]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defn #^ tuple write-parts [#^ (| PutRow PutRows) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
