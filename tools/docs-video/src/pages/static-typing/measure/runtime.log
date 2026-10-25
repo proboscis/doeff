@@ -1,0 +1,25 @@
+
+doeff Traceback (most recent call last):
+
+  elapsed()  tools/docs-video/src/pages/static-typing/measure/runtime.py:49
+    now = yield from ReadClock()
+
+UnhandledEffect: unhandled effect: ReadClock (ReadClock()) (no handlers in scope)
+  hint: install a handler for ReadClock: run(fn(prog)), where fn is a def (effect: ReadClock, k) marked with @handler that returns (yield Resume(k, value))
+
+effect_result_type(ReadClock): <class 'int'>
+effect_result_type(WriteShared): <class 'bool'>
+effect_result_type(Untyped): typing.Any
+program_signature(elapsed): ProgramSignature(effects=(<class '__main__.ReadClock'>,), result=<class 'int'>)
+program_signature(both): ProgramSignature(effects=(doeff_core_effects.scheduler.Spawn[typing.Any, typing.Any], doeff_core_effects.scheduler.Gather[int | str], doeff_core_effects.scheduler.Race[int | str], <class '__main__.ReadClock'>), result=list[int | str])
+handler_effect_types(clock): None
+clock: answers ReadClock with 1000
+elapsed: sent back 1000 (int)
+run(clock(elapsed(400))): 600
+clock: answers ReadClock with 1000
+elapsed: sent back 1000 (int)
+clock: answers ReadClock with 1000
+elapsed: sent back 1000 (int)
+run(scheduled(clock(both(400)))): [600, '600 ms', 600]
+@handler wrong(effect: str, k): TypeError - handler wrong (defined at /work/toolset/worktrees/doeff-wt-video-static-typing/tools/docs-video/src/pages/static-typing/measure/runtime.py:93): the annotation of effect parameter 'effect' names str, which no effect can be an instance of, so the handler would never be called. Annotate it with the effect class it handles (a subclass of EffectBase, e.g. effect: MyEffect), or with EffectBase to receive every effect.
+run(elapsed(400)) without clock: UnhandledEffect

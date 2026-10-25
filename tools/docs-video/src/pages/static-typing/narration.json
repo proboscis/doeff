@@ -1,0 +1,94 @@
+[
+ {
+  "id": "a1",
+  "text": "Static typing in doeff. A type checker follows your effects out to the handler, and back."
+ },
+ {
+  "id": "a2",
+  "text": "It checks three things. First, the value each effect answers with."
+ },
+ {
+  "id": "a3",
+  "text": "Second, the effects a program may yield."
+ },
+ {
+  "id": "a4",
+  "text": "And third, the value a handler answers with."
+ },
+ {
+  "id": "b1",
+  "text": "An effect declares its answer type. ReadClock is an EffectBase of int: its handler answers with an int."
+ },
+ {
+  "id": "b2",
+  "text": "A generic parent works too, and the same type can be read at run time: WriteShared answers a bool."
+ },
+ {
+  "id": "b3",
+  "text": "An effect on plain EffectBase leaves its answer type unknown: Any."
+ },
+ {
+  "id": "c1",
+  "text": "Yield from an effect: the program pauses, the effect travels out, and a handler sends back the answer."
+ },
+ {
+  "id": "c2",
+  "text": "The checker knows that answer's type. now is an int, in pyright and in mypy."
+ },
+ {
+  "id": "c3",
+  "text": "A bare yield runs exactly the same way, but the checker only sees Any."
+ },
+ {
+  "id": "c4",
+  "text": "Yield from a sub-program gives its result type: spent is an int."
+ },
+ {
+  "id": "d1",
+  "text": "The at-do decorator keeps three things of the function it wraps: its parameters, its effects, and its result."
+ },
+ {
+  "id": "d2",
+  "text": "The parameters. Calling elapsed with a string is a type error."
+ },
+ {
+  "id": "d3",
+  "text": "The effects. Yielding an effect outside the declared set is a type error too."
+ },
+ {
+  "id": "d4",
+  "text": "And the result. Running the program under its handler gives an int."
+ },
+ {
+  "id": "e1",
+  "text": "A handler answers an effect by resuming k, the rest of the program, with a value."
+ },
+ {
+  "id": "e2",
+  "text": "typed resume checks that value against the effect's answer type. One thousand is an int, so elapsed returns six hundred."
+ },
+ {
+  "id": "e3",
+  "text": "Answering ReadClock with a string is refused by the checker."
+ },
+ {
+  "id": "e4",
+  "text": "A handler that no effect can reach is refused twice: by the checker, and by the handler decorator when it runs."
+ },
+ {
+  "id": "f1",
+  "text": "The same types can be read at run time, so tools that cannot run pyright, such as the Hy checker, read one source of truth."
+ },
+ {
+  "id": "f2",
+  "text": "What is not typed: Ask and Get answer Any, because the environment and the state are dynamic."
+ },
+ {
+  "id": "f3",
+  "text": "And whether the handlers cover a program's effects is not a type error. Without the clock handler, run raises UnhandledEffect."
+ },
+ {
+  "id": "o1",
+  "text": "In doeff, effects carry their types. The checker follows them out to the handler, and back."
+ }
+]

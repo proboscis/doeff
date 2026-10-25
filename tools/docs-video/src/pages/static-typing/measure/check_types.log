@@ -1,0 +1,41 @@
+$ pyright probe.py  (exit 1)
+  probe.py
+  probe.py:26:17 - information: Type of "now" is "int"
+  probe.py:28:17 - information: Type of "loose" is "Any"
+  probe.py:35:17 - information: Type of "spent" is "int"
+  probe.py:39:13 - information: Type of "elapsed" is "(since: int) -> Expand[int, ReadClock]"
+  probe.py:40:13 - information: Type of "elapsed(400)" is "Expand[int, ReadClock]"
+  probe.py:41:9 - error: Argument of type "Literal['400']" cannot be assigned to parameter "since" of type "int"
+  "Literal['400']" is not assignable to "int" (reportArgumentType)
+  probe.py:46:16 - error: Return type of generator function must be compatible with "Generator[SleepSeconds, Any, Any]"
+  "Generator[SleepSeconds, Any, Unknown]" is not assignable to "Generator[ReadClock, Any, int]"
+  Type parameter "_YieldT_co@Generator" is covariant, but "SleepSeconds" is not a subtype of "ReadClock"
+  "SleepSeconds" is not assignable to "ReadClock" (reportReturnType)
+  probe.py:57:43 - error: Argument of type "Literal['noon']" cannot be assigned to parameter "value" of type "_Answer@typed_resume" in function "typed_resume"
+  "Literal['noon']" is not assignable to "int" (reportArgumentType)
+  probe.py:60:2 - error: No overloads for "handler" match the provided arguments (reportCallIssue)
+  probe.py:60:2 - error: Argument of type "(effect: str, k: K) -> Generator[Any, Any, Any]" cannot be assigned to parameter "raw_handler" of type "(_HandledEffect@handler, K) -> object" in function "handler"
+  Type "(effect: str, k: K) -> Generator[Any, Any, Any]" is not assignable to type "(_HandledEffect@handler, K) -> object"
+  Parameter 1: type "_HandledEffect@handler" is incompatible with type "str"
+  "EffectBase[Any]*" is not assignable to "str" (reportArgumentType)
+  probe.py:60:2 - error: Untyped function decorator obscures type of function; ignoring decorator (reportUntypedFunctionDecorator)
+  probe.py:65:13 - information: Type of "run(clock(elapsed(400)))" is "int"
+  probe.py:71:17 - information: Type of "name" is "Any"
+  probe.py:73:17 - information: Type of "count" is "Any"
+  probe.py:77:13 - information: Type of "run(elapsed(400))" is "int"
+  6 errors, 0 warnings, 9 informations
+  WARNING: there is a new pyright version available (v1.1.411 -> v1.1.414).
+$ mypy --strict probe.py  (exit 1)
+  probe.py:26: note: Revealed type is "int"
+  probe.py:28: note: Revealed type is "Any"
+  probe.py:35: note: Revealed type is "int"
+  probe.py:39: note: Revealed type is "def (since: int) -> doeff_vm.Expand[int, probe.ReadClock]"
+  probe.py:40: note: Revealed type is "doeff_vm.Expand[int, probe.ReadClock]"
+  probe.py:41: error: Argument 1 to "elapsed" has incompatible type "str"; expected "int" [arg-type]
+  probe.py:46: error: Incompatible types in "yield from" (actual type "SleepSeconds", expected type "ReadClock") [misc]
+  probe.py:57: error: Cannot infer value of type parameter "_Answer" of "typed_resume" [misc]
+  probe.py:60: error: Value of type variable "_HandledEffect" of "handler" cannot be "str" [type-var]
+  probe.py:65: note: Revealed type is "int"
+  probe.py:71: note: Revealed type is "Any"
+  probe.py:73: note: Revealed type is "Any"
+  probe.py:77: note: Revealed type is "int"
