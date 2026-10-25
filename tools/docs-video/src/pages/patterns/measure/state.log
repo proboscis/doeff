@@ -1,0 +1,5 @@
+order_state_machine(7), four times from 'pending':
+  returns: ('paid', 'shipped', 'completed', Err(ValueError('Invalid state: completed')))
+  log: ['Order 7: pending -> paid', 'Order 7: paid -> shipped', 'Order 7: shipped -> completed']
+Try alone: Err(RuntimeError('card declined')), _state after = {'balance': 0}
+with_state_snapshot: Err(RuntimeError('card declined')), _state after = {'balance': 100}

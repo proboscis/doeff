@@ -1,0 +1,5 @@
+bad_program under sim_time_handler: 'done', virtual clock +0 s, wall clock 5.003 s
+good_program under sim_time_handler: 'done', virtual clock +5 s, wall clock 0.001 s
+semgrep on bad_program: exit 0, findings [('doeff-no-sleep-in-programs', 9, 'ERROR')]
+good_side_effects under write_to_disk: 'done', files ['file.txt']
+good_side_effects under record_writes: 'done', writes {'file.txt': 'data'}, cwd has file.txt: False

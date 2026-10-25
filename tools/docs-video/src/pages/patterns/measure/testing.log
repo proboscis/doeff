@@ -1,0 +1,3 @@
+test_effects_executed PASSED in 0.16 ms: run(...) == 'result'
+test_effects_seen PASSED in 0.06 ms: value 'result', log ['Logged message'], store key = 'value'
+test_retry_on_a_virtual_clock PASSED in 3.48 ms: value 'data', virtual clock moved 6 s
