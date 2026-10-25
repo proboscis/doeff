@@ -334,6 +334,8 @@ from dataclasses import dataclass
 from itertools import count
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, writer, writer_log
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     CompletePromise,
@@ -383,15 +385,12 @@ def virtual_clock():
     return clock
 
 
-log = []
-
-
 @do
 def reminder(name, every_hours, times):
     for _ in range(times):
         yield Sleep(every_hours * 3600)
         hour = (yield Now()) / 3600
-        log.append(f"{hour:g}h {name}")
+        yield Tell(f"{hour:g}h {name}")
 
 
 @do
@@ -401,11 +400,20 @@ def day():
     yield Gather(tea, stretch)
 
 
+@do
+def logged(program):                    # runs program, then reads back what it told
+    yield program
+    return (yield writer_log())
+
+
 started = time.monotonic()
-run(scheduled(virtual_clock()(day())))
+log = run(scheduled(state()(writer(virtual_clock()(logged(day()))))))
 print(log)  # ['2h tea', '3h stretch', '4h tea', '6h stretch', '6h tea']
 print(time.monotonic() - started < 1)  # True
 ```
+
+Each reminder tells its line with `Tell`, and `writer` keeps the lines in order in `state`, from
+which `writer_log()` reads them back; no task writes to a shared list.
 
 Six hours of two concurrent tasks ran in well under a second, in the same order every time. Under
 a handler that answers `Sleep` with `Await(asyncio.sleep(effect.seconds))` (under
