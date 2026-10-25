@@ -1,5 +1,5 @@
 """
-Core handlers — reader, state, writer.
+Reference handlers — reader, state, writer.
 
 Stateless handlers are pre-installed Program -> Program functions.
 Parameterised handlers are factories that return Program -> Program installers.

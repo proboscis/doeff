@@ -2,8 +2,8 @@
 doeff-core-effects — reference implementation of effects and handlers.
 
 This package provides:
-- Core effects: Ask, Get, Put, Tell
-- Core handlers: reader, state, writer
+- Effects: Ask, Get, Put, Tell
+- Handlers: reader, state, writer
 - Scheduler: Spawn, Wait, Gather, Race, Cancel, Discard, Promise, ExternalPromise, Semaphore
 """
 

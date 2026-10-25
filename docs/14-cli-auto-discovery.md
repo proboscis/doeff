@@ -8,7 +8,7 @@ pip install doeff doeff-indexer
 ```
 
 > Without `doeff-indexer`, `doeff run` without `--interpreter` silently falls back to its
-> built-in default interpreter. Passing `--interpreter` (and `--env`) explicitly works with
+> fallback interpreter. Passing `--interpreter` (and `--env`) explicitly works with
 > `pip install doeff` alone.
 
 > `doeff-indexer` 0.1.3 skips a Python file that mentions none of `Program`, `@do`,
@@ -18,7 +18,7 @@ pip install doeff doeff-indexer
 
 Automatically discover and use default interpreters and environments when running programs with the `doeff run` command.
 
-[![A narrated video, about three minutes: a program yields effects and doeff run chooses the handlers; the interpreter and env markers and what doeff-indexer finds; the closest marked interpreter on the program's module path winning; the marked envs collected root first and merged, later values overriding; the chosen interpreter's reader answering the program's Asks from the merged env; --env, --interpreter, their deprecation and --hy; and the built-in default interpreter when no marker is on the path](assets/videos/cli-auto-discovery.jpg)](assets/videos/cli-auto-discovery.mp4)
+[![A narrated video, about three minutes: a program yields effects and doeff run chooses the handlers; the interpreter and env markers and what doeff-indexer finds; the closest marked interpreter on the program's module path winning; the marked envs collected root first and merged, later values overriding; the chosen interpreter's reader answering the program's Asks from the merged env; --env, --interpreter, their deprecation and --hy; and the fallback interpreter when no marker is on the path](assets/videos/cli-auto-discovery.jpg)](assets/videos/cli-auto-discovery.mp4)
 
 ## Table of Contents
 
@@ -91,7 +91,7 @@ Discovery uses the `doeff-indexer` package, which `doeff` does not install:
 pip install doeff-indexer
 ```
 
-Without it, `doeff run` silently uses its built-in default interpreter and no envs.
+Without it, `doeff run` silently uses its fallback interpreter and no envs.
 
 **Step 1**: Mark your interpreter
 
@@ -254,7 +254,7 @@ The CLI searches for functions marked with `# doeff: interpreter, default`:
 5. **Select closest**: Choose the rightmost (deepest) match
 
 If no marked interpreter is found, `doeff run` does not stop with an error: it runs the
-program with its built-in default interpreter (`doeff.cli.run_services:default_interpreter`),
+program with its fallback interpreter (`doeff.cli.run_services:default_interpreter`),
 which ignores envs.
 
 ### Example: Closest Match Selection
@@ -536,7 +536,7 @@ graph TB
     E --> F[Query indexer for<br/>interpreter, default]
     F --> I[Filter to hierarchy]
     I --> G{Found any?}
-    G -->|No| H[Use built-in<br/>default interpreter]
+    G -->|No| H[Use fallback<br/>interpreter]
     G -->|Yes| J[Select closest match]
     H --> Q{--env<br/>provided?}
     J --> Q
@@ -827,11 +827,11 @@ doeff run \
 
 ## Troubleshooting
 
-### Built-in Default Interpreter Used Instead of Yours
+### Fallback Interpreter Used Instead of Yours
 
 **Symptom**: `doeff run` does not stop with an error when it finds no marked interpreter.
-It runs the program with its built-in default interpreter, which ignores envs, so
-`Ask('key')` fails. The handlers listed are those of the built-in default interpreter:
+It runs the program with its fallback interpreter, which ignores envs, so
+`Ask('key')` fails. The handlers listed are those of the fallback interpreter:
 
 ```
 UnhandledEffect: no handler found for effect: Ask (Ask('timeout'))
@@ -1286,7 +1286,7 @@ doeff run --program X --interpreter Y
 ✅ **Discovery is opt-in**
 
 Without markers, behavior is unchanged:
-- No markers → the built-in default interpreter runs the program (no envs)
+- No markers → the fallback interpreter runs the program (no envs)
 - With markers → Auto-discovery works
 
 ---
@@ -1314,7 +1314,7 @@ Without markers, behavior is unchanged:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `UnhandledEffect: no handler found for effect: Ask`, with `lazy_ask` among the handlers | No marked interpreter found (or `doeff-indexer` not installed): the built-in default interpreter ran | Install `doeff-indexer`, add marker, or use `--interpreter` |
+| `UnhandledEffect: no handler found for effect: Ask`, with `lazy_ask` among the handlers | No marked interpreter found (or `doeff-indexer` not installed): the fallback interpreter ran | Install `doeff-indexer`, add marker, or use `--interpreter` |
 | `MissingEnvKeyError: Ask: key not found: ...` | The env did not reach the program | See [Environment Values Not Applied](#error-environment-values-not-applied) |
 | `expected DoExpr or EffectBase, got: <class 'function'>` | `--program` names a `@do` function, not a Program value | Point `--program` at a value such as `my_program = main()` |
 | `ModuleNotFoundError: No module named 'myapp'` | `myapp` is not importable where `doeff` runs | Install your project, or run `python -m doeff run ...` from the project root |

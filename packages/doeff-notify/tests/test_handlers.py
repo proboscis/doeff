@@ -1,7 +1,7 @@
 from doeff import handler as _install_raw_handler
 
 # ruff: noqa: E402
-"""Tests for doeff-notify effects and built-in handlers."""
+"""Tests for doeff-notify effects and reference handlers."""
 
 
 import importlib
@@ -55,7 +55,7 @@ def _console_program():
 
 
 def test_console_handler_prints_and_returns_notification_result(capsys) -> None:
-    # The built-in handlers are raw ``(effect, k)`` dispatchers; install them
+    # The reference handlers are raw ``(effect, k)`` dispatchers; install them
     # with ``doeff.handler`` (the replacement of ``WithHandler(raw, program)``).
     payload = run(_install_raw_handler(console_handler)(_console_program()))
 

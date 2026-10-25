@@ -207,7 +207,7 @@ Pre-built workflow templates:
 |  Dependencies                                                        |
 |  - doeff-agentic (session management, agent adapters)               |
 |  - doeff-flow (trace observability)                                 |
-|  - doeff (core effects, @do, run_sync)                              |
+|  - doeff (effects, @do, run_sync)                                   |
 +---------------------------------------------------------------------+
 ```
 

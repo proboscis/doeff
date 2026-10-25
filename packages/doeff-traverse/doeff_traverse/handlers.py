@@ -1,7 +1,7 @@
 """
 Handlers for doeff-traverse effects.
 
-sequential(): default handler — runs Traverse sequentially, Reduce/Zip/Inspect directly.
+sequential(): reference handler — runs Traverse sequentially, Reduce/Zip/Inspect directly.
 normalize_to_none(): Fail handler — resumes with None at fail site.
 progress_bars(): ItemOutcome handler — one progress bar per Traverse.
 """

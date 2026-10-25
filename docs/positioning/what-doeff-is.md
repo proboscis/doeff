@@ -16,7 +16,7 @@ one mechanism. Continuations are one-shot: a handler resumes each `k` at most on
 ## The mechanism
 
 - **An effect** is a plain value that names an operation: `Spend(3)`, `Get("count")`,
-  `Spawn(task)`. It does nothing by itself. You define your own as a class, or use the built-in ones.
+  `Spawn(task)`. It does nothing by itself. You define your own as a class, or use the ones a package ships.
 - **A program** is a generator function under `@do`. At each `yield` of an effect it pauses.
 - **A handler** is a function of `(effect, k)`. The innermost handler installed around the program
   that takes that effect receives it.
@@ -31,7 +31,7 @@ What the handler does with `k`:
 | answers and is done | `Transfer(k, value)` | goes on with `value`; the handler does not get control back |
 | throws into it | `ResumeThrow(k, error)` | sees `error` raised at the `yield`, where its own `try` can catch it |
 | passes the effect on | `Pass(effect, k)` | gets the answer of the next handler out |
-| holds it while other tasks run | the built-in scheduler, `scheduled(...)` | waits; `Spawn`, `Gather` and `Race` are effects of this handler |
+| holds it while other tasks run | a scheduler handler, such as the reference `scheduled(...)` | waits; `Spawn`, `Gather` and `Race` are effects of this handler |
 | drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
 
 `research` yields one `Spend` per topic and knows nothing about what spending means. Two handlers
@@ -103,7 +103,7 @@ print(seen)  # [Spend(cost=3), Spend(cost=3)]
 
 ## One mechanism for state, exceptions, concurrency, observation, budgets and I/O
 
-The built-in effects are effects like `Spend`, and their handlers are handlers like `budget`:
+The effects the packages ship are effects like `Spend`, and their reference handlers are handlers like `budget`:
 
 | What | The program yields | The handler that gives it its meaning |
 | --- | --- | --- |
@@ -311,7 +311,7 @@ the I/O use, not to the description of doeff.
 | --- | --- | --- |
 | "Algebraic effects for Python: swap real and fake I/O without mocks." | Names one use as the whole. Most of what handlers do (budgets, early exit, errors, the scheduler) has no I/O in it. | "Algebraic effects for Python: your code yields effects, and handlers decide what they mean." |
 | "A replacement for mocks", "mock-free testing", "test without mocks" as the headline | Tests are one consumer of handlers, and for swapping alone dependency injection is the simpler tool. | As a use, after the mechanism: "A test answers effects with handlers, so nothing is patched, and an effect nobody answers stops the run with `UnhandledEffect`." |
-| "Your code yields its I/O", "yield I/O effects", "push I/O to the edges" | An effect is any operation a program names, not a wrapper around I/O. | "Your code yields effects: operations you define, such as `Spend(3)`, or built-in ones such as `Get("count")` and `Spawn(task)`. Fetching a page is one of them." |
+| "Your code yields its I/O", "yield I/O effects", "push I/O to the edges" | An effect is any operation a program names, not a wrapper around I/O. | "Your code yields effects: operations you define, such as `Spend(3)`, or ones a package ships, such as `Get("count")` and `Spawn(task)`. Fetching a page is one of them." |
 | "Handlers are swappable implementations", "dependency injection with generators" | An injected object answers a call; it does not get the rest of the program. | "A handler receives each effect with its continuation, and decides whether the program goes on, with what, when, or not at all." |
 | "Do-notation for Python", "a do-notation and effects system" | `@do` is the syntax a program is written in, not what doeff does. | "Algebraic effects for Python. Programs are generator functions under `@do`." |
 | "Full algebraic effects, like Koka or OCaml 5" | Overclaims: continuations are one-shot (no backtracking or nondeterminism), and effects are not in the types. | "Algebraic effects with one-shot continuations, as in OCaml 5; no multi-shot handlers, and no effect types." |

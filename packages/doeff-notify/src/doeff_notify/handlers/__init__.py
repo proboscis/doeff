@@ -1,4 +1,4 @@
-"""Built-in handlers for notification effects."""
+"""Reference handlers for notification effects."""
 
 from .log import log_handler
 from .stdout import console_handler

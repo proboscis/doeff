@@ -3,7 +3,7 @@
 //!
 //! The VM knows no handler, so the lines come from Python: a package that ships
 //! handlers registers a function from an effect to the line naming the handler and
-//! how to install it (`doeff_vm._unhandled_hint`); the core effects' table is
+//! how to install it (`doeff_vm._unhandled_hint`); the table for its effects is
 //! `doeff_core_effects.unhandled_hints`. The VM hands over the handlers in scope that
 //! filter by their annotation, and Python writes the line naming the ones that left
 //! the effect out.

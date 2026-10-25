@@ -1,4 +1,4 @@
-"""Core effects — Ask, Get, Put, Tell, HttpRequest.
+"""Reference effects — Ask, Get, Put, Tell, HttpRequest.
 
 These are EffectBase subclasses. Yield them from @do functions.
 Handlers (reader, state, writer) handle them.
