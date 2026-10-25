@@ -408,7 +408,12 @@ tests = ["tests/test_docs_page_examples.py"]
 # 秒は 3.5 秒(起動を含む壁時計・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/09-advanced-effects.md"
-tests = ["tests/test_docs_state_get_missing_key.py"]
+tests = [
+    "tests/test_docs_state_get_missing_key.py",
+    # 小節 Using Gather with Async Operations の例(I/O を HttpGet の effect と @handler に置いた形)を走らせる
+    # (card ki-d4da7b8d4229)。09 章は page 全体をまだ走らせられないので、小節だけを走らせる。
+    "tests/test_docs_gather_io_example.py",
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "docs/history/specs/effects/SPEC-EFF-002-state.md"

@@ -52,24 +52,45 @@ def parallel_dict():
 
 ### Using Gather with Async Operations
 
-To run async operations in parallel, wrap them with `Await` and `Spawn`:
+To run I/O in parallel, the program yields an effect for each request in a spawned task, and a
+handler performs the I/O. Here `HttpGet(url)` is the effect, and `http_handler` answers it by
+awaiting an async HTTP call with `Await`; `await_handler()` runs both awaits on one asyncio loop,
+so they overlap:
 
 ```python
-from doeff import Await, do
-from doeff_core_effects.scheduler import Spawn, Gather
+from dataclasses import dataclass
+
+from doeff import Await, EffectBase, Resume, do, handler, run
+from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+
+@dataclass(frozen=True)
+class HttpGet(EffectBase):  # an effect: "get the body at url"
+    url: str
 
 @do
-def parallel_async():
-    @do
-    def fetch_data(url):
-        return (yield Await(http_get(url)))
+def fetch_data(url):
+    return (yield HttpGet(url))
 
+@do
+def parallel_fetch():
     t1 = yield Spawn(fetch_data("https://api1.example.com"))
     t2 = yield Spawn(fetch_data("https://api2.example.com"))
+    return (yield Gather(t1, t2))
 
-    results = yield Gather(t1, t2)
-    return results
+async def http_get(url):  # stands for the call to your async HTTP client
+    return f"body of {url}"
+
+@handler
+def http_handler(effect: HttpGet, k):
+    body = yield Await(http_get(effect.url))
+    return (yield Resume(k, body))
+
+print(run(scheduled(await_handler()(http_handler(parallel_fetch())))))  # ['body of https://api1.example.com', 'body of https://api2.example.com']
 ```
+
+`parallel_fetch` names no HTTP client. A test puts a handler that answers `HttpGet` with
+made-up bodies in place of `http_handler`, and nothing reaches the network.
 
 ### Gather Fail-Fast Semantics
 
