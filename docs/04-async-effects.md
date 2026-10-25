@@ -256,16 +256,20 @@ print(run(scheduled(try_handler(collect_all_even_on_errors()))))  # [Ok('one'), 
 Race losers continue running by default. Cancel them explicitly if needed (for Task inputs):
 `for t in (t1, t2): yield Cancel(t)` — cancelling the task that already completed is a no-op.
 
-```python
-import asyncio
+The jobs below wait with doeff-time's `Delay`, and the run puts `sim_time_handler()` around them, so
+they wait on a virtual clock: the run takes no real time and `b` wins on every run. `doeff-time`
+(import name `doeff_time`) is not installed by `pip install doeff` and is not on PyPI; install it
+from a checkout as shown in [Pages That Need Other Components](index.md#pages-that-need-other-components).
 
-from doeff import Await, Cancel, Race, Spawn, Try, Wait, do, run
-from doeff_core_effects.handlers import await_handler, try_handler
+```python
+from doeff import Cancel, Race, Spawn, Try, Wait, do, run
+from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
+from doeff_time import Delay, sim_time_handler
 
 @do
 def job(name, seconds):
-    yield Await(asyncio.sleep(seconds))
+    yield Delay(seconds)
     return name
 
 @do
@@ -282,7 +286,7 @@ def first_result():
         yield Try(Wait(t))
     return value
 
-print(run(scheduled(try_handler(await_handler()(first_result())))))  # b
+print(run(scheduled(sim_time_handler()(try_handler(first_result())))))  # b
 ```
 
 ## Cancel and TaskCancelledError
@@ -308,7 +312,8 @@ Cancellation is explicit and delivered into the task:
 
 ```python
 from doeff import Cancel, CreatePromise, Ok, Err, Try, Spawn, Wait, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import slog
+from doeff_core_effects.handlers import slog_handler, try_handler
 from doeff_core_effects.scheduler import scheduled
 
 @do
@@ -322,7 +327,7 @@ def run_remote(lease):
 
 @do
 def release_lease(lease):
-    print(f"released {lease}")  # released lease-1
+    yield slog("released", lease=lease)  # slog_handler prints on stderr:     INFO released lease=lease-1
 
 @do
 def work():
@@ -343,7 +348,7 @@ def cancel_child():
         case Ok(value=v):
             return v
 
-print(repr(run(scheduled(try_handler(cancel_child())))))  # TaskCancelledError()
+print(repr(run(scheduled(slog_handler(try_handler(cancel_child()))))))  # TaskCancelledError()
 ```
 
 ### Cancelling a task parked on external work
@@ -362,14 +367,60 @@ or indirectly via `Await`), the cancellation reaches the external producer:
 - a failing callback is re-raised to the `Cancel` caller as
   `ExternalPromiseCancelCallbackError` after the cancellation has taken effect
 
-```python excerpt
-@do
-def watch_process(proc):
+The program below asks for processes with a `RunProcess` effect and does no I/O itself. The
+`subprocess_runner` handler starts the process, parks the task on an `ExternalPromise` that a
+reader thread completes, and registers `proc.terminate` with `on_cancel`. When the fast process
+wins the `Race`, cancelling the slow task terminates the slow process:
+
+```python
+import subprocess
+import sys
+import threading
+from dataclasses import dataclass
+
+from doeff import (
+    Cancel, CreateExternalPromise, EffectBase, Race, Resume, Spawn, Try, Wait, do, handler, run,
+)
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
+
+@dataclass(frozen=True)
+class RunProcess(EffectBase):  # an effect: "run this command, give its output"
+    args: tuple[str, ...]
+
+def run_python(code):
+    return RunProcess((sys.executable, "-c", code))
+
+def read_output(proc, ep):
+    ep.complete(proc.communicate()[0].strip())  # runs on the reader thread
+
+started = []
+
+@handler
+def subprocess_runner(effect: RunProcess, k):
+    proc = subprocess.Popen(effect.args, stdout=subprocess.PIPE, text=True)
+    started.append(proc)
     ep = yield CreateExternalPromise()
     ep.on_cancel(proc.terminate)  # runs on the scheduler thread; keep it quick
-    start_reader_thread(proc, ep)  # calls ep.complete()/ep.fail()
-    return (yield Wait(ep.future))
+    threading.Thread(target=read_output, args=(proc, ep), daemon=True).start()
+    output = yield Wait(ep.future)
+    return (yield Resume(k, output))
+
+@do
+def first_output():
+    slow = yield Spawn(run_python("import time; time.sleep(30)"))
+    fast = yield Spawn(run_python("print('fast')"))
+    winner = yield Race(slow, fast)
+    yield Cancel(slow)  # the handler's on_cancel terminates the slow process
+    yield Try(Wait(slow))
+    return winner
+
+print(run(scheduled(try_handler(subprocess_runner(first_output())))))  # fast
+print(sorted(proc.wait() for proc in started))  # [-15, 0]
 ```
+
+In a test, a handler that answers `RunProcess` with made-up output takes the place of
+`subprocess_runner`, and `first_output` runs without starting a process.
 
 ## Task Exceptions Nothing Retrieved
 
