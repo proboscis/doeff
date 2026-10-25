@@ -614,13 +614,13 @@ const RulesScene: React.FC = () => {
           return {x: layer(d).x + 110, y: layer(d).y + 18};
         };
         const t0 = n.from + 1.2;
-        const reach = ni === 0 ? at('await_handler') : {x: 1110, y: DIAGRAM.y - 2};
+        const reach = ni === 0 ? at('await_handler') : {x: 1110, y: DIAGRAM.y + 18};
         const fetchTrip = ramp(frame, t0, t0 + 0.6);
         const awaitTrip = ramp(frame, t0 + 1.0, t0 + 1.7);
         const outTrip = ramp(frame, t0 + 2.0, t0 + 3.0);
         const backTrip = ramp(frame, t0 + 3.6, t0 + 4.8);
         const loopMid = {x: LOOP_BOX.x + LOOP_BOX.w / 2, y: LOOP_BOX.y + LOOP_BOX.h / 2};
-        const failAt = {x: 1110, y: DIAGRAM.y - 2};
+        const failAt = {x: 1110, y: DIAGRAM.y + 18};
         return (
           <div key={ni} style={{opacity}}>
             {n.layers.map((name, d) => {
@@ -653,7 +653,7 @@ const RulesScene: React.FC = () => {
             {ni === 0 && frame >= f(t0 + 3.6) && frame < f(t0 + 5.1) && (
               <Pill x={mix(loopMid.x, progMid.x, backTrip)} y={mix(loopMid.y, progMid.y, backTrip)} text="body" color={TEST} opacity={1 - ramp(frame, t0 + 4.8, t0 + 5.1)} />
             )}
-            {ni > 0 && frame >= f(t0 + 1.8) && <Pill x={failAt.x} y={failAt.y} text="no handler for Await" color={FAIL} opacity={fadeAt(frame, t0 + 1.8, 0.2)} />}
+            {ni > 0 && frame >= f(t0 + 2.0) && <Pill x={failAt.x} y={failAt.y} text="no handler for Await" color={FAIL} opacity={fadeAt(frame, t0 + 2.0, 0.2)} />}
           </div>
         );
       })}
