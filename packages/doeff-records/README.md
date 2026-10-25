@@ -63,7 +63,7 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   service を先に新しい版で起こしても 1 版前の client は答えを読める(要求の本文の知らない鍵は前のとおり 400 で断る)。鍵を消す・綴りを
   変える・新しい鍵を必須にする変更はしない — `tests/test_wire_versions.hy` が凍らせた答えの見本(`tests/wire-answers/<日>.json`・足すだけ)で
   断る。答えに鍵を足した変更は、新しい日の見本の file を足す。
-- 行の書きの冪等キー(card ki-78c6d663491f): `PutRow`・`PutRows` の `idempotency_key` は書き 1 つの身元。置き場(memory・PostgreSQL)は
+- 行の書きの冪等キー: `PutRow`・`PutRows` の `idempotency_key` は書き 1 つの身元。置き場(memory・PostgreSQL)は
   確定した鍵つきの書きの答え(`Written`・`WrittenRows` — 版・値・位置)と本文の指紋(表・鍵・値・期待)を、書きを確定するのと同じ錠・
   transaction で覚え、同じ鍵・同じ本文の次の書きには、期待も書きの判定も見ずに覚えた答えを `replayed=True` で返す(行にも変更の列にも
   触らない — 間に別の書き手が行を変えていても)。同じ鍵の別の本文は冪等キーの断り(`PutRow` は `Refused`・`PutRows` は束の 0 行目の

@@ -113,7 +113,7 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
 - 届かない物: 知らせは、出された時に購読していて繋がっている読み手にだけ届きます。購読の前と、繋がっていない間の知らせは後から
   届きません。失った分は backend が埋めず、Program が `SourceStarted` と `SourceResumed` を受けた時に 1 度 記録から追いつく前提です
   (どちらも購読が成った後にだけ出るので、追いつきの読みの後に出た知らせは落ちません)。
-- 残す channel(`NoticeRoute(kept=True)` — agora card ki-86d11cadf3be): 出す側は `Announce(kept=True)` で channel の log(Redis は
+- 残す channel(`NoticeRoute(kept=True)`): 出す側は `Announce(kept=True)` で channel の log(Redis は
   Streams の `XADD`・長さの上限 `KEPT_LOG_LENGTH` は近似)へ足し、受ける側は reader の名(源の名)で log から読みます。源は出来事を
   process の中の列へ出した後に `AckAnnouncement` を返し、broker の handler は ack の無い知らせを `redeliver_seconds`(既定
   `KEPT_REDELIVERY_SECONDS` = 2 秒)の後に渡し直します。繋ぎ直しの後は、同じ reader の読んだ所の続きから読みます。broker と列の間で

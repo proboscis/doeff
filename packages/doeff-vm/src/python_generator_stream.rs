@@ -386,9 +386,25 @@ struct Verdict {
 /// starts over (a handler sees a few effect types).
 const KEPT_VERDICTS: usize = 32;
 
+#[cfg(Py_3_12)]
 unsafe extern "C" {
     /// CPython 3.12+: give the type a version tag if it has none; 0 when none is left.
-    pub(crate) fn PyUnstable_Type_AssignVersionTag(type_: *mut pyo3::ffi::PyTypeObject) -> std::ffi::c_int;
+    fn PyUnstable_Type_AssignVersionTag(type_: *mut pyo3::ffi::PyTypeObject) -> std::ffi::c_int;
+}
+
+/// Give the type a version tag if it has none; false when it has none after.
+/// CPython 3.11 has no call that gives one, so there answers are never kept.
+pub(crate) fn assign_version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -> bool {
+    #[cfg(Py_3_12)]
+    {
+        // SAFETY: the type is alive (bound).
+        unsafe { PyUnstable_Type_AssignVersionTag(effect_type.as_type_ptr()) != 0 }
+    }
+    #[cfg(not(Py_3_12))]
+    {
+        let _ = effect_type;
+        false
+    }
 }
 
 /// The type's version tag now (0 = none; CPython clears it when the type changes).
@@ -441,8 +457,7 @@ impl PyHandlerSpec {
         if !self.by_type_only || !answer_depends_on_type_only(effect_type) {
             return;
         }
-        // SAFETY: the type is alive (bound).
-        if unsafe { PyUnstable_Type_AssignVersionTag(effect_type.as_type_ptr()) } == 0 {
+        if !assign_version_tag(effect_type) {
             return;
         }
         let version = version_tag(effect_type);

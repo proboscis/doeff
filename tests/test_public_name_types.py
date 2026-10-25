@@ -31,19 +31,12 @@ from pathlib import Path
 import pytest
 from doeff_hy.static_check import python_without_bytecode
 
-#: 型引数を書かない program の node の union(``isinstance(x, DoExpr)`` に渡せる形 — ``Pure[Any] | ...`` と書くと
-#: isinstance が型の error になる)。node の型引数に既定値 Any を持たせるのは doeff_vm の stub の側で、変えると doeff-vm の
-#: Rust の組み立て直しが起きる(tool.uv.cache-keys が .pyi を含む)。
-_NODE_TYPE_ARGS = "program の node の型引数"
-
 #: ``python -m doeff demo``(doeff/cli/demo.py)は自分の source を README の例と同じ書き方(注記を書かない例)のまま
 #: 印字して走らせる。注記を足すと、印字する program と handler が README の例とずれる。
 _DEMO_PRINTS_THE_README_EXAMPLE = "demo が印字する README の書き方の例(注記なし)"
 
 #: doeff の公開の名のうち、型が分からないままの物と訳。
 _DOEFF_GAPS: dict[str, str] = {
-    "doeff.DoExpr": _NODE_TYPE_ARGS,
-    "doeff.ProgramBase": _NODE_TYPE_ARGS,
     "doeff.cli.demo.digest": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.canned": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.trace": _DEMO_PRINTS_THE_README_EXAMPLE,
@@ -51,14 +44,8 @@ _DOEFF_GAPS: dict[str, str] = {
     "doeff.cli.demo.live_world": _DEMO_PRINTS_THE_README_EXAMPLE,
 }
 
-#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(outcomes の境目の handler — 束ねる物の union
-#: Bindable と戻りが DoExpr)。
-_CORE_HEAD_GAPS: dict[str, str] = {
-    "doeff_core_effects.absent_as": _NODE_TYPE_ARGS,
-    "doeff_core_effects.maybe": _NODE_TYPE_ARGS,
-    "doeff_core_effects.on_raise": _NODE_TYPE_ARGS,
-    "doeff_core_effects.result": _NODE_TYPE_ARGS,
-}
+#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(今は無い — 足す時は訳と一緒に書く)。
+_CORE_HEAD_GAPS: dict[str, str] = {}
 #: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。
 _CORE_TYPED_MODULES = (
     "doeff_core_effects.effects",

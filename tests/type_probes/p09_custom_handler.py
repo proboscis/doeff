@@ -26,7 +26,7 @@ def untyped_resume(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
     return (yield Resume(k, "now"))  # Resume は値の型を見ない — docs/23 の決まり(型を見るのは typed_resume)
 
 
-@handler
+@handler  # expect-error (effect に当たらない注記 — 抜け 7 — 直った・@handler を付けた所で断る)
 def wrong_filter(effect: str, k: K) -> Generator[Any, Any, Any]:
     return (yield Resume(k, 1))
 
@@ -40,4 +40,3 @@ def body() -> Generator[ReadClock, Any, int]:
 installed = handler(clock)
 assert_type(installed(body()), Program[int, Any])
 assert_type(run(installed(body())), int)
-handler(wrong_filter)  # expect-error (effect に当たらない注記 — 抜け 7 — 直った)
