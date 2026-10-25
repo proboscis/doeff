@@ -563,6 +563,9 @@ class SubagentCalls:
 def subagent_calls_of(records: tuple) -> _Program[SubagentCalls, object]:
     ...
 
+def own_records(records: tuple, parent_tool_use_id: str) -> _Program[tuple, object]:
+    ...
+
 def last_call_closed(records: tuple) -> _Program[bool, object]:
     ...
 
