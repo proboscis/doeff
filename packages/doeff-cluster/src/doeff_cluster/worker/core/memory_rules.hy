@@ -18,6 +18,15 @@
 ;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
 ;;; だけだから(10-24 atlas で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
 ;;; 後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
+;;; 群れの止め(swarm-of — card ki-d9953fe1d739): 止める候補の単位が無い(どれも min-victim-bytes 未満か平常の大きさの job の物)のに、
+;;; 1 つの job の木が機体の全量の swarm-share 以上を持ち、worker の外の使用量より大きい時は、その job の BODY 以外の単位を大きい順に、
+;;; 機体の空きを DANGER の線(danger-available)の上へ min-victim-bytes ぶん戻す量まで足して、まとめて止める。訳: CLI を多数並べて走らせる常駐の
+;;; job は、CLI の木と、shim に引き取られた道具の子が数百の小さい単位に割れ、1 つずつはどれも 512 MiB 未満なのに、和は機体の
+;;; 半分を越える(2026-10-23 20:36〜20:46 UTC の zeus — 見張りの最大の単位 260 MiB のまま機体の空き 11 GB・PSI full 68% で機体ごと
+;;; 約 3 分止まり、その job が止まって終わって子の CLI の仕事が全部切れた)。BODY(job の本体)は止めない — 群れの止めは job の
+;;; 子を減らして、job そのものと残りの子を生かす。worker の外の使用量より小さい job を止めない訳は平常の大きさの止めと同じ(不足が
+;;; worker の外から来た時に、job の子を止めても戻らない)。平常の大きさは問わない(群れの job は止める単位を小さく割るので、平常の
+;;; 大きさの比べでは止める候補にならず、DANGER のまま機体が止まる)。
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
@@ -50,16 +59,18 @@
    tight-available と tight-full-avg10 = どちらかを越えたら TIGHT・min-victim-bytes = これより小さい単位は止めない(食った物が job の外の
    時に、小さい job を次々に止めない)・steady-ratio = 常駐の job の今の memory が平常の大きさのこの倍以上の時だけ、その job の単位を
    止める候補にする(頭の註)。既定の値の根拠: atlas の 3 回は空き 1.5〜2.5 GiB / 28.3 GiB(5〜9%)・zeus は 7 GB / 125 GiB(5.6%)
-   で止まり、ふだんの最低は atlas 6.2 GiB(22%)・zeus 52 GiB(41%)。"
+   で止まり、ふだんの最低は atlas 6.2 GiB(22%)・zeus 52 GiB(41%)。swarm-share = 群れの止め(頭の註)を掛ける job の木の、機体の全量に
+   占める割合の最低(既定 0.25 — zeus の 10-23 の CLI を並べる job の木は約 64 GB / 128 GB)。"
   {:check [(< 0 danger-available danger-pressured-available 1) (< 0 danger-available tight-available 1) (> danger-full-avg10 0)
-           (> tight-full-avg10 0) (>= min-victim-bytes 0) (> steady-ratio 1)]}
+           (> tight-full-avg10 0) (>= min-victim-bytes 0) (> steady-ratio 1) (< 0 swarm-share 1)]}
   (setv #^ float danger-available 0.10)
   (setv #^ float danger-pressured-available 0.20)
   (setv #^ float danger-full-avg10 25.0)
   (setv #^ float tight-available 0.20)
   (setv #^ float tight-full-avg10 10.0)
   (setv #^ int min-victim-bytes (* 512 MIB))
-  (setv #^ float steady-ratio 1.5))
+  (setv #^ float steady-ratio 1.5)
+  (setv #^ float swarm-share 0.25))
 
 
 (defrecord NodeMemory
@@ -371,3 +382,38 @@
   (cond leaves (get leaves 0)
         bodies (get bodies 0)
         True None))
+
+
+(defk swarm-need [node limits]
+  {:pre [(: node NodeMemory) (: limits MemoryLimits)] :post [(: % int) (>= % limits.min-victim-bytes)]
+   :tags {:context "worker" :role "judgment"}}
+  "群れの止めで戻す量を求めるため(頭の註): 機体の空きを DANGER の線(全量 × danger-available)の上へ min-victim-bytes ぶん戻す量。
+   線の上に居る時(PSI で DANGER)も min-victim-bytes。"
+  (val line (int (* node.total-bytes limits.danger-available)))
+  (max limits.min-victim-bytes (- (+ line limits.min-victim-bytes) node.available-bytes)))
+
+
+(defk swarm-of [units uses node container-bytes limits]
+  {:pre [(: units tuple) (: uses tuple) (: node NodeMemory) (: container-bytes (| int None)) (: limits MemoryLimits)]
+   :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "DANGER で止める候補の単位が無い時に、まとめて止める単位を選ぶため(頭の註の群れの止め): uses(大きい順)の中で、木が機体の全量の
+   swarm-share 以上で、worker の外の使用量(機体の使用量 − container-bytes — 読めなければ問わない)より大きい最初の job の、BODY 以外の
+   単位(units — 大きい順)を、和が swarm-need に届くまで頭から足す(届かなければ全部)。当たる job が無い・単位が無ければ空。"
+  (val used (- node.total-bytes node.available-bytes))
+  (val outside (if (is container-bytes None) None (max 0 (- used container-bytes))))
+  (val job (next (gfor use uses
+                       :if (and (>= use.bytes (* limits.swarm-share node.total-bytes)) (or (is outside None) (> use.bytes outside)))
+                       use)
+                 None))
+  (when (is job None)
+    (return #()))
+  (<- need int (swarm-need node limits))
+  (var picked #())
+  (var freed 0)
+  (for [unit units]
+    (when (>= freed need)
+      (break))
+    (when (and (= unit.job job.job) (!= unit.kind UnitKind.BODY))
+      (:= picked (+ picked #(unit)))
+      (:= freed (+ freed unit.bytes))))
+  picked)

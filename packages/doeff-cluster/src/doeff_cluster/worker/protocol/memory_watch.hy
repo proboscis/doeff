@@ -10,9 +10,12 @@
 ;;;   JOB-PEAK-LOG       job が終わった(根が観測から消えた)時に 1 行: その job の memory の最大と、最大を読んだ刻。
 ;;;   MEMORY-LEVEL-LOG   機体の様子(CALM・TIGHT・DANGER)が変わった時に 1 行: 機体の空き・PSI・大きい単位の上位。
 ;;;   MEMORY-KILL-LOG    止めた時に 1 行: job・単位の頭の pid と命令の名・単位の memory・送った process の数・機体の空き。
-;;;   MEMORY-NO-VICTIM-LOG  DANGER なのに止める単位が無い(止める候補の単位が無いか min-victim-bytes 未満 — 食った物は job の外か、平常の
-;;;                      大きさで動く常駐の job だけ)時に、DANGER の 1 回につき 1 行: 機体の使用量・container の memory・その差(worker の
-;;;                      外の使用量)と、平常の大きさなので止めなかった job。
+;;;   MEMORY-SWARM-KILL-LOG  止める候補の単位が無く、1 つの job の木が機体の大きな割合を持つ時に、その job の小さい単位をまとめて止めた
+;;;                      時に 1 行(worker/core/memory_rules の swarm-of — card ki-d9953fe1d739): job・止めた単位の数と和・大きい単位の
+;;;                      上位・送った process の数・機体の空き。
+;;;   MEMORY-NO-VICTIM-LOG  DANGER なのに止める単位が無い(止める候補の単位が無いか min-victim-bytes 未満で、群れの止めも当たらない — 食った
+;;;                      物は job の外か、平常の大きさで動く小さい常駐の job だけ)時に、DANGER の 1 回につき 1 行: 機体の使用量・container の
+;;;                      memory・その差(worker の外の使用量)と、平常の大きさなので止めなかった job。
 ;;;   MEMORY-UNREAD-LOG  読めない訳が変わった時に 1 行(読めない間は数えない・止めない)。
 ;;; 止めは guard が真の時だけ(偽は log だけ — 起動の引数 --memory-guard off)。止めた後 kill-cooldown-seconds は次を止めない(止めた木の
 ;;; memory が戻るのを待つ)。
@@ -34,12 +37,13 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster.worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory KillUnit JobUse JobSteady node-memory-of
-                                                cgroup-bytes-of memory-level job-uses kill-units steady-sizes spared-steady victim-of])
+                                                cgroup-bytes-of memory-level job-uses kill-units steady-sizes spared-steady victim-of swarm-of])
 
 (val MEMORY-WINDOW-LOG "worker: job ごとの memory")
 (val JOB-PEAK-LOG "worker: job の memory の最大")
 (val MEMORY-LEVEL-LOG "worker: 機体の memory の様子")
 (val MEMORY-KILL-LOG "worker: 機体の memory の尽きかけで止めた")
+(val MEMORY-SWARM-KILL-LOG "worker: 機体の memory の尽きかけで job の小さい単位をまとめて止めた")
 (val MEMORY-NO-VICTIM-LOG "worker: 機体の memory が尽きかけだが止める単位が無い")
 (val MEMORY-UNREAD-LOG "worker: 機体の memory を読めない")
 ;; 様子の行に並べる大きい単位の数。
@@ -230,6 +234,43 @@
   (if (is size None) None (// size (* 1024 1024))))
 
 
+(defk unit-signalled [unit]
+  {:pre [(: unit KillUnit)] :post [(: % int)] :tags {:context "worker" :role "protocol"}}
+  "単位 1 つの process へ、頭から順に、読んだ時と同じ起動の刻の物だけへ SIGKILL を送るため(SignalPid — 使い回された pid の他人の
+   process へ送らない)。答え = 送れた process の数。"
+  (var sent 0)
+  (for [member unit.members]
+    (<- delivered bool (SignalPid :pid member.pid :start-ticks member.start-ticks :signal ProcessSignal.KILL))
+    (when delivered
+      (:= sent (+ sent 1))))
+  sent)
+
+
+(defk swarm-killed [settings cell reading swarm now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: swarm tuple) swarm (: now-ms int)]
+   :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "群れの止め(worker/core/memory_rules の swarm-of — 同じ job の小さい単位の組)を止め、止めの刻・止めた印・その間の止めた job を残して
+   1 行にするため(印と間の扱いは 1 つの単位の止めと同じ)。"
+  (val job (. (get swarm 0) job))
+  (var sent 0)
+  (for [unit swarm]
+    (<- count int (unit-signalled unit))
+    (:= sent (+ sent count)))
+  (setv cell.last-kill-ms now-ms)
+  (val root (next (gfor r reading.roots :if (= r.name job) r) None))
+  (when (and (> sent 0) (is-not root None))
+    (setv cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms)))))
+  (when (> sent 0)
+    (setv cell.window-killed (| cell.window-killed #{job})))
+  (val node reading.node)
+  (<- listed str (units-text swarm LEVEL-UNITS))
+  (<- (slog MEMORY-SWARM-KILL-LOG :level "warning" :job job :units (len swarm) :units-mib (// (sum (gfor u swarm u.bytes)) (* 1024 1024))
+            :largest listed :processes (sum (gfor u swarm (len u.members))) :sent sent
+            :node-available-mib (// node.available-bytes (* 1024 1024)) :node-total-mib (// node.total-bytes (* 1024 1024))
+            :full-avg10 node.full-avg10))
+  None)
+
+
 (defk guarded [settings cell reading level units uses now-ms]
   {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: level MemoryLevel) (: units tuple)
          (: uses tuple) (: now-ms int)]
@@ -247,6 +288,14 @@
   (<- steadies tuple (steady-sizes cell.steady))
   (<- victim (| KillUnit None) (victim-of units uses steadies settings.limits))
   (val node reading.node)
+  ;; 止める候補の単位が無ければ、群れの止め(頭の註の MEMORY-SWARM-KILL-LOG)を試す。
+  (var swarm #())
+  (when (is victim None)
+    (<- found tuple (swarm-of units uses node reading.container.current-bytes settings.limits))
+    (:= swarm found))
+  (when swarm
+    (<- (swarm-killed settings cell reading swarm now-ms))
+    (return None))
   (when (is victim None)
     (when (not cell.told-no-victim)
       (<- spared tuple (spared-steady units uses steadies settings.limits))
@@ -265,11 +314,7 @@
                 :full-avg10 node.full-avg10))
       (setv cell.told-no-victim True))
     (return None))
-  (var sent 0)
-  (for [member victim.members]
-    (<- delivered bool (SignalPid :pid member.pid :start-ticks member.start-ticks :signal ProcessSignal.KILL))
-    (when delivered
-      (:= sent (+ sent 1))))
+  (<- sent int (unit-signalled victim))
   (setv cell.last-kill-ms now-ms)
   ;; 止めた単位の属する job の根に印を残す(調整ループが、その process の終わりを見張りに止められた終わりとして数える)。送れなかった
   ;; (単位の process が既に居ない)時は残さない。
