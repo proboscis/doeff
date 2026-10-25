@@ -1,0 +1,2 @@
+('done', ['Starting operation', 'Processing data', 'Count: 0', 'Operation complete'])
+reached state: ['Get(log)', 'Put(log)', 'Get(log)', 'Get(count)', 'Get(log)', 'Get(log)', 'Get(log)']

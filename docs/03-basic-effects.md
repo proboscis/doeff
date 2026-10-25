@@ -2,6 +2,8 @@
 
 This chapter covers the fundamental **batteries-included algebraic effects** that form the building blocks of most programs: Reader, State, and Writer, plus structured logs (`slog`). Each effect type has a corresponding built-in handler that interprets the effect operations.
 
+[![A narrated video, about two minutes: Ask reading the env the reader handler holds, Local overriding it for a sub-program, Get and Put on the store the state handler holds, Tell appending to a log that writer keeps in state, slog entries printed by slog_handler and collected by Listen, and one program under reader, state and writer with each effect reaching its layer](assets/videos/basic-effects.jpg)](assets/videos/basic-effects.mp4)
+
 ## Table of Contents
 
 - [Reader Effects](#reader-effects)
