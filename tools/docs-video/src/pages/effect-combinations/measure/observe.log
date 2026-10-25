@@ -1,0 +1,7 @@
+observer saw: Spawn
+observer saw: Ask('key')
+observer saw: Spawn
+observer saw: Ask('key')
+observer saw: Gather
+asks seen: ["Ask('key')", "Ask('key')"]
+body returned: ['value', 'value']

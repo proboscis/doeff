@@ -1,0 +1,12 @@
+[rust] child does not suspend:
+  order: t1 read 0, t1 wrote 1, t2 read 1, t2 wrote 2, t3 read 2, t3 wrote 3
+  Gather -> [0, 1, 2]  counter -> 3
+[rust] child suspends between read and write:
+  order: t1 read 0, t1 suspends, t2 read 0, t2 suspends, t3 read 0, t3 suspends, t1 wrote 1, t2 wrote 1, t3 wrote 1
+  Gather -> [0, 0, 0]  counter -> 1
+[python] child does not suspend:
+  order: t1 read 0, t1 wrote 1, t2 read 1, t2 wrote 2, t3 read 2, t3 wrote 3
+  Gather -> [0, 1, 2]  counter -> 3
+[python] child suspends between read and write:
+  order: t1 read 0, t1 suspends, t2 read 0, t2 suspends, t3 read 0, t3 suspends, t1 wrote 1, t2 wrote 1, t3 wrote 1
+  Gather -> [0, 0, 0]  counter -> 1

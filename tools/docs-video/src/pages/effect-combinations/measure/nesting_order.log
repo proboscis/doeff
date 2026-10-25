@@ -1,0 +1,3 @@
+Try(Listen(p)): Err(ValueError('bad row'))
+Listen(Try(p)): (Err(ValueError('bad row')), ['loaded config', 'parsing rows'])
+Listen(ok):     (42, ['loaded config', 'parsing rows'])

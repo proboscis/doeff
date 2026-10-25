@@ -1,0 +1,5 @@
+ran: t1 wrote side_effects=1
+ran: t2 raises ValueError('boom')
+ran: t3 wrote side_effects=2
+Try(Gather(t1, t2, t3)) -> Err(ValueError('boom'))
+side_effects -> 2
