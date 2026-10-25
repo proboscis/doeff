@@ -61,7 +61,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
 
     契約テストは deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
     coordinator_contract_handlers.hy・host_reads_contract_handlers.hy・runtime_facts_contract_handlers.hy・
-    file_contract_handlers.hy・tree_contract_handlers.hy・job_call_contract_handlers.hy が持ち、
+    file_contract_handlers.hy・tree_contract_handlers.hy・job_call_contract_handlers.hy・job_reach_contract_handlers.hy が持ち、
     ここはその表を引くだけ(名の無い deftest は今までどおり素のまま回す)。
     """
     if doeff_interpreter_name == PLAIN:
@@ -73,6 +73,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         from tests.file_contract_handlers import INTERPRETERS as FILE_INTERPRETERS
         from tests.host_reads_contract_handlers import INTERPRETERS as HOST_READS_INTERPRETERS
         from tests.job_call_contract_handlers import INTERPRETERS as JOB_CALL_INTERPRETERS
+        from tests.job_reach_contract_handlers import INTERPRETERS as JOB_REACH_INTERPRETERS
         from tests.runtime_facts_contract_handlers import INTERPRETERS as RUNTIME_FACTS_INTERPRETERS
         from tests.tree_contract_handlers import INTERPRETERS as TREE_INTERPRETERS
 
@@ -81,6 +82,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
             **FILE_INTERPRETERS,
             **HOST_READS_INTERPRETERS,
             **JOB_CALL_INTERPRETERS,
+            **JOB_REACH_INTERPRETERS,
             **RUNTIME_FACTS_INTERPRETERS,
             **TREE_INTERPRETERS,
         }
