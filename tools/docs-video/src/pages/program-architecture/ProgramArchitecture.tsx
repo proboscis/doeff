@@ -467,7 +467,7 @@ const ObserveScene: React.FC = () => {
           border: `3px dashed ${LOOK}`, opacity: fadeAt(frame, 2.6),
         }}
       />
-      <Label x={OB.x + OB.w - 168} y={OB.bump + 10} size={16} bold color={LOOK} opacity={fadeAt(frame, 2.6)}>
+      <Label x={OB.x + OB.w - 200} y={OB.bump + 10} size={16} bold color={LOOK} opacity={fadeAt(frame, 2.6)}>
         the body: observed
       </Label>
       <CodeBlock lines={WATCHED} x={OB.x} y={OB.watched} w={OB.w} size={OB.size} line={OB.line} band={watchedBand} opacity={fadeAt(frame, 0.8)} />
