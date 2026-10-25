@@ -416,7 +416,13 @@ tests = ["tests/test_docs_page_examples.py"]
 # 2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/13-api-reference.md"
-tests = ["tests/test_docs_handler_endings.py"]
+tests = [
+    "tests/test_docs_handler_endings.py",
+    # The index of public names and the Removed APIs table list every name of doeff (card
+    # ki-e3a2ebe02690). The check reads the page by path, so import reverse-dependencies do not
+    # select it. 2.0 s (5 tests, no child, pytest's count, 2026-10-25 conversation Pod).
+    "tests/test_public_names_documented.py",
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "docs/18-effect-combinations.md"
