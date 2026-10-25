@@ -1,0 +1,1460 @@
+"""List the public API each subpackage under ``packages/`` shows its users, and type every name.
+
+The one place that counts a subpackage's public API (the rule under discussion: a subpackage shows
+its users effects and handlers only). Tests that check the rule read ``inventory`` from here.
+
+What is counted, per package dir:
+
+- the names the import root's ``__init__`` exports (the roots are the wheel's packages in
+  ``pyproject.toml``: hatch's ``packages``, maturin's ``python-source`` + ``module-name``,
+  setuptools' discovered packages);
+- the names every submodule whose path has no part starting with ``_`` exports (a module a user
+  can import);
+- ``[project.scripts]``, ``[project.entry-points]`` and the Rust executables of a maturin ``bin``.
+
+The names a module exports: its ``__all__`` when it has one, otherwise every name not starting
+with ``_`` that the package itself defines (names imported from another package or the standard
+library, and module objects, are not counted). A Hy module's macros not starting with ``_``
+(``_hy_export_macros`` when the module exports them) are counted too.
+
+Kinds:
+
+- ``effect``: a subclass of ``EffectBase``, an ``EffectBase`` value, or a function that makes an
+  effect (its return type is an ``EffectBase`` subclass, or every ``return`` calls one);
+- ``handler``: a value or class with the handler marker (``_doeff_is_handler_fn``), a function
+  that returns a handler (its return type is ``ProgramHandler``, or every ``return`` builds a
+  handler), or a raw handler function taking ``(effect, k)``;
+- ``other``: decided to be neither — a program function (``@do``, ``defk``), any other function,
+  class, exception, type, constant, macro, console script or entry point;
+- ``unclassified``: what the machine cannot decide — a function with no return type whose
+  ``return`` statements do not decide it either, a class named like an effect or a handler
+  without being one, a name of a module that cannot be imported.
+
+Each package is imported in its own child process, so one package's import side effects and
+failures stay out of the others.
+
+    uv run python tools/public_api_inventory.py --json inventory.json --markdown inventory.md
+    uv run python tools/public_api_inventory.py --package doeff-time --json -
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import collections
+import contextlib
+import enum
+import functools
+import importlib
+import importlib.util
+import inspect
+import itertools
+import json
+import re
+import subprocess
+import sys
+import tempfile
+import textwrap
+import types
+import typing
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, TypedDict, cast
+
+import tomllib
+
+ROOT = Path(__file__).resolve().parents[1]
+
+Kind = Literal["effect", "handler", "other", "unclassified"]
+KINDS: tuple[Kind, ...] = ("effect", "handler", "other", "unclassified")
+KIND_LABELS: dict[Kind, str] = {
+    "effect": "effect",
+    "handler": "handler",
+    "other": "それ以外",
+    "unclassified": "未分類",
+}
+ModuleReadWay = Literal["__all__", "own", "text"]
+
+_MODULE_SUFFIXES = (".py", ".hy", ".pyi")
+_EXTENSION_SUFFIXES = (".so", ".pyd")
+_INIT_NAMES = ("__init__.py", "__init__.hy", "__init__.pyi")
+_PROGRAM_TYPE_NAMES = frozenset({"Program", "Expand", "DoExpr", "DoCtrl", "ProgramBase"})
+_PROGRAM_VALUE_TYPE_NAMES = _PROGRAM_TYPE_NAMES | {"Call", "Pure", "Perform"}
+_HANDLER_TYPE_NAMES = frozenset({"ProgramHandler", "_InstalledHandler", "Handler"})
+_CONSTANT_TYPES: tuple[type, ...] = (
+    str,
+    bytes,
+    int,
+    float,
+    complex,
+    bool,
+    type(None),
+    tuple,
+    list,
+    dict,
+    set,
+    frozenset,
+    Path,
+    re.Pattern,
+    enum.Enum,
+)
+_HY_DEFINING_FORM = re.compile(
+    r"\s*\((?:setv|defn|defk|deff|defp|defclass|defmacro|defhandler|defeffect|\S*def\S*)\s+(\S+)"
+)
+_HY_IMPORT_FORM = re.compile(r"\(import\s+([\w.]+)\s*\[([^\]]*)\]")
+_HY_TOP_DEFINITION = re.compile(
+    r"^\((?:defn|defk|deff|defp|defclass|defmacro|defhandler|setv)\s+([^\s()\[\]]+)", re.MULTILINE
+)
+# How many wrapper layers (``__wrapped__``, doeff's marks) and re-export hops are followed.
+_FOLLOW_DEPTH = 8
+_DEFAULT_TIMEOUT_SECONDS = 1800
+_MISSING = object()
+
+
+class ExportRow(TypedDict):
+    """One name a module (or the package's metadata) shows, with its kind and where it is defined."""
+
+    module: str
+    name: str
+    kind: Kind
+    form: str
+    defined_at: str
+    reason: str
+
+
+class MergedRow(ExportRow):
+    """An ``ExportRow`` with every module that shows the same name and definition."""
+
+    modules: list[str]
+
+
+class ModuleRead(TypedDict):
+    """How one public module was read: imported (its names by ``__all__`` or ``own``) or as text."""
+
+    name: str
+    read: ModuleReadWay
+    error: str | None
+
+
+class PackageInventory(TypedDict):
+    """The public API of one package dir (the JSON the child process hands the parent)."""
+
+    dir: str
+    distribution: str | None
+    import_roots: list[str]
+    notes: list[str]
+    modules: list[ModuleRead]
+    exports: list[ExportRow]
+    error: str | None
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """The verdict on one name: its kind, its form (what it is) and the reason (what decided it)."""
+
+    kind: Kind
+    form: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class Place:
+    """Where a name is defined: the module, and its source file and line when they are known."""
+
+    module: str
+    file: str | None = None
+    line: int | None = None
+
+
+# --- the layout of a package dir (read from files only; the parent process uses this) ---
+
+
+@dataclass(frozen=True)
+class ImportRoot:
+    """A top-level import name a package installs, and the dir holding its source."""
+
+    name: str
+    path: Path
+
+
+@dataclass(frozen=True)
+class _Installs:
+    """What a build backend's config installs: import roots, Rust executables, notes for the reader."""
+
+    roots: tuple[ImportRoot, ...] = ()
+    rust_bins: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PackageLayout:
+    """What a package dir installs, read from its ``pyproject.toml`` (and ``Cargo.toml``)."""
+
+    dir: Path
+    distribution: str | None
+    roots: tuple[ImportRoot, ...]
+    maturin: bool
+    scripts: dict[str, str]
+    entry_points: dict[str, dict[str, str]]
+    rust_bins: tuple[str, ...]
+    notes: tuple[str, ...]
+
+
+def package_dirs(repo: Path = ROOT) -> list[Path]:
+    """Every package the inventory covers: each dir under ``packages/`` (not a dot or underscore dir)."""
+    return sorted(
+        path
+        for path in (repo / "packages").iterdir()
+        if path.is_dir() and not path.name.startswith((".", "_"))
+    )
+
+
+def _table(data: dict[str, object], *keys: str) -> dict[str, object]:
+    """The nested TOML table at ``keys``, so absent config reads as an empty table."""
+    current = data
+    for key in keys:
+        found = current.get(key)
+        if not isinstance(found, dict):
+            return {}
+        current = cast(dict[str, object], found)  # a TOML table: string keys
+    return current
+
+
+def _read_toml(path: Path) -> dict[str, object]:
+    """A TOML file as a table (``tomllib`` answers ``dict[str, Any]``)."""
+    return dict(tomllib.loads(path.read_text(encoding="utf-8")))
+
+
+def _cargo_bins(package_dir: Path) -> tuple[str, ...]:
+    """The executables a Cargo crate builds: its ``[[bin]]`` names, or the crate name for ``src/main.rs``."""
+    cargo = package_dir / "Cargo.toml"
+    if not cargo.is_file():
+        return ()
+    data = _read_toml(cargo)
+    bins = data.get("bin")
+    if isinstance(bins, list) and bins:
+        return tuple(
+            str(cast(dict[str, object], entry)["name"]) for entry in bins
+        )  # [[bin]] tables
+    if (package_dir / "src" / "main.rs").is_file():
+        return (str(_table(data, "package")["name"]),)
+    return ()
+
+
+def _setuptools_roots(package_dir: Path, tool: dict[str, object]) -> tuple[ImportRoot, ...]:
+    """The packages setuptools discovers: ``packages.find.where``, or ``src`` (src layout) or the dir."""
+    where = _table(tool, "setuptools", "packages", "find").get("where")
+    if isinstance(where, list):
+        bases = [package_dir / str(entry) for entry in where]
+    elif (package_dir / "src").is_dir():
+        bases = [package_dir / "src"]
+    else:
+        bases = [package_dir]
+    return tuple(
+        ImportRoot(child.name, child)
+        for base in bases
+        for child in sorted(base.iterdir())
+        if child.is_dir()
+        and child.name.isidentifier()
+        and child.name != "tests"
+        and any((child / init).is_file() for init in _INIT_NAMES)
+    )
+
+
+def _installs(
+    package_dir: Path, distribution: str | None, backend: str, tool: dict[str, object]
+) -> _Installs:
+    """What the package's build config installs (maturin, hatch, setuptools, or no build at all)."""
+    maturin = _table(tool, "maturin")
+    hatch_packages = _table(tool, "hatch", "build", "targets", "wheel").get("packages")
+    if maturin and maturin.get("bindings") == "bin":
+        return _Installs(
+            rust_bins=_cargo_bins(package_dir),
+            notes=("Rust の実行 file を置く package(Python から import できる module は無い)",),
+        )
+    if maturin:
+        default_module = (distribution or package_dir.name).replace("-", "_")
+        top = str(maturin.get("module-name", default_module)).split(".")[0]
+        return _Installs(
+            roots=(ImportRoot(top, package_dir / str(maturin.get("python-source", ".")) / top),)
+        )
+    if isinstance(hatch_packages, list):
+        paths = [package_dir / str(entry) for entry in hatch_packages]
+        return _Installs(
+            roots=tuple(ImportRoot(path.name, path) for path in paths if path.name.isidentifier()),
+            notes=tuple(
+                f"{path.relative_to(package_dir)}: import の名にならない dir(型の stub など)— 数えない"
+                for path in paths
+                if not path.name.isidentifier()
+            ),
+        )
+    if backend.startswith("setuptools"):
+        return _Installs(roots=_setuptools_roots(package_dir, tool))
+    if not backend:
+        return _Installs(
+            notes=(
+                "build の設定が無い(uv の package = false)— Python から import できる module は無い",
+            )
+        )
+    return _Installs(notes=(f"build backend {backend} の import の根を読めない",))
+
+
+def read_layout(package_dir: Path) -> PackageLayout:
+    """The import roots, scripts, entry points and executables one package dir installs."""
+    pyproject = package_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return PackageLayout(
+            package_dir,
+            None,
+            (),
+            False,
+            {},
+            {},
+            _cargo_bins(package_dir),
+            ("pyproject.toml が無い",),
+        )
+    data = _read_toml(pyproject)
+    project = _table(data, "project")
+    tool = _table(data, "tool")
+    distribution = str(project["name"]) if "name" in project else None
+    backend = str(_table(data, "build-system").get("build-backend", ""))
+    installs = _installs(package_dir, distribution, backend, tool)
+    return PackageLayout(
+        dir=package_dir,
+        distribution=distribution,
+        roots=installs.roots,
+        maturin=bool(_table(tool, "maturin")),
+        scripts={name: str(target) for name, target in _table(project, "scripts").items()},
+        entry_points={
+            group: {
+                name: str(target) for name, target in _table(project, "entry-points", group).items()
+            }
+            for group in _table(project, "entry-points")
+        },
+        rust_bins=installs.rust_bins,
+        notes=installs.notes,
+    )
+
+
+def _module_name(root: ImportRoot, relative: Path) -> str:
+    """The import name of a module file or package dir below a root."""
+    *parents, last = relative.parts
+    if last.endswith(_EXTENSION_SUFFIXES):
+        last = last.split(".")[0]
+    elif last.endswith(_MODULE_SUFFIXES):
+        last = last.rsplit(".", 1)[0]
+    return ".".join([root.name, *parents, last])
+
+
+def _init_of(directory: Path) -> Path | None:
+    """The ``__init__`` file that makes a dir a package (``None`` for a namespace dir)."""
+    return next((directory / name for name in _INIT_NAMES if (directory / name).is_file()), None)
+
+
+def _root_modules(root: ImportRoot) -> Iterator[tuple[str, Path]]:
+    """The modules of one import root: the root package, then its public submodules and subpackages."""
+    if not root.path.is_dir():
+        return
+    yield root.name, _init_of(root.path) or root.path
+    for path in sorted(root.path.rglob("*")):
+        relative = path.relative_to(root.path)
+        if any(part.startswith(("_", ".")) for part in relative.parts):
+            continue
+        init = _init_of(path) if path.is_dir() else None
+        if init is not None:
+            yield _module_name(root, relative), init
+        elif path.is_file() and path.name.endswith(_MODULE_SUFFIXES + _EXTENSION_SUFFIXES):
+            yield _module_name(root, relative), path
+
+
+def public_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
+    """Every module a user can import from the package: the roots and their public submodules.
+
+    A submodule is public when no part of its path below the root starts with ``_`` (``__init__``
+    stands for its package). A dir is a module when it holds an ``__init__``; a dir without one is
+    walked through (its modules are importable through the namespace package). A module with both
+    a source file and a ``.pyi`` stub is listed once, by its source.
+    """
+    candidates = [module for root in layout.roots for module in _root_modules(root)]
+    # Stubs sort before sources of the same name, so the source is the one the dict keeps.
+    ordered = sorted(candidates, key=lambda module: (module[0], module[1].suffix != ".pyi"))
+    return sorted(dict(ordered).items())
+
+
+# --- typing the names of imported modules (the child process uses this) ---
+
+
+def _static(obj: object, name: str) -> object:
+    """An attribute read without running descriptors or ``__getattr__`` (``_MISSING`` when absent)."""
+    return inspect.getattr_static(obj, name, _MISSING)
+
+
+def _is_handler_marked(obj: object) -> bool:
+    """Whether a value carries doeff's handler marker (what every installer has)."""
+    return _static(obj, "_doeff_is_handler_fn") is True
+
+
+def _unwrapped_once(obj: object) -> object:
+    """The value one doeff or functools wrapper holds (``_MISSING`` when ``obj`` wraps nothing)."""
+    if isinstance(obj, functools.partial):
+        return obj.func
+    if isinstance(obj, types.MethodType):
+        return obj.__func__
+    if isinstance(obj, type):
+        return _MISSING
+    inner = (
+        _static(obj, attribute)
+        for attribute in ("__doeff_handler_data__", "__doeff_generator_function__", "__wrapped__")
+    )
+    return next((value for value in inner if value is not _MISSING), _MISSING)
+
+
+def _definition(obj: object) -> object:
+    """The function or class a value comes from, through doeff's and functools' wrappers."""
+    current = obj
+    for _ in range(_FOLLOW_DEPTH):
+        inner = _unwrapped_once(current)
+        if inner is _MISSING or inner is current:
+            break
+        current = inner
+    return current
+
+
+def _is_program_function(obj: object) -> bool:
+    """Whether calling a value builds a program (a ``@do`` / ``defk`` function)."""
+    current = obj
+    for _ in range(_FOLLOW_DEPTH):
+        if _static(current, "__doeff_generator_function__") is not _MISSING:
+            return True
+        inner = _static(current, "__wrapped__")
+        if inner is _MISSING:
+            return type(current).__name__ in {"DoFunction", "KleisliProgram"}
+        current = inner
+    return False
+
+
+def _doeff_hy_handler_types() -> tuple[object, ...]:
+    """doeff-hy's ``Handler`` type (a ``defhandler`` handler's type), when doeff-hy is installed."""
+    if importlib.util.find_spec("doeff_hy") is None:
+        return ()
+    static_types = importlib.import_module("doeff_hy.static_types")
+    return (static_types.__dict__["Handler"],) if "Handler" in static_types.__dict__ else ()
+
+
+class _Classifier:
+    """Types the values a package exports (holds doeff's types, imported once per child)."""
+
+    def __init__(self) -> None:
+        from doeff import EffectBase
+
+        self.effect_base: type = EffectBase
+        program_module = importlib.import_module("doeff.program")
+        self.handler_builders: tuple[object, ...] = tuple(
+            program_module.__dict__[name]
+            for name in ("handler", "stacked_handlers", "_named_handler", "_rust_handler_installer")
+            if name in program_module.__dict__
+        )
+        self.handler_types: tuple[object, ...] = (
+            *(
+                program_module.__dict__[name]
+                for name in ("ProgramHandler", "_InstalledHandler")
+                if name in program_module.__dict__
+            ),
+            *_doeff_hy_handler_types(),
+        )
+
+    def is_effect_class(self, obj: object) -> bool:
+        """Whether a value is an effect type (a subclass of ``EffectBase``)."""
+        return isinstance(obj, type) and issubclass(obj, self.effect_base)
+
+    def classify(self, obj: object, name: str) -> Verdict:
+        """The inventory's verdict on one exported value: its kind, form and reason."""
+        if isinstance(obj, type):
+            return self._classify_class(obj, name)
+        if callable(obj) and _is_function_like(obj) and not _is_handler_marked(obj):
+            return self._classify_function(obj)
+        value_type = type(obj)
+        type_name = value_type.__name__
+        from_doeff = value_type.__module__.startswith(("doeff_vm", "doeff."))
+        rules: list[tuple[bool, Verdict]] = [
+            (
+                isinstance(obj, self.effect_base),
+                Verdict("effect", "effect の値", f"{type_name} の値(EffectBase の子)"),
+            ),
+            (
+                _is_handler_marked(obj),
+                Verdict("handler", "handler", "handler の印(_doeff_is_handler_fn)を持つ"),
+            ),
+            (isinstance(obj, types.ModuleType), Verdict("other", "module", "module")),
+            (
+                from_doeff and type_name.endswith("Handler"),
+                Verdict("handler", "VM の handler の値", f"{type_name} の値"),
+            ),
+            (_is_type_like(obj), Verdict("other", "型", f"型({type_name})")),
+            (isinstance(obj, _CONSTANT_TYPES), Verdict("other", "定数", f"定数({type_name})")),
+            (
+                from_doeff and type_name in _PROGRAM_VALUE_TYPE_NAMES,
+                Verdict("other", "program の値", f"{type_name} の値"),
+            ),
+            (callable(obj), Verdict("other", "呼べる値", f"{type_name} の値(呼べる)")),
+        ]
+        fallback = Verdict("other", "値", f"{type_name} の値")
+        return next((verdict for matched, verdict in rules if matched), fallback)
+
+    def _classify_class(self, cls: type, name: str) -> Verdict:
+        """The verdict on a class: an effect type, a handler class, or by what it is named."""
+        names = (name, cls.__name__)
+        rules: list[tuple[bool, Verdict]] = [
+            (
+                issubclass(cls, self.effect_base),
+                Verdict("effect", "effect の class", "EffectBase の子の class"),
+            ),
+            (
+                _is_handler_marked(cls),
+                Verdict(
+                    "handler", "handler の class", "handler の印(_doeff_is_handler_fn)を持つ class"
+                ),
+            ),
+            (
+                issubclass(cls, BaseException),
+                Verdict("other", "例外の class", "BaseException の子"),
+            ),
+            (
+                any(each.endswith("Effect") for each in names),
+                Verdict("unclassified", "class", "名が Effect で終わるが EffectBase の子でない"),
+            ),
+            (
+                any(each.endswith("Handler") for each in names),
+                Verdict("unclassified", "class", "名が Handler で終わるが handler の印が無い"),
+            ),
+            (issubclass(cls, enum.Enum), Verdict("other", "Enum", "Enum の子")),
+            (_static(cls, "_is_protocol") is True, Verdict("other", "Protocol", "typing.Protocol")),
+        ]
+        return next(
+            (verdict for matched, verdict in rules if matched), Verdict("other", "class", "class")
+        )
+
+    def _classify_function(self, obj: object) -> Verdict:
+        """The verdict on a function: a program function, then its return type, parameters, returns."""
+        if _is_program_function(obj):
+            return Verdict("other", "program 関数", "@do / defk の関数(呼ぶと program を作る)")
+        function = _definition(obj)
+        annotation = _return_annotation(function)
+        decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
+        if decided is None and _takes_effect_and_k(function):
+            decided = Verdict(
+                "handler", "素の handler の関数", "引数が (effect, k)(handler の印は無い)"
+            )
+        if decided is None and annotation is _MISSING:
+            decided = self._returns_kind(function) or Verdict(
+                "unclassified", "関数", "戻りの型が無く、return の形からも決まらない"
+            )
+        return decided or Verdict("other", "関数", f"戻りの型 {_annotation_text(annotation)}")
+
+    def _annotation_kind(self, annotation: object) -> Verdict | None:
+        """The verdict a return type gives (``None`` when it says neither effect, handler nor program)."""
+        text = _annotation_text(annotation)
+        if isinstance(annotation, str):
+            return _named_annotation_kind(annotation)
+        if self._is_effect_type(annotation):
+            return Verdict("effect", "effect を作る関数", f"戻りの型 {text}(EffectBase の子)")
+        if any(annotation is handler_type for handler_type in self.handler_types):
+            return Verdict("handler", "handler を返す関数", f"戻りの型 {text}")
+        origin = typing.get_origin(annotation)
+        base = origin if origin is not None else annotation
+        if isinstance(base, type) and base.__name__ in _PROGRAM_TYPE_NAMES:
+            return Verdict("other", "program を返す関数", f"戻りの型 {text}")
+        return None
+
+    def _is_effect_type(self, annotation: object) -> bool:
+        """Whether a return type is an effect type: the class, a generic of it, or a union of them."""
+        if self.is_effect_class(annotation):
+            return True
+        origin = typing.get_origin(annotation)
+        if origin in (typing.Union, types.UnionType):
+            members = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
+            return bool(members) and all(self._is_effect_type(arg) for arg in members)
+        return origin is not None and self.is_effect_class(origin)
+
+    def _returns_kind(self, function: object) -> Verdict | None:
+        """The verdict every ``return`` of a Python function agrees on (``None`` when they do not)."""
+        node = _function_node(function)
+        if node is None or not isinstance(function, types.FunctionType):
+            return None
+        returned = [statement.value for statement in _own_returns(node)]
+        if all(value is None for value in returned):
+            return Verdict("other", "関数", "値を返さない")
+        nested = {
+            child.name: child
+            for child in ast.walk(node)
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child is not node
+        }
+        kinds = {
+            self._returned_kind(value, function.__globals__, nested)
+            for value in returned
+            if value is not None
+        }
+        if kinds == {"effect"}:
+            return Verdict("effect", "effect を作る関数", "return が effect の class を呼ぶ")
+        if kinds == {"handler"}:
+            return Verdict("handler", "handler を返す関数", "return が handler を作る")
+        return None
+
+    def _returned_kind(
+        self,
+        value: ast.expr,
+        namespace: dict[str, object],
+        nested: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+    ) -> Kind | None:
+        """Whether one returned expression is an effect or a handler, read with the module's globals."""
+        if isinstance(value, ast.Call):
+            return self._called_kind(_resolve(value.func, namespace))
+        if isinstance(value, ast.Name) and value.id in nested:
+            decorators = nested[value.id].decorator_list
+            return (
+                "handler"
+                if any(_decorator_name(item) == "handler" for item in decorators)
+                else None
+            )
+        target = _resolve(value, namespace)
+        if _is_handler_marked(target):
+            return "handler"
+        return "effect" if isinstance(target, self.effect_base) else None
+
+    def _called_kind(self, target: object) -> Kind | None:
+        """Whether calling ``target`` makes an effect or a handler (an effect class, a handler builder)."""
+        if self.is_effect_class(target):
+            return "effect"
+        if any(target is builder for builder in self.handler_builders) or _is_handler_marked(
+            target
+        ):
+            return "handler"
+        if target is _MISSING or not callable(target) or isinstance(target, type):
+            return None
+        annotation = _return_annotation(_definition(target))
+        decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
+        return (
+            decided.kind if decided is not None and decided.kind in ("effect", "handler") else None
+        )
+
+
+def _named_annotation_kind(annotation: str) -> Verdict:
+    """The verdict of a return type left as text (one the module's globals cannot evaluate)."""
+    head = annotation.split("[", 1)[0].strip().rsplit(".", 1)[-1]
+    if head in _HANDLER_TYPE_NAMES:
+        return Verdict("handler", "handler を返す関数", f"戻りの型 {annotation}")
+    if head in _PROGRAM_TYPE_NAMES:
+        return Verdict("other", "program を返す関数", f"戻りの型 {annotation}")
+    return Verdict("unclassified", "関数", f"戻りの型 {annotation} を解けない")
+
+
+def _is_function_like(obj: object) -> bool:
+    """Whether a callable value is a function (so its return type and body can be read)."""
+    if isinstance(obj, functools.partial):
+        return True
+    return isinstance(
+        _definition(obj), (types.FunctionType, types.BuiltinFunctionType, types.MethodType)
+    )
+
+
+def _is_type_like(obj: object) -> bool:
+    """Whether a value is a typing construct (``TypeVar``, alias, union, special form)."""
+    typing_kinds = (
+        typing.TypeVar,
+        typing.ParamSpec,
+        typing.TypeAliasType,
+        types.UnionType,
+        types.GenericAlias,
+    )
+    return isinstance(obj, typing_kinds) or type(obj).__module__ == "typing"
+
+
+def _return_annotation(function: object) -> object:
+    """A function's return type, evaluated when it can be (its text when not; ``_MISSING`` when absent)."""
+    if not callable(function):
+        return _MISSING
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError, NameError):
+        return _MISSING
+    annotation = signature.return_annotation
+    if annotation is inspect.Signature.empty:
+        return _MISSING
+    if isinstance(annotation, str) and isinstance(function, types.FunctionType):
+        try:
+            return eval(annotation, function.__globals__)  # the module's own annotation text
+        except (NameError, AttributeError, SyntaxError, TypeError):
+            return annotation
+    return annotation
+
+
+def _annotation_text(annotation: object) -> str:
+    """A return type as a reader writes it, for the row's reason."""
+    if isinstance(annotation, str):
+        return annotation
+    if isinstance(annotation, type):
+        return annotation.__qualname__
+    return repr(annotation).replace("typing.", "")
+
+
+def _takes_effect_and_k(function: object) -> bool:
+    """Whether a function is a raw handler: two required positional parameters, the second ``k``."""
+    if not isinstance(function, types.FunctionType):
+        return False
+    required = [
+        parameter
+        for parameter in inspect.signature(function).parameters.values()
+        if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+        and parameter.default is parameter.empty
+    ]
+    return len(required) == 2 and required[1].name == "k"
+
+
+def _function_node(function: object) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The ``def`` of a Python function, parsed from its source (``None`` for Hy and native code)."""
+    if not isinstance(function, types.FunctionType) or not function.__code__.co_filename.endswith(
+        ".py"
+    ):
+        return None
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    except (OSError, TypeError, SyntaxError):
+        return None
+    first = tree.body[0] if tree.body else None
+    return first if isinstance(first, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
+
+
+def _own_returns(node: ast.AST) -> Iterator[ast.Return]:
+    """The ``return`` statements of a function, not those of the functions and classes inside it."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.Return):
+            yield child
+        elif not isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            yield from _own_returns(child)
+
+
+def _decorator_name(decorator: ast.expr) -> str | None:
+    """The last name of a decorator (``@handler``, ``@doeff.handler``, ``@handler(...)``)."""
+    if isinstance(decorator, ast.Call):
+        return _decorator_name(decorator.func)
+    if isinstance(decorator, ast.Name):
+        return decorator.id
+    if isinstance(decorator, ast.Attribute):
+        return decorator.attr
+    return None
+
+
+def _resolve(expression: ast.expr, namespace: dict[str, object]) -> object:
+    """The value a name or dotted attribute refers to in a module's globals (``_MISSING`` otherwise)."""
+    if isinstance(expression, ast.Name):
+        if expression.id in namespace:
+            return namespace[expression.id]
+        builtins = namespace.get("__builtins__")
+        if isinstance(builtins, dict) and expression.id in builtins:
+            return cast(dict[str, object], builtins)[expression.id]  # the module's builtins table
+        return _MISSING
+    if isinstance(expression, ast.Attribute):
+        owner = _resolve(expression.value, namespace)
+        return _MISSING if owner is _MISSING else _static(owner, expression.attr)
+    return _MISSING
+
+
+# --- where a name is defined ---
+
+
+@functools.cache
+def _source_text(file: str) -> str | None:
+    """A source file's text, read once per child (``None`` when it cannot be read)."""
+    try:
+        return Path(file).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+@functools.cache
+def _source_tree(file: str) -> ast.Module | None:
+    """A Python file's syntax tree, parsed once per child (``None`` when it does not parse)."""
+    text = _source_text(file)
+    try:
+        return ast.parse(text) if text is not None else None
+    except SyntaxError:
+        return None
+
+
+def _module_file(module_name: str) -> str | None:
+    """The source file of an imported module (``None`` for one not imported or without a file)."""
+    module = sys.modules.get(module_name)
+    file = module.__dict__.get("__file__") if module is not None else None
+    return file if isinstance(file, str) else None
+
+
+@dataclass(frozen=True)
+class _Sources:
+    """Finds where a plain value is bound, and tells the package's own modules from the others."""
+
+    roots: tuple[str, ...]
+
+    def origin(self, module_name: str, name: str, depth: int = 0) -> Place:
+        """Where a plain value is bound, following ``from x import name`` to the module that binds it."""
+        file = _module_file(module_name)
+        if file is None or depth > _FOLLOW_DEPTH:
+            return Place(module_name, file)
+        if file.endswith(".hy"):
+            return self._hy_origin(module_name, file, name, depth)
+        tree = _source_tree(file) if file.endswith(".py") else None
+        statements = _top_statements(tree.body) if tree is not None else iter(())
+        found = (
+            self._statement_origin(statement, Place(module_name, file), name, depth)
+            for statement in statements
+        )
+        return next((place for place in found if place is not None), Place(module_name, file))
+
+    def _statement_origin(
+        self, statement: ast.stmt, module: Place, name: str, depth: int
+    ) -> Place | None:
+        """``origin`` when one module-level statement binds ``name`` (``None`` when it does not)."""
+        if _binds(statement, name):
+            return Place(module.module, module.file, statement.lineno)
+        if not isinstance(statement, ast.ImportFrom) or module.file is None:
+            return None
+        for alias in statement.names:
+            if (alias.asname or alias.name) == name and alias.name != "*":
+                source = _absolute_module(module.module, module.file, statement)
+                return (
+                    self.origin(source, alias.name, depth + 1)
+                    if source in sys.modules
+                    else Place(source)
+                )
+        return None
+
+    def _hy_origin(self, module_name: str, file: str, name: str, depth: int) -> Place:
+        """``origin`` for a Hy module, read from its text (its defining forms and ``import`` forms)."""
+        text = _source_text(file)
+        if text is None:
+            return Place(module_name, file)
+        hy_names = {name, name.replace("_", "-")}
+        for number, line in enumerate(text.splitlines(), start=1):
+            match = _HY_DEFINING_FORM.match(line)
+            if match and match.group(1).rstrip(")") in hy_names:
+                return Place(module_name, file, number)
+        for match in _HY_IMPORT_FORM.finditer(text):
+            if hy_names & set(match.group(2).split()):
+                source = match.group(1)
+                return (
+                    self.origin(source, name, depth + 1) if source in sys.modules else Place(source)
+                )
+        return Place(module_name, file)
+
+    def is_own_module(self, module_name: str) -> bool:
+        """Whether a module belongs to the package being read (one of its import roots)."""
+        return module_name.split(".")[0] in self.roots
+
+
+def _top_statements(body: list[ast.stmt]) -> Iterator[ast.stmt]:
+    """Module-level statements, including those under ``if`` / ``try`` / ``with``."""
+    for statement in body:
+        if isinstance(statement, ast.If):
+            yield from _top_statements(statement.body)
+            yield from _top_statements(statement.orelse)
+        elif isinstance(statement, ast.Try):
+            yield from _top_statements(statement.body)
+            for handler in statement.handlers:
+                yield from _top_statements(handler.body)
+            yield from _top_statements(statement.orelse)
+            yield from _top_statements(statement.finalbody)
+        elif isinstance(statement, ast.With):
+            yield from _top_statements(statement.body)
+        else:
+            yield statement
+
+
+def _statement_names(statement: ast.stmt) -> tuple[str, ...]:
+    """The names a module-level statement binds (def, class, assignment, type alias)."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return (statement.name,)
+    if isinstance(statement, ast.Assign):
+        return tuple(name for target in statement.targets for name in _target_names(target))
+    if isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+        return _target_names(statement.target)
+    if isinstance(statement, ast.TypeAlias) and isinstance(statement.name, ast.Name):
+        return (statement.name.id,)
+    return ()
+
+
+def _target_names(target: ast.expr) -> tuple[str, ...]:
+    """The names an assignment target binds (a name, or a tuple or list of them)."""
+    if isinstance(target, ast.Name):
+        return (target.id,)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return tuple(name for element in target.elts for name in _target_names(element))
+    return ()
+
+
+def _binds(statement: ast.stmt, name: str) -> bool:
+    """Whether a module-level statement binds ``name``."""
+    return name in _statement_names(statement)
+
+
+def _absolute_module(module_name: str, file: str, statement: ast.ImportFrom) -> str:
+    """The module a (possibly relative) ``from ... import`` reads from."""
+    if statement.level == 0:
+        return statement.module or ""
+    package_parts = module_name.split(".")
+    if not Path(file).name.startswith("__init__."):
+        package_parts = package_parts[:-1]
+    base = package_parts[: len(package_parts) - (statement.level - 1)]
+    return ".".join([*base, statement.module] if statement.module else base)
+
+
+def _place_text(place: Place) -> str:
+    """A repo-relative ``path:line`` for the table, or the module name for code outside the repo."""
+    if place.file is None:
+        return place.module
+    path = Path(place.file).resolve()
+    if path.suffix in _EXTENSION_SUFFIXES:
+        return f"{place.module}(native)"
+    if path.is_relative_to(ROOT) and not path.is_relative_to(ROOT / ".venv"):
+        relative = path.relative_to(ROOT).as_posix()
+        return f"{relative}:{place.line}" if place.line is not None else relative
+    return place.module
+
+
+def _code_place(target: object) -> Place | None:
+    """Where a function or class is defined (``None`` for a value that is neither)."""
+    if isinstance(target, types.FunctionType):
+        return Place(target.__module__, target.__code__.co_filename, target.__code__.co_firstlineno)
+    if isinstance(target, type):
+        line = _static(target, "__firstlineno__")
+        return Place(
+            target.__module__,
+            _module_file(target.__module__),
+            line if isinstance(line, int) else None,
+        )
+    return None
+
+
+# --- one package, in the child process ---
+
+
+def _install_hy() -> None:
+    """Let ``.hy`` modules be imported (Hy's import hook)."""
+    if importlib.util.find_spec("hy") is not None:
+        importlib.import_module("hy")
+
+
+def _put_roots_on_path(layout: PackageLayout) -> None:
+    """Make a package that is not installed in the venv importable from its source.
+
+    Installed packages (editable or built) are imported as installed; a maturin package needs its
+    built native module, so its source dir is never put first.
+    """
+    missing = [
+        root
+        for root in layout.roots
+        if not layout.maturin and importlib.util.find_spec(root.name) is None
+    ]
+    sys.path[:0] = [str(root.path.parent) for root in missing]
+
+
+def _exported_names(module: types.ModuleType, sources: _Sources) -> tuple[list[str], ModuleReadWay]:
+    """The names a module exports, and how they were read (``__all__`` or the package's own names)."""
+    declared = module.__dict__.get("__all__")
+    if isinstance(declared, (list, tuple)):
+        return [str(name) for name in cast(Sequence[object], declared)], "__all__"
+    names = [
+        name
+        for name, value in sorted(module.__dict__.items())
+        if not name.startswith("_")
+        and not isinstance(value, types.ModuleType)
+        and _defined_in_package(value, module.__name__, name, sources)
+    ]
+    return names, "own"
+
+
+def _defined_in_package(value: object, module_name: str, name: str, sources: _Sources) -> bool:
+    """Whether a module's name is the package's own (not imported from another package)."""
+    target = _definition(value)
+    if isinstance(target, (type, types.FunctionType)):
+        return sources.is_own_module(target.__module__)
+    if isinstance(value, (typing.TypeVar, typing.TypeAliasType)):
+        return sources.is_own_module(value.__module__)
+    return sources.is_own_module(sources.origin(module_name, name).module)
+
+
+def _location(value: object, module_name: str, name: str, sources: _Sources) -> str:
+    """Where an exported value is defined, for the table's column."""
+    place = _code_place(_definition(value))
+    if place is None:
+        return _place_text(sources.origin(module_name, name))
+    if place.module == "builtins":
+        # A native class that names no module (pyo3 without ``module=``): the module showing it.
+        return f"{module_name}(native)"
+    return _place_text(place)
+
+
+def _macro_exports(
+    module: types.ModuleType, sources: _Sources
+) -> list[tuple[str, Callable[..., object]]]:
+    """A Hy module's public macros: ``_hy_export_macros`` when it exports them, else its own macros."""
+    macros = module.__dict__.get("_hy_macros")
+    if not isinstance(macros, dict):
+        return []
+    table = cast(
+        dict[str, Callable[..., object]], macros
+    )  # Hy's macro table: mangled name -> macro
+    exported = module.__dict__.get("_hy_export_macros")
+    if isinstance(exported, (list, tuple, set, frozenset)):
+        names = [str(name) for name in cast(Sequence[object], exported)]
+        return [(name, table[name]) for name in names if name in table]
+    return [
+        (name, macro)
+        for name, macro in sorted(table.items())
+        if not name.startswith("_")
+        and isinstance(macro, types.FunctionType)
+        and macro.__module__ == module.__name__
+        and sources.is_own_module(macro.__module__)
+    ]
+
+
+def _display_name(name: str) -> str:
+    """A Hy-mangled name as written in Hy (``hyx_XlessHthan_signX_`` -> ``<-``)."""
+    if not name.startswith("hyx_") or importlib.util.find_spec("hy") is None:
+        return name
+    return str(importlib.import_module("hy").unmangle(name))
+
+
+def _fallback_names(path: Path) -> list[str]:
+    """The names a module that cannot be imported seems to define, read from its text."""
+    text = _source_text(str(path))
+    if text is None:
+        return []
+    if path.suffix == ".hy":
+        return sorted(
+            {name for name in _HY_TOP_DEFINITION.findall(text) if not name.startswith("_")}
+        )
+    tree = _source_tree(str(path)) if path.suffix in (".py", ".pyi") else None
+    if tree is None:
+        return []
+    names = {
+        name for statement in _top_statements(tree.body) for name in _statement_names(statement)
+    }
+    return sorted(name for name in names if not name.startswith("_"))
+
+
+def _entry_location(target: str) -> str:
+    """Where a ``module:attr`` console script or entry point target is defined."""
+    module_name, _, attribute = target.partition(":")
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as error:  # the failure is written into the row, not dropped
+        return f"{module_name}(import できない: {type(error).__name__})"
+    if not attribute:
+        return _place_text(Place(module_name, _module_file(module_name)))
+    value = functools.reduce(_static, attribute.split("."), cast(object, module))
+    return _place_text(_code_place(_definition(value)) or Place(module_name))
+
+
+def _name_row(
+    module: types.ModuleType, name: str, classifier: _Classifier, sources: _Sources
+) -> ExportRow:
+    """The row of one name a module exports: its verdict and where it is defined."""
+    if name not in module.__dict__:
+        verdict, defined_at = (
+            Verdict("unclassified", "名だけ", "__all__ に在るが module に無い"),
+            module.__name__,
+        )
+    else:
+        value = module.__dict__[name]
+        try:
+            verdict = classifier.classify(value, name)
+            defined_at = _location(value, module.__name__, name, sources)
+        except Exception as error:  # the failure is written into the row, not dropped
+            verdict = Verdict(
+                "unclassified", "値", f"種類を決める途中で {type(error).__name__}: {error}"
+            )
+            defined_at = module.__name__
+    return ExportRow(
+        module=module.__name__,
+        name=name,
+        kind=verdict.kind,
+        form=verdict.form,
+        defined_at=defined_at,
+        reason=verdict.reason,
+    )
+
+
+def _macro_row(module: types.ModuleType, name: str, macro: Callable[..., object]) -> ExportRow:
+    """The row of one public Hy macro."""
+    return ExportRow(
+        module=module.__name__,
+        name=_display_name(name),
+        kind="other",
+        form="Hy の macro",
+        defined_at=_place_text(_code_place(macro) or Place(module.__name__)),
+        reason="Hy の macro(書き方の道具)",
+    )
+
+
+@dataclass(frozen=True)
+class _ModuleResult:
+    """One public module as read: how it was read, and the rows of its names."""
+
+    read: ModuleRead
+    rows: tuple[ExportRow, ...]
+
+
+def _read_module(
+    module_name: str, path: Path, classifier: _Classifier, sources: _Sources
+) -> _ModuleResult:
+    """Import one public module and type its names; a module that cannot be imported is read as text."""
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            module = importlib.import_module(module_name)
+    except (
+        Exception,
+        SystemExit,
+    ) as error:  # the failure is written into the inventory, not dropped
+        message = f"{type(error).__name__}: {error}".splitlines()[0][:300]
+        location = _place_text(Place(module_name, str(path)))
+        return _ModuleResult(
+            ModuleRead(name=module_name, read="text", error=message),
+            tuple(
+                ExportRow(
+                    module=module_name,
+                    name=name,
+                    kind="unclassified",
+                    form="import できない module の名",
+                    defined_at=location,
+                    reason=message,
+                )
+                for name in _fallback_names(path)
+            ),
+        )
+    names, read = _exported_names(module, sources)
+    return _ModuleResult(
+        ModuleRead(name=module_name, read=read, error=None),
+        (
+            *(_name_row(module, name, classifier, sources) for name in names),
+            *(_macro_row(module, name, macro) for name, macro in _macro_exports(module, sources)),
+        ),
+    )
+
+
+def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
+    """The rows of what ``pyproject.toml`` installs besides modules: scripts, entry points, executables."""
+    cargo = _place_text(Place(layout.dir.name, str(layout.dir / "Cargo.toml")))
+    return [
+        *(
+            ExportRow(
+                module="(console script)",
+                name=script,
+                kind="other",
+                form="console script",
+                defined_at=_entry_location(target),
+                reason=f"命令の入口 {target}",
+            )
+            for script, target in sorted(layout.scripts.items())
+        ),
+        *(
+            ExportRow(
+                module="(entry point)",
+                name=f"{group}:{entry}",
+                kind="other",
+                form=f"entry point({group})",
+                defined_at=_entry_location(target),
+                reason=f"入口 {target}",
+            )
+            for group, entries in sorted(layout.entry_points.items())
+            for entry, target in sorted(entries.items())
+        ),
+        *(
+            ExportRow(
+                module="(実行 file)",
+                name=binary,
+                kind="other",
+                form="Rust の実行 file",
+                defined_at=cargo,
+                reason="maturin の bin が置く実行 file",
+            )
+            for binary in layout.rust_bins
+        ),
+    ]
+
+
+def probe_package(package_dir: Path) -> PackageInventory:
+    """Import one package's public modules and type every exported name (run in a child process)."""
+    layout = read_layout(package_dir)
+    _put_roots_on_path(layout)
+    _install_hy()
+    classifier = _Classifier()
+    sources = _Sources(tuple(root.name for root in layout.roots))
+    results = [
+        _read_module(name, path, classifier, sources) for name, path in public_modules(layout)
+    ]
+    return PackageInventory(
+        dir=package_dir.name,
+        distribution=layout.distribution,
+        import_roots=[root.name for root in layout.roots],
+        notes=list(layout.notes),
+        modules=[result.read for result in results],
+        exports=[*(row for result in results for row in result.rows), *_metadata_rows(layout)],
+        error=None,
+    )
+
+
+# --- the whole repo (parent process) ---
+
+
+def _run_probe(package_dir: Path, timeout: float) -> PackageInventory:
+    """Probe one package in a child process (its own imports, its own failures)."""
+    with tempfile.TemporaryDirectory(prefix="public-api-") as scratch:
+        out = Path(scratch) / "probe.json"
+        command = [
+            sys.executable,
+            "-P",
+            str(Path(__file__).resolve()),
+            "--probe",
+            str(package_dir),
+            "--probe-out",
+            str(out),
+        ]
+        try:
+            finished = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout, check=False
+            )
+        except subprocess.TimeoutExpired:
+            return _failed(package_dir, f"{timeout:.0f} 秒で読み終わらなかった")
+        if finished.returncode != 0 or not out.is_file():
+            tail = " / ".join(finished.stderr.strip().splitlines()[-5:])
+            return _failed(
+                package_dir, f"読む子が終了 code {finished.returncode} で終わった: {tail}"
+            )
+        return cast(
+            PackageInventory, json.loads(out.read_text(encoding="utf-8"))
+        )  # written by probe_package
+
+
+def _failed(package_dir: Path, message: str) -> PackageInventory:
+    """The entry of a package whose child process failed: its layout, no names, and the failure."""
+    layout = read_layout(package_dir)
+    return PackageInventory(
+        dir=package_dir.name,
+        distribution=layout.distribution,
+        import_roots=[root.name for root in layout.roots],
+        notes=list(layout.notes),
+        modules=[],
+        exports=[],
+        error=message,
+    )
+
+
+def inventory(
+    repo: Path = ROOT,
+    packages: Sequence[str] | None = None,
+    jobs: int = 4,
+    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+) -> list[PackageInventory]:
+    """The public API of every package dir (or of the named ones), one entry per dir, sorted by name."""
+    dirs = package_dirs(repo)
+    if packages is not None:
+        unknown = set(packages) - {path.name for path in dirs}
+        if unknown:
+            raise SystemExit(f"packages/ の下に無い: {', '.join(sorted(unknown))}")
+        dirs = [path for path in dirs if path.name in packages]
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        return list(pool.map(lambda path: _run_probe(path, timeout), dirs))
+
+
+def _merge_key(row: ExportRow) -> tuple[str, str, str]:
+    """What makes two rows the same name: its name, its definition and its kind."""
+    return row["name"], row["defined_at"], row["kind"]
+
+
+def merged_exports(package: PackageInventory) -> list[MergedRow]:
+    """A package's names, one row per name and definition (in first-shown order), with every module showing it."""
+    indexed = sorted(enumerate(package["exports"]), key=lambda item: (_merge_key(item[1]), item[0]))
+    groups = [
+        list(group)
+        for _key, group in itertools.groupby(indexed, key=lambda item: _merge_key(item[1]))
+    ]
+    return [
+        MergedRow(**group[0][1], modules=[row["module"] for _index, row in group])
+        for group in sorted(groups, key=lambda group: group[0][0])
+    ]
+
+
+def counts(package: PackageInventory) -> dict[Kind, int]:
+    """How many distinct names of each kind a package shows (a name re-exported twice counts once)."""
+    found = collections.Counter(row["kind"] for row in merged_exports(package))
+    return {kind: found[kind] for kind in KINDS}
+
+
+# --- the markdown page (discussion-page skill, scene "page") ---
+
+
+def _cell(text: str) -> str:
+    """Text made safe for one markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _counts_text(found: dict[Kind, int]) -> str:
+    """A package's counts in one phrase, for the page and the run's log."""
+    return (
+        f"公開名 {sum(found.values())} 個(effect {found['effect']}・handler {found['handler']}・"
+        f"それ以外 {found['other']}・未分類 {found['unclassified']})"
+    )
+
+
+def _package_notes(package: PackageInventory) -> list[str]:
+    """What the reader should know about a package before its table (layout notes, failures)."""
+    failure = [f"読めなかった: {package['error']}"] if package["error"] is not None else []
+    modules = [
+        f"`{module['name']}` を import できない: {module['error']}"
+        for module in package["modules"]
+        if module["error"] is not None
+    ]
+    return [*package["notes"], *failure, *modules]
+
+
+def _package_section(package: PackageInventory, found: dict[Kind, int]) -> list[str]:
+    """One package's section of the page: a summary line, its notes and its table of names."""
+    roots = ", ".join(f"`{root}`" for root in package["import_roots"]) or "なし"
+    notes = _package_notes(package)
+    rows = merged_exports(package)
+    head = [
+        "",
+        f"## {package['dir']}",
+        "",
+        f"import の根 {roots}・{_counts_text(found)}。",
+        *([""] if notes else []),
+        *(f"- {_cell(note)}" for note in notes),
+    ]
+    if not rows:
+        return [*head, "", "注: 公開名は無い。"]
+    prefix = f"packages/{package['dir']}/"
+    table = [
+        f"| `{_cell(row['name'])}` | {KIND_LABELS[row['kind']]} | {_cell(row['form'])} | "
+        f"`{_cell(row['defined_at'].removeprefix(prefix))}` | "
+        f"{', '.join(f'`{module}`' for module in row['modules'])} | {_cell(row['reason'])} |"
+        for row in rows
+    ]
+    return [
+        *head,
+        "",
+        "| 名 | 種類 | 形 | 定義の場所 | 出す所 | 訳 |",
+        "|---|---|---|---|---|---|",
+        *table,
+    ]
+
+
+_METHOD_NOTES = (
+    "数える module: pyproject の wheel の packages(hatch)・python-source と module-name(maturin)・setuptools の"
+    "見つける package を import の根とし、根と、path のどの部分も `_` で始まらない submodule の全部。",
+    "module が出す名: `__all__` が在ればその全部。無ければ `_` で始まらない名のうち、その package の中で定義された物"
+    "(他の package と標準ライブラリから import しただけの名と module は数えない)。",
+    "Hy の module は `_` で始まらない macro も数える。pyproject の console script・entry point と、maturin の bin の"
+    "Rust の実行 file も数える。",
+    "effect: EffectBase の子の class・EffectBase の値・effect を作る関数(戻りの型が EffectBase の子か、return が"
+    "effect の class を呼ぶ)。",
+    "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler"
+    "か、return が handler を作る)・引数が (effect, k) の素の handler の関数。",
+    "それ以外: program 関数(@do・defk)・ほかの関数・class・例外・型・定数・macro・console script・entry point。",
+    "未分類: 戻りの型が無く return の形からも決まらない関数・名が Effect か Handler で終わるのに印の無い class・"
+    "import できない module の名。",
+    "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を全部並べる。定義の場所の"
+    "`packages/<package>/` は略す。",
+    "道具: `tools/public_api_inventory.py`(`uv run python tools/public_api_inventory.py --json <file> "
+    "--markdown <file>`)。",
+)
+
+
+def render_markdown(packages: list[PackageInventory], commit: str) -> str:
+    """The inventory as a page for people: the totals table, then one table per package."""
+    per_package = [(package, counts(package)) for package in packages]
+    total: dict[Kind, int] = {
+        kind: sum(found[kind] for _package, found in per_package) for kind in KINDS
+    }
+    header = [
+        "# doeff の subpackage の公開 API の目録",
+        "",
+        (
+            f"packages/ の下の {len(packages)} 個の subpackage が利用者に見せる公開名は {sum(total.values())} 個で、"
+            f"effect {total['effect']} 個・handler {total['handler']} 個・それ以外 {total['other']} 個・"
+            f"未分類 {total['unclassified']} 個です。"
+        ),
+        "",
+        "## 全体",
+        "",
+        "| package | 公開名 | effect | handler | それ以外 | 未分類 | 公開 module | import できない module |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    totals = [
+        f"| {package['dir']} | {sum(found.values())} | {found['effect']} | {found['handler']} | "
+        f"{found['other']} | {found['unclassified']} | {len(package['modules'])} | "
+        f"{sum(1 for module in package['modules'] if module['error'] is not None)} |"
+        for package, found in per_package
+    ]
+    sections = [line for package, found in per_package for line in _package_section(package, found)]
+    appendix = ["", "## 付録: 数え方", "", *(f"- {note}" for note in _METHOD_NOTES)]
+    note = f"注: doeff の commit {commit} の木を数えた。種類の決め方は付録にある。"
+    return "\n".join([*header, *totals, "", note, *sections, *appendix]) + "\n"
+
+
+def _git_head(repo: Path) -> str:
+    """The commit the inventory was taken at, for the page's note."""
+    finished = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return finished.stdout.strip() or "(不明)"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Write the inventory as JSON and markdown, or probe one package (the child process's entry)."""
+    parser = argparse.ArgumentParser(description="subpackage の公開 API の目録を作る")
+    parser.add_argument(
+        "--package", action="append", help="packages/ の下の dir の名(重ねてよい・既定は全部)"
+    )
+    parser.add_argument("--json", help="目録の JSON を書く file(- で標準出力)")
+    parser.add_argument("--markdown", help="目録の表の markdown を書く file")
+    parser.add_argument("--jobs", type=int, default=4, help="同時に読む package の数")
+    parser.add_argument(
+        "--timeout", type=float, default=_DEFAULT_TIMEOUT_SECONDS, help="1 package を読む秒の上限"
+    )
+    parser.add_argument("--probe", help=argparse.SUPPRESS)
+    parser.add_argument("--probe-out", help=argparse.SUPPRESS)
+    arguments = parser.parse_args(argv)
+    if arguments.probe is not None:
+        result = probe_package(Path(arguments.probe).resolve())
+        Path(arguments.probe_out).write_text(
+            json.dumps(result, ensure_ascii=False), encoding="utf-8"
+        )
+        return 0
+    packages = inventory(ROOT, arguments.package, arguments.jobs, arguments.timeout)
+    commit = _git_head(ROOT)
+    document = (
+        json.dumps({"commit": commit, "packages": packages}, ensure_ascii=False, indent=1) + "\n"
+    )
+    if arguments.json == "-":
+        sys.stdout.write(document)
+    elif arguments.json is not None:
+        Path(arguments.json).write_text(document, encoding="utf-8")
+    if arguments.markdown is not None:
+        Path(arguments.markdown).write_text(render_markdown(packages, commit), encoding="utf-8")
+    log = "\n".join(
+        f"{package['dir']}: {_counts_text(counts(package))}"
+        + (f" — 読めなかった: {package['error']}" if package["error"] else "")
+        for package in packages
+    )
+    print(log, file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
