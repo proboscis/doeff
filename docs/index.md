@@ -137,7 +137,7 @@ components are listed separately under
 ### CLI Tools
 
 15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
-16. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
+16. **[Effect Boundaries](17-effect-boundaries.md)** - Which effects handlers answer inside doeff, and how Await leaves it
 17. **[Effect Combinations](18-effect-combinations.md)** - Composition laws and interaction guarantees across effects
 
 ### Specialized Topics

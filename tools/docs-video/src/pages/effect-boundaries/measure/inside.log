@@ -1,0 +1,12 @@
+run 1: result ('pipeline', ['A', 'B'], 'A', Ok('C'))
+  15 effects in order: ['Ask', 'Spawn', 'Get', 'Put', 'WriterTellEffect', 'Spawn', 'Get', 'Put', 'WriterTellEffect', 'Gather', 'Wait', 'Try', 'Get', 'Put', 'WriterTellEffect']
+  by kind: {'Ask': 1, 'Spawn': 2, 'Get': 3, 'Put': 3, 'WriterTellEffect': 3, 'Gather': 1, 'Wait': 1, 'Try': 1}
+  threads: ['MainThread'] | event loop running: [False] | threads alive at end: 1
+run 2: result ('pipeline', ['A', 'B'], 'A', Ok('C'))
+  15 effects in order: ['Ask', 'Spawn', 'Get', 'Put', 'WriterTellEffect', 'Spawn', 'Get', 'Put', 'WriterTellEffect', 'Gather', 'Wait', 'Try', 'Get', 'Put', 'WriterTellEffect']
+  by kind: {'Ask': 1, 'Spawn': 2, 'Get': 3, 'Put': 3, 'WriterTellEffect': 3, 'Gather': 1, 'Wait': 1, 'Try': 1}
+  threads: ['MainThread'] | event loop running: [False] | threads alive at end: 1
+run 3: result ('pipeline', ['A', 'B'], 'A', Ok('C'))
+  15 effects in order: ['Ask', 'Spawn', 'Get', 'Put', 'WriterTellEffect', 'Spawn', 'Get', 'Put', 'WriterTellEffect', 'Gather', 'Wait', 'Try', 'Get', 'Put', 'WriterTellEffect']
+  by kind: {'Ask': 1, 'Spawn': 2, 'Get': 3, 'Put': 3, 'WriterTellEffect': 3, 'Gather': 1, 'Wait': 1, 'Try': 1}
+  threads: ['MainThread'] | event loop running: [False] | threads alive at end: 1
