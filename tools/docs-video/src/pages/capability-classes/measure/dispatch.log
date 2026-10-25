@@ -1,0 +1,8 @@
+routed(summarize("the report")):
+  summarize(): the code after the yield runs
+  -> 'openai: summary'
+canned(summarize("the report")):
+  summarize(): the code after the yield runs
+  -> 'canned summary'
+summarize_di("the report", canned_client):
+  -> 'canned summary'

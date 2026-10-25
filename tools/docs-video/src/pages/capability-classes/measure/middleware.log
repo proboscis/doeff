@@ -1,0 +1,10 @@
+memo: three Complete effects
+  answers: ["answer to 'plan'", "answer to 'risks'", "answer to 'plan'"]
+  provider calls: ['plan', 'risks']
+retry: one Complete effect, a provider that fails twice
+  provider: attempt 1 raises TimeoutError
+  provider: attempt 2 raises TimeoutError
+  provider: attempt 3 answers
+  retry: attempt 3 ok, resumes k once
+  one_question(): the code after the yield runs
+  -> "answer to 'plan'"

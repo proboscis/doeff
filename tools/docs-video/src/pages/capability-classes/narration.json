@@ -1,0 +1,106 @@
+[
+ {
+  "id": "t1",
+  "text": "Capability classes. A way to predict where effects pay off, before you write a handler."
+ },
+ {
+  "id": "t2",
+  "text": "Every handler is classified by one question: what does it demand of k, the rest of the program?"
+ },
+ {
+  "id": "t3",
+  "text": "Four classes. Each contains the one before, and each step up buys power, at a cost."
+ },
+ {
+  "id": "a1",
+  "text": "Class zero, dispatch. The handler performs the operation, and resumes k once, right away."
+ },
+ {
+  "id": "a2",
+  "text": "The same program runs under a handler that routes to a provider, or under a test handler."
+ },
+ {
+  "id": "a3",
+  "text": "This is the runtime power of dependency injection. A function call would do."
+ },
+ {
+  "id": "b1",
+  "text": "Class one, data middleware. k is still resumed once, but the handler works around that one resume."
+ },
+ {
+  "id": "b2",
+  "text": "memo reads the effect as data. A repeated question is answered from its cache, without a call."
+ },
+ {
+  "id": "b3",
+  "text": "retry yields the effect again for each attempt. Two attempts fail, and the third one answers."
+ },
+ {
+  "id": "b4",
+  "text": "Then it resumes k once, with the first success. Retrying the operation is class one."
+ },
+ {
+  "id": "b5",
+  "text": "Inspect, accumulate, elide, transform, repeat: around one resume, all of them can be built."
+ },
+ {
+  "id": "c1",
+  "text": "Class two, scheduling. Here k escapes the handler. It is parked, and resumed later."
+ },
+ {
+  "id": "c2",
+  "text": "Task one asks for prices. The backend call takes two seconds, on a virtual clock."
+ },
+ {
+  "id": "c3",
+  "text": "Half a second later, task two asks for the same prices. The dedup handler parks its k."
+ },
+ {
+  "id": "c4",
+  "text": "When the call returns, both tasks resume with the same value. Two calls served three requests."
+ },
+ {
+  "id": "c5",
+  "text": "Dependency injection has no continuations, so it cannot reach this class."
+ },
+ {
+  "id": "d1",
+  "text": "Class three, multi-shot, is deliberately absent. Every k in doeff is one-shot."
+ },
+ {
+  "id": "d2",
+  "text": "A handler that resumes k a second time gets a runtime error."
+ },
+ {
+  "id": "d3",
+  "text": "The sanctioned approximation: run the whole program again, once per branch, with a memoized prefix."
+ },
+ {
+  "id": "d4",
+  "text": "Both branches run, and the expensive call before the branch point happens only once."
+ },
+ {
+  "id": "e1",
+  "text": "When does adopting effects pay? One rule explains the audited projects."
+ },
+ {
+  "id": "e2",
+  "text": "First, you need to change what call boundaries do, at composition time or at run time."
+ },
+ {
+  "id": "e3",
+  "text": "Second, the call behind a boundary must cost far more than intercepting it."
+ },
+ {
+  "id": "e4",
+  "text": "One effect cost three and a half microseconds. Next to a ten millisecond call, that is 0.03 percent."
+ },
+ {
+  "id": "e5",
+  "text": "In a hot loop, it is forty-nine times a plain step. Keep such loops below the effect boundary."
+ },
+ {
+  "id": "z1",
+  "text": "Ask what a handler does with k. It tells you the cost, and whether you need effects at all."
+ }
+]

@@ -1,0 +1,14 @@
+09:00:00.0 task 1 asks 'prices'
+09:00:00.0 backend starts 'prices'
+09:00:00.5 task 2 asks 'prices'
+09:00:00.5 dedup parks k: 'prices' is in flight
+09:00:01.0 task 3 asks 'news'
+09:00:01.0 backend starts 'news'
+09:00:02.0 backend returns 'prices'
+09:00:02.0 dedup resumes the parked k with 'prices@v1'
+09:00:02.0 task 2 gets 'prices@v1'
+09:00:02.0 task 1 gets 'prices@v1'
+09:00:03.0 backend returns 'news'
+09:00:03.0 task 3 gets 'news@v1'
+answers: ['prices@v1', 'prices@v1', 'news@v1']
+backend calls: ['prices', 'news']
