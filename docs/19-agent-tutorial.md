@@ -14,6 +14,8 @@ pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-claude-code
 This tutorial walks through building a practical application using `doeff-agents`:
 an automated code review system that uses Claude to review pull requests.
 
+[![A narrated video, about three minutes, of this page's steps run against a scripted terminal that plays Claude Code: launch_session, monitor_session until the agent exits, capture_output and stop_session; the effects launch_session yields before it opens a terminal and the handler that answers them; session_scope stopping the session on a finish, a timeout and an exception; on_status_change firing on each change, with a BLOCKED session answered by send_message; and a Semaphore limiting a gather of four reviews](assets/videos/agent-tutorial.jpg)](assets/videos/agent-tutorial.mp4)
+
 ## What We'll Build
 
 A script that:
