@@ -3,6 +3,8 @@
 Semaphores provide cooperative concurrency control in doeff. They let you cap concurrent work,
 protect critical sections, and coordinate access to finite resources without blocking OS threads.
 
+[![A narrated video, about two minutes: a semaphore as a fixed number of permits, with CreateSemaphore, AcquireSemaphore and ReleaseSemaphore as effects the scheduler answers; four calls sharing two permits while the others wait as parked k's; each release handing the permit straight to the oldest waiter; a cancelled waiter leaving the queue without taking a permit; and a failure without try/finally losing its permit for good](assets/videos/semaphore-effects.jpg)](assets/videos/semaphore-effects.mp4)
+
 ## Table of Contents
 
 - [Overview / Motivation](#overview--motivation)
