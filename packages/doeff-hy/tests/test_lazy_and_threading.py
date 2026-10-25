@@ -185,7 +185,10 @@ class TestLazyHandlerHyIntegration:
   (lazy greeting "hello")
   (Ping [] (resume greeting)))
 """
-        hy.eval(hy.read_many(code))
+        # 新しい module の大域で評価する — 関数の局所を名前空間にすると、展開が module の頭に置く import(`_doeff_do`)が
+        # 局所に入り、入れ子の関数から引けない(前の検が test の module の大域に置いた時だけ通っていた)。
+        mod = _hy_eval_in_module(code, "_test_defhandler_lazy_compiles")
+        assert callable(mod.ping_handler)
 
     def test_defhandler_lazy_with_effects(self):
         """Lazy init body can perform effects (Ask) for config."""

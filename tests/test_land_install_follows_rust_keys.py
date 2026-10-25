@@ -130,6 +130,7 @@ KEY_FILES = {
     "pyproject.toml": "pyproject.toml",
     "Cargo.toml": "Cargo.toml",
     "Cargo.lock": "Cargo.lock",
+    "build.rs": "build.rs",
     "src/**/*.rs": "src/lib.rs",
     "doeff_vm/**/*.py": "doeff_vm/__init__.py",
     "doeff_vm/**/*.pyi": "doeff_vm/__init__.pyi",

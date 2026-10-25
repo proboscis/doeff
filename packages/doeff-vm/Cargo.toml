@@ -25,6 +25,9 @@ doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }
 libc = "0.2"
 mimalloc = { version = "0.1", default-features = false }
 
+[build-dependencies]
+pyo3-build-config = "0.28"
+
 [dev-dependencies]
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
 

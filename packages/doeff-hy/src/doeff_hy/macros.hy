@@ -40,9 +40,11 @@
 (import doeff-hy.expansion-names [alias-symbol])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
 (import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
-;; macro の引数の型 — 展開の時に macro が受けるのは、Hy の compiler(`_hy-compiler`)と、書かれた form(`hy.models.Object`)
-(import hy.compiler [HyASTCompiler])
-(import hy.models [Object])
+;; macro の引数の型 — 展開の時に macro が受けるのは、Hy の compiler(`_hy-compiler`)と、書かれた form(`hy.models.Object`)。
+;; defmacro は compile の時に関数を作り、3.13 までは引数の注釈をその場で評価するので、compile の時の名前空間にも置く。
+(eval-and-compile
+  (import hy.compiler [HyASTCompiler])
+  (import hy.models [Object]))
 
 ;; Re-export handle macros so users only need one require line.
 ;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes

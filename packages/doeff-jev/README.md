@@ -46,7 +46,7 @@ journal を積まない組み立て点では、同じ行が外の slog の出口
 ## 呼び手の名と中継の名乗り
 
 `caller`(`judge_stack` / `run_judgment` / `jev_handler` の引数)は、記録の行に載るほか、要求の見出し `x-jev-caller` で宛先へ送る
-(形は `<部品>/<出来事か規則>` — 例 `rulebook-advisor/Stop`・`doeff-linter/DOEFF205`・`agora-messaging/land-classification`)。
+(形は `<部品>/<出来事か規則>` — 例 `rulebook-advisor/Stop`・`doeff-linter/DOEFF205`・`messaging/classification`)。
 本文には入れない(中継 jev-proxy の答えの鍵を変えないため)。中継が答えの見出し `x-jev-proxy` で名乗った答えの出所
 (hit / miss / coalesced / refreshed)は `Verdict.proxy` に、手元の cache が答えた判定は `Verdict.cached = True` に印す
 (`input_tokens`・`elapsed_ms` は問うた時の値のまま — 費用を数える時は cached を除く)。

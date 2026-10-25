@@ -43,6 +43,7 @@
 "tests/test_scheduler.py::TestDeadlockDiagnostics::test_runnable_idle_releaser_not_diagnosed_as_deadlock" = "本物の thread の外の待ちの間に、実行できる IDLE の解放役を deadlock と診断しない事"
 "tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock" = "本物の thread の外の待ちの間の、task をまたぐ合図の semaphore の診断(#495c)"
 "tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_logged_while_blocking_on_external" = "外の完了で長く止まった時の停滞の警告 — 停滞の判定が実時間の閾で決まる(#495b)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_counts_many_waiters_instead_of_naming_each" = "多くの待ち手を抱えて止まった時の停滞の警告の行の長さ — 停滞の判定が実時間の閾で決まる"
 "tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_with_a_live_source_is_not_stalled" = "生きている源を見張る外の待ちを停滞と言わない事 — 源の生死と停滞の閾が実時間"
 "tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_whose_source_ended_is_reported" = "終わった源を見張る外の待ちを報告する事 — 源の生死と停滞の閾が実時間"
 "tests/test_scheduler.py::TestRootCloseOut::test_root_return_dropping_queued_work_warns" = "根が返る時に本物の thread が後で満たす仕事を落とすと警告する事(#501)"
