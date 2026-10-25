@@ -565,6 +565,9 @@ def _codes_within(code: types.CodeType) -> tuple[types.CodeType, ...]:
 
 
 _IMPORT_NAME = dis.opmap["IMPORT_NAME"]
+# From 3.15 the import argument's two low bits mark a lazy or eager import (PEP 810); the index
+# into ``co_names`` is the rest.
+_IMPORT_NAME_SHIFT = 2 if sys.version_info >= (3, 15) else 0
 _EXTENDED_ARG = dis.EXTENDED_ARG
 
 
@@ -587,7 +590,7 @@ def _import_arguments(raw: bytes) -> tuple[int, ...]:
     found: tuple[int, ...] = ()
     at = operations.find(_IMPORT_NAME)
     while at != -1:
-        found = (*found, _argument(raw, at))
+        found = (*found, _argument(raw, at) >> _IMPORT_NAME_SHIFT)
         at = operations.find(_IMPORT_NAME, at + 1)
     return found
 

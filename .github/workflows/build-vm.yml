@@ -60,7 +60,7 @@ jobs:
           working-directory: packages/doeff-vm
           manylinux: auto
 
-      # Every job uploads only its own ABI's wheels (cp311-cp315 or cp313t/cp314t): publish.yml
+      # Every job uploads only its own ABI's wheels (cp311-cp315 or cp314t/cp315t): publish.yml
       # downloads all doeff-vm-* artifacts into one dir, and --find-interpreter in the free-threaded
       # jobs also builds the runner's GIL interpreters, so a same-named wheel would overwrite another.
       - name: Upload wheels
@@ -81,20 +81,21 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      # Only 3.14t: maturin 1.15 refuses a named 3.13t interpreter in the manylinux images
-      # ("Free-threaded Python interpreter is only supported on 3.14 and later").
+      # 3.14t and later only: maturin 1.15 refuses a named 3.13t interpreter in the manylinux images
+      # ("Free-threaded Python interpreter is only supported on 3.14 and later"), and PyO3 0.29
+      # builds no free-threaded CPython below 3.14.
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist -i python3.14t
+          args: --release --out dist -i python3.14t python3.15t
           working-directory: packages/doeff-vm
           manylinux: auto
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-linux-freethreaded-${{ matrix.target }}
-          path: packages/doeff-vm/dist/*-cp31[34]-cp31[34]t-*.whl
+          path: packages/doeff-vm/dist/*-cp31[45]-cp31[45]t-*.whl
           if-no-files-found: error
 
   build-macos:
@@ -149,8 +150,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: |
-            3.13t
             3.14t
+            3.15t
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -161,7 +162,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-macos-freethreaded-${{ matrix.target }}
-          path: packages/doeff-vm/dist/*-cp31[34]-cp31[34]t-*.whl
+          path: packages/doeff-vm/dist/*-cp31[45]-cp31[45]t-*.whl
           if-no-files-found: error
 
   build-windows:
@@ -200,8 +201,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: |
-            3.13t
             3.14t
+            3.15t
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -211,7 +212,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-windows-freethreaded
-          path: packages/doeff-vm/dist/*-cp31[34]-cp31[34]t-*.whl
+          path: packages/doeff-vm/dist/*-cp31[45]-cp31[45]t-*.whl
           if-no-files-found: error
 
   sdist:

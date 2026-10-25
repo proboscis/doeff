@@ -1663,6 +1663,8 @@ _LENGTH = struct.Struct("<Q")
 _ENCODE = operator.methodcaller("encode", "utf-8", "surrogatepass")
 
 _IMPORT_NAME = dis.opmap["IMPORT_NAME"]
+#: IMPORT_NAME の引数から名の表の番号を出す右への shift(3.15 から下の 2 bit は lazy・eager の印 — PEP 810)。
+_IMPORT_NAME_SHIFT = 2 if sys.version_info >= (3, 15) else 0
 _LOAD_CONST = dis.opmap["LOAD_CONST"]
 _LOAD_SMALL_INT = dis.opmap.get("LOAD_SMALL_INT", -1)
 _EXTENDED_ARG = dis.EXTENDED_ARG
@@ -1710,7 +1712,7 @@ def _imports(code: CodeType) -> Iterator[ImportReference]:
                     level = int(code.co_consts[arg])
                 case _:
                     level = 0
-            yield ImportReference(code.co_names[unit.arg], level)
+            yield ImportReference(code.co_names[unit.arg >> _IMPORT_NAME_SHIFT], level)
         previous = (previous[1], unit)
 
 
@@ -1732,18 +1734,21 @@ _ATTRIBUTE_NAME_LOADS: dict[int, int] = {
     _opcode("LOAD_METHOD"): 0,
     _opcode("LOAD_SUPER_ATTR"): 2,
 }
-#: 名の表の名を読みでなく使う命令(書き・消し・import の module の名)— 名で辿れない読みの印の名がこれだけに出れば読みではない。
-_OTHER_NAME_USES = frozenset(
-    {
-        _opcode("STORE_ATTR"),
-        _opcode("DELETE_ATTR"),
-        _opcode("STORE_GLOBAL"),
-        _opcode("DELETE_GLOBAL"),
-        _opcode("STORE_NAME"),
-        _opcode("DELETE_NAME"),
-        _opcode("IMPORT_NAME"),
-    }
-) - {-1}
+#: 名の表の名を読みでなく使う命令(書き・消し・import の module の名)と、引数から名の表の番号を出す右への shift — 名で辿れない
+#: 読みの印の名がこれだけに出れば読みではない。
+_OTHER_NAME_USES: dict[int, int] = {
+    op: shift
+    for op, shift in {
+        _opcode("STORE_ATTR"): 0,
+        _opcode("DELETE_ATTR"): 0,
+        _opcode("STORE_GLOBAL"): 0,
+        _opcode("DELETE_GLOBAL"): 0,
+        _opcode("STORE_NAME"): 0,
+        _opcode("DELETE_NAME"): 0,
+        _IMPORT_NAME: _IMPORT_NAME_SHIFT,
+    }.items()
+    if op != -1
+}
 
 
 def _namespace_read(code: CodeType) -> NamespaceRead:
@@ -1784,7 +1789,7 @@ def _name_uses(code: CodeType) -> Iterator[NameUse]:
                 code.co_names[unit.arg >> _ATTRIBUTE_NAME_LOADS[unit.op]], NameWay.ATTRIBUTE
             )
         elif unit.op in _OTHER_NAME_USES:
-            yield NameUse(code.co_names[unit.arg], NameWay.OTHER)
+            yield NameUse(code.co_names[unit.arg >> _OTHER_NAME_USES[unit.op]], NameWay.OTHER)
 
 
 def _mark_read(use: NameUse) -> NamespaceRead:

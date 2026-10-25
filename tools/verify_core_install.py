@@ -145,8 +145,13 @@ MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?
 # 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
 CHILD_TIMEOUT_SECONDS = 120
 # 入れた venv の中で走らせ、入れた物の様子を JSON で印字する program(direct_url.json は PEP 610 — どこから入れたか)。
+# README の本文は 3.14 までは metadata の payload に、3.15 からは Description の欄に在る(payload は空)。
 _DESCRIBE = """
 import importlib.metadata as metadata, json, sys, sysconfig
+
+def readme(name):
+    found = metadata.metadata(name)
+    return found.get_payload() or found.get("Description", "")
 
 def source(distribution):
     direct = json.loads(distribution.read_text("direct_url.json") or "{}")
@@ -157,7 +162,7 @@ print(json.dumps({
     "version": sys.version.split()[0],
     "free_threaded": bool(sysconfig.get_config_var("Py_GIL_DISABLED")),
     "installed": [source(d) for d in metadata.distributions()],
-    "readmes": [metadata.metadata(name).get_payload() for name in sys.argv[1:]],
+    "readmes": [readme(name) for name in sys.argv[1:]],
 }))
 """
 
