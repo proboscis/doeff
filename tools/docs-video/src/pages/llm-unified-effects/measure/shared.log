@@ -1,0 +1,5 @@
+hello('gpt-4o') -> 'hi from openai'
+hello('gemini-1.5-pro') -> 'hi from gemini'
+doeff_openai.effects.chat.ChatCompletion: subclass of LLMChat = True, warns DeprecationWarning
+doeff_gemini.effects.chat.GeminiChat: subclass of LLMChat = True, warns DeprecationWarning
+doeff_openrouter.effects.chat.RouterChat: subclass of LLMChat = True, warns DeprecationWarning

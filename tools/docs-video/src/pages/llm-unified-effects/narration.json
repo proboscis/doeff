@@ -1,0 +1,74 @@
+[
+ {
+  "id": "t1",
+  "text": "Unified LLM effects. The doeff-llm package defines the effects of talking to a language model once, for every provider."
+ },
+ {
+  "id": "t2",
+  "text": "LLM Chat, LLM Streaming Chat, LLM Structured Query and LLM Embedding name what the program asks for."
+ },
+ {
+  "id": "t3",
+  "text": "The provider packages, OpenAI, Gemini and OpenRouter, bring only handlers that answer them."
+ },
+ {
+  "id": "s1",
+  "text": "Before doeff-llm, each provider package defined its own, near-identical effects."
+ },
+ {
+  "id": "s2",
+  "text": "Those names remain as deprecated aliases: subclasses of LLM Chat that warn when they are built."
+ },
+ {
+  "id": "s3",
+  "text": "Now one program yields the same LLM Chat. Only the model name says which provider should answer."
+ },
+ {
+  "id": "s4",
+  "text": "Under the same handlers, OpenAI answers gpt-4o, and Gemini answers gemini 1.5 pro."
+ },
+ {
+  "id": "k1",
+  "text": "Here is the page's example: one workflow, three models, and three provider handlers in one stack. Mock handlers stand in for the real ones, so no API is called."
+ },
+ {
+  "id": "k2",
+  "text": "Each handler reads effect dot model. The structured query for gpt-4o reaches OpenAI first, which supports it, and answers."
+ },
+ {
+  "id": "k3",
+  "text": "The chat for gemini 1.5 pro is not OpenAI's. The handler yields Pass, with k, and the next handler out, Gemini, answers."
+ },
+ {
+  "id": "k4",
+  "text": "Mistral large passes OpenAI and Gemini, and reaches OpenRouter, the catch-all on the outside."
+ },
+ {
+  "id": "f1",
+  "text": "A handler's annotation filters effects too. chat only is annotated effect colon LLM Chat."
+ },
+ {
+  "id": "f2",
+  "text": "The structured query does not match, so it skips chat only without a call, and any model answers it."
+ },
+ {
+  "id": "f3",
+  "text": "The LLM Chat matches. chat only is called, and answers it."
+ },
+ {
+  "id": "o1",
+  "text": "So the order of the stack matters. OpenRouter answers a chat for any model."
+ },
+ {
+  "id": "o2",
+  "text": "Install it innermost, and it answers all three effects. OpenAI and Gemini never see one."
+ },
+ {
+  "id": "o3",
+  "text": "The catch-all goes outermost, and every handler inside it passes on the models it does not support."
+ },
+ {
+  "id": "z1",
+  "text": "One effect says what the program asks for. The handlers decide who answers, by handling it, or passing it on with k."
+ }
+]
