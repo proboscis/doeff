@@ -64,9 +64,9 @@ What the wrapper does:
   it fails with ``NoticeSourceUnreachable`` (``SourceFailed`` reaches the body). The stall's start is one warning
   in the process's log. A broker unreachable at the first subscription is the same outage: ``SourceStalled``,
   then ``SourceResumed`` and ``SourceStarted`` once the subscription is confirmed. The patience is the
-  composition's: a wrapper that reads channels asks ``ReadBrokerPatience`` once, before its first subscription, and
-  an outer ``broker_patience_handler`` answers it (no default — a composition that placed none falls at the start,
-  naming the effect; agora card ki-6b3c298bfee1: the composition answers it from the same value as its other
+  composition's: the source asks ``ReadBrokerPatience`` when an outage begins (like doeff-records' sources ask
+  theirs), and an outer ``broker_patience_handler`` answers it (no default — a composition that placed none falls at
+  its first outage, naming the effect; agora card ki-6b3c298bfee1: the composition answers it from the same value as its other
   stores' patience, so no second copy of the seconds is kept beside the routes).
 - Stopping. The source task and the task waiting for the return end by ``Cancel`` when the body ends; their waits
   have no time limit of their own. Then the subscription the source held is closed (``CloseSubscription``) — when
@@ -292,8 +292,8 @@ class _Plan:
     """A checked set of arguments of one wrapper: the source's name, the routes, the channels it reads
     (first-seen order, no repeats), those of them that are kept channels (read from their log as the reader named
     ``source``), and the effect classes its handler around the body answers (the Publish class of each routed type,
-    and the waits when it reads channels — ``()`` = it answers nothing). The patience is not part of it: the wrapper
-    asks it when it begins (``_asked_patience``)."""
+    and the waits when it reads channels — ``()`` = it answers nothing). The patience is not part of it: the source asks
+    it when the broker goes away (``_asked_patience``)."""
 
     source: str
     routes: tuple[NoticeRoute[object], ...]
@@ -464,13 +464,15 @@ def _came_back_within(seconds: float) -> "EffectGenerator[bool]":
 
 
 @do
-def _subscribed_after_outage(
-    plan: _Plan, patience: float, first: BrokerUnreachable
-) -> "EffectGenerator[ChannelSubscription]":
-    """Get past a broker outage without falling: publish ``SourceStalled``, wait for the broker's return up to
-    ``patience`` seconds (counted from the first failure), and subscribe again. Each new attempt follows an answer of
+def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGenerator[ChannelSubscription]":
+    """Get past a broker outage without falling: ask the composition's patience (``ReadBrokerPatience`` — once per
+    outage, at its start), publish ``SourceStalled``, wait for the broker's return up to the patience (counted from the
+    first failure), and subscribe again. Each new attempt follows an answer of
     ``AwaitBrokerBack`` — not a timer. Answers the new, confirmed subscription; past the patience raises
     ``NoticeSourceUnreachable``."""
+    # Asked here, at the stall, like doeff-records' sources ask theirs: a composition with no answer falls naming the
+    # question when its broker first goes away (agora card ki-6b3c298bfee1).
+    patience: float = yield _asked_patience(plan)
     since: datetime = yield GetTime()
     # Nothing else is seen until the broker is back or the patience is over: the stall's start is one line in the
     # process's log (card ki-aa9497a3a412 — a full pool of connections stalled a source silently for 900 s).
@@ -494,7 +496,7 @@ def _subscribed_after_outage(
 
 
 @do
-def _first_subscription(plan: _Plan, patience: float) -> "EffectGenerator[ChannelSubscription]":
+def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
     """Subscribe the channels before the body runs; a broker that is unreachable at the start is waited for like
     any outage, and its end is told like any outage's: ``SourceResumed`` once the broker confirmed the new
     subscription (``SourceStalled`` promises it — a program that keeps the stalled sources until their return
@@ -502,15 +504,13 @@ def _first_subscription(plan: _Plan, patience: float) -> "EffectGenerator[Channe
     broker confirmed the subscription."""
     answer = yield plan.subscribing()
     if isinstance(answer, BrokerUnreachable):
-        answer = yield _subscribed_after_outage(plan, patience, answer)
+        answer = yield _subscribed_after_outage(plan, answer)
         yield Publish(SourceResumed(source=plan.source))
     return answer
 
 
 @do
-def _read_notices(
-    plan: _Plan, patience: float, subscription: ChannelSubscription, reading: _Reading
-) -> "EffectGenerator[None]":
+def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Reading) -> "EffectGenerator[None]":
     """The source task: wait for the next notice and publish its event on the bus. When the connection is lost,
     give the dead subscription up, get past the outage, and tell ``SourceResumed`` — after the new subscription
     is confirmed. ``reading`` follows the subscription it holds. It ends only by ``Cancel`` (the wait has no time
@@ -527,7 +527,7 @@ def _read_notices(
         if isinstance(notice, BrokerUnreachable):
             yield CloseSubscription(current)
             reading._mut_held = None
-            current = yield _subscribed_after_outage(plan, patience, notice)
+            current = yield _subscribed_after_outage(plan, notice)
             if reading._mut_ended:
                 # The wrapper ended while this source waited for the broker: nobody will close what it just made.
                 yield CloseSubscription(current)
@@ -791,14 +791,11 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     by an error, or by a cancel — stop the source and the task waiting for the return, then close the subscription
     the source held (card ki-aa9497a3a412: a process that wraps body after body holds one subscription at a time,
     not one per body). A wrapper that only sends has no source: nothing to subscribe, nothing to tell but its
-    start gaps — and no patience to ask (nothing it waits for has a deadline)."""
+    start gaps."""
     gaps = _Gaps()
     first: ChannelSubscription | None = None
-    patience = 0.0
     if plan.channels:
-        # Asked before the first subscription: a composition with no answer falls here, not at its first outage.
-        patience = yield _asked_patience(plan)
-        first = yield _first_subscription(plan, patience)
+        first = yield _first_subscription(plan)
     reading = _Reading(first)
     source: tuple[Task[object], ...] = ()
     # The stop runs on an exception and on the normal end, not in ``finally`` (see ``_came_back_within``). It covers
@@ -806,7 +803,7 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     try:
         if first is not None:
             yield Publish(SourceStarted(source=plan.source))
-            reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, patience, first, reading)))
+            reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, first, reading)))
             source = (reader,)
         yield _started_gaps_told(plan, gaps)
         # A wrapper with no route answers nothing around the body (the source alone is enough).
@@ -846,8 +843,8 @@ def notice_events_handler(
     ``SourceResumed`` / ``SourceFailed`` it publishes.
     ``routes`` = one ``NoticeRoute`` per event type that travels through the broker.
 
-    How long the source waits for an unreachable broker is the composition's answer: a wrapper that reads channels
-    asks ``ReadBrokerPatience`` when it begins, and the composition answers it with ``broker_patience_handler``
+    How long the source waits for an unreachable broker is the composition's answer: its source asks
+    ``ReadBrokerPatience`` when the broker goes away, and the composition answers it with ``broker_patience_handler``
     outside the wrapper (no default — the composition chooses it in one place, for every wrapper it places).
 
     ``patience_seconds`` is only for the move to the question (agora card ki-6b3c298bfee1): a caller that still
@@ -884,7 +881,7 @@ def broker_patience_handler(patience: BrokerPatience) -> "ProgramHandler":
 # ``NextAnnouncement``, ``AckAnnouncement`` of a kept channel's notice, ``CloseSubscription``), sending a routed
 # event (``Announce``), what the source task publishes
 # on the bus (``PublishEffect`` — the received events and ``SourceStarted`` / ``SourceStalled`` / ``SourceResumed`` /
-# ``SourceFailed``), getting past an outage (``ReadBrokerPatience`` asked when a reading wrapper begins,
+# ``SourceFailed``), getting past an outage (``ReadBrokerPatience`` asked when an outage begins,
 # ``AwaitBrokerBack``, ``GetTimeEffect``, ``WaitWithinEffect``, the watcher task's ``CreatePromise`` /
 # ``CompletePromise``), and running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``).
 # The body's own ``WaitForEvent`` and its unrouted ``Publish`` go outward as the body's effects and are not counted.

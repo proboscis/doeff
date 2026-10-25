@@ -195,9 +195,9 @@ class BrokerPatience:
 class ReadBrokerPatience(EffectBase["BrokerPatience"]):
     """Ask how long a notice source waits for an unreachable broker (answers ``BrokerPatience``).
 
-    ``notice_events_handler`` asks it once, when a wrapper that reads channels begins — before its first
-    subscription — so a composition that placed no answer falls at its start, naming this effect, instead of at its
-    first outage. A wrapper that only sends never asks it: nothing it waits for has a deadline. The answer comes from
+    The source of ``notice_events_handler`` asks it when an outage begins (once per outage — like doeff-records'
+    sources ask ``ReadSourcePatience``), so a composition that placed no answer falls at its first outage, naming this
+    effect. A wrapper that only sends never asks it: nothing it waits for has a deadline. The answer comes from
     ``broker_patience_handler`` placed outside the wrapper (no default answer). It is its own question, not
     ``Ask`` (a reader of settings inside the composition could take it) and not a question of another package (the
     composition answers it from the same value as its other stores' patience — agora card ki-6b3c298bfee1)."""

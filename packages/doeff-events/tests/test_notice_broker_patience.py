@@ -2,10 +2,10 @@
 wrapper (agora card ki-6b3c298bfee1 — the composition answers it from the same value as its other stores' patience,
 so the seconds are declared in one place).
 
-- A wrapper that reads channels asks ``ReadBrokerPatience`` once when it begins, and its source waits for the
-  broker's return as long as the answer says — not a second longer.
-- A composition that placed no answer falls when the reading wrapper begins, naming the effect (there is no default),
-  before its first subscription and long before any outage.
+- The source of a wrapper that reads channels asks ``ReadBrokerPatience`` once when an outage begins (like
+  doeff-records' sources ask theirs), and waits for the broker's return as long as the answer says — not a second longer.
+- A composition that placed no answer runs while the broker answers, and falls at its first outage naming the effect
+  (there is no default seconds to fall back on).
 - A wrapper that only sends never asks it: nothing it waits for has a deadline.
 - The answer and its handler refuse what is not a patience.
 """
@@ -57,12 +57,6 @@ def _counts_the_question(seen: SimpleNamespace) -> ProgramHandler:
     return program_handler(handler)
 
 
-@do
-def _waits() -> EffectGenerator[object]:
-    """The body: wait for one note."""
-    return (yield WaitForEvent(LawNote))
-
-
 def test_the_source_waits_as_long_as_the_composition_answered() -> None:
     # The body cuts the broker at once and it never comes back: the source falls exactly at the answered patience.
     broker = MemoryBroker()
@@ -95,19 +89,21 @@ def test_the_source_waits_as_long_as_the_composition_answered() -> None:
     assert seen.fell_after == ANSWERED_SECONDS
 
 
-def test_a_reading_wrapper_with_no_answer_falls_at_its_start_naming_the_question() -> None:
-    # The broker is up: nothing would ever stall, yet the composition is refused before the first subscription.
+def test_a_reading_wrapper_with_no_answer_falls_at_its_first_outage_naming_the_question() -> None:
+    # The broker is up: the wrapper subscribes and the body runs without asking. Then the broker goes away, and the
+    # source asks the question nobody answers — it falls by name, not after some default seconds.
     broker = MemoryBroker()
     seen = SimpleNamespace(ran=False)
 
     @do
-    def never_runs() -> EffectGenerator[object]:
+    def runs_then_loses_the_broker() -> EffectGenerator[object]:
         seen.ran = True
+        yield cut_broker(broker, "the broker is away for the rest of the test")
         return (yield WaitForEvent(LawNote))
 
     with pytest.raises(UnhandledEffect, match="no handler found for effect: ReadBrokerPatience"):
-        run_on_virtual_clock(_reading_party(broker, "law-unanswered", never_runs()))
-    assert seen.ran is False
+        run_on_virtual_clock(_reading_party(broker, "law-unanswered", runs_then_loses_the_broker()))
+    assert seen.ran is True
 
 
 def test_a_wrapper_that_only_sends_never_asks() -> None:
@@ -139,8 +135,15 @@ def test_a_wrong_answer_is_named() -> None:
         """A broken composition: answers the seconds without their type."""
         return (yield Resume(k, 900.0))
 
+    broker = MemoryBroker()
+
+    @do
+    def cuts_and_waits() -> EffectGenerator[object]:
+        yield cut_broker(broker, "the broker is away for the rest of the test")
+        return (yield WaitForEvent(LawNote))
+
     with pytest.raises(TypeError, match="law-wrong.*BrokerPatience"):
-        run_on_virtual_clock(_reading_party(MemoryBroker(), "law-wrong", _waits(), program_handler(answers_a_number)))
+        run_on_virtual_clock(_reading_party(broker, "law-wrong", cuts_and_waits(), program_handler(answers_a_number)))
 
 
 def test_seconds_still_passed_to_the_factory_answer_its_own_question() -> None:
