@@ -496,7 +496,7 @@ impl PyHandlerSpec {
         } else {
             Some(
                 effect_types
-                    .downcast::<pyo3::types::PyTuple>()
+                    .cast::<pyo3::types::PyTuple>()
                     .map_err(|_| {
                         PyTypeError::new_err("HandlerSpec: effect_types must be a tuple or None")
                     })?
@@ -515,7 +515,7 @@ impl PyHandlerSpec {
             let tuple = |index: usize| {
                 passed
                     .get_item(index)
-                    .and_then(|item| Ok(item.downcast_into::<pyo3::types::PyTuple>()?.unbind()))
+                    .and_then(|item| Ok(item.cast_into::<pyo3::types::PyTuple>()?.unbind()))
                     .map_err(|e| {
                         PyTypeError::new_err(format!(
                             "HandlerSpec: passed must be None or (passes, keeps) of type tuples: {e}"
@@ -611,7 +611,7 @@ fn spec_rule(py: Python<'_>) -> Result<&SpecRule, String> {
                 resolve: module.getattr("handler_spec")?.unbind(),
                 kept_under: module
                     .getattr("_SPEC_ATTR")?
-                    .downcast_into::<PyString>()?
+                    .cast_into::<PyString>()?
                     .unbind(),
             })
         })
@@ -632,11 +632,11 @@ fn kept_handler_spec(
     let rule = spec_rule(py)?;
     let kept = handler
         .getattr(pyo3::intern!(py, "__dict__"))
-        .and_then(|namespace| Ok(namespace.downcast_into::<pyo3::types::PyDict>()?))
+        .and_then(|namespace| Ok(namespace.cast_into::<pyo3::types::PyDict>()?))
         .and_then(|namespace| namespace.get_item(rule.kept_under.bind(py)))
         .map_err(|e| format!("WithHandler: reading the kept handler spec failed: {e}"))?;
     Ok(kept
-        .and_then(|spec| spec.downcast_into::<PyHandlerSpec>().ok())
+        .and_then(|spec| spec.cast_into::<PyHandlerSpec>().ok())
         .map(Bound::unbind))
 }
 
@@ -657,7 +657,7 @@ fn resolved_handler_spec(
         .name()
         .map_or_else(|_| "?".to_string(), |name| name.to_string());
     answer
-        .downcast_into::<PyHandlerSpec>()
+        .cast_into::<PyHandlerSpec>()
         .map(Bound::unbind)
         .map_err(|_| {
             format!("WithHandler: the handler-spec resolver answered {kind}, not a HandlerSpec")
@@ -1324,7 +1324,7 @@ impl IRStream for PythonGeneratorStream {
 fn is_tail_resume_candidate(obj: &Bound<'_, PyAny>) -> bool {
     use crate::do_expr::{PyResume, PyResumeThrow};
 
-    obj.downcast::<PyResume>().is_ok() || obj.downcast::<PyResumeThrow>().is_ok()
+    obj.cast::<PyResume>().is_ok() || obj.cast::<PyResumeThrow>().is_ok()
 }
 
 /// The line the generator is suspended at. The attribute names are interned once
@@ -1344,14 +1344,14 @@ fn generator_current_line(py: Python<'_>, generator: &PyShared) -> Option<u32> {
 fn classify_tail_resume(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<Option<DoCtrl>, String> {
     use crate::do_expr::{PyResume, PyResumeThrow};
 
-    if let Ok(r) = obj.downcast::<PyResume>() {
+    if let Ok(r) = obj.cast::<PyResume>() {
         let r = r.get();
         let k = take_continuation(py, &r.continuation, "Transfer")?;
         let value = python_to_value(py, &r.value.bind(py));
         return Ok(Some(DoCtrl::Transfer { k, value }));
     }
 
-    if let Ok(rt) = obj.downcast::<PyResumeThrow>() {
+    if let Ok(rt) = obj.cast::<PyResumeThrow>() {
         let rt = rt.get();
         let k = take_continuation(py, &rt.continuation, "TransferThrow")?;
         let exception = Value::Opaque(PyShared::new(rt.exception.clone_ref(py)));
@@ -1468,11 +1468,11 @@ fn continuation_boundaries_value(
 /// Wrap a handler callable as Value::Callable.
 fn wrap_handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Value, String> {
     // A scheduler prompt (Rust handler) reinstalled from a captured stack.
-    if let Ok(prompt) = handler.downcast::<crate::scheduler::PySchedulerPrompt>() {
+    if let Ok(prompt) = handler.cast::<crate::scheduler::PySchedulerPrompt>() {
         return Ok(Value::Callable(prompt.get().callable.clone()));
     }
     // The state handler (Rust handler), made by state() or reinstalled from a captured stack.
-    if let Ok(state) = handler.downcast::<crate::state_handler::PyStateHandler>() {
+    if let Ok(state) = handler.cast::<crate::state_handler::PyStateHandler>() {
         return Ok(Value::Callable(crate::state_handler::PyStateHandler::callable(state)));
     }
     let callable = PythonCallable::handler(py, handler)?;
@@ -1528,33 +1528,33 @@ fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unc
 
     // --- Rust pyclass DoExpr (fast path) ---
 
-    if let Ok(p) = obj.downcast::<PyPure>() {
+    if let Ok(p) = obj.cast::<PyPure>() {
         let value = python_to_value(py, &p.get().value.bind(py));
         return Ok(DoCtrl::Pure { value });
     }
-    if let Ok(p) = obj.downcast::<PyPerform>() {
+    if let Ok(p) = obj.cast::<PyPerform>() {
         return Ok(DoCtrl::Perform {
             effect: Value::Opaque(PyShared::new(p.get().effect.clone_ref(py))),
         });
     }
-    if let Ok(r) = obj.downcast::<PyResume>() {
+    if let Ok(r) = obj.cast::<PyResume>() {
         let r = r.get();
         let k = take_continuation(py, &r.continuation, "Resume")?;
         let value = python_to_value(py, &r.value.bind(py));
         return Ok(DoCtrl::Resume { k, value });
     }
-    if let Ok(t) = obj.downcast::<PyTransfer>() {
+    if let Ok(t) = obj.cast::<PyTransfer>() {
         let t = t.get();
         let k = take_continuation(py, &t.continuation, "Transfer")?;
         let value = python_to_value(py, &t.value.bind(py));
         return Ok(DoCtrl::Transfer { k, value });
     }
-    if let Ok(a) = obj.downcast::<PyApply>() {
+    if let Ok(a) = obj.cast::<PyApply>() {
         let a = a.get();
         let f_doctrl = classify_python_object(py, &a.f.bind(py))?;
         let args_obj = a.args.bind(py);
         let mut args = Vec::new();
-        if let Ok(seq) = args_obj.downcast::<pyo3::types::PyList>() {
+        if let Ok(seq) = args_obj.cast::<pyo3::types::PyList>() {
             for (i, item) in seq.iter().enumerate() {
                 args.push(
                     classify_python_object(py, &item)
@@ -1615,19 +1615,19 @@ fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unc
             }),
         });
     }
-    if let Ok(e) = obj.downcast::<PyExpand>() {
+    if let Ok(e) = obj.cast::<PyExpand>() {
         let expr_doctrl = classify_python_object(py, &e.get().expr.bind(py))?;
         return Ok(DoCtrl::Expand {
             expr: Box::new(expr_doctrl),
         });
     }
-    if let Ok(p) = obj.downcast::<PyPass>() {
+    if let Ok(p) = obj.cast::<PyPass>() {
         let p = p.get();
         let effect = Value::Opaque(PyShared::new(p.effect.clone_ref(py)));
         let k = take_continuation(py, &p.continuation, "Pass")?;
         return Ok(DoCtrl::Pass { effect, k });
     }
-    if let Ok(wh) = obj.downcast::<PyWithHandler>() {
+    if let Ok(wh) = obj.cast::<PyWithHandler>() {
         let wh = wh.get();
         let handler_value = wrap_handler(py, wh.handler.bind(py))?;
         let body_doctrl = classify_python_object(py, &wh.body.bind(py))
@@ -1637,19 +1637,19 @@ fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unc
             body: Box::new(body_doctrl),
         });
     }
-    if let Ok(rt) = obj.downcast::<PyResumeThrow>() {
+    if let Ok(rt) = obj.cast::<PyResumeThrow>() {
         let rt = rt.get();
         let k = take_continuation(py, &rt.continuation, "ResumeThrow")?;
         let exception = Value::Opaque(PyShared::new(rt.exception.clone_ref(py)));
         return Ok(DoCtrl::ResumeThrow { k, exception });
     }
-    if let Ok(tt) = obj.downcast::<PyTransferThrow>() {
+    if let Ok(tt) = obj.cast::<PyTransferThrow>() {
         let tt = tt.get();
         let k = take_continuation(py, &tt.continuation, "TransferThrow")?;
         let exception = Value::Opaque(PyShared::new(tt.exception.clone_ref(py)));
         return Ok(DoCtrl::TransferThrow { k, exception });
     }
-    if let Ok(wo) = obj.downcast::<PyWithObserve>() {
+    if let Ok(wo) = obj.cast::<PyWithObserve>() {
         let wo = wo.get();
         let observer = python_to_value(py, &wo.observer.bind(py));
         let body_doctrl = classify_python_object(py, &wo.body.bind(py))
@@ -1659,7 +1659,7 @@ fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unc
             body: Box::new(body_doctrl),
         });
     }
-    if let Ok(wb) = obj.downcast::<PyWithBoundaries>() {
+    if let Ok(wb) = obj.cast::<PyWithBoundaries>() {
         let wb = wb.get();
         let mut boundaries = Vec::new();
         let entries = wb
@@ -1704,25 +1704,25 @@ fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unc
             body: Box::new(body_doctrl),
         });
     }
-    if let Ok(gt) = obj.downcast::<PyGetTraceback>() {
+    if let Ok(gt) = obj.cast::<PyGetTraceback>() {
         let value = continuation_traceback_value(py, &gt.get().continuation, "GetTraceback")?;
         return Ok(DoCtrl::Pure { value });
     }
-    if obj.downcast::<PyGetExecutionContext>().is_ok() {
+    if obj.cast::<PyGetExecutionContext>().is_ok() {
         return Ok(DoCtrl::GetExecutionContext);
     }
-    if let Ok(gh) = obj.downcast::<PyGetHandlers>() {
+    if let Ok(gh) = obj.cast::<PyGetHandlers>() {
         let value = continuation_handlers_value(py, &gh.get().continuation, "GetHandlers")?;
         return Ok(DoCtrl::Pure { value });
     }
-    if let Ok(gb) = obj.downcast::<PyGetBoundaries>() {
+    if let Ok(gb) = obj.cast::<PyGetBoundaries>() {
         let value = continuation_boundaries_value(py, &gb.get().continuation, "GetBoundaries")?;
         return Ok(DoCtrl::Pure { value });
     }
-    if obj.downcast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {
+    if obj.cast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {
         return Ok(DoCtrl::GetOuterHandlers);
     }
-    if let Ok(te) = obj.downcast::<crate::do_expr::PyTailEval>() {
+    if let Ok(te) = obj.cast::<crate::do_expr::PyTailEval>() {
         let inner = te.get().expr.bind(py);
         let inner_doctrl = classify_python_object(py, &inner)?;
         return Ok(DoCtrl::TailEval {
@@ -1779,7 +1779,7 @@ fn classify_tagged_to_doctrl(
                 .getattr("args")
                 .map_err(|_| "Apply: missing 'args' attribute".to_string())?;
             let mut args = Vec::new();
-            if let Ok(seq) = args_list.downcast::<pyo3::types::PyList>() {
+            if let Ok(seq) = args_list.cast::<pyo3::types::PyList>() {
                 for (i, item) in seq.iter().enumerate() {
                     args.push(
                         classify_python_object(py, &item)
@@ -1827,7 +1827,7 @@ fn classify_tagged_to_doctrl(
                 .getattr("continuation")
                 .map_err(|_| "GetTraceback: missing 'continuation' attribute".to_string())?;
             let k = k_obj
-                .downcast::<doeff_vm_core::continuation::PyK>()
+                .cast::<doeff_vm_core::continuation::PyK>()
                 .map_err(|_| "GetTraceback: continuation must be K".to_string())?;
             let value = {
                 let k_borrowed = k.borrow();
@@ -1877,7 +1877,7 @@ fn classify_tagged_to_doctrl(
                 .getattr("continuation")
                 .map_err(|_| "GetHandlers: missing 'continuation' attribute".to_string())?;
             let k = k_obj
-                .downcast::<doeff_vm_core::continuation::PyK>()
+                .cast::<doeff_vm_core::continuation::PyK>()
                 .map_err(|_| "GetHandlers: continuation must be K".to_string())?;
             let value = {
                 let k_borrowed = k.borrow();
@@ -1912,7 +1912,7 @@ fn extract_continuation_and_value(
         .getattr("continuation")
         .map_err(|_| format!("{}: missing 'continuation' attribute", label))?;
     let k_ref = k_obj
-        .downcast::<doeff_vm_core::continuation::PyK>()
+        .cast::<doeff_vm_core::continuation::PyK>()
         .map_err(|_| format!("{}: continuation must be K", label))?;
     let mut k_borrowed = k_ref.borrow_mut();
     let k = k_borrowed
@@ -1942,7 +1942,7 @@ fn extract_effect_and_continuation(
         .getattr("continuation")
         .map_err(|_| format!("{}: missing 'continuation' attribute", label))?;
     let k_ref = k_obj
-        .downcast::<doeff_vm_core::continuation::PyK>()
+        .cast::<doeff_vm_core::continuation::PyK>()
         .map_err(|_| format!("{}: continuation must be K", label))?;
     let mut k_borrowed = k_ref.borrow_mut();
     let k = k_borrowed
@@ -1964,7 +1964,7 @@ fn extract_continuation_and_exception(
         .getattr("continuation")
         .map_err(|_| format!("{}: missing 'continuation' attribute", label))?;
     let k_ref = k_obj
-        .downcast::<doeff_vm_core::continuation::PyK>()
+        .cast::<doeff_vm_core::continuation::PyK>()
         .map_err(|_| format!("{}: continuation must be K", label))?;
     let mut k_borrowed = k_ref.borrow_mut();
     let k = k_borrowed
@@ -1992,21 +1992,21 @@ fn extract_continuation_and_exception(
 /// The Python side is responsible for explicit conversion.
 pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
     // PythonCallable pyclass → Value::Callable
-    if let Ok(pc) = obj.downcast::<PythonCallable>() {
+    if let Ok(pc) = obj.cast::<PythonCallable>() {
         let inner = pc.borrow().callable.clone_ref(_py);
         let callable = PythonCallable::new(inner);
         return Value::Callable(std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef);
     }
     // Scheduler prompt → its Rust handler
-    if let Ok(prompt) = obj.downcast::<crate::scheduler::PySchedulerPrompt>() {
+    if let Ok(prompt) = obj.cast::<crate::scheduler::PySchedulerPrompt>() {
         return Value::Callable(prompt.get().callable.clone());
     }
     // State handler → its Rust handler
-    if let Ok(state) = obj.downcast::<crate::state_handler::PyStateHandler>() {
+    if let Ok(state) = obj.cast::<crate::state_handler::PyStateHandler>() {
         return Value::Callable(crate::state_handler::PyStateHandler::callable(state));
     }
     // PyK → Value::Continuation
-    if let Ok(k) = obj.downcast::<doeff_vm_core::continuation::PyK>() {
+    if let Ok(k) = obj.cast::<doeff_vm_core::continuation::PyK>() {
         let mut k_borrowed = k.borrow_mut();
         if let Some(owned) = k_borrowed.take() {
             if let doeff_vm_core::OwnedControlContinuation::Started(continuation) = owned {
@@ -2015,7 +2015,7 @@ pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
         }
     }
     // PyIRStream → Value::Stream
-    if let Ok(s) = obj.downcast::<PyIRStream>() {
+    if let Ok(s) = obj.cast::<PyIRStream>() {
         let (gen, tail_resume_lines) = {
             let stream = s.borrow();
             (

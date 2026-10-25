@@ -24,6 +24,7 @@
 
 範囲の決定: 利用者が依頼書 lt-8D749ZHBM6VF2HQEDE2SDMNASF(2026-10-16)で、出す範囲を核の 5 個だけ・名は今のまま・支える Python を
 3.11〜3.14 と決めた。それまで root の tag で出していた `doeff-agents`・`doeff-time`・`doeff-indexer` は、この決定で root の tag から外した。
+2026-10-26 に利用者の頼み(card ki-72048868aedb)で、支える Python に 3.15 を足した(doeff-vm は 3.15 を組める PyO3 0.29 へ上げた)。
 
 ## 出す部品の分類
 
