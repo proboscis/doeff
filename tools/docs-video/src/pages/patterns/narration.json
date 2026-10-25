@@ -1,0 +1,86 @@
+[
+ {
+  "id": "a1",
+  "text": "Patterns in doeff. Every pattern is the same pair: a program that yields effects, and a handler stack that gives them their meaning."
+ },
+ {
+  "id": "a2",
+  "text": "Layered architecture. The domain layer computes, the service layer asks for its database and cache, and the API layer logs and tries."
+ },
+ {
+  "id": "a3",
+  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Ask for the database, Ask for the cache, and Tell."
+ },
+ {
+  "id": "a4",
+  "text": "For order seven the service fails. Try keeps the failure as a value, and the API layer answers with an error."
+ },
+ {
+  "id": "b1",
+  "text": "Effects compose. Retry with backoff combines Try, Tell and Delay in one small loop."
+ },
+ {
+  "id": "b2",
+  "text": "The operation fails twice. The loop waits two seconds, then four, and the third attempt answers at six seconds."
+ },
+ {
+  "id": "b3",
+  "text": "Delay is an effect, so the time handler decides what a second is. Under sim time handler, the six seconds pass in a few milliseconds."
+ },
+ {
+  "id": "b4",
+  "text": "Under sync time handler, the same program waits six real seconds."
+ },
+ {
+  "id": "c1",
+  "text": "State lives in a handler, not in the program. Get and Put ask the state handler for its store."
+ },
+ {
+  "id": "c2",
+  "text": "Each run of the state machine moves order seven one step: pending, paid, shipped, completed."
+ },
+ {
+  "id": "c3",
+  "text": "A fourth run finds no step left. Try gives back Err, with the invalid state."
+ },
+ {
+  "id": "c4",
+  "text": "Try never rolls the store back: after the failure, the balance stays at zero. The snapshot pattern puts one hundred back."
+ },
+ {
+  "id": "d1",
+  "text": "Testing. A test is the same program, under a handler stack the test chooses."
+ },
+ {
+  "id": "d2",
+  "text": "The test reads the log and the store from the handlers it installed. Nothing is patched."
+ },
+ {
+  "id": "d3",
+  "text": "The retry path runs on the virtual clock: six seconds of backoff, and the test passes in a few milliseconds."
+ },
+ {
+  "id": "e1",
+  "text": "Patterns to avoid. A blocking sleep inside a program waits behind the time handler's back."
+ },
+ {
+  "id": "e2",
+  "text": "Even under the virtual clock, time dot sleep holds five real seconds. Delay of five moves the virtual clock at once."
+ },
+ {
+  "id": "e3",
+  "text": "The repository's semgrep rule reports the sleep inside the program, as an error."
+ },
+ {
+  "id": "e4",
+  "text": "A side effect done in place is invisible to every handler. Declare it as an effect instead: WriteFile."
+ },
+ {
+  "id": "e5",
+  "text": "Now a handler gives it its meaning. The same program writes the file under one handler, and keeps a record under another."
+ },
+ {
+  "id": "o1",
+  "text": "Patterns in doeff: programs say what they need as effects, and the handler stack decides what each one means."
+ }
+]
