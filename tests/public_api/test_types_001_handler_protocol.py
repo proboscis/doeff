@@ -391,7 +391,7 @@ class TestHP09MultipleEffects:
 
 
 # ---------------------------------------------------------------------------
-# HP-10: Custom handler coexists with built-in handlers
+# HP-10: Custom handler coexists with the reference handlers
 # ---------------------------------------------------------------------------
 
 

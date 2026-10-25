@@ -91,7 +91,7 @@ pip install "doeff[all]"   # both
 - [FAQ](faq.md): dependency injection, asyncio, speed, types, debugging, Hy, production use
 - [Why Effects?](20-why-effects-over-di.md): what a handler does with the rest of the program, example by example, and when dependency injection is simpler
 - Examples: an [LLM agent](../examples/llm_agent.py) and a [GitHub API client](../examples/github_repo/README.md), whose tests answer the model and HTTP effects with handlers, without the network
-- [API Reference](13-api-reference.md) and the [built-in effects and handlers](../packages/doeff-core-effects/README.md)
+- [API Reference](13-api-reference.md) and the [reference effects and handlers](../packages/doeff-core-effects/README.md)
 - [GitHub](https://github.com/proboscis/doeff): the source and the issue tracker
 
 Every guide is listed in the [Table of Contents](#table-of-contents) below.

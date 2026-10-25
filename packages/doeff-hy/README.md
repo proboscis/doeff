@@ -366,7 +366,7 @@ doeff is published as five core packages. `pip install doeff` installs the first
 | --- | --- |
 | [doeff](https://github.com/proboscis/doeff) | The Python API: `@do`, handler installers, `run`, the `doeff` CLI |
 | [doeff-vm](https://github.com/proboscis/doeff/tree/main/packages/doeff-vm) | The Rust VM that executes programs |
-| [doeff-core-effects](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects) | The standard effects and their handlers |
+| [doeff-core-effects](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects) | Reference implementations of effects and their handlers |
 | **doeff-hy** | This package: macros for writing doeff code in Hy |
 | [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest) | pytest plugin for tests written with doeff-hy |
 

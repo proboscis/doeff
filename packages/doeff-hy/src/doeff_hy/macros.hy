@@ -8,7 +8,7 @@
 ;;;                             validate check])   ; validate / check は doeff-validation を入れて使う
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
-;;; Core effects are imported from doeff_core_effects:
+;;; Effects of the reference implementation are imported from doeff_core_effects:
 ;;;   (import doeff_core_effects [Ask Try slog])
 ;;;
 ;;; Contract rules:

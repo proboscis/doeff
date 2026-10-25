@@ -3,7 +3,7 @@
 The VM knows no handler, so it cannot say which one to install. A package that
 ships handlers registers a function from an effect to the line naming the handler
 and how to install it (``doeff_core_effects.unhandled_hints`` holds the one for the
-core effects). When no handler takes an effect, the VM calls ``hint_for`` and ends
+effects of that reference implementation). When no handler takes an effect, the VM calls ``hint_for`` and ends
 the message with the line it returns; an effect no registered function answers for
 (an effect class of the user's own) gets the general line, how to install a handler
 for it with ``handler(fn)(prog)``.

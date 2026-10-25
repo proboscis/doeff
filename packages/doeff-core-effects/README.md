@@ -1,9 +1,10 @@
 # doeff-core-effects
 
-The standard effects and handlers for [doeff](https://github.com/proboscis/doeff).
+Reference implementations of effects and handlers for [doeff](https://github.com/proboscis/doeff).
+None of them is built into doeff: a handler of your own can take the place of any of them.
 
 **This README is for** Python developers who write doeff programs. After reading it
-you can install the package, run a program with the standard handlers, choose the handler that gives
+you can install the package, run a program with the reference handlers, choose the handler that gives
 an effect its meaning (a test handler in place of a production one is one such choice),
 and find the effect family you need.
 
@@ -276,7 +277,7 @@ doeff is published as five core packages. `pip install doeff` installs the first
 | --- | --- |
 | [doeff](https://github.com/proboscis/doeff) | The Python API: `@do`, handler installers, `run`, the `doeff` CLI |
 | [doeff-vm](https://github.com/proboscis/doeff/tree/main/packages/doeff-vm) | The Rust VM that executes programs |
-| **doeff-core-effects** | This package: the standard effects and their handlers |
+| **doeff-core-effects** | This package: reference implementations of effects and their handlers |
 | [doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy) | Macros for writing doeff code in Hy, a Lisp that compiles to Python |
 | [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest) | pytest plugin for tests written with doeff-hy |
 

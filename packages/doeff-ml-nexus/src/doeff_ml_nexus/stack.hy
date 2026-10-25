@@ -1,5 +1,5 @@
 ;;; Handler stack composition
-;;; Provides a standard handler chain for doeff-ml-nexus programs.
+;;; Provides a reference handler chain for doeff-ml-nexus programs.
 
 (require doeff_hy.macros [defk <-])
 (require doeff_docker.compose [with-handlers])
@@ -17,7 +17,7 @@
 
 
 (defn ml-nexus-interpreter [program * [env None]]  ; doeff: interpreter
-  "Standard interpreter for doeff-ml-nexus programs."
+  "Reference interpreter for doeff-ml-nexus programs."
   (setv resolved-env
     (if (is env None)
         {"source_root" "~/repos"

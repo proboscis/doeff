@@ -18,7 +18,7 @@ This note captures the structure of the `doeff run` command pipeline. Use it as 
   - Builds a `DoeffRunContext` for interpreters that support remote execution.
   - Runs the interpreter, passing `env` and `ctx` kwargs if the interpreter's signature accepts them.
 - **default_interpreter(program)**
-  - Composes the standard handler stack (`lazy_ask`, `state`, `writer`, `try_handler`, `slog_handler`, `listen_handler`, `await_handler`).
+  - Composes a stack of reference handlers (`lazy_ask`, `state`, `writer`, `try_handler`, `slog_handler`, `listen_handler`, `await_handler`).
   - Wraps with `scheduled()` and calls `run()`.
 - **Output Rendering**
   - Emits user-facing output in text or JSON format.

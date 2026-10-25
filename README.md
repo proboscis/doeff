@@ -18,7 +18,7 @@ means:
 | answers and is done | `Transfer(k, value)` | goes on with `value`; the handler does not get control back |
 | throws into it | `ResumeThrow(k, error)` | sees `error` raised at the `yield`, where its own `try` can catch it |
 | passes the effect on | `Pass(effect, k)` | gets the answer of the next handler out |
-| holds it while other tasks run | the built-in scheduler, `scheduled(...)` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
+| holds it while other tasks run | a scheduler handler, such as the reference `scheduled(...)` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
 | drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
 
 State, early exit, retries, concurrency and I/O are all handlers built from these, and a function
@@ -102,8 +102,10 @@ or one that throws an error into `research` with `ResumeThrow(k, error)`.
 | Add logging, retries or a cost cap | One wrapper per client | One handler that sees every effect |
 | Test code that does I/O | `mock.patch("app.requests.get")` for every import path | Install a fake handler. Nothing is patched |
 
-- **Batteries included.** Production *and* test handlers ship for files, HTTP (record / replay),
-  SQL (in-memory SQLite for tests), subprocesses, randomness, caching and metrics.
+- **Reference handlers.** No handler is built into doeff. The packages ship reference
+  implementations, production *and* test, for files, HTTP (record / replay), SQL (in-memory
+  SQLite for tests), subprocesses, randomness, caching and metrics; any of them can be replaced
+  by a handler of your own.
 - **Plain Python.** Programs are generator functions; no new syntax.
   Optional [Hy](https://hylang.org/) macros live in [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md).
 - **Rust VM.** Effects are dispatched by a VM written in Rust, with one-shot continuations.
@@ -341,7 +343,7 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
   Run them with `pip install "doeff[http]" pytest`, then `pytest examples/github_repo` (no network).
 - **Why effects?**: [What a handler does with the rest of the program](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md), compared with dependency injection and plain `async`
 - **Questions**: [FAQ](https://github.com/proboscis/doeff/blob/main/docs/faq.md): dependency injection, asyncio, speed, types, Hy, production use
-- **Built-in effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
+- **Reference effects and handlers**: [doeff-core-effects](https://github.com/proboscis/doeff/blob/main/packages/doeff-core-effects/README.md)
 - **Writing programs in Hy**: [doeff-hy](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/README.md)
 - **Command line**: [`doeff run`](https://github.com/proboscis/doeff/blob/main/docs/14-cli-auto-discovery.md)
 
@@ -429,7 +431,7 @@ print(run(reader(env={"greeting": "hello"})(greet)))  # hello
 
 ## Effect Surface
 
-Core effects (from `doeff_core_effects`):
+Effects of the reference implementation `doeff_core_effects`:
 
 - **Reader**: `Ask(key)`, `Local(env, program)`
 - **State**: `Get(key)`, `Put(key, value)`

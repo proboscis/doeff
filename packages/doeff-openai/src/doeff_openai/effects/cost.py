@@ -2,8 +2,8 @@
 
 Lets the pricing table live behind a handler so a user can install their
 own (for internal price overrides, future models, cached-input billing,
-etc.) without editing ``MODEL_PRICING``. The default handler supplied by
-:mod:`doeff_openai.handlers.production` knows about the built-in models;
+etc.) without editing ``MODEL_PRICING``. The reference handler in
+:mod:`doeff_openai.handlers.production` knows the models in its table;
 anything unknown propagates via ``Pass`` so an outer handler has a chance,
 and an unhandled effect becomes a loud ``RuntimeError``.
 """

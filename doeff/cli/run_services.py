@@ -289,7 +289,7 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
 
 
 def default_interpreter(program: object) -> object:
-    """Default interpreter: run with standard handlers + scheduler."""
+    """Fallback interpreter: run with reference handlers + the reference scheduler."""
     from doeff_core_effects.handlers import (
         await_handler,
         lazy_ask,

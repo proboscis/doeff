@@ -89,7 +89,7 @@ make test-packages                                                   # the tests
 | --- | --- |
 | `doeff/` | the Python API: `@do`, `run`, `Program`, the result types, and the `doeff` command (`doeff/__main__.py`, `doeff/cli/`) |
 | `packages/doeff-vm/`, `packages/doeff-vm-core/` | the Rust VM that runs programs and hands each effect to the nearest handler that accepts it |
-| `packages/doeff-core-effects/` | the built-in effects and handlers: reader, state, writer, the scheduler for `Spawn` / `Gather`, cache, file and HTTP |
+| `packages/doeff-core-effects/` | reference implementations of effects and handlers: reader, state, writer, the scheduler for `Spawn` / `Gather`, cache, file and HTTP |
 | `packages/doeff-hy/`, `packages/doeff-hy-pytest/` | the Hy macros (`defk`, `defhandler`, `deftest`, ...) and the pytest plugin that runs Hy tests |
 | other `packages/*` | optional integrations, each published as its own package |
 | `tests/` | the tests of `doeff/` and of behaviour that spans packages |

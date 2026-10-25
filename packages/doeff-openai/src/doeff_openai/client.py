@@ -247,7 +247,7 @@ def track_api_call(
     # Extract token usage and ask a handler to price it. Yielding the
     # CalculateCost effect keeps the pricing table behind a handler —
     # unknown models or missing cached rates are expected to ``Pass``
-    # through the default handler so an outer handler can substitute,
+    # through the reference handler so an outer handler can substitute,
     # and ultimately surface as an unhandled-effect error rather than
     # being silently mispriced.
     token_usage = None

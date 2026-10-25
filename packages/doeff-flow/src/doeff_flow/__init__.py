@@ -62,7 +62,7 @@ def run_result(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
 ) -> "Ok[T] | Err":
-    """Run a program under the standard handler stack and return Ok / Err.
+    """Run a program under a stack of reference handlers and return Ok / Err.
 
     The stack is the same as ``doeff.cli.run_services.default_interpreter``
     (reader, state, writer, try, slog, listen, await, scheduler), with the

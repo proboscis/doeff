@@ -63,7 +63,7 @@ class ProgramHandler(Protocol):
     itself (``writer(prog)``) or ``state()(42)`` — is a type error, as it is a
     ``TypeError`` when the program runs.
 
-    Every installer has this type: the core handlers (``reader``, ``state``,
+    Every installer has this type: the reference handlers (``reader``, ``state``,
     ``writer``, ...), ``handler(raw)`` and ``stacked_handlers(...)``. A
     ``defhandler`` handler (``doeff_hy.static_types.Handler``) is one too.
     """

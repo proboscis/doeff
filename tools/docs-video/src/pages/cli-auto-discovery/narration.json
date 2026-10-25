@@ -89,7 +89,7 @@
  },
  {
   "id": "f1",
-  "text": "And if no marked interpreter is on the path? doeff run does not stop. It uses its built-in default interpreter."
+  "text": "And if no marked interpreter is on the path? doeff run does not stop. It uses its fallback interpreter."
  },
  {
   "id": "f2",

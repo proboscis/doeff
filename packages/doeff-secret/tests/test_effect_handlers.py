@@ -1,4 +1,4 @@
-"""Tests for doeff-secret effects and built-in handlers."""
+"""Tests for doeff-secret effects and reference handlers."""
 
 
 import sys

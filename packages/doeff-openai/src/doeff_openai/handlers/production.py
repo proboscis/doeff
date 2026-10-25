@@ -158,7 +158,7 @@ def production_handlers() -> ProtocolHandler:
 
 
 calculate_cost_handler = _program_handler(_handle_calculate_cost)
-"""Standalone Program -> Program default handler for :class:`CalculateCost`.
+"""Standalone Program -> Program reference handler for :class:`CalculateCost`.
 
 Exposed so test stacks (and callers that swap out the full production
 handler) can still resolve cost queries without bringing in the real
