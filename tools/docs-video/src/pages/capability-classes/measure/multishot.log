@@ -1,0 +1,6 @@
+a handler that resumes k twice:
+  raises RuntimeError: internal error: Continuation: continuation already consumed (one-shot violation) (current fiber=2)
+re-execute what_if() per branch, with one memo shared by the runs:
+  branch a: 'plan v1 -> a'
+  branch b: 'plan v1 -> b'
+  provider calls: ['plan']
