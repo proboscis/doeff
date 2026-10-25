@@ -17,6 +17,7 @@ import {RUST_SCHEDULER} from './pages/rust-scheduler/RustScheduler';
 import {PATTERNS} from './pages/patterns/Patterns';
 import {STATIC_TYPING} from './pages/static-typing/StaticTyping';
 import {LLM_UNIFIED_EFFECTS} from './pages/llm-unified-effects/LlmUnifiedEffects';
+import {PROGRAM_ARCHITECTURE} from './pages/program-architecture/ProgramArchitecture';
 import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 
 // One composition per docs page, named after the page's video file in docs/assets/videos/ (home.mp4 is on
@@ -40,5 +41,6 @@ export const Root: React.FC = () => (
     <Composition id="static-typing" component={STATIC_TYPING.Video} durationInFrames={STATIC_TYPING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="cache-system" component={CACHE_SYSTEM.Video} durationInFrames={CACHE_SYSTEM.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="llm-unified-effects" component={LLM_UNIFIED_EFFECTS.Video} durationInFrames={LLM_UNIFIED_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="program-architecture" component={PROGRAM_ARCHITECTURE.Video} durationInFrames={PROGRAM_ARCHITECTURE.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );

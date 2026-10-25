@@ -1,0 +1,94 @@
+[
+ {
+  "id": "t1",
+  "text": "Program architecture: how a doeff program is built, and how it runs."
+ },
+ {
+  "id": "t2",
+  "text": "A program is a value. It is control instructions, a DoExpr, that the Rust VM evaluates."
+ },
+ {
+  "id": "t3",
+  "text": "An effect is plain data. It is dispatched at one place only: Perform."
+ },
+ {
+  "id": "p1",
+  "text": "Calling an at-do function runs nothing. It returns a program, and the body has not run yet."
+ },
+ {
+  "id": "p2",
+  "text": "An effect such as Ask key is a value too. It names an operation, and does nothing by itself."
+ },
+ {
+  "id": "p3",
+  "text": "Yield Ask is lowered to yield Perform of Ask. Both reach the same handler, and both get ada."
+ },
+ {
+  "id": "p4",
+  "text": "run takes that one program, and returns its raw value."
+ },
+ {
+  "id": "s1",
+  "text": "Handler installers take a program and return a program. Calling them nests the handlers."
+ },
+ {
+  "id": "s2",
+  "text": "h2 is innermost, and sees every effect first. It answers Greet."
+ },
+ {
+  "id": "s3",
+  "text": "Lookup is not for h2. It passes outward, and h1 answers it."
+ },
+ {
+  "id": "s4",
+  "text": "Save passes h2 and h1, and reaches h0, the outermost. Dispatch always goes from inside out."
+ },
+ {
+  "id": "c1",
+  "text": "The VM runs the program one step at a time. A program that yields a program calls it."
+ },
+ {
+  "id": "c2",
+  "text": "Each call becomes a frame in the VM, with its function, file and line."
+ },
+ {
+  "id": "c3",
+  "text": "When charge raises, the doeff traceback lists the chain of calls, and the yield each one waits at."
+ },
+ {
+  "id": "o1",
+  "text": "To watch the effects, wrap a program in WithObserve, with an observer."
+ },
+ {
+  "id": "o2",
+  "text": "The observer is called with each effect dispatched in the body: Ask, Get, Put and Tell."
+ },
+ {
+  "id": "o3",
+  "text": "The answer is still forty two. Tell start is outside the body, so the observer does not see it."
+ },
+ {
+  "id": "o4",
+  "text": "run has no trace flag. Observation composes into the program, like a handler."
+ },
+ {
+  "id": "a1",
+  "text": "Async programs run under the scheduler: run of scheduled of the program."
+ },
+ {
+  "id": "a2",
+  "text": "The scheduler is a handler. It answers Spawn and Gather, and switches tasks at each wait."
+ },
+ {
+  "id": "a3",
+  "text": "Two tasks interleave, a1, b1, a2, b2, inside the VM's one step loop, and run returns both results."
+ },
+ {
+  "id": "a4",
+  "text": "Without scheduled, Spawn finds no handler, and the run raises UnhandledEffect."
+ },
+ {
+  "id": "z1",
+  "text": "Programs are values. Effects are data, dispatched at Perform. Handlers nest, and the VM steps it all. That is how doeff runs algebraic effects."
+ }
+]

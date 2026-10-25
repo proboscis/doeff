@@ -1,0 +1,6 @@
+plain(): 42
+watched(): 42
+  seen: Ask('key')
+  seen: Get('count')
+  seen: Put('count', 42)
+  seen: Tell('count is 42')
