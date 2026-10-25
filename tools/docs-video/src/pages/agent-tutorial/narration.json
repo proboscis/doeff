@@ -1,0 +1,106 @@
+[
+ {
+  "id": "t1",
+  "text": "Agent tutorial. We build a code review system on doeff agents."
+ },
+ {
+  "id": "t2",
+  "text": "doeff agents runs a coding agent, here Claude Code, in a terminal session, and your Python script drives it."
+ },
+ {
+  "id": "t3",
+  "text": "Here a scripted terminal plays Claude's screens, so the runs you see need no tmux, no Claude, and no login."
+ },
+ {
+  "id": "l1",
+  "text": "Step one. Launch a session, watch it until it ends, read its screen, and stop it."
+ },
+ {
+  "id": "l2",
+  "text": "launch session types the claude command, waits for the ready screen, and only then pastes the prompt."
+ },
+ {
+  "id": "l3",
+  "text": "monitor session reads the pane once a second. While the screen says esc to interrupt, the session is running."
+ },
+ {
+  "id": "l4",
+  "text": "At three seconds the shell prompt is back: the agent exited, a terminal status, so the loop ends."
+ },
+ {
+  "id": "l5",
+  "text": "capture output reads the review off the screen. Then stop session kills the session."
+ },
+ {
+  "id": "e1",
+  "text": "launch session is plain Python on top, and a doeff program underneath."
+ },
+ {
+  "id": "e2",
+  "text": "Before it opens a terminal, it yields effects. Is claude on the path? Where is home? Is there a login?"
+ },
+ {
+  "id": "e3",
+  "text": "A handler answers each effect and resumes the program. Here an in-memory world answers; in production, the real system does."
+ },
+ {
+  "id": "e4",
+  "text": "In a world without a login, the same program raises at its check, and no terminal session is ever opened."
+ },
+ {
+  "id": "c1",
+  "text": "Step two. session scope launches the session, and stops it on the way out of the with block."
+ },
+ {
+  "id": "c2",
+  "text": "When the review finishes, the block returns, and stop session runs."
+ },
+ {
+  "id": "c3",
+  "text": "When the timeout returns early from inside the loop, stop session still runs."
+ },
+ {
+  "id": "c4",
+  "text": "And when an exception leaves the block, stop session runs, and the error goes on to the caller."
+ },
+ {
+  "id": "s1",
+  "text": "Step three. monitor session calls on status change only when the status changes."
+ },
+ {
+  "id": "s2",
+  "text": "Eight polls, four changes: running, blocked, running again, and exited."
+ },
+ {
+  "id": "s3",
+  "text": "Blocked means the agent is waiting for input. Here it asks to run the tests, and the loop answers with send message."
+ },
+ {
+  "id": "s4",
+  "text": "The callback keeps the history, with the second of every change."
+ },
+ {
+  "id": "b1",
+  "text": "Step four. Review many files at once, with asyncio and a limit."
+ },
+ {
+  "id": "b2",
+  "text": "A semaphore of two lets two reviews run. The next one starts when a slot frees up."
+ },
+ {
+  "id": "b3",
+  "text": "Four reviews take seven seconds, two at a time, and thirteen point one seconds, one at a time."
+ },
+ {
+  "id": "b4",
+  "text": "api finishes first, but gather returns the results in the order of the files."
+ },
+ {
+  "id": "z1",
+  "text": "Step five puts it together: a scope per session, callbacks for progress, a limited batch, and timeouts."
+ },
+ {
+  "id": "z2",
+  "text": "And under the session API, the driver is a doeff program: effects go out, and handlers send the answers back."
+ }
+]

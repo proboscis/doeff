@@ -1,6 +1,7 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
+import {AGENT_TUTORIAL} from './pages/agent-tutorial/AgentTutorial';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
@@ -20,5 +21,6 @@ export const Root: React.FC = () => (
     <Composition id="async-effects" component={ASYNC_EFFECTS.Video} durationInFrames={ASYNC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="why-effects" component={WHY_EFFECTS.Video} durationInFrames={WHY_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="agent-tutorial" component={AGENT_TUTORIAL.Video} durationInFrames={AGENT_TUTORIAL.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
