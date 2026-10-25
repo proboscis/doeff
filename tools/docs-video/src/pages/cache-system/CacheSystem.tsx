@@ -4,7 +4,7 @@
 //   2. Miss, then hit: the handler throws KeyError into the program at the yield, the program computes and stores;
 //      the second call is answered from the cache (408.2 ms, then 0.5 ms).
 //   3. The policy (ttl, lifecycle, storage, metadata) travels inside CachePut; the handler decides what it means.
-//   4. The page's API example: two calls to fetch_user(1), one request to the server.
+//   4. The page's API example: two calls to fetch_user(1), one GetJson for the handler fake_api.
 //   5. The same program under in_memory_cache_handler, sqlite_cache_handler, and no cache handler.
 // Every output, order and time on screen is printed by a program in measure/ (its .log is next to it).
 import React from 'react';
@@ -412,7 +412,7 @@ const PolicyScene: React.FC = () => {
 const API_LINES: Lines = [
   [0, 'The page\'s API example: fetch_user(1), called twice.'],
   [6, 'First call: a miss, one request, then CachePut. Second call: from the cache.'],
-  [15, 'The stand-in server got one request: /users/1.'],
+  [15, 'fake_api got one request: /users/1.'],
 ];
 const API = f(21);
 const FETCH = [
@@ -421,7 +421,7 @@ const FETCH = [
   '    try:',
   '        return (yield CacheGet(f"user_{user_id}"))',
   '    except KeyError:',
-  '        data = yield Await(get_json(f"/users/{user_id}"))',
+  '        data = yield GetJson(f"/users/{user_id}")',
   '        yield CachePut(f"user_{user_id}", data, ttl=60)',
   '        return data',
 ];
@@ -447,8 +447,8 @@ const ApiScene: React.FC = () => {
         rows={[{key: '"user_1"', value: ADA, at: 10.4, lit: [[10.4, 11.0], [12.4, 13.2]]}]}
       />
       <Box x={server.x} y={server.y} w={server.w} h={server.h} color={PROD} on={frame >= f(8.8) && frame < f(9.6)} opacity={fadeAt(frame, 0.6)}>
-        <div style={{position: 'absolute', left: 20, top: 12, fontFamily: MONO, fontSize: 19, fontWeight: 700, color: PROD}}>api.example.com</div>
-        <div style={{position: 'absolute', left: 20, top: 42, fontFamily: SANS, fontSize: 16, color: MUTED}}>the stand-in server, reached through Await</div>
+        <div style={{position: 'absolute', left: 20, top: 12, fontFamily: MONO, fontSize: 19, fontWeight: 700, color: PROD}}>fake_api</div>
+        <div style={{position: 'absolute', left: 20, top: 42, fontFamily: SANS, fontSize: 16, color: MUTED}}>the handler that answers GetJson in place of the server</div>
         <div style={{position: 'absolute', left: 20, top: 76, fontFamily: MONO, fontSize: 18, color: TEXT}}>
           requested = <span style={{color: frame >= f(15.4) ? LOOK : TEXT, fontWeight: 700}}>{requested ? "['/users/1']" : '[]'}</span>
         </div>
@@ -472,7 +472,7 @@ const ApiScene: React.FC = () => {
       {/* First call: miss, request, store. Second call: hit. */}
       <Travel from={out} to={into} at={6.4} length={0.6} text='CacheGet("user_1")' color={ACCENT} />
       <Travel from={[cache.x + 120, cache.y + 120]} to={out} at={7.0} length={0.7} text="KeyError" color={FAIL} />
-      <Travel from={[code.x + code.w - 40, at(5)]} to={[server.x + 140, server.y + 60]} at={8.0} length={0.8} text="GET /users/1" color={PROD} />
+      <Travel from={[code.x + code.w - 40, at(5)]} to={[server.x + 140, server.y + 60]} at={8.0} length={0.8} text='GetJson("/users/1")' color={PROD} />
       <Travel from={[server.x + 140, server.y + 60]} to={[code.x + code.w - 40, at(5)]} at={9.0} length={0.8} text={ADA} color={PROD} />
       <Travel from={[code.x + code.w - 40, at(6)]} to={into} at={9.8} length={0.6} text='CachePut("user_1", ...)' color={ACCENT} />
       <Travel from={out} to={into} at={11.8} length={0.6} text='CacheGet("user_1")' color={ACCENT} />
@@ -529,12 +529,12 @@ const HandlerScene: React.FC = () => {
       <CodeBlock lines={ANSWER} {...code} opacity={fadeAt(frame, 0.2)} />
       <Box x={670} y={96} w={560} h={224} color={slot.color} on={lane >= 0 && frame < f(lane * 7.5 + 6.0)} opacity={fadeAt(frame, 0.6)}>
         <div style={{position: 'absolute', left: 20, top: 14, fontFamily: SANS, fontSize: 17, color: MUTED}}>each run is a separate run(...):</div>
-        <div style={{position: 'absolute', left: 20, top: 52, fontFamily: MONO, fontSize: 18, lineHeight: '34px', color: TEXT, whiteSpace: 'pre'}}>
-          {'run(scheduled(await_handler()(\n    '}
+        <div style={{position: 'absolute', left: 20, top: 44, fontFamily: MONO, fontSize: 18, lineHeight: '34px', color: TEXT, whiteSpace: 'pre'}}>
+          {'run(scheduled(sync_time_handler()(\n    await_handler()(\n        '}
           <span style={{color: slot.color, fontWeight: 700}}>{slot.name}</span>
-          {'(\n        cached_answer()))))'}
+          {'(\n            cached_answer())))))'}
         </div>
-        <div style={{position: 'absolute', left: 20, top: 176, fontFamily: SANS, fontSize: 17, color: MUTED}}>the program is the same in every run</div>
+        <div style={{position: 'absolute', left: 20, top: 190, fontFamily: SANS, fontSize: 17, color: MUTED}}>the program is the same in every run</div>
       </Box>
       {LANES.map((l, i) => {
         const y = 352 + i * 110;

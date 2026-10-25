@@ -12,13 +12,14 @@ from doeff_core_effects.cache_handlers import in_memory_cache_handler
 from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
 from doeff_core_effects.handlers import await_handler, state, writer, writer_log
 from doeff_core_effects.scheduler import scheduled
+from doeff_time import Delay, sync_time_handler
 
 from doeff import WithObserve, do, run
 
 
 @do
 def expensive_operation():
-    time.sleep(0.4)  # stands in for real work
+    yield Delay(0.4)  # stands in for real work; sync_time_handler() waits it out on the wall clock
     return 42
 
 
@@ -57,7 +58,7 @@ def seen(effect):
 
 
 prog = in_memory_cache_handler()(WithObserve(seen, twice()))
-times, log = run(scheduled(await_handler()(state()(writer(prog)))))
+times, log = run(scheduled(sync_time_handler()(await_handler()(state()(writer(prog))))))
 for i, (value, ms) in enumerate(times, 1):
     print(f"call {i}: returns {value} in {ms:.1f} ms")
 print("log:", log)

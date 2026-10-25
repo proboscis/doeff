@@ -2,13 +2,12 @@
 # when the handler receives it, the storage each policy resolves to, and what in_memory_cache_handler() does with
 # a ttl: it keeps the policy as a hint and stores every entry the same way (docs/07-cache-system.md,
 # "Cache Policy Fields").
-import time
-
 from doeff_core_effects.cache_effects import CacheGet, CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
 from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import scheduled
+from doeff_time import Delay, sync_time_handler
 
 from doeff import WithObserve, do, run
 
@@ -37,12 +36,12 @@ def store_all():
 @do
 def ttl_hint():
     yield CachePut("short", "value", ttl=0.1)
-    time.sleep(0.3)
+    yield Delay(0.3)
     return (yield CacheGet("short"))
 
 
 def under_cache(prog):
-    return run(scheduled(await_handler()(in_memory_cache_handler()(prog))))
+    return run(scheduled(sync_time_handler()(await_handler()(in_memory_cache_handler()(prog)))))
 
 
 under_cache(WithObserve(seen, store_all()))
