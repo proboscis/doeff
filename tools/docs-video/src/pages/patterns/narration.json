@@ -5,15 +5,15 @@
  },
  {
   "id": "a2",
-  "text": "Layered architecture. The domain layer computes, the service layer asks for its database and cache, and the API layer logs and tries."
+  "text": "Layered architecture. The domain layer computes, the service layer yields effects for its orders and its cache, and the API layer logs and tries."
  },
  {
   "id": "a3",
-  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Ask for the database, Ask for the cache, and Tell."
+  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Get Order, Save Order, Cache Set, and Tell."
  },
  {
   "id": "a4",
-  "text": "For order seven the service fails. Try keeps the failure as a value, and the API layer answers with an error."
+  "text": "There is no order seven, so the in-memory handler throws an error into the service. Try keeps the failure as a value, and the API layer answers with an error."
  },
  {
   "id": "b1",
