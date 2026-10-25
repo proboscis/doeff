@@ -1,0 +1,6 @@
+run 1 busy: result ['a', 'b'] order ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
+run 1 polite: result ['a', 'b'] order ['a1', 'b1', 'a2', 'b2', 'a3', 'b3']
+run 2 busy: result ['a', 'b'] order ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
+run 2 polite: result ['a', 'b'] order ['a1', 'b1', 'a2', 'b2', 'a3', 'b3']
+run 3 busy: result ['a', 'b'] order ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
+run 3 polite: result ['a', 'b'] order ['a1', 'b1', 'a2', 'b2', 'a3', 'b3']

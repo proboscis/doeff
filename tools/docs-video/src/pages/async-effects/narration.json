@@ -1,0 +1,66 @@
+[
+ {
+  "id": "a1",
+  "text": "Async in doeff is made of effects, too: Spawn, Wait, Gather, Race and Cancel."
+ },
+ {
+  "id": "a2",
+  "text": "scheduled wraps your program in one more handler layer: the scheduler. Like any handler, it gets each effect, and k, the rest of the program."
+ },
+ {
+  "id": "a3",
+  "text": "Spawn travels out to the scheduler, and the scheduler answers with a Task handle."
+ },
+ {
+  "id": "g1",
+  "text": "Spawn starts a task and hands back its handle. The task runs until it waits, and then main goes on."
+ },
+ {
+  "id": "g2",
+  "text": "Each task waits on the virtual clock, its k parked by wake-up time. They finish in time order: B, C, then A."
+ },
+ {
+  "id": "g3",
+  "text": "Gather waits for all three, and returns their values in input order: A, B, C."
+ },
+ {
+  "id": "t1",
+  "text": "The scheduler runs one task at a time, on one thread."
+ },
+ {
+  "id": "t2",
+  "text": "A task runs until it waits. These two never wait, so A runs all its steps before B starts."
+ },
+ {
+  "id": "t3",
+  "text": "Wait after each step, and the scheduler parks that k and resumes the next ready one: A1, B1, A2, B2."
+ },
+ {
+  "id": "f1",
+  "text": "Gather is fail-fast. B raises at one second, and Gather raises right then."
+ },
+ {
+  "id": "f2",
+  "text": "It cancels nothing. C still finishes at two seconds, and main can still wait for it."
+ },
+ {
+  "id": "f3",
+  "text": "Race returns the first value to finish: B. The loser, A, runs on until you cancel it."
+ },
+ {
+  "id": "c1",
+  "text": "Cancel is an effect too. yield Cancel, with the task, asks it to stop, and returns at once."
+ },
+ {
+  "id": "c2",
+  "text": "The task receives a Task Cancelled Error right where it waits, so its finally block runs."
+ },
+ {
+  "id": "c3",
+  "text": "Cleanup may perform effects. Wait on the task answers only after the cleanup is done."
+ },
+ {
+  "id": "o1",
+  "text": "doeff: a task is a paused program, and the scheduler is a handler that decides when each one resumes. pip install doeff."
+ }
+]

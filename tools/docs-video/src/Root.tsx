@@ -1,6 +1,7 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
+import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
 import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
@@ -14,5 +15,6 @@ export const Root: React.FC = () => (
     <Composition id="getting-started" component={GETTING_STARTED.Video} durationInFrames={GETTING_STARTED.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="basic-effects" component={BASIC_EFFECTS.Video} durationInFrames={BASIC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="error-handling" component={ERROR_HANDLING.Video} durationInFrames={ERROR_HANDLING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="async-effects" component={ASYNC_EFFECTS.Video} durationInFrames={ASYNC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
