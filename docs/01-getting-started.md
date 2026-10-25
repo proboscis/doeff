@@ -266,31 +266,34 @@ print(result)  # Connected to postgresql://localhost/mydb as user 123
 
 ## Error Handling
 
-`run()` returns the raw result value on success, or raises an exception on failure:
+A program handles a failure of a sub-program with the `Try` effect. `yield Try(child)` runs
+`child` and resumes with `Ok(value)` when it returns, or `Err(error)` when it raises, so the
+program decides what a failure means with an ordinary `match`. `try_handler` is the handler that
+answers `Try`; install it around the program like any other handler:
 
 ```python
-from doeff import do, run
-from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
+from doeff import Err, Ok, Try, do, run
+from doeff_core_effects.handlers import try_handler
 
 @do
-def my_program():
-    yield Tell("working...")
-    return 42
+def parse_port(raw: str):
+    return int(raw)
 
-prog = state()(writer(my_program()))
+@do
+def load_port(raw: str):
+    match (yield Try(parse_port(raw))):
+        case Ok(port):
+            return f"port {port}"
+        case Err(e):
+            return f"bad port {raw!r}: {e}"
 
-try:
-    result = run(prog)
-    print(f"Success: {result}")  # Success: 42
-except Exception as e:
-    print(f"Error: {e}")
+print(run(try_handler(load_port("8000"))))  # port 8000
+print(run(try_handler(load_port("eighty"))))  # bad port 'eighty': invalid literal for int() with base 10: 'eighty'
 ```
 
-Output:
-```text
-Success: 42
-```
+An exception that no `Try` catches leaves `run()` as it was raised. See
+[Error Handling](05-error-handling.md) for `Ok`/`Err`, the guarantees `Try` keeps, and more
+patterns.
 
 ## Common Patterns
 
