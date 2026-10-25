@@ -1,0 +1,15 @@
+program: myapp.features.auth.login.login_program
+hierarchy: ['myapp', 'myapp.features', 'myapp.features.auth', 'myapp.features.auth.login']
+marked interpreters (# doeff: interpreter, default):
+  myapp.base_interpreter  index 0
+  myapp.features.auth.auth_interpreter  index 2
+chosen: myapp.features.auth.auth_interpreter
+marked envs (# doeff: default), in merge order:
+  myapp.base_env  {'db_host': 'localhost', 'timeout': 10, 'debug': False}
+  myapp.features.features_env  {'api_key': 'secret123', 'timeout': 20}
+  myapp.features.auth.auth_env  {'oauth_provider': 'google', 'timeout': 30}
+merged: {'db_host': 'localhost', 'timeout': 30, 'debug': False, 'api_key': 'secret123', 'oauth_provider': 'google'}
+auth_interpreter(login(), env=merged):
+  login() yields Ask('db_host')
+  login() yields Ask('timeout')
+  returns 'localhost, timeout 30'
