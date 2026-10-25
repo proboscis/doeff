@@ -64,10 +64,7 @@ Environment MUST restore after `Local` scope, regardless of success or error.
 @do
 def test_law_1():
     outer_val = yield Ask("key")
-    try:
-        yield Local({"key": "inner"}, failing_program())
-    except Exception:
-        pass
+    _ = yield Try(Local({"key": "inner"}, failing_program()))
     restored_val = yield Ask("key")
     assert outer_val == restored_val
 ```
@@ -243,25 +240,25 @@ print(run(scheduled(state()(test_law_8a()))))  # ([0, 1, 2], 3)
 
 #### Law 8b: Children That Suspend Between Read and Write
 
-When a child suspends between its `Get` and its `Put` (here on `Await`), the other children run
-in the gap and read the same old value. All three children below read `0` and write `1`, so two
+When a child suspends between its `Get` and its `Put` (here on doeff-time's `Delay`, run on
+`sim_time_handler()`'s virtual clock), the other children run in the gap and read the same old
+value. All three children below read `0` and write `1`, so two
 of the three updates are lost.
 Programs using `Gather` must not rely on a read-modify-write across a suspension. Keep the read
 and the write together without a suspension in between, guard them with a semaphore, or give
 each child its own key.
 
 ```python
-import asyncio
-
-from doeff import Await, Gather, Get, Put, Spawn, do, run
+from doeff import Gather, Get, Put, Spawn, do, run
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import await_handler, state
+from doeff_core_effects.handlers import state
+from doeff_time import Delay, sim_time_handler
 
 
 @do
-def increment_across_await():
+def increment_across_delay():
     n = yield Get("counter")
-    yield Await(asyncio.sleep(0.05))  # suspends: the other children run here
+    yield Delay(0.05)  # suspends: the other children run here
     yield Put("counter", n + 1)
     return n
 
@@ -271,7 +268,7 @@ def test_law_8b():
     yield Put("counter", 0)
     tasks = []
     for _ in range(3):
-        tasks.append((yield Spawn(increment_across_await())))
+        tasks.append((yield Spawn(increment_across_delay())))
     results = yield Gather(*tasks)
     counter = yield Get("counter")
     assert results == [0, 0, 0]
@@ -279,7 +276,7 @@ def test_law_8b():
     return results, counter
 
 
-print(run(scheduled(state()(await_handler()(test_law_8b())))))  # ([0, 0, 0], 1)
+print(run(scheduled(sim_time_handler()(state()(test_law_8b())))))  # ([0, 0, 0], 1)
 ```
 
 ### Law 9: Gather Error Propagation Law
@@ -331,7 +328,7 @@ first `Spawn` fails with `UnhandledEffect`. There is no separate sync or async r
 `scheduled()` has a Rust implementation (the default) and a Python one (chosen by its
 `implementation=` argument or by `DOEFF_SCHEDULER`), and both give the results shown in Laws 6–9.
 
-| Concern | Children that do not suspend | Children that suspend (`Await`, `Wait`, ...) |
+| Concern | Children that do not suspend | Children that suspend (`Delay`, `Await`, `Wait`, ...) |
 | --- | --- | --- |
 | Execution | One child at a time, in spawn order. | Other tasks run while a child is suspended. |
 | Store | Shared; each child sees the previous child's writes. | Shared; a read-modify-write across a suspension can lose updates. |
