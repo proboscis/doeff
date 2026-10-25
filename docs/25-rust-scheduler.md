@@ -6,6 +6,8 @@ ExternalPromise) has two implementations, one in Rust and one in Python. They ha
 The Rust implementation lives in `packages/doeff-vm/src/scheduler.rs`, the Python one is
 `_scheduled_python` in `packages/doeff-core-effects/doeff_core_effects/scheduler.py`.
 
+[![A narrated video, about two and a half minutes: the scheduler as the handler that answers Spawn, Wait and Gather; how scheduled() chooses between the Rust and the Python implementation; one program giving the same order, Cancel and trace events under both; what moved to Rust and what stays in Python; and the benchmark taken again](assets/videos/rust-scheduler.jpg)](assets/videos/rust-scheduler.mp4)
+
 ## Choosing an implementation
 
 ```python
