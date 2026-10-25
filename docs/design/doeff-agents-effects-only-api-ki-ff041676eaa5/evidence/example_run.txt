@@ -1,0 +1,5 @@
+# example_chapter19.py を doeff 4368f740fbdaf66defea82c9d80157702e590610 の作業木の環境で走らせた結果
+$ uv run python docs/design/doeff-agents-effects-only-api-ki-ff041676eaa5/example_chapter19.py
+parallel: ['reviewed: diff A', 'reviewed: diff B']
+retry: ('reviewed: The previous turn failed. Please review again.', 0, True)
+exit=0
