@@ -1,0 +1,25 @@
+
+doeff Traceback (most recent call last):
+
+  update_counter()  composition.py:15
+    yield Tell(f"counter updated: {current} -> {current + 1}")
+
+UnhandledEffect: unhandled effect: Get (Get('__doeff_writer_log__')) (no handlers in scope)
+  hint: Get and Put are handled by state(): run(state()(prog)); writer needs state() outside it: run(state()(writer(prog)))
+
+state(writer(reader(update_counter()))):
+program yields Ask
+program yields Get
+  Get passes reader
+  Get passes writer
+program yields Put
+  Put passes reader
+  Put passes writer
+program yields WriterTellEffect
+  WriterTellEffect passes reader
+  Get passes writer
+  Put passes writer
+answer: 1
+writer(state(reader(update_counter()))):
+raises UnhandledEffect:
+unhandled effect: Get (Get('__doeff_writer_log__')) (no handlers in scope)

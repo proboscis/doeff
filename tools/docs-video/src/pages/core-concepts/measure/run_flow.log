@@ -1,0 +1,6 @@
+fetch_user(42) is Call | isinstance Expand: True
+(nothing has run yet)
+Perform(Ask('db')) is Perform
+fetch_user starts
+sent back: {42: 'Ada'}
+answer: 'Ada'
