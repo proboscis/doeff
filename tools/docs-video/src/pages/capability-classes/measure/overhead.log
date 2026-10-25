@@ -1,0 +1,7 @@
+hot loop, 20000 steps (best of 5):
+  per effect (Ask under reader): 3.5 us
+  per plain dict lookup: 72 ns
+  the effect is 49x the plain step
+one call that takes 10 ms:
+  measured: 10.1 ms
+  one effect around it adds 0.03 %

@@ -4,6 +4,7 @@ import {FPS, HEIGHT, WIDTH} from './kit/theme';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {CLI_AUTO_DISCOVERY} from './pages/cli-auto-discovery/CliAutoDiscovery';
+import {CAPABILITY_CLASSES} from './pages/capability-classes/CapabilityClasses';
 import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
 import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
 import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
@@ -28,5 +29,6 @@ export const Root: React.FC = () => (
     <Composition id="cli-auto-discovery" component={CLI_AUTO_DISCOVERY.Video} durationInFrames={CLI_AUTO_DISCOVERY.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="semaphore-effects" component={SEMAPHORE_EFFECTS.Video} durationInFrames={SEMAPHORE_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="rust-scheduler" component={RUST_SCHEDULER.Video} durationInFrames={RUST_SCHEDULER.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="capability-classes" component={CAPABILITY_CLASSES.Video} durationInFrames={CAPABILITY_CLASSES.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
