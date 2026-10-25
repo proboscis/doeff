@@ -1,0 +1,10 @@
+every_option:
+  every_option: Resume(k, 'tea')
+  order goes on with 'tea'
+  every_option: Resume(k, 'coffee')
+  raises RuntimeError: internal error: Continuation: continuation already consumed (one-shot violation) (current fiber=0)
+  one-shot violation in the message: True
+one run per choice:
+  order goes on with 'tea'
+  order goes on with 'coffee'
+  -> ['tea please', 'coffee please']
