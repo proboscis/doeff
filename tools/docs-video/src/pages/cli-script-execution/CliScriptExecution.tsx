@@ -146,7 +146,9 @@ const DISCOVER_LINES: Lines = [
 const DISCOVER = f(19);
 const CMD = [COMMAND, 'print(value)', 'PY'];
 const CMD_BOX = {x: 60, y: 108, w: 1160, size: 19, line: 30};
-const CMD_CHAR = 19 * 0.602;
+// The advance of one character of the command at 19 px, as the rendered frames measure it (the mono font the
+// renderer finds is narrower than DejaVu's 0.602 em).
+const CMD_CHAR = 11.0;
 // The example project's files, top of the module path first (measure/project/shop).
 const FILES = [
   {path: 'shop/__init__.py', interp: 'shop_interpreter', env: 'shop_env = {"currency": "EUR", "tax_rate": 0.2}'},
@@ -165,7 +167,7 @@ const DiscoverScene: React.FC = () => {
   const firstEnv = ramp(frame, 13.0, 13.8);
   const secondEnv = ramp(frame, 14.6, 15.4);
   const overridden = ramp(frame, 15.4, 15.9);
-  const ringX = CMD_BOX.x + 24 + 55 * CMD_CHAR;
+  const ringX = CMD_BOX.x + 26 + 55 * CMD_CHAR;
   return (
     <AbsoluteFill>
       <Headlines lines={DISCOVER_LINES} />
