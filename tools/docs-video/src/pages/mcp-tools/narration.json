@@ -1,0 +1,78 @@
+[
+ {
+  "id": "t1",
+  "text": "MCP tools. A defk function can become a tool that an agent calls."
+ },
+ {
+  "id": "t2",
+  "text": "The agent's call runs as a doeff program, and its effects travel out to your handlers."
+ },
+ {
+  "id": "t3",
+  "text": "So a tool reaches the same handlers as the rest of your program."
+ },
+ {
+  "id": "d1",
+  "text": "def-MCP-tool wraps an existing defk in a tool: a name, a description, and typed parameters."
+ },
+ {
+  "id": "d2",
+  "text": "It expands to an MCP tool def. The agent sees the tool's name, and reads its parameters as a JSON schema."
+ },
+ {
+  "id": "d3",
+  "text": "Its handler is an at-do function. Run it, and the defk runs: accepted, buy 100 of 7203."
+ },
+ {
+  "id": "l1",
+  "text": "A program asks for an agent by yielding Launch, with the tools the agent may call."
+ },
+ {
+  "id": "l2",
+  "text": "claude agent handler catches Launch. It captures the handlers around the Launch, and starts an MCP server."
+ },
+ {
+  "id": "l3",
+  "text": "It writes dot MCP dot JSON, starts Claude Code in a terminal, and types the prompt."
+ },
+ {
+  "id": "l4",
+  "text": "Then it resumes k with a session handle."
+ },
+ {
+  "id": "l5",
+  "text": "In this run, the terminal is a fake one, and a script plays the agent's part."
+ },
+ {
+  "id": "c1",
+  "text": "The agent reads dot MCP dot JSON, connects over SSE, and lists the tools."
+ },
+ {
+  "id": "c2",
+  "text": "It calls query price tool. The tool's program yields Quote Price, and paper broker answers: 2480."
+ },
+ {
+  "id": "c3",
+  "text": "A call that breaks the schema never reaches the program. Side hold is refused, and the agent gets the reason."
+ },
+ {
+  "id": "c4",
+  "text": "With side buy, the call goes through. Place Order reaches paper broker, and the order is filled."
+ },
+ {
+  "id": "s1",
+  "text": "Every tool call ran in the program's own VM, under the handlers captured at Launch."
+ },
+ {
+  "id": "s2",
+  "text": "After Stop, the program asks paper broker for its position: 100, the shares the agent bought."
+ },
+ {
+  "id": "s3",
+  "text": "The capture takes the handlers on both sides of the agent handler, so either order gives 100."
+ },
+ {
+  "id": "z1",
+  "text": "MCP tools: your defk becomes the agent's tool, and your handlers decide what its effects mean."
+ }
+]
