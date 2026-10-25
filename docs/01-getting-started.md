@@ -9,6 +9,8 @@ end the program with a value of its own. State, logging, errors, concurrency and
 way. Continuations are **one-shot**: a handler resumes each `k` at most once. A VM written in
 Rust runs the programs and the handlers.
 
+[![A narrated video, under two minutes: a program yields an effect and a handler gets it with k, counter_program's effects answered by state() and writer, an effect of your own, the same program given two meanings by two handlers, and handlers that start with values](assets/videos/getting-started.jpg)](assets/videos/getting-started.mp4)
+
 This page installs doeff, runs a program on the reference handlers of `doeff_core_effects`, then
 writes an effect and a handler of your own. [What doeff Is](positioning/what-doeff-is.md) defines the mechanism in full.
 
