@@ -1,0 +1,5 @@
+effects: summary by gpt-4o | image by imagen-3 ['chat gpt-4o', 'draw imagen-3']
+di: summary by gpt-4o | image by imagen-3 ['chat gpt-4o', 'draw imagen-3']
+2 kinds of calls x 1 concerns: DI 2 wrapper classes, effects 2 effects + 1 handlers
+2 kinds of calls x 3 concerns: DI 6 wrapper classes, effects 2 effects + 3 handlers
+3 kinds of calls x 3 concerns: DI 9 wrapper classes, effects 3 effects + 3 handlers

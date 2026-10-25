@@ -1,0 +1,5 @@
+run 1: asyncio 36 in 11.39 ms | doeff+async_http 36 in 16.22 ms | doeff+instant_http 36 in 0.32 ms
+run 2: asyncio 36 in 11.32 ms | doeff+async_http 36 in 11.16 ms | doeff+instant_http 36 in 0.29 ms
+run 3: asyncio 36 in 11.72 ms | doeff+async_http 36 in 11.15 ms | doeff+instant_http 36 in 0.32 ms
+run 4: asyncio 36 in 10.79 ms | doeff+async_http 36 in 27.58 ms | doeff+instant_http 36 in 0.34 ms
+run 5: asyncio 36 in 10.98 ms | doeff+async_http 36 in 11.08 ms | doeff+instant_http 36 in 0.39 ms
