@@ -2,6 +2,8 @@
 
 This chapter covers error handling in doeff using the `Try` effect and canonical `Ok`/`Err` result values.
 
+[![A narrated video, about two minutes: run returns the value or raises the exception as it is, Ok and Err as values, Try as an effect that try_handler answers by running the sub-program and resuming the caller with Err, the three Try composition guarantees, and the traceback kept on the exception inside Err](assets/videos/error-handling.jpg)](assets/videos/error-handling.mp4)
+
 ## Table of Contents
 
 - [Run Returns Raw Values](#run-returns-raw-values)
