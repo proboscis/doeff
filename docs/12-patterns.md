@@ -13,167 +13,346 @@ Common patterns, best practices, and anti-patterns for building robust applicati
 
 ### Layered Architecture
 
-Separate concerns into distinct layers:
+Each layer yields effects for what it needs from the layer below, and the outermost layer, the
+infrastructure, is a set of handlers. `order_service` reads and saves an order with `GetOrder` and
+`SaveOrder` and caches it with `CachePut`; it holds no database or cache client. `sql_orders`
+answers the order effects from SQL tables, `in_memory_orders` from a dict a test can read, and
+`in_memory_cache_handler()` answers `CachePut` (it needs `await_handler()` and `scheduled()`
+outside it, see [Cache System](07-cache-system.md)):
 
 ```python
-from doeff import do, Try
-from doeff_core_effects import Ask, Tell
+import sqlite3
+from dataclasses import dataclass, replace
+from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
+from doeff_core_effects import Tell
+from doeff_core_effects.cache_effects import CachePut
+from doeff_core_effects.cache_handlers import in_memory_cache_handler
+from doeff_core_effects.handlers import await_handler, state, try_handler, writer, writer_log
+from doeff_core_effects.scheduler import scheduled
+
+@dataclass(frozen=True)
+class Item:
+    price: float
+    quantity: int
+
+@dataclass(frozen=True)
+class Order:
+    id: int
+    items: tuple[Item, ...]
+    total: float = 0.0
+
+# Effects - what the service layer asks the infrastructure for
+@dataclass(frozen=True)
+class GetOrder(EffectBase):
+    order_id: int
+
+@dataclass(frozen=True)
+class SaveOrder(EffectBase):
+    order: Order
 
 # Domain layer - pure business logic
-@do
 def calculate_order_total(items):
     subtotal = sum(item.price * item.quantity for item in items)
-    tax = subtotal * 0.1
-    return subtotal + tax
+    return round(subtotal * 1.1, 2)
 
-# Service layer - orchestration
+# Service layer - orchestration, by effects only
 @do
 def order_service(order_id):
-    db = yield Ask("database")
-    cache = yield Ask("cache")
-    
-    # Fetch order
-    order = yield db.get_order(order_id)
-    
-    # Calculate total
-    total = yield calculate_order_total(order.items)
-    
-    # Update and cache
-    order.total = total
-    yield db.save_order(order)
-    yield cache.set(f"order_{order_id}", order, ttl=300)
-    
+    order = yield GetOrder(order_id)
+    order = replace(order, total=calculate_order_total(order.items))
+    yield SaveOrder(order)
+    yield CachePut(f"order_{order_id}", order, ttl=300)
     return order
 
 # API layer - external interface
 @do
 def get_order_handler(order_id):
     yield Tell(f"Request: GET /orders/{order_id}")
-    
     result = yield Try(order_service(order_id))
-    order = result.value if result.is_ok() else {"error": str(result.error)}
-    
-    yield Tell(f"Response: {order}")
-    return order
+    response = result.value.total if result.is_ok() else {"error": repr(result.error)}
+    yield Tell(f"Response: {response}")
+    return response
+
+# Infrastructure layer - handlers give the effects their meaning
+def sql_orders(conn):
+    """Production: orders and their items live in SQL tables."""
+    @handler
+    def on_order(effect: GetOrder | SaveOrder, k):
+        if isinstance(effect, GetOrder):
+            rows = conn.execute(
+                "SELECT price, quantity FROM items WHERE order_id = ?", (effect.order_id,)
+            ).fetchall()
+            if not rows:
+                raise KeyError(effect.order_id)
+            return (yield Resume(k, Order(effect.order_id, tuple(Item(*row) for row in rows))))
+        conn.execute(
+            "INSERT OR REPLACE INTO orders (id, total) VALUES (?, ?)",
+            (effect.order.id, effect.order.total),
+        )
+        return (yield Resume(k, None))
+
+    return on_order
+
+def in_memory_orders(orders):
+    """Tests: orders live in a dict the test can read."""
+    @handler
+    def on_order(effect: GetOrder | SaveOrder, k):
+        if isinstance(effect, GetOrder):
+            return (yield Resume(k, orders[effect.order_id]))
+        orders[effect.order.id] = effect.order
+        return (yield Resume(k, None))
+
+    return on_order
+
+@do
+def with_log(program):
+    response = yield program
+    return response, (yield writer_log())
+
+def serve(orders_handler, order_id):
+    stack = [state(), writer, try_handler, await_handler(), in_memory_cache_handler(), orders_handler]
+    return run(scheduled(with_handlers(stack, with_log(get_order_handler(order_id)))))
+
+# Production stack: SQLite
+conn = sqlite3.connect(":memory:")
+conn.executescript("""
+    CREATE TABLE items (order_id INTEGER, price REAL, quantity INTEGER);
+    CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL);
+    INSERT INTO items VALUES (1, 10.0, 2), (1, 5.0, 1);
+""")
+print(serve(sql_orders(conn), 1))  # (27.5, ['Request: GET /orders/1', 'Response: 27.5'])
+print(conn.execute("SELECT total FROM orders WHERE id = 1").fetchone())  # (27.5,)
+
+# Test stack: the same program over a dict
+orders = {7: Order(7, (Item(100.0, 1),))}
+print(serve(in_memory_orders(orders), 7)[0])  # 110.0
+print(orders[7].total)  # 110.0
+print(serve(in_memory_orders(orders), 8)[0])  # {'error': 'KeyError(8)'}
 ```
+
+`order_service` and `get_order_handler` are the same in both runs; only the handler for the order
+effects differs. A failure in the infrastructure, such as the `KeyError` for a missing order, comes
+back into the program at the `yield`, where `Try` turns it into a value.
 
 ### Repository Pattern
 
-Centralize data access:
+Centralize data access in effects, and keep the connection in one handler. A program names the
+table and the entity; `sqlite_repository` holds the connection and turns each effect into SQL:
 
 ```python
-from doeff import do
-from doeff_core_effects import Ask
+import sqlite3
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, do, handler, run
 
-@do
-def create_repository(table_name):
-    db = yield Ask("database")
-    
-    @do
-    def find_by_id(id):
-        query = f"SELECT * FROM {table_name} WHERE id = ?"
-        return (yield db.query_one(query, id))
-    
-    @do
-    def find_all():
-        query = f"SELECT * FROM {table_name}"
-        return (yield db.query_many(query))
-    
-    @do
-    def save(entity):
-        if hasattr(entity, "id") and entity.id:
-            yield db.update(table_name, entity)
-        else:
-            yield db.insert(table_name, entity)
-        return entity
-    
-    @do
-    def delete(id):
-        query = f"DELETE FROM {table_name} WHERE id = ?"
-        yield db.execute(query, id)
-    
-    return {
-        "find_by_id": find_by_id,
-        "find_all": find_all,
-        "save": save,
-        "delete": delete
-    }
+@dataclass(frozen=True)
+class FindById(EffectBase):
+    table: str
+    id: int
+
+@dataclass(frozen=True)
+class FindAll(EffectBase):
+    table: str
+
+@dataclass(frozen=True)
+class Save(EffectBase):
+    table: str
+    entity: dict
+
+@dataclass(frozen=True)
+class Delete(EffectBase):
+    table: str
+    id: int
+
+RepositoryEffect = FindById | FindAll | Save | Delete
+
+def sqlite_repository(conn, tables):
+    """One handler holds the connection; programs only name the table and the entity."""
+    conn.row_factory = sqlite3.Row
+
+    @handler
+    def on_repository(effect: RepositoryEffect, k):
+        if effect.table not in tables:
+            raise ValueError(f"unknown table: {effect.table}")
+        table = effect.table
+        if isinstance(effect, FindById):
+            row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (effect.id,)).fetchone()
+            return (yield Resume(k, dict(row) if row else None))
+        if isinstance(effect, FindAll):
+            rows = conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+            return (yield Resume(k, [dict(row) for row in rows]))
+        if isinstance(effect, Save):
+            columns = ", ".join(effect.entity)
+            marks = ", ".join("?" for _ in effect.entity)
+            cursor = conn.execute(
+                f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ({marks})",
+                tuple(effect.entity.values()),
+            )
+            return (yield Resume(k, {**effect.entity, "id": cursor.lastrowid}))
+        conn.execute(f"DELETE FROM {table} WHERE id = ?", (effect.id,))
+        return (yield Resume(k, None))
+
+    return on_repository
 
 # Usage
 @do
+def rename_user(user_id, name):
+    user = yield FindById("users", user_id)
+    return (yield Save("users", {**user, "name": name}))
+
+@do
 def app():
-    users = yield create_repository("users")
-    user = yield users["find_by_id"](42)
-    user.name = "Updated"
-    yield users["save"](user)
+    alice = yield Save("users", {"name": "Alice"})
+    yield Save("users", {"name": "Bob"})
+    yield rename_user(alice["id"], "Alicia")
+    yield Delete("users", 2)
+    return (yield FindAll("users"))
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+print(run(sqlite_repository(conn, {"users"})(app())))  # [{'id': 1, 'name': 'Alicia'}]
 ```
+
+A test installs a handler that answers the same four effects from a dict, and `app` does not change.
 
 ### Service Locator
 
-Centralized dependency access:
+There is no locator object to build: the handler stack around a program is the locator. A program
+yields what it needs (`Ask` for a value, its own effects for data, `Tell` for a log line), and
+whichever handlers are installed around it supply them:
 
 ```python
-from doeff import do
-from doeff_core_effects import Ask
+from dataclasses import dataclass
+from doeff import Ask, EffectBase, Resume, do, handler, run, with_handlers
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import reader, state, writer, writer_log
+
+@dataclass(frozen=True)
+class LoadSales(EffectBase):
+    day: str
 
 @do
-def create_services():
-    return {
-        "database": (yield Ask("database")),
-        "cache": (yield Ask("cache")),
-        "logger": (yield Ask("logger")),
-        "config": (yield Ask("config"))
-    }
+def business_logic(day):
+    limit = yield Ask("top_n")                # a value from the environment
+    sales = yield LoadSales(day)              # data, from whichever handler answers
+    yield Tell(f"Loaded {len(sales)} sales")  # a log line, kept by writer
+    return sorted(sales, reverse=True)[:limit]
+
+def fixed_sales(sales):
+    """Answers LoadSales with fixed rows, in place of the database."""
+    @handler
+    def on_load(effect: LoadSales, k):
+        return (yield Resume(k, sales))
+
+    return on_load
 
 @do
-def business_logic():
-    services = yield create_services()
-    
-    data = yield services["database"].query()
-    yield services["cache"].set("key", data)
-    yield services["logger"].info("Processed data")
+def with_log(program):
+    result = yield program
+    return result, (yield writer_log())
+
+services = [reader({"top_n": 2}), state(), writer, fixed_sales([3, 1, 4])]
+print(run(with_handlers(services, with_log(business_logic("mon")))))  # ([4, 3], ['Loaded 3 sales'])
 ```
+
+To use the database, replace `fixed_sales` with a handler that queries it; to keep the log
+elsewhere, replace `writer`. `business_logic` lists its needs by the effects it yields, and an
+effect that no installed handler answers stops the run with `UnhandledEffect`, which names it.
 
 ### Unit of Work
 
-Transactional boundary:
+Transactional boundary: `Begin`, `Commit` and `Rollback` are effects, and `Try` decides which of
+the last two runs. `sqlite_accounts` answers them, and the balance changes, on one connection:
 
 ```python
-from doeff import do
-from doeff_core_effects import Ask, Tell
+import sqlite3
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+
+@dataclass(frozen=True)
+class Begin(EffectBase):
+    pass
+
+@dataclass(frozen=True)
+class Commit(EffectBase):
+    pass
+
+@dataclass(frozen=True)
+class Rollback(EffectBase):
+    pass
+
+@dataclass(frozen=True)
+class AddToBalance(EffectBase):
+    account: str
+    amount: int
 
 @do
 def unit_of_work(operations):
-    db = yield Ask("database")
-    
-    # Start transaction
-    yield db.begin_transaction()
-    
-    try:
-        # Execute operations
-        result = yield operations()
-        
-        # Commit
-        yield db.commit()
-        yield Tell("Transaction committed")
-        return result
-    except Exception as e:
-        # Rollback on error
-        yield db.rollback()
-        yield Tell(f"Transaction rolled back: {e}")
-        raise e
+    yield Begin()
+    result = yield Try(operations)
+    if result.is_err():
+        yield Rollback()
+        yield Tell(f"Transaction rolled back: {result.error!r}")
+        raise result.error
+    yield Commit()
+    yield Tell("Transaction committed")
+    return result.value
 
-# Usage
 @do
 def transfer_money(from_account, to_account, amount):
     @do
     def operations():
-        yield debit_account(from_account, amount)
-        yield credit_account(to_account, amount)
-        return {"status": "transferred"}
-    
-    return (yield unit_of_work(operations))
+        yield AddToBalance(from_account, -amount)
+        yield AddToBalance(to_account, amount)
+        return "transferred"
+
+    return (yield unit_of_work(operations()))
+
+def sqlite_accounts(conn):
+    """Gives the transaction and balance effects their meaning on one SQLite connection."""
+    @handler
+    def on_account(effect: Begin | Commit | Rollback | AddToBalance, k):
+        if isinstance(effect, AddToBalance):
+            cursor = conn.execute(
+                "UPDATE accounts SET balance = balance + ? WHERE name = ?",
+                (effect.amount, effect.account),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(effect.account)
+        else:
+            conn.execute(type(effect).__name__.upper())  # BEGIN, COMMIT or ROLLBACK
+        return (yield Resume(k, None))
+
+    return on_account
+
+@do
+def transfer_and_log(from_account, to_account, amount):
+    result = yield Try(transfer_money(from_account, to_account, amount))
+    return result.is_ok(), (yield writer_log())
+
+conn = sqlite3.connect(":memory:", isolation_level=None)  # transactions only by the effects
+conn.executescript("""
+    CREATE TABLE accounts (name TEXT PRIMARY KEY, balance INTEGER);
+    INSERT INTO accounts VALUES ('alice', 100), ('bob', 0);
+""")
+
+def transfer(from_account, to_account, amount):
+    return run(with_handlers(
+        [state(), writer, try_handler, sqlite_accounts(conn)],
+        transfer_and_log(from_account, to_account, amount),
+    ))
+
+def balances():
+    return conn.execute("SELECT name, balance FROM accounts ORDER BY name").fetchall()
+
+print(transfer("alice", "bob", 30))  # (True, ['Transaction committed'])
+print(balances())  # [('alice', 70), ('bob', 30)]
+print(transfer("alice", "carol", 30))  # (False, ["Transaction rolled back: KeyError('carol')"])
+print(balances())  # [('alice', 70), ('bob', 30)]
 ```
+
+The failed transfer debited `alice` before the credit to `carol` failed; `Rollback` undid the debit.
 
 ## Effect Composition Patterns
 
@@ -235,7 +414,7 @@ The following laws from SPEC-EFF-100 apply to all compositions:
 
 Wrap operations with consistent error handling:
 
-```python
+```python excerpt
 from doeff import Try, do
 from doeff_core_effects import Tell
 
@@ -272,7 +451,7 @@ time handler decides what a second is: `async_time_handler()` waits on the wall 
 `sim_time_handler()` moves a virtual clock and a test of the retry path never sleeps
 (see [Advanced Effects](09-advanced-effects.md)):
 
-```python
+```python excerpt
 from doeff import Try, do
 from doeff_core_effects import Tell
 from doeff_time import Delay
@@ -302,49 +481,87 @@ def fetch_with_retry():
 
 ### Resource Management
 
-Ensure cleanup with try/finally:
+Ensure cleanup with try/finally. `Acquire`, `Release` and `Query` are effects; the `pool` handler
+holds the open connections and the program only sees the handles it gives out:
 
 ```python
-from doeff import do
-from doeff_core_effects import Ask, Tell
+import sqlite3
+from dataclasses import dataclass
+from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+
+@dataclass(frozen=True)
+class Acquire(EffectBase):
+    pass
+
+@dataclass(frozen=True)
+class Release(EffectBase):
+    conn: object
+
+@dataclass(frozen=True)
+class Query(EffectBase):
+    conn: object
+    sql: str
 
 @do
-def with_resource(acquire, release, operation):
-    resource = yield acquire()
-    
+def with_connection(work):
+    conn = yield Acquire()
     try:
-        result = yield operation(resource)
-        return result
+        return (yield work(conn))
     finally:
-        yield release(resource)
-        yield Tell("Resource released")
+        yield Release(conn)
+        yield Tell("Connection released")
 
 # Usage
 @do
-def use_database_connection():
-    @do
-    def acquire():
-        db = yield Ask("database")
-        conn = yield db.get_connection()
-        yield Tell("Connection acquired")
-        return conn
-    
-    @do
-    def release(conn):
-        yield conn.close()
-    
-    @do
-    def work(conn):
-        return (yield conn.query("SELECT * FROM users"))
-    
-    return (yield with_resource(acquire, release, work))
+def count_users(conn):
+    rows = yield Query(conn, "SELECT count(*) FROM users")
+    return rows[0][0]
+
+@do
+def broken_query(conn):
+    return (yield Query(conn, "SELECT * FROM no_such_table"))
+
+def pool(connect, size):
+    """Holds the open connections; programs only see the handles it gives out."""
+    free = [connect() for _ in range(size)]
+
+    @handler
+    def on_pool(effect: Acquire | Release | Query, k):
+        if isinstance(effect, Acquire):
+            return (yield Resume(k, free.pop()))
+        if isinstance(effect, Release):
+            free.append(effect.conn)
+            return (yield Resume(k, None))
+        return (yield Resume(k, effect.conn.execute(effect.sql).fetchall()))
+
+    return on_pool, free
+
+def connect():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("CREATE TABLE users (name TEXT); INSERT INTO users VALUES ('alice'), ('bob');")
+    return conn
+
+on_pool, free = pool(connect, size=2)
+
+@do
+def both():
+    users = yield with_connection(count_users)
+    failed = yield Try(with_connection(broken_query))
+    return users, failed.is_err(), (yield writer_log())
+
+print(run(with_handlers([state(), writer, try_handler, on_pool], both())))  # (2, True, ['Connection released', 'Connection released'])
+print(len(free))  # 2
 ```
+
+The `finally` block runs when the query fails too, so both connections are back in the pool.
 
 ### Circuit Breaker
 
 Prevent cascading failures:
 
-```python
+```python excerpt
 from doeff import Try, do
 from doeff_core_effects import Get, Put, Tell
 from doeff_time import GetTime
@@ -386,7 +603,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
 
 Explicit state transitions:
 
-```python
+```python excerpt
 from doeff import do
 from doeff_core_effects import Get, Put, Tell
 
@@ -419,7 +636,7 @@ def order_state_machine(order_id):
 
 Functional state transformations:
 
-```python
+```python excerpt
 from doeff import do
 from doeff_core_effects import Get, Put
 from doeff_time import GetTime
@@ -448,7 +665,7 @@ def change_username(user_id, new_username):
 
 Save and restore state:
 
-```python
+```python excerpt
 from doeff import Try, do
 from doeff_core_effects import Get, Put, Tell
 
@@ -475,7 +692,7 @@ def with_state_snapshot(operation):
 
 Fetch multiple resources concurrently:
 
-```python
+```python excerpt
 from doeff import Spawn, Gather, do
 from doeff_time import GetTime
 
@@ -502,7 +719,7 @@ def fetch_user_dashboard(user_id):
 
 Group operations for efficiency:
 
-```python
+```python excerpt
 from doeff import Spawn, Gather, do
 from doeff_core_effects import Tell
 
@@ -548,11 +765,14 @@ def test_effects_executed():
 
     # run() returns the raw value directly
     assert result == "result"
+
+test_effects_executed()
+print("passed")  # passed
 ```
 
 ### Property-Based Testing
 
-```python
+```python excerpt
 from hypothesis import given, strategies as st
 from doeff import do, run
 from doeff_core_effects import Get, Put
@@ -568,7 +788,7 @@ def test_counter_properties(initial_value):
         result = yield Get("counter")
         return result
 
-    result = run(state(counter_program()))
+    result = run(state()(counter_program()))
 
     # Property: counter should always increment by 1
     assert result == initial_value + 1
@@ -579,7 +799,7 @@ def test_counter_properties(initial_value):
 ### Bad: Blocking Operations in Programs
 
 **BAD:**
-```python
+```python excerpt
 @do
 def bad_program():
     # DON'T: blocking call
@@ -592,7 +812,7 @@ def bad_program():
 clock behind the time handler's back, so a test cannot run it on a virtual clock.
 
 **GOOD:**
-```python
+```python excerpt
 from doeff import do
 from doeff_time import Delay
 
@@ -609,7 +829,7 @@ inside a `@do` program.
 ### Bad: Untracked Side Effects
 
 **BAD:**
-```python
+```python excerpt
 @do
 def bad_side_effects():
     # Don't: perform side effects directly in program bodies
@@ -619,7 +839,7 @@ def bad_side_effects():
 ```
 
 **GOOD:**
-```python
+```python excerpt
 from dataclasses import dataclass
 from doeff_vm import EffectBase
 
@@ -638,7 +858,7 @@ def good_side_effects():
 ### Bad: Overusing State
 
 **BAD:**
-```python
+```python excerpt
 @do
 def bad_state_usage():
     # Don't: passing everything through state
@@ -649,7 +869,7 @@ def bad_state_usage():
 ```
 
 **GOOD:**
-```python
+```python excerpt
 @do
 def good_parameter_passing():
     # DO: pass arguments directly
@@ -659,7 +879,7 @@ def good_parameter_passing():
 ### Bad: Ignoring Errors
 
 **BAD:**
-```python
+```python excerpt
 @do
 def bad_error_handling():
     result = yield Try(risky_operation())
@@ -669,7 +889,7 @@ def bad_error_handling():
 ```
 
 **GOOD:**
-```python
+```python excerpt
 from doeff import Try, do
 from doeff_core_effects import Tell
 
@@ -688,7 +908,7 @@ def good_error_handling():
 ### Bad: Deep Nesting
 
 **BAD:**
-```python
+```python excerpt
 @do
 def deeply_nested():
     if condition1:
@@ -701,7 +921,7 @@ def deeply_nested():
 ```
 
 **GOOD:**
-```python
+```python excerpt
 @do
 def flat_structure():
     if not condition1:

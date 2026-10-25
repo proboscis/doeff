@@ -412,6 +412,12 @@ tests = ["tests/test_docs_page_examples.py", "tests/test_docs_kleisli_arguments.
 prefix = "docs/12-mcp-tools.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+# 12 章(Patterns)の Layered・Repository・Service Locator・Unit of Work・Resource Management の例は、client の object の
+# method を呼ばず、領域の effect と @handler で書く(card ki-6954d4a02101)。page の例の検が、その例を走らせて印字を比べる。
+[[tool.doeff.contract-tests]]
+prefix = "docs/12-patterns.md"
+tests = ["tests/test_docs_page_examples.py"]
+
 # 13 章の Control Effects の節(Resume と Pass の項)を書き換えた便は、Resume しない handler と Pass しない handler が program
 # をどう終えるかの例を走らせる検を払う(card ki-03bb9225a242)。13 章は page 全体をまだ走らせられないので、page の例の検
 # (CHECKED_PAGES)に載せず、節だけを走らせる。秒は 4.5 秒(4 本・子 2 本・起動を含む壁時計・load 約 60 の下・
