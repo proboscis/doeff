@@ -1,0 +1,82 @@
+[
+ {
+  "id": "a1",
+  "text": "The cache system of doeff. A program asks for a value it has worked out before, and a handler keeps it."
+ },
+ {
+  "id": "a2",
+  "text": "Two effects do the asking. Cache Get asks for the value under a key. Cache Put stores one."
+ },
+ {
+  "id": "a3",
+  "text": "Which cache answers them is not in the program. It is up to the handler around it."
+ },
+ {
+  "id": "b1",
+  "text": "The first call. Cache Get goes out to the handler, and the cache has nothing under my key."
+ },
+ {
+  "id": "b2",
+  "text": "So the handler throws a key error into the program, right at the yield where it was waiting."
+ },
+ {
+  "id": "b3",
+  "text": "The program catches it, does the work, which takes four hundred milliseconds, and stores the answer with Cache Put."
+ },
+ {
+  "id": "b4",
+  "text": "The second call. This time the handler finds my key, and resumes the program with forty-two."
+ },
+ {
+  "id": "b5",
+  "text": "Half a millisecond instead of four hundred. The log shows a miss, then a hit."
+ },
+ {
+  "id": "c1",
+  "text": "Cache Put can carry a policy: a time to live, a lifecycle, a storage, and metadata."
+ },
+ {
+  "id": "c2",
+  "text": "The policy travels inside the effect, so the handler receives it together with the value."
+ },
+ {
+  "id": "c3",
+  "text": "A persistent lifecycle resolves to disk storage. With no hints, the entry belongs in memory."
+ },
+ {
+  "id": "c4",
+  "text": "These are hints, and the handler decides what they mean. The in-memory handler keeps every entry the same way: one with a time to live of a tenth of a second is still there later."
+ },
+ {
+  "id": "e1",
+  "text": "The page's API example. fetch user is called twice, for the same user."
+ },
+ {
+  "id": "e2",
+  "text": "The first call misses, sends the request, and stores the response. The second is served from the cache."
+ },
+ {
+  "id": "e3",
+  "text": "The stand-in server got exactly one request."
+ },
+ {
+  "id": "d1",
+  "text": "Now the same program, run twice, under different cache handlers."
+ },
+ {
+  "id": "d2",
+  "text": "The in-memory handler starts empty in every run, so both runs do the work."
+ },
+ {
+  "id": "d3",
+  "text": "The SQLite handler keeps the cache in a file. The second run is a hit, in two milliseconds."
+ },
+ {
+  "id": "d4",
+  "text": "With no cache handler at all, Cache Get is unhandled. The program never chose a cache. The handler does."
+ },
+ {
+  "id": "o1",
+  "text": "Caching in doeff: the program asks and stores through effects, and the handler you install decides where the answers live."
+ }
+]

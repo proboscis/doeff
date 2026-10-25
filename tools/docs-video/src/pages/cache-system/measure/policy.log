@@ -1,0 +1,9 @@
+handler gets CachePut('my_key', ...) with policy:
+  ttl=300 lifecycle=PERSISTENT storage=DISK metadata={} -> resolved_storage()=DISK
+handler gets CachePut('user_1', ...) with policy:
+  ttl=60 lifecycle=TRANSIENT storage=None metadata={} -> resolved_storage()=MEMORY
+handler gets CachePut('report', ...) with policy:
+  ttl=None lifecycle=PERSISTENT storage=None metadata={} -> resolved_storage()=DISK
+handler gets CachePut('tmp', ...) with policy:
+  ttl=None lifecycle=TRANSIENT storage=None metadata={'source': 'api'} -> resolved_storage()=MEMORY
+in_memory_cache_handler, ttl=0.1, read 0.3 s later: 'value'
