@@ -1,0 +1,18 @@
+get_order_handler(42):
+  yielded: Tell
+  yielded: Try
+  yielded: Ask('database')
+  yielded: Ask('cache')
+  database: saved order 42
+  cache: set order_42 ttl=300
+  yielded: Tell
+  log: ['Request: GET /orders/42', 'Response: Order(id=42, items=(Item(price=20, quantity=2), Item(price=5, quantity=2)), total=55.0)']
+  returns: Order(id=42, items=(Item(price=20, quantity=2), Item(price=5, quantity=2)), total=55.0)
+get_order_handler(7):
+  yielded: Tell
+  yielded: Try
+  yielded: Ask('database')
+  yielded: Ask('cache')
+  yielded: Tell
+  log: ['Request: GET /orders/7', "Response: {'error': 'no order 7'}"]
+  returns: {'error': 'no order 7'}

@@ -1,0 +1,14 @@
+sim_time_handler:
+  t=0s attempt fails: ConnectionError
+  t=2s attempt fails: ConnectionError
+  t=6s attempt answers
+  log: ['Retry 1 failed, waiting 2s', 'Retry 2 failed, waiting 4s']
+  returns: data after 6s
+  wall clock: 1.58 ms
+sync_time_handler:
+  t=0s attempt fails: ConnectionError
+  t=2s attempt fails: ConnectionError
+  t=6s attempt answers
+  log: ['Retry 1 failed, waiting 2s', 'Retry 2 failed, waiting 4s']
+  returns: data after 6s
+  wall clock: 6.00 s
