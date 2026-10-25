@@ -11,638 +11,406 @@ pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-claude-code
   ./doeff/packages/doeff-codex ./doeff/packages/doeff-agents
 ```
 
-This tutorial walks through building a practical application using `doeff-agents`:
-an automated code review system that uses Claude to review pull requests.
+This tutorial builds an automated code reviewer: a program that asks Claude Code to review a file
+and gets the review back as structured data. After reading it you can:
 
-[![A narrated video, about three minutes, of this page's steps run against a scripted terminal that plays Claude Code: launch_session, monitor_session until the agent exits, capture_output and stop_session; the effects launch_session yields before it opens a terminal and the handler that answers them; session_scope stopping the session on a finish, a timeout and an exception; on_status_change firing on each change, with a BLOCKED session answered by send_message; and a Semaphore limiting a gather of four reviews](assets/videos/agent-tutorial.jpg)](assets/videos/agent-tutorial.mp4)
+- write the work with an agent as a doeff Program, a `@do` function that yields `doeff-agents`
+  effects;
+- run that Program under a handler of your own that answers the effects from a script, with no
+  agent, no terminal and no session host;
+- run the same Program, unchanged, under the production handler that talks to the session host.
+
+The steps up to "Run it against Claude Code" run as they are, with only the install above. That
+last step needs a machine with `tmux`, Claude Code and a session host.
 
 ## What We'll Build
 
-A script that:
-1. Launches Claude in a tmux session
-2. Asks it to review code changes
-3. Collects the review output
-4. Handles errors gracefully
+| Piece | What it is | Where it comes from |
+| --- | --- | --- |
+| `review_file(path)` | a Program: starts a session for one file, waits for its review, stops the session | you write it (Step 1) |
+| `review_all(paths, at_most)` | a Program: reviews several files, at most `at_most` sessions at a time | you write it (Step 4) |
+| `scripted_agent(outcomes, log)` | a test handler: answers the session effects from a script and records them | you write it (Step 2) |
+| `ScenarioAgentHandler` | a test handler: the same job, packaged | `doeff_agents` (Step 5) |
+| `daemon_agent_handlers()` | the production handlers: send the effects to the session host, which runs Claude Code | `doeff_agents` (Step 6) |
 
-## Prerequisites
+## The Effects a Review Uses
 
-Before starting, ensure you have:
+A Program does not start Claude Code itself. It yields an effect, a value that says what it needs,
+and the handler installed around the Program decides how that need is met. A review needs four
+effects:
 
-```bash
-# Install tmux
-brew install tmux  # macOS
-# or: apt install tmux  # Ubuntu
+| The Program yields | It asks for | The handler resumes it with |
+| --- | --- | --- |
+| `LaunchSession(spec)` | a session that runs `spec.prompt` in `spec.work_dir` | a `SessionHandle` |
+| `AwaitResult(handle, timeout_seconds=...)` | the result of the session, or the reason there is none | an `AwaitOutcome` |
+| `FollowUp(handle, message)` | `message` sent into the running session | the same `SessionHandle` |
+| `StopSession(handle)` | the session stopped | `None` |
 
-# Install Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-```
+`spec` is an `AgentSpec`. Its `result_schema` is a JSON Schema: the agent returns its result
+through doeff-agents, and the handler checks it against the schema before the Program sees it.
+The Program never reads the terminal or a file to get the result.
 
-and `doeff-agents` installed from a checkout as shown at the top of this page.
+An `AwaitOutcome` has these fields:
 
-Verify installation:
+| Field | Meaning |
+| --- | --- |
+| `status` | `AwaitStatus.EXITED` (the agent finished), `AwaitStatus.AWAITING_INPUT` (it stopped to ask something) or `AwaitStatus.TIMED_OUT` (nothing came back within `timeout_seconds`) |
+| `result` | the result, valid against `result_schema`; `None` when there is none |
+| `validation_error` | why the result the agent gave was not valid; `None` when it was valid or absent |
 
-```bash
-tmux -V       # Should show version
-claude --help # Should show help text
-```
+`AwaitResult` waits in one step. The waiting (watching the session, checking the result) is the
+handler's job, so the Program has no polling loop and no `sleep`.
 
-## Step 1: Basic Session Launch
+## Step 1: The Review as a Program
 
-Let's start with a simple script that launches Claude and captures its output:
+`review_file` yields the four effects. `StopSession` is in a `finally` block, so the session is
+stopped whether the review succeeds or fails. Save it as `review.py`:
 
-```python
-# review_basic.py
-import time
+```python file=review.py
 from pathlib import Path
 
+from doeff import do
 from doeff_agents import (
+    AgentSpec,
     AgentType,
-    LaunchConfig,
-    capture_output,
-    launch_session,
-    monitor_session,
-    stop_session,
+    AwaitResult,
+    AwaitStatus,
+    FollowUp,
+    LaunchSession,
+    StopSession,
 )
 
+REVIEW_SCHEMA = {
+    "type": "object",
+    "required": ["verdict", "issues"],
+    "properties": {
+        "verdict": {"enum": ["approve", "request-changes"]},
+        "issues": {"type": "array", "items": {"type": "string"}},
+    },
+}
 
-def review_file(file_path: str) -> str:
-    """Get Claude to review a file."""
-    config = LaunchConfig(
+
+class ReviewFailed(Exception):
+    """The session ended without a valid review."""
+
+
+def review_spec(path: str) -> AgentSpec:
+    return AgentSpec(
+        run_id="review",
+        node_id=path,
+        attempt=1,
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
-        prompt=f"Review the code in {file_path} and provide feedback on code quality, potential bugs, and improvements.",
+        prompt=f"Review {path}: list potential bugs and readability problems.",
+        result_schema=REVIEW_SCHEMA,
     )
 
-    session_name = f"review-{int(time.time())}"
-    session = launch_session(session_name, config)
 
+@do
+def review_file(path: str):
+    session = yield LaunchSession(review_spec(path))
     try:
-        # Wait for completion (max 2 minutes)
-        for _ in range(120):
-            monitor_session(session)
-            if session.is_terminal:
-                break
-            time.sleep(1)
-
-        return capture_output(session, lines=100)
+        outcome = yield AwaitResult(session, timeout_seconds=600)
+        if outcome.status is AwaitStatus.AWAITING_INPUT:
+            yield FollowUp(session, "Decide on your own and finish the review.")
+            outcome = yield AwaitResult(session, timeout_seconds=600)
+        if outcome.result is None or outcome.validation_error is not None:
+            reason = outcome.validation_error or outcome.status.value
+            raise ReviewFailed(f"{path}: {reason}")
+        return outcome.result
     finally:
-        stop_session(session)
-
-
-if __name__ == "__main__":
-    import sys
-    file_to_review = sys.argv[1] if len(sys.argv) > 1 else "main.py"
-    review = review_file(file_to_review)
-    print(review)
+        yield StopSession(session)
 ```
 
-Run it:
+The session id comes from `run_id`, `node_id` and `attempt`, so a handler that is asked to launch
+the same spec again can find the session it already started instead of starting a second one:
+
+```python
+from review import review_spec
+
+print(review_spec("src/utils.py").session_id)  # review-src-utils.py-1
+```
+
+Calling `review_file("src/utils.py")` only builds the Program. Nothing runs until a handler
+answers its effects.
+
+## Step 2: A Test Handler
+
+A handler is a function of the effect and the continuation `k` (the rest of the Program), made one
+with `@handler`. It answers an effect with `yield Resume(k, value)`: the Program goes on with
+`value` as the result of its `yield`.
+
+`scripted_agent` answers the four effects from a script. `outcomes` maps a session id to the
+`AwaitOutcome`s its `AwaitResult`s get, in order, and `log` records each effect it answers. Save it
+as `scripted.py`:
+
+```python file=scripted.py
+from doeff import Resume, handler
+from doeff_agents import (
+    AwaitResultEffect,
+    FollowUpEffect,
+    LaunchSessionEffect,
+    SessionHandle,
+    StopSessionEffect,
+)
+
+SessionEffect = LaunchSessionEffect | AwaitResultEffect | FollowUpEffect | StopSessionEffect
+
+
+def scripted_agent(outcomes, log):
+    pending = {session_id: list(steps) for session_id, steps in outcomes.items()}
+
+    @handler
+    def answer(effect: SessionEffect, k):
+        if isinstance(effect, LaunchSessionEffect):
+            log.append(f"launch {effect.spec.session_id}")
+            return (yield Resume(k, SessionHandle(effect.spec.session_id)))
+        session_id = effect.handle.session_id
+        if isinstance(effect, AwaitResultEffect):
+            outcome = pending[session_id].pop(0)
+            log.append(f"await {session_id}: {outcome.status.value}")
+            return (yield Resume(k, outcome))
+        if isinstance(effect, FollowUpEffect):
+            log.append(f"follow-up {session_id}")
+            return (yield Resume(k, effect.handle))
+        log.append(f"stop {session_id}")
+        return (yield Resume(k, None))
+
+    return answer
+```
+
+The annotation `effect: SessionEffect` tells doeff which effects this handler takes. Any other
+effect goes past it to the next handler out.
+
+Run a review under it. The agent in the script finishes and returns a valid review:
+
+```python
+from doeff import run
+from doeff_agents import AwaitOutcome, AwaitStatus
+
+from review import review_file
+from scripted import scripted_agent
+
+approve = AwaitOutcome(status=AwaitStatus.EXITED, result={"verdict": "approve", "issues": []})
+
+log = []
+agent = scripted_agent({"review-src-utils.py-1": [approve]}, log)
+print(run(agent(review_file("src/utils.py"))))  # {'verdict': 'approve', 'issues': []}
+print(log)  # ['launch review-src-utils.py-1', 'await review-src-utils.py-1: exited', 'stop review-src-utils.py-1']
+```
+
+`review_file` did not change for the test. The test chose the handler.
+
+## Step 3: When the Agent Does Not Finish
+
+The script can play the other outcomes. Add this below the example above.
+
+The agent stops to ask a question, gets a follow-up, and then finishes:
+
+```python continues
+asks = AwaitOutcome(status=AwaitStatus.AWAITING_INPUT)
+log = []
+agent = scripted_agent({"review-src-api.py-1": [asks, approve]}, log)
+print(run(agent(review_file("src/api.py"))))  # {'verdict': 'approve', 'issues': []}
+print(log[2])  # follow-up review-src-api.py-1
+```
+
+Nothing comes back within the timeout, or the agent returns a result that does not match the
+schema. `review_file` raises `ReviewFailed`, and the `finally` block still stops the session:
+
+```python continues
+from review import ReviewFailed, review_spec
+
+slow = AwaitOutcome(status=AwaitStatus.TIMED_OUT)
+wrong = AwaitOutcome(
+    status=AwaitStatus.EXITED,
+    result={"verdict": "maybe", "issues": []},
+    validation_error="'maybe' is not one of ['approve', 'request-changes']",
+)
+
+
+def failure(path, outcome):
+    log = []
+    agent = scripted_agent({review_spec(path).session_id: [outcome]}, log)
+    try:
+        run(agent(review_file(path)))
+    except ReviewFailed as error:
+        return str(error), log[-1]
+
+
+print(failure("src/slow.py", slow))  # ('src/slow.py: timed-out', 'stop review-src-slow.py-1')
+print(failure("src/odd.py", wrong))  # ("src/odd.py: 'maybe' is not one of ['approve', 'request-changes']", 'stop review-src-odd.py-1')
+```
+
+## Step 4: Reviewing Several Files at Once
+
+`review_all` starts one task per file with `Spawn` and collects the results with `Gather`. A
+semaphore lets at most `at_most` reviews hold a session at a time. `Try` turns a failed review into
+an `Err` value, so one failure does not stop the others. Save it as `review_all.py`:
+
+```python file=review_all.py
+from doeff import do
+from doeff_core_effects import Try
+from doeff_core_effects.scheduler import (
+    AcquireSemaphore,
+    CreateSemaphore,
+    Gather,
+    ReleaseSemaphore,
+    Spawn,
+)
+
+from review import review_file
+
+
+@do
+def review_all(paths, at_most):
+    sessions = yield CreateSemaphore(at_most)
+
+    @do
+    def one(path):
+        yield AcquireSemaphore(sessions)
+        try:
+            return (yield review_file(path))
+        finally:
+            yield ReleaseSemaphore(sessions)
+
+    tasks = []
+    for path in paths:
+        tasks.append((yield Spawn(Try(one(path)))))
+    return (yield Gather(*tasks))
+```
+
+`Spawn`, `Gather` and the semaphore are answered by the scheduler, `scheduled`, and `Try` by
+`try_handler`. The session effects still go to `scripted_agent`:
+
+```python
+from doeff import run
+from doeff_agents import AwaitOutcome, AwaitStatus
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
+
+from review_all import review_all
+from scripted import scripted_agent
+
+approve = AwaitOutcome(status=AwaitStatus.EXITED, result={"verdict": "approve", "issues": []})
+slow = AwaitOutcome(status=AwaitStatus.TIMED_OUT)
+outcomes = {
+    "review-a.py-1": [approve],
+    "review-b.py-1": [slow],
+    "review-c.py-1": [approve],
+}
+
+log = []
+program = try_handler(scripted_agent(outcomes, log)(review_all(["a.py", "b.py", "c.py"], 2)))
+a, b, c = run(scheduled(program))
+print(a)  # Ok({'verdict': 'approve', 'issues': []})
+print(b)  # Err(ReviewFailed('b.py: timed-out'))
+print(c)  # Ok({'verdict': 'approve', 'issues': []})
+print([line for line in log if line.startswith("stop")])  # ['stop review-a.py-1', 'stop review-b.py-1', 'stop review-c.py-1']
+```
+
+The review of `b.py` failed, and its session was stopped all the same.
+
+## Step 5: The Packaged Test Handler
+
+`doeff_agents` ships a test handler of the same kind, `ScenarioAgentHandler`. Its script maps a
+session id to `ScenarioStep`s, one per `AwaitResult`, and it records the sessions it stopped.
+`wrap` installs it around a Program:
+
+```python
+from doeff import run
+from doeff_agents import ScenarioAgentHandler, ScenarioStep
+
+from review import review_file
+
+scenario = ScenarioAgentHandler(
+    scripts={
+        "review-src-utils.py-1": [
+            ScenarioStep.success({"verdict": "request-changes", "issues": ["unused import"]}),
+        ],
+    },
+)
+print(run(scenario.wrap(review_file("src/utils.py"))))  # {'verdict': 'request-changes', 'issues': ['unused import']}
+print(scenario.stopped_sessions)  # ['review-src-utils.py-1']
+```
+
+Use your own handler when the test needs to see each effect, as `scripted_agent` does with `log`.
+Use `ScenarioAgentHandler` when the script of results is all the test needs.
+
+## Step 6: Run It Against Claude Code
+
+In production the effects go to the session host, `doeff-sessionhost`. The host owns the sessions:
+it starts Claude Code in a terminal, watches it, checks its result against the schema and stops it,
+and a session lives on even when the program that launched it exits. This step needs:
+
+- `tmux` and the Claude Code CLI (`claude`), signed in;
+- a session host running on the machine.
+
+Start the host with the default paths, which the production handler also uses:
 
 ```bash
-python review_basic.py src/utils.py
+AGENTD_DB="${XDG_STATE_HOME:-$HOME/.local/state}/doeff/agentd.sqlite"
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  AGENTD_SOCKET="$XDG_RUNTIME_DIR/doeff/agentd.sock"
+else
+  AGENTD_SOCKET="/tmp/doeff-agentd-${USER:-unknown}.sock"
+fi
+doeff-sessionhost --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10 serve
 ```
 
-## Step 2: Add Context Manager for Safety
+Then install `daemon_agent_handlers()` around the same `review_all`, in place of `scripted_agent`.
+It returns two handlers, a time handler and the agent handler; the time handler goes outside. Save
+this as `code_reviewer.py` next to `review.py` and `review_all.py`:
 
-Let's improve the code using `session_scope` for automatic cleanup:
+```python excerpt
+import sys
 
-```python
-# review_safe.py
-import time
-from pathlib import Path
+from doeff import run
+from doeff_agents import daemon_agent_handlers
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
 
-from doeff_agents import (
-    AgentType,
-    LaunchConfig,
-    SessionStatus,
-    capture_output,
-    monitor_session,
-    session_scope,
-)
+from review_all import review_all
 
-
-def review_file(file_path: str, timeout: int = 120) -> dict:
-    """
-    Review a file with Claude.
-
-    Returns a dict with:
-    - success: bool
-    - review: str (if success)
-    - error: str (if failure)
-    """
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt=f"Please review {file_path}. Focus on:\n"
-               f"1. Code quality and readability\n"
-               f"2. Potential bugs or edge cases\n"
-               f"3. Performance considerations\n"
-               f"4. Security issues\n"
-               f"Be concise and actionable.",
-    )
-
-    session_name = f"review-{int(time.time())}"
-
-    with session_scope(session_name, config) as session:
-        start = time.time()
-
-        while not session.is_terminal:
-            if time.time() - start > timeout:
-                return {"success": False, "error": "Timeout"}
-
-            monitor_session(session)
-            time.sleep(1)
-
-        output = capture_output(session, lines=200)
-
-        if session.status == SessionStatus.DONE:
-            return {"success": True, "review": output}
-        elif session.status == SessionStatus.FAILED:
-            return {"success": False, "error": f"Agent failed:\n{output[-500:]}"}
-        else:
-            return {"success": False, "error": f"Ended with status: {session.status.value}"}
-
-
-if __name__ == "__main__":
-    import sys
-    import json
-
-    file_to_review = sys.argv[1] if len(sys.argv) > 1 else "main.py"
-    result = review_file(file_to_review)
-
-    if result["success"]:
-        print("=== Code Review ===")
-        print(result["review"])
-    else:
-        print(f"Review failed: {result['error']}")
+time_handler, agent_handler = daemon_agent_handlers()
+program = time_handler(agent_handler(try_handler(review_all(sys.argv[1:], 2))))
+for result in run(scheduled(program)):
+    print(result)
 ```
-
-## Step 3: Add Status Callbacks
-
-Let's add real-time progress reporting:
-
-```python
-# review_progress.py
-import time
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
-
-from doeff_agents import (
-    AgentType,
-    LaunchConfig,
-    SessionStatus,
-    capture_output,
-    monitor_session,
-    session_scope,
-)
-
-
-@dataclass
-class ReviewProgress:
-    """Track review progress."""
-    file_path: str
-    started_at: datetime = field(default_factory=datetime.now)
-    status_history: list[tuple[float, SessionStatus]] = field(default_factory=list)
-    pr_url: str | None = None
-
-    def on_status_change(
-        self,
-        old: SessionStatus,
-        new: SessionStatus,
-        output: str | None,
-    ) -> None:
-        elapsed = (datetime.now() - self.started_at).total_seconds()
-        self.status_history.append((elapsed, new))
-
-        # Print progress
-        icon = {
-            SessionStatus.BOOTING: "🚀",
-            SessionStatus.RUNNING: "⚙️",
-            SessionStatus.BLOCKED: "⏸️",
-            SessionStatus.DONE: "✅",
-            SessionStatus.FAILED: "❌",
-        }.get(new, "•")
-
-        print(f"  {icon} [{elapsed:.1f}s] {new.value}")
-
-    def on_pr_detected(self, url: str) -> None:
-        self.pr_url = url
-        print(f"  📝 PR: {url}")
-
-
-def review_file_with_progress(file_path: str, timeout: int = 120) -> dict:
-    """Review a file with progress tracking."""
-    print(f"\n📋 Reviewing: {file_path}")
-    print("-" * 40)
-
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt=f"Review the code in {file_path}. Be thorough but concise.",
-    )
-
-    session_name = f"review-{int(time.time())}"
-    progress = ReviewProgress(file_path)
-
-    with session_scope(session_name, config) as session:
-        start = time.time()
-
-        while not session.is_terminal:
-            if time.time() - start > timeout:
-                return {
-                    "success": False,
-                    "error": "Timeout",
-                    "progress": progress,
-                }
-
-            monitor_session(
-                session,
-                on_status_change=progress.on_status_change,
-                on_pr_detected=progress.on_pr_detected,
-            )
-            time.sleep(0.5)
-
-        output = capture_output(session, lines=200)
-
-        return {
-            "success": session.status == SessionStatus.DONE,
-            "review": output if session.status == SessionStatus.DONE else None,
-            "error": None if session.status == SessionStatus.DONE else session.status.value,
-            "progress": progress,
-        }
-
-
-if __name__ == "__main__":
-    import sys
-
-    files = sys.argv[1:] if len(sys.argv) > 1 else ["main.py"]
-
-    for file_path in files:
-        result = review_file_with_progress(file_path)
-
-        print("-" * 40)
-        if result["success"]:
-            print("Review completed successfully!")
-            # print(result["review"])  # Uncomment to see full review
-        else:
-            print(f"Review failed: {result['error']}")
-```
-
-## Step 4: Async Batch Processing
-
-For reviewing multiple files concurrently:
-
-```python
-# review_batch.py
-import asyncio
-import time
-from pathlib import Path
-
-from doeff_agents import (
-    AgentType,
-    LaunchConfig,
-    SessionStatus,
-    async_monitor_session,
-    async_session_scope,
-    capture_output,
-)
-
-
-async def review_file_async(file_path: str, timeout: float = 120) -> dict:
-    """Asynchronously review a single file."""
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt=f"Briefly review {file_path}. List top 3 issues if any.",
-    )
-
-    session_name = f"review-{file_path.replace('/', '-')}-{int(time.time())}"
-
-    def on_change(old, new, output):
-        print(f"  [{file_path}] {new.value}")
-
-    try:
-        async with async_session_scope(session_name, config) as session:
-            # Create timeout task
-            async def monitor_with_timeout():
-                return await asyncio.wait_for(
-                    async_monitor_session(session, on_status_change=on_change),
-                    timeout=timeout,
-                )
-
-            try:
-                final_status = await monitor_with_timeout()
-            except asyncio.TimeoutError:
-                return {"file": file_path, "success": False, "error": "Timeout"}
-
-            output = capture_output(session, lines=100)
-
-            return {
-                "file": file_path,
-                "success": final_status == SessionStatus.DONE,
-                "review": output if final_status == SessionStatus.DONE else None,
-                "error": None if final_status == SessionStatus.DONE else final_status.value,
-            }
-
-    except Exception as e:
-        return {"file": file_path, "success": False, "error": str(e)}
-
-
-async def review_batch(files: list[str], max_concurrent: int = 3) -> list[dict]:
-    """
-    Review multiple files with limited concurrency.
-
-    Args:
-        files: List of file paths to review
-        max_concurrent: Maximum number of concurrent reviews
-    """
-    print(f"Starting batch review of {len(files)} files (max {max_concurrent} concurrent)")
-    print("=" * 60)
-
-    # Use semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(max_concurrent)
-
-    async def limited_review(file_path: str) -> dict:
-        async with semaphore:
-            print(f"Starting: {file_path}")
-            result = await review_file_async(file_path)
-            status = "✅" if result["success"] else "❌"
-            print(f"{status} Finished: {file_path}")
-            return result
-
-    # Run all reviews
-    start = time.time()
-    results = await asyncio.gather(*[limited_review(f) for f in files])
-    elapsed = time.time() - start
-
-    # Summary
-    print("=" * 60)
-    print(f"Completed {len(results)} reviews in {elapsed:.1f}s")
-    successful = sum(1 for r in results if r["success"])
-    print(f"Success: {successful}/{len(results)}")
-
-    return results
-
-
-async def main():
-    import sys
-
-    if len(sys.argv) > 1:
-        files = sys.argv[1:]
-    else:
-        # Default: find Python files in current directory
-        files = [str(p) for p in Path.cwd().glob("*.py")][:5]  # Limit to 5
-
-    if not files:
-        print("No files to review!")
-        return
-
-    results = await review_batch(files, max_concurrent=2)
-
-    # Print detailed results
-    print("\n" + "=" * 60)
-    print("Detailed Results:")
-    print("=" * 60)
-
-    for result in results:
-        print(f"\n📄 {result['file']}:")
-        if result["success"]:
-            print("  Status: Success")
-            # Uncomment to see reviews:
-            # print(result["review"][:500] + "..." if len(result["review"]) > 500 else result["review"])
-        else:
-            print(f"  Status: Failed ({result['error']})")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## Step 5: Full Application
-
-Here's the complete code review system:
-
-```python
-# code_reviewer.py
-"""
-Automated Code Review System
-
-Usage:
-    python code_reviewer.py [files...]
-    python code_reviewer.py --git-diff  # Review changed files
-    python code_reviewer.py --watch     # Watch and review on change
-"""
-
-import argparse
-import asyncio
-import subprocess
-import time
-from dataclasses import dataclass
-from pathlib import Path
-
-from doeff_agents import (
-    AgentType,
-    LaunchConfig,
-    SessionStatus,
-    async_monitor_session,
-    async_session_scope,
-    capture_output,
-)
-
-
-@dataclass
-class ReviewResult:
-    file: str
-    success: bool
-    review: str | None
-    error: str | None
-    duration: float
-
-
-async def review_file(file_path: str, timeout: float = 180) -> ReviewResult:
-    """Review a single file."""
-    start = time.time()
-
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt=f"""Review the code in {file_path}. Provide:
-
-1. **Summary** (1-2 sentences)
-2. **Issues** (if any, ordered by severity)
-3. **Suggestions** (optional improvements)
-
-Be concise and specific. Use file:line references.""",
-    )
-
-    session_name = f"review-{Path(file_path).stem}-{int(time.time())}"
-
-    try:
-        async with async_session_scope(session_name, config) as session:
-            try:
-                final = await asyncio.wait_for(
-                    async_monitor_session(session, poll_interval=0.5),
-                    timeout=timeout,
-                )
-            except asyncio.TimeoutError:
-                return ReviewResult(
-                    file=file_path,
-                    success=False,
-                    review=None,
-                    error="Timeout",
-                    duration=time.time() - start,
-                )
-
-            output = capture_output(session, lines=200)
-
-            return ReviewResult(
-                file=file_path,
-                success=final == SessionStatus.DONE,
-                review=output if final == SessionStatus.DONE else None,
-                error=None if final == SessionStatus.DONE else final.value,
-                duration=time.time() - start,
-            )
-
-    except Exception as e:
-        return ReviewResult(
-            file=file_path,
-            success=False,
-            review=None,
-            error=str(e),
-            duration=time.time() - start,
-        )
-
-
-async def review_files(files: list[str], max_concurrent: int = 2) -> list[ReviewResult]:
-    """Review multiple files with concurrency limit."""
-    semaphore = asyncio.Semaphore(max_concurrent)
-
-    async def limited(path: str) -> ReviewResult:
-        async with semaphore:
-            print(f"  ⏳ Reviewing: {path}")
-            result = await review_file(path)
-            icon = "✅" if result.success else "❌"
-            print(f"  {icon} Done: {path} ({result.duration:.1f}s)")
-            return result
-
-    return await asyncio.gather(*[limited(f) for f in files])
-
-
-def get_git_changed_files() -> list[str]:
-    """Get list of changed files from git."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        files = [f for f in result.stdout.strip().split("\n") if f]
-        # Filter to Python files
-        return [f for f in files if f.endswith(".py")]
-    except subprocess.CalledProcessError:
-        return []
-
-
-def print_results(results: list[ReviewResult]) -> None:
-    """Print formatted results."""
-    print("\n" + "=" * 70)
-    print("CODE REVIEW RESULTS")
-    print("=" * 70)
-
-    for result in results:
-        print(f"\n📄 {result.file}")
-        print("-" * 50)
-
-        if result.success:
-            print(result.review)
-        else:
-            print(f"❌ Review failed: {result.error}")
-
-    # Summary
-    print("\n" + "=" * 70)
-    successful = [r for r in results if r.success]
-    failed = [r for r in results if not r.success]
-    total_time = sum(r.duration for r in results)
-
-    print(f"Total: {len(results)} files reviewed in {total_time:.1f}s")
-    print(f"  ✅ Successful: {len(successful)}")
-    print(f"  ❌ Failed: {len(failed)}")
-
-    if failed:
-        print("\nFailed files:")
-        for r in failed:
-            print(f"  - {r.file}: {r.error}")
-
-
-async def main() -> None:
-    parser = argparse.ArgumentParser(description="Automated Code Review")
-    parser.add_argument("files", nargs="*", help="Files to review")
-    parser.add_argument("--git-diff", action="store_true", help="Review git changed files")
-    parser.add_argument("--concurrent", "-c", type=int, default=2, help="Max concurrent reviews")
-    args = parser.parse_args()
-
-    # Determine files to review
-    if args.git_diff:
-        files = get_git_changed_files()
-        if not files:
-            print("No changed Python files found.")
-            return
-        print(f"Found {len(files)} changed files")
-    elif args.files:
-        files = args.files
-    else:
-        files = [str(p) for p in Path.cwd().glob("*.py")][:5]
-
-    if not files:
-        print("No files to review!")
-        return
-
-    print(f"\n🔍 Starting review of {len(files)} file(s)...\n")
-
-    results = await review_files(files, max_concurrent=args.concurrent)
-    print_results(results)
-
-
-if __name__ == "__main__":
-    import shutil
-
-    if not shutil.which("claude"):
-        print("Error: Claude CLI not found.")
-        print("Install with: npm install -g @anthropic/claude-code")
-        exit(1)
-
-    asyncio.run(main())
-```
-
-## Running the Application
 
 ```bash
-# Review specific files
 python code_reviewer.py src/main.py src/utils.py
-
-# Review git changes
-python code_reviewer.py --git-diff
-
-# Increase concurrency
-python code_reviewer.py --concurrent 4 *.py
 ```
+
+Without a session host, `agent_effectful_handlers()` gives a tuple of the same shape that runs the
+sessions in `tmux` from the calling process. The sessions then end when that process ends.
+
+The Programs are the same in every step. Only the handlers changed:
+
+| Run | Handlers around the Program |
+| --- | --- |
+| a test that sees every effect | `scripted_agent(outcomes, log)` |
+| a test with a packaged script | `ScenarioAgentHandler(scripts=...).wrap(...)` |
+| production, through the session host | `daemon_agent_handlers()` |
+| production, from the calling process | `agent_effectful_handlers()` |
 
 ## Key Takeaways
 
-1. **Use context managers** (`session_scope`, `async_session_scope`) for automatic cleanup
-2. **Monitor for terminal states** to know when the agent is done
-3. **Handle BLOCKED status** when the agent needs input
-4. **Use callbacks** for progress reporting and event handling
-5. **Limit concurrency** when running multiple sessions
-6. **Set timeouts** to prevent hanging
+1. **The Program says what it needs; the handler decides how.** `review_file` yields
+   `LaunchSession`, `AwaitResult`, `FollowUp` and `StopSession` and does not know whether a script,
+   `tmux` or the session host answers them.
+2. **Waiting is the handler's job.** `AwaitResult` returns when the agent has finished, stopped to
+   ask, or run out of time, so the Program has no polling loop and no `sleep`.
+3. **The result is data checked against a schema.** `AgentSpec.result_schema` says what a review
+   is; `AwaitOutcome.result` is valid against it or `None`, with the reason in `validation_error`.
+4. **Clean-up is a `finally` block.** `yield StopSession(session)` in `finally` stops the session
+   on success, on failure and on timeout.
+5. **Tests swap the handler, not the code.** A handler of your own, or `ScenarioAgentHandler`,
+   answers the same effects without an agent.
 
 ## Next Steps
 
-- Add support for different output formats (JSON, Markdown)
-- Integrate with CI/CD pipelines
-- Add GitHub PR commenting
-- Implement caching to avoid re-reviewing unchanged files
-
-See the [doeff-agents README](../packages/doeff-agents/README.md) for more details.
+- [What doeff is](positioning/what-doeff-is.md) explains effects, handlers and `Resume` in general.
+- [Semaphore Effects](21-semaphore-effects.md) covers the semaphore used in Step 4.
+- The [doeff-agents README](../packages/doeff-agents/README.md) covers the session host, its
+  command line and the other handlers.
