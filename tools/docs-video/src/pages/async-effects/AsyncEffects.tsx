@@ -13,12 +13,9 @@ import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp, smooth} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
 import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
-import {ACCENT, f, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
+import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
-
-// An exception on the move or a task that failed. The kit has no colour for errors, and only this video needs one.
-const FAIL = '#ff6b7f';
 
 type Point = {x: number; y: number};
 
