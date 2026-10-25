@@ -1,0 +1,4 @@
+use_values(Ask('x'), Pure(10)).args: (Ask('x'), Pure(10))
+run(with_env(echo(Ask('x')))): Ask('x')
+run(with_env(use_values(Ask('x'), Pure(10)))): '5:10'
+run(with_env(caller())): 6

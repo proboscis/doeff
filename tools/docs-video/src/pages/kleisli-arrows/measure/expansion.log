@@ -1,0 +1,17 @@
+
+doeff Traceback (most recent call last):
+
+  greeting()  expansion.py:12
+    name = yield Ask("name")
+
+UnhandledEffect: unhandled effect: Ask (Ask('name')) (no handlers in scope)
+  hint: Ask is handled by reader(env={...}) or lazy_ask(env={...}) holding the key: run(reader(env={...})(prog))
+
+program = greeting("Hello")   # no handler is installed anywhere
+  built: Call ('Hello',)
+run(program):
+  greeting's body runs
+  raises UnhandledEffect: unhandled effect: Ask (Ask('name')) (no handlers in scope)
+run(reader(env={"name": "Ada"})(program)):
+  greeting's body runs
+  -> 'Hello, Ada'

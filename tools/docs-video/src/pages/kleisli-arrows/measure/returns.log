@@ -1,0 +1,11 @@
+call_expr = add_one(41)
+type: Call
+isinstance(call_expr, Expand): True
+call_expr.args: (41,)
+has .map / .flat_map: False False
+run(call_expr):
+  add_one's body runs
+  -> 42
+run(call_expr) again:
+  add_one's body runs
+  -> 42
