@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Software Development :: Testing",
 ]
 # 依存を宣言しない: この plugin は doeff-hy に引かれて入る(doeff-hy → doeff-hy-pytest の向きだけ)。

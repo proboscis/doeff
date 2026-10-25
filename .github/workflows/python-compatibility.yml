@@ -1,5 +1,5 @@
 # Python の版ごとの検 — 公開する核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)が、宣言した
-# requires-python の版(3.11〜3.14)で入り、検が通る事を確かめる。3.10 は 2026-10-01 に保守を終え、核は 3.11 からの
+# requires-python の版(3.11〜3.15)で入り、検が通る事を確かめる。3.10 は 2026-10-01 に保守を終え、核は 3.11 からの
 # enum.StrEnum・ast.TryStar を使うので、核の requires-python は >=3.11(3.10 の利用者には PyPI の 0.4.1 が残る)。
 #
 # workspace(uv sync)では走らせない: workspace の requires-python は全 member の交わりで、doeff-docker・doeff-ml-nexus の >=3.12 が
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         experimental: [false]
         include:
           - python-version: "3.14t"
@@ -123,7 +123,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         experimental: [false]
         include:
           - python-version: "3.14t"
