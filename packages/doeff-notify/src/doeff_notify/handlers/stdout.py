@@ -4,7 +4,7 @@
 from itertools import count
 from typing import Any
 
-from doeff import Effect, Pass, Resume, do
+from doeff import Effect, Pass, Resume, handler
 from doeff_notify.effects import Acknowledge, Notify, NotifyThread
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
@@ -21,7 +21,7 @@ def _next_id() -> str:
     return f"console-{next(_CONSOLE_IDS)}"
 
 
-@do
+@handler
 def console_handler(effect: Effect, k: Any):
     """Print notifications to stdout and return NotificationResult payloads."""
 

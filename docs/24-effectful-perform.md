@@ -57,7 +57,7 @@ def place_turns(perform: Effects[ReadShared | WriteShared | ReadClock]) -> int:
 from collections.abc import Generator
 from typing import Any
 
-from doeff import K, do, handler, install_import_hook, run, typed_resume
+from doeff import K, handler, install_import_hook, run, typed_resume
 
 install_import_hook("clock")               # clock を import する前に、書き換えを登録する
 
@@ -66,7 +66,7 @@ from clock import ReadClock, ReadShared, WriteShared, elapsed, place_turns
 program = elapsed(400)    # Expand[int, ReadClock] — まだ走らせていない Program(@do と同じ型)
 
 
-@do
+@handler
 def world(effect: ReadClock | ReadShared | WriteShared, k: K) -> Generator[Any, Any, Any]:
     if isinstance(effect, ReadClock):
         return (yield typed_resume(effect, k, 1_000))
@@ -75,8 +75,8 @@ def world(effect: ReadClock | ReadShared | WriteShared, k: K) -> Generator[Any, 
     return (yield typed_resume(effect, k, True))
 
 
-print(run(handler(world)(program)))        # 600
-print(run(handler(world)(place_turns())))  # 2
+print(run(world(program)))        # 600
+print(run(world(place_turns())))  # 2
 ```
 
 ## pyright が捕まえるもの

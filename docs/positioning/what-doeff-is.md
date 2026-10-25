@@ -53,16 +53,16 @@ def research(topics):               # a program: pauses at each yield
         notes.append(f"notes on {topic}")
     return notes
 
-@do
+@handler
 def free(effect: Spend, k):         # answer, and let the rest of research run
     yield Transfer(k, None)
 
-@do
+@handler
 def refuse(effect: Spend, k):       # drop k: research stops at its first Spend
     return "refused"
 
-print(run(handler(free)(research(["tides", "moons"]))))    # ['notes on tides', 'notes on moons']
-print(run(handler(refuse)(research(["tides", "moons"]))))  # refused
+print(run(free(research(["tides", "moons"]))))    # ['notes on tides', 'notes on moons']
+print(run(refuse(research(["tides", "moons"]))))  # refused
 ```
 
 A third meaning: a budget. The handler keeps the budget between effects, resumes `k` while the
@@ -72,7 +72,7 @@ budget lasts and drops it when the budget runs out. Add this below the example a
 def budget(limit):
     left = limit
 
-    @do
+    @handler
     def on_spend(effect: Spend, k):
         nonlocal left
         if effect.cost > left:
@@ -80,7 +80,7 @@ def budget(limit):
         left -= effect.cost
         return (yield Resume(k, None))      # resume k: research goes on
 
-    return handler(on_spend)
+    return on_spend
 
 print(run(budget(10)(research(["tides", "moons"]))))  # ['notes on tides', 'notes on moons']
 print(run(budget(5)(research(["tides", "moons"]))))   # over budget
@@ -92,12 +92,12 @@ next one out. `trace` takes no annotation, so it receives every effect first:
 ```python continues
 seen: list[object] = []
 
-@do
+@handler
 def trace(effect, k):
     seen.append(effect)
     return (yield Pass(effect, k))          # on to budget, the next handler out
 
-print(run(budget(5)(handler(trace)(research(["tides", "moons"])))))  # over budget
+print(run(budget(5)(trace(research(["tides", "moons"])))))  # over budget
 print(seen)  # [Spend(cost=3), Spend(cost=3)]
 ```
 
@@ -151,16 +151,16 @@ def report(urls):
 
 PAGES = {"https://a.example": "<p>hello</p>", "https://b.example": ""}
 
-@do
+@handler
 def local_pages(effect: Fetch, k):                   # answers Fetch from PAGES
     return (yield Resume(k, PAGES[effect.url]))
 
-program = handler(local_pages)(report(list(PAGES)))  # Fetch
-program = try_handler(program)                       # Try
-program = listen_handler(program)                    # Listen
-program = writer(program)                            # Tell
-program = state({"fetched": 0})(program)             # Get, Put
-sizes, log, fetched = run(scheduled(program))        # Spawn, Gather
+program = local_pages(report(list(PAGES)))  # Fetch
+program = try_handler(program)              # Try
+program = listen_handler(program)           # Listen
+program = writer(program)                   # Tell
+program = state({"fetched": 0})(program)    # Get, Put
+sizes, log, fetched = run(scheduled(program))  # Spawn, Gather
 
 print(sizes)    # [Ok(12), Err(ValueError('empty page: https://b.example'))]
 print(log)      # [Tell('fetched https://a.example')]
@@ -179,7 +179,7 @@ way, and `size`, `crawl` and `report` stay as they are:
 ```python excerpt
 import urllib.request
 
-@do
+@handler
 def live_pages(effect: Fetch, k):                    # answers Fetch over the network
     with urllib.request.urlopen(effect.url) as response:
         page = response.read().decode()
@@ -219,6 +219,7 @@ def order():
     drink = yield Choose(("tea", "coffee"))
     return f"{drink} please"
 
+@handler
 @do(non_tail=True)
 def every_option(effect: Choose, k):   # would resume k once per option
     answers = []
@@ -227,7 +228,7 @@ def every_option(effect: Choose, k):   # would resume k once per option
     return answers
 
 try:
-    run(handler(every_option)(order()))
+    run(every_option(order()))
 except RuntimeError as error:
     print("one-shot violation" in str(error))  # True
 ```
@@ -237,10 +238,10 @@ so it can run any number of times. Add this below the example above:
 
 ```python continues
 def choosing(index):                   # answers Choose with one fixed option
-    @do
+    @handler
     def on_choose(effect: Choose, k):
         return (yield Resume(k, effect.options[index]))
-    return handler(on_choose)
+    return on_choose
 
 print([run(choosing(index)(order())) for index in range(2)])  # ['tea please', 'coffee please']
 ```

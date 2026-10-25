@@ -48,16 +48,16 @@ def settings(given):
             result[key] = yield Missing(key)
     return result
 
-@do
+@handler
 def use_defaults(effect: Missing, k):   # answer, and go back to the yield
     return (yield Resume(k, {"host": "localhost", "port": 8080}[effect.key]))
 
-@do
+@handler
 def give_up(effect: Missing, k):        # do not go back: like an exception caught outside
     return f"no {effect.key} given"
 
-print(run(handler(use_defaults)(settings({"host": "example.com"}))))  # {'host': 'example.com', 'port': 8080}
-print(run(handler(give_up)(settings({"host": "example.com"}))))  # no port given
+print(run(use_defaults(settings({"host": "example.com"}))))  # {'host': 'example.com', 'port': 8080}
+print(run(give_up(settings({"host": "example.com"}))))  # no port given
 ```
 
 You define the effects and write the handlers, and several handlers stack around one program, each
@@ -252,12 +252,12 @@ def digest(url):
     page = yield Fetch(url)
     return len(page)
 
-@do
+@handler
 def offline(effect: Fetch, k):     # a handler that fails
     raise ConnectionError(f"cannot reach {effect.url}")
 
 try:
-    run(handler(offline)(digest("https://example.com")))
+    run(offline(digest("https://example.com")))
 except ConnectionError as error:
     print(error)  # cannot reach https://example.com
 ```
@@ -309,13 +309,13 @@ def publish(title, text):            # the one function that uses effects
 
 saved: dict[str, str] = {}
 
-@do
+@handler
 def in_memory(effect: Save, k):
     saved[effect.key] = effect.text
     return (yield Resume(k, None))
 
 def publish_now(title, text):        # plain code: run() is the boundary
-    return run(handler(in_memory)(publish(title, text)))
+    return run(in_memory(publish(title, text)))
 
 print(publish_now("Hello World", "First post"))  # hello-world
 print(saved)  # {'hello-world': 'First post'}

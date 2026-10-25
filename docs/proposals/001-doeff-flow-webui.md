@@ -8,6 +8,7 @@
 > - `AsyncRuntime` / `SyncRuntime` / `SimulationRuntime` are not real doeff classes — use `run(doexpr)` (single argument, returns raw value) and `run(scheduled(...))` for async
 > - `RunResult` was removed — `run()` returns the raw value directly
 > - `default_handlers()` was removed — compose handlers individually
+> - `handler(raw)(body)` is the old way to install a handler (shown below as written then): today a handler is a def marked with `@handler`, applied to the program as it is — `mock_image_load_handler(mock_encode_handler(tracked))`
 >
 > The architectural vision and comparison with ComfyUI remain relevant. Implementation would need to use the current API surface.
 

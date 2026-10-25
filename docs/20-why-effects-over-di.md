@@ -28,7 +28,7 @@ who answers it. Save this block as `ai_effects.py`; the later examples on this p
 ```python file=ai_effects.py
 from dataclasses import dataclass
 
-from doeff import EffectBase, Resume, do
+from doeff import EffectBase, Resume, do, handler
 
 
 @dataclass(frozen=True)
@@ -50,12 +50,12 @@ def illustrated_summary(topic):
     return f"{summary} | {picture}"
 
 
-@do
+@handler
 def canned_chat(effect: Chat, k):     # the annotation picks the effects it answers
     return (yield Resume(k, f"summary by {effect.model}"))
 
 
-@do
+@handler
 def canned_images(effect: Draw, k):
     return (yield Resume(k, f"image by {effect.model}"))
 ```
@@ -66,11 +66,11 @@ the model providers; `canned_chat` and `canned_images` answer with fixed text so
 run without a network. Install the handlers around the workflow and run it:
 
 ```python
-from doeff import handler, run
+from doeff import run
 
 from ai_effects import canned_chat, canned_images, illustrated_summary
 
-program = handler(canned_chat)(handler(canned_images)(illustrated_summary("tides")))
+program = canned_chat(canned_images(illustrated_summary("tides")))
 print(run(program))  # summary by gpt-4o | image by imagen-3
 ```
 
@@ -86,7 +86,7 @@ returns without resuming `k` ends the workflow there, and its return value becom
 the call over the budget never reaches a provider:
 
 ```python
-from doeff import Pass, do, handler, run
+from doeff import Pass, handler, run
 
 from ai_effects import Chat, Draw, canned_chat, canned_images, illustrated_summary
 
@@ -96,7 +96,7 @@ PRICE_CENTS = {"gpt-4o": 1, "imagen-3": 4}
 def cost_cap(limit_cents):
     spent = 0
 
-    @do
+    @handler
     def cap(effect: Chat | Draw, k):
         nonlocal spent
         spent += PRICE_CENTS[effect.model]
@@ -104,11 +104,11 @@ def cost_cap(limit_cents):
             return f"stopped before {effect.model}: over {limit_cents} cents"
         return (yield Pass(effect, k))
 
-    return handler(cap)
+    return cap
 
 
 def providers(program):
-    return handler(canned_chat)(handler(canned_images)(program))
+    return canned_chat(canned_images(program))
 
 
 print(run(providers(cost_cap(10)(illustrated_summary("tides")))))  # summary by gpt-4o | image by imagen-3
@@ -124,21 +124,21 @@ Log every model call. A concern is one handler: it sees every effect it is annot
 it, and passes it on to the next handler out with `Pass`:
 
 ```python
-from doeff import Pass, do, handler, run
+from doeff import Pass, handler, run
 
 from ai_effects import Chat, Draw, canned_chat, canned_images, illustrated_summary
 
 log = []
 
 
-@do
+@handler
 def log_calls(effect: Chat | Draw, k):  # one handler for both services
     log.append(f"{type(effect).__name__.lower()} {effect.model}")
     return (yield Pass(effect, k))
 
 
-program = handler(log_calls)(illustrated_summary("tides"))
-print(run(handler(canned_chat)(handler(canned_images)(program))))  # summary by gpt-4o | image by imagen-3
+program = log_calls(illustrated_summary("tides"))
+print(run(canned_chat(canned_images(program))))  # summary by gpt-4o | image by imagen-3
 print(log)  # ['chat gpt-4o', 'draw imagen-3']
 ```
 
@@ -153,14 +153,14 @@ they raise. Each attempt is a new effect, and the workflow's `k` resumes once, w
 succeeded:
 
 ```python
-from doeff import Resume, do, handler, run
+from doeff import Resume, handler, run
 
 from ai_effects import Chat, Draw, canned_images, illustrated_summary
 
 attempts = []
 
 
-@do
+@handler
 def flaky_chat(effect: Chat, k):        # the provider times out twice, then answers
     attempts.append(effect.model)
     if len(attempts) < 3:
@@ -168,7 +168,7 @@ def flaky_chat(effect: Chat, k):        # the provider times out twice, then ans
     return (yield Resume(k, f"summary by {effect.model}"))
 
 
-@do
+@handler
 def retry(effect: Chat | Draw, k):      # one retry policy for every model call
     for attempt in range(3):
         try:
@@ -180,8 +180,8 @@ def retry(effect: Chat | Draw, k):      # one retry policy for every model call
         return (yield Resume(k, answer))
 
 
-program = handler(retry)(illustrated_summary("tides"))
-print(run(handler(flaky_chat)(handler(canned_images)(program))))  # summary by gpt-4o | image by imagen-3
+program = retry(illustrated_summary("tides"))
+print(run(flaky_chat(canned_images(program))))  # summary by gpt-4o | image by imagen-3
 print(len(attempts))  # 3
 ```
 
@@ -194,40 +194,40 @@ An effect is a frozen dataclass, so a handler can answer it without any provider
 build a different one. A dry run records what the workflow would call:
 
 ```python
-from doeff import Resume, do, handler, run
+from doeff import Resume, handler, run
 
 from ai_effects import Chat, Draw, illustrated_summary
 
 planned = []
 
 
-@do
+@handler
 def dry_run(effect: Chat | Draw, k):
     planned.append(effect)
     return (yield Resume(k, f"<{effect.model}>"))
 
 
-print(run(handler(dry_run)(illustrated_summary("tides"))))  # <gpt-4o> | <imagen-3>
+print(run(dry_run(illustrated_summary("tides"))))  # <gpt-4o> | <imagen-3>
 print(planned)  # [Chat(model='gpt-4o', prompt='Summarize tides'), Draw(model='imagen-3', prompt='<gpt-4o>')]
 ```
 
 A rewrite sends the effect on with a different model, and the workflow does not change:
 
 ```python
-from doeff import Resume, do, handler, run
+from doeff import Resume, handler, run
 
 from ai_effects import Chat, canned_chat, canned_images, illustrated_summary
 
 
-@do
+@handler
 def cheaper_model(effect: Chat, k):
     if effect.model == "gpt-4o":
         effect = Chat("gpt-4o-mini", effect.prompt)
     return (yield Resume(k, (yield effect)))
 
 
-program = handler(cheaper_model)(illustrated_summary("tides"))
-print(run(handler(canned_chat)(handler(canned_images)(program))))  # summary by gpt-4o-mini | image by imagen-3
+program = cheaper_model(illustrated_summary("tides"))
+print(run(canned_chat(canned_images(program))))  # summary by gpt-4o-mini | image by imagen-3
 ```
 
 ### 5. Route it: the handler stack is the router
@@ -241,14 +241,14 @@ from doeff import Pass, Resume, do, handler, run
 from ai_effects import Chat
 
 
-@do
+@handler
 def openai(effect: Chat, k):
     if not effect.model.startswith("gpt-"):
         return (yield Pass(effect, k))  # not ours: the next handler gets it
     return (yield Resume(k, f"openai answered {effect.model}"))
 
 
-@do
+@handler
 def gemini(effect: Chat, k):
     if not effect.model.startswith("gemini-"):
         return (yield Pass(effect, k))
@@ -262,7 +262,7 @@ def ask_both():
     return [first, second]
 
 
-print(run(handler(gemini)(handler(openai)(ask_both()))))  # ['openai answered gpt-4o', 'gemini answered gemini-2.5-pro']
+print(run(gemini(openai(ask_both()))))  # ['openai answered gpt-4o', 'gemini answered gemini-2.5-pro']
 ```
 
 ### 6. Keep the answers: record once, replay
@@ -271,33 +271,33 @@ Because effects are hashable data, a handler can record the answers the handlers
 and another can replay them, failing on any effect it has not seen:
 
 ```python
-from doeff import Resume, do, handler, run
+from doeff import Resume, handler, run
 
 from ai_effects import Chat, Draw, canned_chat, canned_images, illustrated_summary
 
 
 def record(tape):
-    @do
+    @handler
     def recorder(effect: Chat | Draw, k):
         answer = yield effect           # the handlers outside answer…
         tape[effect] = answer           # …and the answer is kept
         return (yield Resume(k, answer))
 
-    return handler(recorder)
+    return recorder
 
 
 def replay(tape):
-    @do
+    @handler
     def player(effect: Chat | Draw, k):
         if effect not in tape:
             raise LookupError(f"not recorded: {effect}")
         return (yield Resume(k, tape[effect]))
 
-    return handler(player)
+    return player
 
 
 tape = {}
-live = handler(canned_chat)(handler(canned_images)(record(tape)(illustrated_summary("tides"))))
+live = canned_chat(canned_images(record(tape)(illustrated_summary("tides"))))
 print(run(live))  # summary by gpt-4o | image by imagen-3
 print(run(replay(tape)(illustrated_summary("tides"))))  # summary by gpt-4o | image by imagen-3
 try:
@@ -367,7 +367,7 @@ def virtual_clock():
             yield CompletePromise(promise, None)
         advancing = False
 
-    @do
+    @handler
     def clock(effect: Sleep | Now, k):
         nonlocal advancing
         if isinstance(effect, Now):
@@ -380,7 +380,7 @@ def virtual_clock():
         yield Wait(promise.future)
         return (yield Resume(k, None))
 
-    return handler(clock)
+    return clock
 
 
 log = []
@@ -441,23 +441,23 @@ def connect():
 
 
 def from_dict(secrets):                 # a test's secrets (or a vault client's)
-    @do
+    @handler
     def lookup(effect: GetSecret, k):
         if effect.name not in secrets:
             return (yield Pass(effect, k))
         return (yield Resume(k, secrets[effect.name]))
 
-    return handler(lookup)
+    return lookup
 
 
-@do
+@handler
 def from_environment(effect: GetSecret, k):  # DB_PASSWORD for "db-password"
     return (yield Resume(k, os.environ[effect.name.upper().replace("-", "_")]))
 
 
 os.environ["DB_PASSWORD"] = "hunter2"
 print(run(from_dict({"db-password": "s3cret"})(connect())))  # connected with a 6-character password
-print(run(handler(from_environment)(from_dict({})(connect()))))  # connected with a 7-character password
+print(run(from_environment(from_dict({})(connect()))))  # connected with a 7-character password
 ```
 
 The stack of handlers is the configuration. In the same way, a test answers the effects that
@@ -631,19 +631,19 @@ async def download(url):                # production: an async client
     return f"<html>{url}</html>"
 
 
-@do
+@handler
 def async_http(effect: Fetch, k):
     return (yield Resume(k, (yield Await(download(effect.url)))))
 
 
-@do
+@handler
 def instant_http(effect: Fetch, k):     # answers at once, without an event loop
     return (yield Resume(k, f"<html>{effect.url}</html>"))
 
 
 urls = ["a.com", "b.com"]
-print(run(scheduled(await_handler()(handler(async_http)(total_size(urls))))))  # 36
-print(run(scheduled(handler(instant_http)(total_size(urls)))))  # 36
+print(run(scheduled(await_handler()(async_http(total_size(urls))))))  # 36
+print(run(scheduled(instant_http(total_size(urls)))))  # 36
 ```
 
 The trade: doeff does not remove the "color" of functions; it replaces two (plain and `async`)
@@ -685,12 +685,12 @@ def summarize_effect(topic):
     return (yield Chat("gpt-4o", f"Summarize {topic}"))
 
 
-@do
+@handler
 def answer(effect: Chat, k):
     return (yield Resume(k, f"summary by {effect.model}"))
 
 
-print(run(handler(answer)(summarize_effect("tides"))))  # summary by gpt-4o
+print(run(answer(summarize_effect("tides"))))  # summary by gpt-4o
 ```
 
 **You find an API through the editor.** `llm.` lists the methods of a client. With effects, you
