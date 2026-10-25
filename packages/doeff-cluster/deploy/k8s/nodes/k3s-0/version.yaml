@@ -1,6 +1,6 @@
 # k3s-0 の worker の doeff の版(env WORKER_DOEFF_COMMIT — worker 自身の code の版・image は同じ)。定義元はこの 1 行だけ(雛形には置かない)。
 # 変えると、この機体の worker だけが入れ替わる。行は雛形の env の WORK_DIR の直後へ足す — 場所が変わると Pod の template が変わり、版を
-# 変えなくても Pod が作り直される。番号は ../../host-only が env の頭に 2 行を足した後の並び。雛形の env の並びが変わったら、test の操作が
+# 変えなくても Pod が作り直される。番号は雛形の並び(枠は env に置かない — card ki-6828eda880ce)。雛形の env の並びが変わったら、test の操作が
 # 組み立てを止める(黙って別の場所へ足さない)。
-- { op: test, path: /spec/template/spec/containers/0/env/3/name, value: WORK_DIR }
-- { op: add, path: /spec/template/spec/containers/0/env/4, value: { name: WORKER_DOEFF_COMMIT, value: "9fe8c330bdd86f6d2ff5c36ea643344d62b1ca94" } }
+- { op: test, path: /spec/template/spec/containers/0/env/1/name, value: WORK_DIR }
+- { op: add, path: /spec/template/spec/containers/0/env/2, value: { name: WORKER_DOEFF_COMMIT, value: "871d9157c8fd1c8bc78b321253cc62a7b564b19c" } }

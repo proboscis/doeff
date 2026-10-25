@@ -173,11 +173,17 @@ ATLAS_KEPT_ROOM = 0
 # 記録の写しを古い側へ移す常駐の job を 1 つ足す)。task は来ない。
 EOS_MACHINE_JOBS = 1
 EOS_OVERLAY_RESIDENT_JOBS = 2
-# 受ける数が既定(WORKER_CAPACITY 2・WORKER_TASK_RESERVE 0)と違う機体 — (受ける数, task に空けておく数)。
+# 機体の仕事だけを受ける機体の枠 — (受ける数, task に空けておく数)。名の無い機体は 2・0(機体の仕事は機体ごとに数本・task は来ない)。
 HOST_ONLY_ROOM = {
-    "atlas": (str(ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM), str(ATLAS_TASK_RESERVE)),
-    "eos": (str(EOS_MACHINE_JOBS + EOS_OVERLAY_RESIDENT_JOBS), "0"),
+    "atlas": (ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM, ATLAS_TASK_RESERVE),
+    "eos": (EOS_MACHINE_JOBS + EOS_OVERLAY_RESIDENT_JOBS, 0),
 }
+# 枠の定義元(card ki-6828eda880ce): 機体の名 → capacity・taskReserve の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
+# file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_CAPACITY・WORKER_TASK_RESERVE は書かない。
+ROOM_FILE = K8S / "workers" / "worker-room.json"
+ROOM_CONFIGMAP = "worker-room"
+ROOM_DIR = "/etc/worker-room"
+ROOM_PATH = ROOM_DIR + "/worker-room.json"
 # atlas の worker が job の子へ足して渡す env の名: Rust の toolchain の置き場(image の env)。task は Rust の部品を組むので、継がないと
 # rustup が toolchain を選べない。道具の cache の置き場は task が機体の事実 WORK_DIR から自分で作る(worker は上に載る系の置き場を知らない)。
 ATLAS_TASK_PASS_ENV = ("RUSTUP_HOME",)
@@ -478,15 +484,13 @@ def test_upper_system_values_come_from_fixed_named_configmaps(
 
 @pytest.mark.parametrize("node", HOST_ONLY_NODES)
 def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manifest], node: str) -> None:
-    """zeus でない機体の worker は、機体の能力 2 つだけを名乗り(上に載る系の能力の残り WORKER_PROVIDES_EXTRA を足さない)、受ける数
-    (WORKER_CAPACITY 2・task に空けておく数 WORKER_TASK_RESERVE 0)を env で決める(env は envFrom の worker-env の同じ名より優先する)。
-    上に載る系の準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける worker の準備で、空の機体では通らない。
+    """zeus でない機体の worker は、機体の能力 2 つだけを名乗り(上に載る系の能力の残り WORKER_PROVIDES_EXTRA を足さない)、枠は枠の file
+    の機体の行(多くは 2・0 — HOST_ONLY_ROOM)。上に載る系の準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける
+    worker の準備で、空の機体では通らない。
     反例: worker-env の能力の残りを名乗ると、その能力だけを要る上に載る系の job が memory 4GiB の機体へ置かれ得る。"""
     host_only = _worker_on(rendered, node)
-    capacity, reserve = HOST_ONLY_ROOM.get(node, ("2", "0"))
     assert _env_value(host_only, "WORKER_PROVIDES")["value"] == HOST_ONLY_PROVIDES
-    assert _env_value(host_only, "WORKER_CAPACITY")["value"] == capacity
-    assert _env_value(host_only, "WORKER_TASK_RESERVE")["value"] == reserve
+    assert _room_rows()[node] == dict(zip(("capacity", "taskReserve"), HOST_ONLY_ROOM.get(node, (2, 0)), strict=True))
     mounts = [
         _mapping(mount, "volumeMount")["mountPath"]
         for mount in _sequence(_container(host_only).get("volumeMounts", []), "volumeMounts")
@@ -523,8 +527,46 @@ def test_host_only_worker_resources_fit_its_node(rendered: list[Manifest], node:
     assert resources["limits"] == HOST_ONLY_RESOURCES[node].limits
 
 
+def _room_rows() -> dict[str, object]:
+    rows = yaml.safe_load(ROOM_FILE.read_text(encoding="utf-8"))
+    return _mapping(rows, str(ROOM_FILE))
+
+
+def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendered: list[Manifest], worker: Manifest) -> None:
+    """worker の枠は、名の固定した ConfigMap worker-room を volume で置いた file(subPath でない)から読む — 中身を変えても Pod の template は
+    変わらず、kubelet が file を入れ替え、worker が heartbeat の前に読み直す。env で枠を決めない(env の値を変えると Pod が作り直される)。
+    反例: env の WORKER_CAPACITY で枠を決めると、常駐の job を 1 つ足すたびに worker の Pod が作り直され、走っているターンが切れる
+    (2026-10-25 の差し戻し lt-HZM4SN5788SY6NB6AQAXWXM7AC)。"""
+    names = [entry["name"] for entry in _env(worker)]
+    assert "WORKER_CAPACITY" not in names
+    assert "WORKER_TASK_RESERVE" not in names
+    assert _env_value(worker, "WORKER_ROOM_FILE")["value"] == ROOM_PATH
+    mount = _mount_at(worker, ROOM_DIR)
+    assert "subPath" not in mount and mount.get("readOnly") is True
+    volume = _mapping(_volume(worker, str(mount["name"]))["configMap"], "configMap")
+    assert volume["name"] == ROOM_CONFIGMAP
+    assert volume.get("optional", False) is False
+    rows = _room_rows()
+    assert _node(worker) in rows
+    configmaps = [doc for doc in rendered if doc.get("kind") == "ConfigMap" and _mapping(doc["metadata"], "metadata")["name"] == ROOM_CONFIGMAP]
+    assert len(configmaps) == 1
+    assert yaml.safe_load(str(_mapping(configmaps[0]["data"], "data")["worker-room.json"])) == rows
+
+
+def test_the_room_file_has_one_valid_row_per_node() -> None:
+    """枠の file は機体ごとに 1 行を持ち、どの行も 0 ≤ taskReserve ≤ capacity の整数(worker が名乗れる値 — 外れた行は worker が読まず、前の
+    値のまま名乗り続ける)。"""
+    rows = _room_rows()
+    assert sorted(rows) == sorted(NODES)
+    for node, row in rows.items():
+        room = _mapping(row, node)
+        assert sorted(room) == ["capacity", "taskReserve"], node
+        assert all(type(room[key]) is int for key in room), node
+        assert 0 <= int(room["taskReserve"]) <= int(room["capacity"]), node
+
+
 def test_zeus_worker_keeps_upper_system_capabilities(zeus_worker: Manifest) -> None:
-    """zeus の worker は今のまま: 能力の残り(WORKER_PROVIDES_EXTRA)を足し、受ける数は worker-env から受ける(env で決めない)。"""
+    """zeus の worker は今のまま: 能力の残り(WORKER_PROVIDES_EXTRA)を足し、受ける数は枠の file から受ける(env で決めない)。"""
     provides = str(_env_value(zeus_worker, "WORKER_PROVIDES")["value"]).split(",")
     assert provides[-1] == "$(WORKER_PROVIDES_EXTRA)"
     names = [entry["name"] for entry in _env(zeus_worker)]

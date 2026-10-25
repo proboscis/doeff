@@ -193,7 +193,10 @@ spec:
             # worker の拍が 250 秒止まり、coordinator が lease の切れで zeus の task を全部 lost にした)。差は worker の内部と新しい
             # foundation/lifeline だけで、zeus の worker を同じ版へ上げるため、版の向きに合わせて先に上げる。156bf3d7b からの間で coordinator の
             # process に効きうる物は ClickHouse の JSONCompactEachRow の答えの分け方(d3eef372e)だけ。前の版 156bf3d7b は 0e6081c18 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 2c1ac027a212bc59ceb304683130e7b69becbf0b }
+            # 871d9157c = worker が枠を枠の file(ConfigMap worker-room)から heartbeat の前に読み直す版(card ki-6828eda880ce)。worker の全部を
+            # 同じ版へ上げる移行の 1 回で、版の向きに合わせて coordinator も上げる。coordinator の process に効く物は heartbeat の roomFile を
+            # Worker の status に出す事。前の版 2c1ac027a は 871d9157c の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 871d9157c8fd1c8bc78b321253cc62a7b564b19c }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }

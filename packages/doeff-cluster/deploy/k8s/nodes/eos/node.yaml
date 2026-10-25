@@ -13,9 +13,3 @@ spec:
           # eos は CPU 4・memory 15Gi(allocatable)。cordon 中でも置く(雛形の toleration は operator Exists)。
           # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は最初の起動で doeff-vm の wheel を組む山を通す大きさ。
           resources: { requests: { cpu: "250m", memory: 512Mi }, limits: { cpu: "2", memory: 4Gi } }
-          env:
-            # 受ける数: 機体の仕事 1 + 上に載る系の常駐の job で eos の能力(host-eos)を要る物 2(host-only の既定 2・0 を置き換える — task は
-            # 来ない)。式の定義点は tests/test_k8s_declarations.py の EOS_* の数(2026-10-22 に常駐 1 → 2 — 上に載る系が記録の写しを古い側へ
-            # 移す常駐の job を 1 つ足す。機体の仕事だけを受ける機体なので、値の変更で worker の Pod が作り直されてよい)。
-            - { name: WORKER_CAPACITY, value: "3" }
-            - { name: WORKER_TASK_RESERVE, value: "0" }
