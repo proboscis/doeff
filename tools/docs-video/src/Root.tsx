@@ -1,6 +1,7 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
+import {ADVANCED_EFFECTS} from './pages/advanced-effects/AdvancedEffects';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {CAPABILITY_CLASSES} from './pages/capability-classes/CapabilityClasses';
@@ -13,6 +14,7 @@ import {KLEISLI_ARROWS} from './pages/kleisli-arrows/KleisliArrows';
 import {SEMAPHORE_EFFECTS} from './pages/semaphore-effects/SemaphoreEffects';
 import {RUST_SCHEDULER} from './pages/rust-scheduler/RustScheduler';
 import {PATTERNS} from './pages/patterns/Patterns';
+import {STATIC_TYPING} from './pages/static-typing/StaticTyping';
 import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 
 // One composition per docs page, named after the page's video file in docs/assets/videos/ (home.mp4 is on
@@ -32,5 +34,7 @@ export const Root: React.FC = () => (
     <Composition id="semaphore-effects" component={SEMAPHORE_EFFECTS.Video} durationInFrames={SEMAPHORE_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="rust-scheduler" component={RUST_SCHEDULER.Video} durationInFrames={RUST_SCHEDULER.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="patterns" component={PATTERNS.Video} durationInFrames={PATTERNS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="advanced-effects" component={ADVANCED_EFFECTS.Video} durationInFrames={ADVANCED_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="static-typing" component={STATIC_TYPING.Video} durationInFrames={STATIC_TYPING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
