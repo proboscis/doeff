@@ -1,0 +1,42 @@
+run 1: (most inside at once: 2)
+   09:00:00 A asks for a permit
+   09:00:00 A in    (inside: A)
+   09:00:00 B asks for a permit
+   09:00:00 B in    (inside: A B)
+   09:00:00 C asks for a permit
+   09:00:00 D asks for a permit
+   09:00:01 B out
+   09:00:01 C in    (inside: A C)
+   09:00:02 C out
+   09:00:02 D in    (inside: A D)
+   09:00:03 A out
+   09:00:04 D out
+   09:00:04 Gather -> ['A', 'B', 'C', 'D']
+run 2: (most inside at once: 2)
+   09:00:00 A asks for a permit
+   09:00:00 A in    (inside: A)
+   09:00:00 B asks for a permit
+   09:00:00 B in    (inside: A B)
+   09:00:00 C asks for a permit
+   09:00:00 D asks for a permit
+   09:00:01 B out
+   09:00:01 C in    (inside: A C)
+   09:00:02 C out
+   09:00:02 D in    (inside: A D)
+   09:00:03 A out
+   09:00:04 D out
+   09:00:04 Gather -> ['A', 'B', 'C', 'D']
+run 3: (most inside at once: 2)
+   09:00:00 A asks for a permit
+   09:00:00 A in    (inside: A)
+   09:00:00 B asks for a permit
+   09:00:00 B in    (inside: A B)
+   09:00:00 C asks for a permit
+   09:00:00 D asks for a permit
+   09:00:01 B out
+   09:00:01 C in    (inside: A C)
+   09:00:02 C out
+   09:00:02 D in    (inside: A D)
+   09:00:03 A out
+   09:00:04 D out
+   09:00:04 Gather -> ['A', 'B', 'C', 'D']

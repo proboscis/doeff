@@ -1,0 +1,33 @@
+run 1:
+   09:00:00 main holds the permit
+   09:00:00 first asks
+   09:00:00 second asks
+   09:00:00 third asks
+   09:00:01 main releases
+   09:00:01 first holds the permit
+   09:00:01 late asks
+   09:00:02 second holds the permit
+   09:00:03 third holds the permit
+   09:00:04 late holds the permit
+run 2:
+   09:00:00 main holds the permit
+   09:00:00 first asks
+   09:00:00 second asks
+   09:00:00 third asks
+   09:00:01 main releases
+   09:00:01 first holds the permit
+   09:00:01 late asks
+   09:00:02 second holds the permit
+   09:00:03 third holds the permit
+   09:00:04 late holds the permit
+run 3:
+   09:00:00 main holds the permit
+   09:00:00 first asks
+   09:00:00 second asks
+   09:00:00 third asks
+   09:00:01 main releases
+   09:00:01 first holds the permit
+   09:00:01 late asks
+   09:00:02 second holds the permit
+   09:00:03 third holds the permit
+   09:00:04 late holds the permit

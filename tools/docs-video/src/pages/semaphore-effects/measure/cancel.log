@@ -1,0 +1,33 @@
+run 1:
+   09:00:00 holder holds the permit
+   09:00:00 w1 waits
+   09:00:00 w2 waits
+   09:00:01 main Cancel(w1) returned
+   09:00:01 w1 receives TaskCancelledError at its Acquire
+   09:00:01 main Wait(w1) -> TaskCancelledError
+   09:00:02 holder releases
+   09:00:02 w2 holds the permit
+   09:00:02 w2 releases
+   09:00:02 main Wait(w2) -> done
+run 2:
+   09:00:00 holder holds the permit
+   09:00:00 w1 waits
+   09:00:00 w2 waits
+   09:00:01 main Cancel(w1) returned
+   09:00:01 w1 receives TaskCancelledError at its Acquire
+   09:00:01 main Wait(w1) -> TaskCancelledError
+   09:00:02 holder releases
+   09:00:02 w2 holds the permit
+   09:00:02 w2 releases
+   09:00:02 main Wait(w2) -> done
+run 3:
+   09:00:00 holder holds the permit
+   09:00:00 w1 waits
+   09:00:00 w2 waits
+   09:00:01 main Cancel(w1) returned
+   09:00:01 w1 receives TaskCancelledError at its Acquire
+   09:00:01 main Wait(w1) -> TaskCancelledError
+   09:00:02 holder releases
+   09:00:02 w2 holds the permit
+   09:00:02 w2 releases
+   09:00:02 main Wait(w2) -> done
