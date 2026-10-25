@@ -1,0 +1,9 @@
+Reviewing: src/utils.py
+  [0.0s] booting -> running
+  [1.5s] running -> blocked
+  [1.5s] send_message(session, '1')
+  [2.0s] blocked -> running
+  [3.5s] running -> exited
+monitor_session ran 8 times; on_status_change ran 4 times
+status_history: [(0.0, 'running'), (1.5, 'blocked'), (2.0, 'running'), (3.5, 'exited')]
+after the with block: stopped

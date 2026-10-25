@@ -1,0 +1,6 @@
+finishes  -> returned {'ended': 'exited', 'review': '1. ok.'}
+             stop_session ran: terminal killed ['review-utils'], panes left []
+times out -> returned {'success': False, 'error': 'Timeout'}
+             stop_session ran: terminal killed ['review-api'], panes left []
+raises    -> raised ValueError('bad review prompt')
+             stop_session ran: terminal killed ['review-cli'], panes left []
