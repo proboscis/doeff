@@ -1,0 +1,4 @@
+any_model is called for: LLMStructuredQuery(model='gpt-4o', format=Analysis)
+chat_only is called for: LLMChat(model='gpt-4o', messages=[1 msgs])
+analysis: Analysis(verdict='clean', score=8)
+reply: 'chat answer from gpt-4o'
