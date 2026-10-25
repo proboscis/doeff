@@ -97,7 +97,7 @@ const SERVICE = [
 const DOMAIN = ['def calculate_order_total(items):', '    subtotal = sum(i.price * i.quantity for i in items)', '    return subtotal + subtotal * 0.1'];
 // The handler stack of measure/layers.py, outermost first.
 const STACK = [
-  {name: 'in_memory_store', note: 'answers GetOrder, SaveOrder, CacheSet', color: ACCENT},
+  {name: 'in_memory_store', note: 'GetOrder, SaveOrder, CacheSet', color: ACCENT},
   {name: 'state()', note: 'the store writer keeps its log in', color: TEST},
   {name: 'writer', note: 'answers Tell, keeps the log', color: TEST},
   {name: 'try_handler', note: 'answers Try with Ok or Err', color: TEST},
