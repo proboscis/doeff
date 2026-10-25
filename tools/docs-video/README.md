@@ -84,4 +84,4 @@ The narration never uses a local text-to-speech model: the maintainer decided so
 | Each headline stays long enough to read, and its narration fits its slot (`warp.ts` stretches the slot). | The voice never runs into the next headline. |
 | Numbers on screen come from a run in `measure/`. | The video must hold true for anyone who runs the same code. |
 | English on screen and in the narration; no people drawn. | The docs are in English; the videos show code and its runs. |
-| Up to about 3 minutes, and at most 6 MB (`render.mjs` encodes at CRF 29). | The mp4 lives in the repository. |
+| Up to about 3 minutes, and at most 6 MB (`render.mjs` encodes at CRF 29; a video over 6 MB is rendered again with a higher CRF as the third argument). | The mp4 lives in the repository. |
