@@ -1,0 +1,70 @@
+[
+ {
+  "id": "a1",
+  "text": "Error handling in doeff. A failure is handled like everything else: with an effect and a handler."
+ },
+ {
+  "id": "a2",
+  "text": "First, run itself. It gives back what the program returns, as it is: here, the string DOEFF."
+ },
+ {
+  "id": "a3",
+  "text": "When the program raises, run raises the same exception. There is no wrapper around either."
+ },
+ {
+  "id": "b1",
+  "text": "To keep a failure as a value, doeff has two kinds of result. Ok holds a value. Err holds an exception."
+ },
+ {
+  "id": "b2",
+  "text": "Ok is true and Err is false, and both match by pattern."
+ },
+ {
+  "id": "c1",
+  "text": "Try is an effect. app yields Try, with the sub-program it wants to attempt."
+ },
+ {
+  "id": "c2",
+  "text": "The try handler catches the effect, and runs parse count inside itself."
+ },
+ {
+  "id": "c3",
+  "text": "int raises on the text \"not a number\". The handler catches the exception and wraps it in Err."
+ },
+ {
+  "id": "c4",
+  "text": "Then it resumes k with that Err. app goes on: it logs the failure and returns zero."
+ },
+ {
+  "id": "c5",
+  "text": "Without the try handler in the stack, Try is unhandled. It is a handler like any other."
+ },
+ {
+  "id": "d1",
+  "text": "Try keeps three promises when it meets other effects."
+ },
+ {
+  "id": "d2",
+  "text": "One: no rollback. The Put before the failure stays, so counter is one."
+ },
+ {
+  "id": "d3",
+  "text": "Two: when the failure passes through Local, Local still restores the environment. key is outer again."
+ },
+ {
+  "id": "d4",
+  "text": "Three: Try inside Try keeps both layers. You get Ok of Ok, or Ok of Err."
+ },
+ {
+  "id": "e1",
+  "text": "Err keeps the exception, and the exception keeps its traceback."
+ },
+ {
+  "id": "e2",
+  "text": "Its frames lead from inside the try handler, through boom, down to load, where the error was raised."
+ },
+ {
+  "id": "o1",
+  "text": "Failures in doeff: Try asks, a handler answers with Ok or Err, and your code decides what comes next."
+ }
+]

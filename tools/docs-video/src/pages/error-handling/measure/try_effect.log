@@ -1,0 +1,12 @@
+
+doeff Traceback (most recent call last):
+
+  app()  tools/docs-video/src/pages/error-handling/measure/try_effect.py:17
+    parsed = yield Try(parse_count(raw))
+
+UnhandledEffect: unhandled effect: Try (Try(Call(<function parse_count at 0x49a02be4680>))) (no handlers in scope)
+  hint: Try is handled by try_handler: run(try_handler(prog))
+
+app('42'): Try -> Ok(42) log ['parsed count=42'] return 42
+app('not-a-number'): Try -> Err(ValueError("invalid literal for int() with base 10: 'not-a-number'")) log ["parse failed: invalid literal for int() with base 10: 'not-a-number'"] return 0
+without try_handler: UnhandledEffect
