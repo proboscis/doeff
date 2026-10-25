@@ -3,6 +3,7 @@ import {Composition} from 'remotion';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
+import {CLI_AUTO_DISCOVERY} from './pages/cli-auto-discovery/CliAutoDiscovery';
 import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
 import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
 import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
@@ -22,5 +23,6 @@ export const Root: React.FC = () => (
     <Composition id="why-effects" component={WHY_EFFECTS.Video} durationInFrames={WHY_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="kleisli-arrows" component={KLEISLI_ARROWS.Video} durationInFrames={KLEISLI_ARROWS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="cli-auto-discovery" component={CLI_AUTO_DISCOVERY.Video} durationInFrames={CLI_AUTO_DISCOVERY.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
