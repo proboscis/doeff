@@ -85,6 +85,32 @@
   (val read (read-of data))
   (assert (= (lfor call read.calls #(call.call-id call.request-id)) [#("msg_1" "req_1") #("msg_2" None)]) (repr read.calls)))
 
+(deftest test-a-fork-transcript-does-not-count-the-copied-main-call-that-started-it
+  ;; 本番の形(CLI 2.1.306・2026-10-24 の session 04dbe41b — 1 つの本体の呼び req_011CgMYFv… で 3 つの fork を起こした): fork の
+  ;; transcript は fork-context-ref の行の次に、本体の呼びの自分の tool_use の block の行(parentUuid null・本体の requestId)を写して書く。
+  ;; telemetry の api_request はその request_id を本体(query_source sdk)の 1 回と数えるので、subagent の呼びに数えない。失敗ケース =
+  ;; 変更前は本体の呼びを fork ごとに subagent の呼びとして数え、本体の記録と合わせて 4 度数えた。fork の呼びは全部残す。
+  (val copied (| (assistant "msg_main" "claude-opus-5-5" OTHER-USAGE AT
+                            :content [{"type" "tool_use" "id" "toolu_parent" "name" "Agent" "input" {"subagent_type" "fork"}}]
+                            :stop-reason "tool_use")
+                 {"requestId" "req_main" "parentUuid" None}))
+  (val data (.encode (.join "" [(line-of {"type" "fork-context-ref" "agentId" "a1" "parentSessionId" "s1" "contextLength" 475})
+                                (line-of copied)
+                                (line-of {"type" "user" "timestamp" AT
+                                          "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" "toolu_parent"
+                                                                              "content" "fork started"}]}})
+                                (line-of (| (assistant "msg_1" "claude-opus-5-5" FINAL-USAGE LATER :stop-reason "end_turn")
+                                            {"requestId" "req_1"}))])
+                     "utf-8"))
+  (val read (read-of data True))
+  (assert (= (lfor call read.calls call.request-id) ["req_1"]) (repr read.calls))
+  (assert (is read.problem None) (repr read))
+  ;; 外すのは親の道具の呼びの id を持つ行だけ — ほかの tool_use を持つ呼び(subagent が自分で呼んだ道具)は残す。
+  (val own (| (assistant "msg_2" "claude-opus-5-5" OTHER-USAGE AT
+                         :content [{"type" "tool_use" "id" "toolu_child" "name" "Bash" "input" {}}] :stop-reason "tool_use")
+              {"requestId" "req_2"}))
+  (assert (= (lfor call (. (read-of (.encode (line-of own) "utf-8")) calls) call.request-id) ["req_2"])))
+
 (deftest test-lines-without-a-call-id-are-each-their-own-call
   ;; message.id の無い行は畳まない(どの呼びと同じか分からない — 1 行を 1 回と数える)。
   (val bare (assistant "" "m" OTHER-USAGE AT))

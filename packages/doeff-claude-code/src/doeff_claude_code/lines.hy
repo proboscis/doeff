@@ -1256,6 +1256,25 @@
   (SubagentCalls :calls (tuple (gfor #(key call) (.items (dict keyed)) (replace call :at (. (get firsts key) at))))
                  :undated undated))
 
+(defk own-records [#^ tuple records #^ str parent-tool-use-id]
+  {:pre [(: records tuple) (: parent-tool-use-id str)] :post [(: % tuple)] :tags {:context "claude-code" :role "foundation"}}
+  "subagent の transcript の行から、本体の会話の呼びの写しを外すため(card ki-3d45f5857239)。fork の subagent(道具 Agent の
+   subagent_type fork — 本体の会話の文脈を受け継ぐ)の transcript は、頭の fork-context-ref の行の次に、その fork を起こした本体の
+   呼びの行(親の道具の呼び parent-tool-use-id の tool_use を持つ assistant の行 — requestId は本体の呼びの物)の写しを書く(実測
+   CLI 2.1.306・本番 2026-10-24 の session 04dbe41b: 1 つの本体の呼びで起こした 3 つの fork の transcript が、どれもその呼びの自分の
+   tool_use の block の行を持ち、読み手はその本体の呼びを subagent の呼びとして 3 度数えた — telemetry の api_request は同じ request_id
+   を query_source sdk〔本体〕の 1 回と数える)。subagent の呼びは親の道具の呼びの後に始まるので、その tool_use を持つ行は subagent の
+   呼びではない。外すのは assistant の行で content にその id の tool_use の block を持つ物だけ(id が空なら何も外さない)。"
+  (if (not parent-tool-use-id)
+      records
+      (tuple (gfor record records
+                   :setv content (.get (object-at record "message") "content")
+                   :if (not (and (= (text-at record "type") "assistant") (isinstance content list)
+                                 (any (gfor block content
+                                            (and (isinstance block dict) (= (.get block "type") "tool_use")
+                                                 (= (.get block "id") parent-tool-use-id))))))
+                   record))))
+
 (defk last-call-closed [#^ tuple records]
   {:pre [(: records tuple)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
   "subagent の transcript を書き切ったかを transcript そのものから知るため: 最後の usage つきの assistant の行(SYNTHETIC-MODEL の行も —
@@ -1308,7 +1327,8 @@
    空の byte は、answered でなければ呼びの無い読み。"
   (<- records (transcript-records data))
   (<- end (whole-lines-end data))
-  (val readable (tuple (gfor record records :if (is-not record None) record)))
+  (val parsed (tuple (gfor record records :if (is-not record None) record)))
+  (<- readable (own-records parsed parent-tool-use-id))
   (<- counted (subagent-calls-of readable))
   (<- stopped (last-call-closed readable))
   (val reported (if (and (is-not result None) (= result.status SUBAGENT-ANSWERED-STATUS)) result None))
@@ -1316,7 +1336,7 @@
   (val closed (or stopped (is-not final None)))
   (val tail (cut data end None))
   (val calls (if (and (is-not final None) (not (.strip tail))) (+ (cut counted.calls 0 -1) #(final)) counted.calls))
-  (val broken (- (len records) (len readable)))
+  (val broken (- (len records) (len parsed)))
   (val undated counted.undated)
   (val truncations (+ (if (.strip tail) [(.format "the last line of the transcript has no newline ({} bytes)" (len tail))] [])
                       (cond (or (not answered) closed) []
