@@ -827,6 +827,8 @@ class CompletePromise(EffectBase[None], Generic[_T]):
 
 
 class FailPromise(EffectBase[None]):
+    """Fail ``promise`` with ``error``: every task waiting on it gets ``error`` raised."""
+
     def __init__(self, promise: "Promise[Any]", error: BaseException) -> None:
         super().__init__()
         self.promise = promise
@@ -834,18 +836,24 @@ class FailPromise(EffectBase[None]):
 
 
 class CreateSemaphore(EffectBase["Semaphore"]):
+    """Create a semaphore with ``permits`` (at least 1) and answer its ``Semaphore`` handle."""
+
     def __init__(self, permits: int = 1) -> None:
         super().__init__()
         self.permits = permits
 
 
 class AcquireSemaphore(EffectBase[None]):
+    """Take one permit of ``semaphore``; the task parks until a permit is free."""
+
     def __init__(self, semaphore: "Semaphore") -> None:
         super().__init__()
         self.semaphore = semaphore
 
 
 class ReleaseSemaphore(EffectBase[None]):
+    """Give back one permit of ``semaphore``, waking the next waiter in FIFO order."""
+
     def __init__(self, semaphore: "Semaphore") -> None:
         super().__init__()
         self.semaphore = semaphore
