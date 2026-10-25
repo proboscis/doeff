@@ -69,12 +69,12 @@ def my_interpreter(program):  # doeff: interpreter
        return (yield Fetch(url="https://api.example.com/users"))
 
 
-   @do
+   @handler
    def canned_fetch(effect: Fetch, k):
        return (yield Resume(k, f"response from {effect.url}"))
 
 
-   print(run(handler(canned_fetch)(fetch_data())))  # response from https://api.example.com/users
+   print(run(canned_fetch(fetch_data())))  # response from https://api.example.com/users
    ```
 
    The arguments of an effect are the fields of its class, so the handler reads `effect.url`.
@@ -321,7 +321,7 @@ def data_pipeline():  # doeff: kleisli
 saved = []
 
 
-@do
+@handler
 def in_memory(effect: Fetch | Process | Save, k):
     match effect:
         case Fetch(url=url):
@@ -333,7 +333,7 @@ def in_memory(effect: Fetch | Process | Save, k):
             return (yield Resume(k, None))
 
 
-print(run(handler(in_memory)(data_pipeline())))  # ROWS FROM API.EXAMPLE.COM
+print(run(in_memory(data_pipeline())))  # ROWS FROM API.EXAMPLE.COM
 print(saved)  # ['ROWS FROM API.EXAMPLE.COM']
 ```
 

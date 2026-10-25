@@ -192,7 +192,8 @@ Nest them to get both: `result(maybe(program))` gives `Ok(Some(v))`, `Ok(Nothing
 
 An effect is a frozen dataclass that inherits `EffectBase`. A handler receives the
 effect and the continuation `k`, and either resumes `k` with an answer or passes the
-effect outward. `handler(...)` turns it into an installer:
+effect outward. `@handler` above its def makes it an installer that you apply to a
+program:
 
 ```python
 from dataclasses import dataclass
@@ -206,7 +207,7 @@ class Now(EffectBase):
     """Ask for the current time."""
 
 
-@do
+@handler
 def fixed_clock(effect, k):
     if isinstance(effect, Now):
         return (yield Resume(k, "2026-01-01T00:00:00Z"))
@@ -219,7 +220,7 @@ def stamp(message):
     return f"[{now}] {message}"
 
 
-print(run(scheduled(handler(fixed_clock)(stamp("started")))))  # [2026-01-01T00:00:00Z] started
+print(run(scheduled(fixed_clock(stamp("started")))))  # [2026-01-01T00:00:00Z] started
 ```
 
 ## Effect families

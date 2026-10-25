@@ -286,6 +286,8 @@ tests = [
     "tests/test_docs_typed_examples.py",
     # 核だけの venv の道具が確かめる LLM の agent の例を、README が指したままでいる事(下の docs/index.md の行と同じ検)
     "tests/test_verify_core_install.py::test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it",
+    # README が handler を古い handler(fn)(program) で書かない事(下の docs/ の行と同じ検・card ki-6dcc457d8917)
+    "tests/test_docs_current_handler_style.py",
 ]
 
 # docs の page を書き換えた便(改名・消す・見出しを書き換える)は、README・docs・packages/*/README.md の repo の中の link が
@@ -295,7 +297,12 @@ tests = [
 # tests を走らせる)でこの検が名指す。
 [[tool.doeff.contract-tests]]
 prefix = "docs/"
-tests = ["tests/test_check_links.py::test_repo_links_resolve_in_the_tree"]
+tests = [
+    "tests/test_check_links.py::test_repo_links_resolve_in_the_tree",
+    # docs の page が handler を今の書き方(@handler を付けた def を program に当てる)だけで書き、古い
+    # handler(fn)(program) が 0 である事(card ki-6dcc457d8917)。markdown を path で読む。
+    "tests/test_docs_current_handler_style.py",
+]
 
 # link の確かめの道具(tools/check_links.py — 標準ライブラリだけで workspace の外でも走る)を変えた便は、道具の検の全部を払う。
 # 検は道具を path で読むので、import の逆依存では選ばれない。

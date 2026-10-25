@@ -19,7 +19,7 @@ Provider-agnostic notification effects for `doeff`.
 ## Usage
 
 ```python
-from doeff import do, handler, run
+from doeff import do, run
 from doeff_notify.effects import Notify
 from doeff_notify.handlers import console_handler
 from doeff_notify.types import Urgency
@@ -33,15 +33,14 @@ def workflow():
     )
     return result
 
-# The built-in handlers are raw `(effect, k)` dispatchers; `handler` installs one
-# around a program.
-run(handler(console_handler)(workflow()))
+# The built-in handlers are `@handler` functions: apply one to a program.
+run(console_handler(workflow()))
 ```
 
 ## Multi-Channel Stacking Example
 
 ```python
-from doeff import do, handler, run
+from doeff import do, run
 from doeff_core_effects.handlers import state, writer
 from doeff_notify.effects import Notify
 from doeff_notify.handlers import console_handler, log_handler
@@ -60,8 +59,8 @@ def workflow():
 run(
     state()(
         writer(
-            handler(console_handler)(
-                handler(log_handler)(workflow()),
+            console_handler(
+                log_handler(workflow()),
             ),
         ),
     ),
