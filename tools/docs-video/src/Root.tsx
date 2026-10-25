@@ -7,6 +7,7 @@ import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
 import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
 import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
 import {HOME} from './pages/home/Home';
+import {PROGRAM_ARCHITECTURE} from './pages/program-architecture/ProgramArchitecture';
 import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 
 // One composition per docs page, named after the page's video file in docs/assets/videos/ (home.mp4 is on
@@ -20,5 +21,6 @@ export const Root: React.FC = () => (
     <Composition id="async-effects" component={ASYNC_EFFECTS.Video} durationInFrames={ASYNC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="why-effects" component={WHY_EFFECTS.Video} durationInFrames={WHY_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="program-architecture" component={PROGRAM_ARCHITECTURE.Video} durationInFrames={PROGRAM_ARCHITECTURE.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );

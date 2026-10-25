@@ -1,0 +1,28 @@
+
+doeff Traceback (most recent call last):
+
+  checkout()  callstack.py:13
+    paid = yield pay(120)
+  pay()  callstack.py:19
+    return (yield charge(amount))
+  charge()  callstack.py:26
+    raise ValueError(f"{amount} > {limit}")
+    handlers:
+      reader ↗
+
+ValueError: 120 > 100
+
+
+doeff Traceback (most recent call last):
+
+  checkout()  callstack.py:13
+    paid = yield pay(120)
+  pay()  callstack.py:19
+    return (yield charge(amount))
+  charge()  callstack.py:26
+    raise ValueError(f"{amount} > {limit}")
+    handlers:
+      reader ↗
+
+ValueError: 120 > 100
+
