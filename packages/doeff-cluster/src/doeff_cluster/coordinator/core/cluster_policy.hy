@@ -1823,6 +1823,7 @@
                          :env-failed (tuple (gfor f envs.failed (EnvFailed f.key f.kind f.detail f.retryable)))
                          :env-memory-unmeasured (frozenset envs.memory-unmeasured)
                          :env-capacity body.env-capacity
+                         :account-token body.account-token
                          :retired (retired-after previous boot)
                          ;; 同じ世代が起動時刻を名乗らなくなっても(版を戻した worker)、知っている起動時刻は捨てない。
                          :boot-at (if (and (is boot-at None) (= order GenerationOrder.CURRENT) (is-not previous None)

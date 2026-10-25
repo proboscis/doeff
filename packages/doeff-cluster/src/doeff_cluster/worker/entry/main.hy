@@ -39,6 +39,7 @@
 (import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
+(import doeff_cluster.shared.protocol.supplied_values [SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [this-process-versions clock-ticks])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -369,6 +370,8 @@
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
+                        ;; ServiceAccount の token の古さを heartbeat で名乗る(card ki-d31166f84ad0 — Pod の外の worker は file が無く、名乗らない)。
+                        :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)
