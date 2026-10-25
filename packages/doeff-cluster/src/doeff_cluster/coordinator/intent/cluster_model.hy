@@ -100,6 +100,9 @@
   ;; ServiceAccount の token の状態(heartbeat の accountToken — ok・stale = kubelet の置き直しが遅れた・expired・unreadable・card
   ;; ki-d31166f84ad0)。保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str account-token "ok")
+  ;; 枠の file の状態(heartbeat の roomFile — ok・unreadable・malformed — ok でない間 worker は前に名乗った枠のまま・card
+  ;; ki-6828eda880ce)。保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  (setv #^ str room-file "ok")
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、

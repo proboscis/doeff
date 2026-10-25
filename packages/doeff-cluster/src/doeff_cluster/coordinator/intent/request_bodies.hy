@@ -195,7 +195,8 @@
    世代は同じ名の前の世代がまだ走っている間に起きた(起動の script が前の世代の dir の錠を持たれていると見た — RollingUpdate・AL-D2e)。
    判断は新しい世代の名乗りで前の世代の process の lease を外さない(#3770 は前の世代が終わった時だけ)。名乗らない旧い worker は偽。
    account-token = worker の ServiceAccount の token の状態(ok・stale = 置き直しが遅れた・expired・unreadable — card ki-d31166f84ad0。
-   名乗らない worker(Pod の外・旧い worker)は ok)。"
+   名乗らない worker(Pod の外・旧い worker)は ok)・room-file = 枠の file の状態(ok・unreadable・malformed — ok でない間 worker は
+   前に名乗った枠のまま・card ki-6828eda880ce。file を読まない worker・旧い worker は ok)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (<= 0 task-reserve capacity)]}
   (#^ str name)
@@ -218,7 +219,8 @@
   (setv #^ (| (get tuple #(str ...)) None) kept-when-cut-off None)
   (setv #^ bool stopping False)
   (setv #^ bool overlaps-elder False)
-  (setv #^ str account-token "ok"))
+  (setv #^ str account-token "ok")
+  (setv #^ str room-file "ok"))
 
 
 (defwire ResourceBody

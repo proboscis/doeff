@@ -55,6 +55,7 @@
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 (import doeff_cluster.worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
+(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
 
 ;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・
 ;; #3871 の単位 4)。
@@ -120,13 +121,14 @@
    boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)・overlaps-elder = この世代は同じ名の
    前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)・
    token-file = ServiceAccount の token の file(None = 読まない — 本番の入口が標準の path を渡す。読んだ状態を heartbeat の
-   accountToken で名乗る・card ki-d31166f84ad0)。"
+   accountToken で名乗る・card ki-d31166f84ad0)・room-file = 枠の file(None = 読まない — 起動の引数の capacity・task-reserve を
+   名乗り続ける。渡すと heartbeat の前に読み直し、自分の名の行の値を名乗る・card ki-6828eda880ce)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
-                          #^ (| str None) [token-file None]]
+                          #^ (| str None) [token-file None] #^ (| str None) [room-file None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
           self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -168,7 +170,11 @@
           self.boot-marks boot-marks self.boot-told False
           ;; ServiceAccount の token の古さ(card ki-d31166f84ad0): token-file = 読む file(None = 読まない)・account-token = 最後に読んだ
           ;; 状態(None = まだ読んでいない・読めない file — heartbeat に載せない)・token-read-ms = 最後に読んだ刻。
-          self.token-file token-file self.account-token None self.token-read-ms None)))
+          self.token-file token-file self.account-token None self.token-read-ms None
+          ;; 枠の file(card ki-6828eda880ce): room-file = 読む file(None = 読まない)・room-state = 最後に読んだ状態(None = まだ読んで
+          ;; いない・読まない worker — heartbeat に載せない)・room-reason = ok でない訳(同じ訳の 2 度目は log に出さない)・
+          ;; room-read-ms = 最後に読んだ刻。
+          self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None)))
 
 
 
@@ -455,7 +461,9 @@
                    {}
                    (env-heartbeat-part state.env-report (current-platform)))
                ;; token の状態(card ki-d31166f84ad0)は読めた worker だけが名乗る(欄の無い本文は coordinator が ok と読む)。
-               (if (is state.account-token None) {} {"accountToken" state.account-token.value})))
+               (if (is state.account-token None) {} {"accountToken" state.account-token.value})
+               ;; 枠の file の状態(card ki-6828eda880ce)は file を読む worker だけが名乗る(欄の無い本文は coordinator が ok と読む)。
+               (if (is state.room-state None) {} {"roomFile" state.room-state.value})))
   ;; 生存の合図の thread が送り直す宛先と本文(card ki-9b58446e2ad6 — 組を 1 つの欄で入れ替え、thread が混ざった組を読まない)。
   (setv state.life.post #((+ endpoint "/heartbeat") (.encode (json.dumps body :ensure-ascii False) "utf-8")))
   (<- reply RoutedReply (routed-request cell.route "POST" "/heartbeat" options None body))
@@ -675,6 +683,33 @@
   None)
 
 
+(defk room-noted [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "枠の file を READ-EVERY-MS ごとに読み直し、次の heartbeat で名乗る capacity・task-reserve を file の自分の行の値にするため
+   (card ki-6828eda880ce — 枠を変えても Pod を作り直さない)。file を読めない・形が崩れている時は前に名乗った値のままにし、状態を
+   heartbeat の roomFile で名乗る。値が変わった時・読めなくなった時(訳が変わった時)・戻った時に log へ 1 行出す。file を読まない
+   worker(room-file が None)は何もしない。"
+  (when (is-not state.room-file None)
+    (<- now-ms int (now-epoch-ms))
+    (<- due bool (room-read-due state.room-read-ms now-ms))
+    (when due
+      (setv state.room-read-ms now-ms)
+      (<- text (ReadText state.room-file))
+      (var reading (RoomReading :state RoomState.UNREADABLE :room None
+                                :reason (if (isinstance text FileFailed) text.detail "")))
+      (when (isinstance text str)
+        (<- read RoomReading (room-of-text text state.name))
+        (:= reading read))
+      (val before (WorkerRoom :capacity state.capacity :task-reserve state.task-reserve))
+      (val after (if (is reading.room None) before reading.room))
+      (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
+        (<- line str (room-line before after reading))
+        (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
+      (setv state.capacity after.capacity state.task-reserve after.task-reserve
+            state.room-state reading.state state.room-reason reading.reason)))
+  None)
+
+
 (defk token-line [before after claims now-ms failure]
   {:pre [(: before (| TokenState None)) (: after (| TokenState None)) (: claims (| TokenClaims None)) (: now-ms int) (: failure str)]
    :post [(: % str)]}
@@ -778,6 +813,8 @@
     (<- (progress-noted state))
     ;; ServiceAccount の token の古さを読み直す(READ-EVERY-MS ごと — 次の heartbeat が名乗る・card ki-d31166f84ad0)。
     (<- (token-noted state))
+    ;; 枠の file を読み直す(READ-EVERY-MS ごと — 次の heartbeat が名乗る・card ki-6828eda880ce)。
+    (<- (room-noted state))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))

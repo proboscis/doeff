@@ -1,7 +1,7 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster.worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
-;;;     --task-reserve N --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
+;;;     (--room-file FILE | --task-reserve N) --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -40,6 +40,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.shared.protocol.supplied_values [SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [this-process-versions clock-ticks])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -88,6 +89,27 @@
   (when path
     (<- (file-done (WriteText path (+ boot "\n") :replace True))))
   None)
+
+
+(defk boot-room [room-file name capacity task-reserve]
+  {:pre [(: room-file str) (: name str) (: capacity (| int None)) (: task-reserve (| int None))] :post [(: % (| WorkerRoom str))]
+   :tags {:context "worker" :role "main"}}
+  "起動の時に名乗る枠を決めるため(card ki-6828eda880ce): 枠の file(room-file — 空 = 読まない)の自分の行が読めればその値、読めなければ
+   引数の値(--capacity は既定 10)。引数の --task-reserve も無ければ起動を断る訳の文を返す — 既定の値で埋めない。file を読めない事は
+   最初の heartbeat の前の読み直し(coordinator_link.room-noted)が log に出し、heartbeat の roomFile で名乗る。"
+  (var reading None)
+  (when room-file
+    (<- text (ReadText room-file))
+    (:= reading (RoomReading :state RoomState.UNREADABLE :room None :reason (if (isinstance text FileFailed) text.detail "")))
+    (when (isinstance text str)
+      (<- read RoomReading (room-of-text text name))
+      (:= reading read)))
+  (cond
+    (and (is-not reading None) (is-not reading.room None)) reading.room
+    (is-not task-reserve None) (WorkerRoom :capacity (if (is capacity None) 10 capacity) :task-reserve task-reserve)
+    (is reading None) "--task-reserve を渡す(--room-file を渡さない時は必ず要る)"
+    True (.format "枠の file {} を読めない({}: {})— 読めるようにするか、--task-reserve(と --capacity)を渡す"
+                  room-file reading.state.value reading.reason)))
 
 
 (defk job-cgroup-placed [sibling [root CGROUP-ROOT] [var JOB-CGROUP-VAR]]
@@ -247,9 +269,14 @@
   (.add-argument parser "--exclusive" :default "" :help "専用の能力(provides の一部・a,b)— このどれかを要る仕事だけを受ける")
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
   (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
-  (.add-argument parser "--capacity" :type int :default 10)
-  (.add-argument parser "--task-reserve" :type int :required True
-                 :help "capacity のうち task のために空けておく数(0 以上 capacity 以下)— coordinator は常駐の job をこの分に置かない")
+  (.add-argument parser "--capacity" :type int :default None
+                 :help "同時の job と task の上限(--room-file が無ければ既定 10 — 在れば file の値が勝ち、file を読めない起動の時だけ使う)")
+  (.add-argument parser "--task-reserve" :type int :default None
+                 :help "capacity のうち task のために空けておく数(0 以上 capacity 以下)— coordinator は常駐の job をこの分に置かない。
+                        --room-file が無ければ必ず渡す")
+  (.add-argument parser "--room-file" :default ""
+                 :help "枠の file(JSON — worker の名 → capacity・taskReserve)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
+                        値を名乗る — 枠の変更で worker を起こし直さない(card ki-6828eda880ce)。空 = 読まない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
   (.add-argument parser "--repo" :required True :help "コードを取り出す git repo")
@@ -296,9 +323,14 @@
       (.error parser (str error))))
   (when (not (<= (set exclusive) (set provides)))
     (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
+  ;; 起動の時に名乗る枠(card ki-6828eda880ce): 枠の file が在れば file の自分の行(読めなければ引数 — 両方無ければ起動しない)、
+  ;; 無ければ引数。以後の読み直しは coordinator への口(room-noted)。
+  (setv room (run (with-handlers [os-file-handler] (boot-room args.room-file args.name args.capacity args.task-reserve))))
+  (when (isinstance room str)
+    (.error parser room))
   ;; task のために空けておく数を起動の時点で検める(coordinator の heartbeat の本文の型と同じ範囲 — 外れた値で名乗り続けて断られない)。
-  (when (not (<= 0 args.task-reserve args.capacity))
-    (.error parser (.format "--task-reserve {} は 0 以上 --capacity {} 以下で名乗る" args.task-reserve args.capacity)))
+  (when (not (<= 0 room.task-reserve room.capacity))
+    (.error parser (.format "--task-reserve {} は 0 以上 --capacity {} 以下で名乗る" room.task-reserve room.capacity)))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
@@ -366,12 +398,14 @@
   ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る・card ki-069f4a5c07f7)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         started-mono-ms (monotonic-ms-of (run (with-handlers [(sync-time-handler)] (GetMonotonic))))
-        link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) places.tasks boot
+        link (LinkState args.name provides room.capacity room.task-reserve (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
                         ;; ServiceAccount の token の古さを heartbeat で名乗る(card ki-d31166f84ad0 — Pod の外の worker は file が無く、名乗らない)。
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
+                        ;; 枠の file を heartbeat の前に読み直す(card ki-6828eda880ce — 空 = 読まない)。
+                        :room-file (or args.room-file None)
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)

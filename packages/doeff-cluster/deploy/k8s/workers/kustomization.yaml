@@ -16,3 +16,16 @@ resources:
   - ../nodes/zeus
   # 根の disk を worker と Longhorn が分け合う機体の Longhorn の disk の予約(worker の env と同じ宣言 ../disk-share/shares.yaml から導く)。
   - ../disk-share
+# 機体ごとの worker の枠(card ki-6828eda880ce): 同時の job と task の上限 capacity と、そのうち task のために空けておく数 taskReserve を、
+# 機体の名(= worker の名)ごとに worker-room.json に置く — 枠の定義元はこの 1 file。名の固定した ConfigMap worker-room にし(中身の hash を
+# 名に付けない)、worker は volume で置いた file(subPath でない)を heartbeat の前に読み直して名乗る。中身を変えても Pod は作り直されず、
+# kubelet が file を入れ替えた後(1 分前後)の heartbeat から coordinator の Worker の行が新しい値になる。枠を下げて今の数を下回っても、
+# 置いた job と task は退かず、新しく置かないだけ。file を読めない・形が崩れた時は、worker は前に名乗った値のまま(heartbeat の roomFile
+# で名乗り、coordinator は GET /resources/Worker の status に出す)。
+configMapGenerator:
+  - name: worker-room
+    namespace: agent-worker
+    files:
+      - worker-room.json
+    options:
+      disableNameSuffixHash: true

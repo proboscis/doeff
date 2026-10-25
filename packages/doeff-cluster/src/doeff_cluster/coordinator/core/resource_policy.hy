@@ -617,6 +617,9 @@
                ;; ServiceAccount の token の状態(heartbeat の accountToken — stale = kubelet の置き直しが遅れた・expired = 期限が切れた・
                ;; card ki-d31166f84ad0)。envCapacity と同じく ok でない間だけ載せ、切り替わりの拍で版が進む(読み手が 401 の前に知る)。
                (if (!= w.account-token "ok") {"accountToken" w.account-token} {})
+               ;; 枠の file の状態(heartbeat の roomFile — unreadable・malformed の間 worker は前に名乗った枠のまま・card ki-6828eda880ce)。
+               ;; 同じく ok でない間だけ載せる(読み手が枠の変更が効いていない事を知る)。
+               (if (!= w.room-file "ok") {"roomFile" w.room-file} {})
                ;; 世代をまたぐ recreate の job の受け渡し(AL-D2f): 前の世代がまだ動かしている job(重なりを名乗った新しい世代の間の
                ;; SupersededRun)と、今の世代が起こせると報告した job(状態の行の phase が elder-runs)。受け渡しが進むたびに版が進み、
                ;; この worker を名指した 2 つの世代の GET /watch が起きる(前の世代は外す返事を、今の世代は印の外れを次の heartbeat を
