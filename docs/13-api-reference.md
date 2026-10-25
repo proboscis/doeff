@@ -8,6 +8,174 @@ blocks that run as written print what their `# ...` comments state — for examp
 [@do](#do), [Resume](#resumek-value), [Pass](#passeffect-k), [slog_handler](#slog_handler)
 and [run](#rundoexpr).
 
+## Index of Public Names
+
+Every name `from doeff import ...` gives, in one line each, with a link to where it is explained
+with an example. The handlers (`state`, `reader`, `writer`, `scheduled`, ...) are imported from
+`doeff_core_effects.handlers` and `doeff_core_effects.scheduler` — see [Handlers](#handlers). The
+names that are kept only to say what replaced them are in [Removed APIs](#removed-apis).
+
+**Programs and effects**
+
+| Name | What it is | See |
+|---|---|---|
+| `Program` | The type of a program: any program node; `Program[T]` returns `T`. | [Program](#program-doexpr) |
+| `DoExpr` | The same type as `Program`; `isinstance(x, DoExpr)` is true for every program node. | [Program](#program-doexpr) |
+| `ProgramBase` | Another name of `DoExpr`. | [Program](#program-doexpr) |
+| `EffectBase` | The base class of every effect; `EffectBase[T]` is an effect answered with `T`. | [EffectBase](#effectbase) |
+| `Effect` | Another name of `EffectBase`. | [EffectBase](#effectbase) |
+| `do` | Decorator: a generator function becomes a function that returns a program. | [@do](#do) |
+| `program` | `program(gen_fn, *args)`: the program that runs `gen_fn(*args)` — `@do` without the decorator. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `EffectGenerator` | `EffectGenerator[T]` = `Generator[Any, Any, T]`: the return annotation of a `@do` body. | [Static typing](23-static-typing.md#do-keeps-parameters-effects-and-result) |
+
+**Results**
+
+| Name | What it is | See |
+|---|---|---|
+| `Ok` | The success case of a result: `.value` holds what the program returned. | [Ok](#okvalue) |
+| `Err` | The failure case of a result: `.error` holds what the program raised. | [Err](#errerror) |
+| `Maybe` | `Maybe[T]` is `Some[T]` or `Nothing`: an optional value. | [Maybe](#maybe) |
+| `Some` | `Maybe` with a value. | [Maybe](#maybe) |
+| `Nothing` | `Maybe` without a value (a singleton). | [Maybe](#maybe) |
+
+**Reader**
+
+| Name | What it is | See |
+|---|---|---|
+| `Ask` | Effect: the value of a key of the environment. | [Ask](#askkey) |
+| `AskEffect` | Another name of `Ask`. | [Ask](#askkey) |
+| `Local` | Effect: run a program with some environment keys overridden. | [Local](#localenv-program) |
+| `MissingEnvKeyError` | Raised by `Ask` when the environment has no such key (a `KeyError`). | [Ask](#askkey) |
+
+**State**
+
+| Name | What it is | See |
+|---|---|---|
+| `Get` | Effect: the value of a key of the state. | [Get](#getkey) |
+| `Put` | Effect: set a key of the state. | [Put](#putkey-value) |
+
+**Writer and structured logs**
+
+| Name | What it is | See |
+|---|---|---|
+| `Tell` | Effect: append a message to the writer log. | [Tell](#tellmessage) |
+| `WriterTellEffect` | The effect class `Tell` makes. | [WriterTellEffect](#writertelleffectmsg) |
+| `Listen` | Effect: run a program and also answer the effects of given types it performed. | [Listen](#listenprogram-typesnone) |
+| `slog` | Effect: a structured log entry (`slog("event", count=42)`). | [slog](#slogmsg-kwargs) |
+| `SlogEffect` | The effect class `slog` makes. | [slog](#slogmsg-kwargs) |
+| `Slog` | Another name of `SlogEffect`. | [slog](#slogmsg-kwargs) |
+
+**Errors**
+
+| Name | What it is | See |
+|---|---|---|
+| `Try` | Effect: run a program and answer `Ok(value)` or `Err(error)` instead of raising. | [Try](#tryprogram) |
+| `UnhandledEffect` | Raised when no handler in scope answers an effect. | [UnhandledEffect](#unhandledeffect) |
+
+**Handlers and continuations**
+
+| Name | What it is | See |
+|---|---|---|
+| `handler` | Decorator: a `def (effect, k)` becomes a `Program -> Program` handler installer. | [@handler](#handler) |
+| `with_handlers` | Install a list of handlers on a program, the first one outermost. | [with_handlers](#with_handlershandlers-program-and-stacked_handlershandlers) |
+| `stacked_handlers` | Bundle several handlers into one installer. | [with_handlers](#with_handlershandlers-program-and-stacked_handlershandlers) |
+| `Resume` | In a handler: answer the effect with a value and get the program's answer back. | [Resume](#resumek-value) |
+| `Transfer` | In a handler: answer the effect with a value and hand over (tail form of `Resume`). | [Resume](#resumek-value) |
+| `ResumeThrow` | In a handler: raise an exception where the effect was performed. | [ResumeThrow](#resumethrowk-exception-and-transferthrowk-exception) |
+| `TransferThrow` | The tail form of `ResumeThrow`. | [ResumeThrow](#resumethrowk-exception-and-transferthrowk-exception) |
+| `Pass` | In a handler: leave the effect to the next outer handler. | [Pass](#passeffect-k) |
+| `Pure` | A program that returns a value without performing anything. | [Pure](#purevalue) |
+| `K` | The continuation `k` a handler receives; resumed once. | [K](#k) |
+| `typed_resume` | `Resume` whose value type is checked against the effect's answer type. | [Static typing](23-static-typing.md#handler-answers) |
+| `typed_transfer` | `Transfer` whose value type is checked against the effect's answer type. | [Static typing](23-static-typing.md#handler-answers) |
+| `WithObserve` | Run a program with an observer called for each effect it performs. | [WithObserve](#withobserveobserver-body) |
+| `WithObserveRaw` | The `WithObserve` program node; takes an observer already wrapped in `Callable`. | [WithObserve](#withobserveobserver-body) |
+
+**Tasks and concurrency** (under `scheduled()`)
+
+| Name | What it is | See |
+|---|---|---|
+| `Await` | Effect: the result of a Python coroutine or future. | [Await](#awaitcoroutine) |
+| `Spawn` | Effect: start a program as a task and answer its `Task` handle. | [Spawn](#spawnprogram-prioritypriority_normal) |
+| `Task` | Handle of a spawned task; `Task[T]` returns `T`. | [Spawn](#spawnprogram-prioritypriority_normal) |
+| `Wait` | Effect: the result of a `Task` or `Future`. | [Wait](#waittask) |
+| `Gather` | Effect: the results of several tasks or futures, in input order. | [Gather](#gathertasks) |
+| `Race` | Effect: the result of the first task or future to finish. | [Race](#racetasks) |
+| `race` | Another name of `Race`. | [Race](#racetasks) |
+| `Cancel` | Effect: ask a task to stop. | [Cancel](#canceltask) |
+| `TaskCancelledError` | Raised in a cancelled task, and to whoever waits on it. | [TaskCancelledError](#taskcancellederror) |
+| `SchedulerDeadlockError` | Raised when every task waits on something nothing will complete. | [Troubleshooting](01-getting-started.md#schedulerdeadlockerror-scheduler-deadlock-parked-waiters-that-no-external-completion-can-wake-) |
+| `PRIORITY_IDLE` | Task priority 0, the lowest. | [Spawn](#spawnprogram-prioritypriority_normal) |
+| `PRIORITY_NORMAL` | Task priority 10, the default of `Spawn`. | [Spawn](#spawnprogram-prioritypriority_normal) |
+| `PRIORITY_HIGH` | Task priority 20. | [Spawn](#spawnprogram-prioritypriority_normal) |
+
+**Promises**
+
+| Name | What it is | See |
+|---|---|---|
+| `CreatePromise` | Effect: a new promise completed by the run's own tasks. | [CreatePromise](#createpromise) |
+| `CompletePromise` | Effect: complete a promise with a value and wake its waiters. | [CompletePromise](#completepromisepromise-value) |
+| `FailPromise` | Effect: fail a promise with an exception raised in its waiters. | [FailPromise](#failpromisepromise-error) |
+| `CreateExternalPromise` | Effect: a new promise completed from another thread. | [CreateExternalPromise](#createexternalpromise) |
+| `Promise` | The write side of a promise; `.future` is its read side. | [CreatePromise](#createpromise) |
+| `Future` | The read side of a promise, for `Wait`, `Gather` and `Race`. | [Async Effects](04-async-effects.md#waitables-and-handles) |
+
+**Semaphores**
+
+| Name | What it is | See |
+|---|---|---|
+| `CreateSemaphore` | Effect: a new semaphore with a number of permits. | [CreateSemaphore](#createsemaphorepermits) |
+| `AcquireSemaphore` | Effect: take a permit, waiting until one is free. | [AcquireSemaphore](#acquiresemaphoresemaphore) |
+| `ReleaseSemaphore` | Effect: give a permit back, waking the next waiter. | [ReleaseSemaphore](#releasesemaphoresemaphore) |
+| `Semaphore` | The handle `CreateSemaphore` answers. | [CreateSemaphore](#createsemaphorepermits) |
+
+**Running programs**
+
+| Name | What it is | See |
+|---|---|---|
+| `run` | Run a program to completion and return its value. | [run](#rundoexpr) |
+| `merge_dicts` | A program that merges dicts (or programs returning dicts) left to right. | [merge_dicts](#merge_dictssources) |
+| `PyVM` | The Rust VM that `run` creates for each run. | [PyVM](#pyvm) |
+
+**Program nodes and introspection**
+
+| Name | What it is | See |
+|---|---|---|
+| `Perform` | The node `yield effect` builds: perform an effect. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `Apply` | The node that calls a function with arguments. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `Expand` | The node that runs the program an expression returns; a `@do` call returns one. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `WithHandlerType` | The node a handler installer builds: run a body under a handler. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `Callable` | Wraps a Python callable so the VM can call it. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `GetHandlers` | In a handler: the handlers in scope where the effect was performed. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
+| `GetBoundaries` | In a handler: the handlers and observers in scope, innermost first. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
+| `GetOuterHandlers` | In a handler: the handlers installed above it. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
+| `GetTraceback` | In a handler: the frames of the suspended program. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
+| `GetExecutionContext` | The frames and handler chain of the running program. | [GetExecutionContext](#getexecutioncontext) |
+
+**Static typing at runtime**
+
+| Name | What it is | See |
+|---|---|---|
+| `effect_result_type` | The `T` of `EffectBase[T]` for an effect class or instance. | [Static typing](23-static-typing.md#runtime-readers-for-hy-and-other-tools) |
+| `program_signature` | The effects and result a `@do` function's annotation declares. | [Static typing](23-static-typing.md#runtime-readers-for-hy-and-other-tools) |
+| `ProgramSignature` | What `program_signature` answers: `effects` and `result`. | [Static typing](23-static-typing.md#runtime-readers-for-hy-and-other-tools) |
+| `handler_effect_types` | The effect types a handler's annotation admits (`None` = every effect). | [Static typing](23-static-typing.md#runtime-readers-for-hy-and-other-tools) |
+
+**`@effectful` and `perform`**
+
+| Name | What it is | See |
+|---|---|---|
+| `effectful` | Decorator: a function that calls `perform(effect)` becomes a program factory. | [@effectful](24-effectful-perform.md) |
+| `Effects` | The type of the `perform` parameter: `Effects[E]` may perform `E`. | [@effectful](24-effectful-perform.md) |
+| `install_import_hook` | Rewrite the `@effectful` functions of given packages at import. | [@effectful](24-effectful-perform.md) |
+
+**MCP tools**
+
+| Name | What it is | See |
+|---|---|---|
+| `McpToolDef` | An MCP tool: its name, description, parameters and the `@do` function that runs it. | [MCP Tools](12-mcp-tools.md#mcptooldef) |
+| `McpParamSchema` | The JSON Schema of one MCP tool parameter. | [MCP Tools](12-mcp-tools.md#mcpparamschema) |
+
 ## Core Types
 
 ### Program (DoExpr)
@@ -447,6 +615,46 @@ print(run(reader(env={"base": 21})(without_pass(compute()))))  # None
 
 ---
 
+### ResumeThrow(k, exception) and TransferThrow(k, exception)
+
+Answer an effect with an exception instead of a value: the exception is raised at the `yield`
+that performed the effect, so the program can catch it with `try`/`except`. `ResumeThrow` gives
+the handler the program's answer back, like `Resume`; `TransferThrow` is the tail form, like
+`Transfer`.
+
+```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, ResumeThrow, do, handler, run
+
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+
+@handler
+def offline(effect: Fetch, k):
+    return (yield ResumeThrow(k, ConnectionError(f"offline: {effect.url}")))
+
+
+@do
+def page():
+    try:
+        return (yield Fetch("https://example.com"))
+    except ConnectionError as error:
+        return f"fallback ({error})"
+
+
+print(run(offline(page())))  # fallback (offline: https://example.com)
+```
+
+**Signature:** `ResumeThrow(k, exception)`, `TransferThrow(k, exception)`
+
+**See:** [Core Concepts](02-core-concepts.md#doctrl-instruction-set)
+
+---
+
 ### WithObserve(observer, body)
 
 Install a cross-cutting observer and run a body program under it. The observer is
@@ -463,6 +671,9 @@ result = yield WithObserve(my_observer, sub_program())
 
 Accepts a plain Python callable as observer -- automatically wraps it with `doeff_vm.Callable`
 so the Rust VM can invoke it.
+
+`WithObserveRaw(observer, body)` is the program node itself: it takes an observer already wrapped
+as `Callable(fn)` (`doeff.Callable`, the VM's wrapper for a Python callable) and does no wrapping.
 
 ---
 
@@ -564,6 +775,9 @@ result = yield Wait(task)
 **Signature:** `Spawn(program, priority=PRIORITY_NORMAL)`
 
 **Returns:** `Task`
+
+**Priorities:** `PRIORITY_IDLE` (0), `PRIORITY_NORMAL` (10) and `PRIORITY_HIGH` (20). When several
+tasks are ready, the scheduler runs the one with the higher priority first.
 
 **See:** [Advanced Effects](09-advanced-effects.md)
 
@@ -911,6 +1125,29 @@ require `scheduled()` to be installed.
 
 ---
 
+### merge_dicts(*sources)
+
+A program that merges dicts left to right; a later key wins. Each source is a plain dict or a
+program that returns one. The CLI uses it to combine the env programs it loads.
+
+```python
+from doeff import Pure, do, merge_dicts, run
+
+
+@do
+def settings():
+    return (yield merge_dicts({"retries": 1, "timeout": 5}, Pure({"timeout": 30})))
+
+
+print(run(settings()))  # {'retries': 1, 'timeout': 30}
+```
+
+**Signature:** `merge_dicts(*sources) -> Program[dict]`
+
+A source that is neither a dict nor a program returning a dict raises `TypeError`.
+
+---
+
 ## Handlers
 
 Handlers are `Program -> Program` functions. Compose them by calling them in sequence:
@@ -1094,6 +1331,104 @@ prog = env_var_ask()(my_program())
 
 ---
 
+## Program Nodes and Introspection
+
+Most programs never build these nodes by hand: `@do`, `yield effect` and the handler installers
+build them. They are public so that handlers, tools and tests can read the program's structure.
+
+### Program nodes: Perform, Apply, Expand, WithHandlerType
+
+`yield effect` is `yield Perform(effect)`. Calling a `@do` function builds
+`Expand(Apply(Callable(factory), args))`: `Apply` calls a function, `Expand` runs the program that
+call returns. A handler installer wraps its program in `WithHandlerType(handler, body)`. `Callable`
+wraps a Python callable so the VM can call it. `DoExpr` (and its alias `ProgramBase`) is true for
+every one of these nodes under `isinstance`.
+
+**See:** [Core Concepts](02-core-concepts.md#doctrl-instruction-set)
+
+---
+
+### K
+
+The continuation a handler receives as `k`: the rest of the program after the effect it performed.
+It is one-shot — resume it once, with `Resume`, `Transfer`, `ResumeThrow`, `TransferThrow` or
+`Pass`.
+
+**See:** [Resume](#resumek-value)
+
+---
+
+### GetHandlers(k), GetBoundaries(k), GetOuterHandlers() and GetTraceback(k)
+
+Read the program's state from inside a handler, without consuming `k`.
+
+- `GetHandlers(k)` answers the handlers in scope where the effect was performed (the catching
+  handler last).
+- `GetBoundaries(k)` answers the same stack with the `WithObserve` observers between them, as
+  `["handler" | "observer", callable]` pairs, innermost first.
+- `GetOuterHandlers()` answers the handlers installed above the catching handler.
+- `GetTraceback(k)` answers `[function, file, line]` for each frame of the suspended program.
+
+```python
+from doeff import EffectBase, GetHandlers, GetTraceback, Resume, do, handler, run
+
+
+class WhoHandles(EffectBase[int]):
+    pass
+
+
+@handler
+def counts_handlers(effect: WhoHandles, k):
+    handlers = yield GetHandlers(k)  # the handlers in scope where WhoHandles was performed
+    frames = yield GetTraceback(k)  # [function, file, line] of each frame, k is not consumed
+    print(frames[0][0])  # ask
+    return (yield Resume(k, len(handlers)))
+
+
+@do
+def ask():
+    return (yield WhoHandles())
+
+
+print(run(counts_handlers(ask())))  # 1
+```
+
+The scheduler uses `GetBoundaries` to install the spawning task's handlers and observers on a
+`Spawn`ed task; the MCP tool server uses `GetHandlers` and `GetOuterHandlers` to run tools under
+the handlers of the `Launch` site.
+
+---
+
+### GetExecutionContext()
+
+Answer the current execution context as a list of entries: the frames of the running program
+(`["frame", function, file, line]`) and the handler chain around it (`["handler", "chain", names]`).
+Unlike `GetTraceback`, it needs no handler and no `k`.
+
+```python excerpt
+context = yield GetExecutionContext()
+```
+
+---
+
+### PyVM
+
+The Rust VM that `run()` creates for each run. `run(program)` is the entry point; use `PyVM`
+directly only to drive the VM yourself.
+
+**See:** [Core Concepts](02-core-concepts.md#rust-vm-execution-pipeline)
+
+---
+
+### UnhandledEffect
+
+Raised by `run()` when an effect reaches the top of the handler stack with no handler that answers
+it. The message names the effect and the handlers in scope.
+
+**See:** [Core Concepts](02-core-concepts.md#typed-handlers-the-effect-annotation-selects-the-effects)
+
+---
+
 ## Quick Reference
 
 ### Effect Categories
@@ -1200,7 +1535,10 @@ importable.
 | `Delegate` | Use `yield effect` to re-perform in handler body |
 | `cache` (decorator) | Cache module removed |
 | `CacheGet` (top-level) | Renamed to `MemoGet` in `doeff_core_effects.memo_effects` |
+| `CacheExists` (top-level) | Renamed to `MemoExists` in `doeff_core_effects.memo_effects` |
 | `graph_snapshot` | Concept removed |
+| `Discontinue`, `Discontinued` | Concept removed |
+| `rust_vm` | Use `PyVM` directly |
 | `Step`, `Annotate`, `Snapshot`, `CaptureGraph` | Graph tracking removed |
 | `graph_to_html`, `write_graph_html` | Graph visualization removed |
 | `AtomicGet`, `AtomicUpdate` | Concept removed |

@@ -217,6 +217,7 @@ if not TYPE_CHECKING:
         def __init__(self, name: str, reason: str) -> None:
             self._name = name
             self._reason = reason
+            self.__doc__ = f"Removed from doeff; calling or using it raises RuntimeError: {reason}."
 
         def __call__(self, *a: object, **kw: object) -> NoReturn:
             raise RuntimeError(f"{self._name} was removed: {self._reason}")

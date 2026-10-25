@@ -8,6 +8,8 @@ use pyo3::types::PyType;
 // possible (no `&mut self`); see the module doc of `do_expr.rs` for why
 // traverse-only is sound for frozen value holders.
 
+/// The success case of a `Result`: holds the program's value in `.value` (what `Try` answers
+/// when the program returns).
 #[pyclass(frozen, name = "Ok", module = "doeff_vm.doeff_vm")]
 pub struct PyResultOk {
     pub value: Py<PyAny>,
@@ -66,6 +68,8 @@ impl PyResultOk {
     }
 }
 
+/// The failure case of a `Result`: holds the raised exception in `.error` (what `Try` answers
+/// when the program raises).
 #[pyclass(frozen, name = "Err", module = "doeff_vm.doeff_vm")]
 pub struct PyResultErr {
     pub error: Py<PyAny>,
