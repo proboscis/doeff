@@ -12,14 +12,14 @@ Four classes emerge. Each class strictly contains the previous one, and each ste
 
 | Class | What happens to `k` | Members | DI equivalent? |
 |-------|--------------------|---------|----------------|
-| 0 — Dispatch | Resumed once, immediately; operation performed as-is | provider routing, mocks, secret backends | Yes |
+| 0 — Dispatch | Resumed once, immediately; operation performed as-is | provider routing, test or production implementations, secret backends | Yes |
 | 1 — Data middleware | Resumed once, immediately; effect inspected/transformed/elided/repeated first | memo, replay, budget, retry, tracing, dry-run, rewrite | Mostly (decorators + contextvars) |
 | 2 — Scheduling | `k` escapes the handler: parked, reordered, interleaved | Spawn/Wait, virtual time, rate limiting, batching, dedup, hedging | **No** |
 | 3 — Multi-shot | `k` resumed more than once | backtracking, nondeterminism, probabilistic branching | No — **and not doeff either** |
 
 ## Class 0 — Dispatch
 
-The handler performs the operation and resumes `k` once with the result. Routing by model prefix, swapping a mock for a production client, choosing a secret backend — all class 0.
+The handler performs the operation and resumes `k` once with the result. Routing by model prefix, answering a client call with a test implementation instead of the production one, choosing a secret backend — all class 0. Replacing I/O is this class: one use of handlers, and the one that needs no continuation.
 
 Be honest about this class: **it is the same runtime power as dependency injection.** No continuation is needed at all; a function call would do. What doeff adds is *composition-site* selection — the same Program runs under different stacks per run, per test, per dynamic scope (`Local`) — instead of one object graph fixed at construction time. That is valuable, but if class 0 is all you need, DI is a legitimate and simpler alternative.
 
@@ -103,7 +103,7 @@ Across every audited downstream project, one rule explains the outcomes:
 Concretely:
 
 - **Strong fits** (both factors high): running one Program under simulated/paper/live interpreters; record/replay of expensive calls (LLM, market data) with fail-on-miss guarantees; hermetic test suites over I/O-heavy pipelines. These were, empirically, the load-bearing wins.
-- **Poor fit — small single-context apps** (factor *a* low): if the code will only ever run one way, the effect vocabulary is ceremony. Projects that adopted doeff as a template, without an interpreter-swapping problem, ended up deleting or bypassing it.
+- **Poor fit — small single-context apps** (factor *a* low): if the code will only ever run one way, the effect vocabulary is ceremony. Projects that adopted doeff as a template, without a need to run one Program under more than one handler stack, ended up deleting or bypassing it.
 - **Poor fit — CPU-bound hot loops** (factor *b* inverted): interception overhead is per-effect. Historical note: an earlier doeff version captured creation context on every effect and was measured at a multiple-x slowdown in a tight simulation loop; current doeff captures trace context only via opt-in effects (`GetTraceback`/`GetExecutionContext`) and on error paths, with line-text resolution deferred to render time — a regression guard pins this property (ADR-DOE-CORE-002). The residual per-effect cost is dispatch itself (VM core plus `@do` generator re-construction glue), so the guidance stands: move sub-millisecond hot paths below the effect boundary (e.g., into a native extension), keeping effects for orchestration.
 
 ## An Adoption Anti-Pattern: Building Power Faster Than Using It
