@@ -23,9 +23,11 @@ from pathlib import Path
 
 from doeff_core_effects.effects import Await
 from doeff_events import (
+    BrokerPatience,
     MarkGap,
     NoticeRoute,
     broker_back_by_retry,
+    broker_patience_handler,
     notice_events_handler,
     redis_notice_handler,
 )
@@ -114,9 +116,10 @@ def _job() -> EffectGenerator[object]:
     """The shape a job uses: the three factories written as calls in its handler list, outermost first."""
     answer: object = yield with_handlers(
         [
+            broker_patience_handler(BrokerPatience(30.0)),
             redis_notice_handler("redis://broker:6379/0", 1.0),
             broker_back_by_retry(1.0),
-            notice_events_handler("rooms-source", ROUTES, 30.0),
+            notice_events_handler("rooms-source", ROUTES),
         ],
         _announces(),
     )

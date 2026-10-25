@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from doeff_core_effects.scheduler import _read_vm_steps, scheduled
 from doeff_events import (
+    BrokerPatience,
     Drop,
     EventBus,
     NoticeRoute,
@@ -23,6 +24,7 @@ from doeff_events import (
     Publish,
     WaitForEvent,
     WaitForEvents,
+    broker_patience_handler,
     notice_events_handler,
     subscribed_event_handler,
 )
@@ -111,14 +113,15 @@ def _composed(body: Program[object], *inner: ProgramHandler) -> Program[object]:
 
 def _sender_steps(body: Program[None]) -> int:
     """送るだけの送り出しを body に被せた時に増える歩数(置かない同じ組み立てとの差)。"""
-    sender = notice_events_handler("steps-sender", SENDS, PATIENCE_SECONDS)
+    sender = notice_events_handler("steps-sender", SENDS)
     return _steps_of(_composed(body, sender)) - _steps_of(_composed(body))
 
 
 def _reader_steps(body: Program[None]) -> int:
     """読む送り出し(channel を購読する)を body に被せた時に増える歩数(置かない同じ組み立てとの差)。"""
-    reader = notice_events_handler("steps-reader", READS, PATIENCE_SECONDS)
-    return _steps_of(_composed(body, memory_notice_handler(MemoryBroker()), reader)) - _steps_of(
+    reader = notice_events_handler("steps-reader", READS)
+    patience = broker_patience_handler(BrokerPatience(PATIENCE_SECONDS))
+    return _steps_of(_composed(body, memory_notice_handler(MemoryBroker()), patience, reader)) - _steps_of(
         _composed(body, memory_notice_handler(MemoryBroker()))
     )
 
@@ -145,7 +148,7 @@ def _sends_directly() -> EffectGenerator[object]:
 
 def test_a_routed_event_made_as_publish_effect_is_still_sent() -> None:
     # 送り出しが受けるのは経路の型の Publish の class だけ — 直に作った値もその class になるので、外へ漏れずに知らせになる。
-    sender = notice_events_handler("steps-sender", SENDS, PATIENCE_SECONDS)
+    sender = notice_events_handler("steps-sender", SENDS)
     answer = run(
         scheduled(_composed(_sends_directly(), memory_notice_handler(MemoryBroker()), sender))
     )

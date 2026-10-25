@@ -28,7 +28,6 @@ from doeff_events import notice_events_handler as notice_events_handler
 from doeff_events import redis_notice_handler as redis_notice_handler
 from doeff_cluster.coordinator.protocol.worker_notices import WORKER_NOTICE_ROUTES as WORKER_NOTICE_ROUTES
 NOTICE_SOURCE: str
-NOTICE_PATIENCE_SECONDS: float
 
 def redis_notices(url: str, timeout_seconds: float, retry_seconds: float) -> list:
     ...

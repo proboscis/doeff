@@ -25,10 +25,9 @@ from doeff_events import (
     WaitForEvents,
     event_handler,
     memory_notice_handler,
-    notice_events_handler,
     subscribed_event_handler,
 )
-from events_test_support import Wakes, announce_listening, record_wakes, run_scheduled
+from events_test_support import Wakes, announce_listening, patient_notice_events, record_wakes, run_scheduled
 
 from doeff import EffectGenerator, Program, do
 
@@ -178,7 +177,7 @@ def test_the_handler_without_queues_answers_the_one_signal_as_a_tuple() -> None:
 
 def _received_in_notice_wrapper(published: tuple[object, ...]) -> tuple[object, ...]:
     """``notice_events_handler``(源の名 mine・channel を 1 つ読む)の包みの中で ``WaitForEvents(Rang)`` を 1 回した答え。"""
-    reader = notice_events_handler("mine", READS_HEARD, 30.0)
+    reader = patient_notice_events("mine", READS_HEARD, 30.0)
     return _received_after(published, memory_notice_handler(MemoryBroker())(reader(_wait_rang())))
 
 

@@ -32,11 +32,11 @@ from doeff_events.handlers.notice_events import (
     GAP_NOTICE,
     MarkGap,
     NoticeRoute,
-    notice_events_handler,
 )
 from doeff_events.handlers.redis_notices import broker_back_by_retry
 from doeff_events.notice_laws import LawNote, law_routes
 from doeff_time import Delay, GetTime
+from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, T0, run_on_virtual_clock
 
 from doeff import K, Pass, Program, Resume, do
@@ -85,7 +85,7 @@ def _sender(broker: MemoryBroker, seen: _Seen, body: Program[object]) -> Program
     routes = tuple(
         NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, MarkGap()) for r in law_routes(PREFIX)
     )
-    events = notice_events_handler("law-retry", routes, PATIENCE_SECONDS)
+    events = patient_notice_events("law-retry", routes, PATIENCE_SECONDS)
     under = memory_notice_handler(broker)(_recording(seen)(broker_back_by_retry(RETRY_SECONDS)(events(body))))
     return subscribed_event_handler(EventBus(), "law-retry")(under)
 
@@ -175,7 +175,7 @@ def test_a_broker_that_takes_the_ping_but_refuses_the_sends_is_tried_once_an_int
         yield Publish(LawNote("lost"))
         yield Delay(12.0)
 
-    events = notice_events_handler("law-refused", routes, PATIENCE_SECONDS)
+    events = patient_notice_events("law-refused", routes, PATIENCE_SECONDS)
     under = memory_notice_handler(broker)(
         _recording(seen)(_sends_refused()(broker_back_by_retry(RETRY_SECONDS)(events(misses_and_waits()))))
     )

@@ -28,9 +28,9 @@ from doeff_events.handlers.memory_notices import (
     memory_notice_handler,
     restore_broker,
 )
-from doeff_events.handlers.notice_events import notice_events_handler
 from doeff_events.notice_laws import EventLawHarness, GapLawHarness, law_routes
 from doeff_time import sim_time_handler
+from events_test_support import patient_notice_events
 
 from doeff import K, Pass, Program, Pure, Resume, do, run
 from doeff import handler as program_handler
@@ -143,7 +143,7 @@ def memory_harness(
     (between it and the broker) and ``above_events`` (between it and the queue) are where a broken handler goes."""
 
     def as_party(source: str, event_types: tuple[type, ...], body: Program[object]) -> Program[object]:
-        events = notice_events_handler(source, law_routes(PREFIX), PATIENCE_SECONDS)
+        events = patient_notice_events(source, law_routes(PREFIX), PATIENCE_SECONDS)
         queue = subscribed_event_handler(EventBus(), source, event_types)
         return queue(above_events(memory_notice_handler(broker)(below_events(events(inside_events(body))))))
 

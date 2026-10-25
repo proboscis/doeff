@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [EffectBase Program with-handlers])
 (import doeff_time [Delay])
-(import doeff_events [EventBus MemoryBroker hold-broker release-broker SourceMissed SourceResumed SourceStarted WaitForEvent memory-notice-handler notice-events-handler
+(import doeff_events [BrokerPatience broker-patience-handler EventBus MemoryBroker hold-broker release-broker SourceMissed SourceResumed SourceStarted WaitForEvent memory-notice-handler notice-events-handler
                       subscribed-event-handler cut-broker restore-broker])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -35,8 +35,9 @@
   {:pre [(: broker MemoryBroker) (: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "program"}}
   "body を、coordinator と同じ broker の worker の生死の出来事の受け手として走らせるため(購読は body の最初の effect より前に成る)。"
   (<- answer (with-handlers [(subscribed-event-handler (EventBus) READER #(WorkerGone WorkerBack SourceStarted SourceMissed SourceResumed))
+                             (broker-patience-handler (BrokerPatience 3600.0))
                              (memory-notice-handler broker)
-                             (notice-events-handler READER WORKER-NOTICE-READS 3600.0)]
+                             (notice-events-handler READER WORKER-NOTICE-READS)]
                body))
   answer)
 

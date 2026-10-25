@@ -92,6 +92,7 @@ from doeff_events.notice_laws import (
     law_routes,
 )
 from doeff_time import Delay, async_time_handler
+from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, Layer, PartyUnder, gap_harness_over
 from test_kept_notices_memory import _drops_the_first_kept_notice, kept_routes
 
@@ -185,7 +186,7 @@ def _redis_harness(url: str, prefix: str) -> EventLawHarness:
     def as_party(
         source: str, event_types: tuple[type, ...], body: Program[object]
     ) -> Program[object]:
-        events = notice_events_handler(source, law_routes(prefix), PATIENCE_SECONDS)
+        events = patient_notice_events(source, law_routes(prefix), PATIENCE_SECONDS)
         queue = subscribed_event_handler(EventBus(), source, event_types)
         return queue(
             _answers_broker_back(outage)(redis_notice_handler(url, TIMEOUT_SECONDS)(events(body)))
@@ -291,7 +292,7 @@ def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redi
 
     def reader(source: str, body: Program[object]) -> Program[object]:
         """A reader of the process: its own subscriber queue and wrapper, on the process's broker handler."""
-        events = notice_events_handler(source, law_routes(prefix), PATIENCE_SECONDS)
+        events = patient_notice_events(source, law_routes(prefix), PATIENCE_SECONDS)
         return subscribed_event_handler(EventBus(), source, (LawNote,))(events(body))
 
     @do
@@ -384,7 +385,7 @@ def test_a_cancel_before_the_reader_holds_its_source_leaves_no_source_and_no_sta
             yield Cancel((yield Wait(reader_made.future)))
 
         yield Spawn(cancels(), priority=PRIORITY_HIGH)
-        events = notice_events_handler(source, law_routes(prefix), PATIENCE_SECONDS)
+        events = patient_notice_events(source, law_routes(prefix), PATIENCE_SECONDS)
         party = subscribed_event_handler(EventBus(), source, (LawNote,))(
             broker_back_by_retry(RETRY_SECONDS)(woken_at_the_source(woken)(events(follows_forever())))
         )
@@ -576,16 +577,14 @@ def test_a_sender_cut_off_alone_tells_its_gap_to_a_connected_reader_when_it_reac
     @do
     def both() -> "EffectGenerator[tuple[object, ...]]":
         started: Promise[object] = yield CreatePromise()
-        reader_events = notice_events_handler("law-connected", law_routes(prefix), PATIENCE_SECONDS)
+        reader_events = patient_notice_events("law-connected", law_routes(prefix), PATIENCE_SECONDS)
         reader = yield Spawn(
             subscribed_event_handler(
                 EventBus(), "law-connected", (SourceStarted, SourceMissed, LawNote)
             )(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(reader_events(reads(started))))
         )
         yield Wait(started.future)
-        sender_events = notice_events_handler(
-            "law-cut-off", _sender_routes(prefix), PATIENCE_SECONDS
-        )
+        sender_events = notice_events_handler("law-cut-off", _sender_routes(prefix))
         sent = yield subscribed_event_handler(EventBus(), "law-cut-off")(
             redis_notice_handler(link.url, TIMEOUT_SECONDS)(
                 broker_back_by_retry(RETRY_SECONDS)(sender_events(sends()))
@@ -684,7 +683,7 @@ def test_a_restarted_server_is_tried_only_while_a_gap_is_held_and_told_one_gap_o
             after = yield Publish(LawNote("after"))
             return (first, before, missed, during, told, later, after)
 
-        events = notice_events_handler("law-restart", _sender_routes(_prefix()), PATIENCE_SECONDS)
+        events = notice_events_handler("law-restart", _sender_routes(_prefix()))
         program = subscribed_event_handler(EventBus(), "law-restart")(
             redis_notice_handler(url, TIMEOUT_SECONDS)(
                 _counting(tries)(broker_back_by_retry(RETRY_SECONDS)(events(rides_a_restart())))
@@ -713,7 +712,7 @@ def _redis_party_under(url: str) -> PartyUnder:
         def as_party(
             source: str, event_types: tuple[type, ...], body: Program[object]
         ) -> Program[object]:
-            events = notice_events_handler(source, law_routes(PREFIX), PATIENCE_SECONDS)
+            events = patient_notice_events(source, law_routes(PREFIX), PATIENCE_SECONDS)
             queue = subscribed_event_handler(EventBus(), source, event_types)
             return queue(redis_notice_handler(url, TIMEOUT_SECONDS)(layer(events(body))))
 
@@ -748,7 +747,7 @@ def test_a_server_that_stops_answering_cannot_hold_a_publish_past_the_timeout_on
             stopped = yield Publish(LawNote("into the stop"))
             return (first, stopped, time.monotonic() - started)
 
-        events = notice_events_handler("law-stopped", _sender_routes(_prefix()), PATIENCE_SECONDS)
+        events = notice_events_handler("law-stopped", _sender_routes(_prefix()))
         program = subscribed_event_handler(EventBus(), "law-stopped")(
             redis_notice_handler(url, TIMEOUT_SECONDS)(
                 broker_back_by_retry(RETRY_SECONDS)(events(publishes_into_a_stopped_server()))
@@ -793,7 +792,7 @@ def test_a_half_open_subscription_is_told_as_stalled_within_the_default_silence_
             stalled = yield WaitForEvent(SourceStalled)
             return (stalled, time.monotonic() - started)
 
-        events = notice_events_handler("law-half-open", law_routes(_prefix()), PATIENCE_SECONDS)
+        events = patient_notice_events("law-half-open", law_routes(_prefix()), PATIENCE_SECONDS)
         program = subscribed_event_handler(EventBus(), "law-half-open", (SourceStarted, SourceStalled))(
             redis_notice_handler(url, TIMEOUT_SECONDS)(
                 broker_back_by_retry(RETRY_SECONDS)(events(stalls_when_the_server_stops()))
@@ -838,7 +837,7 @@ def test_a_quiet_subscription_that_answers_its_pings_stays_subscribed_on_redis(r
         yield Publish(LawNote("after the quiet"))
         return (yield WaitForEvent(SourceStalled, LawNote))
 
-    events = notice_events_handler("law-quiet", law_routes(prefix), PATIENCE_SECONDS)
+    events = patient_notice_events("law-quiet", law_routes(prefix), PATIENCE_SECONDS)
     program = subscribed_event_handler(EventBus(), "law-quiet", (SourceStarted, SourceStalled, LawNote))(
         redis_notice_handler(url, TIMEOUT_SECONDS, QUIET_SILENCE_SECONDS)(
             broker_back_by_retry(RETRY_SECONDS)(events(stays_quiet()))
@@ -969,7 +968,7 @@ def test_a_kept_notice_lost_on_the_way_to_the_bus_is_received_on_redis(redis_url
         second = yield WaitForEvent(LawNote)
         return first, second
 
-    events = notice_events_handler("law-kept-redis", routes, PATIENCE_SECONDS)
+    events = patient_notice_events("law-kept-redis", routes, PATIENCE_SECONDS)
     queue = subscribed_event_handler(EventBus(), "law-kept-redis", (SourceStarted, LawNote))
     broker = redis_notice_handler(redis_url, TIMEOUT_SECONDS, redeliver_seconds=REDELIVER_SECONDS)
     party = queue(broker(_drops_the_first_kept_notice(state)(events(sends_and_waits()))))
