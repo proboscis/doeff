@@ -48,7 +48,7 @@ The narration never uses a local text-to-speech model: the maintainer decided so
 | `src/kit/warp.ts` | Narration time: a headline's slot stretches to fit its spoken line; scenes read `useSceneFrame()`. |
 | `src/kit/narrated.tsx` | `narrate(page, durations, scenes)`: plays the scenes in order with their narration. |
 | `src/pages/<name>/` | One page's video: its scenes, `narration.json`, `durations.json`, and `measure/` (the runs behind its numbers). |
-| `src/Root.tsx` | One `<Composition>` per page, with the id `<name>`. |
+| `src/Root.tsx` | One `<Composition>` per page, with the id `<name>`: it finds every `narrate(...)` export under `src/pages/` itself, so a new page does not edit it. |
 | `tts.py` | Says `narration.json` through OpenAI's speech endpoint into `public/<name>/`, writes `durations.json`. |
 | `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg`. |
 | `stills.mjs` | Renders single frames as PNG, to check a layout without rendering the whole video. |
@@ -66,7 +66,7 @@ The narration never uses a local text-to-speech model: the maintainer decided so
    English sentence or two per headline. Write `doeff` as it is spelled; `tts.py` respells it for the voice.
 4. Write the scenes in `src/pages/<name>/<Name>.tsx` with the kit's parts. Each scene is designed in seconds
    of its own time with `Lines` (headline times and texts); export the page's video as
-   `narrate('<name>', DURATIONS, [...scenes])` and add its `<Composition>` to `src/Root.tsx`.
+   `narrate('<name>', DURATIONS, [...scenes])`. `src/Root.tsx` picks it up as the composition `<name>`; do not edit it.
 5. Make the narration: `OPENAI_API_KEY=… uv run tts.py <name>` (add line ids to redo only those lines).
 6. Check the layout: `node stills.mjs <name> out/check <frame>…` at the frames where headlines change and
    where things move, and look at every PNG — nothing overlaps, nothing runs off the frame, text is readable.

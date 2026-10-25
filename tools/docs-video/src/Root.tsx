@@ -1,48 +1,26 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
-import {ADVANCED_EFFECTS} from './pages/advanced-effects/AdvancedEffects';
-import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
-import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
-import {CACHE_SYSTEM} from './pages/cache-system/CacheSystem';
-import {CAPABILITY_CLASSES} from './pages/capability-classes/CapabilityClasses';
-import {MCP_TOOLS} from './pages/mcp-tools/McpTools';
-import {CLI_AUTO_DISCOVERY} from './pages/cli-auto-discovery/CliAutoDiscovery';
-import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
-import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
-import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
-import {HOME} from './pages/home/Home';
-import {KLEISLI_ARROWS} from './pages/kleisli-arrows/KleisliArrows';
-import {SEMAPHORE_EFFECTS} from './pages/semaphore-effects/SemaphoreEffects';
-import {RUST_SCHEDULER} from './pages/rust-scheduler/RustScheduler';
-import {PATTERNS} from './pages/patterns/Patterns';
-import {STATIC_TYPING} from './pages/static-typing/StaticTyping';
-import {LLM_UNIFIED_EFFECTS} from './pages/llm-unified-effects/LlmUnifiedEffects';
-import {PROGRAM_ARCHITECTURE} from './pages/program-architecture/ProgramArchitecture';
-import {WHY_EFFECTS} from './pages/why-effects/WhyEffects';
 
-// One composition per docs page, named after the page's video file in docs/assets/videos/ (home.mp4 is on
-// docs/index.md). A new page's video adds its line here.
+// A page's video as narrate() (kit/narrated.tsx) returns it: its id is the page's name under src/pages/ and the name
+// of its video file in docs/assets/videos/ (home.mp4 is on docs/index.md).
+type PageVideo = {id: string; length: number; Video: React.FC};
+
+// Whether an export of a page module is the page's video.
+const isVideo = (value: unknown): value is PageVideo =>
+  typeof value === 'object' && value !== null && 'id' in value && 'length' in value && 'Video' in value;
+
+// Every module under pages/, found when the bundle is built (webpack's require.context), so that a new page's video
+// is a new directory and nothing here: each page adding its own line here made the pages' branches conflict.
+declare const require: {context: (dir: string, deep: boolean, match: RegExp) => {keys: () => string[]; (key: string): Record<string, unknown>}};
+const pages = require.context('./pages', true, /\.tsx$/);
+const VIDEOS = [...new Set(pages.keys().flatMap((key) => Object.values(pages(key)).filter(isVideo)))].sort((a, b) => a.id.localeCompare(b.id));
+
+// One composition per page's video.
 export const Root: React.FC = () => (
   <>
-    <Composition id="home" component={HOME.Video} durationInFrames={HOME.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="advanced-effects" component={ADVANCED_EFFECTS.Video} durationInFrames={ADVANCED_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="getting-started" component={GETTING_STARTED.Video} durationInFrames={GETTING_STARTED.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="basic-effects" component={BASIC_EFFECTS.Video} durationInFrames={BASIC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="error-handling" component={ERROR_HANDLING.Video} durationInFrames={ERROR_HANDLING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="async-effects" component={ASYNC_EFFECTS.Video} durationInFrames={ASYNC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="mcp-tools" component={MCP_TOOLS.Video} durationInFrames={MCP_TOOLS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="why-effects" component={WHY_EFFECTS.Video} durationInFrames={WHY_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="capability-classes" component={CAPABILITY_CLASSES.Video} durationInFrames={CAPABILITY_CLASSES.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="kleisli-arrows" component={KLEISLI_ARROWS.Video} durationInFrames={KLEISLI_ARROWS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="cli-auto-discovery" component={CLI_AUTO_DISCOVERY.Video} durationInFrames={CLI_AUTO_DISCOVERY.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="semaphore-effects" component={SEMAPHORE_EFFECTS.Video} durationInFrames={SEMAPHORE_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="rust-scheduler" component={RUST_SCHEDULER.Video} durationInFrames={RUST_SCHEDULER.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="patterns" component={PATTERNS.Video} durationInFrames={PATTERNS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="static-typing" component={STATIC_TYPING.Video} durationInFrames={STATIC_TYPING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="cache-system" component={CACHE_SYSTEM.Video} durationInFrames={CACHE_SYSTEM.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="llm-unified-effects" component={LLM_UNIFIED_EFFECTS.Video} durationInFrames={LLM_UNIFIED_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
-    <Composition id="program-architecture" component={PROGRAM_ARCHITECTURE.Video} durationInFrames={PROGRAM_ARCHITECTURE.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    {VIDEOS.map((video) => (
+      <Composition key={video.id} id={video.id} component={video.Video} durationInFrames={video.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    ))}
   </>
 );

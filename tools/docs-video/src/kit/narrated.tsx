@@ -39,8 +39,8 @@ const Faded: React.FC<{length: number; children: React.ReactNode}> = ({length, c
   return <AbsoluteFill style={{opacity: interpolate(frame, [length - f(0.4), length], [1, 0], clamp)}}>{children}</AbsoluteFill>;
 };
 
-// The video of a page: its length in frames (for the Composition in Root.tsx) and the component that plays the
-// scenes in order with their narration from public/<page>/.
+// The video of a page: its id (the page, the id of its composition in Root.tsx), its length in frames, and the
+// component that plays the scenes in order with their narration from public/<page>/.
 export const narrate = (page: string, said: Said, scenes: Scene[]) => {
   const laid = scenes.map((scene) => {
     const slots = slotsOf(said, scene);
@@ -69,5 +69,5 @@ export const narrate = (page: string, said: Said, scenes: Scene[]) => {
       })}
     </AbsoluteFill>
   );
-  return {length, Video};
+  return {id: page, length, Video};
 };
