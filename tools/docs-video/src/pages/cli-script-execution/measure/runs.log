@@ -1,0 +1,42 @@
+doeff 807d13011, doeff-indexer 0.1.3
+
+$ doeff run --program shop.checkout.cart.total_program --format json
+{"status": "ok", "program": "shop.checkout.cart.total_program", "interpreter": "shop.checkout.checkout_interpreter", "envs": ["shop.shop_env", "shop.checkout.checkout_env"], "result": "46.20 EUR", "result_type": "str"}
+(exit 0)
+
+$ doeff run --program shop.checkout.cart.total_program - < scripts/inspect.py
+value: '46.20 EUR'
+program: Call
+interpreter: shop.checkout.checkout_interpreter
+injected: ['interpreter', 'json', 'program', 'sys', 'value']
+(exit 0)
+
+$ doeff run --program shop.checkout.cart.total_program - < scripts/rerun.py
+first run: 46.20 EUR
+again: 52.50 USD
+doeff Traceback (most recent call last):
+  total()  shop/checkout/cart.py:9
+    rate = yield Ask("tax_rate")
+    handlers:
+      reader ↗
+      scheduled ↗
+MissingEnvKeyError: Ask: key not found: 'tax_rate'
+  The env is empty.
+  To provide it, put the key in the env of the handler that answers Ask: reader(env={...}) or lazy_ask(env={...}).
+no env: MissingEnvKeyError Ask: key not found: 'tax_rate'
+  The env is empty.
+  To provide it, put the key in the env of the handler that answers Ask: reader(env={...}) or lazy_ask(env={...}).
+(exit 0)
+
+$ doeff run --program shop.checkout.cart.total_program - < scripts/handlers.py
+asked: tax_rate
+asked: currency
+traced: 46.20 EUR
+tax-free: 42.00 EUR
+(exit 0)
+
+$ doeff run --program shop.checkout.cart.total_program - < scripts/fails.py
+value: 46.20 EUR
+Error executing script: string indices must be integers, not 'str'
+(exit 1)
+
