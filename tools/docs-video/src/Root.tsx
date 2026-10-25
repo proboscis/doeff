@@ -4,6 +4,7 @@ import {FPS, HEIGHT, WIDTH} from './kit/theme';
 import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
+import {EFFECT_COMBINATIONS} from './pages/effect-combinations/EffectCombinations';
 import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
 import {GETTING_STARTED} from './pages/getting-started/GettingStarted';
 import {HOME} from './pages/home/Home';
@@ -20,5 +21,6 @@ export const Root: React.FC = () => (
     <Composition id="async-effects" component={ASYNC_EFFECTS.Video} durationInFrames={ASYNC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="why-effects" component={WHY_EFFECTS.Video} durationInFrames={WHY_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="effect-combinations" component={EFFECT_COMBINATIONS.Video} durationInFrames={EFFECT_COMBINATIONS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
   </>
 );
