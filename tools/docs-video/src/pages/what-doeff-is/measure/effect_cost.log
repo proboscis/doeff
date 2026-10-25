@@ -1,0 +1,9 @@
+100000 effects per run, 5 runs
+per effect (us): 3.52 3.77 2.96 2.93 2.67
+per call (us):   0.095 0.077 0.106 0.087 0.117
+100000 effects per run, 5 runs
+per effect (us): 2.90 3.05 3.10 3.23 3.23
+per call (us):   0.079 0.082 0.094 0.082 0.087
+100000 effects per run, 5 runs
+per effect (us): 2.41 2.40 3.35 2.92 2.67
+per call (us):   0.092 0.073 0.073 0.141 0.195

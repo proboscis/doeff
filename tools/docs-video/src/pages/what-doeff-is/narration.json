@@ -1,0 +1,106 @@
+[
+ {
+  "id": "t1",
+  "text": "What is doeff? Algebraic effects for Python."
+ },
+ {
+  "id": "t2",
+  "text": "A program yields effects. A handler receives each one together with k, the rest of the program."
+ },
+ {
+  "id": "t3",
+  "text": "What the handler does with k decides what the effect means."
+ },
+ {
+  "id": "m1",
+  "text": "research yields one Spend per topic. It knows nothing about what spending means."
+ },
+ {
+  "id": "m2",
+  "text": "free answers each Spend and lets the rest run. Notes on both topics."
+ },
+ {
+  "id": "m3",
+  "text": "refuse drops k at the first Spend. research stops there."
+ },
+ {
+  "id": "m4",
+  "text": "A budget keeps what is left between effects. With ten, both Spends fit."
+ },
+ {
+  "id": "m5",
+  "text": "With five, only two is left for the second Spend. The budget drops k."
+ },
+ {
+  "id": "s1",
+  "text": "Handlers stack. trace takes every effect first, notes it, and passes it on to the budget."
+ },
+ {
+  "id": "o1",
+  "text": "State, exceptions, concurrency, observation and I/O are effects of this same kind."
+ },
+ {
+  "id": "o2",
+  "text": "crawl fetches pages in parallel tasks, counts them in state, and logs each fetch."
+ },
+ {
+  "id": "o3",
+  "text": "Each effect travels out to the handler that gives it its meaning."
+ },
+ {
+  "id": "o4",
+  "text": "The empty page raises in its task. Try turns the error into a value."
+ },
+ {
+  "id": "o5",
+  "text": "size, crawl and report name the effects they need. Where they run decides the handlers."
+ },
+ {
+  "id": "u1",
+  "text": "Swapping I/O is one use. A handler that calls the network answers Fetch, and the code stays as it is."
+ },
+ {
+  "id": "u2",
+  "text": "Leave the Fetch handler out, and nobody answers: each task gets an unhandled effect."
+ },
+ {
+  "id": "u3",
+  "text": "It is one use, not what doeff is. research does no I/O at all."
+ },
+ {
+  "id": "l1",
+  "text": "Its limits. Continuations are one-shot: each k resumes at most once."
+ },
+ {
+  "id": "l2",
+  "text": "Resume k for tea, then again for coffee, and the second Resume raises a RuntimeError."
+ },
+ {
+  "id": "l3",
+  "text": "What stands in for it: run the whole program again, once per choice. A program is a value."
+ },
+ {
+  "id": "l4",
+  "text": "Effects are not in the types. A missing handler shows only when the program runs."
+ },
+ {
+  "id": "l5",
+  "text": "And an effect costs a few microseconds. Nothing next to I/O, but visible in a tight loop."
+ },
+ {
+  "id": "w1",
+  "text": "Next to other effect systems: in effect and effectful, a handler never gets the continuation."
+ },
+ {
+  "id": "w2",
+  "text": "OCaml 5 is the closest: one-shot continuations, and no effects in the types."
+ },
+ {
+  "id": "w3",
+  "text": "Koka resumes many times, and checks effects in its types. doeff has neither."
+ },
+ {
+  "id": "z1",
+  "text": "doeff: algebraic effects for Python. Your code yields effects, and handlers decide what they mean."
+ }
+]

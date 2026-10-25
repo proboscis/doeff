@@ -1,0 +1,28 @@
+free:
+  free: Spend(cost=3) -> Transfer(k, None)
+  research goes on: notes on tides
+  free: Spend(cost=3) -> Transfer(k, None)
+  research goes on: notes on moons
+  -> ['notes on tides', 'notes on moons']
+refuse:
+  refuse: Spend(cost=3) -> drops k
+  -> refused
+budget(10):
+  budget: Spend(cost=3), left 10 -> 7, resumes k
+  research goes on: notes on tides
+  budget: Spend(cost=3), left 7 -> 4, resumes k
+  research goes on: notes on moons
+  -> ['notes on tides', 'notes on moons']
+budget(5):
+  budget: Spend(cost=3), left 5 -> 2, resumes k
+  research goes on: notes on tides
+  budget: Spend(cost=3), left 2 -> drops k
+  -> over budget
+budget(5) around trace:
+  trace: Spend(cost=3) -> Pass
+  budget: Spend(cost=3), left 5 -> 2, resumes k
+  research goes on: notes on tides
+  trace: Spend(cost=3) -> Pass
+  budget: Spend(cost=3), left 2 -> drops k
+  -> over budget
+  seen: [Spend(cost=3), Spend(cost=3)]

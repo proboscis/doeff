@@ -30,17 +30,17 @@ export const Headlines: React.FC<{lines: Lines}> = ({lines}) => {
   );
 };
 
-// Marks the yield in a line, the place where the program hands an effect to the handlers.
-export const highlightYield = (line: string) => {
-  const [before, after] = line.split('yield');
-  return (
-    <>
-      {before}
-      <span style={{color: ACCENT, fontWeight: 700}}>yield</span>
-      {after}
-    </>
-  );
-};
+// Marks each yield in a line, the place where the program hands an effect to the handlers.
+export const highlightYield = (line: string) => (
+  <>
+    {line.split('yield').map((part, i) => (
+      <React.Fragment key={i}>
+        {i > 0 && <span style={{color: ACCENT, fontWeight: 700}}>yield</span>}
+        {part}
+      </React.Fragment>
+    ))}
+  </>
+);
 
 export const PAD = 12;
 

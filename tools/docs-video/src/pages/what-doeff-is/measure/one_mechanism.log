@@ -1,0 +1,21 @@
+effects, in the order they were yielded:
+  Listen(crawl(urls))                      -> listen_handler
+  Spawn(Try(size(url)))                    -> scheduled
+  Try(size(url))                           -> try_handler
+  Fetch(url='https://a.example')           -> local_pages
+  Get('fetched')                           -> state
+  Put('fetched', 1)                        -> state
+  Tell('fetched https://a.example')        -> writer
+  Spawn(Try(size(url)))                    -> scheduled
+  Try(size(url))                           -> try_handler
+  Fetch(url='https://b.example')           -> local_pages
+  Gather(*tasks)                           -> scheduled
+  Get('fetched')                           -> state
+sizes:   [Ok(12), Err(ValueError('empty page: https://b.example'))]
+log:     [Tell('fetched https://a.example')]
+fetched: 1
+without local_pages:
+   Err UnhandledEffect no handler found for effect: Fetch (Fetch(url='https://a.example'))
+   Err UnhandledEffect no handler found for effect: Fetch (Fetch(url='https://b.example'))
+log:     []
+fetched: 0
