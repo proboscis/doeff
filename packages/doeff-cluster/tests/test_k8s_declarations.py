@@ -448,10 +448,39 @@ def test_worker_runs_as_fixed_account_with_projected_token(
         for key in _mapping(source, "source")
     }
     assert _mapping(kinds["serviceAccountToken"], "serviceAccountToken")["path"] == "token"
+    assert "audience" not in _mapping(kinds["serviceAccountToken"], "serviceAccountToken")
     assert _mapping(kinds["configMap"], "configMap")["name"] == "kube-root-ca.crt"
     assert _mapping(kinds["downwardAPI"], "downwardAPI")["items"] == [
         {"path": "namespace", "fieldRef": {"fieldPath": "metadata.namespace"}}
     ]
+
+
+# kube-apiserver が JWT の exp を 1 年に延ばす要求の期限(k8s の token.WarnOnlyBoundTokenExpirationSeconds — 自動 mount の既定と同じ)。
+# 延ばすのは、Pod に結んだ・audience が API server の物の・期限がちょうどこの秒の要求だけ(--service-account-extend-token-expiration)。
+EXTENDED_TOKEN_SECONDS = 3607
+
+
+def test_worker_token_outlives_a_missed_kubelet_refresh(worker: Manifest) -> None:
+    """投影の token の期限は 3607 秒 — kubelet が置き直しを取り逃しても、旧い token が 401 にならない(card ki-d31166f84ad0)。
+
+    3600 秒の token は延ばされず、JWT の exp が置かれてから 1 時間で切れる。2026-10-24 の zeus では kubelet が通信の切れの後に置き直しを
+    再開せず、exp の 81 秒後から Pod の中で API server を呼ぶ物が全部 401 になった。3607 秒なら exp は 1 年先で、kubelet は今までどおり
+    1 時間ごとに置き直す(置き直しの間を決めるのは要求の秒 — TokenRequest の status の期限)。
+    """
+    mount = _mount_at(worker, TOKEN_DIR)
+    sources = _sequence(
+        _mapping(_volume(worker, str(mount["name"]))["projected"], "projected")["sources"],
+        "sources",
+    )
+    tokens = [
+        _mapping(_mapping(source, "source")["serviceAccountToken"], "serviceAccountToken")
+        for source in sources
+        if "serviceAccountToken" in _mapping(source, "source")
+    ]
+    assert len(tokens) == 1, f"投影の token はちょうど 1 つ: {tokens!r}"
+    assert tokens[0].get("expirationSeconds") == EXTENDED_TOKEN_SECONDS, (
+        f"token の expirationSeconds は {EXTENDED_TOKEN_SECONDS}(延長の掛かる要求)でなければならない: {tokens[0]!r}"
+    )
 
 
 def test_upper_system_values_come_from_fixed_named_configmaps(

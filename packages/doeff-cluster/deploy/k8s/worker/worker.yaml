@@ -122,11 +122,14 @@ spec:
         - { name: memory-scratch, emptyDir: { medium: Memory, sizeLimit: 1536Mi } }
         - { name: host-systemd, hostPath: { path: /etc/systemd/system, type: Directory } }
         # ServiceAccount doeff-worker の token と cluster の CA と namespace — 自動 mount と同じ中身を worker の container にだけ置く。
+        # token の期限は自動 mount と同じ 3607 秒(card ki-d31166f84ad0)。kube-apiserver は Pod に結んだ 3607 秒の要求だけ JWT の exp を
+        # 1 年に延ばし(--service-account-extend-token-expiration)、kubelet は 1 時間ごとに置き直し続ける。3600 秒では延びず、kubelet が
+        # 置き直しを 1 度取り逃すと(2026-10-24 zeus — 通信の切れの後に再開しなかった)1 時間で Pod の中の API の呼びが全部 401 になる。
         - name: account-token
           projected:
             defaultMode: 0444
             sources:
-              - serviceAccountToken: { path: token, expirationSeconds: 3600 }
+              - serviceAccountToken: { path: token, expirationSeconds: 3607 }
               - configMap: { name: kube-root-ca.crt, items: [{ key: ca.crt, path: ca.crt }] }
               - downwardAPI: { items: [{ path: namespace, fieldRef: { fieldPath: metadata.namespace } }] }
         - { name: repos, secret: { secretName: worker-repos, defaultMode: 0400, optional: true } }
