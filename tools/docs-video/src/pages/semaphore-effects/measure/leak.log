@@ -1,0 +1,30 @@
+run 1:
+  leaky:
+     09:00:00 leaky holds the permit
+     09:00:01 leaky raised ValueError('boom')
+     09:00:06 next task: still waiting
+  guarded:
+     09:00:00 guarded holds the permit
+     09:00:01 next task got the permit
+     09:00:01 guarded raised ValueError('boom')
+     09:00:01 next task: entered
+run 2:
+  leaky:
+     09:00:00 leaky holds the permit
+     09:00:01 leaky raised ValueError('boom')
+     09:00:06 next task: still waiting
+  guarded:
+     09:00:00 guarded holds the permit
+     09:00:01 next task got the permit
+     09:00:01 guarded raised ValueError('boom')
+     09:00:01 next task: entered
+run 3:
+  leaky:
+     09:00:00 leaky holds the permit
+     09:00:01 leaky raised ValueError('boom')
+     09:00:06 next task: still waiting
+  guarded:
+     09:00:00 guarded holds the permit
+     09:00:01 next task got the permit
+     09:00:01 guarded raised ValueError('boom')
+     09:00:01 next task: entered
