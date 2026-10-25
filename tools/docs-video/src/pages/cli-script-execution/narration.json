@@ -1,0 +1,94 @@
+[
+ {
+  "id": "t1",
+  "text": "CLI script execution. doeff run can run a program, and then run a script of yours against that run."
+ },
+ {
+  "id": "t2",
+  "text": "First the program runs, and the effects it yields are answered by its handlers."
+ },
+ {
+  "id": "t3",
+  "text": "Then your script runs, with the program, its value, and its interpreter already in hand."
+ },
+ {
+  "id": "d1",
+  "text": "Here is the command: a program path, then a dash, so the script is read from standard input."
+ },
+ {
+  "id": "d2",
+  "text": "No interpreter is given, so doeff takes the closest marked one on the module path: checkout interpreter."
+ },
+ {
+  "id": "d3",
+  "text": "The default envs along the path are merged in order, and the closer one wins: the tax rate is zero point one."
+ },
+ {
+  "id": "r1",
+  "text": "checkout interpreter runs the program under a reader that holds the merged env."
+ },
+ {
+  "id": "r2",
+  "text": "Each Ask travels out to the reader, and its answer comes back to the yield."
+ },
+ {
+  "id": "r3",
+  "text": "The program returns forty six twenty euros. That is the value."
+ },
+ {
+  "id": "i1",
+  "text": "Now the script runs, and doeff has put five names in its globals."
+ },
+ {
+  "id": "i2",
+  "text": "value is what the program returned."
+ },
+ {
+  "id": "i3",
+  "text": "program is the program as it was imported, still a value you can run. interpreter is the one that ran it."
+ },
+ {
+  "id": "i4",
+  "text": "sys and json come along too. Anything else, the script imports itself."
+ },
+ {
+  "id": "a1",
+  "text": "Because program is a value, the script can run it again."
+ },
+ {
+  "id": "a2",
+  "text": "Give the interpreter another env, and the same Asks get new answers: fifty two fifty, in dollars."
+ },
+ {
+  "id": "a3",
+  "text": "Call it with no env, and nothing holds the tax rate. The Ask fails with a missing env key error."
+ },
+ {
+  "id": "h1",
+  "text": "The script can also wrap the program in handlers of its own."
+ },
+ {
+  "id": "h2",
+  "text": "trace receives each Ask, prints its key, and passes it on to the reader."
+ },
+ {
+  "id": "h3",
+  "text": "free answers the tax rate itself, with zero, and passes currency on."
+ },
+ {
+  "id": "h4",
+  "text": "Same program, other handlers, another meaning: forty two euros."
+ },
+ {
+  "id": "e1",
+  "text": "If the script raises, doeff prints the error and exits with status one."
+ },
+ {
+  "id": "e2",
+  "text": "What the script printed before the error stays on standard output."
+ },
+ {
+  "id": "z1",
+  "text": "doeff run runs your program with its handlers, then hands the run to your script, where the program is a value you can run again, under any handlers."
+ }
+]
