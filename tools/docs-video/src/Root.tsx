@@ -6,6 +6,7 @@ import {ASYNC_EFFECTS} from './pages/async-effects/AsyncEffects';
 import {BASIC_EFFECTS} from './pages/basic-effects/BasicEffects';
 import {CACHE_SYSTEM} from './pages/cache-system/CacheSystem';
 import {CAPABILITY_CLASSES} from './pages/capability-classes/CapabilityClasses';
+import {MCP_TOOLS} from './pages/mcp-tools/McpTools';
 import {CLI_AUTO_DISCOVERY} from './pages/cli-auto-discovery/CliAutoDiscovery';
 import {CORE_CONCEPTS} from './pages/core-concepts/CoreConcepts';
 import {ERROR_HANDLING} from './pages/error-handling/ErrorHandling';
@@ -29,6 +30,7 @@ export const Root: React.FC = () => (
     <Composition id="basic-effects" component={BASIC_EFFECTS.Video} durationInFrames={BASIC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="error-handling" component={ERROR_HANDLING.Video} durationInFrames={ERROR_HANDLING.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="async-effects" component={ASYNC_EFFECTS.Video} durationInFrames={ASYNC_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
+    <Composition id="mcp-tools" component={MCP_TOOLS.Video} durationInFrames={MCP_TOOLS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="why-effects" component={WHY_EFFECTS.Video} durationInFrames={WHY_EFFECTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="capability-classes" component={CAPABILITY_CLASSES.Video} durationInFrames={CAPABILITY_CLASSES.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     <Composition id="core-concepts" component={CORE_CONCEPTS.Video} durationInFrames={CORE_CONCEPTS.length} fps={FPS} width={WIDTH} height={HEIGHT} />
