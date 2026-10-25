@@ -4,8 +4,9 @@ A handler is a def marked with ``@handler``, and it is applied to a program as i
 ``run(budget(10)(research([...])))``. The old style wraps an unmarked function at the call,
 ``handler(fn)(program)``; it was still in about 35 places of the docs after the README had moved
 on (card ki-6dcc457d8917). This check counts the old style in the pages a reader opens and keeps it
-at 0. ``docs/proposals`` and ``docs/specs`` are records of their time and are left out: a proposal
-that still shows the old style says so in a note.
+at 0. The records of their time are left out: ``docs/proposals`` and ``docs/specs`` (a proposal that
+still shows the old style says so in a note), and the design notes, design checks and history,
+whose evidence quotes code as it was.
 """
 
 from __future__ import annotations
@@ -17,7 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 # ``handler(fn)(`` — an unmarked function wrapped at the call and applied to a program.
 OLD_STYLE = re.compile(r"\bhandler\([a-z_]+\)\(")
 # Records of their time, kept as written.
-HISTORICAL = ("docs/proposals/", "docs/specs/")
+HISTORICAL = (
+    "docs/proposals/",
+    "docs/specs/",
+    "docs/design/",
+    "docs/design-checks/",
+    "docs/history/",
+)
 
 
 def _pages() -> list[Path]:
