@@ -1,0 +1,31 @@
+type: McpToolDef
+name: submit-order-tool
+description: Submit a trading order to Kabustation
+input_schema: {
+ "type": "object",
+ "properties": {
+  "symbol": {
+   "type": "string",
+   "description": "Stock symbol code (e.g. 7203)"
+  },
+  "side": {
+   "type": "string",
+   "description": "Order side",
+   "enum": [
+    "buy",
+    "sell"
+   ]
+  },
+  "qty": {
+   "type": "integer",
+   "description": "Quantity to trade"
+  }
+ },
+ "required": [
+  "symbol",
+  "side",
+  "qty"
+ ]
+}
+handler: _submit_order_tool_mcp_handler (symbol: 'str', side: 'str', qty: 'int')
+run(handler("7203", "buy", 100)): 'accepted: buy 100 of 7203'

@@ -16,6 +16,8 @@ doeff-agents can expose `defk` functions as [MCP](https://modelcontextprotocol.i
 to Claude Code agents. The agent discovers tools via `.mcp.json`, connects over SSE,
 and calls them through the doeff handler stack.
 
+[![A narrated video, under two and a half minutes: a defk exposed as a tool an agent calls; defmcp-tool expanding to an McpToolDef with a name, a JSON Schema and a @do handler; Launch caught by claude_agent_handler, which captures the handlers, starts the MCP server, writes .mcp.json and resumes k with a session handle; a scripted agent's calls reaching a paper broker handler, and a call outside the schema refused by the server; and the program seeing the agent's order after Stop, in either handler order](assets/videos/mcp-tools.jpg)](assets/videos/mcp-tools.mp4)
+
 ## Table of Contents
 
 - [Architecture](#architecture)
@@ -39,16 +41,19 @@ program (domain handlers installed)
   │     │
   │     └── claude_handler (defhandler):
   │          1. Trust work_dir in ~/.claude.json
-  │          2. GetHandlers(k) → captures domain handler stack
-  │          3. Starts SSE MCP server on localhost:PORT
+  │          2. GetHandlers(k) + GetOuterHandlers() → captures the handlers
+  │             below and above it
+  │          3. Starts SSE MCP server on localhost:PORT, and spawns
+  │             mcp_server_loop, a task in the program's own VM
   │          4. Writes .mcp.json to work_dir
   │          5. Launches Claude Code in tmux
   │
   │     On tool call from agent:
   │          POST /message → JSON-RPC tools/call
-  │          → tool.handler(*args) → Expand[T]
+  │          → arguments checked against the tool's schema
+  │          → mcp_server_loop: tool.handler(*args) → Expand[T]
   │          → reinstall each captured handler scope around the tool program
-  │          → doeff.run(program) → result
+  │          → run as a task in the same VM → result
   │          → SSE response to agent
   │
   └── Monitor / Stop (Stop shuts down MCP server)
@@ -185,9 +190,10 @@ From Hy:
 
 ## Handler Stack Ordering
 
-**Critical:** The Claude handler must be **outermost** relative to the domain handlers.
-This allows `GetHandlers(k)` inside the handler to capture domain handlers from the
-continuation chain.
+This page installs the Claude handler **outermost** relative to the domain handlers.
+When it catches `Launch`, the handler captures the handlers on both sides of it:
+`GetHandlers(k)` gives the handlers between it and the `Launch` site (the domain
+handlers in this layout), and `GetOuterHandlers()` gives the handlers above it.
 
 ```text
 claude_handler(                 ← outermost: catches Launch, captures inner handlers
@@ -196,8 +202,10 @@ claude_handler(                 ← outermost: catches Launch, captures inner ha
       program)))                ← performs Launch effect
 ```
 
-If the Claude handler is innermost, `GetHandlers(k)` will not see domain handlers,
-and tool calls will fail with "no handler found for effect."
+Tool programs run under both, so a domain handler answers a tool's effects in either
+order: with the Claude handler inside `nak_handler`, `GetOuterHandlers()` captures
+`nak_handler` instead. The video at the top of this page runs both orders
+(`tools/docs-video/src/pages/mcp-tools/measure/agent_flow.py`, with and without `inner`).
 
 The new canonical entry point:
 
@@ -218,9 +226,11 @@ result = run(wrapped)
 
 3. **`claude_handler` (Hy defhandler)** catches `LaunchEffect` when `agent_type=CLAUDE`:
    - Calls `_trust-workdir` to mark the workspace as trusted in `~/.claude.json`
-   - When `mcp_tools` is non-empty: yields `GetHandlers(k)` to capture the handler stack
-   - Creates a `run_tool` closure that reinstalls captured handler scopes around tool programs
+   - When `mcp_tools` is non-empty: yields `GetHandlers(k)` and `GetOuterHandlers()` to capture
+     the handlers below and above it
    - Starts an `McpToolServer` and writes `.mcp.json` to `work_dir`
+   - Spawns `mcp_server_loop`, a task in the program's own VM that reinstalls the captured
+     handler scopes around each tool program
    - Creates the tmux session and launches `claude --dangerously-skip-permissions ...`
    - Stores session + server in `lazy-var sessions` / `lazy-var mcp-servers`
    - Resumes with `SessionHandle`
@@ -229,8 +239,10 @@ result = run(wrapped)
 
 5. **Tool call flow:**
    - Agent sends `tools/call` JSON-RPC via POST
-   - Server calls `run_tool(tool, arguments)`
-   - `run_tool` builds `tool.handler(*args)` → wraps with captured handlers → `doeff.run()`
+   - The server checks the arguments against the tool's schema (`McpToolDef.decode_arguments`)
+     and refuses a call that does not fit, with the reason as the tool's error
+   - `mcp_server_loop` builds `tool.handler(*args)`, wraps it with the captured handlers and runs
+     it as a task in the same VM, so the scheduler and state are the program's own
    - Result returned as JSON-RPC response via SSE
 
 6. **Cleanup:** `StopEffect` shuts down the MCP server for the session
@@ -411,8 +423,8 @@ handler = claude_agent_handler()  # optional: backend=my_backend
 
 ```python excerpt
 class McpToolServer:
-    def __init__(self, tools, run_tool, *, port=0): ...
-    def start(self) -> None      # Start in daemon thread
+    def __init__(self, tools, *, port=0): ...
+    def start(self, *, ready_promise=None) -> None  # Start in daemon thread
     def shutdown(self) -> None   # Stop server and close SSE sessions
     @property
     def url(self) -> str         # SSE endpoint URL (e.g. http://127.0.0.1:52119/sse)
@@ -427,7 +439,8 @@ wrapper inside `LaunchEffect`) is **deprecated**. New code should:
 
 - Use `LaunchEffect` / `Launch(...)` with flat fields (no `config=` wrapper)
 - Use `claude_agent_handler()` instead of `_make_protocol_handler(TmuxAgentHandler())`
-- Place the handler **outermost** relative to domain handlers
+- Place the handler outermost relative to domain handlers, as on this page (it captures the
+  handlers on both sides, so the other order also works)
 
 The legacy `LaunchConfig` dataclass (in `adapters.base`) is retained only for the
 imperative `session.py` / CLI API. The effects API uses flat fields on `LaunchEffect`.
