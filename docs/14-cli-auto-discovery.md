@@ -18,6 +18,8 @@ pip install doeff doeff-indexer
 
 Automatically discover and use default interpreters and environments when running programs with the `doeff run` command.
 
+[![A narrated video, about three minutes: a program yields effects and doeff run chooses the handlers; the interpreter and env markers and what doeff-indexer finds; the closest marked interpreter on the program's module path winning; the marked envs collected root first and merged, later values overriding; the chosen interpreter's reader answering the program's Asks from the merged env; --env, --interpreter, their deprecation and --hy; and the built-in default interpreter when no marker is on the path](assets/videos/cli-auto-discovery.jpg)](assets/videos/cli-auto-discovery.mp4)
+
 ## Table of Contents
 
 1. [Overview & Motivation](#overview--motivation)
