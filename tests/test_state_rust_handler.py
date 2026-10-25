@@ -108,7 +108,9 @@ def test_an_unhashable_key_raises_at_the_yield_of_the_effect() -> None:
             return f"caught: {error}"
         return "no error"
 
-    assert run(state()(body())).startswith("caught: cannot use 'list' as a dict key")
+    # CPython の文は版で違う(3.14 から "cannot use 'list' as a dict key (unhashable type: 'list')")— 両方に在る部分で見る。
+    caught = run(state()(body()))
+    assert caught.startswith("caught: ") and "unhashable type: 'list'" in caught, caught
 
 
 def test_a_raising_hash_of_a_put_key_raises_at_the_yield() -> None:

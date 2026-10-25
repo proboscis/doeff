@@ -393,7 +393,6 @@ unsafe extern "C" {
 }
 
 /// Give the type a version tag if it has none; false when it has none after.
-/// CPython 3.11 has no call that gives one, so there answers are never kept.
 pub(crate) fn assign_version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -> bool {
     #[cfg(Py_3_12)]
     {
@@ -402,8 +401,12 @@ pub(crate) fn assign_version_tag(effect_type: &Bound<'_, pyo3::types::PyType>) -
     }
     #[cfg(not(Py_3_12))]
     {
-        let _ = effect_type;
-        false
+        // CPython 3.11 has no call that gives one, but its method cache lookup on the
+        // type gives one (and a change of the type clears it to 0): look a name up once.
+        if version_tag(effect_type) == 0 {
+            let _ = effect_type.hasattr(pyo3::intern!(effect_type.py(), "__doeff_version_tag__"));
+        }
+        version_tag(effect_type) != 0
     }
 }
 
