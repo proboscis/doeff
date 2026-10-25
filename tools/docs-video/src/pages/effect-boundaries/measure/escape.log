@@ -1,0 +1,32 @@
+run 1: result ['<a>', '<b>', 'c'] in 206.9 ms
+     3.81 ms  MainThread          a: yield Await(download('a', 0.2))
+     4.89 ms  MainThread          b: yield Await(download('b', 0.1))
+     5.06 ms  MainThread          c: Step(1) answered by stepped
+     5.09 ms  MainThread          c: Step(2) answered by stepped
+     5.10 ms  MainThread          c: Step(3) answered by stepped
+     5.63 ms  doeff-await-bridge  a: coroutine starts, loop running: True
+     5.71 ms  doeff-await-bridge  b: coroutine starts, loop running: True
+   106.52 ms  doeff-await-bridge  b: coroutine returns
+   106.78 ms  MainThread          b: resumed with '<b>'
+   206.55 ms  doeff-await-bridge  a: coroutine returns
+   206.76 ms  MainThread          a: resumed with '<a>'
+   206.81 ms  MainThread          main: Gather -> ['<a>', '<b>', 'c']
+  c's 3 Steps done by 5.10 ms | b resumed 106.8 ms | a resumed 206.8 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 2: result ['<a>', '<b>', 'c'] in 202.5 ms
+  c's 3 Steps done by 0.64 ms | b resumed 102.5 ms | a resumed 202.4 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 3: result ['<a>', '<b>', 'c'] in 202.2 ms
+  c's 3 Steps done by 0.54 ms | b resumed 101.3 ms | a resumed 202.1 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 4: result ['<a>', '<b>', 'c'] in 204.7 ms
+  c's 3 Steps done by 0.64 ms | b resumed 103.0 ms | a resumed 204.6 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 5: result ['<a>', '<b>', 'c'] in 201.8 ms
+  c's 3 Steps done by 0.60 ms | b resumed 102.1 ms | a resumed 201.7 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 6: result ['<a>', '<b>', 'c'] in 202.9 ms
+  c's 3 Steps done by 25.41 ms | b resumed 103.9 ms | a resumed 202.8 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 7: result ['<a>', '<b>', 'c'] in 203.0 ms
+  c's 3 Steps done by 0.60 ms | b resumed 102.1 ms | a resumed 202.9 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 8: result ['<a>', '<b>', 'c'] in 202.9 ms
+  c's 3 Steps done by 1.68 ms | b resumed 106.7 ms | a resumed 202.8 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 9: result ['<a>', '<b>', 'c'] in 209.2 ms
+  c's 3 Steps done by 0.70 ms | b resumed 101.7 ms | a resumed 209.1 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
+run 10: result ['<a>', '<b>', 'c'] in 202.7 ms
+  c's 3 Steps done by 0.68 ms | b resumed 102.5 ms | a resumed 202.5 ms | coroutines on ['doeff-await-bridge'] | program on ['MainThread']
