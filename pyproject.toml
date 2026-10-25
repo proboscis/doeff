@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [
     {name = "Proboscis", email = "3684241+proboscis@users.noreply.github.com"}
 ]
-keywords = ["monad", "effects", "functional", "do-notation", "free-monad"]
+keywords = ["algebraic-effects", "effects", "effect-handlers", "handlers", "continuations", "concurrency"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -44,6 +44,8 @@ doeff-effectful-check = "doeff.cli.effectful_check:main"
 Homepage = "https://github.com/proboscis/doeff"
 Repository = "https://github.com/proboscis/doeff"
 Issues = "https://github.com/proboscis/doeff/issues"
+Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
+Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
 [build-system]
 # license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。

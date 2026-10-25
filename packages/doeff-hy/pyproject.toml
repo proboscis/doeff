@@ -6,11 +6,24 @@ build-backend = "hatchling.build"
 [project]
 name = "doeff-hy"
 version = "0.7.0"
-description = "Hy macros for writing doeff programs, effects, handlers and tests"
+description = "Algebraic effects for Python: Hy macros for writing doeff programs, effects, handlers and tests"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["algebraic-effects", "effects", "effect-handlers", "handlers", "continuations", "hy", "lisp", "macros"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Lisp",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 # 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
 dependencies = [
     "doeff>=0.7.0,<0.8",
@@ -33,6 +46,8 @@ dependencies = [
 Homepage = "https://github.com/proboscis/doeff/tree/main/packages/doeff-hy"
 Repository = "https://github.com/proboscis/doeff"
 Issues = "https://github.com/proboscis/doeff/issues"
+Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
+Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
 [project.scripts]
 doeff-hy-check = "doeff_hy.static_check:main"

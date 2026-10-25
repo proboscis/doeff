@@ -6,11 +6,23 @@ build-backend = "hatchling.build"
 [project]
 name = "doeff-hy-pytest"
 version = "0.7.0"
-description = "pytest plugin for doeff-hy tests: a Python 3.14 fix for Hy and optional per-test time limits"
+description = "Algebraic effects for Python: the pytest plugin for doeff-hy tests, with a Python 3.14 fix for Hy and optional per-test time limits"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["algebraic-effects", "effects", "effect-handlers", "handlers", "continuations", "hy", "pytest", "testing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Framework :: Pytest",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Testing",
+]
 # 依存を宣言しない: この plugin は doeff-hy に引かれて入る(doeff-hy → doeff-hy-pytest の向きだけ)。
 # 当て物の本体は doeff_hy.ast_unparse にあり、plugin はそれを import して当てるだけ。
 dependencies = []
@@ -19,6 +31,8 @@ dependencies = []
 Homepage = "https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest"
 Repository = "https://github.com/proboscis/doeff"
 Issues = "https://github.com/proboscis/doeff/issues"
+Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
+Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
 # pytest は pytest11 の entry point を持つ配布物の**全 module** に assert の書き換えの印を付ける。doeff-hy 自身がこの
 # entry point を持つと doeff_hy の .hy(macros.hy など)まで Python として書き換えようとして import が落ちる(wheel で
