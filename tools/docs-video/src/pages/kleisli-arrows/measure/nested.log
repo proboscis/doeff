@@ -1,0 +1,10 @@
+fetch_user_posts(7) has .map / .flat_map: False False
+fetch_user_posts(7) starts
+  fetch_user(7) starts
+  the program yields Ask('prefix')
+  fetch_user returns {'id': 7, 'name': 'user-7'}
+  fetch_posts(user) starts
+  fetch_posts returns ['post-for-user-7']
+fetch_user_posts returns ['post-for-user-7']
+answer: ['post-for-user-7']
+effects that got past reader: []

@@ -1,0 +1,6 @@
+@handler def no_k(effect: Fetch):
+  raises TypeError: handler: Program -> Program function without the handler marker: no_k — build it with defhandler, or bundle handlers with stacked_handlers (an unmarked handler is a raw effect dispatcher, called with (effect, k); this one takes 1 positional argument)
+@handler def wrong_type(effect: int, k):
+  raises TypeError: the annotation of effect parameter 'effect' names int, which no effect can be an instance of, so the handler would never be called. Annotate it with the effect class it handles (a subclass of EffectBase, e.g. effect: MyEffect), or with EffectBase to receive every effect.
+@handler def fetcher(effect: Fetch, k):
+  built; run(fetcher(page())) -> 'body=got https://example.com'

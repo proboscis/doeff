@@ -1,0 +1,90 @@
+[
+ {
+  "id": "t1",
+  "text": "Kleisli arrows. An at-do function takes plain values and returns a program."
+ },
+ {
+  "id": "t2",
+  "text": "Calling add one with forty-one runs nothing. It returns a Call node, which is an Expand."
+ },
+ {
+  "id": "t3",
+  "text": "run evaluates the node. Only now does the body run, and forty-two comes back."
+ },
+ {
+  "id": "t4",
+  "text": "The node is a value. Run it again, and the body runs again."
+ },
+ {
+  "id": "e1",
+  "text": "There are two phases. Python builds the program when you call, and the VM runs it later."
+ },
+ {
+  "id": "e2",
+  "text": "Building consults no handler. greeting is built with no handler anywhere."
+ },
+ {
+  "id": "e3",
+  "text": "Running it needs one. With no handler, its Ask is an unhandled effect."
+ },
+ {
+  "id": "e4",
+  "text": "Under reader, the same program runs, and returns Hello, Ada."
+ },
+ {
+  "id": "e5",
+  "text": "That is why a call is a macro, not an effect. An effect would need handlers before the program even exists."
+ },
+ {
+  "id": "g1",
+  "text": "Arguments are passed as given. An effect or a program you pass in stays a value."
+ },
+ {
+  "id": "g2",
+  "text": "echo of Ask x returns the Ask itself, even though x is annotated int."
+ },
+ {
+  "id": "g3",
+  "text": "To use a result, yield it. use values yields both arguments, and gets five and ten."
+ },
+ {
+  "id": "g4",
+  "text": "The usual style: yield in the caller, then pass the plain value on."
+ },
+ {
+  "id": "n1",
+  "text": "There is no map, no flat map. Programs compose by yielding programs inside at-do functions."
+ },
+ {
+  "id": "n2",
+  "text": "fetch user posts yields fetch user of seven. Its value comes back at that yield."
+ },
+ {
+  "id": "n3",
+  "text": "The Ask inside fetch user travels out past both functions, to the reader around the whole run."
+ },
+ {
+  "id": "n4",
+  "text": "Then fetch posts runs the same way, and the outer function returns the posts."
+ },
+ {
+  "id": "h1",
+  "text": "A handler is an at-do function too. The handler decorator makes a function of effect and k into one."
+ },
+ {
+  "id": "h2",
+  "text": "It must take the effect and k. With one parameter, it is refused with a TypeError."
+ },
+ {
+  "id": "h3",
+  "text": "Its annotation must name an effect class. No effect can be an int, so that one is refused too."
+ },
+ {
+  "id": "h4",
+  "text": "Both are refused when the handler is built, before any program runs. fetcher keeps the contract, and answers Fetch."
+ },
+ {
+  "id": "z1",
+  "text": "Plain values in, a program out. Handlers give its effects their meaning. That is a Kleisli arrow in doeff."
+ }
+]
