@@ -1,0 +1,3 @@
+# uv run python tools/docs-video/src/pages/getting-started/measure/initial_state.py (doeff 4bdc10bc5)
+user_id=123: Connected to postgresql://localhost/mydb as user 123
+user_id=7: Connected to postgresql://localhost/mydb as user 7

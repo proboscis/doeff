@@ -1,0 +1,10 @@
+# uv run python tools/docs-video/src/pages/getting-started/measure/first_program.py (doeff 4bdc10bc5)
+Put('counter', 0) -> None
+Tell('Counter initialized') -> None
+Get('counter') -> 0
+Tell('Current count: 0') -> None
+Put('counter', 1) -> None
+Get('counter') -> 1
+Tell('Final count: 1') -> None
+result: 1
+log: ['Counter initialized', 'Current count: 0', 'Final count: 1']

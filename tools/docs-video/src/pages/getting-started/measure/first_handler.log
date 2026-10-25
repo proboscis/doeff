@@ -1,0 +1,7 @@
+# uv run python tools/docs-video/src/pages/getting-started/measure/first_handler.py (doeff 4bdc10bc5)
+show: [(320, 240), (512, 384), (400, 300)]
+  seen: ['1/3', '2/3', '3/3']
+  shrunk: [(640, 480), (1024, 768), (800, 600)]
+stop_after(2): stopped after 2 of 3
+  seen: ['1/3', '2/3']
+  shrunk: [(640, 480), (1024, 768)]

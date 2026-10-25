@@ -1,0 +1,62 @@
+[
+ {
+  "id": "g1",
+  "text": "Getting started with doeff: algebraic effects for Python."
+ },
+ {
+  "id": "g2",
+  "text": "A program yields an effect. A handler gets it, together with k: the rest of the program."
+ },
+ {
+  "id": "g3",
+  "text": "What the handler does with k decides what the effect means: resume it, throw into it, pass it on, or drop it."
+ },
+ {
+  "id": "p1",
+  "text": "Your first program, counter program, yields Put, Tell, and Get."
+ },
+ {
+  "id": "p2",
+  "text": "Each effect goes out to the handler that answers it: state for Get and Put, writer for Tell."
+ },
+ {
+  "id": "p3",
+  "text": "Each answer comes back to its yield, and the code goes on. The run returns one."
+ },
+ {
+  "id": "e1",
+  "text": "Now your first effect of your own: Progress, a frozen dataclass under EffectBase."
+ },
+ {
+  "id": "e2",
+  "text": "shrink all yields Progress after each image. What that report means is up to a handler."
+ },
+ {
+  "id": "t1",
+  "text": "The show handler notes each Progress and resumes k. All three images are shrunk."
+ },
+ {
+  "id": "t2",
+  "text": "stop after two returns at the second report, without resuming k."
+ },
+ {
+  "id": "t3",
+  "text": "So the rest is dropped, and the third image is never shrunk. Same program, another meaning."
+ },
+ {
+  "id": "s1",
+  "text": "Handlers can start with values: reader with an environment, and state with an initial state."
+ },
+ {
+  "id": "s2",
+  "text": "Ask is answered from the environment, and Get from the initial state."
+ },
+ {
+  "id": "s3",
+  "text": "Start state with another user id, and the same program connects as user seven."
+ },
+ {
+  "id": "o1",
+  "text": "Programs yield effects, and handlers decide what they mean. Core Concepts lists everything a handler can do. pip install doeff."
+ }
+]
