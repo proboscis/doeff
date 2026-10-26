@@ -1,0 +1,5 @@
+This program waits 30 minutes between checks.
+
+Its test runs both checks in a few milliseconds and prints the same lines every run. No mocks, no patched sleep.
+
+The code doesn't change. Only the stack of handlers around it does.
