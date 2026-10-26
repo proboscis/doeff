@@ -1,5 +1,5 @@
 ;;; Rollout の進行中に、coordinator が時間で k8s の Deployment を読みに行かず、Deployment の変化の出来事で処理ステージを進める事の
-;;; 失敗ケース(#3868 — 利用者 2026-10-06 "so anything that require polling, are to be fixed. polling is a last resort")。
+;;; 失敗ケース(#3868 — polling に頼る所は全部直し、polling は最後の手段にする。利用者の決定 2026-10-06)。
 ;;;
 ;;; 本物の coordinator と worker を模擬の cluster(仮想の時計・偽の k8s KubeMemory)で回す。逆向きの Rollout(Service → Deployment)は
 ;;; 処理ステージ WaitingNewReady で新の Deployment の準備を待つ:

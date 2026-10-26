@@ -1,8 +1,7 @@
 # v13 — 読む面に linter の違反の印と説明の吹き出しを出す
 
-出自 = operator 2026-09-30 15:0x(herdr pane・linter-discuss)。逐語 "i want the linted part highlighted in the reading
-view of the hy file, and show info on hover so i can tell what's wrong why. here linter show DOEFF205 on start-turn but the
-viewer doesnt show it on read view so i can't tell" → 案を示して "sounds good"。
+出自 = operator の要望と決定 2026-09-30。Hy の file の読む面で linter の当たった所を目立たせ、hover で何がなぜ違反かを見せる。
+linter は start-turn に DOEFF205 を出すが、読む面には出ないので見ても分からなかった。案を示して合意を得た。
 
 ## なぜ start-turn の DOEFF205 が読む面に出ないか(v12 時点の観測)
 

@@ -67,8 +67,8 @@
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"
     "packages/doeff-docker/src/doeff_docker/compose.hy"
-    ;; R5 の operator 裁定による増額(2026-10-04 10:0x・Mac の調整役の会話 w3J:p17 経由・agora-redesign #1201): 出来事を待つ
-    ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。逐語 "eventloop sounds good"。
+    ;; R5 の operator 裁定による増額(2026-10-04・agora-redesign #1201): 出来事を待つ
+    ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。
     ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。
     "packages/doeff-events/src/doeff_events/macros.hy"})
 
@@ -109,7 +109,7 @@
           ".agents/code-quality.json"]
   :problem
     [(fact
-       "operator の決め(agora-redesign 決定 1.4、2026-09-12): Hy の柵 7 本のうち残りは「TypeCheck の effect(静的は常時・実行時の検査は handler で切替)」「記録の足場の macro」「読み側の射影を operator に置かない」「新しい macro は doeff-hy に投影の規則と一緒に」。"
+       "operator の決め(agora-redesign 決定 1.4、2026-09-12): Hy の柵 7 本のうち残りは、TypeCheck の effect(静的は常時・実行時の検査は handler で切替)・記録の足場の macro・読み側の射影を operator に置かない事・新しい macro は doeff-hy に投影の規則と一緒に置く事、の 4 本。"
        :evidence "agora-redesign docs/plans/decisions-merge-2026-09-12.md 1.4")
      (fact
        "defk / deff の :pre / :post は展開時に無条件の assert (isinstance …) になる。切替の口が無いので、静的に分かる型を hot path で毎回払う。"

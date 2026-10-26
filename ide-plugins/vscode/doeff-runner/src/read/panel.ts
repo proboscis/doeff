@@ -2,7 +2,7 @@ import { termMessage } from '../lint/termViews';
 // 定義を読む面の VS Code の層 — `.hy` を webview(custom text editor)で開き、model.ts が組むカードと軸を render.ts の
 // HTML で描く。読むためだけの面で、document を書き換えない(operator は source を手で編集しない)。
 // 定義の一覧は hy-index の置き場だけから読み、面が自分で file を歩かない。型・effect・違反は linter の置き場から添える。
-// `.hy` を開いた時の既定はこの面(v5・operator 2026-09-29 "when opening hy file the default should be reading view")。
+// `.hy` を開いた時の既定はこの面(v5・operator の決定 2026-09-29)。
 
 import * as crypto from 'crypto';
 import * as path from 'path';

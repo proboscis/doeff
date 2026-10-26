@@ -240,8 +240,8 @@ codex プロセスは生きているため)。model 無指定なら `--model` �
 
 ### 実 launch 障害物 dialog の実物検証(2026-07-07 追補)
 
-ユーザー要求「trust prompt / update prompt 等の実 launch 障害物込みで
-doeff 経由テスト」への実測回答。R9 の 4 dialog のうち実物で踏めるのは
+実 launch の障害物(trust prompt・update prompt 等)を含めた doeff 経由の
+テストを求めるユーザー要求への実測回答。R9 の 4 dialog のうち実物で踏めるのは
 bypass のみで、それは green:
 
 - **claude bypass-permissions dialog(R9)— 実物 green**。
@@ -293,8 +293,8 @@ bypass のみで、それは green:
     発生 → 帯域外 herdr read で実物 frame を確認(逐語一致)→ fast-path が
     Enter で dismiss → **launch 5.2s / E2E 全体 9.8s PASS**(byte-faithful
     payload)。プロファイル復元済み・workspace リーク無し。
-  - 一般化(ユーザー裁定 2026-07-07:「少なくとも launch は黙って永遠に
-    待たず、明確なエラーで fail せよ」)→ 下記 fail-closed 契約修正で実装。
+  - 一般化(ユーザー裁定 2026-07-07: launch が無期限に黙って待つ事を禁じ、
+    明示のエラーで落とす)→ 下記 fail-closed 契約修正で実装。
 
 ### launch fail-closed 契約修正(2026-07-07、oracle からの意図的乖離)
 

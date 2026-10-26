@@ -21,7 +21,7 @@
           }
         ],
         "question": "定義の頭に付く違反(Jev 201〜205 など)をどこに出すか",
-        "reason": "operator 2026-09-30 \"sounds good\"",
+        "reason": "operator の決定 2026-09-30(席の案への合意)",
         "reconsider_when": "Jev の判定に証拠の行が付いた時",
         "selected": "頭の名に下線 + 札(案 A)"
       },
@@ -39,7 +39,7 @@
           }
         ],
         "question": "hover をどう出すか",
-        "reason": "operator \"show info on hover so i can tell what's wrong why\"",
+        "reason": "何がなぜ違反かを hover で分かるようにする(operator の要望)",
         "reconsider_when": "—",
         "selected": "自前の吹き出し"
       },
@@ -267,7 +267,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-30 \"i want the linted part highlighted in the reading view of the hy file\""
+          "source": "operator の要望 2026-09-30(Hy の file の読む面で linter の当たった所を目立たせる)"
         },
         "statement": "linter の違反は、その range が指す場所に印として出る — 定義の頭(名に下線 + 札)・本体の行(札 + source の同じ行に下線)・file の先頭(file の見出しに帯)。どの種類の違反も読む面のどこかに必ず出る"
       },
@@ -276,7 +276,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-30 \"show info on hover so i can tell what's wrong why\""
+          "source": "operator の要望 2026-09-30(何がなぜ違反かを hover で見せる)"
         },
         "statement": "印の hover は、規則 ID・規則の短い名・重大さ・既知か新規か・Jev の p・なぜ(explanation.reason)・直し方(hint)・法の文(あれば)を見せ、違反の表で見る / editor で開くの 2 つの動作を持つ"
       },

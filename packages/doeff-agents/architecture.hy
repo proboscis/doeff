@@ -18,8 +18,8 @@
 ;;;   forbid-modules の doeff・doeff_core_effects を足し直す。
 ;;; (以前の層 runner-env — tests/runner_env.py・conformance/conformance_env.py — は外した: 2 つは環境変数を ReadEnvironment と本物の
 ;;;   答え手で読むようになり、DOEFF004 から外す理由と doeff の import を禁じる理由が無くなった・agora-redesign #3012。)
-;;; foundation = 環境変数の読みが許される foundation の handler の層(利用者 2026-10-02 22:2x "reading env var from outside foundation
-;;;   handler is clear violation" — 環境変数の読みは foundation の handler の中だけ)。名指すのは、agent の起こしに答える handler の
+;;; foundation = 環境変数の読みが許される foundation の handler の層(利用者の決定 2026-10-02 — 環境変数の読みは foundation の
+;;;   handler の中だけで、外での読みは違反)。名指すのは、agent の起こしに答える handler の
 ;;;   2 module だけ: doeff_agents.handlers.daemon(daemon の handler が codex を繋ぐ時の CODEX_HOME の既定)・
 ;;;   doeff_agents.handlers.production(本番の handler が codex を起こす時の CODEX_HOME の既定)。どちらも policy が家を名指さない時だけ
 ;;;   本物の CLI と同じ既定(CODEX_HOME)を読む。ほかの file を足さない(doeff-core-effects の foundation の層と同じ形・cisco-c8 の決め)。

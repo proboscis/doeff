@@ -12,6 +12,6 @@
 | 文脈を共有しなかった方法 | Agent tool の新しい subagent(設計者の会話の文脈を持たない)。入力は prompt の文と repo の file だけ | 同じ |
 | 時間 | 約 232 秒(tool の申告 232289 ms) | 約 539 秒(539123 ms) |
 | 入力 | 対象 file・設計本文の path・2 つの変更要求・4 つの問い(blind-a.md の頭) | 対象 file・設計本文の path・4 つの主張・失敗例の観点(blind-b.md の頭) |
-| fallback の理由 | gpt-6-astra を起こせないため Opus 5.5 で代用(operator の決定 2026-09-24「すべて Opus 5.5 で」) | 同じ |
+| fallback の理由 | gpt-6-astra を起こせないため Opus 5.5 で代用(operator の決定 2026-09-24 で、代わりの model は全部 Opus 5.5 にする) | 同じ |
 
 盲検は 1 回目の設計(aefc034f)に対して行った。返答の要旨と受けた修正は design.md の「再現と修正」。

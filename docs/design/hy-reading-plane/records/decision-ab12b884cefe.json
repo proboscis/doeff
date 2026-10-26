@@ -15,7 +15,7 @@
     "decision": "design",
     "outcome": "accepted",
     "scope_of_agreement": "operator が合意したのは source の highlighting が editor と同じであることと、呼び出しの木があること、および木の見本の形。本体の文字を theme の token の色に寄せること(R19)と、木の既定の細かな数(深さ 3 など)は席の既定で戻せる。網(graph)の描画は決めていない。",
-    "source": "operator の直接の議論 2026-09-29 00:4x〜00:5x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"when showing the source in reading pane, it should have the same semantic highlighting enabled\" / \"it would be great if there's also call dependency tree visualization\" / 木の見本 call-tree.html を見て \"the tree visualization is so good\"",
+    "source": "operator の直接の議論 2026-09-29。読む面で source を見せる時は editor と同じ semantic highlighting にすることと、呼び出しの依存の木の可視化を求めた。木の見本 call-tree.html を見て承認した",
     "statement": "v6 の裁定に 2 点を足す。(1) カードの中に開く元の Hy の source は editor と同じ semantic highlighting(同じ字句の分け・同じ theme の色)で描き、色の表を面に別に持たない。(2) 呼び出しの依存の木を面に持つ: 根の実体から callees ↓ / callers ↑ を木で描き、節は v4 の畳んだ 1 行と同じ形、名をクリックでカードを積む。入口はカードの帯の callers / callees と軸の欄の下の call tree。木の見本(向き・深さ 3・↺・tests は既定で隠す・根の下に effect の和)は operator が承認した。v6 までの他の決まりはそのまま。",
     "subjects": [
       "design-c6ae8fe5208d"

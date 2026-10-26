@@ -1,7 +1,6 @@
 """公開 repo の作者の名義に operator の実名を書かないことを確かめる検。
 
-operator の指示(2026-09-29 "this real name must never be used when making any PR ever" /
-"real name must not be used without any approval")で、package の metadata・作者の欄・使用許諾の文書に
+operator の指示(2026-09-29 — 実名は許しなしに使わず、どの PR にも書かない)で、package の metadata・作者の欄・使用許諾の文書に
 実名を書かず、名義は Proboscis <3684241+proboscis@users.noreply.github.com> だけにする。
 
 この検の中にも実名を書かないため、2 つの形で照らす:

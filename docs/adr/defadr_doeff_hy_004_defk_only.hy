@@ -3,13 +3,12 @@
 ;;; :tags つきの逃げ道としてだけ許す。理由の註の無い deff は凍結台帳(ratchet)で
 ;;; 単調減少させる。defk / deff の契約の辞書には :tags を必須にする。
 ;;;
-;;; 出自 = operator 指示 2026-08-21(逐語):
-;;;   "we need defadr to disallow all deff. only use defk"
-;;; 改訂 = operator 指示 2026-09-27(Claude Code の会話・agora-redesign #798・逐語):
-;;;   "and we want to forbid the use of defn and only allow defk, and in inevitable case allow deff, to force the use of tag on definitions"
+;;; 出自 = operator 指示 2026-08-21: defadr で deff を全部禁じ、defk だけを使う。
+;;; 改訂 = operator 指示 2026-09-27(agora-redesign #798): defn を禁じて defk だけを許し、避けられない所だけ deff を許す
+;;;   — 定義に tag を付ける事を強いるため。
 ;;;   (R4「台帳が空になったら deff の macro を消す」は取り下げ — deff は避けられない所の逃げ道として残る)
 ;;;
-;;; 追記 = operator 裁定 2026-09-27(同じ会話・逐語は :problem の fact): 設定を読むこと・検の補助・framework と
+;;; 追記 = operator 裁定 2026-09-27(agora-redesign #798・決めた事は :problem の fact): 設定を読むこと・検の補助・framework と
 ;;;   process の入口は deff の理由にしない方向。deff の理由の受け入れは doeff-linter の DOEFF203(Jev)が判じる(R6〜R9)。
 ;;;
 ;;; 戻し方: この改訂の commit を revert する(ADR の条・針・台帳の数え方が 2026-08-21 版へ戻る)。
@@ -158,8 +157,8 @@
        "doeff-hy は契約つき関数の語彙を 2 つ持つ: deff(素関数・直接呼び)と defk(kleisli program・<- bind で合成)。同じ :pre/:post 契約面を持ちながら呼び出し規約だけが分裂している。"
        :evidence "packages/doeff-hy/src/doeff_hy/macros.hy:447(deff)/ :498(defk)")
      (fact
-       "operator 指示 2026-08-21(逐語): we need defadr to disallow all deff. only use defk"
-       :evidence "gecko 席 会話 04703743(2026-08-21 未明)")
+       "operator 指示 2026-08-21: defadr で deff を全部禁じ、defk だけを使う。"
+       :evidence "operator 指示(2026-08-21)")
      (fact
        "実測 2026-08-21: doeff repo の deff は 23 file・227 定義(packages 219 / docs-adr 5 / tests 3)。下流 agent-control-plane の apps は deff 0・defk 3,065 — 収束の終端状態は下流で既に本番実証済み。"
        :evidence "本 ADR の DEFF-ROSTER(走査条件同一の凍結断面)")
@@ -170,8 +169,8 @@
        "deff→defk の変換は定義の書き換えだけでは完結しない: 呼び出しが直接呼びから <- bind に変わるため、呼び手自身が program である必要があり、変換は呼び出し木を遡って連鎖する。機械的な一括置換は壊れる。"
        :evidence "defk 展開 = @do generator(macros.hy:498-)— 直接呼びは Program 値が返るだけで実行されない")
      (fact
-       "operator 指示 2026-09-27(逐語): and we want to forbid the use of defn and only allow defk, and in inevitable case allow deff, to force the use of tag on definitions — 同じ会話の直前の文脈(逐語): yes so we structure the dir by service->layer, but have vscode navigator be able to structure components via tags"
-       :evidence "Claude Code の会話(2026-09-27・agora-redesign #798)")
+       "operator 指示 2026-09-27: defn を禁じて defk だけを許し、避けられない所だけ deff を許す — 定義に tag を付ける事を強いるため。直前の文脈: dir は service → layer で分け、VS Code の navigator が tag で部品を並べられるようにする。"
+       :evidence "agora-redesign #798(2026-09-27 の指示)")
      (fact
        "defk / deff / defp / defhandler の契約の辞書は :tags {:context … :role …} を受け、定義の属性 __doeff_tags__ に残す(agora-redesign #800)。defn は契約の辞書を持たないので :tags を書けず、タグから定義を並べる閲覧(VS Code のパネル)に現れない。"
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
@@ -179,8 +178,8 @@
        "実測 2026-09-27: doeff repo の packages・docs・tests の .hy に defn / defn/a が 269 file・2,135 定義ある(packages/doeff-hy の macro の実装を含む)。2026-08-21 版の R1 は Python との境界の defn を対象外にしていた。"
        :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")
      (fact
-       "operator 裁定 2026-09-27(逐語 4 つ): \"yeah reading config, that's exactly where effects like Ask comes in, no excuse\" / \"yeah non-deftest must be forbidden\" / \"process entrypoint,,, of doeff-cluster? i dont think that doeff-cluster should require a non-defk func or something, we need to discuss further around doeff-cluster job api\" / \"about the reason text, we want jev to tell if it's acceptable right?\""
-       :evidence "Claude Code の会話(2026-09-27・agora-redesign #798)— coordinator 経由")
+       "operator 裁定 2026-09-27: 設定を読む事はまさに Ask のような effect の出番で、deff の言い訳にならない。deftest でない検は禁じる。doeff-cluster の process の入口が defk でない関数を要るべきではなく、doeff-cluster の job API は別に議論する。deff の理由の文が受け入れられるかは Jev が判じる。"
+       :evidence "agora-redesign #798(2026-09-27 の決定)")
      (fact
        "agora-controllers の本線 d99194b4 で『defk にできない』の註は 682 件あり、推定の内訳は 検の補助 166・組み立て 127・その他 112・process の入口 82・同上 81・外の library の callback 71・framework の入口 43。本当に素の callable が要る場面と、呼び手を Program にすれば済む場面(組み立て = handlers-of・検 = deftest)が区別されていなかった。"
        :evidence "doeff 683dd0e8(wt/hy-reason-kinds・doeff-linter の DOEFF111 / DOEFF203)の commit message")]
@@ -234,7 +233,7 @@
      (law deff-reason-is-accepted-by-jev
        :statement "for_all deff 定義 d: d の理由の註がある ∧ DOEFF203(Jev)が d の理由を architecture.hy の受け入れ可の理由のどれかと判じる。設定・環境の読み・検の補助・組み立ては受け入れ可の理由に入らない"
        :counterexamples
-         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(operator 逐語 no excuse)")
+         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(operator 裁定 2026-09-27 — 言い訳にならない)")
           (counterexample "deftest の値を組む補助を『; defk にできない: 検の補助』の deff で書く — 補助は defk にして deftest から <- で受ける")
           (counterexample "handler の組を並べる組み立てを deff で書く — 組み立ては defk(handlers-of)で書ける")]
        :enforced-by ["doeff-linter DOEFF111" "doeff-linter DOEFF203"]

@@ -4,8 +4,8 @@
 ;;; 層は foundation の 1 つだけを置き、名指すのは scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler の
 ;;; 2 module に限る。この package のほかの file の母集団は変わらない(今までどおり DOEFF004 が当たる)。
 ;;;
-;;; foundation = 環境変数の読みが許される foundation の handler の層(利用者 2026-10-02 22:2x "reading env var from outside
-;;;   foundation handler is clear violation" — 環境変数の読みは foundation の handler の中だけ)。
+;;; foundation = 環境変数の読みが許される foundation の handler の層(利用者の決定 2026-10-02 — 環境変数の読みは
+;;;   foundation の handler の中だけで、外での読みは違反)。
 ;;;   - doeff_core_effects.scheduler: handler の組の前に scheduler の handler(python / rust)を選ぶ入口で、DOEFF_SCHEDULER を読む。
 ;;;     handler の組がまだ無い所で選ぶので、ReadEnvironment で問うと doeff の全部の run に約 4 割の固定費が足される
 ;;;     (実測 問い 1 回 173 µs・scheduled の run 1 回 415 µs — cisco-c8 2026-10-02 23:4x の決め)。

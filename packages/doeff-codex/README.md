@@ -124,7 +124,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 
 ## 起動の形を app-server にした訳
 
-答えの文字の途中が要る(利用者 2026-09-10「どの会話も、文字が届くたびに 1 文字ずつ更新されない」)。codex 0.162.1 の `codex exec --json`
+答えの文字の途中が要る(答えは文字が届くごとに画面へ流す — 利用者の指摘 2026-09-10)。codex 0.162.1 の `codex exec --json`
 は答えを `item.completed` で丸ごと 1 行に出し、途中を出さない。app-server は `item/agentMessage/delta` で途中を出し、1 つの process で
 ターンを続け、`turn/interrupt` で途中で止められる。実測は `tests/recorded/codex-0.162.1`(検 `test_lines.hy` の
 `test-exec-json-carries-no-text-deltas`)。

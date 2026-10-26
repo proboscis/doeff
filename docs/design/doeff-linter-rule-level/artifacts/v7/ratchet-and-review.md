@@ -2,17 +2,17 @@
 
 - 元: 議論用の報告 artifact `discuss-doeff-linter-critical-ratchet-2026-09-30.html`(sha256 `4403f8e9141d683b023009b13557315eac01717318ee2a56f2da62693f2246d7`)の §2・§5・§6・§8。節番号は元の報告のまま。
 - 数字の時点: agora-controllers の main・doeff-linter の main 版・2026-09-30 16:5x。
-- 合意: operator 2026-09-30 18:2x "I agree with the report"(報告の「決めてほしい事」Q1〜Q3 に推奨どおり)。追跡 = agora-redesign #1762。
+- 合意: 報告の「決めてほしい事」Q1〜Q3 を推奨どおりに採る(operator の決定 2026-09-30)。追跡 = agora-redesign #1762。
 - 図は元の mermaid を `fig/` に置いた。§5.2 の図 3 は Q1 で採らなかった案 L の図で、比較のために残す。
 - 合意後の読み替え: §5.2 は案 M(一覧を持たず main と比べる)に確定。§8 の順 2「critical の既知の一覧の扱い」は「廃止」に確定。
 
 ## 2. 今日までに決まった事
 
-| 記号 | 決定(operator の言葉をそのまま) | 意味 |
-|---|---|---|
-| A | "critical must not be left behind. such 'known' list must not exist to make anything passed" → "ah criticals are rachet okay?" → "not that they must be 0 NOW. we are to make them never increase and start to reduce" | critical の違反を「既知」として通す一覧は持たない。目標は今すぐ 0 ではなく、**増やさない・減らし始める**(ratchet) |
-| B | "we are not yet confident about JEV detections, so we need to keep those JEV rules as warning, but other many issues, we need to also review" | Jev(LLM)が判定する規則 DOEFF201〜205 は、較正が済むまで **warning**(critical にしない)。Jev 以外の critical は直す前に**見直す** |
-| C | "hanrei sounds good"(0 件の規則は失敗ケースのテストで「守れている証拠」にする、への同意) | 規則 1 本ごとに、鳴るべき例(失敗ケース)と鳴らない例のテストを持つ |
+| 記号 | 決定(operator の決定) |
+|---|---|
+| A | critical の違反を「既知」として通す一覧は持たない。目標は今すぐ 0 ではなく、**増やさない・減らし始める**(ratchet) |
+| B | Jev(LLM)の判定にはまだ確信が無いので、Jev が判定する規則 DOEFF201〜205 は、較正が済むまで **warning**(critical にしない)。Jev 以外の critical は直す前に**見直す** |
+| C | 規則 1 本ごとに、鳴るべき例(失敗ケース)と鳴らない例のテストを持つ(0 件の規則は失敗ケースのテストを「守れている証拠」にする案への同意) |
 
 記録: agora-redesign #1762(決定の親)。dotfiles の ADR-DOTFILES-027 と、書く時に出る助言ルール 3 本(master にマージ済み・L4119)。
 

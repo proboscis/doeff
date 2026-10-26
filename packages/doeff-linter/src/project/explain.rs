@@ -2,7 +2,7 @@
 //!
 //! 文の雛形は規則ごとにここの 1 か所だけに書き、層の名前・層の説明・role の説明・law の文は設定から差し込む(Rust に
 //! 層の意味を書かない)。層の説明が設定に無い層は、名前と置き場所と規則の決まりだけで文を作る。
-//! operator 2026-09-27 逐語: "yeah so the linter should tell what they are and why they violate"
+//! linter は違反が何で、なぜ違反かを言う(operator の決定 2026-09-27)。
 
 use serde::Serialize;
 
@@ -454,7 +454,7 @@ impl<'a> Narrator<'a> {
             ),
             Explain::WorldHandlerMisplaced { definition, problem } => (
                 format!("許可名簿の定義 {} — {}", definition, problem),
-                "外の世界に触れてよい定義は層 foundation にだけ置く(operator 2026-09-29 \"placed in specific dir with rules\")。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string(),
+                "外の世界に触れてよい定義は層 foundation にだけ置く(operator の決定 2026-09-29 — 決まった dir に規則つきで置く)。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string(),
             ),
             Explain::TestKindMismatch { test, edge, mark, reached } => (
                 if *edge {
@@ -819,7 +819,7 @@ impl<'a> Narrator<'a> {
                     (_, None) => format!("定義 {}(層 {})が下の層の効果 {} を出している", found.definition, layer, found.name()),
                 },
                 format!(
-                    "{} は architecture.hy の :lower-layer-modules に並ぶ module(記録の service の生の操作)の物。生のデータを読み書きするのは handler の仕事で、業務の層はドメインの効果を出し、翻訳の層の handler がそれを生の操作へ言い換える(利用者 2026-10-07 11:0x)。業務の層が生の効果を出すか、生の効果に答える handler を自分で被せると、業務の流れが記録の置き方を知り、外へドメインの API だけを出す境界が崩れる。import した defk を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。",
+                    "{} は architecture.hy の :lower-layer-modules に並ぶ module(記録の service の生の操作)の物。生のデータを読み書きするのは handler の仕事で、業務の層はドメインの効果を出し、翻訳の層の handler がそれを生の操作へ言い換える(利用者の決定 2026-10-07)。業務の層が生の効果を出すか、生の効果に答える handler を自分で被せると、業務の流れが記録の置き方を知り、外へドメインの API だけを出す境界が崩れる。import した defk を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。",
                     found.qualified
                 ),
             ),

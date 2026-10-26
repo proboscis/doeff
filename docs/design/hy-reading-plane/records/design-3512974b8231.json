@@ -51,7 +51,7 @@
           }
         ],
         "question": "軸で出た一覧の既定",
-        "reason": "\"so i can glance at\"",
+        "reason": "見渡せるようにするため(operator の要望)",
         "reconsider_when": "一覧が数枚しかない時は開いた形でもよい(実装で件数の閾を置いてもよい)",
         "selected": "畳んだ形"
       }
@@ -226,7 +226,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"in plugin view. i want to be able to fold a card to oneline form where i can toggle what to show so i can glance at\""
+          "source": "operator の要望 2026-09-28(plugin の面でカードを 1 行に畳み、1 行に出す物を切り替えて見渡す)"
         },
         "statement": "カードを 1 行の形に畳める(1 枚ずつと全部)。1 行に出す物を切り替えられ、設定は全カード共通で面が覚える。常に出すのは種類・名・開閉のボタン"
       },
@@ -235,7 +235,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "assumption",
-          "source": "席の整理(\"so i can glance at\" から。戻せる)"
+          "source": "席の整理(見渡すという要望から。戻せる)"
         },
         "statement": "軸の切り替えで出たカードの一覧は既定で畳んだ形。開いたカードは積んだカードとして残す"
       }

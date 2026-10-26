@@ -11,7 +11,7 @@
     "decision": "design",
     "outcome": "accepted",
     "scope_of_agreement": "読む面(doeff-runner)の表示の設計。linter の出力は変えない。下線・帯・吹き出しの見た目と開閉の仕組み・規則の短い名の引き方は席の既定で戻せる。実装の issue の起票とワーカーへの委譲は席が行う(two-way door)",
-    "source": "operator 2026-09-30 15:0x JST・herdr pane(linter-discuss)での返答。逐語: \"sounds good\"(席が示した 4 点の案に対して)。前段の逐語: \"i want the linted part highlighted in the reading view of the hy file , and show info on hover so i can tell what's wrong why. here linter show DOEFF205 on start-turn but the viewer doesnt show it on read view so i can't tell\"",
+    "source": "operator の決定 2026-09-30(席が示した 4 点の案への合意)。前段の要望: Hy の file の読む面で linter の当たった所を目立たせ、hover で何がなぜ違反かを見せる。linter は start-turn に DOEFF205 を出すが、読む面には出ないので見ても分からなかった",
     "statement": "agree(席が示した 4 点 — 1. 違反の印を range の種類ごとに 3 か所(定義の頭 = 名に下線 + 札 / 本体の行 = 札 + source の同じ行に下線 / file の先頭 = file の見出しに帯)へ出す 2. hover は自前の吹き出しで linter の全欄(規則 ID・短い名・重大さ・既知/新規・Jev の p・なぜ・直し方・法)+ 違反の表で見る / editor で開く の 2 ボタン 3. Jev の規則(201〜205)は定義の頭に付けるだけ(案 A。証拠の行を返す案 B は #1040 の枠で後から) 4. source の箱の印は開いた時だけ(範囲を level の色で下線)— に対して)",
     "subjects": [
       "design-61d6f263030f"

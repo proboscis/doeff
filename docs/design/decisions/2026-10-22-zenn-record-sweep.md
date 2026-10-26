@@ -6,7 +6,7 @@
 - 根拠：
   - 予約の刻を過ぎた回は、`record_published.py`で表を「公開済み <URL> <刻>」に直し、mainに入れて`push_zenn_branch.py`を走らせるまで、他の回からリンクされず、閲覧の数にも入らない([予約公開の決定記録](2026-10-21-zenn-reserved-publish.md))。これを走らせる物が無かった。
   - doeff-publishの持ち主の決定(10-22)。「刻を過ぎた回の表を毎日直す仕組みは最初の公開の前に要る」「この仕組みは表を直すだけで、公開も予約もしない」。公開は1本ごとの許可のまま([公開の許可の決定記録](2026-10-21-zenn-publish-permit.md))。
-  - agoraの周期の仕事は、専用のPod・CronJobを足さず、既に在るdoeff-clusterのjobに載せる(ユーザー2026-10-09「never on dedicated pods!」)。2026-10-22の時点で、新しい常駐のjobを置けるworkerの枠はどこにも無い。
+  - agoraの周期の仕事は、専用のPod・CronJobを足さず、既に在るdoeff-clusterのjobに載せる(ユーザーの決定 2026-10-09)。2026-10-22の時点で、新しい常駐のjobを置けるworkerの枠はどこにも無い。
   - 見回りのjob(プログラムのreconcile — agora-controllersの`controllers/patrol`)は子processを撃てないので、doeffの道具を走らせられない。agoraの担当の道具の組の同期のjob(agora-controllersの`agent-toolset-sync` — zeusのPodのworkerの上)は、日次の刈りと計器で既に機体の命令を撃っている。
   - マージの列の便は数十秒でmainに入る(10-20のL2643は登記から着地まで14秒)。
 

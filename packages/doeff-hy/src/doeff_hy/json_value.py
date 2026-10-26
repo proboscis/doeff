@@ -2,8 +2,7 @@
 
 ``JsonValue`` は JSON を解いたままの値(``dict`` / ``list`` / 文字列 / 数 / 真偽 / ``None``)の型で、名前を変えた素の
 dict にすぎない。構造を持つ値は、型を宣言した値(doeff-hy の ``defwire`` / ``defrecord``)へ解いて確かめてから運ぶ
-(operator 2026-09-28 逐語 "and i dont think we should make anyone use that directry instead of actually parsing and
-validating it like pydantic does")。この型に触ってよいのは、汎用の解き手(``doeff_hy.wire`` の parse / dump)と、送受信
+(素の dict を直に使わせず、pydantic のように解いて確かめる — operator の決定 2026-09-28)。この型に触ってよいのは、汎用の解き手(``doeff_hy.wire`` の parse / dump)と、送受信
 そのものを行う foundation の module だけ — それ以外で使うと doeff-linter の DOEFF120 が誤りにする。
 
 置き場: doeff-hy(解き手の置き場)の Python の module。doeff-hy は doeff-records を import できない(依存の向きが逆)

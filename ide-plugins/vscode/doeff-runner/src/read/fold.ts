@@ -1,5 +1,5 @@
-// 定義を読む面のカードを 1 行に畳む状態と、1 行に出す欄の設定(v4 2 節・operator 2026-09-28 "i want to be able to fold a card
-// to oneline form where i can toggle what to show so i can glance at")。純粋な関数だけ(VS Code に触らない)。
+// 定義を読む面のカードを 1 行に畳む状態と、1 行に出す欄の設定(v4 2 節・operator の決定 2026-09-28 — カードを
+// 1 行に畳み、出す欄を切り替えて一目で見渡せるようにする)。純粋な関数だけ(VS Code に触らない)。
 // 既定: カードは畳む(一目で見渡すため)・1 行に出すのは args / return type・effects・tags。面は VS Code の状態に覚える。
 
 import type { HyDefinition } from '../hy/contract';

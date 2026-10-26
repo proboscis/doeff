@@ -593,8 +593,8 @@
         :if (spawn-env-inherited? key)
         key value))
 
-;; 従量課金 credential の締め出し(operator 裁定 2026-08-26 —「このシステムで
-;; API キーを利用してはならない。従量課金を利用してはならない」。音声モードは
+;; 従量課金 credential の締め出し(operator 裁定 2026-08-26 — この系は API キーと
+;; 従量課金を使わない。音声モードは
 ;; 唯一の例外だが、この host を通らない)。binding 所有キーと違い「正しい家」が
 ;; 存在しない — agent 席の認証は定額(subscription/OAuth)profile のみで、
 ;; API キーはどの経路でも運ばれてはならない。判定は綴りの列挙でなく形

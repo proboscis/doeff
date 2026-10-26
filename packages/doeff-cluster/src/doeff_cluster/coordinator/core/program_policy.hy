@@ -4,7 +4,7 @@
 ;;;   GET /programs/<sha>  → {"blob" "versions"}(無ければ 404)
 ;;;
 ;;; 宣言の行(Service)・task の本文と行(POST /tasks・PUT /detached)・heartbeat の返事は sha だけを運び、worker が取って cache に置く。
-;;; service と task で運び方を分けない(operator 2026-09-27 "i dont find any reason to have different api for services")。Program は
+;;; service と task で運び方を分けない(service だけ別の API にする理由は無い — operator の決定 2026-09-27)。Program は
 ;;; 大きくなりうるので、宣言の行と毎拍の返事に載せない。キーは中身の sha256(remote_model.program-sha — 置く時に確かめる)。
 ;;; 参照(受け付けた Service の行と task の行 — 終わって結果を保持している task も含む)の無くなった Program は、置いてから
 ;;; PROGRAM-GRACE-MS を過ぎたら掃除する(送り手は Program を先に置いてから行を書くので、その間に消さない)。

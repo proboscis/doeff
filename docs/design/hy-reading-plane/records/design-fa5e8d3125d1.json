@@ -46,12 +46,12 @@
           },
           {
             "benefits": "作る物が少ない",
-            "costs": "面を離れる。operator の \"button to show raw source per entity\" に合わない",
+            "costs": "面を離れる。実体ごとに元の source を見せるボタンという operator の要望に合わない",
             "name": "editor の該当の行へ飛ぶだけ"
           }
         ],
         "question": "source の出し方",
-        "reason": "operator の逐語。editor で開くボタンも隣に置く",
+        "reason": "operator の要望どおり。editor で開くボタンも隣に置く",
         "reconsider_when": "—",
         "selected": "カードの中で開閉(ボタン)"
       }
@@ -92,7 +92,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator \"hy lang is just a way to store data\""
+          "source": "operator の決定(Hy は data を置いておく形式)"
         },
         "rationale": "v1 C5(構造の層が正本になる)",
         "verification": "口の実装を替えてもボタンの動きが変わらない"
@@ -260,7 +260,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"good, i want val/var style for mutability clearness\" + ADR-DOE-HY-006(docs/design/defk-val-var-lazy)"
+          "source": "operator の決定 2026-09-28(書き換えられるかどうかを明瞭にする val / var の書き分け)+ ADR-DOE-HY-006(docs/design/defk-val-var-lazy)"
         },
         "statement": "本体の束縛は val / var の語で書き換えられるかどうかを見せる: <- と val は val、var は var、:= は語なしの x := v、lazy / session は語を前に付ける、本体の setv は警告の印つき"
       },
@@ -269,7 +269,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"and a button to show raw source per defk (entity)\""
+          "source": "operator の要望 2026-09-28(defk(実体)ごとに元の source を見せるボタン)"
         },
         "statement": "実体ごとにカードの中で元の Hy の source(行番号つき)を開閉するボタンと、editor の該当の行を開くボタンを置く。切り出しは索引の位置から"
       }

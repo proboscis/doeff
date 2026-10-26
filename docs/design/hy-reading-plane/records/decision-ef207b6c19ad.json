@@ -14,8 +14,8 @@
     "authority": "direct",
     "decision": "design",
     "outcome": "accepted",
-    "scope_of_agreement": "operator が合意したのは「.hy を開いた時の既定は読む面」と args / return type の 2 語。残りのラベルの語は席の既定で、文字列の表 1 つで戻せる。",
-    "source": "operator の直接の議論 2026-09-29 00:0x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"instead of 引数/答え use args / return type\" / \"great, when opening hy file the default should be reading view\"",
+    "scope_of_agreement": "operator が合意したのは、.hy を開いた時の既定を読む面にすることと、args / return type の 2 語。残りのラベルの語は席の既定で、文字列の表 1 つで戻せる。",
+    "source": "operator の直接の議論 2026-09-29。ラベルを日本語の引数・答えから args / return type に替えることと、Hy の file を開いた時の既定を読む面にすること",
     "statement": "v4 の裁定に 2 点を足す。(1) .hy の file を開いた時の既定は読む面(v1 で席の既定にしていた項目を operator が裁定した。source は切り替えで開く)。(2) 面のラベルは「引数 / 答え」ではなく args / return type。ほかのラベル(effects・handles・handled by・callers・callees・tests・types・used by・handlers・returned by・accepted by・installed at・location・show in line・fold all・unfold all・open in editor・axis)は席が同じ流儀(一般に通じる英語の技術用語)で揃えた既定。実体の種類のバッジ・tags の key・docstring・本体は source のまま。v4 までの他の決まりはそのまま。",
     "subjects": [
       "design-682080043e62"

@@ -441,8 +441,8 @@ rules:
     severity: ERROR
     message: >
       doeff-agents は外の CLI の行(JSON)の形を解かない — 解くのは層 2 の package(doeff-codex の lines・doeff-claude-code の lines)
-      だけで、doeff-agents(層 3 の adapter)はその型つきの記録だけを読む(層の決まり — operator 2026-09-25 "clear boundary for
-      headless mode via effect and handler")。doeff-agents の src に wire の型と JSON の解き手(defwire・doeff_hy.wire・OpaqueJson・
+      だけで、doeff-agents(層 3 の adapter)はその型つきの記録だけを読む(層の決まり — headless の境は効果と handler で
+      はっきり分ける。operator の決定 2026-09-25)。doeff-agents の src に wire の型と JSON の解き手(defwire・doeff_hy.wire・OpaqueJson・
       parse-json)を書かない。要る欄が層 2 の記録に無ければ、層 2 に wire の型と記録を足す。出自 = ki-77e76c7c07ce の設計検証の
       盲検 B(層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・pre-commit・
       型検査を全部通った)。検 = tests/semgrep/test_doeff_agents_wire_json_rule.py。
@@ -2235,7 +2235,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   # 許可の並びの WithBoundaries(1 歩で境の組を付ける命令・d0bbf9ea1 / 43ab0cf3c / 90fbae568・agora-redesign #3149)は利用者の承認
-  # 2026-10-04 11:1x(Mac の調整役が HTML の報告を作り、利用者が見た上で 逐語 "lgtm" — #3149・#1201)。戻し方 = この 1 語を外す。
+  # 2026-10-04(Mac の調整役が作った HTML の報告を利用者が見て承認 — #3149・#1201)。戻し方 = この 1 語を外す。
   - id: doctrl-variants-require-approval
     pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Eval\b|Expand\b|Apply\b|Perform\b|Resume\b|Transfer\b|ResumeThrow\b|TransferThrow\b|WithHandler\b|Pass\b|Delegate\b|WithObserve\b|WithBoundaries\b|GetTraceback\b|GetExecutionContext\b|GetHandlers\b|GetOuterHandlers\b|TailEval\b|AllocVar\b|ReadVar\b|WriteVar\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
@@ -2927,7 +2927,7 @@ rules:
   # program の中の素の time.sleep / asyncio.sleep(Await(asyncio.sleep(…)) を含む)は handler を迂回して
   # 壁の時計で待ち、検が仮想の時計で走れない。(effect, k) を受ける handler の実装の中は鳴らさない。
   # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)と例(examples/ — 本体が
-  # 手本にする物なので素の sleep を置かない)。(card ki-94380dba532f・利用者 2026-10-12 22:38「why not doeff's time effects?」)
+  # 手本にする物なので素の sleep を置かない)。(card ki-94380dba532f・利用者の決定 2026-10-12)
   # Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(card ki-3c3d85253c2c・
   # 定義 = packages/doeff-linter/src/project/program_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.program_sleep])。
   # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py(examples/ の範囲も同じ検が見る)。
@@ -5611,7 +5611,7 @@ rules:
     message: >
       ADR-DOE-RUNNER-001 R3(law reading-plane-is-read-only): 読む面
       (ide-plugins/vscode/doeff-runner/src/read/)は document を書き換えない — 編集の機能は
-      作らない(operator 2026-09-28 "I will never edit the source manually")。
+      作らない(operator は source を手で編集しない — operator の決定 2026-09-28)。
       WorkspaceEdit・applyEdit・TextEditor.edit・document の save を面に置かない。source を
       直したい時は `open in editor` で editor を開く(agora-redesign #910 V9・v1 R2)。
     paths:

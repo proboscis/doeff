@@ -79,7 +79,7 @@
           "docs/adr/defadr_doeff_hy_006_val_var_lazy.hy"]
   :problem
     [(fact
-       "operator の決定(2026-09-26): \"i do want scala-semantic lazy and val var for doeff defk/deftest, so user can do like (lazy val some_variable !(effectful-expr))\" / \"ah yes val as default and enforce var, that sounds good\" / \"1. setv should be warned to use var/val. 2. we need val,var,lazy val, lazy var\" / \"yeah session it is...\" / \"for defhandler, we want to keep lazyval/lazyvar behavior unaffected for now and warn to migrate to session val / session var\""
+       "operator の決定(2026-09-26): doeff の defk / deftest に Scala の意味の lazy と val・var を入れ、(lazy val some_variable !(effectful-expr)) のように書けるようにする。既定は val で、var は明示して書かせる。setv には var / val を使うよう警告し、val・var・lazy val・lazy var の 4 つを用意する。名は session にする。defhandler の lazyval / lazyvar の振る舞いは当面変えず、session val / session var へ移すよう警告する。"
        :evidence "設計の記録 docs/design/defk-val-var-lazy/design.md §1")
      (fact
        "旧い lazy / lazy-val / lazy-var は defhandler でも defk でも「セッションをまたいで状態の効果に保存する値」の意味だった。defk の中の lazy は関数の約束に出ない隠れた状態で、新しい lazy val(その呼び出しの中の遅延)と同じ語で意味が衝突する。"

@@ -5,7 +5,7 @@ agora-redesign #1211(pytest の収集は 1 秒以内)の形: 収集で test modu
 ``(val pytestmark …)``)が、展開の時に「この module が pytest に見せる関数と印」を記録する。記録は展開の式として
 module に入り(``record-at-import`` が module の ``__doeff_pytest_items__`` に JSON の文字列を積む — pyc に焼き込まれる)、
 pytest の plugin(doeff-adr)は 1 度 import した時にそれを取り出して、source の内容の hash を鍵に自分のキャッシュへ保存する。
-Hy の importer には手を入れない(agora-redesign #1290 の利用者の決定 "not touch hy at all"・#1291)。
+Hy の importer には手を入れない(agora-redesign #1290 の利用者の決定・#1291)。
 
 この module が記録の形の**唯一の定義元**: 書く関数(macro が呼ぶ)と読む関数(plugin が呼ぶ)を両方持つ。
 deftest の鍵(``:marks``・``:params`` …)の意味は macro の側で読み、ここへは pytest の言葉(関数の名・引数の名・

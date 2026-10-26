@@ -1060,7 +1060,7 @@
 
 
 (deftest test-api-limit-reading-names-the-range-and-the-reason-the-text-says
-  ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
+  ;; 2026-09-23(operator の規則 2026-09-17 — profile が費用の上限で止まれば、上限の種類に依らず口座が枯れたと読む):
   ;; 実物の文 = 2026-09-23 08:00〜15:00 JST の agent-job の ProviderLimit の 8 件(3 種)と、過去の実物の文。
   ;; 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e・受入 A6): 表は範囲と理由の対を返す。group の上限 $N の族は
   ;; 範囲を名乗らないので unknown(器は決めない)・範囲を名乗る文は account / model のまま・理由は今日どれも rate-limited。

@@ -1,8 +1,8 @@
 // defk の見出しと束縛の型を、editor のどこに何を描くかに直す純粋な関数(VS Code に触らない)。
 // 型の読み方は linter の editor-json(契約 版 2 の signatures と bindings)が唯一の正本で、ここは位置と描く物を決めるだけ。
-// 読むだけの表示 — file の文字は変えない(agora-redesign #849・operator 2026-09-28 "I will never edit the source manually")。
+// 読むだけの表示 — file の文字は変えない(agora-redesign #849・operator は source を手で編集しない — operator の決定 2026-09-28)。
 //
-// 見出し(B 案 — operator 2026-09-28 "i want it to show more like (dict,str)->JsonAnswer" ほか):
+// 見出し(B 案 — 型を (dict, str) -> JsonAnswer の形で見せる。operator の決定 2026-09-28):
 // - 頭の行 `(defk 名 [引数]` を見出しにし(名を太字・行に薄い帯と下の線)、tags は頭の行の末尾に小さな札で置く。
 // - 契約の辞書 `{:pre … :post … :effects … :tags …}` の文字は隠し、1 行目に型の行 `(dict, str) -> JsonAnswer`
 //   (Absent を起こしうる答えは `Maybe[B]`)、2 行目に effect の行(装置の絵と名の札・Raise を含む)を描く。辞書が 1 行なら、

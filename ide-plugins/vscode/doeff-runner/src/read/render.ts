@@ -1,6 +1,5 @@
 // 定義を読む面の HTML を組む純粋な関数(VS Code に触らない)。カード = 定義などの実体 1 つの部品を HTML で見せる物で、
-// 構文はなぞらない(v2・operator 2026-09-28 "so we are not to follow syntax like using. we want better html visualization of
-// entity like defk")。見本 = docs/design/hy-reading-plane/artifacts/v5/entity.html(左に軸・上に 1 行の切り替え・右に実体のカード)。
+// 構文はなぞらず、defk などの実体を HTML でよく見せる(v2・operator の決定 2026-09-28)。見本 = docs/design/hy-reading-plane/artifacts/v5/entity.html(左に軸・上に 1 行の切り替え・右に実体のカード)。
 // カードは 1 行に畳める(v4)。面に出る文字は labels.ts の表からだけ引く(v5)。
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
@@ -302,7 +301,7 @@ function renderSegment(segment: LintBodySegment, at: LineContext): string {
 }
 
 /**
- * 本体の文字(v2 2.2 節・v3 2 節 — operator 承認 "yeah val var when match is perfect.")— 行番号 = source の行、字下げ = 段、
+ * 本体の文字(v2 2.2 節・v3 2 節 — 照合が完全な時は val / var の表で見せる。operator 承認)— 行番号 = source の行、字下げ = 段、
  * effect を通す束縛(⇐)の行は薄い背景、本体の setv は警告の印。組み立ては linter の bodies(読み方の正本は linter)。
  */
 function bodyBlock(body: LintBody, chips: ChipContext, marks: readonly CardMark[], scope: NameScope): string {

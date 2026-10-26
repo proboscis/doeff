@@ -1,6 +1,6 @@
 // defk の見出しの絵の部品(tags の札・effect の札)を、1 行の高さの SVG に描く純粋な関数(VS Code に触らない)と、型の色。
-// 型の行は絵にしない — editor の文字で描く(operator 2026-09-28 "i want it to show more like (dict,str)->JsonAnswer")。
-// editor の文字の大きさと行の高さは変えない。tags の札だけ小さい文字("tags can have small fonts though")。
+// 型の行は絵にしない — editor の文字で描く(型を (dict, str) -> JsonAnswer の形で見せる。operator の決定 2026-09-28)。
+// editor の文字の大きさと行の高さは変えない。tags の札だけ小さい文字にしてよい(同じ決定)。
 // effect の札は 1 つずつ別の画像にする(押した札の effect の定義へ飛ぶため)。
 
 import type { Palette, Pixels } from '../pixel/glyphs';

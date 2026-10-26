@@ -37,7 +37,7 @@ doeff-traverse = { workspace = true }
 # DOEFF013 は根の設定と同じ理由で外す(Optional / None を意図して使う)。層の置き場の規則 DOEFF114・115 は、src/doeff_cluster/ の
 # 直下に平たく在った module を service → 層(core / intent / protocol / entry)と shared・foundation へ移す間(#1988・#2021・#1976)
 # 対象外にしていた。最後の 3 file(新しい置き場を読み直すだけの旧い入口 cluster_foundation・job_context・job_entry)を消した変更で
-# 効かせた(利用者 2026-10-03 00:1x "delete immediately. correctness is prioritized over 'working' somehow"・#2095・#2167)。
+# 効かせた(旧い入口は直ちに消し、とりあえず動く事より正しさを優先する — 利用者の決定 2026-10-03・#2095・#2167)。
 # root = "src": module の名を import の名(doeff_cluster.x)に揃える(この dir を根にすると src.doeff_cluster.x になる)。
 # include = ["tests"]: 根の外の検の dir も歩く範囲に入れ、下の [tool.doeff-linter.definitions] の定義の書き方の規則で判じる
 # (#2821 の案 A-1 — 以前は tests/ の .hy は linter の対象の外で、hook でも手元でも測られていなかった)。層の規則は
@@ -55,8 +55,8 @@ include = ["tests"]
 disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
 
 # 生の副作用(環境変数・時刻・乱数・file・process・http・signal)に直に触ってよい層は foundation だけ(DOEFF106 — 書かないと
-# DOEFF106 は何も出さずに走らない)。利用者の決め(2026-10-02 22:2x "reading env var from outside foundation handler is clear
-# violation")で効かせた — それ以外の層は effect を出し、foundation の答え手(os-file-handler・subprocess-handler・時計の handler など)
+# DOEFF106 は何も出さずに走らない)。利用者の決め(2026-10-02 — foundation の handler の外での環境変数の
+# 読みは違反)で効かせた — それ以外の層は effect を出し、foundation の答え手(os-file-handler・subprocess-handler・時計の handler など)
 # が答える(#3014)。当たりは 0 にしてから効かせた(登録簿に載せて通さない)。残る warning 1 件 = coordinator/protocol/store.hy の
 # (.exists store)(置き場の Protocol の method・書き方では Path.exists と見分けられない弱い証拠 — cisco-c8 の決め・#3014)。
 [tool.doeff-linter.raw_side_effects]

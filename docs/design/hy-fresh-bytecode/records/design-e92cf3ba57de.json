@@ -329,7 +329,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "user",
-          "source": "利用者 2026-09-29 14:0x \"I see, then lets introduce such bypasses and not touch hy at all.\"(#1290)"
+          "source": "利用者の決定 2026-09-29: Hy には手を入れず、回避を doeff の側に置く(#1290)"
         },
         "statement": "Hy に手を入れない。PyPI の Hy に無い名前を hy.* から import しない"
       },

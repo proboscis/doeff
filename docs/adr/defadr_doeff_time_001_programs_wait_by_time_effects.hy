@@ -3,7 +3,7 @@
 ;;; Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(R7・card ki-3c3d85253c2c)。
 ;;; Hy の検も semgrep が読めないので、doeff-linter の規則 DOEFF211 が検の決まり(R3)を止める(R8・card ki-bb3ee40d0af2)。
 ;;;
-;;; 出自 = 利用者の 2026-10-12 22:38 の原文 2 通(下の :problem の fact)。追跡 = card ki-94380dba532f(親)・ki-495db9a2efa0(この冊)。
+;;; 出自 = 利用者の決定 2026-10-12(下の :problem の fact)。追跡 = card ki-94380dba532f(親)・ki-495db9a2efa0(この冊)。
 ;;;
 ;;; この冊は規則の中身(pattern・paths)を持たない。規則の定義は .semgrep.yaml の 1 か所で、冊は法の :enforced-by に規則の id と検の名を
 ;;; `<repo の根からの path>::<名>` の形で書き、その名が今の木に在る事・規則が ERROR である事・極性の検がその規則を当てている事を
@@ -153,8 +153,8 @@
           "docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy"]
   :problem
     [(fact
-       "利用者の 2026-10-12 22:38 の原文: \"someone is using asyncio.sleep??? for what?? why not doeff's time effects?\" / \"i though we have doeff linter checking that\""
-       :evidence "card ki-94380dba532f の本文と、commit ba5513169 の message(どちらも原文を引く)")
+       "利用者の決定 2026-10-12: 待つ所に asyncio.sleep を使う理由は無く、doeff の時間の effect を使う。それは doeff-linter が検めているはずの事である。"
+       :evidence "card ki-94380dba532f の本文と、commit ba5513169 の message")
      (fact
        "2026-10-12 の doeff の main では、sleep の規則は semgrep の doeff-no-sleep-in-tests だけだった。対象は tests/ だけ・severity は WARNING(main への取り込みを止めない)で、本体(src)に規則は無かった。tests/ で asyncio.sleep を含む file は 30 在った。"
        :evidence "card ki-94380dba532f の本文の「今の事実」(2026-10-12 22:4x に main の作業木を git grep で読んだ記録)")
@@ -171,7 +171,7 @@
     [(interpretation
        "program が Delay を yield すれば、1 秒が何であるかは呼び手が置く時間の handler が決める: async_time_handler・sync_time_handler は壁の時計で待ち、sim_time_handler は仮想の時計を進めるだけで待たない。program が time.sleep・asyncio.sleep を呼ぶと、どの handler を置いても壁の時計で待つので、その program の検は実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。")
      (interpretation
-       "利用者の言う「doeff linter」は Rust の doeff-linter(DOEFFnnn)とも読めるが、commit ba5513169 は .semgrep.yaml の規則で入れた。これは親 card ki-94380dba532f の担い手の選びで、利用者が semgrep を名指した記録ではない。commit の hook と日次の走査が新しい所見を止める点は、どちらの道具でも同じ。")
+       "利用者の言う doeff の linter は Rust の doeff-linter(DOEFFnnn)とも読めるが、commit ba5513169 は .semgrep.yaml の規則で入れた。これは親 card ki-94380dba532f の担い手の選びで、利用者が semgrep を名指した記録ではない。commit の hook と日次の走査が新しい所見を止める点は、どちらの道具でも同じ。")
      (interpretation
        "program でも handler でもない Python の loop(CLI の見張りのポーリング・常時動く thread の loop)の素の sleep は、境界の入口に数えて規則の対象にしない。これは card ki-f44251561832 で親 card の担い手が 2026-10-14 に決めた事(案 A・戻せる判断)で、利用者の決定ではない。")]
   :decision
@@ -182,7 +182,7 @@
      (rule R5 "規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る。2026-10-14 の時点で、法の外に残っている所は無い: tests/ の nosemgrep の 7 か所と conformance/ は card ki-6aa7cb5ffb83 が塞いだ(R3)。Hy の program(defk・defp)の素の time.sleep と doeff-agents の自前の待ちの効果は card ki-3c3d85253c2c が塞いだ(R7)。tests の dir の下の Hy の file は card ki-bb3ee40d0af2 が塞いだ(R8)。新しく見つけた「規則が見ていない所」は、ここに子の card と一緒に書く。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
      (rule R7 "Hy の program(defk・defp の本体)にも R1 が当たり、doeff-linter の規則 DOEFF210 が critical で止める(semgrep は Hy を読めない)。規則の定義は packages/doeff-linter/src/project/program_sleep.rs の 1 か所、母集団(program の置き場)は根の pyproject.toml の [tool.doeff-linter.program_sleep] の 1 か所(本体 — tests/ と examples/ は外)。Hy で壁の時計を待ってよい handler の実装は 3 つの形: defhandler の節・引数の並びが [effect k] の定義・handler からだけ呼ばれて本物の相手(子 process・端末)の実時間を待つ helper。helper は契約の辞書の :tags で :role \"foundation\"(汎用の I/O の役)を自分で名乗り、Delay にしない訳を docstring に書く(2026-10-14 の 2 つ: doeff-agents の herdr-send-keys-io — 本物の TUI が貼り付けを受け終える実時間・doeff-core-effects の group-gone-by — 取り消しの手当ては要求の答え手の積みが届かない新しい VM で回り、doeff-core-effects は doeff-time に依存しない)。deff・defn(素の callable)は効果を出せないので program に数えない — deff の是非は ADR-DOE-HY-004 が持つ。doeff-agents は自前の待ちの効果を持たない: program は doeff_time の Delay を yield し、本番の root(io_handlers.hy の run-driver-io・sessionhost/host.hy の run-hosted)が doeff-time の sync-time-handler を置く。自前の待ちの効果を Hy で定め直す形(名に Sleep / Delay を含む効果の defclass・defeffect と、sleep / …-sleep という名の作り手)は、.semgrep.yaml の規則 doeff-agents-no-sleep-effect-hy が ERROR で止める(R4 と同じ扱い — 定義は .semgrep.yaml の 1 か所・形は極性の検が見る)。")
      (rule R8 "Hy の検(名が tests の dir の下の Hy の file — 検・検の道具・子の process に渡す job の本体 — と、どこに在っても検の名の Hy の file)にも R3 が当たり、doeff-linter の規則 DOEFF211 が critical で止める(semgrep は Hy を読めない。DOEFF210 と同じ器で、同じ読みの部品を使う)。規則の定義は packages/doeff-linter/src/project/test_sleep.rs の 1 か所、母集団(検の置き場)は根の pyproject.toml の [tool.doeff-linter.test_sleep] の 1 か所。realtime の名乗りは pytest が印として読む 3 つの形: deftest の meta の {:marks [\"realtime\"]}・素の関数の検の decorator (defn [pytest.mark.realtime] 名 [] …)・module の最上位の (val pytestmark pytest.mark.realtime)(helper が待つ file と検の道具は module の段で名乗る)。名乗った検は Python の検と同じ名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載り、鍵の名は pytest が見せる形(- を _ に直した名)。検が別の process として起こす独立の script(job の本体・替え玉の CLI)は pytest を import しないので印を名乗れない — その file は節の exclude に file で名指し、その 1 行が名乗りの代わりで、名簿の [tests] に同じ path の行を持つ(2026-10-14 の 2 つ: doeff-cluster の tests/fixtures/sleeper.hy・doeff-claude-code の tests/stub_cli/claude.hy)。節の exclude の dir の行は、規則の検体の dir と名簿の [suites] の dir だけ。名乗り・file の名指しと名簿の [tests]、exclude の dir と [suites] が 1 対 1 である事は名簿の検が見る。規則と名簿の検が同じ形を名乗りと読む事は、同じ検体(packages/doeff-linter/tests/fixtures/test_sleep/)を両方が読んで確かめる。既知の当たりの表で下げる道は無い(lowered_by_registry が偽)。")
-     (rule R6 "戻し方: この冊だけを外すなら、冊を足した commit を revert する。規則を外す・WARNING に下げるなら、利用者の 2026-10-12 の決定を覆す事になるので、利用者の新しい決定を :problem に原文で書いてから、規則・極性の検・名簿・この冊を同じ commit で直す。")]
+     (rule R6 "戻し方: この冊だけを外すなら、冊を足した commit を revert する。規則を外す・WARNING に下げるなら、利用者の 2026-10-12 の決定を覆す事になるので、利用者の新しい決定を :problem に書いてから、規則・極性の検・名簿・この冊を同じ commit で直す。")]
   :laws
     [(law a-program-waits-by-a-time-effect
        :statement "for_all 本体(doeff/ と packages の src)と examples/(packages/*/examples/ と根の examples/)の Python の program p(@do の関数)と、本体の Hy の program p(defk・defp の本体)・p の中の待ち w: w は doeff-time の効果の yield ∧ w ∉ {time.sleep(x)・asyncio.sleep(x) | x ≠ 0}(handler の実装の中は除く — Python は (effect, k) を受ける関数・Hy は defhandler の節と [effect k] を受ける定義と :role foundation を名乗る helper〔R7〕)"

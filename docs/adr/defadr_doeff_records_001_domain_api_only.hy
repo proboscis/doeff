@@ -1,7 +1,7 @@
 ;;; Executable ADR: 記録の service(doeff-records)の生の操作(表と列の名と鍵を呼び手に選ばせて直に読み書きする操作)は、
 ;;; cluster の外へ提供しない。外の呼び手(cluster の外の網・CLI・webapp)はドメインの API だけを使う。
 ;;;
-;;; 出自 = 利用者の決定 2026-10-07 10:4x(原文は :problem の fact)。音声で Mac の調整役が受け、配り手の会話 cisco-c8 が
+;;; 出自 = 利用者の決定 2026-10-07(決めた事は :problem の fact)。Mac の調整役が受け、配り手の会話 cisco-c8 が
 ;;; この記録を頼んだ。追跡 = agora-redesign #3883(親 #3850)。
 ;;;
 ;;; この ADR は決定の記録で、doeff-records の code と wire の振る舞いは変えない。cluster の中の job が doeff-records の効果で
@@ -34,8 +34,8 @@
           "docs/adr/defadr_doeff_records_001_domain_api_only.hy"]
   :problem
     [(fact
-       "利用者の決定 2026-10-07 10:4x(原文・一字も変えない): 「まさかだけの汎用なDBのAPIを提供してるんじゃないよね。リードローとかリストローとかそういう生APIを提供しちゃダメでしょ。全部ドメインAPIのみにしてほしい。だからそれも全部、DefjBloomとかLinterで見つけて禁止して赤にして、ちゃんと修正すること。」"
-       :evidence "agora-redesign #3883 の本文。音声で Mac の調整役が受け、配り手の会話 cisco-c8 の連絡で届いた。「DefjBloom」は音声の聞き取りで、defjevrule(dotfiles のルールの宣言)のこと")
+       "利用者の決定 2026-10-07: 汎用の DB の API を提供してはならない。read-row や list-rows のような生の API は出さず、すべてドメインの API だけにする。生の API の提供は defjevrule(dotfiles のルールの宣言)や linter で見つけて禁じ、赤にして直す。"
+       :evidence "agora-redesign #3883 の本文。Mac の調整役が受け、配り手の会話 cisco-c8 の連絡で届いた")
      (fact
        "2026-10-07 の doeff の main で、doeff-records の wire は /v1/records/ の下に 10 の生の操作を出している: read-row・list-rows・put-row・put-rows・watch-changes・append-event・read-events・read-event-by-key・read-stream-end・watch-events(wire.hy の OPERATIONS)。HTTP で受けるのは service.hy。"
        :evidence "packages/doeff-records/src/doeff_records/wire.hy:26-42")]
@@ -43,7 +43,7 @@
     [(interpretation
        "生の操作は、表と列の名と鍵を呼び手に選ばせる汎用の読み書きで、ドメインの意味(誰が何をしてよいか・どの形の値か)を持たない。外の呼び手がこれを直に使うと、ドメインの決まりを通らずに記録を読み書きできる。")
      (interpretation
-       "「外」は cluster の外の網(tailnet を含む)・CLI・webapp を指す。cluster の中の job が doeff-records の効果(ReadRow など)で読み書きする事が「生の API の提供」に当たるかは、原文からは決まらない — 利用者に確かめている最中。")]
+       "「外」は cluster の外の網(tailnet を含む)・CLI・webapp を指す。cluster の中の job が doeff-records の効果(ReadRow など)で読み書きする事が生の API の提供に当たるかは、この決定からは決まらない — 利用者に確かめている最中。")]
   :decision
     [(rule R1 "記録の service の生の操作は、cluster の外(外の網・CLI・webapp)へ提供しない。")
      (rule R2 "外の呼び手は、ドメインの API(用途ごとの名と型を持つ API)だけを使う。生の操作を外から呼ぶ経路を新しく作らない。")

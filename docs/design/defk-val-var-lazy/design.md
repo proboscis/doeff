@@ -6,16 +6,16 @@
   `static_check.py`(doeff-hy-check の警告と赤)
 - 検: `packages/doeff-hy/tests/test_val_var_lazy.py`・`test_static_check.py`・ADR-DOE-HY-006 の enforcement
 
-## 1. 目的と operator の原文(2026-09-26)
+## 1. 目的と operator の決定(2026-09-26)
 
-- "i do want scala-semantic lazy and val var for doeff defk/deftest, so user can do like (lazy val some_variable !(effectful-expr))"
-- "ah yes val as default and enforce var, that sounds good"
-- "1. setv should be warned to use var/val. 2. we need val,var,lazy val, lazy var"
-- "and we should actually migrate defhandler's lazyval and lazyvar to be more clear about the difference" → "yeah session it is..."
-- "also, lets implement the session/lazy val var for defhandler/deftest/defk. for defhandler, we want to keep lazyval/lazyvar behavior unaffected for now and warn to migrate to session val / session var"
-- "so that each handler's session values can be controlled by outer handler via effects" → 訂正 "i mean, value put/get itself is state-monad == effects so"
-- "oh btw perhaps we want lazy val var for global scope, dont we?" → "i mean instead of setv we want val/var used"
-- "hmm, but this makes me feel that what's the point of having lazy val if it can't use effects... but yeah you are right, global context has no handler so it must not have effectful state ments." → "nonono have lazyval"
+- doeff の defk・deftest に、Scala の意味の lazy と val・var を入れる。効果の式も遅延で束縛できる(例 `(lazy val some_variable !(effectful-expr))`)。
+- val を既定にし、書き換える名前には var の宣言を強いる。
+- setv には val / var を使うよう警告し、val・var・lazy val・lazy var を揃える。
+- defhandler の lazyval・lazyvar は、2 つの意味の違いがはっきりする session の語へ移す。
+- defhandler・deftest・defk に session / lazy の val・var を入れる。defhandler の旧い lazyval / lazyvar は今は動きを変えず、session val / session var への移行を警告する。
+- 各 handler の session の値を、外の handler が効果で扱えるようにする。値の put / get がそのまま状態の効果なので、それで足りる(operator の訂正)。
+- module の直下でも、setv の代わりに val / var を使う。
+- module の直下には handler が無いので効果を使う状態は持てないが、lazy val そのものは残す。
 
 名前の束縛を「一度だけ(val)」を既定にし、書き換える名前は var と宣言させる。値の遅延(lazy)と、セッションで共有する値(session)を
 別の語に分けて、今まで同じ `lazy-val` の語に混ざっていた 2 つの意味(1 回の呼び出しの中の遅延と、セッションをまたぐ共有)をはっきりさせる。
@@ -144,12 +144,12 @@ main 席(依頼の文)が決めた項目:
 | 13 | 節の `:when` の番が読む session の値(session val / var・旧い lazy-val / lazy-var)は、番の前に取り出す。番が読まない名前は今までどおり番が通った後(本体が使う節でだけ) | 番も「使う所」なので、lazy の意味(初めて使った時に作る)のまま番の前で作るのが正しい。誤りにして案内する案は、handler の状態で番を掛ける普通の書き方(`:when (< used limit)`)を禁じるので採らない。直す前は取り出しが番の後にあり、番の中の名前は節の関数の局所変数として未定義(UnboundLocalError)だった(2026-09-26・main 席の依頼・席が決定) | `handle.hy` `_build-clause` の guard-prefix を lazy-prefix へ戻す |
 
 module の直下の lazy val の経緯: いったん「効果を使わない lazy の利点は import の時の計算を遅らせるだけ」として外したが、
-operator の指示 "nonono have lazyval"(2026-09-26)で、効果を使わない式に限って許す形へ戻した。外した時の原文 = "hmm, but this makes me feel that
-what's the point of having lazy val if it can't use effects... but yeah you are right, global context has no handler so it must not have effectful state ments."
+operator の決定(2026-09-26)で、効果を使わない式に限って許す形へ戻した。外した時の訳は、module の直下には handler が無く効果を使えないので、
+lazy val を置く意味が薄いという点だった。
 
 ## 7. session の値と外の handler
 
-- 仕組みは doeff の状態の効果(Get / Put = state monad)のまま。専用の型つきの効果は作らない(operator の訂正 "value put/get itself is state-monad == effects so")。
+- 仕組みは doeff の状態の効果(Get / Put = state monad)のまま。専用の型つきの効果は作らない(operator の訂正: 値の put / get そのものが状態の効果である)。
 - 外の handler と検査は `doeff_hy.session.session_key(module, handler, name)` でキーを引く。README と本記録に形を明記し、キーの形を変える時は ADR を改める。
 - 提案(今回は作らない・operator の判断に回す): 型のある専用の効果(例 `SessionValue(handler, name)`)は、キーの文字列を組む手間と綴り違いを型で防げる。
   足すなら Get / Put と二重にならないよう、既定の handler がその効果を Get / Put へ写す 1 段にし、session val / session var の展開はその効果だけを出す形にする。

@@ -420,8 +420,8 @@
   (<- (Stop handle))
   done)
 
-;; --- 添付の画像(card acp:kanban-issue:ki-0faa366b76c0 — 利用者 2026-10-10 19:05:57 "actually the image i paste into this chat, must be part
-;; of the prompt...")。替え玉の CLI は stream-json の user の content の image の block を印 IMAGE-MARK として数え、IMAGES-PHRASE か画像だけの
+;; --- 添付の画像(card acp:kanban-issue:ki-0faa366b76c0 — 会話に貼った画像は prompt の一部として CLI へ渡す。利用者の決定 2026-10-10)。
+;; 替え玉の CLI は stream-json の user の content の image の block を印 IMAGE-MARK として数え、IMAGES-PHRASE か画像だけの
 ;; 入力に「IMAGES-<数>」と答える(tests/scenario_rules.hy)。中身は CLI が読まないので小さな PNG の頭だけ。
 (val PNG (InputImage :mime "image/png" :data-base64 "iVBORw0KGgo="))
 
@@ -886,7 +886,7 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "道具の呼びの始まり(層 2 の PartialMessage の tool-start)が AgentToolCallStartedEvent(呼びの id と道具の名)として、命令の差分(種類
    TOOL-INPUT)が片ごとに AgentToolInputDeltaEvent(切れ端の文字列つき)として、その呼びの AgentToolUseEvent より前に出る。命令を
-   書いている間を落とす adapter では 0 で赤(agora-redesign #3974 の 3 — 利用者 2026-10-07 14:2x「呼んでいると分からないといけない」)。"
+   書いている間を落とす adapter では 0 で赤(agora-redesign #3974 の 3 — 道具を呼んでいる間を画面で分かるようにする。利用者の決定 2026-10-07)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val started (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolCallStartedEvent) #(index event.name event.id)))
   (val pieces (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolInputDeltaEvent) #(index event.text)))

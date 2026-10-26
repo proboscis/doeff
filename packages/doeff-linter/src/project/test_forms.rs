@@ -1,4 +1,4 @@
-//! DOEFF135: テストは deftest だけ(agora-redesign #1106 の R6・#1144 — operator 2026-09-27「検は deftest だけ」・#1104 の決定)。
+//! DOEFF135: テストは deftest だけ(agora-redesign #1106 の R6・#1144 — operator の決定 2026-09-27・#1104 の決定)。
 //!
 //! architecture.hy の `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、deftest 以外のテストの形を
 //! file ごとに 1 件出す(critical):

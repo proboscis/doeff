@@ -379,7 +379,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"also filter by tag feature in doeff panel is not working.\""
+          "source": "operator の報告 2026-09-28: doeff の panel のタグでの絞り込みが動かない。"
         },
         "statement": "agora-controllers を開くと「タグで閲覧」で定義をタグ(service・context 等)で絞れる"
       },

@@ -302,7 +302,7 @@
     (PartialMessage :delta lines.DeltaKind.TEXT :thinking-delta "hmm")))
 
 (deftest test-a-tool-call-start-and-its-input-pieces-are-read
-  ;; #3974 の 3(利用者 2026-10-07 14:2x「呼んでいると分からないといけない」): 担当が道具の命令を書いている間を画面に出す
+  ;; #3974 の 3(道具を呼んでいる間を画面で分かるようにする。利用者の決定 2026-10-07): 担当が道具の命令を書いている間を画面に出す
   ;; ため、content_block_start の tool_use は呼びの id と道具の名(tool-start)を、input_json_delta は命令の切れ端(partial_json — JSON の
   ;; 途中で単独では読めない文字列)を運ぶ。前は種類 TOOL-INPUT だけで中身を落とし、道具の名も読まなかったので赤。
   (val start (classify-record {"type" "stream_event"

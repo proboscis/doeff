@@ -57,7 +57,7 @@ pub struct Mode {
 /// (保存前の 1 file — 書き込み直後の hook は全体 3 秒で切って黙って通すので、待つと hook が効かなくなる)/ `--commit-hook`
 /// (test でなく、stage した file に file 1 つで決まる規則を当てる止める検査 — 子の linter 1 回ごとに自分の CPU 秒の上限
 /// [tool.doeff-linter.commit_hook] timeout_s を持つ。枠に並ぶと pytest と型の検の後ろで最長 20 分待ち、会話の道具の上限で commit が
-/// 切れた — card ki-b96d1fd0433f・利用者 2026-10-12 22:57 JST "pre-commit check is not tests so it shouldn't be blocked by other tests"。
+/// 切れた — card ki-b96d1fd0433f・利用者の決定 2026-10-12: commit の前の検査は test ではないので、ほかの検の後ろで待たせない。
 /// 子の linter も取らない — commit_hook::run_linter が GATED_ENV を付けて起こす)。
 /// 取る: `--hook`(Cursor の stop hook — workspace の全体)・editor-json と text / json の repo 全体(CPU 100 秒超)。
 pub fn weight(mode: Mode) -> Weight {
@@ -106,7 +106,7 @@ fn canon_path() -> Option<PathBuf> {
 }
 
 /// 正本を走らせる python — `uv python find` の答え(作業木の venv が在ればそれ)。機体の python3 や venv の bin を直に探さない
-/// (operator 2026-09-27 "the user must use 'uv', not machine's python"・2026-09-25 "i want you to use uv. never direct venv")。
+/// (operator の決定 2026-09-27・2026-09-25 — python は uv で選び、機体の python や venv を直に使わない)。
 /// 正本は標準の library だけで走る。`uv run` で包まないのは、uv が子を起こして待つ形だと、呼び手の SIGKILL が uv だけを殺し、
 /// 包みと linter が孤児で残るため(exec した python は linter と同じ pid)。
 fn python_for_canon() -> Result<PathBuf, String> {

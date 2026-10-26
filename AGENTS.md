@@ -17,8 +17,8 @@ attribution clean, write access is governed by **account routing**:
   session running under the maintainer's designated personal (non-employer)
   profile. This is enforced system-wide by the profile / git-author boundary
   hooks (company-write-boundary); **orch runs are NOT required for landing
-  changes**. (2026-07-21 maintainer directive: the former "all changes land via
-  orch" rule was a proxy for account routing, which the surrounding system now
+  changes**. (2026-07-21 maintainer directive: the former rule that all changes land via
+  orch was a proxy for account routing, which the surrounding system now
   enforces directly — the choke point is removed.)
 - **Agents running under an employer-provided AI subscription must never author
   commits or PRs in this repository**, even when technically able to. For such
@@ -223,4 +223,4 @@ Recent history favors concise, imperative summaries (for example, `Fix cache inv
 
 - doeff の VS Code 拡張を更新したら、変更範囲を検証し、通った変更を commit して通常の公開経路で main へ反映(push)する。その main から依存物を含む VSIX が自動配布され、標準プロファイルへインストールされたことを確認する。インストールされた成果物で動作と版を確認し、再読み込みが必要なら伝える。ローカルへの手動インストールだけを完了にせず、ユーザーに毎回 commit・push・インストールを依頼させない。
 - 未 merge の開発版を途中で確認する場合は、main を配る `agentcli.vsix_follow` と競合しない専用プロファイルを使う。専用プロファイルでの成功を標準プロファイルへの反映済みと報告しない。自動配布の記録を偽装したり、他の拡張の更新を無断で停止したりしない。
-- 出自: operator 2026-10-04「can you install the plugin as you update?」、2026-10-05「why dont u then commit push to main everytime you upload vscode plugin」。CLAUDE.md はこのファイルへの symlink なので両ランタイムへ適用する。
+- 出自: operator の決定 2026-10-04・2026-10-05(拡張を更新するたびに入れ、vscode の拡張を上げるたびに main へ commit・push する)。CLAUDE.md はこのファイルへの symlink なので両ランタイムへ適用する。

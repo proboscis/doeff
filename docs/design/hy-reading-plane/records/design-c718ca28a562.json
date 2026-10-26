@@ -55,7 +55,7 @@
           }
         ],
         "question": "defk をどう見せるか",
-        "reason": "operator \"to me D reads far better, than pure lisp\"。塊の置き換え・閉じ括弧の消去・本体の Scala 化は D でしかできない",
+        "reason": "operator の判断: D の方が素の lisp より読みやすい。塊の置き換え・閉じ括弧の消去・本体の Scala 化は D でしかできない",
         "reconsider_when": "言語が入って source そのものが Scala の形になった時(読む面は不要になる)",
         "selected": "D. 読むための別の面"
       },
@@ -73,7 +73,7 @@
           }
         ],
         "question": "読む面の単位と入口",
-        "reason": "operator \"a tree structure can never cover the entire axis of domain\" / \"organized across multiple axis of tags rather than a single file structure tree\"",
+        "reason": "木の構造では領域の全ての軸を覆えないので、系は 1 本の file の木ではなく tag の複数の軸で組む(operator の決定)",
         "reconsider_when": "— (operator の裁定)",
         "selected": "定義を単位に、軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差"
       },
@@ -96,7 +96,7 @@
           }
         ],
         "question": "言語を今作るか",
-        "reason": "operator \"ultimately we want new lang but for now we go with D and linter to cover\"",
+        "reason": "最終的には新しい言語を目指すが、今は D と linter で賄う(operator の決定)",
         "reconsider_when": "D と暮らして印字の文法が固まり、候補で controller 1 本を書く実験で agent の精度と周回時間が測れた時",
         "selected": "今は D と linter で賄い、言語は要件だけ記録する"
       }
@@ -119,7 +119,7 @@
           "kind": "user",
           "source": "operator 2026-09-28"
         },
-        "rationale": "operator の到達点 \"ultimately we want new lang\"",
+        "rationale": "operator の到達点は新しい言語",
         "verification": "実物の defk 5 本を印字 → 読み戻し → 元の Hy と一致するテスト"
       },
       {
@@ -178,7 +178,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"multiple axis of tags\""
+          "source": "operator の決定 2026-09-28(tag の複数の軸)"
         },
         "rationale": "系は tag の複数の軸で組織する(R8)",
         "verification": "新しい key を 1 つ足した defk が、code を変えずに新しい軸として面に出るテスト"
@@ -198,7 +198,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"hy lang is just a way to store data\""
+          "source": "operator の決定 2026-09-28(Hy は data を置いておく形式)"
         },
         "rationale": "将来の言語で名前空間を file から離す時",
         "verification": "索引の入口を file の走査から別の正本に替えても面が変わらない"
@@ -488,7 +488,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"i want this defk to look like: scala func definition... visually\" / \"perhaps D is the way to go\" / \"to me D reads far better, than pure lisp\""
+          "source": "operator の決定 2026-09-28(defk を Scala の関数定義の見た目で読みたい。素の lisp より読みやすい案 D を選ぶ)"
         },
         "statement": "定義(defk ほか 2.2 の表の form)を丸ごと Scala 3 の形で読める。閉じ括弧と契約の map は出ない"
       },
@@ -497,7 +497,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "inherited",
-          "source": "ADR-DOTFILES-027 R-28bb3a77・#849 逐語 6 \"I will never edit the source manually\""
+          "source": "ADR-DOTFILES-027 R-28bb3a77・#849 逐語 6(source を手で編集しない)"
         },
         "statement": "source の Hy は 1 文字も変えない。editor は読むためだけ"
       },
@@ -506,7 +506,7 @@
         "kind": "quality",
         "provenance": {
           "kind": "assumption",
-          "source": "席の提案 2026-09-28。operator の \"ultimately we want new lang but for now we go with D\" と整合"
+          "source": "席の提案 2026-09-28。最終的には新しい言語を目指し、今は D で行く operator の決定と整合"
         },
         "statement": "印字した文を読み戻すと元の Hy と等しい(将来の言語の文法を兼ねる)"
       },
@@ -524,7 +524,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "#849 「linter の知らせは違反の場所へ」+ 席の提案(報告・差分・traceback は source の file と行で来る)"
+          "source": "#849(linter の知らせは違反の場所へ)+ 席の提案(報告・差分・traceback は source の file と行で来る)"
         },
         "statement": "source の位置をカードに残し、linter の知らせをカードの該当の行へ写す"
       },
@@ -533,7 +533,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"for now we go with D and linter to cover\""
+          "source": "operator の決定 2026-09-28(今は D と linter で賄う)"
         },
         "statement": "言語の compiler が担うはずの検査(effect の宣言の突合・契約・match の網羅)は当面 doeff-linter が担う"
       },
@@ -542,7 +542,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"actually we are not only talking about defk but the whole doeff-hy code reading plane\""
+          "source": "operator の決定 2026-09-28(対象は defk だけでなく doeff-hy の code を読む面の全体)"
         },
         "statement": "対象は defk だけでなく doeff-hy の code 全体(defrecord・defeffect・defhandler・deftest・defwire・defenum・最上位の setv・import・説明の註)"
       },
@@ -551,7 +551,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"I feel it's nonesense to make a scope of variable or anything bound to a file and file structure\" / \"because a tree structure can never cover the entire axis of domain\" / \"the system should be more organized across multiple axis of tags rather than a single file structure tree\""
+          "source": "operator の決定 2026-09-28(変数などの範囲を file と file の構造に縛らない。木の構造では領域の全ての軸を覆えないので、系は tag の複数の軸で組む)"
         },
         "statement": "単位は定義で、file と dir の構造に縛らない。入口は木ではなく軸(tag の各 key・effect・呼び出し・型・テスト・置き場)の切り替えと交差。tags は key ごとに 1 軸で軸の数は開いている"
       },
@@ -560,7 +560,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"so hy lang is just a way to store data but we want our doeff-hy to be in different plane as a system structure\""
+          "source": "operator の決定 2026-09-28(Hy は data を置いておく形式で、doeff-hy は系の構造として別の面に置く)"
         },
         "statement": "Hy の file は定義を置いておく形式(置き場の層)で、系の構造は定義 × 属性の面(構造の層)にある。読む面は構造の層を見る。面が自分で file を歩かない"
       }

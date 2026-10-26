@@ -1,6 +1,6 @@
 import { termMessage } from '../lint/termViews';
 // 定義を読む面の repo 全体の入口(agora-redesign #910 U9)— file を開かずに、索引の全 file の定義を 1 つの面で軸から絞る。
-// operator の裁定「単位は定義。入口は木ではなく tag の複数の軸」「file を跨ぐという概念は面に無い」(v1)の本来の形。
+// operator の裁定(v1 — 単位は定義で、入口は木ではなく tag の複数の軸。面には file を跨ぐという概念が無い)の本来の形。
 // 全カードは索引だけから作り(source を持たない = 軽い)、カードを開く・source を押した時にその file だけを読み込む
 // (文字・editor と同じ色・linter の見出しと本体)。木や帯から寄せたカードは「積んだカード」として上に残す(v4 2 節)。
 

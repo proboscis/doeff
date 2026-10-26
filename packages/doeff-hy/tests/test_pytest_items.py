@@ -1,7 +1,7 @@
 """item を作る macro が展開の式で module に積む pytest の item の記録(doeff_hy/pytest_items.py・agora-redesign #1291)。
 
 記録は展開の式として module に入るので、test module を import して ``__doeff_pytest_items__`` を読めば確かめられる
-(Hy の importer にも pyc にも頼らない — #1290 の利用者の決定 "not touch hy at all")。
+(Hy の importer にも pyc にも頼らない — #1290 の利用者の決定)。
 """
 
 import importlib

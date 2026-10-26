@@ -110,7 +110,7 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 
 ### linter の結果(doeff-linter)
 
-規則の判定の正本は linter で、拡張はその出力を表示するだけです(自分では判定しません)。operator の逐語は "linter must be the source of truth and editor must follow that" です。
+規則の判定の正本は linter で、拡張はその出力を表示するだけです(自分では判定しません)。linter を正本とし、editor はそれに従うというのが operator の決定(2026-09-28)です。
 
 - **呼び方**: 設定 `doeff-runner.hy.lintCommand`(workspace ごと)。既定は `doeff-linter --output-format editor-json` です。空にすると呼びません。
   - 起動時と workspace の変化、「再実行」のボタンでは、repo 全体を呼びます(引数なし)。

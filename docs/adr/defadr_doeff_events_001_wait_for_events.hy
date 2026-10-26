@@ -6,7 +6,7 @@
 ;;; 改訂 2026-10-03 12:0x(cisco-c8 の戻せる決め・agora-redesign #3072 comment 5964894117): 出来事の源を Redis Streams から
 ;;; 記録の service(PostgreSQL の LISTEN / NOTIFY と HTTP の WatchChanges の long-poll)へ改めた。選ばなかった訳は :problem の fact。
 ;;;
-;;; 出自 = 利用者の決め 2026-10-03 11:4x(Mac の調整役 → cisco-c8 → kn-w37 が記録・逐語は :problem の fact)。
+;;; 出自 = 利用者の決め 2026-10-03(Mac の調整役 → cisco-c8 → kn-w37 が記録・決めた事は :problem の fact)。
 ;;; 同じ決めの席の側の記録 = dotfiles の ADR-DOTFILES-027 R-c9c11f05(書く時の助言は code-quality-policy-when-writing-code)。
 ;;; 待ちの期限と、来るはずの出来事が来ない時の線(業務の期限は出来事にする・基盤の異常は Program に出さない・sim は行き止まりを
 ;;; 即座に赤にする)の全文は c3-w49 の設計の覚え書き。
@@ -28,7 +28,7 @@
           "docs/adr/defadr_doeff_events_001_wait_for_events.hy"]
   :problem
     [(fact
-       "利用者の決め 2026-10-03 11:4x(逐語 2 通): \"about loop and wait architecture, what if we use doeff-events so we can wait for events instead of time?\" → \"yeah so we want doeff-events handler with cluster-aware backend like redis/rabbitmq etc\""
+       "利用者の決め 2026-10-03: loop と待ちの作りは、時間でなく出来事を待てるよう doeff-events を使う。その handler は redis や rabbitmq のような cluster を知る backend を持つ。"
        :evidence "Mac の調整役(w3J:p17)→ cisco-c8 → kn-w37(agora-redesign #2976 の「待ちの形」の行)")
      (fact
        "出来事の源 = 記録の service(PostgreSQL の LISTEN / NOTIFY と、HTTP の WatchChanges の long-poll)。出来事は「どこが変わったか」の合図(キー)だけを運び、受けた側が記録を読み直す — 2 度届いても・順序が入れ替わっても・1 つ欠けても、次の合図か起動の時の読みで追いつくので状態が壊れず、落ちた後の再配達(consumer group・pending・ack)が要らない。選んだ訳 = 新しく置く物が無い・変更の記録が 1 本で済む・NOTIFY は書きと同じ transaction で commit されるので「書いたのに合図が出ない」隙間が無い・password を足さない。"

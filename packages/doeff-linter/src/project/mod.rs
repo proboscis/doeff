@@ -3823,7 +3823,7 @@ fn judge_timed_refetch(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<
                 base: Severity::Error,
                 explain: Explain::PollingOnTimer {
                     subject: format!("{}(区分 {})", found.subject(), found.refetch.label()),
-                    reason: "時間で取りに行くのは最後の手段(利用者 2026-10-06 \"so anything that require polling, are to be fixed. polling is a last resort\")。間隔を置いて同じ物を取りに行くと、変わりへの反応が間隔の分だけ遅れ、変わらない間も相手を読み続け、負荷が取りに行く手の数に比例して増える。起こすのは相手の変わりの知らせ(出来事)にし、起きる刻が行や予定から決まる期限はその刻を掛ける(agora-redesign #3834)。".to_string(),
+                    reason: "時間で取りに行くのは最後の手段(利用者の決定 2026-10-06 — 取りに行く繰り返しは全部直す対象)。間隔を置いて同じ物を取りに行くと、変わりへの反応が間隔の分だけ遅れ、変わらない間も相手を読み続け、負荷が取りに行く手の数に比例して増える。起こすのは相手の変わりの知らせ(出来事)にし、起きる刻が行や予定から決まる期限はその刻を掛ける(agora-redesign #3834)。".to_string(),
                 },
                 rel: found.rel,
                 message,
@@ -5498,7 +5498,7 @@ enum JsonValueAllowance {
 /// 方針は差し替えられる形にしてある: 許す場所の決め方を変える時(例: defwire の macro が生む解き手の中だけを許す形へ移る時)は、
 /// この関数の中身だけを替える。呼び手(母集団・名の数え方・鍵・説明の形)は変わらない。
 ///
-/// 今の方針(agora-redesign #840・operator 2026-09-28「JsonValue に触ってよいのは、汎用の解き手と、送受信そのものを行う foundation だけ」):
+/// 今の方針(agora-redesign #840・operator の決定 2026-09-28 — JsonValue に触ってよいのは、汎用の解き手と、送受信そのものを行う foundation だけ):
 /// 1. 組み込みの汎用の解き手(`BUILTIN_WIRE_MODULES`)は許す。
 /// 2. architecture.hy の `:wire-modules` の pattern に当たり、かつ foundation の層(`:foundation` の層の置き場)に在る module は許す。
 /// 3. `:wire-modules` に当たっても foundation の外なら許さない(訳を説明に出す)。当たらなければ許さない。

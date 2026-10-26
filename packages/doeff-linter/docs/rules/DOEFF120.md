@@ -16,8 +16,7 @@
 中を読まない値)は、JsonValue ではなく `doeff_hy.json_value.OpaqueJson` で運びます。中を分解する口を持たない名のある型で、
 `defwire` の欄に書けば解き手が包み・戻し、形を知る読み手は `(parse T opaque)` で型へ解きます。この規則は OpaqueJson を数えません。
 
-出自: agora-redesign #840・operator 2026-09-28 逐語 "and i dont think we should make anyone use that directry instead of actually parsing
-and validating it like pydantic does"。
+出自: agora-redesign #840・operator の決定 2026-09-28(JsonValue を直に使わせず、pydantic のように解いて検めた型のある値を使う)。
 
 ## 何を数えるか
 

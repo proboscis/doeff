@@ -60,7 +60,7 @@ pub struct ArchLayer {
     #[serde(skip)]
     pub wire_free: bool,
     /// この層の module が、:depends-on に宣言した依存先の service のどの層を読んでよいか(None = :open-layers)。
-    /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む(operator 2026-09-28 "A okay")。
+    /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む(operator の決定 2026-09-28 の案 A)。
     #[serde(skip)]
     pub dependency_layers: Option<Vec<String>>,
     /// この層に入る module を綴りで名指す(`:modules [名 …]` — 点で区切った module の名・その下の module も入る)。置き場の dir で層が
@@ -1375,7 +1375,7 @@ impl<'a> Parser<'a> {
                     }
                     None => self.problem(value, ":roles は {:role \"説明\" …} の辞書"),
                 },
-                // :legacy は廃止(operator 2026-09-27 逐語 "we dont want 'legacy' stuff. we want anything all flagged")— 宣言の外の module は
+                // :legacy は廃止(operator の決定 2026-09-27 — 旧い物の逃げ道を置かない)— 宣言の外の module は
                 // 全部 DOEFF114・115 で出し、既存の分は登録簿で受ける。
                 ":legacy" => self.problem(
                     key,

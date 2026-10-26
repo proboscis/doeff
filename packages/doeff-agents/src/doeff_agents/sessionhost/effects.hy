@@ -35,7 +35,7 @@
   #^ (| str None) reason
   #^ bool retryable
   #^ str observed-at
-  ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
+  ;; 2026-09-23(operator の規則 2026-09-17 — profile が費用の上限で止まれば、上限の種類に依らず口座が枯れたと読む):
   ;; 限度の断り(category rate_limited)が枯らした範囲と、文が名乗った戻りの時刻。当てるのは器の側の 1 点
   ;; (headless.headless-turn-limit-cause — 表は impls/markers.hy)で、制御面はこの欄を読む(ADR-DOE-AGENTS-012 R33)。
   ;; limit-scope = "account"(口座全体)| "model"(文が model の族を名乗る)| "unknown"(文が範囲を名乗らない —

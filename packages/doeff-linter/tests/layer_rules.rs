@@ -1562,7 +1562,7 @@ fn smells_have_clean_counterparts_and_run_on_a_single_file() {
 
 #[test]
 fn only_the_assembly_layer_may_read_a_dependency_protocol() {
-    // operator 2026-09-28 "A okay": 組み立ての entry に限り、:depends-on に宣言した依存先の protocol(翻訳の handler)も読んでよい。
+    // operator の決定 2026-09-28 の案 A: 組み立ての entry に限り、:depends-on に宣言した依存先の protocol(翻訳の handler)も読んでよい。
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
@@ -3111,7 +3111,7 @@ fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
     dir
 }
 
-/// agora-redesign #3493・#3496(利用者 2026-10-04 "so this kind of violation, must be detected by doeff linter"): 本番の系の job が
+/// agora-redesign #3493・#3496(この種の違反は doeff-linter が見つける — 利用者の決定 2026-10-04): 本番の系の job が
 /// 読む組に、本番の job の :writes も :outside-writers の行も無ければ赤(新しい入口の画面が、本番に書き手の無い会話の記録を読んでいた形)。
 /// 本番の系の job に欄が無ければ赤。本番の系でない模擬の系は数えない。
 #[test]
@@ -3249,8 +3249,8 @@ fn record_wait_repo(declared: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 利用者 2026-10-06 23:0x("記録に書いて記録をポーリングする設計を本当にやめてくれ、linterでみつけて禁止したい" /
-/// "記録は記録、起動は起動"・agora-redesign #3834): 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
+/// 利用者の決定 2026-10-06(記録を書いて記録を待つ設計を linter で禁じ、記録と起動を分ける・agora-redesign #3834):
+/// 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
 /// handler の外で秒が 0 でない記録の変更の待ちを出す所は赤。待たずに 1 回読む(秒 0)・模擬・検・doeff-records の中・記録の効果に答える
 /// handler の中・match の pattern は当たらない。
 #[test]
@@ -3351,8 +3351,8 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 利用者 2026-10-06("so anything that require polling, are to be fixed. polling is a last resort" / "記録に書いて記録をポーリングする設計を
-/// 本当にやめてくれ、linterでみつけて禁止したい"・agora-redesign #3834): 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
+/// 利用者の決定 2026-10-06(取りに行く繰り返しは全部直す対象で最後の手段に限る・agora-redesign #3834):
+/// 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
 /// 取りに行く所は赤 — 今 + 秒の ArmTimer・Delay・補助の定義に包んだ形・:poll-seconds。期限の待ち・変わりを待つ上限の秒・1 度だけの期限・
 /// 閉じた語彙の理由を書いた所は通る。母集団は services/record と doeff の package(doeff-core-effects・doeff-traverse・doeff-records)も含む。
 #[test]
@@ -6369,7 +6369,7 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 利用者 2026-10-07 11:0x(agora-redesign #3885): 記録の service の生の操作を使うのは handler(protocol・foundation の層)だけ。業務の層
+/// 利用者の決定 2026-10-07(agora-redesign #3885): 記録の service の生の操作を使うのは handler(protocol・foundation の層)だけ。業務の層
 /// (core・intent)の定義が :lower-layer-modules の効果を出す(直に・defk を辿って・同じ package の repo の外の defk を実行して)所と、
 /// その package の handler を被せる所は critical。値の型の使用・ドメインの効果・翻訳と土台の層は当たらない。
 #[test]

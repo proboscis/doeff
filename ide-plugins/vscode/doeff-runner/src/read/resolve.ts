@@ -1,5 +1,5 @@
-// 実体の名 → 定義の解決(v12・operator 2026-09-29 "jump to definition by clicking each entities like effect/class/record etc from
-// reading view and the source view... every location of plugin")の純粋な関数(VS Code に触らない)。読む面の中で実体の名を
+// 実体の名 → 定義の解決(v12・operator の決定 2026-09-29 — effect・class・record などの
+// 実体の名を、読む面と source の面の拡張の全ての場所で押して定義へ飛べるようにする)の純粋な関数(VS Code に触らない)。読む面の中で実体の名を
 // 描く場所は全部ここを通す — 場所ごとに別の解決を書かないため(agora-redesign #910 U19)。
 // 解き方の順: 1. linter の definition(path と名の範囲)→ 2. 索引の target(呼び出し・型の名・effect の名の完全修飾名)→
 // 3. 名だけ(索引の最上位の定義の名で引く — 候補が複数なら全部返し、押した時に選ばせる)。面が自分で file を歩かない(v1 制約 5)。

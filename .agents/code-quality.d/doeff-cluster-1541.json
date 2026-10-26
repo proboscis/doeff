@@ -283,7 +283,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy"
       ],
-      "responsibility": "coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(operator 2026-09-25 逐語\"such environmental changes are to be all done via handler swapping\")。",
+      "responsibility": "coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(環境の違いは handler の差し替えだけで扱う — operator の決定 2026-09-25)。",
       "typed": true
     },
     {

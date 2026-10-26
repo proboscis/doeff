@@ -265,7 +265,7 @@ fn stage_in_git(repo: &Path) {
     git(&["add", "tool.py"]);
 }
 
-/// 利用者 2026-10-12 22:57 JST "pre-commit check is not tests so it shouldn't be blocked by other tests": commit の hook
+/// 利用者の決定 2026-10-12(commit の前の検査は test ではないので、ほかの検の後ろで待たせない): commit の hook
 /// (`--commit-hook`)は stage した file に file 1 つで決まる規則を当てる短い止める検査で、自分の CPU 秒の上限(timeout_s)を持つ。
 /// 親も、親が stage した path に撃つ子の linter(editor-json)も正本を通らない — 枠の待ちで commit が止まらない。
 /// 子が走った事は、stage した tool.py の当たり(DOEFF016)で止まる事で見る。

@@ -91,7 +91,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator 逐語 2026-09-18"
+          "source": "operator の決定 2026-09-18"
         },
         "rationale": "operator の指示 R4。長い設計を持ち歩く席と 1 件を直す席では要る文脈が違う。",
         "verification": "同じ agentd に auto_compact_window の違う charter を渡し、argv の値だけが変わることを実射で見る。agentd の code に役の語が 1 つも現れないことを確認する。"
@@ -491,7 +491,7 @@
         "status": "performed",
         "steps": [
           {
-            "result": "確定要求 = R4(operator の逐語)。観測要求 = R1 / R2 / R5 / R6。継承の制約 = R3。仮定 = R7(誤りで席が起きなくなってはいけない)と CC3。",
+            "result": "確定要求 = R4(operator の決定)。観測要求 = R1 / R2 / R5 / R6。継承の制約 = R3。仮定 = R7(誤りで席が起きなくなってはいけない)と CC3。",
             "step": "1"
           },
           {
@@ -616,7 +616,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 逐語 2026-09-18 \"i agree with you, separate size for lead and worker\"。"
+          "source": "operator の決定 2026-09-18: lead と worker で閾値の大きさを分ける。"
         },
         "statement": "計画席(lead)と実装席(worker)で別の閾値を持てること。"
       },

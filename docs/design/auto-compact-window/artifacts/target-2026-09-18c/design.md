@@ -86,8 +86,7 @@ flowchart TB
 **文脈の使用率の % **で、`ai conv open --agent compactAt=<0..100>` の閉語彙
 (`model` / `profile` / `effort` / `compactAt` の 4 欄)の 1 つ。宣言があると agentd は
 直前の手番の使用率がそれ以上の時、温かい session を**片付けて記録の service の履歴から再開**する
-(段 10f 便 2・agora-redesign #82・operator 2026-09-14「that routing agent should compact itself
-with some threshold」・計器 `agentd_compactions_total`)。
+(段 10f 便 2・agora-redesign #82・operator の決定 2026-09-14: 振り分けの agent は閾値を越えたら自分の文脈を畳む・計器 `agentd_compactions_total`)。
 
 つまり**輪が 2 つ**ある。
 
@@ -216,8 +215,7 @@ stream-json を 1 行も吐かない)。縮退先を `auto` にすると、少�
 
 **推奨 = a。ただしこれは operator の目的を変える判断なので、配備の前に戻す**(合意の記録なし)。
 理由: 外側の輪が撃つ 700k 付近は、実測で費用の 59% を占める帯そのもの。内側の輪はそこへ
-届く前に、安く(その場で要約・session を残して)畳む。#82 の逐語「compact itself with some
-threshold」の目的は満たし、変わるのは手段。
+届く前に、安く(その場で要約・session を残して)畳む。#82 の目的(閾値で自ら畳む)は満たし、変わるのは手段。
 
 案 b は互換だが、**いちばん直したい席がそのまま残る**ので、今回の目的をほぼ達成しない。
 案 c は出荷済み機能の削除で、今回の範囲を超える。
