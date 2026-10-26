@@ -58,6 +58,9 @@
      ;; 比べる送り手の版 — worker は Program の cache の file をこの版ごとに分ける・card ki-172e63fed4c7)と子の環境変数。
      (if spec.program {"program" spec.program "versions" (dict spec.versions)} {})
      (if spec.environ {"environ" (dict spec.environ)} {})
+     ;; 中身の鍵の在る job だけ(card ki-81bf84ac6590): worker は版と commit の代わりにこの鍵で宣言の変わりを判じる。欄を読まない古い worker は
+     ;; 今どおり版で判じる(coordinator は版の指紋の報告も受ける — job_rules.spec-hash-matches)。
+     (if (is spec.content None) {} {"content" spec.content})
      (if (is spec.placement None) {} {"placement" spec.placement})
      ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。
      (if (is spec.runtime-env None) {} {"runtimeEnv" (json.loads spec.runtime-env)})

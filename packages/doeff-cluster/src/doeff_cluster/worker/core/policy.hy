@@ -868,7 +868,11 @@
   (val stable (and (is-not process None) ran-stably))
   (JobStatus name (phase-of now want process world record policy)
       (if (is want None) None want.revision)
-      (if (is process None) None process.spec.revision)
+      ;; 動いている版: 宣言と同じ spec(中身の鍵が同じ — card ki-81bf84ac6590)の process は、版の違う宣言し直しでも起こし直さないので、
+      ;; 宣言の版を仕事している版と数える(読む code が宣言の版と同じ)。鍵の無い宣言は spec が同じなら版も同じ(今どおり)。
+      (cond (is process None) None
+            (and (is-not want None) (= want process.spec)) want.revision
+            True process.spec.revision)
       (if (is process None) None process.pid)
       record.attempts
       (cond

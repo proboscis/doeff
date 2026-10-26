@@ -88,6 +88,12 @@
   ;; 置く(worker/core/launch.spec-program-file)— 版が替われば別の file なので取り直す。None = Program を持たない job。
   ;; 比べない欄(service の版の替わりは identity の指紋で args に載る・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| (get tuple #((get tuple #(str str)) ...)) None) versions (field :default None :compare False))
+  ;; 中身の鍵(card ki-81bf84ac6590)。宣言の行の content — 送り手が「この job の process が読む code の全部(どの repo の木の、どの file の
+  ;; 中身か・依存の lock)」から計った鍵。在れば指紋 spec-hash と比べ(==)は版(revision)と実行環境の repo の commit を材料に入れず、
+  ;; この鍵で置き換える — 読む code の変わらない commit で宣言し直されても、process を起こし直さず root も用意しない(2026-10-27 01:16〜01:50
+  ;; JST に 5 commit で全部の service が 10 回作り直された)。None = 今どおり版と commit で比べる(鍵を渡さない送り手・古い送り手)。
+  ;; 欄そのものは比べない(比べは指紋 fingerprint が持つ — 下の __eq__)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ (| str None) content (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
@@ -99,14 +105,37 @@
   (defn [cached-property] #^ str fingerprint [self]  ; defk にできない: 値の属性(Program の外の純粋な判断 probe-of・statuses が読む)
     "指紋 spec-hash の計算の本体(公開の入口は doeff_cluster.shared.core.job_rules.spec-hash)。値ごとに最初に読まれた時に 1 度だけ
      計り、その値の中に覚える(覚えの寿命 = この値。module の大域には持たない)。dataclasses.replace で作り直した値は別の object なので
-     計り直す — 欄が変われば指紋も変わる。材料の欄(name・entry・args・revision・once・runtime-env・environ)は str・bool と str の
-     tuple・str の組の tuple だけで、値を作った後に中身が書き換わらないので、覚えた指紋は古くならない。"
-    (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ [self.name self.entry (list self.args) self.revision self.once]
-                                                             (if self.runtime-env [self.runtime-env] [])
-                                                             (if self.environ [(lfor #(k v) self.environ [k v])] []))
+     計り直す — 欄が変われば指紋も変わる。材料の欄(name・entry・args・revision・once・runtime-env・environ・content)は str・bool と str の
+     tuple・str の組の tuple だけで、値を作った後に中身が書き換わらないので、覚えた指紋は古くならない。
+     中身の鍵 content が在れば、版 revision と実行環境の repo の commit を材料から外し、鍵を入れる(card ki-81bf84ac6590 — 実行環境の
+     ほかの欄〔lock の sha256・Python・import の根・native の wheel〕はそのまま材料)。"
+    (setv materials
+      (if (is self.content None)
+          (+ [self.name self.entry (list self.args) self.revision self.once]
+             (if self.runtime-env [self.runtime-env] []))
+          (+ ["content" self.name self.entry (list self.args) self.once self.content]
+             (if self.runtime-env [(env-without-commits self.runtime-env)] []))))
+    (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ materials (if self.environ [(lfor #(k v) self.environ [k v])] []))
                                                           :ensure-ascii False :separators #("," ":"))
                                               "utf-8")))
-         0 16)))
+         0 16))
+
+  ;; 比べは指紋 1 つ(card ki-81bf84ac6590)。前は dataclass の作る比べ(比べる欄 = 指紋の材料の欄)で、指紋と同じ意味だった。中身の鍵の
+  ;; 在る値は版が違っても同じ process の形なので、欄ごとの比べでは表せない — worker の「宣言が変わったか」(plan-job の (= want process.spec))と
+  ;; 指紋を 1 つの定義にする。
+  (defn #^ bool __eq__ [self #^ object other]  ; defk にできない: 値の比べの口
+    (and (isinstance other JobSpec) (= self.fingerprint other.fingerprint)))
+
+  (defn #^ int __hash__ [self]  ; defk にできない: 値の hash の口(比べと揃える)
+    (hash self.fingerprint)))
+
+
+(defn #^ str env-without-commits [#^ str runtime-env]
+  "実行環境の宣言の JSON(正規化した文字列)から repo の commit を外した正規の文字列 — 中身の鍵の在る job の指紋の材料(commit の違いは
+   鍵が運ぶ・card ki-81bf84ac6590)。"
+  (setv declared (json.loads runtime-env))
+  (json.dumps (| declared {"repos" (lfor r (.get declared "repos" []) (dfor #(k v) (.items r) :if (!= k "commit") k v))})
+              :sort-keys True :ensure-ascii False :separators #("," ":")))
 
 
 (defclass JobPhase [Enum]

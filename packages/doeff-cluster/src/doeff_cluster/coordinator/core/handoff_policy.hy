@@ -28,7 +28,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
 (import doeff_cluster.coordinator.core.resource_policy [service-readiness carrier-stale-from readiness-due last-refusal])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
-(import doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster.shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster.shared.intent.job_model [JobSpec])
 
 
 (defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
@@ -54,9 +54,10 @@
   (any (gfor row rows (and (= row.retired-from name) (in row.phase LIVE-PHASES)))))
 
 
-(defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
-  "担い手の行に、今の宣言の spec(指紋 want)で起こした Service name の process が動いている形で在るか(期限の起点)。"
-  (any (gfor row rows (and (= row.name name) (= row.spec-hash want) (in row.phase LIVE-PHASES)))))
+(defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ JobSpec spec]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+  "担い手の行に、今の宣言の spec で起こした Service name の process が動いている形で在るか(期限の起点)。指紋の比べは spec-hash-matches
+   (中身の鍵の在る宣言を古い worker が版の指紋で起こした process も数える — card ki-81bf84ac6590)。"
+  (any (gfor row rows (and (= row.name name) (spec-hash-matches spec row.spec-hash) (in row.phase LIVE-PHASES)))))
 
 
 (defn #^ int handoff-deadline [#^ HandoffWatch watch #^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(next-watch)が呼ぶ
@@ -85,7 +86,7 @@
           (cond
             (= (get verdict "state") "Ready") None
             (is watch None)
-              (if (new-generation-live rows name want) (HandoffWatch :declaration fingerprint :since-ms now) None)
+              (if (new-generation-live rows name job.spec) (HandoffWatch :declaration fingerprint :since-ms now) None)
             (and (>= now (handoff-deadline watch job)) (= (get verdict "state") "NotReady"))
               (replace watch :phase HandoffPhase.ABANDONED :abandoned-ms now
                        :reason (.format "新の世代が {:g} 秒の間 Ready にならなかった(新を止めて旧を残す): {}"
