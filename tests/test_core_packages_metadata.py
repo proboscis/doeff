@@ -1,5 +1,6 @@
-"""The PyPI metadata of the five core packages (doeff, doeff-vm, doeff-core-effects, doeff-hy, doeff-hy-pytest)
-reads on the same axis as the README: algebraic effects (docs/positioning/what-doeff-is.md).
+"""The PyPI metadata of the five core packages (doeff, doeff-vm, doeff-core-effects, doeff-hy, doeff-hy-pytest),
+and of doeff-time which the README installs from PyPI, reads on the same axis as the README: algebraic effects
+(docs/positioning/what-doeff-is.md).
 
 A PyPI page shows `description` as its one-line summary, searches by `keywords`, and lists `project.urls` as its
 links. Before this check the summary was the old "Pragmatic do-notation and effects system for Python", the
@@ -25,6 +26,15 @@ CORE = {
     "doeff-hy-pytest": REPO / "packages" / "doeff-hy-pytest",
 }
 
+# Packages released on their own tag whose PyPI page the README sends readers to (`pip install doeff-time`).
+# doeff-time 0.1.0 went to PyPI with the summary "Provider-agnostic time effects for doeff", no keywords, no
+# links and no classifiers; its next release carries the same metadata as the core (card ki-bdc3c0fec9b0).
+ON_PYPI_ALONE = {
+    "doeff-time": REPO / "packages" / "doeff-time",
+}
+
+PACKAGES = CORE | ON_PYPI_ALONE
+
 # The axis every summary starts with — the opening of the README's first line.
 AXIS = "Algebraic effects for Python: "
 
@@ -36,7 +46,7 @@ REQUIRED_CLASSIFIER_PREFIXES = ("Development Status :: ", "Intended Audience :: 
 
 
 def _project(name: str) -> dict[str, object]:
-    path = CORE[name] / "pyproject.toml"
+    path = PACKAGES[name] / "pyproject.toml"
     project = tomllib.loads(path.read_text(encoding="utf-8")).get("project")
     assert isinstance(project, dict), f"{path} has no [project] table"
     assert project.get("name") == name
@@ -62,7 +72,7 @@ def test_the_readme_first_line_states_the_axis() -> None:
     assert lines[1].strip("*").startswith(AXIS), lines[1]
 
 
-@pytest.mark.parametrize("name", sorted(CORE))
+@pytest.mark.parametrize("name", sorted(PACKAGES))
 def test_description_is_one_line_on_the_axis(name: str) -> None:
     description = _project(name).get("description")
     assert isinstance(description, str)
@@ -72,7 +82,7 @@ def test_description_is_one_line_on_the_axis(name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("name", sorted(CORE))
+@pytest.mark.parametrize("name", sorted(PACKAGES))
 def test_keywords_name_the_axis_and_no_monad_words(name: str) -> None:
     keywords = _strings(_project(name), "keywords")
     assert set(keywords) >= AXIS_KEYWORDS, (
@@ -82,7 +92,7 @@ def test_keywords_name_the_axis_and_no_monad_words(name: str) -> None:
     assert not retired, f"{name}: keywords keep the retired framing: {retired}"
 
 
-@pytest.mark.parametrize("name", sorted(CORE))
+@pytest.mark.parametrize("name", sorted(PACKAGES))
 def test_urls_link_documentation_changelog_and_issues(name: str) -> None:
     urls = _project(name).get("urls")
     assert isinstance(urls, dict)
@@ -100,7 +110,7 @@ def test_urls_link_documentation_changelog_and_issues(name: str) -> None:
         assert (REPO / path).is_file(), path
 
 
-@pytest.mark.parametrize("name", sorted(CORE))
+@pytest.mark.parametrize("name", sorted(PACKAGES))
 def test_classifiers_give_status_audience_and_topic(name: str) -> None:
     classifiers = _strings(_project(name), "classifiers")
     for prefix in REQUIRED_CLASSIFIER_PREFIXES:
