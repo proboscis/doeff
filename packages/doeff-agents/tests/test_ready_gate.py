@@ -41,7 +41,7 @@ from doeff_agents.effects.agent import (
     LaunchEffect,
 )
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
-from doeff_agents.session import (
+from doeff_agents._session import (
     AgentReadyTimeoutError,
     launch_session,
 )
@@ -249,7 +249,7 @@ PROMPT = "line one\nline two\n\nline four (multi-paragraph 規範文)"
 def test_launch_session_codex_hard_fails_when_composer_never_appears(monkeypatch) -> None:
     backend = ScriptedBackend(frames=["$ ", "$ codex --yolo"])
     monkeypatch.setattr(
-        "doeff_agents.session.get_adapter", lambda _agent_type: ReadyFakeCodexAdapter()
+        "doeff_agents._session.get_adapter", lambda _agent_type: ReadyFakeCodexAdapter()
     )
 
     config = LaunchConfig(
@@ -269,7 +269,7 @@ def test_launch_session_codex_pastes_prompt_only_after_ready_frame(monkeypatch) 
     frames = ["$ ", "$ codex --yolo", CODEX_MCP_BOOT, CODEX_READY]
     backend = ScriptedBackend(frames=frames)
     monkeypatch.setattr(
-        "doeff_agents.session.get_adapter", lambda _agent_type: ReadyFakeCodexAdapter()
+        "doeff_agents._session.get_adapter", lambda _agent_type: ReadyFakeCodexAdapter()
     )
 
     config = LaunchConfig(
@@ -294,7 +294,7 @@ def test_launch_session_codex_pastes_prompt_only_after_ready_frame(monkeypatch) 
 def test_launch_session_claude_hard_fails_when_composer_never_appears(monkeypatch) -> None:
     backend = ScriptedBackend(frames=["$ ", "$ claude --ax-screen-reader"])
     monkeypatch.setattr(
-        "doeff_agents.session.get_adapter", lambda _agent_type: ReadyFakeClaudeAdapter()
+        "doeff_agents._session.get_adapter", lambda _agent_type: ReadyFakeClaudeAdapter()
     )
 
     config = LaunchConfig(
@@ -320,7 +320,7 @@ def test_launch_session_claude_pastes_prompt_only_after_ready_frame(monkeypatch)
     frames = ["$ ", "$ claude --ax-screen-reader", CLAUDE_READY]
     backend = ScriptedBackend(frames=frames)
     monkeypatch.setattr(
-        "doeff_agents.session.get_adapter", lambda _agent_type: ReadyFakeClaudeAdapter()
+        "doeff_agents._session.get_adapter", lambda _agent_type: ReadyFakeClaudeAdapter()
     )
 
     config = LaunchConfig(

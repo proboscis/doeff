@@ -43,7 +43,7 @@ from doeff_agents.effects.agent import (  # noqa: E402
     ClaudeLaunchEffect,
     LaunchEffect,
 )
-from doeff_agents.monitor import SessionStatus  # noqa: E402
+from doeff_agents.effects import SessionStatus  # noqa: E402
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy  # noqa: E402
 from doeff_agents.session_store import InMemoryAgentSessionRepository  # noqa: E402
 from test_ready_gate import (  # noqa: E402

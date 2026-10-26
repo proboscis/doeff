@@ -6,14 +6,14 @@
 #   fake_world_root   the io_root (doeff-agents' I/O seam) answering the driver's effects from an in-memory world
 #                     where `claude` is on PATH and ~/.claude.json carries a login. recording_root also prints each
 #                     effect and its answer.
-# doeff_agents.session's default io_root is pointed at fake_world_root, because session_scope and
+# doeff_agents._session's default io_root is pointed at fake_world_root, because session_scope and
 # async_session_scope (Steps 2 to 5 of docs/19-agent-tutorial.md) take a backend but no io_root.
 import json
 import time
 from datetime import datetime, timezone
 
 import hy  # noqa: F401
-import doeff_agents.session as session_module
+import doeff_agents._session as session_module
 from doeff_agents.io_fake import FakeIoWorld, with_fake_io
 from doeff_agents.session_backend import SessionConfig, SessionInfo
 

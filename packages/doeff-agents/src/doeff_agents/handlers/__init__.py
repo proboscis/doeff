@@ -1,7 +1,13 @@
-"""Effect handlers for agent session management."""
+"""Effect handlers for agent session management.
+
+The public surface is the handler factories (each returns doeff handlers to
+install around a program that yields ``doeff_agents.effects``) and the values
+those factories take. The handler implementation classes live in the inner
+modules and are not part of the public API.
+"""
 
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -11,45 +17,23 @@ from doeff_claude_code.values import BypassAll, PermissionPolicy
 from doeff_time import sync_time_handler
 
 if TYPE_CHECKING:
-    from doeff_claude_code.fake import FakeClaudeWorld, FakeReply
+    from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
+    from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
+    from doeff_claude_code.fake import FakeReply as FakeReply
     from doeff_codex.fake import FakeCodexWorld
     from doeff_codex.rpc import ApprovalPolicy as CodexApprovalPolicy
     from doeff_codex.rpc import SandboxMode as CodexSandboxMode
 
-from doeff_agents.agentd_client import LazyAgentdClient
-from doeff_agents.effects import (
-    AgentEffect,
-    AttachAgentSessionEffect,
-    AwaitResultEffect,
-    CancelAgentSessionEffect,
-    CaptureEffect,
-    ClaudeLaunchEffect,
-    CleanupAgentSessionEffect,
-    FollowUpEffect,
-    GetAgentSessionEffect,
-    LaunchEffect,
-    LaunchSessionEffect,
-    ListAgentSessionsEffect,
-    MonitorEffect,
-    ObserveAgentSessionEffect,
-    ReleaseSessionEffect,
-    SendEffect,
-    StopEffect,
-    StopSessionEffect,
-)
+from doeff_agents.agentd_client import LazyAgentdClient as _LazyAgentdClient
 from doeff_agents.handlers.daemon import AgentdSessionClient as AgentdSessionClient
-from doeff_agents.handlers.daemon import DaemonAgentHandler as DaemonAgentHandler
-from doeff_agents.handlers.production import AgentHandler as AgentHandler
-from doeff_agents.handlers.production import SessionState as SessionState
-from doeff_agents.handlers.production import TmuxAgentHandler as TmuxAgentHandler
-from doeff_agents.handlers.production import get_adapter as get_adapter
-from doeff_agents.handlers.production import register_adapter as register_adapter
-from doeff_agents.handlers.testing import MockAgentHandler as MockAgentHandler
-from doeff_agents.handlers.testing import MockAgentState as MockAgentState
+# The handler objects behind the factories (inner modules — not re-exported).
+from doeff_agents.handlers.daemon import DaemonAgentHandler as _DaemonAgentHandler
+from doeff_agents.handlers.testing import MockAgentHandler as _MockAgentHandler
+from doeff_agents.handlers.testing import ScenarioAgentHandler as _ScenarioAgentHandler
 from doeff_agents.handlers.testing import MockSessionScript as MockSessionScript
-from doeff_agents.handlers.testing import ScenarioAgentHandler as ScenarioAgentHandler
 from doeff_agents.handlers.testing import ScenarioStep as ScenarioStep
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents.runtime import ClaudeRuntimePolicy as ClaudeRuntimePolicy
+from doeff_agents.runtime import CodexRuntimePolicy as CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository as AgentSessionRepository
 
@@ -57,87 +41,22 @@ from doeff_agents.session_store import AgentSessionRepository as AgentSessionRep
 # checks (`BypassAll`) — the behavior every caller had before #3753.
 _DEFAULT_CLAUDE_PERMISSION: PermissionPolicy = BypassAll()
 
-# Keys kept for compatibility with persisted metadata naming.
-AGENT_SESSIONS_KEY = "__agent_sessions__"
-MOCK_AGENT_STATE_KEY = "__mock_agent_state__"
-
-# Supported effect types for doeff-agents handlers.
-AGENT_EFFECT_TYPES = (
-    AgentEffect,
-    LaunchSessionEffect,
-    AwaitResultEffect,
-    FollowUpEffect,
-    StopSessionEffect,
-    ReleaseSessionEffect,
-    LaunchEffect,
-    ClaudeLaunchEffect,
-    MonitorEffect,
-    CaptureEffect,
-    SendEffect,
-    StopEffect,
-    GetAgentSessionEffect,
-    ListAgentSessionsEffect,
-    ObserveAgentSessionEffect,
-    AttachAgentSessionEffect,
-    CancelAgentSessionEffect,
-    CleanupAgentSessionEffect,
-)
+# Values the Claude runtime handlers take or raise, defined in doeff-claude-code's
+# Hy modules: read on first use so importing this module does not load them.
+_CLAUDE_CODE_VALUES = {
+    "ClaudeLiveLimitExceeded": "doeff_claude_code.effects",
+    "FakeClaudeWorld": "doeff_claude_code.fake",
+    "FakeReply": "doeff_claude_code.fake",
+}
 
 
-def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
-    """Dispatch an effect to the appropriate handler method."""
-    result = None
-    if isinstance(effect, AgentEffect):
-        result = handler.handle_agent(effect)
-    elif isinstance(effect, LaunchSessionEffect):
-        result = handler.handle_launch_session(effect)
-    elif isinstance(effect, AwaitResultEffect):
-        result = handler.handle_await_result(effect)
-    elif isinstance(effect, FollowUpEffect):
-        result = handler.handle_follow_up(effect)
-    elif isinstance(effect, StopSessionEffect):
-        result = handler.handle_stop_session(effect)
-    elif isinstance(effect, ReleaseSessionEffect):
-        result = handler.handle_release_session(effect)
-    elif isinstance(effect, LaunchEffect):
-        result = handler.handle_launch(effect)
-    elif isinstance(effect, ClaudeLaunchEffect):
-        result = handler.handle_claude_launch(effect)
-    elif isinstance(effect, MonitorEffect):
-        result = handler.handle_monitor(effect)
-    elif isinstance(effect, CaptureEffect):
-        result = handler.handle_capture(effect)
-    elif isinstance(effect, SendEffect):
-        result = handler.handle_send(effect)
-    elif isinstance(effect, StopEffect):
-        result = handler.handle_stop(effect)
-    elif isinstance(effect, GetAgentSessionEffect):
-        result = handler.handle_get_session(effect)
-    elif isinstance(effect, ListAgentSessionsEffect):
-        result = handler.handle_list_sessions(effect)
-    elif isinstance(effect, ObserveAgentSessionEffect):
-        result = handler.handle_observe_session(effect)
-    elif isinstance(effect, AttachAgentSessionEffect):
-        result = handler.handle_attach_session(effect)
-    elif isinstance(effect, CancelAgentSessionEffect):
-        result = handler.handle_cancel_session(effect)
-    elif isinstance(effect, CleanupAgentSessionEffect):
-        result = handler.handle_cleanup_session(effect)
-    return result
-
-
-def _agent_handler_defhandler(agent_handler: AgentHandler) -> Any:
-    """Expose an AgentHandler object through the Hy defhandler boundary."""
-    return _hy_effectful_module().agent_handler_defhandler(agent_handler)
-
-
-def _tmux_agent_defhandler(
-    *,
-    session_repository: AgentSessionRepository | None = None,
-) -> Any:
-    return _hy_effectful_module().tmux_agent_defhandler(
-        session_repository=session_repository,
-    )
+def __getattr__(name: str) -> Any:
+    module_name = _CLAUDE_CODE_VALUES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +96,7 @@ def _hy_headless_compose_module() -> Any:
     return import_module("doeff_agents.handlers.headless_compose")
 
 
-def headless_claude_agent_handlers(
+def claude_agent_runtime_handlers(
     *,
     config_dir: str,
     env: dict[str, str],
@@ -187,27 +106,32 @@ def headless_claude_agent_handlers(
     cold_resume_prompt: str | None = None,
     command: tuple[str, ...] = ("claude",),
 ) -> list[Any]:
-    """Headless Claude handlers: the public effects as an adapter onto doeff-claude-code.
+    """The agent runtime for Claude, as doeff-agents chooses it (agora-redesign #606).
 
-    Returns ``[doeff-claude-code production handler, headless adapter]`` in
-    ``with_handlers`` order (outer first). ``config_dir`` / ``env`` are the
-    Claude home (credentials are placed in ``env`` by the composition root).
-    ``live_limit`` is how many CLI processes the host keeps alive at once and
-    ``credential_floor_seconds`` how long before a lent credential expires the
-    host stops the process using it (both from the caller's declaration — no
-    defaults; agora-redesign #3672 D2). ``live_limit=None`` declares no limit:
-    for a caller that decides how many to keep alive by another measure (the
-    machine's free memory), layer 2 then compares nothing and emits neither
-    the over-limit log line nor ``ClaudeLiveLimitExceeded`` (agora-redesign
-    #4282; ``None`` is passed through as is, and it is not a default — such a
-    caller passes it explicitly).
+    Callers that must not know the substrate (agora: "the agent runtime's
+    substrate is the library's concern", operator decision O5) ask for the
+    Claude agent runtime by this name; which substrate answers the public
+    effects is decided here. Today it is the print-mode (headless) adapter
+    over ``doeff-claude-code``: returns ``[doeff-claude-code production
+    handler, headless adapter]`` in ``with_handlers`` order (outer first).
+    ``config_dir`` / ``env`` are the Claude home (credentials are placed in
+    ``env`` by the composition root). ``live_limit`` is how many CLI processes
+    the host keeps alive at once and ``credential_floor_seconds`` how long
+    before a lent credential expires the host stops the process using it
+    (both from the caller's declaration — no defaults; agora-redesign #3672
+    D2). ``live_limit=None`` declares no limit: for a caller that decides how
+    many to keep alive by another measure (the machine's free memory), layer 2
+    then compares nothing and emits neither the over-limit log line nor
+    ``ClaudeLiveLimitExceeded`` (agora-redesign #4282; ``None`` is passed
+    through as is, and it is not a default — such a caller passes it
+    explicitly). ``command`` is the CLI executable and its leading arguments.
     Install a doeff-time handler, a slog handler (the production handler
     emits CLI launch timing lines — agora-redesign #3605), a handler that
     answers ``ClaudeLiveLimitExceeded`` (the host: layer 2 never stops a CLI
     for the live limit — a launch past it is reported to the host instead,
-    agora-redesign #4072 E1b; the type is re-exported from
-    ``doeff_agents.handlers.headless_compose``) and the scheduler outside
-    them. No session-host socket is opened (agora-redesign #604).
+    agora-redesign #4072 E1b; the type is ``doeff_agents.handlers.ClaudeLiveLimitExceeded``)
+    and the scheduler outside them. No session-host socket is opened
+    (agora-redesign #604).
     """
     return _hy_headless_compose_module().headless_claude_handlers(
         config_dir,
@@ -217,67 +141,6 @@ def headless_claude_agent_handlers(
         tuple(command),
         live_limit=live_limit,
         credential_floor_seconds=credential_floor_seconds,
-    )
-
-
-def fake_headless_claude_agent_handlers(
-    *,
-    responder: Any = None,
-    config_dir: str = "fake-claude-home",
-    world: Any = None,
-    env: Mapping[str, str],
-    settings: Mapping[str, object],
-    permission: PermissionPolicy = _DEFAULT_CLAUDE_PERMISSION,
-) -> list[Any]:
-    """The same adapter over doeff-claude-code's fake handler (no process, no API).
-
-    ``responder(text, memory) -> FakeReply`` scripts each turn
-    (``doeff_agents.handlers.headless_compose.FakeReply``). Pass ``world``
-    (a ``FakeClaudeWorld`` the caller keeps — e.g. ``world.restarted()`` for a
-    new process over the same home) instead of ``responder``; exactly one.
-    ``env`` / ``settings`` mean the same as for ``headless_claude_agent_handlers``
-    (the home's process env as a str → str mapping and the CLI settings as a
-    JSON mapping). Both are required (agora-redesign #3387): a caller's
-    emulation passes what its production path decided, so the launch
-    declaration the fake layer 2 receives carries them (agora-redesign #3327);
-    a caller with nothing to declare passes empty mappings explicitly.
-    ``permission`` is the launch declaration's permission policy, as for
-    ``claude_agent_adapter_handler`` (default ``BypassAll()``).
-    Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
-    """
-    return _hy_headless_compose_module().fake_headless_claude_handlers(
-        responder, config_dir, world, env=env, settings=settings, permission=permission
-    )
-
-
-def claude_agent_runtime_handlers(
-    *,
-    config_dir: str,
-    env: dict[str, str],
-    live_limit: int | None,
-    credential_floor_seconds: float,
-    settings: dict[str, Any] | None = None,
-    cold_resume_prompt: str | None = None,
-) -> list[Any]:
-    """The agent runtime for Claude, as doeff-agents chooses it (agora-redesign #606).
-
-    Callers that must not know the substrate (agora: "the agent runtime's
-    substrate is the library's concern", operator decision O5) ask for the
-    Claude agent runtime by this name; which substrate answers the public
-    effects is decided here. Today it is the print-mode adapter over
-    ``doeff-claude-code`` (the same pair as ``headless_claude_agent_handlers``).
-    ``config_dir`` / ``env`` are the Claude home (credentials are placed by the
-    composition root); ``live_limit`` / ``credential_floor_seconds`` as for
-    ``headless_claude_agent_handlers``. Install a doeff-time handler, a slog
-    handler, a ``ClaudeLiveLimitExceeded`` handler and the scheduler outside.
-    """
-    return headless_claude_agent_handlers(
-        config_dir=config_dir,
-        env=env,
-        live_limit=live_limit,
-        credential_floor_seconds=credential_floor_seconds,
-        settings=settings,
-        cold_resume_prompt=cold_resume_prompt,
     )
 
 
@@ -292,23 +155,23 @@ def fake_claude_agent_runtime_handlers(
 ) -> list[Any]:
     """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
 
+    The same adapter over doeff-claude-code's fake handler.
     ``responder(text, memory) -> FakeReply`` scripts each turn
-    (``doeff_agents.handlers.headless_compose.FakeReply``), or ``world`` is a
-    ``FakeClaudeWorld`` the caller keeps (exactly one of the two).
+    (``doeff_agents.handlers.FakeReply``). Pass ``world`` (a
+    ``FakeClaudeWorld`` the caller keeps — e.g. ``world.restarted()`` for a
+    new process over the same home) instead of ``responder``; exactly one.
     ``env`` / ``settings`` are the same home env (str → str) and CLI settings
-    (a JSON mapping) the production runtime takes; both are required — pass
-    empty mappings explicitly when there is nothing to declare (agora-redesign
-    #3387). They ride on the launch declaration only, as does ``permission``
-    (the permission policy, default ``BypassAll()`` — agora-redesign #3753).
+    (a JSON mapping) the production runtime takes; both are required
+    (agora-redesign #3387): a caller's emulation passes what its production
+    path decided, so the launch declaration the fake layer 2 receives carries
+    them (agora-redesign #3327); a caller with nothing to declare passes empty
+    mappings explicitly. ``permission`` is the launch declaration's permission
+    policy, as for ``claude_agent_adapter_handler`` (default ``BypassAll()`` —
+    agora-redesign #3753).
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
-    return fake_headless_claude_agent_handlers(
-        responder=responder,
-        config_dir=config_dir,
-        world=world,
-        env=env,
-        settings=settings,
-        permission=permission,
+    return _hy_headless_compose_module().fake_headless_claude_handlers(
+        responder, config_dir, world, env=env, settings=settings, permission=permission
     )
 
 
@@ -325,7 +188,7 @@ def claude_process_layer_handler(
     (agora-redesign #3507): layer 2 belongs to the foundation that owns real
     processes (an emulation answers layer 2 outside instead), the adapter sits
     next to the program. ``live_limit`` / ``credential_floor_seconds`` as for
-    ``headless_claude_agent_handlers`` (agora-redesign #3672 D2). Install a
+    ``claude_agent_runtime_handlers`` (agora-redesign #3672 D2). Install a
     doeff-time handler, the scheduler, a slog handler and a
     ``ClaudeLiveLimitExceeded`` handler outside it.
     """
@@ -440,9 +303,6 @@ def codex_agent_adapter_handler(
     return run(compose.codex_adapter(dict(env), policy, mode, tuple(disabled_features)))
 
 
-_mock_effect_handler = MockAgentHandler()
-
-
 def _hy_effectful_module():
     import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
 
@@ -460,39 +320,42 @@ def agent_effectful_handler(
     The session backend is resolved through Ask(SessionBackend), so
     deployment-specific terminal paths are injected by the doeff environment.
     Claude runtime authentication/home policy stays owned by doeff-agents, but
-    callers can pin it here without constructing TmuxAgentHandler directly.
+    callers can pin it here without constructing the handler object themselves.
     """
     return _hy_effectful_module().tmux_agent_defhandler(
         session_repository=session_repository,
         claude_runtime_policy=claude_runtime_policy,
-            codex_runtime_policy=codex_runtime_policy,
+        codex_runtime_policy=codex_runtime_policy,
     )
 
 
-def default_agent_handler(
-    *,
-    backend: SessionBackend,
-    session_repository: AgentSessionRepository | None = None,
-    claude_runtime_policy: ClaudeRuntimePolicy | None = None,
-    codex_runtime_policy: CodexRuntimePolicy | None = None,
-) -> AgentHandler:
-    """Return the default production AgentHandler without exposing transport class names.
+def mock_agent_handler(*, sessions: Sequence[MockSessionScript] = ()) -> Any:
+    """Return a fresh mock testing handler (a Hy defhandler) that answers each scripted session.
 
-    Most callers should install ``agent_effectful_handler()`` and only emit agent
-    effects. MCP tools require the doeff-native handler path so their calls run
-    inside the caller's doeff VM.
+    ``sessions`` are ``MockSessionScript`` values, each naming its session
+    (``session_name``), the observations its ``Monitor`` effects return in turn
+    and the screen text before the first one (``initial_output``). The handler
+    keeps its own state — nothing is shared between two calls.
     """
-    return TmuxAgentHandler(
-        backend=backend,
-        session_repository=session_repository,
-        claude_runtime_policy=claude_runtime_policy,
-            codex_runtime_policy=codex_runtime_policy,
+    mock = _MockAgentHandler()
+    for script in sessions:
+        if script.session_name is None:
+            raise ValueError("mock_agent_handler: every MockSessionScript in sessions names its session_name")
+        mock.configure_session(script)
+    return _hy_effectful_module().agent_handler_defhandler(mock)
+
+
+def scenario_agent_handler(*, scripts: Mapping[str, Sequence[ScenarioStep]]) -> Any:
+    """Return a scenario-driven testing handler (a Hy defhandler) for the schema-result effects.
+
+    ``scripts`` maps a deterministic session id (``AgentSpec.session_id``) to
+    the ``ScenarioStep`` values its awaits return in turn, so retries are
+    explicit in the test data. The agent is replaced by swapping this handler
+    in; application functions are never mocked.
+    """
+    return _hy_effectful_module().agent_handler_defhandler(
+        _ScenarioAgentHandler(scripts={session_id: tuple(steps) for session_id, steps in scripts.items()})
     )
-
-
-def mock_agent_handler() -> Any:
-    """Return the mock testing handler as a Hy defhandler."""
-    return _hy_effectful_module().agent_handler_defhandler(_mock_effect_handler)
 
 
 def agent_effectful_handlers(
@@ -513,7 +376,7 @@ def agent_effectful_handlers(
         agent_effectful_handler(
             session_repository=session_repository,
             claude_runtime_policy=claude_runtime_policy,
-            codex_runtime_policy=codex_runtime_policy,
+        codex_runtime_policy=codex_runtime_policy,
         ),
     )
 
@@ -531,16 +394,16 @@ def daemon_agent_handler(
     """Return the daemon-backed agent handler as a Hy defhandler."""
     active_client = client
     if active_client is None:
-        active_client = LazyAgentdClient(
+        active_client = _LazyAgentdClient(
             socket_path=socket_path,
             db_path=db_path,
             daemon_bin=daemon_bin,
             max_running=max_running,
         )
-    agent_handler = DaemonAgentHandler(
+    agent_handler = _DaemonAgentHandler(
         client=active_client,
         claude_runtime_policy=claude_runtime_policy,
-            codex_runtime_policy=codex_runtime_policy,
+        codex_runtime_policy=codex_runtime_policy,
     )
     return _hy_effectful_module().agent_handler_defhandler(agent_handler)
 
@@ -565,7 +428,7 @@ def daemon_agent_handlers(
             daemon_bin=daemon_bin,
             client=client,
             claude_runtime_policy=claude_runtime_policy,
-            codex_runtime_policy=codex_runtime_policy,
+        codex_runtime_policy=codex_runtime_policy,
             max_running=max_running,
         ),
     )
@@ -574,34 +437,9 @@ def daemon_agent_handlers(
 def mock_agent_handlers(
     *,
     time_handler: Any | None = None,
+    sessions: Sequence[MockSessionScript] = (),
 ) -> tuple[Any, ...]:
-    """Return standard mock handlers, including a no-op Delay handler."""
+    """Return standard mock handlers: a no-op Delay handler and a fresh ``mock_agent_handler(sessions=…)``."""
     noop_time_handler = sync_time_handler(sleep=lambda _seconds: None)
-    return (time_handler or noop_time_handler, mock_agent_handler())
+    return (time_handler or noop_time_handler, mock_agent_handler(sessions=sessions))
 
-
-def production_handlers(
-    *,
-    session_repository: AgentSessionRepository | None = None,
-) -> tuple[Any, ...]:
-    """Canonical handler tuple for production (tmux-backed) execution."""
-    return agent_effectful_handlers(session_repository=session_repository)
-
-
-def mock_handlers() -> tuple[Any, ...]:
-    """Canonical handler tuple for mock execution in tests."""
-    return mock_agent_handlers()
-
-
-def configure_mock_session(
-    session_name: str,
-    script: MockSessionScript | None = None,
-    initial_output: str = "",
-) -> None:
-    """Configure a mock session before program execution."""
-    _mock_effect_handler.configure_session(session_name, script, initial_output)
-
-
-def get_mock_agent_state() -> MockAgentState:
-    """Return current mock state snapshot."""
-    return _mock_effect_handler.snapshot()

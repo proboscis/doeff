@@ -31,7 +31,7 @@
   RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents.effects.agent [AutocompactTokens])
 (import doeff_hy.frozen [freeze-json])
-(import doeff_agents.monitor [SessionStatus])
+(import doeff_agents.effects.agent [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
                                                 CodexUsageLimitHit CodexServerOverloadedHit codex-process-layer fake-codex-process-layer

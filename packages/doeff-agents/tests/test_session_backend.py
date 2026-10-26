@@ -71,7 +71,7 @@ def test_session_api_import_does_not_load_the_handler_layer() -> None:
     code = (
         "import sys\n"
         f"sys.path.insert(0, {str(src_path)!r})\n"
-        "from doeff_agents.session import launch_session\n"
+        "from doeff_agents._session import launch_session\n"
         "from doeff_agents.session_backend import default_session_backend\n"
         "from doeff_agents.tmux import TmuxSessionBackend\n"
         "print(launch_session.__name__)\n"
@@ -730,7 +730,7 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
 
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.session.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr("doeff_agents._session.get_adapter", lambda _agent_type: FakeAdapter())
 
     session = launch_session("worker", _config(), backend=backend)
     status = monitor_session(session)
@@ -750,7 +750,7 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
 
 def test_imperative_session_api_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.session.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr("doeff_agents._session.get_adapter", lambda _agent_type: FakeAdapter())
     forbidden_key = "ANTHROPIC" + "_API_KEY"
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,

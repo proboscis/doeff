@@ -45,7 +45,7 @@
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect
   NamedContextId HandlerMadeContextId InputImage])
-(import doeff_agents.monitor [SessionStatus])
+(import doeff_agents.effects.agent [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
 ;; fake の返事の usage の型(FakeReply の last-call-usage)と model ごとの窓の型は、組み立ての部品と公開面の module から読む。

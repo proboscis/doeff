@@ -14,7 +14,7 @@
 (import pathlib [Path])
 
 (import doeff_agents.adapters.base [AgentSessionLifecycle AgentType])
-(import doeff_agents.monitor [SessionStatus])
+(import doeff_agents.effects.agent [SessionStatus])
 (import doeff_agents.effects [
   AgentSessionQuery
   AgentSessionSnapshot
