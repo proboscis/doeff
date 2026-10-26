@@ -2,8 +2,10 @@
 # (名は doeff-worker-<Node の名>)。
 #
 # 静的に保つ(doeff worker を頻繁に作り直さない — 利用者の決定 2026-10-09):
-# Pod を作り直すのは、この dir の宣言か機体の dir の宣言(doeff の版 WORKER_DOEFF_COMMIT・資源の上限)が変わった時だけ。上に載る系の値は
-# 名の固定した ConfigMap から受ける。ConfigMap の名に中身の hash を付けないので、中身を変えても Pod は作り直されず、次の起動で効く。
+# Pod を作り直すのは、この dir の宣言か機体の dir の宣言(資源の上限など)が変わった時だけ。doeff の版は Pod の template に置かない —
+# 名の固定した ConfigMap worker-version の file から読み、版を替えると同じ container の中で worker の process が入れ替わる(下の
+# worker-version・card ki-6e83e03d146d)。上に載る系の値は名の固定した ConfigMap から受ける。ConfigMap の名に中身の hash を付けないので、
+# 中身を変えても Pod は作り直されず、次の起動で効く。
 #
 # 上に載る系の repo が用意する物(名は固定 — この宣言は名で参照するだけで、上に載る系の名と値は書かない):
 #   ConfigMap worker-env      envFrom で受ける env。WORKER_REPOS・CODE_REPO_URL など boot.sh と job の子が読む値。枠(WORKER_CAPACITY・
@@ -20,7 +22,13 @@
 #                             置き(subPath でない — 中身を変えると kubelet が Pod を作り直さずに file を入れ替える)、WORKER_ROOM_FILE で
 #                             渡す。worker は heartbeat の前に読み直して名乗るので、枠の変更で Pod を作り直さない。ConfigMap が無ければ
 #                             Pod は起きない(optional でない — 既定の枠で起きない)。
-#   Secret worker-repos       WORKER_REPOS の deploy key と known_hosts(boot.sh が /etc/worker-repos から読む)。無くても起動する
+#   ConfigMap worker-version  機体ごとの worker の doeff の版(../workers/worker-version.env — 鍵 = 機体の名・値 = commit・card
+#                             ki-6e83e03d146d)。/etc/worker-version に置き(subPath でない)、WORKER_VERSION_FILE = その下の自分の名の
+#                             file を渡す。起動の args と preStop は file の版を WORKER_DOEFF_COMMIT に入れて image の起動の script へ
+#                             渡し(image の script は file を読まない)、その版の script は keeper として回る — file の版が替わると、
+#                             同じ container の中で新しい版の worker の process を起こし、名乗れた後に前の版の process を drain してから
+#                             止める(deploy/boot.sh の頭の註の「版の file と keeper」)。ConfigMap が無ければ Pod は起きない。
+#   Secret worker-repos      WORKER_REPOS の deploy key と known_hosts(boot.sh が /etc/worker-repos から読む)。無くても起動する
 #                             (WORKER_REPOS が要る key を欠けば boot.sh が理由を出して止まる)。
 #   Namespace agent-worker    ここでは宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため)。
 #
@@ -67,21 +75,23 @@ spec:
         - name: worker
           image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
           # pid 1 は image の ENTRYPOINT の tini。command は ENTRYPOINT を上書きするので args で渡す。準備の script が在れば実行し
-          # (非 0 なら起動しない)、PATH の先頭に ~/.local/bin を置いて起動の script(/opt/worker-boot.sh・ROLE=worker)へ。
-          # job の子は worker の PATH を継ぐ。
+          # (非 0 なら起動しない)、PATH の先頭に ~/.local/bin を置き、版の file(WORKER_VERSION_FILE — 頭の註の worker-version)の版を
+          # WORKER_DOEFF_COMMIT に入れて起動の script(/opt/worker-boot.sh・ROLE=worker)へ — その版の script が keeper として回る。
+          # file を読めなければ起動しない。`$$(` は k8s の $(名) の展開を避ける綴り(shell には `$(` で届く)。job の子は worker の PATH を継ぐ。
           args:
             - /bin/sh
             - -c
             - >-
               if [ -f /opt/worker-prepare/prepare.sh ]; then sh /opt/worker-prepare/prepare.sh; fi
-              && export PATH="$HOME/.local/bin:$PATH" && exec /opt/worker-boot.sh
+              && export PATH="$HOME/.local/bin:$PATH" && WORKER_DOEFF_COMMIT="$$(cat "$WORKER_VERSION_FILE")"
+              && export WORKER_DOEFF_COMMIT && exec /opt/worker-boot.sh
           envFrom:
             - configMapRef: { name: worker-env }
           env:
             - { name: ROLE, value: worker }
             - { name: WORK_DIR, value: /work }
-            # worker 自身の code の版(doeff の commit — env WORKER_DOEFF_COMMIT)はここに置かない。機体の dir の version.yaml が、この行の
-            # 直後に足す — 機体ごとに 1 台ずつ版を上げられるように(1 行を共有すると 1 回の main 入りで全部の機体が同時に替わる)。
+            # worker 自身の code の版(doeff の commit — WORKER_DOEFF_COMMIT)は env に置かない(Pod の template に版を持たない)。版は
+            # ConfigMap worker-version の file(下の WORKER_VERSION_FILE)から起動の args が読む — 機体ごとに 1 行・Pod を作り直さずに替わる。
             - { name: COORDINATOR_URL, value: "http://coordinator.agent-worker.svc.cluster.local:8080" }
             # 置かれた Node の名(coordinator が Node の label から能力を導く)。下の $(NODE_NAME) より前に置く — k8s は前の行で
             # 定義した env だけを展開する。
@@ -103,8 +113,23 @@ spec:
             - { name: DRAIN_DEADLINE, value: "90" }
             # 枠の file(ConfigMap worker-room — 頭の註)。末尾に足す — 機体の dir の JSON patch が読む env の場所(1 番・9 番)を動かさない。
             - { name: WORKER_ROOM_FILE, value: /etc/worker-room/worker-room.json }
+            # 版の file(ConfigMap worker-version の自分の名の鍵 — 頭の註)。$(WORKER_NAME) は前の行の env から展開される。
+            - { name: WORKER_VERSION_FILE, value: "/etc/worker-version/$(WORKER_NAME)" }
+            # 世代ごとの状態の dir(deploy/boot.sh の WORKER_GENERATION_DIRS): keeper は同じ container に 2 つの版の worker の process を
+            # 並べるので、状態を $WORK_DIR/gen/<世代> に分ける(世代の名は Pod の uid と起こした刻)。
+            - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
+            - { name: WORKER_GENERATION_DIRS, value: "1" }
           lifecycle:
-            preStop: { exec: { command: ["/bin/sh", "-c", "ROLE=drain exec /opt/worker-boot.sh"] } }
+            # preStop の drain は、keeper が最後に起こした世代の版(keeper の状態の dir の commit — deploy/boot.sh の DOEFF_KEEPER_DIR の
+            # 既定 /tmp/doeff-worker-keeper)の script で、生きている全部の世代を drain する。keeper が起きる前なら版の file の版。
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - >-
+                    WORKER_DOEFF_COMMIT="$$(cat /tmp/doeff-worker-keeper/commit 2>/dev/null || cat "$WORKER_VERSION_FILE")"
+                    && export WORKER_DOEFF_COMMIT && ROLE=drain exec /opt/worker-boot.sh
           readinessProbe:
             exec: { command: ["/bin/sh", "-c", "ROLE=ready exec /opt/worker-boot.sh"] }
             periodSeconds: 10
@@ -120,6 +145,7 @@ spec:
             - { mountPath: /opt/worker-prepare, name: prepare, readOnly: true }
             - { mountPath: /opt/worker-shell, name: shell, readOnly: true }
             - { mountPath: /etc/worker-room, name: room, readOnly: true }
+            - { mountPath: /etc/worker-version, name: version, readOnly: true }
           # 資源の上限と取り分は機体ごとの値 — 機体の dir が足す。
       volumes:
         # 自己起動の root・実行環境の root・uv の cache と Python・crate・log。Pod の寿命の外(機体の dir)— 作り直しても残る。
@@ -142,3 +168,4 @@ spec:
         - { name: prepare, configMap: { name: worker-prepare, defaultMode: 0555, optional: true } }
         - { name: shell, configMap: { name: worker-shell, defaultMode: 0555, optional: true } }
         - { name: room, configMap: { name: worker-room, defaultMode: 0444 } }
+        - { name: version, configMap: { name: worker-version, defaultMode: 0444 } }
