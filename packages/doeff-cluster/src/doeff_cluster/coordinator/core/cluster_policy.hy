@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker])
 (import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
@@ -943,6 +943,44 @@
         :if (is (.row state.placements job.spec.name) None)
         job.spec.name
         (unplaced-text (unplaced-kind now state job timing) job (effective-needs state job))))
+
+
+(defk note-unplaced [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)を、この拍の置き先で求め直すため(card ki-53b8677f1374)。置き先の無い
+   Service(unplaced-jobs と同じ母集団)は前の刻を保ち、初めて見た Service には now を置く。置かれた・宣言から消えた Service の行は外す。
+   変わらなければ同じ値を返す。"
+  (val names (sorted (gfor job (active-jobs state) :if (is (.row state.placements job.spec.name) None) job.spec.name)))
+  (val since (table-of (tuple (gfor name names
+                                    (TableWrite name (let [seen (.row state.unplaced-since name)] (if (is seen None) now seen)))))))
+  (if (= since state.unplaced-since) state (replace state :unplaced-since since)))
+
+
+(defn #^ tuple missing-needs [#^ int now #^ ClusterState state #^ tuple needs #^ ClusterTiming timing]
+  "needs のうち、生きていて drain 中でない worker のどれも名乗らない能力(名の順)— 置き先の無い Service の「足りない能力」の読み。
+   能力は名乗り(provides)と node の label から導いた能力(derived)の和で数える(placeable と同じ)。"
+  (setv draining (draining-workers state now))
+  (setv offered (set (gfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (not-in w.name draining))
+                          c (+ (tuple w.provides) (tuple w.derived)) c)))
+  (tuple (sorted (- (set needs) offered))))
+
+
+(defn #^ UnplacedView unplaced-view [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]
+  "置き先の無い Service 1 つの読み(UnplacedView)— 外の見張りが理由の文を読み解かずに、種類・足りない能力・いつからを読むため
+   (card ki-53b8677f1374)。GET /state の unplacedDetail(unplaced-views)と Service の資源の status.unplaced(resource_policy.observed-of)が
+   同じこの関数を読む。刻は ClusterState.unplaced-since(まだ調停の拍が見ていなければ now)。"
+  (setv needs (tuple (effective-needs state job))
+        since (.row state.unplaced-since job.spec.name))
+  (UnplacedView :service job.spec.name :kind (unplaced-kind now state job timing) :needs needs
+                :missing (missing-needs now state needs timing) :pin job.pin
+                :since-ms (if (is since None) now since)))
+
+
+(defn #^ tuple unplaced-views [#^ int now #^ ClusterState state #^ ClusterTiming timing]
+  "置き先の無い Service の読みの列(Service の名の順 — UnplacedView)— GET /state の unplacedDetail を綴るため。母集団は unplaced-jobs と同じ。"
+  (tuple (gfor job (sorted (active-jobs state) :key (fn [j] j.spec.name))
+               :if (is (.row state.placements job.spec.name) None)
+               (unplaced-view now state job timing))))
 
 
 (defk task-unplaced-text [kind]
@@ -2235,7 +2273,9 @@
              ;; 組ごとの宣言の値と置いている数(card ki-b0e8028c8c8d)。
              :group-limits (! (group-limit-views state))
              ;; 置き先の一時の上書き(card ki-1523bc0aba4f — Service の名の順)。
-             :needs-overrides (tuple (sorted (.rows state.needs-overrides) :key (fn [o] o.service)))))
+             :needs-overrides (tuple (sorted (.rows state.needs-overrides) :key (fn [o] o.service)))
+             ;; 置き先の無い Service の種類・足りない能力・いつから(card ki-53b8677f1374 — unplaced と同じ Service)。
+             :unplaced-detail (unplaced-views now state timing)))
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ (get Mapping #(str object)) body]

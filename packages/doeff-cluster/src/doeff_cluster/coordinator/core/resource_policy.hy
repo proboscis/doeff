@@ -34,7 +34,7 @@
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of warms-for
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text unplaced-view active-jobs resource-version-of keep-mark-of warms-for
                                                        handover-blockers handover-since HANDOVER-STALL-MS])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
@@ -868,7 +868,10 @@
                            :process (if a (job-status-row state a.worker name) None)
                            ;; 版の判定(state は snapshot と同じ値)と、その理由・動いている版の列(2026-09-29)。
                            :version (version-state state name now timing)
-                           :running (live-processes state name now timing)))
+                           :running (live-processes state name now timing)
+                           ;; 置き先が無ければ種類・足りない能力・いつから(card ki-53b8677f1374 — 外の見張りが Service の一覧から読む)。
+                           :unplaced (let [job (next (gfor j (active-jobs state) :if (= j.spec.name name) j) None)]
+                                       (if (and (is a None) (is-not job None)) (unplaced-view now state job timing) None))))
     (= kind "Worker")
       (do (setv w (.row state.workers name))
           (when (is w None) (raise (ValueError (+ "無い Worker を観測しようとした: " name))))

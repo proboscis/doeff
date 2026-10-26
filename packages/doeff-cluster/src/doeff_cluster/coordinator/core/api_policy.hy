@@ -47,7 +47,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
-(import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write board-written note-liveness
+(import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write board-written note-liveness note-unplaced
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
@@ -78,7 +78,9 @@
   (<- lifted ClusterState (lift-needs-overrides changed now timing))
   (<- placed ClusterState (reconcile now lifted timing))
   (val reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now placed timing) timing) now) now timing))
-  (stamp changed reconciled COORDINATOR now timing))
+  ;; 置き先の無い間の起点(card ki-53b8677f1374): 最後に、置き先が無いと最初に見た拍の刻を、この拍の置き先で求め直す(保存しない・版を進めない)。
+  (<- noted ClusterState (note-unplaced reconciled now))
+  (stamp changed noted COORDINATOR now timing))
 
 
 (defk tick [state now timing]
