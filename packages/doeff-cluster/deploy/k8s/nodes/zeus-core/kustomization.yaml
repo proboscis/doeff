@@ -1,0 +1,25 @@
+# zeus の 2 つ目の worker(doeff-worker-zeus-core)= worker の雛形 + 機体の仕事だけを受ける差(../../host-only)+ zeus-core の差。
+# 同じ機体 zeus の上で、作業の root を USB の SSD でなく内蔵の SATA の SSD に置く worker(card ki-8335f47a1089 — 10-26 05:43 に USB の
+# SSD が bus から落ち、作業の root を SSD に置く worker zeus 1 つに載っていた上に載る系の小さい常駐の job が全部止まった)。
+# 名は Node の名でなく zeus-core(機体の事実 NODE_NAME は zeus のまま)、能力は host-zeus-core と host-systemd-readable の 2 つだけ —
+# host-zeus と上に載る系の能力の残り(agent など)を名乗らないので、worker zeus の job(会話の CLI ホスト・会話の task)はここへ来ない。
+# 上に載る系は、USB の SSD を失っても止めない job の :needs を host-zeus-core にする。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../worker
+components:
+  - ../../host-only
+nameSuffix: -zeus-core
+# 同じ機体の worker zeus の Deployment と互いの Pod を選ばないよう、selector と Pod の label に worker の名を足す(Node の名でない)。
+labels:
+  - pairs: { doeff.dev/node: zeus-core }
+    includeSelectors: true
+patches:
+  - path: node.yaml
+  # 名と能力(JSON patch — 雛形の env の決まった場所を確かめて改める。版の行より前に当てる)。
+  - path: identity.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+  # 版の行(JSON patch — 雛形の env の決まった場所へ足す)。
+  - path: version.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
