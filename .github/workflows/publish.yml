@@ -1,13 +1,14 @@
 name: Publish doeff
 
+# One-off release branch for doeff-time 0.1.0 (cut from tag v0.8.0's commit). doeff-time is released
+# on its own (docs/release-publish-runbook.md, "packages released on their own"), not with the core
+# five, and needs doeff 0.8.0 on PyPI first. Dispatch it on this branch; main's publish.yml stays the
+# core-five release.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to PyPI"
+        description: "Publish doeff-time 0.1.0 to PyPI"
         required: false
         default: false
         type: boolean
@@ -16,12 +17,7 @@ permissions:
   contents: read
 
 jobs:
-  # The uploads below use skip-existing, so a tag pushed without a version bump would upload
-  # nothing and still pass. Every upload job needs this check, which fails the whole release
-  # before its first upload when any package's version is already on PyPI. It has no `if`, so a
-  # build-only dispatch (publish=false) also shows whether the release would go out.
-  check-versions-unpublished:
-    name: Fail if a release version is already on PyPI
+  build-doeff-time:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,205 +25,51 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Check every root tag release package against PyPI
-        run: >-
-          uv run --no-project python tools/check_pypi_unpublished.py
-          packages/doeff-vm packages/doeff-hy-pytest packages/doeff-hy packages/doeff-core-effects .
-
-      # Every upload passes secrets.PYPI_API_TOKEN as its password: the API token while that
-      # secret exists, Trusted Publishing (OIDC, no stored secret) once it is removed.
-      - name: Show which PyPI credential the uploads use
-        env:
-          HAS_PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN != '' }}
+      - name: Fail unless the release is doeff-time 0.1.0, it is not on PyPI yet, and doeff 0.8.0 is
         run: |
-          if [ "$HAS_PYPI_API_TOKEN" = "true" ]; then
-            echo "::notice::PyPI uploads use the API token (secret PYPI_API_TOKEN)"
-          else
-            echo "::notice::PyPI uploads use Trusted Publishing (no PYPI_API_TOKEN secret)"
-          fi
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' packages/doeff-time/pyproject.toml)
+          test "$version" = "0.1.0"
+          uv run --no-project python tools/check_pypi_unpublished.py packages/doeff-time
+          status=$(uv run --no-project python -c 'import urllib.request, urllib.error
+          try:
+              urllib.request.urlopen("https://pypi.org/pypi/doeff/0.8.0/json"); print(200)
+          except urllib.error.HTTPError as e:
+              print(e.code)')
+          test "$status" = "200"
 
-  # PyPI rejects Trusted Publishing from inside a reusable workflow, so the native packages only
-  # build in their reusable workflows (publish: false) and upload from jobs of this workflow. The
-  # calls still grant id-token: write: GitHub caps a called workflow's permissions at its
-  # caller's and refuses the run when a nested job (here the skipped upload) asks for more.
-  build-doeff-vm:
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: [check-versions-unpublished]
-    uses: ./.github/workflows/build-vm.yml
-    permissions:
-      contents: read
-      id-token: write
-    with:
-      publish: false
-
-  # The root tag publishes the core five only: doeff-vm, doeff-hy-pytest, doeff-hy,
-  # doeff-core-effects and doeff (docs/release-publish-runbook.md). Nothing uploads until every
-  # Python dist has built, and each upload needs the one before it, in dependency order: doeff-hy
-  # needs doeff-hy-pytest, and doeff, doeff-core-effects and doeff-hy need each other, so doeff
-  # goes last and `pip install doeff` picks the new version only after the other four are on PyPI.
-  publish-doeff-vm:
-    name: Publish doeff-vm to PyPI
-    needs: [check-versions-unpublished, build-doeff-vm, build-python-release-dists]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download doeff-vm artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: doeff-vm-*
-          path: dist-doeff-vm
-          merge-multiple: true
-
-      - name: List doeff-vm artifacts
-        run: ls -la dist-doeff-vm/
-
-      - name: Publish doeff-vm to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-vm/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  build-python-release-dists:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - package: doeff-hy-pytest
-            artifact: doeff-hy-pytest-dist
-            out-dir: dist-doeff-hy-pytest
-          - package: doeff-hy
-            artifact: doeff-hy-dist
-            out-dir: dist-doeff-hy
-          - package: doeff-core-effects
-            artifact: doeff-core-effects-dist
-            out-dir: dist-doeff-core-effects
-          - package: doeff
-            artifact: doeff-dist
-            out-dir: dist-doeff
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Build wheel and sdist
-        run: uv build --package ${{ matrix.package }} --wheel --sdist --out-dir ${{ matrix.out-dir }}
+      - name: Build doeff-time wheel and sdist
+        run: uv build --package doeff-time --wheel --sdist --out-dir dist-doeff-time
 
       - name: Verify built metadata
-        run: uv run python tools/verify_dist_metadata.py ${{ matrix.out-dir }}/*.whl ${{ matrix.out-dir }}/*.tar.gz
+        run: uv run --no-project python tools/verify_dist_metadata.py dist-doeff-time/*.whl dist-doeff-time/*.tar.gz
 
-      - name: Upload distribution artifacts
+      - name: Upload doeff-time distribution artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.out-dir }}/*
+          name: doeff-time-dist
+          path: dist-doeff-time/*
+          if-no-files-found: error
 
-  publish-doeff-hy-pytest:
-    name: Publish doeff-hy-pytest to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-vm]
+  publish-doeff-time:
+    name: Publish doeff-time to PyPI
+    needs: [build-doeff-time]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     environment: pypi
     permissions:
       id-token: write
     steps:
-      - name: Download doeff-hy-pytest dist artifacts
+      - name: Download doeff-time dist artifacts
         uses: actions/download-artifact@v4
         with:
-          name: doeff-hy-pytest-dist
-          path: dist-doeff-hy-pytest
+          name: doeff-time-dist
+          path: dist-doeff-time
 
-      - name: List doeff-hy-pytest artifacts
-        run: ls -la dist-doeff-hy-pytest/
+      - name: List doeff-time artifacts
+        run: ls -la dist-doeff-time/
 
-      - name: Publish doeff-hy-pytest to PyPI
+      - name: Publish doeff-time to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist-doeff-hy-pytest/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  publish-doeff-hy:
-    name: Publish doeff-hy to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-hy-pytest]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download doeff-hy dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-hy-dist
-          path: dist-doeff-hy
-
-      - name: List doeff-hy artifacts
-        run: ls -la dist-doeff-hy/
-
-      - name: Publish doeff-hy to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-hy/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  publish-doeff-core-effects:
-    name: Publish doeff-core-effects to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-hy]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download doeff-core-effects dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-core-effects-dist
-          path: dist-doeff-core-effects
-
-      - name: List doeff-core-effects artifacts
-        run: ls -la dist-doeff-core-effects/
-
-      - name: Publish doeff-core-effects to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-core-effects/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  publish-doeff:
-    name: Publish doeff to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-core-effects]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-dist
-          path: dist-doeff
-
-      - name: List artifacts
-        run: ls -la dist-doeff/
-
-      - name: Publish doeff to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff/
-          skip-existing: true
+          packages-dir: dist-doeff-time/
           password: ${{ secrets.PYPI_API_TOKEN }}
