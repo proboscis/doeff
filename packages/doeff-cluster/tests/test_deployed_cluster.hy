@@ -91,6 +91,22 @@
   (assert (= (get woken "replicas") 1) woken))
 
 
+(deftest test-the-deployed-handler-carries-the-content-keys-of-the-declared-system
+  ;; card ki-81bf84ac6590: target の中身の鍵(道具が当てる全部の系の job の分)のうち、宣言する系の job の分だけが Service の spec の content に
+  ;; 載る(系に無い job の鍵は渡さない — system-declaration は系に無い job の鍵を断る)。鍵を持たない target の宣言は content を持たない。
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  (val target (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "a" 40) :runtime-env None :versions-read None
+                               :contents {"ping" "sha256:ping-1" "other-system-job" "sha256:other"}))
+  (<- declared tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation))))
+  (assert (= declared #("ping")) declared)
+  (<- spec dict (service-spec coordinator "ping"))
+  (assert (= (get spec "content") "sha256:ping-1") spec)
+  (<- _plain tuple (asked coordinator clock (Redeclare (pings machine-foundation))))
+  (<- plain dict (service-spec coordinator "ping"))
+  (assert (not-in "content" plain) plain))
+
+
 (deftest test-the-deployed-handler-declares-and-reads-readiness-from-the-coordinator
   (val clock (SimClock START))
   (val coordinator (MemoryCoordinator clock))
