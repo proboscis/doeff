@@ -2422,7 +2422,10 @@ class _Walker:
             if name in _CLASS_SKIP:
                 continue
             self._feed("member", name)
-            self._value(members[name], home, ())
+            # 3.15 の dataclass の __doc__ は、初めて読む時に署名から文を作る記述子(dataclasses._AutoDocstring)— class から読んだ
+            # 文で入れる(3.14 までと同じ値・記述子のままでは辿れない値として module の file で覆う)。
+            value = cls.__doc__ if name == "__doc__" else members[name]
+            self._value(value, home, ())
 
     def _extension_class(self, cls: type, home: ModuleType | None) -> None:
         """拡張の module の class(Python の source の無い class)を、.so の file の全体ではなく名と公開の形で覆う — 基底(同じ
