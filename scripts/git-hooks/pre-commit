@@ -65,6 +65,16 @@ if [ -f "$TOP/scripts/check_hy_stubs.py" ]; then
   }
 fi
 
+# (3b) 持ち主の chat の言葉を日付つきで写した引用(card [id])。項は .pre-commit-config.yaml の id no-chat-quotes
+# の 1 つで、stage した file だけを見る。入口の無い古い断面は塞がない。
+if [ -f "$TOP/scripts/check_no_operator_quotes.py" ]; then
+  (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run no-chat-quotes) || {
+    echo "doeff の commit の hook: 持ち主の chat の言葉の日付つきの引用が在る(上の出力)。決定と理由を記録の言葉で書き、" \
+      "出自を短い印にして stage し直す。" >&2
+    exit 1
+  }
+fi
+
 # (3) enforcement 台帳の著述時突合。
 CHECK="$TOP/scripts/check_enforcement_ledger.py"
 # 古い断面には機構が無い — 塞がない。
