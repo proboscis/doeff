@@ -258,8 +258,8 @@ Race losers continue running by default. Cancel them explicitly if needed (for T
 
 The jobs below wait with doeff-time's `Delay`, and the run puts `sim_time_handler()` around them, so
 they wait on a virtual clock: the run takes no real time and `b` wins on every run. `doeff-time`
-(import name `doeff_time`) is not installed by `pip install doeff` and is not on PyPI; install it
-from a checkout as shown in [Pages That Need Other Components](index.md#pages-that-need-other-components).
+(import name `doeff_time`) is not installed by `pip install doeff`; install it from PyPI with
+`pip install doeff-time`.
 
 ```python
 from doeff import Cancel, Race, Spawn, Try, Wait, do, run

@@ -2,6 +2,15 @@
 
 Provider-agnostic time effects for `doeff`.
 
+## Installation
+
+```bash
+pip install doeff-time
+```
+
+doeff-time 0.1.0 needs doeff 0.8 (`doeff>=0.8.0,<0.9` and `doeff-core-effects>=0.8.0,<0.9`); pip
+installs them with it.
+
 ## Effects
 
 - `Delay(seconds)`

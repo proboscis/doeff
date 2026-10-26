@@ -2,12 +2,12 @@
 
 > **Needs components outside `pip install doeff`.** This page describes `doeff-gemini`, which is
 > not on PyPI. Install it from a checkout of this repository together with the repository
-> packages it depends on (`doeff-time`, `doeff-llm`, `doeff-image`). pip takes everything else,
+> packages it depends on (`doeff-llm`, `doeff-image`). pip takes everything else, `doeff-time`,
 > `google-genai` and `google-auth` included, from PyPI:
 
 ```bash
 git clone --depth 1 https://github.com/proboscis/doeff.git
-pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-llm \
+pip install doeff doeff-time ./doeff/packages/doeff-llm \
   ./doeff/packages/doeff-image ./doeff/packages/doeff-gemini
 ```
 

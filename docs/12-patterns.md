@@ -6,8 +6,7 @@ Common patterns, best practices, and anti-patterns for building robust applicati
 
 > Five examples also need `doeff-time` (Retry with Backoff, Circuit Breaker, Immutable State
 > Updates, Parallel Data Fetching, Bad: Blocking Operations in Programs). `pip install doeff`
-> does not install it and it is not on PyPI; install it from a checkout as shown in
-> [Pages That Need Other Components](index.md#pages-that-need-other-components).
+> does not install it; install it from PyPI with `pip install doeff-time`.
 
 ## Architectural Patterns
 

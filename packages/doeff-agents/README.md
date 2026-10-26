@@ -13,12 +13,12 @@ process — behind a single effect boundary.
 ## Installation
 
 Install `doeff-agents` from a checkout of this repository together with the
-repository packages it depends on (`doeff-time`, `doeff-claude-code`,
-`doeff-codex`). pip takes everything else, `doeff` included, from PyPI:
+repository packages it depends on (`doeff-claude-code`, `doeff-codex`). pip
+takes everything else, `doeff` and `doeff-time` included, from PyPI:
 
 ```bash
 git clone --depth 1 https://github.com/proboscis/doeff.git
-pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-claude-code \
+pip install doeff doeff-time ./doeff/packages/doeff-claude-code \
   ./doeff/packages/doeff-codex ./doeff/packages/doeff-agents
 ```
 

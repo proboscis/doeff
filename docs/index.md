@@ -158,14 +158,14 @@ components are listed separately under
 These pages use components that `pip install doeff` does not install. Each page says at its top
 which components it needs and how to install them.
 
-`doeff-indexer` is on PyPI. `doeff-agents` is on PyPI only as an old 0.1.1 build that does not
-import with doeff 0.5 or later. The other components are not on PyPI: install them from a checkout of
-this repository, passing pip the path of every component the page names. pip takes everything
-else from PyPI.
+`doeff-time` and `doeff-indexer` are on PyPI: install them by name (`pip install doeff-time`).
+`doeff-agents` is on PyPI only as an old 0.1.1 build that does not import with doeff 0.5 or later.
+The other components are not on PyPI: install them from a checkout of this repository, passing pip
+the path of every such component the page names. pip takes everything else from PyPI.
 
 ```bash
 git clone --depth 1 https://github.com/proboscis/doeff.git
-pip install doeff ./doeff/packages/doeff-time   # the paths the page names
+pip install doeff doeff-time ./doeff/packages/doeff-llm   # the names and paths the page names
 ```
 
 ### CLI auto-discovery and IDE plugins — `doeff-indexer`
