@@ -314,6 +314,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 |---|---|
 | `GET /resources/Service`・`GET /resources/Service/<名>` | 定義(`spec`)・状態(`status`: 置き先・Ready か・drain の並べた置き先・handoff の段階・受け付けない行の `refused`)・`resourceVersion`・所有者 |
 | `POST /resources/Service`・`PUT /resources/Service/<名>` | 定義を作る・書き換える(`declare --apply` が使う) |
+| `POST /resources/NeedsOverride`・`GET /resources/NeedsOverride/<名>`・`DELETE /resources/NeedsOverride/<名>` | Service の needs の一時の上書き(名 = Service の名・作る本文の `spec` = `{"needs": [...], "capability": "<結び先の能力>", "ttlSeconds": <1〜604800>}`)。上書きの間 Service の needs は上書きの needs になり、行は元の needs(`original`)・期限(`expiresAtMs`)・書き手(`writer`)を持ちます。結び先の能力を名乗る生きた worker が 0 になった拍か期限の拍に、coordinator が元の needs へ戻します(`DELETE` も同じ)。書き直しは無く、延ばす・変えるのは消してから作り直します |
 | `PUT /programs/<sha>`・`GET /programs/<sha>` | 詰めた Program の置き場(`{"blob" "versions"}`)。中身の sha256 がキー |
 | `GET /resources/Rollout/<名>` | Rollout の段階(`status.phase`)・旧の元の台数・台数の食い違い(`status.drift`) |
 | `GET /resources/Worker` | worker の能力(`provides`・`exclusive`)・node・容量・版・drain |
@@ -332,6 +333,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 - 書き込みには header `X-Actor: $ME` が要ります(無いと 400)。
 - 書き換えは版つきです。`GET` で読んだ `resourceVersion` を付けて `PUT` します。読んだ後に誰かが書いていれば 409 で何も書かれません。
 - Service と Rollout の `DELETE`・所有者(`owner`)の書き換えは、送り手が誰でも通ります。所有者は誰が宣言したかの記録で、書き・消しを断る照合には使いません(`X-Actor` の名乗りは確かめないので守りにならないため、2026-10-05 に外しました)。進行中の Rollout が扱っている Service と、進行中の Rollout は `?force=true` を付けた時だけ消えます。
+- 例外は Service の needs の書き換えです。所有者でない送り手の needs の書き換え(`PUT /resources/Service/<名>`・旧い `PUT /jobs`)は 403(旧い口は 409 の競合の行)で断り、`NeedsOverride` を案内します。守りではなく道の振り分けで、復旧の手の一時の書き換えを、元の needs・結び先の能力・期限を持つ上書きの口へ通します(2026-10-26 に直の書き換えが元の値を残さず、能力の側だけが戻って Service 13 本が置き先を失った)。上書きの間に所有者が宣言し直した needs は、上書きの元の needs に入り、上書きが外れた後に効きます。
 - Worker を消す(`DELETE /resources/Worker/<名>`)のは、機体が落ちた事を確かめてから、または沈黙が keep-fence-ms(既定 240 秒)+ 停止の猶予 15 秒を過ぎてからにします。他に置ける worker が無い job は、担い手が途絶しても止めずに動かし続けてよい印を持ちます。Worker を消すと coordinator はその job を他の worker へ置くので、担い手がまだ動いていると 2 か所で走ります。
 - task と切り離した task の本文は Program の sha だけを運びます。先に `PUT /programs/<sha>` で置いてから送ります(置き場に無い sha は 400)。
 - 盤の行に `"ttlSeconds": n` を付けると n 秒後に消えます。上限: 1 行 1 MiB・20,000 行・合計 64 MiB(越える書きは 507)。

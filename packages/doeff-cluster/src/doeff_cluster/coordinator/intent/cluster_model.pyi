@@ -231,6 +231,16 @@ class KeepMark:
     since_ms: int
 
 @dataclass(frozen=True, kw_only=True)
+class NeedsOverride:
+    service: str
+    needs: tuple[str, ...]
+    capability: str
+    original: tuple[str, ...]
+    expires_ms: int
+    writer: str
+    since_ms: int
+
+@dataclass(frozen=True, kw_only=True)
 class SupersededRun:
     worker: str
     boot: str
@@ -733,6 +743,7 @@ class ClusterState:
     group_limits: Table[GroupLimit] = ...
     outbox: Table[DetachedEnded] = ...
     unreached_ms: int | None = None
+    needs_overrides: Table[NeedsOverride] = ...
 
 @dataclass(frozen=True)
 class Fault:
