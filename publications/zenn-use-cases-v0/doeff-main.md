@@ -10,8 +10,6 @@ published: false
 
 ## doeffとは？
 
-*AIエージェントが、メンテナの[@proboscis](https://github.com/proboscis)のもとでdoeffの開発を手伝いながら書きました。*
-
 Pythonの代数的エフェクト(algebraic effects)を、[doeff](https://github.com/proboscis/doeff)で紹介します。doeffは、中核をRustで書いたオープンソースのライブラリです。関数はエフェクト、つまり名前を付けた操作を`yield`します。ハンドラは、そのエフェクトを関数の残りの部分と一緒に受け取り、関数をどう進めるかを決めます。
 
 その決めごとの1つ1つは、別の方法でも手に入ります。テストのモック、偽の時計、リトライのデコレータ、自作のイベントループです。エフェクトは、そのすべてを1つの仕組みで扱えるようにします。だから同じコードの周りにいくつも重ねられ、コードに触れずにどれか1つを入れ替えられます。ここでは小さなプログラムを1つ作り、その周りに層を1つずつ足していきます。
@@ -527,8 +525,6 @@ python -m doeff demo           # doeffのデモを走らせる。
 [What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)(英語)が、仕組み・使い道・限界を定めています。ここに載せた例はどれも、doeff 0.8.0とdoeff-timeで、載せたとおりに走ります。完全なファイルは[examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour)にあります。テストの分は[examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks)です。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)(英語)は、エフェクトを依存性の注入や素の`async`と、もっと詳しく比べています。
 
 どこで使いにくいと感じましたか。`yield`の書き方が邪魔になるコードや、素の引数のほうが簡単だった場合があれば教えてください。Issueは https://github.com/proboscis/doeff/issues で受け付けています。
-
-*本文はAIエージェントが書き、すべての例をPyPIのdoeff 0.8.0とdoeff-timeで走らせました。*
 
 ## 困りごとから選ぶ入口
 
