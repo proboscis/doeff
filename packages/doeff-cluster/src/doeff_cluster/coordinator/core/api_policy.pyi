@@ -47,6 +47,7 @@ from doeff_cluster.coordinator.core.cluster_policy import absorb_task_result as 
 from doeff_cluster.coordinator.core.cluster_policy import board_write as board_write
 from doeff_cluster.coordinator.core.cluster_policy import board_written as board_written
 from doeff_cluster.coordinator.core.cluster_policy import note_liveness as note_liveness
+from doeff_cluster.coordinator.core.cluster_policy import note_unplaced as note_unplaced
 from doeff_cluster.coordinator.core.cluster_policy import lease_write as lease_write
 from doeff_cluster.coordinator.core.cluster_policy import other_generation_boot as other_generation_boot
 from doeff_cluster.coordinator.core.cluster_policy import alive as alive

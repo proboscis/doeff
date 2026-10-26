@@ -271,6 +271,20 @@ class GroupLimitView:
     held: tuple[GroupHeld, ...]
     queued: int
 
+class UnplacedKind(StrEnum):
+    WAITING_PREVIOUS_HOLDER = 'waiting-previous-holder'
+    NO_ELIGIBLE_WORKER = 'no-eligible-worker'
+    NO_ROOM = 'no-room'
+
+@dataclass(frozen=True, kw_only=True)
+class UnplacedView:
+    service: str
+    kind: UnplacedKind
+    needs: tuple[str, ...]
+    missing: tuple[str, ...]
+    pin: str | None
+    since_ms: int
+
 @dataclass(frozen=True, kw_only=True)
 class StateView:
     now: int
@@ -288,6 +302,7 @@ class StateView:
     coordinator_commit: str | None
     group_limits: tuple[GroupLimitView, ...] = ...
     needs_overrides: tuple[NeedsOverride, ...] = ...
+    unplaced_detail: tuple[UnplacedView, ...] = ...
 
 class DrainPhase(StrEnum):
     DRAINING = 'Draining'
@@ -390,11 +405,6 @@ class HandoffWatch:
 
     def status_json(self, timeout_ms: int) -> dict[str, object]:
         ...
-
-class UnplacedKind(StrEnum):
-    WAITING_PREVIOUS_HOLDER = 'waiting-previous-holder'
-    NO_ELIGIBLE_WORKER = 'no-eligible-worker'
-    NO_ROOM = 'no-room'
 
 class TaskUnplacedKind(StrEnum):
     TASK_NO_ROOM = 'task-no-room'
@@ -508,6 +518,7 @@ class ServiceObserved:
     process: StatusRow | None
     version: VersionVerdict
     running: tuple[LiveProcess, ...]
+    unplaced: UnplacedView | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerObserved:
@@ -744,6 +755,7 @@ class ClusterState:
     outbox: Table[DetachedEnded] = ...
     unreached_ms: int | None = None
     needs_overrides: Table[NeedsOverride] = ...
+    unplaced_since: Table[int] = ...
 
 @dataclass(frozen=True)
 class Fault:
