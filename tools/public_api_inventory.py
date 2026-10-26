@@ -117,6 +117,8 @@ _HY_TOP_DEFINITION = re.compile(
 _FOLLOW_DEPTH = 8
 _DEFAULT_TIMEOUT_SECONDS = 1800
 _MISSING = object()
+# The alias a ``type X = ...`` statement makes; the statement and its type come with Python 3.12, so 3.11 has no alias to read.
+_TYPE_ALIAS_TYPES: tuple[type, ...] = (typing.TypeAliasType,) if sys.version_info >= (3, 12) else ()
 
 
 class ExportRow(TypedDict):
@@ -745,7 +747,7 @@ def _is_type_like(obj: object) -> bool:
     typing_kinds = (
         typing.TypeVar,
         typing.ParamSpec,
-        typing.TypeAliasType,
+        *_TYPE_ALIAS_TYPES,
         types.UnionType,
         types.GenericAlias,
     )
@@ -968,7 +970,12 @@ def _statement_names(statement: ast.stmt) -> tuple[str, ...]:
         return tuple(name for target in statement.targets for name in _target_names(target))
     if isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
         return _target_names(statement.target)
-    if isinstance(statement, ast.TypeAlias) and isinstance(statement.name, ast.Name):
+    # ``type X = ...`` (ast.TypeAlias) comes with Python 3.12; 3.11 has no such statement to read.
+    if (
+        sys.version_info >= (3, 12)
+        and isinstance(statement, ast.TypeAlias)
+        and isinstance(statement.name, ast.Name)
+    ):
         return (statement.name.id,)
     return ()
 
@@ -1020,9 +1027,21 @@ def _code_place(target: object) -> Place | None:
         return Place(
             target.__module__,
             _module_file(target.__module__),
-            line if isinstance(line, int) else None,
+            line if isinstance(line, int) else _class_line(target),
         )
     return None
+
+
+def _class_line(cls: type) -> int | None:
+    """Where a class's definition starts, read from its module's source.
+
+    ``__firstlineno__`` comes with Python 3.13; before it, ``inspect`` finds the ``class`` statement by
+    its qualified name in the source (``None`` when there is no source, as for a native class).
+    """
+    try:
+        return inspect.getsourcelines(cls)[1]
+    except (OSError, TypeError):
+        return None
 
 
 # --- one package, in the child process ---
@@ -1035,17 +1054,15 @@ def _install_hy() -> None:
 
 
 def _put_roots_on_path(layout: PackageLayout) -> None:
-    """Make a package that is not installed in the venv importable from its source.
+    """Import a package from its source in the checkout, the code the inventory lists.
 
-    Installed packages (editable or built) are imported as installed; a maturin package needs its
-    built native module, so its source dir is never put first.
+    A built copy installed in the venv (a non-editable install, as in CI's fresh venv) would put the
+    venv's copy in the rows' ``defined_at`` and list the installed version instead of the checkout.
+    A maturin package needs its built native module, so its source dir is never put first.
     """
-    missing = [
-        root
-        for root in layout.roots
-        if not layout.maturin and importlib.util.find_spec(root.name) is None
-    ]
-    sys.path[:0] = [str(root.path.parent) for root in missing]
+    if layout.maturin:
+        return
+    sys.path[:0] = [str(root.path.parent) for root in layout.roots]
 
 
 @dataclass(frozen=True)
@@ -1122,7 +1139,7 @@ def _defined_in_package(value: object, module_name: str, name: str, sources: _So
     target = _definition(value)
     if isinstance(target, (type, types.FunctionType)):
         return sources.is_own_module(target.__module__)
-    if isinstance(value, (typing.TypeVar, typing.TypeAliasType)):
+    if isinstance(value, (typing.TypeVar, *_TYPE_ALIAS_TYPES)):
         return sources.is_own_module(value.__module__)
     return sources.is_own_module(sources.origin(module_name, name).module)
 
