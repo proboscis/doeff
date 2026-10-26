@@ -8,7 +8,11 @@ from pathlib import Path
 from stand_ins import HOME, ScriptedTerminal, recorder, recording_root, world
 
 from doeff import run
-from doeff_agents import AgentType, LaunchConfig, launch_session
+# The old (procedural) chapter-19 video measured these session procedures; they are internal to doeff-agents now
+# (card ki-4b53dcee28f3) — the rewritten video measures the effects instead.
+from doeff_agents import AgentType
+from doeff_agents._session import launch_session
+from doeff_agents.adapters.base import LaunchConfig
 from doeff_agents.io_fake import with_fake_io
 
 config = LaunchConfig(agent_type=AgentType.CLAUDE, work_dir=Path.cwd(), prompt="Review the code in src/utils.py")

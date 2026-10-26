@@ -18,7 +18,6 @@
   AwaitStatus
   CancelAgentSessionEffect
   CaptureEffect
-  ClaudeLaunchEffect
   CleanupAgentSessionEffect
   FollowUpEffect
   GetAgentSessionEffect
@@ -32,6 +31,7 @@
   StopEffect
   StopSessionEffect
   WarmSessionEffect])
+(import doeff_agents.effects._handler-effects [ClaudeLaunchEffect])
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.handlers.production [
   TmuxAgentHandler

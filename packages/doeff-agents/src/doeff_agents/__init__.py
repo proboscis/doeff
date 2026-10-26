@@ -1,34 +1,19 @@
-"""doeff-agents: Agent session management for coding agents in tmux.
+"""doeff-agents: coding-agent sessions as doeff effects.
 
-The package root intentionally keeps imports lazy. The imperative session
-transport API can run without importing the doeff VM, which matters on hosts
-that only need tmux-backed process supervision.
+The public API is the effects a program yields (launch, watch, send, stop and
+await an agent session — ``doeff_agents.effects``), the handlers a caller
+installs to answer them (``doeff_agents.handlers``) and the values those two
+carry. The procedures that drive a session directly are internal.
+
+The package root keeps imports lazy: a name is read from its module on first use.
 """
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 _LAZY_EXPORTS = {
-    "AgentAdapter": ".adapters.base",
-    "AgentSessionLifecycle": ".adapters.base",
-    "AgentType": ".adapters.base",
-    "InjectionMethod": ".adapters.base",
-    "LaunchConfig": ".adapters.base",
-    "LaunchParams": ".adapters.base",
-    "AgentdClient": ".agentd_client",
-    "AgentdClientError": ".agentd_client",
-    "AgentdPaths": ".agentd_client",
-    "AgentdProtocolError": ".agentd_client",
-    "AgentdSessionList": ".agentd_client",
-    "AgentdSessionParseWarning": ".agentd_client",
-    "AgentdSupervisorConfigError": ".agentd_client",
-    "AgentdSupervisorDeclaration": ".agentd_client",
-    "AgentdUnavailableError": ".agentd_client",
-    "LazyAgentdClient": ".agentd_client",
-    "agentd_socket_is_supervised": ".agentd_client",
-    "default_agentd_paths": ".agentd_client",
-    "ensure_agentd": ".agentd_client",
-    "load_supervisor_declaration": ".agentd_client",
+    "AgentSessionLifecycle": ".effects",
+    "AgentType": ".effects",
     "AgentAttemptExhaustedError": ".effects",
     "AgentDeadlineExceededError": ".effects",
     "AgentEffect": ".effects",
@@ -50,7 +35,6 @@ _LAZY_EXPORTS = {
     "CancelAgentSessionEffect": ".effects",
     "Capture": ".effects",
     "CaptureEffect": ".effects",
-    "ClaudeLaunchEffect": ".effects",
     "CleanupAgentSession": ".effects",
     "CleanupAgentSessionEffect": ".effects",
     "FollowUp": ".effects",
@@ -58,7 +42,6 @@ _LAZY_EXPORTS = {
     "GetAgentSession": ".effects",
     "GetAgentSessionEffect": ".effects",
     "JSONSchema": ".effects",
-    "L2SessionHandle": ".effects",
     "Launch": ".effects",
     "LaunchEffect": ".effects",
     "LaunchSession": ".effects",
@@ -86,7 +69,6 @@ _LAZY_EXPORTS = {
     "StopSession": ".effects",
     "StopSessionEffect": ".effects",
     "agent": ".effects",
-    "deterministic_session_id": ".effects",
     "AgentCapabilityUnsupportedError": ".effects",
     "AgentEvent": ".effects",
     "AgentEventPage": ".effects",
@@ -150,17 +132,12 @@ _LAZY_EXPORTS = {
     "ReplacementCredentialUnavailable": ".effects",
     "HandlerMadeContextId": ".effects",
     "NamedContextId": ".effects",
-    "AGENT_SESSIONS_KEY": ".handlers",
-    "MOCK_AGENT_STATE_KEY": ".handlers",
-    "AgentHandler": ".handlers",
+    "SessionStatus": ".effects",
+    "AgentLaunchError": ".effects",
+    "AgentReadyTimeoutError": ".effects",
     "AgentdSessionClient": ".handlers",
-    "DaemonAgentHandler": ".handlers",
-    "MockAgentHandler": ".handlers",
-    "MockAgentState": ".handlers",
     "MockSessionScript": ".handlers",
-    "ScenarioAgentHandler": ".handlers",
     "ScenarioStep": ".handlers",
-    "TmuxAgentHandler": ".handlers",
     "agent_effectful_handler": ".handlers",
     "agent_effectful_handlers": ".handlers",
     "codex_agent_handler": ".handlers",
@@ -172,58 +149,20 @@ _LAZY_EXPORTS = {
     "codex_process_layer_handler": ".handlers",
     "fake_codex_process_layer_handler": ".handlers",
     "codex_agent_adapter_handler": ".handlers",
-    "fake_headless_claude_agent_handlers": ".handlers",
-    "headless_claude_agent_handlers": ".handlers",
-    "configure_mock_session": ".handlers",
     "daemon_agent_handler": ".handlers",
     "daemon_agent_handlers": ".handlers",
-    "default_agent_handler": ".handlers",
-    "dispatch_effect": ".handlers",
-    "get_mock_agent_state": ".handlers",
     "mock_agent_handler": ".handlers",
     "mock_agent_handlers": ".handlers",
-    "mock_handlers": ".handlers",
-    "production_handlers": ".handlers",
-    "MonitorState": ".monitor",
-    "OnStatusChange": ".monitor",
-    "SessionStatus": ".monitor",
-    "AgentResult": ".programs",
-    "interactive_session": ".programs",
-    "monitor_agent_to_completion": ".programs",
-    "monitor_once": ".programs",
-    "monitor_until_terminal": ".programs",
-    "quick_agent": ".programs",
-    "run_agent_to_completion": ".programs",
-    "wait_and_monitor": ".programs",
-    "wait_agent_session": ".programs",
-    "with_session": ".programs",
-    "ClaudeRuntimePolicy": ".runtime",
-    "AgentSessionEvent": ".session_store",
+    "scenario_agent_handler": ".handlers",
+    "ClaudeRuntimePolicy": ".handlers",
+    "CodexRuntimePolicy": ".handlers",
+    "FakeReply": ".handlers",
+    "FakeClaudeWorld": ".handlers",
+    "ClaudeLiveLimitExceeded": ".handlers",
     "AgentSessionRepository": ".session_store",
     "InMemoryAgentSessionRepository": ".session_store",
     "JsonlAgentSessionRepository": ".session_store",
-    "AgentLaunchError": ".session",
-    "AgentReadyTimeoutError": ".session",
-    "AgentSession": ".session",
-    "async_monitor_session": ".session",
-    "async_session_scope": ".session",
-    "attach_session": ".session",
-    "capture_output": ".session",
-    "get_adapter": ".session",
-    "launch_session": ".session",
-    "monitor_session": ".session",
-    "register_adapter": ".session",
-    "send_message": ".session",
-    "session_scope": ".session",
-    "stop_session": ".session",
     "SessionBackend": ".session_backend",
-    "SessionConfig": ".session_backend",
-    "SessionInfo": ".session_backend",
-    "default_session_backend": ".session_backend",
-    "StableTmuxSessionBackend": ".tmux",
-    "TmuxError": ".tmux",
-    "TmuxNotAvailableError": ".tmux",
-    "TmuxSessionBackend": ".tmux",
 }
 
 if TYPE_CHECKING:
@@ -231,31 +170,9 @@ if TYPE_CHECKING:
     # 答えの型は Any なので、無いと使い手の isinstance の絞りと欄の型が Unknown になる)。実行の時は読まない — 遅延は今のまま。
     # 表に名を足したら、ここにも足す(tests/test_package_root_typed_exports.py が 1 名ずつ照らす)。定義が型の宣言(.pyi)を持たない
     # Hy の module に在る名(handlers/testing.hy の Mock*・Scenario*)は型の検査から見えないので載せない — 検は実物の定義元で分ける。
-    from doeff_agents.adapters.base import (
-        AgentAdapter as AgentAdapter,
+    from doeff_agents.effects import (
         AgentSessionLifecycle as AgentSessionLifecycle,
         AgentType as AgentType,
-        InjectionMethod as InjectionMethod,
-        LaunchConfig as LaunchConfig,
-        LaunchParams as LaunchParams,
-    )
-    from doeff_agents.agentd_client import (
-        AgentdClient as AgentdClient,
-        AgentdClientError as AgentdClientError,
-        AgentdPaths as AgentdPaths,
-        AgentdProtocolError as AgentdProtocolError,
-        AgentdSessionList as AgentdSessionList,
-        AgentdSessionParseWarning as AgentdSessionParseWarning,
-        AgentdSupervisorConfigError as AgentdSupervisorConfigError,
-        AgentdSupervisorDeclaration as AgentdSupervisorDeclaration,
-        AgentdUnavailableError as AgentdUnavailableError,
-        LazyAgentdClient as LazyAgentdClient,
-        agentd_socket_is_supervised as agentd_socket_is_supervised,
-        default_agentd_paths as default_agentd_paths,
-        ensure_agentd as ensure_agentd,
-        load_supervisor_declaration as load_supervisor_declaration,
-    )
-    from doeff_agents.effects import (
         AgentAttemptExhaustedError as AgentAttemptExhaustedError,
         AgentDeadlineExceededError as AgentDeadlineExceededError,
         AgentEffect as AgentEffect,
@@ -277,7 +194,6 @@ if TYPE_CHECKING:
         CancelAgentSessionEffect as CancelAgentSessionEffect,
         Capture as Capture,
         CaptureEffect as CaptureEffect,
-        ClaudeLaunchEffect as ClaudeLaunchEffect,
         CleanupAgentSession as CleanupAgentSession,
         CleanupAgentSessionEffect as CleanupAgentSessionEffect,
         FollowUp as FollowUp,
@@ -285,7 +201,6 @@ if TYPE_CHECKING:
         GetAgentSession as GetAgentSession,
         GetAgentSessionEffect as GetAgentSessionEffect,
         JSONSchema as JSONSchema,
-        L2SessionHandle as L2SessionHandle,
         Launch as Launch,
         LaunchEffect as LaunchEffect,
         LaunchSession as LaunchSession,
@@ -313,7 +228,6 @@ if TYPE_CHECKING:
         StopSession as StopSession,
         StopSessionEffect as StopSessionEffect,
         agent as agent,
-        deterministic_session_id as deterministic_session_id,
         AgentCapabilityUnsupportedError as AgentCapabilityUnsupportedError,
         AgentEvent as AgentEvent,
         AgentEventPage as AgentEventPage,
@@ -377,14 +291,12 @@ if TYPE_CHECKING:
         ReplacementCredentialUnavailable as ReplacementCredentialUnavailable,
         HandlerMadeContextId as HandlerMadeContextId,
         NamedContextId as NamedContextId,
+        SessionStatus as SessionStatus,
+        AgentLaunchError as AgentLaunchError,
+        AgentReadyTimeoutError as AgentReadyTimeoutError,
     )
     from doeff_agents.handlers import (
-        AGENT_SESSIONS_KEY as AGENT_SESSIONS_KEY,
-        MOCK_AGENT_STATE_KEY as MOCK_AGENT_STATE_KEY,
-        AgentHandler as AgentHandler,
         AgentdSessionClient as AgentdSessionClient,
-        DaemonAgentHandler as DaemonAgentHandler,
-        TmuxAgentHandler as TmuxAgentHandler,
         agent_effectful_handler as agent_effectful_handler,
         agent_effectful_handlers as agent_effectful_handlers,
         codex_agent_handler as codex_agent_handler,
@@ -396,72 +308,24 @@ if TYPE_CHECKING:
         codex_process_layer_handler as codex_process_layer_handler,
         fake_codex_process_layer_handler as fake_codex_process_layer_handler,
         codex_agent_adapter_handler as codex_agent_adapter_handler,
-        fake_headless_claude_agent_handlers as fake_headless_claude_agent_handlers,
-        headless_claude_agent_handlers as headless_claude_agent_handlers,
-        configure_mock_session as configure_mock_session,
         daemon_agent_handler as daemon_agent_handler,
         daemon_agent_handlers as daemon_agent_handlers,
-        default_agent_handler as default_agent_handler,
-        dispatch_effect as dispatch_effect,
-        get_mock_agent_state as get_mock_agent_state,
         mock_agent_handler as mock_agent_handler,
         mock_agent_handlers as mock_agent_handlers,
-        mock_handlers as mock_handlers,
-        production_handlers as production_handlers,
-    )
-    from doeff_agents.monitor import (
-        MonitorState as MonitorState,
-        OnStatusChange as OnStatusChange,
-        SessionStatus as SessionStatus,
-    )
-    from doeff_agents.programs import (
-        AgentResult as AgentResult,
-        interactive_session as interactive_session,
-        monitor_agent_to_completion as monitor_agent_to_completion,
-        monitor_once as monitor_once,
-        monitor_until_terminal as monitor_until_terminal,
-        quick_agent as quick_agent,
-        run_agent_to_completion as run_agent_to_completion,
-        wait_and_monitor as wait_and_monitor,
-        wait_agent_session as wait_agent_session,
-        with_session as with_session,
-    )
-    from doeff_agents.runtime import (
+        scenario_agent_handler as scenario_agent_handler,
         ClaudeRuntimePolicy as ClaudeRuntimePolicy,
-    )
-    from doeff_agents.session import (
-        AgentLaunchError as AgentLaunchError,
-        AgentReadyTimeoutError as AgentReadyTimeoutError,
-        AgentSession as AgentSession,
-        async_monitor_session as async_monitor_session,
-        async_session_scope as async_session_scope,
-        attach_session as attach_session,
-        capture_output as capture_output,
-        get_adapter as get_adapter,
-        launch_session as launch_session,
-        monitor_session as monitor_session,
-        register_adapter as register_adapter,
-        send_message as send_message,
-        session_scope as session_scope,
-        stop_session as stop_session,
-    )
-    from doeff_agents.session_backend import (
-        SessionBackend as SessionBackend,
-        SessionConfig as SessionConfig,
-        SessionInfo as SessionInfo,
-        default_session_backend as default_session_backend,
+        CodexRuntimePolicy as CodexRuntimePolicy,
+        FakeReply as FakeReply,
+        FakeClaudeWorld as FakeClaudeWorld,
+        ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded,
     )
     from doeff_agents.session_store import (
-        AgentSessionEvent as AgentSessionEvent,
         AgentSessionRepository as AgentSessionRepository,
         InMemoryAgentSessionRepository as InMemoryAgentSessionRepository,
         JsonlAgentSessionRepository as JsonlAgentSessionRepository,
     )
-    from doeff_agents.tmux import (
-        StableTmuxSessionBackend as StableTmuxSessionBackend,
-        TmuxError as TmuxError,
-        TmuxNotAvailableError as TmuxNotAvailableError,
-        TmuxSessionBackend as TmuxSessionBackend,
+    from doeff_agents.session_backend import (
+        SessionBackend as SessionBackend,
     )
 
 

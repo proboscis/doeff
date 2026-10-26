@@ -90,33 +90,36 @@ declaration is the source of truth; the pins are not copied here.
 
 ### Python API
 
+The public API is effects and handlers: a program yields the effects, and one
+entry point installs the handlers that answer them.
+
 ```python
-import time
-from pathlib import Path
+from doeff import do, run, with_handlers
+from doeff_core_effects.scheduler import scheduled
+from doeff_time import sync_time_handler
 
-from doeff_agents import (
-    session_scope, monitor_session, send_message,
-    LaunchConfig, AgentType, SessionStatus
-)
+from doeff_agents import AgentType, AwaitResult, Launch, Stop, claude_agent_runtime_handlers
 
-config = LaunchConfig(
-    agent_type=AgentType.CLAUDE,
-    work_dir=Path("/path/to/project"),
-    prompt="Read the README and summarize the project",
-)
 
-# Context manager ensures cleanup on exit/exception
-with session_scope("my-agent-session", config) as session:
-    while not session.is_terminal:
-        new_status = monitor_session(session)
-        if new_status:
-            print(f"Status changed to: {new_status}")
+@do
+def summarize(work_dir: str):
+    handle = yield Launch("my-agent-session", agent_type=AgentType.CLAUDE, work_dir=work_dir,
+                          prompt="Read the README and summarize the project")
+    try:
+        outcome = yield AwaitResult(handle, timeout_seconds=600.0)  # the handler waits for the turn
+        return outcome.result
+    finally:
+        yield Stop(handle)  # the session is stopped on exit and on exception
 
-        if session.status == SessionStatus.BLOCKED:
-            send_message(session, "Continue with the next step")
 
-        time.sleep(1)
+handlers = [sync_time_handler(),
+            *claude_agent_runtime_handlers(config_dir="/path/to/claude-home", env={}, live_limit=None,
+                                           credential_floor_seconds=600.0)]
+print(run(scheduled(with_handlers(handlers, summarize("/path/to/project")))))
 ```
+
+The runnable examples in [`examples/`](examples/README.md) run the same kind of
+program on the fake Claude runtime and on the mock terminal handler.
 
 ### CLI
 
@@ -216,7 +219,7 @@ accepts. Two flags are easy to get wrong: `--max-running none` (or `unlimited`)
 means no limit, and `--max-running 0` is refused at startup because it would
 reject every launch.
 
-`LazyAgentdClient` connects only to that expected socket. It does not probe
+The handler `daemon_agent_handlers()` connects only to that expected socket. It does not probe
 per-run temporary sockets or fall back to direct worker execution; if no host is
 reachable, it raises an actionable error containing the exact start command.
 
@@ -282,14 +285,14 @@ The session host never launches an agent in print mode.
 
 ## Headless handler without the session host
 
-`doeff_agents.handlers.headless_claude_agent_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
+`doeff_agents.claude_agent_runtime_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
 returns the handler pair that answers the public effects for Claude by
 translating them into `doeff-claude-code`'s effects — no session-host socket,
 no sqlite: `doeff-claude-code`'s production handler and the headless adapter
-(`fake_headless_claude_agent_handlers(responder=..., env=..., settings=...)` puts
-the same adapter over `doeff-claude-code`'s fake). Callers need not import
-`doeff-claude-code`; they install a doeff-time handler and the scheduler
-outside the pair.
+(`fake_claude_agent_runtime_handlers(responder=..., env=..., settings=...)` puts
+the same adapter over `doeff-claude-code`'s fake; `responder` returns
+`doeff_agents.FakeReply` values). Callers need not import `doeff-claude-code`;
+they install a doeff-time handler and the scheduler outside the pair.
 
 The fake pairs take `env` (the home's process env, str → str) and `settings`
 (the CLI settings, a JSON mapping) with no default: they mean the same as for
@@ -297,8 +300,8 @@ the production pair and ride on the launch declaration the fake layer 2
 receives, so an emulation can observe what its production path decided. A
 caller with nothing to declare passes empty mappings explicitly.
 
-The production entries (`headless_claude_agent_handlers`,
-`claude_agent_runtime_handlers`, `claude_process_layer_handler`) take
+The production entries (`claude_agent_runtime_handlers`,
+`claude_process_layer_handler`) take
 `live_limit` as an integer of 1 or more, or `None`. `None` declares no limit —
 for a caller that decides how many CLI processes to keep alive by another
 measure, such as the machine's free memory. It is passed to layer 2 as is:

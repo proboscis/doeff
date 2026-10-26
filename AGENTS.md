@@ -64,15 +64,15 @@ it must be part of `AgentSpec.result_schema` and returned in
 `AwaitOutcome.result`, not carried through a side-channel file.
 
 Application packages must not import `doeff_agents.tmux`, instantiate
-`TmuxSessionBackend` / `TmuxAgentHandler`, or shell out to `tmux` directly. They
-should emit `LaunchEffect` / `LaunchSession` effects and install
-`agent_effectful_handler()`. When they must provide a local backend, use
-`doeff_agents.session_backend.default_session_backend()`. When an advanced caller
-must build a custom effect boundary with an explicit MCP `run_tool` stack, use
-`doeff_agents.handlers.default_agent_handler()` rather than importing transport
-classes. The terminal multiplexer implementation is an internal doeff-agents
-detail so it can move to tmux, zellij, opencode, or another transport without
-changing trading or application code.
+`TmuxSessionBackend` / `TmuxAgentHandler`, or shell out to `tmux` directly. The
+public API of doeff-agents is its effects and its handlers: callers emit the
+effects (`Launch` / `LaunchSession`, `AwaitResult`, `Events`, `Send` /
+`FollowUp`, `Stop` / `StopSession`, …) and install a handler factory from
+`doeff_agents.handlers` (`claude_agent_runtime_handlers()`,
+`agent_effectful_handler()`, `daemon_agent_handlers()`, …). The session
+procedures and the handler objects are internal. The terminal multiplexer implementation is an internal
+doeff-agents detail so it can move to tmux, zellij, opencode, or another
+transport without changing trading or application code.
 
 Never pass Anthropic API keys to agents through `session_env`,
 `ClaudeRuntimePolicy.bootstrap_exports`, wrappers, shell exports, or equivalent

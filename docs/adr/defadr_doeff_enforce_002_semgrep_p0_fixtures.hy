@@ -30,9 +30,9 @@
   :enforcement
     [(defsemgrep p0-no-anthropic-api-key-agent-env
        "doeff-agents-no-anthropic-api-key-agent-env"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/session.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_session.py"
          "source" "session_env = {'ANTHROPIC_API_KEY': 'secret'}\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/session.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_session.py"
          "source" "session_env = {'PYTHONUNBUFFERED': '1'}\n"}])
      (defsemgrep p0-no-claude-print-mode
        "doeff-agents-no-claude-print-mode"

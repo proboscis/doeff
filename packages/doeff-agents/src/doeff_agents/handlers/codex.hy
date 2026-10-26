@@ -10,15 +10,15 @@
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
   SendEffect StopEffect SessionHandle Observation ExportContextEffect WarmSessionEffect AgentCapabilityUnsupportedError])
-(import doeff_agents.effects.agent [refuse-turn-capabilities])
+(import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.codex [CodexAdapter])
 (import doeff_agents.session-backend [SessionBackend])
-(import doeff_agents.monitor [MonitorState SessionStatus
+(import doeff_agents._monitor [MonitorState SessionStatus
   detect-status hash-content is-waiting-for-input])
 (import doeff_agents.shell [wrap-with-shell-exports
                             assert-session-env-is-non-auth-overlay])
-(import doeff_agents.session [deliver-prompt-when-ready])
+(import doeff_agents._session [deliver-prompt-when-ready])
 (import doeff_agents [tmux])
 
 (import pathlib [Path])

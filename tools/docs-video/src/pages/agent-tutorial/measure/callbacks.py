@@ -11,7 +11,11 @@ from pathlib import Path
 
 from stand_ins import ScriptedTerminal
 
-from doeff_agents import AgentType, LaunchConfig, SessionStatus, monitor_session, send_message, session_scope
+# The old (procedural) chapter-19 video measured these session procedures; they are internal to doeff-agents now
+# (card ki-4b53dcee28f3) — the rewritten video measures the effects instead.
+from doeff_agents import AgentType, SessionStatus
+from doeff_agents._session import monitor_session, send_message, session_scope
+from doeff_agents.adapters.base import LaunchConfig
 
 
 @dataclass

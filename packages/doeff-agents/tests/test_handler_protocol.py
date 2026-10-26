@@ -7,6 +7,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+from doeff_time import Delay
+
 from doeff import Effect, EffectBase, Pass, Resume, do, run
 from doeff import handler as _install_raw_handler
 
@@ -15,17 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import (
     AgentType,
     Launch,
-    LaunchConfig,
     MockSessionScript,
     Monitor,
     SessionStatus,
     Stop,
     agent_effectful_handler,
     agent_effectful_handlers,
-    configure_mock_session,
     mock_agent_handler,
     mock_agent_handlers,
-    run_agent_to_completion,
 )
 
 
@@ -35,29 +35,23 @@ class UnknownEffect(EffectBase):
 
 
 @do
-def _mock_workflow(session_name: str, config: LaunchConfig):
-    handle = yield Launch(
-        session_name,
-        agent_type=config.agent_type,
-        work_dir=config.work_dir,
-        prompt=config.prompt,
-        model=config.model,
-        mcp_tools=config.mcp_tools,
-    )
+def _mock_workflow(session_name: str):
+    handle = yield Launch(session_name, agent_type=AgentType.CLAUDE, work_dir=str(Path.cwd()), prompt="say hello")
     observation = yield Monitor(handle)
     yield Stop(handle)
     return observation.status
 
 
 @do
-def _mock_run_to_completion(session_name: str, config: LaunchConfig):
-    return (
-        yield from run_agent_to_completion(
-            session_name,
-            config,
-            poll_interval=5.0,
-        )
-    )
+def _wait_then_watch_to_the_end(session_name: str):
+    # Launch, wait between observations (doeff-time Delay) and watch until the script says the session is done.
+    handle = yield Launch(session_name, agent_type=AgentType.CLAUDE, work_dir=str(Path.cwd()), prompt="say hello")
+    observation = yield Monitor(handle)
+    while observation.status is not SessionStatus.DONE:
+        yield Delay(5.0)
+        observation = yield Monitor(handle)
+    yield Stop(handle)
+    return observation
 
 
 @do
@@ -106,27 +100,38 @@ def test_unknown_effect_delegates() -> None:
     assert result == "noop"
 
 
+def _script(session_name: str) -> MockSessionScript:
+    return MockSessionScript(
+        session_name=session_name,
+        observations=[
+            (SessionStatus.RUNNING, "working"),
+            (SessionStatus.DONE, "done"),
+        ],
+    )
+
+
 def test_mock_handler_runs_program_with_public_vm_api() -> None:
     session_name = f"mock-session-{time.time_ns()}"
-    configure_mock_session(
-        session_name,
-        MockSessionScript(
-            observations=[
-                (SessionStatus.RUNNING, "working"),
-                (SessionStatus.DONE, "done"),
-            ]
-        ),
-    )
 
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt="say hello",
-    )
-
-    result = run(mock_agent_handler()(_mock_workflow(session_name, config)))
+    result = run(mock_agent_handler(sessions=(_script(session_name),))(_mock_workflow(session_name)))
 
     assert result == SessionStatus.RUNNING
+
+
+def test_each_mock_handler_keeps_its_own_sessions() -> None:
+    # The scripted sessions belong to the handler a call returns, not to a module-wide mock: a second
+    # handler built without the script launches the same name afresh and reads only its launch status.
+    session_name = f"mock-own-{time.time_ns()}"
+    scripted = run(mock_agent_handler(sessions=(_script(session_name),))(_mock_workflow(session_name)))
+    unscripted = run(mock_agent_handler()(_mock_workflow(session_name)))
+
+    assert scripted == SessionStatus.RUNNING
+    assert unscripted == SessionStatus.BOOTING
+
+
+def test_a_mock_session_script_names_its_session() -> None:
+    with pytest.raises(ValueError, match="session_name"):
+        mock_agent_handler(sessions=(MockSessionScript(observations=[(SessionStatus.DONE, "")]),))
 
 
 def _install_handlers(handlers, program):
@@ -139,30 +144,15 @@ def _install_handlers(handlers, program):
     return wrapped
 
 
-def test_mock_handlers_include_time_handler_for_run_to_completion() -> None:
+def test_mock_handlers_include_time_handler_for_waits_between_observations() -> None:
     session_name = f"mock-run-completion-{time.time_ns()}"
-    configure_mock_session(
-        session_name,
-        MockSessionScript(
-            observations=[
-                (SessionStatus.RUNNING, "working"),
-                (SessionStatus.DONE, "done"),
-            ]
-        ),
-    )
-
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt="say hello",
-    )
 
     result = run(
         _install_handlers(
-            mock_agent_handlers(),
-            _mock_run_to_completion(session_name, config),
+            mock_agent_handlers(sessions=(_script(session_name),)),
+            _wait_then_watch_to_the_end(session_name),
         ),
     )
 
-    assert result.succeeded
-    assert result.output == "done"
+    assert result.status == SessionStatus.DONE
+    assert result.output_snippet == "done"
