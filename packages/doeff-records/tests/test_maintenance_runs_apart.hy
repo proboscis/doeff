@@ -4,7 +4,7 @@
 ;;   - 本物の待ち受け(127.0.0.1 の空き port)・本物の時計の検の殻に、送りの関数が BUSY-SECONDS 秒 effect を出さずに計算する手入れの計画を
 ;;     渡して口を開く。送りが計算を始めた後に、READS 本の読み(read-row)を並べて撃つ。
 ;;   - どの読みも ANSWER-BOUND 秒の内に答えられ、答えが揃った時に送りの計算はまだ終わっていない(読みが計算の後ろに並んでいない)。
-;;   - 送りの計算はその後に終わる(手入れは捨てられずに回り切る)。
+;;   - 送りの計算はその後に終わる(手入れは捨てられずに回り切る)。口を閉じると、手入れの別の thread も CLOSE-SECONDS 秒の内に終わる。
 ;; 失敗ケース(直す前の形): 手入れの係を要求と同じ scheduler の thread の task で回す — 読みは送りの計算の終わり(BUSY-SECONDS 秒)まで
 ;; 受けの列で待ち、答えが揃うのは計算が終わった後になる。
 (require doeff-hy.macros [deftest defk <- val var])
@@ -23,12 +23,14 @@
 (import doeff_records.http_server [MaintenancePlan RecordsServerConfig RunningServer records-server-config start-records-server])
 
 ;; 送りの関数が effect を出さずに計算する秒(本番の 4 分の代わり — 読みの答えの上限の数倍)・並べて撃つ読みの数・読み 1 本の答えの上限の秒・
-;; 送りが計算を始めるのと終わるのを待つ上限の秒。
+;; 送りが計算を始めるのと終わるのを待つ上限の秒・口を閉じた後に手入れの別の thread の終わりを待つ上限の秒・run-apart が立てる thread の名。
 (val BUSY-SECONDS 3.0)
 (val READS 8)
 (val ANSWER-BOUND 1.0)
 (val START-SECONDS 10.0)
 (val FINISH-SECONDS 30.0)
+(val CLOSE-SECONDS 10.0)
+(val APART-THREAD "doeff-apart")
 
 
 (defk next-count [n]
@@ -99,6 +101,7 @@
       (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                              :maintenance (MaintenancePlan :interval-seconds 3600.0 :keep-seconds 60.0 :archive archive
                                                            :archive-events unsent-events)))
+  (val before (frozenset (gfor t (threading.enumerate) :if (= t.name APART-THREAD) t)))
   (val server (start-records-server config))
   (try
     (assert (.wait started START-SECONDS) "手入れの送りが計算を始めない")
@@ -110,4 +113,9 @@
     (assert (< slowest ANSWER-BOUND) (.format "手入れの計算の間の読みが {:.2f} 秒 掛かった(上限 {} 秒)" slowest ANSWER-BOUND))
     (assert (.wait finished FINISH-SECONDS) "手入れの送りの計算が終わらない")
     (finally
-      (.close server))))
+      (.close server)))
+  ;; 口を閉じたら、手入れの別の thread も終わる(受けの終わりが手入れの task を取り消し、通い路が閉じる)。
+  (val left (tuple (gfor t (threading.enumerate) :if (and (= t.name APART-THREAD) (not-in t before)) t)))
+  (for [t left]
+    (.join t CLOSE-SECONDS))
+  (assert (not (any (gfor t left (.is-alive t)))) "口を閉じた後も手入れの別の thread が残った(手入れの task が取り消されない)"))
