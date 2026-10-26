@@ -502,7 +502,7 @@ const MULTI_LINES: Lines = [
 const MULTI = f(25.4);
 const WHAT_IF = ['@do', 'def what_if():', '    plan = yield Complete("plan")', '    branch = yield Ask("branch")', '    return f"{plan} -> {branch}"'];
 const M = {x: 60, y: 130, w: 560, size: 19, line: 30};
-const TWICE = {x: 680, y: 130, w: 540, h: 210};
+const TWICE = {x: 680, y: 130, w: 540, h: 224};
 const BRANCHES = [
   {branch: 'a', y: 380, at: 12.8, hit: false},
   {branch: 'b', y: 480, at: 15.6, hit: true},
@@ -527,7 +527,7 @@ const MultiScene: React.FC = () => {
           <span style={{fontFamily: MONO}}>twice</span>
           <span style={{fontWeight: 400, color: MUTED, marginLeft: 14, fontSize: 19}}>resumes k two times</span>
         </div>
-        <Code lines={['@handler', '@do(non_tail=True)', 'def twice(effect: Complete, k):', '    yield Resume(k, "first")', '    return (yield Resume(k, "second"))']} x={20} y={56} size={16} line={27} />
+        <Code lines={['@handler', '@do(non_tail=True)', 'def twice(effect: Complete, k):', '    yield Resume(k, "first")', '    return (yield Resume(k, "second"))']} x={20} y={56} size={15} line={24} />
       </Box>
       <Trip a={yieldAt} b={handlerAt} from={1.0} to={1.7} text={'Complete("plan")'} color={ACCENT} />
       <Trip a={handlerAt} b={yieldAt} from={7.0} to={7.6} text={'"first"'} color={TEST} />
