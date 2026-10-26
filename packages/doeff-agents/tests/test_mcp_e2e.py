@@ -17,12 +17,12 @@ from dataclasses import dataclass
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     AgentSpec,
-    L2SessionHandle,
+    SessionHandle,
     LaunchEffect,
     LaunchSession,
     StopEffect,
 )
-from doeff_agents.handlers import _agent_handler_defhandler
+from doeff_agents.handlers.effectful import agent_handler_defhandler
 from doeff_agents.handlers.testing import MockAgentHandler
 from doeff_core_effects.handlers import state
 from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
@@ -114,7 +114,7 @@ class TestMcpE2E:
         the domain handlers (greet, upper) from the continuation chain.
         """
         mock_handler = MockAgentHandler()
-        agent_defhandler = _agent_handler_defhandler(mock_handler)
+        agent_defhandler = agent_handler_defhandler(mock_handler)
 
         wrapped = agent_defhandler(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
         return run(scheduled(state()(wrapped))), mock_handler
@@ -129,10 +129,10 @@ class TestMcpE2E:
 
             def handle_launch_session(self, effect, mcp_servers=None):
                 self.mut_mcp_servers = mcp_servers
-                return L2SessionHandle(session_id=effect.spec.session_id)
+                return SessionHandle(session_id=effect.spec.session_id)
 
         agent_handler = RecordingAgentHandler()
-        agent_defhandler = _agent_handler_defhandler(agent_handler)
+        agent_defhandler = agent_handler_defhandler(agent_handler)
 
         @do
         def program():

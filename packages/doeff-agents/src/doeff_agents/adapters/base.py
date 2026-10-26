@@ -9,6 +9,8 @@ from typing import Protocol, runtime_checkable
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 from doeff import Program, do
 
+from doeff_agents.effects.agent import AgentSessionLifecycle as AgentSessionLifecycle
+from doeff_agents.effects.agent import AgentType as AgentType
 from doeff_agents.io_effects import which_executable
 from doeff_agents.io_root import IoGenerator
 
@@ -22,30 +24,6 @@ def cli_available(name: str) -> IoGenerator[bool]:
     """
     found = yield which_executable(name)
     return found is not None
-
-
-class AgentType(Enum):
-    """Supported agent types."""
-
-    CLAUDE = "claude"
-    CODEX = "codex"
-    GEMINI = "gemini"
-    GENERIC = "generic"
-    CUSTOM = "custom"
-
-
-class AgentSessionLifecycle(Enum):
-    """How a session should be supervised after an agent turn completes."""
-
-    RUN_TO_COMPLETION = "run_to_completion"
-    INTERACTIVE = "interactive"
-    #: A warm session (ADR-DOE-AGENTS-012 R10): the turn ends but the session
-    #: stays and takes the next one.  The host has spoken this word since that
-    #: revision (`policy.hy is-multi-turn`); the client did not, so every warm
-    #: row -- which is what the headless backend actually launches -- arrived as
-    #: "unparseable" and `ps` skipped it with a warning, leaving `stop`,
-    #: `watch` and `output` unable to name the session at all.
-    MULTI_TURN = "multi_turn"
 
 
 class InjectionMethod(Enum):

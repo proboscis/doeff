@@ -25,7 +25,7 @@ from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.adapters.gemini import GeminiAdapter
 from doeff_agents.io_root import IoRoot
-from doeff_agents.monitor import (
+from doeff_agents._monitor import (
     MonitorState,
     OnStatusChange,
     SessionStatus,

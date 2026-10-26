@@ -526,7 +526,7 @@ def capture_agent_output(session_id: str, *, lines: int = 200) -> str | None:
     if not session_id:
         return None
     try:
-        from doeff_agents import LazyAgentdClient
+        from doeff_agents.agentd_client import LazyAgentdClient
 
         return LazyAgentdClient().capture_session(session_id, lines=lines)
     except Exception:

@@ -95,7 +95,7 @@
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
-(import doeff_agents.monitor [SessionStatus])
+(import doeff_agents.effects.agent [SessionStatus])
 (import doeff_agents.shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents.effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect

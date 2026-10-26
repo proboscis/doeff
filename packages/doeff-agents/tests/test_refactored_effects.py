@@ -66,7 +66,7 @@ class TestClaudeLaunchEffectSimplified:
     """ClaudeLaunchEffect has work_dir + prompt directly, no AgentTaskSpec."""
 
     def test_claude_launch_effect_flat(self):
-        from doeff_agents.effects.agent import ClaudeLaunchEffect
+        from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
 
         effect = ClaudeLaunchEffect(
             session_name="claude-test",
@@ -83,7 +83,7 @@ class TestClaudeLaunchEffectSimplified:
         assert not hasattr(effect, "trusted_workspaces"), "trusted_workspaces is handler-internal"
 
     def test_claude_launch_effect_mcp_tools(self):
-        from doeff_agents.effects.agent import ClaudeLaunchEffect
+        from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
 
         effect = ClaudeLaunchEffect(
             session_name="mcp",
@@ -96,11 +96,10 @@ class TestClaudeLaunchEffectSimplified:
 class TestDeprecatedTypesRemoved:
     """Deprecated types removed from effects/agent.py (still in old modules as compat)."""
 
-    def test_launch_task_effect_is_deprecated_stub(self):
-        from doeff_agents.effects.agent import LaunchTaskEffect
-        # Still importable for backward compat, but is a stub
-        assert hasattr(LaunchTaskEffect, "__dataclass_fields__")
-        assert "session_name" in LaunchTaskEffect.__dataclass_fields__
+    def test_launch_task_effect_is_removed(self):
+        from doeff_agents.effects import agent
+
+        assert not hasattr(agent, "LaunchTaskEffect")
 
     def test_no_agent_task_spec_in_effects(self):
         from doeff_agents.effects import agent

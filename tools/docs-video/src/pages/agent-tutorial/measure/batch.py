@@ -9,7 +9,11 @@ from pathlib import Path
 
 from stand_ins import ScriptedTerminal
 
-from doeff_agents import AgentType, LaunchConfig, async_monitor_session, async_session_scope
+# The old (procedural) chapter-19 video measured these session procedures; they are internal to doeff-agents now
+# (card ki-4b53dcee28f3) — the rewritten video measures the effects instead.
+from doeff_agents import AgentType
+from doeff_agents._session import async_monitor_session, async_session_scope
+from doeff_agents.adapters.base import LaunchConfig
 
 WORK = {"utils.py": 3.0, "api.py": 1.0, "models.py": 2.5, "cli.py": 1.5}
 

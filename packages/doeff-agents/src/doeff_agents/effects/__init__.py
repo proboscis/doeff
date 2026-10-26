@@ -18,6 +18,7 @@ from doeff_agents.effects.agent import AgentSessionQuery as AgentSessionQuery
 from doeff_agents.effects.agent import AgentSessionSnapshot as AgentSessionSnapshot
 from doeff_agents.effects.agent import AgentSpec as AgentSpec
 from doeff_agents.effects.agent import AgentTask as AgentTask
+from doeff_agents.effects.agent import AgentType as AgentType
 from doeff_agents.effects.agent import AgentTextDeltaEvent as AgentTextDeltaEvent
 from doeff_agents.effects.agent import AgentTextEvent as AgentTextEvent
 from doeff_agents.effects.agent import AgentThinkingStartedEvent as AgentThinkingStartedEvent
@@ -63,7 +64,6 @@ from doeff_agents.effects.agent import CancelAgentSession as CancelAgentSession
 from doeff_agents.effects.agent import CancelAgentSessionEffect as CancelAgentSessionEffect
 from doeff_agents.effects.agent import Capture as Capture
 from doeff_agents.effects.agent import CaptureEffect as CaptureEffect
-from doeff_agents.effects.agent import ClaudeLaunchEffect as ClaudeLaunchEffect
 from doeff_agents.effects.agent import CleanupAgentSession as CleanupAgentSession
 from doeff_agents.effects.agent import CleanupAgentSessionEffect as CleanupAgentSessionEffect
 from doeff_agents.effects.agent import Events as Events
@@ -79,12 +79,10 @@ from doeff_agents.effects.agent import InputFateState as InputFateState
 from doeff_agents.effects.agent import Interrupt as Interrupt
 from doeff_agents.effects.agent import InterruptEffect as InterruptEffect
 from doeff_agents.effects.agent import JSONSchema as JSONSchema
-from doeff_agents.effects.agent import L2SessionHandle as L2SessionHandle
 from doeff_agents.effects.agent import Launch as Launch
 from doeff_agents.effects.agent import LaunchEffect as LaunchEffect
 from doeff_agents.effects.agent import LaunchSession as LaunchSession
 from doeff_agents.effects.agent import LaunchSessionEffect as LaunchSessionEffect
-from doeff_agents.effects.agent import LaunchTaskEffect as LaunchTaskEffect
 from doeff_agents.effects.agent import ListAgentSessions as ListAgentSessions
 from doeff_agents.effects.agent import ListAgentSessionsEffect as ListAgentSessionsEffect
 from doeff_agents.effects.agent import Monitor as Monitor
@@ -106,6 +104,7 @@ from doeff_agents.effects.agent import SendEffect as SendEffect
 from doeff_agents.effects.agent import SessionAlreadyExistsError as SessionAlreadyExistsError
 from doeff_agents.effects.agent import SessionHandle as SessionHandle
 from doeff_agents.effects.agent import SessionNotFoundError as SessionNotFoundError
+from doeff_agents.effects.agent import SessionStatus as SessionStatus
 from doeff_agents.effects.agent import Stop as Stop
 from doeff_agents.effects.agent import StopEffect as StopEffect
 from doeff_agents.effects.agent import StopSession as StopSession
@@ -136,5 +135,3 @@ from doeff_agents.effects.agent import (
     ReplacementCredentialUnavailable as ReplacementCredentialUnavailable,
 )
 from doeff_agents.effects.agent import agent as agent
-from doeff_agents.effects.agent import deterministic_session_id as deterministic_session_id
-from doeff_agents.effects.agent import refuse_turn_capabilities as refuse_turn_capabilities

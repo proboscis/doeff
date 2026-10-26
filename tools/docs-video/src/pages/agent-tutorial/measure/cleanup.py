@@ -7,7 +7,11 @@ from pathlib import Path
 
 from stand_ins import ScriptedTerminal
 
-from doeff_agents import AgentType, LaunchConfig, capture_output, monitor_session, session_scope
+# The old (procedural) chapter-19 video measured these session procedures; they are internal to doeff-agents now
+# (card ki-4b53dcee28f3) — the rewritten video measures the effects instead.
+from doeff_agents import AgentType
+from doeff_agents._session import capture_output, monitor_session, session_scope
+from doeff_agents.adapters.base import LaunchConfig
 
 
 def review_file(terminal: ScriptedTerminal, file_path: str, timeout: float, fail: bool = False) -> dict:

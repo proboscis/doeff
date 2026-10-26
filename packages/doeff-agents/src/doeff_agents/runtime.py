@@ -1,9 +1,7 @@
-"""Runtime policy and lowering for agent launch effects."""
+"""Runtime policy for agent launch effects."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from doeff_agents.effects.agent import ClaudeLaunchEffect, LaunchTaskEffect
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -31,11 +29,3 @@ class CodexRuntimePolicy:
 
     codex_home: Path | None = None
 
-
-def lower_task_launch_to_claude(
-    effect: LaunchTaskEffect,
-    policy: ClaudeRuntimePolicy,
-) -> ClaudeLaunchEffect:
-    """Lower a generic task intent to a Claude-specific launch effect."""
-    del effect, policy
-    raise NotImplementedError("LaunchTaskEffect is deprecated; use LaunchEffect directly")

@@ -45,7 +45,7 @@
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect
   NamedContextId HandlerMadeContextId InputImage])
-(import doeff_agents.monitor [SessionStatus])
+(import doeff_agents.effects.agent [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
 ;; fake の返事の usage の型(FakeReply の last-call-usage)と model ごとの窓の型は、組み立ての部品と公開面の module から読む。
@@ -647,7 +647,8 @@
 
 (deftest test-resume-snapshot-is-a-typed-field-and-turnless-handlers-refuse-it [tmp-path]
   ;; resume_snapshot は resume_from の文脈の写し: resume_from なし・空は作れない。持ち込めない handler は黙って捨てずに断る。
-  (import doeff_agents.effects [LaunchEffect refuse-turn-capabilities])
+  (import doeff_agents.effects [LaunchEffect])
+  (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (import doeff_agents.handlers.codex [codex-handler])
   (for [#(resume-from snapshot) [#(None "x") #("0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11" "") #("0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11" "  ")]]
     (with [(pytest.raises ValueError)]
@@ -1222,7 +1223,8 @@
 
 (deftest test-images-are-typed-and-turnless-handlers-refuse-them [tmp-path]
   ;; 画像は mime と base64 の data の型の値。画像を CLI へ渡せない handler は黙って捨てずに断る(ki-0faa366b76c0)。
-  (import doeff_agents.effects [LaunchEffect FollowUpEffect refuse-turn-capabilities])
+  (import doeff_agents.effects [LaunchEffect FollowUpEffect])
+  (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (with [(pytest.raises ValueError)] (InputImage :mime "" :data-base64 "AAAA"))
   (with [(pytest.raises ValueError)] (InputImage :mime "image/png" :data-base64 ""))
   (with [(pytest.raises TypeError)]
@@ -1383,7 +1385,8 @@
 
 (deftest test-terminal-handlers-refuse-turn-fields [tmp-path]
   ;; resume_from と INJECT を持たない端末の handler は、黙って新しく始めたり keys にしたりせずに断る。
-  (import doeff_agents.effects [LaunchEffect FollowUpEffect refuse-turn-capabilities])
+  (import doeff_agents.effects [LaunchEffect FollowUpEffect])
+  (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (setv launch-effect (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :resume-from "abc"))
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
     (refuse-turn-capabilities launch-effect :handler "t"))
@@ -1618,7 +1621,7 @@
 (deftest test-launch-new-context-id-is-a-closed-choice-and-terminal-handlers-refuse-a-named-one [tmp-path]
   ;; 既定は handler が id を作る(HandlerMadeContextId)。名指しは NamedContextId だけで、resume_from(前の文脈の続き)とは両立しない。
   ;; 文脈の id を自分で決められない端末の handler は、名指しを黙って捨てずに型で拒否する。
-  (import doeff_agents.effects [refuse-turn-capabilities])
+  (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (val plain (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path))
   (assert (= plain.new-context-id (HandlerMadeContextId)) (repr plain))
   (with [(pytest.raises ValueError)]
@@ -1793,7 +1796,8 @@
   ;; R-4484fd43 (1)・card acp:kanban-issue:ki-0679d4fcb37e)。言わない起動(None)は旗を載せない = CLI の既定。閉じた型の外は作れず、
   ;; 閾値を置けない handler(手番を持たない端末の handler)は黙って既定へ戻さずに断る。
   ;; 失敗ケース: headless.hy の spec-of が :autocompact を写さない形では、閾値を言った 2 つの起動の宣言と argv が赤。
-  (import doeff_agents.effects [LaunchEffect refuse-turn-capabilities])
+  (import doeff_agents.effects [LaunchEffect])
+  (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
   (import doeff_claude_code.argv [launch-argv])
   (import doeff_claude_code.values [AutocompactAuto AutocompactTokens FreshSession])
@@ -2064,14 +2068,13 @@
 
 (deftest test-the-fake-runtime-refuses-a-call-that-drops-env-or-settings []
   ;; agora-redesign #3387: env と settings は既定の無い引数 — 落とした呼びは組を作る前に、落とした名を名指す TypeError で落ちる
-  ;; (「渡さなければ空」の古い形を残さない。宣言する物の無い呼び手は空の写像を明示で渡す)。fake の 3 つの口(土台を名指さない名・
-  ;; headless の名・組み立ての部品)ごとに、片方ずつ落として呼ぶ。
-  (import doeff_agents [fake-claude-agent-runtime-handlers fake-headless-claude-agent-handlers])
+  ;; (「渡さなければ空」の古い形を残さない。宣言する物の無い呼び手は空の写像を明示で渡す)。fake の 2 つの口(土台を名指さない名・
+  ;; 組み立ての部品)ごとに、片方ずつ落として呼ぶ。
+  (import doeff_agents [fake-claude-agent-runtime-handlers])
   (val dropped [#("'env'" {"settings" {}}) #("'settings'" {"env" {}})])
-  (for [make [fake-claude-agent-runtime-handlers fake-headless-claude-agent-handlers]]
-    (for [#(missing given) dropped]
-      (with [(pytest.raises TypeError :match missing)]
-        (make :responder fake-responder #** given))))
+  (for [#(missing given) dropped]
+    (with [(pytest.raises TypeError :match missing)]
+      (fake-claude-agent-runtime-handlers :responder fake-responder #** given)))
   (for [#(missing given) dropped]
     (with [(pytest.raises TypeError :match missing)]
       (fake-headless-claude-handlers fake-responder #** given))))
@@ -2112,20 +2115,17 @@
 
 ;; --- 生かす CLI の本数の上限を宣言しない呼び手(agora-redesign #4282)-------------------------------------------------
 ;; 同時に生かす CLI の本数を別の物差し(機体の memory の余白)で決める呼び手は、live-limit に None を渡す(層 2 の ClaudeCodeHost は
-;; None を「上限を宣言しない」と受け、本数を比べず、上限越えの log の行も知らせも出さない)。本番の層 2 を作る 4 つの関数(Hy の対・
-;; headless の名・agent runtime の名・層 2 だけ)は None をそのまま層 2 へ渡す。整数を渡す呼び手は今までどおり。
-;; 失敗ケース = 変更前は、層 2 だけを作る関数(claude-process-layer)の契約が整数だけを受け、4 つとも注記が int だった(None を渡す
+;; None を「上限を宣言しない」と受け、本数を比べず、上限越えの log の行も知らせも出さない)。本番の層 2 を作る 3 つの関数(Hy の対・
+;; agent runtime の名・層 2 だけ)は None をそのまま層 2 へ渡す。整数を渡す呼び手は今までどおり。
+;; 失敗ケース = 変更前は、層 2 だけを作る関数(claude-process-layer)の契約が整数だけを受け、どれも注記が int だった(None を渡す
 ;; 呼び手は、実行時の契約か、呼び手の側の型の検査で止まる)。
 
 (deftest test-the-production-layer-is-built-without-a-live-limit [tmp-path]
-  ;; 4 つの関数はどれも live-limit None を受け、整数の時と同じ種類の handler を同じ順で作る。
-  (import doeff_agents [claude-agent-runtime-handlers claude-process-layer-handler headless-claude-agent-handlers])
+  ;; 3 つの関数はどれも live-limit None を受け、整数の時と同じ種類の handler を同じ順で作る。
+  (import doeff_agents [claude-agent-runtime-handlers claude-process-layer-handler])
   (val home (str (/ tmp-path "home")))
   (val kinds (lfor h (headless-claude-handlers home {} :live-limit 8 :credential-floor-seconds 7200.0) (. (type h) __name__)))
   (assert (= (lfor h (headless-claude-handlers home {} :live-limit None :credential-floor-seconds 7200.0) (. (type h) __name__)) kinds))
-  (assert (= (lfor h (headless-claude-agent-handlers :config-dir home :env {} :live-limit None :credential-floor-seconds 7200.0)
-                   (. (type h) __name__))
-             kinds))
   (assert (= (lfor h (claude-agent-runtime-handlers :config-dir home :env {} :live-limit None :credential-floor-seconds 7200.0)
                    (. (type h) __name__))
              kinds))
@@ -2134,16 +2134,15 @@
 (deftest test-the-production-layer-declares-a-live-limit-of-int-or-none []
   ;; 呼び手の側の型の検査が読む注記も「整数か None」(注記が int のままだと、None を渡す呼び手は型の検査で止まる)。
   (import typing)
-  (import doeff_agents [claude-agent-runtime-handlers claude-process-layer-handler headless-claude-agent-handlers])
-  (for [make [headless-claude-handlers headless-claude-agent-handlers claude-agent-runtime-handlers claude-process-layer-handler]]
+  (import doeff_agents [claude-agent-runtime-handlers claude-process-layer-handler])
+  (for [make [headless-claude-handlers claude-agent-runtime-handlers claude-process-layer-handler]]
     (assert (= (get (typing.get-type-hints make) "live_limit") (| int None)) (repr make))))
 
 (deftest test-the-adapter-and-the-fake-runtimes-carry-the-given-permission-on-the-launch [tmp-path]
-  ;; agora-redesign #3753: adapter だけの入口と fake の handler の並びの入口(土台を指定しない名・headless の名・組み立ての部品)に permission を渡すと、
+  ;; agora-redesign #3753: adapter だけの入口と fake の handler の並びの入口(土台を指定しない名・組み立ての部品)に permission を渡すと、
   ;; 層 2 へ渡る起動の宣言(ClaudeSessionSpec)の permission がその値になる — 許可を設定 dir の settings.json に任せる形(HomeSettings)を
   ;; 本番の adapter と模擬の fake に同じく渡すため。渡さなければ BypassAll(今のまま)。
-  (import doeff_agents [claude-agent-adapter-handler fake-claude-process-layer-handler fake-claude-agent-runtime-handlers
-                        fake-headless-claude-agent-handlers])
+  (import doeff_agents [claude-agent-adapter-handler fake-claude-process-layer-handler fake-claude-agent-runtime-handlers])
   (import doeff_claude_code.values [BypassAll HomeSettings])
   (val home (str (/ tmp-path "home")))
   (val work (/ tmp-path "work"))
@@ -2159,9 +2158,6 @@
                                                     :permission (HomeSettings)))
               #("fake-runtime-default" (BypassAll)
                 (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home :env {} :settings {}))
-              #("fake-headless-given" (HomeSettings)
-                (fake-headless-claude-agent-handlers :responder fake-responder :config-dir home :env {} :settings {}
-                                                     :permission (HomeSettings)))
               #("fake-compose-given" (HomeSettings)
                 (fake-headless-claude-handlers fake-responder home :env {} :settings {} :permission (HomeSettings)))
               #("fake-compose-default" (BypassAll)

@@ -41,14 +41,11 @@ from doeff_agents.effects import (
     AwaitStatus,
     CancelAgentSessionEffect,
     CaptureEffect,
-    ClaudeLaunchEffect,
     CleanupAgentSessionEffect,
     FollowUpEffect,
     GetAgentSessionEffect,
-    L2SessionHandle,
     LaunchEffect,
     LaunchSessionEffect,
-    LaunchTaskEffect,
     ListAgentSessionsEffect,
     MonitorEffect,
     Observation,
@@ -60,10 +57,10 @@ from doeff_agents.effects import (
     SessionNotFoundError,
     StopEffect,
     StopSessionEffect,
-    refuse_turn_capabilities,
 )
+from doeff_agents.effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
 from doeff_agents.io_root import IoRoot
-from doeff_agents.monitor import (
+from doeff_agents._monitor import (
     MonitorState,
     SessionStatus,
     detect_status,
@@ -73,7 +70,7 @@ from doeff_agents.monitor import (
 )
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
-from doeff_agents.session import _dismiss_onboarding_dialogs, deliver_prompt_when_ready
+from doeff_agents._session import _dismiss_onboarding_dialogs, deliver_prompt_when_ready
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 from doeff_agents.shell import (
@@ -152,7 +149,7 @@ class AgentHandler(ABC):
         self,
         effect: LaunchSessionEffect,
         mcp_servers: dict[str, str] | None = None,
-    ) -> L2SessionHandle:
+    ) -> SessionHandle:
         """Handle L2 Launch."""
         raise NotImplementedError
 
@@ -160,7 +157,7 @@ class AgentHandler(ABC):
         """Handle L2 AwaitResult."""
         raise NotImplementedError
 
-    def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
+    def handle_follow_up(self, effect: FollowUpEffect) -> SessionHandle:
         """Handle L2 FollowUp."""
         raise NotImplementedError
 
@@ -179,10 +176,6 @@ class AgentHandler(ABC):
         mcp_servers: dict[str, str] | None = None,
     ) -> SessionHandle:
         """Handle Launch effect."""
-
-    @abstractmethod
-    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
-        """Handle generic task launch effect."""
 
     @abstractmethod
     def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
@@ -406,7 +399,7 @@ def _await_heartbeat_seconds(task: AgentTask, started_at: float) -> float:
 
 def _raise_if_deadline_exceeded(
     task: AgentTask,
-    handle: L2SessionHandle,
+    handle: SessionHandle,
     started_at: float,
 ) -> None:
     deadline_seconds = task.deadline_seconds
@@ -747,9 +740,6 @@ class TmuxAgentHandler(AgentHandler):
 
         return handle
 
-    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
-        """Lower a generic task launch using runtime policy."""
-        raise AgentLaunchError("LaunchTaskEffect is deprecated; use LaunchEffect directly")
 
     def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
         """Launch a Claude-specific task with dedicated home/bootstrap handling."""
@@ -1022,11 +1012,11 @@ class TmuxAgentHandler(AgentHandler):
         self,
         effect: LaunchSessionEffect,
         mcp_servers: dict[str, str] | None = None,
-    ) -> L2SessionHandle:
+    ) -> SessionHandle:
         """Idempotently launch or re-adopt an L2 session."""
         session_id = effect.spec.session_id
         if session_id in self._sessions or self._session_repository.get_session(session_id):
-            return L2SessionHandle(session_id=session_id)
+            return SessionHandle(session_id=session_id)
         # ADR-DOE-AGENTS-005 R5: a schema session without a registered sink has
         # no result transport on the in-process face — the L2 defhandler path
         # registers the sink and serves report_result before launching. Direct
@@ -1051,7 +1041,7 @@ class TmuxAgentHandler(AgentHandler):
         state = self._sessions[session_id]
         state.result_schema = effect.spec.result_schema
         self._record_snapshot("session_l2_launched", state.handle, state.status)
-        return L2SessionHandle(session_id=session_id)
+        return SessionHandle(session_id=session_id)
 
     def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
         """Await a reported result or an awaiting-input/timeout observation.
@@ -1103,7 +1093,7 @@ class TmuxAgentHandler(AgentHandler):
                 return AwaitOutcome(status=AwaitStatus.TIMED_OUT)
             time.sleep(0.2)
 
-    def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
+    def handle_follow_up(self, effect: FollowUpEffect) -> SessionHandle:
         """Send validation feedback into the live session."""
         refuse_turn_capabilities(effect, handler="TmuxAgentHandler")
         self.handle_send(

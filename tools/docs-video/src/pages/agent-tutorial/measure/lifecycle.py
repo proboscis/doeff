@@ -6,7 +6,11 @@ from pathlib import Path
 
 from stand_ins import ScriptedTerminal
 
-from doeff_agents import AgentType, LaunchConfig, capture_output, launch_session, monitor_session, stop_session
+# The old (procedural) chapter-19 video measured these session procedures; they are internal to doeff-agents now
+# (card ki-4b53dcee28f3) — the rewritten video measures the effects instead.
+from doeff_agents import AgentType
+from doeff_agents._session import capture_output, launch_session, monitor_session, stop_session
+from doeff_agents.adapters.base import LaunchConfig
 
 terminal = ScriptedTerminal(
     work={"src/utils.py": 2.5},

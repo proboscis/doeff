@@ -313,29 +313,28 @@ The review of `b.py` failed, and its session was stopped all the same.
 
 ## Step 5: The Packaged Test Handler
 
-`doeff_agents` ships a test handler of the same kind, `ScenarioAgentHandler`. Its script maps a
-session id to `ScenarioStep`s, one per `AwaitResult`, and it records the sessions it stopped.
-`wrap` installs it around a Program:
+`doeff_agents` ships a test handler of the same kind, made by `scenario_agent_handler`. Its script
+maps a session id to `ScenarioStep`s, one per `AwaitResult`. Install it around a Program like any
+handler:
 
 ```python
 from doeff import run
-from doeff_agents import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioStep, scenario_agent_handler
 
 from review import review_file
 
-scenario = ScenarioAgentHandler(
+scenario = scenario_agent_handler(
     scripts={
         "review-src-utils.py-1": [
             ScenarioStep.success({"verdict": "request-changes", "issues": ["unused import"]}),
         ],
     },
 )
-print(run(scenario.wrap(review_file("src/utils.py"))))  # {'verdict': 'request-changes', 'issues': ['unused import']}
-print(scenario.stopped_sessions)  # ['review-src-utils.py-1']
+print(run(scenario(review_file("src/utils.py"))))  # {'verdict': 'request-changes', 'issues': ['unused import']}
 ```
 
 Use your own handler when the test needs to see each effect, as `scripted_agent` does with `log`.
-Use `ScenarioAgentHandler` when the script of results is all the test needs.
+Use `scenario_agent_handler` when the script of results is all the test needs.
 
 ## Step 6: Run It Against Claude Code
 

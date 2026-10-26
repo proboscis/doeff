@@ -27,7 +27,6 @@ from doeff_agents import (
     SessionHandle,
     SessionStatus,
     Stop,
-    TmuxAgentHandler,
 )
 from doeff_agents.effects import (
     CaptureEffect,
@@ -36,6 +35,9 @@ from doeff_agents.effects import (
     SendEffect,
     StopEffect,
 )
+# agentic drives the tmux handler object directly; it is not part of doeff-agents' public API, so it is read
+# from its defining module (card ki-4b53dcee28f3).
+from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_time import Delay
 
 from doeff import Effect, Pass, Resume, do

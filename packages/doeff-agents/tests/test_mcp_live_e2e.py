@@ -20,7 +20,7 @@ from doeff_agents.effects import (
     Monitor,
     Stop,
 )
-from doeff_agents.handlers import _agent_handler_defhandler
+from doeff_agents.handlers.effectful import agent_handler_defhandler
 from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_agents.tmux import TmuxSessionBackend
 from doeff_core_effects.handlers import state
@@ -70,7 +70,7 @@ class TestMcpLiveE2E:
         _tool_call_log.clear()
 
         handler = TmuxAgentHandler(backend=TmuxSessionBackend())
-        agent_defhandler = _agent_handler_defhandler(handler)
+        agent_defhandler = agent_handler_defhandler(handler)
 
         @do
         def program():

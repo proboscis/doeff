@@ -1,33 +1,16 @@
-"""Status monitoring and detection logic for agent sessions."""
+"""Status monitoring and detection logic for agent sessions (internal to doeff-agents).
+
+``SessionStatus`` is defined with the effects (``doeff_agents.effects``) — the
+public value an ``Observation`` carries; this module only detects it.
+"""
 
 import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 
-
-class SessionStatus(Enum):
-    """Session lifecycle states.
-
-    Transitions:
-    - PENDING → BOOTING → RUNNING
-    - RUNNING ↔ BLOCKED (waiting for input)
-    - RUNNING → BLOCKED_API (rate limited)
-    - RUNNING → EXITED (agent process ended, shell prompt showing)
-    - Any → STOPPED (explicitly killed by user)
-    """
-
-    PENDING = "pending"
-    BOOTING = "booting"
-    RUNNING = "running"
-    BLOCKED = "blocked"  # Waiting for user input
-    BLOCKED_API = "blocked_api"  # API rate limit
-    DONE = "done"
-    FAILED = "failed"
-    EXITED = "exited"  # Agent process ended (shell prompt showing)
-    STOPPED = "stopped"  # Explicitly killed by user
+from doeff_agents.effects.agent import SessionStatus as SessionStatus
 
 
 @dataclass

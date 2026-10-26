@@ -19,7 +19,7 @@ from doeff_agents.effects import (
     AwaitStatus,
     FollowUp,
     FollowUpEffect,
-    L2SessionHandle,
+    SessionHandle,
     LaunchSession,
     LaunchSessionEffect,
     ReleaseSession,
@@ -103,7 +103,7 @@ def test_l2_launch_is_idempotent_and_handle_is_opaque(tmp_path: Path) -> None:
     first, second = run(handler.wrap(_launch_twice(tmp_path)))
 
     assert first == second
-    assert isinstance(first, L2SessionHandle)
+    assert isinstance(first, SessionHandle)
     assert first.session_id == "run-001-node-a-0"
     assert not hasattr(first, "pane_id")
     assert handler.launch_count("run-001-node-a-0") == 1
@@ -119,7 +119,7 @@ def test_l2_effect_constructors_return_core_effects(tmp_path: Path) -> None:
         prompt="return JSON",
         result_schema=RESULT_SCHEMA,
     )
-    handle = L2SessionHandle(session_id="run-001-node-a-0")
+    handle = SessionHandle(session_id="run-001-node-a-0")
 
     assert isinstance(LaunchSession(spec), LaunchSessionEffect)
     assert isinstance(AwaitResult(handle, timeout_seconds=1.0), AwaitResultEffect)

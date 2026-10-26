@@ -4,7 +4,6 @@ Fine-grained effects for agent session management.
 
 Key design:
 - LaunchEffect: flat fields (no LaunchConfig wrapper), user-facing
-- ClaudeLaunchEffect: internal, emitted by claude_resolver_handler
 - Monitor/Capture/Send/Stop: session lifecycle
 - Get/List/Observe/Cleanup/Cancel/Attach: session state management by id
 - SessionHandle: immutable value-type identifier
@@ -27,11 +26,62 @@ from doeff_claude_code.lines import ToolCall as ToolCall
 from doeff_claude_code.values import AutocompactAuto as AutocompactAuto
 from doeff_claude_code.values import AutocompactTokens as AutocompactTokens
 
+from doeff_agents.effects._ids import deterministic_session_id as _deterministic_session_id
+
 if TYPE_CHECKING:
     from doeff.mcp import McpToolDef
 
-from doeff_agents.adapters.base import AgentSessionLifecycle, AgentType
-from doeff_agents.monitor import SessionStatus
+# =============================================================================
+# Values the effects carry: the agent kind, the session lifecycle and status
+# (defined here, the public module — the adapter and the monitor import them)
+# =============================================================================
+
+
+class AgentType(Enum):
+    """Supported agent types."""
+
+    CLAUDE = "claude"
+    CODEX = "codex"
+    GEMINI = "gemini"
+    GENERIC = "generic"
+    CUSTOM = "custom"
+
+
+class AgentSessionLifecycle(Enum):
+    """How a session should be supervised after an agent turn completes."""
+
+    RUN_TO_COMPLETION = "run_to_completion"
+    INTERACTIVE = "interactive"
+    #: A warm session (ADR-DOE-AGENTS-012 R10): the turn ends but the session
+    #: stays and takes the next one.  The host has spoken this word since that
+    #: revision (`policy.hy is-multi-turn`); the client did not, so every warm
+    #: row -- which is what the headless backend actually launches -- arrived as
+    #: "unparseable" and `ps` skipped it with a warning, leaving `stop`,
+    #: `watch` and `output` unable to name the session at all.
+    MULTI_TURN = "multi_turn"
+
+
+class SessionStatus(Enum):
+    """Session lifecycle states.
+
+    Transitions:
+    - PENDING → BOOTING → RUNNING
+    - RUNNING ↔ BLOCKED (waiting for input)
+    - RUNNING → BLOCKED_API (rate limited)
+    - RUNNING → EXITED (agent process ended, shell prompt showing)
+    - Any → STOPPED (explicitly killed by user)
+    """
+
+    PENDING = "pending"
+    BOOTING = "booting"
+    RUNNING = "running"
+    BLOCKED = "blocked"  # Waiting for user input
+    BLOCKED_API = "blocked_api"  # API rate limit
+    DONE = "done"
+    FAILED = "failed"
+    EXITED = "exited"  # Agent process ended (shell prompt showing)
+    STOPPED = "stopped"  # Explicitly killed by user
+
 
 # =============================================================================
 # SessionHandle - Immutable session identifier
@@ -51,9 +101,6 @@ class SessionHandle:
 
     def __repr__(self) -> str:
         return f"SessionHandle({self.session_id!r})"
-
-
-L2SessionHandle = SessionHandle
 
 
 JSONSchema = dict[str, Any]
@@ -702,7 +749,7 @@ class AgentSpec:
 
     @property
     def session_id(self) -> str:
-        return deterministic_session_id(
+        return _deterministic_session_id(
             run_id=self.run_id,
             node_id=self.node_id,
             attempt=self.attempt,
@@ -722,12 +769,6 @@ class AgentTask(AgentSpec):
     """
 
     deadline_seconds: float | None = None
-
-
-def deterministic_session_id(*, run_id: str, node_id: str, attempt: int) -> str:
-    """Derive the stable session id required for replay-safe launches."""
-    raw = f"{run_id}-{node_id}-{attempt}"
-    return "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in raw)
 
 
 # =============================================================================
@@ -1279,30 +1320,6 @@ class LaunchEffect(AgentEffectBase):
             raise ValueError("LaunchEffect.resume_snapshot must be a non-empty string")
 
 
-@dataclass(frozen=True, kw_only=True)
-class ClaudeLaunchEffect(AgentEffectBase):
-    """Claude-specific launch — internal effect (handler-to-handler).
-
-    Emitted by claude_resolver_handler, handled by claude_handler.
-    Trust setup, MCP server, tmux, onboarding are handler-internal.
-
-    Yields: SessionHandle
-    """
-
-    session_name: str
-    work_dir: Path
-    prompt: str | None = None
-    model: str | None = None
-    mcp_tools: tuple["McpToolDef", ...] = ()
-    mcp_server_name: str = "doeff"
-    effort: str | None = None
-    bare: bool = False
-    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
-    # Cold-start budget: matches the doeff-agentd oracle's 120s REPL-idle wait.
-    ready_timeout: float = 120.0
-    session_env: dict[str, str] | None = None
-
-
 # =============================================================================
 # L2 Session Algebra Effects
 # =============================================================================
@@ -1312,7 +1329,7 @@ class ClaudeLaunchEffect(AgentEffectBase):
 class LaunchSessionEffect(AgentEffectBase):
     """L2 Launch: idempotently create or re-adopt a deterministic session.
 
-    Yields: L2SessionHandle
+    Yields: SessionHandle
     """
 
     spec: AgentSpec
@@ -1325,7 +1342,7 @@ class AwaitResultEffect(AgentEffectBase):
     Yields: AwaitOutcome
     """
 
-    handle: L2SessionHandle
+    handle: SessionHandle
     timeout_seconds: float | None = None
 
 
@@ -1341,10 +1358,10 @@ class FollowUpEffect(AgentEffectBase):
     starts at the next effect that touches the session after that turn ends
     (handlers act only when an effect arrives).
 
-    Yields: L2SessionHandle
+    Yields: SessionHandle
     """
 
-    handle: L2SessionHandle
+    handle: SessionHandle
     message: str
     mode: TurnInputMode = TurnInputMode.NEXT_TURN
     input_ref: str | None = None
@@ -1364,7 +1381,7 @@ class StopSessionEffect(AgentEffectBase):
     Yields: None
     """
 
-    handle: L2SessionHandle
+    handle: SessionHandle
     reason: str | None = None
 
 
@@ -1375,7 +1392,7 @@ class ReleaseSessionEffect(AgentEffectBase):
     Yields: None
     """
 
-    handle: L2SessionHandle
+    handle: SessionHandle
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1702,25 +1719,6 @@ class CleanupAgentSessionEffect(AgentEffectBase):
 
 
 # =============================================================================
-# Deprecated — kept temporarily for backward compatibility during migration
-# =============================================================================
-
-# These remain only for compatibility with callers that have not migrated to
-# LaunchEffect / LaunchSession yet.
-
-
-@dataclass(frozen=True, kw_only=True)
-class _DeprecatedLaunchTaskEffect(AgentEffectBase):
-    """DEPRECATED: Use LaunchEffect directly. Will be removed."""
-
-    session_name: str
-    # Stub — just enough for old code to import without crashing
-
-
-LaunchTaskEffect = _DeprecatedLaunchTaskEffect  # backward compat alias
-
-
-# =============================================================================
 # Effect Constructors
 # =============================================================================
 
@@ -1770,7 +1768,7 @@ def LaunchSession(spec: AgentSpec) -> LaunchSessionEffect:  # noqa: N802
 
 
 def AwaitResult(  # noqa: N802
-    handle: L2SessionHandle,
+    handle: SessionHandle,
     *,
     timeout_seconds: float | None = None,
 ) -> AwaitResultEffect:
@@ -1778,7 +1776,7 @@ def AwaitResult(  # noqa: N802
 
 
 def FollowUp(  # noqa: N802
-    handle: L2SessionHandle,
+    handle: SessionHandle,
     message: str,
     *,
     mode: TurnInputMode = TurnInputMode.NEXT_TURN,
@@ -1791,14 +1789,14 @@ def FollowUp(  # noqa: N802
 
 
 def StopSession(  # noqa: N802
-    handle: L2SessionHandle,
+    handle: SessionHandle,
     *,
     reason: str | None = None,
 ) -> StopSessionEffect:
     return StopSessionEffect(handle=handle, reason=reason)
 
 
-def ReleaseSession(handle: L2SessionHandle) -> ReleaseSessionEffect:  # noqa: N802
+def ReleaseSession(handle: SessionHandle) -> ReleaseSessionEffect:  # noqa: N802
     return ReleaseSessionEffect(handle=handle)
 
 
@@ -1977,53 +1975,6 @@ class TurnInFlightError(AgentError):
         self.context_id = context_id
         super().__init__(
             f"session {session_id}: context {context_id} already has a turn in flight"
-        )
-
-
-def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
-    """Refuse the turn-level fields a turn-less (terminal) handler cannot honour.
-
-    Terminal handlers call this before acting on ``LaunchEffect`` /
-    ``FollowUpEffect``, so ``resume_from`` never silently starts a fresh
-    context, a ``turn_credential_ref`` is never silently dropped (the
-    launch would run on whatever home credentials the handler has), and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
-    A named ``new_context_id`` is never silently replaced by an id the caller
-    does not know. A stated ``autocompact`` never silently falls back to the
-    runtime's own default.
-    """
-    if isinstance(effect, LaunchEffect) and isinstance(effect.new_context_id, NamedContextId):
-        raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.new_context_id", handler=handler
-        )
-    if isinstance(effect, LaunchEffect) and effect.resume_from is not None:
-        raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.resume_from", handler=handler
-        )
-    if isinstance(effect, LaunchEffect) and effect.resume_snapshot is not None:
-        raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.resume_snapshot", handler=handler
-        )
-    if isinstance(effect, LaunchEffect) and effect.turn_credential_ref is not None:
-        raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.turn_credential_ref", handler=handler
-        )
-    if isinstance(effect, LaunchEffect) and effect.autocompact is not None:
-        raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.autocompact", handler=handler
-        )
-    if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
-        raise AgentCapabilityUnsupportedError(
-            capability=f"FollowUpEffect.mode={effect.mode.value}", handler=handler
-        )
-    # Images never silently fall off the prompt (a terminal handler has no way
-    # to hand them to the runtime).
-    if isinstance(effect, LaunchEffect) and effect.attachments:
-        raise AgentCapabilityUnsupportedError(
-            capability="LaunchEffect.attachments", handler=handler
-        )
-    if isinstance(effect, FollowUpEffect) and effect.attachments:
-        raise AgentCapabilityUnsupportedError(
-            capability="FollowUpEffect.attachments", handler=handler
         )
 
 

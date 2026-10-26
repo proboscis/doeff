@@ -17,29 +17,30 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import (
-    AgentdClient,
-    AgentdClientError,
-    AgentdProtocolError,
-    AgentdUnavailableError,
     AgentSessionLifecycle,
     AgentSessionSnapshot,
     AgentType,
     AwaitStatus,
-    DaemonAgentHandler,
     LaunchEffect,
-    LazyAgentdClient,
     ObserveAgentSessionEffect,
     SessionStatus,
     agentd_client,
-    default_agentd_paths,
-    ensure_agentd,
 )
+# The agentd client and the daemon handler object are internal to doeff-agents (not on its public API).
 from doeff_agents.agentd_client import (
     AGENTD_SOCKET_ENV,
     DEFAULT_END_SESSION_BUDGET_SECONDS,
+    AgentdClient,
+    AgentdClientError,
+    AgentdProtocolError,
     AgentdSessionList,
     AgentdSessionParseWarning,
+    AgentdUnavailableError,
+    LazyAgentdClient,
+    default_agentd_paths,
+    ensure_agentd,
 )
+from doeff_agents.handlers.daemon import DaemonAgentHandler
 from doeff_agents.io_fake import SpawnLedger, recorded_spawn_handler
 from doeff_agents.io_handlers import driver_io_handler
 from fake_io_support import FakeIoWorld, fake_io_root
@@ -221,7 +222,7 @@ def test_agentd_client_list_sessions_accepts_agentd_generic_rows() -> None:
 
 
 def test_generic_agent_type_has_no_registered_adapter() -> None:
-    from doeff_agents.session import get_adapter
+    from doeff_agents._session import get_adapter
 
     with pytest.raises(ValueError, match="No adapter registered"):
         get_adapter(AgentType.GENERIC)
