@@ -1,7 +1,6 @@
 """公開 repo の作者の名義に operator の実名を書かないことを確かめる検。
 
 [removed]
-"real name must not be used without any approval")で、package の metadata・作者の欄・使用許諾の文書に
 実名を書かず、名義は Proboscis <3684241+proboscis@users.noreply.github.com> だけにする。
 
 この検の中にも実名を書かないため、2 つの形で照らす:

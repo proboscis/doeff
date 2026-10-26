@@ -1,7 +1,7 @@
 //! 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`([issue])。
 //!
 //! [removed]
-//! "yeah so the code would look like: int x <- some-func(0) + 1" / 式の途中の effect は `!` の印を残す案 A("lets try A")。
+//! 読める形にする。式の途中の effect は `!` の印を残す案 A。
 //! 読むための表示だけで、source の Hy はそのまま(書く向きの変換は持たない)。式の形を読むのはここ 1 か所で、エディタは
 //! 置き換えを描くだけ(Hy を読み直さない)。
 //!

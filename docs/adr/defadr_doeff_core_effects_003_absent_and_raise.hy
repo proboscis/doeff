@@ -4,17 +4,17 @@
 ;;; 不在と失敗への変換は呼び手の側の <- が defeffect の宣言に従って行う。関数が出す effect は手で書かずに推論する。
 ;;;
 ;;; [removed]
-;;; (逐語 "lets go with it" — :problem の fact)。状態は決定。実装は段階 1〜5(R16)で進め、この版で段階 1 と段階 2 を実装した:
+;;; (:problem の fact の論点 9)。状態は決定。実装は段階 1〜5(R16)で進め、この版で段階 1 と段階 2 を実装した:
 ;;;   段階 1 = Absent / Raise の effect・境目の handler・defhandler の終わる節 (finish) と節の終わり方の検め(R15)
 ;;;   段階 2 = defeffect の答えの宣言(:absent / :failure / :value)と、<- / ! の変換(:absent・Result / Option の値を開く形を含む)
 ;;; 段階 3(doeff-records の effect に宣言を付ける)と段階 5(agora の呼び手の書き換え)は同じ版で effect ごとに切り替える
 ;;; — 手順は R14。
 ;;;
 ;;; 改訂の経緯(2026-09-27・書いている間): 初めの案は「成功だけを見る」範囲を字面のスコープ(macro success-only)で宣言する形だった。
-;;; operator の逐語 7(success-only は要らないのでは)を受けて、f143ee92 の席が success-only を消す決定をした(戻せる決定 — R3)。
+;;; operator の論点 7(success-only は要らないのでは)を受けて、f143ee92 の席が success-only を消す決定をした(戻せる決定 — R3)。
 ;;; 同じ行の意味が呼び手で変わらない、という success-only の狙いは、出す側が最初から Absent / Raise を出す形で満たされる。
 ;;; [removed]
-;;; [removed]
+;;; 再開の書き忘れという operator の懸念から)を足し、段階 1・2 の実装で決めた戻せる決定を :context の最後の interpretation に記した。
 ;;;
 ;;; 置き場の判断: effect の語彙(Absent・Raise)と境目の handler は Try と同じ doeff-core-effects に置く物なので、ADR-DOE-CORE-EFFECTS の
 ;;; 3 つ目にした。<- の変換と defeffect の宣言と defhandler の終わる節は doeff-hy、effect の推論は doeff-effect-analyzer、規則は
@@ -25,7 +25,7 @@
 ;;; 宣言を持つ effect はまだ無い(段階 3 の前)ので、どちらの revert も既存の呼び手の振る舞いを変えない。
 ;;;
 ;;; ---------------------------------------------------------------------------
-;;; 書き方の例(operator の逐語 5 への答え — 段階 3 の後の形。revise-input は agora-controllers の関数)
+;;; 書き方の例(operator の論点 5 への答え — 段階 3 の後の形。revise-input は agora-controllers の関数)
 ;;; ---------------------------------------------------------------------------
 ;;;
 ;;; Before — agora-controllers の本線 eb2abb27 の controllers/protocol/conversation_input.hy:73-91(そのまま):
@@ -379,19 +379,19 @@
   :problem
     [(fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27 夜・f143ee92 の席)— coordinator 経由")
+       [removed]
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27 夜・f143ee92 の席)— coordinator 経由")
+       [removed]
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27 夜・f143ee92 の席)— coordinator 経由")
+       [removed]
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27 夜・f143ee92 の席)— coordinator 経由")
+       [removed]
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27 夜・f143ee92 の席)— coordinator 経由([issue])")
+       [removed]
      (fact
        [removed]
        :evidence "coordinator の追加の依頼(2026-09-27 夜・[issue])")
@@ -439,15 +439,15 @@
        :evidence "uv run python で yield Ok(1) を撃った VM の誤り・timeit(2026-09-28)・doeff の全 .hy と agora-controllers origin/main の全 .hy を hy_compile だけで展開した走査(2026-09-28)")]
   :context
     [(interpretation
-       [removed]
+       "文献では、中身を持たない失敗を Maybe の側に、理由を持つ失敗を Result(Either)の側に置く。Haskell の MonadFail の fail(説明の文を受けるが Maybe では捨てて Nothing にする)と Alternative の empty が前者、Plotkin と Pretnar の例外の raise・Koka の throw・Haskell の throwError が後者。Maybe の文脈で Fail に当たる物は何か、という operator の問い(論点 2)の答えは、文献では fail / empty がまさに Maybe の側で、Result の側は raise / throw と呼ぶ、となる。この ADR は紛れを避けて、Maybe の側を Absent、Result の側を Raise と呼び、どちらにも Fail の名を使わない(doeff-traverse の Fail は再開できる別の意味を既に持つ)。")
      (interpretation
        "1 つの effect(Nothing だけ・Fail だけ)にすると、受け手が不在と失敗を分けられず、Result の中の Maybe と Maybe の中の Result を作り分けられない。2 つの effect に分ければ、受け手の handler の入れ子の順だけで組み合わせの型が決まる — モナド変換子の積み順(MaybeT (Either e) と ExceptT e Maybe)と同じことを、handler の順で言える。")
      (interpretation
-       "答えを値で受けるか中身で受けるかは呼び手の文脈で変わる(逐語 1)。初めの案はこれを『成功だけを見る』範囲の宣言(success-only)で表したが、範囲の内と外で同じ行の型が変わる。出す側が最初から Absent / Raise を出せば、(<- x (危ない呼び)) は誰に呼ばれても『T か、逃げる』の 1 通りで、行の型は呼び手で変わらない。値で受けたい呼び手だけが、その場で境目の handler で畳む(逐語 7・8)。Koka の書き方と同じ。")
+       "答えを値で受けるか中身で受けるかは呼び手の文脈で変わる(論点 1)。初めの案はこれを『成功だけを見る』範囲の宣言(success-only)で表したが、範囲の内と外で同じ行の型が変わる。出す側が最初から Absent / Raise を出せば、(<- x (危ない呼び)) は誰に呼ばれても『T か、逃げる』の 1 通りで、行の型は呼び手で変わらない。値で受けたい呼び手だけが、その場で境目の handler で畳む(論点 7・8)。Koka の書き方と同じ。")
      (interpretation
        "effect に答える handler は、呼び手の本文より外側(組み立ての根)に置かれる。本文と handler の間には呼び手の maybe / result がある。handler の節の中で Absent / Raise を出すと、それは handler より外側へ行き、呼び手の maybe / result を飛び越える(fact と テストで確かめた)。だから不在と失敗への変換は handler の中でなく、呼び手の本文の中 — 答えを受け取る <- — で行う。handler は今までどおり値で答え、記録係も値を書き留める。")
      (interpretation
-       "try-catch との比較(逐語 6『try-catch に似ているが差し替えられる』への答え):\n観点 | try-catch(例外) | Absent / Raise(この案)\n飛んでくる所 | どの行からでも(呼び先の奥の例外も) | Absent / Raise を出す行と、宣言で失敗を返す effect を受ける <- だけ\n何が飛ぶか | 書かれない(Java の検査例外は手書きで古くなる) | 推論した effect の集合に出る(R13)\n不在と失敗 | 区別しない(null か例外) | Absent と Raise で分け、組み合わせは入れ子の順で選ぶ\n既定値 | catch の中で値を返してスコープを終える | absent-as が既定値で再開できる\n方針の差し替え | catch は書いた所に固定 | 組み立ての handler で差し替える(本番と模擬で別)\n再生 | 例外は記録に残らない | handler は値で答え記録係が書き留めるので、再生でも同じ道を通る\n受け取り忘れ | 走らせて初めて分かる | job の入口の残りの effect で、書いた時点に拾える\n何でも受ける形 | catch (Exception) が書ける | on-raise は型のパターンだけ(何でも受ける形は展開の時に断る)\n見た目 | try … catch | on-raise … パターン — ほぼ同じ形なので、読み手は新しい考え方を覚えずに読める(利点)")
+       "try-catch との比較(try-catch に似ているが差し替えられる、という論点 6 への答え):\n観点 | try-catch(例外) | Absent / Raise(この案)\n飛んでくる所 | どの行からでも(呼び先の奥の例外も) | Absent / Raise を出す行と、宣言で失敗を返す effect を受ける <- だけ\n何が飛ぶか | 書かれない(Java の検査例外は手書きで古くなる) | 推論した effect の集合に出る(R13)\n不在と失敗 | 区別しない(null か例外) | Absent と Raise で分け、組み合わせは入れ子の順で選ぶ\n既定値 | catch の中で値を返してスコープを終える | absent-as が既定値で再開できる\n方針の差し替え | catch は書いた所に固定 | 組み立ての handler で差し替える(本番と模擬で別)\n再生 | 例外は記録に残らない | handler は値で答え記録係が書き留めるので、再生でも同じ道を通る\n受け取り忘れ | 走らせて初めて分かる | job の入口の残りの effect で、書いた時点に拾える\n何でも受ける形 | catch (Exception) が書ける | on-raise は型のパターンだけ(何でも受ける形は展開の時に断る)\n見た目 | try … catch | on-raise … パターン — ほぼ同じ形なので、読み手は新しい考え方を覚えずに読める(利点)")
      (interpretation
        "書き方の例(file の頭の註): revise-input の After は成功の道だけを書き、不在と失敗を 1 つの on-raise で業務の答えの型へ畳む。外から見た型(戻り値と残りの effect)は Before と同じで、手で書いた :effects は推論に置き換わって消える。notify-landed の例は、業務の core に境目を書かず、1 件ごとの失敗の扱いを組み立ての handler に任せる形。")
      (interpretation
@@ -455,11 +455,11 @@
      (interpretation
        "記録と再生の handler(ADR-DOE-CLUSTER-001 R5)は、読みの effect の本物の答え(Unreachable のような失敗の値も)を境目の下で書き留める。<- の変換は本文の中の決定的な計算なので、再生でも同じ答えから同じ Absent / Raise が出る。")
      (interpretation
-       "関数が Absent・Raise を出すかどうかは、その関数が呼ぶ関数と、途中で置いた handler で決まる(逐語 4)。手で書いた :effects は、呼び先が変わると黙って古くなる。呼び先を推移的にたどる推論(doeff-effect-analyzer)なら古くならない。関数の型は、戻り値(中身だけ — Maybe / Result に包まない)と、推論した残りの effect の集合の組として見せる。これは Eff などの論文の計算の型 A ! Δ と同じ考え方(Koka では exn int のように effect の列を戻り値の前に書く)。")
+       "関数が Absent・Raise を出すかどうかは、その関数が呼ぶ関数と、途中で置いた handler で決まる(論点 4)。手で書いた :effects は、呼び先が変わると黙って古くなる。呼び先を推移的にたどる推論(doeff-effect-analyzer)なら古くならない。関数の型は、戻り値(中身だけ — Maybe / Result に包まない)と、推論した残りの effect の集合の組として見せる。これは Eff などの論文の計算の型 A ! Δ と同じ考え方(Koka では exn int のように effect の列を戻り値の前に書く)。")
      (interpretation
        "R13 のために analyzer に足りない物は 3 つ: (1) Program の中で置いた handler(with-handlers・maybe・result・on-raise・<- の :absent の受け手)が受ける effect を集合から引く処理 — 今は Program の effect を集めるだけで、handler を引くのは env の coverage の側だけ。(2) 引数で渡された Program(carried)を、渡した先の意味に従って呼び手の側で畳む処理 — 今は呼び手が effect_types_with で明示して畳む。(3) 結果を cache して linter とエディタが読む形 — Jev の cache と同じ扱いで、保存のたびに module を import しない。今の cache は process の中の module の cache だけ。")
      (interpretation
-       "effect は『積み重なるもう 1 本のデータの口』(逐語 9)。4 種類の失敗は、本文の中では effect として外へ流れ、境目で値に戻る — 外の世界との境目(handler の答え・記録)では答えの値、呼び手が『何かしたい』境目(maybe・result・on-raise・absent-as)でも値。だから handler と記録の形は変えず(値で答える)、変わるのは本文の中の受け取り方(<- の開き)と、宣言(defeffect の :absent / :failure / :value)だけになる。doeff-records の handler を変えない理由も同じ: handler の節で Raise を出すと呼び手のスコープを飛び越える(R4)。")
+       "effect は積み重なるもう 1 本のデータの口である(論点 9)。4 種類の失敗は、本文の中では effect として外へ流れ、境目で値に戻る — 外の世界との境目(handler の答え・記録)では答えの値、呼び手が『何かしたい』境目(maybe・result・on-raise・absent-as)でも値。だから handler と記録の形は変えず(値で答える)、変わるのは本文の中の受け取り方(<- の開き)と、宣言(defeffect の :absent / :failure / :value)だけになる。doeff-records の handler を変えない理由も同じ: handler の節で Raise を出すと呼び手のスコープを飛び越える(R4)。")
      (interpretation
        "段階 1・2 の実装で決めた戻せる決定(2026-09-28・この実装の担当が推奨どおり決めた — 戻し方は各項の後ろ):\n(1) maybe・result は Program を受ける関数(doeff_core_effects.outcomes)で、on-raise・absent-as は Program の式 1 つを受ける macro — 複数の行は do! で包む(handle・Try と同じ形。ADR の (maybe (<- (ReadRow …))) は (maybe (ReadRow …)) と書く)。戻し方: 本文の form を並べて受ける macro を足す。\n(2) handler の終わる節の名は (finish 値)、普通の effect を打ち切る理由は節の鍵 :finish-reason \"理由\"(Hy の reader は註を捨てるので、macro が読める鍵にした)。戻し方: 名と鍵を差し替える。\n(3) Raise の理由に Python の例外を置けない(Raise を作る時に TypeError)。<- が Err(Python の例外) を開く時は、Raise にせず例外のまま上げる(Try が畳んだ実装の誤りを業務の失敗に化けさせない — R11)。戻し方: effects.py の検めと outcomes.py の _open_value の 1 枝を消す。\n(4) <- の :absent <失敗> の失敗は、不在の時にだけ評価する値の式(効果は使えない — 展開の時に断る)。戻し方: open-bind に値を渡す形へ戻す。\n(5) <- と ! の展開は、束ねごとに doeff_core_effects.outcomes.open-bind を呼ぶ(import を展開の中に持つ — どこに書いた <- でも名前が解ける・1 回で約 0.2µs)。宣言の無い effect と Program には受け取った物そのものを返すので、yield する物・束ねる答え・例外は今までと同じ。展開の字面は変わる(tests/test_typed_effect_bind.py の形を直した)。戻し方: 段階 2 の commit の revert。\n(6) 効果の再開の扱いは effect の型の属性 __doeff_resumption__(Resumption)。宣言と節の照合は、名前で分かる物は展開の時、分からない物は handler を初めて本文に被せた時(定義の時にすると、handler より後に定義した effect の型を引けない)。戻し方: clause_endings.check-clause-endings-once の呼び出しを消す。\n(7) 節の終わりの検めを厳しくした: cond は最後が True、match は最後が番の無い _(名前 1 つの capture)、try は except の本体も終わること、入れ子の関数・内包表記の中の resume は数えない。戻し方: handle.hy の _terminates の枝を戻す。\n(8) 段階 4 の中身(この ADR の R16 の段階 4)は、段階 3 と 5 を同時に切り替える前に要る道具(古い分岐を拾う doeff-linter の規則・R13 の推論・Rust の analyzer の :absent の読み)と解した — coordinator の依頼に段階 4 の定義が無かったため。戻し方: R16 の段階 4 の文を差し替える。")
      (interpretation
@@ -479,7 +479,7 @@
      (rule R12 "記録と再生との関係: handler は値で答え、記録係は境目の下で本物の答え(失敗の値も)を書き留める(ADR-DOE-CLUSTER-001 R5)。<- の変換は本文の中の決定的な計算なので、再生でも同じ答えから同じ Absent / Raise が出る。Absent / Raise を記録係へ届く汎用の effect にしない(記録するのは読みの effect の答え)。")
      (rule R13 "関数がどの effect を出すか(Absent・Raise を含む)は、手で書かずに doeff-effect-analyzer で推論する(呼び先を推移的にたどり、Hy は macro を展開してから読み、defhandler の節から受ける effect を読み、追えない物は unresolved と報告する)。関数の型は、戻り値(中身だけ・Maybe / Result に包まない)と推論した残りの effect の集合の組として見せる。表記の例: settle-landing : str → Program[Row] ! {Absent, Raise[Unreachable | Refused], ReadRow, PutRow}(Eff などの論文の計算の型 A ! Δ と同じ考え方)。handler で包むと、その handler が受ける effect が集合から消える。:effects(defk の頭の辞書に既にある任意のキー)は必須にしない。公開の境目にだけ上限として書き、推論 ⊆ 宣言を linter が確かめる(宣言が古くならない)。使い道: エディタの hover で残りの effect を出す/job の入口の Program の残りの effect が空であることを書いた時点で確かめる(R9 の 1 つ目)/core の定義の残りの effect に汎用の effect(通信・記録)が入れば層の違反として出す。analyzer に足りない物は :context の interpretation。")
      (rule R14 "移し替え(段階 3 と段階 5 の切り替えの手順): 今の doeff-records の effect は失敗を値で返す決まり(README『失敗の答え(値で返す)』)。宣言を切り替えると、(match body (Missing) …) の既存の呼び手は Missing を見なくなる(決して通らない分岐が残る)。だから次の順で、effect ごとに(1 つの版で 1 つの effect — 一度に全部の effect を切り替えない)、doeff-records の宣言と agora の呼び手を同じ版で切り替える:\n(1) 切り替える effect E を 1 つ選ぶ(呼び手の少ない物から — ReadPlacedInput・PostMessage など。ReadRow は最後)。\n(2) doeff-records の E を defclass から defeffect へ移し、:absent / :failure / :value を R17 の割り当てで宣言する。E に答える handler は変えない(値で答える — handler の節で Raise を出すと呼び手のスコープを飛び越える: R4)。記録の形も変わらないので、既存の記録はそのまま再生できる。\n(3) 同じ版で agora の E の呼び手を書き換える: 不在・失敗を (match …) / isinstance で分けていた呼び手は成功の道だけにし、不在で何かしたい所は <- の :absent <失敗> か absent-as、失敗で何かしたい所は on-raise にする。Missing を普通の値として持ち回る・数える呼び手は (maybe …) で包み、Maybe の値(Missing の代わりに Nothing)を受ける形にする。:value と宣言した答え(Conflict)の呼び手は変えない。job の入口と、handler の節で Program を走らせる翻訳の handler で Absent / Raise を閉じる(R9)。\n(4) 古い分岐(E の不在・失敗と宣言した型を値として match / isinstance する分岐)は doeff-linter の規則が拾う(段階 4 の道具)。当たりが 0 になるまでその版を着地させない — law declarations-switch-one-effect-at-a-time。\n(5) 型の決まった書き換え(古い分岐の削除・maybe での包み・:absent への移し替え)は Sonnet 5 に任せる — effect ごとの手順(この R14)と linter の当たりの一覧を渡して機械的に進める。不在を何の失敗にするか・どこで閉じるかの判断が要る所は、その呼び手の持ち主が決める。\n(6) HTTP の答えの状態コードは、翻訳の層(HTTP の答えを業務の答えへ写す handler)の 1 か所で 4 種類に写し(R17)、呼び手に状態コードを見せない。")
-     [removed]
+     (rule R15 "handler の節の終わり方(operator の懸念 — 再開の書き忘れ・論点 10): 節は resume(非末尾なら続きの答えが節へ戻る)・transfer・finish(続きを捨て、handler を置いたスコープの答えをその値にする)・reperform・raise のどれかで終わる。書き忘れは今までどおり誤り — 節のすべての道(if・cond・match・try の枝ごと。cond は最後が True、match は最後が番の無い _、try は except の本体も)が終わらなければ展開の時に SyntaxError。when・unless・and・or・loop・入れ子の関数と内包表記の中の resume は終わりに数えない。effect ごとに再開の扱いを宣言する(effect の型の属性 __doeff_resumption__ = doeff_core_effects.effects.Resumption: Raise = NEVER(誰も再開しない)・Absent = ABSENT_AS_ONLY(absent-as だけが再開する)・宣言しない普通の effect = REQUIRED)。宣言に反する節(Raise / Absent を resume・transfer する節、普通の effect を finish で打ち切る節)は違反 — 名前で分かる物(節の頭が Raise / Absent・finish の節に理由が無い)は展開の時に SyntaxError、分からない物(別名で import した Raise・__doeff_resumption__ を宣言した型)は handler を初めて本文に被せた時に ClauseEndingError。とくに Raise の resume は『失敗したのに成功したかのように続く』ので、宣言(NEVER)と展開の両方で断り、<- が開いた Raise / Absent を素の handler 関数が再開しても、開く側が RuntimeError にする。普通の effect を意図して打ち切る節(時間切れで処理全体を止める等)は、節に :finish-reason \"理由\" を書いた時だけ許す(理由の註を書いた deff と同じ扱い)。実行の時: 節が resume も finish もせずに抜けたら(例外を黙らせる with の中の resume など、展開の時に見えない道)、defhandler の包みが RuntimeError にする — VM は再開しない handler の値でスコープを黙って終えるため。素の Python の handler 関数(@do の関数・deff の handler)にはこの包みが無く、VM は『再開しないで値を返す』を正当な終わり方として受けるので、実行の時の検めは効かない(塞げない理由: finish と書き忘れを見分ける印が VM に無い — 見分けるには VM に明示の終わりの操作を足し、既存の Python の handler を全部書き換える必要がある)。素の handler 関数の終わり方は doeff-linter の規則の候補(番号は未定)。")
      [removed]
      [removed]
   :laws

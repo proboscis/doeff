@@ -105,7 +105,7 @@
 ;;; ---------------------------------------------------------------------------
 ;;;
 ;;; [removed]
-;;; instead of actually parsing and validating it like pydantic does" / "hmm, cant we have some def* macro for this?" → "A"。
+;;; そのための def* の macro を置く案 A を採る)。
 ;;; 決まりの正本 = ADR-DOE-HY-007 R8。
 ;;;
 ;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、

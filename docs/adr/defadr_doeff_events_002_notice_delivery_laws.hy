@@ -4,7 +4,7 @@
 ;;; (packages/doeff-events/tests/test_notice_laws_memory.py)。
 ;;;
 ;;; [removed]
-;;; 「記録は記録、起動は起動」)と、その後の確定(正しさは記録が持つ・backend は保存しない知らせ = Pub/Sub だけ・確かめる列
+;;; 分ける)と、その後の確定(正しさは記録が持つ・backend は保存しない知らせ = Pub/Sub だけ・確かめる列
 ;;; 〔Streams・consumer group〕は書かない)。ADR-DOE-EVENTS-001 の出来事の源(記録の service の合図)に、書き手が出す知らせを
 ;;; 運ぶ源を足す。
 ;;;

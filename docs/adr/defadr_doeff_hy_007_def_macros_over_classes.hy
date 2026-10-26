@@ -2,7 +2,7 @@
 ;;; (模擬の store・キャッシュ)は作らず、土台の handler と session val / var に置く。値の class(Point2D)は許す。
 ;;;
 ;;; [removed]
-;;; [removed]
+;;; coordinator の提案(class より def* を選ぶ)を operator が採り、同じ日に的を 2 度絞った(class 全般 → 処理を持つ class →
 ;;; 外の世界に触る class と状態の変わる class。値の class は許す)。判定は名前でなく中身の証拠で、理由の註は要らない。
 ;;;
 ;;; 置き場の判断: ADR-DOE-HY-004(関数の語彙は defk のみ)の続きに足さず、新しい冊にした。HY-004 は関数の定義
@@ -51,13 +51,13 @@
   :problem
     [(fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27・[issue])— coordinator 経由")
+       :evidence "[issue](2026-09-27 の議論)")
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27・[issue])— coordinator 経由")
+       :evidence "[issue](2026-09-27 の議論)")
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27・[issue])— coordinator 経由")
+       :evidence "[issue](2026-09-27 の議論)")
      (fact
        "実測: agora-controllers に defclass 848・defrecord 338(coordinator の計測・2026-09-27)。同じ日のこの席の数え(git grep の出現数・origin/main 380ae943)は defclass 819・defrecord 414。doeff(origin/main 772a4405)は defclass 614・defrecord 98。"
        :evidence "git grep -c '(defclass' / '(defrecord' -- '*.hy'")
@@ -66,7 +66,7 @@
        :evidence "packages/doeff-hy/src/doeff_hy/record.hy(defrecord)・ADR-DOE-HY-005 R4")
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-28・[issue])— coordinator 経由")
+       :evidence "[issue](2026-09-28 の議論)")
      (fact
        "decide-tag(agora-controllers 068dee21)の形: core の判断の中で (.get payload \"subject\") を (isinstance subject str) で検める / (match said (Refusal) (do (<- refused … (rejected (+ said.reason \": \" said.detail))) (return refused))) で受けた断りを包み直して返す / (<- bad-subject WritePlan …) の直後に (return bad-subject) / for の中で (:= writes (+ writes #(…)))。本線 0a528aa1 に当てると DOEFF121 78・122 9(Refusal に印を付けた後)・123 112・124 168・125 30。"
        :evidence "doeff-linter wt/hy-smells の editor-json(agora-controllers wt/hy-smells)")
@@ -75,7 +75,7 @@
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy")
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-28・[issue])— coordinator 経由")
+       :evidence "[issue](2026-09-28 の議論)")
      (fact
        [removed]
        :evidence "[issue] のコメント(2026-09-27T16:22Z)")

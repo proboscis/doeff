@@ -1,6 +1,5 @@
 //! [removed]
-//! polling, are to be fixed. polling is a last resort" / "記録に書いて記録をポーリングする設計を本当にやめてくれ、linterでみつけて禁止したい"
-//! / "この設計思想をdoeff-linter/defjevruleで強制してほしい"・[issue])。
+//! 繰り返しは全部直す対象で最後の手段に限り、この方針を doeff-linter と defjevrule で強制する・[issue])。
 //!
 //! 母集団は DOEFF208 と同じ宣言(architecture.hy の `:business-fakes` の本番の code の Hy の file — `business_fakes::production_code`)。
 //! DOEFF208 と違い doeff-records の package の中も外さない(この規則は待ちの書き手そのものを見る — 効果と源の持ち主も時間で取り直す loop を

@@ -3250,7 +3250,7 @@ fn record_wait_repo(declared: bool) -> tempfile::TempDir {
 }
 
 /// [removed]
-/// "記録は記録、起動は起動"・[issue]): 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
+/// 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
 /// handler の外で秒が 0 でない記録の変更の待ちを出す所は赤。待たずに 1 回読む(秒 0)・模擬・検・doeff-records の中・記録の効果に答える
 /// handler の中・match の pattern は当たらない。
 #[test]
@@ -3352,7 +3352,7 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
 }
 
 /// [removed]
-/// 本当にやめてくれ、linterでみつけて禁止したい"・[issue]): 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
+/// 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
 /// 取りに行く所は赤 — 今 + 秒の ArmTimer・Delay・補助の定義に包んだ形・:poll-seconds。期限の待ち・変わりを待つ上限の秒・1 度だけの期限・
 /// 閉じた語彙の理由を書いた所は通る。母集団は services/record と doeff の package(doeff-core-effects・doeff-traverse・doeff-records)も含む。
 #[test]

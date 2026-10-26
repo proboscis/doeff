@@ -5,7 +5,7 @@
 ;;; ほかの file の母集団は変わらない(今までどおり DOEFF004 が当たる)。
 ;;;
 ;;; [removed]
-;;;   foundation handler is clear violation" — 環境変数の読みは foundation の handler の中だけ)。
+;;;   foundation の handler の中だけで、外での読みは違反)。
 ;;;   - doeff_secret.handlers: GetSecret に環境変数から答える handler(env_var_handler・env_var_handlers)。写像を渡されなければ
 ;;;     この process の環境(os.environ)を読む。DOEFF004 を「os.environ への参照そのもの」へ広げた時に当たった 2 行
 ;;;     (63・97 行)がこれ(cisco-c8 2026-10-03 02:0x の決め — 規則が許す場所の宣言で、違反を隠す除外ではない)。

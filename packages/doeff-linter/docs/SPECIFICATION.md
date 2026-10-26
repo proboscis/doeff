@@ -298,7 +298,6 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す([issue])。設
 ### 既定の重大さ([issue])
 
 [removed]
-doeff code testable")。repo ごとに写すと片方が黙って古くなるので、既定の表は doeff-linter の 1 か所(`ProjectRule::default_level` —
 網羅の match で、新しい規則は決めずに足せない)に置き、repo の設定の `rules.<ID>.level` は既定と違う所だけを書く(書けば repo の宣言が勝つ)。
 
 | 既定 | 規則 |
@@ -647,7 +646,7 @@ module が、その層の `:forbid-modules` の module を import すると DOEF
   定義を entry の層の定義の代わりにし、模擬の環境の deftest・反例の節に届く deftest がそこへ届くかを見る)。空の列・`.` で区切った module の名でない
   綴り・同じ module の 2 度書き・列でない値は設定の誤り。
 - [removed]
-  actual world")。要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]? :contract-test (none …)?)` の欄は、`:touches` = 触れる先(必須・閉じた語
+  要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]? :contract-test (none …)?)` の欄は、`:touches` = 触れる先(必須・閉じた語
   http・db・file・process・clock・env・cluster・network・thread)・`:answers` = 答える effect の名・`:wraps` = 中で動かす doeff の実 I/O の handler
   (`"module:名"`・名簿の定義は書けない)・`:contract-test` = 縁の検を求めない handler の印(書き方の定義元は DOEFF137 の直し方の文 — 値は理由のテストの名つきの
   `(none :doeff-test "file::名")` / `(none :repo-test "file::名")` で、型 `ContractTest::Waived(ContractTestWaiver::{DoeffContractTest, CoveredByRepoTest}(TestNodeId))`
@@ -725,7 +724,6 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 | DOEFF205 | judgment / program の定義が形の検めと判断を混ぜているか(14 節) | `semantic.mixed_concerns` | warning_min 0.7・info_min 0.5 | critical |
 
 - [removed]
-  run everywhere every time with cached by default"・[issue]): 対象 = path の引数の file、無ければ git で変わった file。そのうち手元の
   cache に答えの無い定義だけを撃ち、残りの答えの無い定義は代理が設定されていれば代理に「覚えている時だけ」問う(下の「Jev の呼び出しを覚える代理」)。
   問うはずだった定義に答えを得られなければ `semantic.unmeasured`(測れなかった)に数え、error の違反が無くても終了コード 3。
 - **1 file の `--stdin`(書いた直後の hook・エディタ)の既定は cache を読むだけ**(hook の全体 3 秒の上限の中で層の規則の知らせを失わないため・#1190 の
@@ -841,7 +839,6 @@ true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # 人が本当の
 ## 11. 素の関数(deff)の理由と検の書き方 — DOEFF110・111・118・203
 
 [removed]
-"about the reason text, we want jev to tell if it's acceptable right?"): 理由の種類の札は書かせない。受け入れるかは Jev が理由の文と source を見て決める。
 
 architecture.hy の `defarchitecture` に、受け入れる理由と受け入れない理由の型を宣言する(名・説明・直し方は Rust に書かない):
 
@@ -869,7 +866,6 @@ architecture.hy の `defarchitecture` に、受け入れる理由と受け入れ
 ## 12. class の中身 — DOEFF119・DOEFF204
 
 [removed]
-handlers/effects.." / "such distinction could be passed to jev?")。名前では判じず、中身の証拠で分ける。母集団は `definitions` の業務の Hy の file。
 
 - **許す(出さない)**: 基底に例外・Enum・Protocol(名の終わりが Error・Exception・Warning・Enum・Flag・Protocol・NamedTuple・TypedDict)か、
   repo の外の module の class(import の束縛の module の先頭の段が repo の根に無い・束縛の無い裸の名は組み込み)を持つ class。
@@ -890,7 +886,6 @@ handlers/effects.." / "such distinction could be passed to jev?")。名前では
 ## 13. JsonValue の使い場所 — DOEFF120
 
 [removed]
-validating it like pydantic does")。JsonValue(素の `dict | list | str | int | float | bool | None` を名で包んだだけの型)に触ってよいのは、
 汎用の解き手と、送受信そのものを行う foundation の module だけ。ほかの module は型のある値だけを見る。例と設定は [rules/DOEFF120.md](rules/DOEFF120.md)。
 
 - **有効になる条件**: architecture.hy が在る(`project_wired` は architecture の有無)。
@@ -1050,7 +1045,6 @@ mixed_concerns = { layer = "core", roles = ["judgment", "program"], warning_min 
 ## 17. 呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`([issue])
 
 [removed]
-call look like f(a,b) instead of (f a b)?"・式の途中の effect は `!` の印を残す案 A "lets try A")。source の Hy は変えない。式の形を
 読むのは `src/project/call_view.rs` の 1 か所で、エディタは Hy を読み直さずに描く。版 2 への欄の追加(古いエディタは読み飛ばす)。
 `--stdin --path <file>` の時だけその file の分を出す(全体の実行では空)。
 
@@ -1086,7 +1080,6 @@ call look like f(a,b) instead of (f a b)?"・式の途中の effect は `!` の�
 ## 18. `:effects` の宣言と推論の食い違い — DOEFF127
 
 [removed]
-what it is violating"。前は拡張(doeff-runner)が defk の見出しの中で宣言と推論を比べ、「宣言なし」「違反 2」の札にまとめて出していた。
 判じる所を linter に移し、違反している所に規則の違反として出す(拡張は描くだけ)。
 
 - **対象**: `:effects` を書いた defk だけ。`:effects` は任意(#800)なので、書いていない defk は対象外(「宣言なし」は違反にしない)。
@@ -1154,7 +1147,7 @@ what it is violating"。前は拡張(doeff-runner)が defk の見出しの中で
 ## 20. 定義の本体の文字 — editor-json の `bodies`([issue])
 
 doeff-runner の読む面(webview)は定義などの実体を HTML のカードで見せ、**文字で出すのは本体だけ**。その本体の行の材料。本体の文字の
-[removed]
+形は operator が承認済みで、表の正本は `docs/design/hy-reading-plane/artifacts/v2/design.md`
 2.2 節と `v3/design.md` 2 節(意味の正本 ADR-DOE-HY-006)。Hy の form の読み方は `src/project/body_view.rs` の 1 か所に置き、面は行と
 字の範囲を描くだけにする(#849 の決定「読み方の写しを持たない」)。呼びの読み(何を呼びと読むか・括弧の要否)は 17 節の
 `call_view.rs` の読み手を式 1 つずつ呼んで使う。版 2 への欄の追加(古いエディタは読み飛ばす)。`--stdin --path <file>` の時だけその

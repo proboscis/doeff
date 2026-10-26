@@ -18,7 +18,7 @@ attribution clean, write access is governed by **account routing**:
   profile. This is enforced system-wide by the profile / git-author boundary
   hooks (company-write-boundary); **orch runs are NOT required for landing
   [removed]
-  orch" rule was a proxy for account routing, which the surrounding system now
+  orch was a proxy for account routing, which the surrounding system now
   enforces directly — the choke point is removed.)
 - **Agents running under an employer-provided AI subscription must never author
   commits or PRs in this repository**, even when technically able to. For such

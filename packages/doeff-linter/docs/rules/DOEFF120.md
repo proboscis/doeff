@@ -17,7 +17,6 @@
 `defwire` の欄に書けば解き手が包み・戻し、形を知る読み手は `(parse T opaque)` で型へ解きます。この規則は OpaqueJson を数えません。
 
 [removed]
-and validating it like pydantic does"。
 
 ## 何を数えるか
 

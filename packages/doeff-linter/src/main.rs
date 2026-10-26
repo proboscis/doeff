@@ -377,7 +377,7 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
         return SemanticMode::AskAll;
     }
     // [removed]
-    // with cached by default" — [issue])。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
+    // 既定で cache を使う・[issue])。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
     // 全体 3 秒の上限の中で層の規則の知らせを失わないため(#1190 の決定 A・戻し方 = 下の Some(_) の枝を AskChanged にする)。
     // cache を読むだけの全体の実行は --semantic-cache-only で名指す。
     if args.semantic_cache_only || (stdin_path.is_some() && !args.semantic && !args.semantic_changed) {

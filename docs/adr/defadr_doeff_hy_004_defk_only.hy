@@ -4,9 +4,8 @@
 ;;; 単調減少させる。defk / deff の契約の辞書には :tags を必須にする。
 ;;;
 ;;; [removed]
-;;;   "we need defadr to disallow all deff. only use defk"
 ;;; [removed]
-;;;   "and we want to forbid the use of defn and only allow defk, and in inevitable case allow deff, to force the use of tag on definitions"
+;;;   — 定義に tag を付ける事を強いるため。
 ;;;   (R4「台帳が空になったら deff の macro を消す」は取り下げ — deff は避けられない所の逃げ道として残る)
 ;;;
 ;;; [removed]
@@ -159,7 +158,7 @@
        :evidence "packages/doeff-hy/src/doeff_hy/macros.hy:447(deff)/ :498(defk)")
      (fact
        [removed]
-       :evidence "gecko 席 会話 04703743(2026-08-21 未明)")
+       [removed]
      (fact
        "実測 2026-08-21: doeff repo の deff は 23 file・227 定義(packages 219 / docs-adr 5 / tests 3)。下流 agent-control-plane の apps は deff 0・defk 3,065 — 収束の終端状態は下流で既に本番実証済み。"
        :evidence "本 ADR の DEFF-ROSTER(走査条件同一の凍結断面)")
@@ -171,7 +170,7 @@
        :evidence "defk 展開 = @do generator(macros.hy:498-)— 直接呼びは Program 値が返るだけで実行されない")
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27・[issue])")
+       :evidence "[issue](2026-09-27 の指示)")
      (fact
        "defk / deff / defp / defhandler の契約の辞書は :tags {:context … :role …} を受け、定義の属性 __doeff_tags__ に残す([issue])。defn は契約の辞書を持たないので :tags を書けず、タグから定義を並べる閲覧(VS Code のパネル)に現れない。"
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
@@ -180,7 +179,7 @@
        :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")
      (fact
        [removed]
-       :evidence "Claude Code の会話(2026-09-27・[issue])— coordinator 経由")
+       :evidence "[issue](2026-09-27 の決定)")
      (fact
        "agora-controllers の本線 d99194b4 で『defk にできない』の註は 682 件あり、推定の内訳は 検の補助 166・組み立て 127・その他 112・process の入口 82・同上 81・外の library の callback 71・framework の入口 43。本当に素の callable が要る場面と、呼び手を Program にすれば済む場面(組み立て = handlers-of・検 = deftest)が区別されていなかった。"
        :evidence "doeff 683dd0e8(wt/hy-reason-kinds・doeff-linter の DOEFF111 / DOEFF203)の commit message")]
@@ -234,7 +233,7 @@
      (law deff-reason-is-accepted-by-jev
        :statement "for_all deff 定義 d: d の理由の註がある ∧ DOEFF203(Jev)が d の理由を architecture.hy の受け入れ可の理由のどれかと判じる。設定・環境の読み・検の補助・組み立ては受け入れ可の理由に入らない"
        :counterexamples
-         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(operator 逐語 no excuse)")
+         [removed]
           (counterexample "deftest の値を組む補助を『; defk にできない: 検の補助』の deff で書く — 補助は defk にして deftest から <- で受ける")
           (counterexample "handler の組を並べる組み立てを deff で書く — 組み立ては defk(handlers-of)で書ける")]
        :enforced-by ["doeff-linter DOEFF111" "doeff-linter DOEFF203"]

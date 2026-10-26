@@ -154,7 +154,7 @@
   :problem
     [(fact
        [removed]
-       :evidence "card [id] の本文と、commit ba5513169 の message(どちらも原文を引く)")
+       :evidence "card [id] の本文と、commit ba5513169 の message")
      (fact
        "2026-10-12 の doeff の main では、sleep の規則は semgrep の doeff-no-sleep-in-tests だけだった。対象は tests/ だけ・severity は WARNING(main への取り込みを止めない)で、本体(src)に規則は無かった。tests/ で asyncio.sleep を含む file は 30 在った。"
        :evidence "card [id] の本文の「今の事実」(2026-10-12 22:4x に main の作業木を git grep で読んだ記録)")
@@ -171,7 +171,7 @@
     [(interpretation
        "program が Delay を yield すれば、1 秒が何であるかは呼び手が置く時間の handler が決める: async_time_handler・sync_time_handler は壁の時計で待ち、sim_time_handler は仮想の時計を進めるだけで待たない。program が time.sleep・asyncio.sleep を呼ぶと、どの handler を置いても壁の時計で待つので、その program の検は実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。")
      (interpretation
-       [removed]
+       "利用者の言う doeff の linter は Rust の doeff-linter(DOEFFnnn)とも読めるが、commit ba5513169 は .semgrep.yaml の規則で入れた。これは親 card [id] の担い手の選びで、利用者が semgrep を名指した記録ではない。commit の hook と日次の走査が新しい所見を止める点は、どちらの道具でも同じ。")
      (interpretation
        [removed]
   :decision

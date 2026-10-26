@@ -11,7 +11,7 @@
 //! ([issue])。
 //!
 //! [removed]
-//! clear violation which are tobe identified by linter" — 環境変数の読みは foundation の handler の中だけ。そこは層の宣言の `:exempt` が外す)。
+//! 環境変数の読みは linter が見つける違反。環境変数の読みは foundation の handler の中だけ。そこは層の宣言の `:exempt` が外す)。
 //! 参照の 1 つは 1 件 — その形で文を分ける:
 //!   * 添字 `os.environ[...]`(読み・書き・del)と method の呼び出し `os.environ.<method>(...)`・`os.getenv(...)` — 前からの文のまま。
 //!   * `in` / `not in` の右辺の `os.environ` — 有無を見る読み。
@@ -672,8 +672,8 @@ del os.environ["B"]
         assert_eq!(check_code(code).len(), 2);
     }
 
+    // os.environ・os.getenv への参照そのもの(foundation の handler の外の環境変数の読みは違反 —
     // [removed]
-    // violation")— 直す前は添字・呼び出しの形だけを見ていて、下の新しい形はどれも 0 件だった。
 
     const ENVIRON_VALUE: &str = "Using os.environ as a value is forbidden. \
          Read environment variables only in a foundation handler; \

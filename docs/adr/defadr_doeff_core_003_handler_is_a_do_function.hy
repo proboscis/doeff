@@ -3,12 +3,12 @@
 ;;; 組む所で TypeError にして断り、印の無い物を中で handler にする fallback を持たない。
 ;;;
 ;;; [removed]
-;;; handler にしていた)、16:26 に「@handler だけで def を書けるようにし、@handler @do は deprecated」と決めた(原文は :problem の fact)。
+;;; handler にしていた)、続けて @handler だけで def を書けるようにし、@handler @do は deprecated にすると決めた(決めた事は :problem の fact)。
 ;;;
 ;;; 書くその場面の助言は doeff の外(defjevrule)が持つ(R6)。doeff の側には、作る所と組む所の断り(R1・R2)・入れ直しの口(R3)・
 ;;; deprecated の形(R4)・semgrep の 4 規則(R5)と、それらを確かめる deftest と pytest を置く。
 ;;;
-;;; 戻し方: 16:26 の決定の前の形(handler は @do 関数だけを受ける)に戻すなら、doeff/program.py の _as_do_function を「@do 関数でなければ
+;;; 戻し方: 後の決定(@handler だけで書く)の前の形(handler は @do 関数だけを受ける)に戻すなら、doeff/program.py の _as_do_function を「@do 関数でなければ
 ;;; 断る」に戻し、.semgrep.yaml の doeff-handler-over-do-is-deprecated を「@do の無い def への @handler を断る」規則に戻して、repo の
 ;;; @handler の def に @do を足し直す。外すのは持ち主の言葉が在る時だけ。
 

@@ -423,7 +423,7 @@ impl ProjectRule {
 
     /// 規則の既定の重大さ(repo の宣言 `rules.<ID>.level` が無い時 — [issue])。None の規則は規則そのものの重さから決める
     /// [removed]
-    /// violations are always CRITICAL to make our doeff code testable")— repo ごとに写すと片方が黙って古くなるので、既定はここ 1 か所。
+    /// 守る事が doeff の code を検で確かめられる形に保つ前提だから)— repo ごとに写すと片方が黙って古くなるので、既定はここ 1 か所。
     /// 新しい規則はどちらかに置く(網羅の match — 決めずに足せない)。
     pub fn default_level(self) -> Option<RuleLevel> {
         match self {

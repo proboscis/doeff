@@ -68,7 +68,7 @@
     "packages/doeff-domain/src/doeff_domain/macros.hy"
     "packages/doeff-docker/src/doeff_docker/compose.hy"
     ;; [removed]
-    ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。逐語 "eventloop sounds good"。
+    ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。
     ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。
     "packages/doeff-events/src/doeff_events/macros.hy"})
 

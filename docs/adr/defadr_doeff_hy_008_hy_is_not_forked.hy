@@ -642,7 +642,7 @@
   :problem
     [(fact
        [removed]
-       :evidence "herdr w3J:pG の会話・[issue] の comment(2026-09-29)")
+       :evidence "[issue] の comment(2026-09-29)")
      (fact
        "フォークの費用(2026-09-29 の実例): doeff と agora-controllers の Hy の固定を同時に上げる必要があり、13:16〜13:45 に agora のマージが全部落ちた。早朝には bytecode の形式の変更で image が組めなくなった(#1003)。"
        :evidence "[issue] 本文")
