@@ -1,0 +1,2 @@
+result: {'verdict': 'request-changes', 'issues': ['unused import']}
+stopped: ['review-src-utils.py-1']

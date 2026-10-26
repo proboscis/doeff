@@ -1,0 +1,37 @@
+
+doeff Traceback (most recent call last):
+
+  review_file()  /tmp/agent-tutorial-tdwwyihl/review.py:50
+    raise ReviewFailed(f"{path}: {reason}")
+    handlers:
+      scripted_agent ↗
+
+ReviewFailed: src/slow.py: timed-out
+
+
+doeff Traceback (most recent call last):
+
+  review_file()  /tmp/agent-tutorial-tdwwyihl/review.py:50
+    raise ReviewFailed(f"{path}: {reason}")
+    handlers:
+      scripted_agent ↗
+
+ReviewFailed: src/odd.py: 'maybe' is not one of ['approve', 'request-changes']
+
+== src/api.py
+returns: {'verdict': 'approve', 'issues': []}
+  handler: launch review-src-api.py-1
+  handler: await review-src-api.py-1: awaiting-input
+  handler: follow-up review-src-api.py-1
+  handler: await review-src-api.py-1: exited
+  handler: stop review-src-api.py-1
+== src/slow.py
+raises: ReviewFailed: src/slow.py: timed-out
+  handler: launch review-src-slow.py-1
+  handler: await review-src-slow.py-1: timed-out
+  handler: stop review-src-slow.py-1
+== src/odd.py
+raises: ReviewFailed: src/odd.py: 'maybe' is not one of ['approve', 'request-changes']
+  handler: launch review-src-odd.py-1
+  handler: await review-src-odd.py-1: exited
+  handler: stop review-src-odd.py-1

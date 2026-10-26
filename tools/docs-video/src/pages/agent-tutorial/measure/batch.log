@@ -1,26 +1,13 @@
-review_batch(files, max_concurrent=2):
-[ 0.0s] Starting: utils.py
-[ 0.0s] Starting: api.py
-[ 2.0s] Finished: api.py exited
-[ 2.0s] Starting: models.py
-[ 4.0s] Finished: utils.py exited
-[ 4.0s] Starting: cli.py
-[ 6.0s] Finished: models.py exited
-[ 7.0s] Finished: cli.py exited
-Completed 4 reviews in 7.0s (the scripted work adds up to 8.0s)
-most at once: 2
-gather order: ['utils.py', 'api.py', 'models.py', 'cli.py']
-sessions killed, in order: ['review-api-py', 'review-utils-py', 'review-models-py', 'review-cli-py']
-review_batch(files, max_concurrent=1):
-[ 0.0s] Starting: utils.py
-[ 4.0s] Finished: utils.py exited
-[ 4.0s] Starting: api.py
-[ 6.0s] Finished: api.py exited
-[ 6.0s] Starting: models.py
-[10.1s] Finished: models.py exited
-[10.1s] Starting: cli.py
-[13.1s] Finished: cli.py exited
-Completed 4 reviews in 13.1s (the scripted work adds up to 8.0s)
-most at once: 1
-gather order: ['utils.py', 'api.py', 'models.py', 'cli.py']
-sessions killed, in order: ['review-utils-py', 'review-api-py', 'review-models-py', 'review-cli-py']
+handler: launch review-a.py-1                     open: a
+handler: await review-a.py-1: exited              open: a
+handler: stop review-a.py-1                       open: -
+handler: launch review-b.py-1                     open: b
+handler: await review-b.py-1: timed-out           open: b
+handler: stop review-b.py-1                       open: -
+handler: launch review-c.py-1                     open: c
+handler: await review-c.py-1: exited              open: c
+handler: stop review-c.py-1                       open: -
+most sessions open at once: 1
+a: Ok({'verdict': 'approve', 'issues': []})
+b: Err(ReviewFailed('b.py: timed-out'))
+c: Ok({'verdict': 'approve', 'issues': []})
