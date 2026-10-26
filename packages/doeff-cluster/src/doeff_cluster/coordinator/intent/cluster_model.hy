@@ -103,6 +103,10 @@
   ;; 枠の file の状態(heartbeat の roomFile — ok・unreadable・malformed — ok でない間 worker は前に名乗った枠のまま・card
   ;; ki-6828eda880ce)。保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str room-file "ok")
+  ;; 今の世代の process の doeff の版(heartbeat の doeffCommit — 起動の script の WORKER_DOEFF_COMMIT・card ki-6e83e03d146d。版を持たない
+  ;; worker は空)。同じ Pod の中で版を入れ替える worker は Pod の env に版を持たないので、版の読み手は Worker の spec.doeffCommit を読む。
+  ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  (setv #^ str doeff-commit "")
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、

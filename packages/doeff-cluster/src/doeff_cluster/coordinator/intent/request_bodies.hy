@@ -196,7 +196,8 @@
    判断は新しい世代の名乗りで前の世代の process の lease を外さない(#3770 は前の世代が終わった時だけ)。名乗らない旧い worker は偽。
    account-token = worker の ServiceAccount の token の状態(ok・stale = 置き直しが遅れた・expired・unreadable — card ki-d31166f84ad0。
    名乗らない worker(Pod の外・旧い worker)は ok)・room-file = 枠の file の状態(ok・unreadable・malformed — ok でない間 worker は
-   前に名乗った枠のまま・card ki-6828eda880ce。file を読まない worker・旧い worker は ok)。"
+   前に名乗った枠のまま・card ki-6828eda880ce。file を読まない worker・旧い worker は ok)・doeff-commit = その process の doeff の版
+   (起動の script の WORKER_DOEFF_COMMIT — card ki-6e83e03d146d。版を持たない worker・旧い worker は空)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (<= 0 task-reserve capacity)]}
   (#^ str name)
@@ -220,7 +221,8 @@
   (setv #^ bool stopping False)
   (setv #^ bool overlaps-elder False)
   (setv #^ str account-token "ok")
-  (setv #^ str room-file "ok"))
+  (setv #^ str room-file "ok")
+  (setv #^ str doeff-commit ""))
 
 
 (defwire ResourceBody

@@ -40,6 +40,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.shared.protocol.supplied_values [SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster.shared.core.launch_rules [worker-commit-env-name])
 (import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [this-process-versions clock-ticks])
@@ -347,10 +348,14 @@
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
         codes (CodeSettings :repo args.repo :cache places.code :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
-        ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
+        ;; この process の doeff の版を持つ環境変数の名(起動の script が自己起動した commit — heartbeat の doeffCommit・card ki-6e83e03d146d)。
+        commit-var (run (worker-commit-env-name))
+        ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先・自分の版)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
-                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR) WORKER-LOG-ENV-NAMES))))
+                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
+                                                     commit-var)
+                                                   WORKER-LOG-ENV-NAMES))))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
@@ -406,6 +411,8 @@
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; 枠の file を heartbeat の前に読み直す(card ki-6828eda880ce — 空 = 読まない)。
                         :room-file (or args.room-file None)
+                        ;; 自分の doeff の版を heartbeat で名乗る(card ki-6e83e03d146d — 無ければ名乗らない)。
+                        :doeff-commit (.get machine-env commit-var "")
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)

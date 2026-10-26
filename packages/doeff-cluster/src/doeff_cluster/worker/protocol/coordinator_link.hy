@@ -122,13 +122,14 @@
    前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)・
    token-file = ServiceAccount の token の file(None = 読まない — 本番の入口が標準の path を渡す。読んだ状態を heartbeat の
    accountToken で名乗る・card ki-d31166f84ad0)・room-file = 枠の file(None = 読まない — 起動の引数の capacity・task-reserve を
-   名乗り続ける。渡すと heartbeat の前に読み直し、自分の名の行の値を名乗る・card ki-6828eda880ce)。"
+   名乗り続ける。渡すと heartbeat の前に読み直し、自分の名の行の値を名乗る・card ki-6828eda880ce)・doeff-commit = この process の doeff の
+   版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit・card ki-6e83e03d146d)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
-                          #^ (| str None) [token-file None] #^ (| str None) [room-file None]]
+                          #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
           self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -148,7 +149,7 @@
           self.last-ok-ms started-ms self.last-ok-mono-ms started-mono-ms
           ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
           self.last-jobs #() self.last-tasks #() self.last-warm #() self.warm-keys {}
-          self.boot boot self.boot-at boot-at self.overlaps-elder overlaps-elder
+          self.boot boot self.boot-at boot-at self.overlaps-elder overlaps-elder self.doeff-commit doeff-commit
           ;; 切り離した task の id → 置かれた時の返事の行。状態の報告に写して添え、状態を失った coordinator が走っている task を引き取れる
           ;; ようにする(cluster_policy.adopt-running-detached・2026-09-27)。
           self.task-echo {}
@@ -455,7 +456,7 @@
   (<- base dict (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
                                 :capacity state.capacity :task-reserve state.task-reserve :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
-                                :stopping stopping :overlaps-elder state.overlaps-elder))
+                                :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}

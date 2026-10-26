@@ -56,6 +56,13 @@
   (next (gfor f COORDINATOR-LAUNCH-FIELDS :if (= f.field "doeff_commit") f.env-name)))
 
 
+(defk worker-commit-env-name []
+  {:pre [] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker の process が走っている doeff の版(boot.sh が自己起動の root を選んだ版)を、その process が起動の時に読む環境変数の名を表から
+   引くため — worker は heartbeat の doeffCommit にこの版を載せる(card ki-6e83e03d146d)。名を 2 つ目に書かない。"
+  (next (gfor f WORKER-LAUNCH-FIELDS :if (= f.field "doeff_commit") f.env-name)))
+
+
 (defclass LaunchEnvMissing [ValueError]
   "行から値を読む時に、省けない行(optional でない欄の名)が無い。黙って既定の値で埋めない。")
 
