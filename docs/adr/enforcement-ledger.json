@@ -530,6 +530,7 @@
     "ADR-DOE-RECORDS-002 every-records-assembly-answers-compute",
     "ADR-DOE-RECORDS-002 every-wire-answer-has-one-spelling-place",
     "ADR-DOE-RECORDS-002 the-compute-pool-wait-is-on-metrics",
+    "ADR-DOE-RECORDS-002 the-maintenance-never-holds-the-serving-thread",
     "ADR-DOE-RECORDS-002 the-scheduler-thread-does-no-work-sized-by-stored-rows",
     "ADR-DOE-RUNNER-001 reading-plane-is-read-only",
     "ADR-DOE-RUNNER-001 reading-plane-labels-come-from-one-table",
