@@ -181,10 +181,13 @@
 
 (defk worker-drain-view-json [#^ WorkerDrainView view]
   {:pre [(: view WorkerDrainView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "worker 1 つの画面 → JSON の形(#2595 の前に drain_policy.worker-view・superseded-worker-view が組んでいた形と同じ)。"
+  "worker 1 つの画面 → JSON の形(#2595 の前に drain_policy.worker-view・superseded-worker-view が組んでいた形と同じ)。今の世代の doeff の
+   版 doeffCommit と起動の刻 bootAt は、名乗った worker だけに載せる(card ki-6e83e03d146d — 同じ Pod の中の版の入れ替えを読む)。"
   (val w view.info)
   (| {"name" w.name "alive" view.alive "silentMs" view.silent-ms "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive)
       "derived" (list w.derived) "node" w.node "draining" (is-not view.drain None)}
+     (if w.doeff-commit {"doeffCommit" w.doeff-commit} {})
+     (if (is w.boot-at None) {} {"bootAt" w.boot-at})
      (if view.superseded {"superseded" True} {})
      {"drain" (if (is view.drain None) None (! (drain-progress-json view.drain))) "ready" view.ready}))
 

@@ -94,6 +94,7 @@ class LocalMachine:
     revision: str = ''
     runtime_env: RuntimeEnv | None = None
     git_sources: tuple[GitSource, ...] = ...
+    worker_env: tuple[EnvEntry, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class MachineProcess:

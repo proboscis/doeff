@@ -1880,6 +1880,7 @@
                          :env-capacity body.env-capacity
                          :account-token body.account-token
                          :room-file body.room-file
+                         :doeff-commit body.doeff-commit
                          :retired (retired-after previous boot)
                          ;; 同じ世代が起動時刻を名乗らなくなっても(版を戻した worker)、知っている起動時刻は捨てない。
                          :boot-at (if (and (is boot-at None) (= order GenerationOrder.CURRENT) (is-not previous None)

@@ -97,7 +97,9 @@
    worker は配備と同じ鍵の表(WORKER_REPOS)の道でその repo を取り込み、root を用意して job を動かす。git-sources = 宣言の remote の url を
    手元の checkout から読ませる組(GitSource の列 — 空 = 宣言の url をそのまま読む): 宣言は配備と同じ remote の綴りのまま置き(送り手の
    宣言の組み立てを手元用に分けない)、この機体の worker の git にだけ url.<path>.insteadOf を環境変数で渡す — 手元の 1 台の worker は
-   配備の鍵を持たないので、remote へは取りに行かない。"
+   配備の鍵を持たないので、remote へは取りに行かない。worker-env = どの worker の boot.sh にも足す環境変数(EnvEntry の列 — 空 = 足さない):
+   配備の機体の dir が足す値(版の file と keeper — WORKER_VERSION_FILE・WORKER_DOEFF_COMMIT ほか・card ki-6e83e03d146d)を、同じ名で
+   渡す。"
   (#^ str work-dir)
   (#^ int port)
   (#^ (get tuple #(SimWorker ...)) workers)
@@ -106,7 +108,8 @@
   (setv #^ str code-repo "")
   (setv #^ str revision "")
   (setv #^ (| RuntimeEnv None) runtime-env None)
-  (setv #^ (get tuple #(GitSource ...)) git-sources #()))
+  (setv #^ (get tuple #(GitSource ...)) git-sources #())
+  (setv #^ (get tuple #(EnvEntry ...)) worker-env #()))
 
 
 (defrecord MachineProcess
@@ -185,7 +188,7 @@
   (<- repos str (repo-key-table machine))
   (<- sources (get tuple #(EnvEntry ...)) (git-source-env machine.git-sources))
   (<- boot (get tuple #(EnvEntry ...)) (worker-boot-env machine worker url home repos))
-  (+ boot sources))
+  (+ boot sources machine.worker-env))
 
 
 ;; worker の鍵の表の file の置き場(worker の dir からの相対 — 配備の ConfigMap worker-env の dir の mount の WORKER_REPOS の file に当たる)。
