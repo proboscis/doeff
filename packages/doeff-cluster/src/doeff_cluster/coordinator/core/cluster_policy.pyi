@@ -196,7 +196,10 @@ def program_versions(state: ClusterState, sha: str) -> tuple:
 def needs_refusal(needs: dict | list | tuple | str | int | float | bool | None, requires: dict | list | tuple | str | int | float | bool | None) -> str | None:
     ...
 
-def eligible(job: ClusterJob, worker: WorkerInfo) -> bool:
+def effective_needs(state: ClusterState, job: ClusterJob) -> tuple:
+    ...
+
+def eligible(state: ClusterState, job: ClusterJob, worker: WorkerInfo) -> bool:
     ...
 LIVE_PHASES: set[str]
 
@@ -309,7 +312,7 @@ def versions_note(task: TaskRecord, state: ClusterState, now: int, timing: Clust
 def unplaced_kind(now: int, state: ClusterState, job: ClusterJob, timing: ClusterTiming) -> UnplacedKind:
     ...
 
-def unplaced_text(kind: UnplacedKind, job: ClusterJob) -> str:
+def unplaced_text(kind: UnplacedKind, job: ClusterJob, needs: tuple) -> str:
     ...
 
 def unplaced_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:
