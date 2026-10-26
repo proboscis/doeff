@@ -495,7 +495,7 @@ const ApiScene: React.FC = () => {
 const HANDLER_LINES: Lines = [
   [0, 'The same program, run twice, under different cache handlers.'],
   [5, 'in_memory_cache_handler starts empty in every run: both runs do the work.'],
-  [12, 'sqlite_cache_handler keeps the cache in a file: run 2 is a hit, in 2.3 ms.'],
+  [12, 'sqlite_cache_handler keeps the cache in a file: run 2 is a hit, in 1.8 ms.'],
   [20, 'No cache handler: CacheGet is unhandled. The handler picks the cache.'],
 ];
 const HANDLER = f(28);
@@ -511,10 +511,10 @@ const ANSWER = [
 ];
 // What each run printed in measure/handlers.py: [how, ms], and how many times the work ran.
 const LANES = [
-  {name: 'in_memory_cache_handler()', color: TEST, runs: [['miss', 426.8], ['miss', 403.7]] as [string, number][], work: 'the work ran 2 times', start: 5.6},
-  {name: "sqlite_cache_handler(db)", color: PROD, runs: [['miss', 499.7], ['hit', 2.3]] as [string, number][], work: 'the work ran 1 time', start: 12.6},
+  {name: 'in_memory_cache_handler()', color: TEST, runs: [['miss', 412.0], ['miss', 402.2]] as [string, number][], work: 'the work ran 2 times', start: 5.6},
+  {name: "sqlite_cache_handler(db)", color: PROD, runs: [['miss', 404.0], ['hit', 1.8]] as [string, number][], work: 'the work ran 1 time', start: 12.6},
 ];
-const RUN_MAX = 499.7;
+const RUN_MAX = 412.0;
 const RUN_W = 300;
 
 const HandlerScene: React.FC = () => {
@@ -556,7 +556,7 @@ const HandlerScene: React.FC = () => {
                   </Label>
                   <div style={{position: 'absolute', left: x, top: y + 46, width, height: 26, borderRadius: 7, background: color, boxShadow: `0 0 12px ${color}88`, opacity: fadeAt(frame, grow)}} />
                   <Label x={x + Math.max(4, (ms / RUN_MAX) * RUN_W) + 12} y={y + 47} size={18} color={TEXT} bold opacity={fadeAt(frame, grow + (ms > 100 ? 1.4 : 0.1))}>
-                    {ms} ms
+                    {ms.toFixed(1)} ms
                   </Label>
                 </React.Fragment>
               );
