@@ -29,7 +29,8 @@ uv run --no-sync python publications/zenn-use-cases-v0/reviews/types-check.py --
 | 1 `app.py`と2 bash | bashの枠の命令をそのまま走らせた(`uv run --with`でPyPIのdoeff 0.6.0・0.7.0とpyright 1.1.414を一時の環境に入れる) | 0.6.0は4 errors(`task_id`と`value`がUnknown)・0.7.0は0 errors。verifytypesは0.6.0が381個のうち84個・78%、0.7.0が406個のうち5個・98.8% |
 | 1 `app.py`(今のmain) | 開発の環境のpyright 1.1.411のstrict | 0 errors |
 | 3 tinylib | 枠を一時のpackageにして新しい環境に入れ、verifytypesにかけた。3つの直しを外した形も作った | 直した後は7個のうち0個・100%。直す前は8個のうち5個・37.5%(本文の数) |
-| 4 表のテスト | 一時dirに`tests/test_public_types.py`として置き、今のmainの環境とPyPIの0.7.0の環境でpytest | どちらも2 passed。表から`doeff.cli.demo.live_world`の行を抜くと`test_no_new_gap_opens`だけ、`"doeff.run"`を足すと`test_closed_gaps_leave_the_table`だけが落ちた |
+| 4 表のテスト(0.7.0) | 一時dirに`tests/test_public_types.py`として置き、記事の表のままPyPIの0.7.0の環境でpytest(表は0.7.0の測りなので、値を比べるのはこの環境だけ) | 2 passed。表から`doeff.cli.demo.live_world`の行を抜くと`test_no_new_gap_opens`だけ、`"doeff.run"`を足すと`test_closed_gaps_leave_the_table`だけが落ちた |
+| 4 表のテスト(今のmain・PyPIの最新) | 表だけをその環境で`pyright --verifytypes`が数えた穴の組に替えてpytest。壊し方の名も実測から選ぶ(2026-10-27・card ki-9ec4b21dfb50) | 0.8.0とmainで、実測の穴5個の表で2 passed。`doeff.cli.demo.budget`を抜くと`test_no_new_gap_opens`だけ、`doeff.AcquireSemaphore`を足すと`test_closed_gaps_leave_the_table`だけが落ちた |
 | 5 型の見本 | pyrightのstrictとmypy 2.4.0の`--strict`に、今のmainの環境とPyPIの0.7.0の環境でかけた | どちらの環境でも、両方の道具が`# expect-error`の21行目だけに誤りを出した |
 | 6 道具の出力 | `tools/verify_type_probes.py --python 3.12`(核の4個をこのcheckoutから組んで新しいvenvへ) | 枠の行がすべて出力にあった(見本25個・印の行32・誤り73・開いている抜けは6の2行・READMEの例 doeff 7個とdoeff-vm 1個は誤り0) |
 

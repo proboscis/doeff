@@ -14,8 +14,10 @@
    pyrightのstrictにかけ、誤りが0である事を確かめる。0.6.0の型の分からない名を訳ごとに数え、図の数と比べる。
 2. tinylibの枠: 直した後の形を一時dirのpackageにしてverifytypesにかけ、7個・100%を確かめる。3つの直しを外した形は、
    本文の書くとおり8個のうち5個が分からず37.5%になる。
-3. 表のテストの枠: 今のdoeffの環境と、PyPIの0.7.0の環境でpytestを走らせ、2つとも通る事を確かめる。表から1行抜くと
-   1つ目のテストが、表に無い名を足すと2つ目のテストが落ちる事も確かめる。
+3. 表のテストの枠: 表(KNOWN_GAPS)は0.7.0の測りなので、記事の枠のままのpytestはPyPIの0.7.0の環境でだけ走らせ、
+   2つとも通る事と、表から1行抜くと1つ目のテストが、型の分かる名を足すと2つ目のテストが落ちる事を確かめる。
+   今のdoeffの環境では、表だけをその環境で測った穴の組に替えて走らせ、通る事と、実測の組から1つ抜く・実測で型の
+   分かる名を1つ足すと、それぞれ片方のテストだけが落ちる事を確かめる(新しい版が穴の組を変えても赤にしない)。
 4. 型の見本の枠: pyrightのstrictとmypy --strictにかけ、誤りがexpect-errorの行にだけ、両方の道具から出る事を確かめる。
    今のdoeffの環境と、PyPIの0.7.0の環境の両方で走らせる。
 5. 道具の出力の枠: --probesを付けた時だけ、tools/verify_type_probes.py --python 3.12を走らせ(Rustの組み立てを含めて
@@ -136,10 +138,11 @@ module-root = ""
 
 @dataclass(frozen=True)
 class Completeness:
-    """verifytypesが数えた、公開の名の数と、型の分からない名と、点。"""
+    """verifytypesが数えた、公開の名の数と、型の分からない名と、型の分かる名と、点。"""
 
     exported: int  # 公開の名の数。
     unknown: frozenset[str]  # 型が分からないか、道具ごとに推す型が違いうる名。
+    known: frozenset[str]  # 型の分かる公開の名。
     score: float  # type completeness score(0〜1)。
 
 
@@ -179,7 +182,8 @@ def completeness(output: str) -> Completeness:  # verifytypes --outputjsonの答
     unknown = frozenset(
         symbol["name"] for symbol in symbols if not symbol["isTypeKnown"]
     )  # 型の分からない名。
-    return Completeness(len(symbols), unknown, report["completenessScore"])
+    known = frozenset(symbol["name"] for symbol in symbols) - unknown  # 型の分かる名。
+    return Completeness(len(symbols), unknown, known, report["completenessScore"])
 
 
 def category(name: str) -> str:  # 0.6.0の型の分からない名を、図2の訳に分ける。
@@ -303,9 +307,27 @@ def check_tinylib(after: str, workdir: Path) -> None:  # 直す前と後のtinyl
     assert "37.5%" in ARTICLE.read_text()
 
 
-def check_gap_table(
-    test: str, workdir: Path
-) -> None:  # 表のテストを、2つの環境と2つの壊し方で走らせる。
+def measured_gap_table(test: str, gaps: frozenset[str]) -> str:
+    """表のテストの枠の表(KNOWN_GAPS)だけを、渡した名を穴とする表に替える。関数と2つのテストは枠のまま。"""
+    rows = "".join(f'    "{name}": "実測の穴",\n' for name in sorted(gaps))  # 名ごとの1行。
+    table, count = re.subn(
+        r"^KNOWN_GAPS = \{.*?^\}\n",
+        lambda _: "KNOWN_GAPS = {\n" + rows + "}\n",
+        test,
+        flags=re.S | re.M,
+    )
+    assert count == 1, "表のテストの枠に、KNOWN_GAPSの表が1つでない"
+    return table
+
+
+def check_gap_table(test: str, workdir: Path) -> None:
+    """表のテストを、記事の版の0.7.0では記事の表のまま、今のdoeffでは表を実測の穴に替えて走らせる。
+
+    記事の表(KNOWN_GAPS)は0.7.0の測りなので、値を比べるのは0.7.0の環境だけにする。今のdoeff(PyPIの最新の版・
+    リポジトリのmain)は版ごとに穴の組が変わりうるので、その環境では枠の関数と2つのテストの仕組みを確かめる:
+    その環境で測った穴の組の表で通り、1つ抜くと1つ目のテストが、型の分かる名を足すと2つ目のテストが落ちる。
+    """
+
     def pytest(
         code: str, name: str, environment: tuple[str, ...]
     ) -> str:  # 一時dirにテストを置いて走らせる。
@@ -317,27 +339,59 @@ def check_gap_table(
             place,
         )
 
-    for name, environment in (
-        (CURRENT_NAME, CURRENT),
-        ("PyPIの0.7.0", (*PYPI_070, "--with", "pytest")),
-    ):
-        output = pytest(test, name, environment)
-        assert "2 passed" in output, output
-        ok(f"表のテストが{name}の環境で通る(2 passed)")
+    def only_fails(
+        output: str, failing: str
+    ) -> None:  # 2つのテストのうち、名指した1つだけが落ちた。
+        assert "1 failed, 1 passed" in output, output
+        assert f"FAILED tests/test_public_types.py::{failing}" in output, output
+
+    # 記事の版の0.7.0: 記事の表のまま通り、記事の名で壊すと片方ずつ落ちる。
+    pypi_070 = (*PYPI_070, "--with", "pytest")  # 記事の版の環境。
+    output = pytest(test, "PyPIの0.7.0", pypi_070)
+    assert "2 passed" in output, output
+    ok("表のテストが、記事の表のままPyPIの0.7.0の環境で通る(2 passed)")
     missing_line = next(line for line in test.splitlines() if '"doeff.cli.demo.live_world"' in line)
     output = pytest(
-        test.replace(missing_line + "\n", ""), "表から1行抜く", CURRENT
+        test.replace(missing_line + "\n", ""), "0.7.0で表から1行抜く", pypi_070
     )  # 表に無い穴が開いた時。
-    assert "1 failed, 1 passed" in output, output
-    assert "FAILED tests/test_public_types.py::test_no_new_gap_opens" in output, output
-    ok("表から1行抜くと、test_no_new_gap_opensだけが落ちる")
+    only_fails(output, "test_no_new_gap_opens")
+    ok("0.7.0で表から1行抜くと、test_no_new_gap_opensだけが落ちる")
     extra = test.replace(
         '    "doeff.DoExpr": NODE,', '    "doeff.run": NODE,\n    "doeff.DoExpr": NODE,'
     )
-    output = pytest(extra, "表に塞がった名を足す", CURRENT)  # 表の穴が塞がった時。
-    assert "1 failed, 1 passed" in output, output
-    assert "FAILED tests/test_public_types.py::test_closed_gaps_leave_the_table" in output, output
-    ok("型の分かる名を表に足すと、test_closed_gaps_leave_the_tableだけが落ちる")
+    assert extra != test, "表のテストの枠に、doeff.DoExprの行が無い"
+    output = pytest(extra, "0.7.0で表に塞がった名を足す", pypi_070)  # 表の穴が塞がった時。
+    only_fails(output, "test_closed_gaps_leave_the_table")
+    ok("0.7.0で型の分かる名を表に足すと、test_closed_gaps_leave_the_tableだけが落ちる")
+
+    # 今のdoeff: 表をその環境で測った穴に替え、仕組みだけを確かめる(0.7.0の名を使わない)。
+    place = workdir / f"{CURRENT_NAME}の実測"  # 枠のunknown_namesと同じく、空の設定のdirで数える。
+    place.mkdir()
+    (place / "pyrightconfig.json").write_text("{}")
+    verify = [*CURRENT, "python", "-m", "pyright", "--verifytypes", "doeff", "--outputjson"]
+    measured = completeness(run(verify, place, stdout_only=True))
+    assert measured.known, f"{CURRENT_NAME}の環境に、型の分かる公開の名が無い"
+    output = pytest(measured_gap_table(test, measured.unknown), CURRENT_NAME, CURRENT)
+    assert "2 passed" in output, output
+    ok(
+        f"表を{CURRENT_NAME}の実測の穴{len(measured.unknown)}個に替えると、表のテストが通る(2 passed)"
+    )
+    if measured.unknown:
+        dropped = min(measured.unknown)  # 実測の穴から抜く名。
+        table = measured_gap_table(test, measured.unknown - {dropped})
+        output = pytest(table, f"{CURRENT_NAME}で1つ抜く", CURRENT)  # 表に無い穴が開いた時。
+        only_fails(output, "test_no_new_gap_opens")
+        ok(f"{CURRENT_NAME}で実測の穴から{dropped}を抜くと、test_no_new_gap_opensだけが落ちる")
+    else:
+        # 穴の無い版では表から抜く名が無い。表に無い穴で落ちる事は、上の0.7.0の環境で確かめた。
+        print(f"SKIP: {CURRENT_NAME}には型の穴が無く、表から抜く名が無い(0.7.0の環境で確かめた)")
+    closed = min(measured.known)  # 実測で型の分かる公開の名。
+    table = measured_gap_table(test, measured.unknown | {closed})
+    output = pytest(table, f"{CURRENT_NAME}で塞がった名を足す", CURRENT)  # 表の穴が塞がった時。
+    only_fails(output, "test_closed_gaps_leave_the_table")
+    ok(
+        f"{CURRENT_NAME}で型の分かる{closed}を表に足すと、test_closed_gaps_leave_the_tableだけが落ちる"
+    )
 
 
 def error_lines_of_pyright(output: str) -> set[int]:  # pyrightの答えから、誤りの行(1から)を集める。
