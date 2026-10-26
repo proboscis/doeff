@@ -20,7 +20,8 @@
 (import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
 (import doeff_cluster.worker.protocol.tree_files [tree-files])
 (import doeff_cluster.worker.core.bake_plan [BakeItem TreeArgs bake-order tree-arguments])
-(import doeff_cluster.worker.entry.code_prepare [BAKE-PLAN BakeSources bake-trees plan pool-tool-baker prepare-trees])
+(import doeff_cluster.worker.entry.code_prepare [BAKE-PLAN BakeSources bake-trees closure-reads plan pool-tool-baker prepare-trees
+                                               progress-marks])
 
 
 (defk plant [root files]
@@ -51,7 +52,7 @@
   (assert (isinstance shaped tuple) shaped)
   (<- outcomes tuple
       (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler subprocess-handler tree-files
-                      pool-tool-baker]
+                      pool-tool-baker closure-reads (progress-marks None)]
         (prepare-all shaped 2 #("app.main"))))
   (assert (= (tuple (gfor t outcomes #(t.named t.rebuilt t.reused t.failed t.problem))) #(#((str app) 2 0 0 None) #((str lib) 2 0 0 None)))
           outcomes)
@@ -95,7 +96,8 @@
   (val log (BakeLog))
   (<- shaped (| tuple str) (plan.tree-arguments #((str one) (str two)) #("." ".")))
   (assert (isinstance shaped tuple) shaped)
-  (<- (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler tree-files (recorded-bakes log)]
+  (<- (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler tree-files (recorded-bakes log)
+                     closure-reads (progress-marks None)]
         (prepare-all shaped 2 #())))
   (assert (= (tuple (gfor i log.items (get i 1))) #("p/big.py" "q/mid.py" "p/a_small.py" "p/__init__.py")) log.items))
 

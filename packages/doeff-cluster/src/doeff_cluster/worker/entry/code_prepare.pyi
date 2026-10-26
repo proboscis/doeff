@@ -3,6 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
+from concurrent.futures import ThreadPoolExecutor as ThreadPoolExecutor
 from dataclasses import dataclass as dataclass
 from pathlib import Path as Path
 from types import ModuleType as ModuleType
@@ -53,10 +54,6 @@ class BakeSources(EffectBase):
     code_store: str | None
 
 @dataclass(frozen=True)
-class ReadStoreEntry(EffectBase):
-    path: str
-
-@dataclass(frozen=True)
 class WriteStoreEntry(EffectBase):
     path: str
     data: bytes
@@ -66,10 +63,25 @@ class DiscardStoreEntry(EffectBase):
     path: str
     problem: str
 
+@dataclass(frozen=True)
+class ReadSources(EffectBase):
+    paths: tuple
+
+@dataclass(frozen=True)
+class ReadStoreEntries(EffectBase):
+    paths: tuple
+
+@dataclass(frozen=True)
+class MarkProgress(EffectBase):
+    ...
+
 def bake_trees(shaped: tuple) -> _Program[tuple, object]:
     ...
 
-def stored_imports(code_store: str | None, rel: str, text: str, hy_version: str) -> _Program[tuple | None, object]:
+def imports_entry_path(code_store: str | None, rel: str, text: str, hy_version: str) -> _Program[str | None, object]:
+    ...
+
+def stored_imports(path: str | None, data: bytes | None) -> _Program[tuple | None, object]:
     ...
 
 def store_imports(code_store: str | None, rel: str, text: str, hy_version: str, imports: tuple) -> _Program[str | None, object]:
@@ -82,6 +94,20 @@ def prepare_trees(trees: tuple, revision: str, jobs: int, entries: tuple, code_s
     ...
 pool_tool_baker: _Handler
 store_entries: _Handler
+READ_THREADS: int
+
+def read_source(path: str) -> str | None:
+    ...
+
+def read_entry_or_none(path: str | None) -> bytes | None:
+    ...
+
+def read_all(reader: Incomplete, paths: tuple) -> _Program[tuple, object]:
+    ...
+closure_reads: _Handler
+
+def progress_marks(path: Incomplete) -> _Handler:
+    ...
 
 def main() -> None:
     ...
