@@ -173,9 +173,10 @@
   ;; 担い手の行の detail(入れ替えの途中・新の入口を読み込めない理由 — worker_policy.statuses)を添える: Service の status.readyReason
   ;; から「なぜ新が起きないか」が読める(2026-09-25)。
   (setv note (if row.detail (+ ":" row.detail) ""))
-  ;; 版の違いは、指紋も違う時だけ断る: 中身の鍵の在る宣言(card ki-81bf84ac6590)は、読む code の変わらない版へ宣言し直されても process を
-  ;; 起こし直さないので、版で起こした process が今の宣言の指紋で動いている。鍵の無い宣言の指紋は版を含むので、指紋が合えば版も合う。
-  (when (and (!= row.running-revision job.spec.revision) (not (spec-hash-matches job.spec row.spec-hash)))
+  ;; 中身の鍵の在る宣言(card ki-81bf84ac6590)は、版の違いを指紋も違う時だけ断る: 読む code の変わらない版へ宣言し直されても process を
+  ;; 起こし直さないので、前の版で起こした process が今の宣言の指紋で動いている。鍵の無い宣言は今どおり版の違いで断る。
+  (when (and (!= row.running-revision job.spec.revision)
+             (or (is job.spec.content None) (not (spec-hash-matches job.spec row.spec-hash))))
     (return (no "NotReady" NotReadyKind.REVISION-MISMATCH
                 (.format "版が違う(動いている版 {}・宣言 {}){}" row.running-revision job.spec.revision note))))
   (setv want (spec-hash job.spec))

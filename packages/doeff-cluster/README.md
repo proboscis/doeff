@@ -208,6 +208,13 @@ worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WOR
 - `system-declaration` が宣言の行と詰めた Program を組みます。行は `{name revision needs replicas run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
   同一性(入れ替えの要否を決める指紋)は、呼んだ関数の `module:qualname` と引数の正規の JSON・版・environ から作り、詰めた中身は
   比べません(cloudpickle の出力は同じ Program でも揺れるため)。
+- `system-declaration` の `:contents {job の名 中身の鍵}` を渡すと、行が `content` を持ちます(card ki-81bf84ac6590)。中身の鍵は送り手が
+  「その job の process が読む code の全部(実行環境のどの repo の、どの file の中身か)」から計った文字列(英数字と `. _ : -` の 1〜128 字)で、
+  鍵の在る job の指紋と worker の比べは、版と実行環境の repo の commit の代わりに鍵を読みます(lock の sha256・Python・import の根などの
+  実行環境のほかの欄は今どおり材料)。読む code の変わらない版で宣言し直しても、worker は process を起こし直さず、その版の木・root も
+  用意せず、動いている process を宣言の版の物として報告します(`status.version.running`)。鍵が読む code を覆わないと、変わった code が
+  黙って当たらないので、覆う範囲は送り手の約束です。鍵の欄を読まない古い worker は今どおり版で判じ、coordinator は版の指紋の報告も
+  今の宣言の process と数えます(配備の順の間も Ready になる)。検 = `tests/test_content_key_redeclare.hy`。
 - `apply-declaration` は、詰めた Program を `PUT /programs/<sha>` で先に置き、Service ごとに無ければ `POST`・在れば読んだ
   `resourceVersion` を付けて `PUT` します(所有者は今の値を保ち、台数は行の値 = job の `:replicas` を書きます)。
 
