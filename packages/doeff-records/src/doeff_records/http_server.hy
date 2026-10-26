@@ -34,7 +34,11 @@
 ;;;   - GET /readyz(#1479)は置き場を問う: 用意の前 = 503・置き場に届くかの判断 store-reach(serving.readiness の問いを READINESS-SECONDS の
 ;;;     上限で撃つ)が届く = 200・届かないか上限の内に答えない = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の
 ;;;     不調で再起動を繰り返さない)
-;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む
+;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む。手入れの Program は
+;;;     別の thread の VM で回す(doeff の run-apart — card ki-3b942d3af8da・ADR-DOE-RECORDS-002 R7): 手入れの計算(使い手が渡す送りの
+;;;     関数の照らしを含む)は要求と同じ scheduler の thread を占めず、手入れが出す effect だけを task の handler が答える。前は要求と同じ
+;;;     thread の task で、送りの関数が送り先から読み戻した 19 万行を 1 行ずつ照らす計算に、起き直しのたびに 4 分ずつ 2 回 thread を
+;;;     占め、2 本の口の要求が全部その後ろで待った(2026-10-27 01:26〜01:44・02:08〜02:16 JST)
 ;;;   - 計器(#2709): 要求の task は答えを送った直後に、要求の種(wire の request-kind)と実際に送った答えの status の counter
 ;;;     records_requests_<種>_<status> を doeff の計器の effect CountMetric で 1 つ数える(本文の断りの 400・落ちた時の 500・送りが落ちて
 ;;;     送り直した 500 も同じ 1 か所 — 答えを受け取った呼び手が次に読む /metrics には、その答えがもう入っている)。答え手は serving.meter(None = doeff の
@@ -86,6 +90,7 @@
 (import doeff_core_effects.handlers [await-handler state])
 (import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
 (import doeff_core_effects.compute_effects [ComputeLoad ReadComputeLoad])
+(import doeff_core_effects.apart_call [run-apart])
 (import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError
                                       Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
@@ -883,7 +888,9 @@
     (StorePrepared)
       (do (when (is-not serving.maintenance None)
             (<- handler-for Callable (PreparedHandlers))
-            (<- (Spawn (maintain handler-for serving.maintenance) :daemon True)))
+            ;; 手入れの係は別の thread の VM で回す(run-apart — 頭の註の手入れ・ADR-DOE-RECORDS-002 R7): 送りの関数の計算が長くても、
+            ;; 要求の task はその後ろに並ばない。手入れが出す effect(置き場・SQL・計器・時計)はこの task の handler が答える。
+            (<- (Spawn (run-apart (maintain handler-for serving.maintenance)) :daemon True)))
           (<- (Wait serving-task)))
     (ServingEnded) (do (<- (Cancel preparing))
                        ;; 取り消した用意の終わりを待つ(走りかけの仕事を置き去りにして root が返らない — #501)。
@@ -901,7 +908,8 @@
    request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
    meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)/
    served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)/ callers = 一覧の読みを呼び手ごとに数える
-   宣言の呼び手の名(RecordsServing の callers へそのまま渡す)。"
+   宣言の呼び手の名(RecordsServing の callers へそのまま渡す)/ maintenance = 手入れの周期(RecordsServing の maintenance へそのまま
+   渡す・None = 手入れを立てない — 手入れが要求の答えを待たせない事を殻の上で確かめる検が渡す)。"
   (#^ RecordsSchema schema)
   (#^ Callable handler-for)
   (setv #^ tuple request-handlers #())
@@ -909,16 +917,18 @@
   (setv #^ int port 0)
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| ServedBuild None) served None)
-  (setv #^ tuple callers #()))
+  (setv #^ tuple callers #())
+  (setv #^ (| MaintenancePlan None) maintenance None))
 
 
 (defk records-server-config [schema handler-for [request-handlers #()] [host "127.0.0.1"] [port 0] [meter None] [served None]
-                             [callers #()]]
+                             [callers #()] [maintenance None]]
   {:pre [(: schema RecordsSchema) (: handler-for Callable) (: request-handlers tuple) (: host str) (: port int)
-         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None)) (: callers tuple)] :post [(: % RecordsServerConfig)]}
+         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None)) (: callers tuple)
+         (: maintenance (| MaintenancePlan None))] :post [(: % RecordsServerConfig)]}
   "名簿を取らずに RecordsServerConfig を組む(引数を並べて組む・#3008)。
    引数は RecordsServerConfig の欄と同じ順。"
-  (RecordsServerConfig schema handler-for request-handlers host port meter served callers))
+  (RecordsServerConfig schema handler-for request-handlers host port meter served callers maintenance))
 
 
 (defclass [(dataclass :frozen True)] RunningServer []
@@ -974,7 +984,7 @@
         compute-pool (ThreadPoolExecutor :max-workers SHELL-COMPUTE-WORKERS :thread-name-prefix "doeff-records-compute"))
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
-                                :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
+                                :max-bytes REQUEST-MAX-BYTES :maintenance config.maintenance :stop-poll-seconds SHELL-STOP-POLL-SECONDS
                                 :drain-seconds 0.0 :meter config.meter :served config.served :callers (tuple config.callers)
                                 :compute-workers SHELL-COMPUTE-WORKERS))
   (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server (thread-pool-compute-handler compute-pool)
