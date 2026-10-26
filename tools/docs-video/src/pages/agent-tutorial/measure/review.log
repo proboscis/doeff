@@ -1,0 +1,6 @@
+review_file('src/utils.py') is Call
+session id: review-src-utils.py-1
+handler: launch review-src-utils.py-1
+handler: await review-src-utils.py-1: exited
+handler: stop review-src-utils.py-1
+result: {'verdict': 'approve', 'issues': []}
