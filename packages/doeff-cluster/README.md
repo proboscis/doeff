@@ -474,7 +474,7 @@ Pod を作り直すのは、`deploy/k8s` の宣言(雛形の型・機体の資�
 置かず、ConfigMap `worker-version`(`deploy/k8s/workers/worker-version.env` — 1 行 1 worker)の file から読みます。版の行を変えると、
 Pod を作り直さずに、その worker の keeper(`deploy/boot.sh` の頭の註の「版の file と keeper」)が同じ container の中に新しい版の
 worker の process を起こし、coordinator に名乗れた後に前の版の process を drain してから止めます。前の版の process は自分の task と退いた
-handoff の process を終わりまで回してから退くので、版上げで走っている仕事は切れません(card ki-6e83e03d146d)。今の版は coordinator の
+handoff の process を終わりまで回してから退くので、版上げで走っている仕事は切れません。今の版は coordinator の
 `GET /resources/Worker` の `spec.doeffCommit`(と `GET /workers/<名>` の `doeffCommit`・`bootAt`)に出ます。
 
 宣言は上に載る系の名と値を書かず(規則 `doeff-packages-have-no-application-vocabulary`)、次の物を名で参照するだけです。中身は
