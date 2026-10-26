@@ -1,24 +1,25 @@
 
 doeff Traceback (most recent call last):
 
-  cached_answer()  tools/docs-video/src/pages/cache-system/measure/handlers.py:29
+  cached_answer()  tools/docs-video/src/pages/cache-system/measure/handlers.py:31
     return "hit", (yield CacheGet("answer"))
     handlers:
       await_handler ↗
+      SyncTimeRuntime.handle ↗
       scheduled ↗
 
 UnhandledEffect: no handler found for effect: CacheGetEffect (CacheGet('answer'))
-  handlers in scope (innermost→outermost): await_handler → scheduled
+  handlers in scope (innermost→outermost): await_handler → handle → scheduled
   skipped by annotation: await_handler (effect: Await) — a handler only sees the effects its effect parameter is annotated with
   hint: install a handler for CacheGetEffect: run(fn(prog)), where fn is a def (effect: CacheGetEffect, k) marked with @handler that returns (yield Resume(k, value))
 
 in_memory_cache_handler():
-  run 1: miss -> 42 in 426.8 ms
-  run 2: miss -> 42 in 403.7 ms
+  run 1: miss -> 42 in 412.0 ms
+  run 2: miss -> 42 in 402.2 ms
   the work ran 2 time(s)
 sqlite_cache_handler('cache.sqlite'):
-  run 1: miss -> 42 in 499.7 ms
-  run 2: hit -> 42 in 2.3 ms
+  run 1: miss -> 42 in 404.0 ms
+  run 2: hit -> 42 in 1.8 ms
   the work ran 1 time(s)
 no cache handler:
   UnhandledEffect: no handler found for effect: CacheGetEffect (CacheGet('answer'))
