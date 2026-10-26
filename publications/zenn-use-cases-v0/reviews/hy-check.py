@@ -12,7 +12,7 @@ from doeff_core_effects import Ask  # 問い合わせられたキーを型付き
 from doeff_core_effects.os_process import subprocess_handler  # pytestの子を起こす答え手。
 from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess  # 依頼の型。
 
-from doeff import Transfer, do, handler, run, with_handlers  # ハンドラと実行境界を使う。
+from doeff import Transfer, handler, run, with_handlers  # ハンドラと実行境界を使う。
 
 SOURCE = Path(__file__).resolve().parents[1]  # publicationの正本ディレクトリを求める。
 sys.path.insert(0, str(SOURCE / "examples"))  # 完全な例を記事と同じ名前でimport可能にする。
@@ -42,7 +42,6 @@ total_namespace = next(ns for ns in namespaces if "total" in ns)  # 価格と送
 keys = []  # ハンドラが受け取った問い合わせの順序を記録する。
 
 @handler  # 下位クライアントを作らず、Askの解釈を差し替える。
-@do  # ハンドラ本体もProgramとして継続操作をyieldする。
 def record_ask(effect, continuation):  # 問い合わせと、それを待つ継続を受け取る。
     assert isinstance(effect, Ask)  # この検査にはAskだけが届くと確認する。
     keys.append(effect.key)  # 価格と送料の実際の依頼順を記録する。

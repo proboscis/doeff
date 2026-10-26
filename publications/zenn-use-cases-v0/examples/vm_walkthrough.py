@@ -19,7 +19,6 @@ def greet():  # 名前を要求して挨拶文字列を返す計算を定義す�
 
 
 @handler
-@do  # 関数の呼び出しで、実行前の計算を組み立てられるようにする。
 def supply_name(effect, k):  # 依頼と停止中の継続を受け取り、名前を供給するハンドラを定義する。
     if isinstance(effect, ReadName):  # 名前の取得依頼だけをこのハンドラで処理する。
         return (yield Resume(k, "花子"))  # 名前に「花子」を渡して継続を再開し、その結果を返す。
@@ -53,7 +52,6 @@ def verify() -> None:  # 実VMで各動作を検証し、不一致ならassert�
     forwarded: list[str] = []  # 内側のハンドラを通過した依頼の型を観測する記録を用意する。
 
     @handler
-    @do  # 関数の呼び出しで、実行前の計算を組み立てられるようにする。
     def forward(effect, k):  # 依頼を観測して外側へ渡すハンドラを定義する。
         forwarded.append(type(effect).__name__)  # 配送先を確認するため、受け取った型名を記録する。
         return (yield Pass(effect, k))  # 担当しない依頼を、継続とともに外側のハンドラへ渡す。
@@ -90,7 +88,6 @@ def verify() -> None:  # 実VMで各動作を検証し、不一致ならassert�
     transferred: list[str] = []  # Transferを使うハンドラの呼び出し回数を観測する記録を用意する。
 
     @handler
-    @do  # 関数の呼び出しで、実行前の計算を組み立てられるようにする。
     def tail_name(effect, k):  # 名前を供給した後は自分へ戻らず継続へ移るハンドラを定義する。
         if isinstance(effect, ReadName):  # 名前の取得依頼だけをこのハンドラで処理する。
             transferred.append("名前を渡す")  # 名前の供給1回につき、観測用の記録を1件残す。

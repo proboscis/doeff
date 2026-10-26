@@ -64,7 +64,6 @@ from doeff import Pass, Resume, handler, with_handlers  # 依頼の再開・委�
 
 
 @handler  # この関数を、Programに取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで再開や委譲を指示する。
 def test_formatter(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
     if isinstance(effect, Ask) and effect.key == "formatter":  # 整形の依頼だけを担当する。
         return (yield Resume(k, plain_title))  # テスト用の実装を渡し、続きを動かす。

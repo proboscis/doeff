@@ -68,7 +68,6 @@ def build(content):  # 中身のファイルから、ページの本文と図の
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def not_yet(effect, k):  # 描いた図がまだ無い時の答え。
     if isinstance(effect, DrawnFigure):  # 図の依頼には、
         return (yield Resume(k, None))  # 「まだ無い」を返す。
@@ -77,7 +76,6 @@ def not_yet(effect, k):  # 描いた図がまだ無い時の答え。
 
 def drawn_in(figures):  # 描き終えた図の辞書から、ハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def answer(effect, k):  # 描き終えた図だけに答える。
         if isinstance(effect, DrawnFigure) and effect.figure_id in figures:  # 描き終えた図なら、
             return (yield Resume(k, figures[effect.figure_id]))  # そのSVGを返す。
@@ -248,7 +246,6 @@ def checked_build(content):  # 決まりの外なら組まず、組んだら記�
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def printed(effect, k):  # 記録の依頼を、表示で答える(本物はファイルに時刻つきで足す)。
     if isinstance(effect, Record):  # 記録の依頼には、
         print(effect)  # 何を記録するかを表示し、

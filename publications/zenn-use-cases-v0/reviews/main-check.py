@@ -49,7 +49,6 @@ def verify_delegation(name: str, expected_name: str) -> None:
     calls = []
 
     @handler
-    @do
     def outer_handler(effect, k):
         if isinstance(effect, Ask) and effect.key == "language":
             calls.append(("Ask", effect.key))
@@ -80,7 +79,7 @@ for index, block in enumerate(blocks, 1):
         for node in parsed.body
         if isinstance(node, ast.FunctionDef) and node.name == expected_handler_name
     )
-    assert [ast.unparse(item) for item in definition.decorator_list] == ["handler", "do"]
+    assert [ast.unparse(item) for item in definition.decorator_list] == ["handler"]
     assert [item.arg for item in definition.args.args] == ["effect", "k"]
     comments = {
         token.start[0]

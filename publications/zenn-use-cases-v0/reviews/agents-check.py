@@ -68,7 +68,6 @@ def asks_outside():
 
 
 @handler
-@do
 def outer(effect, k):
     if isinstance(effect, Ask) and effect.key == "outer":
         return (yield Resume(k, "外側で答えた"))
