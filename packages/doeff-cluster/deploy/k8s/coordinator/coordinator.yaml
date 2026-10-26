@@ -196,7 +196,13 @@ spec:
             # 871d9157c = worker が枠を枠の file(ConfigMap worker-room)から heartbeat の前に読み直す版(card ki-6828eda880ce)。worker の全部を
             # 同じ版へ上げる移行の 1 回で、版の向きに合わせて coordinator も上げる。coordinator の process に効く物は heartbeat の roomFile を
             # Worker の status に出す事。前の版 2c1ac027a は 871d9157c の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 871d9157c8fd1c8bc78b321253cc62a7b564b19c }
+            # fb3259d20 = Service の needs の一時の上書きを資源 NeedsOverride(元の needs・結び先の能力・期限・書き手)にし、結び先の能力を
+            # 持つ生きた worker が 0 になった時か期限で coordinator が元の needs へ戻す版(card ki-1523bc0aba4f・L2883 — 10-26 22:45〜23:21 に
+            # 直の書き換えの Service 13 本が置き先を失った)。持ち主でない送り手の needs の直の書き換えは 403 で断る。保存の鍵
+            # needsoverride/<名> が足る(前の版の coordinator へ戻すと、上書きの行を読まずに捨てる — 上書きの間だけ在る行)。間の差で
+            # coordinator の process に効く物は、doeff-vm の PyO3 0.29(308ded66f — 準備で wheel を組み直す)と、知らせの読みの待ちの長さを
+            # 問いにする変更(3a59950d9 — coordinator は送るだけで問わない・handler_sets を合わせ済み)。前の版 871d9157c は fb3259d20 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: fb3259d2052a277e0a92c200afc2504bc414cbb5 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
