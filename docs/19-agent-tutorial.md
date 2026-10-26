@@ -406,8 +406,9 @@ The Programs are the same in every step. Only the handlers changed:
    is; `AwaitOutcome.result` is valid against it or `None`, with the reason in `validation_error`.
 4. **Clean-up is a `finally` block.** `yield StopSession(session)` in `finally` stops the session
    on success, on failure and on timeout.
-5. **Tests swap the handler, not the code.** A handler of your own, or `ScenarioAgentHandler`,
-   answers the same effects without an agent.
+5. **The handler gives the effects their meaning; the Program stays the same.** Under a handler of
+   your own, or `ScenarioAgentHandler`, the same effects are answered without an agent, and
+   `review_file` runs unchanged.
 
 ## Next Steps
 
