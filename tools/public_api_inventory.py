@@ -610,7 +610,7 @@ class _Classifier:
                 Verdict(
                     "unclassified",
                     "関数",
-                    f"戻りの型 {text} は Handler を名乗るが handler の印が無い",
+                    f"戻りの型 {text} の名は Handler で終わるが handler の印が無い",
                 ),
             ),
             (
@@ -1478,11 +1478,11 @@ def _package_section(package: PackageInventory, found: dict[Kind, int]) -> list[
     ]
     if not rows:
         return [*head, "", "注: 公開名は無い。"]
-    prefix = f"packages/{package['dir']}/"
     table = [
         f"| `{_cell(row['name'])}` | {KIND_LABELS[row['kind']]} | {_cell(row['form'])} | "
-        f"`{_cell(row['defined_at'].removeprefix(prefix))}` | "
-        f"{', '.join(f'`{module}`' for module in row['modules'])} | {_cell(row['reason'])} |"
+        f"`{_cell(_short_place(row['defined_at'], package['dir']))}` | "
+        f"{_cell(_short_modules(row['modules'], package['import_roots']))} | "
+        f"{_cell(row['reason']) if row['kind'] != 'other' else ''} |"
         for row in rows
     ]
     return [
@@ -1492,6 +1492,29 @@ def _package_section(package: PackageInventory, found: dict[Kind, int]) -> list[
         "|---|---|---|---|---|---|",
         *table,
     ]
+
+
+def _short_place(place: str, package_dir: str) -> str:
+    """A definition place without the package's own ``packages/<dir>/`` (and ``src/`` / ``python/``) prefix."""
+    own = place.removeprefix(f"packages/{package_dir}/")
+    return own.removeprefix("src/").removeprefix("python/") if own != place else place
+
+
+def _short_modules(modules: list[str], roots: list[str]) -> str:
+    """The modules showing a name, relative to the package's root (``根`` for the root), at most two named."""
+    relative = [
+        next(
+            (
+                "根" if module == root else module.removeprefix(f"{root}.")
+                for root in roots
+                if module == root or module.startswith(f"{root}.")
+            ),
+            module,
+        )
+        for module in modules
+    ]
+    rest = f" ほか {len(relative) - 2}" if len(relative) > 2 else ""
+    return ", ".join(relative[:2]) + rest
 
 
 _METHOD_NOTES = (
@@ -1510,8 +1533,10 @@ _METHOD_NOTES = (
     "それ以外: program 関数(@do・defk)・ほかの関数・class・例外・型・定数・macro・console script・entry point。",
     "未分類: 戻りの型が無いか中身を言わない型(Any・object・Callable・その list)で、return の形からも決まらない関数・"
     "名が Effect か Handler で終わるのに印の無い class(とそれを返す関数)・import できない module の名。",
-    "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を全部並べる。定義の場所の"
-    "`packages/<package>/` は略す。",
+    "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を import の根からの相対で"
+    "2 つまで並べる(根は「根」・3 つ目からは数)。定義の場所の `packages/<package>/`(と続く `src/`・`python/`)は"
+    "略す。列「訳」は種類を決めた訳で、「それ以外」の行は列「形」が訳を兼ねるので空ける。全部の module と訳は"
+    "`--json` の目録に在る。",
     "道具: `tools/public_api_inventory.py`(`uv run python tools/public_api_inventory.py --json <file> "
     "--markdown <file>`)。",
 )
