@@ -2691,7 +2691,8 @@
         "doeff-cluster-semaphore-model",
         "doeff-cluster-warm-model",
         "doeff-cluster-warm-rules",
-        "doeff-cluster-detached-rules"
+        "doeff-cluster-detached-rules",
+        "doeff-cluster-resource-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-coordinator-replies",

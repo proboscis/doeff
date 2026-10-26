@@ -23,6 +23,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
 (import doeff_cluster.shared.core.detached_rules [group-limit-spec task-limits-json])
+(import doeff_cluster.coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster.shared.intent.detached_model [DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster.coordinator.protocol.cluster_json [ended-to-json])
 
@@ -145,7 +146,10 @@
                            "held" (lfor h g.held (| {"count" h.count}
                                                      (if (is h.worker None) {} {"worker" h.worker})
                                                      (if h.part {"part" h.part} {})))}
-                          (group-limit-spec g.limit)))})
+                          (group-limit-spec g.limit)))
+   ;; 置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名の順の列 [{service needs reason expiresAtMs writer sinceMs}] —
+   ;; 宣言の needs の代わりに今効いている needs と、その訳・期限・書き手。宣言の spec は書き換えないので、ここで読む。
+   "needsOverrides" (lfor o view.needs-overrides (| {"service" o.service} (needs-override-spec o)))})
 
 
 (defk drain-progress-json [#^ DrainProgress drain]

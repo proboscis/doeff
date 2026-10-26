@@ -356,20 +356,19 @@
 
 
 (defrecord NeedsOverride
-  "Service 1 つの needs の一時の上書き(資源 NeedsOverride — 2026-10-27・card ki-1523bc0aba4f)。復旧の手が Service を別の worker の能力へ
-   一時に結ぶ形で、上書きの間 Service の needs(ClusterJob.needs)は needs になり、外れると original に戻る。以前は Service の spec.needs を
-   直に書き換えたので、元の needs・結び先・期限が残らず、能力の側だけが戻ると Service が置き先の無いまま残った(2026-10-26 22:45〜23:21 に
-   13 本)。coordinator は、結び先の能力 capability を名乗る生きた worker が 0 になった拍か、期限 expires-ms の来た拍で上書きを外し、
-   original で置き直す(resource_policy.lift-needs-overrides)。上書きの間に Service の持ち主が宣言し直した needs は original に入り、
-   外した後に効く。
-   service = Service の名(資源の名と同じ)・needs = 上書きの間の needs(名の順 — capability を含む)・capability = 結び先の能力の名・
-   original = 上書きの前の needs(名の順 — 外す時に戻す値)・expires-ms = 期限(epoch ms)・writer = 上書きを書いた送り手(X-Actor)・
-   since-ms = 書いた刻。保存する(durable_kv の needsoverride/<名>)。"
+  "Service 1 つの置き先の一時の上書き(資源 NeedsOverride — 2026-10-27・card ki-1523bc0aba4f)。宣言(Service の spec・ClusterJob.needs)は
+   書き換えない別の記録で、置き先の判断が効く needs をこの行から決める(cluster_policy.effective-needs)。以前は復旧の手が Service の
+   spec.needs そのものを書き換えたので、元の needs・訳・期限が残らず、worker の能力の側だけが戻ると Service が置き先の無いまま残った
+   (2026-10-26 22:45〜23:21 に 13 本)。coordinator は、期限 expires-ms の来た拍と、上書きの needs を満たす生きた worker が 0 になった拍
+   (worker が作り直されて能力を名乗らなくなった拍)に、置き方の前に行を外し、同じ拍で宣言の needs で置き直す(resource_policy.lift-needs-overrides)。
+   取り消しは DELETE。
+   service = Service の名(資源の名と同じ)・needs = 上書きの間に効く needs(名の順)・reason = 上書きの訳(書き手の 1 行)・
+   expires-ms = 期限(epoch ms)・writer = 上書きを書いた送り手(X-Actor — 持ち主)・since-ms = 書いた刻。保存する(durable_kv の
+   needsoverride/<名>)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str service)
   (#^ (get tuple #(str ...)) needs)
-  (#^ str capability)
-  (#^ (get tuple #(str ...)) original)
+  (#^ str reason)
   (#^ int expires-ms)
   (#^ str writer)
   (#^ int since-ms))
@@ -437,7 +436,8 @@
    どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)・coordinator-commit = 答えた coordinator の process が走っている
    doeff の版(ClusterState の running-commit — 読めなければ None で、JSON の欄 coordinatorCommit を書かない。版上げの Program が「新しい
    版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)・group-limits = 組の同時数の上限の画面の列
-   (組の名の順 — GroupLimitView)。JSON の形は coordinator/protocol/replies が綴る。"
+   (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride・card ki-1523bc0aba4f)。
+   JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
   (#^ (get tuple #(WorkerView ...)) workers)
@@ -451,7 +451,8 @@
   (#^ int revision)
   (#^ (get tuple #(KeepMark ...)) keep-marks)
   (#^ (| str None) coordinator-commit)
-  (setv #^ (get tuple #(GroupLimitView ...)) group-limits #()))
+  (setv #^ (get tuple #(GroupLimitView ...)) group-limits #())
+  (setv #^ (get tuple #(NeedsOverride ...)) needs-overrides #()))
 
 
 (defenum DrainPhase
@@ -1163,9 +1164,9 @@
   ;; が今の刻を置き、調停の歩ごとにその刻からの長さだけ時計をずらし(api_policy.unreached-shifted)、最初の heartbeat を受けた歩か
   ;; 待ちの上限(api_policy.REACH-WAIT-MS)で None に戻す。保存しない(起き直すたびに読み直しが置く)。位置の引数の呼び手のため最後に置く。
   (setv #^ (| int None) unreached-ms None)
-  ;; Service の needs の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名 → NeedsOverride(資源 NeedsOverride)。上書きの間
-  ;; Service の needs は上書きの needs で、結び先の能力を名乗る生きた worker が 0 になった拍か期限の拍に、coordinator が元の needs へ戻して
-  ;; 行を外す(resource_policy.lift-needs-overrides)。保存する(durable_kv の needsoverride/<名>)。位置の引数の呼び手のため最後に置く。
+  ;; Service の置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名 → NeedsOverride(資源 NeedsOverride — 宣言は
+  ;; 書き換えない)。置き先の判断は上書きの needs を効かせ(cluster_policy.effective-needs)、期限の拍か上書きの needs を満たす生きた worker
+  ;; が 0 になった拍に、coordinator が行を外して宣言の needs で置き直す(resource_policy.lift-needs-overrides)。保存する(durable_kv の needsoverride/<名>)。位置の引数の呼び手のため最後に置く。
   (setv #^ (get Table NeedsOverride) needs-overrides (field :default-factory (partial table-of #()))))
 
 

@@ -133,24 +133,23 @@
 
 (deff needs-override-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
   {:pre [(: name str) (: spec (| dict list str int float bool None))] :post [(: % NeedsOverride)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
-  "保存の needs の上書き 1 つ(Service の名と resource_policy.needs-override-spec の形)→ NeedsOverride を読み直すため。欄の欠け・型の誤り・
-   needs に無い結び先は理由つきの ValueError(保存の行の壊れ — 黙って既定の値で読まない。上書きを落とすと元の needs が失われる)。"
+  "保存の置き先の上書き 1 つ(Service の名と resource_policy.needs-override-spec の形)→ NeedsOverride を読み直すため。欄の欠け・型の誤り・
+   空の needs は理由つきの ValueError(保存の行の壊れ — 黙って既定の値で読まない)。"
   (when (not (isinstance spec dict))
-    (raise (ValueError (.format "保存の needs の上書き {} が object でない: {!r}" name spec))))
-  (setv missing (sorted (- #{"needs" "capability" "original" "expiresAtMs" "writer" "sinceMs"} (set spec))))
+    (raise (ValueError (.format "保存の置き先の上書き {} が object でない: {!r}" name spec))))
+  (setv missing (sorted (- #{"needs" "reason" "expiresAtMs" "writer" "sinceMs"} (set spec))))
   (when missing
-    (raise (ValueError (.format "保存の needs の上書き {} に欄が無い: {}" name missing))))
-  (setv needs (capabilities-of (get spec "needs") "保存の needs の上書きの needs")
-        original (capabilities-of (get spec "original") "保存の needs の上書きの original")
-        capability (get spec "capability"))
-  (when (not (and (isinstance capability str) (in capability needs)))
-    (raise (ValueError (.format "保存の needs の上書き {} の capability {!r} が needs {} に無い" name capability (list needs)))))
+    (raise (ValueError (.format "保存の置き先の上書き {} に欄が無い: {}" name missing))))
+  (setv needs (capabilities-of (get spec "needs") "保存の置き先の上書きの needs"))
+  (when (not needs)
+    (raise (ValueError (.format "保存の置き先の上書き {} の needs が空" name))))
   (for [k #("expiresAtMs" "sinceMs")]
     (when (or (not (isinstance (get spec k) int)) (isinstance (get spec k) bool))
-      (raise (ValueError (.format "保存の needs の上書き {} の {} が整数でない: {!r}" name k (get spec k))))))
-  (when (not (isinstance (get spec "writer") str))
-    (raise (ValueError (.format "保存の needs の上書き {} の writer が文字列でない: {!r}" name (get spec "writer")))))
-  (NeedsOverride :service name :needs needs :capability capability :original original
+      (raise (ValueError (.format "保存の置き先の上書き {} の {} が整数でない: {!r}" name k (get spec k))))))
+  (for [k #("reason" "writer")]
+    (when (not (isinstance (get spec k) str))
+      (raise (ValueError (.format "保存の置き先の上書き {} の {} が文字列でない: {!r}" name k (get spec k))))))
+  (NeedsOverride :service name :needs needs :reason (get spec "reason")
                  :expires-ms (get spec "expiresAtMs") :writer (get spec "writer") :since-ms (get spec "sinceMs")))
 
 

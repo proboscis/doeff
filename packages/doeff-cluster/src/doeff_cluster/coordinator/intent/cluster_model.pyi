@@ -234,8 +234,7 @@ class KeepMark:
 class NeedsOverride:
     service: str
     needs: tuple[str, ...]
-    capability: str
-    original: tuple[str, ...]
+    reason: str
     expires_ms: int
     writer: str
     since_ms: int
@@ -288,6 +287,7 @@ class StateView:
     keep_marks: tuple[KeepMark, ...]
     coordinator_commit: str | None
     group_limits: tuple[GroupLimitView, ...] = ...
+    needs_overrides: tuple[NeedsOverride, ...] = ...
 
 class DrainPhase(StrEnum):
     DRAINING = 'Draining'

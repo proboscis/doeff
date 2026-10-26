@@ -1,14 +1,15 @@
-;; Service の needs の一時の上書き(資源 NeedsOverride — card ki-1523bc0aba4f)。
+;; Service の置き先の一時の上書き(資源 NeedsOverride — card ki-1523bc0aba4f)。
 ;;
-;; 失敗ケース(直す前・2026-10-26 22:45〜23:21 JST): 復旧の手が Service 13 本の spec.needs を直の PUT で host-zeus から
-;; 復旧の能力へ書き換え、能力の側(zeus の worker の名乗り)だけが戻った。coordinator は 13 本の置き先を黙って空にし、
-;; 元の needs はどこにも残っていなかった。直した後は、上書きが元の needs・結び先の能力・期限・書き手を持ち、結び先の能力を名乗る生きた
-;; worker が 0 になった拍か期限の拍に coordinator が元の needs へ戻す。持ち主でない送り手の needs の直の PUT は断る。
+;; 失敗ケース(直す前・2026-10-26 22:45〜23:21 JST): 復旧の手が Service 13 本の spec.needs を直の PUT で host-zeus から復旧の能力へ
+;; 書き換え、worker の側(zeus の Deployment の能力の名乗り)だけが Flux の当て直しで戻った。coordinator は 13 本の置き先を黙って空にし、
+;; 元の needs はどこにも残っていなかった。直した後は、上書きが宣言(spec)を書き換えない記録(訳・期限・書き手)として入り、置き先の判断が
+;; 効く needs をその記録から決める。期限の拍か、上書きの needs を満たす生きた worker が 0 になった拍に、coordinator が記録を外して同じ拍で
+;; 宣言の needs で置き直す。版(revision)を変えずに置き先(needs・pin)を書き換える PUT は 409 で断る。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState NeedsOverride])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json needs-override-from-json])
@@ -16,10 +17,10 @@
 (import doeff_cluster.coordinator.core.api_policy [tick tick-due])
 (import doeff_cluster.coordinator.core.resource_policy [needs-override-due])
 (import doeff_cluster.shared.intent.due_model [DueAt])
-(import doeff_cluster.shared.intent.cluster_control [KillWorker])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ReadCoordinator ClientLink send-request])
+(import doeff_cluster.shared.intent.cluster_control [KillWorker StopWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ReadCoordinator ClientLink StartWorker ReplaceWorker send-request])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.sim_programs [beacons])
+(import tests.fixtures.sim_programs [beacons thirteen-beacons])
 (import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))
@@ -27,7 +28,8 @@
 (val SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
 (val OWNER "declare-tool")
 (val HAND "recovery-hand")
-(val RESCUE {"name" "a" "spec" {"needs" ["net" "rescue"] "capability" "rescue" "ttlSeconds" 3600}})
+(val WHY "停電の復旧の間、rescue の機体に置く")
+(val RESCUE {"name" "a" "spec" {"needs" ["net" "rescue"] "reason" WHY "ttlSeconds" 3600}})
 
 
 (defk req [method path [body None] [actor OWNER]]
@@ -58,7 +60,7 @@
 
 (defk declared-world []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "持ち主 declare-tool が Service a(needs net)を宣言し、worker zeus(net)と rescue(net・専用の rescue)が名乗った状態を作るため
+  "宣言の道具 declare-tool が Service a(needs net)を宣言し、worker zeus(net)と rescue(net・専用の rescue)が名乗った状態を作るため
    (a は zeus に置かれる — rescue は rescue を要らない仕事を受けない)。"
   (<- created tuple (call (ClusterState) "POST" "/resources/Service" {"name" "a" "spec" SPEC}))
   (assert (= (get created 1) 201) created)
@@ -75,49 +77,49 @@
   (if placement (get placement "worker") None))
 
 
-(defk service-needs [state]
-  {:pre [(: state ClusterState)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "GET /resources/Service/a の spec の needs を読むため。"
+(defk service-of [state]
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "GET /resources/Service/a の本文を読むため。"
   (<- seen tuple (call state "GET" "/resources/Service/a"))
-  (get seen 2 "spec" "needs"))
+  (get seen 2))
 
 
 (defk overridden [state actor now]
   {:pre [(: state ClusterState) (: actor str) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "送り手 actor が Service a を能力 rescue へ 1 時間結ぶ上書き(POST /resources/NeedsOverride)を作った後の状態を返すため。"
+  "送り手 actor が Service a を 1 時間 rescue の機体へ向ける上書き(POST /resources/NeedsOverride)を作った後の状態を返すため。"
   (<- answer tuple (call state "POST" "/resources/NeedsOverride" RESCUE :actor actor :now now))
   (assert (= (get answer 1) 201) answer)
   (assert (= (get answer 2 "spec")
-             {"needs" ["net" "rescue"] "capability" "rescue" "original" ["net"] "expiresAtMs" (+ now 3600000) "writer" actor "sinceMs" now})
+             {"needs" ["net" "rescue"] "reason" WHY "expiresAtMs" (+ now 3600000) "writer" actor "sinceMs" now})
           answer)
   (get answer 0))
 
 
-(deftest test-an-override-moves-a-service-and-is-lifted-when-no-live-worker-names-its-capability
-  ;; 受入の条 1 の判断の側: 上書きで rescue に結んだ a は rescue へ移り、rescue が沈黙して(生きた worker が rescue を名乗らなくなって)
-  ;; lease を越えた拍に coordinator が上書きを外して needs を net へ戻し、移し替えの窓の後に元の候補の zeus へ置き直す。外したのは
-  ;; coordinator で、出来事の記録に残る。
+(deftest test-an-override-is-a-record-beside-the-declaration-and-is-lifted-when-no-live-worker-satisfies-it
+  ;; 受入の条 1・c511f7e30: 上書きは宣言の spec を書き換えない記録(訳・期限・書き手 — GET /resources と GET /state に出る)で、置き先の
+  ;; 判断は上書きの needs を効かせて a を rescue へ移す。rescue が黙って上書きの needs を満たす生きた worker が 0 になった拍に、
+  ;; coordinator が記録を外し(出来事に送り手 coordinator の delete)、移し替えの窓の後に宣言の候補 zeus へ置き直す。
   (<- world ClusterState (declared-world))
   (<- before (| str None) (placed-on world 1000))
   (assert (= before "zeus") before)
   (<- bound ClusterState (overridden world HAND 1000))
-  (<- needs list (service-needs bound))
-  (assert (= needs ["net" "rescue"]) needs)
+  (<- service dict (service-of bound))
+  (assert (= (get service "spec" "needs") ["net"]) service)
+  (assert (= (get service "status" "needsOverride" "needs") ["net" "rescue"]) service)
+  (<- seen tuple (call bound "GET" "/state"))
+  (assert (= (lfor o (get seen 2 "needsOverrides") #((get o "service") (get o "reason"))) [#("a" WHY)]) seen)
   (<- moved (| str None) (placed-on bound 1000))
   (assert (= moved "rescue") moved)
-  ;; zeus だけが名乗り続け、rescue は黙る。lease を越えた拍で上書きが外れる。
   (val gone (+ 1001 T.lease-ms))
   (<- quiet ClusterState (beat bound "zeus" ["net"] gone))
   (<- lifted ClusterState (tick quiet gone T))
-  (<- back list (service-needs lifted))
-  (assert (= back ["net"]) back)
   (assert (is (.row lifted.needs-overrides "a") None) lifted.needs-overrides)
-  (<- missing tuple (call lifted "GET" "/resources/NeedsOverride/a" :now gone))
-  (assert (= (get missing 1) 404) missing)
+  (<- after dict (service-of lifted))
+  (assert (= (get after "spec" "needs") ["net"]) after)
+  (assert (not-in "needsOverride" (get after "status")) after)
   (<- events tuple (call lifted "GET" "/events" :now gone))
   (val deleted (lfor e (get events 2 "events") :if (and (= (get e "kind") "NeedsOverride") (= (get e "verb") "delete")) e))
   (assert (= (lfor e deleted (get e "actor")) ["coordinator"]) deleted)
-  ;; 移し替えの窓(reassign-after-ms)を越えると、元の候補の zeus へ置き直す。
   (val later (+ 1001 T.reassign-after-ms))
   (<- awake ClusterState (beat lifted "zeus" ["net"] later))
   (<- again ClusterState (tick awake later T))
@@ -125,28 +127,25 @@
   (assert (= final "zeus") final))
 
 
-(deftest test-an-override-is-lifted-when-the-new-generation-drops-the-capability
-  ;; 2026-10-26 22:45:42 の形: 結び先の worker の新しい世代が能力を名乗らずに起きた拍で、上書きが外れて元の needs に戻り、a は置き先を
-  ;; 失わない(直す前は needs が復旧の能力のまま 13 本の置き先が null になった)。
+(deftest test-an-override-is-lifted-in-the-same-step-the-new-generation-drops-the-capability
+  ;; 2026-10-26 22:45:42 の形: 上書きの needs を満たしていた worker の新しい世代が能力を名乗らずに起きた拍で、上書きが外れ、同じ拍の
+  ;; 置き方が宣言の needs で a を置く(置き先の無い拍が無い — 直す前は 13 本の置き先が null になった)。
   (<- world ClusterState (declared-world))
   (<- bound ClusterState (overridden world HAND 1000))
   (<- reborn ClusterState (beat bound "rescue" ["net"] 2000 :boot "b2"))
-  (<- back list (service-needs reborn))
-  (assert (= back ["net"]) back)
   (assert (is (.row reborn.needs-overrides "a") None) reborn.needs-overrides)
   (<- holder (| str None) (placed-on reborn 2000))
   (assert (in holder #("zeus" "rescue")) holder))
 
 
-(deftest test-an-override-is-lifted-at-its-deadline-and-the-quiet-tick-wakes-for-it
-  ;; 期限の拍で外れる。静かな区間(要求の無い間)でも、tick の起きる刻の答えに期限が入る(期限を過ぎても上書きが残らない)。
+(deftest test-an-override-is-lifted-at-its-deadline-or-when-cancelled
+  ;; 受入の条 c511f7e30: 期限の拍で外れる(静かな区間でも tick の起きる刻に期限が入る)。取り消し(DELETE)でも外れ、宣言の needs で置く。
   (<- world ClusterState (declared-world))
   (<- answer tuple (call world "POST" "/resources/NeedsOverride" (| RESCUE {"spec" (| (get RESCUE "spec") {"ttlSeconds" 5})}) :actor HAND))
   (assert (= (get answer 1) 201) answer)
   (val deadline 6000)
   (<- due (| int None) (needs-override-due (get answer 0)))
   (assert (= due deadline) due)
-  ;; 期限の 1 ms 前: 両方の worker が名乗っていて、上書きは残る。tick の起きる刻は期限ちょうど(worker の沈黙の刻より先)。
   (<- fresh ClusterState (beat (! (beat (get answer 0) "zeus" ["net"] (- deadline 1))) "rescue" ["net" "rescue"] (- deadline 1) :exclusive ["rescue"]))
   (<- kept ClusterState (tick fresh (- deadline 1) T))
   (assert (is-not (.row kept.needs-overrides "a") None) kept.needs-overrides)
@@ -154,71 +153,67 @@
   (assert (= woken (DueAt :at deadline)) woken)
   (<- lifted ClusterState (tick kept deadline T))
   (assert (is (.row lifted.needs-overrides "a") None) lifted.needs-overrides)
-  (<- back list (service-needs lifted))
-  (assert (= back ["net"]) back))
+  (<- bound ClusterState (overridden world HAND 1000))
+  (<- cancelled tuple (call bound "DELETE" "/resources/NeedsOverride/a" :actor HAND))
+  (assert (= (get cancelled 1) 200) cancelled)
+  (assert (is (.row (. (get cancelled 0) needs-overrides) "a") None) cancelled)
+  (<- back (| str None) (placed-on (get cancelled 0) 1000))
+  (assert (= back "zeus") back))
 
 
-(deftest test-a-direct-needs-put-by-a-non-owner-is-refused-and-the-owners-put-passes
-  ;; 受入の条 2: 持ち主(declare-tool)でない送り手の Service の needs の直の PUT は 403 で断り、NeedsOverride を案内する(状態は変えない)。
-  ;; 持ち主の needs の PUT は通る。持ち主でない送り手でも needs を変えない PUT(版の書き換え)は通る(2026-10-05 の決めのまま)。
+(deftest test-a-placement-rewrite-without-a-new-revision-is-refused-and-a-new-revision-passes
+  ;; 受入の条 2・c6e6fcbb6: 版(spec.revision)を変えずに needs か pin を変える Service の PUT は 409 で断り、NeedsOverride を案内する
+  ;; (状態は変えない)。宣言の道具の版を変えた宣言は、送り手が誰でも通る(照らすのは版で、名乗りではない — 2026-10-05 の決め)。
+  ;; 置き先を変えない PUT(子の環境変数)は版を変えずに通る。
   (<- world ClusterState (declared-world))
   (val version (. (.row world.meta "Service/a") resource-version))
-  (<- refused tuple (call world "PUT" "/resources/Service/a" {"spec" (| SPEC {"needs" ["rescue"]}) "resourceVersion" version} :actor HAND))
-  (assert (= (get refused 1) 403) refused)
-  (assert (in "NeedsOverride" (get refused 2 "error")) refused)
-  (assert (in OWNER (get refused 2 "error")) refused)
-  (<- unchanged list (service-needs (get refused 0)))
-  (assert (= unchanged ["net"]) unchanged)
-  ;; 本文の owner で持ち主を名乗り直しても、送り手が持ち主でなければ断る(照らすのは今の持ち主)。
-  (<- renamed tuple (call world "PUT" "/resources/Service/a" {"spec" (| SPEC {"needs" ["rescue"] "owner" HAND}) "resourceVersion" version} :actor HAND))
-  (assert (= (get renamed 1) 403) renamed)
-  (<- revised tuple (call world "PUT" "/resources/Service/a" {"spec" (| SPEC {"revision" "r2"}) "resourceVersion" version} :actor HAND))
-  (assert (= (get revised 1) 200) revised)
-  (<- owned tuple (call world "PUT" "/resources/Service/a" {"spec" (| SPEC {"needs" ["net" "gpu"]}) "resourceVersion" version}))
-  (assert (= (get owned 1) 200) owned)
-  (<- needs list (service-needs (get owned 0)))
-  (assert (= needs ["gpu" "net"]) needs))
+  (for [#(spec what) [#((| SPEC {"needs" ["rescue"]}) "needs") #((| SPEC {"pin" "rescue"}) "pin")]]
+    (<- refused tuple (call world "PUT" "/resources/Service/a" {"spec" spec "resourceVersion" version} :actor HAND))
+    (assert (= (get refused 1) 409) #(what refused))
+    (assert (in "NeedsOverride" (get refused 2 "error")) refused)
+    (<- unchanged dict (service-of (get refused 0)))
+    (assert (= (get unchanged "spec" "needs") ["net"]) unchanged))
+  (<- environ tuple (call world "PUT" "/resources/Service/a" {"spec" (| SPEC {"environ" {"STEP" "2"}}) "resourceVersion" version} :actor HAND))
+  (assert (= (get environ 1) 200) environ)
+  (<- redeclared tuple (call world "PUT" "/resources/Service/a" {"spec" (| SPEC {"needs" ["gpu" "net"] "revision" "r2"}) "resourceVersion" version}
+                             :actor HAND))
+  (assert (= (get redeclared 1) 200) redeclared)
+  (assert (= (get redeclared 2 "spec" "needs") ["gpu" "net"]) redeclared))
 
 
-(deftest test-the-legacy-jobs-put-keeps-the-same-needs-rule
-  ;; 旧い PUT /jobs も同じ規則: 持ち主でない送り手の needs の書き換えは競合の行で断る(何も書かない)。上書きの間の Service は旧い口で書かない。
+(deftest test-the-legacy-jobs-put-keeps-the-same-revision-rule
+  ;; 旧い PUT /jobs も同じ規則: 版を変えない needs の書き換えは競合の行で断る(何も書かない)。
   (<- world ClusterState (declared-world))
   (val version (. (.row world.meta "Service/a") resource-version))
   (<- refused tuple (call world "PUT" "/jobs" {"jobs" [(| SPEC {"name" "a" "needs" ["rescue"] "resourceVersion" version})]} :actor HAND))
   (assert (= (get refused 1) 409) refused)
-  (assert (in "NeedsOverride" (get (get refused 2 "conflicts") 0 "error")) refused)
-  (<- bound ClusterState (overridden world HAND 1000))
-  (val bound-version (. (.row bound.meta "Service/a") resource-version))
-  (<- held tuple (call bound "PUT" "/jobs" {"jobs" [(| SPEC {"name" "a" "revision" "r2" "resourceVersion" bound-version})]}))
-  (assert (= (get held 1) 409) held))
+  (assert (in "NeedsOverride" (get (get refused 2 "conflicts") 0 "error")) refused))
 
 
-(deftest test-the-owners-redeclare-during-an-override-becomes-the-needs-it-returns-to
-  ;; 上書きの間の持ち主の宣言し直し(配備の宣言 — main 入りのたびに走る)は上書きを壊さない: Service の needs は上書きの needs のまま、
-  ;; 宣言の needs は上書きの元の needs に入り、上書きを消すとその値に戻る。
+(deftest test-a-redeclaration-during-an-override-changes-the-declaration-and-keeps-the-override
+  ;; 上書きの間の宣言し直し(main 入りのたびの宣言)は宣言だけを書き換え、上書きはそのまま効く。上書きを消すと新しい宣言の needs が効く。
   (<- world ClusterState (declared-world))
   (<- bound ClusterState (overridden world HAND 1000))
   (val version (. (.row bound.meta "Service/a") resource-version))
   (<- redeclared tuple (call bound "PUT" "/resources/Service/a" {"spec" (| SPEC {"needs" ["agent" "net"] "revision" "r2"}) "resourceVersion" version}))
   (assert (= (get redeclared 1) 200) redeclared)
-  (assert (= (get redeclared 2 "spec" "needs") ["net" "rescue"]) redeclared)
-  (assert (= (get redeclared 2 "spec" "revision") "r2") redeclared)
-  (assert (= (. (.row (. (get redeclared 0) needs-overrides) "a") original) #("agent" "net")) redeclared)
-  (<- dropped tuple (call (get redeclared 0) "DELETE" "/resources/NeedsOverride/a" :actor HAND))
-  (assert (= (get dropped 1) 200) dropped)
-  (<- back list (service-needs (get dropped 0)))
-  (assert (= back ["agent" "net"]) back))
+  (assert (= (get redeclared 2 "spec" "needs") ["agent" "net"]) redeclared)
+  (assert (= (get redeclared 2 "status" "needsOverride" "needs") ["net" "rescue"]) redeclared)
+  (<- holder (| str None) (placed-on (get redeclared 0) 1000))
+  (assert (= holder "rescue") holder))
 
 
 (deftest test-an-override-that-cannot-take-effect-is-refused-when-written
-  ;; 作る時に断る形: 結び先を名乗る生きた worker が無い(作っても次の拍で外れる — 409)・結び先が needs に無い・期限の無い・期限の長すぎる・
-  ;; 知らない欄(元の needs は coordinator が持つ — 400)・無い Service(404)・2 つ目の上書き(409)・書き直し(405)。
+  ;; 作る時に断る形: 上書きの needs を満たす生きた worker が無い(作っても次の拍で外れる — 409)・訳の無い / 空の / 長すぎる訳・期限の
+  ;; 無い / 長すぎる・知らない欄(400)・無い Service(404)・2 つ目の上書き(409)・書き直し(405)。
   (<- world ClusterState (declared-world))
-  (for [#(spec status) [#({"needs" ["net" "ghost"] "capability" "ghost" "ttlSeconds" 60} 409)
-                        #({"needs" ["net"] "capability" "rescue" "ttlSeconds" 60} 400)
-                        #({"needs" ["net" "rescue"] "capability" "rescue"} 400)
-                        #({"needs" ["net" "rescue"] "capability" "rescue" "ttlSeconds" (+ 1 (* 7 24 3600))} 400)
-                        #({"needs" ["net" "rescue"] "capability" "rescue" "ttlSeconds" 60 "original" ["x"]} 400)]]
+  (for [#(spec status) [#({"needs" ["net" "ghost"] "reason" WHY "ttlSeconds" 60} 409)
+                        #({"needs" ["net" "rescue"] "ttlSeconds" 60} 400)
+                        #({"needs" ["net" "rescue"] "reason" " " "ttlSeconds" 60} 400)
+                        #({"needs" ["net" "rescue"] "reason" (* "x" 201) "ttlSeconds" 60} 400)
+                        #({"needs" ["net" "rescue"] "reason" WHY} 400)
+                        #({"needs" ["net" "rescue"] "reason" WHY "ttlSeconds" (+ 1 (* 7 24 3600))} 400)
+                        #({"needs" ["net" "rescue"] "reason" WHY "ttlSeconds" 60 "capability" "rescue"} 400)]]
     (<- answer tuple (call world "POST" "/resources/NeedsOverride" {"name" "a" "spec" spec} :actor HAND))
     (assert (= (get answer 1) status) #(spec answer)))
   (<- nobody tuple (call world "POST" "/resources/NeedsOverride" (| RESCUE {"name" "b"}) :actor HAND))
@@ -231,8 +226,8 @@
 
 
 (deftest test-an-override-survives-the-state-file-and-the-durable-keys
-  ;; 保存先(state file・耐久の鍵)で上書き(元の needs を含む)が往復する — coordinator を作り直しても元の needs を忘れない。壊れた保存の値は
-  ;; 読み直しが理由つきで断る(黙って落とすと元の needs が失われる)。Service を消すと上書きも消える。
+  ;; 保存先(state file・耐久の鍵)で上書きが往復する(coordinator を作り直しても訳・期限・書き手を忘れない)。壊れた保存の値は読み直しが
+  ;; 理由つきで断る。Service を消すと上書きも消える。
   (<- world ClusterState (declared-world))
   (<- bound ClusterState (overridden world HAND 1000))
   (val expected (.row bound.needs-overrides "a"))
@@ -242,8 +237,8 @@
   (<- kv dict (full-kv bound))
   (<- from-keys ClusterState (state-from-kv kv 0))
   (assert (= (.row from-keys.needs-overrides "a") expected) from-keys.needs-overrides)
-  (for [#(spec word) [#({"needs" ["net"] "capability" "rescue" "original" ["net"] "expiresAtMs" 1 "writer" "w" "sinceMs" 0} "capability")
-                      #({"needs" ["rescue"] "capability" "rescue" "expiresAtMs" 1 "writer" "w" "sinceMs" 0} "original")]]
+  (for [#(spec word) [#({"needs" ["rescue"] "expiresAtMs" 1 "writer" "w" "sinceMs" 0} "reason")
+                      #({"needs" [] "reason" "r" "expiresAtMs" 1 "writer" "w" "sinceMs" 0} "needs")]]
     (try
       (needs-override-from-json "a" spec)
       (raise (AssertionError (.format "壊れた保存の値を読んだ: {}" spec)))
@@ -256,22 +251,27 @@
 
 ;; --- 模擬(sim-cluster — 本物の coordinator と本物の worker の上)--------------------------------------------------------------
 
+(defk hand-link []
+  {:pre [] :post [(: % SimLink)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの送り手の口を、送り手 recovery-hand の口に替えて返すため(上書きを書く復旧の手)。"
+  (<- link SimLink (ClientLink))
+  (SimLink :queue link.queue :actor HAND :revision link.revision :peer link.peer :versions link.versions :timing link.timing))
+
+
 (defk rescue-scenario []
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: beacon が zeus に置かれた後に、送り手 recovery-hand が beacon を能力 rescue へ上書きで結び、rescue へ移った後に
-   rescue の機体が死ぬ。移った置き先・死んだ後の置き先・needs・上書きの有無を読んで返すため。"
+  "筋書き: beacon が zeus に置かれた後に、復旧の手が beacon を上書きで rescue の機体へ向け、rescue へ移った後に rescue の機体が死ぬ。
+   移った置き先・死んだ後の置き先・宣言の needs・上書きの有無を読んで返すため。"
   (<- (Delay 8.0))
-  (<- link SimLink (ClientLink))
+  (<- link SimLink (hand-link))
   (<- before dict (ReadCoordinator "/state"))
-  (<- written tuple (send-request (SimLink :queue link.queue :actor HAND :revision link.revision :peer link.peer :versions link.versions
-                                           :timing link.timing)
-                                  "POST" "/resources/NeedsOverride" {}
-                                  {"name" "beacon" "spec" {"needs" ["cluster-net" "rescue"] "capability" "rescue" "ttlSeconds" 3600}}))
+  (<- written tuple (send-request link "POST" "/resources/NeedsOverride" {}
+                                  {"name" "beacon" "spec" {"needs" ["cluster-net" "rescue"] "reason" WHY "ttlSeconds" 3600}}))
   (<- (Delay 15.0))
   (<- bound dict (ReadCoordinator "/state"))
   (<- (KillWorker "rescue"))
-  ;; lease(10 秒)を越えた拍で上書きが外れ、needs が戻る。置き先は、担い手が途絶しても動かし続けてよい印の約束の期限
-  ;; (kept-reassign-after-ms — 280 秒・上書きの間は他に置ける worker が無かったので印を渡してある)の後に元の候補へ移る。
+  ;; lease(10 秒)を越えた拍で上書きが外れる。置き先は、担い手が途絶しても動かし続けてよい印の約束の期限
+  ;; (kept-reassign-after-ms — 280 秒・上書きの間は他に置ける worker が無かったので印を渡してある)の後に宣言の候補へ移る。
   (<- (Delay 20.0))
   (<- service dict (ReadCoordinator "/resources/Service/beacon"))
   (<- overrides dict (ReadCoordinator "/resources/NeedsOverride"))
@@ -286,11 +286,62 @@
 
 
 (deftest test-an-overridden-service-returns-to-its-own-workers-when-the-bound-worker-dies-on-sim
-  ;; 受入の条 1(模擬): 上書きで能力 rescue に結んで rescue へ置いた beacon が、rescue を名乗る worker の消えた拍で元の needs(cluster-net)に
-  ;; 戻り、元の候補の zeus に置かれる。worker の死を試す筋書きなので本番の timing を明示して渡す。
+  ;; 受入の条 1(模擬): 上書きで rescue の機体へ向けた beacon が、rescue の死の後に上書きを失い(宣言の needs は cluster-net のまま)、
+  ;; 宣言の候補の zeus に置かれる。worker の死を試す筋書きなので本番の timing を明示して渡す。
   (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (rescue-scenario)
                              :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                                         (SimWorker :name "rescue" :provides (frozenset ["cluster-net" "rescue"])
                                                    :exclusive (frozenset ["rescue"]) :task-reserve 0))))
   (assert (= seen {"written" 201 "before" "zeus" "bound" "rescue" "after" "zeus" "needs" ["cluster-net"] "overrides" 0}) seen))
 
+
+(val THIRTEEN (tuple (gfor i (range 1 14) (.format "b{:02d}" i))))
+
+
+(defk unplaced-among [state]
+  {:pre [(: state dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "GET /state の答えから、13 本のうち置き先の無い Service の名を並べるため。"
+  (tuple (gfor n THIRTEEN :if (or (in n (get state "unplaced")) (not-in n (get state "placements"))) n)))
+
+
+(defk zeus-rebuilt-scenario []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(2026-10-26 22:45 の形): zeus の worker が復旧の能力 rescue を専用に名乗り(手の patch)、復旧の手が 13 本の Service を上書きで
+   rescue へ向けて置く。Flux の当て直しに当たる作り直しで、zeus が rescue を名乗らない値で起き直す。起き直した後 30 秒、1 秒ごとに
+   置き先の無い Service を数え、上書きの残りを読んで返すため。"
+  (<- (Delay 3.0))
+  (<- link SimLink (hand-link))
+  (var written #())
+  (for [n THIRTEEN]
+    (<- answer tuple (send-request link "POST" "/resources/NeedsOverride" {}
+                                   {"name" n "spec" {"needs" ["cluster-net" "rescue"] "reason" WHY "ttlSeconds" 3600}}))
+    (:= written (+ written #((get answer 0)))))
+  (<- (Delay 10.0))
+  (<- bound dict (ReadCoordinator "/state"))
+  (<- (StopWorker "zeus"))
+  (<- replaced bool (ReplaceWorker "zeus" (SimWorker :name "zeus" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+  (<- started bool (StartWorker "zeus"))
+  (var gaps 0)
+  (for [_ (range 30)]
+    (<- (Delay 1.0))
+    (<- state dict (ReadCoordinator "/state"))
+    (<- missing tuple (unplaced-among state))
+    (when missing (:= gaps (+ gaps 1))))
+  (<- after dict (ReadCoordinator "/state"))
+  (<- overrides dict (ReadCoordinator "/resources/NeedsOverride"))
+  {"written" (sorted (set written))
+   "bound" (sorted (set (gfor n THIRTEEN (get bound "placements" n "worker"))))
+   "replaced" #(replaced started)
+   "gaps" gaps
+   "after" (sorted (set (gfor n THIRTEEN (get after "placements" n "worker"))))
+   "overrides" (len (get overrides "items"))})
+
+
+(deftest test-thirteen-overridden-services-keep-a-placement-when-the-worker-is-rebuilt-without-the-capability-on-sim
+  ;; 受入の条 c69a30194(模擬・10-26 の形): 上書きで rescue へ向けた 13 本の Service は、zeus が rescue を名乗らない値で作り直された後、
+  ;; 1 秒ごとに読んだ 30 回のどの拍でも置き先を失わない(上書きは起き直した最初の拍で外れ、同じ拍で宣言の needs で置かれる)。
+  ;; 直す前の形(上書きを外さない)では、起き直した後の全部の拍で 13 本が置き先を持たない。worker の作り直しを試すので本番の timing を渡す。
+  (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (thirteen-beacons sim-foundation) (zeus-rebuilt-scenario)
+                             :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net" "rescue"])
+                                                   :exclusive (frozenset ["rescue"]) :task-reserve 0 :capacity 20))))
+  (assert (= seen {"written" [201] "bound" ["zeus"] "replaced" #(True True) "gaps" 0 "after" ["zeus"] "overrides" 0}) seen))

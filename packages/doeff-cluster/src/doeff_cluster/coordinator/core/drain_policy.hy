@@ -34,7 +34,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster.coordinator.intent.request_bodies [DrainBody])
-(import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot handover-pending
+(import doeff_cluster.coordinator.core.cluster_policy [alive eligible effective-needs can-take draining-workers load-of other-generation-boot handover-pending
                                                        LIVE-PHASES MAX-EVENTS scan-rows])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 
@@ -119,7 +119,7 @@
         w (.row state.workers surge.worker))
   (and (> job.replicas 0) job.spec.handoff
        (is-not placed None) (in placed.worker draining) (!= placed.worker surge.worker)
-       (is-not w None) (alive now w timing.lease-ms) (eligible job w) (not-in w.name draining)))
+       (is-not w None) (alive now w timing.lease-ms) (eligible state job w) (not-in w.name draining)))
 
 
 (defn #^ ClusterState advance-drains [#^ int now #^ ClusterState state #^ ClusterTiming timing]
@@ -208,7 +208,7 @@
         unmovable (tuple (gfor n placed
                                :setv job (.get jobs n)
                                :if (and (is-not job None)
-                                        (not (any (gfor w (.rows state.workers) (and (!= w.name name) (eligible job w))))))
+                                        (not (any (gfor w (.rows state.workers) (and (!= w.name name) (eligible state job w))))))
                                n))
         ;; 切り離した task(2026-09-25)は移せない(走らせ直さない)ので、この worker の上で終わるまで drain を待たせる。
         remaining (sorted (- (| (set placed) (set (live-rows state name)) (set (detached-rows state name))) (set unmovable)))
@@ -220,7 +220,7 @@
                (is (move-target now state job name timing draining load) None))
       (setv (get blocked n)
             (.format "移す先が無い(要る能力 {}・固定 {}。能力の合う別の worker は名簿に居るが、生きていて drain 中でなく空きの在る物が無い)— 旧を止めずに待つ"
-                     (list job.needs) job.pin))))
+                     (list (effective-needs state job)) job.pin))))
   (DrainProgress :worker name :boot d.boot :superseded False :since-ms d.since-ms :until-ms d.until-ms :actor d.actor
                  :phase (cond (not remaining) DrainPhase.DRAINED (and blocked (not moving)) DrainPhase.BLOCKED True DrainPhase.DRAINING)
                  :remaining (tuple remaining)

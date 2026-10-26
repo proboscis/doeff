@@ -319,6 +319,23 @@
             :environ {"STEP" "1"}))
 
 
+(defsystem thirteen-beacons [#^ Callable foundation]
+  "2026-10-26 の形の系: 同じ能力 cluster-net を要る service 13 本(置き先の一時の上書きの検 — card ki-1523bc0aba4f)"
+  (b01 (beacon-program foundation "beacon/01" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b02 (beacon-program foundation "beacon/02" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b03 (beacon-program foundation "beacon/03" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b04 (beacon-program foundation "beacon/04" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b05 (beacon-program foundation "beacon/05" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b06 (beacon-program foundation "beacon/06" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b07 (beacon-program foundation "beacon/07" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b08 (beacon-program foundation "beacon/08" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b09 (beacon-program foundation "beacon/09" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b10 (beacon-program foundation "beacon/10" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b11 (beacon-program foundation "beacon/11" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b12 (beacon-program foundation "beacon/12" 1.0) :replicas 1 :needs #{"cluster-net"})
+  (b13 (beacon-program foundation "beacon/13" 1.0) :replicas 1 :needs #{"cluster-net"}))
+
+
 (defsystem handoff-beacons [#^ Callable foundation]
   "見本の系: handoff で入れ替える beacon(版 1)"
   (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}

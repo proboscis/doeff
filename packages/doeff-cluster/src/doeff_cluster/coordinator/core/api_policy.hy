@@ -6,12 +6,12 @@
 ;;; HTTP(資源の口・2026-09-24):
 ;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout | GroupLimit | NeedsOverride)
 ;;;   GET    /resources/<Kind>/<名>        1 つ(resourceVersion・generation・所有者・作った / 書いた送り手・spec・status)
-;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service・Rollout・GroupLimit — 組の同時数の上限・NeedsOverride — Service の
-;;;                                         needs の一時の上書き {"needs" "capability" "ttlSeconds"})。在れば 409
+;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service・Rollout・GroupLimit — 組の同時数の上限・NeedsOverride — Service の置き先の
+;;;                                         一時の上書き {"needs" "reason" "ttlSeconds"} — 宣言は書き換えない)。在れば 409
 ;;;   PUT    /resources/<Kind>/<名>        書き換える {"spec", "resourceVersion"}。版が古ければ 409・版が無ければ 400
 ;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(送り手が誰でも消せる。進行中の Rollout が扱う Service・進行中の Rollout は force でだけ消す。
-;;;                                         NeedsOverride を消すと Service は元の needs に戻る)
-;;;   Service の needs の書き換え(PUT)は持ち主(owner)の送り手からだけ受け、他は 403 で NeedsOverride を案内する(2026-10-27・card ki-1523bc0aba4f)
+;;;                                         NeedsOverride を消すと Service は宣言の needs で置き直される)
+;;;   Service の PUT で、版(spec.revision)を変えずに置き先(needs・pin)を変える書きは 409 で断り、NeedsOverride を案内する(2026-10-27・card ki-1523bc0aba4f)
 ;;;   POST   /resources/Service/<名>/readiness   ReportReady の報告 {worker pid revision instance attempt specHash placement ready reason}
 ;;;   POST   /resources/Service/<名>/metrics     ReportMetrics の報告 {worker … placement metrics}(資源の状態は変えない)
 ;;;   GET    /metrics                            Prometheus の text: 今動いている process の計器(label service・worker)
@@ -73,8 +73,8 @@
   ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
   ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
   ;; 生死の切り替わり(#1934): 最後に、生きていないと数える worker の名を今の時刻で求め直す(変われば Worker の status の live と版が進む)。
-  ;; needs の上書き(2026-10-27・card ki-1523bc0aba4f): 置き方の前に、期限の来た上書きと結び先の能力が消えた上書きを外す(同じ拍で元の
-  ;; needs で置き直す — 外した拍と置き直す拍の間に Service が置き先の無いまま残らない)。
+  ;; 置き先の上書き(2026-10-27・card ki-1523bc0aba4f): 置き方の前に、期限の来た上書きと、上書きの needs を満たす生きた worker が 0 になった
+  ;; 上書きを外す(同じ拍で宣言の needs で置き直す — 外した拍と置き直す拍の間に Service が置き先の無いまま残らない)。
   (<- lifted ClusterState (lift-needs-overrides changed now timing))
   (<- placed ClusterState (reconcile now lifted timing))
   (val reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now placed timing) timing) now) now timing))

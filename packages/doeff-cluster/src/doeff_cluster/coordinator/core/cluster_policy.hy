@@ -414,10 +414,20 @@
       (str error))))
 
 
-(defn #^ bool eligible [#^ ClusterJob job #^ WorkerInfo worker]
-  "Service をこの worker に置けるか(pin と能力)。"
+(deff effective-needs [#^ ClusterState state #^ ClusterJob job]  ; defk にできない: 置き先の判断(eligible)と表示の綴り(unplaced-text の呼び手 — Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: job ClusterJob)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "Service に効く needs を、置き先の判断の 1 か所で決めるため(card ki-1523bc0aba4f): needs の一時の上書き(資源 NeedsOverride)が在れば
+   上書きの needs、無ければ宣言の needs(ClusterJob.needs — 上書きは宣言を書き換えない)。上書きの行は、期限の来た拍と上書きの needs を
+   満たす生きた worker が 0 になった拍に、置き方の前に外れる(resource_policy.lift-needs-overrides)ので、置き方の拍に残る行は満たせる行。
+   置き先の判断(eligible — 置く・続ける・drain の移し先・置けない訳)と模擬が同じこの関数を読む。"
+  (setv override (.row state.needs-overrides job.spec.name))
+  (if (is override None) job.needs override.needs))
+
+
+(defn #^ bool eligible [#^ ClusterState state #^ ClusterJob job #^ WorkerInfo worker]
+  "Service をこの worker に置けるか(pin と、効く needs — effective-needs)。"
   (and (or (is job.pin None) (= job.pin worker.name))
-       (placeable job.needs worker)))
+       (placeable (effective-needs state job) worker)))
 
 
 ;; probing(2026-09-27)= starting の手前の入口の検めの間(その worker で起こしかけている — 他へ置かない)。
@@ -458,7 +468,7 @@
                         #^ (| frozenset None) [draining None]]
   "job(と並べた置き先 surge)を新しく置ける worker か(生きている・条件を満たす・drain 中でない・job の側の空き job-room-of と全体の
    空き task-room-of の両方が在る — task のために空けておく分 task-reserve には置かない)。load = load-of の答え(worker の名 → WorkerLoad)。"
-  (and (alive now w timing.lease-ms) (eligible job w)
+  (and (alive now w timing.lease-ms) (eligible state job w)
        (not-in w.name (if (is draining None) (draining-workers state now) draining))
        (> (run (job-room-of w load)) 0)
        (> (run (task-room-of w load)) 0)))
@@ -657,10 +667,10 @@
                 #()
                 (tuple (gfor job (active-jobs state)
                              :setv placed (.row state.placements job.spec.name)
-                             :if (and (is-not placed None) (= placed.worker worker) (not job.spec.handoff) (eligible job info))
+                             :if (and (is-not placed None) (= placed.worker worker) (not job.spec.handoff) (eligible state job info))
                              job))))
   (val crowded (any (gfor job mine w (.rows state.workers)
-                          (and (!= w.name worker) (alive now w timing.lease-ms) (eligible job w) (not-in w.name draining)))))
+                          (and (!= w.name worker) (alive now w timing.lease-ms) (eligible state job w) (not-in w.name draining)))))
   (var marked #())
   (if (not crowded)
       ;; 他に置ける見込みの worker が 1 台も無い — どれも移せない(負荷を求めない)。
@@ -703,7 +713,7 @@
     (when (is-not worker None)
       (<- mark (| KeepMark None) (keep-mark-of state.keep-marks job.spec.name))
       (val promised (and (is-not mark None) (= mark.worker current.worker)))
-      (val fit (eligible job worker))
+      (val fit (eligible state job worker))
       (val leaving (and (in current.worker draining) (not job.spec.handoff)))
       (val awake (alive now worker timing.reassign-after-ms))
       (var free False)
@@ -794,7 +804,7 @@
     (when (in job.spec.name taken) (continue))
     (setv surge (.row state.surges job.spec.name)
           surge-worker (if surge (.row state.workers surge.worker) None))
-    (when (and (is-not surge-worker None) (alive now surge-worker timing.lease-ms) (eligible job surge-worker))
+    (when (and (is-not surge-worker None) (alive now surge-worker timing.lease-ms) (eligible state job surge-worker))
       (.append fresh surge)
       (.add taken job.spec.name)
       (continue))
@@ -904,19 +914,20 @@
     ;; 途絶しても動かし続けてよい印の約束の在る job は、約束の担い手が印を持たないと知らせるまで他へ置かない(#2804)。
     (or (still-live-somewhere now state job.spec.name timing) (is-not (run (keep-mark-of state.keep-marks job.spec.name)) None))
       UnplacedKind.WAITING-PREVIOUS-HOLDER
-    (not (any (gfor w (.rows state.workers) (and (alive now w timing.lease-ms) (eligible job w)
+    (not (any (gfor w (.rows state.workers) (and (alive now w timing.lease-ms) (eligible state job w)
                                                     (not-in w.name (draining-workers state now))))))
       UnplacedKind.NO-ELIGIBLE-WORKER
     True UnplacedKind.NO-ROOM))
 
 
-(defn #^ str unplaced-text [#^ UnplacedKind kind #^ ClusterJob job]
-  "置き先が無い理由の種類 → 人が読む文(状態の表示 GET /state の unplaced と Service の readyReason の綴り)。"
+(defn #^ str unplaced-text [#^ UnplacedKind kind #^ ClusterJob job #^ tuple needs]
+  "置き先が無い理由の種類 → 人が読む文(状態の表示 GET /state の unplaced と Service の readyReason の綴り)。needs = 効く needs
+   (effective-needs — 上書きの間は上書きの needs)。"
   (match kind
     UnplacedKind.WAITING-PREVIOUS-HOLDER "前の担い手が止め終えるのを待っている"
     UnplacedKind.NO-ELIGIBLE-WORKER
       (.format "置ける worker が無い(要る能力 {}・固定 {}。専用の能力を持つ worker には、そのどれかを要る job だけを置く。drain 中の worker には置かない)"
-               (list job.needs) job.pin)
+               (list needs) job.pin)
     UnplacedKind.NO-ROOM "置ける worker に空きが無い"))
 
 
@@ -925,7 +936,7 @@
   (dfor job (active-jobs state)
         :if (is (.row state.placements job.spec.name) None)
         job.spec.name
-        (unplaced-text (unplaced-kind now state job timing) job)))
+        (unplaced-text (unplaced-kind now state job timing) job (effective-needs state job))))
 
 
 (defk task-unplaced-text [kind]
@@ -2216,7 +2227,9 @@
              ;; この coordinator の process が走っている doeff の版(#3772 — 読めなければ None)。
              :coordinator-commit state.running-commit
              ;; 組ごとの宣言の値と置いている数(card ki-b0e8028c8c8d)。
-             :group-limits (! (group-limit-views state))))
+             :group-limits (! (group-limit-views state))
+             ;; 置き先の一時の上書き(card ki-1523bc0aba4f — Service の名の順)。
+             :needs-overrides (tuple (sorted (.rows state.needs-overrides) :key (fn [o] o.service)))))
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ (get Mapping #(str object)) body]
