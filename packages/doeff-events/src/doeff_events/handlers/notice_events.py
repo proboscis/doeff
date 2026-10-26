@@ -829,14 +829,7 @@ class _BodyWrapper(partial["Program"]):
     _doeff_is_handler_fn = True
 
 
-def _answered(answer: "ProgramHandler", wrapper: "ProgramHandler", body: "Program[_T]") -> "Program[_T]":
-    """``wrapper`` around ``body`` with ``answer`` right outside it."""
-    return answer(wrapper(body))
-
-
-def notice_events_handler(
-    source: str, routes: tuple[NoticeRoute[object], ...], patience_seconds: float | None = None
-) -> "ProgramHandler":
+def notice_events_handler(source: str, routes: tuple[NoticeRoute[object], ...]) -> "ProgramHandler":
     """Build the wrapper that carries a body's events through the notice broker.
 
     ``source`` = this process's name for its source: the ``source`` of the ``SourceStarted`` / ``SourceStalled`` /
@@ -847,19 +840,10 @@ def notice_events_handler(
     ``ReadBrokerPatience`` when the broker goes away, and the composition answers it with ``broker_patience_handler``
     outside the wrapper (no default — the composition chooses it in one place, for every wrapper it places).
 
-    ``patience_seconds`` is only for the move to the question (agora card ki-6b3c298bfee1): a caller that still
-    passes the seconds gets the wrapper with its own answer right outside it, so a composition is not broken between
-    the landing of this package and of its callers. It goes once no caller passes it.
-
     The arguments are checked here; the subscription begins at the head of the wrapped body, before the body's
     first effect.
     """
-    wrapper = _BodyWrapper(_run, _checked_plan(source, routes))
-    if patience_seconds is None:
-        return wrapper
-    if isinstance(patience_seconds, bool) or not isinstance(patience_seconds, int | float) or patience_seconds < 0:
-        raise ValueError(f"notice_events_handler: patience_seconds must be a number >= 0, got {patience_seconds!r}")
-    return _BodyWrapper(_answered, broker_patience_handler(BrokerPatience(float(patience_seconds))), wrapper)
+    return _BodyWrapper(_run, _checked_plan(source, routes))
 
 
 def broker_patience_handler(patience: BrokerPatience) -> "ProgramHandler":
