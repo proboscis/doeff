@@ -15,6 +15,7 @@
 (import typing [TypeGuard])
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster.shared.core.job_rules [content-refusal])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
@@ -104,7 +105,9 @@
                    ;; 子の入口が比べる送り手の版 = 宣言の行の run.versions(宣言の道具が Program と一緒に置いた版)。worker は Program の
                    ;; cache の file をこの版ごとに分けるので、同じ sha の Program を別の版で宣言し直すと取り直す(card ki-172e63fed4c7)。
                    :versions (if (json-object? versions) (environ-pairs versions) #())
-                   :environ (if (json-object? environ) (environ-pairs environ) #())))
+                   :environ (if (json-object? environ) (environ-pairs environ) #())
+                   ;; 中身の鍵(card ki-81bf84ac6590 — 在れば指紋と比べが版と commit の代わりにこれを読む・program-row-refusal が形を確かめた)。
+                   :content (.get item "content")))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
 
@@ -162,6 +165,7 @@
       "run.identity(呼んだ関数の参照と引数)が無い"
     (not (text-map? versions)) (.format "run.versions は部品の名 → 版の文字列の object: {!r}" versions)
     (not (json-object? environ)) (.format "environ は文字列の鍵と値の object: {!r}" environ)
+    (is-not (content-refusal (.get item "content")) None) (content-refusal (.get item "content"))
     True (environ-refusal environ declared)))
 
 
@@ -232,7 +236,9 @@
   ;; 入れ替えの欄は、使う宣言にだけ書く(使わない宣言の spec の形・版は以前と同じ)。
   (setv extra (| (if (= job.update "recreate") {} {"update" job.update})
                  (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})
-                 (if job.spec.environ {"environ" (dict job.spec.environ)} {})))
+                 (if job.spec.environ {"environ" (dict job.spec.environ)} {})
+                 ;; 中身の鍵は送られた宣言にだけ書く(鍵の無い宣言の spec の形は以前と同じ — card ki-81bf84ac6590)。
+                 (if (is job.spec.content None) {} {"content" job.spec.content})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
   (| base extra {"run" job.run}))
 

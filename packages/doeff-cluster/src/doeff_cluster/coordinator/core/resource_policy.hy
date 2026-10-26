@@ -33,7 +33,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState NeedsOverride ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
-(import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster.shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of warms-for
                                                        handover-blockers handover-since HANDOVER-STALL-MS])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
@@ -173,14 +173,16 @@
   ;; 担い手の行の detail(入れ替えの途中・新の入口を読み込めない理由 — worker_policy.statuses)を添える: Service の status.readyReason
   ;; から「なぜ新が起きないか」が読める(2026-09-25)。
   (setv note (if row.detail (+ ":" row.detail) ""))
-  (when (!= row.running-revision job.spec.revision)
+  ;; 版の違いは、指紋も違う時だけ断る: 中身の鍵の在る宣言(card ki-81bf84ac6590)は、読む code の変わらない版へ宣言し直されても process を
+  ;; 起こし直さないので、版で起こした process が今の宣言の指紋で動いている。鍵の無い宣言の指紋は版を含むので、指紋が合えば版も合う。
+  (when (and (!= row.running-revision job.spec.revision) (not (spec-hash-matches job.spec row.spec-hash)))
     (return (no "NotReady" NotReadyKind.REVISION-MISMATCH
                 (.format "版が違う(動いている版 {}・宣言 {}){}" row.running-revision job.spec.revision note))))
   (setv want (spec-hash job.spec))
   (when (not row.instance)
     (return (no "NotReady" NotReadyKind.NO-INSTANCE
                 (.format "担い手 {} が process の世代を報告しない(世代を知らない古い worker)" a.worker))))
-  (when (!= row.spec-hash want)
+  (when (not (spec-hash-matches job.spec row.spec-hash))
     (return (no "NotReady" NotReadyKind.SPEC-MISMATCH
                 (.format "動いている process は前の宣言(設定か版)で起こした物(指紋 {}・宣言 {})— 起こし直しを待っている{}"
                          row.spec-hash want note))))
@@ -188,7 +190,9 @@
     (return (no "NotReady" NotReadyKind.PLACEMENT-MISMATCH
                 (.format "動いている process は前の割り当ての世代 {} で起こした物(いま {})" row.placement a.generation))))
   {"ok" True "job" job "worker" a.worker "row" row "instance" row.instance "attempt" (str row.attempts)
-   "specHash" want "placement" row.placement})
+   ;; 指紋は動いている process の物(報告の送り手の指紋と比べる — report-matches)。宣言の指紋 want と違いうるのは、中身の鍵の在る宣言を
+   ;; 鍵を読まない古い worker が版の指紋で起こした時だけ(spec-hash-matches が受けた形)。
+   "specHash" row.spec-hash "placement" row.placement})
 
 
 (defn #^ bool report-matches [#^ ReportOrigin origin #^ dict proc]

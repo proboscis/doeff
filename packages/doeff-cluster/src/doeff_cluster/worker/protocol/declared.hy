@@ -75,7 +75,9 @@
            ;; 途絶しても動かし続けてよい印(#2804 — 移せる先の無い job だけが持つ・無ければ偽 = 古い coordinator の返事も同じ)。
            :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)
            ;; 版を据え置く印(#3684 — drain 中の worker は、drain の間に宣言し直された新しい版を準備も起動もしない・worker_policy.plan-job)。
-           :hold-version draining))
+           :hold-version draining
+           ;; 中身の鍵(card ki-81bf84ac6590 — 送り手が鍵を渡した job だけが持つ・無ければ None = 版と commit で宣言の変わりを判じる)。
+           :content (.get job "content")))
 
 
 (defwire DeclaredReply
