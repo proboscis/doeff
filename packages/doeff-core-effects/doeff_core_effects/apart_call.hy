@@ -17,11 +17,18 @@
 ;;;   - 1 本の program の effect は 1 つずつ(VM が答えを待つ間は次を出さない)なので、撃った task は届いた順に 1 つずつ答える。
 ;;;   - 計算は別の thread で回り、free-threaded の Python では撃った run の scheduler の thread と並んで走る。effect の往復は thread の受け渡し
 ;;;     1 回(外から完了させる promise と Future)ぶん遅い — effect の少ない重い計算に使う(要求ごとの短い program には使わない)。
-;;;   - 撃った所で答える effect が program を値に持つ物(Spawn・Gather・Race の program、SqlTransaction の program、Try の program)は、
-;;;     その program を撃った run が回す(中の計算は撃った run の scheduler の thread に戻る)。重い計算はその外に置く。
+;;;   - Try は別の thread の VM の中で答える(VM に try-handler を置く — Try の program は別の thread に留まり、内側の handler も取り直す)。
+;;;   - 撃った所で答える effect が program を値に持つ物(Spawn・Gather・Race の program、SqlTransaction の program)は、その program を
+;;;     撃った run が回す。中の計算は撃った run の scheduler の thread に戻り、中の program は別の thread の VM の中で program が被せた
+;;;     handler(run-apart の内側の handler)も持たない — 撃った所の handler だけが答える。重い計算と内側の handler の要る effect は
+;;;     その外に置く。
 ;;;   - 取り消し: 撃った task が取り消されたら通い路を閉じ、答えを待つ effect と、閉じた後に program が出す effect は ApartClosed を
-;;;     program へ投げる(program の finally は回る)。effect を出さない計算は終わるまで止まらない(thread は daemon — process の終わりを
-;;;     止めない)。閉じた後の program の答えは捨てる。
+;;;     program へ投げる(program の finally は回るが、finally の中の effect も ApartClosed になる — 後始末に effect を使う program には
+;;;     使えない)。effect を出さない計算は終わるまで止まらない(thread は daemon — process の終わりを止めない)。閉じた後の program の
+;;;     答えは捨てる。撃った側は、program を待たなくなった時に run-apart の task を取り消す(daemon の task は run の終わりに取り消されない)。
+;;;   - 選び方: 入口が見える 1 つの純粋な計算 → Compute(compute_effects.hy — pool と計器を持つ)。driver の塞ぐ呼び → offloaded
+;;;     (offloaded_call.hy)。使い手が決める、effect を出しながら長く計算する program → run-apart(1 回 1 本の thread・上限も計器も無い —
+;;;     ThreadPerCall と同じ形なので、要求ごとに使わない)。
 ;;; 仕組みの在りか(先例): 外から完了させる promise で待つのは offloaded_call.hy の offloaded と同じ作法・新しい VM を起こすのは
 ;;; offloaded_call.hy の run-detached と同じ。Compute(純粋な program だけ)と違い、program は effect を出してよい。
 (require doeff-hy.macros [defk deff <- val])
@@ -34,6 +41,7 @@
 (import doeff_vm [PyVM])
 (import collections.abc [Callable])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait TaskCancelledError])
+(import doeff_core_effects.handlers [try-handler])
 
 (val MODULE-TAGS {:context "scheduler" :role "foundation"})
 
@@ -124,9 +132,9 @@
 
 (deff apart-thread [lane program]  ; defk にできない: daemon の thread の本体(VM の外から新しい VM を起こす)
   {:pre [(: lane ApartLane) (: program Program)] :post [(: % None)]}
-  "別の thread で program を新しい VM で回し、答えか例外を通い路へ置くため。"
+  "別の thread で program を新しい VM で回し、答えか例外を通い路へ置くため(Try はこの VM の中で答える — 頭の註)。"
   (try
-    (setv value (.run (PyVM) (with-handlers [(forwarding-handler lane)] program)))
+    (setv value (.run (PyVM) (with-handlers [(forwarding-handler lane) try-handler] program)))
     (except [error BaseException]
       (.deliver lane (ApartFailed :error error)))
     (else

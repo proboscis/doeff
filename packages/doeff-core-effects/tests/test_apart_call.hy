@@ -3,6 +3,7 @@
 ;;;   - 計算の間も撃った run の他の task が回る(時計の拍が COMPUTE-SECONDS の間に MIN-TICKS 回以上 進む)。計算は別の thread で回り、effect の
 ;;;     答えは撃った thread の handler が出す。反例: 同じ program を run-apart なしで撃つと、計算の間に拍が進まない(thread を占める)。
 ;;;   - 失敗は両向きに渡る: 答え手が断った effect は program へ例外で投げられ(program が捕まえられる)、program の例外は run-apart の例外。
+;;;   - Try の program は別の thread に留まる(撃った所へ送り返さない)。
 ;;;   - 撃った task を取り消すと通い路が閉じ、答えを待っていた program へ ApartClosed が投げられる(program の後始末が回る)。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.handle [defhandler])
@@ -11,6 +12,7 @@
 (import dataclasses [dataclass])
 (import doeff [with_handlers EffectBase Program])
 (import doeff_core_effects.scheduler [Spawn Wait Cancel TaskCancelledError])
+(import doeff_core_effects.effects [Try])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_time [Delay async-time-handler])
 (import doeff_core_effects.apart_call [ApartClosed run-apart])
@@ -120,6 +122,25 @@
     (except [error KeyError]
       (:= raised error)))
   (assert (is-not raised None) "program の例外が run-apart から上がらない"))
+
+
+(defk computed-thread []
+  {:pre [] :post [(: % int)]}
+  "計算した thread の番号を返すため(Try の program として回す)。"
+  (threading.get-ident))
+
+
+(defk thread-inside-try []
+  {:pre [] :post [(: % int)]}
+  "Try の program の中で計算した thread の番号を返すため。"
+  (<- attempted (Try (computed-thread)))
+  attempted.value)
+
+
+(deftest test-try-runs-apart
+  ;; Try は別の thread の VM の中で答える(撃った所へ送り返すと、Try の program は撃った thread で回る)。
+  (<- inside int (run-apart (thread-inside-try)))
+  (assert (!= inside (threading.get-ident)) "Try の program が撃った thread で回った"))
 
 
 (defk waits-long [closed]
