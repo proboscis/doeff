@@ -117,7 +117,7 @@ components are listed separately under
 ### Effect Types
 
 6. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
-7. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
+7. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations (the Race example waits with `doeff-time`)
 8. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
 9. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
 10. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns (the time effects need `doeff-time`)
