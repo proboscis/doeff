@@ -105,11 +105,37 @@
   (val read (read-of data True))
   (assert (= (lfor call read.calls call.request-id) ["req_1"]) (repr read.calls))
   (assert (is read.problem None) (repr read))
-  ;; 外すのは親の道具の呼びの id を持つ行だけ — ほかの tool_use を持つ呼び(subagent が自分で呼んだ道具)は残す。
+  ;; 外すのは fork-context-ref で始まる読みの、最初の user の行より前の行だけ — fork-context-ref で始まらない読み(前の読みの続き・
+  ;; fork でない subagent)の呼びは、道具の呼びを持っていても残す。
   (val own (| (assistant "msg_2" "claude-opus-5-5" OTHER-USAGE AT
-                         :content [{"type" "tool_use" "id" "toolu_child" "name" "Bash" "input" {}}] :stop-reason "tool_use")
+                         :content [{"type" "tool_use" "id" "toolu_parent" "name" "Bash" "input" {}}] :stop-reason "tool_use")
               {"requestId" "req_2"}))
   (assert (= (lfor call (. (read-of (.encode (line-of own) "utf-8")) calls) call.request-id) ["req_2"])))
+
+(deftest test-a-fork-continued-by-send-message-does-not-count-the-copied-main-call
+  ;; 本番の形(CLI 2.1.306・2026-10-25 の session e2729ddb の agent abc33f21e894a978f・ae5cacf2a03239b31 — card ki-603188dbe54d): 道具
+  ;; Agent の呼び toolu_01L9NGY… で起こした fork を、本体が道具 SendMessage の呼び toolu_01UgfKk… で続けた。終わりの報せは続けた道具の
+  ;; 呼びの id を名乗るので、読み手の親の道具の呼びの id(read-of の toolu_parent)は、頭の写しの tool_use の id(toolu_started)と
+  ;; 合わない。失敗ケース = 変更前は道具の呼びの id で写しを見分けたので、続けた fork の写し(本体の呼び req_main)を subagent の呼びに
+  ;; 数え、turn の呼びの見積りが CLI の額を越えた(2 つの fork で 0.3709 USD)。
+  (val copied (| (assistant "msg_main" "claude-opus-5-5" OTHER-USAGE AT
+                            :content [{"type" "tool_use" "id" "toolu_started" "name" "Agent" "input" {"subagent_type" "fork"}}]
+                            :stop-reason "tool_use")
+                 {"requestId" "req_main" "parentUuid" None}))
+  (val data (.encode (.join "" [(line-of {"type" "fork-context-ref" "agentId" "a1" "parentSessionId" "s1" "contextLength" 388})
+                                (line-of copied)
+                                (line-of {"type" "user" "timestamp" AT
+                                          "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" "toolu_started"
+                                                                              "content" "fork started"}]}})
+                                (line-of (| (assistant "msg_1" "claude-opus-5-5" FIRST-USAGE AT :stop-reason "end_turn")
+                                            {"requestId" "req_1"}))
+                                (line-of {"type" "user" "timestamp" LATER "message" {"role" "user" "content" "continue"}})
+                                (line-of (| (assistant "msg_2" "claude-opus-5-5" FINAL-USAGE LATER :stop-reason "end_turn")
+                                            {"requestId" "req_2"}))])
+                     "utf-8"))
+  (val read (read-of data True))
+  (assert (= (lfor call read.calls call.request-id) ["req_1" "req_2"]) (repr read.calls))
+  (assert (is read.problem None) (repr read)))
 
 (deftest test-a-call-with-no-closed-line-is-named-as-a-mid-call-output
   ;; 本番の形(CLI 2.1.306・2026-10-24 の session 2dd12560 の agent aa9ff76941f4f2afe の写し — card ki-edb2b5947d6a): 道具の呼びを
