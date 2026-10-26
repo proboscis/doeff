@@ -133,6 +133,14 @@ def _mount_at(deployment: Manifest, path: str) -> dict[str, object]:
 # 機体の仕事(能力 host-<Node の名> と host-systemd-readable を要る job)だけを受ける。
 NODES = ("atlas", "eos", "k3s-0", "k3s-1", "k3s-2", "k3s-3", "zeus")
 HOST_ONLY_NODES = tuple(node for node in NODES if node != "zeus")
+# 機体の名でない名の worker と、その置く機体(card ki-8335f47a1089): zeus-core は zeus の上の 2 つ目の worker で、作業の root を USB の SSD
+# でなく内蔵の SATA の SSD に置く。worker の名は Node の名でなく、selector の label doeff.dev/node は worker の名。
+EXTRA_WORKERS = {"zeus-core": "zeus"}
+WORKERS = NODES + tuple(EXTRA_WORKERS)
+
+
+def _node_of(worker_name: str) -> str:
+    return EXTRA_WORKERS.get(worker_name, worker_name)
 HOST_ONLY_PROVIDES = "host-$(NODE_NAME),host-systemd-readable"
 PREPARE_DIR = "/opt/worker-prepare"
 
@@ -189,12 +197,20 @@ ROOM_PATH = ROOM_DIR + "/worker-room.json"
 ATLAS_TASK_PASS_ENV = ("RUSTUP_HOME",)
 
 
-def _worker_on(rendered: list[Manifest], node: str) -> Manifest:
-    on_node = [doc for doc in _deployments(rendered, "worker") if _node(doc) == node]
-    assert len(on_node) == 1, (
-        f"{node} の worker の Deployment はちょうど 1 つ: {[d['metadata'] for d in on_node]!r}"
+def _worker_name(deployment: Manifest) -> str | None:
+    """worker の名 — selector の label doeff.dev/node(機体の名の worker は Node の名・zeus-core は機体の名と違う)。"""
+    selector = _mapping(_mapping(_mapping(deployment["spec"], "spec")["selector"], "selector")["matchLabels"], "matchLabels")
+    value = selector.get("doeff.dev/node")
+    return None if value is None else str(value)
+
+
+def _worker_on(rendered: list[Manifest], name: str) -> Manifest:
+    named = [doc for doc in _deployments(rendered, "worker") if _worker_name(doc) == name]
+    assert len(named) == 1, (
+        f"worker {name} の Deployment はちょうど 1 つ: {[d['metadata'] for d in named]!r}"
     )
-    return on_node[0]
+    assert _node(named[0]) == _node_of(name), f"worker {name} の置く機体が {_node_of(name)} でない: {_node(named[0])!r}"
+    return named[0]
 
 
 @pytest.fixture(scope="module")
@@ -209,11 +225,13 @@ def worker(rendered: list[Manifest], request: pytest.FixtureRequest) -> Manifest
 
 
 def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest]) -> None:
-    """worker は会社でない 7 つの機体にちょうど 1 つずつ。名は doeff-worker-<Node の名> で、selector は Node の名で互いの Pod を選ばない。"""
+    """worker は会社でない 7 つの機体にちょうど 1 つずつと、zeus の上の zeus-core。名は doeff-worker-<worker の名> で、selector は worker の
+    名で互いの Pod を選ばない(同じ機体の zeus と zeus-core も)。"""
     workers = _deployments(rendered, "worker")
-    assert sorted(_node(doc) or "" for doc in workers) == sorted(NODES)
+    assert sorted(_worker_name(doc) or "" for doc in workers) == sorted(WORKERS)
     for doc in workers:
-        node = _node(doc)
+        node = _worker_name(doc) or ""
+        assert _node(doc) == _node_of(node)
         assert _mapping(doc["metadata"], "metadata")["name"] == f"doeff-worker-{node}"
         spec = _mapping(doc["spec"], "spec")
         assert spec["replicas"] == 1
@@ -257,7 +275,7 @@ def test_zeus_worker_starts_the_new_generation_before_stopping_the_old(zeus_work
     assert isinstance(grace, int) and grace > drain + STOP_GRACE_SECONDS
 
 
-@pytest.mark.parametrize("node", NODES)
+@pytest.mark.parametrize("node", WORKERS)
 def test_worker_with_generation_dirs_runs_a_boot_script_that_knows_them(rendered: list[Manifest], node: str) -> None:
     """世代の dir を置く worker の版は、boot.sh が世代の dir を知る版(GENERATION_DIRS_SINCE)かその子孫。置かない worker は Recreate
     (同じ dir の 2 つの世代を並べない)。"""
@@ -345,7 +363,7 @@ def test_zeus_worker_cgroup_is_delegated_by_a_root_sidecar_while_the_worker_stay
     assert _volume(zeus_worker, "host-cgroup")["hostPath"] == {"path": "/sys/fs/cgroup", "type": "Directory"}
 
 
-@pytest.mark.parametrize("node", NODES)
+@pytest.mark.parametrize("node", WORKERS)
 def test_worker_with_a_cgroup_layout_runs_a_boot_script_that_knows_it(rendered: list[Manifest], node: str) -> None:
     """層を宣言する worker の版は、boot.sh と worker が層を知る版(CGROUP_LAYOUT_SINCE)かその子孫。"""
     worker = _worker_on(rendered, node)
@@ -382,7 +400,7 @@ def test_template_has_no_version_line() -> None:
     assert [d for d in template if d["kind"] == "Deployment" and any(e["name"] == "WORKER_DOEFF_COMMIT" for e in _env(d))] == []
 
 
-@pytest.mark.parametrize("node", NODES)
+@pytest.mark.parametrize("node", WORKERS)
 def test_worker_version_comes_from_its_node_dir(rendered: list[Manifest], node: str) -> None:
     """機体の worker の版は、その機体の dir の version.yaml の add 1 行の値(40 桁)で、env の WORK_DIR の直後に入る。"""
     adds = _version_adds(node)
@@ -547,7 +565,7 @@ def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendere
     assert volume["name"] == ROOM_CONFIGMAP
     assert volume.get("optional", False) is False
     rows = _room_rows()
-    assert _node(worker) in rows
+    assert _worker_name(worker) in rows
     configmaps = [doc for doc in rendered if doc.get("kind") == "ConfigMap" and _mapping(doc["metadata"], "metadata")["name"] == ROOM_CONFIGMAP]
     assert len(configmaps) == 1
     assert yaml.safe_load(str(_mapping(configmaps[0]["data"], "data")["worker-room.json"])) == rows
@@ -557,7 +575,7 @@ def test_the_room_file_has_one_valid_row_per_node() -> None:
     """枠の file は機体ごとに 1 行を持ち、どの行も 0 ≤ taskReserve ≤ capacity の整数(worker が名乗れる値 — 外れた行は worker が読まず、前の
     値のまま名乗り続ける)。"""
     rows = _room_rows()
-    assert sorted(rows) == sorted(NODES)
+    assert sorted(rows) == sorted(WORKERS)
     for node, row in rows.items():
         room = _mapping(row, node)
         assert sorted(room) == ["capacity", "taskReserve"], node
@@ -710,7 +728,7 @@ def test_no_worker_is_newer_than_the_coordinator(rendered: list[Manifest]) -> No
     coordinator = str(_env_value(coordinators[0], "WORKER_DOEFF_COMMIT")["value"])
     workers = tuple(
         NodeVersion(node=node, commit=str(_env_value(_worker_on(rendered, node), "WORKER_DOEFF_COMMIT")["value"]))
-        for node in NODES
+        for node in WORKERS
     )
     newer = _workers_newer_than(coordinator, workers)
     assert newer == (), f"coordinator の版 {coordinator} より新しい worker の版(coordinator を先に上げる): {newer!r}"
@@ -745,7 +763,7 @@ def test_no_worker_caches_programs_by_sha_alone(rendered: list[Manifest]) -> Non
     """宣言の全部の機体の worker の版は、Program の cache を (版・sha) で名づける版かその子孫(上の註)。"""
     workers = tuple(
         NodeVersion(node=node, commit=str(_env_value(_worker_on(rendered, node), "WORKER_DOEFF_COMMIT")["value"]))
-        for node in NODES
+        for node in WORKERS
     )
     stale = _workers_caching_by_sha_alone(workers)
     assert stale == (), (
@@ -913,7 +931,7 @@ def test_zeus_worker_puts_the_two_usb_dirs_under_the_work_root(zeus_worker: Mani
 def test_other_workers_keep_the_default_work_root(rendered: list[Manifest]) -> None:
     """zeus 以外の機体の worker の作業の root は今のまま(機体ごとの差は機体の dir だけが持つ)。"""
     others = [doc for doc in rendered if doc.get("kind") == "Deployment" and _mapping(doc["metadata"], "metadata").get("name") not in (
-        "doeff-worker-zeus", "coordinator")]
+        "doeff-worker-zeus", "doeff-worker-zeus-core", "coordinator")]
     assert others
     for doc in others:
         assert _work_volume(doc)["path"] == DEFAULT_WORK_ROOT, _mapping(doc["metadata"], "metadata")["name"]
@@ -938,3 +956,56 @@ def test_zeus_worker_stops_at_init_without_the_usb_ssd_marker(zeus_worker: Manif
     assert f"test -f {ZEUS_WORK_MARKER}" in command, command
     assert command.index(f"test -f {ZEUS_WORK_MARKER}") < command.index("chown 1000:1000 /work"), command
     assert "exit 1" in command, command
+
+
+# zeus の 2 つ目の worker zeus-core(card ki-8335f47a1089 — 10-26 05:43 に USB の SSD が bus から落ち、作業の root を SSD に置く worker zeus
+# 1 つに載っていた上に載る系の小さい常駐の job が全部止まった)。作業の root は内蔵の SATA の SSD の下で、USB の SSD の下の物を 1 つも
+# mount しない。名は Node の名と別の値、能力は host-zeus-core と host-systemd-readable の 2 つだけ(host-zeus と能力の残りを名乗らない —
+# 名乗ると worker zeus の job がここへ置かれ得る)。上に載る系の準備の script は置かない(機体の仕事だけを受ける worker と同じ)。
+USB_SSD_ROOT = "/mnt/fast_ssd_usb"
+ZEUS_CORE = "zeus-core"
+ZEUS_CORE_WORK_ROOT = {"path": "/mnt/hot_ssd_sata/agent-worker-core", "type": "DirectoryOrCreate"}
+ZEUS_CORE_PROVIDES = "host-zeus-core,host-systemd-readable"
+ZEUS_CORE_SATA_MARKER = "test -d /sata/longhorn-zeus"
+
+
+def _host_paths(worker: Manifest) -> list[str]:
+    return [
+        str(_mapping(_mapping(v, "volume")["hostPath"], "hostPath")["path"])
+        for v in _sequence(_pod_spec(worker)["volumes"], "volumes")
+        if "hostPath" in _mapping(v, "volume")
+    ]
+
+
+def _usb_rooted(worker: Manifest) -> bool:
+    """worker の作業の root(volume work)か、mount する hostPath のどれかが USB の SSD の下に在るか。"""
+    return any(path == USB_SSD_ROOT or path.startswith(USB_SSD_ROOT + "/") for path in _host_paths(worker))
+
+
+def test_zeus_core_worker_names_itself_apart_from_its_node(rendered: list[Manifest]) -> None:
+    """zeus-core は機体 zeus の上で、名は値 zeus-core(Node の名でない)、機体の事実 NODE_NAME は Node の名のまま、能力は 2 つだけ。"""
+    core = _worker_on(rendered, ZEUS_CORE)
+    assert _env_value(core, "WORKER_NAME") == {"name": "WORKER_NAME", "value": ZEUS_CORE}
+    assert _env_value(core, "NODE_NAME")["valueFrom"] == NODE_NAME_FIELD
+    assert _env_value(core, "WORKER_PROVIDES")["value"] == ZEUS_CORE_PROVIDES
+    assert PREPARE_DIR not in [
+        _mapping(m, "volumeMount")["mountPath"] for m in _sequence(_container(core)["volumeMounts"], "volumeMounts")
+    ]
+
+
+def test_zeus_core_worker_work_root_is_off_the_usb_ssd(rendered: list[Manifest]) -> None:
+    """zeus-core の作業の root は内蔵の SATA の SSD の下で、USB の SSD の下の hostPath を 1 つも持たない。init own-work は SATA の SSD が
+    mount されている事(Longhorn の disk の dir)を確かめてから作業の root を worker の uid へ渡す。"""
+    core = _worker_on(rendered, ZEUS_CORE)
+    assert _work_volume(core) == ZEUS_CORE_WORK_ROOT
+    assert not _usb_rooted(core), _host_paths(core)
+    command = " ".join(str(part) for part in _sequence(_init(core, "own-work")["command"], "command"))
+    assert command.index(ZEUS_CORE_SATA_MARKER) < command.index("chown 1000:1000 /work"), command
+    assert "exit 1" in command, command
+
+
+def test_the_usb_rooted_zeus_worker_is_told_apart() -> None:
+    """USB の SSD の判じは、10-26 に止まった worker zeus(作業の root が USB の SSD)を USB の SSD の上と言い、zeus-core を言わない。"""
+    rendered = _build(K8S)
+    assert _usb_rooted(_worker_on(rendered, "zeus"))
+    assert not _usb_rooted(_worker_on(rendered, ZEUS_CORE))
