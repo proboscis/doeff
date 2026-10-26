@@ -87,7 +87,6 @@ def serve():  # 止める合図が来るまで回る。
 
 def board_handler(ready, free):  # テスト用に、決めた盤面と空きを答えるハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def fixed_board(effect, k):  # 決めた盤面と空きを答える。
         if isinstance(effect, ReadReady):  # 配れるcardの依頼には、
             return (yield Resume(k, ready))  # 決めた一覧を返す。
@@ -99,7 +98,6 @@ def board_handler(ready, free):  # テスト用に、決めた盤面と空きを
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def dry_run(effect, k):  # 記録だけの運転: 会話を起こさず、配るはずだったcardを表示する。
     if isinstance(effect, Dispatch):  # 頼む依頼だけを受け持つ。
         print("配るはずだった:", effect.key)  # 本番のハンドラなら、ここで会話を開く。
@@ -116,7 +114,6 @@ def simulate(strategy, cards, ceiling, minutes=1440):  # 1日の負荷を、仮�
     world = {"now": -1, "running": {}, "waits": {}}  # 世界の値: 今の分・走っている会話・cardごとの待ち。
 
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def world_handler(effect, k):  # 配りの依頼に、世界の値で答える。
         if isinstance(effect, AwaitChange):  # 待ちの依頼には、時計を1分進め、
             world["now"] += 1  # 仮想の時計を進める。

@@ -105,7 +105,6 @@ def advise_prompt(prompt):  # 利用者の依頼1つから、見せる助言を�
 
 def fixed_judge(answers):  # 試験用の判定器。問いの文ごとに、決めた確率で答える。
     @handler  # この関数を、Programに取り付けられるハンドラにする。
-    @do  # ハンドラ自身もyieldで、再開や委譲を指示する。
     def judge(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
         if isinstance(effect, AskJudge):  # 判定器への問いだけを受け持つ。
             probabilities = tuple(answers.get(q) for q in effect.questions)  # 表に無い問いは答え無し。
@@ -115,7 +114,6 @@ def fixed_judge(answers):  # 試験用の判定器。問いの文ごとに、決
 
 
 @handler  # 判定器が時間内に答えなかった時の代わりのハンドラ。
-@do  # 再開を、ほかのハンドラと同じ書き方で指示する。
 def silent_judge(effect, k):  # 答えを持たない判定器。
     if isinstance(effect, AskJudge):  # 判定器への問いを受ける。
         return (yield Resume(k, (None,) * len(effect.questions)))  # 全部を答え無しにして見送らせる。

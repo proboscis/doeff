@@ -48,7 +48,6 @@ def claude_share(rev):  # 共著の行を持つcommitの数と、全体の数を
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def fixed_log(effect, k):  # テスト用に、決めた3つの本文を答える。
     if isinstance(effect, ReadMessages):  # 本文の依頼には、
         return (yield Resume(k, ["Fix typo",  # 共著の行が無い本文と、
@@ -76,7 +75,6 @@ import subprocess  # 本番のハンドラで、gitを走らせる。
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def git_log(effect, k):  # 本番用に、今いるリポジトリのgitの履歴から本文を読む。
     if isinstance(effect, ReadMessages):  # 本文の依頼には、
         argv = ["git", "log", "-z", "--format=%B", effect.rev]  # 本文を、NUL文字で区切って出させる。

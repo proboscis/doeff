@@ -31,7 +31,6 @@ def land(change):  # 変更を1件、mainへ入れる。
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def conflict_scan(effect, k):  # 門は、行頭の衝突の印だけを見る。
     if isinstance(effect, Gate):  # 門の依頼には、
         lines = [line for text in effect.files.values() for line in text.splitlines()]  # 木の全部の行。
@@ -41,7 +40,6 @@ def conflict_scan(effect, k):  # 門は、行頭の衝突の印だけを見る�
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def fake_tests(effect, k):  # 前の形の門。ここでは「assert False」を含む木を、落ちるテストと見なす。
     if isinstance(effect, Gate):  # 門の依頼には、
         failing = any("assert False" in text for text in effect.files.values())  # 落ちるテストがあるか。
@@ -50,7 +48,6 @@ def fake_tests(effect, k):  # 前の形の門。ここでは「assert False」�
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def sample_repo(effect, k):  # テスト用に、決めた積み直しの結果を答える。
     if isinstance(effect, Rebase):  # 積み直しの依頼には、
         trees = {"fix-typo": {"README.md": "# Hello\n"},  # 1語を直しただけの変更。
@@ -63,7 +60,6 @@ def sample_repo(effect, k):  # テスト用に、決めた積み直しの結果�
 
 def taking(seconds):  # 門の依頼にseconds秒かける、ハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、待ちや委譲を指示する。
     def slow_gate(effect, k):  # 門の依頼だけを横取りする。
         if isinstance(effect, Gate):  # 門の依頼なら、
             yield Delay(seconds)  # 確かめの時間だけ待つ。

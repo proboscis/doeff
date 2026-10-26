@@ -29,7 +29,6 @@ class ReadTitle(Effect):  # 文書の先頭行を求める操作を表す。
 
 @handles(ReadTitle)  # このハンドラがReadTitleを扱うことを検査器へ伝える。
 @handler  # @doの関数をハンドラにする。
-@do  # ハンドラの処理もProgramとして継続操作をyieldする。
 def title_handler(effect, k):  # 依頼と、その結果を待つ続きkを受け取る。
     if isinstance(effect, ReadTitle):  # 見出しの依頼だけをここで解釈する。
         return (yield Resume(k, effect.document.splitlines()[0]))  # 先頭行で呼び出し元を再開する。

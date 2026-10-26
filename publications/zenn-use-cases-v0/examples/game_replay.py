@@ -80,7 +80,6 @@ def battle():  # HP9の敵へカードを出し、倒すまでターンを繰り
 
 
 @handler
-@do  # ルールの解釈自体も、状態操作を含むProgramにする。
 def rules(effect, k):  # kは、この操作の結果を待っているゲームの続き。
     if isinstance(effect, DealDamage):  # HPの更新規則だけをこのハンドラで扱う。
         if effect.amount <= 0:  # 不正なダメージは状態を変える前に拒否する。
@@ -94,7 +93,6 @@ def rules(effect, k):  # kは、この操作の結果を待っているゲーム
 
 def scripted_player(cards: tuple[int, ...]):  # 固定のカード列を返すハンドラを組み立てる。
     @handler
-    @do  # 入力を返す前のDelayも、通常のeffectとして処理する。
     def interpret(effect, k):  # 固定入力の解釈を担当する。
         if isinstance(effect, DrawCard):  # 指定ターンのカードを求められた場合。
             return (yield Resume(k, cards[effect.turn]))  # 0・1・2ターンへ2・3・4を返す。
@@ -108,7 +106,6 @@ def scripted_player(cards: tuple[int, ...]):  # 固定のカード列を返す�
 
 def record_inputs(journal: list[dict]):  # 入力取得とは別に、記録するハンドラを組み立てる。
     @handler
-    @do  # 入力の取得結果を待ってから記録できるようにする。
     def interpret(effect, k):  # カードと行動の依頼だけを記録する。
         if isinstance(effect, (DrawCard, ChooseAction)):  # 再現に必要な入力操作を選ぶ。
             value = yield effect  # 外側の入力ハンドラへ同じ依頼を渡し、結果を受け取る。
@@ -128,7 +125,6 @@ def replay_inputs(journal: list[dict]):  # 完了履歴から入力を返すハ�
     entries = deque(journal)  # 元の履歴を壊さず、再生する順番を持つ。
 
     @handler
-    @do  # ゲームからの入力依頼を、記録した結果へ置き換える。
     def interpret(effect, k):  # 外部入力やDelayを発生させずに再生する。
         if isinstance(effect, (DrawCard, ChooseAction)):  # 記録対象と同じ操作だけを解釈する。
             if not entries:  # 次の入力が必要なのに履歴が終わっていないかを確認する。

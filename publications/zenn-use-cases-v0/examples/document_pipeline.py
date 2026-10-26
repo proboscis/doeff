@@ -72,7 +72,6 @@ def workflow():  # ページが重なる2つの索引と、選んだ時計での
 
 
 @handler  # ドメインからHTTPへの翻訳を、Programに取り付けられる形にする。
-@do  # HTTP応答を待つ部分も、外側のハンドラへyieldする。
 def pages_over_http(effect, k):  # ReadPageだけを本文取得の手順へ翻訳する。
     if not isinstance(effect, ReadPage):  # Memoや時間などの別の依頼は担当しない。
         return (yield Pass(effect, k))  # 別の担当へ元の依頼と続きを渡す。
@@ -84,7 +83,6 @@ def pages_over_http(effect, k):  # ReadPageだけを本文取得の手順へ翻�
 
 def fixed_http(pages: dict[str, str], calls: list[str], seconds: float):  # テスト用HTTP担当を作る。
     @handler  # 固定応答を、本番HTTPと同じ位置へ取り付けられるようにする。
-    @do  # 取得待機と結果返却を、DelayとResumeで表す。
     def interpret(effect, k):  # クライアントを作らず、HttpRequestを直接受け取る。
         if not isinstance(effect, HttpRequest):  # HTTP以外は外側の担当に委ねる。
             return (yield Pass(effect, k))  # Memoや時計の処理に干渉しない。
@@ -107,7 +105,6 @@ def fixed_http(pages: dict[str, str], calls: list[str], seconds: float):  # テ�
 
 
 @handler  # 保存済みのデータだけで動くことを確認する、別のHTTP担当。
-@do  # 未保存のHTTP依頼を検出したら、Programの失敗として伝える。
 def reject_http(effect, k):  # HTTPが呼ばれないはずの再実行に取り付ける。
     if not isinstance(effect, HttpRequest):  # HTTP以外の処理は引き続き使える。
         return (yield Pass(effect, k))  # Memoの読み取りや時計を妨げない。

@@ -5686,16 +5686,11 @@ rules:
       def $F(...):
         ...
     paths:
-      # The daily checks run these two directories on the doeff of PyPI (tools/verify_core_install.py
-      # --pypi・publications/zenn-use-cases-v0/verify_pypi.py), and 0.7.0 refuses a def without @do as
-      # a handler. They keep @handler over @do until a release with @handler alone is on PyPI.
       exclude:
         - "/tests/**"
         - "**/tests/**"
         - "/docs/design/**"
         - "/docs/design-checks/**"
-        - "/examples/testing_without_mocks/**"
-        - "/publications/zenn-use-cases-v0/**"
 
   - id: doeff-handler-yields-its-control
     languages: [python]

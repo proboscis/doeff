@@ -34,7 +34,6 @@ def bracketed_title(text: str):  # 入力の型はテスト用と同じにする
 
 
 @handler  # この関数を、Programに取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで再開や委譲を指示する。
 def test_formatter(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
     if isinstance(effect, Ask) and effect.key == "formatter":  # 整形の依頼だけを担当する。
         return (yield Resume(k, plain_title))  # テスト用の実装を渡し、続きを動かす。

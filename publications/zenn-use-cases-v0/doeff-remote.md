@@ -129,7 +129,6 @@ def verify_delivery():  # テスト境界にだけrunを置き、依頼の中身
     requests = []  # この固定ハンドラへ届いた実行依頼を保存する。
 
     @handler  # DockerRunの解釈だけを、テスト用に交換可能にする。
-    @do  # 受け取ったProgramもyieldで合成する。
     def fixed_container(effect, k):  # DockerやSSHのクライアントを作らず、依頼そのものを受け取る。
         if not isinstance(effect, DockerRun):  # コンテナ実行以外の依頼には介入しない。
             return (yield Pass(effect, k))  # 担当する外側のハンドラへ引き渡す。

@@ -13,7 +13,6 @@ def greet():  # 名前の取得方法を決めずに、挨拶を組み立てる�
     return f"こんにちは、{name}さん"  # 受け取った名前を含む挨拶を返す。
 
 @handler  # この処理をProgramに取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで再開や委譲を指示する。
 def handle_ask_effect(effect, k):  # effectは届いた依頼、kは中断した処理の続き。
     if isinstance(effect, Ask) and effect.key == "name":  # 名前を求める依頼だけを担当する。
         return (yield Resume(k, "花子"))  # nameに「花子」を渡してgreetを再開する。
@@ -22,7 +21,6 @@ def handle_ask_effect(effect, k):  # effectは届いた依頼、kは中断した
 assert run(with_handlers([handle_ask_effect], greet())) == "こんにちは、花子さん"  # 取り付けて実行し、挨拶を確認する。
 
 @handler  # 同じエフェクトを別の方法で扱うハンドラを作る。
-@do  # 再開と委譲を、最初のハンドラと同じ書き方で指示する。
 def handle_test_ask_effect(effect, k):  # 依頼の型と再開する値の契約を保つ。
     if isinstance(effect, Ask) and effect.key == "name":  # 同じ名前の依頼を受け取る。
         return (yield Resume(k, "太郎"))  # 今度はnameへ「太郎」を渡す。
