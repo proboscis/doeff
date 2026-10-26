@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-10-27
+
 ### Changed
 
 - **Breaking (doeff-hy):** `<-` and `!` refuse, when they expand, an expression whose value can be a plain literal —
@@ -50,6 +52,25 @@
   `effects`, `effect-handlers`, `handlers` and `continuations` instead of `monad` and `free-monad`, each package links
   its Documentation, Changelog and Issues, and every package gives a Development Status, an Intended Audience and a
   Topic (`tests/test_core_packages_metadata.py`).
+- Python 3.15 is supported: `doeff-vm` builds with PyO3 0.29 and ships cp315 wheels for Linux, macOS and Windows,
+  and the five core packages declare 3.15 in their classifiers. Supported versions are now 3.11 to 3.15
+  (3.14t, the free-threaded build, included).
+- `doeff-vm`: `state()` answers `Get` and `Put` inside the VM (`doeff_vm.StateHandler`) instead of through a
+  Python handler. The answers are the same — a missing key reads `None`, other effects pass on — and the handler
+  keeps its name `state.<locals>.handler` in tracebacks and in `UnhandledEffect`.
+- `doeff-vm`: a `perform` or `Pass` skips the handlers whose type annotation does not accept the effect in one
+  search, and each handler remembers per effect type whether it accepts it, so a handler that an effect passes over
+  costs about 0.1–0.2 µs instead of 0.3–0.4 µs.
+- The Rust scheduler waits for an outside completion in 50 ms slices and runs Python's signal handlers between
+  them, so a `SIGTERM` or `Ctrl-C` handler runs at once instead of up to 30 seconds later.
+- A `defhandler` with arguments (a handler factory) and the factories that return handlers
+  (`doeff_core_effects.http_handlers.http_production_handler` and `http_fixture_handler`) are annotated to return
+  `doeff.program.ProgramHandler`, so type checkers and `inspect.signature` read them as handlers.
+- Every public name of `doeff` has a docstring, and the API reference has an index of them (`DoeffRunContext`
+  included).
+- `doeff-time` 0.1.0 is the first release of `doeff-time` on PyPI (`pip install doeff-time`). It needs
+  `doeff>=0.8.0,<0.9` and `doeff-core-effects>=0.8.0,<0.9`, and is released on its own tag `doeff-time/v0.1.0`,
+  not with the core packages.
 
 ## 0.7.0 — 2026-10-18
 

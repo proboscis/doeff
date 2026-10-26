@@ -605,7 +605,7 @@ wheels = [
 
 [[package]]
 name = "doeff"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "doeff-core-effects" },
@@ -975,7 +975,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "doeff-core-effects"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/doeff-core-effects" }
 dependencies = [
     { name = "doeff" },
@@ -1214,7 +1214,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "doeff-hy"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/doeff-hy" }
 dependencies = [
     { name = "doeff" },
@@ -1235,7 +1235,7 @@ requires-dist = [
 
 [[package]]
 name = "doeff-hy-pytest"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/doeff-hy-pytest" }
 
 [[package]]
@@ -1603,10 +1603,14 @@ version = "0.1.0"
 source = { editable = "packages/doeff-time" }
 dependencies = [
     { name = "doeff" },
+    { name = "doeff-core-effects" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "doeff", editable = "." }]
+requires-dist = [
+    { name = "doeff", editable = "." },
+    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+]
 
 [[package]]
 name = "doeff-traverse"
@@ -1650,7 +1654,7 @@ requires-dist = [
 
 [[package]]
 name = "doeff-vm"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/doeff-vm" }
 
 [[package]]

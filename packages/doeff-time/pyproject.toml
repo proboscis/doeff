@@ -9,7 +9,8 @@ description = "Provider-agnostic time effects for doeff"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "doeff>=0.1.0",
+    "doeff>=0.8.0,<0.9",
+    "doeff-core-effects>=0.8.0,<0.9",
 ]
 
 [tool.hatch.build.targets.wheel]
