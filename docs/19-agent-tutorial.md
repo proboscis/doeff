@@ -2,12 +2,12 @@
 
 > **Needs components outside `pip install doeff`.** This page uses `doeff-agents`. PyPI has only
 > an old `doeff-agents` 0.1.1 build, which does not import with doeff 0.5.0, so install it from a
-> checkout of this repository together with the repository packages it depends on (`doeff-time`,
-> `doeff-claude-code`, `doeff-codex`). pip takes everything else from PyPI:
+> checkout of this repository together with the repository packages it depends on
+> (`doeff-claude-code`, `doeff-codex`). pip takes everything else, `doeff-time` included, from PyPI:
 
 ```bash
 git clone --depth 1 https://github.com/proboscis/doeff.git
-pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-claude-code \
+pip install doeff doeff-time ./doeff/packages/doeff-claude-code \
   ./doeff/packages/doeff-codex ./doeff/packages/doeff-agents
 ```
 

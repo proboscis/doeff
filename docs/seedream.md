@@ -10,12 +10,12 @@ from ByteDance's Ark platform.
 ## Installation
 
 Install `doeff-seedream` from a checkout of this repository together with the
-repository packages it depends on (`doeff-time`, `doeff-image`). pip takes
-everything else, `doeff` included, from PyPI:
+repository package it depends on (`doeff-image`). pip takes everything else,
+`doeff` and `doeff-time` included, from PyPI:
 
 ```bash
 git clone --depth 1 https://github.com/proboscis/doeff.git
-pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-image \
+pip install doeff doeff-time ./doeff/packages/doeff-image \
   ./doeff/packages/doeff-seedream
 ```
 

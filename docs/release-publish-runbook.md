@@ -49,7 +49,7 @@ root の tag では出さない。出す時は、部品ごとの tag `<package>/
 
 | 部品 | 種類 | 先に出す部品 |
 | --- | --- | --- |
-| `doeff-time` | 時間の effect | `doeff` |
+| `doeff-time` | 時間の effect。PyPI に 0.1.0 が在る(2026-10-27・tag `doeff-time/v0.1.0`・doeff 0.8 の系向け) | `doeff`・`doeff-core-effects` |
 | `doeff-llm` | provider に依らない LLM の effect | `doeff` |
 | `doeff-image` | provider に依らない画像の effect | `doeff` |
 | `doeff-secret` | provider に依らない秘密の値の effect | `doeff` |
