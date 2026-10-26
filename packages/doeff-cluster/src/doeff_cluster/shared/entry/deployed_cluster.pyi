@@ -48,6 +48,7 @@ class DeployedCluster:
     revision: str
     runtime_env: RuntimeEnv | None
     versions_read: Program | None
+    contents: dict[str, str] | None = None
 
 def deployed_cluster_answers(target: DeployedCluster) -> _Handler:
     ...

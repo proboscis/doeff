@@ -9,8 +9,9 @@
 ;;; 止めない(配備してある物に話すだけ)。
 ;;;
 ;;; 筋書きが出せる effect(deployed-cluster-answers が答える):
-;;;   Redeclare 系 環境            宣言の部品 system-declaration と apply-declaration で、配備の coordinator へ宣言を書く(版 = target の
-;;;                              revision・実行環境 = target の runtime-env・版の識別 = target の versions-read の答え・送り手 = target の actor —
+;;;;;;   Redeclare 系 環境            宣言の部品 system-declaration と apply-declaration で、配備の coordinator へ宣言を書く(版 = target の
+;;;                              revision・実行環境 = target の runtime-env・版の識別 = target の versions-read の答え・中身の鍵 = target の
+;;;                              contents の系の job の分・送り手 = target の actor —
 ;;;                              手元の 1 台と同じ組み立て・台数は各 job の :replicas が行に載る)。答え = 宣言した Service の名。
 ;;;   RestartService 名           宣言を替えずに Service 1 つを重ねて起こし直す(spec の環境変数 RESTART_MARK を 1 つ進めて書く — 宣言の部品 declare の
 ;;;                              restart-service・送り手 = target の actor)。答え = ServiceRestarted か、書かなかった理由つきの RestartRefused。
@@ -53,12 +54,15 @@
    載せる送り手の名(出来事の記録に残る名)・revision = Redeclare が宣言に書く版・runtime-env = Redeclare が宣言に載せる実行環境(repo と
    commit と uv の lock — 手元の 1 台の LocalMachine の同じ欄と同じ役。None = 版の木の道)・versions-read = Redeclare が宣言に載せる版の
    識別を読む Program(答え = process-versions の答え — 配備の worker の環境の版を読む Program を呼び手が渡す。宣言する process の版は
-   呼び手の pin に従うので、配備の worker と違う版を当てる時はこの欄で渡す・#3295。None = 宣言する process の版 this-process-versions)。"
+   呼び手の pin に従うので、配備の worker と違う版を当てる時はこの欄で渡す・#3295。None = 宣言する process の版 this-process-versions)・
+   contents = Redeclare が宣言に載せる job ごとの中身の鍵(job の名 → 鍵 — system-declaration の :contents。宣言する系に在る job の分だけを
+   渡す・card ki-81bf84ac6590。None = 鍵を載せない = 版と commit で判じる)。"
   (#^ str url)
   (#^ str actor)
   (#^ str revision)
   (#^ (| RuntimeEnv None) runtime-env)
-  (#^ (| Program None) versions-read))
+  (#^ (| Program None) versions-read)
+  (setv #^ (| (get dict #(str str)) None) contents None))
 
 
 ;; 引数に残す理由: 宛先の URL・送り手・宣言の版は、この handler を積む組み立て(deployed-cluster)が呼び手から受ける値で、読む Ask の鍵が
@@ -78,8 +82,13 @@
     (<- versions dict (if (is target.versions-read None) (this-process-versions) target.versions-read))
     ;; その宣言し直しの上書き(渡されなければ上書き無し — 本番の宣言と同じく宣言ごとの上書き・#3131)。台数は系の値の各 job の
     ;; :replicas が行に載って書かれる(0 = 取り下げ — #3487)。
+    ;; 中身の鍵は宣言する系の job の分だけ(target は道具が当てる全部の系の鍵を持ちうる — card ki-81bf84ac6590)。
+    (val names (frozenset (gfor j system.jobs j.name)))
     (val declaration (system-declaration system target.revision :runtime-env target.runtime-env :versions versions
-                                         :environ (if (is environ None) {} environ)))
+                                         :environ (if (is environ None) {} environ)
+                                         :contents (if (is target.contents None)
+                                                       None
+                                                       (dfor #(name key) (.items target.contents) :if (in name names) name key))))
     (<- placed bool (apply-declaration target.url declaration target.actor))
     (when (not placed)
       (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))
