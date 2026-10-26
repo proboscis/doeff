@@ -5,7 +5,9 @@
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import collections.abc [Callable])
 (import dataclasses [asdict])
-(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain KnownExit])
+(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain KnownExit
+                                                       NeedsOverride])
+(import doeff_cluster.coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_hy.wire [parse Malformed])
 (import doeff_traverse.helpers [sequence])
@@ -55,6 +57,7 @@
    "auditSeq" state.audit-seq
    "rollouts" (dfor #(k r) (.items state.rollouts) k (rollout-row-to-json r))
    "groupLimits" (dfor #(k l) (.items state.group-limits) k (group-limit-spec l))
+   "needsOverrides" (dfor o (.rows state.needs-overrides) o.service (needs-override-spec o))
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
@@ -126,6 +129,29 @@
   (when (is-not refusal None)
     (raise (ValueError (+ "保存の組の上限が誤っている: " refusal))))
   (group-limit-of name spec))
+
+
+(deff needs-override-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: name str) (: spec (| dict list str int float bool None))] :post [(: % NeedsOverride)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "保存の needs の上書き 1 つ(Service の名と resource_policy.needs-override-spec の形)→ NeedsOverride を読み直すため。欄の欠け・型の誤り・
+   needs に無い結び先は理由つきの ValueError(保存の行の壊れ — 黙って既定の値で読まない。上書きを落とすと元の needs が失われる)。"
+  (when (not (isinstance spec dict))
+    (raise (ValueError (.format "保存の needs の上書き {} が object でない: {!r}" name spec))))
+  (setv missing (sorted (- #{"needs" "capability" "original" "expiresAtMs" "writer" "sinceMs"} (set spec))))
+  (when missing
+    (raise (ValueError (.format "保存の needs の上書き {} に欄が無い: {}" name missing))))
+  (setv needs (capabilities-of (get spec "needs") "保存の needs の上書きの needs")
+        original (capabilities-of (get spec "original") "保存の needs の上書きの original")
+        capability (get spec "capability"))
+  (when (not (and (isinstance capability str) (in capability needs)))
+    (raise (ValueError (.format "保存の needs の上書き {} の capability {!r} が needs {} に無い" name capability (list needs)))))
+  (for [k #("expiresAtMs" "sinceMs")]
+    (when (or (not (isinstance (get spec k) int)) (isinstance (get spec k) bool))
+      (raise (ValueError (.format "保存の needs の上書き {} の {} が整数でない: {!r}" name k (get spec k))))))
+  (when (not (isinstance (get spec "writer") str))
+    (raise (ValueError (.format "保存の needs の上書き {} の writer が文字列でない: {!r}" name (get spec "writer")))))
+  (NeedsOverride :service name :needs needs :capability capability :original original
+                 :expires-ms (get spec "expiresAtMs") :writer (get spec "writer") :since-ms (get spec "sinceMs")))
 
 
 (deff audit-event-to-json [#^ AuditEvent event]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
@@ -236,6 +262,8 @@
     :rollouts (table-of (tuple (gfor #(k r) (.items (.get data "rollouts" {})) (TableWrite k (rollout-row-from-json r)))))
     ;; 組の同時数の上限(2026-10-12)は、それより前の file には無い(空として読む)。
     :group-limits (table-of (tuple (gfor #(k v) (.items (.get data "groupLimits" {})) (TableWrite k (group-limit-from-json k v)))))
+    ;; Service の needs の一時の上書き(2026-10-27)は、それより前の file には無い(空として読む)。
+    :needs-overrides (table-of (tuple (gfor #(k v) (.items (.get data "needsOverrides" {})) (TableWrite k (needs-override-from-json k v)))))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (table-of (tuple (gfor #(k v) (.items (.get data "drains" {})) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (.items (.get data "surges" {})) (TableWrite k (Placement #** v)))))

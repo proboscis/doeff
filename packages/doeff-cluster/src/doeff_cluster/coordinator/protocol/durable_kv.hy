@@ -5,7 +5,7 @@
 ;;; Service や Rollout の書きに引きずられず、逆に Service の書きが盤全体を書き直さない。
 ;;;
 ;;; キー:
-;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  audit/<番号 10 桁>  counter
+;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  needsoverride/<名>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   outbox/<結末の id>(2026-10-21・card ki-e7945a2b2d00 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
@@ -36,7 +36,8 @@
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes board-tally-of value-size
 ] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
-                                               group-limit-from-json])
+                                               group-limit-from-json needs-override-from-json])
+(import doeff_cluster.coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster.shared.core.detached_rules [group-limit-spec])
 (import doeff_hy.table [TableWrite table-of])
 
@@ -48,6 +49,8 @@
 (val SUPERSEDED "superseded/")
 ;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d — 資源 GroupLimit 1 つに鍵 1 つ)。
 (val GROUP-LIMIT "grouplimit/")
+;; Service の needs の一時の上書き(2026-10-27・card ki-1523bc0aba4f — 資源 NeedsOverride 1 つに鍵 1 つ。無い置き場は空として読む)。
+(val NEEDS-OVERRIDE "needsoverride/")
 ;; 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00 — 出口の行 1 つに鍵 1 つ。鍵 = 結末の id)。
 (val OUTBOX "outbox/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
@@ -143,6 +146,7 @@
     (table-group "meta" (fn [k m] #((+ "meta/" k) #(#(m) (partial resource-meta-to-json m)))))
     (table-group "rollouts" (fn [k r] #((+ "rollout/" k) #(#(r) (partial rollout-row-to-json r)))))
     (table-group "group_limits" (fn [k l] #((+ GROUP-LIMIT k) #(#(l) (partial group-limit-spec l)))))
+    (table-group "needs_overrides" (fn [k o] #((+ NEEDS-OVERRIDE k) #(#(o) (partial needs-override-spec o)))))
     (table-group "drains" (fn [k d] #((+ DRAIN k) #(#(d) (partial asdict d)))))
     (table-group "surges" (fn [k a] #((+ SURGE k) #(#(a) (partial asdict a)))))
     (table-group "warms" (fn [k w] #((+ WARM k) #(#(w) (partial warm-entry-to-json w)))))
@@ -275,6 +279,7 @@
     :meta (table-of (tuple (gfor #(k v) (part "meta/") (TableWrite k (resource-meta-from-json v)))))
     :rollouts (table-of (tuple (gfor #(k v) (part "rollout/") (TableWrite k (rollout-row-from-json v)))))
     :group-limits (table-of (tuple (gfor #(k v) (part GROUP-LIMIT) (TableWrite k (group-limit-from-json k v)))))
+    :needs-overrides (table-of (tuple (gfor #(k v) (part NEEDS-OVERRIDE) (TableWrite k (needs-override-from-json k v)))))
     :drains (table-of (tuple (gfor #(k v) (part DRAIN) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (part SURGE) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。

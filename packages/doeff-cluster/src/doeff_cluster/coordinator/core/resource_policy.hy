@@ -1,4 +1,4 @@
-;;; coordinator の資源(Service・Worker・Task・Rollout・GroupLimit)の純粋な判断。I/O はしない。
+;;; coordinator の資源(Service・Worker・Task・Rollout・GroupLimit・NeedsOverride)の純粋な判断。I/O はしない。
 ;;;
 ;;; - 版と出来事の記録: stamp が「前の状態と後の状態」の差から、変わった資源ごとに resourceVersion を進め(spec が変われば
 ;;;   generation も)、送り手・時刻・前後の版を出来事の記録へ足す。変化を起こした経路(API・heartbeat・調停・Rollout)を問わず
@@ -11,18 +11,26 @@
 ;;;   system の無い組は持ち主の無い組で、最初に書き直した系が持つ。消す(DELETE)は持ち主を照らさない(宣言の道具は消さない)。
 ;;;   一覧の丸ごとの上書きはしない。所有者(owner)は誰が宣言したかの記録で、書き・消しを断る照合には使わない(名乗りの X-Actor は
 ;;;   確かめないので守りにならない — 2026-10-05 に照合して断る分岐を外した)。force は進行中の Rollout が扱う資源を消す時だけに効く。
+;;;   例外は Service の needs の書き換え 1 つ(2026-10-27・card ki-1523bc0aba4f): 持ち主でない名乗りの needs の書き換えは 403 で断り、
+;;;   資源 NeedsOverride を案内する。守りではなく道の振り分け(GroupLimit の system と同じ信頼の水準の名乗り)で、復旧の手の一時の
+;;;   書き換えを、元の needs・結び先の能力・期限を持つ口へ通すための物。
+;;; - NeedsOverride(2026-10-27・card ki-1523bc0aba4f)= Service 1 つの needs の一時の上書き(名 = Service の名・spec = {needs capability
+;;;   ttlSeconds} — 作る時だけ。版つきの書き直しは無い。延ばす・変えるのは DELETE してから作り直す)。作ると Service の needs を上書きの
+;;;   needs にし、元の needs を上書きの行に持つ。調停の拍ごとに(lift-needs-overrides — api_policy.settle が置き方の前に呼ぶ)、結び先の
+;;;   能力を名乗る生きた worker が 0 になった上書きと期限の来た上書きを外して元の needs へ戻す(送り手 = coordinator — 出来事の記録に残る)。
+;;;   DELETE も元の needs へ戻す。上書きの間に持ち主が宣言し直した needs は上書きの行の元の needs に入り、外した後に効く。
 ;;; - readiness: Service が Ready か(service-readiness)。process の生存(worker の報告の running)と、宣言が readiness を
 ;;;   持てば ReportReady の直近の報告の両方で決める。
 ;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
 ;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
-(require doeff-hy.macros [defk deff val <-])
+(require doeff-hy.macros [defk deff val var <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import json)
 (import typing [NoReturn])
 (import doeff_hy.table [Table TableWrite draft-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState NeedsOverride ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
@@ -36,12 +44,13 @@
 (import doeff_cluster.shared.intent.readiness_model [ReadinessClaim])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])
 (import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
+(import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者の記録(本当の持ち主は coordinator には分からない)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
 (setv MIGRATION "migration")              ; 旧い形の状態の file に版を振った送り手
 (setv AUDIT-PER-KIND 300)                 ; 出来事の記録の上限(kind ごと)
-(setv KINDS #("Service" "Worker" "Task" "Rollout" "GroupLimit"))
+(setv KINDS #("Service" "Worker" "Task" "Rollout" "GroupLimit" "NeedsOverride"))
 
 
 (defclass Refused [Exception]
@@ -657,7 +666,8 @@
      (dfor w (.rows state.workers) (key-of "Worker" w.name) (worker-row state w now timing))
      (dfor t (.rows state.tasks) (key-of "Task" t.id) (task-row t))
      (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))
-     (dfor #(name l) (.items state.group-limits) (key-of "GroupLimit" name) (group-limit-row l))))
+     (dfor #(name l) (.items state.group-limits) (key-of "GroupLimit" name) (group-limit-row l))
+     (dfor o (.rows state.needs-overrides) (key-of "NeedsOverride" o.service) (needs-override-row o))))
 
 
 (defn #^ (| dict None) row-of [#^ ClusterState state #^ dict jobs #^ str key #^ int now #^ ClusterTiming timing]
@@ -671,6 +681,7 @@
     "Task" (if (setx task (.row state.tasks name)) (task-row task) None)
     "Rollout" (if (setx rollout (.row state.rollouts name)) (rollout-row rollout) None)
     "GroupLimit" (if (setx limit (.row state.group-limits name)) (group-limit-row limit) None)
+    "NeedsOverride" (if (setx override (.row state.needs-overrides name)) (needs-override-row override) None)
     _ (raise (ValueError (+ "snapshot の鍵の種類を知らない: " key)))))
 
 
@@ -706,7 +717,7 @@
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
    - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)/
      世代をまたぐ受け渡し(退いた世代の組と、組の在る worker の報告 — AL-D2f)。
-     Task・Rollout・GroupLimit: 自分の行。"
+     Task・Rollout・GroupLimit・NeedsOverride: 自分の行(上書きが Service の needs を書き換えた時は、Service の宣言の変化として上で拾う)。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
                        (moved-names before.observations.readiness after.observations.readiness)
@@ -740,12 +751,14 @@
                  (frozenset (gfor n workers (key-of "Worker" n)))
                  (frozenset (gfor n (.changed-keys before.tasks after.tasks) (key-of "Task" n)))
                  (frozenset (gfor n (moved-names before.rollouts after.rollouts) (key-of "Rollout" n)))
-                 (frozenset (gfor n (moved-names before.group-limits after.group-limits) (key-of "GroupLimit" n))))
+                 (frozenset (gfor n (moved-names before.group-limits after.group-limits) (key-of "GroupLimit" n)))
+                 (frozenset (gfor n (moved-names before.needs-overrides after.needs-overrides) (key-of "NeedsOverride" n))))
         present (| (frozenset (gfor n all-services :if (or (in n jobs-after) (is-not (.row after.refused n) None)) (key-of "Service" n)))
                    (frozenset (gfor n (.keys after.workers) (key-of "Worker" n)))
                    (frozenset (gfor n (.keys after.tasks) (key-of "Task" n)))
                    (frozenset (gfor n (.keys after.rollouts) (key-of "Rollout" n)))
-                   (frozenset (gfor n (.keys after.group-limits) (key-of "GroupLimit" n))))
+                   (frozenset (gfor n (.keys after.group-limits) (key-of "GroupLimit" n)))
+                   (frozenset (gfor n (.keys after.needs-overrides) (key-of "NeedsOverride" n))))
         unversioned (frozenset (gfor k present :if (is (.row after.meta k) None) k)))
   (| moved unversioned))
 
@@ -917,6 +930,122 @@
   (group-limit-of name spec))
 
 
+;; --- Service の needs の一時の上書き(資源 NeedsOverride — 2026-10-27・card ki-1523bc0aba4f)-------------------------------
+
+;; 上書きの期限の上限(秒 — 7 日)。上書きは復旧の間だけの物で、期限の無い上書き(git の宣言の外に残り続ける needs)を受けない。
+(setv NEEDS-OVERRIDE-MAX-SECONDS (* 7 24 3600))
+;; 作る時の spec の欄(この外の欄は断る — 元の needs・書き手・刻は coordinator が決める)。
+(setv NEEDS-OVERRIDE-KEYS (frozenset #("needs" "capability" "ttlSeconds")))
+
+
+(deff needs-override-spec [#^ NeedsOverride override]  ; defk にできない: 版の比べ(snapshot・row-of)と保存の綴り(state file・durable KV — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: override NeedsOverride)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "上書き 1 つの JSON の形(資源の行の spec・保存の値・GET の答えで同じ形 — 読みは state_json.needs-override-from-json)を 1 か所で綴るため。"
+  {"needs" (list override.needs) "capability" override.capability "original" (list override.original)
+   "expiresAtMs" override.expires-ms "writer" override.writer "sinceMs" override.since-ms})
+
+
+(deff needs-override-row [#^ NeedsOverride override]  ; defk にできない: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
+  {:pre [(: override NeedsOverride)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "上書き 1 つの資源の行 {spec status} を綴るため(status は空 — 外れたかどうかは行の有無で表す)。"
+  {"spec" (needs-override-spec override) "status" {}})
+
+
+(defk capability-held [state capability now timing]
+  {:pre [(: state ClusterState) (: capability str) (: now int) (: timing ClusterTiming)] :post [(: % bool)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "結び先の能力 capability を名乗る(provides か node の label から導いた derived — 置き方の placeable と同じ和)生きた worker が在るかを
+   知るため。上書きを作れるか(作る時)と、外すか(調停の拍)の両方がこの 1 つで判じる。"
+  (any (gfor w (.rows state.workers)
+             (and (alive now w timing.lease-ms) (or (in capability w.provides) (in capability w.derived))))))
+
+
+(defk needs-overrides-lifted [state overrides]
+  {:pre [(: state ClusterState) (: overrides tuple)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "上書き overrides(NeedsOverride の tuple)を外し、それぞれの Service の needs を上書きの元の needs へ戻した状態を作るため(期限・能力の
+   消え・DELETE の 3 つの外し方が同じこの 1 つを通る)。他の Service の宣言は同じ物のまま運ぶ(版の比べを動かさない)。"
+  (val back (dfor o overrides o.service o.original))
+  (replace state
+           :jobs (tuple (gfor j state.jobs (if (in j.spec.name back) (replace j :needs (get back j.spec.name)) j)))
+           :needs-overrides (.with-writes state.needs-overrides (tuple (gfor o overrides (TableWrite o.service None))))))
+
+
+(defk lift-needs-overrides [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "調停の拍ごとに(api_policy.settle が置き方の前に呼ぶ)、期限の来た上書きと、結び先の能力を名乗る生きた worker が 0 になった上書きを
+   外し、Service を元の needs で置き直させるため。以前の直の PUT の書き換えは能力の側だけが戻ると Service を置き先の無いまま残した
+   (2026-10-26 22:45〜23:21 の 13 本)。外す物が無ければ state をそのまま返す(同じ物 — 版の比べと保存の差分を動かさない)。"
+  (var lifted #())
+  (for [o (.rows state.needs-overrides)]
+    (<- held bool (capability-held state o.capability now timing))
+    (when (or (>= now o.expires-ms) (not held))
+      (:= lifted (+ lifted #(o)))))
+  (if lifted
+      (! (needs-overrides-lifted state lifted))
+      state))
+
+
+(defk needs-override-due [state]
+  {:pre [(: state ClusterState)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "上書きの外しが、状態がこのままで答えを変え得る最初の刻を知るため(api_policy.tick-due — 静かな区間でも期限の拍に起きる)。期限の最小。
+   能力の消えは worker の沈黙(liveness-due)か heartbeat で起きる拍が拾う。上書きが無ければ None。"
+  (min (gfor o (.rows state.needs-overrides) o.expires-ms) :default None))
+
+
+(defk needs-writer-refusal [name owner declared needs actor]
+  {:pre [(: name str) (: owner (| str None)) (: declared tuple) (: needs tuple) (: actor str)] :post [(: % (| str None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "Service name の needs を declared(宣言の needs — 上書きの間は上書きの元の needs)から needs へ書き換える要求を、送り手 actor が持ち主
+   owner でなければ断る理由(受けられれば None)を知るため。持ち主の分からない宣言(None・旧い PUT /jobs の LEGACY-OWNER)は断らない。
+   守りではない(X-Actor の名乗りは確かめない)— 復旧の手の一時の書き換えを、元の needs・結び先・期限を持つ資源 NeedsOverride へ
+   振り分ける道(以前は復旧の手の直の書き換えが元の値を持たず、能力の側だけ戻ると Service が宙づりになった)。"
+  (if (or (= needs declared) (is owner None) (= owner LEGACY-OWNER) (= actor owner))
+      None
+      (.format (+ "Service {} の needs({} → {})を書き換えられるのは持ち主 {} だけ(送り手 {})。一時に別の worker の能力へ結ぶなら、"
+                  "元の needs・結び先の能力・期限を持つ資源 NeedsOverride を作る: POST /resources/NeedsOverride "
+                  "{{\"name\": \"{}\", \"spec\": {{\"needs\": [...], \"capability\": \"<結び先の能力>\", \"ttlSeconds\": <秒>}}}}"
+                  "(結び先の能力を名乗る生きた worker が 0 になった拍か期限の拍に、coordinator が元の needs へ戻す)")
+               name (list declared) (list needs) owner actor name)))
+
+
+(defk create-needs-override [state body actor now timing]
+  {:pre [(: state ClusterState) (: body ResourceBody) (: actor str) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "POST /resources/NeedsOverride を受けるため: Service body.name の needs を spec の needs にし、元の needs・結び先の能力・期限・書き手を
+   上書きの行に持つ。断る物: spec の形の誤り・結び先が needs に無い・期限が 1 秒〜NEEDS-OVERRIDE-MAX-SECONDS の外(400)・Service が無い
+   (404)・同じ Service の上書きが在る・結び先の能力を名乗る生きた worker が今 0(409 — 作っても次の拍で外れる)。"
+  (val name body.name)
+  (val spec body.spec)
+  (when (not (isinstance spec dict))
+    (refuse 400 "NeedsOverride の spec は object {\"needs\": [...], \"capability\": \"<結び先の能力>\", \"ttlSeconds\": <秒>}"))
+  (val unknown (sorted (- (frozenset spec) NEEDS-OVERRIDE-KEYS)))
+  (when unknown
+    (refuse 400 (.format "NeedsOverride の spec の知らない欄: {}(書けるのは needs・capability・ttlSeconds — 元の needs と書き手は coordinator が持つ)"
+                         unknown)))
+  (val needs (capabilities-of (.get spec "needs") "NeedsOverride の needs"))
+  (val capability (.get spec "capability"))
+  (val ttl (.get spec "ttlSeconds"))
+  (when (not needs) (refuse 400 "NeedsOverride の needs が空 — 上書きの間の要る能力の名を 1 つ以上書く"))
+  (when (not (and (isinstance capability str) (in capability needs)))
+    (refuse 400 (.format "NeedsOverride の capability({!r})は needs({})の中の能力の名 1 つ — 上書きはこの能力を名乗る worker が居る間だけ効く"
+                         capability (list needs))))
+  (when (not (and (isinstance ttl int) (not (isinstance ttl bool)) (<= 1 ttl NEEDS-OVERRIDE-MAX-SECONDS)))
+    (refuse 400 (.format "NeedsOverride の ttlSeconds({!r})は 1〜{} の整数 — 上書きは期限の拍に元の needs へ戻る" ttl NEEDS-OVERRIDE-MAX-SECONDS)))
+  (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (when (is job None) (refuse 404 (+ "無い Service(NeedsOverride の名は上書きする Service の名): " (str name))))
+  (when (is-not (.row state.needs-overrides name) None)
+    (refuse 409 (.format "Service {} の NeedsOverride はもう在る(延ばす・変えるなら DELETE /resources/NeedsOverride/{} の後に作り直す)" name name)))
+  (<- held bool (capability-held state capability now timing))
+  (when (not held)
+    (refuse 409 (.format "能力 {} を名乗る生きた worker が無い — 上書きしても置き先が無く、次の拍で元の needs に戻る(先に worker に能力を名乗らせる)"
+                         capability)))
+  (val override (NeedsOverride :service name :needs needs :capability capability :original job.needs
+                               :expires-ms (+ now (* ttl 1000)) :writer actor :since-ms now))
+  (replace state
+           :jobs (tuple (gfor j state.jobs (if (is j job) (replace j :needs needs) j)))
+           :needs-overrides (.with-writes state.needs-overrides #((TableWrite name override)))))
+
+
 (defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ (| ResourceBody ServiceBody) body #^ str actor #^ int now]
   ;; 包みの形(name は文字列・spec は object)と Service の宣言の行は、本文を解く所(coordinator/protocol/request_bodies — #2445・#2448)が読んだ。
   (setv name body.name)
@@ -957,9 +1086,19 @@
                                    :refused (.with-writes state.refused #((TableWrite name None))))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (check-version state key body.resource-version)
+          ;; needs の書き換えだけは持ち主の送り手から受ける(2026-10-27・card ki-1523bc0aba4f — needs-writer-refusal)。上書き(NeedsOverride)の
+          ;; 間の宣言の needs は上書きの元の needs で、持ち主の宣言し直しはそこへ入る(外した後に効く — 上書きの needs は上書きが持つ)。
+          (setv override (.row state.needs-overrides name)
+                declared (if override override.original current.needs)
+                refusal (run (needs-writer-refusal name current.owner declared body.job.needs actor)))
+          (when refusal (refuse 403 refusal))
           ;; 所有者は本文の owner の記録(無ければ今の値)。送り手が誰でも書き換える — 名乗りを照合して断らない(2026-10-05)。
           (setv job (replace body.job :owner (or (valid-actor body.owner) current.owner)))
-          (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) job j)))))
+          (if override
+              (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) (replace job :needs override.needs) j)))
+                             :needs-overrides (.with-writes state.needs-overrides
+                                                            #((TableWrite name (replace override :original job.needs)))))
+              (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) job j))))))
     (= kind "Rollout")
       (do (setv current (.row state.rollouts name) spec (dict (or body.spec {})))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
@@ -987,6 +1126,8 @@
           (check-version state key body.resource-version)
           ;; 値と範囲を変えてよい(宣言し直し)。置いている task は止めず、次の置きから新しい値で数える。
           (replace state :group-limits (.with-writes state.group-limits #((TableWrite name limit)))))
+    (= kind "NeedsOverride")
+      (refuse 405 (.format "NeedsOverride は書き直さない(延ばす・変えるなら DELETE /resources/NeedsOverride/{} の後に作り直す)" name))
     True (refuse 405 (+ "この kind は API から書けない: " kind))))
 
 
@@ -1006,9 +1147,11 @@
           ;; 消した Service の準備と計器の報告も観測の表から外す(同じ名で作り直した Service に前の process の報告を数えない)。
           (setv seen state.observations
                 dropped #((TableWrite name None)))
+          ;; 消した Service の needs の上書きも外す(同じ名で作り直した Service に前の上書きを効かせない)。
           (replace state :jobs (tuple (gfor j state.jobs :if (!= j.spec.name name) j))
                          :observations (replace seen :readiness (.with-writes seen.readiness dropped)
-                                                     :metrics (.with-writes seen.metrics dropped))))
+                                                     :metrics (.with-writes seen.metrics dropped))
+                         :needs-overrides (.with-writes state.needs-overrides dropped)))
     (= kind "Rollout")
       (do (setv current (.row state.rollouts name))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
@@ -1030,6 +1173,11 @@
     (= kind "GroupLimit")
       (do (when (is (.row state.group-limits name) None) (refuse 404 (+ "無い GroupLimit: " name)))
           (replace state :group-limits (.with-writes state.group-limits #((TableWrite name None)))))
+    ;; 上書きを外し、Service を元の needs(上書きの間の持ち主の宣言し直しを含む)で置き直す — 期限・能力の消えと同じ外し方。
+    (= kind "NeedsOverride")
+      (do (setv override (.row state.needs-overrides name))
+          (when (is override None) (refuse 404 (+ "無い NeedsOverride: " name)))
+          (run (needs-overrides-lifted state #(override))))
     True (refuse 404 (+ "知らない kind: " kind))))
 
 
@@ -1053,12 +1201,18 @@
     (setv readiness-problem (readiness-refusal job.readiness job.update))
     (when (is-not readiness-problem None)
       (raise (BodyInvalid readiness-problem)))
+    ;; needs の書き換えは持ち主の送り手からだけ受ける(資源の口の PUT と同じ needs-writer-refusal)。上書き(NeedsOverride)の間の Service は
+    ;; 旧い口では書かない(上書きの元の needs へ入れる道は資源の口の PUT だけ — 2026-10-27・card ki-1523bc0aba4f)。
+    (setv refusal (if have (run (needs-writer-refusal name have.owner have.needs job.needs actor)) None))
     (cond
       (is have None)
         (if (is-not version None)
             (.append conflicts (RowConflict :name name :message "版が付いているが、その Service は無い(消された)"))
             (do (.append jobs job) (setv (get results name) "created")))
       (= job have) (setv (get results name) "unchanged")
+      (is-not (.row state.needs-overrides name) None)
+        (.append conflicts (RowConflict :name name :message "needs の上書き(NeedsOverride)の間の Service は旧い PUT /jobs で書けない(PUT /resources/Service で書く)"))
+      refusal (.append conflicts (RowConflict :name name :message refusal))
       (is version None)
         (.append conflicts (RowConflict :name name :message "resourceVersion の無い行で既存の宣言は変えられない(GET /state の行の版を付ける)"
                                          :current (resource-version-of state (key-of "Service" name))))
