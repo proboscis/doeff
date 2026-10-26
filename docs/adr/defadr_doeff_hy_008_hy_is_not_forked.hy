@@ -1,6 +1,6 @@
 ;;; Executable ADR: Hy はフォークしない・手を入れない。Hy の振る舞いで回避が要る所は doeff の側に置く。
 ;;;
-;;; 出自 = 利用者の決定 2026-09-29 14:0x JST(herdr w3J:pG の会話・agora-redesign #1290 の comment・逐語は :problem の fact)。
+;;; 出自 = 利用者の決定 2026-09-29(agora-redesign #1290 の comment・決めた事は :problem の fact)。
 ;;; doeff は Hy のフォーク(proboscis/hy・本家 1.3.1 に 10 commit)を固定して使っていた。フォークの 3 つの機能を doeff の側の
 ;;; 回避へ置き換える(子 #1291 テストの索引・#1292 macro の変更で古い bytecode を使わない・#1293 require の高速化)。
 ;;;
@@ -641,8 +641,8 @@
           "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy"]
   :problem
     [(fact
-       "利用者の決定 2026-09-29 14:0x JST(逐語): \"I see, then lets introduce such bypasses and not touch hy at all.\" — 前の問い(逐語): \"so we are using hy fork but do we need to? we decided to cache the test index right?\" / \"why do we need to speed up the 'require' to even fork?\" / \"i mean if everything can be bypassed without forking hy\""
-       :evidence "herdr w3J:pG の会話・agora-redesign #1290 の comment(2026-09-29)")
+       "利用者の決定 2026-09-29: Hy を fork せずに済む迂回を入れ、Hy には一切手を入れない。前の問い: test の索引は cache すると決めたのに、Hy の fork は本当に要るのか。require を速くするために fork までする必要は無く、すべて Hy を fork せずに迂回できるのではないか。"
+       :evidence "agora-redesign #1290 の comment(2026-09-29)")
      (fact
        "フォークの費用(2026-09-29 の実例): doeff と agora-controllers の Hy の固定を同時に上げる必要があり、13:16〜13:45 に agora のマージが全部落ちた。早朝には bytecode の形式の変更で image が組めなくなった(#1003)。"
        :evidence "agora-redesign #1290 本文")

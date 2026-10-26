@@ -1,7 +1,7 @@
 //! 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`(agora-redesign #849)。
 //!
-//! operator 2026-09-28 の決定(逐語は #849): "also, maybe we could make the func call look like f(a,b) instead of (f a b)?" /
-//! "yeah so the code would look like: int x <- some-func(0) + 1" / 式の途中の effect は `!` の印を残す案 A("lets try A")。
+//! operator の決定 2026-09-28(#849): 呼びを `(f a b)` でなく `f(a,b)` の形で見せ、束縛も `int x <- some-func(0) + 1` のように
+//! 読める形にする。式の途中の effect は `!` の印を残す案 A。
 //! 読むための表示だけで、source の Hy はそのまま(書く向きの変換は持たない)。式の形を読むのはここ 1 か所で、エディタは
 //! 置き換えを描くだけ(Hy を読み直さない)。
 //!

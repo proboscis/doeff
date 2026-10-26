@@ -1,6 +1,6 @@
 """k8s の宣言(deploy/k8s)は、機体ごとに静的な worker 1 つと coordinator 1 つを持ち、上に載る系の値を名の固定した ConfigMap で受ける。
 
-利用者の決定(2026-10-09 17:03 原文 "we are not supposed to frequently restart doeff worker! it must be very static."): worker の Pod の
+利用者の決定(2026-10-09 — doeff worker は頻繁に作り直さず、静的に保つ): worker の Pod の
 宣言はこの package が持ち、上に載る系の repo は job と DB の宣言だけを持つ。だから宣言はこの dir に在り、機体ごとの差(置く Node・資源の
 上限)だけを機体の dir が足す。上に載る系の値(env・準備の script・Bash の包み)は名の固定した ConfigMap を名で参照するだけで、宣言の文字に
 上に載る系の語を書かない(規則 doeff-packages-have-no-application-vocabulary — 語の一覧は .semgrep.yaml の規則 1 つから読み、ここに写さない)。
@@ -860,8 +860,8 @@ def test_declarations_name_no_upper_system(rendered: list[Manifest]) -> None:
     assert {where: words for where, words in hits.items() if words} == {}
 
 
-# zeus の worker の作業の root(volume work — WORK_DIR=/work)は、機体の root の disk でなく USB の SSD の下に置く(2026-10-10 15:0x の利用者の
-# 決定 原文 "the strategy is to replace the volume consuming part with usb ssd on zeus" — 同じ日の 13:39 JST に root の disk の空きが準備の最低
+# zeus の worker の作業の root(volume work — WORK_DIR=/work)は、機体の root の disk でなく USB の SSD の下に置く(2026-10-10 の利用者の
+# 決定 — zeus の容量を食う置き場を USB の SSD へ移す。同じ日の 13:39 JST に root の disk の空きが準備の最低
 # 25 GiB を切り、zeus へ置く job の新しい版の準備が全部止まった)。hostPath の type は Directory: SSD が外れて mount の点が無い時に、root の
 # disk へ黙って dir を作らず Pod の起動で止まる。他の機体の worker は今の /var/lib/agent-worker のまま。
 ZEUS_WORK_ROOT = "/mnt/fast_ssd_usb/agent-worker"

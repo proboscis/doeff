@@ -6,7 +6,7 @@ zenn-contentにpublished: trueとpublished_atの組で置き、Zennが刻に公�
 訳は docs/design/decisions/2026-10-21-zenn-reserved-publish.md。
 
 予約と公開は、公開状態に「許可 lt-…」(その1本の公開の許可を問うた依頼書のid)を書いた回だけにする
-(2026-10-21 03:51 JSTの利用者の決定・card ki-d8609b0df9b8)。確かめは末尾の「公開の許可」の節。
+(利用者の決定 2026-10-21・card ki-d8609b0df9b8)。確かめは末尾の公開の許可の節。
 訳は docs/design/decisions/2026-10-21-zenn-publish-permit.md。
 """
 
@@ -350,7 +350,7 @@ def test_current_plan_reserves_each_series_in_table_order_one_at_a_time() -> Non
         assert ordered == sorted(ordered), f"{series}の表の順と公開の刻の順が違う"
     # 始め方の答え(2026-10-20 14:06 JST)の前の刻で予約した回は無い。
     assert all(at > jst("2026-10-20 14:06") for at in times)
-    # 公開の刻を書いた公開予定の回は、どれもその1本の公開の許可を持つ(2026-10-21 03:51 JSTの決定)。
+    # 公開の刻を書いた公開予定の回は、どれもその1本の公開の許可を持つ(利用者の決定 2026-10-21)。
     unpermitted = [
         row.slug
         for row in rows
@@ -359,7 +359,7 @@ def test_current_plan_reserves_each_series_in_table_order_one_at_a_time() -> Non
     assert unpermitted == [], f"許可の無い回に公開の刻がある: {unpermitted}"
 
 
-# ---- 公開の許可(2026-10-21 03:51 JSTの利用者の決定・card ki-d8609b0df9b8) ----
+# ---- 公開の許可(利用者の決定 2026-10-21・card ki-d8609b0df9b8) ----
 
 
 def test_plan_cells_carry_permits_after_the_time() -> None:

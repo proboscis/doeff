@@ -15,7 +15,7 @@
     "decision": "design",
     "outcome": "accepted",
     "scope_of_agreement": "operator が合意したのは val / var の書き分けと source のボタンの 2 点。語と型と名の順(val T x = e)・:= の綴り・ボタンの置き場は席の既定で戻せる。",
-    "source": "operator の直接の議論 2026-09-28 23:2x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"good, i want val/var style for mutability clearness, and a button to show raw source per defk (entity)\"",
+    "source": "operator の直接の議論 2026-09-28。書き換えられるかどうかを明瞭にするための val / var の書き分けと、defk(実体)ごとに元の source を見せるボタンを求めた",
     "statement": "v2 の裁定に 2 点を足す。本体の束縛は val / var の語で書き換えられるかどうかを見せる(ADR-DOE-HY-006 の意味のまま: <- と val は val・var は var・:= は語なしの書き換え・lazy / session は語を前に・本体の setv は警告の印)。実体ごとにカードの中で元の Hy の source を開閉するボタンと editor で開くボタンを置く。v2 の他の決まりはそのまま。",
     "subjects": [
       "design-fa5e8d3125d1"

@@ -376,8 +376,8 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
     if args.semantic_all {
         return SemanticMode::AskAll;
     }
-    // 既定 = 全体の実行は cache を使い、変わった定義だけを問う(operator 2026-09-29 "jev involved lints are to be run everywhere every time
-    // with cached by default" — agora-redesign #1160)。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
+    // 既定 = 全体の実行は cache を使い、変わった定義だけを問う(operator の決定 2026-09-29 — Jev を使う規則も毎回どこでも走らせ、
+    // 既定で cache を使う・agora-redesign #1160)。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
     // 全体 3 秒の上限の中で層の規則の知らせを失わないため(#1190 の決定 A・戻し方 = 下の Some(_) の枝を AskChanged にする)。
     // cache を読むだけの全体の実行は --semantic-cache-only で名指す。
     if args.semantic_cache_only || (stdin_path.is_some() && !args.semantic && !args.semantic_changed) {

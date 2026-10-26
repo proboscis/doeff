@@ -33,7 +33,7 @@
         ],
         "needed_from": "user",
         "question": "既にある compactAt(会話の宣言・文脈使用率の %)との関係をどうするか。内側の輪(CLI 側の絶対値)を入れると、40 より上の compactAt を宣言した会話では外側の輪(agentd が温かい session を片付けて記録から再開する腕)が二度と撃たなくなる。",
-        "recommendation": "案 a — 内側の輪を優先し、compactAt は宣言が低い時だけ撃つ backstop にする。外側の輪が撃つ 700k 付近は実測で費用の 59% を占める帯そのもので、内側の輪はそこへ届く前に安く(その場で要約・session を残して)畳む。2026-09-14 の逐語『that routing agent should compact itself with some threshold』の目的は満たし、変わるのは手段。"
+        "recommendation": "案 a — 内側の輪を優先し、compactAt は宣言が低い時だけ撃つ backstop にする。外側の輪が撃つ 700k 付近は実測で費用の 59% を占める帯そのもので、内側の輪はそこへ届く前に安く(その場で要約・session を残して)畳む。#82 の目的(2026-09-14 の決定: 閾値で自ら畳む)は満たし、変わるのは手段。"
       },
       {
         "alternatives": [
@@ -57,7 +57,7 @@
         ],
         "needed_from": "user",
         "question": "段 2(起票側が役ごとの値を宣言する)にいつ着手するか。",
-        "recommendation": "段 1 の着地と選択 4 の裁定の後。operator が合意した『役で分ける』は段 2 で初めて実現する。"
+        "recommendation": "段 1 の着地と選択 4 の裁定の後。operator が合意した、閾値を役で分ける形は段 2 で初めて実現する。"
       },
       {
         "alternatives": [

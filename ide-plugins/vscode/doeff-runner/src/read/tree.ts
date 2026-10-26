@@ -1,4 +1,4 @@
-// 呼び出しの依存の木(v7 3 節・operator 2026-09-29 "it would be great if there's also call dependency tree visualization")の
+// 呼び出しの依存の木(v7 3 節・呼び出しの依存の木も見せる operator の決定 2026-09-29)の
 // 純粋なモデル(VS Code に触らない)。材料は hy-index の全 file(版 4 の呼び出しの target・版 5 の宣言した effect と effect 節の
 // handles)だけで、面が自分で file を歩かない(v1 制約 5)。逆引き(呼び手)は索引に持たず、ここで引く(U7 の決定)。
 // 既定(席の既定・戻せる): 向きは callees・深さ 3・同じ実体の 2 度目は ↺ で開かない・deftest は隠す。

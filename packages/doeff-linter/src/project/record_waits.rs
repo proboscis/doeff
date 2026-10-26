@@ -1,6 +1,6 @@
-//! DOEFF208 — 本番の code が、記録の変更の待ちを job を起こす手段にする所(利用者 2026-10-06 23:0x "記録に書いて記録をポーリングする
-//! 設計を本当にやめてくれ、linterでみつけて禁止したい" / "記録は記録、起動は起動" / "redisでもrabbitmqでも使っていいから、イベントに
-//! 即応してほしい。"・agora-redesign #3834)。
+//! DOEFF208 — 本番の code が、記録の変更の待ちを job を起こす手段にする所(利用者の決定 2026-10-06 — 記録を書いて記録を
+//! 待つ設計を linter で見つけて禁じる。記録と起動を分け、起動は Redis や RabbitMQ などの出来事の基盤から受けて即座に応じる・
+//! agora-redesign #3834)。
 //!
 //! 当たるのは、architecture.hy に `:business-fakes` を書いた repo の本番の code の Hy の file(`business_fakes::production_code` — DOEFF143 の
 //! 本番の入口・DOEFF207 の job でない書き手と同じ範囲の宣言。検・模擬の環境・読まない file は外れる)。次の 2 つを当たりにする:

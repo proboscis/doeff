@@ -158,8 +158,8 @@
 ;; ---------------------------------------------------------------------------
 ;; 限度の断りが「どの範囲」を枯らしたか・「いつ戻る」と言ったか(2026-09-23)
 ;; ---------------------------------------------------------------------------
-;; operator の規則(2026-09-17 逐語 "basically when a profile is stuck due to any financial limit the
-;; strategy is to switch profile"): 5 時間 / 週 / spend limit / group の上限 / credit 切れのどれも
+;; operator の規則(2026-09-17 — 費用の上限で止まった profile は、上限の種類に依らず別の profile へ
+;; 切り替える): 5 時間 / 週 / spend limit / group の上限 / credit 切れのどれも
 ;; 「その口座が枯れた」の 1 事実。文が model を名乗る断り(「You've reached your Fable 5 limit」
 ;; 「You've reached your Opus 4.5 weekly limit」)だけが、その model だけの枯れ(同じ口座で別の model は
 ;; 走れる)。実測 2026-09-23 08:00〜15:00 JST: agent-job の ProviderLimit の文は 8 件とも口座全体

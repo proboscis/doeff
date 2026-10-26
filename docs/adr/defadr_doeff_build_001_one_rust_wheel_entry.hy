@@ -1,7 +1,7 @@
 ;;; Executable ADR: Rust の部品(doeff-vm・doeff-vm-core・doeff-linter・doeff-effect-analyzer・doeff-indexer・doeff-agentic-cli)を組む・
 ;;; 引く入口は 1 つ — build の口 tools/doeff_cargo_backend.py が、組む前に必ず「source の中身の hash を鍵にした wheel の保存先」を引く。
 ;;;
-;;; 出自 = 利用者の 2026-10-07 の原文 2 通(agora-redesign #3860 の本文・dotfiles ADR-DOTFILES-027 の条 R-cf708d56 と追補 1)と、Mac の
+;;; 出自 = 利用者の 2026-10-07 の指摘 2 つ(agora-redesign #3860 の本文・dotfiles ADR-DOTFILES-027 の条 R-cf708d56 と追補 1)と、Mac の
 ;;; 調整役の決定(#3860 の 1・2026-10-07 — 入口は 1 つ・古い道は替える変更と同じ変更で消す)。
 ;;;
 ;;; 移す予定の入口(PENDING-ENTRIES): 鍵と保存先を自前で持つ所が 1 系統残る — commit の hook の doeff-linter の binary の置き場
@@ -142,10 +142,10 @@
           "docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy"]
   :problem
     [(fact
-       "利用者の原文 2026-10-07 01:5x(音声入力・ドウェーフ = doeff・ラスト = Rust): 「そもそもドウェーフの一部のパッケージを更新するたびに、ドウェーフ全体をビルドしてイメージに焼き込むっていう作業が必要になっちゃってるっていうのがおかしくて、今触ってるドウェーフクラスターとかドウェーフエージェンツは、ドウェーフのラストのVMをビルドする必要はほとんどないはずなんだよね。」"
+       "利用者の指摘 2026-10-07: doeff の一部の package を更新するたびに doeff 全体を組んで image に焼き込む作業が要るのはおかしい。doeff-cluster や doeff-agents の変更は、doeff の Rust の VM を組み直す必要がほとんど無いはずである。"
        :evidence "agora-redesign #3860 の本文・dotfiles docs/adr/defadr_dotfiles_027_operator_feedback.hy の条 R-cf708d56")
      (fact
-       "利用者の原文 2026-10-07 02:1x: 「imageを作るにしてもちゃんとMakefileやキャッシュレイヤーをつかって無駄にしないようにして」"
+       "利用者の指示 2026-10-07: image を作る時も Makefile と cache の層を使い、組み直しの無駄を出さない。"
        :evidence "agora-redesign #3860 の本文・R-cf708d56 の追補 1")
      (fact
        "2026-10-06 の数(cc1-w38 の調べ・log の行で確かめた分): 日次の全体検証は task ごとに新しい HOME を作り wheel の保存先を子へ継がないので、doeff-vm を約 100 度・doeff-linter を 14 度組み直した(最初の依存の入れ 6m15s〜9m30s)。build の口の保存先は wheel の hook だけが引き、editable の hook(agora-controllers の doeff-vm・doeff の workspace の一員)は毎回 maturin を撃っていた。doeff-indexer の口は保存先を通らずに毎回 CLI の binary と拡張 module を組んでいた。"

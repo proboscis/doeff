@@ -4,7 +4,7 @@ Hy の module の bytecode は source だけでなく、展開に使った macro
 source の更新時刻と大きさ(または source の hash)しか見ないので、macro の定義(doeff-hy の macros.hy など)を
 変えても、使う側の module は古い展開のまま動く(agora-redesign #1003 の赤)。
 
-この package は Hy に手を入れずに(利用者の決定 2026-09-29「Hy には一切手を入れない。回避は doeff の側に置く」)、
+この package は Hy に手を入れずに(Hy は改めず、回避は doeff の側に置く — 利用者の決定 2026-09-29)、
 Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包んで同じ正しさを出す:
 
 - ``source_to_code``(compile の口): Hy の module を compile した直後に、その展開が実際に使った macro(提供元の module 名・

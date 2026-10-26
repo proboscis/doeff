@@ -65,7 +65,7 @@ LLM の規則の件数(cache だけの実行): 201 = warning 8・info 7(p 0.6〜
 <tr><th>番号</th><th>問い</th><th>選択肢</th><th>推奨と理由</th></tr>
 <tr><td>1</td><td>「責務の境界」にどの規則まで含めるか</td>
 <td>A. 今の 9 本のまま<br>B. 129 を足す<br>C. 129・120・203 も足す</td>
-<td><b>A</b>(当初 B を推したが取り下げ)。operator 2026-09-29: "effects are specifically for testability so i dont get why using GetTime would be problematic"。
+<td><b>A</b>(当初 B を推したが、operator の指摘 2026-09-29 を受けて取り下げ)。effect はテストしやすさのためにあるので、GetTime を使う事は問題にならない。
 judgment が GetTime を起こしても handler を差し替えれば試せるので、テストしやすさの基準では境界の違反ではない。129 は役の分類(#800)の話で、重大さは minor のまま。120・203 は書き方の問題。</td></tr>
 <tr><td>2</td><td>LLM 判定で確率の低い当たりも critical に数えるか(202 は p 0.44 のような、違反でない見込みの方が高いものも出ている)</td>
 <td>A. すべて critical に数える(#942 の今の案)<br>B. 閾値を 1 本にし、超えたら critical・下回ったら出さない</td>
@@ -79,7 +79,7 @@ judgment が GetTime を起こしても handler を差し替えれば試せる�
 </table>
 
 <h2>3b. 議論で開いた問い — judgment が effect を起こさない、という決めそのもの(2026-09-29 追記)</h2>
-<p>operator: "effects are specifically for testability so i dont get why using GetTime would be problematic" / "i dontget why judgment is supposed to not produce effect"。</p>
+<p>operator の問い(2026-09-29): effect はテストしやすさのためにあるのに、なぜ judgment は effect を起こしてはいけないのか。</p>
 <table>
 <tr><th>観点</th><th>内容</th></tr>
 <tr><td>決めの出所</td><td>agora-redesign #780(2026-09-27・役の閉じた一覧 type / judgment / program)。architecture.hy の :roles = judgment「業務の判断をする純粋な関数」・program「intent を出して業務を進める Program」。#800 の段階 4 で「judgment は :effects []」を規則に。</td></tr>
@@ -92,7 +92,7 @@ judgment が GetTime を起こしても handler を差し替えれば試せる�
 
 <h2>4. 出所</h2>
 <ul>
-<li>operator 2026-09-29 01:0x: "why aare those doeff 201 /202 etc classified as info, while i believe they are critical" → "responsibility boundary violations are always CRITICAL to make our doeff code testable"</li>
+<li>operator の決定 2026-09-29: DOEFF201・202 など責務の境界の規則は info ではなく critical に数える。doeff の code を試せるものに保つため、責務の境界の違反は常に critical とする。</li>
 <li>agora-redesign #942(9 本を critical にする変更・作業中)</li>
 <li>仕様 = doeff/packages/doeff-linter/docs/SPECIFICATION.md、設定 = agora-controllers/pyproject.toml の [tool.doeff-linter]</li>
 </ul>

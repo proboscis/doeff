@@ -1,11 +1,11 @@
 # land-queue 宣言(dotfiles ADR-DOTFILES-017 の機構、repo-local 方策)。
-# 敷設 2026-08-09(land-queue-all-repos-rollout 便 — operator 指示「全部の repo で
-# 利用したい」+ operator 決裁 sha d54350a8)。mixed repo(proboscis/doeff* は
+# 敷設 2026-08-09(land-queue-all-repos-rollout 便 — 全部の repo で使う operator の指示
+# + operator 決裁 sha d54350a8)。mixed repo(proboscis/doeff* は
 # company-mixed-repos.txt 登載)— 編集は任意席・著述は個人系。
 #
 # upstream repo 規約の機械化(発注 (4)): 「検証済みでしか main を進めない」は
-# 2026-08-17 の operator 裁定で**着地の門から事後検証へ移った**(下の mode = "focus"
-# の頭注)。テストは減らさない — 走る場所が変わる(日次全量検査 + stable 昇格)。
+# 2026-08-17 の operator 裁定で**着地の門から事後検証へ移った**(下の focus の
+# mode の頭注)。テストは減らさない — 走る場所が変わる(日次全量検査 + stable 昇格)。
 # battery 実測 2026-08-09: uv run pytest -m "not e2e" = 1294 passed / 78 skipped /
 # 8 deselected(11m45s)。e2e marker は実 API キー依存につき gate 外(席実測の
 # 分担)。make sync 前置は AGENTS.md 明文(uv sync は Rust VM を確実に再 build
@@ -32,7 +32,7 @@ name = "doeff"
 # cache が冷えるが、以後は warm のまま艦隊の行列に並ばない。
 # 実行面 = 日次の task が走っている所(2026-10-10 から atlas の静的な doeff-worker の Pod — agora-controllers の daily-verify・
 # card ki-73fbd134a244)。各段の run は task の作業木で直に sh が実行する(下の 2026-10-10 の追補・ADR-DOE-ENFORCE-001 R10)。
-# 2026-08-17〜2026-10-10 の実行面は zeus(operator 裁定伝言 2026-08-17『テストはk3sでやって』・方向宣言 land-verify-tests-on-k3s)で、
+# 2026-08-17〜2026-10-10 の実行面は zeus(テストは k3s で走らせる operator の裁定 2026-08-17・方向宣言 land-verify-tests-on-k3s)で、
 # remote_check が tree を送り逐語実行した(実測 2026-08-17: zeus 全量 477 秒 緑 / Mac 実測 17 分 + 飽和帯 load 100 超)。
 # uv の cache は呼び手の UV_CACHE_DIR(日次の task が worker の共有の cache を渡す)を先に使い、無い時だけ上の convoy 根治の lane
 # ${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff へ倒す — task の HOME は走行ごとに空の dir なので、lane を上書きのまま
@@ -44,7 +44,7 @@ name = "doeff"
 # 赤(1317 passed / 1 failed)。make sync 直後の env が権威なので再 sync を止める
 # (同 tree で make sync → uv run --no-sync が緑を実測)。Mac 側も同じ潜在欠陥 —
 # 従来の緑は cache 状態依存だった。
-# 2026-09-24(operator 指示 "doeff main are to be fixed to have green tests" の続き・two-way door の決定): 日次の全量検査に
+# 2026-09-24(doeff の main のテストを緑に直す operator の指示の続き・two-way door の決定): 日次の全量検査に
 # package の検(make test-packages)を足す。それまで CI(python-compatibility.yml)も日次もこの範囲を走らせておらず、
 # 18 package・約 200 本の赤が誰にも見えないまま積もっていた(削除された default_handlers・handler の呼び規約・
 # 環境に入らない新しい package)。run-timeout 1800 → 3600 = zeus 実測 root 約 480 s + package 約 960 s の約 2.5 倍。
@@ -107,7 +107,7 @@ name = "doeff"
 # 2026-10-10(card acp:kanban-issue:ki-9338eec1d15e・調整役 cisco-c8 の割り・依頼 lt-2BJSBE9W1MVDGPRC8JTW443KSJ・ADR-DOE-ENFORCE-001 R10・
 # 戻せる): 6 段の run から remote_check の運び(`python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label …
 # --fallback-local -- sh -c "…"`)を外し、中の命令を日次の task の中で直に走らせる。
-# ⇒ なぜ: 利用者の決定 2026-10-05 23:0x「zeus は会話の速さを一番にする」。日次の task は 2026-10-10 16:00 から atlas の Pod で走るが、
+# ⇒ なぜ: zeus は会話の速さを最優先にする(利用者の決定 2026-10-05)。日次の task は 2026-10-10 16:00 から atlas の Pod で走るが、
 #   運びが残っていたので 16:18 の回(log doeff-20261010-071839-31779)も 6 段とも `ran=remote node=zeus` で、root の pytest 1091 秒・
 #   18 package の検 2352 秒・cargo test 200 秒が zeus の CPU に載り、会話のターンと取り合った。代案の --node atlas(ssh で atlas の機体へ)
 #   は取らない — 機体への ssh の鍵と機体の環境の整えが要り、機体の操作になる。
@@ -174,9 +174,9 @@ outside = [
 # 戻し方 = 鍵の名を timeout_s へ戻す。
 full_timeout_s = 9000
 
-# R-7a95702d focus mode(operator 直接指示 2026-08-17「merge queue は 10 分以内・
-# 2700 秒の門は許容範囲外」— 先例 = agora D568 出荷 B / ACP 同日切替)。
-# operator 裁定 2026-08-17 逐語「mergeにテストは必須じゃない」: 着地の門は merge の
+# R-7a95702d focus mode(operator の指示 2026-08-17 — merge queue は 10 分以内に収め、
+# 2700 秒の門は認めない。先例 = agora D568 出荷 B / ACP 同日切替)。
+# merge にテストを必須としない(operator の裁定 2026-08-17): 着地の門は merge の
 # 力学(rebase 成立・patch-id 突合・受入検定)のみ。テストは全部事後 =
 # ① 日次全量検査(gate.full を ai land verify が使う — 運び手 = ns agora の
 #   CronJob `land-verify-doeff`・毎日 03:30 JST・宣言の正本 = agora
@@ -195,7 +195,7 @@ mode = "focus"
 #   「門は力学のみ」は変わらない(テストは足さない)。戻すには この行と下の runner を旧値へ戻す。
 focus_paths_runner = '''git grep -n -E '^(<<<<<<< |>>>>>>> )' -- . && exit 1 || test $? -eq 1'''
 # 方策宣言そのものへの変更だけは常時 full battery(自己参照の fail-closed)
-# ⚠ 2026-08-17 operator 逐語「全量検査を無効にしてくれ」: full_paths を空に —
+# ⚠ 着地の窓の全量検査を無効にする(operator の裁定 2026-08-17): full_paths を空に —
 # 着地の窓はいかなる path でも全量検査(gate.full)を走らせない。gate.full の
 # 唯一の消費者 = 日次検証便(ai land verify・ns agora の CronJob land-verify-doeff・
 # 毎日 03:30 JST。2026-09-13 の退役までは Mac の launchd com.masui.land-verify-doeff が
@@ -203,8 +203,8 @@ focus_paths_runner = '''git grep -n -E '^(<<<<<<< |>>>>>>> )' -- . && exit 1 || 
 # 窓では力学のみで着地する(検分は事後 + fix-forward)。復活は operator 裁定で。
 full_paths = []
 
-# R-94ede4bc 投機列車(operator 直接指示 2026-08-17「merge queue の投機テストを
-# 全 repo で適用」— 連邦の機構 = dotfiles land.py・先例 = dotfiles 裁定 2026-08-16
+# R-94ede4bc 投機列車(merge queue の投機テストを全 repo で使う operator の指示 2026-08-17
+# — 連邦の機構 = dotfiles land.py・先例 = dotfiles 裁定 2026-08-16
 # decision-land-speculation-enable / agora D568)。窓は確定 train(消費済み
 # 緑の先端・公開対象)と投機 tip を分け、gate の実行だけを backend へ並列に
 # 発注する(判定の消費は直列同値・赤 1 便で窓ごと abort する形の根治)。厳密 bool。
@@ -260,8 +260,8 @@ stable_branch = "stable"
 
 # ───────────────────────────────────────────────────────────────────────────
 # 全体・広範囲テストの走行の受付(dotfiles ADR-DOTFILES-027 law
-# broad-test-runs-need-an-explicit-grant・operator 指示 2026-09-10「全体テストは
-# 明示の指示と警告なしに撃てない形にする」)の**値の宣言**。
+# broad-test-runs-need-an-explicit-grant・全体テストは明示の許可と警告なしに走らせない
+# operator の指示 2026-09-10)の**値の宣言**。
 # 2026-09-15・段 11 lane 11k(agora-redesign #64 の c)で、この repo も受付に参加した。
 #
 # ⚠ 判定(広範囲か)・30 分の窓の合算・許可の消費は**正本 1 点**(agora の道具立て

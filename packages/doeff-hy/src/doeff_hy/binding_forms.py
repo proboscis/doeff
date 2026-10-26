@@ -1157,7 +1157,7 @@ def legacy_session_message(form: Object, handler: str) -> str:
 # - module の直下の lazy val は効果を使わない式だけ(初めて使った時に 1 回だけ評価して覚える —
 #   import の時に重い計算をしない)。効果を使う式は誤り: module には handler が無く、最初に使った呼び出しの
 #   handler の下で作った値が、以後の別のセッション・別の handler の組でも使い回されるため。
-#   (一度「作らない」と決めて外し、operator の指示 "nonono have lazyval" で戻した — 設計の記録 §6)
+#   (一度「作らない」と決めて外し、operator の指示で戻した — 設計の記録 §6)
 # - module の直下の lazy var は作らない(誤り — var か defhandler の session var を案内する)。
 # - val / var の式も効果を使えない(実行する handler が無い)。
 # - Hy の reader は `(:= …)` を keyword の呼び出しとして読み、macro を通らないので、module の直下では

@@ -3,7 +3,7 @@
 ;;
 ;; 守る事: 答えの文字の途中(item/agentMessage/delta)が型つきの記録 TextDelta になり、ターンごとに連ねると答えの全文
 ;; (item/completed の agentMessage)と同じ文字になる。これが崩れると、上の層は答えの途中を画面へ流せない(決まりの元 =
-;; 利用者 2026-09-10「どの会話も、文字が届くたびに 1 文字ずつ更新されない」・2026-10-10 21:27 の答え A)。
+;; 答えは文字が届くごとに画面へ流す — 利用者の指摘 2026-09-10・2026-10-10 の答え A)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest defk <- var])

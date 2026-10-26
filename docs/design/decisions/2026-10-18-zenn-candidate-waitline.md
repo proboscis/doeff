@@ -11,7 +11,7 @@
 - 採用：中心の話を「最後の1行で、止まった会話を筆者の番・外を待つ・続けてよいの3つに分ける。行が無ければStop hookで1度だけ止め、2度目は必ず通す」にした。8本目（hookで決まりを要る時だけ見せる）と読者が同じで、その続きに置ける。
 - 採用：掲載コードは6つ。Stop hook（読み方と止め方）・設定のJSON・手で動かす3行・読み方の例の表の試験・読む側をdoeffのProgramにした形・参考の実行の1行。どれも読者が自分のClaude Codeで再現できる形にし、PyPIのdoeff 0.7.0と標準ライブラリだけで走る。本物はHyで書いてある事を本文に書いた。
 - 採用：hookの登録と手で動かす行は、機体のpythonでなく`uv run --no-project python`にした。連載の他の回の実行の案内と揃う。
-- 採用：非公開のリポジトリからは、流れ・数字・日付・考え方だけを書く。社内の機体の名・会話やcardのid・利用者の発言・規則のファイルの原文は載せない。内部の呼び名は「会話を並べる仕組み」「連絡の受付」に言い換えた。
+- 採用：非公開のリポジトリからは、流れ・数字・日付・考え方だけを書く。社内の機体の名・会話やcardのid・利用者の発言・規則のファイルの原文は載せない。内部の呼び名は、会話を並べる仕組み・連絡の受付という一般の言い方に替えた。
 - 採用：「うまくいかなかったこと」に、「見てほしい」の申告が溜まった事（10月9日〜11日の119個が18日にも残っていた）と、印の表の「この会話」の取り違え（10月10日の18分）を書いた。前者は日ごとの図にした。
 - 採用：取引の研究には触れない。記事は公開せず、公開の可否も問わない。
 - 戻す手順：本記事・`examples/turn_wait.py`・図3枚とSVG・`visuals/waitline_days_svg.py`・台帳（`visuals/captions/waitline.json`・`imagegen/manifest/waitline.json`・`imagegen/records/waitline.md`・`imagegen/waitline-svg-source.txt`・`reviews/waitline-visuals.json`・`reviews/waitline-days.csv`）・`reviews/waitline.md`と`waitline-check.py`、メインとREADMEの表の1行、`reviews/main-check.py`の1語、`reviews/README.md`の1行、公開計画の「候補」の節の1行を、この変更のcommitで戻す。製品コードには触れていない。

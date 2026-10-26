@@ -1021,7 +1021,7 @@ defk {name}: :post type annotation cannot be an empty string.
 
 (defmacro defeffect [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* rest]
   "Define an effect type: a frozen dataclass inheriting EffectBase (agora-redesign #800 —
-   operator 2026-09-27 \"perhaps we want defeffect as well?\").
+   operator decision 2026-09-27).
 
    (defeffect BorrowToken
      \"Borrow an access token from the custody service.\"

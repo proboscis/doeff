@@ -1,4 +1,4 @@
-// 定義を読む面に出る文字の表 — 面の文字はここからだけ引く(v5・operator 2026-09-29 "instead of 引数/答え use args / return type")。
+// 定義を読む面に出る文字の表 — 面の文字はここからだけ引く(v5・ラベルは 引数/答え でなく args / return type にする — operator の決定 2026-09-29)。
 // ラベルは一般に通じる英語の技術用語(小文字)。実体の種類のバッジ・tags の key・説明・本体は source の語のままで、この表に置かない。
 // 戻す時はこの表だけを直す(docs/design/hy-reading-plane/artifacts/v5/design.md 2 節)。
 

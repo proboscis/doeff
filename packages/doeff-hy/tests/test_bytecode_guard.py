@@ -3,7 +3,7 @@
 #1003 の形: macro の提供元を変えても、使う側の module の .pyc は source の更新時刻と大きさしか見ない Python の判定で
 有効とされ、古い展開のまま動く。包みがあれば、使う側は新しい展開で動く。
 
-Hy は **PyPI の版**(fork ではない — 利用者の決定 2026-09-29「Hy には一切手を入れない」)を、この venv と切り離した
+Hy は **PyPI の版**(fork ではない — Hy は改めない。利用者の決定 2026-09-29)を、この venv と切り離した
 使い捨ての環境(``uv run --no-project --isolated --with hy==<uv.lock の版>``)で使う。この venv は起動の時に .pth から
 包みを入れる(test_the_venv_installs_the_guard_at_startup_before_hy)ので、ここでは包みの無い形と分けて測れない。
 版は repo の根の uv.lock の hy の行から、doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version)で読む

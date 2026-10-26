@@ -49,7 +49,7 @@
 ;;; 頭の辞書 {:tags … :check […]} — 定義のタグと作る時の検め(どちらも省ける)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 出自 = agora-redesign #798 と operator 2026-09-27 "perfect, lets go with def*"
+;;; 出自 = agora-redesign #798 と operator の決定 2026-09-27
 ;;; (道具が読む宣言は def*・データの型は defrecord・振る舞いを持つ class は作らない)。
 ;;; dataclass の `__post_init__` に defn を書いて値を検めていた形を、defrecord の節へ移す。
 ;;;
@@ -104,8 +104,8 @@
 ;;; `defwire` — JSON の境目の型(JSON を解いて確かめる型を 1 つの宣言で建てる)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 出自 = agora-redesign #840・operator 2026-09-28 "and i dont think we should make anyone use that directry
-;;; instead of actually parsing and validating it like pydantic does" / "hmm, cant we have some def* macro for this?" → "A"。
+;;; 出自 = agora-redesign #840・operator の決定 2026-09-28(素の dict を直に使わせず pydantic のように解いて確かめる。
+;;; そのための def* の macro を置く案 A を採る)。
 ;;; 決まりの正本 = ADR-DOE-HY-007 R8。
 ;;;
 ;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、
@@ -150,7 +150,7 @@
 ;;; `defenum` — 閉じた値の集合(文字列の Enum)を 1 行で建てる
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 出自 = operator 2026-09-26「and perhaps we should use macro for enum」。
+;;; 出自 = operator の決定 2026-09-26(enum も macro で建てる)。
 ;;; 設計の記録 = `docs/design/defenum/design.md`(値の綴り・StrEnum・網羅の確認)。
 ;;;
 ;;; 何のための足場か: 「決まった数の名前のどれか」を裸の文字列で持つと、綴り違いが

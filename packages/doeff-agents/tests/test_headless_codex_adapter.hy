@@ -6,7 +6,7 @@
 ;;         0.162.1 の行を、id を差し替えて返す)+ 壁の時計。
 ;;
 ;; 守る事: codex のターンの答えの文字の途中が AgentTextDeltaEvent として順に届く(崩れると agora の画面は codex の答えを途中から流せない —
-;; 利用者 2026-09-10「どの会話も、文字が届くたびに 1 文字ずつ更新されない」・2026-10-10 21:27 の答え A)。出来事の種類と欄は claude の
+;; 答えは文字が届くごとに画面へ流す — 利用者の指摘 2026-09-10・2026-10-10 の答え A)。出来事の種類と欄は claude の
 ;; adapter と同じ形(agora の absorb-event を変えずに受けられる)。入力が読まれた事は AgentInputFateEvent(started)と完了の input_refs で
 ;; 届く(agora は入力の勘定をこの 2 つで数える)。
 ;; 筋書きの Program は doeff_codex を import しない(公開 effect と、組み立ての部品 headless_compose だけ)。

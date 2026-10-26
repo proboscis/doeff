@@ -1,8 +1,8 @@
 //! DOEFF173 — architecture.hy の defservice ごとに、cluster に置く系(defsystem)を宣言し、その系が汎用の模擬 cluster のテストに
 //! 載る形か(agora-redesign #2187・DOEFF136 と対)。
 //!
-//! 母集団は architecture.hy の全 defservice(entry の層を持たない service も数える — operator の決め「全 service に defsystem か
-//! 理由つきの例外」を、entry の層の無い service が黙って抜けないように・agora-redesign #2221)。defservice の
+//! 母集団は architecture.hy の全 defservice(entry の層を持たない service も数える — operator の決め(全 service に defsystem か
+//! 理由つきの例外)を、entry の層の無い service が黙って抜けないように・agora-redesign #2221)。defservice の
 //! `:system "module:名"`(列も可)を読み、次のどれかを欠けとして返す:
 //! - `:system` を書いていない・空の列。
 //! - `:system {:exempt "理由"}` の理由が空(例外は旧い経路に残す service か、process を持たない部品の service — 理由の中身は判じない)。

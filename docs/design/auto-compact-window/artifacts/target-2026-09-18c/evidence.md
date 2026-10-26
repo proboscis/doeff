@@ -132,8 +132,7 @@ cache_write は **100% が 1 時間 TTL**(5 分 TTL は 0)で、書き込み単�
 (文脈の使用率 % ・`ai conv open --agent compactAt=<0..100>` で宣言・閉語彙は
 model / profile / effort / compactAt の 4 欄)を宣言すると、agentd は直前の手番の使用率が
 それ以上の時、温かい session を片付けて**記録の service の履歴から再開**する
-(段 10f 便 2・agora-redesign #82・operator 2026-09-14「that routing agent should compact
-itself with some threshold」・計器 `agentd_compactions_total`)。
+(段 10f 便 2・agora-redesign #82・operator の決定 2026-09-14: 振り分けの agent は閾値を越えたら自分の文脈を畳む・計器 `agentd_compactions_total`)。
 
 使用率の分母は実コード `judgment.context-percent-of` が `result.modelUsage[model].contextWindow`、
 つまり**モデルの窓**(1M)で、畳む閾値ではない。実際に両方の純関数を呼んだ結果:

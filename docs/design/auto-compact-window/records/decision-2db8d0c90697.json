@@ -5,9 +5,9 @@
     "authority": "direct",
     "decision": "design",
     "outcome": "accepted",
-    "scope_of_agreement": "会話の圧縮の閾値を役ごとに分ける、という方向への合意。具体の数値(lead 400k / worker 200k)と、閾値をどこで宣言するかの構造は合意の対象に含まれない(推奨として示しただけで、逐語は「役で分ける」ことへの同意)。配備(走っている艦隊の入れ替え)と、既存の compactAt の効き方が変わることへの合意は含まれない。",
-    "source": "operator の chat での返答 2026-09-18(この会話)。直前に私が出した選択肢は「1M context をやめる / 長寿命 lead の分割 / 並列席数 / 実装を Opus に戻す」の 4 つと、その後の「lead は 400k、実装 lane は 200k のように役で分けるのが現実的」という推奨。",
-    "statement": "逐語: \"i agree with you, separate size for lead and worker\"",
+    "scope_of_agreement": "会話の圧縮の閾値を役ごとに分ける、という方向への合意。具体の数値(lead 400k / worker 200k)と、閾値をどこで宣言するかの構造は合意の対象に含まれない(推奨として示しただけで、同意は役で分けることに対して)。配備(走っている艦隊の入れ替え)と、既存の compactAt の効き方が変わることへの合意は含まれない。",
+    "source": "operator の決定 2026-09-18(chat での返答)。直前に席が示した選択肢は、1M context をやめる・長寿命 lead の分割・並列席数・実装を Opus に戻す、の 4 つと、その後の推奨(lead は 400k、実装 lane は 200k のように役で分ける)。",
+    "statement": "operator は席の推奨に同意し、lead と worker で閾値の大きさを分けると決めた。",
     "subjects": [
       "design-cfb90f68398d"
     ],

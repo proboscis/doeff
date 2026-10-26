@@ -20,7 +20,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator 逐語 2026-09-18"
+          "source": "operator の決定 2026-09-18"
         },
         "rationale": "operator の指示 R4。長い設計を持ち歩く席と、1 件を直す席では要る文脈が違う。",
         "verification": "同じ agentd に別の charter を渡し、argv の --autocompact の値だけが変わることを実射で見る。"
@@ -403,7 +403,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 逐語 2026-09-18 \"i agree with you, separate size for lead and worker\"。"
+          "source": "operator の決定 2026-09-18: lead と worker で閾値の大きさを分ける。"
         },
         "statement": "計画席(lead)と実装席(worker)で別の閾値を持てること。"
       },

@@ -1,7 +1,7 @@
 ;;; Executable ADR: doeff-cluster の coordinator は、要求の無い間、次に判断の答えが変わる刻か、要求か、停止か、外の出来事まで
 ;;; 1 本で待つ — 1 秒ごとに起きて見に行かない。判断は期限ちょうどの刻に出る(1 秒の格子に丸めない)。
 ;;;
-;;; 出自 = 利用者の決定 2026-10-06(原文は :problem の fact)を、Mac の調整役が 2026-10-07 に「本番も期限まで眠る」の答えと読んだ
+;;; 出自 = 利用者の決定 2026-10-06(決めた事は :problem の fact)を、Mac の調整役が 2026-10-07 に、本番も期限まで眠る形への答えと読んだ
 ;;; (解釈である事を :problem に書く)。追跡 = agora-redesign #3865。
 ;;;
 ;;; 段: 単位 1(期限の答えの型・now + 1 の書き直し・次に起きる刻の純粋な判断と落ち着くまでの約束)は判断だけで、待ち方は変えない。
@@ -53,13 +53,13 @@
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem
     [(fact
-       "利用者の決定 2026-10-06(原文): \"so anything that require polling, are to be fixed. polling is a last resort\""
+       "利用者の決定 2026-10-06: polling を要する所はすべて直す。polling は最後の手段とする。"
        :evidence "agora-redesign #3865 の本文(cc3-w56 が見つけ、cisco-c8 が引いた)")
      (fact
        "2026-09-30 の決定(agora-redesign #1383 comment 5896513586・議論の会話 w3J:pE・戻せる決定)は、次の期限まで眠る形を模擬の時計の下だけに入れ、本番の拍の間隔 1 秒と判断の刻を変えず、本番も期限まで眠る形(案 1)を operator の判断として残した。本番の 1 秒は tests/test_idle_skip.hy の test-the-production-inbox-keeps-the-one-second-tick(commit 86c8b2f94)が縛っていた。"
        :evidence "agora-redesign #1383・#1522")
      (fact
-       "Mac の調整役は 2026-10-07 に、2026-10-06 の利用者の原文を、残された判断(案 1)への答えと読み、本番も次の期限まで眠る形で進めると決めた — これは Mac の調整役の解釈で、利用者が案 1 を名指して選んだ記録ではない。"
+       "Mac の調整役は 2026-10-07 に、2026-10-06 の利用者の決定を、残された判断(案 1)への答えと読み、本番も次の期限まで眠る形で進めると決めた — これは Mac の調整役の解釈で、利用者が案 1 を名指して選んだ記録ではない。"
        :evidence "agora-redesign #3865 と #1383 の 2026-10-07 の comment(cisco-c8 が書いた)")
      (fact
        "2026-10-13 02:22〜02:24 JST(17:21:19Z〜17:24:28Z)に atlas が 3 分止まり(containerd が答えず kubelet の PLEG が止まる・host の PSI の記録に空白)、atlas に載る本番の coordinator は落ちずに止まった。起きた最初の歩で全 worker の最後の連絡が lease-ms を越えていて全員を沈黙と数え、配る担当(turn-dispatcher)へ消えと戻りが 33 回届いた。dispatcher は 2026-10-16 に、置き場(atlas)は変えず、coordinator が自分の止まりを見つけて止まりの直後は lease 切れを数えない形(第 3 案)に決めた。"

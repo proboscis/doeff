@@ -4,7 +4,7 @@
 |---|---|---|
 | 要求した model の 1 番目 | gpt-6-astra・effort low(codex exec) | 同左 |
 | 1 番目の結末 | 起こせない — `codex exec -m gpt-6-astra -c model_reasoning_effort=low` が 401 Unauthorized(evidence/blind-model-probe-gpt-6-astra.log・2026-10-12T04:4xZ) | 同左(1 回の試しを両方に当てた) |
-| 代わりに起こした model | Opus 5.5(Agent tool の model=opus — operator の決定 2026-09-24「すべて Opus 5.5 で」・skill の表の 2 番目) | 同左 |
+| 代わりに起こした model | Opus 5.5(Agent tool の model=opus — operator の決定 2026-09-24 で代わりは全部 Opus 5.5・skill の表の 2 番目) | 同左 |
 | 観測した model | 未確認(Agent tool は返りに model の名を出さない。自己申告も求めていない) | 同左 |
 | effort | Agent tool の effort=xhigh を指定した。実際に効いた effort は未確認 | 同左 |
 | 起動の手段 | Agent tool(subagent_type=general-purpose)— 新しい文脈。親の会話の fork・resume ではない | 同左 |

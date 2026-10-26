@@ -15,7 +15,7 @@
     "decision": "design",
     "outcome": "accepted",
     "scope_of_agreement": "operator が合意したのは席の推奨(案 3 + 閾での切り替え・畳んだ 1 行は名だけ + return type)。閾の数(引数 ≥ 4・型の文字 > 60)と None の破線は席の既定で戻せる。",
-    "source": "operator の直接の議論 2026-09-29 00:1x〜00:2x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"hmm this is correct but not good to see.\"(実物の view-body のカードの画面つき)→ 席が案 1〜5 の見本を出して案 3 + 閾での切り替えを推奨 → \"as you recommend\"",
+    "source": "operator の直接の議論 2026-09-29。実物の view-body のカードの画面を見て、正しいが見づらいと指摘 → 席が案 1〜5 の見本を出して案 3 + 閾での切り替えを推奨 → operator が推奨どおりに採った",
     "statement": "v5 の裁定に 1 点を足す。引数が 4 つ以上、または引数と return type の型の文字の合計が長い実体では、args / return type を縦の表(左に名・右に型・union の候補は 1 つずつ小さなチップ・None は破線・return type は最後の行に緑の帯と return type のラベル)で描く(案 3)。それ以外は v2 の 1 行の形のまま。畳んだ 1 行は引数が 4 つ以上なら名だけ + return type(型は hover)。v5 までの他の決まりはそのまま。",
     "subjects": [
       "design-4039628561ae"

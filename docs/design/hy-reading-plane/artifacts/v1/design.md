@@ -22,8 +22,8 @@ doeff-linter の editor-json(file ごと)               [置き場の層]  Hy �
                                                         doeff-linter の editor-json(file ごとに出た物を定義ごとに切る)
 ```
 
-- 今の入口は file の木で、1 本の木は領域の軸を 1 つしか表せない(operator: "a tree structure can never cover the entire axis of domain")。
-- 目標では **Hy の file は定義を置いておく形式**(operator: "hy lang is just a way to store data")で、**系の構造は定義 × 属性の面**にある(operator: "we want our doeff-hy to be in different plane as a system structure")。読む面は構造の層を見る道具で、file は置き場の層に降りる。
+- 今の入口は file の木で、1 本の木は領域の軸を 1 つしか表せない(operator の指摘)。
+- 目標では **Hy の file は定義を置いておく形式**で、**系の構造は定義 × 属性の面**にある(operator の方針)。読む面は構造の層を見る道具で、file は置き場の層に降りる。
 - 将来の言語では構造の層が正本になり得る(Unison の形)。今は file が正本で、構造の層は file から作る索引。
 
 ## 1. 決めたこと(operator の裁定・2026-09-28 22:1x〜23:1x)

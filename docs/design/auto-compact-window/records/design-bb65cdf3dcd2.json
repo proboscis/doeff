@@ -118,7 +118,7 @@
           }
         ],
         "question": "既にある compactAt(外側の輪)との関係をどうするか",
-        "reason": "外側の輪が撃つ 700k 付近(compactAt=70・窓 1M)は、実測で費用の 59% を占める帯そのもの。内側の輪はそこへ届く前に、安く(その場で要約・session を残して)畳む。#82 の逐語『compact itself with some threshold』の目的は満たし、変わるのは手段。⚠ ただしこれは operator の目的を変える判断なので、**配備の前に operator へ戻す**(この選択に合意の記録は無い — 席の推奨にとどまる)。案 b は互換だが、いちばん直したい席がそのまま残るので今回の目的をほぼ達成しない。案 c は出荷済み機能の削除で今回の範囲を超える。案 b を採る場合、判断は ACP の charterFor に置く(agentd に置くと R3 を壊す)。",
+        "reason": "外側の輪が撃つ 700k 付近(compactAt=70・窓 1M)は、実測で費用の 59% を占める帯そのもの。内側の輪はそこへ届く前に、安く(その場で要約・session を残して)畳む。#82 の目的(閾値で自ら畳む)は満たし、変わるのは手段。⚠ ただしこれは operator の目的を変える判断なので、**配備の前に operator へ戻す**(この選択に合意の記録は無い — 席の推奨にとどまる)。案 b は互換だが、いちばん直したい席がそのまま残るので今回の目的をほぼ達成しない。案 c は出荷済み機能の削除で今回の範囲を超える。案 b を採る場合、判断は ACP の charterFor に置く(agentd に置くと R3 を壊す)。",
         "reconsider_when": "記録の service から作り直す要約(系が所有する要約)が、CLI 自身の要約より要ると分かった時。あるいは compactAt を宣言している会話が実際に多いと分かった時(いまは数えられていない)。",
         "selected": "a. 内側の輪を優先し、compactAt は宣言が低い時だけ撃つ backstop にする"
       }
@@ -142,7 +142,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator 逐語 2026-09-18"
+          "source": "operator の決定 2026-09-18"
         },
         "rationale": "operator の指示 R4。長い設計を持ち歩く席と 1 件を直す席では要る文脈が違う。",
         "verification": "同じ agentd に auto_compact_window の違う charter を渡し、argv の値だけが変わることを実射で見る。agentd の code に役の語が 1 つも現れないことを確認する。"
@@ -584,7 +584,7 @@
         "status": "performed",
         "steps": [
           {
-            "result": "確定要求 = R4(operator の逐語)。観測要求 = R1 / R2 / R5 / R6。継承の制約 = R3。仮定 = R7(誤りで席が起きなくなってはいけない)と CC3。",
+            "result": "確定要求 = R4(operator の決定)。観測要求 = R1 / R2 / R5 / R6。継承の制約 = R3。仮定 = R7(誤りで席が起きなくなってはいけない)と CC3。",
             "step": "1"
           },
           {
@@ -713,7 +713,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 逐語 2026-09-18 \"i agree with you, separate size for lead and worker\"。"
+          "source": "operator の決定 2026-09-18: lead と worker で閾値の大きさを分ける。"
         },
         "statement": "計画席(lead)と実装席(worker)で別の閾値を持てること。"
       },
@@ -749,7 +749,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "observed",
-          "source": "段 10f 便 2・agora-redesign #82・operator 2026-09-14「that routing agent should compact itself with some threshold」。使用率の分母はモデルの窓(judgment.context-percent-of)なので、内側の輪を入れると使用率が頭打ちになり、上の宣言は撃たなくなる(evidence E7)。"
+          "source": "段 10f 便 2・agora-redesign #82・operator の決定 2026-09-14: 振り分けの agent は閾値を越えたら自分の文脈を畳む。使用率の分母はモデルの窓(judgment.context-percent-of)なので、内側の輪を入れると使用率が頭打ちになり、上の宣言は撃たなくなる(evidence E7)。"
         },
         "statement": "既にある外側の輪(会話の宣言 compactAt → agentd が記録から再開する腕)の効き方を、黙って変えない。"
       }

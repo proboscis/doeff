@@ -1,7 +1,7 @@
 # doeff-cluster の worker の雛形 — k8s の機体(Node)ごとに 1 つ。機体ごとの差(置く Node・資源の上限)は ../nodes/<Node の名>/ が足す
 # (名は doeff-worker-<Node の名>)。
 #
-# 静的に保つ(利用者の決定 2026-10-09 原文 "we are not supposed to frequently restart doeff worker! it must be very static."):
+# 静的に保つ(doeff worker を頻繁に作り直さない — 利用者の決定 2026-10-09):
 # Pod を作り直すのは、この dir の宣言か機体の dir の宣言(doeff の版 WORKER_DOEFF_COMMIT・資源の上限)が変わった時だけ。上に載る系の値は
 # 名の固定した ConfigMap から受ける。ConfigMap の名に中身の hash を付けないので、中身を変えても Pod は作り直されず、次の起動で効く。
 #

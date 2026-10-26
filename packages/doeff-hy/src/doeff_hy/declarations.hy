@@ -24,7 +24,7 @@
 (import hy.models [Dict List Object Set Symbol String Keyword])
 (import doeff_hy.expansion_names [import-form])
 
-;; 役の閉じた一覧(agora-redesign #780 の層の確定 — operator 2026-09-27 逐語 "core->intent->protocol"):
+;; 役の閉じた一覧(agora-redesign #780 の層の確定 — 層の並びは core → intent → protocol。operator の決定 2026-09-27):
 ;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
 ;; foundation(汎用の I/O)/ entry(組み立て)。前の一覧の effect は intent に、translation は protocol に置き換わった。
 ;; 層 entry の役は 3 種 — system(系の宣言)・process(handler の並び)・main(薄い main)(agora-redesign #1108 の決め・#1187・operator

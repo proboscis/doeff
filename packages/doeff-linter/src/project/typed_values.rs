@@ -713,8 +713,8 @@ pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -
 // --- 値を型だけで渡す層(DOEFF170・171 — agora-redesign #2143)----------------------------------------------------------
 //
 // 層の宣言 `:wire-free True` の層(agora の core)は、wire の型(defwire)を持たず、写像も中身の型の無い組 / 列も受け渡さない
-// (operator 2026-10-01 13:0x〜13:2x 逐語 "defwire should never live in core right???" / "we never pass dict around if it's not about
-// building the dict itself. if it's for getting data, such must be more like key->data func or such effect")。DOEFF144 と違い、
+// (operator の決定 2026-10-01 — defwire は core に置かず、写像は組む事そのものが目的の時だけ渡す。データを引くための写像は
+// キー → 値の関数か効果にする)。DOEFF144 と違い、
 // 型つきの写像(`(of dict str Row)`)も鳴る(データを引く写像はキー → 値の関数か効果にする)。写像を組むのが目的の綴りは翻訳の層の
 // 1 点に置くので、この層には例外を置かない — ただし並べ替えのキーの組(Plain::SortKey)は値の受け渡しではないので外す。
 
@@ -946,8 +946,8 @@ pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
                     let (start, end) = class.span();
                     out.push(WireFreeHit { start, end, name: spelled(source, class), what: WireFreeWhat::Wire, problem: String::new() });
                 }
-                // defwire の欄の型も defrecord・defclass と同じに見る(operator 2026-10-01 13:5x "defrecord should never had dict as attr
-                // unless they are absolutely necessary" — 欄の dict 系は 3 つの宣言のどれでも)。
+                // defwire の欄の型も defrecord・defclass と同じに見る(operator の決定 2026-10-01 — defrecord の欄に dict を
+                // 持たせるのは本当に要る時だけ。欄の dict 系は 3 つの宣言のどれでも)。
                 out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| typed(name, WireFreeWhat::Field, node)));
             }
             "defclass" | "defrecord" => {
@@ -968,9 +968,8 @@ pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
 
 // --- 写像の置き場の臭い(DOEFF172 — agora-redesign #2143 の (2))------------------------------------------------------------
 //
-// agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 13:3x
-// "since all data on agora is to live on DB via effect, the use of dict should be about caching, and caching is done in effect layer")。
-// だから handler の外で写像を組む定義と、欄に写像を持つ型は臭い(数えるだけ — major・warning)。写像を組むのが目的の定義(:post が
+// agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator の決定
+// 2026-10-01)。だから handler の外で写像を組む定義と、欄に写像を持つ型は臭い(数えるだけ — major・warning)。写像を組むのが目的の定義(:post が
 // 写像 — JSON の境界で綴る 1 点)と defhandler の中は数えない。値を型だけで渡す層の欄の写像は DOEFF171(critical)が見るので、欄の
 // 臭いはそれ以外の層だけ。
 
@@ -1174,8 +1173,8 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
                 if defk_posts(items).into_iter().any(|node| mapping_problem(node).is_some()) {
                     continue;
                 }
-                // 外の形を綴る・読むのが目的の 1 点(契約の :tags に :spells / :reads を形の名で名乗る)は数えない — operator の線 (b)「dict を
-                // 組む事が目的の 1 点だけ可」(agora-redesign #2265・#2515)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
+                // 外の形を綴る・読むのが目的の 1 点(契約の :tags に :spells / :reads を形の名で名乗る)は数えない — operator の選んだ線 (b)、dict を
+                // 組む事が目的の 1 点だけ可(agora-redesign #2265・#2515)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
                 if fields && boundary_form_of(items).is_some() {
                     continue;
                 }

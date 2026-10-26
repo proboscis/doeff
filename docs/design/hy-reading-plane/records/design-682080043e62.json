@@ -198,7 +198,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-29 \"instead of 引数/答え use args / return type\"(args / return type が operator の裁定。残りは席の既定)"
+          "source": "operator の決定 2026-09-29(ラベルは日本語の引数・答えではなく args / return type。args / return type が operator の裁定。残りは席の既定)"
         },
         "statement": "面のラベルは「引数 / 答え」ではなく args / return type。ほかのラベル(effects・handles・handled by・callers・callees・tests・types・used by・handlers・returned by・accepted by・installed at・location・show in line・fold all・unfold all・open in editor・axis)も同じ流儀。実体の種類のバッジと tags の key と docstring と本体は source のまま"
       }

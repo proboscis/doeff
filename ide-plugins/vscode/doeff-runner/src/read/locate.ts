@@ -154,8 +154,8 @@ export type ViolationAction =
 const HY_FILE = /\.(?:hy|hyk|hyp)$/;
 
 /**
- * 違反の項目から読む面へ行くため(v10・operator "clicking linter issue browser's item must open the corresponding hy files'
- * reading view with source")— 違反の行を含む定義のカードを開いて source の箱も開く。定義の外の行は面の先頭と理由の 1 行。
+ * 違反の項目から読む面へ行くため(v10・operator の決定: 違反の一覧の項目を押すと、その hy の file の読む面を source つきで開く)—
+ * 違反の行を含む定義のカードを開いて source の箱も開く。定義の外の行は面の先頭と理由の 1 行。
  * 読む面を設定で切っている時・Hy でない file・索引に無い file は今までどおり editor で開く。定義の解決は file:line と同じ locate。
  */
 export function violationAction(

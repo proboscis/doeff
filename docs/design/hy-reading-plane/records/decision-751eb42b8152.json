@@ -15,7 +15,7 @@
     "decision": "design",
     "outcome": "accepted",
     "scope_of_agreement": "operator が合意したのは 1 行に畳めることと 1 行に出す物を切り替えられること、および v3 の本体の文字の形。1 行の既定(型・effect・tags)・軸の一覧を既定で畳むこと・状態の置き場は席の既定で戻せる。",
-    "source": "operator の直接の議論 2026-09-28 23:4x〜23:5x(会話 defk-view-discuss・herdr pane w3J:pA)。逐語: \"yeah val var when match is perfect.\"(v3 の本体の文字の承認)/ \"in plugin view. i want to be able to fold a card to oneline form where i can toggle what to show so i can glance at\"",
+    "source": "operator の直接の議論 2026-09-28。v3 の本体の文字(val / var・when・match)の承認と、plugin の面でカードを 1 行に畳み、1 行に出す物を切り替えて見渡したいという要望",
     "statement": "v3 の裁定に 1 点を足す。実体のカードを 1 行の形に畳め(1 枚ずつと全部)、1 行に出す物(引数と答えの型・effect・tags・説明の 1 行目・関係の数・置き場)を全カード共通で切り替えられる。常に出すのは種類・名・開閉のボタン。あわせて v3 の本体の文字の形(val / var・when・match の矢印)は operator が明示的に承認した(席の既定から承認済みへ)。v3 までの他の決まりはそのまま。",
     "subjects": [
       "design-3512974b8231"

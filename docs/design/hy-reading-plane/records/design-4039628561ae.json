@@ -44,7 +44,7 @@
           }
         ],
         "question": "引数が多い・型が長い時の args / return type の形",
-        "reason": "席の推奨を operator が採った(\"as you recommend\")",
+        "reason": "席の推奨を operator が採った",
         "reconsider_when": "縦の長さが困る実体が多い時(閾を上げるか案 4 を混ぜる)",
         "selected": "案 3 縦の表 + union の候補をチップに(閾で切り替え)"
       }
@@ -219,7 +219,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-29 \"hmm this is correct but not good to see.\"(view-body の画面)→ 席の推奨 → \"as you recommend\"(閾の数は席の既定)"
+          "source": "operator の決定 2026-09-29(view-body の画面は正しいが見づらいとの指摘 → 席の推奨 → 推奨どおりに採る。閾の数は席の既定)"
         },
         "statement": "引数が 4 つ以上、または引数と return type の型の文字の合計が 60 字を超える実体では、args / return type を縦の表で描く(案 3)。union の候補は 1 つずつ小さなチップ、None は破線、return type は最後の行に緑の帯と return type のラベル。それ以外は v2 の 1 行の形"
       },
@@ -228,7 +228,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "assumption",
-          "source": "席の推奨 2026-09-29(operator \"as you recommend\")"
+          "source": "席の推奨 2026-09-29(operator が推奨どおりに採った)"
         },
         "statement": "畳んだ 1 行では、引数が 4 つ以上なら名だけを並べ、型は hover で出す。return type は常に出す"
       }

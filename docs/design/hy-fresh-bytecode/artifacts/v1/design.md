@@ -1,8 +1,7 @@
 # macro が変わった時に古い bytecode を使わない仕組みを doeff の側で持つ(agora-redesign #1292)
 
 - 親: agora-redesign #1290(Hy のフォークを段階的に無くす)
-- 利用者の決定(2026-09-29 14:0x JST・逐語): "I see, then lets introduce such bypasses and not touch hy at all."
-  — Hy には一切手を入れない。回避は doeff の側に置く。
+- 利用者の決定(2026-09-29): Hy には一切手を入れない。回避は doeff の側に置く。
 - 書いた日: 2026-09-29。対象の版: doeff `origin/main` f56579612 から分けた branch `wt/hy-fresh-bytecode`。
 
 ## 0. 全体図(今 ⇒ 目標)

@@ -210,7 +210,7 @@
   :verification-environment "sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
-  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.coordinator.entry.main"]
    :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"
@@ -241,7 +241,7 @@
 ;; worker/entry(#2027)。worker が送る名は旧い path の入口のまま — 切り替えは #2112・旧い入口を消すのは #2113)。
 ;; #2025・#2026。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
-  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.worker.entry.main"]
    :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"
@@ -255,7 +255,7 @@
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
 ;; 言い換え(record-files)・entry = 入口。HTTP の受付(RecordInbox)は汎用の I/O なので foundation/record_inbox。
 (defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
-  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.record_store.entry.main"]
    :invariants ["doeff_cluster.record_store.core.invariants:prune-keeps-runs-whole"]})

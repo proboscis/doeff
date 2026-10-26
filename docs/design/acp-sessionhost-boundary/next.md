@@ -123,8 +123,8 @@ client と apiserver が同じ型と同じ Aeson の instance を共有するの
 
 ## 8. 会話の `status.agent` から器の語を出す
 
-**なぜ**: 原則 11(operator 指示 2026-09-11 逐語 "a conversation is an abstraction for agora system,
-**not actual agent session management backend**")に反している。`status.agent` は 9 欄あり、
+**なぜ**: 原則 11(operator の決定 2026-09-11: 会話は agora の系の抽象で、
+**agent の session を管理する器そのものではない**)に反している。`status.agent` は 9 欄あり、
 `model` / `workDir` / `effort` / `compactAt` は器の語。段ごとに 1 欄ずつ積まれてきた
 (9o-1 → 10e → 10f → 10n → 10r → 11m)。
 
@@ -171,8 +171,8 @@ client と apiserver が同じ型と同じ Aeson の instance を共有するの
 ## 11. agora 固有の指示を CLAUDE.md から出して agora が注入する
 
 **なぜ**: agora / ACP / herdr 固有の指示は CLAUDE.md / AGENTS.md に置かず、**agora が注入する**
-(operator 指示 2026-09-18)。CLAUDE.md 自身の冒頭も「Only always-on rules that must bind EVERY session
-belong here」と言っている。いまは 553 行のうち約 250 行が agora 固有で、**系の外の席にも全部載っている**。
+(operator の決定 2026-09-18)。CLAUDE.md 自身の冒頭も、ここには全部の session を縛る常設の規則だけを置くと
+書いている。いまは 553 行のうち約 250 行が agora 固有で、**系の外の席にも全部載っている**。
 
 **受入**
 - [ ] agora が注ぐ(約 250 行): Convqueue First 143 / Turn-End Wait 25 / Voice Messages 17 /

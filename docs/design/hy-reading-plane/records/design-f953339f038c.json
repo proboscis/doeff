@@ -23,7 +23,7 @@
         "options": [
           {
             "benefits": "1 つの印字器で済み、将来の言語の文法と兼ねられる",
-            "costs": "構文の細目(using・/** */・=・字下げ)を決め続ける。文字なので tags・effect・関係が部品にならない。operator の \"it shouldnt be about pure text visualization\" に反する",
+            "costs": "構文の細目(using・/** */・=・字下げ)を決め続ける。文字なので tags・effect・関係が部品にならない。文字だけの可視化にしないという operator の決定に反する",
             "name": "Scala 3 の構文の文字に印字する(v1 の 2.3 節)"
           },
           {
@@ -33,7 +33,7 @@
           }
         ],
         "question": "実体をどう見せるか",
-        "reason": "operator \"we are not to follow syntax like using. we want better html visualization of entity like defk\"",
+        "reason": "using などの構文をなぞらず、defk などの実体をよりよい HTML で見せる(operator の決定)",
         "reconsider_when": "— (operator の裁定)",
         "selected": "実体の部品を HTML で見せ、文字は本体だけ"
       },
@@ -51,7 +51,7 @@
           }
         ],
         "question": "Hy を置き換えるか",
-        "reason": "operator \"hy is great at storing arbitrary data and code in freely structured manner, for our purpose\"",
+        "reason": "Hy は任意の data と code を自由な構造で置いておくのに向いており、目的に合う(operator の判断)",
         "reconsider_when": "agent の書く精度や binary の runtime を要件に置いた時(v1 3.5 の未決)",
         "selected": "Hy は保存の形式として残し、検査と見る面を強くする"
       }
@@ -112,7 +112,7 @@
         ],
         "provenance": {
           "kind": "user",
-          "source": "operator \"ultimately we want new lang\" + \"hy is great at storing …\""
+          "source": "operator の到達点は新しい言語 + Hy は保存の形式に向く(operator の判断)"
         },
         "rationale": "v2 3 節: 言語の仕事の 1 つ目",
         "verification": "索引の型の欄の出所を linter の推論に替えてもカードが変わらない"
@@ -346,7 +346,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"so we are not to follow syntax like using. we want better html visualization of entity like defk\" / #849 逐語 3・7・8・9・10"
+          "source": "operator の決定 2026-09-28(構文をなぞらず実体を HTML で見せる)/ #849 逐語 3・7・8・9・10"
         },
         "statement": "defk などの実体を HTML の部品(種類のバッジ・名・tags のチップ・引数のチップと答えの型・使う effect の絵と解く handler へのリンク・契約・説明・本体・関係の帯・置き場)で見せる。Scala の構文はなぞらない"
       },
@@ -364,7 +364,7 @@
         "kind": "constraint",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-28 \"in my understanding hy is great at storing arbitrary data and code in freely structured manner, for our purpose\""
+          "source": "operator の判断 2026-09-28(Hy は任意の data と code を自由な構造で置いておくのに向く)"
         },
         "statement": "Hy は data と code を自由な構造で置いておく保存の形式として残す(置き換える対象ではない)。言語の仕事は Hy の data の上の検査と見る面に分かれ、新しい表面の構文は agent の書く精度や runtime の分離を求めた時だけ"
       }

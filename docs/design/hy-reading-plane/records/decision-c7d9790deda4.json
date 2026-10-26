@@ -19,7 +19,7 @@
     "decision": "design",
     "outcome": "accepted",
     "scope_of_agreement": "operator が合意したのは見本の見え方(欄に型・decorator のバッジ・doc・fields の縦の表・used by・帯)。索引の欄の名(param_types に載せるか新しい欄か)・decorator の綴りの正規化・used by の候補の並びは席の既定で戻せる。",
-    "source": "operator の直接の指示 2026-09-29 00:4x〜00:5x(会話 defk-view-discuss・herdr pane w3J:pC)。実物 0.6.32 の defclass のカード(PlacedVersion・LedgerVersion・HandedVersion・InputVersions — 欄の名だけ)の画面を見て逐語 \"this is too simple\"。見本 artifacts/v9/defclass-card.html を見て逐語 \"class viz lgtm\"。",
+    "source": "operator の直接の指示 2026-09-29。実物 0.6.32 の defclass のカード(PlacedVersion・LedgerVersion・HandedVersion・InputVersions — 欄の名だけ)の画面を見て、簡素すぎると指摘した。見本 artifacts/v9/defclass-card.html を見て承認した。",
     "statement": "v8 の裁定に 1 点を足す。defclass の実体は defrecord と同じ扱いで描く: 欄は名と型のチップ(畳んだ 1 行は `(ref: str, text: str, request-id: str | None, …)`、開いた形は v6 の閾で縦の表)、decorator(dataclass :frozen True → `frozen dataclass`)は頭のバッジ、doc は畳んだ 1 行に 1 行目・開いた形に全文、基底と method がある時は bases / methods の欄、そして「used by」の欄(この型を引数に取る定義・返す定義・欄に持つ型・作っている定義)。材料は索引が読む(defclass の欄の `#^ T x` を defrecord の欄と同じ読み手に通して型を積む・decorator を積む)。記録 = artifacts/v9/design.md。",
     "subjects": [
       "design-c6ae8fe5208d"

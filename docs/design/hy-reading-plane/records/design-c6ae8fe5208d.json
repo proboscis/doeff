@@ -33,7 +33,7 @@
           }
         ],
         "question": "source の色をどこから取るか",
-        "reason": "operator \"it should have the same semantic highlighting enabled\"",
+        "reason": "operator の決定: source は editor と同じ semantic highlighting で描く",
         "reconsider_when": "—",
         "selected": "editor と同じ tokenizer + theme の変数"
       }
@@ -54,7 +54,7 @@
         ],
         "provenance": {
           "kind": "observed",
-          "source": "herdr pane w3J:p2 の題 \"Hy semantic highlighting plugin\"・doeff-runner に provider は未登録(2026-09-29 00:4x 時点)"
+          "source": "別の作業(Hy の semantic highlighting の plugin)が進行中・doeff-runner に provider は未登録(2026-09-29 時点)"
         },
         "rationale": "main が Hy の semantic highlighting を検討中",
         "verification": "provider を足しても面の code を変えずに同じ token の列が出る"
@@ -277,7 +277,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-29 \"when showing the source in reading pane, it should have the same semantic highlighting enabled\""
+          "source": "operator の決定 2026-09-29(読む面で source を見せる時は editor と同じ semantic highlighting にする)"
         },
         "statement": "カードの中の source は editor と同じ semantic highlighting(同じ字句の分け・同じ theme の色)で描く。色の表を面に別に持たない"
       },
@@ -295,7 +295,7 @@
         "kind": "functional",
         "provenance": {
           "kind": "user",
-          "source": "operator 2026-09-29 \"it would be great if there's also call dependency tree visualization\""
+          "source": "operator の要望 2026-09-29(呼び出しの依存の木の可視化)"
         },
         "statement": "呼び出しの依存の木: 根の実体から callees ↓ / callers ↑ を木で描く。材料は hy-index 版 4(完全修飾名・呼び先・呼び手の逆引き)。節は v4 の畳んだ 1 行と同じ形で切り替えに従う。名をクリックでカードを積む。入口はカードの帯の callers / callees と軸の欄の下の call tree"
       },

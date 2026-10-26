@@ -1,7 +1,7 @@
 //! defk / deff の見出し(signature)と、束縛の型 — editor-json の `signatures` と `bindings`(契約 版 2・agora-redesign #849)。
 //!
 //! エディタ(doeff-runner)は defk の型・effect・tags を見出しとして描き、束縛の名の前に型を描く。型の読み方はここ 1 か所に置き、
-//! エディタは写しを持たない(読むだけの表示 — source は書き換えない。operator 2026-09-28 "I will never edit the source manually")。
+//! エディタは写しを持たない(読むだけの表示 — source は人が手で書き換えないので、書く向きの変換は持たない — operator の決定 2026-09-28)。
 //!
 //! 読む物:
 //! - 引数の型 = 契約の辞書の `:pre` の `(: 名 型)`、答えの型 = `:post` の `(: % 型)`、宣言した effect = `:effects [E …]`(#800)、

@@ -10,8 +10,8 @@
 //! 式・pattern は種類を全部辿る(網羅の match)。手で並べた種類の外を黙って飛ばすと、`or` の中ほかを見落とす
 //! (agora-redesign #2832)。
 //!
-//! 当てるのは os.environ・os.getenv への参照そのもの(利用者 2026-10-02 22:2x "reading env var from outside foundation handler is
-//! clear violation which are tobe identified by linter" — 環境変数の読みは foundation の handler の中だけ。そこは層の宣言の `:exempt` が外す)。
+//! 当てるのは os.environ・os.getenv への参照そのもの(利用者の決定 2026-10-02 — foundation の handler の外の
+//! 環境変数の読みは linter が見つける違反。環境変数の読みは foundation の handler の中だけ。そこは層の宣言の `:exempt` が外す)。
 //! 参照の 1 つは 1 件 — その形で文を分ける:
 //!   * 添字 `os.environ[...]`(読み・書き・del)と method の呼び出し `os.environ.<method>(...)`・`os.getenv(...)` — 前からの文のまま。
 //!   * `in` / `not in` の右辺の `os.environ` — 有無を見る読み。
@@ -672,8 +672,8 @@ del os.environ["B"]
         assert_eq!(check_code(code).len(), 2);
     }
 
-    // os.environ・os.getenv への参照そのもの(利用者 2026-10-02 22:2x "reading env var from outside foundation handler is clear
-    // violation")— 直す前は添字・呼び出しの形だけを見ていて、下の新しい形はどれも 0 件だった。
+    // os.environ・os.getenv への参照そのもの(foundation の handler の外の環境変数の読みは違反 —
+    // 利用者の決定 2026-10-02)— 直す前は添字・呼び出しの形だけを見ていて、下の新しい形はどれも 0 件だった。
 
     const ENVIRON_VALUE: &str = "Using os.environ as a value is forbidden. \
          Read environment variables only in a foundation handler; \

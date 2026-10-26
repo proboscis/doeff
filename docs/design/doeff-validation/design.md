@@ -1,9 +1,9 @@
 # doeff-validation — 独立した検査の失敗を集める(設計の記録)
 
-- 状態: **決定済み・実装済み(branch `wt/validation`)**。operator が方向を承認した(2026-09-26 "lgtm")。
+- 状態: **決定済み・実装済み(branch `wt/validation`)**。operator が方向を承認した(2026-09-26)。
   doeff の main へ入れるのは、実装の差分とテストの結果を operator が見てから。
 - 書いた者: この package の設計と実装を受けた Claude Code の会話(personal profile・Mac proboscis-mbp)・2026-09-26
-- 会話: `9d1fcceb-187e-44e7-9e22-1de8dc6cecef`(operator の指示は親の会話が中継した。原文は 6 章)
+- 会話: `9d1fcceb-187e-44e7-9e22-1de8dc6cecef`(operator の指示は親の会話が中継した。決定は 6 章)
 
 ## 1. 何が問題か(きっかけのコード)
 
@@ -49,9 +49,8 @@ agora 系の Hy のある関数は、観測した job と配置要求の一致�
 3. **前の値に依る検証で集める意味。** Cats の `Validated` が applicative に限られるのは、集める `ap` と
    止まる `flatMap` を同じ型に置くと法則(`ap` は `flatMap` から作ったものと一致する)が破れるから。
    AssertJ の `SoftAssertions`・pytest-check は逐次の本体のまま集める(本体が読み取りと比較だけで、目的が
-   診断だから許される)。JUnit 5 の `assertAll` は入れ子の block で線を引く。→ operator の判断
-   "validation is fundamentally set of parallel operation instead of monadic sequential computation"
-   で applicative を採った。
+   診断だから許される)。JUnit 5 の `assertAll` は入れ子の block で線を引く。→ 検証は逐次の計算ではなく独立した
+   操作の組だという operator の判断で、applicative を採った。
 4. **`(check = x 0)` と `(check (= x 0))`。** 両方を受け、同じ記録にする(決定 4)。
 5. **入れ子と fail-fast。** 内側の例外を外側が 1 件として足す。handler で切り替える(決定 5)。
 
@@ -107,8 +106,8 @@ pyright が型を追えるようにするため)。別名は `_doeff_validation*
   投げる。引数の `(! …)` はその場で実行する(defk / do! の本体は生成器)。
 - 型の `(: x T)` と真偽の式は**今までどおり `assert`**(最初の失敗で `AssertionError`)。型の assert を先に
   置き、check はその後に評価する(check の式が型を前提にできる)。
-- deff の契約に `check` を書いたら展開の時点で誤り(deff は使わない方針 — operator 2026-09-26 "we dont
-  want deff or defn used at all. we want to use defk by default")。
+- deff の契約に `check` を書いたら展開の時点で誤り(deff は使わない方針 — operator の決定 2026-09-26: deff・defn は使わず、
+  defk を既定にする)。
 - 契約の check は関数の中でその場で順に評価するので、traverse の handler は要らない。
 
 ### 4.5 走らせ方
@@ -152,40 +151,37 @@ repo ごとに別の依頼で決める。
 ## 6. 決定
 
 決めたのは親の会話(会話 `9d1fcceb`・2026-09-26)。戻せる決定として決め、operator が方向を承認した。
-各決定の後に operator の原文を置く。
+各決定の後に、operator の指示の要点を置く。
 
 1. **`validate` の直下は独立した項目だけ(applicative)。** 項目は `check` と Program(defk の呼び出し)。
    soft assertion の形(逐次の本体の中で集める)は採らない — 落ちた値で後ろが走る危険と巻き添えの失敗が、
    形の上で起きなくなるため。直下の裸の `<-` は展開の時点で誤り。前の値に依る処理は validate の前か、
    helper の defk の中の validate へ。
-   - "yeah validation is fundamentally set of parallel operation instead of monadic sequential computation..."
-   - "right... it's difficult, basically a check function becomes defk so we need to allow set of defk in validate"
+   - operator の指示: 検査は逐次の計算ではなく独立した操作の組で、検査の関数は defk になるので、validate は defk の組も受ける。
 2. **実装は doeff-traverse の上の薄い層。** 検査 1 件を traverse の 1 要素にし、要素ごとの分離で失敗を集める。
    新しい効果は作らなかった(check は効果を出さず、validate に渡す値を作るだけになったので、`Check` の効果も
    専用の handler も要らなくなった)。
 3. **失敗が 1 つでもあれば最後に `ValidationException`(全部の失敗を持つ)を投げる。** 値で受けたい所は既存の
    `Try`。例外の使い分けは README に書いた。FP007a の文面との関係は 3 章の 2(直すかは operator に別途)。
-   - "validate is not just simple list of 'check'. it's algebraic effects! … # if any of check is failing, throw
-     ValidationException, and include accumulated errors"
-   - "I am still not sure if try-catch should be completely avoided,,"
+   - operator の指示: validate は check を並べるだけの物ではなく効果で組む。1 つでも落ちたら、集めた失敗を持つ
+     `ValidationException` を投げる。try-catch を全部避けるべきかは operator も決めていない。
 4. **check の形は `(check = x 0)` と `(check (= x 0))` の両方を受け、式・各引数の値・`:reason` を記録する。**
    短絡の `and` / `or` は分解しない。
 5. **入れ子: 内側の例外を外側が 1 件の失敗として足す。handler は集める(既定)と fail-fast。**
 6. **check は `validate` の直下(と契約)にだけ書ける。** helper の defk の本体の check は展開の時点で誤り。
    検査のまとまりの使い回しは、helper に自分の validate を持たせる。
-   - "hmm perhaps check should only be allowed inside validate, not in nested defk"
+   - operator の指示: check は validate の中だけに許し、入れ子の defk の中には許さない。
 7. **check の引数は効果の式でもよい。効果は `(! …)` の字面の印で見分ける**(4.3)。validate の本体で書く時は
    `(! (validate …))`。doeff-hy の `_STATEMENT-FORM-HEADS` に validate を足す案と、ADR-DOE-HY-001 への例外の
    1 条は取り消した(doeff-hy の文の規則は変えない)。
-   - "but check's aarg should accept effectful expressions"
-   - "do we need <- _ for validate?" / "for example we could do !(validate ...)"
+   - operator の指示: check の引数は効果の式も受ける。validate は `<-` で受けず、`!` の印で効果として書ける形にする
      (Hy の文法では `!(…)` は 2 つの式に読まれるので、綴りは `(! (validate …))`)
 8. **defk / do! の `:pre` / `:post` の check を validate と同じ意味で評価する**(4.4)。既存の契約は変えない(5 章 B)。
-   - "and actually such checks are to be done in pre/post of defk"
+   - operator の指示: こうした検査は defk の pre / post で行う。
 9. **関数は defk で書く。** doeff-validation の Hy の例とテストは defk だけで書いた。defn はマクロの展開の時に
    呼ばれる helper(`macros.hy` の節)だけで、理由をその節の頭注に書いた。
-   - "we dont want deff or defn used at all. we want to use defk by default"
-10. 承認: "lgtm"(2026-09-26・対象 = 上の validate の形と、defk の :pre / :post をその意味で評価する方針)。
+   - operator の指示: deff・defn は使わず、defk を既定にする。
+10. 承認: operator が承認した(2026-09-26・対象 = 上の validate の形と、defk の :pre / :post をその意味で評価する方針)。
 
 この会話が実装の中で決めたこと(戻せる決定):
 

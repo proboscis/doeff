@@ -2,7 +2,7 @@
 
 - 日時: 2026-09-26
 - 決めた人: Claude Opus 5.5(作業 branch `wt/defenum`)。どれも後から戻せる決定なので、推奨を 1 つ選んで決めた。main へ入れるかは operator が見てから決める。
-- 出自: operator 2026-09-26 "and perhaps we should use macro for enum"
+- 出自: operator の提案 2026-09-26(enum を macro で書く)
 - 実装: `packages/doeff-hy/src/doeff_hy/record.hy`(`defrecord` の隣)
 - テスト: `packages/doeff-hy/tests/test_defenum.py`
 

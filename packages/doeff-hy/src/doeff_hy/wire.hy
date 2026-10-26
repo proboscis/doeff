@@ -1,8 +1,7 @@
 ;;; defwire の実行時 — JSON の値と、型を宣言した値(defwire の型)を行き来する汎用の解き手(agora-redesign #840)。
 ;;;
-;;; 出自 = operator 2026-09-28(逐語 4 つ): "I realized JSONValue is being used" / "JsonValue is in wire.hy," /
-;;; "and i dont think we should make anyone use that directry instead of actually parsing and validating it like pydantic does" /
-;;; "hmm, cant we have some def* macro for this?" → 案 A(別の macro defwire)に "A"。
+;;; 出自 = operator の決定 2026-09-28: JsonValue を直に使わせず、pydantic のように解いて確かめる。そのための def* の macro を置く
+;;; 案 A(別の macro defwire)を採る。
 ;;;
 ;;; 何をするか: JSON は、型を宣言した値に pydantic と同じ仕組み(TypeAdapter)で一度に解いて確かめる。JSON の値(JsonValue)に
 ;;; 触ってよいのは、この module の parse / dump と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120)。
