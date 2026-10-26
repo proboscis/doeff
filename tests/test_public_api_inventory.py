@@ -37,6 +37,9 @@ def _load() -> ModuleType:
 tool = _load()
 
 SAMPLE = '''
+from collections.abc import Callable
+from typing import Any
+
 from doeff import EffectBase, Pass, do, handler
 from doeff.program import ProgramHandler
 
@@ -91,20 +94,58 @@ def size() -> int:
     return 3
 
 
+@do
+def raw_ping_program(effect, k):
+    yield Pass()
+
+
+def ping_handler_vague() -> Any:
+    return ping_handler
+
+
+def helper_vague() -> Callable[..., Any]:
+    return helper
+
+
+def ping_handler_stack() -> list[ProgramHandler]:
+    return [ping_handler]
+
+
+def make_session() -> SessionHandler:
+    return SessionHandler()
+
+
 LIMIT = 3
 '''
+
+LAZY = """
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from inventory_sample import PingEffect as LazyPing
+
+
+def __getattr__(name):
+    if name == "LazyPing":
+        from inventory_sample import PingEffect
+
+        return PingEffect
+    raise AttributeError(name)
+"""
 
 
 @pytest.fixture
 def sample(tmp_path: Path) -> Iterator[ModuleType]:
     """SAMPLE を tmp_path の module として import する(inspect.getsource が読めるように file に置く)。"""
     (tmp_path / "inventory_sample.py").write_text(textwrap.dedent(SAMPLE), encoding="utf-8")
+    (tmp_path / "inventory_lazy.py").write_text(textwrap.dedent(LAZY), encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
         yield importlib.import_module("inventory_sample")
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("inventory_sample", None)
+        sys.modules.pop("inventory_lazy", None)
 
 
 @pytest.mark.parametrize(
@@ -123,14 +164,29 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("SessionHandler", "unclassified", "class"),
         ("PongEffect", "unclassified", "class"),
         ("helper", "unclassified", "関数"),
+        ("raw_ping_program", "handler", "素の handler の関数"),
+        ("ping_handler_vague", "handler", "handler を返す関数"),
+        ("helper_vague", "unclassified", "関数"),
+        ("ping_handler_stack", "handler", "handler の組を返す関数"),
+        ("make_session", "unclassified", "関数"),
     ],
 )
 def test_names_are_typed_by_marker_return_type_and_return_shape(
     sample: ModuleType, name: str, kind: str, form: str
 ) -> None:
-    """印・戻りの型・return の形で effect と handler を決め、決まらない物を未分類にする。"""
+    """印・戻りの型・return の形で effect と handler を決め、決まらない物を未分類にする。
+
+    中身を言わない戻りの型(Any・Callable[..., Any])は return の形に任せ、それでも決まらなければ未分類にする。
+    """
     verdict = tool._Classifier().classify(sample.__dict__[name], name)
     assert (verdict.kind, verdict.form) == (kind, form)
+
+
+def test_names_made_on_demand_are_exported(sample: ModuleType) -> None:
+    """module の __getattr__ で遅れて出す名も、`if TYPE_CHECKING:` の import が並べる名から数える。"""
+    lazy = importlib.import_module("inventory_lazy")
+    names, read = tool._exported_names(lazy, tool._Sources(("inventory_lazy", "inventory_sample")))
+    assert (names, read) == (["LazyPing"], "own")
 
 
 def test_every_package_dir_is_listed() -> None:

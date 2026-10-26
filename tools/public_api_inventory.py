@@ -14,7 +14,9 @@ What is counted, per package dir:
 
 The names a module exports: its ``__all__`` when it has one, otherwise every name not starting
 with ``_`` that the package itself defines (names imported from another package or the standard
-library, and module objects, are not counted). A Hy module's macros not starting with ``_``
+library, and module objects, are not counted). A module that makes names on demand (a module-level
+``__getattr__``) exports the names its ``__dir__`` and its ``from ... import`` statements (the
+``if TYPE_CHECKING:`` block) list too. A Hy module's macros not starting with ``_``
 (``_hy_export_macros`` when the module exports them) are counted too.
 
 Kinds:
@@ -22,13 +24,15 @@ Kinds:
 - ``effect``: a subclass of ``EffectBase``, an ``EffectBase`` value, or a function that makes an
   effect (its return type is an ``EffectBase`` subclass, or every ``return`` calls one);
 - ``handler``: a value or class with the handler marker (``_doeff_is_handler_fn``), a function
-  that returns a handler (its return type is ``ProgramHandler``, or every ``return`` builds a
-  handler), or a raw handler function taking ``(effect, k)``;
+  that returns a handler (its return type is ``ProgramHandler``, a ``Program -> Program``
+  callable or a list of handlers, or every ``return`` builds a handler), or a raw handler
+  function taking ``(effect, k)``;
 - ``other``: decided to be neither — a program function (``@do``, ``defk``), any other function,
   class, exception, type, constant, macro, console script or entry point;
-- ``unclassified``: what the machine cannot decide — a function with no return type whose
-  ``return`` statements do not decide it either, a class named like an effect or a handler
-  without being one, a name of a module that cannot be imported.
+- ``unclassified``: what the machine cannot decide — a function with no return type, or one that
+  says nothing (``Any``, ``object``, a bare ``Callable``, a list of them), whose ``return``
+  statements do not decide it either; a class named like an effect or a handler without being
+  one (and a function returning one); a name of a module that cannot be imported.
 
 Each package is imported in its own child process, so one package's import side effects and
 failures stay out of the others.
@@ -83,6 +87,8 @@ _INIT_NAMES = ("__init__.py", "__init__.hy", "__init__.pyi")
 _PROGRAM_TYPE_NAMES = frozenset({"Program", "Expand", "DoExpr", "DoCtrl", "ProgramBase"})
 _PROGRAM_VALUE_TYPE_NAMES = _PROGRAM_TYPE_NAMES | {"Call", "Pure", "Perform"}
 _HANDLER_TYPE_NAMES = frozenset({"ProgramHandler", "_InstalledHandler", "Handler"})
+# The generic collections a function may return a handler stack in.
+_COLLECTION_ORIGINS = (list, tuple, frozenset, collections.abc.Sequence, collections.abc.Iterable)
 _CONSTANT_TYPES: tuple[type, ...] = (
     str,
     bytes,
@@ -537,36 +543,105 @@ class _Classifier:
         )
 
     def _classify_function(self, obj: object) -> Verdict:
-        """The verdict on a function: a program function, then its return type, parameters, returns."""
-        if _is_program_function(obj):
-            return Verdict("other", "program 関数", "@do / defk の関数(呼ぶと program を作る)")
+        """The verdict on a function: its parameters, then a program function, its return type, returns.
+
+        A return type that says nothing about the value (``Any``, ``object``, a bare ``Callable``,
+        a list of them) leaves the verdict to the ``return`` statements, and to unclassified when
+        they do not decide it either.
+        """
         function = _definition(obj)
-        annotation = _return_annotation(function)
-        decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
-        if decided is None and _takes_effect_and_k(function):
-            decided = Verdict(
+        if _takes_effect_and_k(function):
+            return Verdict(
                 "handler", "素の handler の関数", "引数が (effect, k)(handler の印は無い)"
             )
-        if decided is None and annotation is _MISSING:
-            decided = self._returns_kind(function) or Verdict(
-                "unclassified", "関数", "戻りの型が無く、return の形からも決まらない"
+        if _is_program_function(obj):
+            return Verdict("other", "program 関数", "@do / defk の関数(呼ぶと program を作る)")
+        annotation = _return_annotation(function)
+        decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
+        if decided is not None:
+            return decided
+        if annotation is _MISSING or self._is_vague(annotation):
+            unknown = (
+                "戻りの型が無く、return の形からも決まらない"
+                if annotation is _MISSING
+                else f"戻りの型 {_annotation_text(annotation)} では決まらず、return の形からも決まらない"
             )
-        return decided or Verdict("other", "関数", f"戻りの型 {_annotation_text(annotation)}")
+            return self._returns_kind(function) or Verdict("unclassified", "関数", unknown)
+        return Verdict("other", "関数", f"戻りの型 {_annotation_text(annotation)}")
+
+    def _is_vague(self, annotation: object) -> bool:
+        """Whether a return type says nothing about effect or handler (``Any``, a ``Callable``, a list of them)."""
+        if (
+            annotation in (typing.Any, object, list, tuple)
+            or annotation is collections.abc.Callable
+        ):
+            return True
+        origin = typing.get_origin(annotation)
+        if origin is collections.abc.Callable:
+            return True
+        if origin in _COLLECTION_ORIGINS:
+            return any(
+                self._is_vague(arg) for arg in typing.get_args(annotation) if arg is not Ellipsis
+            )
+        return False
 
     def _annotation_kind(self, annotation: object) -> Verdict | None:
         """The verdict a return type gives (``None`` when it says neither effect, handler nor program)."""
-        text = _annotation_text(annotation)
         if isinstance(annotation, str):
             return _named_annotation_kind(annotation)
-        if self._is_effect_type(annotation):
-            return Verdict("effect", "effect を作る関数", f"戻りの型 {text}(EffectBase の子)")
-        if any(annotation is handler_type for handler_type in self.handler_types):
-            return Verdict("handler", "handler を返す関数", f"戻りの型 {text}")
+        text = _annotation_text(annotation)
         origin = typing.get_origin(annotation)
         base = origin if origin is not None else annotation
-        if isinstance(base, type) and base.__name__ in _PROGRAM_TYPE_NAMES:
-            return Verdict("other", "program を返す関数", f"戻りの型 {text}")
-        return None
+        rules: list[tuple[bool, Verdict]] = [
+            (
+                self._is_effect_type(annotation),
+                Verdict("effect", "effect を作る関数", f"戻りの型 {text}(EffectBase の子)"),
+            ),
+            (
+                self._is_handler_type(annotation),
+                Verdict("handler", "handler を返す関数", f"戻りの型 {text}"),
+            ),
+            (
+                self._is_handler_collection(annotation),
+                Verdict("handler", "handler の組を返す関数", f"戻りの型 {text}"),
+            ),
+            (
+                isinstance(base, type) and base.__name__.endswith("Handler"),
+                Verdict(
+                    "unclassified",
+                    "関数",
+                    f"戻りの型 {text} は Handler を名乗るが handler の印が無い",
+                ),
+            ),
+            (
+                _is_program_type(annotation),
+                Verdict("other", "program を返す関数", f"戻りの型 {text}"),
+            ),
+        ]
+        return next((verdict for matched, verdict in rules if matched), None)
+
+    def _is_handler_type(self, annotation: object) -> bool:
+        """Whether a return type is a handler: doeff's handler types, a marked class, or ``Program -> Program``."""
+        if any(annotation is handler_type for handler_type in self.handler_types):
+            return True
+        if isinstance(annotation, type) and _is_handler_marked(annotation):
+            return True
+        if typing.get_origin(annotation) is not collections.abc.Callable:
+            return False
+        parameters, result = typing.get_args(annotation)
+        return (
+            isinstance(parameters, list)
+            and len(parameters) == 1
+            and _is_program_type(parameters[0])
+            and _is_program_type(result)
+        )
+
+    def _is_handler_collection(self, annotation: object) -> bool:
+        """Whether a return type is a list or tuple of handlers (a stack to install)."""
+        if typing.get_origin(annotation) not in _COLLECTION_ORIGINS:
+            return False
+        members = [arg for arg in typing.get_args(annotation) if arg is not Ellipsis]
+        return bool(members) and all(self._is_handler_type(arg) for arg in members)
 
     def _is_effect_type(self, annotation: object) -> bool:
         """Whether a return type is an effect type: the class, a generic of it, or a union of them."""
@@ -612,12 +687,9 @@ class _Classifier:
         if isinstance(value, ast.Call):
             return self._called_kind(_resolve(value.func, namespace))
         if isinstance(value, ast.Name) and value.id in nested:
-            decorators = nested[value.id].decorator_list
-            return (
-                "handler"
-                if any(_decorator_name(item) == "handler" for item in decorators)
-                else None
-            )
+            definition = nested[value.id]
+            marked = any(_decorator_name(item) == "handler" for item in definition.decorator_list)
+            return "handler" if marked or _def_takes_effect_and_k(definition) else None
         target = _resolve(value, namespace)
         if _is_handler_marked(target):
             return "handler"
@@ -638,6 +710,15 @@ class _Classifier:
         return (
             decided.kind if decided is not None and decided.kind in ("effect", "handler") else None
         )
+
+
+def _is_program_type(annotation: object) -> bool:
+    """Whether a type is doeff's program type (``Program``, ``DoExpr`` ...), a generic of it or a union of them."""
+    origin = typing.get_origin(annotation)
+    if origin in (typing.Union, types.UnionType):
+        return all(_is_program_type(arg) for arg in typing.get_args(annotation))
+    base = origin if origin is not None else annotation
+    return isinstance(base, type) and base.__name__ in _PROGRAM_TYPE_NAMES
 
 
 def _named_annotation_kind(annotation: str) -> Verdict:
@@ -710,6 +791,13 @@ def _takes_effect_and_k(function: object) -> bool:
         and parameter.default is parameter.empty
     ]
     return len(required) == 2 and required[1].name == "k"
+
+
+def _def_takes_effect_and_k(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """``_takes_effect_and_k`` for a ``def`` read from source (a handler body defined inside a factory)."""
+    positional = [*node.args.posonlyargs, *node.args.args]
+    required = positional[: len(positional) - len(node.args.defaults)]
+    return len(required) == 2 and required[1].arg == "k"
 
 
 def _function_node(function: object) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
@@ -960,19 +1048,73 @@ def _put_roots_on_path(layout: PackageLayout) -> None:
     sys.path[:0] = [str(root.path.parent) for root in missing]
 
 
+@dataclass(frozen=True)
+class _LazyFailure:
+    """A name a module-level ``__getattr__`` could not make: the error, to report in the row."""
+
+    error: str
+
+
+def _module_value(module: types.ModuleType, name: str) -> object:
+    """A module's value for a name, made on demand when the module has a ``__getattr__``.
+
+    ``_MISSING`` when the module has neither the name nor a ``__getattr__``; a ``_LazyFailure`` when
+    its ``__getattr__`` fails for the name.
+    """
+    if name in module.__dict__:
+        return module.__dict__[name]
+    if "__getattr__" not in module.__dict__:
+        return _MISSING
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            return getattr(module, name)
+    except Exception as error:  # the failure is written into the row, not dropped
+        return _LazyFailure(f"{type(error).__name__}: {error}".splitlines()[0][:300])
+
+
+def _lazy_names(module: types.ModuleType) -> list[str]:
+    """The names a module with a module-level ``__getattr__`` makes on demand.
+
+    Read from its ``__dir__`` and from the ``from ... import`` statements of its source (the
+    ``if TYPE_CHECKING:`` block that shows type checkers the lazy names included).
+    """
+    if "__getattr__" not in module.__dict__:
+        return []
+    listed = dir(module)  # runs the module's own __dir__ when it has one
+    file = _module_file(module.__name__)
+    tree = _source_tree(file) if file is not None and file.endswith(".py") else None
+    imported = [
+        alias.asname or alias.name
+        for statement in (_top_statements(tree.body) if tree is not None else ())
+        if isinstance(statement, ast.ImportFrom)
+        for alias in statement.names
+        if alias.name != "*"
+    ]
+    return sorted({*listed, *imported} - set(module.__dict__))
+
+
 def _exported_names(module: types.ModuleType, sources: _Sources) -> tuple[list[str], ModuleReadWay]:
     """The names a module exports, and how they were read (``__all__`` or the package's own names)."""
     declared = module.__dict__.get("__all__")
     if isinstance(declared, (list, tuple)):
         return [str(name) for name in cast(Sequence[object], declared)], "__all__"
-    names = [
+    candidates = [*module.__dict__, *_lazy_names(module)]
+    names = sorted(
         name
-        for name, value in sorted(module.__dict__.items())
-        if not name.startswith("_")
-        and not isinstance(value, types.ModuleType)
-        and _defined_in_package(value, module.__name__, name, sources)
-    ]
+        for name in candidates
+        if not name.startswith("_") and _is_own_name(module, name, sources)
+    )
     return names, "own"
+
+
+def _is_own_name(module: types.ModuleType, name: str, sources: _Sources) -> bool:
+    """Whether a module name counts as the package's own export (a failed lazy name counts, to be reported)."""
+    value = _module_value(module, name)
+    if isinstance(value, _LazyFailure):
+        return True
+    if value is _MISSING or isinstance(value, types.ModuleType):
+        return False
+    return _defined_in_package(value, module.__name__, name, sources)
 
 
 def _defined_in_package(value: object, module_name: str, name: str, sources: _Sources) -> bool:
@@ -1062,13 +1204,14 @@ def _name_row(
     module: types.ModuleType, name: str, classifier: _Classifier, sources: _Sources
 ) -> ExportRow:
     """The row of one name a module exports: its verdict and where it is defined."""
-    if name not in module.__dict__:
-        verdict, defined_at = (
-            Verdict("unclassified", "名だけ", "__all__ に在るが module に無い"),
-            module.__name__,
-        )
+    value = _module_value(module, name)
+    if value is _MISSING:
+        verdict = Verdict("unclassified", "名だけ", "__all__ に在るが module に無い")
+        defined_at = module.__name__
+    elif isinstance(value, _LazyFailure):
+        verdict = Verdict("unclassified", "名だけ", f"__getattr__ が名を作れない: {value.error}")
+        defined_at = module.__name__
     else:
-        value = module.__dict__[name]
         try:
             verdict = classifier.classify(value, name)
             defined_at = _location(value, module.__name__, name, sources)
@@ -1355,16 +1498,18 @@ _METHOD_NOTES = (
     "数える module: pyproject の wheel の packages(hatch)・python-source と module-name(maturin)・setuptools の"
     "見つける package を import の根とし、根と、path のどの部分も `_` で始まらない submodule の全部。",
     "module が出す名: `__all__` が在ればその全部。無ければ `_` で始まらない名のうち、その package の中で定義された物"
-    "(他の package と標準ライブラリから import しただけの名と module は数えない)。",
+    "(他の package と標準ライブラリから import しただけの名と module は数えない)。module の `__getattr__` で"
+    "遅れて出す名は、`__dir__` と import 文(`if TYPE_CHECKING:` の節を含む)が並べる名も数える。",
     "Hy の module は `_` で始まらない macro も数える。pyproject の console script・entry point と、maturin の bin の"
     "Rust の実行 file も数える。",
     "effect: EffectBase の子の class・EffectBase の値・effect を作る関数(戻りの型が EffectBase の子か、return が"
     "effect の class を呼ぶ)。",
-    "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler"
-    "か、return が handler を作る)・引数が (effect, k) の素の handler の関数。",
+    "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler・"
+    "program を受けて program を返す呼べる物・handler の組か、return が handler を作る)・引数が (effect, k) の素の"
+    "handler の関数。",
     "それ以外: program 関数(@do・defk)・ほかの関数・class・例外・型・定数・macro・console script・entry point。",
-    "未分類: 戻りの型が無く return の形からも決まらない関数・名が Effect か Handler で終わるのに印の無い class・"
-    "import できない module の名。",
+    "未分類: 戻りの型が無いか中身を言わない型(Any・object・Callable・その list)で、return の形からも決まらない関数・"
+    "名が Effect か Handler で終わるのに印の無い class(とそれを返す関数)・import できない module の名。",
     "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を全部並べる。定義の場所の"
     "`packages/<package>/` は略す。",
     "道具: `tools/public_api_inventory.py`(`uv run python tools/public_api_inventory.py --json <file> "
