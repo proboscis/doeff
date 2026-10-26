@@ -98,6 +98,16 @@ repos:
         files: '^packages/[^/]+/src/.*\.hy$'
         pass_filenames: true
 
+      # 公開の repo に、持ち主の chat の言葉を日付つきで写した引用を入れない(card ki-2711b47b8d34)。決定と理由は記録の
+      # 言葉で書き、出自は「決定 2026-09-29」の短い印か内部の tracker への参照にする。CI(.github/workflows/no-chat-quotes.yml)は
+      # 木の全体と push した commit の文を同じ script で見る。
+      - id: no-chat-quotes
+        name: 持ち主の chat の言葉の日付つきの引用が無いか
+        entry: uv run --script scripts/check_no_operator_quotes.py
+        language: system
+        types: [text]
+        pass_filenames: true
+
       # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement 資産と台帳は同じ commit で動く。
       # 勘定の家 = scripts/check_enforcement_ledger.py(stdlib 単独)。台帳は生成物 —
       # 落ちたら `make enforcement-ledger` で作り直し、消えた項目を確かめて stage する。
