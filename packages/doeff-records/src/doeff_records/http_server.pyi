@@ -128,6 +128,7 @@ class RecordsServerConfig:
     meter: Callable[..., object] | None = None
     served: ServedBuild | None = None
     callers: tuple[str, ...] = ()
+    maintenance: MaintenancePlan | None = None
 
 def records_server_config(
     schema: RecordsSchema,
@@ -138,6 +139,7 @@ def records_server_config(
     meter: Callable[..., object] | None = None,
     served: ServedBuild | None = None,
     callers: tuple[str, ...] = (),
+    maintenance: MaintenancePlan | None = None,
 ) -> Program[RecordsServerConfig, object]: ...
 
 @dataclass(frozen=True)
