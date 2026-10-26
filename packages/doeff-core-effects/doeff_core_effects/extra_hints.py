@@ -5,7 +5,7 @@ frozendict). The extra ``hy`` adds Hy (doeff-hy) for the effects and handlers
 written in Hy, ``cache``, ``doeff run --hy`` and ``.hy`` programs; the extra
 ``http`` adds Hy and httpx for the HTTP client handler
 (tests/test_core_install_extras.py). When an import a feature needs fails because
-its extra is missing, the error keeps the missing module's name (``missing``) and ends with the
+its extra is missing, the error keeps the missing module's name and ends with the
 line that installs the extra: ``pip install "doeff[hy]"``.
 """
 
@@ -29,20 +29,14 @@ def _installs(extra: Extra) -> frozenset[str]:
 
 
 class MissingExtraError(ModuleNotFoundError):
-    """A module that ``extra`` installs is missing; the message names the extra to install.
-
-    The missing module's name is ``missing``, not ImportError's ``name``: from Python 3.15
-    the traceback appends a similar module name to a ModuleNotFoundError that has ``name``
-    (``Did you mean: 'doeff_vm'?``), which would point away from the extra and push the
-    install line off the last line.
-    """
+    """A module that ``extra`` installs is missing; the message names the extra to install."""
 
     def __init__(self, missing: str, extra: Extra, reason: str) -> None:
         super().__init__(
             f"No module named {missing!r} — {reason}. "
-            f'Install the extra {extra}: pip install "doeff[{extra}]"'
+            f'Install the extra {extra}: pip install "doeff[{extra}]"',
+            name=missing,
         )
-        self.missing = missing
         self.extra: Extra = extra
 
 
@@ -58,10 +52,6 @@ def extra_needed(extra: Extra, reason: str) -> Iterator[None]:
     """
     try:
         yield
-    except MissingExtraError as error:
-        if error.missing.partition(".")[0] not in _installs(extra):
-            raise
-        raise MissingExtraError(error.missing, extra, reason) from error
     except ModuleNotFoundError as error:
         missing = error.name or ""
         if missing.partition(".")[0] not in _installs(extra):
