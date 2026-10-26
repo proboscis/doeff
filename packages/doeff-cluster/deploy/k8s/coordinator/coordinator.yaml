@@ -207,7 +207,14 @@ spec:
             # fb3259d20 の「持ち主でない送り手の needs の書き換えを 403」は、本番の Service の owner が宣言の道具と違うので宣言を断るため
             # 当てずに置き換えた(fb3259d20 の版は当たっていない)。照らしは revision に替え、版を変えずに needs か pin を変える PUT を 409 で
             # 断る。保存の鍵 needsoverride/<名> の形は {needs reason expiresAtMs writer sinceMs}。前の版 fb3259d20 は 953bce78a の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 07fd279c3f53c66f82178b9e40b9b2c75991f9e2 }
+            # 07fd279c3 = worker の heartbeat の doeffCommit(その process の doeff の版)を Worker の spec.doeffCommit と GET /workers/<名> の
+            # doeffCommit・bootAt に出す版(card ki-6e83e03d146d — worker の版を Pod の template から ConfigMap worker-version の file へ移し、
+            # 同じ Pod の中の keeper が版を入れ替える)。worker の全部を同じ版へ上げる移行の 1 回で、版の向きに合わせて coordinator も上げた。
+            # 前の版 953bce78a は 07fd279c3 の祖先。
+            # 851f5f647 = 07fd279c3 の後の main。間の差は core の package の版の数(46a21b67e — 準備で doeff-vm の wheel を組み直す)と宣言・
+            # test・README だけで、coordinator の process に効く code の差は無い。worker の版を ConfigMap の file だけで上げる 1 回目(zeus を
+            # この版へ — card ki-6e83e03d146d)のため、版の向きに合わせて先に上げる。前の版 07fd279c3 は 851f5f647 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 851f5f647de472e184f1e8a6e6eac3e4e9dcd908 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
