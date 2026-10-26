@@ -208,7 +208,7 @@ worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WOR
 - `system-declaration` が宣言の行と詰めた Program を組みます。行は `{name revision needs replicas run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
   同一性(入れ替えの要否を決める指紋)は、呼んだ関数の `module:qualname` と引数の正規の JSON・版・environ から作り、詰めた中身は
   比べません(cloudpickle の出力は同じ Program でも揺れるため)。
-- `system-declaration` の `:contents {job の名 中身の鍵}` を渡すと、行が `content` を持ちます(card ki-81bf84ac6590)。中身の鍵は送り手が
+- `system-declaration` の `:contents {job の名 中身の鍵}` を渡すと、行が `content` を持ちます。中身の鍵は送り手が
   「その job の process が読む code の全部(実行環境のどの repo の、どの file の中身か)」から計った文字列(英数字と `. _ : -` の 1〜128 字)で、
   鍵の在る job の指紋と worker の比べは、版と実行環境の repo の commit の代わりに鍵を読みます(lock の sha256・Python・import の根などの
   実行環境のほかの欄は今どおり材料)。読む code の変わらない版で宣言し直しても、worker は process を起こし直さず、その版の木・root も
