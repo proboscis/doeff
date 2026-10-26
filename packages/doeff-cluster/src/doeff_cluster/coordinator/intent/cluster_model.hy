@@ -429,6 +429,28 @@
   (#^ int queued))
 
 
+(defenum UnplacedKind WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM)
+
+
+;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
+;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
+
+
+(defrecord UnplacedView
+  "置き先の無い Service 1 つの読み(cluster_policy.unplaced-views — card ki-53b8677f1374)。置き先の無い Service に人が気づくまでの長さが、
+   止まりの長さになった(2026-10-26 22:45〜23:21 に 13 本)ので、外の見張りが理由の文を読み解かずに、種類・足りない能力・いつからを読むため。
+   service = Service の名・kind = 置き先が無い理由の種類・needs = 効く needs(cluster_policy.effective-needs — 上書きの間は上書きの needs)・
+   missing = needs のうち、生きていて drain 中でない worker のどれも名乗らない能力(名の順 — 空なら、能力は揃うが 1 台に揃わない・固定・
+   専用の能力・空きのどれかで置けない)・pin = 固定の worker の名・since-ms = 置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str service)
+  (#^ UnplacedKind kind)
+  (#^ (get tuple #(str ...)) needs)
+  (#^ (get tuple #(str ...)) missing)
+  (#^ (| str None) pin)
+  (#^ int since-ms))
+
+
 (defrecord StateView
   "GET /state の状態の画面(cluster_policy.state-view — #2595): now・services・workers・placements(job の名 → Placement)・unplaced(job の名 →
    置き先が無い理由)・statuses(worker の名 → StatusView)・tasks・board-keys = 盤の行の数・surges(job の名 → Placement)・events = 直近
@@ -436,7 +458,8 @@
    どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)・coordinator-commit = 答えた coordinator の process が走っている
    doeff の版(ClusterState の running-commit — 読めなければ None で、JSON の欄 coordinatorCommit を書かない。版上げの Program が「新しい
    版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)・group-limits = 組の同時数の上限の画面の列
-   (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride・card ki-1523bc0aba4f)。
+   (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride・card ki-1523bc0aba4f)・
+   unplaced-detail = 置き先の無い Service の読みの列(Service の名の順 — UnplacedView・card ki-53b8677f1374 — unplaced と同じ Service)。
    JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
@@ -452,7 +475,8 @@
   (#^ (get tuple #(KeepMark ...)) keep-marks)
   (#^ (| str None) coordinator-commit)
   (setv #^ (get tuple #(GroupLimitView ...)) group-limits #())
-  (setv #^ (get tuple #(NeedsOverride ...)) needs-overrides #()))
+  (setv #^ (get tuple #(NeedsOverride ...)) needs-overrides #())
+  (setv #^ (get tuple #(UnplacedView ...)) unplaced-detail #()))
 
 
 (defenum DrainPhase
@@ -612,13 +636,6 @@
 ;; Service ごとに「指定の版(spec.revision)が実際に仕事をしているか」を coordinator が答える(resource_policy.version-state)。
 ;; 材料の判定(running-process・入れ替えの見張り・停止の述語)の答えは、理由の文ではなく下の閉じた型で運ぶ — version-state は種類を
 ;; 網羅の match で状態へ写し、文を読んで分けない。
-
-(defenum UnplacedKind WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM)
-
-
-;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
-;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
-
 
 (defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-UNDECLARED)
 
@@ -783,12 +800,13 @@
 (defrecord ServiceObserved
   "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後に受けた準備の
    報告(無ければ None — JSON の形は coordinator/protocol/replies が綴る)・process = 置き先の worker の最後の報告の行・version = 版の判定・
-   running = 生きている process の版の列。"
+   running = 生きている process の版の列・unplaced = 置き先が無ければその読み(UnplacedView — 置かれていれば None・card ki-53b8677f1374)。"
   (#^ str ready-reason)
   (#^ (| ReadinessReport None) last-readiness)
   (#^ (| StatusRow None) process)
   (#^ VersionVerdict version)
-  (#^ (get tuple #(LiveProcess ...)) running))
+  (#^ (get tuple #(LiveProcess ...)) running)
+  (setv #^ (| UnplacedView None) unplaced None))
 
 
 (defrecord WorkerObserved
@@ -1167,7 +1185,12 @@
   ;; Service の置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名 → NeedsOverride(資源 NeedsOverride — 宣言は
   ;; 書き換えない)。置き先の判断は上書きの needs を効かせ(cluster_policy.effective-needs)、期限の拍か上書きの needs を満たす生きた worker
   ;; が 0 になった拍に、coordinator が行を外して宣言の needs で置き直す(resource_policy.lift-needs-overrides)。保存する(durable_kv の needsoverride/<名>)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get Table NeedsOverride) needs-overrides (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table NeedsOverride) needs-overrides (field :default-factory (partial table-of #())))
+  ;; 置き先が無いと最初に見た拍の刻(2026-10-27・card ki-53b8677f1374): Service の名 → epoch ms。調停の拍ごとに cluster_policy.note-unplaced が
+  ;; 置き先の無い Service に刻を置き、置かれた Service の行を外す(置かれないまま続く間は最初の刻を保つ)。GET /state の unplacedDetail と
+  ;; Service の資源の status.unplaced の sinceMs に出る — 外の見張りが「いつから置き先が無いか」を読むため。保存しない(起き直した後は、
+  ;; 起きた後の最初の拍から数える)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table int) unplaced-since (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []

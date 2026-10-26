@@ -11,7 +11,7 @@
 (import collections.abc [Callable Iterable Mapping])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
-                                                       ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
+                                                       ServiceObserved UnplacedView WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                                                        DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
@@ -149,7 +149,18 @@
                           (group-limit-spec g.limit)))
    ;; 置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名の順の列 [{service needs reason expiresAtMs writer sinceMs}] —
    ;; 宣言の needs の代わりに今効いている needs と、その訳・期限・書き手。宣言の spec は書き換えないので、ここで読む。
-   "needsOverrides" (lfor o view.needs-overrides (| {"service" o.service} (needs-override-spec o)))})
+   "needsOverrides" (lfor o view.needs-overrides (| {"service" o.service} (needs-override-spec o)))
+   ;; 置き先の無い Service の読み(2026-10-27・card ki-53b8677f1374): Service の名 → {kind needs missing pin sinceMs}(unplaced と同じ鍵)—
+   ;; 種類(no-eligible-worker など)・効く needs・足りない能力(生きていて drain 中でない worker のどれも名乗らない能力)・固定・置き先が
+   ;; 無いと最初に見た刻。外の見張りが理由の文を読み解かずに、どの Service がいつから何の能力が足りずに置けないかを読むため。
+   "unplacedDetail" (dict (zip (gfor u view.unplaced-detail u.service) (! (spelled-each unplaced-view-json view.unplaced-detail))))})
+
+
+(defk unplaced-view-json [#^ UnplacedView view]
+  {:pre [(: view UnplacedView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "置き先の無い Service 1 つの読み → JSON の形 {kind needs missing pin sinceMs}(GET /state の unplacedDetail の値と、Service の資源の
+   status.unplaced が同じ形を読むため — card ki-53b8677f1374)。kind = UnplacedKind の値(no-eligible-worker・no-room・waiting-previous-holder)。"
+  {"kind" view.kind.value "needs" (list view.needs) "missing" (list view.missing) "pin" view.pin "sinceMs" view.since-ms})
 
 
 (defk drain-progress-json [#^ DrainProgress drain]
@@ -220,7 +231,9 @@
       {"readyReason" observed.ready-reason
        "lastReadiness" (! (readiness-report-json observed.last-readiness))
        "process" (if (is observed.process None) None (status-row-to-json observed.process))
-       "version" (! (version-json observed.version observed.running))}
+       "version" (! (version-json observed.version observed.running))
+       ;; 置き先が無ければ {kind needs missing pin sinceMs}・置かれていれば null(card ki-53b8677f1374)。
+       "unplaced" (if (is observed.unplaced None) None (! (unplaced-view-json observed.unplaced)))}
     (isinstance observed WorkerObserved) {"silentMs" observed.silent-ms "alive" observed.alive}
     (isinstance observed TaskObserved) (! (task-summary observed.task))
     ;; Rollout の相手の Deployment ごとの最後の観測(鍵 = 相手の鍵・値の形は deployment-observation-json)。

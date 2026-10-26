@@ -47,6 +47,7 @@ from doeff_cluster.coordinator.intent.cluster_model import TaskRecord as TaskRec
 from doeff_cluster.coordinator.intent.cluster_model import EnvFailed as EnvFailed
 from doeff_cluster.coordinator.intent.cluster_model import HandoffPhase as HandoffPhase
 from doeff_cluster.coordinator.intent.cluster_model import UnplacedKind as UnplacedKind
+from doeff_cluster.coordinator.intent.cluster_model import UnplacedView as UnplacedView
 from doeff_cluster.coordinator.intent.cluster_model import TaskUnplacedKind as TaskUnplacedKind
 from doeff_cluster.coordinator.intent.cluster_model import WorkerLoad as WorkerLoad
 from doeff_cluster.coordinator.intent.cluster_model import ACCEPTED_FORMATS as ACCEPTED_FORMATS
@@ -316,6 +317,18 @@ def unplaced_text(kind: UnplacedKind, job: ClusterJob, needs: tuple) -> str:
     ...
 
 def unplaced_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:
+    ...
+
+def note_unplaced(state: ClusterState, now: int) -> _Program[ClusterState, object]:
+    ...
+
+def missing_needs(now: int, state: ClusterState, needs: tuple, timing: ClusterTiming) -> tuple:
+    ...
+
+def unplaced_view(now: int, state: ClusterState, job: ClusterJob, timing: ClusterTiming) -> UnplacedView:
+    ...
+
+def unplaced_views(now: int, state: ClusterState, timing: ClusterTiming) -> tuple:
     ...
 
 def task_unplaced_text(kind: TaskUnplacedKind) -> _Program[str, object]:
