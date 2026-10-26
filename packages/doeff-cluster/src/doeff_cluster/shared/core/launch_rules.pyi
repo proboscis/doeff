@@ -30,6 +30,9 @@ def coordinator_launch_names() -> _Program[frozenset[str], object]:
 def coordinator_commit_env_name() -> _Program[str, object]:
     ...
 
+def worker_commit_env_name() -> _Program[str, object]:
+    ...
+
 class LaunchEnvMissing(ValueError):
     ...
 
