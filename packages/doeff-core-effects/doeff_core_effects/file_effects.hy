@@ -22,7 +22,7 @@
 ;;;   (書きの 3 つの sync = True は、答える前に中身を disk へ落とす(fsync — replace では置き換える前)。返事を済ませた中身が機体の停止で
 ;;;    消えては困る書き手のため。memory の置き場には落とす先が無いので、答えは sync に依らない)
 ;;;   MakeDirectory  dir を親ごと作る(在ってもよい)。mode は新しく作った最後の dir に与える。答え = None
-;;;   ListDirectory  dir の直下。答え = DirEntry の tuple(名の順)
+;;;   ListDirectory  dir の直下。答え = DirEntry の tuple(名の順・並べた後で種類を読む前に消えた名は飛ばす — 並べた時点で在った名の写し)
 ;;;   WalkTree       dir の下の全部(再帰)。答え = DirEntry の tuple(name = dir からの相対 path・/ 区切り・並べた順)
 ;;;   StatTree       dir の下の全部(再帰)を様子つきで。答え = EntryStat の tuple(name は WalkTree と同じ・種類と大きさと mtime は symlink を
 ;;;                  辿らない — os.lstat・一覧の後で様子を読む前に消えた物は StatPath の無い path と同じく kind MISSING)。木の file ごとの時刻を

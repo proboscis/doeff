@@ -425,6 +425,24 @@
   (assert (= (tuple (gfor e stats #(e.name e.kind e.size))) #(#("gone" PathKind.MISSING 0) #("kept" PathKind.FILE 3))) stats))
 
 
+(deftest test-list-directory-skips-a-name-gone-before-its-kind-is-read [tmp-path monkeypatch]
+  ;; 並べた後で種類を読む前に消えた名は飛ばし、残りを名の順に返す(並べた時点で在った名の写し・card ki-a6a20f777219)。消えた所は
+  ;; os.lstat の差し替え。失敗ケース(前の形): /proc を並べる間にプロセスが 1 つ終わると、並べ全体が FileFailed になった。
+  (.mkdir (/ tmp-path "t"))
+  (.write-bytes (/ tmp-path "t" "kept") b"abc")
+  (.write-bytes (/ tmp-path "t" "gone") b"x")
+  (.mkdir (/ tmp-path "t" "sub"))
+  (val original os.lstat)
+  (.setattr monkeypatch os "lstat" (fn [path #* args #** options]
+                                     (if (.endswith (str path) "/t/gone")
+                                         (raise (FileNotFoundError 2 "No such file or directory" path))
+                                         (original path #* args #** options))))
+  (<- listed tuple (with_handlers [os-file-handler] (ListDirectory (str (/ tmp-path "t")))))
+  (assert (= listed #((DirEntry :name "kept" :kind PathKind.FILE) (DirEntry :name "sub" :kind PathKind.DIRECTORY))) listed)
+  (<- missing FileFailed (with_handlers [os-file-handler] (ListDirectory (str (/ tmp-path "none")))))
+  (assert (in "No such file or directory" missing.detail) missing))
+
+
 (defk link-journey [root]
   {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
   "file に名を付け(#2462)、付けた名から読み、断りの 4 つ(在る先・無い元・dir の元・無い親)を返す筋。断りは元と先の path を root の外して。"

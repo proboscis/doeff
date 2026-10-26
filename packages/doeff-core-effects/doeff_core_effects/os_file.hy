@@ -148,14 +148,13 @@
 
 (defk list-directory [path]
   {:pre [(: path str)] :post [(: % (| (get tuple #(DirEntry ...)) FileFailed))]}
-  "dir の直下を名の順に並べるため。"
+  "dir の直下を名の順に並べるため。並べた後で種類を読む前に消えた名は飛ばす(並べた時点で在った名の写し — /proc のように並べる間に
+   名が消える dir で、消えた 1 つが並べ全体を FileFailed にしない・card ki-a6a20f777219)。"
   (try
-    (val names (sorted (os.listdir path)))
-    (val entries [])
-    (for [name names]
-      (<- entry DirEntry (entry-of (os.path.join path name) name))
-      (.append entries entry))
-    (tuple entries)
+    (tuple (lfor name (sorted (os.listdir path))
+                 :setv seen (try (os.lstat (os.path.join path name)) (except [FileNotFoundError] None))
+                 :if (is-not seen None)
+                 (DirEntry :name name :kind (.get KIND-OF-FORMAT (stat.S-IFMT seen.st-mode) PathKind.OTHER))))
     (except [error OSError]
       (<- answer FileFailed (failed path error))
       answer)))
