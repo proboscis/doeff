@@ -1008,6 +1008,14 @@
                  (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
                  lazy-imports]
         #(outer-imports inner-imports) (if (_in-class-body? _hy-compiler) #([] imports) #(imports [])))
+  ;; 引数の在る defhandler は handler の工場(呼ぶと handler を返す関数)。実行時の展開は工場の戻りの型を doeff の ProgramHandler と
+  ;; 注記する — 公開 API の目録(tools/public_api_inventory.py)と inspect.signature が、工場を handler を返す関数と読めるように(注記が
+  ;; 無いと「戻りの型が無い関数」で未分類になった・card ki-01270742001e)。class の本体では注記しない(import が組む関数の中へ移り、
+  ;; 定義の段から名が見えない)。型検査のための展開も注記しない(pyright は本文に被せる関数の型を推し、型の宣言の生成 static_stub.py は
+  ;; 工場の答えを Handler と書く)。
+  (setv factory-annotated (and (is-not params None) (not (static-view-enabled)) (not (_in-class-body? _hy-compiler)))
+        factory-head (if factory-annotated `(annotate ~name ~(alias-symbol "ProgramHandler")) name)
+        factory-imports (if factory-annotated [(import-form ["ProgramHandler"])] []))
   (locate-synthesized (_scoped-definition _hy-compiler name (if (is params None)
       [#* outer-imports
        `(setv ~name
@@ -1025,7 +1033,8 @@
        `(setattr ~name "__doeff_name__" ~(str name))
        #* declared]
       [#* outer-imports
-       `(defn ~name [~@params]
+       #* factory-imports
+       `(defn ~factory-head [~@params]
          ~@inner-imports
          (setv __doeff-handler-data__ ~handler-expr)
          (setv __doeff-clause-endings__ (fn [] [~@specs]))

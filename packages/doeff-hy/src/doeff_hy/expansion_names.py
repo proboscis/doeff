@@ -18,7 +18,7 @@ effect が外の handler へ黙って抜け、module の段では展開の impor
 表は閉じている: 展開が読む名はすべて `_HOMES` に置き場とともに載せ、表に無い名は `home` が断る(知らない名を別名の import と
 答えない — for/do の docstring は書き手に `(import doeff [do :as _doeff-do])` を書かせる)。
 
-読み手: handle.hy(`WithHandler`・`Pass`・session の `Get`・`Put`・`Some`)・clause_ops.hy(節の操作の node と、型検査のための展開の
+読み手: handle.hy(`WithHandler`・`Pass`・session の `Get`・`Put`・`Some`、引数の在る defhandler の工場の戻りの型 `ProgramHandler`)・clause_ops.hy(節の操作の node と、型検査のための展開の
 `typed_resume`・`typed_transfer`)・binding_forms.py(`:=` の `Put`・`Some`)・macros.hy(`set!` の `Put`・`Some`)・declarations.hy の
 defeffect-form と record.hy の defrecord(:check)・defwire(型の本体が読む typing の `ClassVar`・`cast` — class の本体に書いた型の
 本体は名を module の段から引くので、型検査の投影はこの import を module の段へ移す)。
@@ -41,6 +41,7 @@ _HOMES: dict[str, str] = {
     "typed_resume": "doeff",
     "typed_transfer": "doeff",
     "WithHandler": "doeff_vm",
+    "ProgramHandler": "doeff.program",
     "Get": "doeff_core_effects.effects",
     "Put": "doeff_core_effects.effects",
     "ClassVar": "typing",
