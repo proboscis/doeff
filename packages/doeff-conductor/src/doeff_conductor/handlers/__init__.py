@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from doeff import handler as _program_handler
 from doeff import run
+from doeff.program import ProgramHandler
 from doeff_conductor.handlers.agent_handler import (
     AgentBackend as AgentBackend,
 )
@@ -91,7 +92,7 @@ def production_handlers(
     exec_handler: ExecHandler | None = None,
     journal_state_dir: str | Path | None = None,
     journal_run_id: str | None = None,
-) -> HandlerProtocol:
+) -> ProgramHandler:
     """Build the default production protocol handler for all conductor effects."""
     active_workspace_handler = workspace_handler or WorkspaceHandler()
     resolved_agent_handler = agent_handler or AgentHandler(

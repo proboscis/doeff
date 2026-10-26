@@ -1391,7 +1391,7 @@
 
 
 (deff memory-signal-handler [store bindings subscriber]  ; defk にできない: with-handlers の列に置く素の工場の関数 — 閉じの検の道具が宣言を読む形(records-signal-handler と同じ)
-  {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
+  {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}
   "memory の置き場 store の書きを合図として発する源で本体を包む関数を作るため(模擬の組の源 — 素の工場で、with-handlers の列に置く)。bindings =
    SignalTables の tuple / subscriber = 購読者の名前。包んだ本体の間だけ源の task が動く。"
   (BodyWrapper run-memory-source store bindings subscriber))

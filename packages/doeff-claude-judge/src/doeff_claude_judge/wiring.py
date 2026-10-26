@@ -22,6 +22,7 @@ from doeff_hy.frozen import freeze_json
 
 from doeff import Pass, Resume, do, run, with_handlers
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_claude_judge.handler import claude_judge_handler, query_user
 from doeff_claude_judge.target import BorrowJudgeCredential, ClaudeJudgeTarget, JudgeCredential
 from doeff_claude_judge.wire import ClaudeQuery
@@ -33,13 +34,13 @@ if TYPE_CHECKING:
 DEFAULT_COMMAND: tuple[str, ...] = ("claude",)
 
 
-def production_printer(command: Sequence[str] = DEFAULT_COMMAND) -> Callable[[Any], Any]:
+def production_printer(command: Sequence[str] = DEFAULT_COMMAND) -> ProgramHandler:
     """本番の print の実体(CLI の process を 1 回起こす handler)を作るため。command = 実行ファイルと前置きの引数。"""
     return claude_print_handler(tuple(command))
 
 
 def scripted_printer(answer: Callable[[ClaudeQuery, str], "JsonIn"],
-                     limited: Callable[[ClaudeQuery, str], AccountLimitHit | None] | None = None) -> Callable[[Any], Any]:
+                     limited: Callable[[ClaudeQuery, str], AccountLimitHit | None] | None = None) -> ProgramHandler:
     """使い手の検の print の実体: CLI を起こさず、answer(問いの部品, model) が返す構造化の答えで答える(fake)。
 
     limited(問いの部品, model) が尽きの事実(AccountLimitHit — 使い手は doeff_claude_judge から読む)を返す print は、answer を呼ばずに
@@ -77,7 +78,7 @@ def claude_judge_stack(
     lender: Callable[[Any], Any] | None = None,
     command: Sequence[str] = DEFAULT_COMMAND,
     log_stderr: bool = False,
-) -> list:
+) -> list[ProgramHandler]:
     """本番の handler の列(外側が先)。`printer` を差し替えると検の実体、`lender` は BorrowJudgeCredential の答え手。"""
     sink = slog_handler if log_stderr else slog_discard_handler
     return [try_handler, sink, printer if printer is not None else production_printer(command),

@@ -8,6 +8,7 @@ from doeff_core_effects.scheduler import CreateExternalPromise, Wait
 
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _install_raw_handler
+from doeff.program import ProgramHandler
 
 if TYPE_CHECKING:
     from doeff_conductor.handlers.agent_handler import AgentHandler
@@ -113,7 +114,7 @@ def default_scheduled_handlers(
     exec_handler: "ExecHandler | None" = None,
     workflow_effect_handler: "JournaledWorkflowEffectHandler | None" = None,
     create_workspace_override: Callable[[Any], Any] | None = None,
-) -> Callable[..., Any]:
+) -> ProgramHandler:
     """Build a complete protocol handler for all conductor effects.
 
     Args:
