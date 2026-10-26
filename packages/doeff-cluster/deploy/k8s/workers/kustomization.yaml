@@ -31,3 +31,13 @@ configMapGenerator:
       - worker-room.json
     options:
       disableNameSuffixHash: true
+  # 機体ごとの worker の doeff の版(card ki-6e83e03d146d): 機体の名 = worker の名ごとに 1 行の worker-version.env — 版の定義元はこの 1 file。
+  # 名の固定した ConfigMap worker-version にし(中身の hash を名に付けない)、data の鍵 = 機体の名・値 = commit。雛形は volume で置いた
+  # file(subPath でない)/etc/worker-version/<worker の名> を WORKER_VERSION_FILE で渡し、keeper が file の替わりで同じ container の
+  # 中の worker の process を入れ替える。中身を変えても Pod は作り直されない(版は Pod の template に無い)。
+  - name: worker-version
+    namespace: agent-worker
+    envs:
+      - worker-version.env
+    options:
+      disableNameSuffixHash: true

@@ -470,7 +470,12 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   置きます。確かめは `tests/test_k8s_declarations.py`(`kubectl kustomize` で組み立てた物を読む)。
 
 worker は静的に保ち、頻繁に起動し直しません(2026-10-09 の保守者の決定)。
-Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doeff の版を含む)か機体の資源の上限が変わった時だけです。
+Pod を作り直すのは、`deploy/k8s` の宣言(雛形の型・機体の資源の上限)が変わった時だけです。worker の doeff の版は Pod の template に
+置かず、ConfigMap `worker-version`(`deploy/k8s/workers/worker-version.env` — 1 行 1 worker)の file から読みます。版の行を変えると、
+Pod を作り直さずに、その worker の keeper(`deploy/boot.sh` の頭の註の「版の file と keeper」)が同じ container の中に新しい版の
+worker の process を起こし、coordinator に名乗れた後に前の版の process を drain してから止めます。前の版の process は自分の task と退いた
+handoff の process を終わりまで回してから退くので、版上げで走っている仕事は切れません(card ki-6e83e03d146d)。今の版は coordinator の
+`GET /resources/Worker` の `spec.doeffCommit`(と `GET /workers/<名>` の `doeffCommit`・`bootAt`)に出ます。
 
 宣言は上に載る系の名と値を書かず(規則 `doeff-packages-have-no-application-vocabulary`)、次の物を名で参照するだけです。中身は
 上に載る系の repo が持ちます。ConfigMap の名に中身の hash を付けないので、中身を変えても Pod は作り直されず、次の起動で効きます。
@@ -483,6 +488,7 @@ Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doe
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
 | ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `capacity`・`taskReserve`。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
+| ConfigMap `worker-version`(この package が持つ — `deploy/k8s/workers/worker-version.env`) | `/etc/worker-version`(`WORKER_VERSION_FILE` = `/etc/worker-version/<worker の名>`) | worker の名ごとの doeff の版(40 字の commit)。起動の args と preStop が自分の行を `WORKER_DOEFF_COMMIT` に入れて起動の script へ渡し、keeper が file の替わりで同じ container の中の worker の process を入れ替える(Pod を作り直さない) | Pod が起きない |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
 worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`deploy/k8s/workers/worker-cluster-admin.yaml`・
@@ -505,9 +511,11 @@ Deployment の在る namespace の権限として配備する側が与えます�
 上げた宣言が main へ入り、新しい worker が coordinator に登録できずにその機体が約 16 分止まりました。宣言の検
 `tests/test_k8s_declarations.py` の `test_no_worker_is_newer_than_the_coordinator` が、coordinator の版より新しい worker の版を commit の
 時点で断ります。worker の働きが要る変更でも、coordinator の版を先に(同じ版か、より新しい版へ)上げてから worker を上げます。本番の
-worker と coordinator は Flux が `deploy/k8s` の宣言(機体ごとの `deploy/k8s/nodes`)から作り直すので、順は宣言を当てる順(main へ入れる順と、
-Flux の Kustomization の suspend / resume)で守ります。coordinator と worker の版の行を同じ commit で上げると、Flux がどちらを先に作り直すかは
-決まらないので、coordinator の版の行を先に main へ入れます。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
+coordinator は Flux が `deploy/k8s/coordinator` の宣言から作り直し、worker の版は Flux が当てる ConfigMap `worker-version` の行で替わるので、
+順は宣言を当てる順(main へ入れる順と、Flux の Kustomization の suspend / resume)で守ります。coordinator と worker の版の行を同じ commit で
+上げると、Flux がどちらを先に当てるかは決まらないので、coordinator の版の行を先に main へ入れます。それでも新しい worker が古い coordinator に
+名乗れない間は、keeper は前の版の process を drain せず(新しい process の ready が立たない)、前の版の process が仕事を続けます —
+coordinator が上がって新しい process が名乗れた時に入れ替わります。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
 入れ替えの順の不変条件 V1〜V5・模擬の Flux は、使い手が 0 になったので 2026-10-10 に退役しました。
 
 coordinator の版上げの commit は、`deploy/k8s/coordinator/coordinator.yaml` の `WORKER_DOEFF_COMMIT` の 1 行だけを変えます

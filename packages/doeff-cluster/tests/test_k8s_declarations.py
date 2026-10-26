@@ -284,7 +284,7 @@ def test_worker_with_generation_dirs_runs_a_boot_script_that_knows_them(rendered
     if not any(entry["name"] == "WORKER_GENERATION_DIRS" for entry in _env(worker)):
         assert strategy["type"] == "Recreate"
         return
-    version = str(_env_value(worker, "WORKER_DOEFF_COMMIT")["value"])
+    version = _worker_version(rendered, node)
     assert _same_or_ancestor(GENERATION_DIRS_SINCE, version), (
         f"{node} の worker の版 {version} は世代の dir を知らない(GENERATION_DIRS_SINCE {GENERATION_DIRS_SINCE} の子孫でない)"
     )
@@ -369,7 +369,7 @@ def test_worker_with_a_cgroup_layout_runs_a_boot_script_that_knows_it(rendered: 
     worker = _worker_on(rendered, node)
     if not any(entry["name"] == "WORKER_CGROUP_LAYOUT" for entry in _env(worker)):
         return
-    version = str(_env_value(worker, "WORKER_DOEFF_COMMIT")["value"])
+    version = _worker_version(rendered, node)
     assert _same_or_ancestor(CGROUP_LAYOUT_SINCE, version), (
         f"{node} の worker の版 {version} は cgroup の層を知らない(CGROUP_LAYOUT_SINCE {CGROUP_LAYOUT_SINCE} の子孫でない)"
     )
@@ -380,38 +380,95 @@ def test_cgroup_layout_on_a_version_without_it_is_refused() -> None:
     assert not _same_or_ancestor(CGROUP_LAYOUT_SINCE, "0e6081c18c0d58f665246c296944d8939d0a2dcd")
 
 
-# worker の doeff の版(WORKER_DOEFF_COMMIT)の定義元は機体の dir の version.yaml 1 つ(JSON patch の add 1 行)— 雛形には版の行を置かない。
-# 機体ごとに 1 台ずつ版を上げられるように(7 台が 1 行を共有すると、1 回の main 入りで 7 台が同時に替わる)。版の行は env の WORK_DIR の
-# 直後に入る(行の場所が変わると Pod の template が変わり、版を変えなくても Pod が作り直される)。
-VERSION_PATCH = "version.yaml"
+# worker の doeff の版の定義元は workers/worker-version.env 1 つ(1 行 1 worker「<名>=<commit>」— card ki-6e83e03d146d)。名の固定した
+# ConfigMap worker-version になり、雛形が /etc/worker-version に volume で置く(subPath でない)。版を Pod の template に持たないので、版を
+# 替えても Pod は作り直されず、keeper(deploy/boot.sh の頭の註の「版の file と keeper」)が同じ container の中で worker の process を
+# 入れ替える。反例: 版を env(以前の機体の dir の version.yaml の JSON patch)に置くと、版を上げるたびに Pod の型が替わって Pod が作り直され、
+# 走っている仕事が切れる(10-24〜10-25 の 2 日で版だけの作り直しが 4 回)。
+VERSION_FILE = K8S / "workers" / "worker-version.env"
+VERSION_CONFIGMAP = "worker-version"
+VERSION_DIR = "/etc/worker-version"
+VERSION_PATH = VERSION_DIR + "/$(WORKER_NAME)"
+# 版の file を読んで keeper として回る起動の script を持つ最初の版(段 A — L2908)。版の file の版はこれかその子孫(keeper を知らない版で
+# 起きると、版の file を読まずに worker を 1 つ起こすだけで、版を替えても入れ替わらない)。
+KEEPER_SINCE = "07fd279c3f53c66f82178b9e40b9b2c75991f9e2"
+# 起動の args と preStop が版の file を読む綴り(`$$(` は k8s の $(名) の展開を避け、shell に `$(` で届く)。
+VERSION_READ = 'WORKER_DOEFF_COMMIT="$$(cat "$WORKER_VERSION_FILE")"'
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
-def _version_adds(node: str) -> list[dict[str, object]]:
-    path = K8S / "nodes" / node / VERSION_PATCH
-    assert path.is_file(), f"{node} の機体の dir に版の file {VERSION_PATCH} が無い"
-    ops = [_mapping(op, f"{path} の操作") for op in _sequence(yaml.safe_load(path.read_text()), str(path))]
-    return [op for op in ops if op["op"] == "add"]
+def _version_rows() -> dict[str, str]:
+    """版の file の行(worker の名 → commit)。# の行と空行は読まない(kustomize の envs と同じ)。"""
+    rows: dict[str, str] = {}
+    for line in VERSION_FILE.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        name, sep, commit = line.partition("=")
+        assert sep == "=", f"版の file の行が <名>=<commit> でない: {line!r}"
+        assert name not in rows, f"版の file に {name} の行が 2 つ在る"
+        rows[name] = commit
+    return rows
 
 
-def test_template_has_no_version_line() -> None:
-    """雛形(worker/worker.yaml)には版の行を置かない — 古い値や代わりの値を base に残さない。"""
+def _worker_version(rendered: list[Manifest], name: str) -> str:
+    """worker name の宣言の版(組み立てた ConfigMap worker-version の鍵 name の値 — 40 桁)。"""
+    configmaps = [doc for doc in rendered if doc.get("kind") == "ConfigMap" and _mapping(doc["metadata"], "metadata")["name"] == VERSION_CONFIGMAP]
+    assert len(configmaps) == 1, f"ConfigMap {VERSION_CONFIGMAP} はちょうど 1 つ: {len(configmaps)}"
+    data = _mapping(configmaps[0]["data"], "data")
+    assert name in data, f"ConfigMap {VERSION_CONFIGMAP} に {name} の版が無い"
+    commit = str(data[name])
+    assert SHA.match(commit), f"{name} の版が 40 桁の 16 進でない: {commit!r}"
+    return commit
+
+
+def test_no_worker_template_carries_its_version(rendered: list[Manifest]) -> None:
+    """雛形と組み立てた全部の worker の Deployment の pod template に WORKER_DOEFF_COMMIT が無い — 版は ConfigMap の file だけが持つ。"""
     template = _build(K8S / "worker")
-    assert [d for d in template if d["kind"] == "Deployment" and any(e["name"] == "WORKER_DOEFF_COMMIT" for e in _env(d))] == []
+    deployments = [d for d in template if d["kind"] == "Deployment"] + _deployments(rendered, "worker")
+    assert len(deployments) == 1 + len(WORKERS)
+    assert [d["metadata"] for d in deployments if any(e["name"] == "WORKER_DOEFF_COMMIT" for e in _env(d))] == []
 
 
-@pytest.mark.parametrize("node", WORKERS)
-def test_worker_version_comes_from_its_node_dir(rendered: list[Manifest], node: str) -> None:
-    """機体の worker の版は、その機体の dir の version.yaml の add 1 行の値(40 桁)で、env の WORK_DIR の直後に入る。"""
-    adds = _version_adds(node)
-    assert len(adds) == 1, f"{node} の版の add はちょうど 1 つ: {adds!r}"
-    added = _mapping(adds[0]["value"], "add の値")
-    assert added["name"] == "WORKER_DOEFF_COMMIT"
-    assert SHA.match(str(added["value"])), f"{node} の版が 40 桁の 16 進でない: {added['value']!r}"
-    worker = _worker_on(rendered, node)
-    assert _env_value(worker, "WORKER_DOEFF_COMMIT")["value"] == added["value"]
+def test_no_node_dir_patches_a_version() -> None:
+    """機体の dir に版の JSON patch(以前の version.yaml)を置かない・読まない。"""
+    for node_dir in sorted((K8S / "nodes").iterdir()):
+        assert not (node_dir / "version.yaml").exists(), f"{node_dir.name} の機体の dir に version.yaml が在る"
+        assert "version.yaml" not in (node_dir / "kustomization.yaml").read_text(encoding="utf-8"), node_dir.name
+
+
+@pytest.mark.parametrize("name", WORKERS)
+def test_every_worker_reads_its_version_from_the_fixed_named_configmap_file(rendered: list[Manifest], name: str) -> None:
+    """worker の版は、名の固定した ConfigMap worker-version を volume で置いた file(subPath でない)の自分の名の鍵から読む — 起動の args と
+    preStop がその版を WORKER_DOEFF_COMMIT に入れて image の起動の script へ渡す。keeper が同じ container に 2 つの版を並べるので、世代ごとの
+    状態の dir(WORKER_GENERATION_DIRS・POD_UID)を使う。"""
+    worker = _worker_on(rendered, name)
     names = [entry["name"] for entry in _env(worker)]
-    assert names[names.index("WORK_DIR") + 1] == "WORKER_DOEFF_COMMIT", f"{node} の版の行が WORK_DIR の直後に無い: {names!r}"
+    assert _env_value(worker, "WORKER_VERSION_FILE")["value"] == VERSION_PATH
+    # k8s は $(名) を前の行で定義した env だけから展開する — WORKER_NAME は WORKER_VERSION_FILE より前に要る。
+    assert names.index("WORKER_NAME") < names.index("WORKER_VERSION_FILE")
+    assert _env_value(worker, "WORKER_GENERATION_DIRS")["value"] == "1"
+    assert _env_value(worker, "POD_UID")["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.uid"}}
+    mount = _mount_at(worker, VERSION_DIR)
+    assert "subPath" not in mount and mount.get("readOnly") is True
+    volume = _mapping(_volume(worker, str(mount["name"]))["configMap"], "configMap")
+    assert volume["name"] == VERSION_CONFIGMAP
+    assert volume.get("optional", False) is False
+    container = _container(worker)
+    assert VERSION_READ in " ".join(str(arg) for arg in _sequence(container["args"], "args"))
+    pre_stop = _mapping(_mapping(_mapping(container["lifecycle"], "lifecycle")["preStop"], "preStop")["exec"], "exec")
+    assert VERSION_READ.replace('cat "$WORKER_VERSION_FILE"', 'cat /tmp/doeff-worker-keeper/commit 2>/dev/null || cat "$WORKER_VERSION_FILE"') in " ".join(
+        str(word) for word in _sequence(pre_stop["command"], "command")
+    )
+
+
+def test_the_version_file_has_one_row_per_worker_at_a_version_that_knows_the_keeper(rendered: list[Manifest]) -> None:
+    """版の file は worker ごとに 1 行(40 桁の commit)を持ち、組み立てた ConfigMap はその写し(名に中身の hash を付けない)。どの版も keeper を
+    知る版(KEEPER_SINCE)かその子孫。"""
+    rows = _version_rows()
+    assert sorted(rows) == sorted(WORKERS)
+    for name, commit in rows.items():
+        assert _worker_version(rendered, name) == commit
+        assert _same_or_ancestor(KEEPER_SINCE, commit), f"{name} の版 {commit} は keeper を知らない(KEEPER_SINCE の子孫でない)"
 
 
 def test_worker_names_itself_after_its_node(worker: Manifest) -> None:
@@ -727,7 +784,7 @@ def test_no_worker_is_newer_than_the_coordinator(rendered: list[Manifest]) -> No
     assert len(coordinators) == 1
     coordinator = str(_env_value(coordinators[0], "WORKER_DOEFF_COMMIT")["value"])
     workers = tuple(
-        NodeVersion(node=node, commit=str(_env_value(_worker_on(rendered, node), "WORKER_DOEFF_COMMIT")["value"]))
+        NodeVersion(node=node, commit=_worker_version(rendered, node))
         for node in WORKERS
     )
     newer = _workers_newer_than(coordinator, workers)
@@ -762,7 +819,7 @@ def _workers_caching_by_sha_alone(workers: tuple[NodeVersion, ...]) -> tuple[Nod
 def test_no_worker_caches_programs_by_sha_alone(rendered: list[Manifest]) -> None:
     """宣言の全部の機体の worker の版は、Program の cache を (版・sha) で名づける版かその子孫(上の註)。"""
     workers = tuple(
-        NodeVersion(node=node, commit=str(_env_value(_worker_on(rendered, node), "WORKER_DOEFF_COMMIT")["value"]))
+        NodeVersion(node=node, commit=_worker_version(rendered, node))
         for node in WORKERS
     )
     stale = _workers_caching_by_sha_alone(workers)

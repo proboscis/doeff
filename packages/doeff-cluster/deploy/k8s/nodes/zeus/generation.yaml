@@ -1,9 +1,6 @@
-# zeus の worker の世代ごとの状態の dir(JSON patch — 雛形の env の決まった場所を確かめて改める)。入れ替えで同じ機体に並ぶ 2 つの世代が
-# job・root・準備の要求を消し合わないよう、状態を $WORK_DIR/gen/<Pod の uid>/state に置く(boot.sh の WORKER_GENERATION_DIRS)。drain の
-# 上限は、退いた process が走り切る上限(上に載る系の宣言の retiredSeconds 21600 秒)+ 5 分(node.yaml の入れ替えの形と猶予を参照)。
-# 版の行(version.yaml)より前に当てる — 版の行が WORK_DIR の直後に入ると、下の行の場所がずれる。雛形の env の並びが変わったら、test の
-# 操作が組み立てを止める。
+# zeus の worker の drain の上限(JSON patch — 雛形の env の決まった場所を確かめて改める)。入れ替えで同じ機体に並ぶ 2 つの世代
+# (Pod の RollingUpdate と、同じ container の中の keeper の版の入れ替え — 世代ごとの状態の dir は雛形の WORKER_GENERATION_DIRS)で、
+# 前の世代の drain は退いた process が走り切るまで待つ。上限は、退いた process が走り切る上限(上に載る系の宣言の retiredSeconds 21600 秒)
+# + 5 分(node.yaml の入れ替えの形と猶予を参照)。雛形の env の並びが変わったら、test の操作が組み立てを止める。
 - { op: test, path: /spec/template/spec/containers/0/env/9/name, value: DRAIN_DEADLINE }
 - { op: replace, path: /spec/template/spec/containers/0/env/9/value, value: "21900" }
-- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } } }
-- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_GENERATION_DIRS, value: "1" } }
