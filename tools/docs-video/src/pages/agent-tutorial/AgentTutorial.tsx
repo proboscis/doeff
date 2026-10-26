@@ -1,18 +1,18 @@
-// The video on the Agent Tutorial page (docs/19-agent-tutorial.md): the code review system the page builds on
-// doeff-agents, step by step, in motion. Seven scenes, each with headlines a synthetic voice reads (narration.json):
-//   1. What we build: a script that drives a coding agent in a terminal session; a scripted terminal plays Claude.
-//   2. Step 1: launch_session, monitor_session until a terminal status, capture_output, stop_session.
-//   3. Under launch_session: a doeff program whose effects a handler answers; without a login it raises.
-//   4. Step 2: session_scope stops the session however the with block is left.
-//   5. Step 3: on_status_change runs on changes only; BLOCKED waits for input, answered with send_message.
-//   6. Step 4: a Semaphore limits the batch; gather keeps the order of the files.
-//   7. The outro: Step 5 puts the steps together; the driver underneath is effects and handlers.
-// Every status, time, effect and order on screen is printed by a program in measure/ (its .log is next to it). The
-// programs run the page's code against measure/stand_ins.py: a scripted terminal that plays Claude Code's screens
-// and an in-memory world, so no run needs tmux, Claude Code or a login.
+// The video on the Agent Tutorial page (docs/19-agent-tutorial.md): the automated code reviewer the page builds,
+// written as doeff Programs that yield doeff-agents effects and run under handlers. Seven scenes, each with
+// headlines a synthetic voice reads (narration.json):
+//   1. What we build: a Program yields effects, the handler around it decides how each one is met; the four effects.
+//   2. Step 1: review_file yields LaunchSession, AwaitResult, FollowUp and StopSession; calling it runs nothing.
+//   3. Step 2: scripted_agent, a @handler of the effect and k, resumes k with its answers and logs each effect.
+//   4. Step 3: the script plays the agent asking, timing out, and returning a result off the schema.
+//   5. Step 4: review_all spawns a task per file under scheduled, try_handler and scripted_agent.
+//   6. Steps 5 and 6: scenario_agent_handler in a test, daemon_agent_handlers() and the session host in production.
+//   7. The outro: the Program says what it needs, the handler decides how.
+// Every value, log line and order on screen is printed by a program in measure/ (its .log is next to it). The
+// programs import the page's own code blocks (measure/chapter.py), so they measure exactly what the page prints.
 import React from 'react';
-import {AbsoluteFill, interpolate} from 'remotion';
-import {clamp, fadeAt, mix, ramp} from '../../kit/motion';
+import {AbsoluteFill} from 'remotion';
+import {fadeAt, mix, ramp} from '../../kit/motion';
 import {LEAD, narrate, Scene, TAIL} from '../../kit/narrated';
 import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
@@ -52,30 +52,21 @@ const Box: React.FC<{x: number; y: number; w: number; h: number; color: string; 
   </div>
 );
 
-// The scripted terminal of measure/stand_ins.py: a pane with a dashed test-coloured border, its title, and the screen.
-// A line given as [text, colour] is drawn in that colour (the part of the screen the driver is reading).
-type ScreenLine = string | [string, string];
-const Terminal: React.FC<{x: number; y: number; w: number; h: number; title: string; lines: ScreenLine[]; size?: number; line?: number; on?: boolean; opacity?: number}> = ({
-  x, y, w, h, title, lines, size = 13, line = 20, on = false, opacity = 1,
-}) => (
-  <Box x={x} y={y} w={w} h={h} color={TEST} on={on} dashed opacity={opacity}>
-    <div style={{position: 'absolute', left: 14, top: 8, fontFamily: SANS, fontSize: 15, fontWeight: 700, color: on ? LOOK : TEST, whiteSpace: 'nowrap'}}>{title}</div>
-    <div style={{position: 'absolute', left: 14, right: 14, top: 36, bottom: 10, background: '#0b0d13', borderRadius: 8, padding: '8px 10px', boxSizing: 'border-box', overflow: 'hidden'}}>
-      {lines.map((text, i) => {
-        const [body, color] = typeof text === 'string' ? [text, TEXT] : text;
-        return (
-          <div key={i} style={{fontFamily: MONO, fontSize: size, lineHeight: `${line}px`, color, whiteSpace: 'pre'}}>
-            {body}
-          </div>
-        );
-      })}
+// The title and the lines under it, inside a Box.
+const BoxText: React.FC<{title: string; color: string; on?: boolean; lines?: string[]; mono?: boolean; size?: number}> = ({title, color, on = false, lines = [], mono = false, size = 16}) => (
+  <>
+    <div style={{position: 'absolute', left: 18, top: 12, fontFamily: MONO, fontSize: 19, fontWeight: 700, color: on ? LOOK : color, whiteSpace: 'nowrap'}}>{title}</div>
+    <div style={{position: 'absolute', left: 18, top: 46, fontFamily: mono ? MONO : SANS, fontSize: size, lineHeight: `${size + 10}px`, color: MUTED, whiteSpace: 'pre'}}>
+      {lines.map((line) => (
+        <div key={line}>{line}</div>
+      ))}
     </div>
-  </Box>
+  </>
 );
 
 // Printed lines of a run: each appears at its second, in its colour.
 type Printed = {at: number; text: string; color?: string};
-const Prints: React.FC<{rows: Printed[]; x: number; y: number; size?: number; line?: number}> = ({rows, x, y, size = 15, line = 26}) => {
+const Prints: React.FC<{rows: Printed[]; x: number; y: number; size?: number; line?: number; opacity?: number}> = ({rows, x, y, size = 15, line = 26, opacity = 1}) => {
   const frame = useSceneFrame();
   return (
     <>
@@ -84,7 +75,7 @@ const Prints: React.FC<{rows: Printed[]; x: number; y: number; size?: number; li
           key={i}
           style={{
             position: 'absolute', left: x, top: y + i * line + mix(8, 0, ramp(frame, row.at, row.at + 0.3)), fontFamily: MONO, fontSize: size, lineHeight: `${line}px`,
-            color: row.color ?? TEXT, whiteSpace: 'pre', opacity: fadeAt(frame, row.at, 0.3),
+            color: row.color ?? TEXT, whiteSpace: 'pre', opacity: fadeAt(frame, row.at, 0.3) * opacity,
           }}
         >
           {row.text}
@@ -94,623 +85,600 @@ const Prints: React.FC<{rows: Printed[]; x: number; y: number; size?: number; li
   );
 };
 
-// What the scripted Claude Code shows (measure/stand_ins.py) while it reviews src/utils.py, by screen.
-const ASKED = '❯ Review the code in src/utils.py';
-const READY: ScreenLine[] = ['[Screen Reader Mode: on via flag]', 'Claude Code v2.1.209', '❯ ', ['auto mode on (shift+tab to cycle)', LOOK]];
-const working = (seconds: number, look: boolean): ScreenLine[] => [
-  ASKED,
-  [`✻ Reviewing src/utils.py… (${seconds}s · esc to interrupt)`, look ? LOOK : TEXT],
-  'auto mode on (shift+tab to cycle)',
-];
-const REVIEWED: ScreenLine[] = [
-  ASKED,
-  '⏺ Review of src/utils.py',
-  '  1. parse_port() accepts 0; reject ports outside 1-65535.',
-  '  2. load_config() hides FileNotFoundError; name the missing file.',
-  '  3. retry() always sleeps 1 s; back off instead.',
-];
+// An effect that goes out from (x0, y0) to a handler at (x1, y1) at its second, waits there for hold seconds, and comes
+// back as the answer the handler resumes the program with.
+const Trip: React.FC<{at: number; hold?: number; x0: number; y0: number; x1: number; y1: number; out: string; back: string; backColor?: string}> = ({
+  at, hold = 0.3, x0, y0, x1, y1, out, back, backColor = TEST,
+}) => {
+  const frame = useSceneFrame();
+  const turn = at + 0.6 + hold;
+  if (frame < f(at) || frame >= f(turn + 0.8)) return null;
+  const going = frame < f(turn);
+  const t = going ? ramp(frame, at, at + 0.6) : 1 - ramp(frame, turn, turn + 0.6);
+  return (
+    <Pill
+      x={mix(x0, x1, t)} y={mix(y0, y1, t)} text={going ? out : back} color={going ? ACCENT : backColor} left
+      opacity={going ? 1 : 1 - ramp(frame, turn + 0.6, turn + 0.8)}
+    />
+  );
+};
 
-// Scene 1 — what we build.
+// An effect that goes one way, from (x0, y0) to (x1, y1), and fades out on arrival.
+const Fly: React.FC<{at: number; x0: number; y0: number; x1: number; y1: number; text: string; color?: string}> = ({at, x0, y0, x1, y1, text, color = ACCENT}) => {
+  const frame = useSceneFrame();
+  if (frame < f(at) || frame >= f(at + 1.0)) return null;
+  const t = ramp(frame, at, at + 0.7);
+  return <Pill x={mix(x0, x1, t)} y={mix(y0, y1, t)} text={text} color={color} left opacity={1 - ramp(frame, at + 0.75, at + 1.0)} />;
+};
+
+// Scene 1 — what we build: a Program, its effects, and the handler that meets them.
 
 const TITLE_LINES: Lines = [
-  [0, 'Agent Tutorial: a code review system on doeff-agents, which drives Claude Code in a terminal session.'],
-  [12.5, "A scripted terminal plays Claude's screens: the runs shown need no tmux, no Claude, no login."],
+  [0, 'Agent Tutorial: an automated code reviewer, written as a doeff program.'],
+  [5.1, 'The program yields effects. The handler around it decides how each one is met.'],
+  [13.6, 'A review needs four effects: launch a session, await its result, follow up, stop it.'],
 ];
-const TITLE = f(21);
-const PARTS = [
-  {name: 'your script', color: ACCENT, dashed: false, about: ['review_file(path)', 'launch · monitor', 'capture · stop']},
-  {name: 'terminal session', color: MUTED, dashed: false, about: ['a tmux pane:', 'the agent reads it,', 'the script watches it']},
-  {name: 'Claude Code', color: TEST, dashed: true, about: ['reads the prompt,', 'reviews the code,', 'prints its review']},
+const TITLE = f(20.4);
+const PROGRAM = {x: 120, y: 262, w: 400, h: 150};
+const AROUND = {x: 760, y: 262, w: 400, h: 150};
+const FOUR = [
+  {effect: 'LaunchSession(spec)', asks: 'a session that runs the prompt', answer: 'a SessionHandle'},
+  {effect: 'AwaitResult(handle)', asks: 'its result, or why there is none', answer: 'an AwaitOutcome'},
+  {effect: 'FollowUp(handle, message)', asks: 'a message sent into it', answer: 'the SessionHandle'},
+  {effect: 'StopSession(handle)', asks: 'the session stopped', answer: 'None'},
 ];
-const PART = {y: 320, w: 330, h: 190, gap: 70};
-const partX = (i: number) => 640 - (3 * PART.w + 2 * PART.gap) / 2 + i * (PART.w + PART.gap);
 
 const TitleScene: React.FC = () => {
   const frame = useSceneFrame();
-  const on = [frame >= f(5.6) && frame < f(7.4), frame >= f(7.4) && frame < f(9.4), frame >= f(9.4) && frame < f(11.4) || frame >= f(12.9)];
-  const midY = PART.y + PART.h / 2;
-  const out = ramp(frame, 7.0, 9.0);
-  const back = ramp(frame, 9.6, 11.6);
-  const left = partX(0) + PART.w;
-  const right = partX(2);
-  const scripted = frame >= f(12.9);
+  const handlerOn = frame >= f(7.0) && frame < f(7.6);
+  const programOn = frame >= f(5.4) && frame < f(6.1);
   return (
     <AbsoluteFill>
       <Headlines lines={TITLE_LINES} />
-      <div style={{position: 'absolute', left: 0, right: 0, top: 112 + mix(16, 0, ramp(frame, 0.2, 0.8)), textAlign: 'center', opacity: fadeAt(frame, 0.2, 0.5)}}>
-        <div style={{fontFamily: SANS, fontSize: 72, fontWeight: 700, color: TEXT}}>Agent Tutorial</div>
-        <div style={{fontFamily: SANS, fontSize: 28, color: ACCENT, marginTop: 6}}>an automated code review system on doeff-agents</div>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 104 + mix(16, 0, ramp(frame, 0.2, 0.8)), textAlign: 'center', opacity: fadeAt(frame, 0.2, 0.5)}}>
+        <div style={{fontFamily: SANS, fontSize: 64, fontWeight: 700, color: TEXT}}>Agent Tutorial</div>
+        <div style={{fontFamily: SANS, fontSize: 26, color: ACCENT, marginTop: 4}}>an automated code reviewer, written as a doeff program</div>
       </div>
-      {[0, 1].map((i) => (
-        <div key={i} style={{position: 'absolute', left: partX(i) + PART.w, top: midY - 1, width: PART.gap, height: 2, background: MUTED, opacity: fadeAt(frame, 2.4 + i * 0.4)}} />
-      ))}
-      {PARTS.map((part, i) => (
-        <Box key={part.name} x={partX(i)} y={PART.y} w={PART.w} h={PART.h} color={part.color} on={on[i]} dashed={part.dashed} opacity={fadeAt(frame, 1.2 + i * 0.5, 0.5)}>
-          <div style={{position: 'absolute', left: 20, top: 14, fontFamily: SANS, fontSize: i === 2 && scripted ? 23 : 25, fontWeight: 700, color: on[i] ? LOOK : part.color, whiteSpace: 'nowrap'}}>
-            {i === 2 && scripted ? 'scripted Claude Code' : part.name}
-          </div>
-          <div style={{position: 'absolute', left: 20, top: 60, fontFamily: i === 0 ? MONO : SANS, fontSize: i === 0 ? 17 : 19, lineHeight: '30px', color: MUTED}}>
-            {part.about.map((line) => (
-              <div key={line}>{line}</div>
-            ))}
-          </div>
-        </Box>
-      ))}
-      {frame >= f(7.0) && frame < f(9.3) && <Pill x={mix(left - 40, right + 40, out)} y={midY - 22} text="the prompt" color={ACCENT} opacity={1 - ramp(frame, 9.0, 9.3)} />}
-      {frame >= f(9.6) && frame < f(11.9) && <Pill x={mix(right + 40, left - 40, back)} y={midY + 22} text="its screen" color={TEST} opacity={1 - ramp(frame, 11.6, 11.9)} />}
-      <Label x={640} y={548} size={21} bold color={TEST} center opacity={fadeAt(frame, 13.2)}>
-        measure/stand_ins.py: scripted screens and an in-memory world
-      </Label>
-      <Label x={640} y={588} size={19} color={MUTED} center opacity={fadeAt(frame, 14.0)}>
-        The page&apos;s code runs unchanged on top of them; only the backend and the io_root are the stand-ins.
-      </Label>
-    </AbsoluteFill>
-  );
-};
-
-// Scene 2 — Step 1: launch, monitor until terminal, capture, stop (measure/lifecycle.py).
-
-const LIFE_LINES: Lines = [
-  [0, 'Step 1: launch, watch until it ends, read the screen, stop.'],
-  [5.85, 'launch_session types the claude command, waits for the ready screen, then pastes the prompt.'],
-  [13.05, 'monitor_session reads the pane once a second. "esc to interrupt" on screen means running.'],
-  [20.45, 'At 3.0 s the shell prompt is back: the agent exited, a terminal status. The loop ends.'],
-  [27.15, 'capture_output reads the review off the screen. stop_session kills the session.'],
-];
-const LIFE = f(34);
-const LIFE_CODE = [
-  'session = launch_session(name, config)',
-  'try:',
-  '    for _ in range(120):',
-  '        monitor_session(session)',
-  '        if session.is_terminal:',
-  '            break',
-  '        time.sleep(1)',
-  '    return capture_output(session, lines=100)',
-  'finally:',
-  '    stop_session(session)',
-];
-const LC = {x: 50, y: 120, w: 600, size: 17, line: 27};
-// The rows of measure/lifecycle.log, with the second each is shown.
-const LIFE_PRINTS: Printed[] = [
-  {at: 7.0, text: '[ 0.0s] launch_session  -> booting', color: MUTED},
-  {at: 13.4, text: '[ 0.0s] monitor_session -> running', color: ACCENT},
-  {at: 15.6, text: '[ 1.0s] monitor_session -> running', color: ACCENT},
-  {at: 17.8, text: '[ 2.0s] monitor_session -> running', color: ACCENT},
-  {at: 20.8, text: '[ 3.0s] monitor_session -> exited', color: LOOK},
-  {at: 27.5, text: '[ 3.0s] capture_output  -> the review', color: TEXT},
-  {at: 30.6, text: '[ 3.0s] stop_session    -> stopped', color: TEST},
-];
-const STATUSES = [
-  {name: 'booting', at: 7.0, color: MUTED},
-  {name: 'running', at: 13.4, color: ACCENT},
-  {name: 'exited', at: 20.8, color: LOOK},
-  {name: 'stopped', at: 30.6, color: TEST},
-];
-
-const LifeScene: React.FC = () => {
-  const frame = useSceneFrame();
-  const loop = [3, 4, 6][Math.floor(Math.max(0, frame - f(13.05)) / f(0.8)) % 3];
-  const band = stepAt<number | null>(frame, [[0, null], [5.85, 0], [13.05, loop], [20.45, 4], [21.6, 5], [27.15, 7], [30.3, 9]]);
-  const polled = Math.min(2, Math.floor(Math.max(0, frame - f(13.05)) / f(2.2)));
-  const screen = stepAt<ScreenLine[]>(frame, [
-    [0, ['$ ']],
-    [6.3, ['$ claude --ax-screen-reader --dangerously-skip-permissions']],
-    [8.2, READY],
-    [10.8, working(0, false)],
-    [13.05, working(polled, true)],
-    [20.45, [...REVIEWED, ['$ ', LOOK]]],
-    [27.15, [...REVIEWED.map((line): ScreenLine => [typeof line === 'string' ? line : line[0], LOOK]), '$ ']],
-  ]);
-  const killed = ramp(frame, 30.6, 31.2);
-  const current = STATUSES.reduce((found, s, i) => (frame >= f(s.at) ? i : found), -1);
-  return (
-    <AbsoluteFill>
-      <Headlines lines={LIFE_LINES} />
-      <CodeBlock lines={LIFE_CODE} {...LC} band={band} opacity={fadeAt(frame, 0)} />
-      <Terminal
-        x={680} y={120} w={560} h={294} title="src/utils.py · the scripted terminal" lines={screen} size={12} line={20}
-        on={frame >= f(13.05) && frame < f(27.15)} opacity={fadeAt(frame, 0.4) * (1 - 0.6 * killed)}
-      />
-      <Label x={960} y={330} size={24} bold color={TEST} center opacity={killed}>
-        session killed
-      </Label>
-      <Label x={712} y={300} size={16} bold color={LOOK} opacity={between(frame, 8.4, 10.8)}>
-        the ready screen: now the prompt goes in
-      </Label>
-      <Prints rows={LIFE_PRINTS} x={690} y={440} size={15} line={26} />
-      {STATUSES.map((s, i) => (
-        <div
-          key={s.name}
-          style={{
-            position: 'absolute', left: 50 + i * 155, top: 452, width: 135, height: 50, boxSizing: 'border-box', borderRadius: 12, background: PANEL,
-            border: `3px solid ${s.color}`, ...glow(current === i, s.color), fontFamily: MONO, fontSize: 19, fontWeight: 700, lineHeight: '44px', textAlign: 'center',
-            color: current === i ? LOOK : s.color, opacity: current >= i ? 1 : 0.25 * fadeAt(frame, 1.0),
-          }}
-        >
-          {s.name}
-        </div>
-      ))}
-      <Label x={50} y={520} size={17} mono color={MUTED} opacity={fadeAt(frame, 21.2)}>
-        is_terminal: exited, done, failed or stopped
-      </Label>
-      <Label x={50} y={556} size={18} color={TEST} opacity={fadeAt(frame, 22.0)}>
-        The scripted Claude prints its review, then exits to the shell.
-      </Label>
-    </AbsoluteFill>
-  );
-};
-
-// Scene 3 — under launch_session: a doeff program, effects and a handler (measure/driver_effects.py).
-
-const EFF_LINES: Lines = [
-  [0, 'launch_session is plain Python on top, and a doeff program underneath.'],
-  [5.65, 'Before it opens a terminal, it yields effects: is claude on PATH? where is home? is there a login?'],
-  [13.65, 'A handler answers each effect and resumes the program. Here an in-memory world answers.'],
-  [23.4, 'Without a login, the same program raises at its check, and no terminal session is opened.'],
-];
-const EFFECTS = f(32);
-const EFF_CODE = [
-  '@do',
-  'def cli_available(name):',
-  '    found = yield which_executable(name)',
-  '    return found is not None',
-  ' ',
-  '@do',
-  'def claude_pre_launch():',
-  '    home = yield home_path()',
-  '    claude_json = posixpath.join(home, ".claude.json")',
-  '    present = yield path_exists(claude_json)',
-  '    if not present: raise RuntimeError(...)',
-  '    raw_text = yield read_text(claude_json)',
-  '    ...  # then the config files',
-];
-const EC = {x: 50, y: 120, w: 640, size: 16, line: 25};
-const HANDLER = {x: 740, y: 120, w: 490, h: 72};
-// measure/driver_effects.log: each effect, its answer, the code line that yields it, and the second it goes out.
-const ANSWERED = [
-  {effect: "WhichExecutable('claude')", answer: "'/usr/local/bin/claude'", line: 2, at: 6.2},
-  {effect: 'HomePath()', answer: "'/home/dev'", line: 7, at: 8.0},
-  {effect: "PathExists('/home/dev/.claude.json')", answer: 'True', line: 9, at: 9.8},
-  {effect: "ReadText('/home/dev/.claude.json')", answer: '\'{"oauthAccount": …}\'', line: 11, at: 11.6},
-];
-const REST = [
-  "MakeDirs('/home/dev/.claude') -> None",
-  "PathExists('…/config.json') -> False",
-  "WriteText('…/config.json', …) -> None",
-  "PathExists('…/settings.json') -> False",
-  "WriteText('…/settings.json', '{}') -> None",
-];
-const EFF_PRINTS: Printed[] = [
-  ...ANSWERED.map((e) => ({at: e.at + 1.3, text: `${e.effect} -> ${e.answer}`})),
-  ...REST.map((text, i) => ({at: 14.2 + i * 0.45, text, color: MUTED})),
-  {at: 17.0, text: '-> the terminal opens: claude, then the prompt', color: TEST},
-];
-const FAIL_PRINTS: Printed[] = [
-  {at: 24.0, text: "WhichExecutable('claude') -> '/usr/local/bin/claude'", color: MUTED},
-  {at: 24.5, text: "HomePath() -> '/home/dev'", color: MUTED},
-  {at: 25.0, text: "PathExists('/home/dev/.claude.json') -> False", color: FAIL},
-  {at: 26.0, text: 'RuntimeError: /home/dev/.claude.json not found.', color: FAIL},
-  {at: 27.0, text: 'terminal sessions: []', color: TEXT},
-];
-
-const EffectsScene: React.FC = () => {
-  const frame = useSceneFrame();
-  const sending = ANSWERED.reduce((found, e, i) => (frame >= f(e.at) ? i : found), -1);
-  const band = stepAt<number | null>(frame, [
-    [0, null],
-    ...ANSWERED.map((e): [number, number | null] => [e.at - 0.2, e.line]),
-    [14.0, 12],
-    [23.4, 9],
-    [25.6, 10],
-  ]);
-  const handlerOn = ANSWERED.some((e) => frame >= f(e.at + 0.6) && frame < f(e.at + 0.9)) || (frame >= f(14.0) && frame < f(16.4));
-  const startX = EC.x + EC.w;
-  const lineY = (i: number) => lineMid(EC.y, EC.line, i);
-  const failing = frame >= f(25.6);
-  return (
-    <AbsoluteFill>
-      <Headlines lines={EFF_LINES} />
-      <CodeBlock lines={EFF_CODE} {...EC} band={band} opacity={fadeAt(frame, 0)} />
-      <Box x={HANDLER.x} y={HANDLER.y} w={HANDLER.w} h={HANDLER.h} color={TEST} on={handlerOn} opacity={fadeAt(frame, 1.0)}>
-        <div style={{position: 'absolute', left: 16, top: 8, fontFamily: MONO, fontSize: 17, fontWeight: 700, color: handlerOn ? LOOK : TEST, whiteSpace: 'nowrap'}}>
-          fake_driver_io_handler(world)
-        </div>
-        <div style={{position: 'absolute', left: 16, top: 38, fontFamily: SANS, fontSize: 15, color: MUTED, whiteSpace: 'nowrap'}}>
-          in memory: claude on PATH, a login in ~/.claude.json
-        </div>
+      <Box {...PROGRAM} color={ACCENT} on={programOn} opacity={fadeAt(frame, 1.6, 0.5)}>
+        <BoxText title="@do review_file(path)" color={ACCENT} on={programOn} lines={['a Program: it says what it needs', 'by yielding effects']} size={18} />
       </Box>
-      {ANSWERED.map((e, i) => {
-        if (sending !== i || frame >= f(e.at + 1.6)) return null;
-        const out = ramp(frame, e.at, e.at + 0.6);
-        const back = ramp(frame, e.at + 0.9, e.at + 1.5);
-        const goingOut = frame < f(e.at + 0.9);
-        const t = goingOut ? out : 1 - back;
-        return (
-          <Pill
-            key={e.effect}
-            x={mix(startX - 30, HANDLER.x + 20, t)}
-            y={mix(lineY(e.line), HANDLER.y + HANDLER.h + 16, t)}
-            text={goingOut ? e.effect.replace(/\('\/home\/dev\/\.claude\.json'\)/, '(…)') : e.answer}
-            color={goingOut ? ACCENT : TEST}
-            left
-            opacity={goingOut ? 1 : 1 - ramp(frame, e.at + 1.4, e.at + 1.6)}
-          />
-        );
-      })}
-      <Prints rows={EFF_PRINTS} x={748} y={234} size={13} line={22} />
-      <Label x={50} y={470} size={17} mono color={TEXT} opacity={fadeAt(frame, 1.6)}>
-        launch_session(name, config, io_root=recording_root)
-      </Label>
-      <Label x={50} y={500} size={16} color={MUTED} opacity={fadeAt(frame, 2.2)}>
-        runs adapter.available() and adapter.pre_launch() through io_root,
-      </Label>
-      <Label x={50} y={524} size={16} color={MUTED} opacity={fadeAt(frame, 2.2)}>
-        then opens the terminal session and pastes the prompt
-      </Label>
-      <Label x={50} y={566} size={18} bold color={ACCENT} opacity={fadeAt(frame, 18.0)}>
-        The decisions stay in the program; the handler only answers.
-      </Label>
-      <Box x={740} y={470} w={490} h={168} color={FAIL} on={failing && frame < f(27.4)} opacity={fadeAt(frame, 23.6)}>
-        <div style={{position: 'absolute', left: 16, top: 8, fontFamily: SANS, fontSize: 16, fontWeight: 700, color: FAIL}}>a world without ~/.claude.json</div>
+      <Box {...AROUND} color={TEST} on={handlerOn} opacity={fadeAt(frame, 5.3, 0.5)}>
+        <BoxText title="the handler around it" color={TEST} on={handlerOn} lines={['decides how each effect is met,', 'then resumes the program']} size={18} />
       </Box>
-      <Prints rows={FAIL_PRINTS} x={756} y={502} size={13} line={24} />
-      <Label x={50} y={606} size={18} bold color={FAIL} opacity={fadeAt(frame, 26.4)}>
-        raised before backend.new_session: no terminal was opened
+      <div style={{position: 'absolute', left: PROGRAM.x + PROGRAM.w, top: PROGRAM.y + PROGRAM.h / 2 - 1, width: AROUND.x - PROGRAM.x - PROGRAM.w, height: 2, background: MUTED, opacity: fadeAt(frame, 5.6)}} />
+      <Trip at={6.0} hold={0.4} x0={PROGRAM.x + PROGRAM.w - 150} y0={PROGRAM.y + 50} x1={AROUND.x - 20} y1={PROGRAM.y + 50} out="effect" back="value" />
+      <Label x={AROUND.x + 20} y={AROUND.y + AROUND.h + 18} size={19} bold color={TEST} opacity={between(frame, 9.0, 13.4)}>
+        in a test: a script answers
       </Label>
-    </AbsoluteFill>
-  );
-};
-
-// Scene 4 — Step 2: session_scope stops the session however the block is left (measure/cleanup.py).
-
-const CLEAN_LINES: Lines = [
-  [0, 'Step 2: session_scope stops the session on the way out of the with block.'],
-  [6.65, 'The review finishes: the block returns, and stop_session runs.'],
-  [12.05, 'A timeout returns early from inside the loop: stop_session still runs.'],
-  [18.35, 'An exception leaves the block: stop_session runs, and the error goes on to the caller.'],
-];
-const CLEAN = f(25);
-const CLEAN_CODE = [
-  'with session_scope(name, config) as session:',
-  '    start = time.time()',
-  '    while not session.is_terminal:',
-  '        if time.time() - start > timeout:',
-  '            return {"success": False, "error": "Timeout"}',
-  '        monitor_session(session)',
-  '        time.sleep(1)',
-  '    output = capture_output(session, lines=200)',
-  '    return ...',
-  '# leaving the block: stop_session(session)',
-];
-const CC = {x: 50, y: 130, w: 640, size: 16, line: 27};
-// measure/cleanup.log: how each run left the block, the code line it left at, and the second the scene shows it.
-const WAYS = [
-  {title: 'the review finishes (1.5 s)', result: "returned {'ended': 'exited', ...}", killed: "killed ['review-utils']", line: 8, at: 7.0, color: TEST},
-  {title: 'a 2 s timeout, a 5 s review', result: "returned {'success': False, 'error': 'Timeout'}", killed: "killed ['review-api']", line: 4, at: 12.4, color: PROD},
-  {title: 'an exception inside the block', result: "raised ValueError('bad review prompt')", killed: "killed ['review-cli']", line: 5, at: 18.7, color: FAIL},
-];
-
-const CleanScene: React.FC = () => {
-  const frame = useSceneFrame();
-  const way = WAYS.reduce((found, w, i) => (frame >= f(w.at) ? i : found), -1);
-  const leaving = way >= 0 ? WAYS[way] : null;
-  const band = leaving === null ? null : frame < f(leaving.at + 1.6) ? leaving.line : 9;
-  const stopOn = WAYS.some((w) => frame >= f(w.at + 1.6) && frame < f(w.at + 2.6));
-  return (
-    <AbsoluteFill>
-      <Headlines lines={CLEAN_LINES} />
-      <CodeBlock lines={CLEAN_CODE} {...CC} band={band} dim={(i) => (i === 9 ? (stopOn ? 1 : 0.75) : 1)} opacity={fadeAt(frame, 0)} />
-      <div
-        style={{
-          position: 'absolute', left: CC.x + 6, top: CC.y + PAD + 9 * CC.line - 2, width: CC.w - 12, height: CC.line + 4, borderRadius: 8, boxSizing: 'border-box',
-          border: `2px solid ${TEST}`, ...glow(stopOn, TEST), opacity: fadeAt(frame, 2.0),
-        }}
-      />
-      {leaving !== null && frame >= f(leaving.at + 0.6) && frame < f(leaving.at + 1.8) && (
-        <Pill
-          x={CC.x + CC.w - 120}
-          y={mix(lineMid(CC.y, CC.line, leaving.line), lineMid(CC.y, CC.line, 9), ramp(frame, leaving.at + 0.6, leaving.at + 1.5))}
-          text={way === 2 ? 'ValueError' : 'return'}
-          color={leaving.color}
-          opacity={1 - ramp(frame, leaving.at + 1.5, leaving.at + 1.8)}
-        />
-      )}
-      {WAYS.map((w, i) => (
-        <Box key={w.title} x={740} y={130 + i * 150} w={490} h={130} color={w.color} on={way === i && frame < f(w.at + 3.0)} opacity={fadeAt(frame, w.at - 0.2)}>
-          <div style={{position: 'absolute', left: 16, top: 10, fontFamily: SANS, fontSize: 19, fontWeight: 700, color: w.color}}>{w.title}</div>
-          <div style={{position: 'absolute', left: 16, top: 48, fontFamily: MONO, fontSize: 14, color: i === 2 ? FAIL : TEXT, opacity: fadeAt(frame, w.at + 0.6), whiteSpace: 'nowrap'}}>
-            {w.result}
-          </div>
-          <div style={{position: 'absolute', left: 16, top: 84, fontFamily: MONO, fontSize: 14, fontWeight: 700, color: TEST, opacity: fadeAt(frame, w.at + 1.7), whiteSpace: 'nowrap'}}>
-            {`stop_session ran · ${w.killed}`}
-          </div>
-        </Box>
-      ))}
-      <Label x={50} y={455} size={16} color={MUTED} opacity={fadeAt(frame, 18.8)}>
-        (the run raises after monitor_session, to leave the block by an exception)
+      <Label x={AROUND.x + 20} y={AROUND.y + AROUND.h + 52} size={19} bold color={PROD} opacity={between(frame, 10.6, 13.4)}>
+        in production: Claude Code answers
       </Label>
-      <Label x={50} y={520} size={20} bold color={FAIL} opacity={fadeAt(frame, 21.0)}>
-        ValueError goes on to the caller of review_file
+      <Label x={PROGRAM.x + 20} y={PROGRAM.y + PROGRAM.h + 18} size={18} color={MUTED} opacity={between(frame, 9.0, 13.4)}>
+        the same program in both
       </Label>
-      <Label x={50} y={570} size={18} color={TEST} opacity={fadeAt(frame, 22.0)}>
-        Three ways out, three sessions killed, no pane left behind.
-      </Label>
-    </AbsoluteFill>
-  );
-};
-
-// Scene 5 — Step 3: on_status_change runs on changes only; BLOCKED waits for input (measure/callbacks.py).
-
-const CB_LINES: Lines = [
-  [0, 'Step 3: on_status_change runs only when the status changes.'],
-  [6.85, 'Eight polls, four changes: running, blocked, running again, exited.'],
-  [13.0, 'Blocked: the agent waits for input. It asks to run the tests; the loop answers with send_message.'],
-  [21.75, 'The callback keeps the history, with the second of each change.'],
-];
-const CALLBACKS = f(27);
-const CB_CODE = [
-  'def on_status_change(self, old, new, output):',
-  '    elapsed = (datetime.now() - self.started_at).total_seconds()',
-  '    self.status_history.append((elapsed, new))',
-  '    print(f"  [{elapsed:.1f}s] {old.value} -> {new.value}")',
-  ' ',
-  'monitor_session(session, on_status_change=progress.on_status_change)',
-  'if session.status == SessionStatus.BLOCKED:',
-  '    send_message(session, "1")',
-];
-const CBC = {x: 50, y: 120, w: 760, size: 15, line: 24};
-// measure/callbacks.log: the seconds of the run, and the status from each second on.
-const AXIS = {x0: 110, x1: 1170, y: 420};
-const RUN_END = 3.5;
-const axisX = (s: number) => mix(AXIS.x0, AXIS.x1, s / RUN_END);
-const SEGMENTS = [
-  {from: 0, to: 1.5, name: 'running', color: ACCENT},
-  {from: 1.5, to: 2.0, name: 'blocked', color: PROD},
-  {from: 2.0, to: 3.5, name: 'running', color: ACCENT},
-];
-const POLLS = [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
-const CHANGES = [0, 1.5, 2.0, 3.5];
-// The playhead sweeps the run's 3.5 s between these seconds of the scene.
-const SWEEP = {from: 7.2, to: 12.6};
-const sceneOf = (s: number) => mix(SWEEP.from, SWEEP.to, s / RUN_END);
-const CB_PRINTS: Printed[] = [
-  {at: sceneOf(0) + 0.2, text: '[0.0s] booting -> running', color: ACCENT},
-  {at: sceneOf(1.5) + 0.2, text: '[1.5s] running -> blocked', color: PROD},
-  {at: sceneOf(1.5) + 0.5, text: "[1.5s] send_message(session, '1')", color: TEST},
-  {at: sceneOf(2.0) + 0.2, text: '[2.0s] blocked -> running', color: ACCENT},
-  {at: sceneOf(3.5) + 0.2, text: '[3.5s] running -> exited', color: LOOK},
-];
-
-const CallbackScene: React.FC = () => {
-  const frame = useSceneFrame();
-  const run = interpolate(frame, [f(SWEEP.from), f(SWEEP.to)], [0, RUN_END], clamp);
-  const asking = frame >= f(13.0) && frame < f(21.75);
-  const answered = ramp(frame, 16.4, 17.4);
-  const history = frame >= f(21.75);
-  return (
-    <AbsoluteFill>
-      <Headlines lines={CB_LINES} />
-      <CodeBlock lines={CB_CODE} {...CBC} band={stepAt<number | null>(frame, [[0, null], [1.2, 5], [3.4, 0], [7.2, 3], [13.4, 6], [16.0, 7], [21.75, 2]])} opacity={fadeAt(frame, 0)} />
-      <Box x={840} y={120} w={390} h={216} color={MUTED} opacity={fadeAt(frame, 6.85)}>
-        <div style={{position: 'absolute', left: 14, top: 8, fontFamily: SANS, fontSize: 15, fontWeight: 700, color: MUTED}}>printed</div>
-      </Box>
-      <Prints rows={CB_PRINTS} x={856} y={150} size={14} line={34} />
-      {SEGMENTS.map((s) => (
-        <div
-          key={s.from}
-          style={{
-            position: 'absolute', left: axisX(s.from), top: AXIS.y - 44, width: Math.max(0, axisX(Math.min(s.to, Math.max(s.from, run))) - axisX(s.from)), height: 30,
-            background: s.color, opacity: 0.85, boxShadow: s.name === 'blocked' && asking ? `0 0 18px ${LOOK}` : 'none',
-          }}
-        >
-          <div style={{position: 'absolute', left: 8, top: 4, fontFamily: MONO, fontSize: 15, fontWeight: 700, color: '#0f1117', whiteSpace: 'nowrap', opacity: run >= s.to - 0.05 ? 1 : 0}}>{s.name}</div>
-        </div>
-      ))}
-      <Label x={axisX(3.5) + 14} y={AXIS.y - 40} size={15} mono bold color={LOOK} opacity={run >= 3.45 ? 1 : 0}>
-        exited
-      </Label>
-      <div style={{position: 'absolute', left: AXIS.x0, top: AXIS.y, width: AXIS.x1 - AXIS.x0, height: 2, background: MUTED, opacity: fadeAt(frame, 6.85)}} />
-      {[0, 1, 2, 3].map((s) => (
-        <Label key={s} x={axisX(s)} y={AXIS.y + 34} size={14} mono center opacity={fadeAt(frame, 6.85)}>
-          {`${s}.0 s`}
+      {[
+        ['the Program yields', 120, ACCENT],
+        ['it asks for', 500, MUTED],
+        ['the handler resumes it with', 900, TEST],
+      ].map(([text, x, color]) => (
+        <Label key={text as string} x={x as number} y={444} size={16} bold color={color as string} opacity={fadeAt(frame, 13.8)}>
+          {text}
         </Label>
       ))}
-      {POLLS.map((s) => {
-        const changed = CHANGES.includes(s);
-        const reached = run >= s - 0.01;
+      {FOUR.map((e, i) => {
+        const y = 480 + i * 52;
+        const seen = fadeAt(frame, 14.2 + i * 0.9);
+        const on = frame >= f(14.2 + i * 0.9) && frame < f(15.1 + i * 0.9);
         return (
-          <div
-            key={s}
-            style={{
-              position: 'absolute', left: axisX(s) - 8, top: AXIS.y - 7, width: 16, height: 16, borderRadius: 8, boxSizing: 'border-box',
-              background: reached ? (changed ? LOOK : MUTED) : PANEL, border: `2px solid ${changed ? LOOK : MUTED}`, boxShadow: reached && changed ? `0 0 12px ${LOOK}` : 'none',
-              opacity: fadeAt(frame, 6.85),
-            }}
-          />
-        );
-      })}
-      <Label x={AXIS.x0} y={AXIS.y + 62} size={15} color={MUTED} opacity={fadeAt(frame, 8.0)}>
-        each dot: one monitor_session call, every 0.5 s · yellow: the status changed, on_status_change ran
-      </Label>
-      <Terminal
-        x={110} y={530} w={660} h={130} title="the scripted terminal, at 1.5 s"
-        lines={[ASKED, ['? Run pytest tests/test_utils.py?', PROD], '  1. Yes   2. No', ['Esc to cancel', LOOK]]}
-        size={13} line={17} on={asking && answered < 1} opacity={between(frame, 13.2, 21.5)}
-      />
-      {frame >= f(16.4) && frame < f(17.7) && <Pill x={mix(1010, 790, answered)} y={636} text={"send_message(session, '1')"} color={TEST} opacity={1 - ramp(frame, 17.4, 17.7)} />}
-      <Label x={800} y={540} size={17} color={MUTED} opacity={between(frame, 14.2, 21.5)}>
-        a prompt on screen, nothing changing:
-      </Label>
-      <Label x={800} y={566} size={17} bold color={PROD} opacity={between(frame, 14.2, 21.5)}>
-        BLOCKED, not terminal
-      </Label>
-      <Label x={800} y={622} size={17} color={TEST} opacity={between(frame, 18.0, 21.5)}>
-        the agent goes on: running again
-      </Label>
-      <Label x={110} y={560} size={18} mono color={TEXT} opacity={fadeAt(frame, 22.0)}>
-        status_history:
-      </Label>
-      <Label x={110} y={592} size={18} mono color={TEXT} opacity={fadeAt(frame, 22.4)}>
-        {"[(0.0, 'running'), (1.5, 'blocked'), (2.0, 'running'), (3.5, 'exited')]"}
-      </Label>
-      <Label x={110} y={636} size={17} color={MUTED} opacity={fadeAt(frame, 23.0) * (history ? 1 : 0)}>
-        monitor_session ran 8 times; on_status_change ran 4 times
-      </Label>
-    </AbsoluteFill>
-  );
-};
-
-// Scene 6 — Step 4: a Semaphore limits the batch, gather keeps the order (measure/batch.py).
-
-const BATCH_LINES: Lines = [
-  [0, 'Step 4: many files at once, with asyncio and a limit.'],
-  [6.25, 'A Semaphore of 2 lets two reviews run. The next one starts when a slot frees up.'],
-  [13.15, 'Four reviews: 7.0 s two at a time, 13.1 s one at a time.'],
-  [21.1, 'api.py finishes first, but gather returns the results in the order of the files.'],
-];
-const BATCH = f(27.5);
-const BATCH_CODE = [
-  'semaphore = asyncio.Semaphore(max_concurrent)',
-  ' ',
-  'async def limited_review(file_path):',
-  '    async with semaphore:',
-  '        return await review_file_async(file_path)',
-  ' ',
-  'results = await asyncio.gather(*[limited_review(f) for f in files])',
-];
-const BC = {x: 50, y: 120, w: 660, size: 15, line: 23};
-const WORK = [
-  {name: 'utils.py', s: 3.0},
-  {name: 'api.py', s: 1.0},
-  {name: 'models.py', s: 2.5},
-  {name: 'cli.py', s: 1.5},
-];
-// measure/batch.log: when each review started and finished, by run and lane.
-const GANTT = {x0: 230, x1: 1190};
-const SPAN = 13.1;
-const gX = (s: number) => mix(GANTT.x0, GANTT.x1, s / SPAN);
-const RUNS = [
-  {
-    label: 'max_concurrent=2', total: 7.0, sweep: [6.6, 12.2], lanes: ['slot 1', 'slot 2'], y: 360,
-    bars: [
-      {name: 'utils.py', lane: 0, from: 0, to: 4.0},
-      {name: 'api.py', lane: 1, from: 0, to: 2.0},
-      {name: 'models.py', lane: 1, from: 2.0, to: 6.0},
-      {name: 'cli.py', lane: 0, from: 4.0, to: 7.0},
-    ],
-  },
-  {
-    label: 'max_concurrent=1', total: 13.1, sweep: [13.5, 19.6], lanes: ['one slot'], y: 480,
-    bars: [
-      {name: 'utils.py', lane: 0, from: 0, to: 4.0},
-      {name: 'api.py', lane: 0, from: 4.0, to: 6.0},
-      {name: 'models.py', lane: 0, from: 6.0, to: 10.1},
-      {name: 'cli.py', lane: 0, from: 10.1, to: 13.1},
-    ],
-  },
-];
-const LANE = {h: 34, gap: 8};
-
-const BatchScene: React.FC = () => {
-  const frame = useSceneFrame();
-  const orders = frame >= f(21.1);
-  return (
-    <AbsoluteFill>
-      <Headlines lines={BATCH_LINES} />
-      <CodeBlock lines={BATCH_CODE} {...BC} band={stepAt<number | null>(frame, [[0, null], [1.4, 0], [6.25, 3], [21.1, 6]])} opacity={fadeAt(frame, 0)} />
-      <Label x={750} y={126} size={17} bold color={TEST} opacity={fadeAt(frame, 1.6)}>
-        the scripted agent&apos;s work per file
-      </Label>
-      {WORK.map((w, i) => (
-        <Label key={w.name} x={750 + (i % 2) * 230} y={162 + Math.floor(i / 2) * 32} size={17} mono color={TEXT} opacity={fadeAt(frame, 2.0 + i * 0.3)}>
-          {`${w.name.padEnd(10)} ${w.s.toFixed(1)} s`}
-        </Label>
-      ))}
-      <Label x={750} y={240} size={15} color={MUTED} opacity={fadeAt(frame, 3.4)}>
-        polled every 1 s (async_monitor_session), so each review
-      </Label>
-      <Label x={750} y={262} size={15} color={MUTED} opacity={fadeAt(frame, 3.4)}>
-        ends at the first poll after its work is done
-      </Label>
-      {RUNS.map((r, ri) => {
-        const at = interpolate(frame, [f(r.sweep[0]), f(r.sweep[1])], [0, r.total], clamp);
-        const seen = fadeAt(frame, ri === 0 ? 5.6 : 13.15);
-        return (
-          <React.Fragment key={r.label}>
-            <Label x={50} y={r.y - 34} size={17} mono bold color={ACCENT} opacity={seen}>
-              {r.label}
-            </Label>
-            {r.lanes.map((lane, li) => (
-              <React.Fragment key={lane}>
-                <Label x={50} y={r.y + li * (LANE.h + LANE.gap) + 7} size={15} color={MUTED} opacity={seen}>
-                  {lane}
-                </Label>
-                <div style={{position: 'absolute', left: GANTT.x0, top: r.y + li * (LANE.h + LANE.gap), width: GANTT.x1 - GANTT.x0, height: LANE.h, background: '#141722', opacity: seen}} />
-              </React.Fragment>
-            ))}
-            {r.bars.map((b) => {
-              if (at <= b.from) return null;
-              const end = Math.min(b.to, at);
-              const done = at >= b.to;
-              const first = ri === 0 && b.name === 'api.py' && orders;
-              return (
-                <div
-                  key={b.name}
-                  style={{
-                    position: 'absolute', left: gX(b.from) + 1, top: r.y + b.lane * (LANE.h + LANE.gap), width: gX(end) - gX(b.from) - 2, height: LANE.h, boxSizing: 'border-box',
-                    borderRadius: 6, background: done ? '#1d1a33' : '#2a2450', border: `2px solid ${first ? LOOK : ACCENT}`, boxShadow: first ? `0 0 14px ${LOOK}` : 'none', overflow: 'hidden',
-                  }}
-                >
-                  <div style={{position: 'absolute', left: 8, top: 6, fontFamily: MONO, fontSize: 15, fontWeight: 700, color: first ? LOOK : TEXT, whiteSpace: 'nowrap'}}>{b.name}</div>
-                </div>
-              );
-            })}
-            {at > 0 && at < r.total && <div style={{position: 'absolute', left: gX(at) - 1, top: r.y - 6, width: 3, height: r.lanes.length * (LANE.h + LANE.gap) + 4, background: LOOK, boxShadow: `0 0 10px ${LOOK}`}} />}
-            <Label x={gX(r.total) + 10} y={r.y + 6} size={18} mono bold color={LOOK} opacity={at >= r.total ? fadeAt(frame, r.sweep[1]) : 0}>
-              {`${r.total.toFixed(1)} s`}
-            </Label>
+          <React.Fragment key={e.effect}>
+            <div
+              style={{
+                position: 'absolute', left: 110, top: y, width: 1060, height: 44, borderRadius: 10, background: PANEL, boxSizing: 'border-box',
+                border: `2px solid ${on ? LOOK : '#2a2e40'}`, opacity: seen,
+              }}
+            />
+            <Label x={130} y={y + 10} size={18} mono bold color={ACCENT} opacity={seen}>{e.effect}</Label>
+            <Label x={500} y={y + 11} size={17} color={TEXT} opacity={seen}>{e.asks}</Label>
+            <Label x={900} y={y + 10} size={18} mono bold color={TEST} opacity={seen}>{e.answer}</Label>
           </React.Fragment>
         );
       })}
-      <div style={{position: 'absolute', left: GANTT.x0, top: 532, width: GANTT.x1 - GANTT.x0, height: 2, background: MUTED, opacity: fadeAt(frame, 5.6)}} />
-      {[0, 2, 4, 6, 8, 10, 12].map((s) => (
-        <Label key={s} x={gX(s)} y={540} size={13} mono center opacity={fadeAt(frame, 5.6)}>
-          {`${s} s`}
-        </Label>
+    </AbsoluteFill>
+  );
+};
+
+// Scene 2 — Step 1: review_file as a Program (measure/review.py).
+
+const PROG_LINES: Lines = [
+  [0, 'Step 1: the review as a program. review_file yields the four effects.'],
+  [6.5, 'Calling it only builds the program. Nothing runs until a handler answers its effects.'],
+  [13.2, 'LaunchSession goes out; the handler resumes the program with a session handle.'],
+  [18.9, "AwaitResult waits in one step. Waiting is the handler's job: no polling loop, no sleep."],
+  [26.7, 'The outcome comes back: the agent exited, with a result checked against the schema.'],
+  [33.0, 'StopSession is in a finally block, so the session is stopped on every path.'],
+];
+const PROG = f(39.9);
+const PROG_CODE = [
+  '@do',
+  'def review_file(path: str):',
+  '    session = yield LaunchSession(review_spec(path))',
+  '    try:',
+  '        outcome = yield AwaitResult(session, timeout_seconds=600)',
+  '        if outcome.status is AwaitStatus.AWAITING_INPUT:',
+  '            yield FollowUp(session, "Decide on your own and finish the review.")',
+  '            outcome = yield AwaitResult(session, timeout_seconds=600)',
+  '        if outcome.result is None or outcome.validation_error is not None:',
+  '            reason = outcome.validation_error or outcome.status.value',
+  '            raise ReviewFailed(f"{path}: {reason}")',
+  '        return outcome.result',
+  '    finally:',
+  '        yield StopSession(session)',
+];
+const PC = {x: 40, y: 112, w: 760, size: 14, line: 23};
+const HANDLER = {x: 840, y: 112, w: 400, h: PAD * 2 + PROG_CODE.length * PC.line};
+// measure/review.log: the Program before any handler runs it, the session id, the answers and the result.
+const PROG_PRINTS: Printed[] = [
+  {at: 7.0, text: "program = review_file('src/utils.py')", color: TEXT},
+  {at: 8.2, text: "type(program).__name__ -> 'Call'   a Program, not run yet", color: MUTED},
+  {at: 9.8, text: "review_spec('src/utils.py').session_id -> 'review-src-utils.py-1'", color: MUTED},
+  {at: 22.0, text: 'no polling loop and no sleep in the program: the handler waits', color: LOOK},
+  {at: 28.4, text: 'outcome.status is AwaitStatus.EXITED, validation_error is None', color: TEXT},
+  {at: 35.4, text: "returns {'verdict': 'approve', 'issues': []}; the session is stopped", color: TEST},
+];
+
+const ProgramScene: React.FC = () => {
+  const frame = useSceneFrame();
+  const band = stepAt<number | null>(frame, [
+    [0, null], [1.4, 2], [2.4, 4], [3.4, 6], [4.4, 13], [5.6, null],
+    [13.4, 2], [19.0, 4], [27.4, 5], [28.2, 8], [29.4, 11], [33.2, 12], [33.8, 13],
+  ]);
+  const y = (i: number) => lineMid(PC.y, PC.line, i);
+  const waiting = frame >= f(20.0) && frame < f(26.9);
+  const handlerOn = (frame >= f(14.4) && frame < f(14.8)) || waiting || (frame >= f(34.6) && frame < f(35.0));
+  const answer = stepAt<[string, string]>(frame, [
+    [0, ['', MUTED]],
+    [15.0, ["SessionHandle(\n  'review-src-utils.py-1')", TEST]],
+    [20.0, ['waiting on the session:\nwatching it, checking its\nresult against the schema', LOOK]],
+    [26.9, ["AwaitOutcome(\n  status=EXITED,\n  result={'verdict': 'approve',\n          'issues': []},\n  validation_error=None)", TEST]],
+    [34.6, ['stopped the session\nresumed with None', TEST]],
+  ]);
+  return (
+    <AbsoluteFill>
+      <Headlines lines={PROG_LINES} />
+      <CodeBlock lines={PROG_CODE} {...PC} band={band} opacity={fadeAt(frame, 0)} />
+      <Box {...HANDLER} color={TEST} on={handlerOn} opacity={fadeAt(frame, 0.6)}>
+        <div style={{position: 'absolute', left: 18, top: 12, fontFamily: SANS, fontSize: 20, fontWeight: 700, color: handlerOn ? LOOK : TEST}}>the handler around it</div>
+        <div style={{position: 'absolute', left: 18, top: 48, fontFamily: SANS, fontSize: 15, color: MUTED}}>answers each effect, resumes the program</div>
+        <div key={answer[0]} style={{position: 'absolute', left: 18, top: 124, fontFamily: MONO, fontSize: 17, lineHeight: '27px', color: answer[1], whiteSpace: 'pre'}}>{answer[0]}</div>
+      </Box>
+      <Trip at={13.8} x0={PC.x + 480} y0={y(2)} x1={HANDLER.x + 20} y1={HANDLER.y + 94} out="LaunchSession(spec)" back="SessionHandle" />
+      <Trip at={19.4} hold={6.9} x0={PC.x + 520} y0={y(4)} x1={HANDLER.x + 20} y1={HANDLER.y + 94} out="AwaitResult(session)" back="AwaitOutcome" />
+      <Trip at={34.0} x0={PC.x + 360} y0={y(13)} x1={HANDLER.x + 20} y1={HANDLER.y + 94} out="StopSession(session)" back="None" />
+      <Prints rows={PROG_PRINTS} x={PC.x} y={492} size={16} line={31} />
+    </AbsoluteFill>
+  );
+};
+
+// Scene 3 — Step 2: scripted_agent, a test handler (measure/review.py).
+
+const HANDLER_LINES: Lines = [
+  [0, 'Step 2: a test handler. @handler makes a function of the effect and k a handler.'],
+  [7.9, 'k is the rest of the program. Resume(k, value) goes on with value as the result of the yield.'],
+  [16.0, 'The annotation names the effects it takes. Any other effect goes past, to the next handler out.'],
+  [22.8, 'Under scripted_agent the review returns approve; the log reads launch, await, stop.'],
+  [30.5, 'review_file did not change for the test. The test chose the handler.'],
+];
+const HANDLER_SCENE = f(35.5);
+const HANDLER_CODE = [
+  '@handler',
+  'def answer(effect: SessionEffect, k):',
+  '    if isinstance(effect, LaunchSessionEffect):',
+  '        log.append(f"launch {effect.spec.session_id}")',
+  '        return (yield Resume(k, SessionHandle(...)))',
+  '    session_id = effect.handle.session_id',
+  '    if isinstance(effect, AwaitResultEffect):',
+  '        outcome = pending[session_id].pop(0)',
+  '        log.append(f"await {session_id}: {outcome.status.value}")',
+  '        return (yield Resume(k, outcome))',
+  '    ...  # FollowUpEffect: log it, resume with the handle',
+  '    log.append(f"stop {session_id}")',
+  '    return (yield Resume(k, None))',
+];
+const HC = {x: 40, y: 112, w: 700, size: 15, line: 24};
+const PROGRAM_PART = [
+  'session = yield LaunchSession(...)',
+  'try:',
+  '    outcome = yield AwaitResult(...)',
+  '    ...',
+  '    return outcome.result',
+  'finally:',
+  '    yield StopSession(session)',
+];
+const PM = {x: 780, y: 112, w: 460, size: 15, line: 24};
+// measure/review.log: the run under scripted_agent.
+const RUN_PRINTS: Printed[] = [
+  {at: 23.0, text: 'run(agent(review_file("src/utils.py")))', color: TEXT},
+  {at: 24.0, text: "-> {'verdict': 'approve', 'issues': []}", color: TEST},
+  {at: 25.0, text: 'log: launch review-src-utils.py-1', color: MUTED},
+  {at: 25.8, text: '     await review-src-utils.py-1: exited', color: MUTED},
+  {at: 26.6, text: '     stop review-src-utils.py-1', color: MUTED},
+];
+
+const HandlerScene: React.FC = () => {
+  const frame = useSceneFrame();
+  const band = stepAt<number | null>(frame, [[0, null], [1.0, 0], [2.6, 1], [8.6, 4], [16.2, 1], [22.8, null], [25.0, 3], [25.8, 8], [26.6, 11], [28.0, null]]);
+  const programBand = stepAt<number | null>(frame, [[0, null], [8.2, 0], [12.4, 2], [15.6, null]]);
+  const k = between(frame, 8.6, 22.6);
+  const resuming = frame >= f(10.6) && frame < f(12.4);
+  const t = ramp(frame, 10.6, 11.6);
+  const passing = ramp(frame, 18.8, 20.6);
+  return (
+    <AbsoluteFill>
+      <Headlines lines={HANDLER_LINES} />
+      <CodeBlock lines={HANDLER_CODE} {...HC} band={band} opacity={fadeAt(frame, 0)} />
+      <Label x={PM.x} y={PM.y + PAD * 2 + PROGRAM_PART.length * PM.line + 8} size={16} bold color={ACCENT} opacity={fadeAt(frame, 1.6)}>
+        review_file, paused at its first yield
+      </Label>
+      <CodeBlock lines={PROGRAM_PART} {...PM} band={programBand} opacity={fadeAt(frame, 1.4)} />
+      <div
+        style={{
+          position: 'absolute', left: PM.x + 6, top: PM.y + PAD + PM.line - 2, width: PM.w - 12, height: (PROGRAM_PART.length - 1) * PM.line + 4,
+          borderRadius: 8, boxSizing: 'border-box', border: `2px dashed ${LOOK}`, opacity: k,
+        }}
+      />
+      <Label x={PM.x} y={PM.y + PAD * 2 + PROGRAM_PART.length * PM.line + 40} size={19} bold color={LOOK} opacity={k}>
+        k: the rest of the program
+      </Label>
+      {resuming && (
+        <Pill
+          x={mix(HC.x + 440, PM.x + 250, t)} y={mix(lineMid(HC.y, HC.line, 4), lineMid(PM.y, PM.line, 0), t)}
+          text="Resume(k, SessionHandle)" color={TEST} left opacity={1 - ramp(frame, 12.0, 12.4)}
+        />
+      )}
+      <Label x={PM.x} y={PM.y + PAD * 2 + PROGRAM_PART.length * PM.line + 72} size={16} color={MUTED} opacity={between(frame, 12.4, 22.6)}>
+        {'the yield evaluates to the SessionHandle,\nand the program goes on to AwaitResult'}
+      </Label>
+      <Label x={HC.x} y={476} size={14} mono color={TEXT} opacity={between(frame, 16.2, 22.6)}>
+        SessionEffect = LaunchSessionEffect | AwaitResultEffect | FollowUpEffect | StopSessionEffect
+      </Label>
+      <Label x={HC.x} y={512} size={17} color={MUTED} opacity={between(frame, 16.8, 22.6)}>
+        the effects in the annotation come to answer; any other effect goes past it:
+      </Label>
+      <div
+        style={{
+          position: 'absolute', left: 520, top: 560, width: 220, height: 80, borderRadius: 14, boxSizing: 'border-box', background: PANEL,
+          border: `3px solid ${TEST}`, opacity: between(frame, 17.4, 22.6),
+        }}
+      >
+        <div style={{position: 'absolute', left: 0, right: 0, top: 24, textAlign: 'center', fontFamily: MONO, fontSize: 19, fontWeight: 700, color: TEST}}>answer</div>
+      </div>
+      <Label x={780} y={586} size={17} color={MUTED} opacity={between(frame, 20.4, 22.6)}>
+        to the next handler out
+      </Label>
+      {frame >= f(18.8) && frame < f(22.6) && (
+        <Pill x={mix(HC.x + 20, 1000, passing)} y={600} text="Spawn(...)" color={ACCENT} left opacity={between(frame, 18.8, 22.4)} />
+      )}
+      <Prints rows={RUN_PRINTS} x={HC.x} y={480} size={17} line={36} opacity={1 - fadeAt(frame, 35.0)} />
+      <Label x={PM.x} y={500} size={24} bold color={ACCENT} opacity={fadeAt(frame, 30.8)}>
+        review_file: unchanged
+      </Label>
+      <Label x={PM.x} y={544} size={24} bold color={TEST} opacity={fadeAt(frame, 32.2)}>
+        the test chose the handler
+      </Label>
+    </AbsoluteFill>
+  );
+};
+
+// Scene 4 — Step 3: the other outcomes the script plays (measure/failures.py).
+
+const FAIL_LINES: Lines = [
+  [0, 'Step 3: when the agent does not finish, the script plays the other outcomes.'],
+  [5.3, 'The agent stops to ask: a FollowUp, another AwaitResult, and the review comes back.'],
+  [12.7, 'Nothing comes back within the timeout: review_file raises ReviewFailed.'],
+  [19.0, 'A result that does not match the schema comes back with the reason: it raises too.'],
+  [25.2, 'On every path, the finally block stops the session.'],
+];
+const FAILURES = f(30.0);
+// measure/failures.log: each script, the effects scripted_agent answered in order, and what review_file did.
+const CASES = [
+  {
+    title: 'the agent asks first', color: PROD, script: ['outcomes: [asks, approve]', 'asks = AWAITING_INPUT'], at: 5.6,
+    log: ['launch review-src-api.py-1', 'await …: awaiting-input', 'follow-up review-src-api.py-1', 'await …: exited', 'stop review-src-api.py-1'],
+    end: "returns {'verdict': 'approve',\n         'issues': []}", endColor: TEST,
+  },
+  {
+    title: 'nothing within the timeout', color: FAIL, script: ['outcomes: [slow]', 'slow = TIMED_OUT'], at: 13.0,
+    log: ['launch review-src-slow.py-1', 'await …: timed-out', 'stop review-src-slow.py-1'],
+    end: 'raises ReviewFailed:\nsrc/slow.py: timed-out', endColor: FAIL,
+  },
+  {
+    title: 'a result off the schema', color: FAIL, script: ["outcomes: [wrong]", "wrong = EXITED, verdict 'maybe'"], at: 19.3,
+    log: ['launch review-src-odd.py-1', 'await …: exited', 'stop review-src-odd.py-1'],
+    end: "raises ReviewFailed:\nsrc/odd.py: 'maybe' is not one\nof ['approve', 'request-changes']", endColor: FAIL,
+  },
+];
+const CARD = {y: 112, w: 390, h: 486, gap: 15};
+const cardX = (i: number) => 40 + i * (CARD.w + CARD.gap);
+const STEP = 0.9;
+
+const FailureScene: React.FC = () => {
+  const frame = useSceneFrame();
+  const stops = frame >= f(25.4);
+  return (
+    <AbsoluteFill>
+      <Headlines lines={FAIL_LINES} />
+      {CASES.map((c, i) => {
+        const x = cardX(i);
+        const ends = c.at + c.log.length * STEP;
+        const on = frame >= f(c.at) && frame < f(ends + 0.8);
+        return (
+          <React.Fragment key={c.title}>
+            <Box x={x} y={CARD.y} w={CARD.w} h={CARD.h} color={c.color} on={on} opacity={fadeAt(frame, 0.6 + i * 0.6)}>
+              <div style={{position: 'absolute', left: 18, top: 12, fontFamily: SANS, fontSize: 21, fontWeight: 700, color: on ? LOOK : c.color}}>{c.title}</div>
+              <div style={{position: 'absolute', left: 18, top: 50, fontFamily: MONO, fontSize: 14, lineHeight: '22px', color: MUTED, whiteSpace: 'pre'}}>{c.script.join('\n')}</div>
+              <div style={{position: 'absolute', left: 18, top: 110, fontFamily: SANS, fontSize: 14, fontWeight: 700, color: MUTED}}>scripted_agent&apos;s log</div>
+            </Box>
+            {c.log.map((line, j) => {
+              const at = c.at + j * STEP;
+              const isStop = line.startsWith('stop');
+              const lit = (isStop && stops) || line.startsWith('follow-up');
+              return (
+                <div
+                  key={j}
+                  style={{
+                    position: 'absolute', left: x + 14, top: CARD.y + 138 + j * 34, width: CARD.w - 28, height: 30, boxSizing: 'border-box', borderRadius: 8,
+                    border: `2px solid ${lit ? (isStop ? TEST : PROD) : 'transparent'}`, boxShadow: isStop && stops ? `0 0 12px ${TEST}` : 'none',
+                    fontFamily: MONO, fontSize: 14, lineHeight: '26px', paddingLeft: 8, color: isStop && stops ? TEST : TEXT, whiteSpace: 'nowrap', opacity: fadeAt(frame, at),
+                  }}
+                >
+                  {line}
+                </div>
+              );
+            })}
+            <div
+              style={{
+                position: 'absolute', left: x + 22, top: CARD.y + 330, fontFamily: MONO, fontSize: 15, lineHeight: '24px', fontWeight: 700, color: c.endColor,
+                whiteSpace: 'pre', opacity: fadeAt(frame, ends + 0.2),
+              }}
+            >
+              {c.end}
+            </div>
+          </React.Fragment>
+        );
+      })}
+      <Label x={640} y={622} size={22} bold color={TEST} center opacity={fadeAt(frame, 25.8)}>
+        finally: yield StopSession(session) — three paths, three sessions stopped
+      </Label>
+    </AbsoluteFill>
+  );
+};
+
+// Scene 5 — Step 4: several files, under three handlers (measure/batch.py).
+
+const BATCH_LINES: Lines = [
+  [0, 'Step 4: several files. Spawn starts a task per file; Gather collects the results in order.'],
+  [8.3, 'Each effect goes to its own handler: scheduled, try_handler, scripted_agent.'],
+  [14.8, 'A semaphore of 2: at most two sessions at once. The scripted agent answers at once, so they run one by one.'],
+  [24.3, 'Try turns the timeout of b.py into an Err, so one failure does not stop the others.'],
+  [32.0, 'All three sessions are stopped, the failed one too.'],
+];
+const BATCH = f(36.6);
+const BATCH_CODE = [
+  '@do',
+  'def review_all(paths, at_most):',
+  '    sessions = yield CreateSemaphore(at_most)',
+  ' ',
+  '    @do',
+  '    def one(path):',
+  '        yield AcquireSemaphore(sessions)',
+  '        try:',
+  '            return (yield review_file(path))',
+  '        finally:',
+  '            yield ReleaseSemaphore(sessions)',
+  ' ',
+  '    tasks = []',
+  '    for path in paths:',
+  '        tasks.append((yield Spawn(Try(one(path)))))',
+  '    return (yield Gather(*tasks))',
+];
+const BC = {x: 40, y: 112, w: 540, size: 14, line: 22};
+const STACK = [
+  {name: 'scheduled', takes: 'Spawn · Gather · CreateSemaphore · Acquire/Release', color: MUTED, x: 620, y: 112, w: 620, h: 300, at: 9.5},
+  {name: 'try_handler', takes: 'Try', color: MUTED, x: 640, y: 186, w: 580, h: 210, at: 11.0},
+  {name: 'scripted_agent(outcomes, log)', takes: 'LaunchSession · AwaitResult · FollowUp · StopSession', color: TEST, x: 660, y: 260, w: 540, h: 120, at: 12.5},
+];
+// measure/batch.log: the sessions in the order scripted_agent answered them, and the three results.
+const SESSIONS = [
+  {name: 'a.py', said: 'launch · await: exited · stop', color: ACCENT},
+  {name: 'b.py', said: 'launch · await: timed-out · stop', color: FAIL},
+  {name: 'c.py', said: 'launch · await: exited · stop', color: ACCENT},
+];
+const LANES = {x0: 150, x1: 1240, y: 552, h: 40, gap: 10};
+const RESULTS: Printed[] = [
+  {at: 25.2, text: "a: Ok({'verdict': 'approve', 'issues': []})", color: TEST},
+  {at: 26.0, text: "b: Err(ReviewFailed('b.py: timed-out'))", color: FAIL},
+  {at: 26.8, text: "c: Ok({'verdict': 'approve', 'issues': []})", color: TEST},
+];
+
+const BatchScene: React.FC = () => {
+  const frame = useSceneFrame();
+  const y = (i: number) => lineMid(BC.y, BC.line, i);
+  const band = stepAt<number | null>(frame, [[0, null], [1.4, 14], [4.0, 15], [6.0, null], [9.0, 14], [12.2, 8], [15.0, 2], [16.4, 6], [24.5, 14], [26.0, 15], [32.2, 9]]);
+  const sweep = (frame - f(16.4)) / f(6.0);
+  const cell = (LANES.x1 - LANES.x0) / 3;
+  return (
+    <AbsoluteFill>
+      <Headlines lines={BATCH_LINES} />
+      <CodeBlock lines={BATCH_CODE} {...BC} band={band} opacity={fadeAt(frame, 0)} />
+      {STACK.map((s) => {
+        const on = frame >= f(s.at + 0.6) && frame < f(s.at + 1.3);
+        return (
+          <Box key={s.name} x={s.x} y={s.y} w={s.w} h={s.h} color={s.color} on={on} opacity={fadeAt(frame, 2.0)}>
+            <div style={{position: 'absolute', left: 16, top: 8, fontFamily: MONO, fontSize: 17, fontWeight: 700, color: on ? LOOK : s.color === MUTED ? TEXT : s.color}}>{s.name}</div>
+            <div style={{position: 'absolute', left: 16, top: 34, fontFamily: MONO, fontSize: 13, color: MUTED, whiteSpace: 'nowrap'}}>{`takes: ${s.takes}`}</div>
+          </Box>
+        );
+      })}
+      <Label x={680} y={326} size={16} mono bold color={ACCENT} opacity={fadeAt(frame, 2.6)}>
+        review_all(["a.py", "b.py", "c.py"], 2)
+      </Label>
+      <Fly at={STACK[0].at} x0={BC.x + 380} y0={y(14)} x1={STACK[0].x + 300} y1={STACK[0].y + 16} text="Spawn" />
+      <Fly at={STACK[1].at} x0={BC.x + 380} y0={y(14)} x1={STACK[1].x + 300} y1={STACK[1].y + 16} text="Try" />
+      <Fly at={STACK[2].at} x0={BC.x + 380} y0={y(8)} x1={STACK[2].x + 360} y1={STACK[2].y + 16} text="LaunchSession" />
+      <Prints rows={RESULTS} x={640} y={420} size={15} line={26} />
+      <Label x={40} y={514} size={16} color={MUTED} opacity={fadeAt(frame, 15.2)}>
+        the semaphore&apos;s two slots, in the order scripted_agent answered the effects
+      </Label>
+      {['slot 1', 'slot 2'].map((lane, i) => (
+        <React.Fragment key={lane}>
+          <Label x={40} y={LANES.y + i * (LANES.h + LANES.gap) + 9} size={16} color={MUTED} opacity={fadeAt(frame, 15.4)}>{lane}</Label>
+          <div style={{position: 'absolute', left: LANES.x0, top: LANES.y + i * (LANES.h + LANES.gap), width: LANES.x1 - LANES.x0, height: LANES.h, background: '#141722', opacity: fadeAt(frame, 15.4)}} />
+        </React.Fragment>
       ))}
-      <Label x={50} y={590} size={18} mono color={TEXT} opacity={fadeAt(frame, 21.4)}>
-        {'finished in:   '}
-        <span style={{color: LOOK, fontWeight: 700}}>api.py</span>
-        {', utils.py, models.py, cli.py'}
+      <Label x={LANES.x0 + 16} y={LANES.y + LANES.h + LANES.gap + 10} size={15} color={MUTED} opacity={fadeAt(frame, 22.6)}>
+        not used: each session was stopped before the next one was launched
       </Label>
-      <Label x={50} y={626} size={18} mono color={TEXT} opacity={fadeAt(frame, 22.4)}>
-        {'gather order:  utils.py, '}
-        <span style={{color: LOOK, fontWeight: 700}}>api.py</span>
-        {', models.py, cli.py'}
+      {SESSIONS.map((s, i) => {
+        const shown = Math.max(0, Math.min(1, sweep * 3 - i));
+        if (shown <= 0) return null;
+        const failed = s.name === 'b.py' && frame >= f(24.5);
+        const stopped = frame >= f(32.2);
+        return (
+          <div
+            key={s.name}
+            style={{
+              position: 'absolute', left: LANES.x0 + i * cell + 2, top: LANES.y, width: (cell - 4) * shown, height: LANES.h, boxSizing: 'border-box', borderRadius: 6,
+              background: '#1d1a33', border: `2px solid ${stopped ? TEST : failed ? FAIL : s.color}`, boxShadow: stopped || failed ? `0 0 12px ${stopped ? TEST : FAIL}` : 'none',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{position: 'absolute', left: 10, top: 9, fontFamily: MONO, fontSize: 15, fontWeight: 700, color: s.name === 'b.py' ? FAIL : TEXT, whiteSpace: 'nowrap'}}>
+              {`${s.name}: ${s.said}`}
+            </div>
+          </div>
+        );
+      })}
+      <Label x={40} y={668} size={18} mono bold color={LOOK} opacity={fadeAt(frame, 22.4)}>
+        most sessions open at once: 1
       </Label>
-      <Label x={50} y={668} size={16} color={MUTED} opacity={fadeAt(frame, 23.4)}>
-        (the order the files were given; most at once: 2, then 1)
+      <Label x={520} y={668} size={18} mono bold color={TEST} opacity={fadeAt(frame, 32.4)}>
+        stop review-a.py-1 · stop review-b.py-1 · stop review-c.py-1
+      </Label>
+    </AbsoluteFill>
+  );
+};
+
+// Scene 6 — Steps 5 and 6: the packaged test handler (measure/scenario.py), and the production handlers.
+
+const SWAP_LINES: Lines = [
+  [0, 'Step 5: doeff-agents ships a test handler of the same kind, made by scenario_agent_handler.'],
+  [7.6, 'The same review_file returns request-changes, with one issue, from the scripted step.'],
+  [14.2, 'Step 6: in production, daemon_agent_handlers() sends the same effects to the session host.'],
+  [20.6, 'The host starts Claude Code in a terminal, watches it, checks its result, and stops it.'],
+  [27.5, 'The programs never changed. Only the handlers did.'],
+];
+const SWAP = f(32.4);
+const SCENARIO_CODE = [
+  'scenario = scenario_agent_handler(',
+  '    scripts={',
+  '        "review-src-utils.py-1": [',
+  '            ScenarioStep.success({"verdict": "request-changes",',
+  '                                  "issues": ["unused import"]}),',
+  '        ],',
+  '    },',
+  ')',
+  'run(scenario(review_file("src/utils.py")))',
+];
+const DAEMON_CODE = [
+  'time_handler, agent_handler = daemon_agent_handlers()',
+  'program = time_handler(agent_handler(',
+  '    try_handler(review_all(sys.argv[1:], 2))))',
+  'run(scheduled(program))',
+];
+const ZC = {x: 40, y: 112, w: 720, size: 15, line: 24};
+// measure/scenario.log.
+const SCENARIO_PRINTS: Printed[] = [
+  {at: 8.2, text: "-> {'verdict': 'request-changes', 'issues': ['unused import']}", color: TEST},
+];
+const CHAIN = [
+  {name: 'review_all', sub: 'the same Program', color: ACCENT, x: 40, w: 250},
+  {name: 'agent_handler', sub: 'from daemon_agent_handlers()', color: PROD, x: 350, w: 280},
+  {name: 'doeff-sessionhost', sub: 'owns the sessions', color: PROD, x: 690, w: 260},
+  {name: 'Claude Code', sub: 'in a tmux terminal', color: PROD, x: 1010, w: 230},
+];
+const CHAIN_Y = 290;
+const HOST = ['starts Claude Code in a terminal', 'watches it', 'checks the result against the schema', 'stops it'];
+const RUNS = [
+  ['a test that sees every effect', 'scripted_agent(outcomes, log)', TEST],
+  ['a test with a packaged script', 'scenario_agent_handler(scripts=...)', TEST],
+  ['production, through the session host', 'daemon_agent_handlers()', PROD],
+  ['production, from the calling process', 'agent_effectful_handlers()', PROD],
+];
+
+const SwapScene: React.FC = () => {
+  const frame = useSceneFrame();
+  const step5 = between(frame, 0, 14.0);
+  const step6 = between(frame, 14.2, 27.3);
+  const table = fadeAt(frame, 27.6);
+  const scenarioOn = frame >= f(8.0) && frame < f(8.8);
+  const goes = ramp(frame, 15.6, 18.0);
+  return (
+    <AbsoluteFill>
+      <Headlines lines={SWAP_LINES} />
+      <CodeBlock lines={SCENARIO_CODE} {...ZC} band={stepAt<number | null>(frame, [[0, null], [1.4, 0], [3.0, 3], [8.0, 8]])} opacity={step5} />
+      <Box x={800} y={112} w={440} h={240} color={TEST} on={scenarioOn} opacity={step5 * fadeAt(frame, 1.0)}>
+        <BoxText title="scenario_agent_handler" color={TEST} on={scenarioOn} lines={['in doeff_agents: makes a test handler', 'from a script, one ScenarioStep', 'per AwaitResult; install it', 'around a Program like any handler']} size={17} />
+      </Box>
+      <Prints rows={SCENARIO_PRINTS} x={ZC.x} y={ZC.y + PAD * 2 + SCENARIO_CODE.length * ZC.line + 30} size={17} line={36} opacity={step5} />
+      <CodeBlock lines={DAEMON_CODE} {...ZC} band={stepAt<number | null>(frame, [[0, null], [14.6, 0], [16.0, 1]])} opacity={step6} />
+      <Label x={800} y={124} size={17} color={MUTED} opacity={step6}>
+        {'in place of scripted_agent,\nthe production handlers;\nthe time handler goes outside'}
+      </Label>
+      {CHAIN.map((c, i) => {
+        const on = (i === 1 && frame >= f(16.4) && frame < f(17.0)) || (i === 2 && frame >= f(17.4) && frame < f(18.4)) || (i === 3 && frame >= f(21.0) && frame < f(26.6));
+        return (
+          <React.Fragment key={c.name}>
+            <Box x={c.x} y={CHAIN_Y} w={c.w} h={100} color={c.color} on={on} dashed={i === 3} opacity={step6 * fadeAt(frame, 14.6 + i * 0.4)}>
+              <div style={{position: 'absolute', left: 0, right: 0, top: 18, textAlign: 'center', fontFamily: MONO, fontSize: 19, fontWeight: 700, color: on ? LOOK : c.color}}>{c.name}</div>
+              <div style={{position: 'absolute', left: 0, right: 0, top: 56, textAlign: 'center', fontFamily: SANS, fontSize: 15, color: MUTED}}>{c.sub}</div>
+            </Box>
+            {i > 0 && <div style={{position: 'absolute', left: CHAIN[i - 1].x + CHAIN[i - 1].w, top: CHAIN_Y + 49, width: c.x - CHAIN[i - 1].x - CHAIN[i - 1].w, height: 2, background: MUTED, opacity: step6}} />}
+          </React.Fragment>
+        );
+      })}
+      {frame >= f(15.6) && frame < f(18.4) && (
+        <Pill x={mix(CHAIN[0].x + 120, CHAIN[2].x + 40, goes)} y={CHAIN_Y - 22} text="LaunchSession(spec)" color={ACCENT} left opacity={1 - ramp(frame, 18.0, 18.4)} />
+      )}
+      {HOST.map((text, i) => {
+        const at = 21.0 + i * 1.4;
+        const on = frame >= f(at) && frame < f(at + 1.4);
+        return (
+          <div
+            key={text}
+            style={{
+              position: 'absolute', left: 40 + i * 302, top: 440, width: 290, height: 64, boxSizing: 'border-box', borderRadius: 12, background: PANEL,
+              border: `2px solid ${PROD}`, ...glow(on, PROD), fontFamily: SANS, fontSize: 16, fontWeight: 700, color: on ? LOOK : TEXT, textAlign: 'center',
+              lineHeight: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 14px', opacity: step6 * fadeAt(frame, at - 0.2),
+            }}
+          >
+            {text}
+          </div>
+        );
+      })}
+      <Label x={640} y={540} size={18} color={MUTED} center opacity={step6 * fadeAt(frame, 26.6)}>
+        A session lives on even when the program that launched it exits.
+      </Label>
+      <Label x={110} y={120} size={17} bold color={MUTED} opacity={table}>the run</Label>
+      <Label x={660} y={120} size={17} bold color={MUTED} opacity={table}>the handlers around the Program</Label>
+      {RUNS.map(([run, handlers, color], i) => (
+        <React.Fragment key={run}>
+          <div style={{position: 'absolute', left: 90, top: 160 + i * 72, width: 1100, height: 60, borderRadius: 12, background: PANEL, border: '2px solid #2a2e40', opacity: table * fadeAt(frame, 27.8 + i * 0.3)}} />
+          <Label x={110} y={177 + i * 72} size={19} color={TEXT} opacity={table * fadeAt(frame, 27.8 + i * 0.3)}>{run}</Label>
+          <Label x={660} y={177 + i * 72} size={19} mono bold color={color} opacity={table * fadeAt(frame, 27.8 + i * 0.3)}>{handlers}</Label>
+        </React.Fragment>
+      ))}
+      <Label x={640} y={480} size={24} bold color={ACCENT} center opacity={fadeAt(frame, 29.4)}>
+        review_file and review_all: the same in every run
       </Label>
     </AbsoluteFill>
   );
@@ -718,51 +686,45 @@ const BatchScene: React.FC = () => {
 
 // The outro.
 
-const OUTRO_LINES: Lines = [
-  [0, 'Step 5 puts it together: a scope per session, callbacks for progress, a limited batch, timeouts.'],
-  [7.6, 'Under the session API, the driver is a doeff program: effects go out, handlers send answers back.'],
+const OUTRO_LINES: Lines = [[0, 'The program says what it needs. The handler decides how: a script in a test, Claude Code in production.']];
+const OUTRO = f(7.1);
+const CHOICES = [
+  {name: 'scripted_agent', sub: 'a script, in a test', color: TEST},
+  {name: 'scenario_agent_handler', sub: 'a packaged script, in a test', color: TEST},
+  {name: 'daemon_agent_handlers()', sub: 'Claude Code, in production', color: PROD},
 ];
-const OUTRO = f(16.6);
-const STEPS = [
-  {n: '1', name: 'launch · monitor', sub: 'capture · stop'},
-  {n: '2', name: 'session_scope', sub: 'always stopped'},
-  {n: '3', name: 'on_status_change', sub: 'BLOCKED needs input'},
-  {n: '4', name: 'Semaphore + gather', sub: 'a limit, in order'},
-  {n: '5', name: 'code_reviewer.py', sub: 'timeouts on every wait'},
-];
-const CHIP = {w: 218, h: 92, gap: 14, y: 140};
-const chipX = (i: number) => 640 - (STEPS.length * CHIP.w + (STEPS.length - 1) * CHIP.gap) / 2 + i * (CHIP.w + CHIP.gap);
-const LAYERS = [
-  {name: 'launch_session(...)', sub: 'the session API: plain Python', color: MUTED, x: 90},
-  {name: 'yield effect', sub: 'a doeff program decides', color: ACCENT, x: 490},
-  {name: 'handler', sub: 'answers, and resumes k', color: TEST, x: 890},
-];
+
+// How far below the Program's middle the line to choice i ends.
+const rise = (i: number) => 140 + i * 100 + 38 - 264;
 
 const OutroScene: React.FC = () => {
   const frame = useSceneFrame();
-  const out = ramp(frame, 9.6, 10.6);
-  const back = ramp(frame, 11.0, 12.0);
+  const lit = Math.floor(Math.max(0, frame - f(1.2)) / f(0.8));
   return (
     <AbsoluteFill>
       <Headlines lines={OUTRO_LINES} />
-      {STEPS.map((s, i) => (
-        <Box key={s.n} x={chipX(i)} y={CHIP.y} w={CHIP.w} h={CHIP.h} color={i === 4 ? LOOK : TEST} on={frame >= f(0.6 + i * 0.9) && frame < f(1.5 + i * 0.9)} opacity={fadeAt(frame, 0.4 + i * 0.9)}>
-          <div style={{position: 'absolute', left: 14, top: 10, fontFamily: SANS, fontSize: 15, fontWeight: 700, color: MUTED}}>{`Step ${s.n}`}</div>
-          <div style={{position: 'absolute', left: 14, top: 32, fontFamily: MONO, fontSize: 16, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap'}}>{s.name}</div>
-          <div style={{position: 'absolute', left: 14, top: 60, fontFamily: SANS, fontSize: 14, color: MUTED, whiteSpace: 'nowrap'}}>{s.sub}</div>
-        </Box>
-      ))}
-      {LAYERS.map((l, i) => (
-        <Box key={l.name} x={l.x} y={300} w={300} h={100} color={l.color} on={(i === 1 && frame >= f(9.4) && frame < f(9.8)) || (i === 2 && frame >= f(10.6) && frame < f(11.0))} opacity={fadeAt(frame, 7.9 + i * 0.4)}>
-          <div style={{position: 'absolute', left: 0, right: 0, top: 16, textAlign: 'center', fontFamily: MONO, fontSize: 20, fontWeight: 700, color: l.color}}>{l.name}</div>
-          <div style={{position: 'absolute', left: 0, right: 0, top: 56, textAlign: 'center', fontFamily: SANS, fontSize: 16, color: MUTED}}>{l.sub}</div>
-        </Box>
-      ))}
-      <div style={{position: 'absolute', left: 390, top: 349, width: 100, height: 2, background: MUTED, opacity: fadeAt(frame, 8.3)}} />
-      <div style={{position: 'absolute', left: 790, top: 349, width: 100, height: 2, background: MUTED, opacity: fadeAt(frame, 8.7)}} />
-      {frame >= f(9.6) && frame < f(10.9) && <Pill x={mix(800, 880, out)} y={330} text="effect" color={ACCENT} opacity={1 - ramp(frame, 10.6, 10.9)} />}
-      {frame >= f(11.0) && frame < f(12.3) && <Pill x={mix(880, 800, back)} y={372} text="answer" color={TEST} opacity={1 - ramp(frame, 12.0, 12.3)} />}
-      <div style={{position: 'absolute', left: 0, right: 0, top: 460 + mix(16, 0, ramp(frame, 12.6, 13.2)), textAlign: 'center', opacity: fadeAt(frame, 12.6, 0.5)}}>
+      <Box x={140} y={200} w={380} h={130} color={ACCENT} opacity={fadeAt(frame, 0.2)}>
+        <BoxText title="review_file · review_all" color={ACCENT} lines={['@do Programs that yield', 'doeff-agents effects']} size={18} />
+      </Box>
+      {CHOICES.map((c, i) => {
+        const on = lit === i;
+        return (
+          <React.Fragment key={c.name}>
+            <div
+              style={{
+                position: 'absolute', left: 520, top: 264, width: Math.hypot(240, rise(i)), height: 2, background: on ? LOOK : MUTED, transformOrigin: '0 50%',
+                transform: `rotate(${Math.atan2(rise(i), 240) * (180 / Math.PI)}deg)`,
+                opacity: fadeAt(frame, 0.6 + i * 0.3),
+              }}
+            />
+            <Box x={760} y={140 + i * 100} w={400} h={76} color={c.color} on={on} opacity={fadeAt(frame, 0.6 + i * 0.3)}>
+              <div style={{position: 'absolute', left: 18, top: 10, fontFamily: MONO, fontSize: 19, fontWeight: 700, color: on ? LOOK : c.color}}>{c.name}</div>
+              <div style={{position: 'absolute', left: 18, top: 42, fontFamily: SANS, fontSize: 15, color: MUTED}}>{c.sub}</div>
+            </Box>
+          </React.Fragment>
+        );
+      })}
+      <div style={{position: 'absolute', left: 0, right: 0, top: 490 + mix(16, 0, ramp(frame, 3.6, 4.2)), textAlign: 'center', opacity: fadeAt(frame, 3.6, 0.5)}}>
         <div style={{fontFamily: SANS, fontSize: 60, fontWeight: 700, color: TEXT}}>doeff</div>
         <div style={{fontFamily: SANS, fontSize: 28, color: ACCENT, marginTop: 4}}>Algebraic effects for Python</div>
       </div>
@@ -797,11 +759,11 @@ const tight = (scene: Scene): Scene => {
 
 // The scenes in order; Root.tsx registers AGENT_TUTORIAL.length frames of AGENT_TUTORIAL.Video.
 export const AGENT_TUTORIAL = narrate('agent-tutorial', DURATIONS, [
-  {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't3'], node: <TitleScene />},
-  {length: LIFE, starts: startsOf(LIFE_LINES), ids: ['l1', 'l2', 'l3', 'l4', 'l5'], node: <LifeScene />},
-  {length: EFFECTS, starts: startsOf(EFF_LINES), ids: ['e1', 'e2', 'e3', 'e4'], node: <EffectsScene />},
-  {length: CLEAN, starts: startsOf(CLEAN_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <CleanScene />},
-  {length: CALLBACKS, starts: startsOf(CB_LINES), ids: ['s1', 's2', 's3', 's4'], node: <CallbackScene />},
-  {length: BATCH, starts: startsOf(BATCH_LINES), ids: ['b1', 'b2', 'b3', 'b4'], node: <BatchScene />},
-  {length: OUTRO, starts: startsOf(OUTRO_LINES), ids: ['z1', 'z2'], node: <OutroScene />},
+  {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
+  {length: PROG, starts: startsOf(PROG_LINES), ids: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'], node: <ProgramScene />},
+  {length: HANDLER_SCENE, starts: startsOf(HANDLER_LINES), ids: ['h1', 'h2', 'h3', 'h4', 'h5'], node: <HandlerScene />},
+  {length: FAILURES, starts: startsOf(FAIL_LINES), ids: ['f1', 'f2', 'f3', 'f4', 'f5'], node: <FailureScene />},
+  {length: BATCH, starts: startsOf(BATCH_LINES), ids: ['b1', 'b2', 'b3', 'b4', 'b5'], node: <BatchScene />},
+  {length: SWAP, starts: startsOf(SWAP_LINES), ids: ['z1', 'z2', 'z3', 'z4', 'z5'], node: <SwapScene />},
+  {length: OUTRO, starts: startsOf(OUTRO_LINES), ids: ['o1'], node: <OutroScene />},
 ].map(tight));
