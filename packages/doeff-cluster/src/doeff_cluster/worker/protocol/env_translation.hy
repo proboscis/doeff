@@ -737,15 +737,18 @@
   stat.real-path)
 
 
-(defk compile-argv [uv code-prepare project-dir trees entries jobs]
-  {:pre [(: uv str) (: code-prepare str) (: project-dir str) (: trees tuple) (: entries tuple) (: jobs (| int None))] :post [(: % tuple)]}
+(defk compile-argv [uv code-prepare project-dir trees entries jobs progress]
+  {:pre [(: uv str) (: code-prepare str) (: project-dir str) (: trees tuple) (: entries tuple) (: jobs (| int None)) (: progress str)]
+   :post [(: % tuple)]}
   "焼く道具(worker 自身の code の code_prepare.hy)を root の venv の hy で 1 回起こす命令を組むため: 木ごとに --tree・--roots を木の順に
    並べる(道具の揃え方)。entries は全部の木に共通。保存先の dir は道具が環境変数 DOEFF_HY_CODE_STORE から読む(worker の起動の script が
    置き、子へ継がれる)。jobs = 並べる数(在る時だけ --jobs N — recreate の job の旧い process が動いている間の準備・None = 道具の既定 =
-   cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。"
+   cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。progress = 進みの印の file(在る時だけ --progress — 道具が閉包の一回りと
+   焼きの前後に印の時刻を進めるので、disk が遅いだけの bytecode の処理ステージを停滞と読まない・空 = 印を書かない設定・card ki-d3e585481618)。"
   (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare "--revision" "env")
      (if (is jobs None) #() #("--jobs" (str jobs)))
      (if entries #("--entries" (.join "," entries)) #())
+     (if progress #("--progress" progress) #())
      (tuple (gfor t trees a #("--tree" t.tree "--roots" (.join "," t.roots)) a))))
 
 
@@ -953,7 +956,7 @@
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
     ;; 無い物だけを焼く(#3858 — 前の root からの引き継ぎと、その差の一覧は持たない)。
     (<- env tuple (uv-environment shared-dir uv-cache))
-    (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs))
+    (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs progress))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
     (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees project-dir))
     (resume compiled))

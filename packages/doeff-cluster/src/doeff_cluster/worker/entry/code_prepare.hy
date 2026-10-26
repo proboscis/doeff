@@ -9,7 +9,7 @@
 ;;; 中身の動く手元の環境には使えない)。
 ;;;
 ;;;   PYTHONDONTWRITEBYTECODE=1 hy <worker のコード>/doeff_cluster/worker/entry/code_prepare.hy --revision <版> [--jobs N]
-;;;       [--entries <module,…>] --tree <木> --roots <根,…> [--tree … --roots … …]
+;;;       [--entries <module,…>] [--progress <進みの印の file>] --tree <木> --roots <根,…> [--tree … --roots … …]
 ;;;
 ;;; 木ごとの引数の揃え方(1 つだけ): --tree・--roots は --tree の順に並べる。--roots は木ごとに必ず 1 つ(import の根 — 木の中の dir・`,` で
 ;;; 並べる・前が先)。数が揃わなければ使い方の誤り(終わり 2)。保存先の dir は環境変数 DOEFF_HY_CODE_STORE(code_store の store-dir —
@@ -23,6 +23,10 @@
 ;;;               --entries が無ければ全部の木の根の下を全部用意する。
 ;;;               import の名は構文の読み(Hy の read-many・Python の ast.parse — 閉包の秒の大半)で求め、保存先に source の中身の鍵で
 ;;;               置く(種類 .imports — 形は bake_plan)。次の準備は中身の同じ source の entry を使い、中身の変わった file だけを読む。
+;;;               一回り(closure-step の答え)の source と entry は、それぞれまとめて thread の pool で並べて読む(効果 ReadSources・
+;;;               ReadStoreEntries — disk の 1 回の読みの待ちを積もらせない・card ki-d3e585481618)。
+;;;   進みの印  --progress の file の時刻を、走査の後・閉包の一回りごと・焼きの前と後に進める(効果 MarkProgress)。呼び手の準備は印の
+;;;             時刻で停滞を見分けるので、disk が遅いだけの歩みを止まりと読ませない。
 ;;;   3 用意      用意する物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
 ;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits・天井 BAKE-JOBS-CEILING)。道具は 1 つずつ
@@ -59,9 +63,10 @@
 ;;;
 ;;; 道具は worker 自身のコードから file の path で起動する(準備する版の木から -m で起動すると、道具を持たない
 ;;; 古い版では道具が見つからない — 2026-09-23 に atlas の版 8d7181f が bytecode 0 のまま完成品になった原因)。
-(require doeff-hy.macros [defk defhandler val var <-])
+(require doeff-hy.macros [defk deff defhandler val var <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
+(import concurrent.futures [ThreadPoolExecutor])
 (import hy)
 (import importlib.machinery)
 (import importlib.util)
@@ -143,11 +148,6 @@
 
 ;; --- 保存先の entry の効果(閉包の import の名 — 答え手 store-entries が code_store を呼ぶ)----------------------------------
 
-(defclass [(dataclass :frozen True)] ReadStoreEntry [EffectBase]
-  "保存先の entry の中身を読む(当たれば entry の時刻を進める)。答え = bytes か None(無い・読めない)。"
-  (#^ str path))
-
-
 (defclass [(dataclass :frozen True)] WriteStoreEntry [EffectBase]
   "保存先へ entry を書く(一時の file に書いてから置き換える)。答え = 書けなかった理由か None。"
   (#^ str path)
@@ -158,6 +158,28 @@
   "壊れた entry を名指しの 1 行で除く(呼び手は作り直す)。答え = None。"
   (#^ str path)
   (#^ str problem))
+
+
+;; --- 閉包の歩みの読みと進みの印の効果(card ki-d3e585481618)--------------------------------------------
+;; 閉包の歩みは一回り(closure-step の答え)ごとに、訪ねる source と保存先の entry を全部まとめて読む。1 つずつ順に読むと、disk の 1 回の
+;; 読みの待ちがそのまま積もる — 2026-10-26 に機体の USB の SSD の trim が読みを 1 回 50〜290 ms にした間、1 つずつ読む歩みは 202 秒・
+;; 600 秒超(準備が止まりと判じられた)、並べて読む焼きは 3 秒だった。答え手(closure-reads)が並べて読む。
+
+(defclass [(dataclass :frozen True)] ReadSources [EffectBase]
+  "閉包の歩みの一回りで訪ねる source を全部読む(path の列 — 答え手が並べて読む)。答え = path の順の中身の列(読めない file は None —
+   呼び手は何も import しない物として扱う)。"
+  (#^ tuple paths))
+
+
+(defclass [(dataclass :frozen True)] ReadStoreEntries [EffectBase]
+  "保存先の entry を幾つも読む(path か None の列 — 答え手が並べて読む・当たれば entry の時刻を進める)。答え = path の順の中身の列
+   (path が None・無い・読めない entry は None)。"
+  (#^ tuple paths))
+
+
+(defclass [(dataclass :frozen True)] MarkProgress [EffectBase]
+  "準備の進みの印(呼び手の準備が渡す file)の時刻を進める。呼び手は印の時刻で準備の停滞を見分けるので、遅いが進んでいる歩みと焼きを
+   止まりと読ませないため。答え = None(印の無い起動では何もしない)。")
 
 
 ;; --- Program -----------------------------------------------------------------------------
@@ -172,22 +194,26 @@
   trees)
 
 
-(defk stored-imports [code-store rel text hy-version]
-  {:pre [(: code-store (| str None)) (: rel str) (: text str) (: hy-version str)] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
-  "source 1 つの import の名を保存先から引くため(source の中身の鍵 — 無い・保存先を使わない時は None)。形の違う entry は名指して除き
-   None(呼び手は構文を読み直して書き直す)。"
+(defk imports-entry-path [code-store rel text hy-version]
+  {:pre [(: code-store (| str None)) (: rel str) (: text str) (: hy-version str)] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
+  "source 1 つの import の名の entry の path を求めるため(source の中身の鍵 — 保存先を使わない時は None)。"
   (if (is code-store None)
       None
       (do (<- parts tuple (plan.imports-key-parts rel hy-version))
-          (val path (store.entry-path code-store (store.content-key parts (.encode text "utf-8")) store.IMPORTS-SUFFIX))
-          (<- data (| bytes None) (ReadStoreEntry path))
-          (match data
-            None None
-            _ (do (<- read (| tuple str) (plan.imports-of-entry data))
-                  (match read
-                    (tuple) read
-                    problem (do (<- (DiscardStoreEntry path problem))
-                                None)))))))
+          (store.entry-path code-store (store.content-key parts (.encode text "utf-8")) store.IMPORTS-SUFFIX))))
+
+
+(defk stored-imports [path data]
+  {:pre [(: path (| str None)) (: data (| bytes None))] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
+  "読んだ entry の中身を source 1 つの import の名にするため(entry が無い・保存先を使わない時は None)。形の違う entry は名指して除き
+   None(呼び手は構文を読み直して書き直す)。"
+  (match data
+    None None
+    _ (do (<- read (| tuple str) (plan.imports-of-entry data))
+          (match read
+            (tuple) read
+            problem (do (<- (DiscardStoreEntry path problem))
+                        None)))))
 
 
 (defk store-imports [code-store rel text hy-version imports]
@@ -221,24 +247,36 @@
           (while frontier
             (<- found tuple (plan.closure-step index frontier seen))
             (:= seen (| seen (frozenset found)))
-            (var imports #())
+            ;; 一回りで訪ねる source と、その保存先の entry を、それぞれまとめて読む(答え手が並べて読む — 効果の頭の註)。
+            (var places #())
             (for [m found]
               (<- place tuple (plan.module-place index m))
+              (:= places (+ places #(place))))
+            (<- texts tuple (ReadSources (tuple (gfor place places (posixpath.join (. (get trees (get place 0)) path) (get place 1))))))
+            (var paths #())
+            (for [#(place text) (zip places texts)]
+              (if (is text None)
+                  (:= paths (+ paths #(None)))
+                  (do (<- path (| str None) (imports-entry-path code-store (get place 1) text hy-version))
+                      (:= paths (+ paths #(path))))))
+            (<- datas tuple (ReadStoreEntries paths))
+            (var imports #())
+            (for [#(place text path data) (zip places texts paths datas)]
               (val rel (get place 1))
-              (<- read (| str FileFailed) (ReadText (posixpath.join (. (get trees (get place 0)) path) rel)))
-              (match read
-                (FileFailed) (:= imports (+ imports #(#())))
-                text (do (:= modules (+ modules 1))
-                         (<- stored (| tuple None) (stored-imports code-store rel text hy-version))
-                         (var listed #())
-                         (match stored
-                           None (do (:= listed (plan.imported-names rel text))
-                                    (:= reread (+ reread 1))
-                                    (<- problem (| str None) (store-imports code-store rel text hy-version listed))
-                                    (when (and (is-not problem None) (not-in problem unstored))
-                                      (:= unstored (+ unstored #(problem)))))
-                           _ (:= listed stored))
-                         (:= imports (+ imports #(listed))))))
+              (if (is text None)
+                  (:= imports (+ imports #(#())))
+                  (do (:= modules (+ modules 1))
+                      (<- stored (| tuple None) (stored-imports path data))
+                      (var listed #())
+                      (match stored
+                        None (do (:= listed (plan.imported-names rel text))
+                                 (:= reread (+ reread 1))
+                                 (<- problem (| str None) (store-imports code-store rel text hy-version listed))
+                                 (when (and (is-not problem None) (not-in problem unstored))
+                                   (:= unstored (+ unstored #(problem)))))
+                        _ (:= listed stored))
+                      (:= imports (+ imports #(listed))))))
+            (<- (MarkProgress))
             (<- named frozenset (plan.imported-modules index found imports))
             (:= frontier named))
           (for [problem unstored]
@@ -260,6 +298,7 @@
     (<- scanned tuple (ScanTree tree.path))
     (:= scans (+ scans #(scanned))))
   (<- scanned-at float (GetMonotonic))
+  (<- (MarkProgress))
   (<- scopes tuple (closure-of-trees trees (tuple (gfor s scans (tuple (get s 0)))) entries code-store hy-version))
   (<- closed float (GetMonotonic))
   ;; 木ごとの用意する物の計画と、その大きさ(読めない source は大きさ 0 — 焼きが理由つきで断る)。全部の木の物を大きい順に 1 つの pool で用意する。
@@ -274,7 +313,9 @@
       (:= items (+ items #((plan.BakeItem :tree tree.path :rel rel :name name :size (match stat (PathStat :size size) size _ 0)))))))
   (<- order tuple (plan.bake-order items))
   (<- paths tuple (plan.trees-import-path trees))
+  (<- (MarkProgress))
   (<- answer plan.BakeAnswer (BakeSources order jobs paths code-store))
+  (<- (MarkProgress))
   (val failures answer.failed)
   (<- baked float (GetMonotonic))
   (for [#(path rel reason) (cut failures 0 20)]
@@ -337,12 +378,64 @@
 
 (defhandler store-entries
   ;; 保存先の entry の効果を、worker の版の code_store の関数で答える(main が被せる)。
-  (ReadStoreEntry [path]
-    (resume (store.read-entry path)))
   (WriteStoreEntry [path data]
     (resume (store.write-entry path data)))
   (DiscardStoreEntry [path problem]
     (resume (store.discard-entry path problem))))
+
+
+;; --- 閉包の歩みの読みと進みの印の効果の訳し(card ki-d3e585481618)--------------------------------------------
+;; 一回りの読みを thread の pool で並べる。数は disk の待ちを重ねられる数で、CPU の数に依らない(読みは CPU を使わない)。2026-10-26 の
+;; 本番の機体の保存先で、page cache に無い entry 400 本の読みは 1 つずつ 2.52 秒・32 本並べて 0.22 秒だった。
+
+(val READ-THREADS 32)
+
+
+(deff read-source [path]  ; defk にできない: thread の pool で回す読み(VM の外)
+  {:pre [(: path str)] :post [(: % (| str None))]}
+  "source 1 つを、前の読み(file の効果 ReadText の答え手 — UTF-8・読めない byte は置き換え)と同じ文字列に読むため(中身の鍵が前の
+   準備の entry と揃う)。読めない file は None — 歩みは何も import しない物として扱う。"
+  (try
+    (.read-text (Path path) :encoding "utf-8" :errors "replace")
+    (except [OSError]
+      None)))
+
+
+(deff read-entry-or-none [path]  ; defk にできない: thread の pool で回す読み(VM の外)
+  {:pre [(: path (| str None))] :post [(: % (| bytes None))]}
+  "保存先の entry 1 つを code_store の read-entry で読むため(path が None なら読まずに None)。"
+  (if (is path None) None (store.read-entry path)))
+
+
+(defk read-all [reader paths]
+  {:pre [(: reader "path 1 つ → 答え の callable") (: paths tuple)] :post [(: % tuple)] :tags {:context "worker" :role "foundation"}}
+  "一回りの読みを disk の待ちを重ねて済ませるため: paths を thread の pool で並べて読み、paths の順の答えの列にする。"
+  (if (not paths)
+      #()
+      (with [pool (ThreadPoolExecutor :max-workers (min READ-THREADS (len paths)))]
+        (tuple (.map pool reader paths)))))
+
+
+(defhandler closure-reads
+  ;; 閉包の歩みの読みの効果を、thread の pool で並べた読みに訳す(main が被せる)。
+  (ReadSources [paths]
+    (<- texts tuple (read-all read-source paths))
+    (resume texts))
+  (ReadStoreEntries [paths]
+    (<- datas tuple (read-all read-entry-or-none paths))
+    (resume datas)))
+
+
+(defhandler progress-marks [path]
+  ;; 引数に残す理由: 印の file の path は起動ごとの値(呼び手の準備が --progress で渡す・None = 印の無い起動 — 何もしない)。
+  ;; 印の時刻を今にするだけで中身は変えない(中身は呼び手の処理の名)。印の file が消えていても準備は止めない(印は見張りの材料)。
+  (MarkProgress []
+    (when (is-not path None)
+      (try
+        (os.utime path)
+        (except [OSError]
+          None)))
+    (resume None)))
 
 
 ;; --- 入口 --------------------------------------------------------------------------------
@@ -356,6 +449,7 @@
   (.add-argument parser "--entries" :default "" :help "焼く範囲の入口の module(`,` で並べる・空 = 全部の木の根の下を全部)")
   (.add-argument parser "--tree" :action "append" :required True :help "焼く木(幾つでも — 木ごとの引数はこの順に並べる)")
   (.add-argument parser "--roots" :action "append" :help "木の中の import の根(`,` で並べる・前が先 — 木ごとに 1 つ)")
+  (.add-argument parser "--progress" :default "" :help "進みの印の file(閉包の一回りと焼きの前後に時刻を進める・空 = 印を触らない)")
   (setv args (.parse-args parser))
   (setv shaped (run (plan.tree-arguments (tuple args.tree) (tuple (or args.roots [])))))
   (when (isinstance shaped str)
@@ -374,7 +468,7 @@
   ;; venv の Hy の版で読みが変わりうるので Hy の版を入れる。
   (setv code-store (store.store-dir))
   (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files pool-tool-baker
-                                      store-entries]
+                                      store-entries closure-reads (progress-marks (or args.progress None))]
                                      (prepare-trees trees args.revision args.jobs entries code-store hy.__version__))))
   (setv failed (tuple (gfor t outcomes :if (is-not t.problem None) t)))
   (for [t failed]
