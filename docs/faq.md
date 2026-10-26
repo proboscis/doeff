@@ -209,8 +209,8 @@ it does: keep the loop in plain Python and yield effects around it.
 - The other Python effect libraries measured: effect 1.1.0 takes 12.7 µs per effect, effectful
   0.4.0 57.9 µs.
 - Many tasks: the Rust scheduler costs about 17 µs of CPU per spawned task, asyncio 11 µs.
-  `pip install doeff` installs 0.7.0, whose `scheduled()` runs the Rust scheduler by default (up
-  to 0.6.0 it ran the Python one, about 150 µs per task). Select the Python one with
+  `pip install doeff` installs 0.8.0, whose `scheduled()` runs the Rust scheduler by default (since
+  0.7.0; up to 0.6.0 it ran the Python one, about 150 µs per task). Select the Python one with
   `DOEFF_SCHEDULER=python` or `scheduled(program, implementation="python")`
   ([Rust Scheduler](25-rust-scheduler.md)).
 
@@ -343,9 +343,10 @@ No. `pip install doeff` installs no Hy, and the README's Python examples run wit
 
 Judge from these facts:
 
-- doeff is at 0.7.0, and versions before 1.0 change the API: code written for 0.4 does not run on
-  0.5 (`WithHandler` is gone from `doeff`), 0.6.0 changed what `pip install doeff` installs, and
-  0.7.0 changed the reference scheduler `scheduled` to the Rust one.
+- doeff is at 0.8.0, and versions before 1.0 change the API: code written for 0.4 does not run on
+  0.5 (`WithHandler` is gone from `doeff`), 0.6.0 changed what `pip install doeff` installs,
+  0.7.0 changed the reference scheduler `scheduled` to the Rust one, and 0.8.0 takes only a `def`
+  marked with `@handler` as a handler.
   The [changelog](../CHANGELOG.md) lists each change. Pin the version you test with.
 - One person maintains it, and uses it in their own projects.
 - Each push to `main` and each pull request runs the tests of the core packages on Linux with
