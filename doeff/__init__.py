@@ -317,3 +317,11 @@ if not TYPE_CHECKING:
                 f"cannot import name {name!r} from {__name__!r}; {hint}", name=__name__
             )
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}; {hint}")
+
+    def __dir__() -> list[str]:
+        """The module's names, with ``DoeffRunContext`` before its first use (PEP 562).
+
+        Without it, ``dir(doeff)`` showed ``DoeffRunContext`` only once some code had read it, so the
+        names a reader of ``dir`` saw depended on what ran first.
+        """
+        return sorted({*globals(), "DoeffRunContext"})
