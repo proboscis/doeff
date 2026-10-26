@@ -6,7 +6,7 @@
 # (agora deploy/agent-worker/worker-prepare.sh)。pre-commit の枠組みを据え付けた機体(make pre-commit-install)は
 # .pre-commit-config.yaml の項が同じ 3 つを撃ち、この file は入らない。
 #
-# なぜ著述時か: 着地の窓は力学のみ(2026-08-17 operator 裁定・mode = "focus")で、
+# なぜ著述時か: 着地の窓は力学のみ(2026-08-17 operator 裁定・mode は focus)で、
 # 直接 push は窓さえ通らない — どの経路でも commit は必ず著述機の git を通るので、
 # 記帳漏れ(2026-08-21 実弾 f47f0a4b: ADR 新設が台帳未更新で main へ)を構造的に
 # 止められる最初で唯一の点はここ。正典ゲートは R1 のとおり既定 pytest のまま
@@ -61,6 +61,16 @@ fi
 if [ -f "$TOP/scripts/check_hy_stubs.py" ]; then
   (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run hy-stubs) || {
     echo "doeff の commit の hook: .hy の隣の .pyi が古い(上の出力)。作り直して stage し直す。" >&2
+    exit 1
+  }
+fi
+
+# (3b) 持ち主の chat の言葉を日付つきで写した引用(card ki-2711b47b8d34)。項は .pre-commit-config.yaml の id no-chat-quotes
+# の 1 つで、stage した file だけを見る。入口の無い古い断面は塞がない。
+if [ -f "$TOP/scripts/check_no_operator_quotes.py" ]; then
+  (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run no-chat-quotes) || {
+    echo "doeff の commit の hook: 持ち主の chat の言葉の日付つきの引用が在る(上の出力)。決定と理由を記録の言葉で書き、" \
+      "出自を短い印にして stage し直す。" >&2
     exit 1
   }
 fi
