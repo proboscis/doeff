@@ -16,6 +16,8 @@ import hy  # noqa: F401  # activate Hy import hook for handler modules
 from doeff_claude_code.values import BypassAll, PermissionPolicy
 from doeff_time import sync_time_handler
 
+from doeff.program import ProgramHandler
+
 if TYPE_CHECKING:
     from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
     from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
@@ -63,7 +65,7 @@ def __getattr__(name: str) -> Any:
 # New handler composition — claude_resolver + claude_handler (Hy-based)
 # ---------------------------------------------------------------------------
 
-def claude_agent_handler(*, backend=None):
+def claude_agent_handler(*, backend=None) -> ProgramHandler:
     """Claude agent handler (new Hy-based architecture).
 
     Catches LaunchEffect(agent_type=CLAUDE) directly — no resolver indirection.
@@ -82,7 +84,7 @@ def claude_agent_handler(*, backend=None):
     return claude_handler(backend=backend)
 
 
-def codex_agent_handler(*, backend=None):
+def codex_agent_handler(*, backend=None) -> ProgramHandler:
     """Codex agent handler (Hy-based architecture)."""
     import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
 
@@ -105,7 +107,7 @@ def claude_agent_runtime_handlers(
     settings: dict[str, Any] | None = None,
     cold_resume_prompt: str | None = None,
     command: tuple[str, ...] = ("claude",),
-) -> list[Any]:
+) -> list[ProgramHandler]:
     """The agent runtime for Claude, as doeff-agents chooses it (agora-redesign #606).
 
     Callers that must not know the substrate (agora: "the agent runtime's
@@ -152,7 +154,7 @@ def fake_claude_agent_runtime_handlers(
     env: Mapping[str, str],
     settings: Mapping[str, object],
     permission: PermissionPolicy = _DEFAULT_CLAUDE_PERMISSION,
-) -> list[Any]:
+) -> list[ProgramHandler]:
     """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
 
     The same adapter over doeff-claude-code's fake handler.
@@ -180,7 +182,7 @@ def claude_process_layer_handler(
     live_limit: int | None,
     credential_floor_seconds: float,
     command: tuple[str, ...] = ("claude",),
-) -> Callable[..., object]:
+) -> ProgramHandler:
     """Layer 2 alone: the production handler that keeps each conversation's CLI process alive across turns.
 
     The same handler ``claude_agent_runtime_handlers`` returns first. For a
@@ -205,7 +207,7 @@ def fake_claude_process_layer_handler(
     *,
     responder: Callable[[str, tuple[str, ...]], "FakeReply"] | None = None,
     world: "FakeClaudeWorld | None" = None,
-) -> Callable[..., object]:
+) -> ProgramHandler:
     """Layer 2 alone, fake (no process, no API) — the first of ``fake_claude_agent_runtime_handlers``.
 
     ``responder`` / ``world`` mean the same as for the fake pair (exactly one).
@@ -222,7 +224,7 @@ def claude_agent_adapter_handler(
     settings: Mapping[str, object],
     cold_resume_prompt: str | None = None,
     permission: PermissionPolicy = _DEFAULT_CLAUDE_PERMISSION,
-) -> Callable[..., object]:
+) -> ProgramHandler:
     """The headless adapter alone: the public effects onto layer-2 effects.
 
     The same adapter both pair entries return second — whether layer 2 is
@@ -248,7 +250,7 @@ def codex_process_layer_handler(
     *,
     command: tuple[str, ...] = ("codex",),
     launch_timeout: float = 120.0,
-) -> Callable[..., object]:
+) -> ProgramHandler:
     """Codex layer 2 alone: the production handler that keeps each conversation's app-server process alive across turns.
 
     The codex counterpart of ``claude_process_layer_handler`` (card
@@ -265,7 +267,7 @@ def codex_process_layer_handler(
     return run(_hy_headless_compose_module().codex_process_layer(tuple(command), float(launch_timeout)))
 
 
-def fake_codex_process_layer_handler(*, world: "FakeCodexWorld") -> Callable[..., object]:
+def fake_codex_process_layer_handler(*, world: "FakeCodexWorld") -> ProgramHandler:
     """Codex layer 2 alone, fake (no process, no API).
 
     ``world`` holds the scripted replies (``CodexTurnInput`` → ``FakeCodexReply``)
@@ -282,7 +284,7 @@ def codex_agent_adapter_handler(
     approval_policy: "CodexApprovalPolicy | None" = None,
     sandbox: "CodexSandboxMode | None" = None,
     disabled_features: tuple[str, ...] = (),
-) -> Callable[..., object]:
+) -> ProgramHandler:
     """The codex adapter alone: the public effects onto codex layer-2 effects.
 
     The same adapter whether layer 2 is the production handler or the fake.
@@ -314,7 +316,7 @@ def agent_effectful_handler(
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
     codex_runtime_policy: CodexRuntimePolicy | None = None,
-) -> Any:
+) -> ProgramHandler:
     """Return the real tmux handler as a Hy defhandler.
 
     The session backend is resolved through Ask(SessionBackend), so
@@ -329,7 +331,7 @@ def agent_effectful_handler(
     )
 
 
-def mock_agent_handler(*, sessions: Sequence[MockSessionScript] = ()) -> Any:
+def mock_agent_handler(*, sessions: Sequence[MockSessionScript] = ()) -> ProgramHandler:
     """Return a fresh mock testing handler (a Hy defhandler) that answers each scripted session.
 
     ``sessions`` are ``MockSessionScript`` values, each naming its session
@@ -345,7 +347,7 @@ def mock_agent_handler(*, sessions: Sequence[MockSessionScript] = ()) -> Any:
     return _hy_effectful_module().agent_handler_defhandler(mock)
 
 
-def scenario_agent_handler(*, scripts: Mapping[str, Sequence[ScenarioStep]]) -> Any:
+def scenario_agent_handler(*, scripts: Mapping[str, Sequence[ScenarioStep]]) -> ProgramHandler:
     """Return a scenario-driven testing handler (a Hy defhandler) for the schema-result effects.
 
     ``scripts`` maps a deterministic session id (``AgentSpec.session_id``) to
@@ -364,7 +366,7 @@ def agent_effectful_handlers(
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
     codex_runtime_policy: CodexRuntimePolicy | None = None,
-) -> tuple[Any, ...]:
+) -> tuple[ProgramHandler, ...]:
     """Return standard production handlers for real tmux agent workflows.
 
     High-level agent programs use ``doeff_time.Delay`` between monitor polls.
@@ -390,7 +392,7 @@ def daemon_agent_handler(
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
     codex_runtime_policy: CodexRuntimePolicy | None = None,
     max_running: int = 10,
-) -> Any:
+) -> ProgramHandler:
     """Return the daemon-backed agent handler as a Hy defhandler."""
     active_client = client
     if active_client is None:
@@ -418,7 +420,7 @@ def daemon_agent_handlers(
     codex_runtime_policy: CodexRuntimePolicy | None = None,
     time_handler: Any | None = None,
     max_running: int = 10,
-) -> tuple[Any, ...]:
+) -> tuple[ProgramHandler, ...]:
     """Return the reference handlers for doeff-agentd-backed workflows."""
     return (
         time_handler or sync_time_handler(),
@@ -438,7 +440,7 @@ def mock_agent_handlers(
     *,
     time_handler: Any | None = None,
     sessions: Sequence[MockSessionScript] = (),
-) -> tuple[Any, ...]:
+) -> tuple[ProgramHandler, ...]:
     """Return standard mock handlers: a no-op Delay handler and a fresh ``mock_agent_handler(sessions=…)``."""
     noop_time_handler = sync_time_handler(sleep=lambda _seconds: None)
     return (time_handler or noop_time_handler, mock_agent_handler(sessions=sessions))

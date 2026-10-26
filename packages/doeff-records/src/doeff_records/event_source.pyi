@@ -165,7 +165,7 @@ class BodyWrapper(partial):
     ...
 SOURCE_EFFECTS: tuple[type, ...]
 
-def records_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]:
+def records_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> BodyWrapper:
     ...
 
 @dataclass(frozen=True, kw_only=True)
@@ -180,5 +180,5 @@ def run_read_signal[T](bindings: tuple[SignalTables, ...], subscriber: str, body
     ...
 READ_SIGNAL_EFFECTS: tuple[type, ...]
 
-def read_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]:
+def read_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> BodyWrapper:
     ...

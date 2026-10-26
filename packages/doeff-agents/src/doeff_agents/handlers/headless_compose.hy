@@ -13,6 +13,7 @@
 ;;; 並びは with_handlers の順(先頭が外側): 層 2 の handler → adapter(Program に近い側)。
 (require doeff-hy.macros [defk])
 (import collections.abc [Callable Mapping])
+(import doeff.program [ProgramHandler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome BypassAll PermissionPolicy])
@@ -46,7 +47,7 @@
 (import doeff_agents.handlers.headless_codex [HeadlessCodexConfig HeadlessCodexState headless-codex-handler])
 
 
-(defn #^ list headless-claude-handlers [#^ str config-dir #^ (get FrozenMap str) env
+(defn #^ (get list ProgramHandler) headless-claude-handlers [#^ str config-dir #^ (get FrozenMap str) env
                                         [settings None] [cold-resume-prompt None] [command #("claude")]
                                         * #^ (| int None) live-limit #^ float credential-floor-seconds]
   "本番の組: doeff-claude-code の本番の handler(会話の CLI を手番をまたいで生かす)+ headless の adapter。
@@ -60,7 +61,7 @@
   [(claude-code-handler (ClaudeCodeHost (tuple command) (clock-of (sync-time-handler)) live-limit credential-floor-seconds))
    (headless-claude-handler config (HeadlessState))])
 
-(defn #^ list fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]
+(defn #^ (get list ProgramHandler) fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]
                                              * #^ (get Mapping #(str str)) env #^ (get Mapping #(str object)) settings
                                              #^ PermissionPolicy [permission (BypassAll)]]
   "模擬の組: doeff-claude-code の fake の handler + headless の adapter(process も API も使わない)。

@@ -42,6 +42,7 @@ from doeff_time import Delay
 
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_agentic.effects import (
     AgentNotRunningError,
     CaptureOutputEffect,
@@ -556,7 +557,7 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
     tmux_handler: TmuxAgentHandler | None = None,
-) -> Any:
+) -> ProgramHandler:
     """Create the Program -> Program installer for legacy agentic effects.
 
     It installs two `(effect, k)` handlers: the agentic handler (RunAgent,

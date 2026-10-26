@@ -458,11 +458,13 @@
                       CreatePromise CompletePromise WaitWithinEffect Spawn Cancel Wait))
 
 
-;; 包む関数の型 = 本文を object で受ける Callable[[object], Program](subscribed_event_handler・timer_handler と同じ with-handlers の列に
-;; 並ぶ型 — doeff の ProgramHandler(doeff/program.py の、本文の結果の型を保つ Protocol)に当たる)。ProgramHandler は runtime_checkable で
-;; ない Protocol で isinstance に渡せない(契約の実行時の確かめが TypeError)ので、契約にはこの型を綴る。
+;; 包む関数の型 = BodyWrapper(handler の印を持つ class — subscribed_event_handler・timer_handler と同じ with-handlers の列に並ぶ、doeff の
+;; ProgramHandler に当たる値)。ProgramHandler は runtime_checkable でない Protocol で isinstance に渡せない(契約の実行時の確かめが
+;; TypeError)ので、契約には返す class を綴る。前の Callable[[object], Program] は公開 API の目録(tools/public_api_inventory.py)が
+;; handler と読めず、工場が未分類になった(card ki-01270742001e)。BodyWrapper は Callable[[object], Program](SignalSourceFactory の make の答え)
+;; にもそのまま入る。
 (deff records-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3104)
-  {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
+  {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}
   "記録の変化を合図として発する源で本体を包む関数を作るため(素の工場 — Program ではなく、with-handlers の列に置く)。bindings =
    SignalTables の tuple(合図の型 → 表と列の名前の組)/ subscriber = 購読者の名前(誤りの文で名指す)。購読の始まりの位置は、包んだ
    本体を走らせる頭で(外の記録の handler の下で)読み、源の task を Spawn してから本体を走らせる — 包んだ本体の間だけ源の task が動く。
@@ -508,7 +510,7 @@
 
 
 (deff read-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3127)
-  {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
+  {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}
   "組み立ての entry が with-handlers の列に置く源の工場(素の工場 — #3127)。包んだ本体を走らせる頭で、その組で記録に答えている handler に
    源の工場を ReadSignalSource で問い(本番 = 記録の HTTP の client・PostgreSQL が答える long-poll の源・模擬 = memory の記録の handler が答える
    自分の置き場の源)、その源で本体を包む — entry は源の種類を名指さず、本番と模擬の違いは記録の handler の差し替えだけになる。"

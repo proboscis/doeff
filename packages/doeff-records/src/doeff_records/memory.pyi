@@ -37,7 +37,7 @@ from doeff_records.effects import (
 from doeff_records.faults import SetStoreOutage, StoreFault
 from doeff_records.faults import StoreOperation as StoreOperation
 from doeff_records.store_choice import StoreChoice
-from doeff_records.event_source import ChangedRow, SignalSourceFactory, SignalTables
+from doeff_records.event_source import BodyWrapper, ChangedRow, SignalSourceFactory, SignalTables
 from doeff_records.values import (
     Appended,
     AppendedEvents,
@@ -244,5 +244,5 @@ def memory_publish(
 def run_memory_source[T](
     store: MemoryStore, bindings: tuple[SignalTables, ...], subscriber: str, body: Program[T, object]
 ) -> Program[T, object]: ...
-def memory_signal_handler(store: MemoryStore, bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]: ...
+def memory_signal_handler(store: MemoryStore, bindings: tuple[SignalTables, ...], subscriber: str) -> BodyWrapper: ...
 def memory_signal_source(store: MemoryStore) -> Program[SignalSourceFactory, object]: ...
