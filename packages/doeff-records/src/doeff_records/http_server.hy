@@ -886,12 +886,21 @@
   (<- first (| StorePrepared ServingEnded) (Race preparing serving-task))
   (match first
     (StorePrepared)
-      (do (when (is-not serving.maintenance None)
+      (do (var maintaining None)
+          (when (is-not serving.maintenance None)
             (<- handler-for Callable (PreparedHandlers))
             ;; 手入れの係は別の thread の VM で回す(run-apart — 頭の註の手入れ・ADR-DOE-RECORDS-002 R7): 送りの関数の計算が長くても、
             ;; 要求の task はその後ろに並ばない。手入れが出す effect(置き場・SQL・計器・時計)はこの task の handler が答える。
-            (<- (Spawn (run-apart (maintain handler-for serving.maintenance)) :daemon True)))
-          (<- (Wait serving-task)))
+            (<- spawned Task (Spawn (run-apart (maintain handler-for serving.maintenance)) :daemon True))
+            (:= maintaining spawned))
+          (<- (Wait serving-task))
+          ;; 受けが終わったら手入れの task を取り消して終わりを待つ: daemon の task は run の終わりに取り消されないので、取り消さないと
+          ;; run-apart の通い路が閉じず、別の thread の VM が次の effect の答えを待ち続ける(検の殻を閉じるたびに thread が 1 本残る)。
+          (when (is-not maintaining None)
+            (<- (Cancel maintaining))
+            (try
+              (<- (Wait maintaining))
+              (except [TaskCancelledError] None))))
     (ServingEnded) (do (<- (Cancel preparing))
                        ;; 取り消した用意の終わりを待つ(走りかけの仕事を置き去りにして root が返らない — #501)。
                        (try
