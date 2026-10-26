@@ -271,6 +271,7 @@ tests = [
     # README の例(多くは core-effects の handler の使い方)を子の interpreter で走らせる — 例は file に書いて走らせるので、import の
     # 逆依存では選ばれない(並行の例は writer が state を要るようになった後も落ちたままだった・card ki-68cd4c8effcd)
     "tests/test_readme_examples.py::test_readme_example_runs_and_prints_what_it_states",  # 4 本の call で 1.6 秒(load 約 70 の下)
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-core-effects]",  # 3.3 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 # README の囲みを書き換えた便は、例を走らせて印字を注記と比べる検と、囲みの言葉・入口の例の節の検を払う(card ki-68cd4c8effcd)。
@@ -315,7 +316,24 @@ tests = ["tests/test_check_links.py"]
 # 変えた便は、道具の検の全部を払う。検は道具を path で読むので、import の逆依存では選ばれない。
 [[tool.doeff.contract-tests]]
 prefix = "tools/public_api_inventory.py"
-tests = ["tests/test_public_api_inventory.py"]
+tests = [
+    "tests/test_public_api_inventory.py",
+    # 道具の読みで外れの表の照合が赤と緑を返す失敗ケース(使い捨ての package を子の process で読む 3 本)。package ごとの 39 件は
+    # 全部で 1 分を越えるので選ばない — 道具の読みが変わって表とずれたら日次が名指す
+    "tests/test_public_api_known_violations.py::test_an_added_outlier_turns_red_and_removing_it_turns_green",
+    "tests/test_public_api_known_violations.py::test_a_fixed_name_left_in_the_table_turns_red",
+    "tests/test_public_api_known_violations.py::test_an_outlier_added_with_a_reason_line_is_green",
+]
+
+# 公開 API の外れの既知の表(tests/data/public_api_known_violations.json)を変えた便は、表の形と減るだけの検を払う(card
+# ki-aaaa56621c5a)。検は表を path で読むので、import の逆依存では選ばれない。表と一緒に変えた package の 1 件は、その package の
+# 行が選ぶ。
+[[tool.doeff.contract-tests]]
+prefix = "tests/data/public_api_known_violations.json"
+tests = [
+    "tests/test_public_api_known_violations.py::test_the_known_table_has_one_well_formed_entry_per_package_dir",
+    "tests/test_public_api_known_violations.py::test_the_known_table_only_shrinks_from_its_first_version",
+]
 
 # README の頭の GIF と、GIF に映る例の file(tools/readme_demo/digest.py と handlers.py)を変えた便は、例が今の doeff で走り、
 # GIF の 4 行が `python -m doeff demo` と同じ答えを返し、GIF が目安の大きさに収まる検を払う。例は path で読むので、import の
@@ -496,24 +514,28 @@ prefix = "packages/doeff-domain/"
 tests = [
     "packages/doeff-domain/tests/test_domain_dogfood.py",  # 2.8 秒
     "docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green",  # 2.2 秒
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-domain]",  # 2.4 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-cluster/"
 tests = [
     "packages/doeff-cluster/tests/test_service_model_stubs.py",  # 1.5 秒 — 系の宣言の 3 module と .pyi
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-cluster]",  # 9.2 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-records/"
 tests = [
     "packages/doeff-records/tests/test_static_stubs.py",  # 12.2 秒 — doeff_records の .pyi と実装・pyright の strict
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-records]",  # 3.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-hy/"
 tests = [
     "packages/doeff-hy/tests/test_hy_stubs.py",  # 6.6 秒 — 配る hy の stub と実行時の hy
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-hy]",  # 2.2 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 # 例の検(下の doeff-traverse の行と同じ検)は、例が require する macro の持ち主の source(展開の中身)の変更でも選ぶ。
@@ -615,6 +637,7 @@ tests = [
     # 2.3 秒 — 型の宣言の Expand が Program を基底に持ち、pyright が file を並べた順で答えを変えない(agora-redesign #4346)。
     # pyright が .pyi を読むだけで import しないので、import の逆依存では選ばれない
     "tests/test_expand_program_static_types.py",
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-vm]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 # ── 2026-10-02 に足した組(agora-redesign #2658 — 表に組の無かった 31 package の中身を読み、package の公開の形・木を歩く母集団を
@@ -623,6 +646,7 @@ tests = [
 prefix = "packages/doeff-adr/"
 tests = [
     "packages/doeff-adr/tests/test_lazy_public_api.py",  # 3.1 秒 — 公開の名(__all__)と TYPE_CHECKING の import の名の一致・値は registry の物
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-adr]",  # 1.3 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
@@ -630,36 +654,42 @@ prefix = "packages/doeff-agents/"
 tests = [
     "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy::test_adr_doe_agents_013_driver_layer_has_no_direct_io",  # 1.5 秒 — driver 層の木を歩き直接の I/O が 0 行
     "packages/doeff-agents/tests/test_sessionhost_transaction_owner.py",  # 6.9 秒 — sessionhost の木を歩き transaction の開閉は許した定義だけ
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-agents]",  # 4.4 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-codex/"
 tests = [
     "tests/test_package_file_names_have_no_application_vocabulary.py",  # 1.5 秒 — 汎用の 4 package の file の名に業務の語が無い(中身は semgrep の規則が commit で止める)
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-codex]",  # 1.3 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-claude-code/"
 tests = [
     "tests/test_package_file_names_have_no_application_vocabulary.py",  # 1.5 秒 — 汎用の 4 package の file の名に業務の語が無い(中身は semgrep の規則が commit で止める)
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-claude-code]",  # 1.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-conductor/"
 tests = [
     "packages/doeff-conductor/tests/test_annotations_resolve.py",  # 2.3 秒 — 全 module を歩き、全関数の注釈が実行時に評価できる
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-conductor]",  # 3.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-docker/"
 tests = [
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy::test_adr_doe_hy_005_macros_live_only_in_doeff_hy",  # 1.5 秒 — macro の凍結台帳(compose.hy が載る)と repo の .hy の defmacro の一致
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-docker]",  # 1.0 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-hy-pytest/"
 tests = [
     "packages/doeff-hy-pytest/tests/test_plugin_distribution.py",  # 0.9 秒 — pytest11 の entry point の持ち主・src に .hy が無い
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-hy-pytest]",  # 1.0 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
@@ -672,6 +702,7 @@ tests = [
     # 走らせた間は 25〜40 秒(load 110〜130)で、後ろの repo 全体の行を 60 秒の上限で打ち切った(card ki-458fc8e0de36)。例も
     # macro も import しないので、import の逆依存では選ばれない(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間は日次でしか走らなかった)
     "packages/doeff-traverse/tests/test_examples_run.py",
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-traverse]",  # 0.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
@@ -686,6 +717,7 @@ tests = [
     "packages/doeff-vm-core/tests/test_move_semantics_architecture.py",
     "packages/doeff-vm-core/tests/test_vm_module_split.py",
     "packages/doeff-vm-core/tests/test_vm_unreachable_exhaustive.py",  # vm-core の tests の 7 本で 0.9 秒
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-vm-core]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
@@ -706,48 +738,69 @@ tests = [
     "tests/test_entry_files_have_no_internal_names.py",
 ]
 
-# ── 契約の組の要らない package(agora-redesign #2658 — 2026-10-02 に中身を読んで決めた 23 package)。
-#    「無い」の根拠 = stub(.pyi)が無いか突き合わせる相手が無い・公開の名の全体を確かめる検が無い・木を歩く検が無い。
-#    残る検は単体の振る舞い(変えた module を import するので、変えた所の検の逆依存が選ぶ)か、印 e2e の実 API の検。
+# ── 2026-10-02 に契約の組の要らない package として除外した 23 package(agora-redesign #2658 — 根拠は「公開の名の全体を
+#    確かめる検が無い」)。2026-10-27 に公開名の全体を既知の表と突き合わせる検(tests/test_public_api_known_violations.py の
+#    package ごとの 1 件・card ki-aaaa56621c5a)を足したので、除外の行を組の行に書き換えた。上の組の行の package にも同じ 1 件を
+#    足した。秒は 1 package を子の process で読む壁時計(load 約 55 の下・2026-10-27 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-agentic/"
-reason = "stub が無く、__all__ の全体を確かめる検も木を歩く検も無い — 検は types・effects・handlers を import して作って確かめる単体だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-agentic]",  # 2.2 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-agentic-cli/"
-reason = "Rust の bin crate(src/main.rs だけ)で Python の公開面も Python の検も無い — maturin の build の宣言は repo 全体の tests/test_rust_build_target_outside_package.py が見る"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-agentic-cli]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-claude-judge/"
-reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は問いの部品の形・答えの読み・形の違う答えと、print を fake で答える handler の単体(変えた module を import する)、印 e2e の本物の CLI の検だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-claude-judge]",  # 1.3 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-effect-analyzer/"
-reason = "stub も公開の名の一覧も無い(analyze・analyze_symbol を遅延で出すだけ)— Python の検は使い捨ての package を作って解析する単体で、Rust の検は cargo(make test-rust)の範囲"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-effect-analyzer]",  # 0.7 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-events/"
-reason = "stub が無く、__all__ を確かめる検も無い — 検は publish・待ち・型ごとの配信の単体の振る舞いだけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-events]",  # 1.2 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-flow/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は数個の名の同一性の抜き取り)— 検は単体と CLI の振る舞いだけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-flow]",  # 1.1 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-gemini/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は数個の名の同一性と継承の抜き取り)— 検は単体と、印 e2e の実 API の検だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-gemini]",  # 1.2 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-git/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い — 検は 1 本(3 名ずつの同一性の抜き取りと、実 git の handler の振る舞い)"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-git]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-google-secret-manager/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い — 検は非推奨の shim の警告と単体の振る舞い、印 e2e の実 API の検だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-google-secret-manager]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-image/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(公開の名の検は 3 名の同一性)— 検は単体と provider を重ねる統合の振る舞いだけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-image]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 # wheel の中の binary の位置(命令の入口が探す所)と、CI の maturin の固定と、今の source を組んだ wheel を入れた命令の動き
 # (PyPI の 0.1.3 は全部の機体の wheel が binary を python/ の下に持ち、入れた命令が動かなかった・card ki-d20475e94d87)。
@@ -757,6 +810,7 @@ prefix = "packages/doeff-indexer/"
 tests = [
     "tests/test_indexer_wheel_layout.py",
     "tests/test_indexer_cli_finds_binary_on_package_path.py",
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-indexer]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
 [[tool.doeff.contract-tests]]
@@ -765,55 +819,81 @@ tests = ["tests/test_indexer_wheel_layout.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-jev/"
-reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は宛先の解き方・要求の形・答えの読みの単体だけ(台本の handler で答える)"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-jev]",  # 1.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-linter/"
-reason = "Rust の crate で Python の公開面が無い — tests/ の Python は Rust の検体と conftest だけで、Rust の検は cargo の範囲"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-linter]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-llm/"
-reason = "検が 0 本(tests の dir が無い)— 公開の effect は provider の package の検が import して使う(変えた所の検の逆依存が選ぶ)"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-llm]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-ml-nexus/"
-reason = "stub も公開の名の一覧も無い — 検は Dockerfile の出力・依存・直列化・runner の単体と、手書きの 6 module の import の煙の検だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-ml-nexus]",  # 0.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-notify/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は同じ module から取った 3 名の同一性で常に真)— 検は単体の振る舞いだけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-notify]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-openai/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は 4 名の抜き取り)— 検は mock・本番の handler の単体と、印 e2e の実 API の検だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-openai]",  # 4.0 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-openrouter/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は同一性と継承 3 本の抜き取り)— 検は単体と、印 e2e の実 API の検だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-openrouter]",  # 1.1 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-secret/"
-reason = "stub が無く、公開の名を確かめる検も無い — 検は in-memory と環境変数の handler の単体の振る舞いだけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-secret]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-seedream/"
-reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は同一性の抜き取り)— 検は mock の handler と client の単体だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-seedream]",  # 0.9 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-system-one/"
-reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は台本の handler と判定の関数の単体だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-system-one]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-test-target/"
-reason = "他の検の的(fixture)の package で、自分の公開の形を確かめる検は無い — 的を写して解析する使い手は doeff-effect-analyzer の Rust の検(cargo の範囲・この表に載せられない)"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-test-target]",  # 0.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-time/"
-reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 3 つの時計が同じ deftest を通る test_time_contract.hy は振る舞いの検で、doeff_time を import するので逆依存が選ぶ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-time]",  # 0.9 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-validation/"
-reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は Python の API と Hy の macro の展開の誤りの単体だけ"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-validation]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
+]
 
 [dependency-groups]
 dev = [

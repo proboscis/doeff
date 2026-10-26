@@ -75,12 +75,15 @@ jobs:
       # 印 semgrep の検(repo の規則を semgrep で検める)は外す — 版の違いではなく repo の規則を見る検で、日次の検が持つ。外す検 =
       # 核の外の重い部品(doeff-gemini・doeff-conductor・doeff-cluster と、doeff-agents の MCP の server の検)か、開発の道具(semgrep・pre-commit・
       # doeff-linter)を要る検と、共有の runner で揺れる時間の比の検。足す時は訳と一緒にここへ書く。
+      # tests/test_public_api_known_violations.py は packages/ の下の 39 個の全部を import して公開名を既知の表と突き合わせる —
+      # 核の 5 個だけの venv では核の外の依存が無く、module が import できずに名を字面で読むので表とずれる(日次と登記の前の検が持つ)。
       - name: Run tests (doeff and doeff-vm)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           .venv-ci/bin/python -m pytest -q -n auto -m "not e2e and not semgrep" \
             tests packages/doeff-vm/tests packages/doeff-vm-core/tests \
             --ignore=tests/test_llm_multi_provider_handlers.py \
+            --ignore=tests/test_public_api_known_violations.py \
             --ignore=tests/test_mcp_json_type_table.py \
             --ignore=tests/test_lint_entrypoint_wiring.py \
             --ignore=tests/test_nested_definition_scope.py \
