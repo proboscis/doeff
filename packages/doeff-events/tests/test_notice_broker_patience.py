@@ -144,21 +144,3 @@ def test_a_wrong_answer_is_named() -> None:
 
     with pytest.raises(TypeError, match="law-wrong.*BrokerPatience"):
         run_on_virtual_clock(_reading_party(broker, "law-wrong", cuts_and_waits(), program_handler(answers_a_number)))
-
-
-def test_seconds_still_passed_to_the_factory_answer_its_own_question() -> None:
-    # The move to the question: a caller that still passes the seconds needs no answer outside, and its source waits
-    # as long as it said. Goes with the argument once no caller passes it (agora card ki-6b3c298bfee1).
-    broker = MemoryBroker()
-
-    @do
-    def cuts_and_waits() -> EffectGenerator[object]:
-        yield cut_broker(broker, "the broker is away for the rest of the test")
-        return (yield WaitForEvent(LawNote))
-
-    events = notice_events_handler("law-passed", law_routes(PREFIX), ANSWERED_SECONDS)
-    party = subscribed_event_handler(EventBus(), "law-passed", (LawNote,))(
-        memory_notice_handler(broker)(events(cuts_and_waits()))
-    )
-    with pytest.raises(NoticeSourceUnreachable, match=f"within {ANSWERED_SECONDS} s"):
-        run_on_virtual_clock(party)
