@@ -6,8 +6,9 @@ process — behind a single effect boundary.
 
 > **Needs components outside `pip install doeff`.** `doeff-agents` is not part of
 > the core install, and PyPI has only an old `doeff-agents` 0.1.1 build, which
-> does not import with doeff 0.5 or later. Install it from a checkout of this repository
-> as shown under Installation.
+> does not import with doeff 0.5 or later. Its examples also import `doeff-time`,
+> which `pip install doeff` does not install either. Install both from a checkout of
+> this repository as shown under Installation.
 
 ## Installation
 
