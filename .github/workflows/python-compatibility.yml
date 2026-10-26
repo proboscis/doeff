@@ -54,7 +54,9 @@ jobs:
       # (doeff-time・doeff-traverse・doeff-validation・cloudpickle・pyyaml — doeff-hy の macro の validate・check は doeff-validation を
       # 読む)・build の口と型の検が子の process で呼ぶ maturin と pyright(版は uv.lock の dev の物)。doeff-core-effects は答え手の検が
       # httpx と aiohttp と psycopg を読むので extra の http・http-server・postgres ごと入れる(httpx は既定の依存でなく extra http に在る —
-      # card ki-006338b48f4b)。venv の bin を PATH に置き、検が呼ぶ python・hy・doeff をこの venv の物にする。
+      # card ki-006338b48f4b)。docs の 19 章(agent の手引き)の例は doeff-agents の effect を yield するので、doeff-agents と、PyPI に
+      # 無い依存の doeff-claude-code・doeff-codex も checkout から入れる(tests/test_docs_page_examples.py が例を走らせる)。
+      # venv の bin を PATH に置き、検が呼ぶ python・hy・doeff をこの venv の物にする。
       - name: Install the core packages into a fresh venv
         id: install
         run: |
@@ -64,13 +66,14 @@ jobs:
           uv pip install --python .venv-ci/bin/python -c .venv-ci/tool-pins.txt \
             ./packages/doeff-vm "./packages/doeff-core-effects[http,http-server,postgres]" ./packages/doeff-hy ./packages/doeff-hy-pytest . \
             ./packages/doeff-adr ./packages/doeff-time ./packages/doeff-traverse ./packages/doeff-validation \
+            ./packages/doeff-agents ./packages/doeff-claude-code ./packages/doeff-codex \
             pytest pytest-asyncio pytest-timeout pytest-xdist cloudpickle pyyaml maturin pyright
 
       - name: Verify doeff-vm import
         run: .venv-ci/bin/python -c "import doeff_vm; import doeff_vm.doeff_vm"
 
       # 印 semgrep の検(repo の規則を semgrep で検める)は外す — 版の違いではなく repo の規則を見る検で、日次の検が持つ。外す検 =
-      # 核の外の重い部品(doeff-gemini・doeff-agents・doeff-conductor・doeff-cluster)か、開発の道具(semgrep・pre-commit・
+      # 核の外の重い部品(doeff-gemini・doeff-conductor・doeff-cluster と、doeff-agents の MCP の server の検)か、開発の道具(semgrep・pre-commit・
       # doeff-linter)を要る検と、共有の runner で揺れる時間の比の検。足す時は訳と一緒にここへ書く。
       - name: Run tests (doeff and doeff-vm)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
