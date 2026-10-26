@@ -9,6 +9,7 @@ from operator import attrgetter as attrgetter
 from math import ceil as ceil
 from typing import TypeGuard as TypeGuard
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster.shared.core.job_rules import content_refusal as content_refusal
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
