@@ -4,11 +4,14 @@
 ;;; 「それを受けた調停の変化(送り手 = coordinator)」を分けて版と記録を付ける(resource_policy.stamp)。
 ;;;
 ;;; HTTP(資源の口・2026-09-24):
-;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout | GroupLimit)
+;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout | GroupLimit | NeedsOverride)
 ;;;   GET    /resources/<Kind>/<名>        1 つ(resourceVersion・generation・所有者・作った / 書いた送り手・spec・status)
-;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service・Rollout・GroupLimit — 組の同時数の上限)。在れば 409
+;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service・Rollout・GroupLimit — 組の同時数の上限・NeedsOverride — Service の
+;;;                                         needs の一時の上書き {"needs" "capability" "ttlSeconds"})。在れば 409
 ;;;   PUT    /resources/<Kind>/<名>        書き換える {"spec", "resourceVersion"}。版が古ければ 409・版が無ければ 400
-;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(送り手が誰でも消せる。進行中の Rollout が扱う Service・進行中の Rollout は force でだけ消す)
+;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(送り手が誰でも消せる。進行中の Rollout が扱う Service・進行中の Rollout は force でだけ消す。
+;;;                                         NeedsOverride を消すと Service は元の needs に戻る)
+;;;   Service の needs の書き換え(PUT)は持ち主(owner)の送り手からだけ受け、他は 403 で NeedsOverride を案内する(2026-10-27・card ki-1523bc0aba4f)
 ;;;   POST   /resources/Service/<名>/readiness   ReportReady の報告 {worker pid revision instance attempt specHash placement ready reason}
 ;;;   POST   /resources/Service/<名>/metrics     ReportMetrics の報告 {worker … placement metrics}(資源の状態は変えない)
 ;;;   GET    /metrics                            Prometheus の text: 今動いている process の計器(label service・worker)
@@ -48,7 +51,7 @@
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
-                          legacy-put-jobs COORDINATOR ready-instances])
+                          legacy-put-jobs COORDINATOR ready-instances create-needs-override lift-needs-overrides needs-override-due])
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
 (import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
@@ -70,7 +73,10 @@
   ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
   ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
   ;; 生死の切り替わり(#1934): 最後に、生きていないと数える worker の名を今の時刻で求め直す(変われば Worker の status の live と版が進む)。
-  (<- placed ClusterState (reconcile now changed timing))
+  ;; needs の上書き(2026-10-27・card ki-1523bc0aba4f): 置き方の前に、期限の来た上書きと結び先の能力が消えた上書きを外す(同じ拍で元の
+  ;; needs で置き直す — 外した拍と置き直す拍の間に Service が置き先の無いまま残らない)。
+  (<- lifted ClusterState (lift-needs-overrides changed now timing))
+  (<- placed ClusterState (reconcile now lifted timing))
   (val reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now placed timing) timing) now) now timing))
   (stamp changed reconciled COORDINATOR now timing))
 
@@ -104,8 +110,10 @@
    tick の中の期限で動く判断ごとの答え(intent/due_model — #3865)を合わせた物。どれも DueNever なら DueNever(状態がこのままなら
    tick は何も変えない)。"
   (<- placing (| int None) (placement-due state now timing))
+  (<- lifting (| int None) (needs-override-due state))
   (val dues #((! (liveness-due state now timing)) (! (task-due state now timing)) (! (sweep-due state now timing))
-              (if (is placing None) (DueNever) (DueAt :at placing))))
+              (if (is placing None) (DueNever) (DueAt :at placing))
+              (if (is lifting None) (DueNever) (DueAt :at lifting))))
   (<- answer (| DueAt DueNow DueNever) (earliest-due dues))
   answer)
 
@@ -216,6 +224,7 @@
                "events" "audit" "audit_seq" "meta" "revision"  ; 出来事と版の記録 — 事実
                "next_task" "task_prefix" "env_cold_starts"     ; 数と名
                "outbox"                                  ; 終わった刻 finished-ms は事実(出口の保持の期限は受領されない行の掃除だけ)
+               "needs_overrides"                         ; 上書きの期限 expires-ms は書き手が決めた刻(頼み直して延ばす期限でない)
                "derivable" "running_commit"                    ; 導く能力の名・走っている版
                "unreached_ms")))                               ; 届かない間の起点 — ずらしの起点そのもの(unreached-shifted が進める)
 
@@ -440,7 +449,10 @@
       #(state 200 (get-resource state (get parts 1) (get parts 2) now timing))
     (and (= head "resources") (= (len parts) 2) (= method "POST"))
       (do (setv actor (require-actor request.actor))
-          (setv after (! (settle state (create-resource state (get parts 1) body actor now) actor now timing)))
+          (setv created (if (= (get parts 1) "NeedsOverride")
+                            (! (create-needs-override state body actor now timing))
+                            (create-resource state (get parts 1) body actor now)))
+          (setv after (! (settle state created actor now timing)))
           #(after 201 (get-resource after (get parts 1) body.name now timing)))
     (and (= head "resources") (= (len parts) 3) (= method "PUT"))
       (do (setv actor (require-actor request.actor))

@@ -479,7 +479,8 @@
         "doeff-cluster-cluster-rules",
         "doeff-cluster-state-json",
         "doeff-cluster-detached-rules",
-        "doeff-hy-table"
+        "doeff-hy-table",
+        "doeff-cluster-resource-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
@@ -1197,7 +1198,8 @@
         "doeff-cluster-readiness-rules",
         "doeff-cluster-cluster-rules",
         "doeff-cluster-detached-model",
-        "doeff-cluster-detached-rules"
+        "doeff-cluster-detached-rules",
+        "doeff-cluster-shared-capabilities"
       ],
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",
@@ -2628,7 +2630,8 @@
         "doeff-cluster-detached-model",
         "doeff-cluster-detached-rules",
         "doeff-hy-table",
-        "doeff-traverse-effects"
+        "doeff-traverse-effects",
+        "doeff-cluster-resource-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-state-json",

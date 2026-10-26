@@ -355,6 +355,26 @@
   (#^ int since-ms))
 
 
+(defrecord NeedsOverride
+  "Service 1 つの needs の一時の上書き(資源 NeedsOverride — 2026-10-27・card ki-1523bc0aba4f)。復旧の手が Service を別の worker の能力へ
+   一時に結ぶ形で、上書きの間 Service の needs(ClusterJob.needs)は needs になり、外れると original に戻る。以前は Service の spec.needs を
+   直に書き換えたので、元の needs・結び先・期限が残らず、能力の側だけが戻ると Service が置き先の無いまま残った(2026-10-26 22:45〜23:21 に
+   13 本)。coordinator は、結び先の能力 capability を名乗る生きた worker が 0 になった拍か、期限 expires-ms の来た拍で上書きを外し、
+   original で置き直す(resource_policy.lift-needs-overrides)。上書きの間に Service の持ち主が宣言し直した needs は original に入り、
+   外した後に効く。
+   service = Service の名(資源の名と同じ)・needs = 上書きの間の needs(名の順 — capability を含む)・capability = 結び先の能力の名・
+   original = 上書きの前の needs(名の順 — 外す時に戻す値)・expires-ms = 期限(epoch ms)・writer = 上書きを書いた送り手(X-Actor)・
+   since-ms = 書いた刻。保存する(durable_kv の needsoverride/<名>)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str service)
+  (#^ (get tuple #(str ...)) needs)
+  (#^ str capability)
+  (#^ (get tuple #(str ...)) original)
+  (#^ int expires-ms)
+  (#^ str writer)
+  (#^ int since-ms))
+
+
 (defrecord SupersededRun
   "退いた世代(同じ名の新しい世代が名乗った後の旧い Pod)が、まだ走らせていると報告した入れ替え(handoff)の job の組(AL-D2)。旧い Pod の
    preStop の drain(drain_policy.superseded-worker-view)は、この組が空になるまで(退かせた process が走っている仕事を終えて自分で終わる
@@ -1142,7 +1162,11 @@
   ;; WorkerGone になって Service に載った後に WorkerBack で戻った(rev 47 2026-10-17 15:25 の実測)。読み直し(api_policy.resume-after-downtime)
   ;; が今の刻を置き、調停の歩ごとにその刻からの長さだけ時計をずらし(api_policy.unreached-shifted)、最初の heartbeat を受けた歩か
   ;; 待ちの上限(api_policy.REACH-WAIT-MS)で None に戻す。保存しない(起き直すたびに読み直しが置く)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (| int None) unreached-ms None))
+  (setv #^ (| int None) unreached-ms None)
+  ;; Service の needs の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名 → NeedsOverride(資源 NeedsOverride)。上書きの間
+  ;; Service の needs は上書きの needs で、結び先の能力を名乗る生きた worker が 0 になった拍か期限の拍に、coordinator が元の needs へ戻して
+  ;; 行を外す(resource_policy.lift-needs-overrides)。保存する(durable_kv の needsoverride/<名>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table NeedsOverride) needs-overrides (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []
