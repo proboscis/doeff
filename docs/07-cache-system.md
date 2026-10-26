@@ -67,9 +67,10 @@ See [CachePolicy in the API Reference](13-api-reference.md#cachepolicy) for the 
 
 On a miss, `CacheGet` raises `KeyError`, so the program fetches the response and stores it; the
 next call for the same key is served from the cache. The fetch is an effect too: `fetch_user` yields
-`GetJson(path)` and does no I/O of its own. `http_api` is the real handler, which calls the server
-with httpx; `fake_api` answers from memory and records each path it is asked for, so the example
-runs offline. To call the server, put `http_api` where `fake_api` is; `fetch_user` does not change.
+`GetJson(path)` and does no I/O of its own; the handler it runs under decides what `GetJson` means.
+Under `answer_from_server`, `GetJson` means "GET the path from the server with httpx". Under
+`answer_from_memory`, it means "answer from memory and record the path", so the example runs
+offline. To call the server, run the program under `answer_from_server`; `fetch_user` does not change.
 The program runs under a cache handler (here `in_memory_cache_handler()`) and `await_handler()`
 inside `scheduled()`.
 
@@ -88,7 +89,7 @@ class GetJson(EffectBase):  # an effect: "GET this path and give me the JSON bod
     path: str
 
 @handler
-def http_api(effect, k):  # the real handler: calls the server
+def answer_from_server(effect, k):  # GetJson means: GET the path from the server
     if isinstance(effect, GetJson):
         response = httpx.get(f"https://api.example.com{effect.path}")
         response.raise_for_status()
@@ -98,7 +99,7 @@ def http_api(effect, k):  # the real handler: calls the server
 requested = []
 
 @handler
-def fake_api(effect, k):  # the fake: answers from memory and records the request
+def answer_from_memory(effect, k):  # GetJson means: answer from memory, record the path
     if isinstance(effect, GetJson):
         requested.append(effect.path)
         return (yield Resume(k, {"id": 1, "name": "Ada"}))
@@ -119,7 +120,7 @@ def program():
     second = yield fetch_user(1)  # served from the cache
     return first, second
 
-prog = in_memory_cache_handler()(fake_api(program()))
+prog = in_memory_cache_handler()(answer_from_memory(program()))
 first, second = run(scheduled(await_handler()(prog)))
 print(first)  # {'id': 1, 'name': 'Ada'}
 print(second == first)  # True
