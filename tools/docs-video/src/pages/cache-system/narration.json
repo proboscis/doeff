@@ -57,7 +57,7 @@
  },
  {
   "id": "e3",
-  "text": "The fake handler got exactly one request."
+  "text": "Here the handler answer from memory decides what Get Json means, and it got exactly one request."
  },
  {
   "id": "d1",

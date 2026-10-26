@@ -4,7 +4,8 @@
 //   2. Miss, then hit: the handler throws KeyError into the program at the yield, the program computes and stores;
 //      the second call is answered from the cache (408.2 ms, then 0.5 ms).
 //   3. The policy (ttl, lifecycle, storage, metadata) travels inside CachePut; the handler decides what it means.
-//   4. The page's API example: two calls to fetch_user(1), one GetJson for the handler fake_api.
+//   4. The page's API example: two calls to fetch_user(1), one GetJson; the handler answer_from_memory gives it
+//      its meaning.
 //   5. The same program under in_memory_cache_handler, sqlite_cache_handler, and no cache handler.
 // Every output, order and time on screen is printed by a program in measure/ (its .log is next to it).
 import React from 'react';
@@ -412,7 +413,7 @@ const PolicyScene: React.FC = () => {
 const API_LINES: Lines = [
   [0, 'The page\'s API example: fetch_user(1), called twice.'],
   [6, 'First call: a miss, one request, then CachePut. Second call: from the cache.'],
-  [15, 'fake_api got one request: /users/1.'],
+  [15, 'answer_from_memory says what GetJson means: one request, /users/1.'],
 ];
 const API = f(21);
 const FETCH = [
@@ -447,8 +448,8 @@ const ApiScene: React.FC = () => {
         rows={[{key: '"user_1"', value: ADA, at: 10.4, lit: [[10.4, 11.0], [12.4, 13.2]]}]}
       />
       <Box x={server.x} y={server.y} w={server.w} h={server.h} color={PROD} on={frame >= f(8.8) && frame < f(9.6)} opacity={fadeAt(frame, 0.6)}>
-        <div style={{position: 'absolute', left: 20, top: 12, fontFamily: MONO, fontSize: 19, fontWeight: 700, color: PROD}}>fake_api</div>
-        <div style={{position: 'absolute', left: 20, top: 42, fontFamily: SANS, fontSize: 16, color: MUTED}}>the handler that answers GetJson in place of the server</div>
+        <div style={{position: 'absolute', left: 20, top: 12, fontFamily: MONO, fontSize: 19, fontWeight: 700, color: PROD}}>answer_from_memory</div>
+        <div style={{position: 'absolute', left: 20, top: 42, fontFamily: SANS, fontSize: 16, color: MUTED}}>the handler that decides what GetJson means here</div>
         <div style={{position: 'absolute', left: 20, top: 76, fontFamily: MONO, fontSize: 18, color: TEXT}}>
           requested = <span style={{color: frame >= f(15.4) ? LOOK : TEXT, fontWeight: 700}}>{requested ? "['/users/1']" : '[]'}</span>
         </div>
