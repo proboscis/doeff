@@ -29,6 +29,7 @@ from typing import Any
 
 from doeff import Await, Effect, Pass, Resume, do, slog
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
@@ -1039,7 +1040,7 @@ def opencode_handler(
     port: int | None = None,
     startup_timeout: float = 30.0,
     working_dir: str | None = None,
-) -> Callable[[Any, Any], Any]:
+) -> ProgramHandler:
     """Create VM-compatible handlers for agentic effects using OpenCode.
 
     Args:

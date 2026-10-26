@@ -1,7 +1,7 @@
 """Handlers for doeff-agentic effects."""
 
 
-from typing import Any
+from doeff.program import ProgramHandler
 
 from .opencode import OpenCodeHandler, opencode_handler
 from .testing import MockAgenticHandler, MockAgenticState, mock_handlers
@@ -31,7 +31,7 @@ def production_handlers(
     port: int | None = None,
     startup_timeout: float = 30.0,
     working_dir: str | None = None,
-) -> Any:
+) -> ProgramHandler:
     """Create a production protocol handler for new agentic effects."""
     if backend == "opencode":
         return opencode_handler(

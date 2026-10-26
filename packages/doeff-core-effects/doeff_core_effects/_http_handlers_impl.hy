@@ -20,6 +20,7 @@
 
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
+(import doeff.program [ProgramHandler])
 (import doeff_core_effects.effects [Await HttpRequest HttpResponse SlogEffect slog])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpPhases])
 
@@ -72,7 +73,7 @@
 (val HTTP-PRODUCTION-EFFECTS #(Await SlogEffect))
 
 
-(defn #^ (get Callable #([(| Program EffectBase)] Program)) http-production-handler
+(defn #^ ProgramHandler http-production-handler
   [* #^ (get Callable #([] object)) [client-factory http-client-factory] #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
   "Handle HttpRequest with retry/backoff through one async HTTP client per covered scope: each time the handler value is
    installed around a program, a new client is made when that program starts and closed when it ends — the same value can
@@ -93,7 +94,7 @@
       http-production-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
 
 
-(defn #^ (get Callable #([(| Program EffectBase)] Program)) http-fixture-handler
+(defn #^ ProgramHandler http-fixture-handler
   [#^ (| str Path) fixture-path * #^ str mode #^ (get Callable #([] object)) [client-factory http-client-factory]
    #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
   "Record or replay HttpRequest responses from a pickle fixture file."

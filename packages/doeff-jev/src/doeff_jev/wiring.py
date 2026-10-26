@@ -21,6 +21,7 @@ from doeff_core_effects.cache_handlers import in_memory_cache_handler, sqlite_ca
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import run, with_handlers
+from doeff.program import ProgramHandler
 from doeff_jev.handlers.journal import journal_handler
 from doeff_jev.handlers.production import jev_handler, jev_memo_handler
 from doeff_jev.target import JevTarget, target_from_process_environment
@@ -36,7 +37,7 @@ def judge_stack(
     journal: str | None = DEFAULT_JOURNAL,
     caller: str = "",
     log_stderr: bool = False,
-) -> list:
+) -> list[ProgramHandler]:
     """本番の handler の列(外側が先)。`http` / `cache` を差し替えるとテストや別の実体になる。
 
     journal=None で記録なし。cache=None で in-memory(process 内だけ)。
@@ -46,7 +47,7 @@ def judge_stack(
     sink = slog_handler if log_stderr else slog_discard_handler
     # 効果は内側から外へ流れる: jev の slog("jev_judge") は journal(内)が消費し、
     # それ以外の slog は sink(外)へ抜ける。journal を sink の外に置くと sink が先に飲む。
-    layers: list = [await_handler(), try_handler, sink]
+    layers: list[ProgramHandler] = [await_handler(), try_handler, sink]
     if journal:
         layers.append(journal_handler(os.path.expanduser(journal), caller=caller))
     layers.append(http if http is not None else http_production_handler())

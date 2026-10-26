@@ -4,6 +4,7 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from collections.abc import Mapping as Mapping
+from doeff.program import ProgramHandler as ProgramHandler
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_time import sync_time_handler as sync_time_handler
 from doeff_claude_code.values import ClaudeHome as ClaudeHome
@@ -47,10 +48,10 @@ from doeff_agents.handlers.headless_codex import HeadlessCodexConfig as Headless
 from doeff_agents.handlers.headless_codex import HeadlessCodexState as HeadlessCodexState
 from doeff_agents.handlers.headless_codex import headless_codex_handler as headless_codex_handler
 
-def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int | None, credential_floor_seconds: float) -> list:
+def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int | None, credential_floor_seconds: float) -> list[ProgramHandler]:
     ...
 
-def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, *, env: Mapping[str, str], settings: Mapping[str, object], permission: PermissionPolicy=...) -> list:
+def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, *, env: Mapping[str, str], settings: Mapping[str, object], permission: PermissionPolicy=...) -> list[ProgramHandler]:
     ...
 
 def claude_process_layer(command: tuple, live_limit: int | None, credential_floor_seconds: float) -> _Program[Callable, object]:

@@ -35,6 +35,7 @@ from typing import Any
 
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
@@ -941,7 +942,7 @@ def tmux_handler(
     working_dir: str | None = None,
     *,
     backend: Any | None = None,
-) -> Callable[[Any, Any], Any]:
+) -> ProgramHandler:
     """Create VM-compatible handlers for agentic effects using tmux.
 
     Args:
