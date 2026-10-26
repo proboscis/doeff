@@ -64,7 +64,6 @@ def verify() -> None:  # テスト境界でのみrunを呼び、外部APIへの�
     calls: list[str] = []  # 発行された依頼の順番をテストで観測する。
 
     @handler  # 生の依頼処理を、Programへ取り付けるハンドラに変換する。
-    @do  # 固定画像を返すハンドラ自身もProgramとして動く。
     def fixed_images(effect: EffectBase, k: Any):  # kは依頼元へ結果を渡して再開するための継続。
         if isinstance(effect, ImageGenerate):  # 表紙の生成依頼を受け取る。
             assert effect.model == base.model  # 指定モデルが生成依頼に届くことを確認する。

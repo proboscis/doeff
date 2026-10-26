@@ -247,7 +247,6 @@ def verify_sdk_stream() -> None:  # 通信せず、本物のSDKデコーダで�
     waits: list[str] = []  # 観測した待機の一覧を空で用意する。
 
     @handler
-    @do  # 呼び出し時に合成可能なProgramを作る。
     def count_waits(effect, k):  # 各Awaitの発生を観測するハンドラを定義する。
         if isinstance(effect, Await):  # 今回の検証対象である待機だけを数える。
             waits.append(type(effect.coroutine).__name__)  # 待機を観測した記録を1件追加する。

@@ -67,7 +67,6 @@ def review_spec(node: str, prompt: str):  # 作業名と依頼文から1件分�
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで再開と委譲を指示する。
 def fixed_agent(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
     if isinstance(effect, LaunchSessionEffect):  # 起動の依頼なら、
         return (yield Resume(k, SessionHandle(effect.spec.session_id)))  # 起こさずハンドルだけ返す。

@@ -71,7 +71,6 @@ def dispatcher(work):  # cardの鍵と、仕事の分数の表を受け取る。
 
 def answer_ceiling(value):  # 上限の依頼だけに決めた値を答える、取り替えられる設定の受け手を作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def handle(effect, k):  # 上限の依頼だけを受け持つ。
         if isinstance(effect, Ask) and effect.key == "ceiling":  # 上限の依頼には、
             return (yield Resume(k, value))  # 決めた値を返す。
@@ -82,7 +81,6 @@ def answer_ceiling(value):  # 上限の依頼だけに決めた値を答える�
 
 def memory_board(board, peak):  # 本番の記録のサービスの代わりに、メモリの盤で答える受け手を作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def handle(effect, k):  # 届いた依頼に、メモリの盤面で答える。
         if isinstance(effect, ReadBoard):  # 盤面の依頼には、
             return (yield Resume(k, list(board.values())))  # 今の盤面を返す。

@@ -80,7 +80,6 @@ def close_turn(reply):  # 終わったターンの返事1つを、待ちの申�
 
 def fake_board(board, posted, session):  # 試験用: 申告と続きを、メモリに書くハンドラ。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def answer(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
         if isinstance(effect, DeclareWait):  # 待ちの申告は、
             board[session] = effect.waits  # 会話ごとの表を置き換える。

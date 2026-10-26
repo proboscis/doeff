@@ -55,7 +55,6 @@ def attack():  # 状態の保存先を知らず、更新後のHPを返す。
     return remaining  # ハンドラの戻したHPを、呼び出し元へ返す。
 
 @handler  # ダメージの解釈を、Programに取り付けられる形にする。
-@do  # 状態を読む・書く部分も、外側へyieldする。
 def damage_handler(effect, k):  # 依頼と、結果を待つ処理の続きを受け取る。
     if not isinstance(effect, DealDamage):  # ダメージ以外の依頼には介入しない。
         return (yield Pass(effect, k))  # 担当する別のハンドラへ通す。
@@ -120,7 +119,6 @@ def workflow():  # 2つの索引と、選んだ時計での経過秒数を返す
 from doeff_core_effects import HttpRequest, HttpResponse  # HTTPの公開の依頼型と応答型を使う。
 
 @handler  # 文書の依頼をHTTPへ翻訳する担当を、Programに取り付けられる形にする。
-@do  # HTTPへの依頼も、処理本体と同じyieldで行う。
 def pages_over_http(effect, k):  # ReadPageだけを、本文取得の手順へ翻訳する。
     if not isinstance(effect, ReadPage):  # 別種の依頼には介入しない。
         return (yield Pass(effect, k))  # 元の依頼と続きを、別の担当へ渡す。
@@ -141,7 +139,6 @@ from doeff_time import Delay  # 取得待機を、時計に解釈してもらう
 
 def fixed_http(pages, calls, seconds):  # 固定本文・到達記録・取得時間を持つ、テスト用担当を作る。
     @handler  # 本番HTTPと同じ位置へ取り付けられる形にする。
-    @do  # 待機と結果返却を、DelayとResumeで行う。
     def interpret(effect, k):  # HttpRequestを直接受け取るので、クライアントは不要。
         if not isinstance(effect, HttpRequest):  # HTTP以外の依頼には干渉しない。
             return (yield Pass(effect, k))  # Memoや時間の依頼を外側へ通す。
@@ -155,7 +152,6 @@ def fixed_http(pages, calls, seconds):  # 固定本文・到達記録・取得�
     return interpret  # 呼び出し元は、この担当をProgramへ取り付けられる。
 
 @handler  # 保存済みデータだけで動くことを確かめる、もうひとつのHTTP担当。
-@do  # 未保存のHTTP依頼を、Programの失敗として伝える。
 def reject_http(effect, k):  # HTTPが呼ばれないはずの再実行に取り付ける。
     if not isinstance(effect, HttpRequest):  # HTTP以外の処理は引き続き使える。
         return (yield Pass(effect, k))  # 保存値の読み取りや時計の処理を妨げない。

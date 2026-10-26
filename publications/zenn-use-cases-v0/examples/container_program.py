@@ -105,7 +105,6 @@ def verify() -> None:  # テスト境界でrunを呼び、依頼の解釈と順�
         observed = []  # 実I/Oへ進むはずだった依頼を、テスト内だけで保存する。
 
         @handler  # 外部I/Oを依頼単位で置き換える固定ハンドラを作る。
-        @do  # 各依頼への応答をResumeで本体へ戻す。
         def fixed_environment(effect, k):  # 実Docker・SSH・ファイル転送を設置しない。
             if isinstance(effect, Resolve):  # 配置手順が要求したソースの解決を受ける。
                 observed.append(effect)  # 後で解決対象と順序を検査する。

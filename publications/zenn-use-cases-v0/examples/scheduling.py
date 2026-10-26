@@ -104,7 +104,6 @@ def test_job_finishes_without_waiting():  # 記事の最初のテスト。
 
 
 @handler  # この関数を、Programに取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで、再開や委譲を指示する。
 def skip_delay(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
     if isinstance(effect, DelayEffect):  # 待ちの依頼だけを受け持つ。
         return (yield Resume(k, None))  # 待たずに、すぐ続きを再開する。

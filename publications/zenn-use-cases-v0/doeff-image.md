@@ -90,10 +90,9 @@ for model, install in [  # 同じ制作処理を二つの固定応答実装で�
 ハンドラが値を返して処理を再開する部分は、次の形です。`base`は生成用、`final`は編集用の固定した`ImageResult`で、完全な例の検証関数内で用意しています。
 
 ```python
-from doeff import Pass, Resume, do, handler  # 結果を返して再開する操作と、他のハンドラへ委ねる操作を使う。
+from doeff import Pass, Resume, handler  # 結果を返して再開する操作と、他のハンドラへ委ねる操作を使う。
 
 @handler  # 依頼処理を、Programへ取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで再開操作を依頼する。
 def fixed_images(effect, k):  # effectは画像の依頼、kはその結果を待っている継続。
     if isinstance(effect, ImageGenerate):  # 生成依頼を受け取った場合だけ処理する。
         return (yield Resume(k, base))  # 固定の生成結果を渡し、生成を待つProgramを再開する。

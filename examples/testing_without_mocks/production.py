@@ -2,7 +2,7 @@
 import atexit
 import sqlite3
 
-from doeff import Resume, do, handler, run, with_handlers
+from doeff import Resume, handler, run, with_handlers
 
 from infra import User
 from welcome import LoadUser, SendMail, welcome
@@ -14,7 +14,6 @@ db.execute("INSERT INTO users VALUES (1, 'Grace', 'grace@example.com')")
 
 
 @handler
-@do
 def db_load_user(effect: LoadUser, k):
     name, email = db.execute(
         "SELECT name, email FROM users WHERE id = ?", (effect.user_id,)
@@ -23,7 +22,6 @@ def db_load_user(effect: LoadUser, k):
 
 
 @handler
-@do
 def smtp_send_mail(effect: SendMail, k):
     print(f"SMTP -> {effect.to}: {effect.body}")  # stand-in for smtplib
     return (yield Resume(k, None))

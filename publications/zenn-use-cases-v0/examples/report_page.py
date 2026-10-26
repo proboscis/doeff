@@ -129,7 +129,6 @@ def requested():  # 頼まれた時刻を、所要の記録の最初の行にす
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def not_yet(effect, k):  # 描いた図がまだ無い時の答え。
     if isinstance(effect, DrawnFigure):  # 図の依頼には、
         return (yield Resume(k, None))  # 「まだ無い」を返す。
@@ -138,7 +137,6 @@ def not_yet(effect, k):  # 描いた図がまだ無い時の答え。
 
 def drawn_in(figures):  # 描き終えた図の辞書から、テスト用のハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def answer(effect, k):  # 描き終えた図だけに答える。
         if isinstance(effect, DrawnFigure) and effect.figure_id in figures:  # 描き終えた図なら、
             return (yield Resume(k, figures[effect.figure_id]))  # そのSVGを返す。
@@ -149,7 +147,6 @@ def drawn_in(figures):  # 描き終えた図の辞書から、テスト用のハ
 
 def from_dir(folder):  # 作業役が図を置くdir(figures/<id>.svg)から、本番のハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def answer(effect, k):  # 置かれた図だけに答える。
         path = folder / f"{effect.figure_id}.svg" if isinstance(effect, DrawnFigure) else None  # 図の置き場。
         if path is not None and path.is_file():  # 作業役が描き終えていれば、
@@ -161,7 +158,6 @@ def from_dir(folder):  # 作業役が図を置くdir(figures/<id>.svg)から、�
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def printed(effect, k):  # 記録の依頼を、表示で答えるテスト用のハンドラ(本物はファイルに時刻つきで足す)。
     if isinstance(effect, Record):  # 記録の依頼には、
         print(effect)  # 何を記録するかを表示し、
@@ -175,7 +171,6 @@ def local_now():  # 今の時刻を、時差つきで読む(本番の時計)。
 
 def log_to(path, clock=local_now):  # 記録の依頼を、時刻つきの1行としてファイルに足す本番のハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラもyieldで、再開や委譲を指示する。
     def answer(effect, k):  # 記録の依頼だけを受け持つ。
         if isinstance(effect, Record):  # 記録の依頼には、
             row = {"at": clock().isoformat(timespec="seconds"), "event": effect.event}  # 時計から時刻を読む。

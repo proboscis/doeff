@@ -52,7 +52,6 @@ def pick_cards():  # 新しい会話へ配るcardを選ぶ。
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def fixed_board(effect, k):  # テスト用に、決めた盤面を答える。
     if isinstance(effect, Ask) and effect.key == "ceiling":  # 上限の依頼には、
         return (yield Resume(k, 3))  # 3を返す。
@@ -233,7 +232,6 @@ peak = [0]  # 同時に走った会話の数の最大。
 
 
 @handler  # Programに取り付けられるハンドラにする。
-@do  # ハンドラもyieldで、再開や委譲を指示する。
 def memory_board(effect, k):  # 届いた依頼に、メモリの盤面で答える。
     if isinstance(effect, Ask) and effect.key == "ceiling":  # 上限の依頼には、
         return (yield Resume(k, 2))  # 2を返す。

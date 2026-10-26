@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
+  `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
+
 ## 0.8.0 — 2026-10-27
 
 ### Changed

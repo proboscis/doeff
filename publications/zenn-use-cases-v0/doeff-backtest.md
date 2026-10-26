@@ -103,7 +103,6 @@ def backtest_market(history):  # 記録で値段に答え、注文を受け付�
     times = [at for at, _ in history]  # 記録の時刻だけを、古い順に並べる。
 
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラ自身も、yieldで依頼や再開を書く。
     def market(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
         if isinstance(effect, GetPrice):  # 値段の依頼なら、
             now = yield GetTime()  # 仮想の時計に、今の時刻を問う。
@@ -191,7 +190,6 @@ class Broker(Protocol):  # 本番の取引所のクライアントに求める2�
 
 def live_market(broker: Broker):  # 本番のクライアントで答えるハンドラを作る。
     @handler  # Programに取り付けられるハンドラにする。
-    @do  # ハンドラ自身も、yieldで再開や委譲を書く。
     def market(effect, k):  # バックテストのハンドラと、同じ依頼を受け持つ。
         if isinstance(effect, GetPrice):  # 値段の依頼なら、
             return (yield Resume(k, broker.price(effect.symbol)))  # 取引所に問うた値段を返す。

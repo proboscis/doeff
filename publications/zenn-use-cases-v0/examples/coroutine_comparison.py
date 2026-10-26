@@ -42,7 +42,6 @@ def greet():  # yield版の挨拶。
 
 
 @handler  # 手順に取り付けられるハンドラにする。
-@do  # ハンドラも、yieldで再開と委譲を指示する。
 def hanako(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
     if isinstance(effect, ReadName):  # 名前の依頼なら、
         return (yield Resume(k, "花子"))  # 続きに「花子」を返して再開する。
@@ -53,7 +52,6 @@ def hanako(effect, k):  # effectは届いた依頼、kは止まった処理の�
 
 
 @handler  # 同じ依頼へ、別の答え方をするハンドラにする。
-@do  # 再開と委譲を、hanakoと同じ書き方で指示する。
 def taro(effect, k):  # この範囲では、名前の依頼に「太郎」で答える。
     if isinstance(effect, ReadName):  # 名前の依頼だけを担当する。
         return (yield Resume(k, "太郎"))  # 続きに「太郎」を返して再開する。

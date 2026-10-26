@@ -43,7 +43,6 @@ def fetch_text(url: str):  # URLの本文を返す。どう通信するかは知
 
 
 @handler  # この関数を、Programに取り付けられるハンドラにする。
-@do  # ハンドラ自身もyieldで、再開や委譲を指示する。
 def fake_http(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
     if not isinstance(effect, HttpRequest):  # HTTP以外の依頼は受け持たない。
         return (yield Pass(effect, k))  # 外側のハンドラへ、そのまま渡す。
@@ -59,7 +58,6 @@ def test_fetch_text_without_network():  # pytestが集めるテスト関数。
 
 
 @handler  # 記録に無い依頼だけが、ここまで届く。
-@do  # 依頼を見分けて、失敗させるか外へ渡す。
 def reject_http(effect, k):  # 再生だけのテストで、取得担当の位置に置く。
     if isinstance(effect, HttpRequest):  # 記録に無いHTTPの依頼が届いた。
         raise LookupError(f"記録に無い依頼: {effect.method} {effect.url}")  # 通信せずに失敗させる。
