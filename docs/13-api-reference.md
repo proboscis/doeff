@@ -136,6 +136,7 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 | `run` | Run a program to completion and return its value. | [run](#rundoexpr) |
 | `merge_dicts` | A program that merges dicts (or programs returning dicts) left to right. | [merge_dicts](#merge_dictssources) |
 | `PyVM` | The Rust VM that `run` creates for each run. | [PyVM](#pyvm) |
+| `DoeffRunContext` | The `doeff run` command line, given to an interpreter that runs the program elsewhere (`ctx=`). | [doeff run Command Architecture](cli-run-command-architecture.md#supporting-classes) |
 
 **Program nodes and introspection**
 
