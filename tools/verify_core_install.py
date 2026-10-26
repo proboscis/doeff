@@ -144,6 +144,8 @@ HEAD_NAMES = ("Ask", "Get", "Put", "Tell", "reader", "state", "writer")
 MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?")
 # 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
 CHILD_TIMEOUT_SECONDS = 120
+# 3.15 の traceback が名を持つ ModuleNotFoundError の行の末尾に足す、似た module の名の後書き。
+_SUGGESTION_SUFFIX = re.compile(r"\. Did you mean: '[^']*'\?$")
 # 入れた venv の中で走らせ、入れた物の様子を JSON で印字する program(direct_url.json は PEP 610 — どこから入れたか)。
 # README の本文は 3.14 までは metadata の payload に、3.15 からは Description の欄に在る(payload は空)。
 _DESCRIBE = """
@@ -929,6 +931,9 @@ def extra_failure(use: ExtraUse, result: subprocess.CompletedProcess[str]) -> st
     """extra が要る使い方の結末が、足す extra の名を言う文で 1 を返す形でない事を言う文(合えば None)。"""
     line = f'pip install "doeff[{use.extra}]"'
     last = (result.stderr.strip().splitlines() or [""])[-1]
+    # 3.15 から traceback は名を持つ ModuleNotFoundError の行の末尾に似た module の名を足す(`. Did you mean: 'doeff_vm'?`)—
+    # MissingExtraError の文の後ろに付くので、その後書きを除いて比べる。
+    last = _SUGGESTION_SUFFIX.sub("", last)
     if result.returncode == 1 and last.endswith(line):
         return None
     return (
