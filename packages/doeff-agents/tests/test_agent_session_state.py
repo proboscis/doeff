@@ -16,14 +16,11 @@ from doeff_agents import (
     CleanupAgentSession,
     GetAgentSession,
     Launch,
-    LaunchConfig,
     ListAgentSessions,
     MockSessionScript,
     ObserveAgentSession,
     SessionStatus,
-    configure_mock_session,
     mock_agent_handlers,
-    wait_agent_session,
 )
 
 
@@ -35,49 +32,20 @@ def _install_handlers(handlers, program):
 
 
 @do
-def _launch_and_query_session(session_name: str, config: LaunchConfig):
-    handle = yield Launch(
-        session_name,
-        agent_type=config.agent_type,
-        work_dir=config.work_dir,
-        prompt=config.prompt,
-    )
+def _launch_and_query_session(session_name: str, work_dir: Path):
+    handle = yield Launch(session_name, agent_type=AgentType.CLAUDE, work_dir=work_dir, prompt="work on the issue")
     snapshot = yield GetAgentSession(session_name)
     sessions = yield ListAgentSessions()
     return handle, snapshot, sessions
 
 
 @do
-def _observe_and_cleanup_session(session_name: str, config: LaunchConfig):
-    yield Launch(
-        session_name,
-        agent_type=config.agent_type,
-        work_dir=config.work_dir,
-        prompt=config.prompt,
-    )
+def _observe_and_cleanup_session(session_name: str, work_dir: Path):
+    yield Launch(session_name, agent_type=AgentType.CLAUDE, work_dir=work_dir, prompt="work on the issue")
     first = yield ObserveAgentSession(session_name)
     second = yield ObserveAgentSession(session_name)
     cleaned = yield CleanupAgentSession(session_name)
     return first, second, cleaned
-
-
-@do
-def _launch_and_wait_session(session_name: str, config: LaunchConfig):
-    yield Launch(
-        session_name,
-        agent_type=config.agent_type,
-        work_dir=config.work_dir,
-        prompt=config.prompt,
-    )
-    return (yield from wait_agent_session(session_name, poll_interval=5.0))
-
-
-def _config(tmp_path: Path) -> LaunchConfig:
-    return LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=tmp_path,
-        prompt="work on the issue",
-    )
 
 
 def test_launch_records_queryable_session_state(tmp_path: Path) -> None:
@@ -86,7 +54,7 @@ def test_launch_records_queryable_session_state(tmp_path: Path) -> None:
     handle, snapshot, sessions = run(
         _install_handlers(
             mock_agent_handlers(),
-            _launch_and_query_session(session_name, _config(tmp_path)),
+            _launch_and_query_session(session_name, tmp_path),
         )
     )
 
@@ -102,20 +70,18 @@ def test_launch_records_queryable_session_state(tmp_path: Path) -> None:
 
 def test_observe_and_cleanup_are_session_id_based(tmp_path: Path) -> None:
     session_name = f"state-observe-{time.time_ns()}"
-    configure_mock_session(
-        session_name,
-        MockSessionScript(
-            observations=[
-                (SessionStatus.RUNNING, "working"),
-                (SessionStatus.DONE, "done"),
-            ]
-        ),
+    script = MockSessionScript(
+        session_name=session_name,
+        observations=[
+            (SessionStatus.RUNNING, "working"),
+            (SessionStatus.DONE, "done"),
+        ],
     )
 
     first, second, cleaned = run(
         _install_handlers(
-            mock_agent_handlers(),
-            _observe_and_cleanup_session(session_name, _config(tmp_path)),
+            mock_agent_handlers(sessions=(script,)),
+            _observe_and_cleanup_session(session_name, tmp_path),
         )
     )
 
@@ -126,26 +92,3 @@ def test_observe_and_cleanup_are_session_id_based(tmp_path: Path) -> None:
     assert cleaned.status == SessionStatus.STOPPED
     assert cleaned.cleaned_at is not None
 
-
-def test_wait_agent_session_uses_persisted_session_id(tmp_path: Path) -> None:
-    session_name = f"state-wait-{time.time_ns()}"
-    configure_mock_session(
-        session_name,
-        MockSessionScript(
-            observations=[
-                (SessionStatus.RUNNING, "working"),
-                (SessionStatus.DONE, "done"),
-            ]
-        ),
-    )
-
-    snapshot = run(
-        _install_handlers(
-            mock_agent_handlers(),
-            _launch_and_wait_session(session_name, _config(tmp_path)),
-        )
-    )
-
-    assert snapshot.session_id == session_name
-    assert snapshot.status == SessionStatus.STOPPED
-    assert snapshot.cleaned_at is not None

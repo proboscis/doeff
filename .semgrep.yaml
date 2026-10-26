@@ -508,7 +508,7 @@ rules:
     severity: ERROR
     message: >
       First-prompt delivery over the TMUX transport must go through
-      doeff_agents.session.deliver_prompt_when_ready — the single ready-gated
+      doeff_agents._session.deliver_prompt_when_ready — the single ready-gated
       choke point. Sending the launch prompt straight to the pane races the
       agent TUI startup (cold-start per-line splitting, prompts fed into
       login/trust/update dialogs) and produces silently empty sessions
@@ -529,7 +529,7 @@ rules:
     severity: ERROR
     message: >
       Hy agent handlers must deliver the first prompt through
-      doeff_agents.session.deliver_prompt_when_ready (ready-gated choke
+      doeff_agents._session.deliver_prompt_when_ready (ready-gated choke
       point), not raw (.send-keys ... prompt). Ungated paste races the TUI
       startup and yields falsely-Succeeded empty sessions (issue
       agentd-codex-coldstart-paste-race, 2026-07-14).
@@ -972,8 +972,8 @@ rules:
       - pattern-regex: '\b(is_completed|is_failed)\s*\('
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/monitor.py
-        - /packages/doeff-agents/src/doeff_agents/session.py
+        - /packages/doeff-agents/src/doeff_agents/_monitor.py
+        - /packages/doeff-agents/src/doeff_agents/_session.py
 
   - id: doeff-agents-agentd-request-requires-result-key
     languages: [python]

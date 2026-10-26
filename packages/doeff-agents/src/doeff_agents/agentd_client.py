@@ -52,7 +52,7 @@ from doeff_agents.effects import (
     AwaitOutcome,
     AwaitStatus,
 )
-from doeff_agents.monitor import SessionStatus
+from doeff_agents.effects import SessionStatus
 
 def _default_io_root() -> IoRoot:
     """既定の composition root: 本番の I/O handler。"""

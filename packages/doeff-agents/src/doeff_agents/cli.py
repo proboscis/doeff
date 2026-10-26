@@ -21,8 +21,8 @@ from doeff_agents.agentd_client import (
     ensure_agentd,
 )
 from doeff_agents.effects import AgentSessionSnapshot
-from doeff_agents.monitor import SessionStatus
-from doeff_agents.session import AgentSession, launch_session, monitor_session
+from doeff_agents.effects import SessionStatus
+from doeff_agents._session import AgentSession, launch_session, monitor_session
 from doeff_agents.tmux import attach_session as tmux_attach
 
 console = Console()

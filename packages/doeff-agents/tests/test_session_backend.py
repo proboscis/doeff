@@ -20,36 +20,31 @@ from doeff_agents import (
     CaptureEffect,
     CleanupAgentSession,
     GetAgentSession,
-    LaunchConfig,
     LaunchEffect,
     LaunchSessionEffect,
     ListAgentSessions,
     MonitorEffect,
     ObserveAgentSession,
     SendEffect,
-    SessionConfig,
-    SessionInfo,
     SessionStatus,
     StopEffect,
-    TmuxAgentHandler,
     agent_effectful_handler,
-    capture_output,
-    default_agent_handler,
-    launch_session,
-    monitor_session,
-    send_message,
-    stop_session,
 )
 from doeff_agents import session_backend as session_backend_module
+# The session procedures, the terminal backend and the tmux handler object are internal to doeff-agents;
+# these tests exercise them directly.
+from doeff_agents._session import capture_output, launch_session, monitor_session, send_message, stop_session
 from doeff_agents.adapters.base import (
     InjectionMethod,
+    LaunchConfig,
     LaunchParams,
 )
+from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
-from doeff_agents.session_backend import SessionBackend
+from doeff_agents.session_backend import SessionBackend, SessionConfig, SessionInfo
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
 from fake_io_support import FakeIoWorld, completed_process_script, fake_io_root
@@ -71,7 +66,7 @@ def test_session_api_import_does_not_load_the_handler_layer() -> None:
     code = (
         "import sys\n"
         f"sys.path.insert(0, {str(src_path)!r})\n"
-        "from doeff_agents.session import launch_session\n"
+        "from doeff_agents._session import launch_session\n"
         "from doeff_agents.session_backend import default_session_backend\n"
         "from doeff_agents.tmux import TmuxSessionBackend\n"
         "print(launch_session.__name__)\n"
@@ -730,7 +725,7 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
 
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.session.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr("doeff_agents._session.get_adapter", lambda _agent_type: FakeAdapter())
 
     session = launch_session("worker", _config(), backend=backend)
     status = monitor_session(session)
@@ -750,7 +745,7 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
 
 def test_imperative_session_api_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.session.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr("doeff_agents._session.get_adapter", lambda _agent_type: FakeAdapter())
     forbidden_key = "ANTHROPIC" + "_API_KEY"
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
@@ -825,7 +820,7 @@ def test_agent_effectful_handler_accepts_claude_runtime_policy(
     assert f"export CLAUDE_HOME={tmp_path / '.claude'};" in command
 
 
-def test_default_agent_handler_accepts_claude_runtime_policy(
+def test_tmux_handler_accepts_claude_runtime_policy(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -834,7 +829,7 @@ def test_default_agent_handler_accepts_claude_runtime_policy(
         "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
-    handler = default_agent_handler(
+    handler = TmuxAgentHandler(
         backend=backend,
         claude_runtime_policy=ClaudeRuntimePolicy(agent_home=tmp_path),
     )

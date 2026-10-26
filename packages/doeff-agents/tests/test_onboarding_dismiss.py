@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.session import _dismiss_onboarding_dialogs
+from doeff_agents._session import _dismiss_onboarding_dialogs
 
 
 class FakeBackend:

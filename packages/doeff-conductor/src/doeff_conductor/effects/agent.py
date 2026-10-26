@@ -20,9 +20,9 @@ from doeff_agents.effects import (
 from doeff_agents.effects import (
     AgentValidationFailure as AgentValidationFailure,
 )
-from doeff_agents.effects import (
-    deterministic_session_id,
-)
+# The replay-stable session id rule doeff-agents' AgentSpec.session_id uses — conductor's effects name their
+# sessions by the same rule (doeff-agents keeps it in an inner module; it is not part of its public effects).
+from doeff_agents.effects._ids import deterministic_session_id
 
 from doeff_conductor.effects.base import ConductorEffectBase
 from doeff_conductor.replay_keying import ResolvedIdentity, resolved_identity_fingerprint

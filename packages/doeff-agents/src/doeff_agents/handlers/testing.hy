@@ -5,7 +5,7 @@
 (import pathlib [Path])
 
 (import doeff_agents.adapters.base [AgentType])
-(import doeff_agents.effects.agent [refuse-turn-capabilities])
+(import doeff_agents.effects._handler-effects [ClaudeLaunchEffect refuse-turn-capabilities])
 (import doeff_agents.effects [
   AgentSessionLifecycle
   AgentSessionSnapshot
@@ -15,14 +15,11 @@
   AwaitStatus
   CancelAgentSessionEffect
   CaptureEffect
-  ClaudeLaunchEffect
   CleanupAgentSessionEffect
   FollowUpEffect
   GetAgentSessionEffect
-  L2SessionHandle
   LaunchEffect
   LaunchSessionEffect
-  LaunchTaskEffect
   ListAgentSessionsEffect
   MonitorEffect
   Observation
@@ -35,16 +32,22 @@
   StopEffect
   StopSessionEffect])
 (import doeff_agents.handlers.production [AgentHandler])
-(import doeff_agents.monitor [SessionStatus])
+(import doeff_agents.effects.agent [SessionStatus])
 (import doeff_agents.session-store [
   AgentSessionRepository
   InMemoryAgentSessionRepository])
 
 
 (defclass MockSessionScript []
-  "Script for deterministic session observations."
-  (defn __init__ [self * [observations None] [_index 0]]
+  "Script for deterministic session observations.
+
+   session_name names the session the mock handler answers with this script
+   (mock_agent_handlers(sessions=…) reads it); initial_output is the screen text
+   the session shows before its first observation."
+  (defn __init__ [self * [session-name None] [observations None] [initial-output ""] [_index 0]]
+    (setv self.session-name session-name)
     (setv self.observations (if (is observations None) [] (list observations)))
+    (setv self.initial-output initial-output)
     (setv self._index _index))
 
   (defn next-observation [self]
@@ -84,12 +87,11 @@
     (setv self._session-repository
           (or session-repository (InMemoryAgentSessionRepository))))
 
-  (defn configure-session [self session-name [script None] [initial-output ""]]
-    "Pre-configure a session for testing."
-    (when script
-      (setv (get self._sessions session-name) script))
-    (setv (get self._outputs session-name) initial-output)
-    (setv (get self._statuses session-name) SessionStatus.BOOTING))
+  (defn configure-session [self script]
+    "Pre-configure the session the script names, so its observations come from the script."
+    (setv (get self._sessions script.session-name) script)
+    (setv (get self._outputs script.session-name) script.initial-output)
+    (setv (get self._statuses script.session-name) SessionStatus.BOOTING))
 
   (defn handle-launch [self effect [mcp-servers None]]
     "Create a testing session, optionally writing MCP server config."
@@ -121,10 +123,6 @@
     (setv (get self._lifecycles effect.session-name) effect.lifecycle)
     (._record-snapshot self "session_started" handle SessionStatus.BOOTING)
     handle)
-
-  (defn handle-launch-task [self effect]
-    "Create testing session for generic task launch."
-    (raise (NotImplementedError "LaunchTaskEffect is deprecated; use LaunchEffect directly")))
 
   (defn handle-claude-launch [self effect]
     "Create a testing Claude session."
@@ -371,8 +369,8 @@
       (setv (get self._launch-counts session-id)
             (+ (.get self._launch-counts session-id 0) 1))
       (setv (get self._handles session-id)
-            (L2SessionHandle :session-id session-id)))
-    (L2SessionHandle :session-id session-id))
+            (SessionHandle :session-id session-id)))
+    (SessionHandle :session-id session-id))
 
   (defn handle-await-result [self effect]
     (setv session-id effect.handle.session-id)

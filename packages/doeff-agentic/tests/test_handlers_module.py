@@ -77,7 +77,7 @@ def test_legacy_handler_module_reexport_when_optional_dependency_available() -> 
 def test_legacy_agentic_handler_accepts_injected_tmux_runtime(tmp_path: Path) -> None:
     from doeff_agents.adapters.base import AgentType
     from doeff_agents.effects import Observation, SessionHandle
-    from doeff_agents.monitor import SessionStatus
+    from doeff_agents.effects import SessionStatus
 
     class FakeTmuxHandler:
         def __init__(self) -> None:
@@ -135,7 +135,7 @@ def test_legacy_agentic_handler_accepts_injected_tmux_runtime(tmp_path: Path) ->
 def test_legacy_agentic_handler_polls_with_time_delay(tmp_path: Path) -> None:
     """While the agent is still running, RunAgent waits with doeff_time Delay."""
     from doeff_agents.effects import Observation, SessionHandle
-    from doeff_agents.monitor import SessionStatus
+    from doeff_agents.effects import SessionStatus
     from doeff_core_effects.scheduler import scheduled
     from doeff_time import sync_time_handler
 

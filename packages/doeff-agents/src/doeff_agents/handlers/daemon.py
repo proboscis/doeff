@@ -20,14 +20,11 @@ from doeff_agents.effects import (
     AwaitResultEffect,
     CancelAgentSessionEffect,
     CaptureEffect,
-    ClaudeLaunchEffect,
     CleanupAgentSessionEffect,
     FollowUpEffect,
     GetAgentSessionEffect,
-    L2SessionHandle,
     LaunchEffect,
     LaunchSessionEffect,
-    LaunchTaskEffect,
     ListAgentSessionsEffect,
     MonitorEffect,
     Observation,
@@ -38,9 +35,9 @@ from doeff_agents.effects import (
     SessionNotFoundError,
     StopEffect,
     StopSessionEffect,
-    refuse_turn_capabilities,
 )
 from doeff_agents.handlers.production import AgentHandler, get_adapter
+from doeff_agents.effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
 from doeff_agents.io_root import IoRoot
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.shell import (
@@ -140,9 +137,6 @@ class DaemonAgentHandler(AgentHandler):
             session_env=effect.session_env,
         )
 
-    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
-        """LaunchTaskEffect is deprecated."""
-        raise AgentLaunchError("LaunchTaskEffect is deprecated; use LaunchEffect directly")
 
     def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
         """Launch a Claude session through doeff-agentd."""
@@ -292,7 +286,7 @@ class DaemonAgentHandler(AgentHandler):
         self,
         effect: LaunchSessionEffect,
         mcp_servers: dict[str, str] | None = None,
-    ) -> L2SessionHandle:
+    ) -> SessionHandle:
         """Idempotently launch or re-adopt an agentd session."""
         if effect.spec.mcp_tools:
             raise AgentLaunchError(
@@ -301,7 +295,7 @@ class DaemonAgentHandler(AgentHandler):
         session_id = effect.spec.session_id
         existing = self._client.get_session(session_id)
         if existing is not None:
-            return L2SessionHandle(session_id=session_id)
+            return SessionHandle(session_id=session_id)
 
         adapter = get_adapter(effect.spec.agent_type)
         if not self._io(adapter.available()):
@@ -340,7 +334,7 @@ class DaemonAgentHandler(AgentHandler):
                 "max_retries": effect.spec.max_retries,
             },
         )
-        return L2SessionHandle(session_id=session_id)
+        return SessionHandle(session_id=session_id)
 
     def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
         """Await agentd's single await_result handoff."""
@@ -354,7 +348,7 @@ class DaemonAgentHandler(AgentHandler):
                 raise SessionNotFoundError(effect.handle.session_id) from exc
             raise
 
-    def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
+    def handle_follow_up(self, effect: FollowUpEffect) -> SessionHandle:
         """Continue a daemon-owned session."""
         refuse_turn_capabilities(effect, handler="DaemonAgentHandler")
         self._client.send_session(effect.handle.session_id, effect.message)

@@ -11,12 +11,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents import (
-    ClaudeLaunchEffect,
-    ClaudeRuntimePolicy,
-    SessionConfig,
-    TmuxAgentHandler,
-)
+from doeff_agents import ClaudeRuntimePolicy
+from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
+from doeff_agents.handlers.production import TmuxAgentHandler
+from doeff_agents.session_backend import SessionConfig
 from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams
 from doeff import Pure
 from doeff_agents.session_backend import SessionBackend
