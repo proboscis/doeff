@@ -1141,14 +1141,20 @@ def _location(value: object, module_name: str, name: str, sources: _Sources) -> 
 def _macro_exports(
     module: types.ModuleType, sources: _Sources
 ) -> list[tuple[str, Callable[..., object]]]:
-    """A Hy module's public macros: ``_hy_export_macros`` when it exports them, else its own macros."""
-    macros = module.__dict__.get("_hy_macros")
+    """A Hy module's public macros: ``_hy_export_macros`` when it exports them, else its own macros.
+
+    The names of Hy's tables come from ``doeff_hy_bytecode_guard.records``, their one home (card ki-ffe72a1fb7d7).
+    """
+    if importlib.util.find_spec("doeff_hy_bytecode_guard") is None:
+        return []
+    records = importlib.import_module("doeff_hy_bytecode_guard.records")
+    macros = module.__dict__.get(records.MACRO_TABLE)
     if not isinstance(macros, dict):
         return []
     table = cast(
         dict[str, Callable[..., object]], macros
     )  # Hy's macro table: mangled name -> macro
-    exported = module.__dict__.get("_hy_export_macros")
+    exported = module.__dict__.get(records.EXPORT_NAMES)
     if isinstance(exported, (list, tuple, set, frozenset)):
         names = [str(name) for name in cast(Sequence[object], exported)]
         return [(name, table[name]) for name in names if name in table]
