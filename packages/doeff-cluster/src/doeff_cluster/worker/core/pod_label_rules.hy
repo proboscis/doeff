@@ -30,10 +30,22 @@
 (val RETRY-LIMIT-MS (* 5 60 1000))
 
 
+(defrecord PodLabel
+  "Pod の label 1 つ: key = 鍵(前置きつき)・value = 値。"
+  (#^ str key)
+  (#^ str value))
+
+
+(defrecord LabelChange
+  "Pod の label の付け外し 1 つ(merge patch の labels の欄の 1 行): key = 鍵・value = 付ける値(None = 外す)。"
+  (#^ str key)
+  (#^ (| str None) value))
+
+
 (defrecord JobLabels
-  "宣言から求める Pod の job の label: wanted = 鍵 → 値(付けておく label)・unlabelled = label の名に成らない job の名(名の順)。
-   wanted を dict にする理由: 鍵が job ごとに変わる k8s の label の写しで、そのまま merge patch の本文の labels の欄になる(欄の決まった値でない)。"
-  (#^ dict wanted)
+  "宣言から求める Pod の job の label: wanted = 付けておく label の鍵の組(値はどれも JOB-LABEL-VALUE)・unlabelled = label の名に成らない
+   job の名(名の順)。"
+  (#^ frozenset wanted)
   (#^ tuple unlabelled))
 
 
@@ -47,28 +59,30 @@
   {:pre [(: jobs (get tuple #(JobSpec ...)))] :post [(: % JobLabels)]}
   "この worker に置かれた宣言の job の列(JobSpec — task も混ざる)から、Pod に付けておく job の label を決めるため。task(once)は
    載せない。label の名に成らない job は wanted に入れず unlabelled に挙げる。"
-  (var wanted {})
+  (var wanted #())
   (var unlabelled #())
   (for [spec jobs]
     (when (not spec.once)
       (<- key (| str None) (job-label-key spec.name))
       (if (is key None)
           (:= unlabelled (+ unlabelled #(spec.name)))
-          (:= wanted (| wanted {key JOB-LABEL-VALUE})))))
-  (JobLabels :wanted wanted :unlabelled (tuple (sorted (set unlabelled)))))
+          (:= wanted (+ wanted #(key))))))
+  (JobLabels :wanted (frozenset wanted) :unlabelled (tuple (sorted (set unlabelled)))))
 
 
 (defk job-labels-patch [current wanted]
-  {:pre [(: current dict) (: wanted dict)] :post [(: % dict)]}
-  "Pod の今の label(current — 全部の label)を wanted に揃える merge patch の labels の欄を決めるため: wanted に在って無い・値の違う鍵は
-   その値、前置き JOB-LABEL-PREFIX の鍵で wanted に無い物は None(merge patch で消す)。前置きの外の label には触らない。空 = 揃っている。"
-  (val put (dfor #(key value) (.items wanted) :if (!= (.get current key) value) key value))
-  (val dropped (dfor key current :if (and (.startswith key JOB-LABEL-PREFIX) (not-in key wanted)) key None))
-  (dict (sorted (.items (| put dropped)))))
+  {:pre [(: current (get tuple #(PodLabel ...))) (: wanted frozenset)] :post [(: % (get tuple #(LabelChange ...)))]}
+  "Pod の今の label(current — 全部の label)を wanted に揃える付け外しを決めるため(鍵の順): wanted の鍵で無い・値の違う物は付け、
+   前置き JOB-LABEL-PREFIX の鍵で wanted に無い物は外す。前置きの外の label には触らない。空 = 揃っている。"
+  (val placed (frozenset (gfor label current :if (= label.value JOB-LABEL-VALUE) label.key)))
+  (val put (gfor key wanted :if (not-in key placed) (LabelChange :key key :value JOB-LABEL-VALUE)))
+  (val dropped (gfor label current :if (and (.startswith label.key JOB-LABEL-PREFIX) (not-in label.key wanted))
+                 (LabelChange :key label.key :value None)))
+  (tuple (sorted (+ (tuple put) (tuple dropped)) :key (fn [change] change.key))))
 
 
 (defk labels-sync-due [wanted synced-wanted synced-ms retry-at-ms now-ms]
-  {:pre [(: wanted dict) (: synced-wanted (| dict None)) (: synced-ms (| int None)) (: retry-at-ms (| int None)) (: now-ms int)]
+  {:pre [(: wanted frozenset) (: synced-wanted (| frozenset None)) (: synced-ms (| int None)) (: retry-at-ms (| int None)) (: now-ms int)]
    :post [(: % bool)]}
   "この拍で Pod の label を揃えるかを決めるため: synced-wanted = 前に揃えた時の wanted(None = まだ揃えていない)・synced-ms = その刻・
    retry-at-ms = 失敗の後に次に試す刻(None = 失敗していない)。失敗の後は次に試す刻まで待つ(wanted が変わっても)。そうでなければ、
@@ -86,10 +100,11 @@
   (min RETRY-LIMIT-MS (* RETRY-FIRST-MS (** 2 (min 16 (max 0 (- failures 1)))))))
 
 
-(defk labels-line [patch]
-  {:pre [(: patch dict)] :post [(: % str)]}
-  "Pod の job の label を揃えた移り(付けた・外した鍵)を worker の log の 1 行にするため。"
-  (val added (lfor #(key value) (.items patch) :if (is-not value None) (cut key (len JOB-LABEL-PREFIX) None)))
-  (val removed (lfor #(key value) (.items patch) :if (is value None) (cut key (len JOB-LABEL-PREFIX) None)))
+(defk labels-line [changes]
+  {:pre [(: changes (get tuple #(LabelChange ...)))] :post [(: % str)]}
+  "Pod の job の label を揃えた付け外しを worker の log の 1 行にするため。"
+  (val named (fn [change] (cut change.key (len JOB-LABEL-PREFIX) None)))
+  (val added (lfor change changes :if (is-not change.value None) (named change)))
+  (val removed (lfor change changes :if (is change.value None) (named change)))
   (.format "worker: Pod の job の label を揃えた — 付けた {}・外した {}"
            (or (.join "・" added) "無し") (or (.join "・" removed) "無し")))
