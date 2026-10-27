@@ -1,9 +1,9 @@
 {
   "concept": {
     "title": "異なる抽象を、同じyieldでつなぐ",
-    "code": "outcome = yield Try(convert_title(text))  # 成功か失敗を受け取る\ncount = yield Get(\"attempts\")  # 試行回数1を読む\nmessages = yield writer_log()  # 開始ログを受け取る\nreturn outcome, count, messages  # 結果・回数・ログを返す",
-    "flow": "白背景、平面的な角丸枠、紺文字、青緑の矢印。写真・3D不可。中央に4行のコードを大きく配置する。上から順にコード行へ対応する枠を置く。Tryの行は『変換の結果 → Ok / Err』、Getの行は『State → 試行回数1』、writer_logの行は『Writer → 開始ログ』。最後のreturnの行から『結果・回数・ログ』へ矢印を出す。上部の補助枠で『変換の中では Ask → 設定2秒、Delay → 仮想時間で待機』と表示し、変換の処理に接続する。抽象ごとに別の構文を必要とせずyieldで結果を受け取ることを示す。ハンドラの並列実行や、失敗時の状態リセットは描かない。コードの各行のコメントも必ず表示する。コードは抜粋と明記。",
-    "caption": "Tryで成功・失敗を値にし、Getで状態、writer_logでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。"
+    "code": "outcome = yield Try(convert_title(text))  # 成功か失敗を受け取る\ncount = yield Get(\"attempts\")  # 試行回数1を読む\nmessages = yield ReadWriterLog()  # 開始ログを受け取る\nreturn outcome, count, messages  # 結果・回数・ログを返す",
+    "flow": "白背景、平面的な角丸枠、紺文字、青緑の矢印。写真・3D不可。中央に4行のコードを大きく配置する。上から順にコード行へ対応する枠を置く。Tryの行は『変換の結果 → Ok / Err』、Getの行は『State → 試行回数1』、ReadWriterLogの行は『Writer → 開始ログ』。最後のreturnの行から『結果・回数・ログ』へ矢印を出す。上部の補助枠で『変換の中では Ask → 設定2秒、Delay → 仮想時間で待機』と表示し、変換の処理に接続する。抽象ごとに別の構文を必要とせずyieldで結果を受け取ることを示す。ハンドラの並列実行や、失敗時の状態リセットは描かない。コードの各行のコメントも必ず表示する。コードは抜粋と明記。",
+    "caption": "Tryで成功・失敗を値にし、Getで状態、ReadWriterLogでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。"
   },
   "flow": {
     "title": "失敗しても、試行回数と開始ログは残る",
