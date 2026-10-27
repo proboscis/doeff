@@ -31,6 +31,7 @@ class DeclaredReply:
     jobs: tuple[dict[str, object], ...]
     draining: bool
     handover_pending: bool = False
+    superseded: bool = False
 
 class DeclaredReplyMalformed(ValueError):
     ...
