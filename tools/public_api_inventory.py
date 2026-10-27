@@ -10,6 +10,9 @@ What is counted, per package dir:
   setuptools' discovered packages);
 - the names every submodule whose path has no part starting with ``_`` exports (a module a user
   can import);
+- every such submodule itself, as one row (shown by ``(submodule)``, named by its import name, kind
+  ``other``): the public names come from the import root only, so a public submodule is outside
+  the rule (ADR-DOE-API-001 R5 — hide it by giving its name a leading ``_``);
 - ``[project.scripts]``, ``[project.entry-points]`` and the Rust executables of a maturin ``bin``.
 
 The names a module exports: its ``__all__`` when it has one, otherwise every name not starting
@@ -80,6 +83,8 @@ KIND_LABELS: dict[Kind, str] = {
     "unclassified": "未分類",
 }
 ModuleReadWay = Literal["__all__", "own", "text"]
+#: What shows a public submodule's row (as ``(console script)`` shows a console script's).
+SUBMODULE = "(submodule)"
 
 _MODULE_SUFFIXES = (".py", ".hy", ".pyi")
 _EXTENSION_SUFFIXES = (".so", ".pyd")
@@ -889,19 +894,23 @@ class _Sources:
     roots: tuple[str, ...]
 
     def origin(self, module_name: str, name: str, depth: int = 0) -> Place:
-        """Where a plain value is bound, following ``from x import name`` to the module that binds it."""
+        """Where a plain value is bound, following ``from x import name`` to the module that binds it.
+
+        A name the module neither binds nor imports by name is followed through its
+        ``from x import *`` statements (a module that only re-shows another's names, as the old path
+        of a submodule renamed to ``_<name>`` does), so both paths read the same definition place.
+        """
         file = _module_file(module_name)
         if file is None or depth > _FOLLOW_DEPTH:
             return Place(module_name, file)
         if file.endswith(".hy"):
             return self._hy_origin(module_name, file, name, depth)
         tree = _source_tree(file) if file.endswith(".py") else None
-        statements = _top_statements(tree.body) if tree is not None else iter(())
-        found = (
-            self._statement_origin(statement, Place(module_name, file), name, depth)
-            for statement in statements
-        )
-        return next((place for place in found if place is not None), Place(module_name, file))
+        statements = list(_top_statements(tree.body)) if tree is not None else []
+        here = Place(module_name, file)
+        found = (self._statement_origin(statement, here, name, depth) for statement in statements)
+        starred = (self._star_origin(statement, here, name, depth) for statement in statements)
+        return next((place for place in itertools.chain(found, starred) if place is not None), here)
 
     def _statement_origin(
         self, statement: ast.stmt, module: Place, name: str, depth: int
@@ -920,6 +929,20 @@ class _Sources:
                     else Place(source)
                 )
         return None
+
+    def _star_origin(
+        self, statement: ast.stmt, module: Place, name: str, depth: int
+    ) -> Place | None:
+        """``origin`` through a ``from x import *`` whose module has ``name`` (``None`` otherwise)."""
+        if not isinstance(statement, ast.ImportFrom) or module.file is None:
+            return None
+        if [alias.name for alias in statement.names] != ["*"]:
+            return None
+        source = _absolute_module(module.module, module.file, statement)
+        source_module = sys.modules.get(source)
+        if source_module is None or name not in source_module.__dict__:
+            return None
+        return self.origin(source, name, depth + 1)
 
     def _hy_origin(self, module_name: str, file: str, name: str, depth: int) -> Place:
         """``origin`` for a Hy module, read from its text (its defining forms and ``import`` forms)."""
@@ -1224,9 +1247,13 @@ def _entry_location(target: str) -> str:
 
 
 def _name_row(
-    module: types.ModuleType, name: str, classifier: _Classifier, sources: _Sources
+    module: types.ModuleType, door: str, name: str, classifier: _Classifier, sources: _Sources
 ) -> ExportRow:
-    """The row of one name a module exports: its verdict and where it is defined."""
+    """The row of one name a module exports: its verdict and where it is defined.
+
+    ``door`` is the import name the user reads the module by, which shows the name. It is the
+    module's own ``__name__`` unless the module puts another in ``sys.modules`` under its name.
+    """
     value = _module_value(module, name)
     if value is _MISSING:
         verdict = Verdict("unclassified", "名だけ", "__all__ に在るが module に無い")
@@ -1244,7 +1271,7 @@ def _name_row(
             )
             defined_at = module.__name__
     return ExportRow(
-        module=module.__name__,
+        module=door,
         name=name,
         kind=verdict.kind,
         form=verdict.form,
@@ -1253,10 +1280,12 @@ def _name_row(
     )
 
 
-def _macro_row(module: types.ModuleType, name: str, macro: Callable[..., object]) -> ExportRow:
-    """The row of one public Hy macro."""
+def _macro_row(
+    module: types.ModuleType, door: str, name: str, macro: Callable[..., object]
+) -> ExportRow:
+    """The row of one public Hy macro (``door`` as in ``_name_row``)."""
     return ExportRow(
-        module=module.__name__,
+        module=door,
         name=_display_name(name),
         kind="other",
         form="Hy の macro",
@@ -1304,8 +1333,11 @@ def _read_module(
     return _ModuleResult(
         ModuleRead(name=module_name, read=read, error=None),
         (
-            *(_name_row(module, name, classifier, sources) for name in names),
-            *(_macro_row(module, name, macro) for name, macro in _macro_exports(module, sources)),
+            *(_name_row(module, module_name, name, classifier, sources) for name in names),
+            *(
+                _macro_row(module, module_name, name, macro)
+                for name, macro in _macro_exports(module, sources)
+            ),
         ),
     )
 
@@ -1351,6 +1383,26 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
     ]
 
 
+def submodule_rows(layout: PackageLayout) -> list[ExportRow]:
+    """One row per public submodule (a public module that is not an import root — R5's outliers).
+
+    Read from the files only: a submodule that cannot be imported is still a module a user reaches.
+    """
+    roots = {root.name for root in layout.roots}
+    return [
+        ExportRow(
+            module=SUBMODULE,
+            name=name,
+            kind="other",
+            form="公開の submodule",
+            defined_at=_place_text(Place(name, str(path))),
+            reason="path のどの部分も _ で始まらない submodule(名は import の根から出し、submodule は _ で隠す)",
+        )
+        for name, path in public_modules(layout)
+        if name not in roots
+    ]
+
+
 def probe_package(package_dir: Path) -> PackageInventory:
     """Import one package's public modules and type every exported name (run in a child process)."""
     layout = read_layout(package_dir)
@@ -1367,7 +1419,11 @@ def probe_package(package_dir: Path) -> PackageInventory:
         import_roots=[root.name for root in layout.roots],
         notes=list(layout.notes),
         modules=[result.read for result in results],
-        exports=[*(row for result in results for row in result.rows), *_metadata_rows(layout)],
+        exports=[
+            *(row for result in results for row in result.rows),
+            *submodule_rows(layout),
+            *_metadata_rows(layout),
+        ],
         error=None,
     )
 
@@ -1548,6 +1604,8 @@ _METHOD_NOTES = (
     "遅れて出す名は、`__dir__` と import 文(`if TYPE_CHECKING:` の節を含む)が並べる名も数える。",
     "Hy の module は `_` で始まらない macro も数える。pyproject の console script・entry point と、maturin の bin の"
     "Rust の実行 file も数える。",
+    "path のどの部分も `_` で始まらない submodule そのものも、1 行(出す所 `(submodule)`・名は module の import の名・"
+    "形「公開の submodule」・それ以外)と数える — 公開の名は import の根からだけ出す(ADR-DOE-API-001 R5)。",
     "effect: EffectBase の子の class・EffectBase の値・effect を作る関数(戻りの型が EffectBase の子か、return が"
     "effect の class を呼ぶ)。",
     "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler・"
