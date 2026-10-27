@@ -278,6 +278,11 @@ from doeff_cluster.shared.intent.warm_model import WarmWaitExpired as WarmWaitEx
 from doeff_cluster.shared.core.warm_rules import warm_state_of_json as warm_state_of_json
 from doeff_cluster.shared.core.warm_rules import warm_wait_answer as warm_wait_answer
 from doeff_cluster.worker.core.warm_rules import refusals_after as refusals_after
+from doeff_cluster.worker.core.room_rules import RoomReading as RoomReading
+from doeff_cluster.worker.core.room_rules import RoomState as RoomState
+from doeff_cluster.worker.core.room_rules import WorkerRoom as WorkerRoom
+from doeff_cluster.worker.core.room_rules import room_of_text as room_of_text
+from doeff_cluster.worker.core.room_rules import room_read_due as room_read_due
 from doeff_cluster.worker.entry.main import worker_on as worker_on
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster.worker.intent.worker_model import WorkerState as WorkerState
@@ -369,6 +374,7 @@ class SimWorker:
     claims_task_reserve: int | None = None
     silent_notices: bool = False
     steps_wall: bool = False
+    reads_room: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
@@ -485,6 +491,10 @@ class NodeReads(_doeff_effect_base[tuple]):
 class RelabelNode(_doeff_effect_base[None]):
     name: str
     labels: dict
+
+@_doeff_dataclass(frozen=True)
+class WriteRoomFile(_doeff_effect_base[None]):
+    text: str | None
 
 @_doeff_dataclass(frozen=True)
 class ReportsOf(_doeff_effect_base[tuple[SimReport, ...]]):
@@ -669,6 +679,9 @@ class HostTruth:
     ticks: int = 0
     warm_children: tuple = ...
     overlaps_elder: bool = False
+    room: WorkerRoom | None = None
+    room_state: RoomState | None = None
+    room_read_ms: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class HostTruthChange:
@@ -725,6 +738,10 @@ class RollBellOf(_doeff_effect_base[Promise]):
 @_doeff_dataclass(frozen=True)
 class WallBackOf(_doeff_effect_base[int]):
     name: str
+
+@_doeff_dataclass(frozen=True)
+class RoomFileText(_doeff_effect_base[str | None]):
+    ...
 
 @_doeff_dataclass(frozen=True)
 class PutHostTruth(_doeff_effect_base[None]):
@@ -1129,6 +1146,9 @@ def accepted_programs(link: SimLink, wanted: list, known: dict) -> _Program[dict
     ...
 
 def beat_body(worker: SimWorker, truth: HostTruth, sent_at: int, stopping: bool, plan: SimPlan) -> _Program[dict, object]:
+    ...
+
+def room_noted_truth(worker: SimWorker, boot: str, truth: HostTruth, now_ms: int) -> _Program[HostTruth, object]:
     ...
 
 def heartbeat(worker: SimWorker, boot: str, stopping: bool, plan: SimPlan, parts: SimParts) -> _Program[DesiredJobs | DesiredUnreadable, object]:

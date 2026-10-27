@@ -10,6 +10,7 @@ from doeff_cluster.coordinator.intent.cluster_model import ClusterNaming as Clus
 from doeff_cluster.coordinator.intent.cluster_model import TaskRecord as TaskRecord
 from doeff_cluster.coordinator.intent.cluster_model import ENDED_PHASES as ENDED_PHASES
 from doeff_cluster.shared.intent.detached_model import DetachedEnded as DetachedEnded
+from doeff_cluster.shared.core.capabilities import POOL_PREFIX as POOL_PREFIX
 from doeff_cluster.shared.core.capabilities import capabilities_of as capabilities_of
 from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
 from doeff_cluster.shared.core.detached_rules import task_limits_refusal as task_limits_refusal
