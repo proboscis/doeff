@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
     from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
     from doeff_claude_code.fake import FakeReply as FakeReply
-    from doeff_codex.fake import FakeCodexWorld
+    from doeff_codex.fake import FakeCodexWorld as FakeCodexWorld
     from doeff_codex.rpc import ApprovalPolicy as CodexApprovalPolicy
     from doeff_codex.rpc import SandboxMode as CodexSandboxMode
 
@@ -43,20 +43,25 @@ from doeff_agents.session_store import AgentSessionRepository as AgentSessionRep
 # checks (`BypassAll`) — the behavior every caller had before #3753.
 _DEFAULT_CLAUDE_PERMISSION: PermissionPolicy = BypassAll()
 
-# Values the Claude runtime handlers take or raise, defined in doeff-claude-code's
-# Hy modules: read on first use so importing this module does not load them.
-_CLAUDE_CODE_VALUES = {
-    "ClaudeLiveLimitExceeded": "doeff_claude_code.effects",
-    "FakeClaudeWorld": "doeff_claude_code.fake",
-    "FakeReply": "doeff_claude_code.fake",
+# Values the Claude and codex runtime handlers take or raise, defined in
+# doeff-claude-code's and doeff-codex's Hy modules (name → defining module and
+# its name there): read on first use so importing this module does not load them.
+_RUNTIME_VALUES = {
+    "ClaudeLiveLimitExceeded": ("doeff_claude_code.effects", "ClaudeLiveLimitExceeded"),
+    "FakeClaudeWorld": ("doeff_claude_code.fake", "FakeClaudeWorld"),
+    "FakeReply": ("doeff_claude_code.fake", "FakeReply"),
+    "FakeCodexWorld": ("doeff_codex.fake", "FakeCodexWorld"),
+    "CodexApprovalPolicy": ("doeff_codex.rpc", "ApprovalPolicy"),
+    "CodexSandboxMode": ("doeff_codex.rpc", "SandboxMode"),
 }
 
 
 def __getattr__(name: str) -> Any:
-    module_name = _CLAUDE_CODE_VALUES.get(name)
-    if module_name is None:
+    source = _RUNTIME_VALUES.get(name)
+    if source is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module_name), name)
+    module_name, attribute = source
+    value = getattr(import_module(module_name), attribute)
     globals()[name] = value
     return value
 
