@@ -281,19 +281,6 @@
       "EventLogWriter",
       "get_default_state_dir"
      ],
-     "doeff_agentic.handler": [
-      "WorkflowContext"
-     ],
-     "doeff_agentic.handlers": [
-      "MockAgenticState",
-      "WorkflowContext"
-     ],
-     "doeff_agentic.handlers.production": [
-      "WorkflowContext"
-     ],
-     "doeff_agentic.handlers.testing": [
-      "MockAgenticState"
-     ],
      "doeff_agentic.state": [
       "StateManager",
       "get_default_state_dir"
@@ -342,40 +329,6 @@
     "境界 — CLI": {
      "(console script)": [
       "doeff-agentic-tui"
-     ]
-    },
-    "境界 — class の形の handler": {
-     "doeff_agentic": [
-      "AgenticHandler",
-      "OpenCodeHandler",
-      "TmuxHandler"
-     ],
-     "doeff_agentic.handler": [
-      "AgenticHandler"
-     ],
-     "doeff_agentic.handlers": [
-      "AgenticHandler",
-      "MockAgenticHandler",
-      "OpenCodeHandler",
-      "TmuxHandler"
-     ],
-     "doeff_agentic.handlers.opencode": [
-      "OpenCodeHandler"
-     ],
-     "doeff_agentic.handlers.production": [
-      "AgenticHandler"
-     ],
-     "doeff_agentic.handlers.testing": [
-      "MockAgenticHandler"
-     ],
-     "doeff_agentic.handlers.tmux": [
-      "TmuxHandler"
-     ],
-     "doeff_agentic.opencode_handler": [
-      "OpenCodeHandler"
-     ],
-     "doeff_agentic.tmux_handler": [
-      "TmuxHandler"
      ]
     },
     "境界 — effect の値の型": {
@@ -438,19 +391,13 @@
      ]
     },
     "境界 — handler と読める名(道具が読めない)": {
-     "doeff_agentic": [
-      "agent_handler"
-     ],
      "doeff_agentic.handler": [
-      "agent_handler",
       "with_agentic_effectful_handlers"
      ],
      "doeff_agentic.handlers": [
-      "agent_handler",
       "with_agentic_effectful_handlers"
      ],
      "doeff_agentic.handlers.production": [
-      "agent_handler",
       "with_agentic_effectful_handlers"
      ],
      "doeff_agentic.runtime": [

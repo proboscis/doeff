@@ -140,10 +140,7 @@ from .handlers import (
 )
 
 # OpenCode Handler (new - primary)
-from .opencode_handler import (
-    OpenCodeHandler,
-    opencode_handler,
-)
+from .opencode_handler import opencode_handler
 
 # State management
 from .state import (
@@ -153,10 +150,7 @@ from .state import (
 )
 
 # Tmux Handler (legacy fallback)
-from .tmux_handler import (
-    TmuxHandler,
-    tmux_handler,
-)
+from .tmux_handler import tmux_handler
 from .types import (
     # Legacy types (deprecated)
     AgentConfig,
@@ -189,15 +183,9 @@ from .visual_interceptor import (
 
 # Legacy Handler (deprecated - requires doeff-agents)
 try:
-    from .handler import (
-        AgenticHandler,
-        agent_handler,
-        agentic_effectful_handlers,
-    )
+    from .handler import agentic_effectful_handlers
 except ImportError:
     # doeff-agents not installed, handlers not available
-    AgenticHandler = None  # type: ignore
-    agent_handler = None  # type: ignore
     agentic_effectful_handlers = None  # type: ignore
 
 __all__ = [
@@ -236,8 +224,6 @@ __all__ = [
     "AgenticGetSession",
     "AgenticGetSessionStatus",
     "AgenticGetWorkflow",
-    # Handler (deprecated - requires doeff-agents)
-    "AgenticHandler",
     "AgenticListWorkflows",
     "AgenticMessage",
     "AgenticMessageHandle",
@@ -261,8 +247,6 @@ __all__ = [
     "EventLogReader",
     # Event logging
     "EventLogWriter",
-    # OpenCode Handler (new - primary)
-    "OpenCodeHandler",
     "RunAgent",
     # Effects - legacy
     "RunAgentEffect",
@@ -272,8 +256,6 @@ __all__ = [
     "StateManager",
     "StopAgent",
     "StopAgentEffect",
-    # Tmux Handler (legacy fallback)
-    "TmuxHandler",
     "UserInputTimeoutError",
     "VisualInterceptorConfig",
     "WaitForStatus",
@@ -287,7 +269,6 @@ __all__ = [
     # Errors - legacy aliases
     "WorkflowNotFoundError",
     "WorkflowStatus",
-    "agent_handler",
     "agentic_effectful_handlers",
     "generate_workflow_id",
     "get_default_state_dir",

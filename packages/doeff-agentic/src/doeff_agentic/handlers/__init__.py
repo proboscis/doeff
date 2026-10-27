@@ -3,23 +3,17 @@
 
 from doeff.program import ProgramHandler
 
-from .opencode import OpenCodeHandler, opencode_handler
+from .opencode import opencode_handler
 from .recorded import recorded_workflows_handler
-from .testing import MockAgenticHandler, MockAgenticState, mock_handlers
-from .tmux import TmuxHandler, tmux_handler
+from .testing import mock_handlers
+from .tmux import tmux_handler
 
 try:
     from .production import (
-        AgenticHandler,
-        WorkflowContext,
-        agent_handler,
         agentic_effectful_handlers,
         with_agentic_effectful_handlers,
     )
 except ImportError:
-    AgenticHandler = None  # type: ignore[assignment]
-    WorkflowContext = None  # type: ignore[assignment]
-    agent_handler = None  # type: ignore[assignment]
     agentic_effectful_handlers = None  # type: ignore[assignment]
     with_agentic_effectful_handlers = None  # type: ignore[assignment]
 
@@ -48,13 +42,6 @@ def production_handlers(
 
 
 __all__ = [
-    "AgenticHandler",
-    "MockAgenticHandler",
-    "MockAgenticState",
-    "OpenCodeHandler",
-    "TmuxHandler",
-    "WorkflowContext",
-    "agent_handler",
     "agentic_effectful_handlers",
     "mock_handlers",
     "opencode_handler",

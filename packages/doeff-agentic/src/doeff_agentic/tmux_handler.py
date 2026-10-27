@@ -1,8 +1,7 @@
 """Backward-compatible re-export for tmux handler imports."""
 
-from .handlers.tmux import TmuxHandler, tmux_handler
+from .handlers.tmux import tmux_handler
 
 __all__ = [
-    "TmuxHandler",
     "tmux_handler",
 ]
