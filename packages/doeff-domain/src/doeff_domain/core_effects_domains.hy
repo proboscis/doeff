@@ -19,7 +19,7 @@
 (import doeff_domain.introspect [handles])
 
 (import doeff_core_effects.effects [Ask Get Put Local Listen Await Try
-                                    WriterTellEffect SlogEffect])
+                                    WriterTellEffect ReadWriterLog SlogEffect])
 (import doeff_core_effects.http-effects [HttpRequest])
 (import doeff_core_effects.memo-effects [MemoGetEffect MemoPutEffect
                                          MemoDeleteEffect MemoExistsEffect])
@@ -130,7 +130,7 @@
 ((handles Ask) env-var-ask)
 ((handles Ask Local) lazy-ask)
 ((handles Get Put) state)
-((handles WriterTellEffect) writer)
+((handles WriterTellEffect ReadWriterLog) writer)
 ((handles SlogEffect) slog-handler)
 ((handles SlogEffect) slog-discard-handler)
 ((handles Try) try-handler)
@@ -171,13 +171,10 @@
 
 (defdomain doeff-writer
   :title "Writer 語彙 — Tell の静かな蓄積"
-  :effects [WriterTellEffect]
+  :effects [WriterTellEffect ReadWriterLog]
   :terms [(DomainTerm :name "Tell"
                       :home "doeff_core_effects.effects"
-                      :description "WriterTellEffect の正典コンストラクタ")
-          (DomainTerm :name "writer_log"
-                      :home "doeff_core_effects.handlers"
-                      :description "蓄積ログ読み出しの正典 Program(State 収集)")]
+                      :description "WriterTellEffect の正典コンストラクタ")]
   :handlers [writer]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-001"])
 

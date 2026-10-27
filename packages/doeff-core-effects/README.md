@@ -52,8 +52,8 @@ outermost one:
 
 ```python
 from doeff import do, run
-from doeff_core_effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer, writer_log
+from doeff_core_effects import Ask, Get, Put, ReadWriterLog, Tell
+from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 
@@ -70,7 +70,7 @@ def greet():
 def main():
     first = yield greet()
     second = yield greet()
-    log = yield writer_log()
+    log = yield ReadWriterLog()
     return first, second, log
 
 

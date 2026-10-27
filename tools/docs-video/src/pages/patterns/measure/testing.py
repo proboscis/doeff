@@ -5,7 +5,8 @@
 import time
 from datetime import datetime, timezone
 
-from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog
+from doeff_core_effects.handlers import state, try_handler, writer
 from doeff_core_effects.scheduler import scheduled
 from doeff_time import Delay, GetTime, sim_time_handler
 
@@ -30,7 +31,7 @@ def test_effects_executed():
 def program_and_what_its_handlers_kept():
     """Runs program() and then reads the log writer kept and the value the state handler holds."""
     value = yield program()
-    return value, (yield writer_log()), (yield Get("key"))
+    return value, (yield ReadWriterLog()), (yield Get("key"))
 
 
 def test_effects_seen():

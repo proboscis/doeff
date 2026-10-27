@@ -20,6 +20,7 @@ from __future__ import annotations
 from contextlib import closing
 
 import pytest
+from doeff_core_effects.effects import ReadWriterLog
 from doeff_core_effects.handlers import (
     await_handler,
     lazy_ask,
@@ -237,6 +238,12 @@ def _state_program():
 
 
 @do
+def _read_log_program():
+    yield Tell("hello")
+    return (yield ReadWriterLog())
+
+
+@do
 def _gather_program():
     first = yield Spawn(child_program())
     second = yield Spawn(child_program())
@@ -267,6 +274,12 @@ FOLLOW_THE_HINT = [
     ),
     pytest.param(
         tell_program, "state()(writer(", lambda: state()(writer(tell_program())), id="tell"
+    ),
+    pytest.param(
+        _read_log_program,
+        "state()(writer(",
+        lambda: state()(writer(_read_log_program())),
+        id="read-writer-log",
     ),
     pytest.param(_state_program, "state()(prog)", lambda: state()(_state_program()), id="get-put"),
     pytest.param(

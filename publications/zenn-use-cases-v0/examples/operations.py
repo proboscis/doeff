@@ -4,7 +4,8 @@ from hashlib import sha256  # 通知に添える署名をSHA-256で計算する�
 from hmac import new as make_hmac  # 秘密の値を本文へ出さず、PR URLの署名を作る。
 from pathlib import Path  # Git操作の対象を表す。テストではメモリ上のキーになる。
 
-from doeff_core_effects.handlers import state, writer, writer_log  # Tellを状態へ集め、読み出す。
+from doeff_core_effects import ReadWriterLog  # 集めたTellの記録を読み出す。
+from doeff_core_effects.handlers import state, writer  # Tellを状態へ集める。
 from doeff_git.effects import (  # Gitの依頼を使う。
     CreatePR,  # PRを作成し、URLと番号を受け取る。
     GitCommit,  # stage済みの内容をcommitする依頼を作る。
@@ -96,7 +97,7 @@ def propose_and_notify(work_dir: Path):  # stage済みの変更についてPRを
 @do  # 通知を処理してから、変換先のTellの記録を読み出す。
 def collect_notification_log():  # ログ用ハンドラの結果を検証側へ返す。
     acknowledged = yield notify_progress()  # log版では確認操作の結果はFalseになる。
-    entries = yield writer_log()  # notify・notify_thread・acknowledgeの3件を受け取る。
+    entries = yield ReadWriterLog()  # notify・notify_thread・acknowledgeの3件を受け取る。
     return acknowledged, entries  # 確認結果と通知の記録を返す。
 
 

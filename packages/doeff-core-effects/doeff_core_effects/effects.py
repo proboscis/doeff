@@ -310,6 +310,18 @@ class WriterTellEffect(EffectBase[None]):
         return f"Tell({self.msg!r})"
 
 
+class ReadWriterLog(EffectBase[list[Any]]):
+    """Writer effect: read a copy of the messages Tell has logged so far.
+
+    yield ReadWriterLog() → [msg, ...] in the order told ([] before the first Tell).
+    The writer handler answers it with a new list, so changing the list leaves the
+    log as told. Without writer it is an unhandled effect.
+    """
+
+    def __repr__(self) -> str:
+        return "ReadWriterLog()"
+
+
 class SlogEffect(EffectBase[None]):
     """Structured log (observability) effect: msg + kwargs.
 

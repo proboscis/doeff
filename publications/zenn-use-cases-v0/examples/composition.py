@@ -2,13 +2,19 @@
 
 from datetime import datetime, timedelta, timezone  # 仮想時計の開始時刻と2秒後を比較する。
 
-from doeff_core_effects import Ask, Get, Put, Tell, Try  # 設定・状態・ログ・失敗を依頼する。
-from doeff_core_effects.handlers import (  # 各依頼の解釈と、ログの取り出しを用意する。
+from doeff_core_effects import (  # 設定・状態・ログ・失敗を依頼する。
+    Ask,  # 設定値を依頼する。
+    Get,  # 状態を読む。
+    Put,  # 状態を書く。
+    ReadWriterLog,  # 蓄積済みのメッセージ一覧を依頼する。
+    Tell,  # ログを蓄積する。
+    Try,  # 子Programの成功・失敗を値にする。
+)
+from doeff_core_effects.handlers import (  # 各依頼の解釈を用意する。
     reader,  # Askへ設定値を返すハンドラを作る。
     state,  # Get/Putを同じ状態辞書へ接続する。
     try_handler,  # Tryの対象をOkまたはErrに包む。
     writer,  # Tellを外側のstateへ蓄積する。
-    writer_log,  # 蓄積済みのメッセージ一覧を返すProgramを作る。
 )
 from doeff_core_effects.scheduler import scheduled  # 仮想時間ハンドラが使う待機と再開を扱う。
 from doeff_time import Delay, GetTime  # 経過時間の待機と現在時刻を依頼する。
@@ -42,7 +48,7 @@ def convert_title(text: str):  # 正常な見出しと空文字の両方を入�
 def inspect(text: str):  # 入力ごとに成功・失敗と、その後に残る情報を調べる。
     outcome = yield Try(convert_title(text))  # 成功ならOk、空文字ならErrを受け取る。
     count = yield Get("attempts")  # Tryの後も試行回数1が残っていることを観測する。
-    messages = yield writer_log()  # Tellで蓄積したメッセージ一覧を受け取る。
+    messages = yield ReadWriterLog()  # Tellで蓄積したメッセージ一覧を受け取る。
     return outcome, count, messages  # 結果・回数・ログを検証側へ返す。
 
 

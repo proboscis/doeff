@@ -2,8 +2,8 @@
 # tasks Spawned inside it, and only those. The observer only looks: what it returns is ignored, and the effect
 # still goes on to its handler, which answers it as before. Prints what the observer saw and what the program got,
 # to back the WithObserve scene of the Advanced Effects video (the example of docs/09-advanced-effects.md).
-from doeff_core_effects import Ask, Tell
-from doeff_core_effects.handlers import reader, state, writer, writer_log
+from doeff_core_effects import Ask, ReadWriterLog, Tell
+from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import Gather, Spawn, WithObserve, do, run
@@ -41,7 +41,7 @@ def program():
     yield Tell("before the scope")
     result = yield WithObserve(observer, body())
     yield Tell("after the scope")
-    return result, (yield writer_log())
+    return result, (yield ReadWriterLog())
 
 
 for i in range(3):

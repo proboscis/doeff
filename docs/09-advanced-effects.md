@@ -117,8 +117,8 @@ Use `Get` followed by `Put` when you need to update state:
 
 ```python
 from doeff import do, run
-from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer, writer_log
+from doeff_core_effects import Get, Put, ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, writer
 
 @do
 def increment_counter():
@@ -132,7 +132,7 @@ def increment_counter():
 def increment_twice():
     first = yield increment_counter()
     second = yield increment_counter()
-    return first, second, (yield writer_log())
+    return first, second, (yield ReadWriterLog())
 
 print(run(state()(writer(increment_twice()))))  # (1, 2, ['Counter: 1', 'Counter: 2'])
 print(run(state(initial={"counter": 41})(writer(increment_counter()))))  # 42

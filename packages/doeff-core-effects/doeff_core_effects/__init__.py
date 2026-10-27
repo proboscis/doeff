@@ -2,7 +2,7 @@
 doeff-core-effects — reference implementation of effects and handlers.
 
 This package provides:
-- Effects: Ask, Get, Put, Tell
+- Effects: Ask, Get, Put, Tell, ReadWriterLog
 - Handlers: reader, state, writer
 - Scheduler: Spawn, Wait, Gather, Race, Cancel, Discard, Promise, ExternalPromise, Semaphore
 """
@@ -22,6 +22,7 @@ from doeff_core_effects.effects import Local as Local
 from doeff_core_effects.effects import MissingEnvKeyError as MissingEnvKeyError
 from doeff_core_effects.effects import Put as Put
 from doeff_core_effects.effects import Raise as Raise
+from doeff_core_effects.effects import ReadWriterLog as ReadWriterLog
 from doeff_core_effects.effects import Resumption as Resumption
 from doeff_core_effects.effects import Slog as Slog
 from doeff_core_effects.effects import SlogEffect as SlogEffect
@@ -40,7 +41,6 @@ from doeff_core_effects.handlers import slog_handler as slog_handler
 from doeff_core_effects.handlers import state as state
 from doeff_core_effects.handlers import try_handler as try_handler
 from doeff_core_effects.handlers import writer as writer
-from doeff_core_effects.handlers import writer_log as writer_log
 
 # absence and failure (ADR-DOE-CORE-EFFECTS-003)
 from doeff_core_effects.outcomes import RaiseCase as RaiseCase

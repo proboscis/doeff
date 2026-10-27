@@ -9,6 +9,11 @@
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
   `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
   `importlib.metadata.version("doeff-openai")` (and likewise for the other four).
+- **Breaking (doeff-core-effects):** the writer log is read with the effect `ReadWriterLog`, which `writer` answers
+  with a copy of the messages `Tell` has logged (`[]` before the first `Tell`); the program function `writer_log` is
+  gone. Write `log = yield ReadWriterLog()` (`from doeff_core_effects import ReadWriterLog`) where you wrote
+  `log = yield writer_log()`. Without `writer`, `ReadWriterLog` is an unhandled effect whose hint names
+  `state()(writer(prog))`.
 
 ## 0.8.0 — 2026-10-27
 

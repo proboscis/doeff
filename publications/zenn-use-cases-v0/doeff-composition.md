@@ -12,14 +12,14 @@ published: false
 
 ```python
 from doeff import do  # 関数の呼び出しを、合成できるProgramにする。
-from doeff_core_effects import Get, Try, writer_log  # 状態・失敗・ログの取得を組み合わせる。
+from doeff_core_effects import Get, ReadWriterLog, Try  # 状態・失敗・ログの取得を組み合わせる。
 
 
 @do  # 結果だけでなく、同じ試行の状態とログも値として取り出す。
 def inspect(text: str):  # 入力ごとに成功・失敗と、その後に残る情報を調べる。
     outcome = yield Try(convert_title(text))  # 成功ならOk、空文字ならErrを受け取る。
     count = yield Get("attempts")  # Tryの後も試行回数1が残っていることを観測する。
-    messages = yield writer_log()  # Tellで蓄積したメッセージ一覧を受け取る。
+    messages = yield ReadWriterLog()  # Tellで蓄積したメッセージ一覧を受け取る。
     return outcome, count, messages  # 結果・回数・ログを検証側へ返す。
 ```
 
@@ -35,7 +35,7 @@ Tryで成功・失敗を値にし、Getで状態、writer_logでログを受け�
 | --- | --- | --- |
 | `Ask` | 待機時間の設定値`2` | Reader |
 | `Get` / `Put` | 試行回数を`0`から`1`へ更新 | State |
-| `Tell` / `writer_log()` | 開始ログを蓄積し、一覧を取得 | Writer |
+| `Tell` / `ReadWriterLog()` | 開始ログを蓄積し、一覧を取得 | Writer |
 | `Try` | `Ok(変換結果)`または`Err(ValueError)` | Result / Eitherに近い扱い |
 | 別の`@do`関数を`yield` | 子Programを進め、戻り値を取得 | モナド的な逐次合成 |
 | `Delay` / `GetTime` | 待機を依頼し、再開後の時刻を取得 | 時間を扱うeffect |
@@ -80,7 +80,7 @@ def convert_title(text: str):  # 正常な見出しと空文字の両方を入�
 
 この例の`writer`は、ログを保存するために内部で`Get`と`Put`を発行します。その依頼を受ける`state`を、**`writer`の外側**へ取り付けます。式では`state(...)(writer(program))`となります。
 
-`writer`を取り付けただけでは、プログラムの戻り値にログが追加されるわけではありません。本文の`yield writer_log()`で明示的に取得します。同様に、最後の状態も`yield Get(...)`で取得しています。
+`writer`を取り付けただけでは、プログラムの戻り値にログが追加されるわけではありません。本文の`yield ReadWriterLog()`で明示的に依頼して取得します。同様に、最後の状態も`yield Get(...)`で取得しています。
 
 ```python
 from datetime import datetime, timedelta, timezone  # 仮想時計の開始時刻と2秒後を比較する。

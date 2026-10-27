@@ -2,12 +2,11 @@
 
 from datetime import datetime, timedelta, timezone  # UTC日時と秒単位の時刻差を作る。
 
-from doeff_core_effects.effects import Tell  # 実行した処理の名前を記録として送る。
+from doeff_core_effects.effects import ReadWriterLog, Tell  # 実行した処理の記録を送り、読む。
 from doeff_core_effects.handlers import (  # 待機と記録を受け持つハンドラを選ぶ。
     await_handler,  # 非同期待機をスケジューラへ接続する。
     state,  # 集めた記録の置き場を持つ。
     writer,  # Tellで送られた記録を集める。
-    writer_log,  # 集めた記録を、処理の途中でも読む。
 )
 from doeff_core_effects.scheduler import (  # 並行タスクの開始・待機・優先度を指定する。
     PRIORITY_HIGH,  # 実行可能な通常タスクより先に選ばれる優先度。
@@ -91,7 +90,7 @@ def priorities():  # 実行可能な2タスクがどちらから選ばれるか�
     )
     yield Wait(urgent)  # 応答処理の完了を確認する。
     yield Wait(background)  # 背景処理も完了させ、未完了タスクを残さない。
-    return (yield writer_log())  # 記録された実行順を返す。
+    return (yield ReadWriterLog())  # 記録された実行順を返す。
 
 
 def recorded(program):  # 記録を集めるwriterと、その置き場のstateを外側に付ける。

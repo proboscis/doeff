@@ -11,7 +11,7 @@ import asyncio
 import time
 
 import pytest
-from doeff_core_effects import SlogEffect, WriterTellEffect, slog, writer_log
+from doeff_core_effects import ReadWriterLog, SlogEffect, WriterTellEffect, slog
 from doeff_core_effects.handlers import (
     listen_handler,
     slog_discard_handler,
@@ -470,7 +470,7 @@ class TestListenNested:
         @do
         def program():
             yield Listen(outer())
-            return (yield writer_log())
+            return (yield ReadWriterLog())
 
         assert run(state()(writer(listen_handler(program())))) == [
             "outer-before",
