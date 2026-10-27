@@ -17,7 +17,8 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    利用者の発言の id)を 1 行ずつ書く。
 5. 失敗ケース: 使い捨ての package を作り、effect と handler だけなら緑・外れを 1 つ足すと赤・外すと緑・直したのに表に
    残すと赤・訳と決めつきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
-   (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤になる事を、同じ照合で確かめる。
+   (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤・1 行目に印 moved-submodule-shim の在る
+   移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
 """
 
 from __future__ import annotations
@@ -412,9 +413,9 @@ def _fixture_tree(tmp_path: Path, files: Mapping[str, str]) -> Path:
     (package / "src" / FIXTURE_ROOT).mkdir(parents=True, exist_ok=True)
     (package / "pyproject.toml").write_text(textwrap.dedent(FIXTURE_PYPROJECT), encoding="utf-8")
     for relative, source in files.items():
-        (package / "src" / FIXTURE_ROOT / relative).write_text(
-            textwrap.dedent(source), encoding="utf-8"
-        )
+        target = package / "src" / FIXTURE_ROOT / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(textwrap.dedent(source), encoding="utf-8")
     return tmp_path
 
 
@@ -641,3 +642,52 @@ def test_a_different_definition_with_a_known_name_at_the_root_turns_red(tmp_path
     )
     with pytest.raises(AssertionError, match=r"既知の表に無い[\s\S]*doeff_fixture_api\.PingResult"):
         check_package(_read_fixture(repo), table)
+
+
+#: 子の package を _types へ移した後に元の path へ残す移し替えの module(card ki-299be2ea4a13 の道具の形 — 1 行目の印つき)。
+MARKED_SHIM = f"""# moved-submodule-shim: {FIXTURE_ROOT}.types -> {FIXTURE_ROOT}._types
+import sys
+from importlib import import_module
+
+sys.modules[__name__] = import_module("{FIXTURE_ROOT}._types")
+"""
+#: 子の package の下の module(外れの関数を 1 つ出す)。
+BELOW = '''
+def sub_helper(x: int) -> int:
+    """An outlier in a module below the child package."""
+    return x - 1
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_names(
+    tmp_path: Path,
+) -> None:
+    """子の package を _ へ移し、1 行目に印のある移し替えの module を残す間は、下の module も古い名のまま数えて緑。
+
+    印の無い移し替えの module では、下の module は目録から消える(古い名の submodule と名の行が、表に在るのに目録に無い)。
+    """
+    child, below = f"{FIXTURE_ROOT}.types", f"{FIXTURE_ROOT}.types.sub"
+    table = _fixture_table(
+        {SUBMODULE: [child, below], child: ["LIMIT", "PingResult", "helper"], below: ["sub_helper"]}
+    )
+    before = _fixture_tree(
+        tmp_path / "before",
+        {"__init__.py": EFFECTS_AND_HANDLERS, "types/__init__.py": TYPES, "types/sub.py": BELOW},
+    )
+    check_package(_read_fixture(before), table)
+
+    moved = {
+        "__init__.py": EFFECTS_AND_HANDLERS,
+        "_types/__init__.py": TYPES,
+        "_types/sub.py": BELOW,
+    }
+    stage_1 = _fixture_tree(tmp_path / "stage-1", {**moved, "types.py": MARKED_SHIM})
+    check_package(_read_fixture(stage_1), table)
+
+    unmarked = MARKED_SHIM.split("\n", 1)[1]
+    without_mark = _fixture_tree(tmp_path / "unmarked", {**moved, "types.py": unmarked})
+    with pytest.raises(AssertionError, match=r"目録に無い名が 2 個") as failure:
+        check_package(_read_fixture(without_mark), table)
+    assert f"{below}(公開の submodule)" in str(failure.value)
+    assert f"{below}.sub_helper" in str(failure.value)

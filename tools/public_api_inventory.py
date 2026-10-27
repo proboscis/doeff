@@ -85,6 +85,8 @@ KIND_LABELS: dict[Kind, str] = {
 ModuleReadWay = Literal["__all__", "own", "text"]
 #: What shows a public submodule's row (as ``(console script)`` shows a console script's).
 SUBMODULE = "(submodule)"
+#: The first line of a module left at a submodule's old path when the submodule moved to ``_<name>``.
+SHIM_MARK = re.compile(r"#\s*moved-submodule-shim:\s*([\w.]+)\s*->\s*([\w.]+)")
 
 _MODULE_SUFFIXES = (".py", ".hy", ".pyi")
 _EXTENSION_SUFFIXES = (".so", ".pyd")
@@ -351,14 +353,14 @@ def read_layout(package_dir: Path) -> PackageLayout:
     )
 
 
-def _module_name(root: ImportRoot, relative: Path) -> str:
-    """The import name of a module file or package dir below a root."""
+def _module_name(prefix: str, relative: Path) -> str:
+    """The import name of a module file or package dir below the package named ``prefix``."""
     *parents, last = relative.parts
     if last.endswith(_EXTENSION_SUFFIXES):
         last = last.split(".")[0]
     elif last.endswith(_MODULE_SUFFIXES):
         last = last.rsplit(".", 1)[0]
-    return ".".join([root.name, *parents, last])
+    return ".".join([prefix, *parents, last])
 
 
 def _init_of(directory: Path) -> Path | None:
@@ -371,15 +373,47 @@ def _root_modules(root: ImportRoot) -> Iterator[tuple[str, Path]]:
     if not root.path.is_dir():
         return
     yield root.name, _init_of(root.path) or root.path
-    for path in sorted(root.path.rglob("*")):
-        relative = path.relative_to(root.path)
+    yield from _modules_below(root.path, root.name, 0)
+
+
+def _modules_below(base: Path, prefix: str, depth: int) -> Iterator[tuple[str, Path]]:
+    """The public modules below the package dir ``base`` (named ``prefix``).
+
+    A moved-submodule shim (``SHIM_MARK``) also stands for the modules below the package it moved
+    to, by their old names: they stay importable at the old path until the shim is removed.
+    """
+    for path in sorted(base.rglob("*")):
+        relative = path.relative_to(base)
         if any(part.startswith(("_", ".")) for part in relative.parts):
             continue
         init = _init_of(path) if path.is_dir() else None
         if init is not None:
-            yield _module_name(root, relative), init
+            yield _module_name(prefix, relative), init
         elif path.is_file() and path.name.endswith(_MODULE_SUFFIXES + _EXTENSION_SUFFIXES):
-            yield _module_name(root, relative), path
+            name = _module_name(prefix, relative)
+            yield name, path
+            moved_to = _shim_package(name, path)
+            if moved_to is not None and depth < _FOLLOW_DEPTH:
+                yield from _modules_below(moved_to, name, depth + 1)
+
+
+def _shim_package(name: str, path: Path) -> Path | None:
+    """The package dir a moved-submodule shim stands for (``None`` for any other module).
+
+    A shim's first line is ``# moved-submodule-shim: <old> -> <new>``, its old name is its own and
+    the new one is a sibling (the shims the rewriting tool of card ki-299be2ea4a13 writes).
+    """
+    if path.suffix != ".py":
+        return None
+    with path.open(encoding="utf-8", errors="replace") as source:
+        found = SHIM_MARK.fullmatch(source.readline().strip())
+    if found is None or found.group(1) != name:
+        return None
+    parent, _, last = found.group(2).rpartition(".")
+    if parent != name.rpartition(".")[0]:
+        return None
+    moved_to = path.parent / last
+    return moved_to if _init_of(moved_to) is not None else None
 
 
 def public_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
@@ -1605,7 +1639,9 @@ _METHOD_NOTES = (
     "Hy の module は `_` で始まらない macro も数える。pyproject の console script・entry point と、maturin の bin の"
     "Rust の実行 file も数える。",
     "path のどの部分も `_` で始まらない submodule そのものも、1 行(出す所 `(submodule)`・名は module の import の名・"
-    "形「公開の submodule」・それ以外)と数える — 公開の名は import の根からだけ出す(ADR-DOE-API-001 R5)。",
+    "形「公開の submodule」・それ以外)と数える — 公開の名は import の根からだけ出す(ADR-DOE-API-001 R5)。"
+    "1 行目が `# moved-submodule-shim: <古い名> -> <新しい名>` の移し替えの module は、移した先の package の下の module も"
+    "古い名で数える(移し替えの module を消すまで古い path で import できる)。",
     "effect: EffectBase の子の class・EffectBase の値・effect を作る関数(戻りの型が EffectBase の子か、return が"
     "effect の class を呼ぶ)。",
     "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler・"

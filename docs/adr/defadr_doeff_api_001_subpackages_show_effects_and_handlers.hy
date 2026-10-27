@@ -126,10 +126,11 @@
                      "tests/test_public_api_known_violations.py::test_an_added_public_submodule_turns_red_and_hiding_it_turns_green"
                      "tests/test_public_api_known_violations.py::test_moving_names_from_a_submodule_to_the_root_keeps_the_table_green"
                      "tests/test_public_api_known_violations.py::test_a_different_definition_with_a_known_name_at_the_root_turns_red"
+                     "tests/test_public_api_known_violations.py::test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_names"
                      "tests/test_public_api_known_violations.py::test_the_known_table_only_shrinks_from_its_first_version"
                      "tests/test_public_api_known_violations.py::test_a_submodule_row_put_into_the_table_after_it_had_submodule_rows_turns_red"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-a-public-submodule-turns-the-guard-red-and-a-moved-name-does-not"]
-       :wiring "配線済み(2026-10-28・card ki-25d43146681e)— 目録は _ で始まらない submodule を 1 行(名を出す module の欄が (submodule))の外れと数え、既知の表は今の公開の submodule 731 行を載せて、submodule の行を足した版から減るだけ。名を submodule から入口へ移した行は表の module を書き換えずに同じ行と読む(submodule がまだ同じ名を出す間は定義の場所が同じ時だけ・古い口を閉じた後は名と根だけ)。隠した submodule の行は表から消す。この file の deftest はその関数を呼ぶだけ")]
+       :wiring "配線済み(2026-10-28・card ki-25d43146681e)— 目録は _ で始まらない submodule を 1 行(名を出す module の欄が (submodule))の外れと数え、既知の表は今の公開の submodule 731 行を載せて、submodule の行を足した版から減るだけ。名を submodule から入口へ移した行は表の module を書き換えずに同じ行と読む(submodule がまだ同じ名を出す間は定義の場所が同じ時だけ・古い口を閉じた後は名と根だけ)。1 行目に印 # moved-submodule-shim: <古い名> -> <新しい名> の在る移し替えの module(card ki-299be2ea4a13 の道具が置く)は、移した先の package の下の module も古い名で数えるので、stage 1 は表を書き換えずに緑。隠した submodule の行は表から消す。この file の deftest はその関数を呼ぶだけ")]
   :enforcement
     [(deftest test-adr-doe-api-001-an-added-outlier-turns-the-guard-red
        ;; R12: 強制は card ki-aaaa56621c5a の test が持ち、ここではその関数を呼ぶだけ — 使い捨ての package に effect と handler の外の
@@ -152,6 +153,7 @@
        (with [scratch (tempfile.TemporaryDirectory)]
          (guard.test-an-added-public-submodule-turns-red-and-hiding-it-turns-green (/ (Path scratch) "submodule"))
          (guard.test-moving-names-from-a-submodule-to-the-root-keeps-the-table-green (/ (Path scratch) "moved") "lazy" "alias")
+         (guard.test-a-marked-shim-keeps-the-modules-below-a-moved-package-at-their-old-names (/ (Path scratch) "marked"))
          (guard.test-a-different-definition-with-a-known-name-at-the-root-turns-red (/ (Path scratch) "different"))))]
   :plans ["tests/test_public_api_known_violations.py・tests/data/public_api_known_violations.json (card ki-aaaa56621c5a)"
           "tools/public_api_inventory.py (card ki-633e6b8564b4)"
