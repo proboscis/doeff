@@ -16,7 +16,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import hy  # noqa: F401  # .hy import hook — the I/O handlers are Hy modules
-from doeff_agents.agentd_client import (
+from doeff_agents._agentd_client import (
     AGENTD_START_POLL_SECONDS,
     AgentdClient,
     _wait_for_agentd_ready,

@@ -32,7 +32,7 @@ import json
 
 import pytest
 from conformance_env import agentd_bin_setting
-from doeff_agents.agentd_client import AgentdClientError
+from doeff_agents._agentd_client import AgentdClientError
 from harness import AgentdHarness
 
 # Transfer-gate seam (harness.resolve_agentd_bin): S20 requires the canonical Hy

@@ -759,21 +759,21 @@ rules:
     message: >
       issue #558 / ACP ADR 0024 / ADR-DOE-AGENTS-004 R10: doeff-sessionhost
       (re)start authority is owned exclusively by the supervisor-aware
-      ensure boundary in doeff_agents/agentd_client.py. Calling
+      ensure boundary in doeff_agents/_agentd_client.py. Calling
       _start_agentd_process from anywhere else bypasses the supervisor
       declaration gate (agentd.supervisor.json) and can bind a rogue
       unsupervised host against a launchd/systemd-managed socket during a
       supervisor restart window (split-brain). Go through ensure_agentd().
     pattern-either:
       - pattern: _start_agentd_process(...)
-      - pattern: agentd_client._start_agentd_process(...)
-      - pattern: from doeff_agents.agentd_client import _start_agentd_process
+      - pattern: _agentd_client._start_agentd_process(...)
+      - pattern: from doeff_agents._agentd_client import _start_agentd_process
     paths:
       include:
         - doeff/**
         - packages/**
       exclude:
-        - packages/doeff-agents/src/doeff_agents/agentd_client.py
+        - packages/doeff-agents/src/doeff_agents/_agentd_client.py
         - tests/**
         - packages/**/tests/**
         - packages/**/conformance/**
@@ -989,7 +989,7 @@ rules:
       - pattern: return $RESPONSE.get("result")
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/agentd_client.py
+        - /packages/doeff-agents/src/doeff_agents/_agentd_client.py
 
   - id: doeff-agents-await-result-requires-protocol-fields
     languages: [python]
@@ -1007,7 +1007,7 @@ rules:
           - pattern: $RESULT.get("result")
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/agentd_client.py
+        - /packages/doeff-agents/src/doeff_agents/_agentd_client.py
 
   - id: doeff-agents-ready-promise-fail-fast
     languages: [generic]
@@ -1165,7 +1165,7 @@ rules:
               - pattern: _resolve_tmux_session(...)
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/cli.py
+        - /packages/doeff-agents/src/doeff_agents/_cli.py
 
   - id: conductor-runtime-state-ignores-live-in-workspace-init
     languages: [generic]

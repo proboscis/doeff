@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_agents.agentd_client import AgentdClient
+from doeff_agents._agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
 from sessionhost_bin import resolve_sessionhost_bin
 from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv

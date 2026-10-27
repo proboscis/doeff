@@ -45,7 +45,7 @@ class AgentdAgentBackend:
             AgentTask as AgentsAgentTask,
         )
         from doeff_agents import AgentType
-        from doeff_agents.agentd_client import LazyAgentdClient
+        from doeff_agents._agentd_client import LazyAgentdClient
         from doeff_agents.handlers.daemon import DaemonAgentHandler
 
         client = self._client if self._client is not None else LazyAgentdClient()

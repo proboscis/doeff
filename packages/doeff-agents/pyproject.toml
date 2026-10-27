@@ -49,7 +49,7 @@ dev = [
 ]
 
 [project.scripts]
-doeff-agents = "doeff_agents.cli:cli"
+doeff-agents = "doeff_agents._cli:cli"
 doeff-sessionhost = "doeff_agents.sessionhost.hostmain:main"
 
 [project.urls]

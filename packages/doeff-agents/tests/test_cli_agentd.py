@@ -13,10 +13,15 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents import AgentSessionSnapshot, AgentType, SessionStatus
-from doeff_agents import cli as cli_module
-from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning, AgentdUnavailableError
-from doeff_agents.cli import cli
+from doeff_time import sync_time_handler
+
+from doeff_agents import AgentSessionQuery, AgentSessionSnapshot, AgentType, SessionStatus
+from doeff_agents import _agentd_client as agentd_client_module
+from doeff_agents import _cli as cli_module
+from doeff_agents._agentd_client import AgentdSessionList, AgentdSessionParseWarning, AgentdUnavailableError
+from doeff_agents._cli import cli
+from doeff_agents.handlers import daemon as daemon_module
+from doeff_agents.handlers._session_host import session_host_handlers
 
 
 class FakeAgentdClient:
@@ -37,9 +42,16 @@ class FakeAgentdClient:
             "db_path": "/tmp/fake-agentd.sqlite",
         }
 
+    def resolved_socket_path(self) -> Path:
+        return self.socket_path
+
     def status(self) -> dict[str, Any]:
         self.calls.append(("status", None))
         return dict(self.status_payload)
+
+    def kinds(self) -> list[dict[str, Any]]:
+        self.calls.append(("kinds", None))
+        return [{"kind": "claude-code", "agent_type": "claude"}]
 
     def get_session(self, session_id: str) -> AgentSessionSnapshot | None:
         self.calls.append(("get_session", session_id))
@@ -87,12 +99,35 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def _use_fake_host(
+    monkeypatch: pytest.MonkeyPatch,
+    client: FakeAgentdClient,
+    starts: list[bool] | None = None,
+) -> None:
+    """Run the CLI's programs under the real session-host handlers, over CLIENT and a clock that does not wait.
+
+    STARTS collects the host-start decision each command hands the handlers.
+    """
+
+    def handlers(*, start_host: bool) -> tuple[Any, ...]:
+        if starts is not None:
+            starts.append(start_host)
+        return session_host_handlers(
+            start_host=start_host,
+            client=client,  # type: ignore[arg-type]  # the fake host answers the same calls
+            time_handler=sync_time_handler(sleep=lambda _seconds: None),
+        )
+
+    monkeypatch.setattr(cli_module, "_session_host_handlers", handlers)
+
+
 def test_ps_lists_agentd_sessions_not_tmux(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
 ) -> None:
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1", session_name="agentd-tmux")])
-    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["ps"])
 
@@ -100,7 +135,8 @@ def test_ps_lists_agentd_sessions_not_tmux(
     assert "agentd-s1" in result.output
     assert "agentd-tmux" in result.output
     assert "running" in result.output
-    assert client.calls == [("list_sessions_with_warnings", None)]
+    assert client.calls == [("list_sessions_with_warnings", AgentSessionQuery())]
+    assert starts == [False]
 
 
 def test_ps_warns_about_unparseable_agentd_rows(
@@ -120,7 +156,7 @@ def test_ps_warns_about_unparseable_agentd_rows(
         [_snapshot(session_id="agentd-s1", session_name="agentd-tmux")],
         warnings=(warning,),
     )
-    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
+    _use_fake_host(monkeypatch, client)
 
     result = runner.invoke(cli, ["ps"])
 
@@ -137,13 +173,15 @@ def test_output_captures_via_agentd(
     runner: CliRunner,
 ) -> None:
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1")])
-    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["output", "agentd-s1", "--lines", "12"])
 
     assert result.exit_code == 0
     assert "captured from agentd-s1" in result.output
     assert client.captures == [("agentd-s1", 12)]
+    assert starts == [False]
 
 
 def test_send_uses_agentd_rpc(
@@ -151,12 +189,14 @@ def test_send_uses_agentd_rpc(
     runner: CliRunner,
 ) -> None:
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1")])
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["send", "agentd-s1", "hello"])
 
     assert result.exit_code == 0
     assert client.sent_messages == [("agentd-s1", "hello")]
+    assert starts == [True]
 
 
 def test_watch_polls_agentd_snapshot_until_terminal(
@@ -173,17 +213,13 @@ def test_watch_polls_agentd_snapshot_until_terminal(
         return next(polls)
 
     client.get_session = get_session  # type: ignore[method-assign]
-    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
-    monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(
-        cli_module,
-        "monitor_session",
-        lambda *_args, **_kwargs: pytest.fail("watch must poll agentd snapshots"),
-    )
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["watch", "agentd-s1"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
+    assert starts == [False]
     assert "Watching session: agentd-s1" in result.output
     assert "exited" in result.output
 
@@ -194,13 +230,34 @@ def test_attach_resolves_session_in_agentd(
 ) -> None:
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1", session_name="agentd-tmux")])
     attached: list[str] = []
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
-    monkeypatch.setattr(cli_module, "tmux_attach", attached.append)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
+    monkeypatch.setattr(daemon_module, "_attach_tmux_session", attached.append)
 
     result = runner.invoke(cli, ["attach", "agentd-s1"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert attached == ["agentd-tmux"]
+    assert starts == [True]
+
+
+def test_attach_refuses_a_session_no_terminal_carries(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    """Only a tmux session has a terminal to join; the host's handler says so instead of attaching."""
+    client = FakeAgentdClient(
+        [_snapshot(session_id="agentd-s1", backend_kind="headless", lifecycle="multi_turn")]
+    )
+    attached: list[str] = []
+    _use_fake_host(monkeypatch, client)
+    monkeypatch.setattr(daemon_module, "_attach_tmux_session", attached.append)
+
+    result = runner.invoke(cli, ["attach", "agentd-s1"])
+
+    assert result.exit_code == 1
+    assert "not backed by tmux (backend: headless)" in result.output
+    assert attached == []
 
 
 @pytest.mark.parametrize(
@@ -217,14 +274,14 @@ def test_commands_that_change_a_session_fail_loudly_when_agentd_unreachable(
     tmp_path: Path,
     command: list[str],
 ) -> None:
-    def unavailable() -> None:
+    def unavailable(**_kwargs: object) -> None:
         raise AgentdUnavailableError(
             "not reachable",
             socket_path=tmp_path / "agentd.sock",
             start_command=("doeff-sessionhost", "serve"),
         )
 
-    monkeypatch.setattr(cli_module, "ensure_agentd", unavailable)
+    monkeypatch.setattr(agentd_client_module, "ensure_agentd", unavailable)
 
     result = runner.invoke(cli, command)
 
@@ -269,7 +326,7 @@ def test_observation_verbs_never_start_a_host(
     def forbidden(*_args: object, **_kwargs: object) -> None:
         pytest.fail("an observation verb tried to start a host")
 
-    monkeypatch.setattr(cli_module, "ensure_agentd", forbidden)
+    monkeypatch.setattr(agentd_client_module, "ensure_agentd", forbidden)
 
     result = runner.invoke(cli, command)
 
@@ -295,12 +352,11 @@ def test_observation_verbs_start_a_host_only_with_the_explicit_flag(
     calls: list[str] = []
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1", status=SessionStatus.EXITED)])
 
-    def ensure() -> FakeAgentdClient:
+    def ensure(**_kwargs: object) -> FakeAgentdClient:
         calls.append("ensure")
         return client
 
-    monkeypatch.setattr(cli_module, "ensure_agentd", ensure)
-    monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(agentd_client_module, "ensure_agentd", ensure)
 
     result = runner.invoke(cli, command)
 
@@ -336,7 +392,8 @@ def test_stop_ends_the_session_through_the_host_on_every_backend(
             )
         ]
     )
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["stop", "s1"])
 
@@ -345,6 +402,7 @@ def test_stop_ends_the_session_through_the_host_on_every_backend(
     assert "Stopped session" in result.output
     assert backend in result.output
     assert "stopped" in result.output
+    assert starts == [True]
 
 
 def test_agentd_ensure_json_outputs_readiness_contract(
@@ -359,7 +417,8 @@ def test_agentd_ensure_json_outputs_readiness_contract(
         "state": "running",
         "db_path": str(tmp_path / "agentd.sqlite"),
     }
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["agentd", "ensure", "--json"])
 
@@ -372,6 +431,7 @@ def test_agentd_ensure_json_outputs_readiness_contract(
         "supervised": False,
     }
     assert client.calls == [("status", None)]
+    assert starts == [True]
 
 
 def test_agentd_ensure_json_reports_supervised_socket(
@@ -399,7 +459,8 @@ def test_agentd_ensure_json_reports_supervised_socket(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    starts: list[bool] = []
+    _use_fake_host(monkeypatch, client, starts)
 
     result = runner.invoke(cli, ["agentd", "ensure", "--json"])
 
@@ -414,14 +475,14 @@ def test_agentd_ensure_json_fails_loudly_when_agentd_unreachable(
     runner: CliRunner,
     tmp_path: Path,
 ) -> None:
-    def unavailable() -> None:
+    def unavailable(**_kwargs: object) -> None:
         raise AgentdUnavailableError(
             "not reachable",
             socket_path=tmp_path / "agentd.sock",
             start_command=("doeff-agentd", "serve"),
         )
 
-    monkeypatch.setattr(cli_module, "ensure_agentd", unavailable)
+    monkeypatch.setattr(agentd_client_module, "ensure_agentd", unavailable)
 
     result = runner.invoke(cli, ["agentd", "ensure", "--json"])
 
@@ -458,3 +519,37 @@ def _snapshot(
             "output_snippet": "running",
         }
     )
+
+
+def test_cli_builds_no_client_and_runs_only_effect_programs() -> None:
+    """The commands yield effects under handlers; the session host's client is built in the handler layer only.
+
+    Card ki-307f29018559 (CLI commands = programs of effects run under handlers):
+    the CLI module names no client class and no function that hands one out, so a
+    command cannot reach the host except through the effects its handlers answer.
+    """
+    import ast
+
+    source = Path(cli_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    forbidden = {
+        "AgentdClient",
+        "LazyAgentdClient",
+        "ensure_agentd",
+        "default_agentd_paths",
+        "agentd_socket_is_supervised",
+        "launch_session",
+        "monitor_session",
+        "attach_session",
+    }
+    named = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    } | {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert named & forbidden == set()
+    imported_modules = {
+        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    }
+    assert "doeff_agents._session" not in imported_modules

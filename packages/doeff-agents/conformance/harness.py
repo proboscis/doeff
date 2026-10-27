@@ -1,7 +1,7 @@
 """Driver harness for the agentd conformance suite (contract: README.md).
 
 Dependency discipline (mirrors ACP mini_conformance): the driver may import
-ONLY the public wire client (doeff_agents.agentd_client / effects enums),
+ONLY the public wire client (doeff_agents._agentd_client / effects enums),
 pytest, and stdlib. SQLite access is READ-ONLY and reserved for obligations
 that do not appear on the wire (payload persistence, counter durability).
 
@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 from conformance_env import agentd_bin_setting, herdr_socket_setting, process_environment, sessionhost_backend_setting
-from doeff_agents.agentd_client import AgentdClient
+from doeff_agents._agentd_client import AgentdClient
 
 CONFORMANCE_DIR = Path(__file__).resolve().parent
 AGENT_SCRIPT = CONFORMANCE_DIR / "conformance_agent.py"
