@@ -2614,11 +2614,43 @@ class _Passed:
 
 def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) -> _Bound:
     """``function``'s parameters bound to the arguments of ``call`` that are known here."""
-    known = (
-        Binding(passed.name, _argument_value(passed.argument, scope))
-        for passed in _passed_arguments(function, call, scope)
+    passed = _passed_arguments(function, call, scope)
+    known = (Binding(p.name, _argument_value(p.argument, scope)) for p in passed)
+    return _Bound(
+        tuple(b for b in known if b.value is not UNBOUND)
+        + _defaulted(function, call, frozenset(p.name for p in passed))
     )
-    return _Bound(tuple(b for b in known if b.value is not UNBOUND))
+
+
+def _defaulted(
+    function: types.FunctionType, call: ast.Call, passed: frozenset[str]
+) -> tuple[Binding, ...]:
+    """The parameters ``call`` leaves out, bound to their defaults when a default says what a
+    call on the parameter does: ``None`` (calling it performs nothing — ``(read-intake fold)``
+    leaves ``kept`` None, and the body calls ``(kept entry)`` only when it is not) or a function /
+    effect class (the call runs it).  Other defaults (data) stay unbound, as before.  A call that
+    spreads ``*args`` / ``**kwargs`` may pass any parameter: nothing is taken as left out
+    (card ki-e912b1821351)."""
+    spreads = any(isinstance(a, ast.Starred) for a in call.args) or any(
+        k.arg is None for k in call.keywords
+    )
+    if spreads:
+        return ()
+    try:
+        params = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return ()
+    return tuple(
+        Binding(p.name, p.default)
+        for p in params
+        if p.name not in passed
+        and p.default is not inspect.Parameter.empty
+        and (
+            p.default is None
+            or _is_effect_class(p.default)
+            or (not isinstance(p.default, type) and _function_of(p.default) is not None)
+        )
+    )
 
 
 def _passed_arguments(
@@ -3162,6 +3194,10 @@ class _Reader:
                     self._program_call(
                         called.target, called.function, called.call, scope, filename, facts, location
                     )
+        elif target is None:
+            # A parameter left at its default None (``_defaulted``): the call raises TypeError
+            # where it runs and performs nothing — the body calls it only on a path where it is set.
+            pass
         elif target is UNBOUND:
             facts.unresolved.append(
                 (
