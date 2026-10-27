@@ -9,14 +9,14 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
-                              StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents])
-(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey])
+                              StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents BatchRead])
+(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
-                            law-append-events-answer-like-appends-in-order
+                            law-append-events-answer-like-appends-in-order law-read-batch-answers-like-each-read
                             law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
@@ -274,6 +274,38 @@
     (resume (if (isinstance answer EventRetired) (EventAbsent) answer))))
 
 
+(defk batch-read-without-where-any [reads]
+  {:pre [(: reads tuple)] :post [(: % BatchRead)]}
+  "束の読みを 1 つずつ撃ち、一覧の値の組の絞り(where-any)を束の道だけ落とす — 束の読みを 1 つずつの読みと違う道で組む handler の顔の答え。
+   handler の節で走らせる Program なので、読みの答えは宣言を開かずに(Perform)値のまま受ける(R4・R9)。"
+  (var items #())
+  (for [one reads]
+    (<- answer (Perform (if (isinstance one ListRows) (dataclasses.replace one :where-any (FrozenMap)) one)))
+    (:= items (+ items #(answer))))
+  (BatchRead items))
+
+(defhandler batch-drops-where-any []
+  ;; 束の道だけ値の組の絞りを落とす handler の顔(card ki-177a4f287c42): 1 つずつの読みは正しく、束の一覧だけが表の全部を返す。
+  (ReadBatch [reads]
+    (<- answer (batch-read-without-where-any reads))
+    (resume answer)))
+
+(defk batch-read-in-reverse [reads]
+  {:pre [(: reads tuple)] :post [(: % BatchRead)]}
+  "束の読みを 1 つずつ撃ち、答えを束の逆の順に並べる — 束の i 番目の答えを i 番目の読みに揃えない handler の顔の答え。"
+  (var items #())
+  (for [one reads]
+    (<- answer (Perform one))
+    (:= items (+ #(answer) items)))
+  (BatchRead items))
+
+(defhandler batch-answers-in-reverse []
+  ;; 束の答えの順を読みの順に揃えない handler の顔(card ki-177a4f287c42)。
+  (ReadBatch [reads]
+    (<- answer (batch-read-in-reverse reads))
+    (resume answer)))
+
+
 (defhandler cap-below-limit []
   ;; 1 頁を内部で上限より 1 つ少なく切る handler の顔(#3986): 残りの出来事を隠したまま、上限より短い頁を返す。
   (ReadEvents [stream after limit]
@@ -318,6 +350,8 @@
                       #(law-append-is-idempotent (forget-idempotency))
                       #(law-append-events-answer-like-appends-in-order (stop-appends-at-a-refusal))
                       #(law-append-events-answer-like-appends-in-order (appends-in-reverse))
+                      #(law-read-batch-answers-like-each-read (batch-drops-where-any))
+                      #(law-read-batch-answers-like-each-read (batch-answers-in-reverse))
                       #(law-key-head-read-equals-filtered-scan (ignore-key-head))
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))

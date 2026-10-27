@@ -1,4 +1,4 @@
-;;; memory の handler — 公開 effect 10 個と列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 11 個と列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
@@ -67,10 +67,10 @@
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
-                              EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
+                              EventAbsent EventRetired BatchRead key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
 (import doeff_records.watching [closing-wake?])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
-                               ReadStreamEnd ReadEventByKey AwaitRecordsBack ReadSourcePatience write-parts])
+                               ReadStreamEnd ReadEventByKey ReadBatch AwaitRecordsBack ReadSourcePatience write-parts])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
@@ -531,6 +531,13 @@
         (if (> (len matching) ask.limit) (ListCursor store.epoch (get taken -1)) None)
         store.epoch
         store.head))
+
+
+(defn #^ BatchRead memory-read-batch [#^ MemoryStore store #^ ReadBatch ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み(memory-read-row と同じ作法)
+  "ReadBatch の束に答えるため(card ki-177a4f287c42): 錠の内で束の順に読み 1 つずつを、同じ読みを 1 つ撃った時と同じ関数(memory-read-row・
+   memory-list-rows)で同じ刻 now-ms に読む(memory の束は 1 つの断面 — 間に書きは入らない)。"
+  (BatchRead (tuple (gfor one ask.reads
+                          (if (isinstance one ReadRow) (memory-read-row store one now-ms) (memory-list-rows store one now-ms))))))
 
 
 (defn #^ (| Row None) memory-current-row [#^ MemoryStore store #^ str table #^ tuple key]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ読み
@@ -1111,6 +1118,31 @@
   (if (is landed-cut None) answer landed-cut.answer))
 
 
+(defk answered-reads [store ask]
+  {:pre [(: store MemoryStore) (: ask ReadBatch)] :post [(: % (| BatchRead Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "ReadBatch の束の答え(answered の束の形 — card ki-177a4f287c42): 届かない状態(SetStoreOutage)が束の表のどれかに当たれば Unreachable・
+   次に読みごとの故障を、同じ読みを 1 つ撃った時と同じ探し方(fault-for — matching は束の中の ReadRow | ListRows を受ける)で探し、1 つでも
+   当たれば束の全部が届かない(当たった最初の故障の Unreachable — 読みの答えに Refused は無いので、Refused を置いた故障も Unreachable に
+   読む)・当たらなければ錠の内で束を読む(memory-read-batch)。当たった故障は束 1 つにつき 1 回ずつ使う。"
+  (val down (unreachable-for store (tuple (gfor one ask.reads one.table))))
+  (when down
+    (return down))
+  (var faults #())
+  (for [one ask.reads]
+    (<- fault (| StoreFault None) (fault-for store StoreOperation.READ #(one.table) one))
+    (:= faults (+ faults #(fault))))
+  (for [fault (first-seen-faults faults)]
+    (memory-spend-fault store fault))
+  (val hit (next (gfor fault faults :if (is-not fault None) fault) None))
+  (when (is-not hit None)
+    (return (if (isinstance hit.answer Unreachable)
+                hit.answer
+                (Unreachable (.format "束の読みに故障が当たった: {!r}" hit.answer)))))
+  (<- answer (read-at-now store (fn [now-ms] (memory-read-batch store ask now-ms))))
+  answer)
+
+
 (defk at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
    ;; 答え = 置き場の操作の答え(公開 effect の答えの型のどれか)。
@@ -1128,7 +1160,7 @@
 (defk read-at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
    ;; 答え = 置き場の読みの答え(読みの公開 effect の答えの型のどれか)。
-   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty Event EventAbsent EventRetired))]
+   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty Event EventAbsent EventRetired BatchRead))]
    :tags {:context "records" :role "foundation"}}
   "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(読みの節 ReadRow・ListRows・ReadEvents・
    ReadStreamEnd・ReadEventByKey の置き場の操作の形)。回収は走らせない — 読みの関数が刻を受けて期限を過ぎた行と出来事を自分で除く(頭の註・#3561)。"
@@ -1214,6 +1246,10 @@
     (resume answer))
   (ReadEventByKey [stream idempotency-key]
     (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-event-by-key store effect now-ms)))))
+    (resume answer))
+  (ReadBatch [reads]
+    ;; 届かない状態と故障は束の読みごとに当てる(answered-reads — 読み 1 つに置いた故障は束の中の同じ読みに当たり、束の全部が届かない)。
+    (<- answer (answered-reads store effect))
     (resume answer))
   (AwaitRecordsBack [names]
     ;; 合図の源の止まりの見張り(#3469)— 止まりが names から外れるまで呼び鈴で眠り、外れたら答える(期限は待つ側の源が持つ)。

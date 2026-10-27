@@ -101,10 +101,10 @@
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time.effects.time [WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
+(import doeff_records.values [BatchRead NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
 (import doeff_records.schema_digest [schema-digests])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey])
+                               ReadEventByKey ReadBatch])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
@@ -414,7 +414,8 @@
   (AppendEvents [appends] (resume (Unreachable NOT-PREPARED-REASON)))
   (ReadEvents [stream after limit] (resume (Unreachable NOT-PREPARED-REASON)))
   (ReadStreamEnd [stream] (resume (Unreachable NOT-PREPARED-REASON)))
-  (ReadEventByKey [stream idempotency-key] (resume (Unreachable NOT-PREPARED-REASON))))
+  (ReadEventByKey [stream idempotency-key] (resume (Unreachable NOT-PREPARED-REASON)))
+  (ReadBatch [reads] (resume (Unreachable NOT-PREPARED-REASON))))
 
 
 (defhandler request-stamps
@@ -622,7 +623,7 @@
    :tags {:context "records" :role "entry"}}
   "記録の handler record-handler の下で body(要求の公開 effect)を撃ち、要求の刻の帳面 book に handler の入りと出の刻を打つため(handler の中の
    待ちの刻は wait-stamps — 頭の註の要求ごとの計時)。待ちの刻の答え手と止めの切り手は、待つ操作(WAITING-EFFECTS)にだけ被せる(ほかの
-   操作に要求ごとの handler を組まない)。一覧の読みなら答えを呼び手 caller の名で数える(count-list-rows)。answer-with が
+   操作に要求ごとの handler を組まない)。一覧の読み(読みの束の中の一覧を含む)なら答えを呼び手 caller の名で数える(count-list-rows)。answer-with が
    書き手の名ごとの handler をこの包み(BodyWrapper)にして service へ渡す。"
   (<- (StampRequest :book book :mark RequestMark.HANDLER-IN))
   ;; 待ちの切り手は待ちの刻の答え手の外側(待ちの刻の答え手が待ちの入りと起きを、切り手の Race ごと測る)。
@@ -632,6 +633,11 @@
   (<- (StampRequest :book book :mark RequestMark.HANDLER-OUT))
   (when (isinstance body ListRows)
     (<- (count-list-rows caller body answer)))
+  ;; 読みの束の中の一覧の読みも、1 つずつ撃った一覧と同じに数える(card ki-177a4f287c42 — 束にしても表ごとの読み通しが数で言える)。
+  (when (and (isinstance body ReadBatch) (isinstance answer BatchRead))
+    (for [#(one item) (zip body.reads answer.items)]
+      (when (isinstance one ListRows)
+        (<- (count-list-rows caller one item)))))
   answer)
 
 

@@ -325,6 +325,10 @@ class Reset:
     epoch: int
     floor: int
 
+@dataclass(frozen=True)
+class BatchRead:
+    items: tuple[Row | Missing | Page | Reset | NotIndexed, ...]
+
 @dataclass(frozen=True, kw_only=True)
 class WaitsClosed:
     reason: str
@@ -340,4 +344,5 @@ ReadStreamEndAnswer: TypeAlias = StreamEnd | StreamEmpty | Unreachable
 ReadEventByKeyAnswer: TypeAlias = Event | EventAbsent | EventRetired | Unreachable
 PutRowsAnswer: TypeAlias = WrittenRows | RowsConflict | RowsRefused | Unreachable
 AppendEventsAnswer: TypeAlias = AppendedEvents | Unreachable
+ReadBatchAnswer: TypeAlias = BatchRead | Unreachable
 

@@ -27,6 +27,7 @@ from doeff_records.values import (
     ListRowsAnswer,
     PutRowAnswer,
     PutRowsAnswer,
+    ReadBatchAnswer,
     ReadEventByKeyAnswer,
     ReadEventsAnswer,
     ReadRowAnswer,
@@ -46,6 +47,7 @@ LIST_LIMIT_MAX: int
 DEFAULT_WATCH_LIMIT: int
 DEFAULT_READ_EVENTS_LIMIT: int
 WHERE_ANY_LIMIT: int
+READ_BATCH_MAX: int
 
 def checked_key(key: object, what: str) -> tuple[str, ...]: ...
 def checked_limit(limit: object, what: str) -> int: ...
@@ -71,6 +73,10 @@ class ListRows(EffectBase[ListRowsAnswer]):
     limit: int = ...
     descending_by: str | None = None
     where_any: FrozenMap = ...
+
+@dataclass(frozen=True)
+class ReadBatch(EffectBase[ReadBatchAnswer]):
+    reads: tuple[ReadRow | ListRows, ...]
 
 @dataclass(frozen=True)
 class PutRow(EffectBase[PutRowAnswer]):

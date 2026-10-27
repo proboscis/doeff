@@ -1,4 +1,4 @@
-;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 10 個と列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
+;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 11 個と列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
 ;;; 値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
@@ -29,9 +29,9 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
-                              EventsQuiet EventAbsent EventRetired stored-text])
+                              EventsQuiet EventAbsent EventRetired BatchRead stored-text])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
-                               ReadEvents ReadStreamEnd ReadEventByKey])
+                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
 
 (setv PATH-PREFIX "/v1/records/")
 ;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りをそのまま書き手の名に使う・#2988)。
@@ -52,8 +52,14 @@
 ;; refused})。前の 10 個の綴りは変えずに足した(card ki-48c34994ed15 — 1 つの要求で原因と本体の 2 つの出来事を積む書き手が、書きの錠と
 ;; 往復を 2 回順に待たないため。使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
 (val OP-APPEND-EVENTS "append-events")
+;; 行の読みの束を 1 往復で読む操作(本文 = {reads: [{operation: read-row | list-rows, body: その操作の本文} …]} — 答え = batchRead{items:
+;; 読みごとの row | missing | page | reset | notIndexed})。前の 11 個の綴りは変えずに足した(card ki-177a4f287c42 — 複数の表から行を読む
+;; 読み手が、読みの数だけ往復を待たないため。使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
+(val OP-READ-BATCH "read-batch")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END
-                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY OP-APPEND-EVENTS))
+                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY OP-APPEND-EVENTS OP-READ-BATCH))
+;; 束の読み(read-batch)の本文の 1 項に載せてよい操作(束の中の読みの操作の名 — 束の中に束・書き・待ちは載せない)。
+(val BATCH-READ-OPERATIONS #(OP-READ-ROW OP-LIST-ROWS))
 ;; 変化の待ち(watch-changes・watch-events)1 回の要求で service が待つ秒の上限(#3074 の long-poll)。要求の読み(decode-request)が
 ;; timeout をこの秒で切り、service は置き場の待ちへそのまま渡す — 変化が無ければこの秒で空の答え(changes の空・eventsQuiet)を返す。
 ;; client は待ちをこの秒ごとの要求に分けて撃ち直す(眠らない)。間に立つ口の要求の時間切れより短く置く。
@@ -183,14 +189,15 @@
                     OP-READ-STREAM-END #("streamEnd" "streamEmpty")
                     OP-WATCH-EVENTS #("eventsMoved" "eventsQuiet")
                     OP-READ-EVENT-BY-KEY #("event" "eventAbsent" "eventRetired")
-                    OP-APPEND-EVENTS #("appendedEvents")})
+                    OP-APPEND-EVENTS #("appendedEvents")
+                    OP-READ-BATCH #("batchRead")})
 
 ;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy.json_value)。
 (setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents ReadEventByKey
-                      AppendEvents))
+                      AppendEvents ReadBatch))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
                     WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired
-                    AppendedEvents))
+                    AppendedEvents BatchRead))
 
 
 (defclass WireMalformed [ValueError]
@@ -534,6 +541,24 @@
   appends)
 
 
+(defk batch-reads-from [body]
+  {:pre [(: body JsonValue)] :post [(: % tuple)]}
+  "read-batch の本文 {reads: [{operation body} …]} から束の読み(ReadRow | ListRows の tuple)を読むため — 項ごとに、同じ読みを 1 つ撃つ
+   要求と同じ読み(decode-request)で読む。束に載せない操作(BATCH-READ-OPERATIONS の外)は WireMalformed。空の束と上限の越えは ReadBatch が
+   作る時に断る。"
+  (<- (object-of body "read-batch の本文" #("reads") #()))
+  (<- items list (list-in (get body "reads") "reads"))
+  (var reads #())
+  (for [item items]
+    (<- (object-of item "read-batch の読み" #("operation" "body") #()))
+    (<- operation str (string-of (get item "operation") "reads[].operation"))
+    (when (not-in operation BATCH-READ-OPERATIONS)
+      (raise (WireMalformed (.format "read-batch の読みに載せる操作は {} のどれか: {!r}" BATCH-READ-OPERATIONS operation))))
+    (<- read DecodedRequest (decode-request (WireRequest operation (get item "body"))))
+    (:= reads (+ reads #(read.effect))))
+  reads)
+
+
 (defk encode-request [ask]
   {:pre [(: ask PublicEffect)] :post [(: % WireRequest)]}
   "client の handler が撃つ公開 effect(ask)を、HTTP で送る操作の名と本文にする。"
@@ -577,7 +602,14 @@
           (for [one appends]
             (<- item dict (event-append-json one))
             (:= append-items (+ append-items [item])))
-          (WireRequest OP-APPEND-EVENTS {"appends" append-items}))))
+          (WireRequest OP-APPEND-EVENTS {"appends" append-items}))
+    (ReadBatch :reads reads)
+      ;; 束の項は読み 1 つを 1 つだけ撃つ時と同じ操作の名と本文(read-row・list-rows の綴りの 1 か所を継ぐ)。
+      (do (var read-items [])
+          (for [one reads]
+            (<- sent WireRequest (encode-request one))
+            (:= read-items (+ read-items [{"operation" sent.operation "body" sent.body}])))
+          (WireRequest OP-READ-BATCH {"reads" read-items}))))
 
 
 (defk request-key [ask]
@@ -677,6 +709,8 @@
             (ReadEventByKey (! (string-of (get body "stream") "stream")) (! (string-of (get body "idempotencyKey") "idempotencyKey"))))
       "append-events"
         (AppendEvents (! (event-appends-from body)))
+      "read-batch"
+        (ReadBatch (! (batch-reads-from body)))
       _ (raise (WireMalformed (.format "知らない操作: {!r}(操作 = {})" request.operation OPERATIONS)))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed request.operation error)))))
@@ -697,7 +731,8 @@
     (WatchEvents :stream stream) (NamedStores #() #(stream))
     (ReadEventByKey :stream stream) (NamedStores #() #(stream))
     (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())
-    (AppendEvents :appends appends) (NamedStores #() (tuple (sorted (sfor one appends one.stream))))))
+    (AppendEvents :appends appends) (NamedStores #() (tuple (sorted (sfor one appends one.stream))))
+    (ReadBatch :reads reads) (NamedStores (tuple (sorted (sfor one reads one.table))) #())))
 
 
 ;; --- 宣言に無い名の断り(404 not-found)の理由の綴り---------------------------------------------------------
@@ -856,6 +891,12 @@
             (<- encoded dict (answer-object item value-of))
             (:= appended-items (+ appended-items [encoded])))
           {"kind" "appendedEvents" "items" appended-items})
+    (BatchRead :items items)
+      (do (var read-items [])
+          (for [item items]
+            (<- encoded dict (answer-object item value-of))
+            (:= read-items (+ read-items [encoded])))
+          {"kind" "batchRead" "items" read-items})
     (Events :items items :last_sequence last-sequence)
       (do (setv encoded [])
           (for [event items] (.append encoded (! (event-json event))))
@@ -977,6 +1018,20 @@
   (AppendedEvents items))
 
 
+(defk batch-read-from [value]
+  {:pre [(: value JsonValue)] :post [(: % BatchRead)]}
+  "wire の object から ReadBatch の束の答え(束の順の、読みごとの row | missing | page | reset | notIndexed の列)を読むため。"
+  (<- (answer-object-of value "batchRead" #("kind" "items") #()))
+  (<- listed list (list-in (get value "items") "batchRead.items"))
+  (var items #())
+  (for [item listed]
+    (<- one WireAnswer (answer-from item))
+    (when (not (isinstance one #(Row Missing Page Reset NotIndexed)))
+      (raise (WireMalformed (.format "batchRead.items は row | missing | page | reset | notIndexed の列: {!r}" value))))
+    (:= items (+ items #(one))))
+  (BatchRead items))
+
+
 (defk rows-conflict-from [value]
   {:pre [(: value JsonValue)] :post [(: % RowsConflict)]}
   "wire の object から PutRows の衝突(束の中の位置・行・今の値)を読む。"
@@ -1047,6 +1102,7 @@
             (EventRetired (! (integer-of (get value "sequence") "eventRetired.sequence"))))
       {"kind" "writtenRows"} (! (written-rows-from value))
       {"kind" "appendedEvents"} (! (appended-events-from value))
+      {"kind" "batchRead"} (! (batch-read-from value))
       {"kind" "rowsConflict"} (! (rows-conflict-from value))
       {"kind" "rowsRefused"}
         (do (<- (answer-object-of value "rowsRefused" #("kind" "index" "table" "key" "reason") #()))
@@ -1071,7 +1127,8 @@
   {:pre [(: ask PublicEffect) (: answer WireAnswer)] :post [(: % WireAnswer)]}
   "client が受けて読んだ答え answer が、撃った要求 ask に合うかを照らすため(#3718): WatchChanges の答えの tails は、名指した列 streams と
    同じ数・同じ順の列の末尾。名指したのに鍵 tails が無い・数や列が違う・名指さないのに在る答えは、黙って空や既定へ倒さず WireMalformed で
-   名指して上げる(service の綴りの誤り)。他の答えはそのまま返す。"
+   名指して上げる(service の綴りの誤り)。ReadBatch の答え BatchRead は、束の読みと同じ数で、i 番目が i 番目の読みの答えの型(ReadRow =
+   row | missing・ListRows = page | reset | notIndexed — card ki-177a4f287c42)。他の答えはそのまま返す。"
   (match #(ask answer)
     #((WatchChanges :streams streams) (Changes :tails tails))
       (do (val named (tuple (gfor tail tails tail.stream)))
@@ -1079,6 +1136,15 @@
             (raise (WireMalformed (.format "watch-changes の答えの tails の列 {} が、要求が名指した列 {} と合わない"
                                            (list named) (list streams)))))
           answer)
+    #((ReadBatch :reads reads) (BatchRead :items items))
+      (do (when (!= (len items) (len reads))
+            (raise (WireMalformed (.format "read-batch の答えの項の数 {} が、要求の読みの数 {} と合わない" (len items) (len reads)))))
+          (for [#(one item) (zip reads items)]
+            (when (not (isinstance item (if (isinstance one ReadRow) #(Row Missing) #(Page Reset NotIndexed))))
+              (raise (WireMalformed (.format "read-batch の答えの項 {!r} が、読み {!r} の答えの型でない" item one)))))
+          answer)
+    #((ReadBatch) _)
+      (raise (WireMalformed (.format "read-batch の答えは batchRead: {!r}" answer)))
     _ answer))
 
 

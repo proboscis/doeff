@@ -1,16 +1,16 @@
 ;; wire の綴り: 公開 effect と答えの全部の形が JSON を往復して元と等しい・契約の形でない JSON は WireMalformed で断る(答えの知らない鍵は
 ;; 断らずに読み捨てる — 版の違いの検は test_wire_versions.hy)。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import json)
 (import doeff [run])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
                               WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved
-                              EventsQuiet EventAbsent EventRetired AppendedEvents])
+                              EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
-                               ReadEventByKey AppendEvents EventAppend WHERE-ANY-LIMIT LIST-LIMIT-MAX])
-(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer
+                               ReadEventByKey AppendEvents EventAppend ReadBatch WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX])
+(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer answer-for-request
                             decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
@@ -46,7 +46,13 @@
               (RowWrite "parts" #("p2") {} (ExpectAny))))
    ;; 追記の束(card ki-48c34994ed15)— 列をまたぐ束・文字列の本文。
    (AppendEvents #((EventAppend "pairs" "cause:r1" {"n" [1 {"m" None}]})
-                   (EventAppend "journal" "k1" "a string body")))])
+                   (EventAppend "journal" "k1" "a string body")))
+   ;; 読みの束(card ki-177a4f287c42)— 表をまたぐ鍵の読みと、値の組・位置・上から読む読みの一覧。
+   (ReadBatch #((ReadRow "parts" #("p1"))
+                (ListRows "tickets" :where-any {"owner" ["o1" "o2"]} :fields #("owner") :limit 50)
+                (ReadRow "tickets" #("g1" "t1"))
+                (ListRows "parts" :where {"color" "red"} :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
+                (ListRows "parts" :limit 3 :descending-by "note")))])
 
 ;; 答え → それを答えてよい操作。
 (setv ANSWERS
@@ -90,7 +96,8 @@
    #("put-rows" (RowsConflict 1 "tickets" #("g1" "t1") ROW))
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
    #("put-rows" (RowsRefused 2 "parts" #("p2") "書き手でない"))
-   #("append-events" (AppendedEvents #((Appended 7 False) (Refused "別の本文") (Appended 3 True))))])
+   #("append-events" (AppendedEvents #((Appended 7 False) (Refused "別の本文") (Appended 3 True))))
+   #("read-batch" (BatchRead #(ROW (Missing) (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9) (Reset 3 0) (NotIndexed #("note")))))])
 
 
 (defn through-json [value]
@@ -197,6 +204,18 @@
                            #("append-events" {"appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}
                                                          {"stream" "journal" "idempotencyKey" "k1" "body" 2}]})
                            #("append-events" {"appends" [] "extra" 1})
+                           ;; 読みの束: 空の束・配列でない束・欄の足りない読み・束に載せない操作(書き・束の中の束)・項の本文の形の誤り・
+                           ;; 読みの数と一覧の limit の和の上限・知らない鍵は断る。
+                           #("read-batch" {"reads" []})
+                           #("read-batch" {"reads" {"operation" "read-row"}})
+                           #("read-batch" {"reads" [{"operation" "read-row"}]})
+                           #("read-batch" {"reads" [{"operation" "put-row" "body" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}}]})
+                           #("read-batch" {"reads" [{"operation" "read-batch" "body" {"reads" []}}]})
+                           #("read-batch" {"reads" [{"operation" "read-row" "body" {"table" "parts"}}]})
+                           #("read-batch" {"reads" [{"operation" "read-row" "body" {"table" "parts" "key" ["p1"]} "extra" 1}]})
+                           #("read-batch" {"reads" (lfor n (range (+ READ-BATCH-MAX 1)) {"operation" "read-row" "body" {"table" "parts" "key" [(str n)]}})})
+                           #("read-batch" {"reads" (lfor n (range 2) {"operation" "list-rows" "body" {"table" "parts" "limit" LIST-LIMIT-MAX}})})
+                           #("read-batch" {"reads" [] "extra" 1})
                            #("drop-table" {})
                            #("read-row" ["not" "an" "object"])]]
     (try
@@ -296,3 +315,41 @@
       (assert False (.format "上限を越えた一覧の読みを読んだ: {!r}" body))
       (except [refused WireMalformed]
         (assert (in (str LIST-LIMIT-MAX) (str refused)) refused)))))
+
+
+(deftest test-a-batch-answer-must-match-the-reads-it-answers
+  ;; 読みの束(card ki-177a4f287c42): client は束の答えを、撃った束の読みと照らす — 項の数が違う・i 番目が i 番目の読みの答えの型でない・
+  ;; 束の答えでない答えは、黙って読まずに WireMalformed で名指す(service の綴りの誤り)。合う答えはそのまま返す。
+  (setv batch (ReadBatch #((ReadRow "parts" #("p1")) (ListRows "parts"))))
+  (setv fitting (BatchRead #(ROW (Page #() None 1 0))))
+  (assert (= (run (answer-for-request batch fitting)) fitting))
+  (for [wrong [(BatchRead #(ROW))
+               (BatchRead #((Page #() None 1 0) ROW))
+               (BatchRead #(ROW (Missing)))
+               (Missing)]]
+    (try
+      (run (answer-for-request batch wrong))
+      (assert False (.format "束に合わない答えを通した: {!r}" wrong))
+      (except [refused WireMalformed]
+        None)))
+  ;; 束の作りの上限: 読みの数 READ-BATCH-MAX と一覧の limit の和 LIST-LIMIT-MAX はちょうどなら作れて、越えれば作る時に断る。
+  (val most-reads (ReadBatch (tuple (gfor n (range READ-BATCH-MAX) (ReadRow "parts" #((str n)))))))
+  (val most-rows (ReadBatch #((ListRows "parts" :limit (- LIST-LIMIT-MAX 1)) (ListRows "tickets" :limit 1))))
+  (assert (and (= (len most-reads.reads) READ-BATCH-MAX) (= (len most-rows.reads) 2)))
+  (for [make [(fn [] (ReadBatch (tuple (gfor n (range (+ READ-BATCH-MAX 1)) (ReadRow "parts" #((str n)))))))
+              (fn [] (ReadBatch #((ListRows "parts" :limit LIST-LIMIT-MAX) (ListRows "tickets" :limit 1))))]]
+    (try
+      (make)
+      (assert False "上限の外の束を作った")
+      (except [refused ValueError]
+        None)))
+  (try
+    (ReadBatch #((PutRow "parts" #("p1") {} (ExpectAny))))
+    (assert False "書きを載せた束を作った")
+    (except [refused TypeError]
+      None))
+  (try
+    (ReadBatch #())
+    (assert False "空の束を作った")
+    (except [refused TypeError]
+      None)))

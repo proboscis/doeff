@@ -698,6 +698,15 @@
   (#^ int epoch)
   (#^ int floor))
 
+(defclass [(dataclass :frozen True)] BatchRead []
+  "ReadBatch の束の答え(card ki-177a4f287c42): items = 束の順の、読み 1 つごとの答え(ReadRow の Row | Missing・ListRows の
+   Page | Reset | NotIndexed — 束の i 番目の読みの答え = items の i 番目)。届かない読みは在らない(届かなければ束の答えが Unreachable)。"
+  (#^ tuple items)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.items tuple) self.items
+                    (all (gfor item self.items (isinstance item #(Row Missing Page Reset NotIndexed))))))
+      (raise (TypeError (.format "BatchRead.items は Row | Missing | Page | Reset | NotIndexed の空でない tuple: {!r}" self.items))))))
+
 (defrecord WaitsClosed
   "置き場の変化の待ち(WatchChanges・WatchEvents の呼び鈴の待ち)を起こした止めの印(#3713): 待ちを抱える記録の service の入口が止めの
    合図を受けた — 待ち手は読み直さず、手元の静かな答え(空の Changes・EventsQuiet)で直ぐに返る。reason = 止めの理由。呼び鈴の待ち
@@ -716,3 +725,4 @@
 (val ReadEventByKeyAnswer (| Event EventAbsent EventRetired Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))
 (val AppendEventsAnswer (| AppendedEvents Unreachable))
+(val ReadBatchAnswer (| BatchRead Unreachable))
