@@ -31,14 +31,10 @@ import pytest
 from doeff_hy.frozen import freeze_json
 from doeff_hy.json_value import OpaqueJson
 from doeff_hy.wire import WireValue
-from doeff_hy.wire import dump as pydantic_dump
-from doeff_hy.wire import dump_json as pydantic_dump_json
-from doeff_hy.wire import json_schema as pydantic_json_schema
 from doeff_hy.wire_codec import codec_of
 from doeff_hy.wire_malformed import Malformed
+from doeff_hy.wire_parity import pydantic_dump, pydantic_dump_json, pydantic_json_schema
 from pydantic import TypeAdapter
-
-from doeff import run
 
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
@@ -75,10 +71,10 @@ def _typed(value: object) -> object:
 
 
 def _pydantic(value: WireValue) -> tuple[object, str]:
-    """今の pydantic の書き手(doeff_hy.wire の dump・dump-json)の答え。欄の型に合わない値の書き出しの警告は読み捨てる。"""
+    """pydantic の書き手(doeff_hy.wire_parity — 切り替える前の wire.hy の dump・dump-json と同じ)の答え。欄の型に合わない値の書き出しの警告は読み捨てる。"""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return run(pydantic_dump(value)), run(pydantic_dump_json(value))
+        return pydantic_dump(value), pydantic_dump_json(value)
 
 
 # --- 1. 今の pydantic と同じ JSON を書く -------------------------------------------------------------------------------------------
@@ -368,8 +364,8 @@ def _object(value: object) -> dict[str, object]:
 
 
 def _pydantic_schema(wire_type: type) -> dict[str, object]:
-    """今の pydantic の json-schema(doeff_hy.wire)の答え。"""
-    return _object(run(pydantic_json_schema(wire_type)))
+    """pydantic の json-schema(doeff_hy.wire_parity — 切り替える前の wire.hy と同じ)の答え。"""
+    return _object(pydantic_json_schema(wire_type))
 
 
 def _defaults_of(schema: Mapping[str, object], wires: list[str]) -> dict[str, object]:
@@ -432,7 +428,7 @@ def test_a_lone_surrogate_cannot_be_written_as_json_text() -> None:
     with pytest.raises(
         ValueError, match="surrogates not allowed"
     ):  # 今の pydantic も書かない(PydanticSerializationError は ValueError)
-        run(pydantic_dump_json(value))
+        pydantic_dump_json(value)
     assert codec_of(types.Vocab).encode(value) == {"s": "\ud800"}
 
 

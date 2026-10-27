@@ -2,7 +2,7 @@
 
 契約は設計の記録 docs/design/defwire-decoder/design.md(節 2 の型ごとの判じ方・節 3 の共通の規則・付録 B の腕の名)。確かめること:
 
-1. 語彙の型ごとの受ける形・断る形 — 同じ入力を今の pydantic の解き手(doeff_hy.wire の parse-json)にも通し、受けた値(値と欄の値の型)
+1. 語彙の型ごとの受ける形・断る形 — 同じ入力をpydantic の解き手(doeff_hy.wire_parity の pydantic_parse_json — 切り替える前の wire.hy と同じ設定)にも通し、受けた値(値と欄の値の型)
    と断りの (場所, reason) の列が一致する事。試作の 4 つの断り(artifact 2026-10-27-defwire-base-measurements.html の表 3)を含む。
 2. 何でも受ける腕の規則 4(pydantic と違う答えを正とする所)— 単体で確かめる。
 3. JSON の読み(節 3「JSON の読み」)と、JSON の値・凍らせた値・OpaqueJson から解いた答えが文字列から解いた答えと同じ事。
@@ -27,11 +27,9 @@ import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
 from doeff_hy.frozen import freeze_json
 from doeff_hy.json_value import OpaqueJson
-from doeff_hy.wire import parse_json as pydantic_parse_json
 from doeff_hy.wire_codec import _WireNode, codec_of
 from doeff_hy.wire_malformed import Malformed, MalformedField
-
-from doeff import run
+from doeff_hy.wire_parity import pydantic_parse_json
 
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
@@ -65,7 +63,7 @@ def _kinds(answer: Malformed) -> list[tuple[str, str]]:
 
 
 def _both(wire_type: type, text: str) -> tuple[object, object]:
-    return codec_of(wire_type).decode_json(text), run(pydantic_parse_json(wire_type, text))
+    return codec_of(wire_type).decode_json(text), pydantic_parse_json(wire_type, text)
 
 
 # --- 1. 語彙の型ごとの受ける形・断る形(pydantic と照らす)-------------------------------------------------------------------------
@@ -317,7 +315,7 @@ def test_a_catch_all_arm_takes_only_what_no_other_arm_takes() -> None:
 )
 def test_text_that_is_not_json_is_json_invalid_like_pydantic(raw: str | bytes) -> None:
     ours = codec_of(types.Vocab).decode_json(raw)
-    theirs = run(pydantic_parse_json(types.Vocab, raw))
+    theirs = pydantic_parse_json(types.Vocab, raw)
     assert isinstance(ours, Malformed)
     assert isinstance(theirs, Malformed)
     assert _kinds(ours) == _kinds(theirs) == [("", "json_invalid")]

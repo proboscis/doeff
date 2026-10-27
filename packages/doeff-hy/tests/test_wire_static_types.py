@@ -184,7 +184,7 @@ def test_the_wire_annotation_is_not_a_field() -> None:
     assert tuple(inspect.signature(row).parameters) == names
     assert isinstance(row.__doeff_wire__, WireShape)
     assert typing.get_origin(row.__annotations__["__doeff_wire__"]) is typing.ClassVar
-    assert tuple(row.__doeff_wire__.adapter.json_schema()["properties"]) == (
+    assert tuple(row.__doeff_wire__.codec.schema()["properties"]) == (
         "laneId",
         "state",
         "landedAt",
