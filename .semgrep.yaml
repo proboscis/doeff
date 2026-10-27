@@ -1253,7 +1253,7 @@ rules:
       include:
         - /doeff/__main__.py
         - /packages/doeff-flow/src/doeff_flow/trace.py
-        - /packages/doeff-conductor/src/doeff_conductor/api.py
+        - /packages/doeff-conductor/src/doeff_conductor/_api.py
 
   - id: no-run-module-cli-entrypoint-import
     languages: [python]
@@ -2524,7 +2524,7 @@ rules:
     pattern-regex: 'except \(OSError, json\.JSONDecodeError, KeyError, TypeError, ValueError\):\s*\n\s*continue'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/api.py
+        - /packages/doeff-conductor/src/doeff_conductor/_api.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2538,7 +2538,7 @@ rules:
     pattern-regex: 'result = subprocess\.run\([\s\S]*?\["git", "branch", "--show-current"\][\s\S]*?check=False,[\s\S]*?\)\s*\n\s*ref = result\.stdout\.strip\(\)'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/api.py
+        - /packages/doeff-conductor/src/doeff_conductor/_api.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2552,7 +2552,7 @@ rules:
     pattern-regex: 'except \(OSError, TypeError, ValueError\):\s*\n\s*continue'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/api.py
+        - /packages/doeff-conductor/src/doeff_conductor/_api.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2570,6 +2570,33 @@ rules:
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
+
+  - id: conductor-cli-runs-effect-programs
+    languages: [python]
+    severity: ERROR
+    message: >
+      conductor-cli-runs-effect-programs: the conductor CLI commands are programs of
+      conductor effects run under conductor_state_handler (card ki-1ef3718c89b3 — the
+      subpackage shows its users effects and handlers only). Do not build ConductorAPI or
+      an issue handler, or call the state store's functions, from the CLI; yield the run
+      effect (doeff_conductor.effects.runs) and let the handler answer it.
+    pattern-either:
+      - pattern: ConductorAPI(...)
+      - pattern: IssueHandler(...)
+      - pattern: import doeff_conductor._api
+      - pattern: from doeff_conductor._api import $X
+      - pattern: from doeff_conductor.overseer import $X
+      - pattern: from doeff_conductor.verbs import $X
+      - pattern: from doeff_conductor.templates import $X
+      - pattern: from doeff_conductor.monitor import $X
+      - pattern: from doeff_conductor.monitor_app import $X
+      - pattern: from doeff_conductor.workflow_loader import $X
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/_cli.py
+    metadata:
+      issue: ki-1ef3718c89b3
+      category: architecture
 
   - id: conductor-no-silent-issue-list-skip
     languages: [generic]

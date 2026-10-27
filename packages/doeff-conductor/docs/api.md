@@ -8,7 +8,7 @@ Complete API documentation for doeff-conductor.
 - [Effects](#effects)
 - [Handlers](#handlers)
 - [Templates](#templates)
-- [ConductorAPI](#conductorapi)
+- [Run Effects](#run-effects)
 - [CLI Commands](#cli-commands)
 
 ---
@@ -629,90 +629,67 @@ source = get_template_source("basic_pr")
 
 ---
 
-## ConductorAPI
+## Run Effects
 
-High-level API for programmatic access.
-
-```python
-from doeff_conductor import ConductorAPI
-
-api = ConductorAPI(state_dir="/path/to/state")  # Optional
-```
-
-### Methods
-
-#### `run_workflow`
-
-Run a workflow template or file.
+The conductor's runs are read and changed through effects, answered by
+`conductor_state_handler` from the state directory it is given. The `conductor` CLI
+commands are programs of these effects.
 
 ```python
-handle = api.run_workflow(
-    "basic_pr",
-    issue=issue,
-    params={"max_retries": 3},
+from doeff import do, run
+from doeff_conductor import (
+    GetWorkflow,
+    ListWorkflows,
+    RunWorkflow,
+    StopWorkflow,
+    WorkflowStatus,
+    conductor_state_handler,
 )
+
+
+@do
+def run_and_list():
+    handle = yield RunWorkflow(template_or_file="basic_pr", params={"max_retries": 3})
+    running = yield ListWorkflows(status=(WorkflowStatus.RUNNING, WorkflowStatus.BLOCKED))
+    return handle, running
+
+
+handle, running = run(conductor_state_handler("/path/to/state")(run_and_list()))
 ```
 
-#### `list_workflows`
+`conductor_state_handler(state_dir=None, *, issues_dir=None)` uses the XDG state
+directory when `state_dir` is not given; it also answers the issue effects
+(`CreateIssue`, `ListIssues`, `GetIssue`, `ResolveIssue`) from the issue vault.
 
-List workflows with optional status filter.
-
-```python
-workflows = api.list_workflows(
-    status=[WorkflowStatus.RUNNING, WorkflowStatus.BLOCKED]
-)
-```
-
-#### `get_workflow`
-
-Get workflow by ID or prefix.
-
-```python
-workflow = api.get_workflow("abc123")
-# Also works with prefix: api.get_workflow("abc")
-```
-
-#### `watch_workflow`
-
-Watch workflow progress (generator).
-
-```python
-for update in api.watch_workflow("abc123"):
-    print(update["status"])
-    if update["terminal"]:
-        break
-```
-
-#### `stop_workflow`
-
-Stop a workflow or specific agent.
+| Effect | Yields | What it does |
+|---|---|---|
+| `ListWorkflows(status=())` | `list[WorkflowHandle]` | Workflows, newest update first; `status` keeps only those statuses |
+| `GetWorkflow(workflow_id)` | `WorkflowHandle \| None` | Workflow by ID or unique prefix (`"abc"`) |
+| `RunWorkflow(template_or_file, issue=None, params=None, run_id=None, supervision="autonomous")` | `WorkflowHandle` | Runs a template or Hy workflow file |
+| `ResumeWorkflow(workflow_id, params=None, supervision=None)` | `WorkflowHandle` | Resumes a run from its snapshotted source |
+| `StopWorkflow(workflow_id, agent=None)` | `list[str]` | Stops a workflow or one agent of it |
+| `AnswerGate(workflow_id, gate_id, option, params=None, note="")` | `WorkflowHandle` | Answers an open overseer gate |
+| `ListOpenGates(workflow_id=None)` | `list[dict]` | Open gates of one workflow or of all |
+| `ListGates(workflow_id)` | `list[dict]` | Open and answered gates of one workflow |
+| `ReadProgress(workflow_id, since)` | `list[dict]` | Progress events after a sequence number |
+| `PlanWorkflow(workflow_file, supervision="autonomous", run_id=None)` | `BindingPlan` | Overseer binding plan |
+| `ValidateWorkflow(workflow_file, scenarios=(), supervision="autonomous", run_id=None)` | `ValidationSuiteReport` | Control-flow validation under stubs |
+| `ListWorkspaces(workflow_id=None)` | `list[Workspace]` | Materialized workspaces |
+| `CleanupWorkspaces(dry_run=False, older_than_days=None)` | `list[Path]` | Removes orphaned workspace materializations |
+| `RenderMonitor(workflow_id=None, only_running=True, view=None)` | Rich renderable | One frame of the read-only monitor |
+| `OpenMonitor(workflow_id=None, only_running=True, interval=1.0)` | `None` | The interactive read-only monitor |
+| `DescribeEnvironment()` | `dict` | Profiles, role conventions, router policy, capabilities |
+| `ListTemplates()` | `dict[str, str]` | Template names with descriptions |
+| `GetTemplateSource(name)` | `str` | A template's source code |
+| `ConductorStateDir()` | `Path` | The state directory the handler reads |
 
 ```python
-stopped = api.stop_workflow("abc123")
-# Or specific agent
-stopped = api.stop_workflow("abc123", agent="implementer")
-```
-
-#### `list_workspaces`
-
-List workspace workspaces.
-
-```python
-workspaces = api.list_workspaces()
-# Filter by workflow
-workspaces = api.list_workspaces(workflow_id="abc123")
-```
-
-#### `cleanup_workspaces`
-
-Cleanup orphaned workspace workspaces.
-
-```python
-# Dry run
-would_clean = api.cleanup_workspaces(dry_run=True)
-
-# Actually clean
-cleaned = api.cleanup_workspaces(older_than_days=7)
+@do
+def stop_one(workflow_id: str):
+    workflow = yield GetWorkflow(workflow_id=workflow_id)
+    if workflow is None:
+        return []
+    return (yield StopWorkflow(workflow_id=workflow.id, agent="implementer"))
 ```
 
 ---

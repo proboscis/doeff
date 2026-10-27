@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.types import WorkflowStatus
 
 RANDOM_WORKFLOW_SOURCE = """
