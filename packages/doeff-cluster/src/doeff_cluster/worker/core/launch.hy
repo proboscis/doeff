@@ -128,7 +128,7 @@
   (setv #^ tuple entry-args #())
   ;; 入口が走る環境(実行環境の job だけ — 名の順): env に、冷えた道で uv run が足す root の venv の 2 つ(PATH の頭・VIRTUAL_ENV —
   ;; uv-run-environ)を足した物。待ちの子から分ける task は uv を通らないので、この環境を ForkFromWarm の env に載せ、2 つの道の入口が
-  ;; 同じ venv を名で引く(card ki-b884608b96e4)。木の job と入口の検めは待ちの子から分けない(warm_rules.forks-from-warm-child)ので空。
+  ;; 同じ venv を名で引く(card ki-b884608b96e4)。分ける service も同じ値を使う(card ki-de44efdb9aa4)。木の job と入口の検めは待ちの子から分けないので空。
   (setv #^ (get tuple #(EnvEntry ...)) entry-env #()))
 
 
