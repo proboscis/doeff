@@ -389,7 +389,7 @@ const OBSERVE_LINES: Lines = [
 ];
 const OBSERVE = f(23);
 const BODY = ['@do', 'def child():', '    return (yield Ask("key"))', ' ', '@do', 'def body():', '    t1 = yield Spawn(child())', '    t2 = yield Spawn(child())', '    return (yield Gather(t1, t2))'];
-const OBSERVER = ['def observer(effect):', '    seen = (*seen, name_of(effect))', '    return "ignored"'];
+const OBSERVER = ['def observer(effect):', '    seen.append(name_of(effect))', '    return "ignored"'];
 // measure/observe.log: the effects the observer saw, in order, and the handler that answers each.
 const SEEN = [
   {name: 'Spawn', line: 6, to: 'scheduled'},
@@ -540,12 +540,12 @@ const GATHER_LINES: Lines = [
   [0, 'Children under Gather share one store; one task runs at a time.'],
   [6.5, 'A child that does not suspend runs to its end. Each sees the last write.'],
   [14.5, 'Gather gives [0, 1, 2], and counter is 3.'],
-  [18.5, 'Now each child suspends on Await between its read and its write.'],
+  [18.5, 'Now each child suspends on Delay between its read and its write.'],
   [24, 'The others run in the gap and read the same 0: two updates are lost.'],
   [31.5, 'The Rust and the Python scheduler give the same results.'],
 ];
 const GATHER = f(37.5);
-const INCREMENT = ['@do', 'def increment():', '    n = yield Get("counter")', '    yield Await(asyncio.sleep(0.05))', '    yield Put("counter", n + 1)', '    return n'];
+const INCREMENT = ['@do', 'def increment():', '    n = yield Get("counter")', '    yield Delay(0.05)', '    yield Put("counter", n + 1)', '    return n'];
 // measure/gather_store.log, the order of the reads and writes under each scheduler (the same in both).
 const STRAIGHT: Step[] = [
   {at: 7.2, lane: 0, text: 'read 0', kind: 'read'},
@@ -574,7 +574,7 @@ const GatherScene: React.FC = () => {
   const steps = second ? SUSPENDED : STRAIGHT;
   const shown = steps.filter((s) => frame >= f(s.at));
   const last = shown[shown.length - 1];
-  // The band follows the step being run: Get for a read, Await for a wait, Put for a write.
+  // The band follows the step being run: Get for a read, Delay for a wait, Put for a write.
   const band = !last ? null : last.kind === 'read' ? 2 : last.kind === 'wait' ? 3 : 4;
   const counterKeys: [number, string][] = [[0, '0'], ...STRAIGHT.filter((s) => s.kind === 'write').map((s): [number, string] => [s.at, s.text.split(' ')[1]]), [18.5, '0'],
     ...SUSPENDED.filter((s) => s.kind === 'write').map((s): [number, string] => [s.at, s.text.split(' ')[1]])];
@@ -597,7 +597,7 @@ const GatherScene: React.FC = () => {
       </Label>
       {allWaiting && (
         <Label x={530} y={330} size={17} color={MUTED} opacity={fadeAt(frame, 23.8)}>
-          all three are waiting on Await, each holding n = 0
+          all three are waiting on Delay, each holding n = 0
         </Label>
       )}
       {frame >= f(27.2) && (
@@ -609,7 +609,7 @@ const GatherScene: React.FC = () => {
         x={40} y={470} w={1200} size={18} line={30}
         lines={[
           {text: frame >= f(13.4) ? 'does not suspend:     Gather -> [0, 1, 2]   counter -> 3' : '', color: TEST},
-          {text: frame >= f(28.2) ? 'suspends on Await:    Gather -> [0, 0, 0]   counter -> 1' : '', color: FAIL},
+          {text: frame >= f(28.2) ? 'suspends on Delay:    Gather -> [0, 0, 0]   counter -> 1' : '', color: FAIL},
         ]}
         opacity={fadeAt(frame, 13.2)} on={frame >= f(14.5) && frame < f(15.6)}
       />

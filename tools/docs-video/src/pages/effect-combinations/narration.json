@@ -69,7 +69,7 @@
  },
  {
   "id": "e4",
-  "text": "Now each child suspends on Await, between its read and its write."
+  "text": "Now each child suspends on Delay, between its read and its write."
  },
  {
   "id": "e5",

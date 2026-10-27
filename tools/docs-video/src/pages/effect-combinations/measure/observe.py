@@ -22,7 +22,7 @@ def body():
     return (yield Gather(t1, t2))
 
 
-seen = ()
+seen = []
 
 
 def name_of(effect):
@@ -32,8 +32,7 @@ def name_of(effect):
 
 def observer(effect):
     """Keeps the name of every effect it is shown, and tries to answer: its return value goes nowhere."""
-    global seen
-    seen = (*seen, name_of(effect))
+    seen.append(name_of(effect))
     return "ignored"
 
 
