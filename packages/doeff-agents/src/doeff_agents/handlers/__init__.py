@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from doeff_codex.rpc import ApprovalPolicy as CodexApprovalPolicy
     from doeff_codex.rpc import SandboxMode as CodexSandboxMode
 
-from doeff_agents.agentd_client import LazyAgentdClient as _LazyAgentdClient
+from doeff_agents._agentd_client import LazyAgentdClient as _LazyAgentdClient
 from doeff_agents.handlers.daemon import AgentdSessionClient as AgentdSessionClient
 # The handler objects behind the factories (inner modules — not re-exported).
 from doeff_agents.handlers.daemon import DaemonAgentHandler as _DaemonAgentHandler

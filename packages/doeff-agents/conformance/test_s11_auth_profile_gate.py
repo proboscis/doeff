@@ -19,7 +19,7 @@ import subprocess
 import time
 
 import pytest
-from doeff_agents.agentd_client import AgentdClientError
+from doeff_agents._agentd_client import AgentdClientError
 from harness import RESULT_SCHEMA, AgentdHarness
 
 PROMPT = "Produce the conformance structured result."

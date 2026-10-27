@@ -74,7 +74,7 @@ def test_session_api_import_does_not_load_the_handler_layer() -> None:
         "print(TmuxSessionBackend.__name__)\n"
         "print('doeff_agents.io_handlers' in sys.modules)\n"
         "print('doeff_agents.handlers' in sys.modules)\n"
-        "print('doeff_agents.agentd_client' in sys.modules)\n"
+        "print('doeff_agents._agentd_client' in sys.modules)\n"
     )
 
     result = subprocess.run(

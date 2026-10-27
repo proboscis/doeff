@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from doeff_agents.adapters.base import AgentType, LaunchParams
-from doeff_agents.agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
+from doeff_agents._agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import (
     AgentError,
@@ -45,6 +45,7 @@ from doeff_agents.shell import (
     assert_session_env_is_non_auth_overlay,
     wrap_with_shell_exports,
 )
+from doeff_agents.tmux import attach_session as _attach_tmux_session
 
 
 class AgentdSessionClient(Protocol):
@@ -204,8 +205,19 @@ class DaemonAgentHandler(AgentHandler):
         return self._require_snapshot(effect.session_id)
 
     def handle_attach_session(self, effect: AttachAgentSessionEffect) -> None:
-        """Attach is intentionally not part of the first daemon RPC slice."""
-        raise AgentError("AttachAgentSession is not implemented by doeff-agentd client")
+        """Put this terminal on a session the host carries, so an operator can watch or type into it.
+
+        Only a tmux session has a terminal to join; the host names its tmux
+        session, and the attach (or a client switch when already inside tmux)
+        runs on this machine until the operator detaches.
+        """
+        snapshot = self._require_snapshot(effect.session_id)
+        if snapshot.backend_kind != "tmux":
+            raise AgentError(
+                f"Session '{snapshot.session_id}' is not backed by tmux "
+                f"(backend: {snapshot.backend_kind})"
+            )
+        _attach_tmux_session(snapshot.session_name)
 
     def handle_cancel_session(
         self,

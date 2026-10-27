@@ -27,7 +27,7 @@ from doeff_agents import (
     agentd_client,
 )
 # The agentd client and the daemon handler object are internal to doeff-agents (not on its public API).
-from doeff_agents.agentd_client import (
+from doeff_agents._agentd_client import (
     AGENTD_SOCKET_ENV,
     DEFAULT_END_SESSION_BUDGET_SECONDS,
     AgentdClient,
@@ -180,7 +180,7 @@ def test_launch_rpc_timeout_tracks_daemon_ready_gate_knob(monkeypatch) -> None:
     # client の launch read-timeout は同じ knob に use-site で追従する。固定 135s の
     # ままだと、knob で延長された daemon の ready 待ちを client が先に切断して
     # Broken pipe / AgentRequestFailed になる(2026-07-27 sessionhost wedge incident)。
-    from doeff_agents.agentd_client import (
+    from doeff_agents._agentd_client import (
         RPC_TIMEOUT_MARGIN_SECONDS,
         launch_rpc_timeout_seconds,
     )
@@ -1071,7 +1071,7 @@ def test_ensure_agentd_malformed_supervisor_declaration_is_loud(
     # Fail-closed: a declaration that cannot be understood might be
     # declaring supervision, so ensure must refuse to act (and must
     # never "fall back" to self-spawn).
-    from doeff_agents.agentd_client import AgentdSupervisorConfigError
+    from doeff_agents._agentd_client import AgentdSupervisorConfigError
 
     state_home = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
@@ -1111,7 +1111,7 @@ def test_ensure_agentd_malformed_declaration_is_loud_even_with_healthy_daemon(
     # declaring ANY socket, so every ensure call on the machine surfaces
     # the typed config error immediately — not only at the next restart
     # window (the worst possible moment to discover a config typo).
-    from doeff_agents.agentd_client import AgentdSupervisorConfigError
+    from doeff_agents._agentd_client import AgentdSupervisorConfigError
 
     state_home = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))

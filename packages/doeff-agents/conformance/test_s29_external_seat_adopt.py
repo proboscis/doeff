@@ -22,7 +22,7 @@ import time
 import uuid
 
 import pytest
-from doeff_agents.agentd_client import AgentdClient
+from doeff_agents._agentd_client import AgentdClient
 from harness import AgentdHarness, kill_session_out_of_band
 
 ACTIVE_STATUSES = {"pending", "booting", "running", "blocked", "blocked_api"}

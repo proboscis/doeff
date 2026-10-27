@@ -131,7 +131,10 @@
        :facts
          [(fact
             "起源 = 2026-09-15(引き継ぎの受け手が最初に撃つ面の棚卸し): CLI の観測の動詞(`ps` / `watch` / `output` / `agentd by-conversation`)が `_agentd_client_or_exit` → `ensure_agentd` を通っていたため、常駐(launchd / systemd)が host を持つ機体で、期待する socket に listener が無い拍(bootout・crash throttle・plist 差し替え)に観測を撃つと競合する host を起こしうる構造だった。R10(d) は ensure 自身の self-spawn を supervisor 宣言で塞いだが、宣言が無い機体・宣言と違う socket を名指した観測(`DOEFF_AGENTD_SOCKET` で join の置き場を指した時)は self-spawn の枇へ落ちる。根治 = 観測の client を作る 1 点(cli.py `_observing_client`)を ensure から切り離し、起こす口を `agentd ensure` と明示の `--ensure` の 2 つに閉じた。`agentd kinds` が R5 の fact で既に持っていた性質(「host 不達 = 観測なし ≠ 違反」)を観測の動詞ぜんぶへ広げた形で、kinds も同じ 1 点を読む。"
-            :evidence "packages/doeff-agents/tests/test_cli_agentd.py test_observation_verbs_never_start_a_host・test_observation_verbs_start_a_host_only_with_the_explicit_flag / .semgrep.yaml doeff-agents-cli-monitoring-uses-agentd")]
+            :evidence "packages/doeff-agents/tests/test_cli_agentd.py test_observation_verbs_never_start_a_host・test_observation_verbs_start_a_host_only_with_the_explicit_flag / .semgrep.yaml doeff-agents-cli-monitoring-uses-agentd")
+          (fact
+            "2026-10-27(card ki-307f29018559): CLI の各動詞は effect を出す program を handler の下で走らせる形になり、client を作る 1 点は CLI(`_cli.py`)から handler の側へ移った — `handlers/_session_host.hy` の `session-host-handlers` が `LazyAgentdClient :start-host` を 1 本だけ作り、公開の session の effect(daemon-agent-handler)と host の口の内側の effect の両方をその 1 本で答える。CLI が handler へ渡すのは `start_host` の旗だけで、観測の動詞は False(明示の `--ensure` の時だけ True)。False の client は名指した socket(無ければ既定の path・`DOEFF_AGENTD_SOCKET` を含む)にだけ話し、`ensure_agentd` を呼ばない。"
+            :evidence "packages/doeff-agents/tests/test_cli_agentd.py test_observation_verbs_never_start_a_host・test_cli_builds_no_client_and_runs_only_effect_programs / この ADR の deftest test-adr-doe-agents-004-reads-never-start-a-host")]
        :counterexamples
          [(counterexample "観測の動詞が到達不能を「起動の合図」と読んで host を起こす(常駐の停止窓で野良 host が bind に勝ち、store が launchctl 不可視の process に渡る — R10(d) と同型)")
           (counterexample "起こすかどうかを対話の確認(y/n)で決める(非対話の agent 運用では確認が出ず、既定の側へ黙って倒れる)")
@@ -266,7 +269,7 @@
         {"relative-path" "packages/doeff-agents/tests/test_retired_module_import.py"
          "source" "from doeff_agentd import serve\n"}]
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/contract_vocab_ok.py"
-         "source" "# agentd 契約語彙は退役対象外(issue #575 射程限定)\nfrom doeff_agents.agentd_client import ensure_agentd\nSOCKET_SUFFIX = 'doeff-agentd-user.sock'\nBIN_ENV = 'DOEFF_AGENTD_BIN'\nDB_NAME = 'agentd.sqlite'\n"}
+         "source" "# agentd 契約語彙は退役対象外(issue #575 射程限定)\nfrom doeff_agents._agentd_client import ensure_agentd\nSOCKET_SUFFIX = 'doeff-agentd-user.sock'\nBIN_ENV = 'DOEFF_AGENTD_BIN'\nDB_NAME = 'agentd.sqlite'\n"}
         {"relative-path" "packages/doeff-agents/src/doeff_agents/provenance_ok.py"
          "source" "# 移植出典: agentd-rust-final:src/main.rs:2775(rollback 専用・正しさの基準ではない)\n"}
         {"relative-path" "docs/history-note.md"
@@ -315,14 +318,17 @@
        ;; 到達できない host は「観測なし + 起動の命令を案内」で終わる(socket に
        ;; listener を作らない)。起こす口は明示の旗ちょうど。
        ;; この機体の常駐 socket には触らない — DOEFF_AGENTD_SOCKET で tmp の
-       ;; 不在の path を名指してから撃つ。
+       ;; 不在の path を名指してから撃つ。host を起こす口は client の側の
+       ;; ensure_agentd ちょうど 1 つ(CLI は handler へ start_host の旗を渡すだけ)
+       ;; なので、そこを差し替えて見張る。
        (import os)
        (import tempfile)
        (import click.testing [CliRunner])
-       (import doeff_agents.cli :as cli-module)
-       (import doeff_agents.agentd_client [AGENTD-SOCKET-ENV])
+       (import doeff_agents._cli :as cli-module)
+       (import doeff_agents._agentd_client :as client-module)
+       (import doeff_agents._agentd_client [AGENTD-SOCKET-ENV])
        (setv runner (CliRunner))
-       (setv saved-ensure cli-module.ensure-agentd)
+       (setv saved-ensure client-module.ensure-agentd)
        (setv saved-env (.get os.environ AGENTD-SOCKET-ENV))
        (defn forbidden [#* args #** kwargs]
          (raise (AssertionError "an observation verb tried to start a host")))
@@ -336,7 +342,7 @@
          (with [tmp (tempfile.TemporaryDirectory)]
            (setv socket-path (os.path.join tmp "absent.sock"))
            (setv (get os.environ AGENTD-SOCKET-ENV) socket-path)
-           (setattr cli-module "ensure_agentd" forbidden)
+           (setattr client-module "ensure_agentd" forbidden)
            (for [argv observation-argvs]
              (setv result (.invoke runner cli-module.cli argv))
              (assert (= result.exit-code 1) f"{argv}: exit code {result.exit-code}")
@@ -347,15 +353,15 @@
                      f"{argv} left a socket behind"))
            ;; 起こす口は明示の旗だけ — 旗を付けた時だけ ensure に届く
            (setv calls [])
-           (defn fake-ensure []
+           (defn fake-ensure [#** kwargs]
              (.append calls "ensure")
              (raise (SystemExit 9)))
-           (setattr cli-module "ensure_agentd" fake-ensure)
+           (setattr client-module "ensure_agentd" fake-ensure)
            (setv flagged (.invoke runner cli-module.cli ["ps" "--ensure"]))
            (assert (= calls ["ensure"]) f"--ensure did not reach ensure: {calls}")
            (assert (= flagged.exit-code 9) f"exit {flagged.exit-code}"))
          (finally
-           (setattr cli-module "ensure_agentd" saved-ensure)
+           (setattr client-module "ensure_agentd" saved-ensure)
            (if (is saved-env None)
                (.pop os.environ AGENTD-SOCKET-ENV None)
                (setv (get os.environ AGENTD-SOCKET-ENV) saved-env)))))
