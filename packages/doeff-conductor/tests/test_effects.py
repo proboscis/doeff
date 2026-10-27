@@ -338,13 +338,7 @@ class TestModuleExports:
 
         runtime = MockConductorRuntime(tmp_path)
 
-        production = production_handlers(
-            workspace_handler=runtime,
-            issue_handler=runtime,
-            agent_handler=runtime,
-            git_handler=runtime,
-            exec_handler=runtime,
-        )
+        production = production_handlers(workspace_handler=mock_handlers(runtime=runtime))
         mocked = mock_handlers(runtime=runtime)
 
         assert callable(production)

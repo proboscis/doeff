@@ -10,9 +10,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from doeff import Effect, K, Pass, Resume, handler
+from doeff import Effect, K, Pass, Resume, handler, stacked_handlers
 from doeff.program import ProgramHandler
-from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
 from doeff_conductor.effects.runs import (
     AnswerGate,
     CleanupWorkspaces,
@@ -34,26 +33,24 @@ from doeff_conductor.effects.runs import (
     StopWorkflow,
     ValidateWorkflow,
 )
+from doeff_conductor.handlers.issue_handler import issue_handler
 
 if TYPE_CHECKING:
     from doeff_conductor._api import ConductorAPI
-    from doeff_conductor.handlers.issue_handler import IssueHandler
 
 __all__ = ["conductor_state_handler"]
 
 
 class _Stores:
-    """The run state store and issue vault one handler answers from, opened on first use.
+    """The run state store one handler answers from, opened on first use.
 
-    Opening on first use keeps a command that reads neither (``template list``) from
-    creating the state directory or the issue vault.
+    Opening on first use keeps a command that reads no run state (``template list``) from
+    creating the state directory.
     """
 
-    def __init__(self, state_dir: str | Path | None, issues_dir: Path | None) -> None:
+    def __init__(self, state_dir: str | Path | None) -> None:
         self._state_dir = state_dir
-        self._issues_dir = issues_dir
         self._api: ConductorAPI | None = None
-        self._issues: IssueHandler | None = None
 
     def api(self) -> "ConductorAPI":
         """The run state store, for the effects that read or change workflows."""
@@ -66,14 +63,6 @@ class _Stores:
     def state_dir(self) -> Path:
         """The state directory, for the effects that read overseer and progress files."""
         return self.api().state_dir
-
-    def issues(self) -> "IssueHandler":
-        """The issue vault, for the issue effects."""
-        if self._issues is None:
-            from doeff_conductor.handlers.issue_handler import IssueHandler
-
-            self._issues = IssueHandler(self._issues_dir)
-        return self._issues
 
 
 class _NotMine:
@@ -196,7 +185,7 @@ def _answer_run(stores: _Stores, effect: Effect) -> object:  # noqa: PLR0911, PL
 
 
 def _answer_tooling(stores: _Stores, effect: Effect) -> object:  # noqa: PLR0911 - one case per effect
-    """Answer a planning, monitor, environment, template or issue effect."""
+    """Answer a planning, monitor, environment or template effect."""
     from doeff_conductor.templates import get_available_templates, get_template_source
     from doeff_conductor.verbs import describe_environment
 
@@ -215,14 +204,6 @@ def _answer_tooling(stores: _Stores, effect: Effect) -> object:  # noqa: PLR0911
             return get_available_templates()
         case GetTemplateSource():
             return get_template_source(effect.name)
-        case CreateIssue():
-            return stores.issues().handle_create_issue(effect)
-        case ListIssues():
-            return stores.issues().handle_list_issues(effect)
-        case GetIssue():
-            return stores.issues().handle_get_issue(effect)
-        case ResolveIssue():
-            return stores.issues().handle_resolve_issue(effect)
         case _:
             return _NOT_MINE
 
@@ -239,7 +220,9 @@ def conductor_state_handler(
         issues_dir: Issue vault directory. Auto-detected if not provided.
 
     Returns:
-        Handler-protocol callable; other effects pass to the outer handlers.
+        Handler-protocol callable; other effects pass to the outer handlers. The issue
+        effects are answered by ``issue_handler(issues_dir)``, which creates the vault on the
+        first issue effect.
 
     Example:
         @do
@@ -248,11 +231,11 @@ def conductor_state_handler(
 
         workflows = run(conductor_state_handler(state_dir)(running()))
     """
-    stores = _Stores(state_dir, issues_dir)
+    stores = _Stores(state_dir)
 
     @handler
     def answer_from_stores(effect: Effect, k: K):
-        """Answer one run or issue effect from the stores; pass any other effect outward."""
+        """Answer one run effect from the run state store; pass any other effect outward."""
         answer = _answer_run(stores, effect)
         if answer is _NOT_MINE:
             answer = _answer_tooling(stores, effect)
@@ -261,4 +244,4 @@ def conductor_state_handler(
             return None
         return (yield Resume(k, answer))
 
-    return answer_from_stores
+    return stacked_handlers(issue_handler(issues_dir), answer_from_stores)

@@ -253,40 +253,34 @@ from doeff_conductor.exceptions import (
     WorkspaceError as WorkspaceError,
 )
 from doeff_conductor.handlers import (
-    AgentBackend as AgentBackend,
-)
-from doeff_conductor.handlers import (
-    AgentdAgentBackend as AgentdAgentBackend,
-)
-from doeff_conductor.handlers import (
-    AgentHandler as AgentHandler,
-)
-from doeff_conductor.handlers import (
-    ExecHandler as ExecHandler,
-)
-from doeff_conductor.handlers import (
-    GitHandler as GitHandler,
-)
-from doeff_conductor.handlers import (
-    IssueHandler as IssueHandler,
-)
-from doeff_conductor.handlers import (
-    JournaledAgentHandler as JournaledAgentHandler,
-)
-from doeff_conductor.handlers import (
-    JournaledWorkflowEffectHandler as JournaledWorkflowEffectHandler,
-)
-from doeff_conductor.handlers import (
     MockConductorRuntime as MockConductorRuntime,
 )
 from doeff_conductor.handlers import (
-    WorkspaceHandler as WorkspaceHandler,
+    agent_handler as agent_handler,
 )
 from doeff_conductor.handlers import (
     conductor_state_handler as conductor_state_handler,
 )
 from doeff_conductor.handlers import (
     default_scheduled_handlers as default_scheduled_handlers,
+)
+from doeff_conductor.handlers import (
+    exec_handler as exec_handler,
+)
+from doeff_conductor.handlers import (
+    git_handler as git_handler,
+)
+from doeff_conductor.handlers import (
+    issue_handler as issue_handler,
+)
+from doeff_conductor.handlers import (
+    journaled_agent_handler as journaled_agent_handler,
+)
+from doeff_conductor.handlers import (
+    journaled_workflow_effect_handler as journaled_workflow_effect_handler,
+)
+from doeff_conductor.handlers import (
+    journaled_workspace_handler as journaled_workspace_handler,
 )
 from doeff_conductor.handlers import (
     make_async_scheduled_handler as make_async_scheduled_handler,
@@ -308,6 +302,9 @@ from doeff_conductor.handlers import (
 )
 from doeff_conductor.handlers import (
     production_handlers as production_handlers,
+)
+from doeff_conductor.handlers import (
+    workspace_handler as workspace_handler,
 )
 from doeff_conductor.replay_keying import (
     ResolvedIdentity as ResolvedIdentity,

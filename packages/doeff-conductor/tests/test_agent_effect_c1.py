@@ -18,11 +18,12 @@ from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace
 from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.agent_handler import AgentdAgentBackend, AgentHandler
+from doeff_conductor.handlers.agent_handler import agent_handler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import Workspace
 
-from doeff import Pure, do
+from doeff import Pure, do, stacked_handlers
+from tests.effect_runner import answering, workspace_paths
 
 IMPLEMENT_SCHEMA = {
     "type": "object",
@@ -234,9 +235,6 @@ def test_agent_handler_delegates_schema_agent_to_agentd_client(
         created_at=datetime.now(timezone.utc),
     )
 
-    def resolve_workspace(_workspace: Workspace) -> Path:
-        return tmp_path
-
     class AvailableAdapter:
         def available(self):
             # 段 7 lane 7c: adapter の可用性は program(I/O は handler が果たす)。
@@ -247,9 +245,11 @@ def test_agent_handler_delegates_schema_agent_to_agentd_client(
         "doeff_agents.handlers.daemon.get_adapter",
         lambda _agent_type: AvailableAdapter(),
     )
-    handler = AgentHandler(
-        workspace_resolver=resolve_workspace,
-        backend=AgentdAgentBackend(client=fake_client),
+    # The handler connects to the daemon itself; the test swaps the daemon's client for a fake.
+    monkeypatch.setattr("doeff_agents._agentd_client.LazyAgentdClient", lambda: fake_client)
+    answer = answering(
+        stacked_handlers(workspace_paths({workspace.id: tmp_path}), agent_handler()),
+        under_scheduler=True,
     )
     task = AgentTask(
         run_id="run-agentd",
@@ -263,7 +263,7 @@ def test_agent_handler_delegates_schema_agent_to_agentd_client(
         max_retries=0,
     )
 
-    result = handler.handle_agent(AgentEffect(task=task))
+    result = answer(AgentEffect(task=task))
 
     assert result == {"summary": "ok", "files_changed": []}
     assert fake_client.launches[0]["session_id"] == "run-agentd-implement-0"

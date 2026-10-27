@@ -491,8 +491,8 @@ workspace — false-positive green, the worst failure class.
 - `WorkspaceJournal` — flat append-only JSONL with `latest_workspaces()`
   returning last-wins-per-`workspace_id`. No generation/entry_index —
   workspace identity is deterministic, not nondeterministic.
-- `JournaledWorkspaceHandler` — wraps the delegate workspace handler:
-  first call for a `workspace_id` delegates AND appends; subsequent
+- `journaled_workspace_handler` — installed inside the workspace handler:
+  first call for a `workspace_id` performs the effect outward AND appends; subsequent
   calls delegate but do NOT double-append. Pre-coverage detection
   raises `PreCoverageRunError`.
 

@@ -6,17 +6,22 @@ run must still exist in the resumed run.
 """
 
 
-from collections.abc import Callable
+import functools
 from datetime import datetime, timezone
 from pathlib import Path
 
+from doeff import K, Resume, handler
+from doeff.program import ProgramHandler
 from doeff_conductor.effects.workspace import CreateWorkspace
+from doeff_conductor.handlers._workspace_path import WorkspacePath
 from doeff_conductor.journal import (
     AGENT_JOURNAL_FILENAME,
     CreateWorkspaceJournalEntry,
     WorkspaceJournal,
 )
 from doeff_conductor.types import Workspace
+
+__all__ = ["PreCoverageRunError", "journaled_workspace_handler"]
 
 
 class PreCoverageRunError(RuntimeError):
@@ -28,83 +33,75 @@ class PreCoverageRunError(RuntimeError):
     """
 
 
-class JournaledWorkspaceHandler:
-    """Record workspace creation events in a durable journal.
-
-    Wraps a delegate workspace handler (real or mock) and appends a
-    journal entry for each **new** workspace_id materialization.
-    Re-emitting the same workspace_id (resume) delegates but does
-    not double-append.
-    """
-
-    def __init__(
-        self,
-        delegate: Callable[[CreateWorkspace], Workspace],
-        *,
-        state_dir: str | Path | None = None,
-        run_id: str,
-        resolve_path: Callable[[Workspace], Path] | None = None,
-    ) -> None:
-        if not run_id:
-            raise ValueError(
-                "JournaledWorkspaceHandler requires a non-empty run_id; "
-                "journaling into an unknown run directory is a silent misconfiguration"
-            )
-        self._delegate = delegate
-        self._state_dir = Path(state_dir) if state_dir is not None else None
-        self._run_id = run_id
-        self._resolve_path = resolve_path
-        self._journals: dict[str, WorkspaceJournal] = {}
-
-    def _journal_for(self, run_id: str) -> WorkspaceJournal:
-        journal: WorkspaceJournal | None = self._journals.get(run_id)
-        if journal is not None:
-            return journal
-        journal = WorkspaceJournal.for_run(
-            run_id,
-            state_dir=self._state_dir,
+def _check_pre_coverage(journal: WorkspaceJournal, run_id: str) -> None:
+    """Fail loudly if the run predates workspace coverage."""
+    if journal.path.exists():
+        return
+    agent_journal_path: Path = journal.path.parent / AGENT_JOURNAL_FILENAME
+    if agent_journal_path.exists():
+        raise PreCoverageRunError(
+            f"Run {run_id!r} has an agent journal but no workspace journal. "
+            f"This run predates workspace coverage (L-K3-3). "
+            f"Start a fresh run with a new --run-id."
         )
-        self._check_pre_coverage(journal, run_id)
-        self._journals[run_id] = journal
-        return journal
 
-    def _check_pre_coverage(self, journal: WorkspaceJournal, run_id: str) -> None:
-        """Fail loudly if the run predates workspace coverage."""
-        if journal.path.exists():
-            return
-        agent_journal_path: Path = journal.path.parent / AGENT_JOURNAL_FILENAME
-        if agent_journal_path.exists():
-            raise PreCoverageRunError(
-                f"Run {run_id!r} has an agent journal but no workspace journal. "
-                f"This run predates workspace coverage (L-K3-3). "
-                f"Start a fresh run with a new --run-id."
-            )
 
-    def handle_create_workspace(self, effect: CreateWorkspace) -> Workspace:
-        """Delegate to real handler, then journal if this is a new workspace_id."""
-        run_id: str = self._run_id
-        journal: WorkspaceJournal = self._journal_for(run_id)
-        known_workspaces: dict[str, CreateWorkspaceJournalEntry] = journal.latest_workspaces()
+def journaled_workspace_handler(
+    *,
+    run_id: str,
+    state_dir: str | Path | None = None,
+) -> ProgramHandler:
+    """Build the handler that records workspace creation events in a durable journal.
 
-        workspace: Workspace = self._delegate(effect)
+    It catches ``CreateWorkspace``, performs it outward — the handler is installed inside the
+    workspace handler (``workspace_handler``, or a test's) — and appends a journal entry with the
+    worktree path (``WorkspacePath``) for each **new** workspace_id materialization. Re-emitting
+    the same workspace_id (resume) performs the effect again but does not double-append.
+
+    Args:
+        run_id: The run whose workspace journal is written. Required: journaling into an
+            unknown run directory is a silent misconfiguration.
+        state_dir: The conductor state directory. The XDG default if not provided.
+
+    Raises:
+        PreCoverageRunError: on the first workspace effect of a run that has an agent journal
+            but no workspace journal.
+    """
+    if not run_id:
+        raise ValueError(
+            "journaled_workspace_handler requires a non-empty run_id; "
+            "journaling into an unknown run directory is a silent misconfiguration"
+        )
+    journal_dir: Path | None = Path(state_dir) if state_dir is not None else None
+
+    @functools.cache
+    def journal() -> WorkspaceJournal:
+        """The run's workspace journal, checked for pre-coverage runs when first opened."""
+        opened = WorkspaceJournal.for_run(run_id, state_dir=journal_dir)
+        _check_pre_coverage(opened, run_id)
+        return opened
+
+    @handler
+    def journal_workspace(effect: CreateWorkspace, k: K):
+        """Perform the workspace creation outward, then journal it if this is a new workspace_id."""
+        known_workspaces: dict[str, CreateWorkspaceJournalEntry] = journal().latest_workspaces()
+
+        workspace: Workspace = yield effect
 
         if effect.workspace_id not in known_workspaces:
-            worktree_path: str = self._resolve_worktree_path(workspace)
-            journal.append_entry(
+            worktree_path: Path = yield WorkspacePath(workspace=workspace)
+            journal().append_entry(
                 CreateWorkspaceJournalEntry(
                     workspace_id=workspace.id,
                     repo=workspace.repo,
                     branch=workspace.ref,
-                    worktree_path=worktree_path,
+                    worktree_path=str(worktree_path),
                     base_ref=workspace.base_ref,
                     issue_id=workspace.issue_id,
                     created_at=datetime.now(timezone.utc).isoformat(),
                 )
             )
 
-        return workspace
+        return (yield Resume(k, workspace))
 
-    def _resolve_worktree_path(self, workspace: Workspace) -> str:
-        if self._resolve_path is not None:
-            return str(self._resolve_path(workspace))
-        return ""
+    return journal_workspace

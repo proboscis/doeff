@@ -1,14 +1,15 @@
 """Git handler for doeff-conductor.
 
-This handler delegates git operations to the commands doeff-git's handlers run while
-keeping conductor effect APIs stable.
+``git_handler`` answers the conductor git effects by performing the doeff-git effects
+(``GitCommit``, ``GitPush``, ``CreatePR``, ``MergePR``) for the workspace's worktree, so a
+doeff-git handler installed outside it (``doeff_git.handlers.production_handlers()``) runs
+git and gh. The worktree path comes from the workspace handler (``WorkspacePath``).
 """
 
-from collections.abc import Callable
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
-from doeff_git import _commands as _git_commands
 from doeff_git.effects import (
     CreatePR as GitCreatePR,
 )
@@ -22,16 +23,15 @@ from doeff_git.effects import (
 from doeff_git.exceptions import GitCommandError as DomainGitCommandError
 from doeff_git.types import PRHandle as GitPRHandle
 
+from doeff import EffectBase, K, Resume, do, handler
+from doeff.program import ProgramHandler
+from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.exceptions import GitCommandError
 from doeff_conductor.git_workspace import get_current_commit, run_git
-from doeff_conductor.types import MergeStrategy
+from doeff_conductor.handlers._workspace_path import WorkspacePath
+from doeff_conductor.types import MergeStrategy, PRHandle
 
-if TYPE_CHECKING:
-    from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
-    from doeff_conductor.types import PRHandle, Workspace
-
-
-WorkspaceResolver = Callable[["Workspace"], Path]
+__all__ = ["git_handler"]
 
 
 def _labels_to_list(labels: tuple[str, ...] | list[str] | None) -> list[str] | None:
@@ -48,69 +48,65 @@ def _strategy_to_value(strategy: object) -> str | None:
     return str(strategy)
 
 
-class GitHandler:
-    """Handler for conductor git effects via doeff-git delegates."""
+def _translate_error(error: DomainGitCommandError) -> GitCommandError:
+    return GitCommandError(
+        command=error.command,
+        returncode=error.returncode,
+        stdout=error.stdout,
+        stderr=error.stderr,
+        cwd=error.cwd,
+    )
 
-    def __init__(
-        self,
-        *,
-        workspace_resolver: WorkspaceResolver | None = None,
-    ) -> None:
-        self._workspace_resolver = workspace_resolver
 
-    def _resolve_workspace_path(self, workspace: "Workspace") -> Path:
-        if self._workspace_resolver is None:
-            raise ValueError("Git workspace requires a workspace resolver")
-        return self._workspace_resolver(workspace)
+@do
+def _perform_git(git_effect: EffectBase) -> Generator[EffectBase, Any, Any]:
+    """Perform one doeff-git effect outward, raising its failure as the conductor's GitCommandError."""
+    try:
+        return (yield git_effect)
+    except DomainGitCommandError as error:
+        raise _translate_error(error) from error
 
-    @staticmethod
-    def _translate_error(error: DomainGitCommandError) -> GitCommandError:
-        return GitCommandError(
-            command=error.command,
-            returncode=error.returncode,
-            stdout=error.stdout,
-            stderr=error.stderr,
-            cwd=error.cwd,
+
+@do
+def _commit(effect: Commit) -> Generator[EffectBase, Any, str]:
+    """Stage changes and create a commit. Returns commit SHA."""
+    work_dir: Path = yield WorkspacePath(workspace=effect.workspace)
+    if effect.skip_if_clean:
+        status = run_git(["git", "status", "--porcelain"], cwd=work_dir)
+        if not status.stdout.strip():
+            return get_current_commit(work_dir)
+    return (
+        yield _perform_git(
+            GitCommit(
+                work_dir=work_dir,
+                message=effect.message,
+                all=effect.all,
+            )
         )
+    )
 
-    def handle_commit(self, effect: "Commit") -> str:
-        """Stage changes and create a commit. Returns commit SHA."""
-        work_dir = self._resolve_workspace_path(effect.workspace)
-        if effect.skip_if_clean:
-            status = run_git(["git", "status", "--porcelain"], cwd=work_dir)
-            if not status.stdout.strip():
-                return get_current_commit(work_dir)
-        git_effect = GitCommit(
-            work_dir=work_dir,
-            message=effect.message,
-            all=effect.all,
-        )
-        try:
-            return _git_commands.commit(git_effect)
-        except DomainGitCommandError as error:
-            raise self._translate_error(error) from error
 
-    def handle_push(self, effect: "Push") -> None:
-        """Push branch to remote. Raises GitCommandError on failure."""
-        work_dir = self._resolve_workspace_path(effect.workspace)
-        git_effect = GitPush(
+@do
+def _push(effect: Push) -> Generator[EffectBase, Any, None]:
+    """Push branch to remote. Raises GitCommandError on failure."""
+    work_dir: Path = yield WorkspacePath(workspace=effect.workspace)
+    yield _perform_git(
+        GitPush(
             work_dir=work_dir,
             remote=effect.remote,
             force=effect.force,
             set_upstream=effect.set_upstream,
             branch=effect.workspace.ref,
         )
-        try:
-            _git_commands.push(git_effect)
-        except DomainGitCommandError as error:
-            raise self._translate_error(error) from error
+    )
 
-    def handle_create_pr(self, effect: "CreatePR") -> "PRHandle":
-        """Create a pull request using gh CLI."""
-        from doeff_conductor.types import PRHandle
 
-        work_dir = self._resolve_workspace_path(effect.workspace)
-        git_effect = GitCreatePR(
+@do
+def _create_pr(effect: CreatePR) -> Generator[EffectBase, Any, PRHandle]:
+    """Create a pull request from the workspace branch."""
+    work_dir: Path = yield WorkspacePath(workspace=effect.workspace)
+    pr: GitPRHandle = yield _perform_git(
+        GitCreatePR(
             work_dir=work_dir,
             title=effect.title,
             body=effect.body,
@@ -119,24 +115,23 @@ class GitHandler:
             labels=_labels_to_list(effect.labels),
             head=effect.workspace.ref,
         )
-        try:
-            pr = _git_commands.create_pr(git_effect)
-        except DomainGitCommandError as error:
-            raise self._translate_error(error) from error
+    )
+    return PRHandle(
+        url=pr.url,
+        number=pr.number,
+        title=pr.title,
+        branch=pr.branch,
+        target=pr.target,
+        status=pr.status,
+        created_at=pr.created_at,
+    )
 
-        return PRHandle(
-            url=pr.url,
-            number=pr.number,
-            title=pr.title,
-            branch=pr.branch,
-            target=pr.target,
-            status=pr.status,
-            created_at=pr.created_at,
-        )
 
-    def handle_merge_pr(self, effect: "MergePR") -> None:
-        """Merge a pull request using gh CLI. Raises GitCommandError on failure."""
-        git_effect = GitMergePR(
+@do
+def _merge_pr(effect: MergePR) -> Generator[EffectBase, Any, None]:
+    """Merge a pull request. Raises GitCommandError on failure."""
+    yield _perform_git(
+        GitMergePR(
             pr=GitPRHandle(
                 url=effect.pr.url,
                 number=effect.pr.number,
@@ -150,7 +145,29 @@ class GitHandler:
             strategy=_strategy_to_value(effect.strategy),
             delete_branch=effect.delete_branch,
         )
-        try:
-            _git_commands.merge_pr(git_effect)
-        except DomainGitCommandError as error:
-            raise self._translate_error(error) from error
+    )
+
+
+def git_handler() -> ProgramHandler:
+    """Build the handler for conductor git effects.
+
+    It answers ``Commit``, ``Push``, ``CreatePR`` and ``MergePR`` by performing the doeff-git
+    effects, so it is installed inside a doeff-git handler and inside the workspace handler.
+    A failed git or gh command raises the conductor's ``GitCommandError``.
+    """
+
+    @handler
+    def answer_git(effect: Commit | Push | CreatePR | MergePR, k: K):
+        """Answer one conductor git effect through doeff-git."""
+        match effect:
+            case Commit():
+                answer: object = yield _commit(effect)
+            case Push():
+                answer = yield _push(effect)
+            case CreatePR():
+                answer = yield _create_pr(effect)
+            case MergePR():
+                answer = yield _merge_pr(effect)
+        return (yield Resume(k, answer))
+
+    return answer_git

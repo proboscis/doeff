@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from doeff_conductor import CreateWorkspace
-from doeff_conductor.effects import Agent, AgentEffect, AgentTask
+from doeff_conductor.effects import Agent, AgentTask
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
+from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import (
     PROGRESS_STATUS_PARKED,
@@ -74,10 +74,12 @@ def _run_one_node(state_dir: Path, runtime: MockConductorRuntime, run_id: str, i
         )
         return result
 
-    journaled = JournaledAgentHandler(runtime.handle_agent, state_dir=state_dir, run_id=run_id)
     return run_sync(
         workflow(),
-        scheduled_handlers=mock_handlers(runtime=runtime, overrides={AgentEffect: journaled.handle_agent}),
+        scheduled_handlers=[
+            mock_handlers(runtime=runtime),
+            journaled_agent_handler(state_dir=state_dir, run_id=run_id),
+        ],
     )
 
 

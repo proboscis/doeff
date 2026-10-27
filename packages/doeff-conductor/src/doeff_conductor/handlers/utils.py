@@ -1,23 +1,21 @@
 """Handler utilities for doeff-conductor."""
 
-import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from doeff_core_effects.scheduler import CreateExternalPromise, Wait
+from doeff_git.handlers import production_handlers as _git_production_handlers
 
-from doeff import Effect, Pass, Resume, do
-from doeff import handler as _install_raw_handler
+from doeff import Effect, Resume, do, stacked_handlers
 from doeff.program import ProgramHandler
-
-if TYPE_CHECKING:
-    from doeff_conductor.handlers.agent_handler import AgentHandler
-    from doeff_conductor.handlers.exec_handler import ExecHandler
-    from doeff_conductor.handlers.git_handler import GitHandler
-    from doeff_conductor.handlers.issue_handler import IssueHandler
-    from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
-    from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
-    from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
+from doeff_conductor.handlers._offload import offloaded_call as _offloaded_call
+from doeff_conductor.handlers.agent_handler import agent_handler as _agent_handler
+from doeff_conductor.handlers.exec_handler import exec_handler as _exec_handler
+from doeff_conductor.handlers.git_handler import git_handler as _git_handler
+from doeff_conductor.handlers.issue_handler import issue_handler as _issue_handler
+from doeff_conductor.handlers.workspace_handler import workspace_handler as _workspace_handler
+from doeff_conductor.workflow_effect_journal import (
+    journaled_workflow_effect_handler as _journaled_workflow_effect_handler,
+)
 
 SimpleHandler = Callable[[Any], Any]
 
@@ -38,45 +36,15 @@ def make_blocking_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any
 
 
 def make_offloaded_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
-    """Bridge a blocking handler through the scheduler's ExternalPromise.
+    """Bridge a blocking handler through the scheduler's ExternalPromise (``offloaded_call``).
 
-    The handler executes in a daemon thread while the cooperative
-    scheduler is free to dispatch sibling tasks.  This is the
-    **agent-await bridge** required by L-K4-1: an effect handler must
-    not perform unbounded blocking I/O synchronously; unbounded waits
-    enter only via the scheduler's Await / external-completion path.
-
-    Deadline semantics (L-K4-3): the offloaded agent handler re-awaits
-    in a loop until a terminal result or the node-spec wall-clock
-    deadline (``agent! :deadline-seconds``).  Each round-trip is bounded
-    by the transport keep-alive heartbeat (agentd's
-    ``DEFAULT_AWAIT_BUDGET_SECONDS + RPC_TIMEOUT_MARGIN_SECONDS``);
-    heartbeat expiry is transparent and never surfaces as a node
-    failure.
-
-    Cancellation: if the scheduler cancels the waiting task (e.g.
-    Gather fail-fast), the daemon thread runs to its own terminal/
-    deadline outcome and the promise completion is a harmless no-op on
-    an already-resolved promise.
+    The handler executes in a daemon thread while the cooperative scheduler is free to
+    dispatch sibling tasks — the agent-await bridge required by L-K4-1.
     """
 
     @do
     def scheduled_handler(effect: Effect, k: Any):
-        promise = yield CreateExternalPromise()
-
-        def _offload(ep=promise, eff=effect):
-            try:
-                ep.complete(handler(eff))
-            except Exception as exc:
-                ep.fail(exc)
-
-        threading.Thread(
-            target=_offload,
-            daemon=True,
-            name="agent-await-bridge",
-        ).start()
-
-        result = yield Wait(promise.future)
+        result = yield _offloaded_call(lambda: handler(effect))
         return (yield Resume(k, result))
 
     return scheduled_handler
@@ -107,72 +75,37 @@ def make_async_scheduled_handler(
 
 
 def default_scheduled_handlers(
-    workspace_handler: "WorkspaceHandler | None" = None,
-    issue_handler: "IssueHandler | None" = None,
-    agent_handler: "AgentHandler | JournaledAgentHandler | None" = None,
-    git_handler: "GitHandler | None" = None,
-    exec_handler: "ExecHandler | None" = None,
-    workflow_effect_handler: "JournaledWorkflowEffectHandler | None" = None,
-    create_workspace_override: Callable[[Any], Any] | None = None,
+    workspace_handler: ProgramHandler | None = None,
+    issue_handler: ProgramHandler | None = None,
+    agent_handler: ProgramHandler | None = None,
+    git_handler: ProgramHandler | None = None,
+    exec_handler: ProgramHandler | None = None,
+    workflow_effect_handler: ProgramHandler | None = None,
 ) -> ProgramHandler:
-    """Build a complete protocol handler for all conductor effects.
+    """Stack the handlers that answer every conductor effect, outermost first.
+
+    The workspace handler sits outside the agent, git and exec handlers, which ask it where a
+    workspace is materialized; doeff-git's handlers sit outermost and run the git and gh commands
+    the conductor git handler performs.
 
     Args:
-        workspace_handler: Custom WorkspaceHandler, or None to create default
-        issue_handler: Custom IssueHandler, or None to create default
-        agent_handler: Custom AgentHandler, or None to create default
-        git_handler: Custom GitHandler, or None to create default
-        exec_handler: Custom ExecHandler, or None to create default
-        workflow_effect_handler: Custom time!/random! journal handler, or None for default
+        workspace_handler: Custom workspace handler, or None for ``workspace_handler()``
+        issue_handler: Custom issue handler, or None for ``issue_handler()``
+        agent_handler: Custom agent handler, or None for ``agent_handler()``
+        git_handler: Custom git handler, or None for ``git_handler()``
+        exec_handler: Custom exec handler, or None for ``exec_handler()``
+        workflow_effect_handler: Custom time!/random! handler, or None for
+            ``journaled_workflow_effect_handler()``
 
     Returns:
-        Handler-protocol callable for all conductor effects.
+        One handler for all conductor effects; other effects pass to the outer handlers.
     """
-    from doeff_conductor.effects.agent import AgentEffect
-    from doeff_conductor.effects.dsl import RandomCall, TimeCall
-    from doeff_conductor.effects.exec import Exec
-    from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
-    from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-    from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
-    from doeff_conductor.handlers.agent_handler import AgentHandler
-    from doeff_conductor.handlers.exec_handler import ExecHandler
-    from doeff_conductor.handlers.git_handler import GitHandler
-    from doeff_conductor.handlers.issue_handler import IssueHandler
-    from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
-    from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
-
-    workspace = workspace_handler or WorkspaceHandler()
-    iss = issue_handler or IssueHandler()
-    agent = agent_handler or AgentHandler(workspace_resolver=workspace.resolve_path)
-    git = git_handler or GitHandler(workspace_resolver=workspace.resolve_path)
-    exec_gate = exec_handler or ExecHandler(workspace_resolver=workspace.resolve_path)
-    workflow_effect = workflow_effect_handler or JournaledWorkflowEffectHandler()
-
-    handlers: tuple[tuple[type[Any], Callable[..., Any]], ...] = (
-        (CreateWorkspace, make_blocking_scheduled_handler(
-            create_workspace_override or workspace.handle_create_workspace,
-        )),
-        (MergeWorkspaces, make_blocking_scheduled_handler(workspace.handle_merge_workspaces)),
-        (DeleteWorkspace, make_blocking_scheduled_handler(workspace.handle_delete_workspace)),
-        (Exec, make_blocking_scheduled_handler(exec_gate.handle_exec)),
-        (CreateIssue, make_blocking_scheduled_handler(iss.handle_create_issue)),
-        (ListIssues, make_blocking_scheduled_handler(iss.handle_list_issues)),
-        (GetIssue, make_blocking_scheduled_handler(iss.handle_get_issue)),
-        (ResolveIssue, make_blocking_scheduled_handler(iss.handle_resolve_issue)),
-        (AgentEffect, make_offloaded_scheduled_handler(agent.handle_agent)),
-        (TimeCall, make_blocking_scheduled_handler(workflow_effect.handle_time)),
-        (RandomCall, make_blocking_scheduled_handler(workflow_effect.handle_random)),
-        (Commit, make_blocking_scheduled_handler(git.handle_commit)),
-        (Push, make_blocking_scheduled_handler(git.handle_push)),
-        (CreatePR, make_blocking_scheduled_handler(git.handle_create_pr)),
-        (MergePR, make_blocking_scheduled_handler(git.handle_merge_pr)),
+    return stacked_handlers(
+        _git_production_handlers(),
+        workspace_handler or _workspace_handler(),
+        issue_handler or _issue_handler(),
+        agent_handler or _agent_handler(),
+        git_handler or _git_handler(),
+        exec_handler or _exec_handler(),
+        workflow_effect_handler or _journaled_workflow_effect_handler(),
     )
-
-    @do
-    def handler(effect: Effect, k: Any):
-        for effect_type, effect_handler in handlers:
-            if isinstance(effect, effect_type):
-                return (yield effect_handler(effect, k))
-        yield Pass(effect, k)
-
-    return _install_raw_handler(handler)

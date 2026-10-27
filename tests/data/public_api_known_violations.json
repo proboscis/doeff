@@ -9525,9 +9525,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_conductor": [
-      "AgentdAgentBackend"
-     ],
      "doeff_conductor.git_workspace": [
       "append_git_output",
       "conflicted_files",
@@ -9537,40 +9534,9 @@
       "run_git"
      ],
      "doeff_conductor.handlers": [
-      "AgentdAgentBackend",
       "HandlerProtocol",
       "RunSyncResult",
       "run_sync"
-     ],
-     "doeff_conductor.handlers.agent_handler": [
-      "AgentdAgentBackend",
-      "WorkspaceResolver"
-     ],
-     "doeff_conductor.handlers.exec_handler": [
-      "WorkspaceResolver"
-     ],
-     "doeff_conductor.handlers.git_handler": [
-      "WorkspaceResolver",
-      "get_current_commit",
-      "run_git"
-     ],
-     "doeff_conductor.handlers.journaled_agent": [
-      "AgentJournal",
-      "AgentReplaySession"
-     ],
-     "doeff_conductor.handlers.journaled_workspace": [
-      "AGENT_JOURNAL_FILENAME",
-      "CreateWorkspaceJournalEntry",
-      "WorkspaceJournal"
-     ],
-     "doeff_conductor.handlers.workspace_handler": [
-      "WORKSPACE_RUNTIME_STATE_EXCLUDE_ENTRIES",
-      "append_git_output",
-      "conflicted_files",
-      "get_current_commit",
-      "get_default_branch",
-      "get_repo_root",
-      "run_git"
      ],
      "doeff_conductor.journal": [
       "AGENT_JOURNAL_FILENAME",
@@ -9880,55 +9846,6 @@
       "conductor"
      ]
     },
-    "境界 — class の形の handler": {
-     "doeff_conductor": [
-      "AgentHandler",
-      "ExecHandler",
-      "GitHandler",
-      "IssueHandler",
-      "JournaledAgentHandler",
-      "JournaledWorkflowEffectHandler",
-      "WorkspaceHandler"
-     ],
-     "doeff_conductor.handlers": [
-      "AgentHandler",
-      "ExecHandler",
-      "GitHandler",
-      "IssueHandler",
-      "JournaledAgentHandler",
-      "JournaledWorkflowEffectHandler",
-      "JournaledWorkspaceHandler",
-      "WorkspaceHandler"
-     ],
-     "doeff_conductor.handlers.agent_handler": [
-      "AgentHandler"
-     ],
-     "doeff_conductor.handlers.exec_handler": [
-      "ExecHandler"
-     ],
-     "doeff_conductor.handlers.git_handler": [
-      "GitHandler"
-     ],
-     "doeff_conductor.handlers.issue_handler": [
-      "IssueHandler"
-     ],
-     "doeff_conductor.handlers.journaled_agent": [
-      "JournaledAgentHandler"
-     ],
-     "doeff_conductor.handlers.journaled_workspace": [
-      "JournaledWorkspaceHandler"
-     ],
-     "doeff_conductor.handlers.testing": [
-      "ExecHandler",
-      "JournaledWorkflowEffectHandler"
-     ],
-     "doeff_conductor.handlers.workspace_handler": [
-      "WorkspaceHandler"
-     ],
-     "doeff_conductor.workflow_effect_journal": [
-      "JournaledWorkflowEffectHandler"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_conductor": [
       "AgentTask",
@@ -9998,18 +9915,8 @@
       "Tier2Callback",
       "Tier2ReviewRequest"
      ],
-     "doeff_conductor.handlers.git_handler": [
-      "MergeStrategy"
-     ],
-     "doeff_conductor.handlers.journaled_workspace": [
-      "Workspace"
-     ],
      "doeff_conductor.handlers.testing": [
       "Issue",
-      "Workspace"
-     ],
-     "doeff_conductor.handlers.workspace_handler": [
-      "MergeConflict",
       "Workspace"
      ],
      "doeff_conductor.journal": [
@@ -10081,18 +9988,11 @@
       "ReviewerAgentLost",
       "Tier1ReviewResult"
      ],
-     "doeff_conductor.handlers.exec_handler": [
-      "ExecResult"
-     ],
      "doeff_conductor.handlers.testing": [
       "IssueStatus",
       "MergeStatus",
       "MergeWorkspacesResult",
       "PRHandle"
-     ],
-     "doeff_conductor.handlers.workspace_handler": [
-      "MergeStatus",
-      "MergeWorkspacesResult"
      ],
      "doeff_conductor.templates.basic_pr": [
       "PRHandle"
@@ -10137,7 +10037,6 @@
     },
     "境界 — handler の設定の型": {
      "doeff_conductor": [
-      "AgentBackend",
       "DefaultReviewRouter",
       "DurableReviewBudget",
       "MockConductorRuntime"
@@ -10153,11 +10052,7 @@
       "DurableReviewBudget"
      ],
      "doeff_conductor.handlers": [
-      "AgentBackend",
       "MockConductorRuntime"
-     ],
-     "doeff_conductor.handlers.agent_handler": [
-      "AgentBackend"
      ],
      "doeff_conductor.handlers.testing": [
       "MockConductorRuntime"
@@ -10272,14 +10167,6 @@
      "doeff_conductor.git_workspace": [
       "GitCommandError"
      ],
-     "doeff_conductor.handlers.git_handler": [
-      "GitCommandError"
-     ],
-     "doeff_conductor.handlers.issue_handler": [
-      "ConductorStateWarning",
-      "IssueFileCorruptError",
-      "IssueNotFoundError"
-     ],
      "doeff_conductor.handlers.journaled_workspace": [
       "PreCoverageRunError"
      ],
@@ -10287,7 +10174,6 @@
       "IssueNotFoundError"
      ],
      "doeff_conductor.handlers.workspace_handler": [
-      "GitCommandError",
       "WorkspaceStateError"
      ],
      "doeff_conductor.journal": [

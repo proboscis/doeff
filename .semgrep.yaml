@@ -2586,7 +2586,7 @@ rules:
       effect (doeff_conductor.effects.runs) and let the handler answer it.
     pattern-either:
       - pattern: ConductorAPI(...)
-      - pattern: IssueHandler(...)
+      - pattern: issue_handler(...)
       - pattern: import doeff_conductor._api
       - pattern: from doeff_conductor._api import $X
       - pattern: from doeff_conductor.overseer import $X

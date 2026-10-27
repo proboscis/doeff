@@ -7,7 +7,9 @@ Tests all CLI commands using Click's CliRunner for:
 - Template commands: list, show
 """
 
+import contextlib
 import json
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -445,13 +447,31 @@ class TestWorkflowCommands(TestCLIBase):
         assert result.exit_code == 1
 
 
+@contextlib.contextmanager
+def _issue_vault_stub() -> Iterator[MagicMock]:
+    """Stand in for the issue vault: each issue effect answers what the test sets on the stub.
+
+    The CLI's issue handler answers ``CreateIssue`` with ``stub.handle_create_issue(effect)``
+    and so on, and does not find or create a vault directory.
+    """
+    stub = MagicMock()
+    module = "doeff_conductor.handlers.issue_handler"
+    with (
+        patch(f"{module}._open_issues_dir", lambda _issues_dir: Path("unused-issue-vault")),
+        patch(f"{module}._create_issue", lambda _vault, effect: stub.handle_create_issue(effect)),
+        patch(f"{module}._list_issues", lambda _vault, effect: stub.handle_list_issues(effect)),
+        patch(f"{module}._get_issue", lambda _vault, effect: stub.handle_get_issue(effect)),
+        patch(f"{module}._resolve_issue", lambda _vault, effect: stub.handle_resolve_issue(effect)),
+    ):
+        yield stub
+
+
 class TestIssueCommands(TestCLIBase):
     """Tests for issue-related CLI commands."""
 
     def test_issue_create(self, runner: CliRunner, tmp_issues_dir: Path):
         """Create a new issue via CLI."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             mock_issue = Issue(
                 id="ISSUE-001",
                 title="Test Issue",
@@ -459,7 +479,6 @@ class TestIssueCommands(TestCLIBase):
                 status=IssueStatus.OPEN,
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Test Issue",
@@ -470,8 +489,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create_with_labels(self, runner: CliRunner, tmp_issues_dir: Path):
         """Create an issue with labels."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             mock_issue = Issue(
                 id="ISSUE-001",
                 title="Feature",
@@ -480,7 +498,6 @@ class TestIssueCommands(TestCLIBase):
                 labels=("feature", "urgent"),
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Feature",
@@ -492,8 +509,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create_json(self, runner: CliRunner, tmp_issues_dir: Path):
         """Test JSON output for issue create."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -503,7 +519,6 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Test Issue",
@@ -517,10 +532,8 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_empty(self, runner: CliRunner):
         """List issues when none exist."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             mock_handler.handle_list_issues.return_value = []
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list"])
             assert result.exit_code == 0
@@ -528,8 +541,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_with_issues(self, runner: CliRunner):
         """List existing issues."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issues = [
                 Issue(
@@ -549,7 +561,6 @@ class TestIssueCommands(TestCLIBase):
                 ),
             ]
             mock_handler.handle_list_issues.return_value = mock_issues
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list"])
             assert result.exit_code == 0
@@ -559,9 +570,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_filter_status(self, runner: CliRunner):
         """Filter issues by status."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
-            mock_handler_class.return_value = mock_handler
+        with _issue_vault_stub() as mock_handler:
             mock_handler.handle_list_issues.return_value = []
 
             result = runner.invoke(cli, [
@@ -575,8 +584,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_json(self, runner: CliRunner):
         """Test JSON output for issue list."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issues = [
                 Issue(
@@ -588,7 +596,6 @@ class TestIssueCommands(TestCLIBase):
                 ),
             ]
             mock_handler.handle_list_issues.return_value = mock_issues
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list", "--json"])
             assert result.exit_code == 0
@@ -599,8 +606,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_show(self, runner: CliRunner):
         """Show issue details."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -611,7 +617,6 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_get_issue.return_value = mock_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "show", "ISSUE-001"])
             assert result.exit_code == 0
@@ -620,8 +625,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_show_json(self, runner: CliRunner):
         """Test JSON output for issue show."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -631,7 +635,6 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_get_issue.return_value = mock_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "show", "ISSUE-001", "--json"])
             assert result.exit_code == 0
@@ -640,8 +643,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_resolve(self, runner: CliRunner):
         """Resolve an issue."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -661,7 +663,6 @@ class TestIssueCommands(TestCLIBase):
             )
             mock_handler.handle_get_issue.return_value = mock_issue
             mock_handler.handle_resolve_issue.return_value = resolved_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "resolve", "ISSUE-001",
@@ -672,8 +673,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_resolve_json(self, runner: CliRunner):
         """Test JSON output for issue resolve."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
-            mock_handler = MagicMock()
+        with _issue_vault_stub() as mock_handler:
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -693,7 +693,6 @@ class TestIssueCommands(TestCLIBase):
             )
             mock_handler.handle_get_issue.return_value = mock_issue
             mock_handler.handle_resolve_issue.return_value = resolved_issue
-            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "resolve", "ISSUE-001",

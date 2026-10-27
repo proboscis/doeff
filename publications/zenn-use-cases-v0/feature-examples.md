@@ -25,7 +25,7 @@
 | HTTP記録・再生 / production | [replay](doeff-replay.md)・[完全な例](examples/http_replay.py) | Memo書き換え＋SQLite＋HTTPハンドラを合成。新しい実行での保存値再利用と未保存時の拒否を確認 |
 | cache / SQLite / プロセスをまたぐ再利用 | [durable](doeff-durable.md)・[完全な例](examples/durable.py) | prepare→finish→finishを別プロセスで実行。再利用と未完了の後続処理を確認 |
 | Conductorの履歴 / 時刻・乱数 | [durable](doeff-durable.md)・[完全な例](examples/workflow_journal.hy) | 同じ実行IDで再実行し結果一致を確認。エージェントなし |
-| JournaledAgentHandler | [durable](doeff-durable.md)（本文にコード） | 既存のテスト用実行基盤への接続コード。エージェントの強制終了→再開は未検証 |
+| journaled_agent_handler | [durable](doeff-durable.md)（本文にコード） | 既存のテスト用実行基盤への接続コード。エージェントの強制終了→再開は未検証 |
 | ドメインAPI / 状態操作への翻訳 | [boundaries](doeff-boundaries.md)・[完全な例](examples/game_replay.py) | DealDamageをGet/Putへ翻訳。文書取得の統合例も掲載 |
 | カードゲーム / 複数対局 / 入力履歴からの再構成 | [games](doeff-games.md)・[完全な例](examples/game_replay.py) | 3ターンの対局を記録・JSON保存・再構成。状態を分けた2対局も確認 |
 | Publish / WaitForEvent / 待機ループ / Race / Cancel | [events](doeff-events.md)・[完全な例](examples/event_loop.py) | 終了までの待機と期限の競争、残ったタスクの取消を確認 |

@@ -10,9 +10,14 @@ import pytest
 from doeff_conductor.effects.git import Commit
 from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
 from doeff_conductor.git_workspace import GitCommandError, GitCommandResult
-from doeff_conductor.handlers.git_handler import GitHandler
-from doeff_conductor.handlers.workspace_handler import WorkspaceHandler, WorkspaceStateError
+from doeff_conductor.handlers._workspace_path import WorkspacePath
+from doeff_conductor.handlers.git_handler import git_handler
+from doeff_conductor.handlers.workspace_handler import WorkspaceStateError, workspace_handler
 from doeff_conductor.types import Issue, IssueStatus, MergeStatus, MergeStrategy, Workspace
+from doeff_git.handlers import production_handlers as git_production_handlers
+
+from doeff import stacked_handlers
+from tests.effect_runner import Answer, answering
 
 
 def _init_repo(repo_path: Path) -> None:
@@ -89,11 +94,11 @@ class TestWorkspaceHandler:
         self,
         git_repo: Path,
         workspace_base: Path,
-    ) -> WorkspaceHandler:
-        return WorkspaceHandler(repo_path=git_repo, workspace_base=workspace_base)
+    ) -> Answer:
+        return answering(workspace_handler(repo_path=git_repo, workspace_base=workspace_base))
 
-    def test_create_workspace_basic(self, handler: WorkspaceHandler) -> None:
-        workspace = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-basic"))
+    def test_create_workspace_basic(self, handler: Answer) -> None:
+        workspace = handler(CreateWorkspace(workspace_id="ws-basic"))
 
         assert isinstance(workspace, Workspace)
         assert workspace.id == "ws-basic"
@@ -101,16 +106,14 @@ class TestWorkspaceHandler:
         assert workspace.ref == "conductor/ws-basic"
         assert workspace.base_ref in ("master", "main")
         assert "path" not in workspace.to_dict()
-        assert handler.resolve_path(workspace).exists()
+        assert handler(WorkspacePath(workspace=workspace)).exists()
 
     def test_create_workspace_installs_runtime_state_exclude_idempotently(
         self,
-        handler: WorkspaceHandler,
+        handler: Answer,
     ) -> None:
-        workspace: Workspace = handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="ws-ignore")
-        )
-        materialized_path: Path = handler.resolve_path(workspace)
+        workspace: Workspace = handler(CreateWorkspace(workspace_id="ws-ignore"))
+        materialized_path: Path = handler(WorkspacePath(workspace=workspace))
 
         status_before_runtime_state: subprocess.CompletedProcess[str] = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -126,10 +129,8 @@ class TestWorkspaceHandler:
         exclude_lines: list[str] = exclude_path.read_text().splitlines()
         assert exclude_lines.count(".agent-home/") == 1
 
-        same_workspace: Workspace = handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="ws-ignore")
-        )
-        assert handler.resolve_path(same_workspace) == materialized_path
+        same_workspace: Workspace = handler(CreateWorkspace(workspace_id="ws-ignore"))
+        assert handler(WorkspacePath(workspace=same_workspace)) == materialized_path
         exclude_lines_after_second_init: list[str] = exclude_path.read_text().splitlines()
         assert exclude_lines_after_second_init.count(".agent-home/") == 1
 
@@ -148,20 +149,25 @@ class TestWorkspaceHandler:
 
     def test_workspace_auto_commit_excludes_runtime_agent_home(
         self,
-        handler: WorkspaceHandler,
+        git_repo: Path,
+        workspace_base: Path,
     ) -> None:
-        workspace: Workspace = handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="ws-autocommit")
+        answer: Answer = answering(
+            stacked_handlers(
+                git_production_handlers(),
+                workspace_handler(repo_path=git_repo, workspace_base=workspace_base),
+                git_handler(),
+            )
         )
-        materialized_path: Path = handler.resolve_path(workspace)
-        git_handler: GitHandler = GitHandler(workspace_resolver=handler.resolve_path)
+        workspace: Workspace = answer(CreateWorkspace(workspace_id="ws-autocommit"))
+        materialized_path: Path = answer(WorkspacePath(workspace=workspace))
 
         (materialized_path / "feature.txt").write_text("user-visible work\n")
         agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
         agent_state_path.parent.mkdir()
         agent_state_path.write_text('{"session": "runtime"}')
 
-        commit_sha: str = git_handler.handle_commit(
+        commit_sha: str = answer(
             Commit(
                 workspace=workspace,
                 message="Commit workspace changes",
@@ -181,11 +187,11 @@ class TestWorkspaceHandler:
         assert ".gitignore" not in committed_paths
         assert ".agent-home/session.json" not in committed_paths
 
-    def test_create_workspace_requires_identity(self, handler: WorkspaceHandler) -> None:
+    def test_create_workspace_requires_identity(self, handler: Answer) -> None:
         with pytest.raises(ValueError, match="non-empty workspace_id"):
-            handler.handle_create_workspace(CreateWorkspace(workspace_id=""))
+            handler(CreateWorkspace(workspace_id=""))
 
-    def test_create_workspace_with_issue(self, handler: WorkspaceHandler) -> None:
+    def test_create_workspace_with_issue(self, handler: Answer) -> None:
         issue = Issue(
             id="ISSUE-123",
             title="Test Issue",
@@ -195,53 +201,47 @@ class TestWorkspaceHandler:
             created_at=datetime.now(timezone.utc),
         )
 
-        workspace = handler.handle_create_workspace(
-            CreateWorkspace(issue=issue, workspace_id="issue-123-impl")
-        )
+        workspace = handler(CreateWorkspace(issue=issue, workspace_id="issue-123-impl"))
 
         assert workspace.ref == "conductor/issue-123-impl"
         assert workspace.issue_id == "ISSUE-123"
 
-    def test_delete_workspace(self, handler: WorkspaceHandler) -> None:
-        workspace = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-delete"))
-        materialized_path = handler.resolve_path(workspace)
+    def test_delete_workspace(self, handler: Answer) -> None:
+        workspace = handler(CreateWorkspace(workspace_id="ws-delete"))
+        materialized_path = handler(WorkspacePath(workspace=workspace))
         assert materialized_path.exists()
 
-        result = handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace))
+        result = handler(DeleteWorkspace(workspace=workspace))
 
         assert result is True
         assert not materialized_path.exists()
 
     def test_delete_workspace_preserves_uncommitted_user_changes(
         self,
-        handler: WorkspaceHandler,
+        handler: Answer,
     ) -> None:
-        workspace: Workspace = handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="ws-delete-dirty")
-        )
-        materialized_path: Path = handler.resolve_path(workspace)
+        workspace: Workspace = handler(CreateWorkspace(workspace_id="ws-delete-dirty"))
+        materialized_path: Path = handler(WorkspacePath(workspace=workspace))
         (materialized_path / "wip.txt").write_text("keep me\n")
 
-        result: bool = handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace))
+        result: bool = handler(DeleteWorkspace(workspace=workspace))
 
         assert result is False
         assert materialized_path.exists()
 
-    def test_delete_workspace_nonexistent(self, handler: WorkspaceHandler) -> None:
+    def test_delete_workspace_nonexistent(self, handler: Answer) -> None:
         workspace = Workspace(id="missing", repo="default", ref="missing", base_ref="main")
 
-        result = handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace))
+        result = handler(DeleteWorkspace(workspace=workspace))
 
         assert result is False
 
     def test_force_delete_workspace_raises_when_fallback_path_remains(
         self,
-        handler: WorkspaceHandler,
+        handler: Answer,
     ) -> None:
-        workspace = handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="ws-force-delete-remains")
-        )
-        materialized_path = handler.resolve_path(workspace)
+        workspace = handler(CreateWorkspace(workspace_id="ws-force-delete-remains"))
+        materialized_path = handler(WorkspacePath(workspace=workspace))
 
         def fake_run_git(args: list[str], *, cwd: Path, **kwargs) -> GitCommandResult:
             if args[:3] == ["git", "worktree", "remove"]:
@@ -261,18 +261,16 @@ class TestWorkspaceHandler:
             patch("doeff_conductor.handlers.workspace_handler.shutil.rmtree", return_value=None),
             pytest.raises(WorkspaceStateError, match="still exists"),
         ):
-            handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace, force=True))
+            handler(DeleteWorkspace(workspace=workspace, force=True))
 
         assert materialized_path.exists()
 
     def test_force_delete_workspace_raises_when_prune_fails(
         self,
-        handler: WorkspaceHandler,
+        handler: Answer,
     ) -> None:
-        workspace = handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="ws-force-delete-prune")
-        )
-        materialized_path = handler.resolve_path(workspace)
+        workspace = handler(CreateWorkspace(workspace_id="ws-force-delete-prune"))
+        materialized_path = handler(WorkspacePath(workspace=workspace))
 
         def fake_run_git(
             args: list[str],
@@ -306,44 +304,48 @@ class TestWorkspaceHandler:
             patch("doeff_conductor.handlers.workspace_handler.run_git", side_effect=fake_run_git),
             pytest.raises(GitCommandError, match="git command failed"),
         ):
-            handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace, force=True))
+            handler(DeleteWorkspace(workspace=workspace, force=True))
 
         assert not materialized_path.exists()
 
-    def test_merge_workspaces_two_branches(self, handler: WorkspaceHandler) -> None:
-        workspace1 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-feature1"))
-        _commit_file(handler.resolve_path(workspace1), "feature1.txt", "Feature 1", "feature1")
+    def test_merge_workspaces_two_branches(self, handler: Answer) -> None:
+        workspace1 = handler(CreateWorkspace(workspace_id="ws-feature1"))
+        _commit_file(
+            handler(WorkspacePath(workspace=workspace1)), "feature1.txt", "Feature 1", "feature1"
+        )
 
-        workspace2 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-feature2"))
-        _commit_file(handler.resolve_path(workspace2), "feature2.txt", "Feature 2", "feature2")
+        workspace2 = handler(CreateWorkspace(workspace_id="ws-feature2"))
+        _commit_file(
+            handler(WorkspacePath(workspace=workspace2)), "feature2.txt", "Feature 2", "feature2"
+        )
 
-        result = handler.handle_merge_workspaces(
+        result = handler(
             MergeWorkspaces(workspace_id="ws-merged", workspaces=(workspace1, workspace2)),
         )
 
         assert result.status is MergeStatus.MERGED
         assert result.workspace is not None
-        merged_path = handler.resolve_path(result.workspace)
+        merged_path = handler(WorkspacePath(workspace=result.workspace))
         assert result.workspace.ref == "conductor/ws-merged"
         assert (merged_path / "feature1.txt").exists()
         assert (merged_path / "feature2.txt").exists()
         assert result.log_path is not None
         assert Path(result.log_path).exists()
 
-    def test_merge_workspaces_empty_raises(self, handler: WorkspaceHandler) -> None:
+    def test_merge_workspaces_empty_raises(self, handler: Answer) -> None:
         effect = MergeWorkspaces(workspace_id="ws-merged", workspaces=())
 
         with pytest.raises(ValueError, match="No workspaces to merge"):
-            handler.handle_merge_workspaces(effect)
+            handler(effect)
 
-    def test_merge_workspaces_with_strategy_squash(self, handler: WorkspaceHandler) -> None:
-        workspace1 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-base"))
-        _commit_file(handler.resolve_path(workspace1), "base.txt", "Base", "base")
+    def test_merge_workspaces_with_strategy_squash(self, handler: Answer) -> None:
+        workspace1 = handler(CreateWorkspace(workspace_id="ws-base"))
+        _commit_file(handler(WorkspacePath(workspace=workspace1)), "base.txt", "Base", "base")
 
-        workspace2 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-squash"))
-        _commit_file(handler.resolve_path(workspace2), "squash.txt", "Squash", "squash")
+        workspace2 = handler(CreateWorkspace(workspace_id="ws-squash"))
+        _commit_file(handler(WorkspacePath(workspace=workspace2)), "squash.txt", "Squash", "squash")
 
-        result = handler.handle_merge_workspaces(
+        result = handler(
             MergeWorkspaces(
                 workspace_id="ws-squash-merged",
                 workspaces=(workspace1, workspace2),
@@ -353,16 +355,16 @@ class TestWorkspaceHandler:
 
         assert result.merged
         assert result.workspace is not None
-        assert (handler.resolve_path(result.workspace) / "squash.txt").exists()
+        assert (handler(WorkspacePath(workspace=result.workspace)) / "squash.txt").exists()
 
-    def test_merge_conflict_returns_structured_result(self, handler: WorkspaceHandler) -> None:
-        workspace1 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-left"))
-        _commit_file(handler.resolve_path(workspace1), "shared.txt", "left\n", "left")
+    def test_merge_conflict_returns_structured_result(self, handler: Answer) -> None:
+        workspace1 = handler(CreateWorkspace(workspace_id="ws-left"))
+        _commit_file(handler(WorkspacePath(workspace=workspace1)), "shared.txt", "left\n", "left")
 
-        workspace2 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-right"))
-        _commit_file(handler.resolve_path(workspace2), "shared.txt", "right\n", "right")
+        workspace2 = handler(CreateWorkspace(workspace_id="ws-right"))
+        _commit_file(handler(WorkspacePath(workspace=workspace2)), "shared.txt", "right\n", "right")
 
-        result = handler.handle_merge_workspaces(
+        result = handler(
             MergeWorkspaces(workspace_id="ws-conflict", workspaces=(workspace1, workspace2)),
         )
 
@@ -383,22 +385,20 @@ class TestWorkspaceHandler:
         docs_repo = tmp_path / "docs"
         _init_repo(app_repo)
         _init_repo(docs_repo)
-        handler = WorkspaceHandler(
-            repo_paths={"app": app_repo, "docs": docs_repo},
-            workspace_base=workspace_base,
+        handler = answering(
+            workspace_handler(
+                repo_paths={"app": app_repo, "docs": docs_repo},
+                workspace_base=workspace_base,
+            )
         )
 
-        app_workspace = handler.handle_create_workspace(
-            CreateWorkspace(repo="app", workspace_id="ws-task")
-        )
-        docs_workspace = handler.handle_create_workspace(
-            CreateWorkspace(repo="docs", workspace_id="ws-task")
-        )
+        app_workspace = handler(CreateWorkspace(repo="app", workspace_id="ws-task"))
+        docs_workspace = handler(CreateWorkspace(repo="docs", workspace_id="ws-task"))
 
         assert app_workspace.repo == "app"
         assert docs_workspace.repo == "docs"
-        assert handler.resolve_path(app_workspace).exists()
-        assert handler.resolve_path(docs_workspace).exists()
+        assert handler(WorkspacePath(workspace=app_workspace)).exists()
+        assert handler(WorkspacePath(workspace=docs_workspace)).exists()
 
     def test_explicit_repo_paths_do_not_require_a_git_cwd(
         self,
@@ -420,12 +420,12 @@ class TestWorkspaceHandler:
         app_repo = tmp_path / "app"
         _init_repo(app_repo)
 
-        handler = WorkspaceHandler(repo_paths={"app": app_repo}, workspace_base=workspace_base)
-        workspace = handler.handle_create_workspace(
-            CreateWorkspace(repo="app", workspace_id="ws-outside")
+        handler = answering(
+            workspace_handler(repo_paths={"app": app_repo}, workspace_base=workspace_base)
         )
+        workspace = handler(CreateWorkspace(repo="app", workspace_id="ws-outside"))
 
-        assert handler.resolve_path(workspace).exists()
+        assert handler(WorkspacePath(workspace=workspace)).exists()
 
     def test_default_repo_resolves_from_construction_cwd_on_first_use(
         self,
@@ -439,12 +439,14 @@ class TestWorkspaceHandler:
         _init_repo(repo)
         (repo / "sub").mkdir()
         monkeypatch.chdir(repo / "sub")
-        handler = WorkspaceHandler(workspace_base=workspace_base)
+        handler = answering(workspace_handler(workspace_base=workspace_base))
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
 
-        assert handler.repo_path("default").resolve() == repo.resolve()
+        handler(CreateWorkspace(workspace_id="ws-default"))
+
+        assert "conductor/ws-default" in _branches(repo)
 
     def test_default_repo_outside_git_fails_when_used(
         self,
@@ -458,10 +460,10 @@ class TestWorkspaceHandler:
         monkeypatch.chdir(outside)
         monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
 
-        handler = WorkspaceHandler(workspace_base=workspace_base)
+        handler = answering(workspace_handler(workspace_base=workspace_base))
 
         with pytest.raises(GitCommandError, match="rev-parse --show-toplevel"):
-            handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-default"))
+            handler(CreateWorkspace(workspace_id="ws-default"))
 
 
 class TestWorkspaceResumeStability:
@@ -479,20 +481,20 @@ class TestWorkspaceResumeStability:
         base.mkdir()
         return base
 
-    def _handler(self, git_repo: Path, workspace_base: Path) -> WorkspaceHandler:
+    def _handler(self, git_repo: Path, workspace_base: Path) -> Answer:
         """A fresh handler instance simulates a conductor process restart."""
-        return WorkspaceHandler(repo_path=git_repo, workspace_base=workspace_base)
+        return answering(workspace_handler(repo_path=git_repo, workspace_base=workspace_base))
 
     def test_same_identity_twice_binds_same_branch_and_path(
         self, git_repo: Path, workspace_base: Path
     ) -> None:
         first_handler = self._handler(git_repo, workspace_base)
-        first = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
-        first_path = first_handler.resolve_path(first)
+        first = first_handler(CreateWorkspace(workspace_id="run-ws"))
+        first_path = first_handler(WorkspacePath(workspace=first))
 
         second_handler = self._handler(git_repo, workspace_base)
-        second = second_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
-        second_path = second_handler.resolve_path(second)
+        second = second_handler(CreateWorkspace(workspace_id="run-ws"))
+        second_path = second_handler(WorkspacePath(workspace=second))
 
         assert second.ref == first.ref == "conductor/run-ws"
         assert second_path == first_path
@@ -503,14 +505,14 @@ class TestWorkspaceResumeStability:
         self, git_repo: Path, workspace_base: Path
     ) -> None:
         first_handler = self._handler(git_repo, workspace_base)
-        workspace = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
-        worktree = first_handler.resolve_path(workspace)
+        workspace = first_handler(CreateWorkspace(workspace_id="run-ws"))
+        worktree = first_handler(WorkspacePath(workspace=workspace))
         (worktree / "wip.txt").write_text("uncommitted work\n")
 
         resumed_handler = self._handler(git_repo, workspace_base)
-        readopted = resumed_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
+        readopted = resumed_handler(CreateWorkspace(workspace_id="run-ws"))
 
-        readopted_path = resumed_handler.resolve_path(readopted)
+        readopted_path = resumed_handler(WorkspacePath(workspace=readopted))
         assert readopted_path == worktree
         assert readopted.ref == workspace.ref
         assert (readopted_path / "wip.txt").read_text() == "uncommitted work\n"
@@ -519,17 +521,17 @@ class TestWorkspaceResumeStability:
         self, git_repo: Path, workspace_base: Path
     ) -> None:
         first_handler = self._handler(git_repo, workspace_base)
-        workspace = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
-        worktree = first_handler.resolve_path(workspace)
+        workspace = first_handler(CreateWorkspace(workspace_id="run-ws"))
+        worktree = first_handler(WorkspacePath(workspace=workspace))
         _commit_file(worktree, "work.txt", "committed work\n", "implement")
 
         # The site loses the worktree (e.g. cleanup) but the branch survives.
         shutil.rmtree(worktree)
 
         resumed_handler = self._handler(git_repo, workspace_base)
-        resumed = resumed_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
+        resumed = resumed_handler(CreateWorkspace(workspace_id="run-ws"))
 
-        resumed_path = resumed_handler.resolve_path(resumed)
+        resumed_path = resumed_handler(WorkspacePath(workspace=resumed))
         assert resumed_path == worktree
         assert resumed.ref == workspace.ref
         # Re-materialized FROM THE BRANCH: the committed work is present.
@@ -544,40 +546,36 @@ class TestWorkspaceResumeStability:
         rogue_path.mkdir(parents=True)
 
         with pytest.raises(WorkspaceStateError, match="branch conductor/run-ws does not"):
-            handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
+            handler(CreateWorkspace(workspace_id="run-ws"))
 
     def test_merge_identity_is_resume_stable(self, git_repo: Path, workspace_base: Path) -> None:
         first_handler = self._handler(git_repo, workspace_base)
-        left = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-left"))
-        _commit_file(first_handler.resolve_path(left), "left.txt", "left\n", "left")
-        right = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-right"))
-        _commit_file(first_handler.resolve_path(right), "right.txt", "right\n", "right")
+        left = first_handler(CreateWorkspace(workspace_id="run-left"))
+        _commit_file(first_handler(WorkspacePath(workspace=left)), "left.txt", "left\n", "left")
+        right = first_handler(CreateWorkspace(workspace_id="run-right"))
+        _commit_file(first_handler(WorkspacePath(workspace=right)), "right.txt", "right\n", "right")
 
-        first_result = first_handler.handle_merge_workspaces(
+        first_result = first_handler(
             MergeWorkspaces(workspace_id="run-merged", workspaces=(left, right))
         )
         assert first_result.status is MergeStatus.MERGED
         assert first_result.workspace is not None
-        merged_path = first_handler.resolve_path(first_result.workspace)
+        merged_path = first_handler(WorkspacePath(workspace=first_result.workspace))
 
         # The site loses the merged worktree; the merge branch survives.
         shutil.rmtree(merged_path)
 
         resumed_handler = self._handler(git_repo, workspace_base)
-        resumed_left = resumed_handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="run-left")
-        )
-        resumed_right = resumed_handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="run-right")
-        )
-        second_result = resumed_handler.handle_merge_workspaces(
+        resumed_left = resumed_handler(CreateWorkspace(workspace_id="run-left"))
+        resumed_right = resumed_handler(CreateWorkspace(workspace_id="run-right"))
+        second_result = resumed_handler(
             MergeWorkspaces(workspace_id="run-merged", workspaces=(resumed_left, resumed_right))
         )
 
         assert second_result.status is MergeStatus.MERGED
         assert second_result.workspace is not None
         assert second_result.workspace.ref == first_result.workspace.ref
-        resumed_merged_path = resumed_handler.resolve_path(second_result.workspace)
+        resumed_merged_path = resumed_handler(WorkspacePath(workspace=second_result.workspace))
         assert resumed_merged_path == merged_path
         # Re-materialized from the merge branch with both merges intact;
         # re-applying the merges is a no-op.
@@ -595,35 +593,33 @@ class TestWorkspaceResumeStability:
         resumed merged tree diverges from what a fresh run would produce.
         """
         first_handler = self._handler(git_repo, workspace_base)
-        left = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-left"))
-        _commit_file(first_handler.resolve_path(left), "left.txt", "left\n", "left")
-        right = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-right"))
-        _commit_file(first_handler.resolve_path(right), "right.txt", "right\n", "right")
+        left = first_handler(CreateWorkspace(workspace_id="run-left"))
+        _commit_file(first_handler(WorkspacePath(workspace=left)), "left.txt", "left\n", "left")
+        right = first_handler(CreateWorkspace(workspace_id="run-right"))
+        _commit_file(first_handler(WorkspacePath(workspace=right)), "right.txt", "right\n", "right")
 
-        first_result = first_handler.handle_merge_workspaces(
+        first_result = first_handler(
             MergeWorkspaces(workspace_id="run-merged", workspaces=(left, right))
         )
         assert first_result.status is MergeStatus.MERGED
 
         # AFTER the first merge, both sources gain new commits (e.g. a
         # resumed agent node re-ran on a journal cache miss).
-        _commit_file(first_handler.resolve_path(left), "left2.txt", "left2\n", "left2")
-        _commit_file(first_handler.resolve_path(right), "right2.txt", "right2\n", "right2")
+        _commit_file(first_handler(WorkspacePath(workspace=left)), "left2.txt", "left2\n", "left2")
+        _commit_file(
+            first_handler(WorkspacePath(workspace=right)), "right2.txt", "right2\n", "right2"
+        )
 
         resumed_handler = self._handler(git_repo, workspace_base)
-        resumed_left = resumed_handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="run-left")
-        )
-        resumed_right = resumed_handler.handle_create_workspace(
-            CreateWorkspace(workspace_id="run-right")
-        )
-        second_result = resumed_handler.handle_merge_workspaces(
+        resumed_left = resumed_handler(CreateWorkspace(workspace_id="run-left"))
+        resumed_right = resumed_handler(CreateWorkspace(workspace_id="run-right"))
+        second_result = resumed_handler(
             MergeWorkspaces(workspace_id="run-merged", workspaces=(resumed_left, resumed_right))
         )
 
         assert second_result.status is MergeStatus.MERGED
         assert second_result.workspace is not None
-        merged_path = resumed_handler.resolve_path(second_result.workspace)
+        merged_path = resumed_handler(WorkspacePath(workspace=second_result.workspace))
         # BOTH sources' newer commits are in the resumed merged tree —
         # source[0] must not be frozen at its first-merge tip.
         assert (merged_path / "left2.txt").exists()

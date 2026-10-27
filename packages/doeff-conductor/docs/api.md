@@ -502,67 +502,55 @@ yield MergePR(
 
 ## Handlers
 
-### Handler Classes
+### Handlers
 
-#### `WorkspaceHandler`
-
-Handles workspace effects.
-
-```python
-from doeff_conductor import WorkspaceHandler
-
-handler = WorkspaceHandler(repo_path=Path("/path/to/repo"))
-
-# Methods
-handler.handle_create_workspace(effect)
-handler.handle_merge_workspaces(effect)
-handler.handle_delete_workspace(effect)
-```
-
-#### `IssueHandler`
-
-Handles issue effects.
+Each handler is a doeff handler: it takes an effect and its continuation `k`, answers the
+effects it handles and passes every other effect outward. A function builds it from its
+settings; install it on a program like any doeff handler (`handler(program)`,
+`with_handlers([...], program)` or `stacked_handlers(...)`).
 
 ```python
-from doeff_conductor import IssueHandler
+from doeff import stacked_handlers
+from doeff_conductor import (
+    agent_handler,
+    exec_handler,
+    git_handler,
+    issue_handler,
+    journaled_agent_handler,
+    journaled_workflow_effect_handler,
+    journaled_workspace_handler,
+    workspace_handler,
+)
+from doeff_git.handlers import production_handlers as git_production_handlers
 
-handler = IssueHandler(issues_dir=Path("/path/to/issues"))
-
-# Methods
-handler.handle_create_issue(effect)
-handler.handle_list_issues(effect)
-handler.handle_get_issue(effect)
-handler.handle_resolve_issue(effect)
+handlers = stacked_handlers(          # outermost first
+    git_production_handlers(),        # runs the git / gh commands git_handler performs
+    workspace_handler(repo_path=Path("/path/to/repo")),
+    issue_handler(issues_dir=Path("/path/to/issues")),
+    agent_handler(),                  # waits off the scheduler thread: run under `scheduled`
+    git_handler(),
+    exec_handler(log_dir=Path("/path/to/logs")),
+    journaled_workflow_effect_handler(state_dir=state_dir, run_id=run_id),
+    journaled_agent_handler(state_dir=state_dir, run_id=run_id),
+    journaled_workspace_handler(state_dir=state_dir, run_id=run_id),
+)
+result = run(scheduled(handlers(program)))
 ```
 
-#### `AgentHandler`
+| Handler | Answers | Settings |
+|---------|---------|----------|
+| `workspace_handler` | `CreateWorkspace`, `MergeWorkspaces`, `DeleteWorkspace` | `repo_path`, `repo_paths`, `workspace_base` |
+| `issue_handler` | `CreateIssue`, `ListIssues`, `GetIssue`, `ResolveIssue` | `issues_dir` |
+| `agent_handler` | `AgentEffect` (runs it on doeff-agentd) | — |
+| `git_handler` | `Commit`, `Push`, `CreatePR`, `MergePR` (performs the doeff-git effects) | — |
+| `exec_handler` | `Exec` | `log_dir` |
+| `journaled_workflow_effect_handler` | `TimeCall`, `RandomCall` (replayed from the run's journal) | `state_dir`, `run_id` |
+| `journaled_agent_handler` | `AgentEffect` from the run's journal; performs it outward when not journaled | `state_dir`, `run_id` |
+| `journaled_workspace_handler` | journals each new `CreateWorkspace`; performs it outward | `state_dir`, `run_id` |
 
-Handles agent effects.
-
-```python
-from doeff_conductor import AgentHandler
-
-handler = AgentHandler()
-
-# Methods
-handler.handle_agent(effect)
-```
-
-#### `GitHandler`
-
-Handles git effects.
-
-```python
-from doeff_conductor import GitHandler
-
-handler = GitHandler()
-
-# Methods
-handler.handle_commit(effect)
-handler.handle_push(effect)
-handler.handle_create_pr(effect)
-handler.handle_merge_pr(effect)
-```
+The agent, git and exec handlers and the workspace journal ask the workspace handler where a
+workspace is materialized, so they are installed inside it; the journal handlers are installed
+inside the handlers they perform the effect to. `production_handlers(...)` builds this stack.
 
 ### Handler Utilities
 
