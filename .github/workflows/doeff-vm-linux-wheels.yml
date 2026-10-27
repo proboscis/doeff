@@ -93,14 +93,16 @@ jobs:
       # `docker run` rather than a job container: the runner's JavaScript actions do not run in an
       # Alpine container on arm64. The image (the official python image with uv added) has no Rust
       # and no C compiler, and --only-binary makes a wheel that does not match the platform fail
-      # here instead of building doeff-vm from source. The demo runs from /tmp so that `-m doeff`
+      # here instead of building doeff-vm from source. --no-sources keeps uv from reading the
+      # workspace [tool.uv.sources], which would ask for doeff-vm from the checkout as well as the
+      # wheel (tools/verify_core_install.py does the same). The demo runs from /tmp so that `-m doeff`
       # imports the installed package, not the checkout.
       - name: Install into a fresh venv and run python -m doeff demo
         run: |
           docker run --rm -v "$PWD:/src" -w /tmp "${{ matrix.image }}" sh -euxc '
             uname -m
             uv venv /tmp/venv
-            uv pip install --python /tmp/venv --no-cache --only-binary doeff-vm /src/wheels/*.whl /src /src/packages/doeff-core-effects
+            uv pip install --python /tmp/venv --no-cache --no-sources --only-binary doeff-vm /src/wheels/*.whl /src /src/packages/doeff-core-effects
             uv pip list --python /tmp/venv
             uv run --no-project --python /tmp/venv python -c "import doeff_vm.doeff_vm as ext; print(ext.__file__)"
             uv run --no-project --python /tmp/venv python -m doeff demo
