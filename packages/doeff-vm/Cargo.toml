@@ -25,6 +25,12 @@ doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }
 libc = "0.2"
 mimalloc = { version = "0.1", default-features = false }
 
+# musl refuses to dlopen an extension whose C code uses the initial-exec TLS model, mimalloc's
+# default ("initial-exec TLS resolves to dynamic definition" — doeff-vm Linux wheels install run
+# 40526709517); local-dynamic TLS loads. glibc keeps the faster initial-exec model.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false, features = ["local_dynamic_tls"] }
+
 [build-dependencies]
 pyo3-build-config = "0.29"
 
