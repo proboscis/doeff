@@ -78,6 +78,7 @@ from doeff_effect_analyzer.program_effects import (
     ProgramEffects,
     ReceivedEffect,
     Residual,
+    SuppliedDeclaration,
     UnknownTest,
     Unresolved,
     _bind_expression,
@@ -110,6 +111,7 @@ from doeff_effect_analyzer.program_effects import (
     pass_through,
     qualified_name,
     resolve_target,
+    supplied_declarations,
 )
 
 
@@ -1317,6 +1319,7 @@ def check_coverage(
     *,
     origin: str = "program",
     include: Callable[[Any], bool] = _no_carrier,
+    supplied: Sequence[SuppliedDeclaration] = (),
 ) -> Coverage:
     """Run ``effects`` through ``env`` (outermost first) from the innermost handler out.
 
@@ -1326,15 +1329,20 @@ def check_coverage(
     handlers (``with_handlers`` in its body) are applied first.  A handler that
     could not be read — in the env or inside the Program — and a place in the
     Program the reader could not follow (``unresolved``) make coverage incomplete.
+    ``supplied`` = declarations for handlers that could not be read (``SuppliedDeclaration``):
+    such a handler is read from its declaration, and is not named in ``unknown_handlers``.
     """
-    if isinstance(effects, ProgramEffects):
-        origin = effects.target if origin == "program" else origin
-        inner = effects.residual_with(include)
-    elif isinstance(effects, Residual):
-        inner = effects
-    else:
-        inner = Residual(tuple(Escape(effect, EffectUse(effect, _nowhere())) for effect in effects))
-    out = pass_through(inner, env, include)
+    with supplied_declarations(supplied):
+        if isinstance(effects, ProgramEffects):
+            origin = effects.target if origin == "program" else origin
+            inner = effects.residual_with(include)
+        elif isinstance(effects, Residual):
+            inner = effects
+        else:
+            inner = Residual(
+                tuple(Escape(effect, EffectUse(effect, _nowhere())) for effect in effects)
+            )
+        out = pass_through(inner, env, include)
     gaps = sorted(
         (Gap(escape.effect, escape.by or origin) for escape in out.escapes),
         key=lambda gap: (gap.effect.__name__, gap.origin),
