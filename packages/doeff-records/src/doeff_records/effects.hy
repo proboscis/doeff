@@ -1,4 +1,4 @@
-;;; 記録の仕組みの公開 effect 10 個(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
+;;; 記録の仕組みの公開 effect 11 個(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
 ;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。WatchChanges は名指した列(streams)の末尾の
 ;;; 番号と刻も答えに載せる(Changes.tails — #3718)。
@@ -6,6 +6,9 @@
 ;;; 出自の issue は #3750)。
 ;;; 10 個目の AppendEvents は追記の束(束の追記 1 つ = EventAppend — AppendEvent と同じ欄)を置き場への 1 往復で積む(1 つの要求で原因と
 ;;; 本体の 2 つの出来事を積む書き手が、置き場の書きの錠と往復を 2 回順に待たないため — card ki-48c34994ed15)。
+;;; 11 個目の ReadBatch は行の読みの束(ReadRow と ListRows の組)を置き場への 1 往復で読む(複数の表から名指す鍵と欄の値の組の行を
+;;; 読む読み手が、読みを 1 本ずつ撃って往復ごとの client の接続の取り合いと service の受けの列を読みの数だけ待たないため —
+;;; card ki-177a4f287c42)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
@@ -35,6 +38,9 @@
 ;; ListRows の値の組の絞り(where-any)1 つの読みに載せる値の数の上限(全部の欄の組の値の和)— PostgreSQL の置き場は値を 1 つずつ文の
 ;; 引数に展げるので、1 つの文の引数と綴りの大きさをこの数で縛る。呼び手は大きな組をこの数ごとに割って読む。
 (setv WHERE-ANY-LIMIT 1000)
+;; ReadBatch 1 つに載せる読みの数の上限。束の読みは service の 1 要求なので、1 要求の計算の量を ListRows 1 回と同じ桁に縛る: 読みの数を
+;; この数・束の中の ListRows の limit の和を LIST-LIMIT-MAX まで(どちらも作る時に ValueError)。呼び手は大きな束を割って撃つ。
+(setv READ-BATCH-MAX 64)
 
 
 (defn #^ tuple checked-key [#^ object key #^ str what]
@@ -118,6 +124,24 @@
       (raise (ValueError (if (is self.descending-by None)
                              "ListRows の鍵の順の読みの cursor は after_value の無い位置(上から読む読みの位置を渡さない)"
                              "ListRows.descending_by の読みの cursor は after_value を持つ位置(上から読む読みが返した next_cursor)"))))))
+
+
+(defclass [(dataclass :frozen True)] ReadBatch [EffectBase]
+  "行の読みの束を置き場への 1 往復で読む(card ki-177a4f287c42)。reads = ReadRow | ListRows の空でない tuple(READ-BATCH-MAX 個まで・
+   束の中の ListRows の limit の和は LIST-LIMIT-MAX まで — 外は作る時に ValueError・読みでない項は TypeError)。
+   答え = BatchRead(items = 束の順の、読み 1 つごとの答え — ReadRow は Row | Missing・ListRows は Page | Reset | NotIndexed)| Unreachable。
+   束の i 番目の読みの答えは、同じ読みを 1 つだけ撃った答えと同じ(読みの意味・保持の期限の除き・索引の断り NotIndexed・頁の続きの位置は
+   読みごとに変わらない)。束は 1 つの断面とは限らない(置き場によっては読みの間に他の書きが入り得る — 断面が要る呼び手は行の版で照らす)。
+   届かない(Unreachable)時は束の全部が届かない(読みの一部だけの答えは返さない — 読みは置き場を変えないので、同じ束を撃ち直してよい)。"
+  (#^ tuple reads)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.reads tuple) self.reads (all (gfor one self.reads (isinstance one #(ReadRow ListRows))))))
+      (raise (TypeError (.format "ReadBatch.reads は ReadRow | ListRows の空でない tuple: {!r}" self.reads))))
+    (when (> (len self.reads) READ-BATCH-MAX)
+      (raise (ValueError (.format "ReadBatch.reads の読みの数 {} が上限 {} を越える(束を割って撃つ)" (len self.reads) READ-BATCH-MAX))))
+    (setv listed (sum (gfor one self.reads :if (isinstance one ListRows) one.limit)))
+    (when (> listed LIST-LIMIT-MAX)
+      (raise (ValueError (.format "ReadBatch の ListRows の limit の和 {} が上限 {} を越える(束を割るか limit を絞る)" listed LIST-LIMIT-MAX))))))
 
 
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]

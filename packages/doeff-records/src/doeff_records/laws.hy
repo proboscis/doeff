@@ -24,9 +24,9 @@
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable
-                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS])
+                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS BatchRead])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
-                               ReadEvents ReadStreamEnd ReadEventByKey])
+                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents
                                    RetireArchivedEvents RetiredEvents EventsArchived archive-expired-events])
@@ -661,6 +661,48 @@
   (<- (require-law (= (lfor e pairs.items #(e.idempotency-key e.sequence)) [#("ask:b" ask.sequence)])
                    law (.format "列 pairs の出来事: {!r}" pairs)))
   [seed batch again mixed journal pairs])
+
+
+;; --- 法 7a2: 読みの束は読みを 1 つずつ撃った答えと同じ ----------------------------------------------------
+
+(defk law-read-batch-answers-like-each-read [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "読みの束(ReadBatch — card ki-177a4f287c42)の法: 束の答えは、束の読みを 1 つずつ撃った答えを束の順に並べた物と同じ — 表をまたぐ鍵の
+   読み(在る行・無い行)・値の組の一覧(where-any)・頁の続きの位置・索引の無い欄の断り(NotIndexed)・版の違う位置の読み直し(Reset)が
+   混ざっても、読みごとの答えは変わらない。複数の表から名指す鍵と値の組の行を読む読み手が、読みの数の往復を束 1 つの往復に替えても
+   答えが変わらないため。どの置き場の組も同じ答えを返すことを確かめる。"
+  (val law "読みの束は束の読みを 1 つずつ撃った答えと同じ")
+  (var transcript [])
+  (for [n (range 1 7)]
+    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n))
+                                                 (FrozenMap {"color" (get COLORS (% n 3)) "label" (get LABELS (% n 2))}) (ExpectAbsent))))
+    (:= transcript (+ transcript [written])))
+  (for [#(group id owner) [#("g1" "t1" "o1") #("g1" "t2" "o2") #("g2" "t3" "o1") #("g2" "t4" "o3")]]
+    (<- written (as-writer harness MAKER (PutRow "tickets" #(group id) (FrozenMap {"owner" owner}) (ExpectAbsent))))
+    (:= transcript (+ transcript [written])))
+  (<- first-page (as-writer harness MAKER (ListRows "parts" :limit 2)))
+  (<- (require-law (and (isinstance first-page Page) (is-not first-page.next-cursor None)) law (.format "頁の続き: {!r}" first-page)))
+  (val reads #((ReadRow "parts" #("p02"))
+               (ListRows "tickets" :where-any (FrozenMap {"owner" ["o1" "o3"]}))
+               (ReadRow "tickets" #("g1" "t2"))
+               (ReadRow "parts" #("p-none"))
+               (ListRows "parts" :where-any (FrozenMap {"color" ["red" "blue"]}) :fields #("color"))
+               (ListRows "parts" :cursor first-page.next-cursor :limit 2)
+               (ListRows "parts" :where-any (FrozenMap {"note" ["x"]}))
+               (ListRows "parts" :cursor (ListCursor (+ first-page.epoch 1) "p01"))
+               (ListRows "tickets" :where (FrozenMap {"owner" "o2"}))))
+  (var singles [])
+  (for [one reads]
+    (<- single (as-writer harness MAKER one))
+    (:= singles (+ singles [single])))
+  (<- batch (as-writer harness MAKER (ReadBatch reads)))
+  (<- (require-law (and (isinstance batch BatchRead) (= (len batch.items) (len reads))) law (.format "束の答え: {!r}" batch)))
+  (<- (require-law (= (list batch.items) singles) law (.format "束の答えと 1 つずつの答えが違う: {!r} / {!r}" batch.items singles)))
+  (<- (require-law (and (isinstance (get singles 0) Row) (isinstance (get singles 2) Row) (= (get singles 3) (Missing))
+                        (= (len (. (get singles 1) rows)) 3) (isinstance (get singles 6) NotIndexed) (isinstance (get singles 7) Reset))
+                   law (.format "読みごとの答えの種: {!r}" singles)))
+  (+ transcript [first-page] singles [batch]))
 
 
 ;; --- 法 7b: 冪等キーの頭で引く ReadEvents は全部の出来事を読んで頭で絞った列と同じ ------------------------------
@@ -1912,9 +1954,9 @@
 
 
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
-;; law-put-rows-is-all-or-nothing と law-append-events-answer-like-appends-in-order は SHARED-LAWS に入れない — SHARED-LAWS は前からの
-;; 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを
-;; 比べている。
+;; law-put-rows-is-all-or-nothing・law-append-events-answer-like-appends-in-order・law-read-batch-answers-like-each-read は SHARED-LAWS に
+;; 入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents・ReadBatch を答えない handler の組(呼び手の系の
+;; 写しの handler など)もこの名簿で答えを比べている。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
             "epoch-change-resets" law-epoch-change-resets
@@ -1926,6 +1968,7 @@
             "any-of-list-equals-the-union-of-equal-lists" law-any-of-list-equals-the-union-of-equal-lists
             "append-is-idempotent" law-append-is-idempotent
             "append-events-answer-like-appends-in-order" law-append-events-answer-like-appends-in-order
+            "read-batch-answers-like-each-read" law-read-batch-answers-like-each-read
             "key-head-read-equals-filtered-scan" law-key-head-read-equals-filtered-scan
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append

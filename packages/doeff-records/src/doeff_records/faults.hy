@@ -16,7 +16,7 @@
 (defclass [(dataclass :frozen True)] SetStoreOutage [EffectBase]
   "置き場に届かない状態を起こす・戻すため(記録の service の不達・一部の表の断りの筋書き — 検と模擬の土台の故障の口)。
    detail = 届かない理由の文(None = 戻す)/ names = 届かない表と追記の列の名(None = 全部)。届かない間、名に当たる公開 effect
-   (ReadRow・ListRows・PutRow・PutRows・WatchChanges・AppendEvent・AppendEvents・ReadEvents・ReadStreamEnd・ReadEventByKey)と列の待ち WatchEvents は Unreachable(detail) を答え、置き場を変えない —
+   (ReadRow・ListRows・PutRow・PutRows・WatchChanges・AppendEvent・AppendEvents・ReadEvents・ReadStreamEnd・ReadEventByKey・ReadBatch)と列の待ち WatchEvents は Unreachable(detail) を答え、置き場を変えない —
    本番の記録の口(http_client)が service に届かない時に返す答えと同じ。答え = None。memory の置き場が答える(PostgreSQL の置き場は
    本物の不達が起きるので答えない)。"
   (#^ (| str None) detail)
@@ -29,14 +29,15 @@
 ;; 使い手は業務の effect に答える偽の handler を書かず、この口で正典の置き場に断らせる。
 
 (defclass StoreOperation [Enum]
-  "故障が当たる操作の閉じた列挙: READ = ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd・ReadEventByKey / WRITE = PutRow・PutRows・AppendEvent・AppendEvents。"
+  "故障が当たる操作の閉じた列挙: READ = ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd・ReadEventByKey・ReadBatch / WRITE = PutRow・PutRows・AppendEvent・AppendEvents。"
   (setv READ "read"
         WRITE "write"))
 
 
 (defclass [(dataclass :frozen True)] StoreFault []
   "置き場の故障 1 つ。names = 当たる表と追記の列の名(effect が触る名のどれかが入っていれば当たる — PutRows は束の中の表のどれか 1 つで
-   束ごと当たる。AppendEvents は束の追記ごとに、同じ追記の AppendEvent として当たる — memory.answered-appends)/ operation = 当たる操作 / answer = 当たった effect の答え(Refused | Unreachable)/ lands = 書きを置き場に着けてから
+   束ごと当たる。AppendEvents は束の追記ごとに、同じ追記の AppendEvent として当たる — memory.answered-appends。ReadBatch は束の読みごとに、
+   同じ読みの ReadRow | ListRows として当たり、当たれば束の全部が届かない — memory.answered-reads)/ operation = 当たる操作 / answer = 当たった effect の答え(Refused | Unreachable)/ lands = 書きを置き場に着けてから
    答えを answer に差し替えるか(False = 置き場を変えずに answer を返す。読みは置き場を変えないのでどちらでも同じ)/ matching = effect を
    受けて当たるかを返す関数(None = 名と操作に当たる effect の全部)/ times = 当たる回数(None = 外すまで当たり続ける。数を持つ故障は
    当たるたびに 1 減り、尽きた拍に故障の列から外れる — lands と組むと「書きは確定したが答えが 1 度だけ切れた」形になり、撃ち直す

@@ -5,7 +5,7 @@
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
-                            law-append-events-answer-like-appends-in-order
+                            law-append-events-answer-like-appends-in-order law-read-batch-answers-like-each-read
                             law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
                             law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append law-concurrent-writes-appear-in-number-order
@@ -128,6 +128,13 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-append-events-answer-like-appends-in-order harness))
+  (assert transcript))
+
+(deftest test-read-batch-answers-like-each-read
+  ;; card ki-177a4f287c42: 読みの束は束の読みを 1 つずつ撃った答えと同じ(表をまたぐ鍵・値の組・頁の続き・NotIndexed・Reset)— 4 つの組で。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-read-batch-answers-like-each-read harness))
   (assert transcript))
 
 (deftest test-key-head-read-equals-filtered-scan

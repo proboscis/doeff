@@ -116,9 +116,9 @@
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty stored-row stored-change
-                              Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
+                              Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey write-parts])
+                               ReadEventByKey ReadBatch write-parts])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
@@ -1264,8 +1264,17 @@
   {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int)] :post [(: % (| Page Reset NotIndexed))]
    :tags {:context "records" :role "foundation"}}
   "ListRows に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない — 文の条件・頭の註)。"
-  (val decl (store.schema.table ask.table))
   (<- head (store-head store))
+  (<- answer (| Page Reset NotIndexed) (pg-list-rows-at store ask now-ms head))
+  answer)
+
+
+(defk pg-list-rows-at [store ask now-ms head]
+  {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int) (: head StoreHead)] :post [(: % (| Page Reset NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows に、先に読んだ置き場の版と頭 head で答えるため(1 つの読みの pg-list-rows と束の読みの pg-read-batch が、頭の読みを読みごとに
+   撃つか束で 1 度にするかだけを違えて同じ頁を作る 1 点)。"
+  (val decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch head.epoch))
     (return (Reset head.epoch head.floor)))
   (val refusal (where-refusal decl ask.where ask.where-any))
@@ -1307,6 +1316,20 @@
         (if (> (len records) ask.limit) (ListCursor head.epoch (get (get taken -1) 0)) None)
         head.epoch
         head.head))
+
+
+(defk pg-read-batch [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadBatch) (: now-ms int)] :post [(: % BatchRead)]
+   :tags {:context "records" :role "foundation"}}
+  "ReadBatch の束に答えるため(card ki-177a4f287c42): 置き場の版と頭を束で 1 度だけ読み、束の順に読み 1 つずつを、同じ読みを 1 つ撃った時と
+   同じ文(pg-read-row・pg-list-rows-at)で同じ刻 now-ms に読む。読みの間に他の書きが入り得る(束は 1 つの断面ではない — ReadBatch の註)。"
+  (<- head (store-head store))
+  (var items #())
+  (for [one ask.reads]
+    (<- item (| Row Missing Page Reset NotIndexed)
+        (if (isinstance one ReadRow) (pg-read-row store one now-ms) (pg-list-rows-at store one now-ms head)))
+    (:= items (+ items #(item))))
+  (BatchRead items))
 
 
 (defk locked-row [store decl text records now-ms epoch]
@@ -2016,6 +2039,10 @@
   (ListRows [table where fields cursor limit]
     (<- now (GetTime))
     (<- answer (reached (pg-list-rows store effect (epoch-ms now))))
+    (resume answer))
+  (ReadBatch [reads]
+    (<- now (GetTime))
+    (<- answer (reached (pg-read-batch store effect (epoch-ms now))))
     (resume answer))
   ;; 書きの節は触る名(表 | 列)の合図を、待ちの節は待つ名の呼び鈴を使う(頭の註 — notice-topics)。
   (PutRow [table key value expect]

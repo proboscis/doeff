@@ -56,6 +56,7 @@ from doeff_records.values import Unreachable as Unreachable
 from doeff_records.values import RememberKeysFor as RememberKeysFor
 from doeff_records.values import RememberNoKeys as RememberNoKeys
 from doeff_records.values import WRITE_KEY_MEMORY_SECONDS as WRITE_KEY_MEMORY_SECONDS
+from doeff_records.values import BatchRead as BatchRead
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -69,6 +70,7 @@ from doeff_records.effects import EventAppend as EventAppend
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records.effects import ReadEventByKey as ReadEventByKey
+from doeff_records.effects import ReadBatch as ReadBatch
 from doeff_records.faults import AdvanceStoreEpoch as AdvanceStoreEpoch
 from doeff_records.maintenance import SweepExpired as SweepExpired
 from doeff_records.maintenance import PruneChanges as PruneChanges
@@ -180,6 +182,9 @@ def law_append_is_idempotent(harness: LawHarness) -> _Program[list[object], obje
     ...
 
 def law_append_events_answer_like_appends_in_order(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_read_batch_answers_like_each_read(harness: LawHarness) -> _Program[list[object], object]:
     ...
 TRAIL_KEYS: tuple[str, ...]
 TRAIL_HEADS: tuple[str, ...]
