@@ -64,7 +64,10 @@
        :evidence "tests/data/public_api_known_violations.json(main edc3802d5b5f)")
      (fact
        "既知の違反の表(同じ版)の行の多い package — doeff-cluster 5,192(範囲の答え待ち)・doeff-agents 1,653・doeff-records 1,507・doeff-core-effects 1,273・doeff-claude-code 774・doeff-hy 735(範囲の答え待ち)・doeff-conductor 558。直しは行の多い決まりの範囲の package から、取り組み doeff-subpackages-effects-only の区切りごとに進める。"
-       :evidence "tests/data/public_api_known_violations.json(main edc3802d5b5f)")]
+       :evidence "tests/data/public_api_known_violations.json(main edc3802d5b5f)")
+     (fact
+       "公開の submodule(R5 の外れ)は、card ki-25d43146681e が既知の表に載せた 39 package の 731 行(決まりの範囲の 28 package に 410・範囲の答え待ちの 11 package に 321)。決まりの範囲の import の根のすぐ下の子は 267 個で、子を _<名> に替えれば下の module も隠れる。直しの分けは card ki-4bff1f81b0f4(stage 1〜3 の 31 枚)。"
+       :evidence "tests/data/public_api_known_violations.json の (submodule) の行(doeff ec6311c0a の目録)・artifact 2026-10-28-doeff-submodule-hide-split.html(doeff 37467d478138 で 733 行・第 1 層の子 265 — その後 doeff-agents と doeff-hy-pytest が submodule を減らした)")]
   :context
     [(interpretation
        "doeff の値は、handler を替えれば同じ program が test でも本番でも走る事にある。subpackage が手続き型の関数や client の class を見せると、利用者はその口を直に呼び、handler の差し替えの外で書く。effect と handler だけを見せれば、どの subpackage も effect を yield して handler を据えるだけで使える。")
@@ -73,7 +76,7 @@
      (interpretation
        "型は effect と handler の一部: 値の型が無いと effect を作れず、結果の型が無いと答えを読めず、例外の型が無いと失敗を受けられず、設定の型が無いと handler を作れない。")
      (interpretation
-       "公開の名の数え方は目録の道具の 1 か所が持つ: import の根の __init__ が出す名・path のどの部分も _ で始まらない submodule が出す名・[project.scripts] と entry point と maturin の bin。この ADR は数え方を別に持たない。repo の根の doeff(program・do・run・handler の核)は subpackage でなく、目録も数えない。")]
+       "公開の名の数え方は目録の道具の 1 か所が持つ: import の根の __init__ が出す名・path のどの部分も _ で始まらない submodule が出す名と、その submodule そのもの(R5)・[project.scripts] と entry point と maturin の bin。この ADR は数え方を別に持たない。repo の根の doeff(program・do・run・handler の核)は subpackage でなく、目録も数えない。")]
   :decision
     [(rule R1 "subpackage の公開 API は effect(EffectBase の型と、effect を作る関数)と handler(@handler・defhandler の handler と、handler か handler の組を作って返す関数)だけ。ほかの名(手続き型の関数・program 関数・client や API の class・設定を読む関数・定数)は、名か module の path に _ を付けた内側に置くか、effect か handler に作り直す。")
      (rule R2 "effect の値の型・effect の結果の型・effect と handler が投げる例外の型・handler の設定の型は、effect と handler の一部として公開してよい(2026-10-27・依頼書 lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM の問い types の答え lt-85SHMNQG7HG4AYHBER6V2BAKX6)。")
@@ -113,11 +116,20 @@
                      "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"]
        :wiring "一部配線(2026-10-28)— 目録は印の無い Handler の名の class を未分類、(effect, k) の関数を handler と読み、既知の表に無ければ赤。目録が「戻りの型が Program -> Program の callable の関数」を handler と読む所は R3 と照らし直していない(持ち主が card を切る)")
      (law the-public-names-come-from-the-import-root
-       :statement "for_all package p in scope: for_all public submodule m of p: m's path has a part starting with _"
+       :statement "for_all package p in scope: for_all public submodule m of p: m's path has a part starting with _ — enforced as: public_submodules(p) = known_submodules(p), known_submodules only shrinks from the version that added them, and a name n moved from a submodule s to the import root r is the same row as (s, n) when s no longer shows n or shows the same definition"
        :counterexamples
-         [(counterexample "effect を doeff_agentic.effects から import させ、根と submodule の 2 つの口で同じ名を見せる")]
-       :enforced-by ["tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"]
-       :wiring "未配線(2026-10-28)— 目録は _ で始まらない submodule が出す名を数えるが、effect か handler の名なら外れと数えない。submodule を外れと数える目録と表の直しは card ki-4bff1f81b0f4 の調べの後")]
+         [(counterexample "effect を doeff_agentic.effects から import させ、根と submodule の 2 つの口で同じ名を見せる")
+          (counterexample "subpackage に _ の無い submodule を新しく足し、出す名が effect だけなので既知の表にも「足した名」にも書かずに通る")
+          (counterexample "R2 の型を submodule から入口へ移すと、表の鍵(名を出す module)が替わったと読まれて赤になり、直しが表の名の組を書き足すか「足した名」に書くしか無い")
+          (counterexample "submodule がまだ出している名と同じ名の、違う定義を入口に足し、入口へ移した名と読まれて通る")]
+       :enforced-by ["tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
+                     "tests/test_public_api_known_violations.py::test_an_added_public_submodule_turns_red_and_hiding_it_turns_green"
+                     "tests/test_public_api_known_violations.py::test_moving_names_from_a_submodule_to_the_root_keeps_the_table_green"
+                     "tests/test_public_api_known_violations.py::test_a_different_definition_with_a_known_name_at_the_root_turns_red"
+                     "tests/test_public_api_known_violations.py::test_the_known_table_only_shrinks_from_its_first_version"
+                     "tests/test_public_api_known_violations.py::test_a_submodule_row_put_into_the_table_after_it_had_submodule_rows_turns_red"
+                     "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-a-public-submodule-turns-the-guard-red-and-a-moved-name-does-not"]
+       :wiring "配線済み(2026-10-28・card ki-25d43146681e)— 目録は _ で始まらない submodule を 1 行(名を出す module の欄が (submodule))の外れと数え、既知の表は今の公開の submodule 731 行を載せて、submodule の行を足した版から減るだけ。名を submodule から入口へ移した行は表の module を書き換えずに同じ行と読む(submodule がまだ同じ名を出す間は定義の場所が同じ時だけ・古い口を閉じた後は名と根だけ)。隠した submodule の行は表から消す。この file の deftest はその関数を呼ぶだけ")]
   :enforcement
     [(deftest test-adr-doe-api-001-an-added-outlier-turns-the-guard-red
        ;; R12: 強制は card ki-aaaa56621c5a の test が持ち、ここではその関数を呼ぶだけ — 使い捨ての package に effect と handler の外の
@@ -131,7 +143,16 @@
        (<- guard ModuleType (guard-module))
        (guard.test-the-known-table-has-one-well-formed-entry-per-package-dir)
        (guard.test-the-known-table-only-shrinks-from-its-first-version)
-       (guard.test-a-name-put-into-the-listed-groups-turns-red))]
+       (guard.test-a-name-put-into-the-listed-groups-turns-red)
+       (guard.test-a-submodule-row-put-into-the-table-after-it-had-submodule-rows-turns-red))
+     (deftest test-adr-doe-api-001-a-public-submodule-turns-the-guard-red-and-a-moved-name-does-not
+       ;; R5・R12: 同じ test の関数を呼ぶだけ — 使い捨ての package に _ の無い submodule を足すと赤・隠すと緑、名を submodule から
+       ;; 入口へ移しても(移し替えの module を残す間も消した後も)表を書き換えずに緑、同じ名の違う定義を入口に足すと赤。
+       (<- guard ModuleType (guard-module))
+       (with [scratch (tempfile.TemporaryDirectory)]
+         (guard.test-an-added-public-submodule-turns-red-and-hiding-it-turns-green (/ (Path scratch) "submodule"))
+         (guard.test-moving-names-from-a-submodule-to-the-root-keeps-the-table-green (/ (Path scratch) "moved") "lazy" "alias")
+         (guard.test-a-different-definition-with-a-known-name-at-the-root-turns-red (/ (Path scratch) "different"))))]
   :plans ["tests/test_public_api_known_violations.py・tests/data/public_api_known_violations.json (card ki-aaaa56621c5a)"
           "tools/public_api_inventory.py (card ki-633e6b8564b4)"
           "取り組み doeff-subpackages-effects-only の区切り 2〜4 の card (直し — doeff-agents・CLI コマンド・doeff-vm・doeff-hy の macro・writer_log・__version__・class の handler・submodule)"
