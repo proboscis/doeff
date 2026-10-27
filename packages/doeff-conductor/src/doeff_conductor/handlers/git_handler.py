@@ -1,13 +1,14 @@
 """Git handler for doeff-conductor.
 
-This handler delegates git operations to doeff-git handlers while keeping
-conductor effect APIs stable.
+This handler delegates git operations to the commands doeff-git's handlers run while
+keeping conductor effect APIs stable.
 """
 
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from doeff_git import _commands as _git_commands
 from doeff_git.effects import (
     CreatePR as GitCreatePR,
 )
@@ -19,7 +20,6 @@ from doeff_git.effects import (
     MergePR as GitMergePR,
 )
 from doeff_git.exceptions import GitCommandError as DomainGitCommandError
-from doeff_git.handlers import GitHubHandler, GitLocalHandler
 from doeff_git.types import PRHandle as GitPRHandle
 
 from doeff_conductor.exceptions import GitCommandError
@@ -54,12 +54,8 @@ class GitHandler:
     def __init__(
         self,
         *,
-        local_handler: GitLocalHandler | None = None,
-        github_handler: GitHubHandler | None = None,
         workspace_resolver: WorkspaceResolver | None = None,
     ) -> None:
-        self._local_handler = local_handler or GitLocalHandler()
-        self._github_handler = github_handler or GitHubHandler()
         self._workspace_resolver = workspace_resolver
 
     def _resolve_workspace_path(self, workspace: "Workspace") -> Path:
@@ -90,7 +86,7 @@ class GitHandler:
             all=effect.all,
         )
         try:
-            return self._local_handler.handle_commit(git_effect)
+            return _git_commands.commit(git_effect)
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error
 
@@ -105,7 +101,7 @@ class GitHandler:
             branch=effect.workspace.ref,
         )
         try:
-            self._local_handler.handle_push(git_effect)
+            _git_commands.push(git_effect)
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error
 
@@ -124,7 +120,7 @@ class GitHandler:
             head=effect.workspace.ref,
         )
         try:
-            pr = self._github_handler.handle_create_pr(git_effect)
+            pr = _git_commands.create_pr(git_effect)
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error
 
@@ -155,6 +151,6 @@ class GitHandler:
             delete_branch=effect.delete_branch,
         )
         try:
-            self._github_handler.handle_merge_pr(git_effect)
+            _git_commands.merge_pr(git_effect)
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error

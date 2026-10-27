@@ -2,16 +2,15 @@
 
 
 import hashlib
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from doeff_git.types import PRHandle
-
-ProtocolHandler = Callable[[Any, Any], Any]
 
 
 @dataclass
@@ -88,7 +87,7 @@ class MockGitRuntime:
 def mock_handlers(
     *,
     runtime: MockGitRuntime | None = None,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Build a protocol handler backed by MockGitRuntime."""
 
     active_runtime = runtime or MockGitRuntime()
@@ -117,6 +116,5 @@ def mock_handlers(
 
 __all__ = [
     "MockGitRuntime",
-    "ProtocolHandler",
     "mock_handlers",
 ]

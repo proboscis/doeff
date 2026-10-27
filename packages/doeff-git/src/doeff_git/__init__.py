@@ -3,9 +3,9 @@
 from .effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from .exceptions import GitCommandError
 from .handlers import (
-    GitHubHandler,
-    GitLocalHandler,
     MockGitRuntime,
+    git_local_handler,
+    github_handler,
     mock_handlers,
     production_handlers,
 )
@@ -17,14 +17,14 @@ __all__ = [
     "GitCommandError",
     "GitCommit",
     "GitDiff",
-    "GitHubHandler",
-    "GitLocalHandler",
     "GitPull",
     "GitPush",
     "MergePR",
     "MergeStrategy",
     "MockGitRuntime",
     "PRHandle",
+    "git_local_handler",
+    "github_handler",
     "mock_handlers",
     "production_handlers",
 ]

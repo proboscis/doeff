@@ -1,215 +1,56 @@
 """Production handlers for doeff-git effects."""
 
 
-import re
-import subprocess
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
-
-from doeff import Effect, Pass, Resume, do
-from doeff import handler as _program_handler
+from doeff import K, Pass, Resume, handler, stacked_handlers
+from doeff.program import ProgramHandler
+from doeff_git import _commands
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
-from doeff_git.exceptions import GitCommandError
-from doeff_git.types import MergeStrategy, PRHandle
-
-ProtocolHandler = Callable[[Any, Any], Any]
 
 
-def _run_command(
-    args: list[str],
-    *,
-    cwd: Path | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Run git/gh command and raise GitCommandError on failure."""
-    try:
-        return subprocess.run(
-            args,
-            cwd=str(cwd) if cwd else None,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as error:
-        raise GitCommandError.from_subprocess_error(error, cwd=str(cwd) if cwd else None) from error
+@handler
+def git_local_handler(effect: GitCommit | GitDiff | GitPush | GitPull, k: K):
+    """Answer the local git effects (``GitCommit``, ``GitDiff``, ``GitPush``, ``GitPull``)
+    by running the git CLI in the effect's ``work_dir``; pass every other effect on.
+
+    A failed command raises ``GitCommandError`` in the program that yielded the effect.
+    """
+    if isinstance(effect, GitCommit):
+        return (yield Resume(k, _commands.commit(effect)))
+    if isinstance(effect, GitDiff):
+        return (yield Resume(k, _commands.diff(effect)))
+    if isinstance(effect, GitPush):
+        return (yield Resume(k, _commands.push(effect)))
+    if isinstance(effect, GitPull):
+        return (yield Resume(k, _commands.pull(effect)))
+    return (yield Pass(effect, k))
 
 
-def _current_branch(work_dir: Path) -> str:
-    result = _run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=work_dir)
-    return result.stdout.strip()
+@handler
+def github_handler(effect: CreatePR | MergePR, k: K):
+    """Answer the hosting effects (``CreatePR``, ``MergePR``) by running the GitHub CLI
+    (``gh``); pass every other effect on.
+
+    A failed command raises ``GitCommandError`` in the program that yielded the effect.
+    """
+    if isinstance(effect, CreatePR):
+        return (yield Resume(k, _commands.create_pr(effect)))
+    if isinstance(effect, MergePR):
+        return (yield Resume(k, _commands.merge_pr(effect)))
+    return (yield Pass(effect, k))
 
 
-def _extract_pr_url(raw_output: str) -> str:
-    lines = [line.strip() for line in raw_output.splitlines() if line.strip()]
-    if not lines:
-        raise ValueError("gh pr create returned no output")
-    return lines[-1]
+def production_handlers() -> ProgramHandler:
+    """Install ``git_local_handler`` and ``github_handler`` as one handler: git CLI for the
+    local effects, GitHub CLI for the hosting effects.
 
-
-def _extract_pr_number(pr_url: str) -> int:
-    match = re.search(r"/(\d+)$", pr_url)
-    if not match:
-        raise ValueError(f"Could not parse PR number from URL: {pr_url}")
-    return int(match.group(1))
-
-
-def _normalize_strategy(strategy: MergeStrategy | str | Any | None) -> MergeStrategy:
-    if strategy is None:
-        return MergeStrategy.MERGE
-
-    if isinstance(strategy, MergeStrategy):
-        return strategy
-
-    raw_value = strategy.value if hasattr(strategy, "value") else strategy
-    if isinstance(raw_value, str):
-        normalized = raw_value.strip().lower()
-        for candidate in MergeStrategy:
-            if candidate.value == normalized:
-                return candidate
-
-    raise ValueError(f"Unsupported merge strategy: {strategy!r}")
-
-
-def _merge_selector(pr: PRHandle) -> str:
-    if pr.url:
-        return pr.url
-    return str(pr.number)
-
-
-class GitLocalHandler:
-    """Handler for local git CLI operations."""
-
-    def handle_commit(self, effect: GitCommit) -> str:
-        if effect.all:
-            _run_command(["git", "add", "-A"], cwd=effect.work_dir)
-
-        _run_command(["git", "commit", "-m", effect.message], cwd=effect.work_dir)
-        result = _run_command(["git", "rev-parse", "HEAD"], cwd=effect.work_dir)
-        return result.stdout.strip()
-
-    def handle_diff(self, effect: GitDiff) -> str:
-        args = ["git", "diff"]
-        if effect.staged:
-            args.append("--staged")
-        result = _run_command(args, cwd=effect.work_dir)
-        return result.stdout
-
-    def handle_push(self, effect: GitPush) -> None:
-        branch = effect.branch or _current_branch(effect.work_dir)
-
-        args = ["git", "push"]
-        if effect.force:
-            args.append("--force")
-
-        if effect.set_upstream:
-            args.extend(["-u", effect.remote, branch])
-        else:
-            args.extend([effect.remote, branch])
-
-        _run_command(args, cwd=effect.work_dir)
-
-    def handle_pull(self, effect: GitPull) -> None:
-        args = ["git", "pull"]
-        if effect.rebase:
-            args.append("--rebase")
-        args.append(effect.remote)
-        if effect.branch:
-            args.append(effect.branch)
-
-        _run_command(args, cwd=effect.work_dir)
-
-
-class GitHubHandler:
-    """Handler for hosting operations backed by GitHub CLI."""
-
-    def handle_create_pr(self, effect: CreatePR) -> PRHandle:
-        branch = effect.head or _current_branch(effect.work_dir)
-        args = [
-            "gh",
-            "pr",
-            "create",
-            "--title",
-            effect.title,
-            "--base",
-            effect.target,
-            "--head",
-            branch,
-            "--body",
-            effect.body or "",
-        ]
-
-        if effect.draft:
-            args.append("--draft")
-
-        for label in effect.labels or []:
-            args.extend(["--label", label])
-
-        result = _run_command(args, cwd=effect.work_dir)
-        pr_url = _extract_pr_url(result.stdout)
-        pr_number = _extract_pr_number(pr_url)
-
-        return PRHandle(
-            url=pr_url,
-            number=pr_number,
-            title=effect.title,
-            branch=branch,
-            target=effect.target,
-            status="open",
-            work_dir=effect.work_dir,
-        )
-
-    def handle_merge_pr(self, effect: MergePR) -> None:
-        strategy = _normalize_strategy(effect.strategy)
-
-        args = ["gh", "pr", "merge", _merge_selector(effect.pr)]
-        if strategy is MergeStrategy.MERGE:
-            args.append("--merge")
-        elif strategy is MergeStrategy.REBASE:
-            args.append("--rebase")
-        elif strategy is MergeStrategy.SQUASH:
-            args.append("--squash")
-
-        if effect.delete_branch:
-            args.append("--delete-branch")
-
-        _run_command(args, cwd=effect.pr.work_dir)
-
-
-def production_handlers(
-    *,
-    local_handler: GitLocalHandler | None = None,
-    github_handler: GitHubHandler | None = None,
-) -> ProtocolHandler:
-    """Build the production protocol handler for git and GitHub effects."""
-
-    local = local_handler or GitLocalHandler()
-    hosting = github_handler or GitHubHandler()
-
-    @do
-    def handler(effect: Effect, k: Any):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
-        if isinstance(effect, GitCommit):
-            return (yield Resume(k, local.handle_commit(effect)))
-        if isinstance(effect, GitDiff):
-            return (yield Resume(k, local.handle_diff(effect)))
-        if isinstance(effect, GitPush):
-            local.handle_push(effect)
-            return (yield Resume(k, None))
-        if isinstance(effect, GitPull):
-            local.handle_pull(effect)
-            return (yield Resume(k, None))
-        if isinstance(effect, CreatePR):
-            return (yield Resume(k, hosting.handle_create_pr(effect)))
-        if isinstance(effect, MergePR):
-            hosting.handle_merge_pr(effect)
-            return (yield Resume(k, None))
-        return (yield Pass(effect, k))
-
-    return _program_handler(handler)
+    To answer some effects another way, install that handler inside this one (nearer the
+    program); the effects it passes on reach these.
+    """
+    return stacked_handlers(github_handler, git_local_handler)
 
 
 __all__ = [
-    "GitHubHandler",
-    "GitLocalHandler",
-    "ProtocolHandler",
+    "git_local_handler",
+    "github_handler",
     "production_handlers",
 ]

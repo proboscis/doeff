@@ -169,7 +169,7 @@ class TestGitHandler:
         with pytest.raises(GitCommandError):
             handler.handle_push(effect)
 
-    @patch("doeff_git.handlers.production._run_command")
+    @patch("doeff_git._commands._run_command")
     def test_create_pr_success(
         self,
         mock_run: MagicMock,
@@ -190,7 +190,7 @@ class TestGitHandler:
         assert pr.branch == "main"
         assert pr.status == "open"
 
-    @patch("doeff_git.handlers.production._run_command")
+    @patch("doeff_git._commands._run_command")
     def test_create_pr_draft(
         self,
         mock_run: MagicMock,
@@ -208,7 +208,7 @@ class TestGitHandler:
         call_args = mock_run.call_args[0][0]
         assert "--draft" in call_args
 
-    @patch("doeff_git.handlers.production._run_command")
+    @patch("doeff_git._commands._run_command")
     def test_merge_pr_default_strategy(self, mock_run: MagicMock, handler: GitHandler):
         mock_run.return_value = MagicMock(returncode=0)
         pr = PRHandle(
@@ -227,7 +227,7 @@ class TestGitHandler:
         call_args = mock_run.call_args[0][0]
         assert "--merge" in call_args
 
-    @patch("doeff_git.handlers.production._run_command")
+    @patch("doeff_git._commands._run_command")
     def test_merge_pr_squash_strategy(self, mock_run: MagicMock, handler: GitHandler):
         mock_run.return_value = MagicMock(returncode=0)
         pr = PRHandle(
@@ -246,7 +246,7 @@ class TestGitHandler:
         call_args = mock_run.call_args[0][0]
         assert "--squash" in call_args
 
-    @patch("doeff_git.handlers.production._run_command")
+    @patch("doeff_git._commands._run_command")
     def test_merge_pr_rebase_strategy(self, mock_run: MagicMock, handler: GitHandler):
         mock_run.return_value = MagicMock(returncode=0)
         pr = PRHandle(
@@ -265,7 +265,7 @@ class TestGitHandler:
         call_args = mock_run.call_args[0][0]
         assert "--rebase" in call_args
 
-    @patch("doeff_git.handlers.production._run_command")
+    @patch("doeff_git._commands._run_command")
     def test_merge_pr_delete_branch(self, mock_run: MagicMock, handler: GitHandler):
         mock_run.return_value = MagicMock(returncode=0)
         pr = PRHandle(
