@@ -19,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from doeff_core_effects.effects import Try
+from doeff_core_effects.effects import ReadWriterLog, Try
 from doeff_core_effects.handlers import (
     await_handler,
     lazy_ask,
@@ -29,7 +29,6 @@ from doeff_core_effects.handlers import (
     state,
     try_handler,
     writer,
-    writer_log,
 )
 from doeff_core_effects.process_effects import ReadEnvironment
 from doeff_core_effects.scheduler import scheduled
@@ -59,7 +58,7 @@ def _build_chain(program: Any, env: dict | None, clock: SimClock | None = None):
     """Build the legacy default handler chain.
 
     Returns a single wrapped program.  The writer log is captured inside
-    the program via ``writer_log()`` — no side-channel ``.log`` access.
+    the program via ``ReadWriterLog()`` — no side-channel ``.log`` access.
 
     Composition order mirrors ``doeff-traverse/tests`` — ``scheduled``
     is outermost so scheduler effects resolve regardless of scope.
@@ -101,7 +100,7 @@ async def run_program(
     @do
     def _wrap():
         outcome = yield Try(program)
-        log = yield writer_log()
+        log = yield ReadWriterLog()
         return (outcome, log)
 
     chain = _build_chain(_wrap(), env, clock)

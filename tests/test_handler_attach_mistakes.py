@@ -19,7 +19,7 @@ import traceback
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects import Ask, Get, Put, Tell
+from doeff_core_effects import Ask, Get, Put, ReadWriterLog, Tell
 from doeff_core_effects.handlers import (
     lazy_ask,
     listen_handler,
@@ -27,7 +27,6 @@ from doeff_core_effects.handlers import (
     state,
     try_handler,
     writer,
-    writer_log,
 )
 from doeff_core_effects.scheduler import scheduled
 
@@ -54,7 +53,7 @@ def asks_key():
 @do
 def tells_hello():
     yield Tell("hello")
-    return (yield writer_log())
+    return (yield ReadWriterLog())
 
 
 @dataclass(frozen=True)

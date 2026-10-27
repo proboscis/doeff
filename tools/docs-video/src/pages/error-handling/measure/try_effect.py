@@ -1,7 +1,8 @@
 # Try is an effect: try_handler runs the sub-program and resumes the caller with Ok(value) or Err(exception).
 # Runs the page's parse_count example on a good and a bad input, printing the Try result, the log and the return.
 from doeff import Err, Ok, Tell, Try, do, run
-from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog
+from doeff_core_effects.handlers import state, try_handler, writer
 
 
 @do
@@ -28,7 +29,7 @@ def app(raw: str):
 @do
 def with_log(raw: str):
     value = yield app(raw)
-    return value, (yield writer_log())
+    return value, (yield ReadWriterLog())
 
 
 for raw in ["42", "not-a-number"]:

@@ -1,7 +1,18 @@
 """Tests for core effects — Ask, Get, Put, Tell."""
 
+import doeff_core_effects
 import pytest
-from doeff_core_effects.effects import Ask, Get, Listen, Put, Slog, Tell, Try
+from doeff_core_effects import handlers as core_handlers
+from doeff_core_effects.effects import (
+    Ask,
+    Get,
+    Listen,
+    Put,
+    ReadWriterLog,
+    Slog,
+    Tell,
+    Try,
+)
 from doeff_core_effects.handlers import (
     listen_handler,
     reader,
@@ -9,10 +20,9 @@ from doeff_core_effects.handlers import (
     state,
     try_handler,
     writer,
-    writer_log,
 )
 
-from doeff import Pure, do
+from doeff import Pure, UnhandledEffect, do
 from doeff import run as doeff_run
 
 
@@ -81,10 +91,49 @@ class TestWriter:
         def body():
             yield Tell("hello")
             yield Tell("world")
-            return (yield writer_log())
+            return (yield ReadWriterLog())
 
         result = doeff_run(state()(writer(body())))
         assert result == ["hello", "world"]
+
+    def test_read_writer_log_before_any_tell_is_empty(self):
+        @do
+        def body():
+            return (yield ReadWriterLog())
+
+        assert doeff_run(state()(writer(body()))) == []
+
+    def test_read_writer_log_answers_a_copy(self):
+        """The list ReadWriterLog answers is the program's own: changing it leaves the log as told."""
+
+        @do
+        def body():
+            yield Tell("kept")
+            first = yield ReadWriterLog()
+            first.append("not told")
+            yield Tell("next")
+            return first, (yield ReadWriterLog())
+
+        first, second = doeff_run(state()(writer(body())))
+        assert first == ["kept", "not told"]
+        assert second == ["kept", "next"]
+
+    def test_read_writer_log_without_writer_is_unhandled(self):
+        """The writer handler answers ReadWriterLog: without it the read is an unhandled effect."""
+
+        @do
+        def body():
+            yield Put("x", 1)
+            return (yield ReadWriterLog())
+
+        with pytest.raises(UnhandledEffect, match="ReadWriterLog"):
+            doeff_run(state()(body()))
+
+    def test_the_log_is_read_with_the_effect_not_a_function(self):
+        """The writer log is read by yielding ReadWriterLog: the function writer_log is gone."""
+        assert doeff_core_effects.ReadWriterLog is ReadWriterLog
+        assert not hasattr(doeff_core_effects, "writer_log")
+        assert not hasattr(core_handlers, "writer_log")
 
 
 class TestComposed:
@@ -109,7 +158,7 @@ class TestComposed:
             yield Tell(f"hello {name}")
             yield Put("greeted", True)
             greeted = yield Get("greeted")
-            log = yield writer_log()
+            log = yield ReadWriterLog()
             return (greeted, log)
 
         prog = reader(env={"name": "Bob"})(state()(writer(body())))

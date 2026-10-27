@@ -2,7 +2,8 @@
 
 import doeff_vm
 import pytest
-from doeff_core_effects.handlers import reader, state, writer, writer_log
+from doeff_core_effects.effects import ReadWriterLog
+from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
 from doeff import Ask, Get, Put, Tell, do, run
@@ -363,7 +364,7 @@ def test_current_state_reader_writer_handlers_use_installer_api() -> None:
     def writer_body():
         yield Tell("starting")
         yield Tell("done")
-        log = yield writer_log()
+        log = yield ReadWriterLog()
         return ("ok", log)
 
     assert run(state(initial={"counter": 1})(state_body())) == 2

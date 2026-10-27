@@ -21,6 +21,7 @@ from doeff_core_effects.effects import (
     Listen,
     Local,
     Put,
+    ReadWriterLog,
     Slog,
     Try,
     WriterTellEffect,
@@ -55,7 +56,7 @@ def _raw(installed: object) -> Callable[..., object]:
     [
         (reader({}), (Ask,)),
         (state(), (Get, Put)),
-        (writer, (WriterTellEffect,)),
+        (writer, (WriterTellEffect, ReadWriterLog)),
         (try_handler, (Try,)),
         (slog_handler, (Slog,)),
         (slog_discard_handler, (Slog,)),

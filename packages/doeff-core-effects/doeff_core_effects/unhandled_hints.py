@@ -22,6 +22,7 @@ from doeff_core_effects.effects import (
     Listen,
     Local,
     Put,
+    ReadWriterLog,
     SlogEffect,
     Try,
     WriterTellEffect,
@@ -85,6 +86,11 @@ UNHANDLED_EFFECT_HINTS: tuple[UnhandledEffectHint, ...] = (
     UnhandledEffectHint(
         (WriterTellEffect,),
         "Tell is handled by writer, which needs state() outside it: run(state()(writer(prog)))",
+    ),
+    UnhandledEffectHint(
+        (ReadWriterLog,),
+        "ReadWriterLog is handled by writer, which needs state() outside it: "
+        "run(state()(writer(prog)))",
     ),
     UnhandledEffectHint(
         (SlogEffect,),

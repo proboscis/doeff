@@ -60,6 +60,7 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 |---|---|---|
 | `Tell` | Effect: append a message to the writer log. | [Tell](#tellmessage) |
 | `WriterTellEffect` | The effect class `Tell` makes. | [WriterTellEffect](#writertelleffectmsg) |
+| `ReadWriterLog` | Effect: a copy of the messages `Tell` has logged so far. | [ReadWriterLog](#readwriterlog) |
 | `Listen` | Effect: run a program and also answer the effects of given types it performed. | [Listen](#listenprogram-typesnone) |
 | `slog` | Effect: a structured log entry (`slog("event", count=42)`). | [slog](#slogmsg-kwargs) |
 | `SlogEffect` | The effect class `slog` makes. | [slog](#slogmsg-kwargs) |
@@ -460,6 +461,22 @@ yield WriterTellEffect("event")
 **Fields:**
 
 - **`msg`** - The log message
+
+---
+
+### ReadWriterLog()
+
+Read the writer log: `writer` answers it with a copy of the messages `Tell` has logged so far,
+in the order told (`[]` before the first `Tell`). Changing the list leaves the log as told.
+Without `writer` it is an unhandled effect.
+
+```python excerpt
+from doeff_core_effects import ReadWriterLog
+
+log = yield ReadWriterLog()
+```
+
+**Signature:** `ReadWriterLog() -> list`
 
 ---
 
@@ -1210,24 +1227,26 @@ prog = state(initial={"counter": 0})(my_program())
 
 ### writer
 
-Handles `Tell(message)` / `WriterTellEffect`. Collects messages into a list.
+Handles `Tell(message)` / `WriterTellEffect` and `ReadWriterLog()`. Collects the messages into a
+list, and answers `ReadWriterLog()` with a copy of it.
 Pre-installed `Program -> Program` handler (not a factory -- use directly).
 Requires `state()` to be installed as an outer handler.
 
-Access the log from inside a `@do` program via `yield writer_log()`.
+Read the log from inside a `@do` program via `yield ReadWriterLog()`.
 
 ```python excerpt
-from doeff_core_effects.handlers import writer, writer_log
+from doeff_core_effects import ReadWriterLog
+from doeff_core_effects.handlers import writer
 
 prog = writer(my_program())
 prog = state()(prog)
 run(scheduled(prog))
 
-# To access the log, use writer_log() inside a @do program:
+# To access the log, use ReadWriterLog() inside a @do program:
 @do
 def with_log_access():
     yield my_program()
-    log = yield writer_log()
+    log = yield ReadWriterLog()
     return log
 ```
 
@@ -1438,7 +1457,7 @@ it. The message names the effect and the handlers in scope.
 |----------|---------|
 | **Reader** | `Ask`, `Local` |
 | **State** | `Get`, `Put` |
-| **Writer** | `Tell`, `slog`, `WriterTellEffect`, `Listen` |
+| **Writer** | `Tell`, `slog`, `WriterTellEffect`, `ReadWriterLog`, `Listen` |
 | **Async/Concurrency** | `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Cancel` |
 | **Semaphore** | `CreateSemaphore`, `AcquireSemaphore`, `ReleaseSemaphore` |
 | **Promise** | `CreatePromise`, `CompletePromise`, `FailPromise`, `CreateExternalPromise` |
@@ -1459,6 +1478,7 @@ from doeff_core_effects.scheduler import scheduled
 
 # Reader / State / Writer
 from doeff import Ask, Local, Get, Put, Tell, Listen, slog, WriterTellEffect
+from doeff_core_effects import ReadWriterLog
 
 # Async / Concurrency
 from doeff import Await, Spawn, Wait, Gather, Race, Cancel, Task

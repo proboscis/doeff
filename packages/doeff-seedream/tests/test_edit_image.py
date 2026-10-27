@@ -20,13 +20,13 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from doeff_core_effects.effects import EffectBase as Effect
+from doeff_core_effects.effects import ReadWriterLog
 from doeff_core_effects.handlers import (
     await_handler,
     lazy_ask,
     state,
     try_handler,
     writer,
-    writer_log,
 )
 from doeff_core_effects.scheduler import scheduled
 from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_client
@@ -90,7 +90,7 @@ def _capture(program):
     # Try inside the stack so the writer log is still readable when the
     # program raises (the log lives in the state handler, not a side channel).
     result = yield Try(program)
-    log = yield writer_log()
+    log = yield ReadWriterLog()
     return _Outcome(result=result, log=log)
 
 

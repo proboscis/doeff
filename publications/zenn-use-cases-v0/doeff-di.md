@@ -97,8 +97,8 @@ DIのコンテナには、依存を初めて使う時に作り、以後は使い
 次の例では、挨拶を4回取得します。通常の挨拶を2回取得し、`Local`の中で夕方の挨拶を1回取得します。最後に外へ戻り、通常の挨拶をもう1回取得します。挨拶を作るたびに`Tell`で接頭辞を記録し、作った回数をログで数えます。
 
 ```python
-from doeff_core_effects import Local, Tell  # 依存の局所変更と、作成ログの依頼を使う。
-from doeff_core_effects.handlers import lazy_ask, state, writer, writer_log  # 解決と記録を担う。
+from doeff_core_effects import Local, ReadWriterLog, Tell  # 依存の局所変更と、作成ログの依頼を使う。
+from doeff_core_effects.handlers import lazy_ask, state, writer  # 解決と記録を担う。
 from doeff_core_effects.scheduler import scheduled  # 遅延解決の排他制御を実行する。
 
 
@@ -126,7 +126,7 @@ def localized_messages():  # 4回の取得結果から範囲の違いを確認�
 @do  # 結果と作成ログを同じハンドラの範囲から回収する。
 def inspect_messages():  # テストに必要な観測値を戻り値へ含める。
     messages = yield localized_messages()  # 挨拶の取得を4回進める。
-    built = yield writer_log()  # 作成時にだけ出たTellをリストで受け取る。
+    built = yield ReadWriterLog()  # 作成時にだけ出たTellをリストで受け取る。
     return messages, built  # 表示内容と作成回数を別々に検証できる。
 
 

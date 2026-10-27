@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from itertools import count
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
-from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer, writer_log
+from doeff_core_effects import ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, writer
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     CompletePromise,
@@ -80,7 +80,7 @@ def day():
 @do
 def logged(program):                    # runs program, then reads back what it told
     yield program
-    return (yield writer_log())
+    return (yield ReadWriterLog())
 
 
 for i in range(7):

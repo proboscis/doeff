@@ -147,12 +147,12 @@ def test_journal_records_each_judgment(tmp_path) -> None:
 
 
 def test_handler_passes_unrelated_effects() -> None:
-    from doeff_core_effects import Tell, state, writer, writer_log
+    from doeff_core_effects import ReadWriterLog, Tell, state, writer
 
     @do
     def flow():
         yield Tell("hello")
-        log = yield writer_log()
+        log = yield ReadWriterLog()
         return list(log)
 
     program = with_handlers([state(), writer, jev_handler(DIRECT)], flow())

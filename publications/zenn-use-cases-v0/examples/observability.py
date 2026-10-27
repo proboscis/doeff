@@ -5,6 +5,7 @@ from io import StringIO  # ネットワークもファイルも使わず、表�
 
 from doeff_core_effects import (  # 観測対象と、ログを発行する公開APIを使う。
     Listen,  # 子Programの指定エフェクトを、戻り値と一緒に受け取る。
+    ReadWriterLog,  # 蓄積したTellのメッセージ一覧を、コピーで受け取る。
     SlogEffect,  # 構造化ログを表す型で、WriterTellEffectとは別の型になる。
     Tell,  # Writerへ渡す値をWriterTellEffectとして作る。
     WriterTellEffect,  # ListenでTellの依頼だけを選ぶために使う。
@@ -16,7 +17,6 @@ from doeff_core_effects.handlers import (  # 用途の異なるハンドラを�
     slog_handler,  # 構造化ログを標準エラーへ表示する。
     state,  # Writerの蓄積先を保持し、実行ごとに新しく作る。
     writer,  # TellのメッセージをStateへ蓄積する。
-    writer_log,  # 蓄積したTellのメッセージ一覧をコピーして返す。
 )
 from doeff_vm import UnhandledEffect  # ログを処理するハンドラがない場合の失敗を確かめる。
 
@@ -43,7 +43,7 @@ def observe():  # 結果・収集した依頼・Writerの蓄積を返す。
         convert(), types=(WriterTellEffect, SlogEffect)  # convertから出る2種類の依頼を選ぶ。
     )  # 2件を収集する。
     yield Tell("観測後")  # このTellもListenの対象外だが、Writerには蓄積される。
-    written = yield writer_log()  # Tellだけの3件を、独立した一覧として受け取る。
+    written = yield ReadWriterLog()  # Tellだけの3件を、独立した一覧として受け取る。
     return result, captured, written  # 結果は「完了」、収集は2件、Writerは3件となる。
 
 

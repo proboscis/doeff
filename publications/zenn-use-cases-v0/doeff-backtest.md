@@ -94,7 +94,8 @@ from bisect import bisect_right  # 時刻の並びから、今以前の最後の
 from datetime import datetime, timedelta, timezone  # 架空の記録の時刻を作る。
 
 from doeff import Pass, Resume, handler, run, with_handlers  # ハンドラの定義・再開・委譲・実行を使う。
-from doeff_core_effects.handlers import state, writer, writer_log  # 控えを集める部品。
+from doeff_core_effects import ReadWriterLog  # 書き残した控えを読む依頼。
+from doeff_core_effects.handlers import state, writer  # 控えを集める部品。
 from doeff_core_effects.scheduler import scheduled  # 待っている処理の再開と時計の進みを受け持つ。
 from doeff_time import sim_time_handler  # 仮想の時計のハンドラ。
 
@@ -121,7 +122,7 @@ def backtest_market(history):  # 記録で値段に答え、注文を受け付�
 @do  # 補助の処理も、yieldで組み立てる。
 def with_log(program):  # 処理を動かし終えてから、書き残した控えを読む。
     yield program  # 処理を最後まで動かす。
-    return (yield writer_log())  # writerが集めた控えの一覧を受け取る。
+    return (yield ReadWriterLog())  # writerが集めた控えの一覧を受け取る。
 
 
 START = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)  # 架空の記録の始まり。
@@ -144,7 +145,7 @@ print(backtest(history, 3))  # 表示: [('09:00', 100.0, 'bt-0900'), ('09:01', 1
 - 注文の依頼は、どこにも送りません。時刻から作った受付の番号を返します。
 - 時刻と待ちの依頼は担当外なので、`Pass`で外側へ渡します。
 - `Resume(k, 値)`は、止まっていた処理へ値を渡して続きを動かします。
-- `writer`は`Tell`の値を集め、`state()`の置き場に置きます。`writer_log()`で読み出せます。
+- `writer`は`Tell`の値を集め、`state()`の置き場に置きます。`yield ReadWriterLog()`の依頼で読み出せます。
 - `with_handlers`の並びは、左ほど外側です。`scheduled`は、待つ処理の再開を受け持ちます。
 
 ![値段の依頼は、仮想の時計に今を問うてから答える](/images/zenn-use-cases-v0/generated/backtest-flow.png)

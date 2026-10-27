@@ -99,7 +99,8 @@ that return an installer.
 `writer` keeps its log in state, so install `state()` outside it: `state()(writer(prog))`.
 Without `state()` outside, the first `Tell` fails with
 `UnhandledEffect: unhandled effect: Get (Get('__doeff_writer_log__'))`.
-Read the collected log with `yield writer_log()` (from `doeff_core_effects.handlers`).
+Read the collected log by yielding the effect `ReadWriterLog()` (from `doeff_core_effects`),
+which `writer` answers: `log = yield ReadWriterLog()`.
 
 ## Your First Effect and Handler
 
@@ -215,8 +216,8 @@ the whole:
 
 ```python
 from doeff import do, run
-from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer, writer_log
+from doeff_core_effects import Get, Put, ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, writer
 
 @do
 def setup():
@@ -233,7 +234,7 @@ def work():
 def full_program():
     yield setup()  # Run setup first
     result = yield work()  # Then do work
-    log = yield writer_log()
+    log = yield ReadWriterLog()
     return result, log
 
 result, log = run(state()(writer(full_program())))
@@ -747,13 +748,13 @@ Wrap the program again for each run:
 
 ```python
 from doeff import do, run
-from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer, writer_log
+from doeff_core_effects import ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, writer
 
 @do
 def my_program():
     yield Tell("test")
-    return (yield writer_log())
+    return (yield ReadWriterLog())
 
 # Wrapped once, run twice: the second run sees the first run's log
 wrapped = state()(writer(my_program()))
@@ -795,7 +796,7 @@ from doeff import (
 from doeff_core_effects import (
     Get, Put,              # State effects
     Ask, Local,            # Reader effects
-    Tell,                  # Writer effect
+    Tell, ReadWriterLog,   # Writer effects: log = yield ReadWriterLog()
     slog,                  # Structured logging helper
 )
 
@@ -803,8 +804,7 @@ from doeff_core_effects import (
 from doeff_core_effects.handlers import (
     reader,                # Reader handler (resolves Ask)
     state,                 # State handler (resolves Get/Put)
-    writer,                # Writer handler (resolves Tell; install state() outside it)
-    writer_log,            # Read the writer log: log = yield writer_log()
+    writer,                # Writer handler (resolves Tell, ReadWriterLog; install state() outside it)
 )
 
 # Scheduler (for concurrency)

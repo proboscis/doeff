@@ -2,7 +2,8 @@
 # Patterns"). The order's state lives in the store the state handler keeps, not in the program; each run of
 # order_state_machine moves it one step. Then a failing operation under Try, without and with the snapshot:
 # Try does not roll the store back, the snapshot pattern does.
-from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog
+from doeff_core_effects.handlers import state, try_handler, writer
 
 from doeff import Get, Put, Tell, Try, do, run
 
@@ -46,7 +47,7 @@ def three_steps_then_one_more(order_id):
     second = yield order_state_machine(order_id)
     third = yield order_state_machine(order_id)
     fourth = yield Try(order_state_machine(order_id))
-    return (first, second, third, fourth), (yield writer_log())
+    return (first, second, third, fourth), (yield ReadWriterLog())
 
 
 answers, log = run(state({"order_7_state": "pending"})(writer(try_handler(three_steps_then_one_more(7)))))

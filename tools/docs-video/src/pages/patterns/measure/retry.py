@@ -5,7 +5,8 @@
 import time
 from datetime import datetime, timezone
 
-from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog
+from doeff_core_effects.handlers import state, try_handler, writer
 from doeff_core_effects.scheduler import scheduled
 from doeff_time import Delay, GetTime, sim_time_handler, sync_time_handler
 
@@ -54,7 +55,7 @@ def retry_with_exponential_backoff(operation, max_attempts=5):
 def with_log(program):
     """The program's answer together with what it logged, to print both."""
     value = yield program
-    return value, (yield writer_log())
+    return value, (yield ReadWriterLog())
 
 
 for name, clock in [("sim_time_handler", sim_time_handler(start_time=START)), ("sync_time_handler", sync_time_handler())]:

@@ -1,7 +1,7 @@
 # Reader: Ask reads the env the reader handler holds; a missing key raises MissingEnvKeyError; Local runs a
 # sub-program over an overridden env and then the env is back. Backs the Reader and Local scenes of the video.
-from doeff_core_effects import Ask, Local, Tell
-from doeff_core_effects.handlers import local_handler, reader, state, writer, writer_log
+from doeff_core_effects import Ask, Local, ReadWriterLog, Tell
+from doeff_core_effects.handlers import local_handler, reader, state, writer
 
 from doeff import do, run
 
@@ -41,7 +41,7 @@ def with_custom_config():
     result = yield Local({"api_url": "https://staging.example.com"}, fetch_data())
     url2 = yield Ask("api_url")
     yield Tell(f"Back to: {url2}")
-    return result, (yield writer_log())
+    return result, (yield ReadWriterLog())
 
 
 prog = local_handler(with_custom_config())

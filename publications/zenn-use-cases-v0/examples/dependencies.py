@@ -3,14 +3,13 @@
 from typing import Protocol  # 型をAskのキーにする例で、呼び出し契約を表す。
 from unittest.mock import patch  # 架空の環境変数をテスト中だけ設定する。
 
-from doeff_core_effects import Ask, Local, Tell  # 依存要求・局所変更・観測ログを使う。
+from doeff_core_effects import Ask, Local, ReadWriterLog, Tell  # 依存要求・局所変更・ログを使う。
 from doeff_core_effects.handlers import (  # 依存供給とログ保存の担当を組み合わせる。
     env_var_ask,  # Askを接頭辞付きの環境変数へ接続する。
     lazy_ask,  # Programで渡した依存を必要時に解決する。
     reader,  # 辞書に入れた値をそのまま供給する。
     state,  # writerがログを保存する状態を提供する。
     writer,  # Tellの内容を記録する。
-    writer_log,  # 記録した内容をProgramとして読み出す。
 )
 from doeff_core_effects.scheduler import scheduled  # 遅延解決の排他制御を実行する。
 
@@ -81,7 +80,7 @@ def localized_messages():  # 4回の取得結果から範囲の違いを確認�
 @do  # 結果と作成ログを同じハンドラの範囲から回収する。
 def inspect_messages():  # テストに必要な観測値を戻り値へ含める。
     messages = yield localized_messages()  # 挨拶の取得を4回進める。
-    built = yield writer_log()  # 作成時にだけ出たTellをリストで受け取る。
+    built = yield ReadWriterLog()  # 作成時にだけ出たTellをリストで受け取る。
     return messages, built  # 表示内容と作成回数を別々に検証できる。
 
 

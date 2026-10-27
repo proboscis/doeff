@@ -29,7 +29,7 @@ assert run(slog_handler(summarize_progress(3, 3))) is True  # 件数を表示し
 
 ## Tellとslogは、用途も型も異なる
 
-`Tell`はWriterへ値を渡す操作です。`writer`が蓄積し、`yield writer_log()`で一覧を受け取れます。現在の実装では、その蓄積先として外側に`state()`が必要です。
+`Tell`はWriterへ値を渡す操作です。`writer`が蓄積し、`yield ReadWriterLog()`の依頼で一覧を受け取れます。現在の実装では、その蓄積先として外側に`state()`が必要です。
 
 `slog`は観測用の構造化ログを出します。型は`SlogEffect`で、`Slog`はその別名です。`slog_handler`の仕事は標準エラーへの表示で、蓄積はしません。こちらには`state()`が不要です。
 
@@ -43,9 +43,9 @@ assert run(slog_handler(summarize_progress(3, 3))) is True  # 件数を表示し
 from contextlib import redirect_stderr  # 実際の表示内容をテストで捕まえる。
 from io import StringIO  # 表示先をメモリに置き、文字列として検査する。
 from doeff import do, run  # 本体と観測を@doで合成し、テストで実行する。
-from doeff_core_effects import Listen, SlogEffect, Tell, WriterTellEffect, slog  # 2種類の依頼を使う。
+from doeff_core_effects import Listen, ReadWriterLog, SlogEffect, Tell, WriterTellEffect, slog  # 2種類の依頼を使う。
 from doeff_core_effects.handlers import listen_handler, slog_handler  # 収集と表示の処理先を使う。
-from doeff_core_effects.handlers import state, writer, writer_log  # Tellの蓄積先と取得操作を使う。
+from doeff_core_effects.handlers import state, writer  # Tellの蓄積先と取得操作を使う。
 
 @do  # 変換処理を定義し、ログの表示先はここでは決めない。
 def convert():  # サンプルの3ページの変換結果を返す。
@@ -58,7 +58,7 @@ def observe():  # 結果・収集した依頼・Writerの蓄積を返す。
     yield Tell("観測前")  # Listenの対象外なので、Writerにだけ蓄積される。
     result, captured = yield Listen(convert(), types=(WriterTellEffect, SlogEffect))  # 2件を収集する。
     yield Tell("観測後")  # このTellもListenの対象外だが、Writerには蓄積される。
-    written = yield writer_log()  # Tellだけの3件を、独立した一覧として受け取る。
+    written = yield ReadWriterLog()  # Tellだけの3件を、独立した一覧として受け取る。
     return result, captured, written  # 結果は「完了」、収集は2件、Writerは3件となる。
 
 output = StringIO()  # 標準エラーへの表示を受け取る入れ物を作る。

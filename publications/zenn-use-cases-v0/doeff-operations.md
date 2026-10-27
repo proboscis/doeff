@@ -189,12 +189,13 @@ log版の通知ハンドラは、通信の代わりに`Tell`を発行します�
 
 ```python
 from doeff_notify.handlers.log import log_handler  # 通知をTellへ翻訳するハンドラを使う。
-from doeff_core_effects.handlers import state, writer, writer_log  # Tellの記録と読み出しを使う。
+from doeff_core_effects import ReadWriterLog  # 集めたTellの記録を読み出す。
+from doeff_core_effects.handlers import state, writer  # Tellの記録を使う。
 
 @do  # 通知を処理してから、変換先のTellの記録を読み出す。
 def collect_notification_log():  # ログ用ハンドラの結果を検証側へ返す。
     acknowledged = yield notify_progress()  # log版では確認操作の結果はFalseになる。
-    entries = yield writer_log()  # notify・notify_thread・acknowledgeの3件を受け取る。
+    entries = yield ReadWriterLog()  # notify・notify_thread・acknowledgeの3件を受け取る。
     return acknowledged, entries  # 確認結果と通知の記録を返す。
 
 p_log = notifications_only(log_handler)(collect_notification_log())  # 通知の依頼をTellへ翻訳する。

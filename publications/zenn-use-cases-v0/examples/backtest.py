@@ -11,11 +11,13 @@ from datetime import datetime, timedelta, timezone  # 架空の記録の時刻�
 from typing import Protocol  # 本番のクライアントに求める形を書く。
 
 import pytest  # 例外が起きることを確かめる。
-from doeff_core_effects import Tell  # 「この値を書き残したい」という依頼。
+from doeff_core_effects import (  # 控えを書き残す依頼と読む依頼。
+    ReadWriterLog,  # 集めた控えを読み出す依頼。
+    Tell,  # 「この値を書き残したい」という依頼。
+)
 from doeff_core_effects.handlers import (  # 書き残した控えを集める部品。
     state,  # 集めた控えの置き場を持つハンドラ。
     writer,  # Tellの値を集めるハンドラ。
-    writer_log,  # 集めた控えを読み出す処理。
 )
 from doeff_core_effects.scheduler import scheduled  # 待っている処理の再開と時計の進みを受け持つ。
 from doeff_time import (  # 時間の依頼と、その答え方を選ぶ。
@@ -85,7 +87,7 @@ def backtest_market(history):  # 記録で値段に答え、注文を受け付�
 @do  # 補助の処理も、yieldで組み立てる。
 def with_log(program):  # 処理を動かし終えてから、書き残した控えを読む。
     yield program  # 処理を最後まで動かす。
-    return (yield writer_log())  # writerが集めた控えの一覧を受け取る。
+    return (yield ReadWriterLog())  # writerが集めた控えの一覧を受け取る。
 
 
 START = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)  # 架空の記録の始まり。

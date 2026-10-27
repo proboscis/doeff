@@ -23,7 +23,6 @@ HANDLER_HOMES = [
     ("state", "doeff_core_effects.handlers"),
     ("reader", "doeff_core_effects.handlers"),
     ("writer", "doeff_core_effects.handlers"),
-    ("writer_log", "doeff_core_effects.handlers"),
     ("lazy_ask", "doeff_core_effects.handlers"),
     ("env_var_ask", "doeff_core_effects.handlers"),
     ("try_handler", "doeff_core_effects.handlers"),

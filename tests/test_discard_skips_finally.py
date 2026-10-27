@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_core_effects import Tell, state, writer, writer_log
+from doeff_core_effects import ReadWriterLog, Tell, state, writer
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     Cancel,
@@ -65,7 +65,7 @@ def _run(program: Program[object], implementation: SchedulerImplementation) -> _
     @do
     def with_log():
         value = yield program
-        return _Recorded(value, tuple((yield writer_log())))
+        return _Recorded(value, tuple((yield ReadWriterLog())))
 
     def _worker() -> None:
         try:

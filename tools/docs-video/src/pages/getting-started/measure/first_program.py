@@ -1,7 +1,7 @@
 # The page's first program, counter_program, run on state() and writer: prints every effect it yields, in order,
 # with the answer that comes back to it, then its result and the writer's log. Backs the first-program scene.
-from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer, writer_log
+from doeff_core_effects import Get, Put, ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, writer
 
 from doeff import EffectBase, Resume, do, handler, run
 
@@ -34,7 +34,7 @@ def traced(effect: EffectBase, k):  # notes the effect, asks the handlers outsid
 @do
 def with_log():
     result = yield traced(counter_program())
-    return result, (yield writer_log())
+    return result, (yield ReadWriterLog())
 
 
 result, log = run(state()(writer(with_log())))
