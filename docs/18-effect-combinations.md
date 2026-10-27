@@ -4,7 +4,7 @@ This chapter documents how effects compose in doeff 0.5.0. It follows the outer/
 of `SPEC-EFF-100`; where the spec still uses older names (`Intercept`, `SyncRuntime` and
 `AsyncRuntime`), this chapter follows the 0.5.0 runtime.
 
-[![A narrated video, under three minutes: the matrix of outer and inner effects; Try and Listen nested both ways around a failing program; Local and Try restoring the environment while the store keeps every write; WithObserve seeing the effects of spawned children; Gather children sharing one store under a scheduler that switches only where a task suspends; and a failing child whose siblings are not cancelled](assets/videos/effect-combinations.jpg)](assets/videos/effect-combinations.mp4)
+[![A narrated video, under three minutes: the matrix of outer and inner effects; Try and Listen nested both ways around a failing program; Local and Try restoring the environment while the store keeps every write; WithObserve seeing the effects of spawned children; Gather children sharing one store under a scheduler that switches only where a task suspends; and a failing child whose siblings are not cancelled](assets/videos/effect-combinations.gif)](assets/videos/effect-combinations.mp4)
 
 ## Table of Contents
 

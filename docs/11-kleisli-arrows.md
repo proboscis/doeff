@@ -3,7 +3,7 @@
 `@do` produces a normal callable. Calling that callable performs
 pure call-time macro expansion and emits an `Expand` DoExpr directly.
 
-[![A narrated video, about two and a half minutes: calling a @do function building a Call node that run evaluates, the call built with no handler asked, arguments passed as given, programs composed by yielding programs, and @handler refusing a handler that breaks its contract](assets/videos/kleisli-arrows.jpg)](assets/videos/kleisli-arrows.mp4)
+[![A narrated video, about two and a half minutes: calling a @do function building a Call node that run evaluates, the call built with no handler asked, arguments passed as given, programs composed by yielding programs, and @handler refusing a handler that breaks its contract](assets/videos/kleisli-arrows.gif)](assets/videos/kleisli-arrows.mp4)
 
 ## Table of Contents
 
