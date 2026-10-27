@@ -77,8 +77,8 @@ flowchart LR
 | 値を作る時の :check の落ちを Malformed にする | 要る | 業務の失敗として返す約束。:check は今のまま defrecord の `__post_init__` が走らせ、解き手は ValueError と AssertionError だけを Malformed へ写す(他の例外は投げたまま — 今と同じ) | defrecord の :check(今のまま)と型の木・card 1 |
 | 合わない欄の場所と訳を返す | 要る | Malformed の欄。場所と reason の綴りは節 3 の規則で今と同じにする(画面の誤りの文と test が reason の文を読む — 例 `payload-invalid: passDefinition: Field required [missing]`) | 型の木・card 1 |
 | 値を JSON へ書く(既定値の欄は書かない) | 要る | 送る側と読む側の往復の約束。既定値と等しい欄は書かない(入れ子も)。float の綴りは今の bytes と同じにする(節 2 の「float の綴り」)。往復で JSON は同じでも、何でも受ける腕の在る union は値の腕が変わる事が在る(`(\| str OpaqueJson None)` の欄の OpaqueJson `"s"` は、書いて読み直すと str の `s`) | `wire_codec.py` の書き手・card 2 |
-| OpaqueJson の中身を読み直さずに埋める | 要る | 大きな JSON を 2 度読まないための作り。自前の書き手は持っている文字列を出力へそのまま書けるので、今の `OpaqueSplice`(印を置いて後で替える仕掛け)は要らなくなる | 書き手・card 2(`OpaqueSplice` と `__get_pydantic_core_schema__` を消す) |
-| JSON Schema を出す | 要る | 契約の file と照らす test が使う(読むのは properties・required・type・items・anyOf・enum・$defs・$ref・additionalProperties)。title と description は出さない(読む所が無い) | 型の木・card 2 |
+| OpaqueJson の中身を読み直さずに埋める | 要る | 大きな JSON を 2 度読まないための作り。自前の書き手は持っている文字列を出力へそのまま書けるので、今の `OpaqueSplice`(印を置いて後で替える仕掛け)は要らなくなる | 書き手・card 2(`OpaqueSplice` と `__get_pydantic_core_schema__` は、wire.hy の dump-json が自前の書き手へ替わる card 3 の commit で消す — それまでは pydantic の道が使う) |
+| JSON Schema を出す | 要る | 契約の file と照らす test が使う(読むのは properties・required・type・items・anyOf・enum・$defs・$ref・additionalProperties・title・default — 節 3b)。description は出さない(今の pydantic も出していない) | 型の木・card 2 |
 | 解き手を最初の使いまで組まない | 要る | 使わない型まで組むと起動が遅い(前の測りで 547 個・1.84 秒)。型の木は最初の parse・dump・json-schema で 1 度組み、型に覚える。free-threading の Python なので、組むのは lock の中で 1 度にする | `WireShape` の codec の欄(遅れて組む入れ物)・card 1 |
 | 表の行を緩く読む(文字列の数を数にする等) | 決めていない — 節 6 の確かめ方で決める | 表の行は今 `validate_python`(pydantic の lax・Python の読み方)で読む。行は自分の書き手が JSON の値で書くので strict でも通る見込み。通らない行が在れば、緩い読みを残さず、行を書き直してから strict に揃える | card 4 |
 | 解く前に値を作り替える(BeforeValidator の 1 か所) | 形を替えて要る | `LooseText`・`LooseInteger`(agora-controllers の custody_body/protocol/identity.hy)。節 3 の union の規則(何でも受ける腕は最後)で `(\| str OpaqueJson None)`・`(\| int OpaqueJson None)` と書ける | defwire の union の欄・card 6 |
@@ -203,6 +203,39 @@ flowchart LR
 - 読み方: FrozenMap は object・tuple は配列・OpaqueJson は `json.loads(text)`・str の派生(StrEnum)は str・int の派生は int(bool は真偽)。
 - JSON の値でない物(set・任意の object)は TypeError(今の `json.dumps` と同じ)。
 
+## 3b. 書き出しと JSON Schema(card 2 — ki-f6551d717654)
+
+書き手(`Codec.encode`・`Codec.encode_json`)と JSON Schema(`Codec.schema`)は、解き手と同じ型の木の判じ手が持つ。今の pydantic の
+dump・dump-json・json-schema を pydantic 2.13.4 で走らせて測った形に揃えた(照らしは `packages/doeff-hy/tests/test_wire_codec_write.py`)。
+
+書き出しの規則:
+
+- 欄は宣言の順に wire の名で書く。値が既定値(作り手の欄は作り手の作る値)と `==` で等しい欄は書かない(入れ子の型の欄も)。NaN は NaN と等しくないので書く。既定値の無い欄は None でも null を書く。
+- union の腕は、宣言の順に型ちょうどの腕(strict)、無ければ宣言の順に書き直せる腕(lax — float の腕は整数と真偽も・int の腕は真偽も)、どれも合わなければ値の型から書く(pydantic と同じ)。`(| float int)` の `1` は `1`・`True` は `1.0`。
+- 欄の型に合わない値(構築子は型を確かめないので入りうる)は、pydantic と同じく直すか値の型から書く: float の欄の整数と真偽は float・int の欄の真偽は整数・他は値の型から。
+- 値の型から書く時(object・素の dict の欄の中身と、合わない値)は、NaN と inf は null・tuple と set は配列・defenum は値の綴り・object の key は文字列の派生と defenum は値の綴り・真偽は `true` / `false`・None は `None`・数は数の綴り。JSON に書けない値は TypeError。
+- 型のある float の欄の NaN と inf は、dump(JSON の値)では float のまま・dump-json では null。
+- OpaqueJson: dump-json は持っている文字列を読み直さずに出力へ埋める(区切りの空白も綴りもそのまま)。`NaN`・`Infinity` の綴りを含む文字列と dump は読み直して値の型から書く(今と同じ)。
+- 文字列の書き出しは `"` と `\` と制御文字だけを escape し、孤立した surrogate を含む文字列は dump-json が ValueError で断る(pydantic も断る)。dump はそのまま。
+- float の綴りは節 2 の「float の綴り」。乱数の float 約 6,500 個で pydantic と同じ綴りを確かめた。
+
+JSON Schema の規則(pydantic と同じ形・鍵の順):
+
+- defwire の型と defenum は `$defs` に置き(名は型の名・同じ名の違う型が在れば module と qualname — `wire_codec_types__Note`)、欄からは `$ref`。最上位の型は形をそのまま置く。
+- 欄の schema に、既定値の在る欄は `default`(作り手の欄は書かない)、`title`(wire の名を `str.title()` して `_` を空白に — 入れ子の defwire・defenum とその `(| T None)` には付けない)を足す。
+- `title` は出す。設計の初めは「出さない」としたが、agora-controllers の `agent-env/cli/tests/test_health.hy`(reader-mismatches)が `title` と `default` を読み、`scripts/project_health_contract.hy` が JSON Schema の全体を契約の file へ書いて bytes で照らすため。`description` は出さない(今の pydantic も、defwire の型の `__doc__` が dataclass の綴りなので出していない)。
+- 型の形: str `string`・int `integer`・float `number`・bool `boolean`・None `null`・Literal は 1 つなら `const`・2 つ以上は `enum`・tuple と list は `items`・frozenset は `uniqueItems`・長さちょうどの tuple は `prefixItems`・`minItems`・`maxItems`・`(get dict #(str T))` は `additionalProperties` T・素の dict は `additionalProperties` true・object と OpaqueJson は `{}`。
+- union は `anyOf`(None の腕は最後の `{"type": "null"}`・同じ形の腕は 1 つに・1 つになれば anyOf で包まない)。
+- 鍵の順は pydantic の sort と同じ(properties と default の直下は宣言の順・他は鍵の文字の順)。
+
+pydantic と違う所(どれも pydantic の出力が読み手の受けない形だった所 — 照らしの test は違いとして示す):
+
+| 所 | 今の pydantic | 自前 |
+|---|---|---|
+| 入れ子の defwire の既定値(JSON Schema の default) | 欄の Python の名で全部の欄(`{"leaf_name": "a", "n": 0}` — 読み手は断る) | 書き手の書く形(`{"leafName": "a"}`) |
+| OpaqueJson の既定値(JSON Schema の default) | `{"text": "<文字列>"}` | 中の JSON の値 |
+| object・素の dict の欄の中の defwire の値・OpaqueJson・FrozenMap | 欄の Python の名・`{"text": …}`・書けずに PydanticSerializationError | その型の書き出し(wire の名・中の JSON の値・object) |
+
 ## 4. 置き場と API
 
 | 物 | 置き場 | 中身 |
@@ -266,7 +299,7 @@ census(agora exec x20261027020405-8aa9497b・agora-controllers の本体の欄 6
 - 断った入力: Malformed の fields の (場所・種類) の列が等しい。msg は missing・enum・value_error の頭の綴りだけを比べる。test の依存の pydantic の版は固定する。
 - 何でも受ける腕と None 以外の腕が混ざった union の欄は照らしから外し、そういう欄の数を出す(規則 4 は節 3 の単体の test が確かめる)。
 - 書き出し: dump は等しく、dump-json は bytes が等しい(frozenset の欄は集合として比べる)。
-- JSON Schema: title と description を両方から外して等しい。
+- JSON Schema: 鍵の順まで等しい(`json.dumps` が等しい)。違うのは節 3b の表の既定値の 2 つだけで、その欄は書き手の形と照らす。
 - 不一致 0 で wire.hy を替える。
 
 ## 付録 A. 今の振る舞いを確かめた走り

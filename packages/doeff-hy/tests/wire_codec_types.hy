@@ -88,3 +88,33 @@
 (defwire LoopA {:names :camel} (setv #^ (get Optional "LoopB") b None))
 (defwire LoopB {:names :camel} (setv #^ (| LoopA None) a None))
 (defwire Unresolved {:names :camel} (#^ "NoSuchType" x))
+
+
+;; 書き手と JSON Schema の検(test_wire_codec_write.py・card ki-f6551d717654)に使う型。
+;; 既定値の形ごとの欄(入れ子の defwire・defenum・frozenset・NaN・OpaqueJson・object・作り手)と、(| T None) の title の付け方。
+(defwire Leaf {:names :camel} (#^ str leaf-name) (setv #^ int n 0))
+(defwire Defaults
+  {:names :camel :unknown :reject}
+  (#^ (| Leaf None) maybe-leaf)
+  (#^ (| Color None) maybe-color)
+  (#^ Color color)
+  (setv #^ Leaf leaf (Leaf :leaf-name "a")
+        #^ (get tuple #(Leaf ...)) leaves #((Leaf :leaf-name "b" :n 2))
+        #^ (get dict #(str Leaf)) by-name (field :default-factory dict)
+        #^ (get list (| int None)) holes (field :default-factory list)
+        #^ (get tuple #()) empty #()
+        #^ (| (get Literal "a") int) lit-or-int 0
+        #^ (| None str) none-first None
+        #^ (get frozenset int) ids (frozenset #(3 1 2))
+        #^ float not-a-number (float "nan")
+        #^ float infinite (float "inf")
+        #^ Color light Color.BLUE
+        #^ (| Color int) color-or-int 1
+        #^ OpaqueJson spec (OpaqueJson.of {"k" [1 2]})
+        #^ object pair #(1 2)
+        #^ dict table (field :default-factory (fn [] {"a" 1}))
+        #^ (get Optional (get tuple #(int str))) maybe-pair None))
+
+;; 同じ名の違う型(wire_codec_types_other の Note)を欄に持つ型 — $defs の名に module を付ける。
+(import wire_codec_types_other)
+(defwire BothNotes {:names :camel} (#^ Note mine) (#^ wire_codec_types_other.Note theirs))
