@@ -35,8 +35,8 @@ import threading
 import types
 import typing
 from collections import Counter
-from collections.abc import Callable, Mapping
-from typing import Any, Final, ForwardRef, Generic, TypeVar, cast, final
+from collections.abc import Callable, Collection, Mapping
+from typing import Any, Final, ForwardRef, Generic, TypeAlias, TypeGuard, TypeVar, cast, final
 
 # 名を _ で始めて読む: この module の公開の名は Codec と codec_of だけ(Malformed は wire_malformed・OpaqueJson は json_value が出す)。
 from doeff_hy.json_value import OpaqueJson as _OpaqueJson
@@ -47,6 +47,14 @@ _T = TypeVar("_T")
 
 #: 誤り 1 つ: (場所の列・種類・msg)。場所は wire の名・配列の位置・dict の key・union の腕の名の列(値の全体は空の列)。
 _Problem = tuple[tuple[str | int, ...], str, str]
+
+#: 書き出した JSON の値と JSON Schema の値(判じ手の encode・schema の答え)。_Raw は文字列へ書く途中の OpaqueJson の文字列・
+#: _RefMark は組み終える前の $ref の行き先で、どちらも Codec の答えには残らない。
+_Json: TypeAlias = (
+    "dict[str, _Json] | list[_Json] | str | int | float | bool | None | _Raw | _RefMark"
+)
+#: JSON Schema の形 1 つ(object)。
+_Schema: TypeAlias = "dict[str, _Json]"
 
 
 class _RefusedError(Exception):
@@ -101,7 +109,7 @@ class _Node:
         """JSON の素の値を、この型の値へ解いて確かめる(受けない値は _RefusedError — 誤りの場所はこの判じ手の所から)。"""
         raise NotImplementedError
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         """この型の値を JSON の素の値へ書く(raw = 文字列へ書く途中 — OpaqueJson の文字列を _Raw のまま残す)。型の合わない値は、
         今の pydantic と同じく値の型から書く(_inferred)。"""
         return _inferred(value, raw)
@@ -110,7 +118,7 @@ class _Node:
         """union の腕として、値がこの型の値か(書く時に腕を選ぶ — strict は型ちょうど・lax は書き直せる型も)。"""
         raise NotImplementedError
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         """この型の JSON Schema(defwire の型と defenum は defs に置いて $ref で指す)。"""
         raise NotImplementedError
 
@@ -132,7 +140,7 @@ class _Str(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, str)
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"type": "string"}
 
 
@@ -146,7 +154,7 @@ class _Int(_Node):
             return value
         raise _refuse("int_type", "Input should be a valid integer")
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         if type(value) is int:
             return value
         if isinstance(value, int):  # 真偽と IntEnum も整数で書く(今の pydantic と同じ)
@@ -156,7 +164,7 @@ class _Int(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, int) and not (strict and isinstance(value, bool))
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"type": "integer"}
 
 
@@ -177,7 +185,7 @@ class _Float(_Node):
                 return math.inf if cast(int, value) > 0 else -math.inf
         raise _refuse("float_type", "Input should be a valid number")
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         # 型のある float の欄は NaN・inf も float のまま(dump)— 文字列へ書く時に null になる。整数と真偽は float に直す(今と同じ)。
         if type(value) is float:
             return value
@@ -193,7 +201,7 @@ class _Float(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, float) or (not strict and isinstance(value, int))
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"type": "number"}
 
 
@@ -210,7 +218,7 @@ class _Bool(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, bool)
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"type": "boolean"}
 
 
@@ -226,7 +234,7 @@ class _NoneOnly(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return value is None
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"type": "null"}
 
 
@@ -234,7 +242,7 @@ class _NoneOnly(_Node):
 class _Enum(_Node):
     """defenum(StrEnum)— member の値の綴りの文字列だけを受ける(member の名では受けない)。"""
 
-    __slots__ = ("_members", "_msg", "enum_type")
+    __slots__ = ("_members", "_msg", "_spellings", "enum_type")
     kinds = frozenset({"str"})
     rank = 2  # str と Literal の腕が先(pydantic は文字列に str の腕を選ぶ)
 
@@ -243,6 +251,9 @@ class _Enum(_Node):
         self.enum_type = enum_type
         self._members: dict[str, enum.Enum] = {
             cast(str, member.value): member for member in enum_type
+        }
+        self._spellings: dict[enum.Enum, str] = {
+            member: spelling for spelling, member in self._members.items()
         }
         self._msg = f"Input should be {_expected(tuple(self._members))}"
 
@@ -253,23 +264,23 @@ class _Enum(_Node):
                 return member
         raise _refuse("enum", self._msg)
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         if isinstance(value, self.enum_type):
-            return cast(str, value.value)
+            return self._spellings[value]
         return _inferred(value, raw)
 
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, self.enum_type)
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return defs.ref(self.enum_type, self.definition)
 
     def titled(self) -> bool:
         return False
 
-    def definition(self, defs: "_Definitions") -> dict[str, object]:
+    def definition(self, defs: "_Definitions") -> _Schema:
         """$defs に置く形(値の綴りの並び・型の名)。"""
-        return {"enum": list(self._members), "title": self.enum_type.__name__, "type": "string"}
+        return {"enum": [*self._members], "title": self.enum_type.__name__, "type": "string"}
 
 
 @final
@@ -293,10 +304,10 @@ class _Literal(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, str) and value in self._values
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         if len(self._order) == 1:
             return {"const": self._order[0], "type": "string"}
-        return {"enum": list(self._order), "type": "string"}
+        return {"enum": [*self._order], "type": "string"}
 
 
 #: 判じ手 1 回の結末: (True, 値) か (False, 誤りの列)。誤りを全部集める所(欄・要素・腕)が、例外を内包表記の中で受けるために使う。
@@ -339,46 +350,48 @@ def _items(node: _Node, values: list[object]) -> list[object]:
 class _Array(_Node):
     """長さの決まらない配列: (get tuple #(T ...))・(get list T)・(get frozenset T)。"""
 
-    __slots__ = ("_item", "_kind", "_make")
+    __slots__ = ("_item", "_kind", "_make", "_own")
     kinds = frozenset({"array"})
 
     def __init__(
-        self, label: str, item: _Node, kind: str, make: Callable[[list[object]], object]
+        self,
+        label: str,
+        item: _Node,
+        kind: str,
+        make: Callable[[list[object]], object],
+        own: tuple[type, ...],
     ) -> None:
         super().__init__(label)
         self._item = item
         self._kind = kind
         self._make = make
+        self._own = (
+            own  # 書く時に strict で受ける入れ物(宣言の入れ物ちょうど — frozenset の欄は set も)
+        )
 
     def decode(self, value: object) -> object:
         if type(value) is list:
             return self._make(_items(self._item, cast(list[object], value)))
         raise _refuse(self._kind, "Input should be a valid array")
 
-    def encode(self, value: object, raw: bool) -> object:
-        if isinstance(value, list | tuple | set | frozenset):
+    def encode(self, value: object, raw: bool) -> _Json:
+        if _is_array(value):
             item = self._item
-            return [item.encode(element, raw) for element in cast(list[object], value)]
+            return [item.encode(element, raw) for element in value]
         return _inferred(value, raw)
 
     def fits(self, value: object, strict: bool) -> bool:
-        # strict は宣言の入れ物ちょうど(frozenset の欄は set も)・lax はどの配列の入れ物も。要素も同じ strict で確かめる。
-        if not strict:
-            containers: tuple[type, ...] = (list, tuple, set, frozenset)
-        elif self._make is frozenset:
-            containers = (frozenset, set)
-        else:
-            containers = (cast(type, self._make),)
+        # strict は宣言の入れ物ちょうど・lax はどの配列の入れ物も。要素も同じ strict で確かめる。
         item = self._item
-        return isinstance(value, containers) and all(
-            item.fits(element, strict) for element in cast(list[object], value)
+        return (
+            _is_array(value)
+            and isinstance(value, self._own if strict else _ARRAYS)
+            and all(item.fits(element, strict) for element in value)
         )
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
-        shape: dict[str, object] = {"items": self._item.schema(defs), "type": "array"}
-        if self._make is frozenset:
-            shape["uniqueItems"] = True
-        return shape
+    def schema(self, defs: "_Definitions") -> _Schema:
+        shape: _Schema = {"items": self._item.schema(defs), "type": "array"}
+        return {**shape, "uniqueItems": True} if self._make is frozenset else shape
 
 
 @final
@@ -412,30 +425,28 @@ class _FixedTuple(_Node):
             )
         )
 
-    def encode(self, value: object, raw: bool) -> object:
-        if isinstance(value, list | tuple) and len(cast(tuple[object, ...], value)) == len(
-            self._items
-        ):
+    def encode(self, value: object, raw: bool) -> _Json:
+        if _is_array(value) and isinstance(value, list | tuple) and len(value) == len(self._items):
             return [
-                node.encode(element, raw)
-                for node, element in zip(self._items, cast(tuple[object, ...], value), strict=True)
+                node.encode(element, raw) for node, element in zip(self._items, value, strict=True)
             ]
         return _inferred(value, raw)
 
     def fits(self, value: object, strict: bool) -> bool:
-        if not isinstance(value, tuple if strict else list | tuple):
-            return False
-        values = cast(tuple[object, ...], value)
-        return len(values) == len(self._items) and all(
-            node.fits(element, strict) for node, element in zip(self._items, values, strict=True)
+        return (
+            _is_array(value)
+            and isinstance(value, tuple if strict else list | tuple)
+            and len(value) == len(self._items)
+            and all(
+                node.fits(element, strict) for node, element in zip(self._items, value, strict=True)
+            )
         )
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         count = len(self._items)
-        shape: dict[str, object] = {"maxItems": count, "minItems": count, "type": "array"}
-        if count:
-            shape["prefixItems"] = [node.schema(defs) for node in self._items]
-        return shape
+        shape: _Schema = {"maxItems": count, "minItems": count, "type": "array"}
+        prefix: list[_Json] = [node.schema(defs) for node in self._items]
+        return {**shape, "prefixItems": prefix} if count else shape
 
 
 @final
@@ -461,25 +472,24 @@ class _Dict(_Node):
             )
         )
 
-    def encode(self, value: object, raw: bool) -> object:
-        if isinstance(value, Mapping):
+    def encode(self, value: object, raw: bool) -> _Json:
+        if _is_mapping(value):
             item = self._item
-            return {
-                _json_key(key): item.encode(element, raw)
-                for key, element in cast(Mapping[object, object], value).items()
-            }
+            return {_json_key(key): item.encode(element, raw) for key, element in value.items()}
         return _inferred(value, raw)
 
     def fits(self, value: object, strict: bool) -> bool:
-        if not isinstance(value, dict if strict else Mapping):
-            return False
         item = self._item
-        return all(
-            isinstance(key, str) and item.fits(element, strict)
-            for key, element in cast(Mapping[object, object], value).items()
+        return (
+            _is_mapping(value)
+            and (not strict or isinstance(value, dict))
+            and all(
+                isinstance(key, str) and item.fits(element, strict)
+                for key, element in value.items()
+            )
         )
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"additionalProperties": self._item.schema(defs), "type": "object"}
 
 
@@ -498,7 +508,7 @@ class _BareDict(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, dict if strict else Mapping)
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {"additionalProperties": True, "type": "object"}
 
 
@@ -515,7 +525,7 @@ class _Anything(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return True
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {}
 
 
@@ -529,7 +539,7 @@ class _Opaque(_Node):
     def decode(self, value: object) -> object:
         return _OpaqueJson.of(cast(Any, value))
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         if isinstance(value, _OpaqueJson):
             return _opaque_out(value, raw)
         return _inferred(value, raw)
@@ -537,7 +547,7 @@ class _Opaque(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, _OpaqueJson)
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return {}
 
 
@@ -631,7 +641,7 @@ class _WireNode(_Node):
         except AssertionError as error:
             raise _refuse("assertion_error", f"Assertion failed, {error}") from None
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         # 欄は宣言の順に wire の名で書き、既定値と等しい欄は書かない(入れ子の型の欄も、その型の書き出しが同じく省く)。
         # 既定値の無い欄は None でも書く(null)。
         if not isinstance(value, self.wire_type):
@@ -645,20 +655,24 @@ class _WireNode(_Node):
     def fits(self, value: object, strict: bool) -> bool:
         return type(value) is self.wire_type if strict else isinstance(value, self.wire_type)
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
+    def schema(self, defs: "_Definitions") -> _Schema:
         return defs.ref(self.wire_type, self.definition)
 
     def titled(self) -> bool:
         return False
 
-    def definition(self, defs: "_Definitions") -> dict[str, object]:
+    def definition(self, defs: "_Definitions") -> _Schema:
         """この型の object の形(欄は wire の名・required は既定値の無い欄・:unknown :reject は additionalProperties false・title は
         型の名)— 今の pydantic の json_schema と同じ形(節 3b)。"""
-        required = [field.wire for field in self.fields if field.required]
-        return {
-            "properties": {field.wire: _field_schema(field, defs) for field in self.fields},
+        properties: _Schema = {field.wire: _field_schema(field, defs) for field in self.fields}
+        required: list[_Json] = [field.wire for field in self.fields if field.required]
+        shape: _Schema = {
+            "properties": properties,
             "title": self.wire_type.__name__,
             "type": "object",
+        }
+        return {
+            **shape,
             **({"required": required} if required else {}),
             **({"additionalProperties": False} if self._reject else {}),
         }
@@ -739,7 +753,7 @@ class _Union(_Node):
                 continue
         return _NO_ARM if best is None else best[0]
 
-    def encode(self, value: object, raw: bool) -> object:
+    def encode(self, value: object, raw: bool) -> _Json:
         # 書く腕の選び方は今の pydantic と同じ: 宣言の順に型ちょうどの腕(strict)、無ければ宣言の順に書き直せる腕(lax — float の腕は
         # 整数と真偽も)、どれも合わなければ値の型から書く。
         if value is None and self._nullable:
@@ -758,8 +772,8 @@ class _Union(_Node):
             arm.fits(value, strict) for arm in self._arms
         )
 
-    def schema(self, defs: "_Definitions") -> dict[str, object]:
-        nulls: tuple[dict[str, object], ...] = ({"type": "null"},) if self._nullable else ()
+    def schema(self, defs: "_Definitions") -> _Schema:
+        nulls: tuple[_Schema, ...] = ({"type": "null"},) if self._nullable else ()
         return _any_of((*(arm.schema(defs) for arm in self._arms), *nulls))
 
     def titled(self) -> bool:
@@ -903,7 +917,7 @@ def _tuple(
     """(get tuple #(T ...))は長さの決まらない配列・(get tuple #(T1 T2 …))は長さちょうどの配列。"""
     if len(args) == 2 and args[1] is Ellipsis:
         item = _build(args[0], namespace, f"{where}[]")
-        return _Array(f"tuple[{item.label}, ...]", item, "tuple_type", tuple)
+        return _Array(f"tuple[{item.label}, ...]", item, "tuple_type", tuple, (tuple,))
     items = tuple(_build(arg, namespace, f"{where}[{index}]") for index, arg in enumerate(args))
     return _FixedTuple(f"tuple[{', '.join(item.label for item in items)}]", items)
 
@@ -915,7 +929,7 @@ def _list(
     if len(args) != 1:
         raise TypeError(f"{where}: 要素の型の無い list {annotation!r} は語彙の外")
     item = _build(args[0], namespace, f"{where}[]")
-    return _Array(f"list[{item.label}]", item, "list_type", list)
+    return _Array(f"list[{item.label}]", item, "list_type", list, (list,))
 
 
 def _frozenset(
@@ -925,7 +939,7 @@ def _frozenset(
     item = _build(args[0], namespace, f"{where}[]") if len(args) == 1 else None
     if item is None or (item is not _STR and item is not _INT):
         raise TypeError(f"{where}: frozenset の要素は str か int だけ: {annotation!r}")
-    return _Array(f"frozenset[{item.label}]", item, "frozen_set_type", frozenset)
+    return _Array(f"frozenset[{item.label}]", item, "frozen_set_type", frozenset, (frozenset, set))
 
 
 def _dict(
@@ -978,9 +992,7 @@ def _wire_node(wire_type: type) -> _WireNode:
                         field.type, namespace, f"defwire {wire_type.__qualname__} の欄 {field.name}"
                     ),
                     field.default,
-                    None
-                    if field.default_factory is dataclasses.MISSING
-                    else cast(Callable[[], object], field.default_factory),
+                    None if field.default_factory is dataclasses.MISSING else field.default_factory,
                 )
                 for field in dataclasses.fields(wire_type)
                 if field.init
@@ -1105,9 +1117,21 @@ class _Raw:
 #: そのまま埋めると JSON でなくなる綴り(Python の json.dumps が NaN・inf をそう書く)。含む文字列は読み直して書く(NaN は null — 今と同じ)。
 _NOT_STRICT_JSON: Final = ("NaN", "Infinity")
 _ENCODE_STRING: Final = json.encoder.encode_basestring
+#: 配列に書く入れ物(値の型から書く時と、union の腕を lax で当てる時)。
+_ARRAYS: Final = (list, tuple, set, frozenset)
 
 
-def _opaque_out(value: _OpaqueJson, raw: bool) -> object:
+def _is_array(value: object) -> TypeGuard[Collection[object]]:
+    """配列に書く入れ物か(list・tuple・set・frozenset — 文字列と dict は入れない)。要素は読むだけなので object として絞る。"""
+    return isinstance(value, _ARRAYS)
+
+
+def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    """object に書く写像か(dict と凍らせた FrozenMap)。key と値は読むだけなので object として絞る。"""
+    return isinstance(value, Mapping)
+
+
+def _opaque_out(value: _OpaqueJson, raw: bool) -> _Json:
     """OpaqueJson の書き出し: 文字列へ書く時は持っている文字列をそのまま埋め、JSON の値へ書く時と NaN・Infinity を含む時は読み直して
     値の型から書く(今の pydantic の dump・dump-json と同じ)。"""
     text = value.text
@@ -1130,26 +1154,22 @@ def _json_key(key: object) -> str:
     raise TypeError(f"JSON の object の key に書けない: {type(key).__name__}")
 
 
-def _inferred(value: object, raw: bool) -> object:
+def _inferred(value: object, raw: bool) -> _Json:
     """型の木の外の値(object・素の dict の欄の中身と、欄の型に合わない値)を、値の型から JSON の素の値へ書く。今の pydantic の値の型
     からの書き出しと同じ: NaN・inf は null・tuple と set は配列・defenum は値の綴り。defwire の値と OpaqueJson はその型の書き出し
     (pydantic は欄の Python の名・OpaqueJson の欄 text を書いていた — 節 3b)。JSON に書けない値は TypeError。"""
-    kind = type(value)
-    if kind is str or kind is int or kind is bool or value is None:
+    if value is None or type(value) is str or type(value) is int or type(value) is bool:
         return value
-    if kind is float:
-        return value if math.isfinite(cast(float, value)) else None
-    if isinstance(value, Mapping):
-        return {
-            _json_key(key): _inferred(item, raw)
-            for key, item in cast(Mapping[object, object], value).items()
-        }
-    if isinstance(value, list | tuple | set | frozenset):
-        return [_inferred(item, raw) for item in cast(list[object], value)]
+    if type(value) is float:
+        return value if math.isfinite(value) else None
+    if _is_mapping(value):
+        return {_json_key(key): _inferred(item, raw) for key, item in value.items()}
+    if _is_array(value):
+        return [_inferred(item, raw) for item in value]
     return _inferred_named(value, raw)
 
 
-def _inferred_named(value: object, raw: bool) -> object:
+def _inferred_named(value: object, raw: bool) -> _Json:
     """_inferred の続き — 素の JSON の型でない値(OpaqueJson・defwire の値・defenum・str や数の派生)を書く。"""
     if isinstance(value, _OpaqueJson):
         return _opaque_out(value, raw)
@@ -1190,40 +1210,35 @@ def _string_text(text: str) -> str:
     return _ENCODE_STRING(text)
 
 
-#: 書き出した JSON の素の値のうち、入れ物でない物の綴り(型ちょうどで引く — encode は派生の型を素の型に直してから渡す)。
-_SCALAR_TEXT: Final[dict[type, Callable[[object], str]]] = {
-    str: lambda value: _string_text(cast(str, value)),
-    bool: lambda value: "true" if value else "false",
-    int: lambda value: int.__repr__(cast(int, value)),
-    float: lambda value: _float_text(cast(float, value)),
-    type(None): lambda _: "null",
-    _Raw: lambda value: cast(_Raw, value).text,
-}
-
-
-def _json_text(value: object) -> str:
+def _json_text(value: _Json) -> str:
     """書き出した JSON の素の値を JSON の文字列にする(区切りの空白無し・ensure_ascii 無し — 今の dump-json と同じ bytes)。"""
     # 多い順に型を見る(文字列・object・配列)。join には内包表記の list を渡す(generator より速い — 1 回の書き出しで数十回呼ぶ所)。
-    kind = type(value)
-    if kind is str:
-        return _string_text(cast(str, value))
-    if kind is dict:
+    if isinstance(value, str):
+        return _string_text(value)
+    if isinstance(value, dict):
         return (
             "{"
-            + ",".join(
-                [
-                    _string_text(key) + ":" + _json_text(item)
-                    for key, item in cast(dict[str, object], value).items()
-                ]
-            )
+            + ",".join([_string_text(key) + ":" + _json_text(item) for key, item in value.items()])
             + "}"
         )
-    if kind is list:
-        return "[" + ",".join([_json_text(item) for item in cast(list[object], value)]) + "]"
-    spell = _SCALAR_TEXT.get(kind)
-    if spell is None:
-        raise TypeError(f"書き出しの値でない: {kind.__name__}")
-    return spell(value)
+    if isinstance(value, list):
+        return "[" + ",".join([_json_text(item) for item in value]) + "]"
+    return _scalar_text(value)
+
+
+def _scalar_text(value: _Json) -> str:
+    """入れ物でない書き出しの値の綴り(数・真偽・null と、OpaqueJson の文字列 — 真偽は int より先に見る)。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return int.__repr__(value)
+    if isinstance(value, float):
+        return _float_text(value)
+    if isinstance(value, _Raw):
+        return value.text
+    if value is None:
+        return "null"
+    raise TypeError(f"書き出しの値でない: {type(value).__name__}")
 
 
 # --- JSON Schema ---------------------------------------------------------------------------------------------------------------
@@ -1247,11 +1262,9 @@ class _Definitions:
 
     def __init__(self) -> None:
         self.marks: dict[type, _RefMark] = {}
-        self.shapes: dict[type, dict[str, object]] = {}
+        self.shapes: dict[type, _Schema] = {}
 
-    def ref(
-        self, target: type, build: Callable[["_Definitions"], dict[str, object]]
-    ) -> dict[str, object]:
+    def ref(self, target: type, build: Callable[["_Definitions"], _Schema]) -> _Schema:
         """型を $defs に(まだ無ければ組んで)置き、それを指す $ref を返す。"""
         mark = self.marks.get(target)
         if mark is None:
@@ -1273,7 +1286,7 @@ class _Definitions:
         }
 
 
-def _schema_default(value: object) -> object:
+def _schema_default(value: object) -> _Json:
     """JSON Schema の欄の default — 既定値を値の型から書く(型のある float の NaN・inf は float のまま — 今の pydantic と同じ)。
     入れ子の defwire と OpaqueJson の既定値は書き手の書く形(pydantic は欄の Python の名と OpaqueJson の欄 text を書いていた — 節 3b)。"""
     if type(value) is float:
@@ -1281,72 +1294,74 @@ def _schema_default(value: object) -> object:
     return _inferred(value, False)
 
 
-def _field_schema(field: _WireField, defs: _Definitions) -> dict[str, object]:
+def _field_schema(field: _WireField, defs: _Definitions) -> _Schema:
     """欄 1 つの JSON Schema: 型の形に、既定値(作り手の欄は書かない)と title(wire の名から — 型の側が title を持つ defwire・defenum と
     その (| T None) には付けない)を足す(今の pydantic と同じ)。"""
-    default = (
+    default: _Schema = (
         {"default": _schema_default(field.default)}
         if field.default is not dataclasses.MISSING
         else {}
     )
-    title = {"title": field.wire.title().replace("_", " ").strip()} if field.node.titled() else {}
+    title: _Schema = (
+        {"title": field.wire.title().replace("_", " ").strip()} if field.node.titled() else {}
+    )
     return {**field.node.schema(defs), **default, **title}
 
 
-def _json_hashable(value: object) -> object:
+def _json_hashable(value: _Json) -> object:
     """JSON Schema の値を、同じ形の腕を 1 つにするための hash できる形へ(pydantic の _make_json_hashable と同じ)。"""
     if isinstance(value, dict):
-        return tuple(
-            sorted(
-                (key, _json_hashable(item)) for key, item in cast(dict[str, object], value).items()
-            )
-        )
+        return tuple(sorted((key, _json_hashable(item)) for key, item in value.items()))
     if isinstance(value, list):
-        return tuple(_json_hashable(item) for item in cast(list[object], value))
+        return tuple(_json_hashable(item) for item in value)
     return value
 
 
-def _any_of(members: tuple[dict[str, object], ...]) -> dict[str, object]:
+def _arms_of(schema: _Schema) -> list[_Schema]:
+    """union の腕 1 つの形を、anyOf だけの形なら開いて並べる(pydantic の get_flattened_anyof と同じ)。"""
+    arms = schema.get("anyOf")
+    if len(schema) == 1 and isinstance(arms, list):
+        return [arm for arm in arms if isinstance(arm, dict)]
+    return [schema]
+
+
+def _any_of(members: tuple[_Schema, ...]) -> _Schema:
     """union の JSON Schema(今の pydantic と同じ: anyOf だけの腕は開き・同じ形の腕は 1 つにし・腕が 1 つなら anyOf で包まない)。"""
-    flat = [
-        member
-        for schema in members
-        for member in (
-            cast(list[dict[str, object]], schema["anyOf"])
-            if len(schema) == 1 and "anyOf" in schema
-            else (schema,)
-        )
-    ]
-    unique = list({_json_hashable(member): member for member in flat}.values())
-    return unique[0] if len(unique) == 1 else {"anyOf": unique}
+    unique = list(
+        {_json_hashable(arm): arm for member in members for arm in _arms_of(member)}.values()
+    )
+    if len(unique) == 1:
+        return unique[0]
+    arms: list[_Json] = [*unique]
+    return {"anyOf": arms}
 
 
-def _sorted_schema(value: object, parent: str | None, names: dict[type, str]) -> object:
+def _sorted_schema(value: _Json, parent: str | None, names: dict[type, str]) -> _Json:
     """組んだ JSON Schema の鍵を今の pydantic と同じ順に並べ($defs の名も鍵の順)、$ref の印を名に替える。並べ方は pydantic の sort と
     同じ: properties と default の直下は宣言の順のまま・他は鍵の文字の順・list の要素は親の鍵を引き継ぐ(契約の file を bytes で照らす
     書き手が在るので順も揃える)。"""
     if isinstance(value, dict):
-        shape = cast(dict[str, object], value)
-        keys = list(shape) if parent in ("properties", "default") else sorted(shape)
-        return {key: _sorted_schema(shape[key], key, names) for key in keys}
+        keys = list(value) if parent in ("properties", "default") else sorted(value)
+        return {key: _sorted_schema(value[key], key, names) for key in keys}
     if isinstance(value, list):
-        return [_sorted_schema(item, parent, names) for item in cast(list[object], value)]
+        return [_sorted_schema(item, parent, names) for item in value]
     if isinstance(value, _RefMark):
         return f"#/$defs/{names[value.target]}"
     return value
 
 
-def _schema_of(node: _Node) -> dict[str, object]:
+def _schema_of(node: _Node) -> _Schema:
     """型の木の根の JSON Schema。最上位の defwire の型と defenum は $ref でなく形をそのまま置き、入れ子の型は $defs に置く。"""
     defs = _Definitions()
     top = node.definition(defs) if isinstance(node, _WireNode | _Enum) else node.schema(defs)
     names = defs.names()
-    whole = (
-        {**top, "$defs": {names[target]: shape for target, shape in defs.shapes.items()}}
-        if defs.shapes
-        else top
-    )
-    return cast(dict[str, object], _sorted_schema(whole, None, names))
+    nested: _Schema = {names[target]: shape for target, shape in defs.shapes.items()}
+    whole = _sorted_schema({**top, "$defs": nested} if nested else top, None, names)
+    if not isinstance(whole, dict):
+        raise TypeError(
+            "JSON Schema の根が object でない"
+        )  # 根は object の形を並べ替えた物 — 起きない
+    return whole
 
 
 # --- 公開の口 ------------------------------------------------------------------------------------------------------------------
@@ -1389,7 +1404,7 @@ class Codec(Generic[_T]):
         持っている文字列を読み直さずに埋める)。孤立した surrogate を含む文字列は ValueError・JSON に書けない値は TypeError。"""
         return _json_text(self.node.encode(value, True))
 
-    def schema(self) -> dict[str, object]:
+    def schema(self) -> Mapping[str, object]:
         """この型の JSON Schema(今の json-schema と同じ形・鍵の順 — 違いは設計の記録の節 3b)。呼ぶたびに組む(契約の file と照らす
         所だけが使う — 型には覚えない)。"""
         return _schema_of(self.node)
