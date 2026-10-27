@@ -23,7 +23,10 @@ dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも
   不一致 0 を示した後)。
 - 表の行の型(素の defrecord)は ``row_codec_of`` が同じ判じ手で組む(欄は Python の名・知らない欄は読み捨て・書きは全部の欄 —
   doeff-records の typed.hy が使う・設計の記録の節 6・card ki-138189339298)。
-- この module は pydantic を import しない(標準の module と doeff_hy.json_value・doeff_hy.wire_malformed だけを読む —
+- decode と encode_json は先に速い道で読み書きする(入力を写し直さない・欄を並べ切った読み手と書き手を型ごとに 1 度組む・defrecord の
+  型は構築子を通さずに作る)。答えは今までの道と同じで、受けない所は今までの道へ戻る(card ki-c43f34494b42 — 節「判じ手」の註・
+  tests/test_wire_codec_fast.py)。
+- この module は pydantic を import しない(標準の module と doeff_hy.json_value・doeff_hy.wire_malformed・doeff_hy.record_runtime だけを読む —
   ``tests/test_wire_codec.py`` と ``tests/test_wire_codec_write.py`` が import の閉包を確かめる)。
 """
 
@@ -1248,29 +1251,36 @@ class _Union(_Node):
         kind = _FAST_KIND_OF.get(type(value))
         if kind is None:
             return _Node.fast(self, value, room)
-        if kind != "object":
-            for arm in self._by_kind[kind]:
-                try:
-                    return arm.fast(value, room)
-                except _RefusedError:
-                    continue
-        else:
-            best: tuple[object, int] | None = None
-            for arm in self._by_kind["object"]:
-                try:
-                    if isinstance(arm, _WireNode):
-                        counted = arm.fast_counted(value, room)
-                        if best is None or counted[1] > best[1]:
-                            best = counted
-                    else:
-                        return arm.fast(value, room)
-                except _RefusedError:
-                    continue
-            if best is not None:
-                return best[0]
+        chosen = self._fast_object(value, room) if kind == "object" else self._fast_scalar(kind, value, room)
+        if chosen is not _NO_ARM:
+            return chosen
         if self._fallback is not None:
             return self._fallback.fast(value, room)
         raise _refuse("union", "no arm accepted the value")
+
+    def _fast_scalar(self, kind: str, value: object, room: int) -> object:
+        """速い道の規則 2(文字列・数・真偽・配列は、JSON の種類が合う腕を順に — どれも受けなければ _NO_ARM)。"""
+        for arm in self._by_kind[kind]:
+            try:
+                return arm.fast(value, room)
+            except _RefusedError:
+                continue
+        return _NO_ARM
+
+    def _fast_object(self, value: object, room: int) -> object:
+        """速い道の規則 3(object を受ける腕を宣言の順に — dict の腕はそれ・defwire の腕は入力から埋めた欄の多い腕。どれも受けなければ
+        _NO_ARM)。"""
+        best: tuple[object, int] | None = None
+        for arm in self._by_kind["object"]:
+            try:
+                if not isinstance(arm, _WireNode):
+                    return arm.fast(value, room)
+                counted = arm.fast_counted(value, room)
+            except _RefusedError:
+                continue
+            if best is None or counted[1] > best[1]:
+                best = counted
+        return _NO_ARM if best is None else best[0]
 
     def encode(self, value: object, raw: bool) -> _Json:
         # 書く腕の選び方は今の pydantic と同じ: 宣言の順に型ちょうどの腕(strict)、無ければ宣言の順に書き直せる腕(lax — float の腕は
@@ -1346,7 +1356,7 @@ def _compiled(
 ) -> Callable[..., object]:
     """組んだ source を exec して、関数 name を返す(_WireNode の欄を並べ切った読み手と書き手 — 名の空間は判じ手と型だけを持つ)。"""
     code = compile(source, f"<wire_codec {owner.__module__}.{owner.__qualname__}.{name}>", "exec")
-    exec(code, namespace)  # noqa: S102 — source は欄の名を repr で字面にした物だけ(上の _compile_reader / _compile_writer)
+    exec(code, namespace)
     return cast(Callable[..., object], namespace[name])
 
 
@@ -2105,7 +2115,7 @@ class Codec(Generic[_T]):
         誤りの列を全部集める・例外を投げるのはその 1 か所(速い道は最初の誤りで止まり、例外の順も今までの道と違いうるので)。"""
         try:
             return self.node.fast(value, _DEPTH_LIMIT)
-        except Exception:  # noqa: BLE001 — 速い道の答えは捨てて、下の今までの道が答え(値・Malformed・例外)を決める
+        except Exception:
             return self.node.decode(_plain(value))
 
     def encode(self, value: _T) -> object:
@@ -2118,7 +2128,7 @@ class Codec(Generic[_T]):
         持っている文字列を読み直さずに埋める)。孤立した surrogate を含む文字列は ValueError・JSON に書けない値は TypeError。"""
         try:
             text = self.node.text(value)
-        except Exception:  # noqa: BLE001 — 速い道の答えは捨てて、下の今までの道が答え(文字列・例外)を決める
+        except Exception:
             return _json_text(self.node.encode(value, True))
         if not text.isascii() and _has_surrogate(text):
             return _json_text(self.node.encode(value, True))  # 孤立した surrogate — 今までの道が ValueError で断る
