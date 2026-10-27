@@ -328,6 +328,9 @@ def find_event_statement(prefix: str, stream: str, idempotency_key: str) -> _Pro
 def insert_event_statement(prefix: str, stream: str, at: int, payload: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
     ...
 
+def insert_unused_event_statement(prefix: str, stream: str, at: int, payload: str, origin_host: str, idempotency_key: str) -> _Program[Statement, object]:
+    ...
+
 def living_events_filter(prefix: str, expiry: EventExpiry | None, bound: str) -> _Program[Clause, object]:
     ...
 
