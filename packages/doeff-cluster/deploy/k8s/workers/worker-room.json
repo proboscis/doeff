@@ -1,9 +1,9 @@
 {
-  "atlas": {"capacity": 12, "taskReserve": 3},
+  "atlas": {"capacity": 13, "taskReserve": 3},
   "eos": {"capacity": 3, "taskReserve": 0},
-  "k3s-0": {"capacity": 2, "taskReserve": 0},
+  "k3s-0": {"capacity": 3, "taskReserve": 0},
   "k3s-1": {"capacity": 2, "taskReserve": 0},
-  "k3s-2": {"capacity": 2, "taskReserve": 0},
-  "k3s-3": {"capacity": 2, "taskReserve": 0},
+  "k3s-2": {"capacity": 3, "taskReserve": 0},
+  "k3s-3": {"capacity": 3, "taskReserve": 0},
   "zeus": {"capacity": 40, "taskReserve": 6, "warmServices": true}
 }

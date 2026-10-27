@@ -169,14 +169,20 @@ ATLAS_MACHINE_JOBS = 1
 ATLAS_OVERLAY_RESIDENT_JOBS = 8
 ATLAS_TASK_RESERVE = 3
 ATLAS_KEPT_ROOM = 0
+# 予備の枠(2026-10-27・card ki-384c80df957f): 上に載る系が常駐の job を 1 台の機体の名でなく、2 台以上の worker が満たす能力(node の label から
+# coordinator が導く能力)で置き、どの 1 台の worker が落ちても、その台の job を残りの worker の空きが受ける分。平時は使わない。
+# atlas 1・k3s-0 1・k3s-2 1・k3s-3 1(k3s-1 は node の memory が狭いので足さない)。
+ATLAS_SPARE_ROOM = 1
+SPARE_ROOM = {"k3s-0": 1, "k3s-2": 1, "k3s-3": 1}
 # eos の受ける数の内訳: 機体の仕事 1 + 上に載る系の常駐の job で eos の能力(host-eos)を要る物 2(2026-10-22 に 1 → 2 — 上に載る系が
 # 記録の写しを古い側へ移す常駐の job を 1 つ足す)。task は来ない。
 EOS_MACHINE_JOBS = 1
 EOS_OVERLAY_RESIDENT_JOBS = 2
 # 機体の仕事だけを受ける機体の枠 — (受ける数, task に空けておく数)。名の無い機体は 2・0(機体の仕事は機体ごとに数本・task は来ない)。
 HOST_ONLY_ROOM = {
-    "atlas": (ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM, ATLAS_TASK_RESERVE),
+    "atlas": (ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM + ATLAS_SPARE_ROOM, ATLAS_TASK_RESERVE),
     "eos": (EOS_MACHINE_JOBS + EOS_OVERLAY_RESIDENT_JOBS, 0),
+    **{node: (2 + spare, 0) for node, spare in SPARE_ROOM.items()},
 }
 # 枠の定義元(card ki-6828eda880ce): 機体の名 → capacity・taskReserve の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
 # file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_CAPACITY・WORKER_TASK_RESERVE は書かない。
