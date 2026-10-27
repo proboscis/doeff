@@ -577,6 +577,7 @@
     "ADR-DOE-AGENTS-013 test-adr-doe-agents-013-roster-files-are-in-the-driver-layer",
     "ADR-DOE-ANALYZER-001 test-adr-doe-analyzer-001-a-module-the-answer-depends-on-is-in-the-key",
     "ADR-DOE-ANALYZER-001 test-adr-doe-analyzer-001-an-unrelated-module-does-not-take-part-in-the-key",
+    "ADR-DOE-API-001 test-adr-doe-api-001-a-public-submodule-turns-the-guard-red-and-a-moved-name-does-not",
     "ADR-DOE-API-001 test-adr-doe-api-001-an-added-outlier-turns-the-guard-red",
     "ADR-DOE-API-001 test-adr-doe-api-001-the-known-table-is-well-formed-and-only-shrinks",
     "ADR-DOE-BUILD-001 test-adr-doe-build-001-compiler-hooks-read-the-store",

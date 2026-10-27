@@ -2,7 +2,9 @@
  "説明": [
   "subpackage の公開 API は effect と handler だけ、の決まりの今の外れの既知の表(tests/test_public_api_known_violations.py が読む)。",
   "名の鍵は (package の dir, 名を出す module, 名) — tools/public_api_inventory.py の目録の行のうち、種類が effect でも handler でもない物(それ以外・未分類)。",
-  "表は減るだけ: 「名」の組の名は、この file を足した commit の版に在る名に限る(検が git の履歴の最初の版と比べる)。直した名は表から消す(表に在るのに目録に無い名は赤)。",
+  "_ で始まらない submodule は、名を出す module の欄が (submodule)・名が submodule の import の名の行(ADR-DOE-API-001 R5 — 範囲の package は組「外れ — submodule を _ で隠す」・範囲の答え待ちの package は組「境界 — 基盤・道具の package」)。名に _ を付けて隠したら表から消す(card ki-25d43146681e)。",
+  "名を submodule から入口(import の根)へ移した名は、表の module を書き換えずに同じ行と読む: その submodule がまだ同じ名を出していれば定義の場所が同じ時だけ、もう出していなければ名と根だけで(card ki-25d43146681e)。",
+  "表は減るだけ: 「名」の組の名は、この file を足した commit の版に在る名に限る(検が git の履歴の最初の版と比べる)。submodule の行は、submodule の行を足した commit の版に在る物に限る。直した名は表から消す(表に在るのに目録に無い名は赤)。",
   "新しく足すしか無い名は「足した名」に、package・module・名・訳・決め(card ki-… か依頼 lt-… か利用者の発言 ci-…)を 1 行ずつ書く。",
   "組の名(分け — 直しの向き・境界の種類)は card ki-1c2bd5bea63f の資料(doeff 5b1accad6 の目録の分け — 機械の案)から写した。範囲と境界の扱いは依頼書 lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM の答え待ち。",
   "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。"
@@ -18,6 +20,21 @@
      ],
      "(entry point)": [
       "pytest11:doeff_adr"
+     ],
+     "(submodule)": [
+      "doeff_adr.cli",
+      "doeff_adr.env_places",
+      "doeff_adr.hy_expand",
+      "doeff_adr.indexed_pytest",
+      "doeff_adr.item_cache",
+      "doeff_adr.lazy_collection",
+      "doeff_adr.macros",
+      "doeff_adr.pytest_plugin",
+      "doeff_adr.registry",
+      "doeff_adr.runtime_records",
+      "doeff_adr.semgrep_hy",
+      "doeff_adr.semgrep_verdicts",
+      "doeff_adr.source_dependencies"
      ],
      "doeff_adr": [
       "AdrSpec",
@@ -324,6 +341,34 @@
      "doeff_agentic.visual_interceptor": [
       "create_visual_interceptor",
       "visual_logging_console"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_agentic.api",
+      "doeff_agentic.cli",
+      "doeff_agentic.effects",
+      "doeff_agentic.effects.environment",
+      "doeff_agentic.effects.messaging",
+      "doeff_agentic.effects.recorded",
+      "doeff_agentic.effects.session",
+      "doeff_agentic.effects.status",
+      "doeff_agentic.effects.workflow",
+      "doeff_agentic.event_log",
+      "doeff_agentic.exceptions",
+      "doeff_agentic.handler",
+      "doeff_agentic.handlers",
+      "doeff_agentic.handlers.opencode",
+      "doeff_agentic.handlers.production",
+      "doeff_agentic.handlers.recorded",
+      "doeff_agentic.handlers.testing",
+      "doeff_agentic.handlers.tmux",
+      "doeff_agentic.opencode_handler",
+      "doeff_agentic.runtime",
+      "doeff_agentic.state",
+      "doeff_agentic.tmux_handler",
+      "doeff_agentic.types",
+      "doeff_agentic.visual_interceptor"
      ]
     },
     "境界 — CLI": {
@@ -1882,6 +1927,67 @@
       "transcript_file_name"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_agents.adapters",
+      "doeff_agents.adapters.base",
+      "doeff_agents.adapters.claude",
+      "doeff_agents.adapters.codex",
+      "doeff_agents.adapters.gemini",
+      "doeff_agents.agent_env",
+      "doeff_agents.claude_home",
+      "doeff_agents.effects",
+      "doeff_agents.effects.agent",
+      "doeff_agents.handlers",
+      "doeff_agents.handlers.claude",
+      "doeff_agents.handlers.codex",
+      "doeff_agents.handlers.daemon",
+      "doeff_agents.handlers.effectful",
+      "doeff_agents.handlers.headless",
+      "doeff_agents.handlers.headless_codex",
+      "doeff_agents.handlers.headless_compose",
+      "doeff_agents.handlers.mcp_server_loop",
+      "doeff_agents.handlers.production",
+      "doeff_agents.handlers.session_store",
+      "doeff_agents.handlers.testing",
+      "doeff_agents.io_effects",
+      "doeff_agents.io_fake",
+      "doeff_agents.io_handlers",
+      "doeff_agents.io_root",
+      "doeff_agents.mcp_server",
+      "doeff_agents.ready_physics",
+      "doeff_agents.result_validation",
+      "doeff_agents.runtime",
+      "doeff_agents.session_backend",
+      "doeff_agents.session_store",
+      "doeff_agents.session_store_sql",
+      "doeff_agents.sessionhost",
+      "doeff_agents.sessionhost.adopt",
+      "doeff_agents.sessionhost.attachment",
+      "doeff_agents.sessionhost.drivers",
+      "doeff_agents.sessionhost.effects",
+      "doeff_agents.sessionhost.host",
+      "doeff_agents.sessionhost.impls",
+      "doeff_agents.sessionhost.impls.channel",
+      "doeff_agents.sessionhost.impls.claude_code",
+      "doeff_agents.sessionhost.impls.codex",
+      "doeff_agents.sessionhost.impls.fast_jev",
+      "doeff_agents.sessionhost.impls.markers",
+      "doeff_agents.sessionhost.impls.otel_telemetry",
+      "doeff_agents.sessionhost.launch",
+      "doeff_agents.sessionhost.policy",
+      "doeff_agents.sessionhost.result_mcp",
+      "doeff_agents.sessionhost.schema",
+      "doeff_agents.sessionhost.store",
+      "doeff_agents.sessionhost.store_health",
+      "doeff_agents.sessionhost.store_memory",
+      "doeff_agents.sessionhost.substrate",
+      "doeff_agents.sessionhost.substrate_herdr",
+      "doeff_agents.sessionhost.turn",
+      "doeff_agents.shell",
+      "doeff_agents.tmux"
+     ]
+    },
     "境界 — CLI": {
      "(console script)": [
       "doeff-agents"
@@ -3130,6 +3236,24 @@
       "checked_session_id"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_claude_code.argv",
+      "doeff_claude_code.clock",
+      "doeff_claude_code.credential_home",
+      "doeff_claude_code.decision",
+      "doeff_claude_code.dialogue",
+      "doeff_claude_code.effects",
+      "doeff_claude_code.fake",
+      "doeff_claude_code.faults",
+      "doeff_claude_code.handler",
+      "doeff_claude_code.lines",
+      "doeff_claude_code.print_once",
+      "doeff_claude_code.process",
+      "doeff_claude_code.rotation",
+      "doeff_claude_code.values"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_claude_code.argv": [
       "ClaudeHome",
@@ -3414,6 +3538,14 @@
       "DEFAULT_COMMAND"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_claude_judge.handler",
+      "doeff_claude_judge.target",
+      "doeff_claude_judge.wire",
+      "doeff_claude_judge.wiring"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_claude_judge": [
       "ClaudeJudgeTarget",
@@ -3461,6 +3593,222 @@
    "範囲": "範囲の答え待ち",
    "名": {
     "境界 — 基盤・道具の package": {
+     "(submodule)": [
+      "doeff_cluster.coordinator.core.api_policy",
+      "doeff_cluster.coordinator.core.cluster_policy",
+      "doeff_cluster.coordinator.core.cluster_rules",
+      "doeff_cluster.coordinator.core.coordinator_invariants",
+      "doeff_cluster.coordinator.core.detached_policy",
+      "doeff_cluster.coordinator.core.drain_policy",
+      "doeff_cluster.coordinator.core.failover_policy",
+      "doeff_cluster.coordinator.core.failover_room",
+      "doeff_cluster.coordinator.core.handoff_policy",
+      "doeff_cluster.coordinator.core.metrics_policy",
+      "doeff_cluster.coordinator.core.program",
+      "doeff_cluster.coordinator.core.program_policy",
+      "doeff_cluster.coordinator.core.resource_policy",
+      "doeff_cluster.coordinator.core.rollout_policy",
+      "doeff_cluster.coordinator.core.wake_policy",
+      "doeff_cluster.coordinator.core.warm_policy",
+      "doeff_cluster.coordinator.core.watch_policy",
+      "doeff_cluster.coordinator.entry.handler_sets",
+      "doeff_cluster.coordinator.entry.main",
+      "doeff_cluster.coordinator.intent.cluster_model",
+      "doeff_cluster.coordinator.intent.due_model",
+      "doeff_cluster.coordinator.intent.failover_model",
+      "doeff_cluster.coordinator.intent.kube_model",
+      "doeff_cluster.coordinator.intent.request_bodies",
+      "doeff_cluster.coordinator.intent.worker_notices",
+      "doeff_cluster.coordinator.protocol.cluster_json",
+      "doeff_cluster.coordinator.protocol.durable_kv",
+      "doeff_cluster.coordinator.protocol.faults",
+      "doeff_cluster.coordinator.protocol.kube",
+      "doeff_cluster.coordinator.protocol.replies",
+      "doeff_cluster.coordinator.protocol.request_bodies",
+      "doeff_cluster.coordinator.protocol.request_queue",
+      "doeff_cluster.coordinator.protocol.state_json",
+      "doeff_cluster.coordinator.protocol.store",
+      "doeff_cluster.coordinator.protocol.wal_files",
+      "doeff_cluster.coordinator.protocol.wal_format",
+      "doeff_cluster.coordinator.protocol.worker_notices",
+      "doeff_cluster.foundation.bytecode_pool",
+      "doeff_cluster.foundation.child_environ",
+      "doeff_cluster.foundation.coordinator_http",
+      "doeff_cluster.foundation.coordinator_inbox",
+      "doeff_cluster.foundation.foundation_check",
+      "doeff_cluster.foundation.host_contract",
+      "doeff_cluster.foundation.in_cluster_api",
+      "doeff_cluster.foundation.kube_client",
+      "doeff_cluster.foundation.lifeline",
+      "doeff_cluster.foundation.notice_pipe",
+      "doeff_cluster.foundation.otlp_post",
+      "doeff_cluster.foundation.process_environ",
+      "doeff_cluster.foundation.process_versions",
+      "doeff_cluster.foundation.record_codec",
+      "doeff_cluster.foundation.record_handlers",
+      "doeff_cluster.foundation.record_inbox",
+      "doeff_cluster.foundation.record_log",
+      "doeff_cluster.foundation.wal_store",
+      "doeff_cluster.record_store.core.invariants",
+      "doeff_cluster.record_store.core.program",
+      "doeff_cluster.record_store.entry.handler_sets",
+      "doeff_cluster.record_store.entry.main",
+      "doeff_cluster.record_store.intent.record_store_model",
+      "doeff_cluster.record_store.protocol.record_files",
+      "doeff_cluster.shared.core.board_rules",
+      "doeff_cluster.shared.core.capabilities",
+      "doeff_cluster.shared.core.clock",
+      "doeff_cluster.shared.core.declaring",
+      "doeff_cluster.shared.core.detached_rules",
+      "doeff_cluster.shared.core.due_policy",
+      "doeff_cluster.shared.core.image_rules",
+      "doeff_cluster.shared.core.job_rules",
+      "doeff_cluster.shared.core.launch_rules",
+      "doeff_cluster.shared.core.lease_rules",
+      "doeff_cluster.shared.core.native_wheel",
+      "doeff_cluster.shared.core.promise_wait",
+      "doeff_cluster.shared.core.readiness_report",
+      "doeff_cluster.shared.core.readiness_rules",
+      "doeff_cluster.shared.core.remote_rules",
+      "doeff_cluster.shared.core.resend",
+      "doeff_cluster.shared.core.run_context_rules",
+      "doeff_cluster.shared.core.runtime_env",
+      "doeff_cluster.shared.core.runtime_env_rules",
+      "doeff_cluster.shared.core.runtime_identity",
+      "doeff_cluster.shared.core.semaphore_handlers",
+      "doeff_cluster.shared.core.service_back",
+      "doeff_cluster.shared.core.service_rules",
+      "doeff_cluster.shared.core.timing_rules",
+      "doeff_cluster.shared.core.warm_rules",
+      "doeff_cluster.shared.entry.boundary_recorder",
+      "doeff_cluster.shared.entry.client_foundation",
+      "doeff_cluster.shared.entry.cluster_foundation",
+      "doeff_cluster.shared.entry.declare",
+      "doeff_cluster.shared.entry.deployed_cluster",
+      "doeff_cluster.shared.entry.host_reader",
+      "doeff_cluster.shared.entry.image_contract",
+      "doeff_cluster.shared.entry.macros",
+      "doeff_cluster.shared.entry.replay_main",
+      "doeff_cluster.shared.entry.run_context_env",
+      "doeff_cluster.shared.entry.service_build",
+      "doeff_cluster.shared.intent.checkout_model",
+      "doeff_cluster.shared.intent.cluster_control",
+      "doeff_cluster.shared.intent.detached_model",
+      "doeff_cluster.shared.intent.due_model",
+      "doeff_cluster.shared.intent.env_marker_model",
+      "doeff_cluster.shared.intent.job_call_model",
+      "doeff_cluster.shared.intent.job_model",
+      "doeff_cluster.shared.intent.job_reach_model",
+      "doeff_cluster.shared.intent.launch_model",
+      "doeff_cluster.shared.intent.metrics_model",
+      "doeff_cluster.shared.intent.process_model",
+      "doeff_cluster.shared.intent.protocol",
+      "doeff_cluster.shared.intent.readiness_model",
+      "doeff_cluster.shared.intent.record_spec",
+      "doeff_cluster.shared.intent.remote_model",
+      "doeff_cluster.shared.intent.run_context",
+      "doeff_cluster.shared.intent.runtime_env_model",
+      "doeff_cluster.shared.intent.runtime_identity_model",
+      "doeff_cluster.shared.intent.semaphore_model",
+      "doeff_cluster.shared.intent.service_model",
+      "doeff_cluster.shared.intent.shared_model",
+      "doeff_cluster.shared.intent.supplied_model",
+      "doeff_cluster.shared.intent.warm_model",
+      "doeff_cluster.shared.protocol.board_requests",
+      "doeff_cluster.shared.protocol.checkout_reads",
+      "doeff_cluster.shared.protocol.coordinator_reads",
+      "doeff_cluster.shared.protocol.coordinator_route",
+      "doeff_cluster.shared.protocol.declaration_requests",
+      "doeff_cluster.shared.protocol.detached",
+      "doeff_cluster.shared.protocol.inbox",
+      "doeff_cluster.shared.protocol.job_call_handlers",
+      "doeff_cluster.shared.protocol.job_reach_handlers",
+      "doeff_cluster.shared.protocol.meter_report",
+      "doeff_cluster.shared.protocol.metrics_handlers",
+      "doeff_cluster.shared.protocol.metrics_memory",
+      "doeff_cluster.shared.protocol.program_codec",
+      "doeff_cluster.shared.protocol.readiness_handlers",
+      "doeff_cluster.shared.protocol.remote",
+      "doeff_cluster.shared.protocol.runtime_facts",
+      "doeff_cluster.shared.protocol.service_report",
+      "doeff_cluster.shared.protocol.shared_handlers",
+      "doeff_cluster.shared.protocol.supplied_values",
+      "doeff_cluster.shared.protocol.task_result",
+      "doeff_cluster.sim.checkout_git_script",
+      "doeff_cluster.sim.env_world",
+      "doeff_cluster.sim.k8s_supplied",
+      "doeff_cluster.sim.local",
+      "doeff_cluster.sim.machine",
+      "doeff_cluster.sim.test_entries_on_sim",
+      "doeff_cluster.sim.test_recording_on_sim",
+      "doeff_cluster.sim.worktree_git_script",
+      "doeff_cluster.worker.core.account_token",
+      "doeff_cluster.worker.core.bake_plan",
+      "doeff_cluster.worker.core.beat_policy",
+      "doeff_cluster.worker.core.boot_timing",
+      "doeff_cluster.worker.core.code_plan",
+      "doeff_cluster.worker.core.code_prepare",
+      "doeff_cluster.worker.core.code_rules",
+      "doeff_cluster.worker.core.drain_client",
+      "doeff_cluster.worker.core.env_prepare",
+      "doeff_cluster.worker.core.env_rules",
+      "doeff_cluster.worker.core.env_upkeep",
+      "doeff_cluster.worker.core.heartbeat_rules",
+      "doeff_cluster.worker.core.invariants",
+      "doeff_cluster.worker.core.job_cgroup",
+      "doeff_cluster.worker.core.launch",
+      "doeff_cluster.worker.core.memory_rules",
+      "doeff_cluster.worker.core.places",
+      "doeff_cluster.worker.core.pod_label_rules",
+      "doeff_cluster.worker.core.policy",
+      "doeff_cluster.worker.core.probe_rules",
+      "doeff_cluster.worker.core.program",
+      "doeff_cluster.worker.core.room_rules",
+      "doeff_cluster.worker.core.shim_timing",
+      "doeff_cluster.worker.core.warm_rules",
+      "doeff_cluster.worker.core.worker_due",
+      "doeff_cluster.worker.core.worker_rules",
+      "doeff_cluster.worker.entry.boot_wheel",
+      "doeff_cluster.worker.entry.code_prepare",
+      "doeff_cluster.worker.entry.drain_main",
+      "doeff_cluster.worker.entry.env_tool",
+      "doeff_cluster.worker.entry.job_entry",
+      "doeff_cluster.worker.entry.line_stamp",
+      "doeff_cluster.worker.entry.main",
+      "doeff_cluster.worker.entry.result_delivery",
+      "doeff_cluster.worker.entry.retirement_notices",
+      "doeff_cluster.worker.entry.shim",
+      "doeff_cluster.worker.entry.warm_child",
+      "doeff_cluster.worker.intent.code_model",
+      "doeff_cluster.worker.intent.drain_model",
+      "doeff_cluster.worker.intent.env_prepare_model",
+      "doeff_cluster.worker.intent.retirement_model",
+      "doeff_cluster.worker.intent.worker_model",
+      "doeff_cluster.worker.protocol.code_store",
+      "doeff_cluster.worker.protocol.coordinator_link",
+      "doeff_cluster.worker.protocol.declared",
+      "doeff_cluster.worker.protocol.drain_requests",
+      "doeff_cluster.worker.protocol.env_store",
+      "doeff_cluster.worker.protocol.env_translation",
+      "doeff_cluster.worker.protocol.heartbeat",
+      "doeff_cluster.worker.protocol.job_cgroup",
+      "doeff_cluster.worker.protocol.lease_release",
+      "doeff_cluster.worker.protocol.leaving_mark",
+      "doeff_cluster.worker.protocol.leaving_observer",
+      "doeff_cluster.worker.protocol.memory_observer",
+      "doeff_cluster.worker.protocol.memory_watch",
+      "doeff_cluster.worker.protocol.observations",
+      "doeff_cluster.worker.protocol.pod_labels",
+      "doeff_cluster.worker.protocol.probes",
+      "doeff_cluster.worker.protocol.process_clock",
+      "doeff_cluster.worker.protocol.process_host",
+      "doeff_cluster.worker.protocol.status_file",
+      "doeff_cluster.worker.protocol.tick_pauses",
+      "doeff_cluster.worker.protocol.tree_files",
+      "doeff_cluster.worker.protocol.warm_host",
+      "doeff_cluster.worker.protocol.worker_wakes",
+      "doeff_cluster.worker.protocol.world"
+     ],
      "doeff_cluster.coordinator.core.api_policy": [
       "ALIVE_MARK_MS",
       "BoardEntryView",
@@ -9370,6 +9718,19 @@
       "MODULE_TAGS"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_codex.credential_home",
+      "doeff_codex.effects",
+      "doeff_codex.fake",
+      "doeff_codex.handler",
+      "doeff_codex.limits",
+      "doeff_codex.lines",
+      "doeff_codex.process",
+      "doeff_codex.rpc",
+      "doeff_codex.values"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_codex.effects": [
       "CodexInput",
@@ -9820,6 +10181,53 @@
       "load_profile_registry_from_env",
       "resolve_agent_profile",
       "workflow_spec_to_program"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_conductor.dsl",
+      "doeff_conductor.effects",
+      "doeff_conductor.effects.agent",
+      "doeff_conductor.effects.base",
+      "doeff_conductor.effects.dsl",
+      "doeff_conductor.effects.exec",
+      "doeff_conductor.effects.git",
+      "doeff_conductor.effects.issue",
+      "doeff_conductor.effects.review",
+      "doeff_conductor.effects.runs",
+      "doeff_conductor.effects.workspace",
+      "doeff_conductor.env_places",
+      "doeff_conductor.environment",
+      "doeff_conductor.exceptions",
+      "doeff_conductor.git_workspace",
+      "doeff_conductor.handlers",
+      "doeff_conductor.handlers.agent_handler",
+      "doeff_conductor.handlers.exec_handler",
+      "doeff_conductor.handlers.git_handler",
+      "doeff_conductor.handlers.issue_handler",
+      "doeff_conductor.handlers.journaled_agent",
+      "doeff_conductor.handlers.journaled_workspace",
+      "doeff_conductor.handlers.state_handler",
+      "doeff_conductor.handlers.testing",
+      "doeff_conductor.handlers.utils",
+      "doeff_conductor.handlers.workspace_handler",
+      "doeff_conductor.interpreters",
+      "doeff_conductor.journal",
+      "doeff_conductor.macros",
+      "doeff_conductor.monitor",
+      "doeff_conductor.monitor_app",
+      "doeff_conductor.overseer",
+      "doeff_conductor.replay_keying",
+      "doeff_conductor.templates",
+      "doeff_conductor.templates.basic_pr",
+      "doeff_conductor.templates.enforced_pr",
+      "doeff_conductor.templates.multi_agent",
+      "doeff_conductor.templates.reviewed_pr",
+      "doeff_conductor.types",
+      "doeff_conductor.verbs",
+      "doeff_conductor.workflow_effect_journal",
+      "doeff_conductor.workflow_loader",
+      "doeff_conductor.workflow_runtime"
      ]
     },
     "境界 — CLI": {
@@ -11238,6 +11646,91 @@
       "signalled"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_core_effects.aiohttp_http_server",
+      "doeff_core_effects.aiohttp_ws_client",
+      "doeff_core_effects.apart_call",
+      "doeff_core_effects.cache",
+      "doeff_core_effects.cache_effects",
+      "doeff_core_effects.cache_handlers",
+      "doeff_core_effects.cache_policy",
+      "doeff_core_effects.channel_effects",
+      "doeff_core_effects.clickhouse_http_sql",
+      "doeff_core_effects.compute_effects",
+      "doeff_core_effects.darwin_proc",
+      "doeff_core_effects.darwin_volume",
+      "doeff_core_effects.effects",
+      "doeff_core_effects.extra_hints",
+      "doeff_core_effects.faulthandler_stack_dump",
+      "doeff_core_effects.file_effects",
+      "doeff_core_effects.gc_freeze",
+      "doeff_core_effects.handlers",
+      "doeff_core_effects.heap_effects",
+      "doeff_core_effects.http_effects",
+      "doeff_core_effects.http_handlers",
+      "doeff_core_effects.http_host_gate",
+      "doeff_core_effects.http_server_effects",
+      "doeff_core_effects.inline_compute",
+      "doeff_core_effects.kqueue_exit",
+      "doeff_core_effects.latest_effects",
+      "doeff_core_effects.memo_effects",
+      "doeff_core_effects.memo_handlers",
+      "doeff_core_effects.memo_policy",
+      "doeff_core_effects.memory_file",
+      "doeff_core_effects.memory_latest",
+      "doeff_core_effects.memory_meter",
+      "doeff_core_effects.memory_stack_dump",
+      "doeff_core_effects.meter_effects",
+      "doeff_core_effects.meter_prometheus",
+      "doeff_core_effects.offloaded_call",
+      "doeff_core_effects.os_file",
+      "doeff_core_effects.os_proc_table",
+      "doeff_core_effects.os_process",
+      "doeff_core_effects.os_random",
+      "doeff_core_effects.os_warm_process",
+      "doeff_core_effects.outcomes",
+      "doeff_core_effects.pidfd_exit",
+      "doeff_core_effects.pooled_postgres_sql",
+      "doeff_core_effects.postgres_sql",
+      "doeff_core_effects.proc_table_effects",
+      "doeff_core_effects.process_effects",
+      "doeff_core_effects.process_exit",
+      "doeff_core_effects.process_latest",
+      "doeff_core_effects.process_meter",
+      "doeff_core_effects.process_stat",
+      "doeff_core_effects.python_bytecode",
+      "doeff_core_effects.random_effects",
+      "doeff_core_effects.rooted_file",
+      "doeff_core_effects.scheduler",
+      "doeff_core_effects.scheduler_channel",
+      "doeff_core_effects.scheduler_step_tally",
+      "doeff_core_effects.scripted_freeze",
+      "doeff_core_effects.scripted_http_server",
+      "doeff_core_effects.scripted_proc_table",
+      "doeff_core_effects.scripted_process",
+      "doeff_core_effects.scripted_warm_process",
+      "doeff_core_effects.scripted_ws_client",
+      "doeff_core_effects.seeded_random",
+      "doeff_core_effects.sql_effects",
+      "doeff_core_effects.sql_transaction",
+      "doeff_core_effects.sqlite_file_sql",
+      "doeff_core_effects.sqlite_sql",
+      "doeff_core_effects.stack_dump_effects",
+      "doeff_core_effects.step_tally_effects",
+      "doeff_core_effects.stop_signal_effects",
+      "doeff_core_effects.stop_signal_handlers",
+      "doeff_core_effects.storage",
+      "doeff_core_effects.storage.memory",
+      "doeff_core_effects.storage.sqlite",
+      "doeff_core_effects.thread_pool_compute",
+      "doeff_core_effects.unhandled_hints",
+      "doeff_core_effects.vm_probe_effects",
+      "doeff_core_effects.warm_effects",
+      "doeff_core_effects.world_phases",
+      "doeff_core_effects.ws_client_effects"
+     ]
+    },
     "境界 — combinator(program を包む関数)": {
      "doeff_core_effects": [
       "absent_as",
@@ -11932,6 +12425,16 @@
       "render_dockerfile"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_docker.compose",
+      "doeff_docker.effects",
+      "doeff_docker.handlers",
+      "doeff_docker.handlers.docker",
+      "doeff_docker.handlers.dockerfile",
+      "doeff_docker.handlers.shell"
+     ]
+    },
     "境界 — Hy の macro": {
      "doeff_docker.compose": [
       "with_handlers"
@@ -11951,6 +12454,13 @@
    "範囲": "範囲の答え待ち",
    "名": {
     "境界 — 基盤・道具の package": {
+     "(submodule)": [
+      "doeff_domain.checks",
+      "doeff_domain.core_effects_domains",
+      "doeff_domain.introspect",
+      "doeff_domain.macros",
+      "doeff_domain.registry"
+     ],
      "doeff_domain": [
       "BODY_ATTRIBUTE",
       "Domain",
@@ -12066,6 +12576,14 @@
     "境界 — 基盤・道具の package": {
      "(console script)": [
       "doeff-effects"
+     ],
+     "(submodule)": [
+      "doeff_effect_analyzer.cli",
+      "doeff_effect_analyzer.env_places",
+      "doeff_effect_analyzer.handler_effects",
+      "doeff_effect_analyzer.hy_expansion",
+      "doeff_effect_analyzer.program_effects",
+      "doeff_effect_analyzer.result_cache"
      ],
      "doeff_effect_analyzer.cli": [
       "main"
@@ -12250,6 +12768,26 @@
       "law_start_is_told_after_the_subscription",
       "law_subscription_precedes_the_body",
       "law_unsure_send_is_told_as_a_gap"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_events.effects",
+      "doeff_events.effects.events",
+      "doeff_events.effects.files",
+      "doeff_events.effects.notices",
+      "doeff_events.effects.timers",
+      "doeff_events.event_loop",
+      "doeff_events.handlers",
+      "doeff_events.handlers.memory",
+      "doeff_events.handlers.memory_files",
+      "doeff_events.handlers.memory_notices",
+      "doeff_events.handlers.notice_events",
+      "doeff_events.handlers.os_files",
+      "doeff_events.handlers.redis_notices",
+      "doeff_events.handlers.timer",
+      "doeff_events.macros",
+      "doeff_events.notice_laws"
      ]
     },
     "境界 — Hy の macro": {
@@ -12507,6 +13045,18 @@
       "write_terminal_trace"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_flow.effects",
+      "doeff_flow.effects.trace",
+      "doeff_flow.env_places",
+      "doeff_flow.handlers",
+      "doeff_flow.handlers.files",
+      "doeff_flow.handlers.production",
+      "doeff_flow.handlers.testing",
+      "doeff_flow.trace"
+     ]
+    },
     "境界 — CLI": {
      "(console script)": [
       "doeff-flow"
@@ -12615,6 +13165,23 @@
       "process_unstructured_response"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_gemini.client",
+      "doeff_gemini.costs",
+      "doeff_gemini.effects",
+      "doeff_gemini.effects.chat",
+      "doeff_gemini.effects.cost",
+      "doeff_gemini.effects.embedding",
+      "doeff_gemini.effects.image",
+      "doeff_gemini.effects.structured",
+      "doeff_gemini.handlers",
+      "doeff_gemini.handlers.production",
+      "doeff_gemini.handlers.testing",
+      "doeff_gemini.structured_llm",
+      "doeff_gemini.types"
+     ]
+    },
     "境界 — class の形の handler": {
      "doeff_gemini.handlers": [
       "MockGeminiHandler"
@@ -12668,6 +13235,19 @@
   "doeff-git": {
    "範囲": "決まりの範囲",
    "名": {
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_git.effects",
+      "doeff_git.effects.hosting",
+      "doeff_git.effects.local",
+      "doeff_git.effects.remote",
+      "doeff_git.exceptions",
+      "doeff_git.handlers",
+      "doeff_git.handlers.production",
+      "doeff_git.handlers.testing",
+      "doeff_git.types"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_git": [
       "MergeStrategy"
@@ -12730,6 +13310,17 @@
       "ProtocolHandler"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_google_secret_manager.client",
+      "doeff_google_secret_manager.effects",
+      "doeff_google_secret_manager.effects.secrets",
+      "doeff_google_secret_manager.handlers",
+      "doeff_google_secret_manager.handlers.production",
+      "doeff_google_secret_manager.handlers.testing",
+      "doeff_google_secret_manager.secrets"
+     ]
+    },
     "未分け — 資料の分けの後に現れた名": {
      "doeff_google_secret_manager.handlers.production": [
       "production_handlers"
@@ -12746,6 +13337,61 @@
     "境界 — 基盤・道具の package": {
      "(console script)": [
       "doeff-hy-check"
+     ],
+     "(submodule)": [
+      "doeff_hy.ast_unparse",
+      "doeff_hy.binding_forms",
+      "doeff_hy.check_slot",
+      "doeff_hy.clause_endings",
+      "doeff_hy.clause_ops",
+      "doeff_hy.declarations",
+      "doeff_hy.env_places",
+      "doeff_hy.expansion_names",
+      "doeff_hy.frozen",
+      "doeff_hy.handle",
+      "doeff_hy.http",
+      "doeff_hy.json_lines",
+      "doeff_hy.json_value",
+      "doeff_hy.lazy",
+      "doeff_hy.light_stack",
+      "doeff_hy.macros",
+      "doeff_hy.match_fields",
+      "doeff_hy.outcome_forms",
+      "doeff_hy.positions",
+      "doeff_hy.pytest_items",
+      "doeff_hy.pytest_plugin",
+      "doeff_hy.quoted_forms",
+      "doeff_hy.record",
+      "doeff_hy.record_runtime",
+      "doeff_hy.session",
+      "doeff_hy.sexpr",
+      "doeff_hy.static_baseline",
+      "doeff_hy.static_cache",
+      "doeff_hy.static_carry",
+      "doeff_hy.static_check",
+      "doeff_hy.static_stub",
+      "doeff_hy.static_types",
+      "doeff_hy.static_view",
+      "doeff_hy.table",
+      "doeff_hy.type_forms",
+      "doeff_hy.typecheck",
+      "doeff_hy.typecheck_handlers",
+      "doeff_hy.wire",
+      "doeff_hy.wire_codec",
+      "doeff_hy.wire_malformed",
+      "doeff_hy.wire_parity",
+      "doeff_hy_bytecode_guard.bound_source",
+      "doeff_hy_bytecode_guard.called_code",
+      "doeff_hy_bytecode_guard.code_store",
+      "doeff_hy_bytecode_guard.dataclass_code",
+      "doeff_hy_bytecode_guard.expansion",
+      "doeff_hy_bytecode_guard.expansion_trees",
+      "doeff_hy_bytecode_guard.import_gc",
+      "doeff_hy_bytecode_guard.import_scope",
+      "doeff_hy_bytecode_guard.loader_hooks",
+      "doeff_hy_bytecode_guard.macro_hints",
+      "doeff_hy_bytecode_guard.macro_use",
+      "doeff_hy_bytecode_guard.records"
      ],
      "doeff_hy.ast_unparse": [
       "install",
@@ -13587,6 +14233,12 @@
   "doeff-hy-pytest": {
    "範囲": "決まりの範囲",
    "名": {
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_hy_pytest.budget",
+      "doeff_hy_pytest.python_calls"
+     ]
+    },
     "境界 — pytest の plugin の登録": {
      "(entry point)": [
       "pytest11:doeff_hy"
@@ -13597,6 +14249,14 @@
   "doeff-image": {
    "範囲": "決まりの範囲",
    "名": {
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_image.effects",
+      "doeff_image.effects.edit",
+      "doeff_image.effects.generate",
+      "doeff_image.types"
+     ]
+    },
     "境界 — effect の結果の型": {
      "doeff_image": [
       "ImageResult"
@@ -13706,6 +14366,16 @@
       "DEFAULT_JOURNAL"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_jev.handlers",
+      "doeff_jev.handlers.journal",
+      "doeff_jev.handlers.production",
+      "doeff_jev.target",
+      "doeff_jev.wire",
+      "doeff_jev.wiring"
+     ]
+    },
     "境界 — handler の設定の型": {
      "doeff_jev": [
       "JevTarget"
@@ -13738,6 +14408,15 @@
   "doeff-llm": {
    "範囲": "決まりの範囲",
    "名": {
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_llm.effects",
+      "doeff_llm.effects.chat",
+      "doeff_llm.effects.embedding",
+      "doeff_llm.effects.structured",
+      "doeff_llm.types"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_llm": [
       "Message"
@@ -13816,6 +14495,24 @@
       "rewrite_pyproject_for_container",
       "rewrite_uv_lock_for_container"
      ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_ml_nexus.context",
+      "doeff_ml_nexus.docker",
+      "doeff_ml_nexus.effects",
+      "doeff_ml_nexus.handlers",
+      "doeff_ml_nexus.handlers.docker",
+      "doeff_ml_nexus.handlers.file",
+      "doeff_ml_nexus.handlers.resolve",
+      "doeff_ml_nexus.handlers.rsync",
+      "doeff_ml_nexus.interpreters",
+      "doeff_ml_nexus.runner",
+      "doeff_ml_nexus.runner_env",
+      "doeff_ml_nexus.serializer",
+      "doeff_ml_nexus.stack",
+      "doeff_ml_nexus.uv_deps"
+     ]
     }
    }
   },
@@ -13832,6 +14529,17 @@
      "doeff_notify.handlers.testing": [
       "ProtocolHandler",
       "collected_notifications"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_notify.effects",
+      "doeff_notify.effects.notify",
+      "doeff_notify.handlers",
+      "doeff_notify.handlers.log",
+      "doeff_notify.handlers.stdout",
+      "doeff_notify.handlers.testing",
+      "doeff_notify.types"
      ]
     },
     "境界 — effect の値の型": {
@@ -14029,6 +14737,25 @@
       "ModelPricing"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_openai.chat",
+      "doeff_openai.client",
+      "doeff_openai.costs",
+      "doeff_openai.effects",
+      "doeff_openai.effects.chat",
+      "doeff_openai.effects.cost",
+      "doeff_openai.effects.embedding",
+      "doeff_openai.effects.structured",
+      "doeff_openai.embeddings",
+      "doeff_openai.handlers",
+      "doeff_openai.handlers.production",
+      "doeff_openai.handlers.testing",
+      "doeff_openai.streaming",
+      "doeff_openai.structured_llm",
+      "doeff_openai.types"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_openai": [
       "APICallMetadata",
@@ -14166,6 +14893,20 @@
       "build_messages",
       "ensure_strict_schema",
       "process_unstructured_response"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_openrouter.chat",
+      "doeff_openrouter.client",
+      "doeff_openrouter.effects",
+      "doeff_openrouter.effects.chat",
+      "doeff_openrouter.effects.structured",
+      "doeff_openrouter.handlers",
+      "doeff_openrouter.handlers.production",
+      "doeff_openrouter.handlers.testing",
+      "doeff_openrouter.structured_llm",
+      "doeff_openrouter.types"
      ]
     },
     "境界 — effect の値の型": {
@@ -15465,6 +16206,32 @@
       "written_rows_from"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_records.admission",
+      "doeff_records.effects",
+      "doeff_records.event_source",
+      "doeff_records.faults",
+      "doeff_records.http_client",
+      "doeff_records.http_server",
+      "doeff_records.laws",
+      "doeff_records.loop_work",
+      "doeff_records.main",
+      "doeff_records.maintenance",
+      "doeff_records.memory",
+      "doeff_records.pg",
+      "doeff_records.pg_sql",
+      "doeff_records.principals",
+      "doeff_records.request_timing",
+      "doeff_records.schema_digest",
+      "doeff_records.service",
+      "doeff_records.store_choice",
+      "doeff_records.typed",
+      "doeff_records.values",
+      "doeff_records.watching",
+      "doeff_records.wire"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_records.admission": [
       "Conflict",
@@ -15886,6 +16653,14 @@
       "ProtocolHandler"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_secret.effects",
+      "doeff_secret.effects.secrets",
+      "doeff_secret.handlers",
+      "doeff_secret.testing"
+     ]
+    },
     "境界 — handler の設定の型": {
      "doeff_secret": [
       "InMemorySecretStore",
@@ -15954,6 +16729,20 @@
      "doeff_seedream.structured_llm": [
       "DEFAULT_MODEL",
       "DEFAULT_RESPONSE_FORMAT"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_seedream.client",
+      "doeff_seedream.costs",
+      "doeff_seedream.effects",
+      "doeff_seedream.effects.generate",
+      "doeff_seedream.effects.structured",
+      "doeff_seedream.handlers",
+      "doeff_seedream.handlers.production",
+      "doeff_seedream.handlers.testing",
+      "doeff_seedream.structured_llm",
+      "doeff_seedream.types"
      ]
     },
     "境界 — class の形の handler": {
@@ -16025,6 +16814,17 @@
      "doeff_system_one.types": [
       "IMAGE_FORMATS",
       "KINDS"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_system_one.effects",
+      "doeff_system_one.effects.judge",
+      "doeff_system_one.handlers",
+      "doeff_system_one.handlers.testing",
+      "doeff_system_one.judgment",
+      "doeff_system_one.programs",
+      "doeff_system_one.types"
      ]
     },
     "境界 — effect の値の型": {
@@ -16106,6 +16906,37 @@
    "範囲": "範囲の答え待ち",
    "名": {
     "境界 — 基盤・道具の package": {
+     "(submodule)": [
+      "doeff_test_target.combinators",
+      "doeff_test_target.combinators.advanced",
+      "doeff_test_target.core",
+      "doeff_test_target.core.alpha",
+      "doeff_test_target.core.beta",
+      "doeff_test_target.core.delta",
+      "doeff_test_target.core.epsilon",
+      "doeff_test_target.core.gamma",
+      "doeff_test_target.core.zeta",
+      "doeff_test_target.effects",
+      "doeff_test_target.effects.test_effects",
+      "doeff_test_target.handlers",
+      "doeff_test_target.handlers.production",
+      "doeff_test_target.handlers.testing",
+      "doeff_test_target.helpers",
+      "doeff_test_target.helpers.wrappers",
+      "doeff_test_target.orchestrate",
+      "doeff_test_target.scenarios",
+      "doeff_test_target.scenarios.comprehensions",
+      "doeff_test_target.scenarios.dataclasses",
+      "doeff_test_target.scenarios.decorated",
+      "doeff_test_target.scenarios.first_choice",
+      "doeff_test_target.scenarios.intercepting",
+      "doeff_test_target.scenarios.lifting",
+      "doeff_test_target.scenarios.methods",
+      "doeff_test_target.scenarios.pattern",
+      "doeff_test_target.scenarios.target_effects",
+      "doeff_test_target.scenarios.traverse",
+      "doeff_test_target.scenarios.try_except"
+     ],
      "doeff_test_target": [
       "orchestrate"
      ],
@@ -16351,6 +17182,17 @@
       "ProtocolHandler"
      ]
     },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_time.effects",
+      "doeff_time.effects.time",
+      "doeff_time.epoch_ms",
+      "doeff_time.handlers",
+      "doeff_time.handlers.async_time",
+      "doeff_time.handlers.sim_time",
+      "doeff_time.handlers.sync_time"
+     ]
+    },
     "境界 — effect の結果の型": {
      "doeff_time": [
       "RaceOutcome",
@@ -16405,6 +17247,14 @@
      ],
      "doeff_traverse.handlers": [
       "sequential"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_traverse.collection",
+      "doeff_traverse.effects",
+      "doeff_traverse.handlers",
+      "doeff_traverse.helpers"
      ]
     },
     "境界 — combinator(program を包む関数)": {
@@ -16471,6 +17321,12 @@
      ],
      "doeff_validation.failures": [
       "ItemFailedError"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_validation.api",
+      "doeff_validation.failures"
      ]
     },
     "境界 — combinator(program を包む関数)": {
@@ -16544,6 +17400,9 @@
    "範囲": "範囲の答え待ち",
    "名": {
     "境界 — 基盤・道具の package": {
+     "(submodule)": [
+      "doeff_vm.doeff_vm"
+     ],
      "doeff_vm": [
       "Apply",
       "BindOpener",

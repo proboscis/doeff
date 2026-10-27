@@ -3,15 +3,21 @@
 決まり: doeff の subpackage が利用者に見せる公開 API は effect と handler だけ(取り組み doeff-subpackages-effects-only)。
 公開 API を数えるのは tools/public_api_inventory.py の 1 か所で、この file は数えない — 道具の目録の行のうち、種類が
 effect でも handler でもない物(それ以外・未分類)を外れとし、tests/data/public_api_known_violations.json の既知の表と
-(名を出す module, 名) の鍵で突き合わせる:
+(名を出す module, 名) の鍵で突き合わせる。_ で始まらない submodule そのものも、目録の 1 行(名を出す module は
+(submodule)・名は submodule の import の名)の外れと数える(ADR-DOE-API-001 R5 — 公開の名は import の根からだけ出す):
 
-1. package ごとに 1 件(packages/ の下の dir の名で引く): 表に無い外れが在れば赤(新しく足した外れ)、表に在るのに
-   目録に無い名が在れば赤(直したのに表を縮め忘れた)。
-2. 表の形: packages/ の下の dir の全部が 1 つずつ載り、範囲が決まった値で、名が組の中で並んで重ならない。
-3. 表は減るだけ: 表の「名」の組の名は、この表を足した commit の版(git の履歴の最初の版)に在る名に限る。新しく足すしか
-   無い名は「足した名」に、訳と決め(card・依頼・利用者の発言の id)を 1 行ずつ書く。
-4. 失敗ケース: 使い捨ての package を作り、effect と handler だけなら緑・外れを 1 つ足すと赤・外すと緑・直したのに表に
-   残すと赤・訳と決めつきで「足した名」に書くと緑になる事を、同じ照合で確かめる。
+1. package ごとに 1 件(packages/ の下の dir の名で引く): 表に無い外れが在れば赤(新しく足した外れ・公開の submodule)、
+   表に在るのに目録に無い名が在れば赤(直したのに表を縮め忘れた)。
+2. 名を submodule から入口へ移した行は、表の module を書き換えずに同じ行と読む: 表に無い根の (根, 名) は、表に同じ名の
+   (根の下の submodule, 名) が在り、その submodule がまだ名を出していれば定義の場所が同じ時だけ、もう出していなければ
+   (古い口を閉じた — 定義を比べる相手が無い)名と根だけで、表のその行と読む。違う定義を根に足すのは赤のまま。
+3. 表の形: packages/ の下の dir の全部が 1 つずつ載り、範囲が決まった値で、名が組の中で並んで重ならない。
+4. 表は減るだけ: 表の「名」の組の名は、この表を足した commit の版(git の履歴の最初の版)に在る名に限る。submodule の行は、
+   submodule の行を表に足した commit の版に在る物に限る。新しく足すしか無い名は「足した名」に、訳と決め(card・依頼・
+   利用者の発言の id)を 1 行ずつ書く。
+5. 失敗ケース: 使い捨ての package を作り、effect と handler だけなら緑・外れを 1 つ足すと赤・外すと緑・直したのに表に
+   残すと赤・訳と決めつきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
+   (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤になる事を、同じ照合で確かめる。
 """
 
 from __future__ import annotations
@@ -90,6 +96,8 @@ def _load() -> ModuleType:
 
 
 tool = _load()
+#: 公開の submodule の行の、名を出す module の欄(名は submodule の import の名)。
+SUBMODULE: str = tool.SUBMODULE
 
 
 def _read_table(path: Path = TABLE) -> KnownTable:
@@ -130,13 +138,41 @@ def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
     }
 
 
+def moved_to_root(
+    roots: Iterable[str], found: Mapping[Key, Mapping[str, Any]], known: set[Key]
+) -> set[tuple[Key, Key]]:
+    """名を submodule から入口へ移した行: 表に無い目録の (根, 名) と、同じ行と読む表の (根の下の submodule, 名) の組。
+
+    submodule がまだ同じ名を出していれば(移し替えの module が古い口を開けている間)、定義の場所が同じ時だけ同じ行と読む。
+    もう出していなければ(古い口を閉じた後)、比べる定義が無いので名と根だけで読む。
+    """
+    return {
+        ((root, name), (module, name))
+        for root, name in set(found) - known
+        if root in roots
+        for module, known_name in known
+        if known_name == name
+        and module.startswith(f"{root}.")
+        and (
+            (module, name) not in found
+            or found[(module, name)]["defined_at"] == found[(root, name)]["defined_at"]
+        )
+    }
+
+
+def _key_text(module: str, name: str) -> str:
+    """表の鍵 1 つを人の読む形に(公開の submodule の行は submodule の名だけ)。"""
+    return f"{name}(公開の submodule)" if module == SUBMODULE else f"{module}.{name}"
+
+
 def _new_text(directory: str, new: list[Key], found: Mapping[Key, Mapping[str, Any]]) -> str:
     rows = [found[key] for key in new]
     return (
         f"{directory}: 既知の表に無い、effect と handler の外の公開名が {len(new)} 個 — effect か handler にするか、"
-        "名を _ で始めるか _ で始まる module へ移す。どうしても見せるなら、表の「足した名」に訳と決めつきで書く:\n"
+        "名を _ で始めるか _ で始まる module へ移す(公開の submodule は名に _ を付けて隠し、見せる名は入口から出す)。"
+        "どうしても見せるなら、表の「足した名」に訳と決めつきで書く:\n"
         + "\n".join(
-            f"  {row['module']}.{row['name']}({row['form']}・{row['kind']}・{row['defined_at']})"
+            f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['kind']}・{row['defined_at']})"
             for row in rows
         )
     )
@@ -144,13 +180,16 @@ def _new_text(directory: str, new: list[Key], found: Mapping[Key, Mapping[str, A
 
 def _stale_text(directory: str, stale: list[Key]) -> str:
     return (
-        f"{directory}: 既知の表に在るのに目録に無い名が {len(stale)} 個 — 直した名は表から消す(表は減るだけ):\n"
-        + "\n".join(f"  {module}.{name}" for module, name in stale)
+        f"{directory}: 既知の表に在るのに目録に無い名が {len(stale)} 個 — 直した名と隠した submodule は表から消す"
+        "(表は減るだけ):\n" + "\n".join(f"  {_key_text(module, name)}" for module, name in stale)
     )
 
 
 def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
-    """目録の 1 package を既知の表と突き合わせる。表に無い外れと、表に在るのに目録に無い名を名指して止める。"""
+    """目録の 1 package を既知の表と突き合わせる。表に無い外れと、表に在るのに目録に無い名を名指して止める。
+
+    名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。
+    """
     directory = package["dir"]
     assert package["error"] is None, f"{directory} を読めなかった: {package['error']}"
     entry = table["packages"].get(directory)
@@ -161,8 +200,9 @@ def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
         return
     found = outside_rows(package)
     known = known_names(table, directory)
-    new = sorted(set(found) - known)
-    stale = sorted(known - set(found))
+    moved = moved_to_root(package["import_roots"], found, known)
+    new = sorted(set(found) - known - {root for root, _old in moved})
+    stale = sorted(known - set(found) - {old for _root, old in moved})
     problems = [
         *([_new_text(directory, new, found)] if new else []),
         *([_stale_text(directory, stale)] if stale else []),
@@ -244,9 +284,22 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
     ]
 
 
-def grown_names(first: KnownTable, current: KnownTable) -> list[tuple[str, str, str]]:
-    """最初の版の「名」の組に無いのに、今の「名」の組に在る名(表が増えた所)。"""
-    return sorted(listed_names(current) - listed_names(first))
+def grown_names(
+    first: KnownTable, current: KnownTable, first_submodules: KnownTable | None = None
+) -> list[tuple[str, str, str]]:
+    """最初の版の「名」の組に無いのに、今の「名」の組に在る名(表が増えた所)。
+
+    公開の submodule の行は、submodule の行を表に足した版(first_submodules)と比べる。その版がまだ無い間(submodule の行を
+    足す commit の前)は比べない。
+    """
+    listed = listed_names(current)
+    names = {row for row in listed if row[1] != SUBMODULE} - listed_names(first)
+    submodules = (
+        {row for row in listed if row[1] == SUBMODULE} - listed_names(first_submodules)
+        if first_submodules is not None
+        else set()
+    )
+    return sorted(names | submodules)
 
 
 def _git(*arguments: str) -> str:
@@ -262,6 +315,25 @@ def first_version() -> KnownTable | None:
     if not added:
         assert not _git("ls-files", "--", relative).strip(), (
             f"{relative} は追跡されているのに、足した commit が履歴に無い — 減るだけの比べの相手が読めない"
+        )
+        return None
+    return json.loads(_git("show", f"{added[-1]}:{relative}"))
+
+
+def first_submodule_version() -> KnownTable | None:
+    """公開の submodule の行を既知の表に足した commit の版(行の欄の文字列が履歴で最初に現れた版)。まだ無ければ None。"""
+    relative = TABLE.relative_to(ROOT).as_posix()
+    marker = json.dumps(SUBMODULE)
+    added = _git("log", "--format=%H", "-S", marker, "--", relative).split()
+    if not added:
+        committed = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"HEAD:{relative}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        assert marker not in committed, (
+            f"{relative} の commit 済みの版に submodule の行が在るのに、足した commit が履歴に無い — 減るだけの比べの相手が読めない"
         )
         return None
     return json.loads(_git("show", f"{added[-1]}:{relative}"))
@@ -286,7 +358,7 @@ def test_the_known_table_only_shrinks_from_its_first_version() -> None:
     first = first_version()
     if first is None:
         return
-    grown = grown_names(first, _read_table())
+    grown = grown_names(first, _read_table(), first_submodule_version())
     assert not grown, (
         "既知の表の「名」の組に、最初の版に無い名が在る — 表は減るだけ。足すしか無い名は「足した名」に訳と決めつきで書く:\n"
         + "\n".join(f"  {package_dir} {module}.{name}" for package_dir, module, name in grown)
@@ -331,12 +403,18 @@ def helper(x: int) -> int:
 
 def _fixture_repo(tmp_path: Path, source: str) -> Path:
     """packages/ の下に package を 1 つ持つ使い捨ての repo(__init__ の中身は source)。"""
+    return _fixture_tree(tmp_path, {"__init__.py": source})
+
+
+def _fixture_tree(tmp_path: Path, files: Mapping[str, str]) -> Path:
+    """packages/ の下に package を 1 つ持つ使い捨ての repo(import の根の下の file の名から中身へ)。"""
     package = tmp_path / "packages" / FIXTURE_DIR
     (package / "src" / FIXTURE_ROOT).mkdir(parents=True, exist_ok=True)
     (package / "pyproject.toml").write_text(textwrap.dedent(FIXTURE_PYPROJECT), encoding="utf-8")
-    (package / "src" / FIXTURE_ROOT / "__init__.py").write_text(
-        textwrap.dedent(source), encoding="utf-8"
-    )
+    for relative, source in files.items():
+        (package / "src" / FIXTURE_ROOT / relative).write_text(
+            textwrap.dedent(source), encoding="utf-8"
+        )
     return tmp_path
 
 
@@ -408,3 +486,158 @@ def test_a_name_put_into_the_listed_groups_turns_red() -> None:
     assert grown_names(first, _fixture_table({FIXTURE_ROOT: ["a", "b", "c"]})) == [
         (FIXTURE_DIR, FIXTURE_ROOT, "c")
     ]
+
+
+def test_a_submodule_row_put_into_the_table_after_it_had_submodule_rows_turns_red() -> None:
+    """submodule の行は、submodule の行を足した版から減るだけ(最初の版に無くても、その版に在れば増えたと読まない)。"""
+    first = _fixture_table({FIXTURE_ROOT: ["a"]})
+    with_submodules = _fixture_table({FIXTURE_ROOT: ["a"], SUBMODULE: [f"{FIXTURE_ROOT}.x"]})
+    assert grown_names(first, with_submodules, with_submodules) == []
+    assert grown_names(first, _fixture_table({FIXTURE_ROOT: ["a"]}), with_submodules) == []
+    more = _fixture_table(
+        {FIXTURE_ROOT: ["a"], SUBMODULE: [f"{FIXTURE_ROOT}.x", f"{FIXTURE_ROOT}.y"]}
+    )
+    assert grown_names(first, more, with_submodules) == [
+        (FIXTURE_DIR, SUBMODULE, f"{FIXTURE_ROOT}.y")
+    ]
+
+
+# --- 失敗ケース: 公開の submodule と、名を submodule から入口へ移す直し(ADR-DOE-API-001 R5) ---
+
+ANOTHER_EFFECT = '''
+from doeff import EffectBase
+
+
+class PongEffect(EffectBase):
+    """An effect in a submodule: the names are fine, the public submodule is not."""
+'''
+#: 入口へ移す前の submodule: R2 の型(結果の型)と定数(入口へ移す)と、外れの関数(_ の中に残す)。
+TYPES = '''
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PingResult:
+    """The answer to a ping (a result type, shown from the root)."""
+
+    count: int
+
+
+LIMIT = 3
+
+
+def helper(x: int) -> int:
+    """An outlier: stays inside the hidden module."""
+    return x + 1
+'''
+#: 入口が _types の名を出す 2 つの形: すぐ import する形と、遅延の import の形(__getattr__・__dir__・TYPE_CHECKING)。
+ROOT_SHOWS_TYPES = {
+    "eager": f"""
+from {FIXTURE_ROOT}._types import LIMIT as LIMIT, PingResult as PingResult
+""",
+    "lazy": f"""
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from {FIXTURE_ROOT}._types import LIMIT as LIMIT, PingResult as PingResult
+
+_LAZY = ("LIMIT", "PingResult")
+
+
+def __getattr__(name):
+    if name in _LAZY:
+        from {FIXTURE_ROOT} import _types
+
+        return _types.__dict__[name]
+    raise AttributeError(name)
+
+
+def __dir__():
+    return sorted([*globals(), *_LAZY])
+""",
+}
+#: 元の path に残す移し替えの module の 2 つの形: * で名を写す形と、sys.modules の項を _types に替える形。
+SHIM = {
+    "star": f"""
+from {FIXTURE_ROOT}._types import *
+""",
+    "alias": f"""
+import sys
+
+from {FIXTURE_ROOT} import _types
+
+sys.modules[__name__] = _types
+""",
+}
+#: 入口が自分で定義する、同じ名の違う型(移した名ではない)。
+ANOTHER_PING_RESULT = '''
+
+
+class PingResult:
+    """A different definition with the known name."""
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_an_added_public_submodule_turns_red_and_hiding_it_turns_green(tmp_path: Path) -> None:
+    """_ の無い submodule を足すと、出す名が effect だけでも赤(submodule を名指す)・名に _ を付けて隠すと緑。"""
+    table = _fixture_table({})
+    check_package(_read_fixture(_fixture_repo(tmp_path / "root", EFFECTS_AND_HANDLERS)), table)
+
+    public = _fixture_tree(
+        tmp_path / "public", {"__init__.py": EFFECTS_AND_HANDLERS, "extra.py": ANOTHER_EFFECT}
+    )
+    with pytest.raises(
+        AssertionError, match=r"既知の表に無い[\s\S]*doeff_fixture_api\.extra\(公開の submodule\)"
+    ):
+        check_package(_read_fixture(public), table)
+
+    hidden = _fixture_tree(
+        tmp_path / "hidden", {"__init__.py": EFFECTS_AND_HANDLERS, "_extra.py": ANOTHER_EFFECT}
+    )
+    check_package(_read_fixture(hidden), table)
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+@pytest.mark.parametrize(("root_form", "shim_form"), [("eager", "star"), ("lazy", "alias")])
+def test_moving_names_from_a_submodule_to_the_root_keeps_the_table_green(
+    tmp_path: Path, root_form: str, shim_form: str
+) -> None:
+    """名を submodule から入口へ移しても、表の module を書き換えずに緑(stage 1 — 移し替えの module を残す間)。
+
+    stage 3 で移し替えの module を消すと、表に残るのは隠した submodule と _ の中に残した外れの名だけで、それを表から消すと緑
+    (入口へ移した名は表の submodule の行のまま読む)。
+    """
+    submodule = f"{FIXTURE_ROOT}.types"
+    table = _fixture_table({SUBMODULE: [submodule], submodule: ["LIMIT", "PingResult", "helper"]})
+    before = _fixture_tree(
+        tmp_path / "before", {"__init__.py": EFFECTS_AND_HANDLERS, "types.py": TYPES}
+    )
+    check_package(_read_fixture(before), table)
+
+    root = EFFECTS_AND_HANDLERS + ROOT_SHOWS_TYPES[root_form]
+    stage_1 = _fixture_tree(
+        tmp_path / "stage-1", {"__init__.py": root, "_types.py": TYPES, "types.py": SHIM[shim_form]}
+    )
+    check_package(_read_fixture(stage_1), table)
+
+    stage_3 = _read_fixture(
+        _fixture_tree(tmp_path / "stage-3", {"__init__.py": root, "_types.py": TYPES})
+    )
+    with pytest.raises(AssertionError, match=r"目録に無い名が 2 個") as failure:
+        check_package(stage_3, table)
+    assert f"{submodule}(公開の submodule)" in str(failure.value)
+    assert f"{submodule}.helper" in str(failure.value)
+    check_package(stage_3, _fixture_table({submodule: ["LIMIT", "PingResult"]}))
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_different_definition_with_a_known_name_at_the_root_turns_red(tmp_path: Path) -> None:
+    """submodule が名を出している間に、同じ名の違う定義を入口に足すと赤(移した名と読まない)。"""
+    submodule = f"{FIXTURE_ROOT}.types"
+    table = _fixture_table({SUBMODULE: [submodule], submodule: ["LIMIT", "PingResult", "helper"]})
+    repo = _fixture_tree(
+        tmp_path, {"__init__.py": EFFECTS_AND_HANDLERS + ANOTHER_PING_RESULT, "types.py": TYPES}
+    )
+    with pytest.raises(AssertionError, match=r"既知の表に無い[\s\S]*doeff_fixture_api\.PingResult"):
+        check_package(_read_fixture(repo), table)
