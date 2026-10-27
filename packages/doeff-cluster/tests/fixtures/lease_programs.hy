@@ -4,7 +4,8 @@
 ;;; 土台は sim の土台(state だけ)に、本番の土台(cluster_foundation.cluster-handlers)と同じ名前付きの lease の担い手を並べる:
 ;;; cluster-semaphore と、担い手の名 = lease-holder-of(宿の契約の run-context — sim の宿が答える)。lease の要求(LeaseOp)は sim の宿の
 ;;; クラスタの約束の答えが coordinator へ送る。
-(require doeff-hy.macros [defk defsystem <-])
+(require doeff-hy.macros [defk <-])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [with-handlers EffectBase Program])
 (import doeff_core_effects.effects [Ask])

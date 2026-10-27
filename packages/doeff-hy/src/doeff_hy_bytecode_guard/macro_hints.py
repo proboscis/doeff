@@ -19,7 +19,7 @@ import・pytest の全部が通る)が返す code と記録を、:func:`warn_abo
   提供元の module そのものの import・macro でない名の import は正しい(表の名が提供元の属性と重ならない事は検が守る)。
 
 macro の名は ``MACRO_HOMES`` の 1 か所(提供元の module の名 → ``(require 提供元 *)`` が入れる名)で、実物の macro の表との一致は
-packages/doeff-hy/tests/test_macro_hints.py が測る。doeff-conductor の macro など、利用者が自分の語と区別しにくい名の物は入れない。
+packages/doeff-hy/tests/test_macro_hints.py が測る。doeff-hy の外の package の macro(doeff-conductor・doeff-cluster など — 持ち主の package が出す)は入れない。
 
 venv の全ての Python の起動時に読まれる :mod:`doeff_hy_bytecode_guard` の一部だが、この module は Hy の module を初めて読む時に
 読む(起動時に読まない — ``hy`` は名の表を作る時だけ読む)。正しい module では記録の名と co_names の照合だけで終わり、
@@ -57,7 +57,6 @@ MACRO_HOMES: Mapping[str, tuple[str, ...]] = {
         "defp",
         "defpipeline",
         "defpp",
-        "defsystem",
         "deftest",
         "do!",
         "fnk",

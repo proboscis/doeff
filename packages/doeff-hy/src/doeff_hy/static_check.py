@@ -79,6 +79,7 @@ from doeff_hy.env_places import (
     conversation_setting,
     pyright_threads_setting,
 )
+from doeff_hy.expansion_names import PREFIX as _EXPANSION_PREFIX
 from doeff_hy.expansion_names import is_alias_import
 from doeff_hy.static_baseline import (
     BaselineUnreadable,
@@ -126,7 +127,6 @@ from doeff_hy.static_carry import (
 )
 from doeff_hy.static_view import (
     DEFEFFECT_OUTCOMES_MODULE,
-    DEFSYSTEM_IMPORTS,
     STATIC_HELPER_IMPORTS,
     collect_findings,
     static_view,
@@ -410,20 +410,21 @@ def _doeff_hy_module(module: str) -> bool:
 
 def _synthesized_import(statement: ast.stmt) -> bool:
     """macro が定義ごとに合成する import の文か(利用者の重複の import は赤のまま残すため、重ねを 1 つにするのはこれだけ):
-    doeff-hy 自身の module の import と、defsystem が系ごとに出す別名の無い `import <module>`(static_view.DEFSYSTEM_IMPORTS —
-    展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)と、defeffect が
+    doeff-hy 自身の module の import と、module を展開の名の頭 `_doeff_`(expansion_names.PREFIX)の別名で束ねる
+    `import <module> as _doeff_<名>`(持ち主の package の定義の macro が出す形 — doeff-cluster の defsystem が系ごとに出す系の型と
+    構成子の module の import。doeff-hy は持ち主の module の綴りを持たない)と、defeffect が
     答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)と、handle・defhandler が
     node を `_doeff_<名>` の別名で束ねる `from doeff import Pass as _doeff_Pass` と、型を建てる定義が型の本体で読む
     `from typing import ClassVar as _doeff_ClassVar` など(expansion_names.is_alias_import — 閉じた表の綴りだけ。関数・class の
-    本体の中に残すと、class の本体では節の関数と入れ子の型の本体が名を module の段から引いて pyright が未定義と読んだ)。"""
+    本体の中に残すと、class の本体では節の関数と入れ子の型の本体が名を module の段から引いて pyright が未定義と読んだ)。
+    書き手が `_doeff_` の別名を書くのは for/do の `(import doeff [do :as _doeff-do])`(`from … import` の形)だけなので、
+    `import <module> as _doeff_<名>` の形は書き手の import と取り違えない。"""
     match statement:
         case ast.Import(names=names):
             return all(
                 _doeff_hy_module(alias.name)
-                or (
-                    alias.name in (*DEFSYSTEM_IMPORTS, DEFEFFECT_OUTCOMES_MODULE)
-                    and alias.asname is None
-                )
+                or (alias.name == DEFEFFECT_OUTCOMES_MODULE and alias.asname is None)
+                or (alias.asname is not None and alias.asname.startswith(_EXPANSION_PREFIX))
                 for alias in names
             )
         case ast.ImportFrom(module=str(module), level=0, names=names):
@@ -508,7 +509,7 @@ class _WithoutNestedImports(ast.NodeTransformer):
 
 
 def with_module_level_imports(tree: ast.Module) -> ast.Module:
-    """関数・class の本体の中に macro が置いた import(`_synthesized_import` — doeff-hy の module・defsystem の module・defeffect の
+    """関数・class の本体の中に macro が置いた import(`_synthesized_import` — doeff-hy の module・`_doeff_` の別名で束ねる module・defeffect の
     答えの分け方の module)を、囲む module の直下の文の前へ移す(macros.hy の `_scoped-definition` の型検査のための展開の側)。
 
     定義の macro は展開の import を書いた所に置く。関数の中の `import doeff_hy.record` は `doeff_hy` を外の関数全体の局所の名にし、
@@ -566,7 +567,7 @@ def without_bookkeeping(tree: ast.Module) -> ast.Module:
 
     - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。ただし宣言 :effects の記帳は、名を読む形に
       縮めて残す(_effects_reads — 宣言にだけ出る効果の名の import を、読まれない import にしない)。
-    - module の直下で macro が定義ごとに出す import の文(doeff-hy の module と defsystem の doeff-cluster の module —
+    - module の直下で macro が定義ごとに出す import の文(doeff-hy の module と `_doeff_` の別名で束ねる module —
       _synthesized_import)が繰り返されたら最初の 1 つだけを残す。
     - 記帳だけが使う module(BOOKKEEPING_MODULES)の import の名(1 つの文に並んだ名も 1 つずつ)と Hy の `import hy` で、
       もう読まれない物を外す。
