@@ -23,6 +23,12 @@
 ;;; BEGIN と書きの錠は答え手が同じ往復の先頭に流す)、2 往復目 = 書きの束(片付け・行の書きと変更の列 | 出来事の書き — 合図と COMMIT も同じ
 ;;; 往復)。判じる事(Conflict・ExpectAbsent・断り・期限を過ぎた物の片付け)は 1 往復目の答えで決め、片付けの文は 2 往復目の先頭に入れる
 ;;; (往復を増やさない)。断り・衝突の時も 2 往復目(片付けと COMMIT)を流す。
+;;; 追記の 1 往復(本番の書きの transaction の時間の約半分は、DB が 1 往復目と 2 往復目の間で記録の service の
+;;; 次の文を待つ時間だった): AppendEvent は、片付けが鍵の引きに依らない列(期限が無いか出来事ごとに数える列 — 組で数える列は組の片付けが要る)
+;;; で、前の使いが無いとして本文が通る(judge-append が AppendNew)なら、冪等キーの出来事も鍵の覚えも無い時だけ積む文 1 つを BEGIN・錠・
+;;; 合図・COMMIT と同じ 1 往復で流す(pg_sql.insert-unused-event-statement — 版は同じ文で頭の行から読む)。積まなかった時(鍵が置き場に在った —
+;;; 送り直しか、期限を過ぎた鍵の片付けが要る)だけ、次の transaction で 2 往復の手順が前の使いを判じ直す(appended)。鍵が在る時の答えと
+;;; 片付けは 2 往復の手順と同じで、送り直しは往復が 1 回増える。
 ;;; 読みの手順(行・一覧・変更の列・追記の読み)は SqlQuery を 1 文ずつ流す(自動 commit — 旧い版と同じ断面)。
 ;;; 束の読みの読み解き(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 錠の外の束の読み(一覧の頁・変更の列・出来事の列と、手入れの送りの
 ;;; 読み — 長さは上限 limit までの、置き場に在る行の数で決まる)は、行の payload の読み解き(listed-rows-of・changes-of・events-of)を
@@ -123,7 +129,7 @@
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
-(import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
+(import doeff_records.admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
                                  judge-write-replay write-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
@@ -136,7 +142,7 @@
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement find-event-statement
                               prune-bound-statement prune-changes-statement statement-limit-statement UNBOUNDED-SEQ
-                              insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
+                              insert-event-statement insert-unused-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
                               expire-chosen-events-statement touched-events-statement delete-events-statement expiring-candidates-statement
                               retire-keys-statement find-retired-key-statement expired-page-statement
                               SchemaStep columns-statement drop-keys-statement forget-keys-statement
@@ -1625,7 +1631,48 @@
   (EarlierUse :previous previous :cleanup cleanup :removed removed-sequences))
 
 
+(defrecord KeyInUse
+  "1 往復の追記(append-locked)が積まなかった印: 冪等キー idempotency-key の出来事か鍵の覚えが置き場に在った(前の使いの判じと片付けは
+   2 往復の手順 append-judged-locked が別の transaction で流す — pg-records-handler の AppendEvent の節)。"
+  (#^ str idempotency-key))
+
+
 (defk append-locked [store origin-host writer ask now-ms]
+  {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask AppendEvent) (: now-ms int)]
+   :post [(: % (| Appended Refused KeyInUse))]
+   :tags {:context "records" :role "foundation"}}
+  "AppendEvent の書きの錠の中の手順を流すため(頭の註の「追記の 1 往復」): 片付けが鍵の引きに依らない列(期限が無いか出来事ごとに数える列)で、
+   前の使いが無いとして本文が通るなら、冪等キーの出来事も鍵の覚えも無い時だけ積む文 1 つを COMMIT と同じ往復で流し(在れば積まずに
+   KeyInUse)、それ以外は 2 往復の手順(append-judged-locked)を同じ transaction で流す。"
+  (val decl (store.schema.stream ask.stream))
+  (<- expiry (event-expiry decl now-ms))
+  (when (or (and (is-not expiry None) (is-not expiry.separator None))
+            (not (isinstance (judge-append decl ask.body None) AppendNew)))
+    (<- judged (append-judged-locked store origin-host writer ask now-ms))
+    (return judged))
+  (val payload (canonical-json {"idempotencyKey" ask.idempotency-key "writer" writer "body" ask.body}))
+  (<- insert (insert-unused-event-statement store.prefix ask.stream now-ms payload origin-host ask.idempotency-key))
+  (<- rows (batch-rows store.database #(insert) True))
+  (if (get rows 0)
+      (Appended (int (get (get rows 0) 0 0)) False)
+      (KeyInUse :idempotency-key ask.idempotency-key)))
+
+
+(defk appended [store gated origin-host writer ask now-ms units topics]
+  {:pre [(: store PreparedStore) (: gated bool) (: origin-host str) (: writer str) (: ask AppendEvent) (: now-ms int) (: units tuple)
+         (: topics tuple)]
+   :post [(: % (| Appended Refused))]
+   :tags {:context "records" :role "foundation"}}
+  "AppendEvent を書きの錠の transaction で積むため(頭の註の「追記の 1 往復」): ふつうの追記は 1 往復で積み(append-locked)、冪等キーが置き場に
+   在った時(KeyInUse)だけ、次の transaction で 2 往復の手順(append-judged-locked)が前の使いを判じ直す。"
+  (<- tried (batched-writing store gated "append-event" units topics (append-locked store origin-host writer ask now-ms)))
+  (when (not (isinstance tried KeyInUse))
+    (return tried))
+  (<- judged (batched-writing store gated "append-event" units topics (append-judged-locked store origin-host writer ask now-ms)))
+  judged)
+
+
+(defk append-judged-locked [store origin-host writer ask now-ms]
   {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask AppendEvent) (: now-ms int)]
    :post [(: % (| Appended Refused))]
    :tags {:context "records" :role "foundation"}}
@@ -2049,8 +2096,7 @@
     (<- now (GetTime))
     (<- topics (notice-topics #() #(stream)))
     (<- unit (stream-unit stream))
-    (<- answer (reached (batched-writing store gated "append-event" #(unit) topics
-                                         (append-locked store origin-host writer effect (epoch-ms now)))))
+    (<- answer (reached (appended store gated origin-host writer effect (epoch-ms now) #(unit) topics)))
     (resume answer))
   (AppendEvents [appends]
     ;; 束の追記を 1 つの書きの錠の transaction で 2 往復で積み、束が触る列の名を合図する(append-events-locked)。

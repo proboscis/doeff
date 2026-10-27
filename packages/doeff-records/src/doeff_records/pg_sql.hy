@@ -1313,6 +1313,23 @@
              :params (! (params-of #(#("ledger" stream) #("at" at) #("payload" payload) #("origin_host" origin-host) #("epoch" epoch))))))
 
 
+(defk insert-unused-event-statement [prefix stream at payload origin-host idempotency-key]
+  {:pre [(: prefix str) (: stream str) (: at int) (: payload str) (: origin-host str) (: idempotency-key str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "冪等キー idempotency-key の出来事も鍵の覚えも無い時だけ出来事を 1 つ積み、番号を返す文を作るため(在れば積まずに 0 行 — 追記の
+   1 往復の書き・pg.hy の append-locked)。版は置き場の頭の行から同じ文で読む(書きの錠の中なので、2 往復の書きが 1 往復目に読む頭と同じ)。"
+  (Statement :text (.format "INSERT INTO {p}append_rows (ledger, at, payload, origin_host, epoch)
+                       SELECT :ledger, :at, :payload, :origin_host, head.epoch FROM {p}store_epoch AS head
+                       WHERE head.id = 1
+                         AND NOT EXISTS (SELECT 1 FROM {p}append_rows AS old
+                                         WHERE old.ledger = :ledger AND (old.payload::jsonb) ->> 'idempotencyKey' = :idempotency_key)
+                         AND NOT EXISTS (SELECT 1 FROM {p}retired_keys AS kept
+                                         WHERE kept.ledger = :ledger AND kept.idempotency_key = :idempotency_key)
+                       RETURNING seq" :p prefix)
+             :params (! (params-of #(#("ledger" stream) #("at" at) #("payload" payload) #("origin_host" origin-host)
+                                     #("idempotency_key" idempotency-key))))))
+
+
 (defk living-events-filter [prefix expiry bound]
   {:pre [(: prefix str) (: expiry (| EventExpiry None)) (: bound str)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
