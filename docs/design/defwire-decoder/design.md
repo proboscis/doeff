@@ -80,7 +80,7 @@ flowchart LR
 | OpaqueJson の中身を読み直さずに埋める | 要る | 大きな JSON を 2 度読まないための作り。自前の書き手は持っている文字列を出力へそのまま書けるので、今の `OpaqueSplice`(印を置いて後で替える仕掛け)は要らなくなる | 書き手・card 2(`OpaqueSplice` と `__get_pydantic_core_schema__` は、wire.hy の dump-json が自前の書き手へ替わる card 3 の commit で消す — それまでは pydantic の道が使う) |
 | JSON Schema を出す | 要る | 契約の file と照らす test が使う(読むのは properties・required・type・items・anyOf・enum・$defs・$ref・additionalProperties・title・default — 節 3b)。description は出さない(今の pydantic も出していない) | 型の木・card 2 |
 | 解き手を最初の使いまで組まない | 要る | 使わない型まで組むと起動が遅い(前の測りで 547 個・1.84 秒)。型の木は最初の parse・dump・json-schema で 1 度組み、型に覚える。free-threading の Python なので、組むのは lock の中で 1 度にする | `WireShape` の codec の欄(遅れて組む入れ物)・card 1 |
-| 表の行を緩く読む(文字列の数を数にする等) | 決めていない — 節 6 の確かめ方で決める | 表の行は今 `validate_python`(pydantic の lax・Python の読み方)で読む。行は自分の書き手が JSON の値で書くので strict でも通る見込み。通らない行が在れば、緩い読みを残さず、行を書き直してから strict に揃える | card 4 |
+| 表の行を緩く読む(文字列の数を数にする等) | 要らない — strict に揃えた(節 6 の「決めた事」・card ki-138189339298) | 本番の 70 表・1,132,376 行を lax と strict の両方に通し、strict だけが断る行・値か型の違う行が 0 だった。表の行は `row_codec_of`(defwire と同じ strict の判じ方・欄は Python の名・知らない欄は読み捨て)で読む | `wire_codec.py` の `row_codec_of`・doeff-records の `typed.hy` |
 | 解く前に値を作り替える(BeforeValidator の 1 か所) | 形を替えて要る | `LooseText`・`LooseInteger`(agora-controllers の custody_body/protocol/identity.hy)。節 3 の union の規則(何でも受ける腕は最後)で `(\| str OpaqueJson None)`・`(\| int OpaqueJson None)` と書ける | defwire の union の欄・card 6 |
 | 数の範囲の制約(Field(ge=0) の 1 か所) | 形を替えて要る | agora-controllers の screen/intent/board_rows.hy の `resumes-at`。型を `int` にし、`:check [(>= resumes-at 0)]` を defwire の頭に置く。reason は `greater_than_equal` から `value_error` に変わり、JSON Schema の `minimum` が消える(card 6 で契約の file と照らす) | defrecord の :check・card 6 |
 
@@ -289,6 +289,38 @@ census(agora exec x20261027020405-8aa9497b・agora-controllers の本体の欄 6
 6. 断りの契約: typed.hy の読みは、行の型に合わない行を Malformed の値で返す(wire の parse と同じ形 — pydantic の ValidationError を投げる今の契約を替える)。`(except [ValidationError] …)` で行を読み飛ばす呼び手 7 file(scheduling/protocol の records_turns・turn_derived_fold、messaging/protocol の message_rows・record_reads、custody_body/protocol の installation_poll・credential_plain・nested_fields)は Malformed を読む形へ書き直し、card 4 の範囲に入れる。
 7. 決め方: 2 と 3 の違いが 0 なら strict に揃える。違いが在れば、緩い読みを残さず、その表の書き手が行を書き直してから strict に揃える
    (緩い読みは型の check を弱めるので、読みの形として持たない)。無い欄を None で埋める今の読み方は、既定値が None の欄でだけ欄の既定値と同じになる — 既定値が None でない欄は 1 の数え上げの所で、値の違いを見て決める。
+
+### 決めた事(card ki-138189339298・2026-10-27)
+
+確かめた結果:
+
+| 確かめ | 結果 |
+|---|---|
+| 1. 型の木を組めるか | agora-controllers の本体の行の型は 77 種で、全部が素の defrecord(BaseModel は 0)。語彙の外の欄は「入れ子の素の defrecord」の 93 欄だけ(日時・Annotated・alias・validator は 0)。既定値が None でない欄 20・作り手の欄 2 |
+| 2. test の中の行 | doeff-records の行の test と、agora-controllers の行の読み手の test(手番の行の版違い・注釈の行・郵便の行・写しの行ほか)を新しい読みで走らせた。agora-controllers の側は merge 前の test の合計 60 秒の上限で全部は回していない(登記の後の全体の回が測る) |
+| 3. 本番の行 | 記録の service の 70 表・1,132,376 行(2026-10-27 20:20〜20:45 JST に読むだけで 1 周)。両方が受けて値と型が等しい 1,132,068 行・strict だけが断る 0・lax だけが断る 0・値か型が違う 0・両方が同じ場所と種類で断る 308 行(turn-usage-hour 18・turn-burn-band 290 — 鍵の欄だけの空の行で、今も読めない行) |
+
+決めた事:
+
+- 表の行は strict に読む。緩い読みは持たない。
+- 読み方は doeff_hy.wire_codec の `row_codec_of(行の型)`。defwire と同じ判じ手の木で、行の型の規則は 3 つだけ違う:
+  - 欄の名は Python の欄の名(:names は持たない)。
+  - 知らない欄は読み捨てる(欄を足した新しい書き手の行を古い読み手が断らない — 今の pydantic の dataclass の既定と同じ)。
+  - 書く時は既定値と等しい欄も書く。行の書き(PutRow)は欄ごとの差分なので、省いた欄は前の値が残るため。
+- 入れ子の素の defrecord も同じ行の読み方で組む(defwire の解き手は、今と同じく素の defrecord を語彙の外として断る)。
+- 置き場に無い欄を None で埋めてから読む今の読み方は残す(書きで None の欄は消えるため)。None を許さない欄が置き場に無い行は、既定値が在ってもその欄の型の誤り(今の pydantic の読みと同じ)。
+- 行の型は素の defrecord だけ。pydantic の BaseModel の行の型は受けない(本番に 0)。
+
+断りの契約(節 6 の 6 の形を、呼び手の数に合わせて決めた):
+
+- 純関数 `row-value` は、行の型の値か Malformed を返す(行を読み飛ばす読み手が使う)。
+- 行を型へ読む他の関数と Program(`value-of-fields`・`typed-row`・`typed-change`・`read-typed`・`list-typed`・`put-typed`)は、
+  合わない行で `RowMalformed`(ValueError の派生 — 欄 `malformed` に同じ Malformed を運ぶ)を投げる。
+- read-typed の答えに Malformed を足さない訳: 答えを TypedRow か否かで分ける呼び手が数百あり、足すと型に合わない行が無い行・届かない行の
+  腕へ黙って流れうる。投げれば組み立ての誤りとして名指して落ちる(今と同じ)。
+- `(except [ValidationError] …)` で行を読み飛ばしていた agora-controllers の読み手は、同じ便で `RowMalformed`・`row-value`・
+  `RowType.codec` へ移す(doeff-min-commit をこの版へ進める agora-controllers の変更)。`RowType.adapter` は消し、`RowType.codec`
+  (行の解き手)を置いた。
 
 ## 7. 照らしの test が比べる物(card 3 の契約)
 

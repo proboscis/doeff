@@ -21,6 +21,8 @@ dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも
 - wire.hy(parse・parse-json・dump・dump-json・json-schema)はこの木を呼ぶ(card ki-b7701d5fc0dd で pydantic の TypeAdapter から替えた —
   照らしの test(doeff_hy/wire_parity.py・tests/test_wire_parity.py)が doeff と agora-controllers の全 defwire の型で pydantic との
   不一致 0 を示した後)。
+- 表の行の型(素の defrecord)は ``row_codec_of`` が同じ判じ手で組む(欄は Python の名・知らない欄は読み捨て・書きは全部の欄 —
+  doeff-records の typed.hy が使う・設計の記録の節 6・card ki-138189339298)。
 - この module は pydantic を import しない(標準の module と doeff_hy.json_value・doeff_hy.wire_malformed だけを読む —
   ``tests/test_wire_codec.py`` と ``tests/test_wire_codec_write.py`` が import の閉包を確かめる)。
 """
@@ -40,7 +42,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Mapping
 from typing import Any, Final, ForwardRef, Generic, TypeAlias, TypeGuard, TypeVar, cast, final
 
-# 名を _ で始めて読む: この module の公開の名は Codec と codec_of だけ(Malformed は wire_malformed・OpaqueJson は json_value が出す)。
+# 名を _ で始めて読む: この module の公開の名は Codec と codec_of と row_codec_of だけ(Malformed は wire_malformed・OpaqueJson は json_value が出す)。
 from doeff_hy.json_value import OpaqueJson as _OpaqueJson
 from doeff_hy.wire_malformed import Malformed as _Malformed
 from doeff_hy.wire_malformed import MalformedField as _MalformedField
@@ -597,21 +599,23 @@ class _WireField:
 
 @final
 class _WireNode(_Node):
-    """入れ子の defwire の型 — object を、その型の :names・:unknown・:check で判じる。
+    """入れ子の defwire の型 — object を、その型の :names・:unknown・:check で判じる(表の行の素の defrecord も — _row_node)。
 
     欄は宣言の順に判じて誤りを全部集め、その後に知らない欄を入力の順に並べる(:unknown :reject の時)。:check は欄が全部通った時だけ
     走る(型の構築子が __post_init__ を呼ぶ)— ValueError と AssertionError だけを Malformed へ写し、他の例外は投げたまま。
     """
 
-    __slots__ = ("_reject", "_wires", "fields", "wire_type")
+    __slots__ = ("_reject", "_whole", "_wires", "fields", "wire_type")
     kinds = frozenset({"object"})
 
-    def __init__(self, wire_type: type) -> None:
+    def __init__(self, wire_type: type, whole: bool = False) -> None:
         super().__init__(wire_type.__name__)
         self.wire_type = wire_type
         self.fields: tuple[_WireField, ...] = ()
         self._wires: frozenset[str] = frozenset()
         self._reject = False
+        # whole = 書く時に既定値と等しい欄も省かない(表の行の像 — 行の書きは欄ごとの差分なので、省いた欄は前の値が残る)。
+        self._whole = whole
 
     def fill(self, fields: tuple[_WireField, ...], reject: bool) -> None:
         """欄の判じ手を、組み終えてから入れる(組む途中の型の輪は _BUILDING が見張る)。"""
@@ -663,7 +667,7 @@ class _WireNode(_Node):
         return {
             field.wire: field.node.encode(item, raw)
             for field, item in ((field, getattr(value, field.python)) for field in self.fields)
-            if not field.omits(item)
+            if self._whole or not field.omits(item)
         }
 
     def fits(self, value: object, strict: bool) -> bool:
@@ -834,6 +838,8 @@ _LOCK: Final = threading.RLock()
 #: 組んでいる途中の defwire の型(輪を見つける — A → B → A の間接の輪も自分を参照する型も断る)。lock の中だけで触る。
 _BUILDING: Final[set[type]] = set()
 _CODEC_ATTRIBUTE: Final = "__doeff_codec__"
+#: 表の行の型(素の defrecord)に覚える行の解き手(row_codec_of — defwire の解き手と別の名に置く)。
+_ROW_CODEC_ATTRIBUTE: Final = "__doeff_row_codec__"
 
 
 def _is_wire_type(annotation: object) -> bool:
@@ -866,16 +872,19 @@ def _resolved(annotation: object, namespace: dict[str, Any], where: str) -> obje
         ) from error
 
 
-def _build(annotation: object, namespace: dict[str, Any], where: str) -> _Node:
-    """注記 1 つの判じ手を組む(型の木を組む唯一の入口)。語彙の外の型は TypeError(どの型のどの欄のどの綴りかを示す)。"""
+def _build(annotation: object, namespace: dict[str, Any], where: str, rows: bool = False) -> _Node:
+    """注記 1 つの判じ手を組む(型の木を組む唯一の入口)。語彙の外の型は TypeError(どの型のどの欄のどの綴りかを示す)。
+    rows = 表の行の型の木を組む(素の defrecord を行の読み方で組む — _row_node。defwire の型の中は rows に依らず wire の読み方)。"""
     annotation = _resolved(annotation, namespace, where)
     named = _named_node(annotation, where)
     if named is not None:
         return named
     builder = _GENERIC_BUILDERS.get(typing.get_origin(annotation))
     if builder is not None:
-        return builder(annotation, typing.get_args(annotation), namespace, where)
+        return builder(annotation, typing.get_args(annotation), namespace, where, rows)
     if isinstance(annotation, type) and dataclasses.is_dataclass(annotation):
+        if rows:
+            return _row_node(annotation)
         raise TypeError(
             f"{where}: 素の defrecord(defwire でない dataclass){annotation.__name__} は語彙の外 — defwire にする"
         )
@@ -902,12 +911,12 @@ def _named_node(annotation: object, where: str) -> _Node | None:
 
 
 def _union(
-    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str
+    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
     """(| T1 T2 … None)— None の腕は印(nullable)にし、残りの腕を組む。"""
     nullable = any(arg is type(None) or arg is None for arg in args)
     arms = tuple(
-        _build(arg, namespace, f"{where}|{index}")
+        _build(arg, namespace, f"{where}|{index}", rows)
         for index, arg in enumerate(args)
         if not (arg is type(None) or arg is None)
     )
@@ -917,7 +926,7 @@ def _union(
 
 
 def _literal(
-    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str
+    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
     """文字列の Literal だけを語彙に入れる(今の defwire の Literal は全部文字列)。"""
     if not args or not all(type(arg) is str for arg in args):
@@ -926,49 +935,49 @@ def _literal(
 
 
 def _tuple(
-    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str
+    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
     """(get tuple #(T ...))は長さの決まらない配列・(get tuple #(T1 T2 …))は長さちょうどの配列。"""
     if len(args) == 2 and args[1] is Ellipsis:
-        item = _build(args[0], namespace, f"{where}[]")
+        item = _build(args[0], namespace, f"{where}[]", rows)
         return _Array(f"tuple[{item.label}, ...]", item, "tuple_type", tuple, (tuple,))
-    items = tuple(_build(arg, namespace, f"{where}[{index}]") for index, arg in enumerate(args))
+    items = tuple(_build(arg, namespace, f"{where}[{index}]", rows) for index, arg in enumerate(args))
     return _FixedTuple(f"tuple[{', '.join(item.label for item in items)}]", items)
 
 
 def _list(
-    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str
+    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
     """(get list T)— 配列を list にする。"""
     if len(args) != 1:
         raise TypeError(f"{where}: 要素の型の無い list {annotation!r} は語彙の外")
-    item = _build(args[0], namespace, f"{where}[]")
+    item = _build(args[0], namespace, f"{where}[]", rows)
     return _Array(f"list[{item.label}]", item, "list_type", list, (list,))
 
 
 def _frozenset(
-    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str
+    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
     """(get frozenset T)— 配列の重なりを 1 つにまとめる(要素は hash できる str か int だけ)。"""
-    item = _build(args[0], namespace, f"{where}[]") if len(args) == 1 else None
+    item = _build(args[0], namespace, f"{where}[]", rows) if len(args) == 1 else None
     if item is None or (item is not _STR and item is not _INT):
         raise TypeError(f"{where}: frozenset の要素は str か int だけ: {annotation!r}")
     return _Array(f"frozenset[{item.label}]", item, "frozen_set_type", frozenset, (frozenset, set))
 
 
 def _dict(
-    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str
+    annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
     """(get dict #(str T))— JSON の object の key は文字列なので、key が str の dict だけを語彙に入れる。"""
     if len(args) != 2 or _resolved(args[0], namespace, where) is not str:
         raise TypeError(f"{where}: key が文字列でない dict {annotation!r} は語彙の外")
-    item = _build(args[1], namespace, f"{where}[]")
+    item = _build(args[1], namespace, f"{where}[]", rows)
     return _Dict(f"dict[str,{item.label}]", item)
 
 
 #: 総称の型の形(typing.get_origin の答え)→ 判じ手を組む関数。ここに無い形(Annotated・datetime など)は語彙の外。
 _GENERIC_BUILDERS: Final[
-    dict[object, Callable[[object, tuple[object, ...], dict[str, Any], str], _Node]]
+    dict[object, Callable[[object, tuple[object, ...], dict[str, Any], str, bool], _Node]]
 ] = {
     typing.Union: _union,
     types.UnionType: _union,
@@ -1015,6 +1024,41 @@ def _wire_node(wire_type: type) -> _WireNode:
             setattr(wire_type, _CODEC_ATTRIBUTE, Codec(node, wire_type.__name__))
         finally:
             _BUILDING.discard(wire_type)
+        return node
+
+
+def _row_node(row_type: type) -> _WireNode:
+    """表の行の素の defrecord(defwire でない dataclass)の判じ手 — 欄の名は Python の欄の名・知らない欄は読み捨てる・書く時は
+    既定値と等しい欄も書く(設計の記録の節 6)。欄ごとの判じ方は defwire と同じ strict。型に覚えた物か、無ければ lock の中で 1 度だけ組む。"""
+    known = row_type.__dict__.get(_ROW_CODEC_ATTRIBUTE)
+    if known is not None:
+        return cast(_WireNode, cast(Codec[Any], known).node)
+    with _LOCK:
+        known = row_type.__dict__.get(_ROW_CODEC_ATTRIBUTE)
+        if known is not None:
+            return cast(_WireNode, cast(Codec[Any], known).node)
+        if row_type in _BUILDING:
+            raise TypeError(f"行の型 {row_type.__qualname__}: 型の輪(自分を参照する欄)は語彙の外")
+        _BUILDING.add(row_type)
+        try:
+            node = _WireNode(row_type, whole=True)
+            module = sys.modules.get(row_type.__module__)
+            namespace: dict[str, Any] = dict(vars(module)) if module is not None else {}
+            fields = tuple(
+                _WireField(
+                    field.name,
+                    field.name,
+                    _build(field.type, namespace, f"行の型 {row_type.__qualname__} の欄 {field.name}", rows=True),
+                    field.default,
+                    None if field.default_factory is dataclasses.MISSING else field.default_factory,
+                )
+                for field in dataclasses.fields(row_type)
+                if field.init
+            )
+            node.fill(fields, reject=False)
+            setattr(row_type, _ROW_CODEC_ATTRIBUTE, Codec(node, row_type.__name__))
+        finally:
+            _BUILDING.discard(row_type)
         return node
 
 
@@ -1494,3 +1538,18 @@ def codec_of(wire_type: object) -> Codec[Any]:
             known_alias = Codec(node, node.label)
             _ALIAS_CODECS[wire_type] = known_alias
         return known_alias
+
+
+def row_codec_of(row_type: type[_T]) -> Codec[_T]:
+    """表の行の型 1 つの解き手(doeff-records の typed.hy が使う — 設計の記録の節 6)。行の型は素の defrecord(defwire でない
+    dataclass)で、欄の名は Python の欄の名・知らない欄は読み捨てる(欄を足した新しい書き手の行を古い読み手が断らない)・書く時は
+    既定値と等しい欄も書く(行の書きは欄ごとの差分なので、全部の欄を載せた像にする)。入れ子の素の defrecord も同じ読み方・入れ子の
+    defwire の型はその型の読み方。欄ごとの判じ方は defwire と同じ strict(節 2)。最初の使いで組んで型に覚える(``__doeff_row_codec__``)。
+    defwire の型・dataclass でない型・語彙の外の欄は TypeError。"""
+    if not (isinstance(row_type, type) and dataclasses.is_dataclass(row_type)) or _is_wire_type(row_type):
+        raise TypeError(f"行の型は素の defrecord(defwire でない dataclass): {row_type!r}")
+    known = row_type.__dict__.get(_ROW_CODEC_ATTRIBUTE)
+    if known is None:
+        _row_node(row_type)
+        known = row_type.__dict__[_ROW_CODEC_ATTRIBUTE]
+    return cast(Codec[_T], known)
