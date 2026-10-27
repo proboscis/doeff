@@ -26,8 +26,8 @@
 (import doeff_core_effects.file_effects [FileFailed ReadText])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.core.pod_label_rules [JobLabels job-labels-wanted job-labels-patch labels-sync-due retry-after-ms
-                                                   labels-line])
+(import doeff_cluster.worker.core.pod_label_rules [JobLabels LabelChange PodLabel job-labels-wanted job-labels-patch labels-sync-due
+                                                   retry-after-ms labels-line])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired])
 
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒 — 拍が API server の答えを待つ上限)。
@@ -77,10 +77,9 @@
 
 
 (defrecord OwnPod
-  "list から見つけたこの worker の Pod: name = Pod の名(patch の宛先)・labels = 今の label(全部 — 鍵が Pod ごとに変わる k8s の label の
-   写しなので dict のまま)。"
+  "list から見つけたこの worker の Pod: name = Pod の名(patch の宛先)・labels = 今の label(全部 — 鍵の順)。"
   (#^ str name)
-  (#^ dict labels))
+  (#^ (get tuple #(PodLabel ...)) labels))
 
 
 (defk refusal-of [answer]
@@ -101,8 +100,16 @@
     (return "Pod の list の答えの本文の形が違う"))
   (val found (lfor pod (or parsed.items #()) :if (= pod.metadata.uid uid) pod.metadata))
   (if found
-      (OwnPod :name (. (get found 0) name) :labels (dict (or (. (get found 0) labels) {})))
+      (OwnPod :name (. (get found 0) name)
+              :labels (tuple (gfor #(key value) (sorted (.items (or (. (get found 0) labels) {}))) (PodLabel :key key :value value))))
       (.format "この Pod(uid {})が list に無い" uid)))
+
+
+(defk patch-body [uid changes]
+  {:pre [(: uid str) (: changes (get tuple #(LabelChange ...)))] :post [(: % bytes)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "Pod の label の付け外しを、API server の merge patch の本文に綴るため(uid を載せる — uid の違う Pod へは API server が断る。外す
+   label は null)。"
+  (.encode (json.dumps {"metadata" {"uid" uid "labels" (dfor change changes change.key change.value)}} :ensure-ascii False) "utf-8"))
 
 
 (defk account-text [path what]
@@ -119,9 +126,9 @@
 
 
 (defk labels-synced [settings wanted]
-  {:pre [(: settings PodLabelSettings) (: wanted dict)] :post [(: % (| dict str))] :tags {:context "worker" :role "protocol" :spells "json"}}
-  "自分の Pod の job の label を wanted に揃えるため: Pod を list で見つけ、今の label との差の merge patch を当てる(差が無ければ当てない)。
-   答え = 当てた labels の欄(空 = 揃っていた)か、揃えられなかった訳の文。思わぬ例外も訳にする(job を止めない)。"
+  {:pre [(: settings PodLabelSettings) (: wanted frozenset)] :post [(: % (| tuple str))] :tags {:context "worker" :role "protocol" :spells "http"}}
+  "自分の Pod の job の label を wanted(鍵の組)に揃えるため: Pod を list で見つけ、今の label との差の merge patch を当てる(差が無ければ
+   当てない)。答え = 当てた付け外しの列(LabelChange — 空 = 揃っていた)か、揃えられなかった訳の文。思わぬ例外も訳にする(job を止めない)。"
   (try
     (<- token str (account-text settings.token-file "token"))
     (<- namespace str (account-text settings.namespace-file "namespace"))
@@ -136,26 +143,26 @@
     (<- pod (| OwnPod str) (own-pod-of listed.text settings.pod-uid))
     (when (isinstance pod str)
       (return pod))
-    (<- patch dict (job-labels-patch pod.labels wanted))
-    (when (not patch)
-      (return patch))
-    (val body (.encode (json.dumps {"metadata" {"uid" settings.pod-uid "labels" patch}} :ensure-ascii False) "utf-8"))
+    (<- changes (get tuple #(LabelChange ...)) (job-labels-patch pod.labels wanted))
+    (when (not changes)
+      (return changes))
+    (<- body bytes (patch-body settings.pod-uid changes))
     (<- patched (| HttpResponse HttpFailed)
         (HttpRequest "PATCH" (+ pods-url "/" (url-quote pod.name :safe "")) :body body
                      :headers (| headers {"content-type" "application/merge-patch+json"})
                      :timeout-seconds REQUEST-TIMEOUT-SECONDS :max-retries 0 :failures-as-values True))
     (<- patch-refused (| str None) (refusal-of patched))
-    (if (is patch-refused None) patch patch-refused)
+    (if (is patch-refused None) changes patch-refused)
     (except [error Exception]
       (repr error))))
 
 
 (defk outcome-noted [cell wanted outcome now-ms]
-  {:pre [(: cell PodLabelCell) (: wanted dict) (: outcome (| dict str)) (: now-ms int)] :post [(: % None)]}
+  {:pre [(: cell PodLabelCell) (: wanted frozenset) (: outcome (| tuple str)) (: now-ms int)] :post [(: % None)]}
   "揃えの答え outcome を入れ物に書き、label を付け外しした時・失敗の訳が変わった時・戻った時に log へ 1 行出すため。失敗の後は
    retry-after-ms だけ待つ刻を置く。"
-  (if (isinstance outcome dict)
-      (do (setv cell.synced-wanted (dict wanted) cell.synced-ms now-ms cell.retry-at-ms None cell.failures 0 cell.failure "")
+  (if (isinstance outcome tuple)
+      (do (setv cell.synced-wanted wanted cell.synced-ms now-ms cell.retry-at-ms None cell.failures 0 cell.failure "")
           (when outcome
             (<- line str (labels-line outcome))
             (<- (slog line :level "info"))))
@@ -186,7 +193,7 @@
     (<- now-ms int (now-epoch-ms))
     (<- due bool (labels-sync-due labels.wanted cell.synced-wanted cell.synced-ms cell.retry-at-ms now-ms))
     (when due
-      (<- outcome (| dict str) (labels-synced settings labels.wanted))
+      (<- outcome (| tuple str) (labels-synced settings labels.wanted))
       (<- (outcome-noted cell labels.wanted outcome now-ms))))
   None)
 

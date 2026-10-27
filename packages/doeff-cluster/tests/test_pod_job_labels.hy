@@ -24,8 +24,8 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-DIR SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster.worker.intent.worker_model [CutOff DesiredJobs DesiredUnreadable ReadDesired])
-(import doeff_cluster.worker.core.pod_label_rules [JobLabels job-label-key job-labels-wanted job-labels-patch labels-sync-due
-                                                   retry-after-ms labels-line])
+(import doeff_cluster.worker.core.pod_label_rules [JobLabels LabelChange PodLabel job-label-key job-labels-wanted job-labels-patch
+                                                   labels-sync-due retry-after-ms labels-line])
 (import doeff_cluster.worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
 (import doeff_cluster.worker.entry.main [pod-label-parts])
 
@@ -132,26 +132,31 @@
           keys)
   ;; task は載せず、label の名に成らない job は名を挙げる。
   (<- labels JobLabels (job-labels-wanted #(SECRETARY TASK ODD MAIL)))
-  (assert (= labels (JobLabels :wanted {"job.doeff.dev/secretary" "placed" "job.doeff.dev/mail-derivation" "placed"}
+  (assert (= labels (JobLabels :wanted (frozenset #("job.doeff.dev/secretary" "job.doeff.dev/mail-derivation"))
                                :unlabelled #("odd/name")))
           labels))
 
 
 (deftest test-the-patch-touches-only-the-worker-prefix
-  (val current {"app" "doeff-worker" "doeff.dev/node" "k3s-3" "job.doeff.dev/old" "placed" "job.doeff.dev/keep" "placed"
-                "job.doeff.dev/odd" "hand-written"})
-  (val wanted {"job.doeff.dev/keep" "placed" "job.doeff.dev/odd" "placed" "job.doeff.dev/new" "placed"})
-  (<- patch dict (job-labels-patch current wanted))
-  (assert (= patch {"job.doeff.dev/new" "placed" "job.doeff.dev/odd" "placed" "job.doeff.dev/old" None}) patch)
-  (<- same dict (job-labels-patch (| current patch {"job.doeff.dev/old" "placed"}) (| wanted {"job.doeff.dev/old" "placed"})))
-  (assert (= same {}) same)
+  (val current #((PodLabel :key "app" :value "doeff-worker") (PodLabel :key "doeff.dev/node" :value "k3s-3")
+                 (PodLabel :key "job.doeff.dev/old" :value "placed") (PodLabel :key "job.doeff.dev/keep" :value "placed")
+                 (PodLabel :key "job.doeff.dev/odd" :value "hand-written")))
+  (val wanted (frozenset #("job.doeff.dev/keep" "job.doeff.dev/odd" "job.doeff.dev/new")))
+  (<- patch tuple (job-labels-patch current wanted))
+  (assert (= patch #((LabelChange :key "job.doeff.dev/new" :value "placed") (LabelChange :key "job.doeff.dev/odd" :value "placed")
+                     (LabelChange :key "job.doeff.dev/old" :value None)))
+          patch)
+  (val settled #((PodLabel :key "app" :value "doeff-worker") (PodLabel :key "job.doeff.dev/keep" :value "placed")
+                 (PodLabel :key "job.doeff.dev/odd" :value "placed") (PodLabel :key "job.doeff.dev/new" :value "placed")))
+  (<- same tuple (job-labels-patch settled wanted))
+  (assert (= same #()) same)
   (<- line str (labels-line patch))
   (assert (= line "worker: Pod の job の label を揃えた — 付けた new・odd・外した old") line))
 
 
 (deftest test-labels-are-synced-when-the-jobs-change-and-every-minute-and-wait-after-a-failure
-  (val w {"job.doeff.dev/secretary" "placed"})
-  (val v {"job.doeff.dev/mail-derivation" "placed"})
+  (val w (frozenset #("job.doeff.dev/secretary")))
+  (val v (frozenset #("job.doeff.dev/mail-derivation")))
   (var dues #())
   (for [#(wanted synced synced-ms retry-at now) [[w None None None 0]       ; まだ揃えていない
                                                  [w w 0 None 59999]         ; 同じ宣言の 1 分の内
