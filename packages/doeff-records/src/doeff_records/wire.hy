@@ -16,8 +16,11 @@
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "protocol"})
 (require doeff-hy.record [defenum defrecord])
+(import json)
+(import json.encoder [encode-basestring])
 (import re)
 (import collections [Counter])
+(import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import enum [StrEnum])
 (import doeff_hy.frozen [FrozenMap thaw-json])
@@ -26,7 +29,7 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
-                              EventsQuiet EventAbsent EventRetired])
+                              EventsQuiet EventAbsent EventRetired stored-text])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey])
 
@@ -730,19 +733,56 @@
 
 
 ;; --- 答え ------------------------------------------------------------------------------------------------
+;;; 答えの本文の綴り(answer-text — HTTP の口が送る本文)は、行と変更の値を保存の綴り(values.hy の頭の註)のまま継ぎ、値を解かず
+;;; 戻さず綴り直さない(綴りを持たない値だけを値から綴る)。綴りの形は encode-answer の object を json.dumps で綴った物と同じ
+;;; (鍵の順・区切り・ASCII の外の字をそのまま書く — 検 tests/test_wire_spelled.hy)。encode-answer は wire の object(dict と list)を
+;;; 返す形のまま残す(答えの見本の検と、答えの object を読む呼び手のため)— 2 つは answer-object の 1 か所から作り、値の写し方だけが違う。
 
-(defk row-json [row]
-  {:pre [(: row Row)] :post [(: % dict)]}
-  "行 1 つを wire の object にする。"
-  {"kind" "row" "key" (list row.key) "value" (thaw-json row.value) "version" row.version})
+(defclass [(dataclass :frozen True)] SpelledJson []
+  "wire の object の中の、既に JSON に綴った値 1 つ(answer-text が綴り直さずに本文へ継ぐ)。"
+  (#^ str text))
+
+;; 答えの本文の綴りの形(json.dumps の ensure_ascii False・区切り「,」「:」)— service.json-answer と同じ形。
+(val ANSWER-ENCODER (json.JSONEncoder :ensure-ascii False :separators #("," ":")))
 
 
-(defk change-json [change]
-  {:pre [(: change (| RowChanged RowRemoved))] :post [(: % dict)]}
-  "変更 1 つを wire の object(kind = rowChanged | rowRemoved)にする。"
+(defn #^ object plain-value [#^ (| Row RowChanged) holder]  ; defk にできない: answer-object が内包表記の中で行ごとに同期に呼ぶ値の写し
+  "行・変更の値を wire の object(dict と list)へ戻すため(encode-answer の値の写し)。"
+  (thaw-json holder.value))
+
+
+(defn #^ SpelledJson spelled-value [#^ (| Row RowChanged) holder]  ; defk にできない: plain-value と同じ
+  "行・変更の値を綴りにするため(answer-text の値の写し): 保存の綴りを持てばそのまま継ぎ、持たなければ値から 1 度綴る。"
+  (setv text (stored-text holder))
+  (SpelledJson (if (is text None) (.encode ANSWER-ENCODER (thaw-json holder.value)) text)))
+
+
+(defn #^ str spelled-json [#^ object wire]  ; defk にできない: answer-text の綴りが object を深さの順に辿る再帰の同期の綴り
+  "SpelledJson を含みうる wire の object を、JSON の綴りにするため(SpelledJson はそのまま継ぐ・ほかは ANSWER-ENCODER と同じ綴り)。"
+  ;; 行ごとに通る小さな値(文字列・整数)は json の部品で直に綴る(ANSWER-ENCODER.encode は整数 1 つにも綴りの機械を組み直す)。
+  (setv kind (type wire))
+  (cond
+    (is kind SpelledJson) wire.text
+    (is kind str) (encode-basestring wire)
+    (is kind int) (int.__repr__ wire)
+    (is kind dict)
+      (+ "{" (.join "," (gfor #(name item) (.items wire) (+ (encode-basestring name) ":" (spelled-json item)))) "}")
+    (is kind list) (+ "[" (.join "," (gfor item wire (spelled-json item))) "]")
+    True (.encode ANSWER-ENCODER wire)))
+
+
+(defk row-json [row value-of]
+  {:pre [(: row Row) (: value-of Callable)] :post [(: % dict)]}
+  "行 1 つを wire の object にする(値は value-of で写す — plain-value | spelled-value)。"
+  {"kind" "row" "key" (list row.key) "value" (value-of row) "version" row.version})
+
+
+(defk change-json [change value-of]
+  {:pre [(: change (| RowChanged RowRemoved)) (: value-of Callable)] :post [(: % dict)]}
+  "変更 1 つを wire の object(kind = rowChanged | rowRemoved)にする(値は row-json と同じく value-of で写す)。"
   (match change
-    (RowChanged :table table :key key :version version :value value :sequence sequence :at at)
-      {"kind" "rowChanged" "table" table "key" (list key) "version" version "value" (thaw-json value) "sequence" sequence
+    (RowChanged :table table :key key :version version :sequence sequence :at at)
+      {"kind" "rowChanged" "table" table "key" (list key) "version" version "value" (value-of change) "sequence" sequence
        "at" at}
     (RowRemoved :table table :key key :sequence sequence)
       {"kind" "rowRemoved" "table" table "key" (list key) "sequence" sequence}))
@@ -765,13 +805,28 @@
 
 (defk encode-answer [answer]
   {:pre [(: answer WireAnswer)] :post [(: % dict)]}
-  "HTTP の口が記録の handler から受けた答え(Unreachable を除く)を、200 の本文にする。"
+  "HTTP の口が記録の handler から受けた答え(Unreachable を除く)を、200 の本文の wire の object(dict と list)にする。"
+  (<- encoded (answer-object answer plain-value))
+  encoded)
+
+
+(defk answer-text [answer]
+  {:pre [(: answer WireAnswer)] :post [(: % str)]}
+  "HTTP の口が記録の handler から受けた答え(Unreachable を除く)を、200 の本文の JSON の綴りにする(行と変更の値は保存の綴りを継ぐ —
+   上の註)。"
+  (<- encoded (answer-object answer spelled-value))
+  (spelled-json encoded))
+
+
+(defk answer-object [answer value-of]
+  {:pre [(: answer WireAnswer) (: value-of Callable)] :post [(: % dict)]}
+  "答え(Unreachable を除く)を wire の object にする 1 か所(行と変更の値は value-of で写す — encode-answer と answer-text が使う)。"
   (match answer
-    (Row) (! (row-json answer))
+    (Row) (! (row-json answer value-of))
     (Missing) {"kind" "missing"}
     (Page :rows rows :next_cursor next-cursor :epoch epoch :sequence sequence)
       (do (setv encoded [])
-          (for [row rows] (.append encoded (! (row-json row))))
+          (for [row rows] (.append encoded (! (row-json row value-of))))
           {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence})
     ;; 鍵 position は書きの変更の位置を持つ答えの時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。
     ;; 鍵 replayed は冪等キーの送り直しの答えの時だけ出す(省ける鍵 — 真の時だけ・card ki-78c6d663491f。1 版前の読み手は読み捨てる)。
@@ -779,13 +834,13 @@
       (| {"kind" "written" "version" version "value" (thaw-json value)}
          (if (is position None) {} {"position" (! (watch-cursor-json position))})
          (if replayed {"replayed" True} {}))
-    (Conflict :current current) {"kind" "conflict" "current" (! (encode-answer current))}
+    (Conflict :current current) {"kind" "conflict" "current" (! (answer-object current value-of))}
     (Refused :reason reason) {"kind" "refused" "reason" reason}
     (NotIndexed :fields fields) {"kind" "notIndexed" "fields" (list fields)}
     (Reset :epoch epoch :floor floor) {"kind" "reset" "epoch" epoch "floor" floor}
     (Changes :items items :cursor cursor :tails tails)
       (do (setv encoded [])
-          (for [item items] (.append encoded (! (change-json item))))
+          (for [item items] (.append encoded (! (change-json item value-of))))
           (var tail-items [])
           (for [tail tails]
             (<- tail-item dict (tail-json tail))
@@ -798,7 +853,7 @@
     (AppendedEvents :items items)
       (do (var appended-items [])
           (for [item items]
-            (<- encoded dict (encode-answer item))
+            (<- encoded dict (answer-object item value-of))
             (:= appended-items (+ appended-items [encoded])))
           {"kind" "appendedEvents" "items" appended-items})
     (Events :items items :last_sequence last-sequence)
@@ -807,11 +862,11 @@
           {"kind" "events" "items" encoded "lastSequence" last-sequence})
     (WrittenRows :items items :replayed replayed)
       (do (val written-items [])
-          (for [written items] (.append written-items (! (encode-answer written))))
+          (for [written items] (.append written-items (! (answer-object written value-of))))
           (| {"kind" "writtenRows" "items" written-items}
              (if replayed {"replayed" True} {})))
     (RowsConflict :index index :table table :key key :current current)
-      {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (encode-answer current))}
+      {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (answer-object current value-of))}
     (RowsRefused :index index :table table :key key :reason reason)
       {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
     (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}

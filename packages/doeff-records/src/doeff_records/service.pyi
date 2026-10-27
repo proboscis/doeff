@@ -22,7 +22,7 @@ from doeff_records.wire import ERROR_MALFORMED as ERROR_MALFORMED
 from doeff_records.wire import ERROR_NOT_FOUND as ERROR_NOT_FOUND
 from doeff_records.wire import ERROR_STORE_UNAVAILABLE as ERROR_STORE_UNAVAILABLE
 from doeff_records.wire import decode_request as decode_request
-from doeff_records.wire import encode_answer as encode_answer
+from doeff_records.wire import answer_text as answer_text
 from doeff_records.wire import refusal_json as refusal_json
 from doeff_records.wire import undeclared_reason as undeclared_reason
 from doeff_records.wire import keyed_request as keyed_request

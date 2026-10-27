@@ -289,17 +289,18 @@
   (and (isinstance value int) (not (isinstance value bool))))
 
 
-(defn #^ FrozenMap projected [#^ TableDecl decl #^ (| tuple None) fields #^ FrozenMap value]
-  "返す欄だけの値(fields = None は全部・鍵の欄は常に残す)。"
-  (if (is fields None)
-      (frozen-json-object value "一覧の行の値")
-      (frozen-json-object (dfor #(name v) (.items value) :if (or (in name fields) (in name decl.key-fields)) name v)
-                          "一覧の行の値")))
+(defn #^ FrozenMap projected [#^ TableDecl decl #^ tuple fields #^ FrozenMap value]
+  "返す欄 fields だけの値(鍵の欄は常に残す — 欄を絞らない読みは listed-row が行をそのまま出す)。"
+  (frozen-json-object (dfor #(name v) (.items value) :if (or (in name fields) (in name decl.key-fields)) name v)
+                      "一覧の行の値"))
 
 
 (defn #^ Row listed-row [#^ TableDecl decl #^ (| tuple None) fields #^ Row row]
-  "一覧に出す行(返す欄だけ)。"
-  (Row row.key (projected decl fields row.value) row.version))
+  "一覧に出す行(返す欄だけ)。欄を絞らない読み(fields = None)は行をそのまま出す(値を解かない — 保存の綴りを持つ行は綴りのまま
+   答えに継がれる・values.hy の頭の註)。"
+  (if (is fields None)
+      row
+      (Row row.key (projected decl fields row.value) row.version)))
 
 
 (defn #^ int next-watch-sequence [#^ tuple items #^ int limit #^ int head]

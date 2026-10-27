@@ -67,7 +67,7 @@
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
-                              EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS])
+                              EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
 (import doeff_records.watching [closing-wake?])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
                                ReadStreamEnd ReadEventByKey AwaitRecordsBack ReadSourcePatience write-parts])
@@ -78,7 +78,7 @@
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
                                  retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
-                                 listed-row key-text
+                                 listed-row key-text canonical-json
                                  next-watch-sequence
                                  epoch-ms terminal-row? body-digest row-expired? event-expired? judge-write-replay write-digest])
 
@@ -543,12 +543,15 @@
                                    #^ int now-ms]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
   "判定を通った 1 行を置き場に書き、変更の列に 1 つ積む(PutRow と PutRows の書きを 1 つにし、版と番号の採り方を揃えるため)。"
   (setv version (if (is current None) 1 (+ current.version 1)))
-  (setv text (key-text key)
-        stored (StoredRow (Row key value version) now-ms))
+  ;; 値は書いた時に 1 度だけ綴り、行と変更に持たせる(PostgreSQL の置き場の payload と同じ綴り — 読みの答えは綴りをそのまま継ぐ・
+  ;; values.hy の頭の註の保存の綴り)。
+  (setv spelled (canonical-json value)
+        text (key-text key)
+        stored (StoredRow (spelled-row key value spelled version) now-ms))
   (setv (get (get store.rows table) text) stored)
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
-  (.append store.changes (RowChanged table key version value store.head now-ms))
+  (.append store.changes (spelled-change table key version value spelled store.head now-ms))
   (ring-bells store (_bell-names #(table) #()))
   (setv decl (store.schema.table table))
   (when (and (isinstance decl.retention KeepFor) (terminal-row? decl value))
