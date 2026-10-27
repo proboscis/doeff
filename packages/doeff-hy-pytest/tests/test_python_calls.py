@@ -1,4 +1,4 @@
-"""Python の呼び出しの数え(doeff_hy_pytest/python_calls.py・agora-redesign #2854 の受入条 c4c2e04dc)の検。
+"""Python の呼び出しの数え(doeff_hy_pytest/_python_calls.py・agora-redesign #2854 の受入条 c4c2e04dc)の検。
 
 依頼書 B の受入条と失敗例を 1 つずつ潰す: 印の無い走りは枠を取らず set_events を呼ばない(受入条 2)・数えるのは歩数を宣言した
 検の call の間だけ(受入条 3・決定 3)・複数 thread で数を落とさない(受入条 4)・枠は 4 → 5 → 3 の順で 0〜2 を取らず、全部
@@ -16,7 +16,7 @@ import sys
 import threading
 
 import pytest
-from doeff_hy_pytest.budget import (
+from doeff_hy_pytest._budget import (
     RATIO_EXCLUDED_TEXT,
     RATIO_MIN_TESTS,
     CompileTally,
@@ -28,7 +28,7 @@ from doeff_hy_pytest.budget import (
     step_cost_line,
     step_cost_report,
 )
-from doeff_hy_pytest.python_calls import (
+from doeff_hy_pytest._python_calls import (
     TOOL_NAME,
     CallCounter,
     CalledTest,
@@ -107,7 +107,7 @@ CALLS_PER_THREAD = 50_000
 DECLARED = f"""\
 (require doeff-hy.macros [deftest])
 (import pytest threading fake_work)
-(import doeff_hy_pytest.budget [declare-step-budget])
+(import doeff_hy_pytest [declare-step-budget])
 (fake_work.call-many {NOISE_CALLS})
 (defn [pytest.fixture] noisy []
   (fake_work.call-many {NOISE_CALLS})

@@ -1,4 +1,4 @@
-"""Hy の検の時間の上限(doeff_hy_pytest/budget.py)の検。
+"""Hy の検の時間の上限(doeff_hy_pytest/_budget.py)の検。
 
 収集は CPU 時間・印ごとの実行は壁の時計で測るので、検の file の中は sleep ではなく CPU を回して時間を使う(CPU を回せば
 両方の時計に時間が出る)。子 process の待ちで壁の時計だけに時間が出る検は CHILD_WAIT_CALL。上限は小さく(0.05 秒)、
@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from doeff_hy_pytest.budget import (
+from doeff_hy_pytest._budget import (
     Budgets,
     DEFAULT_CALL_BUDGET_STEPS,
     DEFAULT_RUNAWAY_STEPS_MULTIPLIER,
@@ -262,7 +262,7 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
     _project(pytester, REAL_WORLD_SECONDS_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     # 同じ process で走る内側の pytest は、外側の走りの警告の filter を引き継ぐ — 外側が `-W ignore::pytest.PytestWarning`
     # で走ると BudgetWarning(PytestWarning の子)が消えて赤になった(card ki-2320b23ba160)。内側の -W で見せる側に固定する。
-    result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest.budget.BudgetWarning")
+    result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest._budget.BudgetWarning")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
         [
@@ -1168,7 +1168,7 @@ def test_declare_step_budget_attaches_the_declaration_and_refuses_bad_values() -
 DECLARED_STEPS = """\
 (require doeff-hy.macros [deftest])
 (import fake_work)
-(import doeff_hy_pytest.budget [declare-step-budget])
+(import doeff_hy_pytest [declare-step-budget])
 (deftest test-declared-heavy
   (fake_work.add 10000)
   (assert True))
@@ -1198,7 +1198,7 @@ def test_a_declared_test_is_judged_by_its_declaration_and_the_failure_cases_stay
 def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
     """宣言の値を超えた検は赤(宣言は上限を上げる口ではない — 宣言した値までしか通さない)。"""
     over = (
-        "(require doeff-hy.macros [deftest])\n(import fake_work)\n(import doeff_hy_pytest.budget [declare-step-budget])\n"
+        "(require doeff-hy.macros [deftest])\n(import fake_work)\n(import doeff_hy_pytest [declare-step-budget])\n"
         "(deftest test-over\n  (fake_work.add 20000)\n  (assert True))\n"
         '(declare-step-budget test-over 12000 "検の例")\n'
     )
@@ -1471,7 +1471,7 @@ def test_an_outlier_changes_neither_the_outcomes_nor_the_exit_code_nor_the_warni
             RATIO_TESTS_INI + f'doeff_test_budget_mode = "{mode}"\n',
             {"test_ratio": _ratio_tests(hot=hot)},
         )
-        result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest.budget.BudgetWarning")
+        result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest._budget.BudgetWarning")
         result.stdout.fnmatch_lines(["CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 9 本(未満 0 本は出さない)・中央値 *"])
         named = "*・中央値の 2 倍超 1 本: test_hot ×*"
         if hot:

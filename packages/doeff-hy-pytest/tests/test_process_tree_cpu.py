@@ -1,4 +1,4 @@
-"""印の秒の上限を process の木の CPU 秒で判じる宣言(declare_process_tree_cpu・doeff_hy_pytest.tree_cpu)の検
+"""印の秒の上限を process の木の CPU 秒で判じる宣言(declare_process_tree_cpu・doeff_hy_pytest._tree_cpu)の検
 (agora-redesign card ki-ef6d57782313)。
 
 確かめる事: 宣言した検は、壁の時計が上限を越えても木の CPU 秒が内なら緑(機体の混みで赤にならない)・子孫が CPU を使って上限を
@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 import pytest
-from doeff_hy_pytest.budget import (
+from doeff_hy_pytest._budget import (
     TREE_CPU_WALL_BACKSTOP_FACTOR,
     Budgets,
     CompileTally,
@@ -26,7 +26,7 @@ from doeff_hy_pytest.budget import (
     declared_tree_cpu_of,
     judge_call,
 )
-from doeff_hy_pytest.tree_cpu import (
+from doeff_hy_pytest._tree_cpu import (
     ProcessStat,
     TreeCpu,
     TreeCpuSampler,
@@ -212,7 +212,7 @@ def _child_test(name: str, child_code: str, declared: bool) -> str:
     return (
         "(require doeff-hy.macros [deftest])\n"
         "(import pytest subprocess sys)\n"
-        "(import doeff_hy_pytest.budget [declare-process-tree-cpu])\n"
+        "(import doeff_hy_pytest [declare-process-tree-cpu])\n"
         "(setv pytestmark [pytest.mark.real_world])\n"
         f"(deftest {name}\n"
         f'  (subprocess.run [sys.executable "-c" {json.dumps(child_code)}] :check True)\n'
