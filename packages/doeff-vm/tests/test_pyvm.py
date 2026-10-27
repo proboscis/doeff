@@ -3,10 +3,10 @@
 import doeff_vm
 import pytest
 from doeff_core_effects.effects import ReadWriterLog
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.handlers import reader, state, vm_probe_handler, writer
 from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
-from doeff import Ask, Get, Put, Tell, do, run
+from doeff import Ask, Get, Put, ReadVmLiveCounts, Tell, do, run
 
 
 class CustomEffect(doeff_vm.EffectBase):
@@ -29,7 +29,6 @@ def test_import_exports_current_low_level_api() -> None:
     assert doeff_vm.EffectBase is not None
     assert doeff_vm.WithHandler is not None
     assert doeff_vm.TailEval is not None
-    assert doeff_vm.vm_live_counts is not None
 
     removed_runtime_facade_symbols = {
         "run",
@@ -387,11 +386,11 @@ def test_scheduled_spawn_gather_runs_via_doeff_facade() -> None:
 
 
 def test_vm_live_counts_return_to_baseline_after_run() -> None:
-    before = doeff_vm.vm_live_counts()
+    before = run(vm_probe_handler(ReadVmLiveCounts()))
 
     assert run(simple_program()) == 42
 
-    assert doeff_vm.vm_live_counts() == before
+    assert run(vm_probe_handler(ReadVmLiveCounts())) == before
 
 
 class TestGcCycleCollection:

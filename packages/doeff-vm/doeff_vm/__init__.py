@@ -51,5 +51,6 @@ GetBoundaries = _ext.GetBoundaries
 GetOuterHandlers = _ext.GetOuterHandlers
 TailEval = _ext.TailEval
 
-vm_live_counts = _ext.vm_live_counts
-invariant_checks_enabled = _ext.invariant_checks_enabled
+# The VM's counts and switches (live objects, work and scan counts, the invariant checks) are not
+# exported here: read and set them with doeff's effects (ReadVmLiveCounts, SetInvariantChecks, ...),
+# answered by doeff_core_effects.handlers.vm_probe_handler (agora card ki-27e8ea225b62).

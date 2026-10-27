@@ -110,9 +110,10 @@ fails unless `tests/over-budget` lists it.
 | `doeff_hy_pytest.budget.declare_step_budget(test, steps, reason)` | Gives one test its own step limit with a one-line reason, next to the test's definition. Over the declared value fails; at most half of it fails as stale |
 | `--doeff-python-calls` | Command-line flag. Counts Python calls (`sys.monitoring` CALL events) during tests that declared a step limit, and prints one summary line. Reports only; never fails a test |
 
-The step limits need a doeff-vm build that exposes step counts
-(`doeff_vm.doeff_vm.vm_work_counts`). If it is missing, pytest stops at start-up with
-a `UsageError` instead of silently falling back to seconds.
+The step limits need a doeff that reads step counts with the effect `ReadVmWorkCounts`
+(answered by `doeff_core_effects.handlers.vm_probe_handler`). If it is missing, or the
+doeff-vm build is too old to answer it, pytest stops at start-up with a `UsageError`
+instead of silently falling back to seconds.
 
 ### Output
 

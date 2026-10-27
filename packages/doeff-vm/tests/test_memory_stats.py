@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import doeff_vm
+from doeff_core_effects.handlers import vm_probe_handler
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import Gather, Spawn, do, run
+from doeff import Gather, ReadVmLiveCounts, ReadVmWorkCounts, Spawn, do, run
 
 
 class SyntheticQuery(doeff_vm.EffectBase):
@@ -26,8 +27,13 @@ def _synthetic_query_handler():
     return handler
 
 
-def test_vm_live_counts_exported_with_expected_shape() -> None:
-    live_segments, live_continuations, live_ir_streams = doeff_vm.vm_live_counts()
+def _live() -> tuple[int, int, int]:
+    """VM の生きている数を effect ReadVmLiveCounts で読む(読む run は終わってから比べるので、どの読みにも同じだけ入る)。"""
+    return run(vm_probe_handler(ReadVmLiveCounts()))
+
+
+def test_the_live_counts_effect_answers_three_ints() -> None:
+    live_segments, live_continuations, live_ir_streams = _live()
 
     assert isinstance(live_segments, int)
     assert isinstance(live_continuations, int)
@@ -35,12 +41,12 @@ def test_vm_live_counts_exported_with_expected_shape() -> None:
 
 
 def test_vm_live_counts_return_to_baseline_after_pyvm_run() -> None:
-    before = doeff_vm.vm_live_counts()
+    before = _live()
     vm = doeff_vm.PyVM()
 
     assert vm.run(doeff_vm.Pure(7)) == 7
 
-    assert doeff_vm.vm_live_counts() == before
+    assert _live() == before
     assert vm.arena_stats() == (0, 0, 0, 0)
 
 
@@ -60,14 +66,14 @@ def test_vm_live_counts_return_to_baseline_after_scheduled_handler_chain() -> No
         return batches
 
     program = scheduled(doeff_vm.WithHandler(_synthetic_query_handler(), scenario()))
-    before = doeff_vm.vm_live_counts()
+    before = _live()
 
     assert run(program) == [
         [f"0:{task_index}" for task_index in range(10)],
         [f"1:{task_index}" for task_index in range(10)],
     ]
 
-    assert doeff_vm.vm_live_counts() == before
+    assert _live() == before
 
 
 def test_arena_slots_reclaimed_when_handler_abandons_continuation() -> None:
@@ -99,11 +105,11 @@ def test_arena_slots_reclaimed_when_handler_abandons_continuation() -> None:
             result = yield doeff_vm.WithHandler(abort_handler, body())
         return result
 
-    before = doeff_vm.vm_live_counts()
+    before = _live()
 
     assert run(scenario()) == "aborted"
 
-    assert doeff_vm.vm_live_counts() == before
+    assert _live() == before
     assert len(head_indices) == n_aborts
     assert max(head_indices) <= 8, (
         f"arena slots stranded: max head fiber index {max(head_indices)} "
@@ -112,7 +118,7 @@ def test_arena_slots_reclaimed_when_handler_abandons_continuation() -> None:
 
 
 # ── 積み上げの仕事の量(agora-redesign #2851・#2670)────────────────────────────────
-# 検の時間の予算を、機体の負荷で揺れない数で判じるための口。compiled の module から読む(__init__ へは足さない)。
+# 検の時間の予算を、機体の負荷で揺れない数で判じるための数。effect ReadVmWorkCounts で読む(拡張の関数は公開の名に無い)。
 
 
 @dataclass(frozen=True)
@@ -127,9 +133,8 @@ class Work:
 
 
 def _work() -> Work:
-    from doeff_vm import doeff_vm as ext
-
-    steps, handler_calls = ext.vm_work_counts()
+    """積み上げの数を effect で読む(読む run の歩はどの読みにも同じだけ入り、2 つの読みの差では program の分に足される決まった数)。"""
+    steps, handler_calls = run(vm_probe_handler(ReadVmWorkCounts()))
     return Work(steps, handler_calls)
 
 
@@ -151,12 +156,16 @@ def _work_of_one_run() -> Work:
     return _work().since(before)
 
 
-def test_vm_work_counts_is_cumulative_and_not_reexported() -> None:
-    """積み上げの数は減らない・handler を通る program で歩数も handler の回数も増える・package の頭へは出さない。"""
+def test_vm_work_counts_is_cumulative_and_not_a_public_name() -> None:
+    """積み上げの数は減らない・handler を通る program で歩数も handler の回数も増える・package の頭にも拡張の公開の名にも無い。"""
+    from doeff_vm import doeff_vm as ext
+
     grown = _work_of_one_run()
     assert grown.steps > 0
     assert grown.handler_calls >= 5
     assert not hasattr(doeff_vm, "vm_work_counts")
+    assert not hasattr(ext, "vm_work_counts")
+    assert "_vm_work_counts" not in ext.__all__
 
 
 def test_vm_work_counts_grow_by_the_same_amount_for_the_same_program() -> None:
@@ -167,7 +176,8 @@ def test_vm_work_counts_grow_by_the_same_amount_for_the_same_program() -> None:
 
 
 def test_the_extension_stub_declares_only_functions_the_extension_has() -> None:
-    """compiled の module の型の宣言(doeff_vm/doeff_vm.pyi)が名乗る関数は、拡張に在り、vm_work_counts は int 2 つを返す。"""
+    """compiled の module の型の宣言(doeff_vm/doeff_vm.pyi)が名乗る関数は、拡張に在り、_ で始まる物は拡張の __all__ に無く、
+    _vm_work_counts は int 2 つを返す。"""
     from doeff_vm import doeff_vm as ext
 
     stub = ast.parse(Path(doeff_vm.__file__).with_name("doeff_vm.pyi").read_text(encoding="utf-8"))
@@ -176,7 +186,8 @@ def test_the_extension_stub_declares_only_functions_the_extension_has() -> None:
         for node in stub.body
         if isinstance(node, ast.FunctionDef) and node.name != "__getattr__"
     }
-    assert declared["vm_work_counts"] == "tuple[int, int]"
+    assert declared["_vm_work_counts"] == "tuple[int, int]"
     assert [name for name in declared if not hasattr(ext, name)] == []
-    steps, calls = ext.vm_work_counts()
+    assert [name for name in declared if name.startswith("_") and name in ext.__all__] == []
+    steps, calls = ext._vm_work_counts()
     assert (type(steps), type(calls)) == (int, int)

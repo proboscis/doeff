@@ -60,7 +60,8 @@ from types import ModuleType
 from typing import NoReturn
 
 import hy  # noqa: F401 — Hy の importer を据える(入口と、前もって読む module の多くは Hy)
-from doeff import run
+from doeff import ReadVmLiveCounts, run
+from doeff_core_effects.handlers import vm_probe_handler
 from doeff_core_effects.os_warm_process import WarmRequestWire, own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
 from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused
@@ -120,12 +121,16 @@ def thread_count() -> int:
     return counted
 
 
-def vm_live_counts() -> tuple[int, ...]:
-    """doeff の VM の生きている数(segment・continuation・IR の流れ)— 分かれる前に VM が作られていない事を印に残すため。"""
-    import doeff_vm  # noqa: PLC0415 — 読み込みの後に数えるだけ(待ちの子の読み込みの一覧に入れない)
-
-    counts: tuple[int, ...] = tuple(doeff_vm.vm_live_counts())
+def _live_vm_objects() -> tuple[int, int, int]:
+    """doeff の VM の生きている数(segment・continuation・IR の流れ)を effect ReadVmLiveCounts で読むため。読む run 自身の物も数に入る。"""
+    counts: tuple[int, int, int] = run(vm_probe_handler(ReadVmLiveCounts()))
     return counts
+
+
+def _vm_live_beyond(reading: tuple[int, int, int]) -> tuple[int, ...]:
+    """doeff の VM の生きている数のうち、読む run 自身の物(reading — VM の物がまだ無い起動の始めに読んだ数)の外の数 — 分かれる前に
+    VM が作られていない(全部 0)事を印に残すため。"""
+    return tuple(now - own for now, own in zip(_live_vm_objects(), reading, strict=True))
 
 
 def start_ticks(pid: int) -> int:
@@ -390,6 +395,7 @@ def main() -> None:
     parser.add_argument("--preload", action="append", default=[], help="前もって読む module の名(速さの手がかり・何度でも)")
     options = parser.parse_args()
     os.umask(0o077)
+    reading = _live_vm_objects()  # まだ run を 1 つも走らせていない — 数は読む run 自身の物だけ
     modules = tuple(dict.fromkeys((JOB_ENTRY, *options.preload)))
     for name in modules:
         try:
@@ -421,7 +427,7 @@ def main() -> None:
         "modules": len(sys.modules),
         "preloaded": list(modules),
         "threads": thread_count(),
-        "vmLive": list(vm_live_counts()),
+        "vmLive": list(_vm_live_beyond(reading)),
         "gcFrozen": gc.get_freeze_count(),
         # service の頼み(入力の pipe・cgroup・知らせの中継 — 頭注)を受けられる版である印。worker はこの印の在る待ちの子へだけ service を頼む。
         "serviceForks": True,

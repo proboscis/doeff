@@ -22,7 +22,7 @@ out of arming order — fail the checks below (each check names the timer the br
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.handlers import await_handler, vm_probe_handler
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, scheduled
 from doeff_events import (
     ArmedTimer,
@@ -37,9 +37,8 @@ from doeff_events import (
 from doeff_time import GetTime, sim_time_handler
 from doeff_time.handlers.async_time import async_time_handler
 from doeff_time.handlers.sync_time import sync_time_handler
-from doeff_vm.doeff_vm import vm_work_counts
 
-from doeff import Pass, do, run
+from doeff import Pass, ReadVmWorkCounts, do, run
 from doeff import handler as program_handler
 from doeff.program import ProgramHandler
 
@@ -149,9 +148,9 @@ def _steps_to_a_deadline(away: timedelta) -> int:
         yield ArmTimer("deadline", T0 + away)
         return (yield first_timer_and_when())
 
-    before, _ = vm_work_counts()
+    before, _ = run(vm_probe_handler(ReadVmWorkCounts()))
     fired = run_on_sim(program())
-    after, _ = vm_work_counts()
+    after, _ = run(vm_probe_handler(ReadVmWorkCounts()))
     assert fired == (TimerFired("deadline"), T0 + away)
     return after - before
 

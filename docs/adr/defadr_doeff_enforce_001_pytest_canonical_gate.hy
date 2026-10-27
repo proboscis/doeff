@@ -138,13 +138,14 @@
        ;; 2026-09-29(#980): 配線は root の conftest.py が oracle を実行時に有効にする形。この走行で
        ;; 有効であること(= 配線が効いていること)と、make sync が build を feature で分けないことを見る。
        (import pathlib [Path])
-       (import doeff_vm.doeff_vm [invariant_checks_enabled])
+       (import doeff [ReadInvariantChecks run])
+       (import doeff_core_effects.handlers [vm-probe-handler])
        (setv root (get (. (Path __file__) parents) 2))
        (setv conftest (.read-text (/ root "conftest.py")))
        (setv makefile (.read-text (/ root "Makefile")))
        (assert (in "\"vm_invariant_checks\"" conftest)
                "root の conftest.py が VM の oracle を有効にしていない — ADR-DOE-ENFORCE-001 R4")
-       (assert (invariant_checks_enabled)
+       (assert (run (vm-probe-handler (ReadInvariantChecks)))
                "この pytest の走行で VM の oracle が無効 — ADR-DOE-ENFORCE-001 R4")
        (assert (not-in "maturin develop --release --features" makefile)
                "make sync が VM の build を feature で分けている — 2 経路の build の食い違いに戻る(#980)"))

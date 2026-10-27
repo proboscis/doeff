@@ -24,14 +24,13 @@ import dataclasses
 import functools
 
 import pytest
-from doeff_core_effects import Spawn, Wait, scheduled
+from doeff_core_effects import Spawn, Wait, scheduled, vm_probe_handler
 from doeff_vm import Callable as VmCallable
 from doeff_vm import WithBoundaries
 from doeff_vm import WithHandler as WithHandlerRaw
 from doeff_vm import WithObserve as WithObserveRaw
-from doeff_vm import doeff_vm as vm_ext
 
-from doeff import EffectBase, Pass, Resume, WithObserve, do, handler, run
+from doeff import EffectBase, Pass, ReadVmWorkCounts, Resume, WithObserve, do, handler, run
 from doeff.handler_utils import get_inner_boundaries
 
 
@@ -250,10 +249,11 @@ def test_a_spawn_inside_the_reinstalled_stack_sees_the_same_boundaries(one_step)
 
 
 def steps_of(program):
-    """VM steps spent running `program` (the VM's process-wide counter, before and after)."""
-    before, _ = vm_ext.vm_work_counts()
+    """VM steps spent running `program` (the VM's process-wide counter, before and after — each read
+    is a run of its own, whose steps are the same for every program and cancel out in a comparison)."""
+    before, _ = run(vm_probe_handler(ReadVmWorkCounts()))
     run(program)
-    after, _ = vm_ext.vm_work_counts()
+    after, _ = run(vm_probe_handler(ReadVmWorkCounts()))
     return after - before
 
 

@@ -40,6 +40,7 @@ from doeff_core_effects.handlers import slog_discard_handler as slog_discard_han
 from doeff_core_effects.handlers import slog_handler as slog_handler
 from doeff_core_effects.handlers import state as state
 from doeff_core_effects.handlers import try_handler as try_handler
+from doeff_core_effects.handlers import vm_probe_handler as vm_probe_handler
 from doeff_core_effects.handlers import writer as writer
 
 # absence and failure (ADR-DOE-CORE-EFFECTS-003)
@@ -75,6 +76,19 @@ from doeff_core_effects.scheduler import Task as Task
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.scheduler import scheduled as scheduled
+
+# the doeff-vm's counts and switches, answered by vm_probe_handler (agora card ki-27e8ea225b62)
+from doeff_core_effects.vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks
+from doeff_core_effects.vm_probe_effects import ReadVmLiveCounts as ReadVmLiveCounts
+from doeff_core_effects.vm_probe_effects import ReadVmScanCounts as ReadVmScanCounts
+from doeff_core_effects.vm_probe_effects import ReadVmWorkCounts as ReadVmWorkCounts
+from doeff_core_effects.vm_probe_effects import SetInvariantChecks as SetInvariantChecks
+from doeff_core_effects.vm_probe_effects import (
+    SetSchedulerStepBudgetArmed as SetSchedulerStepBudgetArmed,
+)
+from doeff_core_effects.vm_probe_effects import (
+    SetSchedulerTraceInstalled as SetSchedulerTraceInstalled,
+)
 
 # isort: split
 # Last: the hint table reads the scheduler, which `import doeff` must finish loading first.
