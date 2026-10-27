@@ -87,9 +87,9 @@
   測った検だけを判じる(走らなかった検・別の検査の鍵が同じ dir に在っても判じない)。
 - 上限は doeff-vm の不変条件の検査が無効な走行を基準にする。検査が有効な走行(doeff 自身の pytest — root の
   conftest.py が有効にする・agora-redesign #980 からはどの build も検査を持ち実行時に切り替える)は VM の
-  1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに ``doeff_vm.invariant_checks_enabled()`` を 1 回読み、
+  1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに doeff の effect ``ReadInvariantChecks`` を 1 回読み、
   検査つきなら ``fail`` でも赤にせず報告に留める(基準の違う build で誤った赤を出さない)。終わりの要約の見出しに
-  build の種類を 1 行出す。読めない(import できない・古い VM で関数が無い)時は「不明」と出し、判定は今のまま。
+  build の種類を 1 行出す。読めない(import できない・古い VM で答えられない)時は「不明」と出し、判定は今のまま。
 """
 
 import contextlib
@@ -187,15 +187,18 @@ VmBuild = CheckedVmBuild | UncheckedVmBuild | UnknownVmBuild
 
 
 def read_vm_build() -> VmBuild:
-    """doeff-vm の build の種類を ``doeff_vm.invariant_checks_enabled()`` で読む(session の始めに 1 回)。"""
+    """doeff-vm の build の種類を doeff の effect ``ReadInvariantChecks`` で読む(session の始めに 1 回)。"""
     try:
-        import doeff_vm
+        from doeff_core_effects.handlers import vm_probe_handler
+
+        from doeff import ReadInvariantChecks, run
     except ImportError as exc:
-        return UnknownVmBuild(f"doeff_vm を import できない: {exc}")
-    reader = getattr(doeff_vm, "invariant_checks_enabled", None)
-    if reader is None:
-        return UnknownVmBuild("doeff_vm に invariant_checks_enabled が無い(古い VM)")
-    return CheckedVmBuild() if reader() else UncheckedVmBuild()
+        return UnknownVmBuild(f"doeff の ReadInvariantChecks を import できない(effect より前の doeff か、doeff が無い): {exc}")
+    try:
+        enabled = run(vm_probe_handler(ReadInvariantChecks()))
+    except ImportError as exc:  # vm_probe_handler が、doeff より古い doeff-vm の拡張を名指して断った
+        return UnknownVmBuild(str(exc))
+    return CheckedVmBuild() if enabled else UncheckedVmBuild()
 
 
 @dataclass(frozen=True)
@@ -212,7 +215,8 @@ class VmWork:
 
 @dataclass(frozen=True)
 class WorkReader:
-    """doeff-vm の積み上げの数を読む口(``doeff_vm.doeff_vm.vm_work_counts`` — agora-redesign #2851)。"""
+    """doeff-vm の積み上げの数を読む口(doeff の effect ``ReadVmWorkCounts`` を 1 回走らせて読む — agora-redesign #2851)。
+    読みも run なので、区間の前後の 2 つの読みの差には、読む run の歩(と handler の 1 回)が決まった数だけ入る。"""
 
     read: Callable[[], tuple[int, int]]
 
@@ -233,16 +237,25 @@ WorkSource = WorkReader | NoWorkReader
 
 
 def read_work_source() -> WorkSource:
-    """積み上げの数の口を session の始めに 1 回探す。compiled の module から直に引く(``doeff_vm/__init__.py`` へは足さない
-    — 古い ``.so`` で import が AttributeError になり全部の使い手が落ちるため・同じ file の註)。"""
+    """積み上げの数の口を session の始めに 1 回探す: doeff の effect ``ReadVmWorkCounts`` と、それに答える ``vm_probe_handler``。
+    1 度読んでみて、doeff-vm の拡張が古くて答えられなければ(handler が ImportError で断る)口は無い。"""
     try:
-        import doeff_vm.doeff_vm as ext
+        from doeff_core_effects.handlers import vm_probe_handler
+
+        from doeff import ReadVmWorkCounts, run
     except ImportError as exc:
-        return NoWorkReader(f"doeff_vm を import できない: {exc}")
-    reader = getattr(ext, "vm_work_counts", None)
-    if reader is None:
-        return NoWorkReader("doeff_vm に vm_work_counts が無い(積み上げの数の口より前の build)")
-    return WorkReader(reader)
+        return NoWorkReader(f"doeff の ReadVmWorkCounts を import できない(effect より前の doeff か、doeff が無い): {exc}")
+
+    def read() -> tuple[int, int]:
+        """検の区間の前後で、process の全部の VM の積み上げの数 (歩数, handler の回数) を読むため。"""
+        counts: tuple[int, int] = run(vm_probe_handler(ReadVmWorkCounts()))
+        return counts
+
+    try:
+        read()
+    except ImportError as exc:  # vm_probe_handler が、doeff より古い doeff-vm の拡張を名指して断った
+        return NoWorkReader(str(exc))
+    return WorkReader(read)
 
 
 @dataclass(frozen=True)

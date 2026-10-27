@@ -9,15 +9,14 @@ conftest.py が ini の値 vm_invariant_checks(既定 true)で有効にする(�
 ADR-DOE-ENFORCE-001 law `default-pytest-sees-all-enforcement`)。
 """
 
-import doeff_vm
+from doeff_core_effects.handlers import vm_probe_handler
+
+from doeff import ReadInvariantChecks, run
 
 
 def test_vm_built_with_invariant_checks():
-    assert hasattr(doeff_vm, "invariant_checks_enabled"), (
-        "doeff_vm.invariant_checks_enabled が存在しない — VM バイナリが古い。"
-        "`make sync` で再ビルドすること(stale Rust VM build; CLAUDE.md の警告参照)"
-    )
-    assert doeff_vm.invariant_checks_enabled(), (
+    # VM バイナリが古ければ、vm_probe_handler が「`make sync` で再ビルドする」の ImportError で落ちる(stale Rust VM build)。
+    assert run(vm_probe_handler(ReadInvariantChecks())), (
         "VM の oracle が無効 — ADR-DOE-ENFORCE-001 R4(B3 裁定 2026-07-14)。root の conftest.py が"
         "ini の値 vm_invariant_checks で有効にするはず — -o vm_invariant_checks=false を渡していないか、conftest を通らずに走らせていないかを見ること"
     )

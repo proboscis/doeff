@@ -205,6 +205,7 @@
     "doeff-task-join-deprecated",
     "doeff-to-generator-must-wrap-doeff-generator",
     "doeff-traceback-except-must-log",
+    "doeff-vm-counts-are-read-with-effects",
     "doeff-vm-handle-flat-map-no-anonymous-callmetadata",
     "doeff-vm-handle-map-no-anonymous-callmetadata",
     "doeff-vm-no-cfg-disabled-pyvm-base-stubs",

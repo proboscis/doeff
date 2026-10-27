@@ -8533,7 +8533,6 @@
       "stamped_lines",
       "start_ticks",
       "thread_count",
-      "vm_live_counts",
       "write_replacing"
      ],
      "doeff_cluster.worker.intent.code_model": [
@@ -17166,9 +17165,7 @@
       "UnhandledEffect",
       "WithBoundaries",
       "WithHandler",
-      "WithObserve",
-      "invariant_checks_enabled",
-      "vm_live_counts"
+      "WithObserve"
      ],
      "doeff_vm.doeff_vm": [
       "Apply",
@@ -17206,14 +17203,7 @@
       "WithBoundaries",
       "WithHandler",
       "WithObserve",
-      "gc_traverse_zeroed_visits",
-      "invariant_checks_enabled",
-      "set_invariant_checks",
-      "set_scheduler_step_budget_armed",
-      "set_scheduler_trace_installed",
-      "vm_live_counts",
-      "vm_scan_counts",
-      "vm_work_counts"
+      "gc_traverse_zeroed_visits"
      ]
     }
    }

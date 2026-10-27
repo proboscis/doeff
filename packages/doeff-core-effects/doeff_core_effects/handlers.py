@@ -50,6 +50,15 @@ from doeff_core_effects.effects import (
     Try,
     WriterTellEffect,
 )
+from doeff_core_effects.vm_probe_effects import (
+    ReadInvariantChecks,
+    ReadVmLiveCounts,
+    ReadVmScanCounts,
+    ReadVmWorkCounts,
+    SetInvariantChecks,
+    SetSchedulerStepBudgetArmed,
+    SetSchedulerTraceInstalled,
+)
 
 
 def _refuse_program(factory: str, value: object, takes: str) -> None:
@@ -249,6 +258,66 @@ def _slog_discard_handler(effect: Slog, k):
 slog_discard_handler: ProgramHandler = _named_handler(
     _slog_discard_handler, "slog_discard_handler"
 )
+
+
+_VmProbe = (
+    ReadVmLiveCounts
+    | ReadVmWorkCounts
+    | ReadVmScanCounts
+    | ReadInvariantChecks
+    | SetInvariantChecks
+    | SetSchedulerStepBudgetArmed
+    | SetSchedulerTraceInstalled
+)
+
+
+def _asked_vm(effect: _VmProbe) -> object:
+    """What the VM answers to ``effect``: the count it reads or None once the switch is set.
+
+    The functions are internal to doeff-vm (no public name of ``doeff_vm.doeff_vm``) and are
+    looked up at each effect, so a test can stand in a fake count for one of them.
+    """
+    from doeff_vm import doeff_vm as vm
+
+    answer: object
+    try:
+        match effect:
+            case ReadVmLiveCounts():
+                answer = vm._vm_live_counts()
+            case ReadVmWorkCounts():
+                answer = vm._vm_work_counts()
+            case ReadVmScanCounts():
+                answer = vm._vm_scan_counts()
+            case ReadInvariantChecks():
+                answer = vm._invariant_checks_enabled()
+            case SetInvariantChecks():
+                answer = vm._set_invariant_checks(effect.enabled)
+            case SetSchedulerStepBudgetArmed():
+                answer = vm._set_scheduler_step_budget_armed(effect.armed)
+            case SetSchedulerTraceInstalled():
+                answer = vm._set_scheduler_trace_installed(effect.installed)
+    except AttributeError as error:
+        raise ImportError(
+            f"vm_probe_handler cannot answer {effect!r}: the doeff_vm extension is older than "
+            f"doeff_core_effects ({error}). Rebuild the Rust extension (`make sync` in a doeff "
+            "checkout, or reinstall doeff-vm)"
+        ) from error
+    return answer
+
+
+def _vm_probe_handler(effect: _VmProbe, k):
+    """VM probe handler: answers the effects that read the doeff-vm's counts and set its
+    switches (``doeff_core_effects.vm_probe_effects``) by asking the VM of this process.
+
+    Stateless and needs no other handler: ``run(vm_probe_handler(ReadVmWorkCounts()))``.
+    The installer makes the def a ``@do`` function, as ``@handler`` does (ADR-DOE-CORE-003).
+    """
+    if isinstance(effect, _VmProbe):
+        return (yield Transfer(k, _asked_vm(effect)))
+    yield Pass(effect, k)
+
+
+vm_probe_handler: ProgramHandler = _named_handler(_vm_probe_handler, "vm_probe_handler")
 
 
 @do

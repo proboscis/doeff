@@ -20,7 +20,8 @@ import stat
 import subprocess
 import sys
 
-from doeff import run
+from doeff import ReadVmLiveCounts, run
+from doeff_core_effects.handlers import vm_probe_handler
 from doeff_core_effects.os_warm_process import own_thread_count
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "main"}
@@ -74,9 +75,9 @@ def command_line() -> str:
 def facts() -> dict[str, object]:
     """この process の見え方(fd の行き先・env・命令行・interpreter の venv・thread の本数・VM の数・GC が凍らせた object の数 — 待ちの子から
     受け継いだ分)を集めるため。interpreter の venv(sys.prefix)は、分かれた子が待ちの子を起こした venv で走る事を検が見る。"""
-    import doeff_vm  # noqa: PLC0415 — 走った後の数を読むだけ
-
     threads: int = run(own_thread_count())
+    # 読む run 自身の物も数に入る(effect ReadVmLiveCounts)。
+    live: tuple[int, int, int] = run(vm_probe_handler(ReadVmLiveCounts()))
     return {
         "pid": os.getpid(),
         "fds": list(fd_targets()),
@@ -85,7 +86,7 @@ def facts() -> dict[str, object]:
         "argv": list(sys.argv),
         "prefix": sys.prefix,
         "threads": threads,
-        "vmLive": list(doeff_vm.vm_live_counts()),
+        "vmLive": list(live),
         "gcFrozen": gc.get_freeze_count(),
     }
 

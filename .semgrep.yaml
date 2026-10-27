@@ -2598,6 +2598,41 @@ rules:
       issue: ki-1ef3718c89b3
       category: architecture
 
+  - id: doeff-vm-counts-are-read-with-effects
+    languages: [python]
+    severity: ERROR
+    message: >
+      doeff-vm-counts-are-read-with-effects: the doeff-vm's counts and switches (the live, work
+      and scan counts, the invariant checks, the Rust scheduler's trace and step budget flags)
+      are doeff's effects ReadVmLiveCounts, ReadVmWorkCounts, ReadVmScanCounts,
+      ReadInvariantChecks, SetInvariantChecks, SetSchedulerStepBudgetArmed and
+      SetSchedulerTraceInstalled, answered by doeff_core_effects.handlers.vm_probe_handler
+      (card ki-27e8ea225b62 — a subpackage shows its users effects and handlers only). Yield the
+      effect under vm_probe_handler instead of calling the extension's function; only that
+      handler and doeff_core_effects' scheduler and world phases call the functions.
+    patterns:
+      - pattern-either:
+          - pattern: from doeff_vm.doeff_vm import $NAME
+          - pattern: from doeff_vm import $NAME
+          - pattern: $MODULE.$NAME
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: ^_?(vm_live_counts|vm_work_counts|vm_scan_counts|invariant_checks_enabled|set_invariant_checks|set_scheduler_step_budget_armed|set_scheduler_trace_installed)$
+    paths:
+      exclude:
+        - /packages/doeff-core-effects/doeff_core_effects/handlers.py
+        - /packages/doeff-core-effects/doeff_core_effects/scheduler.py
+        - /packages/doeff-core-effects/doeff_core_effects/world_phases.py
+        # the extension's own test of its type stub (the functions it declares are on the extension)
+        - /packages/doeff-vm/tests/test_memory_stats.py
+        # the handler's test compares each effect's answer with the function it asks
+        - /tests/test_vm_probe_effects.py
+        # the step budget plugin's tests stand a fake count in for the extension's function
+        - /packages/doeff-hy-pytest/tests/
+    metadata:
+      issue: ki-27e8ea225b62
+      category: architecture
+
   - id: conductor-no-silent-issue-list-skip
     languages: [generic]
     severity: ERROR

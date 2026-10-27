@@ -181,7 +181,8 @@ implementations, with the same `StepBudgetExceeded` (a `BaseException`) and the 
 (`tests/test_scheduler_step_budget.py` checks it under both).
 
 - The only function that checks is the Python `_check_step_budget`. The Rust implementation reads a
-  flag (`set_scheduler_step_budget_armed`, switched together with the limit by `arm_step_budget` and
+  flag (the extension's internal `_set_scheduler_step_budget_armed` — the effect
+  `SetSchedulerStepBudgetArmed` sets the same flag — switched together with the limit by `arm_step_budget` and
   `disarm_step_budget`) each time it takes an entry from the ready queue, and calls that function only
   while the flag is set. So the counting, and the rule that an exhausted limit raises the same error on
   later wakes, are the same too.
