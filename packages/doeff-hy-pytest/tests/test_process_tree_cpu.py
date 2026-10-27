@@ -234,9 +234,9 @@ def test_in_a_run_a_declared_test_is_judged_by_the_cpu_of_its_child(
 ) -> None:
     """走りの中で: 子が 2.3 秒 CPU を回す宣言した検は木の CPU 秒で赤(子の CPU を数える)、子が 2.3 秒眠る宣言した検は壁の時計が
     上限 2 秒を越えても木の CPU 秒が内で緑(安全弁 4 秒の内)、同じく眠る宣言しない検は壁の時計で赤。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         {

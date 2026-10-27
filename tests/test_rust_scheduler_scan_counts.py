@@ -7,8 +7,9 @@ waiter (keys_parked_by, detach_from_waiters) and every task row (live_semaphore_
 kept claimed external-wait placeholders in the ready heap until popped, and walked a detached
 continuation chain with a linear find per fiber (DetachedFiberChain::fiber — O(L²) under L handlers).
 
-The work is counted, not timed: ``doeff_vm.doeff_vm.vm_scan_counts()`` adds up the entries every scan
-looked at, by what it walked.
+The work is counted, not timed: the effect ``ReadVmScanCounts`` (answered by ``vm_probe_handler``, the
+innermost handler, so reading costs no scheduler scan) adds up the entries every scan looked at, by what
+it walked.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.handlers import await_handler, vm_probe_handler
 from doeff_core_effects.scheduler import (
     Cancel,
     CreateExternalPromise,
@@ -31,9 +32,8 @@ from doeff_core_effects.scheduler import (
     scheduled,
 )
 from doeff_time import WaitWithin, async_time_handler
-from doeff_vm.doeff_vm import vm_scan_counts
 
-from doeff import EffectBase, K, Resume, do, handler, with_handlers
+from doeff import EffectBase, K, ReadVmScanCounts, Resume, do, handler, with_handlers
 from doeff import run as doeff_run
 
 pytestmark = [
@@ -98,8 +98,9 @@ def spawn_wait():
     return (yield Wait((yield Spawn(noop()))))
 
 
-def _scans() -> Counter[str]:
-    return Counter(vm_scan_counts())
+@do
+def _scans() -> Generator[ReadVmScanCounts, dict[str, int], Counter[str]]:
+    return Counter((yield ReadVmScanCounts()))
 
 
 @dataclass(frozen=True)
@@ -123,13 +124,13 @@ def _scans_per_op(op: Callable[[], object], *, parked: int, layers: int, ops: in
         for _ in range(4):  # the parked tasks start and park
             yield op()
         per_op: tuple[int, ...] = ()
-        start = _scans()
+        start = yield _scans()
         for _ in range(ops):
-            before = _scans()
+            before = yield _scans()
             yield op()
-            after = _scans()
+            after = yield _scans()
             per_op = (*per_op, sum(after[name] - before[name] for name in _PER_STEP_SCANS))
-        total = _scans()
+        total = yield _scans()
         total.subtract(start)
         for task in tasks:
             yield Cancel(task)
@@ -138,7 +139,7 @@ def _scans_per_op(op: Callable[[], object], *, parked: int, layers: int, ops: in
             by_scan=Counter({name: count / ops for name, count in total.items()}),
         )
 
-    stack = [await_handler(), async_time_handler(), *[unrelated_handler] * layers]
+    stack = [await_handler(), async_time_handler(), *[unrelated_handler] * layers, vm_probe_handler]
     return doeff_run(scheduled(with_handlers(stack, body()), implementation="rust"))
 
 

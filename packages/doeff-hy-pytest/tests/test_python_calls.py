@@ -59,12 +59,11 @@ def _own_stores(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Mo
 CONFTEST = """\
 import pytest
 
-import doeff_vm
 import doeff_vm.doeff_vm as _ext
 import fake_work
 
-doeff_vm.invariant_checks_enabled = lambda: False
-_ext.vm_work_counts = fake_work.counts
+_ext._invariant_checks_enabled = lambda: False
+_ext._vm_work_counts = fake_work.counts
 
 
 @pytest.fixture

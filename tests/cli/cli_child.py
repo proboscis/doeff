@@ -11,7 +11,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from doeff_vm.doeff_vm import invariant_checks_enabled
+from doeff_core_effects.handlers import vm_probe_handler
+
+from doeff import ReadInvariantChecks, run
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +21,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def with_settings(command: list[str], settings: Mapping[str, str | None]) -> list[str]:
     """command の前に `env …` を置き、子が継ぐ環境に settings だけを足す(None の名は外す)ため。"""
     removed = [part for name, value in settings.items() if value is None for part in ("-u", name)]
-    oracle = {"DOEFF_VM_INVARIANT_CHECKS": "1" if invariant_checks_enabled() else "0"}
+    oracle = {"DOEFF_VM_INVARIANT_CHECKS": "1" if run(vm_probe_handler(ReadInvariantChecks())) else "0"}
     added = [f"{name}={value}" for name, value in {**oracle, **settings}.items() if value is not None]
     return ["env", *removed, *added, *command]

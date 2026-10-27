@@ -31,7 +31,6 @@ CURRENT_RUNTIME_SYMBOLS = (
     "GetHandlers",
     "GetOuterHandlers",
     "TailEval",
-    "vm_live_counts",
 )
 
 REMOVED_FACADE_SYMBOLS = (
@@ -45,6 +44,9 @@ REMOVED_FACADE_SYMBOLS = (
     "DoeffTracebackData",
     "memory_stats",
     "RustHandler",
+    # the VM's counts and switches are doeff's effects now (ReadVmLiveCounts, ReadInvariantChecks, ...)
+    "vm_live_counts",
+    "invariant_checks_enabled",
 )
 
 
