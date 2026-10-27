@@ -92,7 +92,6 @@ class HostSettings:
     program_dir: str
     python: str
     hy_command: str
-    uv: str
     extra_env: tuple[EnvEntry, ...]
     layout: CodeLayout
     program_env: str

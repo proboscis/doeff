@@ -29,14 +29,14 @@
 (val pytestmark pytest.mark.realtime)
 
 
-(defk host-settings [state [hy-command "hy"] [extra-env {}] [layout (CodeLayout)] [uv "uv"] [policy (WorkerPolicy)] [generation "0b6f5e2a9c1d"]]
-  {:pre [(: state Path) (: hy-command str) (: extra-env dict) (: layout CodeLayout) (: uv str) (: policy WorkerPolicy) (: generation str)]
+(defk host-settings [state [hy-command "hy"] [extra-env {}] [layout (CodeLayout)] [policy (WorkerPolicy)] [generation "0b6f5e2a9c1d"]]
+  {:pre [(: state Path) (: hy-command str) (: extra-env dict) (: layout CodeLayout) (: policy WorkerPolicy) (: generation str)]
    :post [(: % HostSettings)] :tags {:context "doeff-cluster-test" :role "program"}}
   "検の state dir に、main と同じ置き方(logs・jobs・programs)と同じ shim の時間の導き方(policy から shim-spans — 既定は本番の方針)で
    job の子 process の設定を作るため。generation = log の名に入れる世代の印(既定は検の 1 つの世代 — 本番は places の WorkerPlaces.generation)。"
   (<- shim ShimSpans (shim-spans policy))
   (HostSettings :log-dir (str (/ state "logs")) :generation generation :jobs-dir (str (/ state "jobs")) :program-dir (str (/ state "programs"))
-                :python sys.executable :hy-command hy-command :uv uv
+                :python sys.executable :hy-command hy-command
                 :extra-env (tuple (gfor k (sorted extra-env) (EnvEntry :name k :value (get extra-env k))))
                 :layout layout :program-env HOST-CONTRACT.program-env :shim shim :warm-dir (str (/ state "warm"))
                 :notice-env HOST-CONTRACT.notice-env))
@@ -49,7 +49,7 @@
    (EXTEND は今の process の環境を継いで重ねた物・REPLACE は許可表で絞った物)。"
   (val allowed (dfor #(k v) (.items os.environ)
                      :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v))
-  (<- plan JobLaunch (job-launch spec code-path instance attempt :python settings.python :hy-command settings.hy-command :uv settings.uv
+  (<- plan JobLaunch (job-launch spec code-path instance attempt :python settings.python :hy-command settings.hy-command
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout :allowed-env allowed
                                  :worker-pid (os.getpid)
                                  :program-path (if spec.program (str (! (spec-program-file (Path settings.program-dir) spec))) None)
