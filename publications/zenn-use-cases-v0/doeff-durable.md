@@ -138,18 +138,17 @@ with TemporaryDirectory() as directory:  # この検証の2回の実行で保存
 
 同じ実行IDのもとで、依頼の種類・ノード・仕様などの識別と順序が一致する部分の値を再利用します。実行IDが同じならどんな変更も無条件に再生する、という意味ではありません。実用では`TemporaryDirectory`の代わりに、保持する状態ディレクトリを指定します。
 
-エージェントの結果にも`JournaledAgentHandler`があります。次はテスト用の実行基盤に、完了結果の記録・再利用を加える構成です。この関数は**検証用の実行入口**であり、処理を合成する関数ではありません。
+エージェントの結果にも`journaled_agent_handler`があります。次はテスト用の実行基盤に、完了結果の記録・再利用を加える構成です。この関数は**検証用の実行入口**であり、処理を合成する関数ではありません。
 
 ```python
-from doeff_conductor.effects import AgentEffect  # エージェントへの依頼を差し替え対象にする。
 from doeff_conductor.handlers import run_sync  # テスト用の入口でProgramを実行し、OkかErrを得る。
-from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler  # 有効な保存結果を先に探す。
+from doeff_conductor.handlers.journaled_agent import journaled_agent_handler  # 有効な保存結果を先に探す。
 from doeff_conductor.handlers.testing import mock_handlers  # 実エージェントを起動しないハンドラを使う。
 
 # runtimeは応答を設定済みのMockConductorRuntime、state_dirはテスト間でも保持する保存先。
 def run_recorded_agents(program, runtime, state_dir):  # テスト対象のProgramを履歴付きで実行する。
-    journal = JournaledAgentHandler(runtime.handle_agent, state_dir=state_dir)  # 未保存の依頼だけテスト実装へ渡す。
-    handlers = mock_handlers(runtime=runtime, overrides={AgentEffect: journal.handle_agent})  # AgentEffectを記録対象にする。
+    journal = journaled_agent_handler(state_dir=state_dir)  # 未保存の依頼だけ外側のハンドラへ渡す。
+    handlers = [mock_handlers(runtime=runtime), journal]  # 記録のハンドラを内側に置き、AgentEffectを先に受ける。
     return run_sync(program, scheduled_handlers=handlers)  # 保存結果か新しい応答でProgramを進め、OkかErrを返す。
 ```
 

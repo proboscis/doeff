@@ -7,20 +7,18 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from doeff import handler as _program_handler
-from doeff import run
+from doeff import run, stacked_handlers
 from doeff.program import ProgramHandler
-from doeff_conductor.handlers.agent_handler import (
-    AgentBackend as AgentBackend,
+from doeff_conductor.handlers.agent_handler import agent_handler as agent_handler
+from doeff_conductor.handlers.exec_handler import exec_handler as exec_handler
+from doeff_conductor.handlers.git_handler import git_handler as git_handler
+from doeff_conductor.handlers.issue_handler import issue_handler as issue_handler
+from doeff_conductor.handlers.journaled_agent import (
+    journaled_agent_handler as journaled_agent_handler,
 )
-from doeff_conductor.handlers.agent_handler import (
-    AgentdAgentBackend,
-    AgentHandler,
+from doeff_conductor.handlers.journaled_workspace import (
+    journaled_workspace_handler as journaled_workspace_handler,
 )
-from doeff_conductor.handlers.exec_handler import ExecHandler
-from doeff_conductor.handlers.git_handler import GitHandler
-from doeff_conductor.handlers.issue_handler import IssueHandler
-from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
-from doeff_conductor.handlers.journaled_workspace import JournaledWorkspaceHandler
 from doeff_conductor.handlers.state_handler import (
     conductor_state_handler as conductor_state_handler,
 )
@@ -44,8 +42,10 @@ from doeff_conductor.handlers.utils import (
 from doeff_conductor.handlers.utils import (
     make_scheduled_handler_with_store as make_scheduled_handler_with_store,
 )
-from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
-from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
+from doeff_conductor.handlers.workspace_handler import workspace_handler as workspace_handler
+from doeff_conductor.workflow_effect_journal import (
+    journaled_workflow_effect_handler as journaled_workflow_effect_handler,
+)
 
 if TYPE_CHECKING:
     from doeff import Program
@@ -88,48 +88,42 @@ class RunSyncResult:
 
 
 def production_handlers(
-    workspace_handler: WorkspaceHandler | None = None,
-    issue_handler: IssueHandler | None = None,
-    agent_handler: AgentHandler | None = None,
-    git_handler: GitHandler | None = None,
-    exec_handler: ExecHandler | None = None,
+    workspace_handler: ProgramHandler | None = None,
+    issue_handler: ProgramHandler | None = None,
+    agent_handler: ProgramHandler | None = None,
+    git_handler: ProgramHandler | None = None,
+    exec_handler: ProgramHandler | None = None,
     journal_state_dir: str | Path | None = None,
     journal_run_id: str | None = None,
 ) -> ProgramHandler:
-    """Build the default production protocol handler for all conductor effects."""
-    active_workspace_handler = workspace_handler or WorkspaceHandler()
-    resolved_agent_handler = agent_handler or AgentHandler(
-        workflow_id=journal_run_id,
-        workspace_resolver=active_workspace_handler.resolve_path,
-        backend=AgentdAgentBackend(),
-    )
-    journaling_active: bool = journal_state_dir is not None or journal_run_id is not None
-    create_workspace_override = None
-    if journaling_active:
-        resolved_agent_handler = JournaledAgentHandler(
-            resolved_agent_handler.handle_agent,
-            state_dir=journal_state_dir,
-            run_id=journal_run_id,
-        )
-        journaled_workspace = JournaledWorkspaceHandler(
-            active_workspace_handler.handle_create_workspace,
-            state_dir=journal_state_dir,
-            run_id=journal_run_id,
-            resolve_path=active_workspace_handler.resolve_path,
-        )
-        create_workspace_override = journaled_workspace.handle_create_workspace
-    workflow_effect_handler = JournaledWorkflowEffectHandler(
+    """Build the default production protocol handler for all conductor effects.
+
+    With a journal state directory or run id, agent effects and workspace creations are
+    journaled (``journaled_agent_handler``, ``journaled_workspace_handler`` installed inside the
+    handlers they perform the effects to) and ``time!``/``random!`` replay from the run's journal.
+    """
+    workflow_effect_handler: ProgramHandler = journaled_workflow_effect_handler(
         state_dir=journal_state_dir,
         run_id=journal_run_id,
     )
-    return default_scheduled_handlers(
-        workspace_handler=active_workspace_handler,
+    answer_effects: ProgramHandler = default_scheduled_handlers(
+        workspace_handler=workspace_handler,
         issue_handler=issue_handler,
-        agent_handler=resolved_agent_handler,
+        agent_handler=agent_handler,
         git_handler=git_handler,
         exec_handler=exec_handler,
         workflow_effect_handler=workflow_effect_handler,
-        create_workspace_override=create_workspace_override,
+    )
+    journaling_active: bool = journal_state_dir is not None or journal_run_id is not None
+    if not journaling_active:
+        return answer_effects
+    return stacked_handlers(
+        answer_effects,
+        journaled_agent_handler(state_dir=journal_state_dir, run_id=journal_run_id),
+        journaled_workspace_handler(
+            state_dir=journal_state_dir,
+            run_id=journal_run_id or "",
+        ),
     )
 
 

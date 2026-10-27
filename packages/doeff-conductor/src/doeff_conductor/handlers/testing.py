@@ -12,21 +12,22 @@ from typing import Any
 
 from doeff_agents.result_validation import validate_result_payload
 
-from doeff import Effect, Gather, Pass, Resume, Spawn, do
-from doeff import handler as _install_raw_handler
+from doeff import Effect, Gather, K, Pass, Resume, Spawn, handler, stacked_handlers
+from doeff.handler_utils import get_inner_handlers, reinstaller
+from doeff.program import ProgramHandler
 from doeff_conductor.effects.agent import (
     AgentAttemptExhaustedError,
     AgentEffect,
     AgentValidationErrorKind,
     AgentValidationFailure,
 )
-from doeff_conductor.effects.dsl import RandomCall, TimeCall
-from doeff_conductor.effects.exec import Exec
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
 from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
 from doeff_conductor.exceptions import IssueNotFoundError
-from doeff_conductor.handlers.exec_handler import ExecHandler
+from doeff_conductor.handlers import _workspace_path
+from doeff_conductor.handlers.exec_handler import exec_handler
+from doeff_conductor.handlers.utils import make_scheduled_handler
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
@@ -35,9 +36,7 @@ from doeff_conductor.types import (
     PRHandle,
     Workspace,
 )
-from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
-
-from doeff_conductor.handlers.utils import make_scheduled_handler
+from doeff_conductor.workflow_effect_journal import journaled_workflow_effect_handler
 
 ScheduledHandler = Callable[..., Any]
 
@@ -273,13 +272,6 @@ class MockConductorRuntime:
         self._workspaces.pop(workspace_key, None)
         return True
 
-    def handle_exec(self, effect: Exec):
-        handler = ExecHandler(
-            workspace_resolver=self.resolve_path,
-            log_dir=self.root / "exec-logs",
-        )
-        return handler.handle_exec(effect)
-
     def handle_agent(self, effect: AgentEffect) -> object:
         session_id = effect.task.session_id
         self._agent_prompts.setdefault(session_id, []).append(effect.task.worker_prompt)
@@ -377,49 +369,60 @@ def mock_handlers(
     overrides: Mapping[type[Any], Callable[..., Any]] | None = None,
     root: Path | None = None,
     workflow_id: str = "mock-workflow",
-) -> ScheduledHandler:
-    """Build a complete mock protocol handler for all conductor effects."""
+) -> ProgramHandler:
+    """Build a complete mock protocol handler for all conductor effects.
+
+    The runtime answers the workspace, issue, agent and git effects; gate commands run for real
+    in the runtime's workspaces (``exec_handler``) and ``time!``/``random!`` are journaled under
+    the runtime's root. ``overrides`` answer their effect types before everything else. A
+    spawned program runs to completion at its ``Spawn``, under the same handlers — including any
+    installed inside these.
+    """
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
-    workflow_effect_handler = JournaledWorkflowEffectHandler(
-        state_dir=active_runtime.root,
-    )
 
     handlers: list[tuple[type[Any], ScheduledHandler]] = [
         (CreateWorkspace, make_scheduled_handler(active_runtime.handle_create_workspace)),
         (MergeWorkspaces, make_scheduled_handler(active_runtime.handle_merge_workspaces)),
         (DeleteWorkspace, make_scheduled_handler(active_runtime.handle_delete_workspace)),
-        (Exec, make_scheduled_handler(active_runtime.handle_exec)),
+        (
+            _workspace_path.WorkspacePath,
+            make_scheduled_handler(lambda effect: active_runtime.resolve_path(effect.workspace)),
+        ),
         (CreateIssue, make_scheduled_handler(active_runtime.handle_create_issue)),
         (ListIssues, make_scheduled_handler(active_runtime.handle_list_issues)),
         (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),
         (ResolveIssue, make_scheduled_handler(active_runtime.handle_resolve_issue)),
         (AgentEffect, make_scheduled_handler(active_runtime.handle_agent)),
-        (TimeCall, make_scheduled_handler(workflow_effect_handler.handle_time)),
-        (RandomCall, make_scheduled_handler(workflow_effect_handler.handle_random)),
         (Commit, make_scheduled_handler(active_runtime.handle_commit)),
         (Push, make_scheduled_handler(active_runtime.handle_push)),
         (CreatePR, make_scheduled_handler(active_runtime.handle_create_pr)),
         (MergePR, make_scheduled_handler(active_runtime.handle_merge_pr)),
     ]
 
-    for effect_type, override_handler in (overrides or {}).items():
-        normalized = (
+    override_handlers: list[tuple[type[Any], ScheduledHandler]] = [
+        (
+            effect_type,
             override_handler
             if _supports_continuation(override_handler)
-            else make_scheduled_handler(override_handler)  # type: ignore[arg-type]
+            else make_scheduled_handler(override_handler),  # type: ignore[arg-type]
         )
-        handlers.insert(0, (effect_type, normalized))
+        for effect_type, override_handler in (overrides or {}).items()
+    ]
 
     spawn_results: dict[str, Any] = {}
     spawn_counter = 0
 
-    @do
-    def handler(effect: Effect, k: Any):
+    @handler
+    def answer_from_runtime(effect: Effect, k: K):
+        """Answer one conductor effect from the mock runtime; run a spawned program inline."""
         nonlocal spawn_counter
         if isinstance(effect, Spawn):
             spawn_counter += 1
             task_id = f"mock-spawn-{spawn_counter}"
-            result = yield _install_raw_handler(handler)(effect.program)
+            program = effect.program
+            for inner in (yield get_inner_handlers(k)):
+                program = reinstaller(inner)(program)
+            result = yield answer_from_runtime(program)
             spawn_results[task_id] = result
             return (yield Resume(k, task_id))
 
@@ -431,5 +434,20 @@ def mock_handlers(
             if isinstance(effect, effect_type):
                 return (yield effect_handler(effect, k))
         yield Pass(effect, k)
+        return None
 
-    return _install_raw_handler(handler)
+    @handler
+    def answer_overrides(effect: Effect, k: K):
+        """Answer an effect a test overrides, before any other mock handler sees it."""
+        for effect_type, effect_handler in override_handlers:
+            if isinstance(effect, effect_type):
+                return (yield effect_handler(effect, k))
+        yield Pass(effect, k)
+        return None
+
+    return stacked_handlers(
+        answer_from_runtime,
+        exec_handler(log_dir=active_runtime.root / "exec-logs"),
+        journaled_workflow_effect_handler(state_dir=active_runtime.root),
+        answer_overrides,
+    )

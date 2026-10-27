@@ -8,6 +8,8 @@ from pathlib import Path
 from random import SystemRandom
 from typing import Any
 
+from doeff import K, Resume, handler
+from doeff.program import ProgramHandler
 from doeff_conductor.effects.dsl import RandomCall, TimeCall
 from doeff_conductor.env_places import xdg_state_home
 from doeff_conductor.exceptions import JournalCorruptionError
@@ -240,55 +242,56 @@ class WorkflowEffectReplaySession:
             )
 
 
-class JournaledWorkflowEffectHandler:
-    """Replay cached workflow effect values before producing new values."""
+def _produce_value(effect: TimeCall | RandomCall) -> Any:
+    """A fresh value for a workflow effect the journal does not replay: the time, or a random draw."""
+    match effect:
+        case TimeCall():
+            return datetime.now(timezone.utc).isoformat()
+        case RandomCall():
+            return evaluate_random_spec(effect.spec)
 
-    def __init__(
-        self,
-        *,
-        state_dir: str | Path | None = None,
-        run_id: str | None = None,
-    ) -> None:
-        self.state_dir = Path(state_dir) if state_dir is not None else None
-        self.run_id = run_id
-        self._sessions: dict[str, WorkflowEffectReplaySession] = {}
 
-    def handle_time(self, effect: TimeCall) -> str:
-        return self._run_or_replay(
-            effect,
-            lambda: datetime.now(timezone.utc).isoformat(),
-        )
+def journaled_workflow_effect_handler(
+    *,
+    state_dir: str | Path | None = None,
+    run_id: str | None = None,
+) -> ProgramHandler:
+    """Build the handler that answers ``time!`` and ``random!`` with journaled, replayable values.
 
-    def handle_random(self, effect: RandomCall) -> Any:
-        return self._run_or_replay(
-            effect,
-            lambda: evaluate_random_spec(effect.spec),
-        )
+    A resumed run answers the cached prefix from the run's workflow effect journal; any other
+    ``TimeCall`` or ``RandomCall`` gets a fresh value, which is journaled.
 
-    def _run_or_replay(
-        self,
-        effect: TimeCall | RandomCall,
-        produce_value: Callable[[], Any],
-    ) -> Any:
-        run_id = self._resolve_run_id(effect)
-        session = self._sessions.get(run_id)
+    Args:
+        state_dir: The conductor state directory. The XDG default if not provided.
+        run_id: The run whose journal is used. The effect's run id if not provided.
+    """
+    journal_dir: Path | None = Path(state_dir) if state_dir is not None else None
+    sessions: dict[str, WorkflowEffectReplaySession] = {}
+
+    def session_for(effect: TimeCall | RandomCall) -> WorkflowEffectReplaySession:
+        """The replay cursor of the run the effect belongs to, opened on its first workflow effect."""
+        active_run_id: str | None = run_id if run_id is not None else effect.run_id
+        if active_run_id is None:
+            raise ValueError("journaled workflow effects require a run_id")
+        session = sessions.get(active_run_id)
         if session is None:
             session = WorkflowEffectReplaySession(
-                WorkflowEffectJournal.for_run(
-                    run_id,
-                    state_dir=self.state_dir,
-                )
+                WorkflowEffectJournal.for_run(active_run_id, state_dir=journal_dir)
             )
-            self._sessions[run_id] = session
-        decision = workflow_effect_replay_decision(effect)
-        return session.run_or_replay(decision, produce_value)
+            sessions[active_run_id] = session
+        return session
 
-    def _resolve_run_id(self, effect: TimeCall | RandomCall) -> str:
-        if self.run_id is not None:
-            return self.run_id
-        if effect.run_id is not None:
-            return effect.run_id
-        raise ValueError("journaled workflow effects require a run_id")
+    @handler
+    def replay_or_produce(effect: TimeCall | RandomCall, k: K):
+        """Answer a time! or random! effect from the journal, or with a fresh journaled value."""
+        session: WorkflowEffectReplaySession = session_for(effect)
+        value = session.run_or_replay(
+            workflow_effect_replay_decision(effect),
+            lambda: _produce_value(effect),
+        )
+        return (yield Resume(k, value))
+
+    return replay_or_produce
 
 
 def workflow_effect_replay_decision(

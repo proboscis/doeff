@@ -14,10 +14,10 @@ from doeff_agents import (
 )
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
 from doeff_conductor import CreateWorkspace
-from doeff_conductor.effects import Agent, AgentEffect, AgentTask
+from doeff_conductor.effects import Agent, AgentTask
 from doeff_conductor.exceptions import JournalCorruptionError
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
+from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import AgentJournal
 from doeff_conductor.replay_keying import ResolvedIdentity
@@ -64,16 +64,12 @@ def _run_with_journal(
     runtime: MockConductorRuntime,
     state_dir: Path,
 ) -> Any:
-    journaled_handler = JournaledAgentHandler(
-        runtime.handle_agent,
-        state_dir=state_dir,
-    )
     return run_sync(
         program,
-        scheduled_handlers=mock_handlers(
-            runtime=runtime,
-            overrides={AgentEffect: journaled_handler.handle_agent},
-        ),
+        scheduled_handlers=[
+            mock_handlers(runtime=runtime),
+            journaled_agent_handler(state_dir=state_dir),
+        ],
     )
 
 

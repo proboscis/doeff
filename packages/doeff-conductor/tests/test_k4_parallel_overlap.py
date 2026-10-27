@@ -28,7 +28,7 @@ from doeff_conductor.handlers.utils import (
 )
 from doeff_core_effects.scheduler import Gather, scheduled
 
-from doeff import Effect, Pass, Resume, Spawn, do, run
+from doeff import Effect, Pass, Resume, Spawn, do, run, stacked_handlers
 from doeff import handler as _install_raw_handler
 
 # The subject is wall-clock overlap of real offload threads (L-K4-2), which a
@@ -102,8 +102,6 @@ def _build_handler_with_real_scheduler(
     bridge under test) and ``make_scheduled_handler`` for all other
     conductor effects.
     """
-    from doeff_conductor.effects.dsl import RandomCall, TimeCall
-    from doeff_conductor.effects.exec import Exec
     from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
     from doeff_conductor.effects.issue import (
         CreateIssue,
@@ -115,23 +113,18 @@ def _build_handler_with_real_scheduler(
         DeleteWorkspace,
         MergeWorkspaces,
     )
-    from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
-
-    workflow_effect = JournaledWorkflowEffectHandler(state_dir=runtime.root)
+    from doeff_conductor.workflow_effect_journal import journaled_workflow_effect_handler
 
     handlers: tuple[tuple[type[Any], Any], ...] = (
         (CreateWorkspace, make_scheduled_handler(runtime.handle_create_workspace)),
         (MergeWorkspaces, make_scheduled_handler(runtime.handle_merge_workspaces)),
         (DeleteWorkspace, make_scheduled_handler(runtime.handle_delete_workspace)),
-        (Exec, make_scheduled_handler(runtime.handle_exec)),
         (CreateIssue, make_scheduled_handler(runtime.handle_create_issue)),
         (ListIssues, make_scheduled_handler(runtime.handle_list_issues)),
         (GetIssue, make_scheduled_handler(runtime.handle_get_issue)),
         (ResolveIssue, make_scheduled_handler(runtime.handle_resolve_issue)),
         # --- THE BRIDGE UNDER TEST ---
         (AgentEffect, make_offloaded_scheduled_handler(timed_handler.handle_agent)),
-        (TimeCall, make_scheduled_handler(workflow_effect.handle_time)),
-        (RandomCall, make_scheduled_handler(workflow_effect.handle_random)),
         (Commit, make_scheduled_handler(runtime.handle_commit)),
         (Push, make_scheduled_handler(runtime.handle_push)),
         (CreatePR, make_scheduled_handler(runtime.handle_create_pr)),
@@ -145,7 +138,10 @@ def _build_handler_with_real_scheduler(
                 return (yield effect_handler(effect, k))
         yield Pass(effect, k)
 
-    return _install_raw_handler(handler)
+    return stacked_handlers(
+        _install_raw_handler(handler),
+        journaled_workflow_effect_handler(state_dir=runtime.root),
+    )
 
 
 class TestK4ParallelOverlap:

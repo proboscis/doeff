@@ -33,8 +33,8 @@ from doeff_agents import AgentType
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
 from doeff_conductor._api import ConductorAPI
 from doeff_conductor.effects import AgentEffect, AgentTask
-from doeff_conductor.handlers.agent_handler import AgentHandler
-from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
+from doeff_conductor.handlers._workspace_path import WorkspacePath
+from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import (
     AgentJournal,
@@ -43,6 +43,8 @@ from doeff_conductor.journal import (
 from doeff_conductor.overseer import list_open_gates
 from doeff_conductor.replay_keying import ResolvedIdentity
 from doeff_conductor.types import WorkflowStatus
+
+from doeff import K, Resume, handler, stacked_handlers
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -71,37 +73,35 @@ def _cheap_session_id(run_id: str, node_id: str) -> str:
     ).session_id
 
 
-class _ScenarioConductorBackend:
-    """Conductor AgentBackend driving the REAL L2 attempt loop.
+def _run_scenario_agent(
+    scenario_handler: ScenarioAgentHandler,
+    effect: AgentEffect,
+    work_dir: Path,
+) -> object:
+    """Run a conductor agent task on the REAL L2 attempt loop with scripted transport outcomes.
 
-    Mirrors ``AgentdAgentBackend.handle_agent`` exactly (conductor task →
-    agents task, deadline included) but binds the L2 algebra to
-    ``ScenarioAgentHandler`` instead of the agentd daemon, so the
-    deadline/heartbeat enforcement under test is the production
-    ``_run_agent_task`` code path with scripted transport outcomes.
+    Mirrors the production agent handler's conductor task → agents task translation exactly
+    (deadline included) but binds the L2 algebra to ``ScenarioAgentHandler`` instead of the
+    agentd daemon, so the deadline/heartbeat enforcement under test is the production
+    ``_run_agent_task`` code path.
     """
-
-    def __init__(self, scenario_handler: ScenarioAgentHandler) -> None:
-        self.scenario_handler = scenario_handler
-
-    def handle_agent(self, effect: AgentEffect, workspace_resolver: Any) -> object:
-        return self.scenario_handler.handle_agent(
-            AgentsAgentEffect(
-                task=AgentsAgentTask(
-                    run_id=effect.task.run_id,
-                    node_id=effect.task.session_node_key,
-                    attempt=effect.task.attempt,
-                    agent_type=AgentType(effect.task.agent_type),
-                    work_dir=workspace_resolver(effect.task.env),
-                    prompt=effect.task.prompt,
-                    result_schema=effect.task.result_schema,
-                    model=effect.task.model,
-                    effort=effect.task.effort,
-                    max_retries=effect.task.max_retries,
-                    deadline_seconds=effect.task.deadline_seconds,
-                )
+    return scenario_handler.handle_agent(
+        AgentsAgentEffect(
+            task=AgentsAgentTask(
+                run_id=effect.task.run_id,
+                node_id=effect.task.session_node_key,
+                attempt=effect.task.attempt,
+                agent_type=AgentType(effect.task.agent_type),
+                work_dir=work_dir,
+                prompt=effect.task.prompt,
+                result_schema=effect.task.result_schema,
+                model=effect.task.model,
+                effort=effect.task.effort,
+                max_retries=effect.task.max_retries,
+                deadline_seconds=effect.task.deadline_seconds,
             )
         )
+    )
 
 
 def _install_scenario_production_handlers(
@@ -113,24 +113,21 @@ def _install_scenario_production_handlers(
 ) -> None:
     import doeff_conductor.handlers as handlers_module
 
-    agent_handler = AgentHandler(
-        workspace_resolver=runtime.resolve_path,
-        backend=_ScenarioConductorBackend(scenario_handler),
-    )
-
-    def counting_delegate(effect: AgentEffect) -> object:
+    @handler
+    def run_agent_on_scenario(effect: AgentEffect, k: K):
+        """Answer the agent effects the journal does not replay, counting each run."""
         delegate_calls.append(effect.task.node_id)
-        return agent_handler.handle_agent(effect)
+        work_dir: Path = yield WorkspacePath(workspace=effect.task.env)
+        return (yield Resume(k, _run_scenario_agent(scenario_handler, effect, work_dir)))
 
     def production_handlers(**kwargs: object):
-        journaled_handler = JournaledAgentHandler(
-            counting_delegate,
-            state_dir=cast(str | Path | None, kwargs["journal_state_dir"]),
-            run_id=str(kwargs["journal_run_id"]),
-        )
-        return mock_handlers(
-            runtime=runtime,
-            overrides={AgentEffect: journaled_handler.handle_agent},
+        return stacked_handlers(
+            mock_handlers(runtime=runtime),
+            run_agent_on_scenario,
+            journaled_agent_handler(
+                state_dir=cast(str | Path | None, kwargs["journal_state_dir"]),
+                run_id=str(kwargs["journal_run_id"]),
+            ),
         )
 
     monkeypatch.setattr(handlers_module, "production_handlers", production_handlers)

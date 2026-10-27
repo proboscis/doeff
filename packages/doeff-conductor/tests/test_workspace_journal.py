@@ -1,19 +1,19 @@
-"""Unit tests for workspace journal types and JournaledWorkspaceHandler (L-K3-3)."""
+"""Unit tests for workspace journal types and journaled_workspace_handler (L-K3-3)."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import pytest
 from doeff_conductor.effects.workspace import CreateWorkspace
 from doeff_conductor.exceptions import JournalCorruptionError
+from doeff_conductor.handlers._workspace_path import WorkspacePath
 from doeff_conductor.handlers.journaled_workspace import (
-    JournaledWorkspaceHandler,
     PreCoverageRunError,
+    journaled_workspace_handler,
 )
 from doeff_conductor.journal import (
     AGENT_JOURNAL_FILENAME,
@@ -22,6 +22,10 @@ from doeff_conductor.journal import (
     WorkspaceJournal,
 )
 from doeff_conductor.types import Workspace
+
+from doeff import K, Resume, handler, stacked_handlers
+from doeff.program import ProgramHandler
+from tests.effect_runner import Answer, answering
 
 
 def _sample_entry(
@@ -196,71 +200,56 @@ class TestWorkspaceJournal:
 
 
 # =============================================================================
-# JournaledWorkspaceHandler tests
+# journaled_workspace_handler tests
 # =============================================================================
 
 
-class _StubDelegate(NamedTuple):
-    delegate: Callable[[CreateWorkspace], Workspace]
-    resolve_path: Callable[[Workspace], Path]
+def _stub_workspace_handler(tracker: list[str]) -> ProgramHandler:
+    """A workspace handler stand-in that records each creation it answers."""
+
+    @handler
+    def answer_workspace(effect: CreateWorkspace | WorkspacePath, k: K):
+        match effect:
+            case CreateWorkspace():
+                tracker.append(effect.workspace_id)
+                answer: object = _sample_workspace(
+                    workspace_id=effect.workspace_id,
+                    repo=effect.repo,
+                )
+            case WorkspacePath():
+                answer = Path(f"/tmp/mock/{effect.workspace.id}")
+        return (yield Resume(k, answer))
+
+    return answer_workspace
 
 
-def _make_stub_delegate(
-    tracker: list[str],
-) -> _StubDelegate:
-    """Return a _StubDelegate (delegate, resolve_path) that tracks workspace creation."""
-
-    workspaces: dict[str, Workspace] = {}
-
-    def delegate(effect: CreateWorkspace) -> Workspace:
-        tracker.append(effect.workspace_id)
-        workspace: Workspace = _sample_workspace(
-            workspace_id=effect.workspace_id,
-            repo=effect.repo,
+def _journaled(tracker: list[str], state_dir: Path, run_id: str) -> Answer:
+    """Run workspace effects through the journal installed inside the stub workspace handler."""
+    return answering(
+        stacked_handlers(
+            _stub_workspace_handler(tracker),
+            journaled_workspace_handler(state_dir=state_dir, run_id=run_id),
         )
-        workspaces[effect.workspace_id] = workspace
-        return workspace
-
-    def resolve_path(workspace: Workspace) -> Path:
-        return Path(f"/tmp/mock/{workspace.id}")
-
-    return _StubDelegate(delegate, resolve_path)
+    )
 
 
 class TestJournaledWorkspaceHandler:
     def test_none_run_id_raises_at_construction(self, tmp_path: Path) -> None:
-        tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
         with pytest.raises(ValueError, match="non-empty run_id"):
-            JournaledWorkspaceHandler(
-                delegate,
+            journaled_workspace_handler(
                 state_dir=tmp_path,
-                run_id=None,  # type: ignore[arg-type]
-                resolve_path=resolve_path,
+                run_id=None,  # type: ignore[arg-type] — the refusal of a missing run id is the subject
             )
 
     def test_empty_run_id_raises_at_construction(self, tmp_path: Path) -> None:
-        tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
         with pytest.raises(ValueError, match="non-empty run_id"):
-            JournaledWorkspaceHandler(
-                delegate,
-                state_dir=tmp_path,
-                run_id="",
-                resolve_path=resolve_path,
-            )
+            journaled_workspace_handler(state_dir=tmp_path, run_id="")
 
     def test_first_call_delegates_and_journals(self, tmp_path: Path) -> None:
         tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
-        handler: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-first",
-            resolve_path=resolve_path,
-        )
+        answer: Answer = _journaled(tracker, tmp_path, "run-first")
         effect: CreateWorkspace = CreateWorkspace(workspace_id="ws-1", repo="default")
-        result: Workspace = handler.handle_create_workspace(effect)
+        result: Workspace = answer(effect)
 
         assert result.id == "ws-1"
         assert tracker == ["ws-1"]
@@ -269,19 +258,14 @@ class TestJournaledWorkspaceHandler:
         entries: list[CreateWorkspaceJournalEntry] = journal.load_entries()
         assert len(entries) == 1
         assert entries[0].workspace_id == "ws-1"
+        assert entries[0].worktree_path == "/tmp/mock/ws-1"
 
     def test_second_call_same_workspace_does_not_double_append(self, tmp_path: Path) -> None:
         tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
-        handler: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-dedup",
-            resolve_path=resolve_path,
-        )
+        answer: Answer = _journaled(tracker, tmp_path, "run-dedup")
         effect: CreateWorkspace = CreateWorkspace(workspace_id="ws-dup", repo="default")
-        handler.handle_create_workspace(effect)
-        handler.handle_create_workspace(effect)
+        answer(effect)
+        answer(effect)
 
         assert tracker == ["ws-dup", "ws-dup"]
 
@@ -291,24 +275,9 @@ class TestJournaledWorkspaceHandler:
 
     def test_resumed_handler_does_not_re_journal(self, tmp_path: Path) -> None:
         tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
-
-        handler_1: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-resume",
-            resolve_path=resolve_path,
-        )
         effect: CreateWorkspace = CreateWorkspace(workspace_id="ws-resume", repo="default")
-        handler_1.handle_create_workspace(effect)
-
-        handler_2: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-resume",
-            resolve_path=resolve_path,
-        )
-        handler_2.handle_create_workspace(effect)
+        _journaled(tracker, tmp_path, "run-resume")(effect)
+        _journaled(tracker, tmp_path, "run-resume")(effect)
 
         assert tracker == ["ws-resume", "ws-resume"]
 
@@ -322,43 +291,26 @@ class TestJournaledWorkspaceHandler:
         (run_dir / AGENT_JOURNAL_FILENAME).write_text("", encoding="utf-8")
 
         tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
-        handler: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-old",
-            resolve_path=resolve_path,
-        )
+        answer: Answer = _journaled(tracker, tmp_path, "run-old")
         effect: CreateWorkspace = CreateWorkspace(workspace_id="ws-old", repo="default")
 
         with pytest.raises(PreCoverageRunError, match="predates workspace coverage"):
-            handler.handle_create_workspace(effect)
+            answer(effect)
+        assert tracker == []
 
     def test_pre_coverage_not_raised_when_no_agent_journal(self, tmp_path: Path) -> None:
         tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
-        handler: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-fresh",
-            resolve_path=resolve_path,
-        )
+        answer: Answer = _journaled(tracker, tmp_path, "run-fresh")
         effect: CreateWorkspace = CreateWorkspace(workspace_id="ws-fresh", repo="default")
-        result: Workspace = handler.handle_create_workspace(effect)
+        result: Workspace = answer(effect)
         assert result.id == "ws-fresh"
 
     def test_multiple_different_workspaces(self, tmp_path: Path) -> None:
         tracker: list[str] = []
-        delegate, resolve_path = _make_stub_delegate(tracker)
-        handler: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            delegate,
-            state_dir=tmp_path,
-            run_id="run-multi",
-            resolve_path=resolve_path,
-        )
+        answer: Answer = _journaled(tracker, tmp_path, "run-multi")
 
-        handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-a", repo="default"))
-        handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-b", repo="default"))
+        answer(CreateWorkspace(workspace_id="ws-a", repo="default"))
+        answer(CreateWorkspace(workspace_id="ws-b", repo="default"))
 
         journal: WorkspaceJournal = WorkspaceJournal.for_run("run-multi", state_dir=tmp_path)
         entries: list[CreateWorkspaceJournalEntry] = journal.load_entries()

@@ -3,7 +3,6 @@
 
 import json
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,6 +119,21 @@ class AgentReplayDecision:
     cache_key: str
     resolved_identity_fingerprint: str
     node_identity: str
+
+
+@dataclass(frozen=True)
+class _ReplayedAgent:
+    """An agent effect the journal answers from the cached prefix, without running the agent."""
+
+    result_artifact: object
+
+
+@dataclass(frozen=True)
+class _AgentDispatch:
+    """The journal slot an agent effect fills by running the agent (``AgentReplaySession.begin``)."""
+
+    decision: AgentReplayDecision
+    entry_index: int
 
 
 class AgentJournal:
@@ -543,11 +557,13 @@ class AgentReplaySession:
         self.replayed_prefix_entries: list[AgentJournalEntry] = []
         self._mut_started_new_generation = False
 
-    def run_or_replay(
-        self,
-        effect: AgentEffect,
-        delegate: Callable[[AgentEffect], object],
-    ) -> object:
+    def begin(self, effect: AgentEffect) -> "_ReplayedAgent | _AgentDispatch":
+        """Look the agent effect up in the journal: its replayed artifact, or the slot a run fills.
+
+        A ``_ReplayedAgent`` is the cached prefix's succeeded artifact — the agent is not run
+        again. An ``_AgentDispatch`` is the journal slot the caller fills by running the agent and
+        settling it with ``succeeded`` or ``failed``.
+        """
         decision = agent_replay_decision(effect.task)
         self.current_keys.append(decision.cache_key)
         entry_index = len(self.current_keys) - 1
@@ -557,7 +573,7 @@ class AgentReplaySession:
             previous_entry = self.previous_entries[entry_index]
             if previous_entry.terminal_kind != TERMINAL_KIND_SUCCEEDED:
                 self._start_new_generation()
-                return self._run_delegate_and_append(effect, delegate, decision, entry_index)
+                return self._dispatch(effect, decision, entry_index)
             self._validate_replay_entry(previous_entry, effect, decision)
             self.replayed_prefix_entries.append(previous_entry)
             if self._mut_started_new_generation:
@@ -568,76 +584,84 @@ class AgentReplaySession:
             self._emit_progress(
                 effect.task, decision, PROGRESS_STATUS_SUCCEEDED, terminal_kind=TERMINAL_KIND_SUCCEEDED
             )
-            return previous_entry.result_artifact
+            return _ReplayedAgent(result_artifact=previous_entry.result_artifact)
 
         if entry_index < len(self.previous_entries):
             self._start_new_generation()
 
-        return self._run_delegate_and_append(effect, delegate, decision, entry_index)
+        return self._dispatch(effect, decision, entry_index)
 
-    def _run_delegate_and_append(
+    def _dispatch(
         self,
         effect: AgentEffect,
-        delegate: Callable[[AgentEffect], object],
         decision: AgentReplayDecision,
         entry_index: int,
-    ) -> object:
-        # ADR 0002: emit "running" at dispatch from inside the offloaded handler
-        # (not before yield Agent in the runtime, which would serialize K4
-        # sibling dispatch). Emission is fail-open and never alters the run.
+    ) -> "_AgentDispatch":
+        # ADR 0002: emit "running" at dispatch, from the journal handler that
+        # caught the effect (not before yield Agent in the runtime, which would
+        # serialize K4 sibling dispatch). Emission is fail-open and never alters
+        # the run.
         self._emit_progress(effect.task, decision, PROGRESS_STATUS_RUNNING)
-        try:
-            result = delegate(effect)
-        except AgentAttemptExhaustedError as error:
-            self._append_open_gate_entry(
-                decision,
-                entry_index,
-                {
-                    "session_id": error.session_id,
-                    "attempts": error.attempts,
-                    "last_error_kind": error.last_error.kind.value,
-                    "last_error_message": error.last_error.message,
-                },
-            )
-            self._emit_progress(
-                effect.task, decision, PROGRESS_STATUS_PARKED, terminal_kind=TERMINAL_KIND_OPEN_GATE
-            )
-            raise
-        except AgentDeadlineExceededError as error:
-            # L-K4-3: the deadline park is a journaled open-gate terminal,
-            # exactly like attempt exhaustion — replay treats it as a
-            # non-succeeded entry and re-runs the node (the extension
-            # window granted by the gate answer).
-            self._append_open_gate_entry(
-                decision,
-                entry_index,
-                {
-                    "session_id": error.session_id,
-                    "deadline_seconds": error.deadline_seconds,
-                    "elapsed_seconds": error.elapsed_seconds,
-                    "reason": "wall-clock deadline exceeded",
-                },
-            )
-            self._emit_progress(
-                effect.task, decision, PROGRESS_STATUS_PARKED, terminal_kind=TERMINAL_KIND_OPEN_GATE
-            )
-            raise
-        except Exception:
-            self._emit_progress(effect.task, decision, PROGRESS_STATUS_FAILED)
-            raise
+        return _AgentDispatch(decision=decision, entry_index=entry_index)
 
+    def failed(self, effect: AgentEffect, dispatch: "_AgentDispatch", error: Exception) -> None:
+        """Journal an agent run that raised: attempt exhaustion and deadline park as open gates."""
+        match error:
+            case AgentAttemptExhaustedError():
+                self._append_open_gate_entry(
+                    dispatch.decision,
+                    dispatch.entry_index,
+                    {
+                        "session_id": error.session_id,
+                        "attempts": error.attempts,
+                        "last_error_kind": error.last_error.kind.value,
+                        "last_error_message": error.last_error.message,
+                    },
+                )
+                self._emit_progress(
+                    effect.task,
+                    dispatch.decision,
+                    PROGRESS_STATUS_PARKED,
+                    terminal_kind=TERMINAL_KIND_OPEN_GATE,
+                )
+            case AgentDeadlineExceededError():
+                # L-K4-3: the deadline park is a journaled open-gate terminal,
+                # exactly like attempt exhaustion — replay treats it as a
+                # non-succeeded entry and re-runs the node (the extension
+                # window granted by the gate answer).
+                self._append_open_gate_entry(
+                    dispatch.decision,
+                    dispatch.entry_index,
+                    {
+                        "session_id": error.session_id,
+                        "deadline_seconds": error.deadline_seconds,
+                        "elapsed_seconds": error.elapsed_seconds,
+                        "reason": "wall-clock deadline exceeded",
+                    },
+                )
+                self._emit_progress(
+                    effect.task,
+                    dispatch.decision,
+                    PROGRESS_STATUS_PARKED,
+                    terminal_kind=TERMINAL_KIND_OPEN_GATE,
+                )
+            case _:
+                self._emit_progress(effect.task, dispatch.decision, PROGRESS_STATUS_FAILED)
+
+    def succeeded(self, effect: AgentEffect, dispatch: "_AgentDispatch", result: object) -> object:
+        """Validate and journal the artifact an agent run returned, and return it."""
         try:
             _validate_delegate_result(effect, result)
         except Exception:
-            self._emit_progress(effect.task, decision, PROGRESS_STATUS_FAILED)
+            self._emit_progress(effect.task, dispatch.decision, PROGRESS_STATUS_FAILED)
             raise
         self.journal.append_entry(
             AgentJournalEntry(
                 generation=self._mut_current_generation,
-                entry_index=entry_index,
-                cache_key=decision.cache_key,
-                resolved_identity_fingerprint=decision.resolved_identity_fingerprint,
-                node_identity=decision.node_identity,
+                entry_index=dispatch.entry_index,
+                cache_key=dispatch.decision.cache_key,
+                resolved_identity_fingerprint=dispatch.decision.resolved_identity_fingerprint,
+                node_identity=dispatch.decision.node_identity,
                 result_artifact=result,
                 terminal_kind=TERMINAL_KIND_SUCCEEDED,
             )
@@ -646,7 +670,10 @@ class AgentReplaySession:
         # so the progress terminal is artifact-grounded (ADR 0001 D6), never a
         # screen/heuristic judgement.
         self._emit_progress(
-            effect.task, decision, PROGRESS_STATUS_SUCCEEDED, terminal_kind=TERMINAL_KIND_SUCCEEDED
+            effect.task,
+            dispatch.decision,
+            PROGRESS_STATUS_SUCCEEDED,
+            terminal_kind=TERMINAL_KIND_SUCCEEDED,
         )
         return result
 

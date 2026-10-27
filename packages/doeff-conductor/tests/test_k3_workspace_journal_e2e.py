@@ -13,11 +13,10 @@ from typing import Any, cast
 
 import pytest
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.effects import AgentEffect, CreateWorkspace
-from doeff_conductor.effects.dsl import RandomCall, TimeCall
-from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
+from doeff_conductor.effects import CreateWorkspace
+from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
 from doeff_conductor.handlers.journaled_workspace import (
-    JournaledWorkspaceHandler,
+    journaled_workspace_handler,
 )
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import (
@@ -26,7 +25,9 @@ from doeff_conductor.journal import (
     WorkspaceJournal,
 )
 from doeff_conductor.types import WorkflowStatus, Workspace
-from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
+from doeff_conductor.workflow_effect_journal import journaled_workflow_effect_handler
+
+from doeff import K, Resume, handler, stacked_handlers
 
 SHARED_WORKSPACE_WORKFLOW = """
 (require doeff-conductor.macros [defworkflow agent! workspace! <-])
@@ -68,35 +69,19 @@ def _install_mock_production_handlers_with_workspace_journal(
         state_dir: str | Path | None = cast(str | Path | None, kwargs["journal_state_dir"])
         run_id: str = str(kwargs["journal_run_id"])
 
-        journaled_agent: JournaledAgentHandler = JournaledAgentHandler(
-            runtime.handle_agent,
-            state_dir=state_dir,
-            run_id=run_id,
-        )
-        workflow_effect_handler: JournaledWorkflowEffectHandler = JournaledWorkflowEffectHandler(
-            state_dir=state_dir,
-            run_id=run_id,
-        )
-
-        def tracking_delegate(effect: CreateWorkspace) -> Workspace:
+        @handler
+        def track_creation(effect: CreateWorkspace, k: K):
+            """Record each workspace creation the journal performs, then let the runtime answer it."""
             creation_tracker.append(effect.workspace_id)
-            return runtime.handle_create_workspace(effect)
+            workspace: Workspace = yield effect
+            return (yield Resume(k, workspace))
 
-        journaled_workspace: JournaledWorkspaceHandler = JournaledWorkspaceHandler(
-            tracking_delegate,
-            state_dir=state_dir,
-            run_id=run_id,
-            resolve_path=runtime.resolve_path,
-        )
-
-        return mock_handlers(
-            runtime=runtime,
-            overrides={
-                AgentEffect: journaled_agent.handle_agent,
-                CreateWorkspace: journaled_workspace.handle_create_workspace,
-                TimeCall: workflow_effect_handler.handle_time,
-                RandomCall: workflow_effect_handler.handle_random,
-            },
+        return stacked_handlers(
+            mock_handlers(runtime=runtime),
+            track_creation,
+            journaled_workflow_effect_handler(state_dir=state_dir, run_id=run_id),
+            journaled_agent_handler(state_dir=state_dir, run_id=run_id),
+            journaled_workspace_handler(state_dir=state_dir, run_id=run_id),
         )
 
     monkeypatch.setattr(handlers_module, "production_handlers", production_handlers)

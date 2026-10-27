@@ -622,7 +622,7 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
   The journal is flat append-only with last-wins-per-`workspace_id`
   semantics — no generation/entry_index since workspace identity is
   deterministic from `(run_id, workspace-node identity)`.
-  `JournaledWorkspaceHandler` wraps the delegate handler: first call
+  `journaled_workspace_handler`, installed inside the workspace handler: first call
   for a `workspace_id` delegates AND appends; subsequent calls (resume)
   delegate but do NOT double-append.  Pre-coverage detection: if an
   agent journal exists but no workspace journal does, the handler raises
