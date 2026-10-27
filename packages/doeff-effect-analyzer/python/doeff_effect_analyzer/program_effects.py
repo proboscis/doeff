@@ -1291,17 +1291,17 @@ class _Bound:
         read; agora-redesign #1592)."""
         return _BindingsKey(frozenset(_KeyEntry(b.name, _identity(b.value)) for b in self.bindings))
 
-    @property
-    def depth(self) -> int:
-        """How deeply Program arguments nest (bounded, so recursion through arguments ends)."""
-        return max(
-            (b.value.depth for b in self.bindings if isinstance(b.value, _PROGRAM_VALUES)),
-            default=0,
+    @functools.cached_property
+    def written(self) -> frozenset[int]:
+        """The places (by node) the Program arguments bound here were written at, with the places
+        their own scopes were bound from — the chain of callers a Program argument came through
+        (``_recurs``)."""
+        return frozenset().union(
+            *(b.value.written for b in self.bindings if isinstance(b.value, _PROGRAM_VALUES))
         )
 
 
 _NO_BINDINGS = _Bound()
-_MAX_BINDING_DEPTH = 4
 
 
 @dataclass(frozen=True, eq=False)
@@ -1319,9 +1319,14 @@ class _ProgramArg:
         return _module_source(self.scope.module).filename
 
     @property
-    def depth(self) -> int:
-        """1 + the nesting of the Program arguments its scope was itself bound with."""
-        return 1 + self.scope.bound.depth
+    def place(self) -> ast.AST:
+        """Where the caller wrote it."""
+        return self.expr
+
+    @functools.cached_property
+    def written(self) -> frozenset[int]:
+        """Its place and the places its scope was bound from."""
+        return self.scope.bound.written | {id(self.place)}
 
 
 @dataclass(frozen=True, eq=False)
@@ -1348,9 +1353,14 @@ class _ProgramSeq:
                 return tuple(_ProgramArg(element, self.scope) for element in elts)
 
     @property
-    def depth(self) -> int:
-        """The depth its elements have (they are written in the same scope)."""
-        return 1 + self.scope.bound.depth
+    def place(self) -> ast.AST:
+        """Where the caller wrote it (its elements are written in the same scope)."""
+        return self.expr
+
+    @functools.cached_property
+    def written(self) -> frozenset[int]:
+        """Its place and the places its scope was bound from."""
+        return self.scope.bound.written | {id(self.place)}
 
 
 @dataclass(frozen=True, eq=False)
@@ -1362,9 +1372,9 @@ class _ProgramAnyOf:
     sequence: _ProgramSeq
 
     @property
-    def depth(self) -> int:
-        """The sequence's depth."""
-        return self.sequence.depth
+    def written(self) -> frozenset[int]:
+        """The sequence's places."""
+        return self.sequence.written
 
 
 @dataclass(frozen=True, eq=False)
@@ -1383,9 +1393,14 @@ class _LocalFunction:
         return _module_source(self.scope.module).filename
 
     @property
-    def depth(self) -> int:
-        """1 + the nesting of the Program arguments its scope was itself bound with."""
-        return 1 + self.scope.bound.depth
+    def place(self) -> ast.AST:
+        """Where it was written."""
+        return self.node
+
+    @functools.cached_property
+    def written(self) -> frozenset[int]:
+        """Its place and the places its scope was bound from."""
+        return self.scope.bound.written | {id(self.place)}
 
 
 @dataclass(frozen=True, eq=False)
@@ -2420,16 +2435,26 @@ def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
         # A function written here, called by the callee (``begin`` / ``commit`` handed to
         # ``run-in-transaction``): read where it was written, bounded like a Program argument.
         local = value if isinstance(value, _LocalFunction) else _LocalFunction(argument, scope)
-        return local if local.depth <= _MAX_BINDING_DEPTH else UNBOUND
+        return UNBOUND if _recurs(local) else local
     if value is not UNBOUND:
         return value
     sequence = _program_sequence(argument, scope)
     if sequence is not None:
-        return sequence if sequence.depth <= _MAX_BINDING_DEPTH else UNBOUND
+        return UNBOUND if _recurs(sequence) else sequence
     if not _is_program_expr(argument, scope):
         return value
     program = _ProgramArg(argument, scope)
-    return program if program.depth <= _MAX_BINDING_DEPTH else UNBOUND
+    return UNBOUND if _recurs(program) else program
+
+
+def _recurs(value: "_ProgramArg | _ProgramSeq | _LocalFunction") -> bool:
+    """Whether ``value`` is written at a place its own scope was already bound from — a function
+    handing its parameter on to itself again (``f(body)`` calling ``f(wrap(body))``), whose reading
+    would never end. A chain of callers through distinct places is followed to its end however long
+    it is: the number of places is finite. (Before, a fixed depth of 4 stopped it, and the production
+    job foundation's chain of wrappers — foundation, host, its inside, the pool split, the cluster
+    handlers — lost its body at the fifth: card ki-36f06eb1c65a.)"""
+    return id(value.place) in value.scope.bound.written
 
 
 def _program_sequence(expr: ast.expr, scope: _Scope) -> _ProgramSeq | None:

@@ -98,6 +98,7 @@ from doeff_effect_analyzer.program_effects import (
     _no_carrier,
     _passed_arguments,
     _passes_declaration,
+    _positional_params,
     _ProgramAnyOf,
     _ProgramArg,
     _Reader,
@@ -176,21 +177,32 @@ def _analyze_handler(obj: Any, label: str, *, depth: int) -> HandlerEffects:
         )
     token = _READING.set(_READING.get() | {function})
     try:
-        read = _read_function(function, label, depth=depth)
+        installed = getattr(obj, "__doeff_handler_data__", None) is not None
+        read = _read_function(function, label, depth=depth, installed=installed)
     finally:
         _READING.reset(token)
     return _decide(read, declared)
 
 
-def _read_function(function: Any, label: str, *, depth: int) -> HandlerEffects:
-    """The clauses in ``function``'s source, following a factory to the dispatcher it returns."""
+def _read_function(
+    function: Any, label: str, *, depth: int, installed: bool = False
+) -> HandlerEffects:
+    """The clauses in ``function``'s source, following a factory to the dispatcher it returns.
+    ``installed``: ``function`` is the raw ``(effect, k)`` a handler value installs, which the VM
+    filters by its effect parameter's annotation (``_annotated_clauses``)."""
     located = _locate(function)
     if isinstance(located, Unresolved):
         return _unread(label, located)
     root, scope, filename = located.node, located.scope, located.filename
-    read = _clauses_in(root, scope, filename, label, _Reader())
+    reader = _Reader()
+    read = _clauses_in(root, scope, filename, label, reader)
     if read.clauses:
         return HandlerEffects(label, read.clauses, read.unresolved, Basis.CLAUSES)
+    annotated = (
+        _annotated_clauses(function, root, scope, filename, label, reader) if installed else ()
+    )
+    if annotated:
+        return HandlerEffects(label, annotated, read.unresolved, Basis.CLAUSES)
     if depth < _MAX_FACTORY_HOPS:
         # A factory that returns a dispatch function (by reference, as
         # functools.partial(dispatch, ...) or doeff.handler(dispatch)), or a handler
@@ -203,6 +215,40 @@ def _read_function(function: Any, label: str, *, depth: int) -> HandlerEffects:
         label,
         *read.unresolved,
         Unresolved("no isinstance(effect, T) clause found", label, _location_of(function)),
+    )
+
+
+def _annotated_clauses(
+    function: Any, root: FunctionNode, scope: _Scope, filename: str, label: str, reader: _Reader
+) -> tuple[Clause, ...]:
+    """The clauses of a raw handler that dispatches by its effect parameter's annotation alone
+    (``def handler(effect: A | B, k)`` with no ``isinstance`` test): the VM gives it only
+    the effects of the annotated classes, as if it began with ``if not isinstance(effect, T): yield
+    Pass(effect, k)``, so its whole body is the clause for each of them. The classes are what the VM
+    filters by (``doeff.handler_effect_types`` — the one place an annotation becomes a filter); an
+    annotation that filters nothing (none, ``Any``, ``EffectBase``) or that no effect can match
+    gives no clause."""
+    params = _positional_params(root)
+    if isinstance(root, ast.Lambda) or not params:
+        return ()  # a lambda carries no annotation
+    try:
+        classes = importlib.import_module("doeff").handler_effect_types(function)
+    except TypeError:
+        return ()
+    if not classes:
+        return ()
+    region = _region(root.body)
+    location = Location(filename, getattr(root, "lineno", 0))
+    return tuple(
+        Clause(
+            handles=cls,
+            emits=_emits_read_later(
+                reader, region, _received_in(scope, params[0], cls), filename, f"{label} clause"
+            ),
+            location=location,
+        )
+        for cls in classes
+        if _is_effect_class(cls)
     )
 
 
