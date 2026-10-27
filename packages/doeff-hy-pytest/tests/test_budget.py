@@ -273,18 +273,19 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
     assert "test_fast(call" not in result.stdout.str()
 
 
-# 超過を赤にする判定の検は、上限の基準の build(検査なし)に固定する — 日次は make sync の検査つきの build で走り、
+# 超過を赤にする判定の検は、上限の基準の build(検査なし)に固定する(effect ReadInvariantChecks に答える vm_probe_handler が読む
+# 拡張の関数を差し替える) — 日次は make sync の検査つきの build で走り、
 # 8d4ff1bb からそこでは超過を赤にしない(日次 t104 の赤・agora-redesign #857)。子の process で走る検は、plugin が
 # build の種類を読む pytest_configure より前に読まれる conftest で固定する。
-PIN_UNCHECKED_VM_BUILD = "\nimport doeff_vm\n\ndoeff_vm.invariant_checks_enabled = lambda: False\n"
+PIN_UNCHECKED_VM_BUILD = "\nimport doeff_vm.doeff_vm as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: False\n"
 
 
 def test_fail_mode_fails_the_slow_test_with_time_and_budget(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
@@ -295,9 +296,9 @@ def test_checked_vm_build_reports_but_does_not_fail(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """doeff-vm が検査つきの build の時は、fail の形でも超過を赤にせず、見出しにその旨を出す(上限は検査なしが基準)。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: True)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: True)
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2)
@@ -312,9 +313,9 @@ def test_checked_vm_build_reports_but_does_not_fail(
 def test_unchecked_vm_build_fails_and_names_the_build(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
@@ -326,14 +327,14 @@ def test_unchecked_vm_build_fails_and_names_the_build(
 def test_unknown_vm_build_is_named_and_judged_as_configured(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """build の種類を読めない(古い VM で関数が無い)時は「不明」と出し、判定は設定のまま。"""
-    import doeff_vm
+    """build の種類を読めない(古い VM で関数が無い — vm_probe_handler が ImportError で断る)時は「不明」と出し、判定は設定のまま。"""
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.delattr(doeff_vm, "invariant_checks_enabled")
+    monkeypatch.delattr(vm_ext, "_invariant_checks_enabled")
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*doeff-vm の build の種類は不明(*invariant_checks_enabled が無い*"])
+    result.stdout.fnmatch_lines(["*doeff-vm の build の種類は不明(*_invariant_checks_enabled*"])
 
 
 def _registered_project(pytester: pytest.Pytester, mode: str) -> None:
@@ -624,9 +625,9 @@ def test_marker_budget_is_chosen_from_the_item_markers(
 ) -> None:
     """検が持つ印ごとに違う上限で判定される(pytest の走行の中で item の印を読む): 同じ 0.3 秒の検が、印 real_world(5 秒)では緑・
     印 e2e(0.05 秒)では赤。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         'markers = ["real_world: 縁の検", "e2e: 結合の検"]\ndoeff_test_budget_mode = "fail"\n'
@@ -643,9 +644,9 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """印ごとの上限だけの設定でも測る。印の上限を超えた印つきの検は赤、印の無い検は測らない。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         'markers = ["real_world: 縁の検"]\ndoeff_test_budget_mode = "fail"\n'
@@ -676,9 +677,9 @@ def test_marked_test_waiting_on_a_child_over_the_wall_clock_budget_is_red(
 ) -> None:
     """印の上限は壁の時計の秒で判じる: 子 process の待ちで 0.3 秒かかる印 real_world の検は、process の CPU 秒が上限 0.05 秒より
     小さくても、fail の形で赤(上限は壁の時計の秒と書く)。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(pytester, FAIL_MODE_INI, {"test_child": CHILD_WAIT_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(failed=1)
@@ -689,9 +690,9 @@ def test_marked_test_waiting_on_a_child_within_the_wall_clock_budget_is_green(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """同じ子 process の待ちの検は、壁の時計の上限(5 秒)の内なら fail の形でも緑。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         'markers = ["real_world: 本物の I/O"]\ndoeff_test_call_budget_by_marker = ["real_world=5"]\n'
@@ -707,9 +708,9 @@ def test_second_registry_dir_is_read_in_a_run(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """登録簿の dir を list で 2 つ書くと、2 つ目に載った検も報告だけになる。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         FAIL_MODE_INI + 'doeff_test_budget_registry = ["over-budget", "kind-breaches"]\n',
@@ -726,9 +727,9 @@ def test_second_registry_dir_is_read_in_a_run(
 
 def test_python_test_files_are_not_measured(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
     """印の上限に当たる印をつけた Python の検でも、測らない(.hy の検の file だけが対象)。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     pytester.makeconftest(CONFTEST)
     pytester.makepyprojecttoml("[tool.pytest.ini_options]\n" + FAIL_MODE_INI)
     pytester.makepyfile(
@@ -778,9 +779,9 @@ def test_the_removed_call_budget_seconds_setting_does_not_judge_the_run(
     """実行の秒の上限の設定 doeff_test_call_budget_seconds は無くなった(後方互換は要らない — 2026-10-04): ini に書いても実行は
     秒で判じられない(印も歩数も無い検は測られない — fail の形・検査なしの build でも 0.3 秒の検は緑)。pytest は未登録の設定として
     警告を出すだけで、走行は止まらない。"""
-    import doeff_vm
+    import doeff_vm.doeff_vm as vm_ext
 
-    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
         pytester,
         'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n' + other_ini,
@@ -819,7 +820,7 @@ def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilatio
 
 
 # ── 歩数で判じる(agora-redesign #2670・#2852)──────────────────────────────────────────────
-# 数の口(doeff_vm.doeff_vm.vm_work_counts)だけを、検の中から歩数を足せる偽の関数に差し替える。CPU 秒が揺れても歩数は
+# 数の口(effect ReadVmWorkCounts に答える vm_probe_handler が読む拡張の関数 doeff_vm.doeff_vm._vm_work_counts)だけを、検の中から歩数を足せる偽の関数に差し替える。CPU 秒が揺れても歩数は
 # 決まった数なので、判定が数なら同じ検は毎回同じ判定になる。
 
 FAKE_WORK = """\
@@ -835,7 +836,7 @@ def counts():
 """
 
 PIN_FAKE_WORK = (
-    "\nimport doeff_vm.doeff_vm as _ext\nimport fake_work\n\n_ext.vm_work_counts = fake_work.counts\n"
+    "\nimport doeff_vm.doeff_vm as _ext\nimport fake_work\n\n_ext._vm_work_counts = fake_work.counts\n"
 )
 
 MANY_STEPS = """\
@@ -939,11 +940,11 @@ def test_a_steps_budget_without_the_counter_stops_the_run_by_name(
     _steps_project(pytester, STEPS_FAIL_INI, {"test_slow": SLOW_CALL}, fake=False)
     pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
     # pytester は同じ process で走るので、口を消すのは monkeypatch で(検の終わりに戻り、後の検に残さない)
-    monkeypatch.delattr(ext, "vm_work_counts", raising=False)
+    monkeypatch.delattr(ext, "_vm_work_counts", raising=False)
     result = pytester.runpytest("-q")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(
-        ["*doeff_test_call_budget_steps があるが歩数を測れない(*vm_work_counts が無い*)*CPU 秒へは倒さない*"]
+        ["*doeff_test_call_budget_steps があるが歩数を測れない(*_vm_work_counts*)*CPU 秒へは倒さない*"]
     )
     output = result.stdout.str() + result.stderr.str()
     assert "passed" not in output
@@ -955,7 +956,7 @@ def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pyteste
     """歩数は不変条件の検査の有無で変わらないので、検査つきの build でも fail の形なら赤にする(秒は報告だけのまま)。"""
     _steps_project(pytester, STEPS_FAIL_INI, {"test_steps": MANY_STEPS})
     pytester.makeconftest(
-        CONFTEST + "\nimport doeff_vm\n\ndoeff_vm.invariant_checks_enabled = lambda: True\n" + PIN_FAKE_WORK
+        CONFTEST + "\nimport doeff_vm.doeff_vm as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: True\n" + PIN_FAKE_WORK
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
@@ -1009,7 +1010,7 @@ def test_a_test_that_takes_no_vm_steps_is_within_the_steps_budget(pytester: pyte
 
 # ── 走っている最中の歩の上限(#3143)──────────────────────────────────────────────────────────
 # 同じ刻に自分へ合図を出し続ける task(promise を作り、それを満たす task を起こして待つ)を doeff の scheduler の上で回す。
-# 歩は本物の数(vm_work_counts)で数える — 偽の数では scheduler が越えを見ないため。上の検の conftest が同じ process の
+# 歩は本物の数(拡張の _vm_work_counts)で数える — 偽の数では scheduler が越えを見ないため。上の検の conftest が同じ process の
 # 数の口を偽の関数へ差し替えたまま残すので、ここの検は別の process で走らせる。
 
 SPIN_SCHEDULER = """\

@@ -37,9 +37,11 @@ VM_INVARIANT_CHECKS_INI = "vm_invariant_checks"
 
 def _turn_vm_oracle_on(enabled: bool) -> None:
     """Make every VM run in this test session check its invariants after each step (R4)."""
-    from doeff_vm.doeff_vm import set_invariant_checks
+    from doeff_core_effects.handlers import vm_probe_handler
 
-    set_invariant_checks(enabled)
+    from doeff import SetInvariantChecks, run
+
+    run(vm_probe_handler(SetInvariantChecks(enabled)))
 
 
 # On from the start, in case a plugin runs a program before pytest_configure

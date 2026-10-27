@@ -786,9 +786,11 @@ fn traced() -> bool {
     TRACE_INSTALLED.load(Ordering::Relaxed)
 }
 
-/// Switch the flag: called by `set_scheduler_trace` only, with the sink it
-/// installs (`True`) or removes (`False`).
+/// Switch the flag: called by `set_scheduler_trace` (with the sink it
+/// installs (`True`) or removes (`False`)) and by the effect
+/// `SetSchedulerTraceInstalled`'s handler only.
 #[pyfunction]
+#[pyo3(name = "_set_scheduler_trace_installed")]
 fn set_scheduler_trace_installed(installed: bool) {
     TRACE_INSTALLED.store(installed, Ordering::Relaxed);
 }
@@ -808,14 +810,16 @@ fn step_budget_armed() -> bool {
 }
 
 /// Switch the flag: called by `arm_step_budget` (`True`) and
-/// `disarm_step_budget` (`False`) only.
+/// `disarm_step_budget` (`False`), and by the effect
+/// `SetSchedulerStepBudgetArmed`'s handler only.
 #[pyfunction]
+#[pyo3(name = "_set_scheduler_step_budget_armed")]
 fn set_scheduler_step_budget_armed(armed: bool) {
     STEP_BUDGET_ARMED.store(armed, Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------
-// The scan counts (`vm_scan_counts`, agora card ki-9de8d0a54408)
+// The scan counts (`_vm_scan_counts` — the effect `ReadVmScanCounts`, agora card ki-9de8d0a54408)
 // ---------------------------------------------------------------------------
 
 /// What a scheduler scan walks. Every place that looks at entries of a
@@ -4269,8 +4273,8 @@ pub fn register(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyExternalQueue>()?;
     m.add_class::<HandleRegistrar>()?;
     m.add_class::<CancelBinder>()?;
-    m.add_function(pyo3::wrap_pyfunction!(set_scheduler_trace_installed, m)?)?;
-    m.add_function(pyo3::wrap_pyfunction!(set_scheduler_step_budget_armed, m)?)?;
+    crate::bind_internal(m, pyo3::wrap_pyfunction!(set_scheduler_trace_installed, m)?)?;
+    crate::bind_internal(m, pyo3::wrap_pyfunction!(set_scheduler_step_budget_armed, m)?)?;
     Ok(())
 }
 

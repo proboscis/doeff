@@ -37,12 +37,12 @@ from doeff_core_effects.handlers import (
     slog_handler,
     state,
     try_handler,
+    vm_probe_handler,
     writer,
 )
 from doeff_vm._effect_types import handler_effect_types
-from doeff_vm.doeff_vm import vm_work_counts
 
-from doeff import do, handler, with_handlers
+from doeff import Pure, ReadVmWorkCounts, do, handler, with_handlers
 from doeff import run as doeff_run
 
 
@@ -117,11 +117,23 @@ def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
     # 列の最後が一番内側: Ask は state を飛ばして外の reader に届く。state は VM の中の Rust の handler で
     # Python の本体を持たないので(card ki-83236a21466e)、VM が handler を呼んだ回数で数える。
     stack = [reader({"a": 1, "b": 2, "c": 3}), state()]
-    _, calls_before = vm_work_counts()
-    result = doeff_run(with_handlers(stack, _asks_then_state()))
-    _, calls_after = vm_work_counts()
+    result, calls = _handler_calls_of(with_handlers(stack, _asks_then_state()))
+    _, reading = _handler_calls_of(Pure(None))  # 後の読みの effect が vm_probe_handler を呼ぶ分
     assert result == 6
-    assert calls_after - calls_before == 5, "handler を呼ぶのは reader の Ask 3 回と state の Put・Get の 2 回だけ(Ask は state を飛ばす)"
+    assert calls - reading == 5, "handler を呼ぶのは reader の Ask 3 回と state の Put・Get の 2 回だけ(Ask は state を飛ばす)"
+
+
+def _handler_calls_of(program: object) -> tuple[object, int]:
+    """program の答えと、走らせた間に VM が handler を呼んだ回数(前後の ReadVmWorkCounts の差 — 後の読みの 1 回を含む)。"""
+
+    @do
+    def counted():
+        _, before = yield ReadVmWorkCounts()
+        value = yield program
+        _, after = yield ReadVmWorkCounts()
+        return value, after - before
+
+    return doeff_run(vm_probe_handler(counted()))
 
 
 def test_the_answers_and_the_types_it_answers_are_unchanged() -> None:

@@ -2,7 +2,7 @@
 
 以前は cargo feature で build を分け、同じ venv が最後に組んだ経路(make sync / uv sync)で 15 倍速さを変えた。
 いまは検査がどの build にも入り、DOEFF_VM_INVARIANT_CHECKS(拡張が最初に 1 回読む)か
-set_invariant_checks で決まる。この検は、同じ build が変数だけで両方の状態になることを子 process で見る。
+effect SetInvariantChecks で決まる。この検は、同じ build が変数だけで両方の状態になることを子 process で見る。
 """
 
 import subprocess
@@ -11,13 +11,13 @@ import sys
 import pytest
 
 PROBE = (
-    "from doeff import do, run\n"
-    "from doeff_vm.doeff_vm import invariant_checks_enabled\n"
+    "from doeff_core_effects.handlers import vm_probe_handler\n"
+    "from doeff import ReadInvariantChecks, do, run\n"
     "@do\n"
     "def one():\n"
     "    return 1\n"
     "assert run(one()) == 1\n"
-    "print(invariant_checks_enabled())\n"
+    "print(run(vm_probe_handler(ReadInvariantChecks())))\n"
 )
 
 
@@ -48,13 +48,20 @@ def test_unknown_value_is_refused() -> None:
 
 
 def test_setter_turns_the_checks_on_and_off() -> None:
-    from doeff_vm.doeff_vm import invariant_checks_enabled, set_invariant_checks
+    from doeff_core_effects.handlers import vm_probe_handler
 
-    before = invariant_checks_enabled()
+    from doeff import ReadInvariantChecks, SetInvariantChecks, do, run
+
+    @do
+    def switch_off_and_on():
+        yield SetInvariantChecks(False)
+        off = yield ReadInvariantChecks()
+        yield SetInvariantChecks(True)
+        on = yield ReadInvariantChecks()
+        return off, on
+
+    before = run(vm_probe_handler(ReadInvariantChecks()))
     try:
-        set_invariant_checks(False)
-        assert not invariant_checks_enabled()
-        set_invariant_checks(True)
-        assert invariant_checks_enabled()
+        assert run(vm_probe_handler(switch_off_and_on())) == (False, True)
     finally:
-        set_invariant_checks(before)
+        run(vm_probe_handler(SetInvariantChecks(before)))

@@ -217,14 +217,14 @@ def _rust_scheduler_trace_switch() -> Callable[[bool], None]:
     同じ拡張を build し直す)。sink の状態は変えない。
     """
     try:
-        from doeff_vm.doeff_vm import set_scheduler_trace_installed
+        from doeff_vm.doeff_vm import _set_scheduler_trace_installed
     except ImportError as error:
         raise ImportError(
             "set_scheduler_trace needs a doeff_vm extension that carries the scheduler trace switch "
-            "(set_scheduler_trace_installed): rebuild the Rust extension (`make sync` in a doeff "
+            "(_set_scheduler_trace_installed): rebuild the Rust extension (`make sync` in a doeff "
             "checkout, or reinstall doeff-vm)"
         ) from error
-    return set_scheduler_trace_installed
+    return _set_scheduler_trace_installed
 
 
 def scheduler_trace_sink() -> TraceSink | None:
@@ -634,9 +634,9 @@ class VmWork:
 
 def _read_vm_work() -> VmWork:
     """Read the process's doeff-vm running totals, so a measured span can be told in steps that a busy machine does not shift."""
-    from doeff_vm.doeff_vm import vm_work_counts
+    from doeff_vm.doeff_vm import _vm_work_counts
 
-    steps, handler_calls = vm_work_counts()
+    steps, handler_calls = _vm_work_counts()
     return VmWork(steps=steps, handler_calls=handler_calls)
 
 
@@ -718,14 +718,14 @@ def _rust_scheduler_step_budget_switch() -> Callable[[bool], None]:
     same extension's step count, so the remedy is the same rebuild). The budget is not changed.
     """
     try:
-        from doeff_vm.doeff_vm import set_scheduler_step_budget_armed
+        from doeff_vm.doeff_vm import _set_scheduler_step_budget_armed
     except ImportError as error:
         raise ImportError(
             "the step budget needs a doeff_vm extension that carries the scheduler step budget switch "
-            "(set_scheduler_step_budget_armed): rebuild the Rust extension (`make sync` in a doeff "
+            "(_set_scheduler_step_budget_armed): rebuild the Rust extension (`make sync` in a doeff "
             "checkout, or reinstall doeff-vm)"
         ) from error
-    return set_scheduler_step_budget_armed
+    return _set_scheduler_step_budget_armed
 
 
 class Race(EffectBase[_T], Generic[_T]):
