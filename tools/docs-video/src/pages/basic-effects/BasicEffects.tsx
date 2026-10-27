@@ -386,7 +386,7 @@ const StateScene: React.FC = () => {
 const WRITER_LINES: Lines = [
   [0, 'Writer: Tell appends a message to a log.'],
   [5, 'A handler can perform effects too: writer keeps its log in state.'],
-  [11.5, 'writer_log() reads the log back: four lines, in the order told.'],
+  [11.5, 'ReadWriterLog() reads the log back: four lines, in the order told.'],
 ];
 const WRITER = f(17.5);
 const WITH_LOGGING = [
@@ -455,7 +455,7 @@ const WriterScene: React.FC = () => {
       <Caption x={980} y={130} w={250} opacity={fadeAt(frame, 5.3)}>
         To handle a Tell, writer yields Get and Put of its own.
       </Caption>
-      <CodeBlock lines={['log = yield writer_log()']} x={code.x} y={420} w={code.w} size={19} line={32} band={frame >= f(11.8) ? 0 : null} opacity={fadeAt(frame, 11.6)} />
+      <CodeBlock lines={['log = yield ReadWriterLog()']} x={code.x} y={420} w={code.w} size={19} line={32} band={frame >= f(11.8) ? 0 : null} opacity={fadeAt(frame, 11.6)} />
       <Fly a={{x: code.x + code.w + 30, y: 450}} b={hopTo} leave={12.0} land={12.6} text="Get(log)" color={ACCENT} />
       <Output
         x={code.x} y={500} w={code.w} h={200} title="with_logging() returns, and the log" size={16} opacity={fadeAt(frame, 13.0)}
