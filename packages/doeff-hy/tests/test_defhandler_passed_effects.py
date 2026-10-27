@@ -13,7 +13,8 @@ from collections.abc import Callable
 from types import CodeType, FrameType
 
 import pytest
-from doeff_vm._effect_types import PassedEffects, handler_spec
+
+from doeff._vm import PassedEffects, handler_spec
 
 PRELUDE = """
 (require doeff-hy.macros [defp defhandler with-handler <-])

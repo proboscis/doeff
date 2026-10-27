@@ -7,7 +7,7 @@
 ;;; Added for agora-redesign #802 (bundle 5) so services stop keeping their own signal boxes.
 
 (import dataclasses [dataclass])
-(import doeff_vm [EffectBase])
+(import doeff [EffectBase])
 
 
 (defclass [(dataclass :frozen True)] StopRequested [EffectBase]

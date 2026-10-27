@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class DomainError(Exception):

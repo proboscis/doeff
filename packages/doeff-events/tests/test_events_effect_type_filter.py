@@ -15,10 +15,9 @@ from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader
 from doeff_events import EventBus, Publish, event_handler, subscribed_event_handler
 from doeff_events.effects import PublishEffect, WaitForEventEffect, WaitForEventsEffect
-from doeff_vm._effect_types import handler_effect_types
 from events_test_support import run_scheduled
 
-from doeff import do
+from doeff import do, handler_effect_types
 
 
 @dataclass(frozen=True)

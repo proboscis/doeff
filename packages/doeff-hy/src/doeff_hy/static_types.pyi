@@ -25,9 +25,8 @@ from pathlib import Path
 from typing import Any, ParamSpec, Protocol, TypeAlias, TypeVar
 
 import pytest
-from doeff_vm import K, WithHandler
 
-from doeff import Program
+from doeff import K, Program, WithHandlerType
 
 # `do` は core の物をそのまま渡し、2 つ目の宣言を持たない(agora-redesign #2321)。for/do を使う module は展開が
 # 名指す `(import doeff [do :as _doeff-do])` を自分で書くので、doeff-hy-check が module の頭に置く `_doeff_do` の後に
@@ -107,7 +106,7 @@ Continuation: TypeAlias = K
 #: handler を被せる本文(どの Program・effect も受ける — Program は答えと effect の両方で共変)。
 HandlerBody: TypeAlias = Program[HandledAnswer, object]
 #: handler を被せた結果(本文と同じ答えの型)。
-HandledScope: TypeAlias = WithHandler[HandledAnswer]
+HandledScope: TypeAlias = WithHandlerType[HandledAnswer]
 
 class Handler(Protocol):
     """defhandler が作る関数 — 本文に答え手を被せる(答えの型は本文のまま)。型の宣言の生成(static_stub.py)が

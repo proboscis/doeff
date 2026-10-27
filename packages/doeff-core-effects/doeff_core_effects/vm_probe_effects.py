@@ -15,7 +15,7 @@ two reads is the work done between them; a read inside a run includes the steps 
 took to reach it.
 """
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class ReadVmLiveCounts(EffectBase[tuple[int, int, int]]):

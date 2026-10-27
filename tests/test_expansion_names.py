@@ -12,7 +12,6 @@ from pathlib import Path
 
 import doeff_core_effects.effects
 import doeff_hy
-import doeff_vm
 import hy
 import pytest
 from doeff_hy import expansion_names
@@ -25,7 +24,7 @@ _NAMES = (
     "Resume",
     "Transfer",
     "Pass",
-    "WithHandler",
+    "WithHandlerType",
     "Get",
     "Put",
     "Some",
@@ -67,13 +66,15 @@ def test_home_refuses_a_name_outside_the_table() -> None:
     ("module", "name", "asname", "expected"),
     [
         ("doeff", "Pass", "_doeff_Pass", True),
-        ("doeff_vm", "WithHandler", "_doeff_WithHandler", True),
+        ("doeff", "WithHandlerType", "_doeff_WithHandlerType", True),
         ("typing", "ClassVar", "_doeff_ClassVar", True),
         ("typing", "cast", "_doeff_cast", True),
         # for/do の docstring が書き手に書かせる別名(表に無い名)は、書き手の import
         ("doeff", "do", "_doeff_do", False),
         ("doeff_traverse", "Traverse", "_doeff_traverse_Traverse", False),
         ("doeff_vm", "Pass", "_doeff_Pass", False),
+        # the VM node is read from doeff's root, never from doeff_vm (agora-redesign ki-ff728b00369a)
+        ("doeff_vm", "WithHandler", "_doeff_WithHandler", False),
         ("doeff", "Pass", "Pass", False),
         ("doeff", "Pass", None, False),
     ],
@@ -86,11 +87,11 @@ def test_is_alias_import_answers_only_the_table(
 
 
 def test_import_source_aliases_the_names_grouped_by_home() -> None:
-    text = expansion_names.import_source(["Pass", "WithHandler", "Put", "Pass", "Some"])
+    text = expansion_names.import_source(["Pass", "WithHandlerType", "Put", "Pass", "Some"])
     assert ast.dump(ast.parse(text)) == ast.dump(
         ast.parse(
-            "from doeff import Pass as _doeff_Pass, Some as _doeff_Some\n"
-            "from doeff_vm import WithHandler as _doeff_WithHandler\n"
+            "from doeff import Pass as _doeff_Pass, WithHandlerType as _doeff_WithHandlerType,"
+            " Some as _doeff_Some\n"
             "from doeff_core_effects.effects import Put as _doeff_Put\n"
         )
     )
@@ -100,12 +101,12 @@ def test_import_form_aliases_the_names_grouped_by_home() -> None:
     """Hy の import の形も、Python の import と同じ別名を同じ置き場から束ねる。"""
     mod = types.ModuleType("expansion_names_probe")
     sys.modules[mod.__name__] = mod
-    hy.eval(expansion_names.import_form(["Pass", "Put", "WithHandler"]), mod.__dict__, module=mod)
+    hy.eval(expansion_names.import_form(["Pass", "Put", "WithHandlerType"]), mod.__dict__, module=mod)
     aliased = {name: value for name, value in vars(mod).items() if name.startswith("_doeff_")}
     assert aliased == {
         "_doeff_Pass": doeff.Pass,
         "_doeff_Put": doeff_core_effects.effects.Put,
-        "_doeff_WithHandler": doeff_vm.WithHandler,
+        "_doeff_WithHandlerType": doeff.WithHandlerType,
     }
 
 
@@ -186,8 +187,8 @@ def _positioned_models(form: object) -> list[object]:
 
 @pytest.mark.parametrize(
     "names",
-    [["Pass"], ["WithHandler"], ["Put", "Get"], ["Pass", "Put", "WithHandler", "Some"]],
-    ids=["doeff", "doeff_vm", "dotted-module", "all-homes"],
+    [["Pass"], ["WithHandlerType"], ["Put", "Get"], ["Pass", "Put", "WithHandlerType", "Some"]],
+    ids=["doeff", "doeff-node", "dotted-module", "all-homes"],
 )
 def test_import_form_builds_no_positioned_model(names: list[str]) -> None:
     """`import_form` が返す model は位置を持たない。reader が作る model(`hy.read("doeff.do")` など)は 1 行目 1 列目の位置を

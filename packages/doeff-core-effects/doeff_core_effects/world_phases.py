@@ -31,9 +31,9 @@ _open_log: tuple[PhaseMark, ...] | None = None
 
 def _read_vm_steps() -> int:
     """The doeff-vm steps taken so far by the whole process (a running total)."""
-    from doeff_vm.doeff_vm import _vm_work_counts
+    from doeff._vm import native
 
-    steps, _handler_calls = _vm_work_counts()
+    steps, _handler_calls = native._vm_work_counts()
     return steps
 
 

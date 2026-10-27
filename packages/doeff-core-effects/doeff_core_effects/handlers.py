@@ -24,10 +24,8 @@ import threading as _threading
 from collections.abc import Mapping
 from typing import Any
 
-from doeff_vm._not_a_program import program_shown, uncalled_do_function_call
-from doeff_vm.doeff_vm import StateHandler
-
 from doeff import do
+from doeff._vm import native, program_shown, uncalled_do_function_call
 from doeff.handler_utils import reinstaller
 from doeff.program import (
     Pass,
@@ -120,7 +118,7 @@ def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     store = dict(initial) if initial else {}
     # The VM answers Get / Put from the store itself, without a Python generator per
     # effect (card ki-83236a21466e); the store stays this dict.
-    return _rust_handler_installer(StateHandler(store, Get, Put))
+    return _rust_handler_installer(native.StateHandler(store, Get, Put))
 
 
 # The declaration doeff-effect-analyzer reads for the state handler: it runs in Rust, so there are no
@@ -176,8 +174,7 @@ def _try_handler(effect: Try, k):
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     if isinstance(effect, Try):
-        from doeff_vm import Err, Ok
-
+        from doeff import Err, Ok
         from doeff.handler_utils import get_inner_handlers
 
         inner_hs = yield get_inner_handlers(k)
@@ -267,25 +264,24 @@ def _asked_vm(effect: _VmProbe) -> object:
     The functions are internal to doeff-vm (no public name of ``doeff_vm.doeff_vm``) and are
     looked up at each effect, so a test can stand in a fake count for one of them.
     """
-    from doeff_vm import doeff_vm as vm
 
     answer: object
     try:
         match effect:
             case ReadVmLiveCounts():
-                answer = vm._vm_live_counts()
+                answer = native._vm_live_counts()
             case ReadVmWorkCounts():
-                answer = vm._vm_work_counts()
+                answer = native._vm_work_counts()
             case ReadVmScanCounts():
-                answer = vm._vm_scan_counts()
+                answer = native._vm_scan_counts()
             case ReadInvariantChecks():
-                answer = vm._invariant_checks_enabled()
+                answer = native._invariant_checks_enabled()
             case SetInvariantChecks():
-                answer = vm._set_invariant_checks(effect.enabled)
+                answer = native._set_invariant_checks(effect.enabled)
             case SetSchedulerStepBudgetArmed():
-                answer = vm._set_scheduler_step_budget_armed(effect.armed)
+                answer = native._set_scheduler_step_budget_armed(effect.armed)
             case SetSchedulerTraceInstalled():
-                answer = vm._set_scheduler_trace_installed(effect.installed)
+                answer = native._set_scheduler_trace_installed(effect.installed)
     except AttributeError as error:
         raise ImportError(
             f"vm_probe_handler cannot answer {effect!r}: the doeff_vm extension is older than "

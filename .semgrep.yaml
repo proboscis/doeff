@@ -3438,6 +3438,35 @@ rules:
       category: doexpr-hierarchy
       rationale: "public WithHandler compatibility shim was deleted; handler stack syntax is the user idiom"
 
+  - id: doeff-vm-imported-only-by-doeff
+    pattern-either:
+      - pattern-regex: (?m)^[ \t]*from[ \t]+doeff_vm\b
+      - pattern-regex: (?m)^[ \t]*import[ \t]+doeff_vm\b
+      - pattern-regex: \(import\s+doeff_vm\b
+    paths:
+      include:
+        - "packages/**/*.py"
+        - "packages/**/*.pyi"
+        - "packages/**/*.hy"
+        - "examples/**/*.py"
+        - "examples/**/*.hy"
+        - "docs/adr/**/*.hy"
+      exclude:
+        - "packages/doeff-vm/**"
+        - "packages/doeff-vm-core/**"
+        - "tests/semgrep/fixtures/**"
+    message: |
+      doeff is the one package that imports doeff_vm (agora-redesign ki-ff728b00369a — the user's
+      answer "via-root", lt-XM33P1YN6QBWX9VFMHT0T439FA). Import the VM's types from doeff
+      (`from doeff import EffectBase, Resume, WithBoundaries, WithHandlerType`); a subpackage of
+      this repository that needs the VM's internals (the Rust handlers, the counters, the handler
+      annotations) imports them from `doeff._vm`.
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: layer-boundary
+      rationale: "the VM is an implementation detail of doeff; users and subpackages see doeff's root only"
+
   - id: no-legacy-intercept-api
     pattern-either:
       - pattern-regex: (?m)^from\s+doeff\s+import\s+.*\bIntercept\b

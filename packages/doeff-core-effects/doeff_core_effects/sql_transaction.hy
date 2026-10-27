@@ -35,8 +35,7 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable Generator])
 (import dataclasses [dataclass])
-(import doeff [do :as program-handler Resume Program EffectBase])
-(import doeff_vm [WithHandler K])
+(import doeff [do :as program-handler Resume Program EffectBase K WithHandlerType])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlNotify SqlRows SqlFailed SqlUnreachable SqlTransactionMisuse T])
 
 
@@ -94,7 +93,7 @@
   (when (is-not began None)
     (return began))
   (try
-    (<- value (WithHandler (transaction-scope database execute-query execute-insert execute-notify) program))
+    (<- value (WithHandlerType (transaction-scope database execute-query execute-insert execute-notify) program))
     (except [Exception]
       (<- (rollback))
       (raise)))
@@ -198,7 +197,7 @@
    答えにしない — 先に起きた事を答える)。"
   (val progress (TransactionProgress))
   (try
-    (<- value (WithHandler (batched-transaction-scope database flush accepts-notices progress) program))
+    (<- value (WithHandlerType (batched-transaction-scope database flush accepts-notices progress) program))
     (except [Exception]
       (when progress.opened
         (<- (rollback)))

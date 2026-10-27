@@ -14,7 +14,7 @@
 (import collections.abc [Callable])
 (import concurrent.futures [Executor Future])
 (import threading)
-(import doeff_vm [PyVM])
+(import doeff [PyVM])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait TaskCancelledError])
 
 ;; まだ答えを渡していない印(答えが None の仕事と見分ける)。

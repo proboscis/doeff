@@ -44,7 +44,7 @@ How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
   `defhandler` and project macros that wrap them (a `defservice` that expands to
   `defk`) are read as the Python they become.
 - **Names resolve by importing** the module that defines the Program. An effect
-  is any class that subclasses `doeff_vm.EffectBase` — including the project's
+  is any class that subclasses `doeff.EffectBase` — including the project's
   own — however it was imported (aliases, re-exports). No Program is run and no
   handler is installed.
 - A Program's effects: `yield E(...)` / `yield from E(...)`; calls to other

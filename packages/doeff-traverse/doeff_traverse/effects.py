@@ -29,8 +29,7 @@ while ``__init__`` was unannotated, and Collection once annotated).
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Never, TypeVar
 
-from doeff_vm import EffectBase
-
+from doeff import EffectBase
 from doeff_traverse.collection import Collection, ItemResult
 
 if TYPE_CHECKING:
