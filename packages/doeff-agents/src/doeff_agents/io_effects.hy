@@ -22,6 +22,7 @@
 
 (require doeff-hy.macros [defk <-])
 
+(import sys)
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 ;; 汎用の子 process の effect と答えの型は doeff-core-effects に 1 つ(agora-redesign #802 便 1)— この module は同じ型を re-export する
@@ -114,6 +115,31 @@
   #^ str log-path
   #^ (| str None) cwd
   (setv cwd None))
+
+(defclass [(dataclass :frozen True :kw-only True)] StartSessionHost [EffectBase]
+  "session host を常駐として起こして待たない。答えは pid。stdout / stderr は log へ。
+   起こす argv は handler が `_session-host-argv` で組む: 既定は今の python で入口の module を
+   起こす `[sys.executable -m doeff_agents.sessionhost.host --db … --socket … --max-running …]`
+   (PATH を見ない・サブコマンドを持たない)。host-bin は起こす実行 file の差し替えの口
+   ($DOEFF_AGENTD_BIN か呼び手の daemon_bin — 検・別の実装の host)で、同じ旗を受け取る。"
+  #^ str db-path
+  #^ str socket-path
+  #^ int max-running
+  #^ str log-path
+  #^ (| str None) host-bin
+  (setv host-bin None))
+
+;; session host の入口の module(python -m の的)。結果の MCP server の入口は
+;; sessionhost/impls/channel.hy が持つ — 役ごとに 1 つの module で、サブコマンドで振り分けない。
+(setv _SESSION-HOST-MODULE "doeff_agents.sessionhost.host")
+
+(defk _session-host-argv [host-bin db-path socket-path max-running]
+  {:pre [(: host-bin (| str None)) (: db-path str) (: socket-path str) (: max-running int)]
+   :post [(: % list)]
+   :tags {:context "driver-io" :role "foundation"}}
+  "StartSessionHost が起こす argv(本番と検の handler と、client の案内の文が読む 1 点)。"
+  (+ (if (is host-bin None) [sys.executable "-m" _SESSION-HOST-MODULE] [host-bin])
+     ["--db" db-path "--socket" socket-path "--max-running" (str max-running)]))
 
 (defclass [(dataclass :frozen True :kw-only True)] UnixLineRequest [EffectBase]
   "unix socket へ 1 行送って 1 行読む。framing の外(JSON の組み立てと

@@ -949,7 +949,7 @@
 ;; per-kind defhandler(R2: 直接束縛と host 束縛の両方で同一モジュール)
 ;; ---------------------------------------------------------------------------
 
-(defhandler claude-code-impl [result-command]
+(defhandler claude-code-impl [python]
   (BuildLaunch [agent-type params]
     :when (= agent-type "claude")
     (<- argv (build-claude-argv params))
@@ -993,7 +993,7 @@
 
   (WireResultChannel [agent-type session-id socket-path]
     :when (= agent-type "claude")
-    (resume (result-channel-spec result-command session-id socket-path)))
+    (resume (result-channel-spec python session-id socket-path)))
 
   (DeliverMessage [pane-id text]
     ;; live REPL への paste + submit。盲窓(paste→confirm ループ)の物理は

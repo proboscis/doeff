@@ -309,7 +309,7 @@ def test_default_agentd_paths_take_the_socket_from_the_environment(
 ) -> None:
     """`DOEFF_AGENTD_SOCKET` names the socket; the default order is untouched.
 
-    A host started by `doeff-sessionhost join` listens under its own state
+    A host a deployment starts (launchd, systemd) listens under its own state
     directory, which the XDG defaults never name — so before this the CLI could
     not observe a joined host at all.  The environment variable is the one place
     that teaches it; there is no flag, because the socket is a property of the
@@ -380,7 +380,7 @@ def test_ensure_agentd_uses_a_named_socket_without_auditing_its_database(
 ) -> None:
     """A socket named by the environment is used as it is, database and all.
 
-    A host started by `doeff-sessionhost join` keeps its own database under its
+    A host a deployment starts (launchd, systemd) keeps its own database under its
     state directory, so auditing it against the canonical path would refuse
     every joined host — the identity audit exists to catch a stale host on the
     *default* socket, not to reject one the caller pointed at deliberately.
@@ -557,7 +557,7 @@ def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
     assert str(paths.socket_path) in message
     assert "doeff-agentd --db" in message
     assert f"--socket {paths.socket_path}" in message
-    assert "--max-running 7 serve" in message
+    assert "--max-running 7\n" in message
 
 
 def test_ensure_agentd_error_prose_names_the_session_host_not_the_retired_daemon(
@@ -565,22 +565,22 @@ def test_ensure_agentd_error_prose_names_the_session_host_not_the_retired_daemon
     tmp_path: Path,
     short_runtime_dir: Path,
 ) -> None:
-    """The user-facing prose names the console script that actually runs.
+    """The user-facing prose names the session host, not the retired daemon.
 
     The Rust ``doeff-agentd`` binary was retired (ADR-DOE-AGENTS-004
     ``retired-impl-lives-only-in-git-history``); the host that ships with this
-    package is ``doeff-sessionhost``.  A reader of this error must not be handed
-    two different binary names for one daemon.
+    package is the entry module ``doeff_agents.sessionhost.host``.  A reader of
+    this error must not be handed two different names for one daemon.
     """
     state_home = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
 
     with pytest.raises(AgentdUnavailableError) as error:
-        ensure_agentd(daemon_bin=str(tmp_path / "doeff-sessionhost"), max_running=7)
+        ensure_agentd(daemon_bin=str(tmp_path / "no-such-host"), max_running=7)
 
     message = str(error.value)
-    assert "doeff-sessionhost is not reachable" in message
+    assert "The session host is not reachable" in message
     assert "doeff-agentd" not in message
 
 
@@ -623,7 +623,6 @@ def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
                 str(paths.socket_path),
                 "--max-running",
                 "7",
-                "serve",
             ),
             paths.log_path,
         )
@@ -1131,52 +1130,70 @@ def test_ensure_agentd_malformed_declaration_is_loud_even_with_healthy_daemon(
         ensure_agentd(client_timeout=2.0)
 
 
-def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
+def test_start_session_host_runs_the_entry_module_on_the_running_interpreter(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    # Retirement (DOE-004): the canonical spawn target is the Hy session
-    # host console script installed next to the running interpreter — the
-    # executor ships with the client package, so any env that can import
-    # doeff_agents can start the right daemon.
-    fake_bin_dir = tmp_path / "venv" / "bin"
-    fake_bin_dir.mkdir(parents=True)
-    sibling = fake_bin_dir / "doeff-sessionhost"
-    sibling.write_text("#!/bin/sh\n", encoding="utf-8")
-    sibling.chmod(0o755)
-    monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
-    monkeypatch.setattr(agentd_client.sys, "executable", str(fake_bin_dir / "python"))
-
-    command = agentd_client._agentd_command(
-        daemon_bin=None,
-        db_path=tmp_path / "agentd.sqlite",
-        socket_path=tmp_path / "agentd.sock",
-        max_running=3,
+    # card ki-bb337cfd0336: the host is started by the StartSessionHost effect, whose
+    # handler runs the host's entry module on the running interpreter — no console
+    # script, no PATH lookup, no subcommand (a stale tool on PATH can not be the host).
+    paths = agentd_client.agentd_paths_from_env(
+        str(tmp_path / "state"), str(tmp_path / "run"), "u", str(tmp_path)
+    )
+    world = FakeIoWorld(
+        env={"XDG_STATE_HOME": str(tmp_path / "state"), "XDG_RUNTIME_DIR": str(tmp_path / "run")},
+        which={"doeff-sessionhost": "/stale/bin/doeff-sessionhost"},
+        home=str(tmp_path),
+    )
+    monkeypatch.setattr(
+        agentd_client, "_wait_for_agentd_ready", lambda _client, **_kwargs: True
     )
 
-    assert command[0] == str(sibling)
-    assert command[-1] == "serve"
+    agentd_client.ensure_agentd(max_running=3, io_root=fake_io_root(world))
+
+    assert world.spawned == [
+        (
+            (
+                sys.executable,
+                "-m",
+                "doeff_agents.sessionhost.host",
+                "--db",
+                str(paths.db_path),
+                "--socket",
+                str(paths.socket_path),
+                "--max-running",
+                "3",
+            ),
+            str(paths.log_path),
+            None,
+        )
+    ]
 
 
-def test_agentd_command_never_resolves_the_retired_rust_binary(
+def test_start_session_host_honours_the_explicit_host_bin_override(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    # No sibling script and nothing on PATH: the bare name is the Hy host,
-    # never the retired Rust "doeff-agentd" (silent-rollback root cause).
-    monkeypatch.setattr(agentd_client.sys, "executable", str(tmp_path / "nowhere" / "python"))
-    world = FakeIoWorld()  # DOEFF_AGENTD_BIN 未設定・sibling 無し・PATH 無し
-
-    command = agentd_client._agentd_command(
-        daemon_bin=None,
-        db_path=tmp_path / "agentd.sqlite",
-        socket_path=tmp_path / "agentd.sock",
-        max_running=3,
-        io_root=fake_io_root(world),
+    # $DOEFF_AGENTD_BIN stays the explicit seam (tests, another host implementation):
+    # the named executable receives the same flags as the entry module.
+    world = FakeIoWorld(
+        env={
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+            "XDG_RUNTIME_DIR": str(tmp_path / "run"),
+            "DOEFF_AGENTD_BIN": "/opt/other-host",
+        },
+        home=str(tmp_path),
+    )
+    monkeypatch.setattr(
+        agentd_client, "_wait_for_agentd_ready", lambda _client, **_kwargs: True
     )
 
-    assert command[0] == "doeff-sessionhost"
-    assert "doeff-agentd" not in command[0]
+    agentd_client.ensure_agentd(max_running=3, io_root=fake_io_root(world))
+
+    [(argv, _log_path, _cwd)] = world.spawned
+    assert argv[0] == "/opt/other-host"
+    assert argv[1:3] == ("--db", str(tmp_path / "state" / "doeff" / "agentd.sqlite"))
+    assert argv[-2:] == ("--max-running", "3")
 
 
 def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:

@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
-from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_bin import sessionhost_command
 from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
 # This support module waits for a real doeff-agentd process, which no doeff
@@ -59,7 +59,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
     fake_log_path = work_dir / "fake-agent-events.jsonl"
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script_path))}"
 
-    agentd_bin = resolve_sessionhost_bin()
+    host_command = sessionhost_command()
     # 宿から隔離する(sessionhost_isolated_host の頭注 — 2026-09-24 zeus で本物の claude が
     # 画面判定として 3 回起き、宿の ~/.claude の資格を空で上書きした)。
     host = isolated_host(runtime_dir / "host")
@@ -68,7 +68,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
             agentd_proc = host.spawn_sessionhost(
                 sessionhost_serve_argv(
-                    agentd_bin,
+                    host_command,
                     db_path=db_path,
                     socket_path=socket_path,
                     monitor_interval_ms=100,
@@ -92,7 +92,6 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
                     **host.session_env(),
                     "DOEFF_RESULT_SESSION_ID": session_id,
                     "DOEFF_AGENTD_SOCKET": str(socket_path),
-                    "DOEFF_AGENTD_BIN": str(agentd_bin),
                 },
                 expected_result={"payload_schema": RESULT_SCHEMA},
             )
@@ -168,7 +167,6 @@ from pathlib import Path
 
 SESSION_ID = os.environ["DOEFF_RESULT_SESSION_ID"]
 SOCKET = os.environ["DOEFF_AGENTD_SOCKET"]
-AGENTD_BIN = os.environ["DOEFF_AGENTD_BIN"]
 LOG_PATH = Path.cwd() / "fake-agent-events.jsonl"
 
 
@@ -211,7 +209,8 @@ def report_invalid() -> str:
     # server (missing the required "ok" field). agentd must reject it
     # deterministically and MUST NOT re-prompt.
     proc = subprocess.Popen(
-        [AGENTD_BIN, "report-result-mcp", "--session", SESSION_ID, "--socket", SOCKET],
+        [sys.executable, "-m", "doeff_agents.sessionhost.result_mcp",
+     "--session", SESSION_ID, "--socket", SOCKET],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,

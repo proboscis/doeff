@@ -221,7 +221,7 @@ def test_commands_that_change_a_session_fail_loudly_when_agentd_unreachable(
         raise AgentdUnavailableError(
             "not reachable",
             socket_path=tmp_path / "agentd.sock",
-            start_command=("doeff-sessionhost", "serve"),
+            start_command=("python", "-m", "doeff_agents.sessionhost.host"),
         )
 
     monkeypatch.setattr(cli_module, "ensure_agentd", unavailable)
@@ -232,7 +232,7 @@ def test_commands_that_change_a_session_fail_loudly_when_agentd_unreachable(
     assert "agentd が起動していません" in result.output
     # retirement (DOE-004 R7): the hint points at the ensure verb / the
     # canonical Hy host, never the retired Rust binary
-    assert "doeff-sessionhost" in result.output
+    assert "doeff_agents.sessionhost.host" in result.output
 
 
 @pytest.mark.parametrize(
@@ -275,7 +275,7 @@ def test_observation_verbs_never_start_a_host(
 
     assert result.exit_code == 1
     assert "agentd が起動していません" in result.output
-    assert "doeff-sessionhost" in result.output
+    assert "doeff_agents.sessionhost.host" in result.output
 
 
 @pytest.mark.parametrize(
@@ -418,7 +418,7 @@ def test_agentd_ensure_json_fails_loudly_when_agentd_unreachable(
         raise AgentdUnavailableError(
             "not reachable",
             socket_path=tmp_path / "agentd.sock",
-            start_command=("doeff-agentd", "serve"),
+            start_command=("doeff-agentd",),
         )
 
     monkeypatch.setattr(cli_module, "ensure_agentd", unavailable)
@@ -429,7 +429,7 @@ def test_agentd_ensure_json_fails_loudly_when_agentd_unreachable(
     assert "agentd が起動していません" in result.output
     # retirement (DOE-004 R7): the hint points at the ensure verb / the
     # canonical Hy host, never the retired Rust binary
-    assert "doeff-sessionhost" in result.output
+    assert "doeff_agents.sessionhost.host" in result.output
 
 
 def _snapshot(

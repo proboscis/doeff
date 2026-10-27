@@ -24,7 +24,7 @@ from runner_env import (
     real_claude_auth_email_setting,
     real_claude_config_dir_setting,
 )
-from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_bin import sessionhost_command
 from sessionhost_isolated_host import sessionhost_serve_argv
 
 # This support module waits for a real doeff-agentd process, which no doeff
@@ -70,7 +70,7 @@ def run_agentd_real_agent_result_report_e2e(
     db_path = runtime_dir / "agentd.sqlite"
     socket_path = runtime_dir / "agentd.sock"
     agentd_log_path = runtime_dir / "agentd.log"
-    agentd_bin = resolve_sessionhost_bin()
+    host_command = sessionhost_command()
     agentd_proc: subprocess.Popen[str] | None = None
     try:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
@@ -81,7 +81,7 @@ def run_agentd_real_agent_result_report_e2e(
                 # docstring of sessionhost_isolated_host). The agent's own auth
                 # profile is declared through the binding.
                 sessionhost_serve_argv(
-                    agentd_bin,
+                    host_command,
                     db_path=db_path,
                     socket_path=socket_path,
                     monitor_interval_ms=250,

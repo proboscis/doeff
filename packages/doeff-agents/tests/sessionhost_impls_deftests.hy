@@ -123,8 +123,8 @@
 
 
 (defn channel-spec []
-  {"command" "/opt/doeff-sessionhost"
-   "args" ["report-result-mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]})
+  {"command" "/opt/venv/bin/python"
+   "args" ["-m" "doeff_agents.sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]})
 
 
 (defk perform [op]
@@ -137,14 +137,14 @@
   {:pre [(: world ImplWorld) (: op EffectBase)]
    :post [(: % "impl handler 実行結果")]}
   (<- result ((fake-impl-substrate world)
-              ((claude-code-impl "/opt/doeff-sessionhost") (perform op))))
+              ((claude-code-impl "/opt/venv/bin/python") (perform op))))
   result)
 
 (defk run-codex [world op]
   {:pre [(: world ImplWorld) (: op EffectBase)]
    :post [(: % "impl handler 実行結果")]}
   (<- result ((fake-impl-substrate world)
-              ((codex-impl "/opt/doeff-sessionhost") (perform op))))
+              ((codex-impl "/opt/venv/bin/python") (perform op))))
   result)
 
 
@@ -172,9 +172,9 @@
   (setv mcp (json.loads mcp-json))
   (setv server (get mcp "mcpServers" "doeff_result"))
   (assert (= (get server "type") "stdio"))
-  (assert (= (get server "command") "/opt/doeff-sessionhost"))
+  (assert (= (get server "command") "/opt/venv/bin/python"))
   (assert (= (get server "args")
-             ["report-result-mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
+             ["-m" "doeff_agents.sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
   (assert (in "--strict-mcp-config" argv))
   ;; prompt は argv に載らない・print mode 不使用(launch invariant)
   (assert (not-in "do the task" argv))
@@ -486,9 +486,9 @@
   (assert (in "model_reasoning_effort=\"high\"" argv))
   ;; caller server は url、channel は command + args(TOML 配列、key は常に quote)
   (assert (in "mcp_servers.\"tools\".url=\"http://127.0.0.1:9/sse\"" argv))
-  (assert (in "mcp_servers.\"doeff_result\".command=\"/opt/doeff-sessionhost\"" argv))
+  (assert (in "mcp_servers.\"doeff_result\".command=\"/opt/venv/bin/python\"" argv))
   (assert (in (+ "mcp_servers.\"doeff_result\".args="
-                 "[\"report-result-mcp\",\"--session\",\"s1\",\"--socket\",\"/tmp/agentd.sock\"]")
+                 "[\"-m\",\"doeff_agents.sessionhost.result_mcp\",\"--session\",\"s1\",\"--socket\",\"/tmp/agentd.sock\"]")
               argv))
   ;; -c が各値の直前に居る
   (setv effort-idx (.index argv "model_reasoning_effort=\"high\""))
@@ -496,7 +496,7 @@
   ;; model は channel 配線の後(oracle 順序)
   (assert (= (get argv (+ (.index argv "--model") 1)) "gpt-5"))
   (assert (> (.index argv "--model")
-             (.index argv "mcp_servers.\"doeff_result\".command=\"/opt/doeff-sessionhost\"")))
+             (.index argv "mcp_servers.\"doeff_result\".command=\"/opt/venv/bin/python\"")))
   ;; prompt は argv に載らない
   (assert (not-in "do the task" argv)))
 
@@ -515,9 +515,9 @@
 (deftest test-wire-result-channel-spec
   (setv world (ImplWorld))
   (<- spec (run-codex world (wire-result-channel "codex" "s1" "/tmp/agentd.sock")))
-  (assert (= (get spec "command") "/opt/doeff-sessionhost"))
+  (assert (= (get spec "command") "/opt/venv/bin/python"))
   (assert (= (get spec "args")
-             ["report-result-mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
+             ["-m" "doeff_agents.sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
   (setv world2 (ImplWorld))
   (<- spec2 (run-claude world2 (wire-result-channel "claude" "s1" "/tmp/agentd.sock")))
   (assert (= spec spec2)))

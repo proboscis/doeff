@@ -477,10 +477,11 @@
   #^ str text)
 
 (defclass [(dataclass :frozen True :kw-only True)] WireResultChannel [EffectBase]
-  "kind の result 報告チャネル(report-result-mcp)を session に配線する。
-   凍結物理(S1/S13 / main.rs:1306 mcp_command_args):
-   `$DOEFF_AGENTD_BIN report-result-mcp --session $DOEFF_RESULT_SESSION_ID
-   --socket $DOEFF_AGENTD_SOCKET` と同物理。結果は常にこのデータチャネル経由 —
+  "kind の result 報告チャネル(結果の MCP server)を session に配線する。
+   handler が答える channel spec は、host を走らせている python で入口の module を起こす
+   `<python> -m doeff_agents.sessionhost.result_mcp --session $DOEFF_RESULT_SESSION_ID
+   --socket $DOEFF_AGENTD_SOCKET`(S1/S13 / main.rs:1306 mcp_command_args の --session /
+   --socket の形・サブコマンドは無い)。結果は常にこのデータチャネル経由 —
    pane を result として parse することは禁止(result-first、ADR 0035)。"
   #^ str agent-type
   #^ str session-id
@@ -939,7 +940,7 @@
 (deff wire-result-channel [agent-type session-id socket-path]
   {:pre [(: agent-type str) (: session-id str) (: socket-path str)]
    :post [(: % WireResultChannel)]}
-  "WireResultChannel を構築する(report-result-mcp 配線)。"
+  "WireResultChannel を構築する(結果の MCP server の配線)。"
   (WireResultChannel :agent-type agent-type :session-id session-id
                      :socket-path socket-path))
 

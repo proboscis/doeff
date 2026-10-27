@@ -20,7 +20,7 @@ whether the old owner PID is actually still alive, so a naive
 terminate-then-start restart fails non-deterministically inside that
 window. `restart()` now retries past the TTL (README hazard 5).
 
-Oracle-vs-contract discrepancy shared with S4: the `report-result-mcp` MCP
+Oracle-vs-contract discrepancy shared with S4: the result MCP server
 relay (main.rs:863) collapses BOTH `already_reported: true` and a fresh
 accept into the same generic `{"content":[{"text":"result recorded"}],
 "isError":false}` response, and collapses the -32003 rejection into a
@@ -31,7 +31,7 @@ contract literally named in the README's checklist (d)/(e) is to speak
 `session.report_result` directly against the daemon's OWN control socket
 -- which `AgentdClient.request()` (the sanctioned public wire client) is
 built to do generically. This test uses `harness.client.request(...)`
-for the driver-side re-report instead of spawning `report-result-mcp`,
+for the driver-side re-report instead of spawning the result MCP server,
 and documents why. Confirmed empirically: the raw wire call returns
 `{"accepted": true, "already_reported": true}` and raises
 `AgentdClientError(..., error_code=-32003)` respectively.

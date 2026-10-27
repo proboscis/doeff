@@ -15,7 +15,7 @@
 ;;;     違反箇所を指す。
 ;;;   - schema-admission-error: schema 自体の meta-schema 検証
 ;;;     (session.launch 時 fail-closed — 壊れた契約で session を作らない)。
-;;; 注意: report-result-mcp relay(relaymain.py)は stdlib-only の凍結物理
+;;; 注意: 結果の MCP server(result_mcp.py)は stdlib-only の凍結物理
 ;;; (S1 boot latency)であり、検証は host 側のみで行う — ここに import を
 ;;; 足しても relay の依存は増えない。
 

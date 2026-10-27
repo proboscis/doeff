@@ -8,9 +8,7 @@
 """
 
 import json
-import posixpath
 import shlex
-import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -25,7 +23,6 @@ from doeff_agents.adapters.base import AgentType
 from doeff_agents.io_root import (
     IoGenerator,
     IoRoot,
-    as_bool,
     as_float,
     as_int,
     as_optional_str,
@@ -33,17 +30,16 @@ from doeff_agents.io_root import (
     as_str,
 )
 from doeff_agents.io_effects import (
+    StartSessionHost,
+    _session_host_argv,
     env_value,
     home_path,
-    executable_at,
     make_dirs,
     monotonic_time,
     read_text,
     run_process,
-    spawn_detached,
     unix_connect_probe,
     unix_line_request,
-    which_executable,
 )
 from doeff_agents.effects import (
     AgentSessionLifecycle,
@@ -241,7 +237,7 @@ AGENTD_START_POLL_SECONDS: float = 0.1
 # busy host to answer before failing LOUDLY (never by spawning).
 AGENTD_BUSY_STATUS_TIMEOUT_SECONDS: float = 15.0
 #: Environment variable naming the socket to talk to, overriding the XDG
-#: defaults.  A host started by `doeff-sessionhost join` listens under its own
+#: defaults.  A host a deployment starts (launchd, systemd) listens under its own
 #: state directory, which the defaults never name; this is the one place that
 #: teaches every caller (the CLI included) where to look.  The spelling is the
 #: one already used to tell an agent process where the host is, so no second
@@ -554,19 +550,19 @@ def request_line(request_id: int, method: str, params: Mapping[str, Any] | None)
 def parse_response_line(line: str, *, request_id: int, method: str) -> Any:
     """Pure judgment: the result carried by one response line, or a typed failure."""
     if not line:
-        raise AgentdProtocolError("doeff-sessionhost closed the connection without a response")
+        raise AgentdProtocolError("The session host closed the connection without a response")
     response = json.loads(line)
     if not isinstance(response, Mapping):
-        raise AgentdProtocolError("doeff-sessionhost returned a non-object response")
+        raise AgentdProtocolError("The session host returned a non-object response")
     if response.get("id") != request_id:
-        raise AgentdProtocolError("doeff-sessionhost response id did not match request id")
+        raise AgentdProtocolError("The session host response id did not match request id")
     if not response.get("ok"):
         error = response.get("error")
         if not isinstance(error, str) or not error:
-            error = "doeff-sessionhost request failed"
+            error = "The session host request failed"
         error_code = response.get("error_code")
         if error_code is not None and not isinstance(error_code, (int, str)):
-            raise AgentdProtocolError("doeff-sessionhost error_code was not an integer or string")
+            raise AgentdProtocolError("The session host error_code was not an integer or string")
         raise AgentdClientError(error, error_code=error_code)
     if "result" not in response:
         raise AgentdProtocolError(
@@ -697,8 +693,8 @@ def agentd_paths_from_env(
 ) -> AgentdPaths:
     """Pure judgment: the XDG-style default paths implied by this environment.
 
-    ``socket_override`` is ``$DOEFF_AGENTD_SOCKET``: a host started by
-    ``doeff-sessionhost join`` listens under its own state directory, so the
+    ``socket_override`` is ``$DOEFF_AGENTD_SOCKET``: a host a deployment starts
+    (launchd, systemd) listens under its own state directory, so the
     XDG defaults below never name it and the CLI could not observe it. The
     environment variable names the socket instead; the default order
     (``XDG_RUNTIME_DIR`` then ``/tmp``) is unchanged when it is absent.
@@ -855,12 +851,20 @@ def ensure_agentd(
     active_db_path = Path(db_path) if db_path is not None else paths.db_path
     active_socket_path = Path(socket_path) if socket_path is not None else paths.socket_path
     client = AgentdClient(active_socket_path, timeout=client_timeout, io_root=root)
-    command = _agentd_command(
-        daemon_bin=daemon_bin,
-        db_path=active_db_path,
-        socket_path=active_socket_path,
+    start = StartSessionHost(
+        db_path=str(active_db_path),
+        socket_path=str(active_socket_path),
         max_running=max_running,
-        io_root=root,
+        log_path=str(paths.log_path),
+        host_bin=(
+            str(daemon_bin)
+            if daemon_bin is not None
+            else as_optional_str(root(_host_bin_override_program()))
+        ),
+    )
+    # The start command the prose below hands a reader: the same argv the handler runs.
+    command = _argv_answer(
+        root(_session_host_argv(start.host_bin, start.db_path, start.socket_path, start.max_running))
     )
     root(prepare_agentd_paths_program(active_db_path, active_socket_path, paths.log_path))
     # Loaded unconditionally so a malformed declaration is a loud, typed
@@ -889,7 +893,7 @@ def ensure_agentd(
         raise AgentdUnavailableError(
             f"{AGENTD_SOCKET_ENV} names {active_socket_path}, but nothing is "
             "listening there. That socket belongs to whoever declared it (a "
-            "host started by `doeff-sessionhost join`, launchd, systemd), so "
+            "deployment's own host, launchd, systemd), so "
             "this command will not start one against it. Start the host there, "
             f"or unset {AGENTD_SOCKET_ENV} to use the canonical one:\n"
             f"  {shlex.join(command)}",
@@ -933,11 +937,11 @@ def ensure_agentd(
         )
 
     try:
-        root(start_agentd_process_program(command, paths.log_path))
+        root(_start_session_host_program(start))
     except OSError as error:
         command_text = shlex.join(command)
         raise AgentdUnavailableError(
-            "doeff-sessionhost is not reachable at the expected socket "
+            "The session host is not reachable at the expected socket "
             f"{active_socket_path}, and starting it failed: {error}. "
             "Start command:\n"
             f"  {command_text}\n"
@@ -959,7 +963,7 @@ def ensure_agentd(
 
     command_text = shlex.join(command)
     raise AgentdUnavailableError(
-        "doeff-sessionhost is not reachable at the expected socket "
+        "The session host is not reachable at the expected socket "
         f"{active_socket_path} after starting it. Start command:\n"
         f"  {command_text}\n"
         f"Expected socket path: {active_socket_path}\n"
@@ -987,7 +991,7 @@ def _client_from_live_listener(
         )
         return client
     raise AgentdUnavailableError(
-        "doeff-sessionhost has a live listener on "
+        "The session host has a live listener on "
         f"{active_socket_path} but did not answer daemon.status within "
         f"{AGENTD_BUSY_STATUS_TIMEOUT_SECONDS}s; refusing to start a "
         "competing daemon against a live socket. Inspect the running "
@@ -1023,7 +1027,7 @@ def _delegate_to_supervisor(
     identity = _supervisor_identity(declaration)
     if declaration.kick_command is None:
         raise AgentdUnavailableError(
-            f"doeff-sessionhost socket {active_socket_path} is declared "
+            f"The session host socket {active_socket_path} is declared "
             f"supervisor-managed ({identity}) and has no live listener; "
             "refusing to self-spawn a host the supervisor does not manage. "
             "Start or restart the daemon through its supervisor (the "
@@ -1040,7 +1044,7 @@ def _delegate_to_supervisor(
         )
     except OSError as error:
         raise AgentdUnavailableError(
-            f"doeff-sessionhost socket {active_socket_path} is supervisor-managed "
+            f"The session host socket {active_socket_path} is supervisor-managed "
             f"({identity}) and its kick command failed to run: {error}.\n"
             f"Kick command: {shlex.join(kick)}\n"
             f"Log path: {log_path}",
@@ -1050,7 +1054,7 @@ def _delegate_to_supervisor(
     if outcome.timed_out or outcome.exit_code != 0:
         detail = outcome.stderr.strip() or outcome.stdout.strip()
         raise AgentdUnavailableError(
-            f"doeff-sessionhost socket {active_socket_path} is supervisor-managed "
+            f"The session host socket {active_socket_path} is supervisor-managed "
             f"({identity}) and its kick command exited with "
             f"exit code {outcome.exit_code}: {detail}\n"
             f"Kick command: {shlex.join(kick)}\n"
@@ -1070,7 +1074,7 @@ def _delegate_to_supervisor(
         return client
 
     raise AgentdUnavailableError(
-        f"doeff-sessionhost socket {active_socket_path} is supervisor-managed "
+        f"The session host socket {active_socket_path} is supervisor-managed "
         f"({identity}); the kick command succeeded but the daemon did not "
         f"become ready within {timeout}s. Inspect the supervisor state and "
         "the daemon log.\n"
@@ -1101,7 +1105,7 @@ def _validate_agentd_identity(
         expected_db_path
     ):
         raise AgentdUnavailableError(
-            "doeff-sessionhost is reachable at the expected socket "
+            "The session host is reachable at the expected socket "
             f"{expected_socket_path}, but it is using a different database: "
             f"{daemon_db}. Expected database: {expected_db_path}. "
             "Stop the stale daemon bound to this socket and start the "
@@ -1114,10 +1118,14 @@ def _validate_agentd_identity(
 
 
 @do
-def start_agentd_process_program(command: list[str], log_path: Path) -> IoGenerator[int]:
-    """Program starting the daemon detached, with its output appended to the log."""
-    yield make_dirs(str(log_path.parent))
-    pid = as_int((yield spawn_detached(tuple(command), str(log_path))))
+def _start_session_host_program(start: StartSessionHost) -> IoGenerator[int]:
+    """Program starting the session host detached, with its output appended to the log.
+
+    The handler of StartSessionHost composes the argv (the host's entry module on the running
+    interpreter); this program only asks for the start.
+    """
+    yield make_dirs(str(Path(start.log_path).parent))
+    pid = as_int((yield start))
     return pid
 
 
@@ -1200,54 +1208,28 @@ def _normalize_path(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
 
 
-def _agentd_command(
-    *,
-    daemon_bin: str | Path | None,
-    db_path: Path,
-    socket_path: Path,
-    max_running: int,
-    io_root: IoRoot | None = None,
-) -> list[str]:
-    prefix = (
-        [str(daemon_bin)]
-        if daemon_bin is not None
-        else [as_str((io_root or _default_io_root())(resolve_agentd_binary_program()))]
-    )
-    return [
-        *prefix,
-        "--db",
-        str(db_path),
-        "--socket",
-        str(socket_path),
-        "--max-running",
-        str(max_running),
-        "serve",
-    ]
+#: Environment variable naming another executable to start as the session host (tests, another
+#: host implementation). It receives the same flags as the host's entry module.
+_HOST_BIN_ENV = "DOEFF_AGENTD_BIN"
 
 
 @do
-def resolve_agentd_binary_program() -> IoGenerator[str]:
-    """Program resolving the canonical agentd executable: the Hy session host.
+def _host_bin_override_program() -> IoGenerator[str | None]:
+    """Program reading the explicit override of the host executable, or None.
 
-    Retirement (DOE-004, user GO 2026-07-06): the Rust ``doeff-agentd``
-    binary is no longer a spawn target — auto-(re)starting it silently
-    rolled the executor back and invalidated canary observation (ADR 0045
-    R5 in agent-control-plane).  The session host ships WITH this package,
-    so the console script installed next to the running interpreter is the
-    deterministic default; ``DOEFF_AGENTD_BIN`` stays as the explicit
-    override seam (tests, oracle runs).
+    Unset, the StartSessionHost handler runs the host's entry module on the running
+    interpreter — the host ships WITH this package, so no PATH lookup decides which host
+    starts (a stale console script on PATH once did, issue #556).
     """
-    env_bin = as_optional_str((yield env_value("DOEFF_AGENTD_BIN")))
-    if env_bin:
-        return env_bin
-    sibling = posixpath.join(posixpath.dirname(sys.executable), "doeff-sessionhost")
-    runnable = as_bool((yield executable_at(sibling)))
-    if runnable:
-        return sibling
-    path_bin = as_optional_str((yield which_executable("doeff-sessionhost")))
-    if path_bin:
-        return path_bin
-    return "doeff-sessionhost"
+    env_bin = as_optional_str((yield env_value(_HOST_BIN_ENV)))
+    return env_bin or None
+
+
+def _argv_answer(value: object) -> list[str]:
+    """Narrow a program's answer to an argv, so the start command shown to a reader is typed."""
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise TypeError(f"session host argv の形が違う: {value!r}")
+    return value
 
 
 def _query_to_params(query: AgentSessionQuery | None) -> dict[str, Any]:
@@ -1277,7 +1259,7 @@ def _lifecycle_value(lifecycle: AgentSessionLifecycle | str) -> str:
 
 def _snapshot_from_result(result: Any) -> AgentSessionSnapshot:
     if not isinstance(result, Mapping):
-        raise AgentdProtocolError("doeff-sessionhost returned a non-object session snapshot")
+        raise AgentdProtocolError("The session host returned a non-object session snapshot")
     return AgentSessionSnapshot.from_dict(dict(result))
 
 

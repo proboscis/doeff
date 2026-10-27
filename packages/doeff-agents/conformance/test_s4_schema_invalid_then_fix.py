@@ -8,13 +8,13 @@ valid payload and the session finalizes `done`.
 Oracle-vs-contract discrepancy (README S4 / task brief said "the journal's
 first report_result response contains -32002"): OBSERVED behavior is that
 the numeric JSON-RPC error code never reaches the agent. `report_result`
-is spoken over the `report-result-mcp` MCP relay (main.rs:863
+is spoken over the result MCP server `python -m doeff_agents.sessionhost.result_mcp` (main.rs:863
 handle_report_result_tool_call), which forwards only the message TEXT
 from `relay_report_result` (main.rs:908, which discards
 `RpcResponse.error_code` -- see the field comment at main.rs:213) and
 wraps it as a tool-level error: `{"content":[...],"isError":true}`
 (main.rs:949 mcp_tool_error). The literal numeric code -32002 is an
-internal wire-protocol detail between `report-result-mcp` and the serving
+internal wire-protocol detail between the result MCP server and the serving
 daemon (`session.report_result`'s own RpcError, main.rs:104); it is never
 serialized into the MCP `tools/call` response the agent's report_result()
 helper receives. Confirmed empirically: the rejected report's journalled

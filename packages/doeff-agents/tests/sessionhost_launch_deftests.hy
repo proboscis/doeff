@@ -411,8 +411,8 @@
    :post [(: % "SessionRow(成功時)")]}
   (<- row (under-world world
            ((refusing-link-artifact)
-            ((codex-impl "/opt/doeff-sessionhost")
-             ((claude-code-impl "/opt/doeff-sessionhost")
+            ((codex-impl "/opt/venv/bin/python")
+             ((claude-code-impl "/opt/venv/bin/python")
               (launch-session params))))))
   row)
 
@@ -421,8 +421,8 @@
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
   (<- row (under-world world
-           ((codex-impl "/opt/doeff-sessionhost")
-            ((claude-code-impl "/opt/doeff-sessionhost")
+           ((codex-impl "/opt/venv/bin/python")
+            ((claude-code-impl "/opt/venv/bin/python")
              (launch-session params)))))
   row)
 
@@ -446,7 +446,7 @@
   (assert submit)
   (assert (.startswith cmd "codex --yolo"))
   (assert (in "doeff_result" cmd))
-  (assert (in "report-result-mcp" cmd))
+  (assert (in "doeff_agents.sessionhost.result_mcp" cmd))
   ;; prompt は ready gate(idle 観測 + 貼り付け可能性 probe)の後に
   ;; DeliverMessage → impl → TmuxSendKeys(literal+submit)で配送され、
   ;; result-protocol instruction が追記されている。

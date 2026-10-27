@@ -1,7 +1,7 @@
 """S28 supervised host lifetime — out-of-band orphan boundary (README S28).
 
 The leak this scenario pins (host-load-steward observation, 2026-07-30): the
-harness spawns `doeff-sessionhost ... serve` as a plain child process. Its
+harness spawns `python -m doeff_agents.sessionhost.host ...` as a plain child process. Its
 teardown (`__exit__` -> kill sessions -> SIGTERM daemon -> rmtree) is correct,
 but it lives INSIDE the pytest process — SIGKILL the driver and nothing is
 left with the authority or the code path to stop the daemon. 28 daemons at a
@@ -50,7 +50,7 @@ from harness import (
     SESSIONHOST_BACKEND,
     AgentdHarness,
     kill_session_out_of_band,
-    resolve_agentd_bin,
+    resolve_agentd_command,
     session_exists_out_of_band,
 )
 
@@ -218,22 +218,21 @@ def test_s28a_daemon_and_agent_die_after_driver_sigkill() -> None:
         os.unlink(stderr_name)
 
 
-# Bare-daemon child: spawn `doeff-sessionhost serve` in an isolated runtime
+# Bare-daemon child: spawn the host's entry module in an isolated runtime
 # dir, wait for the socket, report the pid, then EXIT — orphaning the daemon.
-# argv: <agentd_bin> <runtime_dir> <knob: 0|1>
+# argv: <runtime_dir> <knob: 0|1> <host command…>
 _BARE_CHILD = r"""
 import json, os, socket, subprocess, sys, time
-agentd_bin, runtime_dir, knob = sys.argv[1], sys.argv[2], sys.argv[3]
+runtime_dir, knob, host_command = sys.argv[1], sys.argv[2], sys.argv[3:]
 env = {k: v for k, v in os.environ.items()
        if k != "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"}
 if knob == "1":
     env["DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"] = str(os.getpid())
 log = open(os.path.join(runtime_dir, "agentd.log"), "a")
 proc = subprocess.Popen(
-    [agentd_bin,
+    [*host_command,
      "--db", os.path.join(runtime_dir, "agentd.sqlite"),
-     "--socket", os.path.join(runtime_dir, "agentd.sock"),
-     "serve"],
+     "--socket", os.path.join(runtime_dir, "agentd.sock")],
     stdout=log, stderr=subprocess.STDOUT, env=env,
 )
 deadline = time.monotonic() + 30.0
@@ -277,9 +276,9 @@ def _spawn_bare_daemon_via_dying_parent(knob: str) -> _BareDaemon:
             sys.executable,
             "-c",
             _BARE_CHILD,
-            str(resolve_agentd_bin()),
             runtime_dir,
             knob,
+            *resolve_agentd_command(),
         ],
         capture_output=True,
         text=True,
@@ -354,18 +353,17 @@ def test_s28c_with_knob_daemon_self_evicts_after_parent_death() -> None:
 
 # Early spawner: hand the daemon this process's pid as its supervisor (as the
 # harness does), report the daemon pid and exit AT ONCE — the daemon is still
-# importing, before serve. argv: <agentd_bin> <runtime_dir>
+# importing, before serve. argv: <runtime_dir> <host command…>
 _EARLY_SPAWNER = r"""
 import json, os, subprocess, sys
-agentd_bin, runtime_dir = sys.argv[1], sys.argv[2]
+runtime_dir, host_command = sys.argv[1], sys.argv[2:]
 env = dict(os.environ)
 env["DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"] = str(os.getpid())
 log = open(os.path.join(runtime_dir, "agentd.log"), "a")
 proc = subprocess.Popen(
-    [agentd_bin,
+    [*host_command,
      "--db", os.path.join(runtime_dir, "agentd.sqlite"),
-     "--socket", os.path.join(runtime_dir, "agentd.sock"),
-     "serve"],
+     "--socket", os.path.join(runtime_dir, "agentd.sock")],
     stdout=log, stderr=subprocess.STDOUT, env=env,
 )
 print(json.dumps({"daemon_pid": proc.pid}), flush=True)
@@ -375,15 +373,15 @@ os._exit(0)
 # Subreaper parent: become the reparenting target of the early spawner's
 # daemon (the shape of a dev host whose user systemd is a subreaper — orphans
 # land on a pid that is not 1), then wait for the daemon to exit by itself.
-# argv: <agentd_bin> <runtime_dir> <budget_s> <early spawner source>
+# argv: <runtime_dir> <budget_s> <early spawner source> <host command…>
 _SUBREAPER_PARENT = r"""
 import ctypes, json, os, signal, subprocess, sys, time
-agentd_bin, runtime_dir, budget_s, spawner = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
+runtime_dir, budget_s, spawner, host_command = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4:]
 PR_SET_CHILD_SUBREAPER = 36
 if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
     print(json.dumps({"error": "prctl(PR_SET_CHILD_SUBREAPER) failed"}), flush=True)
     sys.exit(1)
-done = subprocess.run([sys.executable, "-c", spawner, agentd_bin, runtime_dir],
+done = subprocess.run([sys.executable, "-c", spawner, runtime_dir, *host_command],
                       capture_output=True, text=True, timeout=30)
 daemon_pid = json.loads(done.stdout.strip().splitlines()[-1])["daemon_pid"]
 started = time.monotonic()
@@ -416,10 +414,10 @@ def test_s28e_daemon_whose_spawner_dies_during_startup_self_evicts() -> None:
                 sys.executable,
                 "-c",
                 _SUBREAPER_PARENT,
-                str(resolve_agentd_bin()),
                 runtime_dir,
                 "30",
                 _EARLY_SPAWNER,
+                *resolve_agentd_command(),
             ],
             capture_output=True,
             text=True,

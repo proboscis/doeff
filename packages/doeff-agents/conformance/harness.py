@@ -6,11 +6,13 @@ pytest, and stdlib. SQLite access is READ-ONLY and reserved for obligations
 that do not appear on the wire (payload persistence, counter durability).
 
 Absorbed from tests/agentd_result_retry_e2e_support.py — the proven physics:
-the canonical doeff-sessionhost executor (venv console script), 100ms monitor
-tick, fake CLI in a real tmux pane, result channel spoken via
-`report-result-mcp`. issue #575 M1: the retired Rust build path is gone —
-the daemon under test defaults to the interpreter-adjacent console script
-(ADR-DOE-AGENTS-004 R7), with `CONFORMANCE_AGENTD_BIN` as the explicit seam.
+the host's entry module (`python -m doeff_agents.sessionhost.host`), 100ms
+monitor tick, fake CLI in a real tmux pane, result channel spoken via the
+result MCP server's entry module (`python -m doeff_agents.sessionhost.result_mcp`).
+issue #575 M1: the retired Rust build path is gone — the daemon under test
+defaults to the entry module on the running interpreter (no console script, no
+PATH lookup — card ki-bb337cfd0336), with `CONFORMANCE_AGENTD_BIN` as the
+explicit seam.
 """
 
 import json
@@ -58,8 +60,8 @@ SESSIONHOST_BACKEND = _BACKEND_SETTING if _BACKEND_SETTING is not None else "tmu
 
 
 def require_binaries() -> None:
-    # The daemon under test is the doeff-sessionhost console script (see
-    # resolve_agentd_bin) — only the terminal multiplexer is a prerequisite.
+    # The daemon under test is the host's entry module on this interpreter (see
+    # resolve_agentd_command) — only the terminal multiplexer is a prerequisite.
     mux = "herdr" if SESSIONHOST_BACKEND == "herdr" else "tmux"
     if shutil.which(mux) is None:
         pytest.skip(f"{mux} is required for the agentd conformance suite")
@@ -305,19 +307,21 @@ def create_externally_named_seat_out_of_band(name: str, *, cwd: str | None = Non
     return pane_id
 
 
-def resolve_agentd_bin() -> Path:
-    """Resolve the daemon binary under test.
+#: The host's entry module (the target of `python -m`).
+SESSIONHOST_MODULE = "doeff_agents.sessionhost.host"
+
+
+def resolve_agentd_command() -> tuple[str, ...]:
+    """Resolve the head of the argv that starts the daemon under test.
 
     Transfer-gate seam (C3): `CONFORMANCE_AGENTD_BIN` points the whole suite
-    at an alternative agentd-compatible executable (a single binary path —
-    it is reused verbatim as `DOEFF_AGENTD_BIN` for the `report-result-mcp`
-    relay, so it must implement the full agentd CLI contract: `serve` with
-    the flags below plus the `report-result-mcp` subcommand).  Unset, the
-    suite runs the canonical executor doeff-sessionhost, mirroring the R7
-    spawn order of ensure_agentd (ADR-DOE-AGENTS-004, issue #575 M1):
-    interpreter-adjacent console script first (the venv install — immune to
-    stale PATH tools, issue #556), then PATH.  Unresolvable is a loud
-    AssertionError — no silent fallback (R7).
+    at an alternative agentd-compatible executable (a single binary path that
+    takes the host flags below).  Unset, the suite runs the host's entry
+    module on the running interpreter, mirroring the StartSessionHost handler
+    of ensure_agentd (ADR-DOE-AGENTS-004, card ki-bb337cfd0336): no console
+    script and no PATH lookup decide which host starts (issue #556).  A seam
+    that is not an executable file is a loud AssertionError — no silent
+    fallback (R7).
     """
     override = agentd_bin_setting()
     if override:
@@ -326,17 +330,8 @@ def resolve_agentd_bin() -> Path:
             raise AssertionError(
                 f"CONFORMANCE_AGENTD_BIN is not an executable file: {path}"
             )
-        return path
-    sibling = Path(sys.executable).parent / "doeff-sessionhost"
-    if sibling.exists() and os.access(sibling, os.X_OK):
-        return sibling
-    if path_bin := shutil.which("doeff-sessionhost"):
-        return Path(path_bin)
-    raise AssertionError(
-        "doeff-sessionhost console script not found (interpreter-adjacent or"
-        " PATH) — run `make sync`, or point CONFORMANCE_AGENTD_BIN at an"
-        " agentd-compatible executable"
-    )
+        return (str(path),)
+    return (sys.executable, "-m", SESSIONHOST_MODULE)
 
 
 # -- pre-existing orphan reaper (S28d) ----------------------------------------
@@ -389,20 +384,17 @@ def _argv_flag_value(argv: list[str], flag: str) -> str | None:
 
 
 def classify_conformance_daemon(command: str) -> ConformanceDaemonTarget | None:
-    """The safety discriminator: a target IFF the command line is a
-    doeff-sessionhost `serve` whose --db lives under /tmp/agentd-conf-*.
+    """The safety discriminator: a target IFF the command line is the host's
+    entry module (`python -m doeff_agents.sessionhost.host`) whose --db lives
+    under /tmp/agentd-conf-*.
     Everything else — production hosts (~/.local/state/doeff/agentd.sqlite),
     other tools mentioning the dir — is None, regardless of ppid."""
     try:
         argv = shlex.split(command)
     except ValueError:
         return None
-    # The console script is a shebang file, so ps shows the interpreter as
-    # argv[0] and doeff-sessionhost as argv[1] (measured on the live leaked
-    # population, 2026-07-31); a direct binary would sit at argv[0].
-    if "doeff-sessionhost" not in (Path(token).name for token in argv[:2]):
-        return None
-    if "serve" not in argv:
+    # ps shows the interpreter at argv[0], then `-m` and the entry module.
+    if argv[1:3] != ["-m", SESSIONHOST_MODULE]:
         return None
     db_value = _argv_flag_value(argv, "--db")
     if db_value is None or not db_value.startswith(CONFORMANCE_RUNTIME_PREFIX):
@@ -595,12 +587,12 @@ def _signal_process_group(pgid: int, sig: signal.Signals) -> None:
 
 @dataclass(frozen=True)
 class _AgentdPlaces:
-    """Where one harness run's daemon lives: its binary and its isolated runtime dir.
+    """Where one harness run's daemon lives: its start command and its isolated runtime dir.
 
     Decided once, at __enter__.
     """
 
-    agentd_bin: Path
+    agentd_command: tuple[str, ...]
     runtime_dir: Path
     db_path: Path
     socket_path: Path
@@ -636,8 +628,8 @@ class AgentdHarness:
         return self._mut_places
 
     @property
-    def agentd_bin(self) -> Path:
-        return self._places().agentd_bin
+    def agentd_command(self) -> tuple[str, ...]:
+        return self._places().agentd_command
 
     @property
     def runtime_dir(self) -> Path:
@@ -675,10 +667,10 @@ class AgentdHarness:
         # dir — pre-existing orphan daemons (and their parked agents) from
         # SIGKILLed past runs must not accumulate across harness startups.
         reap_preexisting_orphan_daemons()
-        agentd_bin = resolve_agentd_bin()
+        agentd_command = resolve_agentd_command()
         runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
         self._mut_places = _AgentdPlaces(
-            agentd_bin=agentd_bin,
+            agentd_command=agentd_command,
             runtime_dir=runtime_dir,
             db_path=runtime_dir / "agentd.sqlite",
             socket_path=runtime_dir / "agentd.sock",
@@ -702,7 +694,7 @@ class AgentdHarness:
         )
         self._mut_proc = subprocess.Popen(
             [
-                str(self.agentd_bin),
+                *self.agentd_command,
                 "--db",
                 str(self.db_path),
                 "--socket",
@@ -713,7 +705,6 @@ class AgentdHarness:
                 "4",
                 *judge_args,
                 *self.extra_serve_args,
-                "serve",
             ],
             cwd=self.runtime_dir,
             stdout=log,
@@ -948,7 +939,8 @@ class Scenario:
         lifecycle: Any = None,
     ) -> None:
         """M2 (command override): the conformance agent runs as the pane
-        command; the result channel is spoken via report-result-mcp.
+        command; the result channel is spoken via the result MCP server's
+        entry module.
 
         lifecycle defaults to RUN_TO_COMPLETION; S26 passes INTERACTIVE to
         put the koine reap exemption (safety clause 1) under test."""
@@ -964,7 +956,6 @@ class Scenario:
             "CONFORMANCE_JOURNAL": str(self.journal_path),
             "DOEFF_RESULT_SESSION_ID": self.session_id,
             "DOEFF_AGENTD_SOCKET": str(self.harness.socket_path),
-            "DOEFF_AGENTD_BIN": str(self.harness.agentd_bin),
             **(extra_env or {}),
         }
         binding = binding_from_session_env(agent_type, session_env)
@@ -1057,7 +1048,6 @@ class Scenario:
             "ZDOTDIR": str(zdotdir),
             "DOEFF_RESULT_SESSION_ID": self.session_id,
             "DOEFF_AGENTD_SOCKET": str(self.harness.socket_path),
-            "DOEFF_AGENTD_BIN": str(self.harness.agentd_bin),
             **(extra_env or {}),
         }
         binding = binding_from_session_env(agent_type, session_env)
