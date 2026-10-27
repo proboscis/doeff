@@ -29,7 +29,7 @@ from doeff_conductor.types import WorkflowStatus, Workspace
 from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
 
 SHARED_WORKSPACE_WORKFLOW = """
-(require doeff-hy.conductor [defworkflow agent! workspace! <-])
+(require doeff-conductor.macros [defworkflow agent! workspace! <-])
 (import doeff_conductor.dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"

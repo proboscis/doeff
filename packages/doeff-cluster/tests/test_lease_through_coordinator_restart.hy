@@ -10,7 +10,8 @@
 ;;       期限切れと読み、taker の取りが通った(盤の担い手の行が taker の世代に替わる)。
 ;;   (b) 純粋: 持ち主が本当に居ない lease は、起き直した刻 + 止まる前に残っていた時間(≤ TTL)を過ぎると取りが通る(切れない lease を
 ;;       作らない)。止まる前に既に切れていた担い手は、ずらしても切れたまま。
-(require doeff-hy.macros [deftest defk defsystem <- val])
+(require doeff-hy.macros [deftest defk <- val])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import doeff_hy.table [TableWrite table-of])
 (import collections.abc [Callable])
 (import doeff_events [MemoryBroker])

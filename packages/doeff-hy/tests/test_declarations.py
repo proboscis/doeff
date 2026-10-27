@@ -93,7 +93,7 @@ def test_a_function_declares_what_it_writes_and_nothing_happens_at_run_time() ->
 
 
 def test_the_writes_of_a_function_are_checked_like_a_system_job() -> None:
-    # 形は defsystem の job の :writes と同じ確かめ(system_form.record-names)— 集合でない値・綴りの誤りは展開が断る。
+    # 形は doeff-cluster の defsystem の job の :writes と同じ確かめ(declarations.record-names)— 集合でない値・綴りの誤りは展開が断る。
     assert "文字列の集合" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes ["record:turn"]} x)')
     assert "<置き場>:<名>" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes #{"turn"}} x)')
     assert "<置き場>:<名>" in refused('(deff f [x] {:pre [(: x int)] :post [(: % int)] :writes #{"a:b:c"}} x)')
