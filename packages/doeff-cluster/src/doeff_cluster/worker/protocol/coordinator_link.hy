@@ -174,8 +174,10 @@
           self.token-file token-file self.account-token None self.token-read-ms None
           ;; 枠の file(card ki-6828eda880ce): room-file = 読む file(None = 読まない)・room-state = 最後に読んだ状態(None = まだ読んで
           ;; いない・読まない worker — heartbeat に載せない)・room-reason = ok でない訳(同じ訳の 2 度目は log に出さない)・
-          ;; room-read-ms = 最後に読んだ刻。
-          self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None)))
+          ;; room-read-ms = 最後に読んだ刻。pools = 枠の file から名乗る置ける組の印(heartbeat の provides に足す)・memory-mib = 名乗る
+          ;; 常駐の job の memory の予算(None = 名乗らない — card ki-ced3c45980a5)。どちらも file を読めない間は前の値のまま。
+          self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
+          self.pools #() self.memory-mib None)))
 
 
 
@@ -456,7 +458,8 @@
   (<- base dict (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
                                 :capacity state.capacity :task-reserve state.task-reserve :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
-                                :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit))
+                                :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
+                                :pools state.pools :memory-mib state.memory-mib))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
@@ -686,8 +689,8 @@
 
 (defk room-noted [state]
   {:pre [(: state LinkState)] :post [(: % None)]}
-  "枠の file を READ-EVERY-MS ごとに読み直し、次の heartbeat で名乗る capacity・task-reserve を file の自分の行の値にするため
-   (card ki-6828eda880ce — 枠を変えても Pod を作り直さない)。file を読めない・形が崩れている時は前に名乗った値のままにし、状態を
+  "枠の file を READ-EVERY-MS ごとに読み直し、次の heartbeat で名乗る capacity・task-reserve・置ける組の印・memory の予算を file の
+   自分の行の値にするため(card ki-6828eda880ce・ki-ced3c45980a5 — 枠と組を変えても Pod を作り直さない)。file を読めない・形が崩れている時は前に名乗った値のままにし、状態を
    heartbeat の roomFile で名乗る。値が変わった時・読めなくなった時(訳が変わった時)・戻った時に log へ 1 行出す。file を読まない
    worker(room-file が None)は何もしない。"
   (when (is-not state.room-file None)
@@ -701,12 +704,12 @@
       (when (isinstance text str)
         (<- read RoomReading (room-of-text text state.name))
         (:= reading read))
-      (val before (WorkerRoom :capacity state.capacity :task-reserve state.task-reserve))
+      (val before (WorkerRoom :capacity state.capacity :task-reserve state.task-reserve :pools state.pools :memory-mib state.memory-mib))
       (val after (if (is reading.room None) before reading.room))
       (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
         (<- line str (room-line before after reading))
         (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
-      (setv state.capacity after.capacity state.task-reserve after.task-reserve
+      (setv state.capacity after.capacity state.task-reserve after.task-reserve state.pools after.pools state.memory-mib after.memory-mib
             state.room-state reading.state state.room-reason reading.reason)))
   None)
 

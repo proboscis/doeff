@@ -34,12 +34,13 @@
 
 
 (defk heartbeat-body [* name provides exclusive node capacity task-reserve versions statuses endpoint boot boot-at tools kept [stopping False]
-                      [overlaps-elder False] [doeff-commit ""]]
+                      [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None]]
   {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str) (: capacity int)
          (: task-reserve int)
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)
-         (: overlaps-elder bool) (: doeff-commit str)] :post [(: % (get dict #(str object)))]
+         (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))]
+   :post [(: % (get dict #(str object)))]
    :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印・止まり始め)を作るため。実行環境の root の名乗り(env-body)は
    本番の worker だけが足す。task-reserve = task のために空けておく数(必ず書く — coordinator は常駐の job と並べた置き先をこの分に置かない)。
@@ -49,8 +50,12 @@
    overlaps-elder = この世代は同じ名の前の世代がまだ走っている間に起きた(起動の script が渡す — coordinator は新しい世代の名乗りで
    前の世代の process の lease を外さない・AL-D2e)。真の時だけ欄を書く(偽の本文は前と同じ形)。doeff-commit = この process の doeff の
    版(起動の script が自己起動した commit の WORKER_DOEFF_COMMIT・card ki-6e83e03d146d — coordinator は Worker の spec.doeffCommit に
-   出す)。空でない時だけ欄を書く(版を持たない worker の本文は前と同じ形)。"
-  {"name" name "provides" (list provides) "exclusive" (list exclusive) "node" node "capacity" capacity "taskReserve" task-reserve
+   出す)。空でない時だけ欄を書く(版を持たない worker の本文は前と同じ形)。pools = 枠の file の行の置ける組の印(card ki-ced3c45980a5 —
+   provides の後ろに足して名乗る。起動の引数の能力との和で、coordinator は heartbeat ごとに Worker の行の provides を書き直すので、次の
+   heartbeat から置き方に効く)。memory-mib = 枠の file の行の常駐の job の memory の予算(MiB — 名乗る時だけ欄 memoryMiB を書く。欄を
+   知らない coordinator は読み捨てる)。"
+  {"name" name "provides" (+ (list provides) (lfor p pools :if (not-in p provides) p)) "exclusive" (list exclusive) "node" node
+   "capacity" capacity "taskReserve" task-reserve
    "versions" versions
    "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at
    "format" PROTOCOL-FORMAT
@@ -58,7 +63,8 @@
    "keptWhenCutOff" (list kept)
    "stopping" stopping
    #** (if overlaps-elder {"overlapsElder" True} {})
-   #** (if doeff-commit {"doeffCommit" doeff-commit} {})})
+   #** (if doeff-commit {"doeffCommit" doeff-commit} {})
+   #** (if (is memory-mib None) {} {"memoryMiB" memory-mib})})
 
 
 (defk status-report [statuses task-echo results]

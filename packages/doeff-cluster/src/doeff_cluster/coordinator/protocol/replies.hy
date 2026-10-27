@@ -122,11 +122,13 @@
   "状態の画面の、版の欄を除く本体 → JSON の形(state-view-json が版の欄を足す)。"
   {"now" view.now
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
+   ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(card ki-ced3c45980a5 — 名乗った worker だけに載せる)。
    "workers" (dfor w view.workers
-                   w.info.name {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
-                                "node" w.info.node "capacity" w.info.capacity "taskReserve" w.info.task-reserve "taskRoom" w.task-room
-                                "silentMs" w.silent-ms
-                                "versions" (dict w.info.versions) "live" w.live "draining" w.draining})
+                   w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
+                                   "node" w.info.node "capacity" w.info.capacity "taskReserve" w.info.task-reserve "taskRoom" w.task-room
+                                   "silentMs" w.silent-ms
+                                   "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
+                                  (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})))
    "placements" (dfor #(k v) (.items view.placements) k (asdict v))
    "unplaced" view.unplaced
    "statuses" (dfor #(n s) (.items view.statuses)

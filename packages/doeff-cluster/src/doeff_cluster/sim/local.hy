@@ -66,6 +66,8 @@
 ;;;                             待っている coordinator を起こす。
 ;;;   NodeReads                 偽の k8s が coordinator へ伝えた node の名の列(伝えた順の tuple — 時間で node の label を読みに行く数の検・#4070)。
 ;;;   RelabelNode 名 labels      node の label を替える(本番の Node の変化の出来事に当たる — 待っている coordinator を起こす)。
+;;;   WriteRoomFile text        枠の file の中身を替える(None = 消す — 本番の ConfigMap worker-room の変更に当たる。SimWorker の reads-room の
+;;;                             worker が読み直して名乗る・card ki-ced3c45980a5)。
 ;;;   ReportsOf 名             coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(ServiceReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
@@ -239,6 +241,7 @@
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
 (import doeff_cluster.worker.core.warm_rules [refusals-after])
+(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due])
 ;; worker の世代は入口の組み立て(doeff_cluster.worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster.worker.entry.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
@@ -312,7 +315,10 @@
    置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)・steps-wall = 機体の壁の時計を筋書きが動かす
    worker(StepWorkerWall の相手 — 宿の外側に機体の壁の時計の代役 worker-wall を並べ、その worker の調整ループ・宿・子 process の
    GetTime を世界の時計から動かした分だけずらす。偽 = 世界の時計をそのまま読む。この worker が起こした process の記録 SimProcess の
-   刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない・card ki-069f4a5c07f7)。"
+   刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない・card ki-069f4a5c07f7)・
+   reads-room = 枠の file を読む worker(本番の --room-file を渡した worker — 世界の枠の file を WriteRoomFile が書き換え、worker は本番の
+   room-noted と同じ間 room-read-due で読み直して、file の行の capacity・task-reserve・置ける組の印 pools・memory の予算を名乗る。組の印は
+   provides に足す。file を読めない・崩れた間は前に名乗った値(初めは capacity・task-reserve の値・組の印は無し)のまま・card ki-ced3c45980a5)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
   (#^ int task-reserve)
@@ -337,7 +343,8 @@
   (setv #^ bool hides-retired False)
   (setv #^ (| int None) claims-task-reserve None)
   (setv #^ bool silent-notices False)
-  (setv #^ bool steps-wall False))
+  (setv #^ bool steps-wall False)
+  (setv #^ bool reads-room False))
 
 
 (defrecord SimProcess
@@ -500,6 +507,14 @@
 (defeffect RelabelNode
   "検の effect: 偽の k8s の node の label を labels(キー → 値)に替える(本番の Node の label の変化の出来事に当たる・#4070)。"
   {:fields [(: name str) (: labels dict)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect WriteRoomFile
+  "検の effect: 枠の file(本番の ConfigMap worker-room を kubelet が Pod へ置いた file)の中身を text に替える(None = file を消す — 読む
+   worker は unreadable を名乗る)。枠の file を読む worker(SimWorker の reads-room)は本番と同じ間で読み直し、Pod を作り直さずに新しい
+   行を名乗る(card ki-ced3c45980a5)。走りの初めは file が無い(読む worker は書かれるまで SimWorker の値を名乗る)。"
+  {:fields [(: text (| str None))]
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -789,7 +804,14 @@
   (setv #^ tuple warm-children #())
   ;; 前の世代がまだ走っている間に起きた世代(RollWorker の新しい世代 — 本番の起動の script が前の世代の dir の錠を見て渡す
   ;; --overlaps-elder と同じ・AL-D2e)。heartbeat に overlapsElder を載せる。
-  (setv #^ bool overlaps-elder False))
+  (setv #^ bool overlaps-elder False)
+  ;; 枠の file を読む worker(SimWorker の reads-room)が最後に名乗った枠(本番の LinkState の capacity・task-reserve・pools・memory-mib —
+  ;; None = まだ読めていない = SimWorker の値を名乗る)・最後に読んだ状態(None = まだ読んでいない・読まない worker — heartbeat の
+  ;; roomFile に載せない)・最後に読んだ刻(card ki-ced3c45980a5)。世代ごと(新しい世代は読み直す — 本番の起動の boot-room と同じく
+  ;; 最初の heartbeat の前に読む)。
+  (setv #^ (| WorkerRoom None) room None)
+  (setv #^ (| RoomState None) room-state None)
+  (setv #^ (| int None) room-read-ms None))
 
 
 (defrecord HostTruthChange
@@ -860,6 +882,11 @@
   "worker name の機体の壁の時計が、世界の時計から戻っている ms(StepWorkerWall の積み — 負 = 進んでいる・0 = 動かしていない)。機体の
    壁の時計の代役 worker-wall と、世界の時計で記録を書く宿の節が問う。"
   {:fields [(: name str)] :answer int :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect RoomFileText
+  "世界の枠の file の今の中身(None = file が無い — WriteRoomFile が書き換える)。枠の file を読む worker(SimWorker の reads-room)の
+   heartbeat が、読み直しの番の拍にだけ問う(本番の room-noted の ReadText に当たる・card ki-ced3c45980a5)。"
+  {:answer (| str None) :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect PutHostTruth
   "worker name の宿の真実を置き直す。"
@@ -1999,16 +2026,43 @@
   (<- kept tuple (keep-marks-held truth.last-desired))
   (val named (if (is worker.claims-provides None) worker.provides worker.claims-provides))
   (val named-exclusive (if (is worker.claims-exclusive None) worker.exclusive worker.claims-exclusive))
+  ;; 枠の file から名乗る枠(card ki-ced3c45980a5 — 読めていない worker は SimWorker の値・組の印は無し)。
+  (val room (if (is truth.room None) (WorkerRoom :capacity worker.capacity :task-reserve worker.task-reserve) truth.room))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node
-                                :capacity (if (is worker.overstates-capacity None) worker.capacity worker.overstates-capacity)
-                                :task-reserve (if (is worker.claims-task-reserve None) worker.task-reserve worker.claims-task-reserve)
+                                :capacity (if (is worker.overstates-capacity None) room.capacity worker.overstates-capacity)
+                                :task-reserve (if (is worker.claims-task-reserve None) room.task-reserve worker.claims-task-reserve)
                                 :versions (or worker.versions plan.versions)
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
-                                :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder))
-  (val full (| base (env-heartbeat-part (env-report views "ok" (frozenset)) (current-platform))))
+                                :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder
+                                :pools room.pools :memory-mib room.memory-mib))
+  (val full (| base
+               (env-heartbeat-part (env-report views "ok" (frozenset)) (current-platform))
+               ;; 枠の file の状態は file を読む worker だけが名乗る(本番の coordinator への口の beat と同じ)。
+               (if (is truth.room-state None) {} {"roomFile" truth.room-state.value})))
   (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
+
+
+(defk room-noted-truth [worker boot truth now-ms]
+  {:pre [(: worker SimWorker) (: boot str) (: truth HostTruth) (: now-ms int)] :post [(: % HostTruth)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "本番の coordinator への口の room-noted の代役(card ki-ced3c45980a5): 枠の file を読む worker が、読み直しの番(room-read-due)に世界の
+   枠の file を読み、名乗る枠(capacity・task-reserve・置ける組の印・memory の予算)と読めた状態を宿の真実へ書いて、その真実を返すため。
+   読めない・崩れた file は前に名乗った値のまま(状態だけを替える — 本番と同じ room-of-text の判断)。読まない worker と番でない拍は
+   truth のまま返す(世界へ問わない)。"
+  (<- due bool (room-read-due truth.room-read-ms now-ms))
+  (when (not (and worker.reads-room due))
+    (return truth))
+  (<- text (| str None) (RoomFileText))
+  (var reading (RoomReading :state RoomState.UNREADABLE :room None :reason "file が無い"))
+  (when (is-not text None)
+    (<- read RoomReading (room-of-text text worker.name))
+    (:= reading read))
+  (val room (if (is reading.room None) truth.room reading.room))
+  (val state reading.state)
+  (<- changed HostTruthChange (change-live-truth worker.name boot (fn [t] (replace t :room room :room-state state :room-read-ms now-ms))))
+  changed.after)
 
 
 (defk heartbeat [worker boot stopping plan parts]
@@ -2023,7 +2077,9 @@
   (val before marked.before)
   (<- sent-at int (now-epoch-ms))
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions :timing plan.timing))
-  (<- body dict (beat-body worker before sent-at stopping plan))
+  ;; 枠の file を読む worker は送る前に読み直す(本番の coordinator への口の room-noted と同じ番 — 番でない拍は世界へ問わない)。
+  (<- roomed HostTruth (room-noted-truth worker boot before sent-at))
+  (<- body dict (beat-body worker roomed sent-at stopping plan))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
   ;; 返事の刻は壁の時計と単調な時計の両方で読む(沈黙の計りの起点と今 — 本番の coordinator への口の beat と同じ・card ki-069f4a5c07f7)。
@@ -3111,6 +3167,9 @@
   (session var runs #())
   ;; coordinator の Pod の環境変数(ReplaceCoordinatorEnviron で差し替える — 一生の始めに CoordinatorEnvironOf で読む・#3772)。
   (session var coordinator-environ #())
+  ;; 枠の file の中身(本番の ConfigMap worker-room を kubelet が Pod へ置いた file — None = 無い。WriteRoomFile で書き換え、枠の file を
+  ;; 読む worker の heartbeat が RoomFileText で読む・card ki-ced3c45980a5)。
+  (session var room-text None)
   ;; coordinator の歩の記録(CoordinatorStep の tuple・刻の順 — AdmitBatch が運ぶ・検が CoordinatorSteps で読む・#2670 の根 B)。
   (session var steps-seen #())
   (session var end-waiters {})
@@ -3606,6 +3665,11 @@
     (resume None))
   (CoordinatorEnvironOf []
     (resume coordinator-environ))
+  (WriteRoomFile [text]
+    (:= room-text text)
+    (resume None))
+  (RoomFileText []
+    (resume room-text))
   (CoordinatorSteps []
     (resume steps-seen))
   (ClientLink []

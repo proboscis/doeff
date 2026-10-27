@@ -258,7 +258,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 |---|---|---|
 | `ownerAnnotation` | Rollout が台数を持つ Deployment に付ける annotation のキー | `doeff-cluster/replicas-owned-by` |
 | `ownerScope` | その値の頭(`<scope>/Rollout/<名> replicas=<n>`) | `doeff-cluster` |
-| `nodeCapabilities` | node の label から導く能力 `[{"label" "value" "capability"} …]` | `company-machine` を `doeff.dev/company-machine=true` から |
+| `nodeCapabilities` | node の label から導く能力 `[{"label" "value" "capability"} …]`。`pool-` で始まる能力は書けない(worker の枠の file の置ける組の印に取ってある — coordinator は起動を断る) | `company-machine` を `doeff.dev/company-machine=true` から |
 
 ### worker の生死の出来事(coordinator の引数)
 
@@ -487,7 +487,7 @@ handoff の process を終わりまで回してから退くので、版上げで
 | ConfigMap `worker-prepare` | `/opt/worker-prepare` | 起動の前に 1 度実行する script(キー `prepare.sh`・非 0 なら起動しない) | 実行せずに起動する |
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
-| ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `capacity`・`taskReserve`。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
+| ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `capacity`・`taskReserve` と、省ける欄の置ける組の印 `pools`(`pool-` で始まる名の列 — heartbeat の `provides` に足す)・常駐の job の memory の予算 `memoryMiB`(0 以上の整数 — Worker の spec と GET /state に出すだけで、置き方には使わない)。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。`pools` に機体の印 `host-`・node の label から導く能力・`pool-` で始まらない名を書いた file は崩れた file。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
 | ConfigMap `worker-version`(この package が持つ — `deploy/k8s/workers/worker-version.env`) | `/etc/worker-version`(`WORKER_VERSION_FILE` = `/etc/worker-version/<worker の名>`) | worker の名ごとの doeff の版(40 字の commit)。起動の args と preStop が自分の行を `WORKER_DOEFF_COMMIT` に入れて起動の script へ渡し、keeper が file の替わりで同じ container の中の worker の process を入れ替える(Pod を作り直さない) | Pod が起きない |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
@@ -538,6 +538,11 @@ coordinator は古い版のまま動き続けます。
   「その worker で起動しかけている」と数えます(他へ置かない)。旧い版の coordinator はこの phase を知らないので、coordinator を先に上げます。
 - 退きの知らせの変更(worker の働きで効く): 上の「退きの知らせ」の段落。coordinator はこの知らせに関わらないので、coordinator の版を
   先に同じ版へ上げてから worker を上げます。
+- 枠の file の組の印 `pools` と memory の予算 `memoryMiB` の変更(coordinator が先・card ki-ced3c45980a5): worker は枠の file の行の
+  `pools` を heartbeat の `provides` に足し、`memoryMiB` を heartbeat の新しい欄 `memoryMiB` で名乗ります。旧い版の coordinator は
+  `provides` の組の印をそのまま能力として受けますが、`memoryMiB` の欄は読み捨てます(Worker の spec と GET /state に出ない)。
+  coordinator を先に上げ、新しい版が Ready になってから worker を上げ、その後に枠の file へ値を入れます。旧い版の worker は 2 つの欄を
+  読まないので、値を先に入れても何も変わりません。
 
 ## テスト
 

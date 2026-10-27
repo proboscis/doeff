@@ -26,6 +26,25 @@
     True None))
 
 
+;; 置ける組の印(card ki-ced3c45980a5): worker は枠の file の自分の行の pools で「置ける組」の印を名乗り、heartbeat の provides に足す
+;; (Pod の template の能力を変えずに、job を 2 台以上の機体に置けるようにする)。印は頭 pool- で始め、機体の印(host-<機体>)と coordinator が
+;; node の label から導く能力(ClusterNaming の node-capabilities)から名の空間を分ける — 枠の file から 1 台の縛りや機体の境界を名乗れない。
+;; coordinator は pool- で始まる能力を node の label から導かない(coordinator/protocol/cluster_json の naming-from-json が断る)。
+(val POOL-PREFIX "pool-")
+(val POOL-PATTERN (re.compile r"pool-[a-z0-9][a-z0-9.-]*"))
+
+
+(defk pool-refusal [name]
+  {:pre [(: name str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "置ける組の印 1 つが印として受けられない理由(受けられれば None)— 機体の印・導く能力・頭の無い名を組の印にしないため。"
+  (cond
+    (.startswith name "host-") (.format "{!r} は機体の印 — 組の印は pool- で始める" name)
+    (not (.startswith name POOL-PREFIX))
+      (.format "{!r} が pool- で始まらない(機体の印 host- と coordinator が node の label から導く能力は組の印に書かない)" name)
+    (not (POOL-PATTERN.fullmatch name)) (.format "{!r} は pool- の後を小文字・数字・`.`・`-` で書く" name)
+    True None))
+
+
 (deff capabilities-of [#^ object value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: value "JSON の値 — 能力の名の列(list・tuple・set・frozenset)が正しい形") (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "JSON の能力の名の列(list・tuple・frozenset)→ 名の順の重なりの無い tuple(比べる時に順が揃う)。旧い形(label の object)や

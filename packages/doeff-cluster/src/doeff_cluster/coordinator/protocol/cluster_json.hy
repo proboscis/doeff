@@ -5,7 +5,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase HandoffWatch ClusterNaming TaskRecord ENDED-PHASES])
 (import doeff_cluster.shared.intent.detached_model [DetachedEnded])
-(import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
+(import doeff_cluster.shared.core.capabilities [POOL-PREFIX capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-limits-refusal task-limits-of task-limits-json])
 
 
@@ -38,12 +38,19 @@
   (when unknown
     (raise (ValueError (+ "naming の知らない欄: " (.join ", " unknown)))))
   (setv base (ClusterNaming))
+  (setv derived (if (in "nodeCapabilities" data)
+                    (tuple (gfor row (get data "nodeCapabilities")
+                                 #((get row "label") (get row "value") (get row "capability"))))
+                    base.node-capabilities))
+  ;; pool- で始まる名は worker が枠の file で名乗る置ける組の印(card ki-ced3c45980a5)。導く能力と名が重なると、枠の file の印が
+  ;; node の label の境界を名乗れてしまう(coordinator は導く能力の名を worker の名乗りから外す)ので、起動で断る。
+  (setv pooled (sorted (gfor row derived :if (.startswith (get row 2) POOL-PREFIX) (get row 2))))
+  (when pooled
+    (raise (ValueError (.format "naming の nodeCapabilities の能力 {} は {} で始まる — {} は worker の枠の file の置ける組の印に取ってある"
+                                pooled POOL-PREFIX POOL-PREFIX))))
   (ClusterNaming :owner-annotation (.get data "ownerAnnotation" base.owner-annotation)
                  :owner-scope (.get data "ownerScope" base.owner-scope)
-                 :node-capabilities (if (in "nodeCapabilities" data)
-                                        (tuple (gfor row (get data "nodeCapabilities")
-                                                     #((get row "label") (get row "value") (get row "capability"))))
-                                        base.node-capabilities)))
+                 :node-capabilities derived))
 
 
 (deff task-record-to-json [#^ TaskRecord task]  ; defk にできない: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り
