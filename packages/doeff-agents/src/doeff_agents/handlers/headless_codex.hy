@@ -203,7 +203,9 @@
   (val asked #(#("LaunchEffect.mcp_tools" (bool request.mcp-tools))
                #("LaunchEffect.bare" request.bare)
                #("LaunchEffect.new_context_id" (isinstance request.new-context-id NamedContextId))
-               #("LaunchEffect.resume_snapshot" (is-not request.resume-snapshot None))))
+               #("LaunchEffect.resume_snapshot" (is-not request.resume-snapshot None))
+               ;; 行の写し手は claude の adapter だけが持つ(agora card ki-31b41eac5071)。
+               #("LaunchEffect.event_tap" (is-not request.event-tap None))))
   (val refused (next (gfor #(capability present) asked :if present capability) None))
   (when (is-not refused None)
     (raise (AgentCapabilityUnsupportedError :capability refused :handler HANDLER-NAME)))

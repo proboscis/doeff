@@ -8,6 +8,7 @@
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val <-])
 (require doeff-hy.record [defenum defrecord])
+(import collections.abc [Callable])
 (import dataclasses [dataclass field fields replace])
 (import datetime [datetime])
 (import enum [StrEnum])
@@ -697,6 +698,17 @@
   (#^ datetime at)
   (#^ ClaudeLineKind kind)
   (#^ str raw))
+
+
+(defn #^ None tap-lines [#^ (get Callable #([ClaudeStreamLine] None)) tap #^ list lines]
+  "手番の記録に足した行を、手番を始めた側の写し手(ClaudeStartTurn.tap)へ足した順に渡すため(card ki-31b41eac5071 — 上の層が
+   頁を受ける遅れに縛られずに、行を読んだ時点で自分の記録を書く)。読み手の thread が会話の lock の外で呼ぶ(写し手の書き込みで
+   ほかの手番の節を待たせない)。写し手の例外は捨てる — 読み手の thread で上げると process を降ろす(process.hy の read-stdout)。"
+  (for [line lines]
+    (try
+      (tap line)
+      (except [Exception]
+        None))))
 
 
 ;; --- 手番の終わり ---------------------------------------------------------------------------------

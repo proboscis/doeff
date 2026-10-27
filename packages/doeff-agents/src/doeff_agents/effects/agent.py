@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePath
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code.lines
@@ -1289,9 +1290,21 @@ class LaunchEffect(AgentEffectBase):
     # images only). Handlers that cannot hand images to the runtime refuse
     # them with ``AgentCapabilityUnsupportedError``.
     attachments: tuple[InputImage, ...] = ()
+    # A tap on the events of the turns this launch starts (None = no tap): the
+    # handler calls it with each ``AgentEvent`` as soon as the runtime reads the
+    # output it comes from, on the runtime's reader thread, before (and
+    # independent of) a caller reading the page with ``EventsEffect``. A caller
+    # keeps its own record of the turn current with it even when its page
+    # reads lag behind the runtime (agora card ki-31b41eac5071). The tap must
+    # not block and must not raise (a raised error is dropped). Handlers that
+    # do not read the runtime's output as it comes refuse it with
+    # ``AgentCapabilityUnsupportedError``.
+    event_tap: "Callable[[AgentEvent], None] | None" = None
 
     def __post_init__(self) -> None:
         _check_attachments("LaunchEffect", self.attachments)
+        if self.event_tap is not None and not callable(self.event_tap):
+            raise TypeError("LaunchEffect.event_tap must be callable or None")
         if self.attachments and self.prompt is None:
             raise ValueError("LaunchEffect.attachments ride with a prompt; prompt is None")
         if self.autocompact is not None and not isinstance(

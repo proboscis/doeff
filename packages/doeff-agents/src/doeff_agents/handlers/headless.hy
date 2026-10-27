@@ -21,6 +21,9 @@
 ;;;                                      同じ id を名指した 2 つの起動は同じ FreshSession になり、片方の事前起動をもう片方の最初のターンが使う
 ;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
 ;;;   LaunchEffect.autocompact         → 層 2 の会話の宣言の autocompact(CLI の argv の --autocompact — None = 載せない・CLI の既定)
+;;;   LaunchEffect.event_tap          → その session が始める手番の ClaudeStartTurn.tap(層 2 の読み手の thread が行を記録に足した直後に、
+;;;                                      頁と同じ写し events-of で層 3 の出来事にして呼ぶ — line-tap-of。上の層が頁の読みの遅れに縛られずに
+;;;                                      自分の記録を書くため・agora card ki-31b41eac5071)
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
@@ -153,15 +156,17 @@
    context-id = 続きに使う agent runtime の文脈の id(claude の会話の id)/ fresh = 次の手番を新しい文脈として始めるか /
    turn = 走っている層 2 の手番(無ければ None)/ cursor = その手番の読んだ所 / waiting = 走っている手番の後に回す入力 /
    events = 層 3 の出来事(seq = 添字)/ last-end = 最後の手番の終わり / stopped = 止めた /
-   carry = 次に始める手番で文脈へ持ち込む写し(LaunchEffect.resume_snapshot — 最初の手番を始めたら None)。"
+   carry = 次に始める手番で文脈へ持ち込む写し(LaunchEffect.resume_snapshot — 最初の手番を始めたら None)/
+   tap = この session が始める手番の層 2 の行の写し手(LaunchEffect.event_tap を line-tap-of で包んだ物 — 無ければ None)。"
   (defn __init__ [self #^ str name #^ ClaudeSessionSpec spec #^ str context-id #^ bool fresh lifecycle
-                  #^ (| Rebuilt None) [carry None]]
+                  #^ (| Rebuilt None) [carry None] [tap None]]
     (setv self.name name
           self.spec spec
           self.context-id context-id
           self.fresh fresh
           self.lifecycle lifecycle
           self.carry carry
+          self.tap tap
           self.stopped False)
     (setv #^ (| ClaudeTurn None) self.turn None)
     (setv #^ int self.cursor -1)
@@ -484,6 +489,17 @@
 
 ;; --- 層 2 との往復 --------------------------------------------------------------------------------
 
+(defn line-tap-of [event-tap]
+  "LaunchEffect.event_tap(層 3 の出来事の写し手)を、層 2 の行の写し手(ClaudeStartTurn.tap)に包むため(agora card ki-31b41eac5071 —
+   上の層が頁の読み(EventsEffect)の遅れに縛られずに、層 2 が行を読んだ時点で自分の記録を書く)。行は頁と同じ写し(events-of)で
+   出来事にする — 写し方を 2 つ作らない。写し手へ渡す出来事の seq は頁の seq ではない(行ごとに 0 から振る)。event-tap が None なら
+   None(写さない)。"
+  (when (is event-tap None)
+    (return None))
+  (fn [line]
+    (for [event (events-of line 0)]
+      (event-tap event))))
+
 (defk next-origin [#^ HeadlessSession session]
   {:pre [(: session HeadlessSession)] :post [(: % (| FreshSession ResumeSession))]
    :tags {:context "headless-adapter" :role "judgment"}}
@@ -499,7 +515,7 @@
    続けるとだけ言う)。持ち込むコピー(carry)が在れば、始められたターンで使い切る(層 2 は既に在る transcript を上書きしない)。拒否は
    例外で示す。"
   (<- origin (next-origin session))
-  (<- outcome (ClaudeStartTurn origin session.spec input))
+  (<- outcome (ClaudeStartTurn origin session.spec input :tap session.tap))
   (when (not (isinstance outcome TurnStarted))
     (raise (start-refusal outcome session)))
   (setv session.fresh False session.turn outcome.turn session.cursor -1 session.carry None)
@@ -674,7 +690,8 @@
   (<- credential (redeemed-credential request))
   (setv spec (spec-of config request credential))
   (val carry (if (is request.resume-snapshot None) None (Rebuilt request.resume-snapshot)))
-  (val session (HeadlessSession name spec context-id (is request.resume-from None) request.lifecycle carry))
+  (val session (HeadlessSession name spec context-id (is request.resume-from None) request.lifecycle carry
+                                (line-tap-of request.event-tap)))
   ;; 写しを持ち込む時は、最初の手番で在るようになるので手元の在否を確かめない。
   (when (and (is-not request.resume-from None) (is request.prompt None) (is carry None))
     (<- status (ClaudeSessionStatus spec.home spec.cwd request.resume-from))

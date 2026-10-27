@@ -3,6 +3,7 @@
 from typing import TypeAlias
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
+from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
 from doeff_hy.frozen import FrozenJson as FrozenJson
@@ -140,6 +141,7 @@ class ClaudeStartTurn(EffectBase[StartTurnOutcome]):
     origin: FreshSession | ResumeSession | ForkSession
     spec: ClaudeSessionSpec
     input: TurnInput
+    tap: Callable[[ClaudeStreamLine], None] | None = None
 
     def __post_init__(self) -> None:
         ...

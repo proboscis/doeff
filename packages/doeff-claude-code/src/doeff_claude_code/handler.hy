@@ -64,7 +64,7 @@
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming tap-lines
                                  TimedPhase TurnResult TaskEvent ToolResult AgentToolResult SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
                                  CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
 (import doeff_hy.json_lines [whole-lines-end])
@@ -227,12 +227,14 @@
    process は起こすまで None。credential-home = その process だけの資格の家の path(借りた資格で起こした時だけ — 家の資格なら None。
    process が降りて消したら None に戻す)。open-calls = その process の stdout で始まりを読み、まだ終わりを読んでいない API の呼び
    (lines.hy の call-step — 呼びの最終の usage を組むため・card ki-290ec664737d。process ごとに持つ — 降りた process の開いた呼びを
-   次の process の終わりと組まない)。書き換えるのは会話の lock の中だけ。"
+   次の process の終わりと組まない)。tap = 今の手番を始めた ClaudeStartTurn の行の写し手(None = 写さない — 手番を始めるたびに
+   その手番の写し手に替わる・card ki-31b41eac5071)。書き換えるのは会話の lock の中だけ。"
   (defn __init__ [self #^ int turn-seq #^ (| str None) [credential-home None]]
     (setv #^ (| ClaudeProcess None) self.process None)
     (setv #^ int self.turn-seq turn-seq)
     (setv #^ (| str None) self.credential-home credential-home)
-    (setv #^ (get tuple #(CallOpened ...)) self.open-calls #())))
+    (setv #^ (get tuple #(CallOpened ...)) self.open-calls #())
+    (setv #^ (| (get Callable #([ClaudeStreamLine] None)) None) self.tap None)))
 
 (defn #^ ClaudeProcess process-of [#^ Binding binding]
   "binding の process。起こす前に読むのは handler の実装の誤り(RuntimeError)。"
@@ -593,16 +595,19 @@
    外の出力)は手番の記録に足さない — 終わった手番の頁に誰の物でもない行を混ぜない(手番の外の出力は状態機械が降ろす訳に変える)。
    CLI の手番の終わり(result の行)なら、その直前に、報せを受けた subagent の transcript の読み(SubagentTranscript)を足す(上の
    subagent の節)。呼びの終わり(message_delta)の行なら、その直後に、その呼びの最終の usage(CallClosed — lines.hy の call-step)を
-   足す(card ki-290ec664737d)。"
+   足す(card ki-290ec664737d)。手番の記録に足した行は、会話の lock を出てから足した順に手番の写し手(binding.tap)へ渡す(tap-lines)。"
   (setv record (parse-record raw))
   (when (is record None) (return None))
   (setv kind (classify-record record))
   (setv reads (if (isinstance kind TurnResult) (due-subagents runtime False) #()))
   (setv #^ datetime at (clock))
+  (setv tapped [])
   (with [runtime.lock]
     (when (is-not runtime.binding binding) (return None))
+    (setv tap binding.tap)
     (note-subagent-task runtime kind)
     (setv log (.get runtime.turns binding.turn-seq))
+    (setv first-seq runtime.next-line-seq)
     (add-subagent-lines runtime log at reads)
     (when (and (is-not log None) runtime.state.in-flight)
       (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
@@ -612,13 +617,19 @@
     (when (and (is-not step.closed None) (is-not log None) runtime.state.in-flight)
       (.add log (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind step.closed :raw ""))
       (+= runtime.next-line-seq 1))
+    (when (and (is-not tap None) (is-not log None))
+      ;; この行で足した行は記録の末尾(seq が first-seq 以上)— 頭から数え直さずに末尾だけを切る。
+      (setv tapped (cut log.lines (bisect.bisect-left log.lines first-seq :key (attrgetter "seq")) None)))
     (setv transition (dialogue.on-record runtime.state kind))
     (apply-transition runtime binding transition)
     ;; 手番の境で、資格の期限 − 床を過ぎていれば止める(D2 — 生き残った入力の手番が続く時は境ではない)。
     (when (and (is-not transition.end None) (not transition.continues) (is transition.retire None)
                (credential-due runtime.retire-after (.timestamp at)))
       (setv runtime.stopped-because StopReason.CREDENTIAL-FLOOR)
-      (.retire (process-of binding)))))
+      (.retire (process-of binding))))
+  (when tapped
+    (tap-lines tap tapped)))
+
 
 (defn on-exit [#^ SessionRuntime runtime #^ Binding binding #^ (get Callable #([] datetime)) clock exit-code #^ str stderr-tail]
   "process が降りた事を状態機械へ渡すため。まだ読んでいない subagent(報せの前に降りた・報せの後の CLI の手番の終わりを出す前に
@@ -1218,11 +1229,13 @@
   mark)
 
 (defk spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
-                  #^ (| CostMark None) recorded #^ str key]
+                  #^ (| CostMark None) recorded #^ str key tap]
   {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: spec ClaudeSessionSpec)
-         (: origin (| FreshSession ResumeSession ForkSession)) (: input TurnInput) (: recorded (| CostMark None)) (: key str)]
+         (: origin (| FreshSession ResumeSession ForkSession)) (: input TurnInput) (: recorded (| CostMark None)) (: key str)
+         (: tap (| Callable None))]
    :post [(: % (| int LaunchFailed))] :tags {:context "claude-code" :role "foundation"}}
-  "ターンの process を起動して入力を書くため。key = この process の起動条件のキー(次のターンの使い回しの判断が読む)。
+  "ターンの process を起動して入力を書くため。key = この process の起動条件のキー(次のターンの使い回しの判断が読む)。tap = 手番の
+   行の写し手(ClaudeStartTurn.tap — binding に持たせ、読み手の thread が行を足した直後に呼ぶ)。
    結果 = ターンの番号か LaunchFailed(実行ファイルが無い等)。新しい process の状態機械へ引き継ぐのは会話の id と費用の起点
    (launch-mark-of)だけ。ターンを始めたので、入力なしで事前起動した新しい会話のマーク(warmed-fresh)は消す。"
   (<- mark (launch-mark-of runtime origin recorded))
@@ -1234,6 +1247,7 @@
           runtime.state (DialogueState :session-id runtime.session-id :cost-mark mark :start-mark mark))
     (val turn-seq (.open-turn runtime))
     (val binding (Binding turn-seq home))
+    (setv binding.tap tap)
     (setv runtime.binding binding)
     (val transition (dialogue.begin-turn runtime.state input))
     (try
@@ -1324,8 +1338,10 @@
                       :stderr-tail (if seen (.stderr-tail process)
                                        (.format "no init line within {} seconds" host.launch-timeout))))))
 
-(defk reuse-turn [#^ SessionRuntime runtime #^ ClaudeSessionSpec spec #^ TurnInput input #^ float requested #^ float floor-seconds]
-  {:pre [(: runtime SessionRuntime) (: spec ClaudeSessionSpec) (: input TurnInput) (: requested float) (: floor-seconds float)]
+(defk reuse-turn [#^ SessionRuntime runtime #^ ClaudeSessionSpec spec #^ TurnInput input #^ float requested #^ float floor-seconds
+                  tap]
+  {:pre [(: runtime SessionRuntime) (: spec ClaudeSessionSpec) (: input TurnInput) (: requested float) (: floor-seconds float)
+         (: tap (| Callable None))]
    :post [(: % (| TurnStarted None))]
    :tags {:context "claude-code" :role "foundation"}}
   "生きて手番を待つ process に、この手番の入力を書くため(#3672 — 起こさず init も待たない。CLI は入力ごとに init を出し直すが、
@@ -1350,6 +1366,8 @@
       (run (replace-credential home spec.credential)))
     (setv turn-seq (.open-turn runtime))
     (setv binding.turn-seq turn-seq)
+    ;; 使い回す process の行は、この手番の写し手へ(前の手番の写し手へ渡さない — 入力を書く前に替える)。
+    (setv binding.tap tap)
     (setv log (.open-log runtime))
     (setv log.launched-at writing log.launched-wall writing-wall)
     ;; ターンを始めたので、入力なしで事前起動した新しい会話のマークは消す(事前起動した process を最初のターンが使い回した時もここ)。
@@ -1498,7 +1516,7 @@
   (when (isinstance decision Reuse)
     (when (is runtime None)
       (raise (RuntimeError (.format "使い回す会話 {} の状態が無い(start-decision の誤り)" target-id))))
-    (<- reused (reuse-turn runtime spec input requested host.credential-floor-seconds))
+    (<- reused (reuse-turn runtime spec input requested host.credential-floor-seconds request.tap))
     (when (is-not reused None) (return reused))
     ;; 判断の後に process が降りた・降り始めた(手番の外で出力した)— 降りるのを待ってから起こす。
     (:= decision (Launch :wait-retire True)))
@@ -1519,7 +1537,7 @@
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
   (<- launching (GetMonotonic))
   (<- launching-wall (GetTime))
-  (<- spawned (spawn-turn host runtime spec origin input ready.recorded key))
+  (<- spawned (spawn-turn host runtime spec origin input ready.recorded key request.tap))
   (when (isinstance spawned LaunchFailed)
     (when unused (.forget host target-id runtime))
     (return spawned))

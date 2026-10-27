@@ -10,7 +10,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import datetime)
 (import os)
 (import pathlib [Path])
@@ -2555,3 +2555,50 @@
           (repr results))
   (val uses (lfor event done.events :if (isinstance event AgentToolUseEvent) event))
   (assert (and uses (all (gfor event uses (is event.parent-tool-use-id None)))) (repr uses)))
+
+
+;; --- 出来事の写し手(LaunchEffect.event_tap — agora card ki-31b41eac5071) ------------------------------------------
+;;
+;; 上の層(agora の turn-host)は答えの記録を頁の読み(Events)の後に書いていて、頁の読みが秒〜分遅れると、記録を 2 秒しか待たない hook が
+;; 答えた後の呼びを断った。写し手は、層 2 が行を手番の記録に足した直後に、頁と同じ写し(events-of)で出来事にして呼ばれる。
+;; 失敗ケース: 写し手へ届いた出来事が頁の出来事と違う(写しを 2 つ作った・手番の終わり以外の出来事が欠ける)・写せない handler が
+;; 写し手を黙って呼ばない。
+
+(defk tapped-turn [#^ Setting s #^ Callable tap]
+  {:pre [(: s Setting) (: tap Callable)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "program"}}
+  "写し手つきで起こした session の手番 1 つを終わりまで頁で読むため。答え = 頁の出来事。"
+  (<- handle (LaunchEffect :session-name "adapter-tap" :agent-type AgentType.CLAUDE :work-dir s.work-dir :prompt (reply-prompt "TAPPED")
+                           :model s.model :lifecycle AgentSessionLifecycle.MULTI-TURN :event-tap tap))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defn check-tapped [#^ str backend #^ Path tmp-path]
+  "写し手へ届いた出来事が、頁の出来事(手番の終わりの出来事を除く — 行から作らない)と同じ型と中身を同じ順に持つか確かめるため。"
+  (setv tapped [])
+  (setv done (run-on backend tmp-path (fn [s] (tapped-turn s (fn [event] (.append tapped event))))))
+  (setv paged (lfor event done.events :if (not (isinstance event AgentTurnEndEvent)) event))
+  (assert (any (gfor event tapped (and (isinstance event AgentTextEvent) (in "TAPPED" event.text)))) (repr tapped))
+  ;; seq は頁の seq でない(写し手には行ごとに 0 から振る)ので、seq を除いて比べる。
+  (assert (= (lfor event tapped (replace event :seq 0)) (lfor event paged (replace event :seq 0)))
+          (repr #((lfor event tapped (type event)) (lfor event paged (type event))))))
+
+(deftest test-the-event-tap-gets-the-page-events-fake [tmp-path]
+  (check-tapped FAKE tmp-path))
+
+(deftest test-the-event-tap-gets-the-page-events-stub [tmp-path]
+  (check-tapped STUB tmp-path))
+
+(deftest test-handlers-that-cannot-tap-refuse-the-event-tap [tmp-path]
+  ;; 写し手を呼べない handler(端末の handler・codex の headless)は黙って捨てずに断る。
+  (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
+  (import doeff_agents.handlers.headless_codex [refuse-launch])
+  (val asked (LaunchEffect :session-name "x" :agent-type AgentType.CODEX :work-dir tmp-path :event-tap (fn [event] None)))
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities asked :handler "t"))
+  (assert (= info.value.capability "LaunchEffect.event_tap") info.value.capability)
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (run (refuse-launch asked)))
+  (assert (= info.value.capability "LaunchEffect.event_tap") info.value.capability)
+  (with [(pytest.raises TypeError)]
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :event-tap "not callable")))

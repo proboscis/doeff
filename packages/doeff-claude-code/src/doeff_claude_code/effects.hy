@@ -10,6 +10,7 @@
 ;;; 上がる。ClaudePrintOnce だけは会話と手番の外の 1 回きりの問い(構造化の答えを 1 つ受けて降りる — 会話の id も記録も持たない)。
 (require doeff-hy.macros [defeffect val])
 (require doeff-hy.record [defrecord])
+(import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import json)
 (import doeff [EffectBase])
@@ -120,13 +121,20 @@
 
 (defclass [(dataclass :frozen True)] ClaudeStartTurn [(get EffectBase StartTurnOutcome)]
   "手番を始める。死んだ(降りた)process の起こし直しの判断はこの effect の handler の中の 1 か所だけ(設計 7 節)。
-   答え = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused。"
+   答え = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused。
+   tap = 行の写し手(None = 写さない — card ki-31b41eac5071): この手番(と同じ process で続く生き残った入力の手番)の記録に
+   足した行(ClaudeStreamLine)を 1 つずつ、行を足した直後に呼ぶ関数。本番の handler は stdout の読み手の thread から会話の lock の外で
+   呼び、fake は行を出した所で呼ぶ — 上の層が ClaudeReadTurnEvents で頁を受ける遅れ(秒〜分)に縛られずに、行を読んだ時点で自分の
+   記録を書くため。写し手は塞がず、例外を出さない(出した例外は handler が捨てる — 読み手の thread を止めない)。"
   (#^ (| FreshSession ResumeSession ForkSession) origin)
   (#^ ClaudeSessionSpec spec)
   (#^ TurnInput input)
+  (setv #^ (| (get Callable #([ClaudeStreamLine] None)) None) tap None)
   (defn __post_init__ [self]
     (when (not (isinstance self.origin #(FreshSession ResumeSession ForkSession)))
-      (raise (TypeError (.format "ClaudeStartTurn.origin は FreshSession / ResumeSession / ForkSession: {!r}" self.origin))))))
+      (raise (TypeError (.format "ClaudeStartTurn.origin は FreshSession / ResumeSession / ForkSession: {!r}" self.origin))))
+    (when (not (or (is self.tap None) (callable self.tap)))
+      (raise (TypeError (.format "ClaudeStartTurn.tap は呼べる物か None: {!r}" self.tap))))))
 
 (defclass [(dataclass :frozen True)] ClaudeInjectInput [(get EffectBase (| InputQueued NoTurnInFlight AttachmentRefused))]
   "走っている手番に入力を足す。答え = InputQueued | NoTurnInFlight | AttachmentRefused(添付の種類の断り — 手番の始まりと同じ検め)。

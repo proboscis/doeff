@@ -21,7 +21,7 @@
 (import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
                                   IMAGE-MIMES LentCredential])
-(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
+(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested tap-lines
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow ModelUsage model-cost-gap merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
@@ -316,7 +316,9 @@
     ;; 行が名乗った usage で、まだ閉じていない物(閉じた・名乗っていなければ None)— 本番の handler と同じく、呼びの最終の usage
     ;; (CallClosed)を手番の終わりの行の前に出すため(card ki-290ec664737d)。
     (setv #^ str self.call-id (.format "msg_fake_{}" seq))
-    (setv #^ (| Usage None) self.call-usage None)))
+    (setv #^ (| Usage None) self.call-usage None)
+    ;; 手番の行の写し手(ClaudeStartTurn.tap — 本番の handler の読み手の thread と同じく、行を出した所で呼ぶ・card ki-31b41eac5071)。
+    (setv #^ (| (get Callable #([ClaudeStreamLine] None)) None) self.tap None)))
 
 
 (defclass FakeSession []
@@ -435,8 +437,12 @@
     (<- (emit session turn closed)))
   (<- at (GetTime))
   (<- said (said-by-reply turn.reply kind turn.call-id))
-  (.append turn.lines (ClaudeStreamLine :seq session.next-line-seq :at at :kind said :raw (repr said)))
+  (val line (ClaudeStreamLine :seq session.next-line-seq :at at :kind said :raw (repr said)))
+  (.append turn.lines line)
   (+= session.next-line-seq 1)
+  ;; 出した行を手番の写し手へ(本番の handler の tap-lines と同じく、写し手の例外は捨てる)。
+  (when (is-not turn.tap None)
+    (tap-lines turn.tap [line]))
   (cond
     (and (isinstance said AssistantMessage) (is said.parent-tool-use-id None))
       (setv turn.last-call-usage said.usage turn.last-call-model said.model
@@ -746,16 +752,19 @@
       (<- (complete-turn world session turn))))
   None)
 
-(defk begin-fake-turn [#^ FakeClaudeWorld world #^ FakeSession session reply #^ tuple refs #^ bool announce #^ bool launched]
-  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: reply FakeReply) (: refs tuple) (: announce bool) (: launched bool)]
+(defk begin-fake-turn [#^ FakeClaudeWorld world #^ FakeSession session reply #^ tuple refs #^ bool announce #^ bool launched tap]
+  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: reply FakeReply) (: refs tuple) (: announce bool) (: launched bool)
+         (: tap (| Callable None))]
    :post [(: % FakeTurn)]}
   "手番を開いて最初の行を出す。announce = 入力の行の運命と init を出す(頼まれた手番 — 使い回した process も入力ごとに init を出す。
-   生き残った入力の手番は started から)/ launched = この手番のために process を起こした(使い回し・生き残った入力の手番は起こさない)。"
+   生き残った入力の手番は started から)/ launched = この手番のために process を起こした(使い回し・生き残った入力の手番は起こさない)/
+   tap = 手番の行の写し手(ClaudeStartTurn.tap — 生き残った入力の手番は止めた手番の写し手を続ける)。"
   (<- now (GetMonotonic))
   (+= session.current-seq 1)
   (when launched (+= session.launches 1))
   (setv session.alive True)
   (setv turn (FakeTurn session.current-seq now reply refs))
+  (setv turn.tap tap)
   (setv (get session.turns turn.seq) turn)
   (for [ref refs]
     (when announce (<- (emit session turn (InputFate ref "queued"))))
@@ -867,7 +876,7 @@
   (<- reply FakeReply (reply-of world input.text memory))
   (when (not reuse)
     (<- (note-over-limit world session target False)))
-  (<- turn (begin-fake-turn world session reply #(input.ref) True (not reuse)))
+  (<- turn (begin-fake-turn world session reply #(input.ref) True (not reuse) request.tap))
   (TurnStarted (ClaudeTurn session-id turn.seq) session-id))
 
 (defk fake-warm-refusal [#^ FakeClaudeWorld world origin spec]
@@ -951,7 +960,8 @@
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_tools")))
         (setv memory (tuple (get world.transcripts (.transcript-key world session.home session.cwd session.session-id))))
         (<- reply FakeReply (reply-of world (.join "\n" (lfor injection queued injection.text)) memory))
-        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection queued injection.ref)) False False))
+        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection queued injection.ref)) False False
+                                       turn.tap))
         (<- (finish session turn (Interrupted :process-kept True :surviving-refs (tuple next-turn.refs)
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do

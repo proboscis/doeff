@@ -57,7 +57,7 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     launch would run on whatever home credentials the handler has), and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
     A named ``new_context_id`` is never silently replaced by an id the caller
     does not know. A stated ``autocompact`` never silently falls back to the
-    runtime's own default.
+    runtime's own default. A stated ``event_tap`` is never silently left uncalled.
     """
     if isinstance(effect, LaunchEffect) and isinstance(effect.new_context_id, NamedContextId):
         raise AgentCapabilityUnsupportedError(
@@ -78,6 +78,10 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     if isinstance(effect, LaunchEffect) and effect.autocompact is not None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.autocompact", handler=handler
+        )
+    if isinstance(effect, LaunchEffect) and effect.event_tap is not None:
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.event_tap", handler=handler
         )
     if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
         raise AgentCapabilityUnsupportedError(
