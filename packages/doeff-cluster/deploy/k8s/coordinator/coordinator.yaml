@@ -219,7 +219,12 @@ spec:
             # 1c54743fe の祖先。
             # 4b01553ab = job の入口と土台が httpx の CLI と coordinator の型を読まない版(card ki-aa24ec10dae8・1 本 約 20 MB 減)。1c54743fe の
             # 直後の 1 commit で、worker を全部の機体でこの版へ上げるため(card ki-943d00b81f39)先に上げる。前の版 1c54743fe は 4b01553ab の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 4b01553ab33221e1c86ade1cf2bcd471ab056bbc }
+            # cc2e22aa8 = 5 つの依頼の版を 1 回の作り直しでまとめた版。worker の側: service を待ちの子から fork する道と旗 warmServices
+            # (d78e3d7d6・card ki-67abc0cf71e9)・枠の予備(cfb7e466・card ki-384c80df957f — coordinator-env の CLUSTER_NAMING も同じ起動で読む)・
+            # 常駐の job の Pod の label(6633cf571・card ki-a66bb71f4152)。coordinator の process に効く差: 枠の行の pools・memoryMiB を
+            # GET /state に出す(b39321225・card ki-17043e66bd83)・N+1 の純粋な判断(601bb530a・実行時には呼ばれない)・lease の空けの待ち
+            # GET /watch?lease=&vacate=(cc2e22aa8・card ki-a3c8b4e344a3)。前の版 4b01553ab は cc2e22aa8 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: cc2e22aa8f211b90b8a82465b08f350e33f1e282 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
