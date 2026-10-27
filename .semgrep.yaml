@@ -3847,6 +3847,37 @@ rules:
       category: interceptor-migration
       issue: ISSUE-AGENTIC-007
 
+  - id: cli-commands-read-through-effects
+    pattern-either:
+      - pattern: open(...)
+      - pattern: $PATH.read_text(...)
+      - pattern: $PATH.read_bytes(...)
+      - pattern: $PATH.iterdir()
+      - pattern: $PATH.exists()
+      - pattern: $PATH.is_dir()
+      - pattern: $PATH.glob(...)
+      - pattern: json.loads(...)
+      - pattern: time.sleep(...)
+      - pattern: AgenticAPI(...)
+      - pattern: StateManager(...)
+      - pattern: $APP.api.$METHOD(...)
+    paths:
+      include:
+        - "/packages/doeff-flow/src/doeff_flow/_cli.py"
+        - "/packages/doeff-agentic/src/doeff_agentic/_tui/**"
+    message: |
+      The doeff-flow console script (doeff_flow._cli) and the doeff-agentic-tui screens
+      (doeff_agentic._tui) run programs of effects: the traces are read with ReadTraces, the
+      recorded workflows with the doeff_agentic.effects.recorded effects, and the polls wait
+      with doeff-time's Delay. The command installs the handlers that read the files, the
+      state directory and the clock (trace_files_handler over os_file_handler,
+      recorded_workflows_handler, sync_time_handler) — do not read them here directly.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: cli-programs-over-effects
+      issue: ki-7e6ce5db22d4
+
   - id: doeff-no-handler-map-run-helpers
     pattern-regex: '\b(run_with_handler_map|async_run_with_handler_map|_wrap_with_handler_map|merge_handler_maps)\b'
     paths:

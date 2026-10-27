@@ -2,9 +2,11 @@
 
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from doeff import EffectBase
+from doeff_flow.trace import LiveTrace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -42,7 +44,23 @@ class TraceCapture(TraceEffectBase):
     format: str = "json"
 
 
+@dataclass(frozen=True, kw_only=True)
+class ReadTraces(TraceEffectBase, EffectBase[tuple[LiveTrace, ...]]):
+    """Read the trace entries the workflows wrote under a trace directory.
+
+    Answers the entries of every workflow directory under ``trace_dir`` that holds a
+    ``trace.jsonl`` — workflow by workflow in name order, each one's entries oldest
+    first — or, with ``workflow_id``, that workflow's entries only. A trace directory
+    or a workflow that wrote no trace answers no entries. A line that is not a trace
+    entry (one still being written) is left out.
+    """
+
+    trace_dir: Path
+    workflow_id: str | None = None
+
+
 __all__ = [
+    "ReadTraces",
     "TraceAnnotate",
     "TraceCapture",
     "TraceEffectBase",

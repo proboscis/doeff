@@ -63,6 +63,9 @@ from .api import AgenticAPI
 # Effects - new spec-compliant effects
 from .effects import (
     AgenticAbortSession,
+    # Recorded workflow effects (the monitor's)
+    AgenticAttachAgent,
+    AgenticCaptureAgentOutput,
     # Environment effects
     AgenticCreateEnvironment,
     # Session effects
@@ -73,6 +76,7 @@ from .effects import (
     AgenticDeleteSession,
     # Effect base
     AgenticEffectBase,
+    AgenticFindWorkflow,
     AgenticForkSession,
     AgenticGetEnvironment,
     AgenticGetMessages,
@@ -80,10 +84,12 @@ from .effects import (
     # Status effects
     AgenticGetSessionStatus,
     AgenticGetWorkflow,
+    AgenticListWorkflows,
     # Event effects
     AgenticNextEvent,
     # Message effects
     AgenticSendMessage,
+    AgenticStopWorkflow,
     AgenticSupportsCapability,
     AgentNotRunningError,
     AmbiguousPrefixError,
@@ -130,6 +136,7 @@ from .exceptions import (
 from .handlers import (
     mock_handlers,
     production_handlers,
+    recorded_workflows_handler,
 )
 
 # OpenCode Handler (new - primary)
@@ -203,6 +210,8 @@ __all__ = [
     "AgenticAPI",
     "AgenticAbortSession",
     "AgenticAmbiguousPrefixError",
+    "AgenticAttachAgent",
+    "AgenticCaptureAgentOutput",
     "AgenticCreateEnvironment",
     "AgenticCreateSession",
     "AgenticCreateWorkflow",
@@ -220,6 +229,7 @@ __all__ = [
     # Exceptions
     "AgenticError",
     "AgenticEvent",
+    "AgenticFindWorkflow",
     "AgenticForkSession",
     "AgenticGetEnvironment",
     "AgenticGetMessages",
@@ -228,6 +238,7 @@ __all__ = [
     "AgenticGetWorkflow",
     # Handler (deprecated - requires doeff-agents)
     "AgenticHandler",
+    "AgenticListWorkflows",
     "AgenticMessage",
     "AgenticMessageHandle",
     "AgenticNextEvent",
@@ -237,6 +248,7 @@ __all__ = [
     "AgenticSessionNotFoundError",
     "AgenticSessionNotRunningError",
     "AgenticSessionStatus",
+    "AgenticStopWorkflow",
     "AgenticSupportsCapability",
     "AgenticTimeoutError",
     "AgenticUnsupportedOperationError",
@@ -282,6 +294,7 @@ __all__ = [
     "mock_handlers",
     "opencode_handler",
     "production_handlers",
+    "recorded_workflows_handler",
     "tmux_handler",
     "with_visual_logging",
 ]

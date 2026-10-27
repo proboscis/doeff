@@ -4,6 +4,7 @@
 from doeff.program import ProgramHandler
 
 from .opencode import OpenCodeHandler, opencode_handler
+from .recorded import recorded_workflows_handler
 from .testing import MockAgenticHandler, MockAgenticState, mock_handlers
 from .tmux import TmuxHandler, tmux_handler
 
@@ -58,6 +59,7 @@ __all__ = [
     "mock_handlers",
     "opencode_handler",
     "production_handlers",
+    "recorded_workflows_handler",
     "tmux_handler",
     "with_agentic_effectful_handlers",
 ]
