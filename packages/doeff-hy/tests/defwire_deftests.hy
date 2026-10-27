@@ -15,6 +15,7 @@
 (import doeff_hy.frozen [freeze-json])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.wire [parse parse-json dump dump-json json-schema Malformed MalformedField WireShape])
+(import doeff_hy.wire_codec [Codec])
 
 
 (defenum LandState QUEUED LANDED)
@@ -252,9 +253,9 @@
 
 
 
-;; --- 解き手を組む時期(agora-redesign #2420・前例 #2327)----------------------------------------------------------------------------
-;; 解き手(pydantic の TypeAdapter の validator と serializer)は型を定義した時(module の読み込み)に組む。最初の parse / dump の呼び手
-;; (検の実行・本番の最初の要求)が組み立ての費用を払わない。この 2 型は他の検が使わない(使う前の解き手を写すため)。
+;; --- 解き手を組む時期(agora-redesign #2420・前例 #2327・card ki-8b518c8f8e9d・ki-b7701d5fc0dd)-------------------------------------------
+;; 解き手(doeff_hy.wire_codec の型の木)は型を定義した時には組まず、最初の parse / dump / json-schema で 1 度だけ組んで型に覚える
+;; (型の属性 __doeff_codec__)。この 2 型は他の検が使わない(使う前の型を写すため)。
 
 (defwire FieldsDefinedBefore
   "欄の型が全部この行より前に定義してある型(定義した時に組めるが、組むのは最初に使う時)"
@@ -275,44 +276,39 @@
   (#^ int count))
 
 
-(defk rebuilds-of [snapshots]
-  {:pre [(: snapshots tuple)] :post [(: % int)] :tags {:context "wire" :role "judgment"}}
-  "解き手を使う前後で写した (validator serializer) の列から、組み直しの回数を数える計器 — 隣り合う写しで validator か serializer が
-   別の物に替わった回数(pydantic は組む時に両方を新しく作る)。"
-  (sum (gfor #(before after) (zip snapshots (cut snapshots 1 None))
-             :if (or (is-not (get before 0) (get after 0)) (is-not (get before 1) (get after 1)))
-             1)))
+(defk built-codec [wire-type]
+  {:pre [(: wire-type type)] :post [(: % (| Codec None))] :tags {:context "wire" :role "judgment"}}
+  "型に覚えた解き手(まだ組んでいなければ None)— 組んだ時期と組み直しの有無を写す計器。"
+  (.get (vars wire-type) "__doeff_codec__"))
 
 
 (deftest test-the-solver-is-built-at-first-use-and-never-rebuilt-by-use
   {:tags {:context "wire" :role "judgment"}}
   ;; 定義した時には組まない — 使わない型の組む費用を、module を読み込む process ごとに払わない(card acp:kanban-issue:ki-8b518c8f8e9d:
   ;; test_emulated_screen.hy の 1 回で組んだ 547 個のうち使ったのは 49 個)。最初に使う時に 1 度だけ組み、2 回目以降は組み直さない。
-  (val adapter FieldsDefinedBefore.__doeff_wire__.adapter)
-  (assert (not adapter.pydantic-complete))
+  (<- before (built-codec FieldsDefinedBefore))
+  (assert (is before None) before)
   (<- first (parse FieldsDefinedBefore {"laneId" "L1" "notes" [{"noteText" "x"}]}))
-  (assert adapter.pydantic-complete)
-  (val after-first #(adapter.validator adapter.serializer))
+  (<- after-first (built-codec FieldsDefinedBefore))
+  (assert (is-not after-first None))
   (<- text (dump-json first))
   (<- second (parse-json FieldsDefinedBefore text))
   (<- _ (dump second))
-  (val after-uses #(adapter.validator adapter.serializer))
+  (<- _ (json-schema FieldsDefinedBefore))
+  (<- after-uses (built-codec FieldsDefinedBefore))
   (assert (= second first))
-  ;; 2 回目以降の使用は組み直さない。
-  (<- rebuilds (rebuilds-of #(after-first after-uses)))
-  (assert (= rebuilds 0)))
+  ;; 2 回目以降の使用は組み直さない(型に覚えた解き手が同じ物のまま)。
+  (assert (is after-uses after-first)))
 
 
 (deftest test-a-type-ahead-of-its-field-type-is-built-at-first-use-and-not-rebuilt-after
   {:tags {:context "wire" :role "judgment"}}
   ;; 欄の型が後で定義される型は定義した時には組めない — 最初に使う時に 1 度だけ組み、2 回目以降は組み直さない。
   (<- first (parse AheadOfItsField {"later" {"count" 1}}))
-  (val adapter AheadOfItsField.__doeff_wire__.adapter)
-  (assert adapter.pydantic-complete)
-  (val after-first #(adapter.validator adapter.serializer))
+  (<- after-first (built-codec AheadOfItsField))
+  (assert (is-not after-first None))
   (<- second (parse AheadOfItsField {"later" {"count" 2}}))
   (<- _ (dump-json second))
-  (val after-uses #(adapter.validator adapter.serializer))
+  (<- after-uses (built-codec AheadOfItsField))
   (assert (= #(first.later.count second.later.count) #(1 2)))
-  (<- rebuilds (rebuilds-of #(after-first after-uses)))
-  (assert (= rebuilds 0)))
+  (assert (is after-uses after-first)))

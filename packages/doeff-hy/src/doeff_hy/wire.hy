@@ -3,7 +3,9 @@
 ;;; 出自 = operator の決定 2026-09-28: JsonValue を直に使わせず、pydantic のように解いて確かめる。そのための def* の macro を置く
 ;;; 案 A(別の macro defwire)を採る。
 ;;;
-;;; 何をするか: JSON は、型を宣言した値に pydantic と同じ仕組み(TypeAdapter)で一度に解いて確かめる。JSON の値(JsonValue)に
+;;; 何をするか: JSON は、型を宣言した値に doeff の自前の解き手(doeff_hy/wire_codec.py の型の木)で一度に解いて確かめる。この module は
+;;; pydantic を import しない(決定 2026-10-27・card ki-b7701d5fc0dd で pydantic の TypeAdapter から替えた。pydantic は照らしの相手として
+;;; だけ残し、照らしは doeff_hy/wire_parity.py と packages/doeff-hy/tests/test_wire_parity.py が持つ)。JSON の値(JsonValue)に
 ;;; 触ってよいのは、この module の parse / dump と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120)。
 ;;; protocol・intent・core は型のある値だけを見る。JsonValue を手で分解して読む関数は書かない。
 ;;;
@@ -15,13 +17,14 @@
 ;;; 形を呼び手が決める任意の JSON(tool の引数と結果・耐久の走行の memo の値)は、JsonValue ではなく OpaqueJson(doeff_hy.json_value)
 ;;; で運ぶ — 中を分解する口を持たない名のある型。defwire の欄に書けば解き手が包み・戻す。形を知る読み手は (parse T opaque) で読む。
 ;;;
-;;; 解き方(defwire の展開がこの module の wire-config と wire-shape を呼んで型ごとに 1 度だけ組む):
-;;;   * 型の検めは厳しい(pydantic の strict・JSON の読み方): 文字列を数にしない・真偽を数にしない・整数は float の欄に入る・
+;;; 解き方(defwire の展開がこの module の wire-shape を呼んで型に wire の形を置き、型の木は最初の使いで 1 度だけ組む — 設計の記録
+;;; docs/design/defwire-decoder/design.md):
+;;;   * 型の検めは厳しい(JSON の読み方): 文字列を数にしない・真偽を数にしない・整数は float の欄に入る・
 ;;;     配列は tuple の欄に入る・defenum の欄は値の綴りで読む。
 ;;;   * 欄の名は defwire の :names が決めた wire の名だけを受ける(Python の欄の名では受けない)。
 ;;;   * 知らない欄は :unknown :reject で断り、:ignore で読み捨てる。
 ;;;   * defrecord の :check は値を作る時に走り、落ちたら Malformed になる。
-;;;   * 入れ子の欄の型も defwire の型にする(素の defrecord は自分の wire の形を持たないので、欄の名の写しと厳しさが効かない)。
+;;;   * 入れ子の欄の型も defwire の型にする(素の defrecord は自分の wire の形を持たないので、木を組む時に断る)。
 ;;;
 ;;; 書き方(dump / dump-json): 既定値の在る欄は「省ける欄」(JSON Schema でも required に入らない)。値が既定値と同じ欄は書かない
 ;;; (入れ子の defwire の型の欄も同じ)— `(setv #^ (| str None) x None)` の None は「欄が無い」で、null を書かない。読み(parse)は
@@ -33,29 +36,37 @@
 ;;; 形の違う JSON の答え = Malformed(5 つ目の失敗の種類 — 外の世界が約束と違う物を返した。相手の版の食い違いは運用で起きうる
 ;;; ので、実装の誤りの例外ではなく業務の失敗として扱う)。Absent / Raise の段階 2 が本線に入るまでは parse は Malformed を値で
 ;;; 返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる(ADR-DOE-HY-007 R8・ADR-DOE-CORE-EFFECTS-003 R17)。
+;;;
+;;; 型の解き手は WireShape の codec(doeff_hy.wire_codec の Codec)。前の pydantic の TypeAdapter(WireShape の adapter)は消した — 直に
+;;; 読んでいた所は codec か上の 5 つの API へ移す。defwire の型は今までどおり __pydantic_config__(wire-config — pydantic を読まずに作る
+;;; 設定の辞書)を持つ: 消すと、pydantic の TypeAdapter で defwire の型を直に解く読み手(agora-controllers の約 20 file)が黙って Python の
+;;; 欄の名と緩い検めで読むようになるため。その読み手を wire の API へ移す card ki-7c4609cd96c9 が、展開の setattr と一緒に消す。
 (require doeff-hy.macros [defk deff val <-])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import json)
 (import typing [ClassVar Protocol runtime-checkable])
-(import pydantic [ConfigDict TypeAdapter ValidationError])
-(import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_hy.json_value [JsonValue OpaqueJson OpaqueSplice])
+(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy.json_value [JsonValue OpaqueJson])
+(import doeff_hy.wire_codec [codec-of])
 ;; Malformed と MalformedField は pydantic を読まない置き場に在る(自前の解き手 wire_codec.py も同じ型を返す — card ki-923c16d33551)。
 (import doeff_hy.wire_malformed [Malformed MalformedField])
 
-;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra。
+;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra(__pydantic_config__ だけが読む)。
 (setv UNKNOWN-FIELDS {"reject" "forbid" "ignore" "ignore"})
 
 
 (defrecord WireShape
   "defwire の型 1 つの wire の形: names = Python の欄の名 → wire の欄の名(欄を全部・名で引く索引)/ unknown = 知らない欄の扱い
-   (\"reject\" / \"ignore\")/ adapter = その型の解き手(pydantic の TypeAdapter — 最初に使う時に 1 度組む)。"
+   (\"reject\" / \"ignore\")/ wire-type = その型。解き手(型の木)は codec が最初に使う時に 1 度だけ組んで型に覚える。"
   {:tags {:context "wire" :role "type"}
    :check [(in unknown UNKNOWN-FIELDS)]}
   (#^ (get dict #(str str)) names)
   (#^ str unknown)
-  (#^ TypeAdapter adapter))
+  (#^ type wire-type)
+
+  (defn [property] codec [self]
+    "その型の解き手(doeff_hy.wire_codec の Codec — 最初の使いで型の木を 1 度組み、2 回目からは組まない)。"
+    (codec-of self.wire-type)))
 
 
 (defclass [runtime-checkable] WireValue [Protocol]
@@ -67,39 +78,25 @@
   {:pre [(: names dict) (: unknown str) (in unknown UNKNOWN-FIELDS)]
    :post [(: % dict)]
    :tags {:context "wire" :role "judgment"}}
-  "defwire の型の pydantic の設定(型の __pydantic_config__ に置く): 欄の名は names の写しだけを受けて書き、知らない欄は unknown に
-   従い、型の検めは厳しい。解き手は最初に使う時(最初の parse / dump / json-schema)に 1 度組み、2 回目からは組み直さない(defer-build)
-   — module を読み込む process ごとに、使わない型まで組む費用を払わないため(card acp:kanban-issue:ki-8b518c8f8e9d・2026-10-11:
-   agora-controllers の test_emulated_screen.hy の 1 回で読み込みの時に 547 個・1.84 秒を組み、使ったのは 49 個)。前は型を定義した時に
-   組んでいた(agora-redesign #2420 — 検の本体の予算の区間と本番の最初の要求から費用を外すため)が、検の本体は 2026-10-03 から doeff の VM
-   の歩数で判じ(pydantic の組み立ては歩数に入らない)、本番の最初の要求が払うのは使う型ごとに 1 度 約 3 ms。戻し方 = :defer-build の
-   1 行を外す(#2420 の形)。"
-  (ConfigDict :alias-generator (. names __getitem__)
-              :validate-by-alias True
-              :validate-by-name False
-              :serialize-by-alias True
-              :extra (get UNKNOWN-FIELDS unknown)
-              :strict True
-              :defer-build True))
+  "defwire の型の __pydantic_config__(pydantic の TypeAdapter で defwire の型を直に解く読み手が、wire の名と厳しさで解くための設定 —
+   pydantic の ConfigDict と同じ鍵の素の辞書で、pydantic を読まずに作る。照らしの道具 wire_parity.py もこの設定で pydantic の解き手を組む)。
+   この module の API は使わない。card ki-7c4609cd96c9 で読み手を wire の API へ移した後に、defwire の展開の setattr と一緒に消す。"
+  {"alias_generator" (. names __getitem__)
+   "validate_by_alias" True
+   "validate_by_name" False
+   "serialize_by_alias" True
+   "extra" (get UNKNOWN-FIELDS unknown)
+   "strict" True
+   "defer_build" True})
 
 
 (deff wire-shape [wire-type names unknown]  ; defk にできない: defwire の展開が module を読む時に呼ぶ(Program を実行できない所)
   {:pre [(: wire-type type) (: names dict) (: unknown str)]
    :post [(: % WireShape)]
    :tags {:context "wire" :role "judgment"}}
-  "defwire の型の wire の形(型の __doeff_wire__ に置く)。wire-config を __pydantic_config__ に置いた後に呼ぶ — TypeAdapter はその設定を読む。"
-  (WireShape :names names :unknown unknown :adapter (TypeAdapter wire-type)))
-
-
-(defk malformed-of [wire-type error]
-  {:pre [(: wire-type type) (: error ValidationError)]
-   :post [(: % Malformed)]
-   :tags {:context "wire" :role "judgment"}}
-  "pydantic の検めの誤りを Malformed へ写す(欄の場所は wire の名・配列の位置を . でつなぐ)。"
-  (Malformed :wire-type wire-type.__name__
-             :fields (tuple (gfor problem (.errors error :include-url False)
-                                  (MalformedField :field (.join "." (gfor part (get problem "loc") (str part)))
-                                                  :reason (.format "{} [{}]" (get problem "msg") (get problem "type")))))))
+  "defwire の型の wire の形(型の __doeff_wire__ に置く)。解き手はここでは組まない — 最初の parse / dump / json-schema で 1 度だけ組む
+   (使わない型まで組む費用を、module を読み込む process ごとに払わない — card acp:kanban-issue:ki-8b518c8f8e9d)。"
+  (WireShape :names names :unknown unknown :wire-type wire-type))
 
 
 (defk parse [wire-type raw]
@@ -107,10 +104,10 @@
    :post [(: % (| WireValue Malformed))]
    :tags {:context "wire" :role "judgment"}}
   "JSON の値(凍らせた JSON — FrozenMap・tuple — と、中を読まずに運んだ OpaqueJson も)を defwire の型 wire-type の値へ解いて
-   確かめる。答え = wire-type の値か、形が合わない時は Malformed(どの型の・どの欄が・なぜ)。JSON の読み方で検めるので、配列は
-   tuple の欄に・値の綴りは defenum の欄に入る。OpaqueJson は形を知る読み手が中を読む唯一の口(json_value.py の OpaqueJson)。"
-  (<- parsed (parse-json wire-type (if (isinstance raw OpaqueJson) raw.text (json.dumps (thaw-json raw) :ensure-ascii False))))
-  parsed)
+   確かめる。答え = wire-type の値か、形が合わない時は Malformed(どの型の・どの欄が・なぜ)。値を文字列へ書き直さずに直に木へ通し、
+   答えは同じ値を JSON の文字列にして parse-json に渡した時と同じ(配列は tuple の欄に・値の綴りは defenum の欄に入る)。OpaqueJson は
+   形を知る読み手が中を読む唯一の口(json_value.py の OpaqueJson)。"
+  (.decode (. wire-type __doeff_wire__ codec) raw))
 
 
 (defk parse-json [wire-type text]
@@ -118,11 +115,7 @@
    :post [(: % (| WireValue Malformed))]
    :tags {:context "wire" :role "judgment"}}
   "JSON の文字列(bytes も)を defwire の型 wire-type の値へ解いて確かめる。JSON として読めない文字列も Malformed(欄は空の文字列)。"
-  (try
-    (.validate-json (. wire-type __doeff_wire__ adapter) text)
-    (except [error ValidationError]
-      (<- malformed Malformed (malformed-of wire-type error))
-      malformed)))
+  (.decode-json (. wire-type __doeff_wire__ codec) text))
 
 
 (defk dump [value]
@@ -131,7 +124,7 @@
    :tags {:context "wire" :role "judgment"}}
   "defwire の型の値を JSON の値へ(欄は wire の名・tuple は配列・defenum は値の綴り・既定値と同じ欄は書かない — 入れ子の型の欄も)。
    送り出す foundation だけが呼ぶ。"
-  (.dump-python (. (type value) __doeff_wire__ adapter) value :mode "json" :by-alias True :exclude-defaults True))
+  (.encode (. (type value) __doeff_wire__ codec) value))
 
 
 (defk dump-json [value]
@@ -139,10 +132,8 @@
    :post [(: % str)]
    :tags {:context "wire" :role "judgment"}}
   "defwire の型の値を JSON の文字列へ(dump と同じ形 — 既定値と同じ欄は書かない)。OpaqueJson の欄は、持っている JSON の文字列を
-   解き直さずにそのまま出力へ埋める(OpaqueSplice — 文字列 → json.loads → もう一度書く、の二度手間をしない。出力の JSON としての
-   意味は dump と同じ)。"
-  (val splice (OpaqueSplice))
-  (.fill splice (.dump-json (. (type value) __doeff_wire__ adapter) value :by-alias True :exclude-defaults True :context splice)))
+   解き直さずにそのまま出力へ埋める(文字列 → json.loads → もう一度書く、の二度手間をしない。出力の JSON としての意味は dump と同じ)。"
+  (.encode-json (. (type value) __doeff_wire__ codec) value))
 
 
 (defk json-schema [wire-type]
@@ -150,4 +141,4 @@
    :post [(: % JsonValue)]
    :tags {:context "wire" :role "judgment"}}
   "defwire の型の JSON Schema(欄は wire の名・:unknown :reject の型は additionalProperties false)— 契約の file と照らす時に使う。"
-  (.json-schema (. wire-type __doeff_wire__ adapter) :by-alias True))
+  (dict (.schema (. wire-type __doeff_wire__ codec))))

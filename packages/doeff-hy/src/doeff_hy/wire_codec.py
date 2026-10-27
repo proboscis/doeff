@@ -18,8 +18,9 @@ dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも
 
 - 型の木は欄の型ごとの判じ手(``_Node``)の木。defwire の型は 1 つの ``_WireNode`` を型に覚え、入れ子の欄は子の判じ手を参照する
   (親ごとに組み直さない)。語彙の外の型・解けない前方参照・型の輪は、組む時に TypeError で断る(黙って通さない)。
-- まだ wire.hy(parse・parse-json・dump・dump-json・json-schema)は替えない。替えるのは照らしの test(card 3)が pydantic との不一致 0 を
-  示した後。
+- wire.hy(parse・parse-json・dump・dump-json・json-schema)はこの木を呼ぶ(card ki-b7701d5fc0dd で pydantic の TypeAdapter から替えた —
+  照らしの test(doeff_hy/wire_parity.py・tests/test_wire_parity.py)が doeff と agora-controllers の全 defwire の型で pydantic との
+  不一致 0 を示した後)。
 - この module は pydantic を import しない(標準の module と doeff_hy.json_value・doeff_hy.wire_malformed だけを読む —
   ``tests/test_wire_codec.py`` と ``tests/test_wire_codec_write.py`` が import の閉包を確かめる)。
 """

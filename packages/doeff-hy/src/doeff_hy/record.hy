@@ -113,7 +113,7 @@
 ;;;
 ;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、
 ;;; 欄の名の綴り違いも型の違いも使う所まで見えない。defwire は JSON の形を型として宣言し、解き手
-;;; (doeff_hy.wire の parse / dump — pydantic の TypeAdapter)で境目の 1 か所で一度に解いて確かめる。
+;;; (doeff_hy.wire の parse / dump — doeff_hy/wire_codec.py の自前の型の木・card ki-b7701d5fc0dd)で境目の 1 か所で一度に解いて確かめる。
 ;;;
 ;;;   (require doeff-hy.record [defwire])
 ;;;   (import dataclasses [dataclass])

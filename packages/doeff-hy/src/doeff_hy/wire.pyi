@@ -4,7 +4,7 @@ wire.hy は Hy の module なので、pyright は中を読めず、`from doeff_h
 (agora の protocol の file で strict の赤が書き手に直せない形で出る — #2220 で 317 → 416 の出どころの 1 つ)。
 ここで型を宣言する。
 
-- defk(parse・parse-json・dump・dump-json・json-schema・malformed-of)は呼ぶと Program を返す。`(<- x (parse T raw))` の
+- defk(parse・parse-json・dump・dump-json・json-schema)は呼ぶと Program を返す。`(<- x (parse T raw))` の
   x は型検査の展開で `_doeff_perform(parse(T, raw))`(static_types.pyi)になり、Program の答えの型 = `T | Malformed` を受ける。
 - parse / parse-json は型を引数に取る総称の関数: 答えは渡した defwire の型 T の値か Malformed。
 - deff(wire-config・wire-shape)は defwire の展開が module を読む時に呼ぶ普通の関数。
@@ -13,10 +13,9 @@ wire.hy は Hy の module なので、pyright は中を読めず、`from doeff_h
 from collections.abc import Mapping
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
-from pydantic import ConfigDict, TypeAdapter, ValidationError
-
 from doeff import Program
 from doeff_hy.json_value import JsonValue, OpaqueJson
+from doeff_hy.wire_codec import Codec
 from doeff_hy.wire_malformed import Malformed as Malformed
 from doeff_hy.wire_malformed import MalformedField as MalformedField
 
@@ -25,12 +24,14 @@ _W = TypeVar("_W")
 UNKNOWN_FIELDS: dict[str, str]
 
 class WireShape:
-    """defwire の型 1 つの wire の形(names = Python の欄の名 → wire の名・unknown・adapter)。"""
+    """defwire の型 1 つの wire の形(names = Python の欄の名 → wire の名・unknown・wire_type・解き手 codec)。"""
 
     names: dict[str, str]
     unknown: str
-    adapter: TypeAdapter[Any]
-    def __init__(self, *, names: dict[str, str], unknown: str, adapter: TypeAdapter[Any]) -> None: ...
+    wire_type: type
+    def __init__(self, *, names: dict[str, str], unknown: str, wire_type: type) -> None: ...
+    @property
+    def codec(self) -> Codec[Any]: ...
 
 @runtime_checkable
 class WireValue(Protocol):
@@ -38,9 +39,8 @@ class WireValue(Protocol):
 
     __doeff_wire__: ClassVar[WireShape]
 
-def wire_config(names: dict[str, str], unknown: str) -> ConfigDict: ...
+def wire_config(names: dict[str, str], unknown: str) -> dict[str, object]: ...
 def wire_shape(wire_type: type, names: dict[str, str], unknown: str) -> WireShape: ...
-def malformed_of(wire_type: type, error: ValidationError) -> Program[Malformed, Any]: ...
 def parse(
     wire_type: type[_W], raw: JsonValue | Mapping[str, object] | tuple[object, ...] | OpaqueJson
 ) -> Program[_W | Malformed, Any]: ...

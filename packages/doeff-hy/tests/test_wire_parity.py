@@ -53,7 +53,8 @@ def test_every_doeff_defwire_type_reads_and_writes_as_pydantic_does() -> None:
     assert report.unbuildable == {}, report.unbuildable
     assert report.catch_all_types == (), report.catch_all_types
     assert report.schema_default_differences == (), report.schema_default_differences
-    assert report.accepted > 0 and report.inputs > report.accepted, wire_parity.summary(report)
+    assert report.accepted > 0, wire_parity.summary(report)
+    assert report.inputs > report.accepted, wire_parity.summary(report)
 
 
 def test_the_vocabulary_types_read_and_write_as_pydantic_does() -> None:
@@ -75,9 +76,11 @@ def test_a_refusal_that_differs_is_reported_with_its_side() -> None:
     # 道具そのものの検: pydantic が受けて自前が断る形(または逆)を不一致として返し、弱める側かを印す。
     types = importlib.import_module("wire_codec_types")
     verdict = wire_parity.compare_input(types.Note, "same", '{"noteText":"a"}', values=True)
-    assert verdict.accepted and verdict.mismatches == (), verdict
+    assert verdict.accepted, verdict
+    assert verdict.mismatches == (), verdict
     refused = wire_parity.compare_input(types.Note, "refused", '{"noteText":1}', values=True)
-    assert not refused.accepted and refused.mismatches == (), refused
+    assert not refused.accepted, refused
+    assert refused.mismatches == (), refused
 
 
 def _nested(depth: int) -> str:
