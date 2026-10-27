@@ -9,11 +9,11 @@
  },
  {
   "id": "a3",
-  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Get Order, Save Order, Cache Set, and Tell."
+  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Get Order, Save Order, Cache Put, and Tell."
  },
  {
   "id": "a4",
-  "text": "There is no order seven, so the in-memory handler throws an error into the service. Try keeps the failure as a value, and the API layer answers with an error."
+  "text": "There is no order eight, so the in-memory handler raises a KeyError. Try keeps the failure as a value, and the API layer answers with an error."
  },
  {
   "id": "b1",
