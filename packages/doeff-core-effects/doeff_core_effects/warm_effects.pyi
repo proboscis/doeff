@@ -18,6 +18,15 @@ class ForkFromWarm(EffectBase):
     log_path: str
     exit_path: str
     grace_seconds: float = 10.0
+    hold_input: bool = False
+    cgroup_procs: str | None = None
+    notice_env: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class WriteWarmChildInput(EffectBase):
+    pid: int
+    start_ticks: int
+    text: str
 
 @dataclass(frozen=True, kw_only=True)
 class PollWarmChild(EffectBase):
@@ -62,6 +71,11 @@ class WarmLost:
 @dataclass(frozen=True, kw_only=True)
 class WarmSignaled:
     pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class WarmInputWritten:
+    pid: int
+    delivered: bool
 
 @dataclass(frozen=True, kw_only=True)
 class WarmGone:

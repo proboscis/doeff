@@ -65,6 +65,10 @@ from doeff_cluster.worker.core.warm_rules import mark_refusal as mark_refusal
 from doeff_cluster.worker.core.warm_rules import warm_launch as warm_launch
 from doeff_cluster.worker.core.warm_rules import warm_child_refused as warm_child_refused
 from doeff_cluster.worker.core.warm_rules import warm_refusal_failure as warm_refusal_failure
+from doeff_cluster.worker.core.warm_rules import service_warm_keys as service_warm_keys
+from doeff_cluster.worker.core.warm_rules import fork_candidate as fork_candidate
+from doeff_cluster.worker.core.warm_rules import WarmStart as WarmStart
+from doeff_cluster.worker.core.warm_rules import warm_start as warm_start
 
 def hyx_kept_when_cut_offXquestion_markX(job: JobSpec, silent_ms: int, keep_fence_ms: int) -> _Program[bool, object]:
     ...
@@ -155,10 +159,10 @@ def elder_waits(spec: JobSpec) -> bool:
 def elder_ready(now: int, spec: JobSpec, code: CodeView | None, world: WorldView, policy: WorkerPolicy) -> bool:
     ...
 
-def ready_tree_step(now: int, spec: JobSpec, tree: str, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> _Program[StartStep, object]:
+def ready_tree_step(now: int, spec: JobSpec, tree: str, world: WorldView, record: JobRecord, policy: WorkerPolicy, warm_keys: frozenset) -> _Program[StartStep, object]:
     ...
 
-def start_step(now: int, spec: JobSpec, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> _Program[StartStep, object]:
+def start_step(now: int, spec: JobSpec, world: WorldView, record: JobRecord, policy: WorkerPolicy, warm_keys: frozenset) -> _Program[StartStep, object]:
     ...
 
 def hyx_recreatingXquestion_markX(want: JobSpec | None, process: ProcessView | None, record: JobRecord) -> _Program[bool, object]:
@@ -191,7 +195,7 @@ def warm_stop_step(now: int, view: WarmChildView, policy: WorkerPolicy) -> _Prog
 def warm_child_step(now: int, key: str, launch: WarmLaunch | None, view: WarmChildView | None, policy: WorkerPolicy, refusal: JobNotStarted | None=None) -> _Program[tuple, object]:
     ...
 
-def launch_of(key: str, wanted: frozenset, desired: tuple, world: WorldView, warm: tuple) -> _Program[WarmLaunch | None, object]:
+def launch_of(key: str, wanted: frozenset, desired: tuple, world: WorldView, warm: tuple, services: frozenset) -> _Program[WarmLaunch | None, object]:
     ...
 
 def fork_refusals(records: dict) -> _Program[dict[str, JobNotStarted], object]:
@@ -258,13 +262,13 @@ def noted_holds(records: dict, holds: tuple) -> _Program[tuple, object]:
 def held_records(records: dict, holds: tuple) -> _Program[dict, object]:
     ...
 
-def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> JobPhase:
+def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world: WorldView, record: JobRecord, policy: WorkerPolicy, warm_keys: frozenset) -> JobPhase:
     ...
 
 def refused_warm_child(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord, policy: WorkerPolicy) -> WarmChildView | None:
     ...
 
-def warm_wait_detail(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord) -> str | None:
+def warm_wait_detail(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord, policy: WorkerPolicy, warm_keys: frozenset) -> str | None:
     ...
 
 def job_status(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, name: str) -> _Program[JobStatus, object]:

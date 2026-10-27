@@ -1,7 +1,9 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = warm_rules.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
+from collections import Counter as Counter
 from dataclasses import dataclass as dataclass
+from enum import StrEnum as StrEnum
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
@@ -17,6 +19,20 @@ from doeff_cluster.worker.core.worker_rules import code_key as code_key
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
 
 def forks_from_warm_child(spec: JobSpec) -> bool:
+    ...
+
+def service_warm_keys(desired: tuple, policy: WorkerPolicy) -> frozenset:
+    ...
+
+def fork_candidate(spec: JobSpec, policy: WorkerPolicy, warm_keys: frozenset) -> bool:
+    ...
+
+class WarmStart(StrEnum):
+    SHIM = 'shim'
+    WAIT = 'wait'
+    FORK = 'fork'
+
+def warm_start(spec: JobSpec, world: WorldView, policy: WorkerPolicy, warm_keys: frozenset) -> WarmStart:
     ...
 
 def warm_key_of(spec: JobSpec) -> str:
@@ -49,7 +65,7 @@ def warm_refusal_failure(view: WarmChildView) -> EnvFailure:
 def mark_refusal(mark: WarmChildMark | WarmMarkUnreadable) -> _Program[str, object]:
     ...
 
-def warm_launch(key: str, root: str, specs: tuple, warm: tuple) -> _Program[WarmLaunch, object]:
+def warm_launch(key: str, root: str, specs: tuple, warm: tuple, services: frozenset=...) -> _Program[WarmLaunch, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)

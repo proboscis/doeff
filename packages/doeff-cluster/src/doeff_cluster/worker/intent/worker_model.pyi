@@ -193,6 +193,7 @@ class WarmChildMark:
 
     threads: int
     vm_live: tuple[int, ...]
+    services: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class WarmMarkUnreadable:
@@ -274,6 +275,8 @@ class WorkerPolicy:
     wake_gap_seconds: float = 0.1
     retired_limit: int = 3
     warm_refusal_limit: int = 3
+    warm_services: bool = False
+    warm_services_min: int = 3
     memory_kill_limit: int = 5
     memory_kill_reset_ms: int = 600000
 

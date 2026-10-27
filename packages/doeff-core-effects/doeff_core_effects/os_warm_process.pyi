@@ -15,6 +15,8 @@ from doeff_core_effects.darwin_proc import darwin_thread_count as darwin_thread_
 from doeff_core_effects.warm_effects import ForkFromWarm as ForkFromWarm
 from doeff_core_effects.warm_effects import PollWarmChild as PollWarmChild
 from doeff_core_effects.warm_effects import SignalWarmChild as SignalWarmChild
+from doeff_core_effects.warm_effects import WriteWarmChildInput as WriteWarmChildInput
+from doeff_core_effects.warm_effects import WarmInputWritten as WarmInputWritten
 from doeff_core_effects.warm_effects import WarmForked as WarmForked
 from doeff_core_effects.warm_effects import WarmRefused as WarmRefused
 from doeff_core_effects.warm_effects import WarmRunning as WarmRunning
@@ -51,6 +53,9 @@ class WarmRequestWire:
     log_path: str
     exit_path: str
     grace_seconds: float
+    hold_input: bool = False
+    cgroup_procs: str | None = None
+    notice_env: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WarmForkedWire:
@@ -79,7 +84,12 @@ def warm_answer_of(line: bytes, socket_path: str) -> _Program[WarmForked | WarmR
 def received_line(connection: socket.socket) -> _Program[bytes | None, object]:
     ...
 
-def os_fork_from_warm(request: ForkFromWarm) -> _Program[WarmForked | WarmRefused, object]:
+@dataclass(frozen=True, kw_only=True)
+class HeldInput:
+    start_ticks: int
+    fd: int
+
+def os_fork_from_warm(request: ForkFromWarm, input_fd: int | None) -> _Program[WarmForked | WarmRefused, object]:
     ...
 
 def proc_stat_of(pid: int) -> _Program[ProcStat | None, object]:
@@ -98,5 +108,8 @@ def os_poll_warm_child(pid: int, start_ticks: int, exit_path: str) -> _Program[W
     ...
 
 def os_signal_warm_child(pid: int, start_ticks: int, sent: ProcessSignal) -> _Program[WarmSignaled | WarmGone, object]:
+    ...
+
+def input_written(fd: int, text: str) -> _Program[bool, object]:
     ...
 os_warm_process_handler: _Handler
