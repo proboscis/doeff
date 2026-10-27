@@ -1,6 +1,6 @@
 ;;; C8 k2-k3 pilot workflow expressed as a DSL-only request artifact.
 
-(require doeff-hy.conductor [defworkflow defphase agent! gate! workspace! merge! parallel loop <-])
+(require doeff-conductor.macros [defworkflow defphase agent! gate! workspace! merge! parallel loop <-])
 (import doeff_conductor.dsl [artifact prompt ref])
 (import doeff_conductor.effects [REVIEW-VERDICT-RESULT-SCHEMA])
 

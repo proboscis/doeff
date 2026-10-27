@@ -3,7 +3,8 @@
 ;;;
 ;;; net-foundation の :needs は job の :needs と同じ。wide-foundation は job の :needs に無い能力(gpu)も名乗る土台 — declare は
 ;;; 「土台の :needs ⊆ job の :needs」の外れとして断る(計画 9 節の P)。
-(require doeff-hy.macros [defk defsystem <-])
+(require doeff-hy.macros [defk <-])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [with-handlers EffectBase Program])
 (import doeff_core_effects.effects [Ask])

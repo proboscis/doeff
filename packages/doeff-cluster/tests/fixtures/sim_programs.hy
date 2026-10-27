@@ -2,7 +2,8 @@
 ;;;
 ;;; どの Program も土台(tests.fixtures.envs の sim-foundation — scheduler と時計を含まない sim の土台)で本体を包む。service どうしは
 ;;; 盤(ReadShared / WriteShared)でだけつながり、宿の契約の environ は Ask で読む。
-(require doeff-hy.macros [defk deff defsystem defhandler defeffect do! <- val var])
+(require doeff-hy.macros [defk deff defhandler defeffect do! <- val var])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects.effects [Ask])
