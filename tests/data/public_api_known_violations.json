@@ -13044,21 +13044,6 @@
       "ops_ending",
       "static_view_enabled"
      ],
-     "doeff_hy.conductor": [
-      "<-",
-      "agent!",
-      "defphase",
-      "defworkflow",
-      "gate!",
-      "loop",
-      "merge!",
-      "parallel",
-      "parallel_for",
-      "pipeline",
-      "random!",
-      "time!",
-      "workspace!"
-     ],
      "doeff_hy.declarations": [
       "CONTRACT_KEYS",
       "DECLARATION_KEYS",
@@ -13203,7 +13188,6 @@
       "defp",
       "defpipeline",
       "defpp",
-      "defsystem",
       "deftest",
       "deftest_fixture_annotation",
       "do!",
@@ -13407,7 +13391,6 @@
       "CompileFailure",
       "DEFAULT_REFRESH_RUNS",
       "DEFEFFECT_OUTCOMES_MODULE",
-      "DEFSYSTEM_IMPORTS",
       "Diagnostic",
       "EXPANDER_LIMIT",
       "ExpansionWorkerLostError",
@@ -13512,9 +13495,6 @@
      "doeff_hy.static_view": [
       "DEFEFFECT_OUTCOMES_MODULE",
       "DEFEFFECT_STATIC_NAMES",
-      "DEFSYSTEM_BUILD_MODULE",
-      "DEFSYSTEM_IMPORTS",
-      "DEFSYSTEM_MODEL_MODULE",
       "DEFTEST_FIXTURE_TYPES",
       "Finding",
       "FixtureType",
@@ -13531,36 +13511,6 @@
       "report_findings",
       "static_view",
       "static_view_enabled"
-     ],
-     "doeff_hy.system_form": [
-      "CONSTANT_SYMBOLS",
-      "DEFSYSTEM_BUILD_MODULE",
-      "DEFSYSTEM_IMPORTS",
-      "DEFSYSTEM_MODEL_MODULE",
-      "JOB_KEYS",
-      "LIMIT_KEYS",
-      "LIMIT_SCOPES",
-      "ModelTypes",
-      "REPLICAS_VALUES",
-      "SYSTEM_KEYS",
-      "StaticRecord",
-      "StaticValue",
-      "TaskLimit",
-      "UPDATE_FORMS",
-      "call_shape_form",
-      "defsystem_form",
-      "dotted",
-      "head_options",
-      "hyx_literalXquestion_markX",
-      "in_module",
-      "needs_names",
-      "param_parts",
-      "read_job",
-      "read_task_limit",
-      "read_task_limits",
-      "record_names",
-      "static_value",
-      "string_dict"
      ],
      "doeff_hy.table": [
       "COMPACT_RATIO",
@@ -17082,5 +17032,6 @@
   [removed]
   [removed]
   [removed]
+  {"package": "doeff-hy", "module": "doeff_hy.declarations", "name": "record_names", "訳": "defsystem の形の読み(旧 doeff_hy.system_form)を doeff-cluster へ移した時、defk・deff の :writes も読む置き場の綴りの検め record-names を、同じ形の :needs の検め needs-names の隣へ移した(名の数は同じ — card [id])", "決め": "[id]"}
  ]
 }
