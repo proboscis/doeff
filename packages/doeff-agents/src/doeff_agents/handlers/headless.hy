@@ -22,8 +22,8 @@
 ;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
 ;;;   LaunchEffect.autocompact         → 層 2 の会話の宣言の autocompact(CLI の argv の --autocompact — None = 載せない・CLI の既定)
 ;;;   LaunchEffect.event_record       → その session が始める手番の ClaudeStartTurn.tap(層 2 の読み手の thread が行を手番の記録に足した直後に、
-;;;                                      頁と同じ写し events-of で層 3 の出来事にし、記録の守り手 RecordKeeper〔event_record.py — 畳みと file の
-;;;                                      置き換え〕へ畳ませる — line-tap-of。上の層が頁の読みの遅れに縛られずに自分の記録を書くため・agora card
+;;;                                      頁と同じ写し events-of で層 3 の出来事にし、記録の守り手 RecordKeeper〔_event_record.py — 畳みと file の
+;;;                                      置き換え〕へ畳ませる — _line-tap-of。上の層が頁の読みの遅れに縛られずに自分の記録を書くため・agora card
 ;;;                                      ki-31b41eac5071)
 ;;;   FollowUpEffect.record_note      → 入力を層 2 へ渡す前に、session の記録の守り手へ畳ませる(読み手の thread が入力の行方を読むより先に、
 ;;;                                      記録が入力を知る)。記録の無い session への record_note は AgentCapabilityUnsupportedError
@@ -103,7 +103,7 @@
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.effects.agent [SessionStatus])
 ;; 出来事の記録の守り手(LaunchEffect.event_record の畳みと file の置き換え — agora card ki-31b41eac5071)。
-(import doeff_agents.handlers.event_record [RecordKeeper])
+(import doeff_agents.handlers._event_record [RecordKeeper :as _RecordKeeper])
 (import doeff_agents.shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents.effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
@@ -163,7 +163,7 @@
    events = 層 3 の出来事(seq = 添字)/ last-end = 最後の手番の終わり / stopped = 止めた /
    carry = 次に始める手番で文脈へ持ち込む写し(LaunchEffect.resume_snapshot — 最初の手番を始めたら None)/
    keeper = この session の出来事の記録の守り手(LaunchEffect.event_record の RecordKeeper — 無ければ None)/
-   tap = この session が始める手番の層 2 の行の写し手(守り手を line-tap-of で包んだ物 — 無ければ None)。"
+   tap = この session が始める手番の層 2 の行の写し手(守り手を _line-tap-of で包んだ物 — 無ければ None)。"
   (defn __init__ [self #^ str name #^ ClaudeSessionSpec spec #^ str context-id #^ bool fresh lifecycle
                   #^ (| Rebuilt None) [carry None] [keeper None]]
     (setv self.name name
@@ -173,7 +173,7 @@
           self.lifecycle lifecycle
           self.carry carry
           self.keeper keeper
-          self.tap (line-tap-of keeper)
+          self.tap (_line-tap-of keeper)
           self.stopped False)
     (setv #^ (| ClaudeTurn None) self.turn None)
     (setv #^ int self.cursor -1)
@@ -496,7 +496,7 @@
 
 ;; --- 層 2 との往復 --------------------------------------------------------------------------------
 
-(defn line-tap-of [keeper]
+(defn _line-tap-of [keeper]
   "session の出来事の記録の守り手(RecordKeeper)を、層 2 の行の写し手(ClaudeStartTurn.tap)に包むため(agora card ki-31b41eac5071 —
    上の層が頁の読み(EventsEffect)の遅れに縛られずに、層 2 が行を読んだ時点で自分の記録を書く)。行は頁と同じ写し(events-of)で
    出来事にする — 写し方を 2 つ作らない。守り手へ渡す出来事の seq は頁の seq ではない(行ごとに 0 から振る)。keeper が None なら
@@ -698,7 +698,7 @@
   (setv spec (spec-of config request credential))
   (val carry (if (is request.resume-snapshot None) None (Rebuilt request.resume-snapshot)))
   (val session (HeadlessSession name spec context-id (is request.resume-from None) request.lifecycle carry
-                                (if (is request.event-record None) None (RecordKeeper request.event-record))))
+                                (if (is request.event-record None) None (_RecordKeeper request.event-record))))
   ;; 写しを持ち込む時は、最初の手番で在るようになるので手元の在否を確かめない。
   (when (and (is-not request.resume-from None) (is request.prompt None) (is carry None))
     (<- status (ClaudeSessionStatus spec.home spec.cwd request.resume-from))
