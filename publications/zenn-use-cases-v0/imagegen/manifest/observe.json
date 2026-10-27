@@ -17,12 +17,11 @@
     "image": "images/zenn-use-cases-v0/generated/observe-flow.png",
     "generation_prompt": "observe-flow-flat-code.txt",
     "edit_prompts": [],
-    "tool": "image_gen (built-in)",
-    "sha256": "00e24dcc506ecdddcf6b78efbde46f13a46b87b1ac61ed2216991eb069040b25",
+    "tool": "OpenAI Images API (gpt-image-2)",
+    "sha256": "41befe53f0f940bfa61f3978d6fcfb73ede8d15b870e5b678fb6b6d9cad163a3",
     "width": 1536,
     "height": 1024,
-    "bytes": 1515579,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
-    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+    "bytes": 1421515,
+    "review": "2026-10-28：writer_log()をReadWriterLog()に直して描き直した。コード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
   }
 ]

@@ -28,6 +28,7 @@ IMAGE_DIRECTORY = ROOT / "images/zenn-use-cases-v0/generated"
 # 採用画像を作った道具。SVGの図は正本をvisuals/に置き、作り方をimagegen/の台帳の文書に書く。
 IMAGE_TOOLS = {
     "image_gen (built-in)",
+    "OpenAI Images API (gpt-image-2)",  # 組み込みのimagegenを使えない環境で、同じプロンプトから描き直した図。
     "SVG (hand-written) + chromium screenshot",
     "example's HTML page + chromium screenshot",  # 完全な例が組んだページの写し(記事が見せる結果そのもの)。
 }

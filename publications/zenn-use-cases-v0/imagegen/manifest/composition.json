@@ -4,13 +4,12 @@
     "image": "images/zenn-use-cases-v0/generated/composition-concept.png",
     "generation_prompt": "composition-concept-flat-code.txt",
     "edit_prompts": [],
-    "tool": "image_gen (built-in)",
-    "sha256": "e304fd250c1eca79425e4c6cee161bbb274bbf7ede57bc7bf5854ad47981141c",
+    "tool": "OpenAI Images API (gpt-image-2)",
+    "sha256": "765bfa97d58ca30ebfdbf9d8cd7b492a44285ae5115e1acb94d6c936e7193da2",
     "width": 1536,
     "height": 1024,
-    "bytes": 1365392,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
-    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+    "bytes": 1281697,
+    "review": "2026-10-28：writer_log()をReadWriterLog()に直して描き直した。コード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
   },
   {
     "id": "composition-flow",

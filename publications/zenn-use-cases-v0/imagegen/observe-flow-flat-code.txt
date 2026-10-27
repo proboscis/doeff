@@ -3,7 +3,7 @@ Use case: infographic-diagram. 日本語技術記事の完成ダイアグラム�
 見出し:Listenで収集してから、元のログ処理へ渡す
 コード:
 result, captured = yield Listen(convert(), types=(WriterTellEffect, SlogEffect))  # 2件を収集する
-written = yield writer_log()  # Tellの蓄積も読み取る
+written = yield ReadWriterLog()  # Tellの蓄積も読み取る
 return result, captured, written  # 本体の結果と両方の記録を返す
-図:白背景の平面シーケンス図。列は「convert」「Listenの観測」「外側の処理先」。上からTell("変換を開始")→Listenが収集して同じ依頼をwriterへ渡す→writerがメッセージを蓄積して再開。次にslog("変換が完了", pages=3)→Listenが収集してslog_handlerへ渡す→標準エラーへ表示して再開。convertが「完了」を返す→Listenが(「完了」, [Tellの依頼, SlogEffectの依頼])を観測する側へ返す。図のコードはobserveの抜粋、外側のTell("観測前"/"観測後")を省略したことを注記し、writer_log結果の具体件数は図では主張しない。収集リストは依頼オブジェクトであり文字列だけではない。写真・3D禁止。
+図:白背景の平面シーケンス図。列は「convert」「Listenの観測」「外側の処理先」。上からTell("変換を開始")→Listenが収集して同じ依頼をwriterへ渡す→writerがメッセージを蓄積して再開。次にslog("変換が完了", pages=3)→Listenが収集してslog_handlerへ渡す→標準エラーへ表示して再開。convertが「完了」を返す→Listenが(「完了」, [Tellの依頼, SlogEffectの依頼])を観測する側へ返す。図のコードはobserveの抜粋、外側のTell("観測前"/"観測後")を省略したことを注記し、ReadWriterLog結果の具体件数は図では主張しない。収集リストは依頼オブジェクトであり文字列だけではない。写真・3D禁止。
 説明:ListenはconvertのTellとSlogEffectを順に収集し、元の依頼を外側へ渡します。本体の結果と収集した2件が戻り、Writerの蓄積とSlogの表示も残ります。
