@@ -25,6 +25,14 @@ class ResidentJob:
         ...
 
 @dataclass(frozen=True, kw_only=True)
+class ExtraProvides:
+    name: str
+    provides: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
 class ExemptJob:
     job: str
     reason: str
