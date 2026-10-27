@@ -9,7 +9,7 @@
 (import re)
 (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
 (import doeff_cluster.coordinator.intent.failover_model [FailoverWorker ResidentJob ExemptJob KeptApart])
-(import doeff_cluster.coordinator.core.failover_policy [failover-refusals])
+(import doeff_cluster.coordinator.core.failover_policy [failover-refusals per-machine?])
 
 ;; 雛形の能力(どの機体の worker も名乗る — needs がこれだけの job は機体ごとの job)。
 (val TEMPLATE #("host-facts"))
@@ -138,6 +138,28 @@
   (<- short (judged #((! (host "a" #("pool-x") :capacity 1 :memory 1100)) (! (host "b" #("pool-x") :capacity 2 :memory 1100))) jobs))
   (assert (= (len short) 1) short)
   (assert (.startswith (get short 0) "worker a: 置ける常駐の job 2(facts, p1)+ surge 0 を数えると job の側の空きが -1") short))
+
+
+(deftest test-a-template-job-spread-per-machine-keeps-the-per-machine-mark
+  ;; 雛形の job を機体ごとに広げた job(needs = 雛形の能力 + 機体の印 host-<機体> 1 つ)は雛形の機体ごとを継ぐ: 1 台にしか置けなくても規則 1
+  ;; で赤にしない(枠と memory には自分の機体の分を数える — 各 worker の枠 2 = 組の job 1 + 広げた job 1・memory 1100 = 落ち着き 300 + 100 +
+  ;; 組の job の山の上乗せ 700)。雛形の能力を持たず機体の印だけの job・機体の印を 2 つ持つ job・雛形の外の能力を足した job は機体ごとで
+  ;; ない(1 台に縛った job)。失敗ケース = 広げた job を 1 台に縛った job と読んで赤にする・印だけの job を機体ごとと読んで通す。
+  (val jobs #((! (resident "facts-a" #("host-a" "host-facts") :peak 5000 :settle 100))
+              (! (resident "facts-b" #("host-b" "host-facts") :peak 5000 :settle 100))
+              (! (resident "p1" #("pool-x") :peak 1000 :settle 300))))
+  (<- out (judged #((! (host "a" #("pool-x") :capacity 2 :memory 1100)) (! (host "b" #("pool-x") :capacity 2 :memory 1100))) jobs))
+  (assert (= out #()) out)
+  (<- spread bool (per-machine? #("host-a" "host-facts") TEMPLATE))
+  (<- template bool (per-machine? #("host-facts") TEMPLATE))
+  (<- pinned bool (per-machine? #("host-a") TEMPLATE))
+  (<- two-marks bool (per-machine? #("host-a" "host-b" "host-facts") TEMPLATE))
+  (<- more bool (per-machine? #("gpu" "host-a" "host-facts") TEMPLATE))
+  (<- pooled bool (per-machine? #("host-facts" "pool-x") TEMPLATE))
+  (assert (= #(spread template pinned two-marks more pooled) #(True True False False False False))
+          #(spread template pinned two-marks more pooled))
+  (<- stranded (judged #((! (host "a" #("pool-x"))) (! (host "b" #("pool-x")))) #((! (resident "derive" #("host-a") :peak 0 :settle 0)))))
+  (assert (= (len stranded) 1) stranded))
 
 
 (deftest test-a-job-in-the-exempt-table-may-stay-on-one-worker-but-still-takes-its-room
