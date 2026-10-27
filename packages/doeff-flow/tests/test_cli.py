@@ -1,4 +1,4 @@
-"""Tests for doeff_flow.cli module."""
+"""Tests for the doeff-flow console script (doeff_flow._cli)."""
 
 
 import json
@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from click.testing import CliRunner
-from doeff_flow.cli import cli
+from doeff_flow._cli import cli
 
 
 class TestPsCommand:

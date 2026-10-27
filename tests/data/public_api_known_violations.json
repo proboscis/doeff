@@ -334,33 +334,6 @@
      "doeff_agentic.state": [
       "generate_workflow_id"
      ],
-     "doeff_agentic.tui": [
-      "AgenticTUI",
-      "main"
-     ],
-     "doeff_agentic.tui.app": [
-      "AgenticAPI",
-      "AgenticTUI",
-      "WorkflowListScreen"
-     ],
-     "doeff_agentic.tui.screens": [
-      "AgentListItem",
-      "AgentLogsScreen",
-      "CurrentActivityPane",
-      "WatchScreen",
-      "WorkflowHeaderPane",
-      "WorkflowListItem",
-      "WorkflowListScreen",
-      "WorkflowWatchScreen"
-     ],
-     "doeff_agentic.tui.widgets": [
-      "AgentListItem",
-      "AgentOutputPane",
-      "CurrentActivityPane",
-      "WorkflowHeaderPane",
-      "WorkflowInfoPane",
-      "WorkflowListItem"
-     ],
      "doeff_agentic.visual_interceptor": [
       "create_visual_interceptor",
       "visual_logging_console"
@@ -444,15 +417,6 @@
       "WorkflowStatus"
      ],
      "doeff_agentic.state": [
-      "AgentInfo",
-      "AgentStatus",
-      "WorkflowInfo",
-      "WorkflowStatus"
-     ],
-     "doeff_agentic.tui.screens": [
-      "WorkflowInfo"
-     ],
-     "doeff_agentic.tui.widgets": [
       "AgentInfo",
       "AgentStatus",
       "WorkflowInfo",
@@ -12733,9 +12697,6 @@
       "run_workflow",
       "trace_observer"
      ],
-     "doeff_flow.cli": [
-      "get_default_trace_dir"
-     ],
      "doeff_flow.trace": [
       "get_default_trace_dir",
       "trace_observer"
@@ -12744,14 +12705,6 @@
     "外れ — 内側の module へ移す": {
      "doeff_flow": [
       "validate_workflow_id"
-     ],
-     "doeff_flow.cli": [
-      "cli",
-      "console",
-      "history",
-      "ps",
-      "validate_workflow_id",
-      "watch"
      ],
      "doeff_flow.env_places": [
       "state_home",
