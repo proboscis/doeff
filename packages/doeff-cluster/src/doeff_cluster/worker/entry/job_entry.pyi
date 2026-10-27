@@ -22,7 +22,6 @@ from doeff_cluster.foundation.process_versions import this_process_versions as t
 from doeff_cluster.shared.intent.run_context import RunContext as RunContext
 from doeff_cluster.shared.core.run_context_rules import runtime_env_of_context as runtime_env_of_context
 from doeff_cluster.shared.entry.run_context_env import context_from_env as context_from_env
-from doeff_cluster.worker.entry.result_delivery import deliver_task_result as deliver_task_result
 
 def parsed_program_row(path: str, text: str | FileFailed) -> _Program[dict | list | str | int | float | bool | None | RemoteJobFailed, object]:
     ...
@@ -46,6 +45,9 @@ def run_probe(args: argparse.Namespace) -> None:
     ...
 
 def run_task(args: argparse.Namespace) -> None:
+    ...
+
+def _decline_httpx_cli() -> None:
     ...
 
 def main() -> None:
