@@ -14,7 +14,7 @@ python -m doeff demo     # one program, four handlers, four meanings
 
 [Get started](01-getting-started.md) · [What doeff is](positioning/what-doeff-is.md) · [GitHub](https://github.com/proboscis/doeff)
 
-[![A narrated video, under three minutes: what doeff is, what yield does, handlers stacked in layers around the code, the rest of the program handed to a handler as k, a scheduler as one more layer, and the same program under test and production handlers](assets/videos/home.jpg)](assets/videos/home.mp4)
+[![A narrated video, under three minutes: what doeff is, what yield does, handlers stacked in layers around the code, the rest of the program handed to a handler as k, a scheduler as one more layer, and the same program under test and production handlers](assets/videos/home.gif)](assets/videos/home.mp4)
 
 ## 30 seconds
 
