@@ -45,6 +45,16 @@ TABLES_HY = """\
 (setv MAKERS {"mark" fold-mark "tick" fold-tick})
 (setv UNEVEN [#("mark" fold-mark) #("tick" fold-tick "extra")])
 
+(defk fold-named [name row]
+  {:pre [(: name str) (: row int)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (<- (Tick))
+  3)
+
+(import functools [partial])
+(setv PARTIAL-FOLDERS [#("mark" fold-mark) #("named" (partial fold-named "named"))])
+(setv MARK-FOLDERS [#("mark" fold-mark)])
+(setv TICK-FOLDERS [#("tick" fold-tick)])
+
 (defk by-row [kind row]
   {:pre [(: kind str) (: row int)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
   (for [#(folder-kind folder) FOLDERS]
@@ -69,6 +79,24 @@ TABLES_HY = """\
   (<- made int ((get MAKERS "tick") row))
   made)
 
+(defk by-partial-row [kind row]
+  {:pre [(: kind str) (: row int)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (for [#(folder-kind folder) PARTIAL-FOLDERS]
+    (when (= folder-kind kind)
+      (<- folded int (folder row))
+      (return folded)))
+  0)
+
+(defk by-two-tables [kind row]
+  {:pre [(: kind str) (: row int)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
+  (for [#(folder-kind folder) MARK-FOLDERS]
+    (when (= folder-kind kind)
+      (<- _m int (folder row))))
+  (for [#(folder-kind folder) TICK-FOLDERS]
+    (when (= folder-kind kind)
+      (<- _t int (folder row))))
+  0)
+
 (defk by-uneven-row [kind row]
   {:pre [(: kind str) (: row int)] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
   (for [#(folder-kind folder) UNEVEN]
@@ -88,7 +116,7 @@ def _names(report) -> set[str]:
     return {name.rsplit(".", 1)[-1] for name in report.effect_names}
 
 
-@pytest.mark.parametrize("program", ["by_row", "each_step", "by_name"])
+@pytest.mark.parametrize("program", ["by_row", "each_step", "by_name", "by_partial_row", "by_two_tables"])
 def test_a_function_taken_out_of_a_module_table_runs_each_entry(pkg: str, program: str) -> None:
     report = analyze_program(f"{pkg}.tables:{program}")
 
