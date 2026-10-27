@@ -6,6 +6,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView JobStatus])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.heartbeat_rules [finished-task-id])
+(import doeff_cluster.worker.core.room_rules [announced-provides])
 
 
 (deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
@@ -54,7 +55,8 @@
    provides の後ろに足して名乗る。起動の引数の能力との和で、coordinator は heartbeat ごとに Worker の行の provides を書き直すので、次の
    heartbeat から置き方に効く)。memory-mib = 枠の file の行の常駐の job の memory の予算(MiB — 名乗る時だけ欄 memoryMiB を書く。欄を
    知らない coordinator は読み捨てる)。"
-  {"name" name "provides" (+ (list provides) (lfor p pools :if (not-in p provides) p)) "exclusive" (list exclusive) "node" node
+  (<- named (get tuple #(str ...)) (announced-provides provides pools))
+  {"name" name "provides" (list named) "exclusive" (list exclusive) "node" node
    "capacity" capacity "taskReserve" task-reserve
    "versions" versions
    "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at

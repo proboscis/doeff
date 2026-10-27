@@ -29,12 +29,16 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import enum [StrEnum])  ; defenum の展開が使う
 (import json)
-(import doeff_cluster.shared.core.capabilities [pool-refusal])
+(import doeff_cluster.shared.core.capabilities [capabilities-of pool-refusal])
 
 ;; 枠の file を読み直す間。kubelet が ConfigMap の変更を Pod の file へ写すのに 1 分前後かかるので、拍ごとに読まなくても遅れは増えない。
 (val READ-EVERY-MS (* 10 1000))
 
 (defenum RoomState OK UNREADABLE MALFORMED)
+
+;; 雛形の能力: worker の雛形(deploy/k8s/worker/worker.yaml の WORKER_PROVIDES — host-only の差も同じ)が、機体の印 host-<機体> の後ろに
+;; どの機体の worker にも渡す能力。上に載る系の照らし(常駐の job が枠に入るか)は写さずにここから読む(card ki-5996b0cce581)。
+(val TEMPLATE-PROVIDES #("host-systemd-readable"))
 
 
 (defrecord WorkerRoom
@@ -111,6 +115,22 @@
     (not-in "memoryMiB" row) None
     (and (isinstance value int) (not (isinstance value bool)) (>= value 0)) value
     True (.format "worker {} の memoryMiB {!r} が 0 以上の整数でない" name value)))
+
+
+(defk launch-provides [node extra]
+  {:pre [(: node str) (: extra (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
+  "雛形が機体 node の worker に起動の引数 --provides で渡す能力(host-<node>・雛形の能力 TEMPLATE-PROVIDES・env の WORKER_PROVIDES_EXTRA の
+   名 extra — 空の名は飛ばす)を、起動の入口と同じ読み(capabilities-of — 名の順の重なりの無い tuple)で知るため。受けられない名は
+   BodyInvalid(ValueError の子)。"
+  (capabilities-of (lfor n (+ #((+ "host-" node)) TEMPLATE-PROVIDES extra) :if n n) "--provides"))
+
+
+(defk announced-provides [provides pools]
+  {:pre [(: provides (get tuple #(str ...))) (: pools (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "worker" :role "judgment"}}
+  "worker が heartbeat の provides で名乗る能力 = 起動の引数の能力 provides の後ろに、枠の file の行の組の印 pools のうちまだ無い物を
+   足した列(card ki-ced3c45980a5)を知るため — heartbeat の本文と上に載る系の照らしが同じ和を使う(card ki-5996b0cce581)。"
+  (+ provides (tuple (gfor p pools :if (not-in p provides) p))))
 
 
 (defk room-warm-services-of [text name]

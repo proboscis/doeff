@@ -34,6 +34,15 @@
   (#^ int settle-mib))
 
 
+(defrecord ExtraProvides
+  "枠の file の worker 1 台に足す能力: name = worker の名・provides = その worker の env の WORKER_PROVIDES_EXTRA の名(雛形の能力の後ろに
+   起動の引数で渡す — 上に載る系が env の file を持つ worker だけ)。"
+  {:tags {:context "coordinator" :role "type"}
+   :check [(.strip name)]}
+  (#^ str name)
+  (#^ (get tuple #(str ...)) provides))
+
+
 (defrecord ExemptJob
   "例外の表の 1 行: job = 置き先が 1 台でよい job の名・reason = 1 台に縛る訳(機体の disk の data を持つ・移す途中 など)。規則 1(置き先が
    2 台以上)だけを当てない — 枠と memory には数える。"

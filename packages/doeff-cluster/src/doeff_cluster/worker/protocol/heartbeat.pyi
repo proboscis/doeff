@@ -7,6 +7,7 @@ from doeff_cluster.worker.intent.worker_model import CodeView as CodeView
 from doeff_cluster.worker.intent.worker_model import JobStatus as JobStatus
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX
 from doeff_cluster.worker.core.heartbeat_rules import finished_task_id as finished_task_id
+from doeff_cluster.worker.core.room_rules import announced_provides as announced_provides
 
 def env_report(views: tuple[CodeView, ...], capacity: str, unmeasured: frozenset[str]) -> dict[str, object]:
     ...
