@@ -23,7 +23,7 @@ pytest.importorskip("doeff_hy")
 EFFECTS_PY = """\
 from dataclasses import dataclass
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def spawn_either(n):
 
 HANDLERS_HY = """\
 (require doeff-hy.macros [defhandler defk <-])
-(import doeff_vm [EffectBase])
+(import doeff [EffectBase])
 (import {pkg}.effects [ReadBoard WriteBoard Nap Tick WriteFamily])
 (import doeff_core_effects.effects [Await])
 

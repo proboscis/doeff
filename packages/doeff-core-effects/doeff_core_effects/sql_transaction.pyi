@@ -10,8 +10,8 @@ from doeff import do as program_handler
 from doeff import Resume as Resume
 from doeff import Program as Program
 from doeff import EffectBase as EffectBase
-from doeff_vm import WithHandler as WithHandler
-from doeff_vm import K as K
+from doeff import K as K
+from doeff import WithHandlerType as WithHandlerType
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects.sql_effects import SqlBatch as SqlBatch

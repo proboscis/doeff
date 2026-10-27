@@ -1,6 +1,6 @@
 """Fixture effect classes for doeff-domain tests."""
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class FixtureAlpha(EffectBase):

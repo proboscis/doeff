@@ -11,7 +11,7 @@
 ;; 周の頭で壁の時計と単調な時計を続けて読む)が周ごとの時計の読みを足した: 114 歩 → 129 歩(正しさのための読みで、task は増えない)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_vm.doeff_vm [vm-work-counts])
+(import doeff._vm [native])
 (import doeff_time [SimClock])
 (import doeff_time [sim-time-handler])
 (import doeff_core_effects.scheduler [CreatePromise Promise])
@@ -29,12 +29,12 @@
   "鳴らない呼び鈴を 1 つ持つ偽の宿で、本物の run-worker と本番の待ちの答え手を仮想の QUIET-MS 回し、#(周の数 歩) を返すため。"
   (val log (TickLog (SimClock)))
   (<- bell Promise (CreatePromise))
-  (val before (get (vm-work-counts) 0))
+  (val before (get (native.vm-work-counts) 0))
   (<- ((sim-time-handler :clock log.clock)
        ((quiet-host log bell QUIET-MS)
         (stop-signal-never-comes
           (tick-pauses (do-ticks None None))))))
-  #((len log.reads) (- (get (vm-work-counts) 0) before)))
+  #((len log.reads) (- (get (native.vm-work-counts) 0) before)))
 
 
 (deftest test-a-quiet-heartbeat-tick-stays-light

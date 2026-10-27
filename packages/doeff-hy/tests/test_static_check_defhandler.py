@@ -291,7 +291,7 @@ def test_static_expansion_reads_only_aliases_of_the_expansion_names() -> None:
     with static_view():
         static = _expand(NAMED_PROBE)
     assert "_doeff_Pass(_doeff_effect, _doeff_k)" in static, static
-    assert "_doeff_WithHandler(" in static, static
+    assert "_doeff_WithHandlerType(" in static, static
     assert "_doeff_Put(" in static, static
     assert "from doeff import Pass as _doeff_Pass" in static, static
 

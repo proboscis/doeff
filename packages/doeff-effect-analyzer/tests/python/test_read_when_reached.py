@@ -19,7 +19,7 @@ from doeff_effect_analyzer.handler_effects import analyze_handler, check_coverag
 from doeff_effect_analyzer.program_effects import analyze_program, reading_sources
 
 EFFECTS_PY = """\
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class Ping(EffectBase):

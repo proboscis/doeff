@@ -41,9 +41,8 @@ from doeff_events.handlers.redis_notices import (
     _client,
     _run,
 )
-from doeff_vm._effect_types import handler_effect_types
 
-from doeff import EffectGenerator, do, with_handlers
+from doeff import EffectGenerator, do, handler_effect_types, with_handlers
 
 # The Python front end of doeff-effect-analyzer is a development tool, not a runtime dependency of doeff-events
 # (same treatment as test_notice_events_closure.py).

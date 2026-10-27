@@ -18,7 +18,7 @@ pytest.importorskip("hy")
 pytest.importorskip("doeff_traverse")
 
 EFFECTS_PY = """\
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class Marked(EffectBase):
@@ -55,7 +55,7 @@ class Elsewhere(EffectBase):
 HANDLERS_PY = """\
 from doeff import do
 from doeff.program import handler as _program_handler
-from doeff_vm import Pass, Resume
+from doeff import Pass, Resume
 
 from {pkg}.effects import Build, Elsewhere, Fold
 

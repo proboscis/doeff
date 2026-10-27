@@ -74,7 +74,7 @@
        ;; R6/D3 緑ピン: 2 つ目の導入は両 domain 名入りで登録時に即例外、includes は自由。
        (import doeff_domain [Domain register-domain isolated-registry
                              DuplicateEffectIntroductionError])
-       (import doeff_vm [EffectBase])
+       (import doeff [EffectBase])
        (import pytest)
        (defclass Adr001PinEffect [EffectBase])
        (with [_ (isolated-registry)]
@@ -99,7 +99,7 @@
        ;; R3(a) 緑ピン: 被覆欠落 domain で fail する fixture と、被覆で pass する fixture。
        (import doeff_domain [Domain register-domain isolated-registry handles
                              assert-domain-covered DomainCoverageError])
-       (import doeff_vm [EffectBase])
+       (import doeff [EffectBase])
        (import pytest)
        (defclass Adr001CoveredEffect [EffectBase])
        (defclass Adr001UncoveredEffect [EffectBase])
@@ -124,7 +124,7 @@
        ;; 導入すれば pass する。
        (import doeff_domain [Domain register-domain isolated-registry
                              assert-no-orphan-effects OrphanEffectError])
-       (import doeff_vm [EffectBase])
+       (import doeff [EffectBase])
        (import pytest sys types)
        (setv mod-name "adr_doe_domain_001_orphan_pin")
        (setv mod (types.ModuleType mod-name))

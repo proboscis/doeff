@@ -1,6 +1,6 @@
 """Fixture package for orphan scanning: the walk must reach submodules."""
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class PkgRootEffect(EffectBase):

@@ -19,7 +19,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [EffectBase Program with_handlers])
-(import doeff_vm [UnhandledEffect])
+(import doeff [UnhandledEffect])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])

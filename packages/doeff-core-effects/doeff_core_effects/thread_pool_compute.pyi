@@ -5,7 +5,7 @@ from doeff_hy.static_types import Handler as _Handler
 from concurrent.futures import Executor as Executor
 from concurrent.futures import Future as Future
 from doeff import Program as Program
-from doeff_vm import PyVM as PyVM
+from doeff import PyVM as PyVM
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.scheduler import Wait as Wait

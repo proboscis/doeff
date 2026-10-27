@@ -18,7 +18,7 @@
 (import dataclasses [dataclass])
 (import typing [TypeVar])
 (import doeff [run with_handlers Program])
-(import doeff_vm [UnhandledEffect])
+(import doeff [UnhandledEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName ReadEnvironment])

@@ -3,7 +3,7 @@
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from doeff import DoExpr as DoExpr
-from doeff_vm import PyVM as PyVM
+from doeff import PyVM as PyVM
 from doeff_core_effects.compute_effects import Compute as Compute
 from doeff_core_effects.compute_effects import Computed as Computed
 from doeff_core_effects.compute_effects import ComputeFailed as ComputeFailed

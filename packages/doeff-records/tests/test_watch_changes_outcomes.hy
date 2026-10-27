@@ -7,7 +7,7 @@
 (require doeff-hy.macros [deftest defk <- val on-raise])
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_vm [Err Ok UnhandledEffect])
+(import doeff [Err Ok UnhandledEffect])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.outcomes [result])
 (import doeff_core_effects.scheduler [scheduled])

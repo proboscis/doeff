@@ -10,7 +10,7 @@ drain_requests.hy は Hy の module なので、pyright は中を読めず、名
 
 from typing import Protocol, TypeVar
 
-from doeff_vm import WithHandler
+from doeff import WithHandlerType
 
 from doeff import Program
 from doeff_core_effects.http_effects import HttpFailed, HttpResponse
@@ -22,7 +22,7 @@ MODULE_TAGS: dict[str, str]
 class _CallsHandler(Protocol):
     """本文の Program に handler を被せる関数(答えの型は本文のまま — host_contract.pyi の _HostHandler と同じ形)。"""
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
+    def __call__(self, body: Program[_A, object], /) -> WithHandlerType[_A]: ...
 
 def drain_request(name: str, ttl_seconds: float, own_boot: str | None) -> tuple[str, str, dict[str, str], dict[str, object]]: ...
 def call_answer(answer: HttpResponse | HttpFailed | None) -> Program[dict[str, object], object]: ...

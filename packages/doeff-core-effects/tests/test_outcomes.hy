@@ -15,7 +15,7 @@
 (import pytest)
 (import doeff [run])
 (import doeff.result [Nothing Some])
-(import doeff_vm [Err Ok UnhandledEffect])
+(import doeff [Err Ok UnhandledEffect])
 (import doeff_core_effects.effects [Absent Raise Resumption resumption-of Ask])
 (import doeff_core_effects.outcomes [maybe result absent-as :as absent-as-fn RaiseCase])
 

@@ -6,7 +6,7 @@
 
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_vm [UnhandledEffect])
+(import doeff [UnhandledEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop])
 (import doeff_core_effects.scheduler [CreatePromise SchedulerDeadlockError Spawn Wait scheduled])

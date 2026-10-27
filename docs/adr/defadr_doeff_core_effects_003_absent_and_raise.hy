@@ -110,7 +110,7 @@
 (import pathlib [Path])
 (import doeff [run with-handlers Ok Err Some Nothing Pass Try EffectBase DoExpr K])
 (import doeff [handler :as make-handler])
-(import doeff_vm [UnhandledEffect])
+(import doeff [UnhandledEffect])
 (import doeff-core-effects.handlers [try-handler])
 (import doeff-core-effects.effects [Absent Raise Resumption resumption-of])
 (import doeff-core-effects.effects [Raise :as ProbeAliasedRaise])  ; R15 の反例: 名前では Raise と分からない別名

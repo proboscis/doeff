@@ -24,7 +24,7 @@ def test_the_core_carriers_that_run_in_place_are_folded() -> None:
 def test_a_carrier_that_declares_nothing_is_not_folded() -> None:
     # The counter-case: an effect that declares nothing (a remote job) runs what it
     # carries elsewhere; a Program function is not an effect at all.
-    from doeff_vm import EffectBase
+    from doeff import EffectBase
 
     class RemoteJob(EffectBase):
         def __init__(self, program: object) -> None:
@@ -36,7 +36,7 @@ def test_a_carrier_that_declares_nothing_is_not_folded() -> None:
 
 
 def test_a_malformed_declaration_is_refused() -> None:
-    from doeff_vm import EffectBase
+    from doeff import EffectBase
 
     class Misdeclared(EffectBase):
         __doeff_runs_carried__ = ("program",)  # a tuple, not a frozenset of field names

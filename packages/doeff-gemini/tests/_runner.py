@@ -33,9 +33,8 @@ from doeff_core_effects.handlers import (
 )
 from doeff_core_effects.scheduler import scheduled
 from doeff_time import SimClock, sim_time_handler
-from doeff_vm import Err, Ok
 
-from doeff import EffectBase, Pass, Transfer, do, run, with_handlers
+from doeff import EffectBase, Err, Ok, Pass, Transfer, do, run, with_handlers
 from doeff import handler as _program_handler
 
 

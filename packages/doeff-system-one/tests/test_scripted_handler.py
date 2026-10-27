@@ -14,9 +14,8 @@ from doeff_system_one import (
     noul,
     scripted_judge_handler,
 )
-from doeff_vm import Err, Ok
 
-from doeff import Try, do, run, with_handlers
+from doeff import Err, Ok, Try, do, run, with_handlers
 
 
 def _run(program, *layers):

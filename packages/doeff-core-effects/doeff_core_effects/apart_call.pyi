@@ -9,7 +9,7 @@ from doeff import Transfer as Transfer
 from doeff import TransferThrow as TransferThrow
 from doeff import with_handlers as with_handlers
 from doeff.program import handler as raw_handler
-from doeff_vm import PyVM as PyVM
+from doeff import PyVM as PyVM
 from collections.abc import Callable as Callable
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise

@@ -38,7 +38,7 @@ pytest.importorskip("doeff_time")
 EFFECTS_PY = """\
 from dataclasses import dataclass
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class Ping(EffectBase):
@@ -369,7 +369,7 @@ PROGRAMS_HY = """\
 OUTCOMES_HY = """\
 (require doeff-hy.macros [defk defeffect do! <- absent-as on-raise])
 (import dataclasses [dataclass])
-(import doeff_vm [Ok Err])
+(import doeff [Ok Err])
 (import doeff_core_effects.effects [Absent])
 (import doeff_core_effects.outcomes [result])
 (import doeff_core_effects.outcomes :as outcomes)

@@ -3,8 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from doeff_vm import EffectBase
-
+from doeff import EffectBase
 from doeff_core_effects.cache_policy import (
     CacheLifecycle,
     CachePolicy,

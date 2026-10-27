@@ -872,7 +872,7 @@ def test_static_projection_nested_scopes_read_macro_names_bound_at_module_level(
 
 
 # handler の展開が `_doeff_<名>` の別名で読む doeff の node(doeff_hy/expansion_names.py)— 節の関数と本文に被せる関数が読む。
-_HANDLER_NODE_ALIASES = frozenset({"_doeff_Pass", "_doeff_WithHandler"})
+_HANDLER_NODE_ALIASES = frozenset({"_doeff_Pass", "_doeff_WithHandlerType"})
 
 
 @pytest.mark.parametrize(
@@ -886,7 +886,7 @@ _HANDLER_NODE_ALIASES = frozenset({"_doeff_Pass", "_doeff_WithHandler"})
 def test_static_projection_of_nested_defhandler_reads_module_level_nodes(
     tmp_path: Path, body: str
 ) -> None:
-    """型検査の投影で、関数・class の本体の中の defhandler が読む `_doeff_Pass`・`_doeff_WithHandler` の import は module の段に
+    """型検査の投影で、関数・class の本体の中の defhandler が読む `_doeff_Pass`・`_doeff_WithHandlerType` の import は module の段に
     置く — class の本体に残すと、節の関数と本文に被せる関数は名を module の段から引くので、pyright が
     `"_doeff_Pass" is not defined` と読んだ。関数の中に残すと外の関数の局所の名になる(49a293f19 の投影の項と同じ形)。"""
     tree = _projection_of(

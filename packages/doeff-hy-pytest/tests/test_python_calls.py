@@ -59,7 +59,7 @@ def _own_stores(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Mo
 CONFTEST = """\
 import pytest
 
-import doeff_vm.doeff_vm as _ext
+from doeff._vm import native as _ext
 import fake_work
 
 _ext._invariant_checks_enabled = lambda: False

@@ -3,7 +3,7 @@
 from collections.abc import Mapping as Mapping
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_vm import EffectBase as EffectBase
+from doeff import EffectBase as EffectBase
 _HTTP_METHODS: frozenset[str]
 
 class HttpRequest(EffectBase):
