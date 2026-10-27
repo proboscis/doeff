@@ -33,6 +33,9 @@ def semaphore_key(name: str) -> str:
 def live_holders(row: Mapping[str, object] | None, now_ms: int) -> dict[str, int]:
     ...
 
+def outside_holders(row: Mapping[str, object] | None, holder: str) -> _Program[tuple[str, ...], object]:
+    ...
+
 def live_instances(row: Mapping[str, object] | None, now_ms: int, job: str) -> _Program[tuple[str, ...], object]:
     ...
 

@@ -8,13 +8,18 @@
 ;;; lease=<名> の待ち(GET /watch?lease=<名>[&timeoutSeconds=<秒>])は版を見ず、その名前付きの lease に空きがある時に起きる(今空いていれば
 ;;; すぐ — claim を断られてから待ちに入るまでに返された空きも取りこぼさない)。担い手の期限切れで空く刻は lease_rules.lease-full-until が
 ;;; 求め、調停ループはその刻に起きる(wake_policy.watchers-due — #3865 の後の単位)。
+;;; lease=<名>&vacate=<担い手> の待ち(GET /watch?lease=<名>&vacate=<担い手>[&timeoutSeconds=<秒>])は空きを見ず、その lease の行に頭が <担い手>/ でない
+;;; token(期限の切れた物も — lease_rules.outside-holders)が 1 つも無い時に起きる(今無ければすぐ)。期限の切れた token は他の誰かが取るまで行に
+;;; 残り、空きの待ちはその間すぐ返るので、行から token が外れる書き(返し・drop・取りが期限の切れた担い手を落とす)を待つ口がこれになる。
+;;; 時刻では起きない(起こす刻を持たない — 起きるのは行を書いた要求の後の歩と期限だけ)。答えの本文は vacate の欄に待った担い手の名を返し、
+;;; 送り手はその欄で、この問いを知らない旧い coordinator(vacate を読まずに素の空きの待ちと答える)を見分ける(watch-answer-body)。
 (require doeff-hy.macros [defk deff <- val var])
 (import dataclasses [astuple replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.resource_policy [ready-instances])
-(import doeff_cluster.shared.core.lease_rules [lease-full-until semaphore-key])
+(import doeff_cluster.shared.core.lease_rules [lease-full-until outside-holders semaphore-key])
 
 ;; 見え方に数えない返事の欄は版(revision — 版が進むたびに変わる)だけ。worker-mark が 0 にして比べる。
 ;; 温める表(warm)は見え方に入る: その worker に当たる行(cluster_policy.warms-for — 返事と同じ選び方)の鍵と宣言だけで、期限は
@@ -53,15 +58,19 @@
   (if (not (and (= request.method "GET") (= (tuple request.parts) #("watch"))))
       None
       (do (val lease (.get request.query "lease"))
+          (val vacate (.get request.query "vacate"))
           ;; lease の待ちは版を見ないので after を求めない(Watcher の after は使われない 0)。
           (<- after (| int None) (if lease (query-revision 0) (query-revision (.get request.query "after"))))
           (<- seconds (| float None) (query-seconds (.get request.query "timeoutSeconds") (/ timing.watch-max-ms 1000.0)))
           (cond
             (and lease (is-not (.get request.query "worker") None)) (WatchRefusal request "lease の待ちに worker は名指せない")
+            (and (is-not vacate None) (not lease)) (WatchRefusal request "vacate(行から外れるのを待つ担い手の外の名)は lease と組でだけ名指せる")
+            (= vacate "") (WatchRefusal request "vacate は空でない担い手の名")
             (is after None) (WatchRefusal request "after(知っている coordinator の版 — 0 以上の整数)が要る")
             (is seconds None) (WatchRefusal request "timeoutSeconds は 0 以上の数")
             True (Watcher :request request :after after :deadline-ms (+ now (int (* 1000 seconds)))
-                          :worker (.get request.query "worker") :boot (.get request.query "boot") :lease (or lease None))))))
+                          :worker (.get request.query "worker") :boot (.get request.query "boot") :lease (or lease None)
+                          :vacate vacate)))))
 
 
 (deff lease-row [#^ ClusterState state #^ str name]  ; defk にできない: all-waiting-unchanged の内包表記の中から呼ぶ純粋な読み
@@ -75,6 +84,23 @@
   {:pre [(: watcher Watcher) (: state ClusterState) (: now int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "lease の待ちが待つ lease が今満ちていれば最初に空く刻、空いていれば None を知るため(盤の行 semaphore/<名> の値を lease_rules で判じる)。"
   (lease-full-until (lease-row state watcher.lease) now))
+
+
+(defk lease-vacated? [watcher state]
+  {:pre [(: watcher Watcher) (: state ClusterState)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "lease=<名>&vacate=<担い手> の待ちが起きる時か(待つ lease の行に、頭が <担い手>/ でない token が期限の切れた物も含めて 1 つも無い)を
+   知るため — 時刻を見ない(起きる条件と、落ち着いていると判じる条件 all-waiting-unchanged の 1 か所)。"
+  (<- outside (get tuple #(str ...)) (outside-holders (lease-row state watcher.lease) watcher.vacate))
+  (not outside))
+
+
+(defk watch-answer-body [watcher answer]
+  {:pre [(: watcher Watcher) (: answer WatchAnswer)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "待ち watcher への答え answer を返事の本文(JSON の object)にするため: {\"revision\" … \"changed\" …} に、vacate の待ちだけ待った担い手の名を
+   vacate の欄で添える(送り手がこの問いを知る coordinator の答えだと見分ける印 — 頭の註)。止まる調停ループの返事(release-watchers)も
+   同じ本文を作る。"
+  (| {"revision" answer.revision "changed" answer.changed}
+     (if (is watcher.vacate None) {} {"vacate" watcher.vacate})))
 
 
 (defk worker-mark [state worker boot now timing]
@@ -105,13 +131,23 @@
   "どの待ちにも settle-watch が答えず、待ちをそのまま返す時か(版が after のまま・worker を名指した待ちは見え方を覚え済み・期限の
    前)を、見え方を作らずに知るため — 次に起きる刻(wake_policy.watchers-due)が、この時は待ちの期限まで待ってよいと判じる
    (#3865)。条件は settle-watch の枝のうち「起きない・覚え直さない・期限で返さない」枝と同じ(同値の検 = tests/test_watch.hy)。"
-  ;; lease の待ちは、その lease が満ちていて期限の前なら落ち着いている(空けば settle-watch が起こす)。
-  (all (gfor watcher watchers
-             (if (is-not watcher.lease None)
-                 (and (is-not (lease-full-until (lease-row state watcher.lease) now) None) (< now watcher.deadline-ms))
-                 (and (= state.revision watcher.after)
-                      (or (is watcher.worker None) (is-not watcher.mark None))
-                      (< now watcher.deadline-ms))))))
+  ;; lease の待ちは、その lease が満ちていて期限の前なら落ち着いている(空けば settle-watch が起こす)。vacate の待ちは、行に担い手の外の
+  ;; token が残っていて期限の前なら落ち着いている(外れれば settle-watch が起こす — 時刻では変わらない)。
+  (var unchanged True)
+  (for [watcher watchers]
+    (var vacated False)
+    (when (is-not watcher.vacate None)
+      (<- seen bool (lease-vacated? watcher state))
+      (:= vacated seen))
+    (val settled (cond
+                   (is-not watcher.vacate None) (and (not vacated) (< now watcher.deadline-ms))
+                   (is-not watcher.lease None)
+                     (and (is-not (lease-full-until (lease-row state watcher.lease) now) None) (< now watcher.deadline-ms))
+                   True (and (= state.revision watcher.after)
+                             (or (is watcher.worker None) (is-not watcher.mark None))
+                             (< now watcher.deadline-ms))))
+    (:= unchanged (and unchanged settled)))
+  unchanged)
 
 
 (defk settle-watch [watcher state now timing]
@@ -119,7 +155,13 @@
    :tags {:context "coordinator" :role "judgment"}}
   "待ち 1 件を今の状態で判じるため。worker を名指さない待ちは版が after と違えば起きる。名指した待ちは、最初に見た時に版が after と
    違えば(送り手の知らない変化が既にある)起き、同じならその時の見え方を覚え、後で版が進んだ時に見え方が変わっていれば起きる
-   (変わっていなければ覚えた版を進めて待ち続ける)。どれでもなければ期限で返す。"
+   (変わっていなければ覚えた版を進めて待ち続ける)。どれでもなければ期限で返す。vacate の待ちは、待つ lease の行に担い手の外の token が
+   無ければ起きる(lease-vacated? — 期限の切れた token が残る間は、空きがあっても起きない)。"
+  (when (is-not watcher.vacate None)
+    (<- vacated bool (lease-vacated? watcher state))
+    (return (if vacated
+                (WatchStep :answer (WatchAnswer state.revision True) :watcher watcher)
+                (! (watch-deadline watcher state now)))))
   (when (is-not watcher.lease None)
     (<- full (| int None) (lease-full-at watcher state now))
     (return (if (is full None)

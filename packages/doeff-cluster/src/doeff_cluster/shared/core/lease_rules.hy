@@ -96,6 +96,15 @@
       (dfor #(token expires) (.items (get row "holders")) :if (> expires now-ms) token expires)))
 
 
+(defk outside-holders [row holder]
+  {:pre [(: row (| (get Mapping #(str object)) None)) (: holder str)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "行の担い手のうち、token の頭が担い手 holder の頭(holder-tokens-prefix — <担い手>/)でない物(期限の切れた物も数える — 時刻を見ない)を
+   知るため: GET /watch?lease=<名>&vacate=<担い手> の待ちが起きる条件(空なら起きる)の 1 か所。行が無ければ空。"
+  (if (is row None)
+      #()
+      (tuple (gfor token (get row "holders") :if (not (.startswith token (holder-tokens-prefix holder))) token))))
+
+
 (defk live-instances [row now-ms job]
   {:pre [(: row (| (get Mapping #(str object)) None)) (: now-ms int) (: job str)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "行の期限が now より後の担い手のうち、job の process(担い手 = lease-holder job <世代の名>・token = <担い手>/<番号>)の世代の名を、

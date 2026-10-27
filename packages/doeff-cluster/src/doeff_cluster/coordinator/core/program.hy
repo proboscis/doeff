@@ -43,7 +43,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested ServiceReached Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
                                                        DeploymentUnreadable NodeLabelsUnreadable])
-(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch watch-answer-body])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-follow with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-follow scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR
                                                    stall-of clocks-shifted unreached-shifted])
@@ -254,12 +254,6 @@
       #(#* result sender)))
 
 
-(defk watch-answer-json [answer]
-  {:pre [(: answer WatchAnswer)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
-  "GET /watch の答えを返事の本文(JSON の object)にするため。"
-  {"revision" answer.revision "changed" answer.changed})
-
-
 ;; process の中の止まりの行の名(2026-10-16・card ki-d033e5f969cf — 名 + 欄 at = 止まりを見つけた歩の刻(ISO)・gap-ms = 経過に
 ;; 数えなかった長さ・busy-ms = 前の歩の長さ・overslept-ms = 予定の起きる刻からの寝過ごし)。機体ごとの止まり(2026-10-13 の atlas)の
 ;; 後に、coordinator が止まっていた事と、その長さだけ worker の沈黙・task の lease・Rollout の期限をずらした事を log から読めるように
@@ -420,7 +414,7 @@
     (<- judged WatchStep (settle-watch watcher next now timing))
     (if (is judged.answer None)
         (:= kept (+ kept #(judged.watcher)))
-        (do (<- body dict (watch-answer-json judged.answer))
+        (do (<- body dict (watch-answer-body watcher judged.answer))
             (<- (Reply watcher.request 200 body)))))
   #(next (len batch) kept now base))
 
@@ -429,8 +423,8 @@
   {:pre [(: state ClusterState) (: watchers tuple)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
   ;; 止まる調停ループが、待たせている版の変化の待ちに「変わっていない」と今の版で返すため(送り手を受付の打ち切りまで待たせない)。
   ;; 答え = 返した数。
-  (<- body dict (watch-answer-json (WatchAnswer state.revision False)))
   (for [watcher watchers]
+    (<- body dict (watch-answer-body watcher (WatchAnswer state.revision False)))
     (<- (Reply watcher.request 200 body)))
   (len watchers))
 
