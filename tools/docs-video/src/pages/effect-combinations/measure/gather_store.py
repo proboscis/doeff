@@ -1,15 +1,14 @@
 # The scheduler scene: three spawned children each read "counter", maybe suspend, and write counter + 1. The
 # scheduler runs one task at a time and switches only where a task suspends, so the children that do not
-# suspend each see the previous write, and the children that suspend on Await between the read and the write all
+# suspend each see the previous write, and the children that suspend on Delay between the read and the write all
 # read the same old value (docs/18-effect-combinations.md, Laws 8a and 8b). Runs both under the Rust and the
 # Python scheduler and prints, for each, the order of the reads and writes and what Gather and the store hold.
-# The suspension is the page's own: Await(asyncio.sleep(0.05)), the example of Law 8b.
-import asyncio
-
+# The suspension is the page's own: Delay(0.05) on sim_time_handler()'s virtual clock, the example of Law 8b.
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import await_handler, state
+from doeff_core_effects.handlers import state
+from doeff_time import Delay, sim_time_handler
 
-from doeff import Await, Gather, Get, Put, Spawn, do, run
+from doeff import Gather, Get, Put, Spawn, do, run
 
 
 @do
@@ -27,7 +26,7 @@ def increment(name, suspend):
         yield note(f"{name} read {n}")
         if suspend:
             yield note(f"{name} suspends")
-            yield Await(asyncio.sleep(0.05))
+            yield Delay(0.05)
         yield Put("counter", n + 1)
         yield note(f"{name} wrote {n + 1}")
         return n
@@ -53,7 +52,7 @@ def gather_three(suspend):
 
 for implementation in ("rust", "python"):
     for suspend in (False, True):
-        results, counter, trace = run(scheduled(state()(await_handler()(gather_three(suspend))), implementation=implementation))
+        results, counter, trace = run(scheduled(sim_time_handler()(state()(gather_three(suspend))), implementation=implementation))
         label = "suspends between read and write" if suspend else "does not suspend"
         print(f"[{implementation}] child {label}:")
         print("  order:", ", ".join(trace))
