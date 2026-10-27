@@ -612,13 +612,15 @@ def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendere
 
 def test_the_room_file_has_one_valid_row_per_node() -> None:
     """枠の file は機体ごとに 1 行を持ち、どの行も 0 ≤ taskReserve ≤ capacity の整数(worker が名乗れる値 — 外れた行は worker が読まず、前の
-    値のまま名乗り続ける)。"""
+    値のまま名乗り続ける)。省ける欄 warmServices は真偽だけ(service を待ちの子から分ける旗 — 真偽でない綴りは worker の起動を断る・
+    card ki-67abc0cf71e9)。"""
     rows = _room_rows()
     assert sorted(rows) == sorted(NODES)
     for node, row in rows.items():
         room = _mapping(row, node)
-        assert sorted(room) == ["capacity", "taskReserve"], node
-        assert all(type(room[key]) is int for key in room), node
+        assert sorted(set(room) - {"warmServices"}) == ["capacity", "taskReserve"], node
+        assert type(room.get("warmServices", False)) is bool, node
+        assert type(room["capacity"]) is int and type(room["taskReserve"]) is int, node
         assert 0 <= int(room["taskReserve"]) <= int(room["capacity"]), node
 
 
