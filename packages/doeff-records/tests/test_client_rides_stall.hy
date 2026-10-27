@@ -22,7 +22,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
-                               ReadEventByKey AppendEvents EventAppend])
+                               ReadEventByKey AppendEvents EventAppend ReadBatch])
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.laws [LAW-SCHEMA LawHarness MAKER as-writer])
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -38,7 +38,7 @@
 (val PATIENCE (RequestPatience :seconds 60.0))
 (val SHORT-PATIENCE (RequestPatience :seconds 10.0))
 ;; 要求と答えの公開 effect の和(止まりの間に撃つ要求の型)。
-(val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey))
+(val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch))
 
 
 (defk part [id]
@@ -60,7 +60,8 @@
     (AppendEvents #((EventAppend "pairs" "cause:stall-k2" {"n" 2}) (EventAppend "journal" "stall-k2" {"n" 2})))
     (ReadEvents "journal")
     (ReadStreamEnd "journal")
-    (ReadEventByKey "journal" "stall-k1")))
+    (ReadEventByKey "journal" "stall-k1")
+    (ReadBatch #((ReadRow "parts" #("p1")) (ListRows "parts")))))
 
 
 (defk lifted-after [harness seconds]

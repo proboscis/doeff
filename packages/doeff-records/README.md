@@ -21,6 +21,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `ReadEventByKey(stream, idempotency_key)` | 追記の列・冪等キー | 答えの分け方は `defeffect` で宣言している(`:absent [EventAbsent]`・`:failure [Unreachable]`・`:value [EventRetired]`)。成功 = `Event`(その鍵で積んだ出来事 — `ReadEvents` が出すのと同じ)。不在 = `EventAbsent()`(その鍵ではまだ積んでいない — `ReadRow` の `Missing` と同じ意味で、呼び手の `<-` が `Absent` に変える。値で受けたい所は `maybe` か `absent-as` で包む)。値 = `EventRetired(sequence)`(積まれたが保持の期限を過ぎた — 消えた出来事の番号。不在にはせず、呼び手が `Event` と分けて扱う)。列を辿らず、置き場の (列, 冪等キー) の一意の索引で答える(#3750) | 失敗 = `Unreachable`(handler は今までどおり値で答え、呼び手の `<-` が `Raise(Unreachable)` に変える。値で受けたい所は `on-raise` か `result` で包む) |
 | `PutRows(writes, idempotency_key=None)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple・束 1 つの冪等キー。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | 答えの分け方は `defeffect` で宣言している(`:failure [RowsRefused Unreachable]`・`:value [RowsConflict]`・`:absent` は無し)。成功 = `WrittenRows(items, replayed)`(束の順の `Written` — 各項の `position` は束の順に 1 つずつ続く。同じ冪等キー・同じ束の送り直しは前の答えを `replayed=True` で)。値 = `RowsConflict(index, table, key, current)`(束のある行の期待が今の行と合わない版の負けで `PutRow` の `Conflict` と同じ — 束は 1 行も書かない。失敗にも不在にもせず、呼び手が `WrittenRows` と分けて扱う) | 失敗 = `RowsRefused(index, table, key, reason)`(束のある行を宣言が許さない・同じ冪等キーの別の束 — `PutRow` の `Refused` と同じ)・`Unreachable`(handler は今までどおり値で答え、呼び手の `<-` が `Raise(RowsRefused)` / `Raise(Unreachable)` に変える。値で受けたい所は `on-raise` か `result` で包む) |
 | `AppendEvents(appends)` | 追記の束 = `EventAppend(stream, idempotency_key, body)`(欄と意味は `AppendEvent` と同じ)の空でない tuple。同じ列の同じ冪等キーが 2 度出る束は作る時に `ValueError` | `AppendedEvents(items)`(束の順の、追記ごとの `Appended` か `Refused`) | `Unreachable`(束の全部が積まれたか、どれも積まれていない) |
+| `ReadBatch(reads)` | 読みの束 = `ReadRow` か `ListRows` の空でない tuple(`READ_BATCH_MAX` 個まで・束の中の `ListRows` の `limit` の和は `LIST_LIMIT_MAX` まで — 外は作る時に `ValueError`・読みでない項は `TypeError`) | `BatchRead(items)`(束の順の、読みごとの答え — `ReadRow` は `Row` か `Missing`・`ListRows` は `Page` か `Reset` か `NotIndexed`) | `Unreachable`(束の全部が届かない — 読みの一部だけの答えは返さない) |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
 (`doeff_cluster.shared.intent.semaphore_model`)をそのまま使う。
@@ -76,6 +77,11 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   先に見て(合わない行があれば束の順で最初の行の `RowsConflict`)、次に全部の行の書きの判定を見る(最初に断られた行の `RowsRefused`)。
   確定した束は変更の列に束の順で 1 行ずつ、続いた番号で積む。PostgreSQL の handler は `PutRow` と同じ置き場の lock と
   transaction 1 つの中で全部の行を検めてから書くので、書きの途中の失敗は transaction ごと戻る。
+- `ReadBatch` は行の読みの束を置き場への 1 往復で読む(複数の表から名指す鍵と値の組の行を読む読み手が、読みの数だけ往復ごとの
+  接続の取り合いと service の受けの列を待たないため)。答えの i 番目は、束の i 番目の読みを 1 つだけ撃った答えと同じ(法
+  `law_read_batch_answers_like_each_read`)。束は 1 つの断面とは限らない: memory の handler は錠の内で束を同じ刻に読むが、PostgreSQL の
+  handler は置き場の版と頭を束で 1 度読み、読みを 1 文ずつ流す(読みの間に他の書きが入り得る — 断面が要る呼び手は行の版で照らす)。
+  故障の口は束の読みごとに、同じ読みの `ReadRow` / `ListRows` として当たり、当たれば束の全部が `Unreachable`。
 - `AppendEvents` は追記の束を置き場への 1 往復で積む(1 つの要求で原因と本体の 2 つの出来事を積む書き手が、書きの錠と
   往復を 2 回順に待たないため)。答えは束の順に `AppendEvent` を 1 つずつ、間に他の書きを挟まずに撃った答えと同じ: 追記ごとに冪等キーの
   再送は前の番号・別の本文と上限は `Refused` で、断られた追記は束の他の追記を止めない(`PutRows` と違い全部か 0 ではない)。今積んだ追記の
@@ -184,6 +190,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
 | `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
 | `POST /v1/records/read-event-by-key` | `{stream, idempotencyKey}` | `event`(`event` = `read-events` の `items` と同じ形の出来事 1 つ)/ `eventAbsent` / `eventRetired`(`sequence`) |
+| `POST /v1/records/read-batch` | `{reads: [{operation, body}, …]}`(`operation` は `read-row` か `list-rows`・`body` はその操作の本文と同じ形。1 つ以上・上限は `ReadBatch` と同じ — 外れれば 400。古い service は操作を知らず 404 なので、束で読む client より先に service を新しい版で起こす) | `batchRead`(`items` = 束の順の `row` / `missing` / `page` / `reset` / `notIndexed` の列。束の中の一覧の読みも一覧の計器 `records_list_rows_*` に 1 つずつ数える) |
 | `POST /v1/records/append-events` | `{appends: [{stream, idempotencyKey, body}, …]}`(1 つ以上・同じ列の同じ冪等キーは 1 度だけ — 外れれば 400。古い service は操作を知らず 404 なので、束で積む client より先に service を新しい版で起こす) | `appendedEvents`(`items` = 束の順の `appended` / `refused` の列) |
 | `GET /healthz` | — | `{status: "ok"}` |
 | `GET /metrics` | — | Prometheus の text(`text/plain; version=0.0.4`)— 身元を問わない |
@@ -344,6 +351,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
 | `law_none_removes_a_field` | 差分の値 None はその欄を消し、行の値は None を持たない |
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
+| `law_read_batch_answers_like_each_read` | `ReadBatch` の答えは束の読みを 1 つずつ撃った答えを束の順に並べた物と同じ — 表をまたぐ鍵の読み・値の組の一覧・頁の続きの位置・`NotIndexed`・`Reset` が混ざっても読みごとの答えは変わらない |
 | `law_append_events_answer_like_appends_in_order` | `AppendEvents` の答えは束の順に `AppendEvent` を撃った答えと同じ — 追記ごとの再送・断り・新しい番号を返し、断られた追記は他の追記を止めず、今積んだ番号は束の順に増え、列をまたぐ束も 1 つで積む |
 | `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
 | `law_a_write_names_its_change_position` | `PutRow` の `Written` と `PutRows` の各項の `position` は、その書きの変更が `WatchChanges` に現れる番号と置き場の版。束の中は束の順に続き、最後の書きの位置は書いた直後の一覧の頭と同じ。位置から読む `WatchChanges` はその後の変更だけを返し、版を上げた置き場の書きは新しい版を名乗る |
