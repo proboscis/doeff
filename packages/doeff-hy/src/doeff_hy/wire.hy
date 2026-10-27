@@ -11,6 +11,8 @@
 ;;;
 ;;;   (<- row (parse LandingRow raw))       ; 解いて確かめる — 答え = LandingRow の値か Malformed
 ;;;   (<- row (parse-json LandingRow text)) ; JSON の文字列(bytes も)から
+;;;   (<- m (parse-as (get dict #(str OpaqueJson)) raw))  ; defwire でない入れ物の型へ(答え = その型の値か Malformed)
+;;;   (<- m (parse-json-as (get list str) text))           ; 同じく JSON の文字列から
 ;;;   (<- raw (dump row))                   ; JSON の値へ(送り出す foundation だけ)
 ;;;   (<- schema (json-schema LandingRow))  ; JSON Schema(契約の file と照らす時)
 ;;;
@@ -44,6 +46,7 @@
 (require doeff-hy.macros [defk deff val <-])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import types)
 (import typing [ClassVar Protocol runtime-checkable])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_hy.json_value [JsonValue OpaqueJson])
@@ -53,6 +56,10 @@
 
 ;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra(__pydantic_config__ だけが読む)。
 (setv UNKNOWN-FIELDS {"reject" "forbid" "ignore" "ignore"})
+
+;; parse-as が受ける語彙の型の綴りの形: 素の型・defenum・defwire の型(type)・(get dict #(str T)) などの総称の型(GenericAlias)・
+;; (| T None) などの union(UnionType)。
+(setv SHAPE-FORMS (| type types.GenericAlias types.UnionType))
 
 
 (defrecord WireShape
@@ -116,6 +123,25 @@
    :tags {:context "wire" :role "judgment"}}
   "JSON の文字列(bytes も)を defwire の型 wire-type の値へ解いて確かめる。JSON として読めない文字列も Malformed(欄は空の文字列)。"
   (.decode-json (. wire-type __doeff_wire__ codec) text))
+
+
+(defk parse-as [shape raw]
+  {:pre [(: shape SHAPE-FORMS) (: raw (| JsonValue FrozenMap tuple OpaqueJson))]
+   :post [(: % (| JsonValue tuple frozenset OpaqueJson WireValue Malformed))]
+   :tags {:context "wire" :role "judgment"}}
+  "JSON の値を、defwire でない語彙の型 shape(入れ物 — (get dict #(str object))・(get list str)・(| str None)・
+   (get dict #(str OpaqueJson))・(get tuple #(SomeWire ...)) など。defwire の型も受ける)の値へ解いて確かめる。答え = shape の値か
+   Malformed(型の名は shape の綴り)。型の木と厳しさは parse と同じ(文字列を数にしない・真偽を数にしない・配列は tuple の欄に入る)。
+   出自 = card ki-7c4609cd96c9(pydantic の TypeAdapter で入れ物を直に解いていた読み手を wire の API へ移す)。"
+  (.decode (codec-of shape) raw))
+
+
+(defk parse-json-as [shape text]
+  {:pre [(: shape SHAPE-FORMS) (: text (| str bytes))]
+   :post [(: % (| JsonValue tuple frozenset OpaqueJson WireValue Malformed))]
+   :tags {:context "wire" :role "judgment"}}
+  "JSON の文字列(bytes も)を語彙の型 shape の値へ解いて確かめる(parse-as の文字列の版)。JSON として読めない文字列も Malformed。"
+  (.decode-json (codec-of shape) text))
 
 
 (defk dump [value]

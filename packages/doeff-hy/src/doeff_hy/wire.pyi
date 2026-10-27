@@ -4,14 +4,15 @@ wire.hy は Hy の module なので、pyright は中を読めず、`from doeff_h
 (agora の protocol の file で strict の赤が書き手に直せない形で出る — #2220 で 317 → 416 の出どころの 1 つ)。
 ここで型を宣言する。
 
-- defk(parse・parse-json・dump・dump-json・json-schema)は呼ぶと Program を返す。`(<- x (parse T raw))` の
+- defk(parse・parse-json・parse-as・parse-json-as・dump・dump-json・json-schema)は呼ぶと Program を返す。`(<- x (parse T raw))` の
   x は型検査の展開で `_doeff_perform(parse(T, raw))`(static_types.pyi)になり、Program の答えの型 = `T | Malformed` を受ける。
-- parse / parse-json は型を引数に取る総称の関数: 答えは渡した defwire の型 T の値か Malformed。
+- parse / parse-json は型を引数に取る総称の関数: 答えは渡した defwire の型 T の値か Malformed。parse-as / parse-json-as は defwire でない
+  語彙の型(dict[str, object]・str | None など)も受ける — 素の型を渡せば答えはその型、総称の型や union の綴りなら Any。
 - deff(wire-config・wire-shape)は defwire の展開が module を読む時に呼ぶ普通の関数。
 """
 
 from collections.abc import Mapping
-from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
+from typing import Any, ClassVar, Protocol, TypeVar, overload, runtime_checkable
 
 from doeff import Program
 from doeff_hy.json_value import JsonValue, OpaqueJson
@@ -45,6 +46,18 @@ def parse(
     wire_type: type[_W], raw: JsonValue | Mapping[str, object] | tuple[object, ...] | OpaqueJson
 ) -> Program[_W | Malformed, Any]: ...
 def parse_json(wire_type: type[_W], text: str | bytes) -> Program[_W | Malformed, Any]: ...
+@overload
+def parse_as(
+    shape: type[_W], raw: JsonValue | Mapping[str, object] | tuple[object, ...] | OpaqueJson
+) -> Program[_W | Malformed, Any]: ...
+@overload
+def parse_as(
+    shape: object, raw: JsonValue | Mapping[str, object] | tuple[object, ...] | OpaqueJson
+) -> Program[Any, Any]: ...
+@overload
+def parse_json_as(shape: type[_W], text: str | bytes) -> Program[_W | Malformed, Any]: ...
+@overload
+def parse_json_as(shape: object, text: str | bytes) -> Program[Any, Any]: ...
 def dump(value: WireValue) -> Program[JsonValue, Any]: ...
 def dump_json(value: WireValue) -> Program[str, Any]: ...
 def json_schema(wire_type: type) -> Program[JsonValue, Any]: ...
