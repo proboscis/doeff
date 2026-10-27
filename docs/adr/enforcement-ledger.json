@@ -53,6 +53,7 @@
     "adr0001-d1-agentd-only-worker-route",
     "ban-program-trace-import",
     "cache-handler-no-result-duck-typing",
+    "cli-commands-read-through-effects",
     "cli-profiling-no-runtime-env-read",
     "conductor-cli-runs-effect-programs",
     "conductor-no-created-date-suppress",

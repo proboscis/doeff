@@ -604,7 +604,7 @@ def env_cleanup(
 @cli.command()
 def tui() -> None:
     """Launch interactive TUI for workflow management."""
-    from .tui import main as tui_main
+    from ._tui import main as tui_main
 
     tui_main()
 

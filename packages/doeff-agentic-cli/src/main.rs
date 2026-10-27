@@ -623,16 +623,16 @@ fn cmd_send(
 
 fn cmd_tui() -> Result<()> {
     // Try doeff-agentic-tui first (installed via pip/uv)
-    // Fall back to python -m doeff_agentic.tui
+    // Fall back to python -m doeff_agentic._tui
     let err = Command::new("doeff-agentic-tui").exec();
 
     // If doeff-agentic-tui not found, try python module
     let err2 = Command::new("python")
-        .args(["-m", "doeff_agentic.tui"])
+        .args(["-m", "doeff_agentic._tui"])
         .exec();
 
     anyhow::bail!(
-        "Failed to launch TUI. Tried:\n  1. doeff-agentic-tui: {}\n  2. python -m doeff_agentic.tui: {}\n\nInstall with: uv pip install doeff-agentic",
+        "Failed to launch TUI. Tried:\n  1. doeff-agentic-tui: {}\n  2. python -m doeff_agentic._tui: {}\n\nInstall with: uv pip install doeff-agentic",
         err, err2
     );
 }

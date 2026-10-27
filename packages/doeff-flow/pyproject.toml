@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-doeff-flow = "doeff_flow.cli:cli"
+doeff-flow = "doeff_flow._cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"

@@ -180,6 +180,80 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
         f.write(json.dumps(trace_dict) + "\n")
 
 
+def _optional_str(value: object) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _frame_from_json(value: object) -> TraceFrame | None:
+    """One ``trace`` item of a line written by ``_write_trace``, or None when it is not one."""
+    if not isinstance(value, dict):
+        return None
+    function, file, line, code = (value.get(key) for key in ("function", "file", "line", "code"))
+    if not (isinstance(function, str) and isinstance(file, str) and isinstance(line, int)):
+        return None
+    if not _optional_str(code):
+        return None
+    return TraceFrame(function=function, file=file, line=line, code=code)
+
+
+def _gather_from_json(value: object) -> GatherState | None:
+    """The ``gather`` of a line written by ``_write_trace``, or None when it is not one."""
+    if not isinstance(value, dict):
+        return None
+    total, completed, results = (value.get(key) for key in ("total", "completed", "results"))
+    if not (isinstance(total, int) and isinstance(completed, int) and isinstance(results, list)):
+        return None
+    if not all(isinstance(result, str) for result in results):
+        return None
+    return GatherState(total=total, completed=completed, results=list(results))
+
+
+def _trace_from_line(line: str) -> LiveTrace | None:  # noqa: PLR0911 - one refusal per field keeps the reading flat
+    """The LiveTrace a ``_write_trace`` line holds, or None when the line is not one.
+
+    The reader's half of the file format ``_write_trace`` writes: a line still being
+    written, or one with a field of the wrong type, is not a trace entry.
+    """
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not (isinstance(value, dict) and isinstance(value.get("trace"), list)):
+        return None
+    frames = [_frame_from_json(frame) for frame in value["trace"]]
+    if any(frame is None for frame in frames):
+        return None
+    workflow_id, step, status = value.get("workflow_id"), value.get("step"), value.get("status")
+    if not (isinstance(workflow_id, str) and isinstance(step, int) and isinstance(status, str)):
+        return None
+    started_at, updated_at = value.get("started_at"), value.get("updated_at")
+    if not (isinstance(started_at, str) and isinstance(updated_at, str)):
+        return None
+    current_effect, error, result = (value.get(key) for key in ("current_effect", "error", "result"))
+    if not (_optional_str(current_effect) and _optional_str(error) and _optional_str(result)):
+        return None
+    gather_value = value.get("gather")
+    gather = None if gather_value is None else _gather_from_json(gather_value)
+    if gather_value is not None and gather is None:
+        return None
+    last_slog = value.get("last_slog")
+    if not (last_slog is None or isinstance(last_slog, dict)):
+        return None
+    return LiveTrace(
+        workflow_id=workflow_id,
+        step=step,
+        status=status,
+        current_effect=current_effect,
+        trace=[frame for frame in frames if frame is not None],
+        started_at=started_at,
+        updated_at=updated_at,
+        error=error,
+        result=result,
+        gather=gather,
+        last_slog=last_slog,
+    )
+
+
 def write_terminal_trace(
     workflow_id: str,
     trace_dir: Path | str | None,

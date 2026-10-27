@@ -6,6 +6,7 @@ Contains:
 - WorkflowWatchScreen: Workflow-level view showing all agents
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from textual import work
@@ -16,6 +17,14 @@ from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Footer, Header, Static
 
+from doeff import do
+from doeff_agentic.effects.recorded import (
+    AgenticAttachAgent,
+    AgenticCaptureAgentOutput,
+    AgenticFindWorkflow,
+    AgenticListWorkflows,
+    AgenticStopWorkflow,
+)
 from doeff_agentic.types import WorkflowInfo
 
 from .widgets import (
@@ -27,6 +36,46 @@ from .widgets import (
 
 if TYPE_CHECKING:
     from .app import AgenticTUI
+
+
+@dataclass(frozen=True)
+class _WorkflowView:
+    """What the watch screen shows of a workflow, read in one refresh."""
+
+    workflow: WorkflowInfo
+    #: Each agent's last output line, in the order of ``workflow.agents``.
+    snippets: tuple[str, ...]
+    #: The selected agent's recent output.
+    selected_output: str
+
+
+def _last_line(output: str) -> str:
+    """The last non-empty line of an agent's output, cut to 50 characters ("-" when there is none)."""
+    lines = [line for line in output.strip().split("\n") if line.strip()]
+    return lines[-1][:50] if lines else "-"
+
+
+@do
+def _workflow_view(workflow_id: str, selected_agent_index: int):
+    """The watched workflow with its agents' output, or None when it is no longer recorded."""
+    workflow = yield AgenticFindWorkflow(workflow_id=workflow_id)
+    if workflow is None:
+        return None
+
+    # Get output snippets for each agent
+    snippets: tuple[str, ...] = ()
+    for agent in workflow.agents:
+        output = yield AgenticCaptureAgentOutput(workflow_id=workflow_id, agent=agent.name, lines=5)
+        snippets = (*snippets, _last_line(output))
+
+    # Get detailed output for selected agent
+    selected_output = ""
+    if workflow.agents and selected_agent_index < len(workflow.agents):
+        selected_agent = workflow.agents[selected_agent_index]
+        selected_output = yield AgenticCaptureAgentOutput(
+            workflow_id=workflow_id, agent=selected_agent.name, lines=20
+        )
+    return _WorkflowView(workflow=workflow, snippets=snippets, selected_output=selected_output)
 
 
 class WorkflowListScreen(Screen[None]):
@@ -133,7 +182,7 @@ class WorkflowListScreen(Screen[None]):
     def refresh_workflows(self) -> None:
         """Refresh the workflow list from state files."""
         try:
-            workflows = self.tui_app.api.list_workflows()
+            workflows = list(self.tui_app.perform(AgenticListWorkflows()))
             self.app.call_from_thread(self._apply_workflows, workflows)
         except Exception as e:
             self.app.call_from_thread(
@@ -194,7 +243,7 @@ class WorkflowListScreen(Screen[None]):
         workflow = self._get_selected_workflow()
         if workflow:
             try:
-                stopped = self.tui_app.api.stop(workflow.id)
+                stopped = self.tui_app.perform(AgenticStopWorkflow(workflow_id=workflow.id))
                 if stopped:
                     self.notify(f"Stopped: {', '.join(stopped)}", severity="information")
                 else:
@@ -318,7 +367,7 @@ class WorkflowWatchScreen(Screen[None]):
         self.workflow_id = workflow_id
         self.workflow: WorkflowInfo | None = None
         self.selected_agent_index = 0
-        self.agent_outputs: dict[str, str] = {}  # agent_name -> output snippet
+        self.agent_snippets: tuple[str, ...] = ()  # each agent's last output line
         self._refresh_timer: Timer | None = None
 
     @property
@@ -363,50 +412,22 @@ class WorkflowWatchScreen(Screen[None]):
     def refresh_workflow(self) -> None:
         """Refresh workflow and agent data."""
         try:
-            workflow = self.tui_app.api.get_workflow(self.workflow_id)
-            if workflow is None:
+            view = self.tui_app.perform(
+                _workflow_view(self.workflow_id, self.selected_agent_index)
+            )
+            if view is None:
                 self.app.call_from_thread(self.app.pop_screen)
                 return
-
-            # Get output snippets for each agent
-            agent_outputs: dict[str, str] = {}
-            for agent in workflow.agents:
-                try:
-                    output = self.tui_app.api.get_agent_output(
-                        self.workflow_id, agent.name, lines=5
-                    )
-                    # Get last non-empty line as snippet
-                    lines = [line for line in output.strip().split("\n") if line.strip()]
-                    agent_outputs[agent.name] = lines[-1][:50] if lines else "-"
-                except Exception:
-                    agent_outputs[agent.name] = "-"
-
-            # Get detailed output for selected agent
-            selected_output = ""
-            if workflow.agents and self.selected_agent_index < len(workflow.agents):
-                selected_agent = workflow.agents[self.selected_agent_index]
-                try:
-                    selected_output = self.tui_app.api.get_agent_output(
-                        self.workflow_id, selected_agent.name, lines=20
-                    )
-                except Exception:
-                    selected_output = "(No output)"
-
-            self.app.call_from_thread(
-                self._apply_workflow_data, workflow, agent_outputs, selected_output
-            )
+            self.app.call_from_thread(self._apply_workflow_data, view)
         except Exception as e:
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
-    def _apply_workflow_data(
-        self,
-        workflow: WorkflowInfo,
-        agent_outputs: dict[str, str],
-        selected_output: str,
-    ) -> None:
+    def _apply_workflow_data(self, view: _WorkflowView) -> None:
         """Apply workflow data to UI (main thread only)."""
+        workflow = view.workflow
+        selected_output = view.selected_output
         self.workflow = workflow
-        self.agent_outputs = agent_outputs
+        self.agent_snippets = view.snippets
 
         # Ensure selected index is valid
         if workflow.agents:
@@ -444,9 +465,9 @@ class WorkflowWatchScreen(Screen[None]):
             list_container.mount(Static("No agents", classes="empty-message"))
             return
 
-        for i, agent in enumerate(self.workflow.agents):
+        # The snippets were read with the workflow, one per agent
+        for i, (agent, snippet) in enumerate(zip(self.workflow.agents, self.agent_snippets, strict=True)):
             is_selected = i == self.selected_agent_index
-            snippet = self.agent_outputs.get(agent.name, "-")
             item = AgentListItem(agent, snippet, is_selected)
             list_container.mount(item)
 
@@ -480,15 +501,13 @@ class WorkflowWatchScreen(Screen[None]):
         """Attach to the selected agent's tmux session."""
         agent_name = self._get_selected_agent_name()
         if self.workflow and agent_name:
-            self.app.suspend()
+            attach = AgenticAttachAgent(workflow_id=self.workflow.id, agent=agent_name)
             try:
-                self.tui_app.api.attach(self.workflow.id, agent_name)
+                # Hand the terminal to the session until it detaches
+                with self.app.suspend():
+                    self.tui_app.perform(attach)
             except Exception as e:
                 self.notify(f"Failed to attach: {e}", severity="error")
-            finally:
-                resume = getattr(self.app, "resume", None)
-                if callable(resume):
-                    resume()
 
     def action_logs(self) -> None:
         """View logs for the selected agent."""
@@ -501,7 +520,7 @@ class WorkflowWatchScreen(Screen[None]):
         """Stop the workflow."""
         if self.workflow:
             try:
-                stopped = self.tui_app.api.stop(self.workflow.id)
+                stopped = self.tui_app.perform(AgenticStopWorkflow(workflow_id=self.workflow.id))
                 if stopped:
                     self.notify(f"Stopped: {', '.join(stopped)}", severity="information")
             except Exception as e:
@@ -590,8 +609,10 @@ class AgentLogsScreen(Screen[None]):
     def refresh_logs(self) -> None:
         """Refresh log content."""
         try:
-            output = self.tui_app.api.get_agent_output(
-                self.workflow_id, self.agent_name, lines=200
+            output = self.tui_app.perform(
+                AgenticCaptureAgentOutput(
+                    workflow_id=self.workflow_id, agent=self.agent_name, lines=200
+                )
             )
             self.app.call_from_thread(self._apply_logs, output)
         except Exception as e:
