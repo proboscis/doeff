@@ -5,5 +5,5 @@
   "k3s-1": {"capacity": 2, "taskReserve": 0},
   "k3s-2": {"capacity": 2, "taskReserve": 0},
   "k3s-3": {"capacity": 2, "taskReserve": 0},
-  "zeus": {"capacity": 40, "taskReserve": 6}
+  "zeus": {"capacity": 40, "taskReserve": 6, "warmServices": true}
 }
