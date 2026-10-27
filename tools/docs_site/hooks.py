@@ -8,7 +8,8 @@
    言語の後の素の語を読めず、その囲みを囲みと見ないので、後ろの見出しまで崩れる。file=<名> は囲みの題(title)にする。
 3. 章の動画を再生できるようにする。page は動画を `[![<説明>](assets/videos/<名>.jpg)](assets/videos/<名>.mp4)` と書く —
    GitHub は markdown の video の要素を消すので、repo の画面では 1 こまの画像が mp4 への link になる。site では、その link を
-   1 こまの画像を poster にした video の要素に替える(動画は tools/docs-video で作る)。
+   1 こまの画像を poster にした video の要素に替える(動画は tools/docs-video で作る)。画像を動画の頭の GIF
+   (`assets/videos/<名>.gif` — GitHub の repo の画面で動く)にした page では、poster は同じ名の 1 こまの画像(<名>.jpg)にする。
 """
 
 from __future__ import annotations
@@ -98,14 +99,17 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
 
 
 def videos_to_players(content: str) -> str:
-    """mp4 への link にした 1 こまの画像を、その画像を poster にして再生する video の要素に替えるため(module の頭の 3)。"""
+    """mp4 への link にした 1 こまの画像か GIF を、1 こまの画像を poster にして再生する video の要素に替えるため(module の頭の 3)。"""
 
     def player(match: re.Match[str]) -> str:
         """1 つの link を video に替える。説明(alt)は読み上げの名にする。"""
         attrs = dict(IMG_ATTR.findall(match.group(2)))
+        poster = attrs.get("src", "")
+        if poster.endswith(".gif"):
+            poster = poster.removesuffix(".gif") + ".jpg"
         return (
             f'<video class="docs-video" controls preload="metadata" playsinline src="{match.group(1)}" '
-            f'poster="{attrs.get("src", "")}" aria-label="{attrs.get("alt", "")}" '
+            f'poster="{poster}" aria-label="{attrs.get("alt", "")}" '
             f'style="width: 100%; height: auto;">{html.escape(html.unescape(attrs.get("alt", "")))}</video>'
         )
 

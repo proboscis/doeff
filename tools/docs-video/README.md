@@ -23,8 +23,20 @@ A page links its still to its video, right below the page's opening paragraph:
 | GitHub (repository view) | The still, linking to the mp4. GitHub removes `<video>` from Markdown, so a link is all a repository page can carry. |
 | The docs site (`make docs-site`) | A player with the still as its poster. The site hook (`tools/docs_site/hooks.py`) turns the link into a `<video>`. |
 
-`tests/test_docs_site_videos.py` checks that every such link points at both files and that each mp4 is at
-most 6 MB.
+A page can show the opening of its video moving on GitHub instead of the still: GitHub plays no mp4 in a
+repository view, but it animates a GIF. `node gif.mjs <name>` cuts the first 15 seconds into
+`docs/assets/videos/<name>.gif` (640 px wide, 10 frames a second, about 0.5 MB), and the page links the GIF
+to the video in the same way:
+
+```markdown
+[![<what the video shows, in one sentence>](assets/videos/<name>.gif)](assets/videos/<name>.mp4)
+```
+
+On the docs site the hook still makes a player of it, with `<name>.jpg` as the poster. `docs/index.md` does
+this.
+
+`tests/test_docs_site_videos.py` checks that every such link points at its files (for a GIF, the still as
+well), that each mp4 is at most 6 MB and that each GIF is at most 3 MB.
 
 ## Setup
 
@@ -51,6 +63,7 @@ The narration never uses a local text-to-speech model: the maintainer decided so
 | `src/Root.tsx` | One `<Composition>` per page, with the id `<name>`: it finds every `narrate(...)` export under `src/pages/` itself, so a new page does not edit it. |
 | `tts.py` | Says `narration.json` through OpenAI's speech endpoint into `public/<name>/`, writes `durations.json`. |
 | `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg`. |
+| `gif.mjs` | Cuts the opening of `docs/assets/videos/<name>.mp4` into `<name>.gif`, the moving still for GitHub. |
 | `stills.mjs` | Renders single frames as PNG, to check a layout without rendering the whole video. |
 
 `src/pages/home/` is the reference: the home page's video, scene by scene.

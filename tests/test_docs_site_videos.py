@@ -4,6 +4,8 @@
 mp4 への link になり、docs の site では hook(tools/docs_site/hooks.py)が video の要素に替える。動画は tools/docs-video で作る。
 
 1. page が指す mp4 と 1 こまの画像が在り、mp4 が上限の大きさの内である — repo に入れる動画が clone を重くしすぎないため。
+   画像を動画の頭の GIF(`assets/videos/<名>.gif`)にした page では、同じ名の 1 こまの画像(site の poster)も在り、GIF が
+   上限の大きさの内である。GitHub は repo の mp4 を再生しないが GIF は画像として動かす(card ki-65f560fe404e)。
 2. hook が link を、その画像を poster にした video の要素に替える。
 3. ナレーションの声は OpenAI の text-to-speech の API で作り、ローカルの音声合成の model を使わない(利用者 2026-10-25 02:53 JST
    「ttsは絶対にローカルモデルを使わないで」・02:53 「openai ttsをopenai api keyでやって」)。戻す時はこの検と tools/docs-video/tts.py を
@@ -20,8 +22,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 TTS = ROOT / "tools" / "docs-video" / "tts.py"
-VIDEO_LINK = re.compile(r"\[!\[[^\]]*\]\(([^)\s]+\.jpg)\)\]\(([^)\s]+\.mp4)\)")
+VIDEO_LINK = re.compile(r"\[!\[[^\]]*\]\(([^)\s]+\.(?:jpg|gif))\)\]\(([^)\s]+\.mp4)\)")
 MAX_VIDEO_BYTES = 6_000_000
+MAX_GIF_BYTES = 3_000_000
 # ローカルで声を作る package(model を手元で走らせる物)。tts.py はこれらを import も依存もしない。
 LOCAL_TTS_PACKAGES = (
     "kokoro",
@@ -56,6 +59,13 @@ def test_the_home_page_has_its_video() -> None:
 def test_every_video_link_points_at_files_within_the_size_limit() -> None:
     for page, poster, video in _video_links():
         where = page.relative_to(ROOT)
+        if poster.suffix == ".gif":
+            assert poster.is_file(), f"{where}: GIF {poster.relative_to(ROOT)} が無い"
+            gif_size = poster.stat().st_size
+            assert gif_size <= MAX_GIF_BYTES, (
+                f"{where}: {poster.name} が {gif_size} byte — 上限 {MAX_GIF_BYTES}。tools/docs-video/gif.mjs で短く・狭く作り直す"
+            )
+            poster = poster.with_suffix(".jpg")
         assert poster.is_file(), f"{where}: 1 こまの画像 {poster.relative_to(ROOT)} が無い"
         assert video.is_file(), f"{where}: 動画 {video.relative_to(ROOT)} が無い"
         size = video.stat().st_size
@@ -87,6 +97,17 @@ def test_the_hook_turns_a_video_link_into_a_player() -> None:
     assert 'poster="../assets/videos/home.jpg"' in out
     assert "controls" in out
     assert "<a href" not in out
+
+
+def test_the_hook_puts_the_still_as_the_poster_of_a_gif_link() -> None:
+    content = (
+        '<p><a href="../assets/videos/home.mp4"><img alt="A video" '
+        'src="../assets/videos/home.gif" /></a></p>'
+    )
+    out = _hooks().videos_to_players(content)
+    assert out.startswith("<p><video "), out
+    assert 'src="../assets/videos/home.mp4"' in out
+    assert 'poster="../assets/videos/home.jpg"' in out
 
 
 def test_the_hook_leaves_other_links_alone() -> None:
