@@ -28,7 +28,7 @@
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator Redeclare])
 (import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.shared.entry._system_form :as system_form)
+(import doeff_hy [system_form])
 (import tests.detached_rig [slow-add RIG-PROVIDES])
 (import tests.state_rows [table-from-rows])
 
@@ -226,7 +226,7 @@
 
 
 (deftest test-the-defsystem-form-reads-the-same-scopes-and-keys-as-the-rule
-  ;; 盲検 A の付随の所見: defsystem の形の読み(_system_form — 誤りの文に並べる順を持つ)は範囲の名と欄の集合を自前で持つ。規則
+  ;; 盲検 A の付随の所見: defsystem の形の読み(doeff-hy — doeff-cluster を import できない)は範囲の名と欄の集合を自前で持つ。規則
   ;; (detached_rules)と食い違えば赤にする(系の名 system は系の構成子が付ける欄で、書き手は書かない)。
   (assert (= (frozenset system_form.LIMIT-SCOPES) TASK-LIMIT-SCOPES) system_form.LIMIT-SCOPES)
   (assert (= (frozenset system_form.LIMIT-KEYS) (- GROUP-LIMIT-KEYS #{"system"})) system_form.LIMIT-KEYS))

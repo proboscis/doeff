@@ -1,6 +1,6 @@
-;;; defsystem の形の読みと展開(macro は同じ dir の macros.hy の defsystem — ここは展開の時に呼ぶ関数だけを置く・doeff-hy から 2026-10-27 に移した)。
+;;; defsystem の形の読みと展開(macro は macros.hy の defsystem — ここは展開の時に呼ぶ関数だけを置く)。
 ;;;
-;;;   (defsystem land-notices [foundation]
+;;;   (defsystem agora-land [foundation]
 ;;;     "着地の報せの系"
 ;;;     (land-notice (land-notice foundation)
 ;;;       :needs #{"pg-network"} :replicas 1 :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
@@ -32,28 +32,19 @@
 (import itertools [takewhile])
 (import typing [TypeAlias])
 (import hy.models [Dict Expression Float Integer Keyword List Object Set String Symbol])
-(import doeff-hy.declarations [needs-names record-names])
-;; :update の綴りと job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)は、
-;; 系の型の module が持つ(展開の時の検めと、構成子 service_build.job の実行時の検めが 1 つの定義を読む)。
-(import doeff_cluster.shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES])
-(require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "main"})
-
-;; 展開が import する module(系の型 System・CallShape・GroupLimit の置き場と、構成子 job・system-of の置き場)と、展開がそれを束ねる名。
-;; 名は展開の名の頭 `_doeff_`(doeff_hy.expansion_names.PREFIX)で付ける — 書き手の名と分け合わず、doeff-hy-check の型検査のための
-;; 展開の掃除が「展開の合成した import」と読んで、1 つの module に系を 2 つ書いた時の重ねを 1 つに畳み、関数・class の本体の中の物を
-;; module の段へ移す(doeff_hy.static_check._synthesized_import — 素の `import <module>` だと畳む綴りを doeff-hy が持つことになる)。
-(setv DEFSYSTEM-MODEL #("doeff_cluster.shared.intent.service_model" "_doeff_cluster_service_model"))
-(setv DEFSYSTEM-BUILD #("doeff_cluster.shared.entry.service_build" "_doeff_cluster_service_build"))
-(setv DEFSYSTEM-IMPORTS #(DEFSYSTEM-MODEL DEFSYSTEM-BUILD))
+(import doeff-hy.declarations [needs-names])
+;; 展開が import する doeff-cluster の module の綴り(型検査のための展開の掃除が重ねを畳む綴りと 1 つの定義元 — static_view.py)。
+(import doeff-hy.static-view [DEFSYSTEM-MODEL-MODULE DEFSYSTEM-BUILD-MODULE DEFSYSTEM-IMPORTS])
 
 (setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves"))
 ;; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d)。
 (setv SYSTEM-KEYS #(":task-limits"))
-;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ —
-;; 誤りの文に並べる順を持つので写しを持ち、規則との一致は tests/test_group_limits_owner.hy が検める)。
+;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ)。
 (setv LIMIT-KEYS #("scope" "limit" "perPart"))
 (setv LIMIT-SCOPES #("worker" "cluster"))
+(setv UPDATE-FORMS #("recreate" "handoff"))
+;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
+(setv REPLICAS-VALUES #(0 1))
 (setv CONSTANT-SYMBOLS #("True" "False" "None"))
 ;; 静的な記述(__doeff_system__)に載せる値の型 — 文字列・数・真偽・None と、それを入れた列と文字列の鍵の対応(JSON と同じ形)。
 ;; 列と対応は読むだけの型(abc.Sequence・abc.Mapping)で受ける — list[str] や dict[str, str] をそのまま載せられるように。
@@ -86,6 +77,21 @@
     (when (not (isinstance v value-types))
       (raise (SyntaxError (.format "{}: {} の値は{}の literal: {}" where key value-word (hy.repr v))))))
   pairs)
+
+
+(defn #^ (get list str) record-names [#^ Object form #^ str where #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "`:reads` / `:writes` / `:serves` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
+   形は文字列の literal の集合だけ(空の集合 = 読み書きしないと宣言した)、綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。
+   置き場の名が何かは照らさない(使い手の repo の語彙 — 頭注)。"
+  (when (not (isinstance form Set))
+    (raise (SyntaxError (.format "{}: {} は置き場の名の文字列の集合 #{{\"<置き場>:<名>\" …}}: {}" where key (hy.repr form)))))
+  (for [item form]
+    (when (not (isinstance item String))
+      (raise (SyntaxError (.format "{}: {} の要素は文字列の literal: {}" where key (hy.repr item)))))
+    (setv parts (.split (str item) ":"))
+    (when (not (and (= (len parts) 2) (all parts)))
+      (raise (SyntaxError (.format "{}: {} の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない): {}" where key (hy.repr item))))))
+  (sorted (sfor item form (str item))))
 
 
 (defn #^ (| str int float) static-value [#^ Object form]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -200,21 +206,15 @@
 
 
 (defn #^ Expression dotted [#^ str spelling]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "展開が import する module を、1 つの綴りの定義元(DEFSYSTEM-IMPORTS)から書くため — 点つきの綴りを
+  "展開が import する module と、そこから引く型と構成子を、1 つの綴りの定義元(static_view.py)から書くため — 点つきの綴りを
    Hy の読み取り器が source から作るのと同じ形 `(. a b c)` にする(点つきの Symbol は作れない)。位置は持たせない — 展開の常として
    defsystem の form の位置が入る(hy.read で読むと読んだ文字列の 1 行目の位置が残り、この式の赤が file の頭を指す)。"
   (Expression [(Symbol ".") #* (gfor part (.split spelling ".") (Symbol part))]))
 
 
-(defn #^ Expression import-of [#^ (get tuple #(str str)) place]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "展開が置く `(import <module> :as <名>)` を作るため(place = DEFSYSTEM-IMPORTS の 1 つ — #(module の綴り 束ねる名))。"
-  (setv #(module alias) place)
-  `(import ~(dotted module) :as ~(Symbol alias)))
-
-
-(defn #^ Expression in-module [#^ (get tuple #(str str)) place #^ str name]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "展開が import した module(place = DEFSYSTEM-IMPORTS の 1 つ)の名を引く式を作るため — import が束ねた名を頭に持つ点つきの式で引く。"
-  (dotted (+ (get place 1) "." name)))
+(defn #^ Expression in-module [#^ str module #^ str name]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "module の名を引く式を作るため — `(import a.b.c)` が束縛するのは根の名だけなので、module の綴りを頭に持つ点つきの式で引く。"
+  (dotted (+ module "." name)))
 
 
 (defn #^ Expression call-shape-form [#^ Expression program]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -227,7 +227,7 @@
         (.extend named [(String (hy.mangle (cut (str head) 1 None))) (.pop rest 0)])
         (.append positional head)))
   ;; CallShape は defrecord(構成子は名の引数だけを受ける)。
-  `(~(in-module DEFSYSTEM-MODEL "CallShape") :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
+  `(~(in-module DEFSYSTEM-MODEL-MODULE "CallShape") :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
 (defn #^ (get tuple #(Symbol (| Symbol None))) param-parts [#^ Object param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -270,7 +270,7 @@
       (raise (SyntaxError (.format "defsystem {}: job の名 {} が 2 回ある" system n)))))
   (setv job-forms
         (lfor #(job-name program values _) jobs
-              `(~(in-module DEFSYSTEM-BUILD "job")
+              `(~(in-module DEFSYSTEM-BUILD-MODULE "job")
                  ~(String job-name) ~program
                  :call ~(call-shape-form program)
                  ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
@@ -279,10 +279,10 @@
   ;; 組の上限は GroupLimit(doeff-cluster の service_model が引き渡す型)の tuple にして system-of へ渡す(無ければ鍵を書かない)。
   (setv limit-forms
         (lfor #(group scope limit per-part) limits
-              `(~(in-module DEFSYSTEM-MODEL "GroupLimit") :group ~(String group) :scope ~(String scope) :limit ~(Integer limit)
+              `(~(in-module DEFSYSTEM-MODEL-MODULE "GroupLimit") :group ~(String group) :scope ~(String scope) :limit ~(Integer limit)
                  :per-part ~(Symbol (str per-part)))))
   ;; 静的な記述は setattr 1 回で置く(param_types も同じ式の中で足す)。置いた後に関数の属性 __doeff_system__ を読み直す文を
-  ;; 展開に出さない — 関数の型は欄を持たず、型検査の展開で reportFunctionMemberAccess になり書き手に直せない(#2291)。
+  ;; 展開に出さない — 関数の型は欄を持たず、型検査の展開で reportFunctionMemberAccess になり書き手に直せない(agora-redesign #2291)。
   ;; setattr の記帳は doeff-hy-check が型検査の展開から外す(static_check._bookkeeping_statement)。
   (setv description
         (if typed
@@ -290,15 +290,15 @@
                 {"param_types" {~@(sum (lfor #(n t) typed [(String n) `(+ (. ~t __module__) ":" (. ~t __qualname__))]) [])}})
             (hy.models.as-model static)))
   ;; 系の関数の答えの型は System(service_build.system-of の答え)— 注記を展開に書く。型検査が系の値を System と読み、
-  ;; 書き手に直せない「公開の関数に答えの型が無い」の所見を出さないため(#3366 — 道具がこの展開に委ねる)。
+  ;; 書き手に直せない「公開の関数に答えの型が無い」の所見を出さないため(agora-redesign #3366 — 道具がこの展開に委ねる)。
   ;; 系ごとに同じ import を出す — 1 つの module に系を 2 つ書いた時の重ねは、doeff-hy-check が型検査のための展開で 1 つに畳む
-  ;; (static_check.without_bookkeeping — 束ねる名が `_doeff_` の頭の import を展開の合成した物と読む)。
+  ;; (static_check.without_bookkeeping・畳む綴りは DEFSYSTEM-IMPORTS)。
   `(do
-     ~@(lfor place DEFSYSTEM-IMPORTS (import-of place))
+     ~@(lfor module DEFSYSTEM-IMPORTS `(import ~(dotted module)))
      (import doeff_hy.declarations)
-     (defn #^ ~(in-module DEFSYSTEM-MODEL "System") ~name [~@params]
+     (defn #^ ~(in-module DEFSYSTEM-MODEL-MODULE "System") ~name [~@params]
        ~@(if (is doc None) [] [doc])
-       (~(in-module DEFSYSTEM-BUILD "system-of") ~(String system) #(~@job-forms)
+       (~(in-module DEFSYSTEM-BUILD-MODULE "system-of") ~(String system) #(~@job-forms)
          ~@(if limit-forms [(Keyword "task-limits") `#(~@limit-forms)] [])))
      (setattr ~name "__doeff_system__" ~description)
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))

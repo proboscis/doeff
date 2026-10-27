@@ -1,8 +1,7 @@
 ;;; sim-cluster の行き止まりの見張り(#3078)が、業務の task の WaitForEvents(届いている合図を全部 1 回で受ける待ち)も出来事の待ちと
 ;;; して数えるかの検。数えなければ、誰も Ping を送らない筋書きで仮想の時計が進み続けて終わらない(test_sim_deadlock の
 ;;; test-a-wait-for-an-event-nobody-sends-ends-the-run-at-once-as-a-deadlock の WaitForEvents 版)。
-(require doeff-hy.macros [deftest defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [deftest defk defsystem <- val])
 (import doeff_events [MemoryBroker])
 (import pytest)
 (import collections.abc [Callable])

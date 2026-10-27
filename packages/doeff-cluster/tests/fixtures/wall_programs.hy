@@ -4,8 +4,7 @@
 ;;; Await の答え手(await-handler)と aiohttp の待ち受けを並べる(wall-io-foundation)— 柵は Await を通さない(host_contract.SIM-PASSABLE)
 ;;; ので、本番の土台と同じく job の中の await-handler が Await を外部の promise(CreateExternalPromise・Wait — 柵を通る)に変える。
 ;;; 外の thread の客(talk-over-ws)は Program の外の本物の socket の客で、筋書きが Await で待つ(壁の時計の入口の await-handler が答える)。
-(require doeff-hy.macros [defk deff <- val var])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk deff defsystem <- val var])
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import json)

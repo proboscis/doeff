@@ -1,6 +1,5 @@
-"""関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff ほか
-doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum、持ち主の package が出す
-doeff_conductor.macros の defworkflow と doeff_cluster.shared.entry.macros の defsystem)が、
+"""関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff・defsystem ほか
+doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum、doeff_hy.conductor の defworkflow)が、
 外の関数に局所の名を作らない事の検(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を
 検体で数える事は card ki-93395c51de1e・defrecord と defwire は card ki-8a17293bc3e5・class の本体と型検査の投影と defworkflow は
 ki-8a17293bc3e5 の残り)。
@@ -11,7 +10,7 @@ defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_st
 最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は card ki-c67428538aec・
 tests/test_fnk_do_bang_scope.py)。defmcp-tool も展開の頭で `_doeff_do`・`McpToolDef`・`McpParamSchema` を import する。
 defeffect は `_doeff_effect_base`・`_doeff_dataclass`・`_doeff_ClassVar` などを、deff は宣言の `doeff_hy` を、defsystem は
-`doeff_hy`・`_doeff_cluster_service_model`・`_doeff_cluster_service_build` を、defrecord は `doeff_hy`(record_runtime・頭の辞書の宣言)を、defwire は加えて
+`doeff_hy`・`doeff_cluster` を、defrecord は `doeff_hy`(record_runtime・頭の辞書の宣言)を、defwire は加えて
 `_doeff_ClassVar` を import する。
 module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。defhandler は tests/test_handle_scope.py
 (card ki-907f779b3290)が検め、ここでは card ki-93395c51de1e の再現の手順の形だけを置く。
@@ -61,8 +60,7 @@ _SCOPE_LEAKING_NAMES = frozenset(
         "_doeff_cast",
         "_doeff_object",
         "doeff_core_effects",
-        "_doeff_cluster_service_model",
-        "_doeff_cluster_service_build",
+        "doeff_cluster",
         "WithHandler",
         "Resume",
         "Transfer",
@@ -76,11 +74,10 @@ _SCOPE_LEAKING_NAMES = frozenset(
 
 # module の段の defk が 1 つ在る(書き手の module の普通の形)— 入れ子の外の関数が先に読む補助は module の globals に在る
 _HEADER = """
-(require doeff-hy.macros [defk defp defpp deftest defmcp-tool defeffect deff defhandler defpipeline
+(require doeff-hy.macros [defk defp defpp deftest defmcp-tool defeffect deff defhandler defsystem defpipeline
                           <- traverse for/do])
 (require doeff-hy.record [defrecord defwire defenum])
-(require doeff-conductor.macros [defworkflow defphase agent!])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.conductor [defworkflow defphase agent!])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
@@ -444,32 +441,27 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
 _NOT_DEFINITION_MACROS = frozenset({"defphase"})
 
 
-#: 定義の macro を持ち主の package に置く Hy の module(doeff-hy の外 — 利用者の答え lt-GXXY5TVWBHJW4ZCBDTCRN68XZS・card ki-f2107259b141)。
-_OWNER_MACRO_MODULES = ("doeff-conductor.macros", "doeff-cluster.shared.entry.macros")
-
-
-def _owner_macro_names() -> set[str]:
-    """`(require <持ち主の module> *)` が書き手の module に引く macro の名 — 持ち主の macro の module は Python から import せず、
-    書き手と同じに Hy の require で読む(この検の module 契約が許す依存の外)。"""
-    reader = types.ModuleType("owner_macro_names")
-    for module in _OWNER_MACRO_MODULES:
-        hy.eval(hy.read(f"(require {module} *)"), reader.__dict__, module=reader)
+def _conductor_macro_names() -> set[str]:
+    """`(require doeff-hy.conductor *)` が書き手の module に引く macro の名 — conductor.hy は Python から import せず、書き手と
+    同じに Hy の require で読む(この検の module 契約が許す依存の外)。"""
+    reader = types.ModuleType("conductor_macro_names")
+    hy.eval(hy.read("(require doeff-hy.conductor *)"), reader.__dict__, module=reader)
     return {hy.unmangle(name) for name in vars(reader)[MACRO_TABLE]}
 
 
 def _exported_definition_macros() -> set[str]:
-    """`(require doeff-hy.macros [...])`・`(require doeff-hy.record [...])` と持ち主の module の require で書き手が引ける
+    """`(require doeff-hy.macros [...])`・`(require doeff-hy.record [...])`・`(require doeff-hy.conductor [...])` で書き手が引ける
     定義の macro の名(handle.hy から出し直す defhandler を含む)。"""
     named = {
         hy.unmangle(name)
         for module in (doeff_hy.macros, doeff_hy.record)
         for name in vars(module)[MACRO_TABLE]
-    } | _owner_macro_names()
+    } | _conductor_macro_names()
     return {name for name in named if name.startswith("def") and name not in _NOT_DEFINITION_MACROS}
 
 
 def test_every_definition_macro_has_a_nested_sample() -> None:
-    """doeff_hy.macros・doeff_hy.record と持ち主の module(doeff_conductor.macros・doeff_cluster.shared.entry.macros)が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
+    """doeff_hy.macros・doeff_hy.record・doeff_hy.conductor が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
     補助の import が外の関数の局所の名になるかを誰も検めない(足した macro は検体を足すまで赤)。"""
     assert _exported_definition_macros() == set(_DEFINITION_SAMPLES)
 
@@ -766,11 +758,10 @@ def test_class_body_type_methods_read_their_own_class(
 # 型検査の投影の検が使う header — 全定義の macro を require し、書き手の module が `doeff_hy` を import している形(外の関数が
 # module の段の `doeff_hy` を読む)にする。
 _PROJECTION_HEADER = """
-(require doeff-hy.macros [defk deff defp defpp deftest defmcp-tool defeffect defhandler defpipeline
+(require doeff-hy.macros [defk deff defp defpp deftest defmcp-tool defeffect defhandler defsystem defpipeline
                           <- traverse for/do])
 (require doeff-hy.record [defrecord defwire defenum])
-(require doeff-conductor.macros [defworkflow defphase agent!])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.conductor [defworkflow defphase agent!])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff_hy)

@@ -1,0 +1,30 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/system_form.hy"
+  ],
+  "module_extensions": {
+    "doeff-hy-macros": {
+      "allow": [
+        "doeff-hy-system-form"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-hy-declarations",
+        "doeff-hy-static-check"
+      ],
+      "layer": "io",
+      "name": "doeff-hy-system-form",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/system_form.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/system_form.hy"
+      ],
+      "responsibility": "defsystem の形の読みと展開 — 系(土台を受けて名前 → Program と約束の組を返す関数)の job の行・頭の :task-limits・引数の型の注記を展開の時に静的に検め(外れれば SyntaxError)、system-of を呼ぶ関数と静的な記述 __doeff_system__・__doeff_tags__ を置く form を作る。macro 本体は macros.hy の defsystem で、ここは展開の時に呼ぶ関数だけを置く。",
+      "typed": true
+    }
+  ]
+}

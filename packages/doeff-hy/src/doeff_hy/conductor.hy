@@ -1,15 +1,8 @@
 ;;; Hy macros for the doeff-conductor workflow DSL.
 ;;;
-;;;   (require doeff-conductor.macros [defworkflow defphase agent! gate! workspace! merge!
-;;;                                    parallel parallel-for loop <- time! random! pipeline])
-;;;
 ;;; These macros are intentionally thin: they only translate the surface
 ;;; vocabulary into doeff_conductor.dsl IR objects. Expansion-time validation
 ;;; lives in the Python DSL module so Python and Hy authors share one checker.
-;;;
-;;; 持ち主は doeff-conductor(2026-10-27 に doeff-hy の doeff_hy.conductor から移した — 利用者の答え
-;;; lt-GXXY5TVWBHJW4ZCBDTCRN68XZS の by-group・card ki-f2107259b141)。doeff-hy は effect・handler・test を書く macro と、
-;;; 定義の macro の土台(_scoped-definition)だけを持つ。
 
 (import hy.models [Keyword List Symbol])
 
@@ -58,8 +51,7 @@
 
 
 ;; 関数の本体の中に書いた defworkflow は、import(と本体の phase・agent! などが出す import)と定義をすぐ呼ぶ関数に入れて
-;; name だけを束ねる — doeff_hy.macros の _scoped-definition(定義の macro が全部通る 1 か所 — 持ち主の package の定義の macro も
-;; この土台を通る)。並べたままだと import した
+;; name だけを束ねる — doeff_hy.macros の _scoped-definition(定義の macro が全部通る 1 か所)。並べたままだと import した
 ;; `_conductor_defworkflow` が外の関数全体の局所の名になり、外の関数が先に読む module の段の同じ名が UnboundLocalError で落ちた。
 (defmacro defworkflow [_hy-compiler name #* forms]
   (import doeff_hy.macros [_scoped-definition])

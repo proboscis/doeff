@@ -3,8 +3,7 @@
 ;;; service は 3 つの事を並べる: 退きの知らせを待ち、来るたびに盤の <prefix>/<世代>/<番号> に語と刻を書く task・準備できたか
 ;;; (ReportReady)を拍ごとに報告する task・本体は止めの合図(AwaitStop)を待ち、来たら盤の <prefix>/<世代>/stop に刻を書いて終わる。
 ;;; 筋書きは盤の行から「知らせを受けた刻」と「止めの合図を受けた刻」を、届いた報告から「新の世代の最初の Ready の刻」を読む。
-(require doeff-hy.macros [defk <- val var])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem <- val var])
 (import collections.abc [Callable])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn Task])

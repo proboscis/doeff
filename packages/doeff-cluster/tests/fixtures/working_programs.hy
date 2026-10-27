@@ -5,8 +5,7 @@
 ;;; 退く事になった)を待ち、受けたら <prefix>/<世代>/left に刻を書いて自分で終わる(退く知らせを仕事の途中で受けても、仕事は終わりまで
 ;;; 回す — 本番の turn-host が走っているターンを終えてから退くのと同じ)。退く知らせが来なければ止めの合図で止まる。
 ;;; 筋書きは盤の行から、どの世代の仕事が終わりまで回ったかを読む。
-(require doeff-hy.macros [defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem <- val])
 (import collections.abc [Callable])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn Task])

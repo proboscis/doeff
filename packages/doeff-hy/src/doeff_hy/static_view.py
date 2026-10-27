@@ -177,9 +177,17 @@ STATIC_HELPER_IMPORTS: str = (
     "import pytest as _doeff_pytest\n" + SESSION_STATIC_IMPORTS + MCP_STATIC_IMPORTS
 )
 
+#: defsystem の展開(system_form.hy の defsystem-form)が系ごとに出す doeff-cluster の module の import — 系の型(System・CallShape)の
+#: 置き場と構成子(job・system_of)の置き場。展開の綴りと、型検査のための展開の掃除(static_check.without_bookkeeping)が module の直下の
+#: 重ねを 1 つに畳む綴りの唯一の定義元。畳む物が根 doeff_hy の import だけだった間は、1 つの module に defsystem を 2 つ書くと同じ
+#: import が 2 度残り、strict の reportDuplicateImport になって書き手は直せなかった(書き手は import を書いていない — agora-controllers の
+#: 日次 2026-10-12 00:00 の 3 file・6 件)。
+DEFSYSTEM_MODEL_MODULE: str = "doeff_cluster.shared.intent.service_model"
+DEFSYSTEM_BUILD_MODULE: str = "doeff_cluster.shared.entry.service_build"
+DEFSYSTEM_IMPORTS: tuple[str, ...] = (DEFSYSTEM_MODEL_MODULE, DEFSYSTEM_BUILD_MODULE)
+
 #: defeffect が答えの分け方(:absent・:failure・:value)を置く時に出す、別名の無い `import <module>`(declarations.hy の
-#: defeffect-form)。型検査のための展開の掃除が、`_doeff_` の別名で束ねる import(持ち主の package の定義の macro — doeff-cluster の
-#: defsystem など — が出す形)と同じく macro が合成する import として畳み、関数・class の本体の中の
+#: defeffect-form)。型検査のための展開の掃除が、DEFSYSTEM_IMPORTS と同じく macro が合成する import として畳み、関数・class の本体の中の
 #: 物を module の段へ移す綴り。展開の綴りとの一致は tests/test_nested_definition_scope.py が関数の中の defeffect の投影で検める。
 DEFEFFECT_OUTCOMES_MODULE: str = "doeff_core_effects.outcomes"
 

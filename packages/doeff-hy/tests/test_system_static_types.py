@@ -1,5 +1,5 @@
 """defsystem の展開と doeff_cluster.shared.intent.service_model・doeff_cluster.shared.entry.service_build の型(service_model.pyi・
-service_build.pyi)の失敗ケース(#2291・#2279 の対。構成子の置き場は #2540 で service_build へ移した)。
+service_build.pyi)の失敗ケース(agora-redesign #2291・#2279 の対。構成子の置き場は #2540 で service_build へ移した)。
 
 defsystem は `doeff_cluster.shared.entry.service_build.system_of` / `job` と `doeff_cluster.shared.intent.service_model.CallShape` を
 呼ぶ関数に展開する。どちらも Hy の module で、型の宣言(service_build.pyi・service_model.pyi)が無いと pyright はこれらを Unknown として読み、系の関数の戻りまで Unknown に
@@ -22,8 +22,7 @@ import pytest
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
-(require doeff-hy.macros [defk val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem val])
 
 (defclass Ping []
   "土台の型の見本(系の引数の型の注記 — 展開が __doeff_system__ の param_types に載せる)。")
@@ -42,7 +41,7 @@ MODULE = """\
 """
 
 #: 型が見えないと Unknown になる名(service_model・service_build の名・系の関数・その答え)。
-WATCHED = ('"_doeff_cluster_service_model"', '"_doeff_cluster_service_build"', '"system_of"', '"job"', '"CallShape"', '"declared"', '"first_name"')
+WATCHED = ('"service_model"', '"service_build"', '"system_of"', '"job"', '"CallShape"', '"declared"', '"first_name"')
 
 
 @dataclass(frozen=True)
@@ -83,24 +82,23 @@ def test_the_system_expansion_has_no_unknown_or_function_member_reads(probe: Pat
     # service_model・service_build の名・系の関数の答えに「型が分からない」の赤が出ない(.pyi が無いと Unknown)。
     unknown = [e for e in errors if e[0].startswith("reportUnknown")]
     assert not [e for e in unknown if any(n in e[2] for n in WATCHED)], unknown
-    # 系の宣言の行(11〜13 行目)と答えの読み(15・16 行目)には赤が 1 つも無い。
-    assert not [e for e in errors if e[1] in (11, 12, 13, 15, 16)], errors
+    # 系の宣言の行(10〜12 行目)と答えの読み(14・15 行目)には赤が 1 つも無い。
+    assert not [e for e in errors if e[1] in (10, 11, 12, 14, 15)], errors
 
 
 @needs_pyright
 def test_a_system_field_used_as_the_wrong_type_is_red(probe: Path) -> None:
-    # 系の関数の答えが System と読めるので、str の欄 name に 1 を足す(17 行目)と型の取り違えで赤。
+    # 系の関数の答えが System と読めるので、str の欄 name に 1 を足す(16 行目)と型の取り違えで赤。
     errors = _check(probe).errors()
-    assert [e for e in errors if e[1] == 17 and e[0] == "reportOperatorIssue"], errors
+    assert [e for e in errors if e[1] == 16 and e[0] == "reportOperatorIssue"], errors
 
 
-#: 空の :needs と空でない :needs の系(#2396)。空の #{} は展開で frozenset([]) になる。frozenset([]) を変数に
+#: 空の :needs と空でない :needs の系(agora-redesign #2396)。空の #{} は展開で frozenset([]) になる。frozenset([]) を変数に
 #: 置けば frozenset[Unknown] だが、展開は job の名の引数 needs に直に渡すので、service_build.pyi の注記
 #: (frozenset[str] | set[str] | …)から双方向の推論で frozenset[str] と読まれる。注記が消えるか、展開が値を一度変数に置く形に
 #: 変われば、書き手に直せない赤になる — その退行をここで止める。
 EMPTY_NEEDS = """\
-(require doeff-hy.macros [defk])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem])
 
 (defclass Ping []
   "土台の型の見本")
@@ -121,17 +119,16 @@ def test_an_empty_needs_set_reads_as_a_set_of_names(tmp_path: Path) -> None:
     (tmp_path / "probe.hy").write_text(EMPTY_NEEDS, encoding="utf-8")
     errors = _check(tmp_path).errors()
     assert not [e for e in errors if "Unknown" in e[2] or e[0].startswith("reportUnknown")], errors
-    # 系の宣言の行(11〜14 行目)には赤が 1 つも無い。
-    assert not [e for e in errors if 11 <= e[1] <= 14], errors
+    # 系の宣言の行(10〜13 行目)には赤が 1 つも無い。
+    assert not [e for e in errors if 10 <= e[1] <= 13], errors
 
 
-#: 1 つの module に系を 2 つ(test の file に系を並べる形 — 使い手の repo の日次の読みの module)。defsystem は系ごとに
-#: service_model・service_build の import を出す。型検査のための展開の掃除がその重ねを畳まないと、2 つ目の系の行(17 行目)に strict の
-#: reportDuplicateImport が 2 件出て、import を書いていない書き手は module を分ける外に直せない(使い手の repo の日次
-#: 2026-10-12 00:00 の 3 file・6 件)。書き手が自分で 2 度書いた import(json の 3・4 行目)は畳まず、赤のまま残す。
+#: 1 つの module に系を 2 つ(test の file に系を並べる形・agora-controllers の daily_verify/entry/log_reads.hy)。defsystem は系ごとに
+#: service_model・service_build の import を出す。型検査のための展開の掃除がその重ねを畳まないと、2 つ目の系の行(16 行目)に strict の
+#: reportDuplicateImport が 2 件出て、import を書いていない書き手は module を分ける外に直せない(agora-controllers の日次
+#: 2026-10-12 00:00 の 3 file・6 件)。書き手が自分で 2 度書いた import(json の 2・3 行目)は畳まず、赤のまま残す。
 TWO_SYSTEMS = """\
-(require doeff-hy.macros [defk val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem val])
 (import json)
 (import json)
 
@@ -165,8 +162,8 @@ def test_two_systems_do_not_duplicate_the_synthesized_imports(two_systems: Run) 
     errors = two_systems.errors()
     duplicated = [e for e in errors if e[0] == "reportDuplicateImport" and "doeff_cluster" in e[2]]
     assert not duplicated, errors
-    # 2 つの系の宣言の行(13〜19 行目)には赤が 1 つも無い。
-    assert not [e for e in errors if 13 <= e[1] <= 19], errors
+    # 2 つの系の宣言の行(12〜18 行目)には赤が 1 つも無い。
+    assert not [e for e in errors if 12 <= e[1] <= 18], errors
 
 
 @needs_pyright

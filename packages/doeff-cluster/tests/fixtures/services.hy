@@ -2,8 +2,7 @@
 ;;;
 ;;; Program は土台(tests.fixtures.envs の module の最上位の関数 — 本体を受けて自分の handler と scheduler の下で走らせる)で本体を包む
 ;;; defk(計画 10.1 — job は自分で scheduled を包まない)。系は defsystem で書き、土台を引数に受ける。
-(require doeff-hy.macros [defk <-])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem <-])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import collections.abc [Callable])

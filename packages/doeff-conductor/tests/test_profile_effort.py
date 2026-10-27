@@ -65,7 +65,7 @@ def test_workflow_runtime_passes_profile_effort_into_agent_task(
     workflow_path = tmp_path / "effort_workflow.hy"
     workflow_path.write_text(
         """
-(require doeff-conductor.macros [defworkflow agent! workspace! <-])
+(require doeff-hy.conductor [defworkflow agent! workspace! <-])
 (import doeff_conductor.dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
