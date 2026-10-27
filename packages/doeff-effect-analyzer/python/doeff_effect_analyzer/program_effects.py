@@ -1525,6 +1525,17 @@ def _label_of(program: "_ProgramArg | _ProgramAnyOf") -> str:
             return ast.unparse(expr)
 
 
+def _table_values(held: Any) -> tuple[Any, ...]:
+    """The entries of a table a module global holds (a tuple or list — its elements; a dict —
+    its values), or () for anything else (a sequence of Programs written in a body is not a
+    table: it is read where it was written)."""
+    if isinstance(held, (tuple, list)):
+        return tuple(held)
+    if isinstance(held, dict):
+        return tuple(held.values())
+    return ()
+
+
 def _element_of(sequence: Imported, index: ast.expr) -> Imported:
     """``sequence[index]`` for a sequence of Programs: the element at a constant index,
     or any element when the index is not a constant the reader can read."""
@@ -1615,6 +1626,9 @@ class _Scope:
     local_rewraps: dict[str, tuple[ast.expr, ...]] = field(default_factory=dict)
     # A local bound by one destructuring assignment and nothing else → where it was unpacked from.
     local_unpacked: dict[str, _Unpacked] = field(default_factory=dict)
+    # A local bound by one ``for`` that unpacks each element of what it walks (``for kind, fold in
+    # TABLE``) and nothing else → the walked expression and its place in each element.
+    local_rows: dict[str, _Unpacked] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
     # What each expression resolved to in this scope, by id(expr).  Resolution
     # reads only the frozen fields above and the module's globals, so a scope answers the
@@ -1744,6 +1758,35 @@ class _Scope:
             case _:
                 return UNBOUND
 
+    def table_entries(self, expr: ast.expr) -> tuple[Any, ...]:
+        """The values ``expr`` may denote when it takes an entry out of a table held by a module
+        global (a tuple, list or dict built at import time): ``fold`` of ``for kind, fold in
+        FOLDERS`` (that place of each row), ``f`` of ``for f in STEPS`` (each element), and
+        ``TABLE[key]`` (the entry under a constant key, else every entry) — or () when it does
+        not, or when a row has another shape."""
+        match expr:
+            case ast.Name(id=name) if name in self.local_rows:
+                place = self.local_rows[name]
+                rows = _table_values(self.resolve(place.value))
+                if not rows or not all(
+                    isinstance(row, (tuple, list)) and len(row) == place.count for row in rows
+                ):
+                    return ()
+                return tuple(row[place.index] for row in rows)
+            case ast.Name(id=name) if name in self.local_elements:
+                return _table_values(self.resolve(self.local_elements[name]))
+            case ast.Subscript(value=table, slice=key):
+                held = self.resolve(table)
+                if (
+                    isinstance(held, dict)
+                    and isinstance(key, ast.Constant)
+                    and key.value in held
+                ):
+                    return (held[key.value],)
+                return _table_values(held)
+            case _:
+                return ()
+
     def shadowing(self, names: frozenset[str]) -> "_Scope":
         """This scope with ``names`` bound to values the reader cannot see (a comprehension's
         own variables): they no longer resolve to a local, a parameter or a module global."""
@@ -1758,6 +1801,7 @@ class _Scope:
             local_choices=_unshadowed(self.local_choices, names),
             local_rewraps=_unshadowed(self.local_rewraps, names),
             local_unpacked=_unshadowed(self.local_unpacked, names),
+            local_rows=_unshadowed(self.local_rows, names),
             bound=self.bound.without(names),
         )
 
@@ -2106,6 +2150,7 @@ def _scope_of(
     choices = facts.choices
     rewraps = facts.rewraps
     unpacked = facts.unpacked
+    rows = facts.rows
     # A parameter rebound in the body (by an assignment or a loop) no longer holds what
     # the caller passed.
     own_bound = bound.without(facts.rebound)
@@ -2121,6 +2166,7 @@ def _scope_of(
             local_choices=choices,
             local_rewraps=rewraps,
             local_unpacked=unpacked,
+            local_rows=rows,
             bound=own_bound,
         )
     shadowed = frozenset(names)
@@ -2135,6 +2181,7 @@ def _scope_of(
         local_choices={**_unshadowed(parent.local_choices, shadowed), **choices},
         local_rewraps={**_unshadowed(parent.local_rewraps, shadowed), **rewraps},
         local_unpacked={**_unshadowed(parent.local_unpacked, shadowed), **unpacked},
+        local_rows={**_unshadowed(parent.local_rows, shadowed), **rows},
         bound=parent.bound.without(shadowed).plus(own_bound),
     )
 
@@ -2154,6 +2201,7 @@ class _BodyFacts:
     choices: dict[str, tuple[ast.expr, ...]]
     rewraps: dict[str, tuple[ast.expr, ...]]
     unpacked: dict[str, _Unpacked]
+    rows: dict[str, _Unpacked]
     rebound: frozenset[str]
 
 
@@ -2206,6 +2254,7 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
     functions: dict[str, list[FunctionNode]] = {}
     loops: dict[str, list[ast.expr]] = {}
     places: list[_Unpacked] = []
+    row_places: list[_Unpacked] = []
     for node in _body_nodes(function):
         kind = type(node)
         if kind not in _BINDING_NODES or (kind is ast.Name and not isinstance(node.ctx, ast.Store)):
@@ -2224,6 +2273,16 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
                 target=ast.Name(id=name), iter=walked
             ):
                 loops.setdefault(name, []).append(walked)
+            case ast.For(
+                target=ast.Tuple(elts=targets) | ast.List(elts=targets), iter=walked
+            ) | ast.AsyncFor(target=ast.Tuple(elts=targets) | ast.List(elts=targets), iter=walked) if all(
+                isinstance(target, ast.Name) for target in targets
+            ):
+                row_places.extend(
+                    _Unpacked(target.id, walked, index, len(targets))
+                    for index, target in enumerate(targets)
+                    if isinstance(target, ast.Name)
+                )
             case _:
                 pass
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -2261,6 +2320,17 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         for place in places
         if times[place.name] == 1 and place.name not in assigned and place.name not in loops
     }
+    row_times = collections.Counter(place.name for place in row_places)
+    # A name one loop unpacks from each element it walks, and bound nowhere else, holds that
+    # place of an element (any element).
+    rows = {
+        place.name: place
+        for place in row_places
+        if row_times[place.name] == 1
+        and place.name not in assigned
+        and place.name not in loops
+        and place.name not in times
+    }
     return _BodyFacts(
         names=frozenset(names),
         imports=imports,
@@ -2271,7 +2341,8 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         choices=choices,
         rewraps=rewraps,
         unpacked=unpacked,
-        rebound=frozenset(assigned) | frozenset(loops) | frozenset(times),
+        rows=rows,
+        rebound=frozenset(assigned) | frozenset(loops) | frozenset(times) | frozenset(row_times),
     )
 
 
@@ -2971,8 +3042,15 @@ class _Reader:
             self.collect(_body_nodes(block), inner, filename, facts, generator=True)
             return
         target = scope.resolve(call.func)
+        entries = scope.table_entries(call.func) if target is UNBOUND else ()
         if isinstance(target, _LocalFunction):
             self._local_call(target, call, scope, facts)
+        elif entries and all(_function_of(entry) is not None for entry in entries):
+            # A function taken out of a table a module global holds (``for kind, fold in
+            # FOLDERS`` / ``TABLE[name]``): the call runs one of them — each is read, as both
+            # branches of a conditional are.
+            for entry in dict.fromkeys(entries):
+                self._program_call(entry, _function_of(entry), call, scope, filename, facts, location)
         elif target is UNBOUND:
             facts.unresolved.append(
                 (
