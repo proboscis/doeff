@@ -2,7 +2,7 @@
 
 [Why Effects?](20-why-effects-over-di.md) argues the case for algebraic effects by example. This document gives the underlying theory: a classification that predicts — *before you write any code* — whether a proposed handler is trivial, cheap, powerful, or impossible in doeff. It was distilled from an evidence audit across every downstream project consuming doeff, including the places where adoption paid off and the places where it was pure ceremony.
 
-[![A narrated video, about three minutes: the one question that classifies a handler, what it demands of k; class 0 dispatch, one program under a routing handler and a test handler; class 1 middleware, a memo that answers a repeated effect from its cache and a retry that re-yields the effect and resumes k once; class 2 scheduling, an in-flight deduplication that parks a k on a virtual clock; class 3 multi-shot, absent, and re-running a program per branch with a shared memo; and the evidence rule with the measured cost of one effect](assets/videos/capability-classes.jpg)](assets/videos/capability-classes.mp4)
+[![A narrated video, about three minutes: the one question that classifies a handler, what it demands of k; class 0 dispatch, one program under a routing handler and a test handler; class 1 middleware, a memo that answers a repeated effect from its cache and a retry that re-yields the effect and resumes k once; class 2 scheduling, an in-flight deduplication that parks a k on a virtual clock; class 3 multi-shot, absent, and re-running a program per branch with a shared memo; and the evidence rule with the measured cost of one effect](assets/videos/capability-classes.gif)](assets/videos/capability-classes.mp4)
 
 ## The Classification Axis
 

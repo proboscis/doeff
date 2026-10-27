@@ -16,7 +16,7 @@ doeff-agents can expose `defk` functions as [MCP](https://modelcontextprotocol.i
 to Claude Code agents. The agent discovers tools via `.mcp.json`, connects over SSE,
 and calls them through the doeff handler stack.
 
-[![A narrated video, under two and a half minutes: a defk exposed as a tool an agent calls; defmcp-tool expanding to an McpToolDef with a name, a JSON Schema and a @do handler; Launch caught by claude_agent_handler, which captures the handlers, starts the MCP server, writes .mcp.json and resumes k with a session handle; a scripted agent's calls reaching a paper broker handler, and a call outside the schema refused by the server; and the program seeing the agent's order after Stop, in either handler order](assets/videos/mcp-tools.jpg)](assets/videos/mcp-tools.mp4)
+[![A narrated video, under two and a half minutes: a defk exposed as a tool an agent calls; defmcp-tool expanding to an McpToolDef with a name, a JSON Schema and a @do handler; Launch caught by claude_agent_handler, which captures the handlers, starts the MCP server, writes .mcp.json and resumes k with a session handle; a scripted agent's calls reaching a paper broker handler, and a call outside the schema refused by the server; and the program seeing the agent's order after Stop, in either handler order](assets/videos/mcp-tools.gif)](assets/videos/mcp-tools.mp4)
 
 ## Table of Contents
 

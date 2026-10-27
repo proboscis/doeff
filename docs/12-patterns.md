@@ -2,7 +2,7 @@
 
 Common patterns, best practices, and anti-patterns for building robust applications with doeff.
 
-[![A narrated video, about three minutes: the effects of a layered program travelling out to the handler stack, with Try keeping a failure as a value; retry with backoff under a virtual and a wall-clock time handler; state held by the state handler, with a state machine and the snapshot pattern; tests as the same program under another handler stack; and two anti-patterns, a blocking sleep and a side effect done in place](assets/videos/patterns.jpg)](assets/videos/patterns.mp4)
+[![A narrated video, about three minutes: the effects of a layered program travelling out to the handler stack, with Try keeping a failure as a value; retry with backoff under a virtual and a wall-clock time handler; state held by the state handler, with a state machine and the snapshot pattern; tests as the same program under another handler stack; and two anti-patterns, a blocking sleep and a side effect done in place](assets/videos/patterns.gif)](assets/videos/patterns.mp4)
 
 > Five examples also need `doeff-time` (Retry with Backoff, Circuit Breaker, Immutable State
 > Updates, Parallel Data Fetching, Bad: Blocking Operations in Programs). `pip install doeff`

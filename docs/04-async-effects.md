@@ -2,7 +2,7 @@
 
 This chapter covers async integration and scheduler primitives for cooperative concurrency.
 
-[![A narrated video, about two minutes: Spawn, Wait, Gather, Race and Cancel as effects handled by the scheduler, one more handler layer; tasks parking their k on a virtual clock and Gather returning values in input order; one task running at a time until it waits; Gather failing fast and Race leaving the loser running; and Cancel delivered into the task as TaskCancelledError, with its finally block running before the waiter hears](assets/videos/async-effects.jpg)](assets/videos/async-effects.mp4)
+[![A narrated video, about two minutes: Spawn, Wait, Gather, Race and Cancel as effects handled by the scheduler, one more handler layer; tasks parking their k on a virtual clock and Gather returning values in input order; one task running at a time until it waits; Gather failing fast and Race leaving the loser running; and Cancel delivered into the task as TaskCancelledError, with its finally block running before the waiter hears](assets/videos/async-effects.gif)](assets/videos/async-effects.mp4)
 
 ## Table of Contents
 

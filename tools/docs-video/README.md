@@ -32,8 +32,8 @@ to the video in the same way:
 [![<what the video shows, in one sentence>](assets/videos/<name>.gif)](assets/videos/<name>.mp4)
 ```
 
-On the docs site the hook still makes a player of it, with `<name>.jpg` as the poster. `docs/index.md` does
-this.
+On the docs site the hook still makes a player of it, with `<name>.jpg` as the poster. Every page with a
+video does this; `mkdocs.yml` leaves the GIFs out of the site, which never shows them.
 
 `tests/test_docs_site_videos.py` checks that every such link points at its files (for a GIF, the still as
 well), that each mp4 is at most 6 MB and that each GIF is at most 3 MB.

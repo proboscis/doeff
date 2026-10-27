@@ -2,7 +2,7 @@
 
 This chapter covers the effects most programs are built from: Reader, State, and Writer, plus structured logs (`slog`). `doeff-core-effects` ships a reference handler for each that interprets the effect operations; none of them is built into doeff, and a handler of your own can take the place of any of them.
 
-[![A narrated video, about two minutes: Ask reading the env the reader handler holds, Local overriding it for a sub-program, Get and Put on the store the state handler holds, Tell appending to a log that writer keeps in state, slog entries printed by slog_handler and collected by Listen, and one program under reader, state and writer with each effect reaching its layer](assets/videos/basic-effects.jpg)](assets/videos/basic-effects.mp4)
+[![A narrated video, about two minutes: Ask reading the env the reader handler holds, Local overriding it for a sub-program, Get and Put on the store the state handler holds, Tell appending to a log that writer keeps in state, slog entries printed by slog_handler and collected by Listen, and one program under reader, state and writer with each effect reaching its layer](assets/videos/basic-effects.gif)](assets/videos/basic-effects.mp4)
 
 ## Table of Contents
 

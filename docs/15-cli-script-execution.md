@@ -2,7 +2,7 @@
 
 Execute Python scripts with access to program execution results, enabling interactive debugging and program manipulation.
 
-[![doeff run runs a program with its handlers, then a script with program, value and interpreter in its globals, which can run the program again under other handlers](assets/videos/cli-script-execution.jpg)](assets/videos/cli-script-execution.mp4)
+[![doeff run runs a program with its handlers, then a script with program, value and interpreter in its globals, which can run the program again under other handlers](assets/videos/cli-script-execution.gif)](assets/videos/cli-script-execution.mp4)
 
 ## Table of Contents
 

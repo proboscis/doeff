@@ -7,7 +7,7 @@ It can resume `k` with an answer, pass the effect to the next handler out, perfo
 an error into it, hold it while other tasks run, or drop it and end the computation with a value of
 its own.
 
-[![A narrated video, about two and a half minutes: a handler gets k, the rest of the program; a cost cap drops k, a retry performs the effect again and resumes k once, a recorder keeps the answers and replays them, a virtual clock holds the k of sleeping tasks; then how dependency injection, plain async and composing handlers compare](assets/videos/why-effects.jpg)](assets/videos/why-effects.mp4)
+[![A narrated video, about two and a half minutes: a handler gets k, the rest of the program; a cost cap drops k, a retry performs the effect again and resumes k once, a recorder keeps the answers and replays them, a virtual clock holds the k of sleeping tasks; then how dependency injection, plain async and composing handlers compare](assets/videos/why-effects.gif)](assets/videos/why-effects.mp4)
 
 This page shows, example by example, what that gives a program: control flow decided outside the
 code (budgets, retries, routing), one handler for a concern across every kind of operation, effects

@@ -5,7 +5,7 @@ post about doeff draw on. After reading it you can say what doeff is in one sent
 mechanism from its uses, know where it stops, and describe it in words that match. Every example
 on this page runs as a test.
 
-[![A narrated video, about three minutes: a program yields effects and a handler receives each with k; research under handlers that resume k, drop it or keep a budget; handlers stacking; state, exceptions, concurrency, observation and I/O as effects of one kind; swapping I/O as one use; one-shot continuations and the other limits; and where doeff sits next to effect, effectful, OCaml 5 and Koka](../assets/videos/what-doeff-is.jpg)](../assets/videos/what-doeff-is.mp4)
+[![A narrated video, about three minutes: a program yields effects and a handler receives each with k; research under handlers that resume k, drop it or keep a budget; handlers stacking; state, exceptions, concurrency, observation and I/O as effects of one kind; swapping I/O as one use; one-shot continuations and the other limits; and where doeff sits next to effect, effectful, OCaml 5 and Koka](../assets/videos/what-doeff-is.gif)](../assets/videos/what-doeff-is.mp4)
 
 **doeff is algebraic effects for Python.** A program yields *effects*, and a *handler* receives
 each effect together with *k*, the *continuation*: the rest of the program from that `yield` on.

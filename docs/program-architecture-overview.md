@@ -12,7 +12,7 @@ This document describes the current execution model defined by:
 - `docs/history/specs/core/SPEC-TYPES-001-program-effect-separation.md`
 - `docs/history/specs/vm/SPEC-008-rust-vm.md`
 
-[![A narrated video, under three minutes: a program as a value the Rust VM evaluates and an effect as data dispatched at Perform; yield Ask lowered to yield Perform(Ask); nested handlers answering from the innermost outward; nested program calls in the doeff traceback; WithObserve seeing each effect of its body; and run(scheduled(...)) interleaving two tasks](assets/videos/program-architecture.jpg)](assets/videos/program-architecture.mp4)
+[![A narrated video, under three minutes: a program as a value the Rust VM evaluates and an effect as data dispatched at Perform; yield Ask lowered to yield Perform(Ask); nested handlers answering from the innermost outward; nested program calls in the doeff traceback; WithObserve seeing each effect of its body; and run(scheduled(...)) interleaving two tasks](assets/videos/program-architecture.gif)](assets/videos/program-architecture.mp4)
 
 ## Core Model
 

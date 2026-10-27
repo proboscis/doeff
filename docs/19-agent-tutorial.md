@@ -20,7 +20,7 @@ and gets the review back as structured data. After reading it you can:
   agent, no terminal and no session host;
 - run the same Program, unchanged, under the production handler that talks to the session host.
 
-[![A narrated video, about three minutes, of this page's steps: review_file as a doeff Program that yields LaunchSession, AwaitResult, FollowUp and StopSession; scripted_agent, a handler that resumes the Program with scripted outcomes and logs each effect; the agent asking, timing out and returning a result off the schema, with the session stopped every time; review_all over three files under scheduled, try_handler and scripted_agent; and the same Programs under scenario_agent_handler and the production daemon_agent_handlers](assets/videos/agent-tutorial.jpg)](assets/videos/agent-tutorial.mp4)
+[![A narrated video, about three minutes, of this page's steps: review_file as a doeff Program that yields LaunchSession, AwaitResult, FollowUp and StopSession; scripted_agent, a handler that resumes the Program with scripted outcomes and logs each effect; the agent asking, timing out and returning a result off the schema, with the session stopped every time; review_all over three files under scheduled, try_handler and scripted_agent; and the same Programs under scenario_agent_handler and the production daemon_agent_handlers](assets/videos/agent-tutorial.gif)](assets/videos/agent-tutorial.mp4)
 
 The steps up to "Run it against Claude Code" run as they are, with only the install above. That
 last step needs a machine with `tmux`, Claude Code and a session host.

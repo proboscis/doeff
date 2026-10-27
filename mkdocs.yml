@@ -16,9 +16,11 @@ site_dir: site
 
 # mkdocs 1.6 は theme の file(Material の CSS と JS — assets/ の下)にも exclude_docs を当てるので、assets/ の下を許す(`!/assets/`
 # では `*` に当たった file が戻らない。make docs-site が組んだ site に theme の CSS と JS が在る事を確かめる)。
+# 章の頭の GIF(assets/videos/<名>.gif)は GitHub の repo の画面の為の物で、site では hook が video に替えて描かないので写さない。
 exclude_docs: |
   *
   !/assets/**
+  /assets/videos/*.gif
   !/index.md
   !/01-getting-started.md
   !/02-core-concepts.md
