@@ -5,7 +5,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "compute" :role "foundation"})
 (import doeff [DoExpr])
-(import doeff_vm [PyVM])
+(import doeff [PyVM])
 (import doeff_core_effects.compute_effects [Compute Computed ComputeFailed ComputeLoad ReadComputeLoad])
 
 ;; その場で回す答え手の負荷(並びも走りも、待った仕事も無い)。

@@ -38,7 +38,7 @@
 (import concurrent.futures [Future])
 (import doeff [Program Transfer TransferThrow with-handlers])
 (import doeff.program [handler :as raw-handler])
-(import doeff_vm [PyVM])
+(import doeff [PyVM])
 (import collections.abc [Callable])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait TaskCancelledError])
 (import doeff_core_effects.handlers [try-handler])

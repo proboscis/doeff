@@ -1,6 +1,6 @@
 """Submodule of the orphan-scan fixture package."""
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class PkgSubEffect(EffectBase):

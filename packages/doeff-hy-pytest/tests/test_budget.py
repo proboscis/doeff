@@ -277,13 +277,13 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
 # 拡張の関数を差し替える) — 日次は make sync の検査つきの build で走り、
 # 8d4ff1bb からそこでは超過を赤にしない(日次 t104 の赤・agora-redesign #857)。子の process で走る検は、plugin が
 # build の種類を読む pytest_configure より前に読まれる conftest で固定する。
-PIN_UNCHECKED_VM_BUILD = "\nimport doeff_vm.doeff_vm as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: False\n"
+PIN_UNCHECKED_VM_BUILD = "\nfrom doeff._vm import native as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: False\n"
 
 
 def test_fail_mode_fails_the_slow_test_with_time_and_budget(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
@@ -296,7 +296,7 @@ def test_checked_vm_build_reports_but_does_not_fail(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """doeff-vm が検査つきの build の時は、fail の形でも超過を赤にせず、見出しにその旨を出す(上限は検査なしが基準)。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: True)
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
@@ -313,7 +313,7 @@ def test_checked_vm_build_reports_but_does_not_fail(
 def test_unchecked_vm_build_fails_and_names_the_build(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
@@ -328,7 +328,7 @@ def test_unknown_vm_build_is_named_and_judged_as_configured(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """build の種類を読めない(古い VM で関数が無い — vm_probe_handler が ImportError で断る)時は「不明」と出し、判定は設定のまま。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.delattr(vm_ext, "_invariant_checks_enabled")
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
@@ -625,7 +625,7 @@ def test_marker_budget_is_chosen_from_the_item_markers(
 ) -> None:
     """検が持つ印ごとに違う上限で判定される(pytest の走行の中で item の印を読む): 同じ 0.3 秒の検が、印 real_world(5 秒)では緑・
     印 e2e(0.05 秒)では赤。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
@@ -644,7 +644,7 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """印ごとの上限だけの設定でも測る。印の上限を超えた印つきの検は赤、印の無い検は測らない。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
@@ -677,7 +677,7 @@ def test_marked_test_waiting_on_a_child_over_the_wall_clock_budget_is_red(
 ) -> None:
     """印の上限は壁の時計の秒で判じる: 子 process の待ちで 0.3 秒かかる印 real_world の検は、process の CPU 秒が上限 0.05 秒より
     小さくても、fail の形で赤(上限は壁の時計の秒と書く)。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(pytester, FAIL_MODE_INI, {"test_child": CHILD_WAIT_CALL})
@@ -690,7 +690,7 @@ def test_marked_test_waiting_on_a_child_within_the_wall_clock_budget_is_green(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """同じ子 process の待ちの検は、壁の時計の上限(5 秒)の内なら fail の形でも緑。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
@@ -708,7 +708,7 @@ def test_second_registry_dir_is_read_in_a_run(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """登録簿の dir を list で 2 つ書くと、2 つ目に載った検も報告だけになる。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
@@ -727,7 +727,7 @@ def test_second_registry_dir_is_read_in_a_run(
 
 def test_python_test_files_are_not_measured(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
     """印の上限に当たる印をつけた Python の検でも、測らない(.hy の検の file だけが対象)。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     pytester.makeconftest(CONFTEST)
@@ -779,7 +779,7 @@ def test_the_removed_call_budget_seconds_setting_does_not_judge_the_run(
     """実行の秒の上限の設定 doeff_test_call_budget_seconds は無くなった(後方互換は要らない — 2026-10-04): ini に書いても実行は
     秒で判じられない(印も歩数も無い検は測られない — fail の形・検査なしの build でも 0.3 秒の検は緑)。pytest は未登録の設定として
     警告を出すだけで、走行は止まらない。"""
-    import doeff_vm.doeff_vm as vm_ext
+    from doeff._vm import native as vm_ext
 
     monkeypatch.setattr(vm_ext, "_invariant_checks_enabled", lambda: False)
     _project(
@@ -836,7 +836,7 @@ def counts():
 """
 
 PIN_FAKE_WORK = (
-    "\nimport doeff_vm.doeff_vm as _ext\nimport fake_work\n\n_ext._vm_work_counts = fake_work.counts\n"
+    "\nfrom doeff._vm import native as _ext\nimport fake_work\n\n_ext._vm_work_counts = fake_work.counts\n"
 )
 
 MANY_STEPS = """\
@@ -935,7 +935,7 @@ def test_a_steps_budget_without_the_counter_stops_the_run_by_name(
 ) -> None:
     """数の口が無い build で歩数の上限が在れば、秒へ倒さず UsageError で止める(赤・文に設定の名と数の口が無い理由が出る)。
     遅い検が秒で判じられて赤になる(= 秒へ倒れる)のでも、黙って緑になるのでもない: 検は 1 本も走らない。"""
-    import doeff_vm.doeff_vm as ext
+    from doeff._vm import native as ext
 
     _steps_project(pytester, STEPS_FAIL_INI, {"test_slow": SLOW_CALL}, fake=False)
     pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
@@ -956,7 +956,7 @@ def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pyteste
     """歩数は不変条件の検査の有無で変わらないので、検査つきの build でも fail の形なら赤にする(秒は報告だけのまま)。"""
     _steps_project(pytester, STEPS_FAIL_INI, {"test_steps": MANY_STEPS})
     pytester.makeconftest(
-        CONFTEST + "\nimport doeff_vm.doeff_vm as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: True\n" + PIN_FAKE_WORK
+        CONFTEST + "\nfrom doeff._vm import native as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: True\n" + PIN_FAKE_WORK
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)

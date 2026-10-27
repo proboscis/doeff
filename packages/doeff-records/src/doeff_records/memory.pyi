@@ -16,7 +16,7 @@ from datetime import timedelta
 from typing import Protocol, TypeVar
 
 from doeff_core_effects.scheduler import ExternalPromise
-from doeff_vm import WithHandler
+from doeff import WithHandlerType
 
 from doeff import Program
 from doeff_records.values import RememberedWrite, RetiredKey
@@ -72,7 +72,7 @@ _Answer = TypeVar("_Answer")
 class _RecordsHandler(Protocol):
     """memory-records-handler を (store writer) に当てた物 — 本文の Program を受けて handler を被せる(答えの型は本文と同じ)。"""
 
-    def __call__(self, body: Program[_Answer, object], /) -> WithHandler[_Answer]: ...
+    def __call__(self, body: Program[_Answer, object], /) -> WithHandlerType[_Answer]: ...
 
 class StoredRow:
     row: Row

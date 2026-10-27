@@ -1,6 +1,6 @@
 """関数の本体の中に書いた handle・defhandler が、外の関数に局所の名を作らない事の検(card ki-907f779b3290)。
 
-handle と defhandler の実行時の展開は、`_doeff_do`・`_doeff_Resume`・`_doeff_Transfer`・`_doeff_Pass`・`_doeff_WithHandler` と
+handle と defhandler の実行時の展開は、`_doeff_do`・`_doeff_Resume`・`_doeff_Transfer`・`_doeff_Pass`・`_doeff_WithHandlerType` と
 節の終わり方の検めを書いた場所で import する(node の名は書き手の同じ名の effect を隠さない別名 — card ki-16180480129e・
 tests/test_handle_writer_names.py)。defk の本体(関数)の中でそれを import すると、名が関数全体の局所の名になり、同じ関数で先に
 読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちていた(fnk・do! の ki-c67428538aec、入れ子の defk の
@@ -39,7 +39,7 @@ _HANDLE_IMPORT_NAMES = frozenset(
         "_doeff_Resume",
         "_doeff_Transfer",
         "_doeff_Pass",
-        "_doeff_WithHandler",
+        "_doeff_WithHandlerType",
         "_doeff_check_clause_endings",
         "_doeff_check_clause_endings_once",
         "_doeff_declare_passes",
@@ -305,7 +305,7 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     # lt-CZC8SGS3C6DFDGSGG64YF49DH9 の S3 の失敗例)
     handle_only = _eval_module("(setv program (handle (bump-n 1) (Bump [n] (resume (+ n 100)))))")
     assert run(handle_only.program) == 101
-    assert "_doeff_WithHandler" in vars(handle_only)
+    assert "_doeff_WithHandlerType" in vars(handle_only)
 
 
 # class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)。class の本体の import は class の属性になり、展開の

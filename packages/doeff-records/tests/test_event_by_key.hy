@@ -8,7 +8,7 @@
 (import pytest)
 (import doeff [run with_handlers])
 (import doeff.result [Nothing Some])
-(import doeff_vm [Err Ok])
+(import doeff [Err Ok])
 (import doeff_core_effects.outcomes [maybe result])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.handlers [await-handler])

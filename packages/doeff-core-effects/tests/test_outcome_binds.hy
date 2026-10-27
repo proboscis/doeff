@@ -17,7 +17,7 @@
 (import doeff [run EffectBase DoExpr K])
 (import doeff.program [Resume Pass])
 (import doeff.result [Nothing Some])
-(import doeff_vm [Call Err Ok WithHandler])
+(import doeff [Call Err Ok WithHandlerType])
 (import doeff_core_effects.effects [Absent Raise])
 (import doeff_core_effects.outcomes [maybe result open-bind Outcomes])
 (import doeff_core_effects [outcomes])
@@ -437,6 +437,6 @@
 
 (deftest test-resuming-raise-or-absent-is-an-error
   (with [(pytest.raises RuntimeError :match "Raise が再開された")]
-    (run (WithHandler resume-anything (raises-then-continues))))
+    (run (WithHandlerType resume-anything (raises-then-continues))))
   (with [(pytest.raises RuntimeError :match "Absent が再開された")]
-    (run (WithHandler resume-anything (table-rows (read-value "zz"))))))
+    (run (WithHandlerType resume-anything (table-rows (read-value "zz"))))))

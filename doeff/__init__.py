@@ -19,6 +19,17 @@ from doeff_vm import K as K
 from doeff_vm import PyVM as PyVM
 from doeff_vm import UnhandledEffect as UnhandledEffect
 
+# The VM's types for writing handlers and program nodes. doeff is the one package that imports
+# doeff_vm; a subpackage or a user imports these from doeff (agora-redesign ki-ff728b00369a).
+# They are bound before doeff_core_effects is imported below, which imports them from here.
+from doeff_vm import BindOpener as BindOpener
+from doeff_vm import Call as Call
+from doeff_vm import DoFunction as DoFunction
+from doeff_vm import HandlerSpec as HandlerSpec
+from doeff_vm import IRStream as IRStream
+from doeff_vm import TailEval as TailEval
+from doeff_vm import WithBoundaries as WithBoundaries
+
 from doeff.do import do as do
 from doeff.effectful import Effects as Effects
 from doeff.effectful import effectful as effectful

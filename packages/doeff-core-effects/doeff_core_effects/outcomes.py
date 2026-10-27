@@ -22,7 +22,7 @@ from enum import Enum
 from types import GeneratorType, NoneType, UnionType
 from typing import TYPE_CHECKING, Any, Generic, Never, TypeAlias, TypeVar, Union, get_args, get_origin
 
-from doeff_vm import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
+from doeff import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
 
 from doeff.do import do
 from doeff.program import Pass, ProgramHandler, Transfer

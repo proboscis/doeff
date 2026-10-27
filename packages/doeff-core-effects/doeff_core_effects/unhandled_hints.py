@@ -13,8 +13,7 @@ Importing ``doeff_core_effects`` registers ``hint_for`` with the VM
 
 from dataclasses import dataclass
 
-from doeff_vm._unhandled_hint import register_unhandled_effect_hint
-
+from doeff._vm import register_unhandled_effect_hint
 from doeff_core_effects.effects import (
     Ask,
     Await,

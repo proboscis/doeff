@@ -691,9 +691,9 @@ def _yielded_call_on(statements: Sequence[ast.stmt], param: str | None) -> ast.C
 
 
 def _pass_class() -> type:
-    """``doeff_vm.Pass``: the control value that sends the effect a clause received on to the
+    """``doeff.Pass``: the control value that sends the effect a clause received on to the
     handlers outside."""
-    return importlib.import_module("doeff_vm").Pass
+    return importlib.import_module("doeff").Pass
 
 
 def _sent_on_guards(dispatch: _Dispatch, scope: _Scope) -> dict[int, ast.If]:

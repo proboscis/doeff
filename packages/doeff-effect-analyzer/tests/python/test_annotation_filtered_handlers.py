@@ -17,7 +17,7 @@ pytest.importorskip("doeff_vm")
 EFFECTS_PY = """\
 from dataclasses import dataclass
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class Nap(EffectBase):
 
 HANDLERS_PY = """\
 from doeff import handler
-from doeff_vm import EffectBase, Resume
+from doeff import EffectBase, Resume
 
 from {pkg}.effects import Nap, ReadDeadline, ReadPatience
 

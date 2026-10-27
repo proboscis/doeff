@@ -24,10 +24,9 @@ from doeff_time.effects import (
     WaitWithinEffect,
 )
 from doeff_time.handlers.sim_time import SimTimeRuntime
-from doeff_vm._effect_types import handler_effect_types
 from time_test_support import run_with_handlers, sim_time
 
-from doeff import do
+from doeff import do, handler_effect_types
 
 
 def _raw(installed: object) -> Callable[..., object]:

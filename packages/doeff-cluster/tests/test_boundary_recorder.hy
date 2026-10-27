@@ -27,7 +27,7 @@
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import pathlib [Path])
 (import doeff [Program with-handlers])
-(import doeff_vm [UnhandledEffect])
+(import doeff [UnhandledEffect])
 (import doeff_core_effects.handlers [reader await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
