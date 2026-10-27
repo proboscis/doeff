@@ -4,7 +4,8 @@
 # doeff-core-effects: `pip install doeff` there must need no Rust toolchain, and
 # `python -m doeff demo` must run (card ki-8080389a2f78). Checks of what is already on PyPI live in
 # core-install-from-pypi.yml; this one runs before a release puts the wheels there. Not a merge
-# gate: it runs daily, by hand, and on main pushes that change it or build-vm.yml.
+# gate: it runs daily, by hand, and on main pushes that change it, build-vm.yml or the doeff-vm
+# Cargo manifest.
 name: doeff-vm Linux wheels install
 
 on:
@@ -17,6 +18,8 @@ on:
     paths:
       - .github/workflows/doeff-vm-linux-wheels.yml
       - .github/workflows/build-vm.yml
+      - packages/doeff-vm/Cargo.toml
+      - packages/doeff-vm/Cargo.lock
 
 permissions:
   contents: read
