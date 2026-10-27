@@ -145,6 +145,20 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   `doeff.dev/company-machine=true` を読んで足します(`--naming` の `nodeCapabilities` で表を変えられます)。
 - task・切り離した task・温める頼みも同じ `needs` を持ち、空の needs は断ります。
 
+### 常駐の job の口(Service の selector)
+
+- k8s の Pod の worker は、coordinator がその worker に置いた常駐の job を、自分の Pod の label `job.doeff.dev/<job の名>: placed` に
+  写し、job が外れると外します(`worker/protocol/pod_labels`・宣言の job が変わった拍と 60 秒ごと)。job の口の Service は機体の label
+  (`doeff.dev/node`)でなく、この label で選びます — job が別の機体へ移っても口が付いてきます。
+
+  ```yaml
+  selector: { app: doeff-worker, job.doeff.dev/<job の名>: placed }
+  ```
+
+- worker が死んだ Pod は readinessProbe が落ちて Service の振り先から外れます。label にできない名(label の名の字の外・63 字を越える)
+  の job は label にせず、worker の log に 1 行出します。task は label にしません。Pod の外の worker(機体の上で直に動く worker)は
+  label を持ちません。
+
 ### 実行先の契約(HOST-CONTRACT)と job_entry
 
 worker の子 process の入口は `hy -m doeff_cluster.worker.entry.job_entry service|task|probe --program FILE …` です。版(Python・cloudpickle・doeff)を
