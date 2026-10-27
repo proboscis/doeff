@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Final, final
 import pytest
 import redis
 import redis.asyncio
+from doeff_core_effects.effects import Await
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import (
     PRIORITY_HIGH,
@@ -975,3 +976,73 @@ def test_a_kept_notice_lost_on_the_way_to_the_bus_is_received_on_redis(redis_url
     first, second = _run_on_wall_clock(party)
     assert state.dropped
     assert (first, second) == (LawNote("lost"), LawNote("next")), (first, second)
+
+
+# --- one read takes what has already come (agora card ki-a83c715eab23) -----------------------------------------------
+# A source publishes each notice's event on its bus; when every NextAnnouncement is one Await, the source's task parks
+# per notice, and a subscriber whose reaction is long takes one event per reaction. One read must take the crowd.
+
+CROWD: Final = 200
+
+
+@final
+class _Awaits:
+    """How many ``Await`` the Redis handler performed (counted by ``_awaits_counted``)."""
+
+    def __init__(self) -> None:
+        """Start at none."""
+        self._mut_count = 0
+
+    def add(self) -> None:
+        """Count one more."""
+        self._mut_count += 1
+
+    @property
+    def count(self) -> int:
+        """How many were counted."""
+        return self._mut_count
+
+
+def _awaits_counted(awaits: _Awaits) -> "ProgramHandler":
+    """The layer between the Redis handler and the asyncio bridge that counts every ``Await`` and passes it on."""
+
+    @do
+    def handler(effect: Await, k: K) -> "EffectGenerator[object]":
+        awaits.add()
+        yield Pass(effect, k)
+
+    return program_handler(handler)
+
+
+def test_a_crowd_that_came_is_handed_out_with_a_few_reads_on_redis(redis_url: str) -> None:
+    plain = f"{_prefix()}:plain"
+    channel = _kept_channel()
+    awaits = _Awaits()
+
+    @do
+    def reads_a_crowd() -> "EffectGenerator[object]":
+        subscription = yield SubscribeChannels((plain, channel), kept=(channel,), reader="reader")
+        for index in range(CROWD):
+            yield Announce(plain, "law-note", f"p{index:03d}")
+            yield Announce(channel, "law-note", f"k{index:03d}", kept=True)
+        # Let the Pub/Sub notices reach the subscription's connection.
+        yield Delay(0.3)
+        before = awaits.count
+        heard: tuple[str, ...] = ()
+        for _ in range(2 * CROWD):
+            notice: Announcement = yield NextAnnouncement(subscription)
+            if notice.receipt:
+                yield AckAnnouncement(subscription, notice)
+            heard = (*heard, notice.body)
+        return heard, awaits.count - before
+
+    handler = redis_notice_handler(redis_url, TIMEOUT_SECONDS)
+    heard, reads = run(
+        scheduled(await_handler()(async_time_handler()(_awaits_counted(awaits)(handler(reads_a_crowd())))))
+    )
+    # Every notice, each channel's in the order announced.
+    assert tuple(body for body in heard if body.startswith("p")) == tuple(f"p{i:03d}" for i in range(CROWD)), heard
+    assert tuple(body for body in heard if body.startswith("k")) == tuple(f"k{i:03d}" for i in range(CROWD)), heard
+    # One read per notice before (2 * CROWD Awaits); now the first read takes what came on both, a second at most
+    # takes the side that had not answered yet.
+    assert reads <= 3, reads

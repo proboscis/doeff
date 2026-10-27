@@ -7,8 +7,9 @@ body starts.
 
 How it talks to Redis:
 
-- Every operation is one ``Await`` of a redis-py coroutine, so it needs ``await_handler`` outside (inside
-  ``scheduled``). The wait for the next notice holds no scheduler task busy and has no time limit of its own while
+- Every operation is one ``Await`` of a redis-py coroutine (but a ``NextAnnouncement`` answered from what the last
+  read took — below — and ``AckAnnouncement``, which are answered here), so it needs ``await_handler`` outside
+  (inside ``scheduled``). The wait for the next notice holds no scheduler task busy and has no time limit of its own while
   the connection lives: cancelling the waiting task cancels the coroutine (``await_handler`` forwards the cancel),
   which is how a source stops.
 - A subscription's connection that went half-open is lost after ``silence_seconds`` (card ki-227ad148680d). A
@@ -31,8 +32,19 @@ How it talks to Redis:
   connection; when that connection is lost the subscription is dead (``NextAnnouncement`` answers
   ``BrokerUnreachable``) and the caller makes a new one — this handler never re-subscribes behind the caller's
   back, because a notice announced between the loss and the new subscription is gone and the caller must know.
+- One read takes everything that has already come, up to ``READ_BATCH`` (agora card ki-a83c715eab23): the read
+  that answers a ``NextAnnouncement`` waits for the first notice, then takes the Pub/Sub notices already received
+  on the connection without waiting, and ``XREAD`` takes up to ``READ_BATCH`` entries per kept stream. The notices
+  after the first stay with the subscription, in order, and the next ``NextAnnouncement``s are answered from them
+  without an ``Await`` — so a source publishes everything that came in one stretch, and its subscriber takes it in
+  one wait. Before, every notice was one ``Await``, which parks the source's task; a subscriber whose reaction is
+  long took one notice per reaction, and a crowd of notices made the ones behind it wait for minutes (agora's
+  turn-dispatcher: 905 notices in 3 minutes, one per ~0.16 s cycle, an input notice behind them waited ~150 s).
 - Nothing received is dropped on this side: redis-py reads a subscription's connection only when
-  ``NextAnnouncement`` asks (no background reader, no queue of its own); what the server sent in the meantime
+  ``NextAnnouncement`` asks (no background reader); what one read took and has not handed out yet is kept with the
+  subscription until the next ``NextAnnouncement``s (a closed subscription drops it — its kept-channel entries
+  were handed out at the read, so they are handed out again to the reader's next subscription like any notice
+  not acknowledged); what the server sent in the meantime
   waits in the socket's buffers, and when those are full, in the server's output buffer for this client. The
   server closes the connection of a subscriber whose output buffer passes ``client-output-buffer-limit pubsub``
   — which this handler answers as ``BrokerUnreachable``, like any lost connection.
@@ -86,7 +98,7 @@ from doeff_events.effects.notices import (
 from doeff_events.handlers._kept_readers import KeptReaders
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Generator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 
     from redis.asyncio import Redis
     from redis.asyncio.client import PubSub
@@ -102,6 +114,10 @@ _BODY: Final = "body"
 # The longest a subscription's connection may answer nothing before it counts as lost (card ki-227ad148680d): the
 # read replica's keeper in agora must learn of a dead subscription within 7 s (its ADR R10).
 SUBSCRIPTION_SILENCE_SECONDS: Final = 7.0
+
+# The most notices one read of a subscription takes from what has already come (agora card ki-a83c715eab23): the
+# Pub/Sub notices already received on the connection, and the entries ``XREAD … COUNT`` answers per kept stream.
+READ_BATCH: Final = 1000
 
 # The approximate number of entries a kept channel's stream holds (``XADD … MAXLEN ~``): a reader further behind
 # than this loses the oldest, as a Pub/Sub subscriber loses what was sent while it was away.
@@ -179,6 +195,12 @@ class _KeptReader:
         self.handed = (*kept, _Handed(notice, now))
         return notice
 
+    def hand_all(self, notices: tuple[Announcement, ...], now: float) -> tuple[Announcement, ...]:
+        """Hand every one of ``notices`` out at ``now``, in order (``hand`` for one read's entries at once)."""
+        kept = tuple(held for held in self.handed if not any(_same_notice(held.notice, one) for one in notices))
+        self.handed = (*kept, *(_Handed(notice, now) for notice in notices))
+        return notices
+
     def acknowledged(self, notice: Announcement) -> None:
         """Forget ``notice``: it is not handed out again (nothing changes if it is not held)."""
         self.handed = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
@@ -192,10 +214,11 @@ def _same_notice(one: Announcement, other: Announcement) -> bool:
 @final
 class _Listening:
     """The client's side of one ``ChannelSubscription``: redis-py's ``PubSub`` connection for its Pub/Sub channels
-    (``None`` when it reads kept channels only), its reader's state for the kept ones, and the reads in flight
-    between two ``NextAnnouncement``s of a subscription that reads kept channels. Matched by identity."""
+    (``None`` when it reads kept channels only), its reader's state for the kept ones, the reads in flight
+    between two ``NextAnnouncement``s of a subscription that reads kept channels, and the notices the last read took
+    that are not handed out yet (``taken`` — oldest first). Matched by identity."""
 
-    __slots__ = ("pubsub", "pubsub_read", "reader", "stream_read", "subscription")
+    __slots__ = ("pubsub", "pubsub_read", "reader", "stream_read", "subscription", "taken")
 
     def __init__(
         self, subscription: ChannelSubscription, pubsub: "PubSub | None", reader: _KeptReader | None
@@ -204,16 +227,31 @@ class _Listening:
         self.subscription: Final = subscription
         self.pubsub: Final = pubsub
         self.reader: Final = reader
-        self.pubsub_read: asyncio.Task[Announcement] | None = None
-        self.stream_read: asyncio.Task[Announcement | None] | None = None
+        self.pubsub_read: asyncio.Task[tuple[Announcement, ...]] | None = None
+        self.stream_read: asyncio.Task[tuple[Announcement, ...]] | None = None
+        self.taken: tuple[Announcement, ...] = ()
+
+    def handed_from_taken(self) -> Announcement | None:
+        """The oldest notice the last read took and has not handed out yet (it is handed out now), or ``None``."""
+        if not self.taken:
+            return None
+        first, self.taken = self.taken[0], self.taken[1:]
+        return first
+
+    def took(self, notices: tuple[Announcement, ...]) -> Announcement:
+        """Keep what one read took (never empty) and hand out its first notice."""
+        first, self.taken = notices[0], notices[1:]
+        return first
 
     def stop_reads(self) -> None:
-        """Cancel the reads in flight (the subscription is closed — its connection goes with it)."""
+        """Cancel the reads in flight and drop what was taken and not handed out (the subscription is closed — its
+        connection goes with it)."""
         for read in (self.pubsub_read, self.stream_read):
             if read is not None:
                 read.cancel()
         self.pubsub_read = None
         self.stream_read = None
+        self.taken = ()
 
 
 @dataclass(frozen=True)
@@ -298,11 +336,30 @@ def _answers_ping(response: object) -> bool:
     return response == "PONG" or (isinstance(response, list) and response[:1] == ["pong"])
 
 
-async def _next_notice(pubsub: "PubSub", silence_seconds: float) -> Announcement:
+async def _next_notices(pubsub: "PubSub", silence_seconds: float) -> tuple[Announcement, ...]:
     """Wait for the next notice of the subscription — without a limit while the connection answers, and failing
-    as a lost connection once it answers nothing for ``silence_seconds``. Only notices are expected on a
-    subscribed connection once the subscription is confirmed; another kind of message is named, not skipped."""
-    message = await _next_message(pubsub, silence_seconds)
+    as a lost connection once it answers nothing for ``silence_seconds`` — then take, without waiting, the notices
+    already received on the connection after it (``READ_BATCH`` in all at most; the module's notes on one read).
+    Only notices are expected on a subscribed connection once the subscription is confirmed; another kind of
+    message is named, not skipped."""
+    first = _notice_of(await _next_message(pubsub, silence_seconds))
+    return (first, *[notice async for notice in _already_received(pubsub, READ_BATCH - 1)])
+
+
+async def _already_received(pubsub: "PubSub", limit: int) -> "AsyncIterator[Announcement]":
+    """The notices already received on the subscription's connection, in order, ``limit`` at most — each read
+    answers at once (``parse_response(block=False, timeout=0)``: ``None`` = nothing more has come). An answer to
+    ``PING`` among them is passed over."""
+    for _ in range(limit):
+        response: object = await pubsub.parse_response(block=False, timeout=0)
+        if response is None:
+            return
+        if not _answers_ping(response):
+            yield _notice_of(await pubsub.handle_message(response, ignore_subscribe_messages=False))
+
+
+def _notice_of(message: object) -> Announcement:
+    """The notice of one message read on a subscribed connection (another kind of message is named)."""
     if not isinstance(message, dict) or message.get("type") != "message":
         raise BrokerAnswerMalformed(f"a subscribed connection must deliver a notice, got {message!r}")
     payload: object = json.loads(_text(message.get("data"), "the data of a notice"))
@@ -368,42 +425,44 @@ def _kept_notice(key: object, entry: object) -> Announcement:
     )
 
 
-def _first_entry(answer: object) -> Announcement | None:
-    """The first entry ``XREAD`` answered (``None`` when the block ended with none) — RESP2 answers a list of
-    ``[key, entries]``, RESP3 a mapping of key to entries."""
+def _entries(answer: object) -> tuple[Announcement, ...]:
+    """Every entry ``XREAD`` answered, stream by stream and in each stream's order (empty when the block ended with
+    none) — RESP2 answers a list of ``[key, entries]``, RESP3 a mapping of key to entries."""
     if answer is None:
-        return None
+        return ()
     streams: object = list(answer.items()) if isinstance(answer, dict) else answer
     if not isinstance(streams, list):
         raise BrokerAnswerMalformed(f"XREAD must answer the streams it read, got {answer!r}")
     for stream in streams:
         if not isinstance(stream, list | tuple) or len(stream) != 2 or not isinstance(stream[1], list):
             raise BrokerAnswerMalformed(f"XREAD must answer [key, entries] per stream, got {stream!r}")
-        if stream[1]:
-            return _kept_notice(stream[0], stream[1][0])
-    return None
+    return tuple(_kept_notice(stream[0], entry) for stream in streams for entry in stream[1])
 
 
-async def _next_kept_entry(client: "Redis", positions: dict[str, str], silence_seconds: float) -> Announcement | None:
-    """``XREAD BLOCK`` for the next entry after ``positions`` (one per stream at most — the first is taken; the
-    others are read again from their positions). Blocks half the silence; ``None`` = nothing came (a quiet stream is
-    not a lost connection). A server that does not answer within the block and the silence is a lost connection."""
+async def _next_kept_entries(
+    client: "Redis", positions: dict[str, str], silence_seconds: float
+) -> tuple[Announcement, ...]:
+    """``XREAD BLOCK`` for the entries after ``positions`` (``READ_BATCH`` per stream at most — the module's notes on
+    one read). Blocks half the silence; empty = nothing came (a quiet stream is not a lost connection). A server
+    that does not answer within the block and the silence is a lost connection."""
     half = silence_seconds / 2
     streams = {_kept_key(channel): position for channel, position in positions.items()}
-    read = client.xread(streams, count=1, block=int(half * 1000))
+    read = client.xread(streams, count=READ_BATCH, block=int(half * 1000))
     try:
         answer: object = await asyncio.wait_for(read, timeout=half + silence_seconds)
     except TimeoutError:
         raise _silent(silence_seconds, "the answer of XREAD BLOCK") from None
-    return _first_entry(answer)
+    return _entries(answer)
 
 
 async def _next_with_kept(
     receiving: "Redis", listening: _Listening, silence_seconds: float, redeliver_seconds: float
-) -> Announcement:
-    """The next notice of a subscription that reads kept channels: an unacknowledged notice that is due again, or
-    whichever read in flight answers first — the Pub/Sub connection's next notice or the streams' next entry. The
-    reads stay in flight across calls (a call cancelled by its task leaves them for the next one)."""
+) -> tuple[Announcement, ...]:
+    """The next notices of a subscription that reads kept channels (never empty): an unacknowledged notice that is
+    due again, or what the reads in flight that have answered took — the Pub/Sub connection's next notices and the
+    streams' next entries, both when both have answered (the Pub/Sub notices first). The entries are handed out
+    here, and the reader's positions move past them. The reads stay in flight across calls (a call cancelled by its
+    task leaves them for the next one)."""
     reader = listening.reader
     if reader is None:
         raise LookupError(f"{listening.subscription!r} reads no kept channel")
@@ -412,25 +471,28 @@ async def _next_with_kept(
         now = loop.time()
         due = reader.due(now, redeliver_seconds)
         if due is not None:
-            return reader.hand(due.notice, now)
+            return (reader.hand(due.notice, now),)
         if listening.pubsub is not None and listening.pubsub_read is None:
-            listening.pubsub_read = asyncio.ensure_future(_next_notice(listening.pubsub, silence_seconds))
+            listening.pubsub_read = asyncio.ensure_future(_next_notices(listening.pubsub, silence_seconds))
         if listening.stream_read is None:
             positions = {channel: reader.positions[channel] for channel in listening.subscription.kept}
-            listening.stream_read = asyncio.ensure_future(_next_kept_entry(receiving, positions, silence_seconds))
+            listening.stream_read = asyncio.ensure_future(_next_kept_entries(receiving, positions, silence_seconds))
         reads = {read for read in (listening.pubsub_read, listening.stream_read) if read is not None}
         done, _waiting = await asyncio.wait(
             reads, timeout=reader.seconds_to_due(now, redeliver_seconds), return_when=asyncio.FIRST_COMPLETED
         )
+        notices: tuple[Announcement, ...] = ()
         if listening.pubsub_read is not None and listening.pubsub_read in done:
-            read_notice, listening.pubsub_read = listening.pubsub_read, None
-            return read_notice.result()
+            read_notices, listening.pubsub_read = listening.pubsub_read, None
+            notices = read_notices.result()
         if listening.stream_read is not None and listening.stream_read in done:
-            read_entry, listening.stream_read = listening.stream_read, None
-            entry = read_entry.result()
-            if entry is not None:
-                reader.positions = {**reader.positions, entry.channel: entry.receipt}
-                return reader.hand(entry, loop.time())
+            read_entries, listening.stream_read = listening.stream_read, None
+            entries = read_entries.result()
+            if entries:
+                reader.positions = {**reader.positions, **{entry.channel: entry.receipt for entry in entries}}
+                notices = (*notices, *reader.hand_all(entries, loop.time()))
+        if notices:
+            return notices
 
 
 async def _or_failed(call: "Awaitable[_T]") -> "_T | _Failed":
@@ -577,14 +639,18 @@ def _broker_handler(
                 known = next((entry for entry in listening if entry.subscription is wanted), None)
                 if known is None:
                     raise LookupError(f"{wanted!r} was not made by this handler, or was closed")
-                if known.reader is not None:
-                    answer = yield Await(
-                        _attempt(partial(_next_with_kept, receiving, known, silence_seconds, redeliver_seconds))
-                    )
-                elif known.pubsub is not None:
-                    answer = yield Await(_attempt(partial(_next_notice, known.pubsub, silence_seconds)))
-                else:
-                    raise LookupError(f"{wanted!r} reads no channel")
+                # What the last read took is handed out first, without an Await (the module's notes on one read).
+                answer = known.handed_from_taken()
+                if answer is None:
+                    if known.reader is not None:
+                        read = yield Await(
+                            _attempt(partial(_next_with_kept, receiving, known, silence_seconds, redeliver_seconds))
+                        )
+                    elif known.pubsub is not None:
+                        read = yield Await(_attempt(partial(_next_notices, known.pubsub, silence_seconds)))
+                    else:
+                        raise LookupError(f"{wanted!r} reads no channel")
+                    answer = read if isinstance(read, _Failed) else known.took(read)
             case AckAnnouncement(subscription=acked, notice=notice):
                 # Kept by the handler only: nothing is sent to the server.
                 acking = readers.of(acked)

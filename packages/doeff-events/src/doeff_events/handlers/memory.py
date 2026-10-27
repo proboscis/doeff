@@ -311,8 +311,13 @@ def subscribed_event_handler(
     同じ ``subscriber`` の名で組み立て直すと、前の列を捨てて新しく始める(落ちた後の再起動 — 追いつくのは Program が
     最初に記録を読むこと)。``event_types=()`` は発するだけの handler(止めと源の失敗の合図も積まない)。
 
-    - ``Publish(event)``: ``bus`` の全購読者(自分を含む)の列へ渡し、起きる待ち手の約束を完了してから続ける。発した
-      合図は、その時に待っていない購読者の列にも残る。
+    - ``Publish(event)``: ``bus`` の全購読者(自分を含む)の列へ渡し、起きる待ち手の約束を完了してすぐ続ける — 起こした
+      購読者は、発した側が次に待った時に回る(``CompletePromise(..., yield_to_woken=False)`` — memory の知らせの置き場と同じ
+      形・agora-redesign #4013)。発した合図は、その時に待っていない購読者の列にも残る(起こした待ち手は ``offer`` が待ち手から
+      外すので、続けて発した合図はその購読者の列に積まれ、起きた後の ``WaitForEvents`` が全部を受ける)。起こした購読者へ
+      合図ごとに手番を譲ると、合図の源の task(知らせの受け取り)は 1 つ発するたびに購読者の 1 周の終わりまで止まり、
+      届いて溜まった合図を購読者は 1 周に 1 つしか受けない(agora card ki-a83c715eab23 — 配る担当が 1 周に出来事を 1 つだけ
+      当て、LeaseReturned の群れの後ろで会話の入力が 2〜3 分待った)。
     - ``WaitForEvent(*types)``: 自分の列から取り出す。無ければ内側の約束(``CreatePromise``・``Wait``)で待つ。
       ``types`` に購読の型の外の型が在れば ``ValueError``(満たされない待ち = 配線の誤りを、その場で名指す)。
     - ``WaitForEvents(*types)``: 自分の列に当たる合図が在れば全部を来た順の組で答える。無ければ ``WaitForEvent`` と同じく
@@ -362,7 +367,8 @@ def subscribed_event_handler(
                 return (yield Resume(k, (found, *queue.take_all(wanted)) if many else found))
             case PublishEffect(event=event):
                 for promise in bus.offer(event):
-                    yield CompletePromise(promise, event)
+                    # 発した側が手番を持ったまま続ける(docstring の Publish の項 — 列が合図を残すので、続けて発した合図は落ちない)。
+                    yield CompletePromise(promise, event, yield_to_woken=False)
                 return (yield Resume(k, None))
             case _:
                 yield Pass(effect, k)
