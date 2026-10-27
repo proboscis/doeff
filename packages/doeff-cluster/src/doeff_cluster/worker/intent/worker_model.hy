@@ -222,9 +222,12 @@
 
 (defrecord WarmChildMark
   "待ちの子の準備完了の印(<S>/ready.json — 入口が読み込みの後に書く): threads = 書いた時の thread の数・vm-live = 生きた VM の数の 3 つ組。
-   分かれる前に thread も VM も無い形(threads = 1・vm-live が全部 0)の時だけ準備済みに数える(条 WC3 — 判じるのは判断の層 1 か所)。"
+   分かれる前に thread も VM も無い形(threads = 1・vm-live が全部 0)の時だけ準備済みに数える(条 WC3 — 判じるのは判断の層 1 か所)。
+   services = 常駐の job(service)の頼み(入力の pipe・cgroup・知らせの中継)を受けられる版の待ちの子か(印の serviceForks — card
+   ki-de44efdb9aa4。待ちの子は root の venv の版で走るので、印の無い古い版の待ちの子へ service を頼まない)。"
   (#^ int threads)
-  (#^ tuple vm-live))
+  (#^ tuple vm-live)
+  (setv #^ bool services False))
 
 
 (defrecord WarmMarkUnreadable
@@ -345,6 +348,15 @@
   ;; worker の枠を取り続けた(2026-10-10 に 1,092 回・10 時間)。task を分けるのを断った待ちの子(worker が止める)も同じ数えに乗る
   ;; (card ki-e1612a12d0c3 — warm_rules の ended-refusing)。
   (setv #^ int warm-refusal-limit 3)
+  ;; 常駐の job(service — JobSpec.once が偽・実行環境を宣言した job)も、その root の待ちの子から分けて起こすか(card ki-de44efdb9aa4)。
+  ;; 分けた service は待ちの子が読み込んだ module の頁を共有する(何もしない job の本体 1 本 170 MB の 8 割が読み込んだ code と型)。
+  ;; 偽 = 今までどおり入れ物 shim で冷えた起動。真でも、印で service を受けると名乗らない版の待ちの子と、断りの上限に届いた待ちの子の
+  ;; root の service は入れ物 shim で起こす(warm_rules の service-start)。機体の配備が worker の環境変数 DOEFF_WORKER_WARM_SERVICES で入れる。
+  (setv #^ bool warm-services False)
+  ;; service のために待ちの子を起こす root の、実行環境の service の本数の下限(正の整数 — card ki-de44efdb9aa4)。待ちの子そのものが
+  ;; 読み込んだ頁を持つ(zeus の測りで RSS 約 500 MB)ので、service が 1〜2 本の root では分けても本体の合計が減らない。task か温める表の
+  ;; ために待ちの子を起こす root の service は、本数によらず分ける(待ちの子は既に居る — warm_rules の service-warm-keys)。
+  (setv #^ int warm-services-min 3)
   ;; 常駐の job が機体の memory の見張りに続けて止められた時に、起こし直しを止めて失敗(phase memory-killed)として報告する回数(正の整数)。
   ;; 起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められ、要求を 1 件も回さずに起き直し続けた(2026-10-19 の本番の
   ;; worker で 1 つの job が起動から約 1 分で止められ、3 時間 13 分に 125 回・43 分に 37 回。失敗の数は約 1 分の走りで 1 に戻り、表に
@@ -366,6 +378,9 @@
     ;; 起動の断りの上限が正の整数である事(0 以下では待ちの子を 1 度も起こさずに task を終えてしまう)。
     (when (< self.warm-refusal-limit 1)
       (raise (ValueError (.format "warm-refusal-limit は 1 以上: {}" self.warm-refusal-limit))))
+    ;; service のために待ちの子を起こす本数の下限が正の整数である事(0 以下では service の無い root にも待ちの子を起こす)。
+    (when (< self.warm-services-min 1)
+      (raise (ValueError (.format "warm-services-min は 1 以上: {}" self.warm-services-min))))
     ;; 見張りに止められた回数の上限が正の整数である事(0 以下では 1 度も起こさずに失敗にしてしまう)。
     (when (< self.memory-kill-limit 1)
       (raise (ValueError (.format "memory-kill-limit は 1 以上: {}" self.memory-kill-limit))))

@@ -11,6 +11,14 @@
 ;;;   ForkFromWarm     待ちの子に 1 つ仕事を頼む。答え = WarmForked(A の pid と start-ticks)か WarmRefused(socket が無い・接続を断られた・
 ;;;                    待ちの子が断りを答えた・答えの期限 WARM-ANSWER-SECONDS が切れた・答えが読めない — 理由の文は下の関数で 1 度だけ作る)。
 ;;;                    env は子の環境変数の全部(置き換え)。値はどの答え・断りの文・log にも出さない。
+;;;                    常駐の子の 3 つの欄(card ki-de44efdb9aa4 — どれも既定なら頼みの形は今までと同じ):
+;;;                      hold-input   = 頼み手が子 A だけの入力の pipe を作り、読み口を頼みに添えて(unix socket の fd の受け渡し)A の標準入力に
+;;;                                     させ、書き口を握る。頼み手が消えると A は EOF を読む(入れ物 shim の hold-stdin と同じ働き)・
+;;;                                     頼み手は WriteWarmChildInput で A へ行を書く。
+;;;                      cgroup-procs = A が入口を起こす前に自分を置く cgroup の cgroup.procs(None = 待ちの子の cgroup のまま)。
+;;;                      notice-env   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(None = 中継しない)。
+;;;   WriteWarmChildInput hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す。答え = WarmInputWritten(delivered = 書いたか —
+;;;                    終わった子・使い回された pid・pipe を握っていない子・読み手の居ない pipe・満ちた pipe は書かない)。
 ;;;   PollWarmChild    頼んだ子の様子を 1 度だけ問う。答え = WarmRunning(同じ start-ticks の process が居て、終わっていない)・
 ;;;                    WarmExited(exit の file の終了 code)・WarmLost(居ないか使い回されたのに exit の file が無い)。
 ;;;   SignalWarmChild  頼んだ子の group へ signal を 1 度だけ送る。答え = WarmSignaled か WarmGone(居ない・終わっている・使い回された —
@@ -47,7 +55,20 @@
   #^ str log-path
   #^ str exit-path
   #^ float grace-seconds
-  (setv grace-seconds 10.0))
+  (setv grace-seconds 10.0)
+  #^ bool hold-input
+  (setv hold-input False)
+  #^ (| str None) cgroup-procs
+  (setv cgroup-procs None)
+  #^ (| str None) notice-env
+  (setv notice-env None))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] WriteWarmChildInput [EffectBase]
+  "hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す(頭の註)。答え = WarmInputWritten。"
+  #^ int pid
+  #^ int start-ticks
+  #^ str text)
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PollWarmChild [EffectBase]
@@ -101,6 +122,12 @@
 (defrecord WarmSignaled
   "子の group へ signal を送った。"
   (#^ int pid))
+
+
+(defrecord WarmInputWritten
+  "WriteWarmChildInput の答え: delivered = 子の入力の pipe へ書いた(True)・書かなかった(False — 頭の註)。"
+  (#^ int pid)
+  (#^ bool delivered))
 
 
 (defrecord WarmGone

@@ -4,11 +4,19 @@
 ;;; 条の守りの置き場(architecture.hy の worker の :invariants・判じる関数は worker/core/invariants):
 ;;;   WC1(古い root から分かれない)= task の分かれ元のキーを決めるのは warm-key-of の 1 か所(task 自身の env のキー)。
 ;;;   WC3(分かれる前に VM を起こさない)= 準備済みに数える印の形を判じるのは warm-mark-clean? の 1 か所。
+;;;
+;;; 常駐の job(service — card ki-de44efdb9aa4): WorkerPolicy.warm-services が真の時、実行環境の service も待ちの子から分けて起こし、
+;;; 待ちの子が読み込んだ module の頁を共有する。分けるのは service-warm-keys の root(service が warm-services-min 本以上か、分かれる task も
+;;; 在る root — 待ちの子そのものの頁が service の得より大きい root に待ちの子を起こさない)の service だけ。道は warm-start の 1 か所で決める:
+;;; 待ちの子の準備を待つ(WAIT)・分ける(FORK)・入れ物 shim(SHIM — 印で service を受けると名乗らない古い版の待ちの子と、断りの上限に
+;;; 届いた待ちの子の root。service は task と違い env-failed で終えない — 動き続ける job を待ちの子の都合で止めない)。
 (require doeff-hy.macros [defk val var <-])
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
+(import collections [Counter])
 (import json)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import enum [StrEnum])  ; defenum の展開が名指す
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
@@ -20,6 +28,43 @@
 (defn #^ bool forks-from-warm-child [#^ JobSpec spec]  ; defk にできない: 純粋な判断の start-on-ready-tree(Program の外の関数)が呼ぶ
   "待ちの子から分かれて走る job = 実行環境を宣言した task(once)。service は今までどおり入れ物 shim で起こす(種類で道が決まる)。"
   (and spec.once (is-not spec.runtime-env None)))
+
+
+(defn #^ frozenset service-warm-keys [#^ tuple desired #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of・ready-tree-step の呼び手(Program の外の関数)が呼ぶ
+  "service を待ちの子から分ける root のキー(頭の註): warm-services が真の時、実行環境の service が warm-services-min 本以上ある root と、
+   分かれる task も宣言に在る root。偽なら空。"
+  (if (not policy.warm-services)
+      (frozenset)
+      (do
+        (setv tasks (frozenset (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
+              counts (Counter (gfor spec desired :if (and (is-not spec.runtime-env None) (not spec.once)) (warm-key-of spec))))
+        (frozenset (gfor #(key n) (.items counts) :if (or (>= n policy.warm-services-min) (in key tasks)) key)))))
+
+
+(defn #^ bool fork-candidate [#^ JobSpec spec #^ WorkerPolicy policy #^ frozenset warm-keys]  ; defk にできない: 純粋な判断の warm-start・ready-followups が呼ぶ
+  "待ちの子から分けて起こしうる job か: 分かれる task(forks-from-warm-child)と、warm-keys(service-warm-keys)の root の実行環境の
+   service(warm-services が真の時)。"
+  (or (forks-from-warm-child spec)
+      (and policy.warm-services (is-not spec.runtime-env None) (not spec.once) (in (warm-key-of spec) warm-keys))))
+
+
+;; 宣言の job を起こす道(頭の註): SHIM = 入れ物 shim・WAIT = 待ちの子の準備を待つ・FORK = 待ちの子から分ける。
+(defenum WarmStart SHIM WAIT FORK)
+
+
+(defn #^ WarmStart warm-start [#^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy #^ frozenset warm-keys]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "宣言の job を起こす道を 1 か所で決めるため(頭の註): 分けうる job でなければ SHIM。task は待ちの子が準備済みなら FORK・それまで WAIT
+   (断りの上限は phase-of が env-failed で終える)。service は待ちの子が断りの上限に届いていれば SHIM・準備済みなら印が service を受けると
+   名乗る時だけ FORK(名乗らない版は SHIM)・それまで WAIT。"
+  (if (not (fork-candidate spec policy warm-keys))
+      WarmStart.SHIM
+      (do
+        (setv view (warm-child-of world (warm-key-of spec)))
+        (cond
+          (forks-from-warm-child spec) (if (warm-child-ready view) WarmStart.FORK WarmStart.WAIT)
+          (warm-child-refused view policy) WarmStart.SHIM
+          (warm-child-ready view) (if view.mark.services WarmStart.FORK WarmStart.SHIM)
+          True WarmStart.WAIT))))
 
 
 (defn #^ str warm-key-of [#^ JobSpec spec]  ; defk にできない: 純粋な判断の start-on-ready-tree(Program の外の関数)が呼ぶ
@@ -83,13 +128,17 @@
     (WarmChildMark) (.format "準備完了の印が分かれる前の形でない(threads={} vmLive={})" mark.threads (list mark.vm-live))))
 
 
-(defk warm-launch [key root specs warm]
-  {:pre [(: key str) (: root str) (: specs tuple) (: warm tuple)] :post [(: % WarmLaunch)] :tags {:context "worker" :role "judgment"}}
+(defk warm-launch [key root specs warm [services (frozenset)]]
+  {:pre [(: key str) (: root str) (: specs tuple) (: warm tuple) (: services frozenset)] :post [(: % WarmLaunch)] :tags {:context "worker" :role "judgment"}}
   "要る root の待ちの子の起こし方を宣言から決めるため: uv の --project は venv を持つ project の dir の定義点(runtime_env.project-dir —
    同じ root の宣言は project が同じなので最初の宣言を読む)、起動で読み込む module の名は、その root の task の宣言と温める表の行の bytecodeEntries を
    合わせた物(名の順・重なりは 1 つ — 宣言の読みは定義点 runtime-env-of-json)。名は root のキーに入らないので、同じ root の宣言どうしで
-   違えば合わせた物を読む(読まなかった module は分かれた task が自分で読む — 遅くなるだけで落ちない)。"
-  (val texts (+ (tuple (gfor spec specs :if (and (forks-from-warm-child spec) (= (warm-key-of spec) key)) spec.runtime-env))
+   違えば合わせた物を読む(読まなかった module は分かれた task が自分で読む — 遅くなるだけで落ちない)。services = service を分ける root の
+   キー(service-warm-keys — 在れば、その root の service の宣言の bytecodeEntries も合わせる・card ki-de44efdb9aa4)。"
+  (val texts (+ (tuple (gfor spec specs :if (and (= (warm-key-of spec) key)
+                                                  (or (forks-from-warm-child spec)
+                                                      (and (in key services) (is-not spec.runtime-env None) (not spec.once))))
+                             spec.runtime-env))
                 (tuple (gfor w warm :if (= w.key key) w.runtime-env))))
   (var names (frozenset))
   (for [text texts]

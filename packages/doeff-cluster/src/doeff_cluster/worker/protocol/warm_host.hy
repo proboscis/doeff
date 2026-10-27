@@ -48,15 +48,21 @@
 
 (defk ready-mark-of [text]
   {:pre [(: text str)] :post [(: % (| WarmChildMark WarmMarkUnreadable))] :tags {:context "worker" :role "protocol"}}
-  "準備完了の印の file の中身(入口が書く JSON — threads と vmLive の欄)を、判断が判じる印の形に読むため。形が違えば読めない印にする
-   (準備済みに数えず、判断が待ちの子を止める — 黙って起こし中のまま待たない)。"
+  "準備完了の印の file の中身(入口が書く JSON — threads と vmLive の欄・service の頼みを受けられる版の serviceForks の欄)を、判断が判じる
+   印の形に読むため。形が違えば読めない印にする(準備済みに数えず、判断が待ちの子を止める — 黙って起こし中のまま待たない)。serviceForks の
+   欄が無いのは、その欄を書く前の版の待ちの子(service を頼まない — 偽)。"
   (try
     (val value (json.loads text))
     (val threads (.get value "threads"))
     (val vm-live (.get value "vmLive"))
-    (if (and (isinstance threads int) (isinstance vm-live list) (all (gfor n vm-live (isinstance n int))))
-        (WarmChildMark :threads threads :vm-live (tuple vm-live))
-        (WarmMarkUnreadable :detail "threads と vmLive の欄が整数でない"))
+    (val services (.get value "serviceForks" False))
+    (cond
+      (not (and (isinstance threads int) (isinstance vm-live list) (all (gfor n vm-live (isinstance n int)))))
+        (WarmMarkUnreadable :detail "threads と vmLive の欄が整数でない")
+      (not (isinstance services bool))
+        (WarmMarkUnreadable :detail "serviceForks の欄が真偽でない")
+      True
+        (WarmChildMark :threads threads :vm-live (tuple vm-live) :services services))
     (except [error [ValueError AttributeError]]
       (WarmMarkUnreadable :detail (.format "JSON でない: {}" (. (type error) __name__))))))
 

@@ -77,6 +77,7 @@ from doeff_cluster.worker.core.shim_timing import shim_deadline_ms as shim_deadl
 from doeff_core_effects.warm_effects import ForkFromWarm as ForkFromWarm
 from doeff_core_effects.warm_effects import PollWarmChild as PollWarmChild
 from doeff_core_effects.warm_effects import SignalWarmChild as SignalWarmChild
+from doeff_core_effects.warm_effects import WriteWarmChildInput as WriteWarmChildInput
 from doeff_core_effects.warm_effects import WarmRefused as WarmRefused
 from doeff_core_effects.warm_effects import WarmRunning as WarmRunning
 from doeff_core_effects.warm_effects import WarmExited as WarmExited
@@ -105,6 +106,7 @@ class HostSettings:
 class ForkedFrom:
     start_ticks: int
     exit_path: str
+    holds_input: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class StopAsked:

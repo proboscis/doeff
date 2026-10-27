@@ -121,6 +121,12 @@ def open_relay(env_name: str) -> NoticeRelay:
     return NoticeRelay(env_name=env_name, read_fd=read_fd, write_fd=write_fd)
 
 
+def notice_variable(relay: NoticeRelay) -> NoticeVariable:
+    """job へ渡す知らせの pipe の印を作るため(入れ物 shim と待ちの子から分かれた service が同じ綴りで渡す)。値は <fd の番号>:<pipe の
+    inode>(環境変数は job の子孫にも継がれるので、受け手は fd が同じ pipe の時だけ読む — foundation/notice_pipe の open-notice-box)。"""
+    return NoticeVariable(name=relay.env_name, value=f"{relay.read_fd}:{os.fstat(relay.read_fd).st_ino}")
+
+
 @dataclass(frozen=True)
 class Harvest:
     """終わった子を待たずに回収した結果: job_code = 回収した中に job が居ればその終了コード(signal で終わったなら負・居なければ None)・
@@ -329,11 +335,9 @@ class PopenSpawner:
         match self.relay:
             case None:
                 self._mut_child = subprocess.Popen(self.command, stdin=subprocess.DEVNULL)
-            case NoticeRelay(env_name=name, read_fd=read_fd):
-                # 値は <fd の番号>:<pipe の inode>(環境変数は job の子孫にも継がれるので、受け手は fd が同じ pipe の時だけ読む —
-                # foundation/notice_pipe の open-notice-box)。
+            case NoticeRelay(read_fd=read_fd):
                 # 環境の組は foundation の生の読み(child_environ — この process の環境に名を足す)が組む(入口は環境変数に直に触らない)。
-                notice = NoticeVariable(name=name, value=f"{read_fd}:{os.fstat(read_fd).st_ino}")
+                notice = notice_variable(self.relay)
                 self._mut_child = subprocess.Popen(
                     self.command,
                     stdin=subprocess.DEVNULL,

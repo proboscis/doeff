@@ -80,6 +80,9 @@
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
+;; 実行環境の service も、その root の待ちの子から分けて起こすか(card ki-de44efdb9aa4 — WorkerPolicy.warm-services)。値は on か off
+;; (無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
+(val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
 
 
 (defk boot-file-written [path boot]
@@ -90,6 +93,15 @@
   (when path
     (<- (file-done (WriteText path (+ boot "\n") :replace True))))
   None)
+
+
+(defn #^ (| bool str) warm-services-of [#^ (| str None) value]  ; defk にできない: 起動の setv の連なり(Program の外)で値を読む
+  "WARM-SERVICES-VAR の値を方策の真偽に読むため。無い = 偽・on = 真・off = 偽。それ以外は起動を断る訳の文を返す。"
+  (cond
+    (is value None) False
+    (= value "on") True
+    (= value "off") False
+    True (.format "{} は on か off で書く: {!r}" WARM-SERVICES-VAR value)))
 
 
 (defk boot-room [room-file name capacity task-reserve]
@@ -187,7 +199,8 @@
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
    code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
-   (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消しと
+   (ForkFromWarm・PollWarmChild・SignalWarmChild・WriteWarmChildInput — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)で、
+   service の子の入力の pipe の書き口の表を session に持つので session-store の内側に置く(card ki-de44efdb9aa4)。木の数えと消しと
    様子つきの歩き(MeasureTree・RemoveTree・StatTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の
    上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715・card ki-0da6a0186492)。tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)も offloaded-file-handler が thread で待つ(card ki-97da6e8be47f)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
@@ -200,9 +213,9 @@
   (+
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler]
   (if (is job-procs None) [] [(job-cgroup-placer job-procs)])
-  [os-warm-process-handler os-proc-table-handler
+  [os-proc-table-handler
    process-exit-handler
-   os-file-handler offloaded-tree-handler offloaded-file-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
+   os-file-handler offloaded-tree-handler offloaded-file-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
    (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
 
@@ -342,9 +355,6 @@
         ;; 世代ごとの置き場と分け合う置き場と、分け合う log の dir の中の名に入れる世代の印(AL-D2c・AL-D2j — worker/core/places の 1 か所で決める)。
         places (run (worker-places (str state-dir) (str shared-dir) boot))
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
-        policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
-        ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
-        shim (run (shim-spans policy))
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
         codes (CodeSettings :repo args.repo :cache places.code :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
@@ -354,8 +364,14 @@
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
-                                                     commit-var)
+                                                     WARM-SERVICES-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
+        ;; service も待ちの子から分けるか(card ki-de44efdb9aa4 — 機体の配備が WARM-SERVICES-VAR で入れる・無ければ今までどおり)。
+        warm-services (warm-services-of (.get machine-env WARM-SERVICES-VAR))
+        policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000))
+                             :warm-services (if (isinstance warm-services bool) warm-services (.error parser warm-services)))
+        ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
+        shim (run (shim-spans policy))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
