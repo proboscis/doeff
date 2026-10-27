@@ -44,7 +44,7 @@
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect
-  NamedContextId HandlerMadeContextId InputImage])
+  NamedContextId HandlerMadeContextId InputImage EventRecord FollowUpEffect])
 (import doeff_agents.effects.agent [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
@@ -2557,48 +2557,76 @@
   (assert (and uses (all (gfor event uses (is event.parent-tool-use-id None)))) (repr uses)))
 
 
-;; --- 出来事の写し手(LaunchEffect.event_tap — agora card ki-31b41eac5071) ------------------------------------------
+;; --- 出来事の記録(LaunchEffect.event_record・FollowUpEffect.record_note — agora card ki-31b41eac5071) ---------------------
 ;;
 ;; 上の層(agora の turn-host)は答えの記録を頁の読み(Events)の後に書いていて、頁の読みが秒〜分遅れると、記録を 2 秒しか待たない hook が
-;; 答えた後の呼びを断った。写し手は、層 2 が行を手番の記録に足した直後に、頁と同じ写し(events-of)で出来事にして呼ばれる。
-;; 失敗ケース: 写し手へ届いた出来事が頁の出来事と違う(写しを 2 つ作った・手番の終わり以外の出来事が欠ける)・写せない handler が
-;; 写し手を黙って呼ばない。
+;; 答えた後の呼びを断った。記録の守り手は、層 2 が行を手番の記録に足した直後に、頁と同じ写し(events-of)で出来事にして畳み、畳みが答えた
+;; 文で file を置き換える。届ける入力の record_note は、入力を層 2 へ渡す前に畳む。
+;; 失敗ケース: 記録へ畳んだ出来事が頁の出来事と違う(写しを 2 つ作った・手番の終わり以外の出来事が欠ける)・file が畳みの答えの文でない・
+;; record_note が入力の行方より後に畳まれる・記録を持てない handler が記録を黙って書かない。
 
-(defk tapped-turn [#^ Setting s #^ Callable tap]
-  {:pre [(: s Setting) (: tap Callable)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "program"}}
-  "写し手つきで起こした session の手番 1 つを終わりまで頁で読むため。答え = 頁の出来事。"
-  (<- handle (LaunchEffect :session-name "adapter-tap" :agent-type AgentType.CLAUDE :work-dir s.work-dir :prompt (reply-prompt "TAPPED")
-                           :model s.model :lifecycle AgentSessionLifecycle.MULTI-TURN :event-tap tap))
-  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+(defn fold-all [state item]  ; defk にできない: 層 2 の読み手の thread が呼ぶ畳みの callback(EventRecord.fold)
+  "検の畳み: 畳んだ物を順に持ち、file には畳んだ数を書く。"
+  (setv folded (+ state #(item)))
+  #(folded (str (len folded))))
+
+(defk recorded-turn [#^ Setting s #^ EventRecord record]
+  {:pre [(: s Setting) (: record EventRecord)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "program"}}
+  "記録つきで起こした session の手番 1 つを終わりまで頁で読み、記録へ畳む物を添えて次の手番を 1 つ頼んで読むため。答え = 2 手番の頁の出来事。"
+  (<- handle (LaunchEffect :session-name "adapter-record" :agent-type AgentType.CLAUDE :work-dir s.work-dir :prompt (reply-prompt "TAPPED")
+                           :model s.model :lifecycle AgentSessionLifecycle.MULTI-TURN :event-record record))
+  (<- one (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (FollowUpEffect :handle handle :message (reply-prompt "NOTED") :input-ref "ref-noted" :record-note "NOTE"))
+  (<- two (read-until handle (fn [events end] (= (len (ends-of events)) 2)) s.timeout -1))
   (<- (Stop handle))
-  done)
+  two)
 
-(defn check-tapped [#^ str backend #^ Path tmp-path]
-  "写し手へ届いた出来事が、頁の出来事(手番の終わりの出来事を除く — 行から作らない)と同じ型と中身を同じ順に持つか確かめるため。"
-  (setv tapped [])
-  (setv done (run-on backend tmp-path (fn [s] (tapped-turn s (fn [event] (.append tapped event))))))
+(defn check-recorded [#^ str backend #^ Path tmp-path]
+  "記録へ畳んだ物が、頁の出来事(手番の終わりの出来事を除く — 行から作らない)と同じ型と中身を同じ順に持ち、届けた入力の record_note は
+   その入力の行方より前に畳まれ、file は最後の畳みの答えの文か確かめるため。"
+  (setv path (str (/ tmp-path "record" "turn.json")))
+  (setv seen [])
+  (setv record (EventRecord :path path :state #() :fold (fn [state item] (.append seen item) (fold-all state item))))
+  (setv done (run-on backend tmp-path (fn [s] (recorded-turn s record))))
   (setv paged (lfor event done.events :if (not (isinstance event AgentTurnEndEvent)) event))
-  (assert (any (gfor event tapped (and (isinstance event AgentTextEvent) (in "TAPPED" event.text)))) (repr tapped))
-  ;; seq は頁の seq でない(写し手には行ごとに 0 から振る)ので、seq を除いて比べる。
-  (assert (= (lfor event tapped (replace event :seq 0)) (lfor event paged (replace event :seq 0)))
-          (repr #((lfor event tapped (type event)) (lfor event paged (type event))))))
+  (setv folded (lfor item seen :if (!= item "NOTE") item))
+  (assert (any (gfor event folded (and (isinstance event AgentTextEvent) (in "TAPPED" event.text)))) (repr seen))
+  ;; seq は頁の seq でない(写しには行ごとに 0 から振る)ので、seq を除いて比べる。
+  (assert (= (lfor event folded (replace event :seq 0)) (lfor event paged (replace event :seq 0)))
+          (repr #((lfor event folded (type event)) (lfor event paged (type event)))))
+  (setv noted (.index seen "NOTE"))
+  (setv fates (lfor #(index item) (enumerate seen) :if (and (isinstance item AgentInputFateEvent) (= item.input-ref "ref-noted")) index))
+  (assert (and fates (< noted (min fates))) (repr #(noted fates)))
+  (assert (= (.read-text (Path path) :encoding "utf-8") (str (len seen))) (repr seen)))
 
-(deftest test-the-event-tap-gets-the-page-events-fake [tmp-path]
-  (check-tapped FAKE tmp-path))
+(deftest test-the-event-record-folds-the-page-events-fake [tmp-path]
+  (check-recorded FAKE tmp-path))
 
-(deftest test-the-event-tap-gets-the-page-events-stub [tmp-path]
-  (check-tapped STUB tmp-path))
+(deftest test-the-event-record-folds-the-page-events-stub [tmp-path]
+  (check-recorded STUB tmp-path))
 
-(deftest test-handlers-that-cannot-tap-refuse-the-event-tap [tmp-path]
-  ;; 写し手を呼べない handler(端末の handler・codex の headless)は黙って捨てずに断る。
+(deftest test-handlers-that-cannot-record-refuse-the-event-record [tmp-path]
+  ;; 記録を持てない handler(端末の handler・codex の headless)は黙って捨てずに断る。記録の無い session への record_note も断る。
   (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (import doeff_agents.handlers.headless_codex [refuse-launch])
-  (val asked (LaunchEffect :session-name "x" :agent-type AgentType.CODEX :work-dir tmp-path :event-tap (fn [event] None)))
+  (val record (EventRecord :path (str (/ tmp-path "r.json")) :state #() :fold fold-all))
+  (val asked (LaunchEffect :session-name "x" :agent-type AgentType.CODEX :work-dir tmp-path :event-record record))
   (with [info (pytest.raises AgentCapabilityUnsupportedError)]
     (refuse-turn-capabilities asked :handler "t"))
-  (assert (= info.value.capability "LaunchEffect.event_tap") info.value.capability)
+  (assert (= info.value.capability "LaunchEffect.event_record") info.value.capability)
   (with [info (pytest.raises AgentCapabilityUnsupportedError)]
     (run (refuse-launch asked)))
-  (assert (= info.value.capability "LaunchEffect.event_tap") info.value.capability)
+  (assert (= info.value.capability "LaunchEffect.event_record") info.value.capability)
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (run-on FAKE tmp-path (fn [s] (noted-without-record s))))
+  (assert (= info.value.capability "FollowUpEffect.record_note") info.value.capability)
   (with [(pytest.raises TypeError)]
-    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :event-tap "not callable")))
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :event-record "not a record")))
+
+(defk noted-without-record [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % SessionHandle)] :tags {:context "headless-adapter-test" :role "program"}}
+  "記録を持たずに起こした session へ、記録へ畳む物を添えて入力を頼むため(断られる筋書き)。"
+  (<- handle (launch s "adapter-no-record" (reply-prompt "PLAIN") None))
+  (<- _ (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (FollowUpEffect :handle handle :message (reply-prompt "NOTED") :record-note "NOTE"))
+  handle)

@@ -1223,6 +1223,33 @@ def _check_attachments(owner: str, attachments: object) -> None:
         raise TypeError(f"{owner}.attachments must be a tuple of InputImage")
 
 
+@dataclass(frozen=True)
+class EventRecord:
+    """A file the handler keeps current with a session's turns as it reads them.
+
+    ``fold(state, item)`` folds one item into the state and answers the new
+    state and the file's new text (``None`` = leave the file as it is). An item
+    is an ``AgentEvent`` the runtime read (the same events a page carries; their
+    ``seq`` is not the page's) or the ``record_note`` of a ``FollowUpEffect``.
+    The handler folds on the runtime's reader thread as it reads the output,
+    one item at a time in the order read, and replaces the file at ``path`` with
+    the text (written to a sibling first, so a reader never sees half a file;
+    a write that fails removes the file rather than leave a stale one).
+    ``state`` is the state before the first item. The fold must be pure and
+    must not raise (a raised error drops the item and keeps the state).
+    """
+
+    path: str
+    state: object
+    fold: "Callable[[object, object], tuple[object, str | None]]"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not self.path:
+            raise ValueError("EventRecord.path must be a non-empty string")
+        if not callable(self.fold):
+            raise TypeError("EventRecord.fold must be callable")
+
+
 @dataclass(frozen=True, kw_only=True)
 class LaunchEffect(AgentEffectBase):
     """Launch a new agent session.
@@ -1290,21 +1317,18 @@ class LaunchEffect(AgentEffectBase):
     # images only). Handlers that cannot hand images to the runtime refuse
     # them with ``AgentCapabilityUnsupportedError``.
     attachments: tuple[InputImage, ...] = ()
-    # A tap on the events of the turns this launch starts (None = no tap): the
-    # handler calls it with each ``AgentEvent`` as soon as the runtime reads the
-    # output it comes from, on the runtime's reader thread, before (and
-    # independent of) a caller reading the page with ``EventsEffect``. A caller
-    # keeps its own record of the turn current with it even when its page
-    # reads lag behind the runtime (agora card ki-31b41eac5071). The tap must
-    # not block and must not raise (a raised error is dropped). Handlers that
-    # do not read the runtime's output as it comes refuse it with
-    # ``AgentCapabilityUnsupportedError``.
-    event_tap: "Callable[[AgentEvent], None] | None" = None
+    # A file the handler keeps current with the events of the turns this
+    # launch starts, as the runtime reads them (None = no record) — see
+    # ``EventRecord``. A caller keeps its own record of the turn current even
+    # when its page reads (``EventsEffect``) lag behind the runtime (agora card
+    # ki-31b41eac5071). Handlers that do not read the runtime's output as it
+    # comes refuse it with ``AgentCapabilityUnsupportedError``.
+    event_record: "EventRecord | None" = None
 
     def __post_init__(self) -> None:
         _check_attachments("LaunchEffect", self.attachments)
-        if self.event_tap is not None and not callable(self.event_tap):
-            raise TypeError("LaunchEffect.event_tap must be callable or None")
+        if self.event_record is not None and not isinstance(self.event_record, EventRecord):
+            raise TypeError("LaunchEffect.event_record must be an EventRecord or None")
         if self.attachments and self.prompt is None:
             raise ValueError("LaunchEffect.attachments ride with a prompt; prompt is None")
         if self.autocompact is not None and not isinstance(
@@ -1382,6 +1406,12 @@ class FollowUpEffect(AgentEffectBase):
     # only). Handlers that cannot hand images to the runtime refuse them with
     # ``AgentCapabilityUnsupportedError``.
     attachments: tuple[InputImage, ...] = ()
+    # An item to fold into the session's event record (``LaunchEffect.event_record``)
+    # before the input reaches the runtime, so the record knows the input
+    # before the runtime's reader thread reads its fate (None = nothing to
+    # fold). Handlers without an event record for the session refuse it with
+    # ``AgentCapabilityUnsupportedError``.
+    record_note: object | None = None
 
     def __post_init__(self) -> None:
         _check_attachments("FollowUpEffect", self.attachments)

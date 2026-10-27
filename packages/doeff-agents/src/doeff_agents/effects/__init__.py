@@ -80,6 +80,7 @@ from doeff_agents.effects.agent import Interrupt as Interrupt
 from doeff_agents.effects.agent import InterruptEffect as InterruptEffect
 from doeff_agents.effects.agent import JSONSchema as JSONSchema
 from doeff_agents.effects.agent import Launch as Launch
+from doeff_agents.effects.agent import EventRecord as EventRecord
 from doeff_agents.effects.agent import LaunchEffect as LaunchEffect
 from doeff_agents.effects.agent import LaunchSession as LaunchSession
 from doeff_agents.effects.agent import LaunchSessionEffect as LaunchSessionEffect
