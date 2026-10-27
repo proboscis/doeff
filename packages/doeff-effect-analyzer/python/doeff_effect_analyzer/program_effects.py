@@ -2713,8 +2713,11 @@ def _comprehension_names(expr: Comprehension) -> frozenset[str]:
 def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
     """Whether ``expr`` builds a Program: a Program call (a local function's included),
     an effect, an install form, or a name (or an element of a sequence) bound to one (so ``(x)(expr)`` installs a
-    handler around it)."""
+    handler around it) — or a conditional either branch of which is one (``f(a() if c else b())``, Hy's ``(f (if c
+    (a) (b)))``: performing it reads both branches, as ``_performed`` does)."""
     match expr:
+        case ast.IfExp(body=body, orelse=orelse):
+            return _is_program_expr(body, scope) or _is_program_expr(orelse, scope)
         case ast.Subscript():
             return isinstance(scope.resolve(expr), (_ProgramArg, _ProgramAnyOf))
         case ast.Name(id=name):
