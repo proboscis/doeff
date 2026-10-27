@@ -26,7 +26,7 @@
 
 
 (defk per-machine? [needs template]
-  {:pre [(: needs tuple) (: template tuple)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: needs (get tuple #(str ...))) (: template (get tuple #(str ...)))] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "needs の job が機体ごとの job(置ける worker のそれぞれに 1 つずつ動き、止まった機体から他の機体へ移らない job)かを知るため — 定義点は
    ここ 1 つ(この判断の規則 1・3 と、上に載る系が「止まった worker が移せない job」を分ける数えが同じ答えを読む)。機体ごとの job =
    needs が雛形の能力 template だけの job(雛形の job — どの機体の worker も名乗るので、どの機体にも置ける)か、雛形の能力の 1 つ以上に
