@@ -807,6 +807,7 @@ class Watcher:
     boot: str | None = None
     mark: HeartbeatReply | None = None
     lease: str | None = None
+    vacate: str | None = None
 
 @dataclass(frozen=True)
 class WatchRefusal:

@@ -51,12 +51,13 @@
   "返事を待たせている待ち(GET /watch の Watcher)が答えを変える最初の刻を知るため: どの待ちも落ち着いていれば(版が after のまま・名指した
    待ちは見え方を覚え済み — watch_policy.all-waiting-unchanged)いちばん早い期限 deadline-ms ちょうど(watch-deadline は now >= deadline-ms で
    「変わっていない」と答える)、落ち着いていない待ちが在れば今すぐ(settle-watch が今の刻で答える・見え方を覚える)、待ちが無ければ無し。"
-  ;; lease の待ちは、その lease に最初に空きが出る刻(担い手の期限切れ)にも起きる(#3865 の後の単位)。
+  ;; lease の待ちは、その lease に最初に空きが出る刻(担い手の期限切れ)にも起きる(#3865 の後の単位)。vacate の待ちは期限切れで起きない
+  ;; (行から token が外れる書きの後の歩で settle-watch が起こす)ので、期限の刻だけを持つ。
   (<- unchanged bool (all-waiting-unchanged watchers state now))
   (var ats #())
   (for [watcher watchers]
     (:= ats (+ ats #(watcher.deadline-ms)))
-    (when (is-not watcher.lease None)
+    (when (and (is-not watcher.lease None) (is watcher.vacate None))
       (<- full (| int None) (lease-full-at watcher state now))
       (when (is-not full None)
         (:= ats (+ ats #(full))))))

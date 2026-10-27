@@ -100,6 +100,17 @@
   (#^ str name))
 
 
+;; 名前付きの lease の行から、担い手 holder の外の token(頭が <holder>/ でない物 — 期限の切れた物も数える)が 1 つも無くなるまで待つ
+;; (coordinator の GET /watch?lease=<名>&vacate=<担い手> — 今無ければすぐ)。期限の切れた token は他の誰かが取るまで行に残るので、空きの待ち
+;; (AwaitLeaseFree — 期限の切れていない担い手の数で起きる)はその間すぐ返る。この待ちは行から token が外れる書き(返し・drop・取りが期限の
+;; 切れた担い手を落とす)の後と待ちの上限でだけ起き、時刻では起きない。答え = bool(真 = 外の token が無いのを見た・偽 = 待ちの上限で
+;; 返った)。答えの本文は待った担い手の名を vacate の欄に返す — 欄の無い答え(この問いを知らない旧い coordinator は素の空きの待ちと読んで、
+;; 期限の切れた token の在る間すぐ返す)は形の違う答えとして断る(board_requests.lease-vacate-answer)。
+(defclass [(dataclass :frozen True)] AwaitLeaseVacated [EffectBase]
+  (#^ str name)
+  (#^ str holder))
+
+
 (defwire LeaseAnswer
   "LeaseOp の答え(coordinator の POST /leases/<名> の返事の本文と同じ形 — 欄の綴りは camel): ok = 操作が通ったか・reason = 通らなかった
    理由(空きが無い・lost — 通れば None)・ttl-ms = 与えた期限(ms — 返す・外すは 0)・dropped = drop で外した担い手の数(ほかの操作は 0)。

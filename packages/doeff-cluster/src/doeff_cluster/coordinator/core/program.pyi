@@ -12,6 +12,7 @@ from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster.shared.intent.protocol import Reply as Reply
 from doeff_cluster.shared.intent.protocol import CoordinatorStopRequested as CoordinatorStopRequested
+from doeff_cluster.shared.intent.protocol import ServiceReached as ServiceReached
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.coordinator.intent.cluster_model import ClusterState as ClusterState
 from doeff_cluster.coordinator.intent.cluster_model import ErrorReply as ErrorReply
@@ -27,6 +28,7 @@ from doeff_cluster.coordinator.intent.cluster_model import DeploymentUnreadable 
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 from doeff_cluster.coordinator.core.watch_policy import watch_of as watch_of
 from doeff_cluster.coordinator.core.watch_policy import settle_watch as settle_watch
+from doeff_cluster.coordinator.core.watch_policy import watch_answer_body as watch_answer_body
 from doeff_cluster.coordinator.core.cluster_policy import nodes_to_follow as nodes_to_follow
 from doeff_cluster.coordinator.core.cluster_policy import with_derived_capabilities as with_derived_capabilities
 from doeff_cluster.coordinator.core.api_policy import respond as respond
@@ -122,9 +124,6 @@ def readable_body(request: Request) -> _Program[Incomplete, object]:
     ...
 
 def request_reply(state: ClusterState, request: Request, now: int, timing: ClusterTiming, settled: bool=False) -> _Program[tuple, object]:
-    ...
-
-def watch_answer_json(answer: WatchAnswer) -> _Program[dict, object]:
     ...
 STALL_LOG: str
 

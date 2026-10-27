@@ -232,6 +232,7 @@ from doeff_cluster.shared.core.native_wheel import current_platform as current_p
 from doeff_cluster.shared.intent.semaphore_model import LeaseOp as LeaseOp
 from doeff_cluster.shared.intent.semaphore_model import LeaseAnswer as LeaseAnswer
 from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
+from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseVacated as AwaitLeaseVacated
 from doeff_cluster.shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMAPHORE_PREFIX
 from doeff_hy.wire import parse as parse_wire
 from doeff_cluster.shared.core.lease_rules import drop_holders as drop_holders
@@ -264,6 +265,8 @@ from doeff_cluster.shared.protocol.board_requests import board_write_request as 
 from doeff_cluster.shared.protocol.board_requests import lease_request as lease_request
 from doeff_cluster.shared.protocol.board_requests import lease_wait_request as lease_wait_request
 from doeff_cluster.shared.protocol.board_requests import lease_wait_answer as lease_wait_answer
+from doeff_cluster.shared.protocol.board_requests import lease_vacate_request as lease_vacate_request
+from doeff_cluster.shared.protocol.board_requests import lease_vacate_answer as lease_vacate_answer
 from doeff_cluster.shared.intent.shared_model import ReadShared as ReadShared
 from doeff_cluster.shared.intent.shared_model import WriteShared as WriteShared
 from doeff_cluster.shared.intent.shared_model import ANY as ANY
