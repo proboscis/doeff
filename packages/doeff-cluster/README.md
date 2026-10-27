@@ -144,6 +144,10 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - `company-machine` は worker が自分で名乗れません。coordinator が worker の置かれた node(`--node`・`NODE_NAME`)の label
   `doeff.dev/company-machine=true` を読んで足します(`--naming` の `nodeCapabilities` で表を変えられます)。
 - task・切り離した task・温める頼みも同じ `needs` を持ち、空の needs は断ります。
+- 1 台の worker が止まった時、他に置ける worker が在る常駐の job は coordinator が移しますが、移る先の枠と memory は置く時に照らしません。
+  宣言の側は `coordinator/core/failover_policy` の `failover-refusals`(N+1 の判断)で前もって照らします: どの job も置ける worker が
+  2 台以上ある(機体ごとの job と例外の表を除く)・どの worker も置ける job の全部を枠(`job-room-of`)に数えて入る・移ってくる job の
+  起動の山が memory の予算に入る・離す組の両方を置ける worker が無い。答えは破りの文の列(空 = 通る)です。
 
 ### 実行先の契約(HOST-CONTRACT)と job_entry
 
