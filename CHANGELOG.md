@@ -79,6 +79,15 @@
 - `doeff-time` 0.1.0 is the first release of `doeff-time` on PyPI (`pip install doeff-time`). It needs
   `doeff>=0.8.0,<0.9` and `doeff-core-effects>=0.8.0,<0.9`, and is released on its own tag `doeff-time/v0.1.0`,
   not with the core packages.
+- **Breaking (doeff-agents, in this repository):** the public API of `doeff-agents` is its effects and its handlers.
+  `from doeff_agents import …` gives the effects (`doeff_agents.effects`), the values they carry and the handler
+  factories (`doeff_agents.handlers`), 151 names in all; the 69 names that drove a session directly, such as
+  `launch_session` and `monitor_session`, are no longer exported. `doeff_agents.session` and `doeff_agents.monitor`
+  are internal (`_session`, `_monitor`), and `doeff_agents.programs` and `doeff_agents.v2` are removed.
+  `production_handlers`, `mock_handlers`, `default_agent_handler` and `headless_claude_agent_handlers` are gone:
+  install `claude_agent_runtime_handlers(...)` (or `fake_claude_agent_runtime_handlers(...)`),
+  `mock_agent_handlers(sessions=...)` or `scenario_agent_handler(scripts=...)` instead. The mock handlers keep no
+  module-level state. `doeff-agents` on PyPI (0.1.1 and 0.1.2, built for doeff 0.4) does not change.
 
 ## 0.7.0 — 2026-10-18
 
