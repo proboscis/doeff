@@ -8,9 +8,10 @@
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated])
 (import doeff_hy.wire [parse])
-(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer])
+(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer
+                                                     lease-vacate-request lease-vacate-answer])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json write-accepted])
 
@@ -52,4 +53,11 @@
     (<- reply RoutedReply (resent-request cell.route method path options query None options.resend-deadline-seconds options.resend-pause-seconds))
     (setv cell.route reply.route)
     (<- answered dict (answer-json reply.answer))
-    (resume (lease-wait-answer answered))))
+    (resume (lease-wait-answer answered)))
+  (AwaitLeaseVacated [name holder]
+    ;; 空けの待ちも読みなので、空きの待ちと同じく期限まで送り直す。旧い coordinator の答え(vacate の印が無い)は lease-vacate-answer が断る。
+    (setv #(method path query _) (lease-vacate-request name holder))
+    (<- reply RoutedReply (resent-request cell.route method path options query None options.resend-deadline-seconds options.resend-pause-seconds))
+    (setv cell.route reply.route)
+    (<- answered dict (answer-json reply.answer))
+    (resume (lease-vacate-answer answered holder))))

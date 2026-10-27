@@ -52,3 +52,23 @@
   (if (isinstance (.get answered "changed") bool)
       (get answered "changed")
       (raise (ValueError (.format "lease の待ちの返事の形が違う: {!r}" answered)))))
+
+
+(deff lease-vacate-request [#^ str name #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: name str) (: holder str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
+  "AwaitLeaseVacated を coordinator の待ちの口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。
+   timeoutSeconds は付けない — coordinator が自分の待ちの上限(ClusterTiming.watch-max-ms)で返す。"
+  #("GET" "/watch" {"lease" name "vacate" holder} None))
+
+
+(deff lease-vacate-answer [#^ dict answered #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ読みをする純粋な判断
+  {:pre [(: answered dict) (: holder str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "GET /watch?lease=<名>&vacate=<担い手> の返事の本文 {\"revision\" … \"changed\" … \"vacate\" <担い手>} を、担い手の外の token が無いのを
+   見たか(changed)にするため。vacate の欄が待った担い手と違う・無い答えは ValueError — この問いを知らない旧い coordinator は vacate を
+   読まずに素の空きの待ちと答え、期限の切れた token が残る間すぐ返す(真と読むと、送り手は行を読み直して同じ待ちを出し直し続ける)。"
+  (cond
+    (!= (.get answered "vacate") holder)
+      (raise (ValueError (.format "coordinator が lease の空けの待ち(vacate)を知らない — 答えに vacate={!r} の印が無い(旧い版): {!r}"
+                                  holder answered)))
+    (isinstance (.get answered "changed") bool) (get answered "changed")
+    True (raise (ValueError (.format "lease の空けの待ちの返事の形が違う: {!r}" answered)))))

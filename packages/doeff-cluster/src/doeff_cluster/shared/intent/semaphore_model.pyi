@@ -61,5 +61,10 @@ class AwaitLeaseFree(EffectBase[bool]):
     name: str
 
 @dataclass(frozen=True)
+class AwaitLeaseVacated(EffectBase[bool]):
+    name: str
+    holder: str
+
+@dataclass(frozen=True)
 class LeaseStanding(EffectBase[str]):
     name: str
