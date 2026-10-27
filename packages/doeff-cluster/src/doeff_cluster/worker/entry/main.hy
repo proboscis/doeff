@@ -40,7 +40,9 @@
 (import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
-(import doeff_cluster.shared.protocol.supplied_values [SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-DIR SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster.foundation.in_cluster_api [SERVICE-ACCOUNT-CA-PATH in-cluster-api-routed])
+(import doeff_cluster.worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
 (import doeff_cluster.shared.core.launch_rules [worker-commit-env-name])
 (import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
@@ -84,6 +86,21 @@
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(card ki-de44efdb9aa4 — WorkerPolicy.warm-services)。値は on か off
 ;; (無ければ枠の file の自分の行の warmServices — card ki-67abc0cf71e9・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
+;; この worker の Pod の metadata.uid(worker の雛形が downward API で置く — card ki-a66bb71f4152)。在り、node の名(--node)も在る時だけ、
+;; 置かれた常駐の job を自分の Pod の label に写す(worker/protocol/pod_labels)。Pod の外の worker には無い。
+(val POD-UID-VAR "POD_UID")
+
+
+(defk pod-label-parts [pod-uid node]
+  {:pre [(: pod-uid (| str None)) (: node str)] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
+  "Pod の job の label の答え手(worker/protocol/pod_labels — card ki-a66bb71f4152)の設定と入れ物を、Pod の uid と node の名が揃った
+   worker にだけ作るため(答え = #(設定 入れ物)・None = 写さない — Pod の外の worker)。身元と宛先は k8s が Pod に置く ServiceAccount の dir と
+   自区画の API server。"
+  (if (and pod-uid node)
+      #((PodLabelSettings :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE
+                          :namespace-file (+ SERVICE-ACCOUNT-DIR "/namespace") :node node :pod-uid pod-uid)
+        (PodLabelCell))
+      None))
 
 
 (defk boot-file-written [path boot]
@@ -210,10 +227,11 @@
 
 
 (defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file memory-cell
-                           [job-procs None]]
+                           [job-procs None] [pod-labels None]]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
          (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings)
-         (: warm WarmSettings) (: boot-file (| str None)) (: memory-cell MemoryCell) (: job-procs (| str None))]
+         (: warm WarmSettings) (: boot-file (| str None)) (: memory-cell MemoryCell) (: job-procs (| str None))
+         (: pod-labels (| tuple None))]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
@@ -228,15 +246,21 @@
    が答える(card ki-7b934e2538f9 — 見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。
    機体の memory の逼迫の観測(ObserveMemoryTight — local-host が問う)は memory-observer が、見張りと分ける入れ物 memory-cell の様子で答える
    (task の起動の見送り — policy の ready-tree-step)。子の job を置く兄弟の cgroup(job-procs — card ki-ed9dca403f58)が在れば、
-   job-cgroup-placer を subprocess-handler のすぐ内側に置き、内側の宿が起こす子をすべて兄弟の cgroup へ入れる(本体は残る)。"
+   job-cgroup-placer を subprocess-handler のすぐ内側に置き、内側の宿が起こす子をすべて兄弟の cgroup へ入れる(本体は残る)。
+   Pod の job の label(pod-labels = pod-label-parts の #(設定 入れ物) — card ki-a66bb71f4152)が在れば、pod-job-labels を coordinator-link の
+   すぐ内側に置き(拍の宣言の読みの答えを受け取って label に写す)、自区画の API server 宛ての要求だけを区画の CA で検める
+   in-cluster-api-routed を http-production-handler のすぐ内側に置く(coordinator への要求は外側の client のまま)。"
   (+
-  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler]
+  [(await-handler) (async-time-handler) (http-production-handler)]
+  (if (is pod-labels None) [] [(in-cluster-api-routed KUBE-API SERVICE-ACCOUNT-CA-PATH)])
+  [slog-handler subprocess-handler]
   (if (is job-procs None) [] [(job-cgroup-placer job-procs)])
   [os-proc-table-handler
    process-exit-handler
    os-file-handler offloaded-tree-handler offloaded-file-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
-   (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
+   (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)]
+  (if (is pod-labels None) [] [(pod-job-labels (get pod-labels 0) (get pod-labels 1))])
+  [(probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
 
 
 (defk timing-checked [fence-ms policy timing]
@@ -387,7 +411,7 @@
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
-                                                     WARM-SERVICES-VAR commit-var)
+                                                     WARM-SERVICES-VAR POD-UID-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(card ki-de44efdb9aa4 — 機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・card ki-67abc0cf71e9・無ければ今までどおり)。
@@ -469,11 +493,13 @@
   (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
         memory-cell (MemoryCell)
         ;; 子の job を置く兄弟の cgroup(card ki-ed9dca403f58 — 機体の配備が名を渡した時だけ)。
-        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root))))
+        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
+        ;; 置かれた常駐の job を自分の Pod の label に写す(card ki-a66bb71f4152 — Pod の uid と node の名が在る worker だけ)。
+        pod-labels (run (pod-label-parts (.get machine-env POD-UID-VAR) args.node)))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
-                                           :job-procs job-procs)))
+                                           :job-procs job-procs :pod-labels pod-labels)))
   ;; 生存の合図の thread(card ki-9b58446e2ad6 — scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
   ;; 拍が最後に送った本文を送り直す(判断は coordinator への口の lifeline-turn)。返事の上限は生存の窓の半分(遅い返事を待つ間に次の
   ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。

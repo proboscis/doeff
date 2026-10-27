@@ -445,7 +445,10 @@
   ;; 前の読みの後からこの読みまでに送った heartbeat の事実(HeartbeatSent)の列 — 送った順。この読みの送りと、拍の外の背景の task の
   ;; 送り(card ki-e38dbfca7671)。空 = 送らなかった(前の返事の desired を使い続けた・途絶で送らずに絞った)。値の比べには入れない
   ;; (同じ宣言は送りの刻が違っても同じ)。
-  (setv #^ tuple sends (field :default #() :compare False)))
+  (setv #^ tuple sends (field :default #() :compare False))
+  ;; 返事がこの世代を退いた世代と名指した(返事の superseded — 同じ名の新しい世代が名乗った後・card ki-a66bb71f4152)。Pod の job の
+  ;; label の答え手(worker/protocol/pod_labels)は、退いた世代では label に触らない。途絶で絞った宣言は偽。値の比べには入れない。
+  (setv #^ bool superseded (field :default False :compare False)))
 
 
 (defclass [(dataclass :frozen True)] DesiredUnreadable []

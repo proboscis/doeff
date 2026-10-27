@@ -317,6 +317,7 @@ class DesiredJobs:
     cut_off: CutOff | None = None
     changed: Future[bool] | None = field(default=None, compare=False)
     sends: tuple[HeartbeatSent, ...] = field(default=(), compare=False)
+    superseded: bool = field(default=False, compare=False)
 
 @dataclass(frozen=True)
 class DesiredUnreadable:
