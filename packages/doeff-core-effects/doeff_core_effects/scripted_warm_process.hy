@@ -9,6 +9,7 @@
 ;;;                    終わった子は writes-exit なら WarmExited(exit-code)・そうでなければ WarmLost(exit の file を書かずに居なくなった子)。
 ;;;                    start-ticks が合わない(pid の使い回し)・知らない pid は、終わって exit の file を書いた子なら WarmExited、それ以外は
 ;;;                    WarmLost — 本物が「居ないか使い回された時は exit の file を読む」のと同じ。
+;;;   WriteWarmChildInput pid と start-ticks が合い、hold-input で受けて終わっていない子だけ書いた事にする(WarmInputWritten の delivered)。
 ;;;   SignalWarmChild  pid と start-ticks が合い、終わっていない子だけ終わった形にして WarmSignaled。それ以外は WarmGone(他人の process
 ;;;                    には送らない)。TERM = 子 A は生き残り、入口の終わり(-15)を exit の file に書く・KILL = A も道連れに死に、exit の
 ;;;                    file は書かれない(後の PollWarmChild は WarmLost)— 本物の group の signal と同じ。
@@ -19,7 +20,7 @@
 (import dataclasses [dataclass replace])
 (import enum [StrEnum])
 (import doeff_core_effects.process_effects [ProcessSignal])
-(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited
+(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmInputWritten WarmForked WarmRefused WarmRunning WarmExited
                                          WarmLost WarmSignaled WarmGone warm-socket-missing warm-answer-late warm-lost warm-gone
                                          signal-number-of])
 
@@ -56,12 +57,13 @@
 
 
 (defrecord WarmChildState
-  "受けた子 1 つの今(start-ticks・残りの WarmRunning の回数・終わったか・終わった時の値と exit の file の在否)。"
+  "受けた子 1 つの今(start-ticks・残りの WarmRunning の回数・終わったか・終わった時の値と exit の file の在否・入力の pipe を握ったか)。"
   (#^ int start-ticks)
   (#^ int polls-left)
   (#^ bool ended)
   (#^ int exit-code)
-  (#^ bool writes-exit))
+  (#^ bool writes-exit)
+  (setv #^ bool holds-input False))
 
 
 (defk scripted-fork [script request pid ticks]
@@ -82,7 +84,8 @@
         (when (not runs)
           (raise (ValueError (.format "台本に入口 {} の WarmRun が無い(検の世界の誤り)" request.entry))))
         (val run (get runs 0))
-        (WarmChildState :start-ticks ticks :polls-left run.polls :ended False :exit-code run.exit-code :writes-exit run.writes-exit))))
+        (WarmChildState :start-ticks ticks :polls-left run.polls :ended False :exit-code run.exit-code :writes-exit run.writes-exit
+                        :holds-input request.hold-input))))
 
 
 (defk ended-answer [pid exit-path state]
@@ -98,12 +101,13 @@
   ;; 受けた子の表(pid → WarmChildState)と、次に配る番。
   (session val children ((get dict #(int WarmChildState))))
   (session var forks 0)
-  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds]
+  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env]
     (val pid (+ SCRIPTED-WARM-FIRST-PID forks))
     (val ticks (+ SCRIPTED-WARM-FIRST-TICKS forks))
     (<- decided (| WarmChildState WarmRefused)
         (scripted-fork script (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env
-                                            :log-path log-path :exit-path exit-path :grace-seconds grace-seconds)
+                                            :log-path log-path :exit-path exit-path :grace-seconds grace-seconds
+                                            :hold-input hold-input :cgroup-procs cgroup-procs :notice-env notice-env)
                        pid ticks))
     (if (isinstance decided WarmRefused)
         (resume decided)
@@ -127,6 +131,10 @@
           (setv (get children pid) ended)
           (<- answer (| WarmExited WarmLost) (ended-answer pid exit-path ended))
           (resume answer))))
+  (WriteWarmChildInput [pid start-ticks text]
+    (val state (.get children pid))
+    (resume (WarmInputWritten :pid pid :delivered (and (is-not state None) (= state.start-ticks start-ticks) (not state.ended)
+                                                       state.holds-input))))
   (SignalWarmChild [pid start-ticks signal]
     (val state (.get children pid))
     (<- gone WarmGone (warm-gone pid))

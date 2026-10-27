@@ -9,6 +9,8 @@ from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.warm_effects import ForkFromWarm as ForkFromWarm
 from doeff_core_effects.warm_effects import PollWarmChild as PollWarmChild
 from doeff_core_effects.warm_effects import SignalWarmChild as SignalWarmChild
+from doeff_core_effects.warm_effects import WriteWarmChildInput as WriteWarmChildInput
+from doeff_core_effects.warm_effects import WarmInputWritten as WarmInputWritten
 from doeff_core_effects.warm_effects import WarmForked as WarmForked
 from doeff_core_effects.warm_effects import WarmRefused as WarmRefused
 from doeff_core_effects.warm_effects import WarmRunning as WarmRunning
@@ -57,6 +59,7 @@ class WarmChildState:
     ended: bool
     exit_code: int
     writes_exit: bool
+    holds_input: bool = False
 
 def scripted_fork(script: WarmScript, request: ForkFromWarm, pid: int, ticks: int) -> _Program[WarmChildState | WarmRefused, object]:
     ...

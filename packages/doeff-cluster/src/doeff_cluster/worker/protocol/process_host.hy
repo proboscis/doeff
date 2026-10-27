@@ -47,7 +47,8 @@
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
-(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmRefused WarmRunning WarmExited WarmLost])
+(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited
+                                         WarmLost])
 (import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
 
 
@@ -82,9 +83,11 @@
 
 (defrecord ForkedFrom
   "待ちの子から分けて起こした子の印(#3646): start-ticks = 分かれた子 A の /proc の起動の刻(pid の使い回しを見分ける)・exit-path = A が
-   終了コードを書く file。観測・止め・回収は pid とこの印で問う(汎用の子 process の効果ではなく、待ちの子の効果)。"
+   終了コードを書く file・holds-input = A の入力の pipe を握って頼んだ(service — 退きの知らせをそこへ書く・card ki-de44efdb9aa4)。
+   観測・止め・回収は pid とこの印で問う(汎用の子 process の効果ではなく、待ちの子の効果)。"
   (#^ int start-ticks)
-  (#^ str exit-path))
+  (#^ str exit-path)
+  (setv #^ bool holds-input False))
 
 
 (defrecord StopAsked
@@ -181,11 +184,13 @@
 (defk tell-retirement [started notice]
   {:pre [(: started Started) (: notice (| Retired HandoffAbandoned))] :post [(: % Started)] :tags {:context "worker" :role "protocol"}}
   "退きの知らせ notice を子へ送り、観測の notice に残した子を返すため(#3672): shim の下の子は shim の標準入力の pipe へ 1 行
-   (retirement-line)を書く — shim がその行を job の知らせの pipe へ中継する。待ちの子から分けた子(task — 入れ替えの対象でない)は知らせの
-   口を持たないので書かない。書けなかった(子が終わっていた)時も観測には残す — 終わりは ObserveProcesses が運ぶ。"
-  (when (is started.fork None)
-    (<- line str (retirement-line notice))
-    (<- (WriteProcessInput :pid started.view.pid :text line)))
+   (retirement-line)を書く — shim がその行を job の知らせの pipe へ中継する。待ちの子から分けた service は、握った入力の pipe へ同じ行を
+   書く — 分けた子 A が同じ部品で中継する(card ki-de44efdb9aa4)。分けた task(入れ替えの対象でない)は知らせの口を持たないので書かない。
+   書けなかった(子が終わっていた)時も観測には残す — 終わりは ObserveProcesses が運ぶ。"
+  (<- line str (retirement-line notice))
+  (cond
+    (is started.fork None) (<- (WriteProcessInput :pid started.view.pid :text line))
+    started.fork.holds-input (<- (WriteWarmChildInput :pid started.view.pid :start-ticks started.fork.start-ticks :text line)))
   (replace started :view (replace started.view :notice notice)))
 
 
@@ -363,13 +368,19 @@
   (if (is-not action.warm-key None)
       (do (<- place WarmPlace (warm-place settings.warm-dir action.warm-key))
           (val exit-path (+ stem ".exit"))
+          ;; 常駐の job(service — card ki-de44efdb9aa4)は入れ物 shim の 4 つの役を分けた子 A に揃える: 入力の pipe を握る(worker の
+          ;; 消失の検知と退きの知らせ — shim の hold-stdin)・知らせの中継(shim の --notice-env)・service の兄弟の cgroup(shim-argv の
+          ;; placed-argv と同じ cgroup.procs)。log の刻と孫の回収と終了コードは task と同じ A の見張りが持つ。
+          (val service (not spec.once))
           (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
-                                   :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)))
+                                   :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)
+                                   :hold-input service :notice-env (if service settings.notice-env None)
+                                   :cgroup-procs (if service settings.service-procs None)))
           (:= started (if (isinstance forked WarmRefused)
                           (JobNotStarted :name spec.name :warm-key action.warm-key :detail (+ "待ちの子が分けるのを断った: " forked.detail)
                                          :at-ms started-ms)
                           (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
-                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path)))))
+                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path :holds-input service)))))
       (do (<- argv tuple (shim-argv settings spec plan.argv))
           (<- answer (StartProcess :argv argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
                                    :process-group True :hold-stdin True :reap-group True))

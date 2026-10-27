@@ -2260,12 +2260,12 @@
   (ForgetProbes [keep]
     (<- (change-live-truth worker.name boot (fn [truth] (replace truth :probes (dfor #(k v) (.items truth.probes) :if (in k keep) k v)))))
     (resume None))
-  ;; 待ちの子(#3646)の代役: 起こした刻に準備済み(模擬に読み込みの秒も thread も VM も無い)・止めは合図の刻に終わる(TERM = -15・
+  ;; 待ちの子(#3646)の代役: 起こした刻に準備済み(模擬に読み込みの秒も thread も VM も無い・service の頼みも受ける版 — card ki-de44efdb9aa4)・止めは合図の刻に終わる(TERM = -15・
   ;; KILL = -9)・忘れると観測から外す。分かれた task は待ちの子と別に走る(本番の A が別の session なのと同じ — 止めても task に触れない)。
   (StartWarmChild [key launch]
     (<- now int (now-epoch-ms))
     (<- pid int (NextPid))
-    (val started (WarmChildView :key key :pid pid :started-ms now :mark (WarmChildMark :threads 1 :vm-live #(0 0 0))))
+    (val started (WarmChildView :key key :pid pid :started-ms now :mark (WarmChildMark :threads 1 :vm-live #(0 0 0) :services True)))
     (<- (change-live-truth worker.name boot
                            ;; 前の子の続けた起動の断りを引き継ぐ(本番の宿と同じ数え — warm_rules の refusals-after)。
                            (fn [truth] (replace truth :warm-children

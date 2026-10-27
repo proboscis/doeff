@@ -6,6 +6,9 @@
       — 開いている fd の行き先・env・process の命令行・interpreter の venv(sys.prefix)・thread の本数・doeff の VM の数・GC が凍らせた object の数を
         JSON で書く。関所が在れば、検が開いた unix socket
         へ繋いで「書いた」を送り、検が切るまで待ってから印を書く(眠らずに、検の合図で進む)。
+  relay <出力の path> <関所の socket> <知らせの環境変数の名>
+      — 関所に着いた事を送ってから、知らせの pipe(環境変数の <fd>:<inode> の fd)の 1 行を読んで出力に書く(待ちの子から分けた service の
+        退きの知らせの中継を検が見る — card ki-de44efdb9aa4)。
 """
 
 import fcntl
@@ -114,6 +117,20 @@ def main() -> None:
                 case _:
                     pass
             print("warm_job: inspect done", flush=True)
+        case ["relay", out, gate, variable]:
+            descriptor = int(environ_seen()[variable].split(":", 1)[0])
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as link:
+                link.connect(gate)
+                link.sendall(b"inspected\n")
+                line = b""
+                while not line.endswith(b"\n"):
+                    chunk = os.read(descriptor, 4096)
+                    if not chunk:
+                        break
+                    line += chunk
+            with open(out, "wb") as handle:
+                handle.write(line)
+            print("warm_job: relay done", flush=True)
         case other:
             print(f"warm_job: 知らない引数 {other}", file=sys.stderr, flush=True)
             sys.exit(2)

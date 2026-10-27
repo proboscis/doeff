@@ -13,6 +13,14 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   待ちの子は、その知らせを受けてから A の pid と起動の刻(機体ごとの読み proc-stat-of の start-ticks — pid の使い回しを見分ける)を
   答える(答えの直後の
   合図が、まだ group の先頭でない A に届いて ESRCH にならないように)。
+常駐の job(service — card ki-de44efdb9aa4)の頼みは 3 つの欄を足す(どれも省ける — task の頼みは今までの形):
+  holdInput   = 頼みの 1 行の頭の byte に、worker が握る入力の pipe の読み口が添えて届く(unix socket の fd の受け渡し)。A はそれを自分の
+                標準入力にする — worker が消えると A は EOF を読む(入れ物 shim の標準入力と同じ)・worker が書いた退きの知らせの行を読む。
+                添えた fd の無い holdInput の頼み・holdInput でない頼みに添えた fd は断る。
+  cgroupProcs = A が setsid の後、入口を起こす前に自分の pid を書いて移る cgroup.procs(入れ物 shim の placed-argv と同じ置き分け —
+                worker/core/job_cgroup の service の類)。書けなければ A は入口を起こさずに終わり、待ちの子は断りを答える。
+  noticeEnv   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(入れ物 shim の --notice-env と同じ)。
+待ちの子は service の頼みを受けられる事を準備完了の印の serviceForks で名乗る(worker はこの印の無い版の待ちの子へ service を頼まない)。
 頼みと答えの 1 行は doeff_core_effects.os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは
 同じ module の warm-request-of・warm-answer-line を使う(綴りを 2 つ持たない)。
 
@@ -47,6 +55,7 @@ import socket
 import sys
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from types import ModuleType
 from typing import NoReturn
 
@@ -59,7 +68,7 @@ from doeff_hy.wire import Malformed
 
 from doeff_cluster.foundation.child_environ import replace_environ
 from doeff_cluster.worker.entry.line_stamp import job_log_plan, stamped_lines
-from doeff_cluster.worker.entry.shim import become_subreaper, exit_status, shim_code
+from doeff_cluster.worker.entry.shim import NoticeRelay, become_subreaper, exit_status, notice_variable, open_relay, shim_code
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の shim.py と同じ。
 MODULE_TAGS = {"context": "worker", "role": "main"}
@@ -74,6 +83,8 @@ REQUEST_TIMEOUT_SECONDS = 5.0
 START_REFUSED_CODE = 3
 # A が setsid を済ませた時に待ちの子へ送る 1 byte。
 SESSION_LED = b"1"
+# A が頼みの cgroup に移れなかった時に待ちの子へ送る 1 byte(A は入口を起こさずに終わる)。
+CGROUP_REFUSED = b"2"
 
 
 def module_named(name: str) -> ModuleType:
@@ -161,11 +172,15 @@ def run_entry(entry: str, args: tuple[str, ...]) -> NoReturn:
 class EntrySpawner:
     """読み込み済みの入口を fork で起こす部品(shim_code の spawn)。呼ぶと B の pid を返す。"""
 
-    def __init__(self, entry: str, args: tuple[str, ...], closing: tuple[int, ...]) -> None:
-        """走らせる入口と引数と、B が継がずに閉じる fd(A の log の書き手の fd — line_stamp の writer_descriptors)を持つため。"""
+    def __init__(
+        self, entry: str, args: tuple[str, ...], closing: tuple[int, ...], handed: tuple[int, ...] = ()
+    ) -> None:
+        """走らせる入口と引数と、B が継がずに閉じる fd(A の log の書き手の fd — line_stamp の writer_descriptors・知らせの pipe の書き口)と、
+        B だけが持つ fd(知らせの pipe の読み口 — A は B を起こした後に自分の写しを閉じる)を持つため。"""
         self.entry = entry
         self.args = args
         self.closing = closing
+        self.handed = handed
 
     def __call__(self) -> int:
         """TERM を block してから B を fork して pid を返すため(B は戻らない)。A は fork の後に元の mask へ戻し、block の間に届いた
@@ -178,68 +193,113 @@ class EntrySpawner:
                 os.close(descriptor)
             run_entry(self.entry, self.args)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        # 知らせの pipe の読み口は B だけが持つ(A が写しを持ち続けると、B が終わった後も書きが詰まらずに溜まる — 入れ物 shim と同じ)。
+        for descriptor in self.handed:
+            os.close(descriptor)
         return pid
 
 
-def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int) -> NoReturn:
-    """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になったら待ちの子へ知らせ(led へ 1 byte)、log(1 行ごとに
-    刻を付ける書き手を通す)・env・cwd を整えてから、shim と同じ見張りで B を起こして待つ。job の終了コードを exit の file に書いてから、
-    shim と同じ値で終わる(exit の file を書く時には、書き手が log を書き終えている)。"""
+def placed_in(procs: str) -> bool:
+    """A を頼みの cgroup へ移すため(自分の pid を cgroup.procs へ書く — 入れ物 shim の placed-argv の sh と同じ書き)。答え = 移れたか。"""
+    try:
+        with open(procs, "w", encoding="ascii") as handle:
+            handle.write(f"{os.getpid()}\n")
+    except OSError:
+        return False
+    return True
+
+
+def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, given: int | None) -> NoReturn:
+    """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になり、頼みの cgroup が在ればそこへ移ってから待ちの子へ
+    知らせ(led へ 1 byte — 移れなければ断りの byte を送り、入口を起こさずに終わる)、入力の pipe(given — service の頼み)を標準入力にし、
+    log(1 行ごとに刻を付ける書き手を通す)・知らせの中継・env・cwd を整えてから、shim と同じ見張りで B を起こして待つ。job の終了コードを
+    exit の file に書いてから、shim と同じ値で終わる(exit の file を書く時には、書き手が log を書き終えている)。"""
     for descriptor in closing:
         with contextlib.suppress(OSError):
             os.close(descriptor)
     os.setsid()
+    if request.cgroup_procs is not None and not placed_in(request.cgroup_procs):
+        os.write(led, CGROUP_REFUSED)
+        os._exit(START_REFUSED_CODE)
     os.write(led, SESSION_LED)
     os.close(led)
+    # service の頼みは worker が握る入力の pipe を標準入力にする(worker の消失 = EOF・退きの知らせの行 — 頭注)。task は待ちの子の
+    # 標準入力を継いだまま(worker の消失だけを読む)。
+    if given is not None:
+        os.dup2(given, 0)
+        os.close(given)
     log = os.open(request.log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     os.dup2(log, 1)
     os.dup2(log, 2)
     os.close(log)
     # job の log の行を OTLP でも送るかは、頼みの env(worker が置いた送り先と job の文脈)で決める — この process の環境はまだ待ちの子の物。
     lines = stamped_lines(job_log_plan({item.name: item.value for item in request.env}))
+    # 退きの知らせ(#3672): service の頼みは入力の行を job の知らせの pipe へ中継する(入れ物 shim の --notice-env と同じ部品と印)。
+    # 分かれた task は入れ替えの対象でないので中継しない。
+    relay: NoticeRelay | None = None if request.notice_env is None else open_relay(request.notice_env)
+    notice = () if relay is None else (notice_variable(relay),)
     # 環境の置き換えは foundation の 1 か所(生の環境変数に触ってよい層)— B は fork で A の環境を継ぎ、入口が自分の文脈を環境から読む。
-    run(replace_environ(tuple((item.name, item.value) for item in request.env)))
+    run(replace_environ((*((item.name, item.value) for item in request.env), *((n.name, n.value) for n in notice))))
     os.chdir(request.cwd)
-    spawner = EntrySpawner(request.entry, tuple(request.args), lines.writer_descriptors)
-    # 分かれた task は入れ替えの対象でない(service だけが入れ替わる)— 退きの知らせを中継しない(#3672)。
-    code = shim_code(request.grace_seconds, spawner, lines, become_subreaper, relay=None)
+    spawner = EntrySpawner(
+        request.entry,
+        tuple(request.args),
+        (*lines.writer_descriptors, *(() if relay is None else (relay.write_fd,))),
+        () if relay is None else (relay.read_fd,),
+    )
+    code = shim_code(request.grace_seconds, spawner, lines, become_subreaper, relay=relay)
     write_replacing(request.exit_path, str(code))
     sys.stderr.flush()
     os._exit(exit_status(code))
 
 
-def forked(request: WarmRequestWire, closing: tuple[int, ...]) -> WarmForked | WarmRefused:
-    """A を fork し、A が session の先頭になった知らせを期限の内に受けてから、pid と起動の刻を答えにするため。知らせが来なければ断る。"""
+def forked(request: WarmRequestWire, closing: tuple[int, ...], given: int | None) -> WarmForked | WarmRefused:
+    """A を fork し、A が session の先頭になった知らせを期限の内に受けてから、pid と起動の刻を答えにするため。知らせが来なければ・A が
+    頼みの cgroup に移れなければ断る。given = A の標準入力にする入力の pipe の読み口(待ちの子の写しは fork の後に閉じる)。"""
     led_read, led_write = os.pipe()
     sys.stdout.flush()
     sys.stderr.flush()
     pid = os.fork()
     if pid == 0:
         os.close(led_read)
-        run_forked(request, closing, led_write)
+        run_forked(request, closing, led_write, given)
     os.close(led_write)
+    if given is not None:
+        os.close(given)
     ready, _, _ = select.select([led_read], [], [], REQUEST_TIMEOUT_SECONDS)
-    led = bool(ready) and os.read(led_read, 1) == SESSION_LED
+    word = os.read(led_read, 1) if ready else b""
     os.close(led_read)
-    if not led:
+    if word == CGROUP_REFUSED:
+        return WarmRefused(detail=f"分かれた子が頼みの cgroup に移れない: {request.cgroup_procs}")
+    if word != SESSION_LED:
         return WarmRefused(detail="分かれた子が、session の先頭になる前に終わったか、期限の内に知らせなかった")
     return WarmForked(pid=pid, start_ticks=start_ticks(pid))
 
 
-def received_line(connection: socket.socket) -> bytes | None:
-    """頼みの 1 行を期限と上限の内で読むため(読めなければ None)。"""
+@dataclass(frozen=True)
+class Received:
+    """受けた頼み 1 つ: line = 頼みの 1 行(読めなければ None)・given = 頼みに添えて届いた fd(service の入力の pipe の読み口)。"""
+
+    line: bytes | None
+    given: tuple[int, ...]
+
+
+def received_request(connection: socket.socket) -> Received:
+    """頼みの 1 行を期限と上限の内で読み、頭の byte に添えて届いた fd を集めるため(読めなければ line は None)。"""
     connection.settimeout(REQUEST_TIMEOUT_SECONDS)
     data = b""
+    given: list[int] = []
     try:
         while b"\n" not in data and len(data) <= REQUEST_LIMIT_BYTES:
-            chunk = connection.recv(65536)
+            chunk, fds, _flags, _address = socket.recv_fds(connection, 65536, 1)
+            given.extend(fds)
             if not chunk:
                 break
             data += chunk
     except OSError:
-        return None
+        return Received(line=None, given=tuple(given))
     line = data.split(b"\n", 1)[0]
-    return line if line and len(line) <= REQUEST_LIMIT_BYTES else None
+    return Received(line=line if line and len(line) <= REQUEST_LIMIT_BYTES else None, given=tuple(given))
 
 
 def answered(connection: socket.socket, answer: WarmForked | WarmRefused) -> None:
@@ -252,15 +312,34 @@ def answered(connection: socket.socket, answer: WarmForked | WarmRefused) -> Non
     connection.close()
 
 
-def handled(connection: socket.socket, closing: tuple[int, ...]) -> None:
-    """頼み 1 つを受けるため: 読めない・形の違う頼みは断り、受けた頼みは A を fork して pid と起動の刻を答える。"""
-    line = received_line(connection)
-    request = WarmRefused(detail="頼みの 1 行を読めない(期限か上限を越えた・空)") if line is None else request_of(line)
+def fitted(request: WarmRequestWire | WarmRefused, given: tuple[int, ...]) -> WarmRequestWire | WarmRefused:
+    """頼みと添えて届いた fd が合うかを確かめるため: holdInput の頼みには fd がちょうど 1 つ、それ以外の頼みには 0 個(合わなければ断る)。"""
     match request:
         case WarmRefused():
+            return request
+        case WarmRequestWire(hold_input=True) if len(given) != 1:
+            return WarmRefused(detail=f"入力を握る頼みに添えた fd が 1 つでない({len(given)} 個)")
+        case WarmRequestWire(hold_input=False) if given:
+            return WarmRefused(detail=f"入力を握らない頼みに fd が添えてある({len(given)} 個)")
+        case WarmRequestWire():
+            return request
+
+
+def handled(connection: socket.socket, closing: tuple[int, ...]) -> None:
+    """頼み 1 つを受けるため: 読めない・形の違う頼み・添えた fd の合わない頼みは断り(添えた fd は閉じる)、受けた頼みは A を fork して
+    pid と起動の刻を答える。"""
+    received = received_request(connection)
+    line = received.line
+    parsed = WarmRefused(detail="頼みの 1 行を読めない(期限か上限を越えた・空)") if line is None else request_of(line)
+    request = fitted(parsed, received.given)
+    match request:
+        case WarmRefused():
+            for descriptor in received.given:
+                os.close(descriptor)
             answered(connection, request)
         case WarmRequestWire():
-            answered(connection, forked(request, (*closing, connection.fileno())))
+            given = received.given[0] if received.given else None
+            answered(connection, forked(request, (*closing, connection.fileno()), given))
 
 
 def reaped() -> None:
@@ -344,6 +423,8 @@ def main() -> None:
         "threads": thread_count(),
         "vmLive": list(vm_live_counts()),
         "gcFrozen": gc.get_freeze_count(),
+        # service の頼み(入力の pipe・cgroup・知らせの中継 — 頭注)を受けられる版である印。worker はこの印の在る待ちの子へだけ service を頼む。
+        "serviceForks": True,
     }
     write_replacing(options.ready, json.dumps(facts, ensure_ascii=False))
     print(f"warm_child: 準備完了 root={root} module={len(sys.modules)}", file=sys.stderr, flush=True)

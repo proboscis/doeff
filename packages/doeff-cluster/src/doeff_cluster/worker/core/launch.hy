@@ -143,7 +143,8 @@
   (setv #^ tuple entry-args #())
   ;; 入口が走る環境(実行環境の job だけ — 名の順): 許可表で組んだ環境に root の venv の 2 つ(PATH の頭・VIRTUAL_ENV —
   ;; uv-run-environ)を足した物で、shim の下の道の env と同じ値。待ちの子から分ける task はこの環境を ForkFromWarm の env に載せ、2 つの道の
-  ;; 入口が同じ venv を名で引く(card ki-b884608b96e4)。木の job と入口の検めは待ちの子から分けない(warm_rules.forks-from-warm-child)ので空。
+  ;; 入口が同じ venv を名で引く(card ki-b884608b96e4)。分ける service も同じ値を使う(card ki-de44efdb9aa4)。木の job と入口の検めは
+  ;; 待ちの子から分けないので空。
   (setv #^ (get tuple #(EnvEntry ...)) entry-env #()))
 
 

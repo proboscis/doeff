@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
-  warm-launch warm-child-refused warm-refusal-failure])
+  warm-launch warm-child-refused warm-refusal-failure service-warm-keys fork-candidate WarmStart warm-start])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -256,31 +256,34 @@
   (and (elder-waits spec) (is-not tree None) (is (probe-actions now spec tree world policy) None)))
 
 
-(defk ready-tree-step [now spec tree world record policy]
-  {:pre [(: now int) (: spec JobSpec) (: tree str) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy)] :post [(: % StartStep)]
-   :tags {:context "worker" :role "judgment"}}
-  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)は、自分の root の
-   待ちの子が準備済みになるまで起こさない(待ちの子を起こすのは warm-child-actions)— 道は 1 つで、入れ物 shim へ倒れない。"
+(defk ready-tree-step [now spec tree world record policy warm-keys]
+  {:pre [(: now int) (: spec JobSpec) (: tree str) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: warm-keys frozenset)]
+   :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
+  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)と、service を分ける
+   root(warm-keys — card ki-de44efdb9aa4)の service は、道を warm_rules の warm-start が決める: 待ちの子が準備済みになるまで起こさず
+   (待ちの子を起こすのは warm-child-actions)、分ける時は StartJob に root のキーを載せる。黙って入れ物 shim へ倒れない(service が shim で
+   起きるのは warm-start が名指す訳 — 古い版の待ちの子・断りの上限 — の時だけ)。"
   (val gate (probe-actions now spec tree world policy))
-  (val forks (forks-from-warm-child spec))
+  (val path (warm-start spec world policy warm-keys))
   (cond
     (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world spec))))
     (in-backoff now record policy) (StartStep :actions #() :hold StartHold.BACKOFF)
-    (and forks (not (warm-child-ready (warm-child-of world (warm-key-of spec))))) (StartStep :actions #() :hold StartHold.WARM-CHILD)
+    (= path WarmStart.WAIT) (StartStep :actions #() :hold StartHold.WARM-CHILD)
     ;; 同じ名の前の世代がこの job を動かしている(AL-D2f): 準備と検めは揃ったので、coordinator が印を外すまで起こさない(状態の行は
     ;; elder-runs — coordinator はそれを見て前の世代から外す)。
     (elder-waits spec) (StartStep :actions #() :hold StartHold.ELDER-RUNS)
     ;; 機体の memory が逼迫している間は、task(once)だけ起こさない(重い task を並べて機体が尽きるのを避ける — card ki-7b934e2538f9)。準備と
     ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。
     (and spec.once world.memory-tight) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
-    True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if forks (warm-key-of spec) None))) :hold None)))
+    True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if (= path WarmStart.FORK) (warm-key-of spec) None)))
+                    :hold None)))
 
 
-(defk start-step [now spec world record policy]
-  {:pre [(: now int) (: spec JobSpec) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy)] :post [(: % StartStep)]
-   :tags {:context "worker" :role "judgment"}}
+(defk start-step [now spec world record policy warm-keys]
+  {:pre [(: now int) (: spec JobSpec) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: warm-keys frozenset)]
+   :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
   "動いている process の無い宣言の job を起こす action と、起こさない訳を 1 か所で決めるため(plan-job の起こしの枝と、拍の終わりの
-   見送りの行 start-holds が同じ判断を読む — #3713)。"
+   見送りの行 start-holds が同じ判断を読む — #3713)。warm-keys = service を待ちの子から分ける root(warm_rules の service-warm-keys)。"
   (val code (code-of world (code-key spec)))
   (val tree (ready-path code))
   (cond
@@ -296,7 +299,7 @@
     (memory-given-up spec record policy) (StartStep :actions #() :hold StartHold.MEMORY-KILLED)
     ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)で焼く。
     (is tree None) (StartStep :actions (prepare-actions now spec world policy None) :hold (! (prepare-hold code record)))
-    True (! (ready-tree-step now spec tree world record policy))))
+    True (! (ready-tree-step now spec tree world record policy warm-keys))))
 
 
 (defk recreating? [want process record]
@@ -402,7 +405,9 @@
   (cond
     ;; 諦めた入れ替えの新・新しい世代へ移った job は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
     ;; 止まりの始まった Pod の handoff の job も起こさない(印の有無に依らない — start-step の頭・AL-D2p)。
-    (is process None) (if (or (is want None) abandoned superseded) #() (. (! (start-step now want world record policy)) actions))
+    (is process None) (if (or (is want None) abandoned superseded)
+                          #()
+                          (. (! (start-step now want world record policy (service-warm-keys desired policy))) actions))
     (is-not process.exit-code None)
       (+ #((ReapJob name process.pid
              (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code
@@ -497,12 +502,13 @@
       #((StopWarmChild key StopStage.TERM (! (mark-refusal view.mark))))
     True #()))
 
-(defk launch-of [key wanted desired world warm]
-  {:pre [(: key str) (: wanted frozenset) (: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % (| WarmLaunch None))]
-   :tags {:context "worker" :role "judgment"}}
-  "root のキーの待ちの子の起こし方を求めるため(要らない root・READY でない root は None — 判断の 1 歩はそれを「要らない」と読む)。"
+(defk launch-of [key wanted desired world warm services]
+  {:pre [(: key str) (: wanted frozenset) (: desired tuple) (: world WorldView) (: warm tuple) (: services frozenset)]
+   :post [(: % (| WarmLaunch None))] :tags {:context "worker" :role "judgment"}}
+  "root のキーの待ちの子の起こし方を求めるため(要らない root・READY でない root は None — 判断の 1 歩はそれを「要らない」と読む)。
+   services = service を分ける root のキー(その root の service の module も前もって読む)。"
   (val root (if (in key wanted) (ready-path (code-of world key)) None))
-  (if (is root None) None (! (warm-launch key root desired warm))))
+  (if (is root None) None (! (warm-launch key root desired warm :services services))))
 
 (defk fork-refusals [records]
   {:pre [(: records dict)] :post [(: % (get dict #(str JobNotStarted)))] :tags {:context "worker" :role "judgment"}}
@@ -519,16 +525,18 @@
 (defk warm-child-actions [now desired world warm policy [records {}]]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy) (: records dict)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
-  "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root の
-   うち READY の物。要る root と観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。records = job の記憶(task を分ける
-   のを断った待ちの子を止める材料 — fork-refusals・card ki-e1612a12d0c3)。"
+  "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root と、
+   service を分ける root(service-warm-keys — card ki-de44efdb9aa4)のうち READY の物。要る root と観測に在る待ちの子を root のキーの順に
+   1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める材料 — fork-refusals・card ki-e1612a12d0c3)。"
+  (val services (service-warm-keys desired policy))
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
-                            (tuple (gfor w warm w.key)))))
+                            (tuple (gfor w warm w.key))
+                            (tuple services))))
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
   (<- refusals dict (fork-refusals records))
   (var actions #())
   (for [key keys]
-    (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm))
+    (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm services))
     (<- step tuple (warm-child-step now key launch (warm-child-of world key) policy :refusal (.get refusals key)))
     (:= actions (+ actions step)))
   actions)
@@ -625,10 +633,11 @@
    うちに揃う宿(模擬の prepare-seconds = 0・起こした刻に準備済みの模擬の待ちの子・cache に完成品の在る版)で、最初の task の起動が拍
    1 つ遅れる形をやめる。揃っていなければ空(今までどおり後の拍で揃いを観測してから起こす)。records = 拍の action を数えた後の記憶・
    absent = plan と同じ止める訳。"
+  (val warm-keys (service-warm-keys desired policy))
   (<- per-job tuple (sequence (gfor spec desired
                                     :if (and (is-not (ready-path (code-of after (code-key spec))) None)
                                              (or (is (ready-path (code-of before (code-key spec))) None)
-                                                 (and (forks-from-warm-child spec)
+                                                 (and (fork-candidate spec policy warm-keys)
                                                       (not (warm-child-ready (warm-child-of before (warm-key-of spec))))
                                                       (warm-child-ready (warm-child-of after (warm-key-of spec))))))
                                     (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy absent))))
@@ -756,13 +765,14 @@
    決める。recreate の job の旧い版を動かしたまま新しい版を準備・検めしている間(2026-10-08)は、plan-job の止めの枝と同じ判断
    replace-step が訳を決める。それ以外の動いている process の在る job と終わった task は見送っていない(None)。"
   (var holds #())
+  (val warm-keys (service-warm-keys desired policy))
   (for [spec desired]
     (val record (.get records spec.name (JobRecord spec.name)))
     (val process (process-of world spec.name))
     (<- replacing bool (recreating? spec process record))
     (val hold (cond
                 (and (is process None) spec.handoff spec.handoff-abandoned) StartHold.HANDOFF-ABANDONED
-                (is process None) (. (! (start-step now spec world record policy)) hold)
+                (is process None) (. (! (start-step now spec world record policy warm-keys)) hold)
                 replacing (. (! (replace-step now spec process world record policy)) hold)
                 True None))
     (:= holds (+ holds #((JobHold :name spec.name :hold hold)))))
@@ -785,7 +795,7 @@
                    h.name (replace record :held h.hold))))
 
 (defn #^ JobPhase phase-of [#^ int now #^ (| JobSpec None) want #^ (| ProcessView None) process
-                            #^ WorldView world #^ JobRecord record #^ WorkerPolicy policy]
+                            #^ WorldView world #^ JobRecord record #^ WorkerPolicy policy #^ frozenset warm-keys]
   (cond
     (is-not process None)
       (cond
@@ -809,8 +819,9 @@
           (in-backoff now record policy) JobPhase.BACKOFF
           ;; 待ちの子が起動の断りの上限に達した task は、準備の失敗として終える。
           (and (forks-from-warm-child want) (warm-child-refused (warm-child-of world (warm-key-of want)) policy)) JobPhase.ENV-FAILED
-          ;; 待ちの子から分かれる task は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は状態の行の文 — #3646)。
-          (and (forks-from-warm-child want) (not (warm-child-ready (warm-child-of world (warm-key-of want))))) JobPhase.PREPARING
+          ;; 待ちの子から分かれる task と分ける root の service は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は
+          ;; 状態の行の文 — #3646・card ki-de44efdb9aa4)。
+          (= (warm-start want world policy warm-keys) WarmStart.WAIT) JobPhase.PREPARING
           ;; 前の世代が動かしている印の job(AL-D2f): 入口の検めまで揃った時だけ elder-runs(coordinator はこれで前の世代から外す)。
           (elder-ready now want code world policy) JobPhase.ELDER-RUNS
           True JobPhase.STARTING))))
@@ -826,10 +837,12 @@
         (if (warm-child-refused view policy) view None))))
 
 (defn #^ (| str None) warm-wait-detail [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
-                                        #^ JobRecord record]
-  "待ちの子の準備を待っている task の状態の行の理由(#3646)。待っていなければ None。前の待ちの子が終わっていれば、その訳も添える。"
-  (if (or (is want None) (is-not process None) (not (forks-from-warm-child want)) (is-not record.last-outcome None)
-          (is (ready-path (code-of world (code-key want))) None))
+                                        #^ JobRecord record #^ WorkerPolicy policy #^ frozenset warm-keys]
+  "待ちの子の準備を待っている task と service(card ki-de44efdb9aa4)の状態の行の理由(#3646)。待っていなければ None。前の待ちの子が
+   終わっていれば、その訳も添える。"
+  (if (or (is want None) (is-not process None) (is-not record.last-outcome None)
+          (is (ready-path (code-of world (code-key want))) None)
+          (!= (warm-start want world policy warm-keys) WarmStart.WAIT))
       None
       (do
         (setv view (warm-child-of world (warm-key-of want)))
@@ -857,7 +870,8 @@
   (val held (and (is-not process None) (is-not want None) want.hold-version (!= process.spec want) (is record.stopping None)))
   ;; recreate の job の旧い版を動かしたまま、新しい版を準備・検めしている(2026-10-08 — plan-job の止めの枝と同じ述語)。
   (<- replacing bool (recreating? want process record))
-  (val warm-wait (warm-wait-detail world want process record))
+  (val warm-keys (service-warm-keys desired policy))
+  (val warm-wait (warm-wait-detail world want process record policy warm-keys))
   (val refused (refused-warm-child world want process record policy))
   ;; 機体の memory の見張りに続けて止められ、起こし直しを止めた常駐の job(動いている process が無い時だけ — phase-of と同じ述語)。
   (val given-up (and (is process None) (is-not want None) (memory-given-up want record policy)))
@@ -866,7 +880,7 @@
   ;; 0 に戻すのは、その process が終わった時(ReapJob)と名から外した時(RetireJob — card ki-3f4bbc55733a)の record-after。
   (<- ran-stably bool (ran-stably? now record policy))
   (val stable (and (is-not process None) ran-stably))
-  (JobStatus name (phase-of now want process world record policy)
+  (JobStatus name (phase-of now want process world record policy warm-keys)
       (if (is want None) None want.revision)
       ;; 動いている版: 宣言と同じ spec(中身の鍵が同じ — card ki-81bf84ac6590)の process は、版の違う宣言し直しでも起こし直さないので、
       ;; 宣言の版を仕事している版と数える(読む code が宣言の版と同じ)。鍵の無い宣言は spec が同じなら版も同じ(今どおり)。
