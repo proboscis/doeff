@@ -70,6 +70,7 @@ import sys
 import tempfile
 import threading
 import types
+import typing
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -1525,6 +1526,33 @@ def _label_of(program: "_ProgramArg | _ProgramAnyOf") -> str:
             return ast.unparse(expr)
 
 
+@dataclass(frozen=True)
+class _EntryCall:
+    """A call of a table's entry, as the reader follows it: the Program function and the call
+    with the arguments a ``functools.partial`` entry puts in front (values the reader does not
+    read — they bind no Program)."""
+
+    target: Any
+    function: types.FunctionType
+    call: ast.Call
+
+
+def _entry_call(entry: Any, call: ast.Call) -> _EntryCall | None:
+    """``call`` of the table entry ``entry``: a Program function, or a ``functools.partial`` of
+    one with positional arguments only — else None (not followed)."""
+    if isinstance(entry, functools.partial):
+        function = _function_of(entry.func)
+        if function is None or entry.keywords:
+            return None
+        front = [ast.copy_location(ast.Constant(value=None), call) for _ in entry.args]
+        shifted = ast.copy_location(
+            ast.Call(func=call.func, args=[*front, *call.args], keywords=call.keywords), call
+        )
+        return _EntryCall(entry.func, function, shifted)
+    function = _function_of(entry)
+    return None if function is None else _EntryCall(entry, function, call)
+
+
 def _table_values(held: Any) -> tuple[Any, ...]:
     """The entries of a table a module global holds (a tuple or list — its elements; a dict —
     its values), or () for anything else (a sequence of Programs written in a body is not a
@@ -1626,9 +1654,12 @@ class _Scope:
     local_rewraps: dict[str, tuple[ast.expr, ...]] = field(default_factory=dict)
     # A local bound by one destructuring assignment and nothing else → where it was unpacked from.
     local_unpacked: dict[str, _Unpacked] = field(default_factory=dict)
-    # A local bound by one ``for`` that unpacks each element of what it walks (``for kind, fold in
-    # TABLE``) and nothing else → the walked expression and its place in each element.
-    local_rows: dict[str, _Unpacked] = field(default_factory=dict)
+    # A local bound only by ``for`` loops that unpack each element of what they walk (``for kind,
+    # fold in TABLE``) → each loop's walked expression and the local's place in each element.
+    local_rows: dict[str, tuple[_Unpacked, ...]] = field(default_factory=dict)
+    # A parameter with a type annotation that the body does not rebind → the annotation (the
+    # contract a ``defk`` writes from its ``:pre`` — ``answers: 'tuple[HttpRespond, ...]'``).
+    local_declared: dict[str, ast.expr] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
     # What each expression resolved to in this scope, by id(expr).  Resolution
     # reads only the frozen fields above and the module's globals, so a scope answers the
@@ -1758,6 +1789,19 @@ class _Scope:
             case _:
                 return UNBOUND
 
+    def declared_effects(self, name: str) -> tuple[type, ...]:
+        """The effect classes a name the reader cannot otherwise resolve is declared to hold:
+        a parameter the caller's argument does not bind, annotated with effect classes, or the
+        variable of a loop over such a parameter annotated as a sequence of them
+        (``(for [answer answers] (<- answer))`` with ``answers: tuple[HttpRespond, ...]``)."""
+        if name in self.local_declared and self.bound.get(name) is UNBOUND:
+            return _declared_effect_classes(self.local_declared[name], self.module, element=False)
+        match self.local_elements.get(name):
+            case ast.Name(id=walked) if walked in self.local_declared and self.bound.get(walked) is UNBOUND:
+                return _declared_effect_classes(self.local_declared[walked], self.module, element=True)
+            case _:
+                return ()
+
     def table_entries(self, expr: ast.expr) -> tuple[Any, ...]:
         """The values ``expr`` may denote when it takes an entry out of a table held by a module
         global (a tuple, list or dict built at import time): ``fold`` of ``for kind, fold in
@@ -1766,13 +1810,15 @@ class _Scope:
         not, or when a row has another shape."""
         match expr:
             case ast.Name(id=name) if name in self.local_rows:
-                place = self.local_rows[name]
-                rows = _table_values(self.resolve(place.value))
-                if not rows or not all(
-                    isinstance(row, (tuple, list)) and len(row) == place.count for row in rows
-                ):
-                    return ()
-                return tuple(row[place.index] for row in rows)
+                found: list[Any] = []
+                for place in self.local_rows[name]:
+                    rows = _table_values(self.resolve(place.value))
+                    if not rows or not all(
+                        isinstance(row, (tuple, list)) and len(row) == place.count for row in rows
+                    ):
+                        return ()
+                    found.extend(row[place.index] for row in rows)
+                return tuple(found)
             case ast.Name(id=name) if name in self.local_elements:
                 return _table_values(self.resolve(self.local_elements[name]))
             case ast.Subscript(value=table, slice=key):
@@ -1802,6 +1848,7 @@ class _Scope:
             local_rewraps=_unshadowed(self.local_rewraps, names),
             local_unpacked=_unshadowed(self.local_unpacked, names),
             local_rows=_unshadowed(self.local_rows, names),
+            local_declared=_unshadowed(self.local_declared, names),
             bound=self.bound.without(names),
         )
 
@@ -2151,6 +2198,7 @@ def _scope_of(
     rewraps = facts.rewraps
     unpacked = facts.unpacked
     rows = facts.rows
+    declared = facts.declared
     # A parameter rebound in the body (by an assignment or a loop) no longer holds what
     # the caller passed.
     own_bound = bound.without(facts.rebound)
@@ -2167,6 +2215,7 @@ def _scope_of(
             local_rewraps=rewraps,
             local_unpacked=unpacked,
             local_rows=rows,
+            local_declared=declared,
             bound=own_bound,
         )
     shadowed = frozenset(names)
@@ -2182,6 +2231,7 @@ def _scope_of(
         local_rewraps={**_unshadowed(parent.local_rewraps, shadowed), **rewraps},
         local_unpacked={**_unshadowed(parent.local_unpacked, shadowed), **unpacked},
         local_rows={**_unshadowed(parent.local_rows, shadowed), **rows},
+        local_declared={**_unshadowed(parent.local_declared, shadowed), **declared},
         bound=parent.bound.without(shadowed).plus(own_bound),
     )
 
@@ -2201,7 +2251,8 @@ class _BodyFacts:
     choices: dict[str, tuple[ast.expr, ...]]
     rewraps: dict[str, tuple[ast.expr, ...]]
     unpacked: dict[str, _Unpacked]
-    rows: dict[str, _Unpacked]
+    rows: dict[str, tuple[_Unpacked, ...]]
+    declared: dict[str, ast.expr]
     rebound: frozenset[str]
 
 
@@ -2321,15 +2372,13 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         if times[place.name] == 1 and place.name not in assigned and place.name not in loops
     }
     row_times = collections.Counter(place.name for place in row_places)
-    # A name one loop unpacks from each element it walks, and bound nowhere else, holds that
-    # place of an element (any element).
+    rebound = frozenset(assigned) | frozenset(loops) | frozenset(times) | frozenset(row_times)
+    # A name loops unpack from each element they walk, and bound nowhere else, holds that place
+    # of an element of one of them (any element of any — the loops are not told apart).
     rows = {
-        place.name: place
-        for place in row_places
-        if row_times[place.name] == 1
-        and place.name not in assigned
-        and place.name not in loops
-        and place.name not in times
+        name: tuple(place for place in row_places if place.name == name)
+        for name in row_times
+        if name not in assigned and name not in loops and name not in times
     }
     return _BodyFacts(
         names=frozenset(names),
@@ -2342,8 +2391,56 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         rewraps=rewraps,
         unpacked=unpacked,
         rows=rows,
-        rebound=frozenset(assigned) | frozenset(loops) | frozenset(times) | frozenset(row_times),
+        declared={
+            name: annotation for name, annotation in _annotations(function).items() if name not in rebound
+        },
+        rebound=rebound,
     )
+
+
+def _annotations(function: FunctionNode) -> dict[str, ast.expr]:
+    """The annotated parameters of ``function`` (a lambda has none)."""
+    if isinstance(function, ast.Lambda):
+        return {}
+    arguments = function.args
+    return {
+        arg.arg: arg.annotation
+        for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+        if arg.annotation is not None
+    }
+
+
+_SEQUENCE_ORIGINS = (tuple, list, collections.abc.Sequence, collections.abc.Iterable)
+
+
+def _declared_effect_classes(
+    annotation: ast.expr, module: types.ModuleType, *, element: bool
+) -> tuple[type, ...]:
+    """The effect classes a parameter's annotation declares it holds (``A`` / ``A | B``), or —
+    ``element`` — that each element of it holds (``tuple[A | B, ...]``).  () when the annotation
+    cannot be read in the module or names anything that is not an effect class."""
+    try:
+        text = annotation.value if isinstance(annotation, ast.Constant) else ast.unparse(annotation)
+        if not isinstance(text, str):
+            return ()
+        declared = eval(text, vars(module))  # noqa: S307 — the annotation the module itself wrote, read as typing.get_type_hints reads it
+    except Exception:  # noqa: BLE001 — an annotation that does not evaluate here declares nothing the reader can use
+        return ()
+    if element:
+        if typing.get_origin(declared) not in _SEQUENCE_ORIGINS:
+            return ()
+        args = [arg for arg in typing.get_args(declared) if arg is not Ellipsis]
+        if len(args) != 1:
+            return ()
+        declared = args[0]
+    members = (
+        typing.get_args(declared)
+        if typing.get_origin(declared) in (typing.Union, types.UnionType)
+        else (declared,)
+    )
+    if not members or not all(_is_effect_class(member) for member in members):
+        return ()
+    return tuple(members)
 
 
 def _unpacked_places(node: ast.AST) -> tuple[_Unpacked, ...]:
@@ -3007,6 +3104,13 @@ class _Reader:
                 for value in choices:
                     self._performed(value, scope, filename, facts)
                 return
+            declared = scope.declared_effects(expr.id) if argument is UNBOUND else ()
+            if declared:
+                # A value the contract types as an effect (``:pre [(: ask (| A B))]``): it performs
+                # one of the declared classes.
+                for cls in declared:
+                    facts.effects.append((cls, location, False))
+                return
         call = self._as_call(expr, scope)
         if call is None:
             facts.unresolved.append(
@@ -3045,12 +3149,16 @@ class _Reader:
         entries = scope.table_entries(call.func) if target is UNBOUND else ()
         if isinstance(target, _LocalFunction):
             self._local_call(target, call, scope, facts)
-        elif entries and all(_function_of(entry) is not None for entry in entries):
+        elif entries and all(_entry_call(entry, call) is not None for entry in entries):
             # A function taken out of a table a module global holds (``for kind, fold in
             # FOLDERS`` / ``TABLE[name]``): the call runs one of them — each is read, as both
             # branches of a conditional are.
             for entry in dict.fromkeys(entries):
-                self._program_call(entry, _function_of(entry), call, scope, filename, facts, location)
+                called = _entry_call(entry, call)
+                if called is not None:
+                    self._program_call(
+                        called.target, called.function, called.call, scope, filename, facts, location
+                    )
         elif target is UNBOUND:
             facts.unresolved.append(
                 (
