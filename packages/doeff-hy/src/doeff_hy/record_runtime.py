@@ -47,6 +47,88 @@ EFFECT_PARAMS: object = getattr(_ReferenceEffect, "__dataclass_params__")
 recursive_repr = reprlib.recursive_repr
 
 
+# --- 型どうしで共有する method(card ki-ff2c33449b3f)----------------------------------------------------------------------
+# __repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は、型ごとに関数を書かず、ここの 1 組を defrecord と defeffect の
+# 全部の型が class の本体で指す。型ごとに違うのは欄の名の並びだけで、展開が class の本体に字面の tuple で置く:
+#   __doeff_fields__(全部の欄 — 凍結の守り)・__doeff_repr_fields__・__doeff_compare_fields__・__doeff_hash_fields__。
+# 型ごとに 5 つの関数(code の object・注記の __annotate__ ほか)を持つと、型 約 1,760 の job で 10 MB を越えた(card ki-22e230f0f396 の測り)。
+# 振る舞いは標準の dataclass(frozen・kw_only)と同じ — 比べは欄ごとの == を and で繋ぎ(Python 3.14 の dataclass の __eq__)、
+# hash は hash に載る欄の組の hash。型の名は名でなく self の型から読む(class の本体に書いた型も同じに動く)。
+
+
+class _RecordDoc:
+    """defrecord の型の __doc__ を、読んだ時に ``Name(*, a, b)``(欄の名)で組むため — docstring を実行の展開に置かない型の説明。
+
+    型の辞書の __doc__ に置いた記述子は、型の __doc__ を読むと __get__ が呼ばれる。文を型に持たせないので、型ごとの文字列が
+    memory に残らない。dataclass は docstring の無い型に読み込みの時に署名の文を計算する(inspect.signature)が、この記述子は
+    真の文を返すので計算しない。書いた docstring は source と型検査の投影に残る。"""
+
+    def __get__(self, instance: object, owner: type | None = None) -> str:
+        cls = owner if owner is not None else type(instance)
+        names = _names(cls, "__doeff_fields__")
+        return f"{cls.__qualname__}(*, {', '.join(names)})" if names else f"{cls.__qualname__}()"
+
+
+#: defrecord の展開が class の本体の __doc__ に置く共有の記述子。
+RECORD_DOC = _RecordDoc()
+
+
+def _names(cls: type, attr: str) -> tuple[str, ...]:
+    """展開が class の本体に置いた欄の名の tuple(attr = __doeff_fields__ ほか)。"""
+    names: tuple[str, ...] = getattr(cls, attr)
+    return names
+
+
+def _frozen_owner(cls: type) -> type:
+    """凍結の守りを持つ型(MRO の中で __doeff_fields__ を自分の辞書に持つ最初の型)— 守りを持たない子の型の値を書く時の super の起点。"""
+    for klass in cls.__mro__:
+        if "__doeff_fields__" in vars(klass):
+            return klass
+    raise TypeError(f"{cls.__qualname__} は defrecord / defeffect の型ではない(__doeff_fields__ が無い)")
+
+
+@reprlib.recursive_repr()
+def record_repr(self: object) -> str:
+    """``Name(a=1, b='x')`` — dataclass の __repr__ と同じ文(型の __qualname__・repr に載る欄を書いた順に)。"""
+    cls = self.__class__
+    return f"{cls.__qualname__}(" + ", ".join([f"{name}={getattr(self, name)!r}" for name in _names(cls, "__doeff_repr_fields__")]) + ")"
+
+
+def record_eq(self: object, other: object) -> object:
+    """同じ物なら真・同じ型なら比べに載る欄ごとの == を and で繋いだ答え(偽の答えはそのまま返す)・違う型なら NotImplemented。"""
+    if self is other:
+        return True
+    if other.__class__ is self.__class__:
+        answer: object = True
+        for name in _names(self.__class__, "__doeff_compare_fields__"):
+            answer = getattr(self, name) == getattr(other, name)
+            if not answer:
+                return answer
+        return answer
+    return NotImplemented
+
+
+def record_hash(self: object) -> int:
+    """hash に載る欄の値の組の hash(dataclass の frozen・eq の __hash__ と同じ値)。"""
+    return hash(tuple([getattr(self, name) for name in _names(self.__class__, "__doeff_hash_fields__")]))
+
+
+def record_setattr(self: object, name: str, value: object) -> None:
+    """凍結: 型そのものの値は全部の名を、守りを持たない子の型の値は欄の名だけを断る(dataclass の frozen と同じ)。"""
+    cls = type(self)
+    if "__doeff_fields__" in vars(cls) or name in _names(cls, "__doeff_fields__"):
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
+    super(_frozen_owner(cls), self).__setattr__(name, value)
+
+
+def record_delattr(self: object, name: str) -> None:
+    """凍結の __delattr__(record_setattr と同じ守り)。"""
+    cls = type(self)
+    if "__doeff_fields__" in vars(cls) or name in _names(cls, "__doeff_fields__"):
+        raise FrozenInstanceError(f"cannot delete field {name!r}")
+    super(_frozen_owner(cls), self).__delattr__(name)
+
+
 def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> None:
     """展開が関数を書いた record を仕上げるため: __dataclass_params__ を今までの展開と同じ値に戻し、展開が字面の値と読んだ欄 plain の
     既定値が field の印(工場・init・repr・compare・hash を持つ Field)でない事を確かめる(名を介した field は展開が読めず、関数が

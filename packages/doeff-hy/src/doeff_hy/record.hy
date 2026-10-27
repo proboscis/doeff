@@ -36,7 +36,10 @@
 ;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
 ;;; seal-record)— dataclass には欄の表だけを作らせ、__init__(kw-only)・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
 ;;; 展開が書く(関数が module の code として .pyc に入り、読み込みの時に dataclass が関数の source を compile しない — 1 型 約 1 ms →
-;;; 約 0.1 ms・card ki-a0cca3bdb9a0)。振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
+;;; 約 0.1 ms・card ki-a0cca3bdb9a0)。型ごとに書く関数は __init__(注記なし)と :check の __post_init__ だけで、__repr__ ほかの 5 つは
+;;; record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
+;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った・card ki-ff2c33449b3f)。
+;;; 振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
 ;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
 ;;; 本体が __init__ ほかを自分で書く)は投影と同じ展開(dataclass が関数を作る)にする。
 ;;; `dataclass` は使う側の scope の名前を指す(使う側が import する)。
@@ -282,20 +285,21 @@
             missing 'doeff_hy.record_runtime.FACTORY-DEFAULT
             factory (fn [py] `((. (get (. __class__ __dataclass_fields__) ~py) default-factory)))
             ;; 欄 1 つの __init__ の引数(None = 引数にしない — init を切った欄)と、self に値を置く式(None = 置かない)。
+            ;; 引数に型の注記は書かない(下の class の form の注 — card ki-ff2c33449b3f)。
             init-of (fn [s]
-                      (setv sym (get s "sym") py (get s "py") ann (get s "ann")
+                      (setv sym (get s "sym") py (get s "py")
                             put (fn [value] `(object.__setattr__ ~self-sym ~py ~value)))
                       (cond
                         (not (get s "init"))
                           #(None (cond (get s "has-factory") (put (factory py)) (get s "has-value") (put `(. __class__ ~sym)) True None))
                         (get s "has-factory")
-                          #(`(annotate [~sym ~missing] ~ann) (put `(if (is ~sym ~missing) ~(factory py) ~sym)))
+                          #(`[~sym ~missing] (put `(if (is ~sym ~missing) ~(factory py) ~sym)))
                         (and (= (get s "kind") "call") (get s "has-value"))
-                          #(`(annotate [~sym (. ~sym default)] ~ann) (put sym))
+                          #(`[~sym (. ~sym default)] (put sym))
                         (= (get s "kind") "plain")
-                          #(`(annotate [~sym ~sym] ~ann) (put sym))
+                          #(`[~sym ~sym] (put sym))
                         True
-                          #(`(annotate ~sym ~ann) (put sym))))
+                          #(sym (put sym))))
             inits (lfor s specs (init-of s))
             params (lfor #(p _) inits :if (is-not p None) p)
             sets (lfor #(_ v) inits :if (is-not v None) v)
@@ -303,41 +307,31 @@
             compared (lfor s specs :if (get s "compare") (get s "py"))
             hashed (lfor s specs :if (if (is (get s "hash") None) (get s "compare") (get s "hash")) (get s "py"))
             plain `#(~@(lfor s specs :if (= (get s "kind") "plain") (String (get s "py"))))
-            other (hy.gensym "other")
-            attr (hy.gensym "name")
-            value (hy.gensym "value")
-            guard (if specs
-                      `(or (is (type ~self-sym) __class__) (in ~attr #{~@(lfor s specs (String (get s "py")))}))
-                      `(is (type ~self-sym) __class__)))
+            names-of (fn [names] `#(~@(lfor n names (String n)))))
+      ;; 型ごとに書くのは __init__(と :check の __post_init__)だけ。__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
+      ;; record_runtime の共有の 1 組を指し、型は欄の名の並びを字面の tuple で持つ(card ki-ff2c33449b3f — 型ごとの関数が型 約 1,760 の
+      ;; job で 10 MB を越えた)。__init__ の引数に型の注記を書かない(実行時に読む所が無く、注記ごとに __annotate__ の関数が残る —
+      ;; 欄の型は class の注記と型検査の投影が持つ)。docstring は実行の展開に置かず(実行時に読む所が無い・型検査の投影と source には
+      ;; 残る)、__doc__ は読んだ時に欄の名から組む共有の記述子にする(dataclass が docstring の無い型に読み込みの時に署名を計算しない)。
       `(do
        (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
-         ~@(if (is docstring None) [] [docstring])
+         (setv __doc__ doeff_hy.record_runtime.RECORD-DOC
+               __doeff-fields__ ~(names-of (lfor s specs (get s "py")))
+               __doeff-repr-fields__ ~(names-of shown)
+               __doeff-compare-fields__ ~(names-of compared)
+               __doeff-hash-fields__ ~(names-of hashed)
+               __repr__ doeff_hy.record_runtime.record-repr
+               __eq__ doeff_hy.record_runtime.record-eq
+               __hash__ doeff_hy.record_runtime.record-hash
+               __setattr__ doeff_hy.record_runtime.record-setattr
+               __delattr__ doeff_hy.record_runtime.record-delattr)
          ~@(or class-vars [])
          ~@fields
          ~@post-init
          (defn __init__ [~self-sym ~@(if params ['* #* params] [])]
            ~@sets
            ~@(if post-init [`(.__post-init__ ~self-sym)] [])
-           None)
-         (defn [(doeff_hy.record_runtime.recursive-repr)] __repr__ [~self-sym]
-           (.format ~(+ "{}(" (.join ", " (gfor n shown (+ n "={!r}"))) ")") (. ~self-sym __class__ __qualname__)
-                    ~@(lfor n shown `(. ~self-sym ~(Symbol n)))))
-         (defn __eq__ [~self-sym ~other]
-           (cond
-             (is ~self-sym ~other) True
-             (is (. ~other __class__) (. ~self-sym __class__))
-               (and ~@(or (lfor n compared `(= (. ~self-sym ~(Symbol n)) (. ~other ~(Symbol n)))) ['True]))
-             True NotImplemented))
-         (defn __hash__ [~self-sym]
-           (hash #(~@(lfor n hashed `(. ~self-sym ~(Symbol n))))))
-         (defn __setattr__ [~self-sym ~attr ~value]
-           (when ~guard
-             (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
-           (.__setattr__ (super) ~attr ~value))
-         (defn __delattr__ [~self-sym ~attr]
-           (when ~guard
-             (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
-           (.__delattr__ (super) ~attr)))
+           None))
        (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))

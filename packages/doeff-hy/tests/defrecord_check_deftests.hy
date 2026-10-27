@@ -103,7 +103,8 @@
   (<- _ (Pure None))
   (assert (= ChatId.__doeff_tags__ (DefinitionTags :context "chat" :role "type")))
   (assert (= ChatId.__doeff_checks__ #("(CHAT-ID-PATTERN.fullmatch value)")))
-  (assert (= ChatId.__doc__ "chat の id"))
+  ;; docstring は source と型検査の投影にだけ残る — 実行時の __doc__ は欄の名から組む(card ki-ff2c33449b3f)。
+  (assert (= ChatId.__doc__ "ChatId(*, value)"))
   (assert (is Span.__doeff_tags__ None))
   (assert (= Span.__doeff_checks__ #("(>= start 0)" "(<= start end)")))
   ;; :tags だけの形は検めを持たず、既定値の欄も欄として読む。
