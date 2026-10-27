@@ -204,8 +204,8 @@
                #("LaunchEffect.bare" request.bare)
                #("LaunchEffect.new_context_id" (isinstance request.new-context-id NamedContextId))
                #("LaunchEffect.resume_snapshot" (is-not request.resume-snapshot None))
-               ;; 行の写し手は claude の adapter だけが持つ(agora card ki-31b41eac5071)。
-               #("LaunchEffect.event_tap" (is-not request.event-tap None))))
+               ;; 出来事の記録は claude の adapter だけが持つ(agora card ki-31b41eac5071)。
+               #("LaunchEffect.event_record" (is-not request.event-record None))))
   (val refused (next (gfor #(capability present) asked :if present capability) None))
   (when (is-not refused None)
     (raise (AgentCapabilityUnsupportedError :capability refused :handler HANDLER-NAME)))
@@ -701,8 +701,11 @@
     (<- (deliver (get state.sessions handle.session-id) ref (CodexInput :text message) TurnInputMode.NEXT-TURN))
     (resume None))
 
-  (FollowUpEffect [handle message mode input-ref attachments]
+  (FollowUpEffect [handle message mode input-ref attachments record-note]
     :when (in handle.session-id state.sessions)
+    ;; 出来事の記録を持たない adapter は、記録へ畳む物を黙って捨てずに断る(agora card ki-31b41eac5071)。
+    (when (is-not record-note None)
+      (raise (AgentCapabilityUnsupportedError :capability "FollowUpEffect.record_note" :handler HANDLER-NAME)))
     (<- images (images-of attachments))
     (<- fresh (new-ref))
     (<- (deliver (get state.sessions handle.session-id) (or input-ref fresh) (CodexInput :text message :images images) mode))
