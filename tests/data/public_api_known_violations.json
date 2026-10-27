@@ -17276,6 +17276,17 @@
    "name": "MODULE_TAGS",
    "訳": "fake の metrics-memory を metrics_handlers から分けた module の、どの module も持つ tag の表(metrics_handlers の MODULE_TAGS と同じ物)。fake が coordinator の型を読むので、本物の module を読む全部の job の起動からその閉包を外すために分けた",
    "決め": "ki-aa24ec10dae8"
-  }
+  },
+  {"package": "doeff-cluster", "module": "doeff_cluster.shared.core.launch_rules", "name": "worker_commit_env_name", "訳": "表を足した land と同じ時に入った keeper の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-6e83e03d146d"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.main", "name": "worker_commit_env_name", "訳": "表を足した land と同じ時に入った keeper の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-6e83e03d146d"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "READ_THREADS", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "imports_entry_path", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "read_all", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "read_entry_or_none", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "read_source", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.launch", "name": "project_hy", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.launch", "name": "project_venv", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "project_hy", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "uv_run_environ", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"}
  ]
 }
