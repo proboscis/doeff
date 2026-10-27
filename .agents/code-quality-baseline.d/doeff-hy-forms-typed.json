@@ -6,13 +6,6 @@
       "reason": "outcome_forms.hy の bind-form(<- の form 1 つの展開)が、macros.hy の内部名 _bind-parts・_bind-yield を関数の中で import して呼び返す既存の依存(macros.hy が outcome_forms.hy の split-absent・open-form・bind-form を呼ぶ向きと対の相互参照)。outcome_forms.hy に module の契約を与えて typed:true にした時(card ki-26d44798fdc5)に初めて測られた。切るのは bind-form を macros.hy へ寄せるか _bind-parts・_bind-yield に公開の名を与える便で、型の契約の便とは別。",
       "rule": "private-symbol",
       "subject": "packages/doeff-hy/src/doeff_hy/macros.hy"
-    },
-    {
-      "count": 3,
-      "path": "packages/doeff-hy/src/doeff_hy/system_form.hy",
-      "reason": "system_form.hy が展開の綴りの唯一の定義元 DEFSYSTEM-MODEL-MODULE・DEFSYSTEM-BUILD-MODULE・DEFSYSTEM-IMPORTS を static_view.py から引く既存の依存(static_view.py は doeff-hy-static-check の公開口 static_check.py の外)。macros.hy が static_view.py を引く既存の登記と同じ。system_form.hy に module の契約を与えて typed:true にした時(card ki-26d44798fdc5)に初めて測られた。解くのは綴りの定義元を公開口のある module へ移す便で、型の契約の便とは別。",
-      "rule": "private-module",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_view.py"
     }
   ],
   "version": 1

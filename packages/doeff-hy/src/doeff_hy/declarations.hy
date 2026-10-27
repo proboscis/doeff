@@ -445,7 +445,7 @@
      ~@outcomes))
 
 
-(defn #^ (get list str) needs-names [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defsystem も読む)
+(defn #^ (get list str) needs-names [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(doeff-cluster の defsystem も読む)
   "`:needs` の値の form を変換の時に検め、能力の名の整列した list を返す。形は文字列の literal の集合 #{\"a\" \"b\"} だけ
    (名・式・空の文字列は断る — linter が実行せずに読めるように)。"
   (when (not (isinstance form Set))
@@ -453,6 +453,22 @@
   (for [item form]
     (when (not (and (isinstance item String) (str item)))
       (raise (SyntaxError (.format "{}: :needs の要素は空でない文字列の literal: {}" where (hy.repr item))))))
+  (sorted (sfor item form (str item))))
+
+
+(defn #^ (get list str) record-names [#^ Object form #^ str where #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数(doeff-cluster の defsystem も読む)
+  "`:reads` / `:writes` / `:serves` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
+   形は文字列の literal の集合だけ(空の集合 = 読み書きしないと宣言した)、綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。
+   置き場の名が何かは照らさない(使い手の repo の語彙)。読み手は定義の契約の :writes(macros.hy の _extract-contracts)と、
+   doeff-cluster の defsystem の job の行(doeff_cluster/shared/entry/_system_form.hy)。"
+  (when (not (isinstance form Set))
+    (raise (SyntaxError (.format "{}: {} は置き場の名の文字列の集合 #{{\"<置き場>:<名>\" …}}: {}" where key (hy.repr form)))))
+  (for [item form]
+    (when (not (isinstance item String))
+      (raise (SyntaxError (.format "{}: {} の要素は文字列の literal: {}" where key (hy.repr item)))))
+    (setv parts (.split (str item) ":"))
+    (when (not (and (= (len parts) 2) (all parts)))
+      (raise (SyntaxError (.format "{}: {} の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない): {}" where key (hy.repr item))))))
   (sorted (sfor item form (str item))))
 
 
