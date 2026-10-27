@@ -36,8 +36,8 @@
 ;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
 ;;; seal-record)— dataclass には欄の表だけを作らせ、__init__(kw-only)・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
 ;;; 展開が書く(関数が module の code として .pyc に入り、読み込みの時に dataclass が関数の source を compile しない — 1 型 約 1 ms →
-;;; 約 0.1 ms・card ki-a0cca3bdb9a0)。型ごとに書く関数は __init__(注記なし)と :check の __post_init__ だけで、__repr__ ほかの 5 つは
-;;; record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
+;;; 約 0.1 ms・card ki-a0cca3bdb9a0)。型ごとに書く関数は __init__(注記なし)・__eq__・__hash__ と :check の __post_init__ だけで、
+;;; __repr__ と凍結の __setattr__ / __delattr__ は record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
 ;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った・card ki-ff2c33449b3f)。
 ;;; 振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
 ;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
@@ -307,22 +307,21 @@
             compared (lfor s specs :if (get s "compare") (get s "py"))
             hashed (lfor s specs :if (if (is (get s "hash") None) (get s "compare") (get s "hash")) (get s "py"))
             plain `#(~@(lfor s specs :if (= (get s "kind") "plain") (String (get s "py"))))
-            names-of (fn [names] `#(~@(lfor n names (String n)))))
-      ;; 型ごとに書くのは __init__(と :check の __post_init__)だけ。__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
+            names-of (fn [names] `#(~@(lfor n names (String n))))
+            other (hy.gensym "other"))
+      ;; 型ごとに書くのは __init__・__eq__・__hash__(と :check の __post_init__)。__repr__ と凍結の __setattr__ / __delattr__ は
       ;; record_runtime の共有の 1 組を指し、型は欄の名の並びを字面の tuple で持つ(card ki-ff2c33449b3f — 型ごとの関数が型 約 1,760 の
-      ;; job で 10 MB を越えた)。__init__ の引数に型の注記を書かない(実行時に読む所が無く、注記ごとに __annotate__ の関数が残る —
-      ;; 欄の型は class の注記と型検査の投影が持つ)。docstring は実行の展開に置かず(実行時に読む所が無い・型検査の投影と source には
-      ;; 残る)、__doc__ は読んだ時に欄の名から組む共有の記述子にする(dataclass が docstring の無い型に読み込みの時に署名を計算しない)。
+      ;; job で 10 MB を越えた)。__eq__ と __hash__ は値を辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま — 共有の 1 つにすると
+      ;; 欄の名を回す分 1.3〜3 倍遅くなった(Python 3.14t の測り)。__init__ の引数に型の注記を書かない(実行時に読む所が無く、注記ごとに
+      ;; __annotate__ の関数が残る — 欄の型は class の注記と型検査の投影が持つ)。docstring は実行の展開に置かず(実行時に読む所が無い・
+      ;; 型検査の投影と source には残る)、__doc__ は読んだ時に欄の名から組む共有の記述子にする(dataclass が docstring の無い型に
+      ;; 読み込みの時に署名を計算しない)。
       `(do
        (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
          (setv __doc__ doeff_hy.record_runtime.RECORD-DOC
                __doeff-fields__ ~(names-of (lfor s specs (get s "py")))
                __doeff-repr-fields__ ~(names-of shown)
-               __doeff-compare-fields__ ~(names-of compared)
-               __doeff-hash-fields__ ~(names-of hashed)
                __repr__ doeff_hy.record_runtime.record-repr
-               __eq__ doeff_hy.record_runtime.record-eq
-               __hash__ doeff_hy.record_runtime.record-hash
                __setattr__ doeff_hy.record_runtime.record-setattr
                __delattr__ doeff_hy.record_runtime.record-delattr)
          ~@(or class-vars [])
@@ -331,7 +330,15 @@
          (defn __init__ [~self-sym ~@(if params ['* #* params] [])]
            ~@sets
            ~@(if post-init [`(.__post-init__ ~self-sym)] [])
-           None))
+           None)
+         (defn __eq__ [~self-sym ~other]
+           (cond
+             (is ~self-sym ~other) True
+             (is (. ~other __class__) (. ~self-sym __class__))
+               (and ~@(or (lfor n compared `(= (. ~self-sym ~(Symbol n)) (. ~other ~(Symbol n)))) ['True]))
+             True NotImplemented))
+         (defn __hash__ [~self-sym]
+           (hash #(~@(lfor n hashed `(. ~self-sym ~(Symbol n)))))))
        (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))

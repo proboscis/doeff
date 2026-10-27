@@ -48,12 +48,11 @@ recursive_repr = reprlib.recursive_repr
 
 
 # --- 型どうしで共有する method(card ki-ff2c33449b3f)----------------------------------------------------------------------
-# __repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は、型ごとに関数を書かず、ここの 1 組を defrecord と defeffect の
-# 全部の型が class の本体で指す。型ごとに違うのは欄の名の並びだけで、展開が class の本体に字面の tuple で置く:
-#   __doeff_fields__(全部の欄 — 凍結の守り)・__doeff_repr_fields__・__doeff_compare_fields__・__doeff_hash_fields__。
-# 型ごとに 5 つの関数(code の object・注記の __annotate__ ほか)を持つと、型 約 1,760 の job で 10 MB を越えた(card ki-22e230f0f396 の測り)。
-# 振る舞いは標準の dataclass(frozen・kw_only)と同じ — 比べは欄ごとの == を and で繋ぎ(Python 3.14 の dataclass の __eq__)、
-# hash は hash に載る欄の組の hash。型の名は名でなく self の型から読む(class の本体に書いた型も同じに動く)。
+# __repr__ と凍結の __setattr__ / __delattr__ は、型ごとに関数を書かず、ここの 1 組を defrecord の全部の型が class の本体で指す。
+# 型ごとに違うのは欄の名の並びだけで、展開が class の本体に字面の tuple で置く: __doeff_fields__(全部の欄 — 凍結の守り)・
+# __doeff_repr_fields__。型ごとに関数(code の object・注記の __annotate__ ほか)を持つと、型 約 1,760 の job で 10 MB を越えた
+# (card ki-22e230f0f396 の測り)。__eq__ と __hash__ は辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま(record.hy の注)。
+# 振る舞いは標準の dataclass(frozen・kw_only)と同じ。型の名は名でなく self の型から読む(class の本体に書いた型も同じに動く)。
 
 
 class _RecordDoc:
@@ -92,25 +91,6 @@ def record_repr(self: object) -> str:
     """``Name(a=1, b='x')`` — dataclass の __repr__ と同じ文(型の __qualname__・repr に載る欄を書いた順に)。"""
     cls = self.__class__
     return f"{cls.__qualname__}(" + ", ".join([f"{name}={getattr(self, name)!r}" for name in _names(cls, "__doeff_repr_fields__")]) + ")"
-
-
-def record_eq(self: object, other: object) -> object:
-    """同じ物なら真・同じ型なら比べに載る欄ごとの == を and で繋いだ答え(偽の答えはそのまま返す)・違う型なら NotImplemented。"""
-    if self is other:
-        return True
-    if other.__class__ is self.__class__:
-        answer: object = True
-        for name in _names(self.__class__, "__doeff_compare_fields__"):
-            answer = getattr(self, name) == getattr(other, name)
-            if not answer:
-                return answer
-        return answer
-    return NotImplemented
-
-
-def record_hash(self: object) -> int:
-    """hash に載る欄の値の組の hash(dataclass の frozen・eq の __hash__ と同じ値)。"""
-    return hash(tuple([getattr(self, name) for name in _names(self.__class__, "__doeff_hash_fields__")]))
 
 
 def record_setattr(self: object, name: str, value: object) -> None:
