@@ -5,7 +5,7 @@ With pyright (or any checker that reads the annotations) an effectful program is
 checked for three things: the value each effect answers with, the effects a
 program may yield, and the value a handler answers with.
 
-[![A narrated video, under three minutes: an effect declaring its answer type, yield from giving the answer that type, @do keeping the parameters, effects and result, typed_resume checking a handler's answer, and what is not typed, with what pyright and mypy say at each step](assets/videos/static-typing.jpg)](assets/videos/static-typing.mp4)
+[![A narrated video, under three minutes: an effect declaring its answer type, yield from giving the answer that type, @do keeping the parameters, effects and result, typed_resume checking a handler's answer, and what is not typed, with what pyright and mypy say at each step](assets/videos/static-typing.gif)](assets/videos/static-typing.mp4)
 
 The examples that start with `import` lines build one file: copy them in
 order, and pyright (`strict`) and mypy (`--strict`) report no errors. Fragments

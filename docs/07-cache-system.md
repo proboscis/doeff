@@ -2,7 +2,7 @@
 
 doeff provides a caching system with policy-based cache management via the `doeff_core_effects` package.
 
-[![A narrated video, about two and a half minutes: CacheGet and CachePut as effects a cache handler answers; a miss thrown into the program as KeyError at the yield, then a hit in 0.5 ms instead of 408.2 ms; the policy travelling inside CachePut as hints the handler reads; the page's API example sending one request for two calls; and the same program under in_memory_cache_handler, sqlite_cache_handler and no cache handler](assets/videos/cache-system.jpg)](assets/videos/cache-system.mp4)
+[![A narrated video, about two and a half minutes: CacheGet and CachePut as effects a cache handler answers; a miss thrown into the program as KeyError at the yield, then a hit in 0.5 ms instead of 408.2 ms; the policy travelling inside CachePut as hints the handler reads; the page's API example sending one request for two calls; and the same program under in_memory_cache_handler, sqlite_cache_handler and no cache handler](assets/videos/cache-system.gif)](assets/videos/cache-system.mp4)
 
 > **Note**: For the signatures of the cache effects and the policy enums, see **[Cache Effects in the API Reference](13-api-reference.md#cache-effects)**.
 

@@ -3,7 +3,7 @@
 This chapter explains where doeff handles work internally and where execution intentionally leaves
 doeff for Python async integration.
 
-[![Inside doeff, handlers answer every effect on one thread; Await is the one effect that leaves, to an event loop on a bridge thread, while the scheduler holds k](assets/videos/effect-boundaries.jpg)](assets/videos/effect-boundaries.mp4)
+[![Inside doeff, handlers answer every effect on one thread; Await is the one effect that leaves, to an event loop on a bridge thread, while the scheduler holds k](assets/videos/effect-boundaries.gif)](assets/videos/effect-boundaries.mp4)
 
 ## Table of Contents
 

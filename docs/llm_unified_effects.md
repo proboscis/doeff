@@ -19,7 +19,7 @@ pip install doeff doeff-time ./doeff/packages/doeff-llm \
 - `LLMStructuredQuery`
 - `LLMEmbedding`
 
-[![A narrated video, about two and a half minutes: one set of LLM effects for every provider and the old provider-specific names as deprecated subclasses; the page's multi-provider stack, where each effect passes the handlers that do not support its model until one answers; a handler's annotation skipping effects it does not take; and why the catch-all handler goes outermost](assets/videos/llm-unified-effects.jpg)](assets/videos/llm-unified-effects.mp4)
+[![A narrated video, about two and a half minutes: one set of LLM effects for every provider and the old provider-specific names as deprecated subclasses; the page's multi-provider stack, where each effect passes the handlers that do not support its model until one answers; a handler's annotation skipping effects it does not take; and why the catch-all handler goes outermost](assets/videos/llm-unified-effects.gif)](assets/videos/llm-unified-effects.mp4)
 
 ## Why
 
