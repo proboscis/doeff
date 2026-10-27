@@ -1,0 +1,107 @@
+# Builds the doeff-vm wheels that Alpine (musllinux x86_64 and aarch64) and ARM Linux (manylinux
+# aarch64) users receive, with the same maturin-action settings as build-vm.yml, and installs each
+# into a fresh venv of a plain Python image of that platform with the checkout's doeff and
+# doeff-core-effects: `pip install doeff` there must need no Rust toolchain, and
+# `python -m doeff demo` must run (card ki-8080389a2f78). Checks of what is already on PyPI live in
+# core-install-from-pypi.yml; this one runs before a release puts the wheels there. Not a merge
+# gate: it runs daily, by hand, and on main pushes that change it or build-vm.yml.
+name: doeff-vm Linux wheels install
+
+on:
+  schedule:
+    # Every day at 06:47 JST
+    - cron: "47 21 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/doeff-vm-linux-wheels.yml
+      - .github/workflows/build-vm.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: musllinux-x86_64
+            runner: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            container: quay.io/pypa/musllinux_1_2_x86_64:latest
+          - platform: musllinux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: musllinux_1_2
+            container: quay.io/pypa/musllinux_1_2_aarch64:latest
+          # An empty container lets maturin-action pick its manylinux image, as build-vm.yml does.
+          - platform: manylinux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: auto
+            container: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the Python 3.14 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i python3.14
+          working-directory: packages/doeff-vm
+          manylinux: ${{ matrix.manylinux }}
+          container: ${{ matrix.container }}
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-${{ matrix.platform }}
+          path: packages/doeff-vm/dist/*-cp314-cp314-*.whl
+          if-no-files-found: error
+
+  install:
+    name: pip install and doeff demo (${{ matrix.platform }}, ${{ matrix.image }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: musllinux-x86_64
+            runner: ubuntu-latest
+            image: ghcr.io/astral-sh/uv:python3.14-alpine
+          - platform: musllinux-aarch64
+            runner: ubuntu-24.04-arm
+            image: ghcr.io/astral-sh/uv:python3.14-alpine
+          - platform: manylinux-aarch64
+            runner: ubuntu-24.04-arm
+            image: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: doeff-vm-${{ matrix.platform }}
+          path: wheels
+
+      # `docker run` rather than a job container: the runner's JavaScript actions do not run in an
+      # Alpine container on arm64. The image (the official python image with uv added) has no Rust
+      # and no C compiler, and --only-binary makes a wheel that does not match the platform fail
+      # here instead of building doeff-vm from source. The demo runs from /tmp so that `-m doeff`
+      # imports the installed package, not the checkout.
+      - name: Install into a fresh venv and run python -m doeff demo
+        run: |
+          docker run --rm -v "$PWD:/src" -w /tmp "${{ matrix.image }}" sh -euxc '
+            uname -m
+            uv venv /tmp/venv
+            uv pip install --python /tmp/venv --no-cache --only-binary doeff-vm /src/wheels/*.whl /src /src/packages/doeff-core-effects
+            uv pip list --python /tmp/venv
+            uv run --no-project --python /tmp/venv python -c "import doeff_vm.doeff_vm as ext; print(ext.__file__)"
+            uv run --no-project --python /tmp/venv python -m doeff demo
+          '

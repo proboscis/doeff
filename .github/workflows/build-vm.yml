@@ -98,6 +98,65 @@ jobs:
           path: packages/doeff-vm/dist/*-cp31[45]-cp31[45]t-*.whl
           if-no-files-found: error
 
+  # musllinux (Alpine) wheels build in the PyPA musllinux_1_2 image of the runner's own arch, like
+  # the manylinux jobs: maturin-action's default musl container (rust-cross/rust-musl-cross) is a
+  # cross toolchain without the CPython interpreters that -i names, and the native image keeps the
+  # same wheel tags. .github/workflows/doeff-vm-linux-wheels.yml builds them again and installs them
+  # in Alpine every day.
+  build-musllinux:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64
+            runner: ubuntu-latest
+          - target: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i python3.11 python3.12 python3.13 python3.14 python3.15
+          working-directory: packages/doeff-vm
+          manylinux: musllinux_1_2
+          container: quay.io/pypa/musllinux_1_2_${{ matrix.target }}:latest
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-musllinux-${{ matrix.target }}
+          path: packages/doeff-vm/dist/*-cp31[1-5]-cp31[1-5]-*.whl
+          if-no-files-found: error
+
+  build-musllinux-freethreaded:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64
+            runner: ubuntu-latest
+          - target: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i python3.14t python3.15t
+          working-directory: packages/doeff-vm
+          manylinux: musllinux_1_2
+          container: quay.io/pypa/musllinux_1_2_${{ matrix.target }}:latest
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-musllinux-freethreaded-${{ matrix.target }}
+          path: packages/doeff-vm/dist/*-cp31[45]-cp31[45]t-*.whl
+          if-no-files-found: error
+
   build-macos:
     runs-on: macos-latest
     strategy:
@@ -237,7 +296,7 @@ jobs:
   # Publishing from a reusable workflow, so publish.yml calls this one with publish: false.
   publish:
     name: Publish to PyPI
-    needs: [check-version-unpublished, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
+    needs: [check-version-unpublished, build-linux, build-linux-freethreaded, build-musllinux, build-musllinux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/doeff-vm-v') || inputs.publish
     environment: pypi
