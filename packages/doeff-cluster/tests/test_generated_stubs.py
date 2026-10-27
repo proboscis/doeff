@@ -89,6 +89,10 @@ USED = (
     UsedModule("foundation.in_cluster_api", ("CLUSTER-API", "SERVICE-ACCOUNT-CA-PATH", "in-cluster-api-routed")),
     UsedModule("sim.k8s_supplied", ("HeldEntry", "HeldObject", "ReadGrant", "SuppliedCluster", "held-value-of", "held-whole-of",
                                     "read-grant-of", "service-account-token-file", "k8s-supplied-peer")),
+    # 1 台が止まっても常駐の job が残りの worker の枠と memory に入るか(N+1)の判断(card ki-4689c7008147 — 使い手の枠の検と宣言の前の
+    # 照らしが値を作って呼ぶ)。
+    UsedModule("coordinator.intent.failover_model", ("FailoverWorker", "ResidentJob", "ExemptJob", "KeptApart")),
+    UsedModule("coordinator.core.failover_policy", ("failover-refusals",)),
 )
 
 
