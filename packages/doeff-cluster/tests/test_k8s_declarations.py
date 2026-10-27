@@ -158,32 +158,42 @@ HOST_ONLY_RESOURCES = {
 }
 
 
-# atlas の受ける数の内訳(2026-10-10 調整役 cisco-c8 の可・22:2x): 機体の仕事 1 + 上に載る系の常駐の job で atlas の能力(host-atlas)を要る物 5
-# + 上に載る系の日次の全体検証の task(:needs host-atlas)に空けておく 3(同時に 3 本まで)+ 後で足す常駐の job に空けておく 1。受ける数 = 4 つの和
-# (ここが式の定義点 — yaml の値はこの和と同じでなければ赤)。
-# 2026-10-11: 上に載る系が host-atlas を要る常駐の job を 1 つ足したので 4 → 5。後の 1 は、次に常駐の job を足す時に worker の Pod を
-# 作り直さずに済ませる余裕(上に載る系の側の決め 2026-10-11 10:20 JST)。
-# 2026-10-12: 上に載る系が host-atlas を要る常駐の job を 3 つ足す(別の機体から移す — 上に載る系の側の決め 2026-10-11 07:2x JST)ので
-# 5 → 8。余裕の 1 はその 3 つの 1 つに充て、残りの 2 を足す(受ける数 10 → 12・余裕 1 → 0)。
-ATLAS_MACHINE_JOBS = 1
-ATLAS_OVERLAY_RESIDENT_JOBS = 8
-ATLAS_TASK_RESERVE = 3
-ATLAS_KEPT_ROOM = 0
-# 予備の枠(2026-10-27・card ki-384c80df957f): 上に載る系が常駐の job を 1 台の機体の名でなく、2 台以上の worker が満たす能力(node の label から
-# coordinator が導く能力)で置き、どの 1 台の worker が落ちても、その台の job を残りの worker の空きが受ける分。平時は使わない。
-# atlas 1・k3s-0 1・k3s-2 1・k3s-3 1(k3s-1 は node の memory が狭いので足さない)。
-ATLAS_SPARE_ROOM = 1
-SPARE_ROOM = {"k3s-0": 1, "k3s-2": 1, "k3s-3": 1}
-# eos の受ける数の内訳: 機体の仕事 1 + 上に載る系の常駐の job で eos の能力(host-eos)を要る物 2(2026-10-22 に 1 → 2 — 上に載る系が
-# 記録の写しを古い側へ移す常駐の job を 1 つ足す)。task は来ない。
-EOS_MACHINE_JOBS = 1
-EOS_OVERLAY_RESIDENT_JOBS = 2
-# 機体の仕事だけを受ける機体の枠 — (受ける数, task に空けておく数)。名の無い機体は 2・0(機体の仕事は機体ごとに数本・task は来ない)。
-HOST_ONLY_ROOM = {
-    "atlas": (ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM + ATLAS_SPARE_ROOM, ATLAS_TASK_RESERVE),
-    "eos": (EOS_MACHINE_JOBS + EOS_OVERLAY_RESIDENT_JOBS, 0),
-    **{node: (2 + spare, 0) for node, spare in SPARE_ROOM.items()},
+# zeus でない機体の受ける数の内訳(N+1 — card ki-17043e66bd83・2026-10-27。ここが式の定義点 — 枠の file の値はこの和と同じでなければ赤):
+# 機体の仕事 1 + 置ける組の印(枠の file の欄 pools)で、その worker に置ける上に載る系の常駐の job の数 + task に空けておく数。
+# 置ける job は「今どこに在るか」でなく「置けるか」で数える — 移った job は元の機体が戻っても戻らないので、この数え方なら、どの置き方の後の
+# どの 1 台の停止でも、移る job が移る先の枠に入る(doeff-cluster の N+1 の判断 failover-refusals の規則 2)。組ごとの job の数は card の
+# 組の表から数えた: pool-atlas-eos 6・pool-atlas-k3s-0 2・pool-atlas-k3s-2 1・pool-atlas-k3s-3 4・pool-k3s-1-k3s-2 1。
+# atlas の task に空けておく 3 は上に載る系の日次の全体検証の task(:needs host-atlas — 同時に 3 本まで)の分。ほかの機体に task は来ない。
+# (前の版の予備の枠 — card ki-384c80df957f の atlas 1・k3s-0 1・k3s-2 1・k3s-3 1 — は、この数えの中に入る。)
+POOL_JOBS = {
+    "pool-atlas-eos": 6,
+    "pool-atlas-k3s-0": 2,
+    "pool-atlas-k3s-2": 1,
+    "pool-atlas-k3s-3": 4,
+    "pool-k3s-1-k3s-2": 1,
 }
+MACHINE_JOBS = 1
+ATLAS_TASK_RESERVE = 3
+# 機体の仕事だけを受ける機体の枠 — 機体の名 → (task に空けておく数, 置ける組の印)。受ける数は上の式から導く。
+HOST_ONLY_POOLS = {
+    "atlas": (ATLAS_TASK_RESERVE, ("pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3")),
+    "eos": (0, ("pool-atlas-eos",)),
+    "k3s-0": (0, ("pool-atlas-k3s-0",)),
+    "k3s-1": (0, ("pool-k3s-1-k3s-2",)),
+    "k3s-2": (0, ("pool-atlas-k3s-2", "pool-k3s-1-k3s-2")),
+    "k3s-3": (0, ("pool-atlas-k3s-3",)),
+}
+HOST_ONLY_ROOM = {
+    node: (MACHINE_JOBS + sum(POOL_JOBS[pool] for pool in pools) + reserve, reserve)
+    for node, (reserve, pools) in HOST_ONLY_POOLS.items()
+}
+# 常駐の job の memory の予算(枠の file の欄 memoryMiB — card ki-17043e66bd83 の定義点)= worker の container の memory の上限 − worker 自身の分
+# − task の分。zeus でない機体: worker 自身 256 MiB(worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)・task の分
+# = task に空けておく数 × 3072 MiB(atlas の task の 1 本の山は 8 時間で 1.1〜4.0 GiB・3 本の同時は group の上限で 3 本まで)。
+# zeus: container の上限 − cgroup の層の worker の memory.min − task の層(jobs)の memory.max(命令の層は常駐の job の子の分なので引かない)。
+# 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
+HOST_ONLY_WORKER_SELF_MIB = 256
+TASK_SHARE_MIB = 3072
 # 枠の定義元(card ki-6828eda880ce): 機体の名 → capacity・taskReserve の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
 # file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_CAPACITY・WORKER_TASK_RESERVE は書かない。
 ROOM_FILE = K8S / "workers" / "worker-room.json"
@@ -548,12 +558,14 @@ def test_upper_system_values_come_from_fixed_named_configmaps(
 @pytest.mark.parametrize("node", HOST_ONLY_NODES)
 def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manifest], node: str) -> None:
     """zeus でない機体の worker は、機体の能力 2 つだけを名乗り(上に載る系の能力の残り WORKER_PROVIDES_EXTRA を足さない)、枠は枠の file
-    の機体の行(多くは 2・0 — HOST_ONLY_ROOM)。上に載る系の準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける
-    worker の準備で、空の機体では通らない。
+    の機体の行(HOST_ONLY_ROOM の式 — 機体の仕事 1 + 置ける組の job + task の予約)と、置ける組の印(HOST_ONLY_POOLS)。上に載る系の
+    準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける worker の準備で、空の機体では通らない。
     反例: worker-env の能力の残りを名乗ると、その能力だけを要る上に載る系の job が memory 4GiB の機体へ置かれ得る。"""
     host_only = _worker_on(rendered, node)
     assert _env_value(host_only, "WORKER_PROVIDES")["value"] == HOST_ONLY_PROVIDES
-    assert _room_rows()[node] == dict(zip(("capacity", "taskReserve"), HOST_ONLY_ROOM.get(node, (2, 0)), strict=True))
+    row = _mapping(_room_rows()[node], node)
+    assert (row["capacity"], row["taskReserve"]) == HOST_ONLY_ROOM[node]
+    assert tuple(row["pools"]) == HOST_ONLY_POOLS[node][1]
     mounts = [
         _mapping(mount, "volumeMount")["mountPath"]
         for mount in _sequence(_container(host_only).get("volumeMounts", []), "volumeMounts")
@@ -624,10 +636,50 @@ def test_the_room_file_has_one_valid_row_per_node() -> None:
     assert sorted(rows) == sorted(NODES)
     for node, row in rows.items():
         room = _mapping(row, node)
-        assert sorted(set(room) - {"warmServices"}) == ["capacity", "taskReserve"], node
+        assert sorted(set(room) - {"warmServices", "pools"}) == ["capacity", "memoryMiB", "taskReserve"], node
         assert type(room.get("warmServices", False)) is bool, node
         assert type(room["capacity"]) is int and type(room["taskReserve"]) is int, node
         assert 0 <= int(room["taskReserve"]) <= int(room["capacity"]), node
+        assert type(room["memoryMiB"]) is int and int(room["memoryMiB"]) >= 0, node
+
+
+def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
+    """枠の file の置ける組の印(欄 pools)は、どれも 2 台以上の機体の行が名乗る。名は pool- で始まり、機体の行は同じ印を 2 度書かない
+    (card ki-17043e66bd83)。zeus の行は組を名乗らない(zeus の常駐の job は移さない)。
+    反例: 1 台だけが名乗る組は、組の印で宣言した job を 1 台に縛る — その 1 台が止まると job は置き先を失う(2026-10-27 10:38 JST に
+    1 台にしか置けない job が約 16 分止まった)。"""
+    rows = {node: _mapping(row, node) for node, row in _room_rows().items()}
+    pools_of = {
+        node: [str(pool) for pool in _sequence(room.get("pools", []), f"{node} の pools")] for node, room in rows.items()
+    }
+    for node, pools in pools_of.items():
+        assert len(pools) == len(set(pools)), node
+        assert all(pool.startswith("pool-") for pool in pools), node
+    members = {
+        pool: [node for node, pools in pools_of.items() if pool in pools]
+        for pool in {pool for pools in pools_of.values() for pool in pools}
+    }
+    assert "pools" not in rows["zeus"]
+    assert {pool: nodes for pool, nodes in members.items() if len(nodes) < 2} == {}
+    assert sorted(members) == sorted(POOL_JOBS)
+
+
+def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(rendered: list[Manifest]) -> None:
+    """枠の file の memoryMiB(常駐の job の memory の予算)は、機体の worker の container の memory の上限から worker 自身の分と task の分を
+    引いた値(定義点は HOST_ONLY_WORKER_SELF_MIB・TASK_SHARE_MIB と zeus の cgroup の層)。
+    反例: 上限を越える予算は、N+1 の判断の規則 3 を通しても、移った job の起動の山で worker の container の上限に当たり、worker の memory の
+    守りが job の起動を止め続ける(k3s-1 の例 — 上に載る系の宣言の註)。"""
+    rows = _room_rows()
+    for node in HOST_ONLY_NODES:
+        limit = _bytes(str(_mapping(_container(_worker_on(rendered, node))["resources"], "resources")["limits"]["memory"])) // 2**20
+        reserve = HOST_ONLY_ROOM[node][1]
+        assert _mapping(rows[node], node)["memoryMiB"] == limit - HOST_ONLY_WORKER_SELF_MIB - reserve * TASK_SHARE_MIB, node
+    zeus = _worker_on(rendered, "zeus")
+    settings = dict(_layout(zeus))
+    jobs = str(_env_value(zeus, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    limit = _bytes(str(_mapping(_mapping(_container(zeus)["resources"], "resources")["limits"], "limits")["memory"]))
+    allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
+    assert _mapping(rows["zeus"], "zeus")["memoryMiB"] == allowance
 
 
 def test_zeus_worker_keeps_upper_system_capabilities(zeus_worker: Manifest) -> None:
