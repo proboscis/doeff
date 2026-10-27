@@ -118,3 +118,15 @@
 ;; 同じ名の違う型(wire_codec_types_other の Note)を欄に持つ型 — $defs の名に module を付ける。
 (import wire_codec_types_other)
 (defwire BothNotes {:names :camel} (#^ Note mine) (#^ wire_codec_types_other.Note theirs))
+
+;; 照らしの test(test_wire_parity.py・card ki-b7701d5fc0dd)が見つけた差の型: doc を持つ StrEnum(JSON Schema の description)・
+;; 値の型が何でもよい dict(additionalProperties true)。
+(defclass Shade [StrEnum]
+  "明るさ(照らしの test の見本 — JSON Schema の $defs に description として出る)。"
+  (setv LIGHT "light"
+        DARK "dark"))
+(defwire Documented
+  {:names :camel :unknown :reject}
+  (setv #^ Shade shade Shade.LIGHT
+        #^ (get dict #(str object)) loose (field :default-factory dict)
+        #^ (get dict #(str OpaqueJson)) opaque-by-key (field :default-factory dict)))

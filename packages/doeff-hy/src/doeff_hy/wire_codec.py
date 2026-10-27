@@ -26,6 +26,7 @@ dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも
 
 import dataclasses
 import enum
+import inspect
 import json
 import json.encoder
 import math
@@ -279,8 +280,18 @@ class _Enum(_Node):
         return False
 
     def definition(self, defs: "_Definitions") -> _Schema:
-        """$defs に置く形(値の綴りの並び・型の名)。"""
-        return {"enum": [*self._members], "title": self.enum_type.__name__, "type": "string"}
+        """$defs に置く形(値の綴りの並び・型の名・型の doc を description に — 今の pydantic と同じく inspect.cleandoc で整え、
+        Enum の既定の doc は出さない。照らしの test が見つけた差)。"""
+        doc = self.enum_type.__doc__
+        description = inspect.cleandoc(doc) if doc else None
+        shape: _Schema = {
+            "enum": [*self._members],
+            "title": self.enum_type.__name__,
+            "type": "string",
+        }
+        if description is None or description == "An enumeration.":
+            return shape
+        return {"description": description, **shape}
 
 
 @final
@@ -490,7 +501,9 @@ class _Dict(_Node):
         )
 
     def schema(self, defs: "_Definitions") -> _Schema:
-        return {"additionalProperties": self._item.schema(defs), "type": "object"}
+        # 値の形が何でもよい時(object・OpaqueJson の値)は true(今の pydantic と同じ — 照らしの test が見つけた差)。
+        item = self._item.schema(defs)
+        return {"additionalProperties": item if item else True, "type": "object"}
 
 
 @final
@@ -1030,9 +1043,31 @@ def _has_lone_surrogate(value: object) -> bool:
     return False
 
 
+#: 配列と object の入れ子の深さの上限 — 今の pydantic(jiter)は 200 階層まで読み、201 階層目を json_invalid(recursion limit
+#: exceeded)で断る(照らしの test が見つけた差 — json.loads は 1000 階層ほどまで読むので、上限を置かないと受ける物が広がる)。
+_DEPTH_LIMIT: Final = 200
+_TOO_DEEP: Final = f"recursion limit exceeded (nesting deeper than {_DEPTH_LIMIT})"
+
+
+def _deeper_than(value: object, room: int) -> bool:
+    """読んだ値の配列と object の入れ子が、あと room 階層に収まらないか(room = 0 の所に入れ物が在れば越える)。"""
+    match value:
+        case list():
+            return room == 0 or any(
+                _deeper_than(item, room - 1) for item in cast(list[object], value)
+            )
+        case dict():
+            return room == 0 or any(
+                _deeper_than(item, room - 1) for item in cast(dict[str, object], value).values()
+            )
+        case _:
+            return False
+
+
 def _read_json(text: str | bytes) -> object:
     """JSON の文字列を素の値へ読む。今の pydantic と同じ物だけを受ける(設計の記録の節 3「JSON の読み」): bytes は UTF-8 だけ・
-    孤立した surrogate は断る・json.loads の ValueError(4300 桁を越える整数も)と RecursionError(深い入れ子)は json_invalid。"""
+    孤立した surrogate は断る・json.loads の ValueError(4300 桁を越える整数も)と RecursionError と、配列と object の入れ子が
+    _DEPTH_LIMIT を越える物は json_invalid。"""
     if isinstance(text, bytes | bytearray | memoryview):
         try:
             text = bytes(text).decode("utf-8")
@@ -1047,6 +1082,8 @@ def _read_json(text: str | bytes) -> object:
         value = json.loads(text)
     except (ValueError, RecursionError) as error:
         raise _json_invalid(error) from None
+    if text.count("[") + text.count("{") > _DEPTH_LIMIT and _deeper_than(value, _DEPTH_LIMIT):
+        raise _json_invalid(_TOO_DEEP)
     if "\\u" in text and _SURROGATE_ESCAPE.search(text) is not None and _has_lone_surrogate(value):
         raise _json_invalid("lone surrogate in a string")
     return value
@@ -1064,11 +1101,12 @@ def _plain_key(key: object) -> str:
     raise TypeError(f"JSON の object の key でない: {type(key).__name__}")
 
 
-def _plain(value: object) -> object:
+def _plain(value: object, room: int = _DEPTH_LIMIT) -> object:
     """JSON の値(凍らせた FrozenMap・tuple・OpaqueJson・str や int の派生も)を、json.loads が返す素の値へ戻す。
 
     答えは「json.dumps で書いて json.loads で読んだ値」と同じ(文字列を経ずに作る)。JSON の値でない物(set・任意の object)は
-    TypeError(今の parse の json.dumps と同じ)。
+    TypeError(今の parse の json.dumps と同じ)。配列と object の入れ子が _DEPTH_LIMIT を越える物は、文字列から読んだ時と同じく
+    json_invalid(room = まだ入れる入れ子の階層の数)。
     """
     kind = type(value)
     if kind is str:
@@ -1079,19 +1117,26 @@ def _plain(value: object) -> object:
     if kind is int or kind is float or kind is bool or value is None:
         return value
     if kind is dict or isinstance(value, Mapping):
+        if room == 0:
+            raise _json_invalid(_TOO_DEEP)
         return {
-            _plain_key(key): _plain(item)
+            _plain_key(key): _plain(item, room - 1)
             for key, item in cast(Mapping[object, object], value).items()
         }
     if kind is list or kind is tuple or isinstance(value, list | tuple):
-        return [_plain(item) for item in cast(list[object], value)]
-    return _plain_derived(value)
+        if room == 0:
+            raise _json_invalid(_TOO_DEEP)
+        return [_plain(item, room - 1) for item in cast(list[object], value)]
+    return _plain_derived(value, room)
 
 
-def _plain_derived(value: object) -> object:
+def _plain_derived(value: object, room: int) -> object:
     """素の JSON の型でない値(OpaqueJson と str・int・float の派生 — StrEnum・IntEnum など)を、json.dumps が書く値へ戻す。"""
     if isinstance(value, _OpaqueJson):
-        return json.loads(value.text)
+        loaded = json.loads(value.text)
+        if _deeper_than(loaded, room):
+            raise _json_invalid(_TOO_DEEP)
+        return loaded
     if isinstance(value, str):
         return _plain(str.__str__(value))
     if isinstance(value, int | float):  # bool は _plain で済んでいる

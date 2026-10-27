@@ -139,10 +139,10 @@ flowchart LR
 | bytes | UTF-16 なども符号化を判じて受ける | UTF-8 だけ | `decode("utf-8")` を先に通し、失敗は `json_invalid` |
 | 孤立した surrogate の escape `"\ud800"` | 受ける(後の dump-json で UnicodeEncodeError) | `json_invalid` | 読んだ値の文字列を 1 度走査し、在れば `json_invalid` |
 | 4300 桁を越える整数 | ValueError(JSONDecodeError でない) | 受ける | ValueError を `json_invalid` に写す(受け入れは狭まるが、型の check は弱めない — 照らしの test は差として示す) |
-| 深い入れ子(2000 階層) | 受ける・もっと深いと RecursionError | recursion limit で断る | RecursionError を `json_invalid` に写す |
+| 深い入れ子(201 階層から) | 1000 階層ほどまで受ける・もっと深いと RecursionError | 200 階層まで読み、201 階層目を `json_invalid`(recursion limit exceeded) | 配列と object の入れ子が 200 階層を越える物を `json_invalid` に写す(文字列からも値からも — 照らしの test が見つけた差・card ki-b7701d5fc0dd) |
 | NaN・Infinity・同じ key が 2 つ | 受ける・後の値 | 同じ | 同じ |
 
-- `json_invalid` に写すのは、`json.loads` の ValueError(JSONDecodeError を含む)・RecursionError・UTF-8 の decode の失敗・孤立した surrogate の 4 つ。
+- `json_invalid` に写すのは、`json.loads` の ValueError(JSONDecodeError を含む)・RecursionError・200 階層を越える入れ子・UTF-8 の decode の失敗・孤立した surrogate の 5 つ。
 
 ### Malformed の欄の場所(field)
 
@@ -223,8 +223,8 @@ JSON Schema の規則(pydantic と同じ形・鍵の順):
 
 - defwire の型と defenum は `$defs` に置き(名は型の名・同じ名の違う型が在れば module と qualname — `wire_codec_types__Note`)、欄からは `$ref`。最上位の型は形をそのまま置く。
 - 欄の schema に、既定値の在る欄は `default`(作り手の欄は書かない)、`title`(wire の名を `str.title()` して `_` を空白に — 入れ子の defwire・defenum とその `(| T None)` には付けない)を足す。
-- `title` は出す。設計の初めは「出さない」としたが、agora-controllers の `agent-env/cli/tests/test_health.hy`(reader-mismatches)が `title` と `default` を読み、`scripts/project_health_contract.hy` が JSON Schema の全体を契約の file へ書いて bytes で照らすため。`description` は出さない(今の pydantic も、defwire の型の `__doc__` が dataclass の綴りなので出していない)。
-- 型の形: str `string`・int `integer`・float `number`・bool `boolean`・None `null`・Literal は 1 つなら `const`・2 つ以上は `enum`・tuple と list は `items`・frozenset は `uniqueItems`・長さちょうどの tuple は `prefixItems`・`minItems`・`maxItems`・`(get dict #(str T))` は `additionalProperties` T・素の dict は `additionalProperties` true・object と OpaqueJson は `{}`。
+- `title` は出す。設計の初めは「出さない」としたが、agora-controllers の `agent-env/cli/tests/test_health.hy`(reader-mismatches)が `title` と `default` を読み、`scripts/project_health_contract.hy` が JSON Schema の全体を契約の file へ書いて bytes で照らすため。`description` は defwire の型には出さない(今の pydantic も、defwire の型の `__doc__` が dataclass の綴りなので出していない)。doc を持つ StrEnum の `$defs` には、今の pydantic と同じく `inspect.cleandoc` した doc を `description` に出す(Enum の既定の doc は出さない — 照らしの test が agora-controllers の型で見つけた差・card ki-b7701d5fc0dd)。
+- 型の形: str `string`・int `integer`・float `number`・bool `boolean`・None `null`・Literal は 1 つなら `const`・2 つ以上は `enum`・tuple と list は `items`・frozenset は `uniqueItems`・長さちょうどの tuple は `prefixItems`・`minItems`・`maxItems`・`(get dict #(str T))` は `additionalProperties` T(T が object・OpaqueJson なら true — 今の pydantic と同じ・照らしの test が見つけた差)・素の dict は `additionalProperties` true・object と OpaqueJson は `{}`。
 - union は `anyOf`(None の腕は最後の `{"type": "null"}`・同じ形の腕は 1 つに・1 つになれば anyOf で包まない)。
 - 鍵の順は pydantic の sort と同じ(properties と default の直下は宣言の順・他は鍵の文字の順)。
 
@@ -301,6 +301,18 @@ census(agora exec x20261027020405-8aa9497b・agora-controllers の本体の欄 6
 - 書き出し: dump は等しく、dump-json は bytes が等しい(frozenset の欄は集合として比べる)。
 - JSON Schema: 鍵の順まで等しい(`json.dumps` が等しい)。違うのは節 3b の表の既定値の 2 つだけで、その欄は書き手の形と照らす。
 - 不一致 0 で wire.hy を替える。
+
+照らしの道具と結果(card ki-b7701d5fc0dd):
+
+- 道具は `packages/doeff-hy/src/doeff_hy/wire_parity.py`(pydantic を読む唯一の module — job の道は import しない)。型の一覧を引数に取り、
+  doeff の検 `packages/doeff-hy/tests/test_wire_parity.py` と agora-controllers の検が同じ道具を呼ぶ。今の wire.hy の pydantic の設定
+  (`pydantic_config`)と OpaqueJson の埋め込みの控えも、この道具が持つ。
+- 2026-10-27 の走り: doeff の 101 型(入力 9,462)と agora-controllers の本体の 1,598 型(入力 209,398)で不一致 0・弱める側 0。
+  見つけて直した差は 3 つ(深い入れ子の上限・doc を持つ StrEnum の description・値の型が何でもよい dict の additionalProperties)。
+- 組めなかった agora-controllers の 13 型(LooseText・LooseInteger の BeforeValidator・board_rows の Field(ge=0)・EventsPage の素の
+  Mapping)は、agora-controllers の側で両方の解き手が同じに読む形へ書き直した(agora-controllers a12ef2f6 — 節 5 の扱いを card 6 から前へ
+  移した。LooseText は `(| str OpaqueJson None)` — 文字列は pydantic では OpaqueJson の腕・自前では str の腕が受けるので、読み手 text-of
+  が両方を読む)。
 
 ## 付録 A. 今の振る舞いを確かめた走り
 
