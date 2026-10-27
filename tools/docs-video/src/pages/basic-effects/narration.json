@@ -53,7 +53,7 @@
  },
  {
   "id": "w3",
-  "text": "writer log reads the log back: four lines, in the order they were told."
+  "text": "ReadWriterLog reads the log back: four lines, in the order they were told."
  },
  {
   "id": "g1",
