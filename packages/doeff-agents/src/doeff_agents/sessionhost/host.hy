@@ -11,10 +11,11 @@
 ;;; monitor / heartbeat thread + result 経路(await_result の blocking poll /
 ;;; report_result の first-write-wins)。全 10 契約 method 実装済み。
 ;;;
-;;; report-result-mcp stdio relay は relaymain.py(stdlib-only 純 Python)に
+;;; 入口: `python -m doeff_agents.sessionhost.host [<flags>]`(下の main・サブコマンドは無い)。
+;;; 起こすのは effect StartSessionHost の handler(io_handlers.hy・PATH を見ない)。
+;;; 結果の MCP server は別の入口 result_mcp.py(stdlib-only 純 Python)に
 ;;; 住む: relay の boot レイテンシは report-vs-turn-end race の凍結物理で、
 ;;; Hy import 連鎖を払うと golden path で solicitation を焼く(S1 実測)。
-;;; subcommand dispatch も hostmain.py が Hy import より先に行う。
 
 (require doeff-hy.macros [deff defk <-])
 
@@ -76,7 +77,6 @@
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
-(import doeff_agents.sessionhost.relaymain [REPORT-RESULT-MCP-SUBCOMMAND])
 (import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
@@ -280,11 +280,10 @@
 ;; CLI(oracle parse_args :600-693)
 ;; ---------------------------------------------------------------------------
 
-;; flag・command・env knob の綴りの座(この 1 点)。parse-args の分岐も
+;; flag・env knob の綴りの座(この 1 点)。parse-args の分岐も
 ;; `--help` の usage の組み立て(下の serve-usage-text)も同じ値を読む —
 ;; 綴りを手で写した一覧をどこにも作らない(一覧が実装から静かに乖離する形を
 ;; 作らない)。
-(setv CMD-SERVE "serve")
 (setv FLAG-DB "--db")
 (setv FLAG-SOCKET "--socket")
 (setv FLAG-TMUX "--tmux")
@@ -377,27 +376,24 @@
               line (entry env-name help-text)
               line))
   (+ (.join "\n"
-            [f"usage: doeff-sessionhost [{CMD-SERVE}] [<flags>]"
-             f"       doeff-sessionhost {REPORT-RESULT-MCP-SUBCOMMAND}"
+            ["usage: python -m doeff_agents.sessionhost.host [<flags>]"
              ""
              #* (paragraph
                   (+ "The agent session host: it owns the RPC socket, the session ledger, and"
                      " the substrate that carries agent sessions."))
              ""
              #* (paragraph
-                  (+ f"`{CMD-SERVE}` is the default and only host command, and may be omitted."
-                     f" `{REPORT-RESULT-MCP-SUBCOMMAND}` is the agent-facing result channel and"
-                     " is not run by hand."))
+                  (+ "doeff-agents starts it through the StartSessionHost effect; the"
+                     " agent-facing result channel is a separate module"
+                     " (doeff_agents.sessionhost.result_mcp) that agents start themselves."))
              ""
-             f"{CMD-SERVE} flags:"
+             "flags:"
              #* flag-lines
              ""
-             f"{CMD-SERVE} environment:"
+             "environment:"
              #* env-lines
              ""
-             #* (paragraph
-                  (+ "Unknown arguments are rejected, and so is any command other than"
-                     f" `{CMD-SERVE}`."))])
+             #* (paragraph "Unknown arguments are rejected.")])
      "\n"))
 
 (deff arg-at [args index]
@@ -418,8 +414,9 @@
 (deff parse-args [args]
   {:pre [(: args list)]
    :post [(: % HostConfig)]}
-  "oracle parse_args の verbatim 移植: flag 網羅・env knob の parse 時読み・
-   unknown argument 拒否・command は serve のみ。"
+  "oracle parse_args の移植: flag 網羅・env knob の parse 時読み・
+   unknown argument 拒否。入口の module が host の 1 つの役なので、サブコマンドは受けない
+   (oracle の `serve` の語も unknown argument として断る)。"
   (setv db-path None)
   (setv socket-path None)
   (setv tmux-bin "tmux")
@@ -458,7 +455,6 @@
           (= orphan-knob "") None
           (.isdigit orphan-knob) (int orphan-knob)
           True (raise (ValueError f"{ENV-EXIT-WHEN-ORPHANED} must be the spawning process's pid, got {orphan-knob !r}"))))
-  (setv command CMD-SERVE)
   (setv index 0)
   (while (< index (len args))
     (setv arg (get args index))
@@ -531,13 +527,9 @@
       (= arg FLAG-HERDR-SOCKET)
       (do (+= index 1)
           (setv herdr-socket (required-arg args index FLAG-HERDR-SOCKET)))
-      (= arg CMD-SERVE)
-      (setv command arg)
       True
       (raise (ValueError f"unknown argument: {arg}")))
     (+= index 1))
-  (when (!= command CMD-SERVE)
-    (raise (ValueError f"unsupported command: {command}")))
   (when (not-in backend #{"tmux" "herdr"})
     (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr)")))
   (HostConfig
@@ -592,14 +584,6 @@
 ;; assert するのは events 表のみ)。
 ;; ---------------------------------------------------------------------------
 
-(deff host-binary-path []
-  {:pre [True]
-   :post [(: % str)]}
-  "result channel に配線する自分自身の実行 path(oracle agentd_binary_path
-   :747-752 = current_exe。console script `doeff-sessionhost` の絶対 path)。"
-  (setv candidate (get sys.argv 0))
-  (if candidate (os.path.abspath candidate) "doeff-sessionhost"))
-
 (defn run-hosted [config actor program]
   "handler stack で program を実行する(RPC 写像と monitor tick の共通経路)。
    substrate(生 IO)と store(SQLite actor)が外側、per-kind impl が内側。
@@ -609,10 +593,11 @@
    多重化 effect 6 個に限定する)。
    program の待ち(doeff-time の Delay — launch の ready gate の poll と再描画待ち)
    には、最も外側の sync-time-handler が壁の時計で答える(card ki-3c3d85253c2c・
-   ADR-DOE-TIME-001 R2)。"
-  (setv result-command (host-binary-path))
-  (setv inner ((codex-impl result-command)
-               ((claude-code-impl result-command)
+   ADR-DOE-TIME-001 R2)。
+   agent が起こす結果の MCP server は、host を走らせている python で入口の module を起こす
+   (WireResultChannel の handler が `python -m doeff_agents.sessionhost.result_mcp` の argv を書く)。"
+  (setv inner ((codex-impl sys.executable)
+               ((claude-code-impl sys.executable)
                 program)))
   (when (= config.backend "herdr")
     (setv inner ((herdr-substrate config.herdr-socket) inner)))
@@ -1270,7 +1255,7 @@
    契約外 method は oracle と同文言の unknown method。"
   (when (= method "daemon.status")
     ;; readiness(store_health.readiness-of の 1 点): 保管の書き込みが続けて失敗していれば ready = False。
-    ;; `doeff-sessionhost ready --socket <path>` がこの欄を読んで終了 code に写す(probe の口)。
+    ;; readiness の probe(k3s の readinessProbe など)はこの欄を読んで終了 code に写す。
     (setv health actor.write-health)
     (setv readiness (readiness-of health (run (store-write-failure-limit))))
     (return {"state" "running"
@@ -1650,7 +1635,7 @@
     (finally (.close probe)))
   (when alive
     (raise (RuntimeError
-             f"doeff-sessionhost is already listening on {socket-path}")))
+             f"The session host is already listening on {socket-path}")))
   (os.remove socket-path)
   None)
 
@@ -1671,7 +1656,7 @@
         (.write stream (+ response "\n"))
         (.flush stream)))
     (except [e Exception]
-      (print f"doeff-sessionhost client error: {e}" :file sys.stderr))
+      (print f"session host client error: {e}" :file sys.stderr))
     (finally
       (.close conn)))
   None)
@@ -1684,7 +1669,7 @@
   (try
     (thunk)
     (except [e Exception]
-      (print f"doeff-sessionhost {worker} error: {e}" :file sys.stderr))))
+      (print f"session host {worker} error: {e}" :file sys.stderr))))
 
 
 (defn heartbeat-loop [actor owner-pid shutdown-event]
@@ -1739,7 +1724,7 @@
   (while True
     (setv ppid (os.getppid))
     (when (!= ppid supervisor)
-      (print (+ "doeff-sessionhost supervisor vanished "
+      (print (+ "session host supervisor vanished "
                 f"(spawner {supervisor}, parent now {ppid}); reaping launched sessions "
                 "and exiting")
              :file sys.stderr)
@@ -1767,7 +1752,7 @@
   (setv cutoff (history-retention-cutoff-iso))
   (setv deleted (actor-prune-history actor cutoff HISTORY-PRUNE-BATCH-ROWS))
   (when (> deleted 0)
-    (print (+ f"doeff-sessionhost history prune: deleted {deleted} audit "
+    (print (+ f"session host history prune: deleted {deleted} audit "
               f"rows older than {cutoff}")
            :file sys.stderr))
   deleted)
@@ -1873,7 +1858,7 @@
     (try
       (setv #(conn _addr) (.accept listener))
       (except [e OSError]
-        (print f"doeff-sessionhost accept error: {e}" :file sys.stderr)
+        (print f"session host accept error: {e}" :file sys.stderr)
         (continue)))
     (setv worker (threading.Thread :target handle-stream
                                    :args #(conn config actor)
@@ -1886,10 +1871,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn main []
-  "serve entry(console script doeff-sessionhost の serve 経路 — subcommand
-   dispatch は hostmain.py 所有で、report-result-mcp は relaymain.py へ
-   Hy import より先に分岐済み)。SIGTERM(launchctl bootout の標準経路)は
-   SystemExit(0) に変換し、finally の lease 釈放へ落とす(issue #565)。"
+  "host の入口(`python -m doeff_agents.sessionhost.host [<flags>]` — 下の __main__ の guard が呼ぶ。
+   doeff-agents は effect StartSessionHost の handler でこれを起こす)。SIGTERM(launchctl bootout の
+   標準経路)は SystemExit(0) に変換し、finally の lease 釈放へ落とす(issue #565)。"
   (setv raw (list (cut sys.argv 1 None)))
   ;; `--help` / `-h` は usage を stdout に出して exit 0(表は SERVE-FLAG-SPECS の 1 点)。
   (when (any (gfor arg raw (in arg HELP-FLAGS)))
@@ -1926,7 +1910,7 @@
     ;; actor を数秒占有して client probe を飢えさせない)。
     (prune-history-tick actor)
     (when (.submit actor db-vacuum-if-bloated)
-      (print "doeff-sessionhost store vacuum: reclaimed free pages"
+      (print "session host store vacuum: reclaimed free pages"
              :file sys.stderr))
     (serve config actor listener shutdown-event)
     (finally
@@ -1934,6 +1918,12 @@
       ;; release より後に actor で実行される heartbeat op は必ず skip する。
       (.set shutdown-event)
       (when (.submit actor (fn [conn] (db-release-lease conn owner-pid)))
-        (print "doeff-sessionhost lease released on shutdown"
+        (print "session host lease released on shutdown"
                :file sys.stderr))))
   None)
+
+
+;; `python -m doeff_agents.sessionhost.host` の入口(包みの __init__ が Hy の import hook を先に入れるので、
+;; .hy の module を -m で直に起こせる)。
+(when (= __name__ "__main__")
+  (main))

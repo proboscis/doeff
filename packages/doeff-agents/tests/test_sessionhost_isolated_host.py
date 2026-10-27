@@ -23,7 +23,7 @@ TESTS_DIR = Path(__file__).resolve().parent
 
 def test_serve_argv_always_disables_the_prompt_judge() -> None:
     argv = sessionhost_serve_argv(
-        Path("/bin/doeff-sessionhost"),
+        ("/venv/bin/python", "-m", "doeff_agents.sessionhost.host"),
         db_path=Path("/tmp/x.sqlite"),
         socket_path=Path("/tmp/x.sock"),
         monitor_interval_ms=100,
@@ -31,10 +31,11 @@ def test_serve_argv_always_disables_the_prompt_judge() -> None:
     )
     index = argv.index("--prompt-judge-cmd")
     assert argv[index + 1] == ""
-    assert argv[-1] == "serve"
+    assert argv[:3] == ["/venv/bin/python", "-m", "doeff_agents.sessionhost.host"]
+    assert "serve" not in argv
     with pytest.raises(ValueError, match="never wire a prompt judge"):
         sessionhost_serve_argv(
-            Path("/bin/doeff-sessionhost"),
+            ("/venv/bin/python", "-m", "doeff_agents.sessionhost.host"),
             db_path=Path("/tmp/x.sqlite"),
             socket_path=Path("/tmp/x.sock"),
             extra_args=("--prompt-judge-cmd", "claude --model haiku"),
@@ -93,7 +94,7 @@ def test_tripwire_records_a_real_cli_call_and_fails_loudly(tmp_path: Path) -> No
 def _spawns_the_real_daemon(tree: ast.AST) -> bool:
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-    return "resolve_sessionhost_bin" in names and bool({"Popen", "spawn_sessionhost"} & attrs)
+    return "sessionhost_command" in names and bool({"Popen", "spawn_sessionhost"} & attrs)
 
 
 def test_every_live_daemon_spawn_in_tests_goes_through_the_isolated_argv() -> None:

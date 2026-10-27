@@ -757,7 +757,7 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      issue #558 / ACP ADR 0024 / ADR-DOE-AGENTS-004 R10: doeff-sessionhost
+      issue #558 / ACP ADR 0024 / ADR-DOE-AGENTS-004 R10: the session host
       (re)start authority is owned exclusively by the supervisor-aware
       ensure boundary in doeff_agents/_agentd_client.py. Calling
       _start_agentd_process from anywhere else bypasses the supervisor
@@ -785,7 +785,7 @@ rules:
       ADR-DOE-AGENTS-004 R7 / retired-impl-lives-only-in-git-history law
       (issue #575): 退役 Rust 参照実装への参照 — crate path
       packages/doeff-agentd と module 名 doeff_agentd — は禁止。現役実装は
-      doeff-sessionhost(packages/doeff-agents の sessionhost)。rollback
+      session host(packages/doeff-agents の sessionhost)。rollback
       座標は git tag agentd-rust-final(in-tree 凍結コピーは持たない —
       凍結保存は二重メンテ #573/PR#574 と素の pytest の退役 gate 束縛 #556
       を生んだ)。移植出典表記は agentd-rust-final:src/main.rs:行番号 形式で
@@ -979,7 +979,7 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      agents-fail-fast-protocol: successful doeff-sessionhost responses must validate
+      agents-fail-fast-protocol: successful session host responses must validate
       that the result key exists. Do not use response.get("result"), which turns
       malformed ok=true payloads into None.
     patterns:
@@ -1080,7 +1080,7 @@ rules:
       ADR 0001 D1 + Condemned class D: doeff-conductor handlers must not launch
       or discover worker binaries through subprocess, os.exec*, or shutil.which.
       Workers may only launch through doeff_agents session APIs supervised by
-      doeff-sessionhost.
+      the session host.
     pattern-either:
       - pattern: import subprocess
       - pattern: from subprocess import $NAME
@@ -1110,7 +1110,7 @@ rules:
     severity: ERROR
     message: >
       agents-cli-query-agentd: doeff-agents ps/watch/output/send/attach/stop must
-      query doeff-sessionhost as the single authority. Do not fall back to local
+      query the session host as the single authority. Do not fall back to local
       tmux/session reads or kills for these commands. `stop` is in scope because a
       backend-blind end-of-session belongs to the host: a tmux-only kill reported
       "Session not found" for every herdr and headless session (mediagen #57).

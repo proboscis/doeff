@@ -20,10 +20,8 @@ class HostConfig:
 SERVE_FLAG_SPECS: list[tuple[str, str | None, str | None, str]]
 #: flag を持たない env knob。各項 = (env の名, 説明)。
 SERVE_ENV_ONLY_SPECS: list[tuple[str, str]]
-#: 唯一の command の綴り。
-CMD_SERVE: str
 
-#: serve の入口(console script doeff-sessionhost — hostmain.py が subcommand を捌いた後に呼ぶ・戻らない: serve の accept loop か SystemExit)。
+#: host の入口(`python -m doeff_agents.sessionhost.host` の __main__ の guard が呼ぶ・戻らない: serve の accept loop か SystemExit)。
 def main() -> None: ...
 def parse_args(args: list[str]) -> HostConfig: ...
 def dispatch_line(line: str, config: HostConfig, actor: StoreActor) -> str: ...

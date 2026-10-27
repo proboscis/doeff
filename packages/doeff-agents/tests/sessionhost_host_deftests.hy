@@ -22,7 +22,6 @@
 (import doeff_agents.sessionhost.policy [AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS])
 (import doeff_agents.sessionhost.host [
   HostConfig
-  CMD-SERVE
   SERVE-ENV-ONLY-SPECS
   SERVE-FLAG-SPECS
   DEFAULT-PROMPT-JUDGE-CMD
@@ -108,8 +107,7 @@
                             "--socket" "/tmp/x.sock"
                             "--monitor-interval-ms" "100"
                             "--max-running" "4"
-                            "--prompt-judge-cmd" ""
-                            "serve"]))
+                            "--prompt-judge-cmd" ""]))
   (assert (= config.db-path "/tmp/x.sqlite"))
   (assert (= config.socket-path "/tmp/x.sock"))
   (assert (= config.monitor-interval-seconds 0.1))
@@ -123,10 +121,10 @@
   ;; 都合であって sessionhost の性質ではない)。None = admission の check ごと
   ;; 飛ぶ = 無制限で、これは直接束縛(config を持たない使い方)と同じ形。
   (for [spelling ["none" "unlimited" "NONE" "Unlimited"]]
-    (setv config (parse-args ["--max-running" spelling "serve"]))
+    (setv config (parse-args ["--max-running" spelling]))
     (assert (is config.max-running None) f"expected unlimited for {spelling}"))
   ;; 数値の綴りは従来どおり
-  (assert (= (. (parse-args ["--max-running" "4" "serve"]) max-running) 4))
+  (assert (= (. (parse-args ["--max-running" "4"]) max-running) 4))
   ;; 旗を省略したら従来の既定 10 のまま — 省略へ無制限を割り当てると、省略
   ;; している既存の呼び手(適合 harness 等)の挙動まで一斉に変わる
   (assert (= (. (parse-args []) max-running) 10)))
@@ -138,7 +136,7 @@
   ;; daemon を作らないため、起動時に loud に落とす。
   (setv raised None)
   (try
-    (parse-args ["--max-running" "0" "serve"])
+    (parse-args ["--max-running" "0"])
     (except [e ValueError] (setv raised e)))
   (assert (is-not raised None) "expected reject for --max-running 0")
   (assert (in "rejects every launch" (str raised)))
@@ -153,24 +151,24 @@
   ;; env knob は **作らない**: 課金の方針を env の 1 語で変えられる形は R10(d) が
   ;; 「env 宣言は監督の穴を塞げない」として退けた形と同じ。
   (assert (is (. (parse-args []) allow-metered-billing) False))
-  (assert (is (. (parse-args ["serve"]) allow-metered-billing) False))
-  (setv config (parse-args ["--allow-metered-billing" "serve"]))
+  (assert (is (. (parse-args []) allow-metered-billing) False))
+  (setv config (parse-args ["--allow-metered-billing"]))
   (assert (is config.allow-metered-billing True))
   ;; 他の旗と混ざっても順序に依らない
   (setv config2 (parse-args ["--max-running" "4" "--allow-metered-billing"
-                             "--backend" "herdr" "serve"]))
+                             "--backend" "herdr"]))
   (assert (is config2.allow-metered-billing True))
   (assert (= config2.max-running 4))
   ;; 値を取らない旗 — 後ろの値は unknown argument
   (setv raised None)
   (try
-    (parse-args ["--allow-metered-billing" "true" "serve"])
+    (parse-args ["--allow-metered-billing" "true"])
     (except [e ValueError] (setv raised e)))
   (assert (is-not raised None) "expected reject for a value after the flag")
   (assert (in "unknown argument" (str raised)))
   ;; env では立たない(同名の env knob を作っていないことの pin)
   (defn check-env []
-    (assert (is (. (parse-args ["serve"]) allow-metered-billing) False)))
+    (assert (is (. (parse-args []) allow-metered-billing) False)))
   (with-env {"DOEFF_SESSIONHOST_ALLOW_METERED_BILLING" "1"
              "DOEFF_AGENTD_ALLOW_METERED_BILLING" "1"}
             check-env))
@@ -203,8 +201,8 @@
       (assert (= env (.upper env)) f"{flag} の env の綴りが大文字でない"))
     ;; 値を取らない旗は見出しが None(見本も要らない)。
     (setv args (if (is placeholder None)
-                   [flag CMD-SERVE]
-                   [flag (get samples flag) CMD-SERVE]))
+                   [flag]
+                   [flag (get samples flag)]))
     ;; 受理 = 例外が出ないこと(表に在って parse-args が知らない flag は赤)。
     (parse-args args))
   ;; 見本が表より広くない = 消えた flag の見本が残り続けない。
@@ -219,7 +217,7 @@
   ;; 表に無い綴りは断る — `--acp` は弁(entry.py)が食う host 外の旗。
   (setv raised None)
   (try
-    (parse-args ["--acp" CMD-SERVE])
+    (parse-args ["--acp"])
     (except [e ValueError] (setv raised e)))
   (assert (is-not raised None) "--acp は host の flag ではない(弁が食う)")
   (assert (in "unknown argument" (str raised))))
@@ -231,7 +229,9 @@
          [["--tmux"] "--tmux requires a value"]
          [["--prompt-stall-secs" "0"] "must be positive"]
          [["--max-running" "0"] "rejects every launch"]
-         [["status"] "unknown argument"]]]
+         [["status"] "unknown argument"]
+         ;; サブコマンドは無い(入口の module が host の 1 つの役 — card ki-bb337cfd0336)。
+         [["serve"] "unknown argument"]]]
     (setv raised None)
     (try
       (parse-args args)
@@ -297,8 +297,7 @@
   (try
     (setv config (parse-args ["--db" (os.path.join d "agentd.sqlite")
                               "--socket" (os.path.join d "agentd.sock")
-                              "--prompt-judge-cmd" ""
-                              "serve"]))
+                              "--prompt-judge-cmd" ""]))
     (setv actor (StoreActor config.db-path))
     (try
       (thunk config actor)
@@ -493,7 +492,7 @@
     (setv saved-argv (list sys.argv))
     (setv raised None)
     (try
-      (setv sys.argv ["doeff-sessionhost" "--db" db-path "--socket" sock-path "serve"])
+      (setv sys.argv ["host" "--db" db-path "--socket" sock-path])
       (main)
       (except [e RuntimeError] (setv raised e))
       (finally (setv sys.argv saved-argv)))
@@ -692,16 +691,12 @@
 
 
 (defn spawn-serve [db-path sock-path log-path]
-  "実プロセスの serve を spawn する(hostmain 経由 — console script と同経路)。
+  "実プロセスの host を spawn する(入口の module を python -m で — StartSessionHost の handler と同経路)。
    judge は明示無効(実 claude subprocess を焼かない)。"
-  (setv code (+ "import sys; "
-                f"sys.argv = ['doeff-sessionhost', '--db', {(json.dumps db-path)}, "
-                f"'--socket', {(json.dumps sock-path)}, "
-                "'--prompt-judge-cmd', '', 'serve']; "
-                "from doeff_agents.sessionhost.hostmain import main; main()"))
   (setv log (open log-path "ab"))
   (try
-    (subprocess.Popen [sys.executable "-c" code]
+    (subprocess.Popen [sys.executable "-m" "doeff_agents.sessionhost.host"
+                       "--db" db-path "--socket" sock-path "--prompt-judge-cmd" ""]
                       :stdout log :stderr subprocess.STDOUT)
     (finally (.close log))))
 
@@ -966,7 +961,7 @@
   (setv d (tempfile.mkdtemp))
   (try
     (setv db (os.path.join d "agentd.sqlite"))
-    (setv config (parse-args ["--db" db "--socket" (os.path.join d "a.sock") "serve"]))
+    (setv config (parse-args ["--db" db "--socket" (os.path.join d "a.sock")]))
     (setv actor (StoreActor db))
     (defn status []
       (get (json.loads (dispatch-line "{\"id\": 1, \"method\": \"daemon.status\"}" config actor)) "result"))

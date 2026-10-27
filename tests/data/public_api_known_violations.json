@@ -1475,7 +1475,6 @@
       "AWAIT_POLL_INTERVAL_SECONDS",
       "AWAIT_TERMINAL_STATUSES",
       "AdoptTargetNotFound",
-      "CMD_SERVE",
       "CONVERSATION_QUIESCENCE_SECONDS",
       "DEFAULT_AWAIT_TIMEOUT_SECONDS",
       "DEFAULT_MAX_RUNNING_SESSIONS",
@@ -1518,7 +1517,6 @@
       "ORPHAN_POLL_INTERVAL_SECONDS",
       "PASTE_RESUBMIT_LIMIT",
       "REPL_IDLE_MAX_WAIT_SECONDS",
-      "REPORT_RESULT_MCP_SUBCOMMAND",
       "RPC_ERR_ADOPT_TARGET_NOT_FOUND",
       "RPC_ERR_ALREADY_TERMINAL",
       "RPC_ERR_AWAIT_TIMEOUT",
@@ -1568,7 +1566,6 @@
       "heartbeat_loop",
       "history_retention_cutoff_iso",
       "home_dir",
-      "host_binary_path",
       "is_run_to_completion",
       "is_terminal_status",
       "iso_format",
@@ -1610,15 +1607,6 @@
       "wire_snapshot",
       "wire_with_stalled",
       "xdg_state_home"
-     ],
-     "doeff_agents.sessionhost.hostmain": [
-      "REPORT_RESULT_MCP_SUBCOMMAND",
-      "main",
-      "run_host",
-      "run_report_result_mcp"
-     ],
-     "doeff_agents.sessionhost.impls.channel": [
-      "REPORT_RESULT_MCP_SUBCOMMAND"
      ],
      "doeff_agents.sessionhost.impls.claude_code": [
       "FS_SYMLINK_REFUSED",
@@ -1870,17 +1858,6 @@
       "tail_lower",
       "turn_stalled"
      ],
-     "doeff_agents.sessionhost.relaymain": [
-      "MCP_PROTOCOL_VERSION",
-      "REPORT_RESULT_MCP_SUBCOMMAND",
-      "handle_mcp_message",
-      "mcp_error",
-      "mcp_result",
-      "mcp_tool_error",
-      "relay_report_result",
-      "report_result_tool_def",
-      "run_report_result_mcp"
-     ],
      "doeff_agents.sessionhost.schema": [
       "JsonValue",
       "schema_admission_error",
@@ -1985,8 +1962,7 @@
     },
     "境界 — CLI": {
      "(console script)": [
-      "doeff-agents",
-      "doeff-sessionhost"
+      "doeff-agents"
      ]
     },
     "境界 — class の形の handler": {

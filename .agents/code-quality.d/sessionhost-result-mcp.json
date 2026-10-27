@@ -1,0 +1,20 @@
+{
+  "include": [
+    "packages/doeff-agents/src/doeff_agents/sessionhost/result_mcp.py"
+  ],
+  "modules": [
+    {
+      "allow": [],
+      "layer": "runtime",
+      "name": "sessionhost-result-mcp",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/result_mcp.py"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/result_mcp.py"
+      ],
+      "responsibility": "結果の MCP server の入口(python -m doeff_agents.sessionhost.result_mcp・stdio relay・既存 — 依存先として宣言)",
+      "typed": false
+    }
+  ]
+}

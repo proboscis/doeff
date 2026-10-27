@@ -39,6 +39,8 @@
   ListDir
   RunProcess
   SpawnDetached
+  StartSessionHost
+  _session-host-argv
   UnixLineRequest
   UnixConnectProbe
   ExecutableAt
@@ -163,6 +165,11 @@
 
   (SpawnDetached [argv log-path cwd]
     (resume (_spawn-detached-io argv log-path cwd)))
+
+  (StartSessionHost [db-path socket-path max-running log-path host-bin]
+    ;; host は入口の module を今の python で起こす(PATH を見ない — argv は io_effects の 1 点)。
+    (<- argv (_session-host-argv host-bin db-path socket-path max-running))
+    (resume (_spawn-detached-io argv log-path None)))
 
   (UnixLineRequest [socket-path payload timeout]
     (resume (_unix-line-request-io socket-path payload timeout)))

@@ -9,7 +9,7 @@ Stdlib plus one doeff environment ask at start (#3012). Two launch modes share t
 Env contract:
   CONFORMANCE_SCRIPT   path to the JSON step array (required)
   CONFORMANCE_JOURNAL  path to the JSONL observation journal (required)
-  DOEFF_RESULT_SESSION_ID / DOEFF_AGENTD_SOCKET / DOEFF_AGENTD_BIN
+  DOEFF_RESULT_SESSION_ID / DOEFF_AGENTD_SOCKET
                        result-channel physics for report_result steps (M2);
                        in M1 the wired doeff_result MCP config in argv is
                        journaled instead of being spoken.
@@ -454,8 +454,9 @@ def await_monitor_ack(timeout_s: float) -> bool:
 
 
 def report_result(spec: object) -> None:
-    """Speak the report_result MCP tool over agentd's own binary
-    (report-result-mcp subcommand), exactly like a real CLI's MCP client.
+    """Speak the report_result MCP tool over the result MCP server's entry
+    module (the argv the daemon wires into the agent's MCP config), exactly
+    like a real CLI's MCP client.
     Retries ONLY the transient not-registered launch race; a schema
     rejection is terminal for that payload (ADR 0035 R4)."""
     if spec == "schema_invalid":
@@ -464,8 +465,9 @@ def report_result(spec: object) -> None:
         payload = spec["payload"]  # type: ignore[index]
     proc = subprocess.Popen(
         [
-            ENV["DOEFF_AGENTD_BIN"],
-            "report-result-mcp",
+            sys.executable,
+            "-m",
+            "doeff_agents.sessionhost.result_mcp",
             "--session",
             ENV["DOEFF_RESULT_SESSION_ID"],
             "--socket",

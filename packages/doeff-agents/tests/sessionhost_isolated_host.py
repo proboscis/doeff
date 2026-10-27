@@ -1,4 +1,4 @@
-"""tests/ の中で本物の daemon(doeff-sessionhost)を起こす検の、宿からの隔離の単一実装。
+"""tests/ の中で本物の daemon(session host)を起こす検の、宿からの隔離の単一実装。
 
 なぜ要るか(2026-09-24 00:50 JST・zeus の実測): `test_agentd_deterministic_result_failure_is_not_retried`
 は替え玉の agent(fake_interactive_agent.py)を tmux で動かす検なのに、daemon を素の argv と素の env で
@@ -57,7 +57,7 @@ _HOST_ENV_TO_DROP: tuple[str, ...] = (
 
 
 def sessionhost_serve_argv(
-    agentd_bin: Path,
+    host_command: Sequence[str],
     *,
     db_path: Path,
     socket_path: Path,
@@ -65,12 +65,12 @@ def sessionhost_serve_argv(
     max_running: int | None = None,
     extra_args: Sequence[str] = (),
 ) -> list[str]:
-    """検で daemon を起こす argv。画面判定は必ず無効(`--prompt-judge-cmd ""`)。
+    """検で daemon を起こす argv(頭は sessionhost_bin.sessionhost_command)。画面判定は必ず無効(`--prompt-judge-cmd ""`)。
 
     判定の挙動そのものを検るのは conformance の S5 / S6 / S6b で、そこは台本の judge を明示で差す。
     tests/ の検は判定を検の対象にしていないので、本物の claude を呼ぶ既定を持ち込まない。
     """
-    argv = [str(agentd_bin), "--db", str(db_path), "--socket", str(socket_path)]
+    argv = [*host_command, "--db", str(db_path), "--socket", str(socket_path)]
     if monitor_interval_ms is not None:
         argv += ["--monitor-interval-ms", str(monitor_interval_ms)]
     if max_running is not None:
@@ -80,7 +80,7 @@ def sessionhost_serve_argv(
             "tests/ never wire a prompt judge into a live daemon — judge behaviour is"
             " conformance's S5 / S6 / S6b (scripted judge)"
         )
-    return [*argv, "--prompt-judge-cmd", "", *extra_args, "serve"]
+    return [*argv, "--prompt-judge-cmd", "", *extra_args]
 
 
 @dataclass(frozen=True)

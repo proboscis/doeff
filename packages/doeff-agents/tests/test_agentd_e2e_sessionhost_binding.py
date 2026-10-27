@@ -1,14 +1,10 @@
-"""agentd e2e 群の sessionhost 束縛(issue #575 M2)。
+"""agentd e2e 群の sessionhost 束縛(issue #575 M2・card ki-bb337cfd0336)。
 
-daemon under test は正典 executor doeff-sessionhost であり、退役 Rust crate
-(rollback tag agentd-rust-final に保存)のビルド(cargo)・path 算出に
-依存しない。解決は
-sessionhost_bin.resolve_sessionhost_bin の単一実装: DOEFF_AGENTD_BIN(明示
-seam、契約語彙)→ 実行中 interpreter 隣接の console script → PATH → 解決
-不能は loud fail(ADR-DOE-AGENTS-004 R7 / retired-impl-lives-only-in-git-history)。
-
-TDD red(2026-07-30): 3 つの e2e が cargo build 束縛のため、ヘルパ実装 +
-再束縛まで red。
+daemon under test は host の入口の module(`python -m doeff_agents.sessionhost.host`)であり、
+退役 Rust crate(rollback tag agentd-rust-final に保存)のビルド(cargo)・path 算出にも、
+CLI コマンドの PATH の探索にも依存しない。起動の argv の頭は
+sessionhost_bin.sessionhost_command の単一実装: DOEFF_AGENTD_BIN(明示 seam、契約語彙)→
+無ければ実行中 interpreter の -m(ADR-DOE-AGENTS-004 R7 / retired-impl-lives-only-in-git-history)。
 """
 
 from __future__ import annotations
@@ -21,38 +17,30 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 
-def test_resolve_explicit_seam_wins(monkeypatch, tmp_path):
-    from sessionhost_bin import resolve_sessionhost_bin
+def test_explicit_seam_wins(monkeypatch, tmp_path):
+    from sessionhost_bin import sessionhost_command
 
     fake = tmp_path / "fake-agentd"
-    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake.chmod(0o755)
     monkeypatch.setenv("DOEFF_AGENTD_BIN", str(fake))
-    assert resolve_sessionhost_bin() == fake
+    assert sessionhost_command() == (str(fake),)
 
 
-def test_resolve_default_is_interpreter_adjacent(monkeypatch):
-    from sessionhost_bin import resolve_sessionhost_bin
-
-    monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
-    sibling = Path(sys.executable).parent / "doeff-sessionhost"
-    assert sibling.exists(), "前提: venv console script が無い(make sync を実行すること)"
-    assert resolve_sessionhost_bin() == sibling
-
-
-def test_resolve_missing_everywhere_is_loud(monkeypatch, tmp_path):
-    import sessionhost_bin
+def test_default_is_the_entry_module_on_the_running_interpreter(monkeypatch, tmp_path):
+    from sessionhost_bin import sessionhost_command
 
     monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
-    lonely = tmp_path / "lonely-bin"
-    lonely.mkdir()
-    monkeypatch.setattr(sessionhost_bin.sys, "executable", str(lonely / "python"))
-    monkeypatch.setenv("PATH", str(lonely))
-    try:
-        sessionhost_bin.resolve_sessionhost_bin()
-    except AssertionError:
-        return
-    raise AssertionError("解決不能なのに loud fail しなかった")
+    # PATH に何が在っても(古い console script でも)見ない。
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert sessionhost_command() == (sys.executable, "-m", "doeff_agents.sessionhost.host")
+
+
+def test_the_package_declares_no_sessionhost_console_script():
+    # card ki-bb337cfd0336: code starts the host through the StartSessionHost effect and the
+    # entry module — a console script would be a second, PATH-resolved way to start it.
+    import tomllib
+
+    pyproject = tomllib.loads((TESTS_DIR.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "doeff-sessionhost" not in pyproject["project"]["scripts"]
 
 
 def test_e2e_supports_have_no_retired_crate_binding():

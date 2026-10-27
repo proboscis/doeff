@@ -81,8 +81,8 @@
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
   (<- row (under-world world
-           ((codex-impl "/opt/doeff-sessionhost")
-            ((claude-code-impl "/opt/doeff-sessionhost")
+           ((codex-impl "/opt/venv/bin/python")
+            ((claude-code-impl "/opt/venv/bin/python")
              (resume-session params)))))
   row)
 

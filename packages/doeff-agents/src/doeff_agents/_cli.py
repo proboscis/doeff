@@ -64,7 +64,7 @@ console = Console()
 
 # All doeff-agents sessions are prefixed with this to distinguish from other tmux sessions
 SESSION_PREFIX = "doeff-"
-AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または doeff-sessionhost ... serve)を実行してください。"
+AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または python -m doeff_agents.sessionhost.host ...)を実行してください。"
 TERMINAL_STATUSES = {
     SessionStatus.DONE,
     SessionStatus.FAILED,
@@ -216,7 +216,7 @@ def cli() -> None:
 @cli.group()
 def agentd() -> None:
     """Manage the session host (the retired `doeff-agentd` binary is now
-    `doeff-sessionhost`; only the socket, database and protocol keep the
+    the entry module `doeff_agents.sessionhost.host`; only the socket, database and protocol keep the
     `agentd` name)."""
 
 
@@ -245,7 +245,7 @@ def agentd_kinds(json_output: bool) -> None:
 @agentd.command("ensure")
 @click.option("--json", "json_output", is_flag=True, help="Print machine-readable status.")
 def agentd_ensure(json_output: bool) -> None:
-    """Ensure doeff-sessionhost is reachable, starting it if necessary."""
+    """Ensure the session host is reachable, starting it if necessary."""
     reading: HostStatusReading = _run_on_host(_ask(SessionHostStatusEffect()), start_host=True)
     status = dict(reading.status)
     payload = {
@@ -261,7 +261,7 @@ def agentd_ensure(json_output: bool) -> None:
         click.echo(json.dumps(payload, sort_keys=True))
         return
 
-    console.print(f"doeff-sessionhost: {status.get('state', 'running')}")
+    console.print(f"session host: {status.get('state', 'running')}")
     console.print(f"socket: {reading.socket_path}")
     if isinstance(daemon_db, str):
         console.print(f"db: {daemon_db}")

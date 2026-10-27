@@ -33,7 +33,7 @@ dependencies = [
     "psutil>=6.0",
     # result-contract validation imports the settled JSON Schema semantics
     # (doeff#482: never hand-roll a subset validator for an enforcement
-    # boundary). NOT used by the stdlib-only report-result-mcp relay.
+    # boundary). NOT used by the stdlib-only result MCP server (sessionhost.result_mcp).
     "jsonschema>=4.21",
     # the api-limit marker reads its reset instant in the IANA zone the refusal
     # names (ZoneInfo); zoneinfo falls back to this package when the machine has
@@ -50,7 +50,6 @@ dev = [
 
 [project.scripts]
 doeff-agents = "doeff_agents._cli:cli"
-doeff-sessionhost = "doeff_agents.sessionhost.hostmain:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"
