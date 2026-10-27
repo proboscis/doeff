@@ -16,7 +16,7 @@ import os
 import tempfile
 import threading
 
-from doeff_agents.effects.agent import EventRecord
+from doeff_agents.effects.agent import EventRecord, RecordStep
 
 
 class RecordKeeper:
@@ -34,13 +34,15 @@ class RecordKeeper:
         """Fold one item (an ``AgentEvent`` read from the runtime or a ``record_note``) and write the text it answers."""
         with self._lock:
             try:
-                state, text = self._fold(self._state, item)
+                step = self._fold(self._state, item)
+                if not isinstance(step, RecordStep):
+                    raise TypeError(f"EventRecord.fold answered {type(step).__name__}, not a RecordStep")
             except Exception as error:  # noqa: BLE001 — a fold that raises drops the item, never the reader thread
                 self.failure = f"fold: {type(error).__name__}: {error}"
                 return
-            self._state = state
-            if text is not None:
-                self._write(text)
+            self._state = step.state
+            if step.text is not None:
+                self._write(step.text)
 
     def _write(self, text: str) -> None:
         """Replace the record's file with ``text`` so a reader sees the whole new record or the old one, never half."""

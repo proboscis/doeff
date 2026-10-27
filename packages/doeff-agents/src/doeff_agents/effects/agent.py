@@ -1224,11 +1224,20 @@ def _check_attachments(owner: str, attachments: object) -> None:
 
 
 @dataclass(frozen=True)
+class RecordStep:
+    """What one fold of an ``EventRecord`` answers: the new state and the file's
+    new text (``None`` = leave the file as it is)."""
+
+    state: object
+    text: str | None
+
+
+@dataclass(frozen=True)
 class EventRecord:
     """A file the handler keeps current with a session's turns as it reads them.
 
-    ``fold(state, item)`` folds one item into the state and answers the new
-    state and the file's new text (``None`` = leave the file as it is). An item
+    ``fold(state, item)`` folds one item into the state and answers a
+    ``RecordStep`` (the new state and the file's new text). An item
     is an ``AgentEvent`` the runtime read (the same events a page carries; their
     ``seq`` is not the page's) or the ``record_note`` of a ``FollowUpEffect``.
     The handler folds on the runtime's reader thread as it reads the output,
@@ -1241,7 +1250,7 @@ class EventRecord:
 
     path: str
     state: object
-    fold: "Callable[[object, object], tuple[object, str | None]]"
+    fold: "Callable[[object, object], RecordStep]"
 
     def __post_init__(self) -> None:
         if not isinstance(self.path, str) or not self.path:

@@ -44,7 +44,7 @@
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect
-  NamedContextId HandlerMadeContextId InputImage EventRecord FollowUpEffect])
+  NamedContextId HandlerMadeContextId InputImage EventRecord RecordStep FollowUpEffect])
 (import doeff_agents.effects.agent [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
@@ -2568,7 +2568,7 @@
 (defn fold-all [state item]  ; defk にできない: 層 2 の読み手の thread が呼ぶ畳みの callback(EventRecord.fold)
   "検の畳み: 畳んだ物を順に持ち、file には畳んだ数を書く。"
   (setv folded (+ state #(item)))
-  #(folded (str (len folded))))
+  (RecordStep :state folded :text (str (len folded))))
 
 (defk recorded-turn [#^ Setting s #^ EventRecord record]
   {:pre [(: s Setting) (: record EventRecord)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "program"}}
