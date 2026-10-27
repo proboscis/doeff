@@ -542,7 +542,7 @@ coordinator は古い版のまま動き続けます。
   「その worker で起動しかけている」と数えます(他へ置かない)。旧い版の coordinator はこの phase を知らないので、coordinator を先に上げます。
 - 退きの知らせの変更(worker の働きで効く): 上の「退きの知らせ」の段落。coordinator はこの知らせに関わらないので、coordinator の版を
   先に同じ版へ上げてから worker を上げます。
-- 枠の file の組の印 `pools` と memory の予算 `memoryMiB` の変更(coordinator が先・card ki-ced3c45980a5): worker は枠の file の行の
+- 枠の file の組の印 `pools` と memory の予算 `memoryMiB` の変更(coordinator が先): worker は枠の file の行の
   `pools` を heartbeat の `provides` に足し、`memoryMiB` を heartbeat の新しい欄 `memoryMiB` で名乗ります。旧い版の coordinator は
   `provides` の組の印をそのまま能力として受けますが、`memoryMiB` の欄は読み捨てます(Worker の spec と GET /state に出ない)。
   coordinator を先に上げ、新しい版が Ready になってから worker を上げ、その後に枠の file へ値を入れます。旧い版の worker は 2 つの欄を
