@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 import pytest
-from doeff_agents.agentd_client import AgentdClientError
+from doeff_agents._agentd_client import AgentdClientError
 from harness import AgentdHarness
 
 IDLE_FRAME = {"claude": "F-idle-claude", "codex": "F-idle-codex"}

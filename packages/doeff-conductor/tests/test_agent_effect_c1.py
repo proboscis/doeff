@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from doeff_agents import AgentSessionLifecycle, AgentSessionSnapshot, AgentType, SessionStatus
-from doeff_agents.agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
+from doeff_agents._agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.effects import AwaitOutcome, AwaitStatus
 from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace

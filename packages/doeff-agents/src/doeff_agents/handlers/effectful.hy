@@ -9,7 +9,7 @@
 (import time threading)
 (import doeff [Ask GetHandlers GetOuterHandlers])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
-(import doeff_agents.agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
+(import doeff_agents._agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
 (import doeff_agents.effects [
   AgentCapabilityUnsupportedError
   AgentEffect

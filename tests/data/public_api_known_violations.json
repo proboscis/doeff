@@ -575,9 +575,6 @@
      "doeff_agents.claude_home": [
       "write_text"
      ],
-     "doeff_agents.cli": [
-      "monitor_session"
-     ],
      "doeff_agents.io_effects": [
       "append_text",
       "executable_at",
@@ -623,33 +620,8 @@
      "doeff_agents.agent_env": [
       "GITHUB_TOKEN_ENV"
      ],
-     "doeff_agents.agentd_client": [
-      "AgentdClient",
-      "AgentdClientError",
-      "AgentdPaths",
-      "AgentdProtocolError",
-      "AgentdSessionList",
-      "AgentdSessionParseWarning",
-      "AgentdSupervisorConfigError",
-      "AgentdSupervisorDeclaration",
-      "AgentdUnavailableError",
-      "LazyAgentdClient",
-      "RPC_ERR_NO_SUCH_SESSION",
-      "default_agentd_paths",
-      "ensure_agentd",
-      "load_supervisor_declaration"
-     ],
      "doeff_agents.claude_home": [
       "prepare_claude_home"
-     ],
-     "doeff_agents.cli": [
-      "AgentdClient",
-      "AgentdClientError",
-      "AgentdSessionParseWarning",
-      "AgentdSupervisorConfigError",
-      "AgentdUnavailableError",
-      "default_agentd_paths",
-      "ensure_agentd"
      ],
      "doeff_agents.handlers": [
       "AgentSessionRepository",
@@ -1333,10 +1305,6 @@
       "policy_normalized_env_key",
       "provider_auth_env_offenders"
      ],
-     "doeff_agents.agentd_client": [
-      "RPC_ERR_AWAIT_TIMEOUT",
-      "agentd_socket_is_supervised"
-     ],
      "doeff_agents.claude_home": [
       "IoGenerator",
       "as_bool",
@@ -1349,31 +1317,6 @@
       "path_exists",
       "read_text",
       "trusted_projects_json"
-     ],
-     "doeff_agents.cli": [
-      "AGENTD_OBSERVE_TIMEOUT_SECONDS",
-      "AGENTD_UNAVAILABLE_HINT",
-      "AgentSession",
-      "SESSION_PREFIX",
-      "TERMINAL_STATUSES",
-      "agentd",
-      "agentd_adopt",
-      "agentd_by_conversation",
-      "agentd_ensure",
-      "agentd_kinds",
-      "agentd_socket_is_supervised",
-      "agentd_turn_close",
-      "agentd_turn_open",
-      "attach",
-      "cli",
-      "console",
-      "output",
-      "ps_command",
-      "run",
-      "send",
-      "stop",
-      "tmux_attach",
-      "watch_command"
      ],
      "doeff_agents.effects": [
       "AgentSessionLifecycle"
@@ -2133,10 +2076,6 @@
      "doeff_agents.adapters.gemini": [
       "AgentType"
      ],
-     "doeff_agents.cli": [
-      "AgentType",
-      "LaunchConfig"
-     ],
      "doeff_agents.effects": [
       "AgentSessionQuery",
       "AgentSpec",
@@ -2280,10 +2219,6 @@
       "SessionStatus",
       "TranscriptRef",
       "TurnRef"
-     ],
-     "doeff_agents.cli": [
-      "AgentSessionSnapshot",
-      "SessionStatus"
      ],
      "doeff_agents.effects": [
       "AgentAccountLimit",
@@ -2669,9 +2604,6 @@
      ]
     },
     "未分け — 資料の分けの後に現れた名": {
-     "doeff_agents.cli": [
-      "launch_session"
-     ],
      "doeff_agents.handlers": [
       "CodexApprovalPolicy",
       "CodexSandboxMode",

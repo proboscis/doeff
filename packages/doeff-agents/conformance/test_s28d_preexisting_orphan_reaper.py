@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from conformance_env import process_environment
-from doeff_agents.agentd_client import AgentdClient
+from doeff_agents._agentd_client import AgentdClient
 from harness import (
     AGENT_SCRIPT,
     AgentdHarness,

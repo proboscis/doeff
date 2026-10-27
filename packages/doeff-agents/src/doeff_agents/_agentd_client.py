@@ -18,10 +18,31 @@ from pathlib import Path
 from typing import Any
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
-from doeff import do
 from doeff_time import Delay
 
+from doeff import do
 from doeff_agents.adapters.base import AgentType
+from doeff_agents.effects import (
+    AgentSessionLifecycle,
+    AgentSessionQuery,
+    AgentSessionSnapshot,
+    AwaitOutcome,
+    AwaitStatus,
+    SessionStatus,
+)
+from doeff_agents.io_effects import (
+    env_value,
+    executable_at,
+    home_path,
+    make_dirs,
+    monotonic_time,
+    read_text,
+    run_process,
+    spawn_detached,
+    unix_connect_probe,
+    unix_line_request,
+    which_executable,
+)
 from doeff_agents.io_root import (
     IoGenerator,
     IoRoot,
@@ -32,27 +53,7 @@ from doeff_agents.io_root import (
     as_process_outcome,
     as_str,
 )
-from doeff_agents.io_effects import (
-    env_value,
-    home_path,
-    executable_at,
-    make_dirs,
-    monotonic_time,
-    read_text,
-    run_process,
-    spawn_detached,
-    unix_connect_probe,
-    unix_line_request,
-    which_executable,
-)
-from doeff_agents.effects import (
-    AgentSessionLifecycle,
-    AgentSessionQuery,
-    AgentSessionSnapshot,
-    AwaitOutcome,
-    AwaitStatus,
-)
-from doeff_agents.effects import SessionStatus
+
 
 def _default_io_root() -> IoRoot:
     """既定の composition root: 本番の I/O handler。"""
@@ -577,7 +578,15 @@ def parse_response_line(line: str, *, request_id: int, method: str) -> Any:
 
 
 class LazyAgentdClient:
-    """Client proxy that resolves doeff-agentd only when an agent effect needs it."""
+    """Client proxy that resolves doeff-agentd only when an agent effect needs it.
+
+    ``start_host`` decides what resolving does.  True (the default) goes
+    through ``ensure_agentd``, which starts a host when none answers.  False
+    never starts one (ADR-DOE-AGENTS-004 law ``reads-never-start-a-host``): it
+    talks to the socket that is named (``socket_path``, else the default paths,
+    ``$DOEFF_AGENTD_SOCKET`` included) and waits at most ``timeout`` seconds
+    for each answer, so an absent host is a failed request, never a new host.
+    """
 
     def __init__(
         self,
@@ -588,6 +597,7 @@ class LazyAgentdClient:
         timeout: float = 5.0,
         client_timeout: float = 1.0,
         max_running: int = 10,
+        start_host: bool = True,
     ) -> None:
         self.db_path = db_path
         self.socket_path = socket_path
@@ -595,24 +605,43 @@ class LazyAgentdClient:
         self.timeout = timeout
         self.client_timeout = client_timeout
         self.max_running = max_running
+        self.start_host = start_host
         self._client: AgentdClient | None = None
         self._lock = threading.Lock()
 
     def _resolve(self) -> AgentdClient:
         with self._lock:
             if self._client is None:
-                self._client = ensure_agentd(
-                    db_path=self.db_path,
-                    socket_path=self.socket_path,
-                    daemon_bin=self.daemon_bin,
-                    timeout=self.timeout,
-                    client_timeout=self.client_timeout,
-                    max_running=self.max_running,
-                )
+                if self.start_host:
+                    self._client = ensure_agentd(
+                        db_path=self.db_path,
+                        socket_path=self.socket_path,
+                        daemon_bin=self.daemon_bin,
+                        timeout=self.timeout,
+                        client_timeout=self.client_timeout,
+                        max_running=self.max_running,
+                    )
+                else:
+                    named = (
+                        Path(self.socket_path)
+                        if self.socket_path is not None
+                        else default_agentd_paths().socket_path
+                    )
+                    self._client = AgentdClient(named, timeout=self.timeout)
             return self._client
+
+    def resolved_socket_path(self) -> Path:
+        """The socket this proxy talks to (resolving it first)."""
+        return self._resolve().socket_path
 
     def status(self) -> Mapping[str, Any]:
         return self._resolve().status()
+
+    def kinds(self) -> list[Mapping[str, Any]]:
+        return self._resolve().kinds()
+
+    def request(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
+        return self._resolve().request(method, params)
 
     def launch_session(
         self,

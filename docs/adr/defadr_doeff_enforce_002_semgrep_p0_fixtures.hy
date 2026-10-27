@@ -86,18 +86,18 @@
            "def launch(client):\n    return client.launch_session(agent_type='claude')\n"}])
      (defsemgrep p0-agentd-request-requires-result-key
        "doeff-agents-agentd-request-requires-result-key"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
          "source"
            "def request(response):\n    return response.get('result')\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
          "source"
            "def request(response):\n    return response['result']\n"}])
      (defsemgrep p0-await-result-requires-protocol-fields
        "doeff-agents-await-result-requires-protocol-fields"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
          "source"
            "def _await_outcome_from_result(result):\n    return result.get('session')\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
          "source"
            "def _await_outcome_from_result(result):\n    return result['session']\n"}])
      (defsemgrep p0-no-return-control-primitives-in-handlers

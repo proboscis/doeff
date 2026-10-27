@@ -132,9 +132,9 @@ def test_defsemgrep_installed_rule_allows_same_path_for_hit_and_clean(tmp_hy_dir
 
         (defsemgrep test-installed-agentd-result-key-rule
           "doeff-agents-agentd-request-requires-result-key"
-          [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+          [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
             "source" "def request(response):\\n    return response.get('result')\\n"}]
-          [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+          [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
             "source" "def request(response):\\n    return response['result']\\n"}])
         """,
     )

@@ -22,7 +22,7 @@ launch fails closed (S18) and the same row transitions to terminal
 import threading
 import time
 
-from doeff_agents.agentd_client import AgentdClientError
+from doeff_agents._agentd_client import AgentdClientError
 from harness import RESULT_SCHEMA, AgentdHarness, session_exists_out_of_band
 
 PROMPT = "Produce the conformance structured result."

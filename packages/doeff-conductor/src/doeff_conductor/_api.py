@@ -553,7 +553,7 @@ class ConductorAPI:
             return []
         client = agentd_client
         if client is None:
-            from doeff_agents.agentd_client import LazyAgentdClient
+            from doeff_agents._agentd_client import LazyAgentdClient
 
             client = LazyAgentdClient()
 

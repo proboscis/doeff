@@ -29,7 +29,7 @@ import json
 import uuid
 
 import pytest
-from doeff_agents.agentd_client import AgentdClientError
+from doeff_agents._agentd_client import AgentdClientError
 from harness import AgentdHarness
 
 ACTIVE_STATUSES = {"pending", "booting", "running", "blocked", "blocked_api"}

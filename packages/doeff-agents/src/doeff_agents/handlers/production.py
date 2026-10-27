@@ -21,7 +21,7 @@ from doeff_agents.adapters.base import (
 from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 from doeff_agents.adapters.gemini import GeminiAdapter
-from doeff_agents.agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
+from doeff_agents._agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import (
     AgentAttemptExhaustedError,
