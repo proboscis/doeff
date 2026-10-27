@@ -513,12 +513,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_agents": [
-      "AgentSessionRepository",
-      "AgentdSessionClient",
-      "InMemoryAgentSessionRepository",
-      "JsonlAgentSessionRepository"
-     ],
      "doeff_agents.adapters": [
       "AgentAdapter"
      ],
@@ -533,10 +527,6 @@
      ],
      "doeff_agents.claude_home": [
       "prepare_claude_home"
-     ],
-     "doeff_agents.handlers": [
-      "AgentSessionRepository",
-      "AgentdSessionClient"
      ],
      "doeff_agents.handlers.claude": [
       "McpToolServer",
@@ -1141,11 +1131,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_agents": [
-      "AgentSessionLifecycle",
-      "MockSessionScript",
-      "ScenarioStep"
-     ],
      "doeff_agents.adapters": [
       "ClaudeAdapter",
       "CodexAdapter",
@@ -1228,16 +1213,6 @@
       "path_exists",
       "read_text",
       "trusted_projects_json"
-     ],
-     "doeff_agents.effects": [
-      "AgentSessionLifecycle"
-     ],
-     "doeff_agents.effects.agent": [
-      "AgentSessionLifecycle"
-     ],
-     "doeff_agents.handlers": [
-      "MockSessionScript",
-      "ScenarioStep"
      ],
      "doeff_agents.handlers.claude": [
       "ClaudeAdapter",
@@ -1928,6 +1903,7 @@
     },
     "境界 — effect の値の型": {
      "doeff_agents": [
+      "AgentSessionLifecycle",
       "AgentSessionQuery",
       "AgentSpec",
       "AgentTask",
@@ -1964,6 +1940,7 @@
       "AgentType"
      ],
      "doeff_agents.effects": [
+      "AgentSessionLifecycle",
       "AgentSessionQuery",
       "AgentSpec",
       "AgentTask",
@@ -1984,6 +1961,7 @@
       "TurnInputMode"
      ],
      "doeff_agents.effects.agent": [
+      "AgentSessionLifecycle",
       "AgentSessionQuery",
       "AgentSpec",
       "AgentTask",
@@ -2342,8 +2320,14 @@
     },
     "境界 — handler の設定の型": {
      "doeff_agents": [
+      "AgentSessionRepository",
+      "AgentdSessionClient",
       "CodexRuntimePolicy",
+      "InMemoryAgentSessionRepository",
       "InputFateState",
+      "JsonlAgentSessionRepository",
+      "MockSessionScript",
+      "ScenarioStep",
       "SessionBackend"
      ],
      "doeff_agents.effects": [
@@ -2353,7 +2337,11 @@
       "InputFateState"
      ],
      "doeff_agents.handlers": [
+      "AgentSessionRepository",
+      "AgentdSessionClient",
       "CodexRuntimePolicy",
+      "MockSessionScript",
+      "ScenarioStep",
       "SessionBackend"
      ],
      "doeff_agents.handlers.claude": [
@@ -2488,13 +2476,6 @@
      "doeff_agents.sessionhost.substrate_herdr": [
       "HerdrApiError",
       "HerdrContractError"
-     ]
-    },
-    "未分け — 資料の分けの後に現れた名": {
-     "doeff_agents.handlers": [
-      "CodexApprovalPolicy",
-      "CodexSandboxMode",
-      "FakeCodexWorld"
      ]
     }
    }
@@ -16843,6 +16824,12 @@
   {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "time!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
   {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "workspace!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
   {"package": "doeff-cluster", "module": "doeff_cluster.shared.entry.macros", "name": "defsystem", "訳": "系を宣言する Hy の macro defsystem を doeff-hy の doeff_hy.macros から持ち主の doeff-cluster へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-hy", "module": "doeff_hy.declarations", "name": "record_names", "訳": "defsystem の形の読み(旧 doeff_hy.system_form)を doeff-cluster へ移した時、defk・deff の :writes も読む置き場の綴りの検め record-names を、同じ形の :needs の検め needs-names の隣へ移した(名の数は同じ — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"}
+  {"package": "doeff-hy", "module": "doeff_hy.declarations", "name": "record_names", "訳": "defsystem の形の読み(旧 doeff_hy.system_form)を doeff-cluster へ移した時、defk・deff の :writes も読む置き場の綴りの検め record-names を、同じ形の :needs の検め needs-names の隣へ移した(名の数は同じ — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
+  {"package": "doeff-agents", "module": "doeff_agents", "name": "EventRecord", "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
+  {"package": "doeff-agents", "module": "doeff_agents", "name": "RecordStep", "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
+  {"package": "doeff-agents", "module": "doeff_agents.effects", "name": "EventRecord", "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
+  {"package": "doeff-agents", "module": "doeff_agents.effects", "name": "RecordStep", "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
+  {"package": "doeff-agents", "module": "doeff_agents.effects.agent", "name": "EventRecord", "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
+  {"package": "doeff-agents", "module": "doeff_agents.effects.agent", "name": "RecordStep", "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"}
  ]
 }
