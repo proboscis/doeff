@@ -27,7 +27,7 @@ def inspect(text: str):  # 入力ごとに成功・失敗と、その後に残�
 
 ![異なる抽象を、同じyieldでつなぐ](/images/zenn-use-cases-v0/generated/composition-concept.png)
 
-Tryで成功・失敗を値にし、Getで状態、writer_logでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。
+Tryで成功・失敗を値にし、Getで状態、ReadWriterLogでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。
 
 ## 計算をつなぐ書き方を一つにする
 
@@ -145,6 +145,6 @@ if __name__ == "__main__":  # このファイルを直接実行した場合に�
 
 導入方法は[公式README](https://github.com/proboscis/doeff#installation)を参照してください。以下はこの記事で確認した開発版へのリンクです。公開パッケージの最新版との一致は別途確認が必要です。
 
-- [Reader・State・Writer・Try・writer_logの実装](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- [基本effectと合成のテスト](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/tests/test_core_effects.py)
-- [仮想時間ハンドラの実装](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/packages/doeff-time/src/doeff_time/handlers/sim_time.py)
+- [Reader・State・Writer・Try・ReadWriterLogの実装](https://github.com/proboscis/doeff/blob/e7d2c0409d8f13304d1177131830e6bc94e8536a/packages/doeff-core-effects/doeff_core_effects/handlers.py)
+- [基本effectと合成のテスト](https://github.com/proboscis/doeff/blob/e7d2c0409d8f13304d1177131830e6bc94e8536a/tests/test_core_effects.py)
+- [仮想時間ハンドラの実装](https://github.com/proboscis/doeff/blob/e7d2c0409d8f13304d1177131830e6bc94e8536a/packages/doeff-time/src/doeff_time/handlers/sim_time.py)
