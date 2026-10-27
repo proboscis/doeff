@@ -521,7 +521,8 @@
     (setv state.sent-statuses sending
           state.sent-stopping stopping
           state.beat-interval-ms (beat-interval-ms timing state.task-echo)
-          state.last-desired (DesiredJobs (+ state.last-jobs state.last-tasks) :warm state.last-warm))
+          ;; 退いた世代の印(返事の superseded)は Pod の job の label の答え手が読む(card ki-a66bb71f4152)。
+          state.last-desired (DesiredJobs (+ state.last-jobs state.last-tasks) :warm state.last-warm :superseded declared.superseded))
     (setv state.watch.after (reply-revision answered))
     (setv state.watch.beats (+ state.watch.beats 1))
     (:= desired state.last-desired)

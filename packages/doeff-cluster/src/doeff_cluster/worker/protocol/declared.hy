@@ -85,11 +85,14 @@
    draining = この worker が drain 中か(ready の file と、版を据え置く印 hold-version が同じ値を読む)。どちらも省けない欄 — coordinator は
    2026-09-25 から返事に draining を必ず載せ、旧い形の返事を作る相手はもう無いので、欄の無い返事は誤り(DeclaredReplyMalformed)。
    handover-pending = 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない(AL-D2k — この間 ready の file を書かない)。
-   coordinator は真の時だけ書くので、欄の無い返事は偽。ほかの欄(tasks・warm・timing・revision など)はここでは読まない。JSON の綴りは coordinator/protocol/replies の heartbeat-reply-json。"
+   coordinator は真の時だけ書くので、欄の無い返事は偽。superseded = この世代は退いた世代(同じ名の新しい世代が名乗った後の返事 —
+   coordinator の superseded-reply。Pod の job の label の答え手 worker/protocol/pod_labels が読む・card ki-a66bb71f4152)。真の時だけ
+   書かれるので、欄の無い返事は偽。ほかの欄(tasks・warm・timing・revision など)はここでは読まない。JSON の綴りは coordinator/protocol/replies の heartbeat-reply-json。"
   {:tags {:context "worker" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ (get tuple #((get dict #(str object)) ...)) jobs)
   (#^ bool draining)
-  (setv #^ bool handover-pending False))
+  (setv #^ bool handover-pending False)
+  (setv #^ bool superseded False))
 
 
 (defclass DeclaredReplyMalformed [ValueError]  ; class にする理由: 返事の読めない形を名指す例外の型(拍の except と検が型で名指す — 欄も状態も足さない)
