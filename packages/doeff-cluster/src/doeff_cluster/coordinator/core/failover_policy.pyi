@@ -13,7 +13,7 @@ from doeff_cluster.coordinator.core.cluster_policy import job_room_of as job_roo
 from doeff_cluster.shared.core.capabilities import HOST_PREFIX as HOST_PREFIX
 HANDOFF_SURGE: int
 
-def hyx_per_machineXquestion_markX(needs: tuple, template: tuple) -> _Program[bool, object]:
+def hyx_per_machineXquestion_markX(needs: tuple[str, ...], template: tuple[str, ...]) -> _Program[bool, object]:
     ...
 
 def takers_of(job: ResidentJob, workers: tuple, template: tuple) -> _Program[JobTakers, object]:
