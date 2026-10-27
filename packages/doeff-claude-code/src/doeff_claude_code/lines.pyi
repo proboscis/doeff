@@ -3,6 +3,7 @@
 from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
+from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from dataclasses import fields as fields
@@ -379,6 +380,9 @@ class ClaudeStreamLine:
     at: datetime
     kind: ClaudeLineKind
     raw: str
+
+def tap_lines(tap: Callable[[ClaudeStreamLine], None], lines: list) -> None:
+    ...
 STDERR_TAIL_CHARS: int
 
 def stderr_tail_within(text: str) -> _Program[str, object]:

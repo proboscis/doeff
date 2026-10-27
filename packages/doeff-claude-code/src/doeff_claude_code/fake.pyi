@@ -33,6 +33,7 @@ from doeff_claude_code.lines import ToolAnswer as ToolAnswer
 from doeff_claude_code.lines import ToolResult as ToolResult
 from doeff_claude_code.lines import InputFate as InputFate
 from doeff_claude_code.lines import PermissionRequested as PermissionRequested
+from doeff_claude_code.lines import tap_lines as tap_lines
 from doeff_claude_code.lines import TaskEvent as TaskEvent
 from doeff_claude_code.lines import TurnResult as TurnResult
 from doeff_claude_code.lines import Completed as Completed
@@ -217,6 +218,7 @@ class FakeTurn:
     boundary_extra: tuple[str, ...]
     call_id: str
     call_usage: Usage | None
+    tap: Callable[[ClaudeStreamLine], None] | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -334,7 +336,7 @@ def call_tool(session: FakeSession, turn: FakeTurn, now: float) -> _Program[None
 def advance(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
     ...
 
-def begin_fake_turn(world: FakeClaudeWorld, session: FakeSession, reply: FakeReply, refs: tuple, announce: bool, launched: bool) -> _Program[FakeTurn, object]:
+def begin_fake_turn(world: FakeClaudeWorld, session: FakeSession, reply: FakeReply, refs: tuple, announce: bool, launched: bool, tap: Callable | None) -> _Program[FakeTurn, object]:
     ...
 
 def note_over_limit(world: FakeClaudeWorld, session: FakeSession, session_id: str, warm: bool) -> _Program[None, object]:
