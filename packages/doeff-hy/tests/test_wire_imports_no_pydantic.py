@@ -39,6 +39,8 @@ def test_the_wire_api_imports_no_pydantic_and_works_without_it() -> None:
         assert run(wire.dump_json(row)) == '{"laneId":"L","n":2}'
         assert list(run(wire.json_schema(Row))["properties"]) == ["laneId", "n"]
         assert Row.__pydantic_config__["extra"] == "forbid"
+        assert run(wire.parse_as(dict[str, int], {"n": 1})) == {"n": 1}
+        assert run(wire.parse_json_as(tuple[Row, ...], '[{"laneId":"L"}]')) == (Row(lane_id="L"),)
         loaded = sorted(name for name in sys.modules if name.split(".")[0] in ("pydantic", "pydantic_core"))
         assert not loaded, loaded
         print("ok")
