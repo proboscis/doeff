@@ -130,10 +130,45 @@
   (<- _ (Pure None))
   ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。包みが __wrapped__ を持つのは Python 3.13
   ;; からで、それより前は包みの code(reprlib.py)しか見えないので、3.12 までは __repr__ を数えない。
-  (val names (+ #("__init__" "__eq__" "__hash__" "__setattr__" "__delattr__")
+  ;; __init__ だけが型ごとの関数で、残りの 5 つは record_runtime の共有の 1 組(card ki-ff2c33449b3f)。
+  (val names (+ #("__eq__" "__hash__" "__setattr__" "__delattr__")
                 (if (>= sys.version-info #(3 13)) #("__repr__") #())))
   (val sources (lfor n names #(n (. (getattr (getattr Shape n) "__wrapped__" (getattr Shape n)) __code__ co-filename))))
-  (assert (all (gfor #(n source) sources (.endswith source "defrecord_shape_deftests.hy"))) sources))
+  (assert (.endswith Shape.__init__.__code__.co-filename "defrecord_shape_deftests.hy") Shape.__init__.__code__.co-filename)
+  (assert (all (gfor #(n source) sources (.endswith source "record_runtime.py"))) sources))
+
+
+(deftest test-records-share-one-set-of-methods-and-keep-no-runtime-text
+  ;; 失敗ケース(直す前は赤): 型ごとに __repr__・__eq__・__hash__・__setattr__・__delattr__ の関数を書き、__init__ の引数に注記を書き、
+  ;; docstring を型に持たせた — 型 約 1,760 の job で関数と注記と文が 10 MB を越えた(card ki-ff2c33449b3f)。
+  (<- _ (Pure None))
+  (val shared #("__repr__" "__eq__" "__hash__" "__setattr__" "__delattr__"))
+  (assert (all (gfor n shared (is (getattr Shape n) (getattr Bare n) (getattr Empty n)))))
+  (assert (= Shape.__init__.__annotations__ {}) Shape.__init__.__annotations__)
+  ;; docstring は source と型検査の投影にだけ残り、実行時の __doc__ は欄の名から組む(dataclass が読み込みで署名を計算しない)。
+  (assert (= Shape.__doc__ "Shape(*, a, b, c, d, e, f, job_id)") Shape.__doc__)
+  (assert (= (. (Bare :x 1) __doc__) "Bare(*, x)"))
+  (assert (= Empty.__doc__ "Empty()"))
+  ;; 欄の型は class の注記に残る(dataclass と型検査が読む)。
+  (assert (is (. (get (dataclasses.fields Bare) 0) type) int)))
+
+
+(defclass Grown [Bare]
+  "defrecord の型を継ぐ素の class(凍結の守りを持たない子の型)。")
+
+
+(deftest test-a-plain-subclass-of-a-record-guards-only-the-fields
+  ;; 共有の凍結の __setattr__ は、守りを持つ型そのものの値は全部の名を、守りを持たない子の型の値は欄の名だけを断る(dataclass の
+  ;; frozen と同じ — 型ごとに書いた形は定義した型を __class__ で読んでいた)。
+  (<- _ (Pure None))
+  (val g (Grown :x 1))
+  (setattr g "note" 2)
+  (assert (= g.note 2))
+  (delattr g "note")
+  (with [(pytest.raises FrozenInstanceError)]
+    (setattr g "x" 3))
+  (assert (= (repr g) "Grown(x=1)"))
+  (assert (!= g (Bare :x 1))))
 
 
 (defrecord Checked
