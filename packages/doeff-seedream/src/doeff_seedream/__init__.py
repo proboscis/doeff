@@ -1,7 +1,5 @@
 """doeff-seedream: ByteDance Seedream helpers for doeff."""
 
-__version__ = "0.1.0"
-
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
@@ -34,7 +32,6 @@ __all__ = [
     "SeedreamImage",
     "SeedreamImageEditResult",
     "SeedreamStructuredOutput",
-    "__version__",
     "calculate_cost",
     "edit_image__seedream4",
     "get_seedream_client",

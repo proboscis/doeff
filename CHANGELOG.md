@@ -6,6 +6,9 @@
 
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
+- **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
+  `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
+  `importlib.metadata.version("doeff-openai")` (and likewise for the other four).
 
 ## 0.8.0 — 2026-10-27
 

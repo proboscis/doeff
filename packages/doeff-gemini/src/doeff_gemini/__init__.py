@@ -1,7 +1,5 @@
 """doeff-gemini: Google Gemini integration with doeff effects."""
 
-__version__ = "0.1.0"
-
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
@@ -69,7 +67,6 @@ __all__ = [
     "TextContentPart",
     "TokenUsage",
     "UriContentPart",
-    "__version__",
     "build_contents",
     "build_generation_config",
     "calculate_cost",

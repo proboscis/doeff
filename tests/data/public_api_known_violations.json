@@ -12992,11 +12992,6 @@
       "GeminiImageEditResult",
       "TokenUsage"
      ]
-    },
-    "境界 — package の版の印(__version__)": {
-     "doeff_gemini": [
-      "__version__"
-     ]
     }
    }
   },
@@ -13052,11 +13047,6 @@
      ],
      "doeff_git.handlers.testing": [
       "MockGitRuntime"
-     ]
-    },
-    "境界 — package の版の印(__version__)": {
-     "doeff_git": [
-      "__version__"
      ]
     },
     "境界 — 例外の型": {
@@ -14184,11 +14174,6 @@
      "doeff_image.types": [
       "ImageResult"
      ]
-    },
-    "境界 — package の版の印(__version__)": {
-     "doeff_image": [
-      "__version__"
-     ]
     }
    }
   },
@@ -14666,11 +14651,6 @@
      "doeff_openai.handlers.testing": [
       "MockOpenAIConfig",
       "MockOpenAIState"
-     ]
-    },
-    "境界 — package の版の印(__version__)": {
-     "doeff_openai": [
-      "__version__"
      ]
     },
     "境界 — 例外の型": {
@@ -16582,11 +16562,6 @@
      ],
      "doeff_seedream.types": [
       "SeedreamImageEditResult"
-     ]
-    },
-    "境界 — package の版の印(__version__)": {
-     "doeff_seedream": [
-      "__version__"
      ]
     }
    }

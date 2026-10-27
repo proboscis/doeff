@@ -34,8 +34,6 @@ Example:
     >>> )
 """
 
-__version__ = "0.1.0"
-
 # Client exports
 # Chat exports
 from doeff_openai.chat import (
@@ -148,8 +146,6 @@ __all__ = [
     "StructuredOutput",
     "TokenUsage",
     "UnknownModelPricingError",
-    # Version
-    "__version__",
     "batch_embeddings",
     "buffered_stream",
     "calculate_cost",
