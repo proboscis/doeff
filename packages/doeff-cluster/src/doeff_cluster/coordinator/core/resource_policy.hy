@@ -609,10 +609,12 @@
   "worker 1 つの {spec status}。now = 温める表の行のうち、この worker に当たる行(期限の内)を選ぶ刻と、受け渡しの止まりを数える刻
    (timing の lease で前の世代の沈黙を数える — handover-of)。"
   ;; spec.doeffCommit = 今の世代の process の doeff の版(card ki-6e83e03d146d — 名乗る worker だけ。名乗らない worker の spec の形・版は
-  ;; 以前と同じ)。版が替わった拍に版と出来事が進み、版の読み手が GET /watch で起きる。
+  ;; 以前と同じ)。版が替わった拍に版と出来事が進み、版の読み手が GET /watch で起きる。spec.memoryMiB = 枠の file の行の常駐の job の
+  ;; memory の予算(card ki-ced3c45980a5 — 名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。
   {"spec" (| {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "taskReserve" w.task-reserve
               "versions" (dict w.versions)}
-             (if w.doeff-commit {"doeffCommit" w.doeff-commit} {}))
+             (if w.doeff-commit {"doeffCommit" w.doeff-commit} {})
+             (if (is w.memory-mib None) {} {"memoryMiB" w.memory-mib}))
    ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
    ;; 版の変化の待ち(GET /watch・AwaitRunnersChange)で worker の死と戻りに即座に起きるため。最後の連絡の時刻そのものは変わりやすい
    ;; 観測なので入れない(生きている間の heartbeat では版は進まない)。

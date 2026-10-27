@@ -65,6 +65,7 @@ class WorkerInfo:
     account_token: str = 'ok'
     room_file: str = 'ok'
     doeff_commit: str = ''
+    memory_mib: int | None = None
     retired: tuple[str, ...] = ...
     boot_at: int | None = None
     exclusive: tuple[str, ...] = ...

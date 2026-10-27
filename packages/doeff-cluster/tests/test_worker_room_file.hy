@@ -13,6 +13,8 @@
 (import json)
 (import dataclasses [replace])
 (import httpx)
+(import pytest)
+(import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json])
 (import doeff [run with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
 (import tests.link_rig [LinkRig])
@@ -48,6 +50,96 @@
   (for [#(text reason) broken]
     (<- read RoomReading (room-of-text text "eos"))
     (assert (= read (RoomReading :state RoomState.MALFORMED :room None :reason reason)) #(text read))))
+
+
+(deftest test-the-room-file-row-names-pools-and-memory-mib
+  ;; card ki-ced3c45980a5: 行の省ける欄 pools(置ける組の印 pool-…)と memoryMiB(常駐の job の memory の予算)。
+  ;; 失敗ケース = 機体の印 host- や導く能力の名を組の印として名乗る・崩れた欄を黙って外して残りを名乗る・memoryMiB の真偽や負の数を受ける。
+  (<- atlas RoomReading (room-of-text (json.dumps {"atlas" {"capacity" 13 "taskReserve" 3 "pools" ["pool-b" "pool-a" "pool-b"]
+                                                            "memoryMiB" 16384}})
+                                      "atlas"))
+  (assert (= atlas (RoomReading :state RoomState.OK :reason ""
+                                :room (WorkerRoom :capacity 13 :task-reserve 3 :pools #("pool-a" "pool-b") :memory-mib 16384)))
+          atlas)
+  ;; 欄の無い行は組の印も予算も持たない(前と同じ枠)。
+  (<- plain RoomReading (room-of-text (json.dumps ROOMS) "zeus"))
+  (assert (= plain.room (WorkerRoom :capacity 39 :task-reserve 6 :pools #() :memory-mib None)) plain)
+  (val row (fn [extra] (json.dumps {"eos" (| {"capacity" 3 "taskReserve" 0} extra)})))
+  (val broken [[{"pools" "pool-a"} "worker eos の行の pools が列でない: 'pool-a'"]
+               [{"pools" {"pool-a" True}} "worker eos の行の pools が列でない: {'pool-a': True}"]
+               [{"pools" ["pool-a" "host-eos"]} "worker eos の pools の 'host-eos' は機体の印 — 組の印は pool- で始める"]
+               [{"pools" ["company-machine"]}
+                "worker eos の pools の 'company-machine' が pool- で始まらない(機体の印 host- と coordinator が node の label から導く能力は組の印に書かない)"]
+               [{"pools" ["gpu"]}
+                "worker eos の pools の 'gpu' が pool- で始まらない(機体の印 host- と coordinator が node の label から導く能力は組の印に書かない)"]
+               [{"pools" ["pool-A"]} "worker eos の pools の 'pool-A' は pool- の後を小文字・数字・`.`・`-` で書く"]
+               [{"pools" ["pool-"]} "worker eos の pools の 'pool-' は pool- の後を小文字・数字・`.`・`-` で書く"]
+               [{"pools" [1]} "worker eos の pools の 1 が文字列でない"]
+               [{"memoryMiB" "2048"} "worker eos の memoryMiB '2048' が 0 以上の整数でない"]
+               [{"memoryMiB" True} "worker eos の memoryMiB True が 0 以上の整数でない"]
+               [{"memoryMiB" -1} "worker eos の memoryMiB -1 が 0 以上の整数でない"]
+               [{"memoryMiB" None} "worker eos の memoryMiB None が 0 以上の整数でない"]])
+  (for [#(extra reason) broken]
+    (<- read RoomReading (room-of-text (row extra) "eos"))
+    (assert (= read (RoomReading :state RoomState.MALFORMED :room None :reason reason)) #(extra read))))
+
+
+(deftest test-the-heartbeat-adds-the-pools-to-provides-and-keeps-them-when-the-file-breaks [tmp-path]
+  ;; card ki-ced3c45980a5: 組の印は起動の引数の能力との和で heartbeat の provides に載り、memoryMiB は欄で載る。外すと次の読み直しの後の
+  ;; heartbeat から消え、崩れた file の間は前に名乗った組の印のまま。
+  ;; 失敗ケース = 組の印を起動の時にしか読まない(Pod を作り直さないと効かない)・崩れた file で組の印を落とす・起動の引数の能力を捨てる。
+  (setv sent #())
+  (deff handle [#^ httpx.Request request]  ; defk にできない: httpx.MockTransport が呼ぶ callback
+    {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+    "口が送った heartbeat の本文を控え、宣言の空の返事で答えるため。"
+    (nonlocal sent)
+    (setv sent (+ sent #((json.loads request.content))))
+    (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" [] "draining" False}))
+  (val room (/ tmp-path "room.json"))
+  (val pooled {"eos" {"capacity" 3 "taskReserve" 0 "pools" ["pool-a"] "memoryMiB" 3072}})
+  (.write-text room (json.dumps pooled))
+  (val link (LinkRig "http://coord" "eos" #("host-eos" "host-systemd-readable") 3 0 60000 :task-dir (str (/ tmp-path "tasks"))
+                     :transport (httpx.MockTransport handle)))
+  (setv link.state.room-file (str room))
+  (val named (fn [body] #((get body "provides") (.get body "memoryMiB") (.get body "roomFile"))))
+  (.poll link)
+  (assert (= (named (get sent -1)) #(["host-eos" "host-systemd-readable" "pool-a"] 3072 "ok")) sent)
+  ;; 崩れた file の間は前の組の印と予算のまま。
+  (.write-text room (json.dumps {"eos" {"capacity" 3 "taskReserve" 0 "pools" ["host-k3s-2"]}}))
+  (setv link.state.room-read-ms None)
+  (.poll link)
+  (assert (= (named (get sent -1)) #(["host-eos" "host-systemd-readable" "pool-a"] 3072 "malformed")) sent)
+  ;; 欄を外すと組の印も予算も名乗らない(起動の引数の能力は残る)。
+  (.write-text room (json.dumps {"eos" {"capacity" 3 "taskReserve" 0}}))
+  (setv link.state.room-read-ms None)
+  (.poll link)
+  (assert (= (named (get sent -1)) #(["host-eos" "host-systemd-readable"] None "ok")) sent))
+
+
+(deftest test-the-coordinator-shows-memory-mib-and-takes-the-pools-as-provides
+  ;; card ki-ced3c45980a5: coordinator は heartbeat の memoryMiB を Worker の行と Worker の spec に写し(置き方には使わない)、組の印は
+  ;; provides として受ける。名乗らない worker の行は予算を持たず、spec の形も前のまま。
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "eos" "provides" ["host-eos" "pool-a"] "capacity" 3
+                                                                     "taskReserve" 0 "memoryMiB" 3072})) 10)))
+  (val both (! (register-heartbeat heard (! (heartbeat-of {"name" "w2" "provides" ["net"] "capacity" 4 "taskReserve" 1})) 10)))
+  (val eos (.row both.workers "eos"))
+  (val silent (.row both.workers "w2"))
+  (assert (= #(eos.provides eos.memory-mib silent.memory-mib) #(#("host-eos" "pool-a") 3072 None)) #(eos silent))
+  (assert (= (get (worker-row both eos 10 T) "spec" "memoryMiB") 3072))
+  (assert (not-in "memoryMiB" (get (worker-row both silent 10 T) "spec")))
+  ;; 負の予算は本文の形の誤り(400)。
+  (with [(pytest.raises ValueError)]
+    (! (heartbeat-of {"name" "eos" "provides" [] "capacity" 3 "taskReserve" 0 "memoryMiB" -1}))))
+
+
+(deftest test-the-naming-refuses-a-derived-capability-in-the-pool-names
+  ;; card ki-ced3c45980a5: pool- は枠の file の組の印に取ってある。node の label から導く能力に pool- の名を置く naming は起動で断る
+  ;; (導く能力と組の印が重なると、枠の file が node の label の境界を名乗れる)。
+  (with [e (pytest.raises ValueError)]
+    (naming-from-json (json.dumps {"nodeCapabilities" [{"label" "doeff.dev/pool" "value" "a" "capability" "pool-a"}]})))
+  (assert (in "pool-a" (str e.value)) e.value)
+  (assert (= (. (naming-from-json (json.dumps {"nodeCapabilities" [{"label" "x" "value" "y" "capability" "gpu"}]})) node-capabilities)
+             #(#("x" "y" "gpu")))))
 
 
 (deftest test-the-room-file-is-read-again-every-ten-seconds

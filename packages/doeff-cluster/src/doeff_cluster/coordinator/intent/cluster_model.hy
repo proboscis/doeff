@@ -107,6 +107,10 @@
   ;; worker は空)。同じ Pod の中で版を入れ替える worker は Pod の env に版を持たないので、版の読み手は Worker の spec.doeffCommit を読む。
   ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str doeff-commit "")
+  ;; 常駐の job に使ってよい memory の予算(MiB — heartbeat の memoryMiB = 枠の file の行の値・card ki-ced3c45980a5。名乗らない worker は
+  ;; None)。GET /state と Worker の spec に出すだけで、置き方の判断には使わない(照らすのは宣言の側)。保存しない(次の heartbeat で埋まる)。
+  ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  (setv #^ (| int None) memory-mib None)
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、
