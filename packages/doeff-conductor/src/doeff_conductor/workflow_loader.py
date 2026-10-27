@@ -1,7 +1,7 @@
 """Load Hy workflow request artifacts for conductor verbs.
 
 The authoring surface is exclusively the Hy macro DSL (ADR 0001 D2): user
-workflows are ``.hy`` modules built with the ``doeff_hy.conductor`` macros.
+workflows are ``.hy`` modules built with the ``doeff_conductor.macros`` macros.
 The Python spec IR those macros expand into is an internal compilation
 target — user-supplied ``.py`` workflow files are rejected here.
 """
@@ -30,7 +30,7 @@ WORKFLOW_SNAPSHOT_FILENAME = "workflow.hy"
 _HY_AUTHORING_GUIDANCE = (
     "the conductor authoring surface is exclusively the Hy macro DSL "
     "(ADR 0001 D2): author the workflow as a .hy module using the "
-    "doeff_hy.conductor macros (defworkflow/agent!/gate!/...)"
+    "doeff_conductor.macros macros (defworkflow/agent!/gate!/...)"
 )
 
 _ALLOWLISTED_IMPORT_ROOTS: frozenset[str] = frozenset(

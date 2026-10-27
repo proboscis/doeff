@@ -1,7 +1,8 @@
 ;;; 世界の区切りの印(card ki-a27b195a3f92 — 歩数の上限は世界が立ち上がってから止め始めるまでの走りの歩数だけを数える)の検の
 ;;; 見本の系: 起動の時だけ仕事をする service(本番の部品の起動の追いつきの代わり)と、周ごとに起きて少し仕事をする service(空回りの
 ;;; 代わり)。部品を足した系と、空回りを 2 倍にした系を並べる。
-(require doeff-hy.macros [defk defsystem <- var])
+(require doeff-hy.macros [defk <- var])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff_core_effects.effects [Put])
 (import doeff_time [Delay])

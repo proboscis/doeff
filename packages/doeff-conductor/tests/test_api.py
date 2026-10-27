@@ -741,7 +741,7 @@ class TestRunWorkflow:
         """run_workflow creates workflow in state directory."""
         workflow_file = tmp_path / "test_workflow.hy"
         workflow_file.write_text("""
-(require doeff-hy.conductor [defworkflow])
+(require doeff-conductor.macros [defworkflow])
 (import doeff_conductor.dsl [artifact])
 
 (defworkflow record-workflow
@@ -762,7 +762,7 @@ class TestRunWorkflow:
         """run_workflow passes params through to workflow refs."""
         workflow_file = tmp_path / "param_workflow.hy"
         workflow_file.write_text("""
-(require doeff-hy.conductor [defworkflow])
+(require doeff-conductor.macros [defworkflow])
 (import doeff_conductor.dsl [artifact ref])
 
 (defworkflow param-workflow
@@ -787,7 +787,7 @@ class TestRunWorkflow:
     ):
         workflow_file = tmp_path / "pr_url_workflow.hy"
         workflow_file.write_text("""
-(require doeff-hy.conductor [defworkflow])
+(require doeff-conductor.macros [defworkflow])
 (import types [SimpleNamespace])
 (import doeff_conductor.dsl [artifact])
 
@@ -811,7 +811,7 @@ class TestRunWorkflow:
     ):
         workflow_file = tmp_path / "dict_result_workflow.hy"
         workflow_file.write_text("""
-(require doeff-hy.conductor [defworkflow])
+(require doeff-conductor.macros [defworkflow])
 (import doeff_conductor.dsl [artifact])
 
 (defworkflow dict-result-workflow
@@ -841,7 +841,7 @@ class TestRunWorkflow:
         """parallel compiles to Spawn/Gather, so the run must install a scheduler."""
         workflow_file = tmp_path / "spawn_workflow.hy"
         workflow_file.write_text("""
-(require doeff-hy.conductor [defworkflow parallel <-])
+(require doeff-conductor.macros [defworkflow parallel <-])
 (import doeff_conductor.dsl [artifact prompt ref])
 
 (defworkflow spawn-workflow
@@ -869,7 +869,7 @@ class TestRunWorkflow:
     ):
         workflow_file = tmp_path / "non_run_result_workflow.hy"
         workflow_file.write_text("""
-(require doeff-hy.conductor [defworkflow])
+(require doeff-conductor.macros [defworkflow])
 (import doeff_conductor.dsl [artifact])
 
 (defworkflow non-run-result-workflow

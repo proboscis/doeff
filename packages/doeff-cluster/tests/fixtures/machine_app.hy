@@ -3,7 +3,8 @@
 ;;; (その repo の commit)の木から取り出して import する(配備と同じ版の木の道 — CODE_REPO_URL)。検の process は同じ名
 ;;; tests.fixtures.machine_app で静的に import して系を組む — 詰めた Program は module の最上位の関数を名で運ぶので、送り手と子が同じ名で
 ;;; import する。土台は本番の形(tests/fixtures/cluster_foundation_programs.hy の production-foundation と同じ並び)。
-(require doeff-hy.macros [defk defsystem <- val])
+(require doeff-hy.macros [defk <- val])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [DoExpr with-handlers])
 (import doeff_core_effects.effects [Ask])

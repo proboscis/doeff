@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest defsystem
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
 ;;;                             defhandler handle with-handler defmcp-tool
 ;;;                             on-raise absent-as   ; 不在と失敗の境目(ADR-DOE-CORE-EFFECTS-003)
@@ -34,8 +34,7 @@
 (import doeff [DoExpr EffectBase])
 (import doeff.mcp [mcp-param-annotation mcp-json-type-names])
 (import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value
-                               type-param-symbols])
-(import doeff-hy.system-form [record-names])
+                               type-param-symbols record-names])
 (import doeff-hy.positions [locate-synthesized])
 (import doeff-hy.expansion-names [alias-symbol])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
@@ -675,7 +674,7 @@ defk {name}: :post type annotation cannot be an empty string.
             ~(hy.models.Symbol (. source name))))))
 
 (defn _scoped-definition [compiler name forms [module-forms #()] [nested-reads False]]
-  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・conductor.hy の defworkflow)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・持ち主の package の定義の macro — doeff-conductor の defworkflow(doeff_conductor/macros.hy)と doeff-cluster の defsystem(doeff_cluster/shared/entry/macros.hy))の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
    `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
    module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
    関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す(card ki-93395c51de1e・設計検証
@@ -706,7 +705,7 @@ defk {name}: :post type annotation cannot be an empty string.
      `nested-reads` を真にしない(test_class_body_handle_leaves_module_globals_alone)。
    - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
      関数・class の本体の局所の名になる — 型検査の展開の後処理が module の段へ移す(doeff_hy/static_check.py の
-     with_module_level_imports — doeff_hy の module・defsystem の module・defeffect の答えの分け方の module の import)。"
+     with_module_level_imports — doeff_hy の module・`_doeff_` の別名の import・defeffect の答えの分け方の module の import)。"
   (cond
     (_in-function-body? compiler) `(setv ~name ((fn [] ~@forms ~name)))
     (_function-scope? compiler) `(do ~@forms)
@@ -2260,27 +2259,6 @@ the effect in the enclosing do-context.
        `(_install-guard-globals ~name {"_doeff_do" _doeff_do})])
     [item-record])))
 
-
-;; ---------------------------------------------------------------------------
-;; defsystem — doeff-cluster の系の宣言(ADR-DOE-CLUSTER-001・形の読みは system_form.hy)
-;; ---------------------------------------------------------------------------
-
-(defmacro defsystem [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object params #^ Object #* body]
-  "系を宣言する: 土台を引数に受け、名前 → Program と約束の組(doeff_cluster.shared.intent.service_model.System)を返す関数を定義する。
-
-   (defsystem agora-land [foundation]
-     \"着地の報せの系\"
-     (land-notice (land-notice foundation)
-       :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
-
-   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)で、必ず書く。
-   説明の文の後・job の行の前に :task-limits {\"<組>\" {\"scope\" \"worker\" \"limit\" 6}} を置くと、系が組の同時数の上限を宣言する
-   (task は組の名だけを名乗る — 値の持ち主は系の宣言)。
-   形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。
-   関数には静的な記述 __doeff_system__(名・引数・job ごとの関数の名と約束)が付く。
-   関数の本体の中に書くと、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition — card ki-93395c51de1e)。"
-  (import doeff-hy.system-form [defsystem-form])
-  (_scoped-definition _hy-compiler name [(defsystem-form name params body)]))
 
 ;; ---------------------------------------------------------------------------
 ;; defpipeline — named-stage pipeline composition
