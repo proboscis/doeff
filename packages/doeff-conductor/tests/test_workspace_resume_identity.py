@@ -19,7 +19,7 @@ from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import WorkflowStatus, Workspace
 
 WORKFLOW_SOURCE = """
-(require doeff-conductor.macros [defworkflow agent! workspace! <-])
+(require doeff-hy.conductor [defworkflow agent! workspace! <-])
 (import doeff_conductor.dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
@@ -160,7 +160,7 @@ def test_workspace_identity_distinguishes_punctuation_only_run_ids() -> None:
 
 
 SHARED_SETV_SOURCE = """
-(require doeff-conductor.macros [defworkflow agent! workspace! <-])
+(require doeff-hy.conductor [defworkflow agent! workspace! <-])
 (import doeff_conductor.dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"

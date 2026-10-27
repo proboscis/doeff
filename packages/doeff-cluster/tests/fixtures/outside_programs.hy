@@ -2,8 +2,7 @@
 ;;;
 ;;; 本番では、store の effect(StorePut・StoreGet)は各 service の土台の handler が外の系へ話して答える。sim では土台がそれを含まず、
 ;;; sim の外側に置いた store の模擬(memory-store)が答え、柵は SimOutside の effects に載った型だけを外へ通す。
-(require doeff-hy.macros [defk defhandler <- val var])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defhandler defsystem <- val var])
 (import collections.abc [Callable])
 (import doeff [EffectBase])
 (import doeff_time [Delay])

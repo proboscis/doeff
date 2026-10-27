@@ -99,7 +99,7 @@ uv run --no-sync python publications/zenn-use-cases-v0/examples/durable.py docum
 `doeff-conductor`には、ワークフローの時刻・乱数の依頼を実行IDに対応する履歴へ記録する仕組みもあります。次は開始時刻と乱数値を保存するHyのワークフローです。エージェントは起動しません。
 
 ```hy
-(require doeff-conductor.macros [defworkflow time! random! <-])  ;; ワークフローと時刻・乱数の依頼を使う。
+(require doeff-hy.conductor [defworkflow time! random! <-])  ;; ワークフローと時刻・乱数の依頼を使う。
 (import doeff_conductor.dsl [artifact ref])  ;; 記録した値を参照して最終結果へまとめる。
 
 (defworkflow document-run  ;; 開始時刻と乱数を取得するワークフローを定義する。

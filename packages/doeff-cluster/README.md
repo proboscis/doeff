@@ -66,8 +66,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 ### job と系を書く
 
 ```hy
-(require doeff-hy.macros [defk <-])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem <-])
 (import collections.abc [Callable])
 (import doeff [with-handlers DoExpr])
 (import doeff_core_effects.handlers [state])

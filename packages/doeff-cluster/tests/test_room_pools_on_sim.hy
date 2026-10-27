@@ -7,8 +7,7 @@
 ;;;   (b) 行に pools ["pool-a"] を足すと、w1 の同じ世代(Pod を作り直さない — boot が変わらない)が組の印を名乗り、pooled が w1 に置かれて
 ;;;       走る(直す前は組の印を名乗る道が起動の引数しか無く、Pod を作り直さないと置けないので赤)。
 ;;;   (c) 行から pools を外すと、w1 は組の印を名乗らなくなり、pooled は置かれない(置き先が外れる)。
-(require doeff-hy.macros [deftest defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [deftest defk defsystem <- val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])

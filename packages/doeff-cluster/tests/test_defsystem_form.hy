@@ -1,4 +1,4 @@
-;;; defsystem と :needs の形の検(defsystem は doeff-cluster の macro・:needs は doeff-hy の defk / defhandler — ADR-DOE-CLUSTER-001 R4b)。
+;;; defsystem と :needs の形の検(doeff-hy の macro — ADR-DOE-CLUSTER-001 R4b・doeff-hy に検の収集が無いのでここに置く)。
 ;;;
 ;;; - defk / defhandler の頭の :needs は __doeff_needs__(frozenset)に残る。形は文字列の literal の集合だけ。
 ;;; - defsystem は静的に決まる形だけを受け、外れれば展開の時に断る。関数には静的な記述 __doeff_system__ が付く。
@@ -6,8 +6,7 @@
 (import hy)
 
 (val PRELUDE "
-(require doeff-hy.macros [defk <-])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-hy.macros [defk defsystem <-])
 (import collections.abc [Callable])
 (require doeff-hy.handle [defhandler])
 (defclass Ping [])
