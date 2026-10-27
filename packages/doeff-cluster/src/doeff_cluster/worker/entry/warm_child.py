@@ -60,15 +60,28 @@ from types import ModuleType
 from typing import NoReturn
 
 import hy  # noqa: F401 — Hy の importer を据える(入口と、前もって読む module の多くは Hy)
-from doeff import run
-from doeff_core_effects.os_warm_process import WarmRequestWire, own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
+from doeff_cluster.foundation.child_environ import replace_environ
+from doeff_cluster.worker.entry.line_stamp import job_log_plan, stamped_lines
+from doeff_cluster.worker.entry.shim import (
+    NoticeRelay,
+    become_subreaper,
+    exit_status,
+    notice_variable,
+    open_relay,
+    shim_code,
+)
+from doeff_core_effects.os_warm_process import (
+    WarmRequestWire,
+    own_thread_count,
+    proc_stat_of,
+    warm_answer_line,
+    warm_request_of,
+)
 from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused
 from doeff_hy.wire import Malformed
 
-from doeff_cluster.foundation.child_environ import replace_environ
-from doeff_cluster.worker.entry.line_stamp import job_log_plan, stamped_lines
-from doeff_cluster.worker.entry.shim import NoticeRelay, become_subreaper, exit_status, notice_variable, open_relay, shim_code
+from doeff import run
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の shim.py と同じ。
 MODULE_TAGS = {"context": "worker", "role": "main"}
@@ -122,9 +135,11 @@ def thread_count() -> int:
 
 def vm_live_counts() -> tuple[int, ...]:
     """doeff の VM の生きている数(segment・continuation・IR の流れ)— 分かれる前に VM が作られていない事を印に残すため。"""
-    import doeff_vm  # noqa: PLC0415 — 読み込みの後に数えるだけ(待ちの子の読み込みの一覧に入れない)
+    from doeff._vm import (
+        native,  # noqa: PLC0415 — 読み込みの後に数えるだけ(待ちの子の読み込みの一覧に入れない)
+    )
 
-    counts: tuple[int, ...] = tuple(doeff_vm.vm_live_counts())
+    counts: tuple[int, ...] = tuple(native.vm_live_counts())
     return counts
 
 

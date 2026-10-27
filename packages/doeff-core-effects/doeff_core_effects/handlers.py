@@ -24,10 +24,8 @@ import threading as _threading
 from collections.abc import Mapping
 from typing import Any
 
-from doeff_vm._not_a_program import program_shown, uncalled_do_function_call
-from doeff_vm.doeff_vm import StateHandler
-
 from doeff import do
+from doeff._vm import native, program_shown, uncalled_do_function_call
 from doeff.handler_utils import reinstaller
 from doeff.program import (
     Pass,
@@ -110,7 +108,7 @@ def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     store = dict(initial) if initial else {}
     # The VM answers Get / Put from the store itself, without a Python generator per
     # effect (card ki-83236a21466e); the store stays this dict.
-    return _rust_handler_installer(StateHandler(store, Get, Put))
+    return _rust_handler_installer(native.StateHandler(store, Get, Put))
 
 
 # The declaration doeff-effect-analyzer reads for the state handler: it runs in Rust, so there are no
@@ -178,8 +176,7 @@ def _try_handler(effect: Try, k):
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     if isinstance(effect, Try):
-        from doeff_vm import Err, Ok
-
+        from doeff import Err, Ok
         from doeff.handler_utils import get_inner_handlers
 
         inner_hs = yield get_inner_handlers(k)

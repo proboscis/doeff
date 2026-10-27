@@ -11,9 +11,7 @@ from collections.abc import Sized
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from doeff_vm import WithBoundaries
-
-from doeff import do, handler_effect_types
+from doeff import WithBoundaries, do, handler_effect_types
 from doeff.handler_utils import reinstaller
 from doeff.program import GetHandlers, Pass, Resume, ResumeThrow, WithHandlerType, _named_handler
 from doeff.program import handler as _program_handler
@@ -443,8 +441,8 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
         Spawn,
         TaskCancelledError,
     )
-    from doeff_vm import Ok
 
+    from doeff import Ok
     from doeff.handler_utils import get_inner_handlers
     @do
     def handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged

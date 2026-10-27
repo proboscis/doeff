@@ -7,8 +7,7 @@ The recompute_cost field drives routing: cheap→ephemeral storage, expensive→
 from collections.abc import Mapping
 from typing import Any
 
-from doeff_vm import EffectBase
-
+from doeff import EffectBase
 from doeff_core_effects.memo_policy import (
     Lifecycle,
     MemoPolicy,

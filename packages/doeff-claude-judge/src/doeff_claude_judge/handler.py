@@ -31,9 +31,8 @@ from doeff_claude_code.values import ClaudeHome, ImageAttachment, LentCredential
 from doeff_core_effects import slog
 from doeff_hy.frozen import FrozenMap
 from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, Verdict
-from doeff_vm import Err, Ok
 
-from doeff import Pass, Transfer, TransferThrow, Try, do
+from doeff import Err, Ok, Pass, Transfer, TransferThrow, Try, do
 from doeff import handler as _program_handler
 from doeff_claude_judge.target import (
     BorrowJudgeCredential,

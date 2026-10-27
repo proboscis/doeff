@@ -147,6 +147,13 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 | `Expand` | The node that runs the program an expression returns; a `@do` call returns one. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
 | `WithHandlerType` | The node a handler installer builds: run a body under a handler. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
 | `Callable` | Wraps a Python callable so the VM can call it. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `Call` | The program a `@do` function returns: call its definition with the arguments. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `DoFunction` | A `@do` definition: the function, its tail-resume lines and whether its body yields. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `BindOpener` | The callable a doeff-hy bind calls on its operand; opens a `Call` in place when it can. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `IRStream` | Wraps a generator so the VM steps it as a program. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `TailEval` | In a handler: run a program in tail position, after leaving the handler's frame. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `WithBoundaries` | Run a body under a captured stack of handlers and observers, innermost first. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
+| `HandlerSpec` | What the VM records when it installs a handler: effect types, function, passed effects. | [Program nodes](#program-nodes-perform-apply-expand-withhandlertype) |
 | `GetHandlers` | In a handler: the handlers in scope where the effect was performed. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
 | `GetBoundaries` | In a handler: the handlers and observers in scope, innermost first. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
 | `GetOuterHandlers` | In a handler: the handlers installed above it. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
@@ -202,10 +209,10 @@ isinstance(my_node, DoExpr)   # equivalent
 ### EffectBase
 
 Effects are user-space operation payloads. They are data, not execution control nodes.
-All effects inherit from `EffectBase` (imported from `doeff_vm`).
+All effects inherit from `EffectBase` (imported from `doeff`).
 
 ```python
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 class MyEffect(EffectBase):
     def __init__(self, payload):
@@ -670,7 +677,7 @@ result = yield WithObserve(my_observer, sub_program())
 
 **Signature:** `WithObserve(observer: callable, body: DoExpr)`
 
-Accepts a plain Python callable as observer -- automatically wraps it with `doeff_vm.Callable`
+Accepts a plain Python callable as observer -- automatically wraps it with `doeff.Callable`
 so the Rust VM can invoke it.
 
 `WithObserveRaw(observer, body)` is the program node itself: it takes an observer already wrapped
@@ -1344,6 +1351,21 @@ build them. They are public so that handlers, tools and tests can read the progr
 call returns. A handler installer wraps its program in `WithHandlerType(handler, body)`. `Callable`
 wraps a Python callable so the VM can call it. `DoExpr` (and its alias `ProgramBase`) is true for
 every one of these nodes under `isinstance`.
+
+A handler or a scheduler that builds the VM's nodes itself imports them from `doeff` too — doeff is
+the one package that imports `doeff_vm`:
+
+- `Call(function, args, kwargs)` is the `Expand` a `@do` call returns; `function` is its `DoFunction`
+  (the undecorated function, its tail-resume lines, and whether its body yields).
+- `BindOpener(fallback, generator_program)` is the callable a doeff-hy bind (`(<- x e)`) calls on its
+  operand: a `Call` whose body does not yield runs in place, every other operand goes to `fallback`.
+- `IRStream(generator)` lets the VM step a generator as a program.
+- `TailEval(expr)`, yielded from a handler, leaves the handler's frame and then runs `expr`, so a
+  loop that re-enters itself (the scheduler) does not grow the stack.
+- `WithBoundaries(boundaries, body)` installs a stack captured with `GetBoundaries(k)` around `body`
+  in one step (the scheduler runs a `Spawn`ed task under its spawner's handlers this way).
+- `HandlerSpec` is what the VM records for an installed handler: the effect types its annotation
+  admits, its function and the effects it passes on.
 
 **See:** [Core Concepts](02-core-concepts.md#doctrl-instruction-set)
 

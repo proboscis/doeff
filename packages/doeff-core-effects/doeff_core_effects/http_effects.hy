@@ -3,7 +3,7 @@
 (import collections.abc [Mapping])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
-(import doeff_vm [EffectBase])
+(import doeff [EffectBase])
 
 
 (val _HTTP-METHODS (frozenset ["GET" "POST" "PUT" "PATCH" "DELETE" "HEAD" "OPTIONS"]))

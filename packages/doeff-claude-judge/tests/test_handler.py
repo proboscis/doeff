@@ -33,9 +33,8 @@ from doeff_claude_judge import (
 from doeff_claude_judge.wire import NOUL_HEAD
 from doeff_hy.frozen import freeze_json
 from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, choice, noul, score
-from doeff_vm import Err
 
-from doeff import Pass, Resume, ResumeThrow, Try, do
+from doeff import Err, Pass, Resume, ResumeThrow, Try, do
 from doeff import handler as _program_handler
 
 if TYPE_CHECKING:

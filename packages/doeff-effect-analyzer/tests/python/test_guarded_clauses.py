@@ -39,7 +39,8 @@ from doeff_effect_analyzer.program_effects import (
     analyze_program,
     pass_through,
 )
-from doeff_vm import EffectBase
+
+from doeff import EffectBase
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
@@ -47,7 +48,7 @@ pytest.importorskip("doeff_hy")
 EFFECTS_PY = """\
 from dataclasses import dataclass
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 @dataclass(frozen=True)
@@ -261,7 +262,7 @@ ALIASED_PASS_PY = """\
 from doeff import Pass as send_on
 from doeff import do
 from doeff.program import with_handlers
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 from {pkg}.effects import Nap, Tick, Zap
 
@@ -334,7 +335,7 @@ def test_threads_reading_the_same_fence_agree(pkg: str) -> None:
 RELAY_PY = """\
 from doeff import do
 from doeff.program import with_handlers
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 from {pkg}.effects import Nap, Relay, Tick
 

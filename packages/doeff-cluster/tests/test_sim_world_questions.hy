@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (import doeff_events [MemoryBroker])
 (import doeff [with-handlers Program])
-(import doeff_vm [EffectBase])
+(import doeff [EffectBase])
 (import doeff_time [sim-time-handler])
 (import doeff_core_effects.handlers [state :as session-store])
 (import doeff_core_effects.scheduler [CreatePromise Promise])

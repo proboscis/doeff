@@ -11,9 +11,8 @@ from collections.abc import Callable, Iterable
 from typing import Any, ClassVar, Generic, Literal, Never, TypeAlias, TypeVar
 
 from _typeshed import SupportsRichComparison
-from doeff_vm import EffectBase
 
-from doeff import Program
+from doeff import EffectBase, Program
 from doeff_traverse.collection import Collection, ItemResult
 
 _Item = TypeVar("_Item")

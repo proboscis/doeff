@@ -9,6 +9,10 @@ This package provides:
 
 import importlib as _importlib
 
+# doeff imports this package's effects and scheduler while it loads, and they import the VM's types
+# from doeff (doeff is the one package that imports doeff_vm). Loading doeff first binds those names
+# before any of this package's modules asks for them, whichever package a program imports first.
+import doeff as _doeff  # noqa: F401 - loaded for its import order, not for a name
 from doeff_core_effects import _hy_submodules  # noqa: F401 - installs the lazy Hy finder first
 
 # `X as X` makes each name public to type checkers: this package ships py.typed, where a plain import is not a

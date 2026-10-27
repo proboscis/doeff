@@ -43,10 +43,9 @@ from doeff_traverse.handlers import (
     progress_bars,
     sequential,
 )
-from doeff_vm import Err, K
 from tqdm import tqdm
 
-from doeff import Pass, Program, do, run
+from doeff import Err, K, Pass, Program, do, run
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
 

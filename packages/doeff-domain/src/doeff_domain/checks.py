@@ -20,8 +20,7 @@ import pkgutil
 import sys
 from collections.abc import Iterable
 
-from doeff_vm import EffectBase
-
+from doeff import EffectBase
 from doeff_domain.introspect import handled_effects
 from doeff_domain.registry import (
     Domain,

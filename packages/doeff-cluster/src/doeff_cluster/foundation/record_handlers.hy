@@ -32,7 +32,7 @@
 (import collections.abc [Callable Generator])
 (import typing [Protocol TypeVar])
 (import doeff [Program])
-(import doeff_vm [GetBoundaries K WithObserve Callable :as VmCallable])
+(import doeff [GetBoundaries K WithObserveRaw Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
 (import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect
@@ -92,7 +92,7 @@
    並びの handler は VM が持つ生の受け手なので、作る口(handler)ではなく入れ直しの口(reinstaller)で入れる(ADR-DOE-CORE-003 R3)。"
   (setv prog program)
   (for [#(kind cb) chain]
-    (setv prog (if (= kind "handler") ((reinstaller cb) prog) (WithObserve (VmCallable cb) prog))))
+    (setv prog (if (= kind "handler") ((reinstaller cb) prog) (WithObserveRaw (VmCallable cb) prog))))
   prog)
 
 

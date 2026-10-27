@@ -48,11 +48,11 @@ from typing import (
     overload,
 )
 
-from doeff_vm import Call, EffectBase, Err, K, Ok, TailEval
-from doeff_vm import Callable as _VmCallable
-from doeff_vm import WithBoundaries as _WithBoundariesRaw
-from doeff_vm import WithHandler as _WithHandlerRaw
-
+from doeff import Call, EffectBase, Err, K, Ok, TailEval
+from doeff import Callable as _VmCallable
+from doeff import WithBoundaries as _WithBoundariesRaw
+from doeff import WithHandlerType as _WithHandlerRaw
+from doeff._vm import native
 from doeff.do import do
 from doeff.handler_utils import get_inner_boundaries
 from doeff.program import Pass, Perform, Pure, Resume, Transfer
@@ -217,14 +217,13 @@ def _rust_scheduler_trace_switch() -> Callable[[bool], None]:
     同じ拡張を build し直す)。sink の状態は変えない。
     """
     try:
-        from doeff_vm.doeff_vm import set_scheduler_trace_installed
-    except ImportError as error:
+        return native.set_scheduler_trace_installed
+    except AttributeError as error:
         raise ImportError(
             "set_scheduler_trace needs a doeff_vm extension that carries the scheduler trace switch "
             "(set_scheduler_trace_installed): rebuild the Rust extension (`make sync` in a doeff "
             "checkout, or reinstall doeff-vm)"
         ) from error
-    return set_scheduler_trace_installed
 
 
 def scheduler_trace_sink() -> TraceSink | None:
@@ -634,9 +633,7 @@ class VmWork:
 
 def _read_vm_work() -> VmWork:
     """Read the process's doeff-vm running totals, so a measured span can be told in steps that a busy machine does not shift."""
-    from doeff_vm.doeff_vm import vm_work_counts
-
-    steps, handler_calls = vm_work_counts()
+    steps, handler_calls = native.vm_work_counts()
     return VmWork(steps=steps, handler_calls=handler_calls)
 
 
@@ -718,14 +715,13 @@ def _rust_scheduler_step_budget_switch() -> Callable[[bool], None]:
     same extension's step count, so the remedy is the same rebuild). The budget is not changed.
     """
     try:
-        from doeff_vm.doeff_vm import set_scheduler_step_budget_armed
-    except ImportError as error:
+        return native.set_scheduler_step_budget_armed
+    except AttributeError as error:
         raise ImportError(
             "the step budget needs a doeff_vm extension that carries the scheduler step budget switch "
             "(set_scheduler_step_budget_armed): rebuild the Rust extension (`make sync` in a doeff "
             "checkout, or reinstall doeff-vm)"
         ) from error
-    return set_scheduler_step_budget_armed
 
 
 class Race(EffectBase[_T], Generic[_T]):
@@ -1339,13 +1335,13 @@ def _rust_spec() -> dict[str, object]:
 
 def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
     """``scheduled`` backed by the Rust scheduler (doeff_vm SchedulerCore)."""
-    # Imported from the extension module itself (not the doeff_vm package
+    # Looked up on the extension module itself (not the doeff_vm package
     # namespace), so a stale extension without the Rust scheduler fails here
-    # with an ImportError that names it, not at `import doeff_vm`. Never
+    # with an ImportError that names it, not when doeff loads the VM. Never
     # falls back to the Python implementation silently.
     try:
-        from doeff_vm.doeff_vm import SchedulerCore
-    except ImportError as error:
+        make_core = native.SchedulerCore
+    except AttributeError as error:
         raise ImportError(
             "the Rust scheduler was selected (it is the default; also implementation='rust' "
             f"or ${IMPLEMENTATION_ENV_VAR}=rust) but the loaded doeff_vm extension has no "
@@ -1358,7 +1354,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
     run_id = next(_trace_runs)
     if _trace_sink is not None:
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
-    core = SchedulerCore(
+    core = make_core(
         {
             **_rust_spec(),
             "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,

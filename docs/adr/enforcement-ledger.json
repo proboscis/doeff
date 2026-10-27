@@ -207,6 +207,7 @@
     "doeff-traceback-except-must-log",
     "doeff-vm-handle-flat-map-no-anonymous-callmetadata",
     "doeff-vm-handle-map-no-anonymous-callmetadata",
+    "doeff-vm-imported-only-by-doeff",
     "doeff-vm-no-cfg-disabled-pyvm-base-stubs",
     "doeff-vm-proto-003-no-pymodule-from-code-in-pyvm",
     "doeff-vm-proto-003-no-runtime-handler-dunder-probing",

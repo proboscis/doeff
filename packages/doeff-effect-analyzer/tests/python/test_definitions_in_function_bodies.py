@@ -27,7 +27,7 @@ pytest.importorskip("doeff_hy")
 EFFECTS_PY = """\
 from dataclasses import dataclass
 
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 @dataclass(frozen=True)

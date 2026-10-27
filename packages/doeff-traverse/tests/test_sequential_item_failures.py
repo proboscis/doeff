@@ -13,9 +13,8 @@ from doeff_core_effects.effects import Try
 from doeff_traverse.collection import Collection
 from doeff_traverse.effects import Traverse
 from doeff_traverse.handlers import sequential
-from doeff_vm import EffectBase, Err, Ok, UnhandledEffect
 
-from doeff import Program, do, run
+from doeff import EffectBase, Err, Ok, Program, UnhandledEffect, do, run
 
 _Answer = TypeVar("_Answer")
 

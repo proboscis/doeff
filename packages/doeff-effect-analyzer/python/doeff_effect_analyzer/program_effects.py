@@ -2,7 +2,7 @@
 
 Why this module exists (and not the name-matching Rust core for this job):
 
-- An effect is any class that subclasses ``doeff_vm.EffectBase``, including the
+- An effect is any class that subclasses ``doeff.EffectBase``, including the
   ones a project defines itself.  Whether a name denotes such a class is decided
   by importing the module that defines the Program and looking the name up —
   aliases, re-exports and ``Effect = EffectBase`` style assignments are then
@@ -1141,14 +1141,14 @@ def _ensure_hy_importable() -> None:
 
 
 def _effect_base() -> type:
-    from doeff_vm import EffectBase
+    from doeff import EffectBase
 
     return EffectBase
 
 
 def _bind_opener_class() -> type:
     """doeff-vm の BindOpener の型 — ``outcomes.open_bind`` の奥の Python の道を読むため(``_function_of``)。"""
-    from doeff_vm import BindOpener
+    from doeff import BindOpener
 
     return BindOpener
 
@@ -1200,10 +1200,10 @@ def _handler_wrapper_function() -> Any:
 
 
 def _with_handler_node() -> Any:
-    """``doeff_vm.WithHandler`` — the VM node every install ends in (``handle`` writes it)."""
-    from doeff_vm import WithHandler
+    """``doeff.WithHandlerType`` — the VM node every install ends in (``handle`` writes it)."""
+    from doeff import WithHandlerType
 
-    return WithHandler
+    return WithHandlerType
 
 
 def _do_decorator() -> Any:
@@ -1212,10 +1212,10 @@ def _do_decorator() -> Any:
 
 
 def _passes_declaration() -> Any:
-    """``doeff_vm._effect_types.declare_passes(handler, source)`` — records which effects
+    """``doeff._vm.declare_passes(handler, source)`` — records which effects
     the VM may skip the handler for and returns ``handler`` itself (``defhandler`` / ``handle``
     write it around a fence-shaped dispatcher); read through to its first argument."""
-    return importlib.import_module("doeff_vm._effect_types").declare_passes
+    return importlib.import_module("doeff._vm").declare_passes
 
 
 # What a name in the code under analysis resolves to: any object its modules define

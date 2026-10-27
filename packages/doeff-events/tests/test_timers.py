@@ -37,10 +37,10 @@ from doeff_events import (
 from doeff_time import GetTime, sim_time_handler
 from doeff_time.handlers.async_time import async_time_handler
 from doeff_time.handlers.sync_time import sync_time_handler
-from doeff_vm.doeff_vm import vm_work_counts
 
 from doeff import Pass, do, run
 from doeff import handler as program_handler
+from doeff._vm import native
 from doeff.program import ProgramHandler
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -149,9 +149,9 @@ def _steps_to_a_deadline(away: timedelta) -> int:
         yield ArmTimer("deadline", T0 + away)
         return (yield first_timer_and_when())
 
-    before, _ = vm_work_counts()
+    before, _ = native.vm_work_counts()
     fired = run_on_sim(program())
-    after, _ = vm_work_counts()
+    after, _ = native.vm_work_counts()
     assert fired == (TimerFired("deadline"), T0 + away)
     return after - before
 

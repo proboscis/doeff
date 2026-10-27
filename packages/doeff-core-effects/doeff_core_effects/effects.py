@@ -10,14 +10,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
 
-from doeff_vm import EffectBase
-
+from doeff import EffectBase
 from doeff_core_effects.extra_hints import extra_needed
 
 if TYPE_CHECKING:
-    from doeff_vm import Err, Ok  # noqa: F401 - named in the string answer type of Try
-
-    from doeff import Program
+    from doeff import Err, Ok, Program  # noqa: F401 - named in the string answer type of Try
     from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
 
 # Answer types: each effect declares what its handler answers with (EffectBase[T]), so

@@ -7,7 +7,7 @@
 (require doeff-hy.macros [deftest defk <- val on-raise])
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_vm [Err UnhandledEffect])
+(import doeff [Err UnhandledEffect])
 (import doeff_core_effects.outcomes [result])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])

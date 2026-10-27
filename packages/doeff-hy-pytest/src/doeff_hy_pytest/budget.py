@@ -187,12 +187,12 @@ VmBuild = CheckedVmBuild | UncheckedVmBuild | UnknownVmBuild
 
 
 def read_vm_build() -> VmBuild:
-    """doeff-vm の build の種類を ``doeff_vm.invariant_checks_enabled()`` で読む(session の始めに 1 回)。"""
+    """doeff-vm の build の種類を VM の ``invariant_checks_enabled()`` で読む(session の始めに 1 回)。"""
     try:
-        import doeff_vm
+        from doeff._vm import native
     except ImportError as exc:
         return UnknownVmBuild(f"doeff_vm を import できない: {exc}")
-    reader = getattr(doeff_vm, "invariant_checks_enabled", None)
+    reader = getattr(native, "invariant_checks_enabled", None)
     if reader is None:
         return UnknownVmBuild("doeff_vm に invariant_checks_enabled が無い(古い VM)")
     return CheckedVmBuild() if reader() else UncheckedVmBuild()
@@ -236,7 +236,7 @@ def read_work_source() -> WorkSource:
     """積み上げの数の口を session の始めに 1 回探す。compiled の module から直に引く(``doeff_vm/__init__.py`` へは足さない
     — 古い ``.so`` で import が AttributeError になり全部の使い手が落ちるため・同じ file の註)。"""
     try:
-        import doeff_vm.doeff_vm as ext
+        from doeff._vm import native as ext
     except ImportError as exc:
         return NoWorkReader(f"doeff_vm を import できない: {exc}")
     reader = getattr(ext, "vm_work_counts", None)

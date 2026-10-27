@@ -15,7 +15,7 @@ from doeff_core_effects.handlers import reader
 from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.effects import Fail, Inspect, ItemOutcome, Reduce, Skip, SortBy, Take, Traverse, Zip
 from doeff_traverse.handlers import fail_handler, normalize_to_none, parallel, parallel_fail_fast, sequential
-from doeff_vm._effect_types import handler_effect_types
+from doeff import handler_effect_types
 
 from doeff import do, run, with_handlers
 

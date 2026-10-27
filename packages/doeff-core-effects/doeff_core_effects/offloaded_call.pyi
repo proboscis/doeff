@@ -5,7 +5,7 @@ from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from concurrent.futures import Executor as Executor
 from concurrent.futures import Future as Future
-from doeff_vm import PyVM as PyVM
+from doeff import PyVM as PyVM
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError

@@ -1,7 +1,7 @@
 """handle・defhandler の展開が読む doeff の名の綴りの唯一の定義元(card ki-16180480129e)。
 
 展開は、書き手の module・class・関数の中に import と名の読みを置く。節の操作と handler のために読む `Resume`・`Transfer`・
-`Pass`・`WithHandler`(session があれば `Get`・`Put`・`Some`)を素の名で置くと、書き手が自分の effect を同じ名にした時
+`Pass`・`WithHandlerType`(session があれば `Get`・`Put`・`Some`)を素の名で置くと、書き手が自分の effect を同じ名にした時
 (振込の `Transfer`・KV の `Put`)、1 つの名を書き手の物と展開の物が分け合う。節の頭の `isinstance` と注記が展開の名を指して
 effect が外の handler へ黙って抜け、module の段では展開の import が書き手の名を上書きした。
 
@@ -18,7 +18,7 @@ effect が外の handler へ黙って抜け、module の段では展開の impor
 表は閉じている: 展開が読む名はすべて `_HOMES` に置き場とともに載せ、表に無い名は `home` が断る(知らない名を別名の import と
 答えない — for/do の docstring は書き手に `(import doeff [do :as _doeff-do])` を書かせる)。
 
-読み手: handle.hy(`WithHandler`・`Pass`・session の `Get`・`Put`・`Some`、引数の在る defhandler の工場の戻りの型 `ProgramHandler`)・clause_ops.hy(節の操作の node と、型検査のための展開の
+読み手: handle.hy(`WithHandlerType`・`Pass`・session の `Get`・`Put`・`Some`、引数の在る defhandler の工場の戻りの型 `ProgramHandler`)・clause_ops.hy(節の操作の node と、型検査のための展開の
 `typed_resume`・`typed_transfer`)・binding_forms.py(`:=` の `Put`・`Some`)・macros.hy(`set!` の `Put`・`Some`)・declarations.hy の
 defeffect-form と record.hy の defrecord(:check)・defwire(型の本体が読む typing の `ClassVar`・`cast` — class の本体に書いた型の
 本体は名を module の段から引くので、型検査の投影はこの import を module の段へ移す)。
@@ -40,7 +40,7 @@ _HOMES: dict[str, str] = {
     "Some": "doeff",
     "typed_resume": "doeff",
     "typed_transfer": "doeff",
-    "WithHandler": "doeff_vm",
+    "WithHandlerType": "doeff",
     "ProgramHandler": "doeff.program",
     "Get": "doeff_core_effects.effects",
     "Put": "doeff_core_effects.effects",

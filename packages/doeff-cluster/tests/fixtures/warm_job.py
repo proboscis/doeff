@@ -74,7 +74,7 @@ def command_line() -> str:
 def facts() -> dict[str, object]:
     """この process の見え方(fd の行き先・env・命令行・interpreter の venv・thread の本数・VM の数・GC が凍らせた object の数 — 待ちの子から
     受け継いだ分)を集めるため。interpreter の venv(sys.prefix)は、分かれた子が待ちの子を起こした venv で走る事を検が見る。"""
-    import doeff_vm  # noqa: PLC0415 — 走った後の数を読むだけ
+    from doeff._vm import native  # noqa: PLC0415 — 走った後の数を読むだけ
 
     threads: int = run(own_thread_count())
     return {
@@ -85,7 +85,7 @@ def facts() -> dict[str, object]:
         "argv": list(sys.argv),
         "prefix": sys.prefix,
         "threads": threads,
-        "vmLive": list(doeff_vm.vm_live_counts()),
+        "vmLive": list(native.vm_live_counts()),
         "gcFrozen": gc.get_freeze_count(),
     }
 

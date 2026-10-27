@@ -24,7 +24,7 @@ pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
 
 EFFECTS_PY = """\
-from doeff_vm import EffectBase
+from doeff import EffectBase
 
 
 class Ping(EffectBase):

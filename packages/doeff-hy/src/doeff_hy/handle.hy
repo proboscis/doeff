@@ -77,14 +77,14 @@
 
 (defn _vm-imports []
   "handler の展開が使う doeff の node の import — 節の操作の node(clause_ops.hy の表の nodes / static-nodes)と、handler 自身が
-   使う Pass(番の外れた effect とどの節にも当たらない effect を外へ渡す)と WithHandler。型検査のための展開の resume / transfer は
+   使う Pass(番の外れた effect とどの節にも当たらない effect を外へ渡す)と WithHandlerType(doeff の根の名 — doeff_vm は import しない)。型検査のための展開の resume / transfer は
    typed-resume / typed-transfer になり Resume / Transfer を使わないので、表の static-nodes に載せない(使わない import は strict の
    赤 — agora-redesign #2279)。
 
    名は `_doeff_<名>` の別名で束ねる(doeff_hy/expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
    (振込の Transfer)、節の頭の isinstance が VM の node を指して effect が外の handler へ黙って抜け、module の段では書き手の
    名が上書きされた(card ki-16180480129e)。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
-  (import-form (+ (node-names (static-view-enabled)) ["Pass" "WithHandler"])))
+  (import-form (+ (node-names (static-view-enabled)) ["Pass" "WithHandlerType"])))
 
 
 (defn _handler-fn-form [endings-check]
@@ -95,10 +95,10 @@
       `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
              [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
          ~endings-check
-         (~(alias-symbol "WithHandler") __doeff-handler-data__ __doeff-body__))
+         (~(alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__))
       `(defn __doeff-handler-fn__ [__doeff-body__]
          ~endings-check
-         (~(alias-symbol "WithHandler") __doeff-handler-data__ __doeff-body__))))
+         (~(alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -759,7 +759,7 @@
   (setv passed (_passed-effects-source clauses (_session-names (or lazy-defs []))))
   (if (is passed None)
       dispatcher
-      `((do (import doeff_vm._effect_types [declare-passes :as _doeff-declare-passes]) _doeff-declare-passes)
+      `((do (import doeff._vm [declare-passes :as _doeff-declare-passes]) _doeff-declare-passes)
         ~dispatcher ~passed)))
 
 
@@ -769,7 +769,7 @@
    everything except X — passes an X effect that no earlier clause names straight to (Pass effect k). The
    annotation cannot say \"everything except X\", so the VM entered the handler for every effect (agora-redesign
    #2008 — the doeff-cluster fence and dead-process gate: 18,000 entries in one invariant test). The thunk answers
-   #(X #(earlier clause types)) at install (doeff_vm._effect_types.declare-passes) and the VM skips the handler for
+   #(X #(earlier clause types)) at install (doeff._vm.declare-passes) and the VM skips the handler for
    an X effect outside those types — the same as the guard failing. Any other guard shape, fields on the clause, or
    an X that reads a session name (bound only inside the clause) → None (the handler sees every effect)."
   (setv catch-alls (lfor #(index clause) (enumerate clauses) :if (= (str (get clause 0)) "EffectBase") index))
@@ -856,11 +856,11 @@
            (setv ~install ((fn []
                              ~@prelude
                              (setv __doeff-handler-data__ ~h-expr)
-                             (fn [__doeff-body__] (~(alias-symbol "WithHandler") __doeff-handler-data__ __doeff-body__)))))
+                             (fn [__doeff-body__] (~(alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__)))))
            (~install ~body)))
       `(do
          ~@prelude
-         (~(alias-symbol "WithHandler") ~h-expr ~body)))))
+         (~(alias-symbol "WithHandlerType") ~h-expr ~body)))))
 
 
 (defmacro with-handler [handlers body]

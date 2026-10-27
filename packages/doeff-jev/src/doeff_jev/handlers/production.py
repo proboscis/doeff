@@ -22,9 +22,8 @@ from typing import Any
 from doeff_core_effects import HttpRequest, slog
 from doeff_core_effects.cache_effects import CacheExistsEffect, cache_get, cache_put
 from doeff_system_one import Judge, JudgeError, Verdict
-from doeff_vm import Err, Ok
 
-from doeff import Pass, Transfer, TransferThrow, Try, do
+from doeff import Err, Ok, Pass, Transfer, TransferThrow, Try, do
 from doeff import handler as _program_handler
 from doeff_jev.target import JevTarget, key_required
 from doeff_jev.wire import Prepared, cache_key, parse, prepare, proxy_outcome
