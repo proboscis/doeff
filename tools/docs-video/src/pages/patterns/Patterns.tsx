@@ -122,7 +122,7 @@ const YIELDS: [number, string, number, number, number][] = [
 
 const LayerScene: React.FC = () => {
   const frame = useSceneFrame();
-  const code = {x: 50, w: 640, size: 15, line: 24};
+  const code = {x: 50, w: 656, size: 15, line: 24};
   const apiY = 124;
   const serviceY = 276;
   const domainY = 464;
