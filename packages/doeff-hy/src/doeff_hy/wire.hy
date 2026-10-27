@@ -41,26 +41,11 @@
 (import pydantic [ConfigDict TypeAdapter ValidationError])
 (import doeff_hy.frozen [FrozenMap thaw-json])
 (import doeff_hy.json_value [JsonValue OpaqueJson OpaqueSplice])
+;; Malformed と MalformedField は pydantic を読まない置き場に在る(自前の解き手 wire_codec.py も同じ型を返す — card ki-923c16d33551)。
+(import doeff_hy.wire_malformed [Malformed MalformedField])
 
 ;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra。
 (setv UNKNOWN-FIELDS {"reject" "forbid" "ignore" "ignore"})
-
-
-(defrecord MalformedField
-  "形の合わない所 1 つ: field = 欄の場所(wire の名・入れ子と配列の位置は . でつなぐ・値の全体は空の文字列)/ reason = なぜ
-   (pydantic の文と誤りの種類)。"
-  {:tags {:context "wire" :role "type"}}
-  (#^ str field)
-  (#^ str reason))
-
-
-(defrecord Malformed
-  "外から来た JSON が型の約束の形でない — 5 つ目の失敗の種類(ADR-DOE-CORE-EFFECTS-003 R17): wire-type = 解こうとした型の名 /
-   fields = 合わない所(1 つ以上・pydantic が見つけた順)。"
-  {:tags {:context "wire" :role "type"}
-   :check [(> (len fields) 0)]}
-  (#^ str wire-type)
-  (#^ (get tuple #(MalformedField ...)) fields))
 
 
 (defrecord WireShape

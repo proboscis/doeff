@@ -17,24 +17,12 @@ from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from doeff import Program
 from doeff_hy.json_value import JsonValue, OpaqueJson
+from doeff_hy.wire_malformed import Malformed as Malformed
+from doeff_hy.wire_malformed import MalformedField as MalformedField
 
 _W = TypeVar("_W")
 
 UNKNOWN_FIELDS: dict[str, str]
-
-class MalformedField:
-    """形の合わない所 1 つ(field = 欄の場所・reason = なぜ)。"""
-
-    field: str
-    reason: str
-    def __init__(self, *, field: str, reason: str) -> None: ...
-
-class Malformed:
-    """外から来た JSON が型の約束の形でない(wire-type = 解こうとした型の名・fields = 合わない所)。"""
-
-    wire_type: str
-    fields: tuple[MalformedField, ...]
-    def __init__(self, *, wire_type: str, fields: tuple[MalformedField, ...]) -> None: ...
 
 class WireShape:
     """defwire の型 1 つの wire の形(names = Python の欄の名 → wire の名・unknown・adapter)。"""

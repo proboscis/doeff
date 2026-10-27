@@ -17287,6 +17287,10 @@
   {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.launch", "name": "project_hy", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
   {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.launch", "name": "project_venv", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
   {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "project_hy", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "uv_run_environ", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"}
+  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "uv_run_environ", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
+  {"package": "doeff-hy", "module": "doeff_hy.wire_codec", "name": "Codec", "訳": "defwire の自前の解き手(読む側)の入口。wire.hy が pydantic の TypeAdapter の代わりに呼ぶ(切り替えは照らしの card)— doeff-hy は基盤・道具の package で範囲の答え待ち", "決め": "ki-923c16d33551"},
+  {"package": "doeff-hy", "module": "doeff_hy.wire_codec", "name": "codec_of", "訳": "defwire の自前の解き手(読む側)の入口。wire.hy が pydantic の TypeAdapter の代わりに呼ぶ(切り替えは照らしの card)— doeff-hy は基盤・道具の package で範囲の答え待ち", "決め": "ki-923c16d33551"},
+  {"package": "doeff-hy", "module": "doeff_hy.wire_malformed", "name": "Malformed", "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)", "決め": "ki-923c16d33551"},
+  {"package": "doeff-hy", "module": "doeff_hy.wire_malformed", "name": "MalformedField", "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)", "決め": "ki-923c16d33551"}
  ]
 }
