@@ -6758,12 +6758,9 @@
      ],
      "doeff_cluster.shared.protocol.metrics_handlers": [
       "MODULE_TAGS",
-      "MetricsPayload",
-      "Refused",
       "RouteCell",
       "RouteOptions",
       "ServiceReport",
-      "checked_metrics",
       "sent_report"
      ],
      "doeff_cluster.shared.protocol.program_codec": [
@@ -8275,7 +8272,6 @@
       "context_from_env",
       "decode_program",
       "decoded_program",
-      "deliver_task_result",
       "diffs_text",
       "encode_outcome",
       "failed_from",
@@ -17273,5 +17269,13 @@
    "名": {}
   }
  },
- "足した名": []
+ "足した名": [
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.metrics_memory",
+   "name": "MODULE_TAGS",
+   "訳": "fake の metrics-memory を metrics_handlers から分けた module の、どの module も持つ tag の表(metrics_handlers の MODULE_TAGS と同じ物)。fake が coordinator の型を読むので、本物の module を読む全部の job の起動からその閉包を外すために分けた",
+   "決め": "ki-aa24ec10dae8"
+  }
+ ]
 }
