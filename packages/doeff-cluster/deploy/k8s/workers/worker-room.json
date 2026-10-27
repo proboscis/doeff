@@ -1,9 +1,9 @@
 {
-  "atlas": {"capacity": 13, "taskReserve": 3},
-  "eos": {"capacity": 3, "taskReserve": 0},
-  "k3s-0": {"capacity": 3, "taskReserve": 0},
-  "k3s-1": {"capacity": 2, "taskReserve": 0},
-  "k3s-2": {"capacity": 3, "taskReserve": 0},
-  "k3s-3": {"capacity": 3, "taskReserve": 0},
-  "zeus": {"capacity": 40, "taskReserve": 6, "warmServices": true}
+  "atlas": {"capacity": 17, "taskReserve": 3, "pools": ["pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3"], "memoryMiB": 8960},
+  "eos": {"capacity": 7, "taskReserve": 0, "pools": ["pool-atlas-eos"], "memoryMiB": 3840},
+  "k3s-0": {"capacity": 3, "taskReserve": 0, "pools": ["pool-atlas-k3s-0"], "memoryMiB": 1792},
+  "k3s-1": {"capacity": 2, "taskReserve": 0, "pools": ["pool-k3s-1-k3s-2"], "memoryMiB": 1792},
+  "k3s-2": {"capacity": 3, "taskReserve": 0, "pools": ["pool-atlas-k3s-2", "pool-k3s-1-k3s-2"], "memoryMiB": 1792},
+  "k3s-3": {"capacity": 5, "taskReserve": 0, "pools": ["pool-atlas-k3s-3"], "memoryMiB": 3840},
+  "zeus": {"capacity": 40, "taskReserve": 6, "warmServices": true, "memoryMiB": 63488}
 }
