@@ -35,6 +35,7 @@ INSTRUCTIONS = (
 # How the scripts' words are spelled for the voice: the library's name, the decorator, and single letters.
 SPOKEN = [
     (r"\bdoeff\b", "doe-eff"),
+    (r"\bReadWriterLog\b", "Read Writer Log"),
     (r"\bat-do\b", "at do"),
     (r"\bb's k\b", "bee's kay"),
     (r"\bk\b", "kay"),
