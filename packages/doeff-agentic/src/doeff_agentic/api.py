@@ -370,6 +370,8 @@ class AgenticAPI:
         Returns:
             Workflow ID
         """
+        from doeff_agents import SessionBackend
+        from doeff_agents.session_backend import default_session_backend
         from doeff_core_effects.handlers import (
             await_handler,
             lazy_ask,
@@ -382,10 +384,15 @@ class AgenticAPI:
         from doeff_core_effects.scheduler import scheduled
         from doeff_time import sync_time_handler
 
+        from doeff import do, run
         from doeff import handler as _program_handler
-        from doeff import run
 
         from .handler import with_agentic_effectful_handlers
+
+        @do
+        def local_session_backend():
+            """The terminal backend doeff-agents' runtime asks for, built on its first Launch."""
+            return default_session_backend()
 
         wf_name = name or "unnamed"
         wf_id = workflow_id or generate_workflow_id(wf_name)
@@ -399,7 +406,8 @@ class AgenticAPI:
         # Entry-point stack, mirroring doeff.cli.run_services.default_interpreter —
         # there is deliberately no public bundled default stack (ADR-DOE-PRESET-001).
         entry_handlers = [
-            lazy_ask(),
+            # The agent runtime (doeff-agents' tmux handler) reads its backend with Ask.
+            lazy_ask({SessionBackend: local_session_backend()}),
             state(),
             writer,
             try_handler,

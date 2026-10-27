@@ -157,7 +157,7 @@ uv run python examples/07_pr_review_workflow.py https://github.com/org/repo/pull
 ```
 
 ### 08. Testing with Mock Handlers
-Effect-based deterministic workflow using `MockAgenticHandler` + installer composition.
+Effect-based deterministic workflow using the `mock_handlers()` handler around the program.
 ```bash
 uv run python examples/08_testing_with_mocks.py
 ```
@@ -230,7 +230,7 @@ This demonstrates workflow patterns (sequential, conditional, parallel) using mo
 uv run python examples/08_testing_with_mocks.py
 ```
 This demonstrates `AgenticCreateSession -> AgenticSendMessage -> AgenticGetMessages` with
-`MockAgenticHandler` and no external service.
+the `mock_handlers()` handler and no external service.
 
 ### Run Unit Tests
 ```bash

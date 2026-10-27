@@ -5,13 +5,14 @@ This module provides the handler that interprets high-level agentic effects
 by orchestrating doeff-agents sessions with state management and observability.
 
 The handler:
-1. Translates RunAgent/SendMessage/etc. to low-level agent effects
+1. Translates RunAgent/SendMessage/etc. to doeff-agents' Launch/Monitor/Capture/Send/Stop
+   effects, which the agent runtime handler outside it answers
 2. Manages workflow state files for CLI/plugin consumers
 3. Integrates with doeff-flow for observability
 """
 
 
-import contextlib
+import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,20 +29,10 @@ from doeff_agents import (
     SessionStatus,
     Stop,
 )
-from doeff_agents.effects import (
-    CaptureEffect,
-    LaunchEffect,
-    MonitorEffect,
-    SendEffect,
-    StopEffect,
-)
-# agentic drives the tmux handler object directly; it is not part of doeff-agents' public API, so it is read
-# from its defining module (card ki-4b53dcee28f3).
-from doeff_agents.handlers.production import TmuxAgentHandler
+from doeff_agents.effects import LaunchEffect
 from doeff_time import Delay
 
-from doeff import Effect, Pass, Resume, do
-from doeff import handler as _program_handler
+from doeff import Effect, Pass, Resume, do, handler, stacked_handlers
 from doeff.program import ProgramHandler
 from doeff_agentic.effects import (
     AgentNotRunningError,
@@ -76,19 +67,26 @@ def _agent_type_from_str(s: str) -> AgentType:
     return AgentType.CUSTOM
 
 
+_AGENT_STATUS_BY_SESSION_STATUS = {
+    SessionStatus.BOOTING: AgentStatus.BOOTING,
+    SessionStatus.RUNNING: AgentStatus.RUNNING,
+    SessionStatus.BLOCKED: AgentStatus.BLOCKED,
+    SessionStatus.DONE: AgentStatus.DONE,
+    SessionStatus.FAILED: AgentStatus.FAILED,
+    SessionStatus.EXITED: AgentStatus.EXITED,
+    SessionStatus.STOPPED: AgentStatus.STOPPED,
+}
+
+_SESSION_STATUS_BY_AGENT_STATUS = {
+    agent_status: session_status
+    for session_status, agent_status in _AGENT_STATUS_BY_SESSION_STATUS.items()
+    if agent_status != AgentStatus.BOOTING
+}
+
+
 def _agent_status_from_session_status(s: SessionStatus) -> AgentStatus:
     """Convert SessionStatus to AgentStatus."""
-    mapping = {
-        SessionStatus.BOOTING: AgentStatus.BOOTING,
-        SessionStatus.RUNNING: AgentStatus.RUNNING,
-        SessionStatus.BLOCKED: AgentStatus.BLOCKED,
-        SessionStatus.DONE: AgentStatus.DONE,
-        SessionStatus.FAILED: AgentStatus.FAILED,
-        SessionStatus.EXITED: AgentStatus.EXITED,
-        SessionStatus.STOPPED: AgentStatus.STOPPED,
-    }
-    return mapping.get(s, AgentStatus.RUNNING)
-
+    return _AGENT_STATUS_BY_SESSION_STATUS.get(s, AgentStatus.RUNNING)
 
 
 def _launch_effect(session_name: str, config: AgentConfig, ready_timeout: float) -> LaunchEffect:
@@ -114,9 +112,10 @@ def _launch_effect(session_name: str, config: AgentConfig, ready_timeout: float)
         ready_timeout=ready_timeout,
     )
 
+
 @dataclass
-class WorkflowContext:
-    """Context for a running workflow.
+class _WorkflowContext:
+    """The running workflow one ``agentic_effectful_handlers()`` handler keeps in its closure.
 
     Tracks the workflow state and active agent sessions.
     """
@@ -132,576 +131,288 @@ class WorkflowContext:
     agent_counter: int = field(default=0)
 
 
-class AgenticHandler:
-    """Handler for high-level agentic workflow effects.
+def _session_name_for(ctx: _WorkflowContext, name: str | None) -> str:
+    """Generate session name for an agent."""
+    if name:
+        return f"doeff-{ctx.workflow_id}-{name}"
+    ctx.agent_counter += 1
+    return f"doeff-{ctx.workflow_id}-agent-{ctx.agent_counter}"
 
-    This handler orchestrates:
-    - Agent session lifecycle using doeff-agents
-    - State file management for CLI consumers
-    - Workflow observability
 
-    Usage with doeff public API (compose the entry-point stack you need,
-    e.g. slog_handler/state — see AgenticAPI.run):
-        from doeff import run
-        from doeff_core_effects.scheduler import scheduled
+def _register_session(ctx: _WorkflowContext, name: str, handle: SessionHandle) -> None:
+    ctx.sessions[name] = handle
+    ctx.session_started_at[name] = datetime.now(timezone.utc)
 
-        wrapped = with_agentic_effectful_handlers(
-            my_workflow(),
-            workflow_id="my-workflow",
-        )
-        result = run(scheduled(wrapped))
 
-    Usage standalone:
-        handler = AgenticHandler(workflow_id="my-workflow")
-        result = handler.handle_run_agent(RunAgentEffect(...))
-    """
+def _resolve_session_handle(ctx: _WorkflowContext, session_name: str) -> SessionHandle:
+    handle = ctx.sessions.get(session_name)
+    if handle is not None:
+        return handle
 
-    def __init__(
-        self,
-        workflow_id: str | None = None,
-        workflow_name: str | None = None,
-        state_dir: Path | str | None = None,
-        tmux_handler: TmuxAgentHandler | None = None,
-    ):
-        """Initialize the agentic handler.
+    for name, candidate in ctx.sessions.items():
+        if session_name in (candidate.session_id, name):
+            return candidate
 
-        Args:
-            workflow_id: Workflow identifier (auto-generated if not provided)
-            workflow_name: Human-readable workflow name
-            state_dir: Directory for state files
-            tmux_handler: Agent handler (creates default if not provided)
-        """
-        self.workflow_name = workflow_name or "unnamed"
-        self.workflow_id = workflow_id or generate_workflow_id(self.workflow_name)
-        self.state_manager = StateManager(state_dir)
-        self.tmux_handler = tmux_handler or TmuxAgentHandler()
-        self._context = WorkflowContext(
-            workflow_id=self.workflow_id,
-            workflow_name=self.workflow_name,
-            state_manager=self.state_manager,
-        )
-        self._update_workflow_status(WorkflowStatus.RUNNING)
+    raise AgentNotRunningError(session_name, "not_found")
 
-    def _session_name_for(self, name: str | None) -> str:
-        """Generate session name for an agent."""
-        if name:
-            return f"doeff-{self.workflow_id}-{name}"
-        self._context.agent_counter += 1
-        return f"doeff-{self.workflow_id}-agent-{self._context.agent_counter}"
 
-    def _register_session(self, name: str, handle: SessionHandle) -> None:
-        self._context.sessions[name] = handle
-        self._context.session_started_at[name] = datetime.now(timezone.utc)
-
-    def _update_workflow_status(
-        self,
-        status: WorkflowStatus,
-        current_agent: str | None = None,
-        last_slog: dict[str, Any] | None = None,
-        error: str | None = None,
-    ) -> None:
-        """Update workflow status in state files."""
-        agents = []
-        for name, handle in self._context.sessions.items():
-            # Get agent status from observation
-            try:
-                obs = self.tmux_handler.handle_monitor(Monitor(handle))
-                agent_status = _agent_status_from_session_status(obs.status)
-            except Exception:
-                agent_status = AgentStatus.EXITED
-
-            agents.append(AgentInfo(
-                name=name,
-                status=agent_status,
-                session_name=handle.session_id,
-                started_at=self._context.session_started_at.get(
-                    name, self._context.started_at
-                ),
-            ))
-
-        workflow = WorkflowInfo(
-            id=self.workflow_id,
-            name=self.workflow_name,
+def _write_workflow_meta(
+    ctx: _WorkflowContext,
+    status: WorkflowStatus,
+    agents: tuple[AgentInfo, ...],
+    current_agent: str | None = None,
+    last_slog: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    """Write the workflow's state files, which the CLI and the TUI read."""
+    ctx.state_manager.write_workflow_meta(
+        WorkflowInfo(
+            id=ctx.workflow_id,
+            name=ctx.workflow_name,
             status=status,
-            started_at=self._context.started_at,
+            started_at=ctx.started_at,
             updated_at=datetime.now(timezone.utc),
             current_agent=current_agent,
-            agents=tuple(agents),
+            agents=agents,
             last_slog=last_slog,
             error=error,
         )
-        self.state_manager.write_workflow_meta(workflow)
+    )
+    for agent in agents:
+        ctx.state_manager.write_agent_state(ctx.workflow_id, agent)
 
-        # Also update individual agent files
-        for agent in agents:
-            self.state_manager.write_agent_state(self.workflow_id, agent)
 
-    @do
-    def run_agent_program(self, effect: RunAgentEffect) -> str:
-        config = effect.config
-        agent_name = effect.session_name or f"agent-{self._context.agent_counter + 1}"
-        session_name = self._session_name_for(effect.session_name)
-
-        handle = yield _launch_effect(session_name, config, effect.ready_timeout)
-        self._register_session(agent_name, handle)
-
-        self._update_workflow_status(
-            WorkflowStatus.RUNNING,
-            current_agent=agent_name,
-        )
-
-        last_output = ""
-        while True:
-            obs = yield Monitor(handle)
-
-            if obs.output_changed or obs.status != SessionStatus.RUNNING:
-                status = WorkflowStatus.RUNNING
-                if obs.status == SessionStatus.BLOCKED:
-                    status = WorkflowStatus.BLOCKED
-                self._update_workflow_status(status, current_agent=agent_name)
-
-            if obs.is_terminal:
-                last_output = yield Capture(handle, lines=500)
-                break
-
-            yield Delay(effect.poll_interval)
-
-        self._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
-        return last_output
-
-    @do
-    def send_message_program(self, effect: SendMessageEffect) -> None:
-        handle = self._resolve_session_handle(effect.session_name)
-        yield Send(
-            handle,
-            effect.message,
-            enter=effect.enter,
-        )
-
-    @do
-    def wait_for_status_program(self, effect: WaitForStatusEffect) -> AgentStatus:
-        handle = self._resolve_session_handle(effect.session_name)
-
-        targets = effect.target_status
-        if isinstance(targets, AgentStatus):
-            targets = (targets,)
-
-        session_targets = set()
-        for target in targets:
-            if target == AgentStatus.RUNNING:
-                session_targets.add(SessionStatus.RUNNING)
-            elif target == AgentStatus.BLOCKED:
-                session_targets.add(SessionStatus.BLOCKED)
-            elif target == AgentStatus.DONE:
-                session_targets.add(SessionStatus.DONE)
-            elif target == AgentStatus.FAILED:
-                session_targets.add(SessionStatus.FAILED)
-            elif target == AgentStatus.EXITED:
-                session_targets.add(SessionStatus.EXITED)
-            elif target == AgentStatus.STOPPED:
-                session_targets.add(SessionStatus.STOPPED)
-
-        deadline = time.time() + effect.timeout
-
-        while time.time() < deadline:
-            obs = yield Monitor(handle)
-
-            if obs.status in session_targets:
-                return _agent_status_from_session_status(obs.status)
-
-            if obs.is_terminal and obs.status not in session_targets:
-                return _agent_status_from_session_status(obs.status)
-
-            yield Delay(effect.poll_interval)
-
+@do
+def _agent_info(ctx: _WorkflowContext, name: str, handle: SessionHandle):
+    """The state-file view of one session, observed through the agent runtime (Monitor)."""
+    try:
         obs = yield Monitor(handle)
-        return _agent_status_from_session_status(obs.status)
+        agent_status = _agent_status_from_session_status(obs.status)
+    except Exception:
+        agent_status = AgentStatus.EXITED
 
-    @do
-    def capture_output_program(self, effect: CaptureOutputEffect) -> str:
-        handle = self._resolve_session_handle(effect.session_name)
-        return (yield Capture(handle, lines=effect.lines))
+    return AgentInfo(
+        name=name,
+        status=agent_status,
+        session_name=handle.session_id,
+        started_at=ctx.session_started_at.get(name, ctx.started_at),
+    )
 
-    @do
-    def stop_agent_program(self, effect: StopAgentEffect) -> None:
-        handle = self._context.sessions.get(effect.session_name)
-        if handle is None:
-            return None
 
-        yield Stop(handle)
-        del self._context.sessions[effect.session_name]
-        self._update_workflow_status(WorkflowStatus.RUNNING)
-        return None
+@do
+def _update_workflow_status(
+    ctx: _WorkflowContext,
+    status: WorkflowStatus,
+    current_agent: str | None = None,
+    last_slog: dict[str, Any] | None = None,
+    error: str | None = None,
+):
+    """Observe every session and write the workflow's state files."""
+    agents: tuple[AgentInfo, ...] = ()
+    # Not spawned side by side: the handler runs without a scheduler in the stack
+    # (plain run() in tests), and Spawn / Gather would require one.
+    for name, handle in list(ctx.sessions.items()):
+        agents = (*agents, (yield _agent_info(ctx, name, handle)))
+    _write_workflow_meta(ctx, status, agents, current_agent, last_slog, error)
 
-    def _resolve_session_handle(self, session_name: str) -> SessionHandle:
-        handle = self._context.sessions.get(session_name)
-        if handle is not None:
-            return handle
 
-        for name, candidate in self._context.sessions.items():
-            if session_name in (candidate.session_id, name):
-                return candidate
+# =============================================================================
+# Answers (one per effect — each returns the Program whose value resumes k)
+# =============================================================================
 
-        raise AgentNotRunningError(session_name, "not_found")
 
-    def handle_run_agent(self, effect: RunAgentEffect) -> str:
-        """Handle RunAgent effect.
+@do
+def _run_agent(ctx: _WorkflowContext, effect: RunAgentEffect):
+    """Launch an agent, monitor it until it ends, and return its final output."""
+    agent_name = effect.session_name or f"agent-{ctx.agent_counter + 1}"
+    session_name = _session_name_for(ctx, effect.session_name)
 
-        Launches an agent, monitors until completion, and returns output.
-        """
-        config = effect.config
-        agent_name = effect.session_name or f"agent-{self._context.agent_counter + 1}"
-        session_name = self._session_name_for(effect.session_name)
+    handle = yield _launch_effect(session_name, effect.config, effect.ready_timeout)
+    _register_session(ctx, agent_name, handle)
 
-        # Launch agent
-        launch_effect = _launch_effect(session_name, config, effect.ready_timeout)
-        handle = self.tmux_handler.handle_launch(launch_effect)
-        self._register_session(agent_name, handle)
+    yield _update_workflow_status(ctx, WorkflowStatus.RUNNING, current_agent=agent_name)
 
-        # Update workflow status
-        self._update_workflow_status(
-            WorkflowStatus.RUNNING,
-            current_agent=agent_name,
-        )
+    while True:
+        obs = yield Monitor(handle)
 
-        # Monitor until terminal status
-        last_output = ""
-        while True:
-            obs = self.tmux_handler.handle_monitor(Monitor(handle))
-
-            # Update status on change
-            if obs.output_changed or obs.status != SessionStatus.RUNNING:
-                status = WorkflowStatus.RUNNING
-                if obs.status == SessionStatus.BLOCKED:
-                    status = WorkflowStatus.BLOCKED
-                self._update_workflow_status(status, current_agent=agent_name)
-
-            # Check for terminal status
-            if obs.is_terminal:
-                # Capture final output
-                last_output = self.tmux_handler.handle_capture(
-                    Capture(handle, lines=500)
-                )
-                break
-
-            # Poll
-            time.sleep(effect.poll_interval)
-
-        # Update workflow
-        self._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
-
-        return last_output
-
-    def handle_send_message(self, effect: SendMessageEffect) -> None:
-        """Handle SendMessage effect."""
-        # Find session
-        handle = self._context.sessions.get(effect.session_name)
-        if handle is None:
-            # Try full session name lookup
-            for _name, h in self._context.sessions.items():
-                if h.session_id == effect.session_name:
-                    handle = h
-                    break
-
-        if handle is None:
-            raise AgentNotRunningError(effect.session_name, "not_found")
-
-        send_effect = Send(
-            handle,
-            effect.message,
-            enter=effect.enter,
-        )
-        self.tmux_handler.handle_send(send_effect)
-
-    def handle_wait_for_status(self, effect: WaitForStatusEffect) -> AgentStatus:
-        """Handle WaitForStatus effect."""
-        handle = self._context.sessions.get(effect.session_name)
-        if handle is None:
-            raise AgentNotRunningError(effect.session_name, "not_found")
-
-        # Normalize target_status to tuple
-        targets = effect.target_status
-        if isinstance(targets, AgentStatus):
-            targets = (targets,)
-
-        # Map to SessionStatus
-        session_targets = set()
-        for t in targets:
-            if t == AgentStatus.RUNNING:
-                session_targets.add(SessionStatus.RUNNING)
-            elif t == AgentStatus.BLOCKED:
-                session_targets.add(SessionStatus.BLOCKED)
-            elif t == AgentStatus.DONE:
-                session_targets.add(SessionStatus.DONE)
-            elif t == AgentStatus.FAILED:
-                session_targets.add(SessionStatus.FAILED)
-            elif t == AgentStatus.EXITED:
-                session_targets.add(SessionStatus.EXITED)
-            elif t == AgentStatus.STOPPED:
-                session_targets.add(SessionStatus.STOPPED)
-
-        deadline = time.time() + effect.timeout
-
-        while time.time() < deadline:
-            obs = self.tmux_handler.handle_monitor(Monitor(handle))
-
-            if obs.status in session_targets:
-                return _agent_status_from_session_status(obs.status)
-
-            # Check for unexpected terminal status
-            if obs.is_terminal and obs.status not in session_targets:
-                return _agent_status_from_session_status(obs.status)
-
-            time.sleep(effect.poll_interval)
-
-        # Timeout - return current status
-        obs = self.tmux_handler.handle_monitor(Monitor(handle))
-        return _agent_status_from_session_status(obs.status)
-
-    def handle_capture_output(self, effect: CaptureOutputEffect) -> str:
-        """Handle CaptureOutput effect."""
-        handle = self._context.sessions.get(effect.session_name)
-        if handle is None:
-            raise AgentNotRunningError(effect.session_name, "not_found")
-
-        return self.tmux_handler.handle_capture(Capture(handle, lines=effect.lines))
-
-    def handle_wait_for_user_input(self, effect: WaitForUserInputEffect) -> str:
-        """Handle WaitForUserInput effect.
-
-        Blocks until user provides input via CLI or TUI.
-        """
-        handle = self._context.sessions.get(effect.session_name)
-        if handle is None:
-            raise AgentNotRunningError(effect.session_name, "not_found")
-
-        # Update workflow to blocked status with prompt
-        self._update_workflow_status(
-            WorkflowStatus.BLOCKED,
-            current_agent=effect.session_name,
-            last_slog={"status": "waiting-input", "prompt": effect.prompt},
-        )
-
-        # Write a marker file for the CLI to detect
-        workflow_dir = self.state_manager.state_dir / "workflows" / self.workflow_id
-        input_request_file = workflow_dir / "input_request.json"
-        input_response_file = workflow_dir / "input_response.txt"
-
-        import json
-        input_request_file.write_text(json.dumps({
-            "session_name": effect.session_name,
-            "prompt": effect.prompt,
-            "requested_at": datetime.now(timezone.utc).isoformat(),
-        }))
-
-        # Wait for response
-        deadline = None
-        if effect.timeout:
-            deadline = time.time() + effect.timeout
-
-        while True:
-            if deadline and time.time() > deadline:
-                input_request_file.unlink(missing_ok=True)
-                raise UserInputTimeoutError("wait_for_user_input", effect.timeout or 0)
-
-            if input_response_file.exists():
-                response = input_response_file.read_text()
-                input_response_file.unlink()
-                input_request_file.unlink(missing_ok=True)
-
-                # Update workflow back to running
-                self._update_workflow_status(
-                    WorkflowStatus.RUNNING,
-                    current_agent=effect.session_name,
-                )
-                return response
-
-            time.sleep(0.5)
-
-    def handle_stop_agent(self, effect: StopAgentEffect) -> None:
-        """Handle StopAgent effect."""
-        handle = self._context.sessions.get(effect.session_name)
-        if handle is None:
-            return  # Already stopped or not found
-
-        self.tmux_handler.handle_stop(Stop(handle))
-        del self._context.sessions[effect.session_name]
-
-        self._update_workflow_status(WorkflowStatus.RUNNING)
-
-    def complete_workflow(
-        self,
-        result: Any = None,
-        error: Exception | None = None,
-    ) -> None:
-        """Mark workflow as completed or failed."""
-        if error:
-            self._update_workflow_status(
-                WorkflowStatus.FAILED,
-                error=str(error),
+        if obs.output_changed or obs.status != SessionStatus.RUNNING:
+            status = (
+                WorkflowStatus.BLOCKED
+                if obs.status == SessionStatus.BLOCKED
+                else WorkflowStatus.RUNNING
             )
-        else:
-            self._update_workflow_status(WorkflowStatus.COMPLETED)
+            yield _update_workflow_status(ctx, status, current_agent=agent_name)
 
-    def cleanup(self) -> None:
-        """Clean up all agent sessions."""
-        for name in list(self._context.sessions.keys()):
-            handle = self._context.sessions[name]
-            with contextlib.suppress(Exception):
-                self.tmux_handler.handle_stop(Stop(handle))
-            del self._context.sessions[name]
+        if obs.is_terminal:
+            break
+
+        yield Delay(effect.poll_interval)
+
+    last_output = yield Capture(handle, lines=500)
+    yield _update_workflow_status(ctx, WorkflowStatus.RUNNING, current_agent=None)
+    return last_output
 
 
-def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
+@do
+def _send_message(ctx: _WorkflowContext, effect: SendMessageEffect):
+    handle = _resolve_session_handle(ctx, effect.session_name)
+    yield Send(handle, effect.message, enter=effect.enter)
+
+
+@do
+def _wait_for_status(ctx: _WorkflowContext, effect: WaitForStatusEffect):
+    """Poll the session until it reaches a target status, ends, or the timeout passes."""
+    handle = _resolve_session_handle(ctx, effect.session_name)
+    targets = (
+        (effect.target_status,)
+        if isinstance(effect.target_status, AgentStatus)
+        else effect.target_status
+    )
+    session_targets = {
+        _SESSION_STATUS_BY_AGENT_STATUS[target]
+        for target in targets
+        if target in _SESSION_STATUS_BY_AGENT_STATUS
+    }
+
+    deadline = time.time() + effect.timeout
+    while time.time() < deadline:
+        obs = yield Monitor(handle)
+        if obs.status in session_targets or obs.is_terminal:
+            return _agent_status_from_session_status(obs.status)
+        yield Delay(effect.poll_interval)
+
+    obs = yield Monitor(handle)
+    return _agent_status_from_session_status(obs.status)
+
+
+@do
+def _capture_output(ctx: _WorkflowContext, effect: CaptureOutputEffect):
+    handle = _resolve_session_handle(ctx, effect.session_name)
+    return (yield Capture(handle, lines=effect.lines))
+
+
+def _write_input_request(ctx: _WorkflowContext, effect: WaitForUserInputEffect) -> tuple[Path, Path]:
+    """Write the input request the CLI shows the user; return it and the response file the CLI writes."""
+    workflow_dir = ctx.state_manager.state_dir / "workflows" / ctx.workflow_id
+    input_request_file = workflow_dir / "input_request.json"
+    input_request_file.write_text(json.dumps({
+        "session_name": effect.session_name,
+        "prompt": effect.prompt,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+    }))
+    return input_request_file, workflow_dir / "input_response.txt"
+
+
+@do
+def _wait_for_user_input(ctx: _WorkflowContext, effect: WaitForUserInputEffect):
+    """Block the workflow until the user answers through the CLI or the TUI.
+
+    The request is a marker file the CLI reads; the answer is the response file it
+    writes. The poll waits with doeff_time Delay.
+    """
+    if effect.session_name not in ctx.sessions:
+        raise AgentNotRunningError(effect.session_name, "not_found")
+
+    yield _update_workflow_status(
+        ctx,
+        WorkflowStatus.BLOCKED,
+        current_agent=effect.session_name,
+        last_slog={"status": "waiting-input", "prompt": effect.prompt},
+    )
+
+    input_request_file, input_response_file = _write_input_request(ctx, effect)
+
+    deadline = time.time() + effect.timeout if effect.timeout else None
+    while not input_response_file.exists():
+        if deadline and time.time() > deadline:
+            input_request_file.unlink(missing_ok=True)
+            raise UserInputTimeoutError("wait_for_user_input", effect.timeout or 0)
+        yield Delay(0.5)
+
+    response = input_response_file.read_text()
+    input_response_file.unlink()
+    input_request_file.unlink(missing_ok=True)
+
+    yield _update_workflow_status(ctx, WorkflowStatus.RUNNING, current_agent=effect.session_name)
+    return response
+
+
+@do
+def _stop_agent(ctx: _WorkflowContext, effect: StopAgentEffect):
+    handle = ctx.sessions.get(effect.session_name)
+    if handle is None:
+        return None  # Already stopped or not found
+
+    yield Stop(handle)
+    del ctx.sessions[effect.session_name]
+    yield _update_workflow_status(ctx, WorkflowStatus.RUNNING)
+    return None
+
+
+def agentic_effectful_handlers(
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
-    tmux_handler: TmuxAgentHandler | None = None,
+    agent_runtime: ProgramHandler | None = None,
 ) -> ProgramHandler:
-    """Create the Program -> Program installer for legacy agentic effects.
+    """Return the doeff handler for the legacy agentic effects (RunAgent, SendMessage, ...).
 
-    It installs two `(effect, k)` handlers: the agentic handler (RunAgent,
-    SendMessage, ...) inside, and the tmux runtime (Launch, Monitor, Capture,
-    Send, Stop) outside it. Poll waits are yielded as doeff_time ``Delay``, so the
-    caller's stack needs a time handler outside both.
+    It installs two handlers: the agentic handler inside, and the agent runtime
+    outside it. The agentic handler lowers its effects onto doeff-agents'
+    Launch / Monitor / Capture / Send / Stop by yielding them; effects a handler
+    yields go to the handlers *outside* it, so the runtime answers them. The
+    runtime also serves those effects when the program yields them directly.
 
-    Call the returned installer to scope it to a specific program.
-    See `with_agentic_effectful_handlers()` for the convenience wrapper.
+    The workflow (its id, sessions and state files) lives in the handler's closure.
+    Building the handler writes the workflow's state files as RUNNING.
+
+    Args:
+        workflow_id: Workflow identifier (auto-generated if not provided)
+        workflow_name: Human-readable workflow name
+        state_dir: Directory for state files
+        agent_runtime: The handler answering doeff-agents' Launch / Monitor /
+            Capture / Send / Stop (default: doeff-agents' tmux handler
+            ``agent_effectful_handler()``, which reads its session backend with
+            ``Ask(SessionBackend)``)
+
+    Poll waits are yielded as doeff_time ``Delay``, so the caller's stack needs a
+    time handler outside both.
     """
-    handler = AgenticHandler(
-        workflow_id=workflow_id,
-        workflow_name=workflow_name,
-        state_dir=state_dir,
-        tmux_handler=tmux_handler,
+    if agent_runtime is None:
+        from doeff_agents.handlers import agent_effectful_handler
+
+        agent_runtime = agent_effectful_handler()
+
+    name = workflow_name or "unnamed"
+    ctx = _WorkflowContext(
+        workflow_id=workflow_id or generate_workflow_id(name),
+        workflow_name=name,
+        state_manager=StateManager(state_dir),
     )
+    _write_workflow_meta(ctx, WorkflowStatus.RUNNING, agents=())
 
-    @do
-    def _handle_runtime(effect: Effect, k: Any):
-        if isinstance(effect, LaunchEffect):
-            return (yield Resume(k, handler.tmux_handler.handle_launch(effect)))
-        if isinstance(effect, MonitorEffect):
-            return (yield Resume(k, handler.tmux_handler.handle_monitor(effect)))
-        if isinstance(effect, CaptureEffect):
-            return (yield Resume(k, handler.tmux_handler.handle_capture(effect)))
-        if isinstance(effect, SendEffect):
-            handler.tmux_handler.handle_send(effect)
-            return (yield Resume(k, None))
-        if isinstance(effect, StopEffect):
-            handler.tmux_handler.handle_stop(effect)
-            return (yield Resume(k, None))
-        yield Pass(effect, k)
+    @handler
+    def answer_agentic(effect: Effect, k: Any):
+        """Answer a legacy agentic effect through the agent runtime; pass every other effect outward."""
+        match effect:
+            case RunAgentEffect():
+                answer = _run_agent(ctx, effect)
+            case SendMessageEffect():
+                answer = _send_message(ctx, effect)
+            case WaitForStatusEffect():
+                answer = _wait_for_status(ctx, effect)
+            case CaptureOutputEffect():
+                answer = _capture_output(ctx, effect)
+            case WaitForUserInputEffect():
+                answer = _wait_for_user_input(ctx, effect)
+            case StopAgentEffect():
+                answer = _stop_agent(ctx, effect)
+            case _:
+                return (yield Pass(effect, k))
+        value = yield answer
+        return (yield Resume(k, value))
 
-    @do
-    def _handle(effect: Effect, k: Any):  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
-        if isinstance(effect, RunAgentEffect):
-            config = effect.config
-            agent_name = effect.session_name or f"agent-{handler._context.agent_counter + 1}"
-            session_name = handler._session_name_for(effect.session_name)
-
-            handle = yield _launch_effect(session_name, config, effect.ready_timeout)
-            handler._register_session(agent_name, handle)
-
-            handler._update_workflow_status(
-                WorkflowStatus.RUNNING,
-                current_agent=agent_name,
-            )
-
-            last_output = ""
-            while True:
-                obs = yield Monitor(handle)
-
-                if obs.output_changed or obs.status != SessionStatus.RUNNING:
-                    status = WorkflowStatus.RUNNING
-                    if obs.status == SessionStatus.BLOCKED:
-                        status = WorkflowStatus.BLOCKED
-                    handler._update_workflow_status(status, current_agent=agent_name)
-
-                if obs.is_terminal:
-                    last_output = yield Capture(handle, lines=500)
-                    break
-
-                yield Delay(effect.poll_interval)
-
-            handler._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
-            value = last_output
-            return (yield Resume(k, value))
-        if isinstance(effect, SendMessageEffect):
-            handle = handler._resolve_session_handle(effect.session_name)
-            yield Send(
-                handle,
-                effect.message,
-                enter=effect.enter,
-            )
-            value = None
-            return (yield Resume(k, value))
-        if isinstance(effect, WaitForStatusEffect):
-            handle = handler._resolve_session_handle(effect.session_name)
-            targets = effect.target_status
-            if isinstance(targets, AgentStatus):
-                targets = (targets,)
-
-            session_targets = set()
-            for target in targets:
-                if target == AgentStatus.RUNNING:
-                    session_targets.add(SessionStatus.RUNNING)
-                elif target == AgentStatus.BLOCKED:
-                    session_targets.add(SessionStatus.BLOCKED)
-                elif target == AgentStatus.DONE:
-                    session_targets.add(SessionStatus.DONE)
-                elif target == AgentStatus.FAILED:
-                    session_targets.add(SessionStatus.FAILED)
-                elif target == AgentStatus.EXITED:
-                    session_targets.add(SessionStatus.EXITED)
-                elif target == AgentStatus.STOPPED:
-                    session_targets.add(SessionStatus.STOPPED)
-
-            deadline = time.time() + effect.timeout
-
-            while time.time() < deadline:
-                obs = yield Monitor(handle)
-
-                if obs.status in session_targets:
-                    value = _agent_status_from_session_status(obs.status)
-                    break
-
-                if obs.is_terminal and obs.status not in session_targets:
-                    value = _agent_status_from_session_status(obs.status)
-                    break
-
-                yield Delay(effect.poll_interval)
-            else:
-                obs = yield Monitor(handle)
-                value = _agent_status_from_session_status(obs.status)
-            return (yield Resume(k, value))
-        if isinstance(effect, CaptureOutputEffect):
-            handle = handler._resolve_session_handle(effect.session_name)
-            value = yield Capture(handle, lines=effect.lines)
-            return (yield Resume(k, value))
-        if isinstance(effect, WaitForUserInputEffect):
-            return (yield Resume(k, handler.handle_wait_for_user_input(effect)))
-        if isinstance(effect, StopAgentEffect):
-            active_handle = handler._context.sessions.get(effect.session_name)
-            if active_handle is not None:
-                yield Stop(active_handle)
-                del handler._context.sessions[effect.session_name]
-                handler._update_workflow_status(WorkflowStatus.RUNNING)
-            value = None
-            return (yield Resume(k, value))
-        yield Pass(effect, k)
-
-    # The agentic handler lowers its effects onto Launch / Monitor / Capture /
-    # Send / Stop by yielding them. Effects a handler yields go to the handlers
-    # *outside* it, never back to itself, so the tmux runtime has to be installed
-    # as a separate, outer handler. It also serves those effects when the
-    # program yields them directly. Delay (poll interval) goes further out, to
-    # the caller's time handler.
-    install_agentic = _program_handler(_handle)
-    install_runtime = _program_handler(_handle_runtime)
-
-    def _install(program: Any) -> Any:
-        return install_runtime(install_agentic(program))
-
-    return _install
+    return stacked_handlers(agent_runtime, answer_agentic)
 
 
 def with_agentic_effectful_handlers(
@@ -709,47 +420,18 @@ def with_agentic_effectful_handlers(
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
-    tmux_handler: TmuxAgentHandler | None = None,
+    agent_runtime: ProgramHandler | None = None,
 ) -> Any:
     """Wrap a program with the legacy agentic effect handler."""
     return agentic_effectful_handlers(
-            workflow_id=workflow_id,
-            workflow_name=workflow_name,
-            state_dir=state_dir,
-            tmux_handler=tmux_handler,
-        )(program)
-
-
-def agent_handler(
-    workflow_id: str | None = None,
-    workflow_name: str | None = None,
-    state_dir: Path | str | None = None,
-    tmux_handler: TmuxAgentHandler | None = None,
-) -> AgenticHandler:
-    """Create an agentic handler instance.
-
-    This is the primary way to get a handler for standalone use.
-
-    Args:
-        workflow_id: Workflow identifier (auto-generated if not provided)
-        workflow_name: Human-readable workflow name
-        state_dir: Directory for state files
-
-    Returns:
-        AgenticHandler instance
-    """
-    return AgenticHandler(
         workflow_id=workflow_id,
         workflow_name=workflow_name,
         state_dir=state_dir,
-        tmux_handler=tmux_handler,
-    )
+        agent_runtime=agent_runtime,
+    )(program)
 
 
 __all__ = [
-    "AgenticHandler",
-    "WorkflowContext",
-    "agent_handler",
     "agentic_effectful_handlers",
     "with_agentic_effectful_handlers",
 ]

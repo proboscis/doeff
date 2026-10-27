@@ -27,18 +27,13 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Effect, Pass, Resume, do
-from doeff import handler as _program_handler
+from doeff import Effect, Pass, Resume, handler
 from doeff.program import ProgramHandler
-
-# REMOVED: make_doeff_generator no longer exists in doeff.do
-# from doeff.do import make_doeff_generator
 from doeff_agentic.effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -67,6 +62,7 @@ from doeff_agentic.exceptions import (
     AgenticTimeoutError,
     AgenticUnsupportedOperationError,
 )
+from doeff_agentic.handlers._effect_groups import MessageEffect, SessionEffect, WorkflowEffect
 from doeff_agentic.types import (
     AgenticEndOfEvents,
     AgenticEnvironmentHandle,
@@ -206,24 +202,23 @@ def detect_status(output: str) -> AgenticSessionStatus:
     # Default to running
     return AgenticSessionStatus.RUNNING
 
-
 # =============================================================================
 # State Management
 # =============================================================================
 
 
 @dataclass
-class TmuxSessionState:
+class _TmuxSession:
     """State for a tmux-backed session."""
 
     handle: AgenticSessionHandle
     pane_id: str
     last_output_hash: str = ""
-    message_history: list[dict[str, Any]] = field(default_factory=list)
+    message_history: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
-class TmuxWorkflowState:
+class _TmuxWorkflow:
     """In-memory state for a workflow."""
 
     id: str
@@ -232,8 +227,19 @@ class TmuxWorkflowState:
     created_at: datetime
     metadata: dict[str, Any] | None = None
     environments: dict[str, AgenticEnvironmentHandle] = field(default_factory=dict)
-    sessions: dict[str, TmuxSessionState] = field(default_factory=dict)  # name -> state
+    sessions: dict[str, _TmuxSession] = field(default_factory=dict)  # name -> state
     session_by_id: dict[str, str] = field(default_factory=dict)  # session_id -> name
+
+
+@dataclass
+class _TmuxWorld:
+    """The state one ``tmux_handler()`` handler keeps in its closure."""
+
+    working_dir: Path
+    backend: Any
+    event_log: EventLogWriter
+    workflow_index: WorkflowIndex
+    workflow: _TmuxWorkflow | None = None
 
 
 def generate_workflow_id(name: str | None = None) -> str:
@@ -253,660 +259,478 @@ def generate_environment_id(name: str | None = None) -> str:
     return hashlib.sha256(data.encode()).hexdigest()[:8]
 
 
+_SUPPORTED_CAPABILITIES = frozenset({"worktree"})  # worktree via git commands
+
+
 # =============================================================================
-# Tmux Handler
+# Helpers
 # =============================================================================
 
 
-class TmuxHandler:
-    """Legacy handler using tmux for session management.
+def _tmux_session_name(workflow: _TmuxWorkflow, name: str) -> str:
+    return f"doeff-{workflow.id}-{name}"
 
-    This handler has limited capability compared to OpenCodeHandler:
-    - Only SHARED environment type
-    - No fork support
-    - Polling-based status detection
-    """
 
-    SUPPORTED_CAPABILITIES = frozenset({"worktree"})  # worktree via git commands
+def _ensure_workflow(world: _TmuxWorld) -> _TmuxWorkflow:
+    if world.workflow is None:
+        _create_workflow(world, AgenticCreateWorkflow())
+    assert world.workflow is not None
+    return world.workflow
 
-    def __init__(self, working_dir: str | None = None, *, backend: Any | None = None) -> None:
-        """Initialize the tmux handler.
 
-        Args:
-            working_dir: Default working directory
-        """
-        self._working_dir = Path(working_dir) if working_dir else Path.cwd()
-        self._workflow: TmuxWorkflowState | None = None
-        self._backend = backend or _resolve_default_backend()
+def _session_state(world: _TmuxWorld, session_id: str) -> tuple[_TmuxWorkflow, _TmuxSession]:
+    workflow = _ensure_workflow(world)
+    name = workflow.session_by_id.get(session_id)
+    if not name:
+        raise AgenticSessionNotFoundError(session_id)
+    return workflow, workflow.sessions[name]
 
-        # Event logging
-        self._event_log = EventLogWriter()
-        self._workflow_index = WorkflowIndex()
 
-        # Verify tmux is available
-        if not self._backend.is_available():
-            raise AgenticServerError("tmux is not installed or not in PATH")
+def _set_status(
+    world: _TmuxWorld,
+    workflow: _TmuxWorkflow,
+    state: _TmuxSession,
+    status: AgenticSessionStatus,
+) -> None:
+    """Record the session's new status, and log it when it changed."""
+    old_status = state.handle.status
+    state.handle = replace(state.handle, status=status)
+    if old_status != status:
+        world.event_log.log_session_status(workflow.id, state.handle.name, status)
 
-    # -------------------------------------------------------------------------
-    # Lifecycle
-    # -------------------------------------------------------------------------
 
-    def initialize(self) -> None:
-        """Initialize handler."""
-        # No-op for tmux
+def _create_worktree(world: _TmuxWorld, env_id: str, base_commit: str | None) -> str:
+    """Create a git worktree."""
+    worktree_dir = Path(f"/tmp/doeff/worktrees/{env_id}")
+    worktree_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    def close(self) -> None:
-        """Clean up resources."""
-        # Kill all sessions
-        if self._workflow:
-            for state in self._workflow.sessions.values():
-                with contextlib.suppress(Exception):
-                    self._backend.kill_session(f"doeff-{self._workflow.id}-{state.handle.name}")
+    cmd = ["git", "worktree", "add", str(worktree_dir)]
+    if base_commit:
+        cmd.append(base_commit)
+    else:
+        cmd.extend(["--detach", "HEAD"])
 
-    # -------------------------------------------------------------------------
-    # Workflow Effects
-    # -------------------------------------------------------------------------
+    subprocess.run(cmd, cwd=world.working_dir, check=True, capture_output=True)
+    return str(worktree_dir)
 
-    def handle_create_workflow(
-        self, effect: AgenticCreateWorkflow
-    ) -> AgenticWorkflowHandle:
-        """Handle AgenticCreateWorkflow effect."""
-        workflow_id = generate_workflow_id(effect.name)
-        self._workflow = TmuxWorkflowState(
-            id=workflow_id,
-            name=effect.name,
-            status=AgenticWorkflowStatus.RUNNING,
-            created_at=datetime.now(timezone.utc),
-            metadata=effect.metadata,
+
+def _delete_worktree(world: _TmuxWorld, path: str) -> None:
+    """Remove a git worktree."""
+    try:
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", path],
+            cwd=world.working_dir,
+            check=True,
+            capture_output=True,
         )
+    except subprocess.CalledProcessError:
+        shutil.rmtree(path, ignore_errors=True)
 
-        # Log workflow creation
-        self._event_log.log_workflow_created(
-            workflow_id, effect.name, effect.metadata
-        )
-        self._workflow_index.add(workflow_id, effect.name)
 
-        return AgenticWorkflowHandle(
-            id=workflow_id,
-            name=effect.name,
-            status=AgenticWorkflowStatus.RUNNING,
-            created_at=self._workflow.created_at,
-            metadata=effect.metadata,
-        )
+def _refresh_session_status(
+    world: _TmuxWorld, workflow: _TmuxWorkflow, state: _TmuxSession
+) -> None:
+    """Refresh session status from tmux."""
+    if not world.backend.has_session(_tmux_session_name(workflow, state.handle.name)):
+        _set_status(world, workflow, state, AgenticSessionStatus.DONE)
+        return
 
-    def handle_get_workflow(self, effect: AgenticGetWorkflow) -> AgenticWorkflowHandle:
-        """Handle AgenticGetWorkflow effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
+    try:
+        output = world.backend.capture_pane(state.pane_id, 50)
+    except Exception:
+        return
+    _set_status(world, workflow, state, detect_status(output))
 
-        return AgenticWorkflowHandle(
-            id=self._workflow.id,
-            name=self._workflow.name,
-            status=self._workflow.status,
-            created_at=self._workflow.created_at,
-            metadata=self._workflow.metadata,
-        )
 
-    # -------------------------------------------------------------------------
-    # Environment Effects
-    # -------------------------------------------------------------------------
+def _wait_for_completion(
+    world: _TmuxWorld, workflow: _TmuxWorkflow, state: _TmuxSession, timeout: float = 300.0
+) -> None:
+    """Wait for session to complete or become blocked."""
+    session_name = _tmux_session_name(workflow, state.handle.name)
+    start = time.time()
 
-    def handle_create_environment(
-        self, effect: AgenticCreateEnvironment
-    ) -> AgenticEnvironmentHandle:
-        """Handle AgenticCreateEnvironment effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
+    while time.time() - start < timeout:
+        if not world.backend.has_session(session_name):
+            return
 
-        # Only SHARED and WORKTREE are supported
-        if effect.env_type not in (
-            AgenticEnvironmentType.SHARED,
-            AgenticEnvironmentType.WORKTREE,
-        ):
+        _refresh_session_status(world, workflow, state)
+
+        if state.handle.status.is_terminal() or state.handle.status == AgenticSessionStatus.BLOCKED:
+            return
+
+        time.sleep(1.0)
+
+
+# =============================================================================
+# Answers (one per effect)
+# =============================================================================
+
+
+def _create_workflow(world: _TmuxWorld, effect: AgenticCreateWorkflow) -> AgenticWorkflowHandle:
+    workflow_id = generate_workflow_id(effect.name)
+    world.workflow = _TmuxWorkflow(
+        id=workflow_id,
+        name=effect.name,
+        status=AgenticWorkflowStatus.RUNNING,
+        created_at=datetime.now(timezone.utc),
+        metadata=effect.metadata,
+    )
+
+    world.event_log.log_workflow_created(workflow_id, effect.name, effect.metadata)
+    world.workflow_index.add(workflow_id, effect.name)
+
+    return AgenticWorkflowHandle(
+        id=workflow_id,
+        name=effect.name,
+        status=AgenticWorkflowStatus.RUNNING,
+        created_at=world.workflow.created_at,
+        metadata=effect.metadata,
+    )
+
+
+def _get_workflow(world: _TmuxWorld, effect: AgenticGetWorkflow) -> AgenticWorkflowHandle:
+    workflow = _ensure_workflow(world)
+    return AgenticWorkflowHandle(
+        id=workflow.id,
+        name=workflow.name,
+        status=workflow.status,
+        created_at=workflow.created_at,
+        metadata=workflow.metadata,
+    )
+
+
+def _create_environment(
+    world: _TmuxWorld, effect: AgenticCreateEnvironment
+) -> AgenticEnvironmentHandle:
+    workflow = _ensure_workflow(world)
+    env_id = generate_environment_id(effect.name)
+
+    match effect.env_type:
+        case AgenticEnvironmentType.SHARED:
+            working_dir = effect.working_dir or str(world.working_dir)
+        case AgenticEnvironmentType.WORKTREE:
+            working_dir = _create_worktree(world, env_id, effect.base_commit)
+        case _:
             raise AgenticUnsupportedOperationError(
                 f"create_environment({effect.env_type.value})",
                 "tmux",
                 "Only SHARED and WORKTREE environment types are supported",
             )
 
-        env_id = generate_environment_id(effect.name)
+    handle = AgenticEnvironmentHandle(
+        id=env_id,
+        env_type=effect.env_type,
+        name=effect.name,
+        working_dir=working_dir,
+        created_at=datetime.now(timezone.utc),
+        base_commit=effect.base_commit,
+        source_environment_id=effect.source_environment_id,
+    )
+    workflow.environments[env_id] = handle
+    world.event_log.log_environment_created(workflow.id, handle)
+    return handle
 
-        if effect.env_type == AgenticEnvironmentType.SHARED:
-            working_dir = effect.working_dir or str(self._working_dir)
-        else:  # WORKTREE
-            working_dir = self._create_worktree(env_id, effect.base_commit)
 
-        handle = AgenticEnvironmentHandle(
+def _get_environment(world: _TmuxWorld, effect: AgenticGetEnvironment) -> AgenticEnvironmentHandle:
+    workflow = _ensure_workflow(world)
+    handle = workflow.environments.get(effect.environment_id)
+    if not handle:
+        raise AgenticEnvironmentNotFoundError(effect.environment_id)
+    return handle
+
+
+def _delete_environment(world: _TmuxWorld, effect: AgenticDeleteEnvironment) -> bool:
+    workflow = _ensure_workflow(world)
+    handle = workflow.environments.get(effect.environment_id)
+    if not handle:
+        raise AgenticEnvironmentNotFoundError(effect.environment_id)
+
+    using_sessions = [
+        s.handle.name
+        for s in workflow.sessions.values()
+        if s.handle.environment_id == effect.environment_id
+    ]
+    if using_sessions and not effect.force:
+        raise AgenticEnvironmentInUseError(effect.environment_id, using_sessions)
+
+    if handle.env_type == AgenticEnvironmentType.WORKTREE:
+        _delete_worktree(world, handle.working_dir)
+
+    del workflow.environments[effect.environment_id]
+    return True
+
+
+def _create_session(world: _TmuxWorld, effect: AgenticCreateSession) -> AgenticSessionHandle:
+    workflow = _ensure_workflow(world)
+
+    if effect.name in workflow.sessions:
+        raise AgenticDuplicateNameError(effect.name, workflow.id)
+
+    if effect.environment_id:
+        env = workflow.environments.get(effect.environment_id)
+        if not env:
+            raise AgenticEnvironmentNotFoundError(effect.environment_id)
+        env_id = effect.environment_id
+        work_dir = Path(env.working_dir)
+    else:
+        # Create implicit shared environment
+        env_id = generate_environment_id("shared")
+        workflow.environments[env_id] = AgenticEnvironmentHandle(
             id=env_id,
-            env_type=effect.env_type,
-            name=effect.name,
-            working_dir=working_dir,
+            env_type=AgenticEnvironmentType.SHARED,
+            name="shared",
+            working_dir=str(world.working_dir),
             created_at=datetime.now(timezone.utc),
-            base_commit=effect.base_commit,
-            source_environment_id=effect.source_environment_id,
         )
+        work_dir = world.working_dir
 
-        self._workflow.environments[env_id] = handle
+    session_id = generate_session_id()
+    try:
+        pane_id = world.backend.new_session(
+            _session_config(session_name=_tmux_session_name(workflow, effect.name), work_dir=work_dir)
+        ).pane_id
+    except Exception as e:
+        raise AgenticServerError(f"Failed to create tmux session: {e}") from e
 
-        # Log environment creation
-        self._event_log.log_environment_created(self._workflow.id, handle)
+    handle = AgenticSessionHandle(
+        id=session_id,
+        name=effect.name,
+        workflow_id=workflow.id,
+        environment_id=env_id,
+        status=AgenticSessionStatus.PENDING,
+        created_at=datetime.now(timezone.utc),
+        title=effect.title or effect.name,
+        agent=effect.agent,
+        model=effect.model,
+    )
+    workflow.sessions[effect.name] = _TmuxSession(handle=handle, pane_id=pane_id)
+    workflow.session_by_id[session_id] = effect.name
 
-        return handle
+    world.event_log.log_session_created(workflow.id, handle)
+    world.event_log.log_session_bound_to_environment(workflow.id, env_id, effect.name)
+    return handle
 
-    def handle_get_environment(
-        self, effect: AgenticGetEnvironment
-    ) -> AgenticEnvironmentHandle:
-        """Handle AgenticGetEnvironment effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
 
-        handle = self._workflow.environments.get(effect.environment_id)
-        if not handle:
-            raise AgenticEnvironmentNotFoundError(effect.environment_id)
-        return handle
+def _get_session(world: _TmuxWorld, effect: AgenticGetSession) -> AgenticSessionHandle:
+    workflow = _ensure_workflow(world)
 
-    def handle_delete_environment(self, effect: AgenticDeleteEnvironment) -> bool:
-        """Handle AgenticDeleteEnvironment effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
+    if effect.name:
+        state = workflow.sessions.get(effect.name)
+        if not state:
+            raise AgenticSessionNotFoundError(effect.name, by_name=True)
+        return state.handle
 
-        handle = self._workflow.environments.get(effect.environment_id)
-        if not handle:
-            raise AgenticEnvironmentNotFoundError(effect.environment_id)
+    if effect.session_id:
+        return _session_state(world, effect.session_id)[1].handle
 
-        # Check for sessions using this environment
-        using_sessions = [
-            s.handle.name
-            for s in self._workflow.sessions.values()
-            if s.handle.environment_id == effect.environment_id
-        ]
+    raise ValueError("Either session_id or name must be provided")
 
-        if using_sessions and not effect.force:
-            raise AgenticEnvironmentInUseError(effect.environment_id, using_sessions)
 
-        # Clean up worktree if applicable
-        if handle.env_type == AgenticEnvironmentType.WORKTREE:
-            self._delete_worktree(handle.working_dir)
+def _abort_session(world: _TmuxWorld, effect: AgenticAbortSession) -> None:
+    workflow, state = _session_state(world, effect.session_id)
 
-        del self._workflow.environments[effect.environment_id]
-        return True
+    # Send Ctrl+C to abort
+    with contextlib.suppress(Exception):
+        world.backend.send_keys(state.pane_id, "C-c", literal=False, enter=False)
 
-    # -------------------------------------------------------------------------
-    # Session Effects
-    # -------------------------------------------------------------------------
+    world.backend.kill_session(_tmux_session_name(workflow, state.handle.name))
+    state.handle = replace(state.handle, status=AgenticSessionStatus.ABORTED)
 
-    def handle_create_session(
-        self, effect: AgenticCreateSession
-    ) -> AgenticSessionHandle:
-        """Handle AgenticCreateSession effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
 
-        # Check for duplicate name
-        if effect.name in self._workflow.sessions:
-            raise AgenticDuplicateNameError(effect.name, self._workflow.id)
+def _delete_session(world: _TmuxWorld, effect: AgenticDeleteSession) -> bool:
+    workflow, state = _session_state(world, effect.session_id)
+    name = state.handle.name
 
-        # Create or get environment
-        if effect.environment_id:
-            env = self._workflow.environments.get(effect.environment_id)
-            if not env:
-                raise AgenticEnvironmentNotFoundError(effect.environment_id)
-            env_id = effect.environment_id
-            work_dir = Path(env.working_dir)
-        else:
-            # Create implicit shared environment
-            env_id = generate_environment_id("shared")
-            env = AgenticEnvironmentHandle(
-                id=env_id,
-                env_type=AgenticEnvironmentType.SHARED,
-                name="shared",
-                working_dir=str(self._working_dir),
+    world.backend.kill_session(_tmux_session_name(workflow, name))
+    workflow.session_by_id.pop(effect.session_id, None)
+    workflow.sessions.pop(name, None)
+    return True
+
+
+def _send_message(world: _TmuxWorld, effect: AgenticSendMessage) -> AgenticMessageHandle:
+    workflow, state = _session_state(world, effect.session_id)
+    name = state.handle.name
+
+    if not world.backend.has_session(_tmux_session_name(workflow, name)):
+        raise AgenticSessionNotRunningError(effect.session_id, state.handle.status.value)
+
+    world.event_log.log_message_sent(workflow.id, name, effect.content, effect.wait)
+    world.backend.send_keys(state.pane_id, effect.content, literal=True, enter=True)
+
+    msg_id = f"msg_{time.time_ns()}"
+    state.message_history = (
+        *state.message_history,
+        {
+            "id": msg_id,
+            "role": "user",
+            "content": effect.content,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    _set_status(world, workflow, state, AgenticSessionStatus.RUNNING)
+
+    if effect.wait:
+        # Poll until completion or blocked
+        _wait_for_completion(world, workflow, state)
+        world.event_log.log_message_complete(workflow.id, name)
+
+    return AgenticMessageHandle(
+        id=msg_id,
+        session_id=effect.session_id,
+        role="user",
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _get_messages(world: _TmuxWorld, effect: AgenticGetMessages) -> list[AgenticMessage]:
+    _, state = _session_state(world, effect.session_id)
+
+    try:
+        output = world.backend.capture_pane(state.pane_id, 500)
+    except Exception:
+        output = ""
+
+    history = [
+        AgenticMessage(
+            id=msg["id"],
+            session_id=effect.session_id,
+            role=msg["role"],
+            content=msg["content"],
+            created_at=datetime.fromisoformat(msg["created_at"]),
+        )
+        for msg in state.message_history
+    ]
+    # The current pane output reads as the assistant's message.
+    current = (
+        [
+            AgenticMessage(
+                id=f"output_{time.time_ns()}",
+                session_id=effect.session_id,
+                role="assistant",
+                content=output,
                 created_at=datetime.now(timezone.utc),
             )
-            self._workflow.environments[env_id] = env
-            work_dir = self._working_dir
+        ]
+        if output
+        else []
+    )
+    messages = history + current
 
-        # Create tmux session
-        session_name = f"doeff-{self._workflow.id}-{effect.name}"
-        session_id = generate_session_id()
+    if effect.limit:
+        return messages[-effect.limit :]
+    return messages
 
-        try:
-            pane_id = self._backend.new_session(
-                _session_config(session_name=session_name, work_dir=work_dir)
-            ).pane_id
-        except Exception as e:
-            raise AgenticServerError(f"Failed to create tmux session: {e}") from e
 
-        handle = AgenticSessionHandle(
-            id=session_id,
-            name=effect.name,
-            workflow_id=self._workflow.id,
-            environment_id=env_id,
-            status=AgenticSessionStatus.PENDING,
-            created_at=datetime.now(timezone.utc),
-            title=effect.title or effect.name,
-            agent=effect.agent,
-            model=effect.model,
-        )
+def _next_event(world: _TmuxWorld, effect: AgenticNextEvent) -> AgenticEvent | AgenticEndOfEvents:
+    """Answer AgenticNextEvent by polling the pane."""
+    workflow, state = _session_state(world, effect.session_id)
+    session_name = _tmux_session_name(workflow, state.handle.name)
 
-        state = TmuxSessionState(handle=handle, pane_id=pane_id)
-        self._workflow.sessions[effect.name] = state
-        self._workflow.session_by_id[session_id] = effect.name
+    start = time.time()
+    while True:
+        if effect.timeout and (time.time() - start) > effect.timeout:
+            raise AgenticTimeoutError("next_event", effect.timeout)
 
-        # Log session creation
-        self._event_log.log_session_created(self._workflow.id, handle)
-        self._event_log.log_session_bound_to_environment(
-            self._workflow.id, env_id, effect.name
-        )
-
-        return handle
-
-    def handle_fork_session(self, effect: AgenticForkSession) -> AgenticSessionHandle:
-        """Handle AgenticForkSession effect - NOT SUPPORTED."""
-        raise AgenticUnsupportedOperationError(
-            "fork_session",
-            "tmux",
-            "Session forking is not supported with tmux backend",
-        )
-
-    def handle_get_session(self, effect: AgenticGetSession) -> AgenticSessionHandle:
-        """Handle AgenticGetSession effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        if effect.name:
-            state = self._workflow.sessions.get(effect.name)
-            if not state:
-                raise AgenticSessionNotFoundError(effect.name, by_name=True)
-            return state.handle
-
-        if effect.session_id:
-            name = self._workflow.session_by_id.get(effect.session_id)
-            if not name:
-                raise AgenticSessionNotFoundError(effect.session_id)
-            return self._workflow.sessions[name].handle
-
-        raise ValueError("Either session_id or name must be provided")
-
-    def handle_abort_session(self, effect: AgenticAbortSession) -> None:
-        """Handle AgenticAbortSession effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
-
-        state = self._workflow.sessions[name]
-        session_name = f"doeff-{self._workflow.id}-{name}"
-
-        # Send Ctrl+C to abort
-        with contextlib.suppress(Exception):
-            send_keys(state.pane_id, "C-c", literal=False, enter=False)
-
-        # Kill the tmux session
-        self._backend.kill_session(session_name)
-
-        # Update status
-        state.handle = AgenticSessionHandle(
-            id=state.handle.id,
-            name=state.handle.name,
-            workflow_id=state.handle.workflow_id,
-            environment_id=state.handle.environment_id,
-            status=AgenticSessionStatus.ABORTED,
-            created_at=state.handle.created_at,
-            title=state.handle.title,
-            agent=state.handle.agent,
-            model=state.handle.model,
-        )
-
-    def handle_delete_session(self, effect: AgenticDeleteSession) -> bool:
-        """Handle AgenticDeleteSession effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
-
-        session_name = f"doeff-{self._workflow.id}-{name}"
-        self._backend.kill_session(session_name)
-
-        self._workflow.session_by_id.pop(effect.session_id, None)
-        self._workflow.sessions.pop(name, None)
-
-        return True
-
-    # -------------------------------------------------------------------------
-    # Message Effects
-    # -------------------------------------------------------------------------
-
-    def handle_send_message(self, effect: AgenticSendMessage) -> AgenticMessageHandle:
-        """Handle AgenticSendMessage effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
-
-        state = self._workflow.sessions[name]
-
-        # Check if session is running
-        if not self._backend.has_session(f"doeff-{self._workflow.id}-{name}"):
-            raise AgenticSessionNotRunningError(
-                effect.session_id, state.handle.status.value
+        if not world.backend.has_session(session_name):
+            return AgenticEndOfEvents(
+                reason="session_done",
+                final_status=AgenticSessionStatus.DONE,
             )
 
-        # Log message sent
-        self._event_log.log_message_sent(
-            self._workflow.id, name, effect.content, effect.wait
-        )
-
-        # Send message to tmux
-        self._backend.send_keys(state.pane_id, effect.content, literal=True, enter=True)
-
-        # Record message
-        msg_id = f"msg_{time.time_ns()}"
-        state.message_history.append(
-            {
-                "id": msg_id,
-                "role": "user",
-                "content": effect.content,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-
-        # Update status to running
-        old_status = state.handle.status
-        state.handle = AgenticSessionHandle(
-            id=state.handle.id,
-            name=state.handle.name,
-            workflow_id=state.handle.workflow_id,
-            environment_id=state.handle.environment_id,
-            status=AgenticSessionStatus.RUNNING,
-            created_at=state.handle.created_at,
-            title=state.handle.title,
-            agent=state.handle.agent,
-            model=state.handle.model,
-        )
-
-        # Log status change if different
-        if old_status != AgenticSessionStatus.RUNNING:
-            self._event_log.log_session_status(
-                self._workflow.id, name, AgenticSessionStatus.RUNNING
-            )
-
-        if effect.wait:
-            # Poll until completion or blocked
-            self._wait_for_completion(state)
-            # Log message complete
-            self._event_log.log_message_complete(self._workflow.id, name)
-
-        return AgenticMessageHandle(
-            id=msg_id,
-            session_id=effect.session_id,
-            role="user",
-            created_at=datetime.now(timezone.utc),
-        )
-
-    def handle_get_messages(self, effect: AgenticGetMessages) -> list[AgenticMessage]:
-        """Handle AgenticGetMessages effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
-
-        state = self._workflow.sessions[name]
-
-        # Get output from tmux
         try:
-            output = self._backend.capture_pane(state.pane_id, 500)
+            output = world.backend.capture_pane(state.pane_id, 50)
         except Exception:
-            output = ""
-
-        # Create a pseudo-message from output
-        messages = []
-        for msg in state.message_history:
-            messages.append(
-                AgenticMessage(
-                    id=msg["id"],
-                    session_id=effect.session_id,
-                    role=msg["role"],
-                    content=msg["content"],
-                    created_at=datetime.fromisoformat(msg["created_at"]),
-                )
+            return AgenticEndOfEvents(
+                reason="session_error",
+                final_status=AgenticSessionStatus.ERROR,
             )
 
-        # Add current output as assistant message
-        if output:
-            messages.append(
-                AgenticMessage(
-                    id=f"output_{time.time_ns()}",
-                    session_id=effect.session_id,
-                    role="assistant",
-                    content=output,
-                    created_at=datetime.now(timezone.utc),
-                )
-            )
+        new_status = detect_status(output)
+        if new_status != state.handle.status:
+            old_status = state.handle.status
+            state.handle = replace(state.handle, status=new_status)
 
-        if effect.limit:
-            messages = messages[-effect.limit :]
-
-        return messages
-
-    # -------------------------------------------------------------------------
-    # Event Effects
-    # -------------------------------------------------------------------------
-
-    def handle_next_event(
-        self, effect: AgenticNextEvent
-    ) -> AgenticEvent | AgenticEndOfEvents:
-        """Handle AgenticNextEvent effect - uses polling."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
-
-        state = self._workflow.sessions[name]
-        session_name = f"doeff-{self._workflow.id}-{name}"
-
-        start = time.time()
-        while True:
-            if effect.timeout and (time.time() - start) > effect.timeout:
-                raise AgenticTimeoutError("next_event", effect.timeout)
-
-            # Check if session still exists
-            if not self._backend.has_session(session_name):
+            if new_status.is_terminal():
                 return AgenticEndOfEvents(
-                    reason="session_done",
-                    final_status=AgenticSessionStatus.DONE,
+                    reason=f"session_{new_status.value}",
+                    final_status=new_status,
                 )
 
-            # Capture output and detect status
-            try:
-                output = self._backend.capture_pane(state.pane_id, 50)
-            except Exception:
-                return AgenticEndOfEvents(
-                    reason="session_error",
-                    final_status=AgenticSessionStatus.ERROR,
-                )
-
-            new_status = detect_status(output)
-
-            # Check for status change
-            if new_status != state.handle.status:
-                old_status = state.handle.status
-                state.handle = AgenticSessionHandle(
-                    id=state.handle.id,
-                    name=state.handle.name,
-                    workflow_id=state.handle.workflow_id,
-                    environment_id=state.handle.environment_id,
-                    status=new_status,
-                    created_at=state.handle.created_at,
-                    title=state.handle.title,
-                    agent=state.handle.agent,
-                    model=state.handle.model,
-                )
-
-                if new_status.is_terminal():
-                    return AgenticEndOfEvents(
-                        reason=f"session_{new_status.value}",
-                        final_status=new_status,
-                    )
-
-                return AgenticEvent(
-                    event_type="session.status",
-                    session_id=effect.session_id,
-                    data={"old": old_status.value, "new": new_status.value},
-                    timestamp=datetime.now(timezone.utc),
-                )
-
-            # Check for output change
-            output_hash = hashlib.sha256(output.encode()).hexdigest()[:16]
-            if output_hash != state.last_output_hash:
-                state.last_output_hash = output_hash
-                return AgenticEvent(
-                    event_type="poll.output",
-                    session_id=effect.session_id,
-                    data={"snippet": output[-500:]},
-                    timestamp=datetime.now(timezone.utc),
-                )
-
-            # Poll interval
-            time.sleep(1.0)
-
-    # -------------------------------------------------------------------------
-    # Status Effects
-    # -------------------------------------------------------------------------
-
-    def handle_get_session_status(
-        self, effect: AgenticGetSessionStatus
-    ) -> AgenticSessionStatus:
-        """Handle AgenticGetSessionStatus effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
-
-        state = self._workflow.sessions[name]
-        self._refresh_session_status(state)
-
-        return state.handle.status
-
-    def handle_supports_capability(self, effect: AgenticSupportsCapability) -> bool:
-        """Handle AgenticSupportsCapability effect."""
-        return effect.capability in self.SUPPORTED_CAPABILITIES
-
-    # -------------------------------------------------------------------------
-    # Helper Methods
-    # -------------------------------------------------------------------------
-
-    def _ensure_workflow(self) -> None:
-        """Ensure workflow is created."""
-        if self._workflow is None:
-            self.handle_create_workflow(AgenticCreateWorkflow())
-
-    def _create_worktree(self, env_id: str, base_commit: str | None) -> str:
-        """Create a git worktree."""
-        worktree_dir = Path(f"/tmp/doeff/worktrees/{env_id}")
-        worktree_dir.parent.mkdir(parents=True, exist_ok=True)
-
-        cmd = ["git", "worktree", "add", str(worktree_dir)]
-        if base_commit:
-            cmd.append(base_commit)
-        else:
-            cmd.extend(["--detach", "HEAD"])
-
-        subprocess.run(cmd, cwd=self._working_dir, check=True, capture_output=True)
-        return str(worktree_dir)
-
-    def _delete_worktree(self, path: str) -> None:
-        """Remove a git worktree."""
-        try:
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", path],
-                cwd=self._working_dir,
-                check=True,
-                capture_output=True,
+            return AgenticEvent(
+                event_type="session.status",
+                session_id=effect.session_id,
+                data={"old": old_status.value, "new": new_status.value},
+                timestamp=datetime.now(timezone.utc),
             )
-        except subprocess.CalledProcessError:
-            shutil.rmtree(path, ignore_errors=True)
 
-    def _refresh_session_status(self, state: TmuxSessionState) -> None:
-        """Refresh session status from tmux."""
-        assert self._workflow is not None
-
-        session_name = f"doeff-{self._workflow.id}-{state.handle.name}"
-        old_status = state.handle.status
-
-        if not self._backend.has_session(session_name):
-            new_status = AgenticSessionStatus.DONE
-            state.handle = AgenticSessionHandle(
-                id=state.handle.id,
-                name=state.handle.name,
-                workflow_id=state.handle.workflow_id,
-                environment_id=state.handle.environment_id,
-                status=new_status,
-                created_at=state.handle.created_at,
-                title=state.handle.title,
-                agent=state.handle.agent,
-                model=state.handle.model,
+        output_hash = hashlib.sha256(output.encode()).hexdigest()[:16]
+        if output_hash != state.last_output_hash:
+            state.last_output_hash = output_hash
+            return AgenticEvent(
+                event_type="poll.output",
+                session_id=effect.session_id,
+                data={"snippet": output[-500:]},
+                timestamp=datetime.now(timezone.utc),
             )
-            # Log status change
-            if old_status != new_status:
-                self._event_log.log_session_status(
-                    self._workflow.id, state.handle.name, new_status
-                )
-            return
 
-        try:
-            output = self._backend.capture_pane(state.pane_id, 50)
-            new_status = detect_status(output)
-            state.handle = AgenticSessionHandle(
-                id=state.handle.id,
-                name=state.handle.name,
-                workflow_id=state.handle.workflow_id,
-                environment_id=state.handle.environment_id,
-                status=new_status,
-                created_at=state.handle.created_at,
-                title=state.handle.title,
-                agent=state.handle.agent,
-                model=state.handle.model,
+        time.sleep(1.0)
+
+
+def _get_session_status(
+    world: _TmuxWorld, effect: AgenticGetSessionStatus
+) -> AgenticSessionStatus:
+    workflow, state = _session_state(world, effect.session_id)
+    _refresh_session_status(world, workflow, state)
+    return state.handle.status
+
+
+def _answer_workflow_effect(world: _TmuxWorld, effect: WorkflowEffect) -> object:
+    """The tmux handler's answer to a workflow or environment effect."""
+    match effect:
+        case AgenticCreateWorkflow():
+            return _create_workflow(world, effect)
+        case AgenticGetWorkflow():
+            return _get_workflow(world, effect)
+        case AgenticCreateEnvironment():
+            return _create_environment(world, effect)
+        case AgenticGetEnvironment():
+            return _get_environment(world, effect)
+        case AgenticDeleteEnvironment():
+            return _delete_environment(world, effect)
+
+
+def _answer_session_effect(world: _TmuxWorld, effect: SessionEffect) -> object:
+    """The tmux handler's answer to a session lifecycle effect (forking is refused)."""
+    match effect:
+        case AgenticCreateSession():
+            return _create_session(world, effect)
+        case AgenticForkSession():
+            raise AgenticUnsupportedOperationError(
+                "fork_session",
+                "tmux",
+                "Session forking is not supported with tmux backend",
             )
-            # Log status change
-            if old_status != new_status:
-                self._event_log.log_session_status(
-                    self._workflow.id, state.handle.name, new_status
-                )
-        except Exception:
-            pass
+        case AgenticGetSession():
+            return _get_session(world, effect)
+        case AgenticAbortSession():
+            return _abort_session(world, effect)
+        case AgenticDeleteSession():
+            return _delete_session(world, effect)
 
-    def _wait_for_completion(
-        self, state: TmuxSessionState, timeout: float = 300.0
-    ) -> None:
-        """Wait for session to complete or become blocked."""
-        assert self._workflow is not None
 
-        session_name = f"doeff-{self._workflow.id}-{state.handle.name}"
-        start = time.time()
-
-        while time.time() - start < timeout:
-            if not self._backend.has_session(session_name):
-                return
-
-            self._refresh_session_status(state)
-
-            if state.handle.status.is_terminal() or state.handle.status == AgenticSessionStatus.BLOCKED:
-                return
-
-            time.sleep(1.0)
+def _answer_message_effect(world: _TmuxWorld, effect: MessageEffect) -> object:
+    """The tmux handler's answer to a message, event or status effect."""
+    match effect:
+        case AgenticSendMessage():
+            return _send_message(world, effect)
+        case AgenticGetMessages():
+            return _get_messages(world, effect)
+        case AgenticNextEvent():
+            return _next_event(world, effect)
+        case AgenticGetSessionStatus():
+            return _get_session_status(world, effect)
+        case AgenticSupportsCapability():
+            return effect.capability in _SUPPORTED_CAPABILITIES
 
 
 # =============================================================================
@@ -914,83 +738,74 @@ class TmuxHandler:
 # =============================================================================
 
 
-def _is_lazy_program_value(value: object) -> bool:
-    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
-        value, "__doeff_effect_base__", False
-    ))
-
-
-def _as_protocol_handler(
-    handler_fn: Callable[[Any], Any],
-) -> Callable[[Any, Any], Any]:
-    """Adapt an effect -> value handler into (effect, k) protocol."""
-
-    @do
-    def _wrapped(effect: Effect, k: Any):
-        result = handler_fn(effect)
-
-        if _is_lazy_program_value(result):
-            resolved = yield result
-            return (yield Resume(k, resolved))
-
-        return (yield Resume(k, result))
-
-    return _wrapped
-
-
 def tmux_handler(
     working_dir: str | None = None,
     *,
     backend: Any | None = None,
 ) -> ProgramHandler:
-    """Create VM-compatible handlers for agentic effects using tmux.
+    """Return a doeff handler that answers the agentic effects with tmux sessions.
+
+    The workflow, environments and sessions live in the handler's closure, so each
+    call starts a fresh workflow. Effects it does not own go to the handlers
+    outside it.
 
     Args:
         working_dir: Default working directory
-
-    Returns:
-        Protocol handler for direct Program -> Program composition.
+        backend: The doeff-agents session backend (default: doeff-agents' default
+            backend). Building the handler fails if tmux is not available.
 
     Usage:
         from doeff import run
         from doeff_agentic import tmux_handler
         from doeff_core_effects.scheduler import scheduled
 
-        handlers = tmux_handler()
-        program = handlers(my_workflow())
+        program = tmux_handler()(my_workflow())
         result = run(scheduled(program))
     """
-    handler = TmuxHandler(working_dir=working_dir, backend=backend)
-
-    effect_handlers: tuple[tuple[type[Any], Callable[[Any, Any], Any]], ...] = (
-        (AgenticCreateWorkflow, _as_protocol_handler(handler.handle_create_workflow)),
-        (AgenticGetWorkflow, _as_protocol_handler(handler.handle_get_workflow)),
-        (AgenticCreateEnvironment, _as_protocol_handler(handler.handle_create_environment)),
-        (AgenticGetEnvironment, _as_protocol_handler(handler.handle_get_environment)),
-        (AgenticDeleteEnvironment, _as_protocol_handler(handler.handle_delete_environment)),
-        (AgenticCreateSession, _as_protocol_handler(handler.handle_create_session)),
-        (AgenticForkSession, _as_protocol_handler(handler.handle_fork_session)),
-        (AgenticGetSession, _as_protocol_handler(handler.handle_get_session)),
-        (AgenticAbortSession, _as_protocol_handler(handler.handle_abort_session)),
-        (AgenticDeleteSession, _as_protocol_handler(handler.handle_delete_session)),
-        (AgenticSendMessage, _as_protocol_handler(handler.handle_send_message)),
-        (AgenticGetMessages, _as_protocol_handler(handler.handle_get_messages)),
-        (AgenticNextEvent, _as_protocol_handler(handler.handle_next_event)),
-        (AgenticGetSessionStatus, _as_protocol_handler(handler.handle_get_session_status)),
-        (AgenticSupportsCapability, _as_protocol_handler(handler.handle_supports_capability)),
+    world = _TmuxWorld(
+        working_dir=Path(working_dir) if working_dir else Path.cwd(),
+        backend=backend or _resolve_default_backend(),
+        event_log=EventLogWriter(),
+        workflow_index=WorkflowIndex(),
     )
+    if not world.backend.is_available():
+        raise AgenticServerError("tmux is not installed or not in PATH")
 
-    @do
-    def protocol_handler(effect: Effect, k: Any):
-        for effect_type, effect_handler in effect_handlers:
-            if isinstance(effect, effect_type):
-                return (yield effect_handler(effect, k))
-        yield Pass(effect, k)
+    @handler
+    def answer_tmux_agentic(effect: Effect, k: Any):
+        """Answer an agentic effect from the tmux world; pass every other effect outward."""
+        match effect:
+            case (
+                AgenticCreateWorkflow()
+                | AgenticGetWorkflow()
+                | AgenticCreateEnvironment()
+                | AgenticGetEnvironment()
+                | AgenticDeleteEnvironment()
+            ):
+                value = _answer_workflow_effect(world, effect)
+            case (
+                AgenticCreateSession()
+                | AgenticForkSession()
+                | AgenticGetSession()
+                | AgenticAbortSession()
+                | AgenticDeleteSession()
+            ):
+                value = _answer_session_effect(world, effect)
+            case (
+                AgenticSendMessage()
+                | AgenticGetMessages()
+                | AgenticNextEvent()
+                | AgenticGetSessionStatus()
+                | AgenticSupportsCapability()
+            ):
+                value = _answer_message_effect(world, effect)
+            case _:
+                return (yield Pass(effect, k))
+        return (yield Resume(k, value))
 
-    return _program_handler(protocol_handler)
+    return answer_tmux_agentic
 
 
 __all__ = [
-    "TmuxHandler",
     "tmux_handler",
 ]
