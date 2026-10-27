@@ -123,7 +123,7 @@ def hyx_row_matches_anyXquestion_markX(where_any: FrozenMap, value: FrozenMap) -
 def hyx_descending_valueXquestion_markX(value: object) -> bool:
     ...
 
-def projected(decl: TableDecl, fields: tuple | None, value: FrozenMap) -> FrozenMap:
+def projected(decl: TableDecl, fields: tuple, value: FrozenMap) -> FrozenMap:
     ...
 
 def listed_row(decl: TableDecl, fields: tuple | None, row: Row) -> Row:
