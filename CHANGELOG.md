@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so the next release
+  installs on Alpine Linux without a Rust toolchain. A daily workflow builds the musllinux and the manylinux aarch64
+  wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.
+
 ### Changed
 
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
