@@ -32,13 +32,17 @@
 ;; coordinator は pool- で始まる能力を node の label から導かない(coordinator/protocol/cluster_json の naming-from-json が断る)。
 (val POOL-PREFIX "pool-")
 (val POOL-PATTERN (re.compile r"pool-[a-z0-9][a-z0-9.-]*"))
+;; 機体の印の頭: worker の雛形が機体 node の worker に渡す能力 host-<node>(job を 1 台の機体に縛る印 — worker/core/room_rules の
+;; launch-provides)。機体ごとの job の判断(coordinator/core/failover_policy の per-machine? — 雛形を機体ごとに広げた job の印を読む)も
+;; この頭を読む。
+(val HOST-PREFIX "host-")
 
 
 (defk pool-refusal [name]
   {:pre [(: name str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "置ける組の印 1 つが印として受けられない理由(受けられれば None)— 機体の印・導く能力・頭の無い名を組の印にしないため。"
   (cond
-    (.startswith name "host-") (.format "{!r} は機体の印 — 組の印は pool- で始める" name)
+    (.startswith name HOST-PREFIX) (.format "{!r} は機体の印 — 組の印は pool- で始める" name)
     (not (.startswith name POOL-PREFIX))
       (.format "{!r} が pool- で始まらない(機体の印 host- と coordinator が node の label から導く能力は組の印に書かない)" name)
     (not (POOL-PATTERN.fullmatch name)) (.format "{!r} は pool- の後を小文字・数字・`.`・`-` で書く" name)

@@ -64,7 +64,8 @@
 
 (defrecord JobTakers
   "置く常駐の job 1 つと、置ける worker: job = 常駐の job・takers = 置ける worker の名(照らす worker の順)・per-machine = 機体ごとの
-   job(needs が雛形の能力だけ — 置ける worker のそれぞれに 1 つずつ動き、他の機体へ移らない)か。"
+   job(coordinator/core/failover_policy の per-machine? — needs が雛形の能力だけか、それに機体の印を 1 つ足して機体ごとに広げた物。
+   置ける worker のそれぞれに 1 つずつ動き、他の機体へ移らない)か。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ ResidentJob job)
   (#^ (get tuple #(str ...)) takers)

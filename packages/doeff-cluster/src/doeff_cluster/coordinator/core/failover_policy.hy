@@ -3,8 +3,9 @@
 ;;; coordinator は、他に置ける worker が在る job を、担い手が移し替えの期限を過ぎて黙ったら外して他へ移す(cluster_policy の #2804 の註)。
 ;;; 移る先が在るか・移った後に枠と memory に入るかは置く時に照らさない(移る先は担う数の少ない順に選び、memory は見ない)ので、
 ;;; 宣言の側がこの判断で前もって照らす。照らす規則は 4 つ(1 件目で止めず、破りをみな文にする):
-;;;   1. 置き先: 機体ごとの job(needs が雛形の能力だけ — 置ける worker のそれぞれに 1 つずつ動く)と例外の表の job を除き、どの常駐の
-;;;      job も置ける worker が 2 台以上ある。言い換えると、どの 1 台を止めても、その機体にしか置けない job が 0。
+;;;   1. 置き先: 機体ごとの job(per-machine? — needs が雛形の能力だけか、それに機体の印 host-<機体> を 1 つ足して機体ごとに広げた
+;;;      物 — 置ける worker のそれぞれに 1 つずつ動く)と例外の表の job を除き、どの常駐の job も置ける worker が 2 台以上ある。言い換えると、
+;;;      どの 1 台を止めても、その機体にしか置けない job が 0。
 ;;;   2. 枠: どの worker も、置ける常駐の job の全部(と handoff の job が在れば surge 1)を自分の枠に数えて job-room-of が 0 以上。
 ;;;      移った job は元の機体が戻っても戻らないので、「今どこに在るか」でなく「置けるか」で数える — この数え方なら、どの置き方の後の
 ;;;      どの 1 台の停止でも枠が足りる。等号は求めない(予備の枠を持ってよい)。枠の式は写さず job-room-of を呼ぶ。
@@ -18,18 +19,34 @@
 (import doeff_cluster.coordinator.intent.cluster_model [WorkerLoad])
 (import doeff_cluster.coordinator.intent.failover_model [FailoverWorker ResidentJob ExemptJob KeptApart JobTakers DownSpike])
 (import doeff_cluster.coordinator.core.cluster_policy [placeable job-room-of])
+(import doeff_cluster.shared.core.capabilities [HOST-PREFIX])
 
 ;; handoff の job を置ける worker が枠に足す並べた置き先(surge)の数。入れ替えは worker ごとに 1 つずつ数える。
 (val HANDOFF-SURGE 1)
 
 
+(defk per-machine? [needs template]
+  {:pre [(: needs tuple) (: template tuple)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "needs の job が機体ごとの job(置ける worker のそれぞれに 1 つずつ動き、止まった機体から他の機体へ移らない job)かを知るため — 定義点は
+   ここ 1 つ(この判断の規則 1・3 と、上に載る系が「止まった worker が移せない job」を分ける数えが同じ答えを読む)。機体ごとの job =
+   needs が雛形の能力 template だけの job(雛形の job — どの機体の worker も名乗るので、どの機体にも置ける)か、雛形の能力の 1 つ以上に
+   機体の印 host-<機体> を 1 つだけ足した job(雛形を機体ごとに広げた job — 広げた機体の上でだけ動き、雛形の機体ごとを継ぐ)。雛形の能力を
+   持たず機体の印だけを持つ job は、1 台に縛った job で機体ごとの job ではない(止まれば移る先が無い — 規則 1 が赤にする)。"
+  (val marks (- (set needs) (set template)))
+  (or (not marks)
+      (and (= (len marks) 1)
+           (.startswith (next (iter marks)) HOST-PREFIX)
+           (bool (& (set needs) (set template))))))
+
+
 (defk takers-of [job workers template]
   {:pre [(: job ResidentJob) (: workers tuple) (: template tuple)] :post [(: % JobTakers)] :tags {:context "coordinator" :role "judgment"}}
-  "job を置ける worker(workers の順)と、機体ごとの job か(needs が雛形の能力 template だけ)を知るため — 置き方の規則 placeable を
-   そのまま呼ぶ。"
+  "job を置ける worker(workers の順)と、機体ごとの job か(per-machine? — 雛形の能力 template で判じる)を知るため — 置き方の規則
+   placeable をそのまま呼ぶ。"
+  (<- per-machine bool (per-machine? job.needs template))
   (JobTakers :job job
              :takers (tuple (gfor w workers :if (placeable job.needs w.info) w.info.name))
-             :per-machine (<= (set job.needs) (set template))))
+             :per-machine per-machine))
 
 
 (defk place-refusal [placed]

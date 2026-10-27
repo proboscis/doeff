@@ -29,7 +29,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import enum [StrEnum])  ; defenum の展開が使う
 (import json)
-(import doeff_cluster.shared.core.capabilities [capabilities-of pool-refusal])
+(import doeff_cluster.shared.core.capabilities [HOST-PREFIX capabilities-of pool-refusal])
 
 ;; 枠の file を読み直す間。kubelet が ConfigMap の変更を Pod の file へ写すのに 1 分前後かかるので、拍ごとに読まなくても遅れは増えない。
 (val READ-EVERY-MS (* 10 1000))
@@ -122,7 +122,7 @@
   "雛形が機体 node の worker に起動の引数 --provides で渡す能力(host-<node>・雛形の能力 TEMPLATE-PROVIDES・env の WORKER_PROVIDES_EXTRA の
    名 extra — 空の名は飛ばす)を、起動の入口と同じ読み(capabilities-of — 名の順の重なりの無い tuple)で知るため。受けられない名は
    BodyInvalid(ValueError の子)。"
-  (capabilities-of (lfor n (+ #((+ "host-" node)) TEMPLATE-PROVIDES extra) :if n n) "--provides"))
+  (capabilities-of (lfor n (+ #((+ HOST-PREFIX node)) TEMPLATE-PROVIDES extra) :if n n) "--provides"))
 
 
 (defk announced-provides [provides pools]

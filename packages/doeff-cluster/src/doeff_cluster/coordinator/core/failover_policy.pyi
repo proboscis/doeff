@@ -10,7 +10,11 @@ from doeff_cluster.coordinator.intent.failover_model import JobTakers as JobTake
 from doeff_cluster.coordinator.intent.failover_model import DownSpike as DownSpike
 from doeff_cluster.coordinator.core.cluster_policy import placeable as placeable
 from doeff_cluster.coordinator.core.cluster_policy import job_room_of as job_room_of
+from doeff_cluster.shared.core.capabilities import HOST_PREFIX as HOST_PREFIX
 HANDOFF_SURGE: int
+
+def hyx_per_machineXquestion_markX(needs: tuple, template: tuple) -> _Program[bool, object]:
+    ...
 
 def takers_of(job: ResidentJob, workers: tuple, template: tuple) -> _Program[JobTakers, object]:
     ...
