@@ -4,8 +4,9 @@
 ;;; doeff-effect-analyzer で job の土台の引数に本番の土台を束ねて読み、Program が自分で並べた handler を通した後に残る effect を見る。
 ;;; 読めない handler・追えない所は閉じていると数えない。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure closed?])
-(import tests.fixtures.closure_programs [job untranslated-job tried-job untranslated-tried-job production-foundation
+(import doeff_cluster.foundation.foundation_check [FoundationClosure UnreadDeclaration foundation-closure closed?])
+(import doeff_core_effects.effects [Ask])
+(import tests.fixtures.closure_programs [Ping Raw job untranslated-job tried-job untranslated-tried-job production-foundation
                                          clockless-foundation unscheduled-foundation opaque-foundation])
 
 
@@ -55,3 +56,16 @@
   (<- closure FoundationClosure (foundation-closure job))
   (assert closure.unresolved closure)
   (assert (not (closed? closure))))
+
+
+(deftest test-a-declaration-the-caller-supplies-reads-an-unreadable-handler-where-it-is-placed
+  ;; 呼び手が読めない handler の答えと出す effect を知る時(UnreadDeclaration): その handler は unknown に出ず、置いた所で宣言から読み、
+  ;; 出す effect は外側の handler へ渡る — 外の設定の handler が答える Ask は閉じ、外に答えの無い Ping はその handler の名つきの gap。
+  (<- closed FoundationClosure (foundation-closure job :foundation opaque-foundation
+                                                  :unread #((UnreadDeclaration :part "opaque_world" :handles #(Raw) :effects #(Ask)))))
+  (assert (closed? closed) closed)
+  (<- owed FoundationClosure (foundation-closure job :foundation opaque-foundation
+                                                :unread #((UnreadDeclaration :part "opaque_world" :handles #(Raw) :effects #(Ping)))))
+  (assert (= owed.unknown #()) owed)
+  (assert (= (len owed.gaps) 1) owed)
+  (assert (and (in "Ping ← " (get owed.gaps 0)) (in "opaque_world" (get owed.gaps 0))) owed))

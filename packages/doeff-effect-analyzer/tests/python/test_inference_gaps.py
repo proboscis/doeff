@@ -17,6 +17,8 @@ foundation" check (#833, foundation_check.hy), whose fixture had to fall back to
    and was "not found in source".
 """
 
+import importlib
+
 import pytest
 from doeff_effect_analyzer.cli import main
 from doeff_effect_analyzer.handler_effects import (
@@ -27,7 +29,7 @@ from doeff_effect_analyzer.handler_effects import (
     check_coverage,
     residual,
 )
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer.program_effects import SuppliedDeclaration, analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
@@ -618,6 +620,36 @@ def test_a_body_wrapper_that_answers_nothing_declares_what_it_performs(pkg: str)
     assert _types(gap.effect for gap in check_coverage([], [wrapper]).gaps) == {"Tick"}
     closed = check_coverage([], [analyze_handler(f"{pkg}.handlers:ticker"), wrapper])
     assert closed.complete, closed
+
+
+def test_a_supplied_declaration_reads_an_unreadable_handler_where_it_is_placed(pkg: str) -> None:
+    # The caller knows what the unreadable table_handler() answers (Nap) and performs when it
+    # answers (Ping): the handler is read from that, so what it performs goes outward — to a
+    # handler that answers it, or a gap named after the handler — and it is not named unknown.
+    effects = importlib.import_module(f"{pkg}.effects")
+    report = analyze_program(f"{pkg}.programs:unreadable_scoped")
+    supplied = (SuppliedDeclaration("table_handler(", (effects.Nap,), (effects.Ping,)),)
+
+    bare = check_coverage(report, [], supplied=supplied)
+    assert bare.unknown_handlers == ()
+    assert {(gap.effect.__name__, gap.origin) for gap in bare.gaps} == {
+        ("Tick", report.target),
+        ("Ping", "table_handler()"),
+    }
+    env = [
+        analyze_handler(f"{pkg}.handlers:raw_world"),
+        analyze_handler(f"{pkg}.handlers:translate"),
+        analyze_handler(f"{pkg}.handlers:ticker"),
+    ]
+    answered = check_coverage(report, env, supplied=supplied)
+    assert answered.complete, answered
+    # Counter-example: without the declaration the handler stays unknown and absorbs nothing.
+    unsupplied = check_coverage(report, env)
+    assert unsupplied.unknown_handlers == ("table_handler()",)
+    assert _types(gap.effect for gap in unsupplied.gaps) == {"Nap"}
+    # A declaration for another name leaves it unknown.
+    other = (SuppliedDeclaration("other_handler(", (effects.Nap,), (effects.Ping,)),)
+    assert check_coverage(report, env, supplied=other).unknown_handlers == ("table_handler()",)
 
 
 def test_a_declaration_that_disagrees_with_the_clauses_is_reported(pkg: str) -> None:

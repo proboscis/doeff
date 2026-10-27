@@ -10,8 +10,14 @@ class FoundationClosure:
     unknown: tuple[str, ...]
     unresolved: tuple[str, ...]
 
+@dataclass(frozen=True, kw_only=True)
+class UnreadDeclaration:
+    part: str
+    handles: tuple[type, ...]
+    effects: tuple[type, ...]
+
 def hyx_closedXquestion_markX(closure: FoundationClosure) -> bool:
     ...
 
-def foundation_closure(job: Callable, *, foundation: Callable | None=None, parameter: str='foundation', fold: tuple[str, ...]=...) -> _Program[FoundationClosure, object]:
+def foundation_closure(job: Callable, *, foundation: Callable | None=None, parameter: str='foundation', fold: tuple[str, ...]=..., unread: tuple[UnreadDeclaration, ...]=...) -> _Program[FoundationClosure, object]:
     ...
