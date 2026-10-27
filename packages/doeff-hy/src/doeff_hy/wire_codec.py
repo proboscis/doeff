@@ -33,6 +33,7 @@ import inspect
 import json
 import json.encoder
 import math
+import operator
 import re
 import sys
 import threading
@@ -44,6 +45,7 @@ from typing import Any, Final, ForwardRef, Generic, TypeAlias, TypeGuard, TypeVa
 
 # 名を _ で始めて読む: この module の公開の名は Codec と codec_of と row_codec_of だけ(Malformed は wire_malformed・OpaqueJson は json_value が出す)。
 from doeff_hy.json_value import OpaqueJson as _OpaqueJson
+from doeff_hy.record_runtime import RECORD_PARAMS as _RECORD_PARAMS
 from doeff_hy.wire_malformed import Malformed as _Malformed
 from doeff_hy.wire_malformed import MalformedField as _MalformedField
 
@@ -71,6 +73,13 @@ class _RefusedError(Exception):
         self.problems = problems
 
 
+class _SlowPathError(Exception):
+    """速い道(_Node.fast)が、素の値として読めない所(凍らせていない派生の型・孤立した surrogate・深すぎる入れ子)に会った —
+    Codec は今までの道(_plain で写し直してから decode)で読み直す。"""
+
+    __slots__ = ()
+
+
 def _refuse(kind: str, msg: str) -> _RefusedError:
     """判じ手が値を断る時の 1 つの誤り(場所は判じ手の所 — 呼び手が鍵を足す)。"""
     return _RefusedError([((), kind, msg)])
@@ -93,6 +102,12 @@ def _expected(values: tuple[str, ...]) -> str:
 # --- 判じ手 -------------------------------------------------------------------------------------------------------------------
 # どの判じ手も、JSON を json.loads で読んだ素の値(dict・list・str・int・float・bool・None)を受ける。凍らせた値と OpaqueJson は
 # Codec.decode が先に素の値へ戻す(_plain)。decode は値を返すか _RefusedError を投げる。
+#
+# 速い道(fast — card ki-c43f34494b42): Codec は先に fast で読み、入力を _plain で写し直さない。fast は json.loads の素の値と、凍らせた
+# FrozenMap(写像)・tuple を、そのまま読む。それ以外の所(str や int の派生・OpaqueJson・set など)は、その所だけを _plain で写して
+# decode に渡す(_Node.fast — 今までの道と同じ判じ方)。孤立した surrogate・深すぎる入れ子は _SlowPathError で、Codec が今までの道で
+# 読み直す。fast が値を返すのは、入力の全部を読んで、どの所も今までの道と同じに判じた時だけ。断った時(_RefusedError)も Codec は
+# 今までの道で読み直して、誤りの列を今までどおり全部集める(fast は最初の誤りで止まる)。room = まだ入れる入れ子の階層の数(_plain と同じ)。
 
 
 class _Node:
@@ -113,10 +128,25 @@ class _Node:
         """JSON の素の値を、この型の値へ解いて確かめる(受けない値は _RefusedError — 誤りの場所はこの判じ手の所から)。"""
         raise NotImplementedError
 
+    def fast(self, value: object, room: int) -> object:
+        """速い道で読む(上の註)。ここは判じ手ごとの速い形に当たらない所 — その所だけを _plain で写して decode に渡す。写せない
+        所(孤立した surrogate・深すぎる入れ子)は _SlowPathError(union の腕が断ったと読まないため)。"""
+        try:
+            plain = _plain(value, room)
+        except _RefusedError:
+            raise _SlowPathError from None
+        return self.decode(plain)
+
     def encode(self, value: object, raw: bool) -> _Json:
         """この型の値を JSON の素の値へ書く(raw = 文字列へ書く途中 — OpaqueJson の文字列を _Raw のまま残す)。型の合わない値は、
         今の pydantic と同じく値の型から書く(_inferred)。"""
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        """この型の値を JSON の文字列へ直に書く(書き出しの速い道 — card ki-c43f34494b42): 答えは _json_text(encode(value, True)) と
+        同じ文字列で、書き出しの JSON の値の木を作らない。ここは判じ手ごとの速い形に当たらない所 — その所だけ木を作って綴る。
+        孤立した surrogate は確かめない(Codec.encode_json が書き終えた文字列で 1 度に確かめ、在れば今までの道で断る)。"""
+        return _json_text(self.encode(value, True))
 
     def fits(self, value: object, strict: bool) -> bool:
         """union の腕として、値がこの型の値か(書く時に腕を選ぶ — strict は型ちょうど・lax は書き直せる型も)。"""
@@ -141,6 +171,17 @@ class _Str(_Node):
             return value
         raise _refuse("string_type", "Input should be a valid string")
 
+    def fast(self, value: object, room: int) -> object:
+        if type(value) is str and (value.isascii() or not _has_surrogate(value)):
+            return value
+        return _Node.fast(self, value, room)
+
+    def encode(self, value: object, raw: bool) -> _Json:
+        return value if type(value) is str else _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        return _ENCODE_STRING(value) if type(value) is str else _Node.text(self, value)
+
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, str)
 
@@ -158,12 +199,18 @@ class _Int(_Node):
             return value
         raise _refuse("int_type", "Input should be a valid integer")
 
+    def fast(self, value: object, room: int) -> object:
+        return value if type(value) is int else _Node.fast(self, value, room)
+
     def encode(self, value: object, raw: bool) -> _Json:
         if type(value) is int:
             return value
         if isinstance(value, int):  # 真偽と IntEnum も整数で書く(今の pydantic と同じ)
             return int(value)
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        return int.__repr__(value) if type(value) is int else _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, int) and not (strict and isinstance(value, bool))
@@ -189,6 +236,9 @@ class _Float(_Node):
                 return math.inf if cast(int, value) > 0 else -math.inf
         raise _refuse("float_type", "Input should be a valid number")
 
+    def fast(self, value: object, room: int) -> object:
+        return value if type(value) is float else _Node.fast(self, value, room)
+
     def encode(self, value: object, raw: bool) -> _Json:
         # 型のある float の欄は NaN・inf も float のまま(dump)— 文字列へ書く時に null になる。整数と真偽は float に直す(今と同じ)。
         if type(value) is float:
@@ -201,6 +251,9 @@ class _Float(_Node):
             ):  # float にできない桁の整数は、今の pydantic の dump と同じく整数のまま書く
                 return _inferred(value, raw)
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        return _float_text(value) if type(value) is float else _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, float) or (not strict and isinstance(value, int))
@@ -219,6 +272,17 @@ class _Bool(_Node):
             return value
         raise _refuse("bool_type", "Input should be a valid boolean")
 
+    def fast(self, value: object, room: int) -> object:
+        return value if type(value) is bool else _Node.fast(self, value, room)
+
+    def encode(self, value: object, raw: bool) -> _Json:
+        return value if type(value) is bool else _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        if value is True:
+            return "true"
+        return "false" if value is False else _Node.text(self, value)
+
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, bool)
 
@@ -235,6 +299,12 @@ class _NoneOnly(_Node):
             return None
         raise _refuse("none_required", "Input should be None")
 
+    def fast(self, value: object, room: int) -> object:
+        return None if value is None else _Node.fast(self, value, room)
+
+    def text(self, value: object) -> str:
+        return "null" if value is None else _Node.text(self, value)
+
     def fits(self, value: object, strict: bool) -> bool:
         return value is None
 
@@ -246,7 +316,7 @@ class _NoneOnly(_Node):
 class _Enum(_Node):
     """defenum(StrEnum)— member の値の綴りの文字列だけを受ける(member の名では受けない)。"""
 
-    __slots__ = ("_members", "_msg", "_spellings", "enum_type")
+    __slots__ = ("_fast_members", "_members", "_msg", "_spellings", "enum_type", "quoted")
     kinds = frozenset({"str"})
     rank = 2  # str と Literal の腕が先(pydantic は文字列に str の腕を選ぶ)
 
@@ -259,7 +329,17 @@ class _Enum(_Node):
         self._spellings: dict[enum.Enum, str] = {
             member: spelling for spelling, member in self._members.items()
         }
+        #: member ごとの JSON の文字列の綴り(text と _WireNode の書き手が使う)。
+        self.quoted: dict[enum.Enum, str] = {
+            member: _ENCODE_STRING(spelling) for member, spelling in self._spellings.items()
+        }
         self._msg = f"Input should be {_expected(tuple(self._members))}"
+        # 速い道で読む綴り(孤立した surrogate を含む綴りは今までの道 — _plain が json_invalid で断る)。
+        self._fast_members = {
+            spelling: member
+            for spelling, member in self._members.items()
+            if _SURROGATE.search(spelling) is None
+        }
 
     def decode(self, value: object) -> object:
         if type(value) is str:
@@ -268,10 +348,22 @@ class _Enum(_Node):
                 return member
         raise _refuse("enum", self._msg)
 
+    def fast(self, value: object, room: int) -> object:
+        if type(value) is str:
+            member = self._fast_members.get(value)
+            if member is not None:
+                return member
+        return _Node.fast(self, value, room)
+
     def encode(self, value: object, raw: bool) -> _Json:
         if isinstance(value, self.enum_type):
             return self._spellings[value]
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        if isinstance(value, self.enum_type):
+            return self.quoted[value]
+        return _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, self.enum_type)
@@ -301,19 +393,31 @@ class _Enum(_Node):
 class _Literal(_Node):
     """文字列の Literal — 並べた文字列のどれか。"""
 
-    __slots__ = ("_msg", "_order", "_values")
+    __slots__ = ("_fast_values", "_msg", "_order", "_values")
     kinds = frozenset({"str"})
 
     def __init__(self, values: tuple[str, ...]) -> None:
         super().__init__(f"literal[{','.join(repr(value) for value in values)}]")
         self._order = values
         self._values = frozenset(values)
+        self._fast_values = frozenset(value for value in values if _SURROGATE.search(value) is None)
         self._msg = f"Input should be {_expected(values)}"
 
     def decode(self, value: object) -> object:
         if type(value) is str and value in self._values:
             return value
         raise _refuse("literal_error", self._msg)
+
+    def fast(self, value: object, room: int) -> object:
+        if type(value) is str and value in self._fast_values:
+            return value
+        return _Node.fast(self, value, room)
+
+    def encode(self, value: object, raw: bool) -> _Json:
+        return value if type(value) is str else _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        return _ENCODE_STRING(value) if type(value) is str else _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         return isinstance(value, str) and value in self._values
@@ -388,11 +492,57 @@ class _Array(_Node):
             return self._make(_items(self._item, cast(list[object], value)))
         raise _refuse(self._kind, "Input should be a valid array")
 
+    @property
+    def item(self) -> _Node:
+        """要素の判じ手(_WireNode の欄を並べ切った読み手と書き手が、要素の読み方と綴り方を開くため)。"""
+        return self._item
+
+    @property
+    def make(self) -> Callable[[list[object]], object]:
+        """読んだ要素の list から欄の入れ物(tuple・list・frozenset)を作る関数。"""
+        return self._make
+
+    def fast(self, value: object, room: int) -> object:
+        kind = type(value)
+        if (kind is list or kind is tuple) and room:
+            item = self._item.fast
+            inner = room - 1
+            if self._item is _STR:  # ASCII の str ちょうどの要素は判じ手を呼ばずに受ける(_Str.fast と同じ答え)
+                items = [
+                    element
+                    if type(element) is str and _is_ascii(element)
+                    else item(element, inner)
+                    for element in cast(list[object], value)
+                ]
+            else:
+                items = [item(element, inner) for element in cast(list[object], value)]
+            return self._make(items)
+        return _Node.fast(self, value, room)
+
     def encode(self, value: object, raw: bool) -> _Json:
         if _is_array(value):
             item = self._item
             return [item.encode(element, raw) for element in value]
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        # str ちょうどの要素は判じ手を呼ばずに綴る(どの判じ手も同じ文字列に書く — _WireNode.text の註)。
+        # 全部の欄を書く入れ子の型ちょうどの要素は、その型の書き手を直に呼ぶ(_WireNode.text と同じ答え)。
+        if _is_array(value):
+            node = self._item
+            item = node.text
+            encode_string = _ENCODE_STRING
+            if isinstance(node, _WireNode) and node.whole:
+                writer = node.writer()
+                owner = node.wire_type
+                texts = [writer(element) if type(element) is owner else item(element) for element in value]
+            else:
+                texts = [
+                    encode_string(element) if type(element) is str else item(element)
+                    for element in value
+                ]
+            return "[" + ",".join(texts) + "]"
+        return _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         # strict は宣言の入れ物ちょうど・lax はどの配列の入れ物も。要素も同じ strict で確かめる。
@@ -439,12 +589,28 @@ class _FixedTuple(_Node):
             )
         )
 
+    def fast(self, value: object, room: int) -> object:
+        kind = type(value)
+        values = cast(list[object], value)
+        if (kind is list or kind is tuple) and room and len(values) == len(self._items):
+            inner = room - 1
+            return tuple(
+                [node.fast(element, inner) for node, element in zip(self._items, values, strict=True)]
+            )
+        return _Node.fast(self, value, room)
+
     def encode(self, value: object, raw: bool) -> _Json:
         if _is_array(value) and isinstance(value, list | tuple) and len(value) == len(self._items):
             return [
                 node.encode(element, raw) for node, element in zip(self._items, value, strict=True)
             ]
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        if _is_array(value) and isinstance(value, list | tuple) and len(value) == len(self._items):
+            texts = [node.text(element) for node, element in zip(self._items, value, strict=True)]
+            return "[" + ",".join(texts) + "]"
+        return _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         return (
@@ -486,11 +652,33 @@ class _Dict(_Node):
             )
         )
 
+    def fast(self, value: object, room: int) -> object:
+        # 鍵は str ちょうどだけ(派生の鍵と数の鍵は今までの道 — _plain_key が綴りを直す)。
+        if room and _is_mapping(value) and all(type(key) is str for key in value):
+            item = self._item.fast
+            inner = room - 1
+            return {key: item(element, inner) for key, element in value.items()}
+        return _Node.fast(self, value, room)
+
     def encode(self, value: object, raw: bool) -> _Json:
         if _is_mapping(value):
             item = self._item
             return {_json_key(key): item.encode(element, raw) for key, element in value.items()}
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        # 鍵は encode と同じ綴り(_json_key)。同じ綴りになる 2 つの鍵(1 と "1" など)は、encode の dict が後の値の 1 つにまとめる
+        # ので、その時は木を作る道で書く。
+        if _is_mapping(value):
+            item = self._item.text
+            keys = [_json_key(key) for key in value]
+            if len(set(keys)) == len(keys):
+                texts = [
+                    _ENCODE_STRING(key) + ":" + item(element)
+                    for key, element in zip(keys, value.values(), strict=True)
+                ]
+                return "{" + ",".join(texts) + "}"
+        return _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         item = self._item
@@ -605,7 +793,21 @@ class _WireNode(_Node):
     走る(型の構築子が __post_init__ を呼ぶ)— ValueError と AssertionError だけを Malformed へ写し、他の例外は投げたまま。
     """
 
-    __slots__ = ("_reject", "_whole", "_wires", "fields", "wire_type")
+    __slots__ = (
+        "_bare",
+        "_post_init",
+        "_reader",
+        "_reads",
+        "_reject",
+        "_texts",
+        "_values_of",
+        "_whole",
+        "_wires",
+        "_writer",
+        "_writes",
+        "fields",
+        "wire_type",
+    )
     kinds = frozenset({"object"})
 
     def __init__(self, wire_type: type, whole: bool = False) -> None:
@@ -614,6 +816,29 @@ class _WireNode(_Node):
         self.fields: tuple[_WireField, ...] = ()
         self._wires: frozenset[str] = frozenset()
         self._reject = False
+        self._bare = False
+        self._post_init = None
+        #: 欄ごとの (wire の名・Python の名・判じ手の fast・既定値が無いか・素の型・None を受けるか・既定値・既定値の工場)。
+        self._reads: tuple[
+            tuple[
+                str,
+                str,
+                Callable[[object, int], object],
+                bool,
+                type | None,
+                bool,
+                object,
+                Callable[[], object] | None,
+            ],
+            ...,
+        ] = ()
+        self._writes: tuple[tuple[str, Callable[[object, bool], _Json]], ...] = ()
+        #: 欄ごとの (書き出しの欄の頭 `"wire":`・判じ手の text)。
+        self._texts: tuple[tuple[str, Callable[[object], str]], ...] = ()
+        self._values_of: Callable[[object], tuple[object, ...]] | None = None
+        #: 欄を並べ切った読み手と書き手(最初の使いで組む — _compile_reader・_compile_writer)。
+        self._reader: Callable[[Mapping[str, object], int], dict[str, object]] | None = None
+        self._writer: Callable[[object], str] | None = None
         # whole = 書く時に既定値と等しい欄も省かない(表の行の像 — 行の書きは欄ごとの差分なので、省いた欄は前の値が残る)。
         self._whole = whole
 
@@ -622,6 +847,39 @@ class _WireNode(_Node):
         self.fields = fields
         self._wires = frozenset(field.wire for field in fields)
         self._reject = reject
+        # 速い道と書き出しが欄ごとに引く物を 1 度に並べておく(1 行に欄の数だけ属性を引かないため)。
+        # (| T None) の欄は、None を欄の loop が受け、他の値は T の判じ手を直に呼ぶ(union の判じ手の 1 段を飛ばす — 答えは同じ)。
+        bodies = [_nullable_body(field.node) for field in fields]
+        self._reads = tuple(
+            (
+                field.wire,
+                field.python,
+                (body or field.node).fast,
+                field.required,
+                _EXACT_OF.get(body or field.node),
+                body is not None or field.node is _NONE,
+                field.default,
+                field.factory,
+            )
+            for field, body in zip(fields, bodies, strict=True)
+        )
+        # 速い道が構築子を通さずに作ってよい型か: defrecord の展開が構築子を書いた型(seal_record の印 RECORD_PARAMS)で、全部の欄が
+        # 構築子の引数の型 — その構築子は欄を宣言の順に置き(無い欄は既定値か工場の値)、:check の __post_init__ を呼ぶだけ。
+        owned = vars(self.wire_type)
+        self._bare = (
+            owned.get("__dataclass_params__") is _RECORD_PARAMS
+            and "__new__" not in owned
+            and len(fields) == len(dataclasses.fields(self.wire_type))
+        )
+        self._post_init: Callable[[object], None] | None = owned.get("__post_init__")
+        self._writes = tuple((field.wire, field.node.encode) for field in fields)
+        self._texts = tuple(
+            (_ENCODE_STRING(field.wire) + ":", (body or field.node).text)
+            for field, body in zip(fields, bodies, strict=True)
+        )
+        self._values_of = (
+            operator.attrgetter(*(field.python for field in fields)) if len(fields) > 1 else None
+        )
 
     def decode(self, value: object) -> object:
         return self.decode_counted(value)[0]
@@ -652,23 +910,227 @@ class _WireNode(_Node):
         if problems:
             raise _RefusedError(problems)
         arguments = {field.python: outcome[1] for field, outcome in outcomes}
+        return self._built(arguments), len(arguments)
+
+    def _built(self, arguments: dict[str, object]) -> object:
+        """欄の値から型の値を作る(:check の落ちの ValueError と AssertionError だけを断りへ写す — 他の例外は投げたまま)。"""
         try:
-            return self.wire_type(**arguments), len(arguments)
+            return self.wire_type(**arguments)
         except ValueError as error:
             raise _refuse("value_error", f"Value error, {error}") from None
         except AssertionError as error:
             raise _refuse("assertion_error", f"Assertion failed, {error}") from None
+
+    def fast(self, value: object, room: int) -> object:
+        # 多い形(json.loads の dict に全部の欄が在る)は fast_counted を経ずに読む(答えは fast_counted と同じ)。
+        if room and type(value) is dict and len(value) == len(self._reads) and self._wires.issuperset(value):
+            arguments = (self._reader or self._compile_reader())(value, room - 1)
+            return self._bare_built(arguments) if self._bare else self._built(arguments)
+        return self.fast_counted(value, room)[0]
+
+    def fast_counted(self, value: object, room: int) -> tuple[object, int]:
+        """速い道の decode_counted。写像の鍵が全部この型の欄の wire の名で、既定値の無い欄が全部在る時だけ、写し直さずに読む
+        (知らない欄・欠けた欄・数の鍵は今までの道 — 誤りと読み捨ての判じ方はその 1 か所)。"""
+        if room and _is_mapping(value) and self._wires.issuperset(value):
+            inner = room - 1
+            if len(value) == len(self._reads):  # 全部の欄が在る(表の行は全部の欄を書く)— 欄を並べ切った読み手で読む
+                reader = self._reader or self._compile_reader()
+                arguments = reader(value, inner)
+                made = self._bare_built(arguments) if self._bare else self._built(arguments)
+                return made, len(arguments)
+            arguments = {}
+            bare = self._bare
+            defaulted = 0
+            # 素の型ちょうどの欄の値(exact — ASCII の文字列・int・float・真偽)と None を受ける欄の None は、判じ手を呼ばずに受ける
+            # (判じ手の fast と同じ答え — 1 行に欄の数だけ関数を呼ばないため)。
+            for wire, python, fast, required, exact, nullable, default, factory in self._reads:
+                if wire in value:
+                    item = value[wire]
+                    kind = type(item)
+                    if kind is exact and (kind is not str or _is_ascii(item)):
+                        arguments[python] = item
+                    elif item is None and nullable:
+                        arguments[python] = None
+                    else:
+                        arguments[python] = fast(item, inner)
+                elif required:
+                    return self._fast_fallback(value, room)
+                elif bare:  # 構築子を通さずに作る型は、構築子と同じく既定値を宣言の順に置く
+                    arguments[python] = default if factory is None else factory()
+                    defaulted += 1
+            if bare:
+                return self._bare_built(arguments), len(arguments) - defaulted
+            return self._built(arguments), len(arguments)
+        return self._fast_fallback(value, room)
+
+    def _compile_reader(self) -> Callable[[Mapping[str, object], int], dict[str, object]]:
+        """全部の欄が在る写像を読む関数を、この型の欄を並べ切った 1 本の関数として組んで覚える(最初の使いで 1 度 — 2 つの thread が
+        同時に組んでも同じ関数)。答えは下の欄の loop と同じ(欄ごとに: 素の型ちょうどの値と None を受ける欄の None はそのまま・他は
+        判じ手の fast)。この Python(3.14t)では欄の loop の 1 欄 約 0.7 µs が 1 行の費用の半分を占めたので、dataclass が __init__ を
+        組むのと同じく source を組んで exec する(欄の名は repr で字面にし、判じ手と型は名の空間で渡す)。"""
+        reads = self._reads
+        bodies = [_nullable_body(field.node) or field.node for field in self.fields]
+        arrays = {index: node for index, node in enumerate(bodies) if isinstance(node, _Array)}
+        namespace: dict[str, object] = {
+            **{f"f{index}": read[2] for index, read in enumerate(reads)},
+            **{f"t{index}": read[4] for index, read in enumerate(reads)},
+            **{f"i{index}": node.item.fast for index, node in arrays.items()},
+            **{f"m{index}": node.make for index, node in arrays.items()},
+        }
+        body = [
+            line
+            for index, ((wire, _python, _fast, _required, exact, nullable, *_default), node) in enumerate(
+                zip(reads, bodies, strict=True)
+            )
+            for line in _reader_lines(index, wire, node, exact, nullable)
+        ]
+        pairs = ", ".join(f"{read[1]!r}: v{index}" for index, read in enumerate(reads))
+        source = "\n".join(("def read(value, inner):", *body, f"    return {{{pairs}}}"))
+        reader = cast(
+            Callable[[Mapping[str, object], int], dict[str, object]],
+            _compiled(source, namespace, "read", self.wire_type),
+        )
+        self._reader = reader
+        return reader
+
+    @property
+    def whole(self) -> bool:
+        """全部の欄を書く型か(表の行の型 — 既定値と等しい欄も書く)。"""
+        return self._whole
+
+    def writer(self) -> Callable[[object], str]:
+        """この型ちょうどの値を JSON の文字列へ書く、欄を並べ切った関数(全部の欄を書く型だけ — 最初の使いで組む)。"""
+        return self._writer or self._compile_writer()
+
+    def _compile_writer(self) -> Callable[[object], str]:
+        """全部の欄を書く型(_whole)の値を JSON の文字列へ書く関数を、欄を並べ切った 1 本の関数として組んで覚える(_compile_reader と
+        同じ訳と作り方)。答えは text の欄の loop と同じ(str ちょうどの値と None はそのまま綴り・他は判じ手の text)。"""
+        texts = self._texts
+        count = len(texts)
+        names = [f"v{index}" for index in range(count)]
+        written = [
+            _writer_part(index, _nullable_body(field.node) or field.node)
+            for index, field in enumerate(self.fields)
+        ]
+        namespace: dict[str, object] = {
+            "encode_string": _ENCODE_STRING,
+            "int_text": int.__repr__,
+            "values_of": self._values_of,
+            "name0": self.fields[0].python if count else None,
+            **{
+                f"h{index}": ("{" if index == 0 else ",") + head
+                for index, (head, _text) in enumerate(texts)
+            },
+            **{f"w{index}": text for index, (_head, text) in enumerate(texts)},
+            **{name: bound for _part, bindings in written for name, bound in bindings.items()},
+        }
+        parts = [
+            part
+            for index, (expression, _bindings) in enumerate(written)
+            for part in (f"h{index}", expression)
+        ]
+        body = (
+            ("    return '{}'",)
+            if count == 0
+            else (
+                "    v0 = getattr(value, name0)" if count == 1 else f"    {', '.join(names)}, = values_of(value)",
+                f"    return ''.join(({', '.join(parts)}, '}}'))",
+            )
+        )
+        source = "\n".join(("def write(value):", *body))
+        writer = cast(Callable[[object], str], _compiled(source, namespace, "write", self.wire_type))
+        self._writer = writer
+        return writer
+
+    def _bare_built(self, arguments: dict[str, object]) -> object:
+        """defrecord の展開が書いた構築子を持つ型(_bare)の値を、構築子を通さずに作る — 構築子と同じ値(欄を宣言の順に置き、
+        :check の __post_init__ を呼ぶ)を、欄ごとの object.__setattr__ を払わずに作る(pydantic が dataclass に作っていた形と
+        同じ — TurnRow 1 つで 18 µs → 6 µs)。arguments は宣言の順の全部の欄。"""
+        made = object.__new__(self.wire_type)
+        object.__setattr__(made, "__dict__", arguments)
+        post_init = self._post_init
+        if post_init is not None:
+            try:
+                post_init(made)
+            except ValueError as error:
+                raise _refuse("value_error", f"Value error, {error}") from None
+            except AssertionError as error:
+                raise _refuse("assertion_error", f"Assertion failed, {error}") from None
+        return made
+
+    def _fast_fallback(self, value: object, room: int) -> tuple[object, int]:
+        """速い道の形に当たらない object を、その所だけ _plain で写して decode_counted で読む(_Node.fast と同じ)。"""
+        try:
+            plain = _plain(value, room)
+        except _RefusedError:
+            raise _SlowPathError from None
+        return self.decode_counted(plain)
 
     def encode(self, value: object, raw: bool) -> _Json:
         # 欄は宣言の順に wire の名で書き、既定値と等しい欄は書かない(入れ子の型の欄も、その型の書き出しが同じく省く)。
         # 既定値の無い欄は None でも書く(null)。
         if not isinstance(value, self.wire_type):
             return _inferred(value, raw)
+        values_of = self._values_of
+        if values_of is None:  # 欄が 0 か 1 つ(attrgetter は 1 つの名に tuple でなく値を返す)
+            items: tuple[object, ...] = tuple(
+                getattr(value, field.python) for field in self.fields
+            )
+        else:
+            items = values_of(value)
+        if self._whole:
+            return {
+                wire: encode(item, raw)
+                for (wire, encode), item in zip(self._writes, items, strict=True)
+            }
         return {
-            field.wire: field.node.encode(item, raw)
-            for field, item in ((field, getattr(value, field.python)) for field in self.fields)
-            if self._whole or not field.omits(item)
+            wire: encode(item, raw)
+            for (wire, encode), field, item in zip(self._writes, self.fields, items, strict=True)
+            if not field.omits(item)
         }
+
+    def text(self, value: object) -> str:
+        # encode と同じ欄を同じ順に、欄の頭(`"wire":`)と判じ手の text で綴る。str ちょうどの値と None は判じ手を呼ばずに綴る —
+        # どの判じ手も str ちょうどの値はその文字列(型の合わない値も _inferred が文字列のまま書く)・None は null に書くので、
+        # 答えは判じ手の text と同じ(1 行に欄の数だけ関数を呼ばないため)。
+        if not isinstance(value, self.wire_type):
+            return _Node.text(self, value)
+        if self._whole:
+            return self.writer()(value)
+        values_of = self._values_of
+        if values_of is None:
+            items: tuple[object, ...] = tuple(
+                getattr(value, field.python) for field in self.fields
+            )
+        else:
+            items = values_of(value)
+        encode_string = _ENCODE_STRING
+        if self._whole:
+            texts = [
+                head
+                + (
+                    encode_string(item)
+                    if type(item) is str
+                    else "null"
+                    if item is None
+                    else text(item)
+                )
+                for (head, text), item in zip(self._texts, items, strict=True)
+            ]
+        else:
+            texts = [
+                head
+                + (
+                    encode_string(item)
+                    if type(item) is str
+                    else "null"
+                    if item is None
+                    else text(item)
+                )
+                for (head, text), field, item in zip(self._texts, self.fields, items, strict=True)
+                if not field.omits(item)
+            ]
+        return "{" + ",".join(texts) + "}"
 
     def fits(self, value: object, strict: bool) -> bool:
         return type(value) is self.wire_type if strict else isinstance(value, self.wire_type)
@@ -746,6 +1208,10 @@ class _Union(_Node):
             ]
         )
 
+    def nullable_single(self) -> _Node | None:
+        """(| T None) の T(None でない腕が 1 つの nullable の union — 欄の速い読みが T の素の型を見るため)。他の union は None。"""
+        return self._arms[0] if self._nullable and len(self._arms) == 1 else None
+
     def _choose(self, value: object) -> object:
         """規則 1〜3 で腕を選んで解く(どの腕も受けなければ _NO_ARM — 呼び手が規則 4 と誤りの列を受け持つ)。"""
         kind = _KIND_OF.get(type(value))
@@ -771,6 +1237,41 @@ class _Union(_Node):
                 continue
         return _NO_ARM if best is None else best[0]
 
+    def fast(self, value: object, room: int) -> object:
+        # 腕の選び方は decode と同じ(規則 1〜4)。腕が断れば次の腕へ(断りの中身は読まない — 全部が断れば Codec が今までの道で
+        # 誤りを集め直す)。腕の速い道が _SlowPathError なら、そのまま上へ(写し直した値では別の腕が受けるかもしれないので)。
+        if value is None and self._nullable:
+            return None
+        arms = self._arms
+        if len(arms) == 1:
+            return arms[0].fast(value, room)
+        kind = _FAST_KIND_OF.get(type(value))
+        if kind is None:
+            return _Node.fast(self, value, room)
+        if kind != "object":
+            for arm in self._by_kind[kind]:
+                try:
+                    return arm.fast(value, room)
+                except _RefusedError:
+                    continue
+        else:
+            best: tuple[object, int] | None = None
+            for arm in self._by_kind["object"]:
+                try:
+                    if isinstance(arm, _WireNode):
+                        counted = arm.fast_counted(value, room)
+                        if best is None or counted[1] > best[1]:
+                            best = counted
+                    else:
+                        return arm.fast(value, room)
+                except _RefusedError:
+                    continue
+            if best is not None:
+                return best[0]
+        if self._fallback is not None:
+            return self._fallback.fast(value, room)
+        raise _refuse("union", "no arm accepted the value")
+
     def encode(self, value: object, raw: bool) -> _Json:
         # 書く腕の選び方は今の pydantic と同じ: 宣言の順に型ちょうどの腕(strict)、無ければ宣言の順に書き直せる腕(lax — float の腕は
         # 整数と真偽も)、どれも合わなければ値の型から書く。
@@ -784,6 +1285,19 @@ class _Union(_Node):
                 if arm.fits(value, strict):
                     return arm.encode(value, raw)
         return _inferred(value, raw)
+
+    def text(self, value: object) -> str:
+        # 腕の選び方は encode と同じ。
+        if value is None and self._nullable:
+            return "null"
+        arms = self._arms
+        if len(arms) == 1:
+            return arms[0].text(value)
+        for strict in (True, False):
+            for arm in arms:
+                if arm.fits(value, strict):
+                    return arm.text(value)
+        return _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
         return (value is None and self._nullable) or any(
@@ -799,6 +1313,90 @@ class _Union(_Node):
         return not (self._nullable and len(self._arms) == 1 and not self._arms[0].titled())
 
 
+def _reader_lines(
+    index: int, wire: str, node: _Node, exact: type | None, nullable: bool
+) -> tuple[str, ...]:
+    """_WireNode._compile_reader が組む関数の、欄 1 つ(判じ手 node — (| T None) は T)を読む行(値を引く・そのまま受けるかを見る・
+    受けなければ判じ手 f<index>)。そのまま受ける値は欄の loop と同じ: 素の型 t<index> ちょうど(str は ASCII の時だけ)と、None を
+    受ける欄の None。list の配列の欄は _Array.fast の要素の読み方をここに開く(要素の判じ手 i<index>・入れ物を作る m<index>)。"""
+    item = f"v{index}"
+    exact_test = (
+        "False"
+        if exact is None
+        else f"type({item}) is t{index}" + (f" and {item}.isascii()" if exact is str else "")
+    )
+    test = f"{item} is None or {exact_test}" if nullable else exact_test
+    head = (f"    {item} = value[{wire!r}]", f"    if {test}:", "        pass")
+    if isinstance(node, _Array):
+        each = (
+            f"e if type(e) is str and e.isascii() else i{index}(e, inner - 1)"
+            if node.item is _STR
+            else f"i{index}(e, inner - 1)"
+        )
+        head = (
+            *head,
+            f"    elif type({item}) is list and inner:",
+            f"        {item} = m{index}([{each} for e in {item}])",
+        )
+    return (*head, "    else:", f"        {item} = f{index}({item}, inner)")
+
+
+def _compiled(
+    source: str, namespace: dict[str, object], name: str, owner: type
+) -> Callable[..., object]:
+    """組んだ source を exec して、関数 name を返す(_WireNode の欄を並べ切った読み手と書き手 — 名の空間は判じ手と型だけを持つ)。"""
+    code = compile(source, f"<wire_codec {owner.__module__}.{owner.__qualname__}.{name}>", "exec")
+    exec(code, namespace)  # noqa: S102 — source は欄の名を repr で字面にした物だけ(上の _compile_reader / _compile_writer)
+    return cast(Callable[..., object], namespace[name])
+
+
+def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
+    """_WireNode._compile_writer が組む関数の、欄 1 つ(値 v<index>・判じ手 node — (| T None) は T)を綴る式と、式が読む名。どの式も
+    判じ手の text(w<index>)と同じ答え: str ちょうどの値はその文字列・None は null(どの判じ手も同じに書く — _WireNode.text の註)・
+    int の欄の int ちょうど・defenum の欄の member・全部の欄を書く入れ子の型の欄のその型ちょうどの値は、判じ手を呼ばずに綴る。"""
+    item = f"v{index}"
+    rest = (
+        f"encode_string({item}) if type({item}) is str else 'null' if {item} is None"
+        f" else w{index}({item})"
+    )
+    if node is _INT:
+        return f"(int_text({item}) if type({item}) is int else {rest})", {}
+    if isinstance(node, _Enum):
+        return (
+            f"(q{index}[{item}] if type({item}) is e{index} else {rest})",
+            {f"q{index}": node.quoted, f"e{index}": node.enum_type},
+        )
+    if isinstance(node, _WireNode) and node.whole:
+        return (
+            f"(n{index}({item}) if type({item}) is c{index} else {rest})",
+            {f"n{index}": node.writer(), f"c{index}": node.wire_type},
+        )
+    if isinstance(node, _Array):  # tuple と list の欄は _Array.text の要素の綴り方をここに開く
+        element = node.item
+        array = f"type({item}) is tuple or type({item}) is list"
+        if isinstance(element, _WireNode) and element.whole:
+            each = f"n{index}(e) if type(e) is c{index} else i{index}(e)"
+            bindings: dict[str, object] = {
+                f"n{index}": element.writer(),
+                f"c{index}": element.wire_type,
+                f"i{index}": element.text,
+            }
+        else:
+            each = f"encode_string(e) if type(e) is str else i{index}(e)"
+            bindings = {f"i{index}": element.text}
+        return (
+            f"('[' + ','.join([{each} for e in {item}]) + ']' if {array} else {rest})",
+            bindings,
+        )
+    return f"({rest})", {}
+
+
+def _nullable_body(node: _Node) -> _Node | None:
+    """(| T None) の欄の T の判じ手(他の判じ手は None)— _WireNode の速い道と書き出しが、None を欄ごとに受けて、他の値は T の
+    判じ手を直に呼ぶため(union の判じ手は None の後に T の判じ手を呼ぶだけなので、答えは同じ)。"""
+    return node.nullable_single() if isinstance(node, _Union) else None
+
+
 _NO_ARM: Final = object()
 _KIND_OF: Final[dict[type, str]] = {
     str: "str",
@@ -808,6 +1406,8 @@ _KIND_OF: Final[dict[type, str]] = {
     list: "array",
     dict: "object",
 }
+#: 速い道の union が読む JSON の種類(凍らせた配列 tuple も配列 — 凍らせた写像などの他の型は _plain で写して decode)。
+_FAST_KIND_OF: Final[dict[type, str]] = {**_KIND_OF, tuple: "array"}
 
 
 # --- 型の木を組む --------------------------------------------------------------------------------------------------------------
@@ -820,6 +1420,11 @@ _NONE: Final = _NoneOnly("none")
 _BARE_DICT: Final = _BareDict("dict[any,any]")
 _ANYTHING: Final = _Anything("any")
 _OPAQUE: Final = _Opaque("opaque-json")
+#: 型が str ちょうどと確かめた値の isascii(速い道の欄の loop が、欄ごとに typing.cast の関数を呼ばずに読むため — cast は実行時も
+#: 関数の呼びで、1 行に str の欄の数だけ払っていた)。呼ぶ所は type(item) is str を先に見る(_WireNode.fast_counted)。
+_is_ascii: Final = cast(Callable[[object], bool], str.isascii)
+#: 速い道で、値の型がちょうどこの型なら判じ手を呼ばずに受ける素の判じ手(_plain_accepts — str は ASCII の時だけ)。
+_EXACT_OF: Final[dict[_Node, type]] = {_STR: str, _INT: int, _FLOAT: float, _BOOL: bool}
 _SCALARS: Final[dict[object, _Node]] = {
     str: _STR,
     int: _INT,
@@ -1316,6 +1921,16 @@ def _json_text(value: _Json) -> str:
     return _scalar_text(value)
 
 
+def _has_surrogate(text: str) -> bool:
+    """文字列に surrogate が在るか(孤立した surrogate を、JSON の文字列に書けない・JSON の値として受けない物として見つけるため)。
+    UTF-8 にできないのは surrogate だけなので、正規表現で探すより速い符号化の失敗で見る(非 ASCII の 1 KB で 12 µs → 3 µs)。"""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
 def _scalar_text(value: _Json) -> str:
     """入れ物でない書き出しの値の綴り(数・真偽・null と、OpaqueJson の文字列 — 真偽は int より先に見る)。"""
     if isinstance(value, bool):
@@ -1470,7 +2085,7 @@ class Codec(Generic[_T]):
     def decode_json(self, text: str | bytes) -> _T | _Malformed:
         """JSON の文字列(bytes も)を解いて確かめる。答え = 型の値か Malformed(JSON として読めない文字列も — 場所は空の文字列)。"""
         try:
-            return cast(_T, self.node.decode(_read_json(text)))
+            return cast(_T, self._decoded(_read_json(text)))
         except _RefusedError as invalid:
             return self._malformed(invalid.problems)
 
@@ -1479,10 +2094,19 @@ class Codec(Generic[_T]):
         文字列にして decode_json に渡した時と同じ。JSON の値でない物は TypeError。"""
         try:
             if isinstance(value, _OpaqueJson):
-                return cast(_T, self.node.decode(_read_json(value.text)))
-            return cast(_T, self.node.decode(_plain(value)))
+                return cast(_T, self._decoded(_read_json(value.text)))
+            return cast(_T, self._decoded(value))
         except _RefusedError as invalid:
             return self._malformed(invalid.problems)
+
+    def _decoded(self, value: object) -> object:
+        """値を先に速い道(_Node.fast — 写し直さない)で読み、受けなかった時だけ今までの道(_plain で写し直して decode)で読み直す。
+        速い道が受けない時(断った・素の値として読めない所が在った・型の構築子が例外を投げた)は、どれも今までの道が答えを決める —
+        誤りの列を全部集める・例外を投げるのはその 1 か所(速い道は最初の誤りで止まり、例外の順も今までの道と違いうるので)。"""
+        try:
+            return self.node.fast(value, _DEPTH_LIMIT)
+        except Exception:  # noqa: BLE001 — 速い道の答えは捨てて、下の今までの道が答え(値・Malformed・例外)を決める
+            return self.node.decode(_plain(value))
 
     def encode(self, value: _T) -> object:
         """値を JSON の値へ書く(今の dump と同じ: 欄は wire の名・tuple と frozenset は配列・defenum は値の綴り・既定値と同じ欄は書かない
@@ -1492,7 +2116,13 @@ class Codec(Generic[_T]):
     def encode_json(self, value: _T) -> str:
         """値を JSON の文字列へ書く(今の dump-json と同じ bytes: encode と同じ形・区切りの空白無し・NaN と inf は null・OpaqueJson の欄は
         持っている文字列を読み直さずに埋める)。孤立した surrogate を含む文字列は ValueError・JSON に書けない値は TypeError。"""
-        return _json_text(self.node.encode(value, True))
+        try:
+            text = self.node.text(value)
+        except Exception:  # noqa: BLE001 — 速い道の答えは捨てて、下の今までの道が答え(文字列・例外)を決める
+            return _json_text(self.node.encode(value, True))
+        if not text.isascii() and _has_surrogate(text):
+            return _json_text(self.node.encode(value, True))  # 孤立した surrogate — 今までの道が ValueError で断る
+        return text
 
     def schema(self) -> Mapping[str, object]:
         """この型の JSON Schema(今の json-schema と同じ形・鍵の順 — 違いは設計の記録の節 3b)。呼ぶたびに組む(契約の file と照らす
