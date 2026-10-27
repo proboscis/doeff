@@ -113,7 +113,7 @@ fails unless `tests/over-budget` lists it.
 
 In Hy, put the declaration right after the `deftest`:
 
-```hy
+```hy excerpt
 (import doeff_hy_pytest [declare-step-budget])
 
 (deftest test-big-scenario ...)
