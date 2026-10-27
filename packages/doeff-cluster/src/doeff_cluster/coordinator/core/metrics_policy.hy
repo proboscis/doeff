@@ -66,7 +66,7 @@
 
 
 (defn #^ dict checked-metrics [#^ MetricsPayload metrics]
-  "fake(shared/protocol/metrics_handlers.metrics-memory)が記録する計器の報告の形(族ごとの名 → 値の写像・欠けた族は空)にするため。
+  "fake(shared/protocol/metrics_memory.metrics-memory)が記録する計器の報告の形(族ごとの名 → 値の写像・欠けた族は空)にするため。
    検めは coordinator と同じ metrics-refusal(合わなければ 400 で断る)。coordinator は同じ値を記録 MetricsReport で残す(metrics-report)。"
   (setv problem (run (metrics-refusal metrics)))
   (when (is-not problem None) (refuse 400 problem))

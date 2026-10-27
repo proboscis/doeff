@@ -889,12 +889,8 @@
     {
       "allow": [
         "doeff-cluster-metrics-model",
-        "doeff-cluster-metrics-policy",
-        "doeff-cluster-resource-policy",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-service-report",
-        "doeff-cluster-coordinator-request-bodies-model",
-        "doeff-hy-wire"
+        "doeff-cluster-service-report"
       ],
       "layer": "io",
       "name": "doeff-cluster-metrics-handlers",
@@ -904,7 +900,26 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_handlers.hy"
       ],
-      "responsibility": "ReportMetrics の handler 2 つ。",
+      "responsibility": "ReportMetrics の本物の handler(coordinator へ送る)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-metrics-model",
+        "doeff-cluster-metrics-policy",
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-hy-wire"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-metrics-memory",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_memory.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_memory.hy"
+      ],
+      "responsibility": "ReportMetrics の fake の handler(coordinator と同じ解きと検めを通して list に記録する)。",
       "typed": true
     },
     {
@@ -1431,6 +1446,7 @@
         "doeff-cluster-local",
         "doeff-cluster-main",
         "doeff-cluster-metrics-handlers",
+        "doeff-cluster-metrics-memory",
         "doeff-cluster-metrics-model",
         "doeff-cluster-metrics-policy",
         "doeff-cluster-process-model",

@@ -44,7 +44,8 @@
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [runtime-env-of-context])
 (import doeff_cluster.shared.entry.run_context_env [context-from-env])
-(import doeff_cluster.worker.entry.result_delivery [deliver-task-result])
+;; 結果の届け(worker/entry/result_delivery — 本物の HTTP の handler と httpx を読む)は task の道だけが要るので、run-task の中で読む。
+;; 頭で読むと、届けを使わない service の子まで起動で読んでいた。
 
 
 (defk parsed-program-row [path text]
@@ -142,12 +143,25 @@
   ;; 別名に書いてから置き換える(書きかけを worker に読ませない)— effect WriteText :replace True(答え手 = os-file-handler・#3014)。
   (run (with_handlers [os-file-handler] (file-done (WriteText args.result encoded :replace True))))
   ;; 届けは入口自身の I/O(worker/entry/result_delivery — job の Program を包まない)。
+  (import doeff_cluster.worker.entry.result_delivery [deliver-task-result])
   (deliver-task-result ctx encoded)
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
 
 
+(defn #^ None _decline-httpx-cli []  ; defk にできない: process の入口(Program の外)が process の module の表を決める
+  "子 process で httpx の端末の client(httpx._main — click・rich・pygments を読む)を読まないため。httpx の頭は
+   `try: from ._main import main except ImportError:` で端末の client を読み、同じ venv に click・rich・pygments が在れば(開発の
+   道具の依存で入る)httpx を使う全部の子がそれを起動で読んでいた(module 80 個ほど・約 7 MB)。sys.modules の値 None は Python の
+   「この module は読まない」の印で、httpx は ImportError の道(端末の client の代わりの関数)を通る。HTTP の client の部分は変わらない。
+   子は端末の client を走らせないので、process の入口(main)だけが置く — library として job_entry を読む process(sim・replay)には置かない。"
+  (.setdefault sys.modules "httpx._main" None)
+  None)
+
+
 (defn #^ None main []  ; defk にできない: process の入口
-  "子 process の入口の引数を読む。旧い引数(--factory・--env・--config・task の --blob・--versions)は argparse が知らない引数として断る。"
+  "子 process の入口の引数を読む。旧い引数(--factory・--env・--config・task の --blob・--versions)は argparse が知らない引数として断る。
+   httpx の端末の client を断る印(_decline-httpx-cli)を、Program を解く前(Program の module が httpx を読む前)に置く。"
+  (_decline-httpx-cli)
   (setv parser (argparse.ArgumentParser :description "doeff worker の子 process の入口(job = Program の値 1 つ)"))
   (setv sub (.add-subparsers parser :dest "kind" :required True))
   (setv service (.add-parser sub "service"))
