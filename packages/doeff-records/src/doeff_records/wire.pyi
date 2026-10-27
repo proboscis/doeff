@@ -3,7 +3,9 @@
 from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
+from json.encoder import encode_basestring as encode_basestring
 from collections import Counter as Counter
+from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from enum import StrEnum as StrEnum
@@ -42,6 +44,7 @@ from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
 from doeff_records.values import EventAbsent as EventAbsent
 from doeff_records.values import EventRetired as EventRetired
+from doeff_records.values import stored_text as stored_text
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -265,10 +268,24 @@ def undeclared_reason(ask: PublicEffect, tables: tuple, streams: tuple) -> _Prog
 def undeclared_refusal(ask: PublicEffect, reason: str) -> _Program[UndeclaredTable, object]:
     ...
 
-def row_json(row: Row) -> _Program[dict, object]:
+@dataclass(frozen=True)
+class SpelledJson:
+    text: str
+ANSWER_ENCODER: Incomplete
+
+def plain_value(holder: Row | RowChanged) -> object:
     ...
 
-def change_json(change: RowChanged | RowRemoved) -> _Program[dict, object]:
+def spelled_value(holder: Row | RowChanged) -> SpelledJson:
+    ...
+
+def spelled_json(wire: object) -> str:
+    ...
+
+def row_json(row: Row, value_of: Callable) -> _Program[dict, object]:
+    ...
+
+def change_json(change: RowChanged | RowRemoved, value_of: Callable) -> _Program[dict, object]:
     ...
 
 def event_json(event: Event) -> _Program[dict, object]:
@@ -278,6 +295,12 @@ def tail_json(tail: StreamTail | StreamTailEmpty) -> _Program[dict, object]:
     ...
 
 def encode_answer(answer: WireAnswer) -> _Program[dict, object]:
+    ...
+
+def answer_text(answer: WireAnswer) -> _Program[str, object]:
+    ...
+
+def answer_object(answer: WireAnswer, value_of: Callable) -> _Program[dict, object]:
     ...
 
 def row_from(value: JsonValue) -> _Program[Row, object]:

@@ -8,11 +8,15 @@
 ;;; 値は None を持たない — PutRow の差分の None は「その欄を消す」(JSON merge patch の null)。
 ;;; 値を持つ型は作る時に受けた写像を凍らせる(実行時は dict を渡しても、欄には FrozenMap が入る — 型の注記は FrozenMap なので、
 ;;; 静的な検査は呼び手に FrozenMap / frozen-json-object で包ませる)。JSON へ書く境界は thaw-json で戻す。
+;;; 行の値を運ぶ答え(Row・RowChanged)は、置き場が保存した値の綴り(JSON の文字列)を一緒に持てる(stored-row・stored-change・
+;;; spelled-row・spelled-change)。綴りを持つ値は使われた時に 1 度だけ解いて凍らせ(stored-value)、HTTP の口は綴りをそのまま答えに継ぐ
+;;; (wire.answer-text — 欄を絞らない一覧と変更の読みが、変わっていない行を読みのたびに解き直し綴り直さないため)。
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が typed.hy に在る — 業務の呼び手はそちらを使う。
 (require doeff-hy.macros [val deff])
 (require doeff-hy.record [defrecord])
 (import copy)
 (import dataclasses [dataclass field])
+(import json)
 (import re)
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
 
@@ -415,6 +419,35 @@
 
 ;; --- 成功の答え --------------------------------------------------------------------------------------------
 
+;; 保存の綴り: 置き場が保存した値の JSON の綴りを、値を運ぶ答えの属 STORED-TEXT に持つ(dataclass の欄ではない — 等しさ・repr・match・
+;; 欄の並びは今のまま)。綴りだけを持って作った答え(stored-row・stored-change)は欄 value を置かず、初めて value を読んだ時に
+;; stored-value が綴りを解いて凍らせ、欄に置く(2 度目からは欄を読む)。綴りの正しさは書いた時に確かめてある(置き場は判定を通った値
+;; だけを綴って保存する)。
+(setv STORED-TEXT "_stored_text")
+
+
+(defn #^ object stored-value [#^ object holder #^ str name #^ str what]  ; defk にできない: __getattr__ が属の読みごとに同期に呼ぶ
+  "綴りだけを持って作った答え holder の欄 value を、保存の綴りから解いて凍らせて置くため(__getattr__ の 1 か所 — value の外の名と、綴りを
+   持たない答えの value は AttributeError)。"
+  (setv text (.get (object.__getattribute__ holder "__dict__") STORED-TEXT))
+  (when (or (!= name "value") (is text None))
+    (raise (AttributeError (.format "{!r} object has no attribute {!r}" (. (type holder) __name__) name))))
+  (setv value (frozen-json-object (json.loads text) what))
+  (object.__setattr__ holder "value" value)
+  value)
+
+
+(defn #^ (| str None) stored-text [#^ object holder]  ; defk にできない: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
+  "答え holder(Row・RowChanged)が持つ保存の綴り(持たなければ None — 綴りの無い答えは呼び手が値から綴る)。"
+  (.get (vars holder) STORED-TEXT))
+
+
+(defn #^ object with-stored-text [#^ object holder #^ str text]  ; defk にできない: 下の作り手(同期の defn)が呼ぶ属の置き
+  "作った答え holder に保存の綴り text を持たせて返すため(綴りは holder.value の JSON の綴りでなければならない — 呼び手が同じ値から綴る)。"
+  (object.__setattr__ holder STORED-TEXT text)
+  holder)
+
+
 (defclass [(dataclass :frozen True)] Row []
   "行 1 つ: key = 鍵(key-fields の順)/ value = 欄 → 値の凍らせた写像(鍵の欄を含む)/
    version = 書かれるたびに 1 増える版(生まれた行は 1)。"
@@ -422,6 +455,9 @@
   (#^ FrozenMap value)
   (#^ int version)
   (defn #^ None __post_init__ [self] (freeze-field self "value" "Row.value"))
+  (defn #^ FrozenMap __getattr__ [self #^ str name]
+    "綴りだけを持って作った行(stored-row)の value を、初めて読んだ時に保存の綴りから解くため(頭の註の保存の綴り)。"
+    (stored-value self name "Row.value"))
   (defn #^ "Row" __deepcopy__ [self #^ (get dict #(int object)) memo]
     "深い写し: 値は作る時に深く凍らせてあり(__post_init__)、鍵が文字列と整数だけなら行は中まで変えられないので自分を返す — 置き場を
      丸ごと deepcopy する使い手(5 万行の memory の置き場を検ごとに写す検の土台)が、変えられない行を作り直さないため(#2670)。
@@ -429,6 +465,18 @@
     (if (all (gfor part self.key (in (type part) #(str int))))
         self
         (Row (copy.deepcopy self.key memo) self.value self.version))))
+
+(defn #^ Row stored-row [#^ tuple key #^ str text #^ int version]  ; defk にできない: pg.row-of(頁の行を内包表記で組む純粋な綴り)が行ごとに同期に呼ぶ作り手
+  "置き場が保存した値の綴り text だけを持つ行を作るため(値は読まれた時に解く — 頭の註の保存の綴り。欄を絞らない一覧の行は解かれずに
+   答えへ綴りのまま継がれる)。"
+  (setv row (object.__new__ Row))
+  (object.__setattr__ row "key" key)
+  (object.__setattr__ row "version" version)
+  (with-stored-text row text))
+
+(defn #^ Row spelled-row [#^ tuple key #^ FrozenMap value #^ str text #^ int version]  ; defk にできない: memory の置き場の書き(錠の内の同期の defn)が呼ぶ作り手
+  "値 value と、その値を書いた時に 1 度だけ綴った text を一緒に持つ行を作るため(値を持つ置き場 — memory — の行)。"
+  (with-stored-text (Row key value version) text))
 
 (defclass [(dataclass :frozen True)] Missing []
   "行が無い。")
@@ -481,7 +529,21 @@
   (#^ FrozenMap value)
   (#^ int sequence)
   (#^ int at)
-  (defn #^ None __post_init__ [self] (freeze-field self "value" "RowChanged.value")))
+  (defn #^ None __post_init__ [self] (freeze-field self "value" "RowChanged.value"))
+  (defn #^ FrozenMap __getattr__ [self #^ str name]
+    "綴りだけを持って作った変更(stored-change)の value を、初めて読んだ時に保存の綴りから解くため(頭の註の保存の綴り)。"
+    (stored-value self name "RowChanged.value")))
+
+(defn #^ RowChanged stored-change [#^ str table #^ tuple key #^ int version #^ str text #^ int sequence #^ int at]  ; defk にできない: stored-row と同じ — pg.changes-of の内包表記が呼ぶ
+  "置き場が保存した値の綴り text だけを持つ変更を作るため(stored-row と同じ — 値は読まれた時に解く)。"
+  (setv change (object.__new__ RowChanged))
+  (for [#(name value) #(#("table" table) #("key" key) #("version" version) #("sequence" sequence) #("at" at))]
+    (object.__setattr__ change name value))
+  (with-stored-text change text))
+
+(defn #^ RowChanged spelled-change [#^ str table #^ tuple key #^ int version #^ FrozenMap value #^ str text #^ int sequence #^ int at]  ; defk にできない: spelled-row と同じ
+  "値 value と、その値を書いた時に 1 度だけ綴った text を一緒に持つ変更を作るため(spelled-row と同じ)。"
+  (with-stored-text (RowChanged table key version value sequence at) text))
 
 (defclass [(dataclass :frozen True)] RowRemoved []
   "変更 1 つ: 行が保持の期限で消えた。積むのは回収(期限の後の SweepExpired か、その行への書き)— 期限の刻でも読みの時でもない(KeepFor の註)。"

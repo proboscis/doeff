@@ -115,7 +115,7 @@
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
-                              StreamTail StreamTailEmpty
+                              StreamTail StreamTailEmpty stored-row stored-change
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey write-parts])
@@ -978,8 +978,9 @@
 
 
 (defn #^ Row row-of [#^ tuple record]  ; defk にできない: decoded-value と同じ — listed-rows-of の内包表記が行ごとに呼ぶ純粋な綴り
-  "state_rows の行(key payload version …)を Row にするため。"
-  (Row (key-from-text (get record 0)) (decoded-value (get record 1)) (int (get record 2))))
+  "state_rows の行(key payload version …)を Row にするため。値は解かず、payload の綴りを保存の綴りとして持たせる(values.hy の頭の註 —
+   値は読まれた時に解き、欄を絞らない一覧の行は綴りのまま答えに継がれる)。"
+  (stored-row (key-from-text (get record 0)) (get record 1) (int (get record 2))))
 
 
 (defk listed-rows-of [decl fields records]
@@ -997,12 +998,12 @@
    :tags {:context "records" :role "foundation"}}
   "row_changes の行(seq ledger key version payload at — payload が NULL = 消えた)の列を、番号の順の変更(RowChanged | RowRemoved)の
    tuple にするため(変更の列の読みと手入れの送りの読みが同じ形で変更を出す 1 点。内包表記で 1 度に組む — listed-rows-of と同じ。
-   純粋 — decoded-batch が scheduler の thread の外で回す)。"
+   純粋 — decoded-batch が scheduler の thread の外で回す)。変更の値は row-of と同じく payload の綴りを持たせ、読まれた時に解く。"
   (tuple (gfor record records
                (if (is (get record 4) None)
                    (RowRemoved (get record 1) (key-from-text (get record 2)) (int (get record 0)))
-                   (RowChanged (get record 1) (key-from-text (get record 2)) (int (get record 3)) (decoded-value (get record 4))
-                               (int (get record 0)) (int (get record 5)))))))
+                   (stored-change (get record 1) (key-from-text (get record 2)) (int (get record 3)) (get record 4)
+                                  (int (get record 0)) (int (get record 5)))))))
 
 
 (defk events-of [stream records]

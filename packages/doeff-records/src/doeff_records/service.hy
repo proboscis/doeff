@@ -3,8 +3,9 @@
 ;;; 判断は持たない: 綴りの読み書きは wire.hy、書き手の名は principals.hy、書きの許可・期待・保持は記録の handler(admission)。
 ;;; ここが持つのは順序だけ — 書き手の名 → 本文の読み → 宣言に在る表か → effect を撃つ → 答えを綴る。
 ;;; 答えの綴り(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 束の読みの答え(Page・Changes・Events で行を 1 つ以上運ぶ答え)は、綴り
-;;; (wire の object → JSON の文字列 → UTF-8 の byte 列 — reply-of)を Compute で scheduler の thread の外で回す(答え手は組み立ての側 —
+;;; (答え → JSON の文字列 → UTF-8 の byte 列 — reply-of)を Compute で scheduler の thread の外で回す(答え手は組み立ての側 —
 ;;; 本番 = thread の pool・台本の検と模擬 = inline-compute-handler)。ほかの答えは大きさが要求の本文か 1 行の上限で決まり、その場で綴る。
+;;; 200 の答えの綴りは wire.answer-text で、行と変更の値は置き場の保存の綴りをそのまま継ぐ(値を解き直し綴り直さない — wire.hy の答えの註)。
 ;;; 書き手の名は effect の引数にしない: 呼び手の名乗り(X-Records-Writer)の名で handler を組み(handler-for)、その下で effect を撃つ。呼び手は断らない(#2988)。
 ;;;
 ;;;   POST /v1/records/<操作>   200 = effect の答え(kind で判別)/ 400 malformed / 404 not-found(宣言に無い表・
@@ -22,7 +23,7 @@
 (import doeff_records.loop_work [off-loop off-loop-answer?])
 (import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireAnswer WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
-                            decode-request encode-answer refusal-json undeclared-reason keyed-request])
+                            decode-request answer-text refusal-json undeclared-reason keyed-request])
 
 (setv METHOD-GET "GET" METHOD-POST "POST")
 (setv PATH-HEALTHZ "/healthz")
@@ -112,10 +113,9 @@
 
 (defk reply-of [answer]
   {:pre [(: answer WireAnswer)] :post [(: % HttpAnswer)]}
-  "記録の handler の答え(Unreachable を除く)を 200 の答え(綴り)にするため。"
-  (<- encoded (encode-answer answer))
-  (<- reply (json-answer 200 encoded))
-  reply)
+  "記録の handler の答え(Unreachable を除く)を 200 の答え(綴り — 行と変更の値は保存の綴りを継ぐ・wire.answer-text)にするため。"
+  (<- body (answer-text answer))
+  (HttpAnswer 200 body))
 
 
 (defk sendable-reply-of [answer]
