@@ -471,7 +471,7 @@
 ;; per-kind defhandler(R2: 直接束縛と host 束縛の両方で同一モジュール)
 ;; ---------------------------------------------------------------------------
 
-(defhandler codex-impl [result-command]
+(defhandler codex-impl [python]
   (BuildLaunch [agent-type params]
     :when (= agent-type "codex")
     (resume (build-codex-argv params)))
@@ -514,7 +514,7 @@
 
   (WireResultChannel [agent-type session-id socket-path]
     :when (= agent-type "codex")
-    (resume (result-channel-spec result-command session-id socket-path)))
+    (resume (result-channel-spec python session-id socket-path)))
 
   (DeliverMessage [pane-id text]
     ;; live REPL への paste + submit(盲窓物理は substrate 所有)。

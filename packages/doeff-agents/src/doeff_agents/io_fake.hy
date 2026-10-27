@@ -40,6 +40,8 @@
   ListDir
   RunProcess
   SpawnDetached
+  StartSessionHost
+  _session-host-argv
   UnixLineRequest
   UnixConnectProbe
   ExecutableAt
@@ -264,6 +266,14 @@
     (.append world.spawned #((tuple argv) log-path cwd))
     (resume world.pid))
 
+  (StartSessionHost [db-path socket-path max-running log-path host-bin]
+    ;; 本物と同じ argv を組んで常駐の起動の控えに残す(起こした物は spawned の 1 行で見える)。
+    (<- argv (_session-host-argv host-bin db-path socket-path max-running))
+    (.remember-parents world log-path)
+    (.setdefault world.files log-path "")
+    (.append world.spawned #((tuple argv) log-path None))
+    (resume world.pid))
+
   (UnixLineRequest [socket-path payload timeout]
     (.append world.requests #(socket-path payload))
     (match (.get world.sockets socket-path)
@@ -307,6 +317,12 @@
 
   (SpawnDetached [argv log-path cwd]
     (.append ledger.spawned #((tuple argv) log-path cwd))
+    (resume ledger.pid))
+
+  (StartSessionHost [db-path socket-path max-running log-path host-bin]
+    ;; 起こす argv は本物と同じ 1 点で組んで控える(起こさない)。
+    (<- argv (_session-host-argv host-bin db-path socket-path max-running))
+    (.append ledger.spawned #((tuple argv) log-path None))
     (resume ledger.pid))
 
   (DelayEffect [seconds]

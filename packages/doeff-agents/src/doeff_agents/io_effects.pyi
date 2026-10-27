@@ -73,6 +73,18 @@ class SpawnDetached(EffectBase):
     cwd: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class StartSessionHost(EffectBase):
+    db_path: str
+    socket_path: str
+    max_running: int
+    log_path: str
+    host_bin: str | None = None
+
+def _session_host_argv(
+    host_bin: str | None, db_path: str, socket_path: str, max_running: int
+) -> Program: ...
+
+@dataclass(frozen=True, kw_only=True)
 class UnixLineRequest(EffectBase):
     socket_path: str
     payload: str

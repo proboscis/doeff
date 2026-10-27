@@ -2,13 +2,13 @@
 C1 で器を凍結 → C3 で本体着地).
 
 契約(ハザード 5): result チャネルの意味論が直接束縛(per-kind ゲートが使う
-in-process endpoint)と転送束縛(daemon wire + report-result-mcp relay)で
+in-process endpoint)と転送束縛(daemon wire + 結果の MCP server(result_mcp))で
 一致しなければならない。検査面は 3 つ:
 
 1. **wire 面**(daemon 制御 socket の `session.report_result` /
    `session.await_result` 応答): -32002 schema reject / -32003
    already-terminal / `already_reported:true` idempotency はここに現れる。
-2. **agent 可視面**(report-result-mcp relay の MCP tools/call 応答):
+2. **agent 可視面**(結果の MCP server(result_mcp) の MCP tools/call 応答):
    `{"content":[{"text":...}],"isError":bool}` + schema 文言のみ。数値
    エラーコードは現れない(S4 で凍結済みの観測 — relay が透過し始めたら
    parity break)。
@@ -263,7 +263,6 @@ def test_s17_inproc_and_host_result_endpoints_agree(tmp_path) -> None:  # noqa: 
             str(tmp_path / "s17-inproc.sock"),
             "--prompt-judge-cmd",
             "",
-            "serve",
         ]
     )
     actor = hystore.StoreActor(db_path)

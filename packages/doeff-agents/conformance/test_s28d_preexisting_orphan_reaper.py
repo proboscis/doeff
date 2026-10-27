@@ -10,7 +10,7 @@ unless something converges the observed end state. S28d is that something:
 a declarative reconciler in the harness fixture setup (AgentdHarness
 `__enter__`) that
 
-  (1) enumerates doeff-sessionhost `serve` processes whose --db lives under
+  (1) enumerates session host processes (`python -m doeff_agents.sessionhost.host`) whose --db lives under
       /tmp/agentd-conf-* AND whose ppid==1 (the supervisor's death is proven
       by the reparent to init),
   (2) reaps their launched non-adopted active sessions with the daemon's own
@@ -53,7 +53,7 @@ from harness import (
     AgentdHarness,
     kill_session_out_of_band,
     require_binaries,
-    resolve_agentd_bin,
+    resolve_agentd_command,
     session_exists_out_of_band,
 )
 
@@ -72,9 +72,9 @@ def _clean_daemon_env() -> dict[str, str]:
     return {name: value for name, value in process_environment().items() if name not in dropped}
 
 
-def _daemon_argv(agentd_bin: Path, runtime_dir: Path) -> list[str]:
+def _daemon_argv(host_command: tuple[str, ...], runtime_dir: Path) -> list[str]:
     return [
-        str(agentd_bin),
+        *host_command,
         "--db",
         str(runtime_dir / "agentd.sqlite"),
         "--socket",
@@ -85,7 +85,6 @@ def _daemon_argv(agentd_bin: Path, runtime_dir: Path) -> list[str]:
         "4",
         "--prompt-judge-cmd",
         "",
-        "serve",
     ]
 
 
@@ -135,11 +134,11 @@ def _wait_daemon_ready(runtime_dir: Path) -> None:
     raise AssertionError(f"synthetic daemon not ready\n{log}")
 
 
-def _spawn_orphan_daemon(agentd_bin: Path, runtime_dir: Path) -> int:
-    """Spawn a REAL doeff-sessionhost that is already orphaned: a short-lived
+def _spawn_orphan_daemon(host_command: tuple[str, ...], runtime_dir: Path) -> int:
+    """Spawn a REAL session host that is already orphaned: a short-lived
     /bin/sh launches it in the background and exits, so the daemon reparents
     to init (ppid==1) — the same physics as a SIGKILLed pytest supervisor."""
-    quoted = " ".join(shlex.quote(a) for a in _daemon_argv(agentd_bin, runtime_dir))
+    quoted = " ".join(shlex.quote(a) for a in _daemon_argv(host_command, runtime_dir))
     log = shlex.quote(str(runtime_dir / "agentd.log"))
     spawned = subprocess.run(
         ["/bin/sh", "-c", f"{quoted} >{log} 2>&1 & echo $!"],
@@ -215,12 +214,12 @@ def test_s28d_preexisting_orphan_daemon_and_partner_agent_are_reaped() -> None:
     partner (via the daemon's cleanup semantics, session and pane together),
     plus the now-dead daemon's runtime dir."""
     require_binaries()
-    agentd_bin = resolve_agentd_bin()
+    host_command = resolve_agentd_command()
     runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
     daemon_pid: int | None = None
     session_id: str | None = None
     try:
-        daemon_pid = _spawn_orphan_daemon(agentd_bin, runtime_dir)
+        daemon_pid = _spawn_orphan_daemon(host_command, runtime_dir)
         parked = _launch_parked_active_session(runtime_dir)
         session_id, pane_pid = parked.session_id, parked.pane_pid
         assert _pid_alive(daemon_pid), "synthetic orphan daemon must be running"
@@ -293,11 +292,11 @@ def test_s28d_counterexample_live_supervisor_daemon_is_untouched() -> None:
     harness's fixture setup untouched, wire answering, dir intact. This is
     the concurrent-harness physics S16 relies on."""
     require_binaries()
-    agentd_bin = resolve_agentd_bin()
+    host_command = resolve_agentd_command()
     runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
     log = (runtime_dir / "agentd.log").open("a", encoding="utf-8")
     proc = subprocess.Popen(
-        _daemon_argv(agentd_bin, runtime_dir),
+        _daemon_argv(host_command, runtime_dir),
         cwd=str(runtime_dir),
         stdout=log,
         stderr=subprocess.STDOUT,
@@ -336,11 +335,11 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
     conformance path."""
     from harness import classify_conformance_daemon, select_reapable_orphans
 
-    bin_path = "/usr/local/bin/doeff-sessionhost"
+    bin_path = "/usr/local/bin/python3 -m doeff_agents.sessionhost.host"
     production_db = Path.home() / ".local" / "state" / "doeff" / "agentd.sqlite"
     production_cmd = (
         f"{bin_path} --db {production_db}"
-        " --socket /tmp/doeff-agentd.sock --monitor-interval-ms 1000 serve"
+        " --socket /tmp/doeff-agentd.sock --monitor-interval-ms 1000"
     )
     assert classify_conformance_daemon(production_cmd) is None, (
         "production sessionhost must be excluded by path regardless of ppid"
@@ -349,33 +348,32 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
 
     conformance_cmd = (
         f"{bin_path} --db /tmp/agentd-conf-abc123/agentd.sqlite"
-        " --socket /tmp/agentd-conf-abc123/agentd.sock serve"
+        " --socket /tmp/agentd-conf-abc123/agentd.sock"
     )
     target = classify_conformance_daemon(conformance_cmd)
     assert target is not None
     assert target.db_path == Path("/tmp/agentd-conf-abc123/agentd.sqlite")
     assert target.socket_path == Path("/tmp/agentd-conf-abc123/agentd.sock")
 
-    # the console script is a shebang file: ps shows the interpreter at
-    # argv[0] and doeff-sessionhost at argv[1] — the VERBATIM shape of the
-    # live leaked population (measured 2026-07-31); note the ps-flattened
-    # empty --prompt-judge-cmd argument
+    # ps shows the harness's start command verbatim: the interpreter at
+    # argv[0], then `-m` and the entry module; note the ps-flattened empty
+    # --prompt-judge-cmd argument
     shebang_cmd = (
         "/Users/u/repos/doeff/.venv/bin/python3"
-        " /Users/u/repos/doeff/.venv/bin/doeff-sessionhost"
+        " -m doeff_agents.sessionhost.host"
         " --db /tmp/agentd-conf-xyaqu22z/agentd.sqlite"
         " --socket /tmp/agentd-conf-xyaqu22z/agentd.sock"
-        " --monitor-interval-ms 100 --max-running 4 --prompt-judge-cmd  serve"
+        " --monitor-interval-ms 100 --max-running 4 --prompt-judge-cmd "
     )
     shebang_target = classify_conformance_daemon(shebang_cmd)
     assert shebang_target is not None
     assert shebang_target.db_path == Path("/tmp/agentd-conf-xyaqu22z/agentd.sqlite")
 
-    # ...but a production host in the same shebang shape stays excluded
+    # ...but a production host in the same shape stays excluded
     assert classify_conformance_daemon(
         "/Users/u/repos/doeff/.venv/bin/python3"
-        " /Users/u/repos/doeff/.venv/bin/doeff-sessionhost"
-        f" --db {production_db} --socket /tmp/doeff-agentd.sock serve"
+        " -m doeff_agents.sessionhost.host"
+        f" --db {production_db} --socket /tmp/doeff-agentd.sock"
     ) is None
 
     # a live supervisor (ppid != 1) protects even a conformance-path daemon
@@ -388,5 +386,5 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
 
     # a non-sessionhost process mentioning the dir (grep, editor) is no target
     assert classify_conformance_daemon(
-        "grep --db /tmp/agentd-conf-abc123/agentd.sqlite serve"
+        "grep --db /tmp/agentd-conf-abc123/agentd.sqlite doeff_agents.sessionhost.host"
     ) is None

@@ -58,8 +58,8 @@
    :post [(: % "SessionRow(成功時)")]}
   (<- row (under-world world
            ((refusing-link-artifact)
-            ((codex-impl "/opt/doeff-sessionhost")
-             ((claude-code-impl "/opt/doeff-sessionhost")
+            ((codex-impl "/opt/venv/bin/python")
+             ((claude-code-impl "/opt/venv/bin/python")
               (resume-session params))))))
   row)
 
@@ -79,8 +79,8 @@
    :post [(: % "SessionRow(成功時)")]}
   (<- row (under-world world
            ((vanishing-link-artifact)
-            ((codex-impl "/opt/doeff-sessionhost")
-             ((claude-code-impl "/opt/doeff-sessionhost")
+            ((codex-impl "/opt/venv/bin/python")
+             ((claude-code-impl "/opt/venv/bin/python")
               (resume-session params))))))
   row)
 

@@ -1,8 +1,11 @@
-"""report-result-mcp stdio relay(oracle main.rs:761-959).
+"""結果の MCP server の入口(`python -m doeff_agents.sessionhost.result_mcp --session <id> --socket <path>`・
+oracle main.rs:761-959)。
 
-stdio MCP server(initialize / ping / tools/list / tools/call)として振る舞い、
-`report_result` tool call を agentd socket の `session.report_result` RPC へ
-中継する。DB / lease / serve loop には一切触らない(oracle と同じ性質)。
+agent が自分で起こす stdio MCP server(initialize / ping / tools/list / tools/call)として振る舞い、
+`report_result` tool call を session host の socket の `session.report_result` RPC へ中継する。
+DB / lease / serve loop には一切触らない(oracle と同じ性質)。agent の MCP の設定にこの argv を書くのは
+WireResultChannel の handler(sessionhost/impls/channel.hy の result-channel-spec)で、host の入口
+(sessionhost/host.hy)とは役ごとに別の module — サブコマンドで振り分けない。入口なので名を外へ見せない。
 
 STDLIB-ONLY 制約(レイテンシ物理): この relay は agent の唯一の result data
 channel であり、report の着地は monitor の turn-end stability 窓(tick 2 回
@@ -10,8 +13,7 @@ channel であり、report の着地は monitor の turn-end stability 窓(tick 
 ms 桁で report を着地させる。relay が Hy runtime + doeff の import 連鎖
 (~170ms)を払うと report が turn-end に敗け、golden path で solicitation を
 1 回焼く(S1 conformance failure として実測)。よってこのモジュールは
-stdlib 以外を import してはならず、hostmain の subcommand dispatch も
-Hy host の import より先にここへ分岐する。
+stdlib 以外を import してはならず、Hy の host の module も読まない。
 """
 
 import json
@@ -19,28 +21,27 @@ import socket
 import sys
 from typing import Any
 
-MCP_PROTOCOL_VERSION = "2024-11-05"
-REPORT_RESULT_MCP_SUBCOMMAND = "report-result-mcp"
+_MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
-def mcp_result(msg_id: Any, result: Any) -> dict:
+def _mcp_result(msg_id: Any, result: Any) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
 
-def mcp_error(msg_id: Any, code: int, message: str) -> dict:
+def _mcp_error(msg_id: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
-def mcp_tool_error(msg_id: Any, text: str) -> dict:
+def _mcp_tool_error(msg_id: Any, text: str) -> dict:
     """tool-level エラー(well-formed tools/call 応答 + isError — transport
     ではなく agent が扱う。oracle mcp_tool_error :961-972)。"""
-    return mcp_result(
+    return _mcp_result(
         msg_id,
         {"content": [{"type": "text", "text": f"Error: {text}"}], "isError": True},
     )
 
 
-def report_result_tool_def() -> dict:
+def _report_result_tool_def() -> dict:
     return {
         "name": "report_result",
         "description": (
@@ -66,7 +67,7 @@ def report_result_tool_def() -> dict:
     }
 
 
-def relay_report_result(socket_path: str, session_id: str, payload: Any) -> Any:
+def _relay_report_result(socket_path: str, session_id: str, payload: Any) -> Any:
     """payload を agentd socket の session.report_result RPC へ中継する
     (oracle relay_report_result :923-951)。ok=false は message ごと raise —
     呼び手(tool call handler)が MCP tool error へ写像する。"""
@@ -95,7 +96,7 @@ def relay_report_result(socket_path: str, session_id: str, payload: Any) -> Any:
         client.close()
 
 
-def handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | None:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
+def _handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | None:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     """MCP JSON-RPC 1 message の dispatch(oracle handle_mcp_message :817-856)。
     request には応答、notification(id 無し)には None。"""
     if not isinstance(msg, dict):
@@ -104,7 +105,7 @@ def handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | No
     msg_id = msg.get("id")
     if method == "initialize":
         protocol = (msg.get("params") or {}).get("protocolVersion") or (
-            MCP_PROTOCOL_VERSION
+            _MCP_PROTOCOL_VERSION
         )
         # boot レイテンシ予算のため import はここまで遅延(initialize は
         # report の critical path 上だが、metadata 読みは ~ms で済む)。
@@ -114,7 +115,7 @@ def handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | No
             version = importlib.metadata.version("doeff-agents")
         except Exception:
             version = "0"
-        return mcp_result(
+        return _mcp_result(
             msg_id,
             {
                 "protocolVersion": protocol,
@@ -128,31 +129,31 @@ def handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | No
     if method == "notifications/initialized":
         return None
     if method == "ping":
-        return mcp_result(msg_id, {})
+        return _mcp_result(msg_id, {})
     if method == "tools/list":
-        return mcp_result(msg_id, {"tools": [report_result_tool_def()]})
+        return _mcp_result(msg_id, {"tools": [_report_result_tool_def()]})
     if method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name", "")
         if name != "report_result":
-            return mcp_tool_error(msg_id, f"unknown tool: {name}")
+            return _mcp_tool_error(msg_id, f"unknown tool: {name}")
         arguments = params.get("arguments") or {}
         if "payload" not in arguments:
-            return mcp_tool_error(msg_id, "report_result requires a `payload` argument")
+            return _mcp_tool_error(msg_id, "report_result requires a `payload` argument")
         try:
-            relay_report_result(socket_path, session_id, arguments["payload"])
+            _relay_report_result(socket_path, session_id, arguments["payload"])
         except Exception as e:
-            return mcp_tool_error(msg_id, str(e))
-        return mcp_result(
+            return _mcp_tool_error(msg_id, str(e))
+        return _mcp_result(
             msg_id,
             {"content": [{"type": "text", "text": "result recorded"}], "isError": False},
         )
     if msg_id is None:
         return None
-    return mcp_error(msg_id, -32601, f"method not found: {method}")
+    return _mcp_error(msg_id, -32601, f"method not found: {method}")
 
 
-def run_report_result_mcp(args: list) -> None:
+def _run_report_result_mcp(args: list) -> None:
     """stdio MCP server 本体(oracle run_report_result_mcp :763-813)。壊れた
     行は無視(crash は agent の唯一の result channel を殺す)、EOF で終了。"""
     session_id = None
@@ -167,12 +168,12 @@ def run_report_result_mcp(args: list) -> None:
             i += 1
             socket_path = args[i] if i < len(args) else None
         else:
-            raise ValueError(f"report-result-mcp: unknown argument: {arg}")
+            raise ValueError(f"result_mcp: unknown argument: {arg}")
         i += 1
     if session_id is None:
-        raise ValueError("report-result-mcp requires --session <id>")
+        raise ValueError("result_mcp requires --session <id>")
     if socket_path is None:
-        raise ValueError("report-result-mcp requires --socket <path>")
+        raise ValueError("result_mcp requires --socket <path>")
     while True:
         line = sys.stdin.readline()
         if line == "":
@@ -184,9 +185,13 @@ def run_report_result_mcp(args: list) -> None:
             msg = json.loads(trimmed)
         except Exception:
             continue
-        response = handle_mcp_message(msg, session_id, socket_path)
+        response = _handle_mcp_message(msg, session_id, socket_path)
         if response is not None:
             sys.stdout.write(
                 json.dumps(response, separators=(",", ":"), ensure_ascii=False) + "\n"
             )
             sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    _run_report_result_mcp(sys.argv[1:])

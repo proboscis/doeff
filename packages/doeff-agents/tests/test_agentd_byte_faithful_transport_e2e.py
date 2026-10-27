@@ -27,7 +27,7 @@ be reproduced by a non-TUI fake agent, so this test proves the positive
 (byte-faithful) direction, which the removed `normalize_wrapped_json_strings`
 heuristic could never guarantee.
 
-Daemon under test: doeff-sessionhost via sessionhost_bin (issue #575 M2).
+Daemon under test: the host's entry module via sessionhost_bin (issue #575 M2).
 Requires tmux; skipped otherwise.
 """
 
@@ -50,7 +50,7 @@ from typing import Any
 import pytest
 from doeff_agents._agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
-from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_bin import sessionhost_command
 from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
 # The test waits for a real doeff-agentd process and a real tmux pane, which no
@@ -119,7 +119,7 @@ def test_agentd_report_result_is_byte_faithful_through_a_real_tmux_pane(
 def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
     _require_binary("tmux")
 
-    agentd_bin = resolve_sessionhost_bin()
+    host_command = sessionhost_command()
 
     runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-byte-faithful-", dir="/tmp"))
     session_id = f"byte-faithful-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -141,7 +141,7 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
             agentd_proc = host.spawn_sessionhost(
                 sessionhost_serve_argv(
-                    agentd_bin,
+                    host_command,
                     db_path=db_path,
                     socket_path=socket_path,
                     monitor_interval_ms=100,
@@ -168,7 +168,6 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
                     **host.session_env(),
                     "DOEFF_RESULT_SESSION_ID": session_id,
                     "DOEFF_AGENTD_SOCKET": str(socket_path),
-                    "DOEFF_AGENTD_BIN": str(agentd_bin),
                     "DOEFF_RESULT_PAYLOAD": json.dumps(RESULT_PAYLOAD),
                 },
                 expected_result={"payload_schema": RESULT_SCHEMA},
@@ -206,11 +205,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 
 SESSION_ID = os.environ["DOEFF_RESULT_SESSION_ID"]
 SOCKET = os.environ["DOEFF_AGENTD_SOCKET"]
-AGENTD_BIN = os.environ["DOEFF_AGENTD_BIN"]
 PAYLOAD = json.loads(os.environ["DOEFF_RESULT_PAYLOAD"])
 
 # Park at an idle prompt marker so agentd's REPL-idle heuristics are happy.
@@ -225,7 +224,8 @@ print("DOEFF_AGENT_RESULT_END", flush=True)
 
 # 2) Deliver the result over the agentd-owned report_result stdio MCP server.
 proc = subprocess.Popen(
-    [AGENTD_BIN, "report-result-mcp", "--session", SESSION_ID, "--socket", SOCKET],
+    [sys.executable, "-m", "doeff_agents.sessionhost.result_mcp",
+     "--session", SESSION_ID, "--socket", SOCKET],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     text=True,

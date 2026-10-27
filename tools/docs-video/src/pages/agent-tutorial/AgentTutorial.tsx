@@ -603,7 +603,7 @@ const SCENARIO_PRINTS: Printed[] = [
 const CHAIN = [
   {name: 'review_all', sub: 'the same Program', color: ACCENT, x: 40, w: 250},
   {name: 'agent_handler', sub: 'from daemon_agent_handlers()', color: PROD, x: 350, w: 280},
-  {name: 'doeff-sessionhost', sub: 'owns the sessions', color: PROD, x: 690, w: 260},
+  {name: 'session host', sub: 'owns the sessions', color: PROD, x: 690, w: 260},
   {name: 'Claude Code', sub: 'in a tmux terminal', color: PROD, x: 1010, w: 230},
 ];
 const CHAIN_Y = 290;
