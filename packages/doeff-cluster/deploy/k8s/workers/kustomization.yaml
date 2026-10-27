@@ -14,8 +14,6 @@ resources:
   - ../nodes/k3s-2
   - ../nodes/k3s-3
   - ../nodes/zeus
-  # zeus の 2 つ目の worker — 作業の root を内蔵の SATA の SSD に置き、USB の SSD を失っても止めない上に載る系の job を受ける(card ki-8335f47a1089)。
-  - ../nodes/zeus-core
   # 根の disk を worker と Longhorn が分け合う機体の Longhorn の disk の予約(worker の env と同じ宣言 ../disk-share/shares.yaml から導く)。
   - ../disk-share
 # 機体ごとの worker の枠(card ki-6828eda880ce): 同時の job と task の上限 capacity と、そのうち task のために空けておく数 taskReserve を、
