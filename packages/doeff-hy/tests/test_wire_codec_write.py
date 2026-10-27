@@ -22,7 +22,7 @@ import subprocess
 import sys
 import textwrap
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -372,13 +372,13 @@ def _pydantic_schema(wire_type: type) -> dict[str, object]:
     return _object(run(pydantic_json_schema(wire_type)))
 
 
-def _defaults_of(schema: dict[str, object], wires: list[str]) -> dict[str, object]:
+def _defaults_of(schema: Mapping[str, object], wires: list[str]) -> dict[str, object]:
     """JSON Schema の欄ごとの default。"""
     properties = _object(schema["properties"])
     return {wire: _object(properties[wire])["default"] for wire in wires}
 
 
-def _with_defaults(schema: dict[str, object], defaults: dict[str, object]) -> dict[str, object]:
+def _with_defaults(schema: Mapping[str, object], defaults: dict[str, object]) -> dict[str, object]:
     """pydantic の JSON Schema の欄の default を、書き手の書く形に替えた写し(違うと分かっている欄だけ — 節 3b)。"""
     properties = _object(schema["properties"])
     return {
