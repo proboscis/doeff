@@ -8,6 +8,8 @@
 ;;; file の形(JSON): worker の名 → {"capacity": 整数, "taskReserve": 整数}。名の無い行は読まない(他の worker の行を置いてよい)。
 ;;;   {"zeus": {"capacity": 39, "taskReserve": 6}, "atlas": {"capacity": 12, "taskReserve": 3}}
 ;;; 範囲は coordinator の heartbeat の本文の型と同じ(0 ≤ taskReserve ≤ capacity)— 外れた値は名乗らない(断られて名乗り続けない)。
+;;; 行は省ける欄 warmServices(真偽 — card ki-67abc0cf71e9)も持てる: 実行環境の service も待ちの子から分けて起こすか(WorkerPolicy.warm-services)。
+;;; 起動の時に 1 度だけ読む(枠と違って読み直さない)— 版の file の入れ替えで新しい世代が起きた時に効き、Pod の template を変えずに機体ごとに入れる。
 ;;;
 ;;; 読めた状態(heartbeat の roomFile で名乗る):
 ;;;   ok          自分の行を読めた
@@ -59,6 +61,20 @@
     (not (<= 0 (get fields 1) (get fields 0)))
       (malformed (.format "worker {} の taskReserve {} が 0 以上 capacity {} 以下でない" name (get fields 1) (get fields 0)))
     True (RoomReading :state RoomState.OK :room (WorkerRoom :capacity (get fields 0) :task-reserve (get fields 1)) :reason "")))
+
+
+(defk room-warm-services-of [text name]
+  {:pre [(: text str) (: name str)] :post [(: % (| bool None str))] :tags {:context "worker" :role "judgment" :reads "json"}}
+  "枠の file の中身から worker name の行の warmServices を読むため(card ki-67abc0cf71e9)。真偽ならその値・JSON でない・行が無い・欄が
+   無いなら None(機体の配備が入れていない)・真偽でない値は起動を断る訳の文(黙って偽に倒れない)。"
+  (val decoded (try #((json.loads text)) (except [json.JSONDecodeError] #())))
+  (val parsed (if decoded (get decoded 0) None))
+  (val row (if (isinstance parsed dict) (.get parsed name) None))
+  (val value (if (isinstance row dict) (.get row "warmServices") None))
+  (cond
+    (is value None) None
+    (isinstance value bool) value
+    True (.format "枠の file の worker {} の warmServices は true か false で書く: {!r}" name value)))
 
 
 (defk room-read-due [read-ms now-ms]

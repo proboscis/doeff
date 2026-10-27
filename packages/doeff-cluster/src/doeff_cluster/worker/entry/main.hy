@@ -42,7 +42,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.shared.protocol.supplied_values [SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster.shared.core.launch_rules [worker-commit-env-name])
-(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text])
+(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [this-process-versions clock-ticks])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -82,7 +82,7 @@
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(card ki-de44efdb9aa4 — WorkerPolicy.warm-services)。値は on か off
-;; (無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
+;; (無ければ枠の file の自分の行の warmServices — card ki-67abc0cf71e9・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
 
 
@@ -103,6 +103,24 @@
     (= value "on") True
     (= value "off") False
     True (.format "{} は on か off で書く: {!r}" WARM-SERVICES-VAR value)))
+
+
+(defk boot-warm-services [room-file name value]
+  {:pre [(: room-file str) (: name str) (: value (| str None))] :post [(: % (| bool str))] :tags {:context "worker" :role "main"}}
+  "起動の時に service も待ちの子から分けるかを決めるため(card ki-67abc0cf71e9): 環境変数の値(value — WARM-SERVICES-VAR)が在ればそれ、
+   無ければ枠の file(room-file — 空 = 読まない)の自分の行の warmServices、どちらも無ければ偽。枠の file は名の固定した ConfigMap の
+   file で、中身を変えても Pod は作り直されない — 版の file の入れ替えで起きる新しい世代が読むので、機体ごとに Pod を作り直さずに入れられる。
+   綴りの誤りは起動を断る訳の文を返す。file を読めない時は無いと同じ(枠の読み — boot-room が断るか引数へ戻る)。"
+  (var found None)
+  (when (and (is value None) room-file)
+    (<- text (ReadText room-file))
+    (when (isinstance text str)
+      (<- read (| bool None str) (room-warm-services-of text name))
+      (:= found read)))
+  (cond
+    (is-not value None) (warm-services-of value)
+    (is found None) False
+    True found))
 
 
 (defk boot-room [room-file name capacity task-reserve]
@@ -371,8 +389,10 @@
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      WARM-SERVICES-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
-        ;; service も待ちの子から分けるか(card ki-de44efdb9aa4 — 機体の配備が WARM-SERVICES-VAR で入れる・無ければ今までどおり)。
-        warm-services (warm-services-of (.get machine-env WARM-SERVICES-VAR))
+        ;; service も待ちの子から分けるか(card ki-de44efdb9aa4 — 機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
+        ;; 入れる・card ki-67abc0cf71e9・無ければ今までどおり)。
+        warm-services (run (with-handlers [os-file-handler]
+                             (boot-warm-services args.room-file args.name (.get machine-env WARM-SERVICES-VAR))))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000))
                              :warm-services (if (isinstance warm-services bool) warm-services (.error parser warm-services)))
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
