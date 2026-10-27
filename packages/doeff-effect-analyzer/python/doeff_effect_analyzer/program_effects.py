@@ -49,7 +49,10 @@ generator function):
 Anything the reader cannot follow (a yielded local variable, a call whose target
 is not importable) is reported in ``unresolved`` instead of being dropped, and a
 handler whose clauses cannot be read is named in ``residual.unknown_handlers`` (it is
-treated as handling nothing, so what it might absorb is still reported).
+treated as handling nothing, so what it might absorb is still reported).  A caller who
+knows what such a handler answers and performs can say so (``supplied_declarations``):
+the handler is then read from that declaration where it is placed, and what it performs
+goes to the handlers outside it.
 """
 
 import ast
@@ -145,6 +148,7 @@ class Basis(str, Enum):
 
     CLAUSES = "clauses"  # read from its isinstance / match branches
     DECLARED = "declared"  # from the marks __doeff_handles__ / __doeff_effects__
+    SUPPLIED = "supplied"  # from a declaration the caller supplied (``supplied_declarations``)
     UNREAD = "unread"  # neither — the handler may handle anything; coverage is unknown
 
 
@@ -515,13 +519,15 @@ def pass_through(
     with what the clause performs before its guard (``Clause.before_guard``).  What a
     handler performs itself around the
     body (``HandlerEffects.performs``) leaves it the same way, toward the handlers
-    outside it.  A handler that could not be read
+    outside it.  A handler that could not be read is read from the declaration the caller
+    supplied for it (``supplied_declarations``); one with none
     handles nothing here and is named in ``unknown_handlers``.  The result has one
     escape per effect class (the first place it was seen).  ``inner``'s unresolved
     places are kept, and so are the places a clause that answers here cannot follow
     (its ``via`` starts with the handler's name) — what such a place performs goes to
     the handlers outside, unseen.
     """
+    handlers = tuple(_supplied_for(handler) for handler in handlers)
     pending: dict[type, Escape] = {}
     for escape in inner.escapes:
         pending.setdefault(escape.effect, escape)
@@ -572,6 +578,57 @@ def _forwarded_as(escape: Escape, arrived: type) -> Escape:
     if not escape.use.forwarded or escape.by or not issubclass(arrived, escape.effect):
         return escape
     return Escape(arrived, replace(escape.use, effect=arrived), escape.by)
+
+
+@dataclass(frozen=True)
+class SuppliedDeclaration:
+    """What a caller knows about handlers the reader cannot read (no clause and no
+    ``__doeff_handles__`` mark — e.g. a wrapper built by a factory whose answers depend on
+    its arguments): the handlers whose name contains ``part`` answer ``handles`` and perform
+    ``effects`` when they answer — the same meaning as the marks ``__doeff_handles__`` /
+    ``__doeff_effects__``, empty ``handles`` = a body wrapper that answers nothing and
+    performs ``effects`` around the body.
+
+    Read where the handler is placed, what it performs goes to the handlers outside it —
+    answered there, or a gap named after the handler (``Escape.by``)."""
+
+    part: str
+    handles: tuple[type, ...]
+    effects: tuple[type, ...]
+
+
+_SUPPLIED: contextvars.ContextVar[tuple[SuppliedDeclaration, ...]] = contextvars.ContextVar(
+    "doeff_effect_analyzer_supplied", default=()
+)
+
+
+@contextlib.contextmanager
+def supplied_declarations(declarations: Sequence[SuppliedDeclaration]) -> Iterator[None]:
+    """Read the handlers that could not be read from ``declarations`` while the block runs
+    (the first declaration whose ``part`` is in the handler's name)."""
+    token = _SUPPLIED.set(tuple(declarations))
+    try:
+        yield
+    finally:
+        _SUPPLIED.reset(token)
+
+
+def _supplied_for(handler: HandlerEffects) -> HandlerEffects:
+    """``handler`` read from the declaration supplied for it, when it could not be read."""
+    if handler.known:
+        return handler
+    declaration = next((d for d in _SUPPLIED.get() if d.part in handler.name), None)
+    if declaration is None:
+        return handler
+    location = Location(f"<supplied for {declaration.part}>", 0)
+    emits = ProgramEffects(
+        target=f"{handler.name} (supplied)",
+        effects=tuple(EffectUse(effect, location) for effect in declaration.effects),
+    )
+    if not declaration.handles:
+        return HandlerEffects(handler.name, (), (), Basis.SUPPLIED, performs=emits)
+    clauses = tuple(Clause(cls, emits, location) for cls in declaration.handles)
+    return HandlerEffects(handler.name, clauses, (), Basis.SUPPLIED)
 
 
 def qualified_name(obj: Any) -> str:
