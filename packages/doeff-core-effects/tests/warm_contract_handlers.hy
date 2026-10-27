@@ -89,7 +89,8 @@
         (val first (if (is child.stdout None) "" (.readline child.stdout)))
         (when (!= (.strip first) "ready")
           (raise (RuntimeError (.format "偽の待ちの子が起きない: {!r}" first)))))
-      (<- ran (with_handlers [(warm-world-paths paths) subprocess-handler os-warm-process-handler] program))
+      ;; 本物の答え手は入力の pipe の書き口の表を session に持つので、外側に state を置く(本番は worker の session-store)。
+      (<- ran (with_handlers [(state) (warm-world-paths paths) subprocess-handler os-warm-process-handler] program))
       (:= answer ran)
       (finally
         (for [child children]

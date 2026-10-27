@@ -8,18 +8,22 @@
 ;;;                    いない(zombie でも回収の最中でもない — process_stat.hy の ENDED-STATES の外)process が居れば WarmRunning、
 ;;;                    そうでなければ exit の file を読む(在れば WarmExited・無ければ WarmLost)。
 ;;;   SignalWarmChild  同じ start-ticks で終わっていない process が居る時だけ、その group(子 A は setsid した group の先頭)へ os.killpg で送る。
+;;;   hold-input の頼み(card ki-de44efdb9aa4)は、pipe を作って読み口を頼みの 1 行の頭の 1 byte に添えて送り(SCM_RIGHTS)、受けた子の書き口を
+;;;   表に握る。WriteWarmChildInput は同じ start-ticks で走っている子の書き口へだけ書き、PollWarmChild が子の終わりを答えた時に閉じる。
+;;;   頼み手(worker)が消えると書き口が閉じ、子 A は入力の EOF を読む。
 ;;;   読みを知らない機体(Linux と macOS の外)・/proc の無い Linux では WarmProcUnavailable を上げる — 黙って Lost / Gone にしない。
 ;;;   待ちの子(doeff-cluster の warm_child.py)も、分けた子の start-ticks と自分の thread の本数を同じ読み(proc-stat-of・own-thread-count)
 ;;;   で読む — 頼み手と待ちの子が同じ start-ticks を照らす。
 ;;;
 ;;; 頼みと答えの形(待ちの子との約束 — 型は下の defwire・待ちの子の側も同じ関数で読み書きする):
-;;;   頼み = WarmRequestWire {"entry", "args": [str], "cwd", "env": [{"name", "value"}], "logPath", "exitPath", "graceSeconds"}
+;;;   頼み = WarmRequestWire {"entry", "args": [str], "cwd", "env": [{"name", "value"}], "logPath", "exitPath", "graceSeconds"
+;;;          [, "holdInput", "cgroupProcs", "noticeEnv"]}(後ろの 3 つは省ける欄 — 既定の値の時は書かない)
 ;;;   答え = WarmForkedWire {"pid", "startTicks"} か WarmRefusedWire {"detail"}(知らない欄は断る — 2 つの形はこれで見分ける)
 ;;;   どれも JSON 1 行・utf-8・末尾に改行。warm-request-line(頼み手が送る)・warm-request-of(待ちの子が読む)・warm-answer-line
 ;;;   (待ちの子が答える)・warm-answer-of(頼み手が読む)。
 ;;; 本物との契約は tests/test_warm_process_contract.hy。
 (require doeff-hy.macros [defhandler defk <- val var])
-(require doeff-hy.record [defwire])
+(require doeff-hy.record [defrecord defwire])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import json)
 (import os)
@@ -30,7 +34,7 @@
 (import doeff_core_effects.process_effects [ProcessSignal])
 (import doeff_core_effects.process_stat [ProcStat ENDED-STATES])
 (import doeff_core_effects.darwin_proc [darwin-proc-stat darwin-thread-count])
-(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited
+(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmInputWritten WarmForked WarmRefused WarmRunning WarmExited
                                          WarmLost WarmSignaled WarmGone WARM-ANSWER-SECONDS warm-socket-missing warm-socket-refused
                                          warm-answer-late warm-answer-unreadable warm-lost warm-gone warm-exit-answer signal-number-of])
 
@@ -61,7 +65,12 @@
   (#^ (get tuple #(WarmEnvWire ...)) env)
   (#^ str log-path)
   (#^ str exit-path)
-  (#^ float grace-seconds))
+  (#^ float grace-seconds)
+  ;; 常駐の子の 3 つの欄(warm_effects.hy の頭の註 — card ki-de44efdb9aa4)。既定の値は書かない(dump が省く)ので、task の頼みの形は
+  ;; 今までと同じ(この欄を知らない版の待ちの子も task を受ける)。hold-input の頼みは入力の pipe の読み口を fd の受け渡しで添える。
+  (setv #^ bool hold-input False)
+  (setv #^ (| str None) cgroup-procs None)
+  (setv #^ (| str None) notice-env None))
 
 
 (defwire WarmForkedWire
@@ -90,7 +99,8 @@
   (<- line bytes (wire-line (WarmRequestWire :entry request.entry :args request.args :cwd request.cwd
                                              :env (tuple (gfor e request.env (WarmEnvWire :name e.name :value e.value)))
                                              :log-path request.log-path :exit-path request.exit-path
-                                             :grace-seconds request.grace-seconds)))
+                                             :grace-seconds request.grace-seconds :hold-input request.hold-input
+                                             :cgroup-procs request.cgroup-procs :notice-env request.notice-env)))
   line)
 
 
@@ -138,9 +148,17 @@
       None))
 
 
-(defk os-fork-from-warm [request]
-  {:pre [(: request ForkFromWarm)] :post [(: % (| WarmForked WarmRefused))] :tags {:context "process" :role "foundation"}}
-  "待ちの子に仕事を 1 つ頼むため(頭の註)。socket が無い・接続を断られた・期限が切れた・答えが読めない = 断り(理由の文に env の値は無い)。"
+(defrecord HeldInput
+  "hold-input で頼んだ子の入力の pipe の書き口(頼み手が子の終わりまで握る): start-ticks = 子の印(pid の使い回しに書かない)・fd = 書き口
+   (待たない口 — 読まない子で pipe が満ちても頼み手を止めない)。"
+  (#^ int start-ticks)
+  (#^ int fd))
+
+
+(defk os-fork-from-warm [request input-fd]
+  {:pre [(: request ForkFromWarm) (: input-fd (| int None))] :post [(: % (| WarmForked WarmRefused))] :tags {:context "process" :role "foundation"}}
+  "待ちの子に仕事を 1 つ頼むため(頭の註)。socket が無い・接続を断られた・期限が切れた・答えが読めない = 断り(理由の文に env の値は無い)。
+   input-fd = 子の入力の pipe の読み口(hold-input の頼み — 頼みの 1 行の頭の 1 byte に添えて fd の受け渡しで送る・None = 添えない)。"
   (val path request.socket-path)
   (<- missing str (warm-socket-missing path))
   (<- refused str (warm-socket-refused path))
@@ -151,7 +169,11 @@
                   (.settimeout connection WARM-ANSWER-SECONDS)
                   (try
                     (do (.connect connection path)
-                        (.sendall connection line)
+                        ;; 添える fd は 1 byte の sendmsg に載せる(大きな 1 行の sendmsg は途中までしか送らない事がある — 残りは sendall)。
+                        (if (is input-fd None)
+                            (.sendall connection line)
+                            (do (socket.send-fds connection #((cut line 0 1)) #(input-fd))
+                                (.sendall connection (cut line 1 None))))
                         (<- answered (| bytes None) (received-line connection))
                         (if (is answered None) unreadable answered))
                     (except [FileNotFoundError] missing)
@@ -237,15 +259,52 @@
         (except [ProcessLookupError] gone))))
 
 
+(defk input-written [fd text]
+  {:pre [(: fd int) (: text str)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
+  "握った入力の pipe へ text を書くため。答え = 書いたか(読み手の居ない pipe・満ちた pipe は書かない — 行は PIPE_BUF より短いので、書きは
+   全部か BlockingIOError のどちらか)。"
+  (try
+    (do (os.write fd (.encode text "utf-8")) True)
+    (except [[BrokenPipeError BlockingIOError]] False)))
+
+
 (defhandler os-warm-process-handler
   ;; 本物の待ちの子と、機体ごとの process の様子の読み(頭の註)。
-  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds]
-    (<- answer (os-fork-from-warm (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env
-                                                :log-path log-path :exit-path exit-path :grace-seconds grace-seconds)))
-    (resume answer))
+  ;; hold-input で頼んだ子の入力の pipe の書き口の表(pid → HeldInput)。子の終わりを読んだら閉じて外す。
+  ;; 表は session に持つ(外側に state か session-store が要る — 本番の worker は session-store の内側に置く)。dict は置き換えずに書き換える。
+  (session val inputs ((get dict #(int HeldInput))))
+  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env]
+    (val request (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env :log-path log-path
+                               :exit-path exit-path :grace-seconds grace-seconds :hold-input hold-input
+                               :cgroup-procs cgroup-procs :notice-env notice-env))
+    (if (not hold-input)
+        (do (<- answer (os-fork-from-warm request None))
+            (resume answer))
+        ;; 子 A だけの入力の pipe: 読み口は頼みに添えて渡し、自分の写しは閉じる(A が唯一の読み手)。書き口は受けた子の分だけ握る。
+        (do (val pipe (os.pipe))
+            (<- answer (os-fork-from-warm request (get pipe 0)))
+            (os.close (get pipe 0))
+            (if (isinstance answer WarmForked)
+                (do (os.set-blocking (get pipe 1) False)
+                    (setv (get inputs answer.pid) (HeldInput :start-ticks answer.start-ticks :fd (get pipe 1))))
+                (os.close (get pipe 1)))
+            (resume answer))))
   (PollWarmChild [pid start-ticks exit-path]
     (<- answer (os-poll-warm-child pid start-ticks exit-path))
+    ;; 終わった子の入力の pipe の書き口を閉じる(同じ start-ticks の子の物だけ)。
+    (val held (.get inputs pid))
+    (when (and (is-not held None) (= held.start-ticks start-ticks) (not (isinstance answer WarmRunning)))
+      (os.close held.fd)
+      (.pop inputs pid))
     (resume answer))
+  (WriteWarmChildInput [pid start-ticks text]
+    (val held (.get inputs pid))
+    (<- running bool (same-child-running pid start-ticks))
+    (var delivered False)
+    (when (and (is-not held None) (= held.start-ticks start-ticks) running)
+      (<- wrote bool (input-written held.fd text))
+      (:= delivered wrote))
+    (resume (WarmInputWritten :pid pid :delivered delivered)))
   (SignalWarmChild [pid start-ticks signal]
     (<- answer (os-signal-warm-child pid start-ticks signal))
     (resume answer)))

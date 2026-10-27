@@ -395,3 +395,80 @@ def test_the_warm_child_reads_the_process_through_the_machine_readers() -> None:
     source = (PACKAGE / "src" / "doeff_cluster" / "worker" / "entry" / "warm_child.py").read_text()
     assert "/proc" not in source
     assert "proc_stat_of" in source and "own_thread_count" in source
+
+
+# --- service の頼み(card ki-de44efdb9aa4)— 入力の pipe・cgroup・退きの知らせの中継 -------------------------------------------------
+
+NOTICE_ENV = "DOEFF_WORKER_NOTICE_FD"
+
+
+def asked_holding(warm: Warm, payload: dict[str, object], given: tuple[int, ...]) -> Forked | Refused:
+    """頼みの 1 行の頭の byte に fd を添えて送り(worker の os-warm-process-handler と同じ送り方)、答えを読むため。"""
+    line = (json.dumps(payload) + "\n").encode("utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(10.0)
+        client.connect(str(warm.socket))
+        socket.send_fds(client, [line[:1]], list(given))
+        client.sendall(line[1:])
+        data = b""
+        while b"\n" not in data:
+            chunk = client.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    answer = json.loads(data.split(b"\n", 1)[0])
+    match answer:
+        case {"pid": int(pid), "startTicks": int(ticks)}:
+            return Forked(pid, ticks)
+        case {"detail": str(detail)}:
+            return Refused(detail)
+        case _:
+            raise AssertionError(f"約束の形でない答え: {answer}")
+
+
+def service_line(name: str, place: Path, args: list[str], procs: Path) -> dict[str, object]:
+    """service の頼み(入力の pipe を握る・cgroup.procs・知らせの中継の名)を作るため。"""
+    return {**request_line(name, place, args, {}), "holdInput": True, "cgroupProcs": str(procs), "noticeEnv": NOTICE_ENV}
+
+
+def test_a_forked_service_relays_notices_moves_to_its_cgroup_and_stops_when_the_worker_goes(
+    place: Path, start_warm_child: StartWarmChild
+) -> None:
+    """service の頼みで分かれた子 A は、頼みの cgroup.procs に自分の pid を書き、添えて届いた入力の pipe の行を入口の知らせの pipe へ中継し、
+    入力の pipe の EOF(worker の消失)で入口を止める — 入れ物 shim の hold-stdin・--notice-env・placed-argv と同じ働き。前の形(service の
+    欄の無い待ちの子)では知らない欄で断られて赤。"""
+    warm = started(place, start_warm_child)
+    try:
+        assert readied(warm)["serviceForks"] is True
+        procs = place / "procs"
+        # 中継: 入口が関所に着いたら 1 行を書き、入口がそれを知らせの pipe から読んで出力に書いて 0 で終わる。
+        reading, writing = os.pipe()
+        gate = gate_opened(place, "g1")
+        out = place / "relayed"
+        child = asked_holding(warm, service_line("svc", place, ["relay", str(out), str(place / "g1"), NOTICE_ENV], procs), (reading,))
+        os.close(reading)
+        assert isinstance(child, Forked), child
+        assert procs.read_text().strip() == str(child.pid)
+        connection = reached(gate)
+        os.write(writing, b"retire\n")
+        ended(child)
+        connection.close()
+        assert out.read_bytes() == b"retire\n"
+        assert (place / "svc.exit").read_text().strip() == "0"
+        os.close(writing)
+        # worker の消失: 入口が関所で待つ間に入力の pipe の書き口を閉じると、A が入口を止めて終わる(終了コードは TERM の負)。
+        reading, writing = os.pipe()
+        gate = gate_opened(place, "g2")
+        held = asked_holding(warm, service_line("gone", place, ["inspect", str(place / "f2"), str(place / "g2")], procs), (reading,))
+        os.close(reading)
+        assert isinstance(held, Forked), held
+        connection = reached(gate)
+        os.close(writing)
+        ended(held)
+        connection.close()
+        assert int((place / "gone.exit").read_text()) < 0
+        # 添えた fd の無い service の頼みは断る。
+        refused = asked(warm, service_line("bare", place, ["exit", "0"], procs))
+        assert isinstance(refused, Refused) and "fd" in refused.detail, refused
+    finally:
+        stopped(warm)

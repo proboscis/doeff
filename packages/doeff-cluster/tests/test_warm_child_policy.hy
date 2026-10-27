@@ -333,3 +333,45 @@
   (assert (= (tuple (gfor s report #(s.phase s.failure)))
              #(#(JobPhase.ENV-FAILED (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :detail LATE :retryable False))))
           report))
+
+
+;; --- 判断の表 2b: service を待ちの子から分ける道(card ki-de44efdb9aa4 — warm_rules の warm-start)------------------------------
+
+(deftest test-a-service-forks-only-from-a-warm-child-that-names-service-forks
+  ;; service を分ける方策(warm-services・下限 2 本)。分けるのは service が 2 本以上か分かれる task も在る root の service だけ。待ちの子の
+  ;; 準備を待ち、印が service を受けると名乗る時だけ分ける。名乗らない古い版の待ちの子と、断りの上限に届いた待ちの子の root は入れ物 shim。
+  (val on (replace POLICY :warm-services True :warm-services-min 2))
+  (val serving (WarmChildMark :threads 1 :vm-live #(0 0 0) :services True))
+  (<- s1 JobSpec (task-on "s1" KEY-A :once False))
+  (<- s2 JobSpec (task-on "s2" KEY-A :once False))
+  (<- lone JobSpec (task-on "lone" KEY-B :once False))
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (<- bare WorldView (world))
+  (<- starting WorldView (world :children #((! (child KEY-A :mark None)))))
+  (<- ready WorldView (world :children #((! (child KEY-A :mark serving)))))
+  (<- old WorldView (world :children #((! (child KEY-A)))))
+  (<- refused-child WarmChildView (child KEY-A :mark None :exit-code 3 :ended-ms (- NOW 30000)))
+  (<- refused WorldView (world :children #((replace refused-child :refusals (- on.warm-refusal-limit 1)))))
+  (val rows
+    #(#("方策が偽 → 2 本でも入れ物 shim・待ちの子は起こさない" POLICY #(s1 s2) bare #((StartJob s1 1 ROOT-A) (StartJob s2 1 ROOT-A)))
+      #("下限に満たない root → 入れ物 shim・待ちの子は起こさない" on #(lone) bare #((StartJob lone 1 ROOT-B)))
+      #("下限の root・待ちの子が無い → 待ちの子を起こし、service は待つ" on #(s1 s2) bare #((StartWarmChild KEY-A LAUNCH-A)))
+      #("下限の root・起こし中 → 何もしない" on #(s1 s2) starting #())
+      #("下限の root・service を受ける待ちの子 → 分ける" on #(s1 s2) ready
+        #((StartJob s1 1 ROOT-A :warm-key KEY-A) (StartJob s2 1 ROOT-A :warm-key KEY-A)))
+      #("下限の root・印が service を名乗らない待ちの子 → 入れ物 shim" on #(s1 s2) old
+        #((StartJob s1 1 ROOT-A) (StartJob s2 1 ROOT-A)))
+      #("分かれる task の在る root の 1 本の service → task も service も分ける" on #(s1 ta) ready
+        #((StartJob s1 1 ROOT-A :warm-key KEY-A) (StartJob ta 1 ROOT-A :warm-key KEY-A)))
+      #("断りの上限に届いた待ちの子の root → service は入れ物 shim(env-failed にしない)" on #(s1 s2) refused
+        #((StartJob s1 1 ROOT-A) (StartJob s2 1 ROOT-A)))))
+  (for [#(label policy desired observed expected) rows]
+    (<- got tuple (plan NOW desired observed {} policy))
+    (assert (= got expected) (.format "{}: {}" label got))
+    (<- broken tuple (clauses-hold got observed))
+    (assert (= broken #()) (.format "{}: 条の破り {}" label broken)))
+  ;; 待ちの子を待つ service の状態は準備の段階(理由は待ちの子の準備中)。shim で起こす service は待たない。
+  (<- waiting tuple (statuses NOW #(s1 s2) starting {} on))
+  (assert (= (tuple (gfor s waiting s.phase)) #(JobPhase.PREPARING JobPhase.PREPARING)) waiting)
+  (<- cold tuple (statuses NOW #(s1 s2) starting {} POLICY))
+  (assert (= (tuple (gfor s cold s.phase)) #(JobPhase.STARTING JobPhase.STARTING)) cold))
