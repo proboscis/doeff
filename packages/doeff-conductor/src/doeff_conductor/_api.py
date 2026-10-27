@@ -1,7 +1,8 @@
 """
-API for doeff-conductor.
+Run state store for doeff-conductor (internal).
 
-Provides programmatic access to conductor functionality:
+``conductor_state_handler`` answers the run effects (``doeff_conductor.effects.runs``)
+through this store; users yield those effects instead of calling it:
 - Run workflows
 - List/get workflows
 - Watch workflow progress
@@ -70,13 +71,12 @@ class ConductorAPI:
         Returns:
             WorkflowHandle for the started workflow
         """
+        from doeff_conductor.templates import get_template, is_template
+        from doeff_conductor.types import PRHandle, WorkflowHandle, WorkflowStatus
         from doeff_conductor.workflow_loader import (
             load_workflow_spec,
             prepare_workflow_source_for_run,
         )
-
-        from doeff_conductor.templates import get_template, is_template
-        from doeff_conductor.types import PRHandle, WorkflowHandle, WorkflowStatus
 
         # Generate workflow ID
         workflow_id = run_id or secrets.token_hex(4)

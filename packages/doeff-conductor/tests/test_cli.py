@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-from doeff_conductor.cli import cli
+from doeff_conductor._cli import cli
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
@@ -710,7 +710,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_list_empty(self, runner: CliRunner, tmp_state_dir: Path):
         """List workspaces when none exist."""
-        with patch("doeff_conductor.api.ConductorAPI.list_workspaces", return_value=[]):
+        with patch("doeff_conductor._api.ConductorAPI.list_workspaces", return_value=[]):
             result = runner.invoke(
                 cli, ["--state-dir", str(tmp_state_dir), "workspace", "list"]
             )
@@ -719,7 +719,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_list_with_items(self, runner: CliRunner, tmp_state_dir: Path):
         """List existing workspaces."""
-        with patch("doeff_conductor.api.ConductorAPI.list_workspaces") as mock_list:
+        with patch("doeff_conductor._api.ConductorAPI.list_workspaces") as mock_list:
             now = datetime.now(timezone.utc)
             mock_workspaces = [
                 Workspace(
@@ -743,7 +743,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_list_json(self, runner: CliRunner, tmp_state_dir: Path):
         """Test JSON output for workspace list."""
-        with patch("doeff_conductor.api.ConductorAPI.list_workspaces") as mock_list:
+        with patch("doeff_conductor._api.ConductorAPI.list_workspaces") as mock_list:
             now = datetime.now(timezone.utc)
             mock_workspaces = [
                 Workspace(
@@ -768,7 +768,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_cleanup_dry_run(self, runner: CliRunner, tmp_state_dir: Path):
         """Test workspace cleanup with dry run."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+        with patch("doeff_conductor._api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = [
                 Path("/tmp/workspaces/old-workspace-1"),
                 Path("/tmp/workspaces/old-workspace-2"),
@@ -783,7 +783,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_cleanup_actual(self, runner: CliRunner, tmp_state_dir: Path):
         """Test actual workspace cleanup."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+        with patch("doeff_conductor._api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = [Path("/tmp/workspaces/old-workspace")]
 
             result = runner.invoke(
@@ -794,7 +794,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_cleanup_empty(self, runner: CliRunner, tmp_state_dir: Path):
         """Test cleanup when no orphaned workspaces."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+        with patch("doeff_conductor._api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = []
 
             result = runner.invoke(
@@ -805,7 +805,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_cleanup_json(self, runner: CliRunner, tmp_state_dir: Path):
         """Test JSON output for workspace cleanup."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+        with patch("doeff_conductor._api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = [Path("/tmp/workspaces/old-workspace")]
 
             result = runner.invoke(
@@ -818,7 +818,7 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_cleanup_older_than(self, runner: CliRunner, tmp_state_dir: Path):
         """Test cleanup with age filter."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+        with patch("doeff_conductor._api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = []
 
             result = runner.invoke(

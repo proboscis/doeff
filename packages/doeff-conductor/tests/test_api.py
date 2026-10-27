@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import doeff_conductor.exceptions as conductor_exceptions
 import pytest
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.journal import ProgressJournal, ProgressJournalEntry
 from doeff_conductor.types import (
     Issue,

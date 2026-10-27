@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.effects import AgentEffect, CreateWorkspace
 from doeff_conductor.effects.dsl import RandomCall, TimeCall
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler

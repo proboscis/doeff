@@ -117,14 +117,21 @@ uv run --no-sync python publications/zenn-use-cases-v0/examples/durable.py docum
 ```python
 from pathlib import Path  # ワークフローと保存先のパスを指定する。
 from tempfile import TemporaryDirectory  # 検証ごとに独立した履歴の保存先を用意する。
-from doeff_conductor.api import ConductorAPI  # ワークフローを読み込み、履歴付きで実行する。
-from doeff_conductor.types import WorkflowStatus  # 完了状態の定数で結果を検証する。
+from doeff import do, run  # 実行の手順をProgramとして組み、ハンドラの下で走らせる。
+from doeff_conductor import RunWorkflow, WorkflowStatus, conductor_state_handler  # 実行を求めるeffectと、履歴の保存先から答えるハンドラ。
+
+
+@do
+def run_twice(path):  # 同じ定義を同じ実行IDで2回実行する。
+    first = yield RunWorkflow(template_or_file=path, run_id="article-journal")  # 時刻と乱数を取得して記録する。
+    replayed = yield RunWorkflow(template_or_file=path, run_id="article-journal")  # 同じ定義と実行IDで履歴を使う。
+    return first, replayed  # 2回の結果を返す。
+
 
 workflow = Path("publications/zenn-use-cases-v0/examples/workflow_journal.hy").resolve()  # 記事のHy定義を使う。
 with TemporaryDirectory() as directory:  # この検証の2回の実行で保存先を共有する。
-    api = ConductorAPI(state_dir=Path(directory))  # 履歴をこのディレクトリへ保存する。
-    first = api.run_workflow(str(workflow), run_id="article-journal")  # 時刻と乱数を取得して記録する。
-    replayed = api.run_workflow(str(workflow), run_id="article-journal")  # 同じ定義と実行IDで履歴を使う。
+    handler = conductor_state_handler(Path(directory))  # 履歴をこのディレクトリへ保存する。
+    first, replayed = run(handler(run_twice(str(workflow))))  # 2回の実行をハンドラの下で走らせる。
     assert first.status == replayed.status == WorkflowStatus.DONE  # 両方とも最後まで完了する。
     assert first.result_payload == replayed.result_payload  # 開始時刻と乱数値が両方一致する。
 ```

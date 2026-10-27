@@ -14,23 +14,56 @@ Commands:
     issue       Issue management (create, list, show, resolve)
     workspace   Workspace management (list, cleanup)
     template    Template management (list, show, new)
+
+Each command is a program of conductor effects (``doeff_conductor.effects``) run under
+``conductor_state_handler``; the command itself only parses arguments and prints.
 """
 
 import json
 import sys
 import time
+from collections.abc import Generator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 import click
+from doeff_core_effects import try_handler
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from doeff import Err, Program, Try, do
+from doeff import run as _doeff_run  # the `run` command below takes the bare name
+from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
+from doeff_conductor.effects.runs import (
+    AnswerGate,
+    CleanupWorkspaces,
+    ConductorStateDir,
+    DescribeEnvironment,
+    GetTemplateSource,
+    GetWorkflow,
+    ListGates,
+    ListOpenGates,
+    ListTemplates,
+    ListWorkflows,
+    ListWorkspaces,
+    OpenMonitor,
+    PlanWorkflow,
+    ReadProgress,
+    RenderMonitor,
+    ResumeWorkflow,
+    RunWorkflow,
+    StopWorkflow,
+    ValidateWorkflow,
+)
 from doeff_conductor.exceptions import ConductorError
-from doeff_conductor.types import IssueStatus, WorkflowStatus
+from doeff_conductor.handlers.state_handler import conductor_state_handler
+from doeff_conductor.types import Issue, IssueStatus, WorkflowHandle, WorkflowStatus
+
+_T = TypeVar("_T")
 
 console = Console()
 _CLI_USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
@@ -82,6 +115,94 @@ def _status_color(status: WorkflowStatus | IssueStatus | str) -> str:
 
 
 # =============================================================================
+# Command programs
+# =============================================================================
+
+
+@do
+def _perform(effect: Any) -> Generator[Any, Any, Any]:
+    """Program of one conductor effect, for a command whose whole work is that effect."""
+    return (yield effect)
+
+
+@do
+def _attempt(program: Program[_T]) -> Generator[Any, Any, Any]:
+    """Catch the command program's error as a value, so ``run`` prints no doeff traceback."""
+    return (yield Try(program))
+
+
+def _run_program(ctx: click.Context, program: Program[_T]) -> _T:
+    """Run one command's program under the conductor state handler; re-raise its error here.
+
+    The error is re-raised outside ``run`` so the command's own ``except`` reports it the
+    way it always has (``Error: ...``), without the doeff traceback ``run`` prints.
+    """
+    state_handler = conductor_state_handler(ctx.obj.get("state_dir"))
+    outcome = _doeff_run(try_handler(state_handler(_attempt(program))))
+    if isinstance(outcome, Err):
+        raise outcome.error
+    return outcome.value
+
+
+@dataclass(frozen=True)
+class _WorkflowView:
+    """A workflow with its open gates, for the commands that show both."""
+
+    workflow: WorkflowHandle
+    gates: list[dict[str, Any]]
+
+
+@do
+def _workflow_view(workflow_id: str) -> Generator[Any, Any, "_WorkflowView | None"]:
+    """Read a workflow and its open gates; None when no workflow matches the id."""
+    workflow: WorkflowHandle | None = yield GetWorkflow(workflow_id=workflow_id)
+    if workflow is None:
+        return None
+    gates: list[dict[str, Any]] = yield ListOpenGates(workflow_id=workflow.id)
+    return _WorkflowView(workflow=workflow, gates=gates)
+
+
+@do
+def _required_workflow_view(workflow_id: str) -> Generator[Any, Any, _WorkflowView]:
+    """Read a workflow and its open gates; fail naming the state dir when it is missing."""
+    view: _WorkflowView | None = yield _workflow_view(workflow_id)
+    if view is None:
+        state_dir: Path = yield ConductorStateDir()
+        raise ValueError(f"Workflow not found: {workflow_id} (state dir: {state_dir})")
+    return view
+
+
+@do
+def _run_with_issue(
+    template_or_file: str,
+    issue_id: str | None,
+    params: dict[str, Any],
+    run_id: str | None,
+    supervision: str,
+) -> Generator[Any, Any, WorkflowHandle]:
+    """Load the issue named on the command line, if any, then run the workflow with it."""
+    issue: Issue | None = None
+    if issue_id is not None:
+        issue = yield GetIssue(id=issue_id)
+    return (
+        yield RunWorkflow(
+            template_or_file=template_or_file,
+            issue=issue,
+            params=params,
+            run_id=run_id,
+            supervision=supervision,
+        )
+    )
+
+
+@do
+def _resolve_issue(issue_id: str, pr_url: str | None) -> Generator[Any, Any, Issue]:
+    """Mark the issue with this id resolved, with its PR when one is given."""
+    issue: Issue = yield GetIssue(id=issue_id)
+    return (yield ResolveIssue(issue=issue, pr_url=pr_url))
+
+
+# =============================================================================
 # Main CLI Group
 # =============================================================================
 
@@ -120,24 +241,13 @@ def plan_cmd(
     supervision: str,
 ) -> None:
     """Produce the overseer binding plan for a workflow."""
-    from doeff_conductor.verbs import plan_workflow
-    from doeff_conductor.workflow_loader import load_workflow_spec, snapshot_workflow_source
-
     try:
-        workflow_source = workflow_file
-        if run_id is not None:
-            from doeff_conductor.api import ConductorAPI
-
-            state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
-            workflow_source = str(
-                snapshot_workflow_source(
-                    workflow_file,
-                    state_dir=state_dir,
-                    run_id=run_id,
-                )
-            )
-        workflow = load_workflow_spec(workflow_source)
-        plan = plan_workflow(workflow, supervision=supervision)
+        plan = _run_program(
+            ctx,
+            _perform(
+                PlanWorkflow(workflow_file=workflow_file, supervision=supervision, run_id=run_id)
+            ),
+        )
         if output_json:
             click.echo(json.dumps(plan.to_dict(), indent=2))
             return
@@ -200,22 +310,17 @@ def validate_cmd(
     supervision: str,
 ) -> None:
     """Validate workflow control flow under scenario-driven stubs."""
-    from doeff_conductor.verbs import validate_workflow
-    from doeff_conductor.workflow_loader import load_workflow_spec
-
     try:
-        workflow = load_workflow_spec(workflow_file)
-        state_dir_for_run = None
-        if run_id:
-            from doeff_conductor.api import ConductorAPI
-
-            state_dir_for_run = str(ConductorAPI(ctx.obj.get("state_dir")).state_dir)
-        report = validate_workflow(
-            workflow,
-            scenarios=scenarios or None,
-            supervision=supervision,
-            state_dir=state_dir_for_run,
-            run_id=run_id,
+        report = _run_program(
+            ctx,
+            _perform(
+                ValidateWorkflow(
+                    workflow_file=workflow_file,
+                    scenarios=scenarios,
+                    supervision=supervision,
+                    run_id=run_id,
+                )
+            ),
         )
         if output_json:
             click.echo(json.dumps(report.to_dict(), indent=2))
@@ -276,40 +381,26 @@ def run(
         conductor run enforced_pr --issue /path/to/issue.md --watch
         conductor run ./my_workflow.hy --params '{"key": "value"}'
     """
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
         # Parse parameters
         parsed_params = {}
         if params:
             parsed_params = json.loads(params)
 
-        # Load issue if provided
-        issue_obj = None
+        # The issue file names the issue by the id in its frontmatter
+        issue_id = None
         if issue:
-            from doeff_conductor.handlers.issue_handler import IssueHandler
-
-            handler = IssueHandler()
             issue_path = Path(issue)
             if issue_path.exists():
-                content = issue_path.read_text()
                 from doeff_conductor.handlers.issue_handler import _parse_frontmatter
 
-                frontmatter, _body = _parse_frontmatter(content)
-                from doeff_conductor.effects.issue import GetIssue
-
-                if frontmatter.get("id"):
-                    issue_obj = handler.handle_get_issue(GetIssue(id=frontmatter["id"]))
+                frontmatter, _body = _parse_frontmatter(issue_path.read_text())
+                issue_id = frontmatter.get("id") or None
 
         # Run workflow
-        workflow = api.run_workflow(
-            template_or_file,
-            issue=issue_obj,
-            params=parsed_params,
-            run_id=run_id,
-            supervision=supervision,
+        workflow = _run_program(
+            ctx,
+            _run_with_issue(template_or_file, issue_id, parsed_params, run_id, supervision),
         )
 
         if output_json:
@@ -344,17 +435,13 @@ def resume_cmd(
     output_json: bool,
 ) -> None:
     """Resume a workflow from its snapshotted source."""
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
         parsed_params = {}
         if params:
             parsed_params = json.loads(params)
-        workflow = api.resume_workflow(
-            workflow_id,
-            params=parsed_params,
+        workflow = _run_program(
+            ctx,
+            _perform(ResumeWorkflow(workflow_id=workflow_id, params=parsed_params)),
         )
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))
@@ -384,11 +471,10 @@ def ps_cmd(
         conductor ps
         conductor ps --status running --status blocked
     """
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
-    workflows = api.list_workflows(status=[WorkflowStatus(s) for s in status] if status else None)
+    workflows = _run_program(
+        ctx,
+        _perform(ListWorkflows(status=tuple(WorkflowStatus(s) for s in status))),
+    )
 
     if output_json:
         click.echo(json.dumps([w.to_dict() for w in workflows], indent=2))
@@ -424,12 +510,11 @@ def _show_progress_since(
     output_json: bool,
     since: int,
 ) -> None:
-    from doeff_conductor.api import ConductorAPI
-    from doeff_conductor.overseer import progress_since
-
     try:
-        state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
-        events = progress_since(state_dir, workflow_id, since)
+        events = _run_program(
+            ctx,
+            _perform(ReadProgress(workflow_id=workflow_id, since=since)),
+        )
         if output_json:
             click.echo(json.dumps(events, indent=2))
             return
@@ -517,13 +602,9 @@ def _show_workflow_details(
     workflow_id: str,
     output_json: bool,
 ) -> None:
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
-        workflow = api.get_workflow(workflow_id)
-        if workflow is None:
+        view = _run_program(ctx, _workflow_view(workflow_id))
+        if view is None:
             if output_json:
                 click.echo(json.dumps({"error": "not found"}))
             else:
@@ -531,17 +612,13 @@ def _show_workflow_details(
             sys.exit(1)
 
         if output_json:
-            payload = workflow.to_dict()
-            from doeff_conductor.overseer import list_open_gates
-
-            payload["open_gates"] = list_open_gates(api.state_dir, workflow.id)
+            payload = view.workflow.to_dict()
+            payload["open_gates"] = view.gates
             click.echo(json.dumps(payload, indent=2))
             return
 
-        console.print(_workflow_detail_panel(workflow))
-        from doeff_conductor.overseer import list_open_gates
-
-        gates = list_open_gates(api.state_dir, workflow.id)
+        console.print(_workflow_detail_panel(view.workflow))
+        gates = view.gates
         if gates:
             table = Table(show_header=True, header_style="bold")
             table.add_column("GATE", style="cyan")
@@ -634,28 +711,22 @@ class _WaitOutcome(NamedTuple):
 
 
 def _wait_for_workflow(
+    ctx: click.Context,
     *,
-    state_dir: str | None,
     workflow_id: str,
     timeout: float | None,
     poll_interval: float,
 ) -> _WaitOutcome:
-    from doeff_conductor.api import ConductorAPI
-    from doeff_conductor.overseer import list_open_gates
-
-    api = ConductorAPI(state_dir)
     started_at = time.monotonic()
 
+    # ポーリングの訳: as in ``_watch_updates`` — the state store announces no change.
     while True:
-        handle = api.get_workflow(workflow_id)
+        view = _run_program(ctx, _required_workflow_view(workflow_id))
         waited_seconds = time.monotonic() - started_at
-        if handle is None:
-            raise ValueError(
-                f"Workflow not found: {workflow_id} (state dir: {api.state_dir})"
-            )
+        handle = view.workflow
 
         status_value = _wait_status_value(handle.status)
-        gate_payload = _wait_gate_payload(list_open_gates(api.state_dir, handle.id))
+        gate_payload = _wait_gate_payload(view.gates)
         payload = {
             "status": status_value,
             "gates": gate_payload,
@@ -705,7 +776,7 @@ def wait_cmd(
     """Wait until a workflow terminates or parks on an open gate."""
     try:
         exit_code, payload = _wait_for_workflow(
-            state_dir=ctx.obj.get("state_dir"),
+            ctx,
             workflow_id=workflow_id,
             timeout=timeout,
             poll_interval=poll_interval,
@@ -723,6 +794,37 @@ def wait_cmd(
         sys.exit(1)
 
 
+def _watch_updates(
+    ctx: click.Context,
+    workflow_id: str,
+    poll_interval: float = 1.0,
+) -> Generator[dict[str, Any], None, None]:
+    """Yield a status update each time the workflow's status changes, until it ends."""
+    last_status = None
+
+    # ポーリングの訳: the run state store is the meta.json files the running workflow's own
+    # process writes; it announces no change, so the command reads it again each interval.
+    while True:
+        handle = _run_program(ctx, _perform(GetWorkflow(workflow_id=workflow_id)))
+        if handle is None:
+            yield {"status": "error", "message": "Workflow not found", "terminal": True}
+            break
+
+        if handle.status != last_status:
+            yield {
+                "status": handle.status.value,
+                "message": f"Workflow {handle.status.value}",
+                "terminal": handle.status.is_terminal(),
+                "workflow": handle.to_dict(),
+            }
+            last_status = handle.status
+
+        if handle.status.is_terminal():
+            break
+
+        time.sleep(poll_interval)
+
+
 @cli.command("watch")
 @click.argument("workflow_id")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSONL")
@@ -733,12 +835,8 @@ def watch_cmd(
     output_json: bool,
 ) -> None:
     """Watch workflow progress in real-time."""
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
-        for update in api.watch_workflow(workflow_id):
+        for update in _watch_updates(ctx, workflow_id):
             if output_json:
                 click.echo(json.dumps(update))
             else:
@@ -796,30 +894,31 @@ def monitor_cmd(
     progress journal, agent-journal completion truth, and open gates; it never
     mutates run state and never reads agentd pane status as completion.
     """
-    from doeff_conductor.api import ConductorAPI
-
-    state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
-
     if once:
-        from doeff_conductor.monitor import render_dashboard
-
         try:
             console.print(
-                render_dashboard(state_dir, workflow_id, only_running=not show_all, view=view)
+                _run_program(
+                    ctx,
+                    _perform(
+                        RenderMonitor(
+                            workflow_id=workflow_id,
+                            only_running=not show_all,
+                            view=view,
+                        )
+                    ),
+                )
             )
         except _CLI_USER_ERROR_TYPES as e:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
         return
 
-    from doeff_conductor.monitor_app import MonitorApp
-
-    MonitorApp(
-        str(state_dir),
-        workflow_id=workflow_id,
-        only_running=not show_all,
-        interval=interval,
-    ).run()
+    _run_program(
+        ctx,
+        _perform(
+            OpenMonitor(workflow_id=workflow_id, only_running=not show_all, interval=interval)
+        ),
+    )
 
 
 @cli.command("stop")
@@ -834,12 +933,11 @@ def stop_cmd(
     output_json: bool,
 ) -> None:
     """Stop a workflow or specific agent."""
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
-        stopped = api.stop_workflow(workflow_id, agent=agent)
+        stopped = _run_program(
+            ctx,
+            _perform(StopWorkflow(workflow_id=workflow_id, agent=agent)),
+        )
 
         if output_json:
             click.echo(json.dumps({"ok": True, "stopped": stopped}))
@@ -868,12 +966,11 @@ def env_group() -> None:
 
 @env_group.command("describe")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def env_describe(output_json: bool) -> None:
+@click.pass_context
+def env_describe(ctx: click.Context, output_json: bool) -> None:
     """Describe profiles, role conventions, router policy, and capabilities."""
-    from doeff_conductor.verbs import describe_environment
-
     try:
-        description = describe_environment()
+        description = _run_program(ctx, _perform(DescribeEnvironment()))
         if output_json:
             click.echo(json.dumps(description, indent=2))
             return
@@ -967,18 +1064,21 @@ def _answer_gate(
     output_json: bool,
 ) -> None:
     """Shared implementation for answering a gate."""
-    from doeff_conductor.api import ConductorAPI
-
     try:
         parsed_params: dict[str, Any] = {}
         if params:
             parsed_params = json.loads(params)
-        workflow = ConductorAPI(ctx.obj.get("state_dir")).answer_gate(
-            workflow_id,
-            gate_id,
-            option,
-            params=parsed_params,
-            note=note,
+        workflow = _run_program(
+            ctx,
+            _perform(
+                AnswerGate(
+                    workflow_id=workflow_id,
+                    gate_id=gate_id,
+                    option=option,
+                    params=parsed_params,
+                    note=note,
+                )
+            ),
         )
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))
@@ -1021,15 +1121,13 @@ def answer_cmd(
 
 
 def _list_gates(ctx: click.Context, workflow_id: str | None, output_json: bool) -> None:
-    from doeff_conductor.api import ConductorAPI
-    from doeff_conductor.overseer import list_gates_with_status, list_open_gates
-
     try:
-        state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
         if workflow_id is not None:
-            gates: list[dict[str, Any]] = list_gates_with_status(state_dir, workflow_id)
+            gates: list[dict[str, Any]] = _run_program(
+                ctx, _perform(ListGates(workflow_id=workflow_id))
+            )
         else:
-            raw_gates: list[dict[str, Any]] = list_open_gates(state_dir)
+            raw_gates: list[dict[str, Any]] = _run_program(ctx, _perform(ListOpenGates()))
             gates = [{**gate, "status": "open"} for gate in raw_gates]
 
         if output_json:
@@ -1102,23 +1200,21 @@ def issue_create(
         conductor issue create "Fix bug" --body "Description here"
         conductor issue create "Feature" --body @description.md --labels feature,urgent
     """
-    from doeff_conductor.effects.issue import CreateIssue
-    from doeff_conductor.handlers.issue_handler import IssueHandler
-
-    handler = IssueHandler()
-
     # Handle body from file
     body_text = ""
     if body:
         body_text = Path(body[1:]).read_text() if body.startswith("@") else body
 
     try:
-        issue_obj = handler.handle_create_issue(
-            CreateIssue(
-                title=title,
-                body=body_text,
-                labels=labels,
-            )
+        issue_obj = _run_program(
+            ctx,
+            _perform(
+                CreateIssue(
+                    title=title,
+                    body=body_text,
+                    labels=labels,
+                )
+            ),
         )
 
         if output_json:
@@ -1146,19 +1242,17 @@ def issue_list(
     output_json: bool,
 ) -> None:
     """List issues."""
-    from doeff_conductor.effects.issue import ListIssues
-    from doeff_conductor.handlers.issue_handler import IssueHandler
-
-    handler = IssueHandler()
-
     status_filter = IssueStatus(status) if status else None
 
     try:
-        issues = handler.handle_list_issues(
-            ListIssues(
-                status=status_filter,
-                labels=labels,
-            )
+        issues = _run_program(
+            ctx,
+            _perform(
+                ListIssues(
+                    status=status_filter,
+                    labels=labels,
+                )
+            ),
         )
 
         if output_json:
@@ -1203,13 +1297,8 @@ def issue_show(
     output_json: bool,
 ) -> None:
     """Show issue details."""
-    from doeff_conductor.effects.issue import GetIssue
-    from doeff_conductor.handlers.issue_handler import IssueHandler
-
-    handler = IssueHandler()
-
     try:
-        issue_obj = handler.handle_get_issue(GetIssue(id=issue_id))
+        issue_obj = _run_program(ctx, _perform(GetIssue(id=issue_id)))
 
         if output_json:
             click.echo(json.dumps(issue_obj.to_dict(), indent=2))
@@ -1246,14 +1335,8 @@ def issue_resolve(
     output_json: bool,
 ) -> None:
     """Mark an issue as resolved."""
-    from doeff_conductor.effects.issue import GetIssue, ResolveIssue
-    from doeff_conductor.handlers.issue_handler import IssueHandler
-
-    handler = IssueHandler()
-
     try:
-        issue_obj = handler.handle_get_issue(GetIssue(id=issue_id))
-        resolved = handler.handle_resolve_issue(ResolveIssue(issue=issue_obj, pr_url=pr))
+        resolved = _run_program(ctx, _resolve_issue(issue_id, pr))
 
         if output_json:
             click.echo(json.dumps(resolved.to_dict(), indent=2))
@@ -1287,12 +1370,8 @@ def workspace_list(
     output_json: bool,
 ) -> None:
     """List materialized workspaces."""
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
-        workspaces = api.list_workspaces(workflow_id=workflow)
+        workspaces = _run_program(ctx, _perform(ListWorkspaces(workflow_id=workflow)))
 
         if output_json:
             click.echo(json.dumps([item.to_dict() for item in workspaces], indent=2))
@@ -1337,14 +1416,10 @@ def workspace_cleanup(
     output_json: bool,
 ) -> None:
     """Cleanup orphaned workspace materializations."""
-    from doeff_conductor.api import ConductorAPI
-
-    api = ConductorAPI(ctx.obj.get("state_dir"))
-
     try:
-        cleaned = api.cleanup_workspaces(
-            dry_run=dry_run,
-            older_than_days=older_than,
+        cleaned = _run_program(
+            ctx,
+            _perform(CleanupWorkspaces(dry_run=dry_run, older_than_days=older_than)),
         )
 
         if output_json:
@@ -1387,9 +1462,7 @@ def template_list(
     output_json: bool,
 ) -> None:
     """List available workflow templates."""
-    from doeff_conductor.templates import get_available_templates
-
-    templates = get_available_templates()
+    templates = _run_program(ctx, _perform(ListTemplates()))
 
     if output_json:
         click.echo(json.dumps(templates, indent=2))
@@ -1414,10 +1487,8 @@ def template_list(
 @click.pass_context
 def template_show(ctx: click.Context, name: str) -> None:
     """Show template source code."""
-    from doeff_conductor.templates import get_template_source
-
     try:
-        source = get_template_source(name)
+        source = _run_program(ctx, _perform(GetTemplateSource(name=name)))
         console.print(Panel(source, title=f"Template: {name}", expand=False))
     except KeyError:
         console.print(f"[red]Template not found:[/red] {name}")

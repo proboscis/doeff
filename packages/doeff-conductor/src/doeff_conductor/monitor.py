@@ -227,7 +227,7 @@ def render_overview(
     workflow_id: str | None = None,
     only_running: bool = True,
 ) -> RenderableType:
-    from doeff_conductor.api import ConductorAPI
+    from doeff_conductor._api import ConductorAPI
 
     api = ConductorAPI(str(state_dir))
     if workflow_id is not None:
@@ -433,7 +433,7 @@ def render_dashboard(
         return render_overview(state_dir, workflow_id=workflow_id, only_running=only_running)
 
     render_one = render_run if view == "compact" else render_run_tree
-    from doeff_conductor.api import ConductorAPI
+    from doeff_conductor._api import ConductorAPI
 
     api = ConductorAPI(str(state_dir))
     if workflow_id is not None:
@@ -476,7 +476,7 @@ class RunRow:
 
 def run_rows(state_dir: str | Path, *, only_running: bool = True) -> list[RunRow]:
     """All runs (read-only) with their node counts and waiting-gate count."""
-    from doeff_conductor.api import ConductorAPI
+    from doeff_conductor._api import ConductorAPI
 
     api = ConductorAPI(str(state_dir))
     rows: list[RunRow] = []

@@ -8,6 +8,10 @@ All effects for conductor orchestration:
 - Agent: Agent, AgentTask
 - Git: Commit, Push, CreatePR, MergePR
 - DSL: AgentCall, GateCall, WorkspaceCall, MergeCall, TimeCall, RandomCall
+- Runs: ListWorkflows, GetWorkflow, RunWorkflow, ResumeWorkflow, StopWorkflow,
+  AnswerGate, ListOpenGates, ListGates, ReadProgress, PlanWorkflow, ValidateWorkflow,
+  ListWorkspaces, CleanupWorkspaces, RenderMonitor, OpenMonitor, DescribeEnvironment,
+  ListTemplates, GetTemplateSource, ConductorStateDir
 """
 
 from doeff_conductor.effects.agent import (
@@ -218,6 +222,63 @@ from doeff_conductor.effects.review import (
 )
 from doeff_conductor.effects.review import (
     run_review_routing_demo as run_review_routing_demo,
+)
+from doeff_conductor.effects.runs import (
+    AnswerGate as AnswerGate,
+)
+from doeff_conductor.effects.runs import (
+    CleanupWorkspaces as CleanupWorkspaces,
+)
+from doeff_conductor.effects.runs import (
+    ConductorStateDir as ConductorStateDir,
+)
+from doeff_conductor.effects.runs import (
+    DescribeEnvironment as DescribeEnvironment,
+)
+from doeff_conductor.effects.runs import (
+    GetTemplateSource as GetTemplateSource,
+)
+from doeff_conductor.effects.runs import (
+    GetWorkflow as GetWorkflow,
+)
+from doeff_conductor.effects.runs import (
+    ListGates as ListGates,
+)
+from doeff_conductor.effects.runs import (
+    ListOpenGates as ListOpenGates,
+)
+from doeff_conductor.effects.runs import (
+    ListTemplates as ListTemplates,
+)
+from doeff_conductor.effects.runs import (
+    ListWorkflows as ListWorkflows,
+)
+from doeff_conductor.effects.runs import (
+    ListWorkspaces as ListWorkspaces,
+)
+from doeff_conductor.effects.runs import (
+    OpenMonitor as OpenMonitor,
+)
+from doeff_conductor.effects.runs import (
+    PlanWorkflow as PlanWorkflow,
+)
+from doeff_conductor.effects.runs import (
+    ReadProgress as ReadProgress,
+)
+from doeff_conductor.effects.runs import (
+    RenderMonitor as RenderMonitor,
+)
+from doeff_conductor.effects.runs import (
+    ResumeWorkflow as ResumeWorkflow,
+)
+from doeff_conductor.effects.runs import (
+    RunWorkflow as RunWorkflow,
+)
+from doeff_conductor.effects.runs import (
+    StopWorkflow as StopWorkflow,
+)
+from doeff_conductor.effects.runs import (
+    ValidateWorkflow as ValidateWorkflow,
 )
 from doeff_conductor.effects.workspace import (
     CreateWorkspace as CreateWorkspace,

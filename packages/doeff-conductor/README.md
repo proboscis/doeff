@@ -280,7 +280,7 @@ Workflow state is stored at `~/.local/state/doeff-conductor/`:
 | [03_basic_pr_workflow.py](./examples/03_basic_pr_workflow.py) | Complete PR workflow |
 | [04_multi_agent.py](./examples/04_multi_agent.py) | Parallel agents |
 | [05_custom_template.py](./examples/05_custom_template.py) | Custom templates |
-| [06_api_usage.py](./examples/06_api_usage.py) | ConductorAPI usage |
+| [06_api_usage.py](./examples/06_api_usage.py) | Run effects and `conductor_state_handler` |
 
 ## License
 

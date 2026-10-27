@@ -21,6 +21,9 @@ from doeff_conductor.handlers.git_handler import GitHandler
 from doeff_conductor.handlers.issue_handler import IssueHandler
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.journaled_workspace import JournaledWorkspaceHandler
+from doeff_conductor.handlers.state_handler import (
+    conductor_state_handler as conductor_state_handler,
+)
 from doeff_conductor.handlers.testing import MockConductorRuntime as MockConductorRuntime
 from doeff_conductor.handlers.testing import mock_handlers as mock_handlers
 from doeff_conductor.handlers.utils import (

@@ -176,15 +176,20 @@ conductor run basic_pr --issue ISSUE-001.md --watch
 ### 1. Python API
 
 ```python
-from doeff_conductor import ConductorAPI
+from doeff import do, run
+from doeff_conductor import ListWorkflows, RunWorkflow, WorkflowStatus, conductor_state_handler
 
-api = ConductorAPI()
 
-# Run workflows programmatically
-pr = api.run_workflow("basic_pr", issue=issue)
+@do
+def run_and_query(issue):
+    # Run workflows programmatically
+    pr = yield RunWorkflow(template_or_file="basic_pr", issue=issue)
+    # Query workflows
+    running = yield ListWorkflows(status=(WorkflowStatus.RUNNING,))
+    return pr, running
 
-# Query workflows
-running = api.list_workflows(status=[WorkflowStatus.RUNNING])
+
+pr, running = run(conductor_state_handler()(run_and_query(issue)))
 ```
 
 ### 2. Custom Effects

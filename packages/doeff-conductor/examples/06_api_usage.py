@@ -2,14 +2,16 @@
 """
 Example 06: API Usage
 
-Demonstrates using the ConductorAPI for programmatic access:
-1. Run workflows via API
+Demonstrates programmatic access through run effects and conductor_state_handler:
+1. List the workflow templates
 2. List and query workflows
-3. Watch workflow progress
-4. Manage workspaces
+3. Manage workspaces
+4. JSON output for scripting
 
-The API provides a high-level interface for conductor operations
-without needing to set up handlers manually.
+A program yields run effects (ListWorkflows, GetWorkflow, RunWorkflow, StopWorkflow,
+ListWorkspaces, CleanupWorkspaces, ...); conductor_state_handler answers them from the
+state directory it is given. The ``conductor`` CLI commands are programs of the same
+effects.
 
 Run:
     cd packages/doeff-conductor
@@ -22,69 +24,79 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 from doeff_conductor import (
-    # API
-    ConductorAPI,
-    # Types
+    CleanupWorkspaces,
     Issue,
     IssueStatus,
+    ListTemplates,
+    ListWorkflows,
+    ListWorkspaces,
     WorkflowStatus,
-    # Templates
-    get_available_templates,
+    conductor_state_handler,
 )
 
+from doeff import do, run
 
-def demo_list_templates():
+
+@do
+def list_templates():
+    """Program: the workflow templates by name with their descriptions."""
+    return (yield ListTemplates())
+
+
+@do
+def list_workflows():
+    """Program: every workflow, and the running or blocked ones."""
+    every = yield ListWorkflows()
+    active = yield ListWorkflows(status=(WorkflowStatus.RUNNING, WorkflowStatus.BLOCKED))
+    return every, active
+
+
+@do
+def workspace_overview():
+    """Program: the materialized workspaces and what a 7-day cleanup would remove."""
+    workspaces = yield ListWorkspaces()
+    would_clean = yield CleanupWorkspaces(dry_run=True, older_than_days=7)
+    return workspaces, would_clean
+
+
+def demo_list_templates(state_dir: Path):
     """Demonstrate listing available templates."""
     print("\n" + "="*60)
     print("Available Templates")
     print("="*60 + "\n")
 
-    templates = get_available_templates()
+    templates = run(conductor_state_handler(state_dir)(list_templates()))
     for name, description in templates.items():
         print(f"  {name}:")
         print(f"    {description}")
         print()
 
-    print("To use a template:")
-    print("  from doeff_conductor import basic_pr, Issue")
-    print("  program = basic_pr(issue)")
-    print("  result = run(program, handlers=[...])")
+    print("To run a template:")
+    print("  run(conductor_state_handler(state_dir)(program_yielding(")
+    print("      RunWorkflow(template_or_file='basic_pr', issue=issue))))")
 
 
-def demo_api_workflow_management():
-    """Demonstrate workflow management via API."""
+def demo_workflow_management(state_dir: Path):
+    """Demonstrate workflow queries through run effects."""
     print("\n" + "="*60)
-    print("Workflow Management via API")
+    print("Workflow Management via Run Effects")
     print("="*60 + "\n")
-
-    # Create API with temporary state directory
-    state_dir = Path(mkdtemp(prefix="conductor-demo-"))
-    api = ConductorAPI(state_dir=state_dir)
 
     print(f"Using state directory: {state_dir}\n")
 
-    # Create sample issue
-    Issue(
-        id="ISSUE-API-001",
-        title="Demo API workflow",
-        body="This is a demo issue for API usage example",
-        status=IssueStatus.OPEN,
-    )
-
     print("1. Listing workflows (should be empty)...")
-    workflows = api.list_workflows()
-    print(f"   Found {len(workflows)} workflows\n")
+    every, active = run(conductor_state_handler(state_dir)(list_workflows()))
+    print(f"   Found {len(every)} workflows ({len(active)} running or blocked)\n")
 
-    # Note: Running a full workflow requires proper handlers,
-    # so we'll demonstrate the API structure without execution
-    print("2. API methods available:")
-    print("   - api.run_workflow(template, issue=issue, params={})")
-    print("   - api.list_workflows(status=[WorkflowStatus.RUNNING])")
-    print("   - api.get_workflow(workflow_id)")
-    print("   - api.watch_workflow(workflow_id)")
-    print("   - api.stop_workflow(workflow_id)")
-    print("   - api.list_workspaces()")
-    print("   - api.cleanup_workspaces(dry_run=True)")
+    # Note: Running a full workflow requires agents, so the run effects
+    # are listed here without executing a workflow
+    print("2. Run effects available:")
+    print("   - RunWorkflow(template_or_file=template, issue=issue, params={})")
+    print("   - ListWorkflows(status=(WorkflowStatus.RUNNING,))")
+    print("   - GetWorkflow(workflow_id=workflow_id)")
+    print("   - StopWorkflow(workflow_id=workflow_id)")
+    print("   - ListWorkspaces()")
+    print("   - CleanupWorkspaces(dry_run=True)")
 
     print("\n3. Workflow status types:")
     for status in WorkflowStatus:
@@ -92,22 +104,17 @@ def demo_api_workflow_management():
         print(f"   - {status.value}: {terminal}")
 
 
-def demo_environment_management():
+def demo_workspace_management(state_dir: Path):
     """Demonstrate workspace management."""
     print("\n" + "="*60)
     print("Workspace Management")
     print("="*60 + "\n")
 
-    # Create API
-    state_dir = Path(mkdtemp(prefix="conductor-workspace-demo-"))
-    api = ConductorAPI(state_dir=state_dir)
-
+    workspaces, would_clean = run(conductor_state_handler(state_dir)(workspace_overview()))
     print("1. Listing workspaces...")
-    workspaces = api.list_workspaces()
     print(f"   Found {len(workspaces)} workspaces")
 
     print("\n2. Workspace cleanup (dry run)...")
-    would_clean = api.cleanup_workspaces(dry_run=True, older_than_days=7)
     print(f"   Would clean {len(would_clean)} workspaces older than 7 days")
 
     print("\n3. Workspace attributes:")
@@ -118,7 +125,7 @@ def demo_environment_management():
     print("   - issue_id: Associated issue (optional)")
 
 
-def demo_json_output():
+def demo_json_output(state_dir: Path):
     """Demonstrate JSON output for scripting/integration."""
     print("\n" + "="*60)
     print("JSON Output for Scripting")
@@ -138,7 +145,7 @@ def demo_json_output():
     print(json.dumps(issue.to_dict(), indent=2, default=str))
 
     print("\n\nTemplates as JSON:")
-    templates = get_available_templates()
+    templates = run(conductor_state_handler(state_dir)(list_templates()))
     print(json.dumps(templates, indent=2))
 
 
@@ -148,10 +155,11 @@ def main():
     print("#  doeff-conductor API Usage Examples")
     print("#"*60)
 
-    demo_list_templates()
-    demo_api_workflow_management()
-    demo_environment_management()
-    demo_json_output()
+    state_dir = Path(mkdtemp(prefix="conductor-demo-"))
+    demo_list_templates(state_dir)
+    demo_workflow_management(state_dir)
+    demo_workspace_management(state_dir)
+    demo_json_output(state_dir)
 
     print("\n" + "="*60)
     print("API Usage Demo Complete!")

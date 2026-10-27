@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from doeff_conductor.cli import cli
+from doeff_conductor._cli import cli
 from doeff_conductor.dsl import (
     agent_bang,
     artifact,

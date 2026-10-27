@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.effects import CreateWorkspace
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import WorkflowStatus, Workspace

@@ -42,7 +42,7 @@ dev = [
 ]
 
 [project.scripts]
-conductor = "doeff_conductor.cli:cli"
+conductor = "doeff_conductor._cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"

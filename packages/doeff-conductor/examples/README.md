@@ -11,7 +11,7 @@ This directory contains progressive examples demonstrating doeff-conductor usage
 | [03_basic_pr_workflow.py](./03_basic_pr_workflow.py) | Complete PR workflow | Agent, Push, CreatePR, templates |
 | [04_multi_agent.py](./04_multi_agent.py) | Parallel agents | Gather, MergeWorkspaces, parallelism |
 | [05_custom_template.py](./05_custom_template.py) | Custom templates | Custom effects, quality gates |
-| [06_api_usage.py](./06_api_usage.py) | ConductorAPI | Programmatic access, JSON output |
+| [06_api_usage.py](./06_api_usage.py) | Run effects | Programmatic access, JSON output |
 
 ## Running Examples
 
@@ -84,7 +84,7 @@ Demonstrates building custom workflow templates:
 
 ## Example 06: API Usage
 
-**Concepts:** ConductorAPI, programmatic access, JSON output
+**Concepts:** run effects, `conductor_state_handler`, programmatic access, JSON output
 
 Shows the high-level API for:
 - Running workflows programmatically
