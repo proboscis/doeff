@@ -1,4 +1,4 @@
-;;; worker が job の子 process を起こす形の判断 — 命令の並び(shim の下の hy -m か、実行環境の root の venv の uv run)・cwd・子の環境変数・
+;;; worker が job の子 process を起こす形の判断 — 命令の並び(shim の下の hy -m — 木の job は worker の hy・実行環境の job は root の venv の hy)・cwd・子の環境変数・
 ;;; 実行環境の job の空の作業 dir と使った印(handlers.hy の ProcessHost.launch から分けた・#2464)。I/O は呼び手(ProcessHost — 後に
 ;;; worker/protocol の言い換え)が行い、ここは渡された値だけから決める。
 (require doeff-hy.macros [defk <- val])
@@ -52,14 +52,29 @@
       (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
 
 
+(defk project-venv [project-dir]
+  {:pre [(: project-dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "実行環境の root の project の venv の path を 1 か所で決めるため: <project-dir>/.venv — uv が --project の path を symlink を解かずに
+   字面で正規化して置く所と同じ(uv sync が作る — tests/test_task_venv_on_both_paths.hy が本物の uv で確かめる)。"
+  (posixpath.join (posixpath.normpath project-dir) ".venv"))
+
+
+(defk project-hy [project-dir]
+  {:pre [(: project-dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "実行環境の job と入口の検めの本体を起こす hy(root の venv の bin/hy — uv sync が置く入口の script)を決めるため。uv run を挟まずに
+   この path を直に起こす(card ki-869cdf21ec85 — uv run は子を spawn して待つだけで 1 本 6 MB を持っていた)。"
+  (<- venv str (project-venv project-dir))
+  (posixpath.join venv "bin" "hy"))
+
+
 (defk uv-run-environ [project-dir env]
   {:pre [(: project-dir str) (: env (get dict #(str str)))] :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
-  "`uv run --project <project-dir>` が子へ渡す環境を、渡した env から導くため(card ki-b884608b96e4): uv は project の venv
-   (<project-dir>/.venv — --project の path を symlink を解かずに字面で正規化した物)の bin を PATH の頭に足し(PATH が無ければ bin だけ)、
-   VIRTUAL_ENV にその venv を置く。冷えた道(shim の下の uv run)は uv がこの 2 つを足し、待ちの子から分ける道は uv を通らないので、
-   job-launch がこの関数で同じ 2 つを足した環境を entry-env に置く — 名で hy・python を起こす task が、2 つの道で同じ root の venv を引く。
+  "`uv run --project <project-dir>` が子へ渡していた環境を、渡した env から導くため(card ki-b884608b96e4): project の venv
+   (project-venv)の bin を PATH の頭に足し(PATH が無ければ bin だけ)、VIRTUAL_ENV にその venv を置く。実行環境の job は shim の下の
+   道も待ちの子から分ける道も uv を通らない(card ki-869cdf21ec85 — shim の下は root の venv の hy を直に起こす)ので、job-launch と
+   probe-command がこの関数で 2 つを足した環境を子に置く — 名で hy・python を起こす task が、どの道でも同じ root の venv を引く。
    uv の足し方と字面が合う事は tests/test_task_venv_on_both_paths.hy が本物の uv で確かめる。"
-  (val venv (posixpath.join (posixpath.normpath project-dir) ".venv"))
+  (<- venv str (project-venv project-dir))
   (val bin (posixpath.join venv "bin"))
   (val path (.get env "PATH" ""))
   (| env {"PATH" (if path (+ bin ":" path) bin) "VIRTUAL_ENV" venv}))
@@ -126,23 +141,24 @@
   ;; 入口の module の後ろに並べる引数(job の args と詰めた Program の --program)。待ちの子から分ける task(#3646)は argv を使わず、
   ;; 読み込み済みの入口をこの引数で走らせる(ForkFromWarm の args)— 2 つの道が同じ引数を読む。入口の検めは使わない(空)。
   (setv #^ tuple entry-args #())
-  ;; 入口が走る環境(実行環境の job だけ — 名の順): env に、冷えた道で uv run が足す root の venv の 2 つ(PATH の頭・VIRTUAL_ENV —
-  ;; uv-run-environ)を足した物。待ちの子から分ける task は uv を通らないので、この環境を ForkFromWarm の env に載せ、2 つの道の入口が
-  ;; 同じ venv を名で引く(card ki-b884608b96e4)。木の job と入口の検めは待ちの子から分けない(warm_rules.forks-from-warm-child)ので空。
+  ;; 入口が走る環境(実行環境の job だけ — 名の順): 許可表で組んだ環境に root の venv の 2 つ(PATH の頭・VIRTUAL_ENV —
+  ;; uv-run-environ)を足した物で、shim の下の道の env と同じ値。待ちの子から分ける task はこの環境を ForkFromWarm の env に載せ、2 つの道の
+  ;; 入口が同じ venv を名で引く(card ki-b884608b96e4)。木の job と入口の検めは待ちの子から分けない(warm_rules.forks-from-warm-child)ので空。
   (setv #^ (get tuple #(EnvEntry ...)) entry-env #()))
 
 
-(defk job-launch [spec code-path instance attempt * python hy-command uv extra-env layout allowed-env worker-pid program-path program-env work-dir
+(defk job-launch [spec code-path instance attempt * python hy-command extra-env layout allowed-env worker-pid program-path program-env work-dir
                   shim-grace-ms notice-env]
-  {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: python str) (: hy-command str) (: uv str)
+  {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: python str) (: hy-command str)
          (: extra-env dict) (: layout CodeLayout) (: allowed-env dict) (: worker-pid int) (: program-path (| str None)) (: program-env str) (: work-dir str)
          (: shim-grace-ms int) (: notice-env str)]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "job の子 process の起こし方を、渡された値だけから決めるため(ProcessHost と、後の言い換えの handler が同じ形で起こす)。
    子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが DOEFF_RUNTIME_ENV・
    DOEFF_RUNTIME_ENV_KEY を受ける)。Program の job(改訂 1 の F・H)は詰めた Program の file(program-path)を引数と環境変数(宿の契約
-   HOST-CONTRACT の program-env — 呼び手が名を渡す。core は foundation の宿の契約を読まない)で渡す。実行環境の job は root の venv の uv run(PYTHONPATH を置かない・子の環境変数は許可表で組む・cwd = work-dir・
-   待ちの子から分ける道の環境は uv run が足す venv まで含めた entry-env)、
+   HOST-CONTRACT の program-env — 呼び手が名を渡す。core は foundation の宿の契約を読まない)で渡す。実行環境の job は root の venv の hy を
+   uv run を挟まずに直に起こす(PYTHONPATH を置かない・子の環境変数は許可表で組み、root の venv の 2 つ(uv-run-environ)を足す・
+   cwd = work-dir・待ちの子から分ける道の環境も同じ entry-env — card ki-869cdf21ec85)、
    それ以外は木の PYTHONPATH(layout)を足して worker の環境を継ぐ(EXTEND)。allowed-env = worker の環境のうち許可表の名と LC_* の分
    (実行環境の job だけが読む — 読むのは呼び手: ReadEnvironment の names = CHILD-ENV-ALLOWED・prefixes = CHILD-ENV-PREFIXES)。
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
@@ -161,15 +177,16 @@
                                                 worker-env))
           (<- project-dir str (env-project-dir code-path declared))
           (<- entry-env dict (uv-run-environ project-dir child-env))
-          (JobLaunch :argv (+ shim #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" "-m" spec.entry)
-                              spec.args program-args)
+          (<- root-hy str (project-hy project-dir))
+          (val entry-entries (tuple (gfor k (sorted entry-env) (EnvEntry :name k :value (get entry-env k)))))
+          (JobLaunch :argv (+ shim #(root-hy "-m" spec.entry) spec.args program-args)
                      :cwd work-dir
-                     :env (tuple (gfor k (sorted child-env) (EnvEntry :name k :value (get child-env k))))
+                     :env entry-entries
                      :env-mode EnvMode.REPLACE
                      :work-dir work-dir
                      :last-used (+ code-path "/.last-used")
                      :entry-args (+ spec.args program-args)
-                     :entry-env (tuple (gfor k (sorted entry-env) (EnvEntry :name k :value (get entry-env k))))))
+                     :entry-env entry-entries))
       ;; 木の job も、足す環境変数から WITHHELD-ENV-NAMES の名を外す。EXTEND で継ぐ worker の環境そのものからは外せない(StartProcess に名を
       ;; 落とす口が無い)— worker の環境に置かない事は雛形(deploy/)の側が守る。
       (do (val tree-env (dfor #(k v) (.items (| extra-env environ {"PYTHONPATH" (.pythonpath layout code-path)} worker-env))

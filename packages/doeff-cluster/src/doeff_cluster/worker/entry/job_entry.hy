@@ -24,8 +24,8 @@
 ;;; 版の違い・file の欠け・解けない Program は、task では TaskFailed(VersionMismatch / RemoteJobFailed)として結果の file に書き、
 ;;; service と probe では理由の 1 行を出して止まる。
 ;;;
-;;; 実行環境(runtime env)の job: worker は env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m
-;;; doeff_cluster.worker.entry.job_entry …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
+;;; 実行環境(runtime env)の job: worker は env の root の venv の hy で `<root の project>/.venv/bin/hy -m
+;;; doeff_cluster.worker.entry.job_entry …` として(uv run を挟まずに — 環境は uv run が足す 2 つを worker が足す・launch.uv-run-environ)起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
 ;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL。
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})

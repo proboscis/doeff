@@ -154,8 +154,7 @@
   (val state (/ base "state"))
   ;; 検の子 process は checkout の中に bytecode を書かない(root の中に準備した bytecode は読むだけ)。root の外の doeff の code は、
   ;; HOME から引く既定の Hy の code の置き場が答える(conftest の job_child_code_store が先に満たす)。
-  (<- host (host-settings state :hy-command HY :extra-env {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
-                         :uv (str wrapper)))
+  (<- host (host-settings state :hy-command HY :extra-env {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}))
   (Rig :base base :state state :fake fake :app app :lib lib
        :envs (EnvSettings :state (str state) :uv-cache (str (/ state "uv-cache")) :hy-command HY :platform (current-platform) :code-prepare PREPARE-TOOL :repo-keys (str keys)
                           :uv (str wrapper) :min-free-bytes min-free-bytes

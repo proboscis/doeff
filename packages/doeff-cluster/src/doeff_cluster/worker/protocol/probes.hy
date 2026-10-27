@@ -39,13 +39,12 @@
 
 
 (defrecord ProbeSettings
-  "入口の検めの起こし方の設定(worker の組み立ての入口 main が作る): python = shim を起こす interpreter・hy-command = 木の job の hy・
-   uv = 実行環境の job の uv・layout = 業務の repo の木の形・probe-dir = 実行環境の job の検めの cwd と束の出力の file の dir・
+  "入口の検めの起こし方の設定(worker の組み立ての入口 main が作る): python = shim を起こす interpreter(hy を通さない素の python —
+   card ki-869cdf21ec85)・hy-command = 木の job の hy・layout = 業務の repo の木の形・probe-dir = 実行環境の job の検めの cwd と束の出力の file の dir・
    shim = shim の時間の内訳(worker の方針から shim_timing.shim-spans が導く — 検めの shim の猶予と、時間切れの束を強いて止めるまでの
    待ちが同じ値を読む・#2940)・timeout-seconds = 束 1 本の時間の上限。"
   (#^ str python)
   (#^ str hy-command)
-  (#^ str uv)
   (#^ CodeLayout layout)
   (#^ str probe-dir)
   (#^ ShimSpans shim)
@@ -87,7 +86,7 @@
   (when runtime-env
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read))
-  (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :uv settings.uv :layout settings.layout
+  (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :layout settings.layout
                                     :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir))
   (val runs-dir (+ settings.probe-dir "/runs"))
   (<- (file-done (MakeDirectory runs-dir)))

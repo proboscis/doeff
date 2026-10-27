@@ -1,7 +1,8 @@
 ;;; 丁寧な模擬の fake の uv(test_env_careful.hy が PATH の先頭に置く sh の包みから起こす)。本物の準備の process(env_handlers の翻訳 env-translation)が呼ぶ 4 つの命令だけを模す:
 ;;;
 ;;;   uv sync --frozen --project P --python X --no-default-groups [--group g]… [--no-install-package n]…
-;;;       P/.venv を作る: bin/python は検の interpreter への symlink、site-packages の .pth が検の環境の site-packages を足す
+;;;       P/.venv を作る: bin/python は検の interpreter への symlink・bin/hy はその python の hy の入口の script、
+;;;       site-packages の .pth が検の環境の site-packages を足す
 ;;;       (doeff・hy・cloudpickle を本物のまま使う)。uv.lock の行(名==版)のうち cache に無い物を「download」と数えて log に書く。
 ;;;       行に ` fake-top=名` が在れば、その名の package を site-packages に置く(根の名前の影の反例)。
 ;;;   uv build --wheel --out-dir D S        S の中身のキーで保存先を引き、無い時だけ組んで log に build と書く(在れば build-stored)。
@@ -65,6 +66,11 @@
                (.format "home = {}\ninclude-system-site-packages = false\nversion = {}\n" (os.path.dirname real) version))
   (val python (/ venv "bin" "python"))
   (when (not (.exists python)) (os.symlink real python))
+  ;; 本物の uv sync と同じく bin/hy の入口の script を置く(worker は実行環境の job と検めをこの script で uv run を挟まずに起こす —
+  ;; card ki-869cdf21ec85)。
+  (val hy-script (/ venv "bin" "hy"))
+  (.write-text hy-script (.format "#!{}\nimport sys\nfrom hy.cmdline import hy_main\nsys.exit(hy_main())\n" python))
+  (.chmod hy-script 0o755)
   (.write-text (/ site "_fake_base.pth") (.format "import site; site.addsitedir({!r})\n" (get os.environ "FAKE_UV_SITE")))
   (val cache-path (/ HOME "cache"))
   (val cache (set (if (.is-file cache-path) (.split (.read-text cache-path)) [])))

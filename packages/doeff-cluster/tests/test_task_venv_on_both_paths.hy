@@ -1,26 +1,29 @@
-;; 実行環境の task の入口が、待ちの子から分かれる道と冷えた道(shim の下の uv run)で、同じ root の venv を名で引くこと(card ki-b884608b96e4)。
+;; 実行環境の task の入口が、待ちの子から分かれる道と冷えた道(shim の下で root の venv の hy を直に起こす道)で、同じ root の venv を名で
+;; 引くこと(card ki-b884608b96e4・ki-869cdf21ec85)。
 ;;
 ;; 前は、冷えた道では uv run が root の venv を PATH の頭と VIRTUAL_ENV に足し、待ちの子から分かれる道では分かれた子 A が頼みの env(許可表の
 ;; worker の PATH のまま・VIRTUAL_ENV 無し)で置き換えたので、名で hy・python を起こす task が道によって違う venv(worker の boot の venv)を
-;; 引いた。今は job-launch が uv run の足す 2 つを足した環境(entry-env)を作り、分かれる道はそれを頼みに載せる。
+;; 引いた。今は job-launch が uv run の足していた 2 つを足した環境を作り、冷えた道の env と分かれる道の頼み(entry-env)の両方に置く。
+;; 冷えた道は uv run を挟まない(card ki-869cdf21ec85)ので、uv が選ぶ venv との突き合わせは、本物の uv run の下に起きる待ちの子の
+;; interpreter の venv で行う。
 ;;
 ;; 1 つの宣言(実行環境の task — root の project は symlink でこの checkout を指す・入口 = tests/fixtures/warm_job の inspect)から、本物の
 ;; process で 2 つの道を起こし、入口の見え方を突き合わせる:
-;;   冷えた道     … job-launch の答えの argv(shim の下の uv run … hy -m 入口)を答えの env(許可表で絞った物・REPLACE)で起こす — 本物の uv が
-;;                  venv を足す。
+;;   冷えた道     … job-launch の答えの argv(shim の下の <root の project>/.venv/bin/hy -m 入口)を答えの env(許可表で絞り root の venv の
+;;                  2 つを足した物・REPLACE)で起こす。
 ;;   分かれる道   … 宿 warm_host が、本番の判断 warm-launch の起こし方(uv の --project)で本物の uv run の下に起こした待ちの子へ、宿
 ;;                  process_host と同じ欄(entry-args・cwd・entry-env)で頼む。
-;;   前の形       … 同じ待ちの子へ、答えの env のまま頼む — PATH の頭が worker の venv・VIRTUAL_ENV 無しで冷えた道と食い違う(失敗ケース —
-;;                  この検が食い違いを測れている事を示す)。
+;;   前の形       … 同じ待ちの子へ、root の venv の 2 つを外した env で頼む — PATH の頭が worker の venv・VIRTUAL_ENV 無しで冷えた道と
+;;                  食い違う(失敗ケース — この検が食い違いを測れている事を示す)。
 ;; 突き合わせる事(設計検証 lt-MEB74WM4BV22PDN26YAA1JVJMK — docs/design-checks の下):
 ;;   - 入口が見る PATH(全部)と VIRTUAL_ENV が 2 つの道で同じで、uv が選ぶ project の venv を名指す。
 ;;   - 入口を走らせる interpreter の venv(sys.prefix の実 path)が 2 つの道で同じで、VIRTUAL_ENV の実 path と同じ — 待ちの子を起こす venv
-;;     (warm-launch)と entry-env と冷えた道の uv の venv が 1 つ(盲検 A — 3 つは別々に uv の既定に頼る)。実 path で比べるのは、冷えた道の
+;;     (warm-launch)と entry-env と冷えた道の root の venv の hy が 1 つ(盲検 A — 3 つは別々に uv の既定に頼る)。実 path で比べるのは、冷えた道の
 ;;     interpreter が hy の script の shebang(venv を作った時の実 path)から決まり、symlink の綴りを持たないから。
 ;;   - 分かれた子が見る環境は entry-env と全く同じ — 分かれた子 A は頼みの env に足さず引かない(盲検 B — 待ちの子の環境から名を継ぐ実装を断る)。
 ;; worker の PATH の頭には本番と同じく worker の venv(boot の venv)が在る形にする: この checkout の venv の package を読む別の venv を
 ;; 検の置き場に作り、宿と判断が読む worker の環境の PATH の頭にその bin を置く(待ちの子が root の venv の外で起きれば interpreter の venv が
-;; 食い違う)。root の project は symlink でこの checkout を指す(uv が --project の綴りのまま venv を名指す事を、uv-run-environ の写しと比べる)。
+;; 食い違う)。root の project は symlink でこの checkout を指す(venv の名は --project の綴りのまま — 本物の uv が同じ venv で待ちの子を起こす事を実 path で比べる)。
 ;; 冷えた道の hy -m が入口を読めるよう、作業 dir(cwd)と待ちの子の起動の cwd は package の dir にする(本番の入口は root の venv から読む)。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -92,7 +95,7 @@
    worker-path-led-by が boot の venv にする)。"
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec root "1-venv" 1 :python sys.executable :hy-command "hy" :uv "uv" :extra-env {}
+  (<- plan JobLaunch (job-launch spec root "1-venv" 1 :python sys.executable :hy-command "hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env (dfor e allowed e.name e.value) :worker-pid (os.getpid) :program-path None
                                  :program-env HOST-CONTRACT.program-env :work-dir (str PACKAGE) :shim-grace-ms shim.shim-grace-ms
                                  :notice-env HOST-CONTRACT.notice-env))
@@ -139,6 +142,14 @@
   view)
 
 
+(defk venv-dropped [env]
+  {:pre [(: env tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "前の形の頼みの env(許可表で絞っただけ — root の venv の 2 つを足す前)を、entry-env から uv-run-environ の足した 2 つを外して作るため:
+   VIRTUAL_ENV を落とし、PATH の頭の venv の bin を外す(許可表の PATH は worker-path-led-by が boot の venv の bin で始めるので、残りは空でない)。"
+  (tuple (gfor e env :if (!= e.name "VIRTUAL_ENV")
+               (if (= e.name "PATH") (EnvEntry :name "PATH" :value (get (.split e.value ":" 1) 1)) e))))
+
+
 (defk forked-seen [plan env socket out stem]
   {:pre [(: plan JobLaunch) (: env tuple) (: socket str) (: out str) (: stem str)] :post [(: % dict)]
    :tags {:context "doeff-cluster-test" :role "program"}}
@@ -175,7 +186,7 @@
   (<- (warm-child-readied key))
   (<- warm-at WarmPlace (warm-place warm-dir key))
   (<- warm dict (forked-seen plan plan.entry-env warm-at.socket out (+ place "/forked")))
-  (<- old dict (forked-seen plan plan.env warm-at.socket out (+ place "/old")))
+  (<- old dict (forked-seen plan (venv-dropped plan.entry-env) warm-at.socket out (+ place "/old")))
   (<- (StopWarmChild key StopStage.TERM "検の終わり"))
   #(cold warm old (+ place "/boot/bin") (+ root "/app/.venv") (dfor e plan.entry-env e.name e.value)))
 
@@ -230,7 +241,7 @@
   (val entry (get seen 5))
   (val cold-env (get cold "env"))
   (val warm-env (get warm "env"))
-  ;; 冷えた道: 本物の uv が root の project の venv を PATH の頭と VIRTUAL_ENV に置く(uv-run-environ が写す uv の足し方)。
+  ;; 冷えた道: job-launch が root の project の venv を PATH の頭と VIRTUAL_ENV に置く(uv-run-environ — uv run の足し方の写し)。
   (assert (= #((get (.split (get cold-env "PATH") ":") 0) (.get cold-env "VIRTUAL_ENV")) #((+ venv "/bin") venv)) cold-env)
   ;; 分かれる道: 入口が見る PATH(全部)と VIRTUAL_ENV が冷えた道と同じ。
   (assert (= #((get warm-env "PATH") (.get warm-env "VIRTUAL_ENV")) #((get cold-env "PATH") (get cold-env "VIRTUAL_ENV")))

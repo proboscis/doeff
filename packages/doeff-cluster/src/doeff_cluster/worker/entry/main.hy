@@ -13,6 +13,7 @@
 (require doeff-hy.macros [deff defk <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
+(import hy)
 (import sys)
 (import pathlib [Path])
 (import doeff [run with-handlers])
@@ -342,6 +343,10 @@
         ;; 世代ごとの置き場と分け合う置き場と、分け合う log の dir の中の名に入れる世代の印(AL-D2c・AL-D2j — worker/core/places の 1 か所で決める)。
         places (run (worker-places (str state-dir) (str shared-dir) boot))
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
+        ;; job と検めの shim を起こす素の python(card ki-869cdf21ec85)。worker は hy の命令で動くので sys.executable は hy の script
+        ;; (hy の cmdline が差し替え、元の interpreter を hy.sys_executable に残す)— shim は .hy を読まないので Hy を読み込まずに起こす
+        ;; (shim の import が 1 本 約 7 MB 軽い)。hy の命令を通さずに起きた時は sys.executable が素の python。
+        interpreter (getattr hy "sys_executable" sys.executable)
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
         shim (run (shim-spans policy))
@@ -373,7 +378,7 @@
         warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
         host (HostSettings :log-dir places.logs :generation places.generation :jobs-dir places.jobs
-                           :program-dir places.programs :python sys.executable :hy-command hy-command :uv args.uv
+                           :program-dir places.programs :python interpreter :hy-command hy-command
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env :service-procs service-procs)
@@ -388,7 +393,7 @@
                           ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
                           :shared (str shared-dir))
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
-        probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
+        probes (ProbeSettings :python interpreter :hy-command hy-command :layout layout
                               :probe-dir places.probe :shim shim))
   ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(card ki-35923a5895b2 — 機体の上で
   ;; 直に動く worker の log は機体の file にしか無かった)。job の名 worker/<名>・世代 boot で名乗る。送り先が在り、stdout と stderr が

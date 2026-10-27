@@ -18,7 +18,7 @@
   (val spec (JobSpec "svc" "app.main" #("service") "rev1" :environ #(#("MODE" "fast"))))
   ;; shim の猶予は本番の方針から導いた値(数を検に写さない — #2940)。
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {"DOEFF_WORKER_NAME" "w1"}
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {"DOEFF_WORKER_NAME" "w1"}
                                  :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
                                  :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (val env (dfor e plan.env e.name e.value))
@@ -40,33 +40,34 @@
 (deftest test-a-runtime-env-job-inherits-only-the-allowed-worker-environment
   (val spec (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {}
+  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
                                  :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/task_t1" :shim-grace-ms shim.shim-grace-ms
                                  :notice-env "DOEFF_NOTICE_FD"))
   (val env (dfor e plan.env e.name e.value))
-  ;; 許可表の名と LC_* だけを継ぎ、資格を運びうる名・venv の名・PYTHONPATH は置かない。宣言の env-vars と Program の file を足す。
-  (assert (= #((get env "PATH") (get env "LC_ALL") (get env "DECLARED") (get env "DOEFF_PROGRAM_FILE")) #("/usr/bin" "C.UTF-8" "1" "/state/programs/s.json")) env)
-  (assert (not (& (set env) #{"SECRET_TOKEN" "VIRTUAL_ENV" "PYTHONPATH"})) env)
+  ;; 許可表の名と LC_* だけを継ぎ、資格を運びうる名・PYTHONPATH は置かない。宣言の env-vars と Program の file を足し、root の venv の 2 つ
+  ;; (PATH の頭・VIRTUAL_ENV — uv run が足していた物)を足す(worker の VIRTUAL_ENV は継がない)。
+  (assert (= #((get env "PATH") (get env "VIRTUAL_ENV") (get env "LC_ALL") (get env "DECLARED") (get env "DOEFF_PROGRAM_FILE"))
+             #("/roots/env-k1/app/.venv/bin:/usr/bin" "/roots/env-k1/app/.venv" "C.UTF-8" "1" "/state/programs/s.json")) env)
+  (assert (not (& (set env) #{"SECRET_TOKEN" "PYTHONPATH"})) env)
   (assert (= plan.env-mode EnvMode.REPLACE) plan.env-mode)
   (assert (= (cut plan.argv 5 9) #("--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) plan.argv)
-  (assert (= (cut plan.argv 9 None) #("uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-k1/app" "hy" "-m" "doeff_cluster.worker.entry.job_entry"
+  ;; 本体は uv run を挟まずに root の venv の hy を直に起こす(card ki-869cdf21ec85)。
+  (assert (= (cut plan.argv 9 None) #("/roots/env-k1/app/.venv/bin/hy" "-m" "doeff_cluster.worker.entry.job_entry"
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
   (assert (= (lfor e plan.env e.name) (sorted env)) plan.env)
-  ;; 待ちの子から分ける道の環境(entry-env)は、env に uv run が足す root の venv の 2 つを足した物(card ki-b884608b96e4)— 冷えた道の
-  ;; env は venv を持たず、uv run が足す。
-  (val entry (dfor e plan.entry-env e.name e.value))
-  (assert (= entry (| env {"PATH" "/roots/env-k1/app/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/roots/env-k1/app/.venv"})) entry)
-  (assert (= (lfor e plan.entry-env e.name) (sorted entry)) plan.entry-env))
+  ;; 待ちの子から分ける道の環境(entry-env)は shim の下の道の env と同じ値(card ki-b884608b96e4・ki-869cdf21ec85)— 2 つの道が
+  ;; 同じ root の venv を名で引く。
+  (assert (= plan.entry-env plan.env) plan.entry-env))
 
 
 (deftest test-a-tree-job-has-no-entry-env-because-it-never-forks-from-a-warm-child
   ;; 木の job は待ちの子から分けない(warm_rules.forks-from-warm-child)ので、分ける道の環境を持たない。
   (val spec (JobSpec "task/t2" "app.main" #("task") "rev1" :once True))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {}
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
                                  :work-dir "/jobs/task_t2" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (assert (= plan.entry-env #()) plan.entry-env))

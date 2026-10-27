@@ -54,8 +54,8 @@
 (defrecord HostSettings
   "job の子 process の置き場と起こし方の設定(worker の組み立ての入口 main が作る): log-dir = 子の出力の file の dir(世代をまたいで分け合う)・
    generation = log-dir の中の名に入れる世代の印(worker/core/places の WorkerPlaces.generation — AL-D2j)・jobs-dir = 実行環境の
-   job の作業 dir の親・program-dir = 詰めた Program の cache の dir・python = shim を起こす interpreter・hy-command = 木の job の hy・
-   uv = 実行環境の job の uv・extra-env = 子へ渡す worker の文脈(名前・coordinator — 資格は渡さない)・layout = 業務の repo の木の形・
+   job の作業 dir の親・program-dir = 詰めた Program の cache の dir・python = shim を起こす interpreter(hy を通さない素の python —
+   card ki-869cdf21ec85)・hy-command = 木の job の hy・extra-env = 子へ渡す worker の文脈(名前・coordinator — 資格は渡さない)・layout = 業務の repo の木の形・
    program-env = 詰めた Program の file を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT)・shim = shim の時間の内訳(worker の方針から
    shim_timing.shim-spans が導く — 子の shim の猶予と、回収の時に shim を待つ秒が同じ値を読む・#2940)。"
   (#^ str log-dir)
@@ -64,7 +64,6 @@
   (#^ str program-dir)
   (#^ str python)
   (#^ str hy-command)
-  (#^ str uv)
   (#^ (get tuple #(EnvEntry ...)) extra-env)
   (#^ CodeLayout layout)
   (#^ str program-env)
@@ -326,7 +325,7 @@
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから起こす。道は判断が決めた欄のとおり(黙って別の道へ倒れない): warm-key の在る task は、その root の待ちの子へ頼んで分ける
    (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と入口の後ろの引数は shim の道と同じ job-launch の値・env は shim の
-   道で uv run が足す root の venv まで含めた job-launch の entry-env — card ki-b884608b96e4)、
+   道と同じ root の venv まで含めた job-launch の entry-env — card ki-b884608b96e4)、
    それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ(待ちの子が分けるのを
    断った・shim を起こせない)その訳の JobNotStarted を返す(card ki-e1612a12d0c3 — 例外にすると worker の process ごと落ち、機体の上の
    job を全部道連れにした。断りの数えと起こし直しは判断の層 — policy の record-after・warm-child-actions)。"
@@ -347,7 +346,7 @@
     (<- cached Path (spec-program-file (Path settings.program-dir) spec))
     (:= program-path (str cached)))
   (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :python settings.python :hy-command settings.hy-command
-                                 :uv settings.uv :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
+                                 :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
                                  :program-path program-path
                                  :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms

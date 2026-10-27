@@ -9,7 +9,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
-(import doeff_cluster.worker.core.launch [JobLaunch child-environment env-project-dir])
+(import doeff_cluster.worker.core.launch [JobLaunch child-environment env-project-dir project-hy uv-run-environ])
 
 
 ;; 入口の検め 1 回(同じ木の束 1 本)の時間の上限(2026-09-27 に 60 → 300)。上限は import の速さを測る物ではなく、import の途中で
@@ -132,21 +132,24 @@
   results)
 
 
-(defk probe-command [code-path runtime-env targets * hy-command uv layout allowed-env probe-dir]
-  {:pre [(: code-path str) (: runtime-env (| str None)) (: targets tuple) (: hy-command str) (: uv str) (: layout CodeLayout)
+(defk probe-command [code-path runtime-env targets * hy-command layout allowed-env probe-dir]
+  {:pre [(: code-path str) (: runtime-env (| str None)) (: targets tuple) (: hy-command str) (: layout CodeLayout)
          (: allowed-env dict) (: probe-dir str)]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "検めの子(shim の下で起こす本体)の起こし方を、渡された値だけから決めるため。実行環境の job は子と同じ root の venv の
-   `uv run --no-sync --frozen --project <root の project> hy -c …`・環境変数は子と同じ許可表(allowed-env = worker の環境のうち許可表の名と
-   LC_* の分)と宣言の env-vars・PYTHONPATH を置かない・cwd = probe-dir(REPLACE)。それ以外は worker の hy と木の PYTHONPATH を worker の環境の
-   上に足す(EXTEND)・cwd = 木。shim の命令の並びは呼び手が前に足す。"
+   hy を uv run を挟まずに直に起こす `<root の project>/.venv/bin/hy -c …`(子と同じ字面 — launch.project-hy・card ki-869cdf21ec85)・
+   環境変数は子と同じ許可表(allowed-env = worker の環境のうち許可表の名と LC_* の分)と宣言の env-vars に root の venv の 2 つ
+   (launch.uv-run-environ)を足した物・PYTHONPATH を置かない・cwd = probe-dir(REPLACE)。それ以外は worker の hy と木の PYTHONPATH を
+   worker の環境の上に足す(EXTEND)・cwd = 木。shim の命令の並びは呼び手が前に足す。"
   (if runtime-env
       (do (val declared (json.loads runtime-env))
           (<- child-env dict (child-environment allowed-env {} (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) {}))
           (<- project-dir str (env-project-dir code-path declared))
-          (JobLaunch :argv (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" "-c" PROBE-PROGRAM) targets)
+          (<- probe-env dict (uv-run-environ project-dir child-env))
+          (<- root-hy str (project-hy project-dir))
+          (JobLaunch :argv (+ #(root-hy "-c" PROBE-PROGRAM) targets)
                      :cwd probe-dir
-                     :env (tuple (gfor k (sorted child-env) (EnvEntry :name k :value (get child-env k))))
+                     :env (tuple (gfor k (sorted probe-env) (EnvEntry :name k :value (get probe-env k))))
                      :env-mode EnvMode.REPLACE :work-dir None :last-used None))
       (JobLaunch :argv (+ #(hy-command "-c" PROBE-PROGRAM) targets)
                  :cwd code-path
