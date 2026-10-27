@@ -2443,6 +2443,72 @@ def _declared_effect_classes(
     return tuple(members)
 
 
+def declared_builders(expr: ast.expr, scope: "_Scope") -> tuple[Any, ...]:
+    """The factories a handler (list) value is declared to be made by, read from the type of the
+    place it comes from (doeff's ``BuiltBy`` — ``Annotated[Callable[..., object], BuiltBy(f)]``, or a
+    sequence of it): a parameter's annotation (``(: receivers (get tuple #(NoticeReceiver ...)))``), a
+    field of a clause's received effect (``effect.handlers``), or a field of a record held by such a
+    parameter (``lane.handlers`` with ``lane: TurnRecordsLane``); ``list(x)`` / ``tuple(x)`` are read
+    as ``x``.  () when the place has no such type — the value stays unread (card ki-e912b1821351)."""
+    match expr:
+        case ast.Call(func=func, args=[inner], keywords=[]) if scope.resolve(func) in (list, tuple):
+            return declared_builders(inner, scope)
+        case ast.Name(id=name) if scope.resolve(expr) is UNBOUND and name in scope.local_choices:
+            # A local assigned on several paths — doeff-hy's clauses of one handler bind a field of the
+            # same name in each (``handlers = effect.handlers``): read when every path declares the same.
+            read = {declared_builders(choice, scope) for choice in scope.local_choices[name]}
+            return read.pop() if len(read) == 1 else ()
+    hint = _declared_hint(expr, scope)
+    return () if hint is None else _builders_of_hint(hint)
+
+
+def _declared_hint(expr: ast.expr, scope: "_Scope") -> Any:
+    """The type the place ``expr`` reads from declares (``None`` when there is none to read)."""
+    value = scope.resolve(expr)
+    if isinstance(value, ReceivedField):
+        return _field_hint(value.cls, value.attr)
+    match expr:
+        case ast.Name(id=name) if name in scope.local_declared and value is UNBOUND:
+            return _evaluated_annotation(scope.local_declared[name], scope.module)
+        case ast.Attribute(value=holder, attr=attr) if value is UNBOUND:
+            held = _declared_hint(holder, scope)
+            return _field_hint(held, attr) if isinstance(held, type) else None
+    return None
+
+
+def _evaluated_annotation(annotation: ast.expr, module: types.ModuleType) -> Any:
+    """``annotation`` evaluated in ``module`` (``None`` when it does not evaluate there)."""
+    try:
+        text = annotation.value if isinstance(annotation, ast.Constant) else ast.unparse(annotation)
+        if not isinstance(text, str):
+            return None
+        return eval(text, vars(module))  # noqa: S307 — the annotation the module itself wrote, read as typing.get_type_hints reads it
+    except Exception:  # noqa: BLE001 — an annotation that does not evaluate here declares nothing the reader can use
+        return None
+
+
+def _field_hint(cls: type, attr: str) -> Any:
+    """The declared type of field ``attr`` of ``cls``, with its ``Annotated`` marks."""
+    try:
+        return typing.get_type_hints(cls, include_extras=True).get(attr)
+    except Exception:  # noqa: BLE001 — hints that do not resolve declare nothing the reader can use
+        return None
+
+
+def _builders_of_hint(hint: Any) -> tuple[Any, ...]:
+    """The ``BuiltBy`` factories of ``hint`` or of the element type of a sequence ``hint``."""
+    if typing.get_origin(hint) in _SEQUENCE_ORIGINS:
+        elements = [arg for arg in typing.get_args(hint) if arg is not Ellipsis]
+        return tuple(builder for element in elements for builder in _builders_of_hint(element))
+    if typing.get_origin(hint) is not typing.Annotated:
+        return ()
+    return tuple(
+        builder
+        for mark in hint.__metadata__
+        for builder in getattr(mark, "__doeff_built_by__", ())
+    )
+
+
 def _unpacked_places(node: ast.AST) -> tuple[_Unpacked, ...]:
     """The names ``[a, b] = v`` / ``a, b = v`` binds, each with its place (only when every
     target is a plain name — a starred or nested target is not followed).  A same-length

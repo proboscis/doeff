@@ -82,6 +82,7 @@ from doeff_effect_analyzer.program_effects import (
     UnknownTest,
     Unresolved,
     _bind_expression,
+    declared_builders,
     _body_nodes,
     _Bound,
     _bound_operand,
@@ -1085,6 +1086,14 @@ def _slots_of(expr: ast.expr, scope: _Scope, filename: str, *, depth: int) -> li
             slots = _slots_of(written.expr, written.scope, written.filename, depth=hop)
         case ast.Call(func=func) if (builder := _builder_function(scope.resolve(func))) is not None:
             slots = _env_of(builder, _builder_bindings(builder, expr, scope), text, depth=hop)
+        case _ if builders := declared_builders(expr, scope):
+            # A list carried as a value whose type names the factories that make it (doeff's
+            # ``BuiltBy``): the handlers those factories make, in the declared order — the list
+            # may hold any number of them, so each place stands for a whole list.
+            slots = [
+                _Slot(analyze_handler(builder, name=f"{_label_of(builder)}(…) ← {text}"), whole_list=True)
+                for builder in builders
+            ]
         case _:
             value = scope.resolve(expr)
             slots = (

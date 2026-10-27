@@ -68,6 +68,9 @@ def runtime_class(tp: object) -> RuntimeClass:
         members: tuple[object, ...] = tp
         return tuple(runtime_class(item) for item in members)
     origin = typing.get_origin(tp)
+    if origin is typing.Annotated:
+        # ``Annotated[T, mark]`` (doeff の BuiltBy など — 静的な読み手への印)は実行の時は T(card ki-e912b1821351)。
+        return runtime_class(typing.get_args(tp)[0])
     if isinstance(tp, types.UnionType) or origin is typing.Union:
         return tuple(runtime_class(item) for item in typing.get_args(tp))
     if isinstance(origin, type):
