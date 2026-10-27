@@ -12854,28 +12854,6 @@
   "doeff-git": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_git.handlers.production": [
-      "ProtocolHandler"
-     ],
-     "doeff_git.handlers.testing": [
-      "ProtocolHandler"
-     ]
-    },
-    "境界 — class の形の handler": {
-     "doeff_git": [
-      "GitHubHandler",
-      "GitLocalHandler"
-     ],
-     "doeff_git.handlers": [
-      "GitHubHandler",
-      "GitLocalHandler"
-     ],
-     "doeff_git.handlers.production": [
-      "GitHubHandler",
-      "GitLocalHandler"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_git": [
       "MergeStrategy"

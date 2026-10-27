@@ -8,36 +8,27 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from doeff import do, run
+from doeff import K, Pass, Resume, do, handler, run
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+import doeff_git
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from doeff_git.handlers import (
-    GitHubHandler,
-    GitLocalHandler,
     MockGitRuntime,
+    git_local_handler,
+    github_handler,
     mock_handlers,
     production_handlers,
 )
 from doeff_git.types import MergeStrategy, PRHandle
 
 
-class _SuccessResult:
-    def __init__(self, value):
-        self.value = value
-
-    def is_ok(self) -> bool:
-        return True
-
-
-def _run_with_handler(program, handler):
-    result = run(handler(program))
-    if hasattr(result, "is_ok"):
-        return result
-    return _SuccessResult(result)
+@do
+def _perform(effect):
+    return (yield effect)
 
 
 @do
@@ -58,20 +49,26 @@ def test_effect_exports() -> None:
 
 def test_handler_exports() -> None:
     handlers_module = importlib.import_module("doeff_git.handlers")
-    assert handlers_module.GitLocalHandler is GitLocalHandler
-    assert handlers_module.GitHubHandler is GitHubHandler
+    assert handlers_module.git_local_handler is git_local_handler
+    assert handlers_module.github_handler is github_handler
     assert handlers_module.mock_handlers is mock_handlers
+    assert doeff_git.git_local_handler is git_local_handler
+    assert doeff_git.github_handler is github_handler
+
+
+def test_handlers_are_doeff_handlers_not_classes() -> None:
+    # ADR-DOE-API-001 R4: the handlers are (effect, k) handlers; the classes are gone.
+    for name in ("GitLocalHandler", "GitHubHandler"):
+        assert not hasattr(doeff_git, name)
+        assert not hasattr(importlib.import_module("doeff_git.handlers"), name)
+    for installer in (git_local_handler, github_handler, production_handlers()):
+        assert installer._doeff_is_handler_fn is True
 
 
 def test_mock_handlers_run_program() -> None:
     runtime = MockGitRuntime()
-    result = _run_with_handler(
-        _mock_flow(Path("/tmp/mock-repo")),
-        mock_handlers(runtime=runtime),
-    )
+    sha, pr = run(mock_handlers(runtime=runtime)(_mock_flow(Path("/tmp/mock-repo"))))
 
-    assert result.is_ok()
-    sha, pr = result.value
     assert len(sha) == 40
     assert runtime.pushes
     assert pr.number == 1
@@ -105,17 +102,17 @@ def test_local_handler_commit_and_diff(tmp_path: Path) -> None:
     repo_path.mkdir()
     _init_test_repo(repo_path)
 
-    handler = GitLocalHandler()
-
     (repo_path / "feature.txt").write_text("line1\n")
-    sha = handler.handle_commit(
-        GitCommit(work_dir=repo_path, message="feat: add feature", all=True)
+    sha = run(
+        git_local_handler(
+            _perform(GitCommit(work_dir=repo_path, message="feat: add feature", all=True))
+        )
     )
 
     assert len(sha) == 40
 
     (repo_path / "feature.txt").write_text("line1\nline2\n")
-    diff = handler.handle_diff(GitDiff(work_dir=repo_path))
+    diff = run(git_local_handler(_perform(GitDiff(work_dir=repo_path))))
     assert "line2" in diff
 
 
@@ -133,9 +130,13 @@ def test_local_handler_push_and_pull(tmp_path: Path) -> None:
         capture_output=True,
     )
 
-    handler = GitLocalHandler()
-    handler.handle_push(GitPush(work_dir=repo_path, set_upstream=True, branch="main"))
-    handler.handle_pull(GitPull(work_dir=repo_path, remote="origin", branch="main"))
+    @do
+    def push_then_pull():
+        pushed = yield GitPush(work_dir=repo_path, set_upstream=True, branch="main")
+        pulled = yield GitPull(work_dir=repo_path, remote="origin", branch="main")
+        return pushed, pulled
+
+    assert run(git_local_handler(push_then_pull())) == (None, None)
 
     result = subprocess.run(
         ["git", "ls-remote", str(remote_path)],
@@ -146,37 +147,55 @@ def test_local_handler_push_and_pull(tmp_path: Path) -> None:
     assert "refs/heads/main" in result.stdout
 
 
-@patch("doeff_git.handlers.production._run_command")
+def test_local_handler_raises_git_command_error_in_the_program(tmp_path: Path) -> None:
+    @do
+    def commit_outside_a_repo():
+        try:
+            yield GitCommit(work_dir=tmp_path, message="no repo", all=False)
+        except doeff_git.GitCommandError as error:
+            return error.command
+        return None
+
+    assert run(git_local_handler(commit_outside_a_repo())) == [
+        "git",
+        "commit",
+        "-m",
+        "no repo",
+    ]
+
+
+@patch("doeff_git._commands._run_command")
 def test_github_handler_create_pr_composes_command(mock_run: MagicMock) -> None:
     mock_run.side_effect = [
         MagicMock(stdout="feature-branch\n", returncode=0),
         MagicMock(stdout="https://github.com/acme/repo/pull/42\n", returncode=0),
     ]
 
-    handler = GitHubHandler()
-    pr = handler.handle_create_pr(
-        CreatePR(
-            work_dir=Path("/tmp/repo"),
-            title="Add feature",
-            body="Body",
-            target="main",
-            draft=True,
-            labels=["feature", "ready"],
+    pr = run(
+        github_handler(
+            _perform(
+                CreatePR(
+                    work_dir=Path("/tmp/repo"),
+                    title="Add feature",
+                    body="Body",
+                    target="main",
+                    draft=True,
+                    labels=["feature", "ready"],
+                )
+            )
         )
     )
 
     create_args = mock_run.call_args_list[1].args[0]
-    assert "--draft" in create_args
-    assert "--label" in create_args
+    assert create_args[-5:] == ["--draft", "--label", "feature", "--label", "ready"]
     assert pr.number == 42
     assert pr.branch == "feature-branch"
 
 
-@patch("doeff_git.handlers.production._run_command")
+@patch("doeff_git._commands._run_command")
 def test_github_handler_merge_pr_uses_strategy(mock_run: MagicMock) -> None:
     mock_run.return_value = MagicMock(stdout="", returncode=0)
 
-    handler = GitHubHandler()
     pr = PRHandle(
         url="https://github.com/acme/repo/pull/7",
         number=7,
@@ -184,52 +203,39 @@ def test_github_handler_merge_pr_uses_strategy(mock_run: MagicMock) -> None:
         branch="feature",
         target="main",
     )
-    handler.handle_merge_pr(MergePR(pr=pr, strategy=MergeStrategy.SQUASH, delete_branch=True))
+    run(
+        github_handler(
+            _perform(MergePR(pr=pr, strategy=MergeStrategy.SQUASH, delete_branch=True))
+        )
+    )
 
     args = mock_run.call_args.args[0]
-    assert "--squash" in args
-    assert "--delete-branch" in args
+    assert args == ["gh", "pr", "merge", pr.url, "--squash", "--delete-branch"]
 
 
-def test_production_handlers_support_handler_swapping() -> None:
-    class LocalStub:
-        def handle_commit(self, effect: GitCommit) -> str:
-            return f"sha:{effect.message}"
+@handler
+def _commit_stub(effect: GitCommit, k: K):
+    if isinstance(effect, GitCommit):
+        return (yield Resume(k, f"sha:{effect.message}"))
+    return (yield Pass(effect, k))
 
-        def handle_diff(self, _effect: GitDiff) -> str:
-            return "diff"
 
-        def handle_push(self, _effect: GitPush) -> None:
-            return None
-
-        def handle_pull(self, _effect: GitPull) -> None:
-            return None
-
-    class HostingStub:
-        def handle_create_pr(self, effect: CreatePR) -> PRHandle:
-            return PRHandle(
-                url="https://example.test/pull/1",
-                number=1,
-                title=effect.title,
-                branch="stub-branch",
-                target=effect.target,
-            )
-
-        def handle_merge_pr(self, _effect: MergePR) -> None:
-            return None
+@patch("doeff_git._commands._run_command")
+def test_a_handler_installed_inside_production_handlers_answers_first(
+    mock_run: MagicMock,
+) -> None:
+    # GitCommit is answered by the stub nearer the program; CreatePR passes the stub and
+    # git_local_handler on to github_handler.
+    mock_run.return_value = MagicMock(stdout="https://example.test/pull/1\n", returncode=0)
 
     @do
     def flow():
         sha = yield GitCommit(work_dir=Path("/tmp/repo"), message="feat")
-        pr = yield CreatePR(work_dir=Path("/tmp/repo"), title="Title")
+        pr = yield CreatePR(work_dir=Path("/tmp/repo"), title="Title", head="stub-branch")
         return sha, pr
 
-    result = _run_with_handler(
-        flow(),
-        production_handlers(local_handler=LocalStub(), github_handler=HostingStub()),
-    )
+    sha, pr = run(production_handlers()(_commit_stub(flow())))
 
-    assert result.is_ok()
-    sha, pr = result.value
     assert sha == "sha:feat"
     assert pr.number == 1
+    assert [call.args[0][:3] for call in mock_run.call_args_list] == [["gh", "pr", "create"]]

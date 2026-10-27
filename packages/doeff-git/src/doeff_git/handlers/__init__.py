@@ -1,13 +1,13 @@
 """Handlers for doeff-git effects."""
 
 
-from .production import GitHubHandler, GitLocalHandler, production_handlers
+from .production import git_local_handler, github_handler, production_handlers
 from .testing import MockGitRuntime, mock_handlers
 
 __all__ = [
-    "GitHubHandler",
-    "GitLocalHandler",
     "MockGitRuntime",
+    "git_local_handler",
+    "github_handler",
     "mock_handlers",
     "production_handlers",
 ]
