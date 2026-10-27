@@ -463,8 +463,8 @@ Reference handlers (from `doeff_core_effects.handlers`), written like any other 
 | Await | `await_handler()` | `Await` |
 | Scheduler | `scheduled(prog)` (from `doeff_core_effects.scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
 
-`writer` keeps its log in state: install `state()` outside it, and read the log with
-`yield writer_log()` (from `doeff_core_effects.handlers`).
+`writer` keeps its log in state: install `state()` outside it, and read the log by yielding the
+effect `ReadWriterLog()`, which `writer` answers: `log = yield ReadWriterLog()`.
 
 ## Scheduler and Concurrency
 

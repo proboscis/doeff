@@ -4,7 +4,8 @@
 # the log and the answer for an order that exists (42) and one that does not (7).
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import reader, state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog
+from doeff_core_effects.handlers import reader, state, try_handler, writer
 
 from doeff import Ask, Tell, Try, WithObserve, do, run
 
@@ -77,7 +78,7 @@ def get_order_handler(order_id):
 @do
 def with_log(program):
     value = yield program
-    return value, (yield writer_log())
+    return value, (yield ReadWriterLog())
 
 
 def observe(effect):

@@ -5,13 +5,12 @@ from tempfile import TemporaryDirectory  # 検証で作ったSQLiteだけを終�
 
 import pytest  # 全層で見つからないときのKeyErrorを検査する。
 from doeff_core_effects import HttpRequest  # 通信方法から独立したHTTP依頼の型を使う。
-from doeff_core_effects.effects import Tell  # 保存先を生成したことを記録として送る。
+from doeff_core_effects.effects import ReadWriterLog, Tell  # 記録を送り、集めた記録を読む。
 from doeff_core_effects.handlers import (  # 保存層の待機・診断ログ・記録を受け持つ。
     await_handler,  # InMemoryStorageやSQLiteStorageが出すAwaitを進める。
     slog_discard_handler,  # 検証中のMemo診断ログは表示しない。
     state,  # 集めた記録の置き場を持つ。
     writer,  # Tellで送られた記録を集める。
-    writer_log,  # 集めた記録を読む。
 )
 from doeff_core_effects.http_handlers import http_production_handler  # HTTP取得だけの担当を選ぶ。
 from doeff_core_effects.memo_effects import (  # 保存先に依存しない4種類の操作を使う。
@@ -93,7 +92,7 @@ def open_expensive_store():  # 接続設定ではなく、生成したことだ�
 @do  # 依頼を最後まで進め、その実行中に生成した保存先の記録を返す。
 def created_stores(program):  # 検証専用の観測で、本体の処理は変えない。
     yield program  # 依頼の結果はこの検証では使わない。
-    return (yield writer_log())  # この実行で送られた記録を読む。
+    return (yield ReadWriterLog())  # この実行で送られた記録を読む。
 
 
 @do  # 保持方針と実際の保存動作を同じProgram内で確認する。

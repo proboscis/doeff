@@ -103,8 +103,8 @@ evaluated lazily on first access. The result is cached for subsequent `Ask` call
 
 ```python
 from doeff import do, run
-from doeff_core_effects import Ask, Tell
-from doeff_core_effects.handlers import lazy_ask, state, writer, writer_log
+from doeff_core_effects import Ask, ReadWriterLog, Tell
+from doeff_core_effects.handlers import lazy_ask, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 @do
@@ -117,7 +117,7 @@ def use_config():
     # env["config"] is a Program: it runs here, on the first Ask
     config = yield Ask("config")
     yield Ask("config")  # cached: the Program does not run again
-    log = yield writer_log()
+    log = yield ReadWriterLog()
     return config, log
 
 # Pass a Program as the env value - evaluated lazily on first Ask
@@ -439,8 +439,8 @@ Writer effects accumulate `Tell` messages in a log throughout execution. Structu
 
 ```python
 from doeff import do, run
-from doeff_core_effects import Get, Tell
-from doeff_core_effects.handlers import state, writer, writer_log
+from doeff_core_effects import Get, ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, writer
 from doeff_core_effects.scheduler import scheduled
 
 @do
@@ -458,8 +458,8 @@ def with_logging():
 def main_program():
     result = yield with_logging()
     # result is "done"
-    # Access the writer log via writer_log()
-    log = yield writer_log()
+    # Access the writer log via ReadWriterLog()
+    log = yield ReadWriterLog()
     return result, log
 
 def main():
@@ -487,7 +487,7 @@ How it works: `listen_handler` runs the sub-program under an extra handler that 
 effect of those types and then passes it on unchanged. So the recorded entries are still handled
 by the handlers outside `listen_handler` (`writer` appends the `Tell` entries to the log as
 usual), and `collected` holds the effect objects themselves (`Tell('inner step 1')` -- read the
-message with `.msg`), not the plain messages that `writer_log()` returns.
+message with `.msg`), not the plain messages that `ReadWriterLog()` reads.
 
 `Listen` is handled by `listen_handler`, installed inside `writer`. A handler installed inside
 `listen_handler` consumes the entries before `Listen` sees them: `listen_handler(writer(prog))`
@@ -617,7 +617,7 @@ from `Tell` with its own handlers:
 |---|---|---|
 | Effect class | `WriterTellEffect` | `SlogEffect` (alias `Slog`) |
 | Handled by | `writer` -- appends `msg` to the log kept in `state` | `slog_handler` -- prints each entry on stderr; `slog_discard_handler` -- drops it |
-| Read as values | `writer_log()` or `Listen(prog)` | `Listen(prog, types=(SlogEffect,))` |
+| Read as values | `ReadWriterLog()` or `Listen(prog)` | `Listen(prog, types=(SlogEffect,))` |
 
 `writer` does not handle `SlogEffect`: a program that yields `slog` under only `writer` and
 `state` fails with `UnhandledEffect`. `SlogEffect` is not a subclass of `WriterTellEffect`.

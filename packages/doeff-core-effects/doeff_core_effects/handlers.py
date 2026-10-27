@@ -46,6 +46,7 @@ from doeff_core_effects.effects import (
     Local,
     MissingEnvKeyError,
     Put,
+    ReadWriterLog,
     Slog,
     Try,
     WriterTellEffect,
@@ -123,18 +124,19 @@ _WRITER_LOG_KEY = "__doeff_writer_log__"
 
 
 @do
-def _writer_handler(effect: WriterTellEffect, k):
+def _writer_handler(effect: WriterTellEffect | ReadWriterLog, k):
     """Writer handler: collects Tell(message) into a log list.
 
     Uses lazy state init via Get/Put + Some (same pattern as Hy
     defhandler's ``lazy`` clause).  Requires the ``state`` handler
     to be installed as an outer handler.
 
-    Retrieve the collected log with ``yield writer_log()``.
+    Answers ``yield ReadWriterLog()`` with a copy of the collected log
+    (an empty list before the first Tell).
     """
-    if isinstance(effect, WriterTellEffect):
-        from doeff.result import Some
+    from doeff.result import Some
 
+    if isinstance(effect, WriterTellEffect):
         cached = yield Get(_WRITER_LOG_KEY)
         if isinstance(cached, Some):
             log = cached.value
@@ -143,26 +145,13 @@ def _writer_handler(effect: WriterTellEffect, k):
             yield Put(_WRITER_LOG_KEY, Some(log))
         log.append(effect.msg)
         return (yield Transfer(k, None))
+    if isinstance(effect, ReadWriterLog):
+        cached = yield Get(_WRITER_LOG_KEY)
+        return (yield Transfer(k, list(cached.value) if isinstance(cached, Some) else []))
     yield Pass(effect, k)
 
 
 writer: ProgramHandler = _named_handler(_writer_handler, "writer")
-
-
-@do
-def writer_log():
-    """Return a snapshot of the current writer log from state.
-
-    Requires state handler.  Returns an empty list if no Tell has
-    been issued yet.  The returned list is a copy — mutations do not
-    affect the handler's internal log.
-    """
-    from doeff.result import Some
-
-    cached = yield Get(_WRITER_LOG_KEY)
-    if isinstance(cached, Some):
-        return list(cached.value)
-    return []
 
 
 @do
@@ -223,7 +212,8 @@ def _slog_handler(effect: Slog, k):
     Capture flows as values via Listen(prog, types=(SlogEffect,));
     explicit silence is slog_discard_handler.
     (slog_log() is retired: with a display-only sink there is no slog
-    state to read. Tell accumulation stays on writer + writer_log().)
+    state to read. Tell accumulation stays on writer, read back with
+    ReadWriterLog.)
     """
     import sys
 

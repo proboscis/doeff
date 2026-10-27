@@ -2,7 +2,7 @@
 
 slog は SlogEffect(Writer の Tell とは別ワイヤ型)。slog_handler は stderr への
 terminal sink(「入れたらログは見える」が契約)。slog の収集は Listen(prog, types=(SlogEffect,)) の値フロー、
-Tell の蓄積は writer + writer_log()(State 収集)。handler install への
+Tell の蓄積は writer(State 収集)で、yield ReadWriterLog() で読む。handler install への
 .log 属性 side-channel は削除済み API(main 0acce3a9 と本 ADR の統合形)。
 
 plan: docs/doeff-2026-07-13-slog-semantics-architecture-plan.md

@@ -11559,14 +11559,10 @@
       "maybe",
       "on_raise",
       "result",
-      "scheduled",
-      "writer_log"
+      "scheduled"
      ],
      "doeff_core_effects.aiohttp_ws_client": [
       "closing_links"
-     ],
-     "doeff_core_effects.handlers": [
-      "writer_log"
      ],
      "doeff_core_effects.outcomes": [
       "absent_as",

@@ -435,13 +435,6 @@
       "subject": "scope_reader"
     },
     {
-      "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
-      "reason": "registered-with-legacy",
-      "rule": "untyped-boundary",
-      "subject": "writer_log"
-    },
-    {
       "count": 3,
       "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
       "reason": "registered-with-legacy",

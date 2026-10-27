@@ -23,10 +23,10 @@ outside it, see [Cache System](07-cache-system.md)):
 import sqlite3
 from dataclasses import dataclass, replace
 from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
-from doeff_core_effects import Tell
+from doeff_core_effects import ReadWriterLog, Tell
 from doeff_core_effects.cache_effects import CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
-from doeff_core_effects.handlers import await_handler, state, try_handler, writer, writer_log
+from doeff_core_effects.handlers import await_handler, state, try_handler, writer
 from doeff_core_effects.scheduler import scheduled
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ def in_memory_orders(orders):
 @do
 def with_log(program):
     response = yield program
-    return response, (yield writer_log())
+    return response, (yield ReadWriterLog())
 
 def serve(orders_handler, order_id):
     stack = [state(), writer, try_handler, await_handler(), in_memory_cache_handler(), orders_handler]
@@ -222,8 +222,8 @@ whichever handlers are installed around it supply them:
 ```python
 from dataclasses import dataclass
 from doeff import Ask, EffectBase, Resume, do, handler, run, with_handlers
-from doeff_core_effects import Tell
-from doeff_core_effects.handlers import reader, state, writer, writer_log
+from doeff_core_effects import ReadWriterLog, Tell
+from doeff_core_effects.handlers import reader, state, writer
 
 @dataclass(frozen=True)
 class LoadSales(EffectBase):
@@ -247,7 +247,7 @@ def fixed_sales(sales):
 @do
 def with_log(program):
     result = yield program
-    return result, (yield writer_log())
+    return result, (yield ReadWriterLog())
 
 services = [reader({"top_n": 2}), state(), writer, fixed_sales([3, 1, 4])]
 print(run(with_handlers(services, with_log(business_logic("mon")))))  # ([4, 3], ['Loaded 3 sales'])
@@ -266,8 +266,8 @@ the last two runs. `sqlite_accounts` answers them, and the balance changes, on o
 import sqlite3
 from dataclasses import dataclass
 from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
-from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, try_handler, writer
 
 @dataclass(frozen=True)
 class Begin(EffectBase):
@@ -328,7 +328,7 @@ def sqlite_accounts(conn):
 @do
 def transfer_and_log(from_account, to_account, amount):
     result = yield Try(transfer_money(from_account, to_account, amount))
-    return result.is_ok(), (yield writer_log())
+    return result.is_ok(), (yield ReadWriterLog())
 
 conn = sqlite3.connect(":memory:", isolation_level=None)  # transactions only by the effects
 conn.executescript("""
@@ -487,8 +487,8 @@ holds the open connections and the program only sees the handles it gives out:
 import sqlite3
 from dataclasses import dataclass
 from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
-from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, try_handler, writer, writer_log
+from doeff_core_effects import ReadWriterLog, Tell
+from doeff_core_effects.handlers import state, try_handler, writer
 
 @dataclass(frozen=True)
 class Acquire(EffectBase):
@@ -548,7 +548,7 @@ on_pool, free = pool(connect, size=2)
 def both():
     users = yield with_connection(count_users)
     failed = yield Try(with_connection(broken_query))
-    return users, failed.is_err(), (yield writer_log())
+    return users, failed.is_err(), (yield ReadWriterLog())
 
 print(run(with_handlers([state(), writer, try_handler, on_pool], both())))  # (2, True, ['Connection released', 'Connection released'])
 print(len(free))  # 2

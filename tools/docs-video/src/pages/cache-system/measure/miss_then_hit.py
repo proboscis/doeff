@@ -6,11 +6,11 @@
 # (docs/07-cache-system.md, "Manual Cache Control").
 import time
 
-from doeff_core_effects import Tell
+from doeff_core_effects import ReadWriterLog, Tell
 from doeff_core_effects.cache_effects import CacheGet, CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
 from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
-from doeff_core_effects.handlers import await_handler, state, writer, writer_log
+from doeff_core_effects.handlers import await_handler, state, writer
 from doeff_core_effects.scheduler import scheduled
 from doeff_time import Delay, sync_time_handler
 
@@ -49,7 +49,7 @@ def twice():
         start = time.perf_counter()
         value = yield with_manual_cache()
         times.append((value, (time.perf_counter() - start) * 1000))
-    return times, (yield writer_log())
+    return times, (yield ReadWriterLog())
 
 
 def seen(effect):
