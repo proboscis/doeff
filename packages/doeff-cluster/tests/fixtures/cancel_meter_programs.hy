@@ -10,7 +10,8 @@
 ;;; 子が走り出してから取り消す(始まる前の取り消しは子を起こさないので数えない — doeff-core-effects の test_offloaded_process_cancel.hy の
 ;;; (a)): 子は自分の pid を file へ書いてから眠り、本体は file が現れるまで待ってから取り消す。子 process の答え手は thread で子を待つので
 ;;; 外側に scheduler が要る — sim-cluster の外側の scheduler が答え、待ちの effect(CreateExternalPromise・Wait)は柵を通る。
-(require doeff-hy.macros [defk defsystem <- val])
+(require doeff-hy.macros [defk <- val])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import os)
 (import collections.abc [Callable])
 (import doeff [with-handlers])

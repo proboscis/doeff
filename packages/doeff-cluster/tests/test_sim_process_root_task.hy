@@ -2,7 +2,8 @@
 ;;
 ;; 速さの測り(呼び手の側)は job → 根の task → 親の結び(task ごとの表 OpenTaskTally・#4188)で、job ごとの task の木の CPU と
 ;; doeff-vm の歩数を足す。片方だけ計算する 2 つの job で、計算しない job の木の CPU の和が計算する job の 1/10 未満。
-(require doeff-hy.macros [deftest defk deff defsystem <- val var])
+(require doeff-hy.macros [deftest defk deff <- val var])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])

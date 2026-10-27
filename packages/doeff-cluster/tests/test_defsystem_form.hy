@@ -6,7 +6,8 @@
 (import hy)
 
 (val PRELUDE "
-(require doeff-hy.macros [defk defsystem <-])
+(require doeff-hy.macros [defk <-])
+(require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (require doeff-hy.handle [defhandler])
 (defclass Ping [])
