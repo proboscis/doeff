@@ -123,13 +123,18 @@ import hy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from doeff_conductor.api import ConductorAPI
-from doeff_conductor.types import WorkflowStatus
+from doeff import do, run
+from doeff_conductor import RunWorkflow, WorkflowStatus, conductor_state_handler
+
+@do
+def run_twice(path):
+    first = yield RunWorkflow(template_or_file=path, run_id="article-journal")
+    replay = yield RunWorkflow(template_or_file=path, run_id="article-journal")
+    return first, replay
+
 with TemporaryDirectory() as directory:
-    api = ConductorAPI(state_dir=Path(directory))
     path = str(Path("publications/zenn-use-cases-v0/examples/workflow_journal.hy").resolve())
-    first = api.run_workflow(path, run_id="article-journal")
-    replay = api.run_workflow(path, run_id="article-journal")
+    first, replay = run(conductor_state_handler(Path(directory))(run_twice(path)))
     assert first.status == replay.status == WorkflowStatus.DONE
     assert first.result_payload == replay.result_payload
 """,

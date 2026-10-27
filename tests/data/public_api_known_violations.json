@@ -9769,7 +9769,6 @@
      "doeff_conductor": [
       "BLOCKER_FINDING",
       "CALIBRATION_SAMPLE_BUDGET_KEY",
-      "ConductorAPI",
       "DEFAULT_REVIEW_ROUTE_TABLE",
       "REVIEW_VERDICT_RESULT_SCHEMA",
       "ResolvedIdentity",
@@ -9789,41 +9788,6 @@
       "route_review_item",
       "run_review_routing_demo",
       "workflow_effect_cache_key"
-     ],
-     "doeff_conductor.api": [
-      "ConductorAPI"
-     ],
-     "doeff_conductor.cli": [
-      "answer_cmd",
-      "cli",
-      "console",
-      "env_describe",
-      "env_group",
-      "gate_answer_cmd",
-      "gate_group",
-      "gate_list",
-      "gates_cmd",
-      "issue",
-      "issue_create",
-      "issue_list",
-      "issue_resolve",
-      "issue_show",
-      "monitor_cmd",
-      "plan_cmd",
-      "ps_cmd",
-      "resume_cmd",
-      "run",
-      "show_cmd",
-      "stop_cmd",
-      "template",
-      "template_list",
-      "template_show",
-      "validate_cmd",
-      "wait_cmd",
-      "watch_cmd",
-      "workspace",
-      "workspace_cleanup",
-      "workspace_list"
      ],
      "doeff_conductor.dsl": [
       "BindingInfo",
@@ -10277,13 +10241,6 @@
       "WorkflowHandle",
       "WorkflowStatus"
      ],
-     "doeff_conductor.api": [
-      "WorkflowHandle"
-     ],
-     "doeff_conductor.cli": [
-      "IssueStatus",
-      "WorkflowStatus"
-     ],
      "doeff_conductor.effects": [
       "BudgetCounterEntry",
       "CalibrationEscapeRecord",
@@ -10477,9 +10434,6 @@
       "JournalCorruptionError",
       "PRError",
       "WorkspaceError"
-     ],
-     "doeff_conductor.cli": [
-      "ConductorError"
      ],
      "doeff_conductor.dsl": [
       "WorkflowExpansionError"

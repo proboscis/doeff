@@ -9,7 +9,6 @@ This package provides a unified orchestration layer for multi-agent workflows:
 - Full CLI for monitoring and control
 """
 
-from doeff_conductor.api import ConductorAPI as ConductorAPI
 from doeff_conductor.effects import (
     BLOCKER_FINDING as BLOCKER_FINDING,
 )
@@ -53,10 +52,19 @@ from doeff_conductor.effects import (
     AgentValidationFailure as AgentValidationFailure,
 )
 from doeff_conductor.effects import (
+    AnswerGate as AnswerGate,
+)
+from doeff_conductor.effects import (
+    CleanupWorkspaces as CleanupWorkspaces,
+)
+from doeff_conductor.effects import (
     Commit as Commit,
 )
 from doeff_conductor.effects import (
     ConductorEffectBase as ConductorEffectBase,
+)
+from doeff_conductor.effects import (
+    ConductorStateDir as ConductorStateDir,
 )
 from doeff_conductor.effects import (
     CreateIssue as CreateIssue,
@@ -74,6 +82,9 @@ from doeff_conductor.effects import (
     DeleteWorkspace as DeleteWorkspace,
 )
 from doeff_conductor.effects import (
+    DescribeEnvironment as DescribeEnvironment,
+)
+from doeff_conductor.effects import (
     DurableReviewBudget as DurableReviewBudget,
 )
 from doeff_conductor.effects import (
@@ -86,7 +97,28 @@ from doeff_conductor.effects import (
     GetIssue as GetIssue,
 )
 from doeff_conductor.effects import (
+    GetTemplateSource as GetTemplateSource,
+)
+from doeff_conductor.effects import (
+    GetWorkflow as GetWorkflow,
+)
+from doeff_conductor.effects import (
+    ListGates as ListGates,
+)
+from doeff_conductor.effects import (
     ListIssues as ListIssues,
+)
+from doeff_conductor.effects import (
+    ListOpenGates as ListOpenGates,
+)
+from doeff_conductor.effects import (
+    ListTemplates as ListTemplates,
+)
+from doeff_conductor.effects import (
+    ListWorkflows as ListWorkflows,
+)
+from doeff_conductor.effects import (
+    ListWorkspaces as ListWorkspaces,
 )
 from doeff_conductor.effects import (
     MergeCall as MergeCall,
@@ -104,16 +136,31 @@ from doeff_conductor.effects import (
     OpenGateReason as OpenGateReason,
 )
 from doeff_conductor.effects import (
+    OpenMonitor as OpenMonitor,
+)
+from doeff_conductor.effects import (
+    PlanWorkflow as PlanWorkflow,
+)
+from doeff_conductor.effects import (
     Push as Push,
 )
 from doeff_conductor.effects import (
     RandomCall as RandomCall,
 )
 from doeff_conductor.effects import (
+    ReadProgress as ReadProgress,
+)
+from doeff_conductor.effects import (
     RemainingReviewBudget as RemainingReviewBudget,
 )
 from doeff_conductor.effects import (
+    RenderMonitor as RenderMonitor,
+)
+from doeff_conductor.effects import (
     ResolveIssue as ResolveIssue,
+)
+from doeff_conductor.effects import (
+    ResumeWorkflow as ResumeWorkflow,
 )
 from doeff_conductor.effects import (
     ReviewerAgentLost as ReviewerAgentLost,
@@ -152,7 +199,16 @@ from doeff_conductor.effects import (
     ReviewVerdictTerminal as ReviewVerdictTerminal,
 )
 from doeff_conductor.effects import (
+    RunWorkflow as RunWorkflow,
+)
+from doeff_conductor.effects import (
+    StopWorkflow as StopWorkflow,
+)
+from doeff_conductor.effects import (
     TimeCall as TimeCall,
+)
+from doeff_conductor.effects import (
+    ValidateWorkflow as ValidateWorkflow,
 )
 from doeff_conductor.effects import (
     WorkspaceCall as WorkspaceCall,
@@ -225,6 +281,9 @@ from doeff_conductor.handlers import (
 )
 from doeff_conductor.handlers import (
     WorkspaceHandler as WorkspaceHandler,
+)
+from doeff_conductor.handlers import (
+    conductor_state_handler as conductor_state_handler,
 )
 from doeff_conductor.handlers import (
     default_scheduled_handlers as default_scheduled_handlers,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.effects import AgentEffect, AgentTask
 from doeff_conductor.environment import DEFAULT_PROFILE_DATA, ProfileBinding
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers

@@ -54,6 +54,7 @@
     "ban-program-trace-import",
     "cache-handler-no-result-duck-typing",
     "cli-profiling-no-runtime-env-read",
+    "conductor-cli-runs-effect-programs",
     "conductor-no-created-date-suppress",
     "conductor-no-force-delete-ignore-errors",
     "conductor-no-silent-corrupt-workflow-list",

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.journal import (
     PROGRESS_STATUS_RUNNING,
     TERMINAL_KIND_SUCCEEDED,

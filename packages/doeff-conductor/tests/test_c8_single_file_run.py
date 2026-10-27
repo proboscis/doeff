@@ -6,8 +6,8 @@ from typing import Any, cast
 
 import pytest
 from click.testing import CliRunner
-from doeff_conductor.api import ConductorAPI
-from doeff_conductor.cli import cli
+from doeff_conductor._api import ConductorAPI
+from doeff_conductor._cli import cli
 from doeff_conductor.effects import AgentEffect, AgentTask
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers

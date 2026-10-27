@@ -22,7 +22,7 @@
 - `packages/doeff-core-effects/doeff_core_effects/cache.py`: `cache()`のキー構築、MemoExists/Get、計算成功後のMemoPut。ハンドラ不在なら計算に進むため、永続化には保存ハンドラの設置が必要。
 - `packages/doeff-core-effects/doeff_core_effects/_memo_handlers_impl.hy`: Memoの存在確認・取得・保存をstorageへ委譲する構成。
 - `packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py`: 値をpickleへ変換してSQLiteへ保存し、ストレージ操作をAwait経由で行う。close()は呼出元スレッドの接続を閉じる。
-- `packages/doeff-conductor/src/doeff_conductor/api.py`: 同一run_idでワークフローの保存済みソースとjournal_state_dirを使う構成。
+- `packages/doeff-conductor/src/doeff_conductor/handlers/state_handler.py`・`_api.py`: RunWorkflowを受け、同一run_idでワークフローの保存済みソースとjournal_state_dirを使う構成。
 - `packages/doeff-conductor/src/doeff_conductor/workflow_effect_journal.py`: 時刻・乱数依頼のキー、順序、最長一致部分の再利用。
 - `packages/doeff-conductor/src/doeff_conductor/handlers/journaled_agent.py`: AgentEffectをAgentReplaySessionへ渡し、有効な保存結果がなければ委譲先を使う。
 - `packages/doeff-conductor/tests/test_agent_journal_c3.py`: モックによる例外後の有効結果の再利用、識別変更、履歴破損の回帰検査。

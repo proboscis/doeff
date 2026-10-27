@@ -31,7 +31,7 @@ from doeff_agents import (
 )
 from doeff_agents import AgentType
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
-from doeff_conductor.api import ConductorAPI
+from doeff_conductor._api import ConductorAPI
 from doeff_conductor.effects import AgentEffect, AgentTask
 from doeff_conductor.handlers.agent_handler import AgentHandler
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
