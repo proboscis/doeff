@@ -20,7 +20,7 @@ from doeff_agentic import (
     AgenticGetSessionStatus,
     AgenticSendMessage,
 )
-from doeff_agentic.handlers.testing import MockAgenticHandler, mock_handlers
+from doeff_agentic.handlers import mock_handlers
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
@@ -41,9 +41,8 @@ def mock_conversation():
 
 
 def main() -> int:
-    # Compose the mock protocol handler directly around the program.
-    handler_impl = MockAgenticHandler(workflow_name="mock-example")
-    program = mock_handlers(handler_impl)(mock_conversation())
+    # Install the mock handler directly around the program.
+    program = mock_handlers(workflow_name="mock-example")(mock_conversation())
     try:
         session_id, status, messages = run(scheduled(program))
     except Exception as e:
