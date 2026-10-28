@@ -1251,11 +1251,19 @@
   {:pre [(: store PreparedStore) (: ask ReadRow) (: now-ms int)] :post [(: % (| Row Missing))]
    :tags {:context "records" :role "foundation"}}
   "ReadRow に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも Missing — 文の条件・頭の註)。"
-  (val decl (store.schema.table ask.table))
-  (<- expiry (row-expiry decl now-ms))
-  (<- statement (read-row-statement store.prefix ask.table (key-text ask.key) expiry))
+  (<- statement Statement (read-row-plan store ask now-ms))
   (<- records (query-rows store.database statement))
   (if records (row-of (get records 0)) (Missing)))
+
+
+(defk read-row-plan [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadRow) (: now-ms int)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "ReadRow の文を作るため(1 つの読みの pg-read-row と束の読みの pg-read-batch が同じ文を流す 1 点)。"
+  (val decl (store.schema.table ask.table))
+  (<- expiry (row-expiry decl now-ms))
+  (<- statement Statement (read-row-statement store.prefix ask.table (key-text ask.key) expiry))
+  statement)
 
 
 (defk unbuilt-fields [store decl names]
@@ -1280,9 +1288,22 @@
    :tags {:context "records" :role "foundation"}}
   "ListRows に、先に読んだ置き場の版と頭 head で答えるため(1 つの読みの pg-list-rows と束の読みの pg-read-batch が、頭の読みを読みごとに
    撃つか束で 1 度にするかだけを違えて同じ頁を作る 1 点)。"
-  (val decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch head.epoch))
     (return (Reset head.epoch head.floor)))
+  (<- plan (| Statement NotIndexed) (list-rows-plan store ask now-ms))
+  (when (isinstance plan NotIndexed)
+    (return plan))
+  (<- records (query-rows store.database plan))
+  (<- page Page (list-rows-page store ask records head))
+  page)
+
+
+(defk list-rows-plan [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int)] :post [(: % (| Statement NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の文を作るか、索引の無い欄の断り NotIndexed を返すため(1 つの読みの pg-list-rows-at と束の読みの pg-read-batch が同じ文を流す
+   1 点 — 置き場の版の照らし Reset は頭を読んだ後に呼び手がする)。"
+  (val decl (store.schema.table ask.table))
   (val refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
   (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
@@ -1295,9 +1316,25 @@
   (when (is-not ask.descending-by None)
     ;; 上から読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) より小さい行から 1 頁 + 1 行(続きの有無を知るため)。表の上から読む
     ;; 欄は並べる式の索引の順に辿る形(pg_sql の頭の註)。
-    (<- top-statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by (in ask.descending-by decl.descending)
-                                          ask.cursor where-json where-any-json ask.limit expiry))
-    (<- top-records (query-rows store.database top-statement))
+    (<- top-statement Statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by
+                                                    (in ask.descending-by decl.descending) ask.cursor where-json where-any-json ask.limit expiry))
+    (return top-statement))
+  (<- statement Statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
+                                               (if (is ask.cursor None) None ask.cursor.after-key)
+                                               where-json
+                                               where-any-json
+                                               ask.limit
+                                               expiry))
+  statement)
+
+
+(defk list-rows-page [store ask top-records head]
+  {:pre [(: store PreparedStore) (: ask ListRows) (: top-records tuple) (: head StoreHead)] :post [(: % Page)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の文(list-rows-plan)の答えの行 top-records(頁の上限 + 1 行まで — 続きの有無を知るため)から、置き場の頭 head の頁を組むため
+   (1 つの読みと束の読みが同じ頁を組む 1 点)。"
+  (val decl (store.schema.table ask.table))
+  (when (is-not ask.descending-by None)
     (val top-taken (cut top-records ask.limit))
     (<- top-rows (decoded-batch top-taken (fn [records-of-page] (listed-rows-of decl ask.fields records-of-page))))
     (when (<= (len top-records) ask.limit)
@@ -1309,13 +1346,7 @@
                   (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ask.descending-by))
                   head.epoch
                   head.head)))
-  (<- statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
-                                     (if (is ask.cursor None) None ask.cursor.after-key)
-                                     where-json
-                                     where-any-json
-                                     ask.limit
-                                     expiry))
-  (<- records (query-rows store.database statement))
+  (val records top-records)
   (val taken (cut records ask.limit))
   (<- rows (decoded-batch taken (fn [records-of-page] (listed-rows-of decl ask.fields records-of-page))))
   (Page rows
@@ -1327,15 +1358,43 @@
 (defk pg-read-batch [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadBatch) (: now-ms int)] :post [(: % BatchRead)]
    :tags {:context "records" :role "foundation"}}
-  "ReadBatch の束に答えるため(card ki-177a4f287c42): 置き場の版と頭を束で 1 度だけ読み、束の順に読み 1 つずつを、同じ読みを 1 つ撃った時と
-   同じ文(pg-read-row・pg-list-rows-at)で同じ刻 now-ms に読む。読みの間に他の書きが入り得る(束は 1 つの断面ではない — ReadBatch の註)。"
-  (<- head (store-head store))
-  (var items #())
+  "ReadBatch の束に答えるため(card ki-177a4f287c42): 置き場の頭の文と、束の読みごとに同じ読みを 1 つ撃った時と
+   同じ文(read-row-plan・list-rows-plan)を、往復をまとめる読みだけの transaction の SqlBatch 1 本で DB への 1 往復に流し、答えの行から読みごとの
+   答えを組む(row-of・list-rows-page — 1 つの読みと同じ組み方)。文 1 つずつの往復の和(本番で読み 11 本・service の中で中央 36 ms)を
+   1 往復にするため。索引の無い欄の読み(NotIndexed)は文を流さない。束の文は 1 つの transaction の中で流れる。"
+  (var plans #())
   (for [one ask.reads]
-    (<- item (| Row Missing Page Reset NotIndexed)
-        (if (isinstance one ReadRow) (pg-read-row store one now-ms) (pg-list-rows-at store one now-ms head)))
+    (<- plan (| Statement NotIndexed) (if (isinstance one ReadRow) (read-row-plan store one now-ms) (list-rows-plan store one now-ms)))
+    (:= plans (+ plans #(plan))))
+  (<- head-statement Statement (store-head-statement store.prefix))
+  (val statements (+ #(head-statement) (tuple (gfor plan plans :if (isinstance plan Statement) plan))))
+  (<- answers tuple (in-transaction store.database None (batch-rows store.database statements True) :batched True))
+  (<- head StoreHead (head-of (get answers 0)))
+  (var rest (tuple (cut answers 1 None)))
+  (var items #())
+  (for [#(one plan) (zip ask.reads plans :strict True)]
+    (val records (if (isinstance plan Statement) (get rest 0) #()))
+    (when (isinstance plan Statement)
+      (:= rest (cut rest 1 None)))
+    (<- item (| Row Missing Page Reset NotIndexed) (batch-item store one plan (tuple records) head))
     (:= items (+ items #(item))))
   (BatchRead items))
+
+
+(defk batch-item [store one plan records head]
+  {:pre [(: store PreparedStore) (: one (| ReadRow ListRows)) (: plan (| Statement NotIndexed)) (: records tuple) (: head StoreHead)]
+   :post [(: % (| Row Missing Page Reset NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "束の読み 1 つの答えを、流した文の答えの行 records と置き場の頭 head から組むため(1 つの読みと同じ順: 置き場の版の照らし Reset → 索引の
+   断り NotIndexed → 頁か行)。"
+  (when (isinstance one ReadRow)
+    (return (if records (row-of (get records 0)) (Missing))))
+  (when (and (is-not one.cursor None) (!= one.cursor.epoch head.epoch))
+    (return (Reset head.epoch head.floor)))
+  (when (isinstance plan NotIndexed)
+    (return plan))
+  (<- page Page (list-rows-page store one records head))
+  page)
 
 
 (defk locked-row [store decl text records now-ms epoch]
