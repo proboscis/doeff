@@ -6,8 +6,6 @@ topics: ["python", "doeff", "algebraiceffects", "設計"]
 published: false
 ---
 
-![doeff — 1つの処理に、ハンドラを重ねる。](/images/zenn-use-cases-v0/generated/main-hero.png)
-
 ## doeffとは？
 
 Pythonの代数的エフェクト(algebraic effects)を、[doeff](https://github.com/proboscis/doeff)で紹介します。doeffは、中核をRustで書いたオープンソースのライブラリです。関数はエフェクト、つまり名前を付けた操作を`yield`します。ハンドラは、そのエフェクトを関数の残りの部分と一緒に受け取り、関数をどう進めるかを決めます。
@@ -104,8 +102,6 @@ over budget
 - `budget(5)`は、残りの額をエフェクトの間で覚えています。1回目の`Spend`は3かかり、ハンドラは`k`を再開します。2回目は残りが2なので、ハンドラは`"over budget"`を返し、2つ目の話題は調べられません。
 
 `budget(5)(research(TOPICS))`の実行を、やりとり1つずつ追うと次のようになります。
-
-![budget(5)が、2回目のSpendで続きを捨てる](/images/zenn-use-cases-v0/generated/main-concept.png)
 
 1回目の`Spend(3)`は、残りの5に収まります。`budget`は`Resume`で`research`を再開し、tidesのメモができます。2回目の`Spend(3)`は、残りの2に収まりません。`budget`は続きの`k`を捨て、`"over budget"`が`run()`の結果になります。
 
@@ -328,8 +324,6 @@ print(tape)  # 書き留めたエフェクトの名を、順に表示する。
 ```
 
 `record`には注釈が無いので、届いたエフェクトを全部受け取ります。型の名を書き留め、`Pass`で外へ渡します。最初の`Fetch`は、次のように進みます。
-
-![recordが書き留めたFetchを、Passでfake_webへ渡す](/images/zenn-use-cases-v0/generated/main-flow.png)
 
 `check`が`Fetch(url)`を`yield`して止まると、まず内側の`record`に届きます。`record`は名を書き留めて`Pass`で外へ渡し、`fake_web`がページを渡して`check`を再開します。
 
