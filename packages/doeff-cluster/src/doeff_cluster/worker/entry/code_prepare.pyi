@@ -92,7 +92,9 @@ def closure_of_trees(trees: tuple, sources: tuple, entries: tuple, code_store: s
 
 def prepare_trees(trees: tuple, revision: str, jobs: int, entries: tuple, code_store: str | None, hy_version: str) -> _Program[tuple, object]:
     ...
-pool_tool_baker: _Handler
+
+def pool_tool_baker(progress: Incomplete) -> _Handler:
+    ...
 store_entries: _Handler
 READ_THREADS: int
 
