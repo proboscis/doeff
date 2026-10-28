@@ -2630,3 +2630,60 @@
   (<- _ (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (FollowUpEffect :handle handle :message (reply-prompt "NOTED") :record-note "NOTE"))
   handle)
+
+
+;; --- 記録の守り手の手番の勘定(agora card ki-d59018b840f9)---------------------------------------------------------------
+;;
+;; 本番の turn-host で、adapter と層 2 の間の handler が ClaudeStartTurn を写し手 tap 抜きで作り直し(agora card ki-3f17ef920d2b)、記録に
+;; 手番の text と呼びが 1 つも載らず、記録を読む hook が答えた後の呼びを断り続けた。守り手は写しと畳みの例外を黙って捨て、写し手が付かない
+;; 事も外から見えなかった。守り手は手番を閉じる時に勘定を 1 度締め、落とした物と付かなかった写し手を session と手番の名つきで log に出す。
+;; 失敗ケース: 写し手を落とす handler を挟んでも log に出ない・畳みの例外が log に出ない・1 手番で 2 行以上出る・壊れていない手番で出る。
+
+(defhandler tap-dropping-start []
+  ;; 本番の印と道具の server の handler の壊れ方(agora-controllers 11c91bf4 の前)をそのまま写す: 要求を作り直して tap を落とす。
+  {:tags {:context "headless-adapter-test" :role "foundation"}}
+  (ClaudeStartTurn [origin spec input]
+    (<- answer (ClaudeStartTurn origin spec input))
+    (resume answer)))
+
+(defn run-with-tap-dropped [#^ Path tmp-path #^ Callable scenario]
+  "run-on と同じ fake の組の、層 2 と headless の adapter の間に tap-dropping-start を挟んで走らせる(adapter は組の最後)。"
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (setv handlers (handlers-for FAKE (str (/ tmp-path "home"))))
+  (setv setting (Setting work None 60.0 8))
+  (run (scheduled (with_handlers (+ (cut handlers 0 -1) [(tap-dropping-start)] (cut handlers -1 None)) (scenario setting)))))
+
+(defn record-warnings [caplog]
+  "守り手の log(doeff_agents.event_record)の warning の本文。"
+  (lfor entry caplog.records :if (= entry.name "doeff_agents.event_record") (.getMessage entry)))
+
+(deftest test-the-keeper-logs-nothing-for-a-whole-record [tmp-path caplog]
+  (.set-level caplog "WARNING" :logger "doeff_agents.event_record")
+  (check-recorded FAKE tmp-path)
+  (assert (= (record-warnings caplog) []) (record-warnings caplog)))
+
+(deftest test-the-keeper-logs-a-turn-whose-tap-was-dropped [tmp-path caplog]
+  (.set-level caplog "WARNING" :logger "doeff_agents.event_record")
+  (setv path (str (/ tmp-path "record" "turn.json")))
+  (setv record (EventRecord :path path :state #() :fold fold-all))
+  (run-with-tap-dropped tmp-path (fn [s] (recorded-turn s record)))
+  (setv warned (record-warnings caplog))
+  ;; 2 手番とも写し手が付かない — 手番ごとに 1 行、session の名と手番と記録の path つき。
+  (assert (= (len warned) 2) warned)
+  (assert (all (gfor line warned (and (in "session adapter-record turn " line) (in path line) (in "the tap brought no item" line))))
+          warned))
+
+(deftest test-the-keeper-logs-dropped-folds-once-per-turn [tmp-path caplog]
+  (.set-level caplog "WARNING" :logger "doeff_agents.event_record")
+  (defn refusing-fold [state item]  ; defk にできない: 層 2 の読み手の thread が呼ぶ畳みの callback(EventRecord.fold)
+    (when (isinstance item AgentTextEvent)
+      (raise (ValueError "text refused")))
+    (fold-all state item))
+  (setv record (EventRecord :path (str (/ tmp-path "record" "turn.json")) :state #() :fold refusing-fold))
+  (run-on FAKE tmp-path (fn [s] (recorded-turn s record)))
+  (setv warned (record-warnings caplog))
+  (assert (= (len warned) 2) warned)
+  (assert (all (gfor line warned (in "fold failed" line))) warned)
+  (assert (all (gfor line warned (in "ValueError: text refused" line))) warned)
+  (assert (not (any (gfor line warned (in "the tap brought no item" line)))) warned))

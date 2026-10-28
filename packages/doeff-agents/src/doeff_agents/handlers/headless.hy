@@ -24,7 +24,9 @@
 ;;;   LaunchEffect.event_record       → その session が始める手番の ClaudeStartTurn.tap(層 2 の読み手の thread が行を手番の記録に足した直後に、
 ;;;                                      頁と同じ写し events-of で層 3 の出来事にし、記録の守り手 RecordKeeper〔_event_record.py — 畳みと file の
 ;;;                                      置き換え〕へ畳ませる — _line-tap-of。上の層が頁の読みの遅れに縛られずに自分の記録を書くため・agora card
-;;;                                      ki-31b41eac5071)
+;;;                                      ki-31b41eac5071)。手番を閉じる時に守り手の手番の勘定を 1 度締め(close-turn → RecordKeeper.settle)、
+;;;                                      写し・畳み・書きの失敗か、頁に text・道具の呼びが在るのに写し手から 1 つも来なかった手番を、session と
+;;;                                      手番の名つきで log に 1 行出す(落とした物を黙って捨てない — agora card ki-d59018b840f9)
 ;;;   FollowUpEffect.record_note      → 入力を層 2 へ渡す前に、session の記録の守り手へ畳ませる(読み手の thread が入力の行方を読むより先に、
 ;;;                                      記録が入力を知る)。記録の無い session への record_note は AgentCapabilityUnsupportedError
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
@@ -163,7 +165,8 @@
    events = 層 3 の出来事(seq = 添字)/ last-end = 最後の手番の終わり / stopped = 止めた /
    carry = 次に始める手番で文脈へ持ち込む写し(LaunchEffect.resume_snapshot — 最初の手番を始めたら None)/
    keeper = この session の出来事の記録の守り手(LaunchEffect.event_record の RecordKeeper — 無ければ None)/
-   tap = この session が始める手番の層 2 の行の写し手(守り手を _line-tap-of で包んだ物 — 無ければ None)。"
+   tap = この session が始める手番の層 2 の行の写し手(守り手を _line-tap-of で包んだ物 — 無ければ None)/
+   paged = 守り手の勘定を前に締めてから頁で写した text・道具の呼びの出来事の数(close-turn が守り手へ渡す — 写し手が付いたかを照らす)。"
   (defn __init__ [self #^ str name #^ ClaudeSessionSpec spec #^ str context-id #^ bool fresh lifecycle
                   #^ (| Rebuilt None) [carry None] [keeper None]]
     (setv self.name name
@@ -174,6 +177,7 @@
           self.carry carry
           self.keeper keeper
           self.tap (_line-tap-of keeper)
+          self.paged 0
           self.stopped False)
     (setv #^ (| ClaudeTurn None) self.turn None)
     (setv #^ int self.cursor -1)
@@ -500,12 +504,11 @@
   "session の出来事の記録の守り手(RecordKeeper)を、層 2 の行の写し手(ClaudeStartTurn.tap)に包むため(agora card ki-31b41eac5071 —
    上の層が頁の読み(EventsEffect)の遅れに縛られずに、層 2 が行を読んだ時点で自分の記録を書く)。行は頁と同じ写し(events-of)で
    出来事にする — 写し方を 2 つ作らない。守り手へ渡す出来事の seq は頁の seq ではない(行ごとに 0 から振る)。keeper が None なら
-   None(写さない)。"
+   None(写さない)。写しの例外は守り手が手番の勘定に数える。"
   (when (is keeper None)
     (return None))
   (fn [line]
-    (for [event (events-of line 0)]
-      (.take keeper event))))
+    (.take-tapped keeper (fn [] (events-of line 0)))))
 
 (defk next-origin [#^ HeadlessSession session]
   {:pre [(: session HeadlessSession)] :post [(: % (| FreshSession ResumeSession))]
@@ -574,6 +577,10 @@
   (when (!= session.turn turn) (return None))
   (setv mapped (end-of end session.context-id session.spec.model))
   (.append session.events (AgentTurnEndEvent :seq (len session.events) :at at :end mapped))
+  ;; 記録の守り手の手番の勘定を締める(落とした物と、付かなかった写し手を log に 1 行出す — agora card ki-d59018b840f9)。
+  (when (is-not session.keeper None)
+    (.settle session.keeper (.format "turn {}" turn.turn-seq) session.paged)
+    (setv session.paged 0))
   (setv session.last-end mapped)
   (if (and (isinstance end Interrupted) (is-not end.continued-by None) (not session.stopped))
       (setv session.turn end.continued-by session.cursor -1)
@@ -595,7 +602,9 @@
     ;; 層 2 がこの手番を知らない(層 2 の handler が作り直された後など)= 終わりの行を読めずに失った。
     (setv page (TurnEventPage #() session.cursor (BackendLost "the agent runtime no longer knows this turn"))))
   (for [line page.lines :if (> line.seq session.cursor)]
-    (.extend session.events (events-of line (len session.events)))
+    (val copied (events-of line (len session.events)))
+    (.extend session.events copied)
+    (+= session.paged (sum (gfor event copied (isinstance event #(AgentTextEvent AgentToolUseEvent)))))
     (setv session.cursor line.seq))
   (when (is-not page.end None)
     (<- (close-turn session turn page.end)))
@@ -698,7 +707,7 @@
   (setv spec (spec-of config request credential))
   (val carry (if (is request.resume-snapshot None) None (Rebuilt request.resume-snapshot)))
   (val session (HeadlessSession name spec context-id (is request.resume-from None) request.lifecycle carry
-                                (if (is request.event-record None) None (_RecordKeeper request.event-record))))
+                                (if (is request.event-record None) None (_RecordKeeper request.event-record name))))
   ;; 写しを持ち込む時は、最初の手番で在るようになるので手元の在否を確かめない。
   (when (and (is-not request.resume-from None) (is request.prompt None) (is carry None))
     (<- status (ClaudeSessionStatus spec.home spec.cwd request.resume-from))
