@@ -58,6 +58,8 @@ DEFAULT_POOL_SIZE: int
 DRIVER_THREADS: ThreadPerCall
 LISTEN_RETRY_SECONDS: int
 NOTICE_PAYLOAD_LIMIT: int
+LARGE_CARRY_BYTES: int
+CARRIED_LARGE: Incomplete
 POSTGRES_TYPES: dict[SqlColumnType, str]
 
 @dataclass(frozen=True, kw_only=True)
@@ -161,7 +163,16 @@ def postgres_schema_statements(tables: tuple) -> _Program[tuple, object]:
 def postgres_error(error: Exception) -> _Program[SqlFailed | SqlUnreachable, object]:
     ...
 
-def postgres_run(connection: Incomplete, text: str, params: tuple | None) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
+def cell_bytes(value: object, doubled: bool) -> int:
+    ...
+
+def largest_message_bytes(rows: tuple, doubled: bool) -> _Program[int, object]:
+    ...
+
+def noted_carry(connection: Incomplete, carried: int) -> _Program[None, object]:
+    ...
+
+def postgres_run(connection: Incomplete, text: str, params: tuple | None, binary: bool) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
     ...
 
 def postgres_query(connection: Incomplete, request: SqlQuery) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
@@ -207,7 +218,11 @@ class PostgresStep:
     text: str
     params: tuple[SqlParam, ...] | None
     rows: tuple[tuple[int | float | str | bytes | bool | None, ...], ...] | None
+    binary: bool
     answered: bool
+
+def step_sent_bytes(step: PostgresStep | None) -> _Program[int, object]:
+    ...
 
 def request_step(request: SqlQuery | SqlInsertRows) -> _Program[PostgresStep | None, object]:
     ...
