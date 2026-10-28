@@ -224,7 +224,12 @@ spec:
             # 常駐の job の Pod の label(6633cf571・card ki-a66bb71f4152)。coordinator の process に効く差: 枠の行の pools・memoryMiB を
             # GET /state に出す(b39321225・card ki-17043e66bd83)・N+1 の純粋な判断(601bb530a・実行時には呼ばれない)・lease の空けの待ち
             # GET /watch?lease=&vacate=(cc2e22aa8・card ki-a3c8b4e344a3)。前の版 4b01553ab は cc2e22aa8 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: cc2e22aa8f211b90b8a82465b08f350e33f1e282 }
+            # 96d851134 = 焼きの道具が 1 file 焼くたびに準備の進みの印を進める版(card ki-6401ff10af71 — 機体直の worker 3 台を 851f5f647
+            # からこの版へ上げ、焼き直しの全体が準備の見張りの 600 秒を越えて止められるのを断つため、版の向きに合わせて先に上げる)。
+            # coordinator の process に効く差: 機体ごとの job の判断 per-machine? を 1 か所に置き、雛形を機体ごとに広げた job も機体ごとと
+            # 読む(76652324c・fce290516)・枠の file の行を N+1 の判断の worker にする読み(c5501982e)・worker の知らせの読み
+            # (worker_notices)。前の版 cc2e22aa8 は 96d851134 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 96d851134554d81806d72bcac2e983c54a158d1c }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
