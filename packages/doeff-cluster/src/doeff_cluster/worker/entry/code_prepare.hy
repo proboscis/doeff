@@ -25,7 +25,8 @@
 ;;;               置く(種類 .imports — 形は bake_plan)。次の準備は中身の同じ source の entry を使い、中身の変わった file だけを読む。
 ;;;               一回り(closure-step の答え)の source と entry は、それぞれまとめて thread の pool で並べて読む(効果 ReadSources・
 ;;;               ReadStoreEntries — disk の 1 回の読みの待ちを積もらせない・card ki-d3e585481618)。
-;;;   進みの印  --progress の file の時刻を、走査の後・閉包の一回りごと・焼きの前と後に進める(効果 MarkProgress)。呼び手の準備は印の
+;;;   進みの印  --progress の file の時刻を、走査の後・閉包の一回りごと・焼きの前と後に進め(効果 MarkProgress)、焼きの道具にも渡して
+;;;             1 つ用意し終えるたびに進めさせる(card ki-6401ff10af71)。呼び手の準備は印の
 ;;;             時刻で停滞を見分けるので、disk が遅いだけの歩みを止まりと読ませない。
 ;;;   3 用意      用意する物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
@@ -353,13 +354,15 @@
 ;; python_bytecode と doeff-hy の bytecode-is-current だけ・保存先の入口は worker の版の code_store)。用意する物を標準入力で渡し、
 ;; 結果の行を標準出力から読む。
 
-(defhandler pool-tool-baker
+(defhandler pool-tool-baker [progress]
   ;; 焼きの効果を、焼きの道具の子 process(この process と同じ interpreter)に訳す(main が被せる・子 process の効果は外側の
   ;; subprocess-handler が答える)。道具が 0 でない終わりで止まれば、焼きの失敗でなく道具の失敗として落ちる。
+  ;; 引数に残す理由: 印の file の path は起動ごとの値(--progress・None = 印の無い起動)。焼きの道具は 1 つ用意するたびに印を進める —
+  ;; 焼きの前後だけの印では、進んでいる焼き直しの全体が停滞の閾を越えて止められる(card ki-6401ff10af71)。
   (BakeSources [items jobs paths code-store]
     ;; interpreter は venv の prefix から求める(hy の起動は sys.executable を hy の入口に差し替えるので、sys.executable では起こせない)。
     (<- facts InterpreterFacts (ReadInterpreter))
-    (<- argv tuple (plan.bake-argv (posixpath.join facts.prefix "bin" "python") POOL-TOOL jobs paths CODE-STORE code-store))
+    (<- argv tuple (plan.bake-argv (posixpath.join facts.prefix "bin" "python") POOL-TOOL jobs paths CODE-STORE code-store progress))
     (<- text str (plan.bake-input items))
     (<- outcome ProcessOutcome (RunProcess :argv argv :stdin text))
     (when (!= outcome.exit-code 0)
@@ -467,7 +470,7 @@
   ;; 保存先の dir は環境変数で決まる(code_store の store-dir — import の読みの口と同じ 1 つの解き方)。import の名の entry の鍵は、この root の
   ;; venv の Hy の版で読みが変わりうるので Hy の版を入れる。
   (setv code-store (store.store-dir))
-  (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files pool-tool-baker
+  (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files (pool-tool-baker (or args.progress None))
                                       store-entries closure-reads (progress-marks (or args.progress None))]
                                      (prepare-trees trees args.revision args.jobs entries code-store hy.__version__))))
   (setv failed (tuple (gfor t outcomes :if (is-not t.problem None) t)))

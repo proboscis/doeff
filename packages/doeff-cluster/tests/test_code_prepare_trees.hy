@@ -52,7 +52,7 @@
   (assert (isinstance shaped tuple) shaped)
   (<- outcomes tuple
       (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler subprocess-handler tree-files
-                      pool-tool-baker closure-reads (progress-marks None)]
+                      (pool-tool-baker None) closure-reads (progress-marks None)]
         (prepare-all shaped 2 #("app.main"))))
   (assert (= (tuple (gfor t outcomes #(t.named t.rebuilt t.reused t.failed t.problem))) #(#((str app) 2 0 0 None) #((str lib) 2 0 0 None)))
           outcomes)

@@ -98,7 +98,7 @@ def tree_count(listed: tuple, tree: str) -> _Program[int, object]:
 def bake_order(items: tuple) -> _Program[tuple, object]:
     ...
 
-def bake_argv(python: str, tool: str, jobs: int, paths: tuple, store_module: str, store: str | None) -> _Program[tuple, object]:
+def bake_argv(python: str, tool: str, jobs: int, paths: tuple, store_module: str, store: str | None, progress: str | None) -> _Program[tuple, object]:
     ...
 
 def bake_input(items: tuple) -> _Program[str, object]:
