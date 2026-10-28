@@ -25,7 +25,10 @@
 ;;;   - 引数と行の値は閉じた集合 SqlValue = int | float | str | bytes | bool | None。答え手が driver の値をこの集合へ正規化する
 ;;;     (Decimal → 整数なら int・他は float / 日時 → ISO 8601 の str / UUID → str / json → text)。集合の外の値は TypeError。
 ;;;
-;;;   SqlQuery         文 1 つ。答え = SqlRows | SqlFailed | SqlUnreachable
+;;;   SqlQuery         文 1 つ。答え = SqlRows | SqlFailed | SqlUnreachable。binary(bool・既定 False)= 答えの行を driver の binary の形で
+;;;                    受ける印(PostgreSQL = 結果を binary の形で受け、bytea を 16 進の text〔本文の 2 倍の長さ〕にしない — 大きな本文の読み)。
+;;;                    答えの値の決まりは同じ。欄は bytea・text・数・真偽・日時に限る(他の型は binary の形の写しが text の形と違いうる —
+;;;                    json は object に読まれて写しの TypeError で断る)。形の区別の無い答え手(sqlite・ClickHouse)は読まない
 ;;;   SqlInsertRows    表へ行をまとめて入れる(PostgreSQL / sqlite = executemany・ClickHouse = JSONCompactEachRow の本文 1 つ)。答えは同じ
 ;;;   SqlTransaction   program を 1 つの transaction の中で走らせる。答え = program の答え | SqlFailed | SqlUnreachable。約束:
 ;;;                      (1) 中の SqlQuery / SqlInsertRows(/ SqlBatch)が最初に失敗したら rollback し、program を再開せずにその失敗を答えにする
@@ -176,8 +179,8 @@
 
 (defeffect SqlQuery
   "文 1 つを流す(頭の註)。文の中で時計を読まない — 刻は引数で渡す。"
-  {:fields [(: database str) (: statement str) (: params (get tuple #(SqlParam ...)) #())]
-   :pre [(: database str) (: statement str) (: params tuple) (all (gfor p params (isinstance p SqlParam)))]
+  {:fields [(: database str) (: statement str) (: params (get tuple #(SqlParam ...)) #()) (: binary bool False)]
+   :pre [(: database str) (: statement str) (: params tuple) (all (gfor p params (isinstance p SqlParam))) (: binary bool)]
    :answer (| SqlRows SqlFailed SqlUnreachable)
    :tags {:context "sql" :role "foundation"}})
 

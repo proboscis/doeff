@@ -1,7 +1,8 @@
 """検の補助: client と PostgreSQL の間に置く TCP の中継で、client が送った文を往復ごとに記録する(agora-redesign #3605)。
 
 答え手が DB へ流す往復の列(往復ごとの文の並び)を、driver の呼び方ではなく wire の上で見るための道具。PostgreSQL の frontend の
-message を読むだけで、中身は書き換えずにそのまま server へ渡す(server の答えも読まずにそのまま client へ返す)。
+message を読むだけで、中身は書き換えずにそのまま server へ渡す(server の答えも読まずにそのまま client へ返し、bytes の数だけを数える —
+答えの行が wire の上で何 bytes になったかを見る検のため・card ki-1368e0d6b801)。
 
 - 往復 = client が Sync('S')か Simple Query('Q')を送るまでに送った文の並び。client はそこで server の答えを待つ(pipeline mode でも
   sync は出口の 1 度 — 答え手の postgres-flush)。文の無い Sync は往復に数えない。
@@ -10,7 +11,8 @@ message を読むだけで、中身は書き換えずにそのまま server へ�
 - 接続の始まり(StartupMessage・SSLRequest・GSSENCRequest — 型の byte が無い)と、文を運ばない message は数えない。
 
 使い方: tap = StatementWireTap(target) — target = unix socket の path(str)か (host, port)。client は 127.0.0.1:tap.port へ繋ぐ
-(sslmode=disable・gssencmode=disable)。tap.reset() の後に答え手を走らせ、tap.round_trips() を読む。止める時は tap.close()。
+(sslmode=disable・gssencmode=disable)。tap.reset() の後に答え手を走らせ、tap.round_trips()(往復の列)か tap.downstream_bytes()(server → client の bytes)を読む。止める時は
+tap.close()。
 """
 
 from __future__ import annotations
@@ -115,6 +117,7 @@ class StatementWireTap:
         self.target = target
         self.lock = threading.Lock()
         self._mut_recorded: tuple[tuple[str, ...], ...] = ()
+        self._mut_downstream = 0
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", 0))
@@ -159,6 +162,8 @@ class StatementWireTap:
                 return
             if conversation is not None:
                 conversation.feed(data)
+            else:
+                self.count_downstream(len(data))
             try:
                 sink.sendall(data)
             except OSError:
@@ -169,10 +174,21 @@ class StatementWireTap:
         with self.lock:
             self._mut_recorded = self._mut_recorded + (statements,)
 
+    def count_downstream(self, size: int) -> None:
+        """server → client へ渡した bytes を足す(どの接続の thread からも呼ばれる)。"""
+        with self.lock:
+            self._mut_downstream += size
+
     def reset(self) -> None:
-        """記録を空にする(答え手を走らせる前に呼ぶ)。"""
+        """記録と数えた bytes を空にする(答え手を走らせる前に呼ぶ)。"""
         with self.lock:
             self._mut_recorded = ()
+            self._mut_downstream = 0
+
+    def downstream_bytes(self) -> int:
+        """reset の後に server → client へ渡した bytes の和(答えの行が wire の上で占めた大きさを見る)。"""
+        with self.lock:
+            return self._mut_downstream
 
     def round_trips(self) -> tuple[tuple[str, ...], ...]:
         """reset の後に記録した往復の列(流れた順)。"""

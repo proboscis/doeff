@@ -68,13 +68,13 @@
   ;; serialized-lock-keys はsession中固定の有限tuple。登録キーだけを接続取得前に直列化する。
   ;; Semaphoreは回収されないので保持して再利用する。ローカルの待機にはDBのstatement_timeoutは掛からない。
   (session var transaction-permits {})
-  (SqlQuery [database statement params] :when (in database (.names connections))
+  (SqlQuery [database statement params binary] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     ;; 許可は初めての拍に 1 度だけ置く(在れば session の値を書き直さない — 文ごとの Put を土台まで往復させない・agora card ki-1841b724d061)。
     ;; 下の節も同じ。
     (when (not-in database permits)
       (:= permits (| permits {database created})))
-    (val request (SqlQuery database statement params))
+    (val request (SqlQuery database statement params binary))
     (<- answer (permitted (get permits database)
                           (offloaded-statement connections pool database (fn [leased] (postgres-query leased request)))))
     (resume answer))

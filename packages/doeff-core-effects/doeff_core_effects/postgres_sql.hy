@@ -4,7 +4,10 @@
 ;;;   - 接続の貸し出し PostgresConnections は組み立ての側(composition root)が database の宣言(PostgresDatabase — 名と DSN)から作って渡し、
 ;;;     止める時に close する。要求 1 つ = 接続 1 本(doeff-records の置き場もこの貸し出しを使う — 同時の要求の transaction を 1 本の接続で
 ;;;     混ぜない)。接続は自動 commit・json / jsonb の欄は text で読む(値の正規化の決まり)。切れた接続と transaction の途中で返った接続は
-;;;     返す時に捨てる / rollback する。
+;;;     返す時に捨てる / rollback する。目安(LARGE-CARRY-BYTES)を越える値(送った引数の組か行 1 つ・受けた行 1 つ)を通した接続も返す時に
+;;;     捨てる — libpq は接続ごとの送りと受けの buffer を通した一番大きな message まで伸ばして閉じるまで縮めないので、空きの列に戻すと大きな
+;;;     本文 1 つで数十 MB を抱え続ける(card ki-1368e0d6b801)。SqlQuery の binary は答えの行を binary の形で受け、bytea を 16 進の 2 倍に
+;;;     しない(大きな本文の読み)。
 ;;;   - 接続の上限(PostgresTimeouts・agora-redesign #1479): 接続は開く時の上限・TCP の keepalive・送った bytes の返事を待つ上限
 ;;;     (tcp_user_timeout)・文の上限(statement_timeout)を持つ。DB の pod が入れ替わると空きの接続は相手の居ない TCP のまま残り、上限が
 ;;;     無いと次の文が kernel の再送の限り(数十分)固まって許可を持ち続ける — 上限があれば文は OperationalError で落ち、SqlUnreachable を
@@ -58,6 +61,7 @@
 (import threading)
 (import time)
 (import uuid)
+(import weakref)
 (import concurrent.futures [Executor])
 (import collections.abc [Callable])
 (import contextlib [AbstractContextManager])
@@ -92,6 +96,13 @@
 (val LISTEN-RETRY-SECONDS 1)
 ;; 合図の本文(NOTIFY の payload)の bytes の上限(PostgreSQL の既定の build は 8000 bytes 未満を求める — 届く本文は名を載せない・頭の註)。
 (val NOTICE-PAYLOAD-LIMIT 8000)
+
+;; 大きな値を通した接続を返す時に閉じる目安(bytes — 文 1 つ・往復 1 回の、送った引数と行・受けた行の str / bytes の長さの和)。libpq の接続は
+;; 送りと受けの buffer を通した一番大きな message の次の 2 の冪まで伸ばし、閉じるまで縮めない — 空きの列に戻すと、大きな本文 1 つで接続ごとに
+;; 数十 MB を抱え続ける(card ki-1368e0d6b801・調べは ki-f62011080c16)。目安の下の値だけを通した接続の buffer は 1 本 数 MB に留まる。
+(val LARGE-CARRY-BYTES (* 256 1024))
+;; 目安を越える値を通した接続の印(release が空きの列に戻さず閉じる)。接続が消えれば印も消える(弱い参照)。
+(val CARRIED-LARGE (weakref.WeakSet))
 
 ;; 宣言の欄の型 → PostgreSQL の型。
 (val POSTGRES-TYPES {SqlColumnType.INTEGER "bigint" SqlColumnType.FLOAT "double precision" SqlColumnType.TEXT "text"
@@ -234,13 +245,14 @@
         (raise))))
 
   (defn release [self #^ str name connection]  ; defk にできない: 資源の返却(with / finally から呼ぶ)
-    "借りた接続を返すため(切れていれば捨てる・pipeline mode のまま残っていれば捨てる — 頭の註・transaction の途中なら rollback し、
-     できなければ捨てる)。"
+    "借りた接続を返すため(切れていれば捨てる・pipeline mode のまま残っていれば捨てる — 頭の註・目安を越える値を通していれば捨てる —
+     CARRIED-LARGE・transaction の途中なら rollback し、できなければ捨てる)。"
     (import psycopg)
     (try
       (cond
         (or connection.closed connection.broken) (.close connection)
         (!= connection.pgconn.pipeline-status psycopg.pq.PipelineStatus.OFF) (.close connection)
+        (in connection CARRIED-LARGE) (.close connection)
         (!= connection.info.transaction-status psycopg.pq.TransactionStatus.IDLE)
           (try
             (.rollback connection)
@@ -405,18 +417,53 @@
   failure)
 
 
-(defk postgres-run [connection text params]
-  {:pre [(: connection "psycopg の接続") (: text str) (: params (| tuple None))] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+;; defk にできない: 行の値の数だけ呼ぶ純関数(Program を返すと値ごとに VM を往復する)
+(defn #^ int cell-bytes [#^ object value #^ bool doubled]
+  "行の値 1 つが libpq の message に占める bytes を見積もるため(str = UTF-8 の長さ・bytes = 長さ — doubled なら text の形の 16 進で 2 倍・
+   他の型は数えない)。"
+  (match value
+    (str) (if (.isascii value) (len value) (len (.encode value "utf-8")))
+    (bytes) (if doubled (* 2 (len value)) (len value))
+    _ 0))
+
+
+(defk largest-message-bytes [rows doubled]
+  {:pre [(: rows tuple) (: doubled bool)] :post [(: % int)]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つを流して答えの値にするため(params = None は引数の書き換えを通さない文 — DDL と transaction の区切り)。
-   connection は psycopg の接続(psycopg を読まない環境でも module を読めるよう、型を契約に書かない)。"
+  "行の並び rows(行 1 つ = libpq の message 1 つ — 送る引数の組か、受けた行)のうち、一番大きな message の bytes を見積もるため
+   (LARGE-CARRY-BYTES と比べる — buffer は一番大きな message まで伸びる。doubled = bytes を text の形の 16 進で受けた)。"
+  (max (gfor row rows (sum (gfor value row (cell-bytes value doubled)))) :default 0))
+
+
+(defk noted-carry [connection carried]
+  {:pre [(: connection "psycopg の接続") (: carried int)] :post [(: % None)]
+   :tags {:context "sql" :role "foundation"}}
+  "接続が通した message の bytes carried が目安(LARGE-CARRY-BYTES)を越えていれば、返す時に閉じる印(CARRIED-LARGE)を付けるため。"
+  (when (>= carried LARGE-CARRY-BYTES)
+    (.add CARRIED-LARGE connection))
+  None)
+
+
+(defk postgres-run [connection text params binary]
+  {:pre [(: connection "psycopg の接続") (: text str) (: params (| tuple None)) (: binary bool)]
+   :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "文 1 つを流して答えの値にするため(params = None は引数の書き換えを通さない文 — DDL と transaction の区切り・binary = 答えの行を
+   binary の形で受ける — SqlQuery の binary)。送る引数と受けた行が目安を越えれば、返す時に閉じる印を付ける(noted-carry — 送りは
+   流す前に付ける: 落ちた文でも buffer は伸びている)。connection は psycopg の接続(psycopg を読まない環境でも module を読めるよう、型を
+   契約に書かない)。"
   (import psycopg)
+  (when (is-not params None)
+    (<- sent (largest-message-bytes #((tuple (gfor p params p.value))) False))
+    (<- (noted-carry connection sent)))
   (try
     (with [cursor (.cursor connection)]
-      (.execute cursor text (if (is params None) None (dfor p params p.name p.value)))
+      (.execute cursor text (if (is params None) None (dfor p params p.name p.value)) :binary binary)
       (if (is cursor.description None)
           (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
           (do (val rows (! (normalized-rows (.fetchall cursor))))
+              (<- received (largest-message-bytes rows (not binary)))
+              (<- (noted-carry connection received))
               (SqlRows :rows rows :rowcount (len rows)))))
     (except [error psycopg.Error]
       (<- failure (postgres-error error))
@@ -428,17 +475,19 @@
    :tags {:context "sql" :role "foundation"}}
   "SqlQuery 1 つに答えるため。"
   (<- bound (postgres-statement request.statement request.params))
-  (<- answer (postgres-run connection bound.text bound.params))
+  (<- answer (postgres-run connection bound.text bound.params request.binary))
   answer)
 
 
 (defk postgres-insert [connection request]
   {:pre [(: connection "psycopg の接続") (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows 1 つに executemany で答えるため。"
+  "SqlInsertRows 1 つに executemany で答えるため(行 1 つ = 送る message 1 つ — 一番大きな行が目安を越えれば返す時に閉じる印を付ける)。"
   (import psycopg)
   (<- (checked-rows request.columns request.rows))
   (<- text (postgres-insert-statement request.table request.columns))
+  (<- sent (largest-message-bytes request.rows False))
+  (<- (noted-carry connection sent))
   (if (not request.rows)
       (SqlRows :rows #() :rowcount 0)
       (try
@@ -456,7 +505,7 @@
   "表の宣言を DDL に描いて順に流すため(最初の失敗で止める)。"
   (<- statements (postgres-schema-statements tables))
   (for [statement statements]
-    (<- answer (postgres-run connection statement None))
+    (<- answer (postgres-run connection statement None False))
     (when (isinstance answer #(SqlFailed SqlUnreachable))
       (return answer)))
   (SqlSchemaApplied :statements statements))
@@ -550,12 +599,24 @@
 
 (defrecord PostgresStep
   "pipeline に積む文 1 つ(postgres-flush の往復の中の順): text = psycopg へ渡す文 / params = 名つきの引数(None = 引数の書き換えを
-   通さない文 — BEGIN・COMMIT)/ rows = executemany で流す行(None = 文 1 つ)/ answered = その答えを往復の答え(requests の答え)に
-   載せるか(BEGIN・錠・合図・COMMIT は載せない)。"
+   通さない文 — BEGIN・COMMIT)/ rows = executemany で流す行(None = 文 1 つ)/ binary = 答えの行を binary の形で受ける(SqlQuery の
+   binary)/ answered = その答えを往復の答え(requests の答え)に載せるか(BEGIN・錠・合図・COMMIT は載せない)。"
   (#^ str text)
   (#^ (| (get tuple #(SqlParam ...)) None) params)
   (#^ (| (get tuple #((get tuple #((| int float str bytes bool None) ...)) ...)) None) rows)
+  (#^ bool binary)
   (#^ bool answered))
+
+
+(defk step-sent-bytes [step]
+  {:pre [(: step (| PostgresStep None))] :post [(: % int)]
+   :tags {:context "sql" :role "foundation"}}
+  "pipeline に積む文 1 つが送る一番大きな message の bytes を見積もるため(引数の組 1 つか、executemany の行 1 つ — noted-carry へ渡す)。"
+  (cond
+    (is step None) 0
+    (is-not step.rows None) (! (largest-message-bytes step.rows False))
+    (is-not step.params None) (! (largest-message-bytes #((tuple (gfor p step.params p.value))) False))
+    True 0))
 
 
 (defk request-step [request]
@@ -564,13 +625,13 @@
   "transaction の中の文 1 つ(SqlQuery | SqlInsertRows)を pipeline の文にするため(引数と行の検めは送る前 — 誤りは ValueError / TypeError)。
    行の無い SqlInsertRows は文を流さないので None(答えは SqlRows の 0 行)。"
   (match request
-    (SqlQuery :statement statement :params params)
+    (SqlQuery :statement statement :params params :binary binary)
       (do (<- bound (postgres-statement statement params))
-          (PostgresStep :text bound.text :params bound.params :rows None :answered True))
+          (PostgresStep :text bound.text :params bound.params :rows None :binary binary :answered True))
     (SqlInsertRows :table table :columns columns :rows rows)
       (do (<- (checked-rows columns rows))
           (<- text (postgres-insert-statement table columns))
-          (if rows (PostgresStep :text text :params None :rows rows :answered True) None))))
+          (if rows (PostgresStep :text text :params None :rows rows :binary False :answered True) None))))
 
 
 (defk flush-steps [locks origin flush]
@@ -581,11 +642,11 @@
    印 origin を載せる(頭の註 — None = 合図の後に同じ process の呼び鈴を鳴らす貸し出しが無い)。"
   (var opening #())
   (when flush.opening
-    (:= opening #((PostgresStep :text "BEGIN" :params None :rows None :answered False)))
+    (:= opening #((PostgresStep :text "BEGIN" :params None :rows None :binary False :answered False)))
     (for [claim locks]
       (<- text (lock-text claim))
       (<- lock (postgres-statement text #((SqlParam :name "key" :value claim.key))))
-      (:= opening (+ opening #((PostgresStep :text lock.text :params lock.params :rows None :answered False))))))
+      (:= opening (+ opening #((PostgresStep :text lock.text :params lock.params :rows None :binary False :answered False))))))
   (var requests #())
   (for [request flush.requests]
     (<- step (request-step request))
@@ -594,9 +655,9 @@
   (for [notify flush.notices]
     (<- params (notice-params origin notify))
     (<- notice (postgres-statement NOTICE-STATEMENT params))
-    (:= notices (+ notices #((PostgresStep :text notice.text :params notice.params :rows None :answered False)))))
+    (:= notices (+ notices #((PostgresStep :text notice.text :params notice.params :rows None :binary False :answered False)))))
   (+ opening requests notices
-     (if flush.closing #((PostgresStep :text "COMMIT" :params None :rows None :answered False)) #())))
+     (if flush.closing #((PostgresStep :text "COMMIT" :params None :rows None :binary False :answered False)) #())))
 
 
 (defclass [runtime-checkable] StatementCursor [Protocol]
@@ -625,7 +686,8 @@
   "pipeline mode の接続に文 1 つを積み、答えを受ける cursor を返すため(答えは sync の後に読む・文を流さない request は None)。"
   (cond
     (is step None) None
-    (is step.rows None) (.execute connection step.text (if (is step.params None) None (dfor p step.params p.name p.value)))
+    (is step.rows None) (.execute connection step.text (if (is step.params None) None (dfor p step.params p.name p.value))
+                                  :binary step.binary)
     True (do (val cursor (.cursor connection))
              (.executemany cursor step.text (list step.rows))
              cursor)))
@@ -667,6 +729,10 @@
    必ず出る(失敗の道でも — 出られずに残った接続は返す時に捨てる)。"
   (import psycopg)
   (<- steps (flush-steps locks origin flush))
+  ;; 送りの印は積む前に付ける(落ちた往復でも buffer は伸びている — postgres-run と同じ)。
+  (for [step steps]
+    (<- sent (step-sent-bytes step))
+    (<- (noted-carry connection sent)))
   (var cursors #())
   (var failed None)
   (try
@@ -688,6 +754,8 @@
   (for [#(step cursor) (zip steps cursors :strict True)]
     (when (or (is step None) step.answered)
       (<- answer (step-answer step cursor))
+      (<- received (largest-message-bytes answer.rows (not (and (is-not step None) step.binary))))
+      (<- (noted-carry connection received))
       (:= answers (+ answers #(answer))))
     (when (is-not cursor None)
       (.close cursor)))
@@ -698,7 +766,7 @@
   {:pre [(: connection PipelineConnection) (: locks tuple)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
   "transaction を始め、錠の並び locks(transaction-locks)を順に取るため(成功は None — 既定の手順の BEGIN と錠 1 つずつの往復)。"
-  (<- began (postgres-run connection "BEGIN" None))
+  (<- began (postgres-run connection "BEGIN" None False))
   (when (not (isinstance began SqlRows))
     (return began))
   (for [claim locks]
@@ -713,7 +781,7 @@
   {:pre [(: connection "psycopg の接続") (: statement str)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
   "transaction の区切りの文(COMMIT・ROLLBACK)を流すため(成功は None)。"
-  (<- answer (postgres-run connection statement None))
+  (<- answer (postgres-run connection statement None False))
   (if (isinstance answer SqlRows) None answer))
 
 
@@ -1040,8 +1108,8 @@
   ;; 同じ組に並べ分ける。
   "本物の PostgreSQL の答え手(頭の註 — scheduler を塞がない)。connections が宣言した database の名にだけ答える(他の名は外側へ回す)。"
   {:tags {:context "sql" :role "foundation"}}
-  (SqlQuery [database statement params] :when (in database (.names connections))
-    (val request (SqlQuery database statement params))
+  (SqlQuery [database statement params binary] :when (in database (.names connections))
+    (val request (SqlQuery database statement params binary))
     (<- answer (offloaded-statement connections DRIVER-THREADS database (fn [leased] (postgres-query leased request))))
     (resume answer))
   (SqlInsertRows [database table columns rows] :when (in database (.names connections))

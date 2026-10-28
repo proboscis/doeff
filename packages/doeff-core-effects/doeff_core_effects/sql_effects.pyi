@@ -87,6 +87,7 @@ class SqlQuery(_doeff_effect_base[SqlRows | SqlFailed | SqlUnreachable]):
     database: str
     statement: str
     params: tuple[SqlParam, ...] = ...
+    binary: bool = False
 
     def __post_init__(self) -> None:
         ...
