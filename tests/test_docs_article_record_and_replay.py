@@ -20,7 +20,7 @@
 
 本文の主張のうち、走らせて確かめられる物も見る: 再生の組の外に HttpRequest の handler が無い・HttpRequest は欄が同じでも等しくない・
 memo の層が出す effect の順・保存を記憶に置いても同じ・保存の handler が無いと毎回外へ出る・POST も記録して再生で送らない・
-file に token が残らない・別の process が同じ file から再生する。
+file に token が残らない・既定の鍵が pickle の protocol で変わる・別の process が同じ file から再生する。
 
 本文の決まりも見る: AI が書いたと名乗る行が無い・IO の差し替えだけに読める語(swap・fake・mock・real I/O)が見出し「## I/O」の
 節の外に無い(軸は algebraic effects — 記事を IO の差し替えの話に縮めない)・前の回の記事と 1 本目の記事へ link する。
@@ -273,6 +273,14 @@ for name, key in (("default", None), ("method_and_url", method_and_url)):
     recorded(latest_releases(REPOS, "s3cr3t-token"), tape, github, *([key] if key else []))
     stored = b"".join(path.read_bytes() for path in directory.glob(f"token-{name}.sqlite*"))
     print(f"token in {name}:", b"s3cr3t-token" in stored, b"v2.4.1" in stored)
+
+# 既定の鍵は pickle した依頼の hash で、pickle の protocol が変われば鍵も変わる(本文の限り「a key made on Python 3.13 is not
+# found on 3.14」— pickle の既定の protocol は Python 3.14 で 4 から 5 になった)
+import hashlib, pickle
+from doeff_core_effects.memo_handlers import content_address
+request = HttpRequest("GET", url, headers={"Authorization": "Bearer secret"})
+by_protocol = {protocol: hashlib.sha256(pickle.dumps(request, protocol=protocol)).hexdigest() for protocol in (4, 5)}
+print("key:", content_address(request) in by_protocol.values(), by_protocol[4] != by_protocol[5])
 """
 
 # 別の process が同じ file から再生する(本文「A test in another process, or in CI, replays from that file the same way」)
@@ -299,6 +307,7 @@ def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
         ("post", "200 200 1"),
         ("token in default", "False True"),
         ("token in method_and_url", "False True"),
+        ("key", "True True"),
     ]
 
 

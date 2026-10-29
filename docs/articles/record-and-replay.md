@@ -200,7 +200,7 @@ print(recorded(reported(latest_releases(REPOS, "ci-dummy")), tape, offline))
 LookupError: not recorded: GET https://api.github.com/repos/acme/server/releases/latest
 ~~~
 
-The default key, `content_address`, is a hash of the whole request: method, URL, headers, params, body and timeouts. The token is in a header, so a request with another token is another request, and it misses. The hand-written tape above keyed by method and URL; give the rewriter the same key:
+The default key, `content_address`, is a hash of the whole request, every field of it: method, URL, headers, params, body, timeouts and the rest. The token is in a header, so a request with another token is another request, and it misses. The hand-written tape above keyed by method and URL; give the rewriter the same key:
 
 ~~~python
 # on_disk.py (excerpt)
@@ -256,8 +256,8 @@ You may know this from VCR.py, which records cassettes by patching HTTP client l
 ## Limits
 
 - The stored answers are pickled. Open only files you trust: loading a pickle can run code.
-- The default key hashes the pickled request. Whether it stays the same across doeff or Python versions is not promised. A key of your own, such as `method_and_url`, is a plain string you control.
-- With no storage handler installed, the rewriter treats every request as a miss and performs it outward each time, without a word. A replay with `offline` in the network's place catches that: the miss raises.
+- The default key hashes the pickled request, and a pickle's bytes change with Python: with doeff installed as below, a key made on Python 3.13 is not found on 3.14, whose pickle writes a newer protocol by default. Across doeff versions it is not promised either. A key of your own, such as `method_and_url`, is a plain string you control.
+- With no storage handler installed, the rewriter treats every request as a miss and performs it outward each time; no error says the storage is missing. A replay with `offline` in the network's place catches that: the miss raises.
 - The rewriter records by type: every `HttpRequest`, POST included, and a recorded POST is not sent again on replay. That is usually what a test wants. If some requests must always go out, write a recorder like `record` that passes those on with `Pass`.
 - A replay shows how your code handles the answers you recorded. It does not show that the API still answers that way. Record again when the API changes.
 
@@ -272,6 +272,6 @@ python live.py
 
 Every example in this post runs as shown with doeff 0.8.0. The complete files are in [examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay). The docs chapter [Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md) covers `CacheGet` and `CachePut`, which a program yields itself when it caches on purpose; the rewriter here keeps answers from outside, and the program never asks.
 
-The previous post, [Time as an effect](time-as-an-effect.md), made the clock a handler, so hours of waiting run in an instant. The series started with [Algebraic effects for Python](algebraic-effects-in-python.md), which stacks handlers for time, concurrency, retries, budgets and I/O around one program.
+The previous post, [Time as an effect](time-as-an-effect.md), made the clock a handler, so days of waiting run in milliseconds. The series started with [Algebraic effects for Python](algebraic-effects-in-python.md), which stacks handlers for time, concurrency, retries, budgets and I/O around one program.
 
 Which answers would you want to keep in your own code, and where would the key be hard to choose? Issues are open at https://github.com/proboscis/doeff/issues.
