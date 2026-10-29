@@ -44,7 +44,7 @@ def fetch_db_password() -> str:
 result = run(
     scheduled(
         with_handlers(
-            [await_handler(), lazy_ask(strict=True), try_handler, state(), writer],
+            [await_handler, lazy_ask(strict=True), try_handler, state(), writer],
             fetch_db_password(),
         )
     )

@@ -71,7 +71,7 @@ next call for the same key is served from the cache. The fetch is an effect too:
 Under `answer_from_server`, `GetJson` means "GET the path from the server with httpx". Under
 `answer_from_memory`, it means "answer from memory and record the path", so the example runs
 offline. To call the server, run the program under `answer_from_server`; `fetch_user` does not change.
-The program runs under a cache handler (here `in_memory_cache_handler()`) and `await_handler()`
+The program runs under a cache handler (here `in_memory_cache_handler()`) and `await_handler`
 inside `scheduled()`.
 
 ```python
@@ -121,7 +121,7 @@ def program():
     return first, second
 
 prog = in_memory_cache_handler()(answer_from_memory(program()))
-first, second = run(scheduled(await_handler()(prog)))
+first, second = run(scheduled(await_handler(prog)))
 print(first)  # {'id': 1, 'name': 'Ada'}
 print(second == first)  # True
 print(requested)  # ['/users/1']

@@ -257,7 +257,7 @@
   {:pre [(: settings RecordsSettings) (: body (| Program EffectBase))] :post [(: % int)] :tags {:context "records" :role "entry"}}
   "単独で起こす時の本番の土台の全部(#834 の形)で本体(serve-records — 答え = process の終わりの code)を走らせるため。並び(外側が先):
    scheduler → Await の橋 → session の値の置き場 → 時計 → 止めの合図 → 土台の口 records-connected(待ち受け → 名乗り → PostgreSQL)。"
-  (<- answer (scheduled (with-handlers [(await-handler) (state) (async-time-handler) os-signal-stop-handler]
+  (<- answer (scheduled (with-handlers [await-handler (state) (async-time-handler) os-signal-stop-handler]
                                        (records-connected settings body))))
   answer)
 

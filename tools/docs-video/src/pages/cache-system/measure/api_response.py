@@ -47,7 +47,7 @@ def program():
     return first, second
 
 prog = in_memory_cache_handler()(answer_from_memory(program()))
-first, second = run(scheduled(await_handler()(prog)))
+first, second = run(scheduled(await_handler(prog)))
 print(first)  # {'id': 1, 'name': 'Ada'}
 print(second == first)  # True
 print(requested)  # ['/users/1']

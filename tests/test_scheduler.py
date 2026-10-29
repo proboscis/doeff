@@ -860,7 +860,7 @@ class TestPrioritySurvivesSuspension:
             ]
             yield Gather(*tasks)
 
-        doeff_run(scheduled(await_handler()(body())))
+        doeff_run(scheduled(await_handler(body())))
 
         stall = timeline["completer_resumed"] - timeline["complete_performed"]
         assert stall < 0.5, (
@@ -1217,7 +1217,7 @@ def _scheduler_lines_per_timed_wait(parked: int, waits: int, *, traced: bool) ->
     sys.settrace(trace_calls)
     try:
         per_wait, counted = doeff_run(scheduled(
-            with_handlers([await_handler(), async_time_handler()], body()),
+            with_handlers([await_handler, async_time_handler()], body()),
             implementation="python",
         ))
     finally:
@@ -1317,7 +1317,7 @@ class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
             return counts["ready"]
 
         ready = doeff_run(scheduled(
-            with_handlers([await_handler(), async_time_handler()], body()),
+            with_handlers([await_handler, async_time_handler()], body()),
             implementation="python",
         ))
         assert ready < waits / 4, (

@@ -38,7 +38,7 @@ def twice(make_handler):
     COMPUTED.clear()
     for i in (1, 2):
         start = time.perf_counter()
-        how, value = run(scheduled(sync_time_handler()(await_handler()(make_handler()(cached_answer())))))
+        how, value = run(scheduled(sync_time_handler()(await_handler(make_handler()(cached_answer())))))
         print(f"  run {i}: {how} -> {value} in {(time.perf_counter() - start) * 1000:.1f} ms")
     print(f"  the work ran {len(COMPUTED)} time(s)")
 
@@ -50,6 +50,6 @@ print("sqlite_cache_handler('cache.sqlite'):")
 twice(lambda: sqlite_cache_handler(db))
 print("no cache handler:")
 try:
-    run(scheduled(sync_time_handler()(await_handler()(cached_answer()))))
+    run(scheduled(sync_time_handler()(await_handler(cached_answer()))))
 except Exception as error:
     print(f"  {type(error).__name__}: {str(error).splitlines()[0]}")

@@ -411,7 +411,7 @@ which `ReadWriterLog()` reads them back; no task writes to a shared list.
 
 Six hours of two concurrent tasks ran in well under a second, in the same order every time. Under
 a handler that answers `Sleep` with `Await(asyncio.sleep(effect.seconds))` (under
-`await_handler()`, as in [Effects vs. Plain `async`](#effects-vs-plain-async)) and `Now` with the
+`await_handler`, as in [Effects vs. Plain `async`](#effects-vs-plain-async)) and `Now` with the
 wall clock, the same `day` waits for real. The scheduler knows nothing about the clock, and the
 clock uses the scheduler only through effects any program can yield (`CreatePromise`, `Spawn`,
 `Wait`).
@@ -644,7 +644,7 @@ def instant_http(effect: Fetch, k):     # answers at once, without an event loop
 
 
 urls = ["a.com", "b.com"]
-print(run(scheduled(await_handler()(async_http(total_size(urls))))))  # 36
+print(run(scheduled(await_handler(async_http(total_size(urls))))))  # 36
 print(run(scheduled(instant_http(total_size(urls)))))  # 36
 ```
 

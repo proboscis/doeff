@@ -60,7 +60,7 @@ def _raw(installed: object) -> Callable[..., object]:
         (slog_discard_handler, (Slog,)),
         (local_handler, (Local,)),
         (listen_handler, (Listen,)),
-        (await_handler(), (Await,)),
+        (await_handler, (Await,)),
         (lazy_ask({}), (Ask, Local)),
         (env_var_ask(), (Ask,)),
         (

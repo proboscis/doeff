@@ -44,7 +44,7 @@ def test_memo_rewriter_uses_storage_without_terminal_and_hits_on_second_call():
 
     wrapped = _with_handlers(
         program(),
-        await_handler(),
+        await_handler,
         state(),
         slog_handler,
         _lookup_handler(calls),

@@ -1000,7 +1000,7 @@
                                 :max-bytes REQUEST-MAX-BYTES :maintenance config.maintenance :stop-poll-seconds SHELL-STOP-POLL-SECONDS
                                 :drain-seconds 0.0 :meter config.meter :served config.served :callers (tuple config.callers)
                                 :compute-workers SHELL-COMPUTE-WORKERS))
-  (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server (thread-pool-compute-handler compute-pool)
+  (setv program (with-handlers [await-handler (async-time-handler) (state) aiohttp-http-server (thread-pool-compute-handler compute-pool)
                                 (shell-control opened.put (fn [] (if (.is-set ended) SHELL-STOP-REASON None)))]
                                (serve-records serving)))
   (setv thread (threading.Thread :target (fn [] (shell-run program opened)) :daemon True :name "doeff-records-http"))

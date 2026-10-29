@@ -18,7 +18,7 @@ from doeff import Err, Ok, Try, do, run, with_handlers
 
 
 def _run(program, *layers):
-    return run(scheduled(with_handlers([await_handler(), try_handler, slog_discard_handler, *layers], program)))
+    return run(scheduled(with_handlers([await_handler, try_handler, slog_discard_handler, *layers], program)))
 
 
 def test_program_reads_verdict_from_scripted_answers() -> None:

@@ -1,0 +1,75 @@
+{
+  "_comment": "引数の無い handler の factory の既知の表(ADR-DOE-API-002 R4)。tools/handler_factory_census.py の一覧と、ADR の deftest が突き合わせる。表に無い factory は赤・一覧に無い行も赤(表は code と一緒に減るだけ)。verdict は 呼びごとの状態(factory のままでよい — 呼ぶたびに新しい状態を作る)・直す(設定も呼びごとの状態も無い — 素の handler にする card を why に書く)・factory でない(読みが factory と取った物)のどれか。",
+  "rows": [
+    {
+      "key": "packages/doeff-conductor/src/doeff_conductor/_handlers/agent_handler.py::agent_handler",
+      "verdict": "直す",
+      "why": "設定も呼びごとの状態も無い(中の @handler def を返すだけ)— agora card ki-e9166ac1c3b1"
+    },
+    {
+      "key": "packages/doeff-conductor/src/doeff_conductor/_handlers/git_handler.py::git_handler",
+      "verdict": "直す",
+      "why": "設定も呼びごとの状態も無い(中の @handler def を返すだけ)— agora card ki-e9166ac1c3b1"
+    },
+    {
+      "key": "packages/doeff-core-effects/doeff_core_effects/_outcomes.py::maybe",
+      "verdict": "直す",
+      "why": "module の定数 _MAYBE を返すだけ。2026-10-28 の決定(ADR-DOE-API-001 R6)と食い違うので、形を持ち主に問う — agora card ki-2d05bfc6ec94"
+    },
+    {
+      "key": "packages/doeff-core-effects/doeff_core_effects/_outcomes.py::result",
+      "verdict": "直す",
+      "why": "module の定数 _RESULT を返すだけ。2026-10-28 の決定(ADR-DOE-API-001 R6)と食い違うので、形を持ち主に問う — agora card ki-2d05bfc6ec94"
+    },
+    {
+      "key": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py::in_memory_cache_handler",
+      "verdict": "呼びごとの状態",
+      "why": "呼ぶたびに新しい InMemoryStorage を作る(呼びごとに別の cache)"
+    },
+    {
+      "key": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py::in_memory_memo_handler",
+      "verdict": "呼びごとの状態",
+      "why": "呼ぶたびに新しい InMemoryStorage を作る(呼びごとに別の memo)"
+    },
+    {
+      "key": "packages/doeff-events/src/doeff_events/_handlers/memory.py::event_handler",
+      "verdict": "呼びごとの状態",
+      "why": "呼ぶたびに新しい listeners の表を作る(呼びごとに別の pub/sub)"
+    },
+    {
+      "key": "packages/doeff-events/src/doeff_events/_handlers/os_files.py::os_file_watch_handler",
+      "verdict": "呼びごとの状態",
+      "why": "呼ぶたびに新しい watches の表を作る(呼びごとに別の監視の組)"
+    },
+    {
+      "key": "packages/doeff-events/src/doeff_events/_handlers/timer.py::timer_handler",
+      "verdict": "呼びごとの状態",
+      "why": "呼ぶたびに新しい armed の表と発火の task を作る(呼びごとに別の timer の列)"
+    },
+    {
+      "key": "packages/doeff-git/src/doeff_git/_handlers/production.py::production_handlers",
+      "verdict": "直す",
+      "why": "決まった 2 つの handler の stacked_handlers を返すだけ — agora card ki-e9166ac1c3b1"
+    },
+    {
+      "key": "packages/doeff-openai/src/doeff_openai/_handlers/production.py::production_handlers",
+      "verdict": "直す",
+      "why": "module の値 openai_production_handler を返すだけ — agora card ki-e9166ac1c3b1"
+    },
+    {
+      "key": "packages/doeff-openrouter/src/doeff_openrouter/_handlers/production.py::production_handlers",
+      "verdict": "直す",
+      "why": "module の値 openrouter_production_handler を返すだけ — agora card ki-e9166ac1c3b1"
+    },
+    {
+      "key": "packages/doeff-traverse/doeff_traverse/_handlers.py::sequential",
+      "verdict": "直す",
+      "why": "設定も呼びごとの状態も無い(中の @do def handler を返すだけ)— agora card ki-b10e81c19717"
+    },
+    {
+      "key": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy::tqdm-progress",
+      "verdict": "呼びごとの状態",
+      "why": "progress_bars(tqdm) を呼び、呼ぶたびに新しい open_bars の表を作る(呼びごとに別の進みの棒)"
+    }
+  ]
+}

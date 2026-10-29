@@ -44,7 +44,7 @@
   (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers (SimClock)) :served served))))
   (try
-    (<- seen tuple (with_handlers [(await-handler) (http-production-handler)] (get-json server.url "/served")))
+    (<- seen tuple (with_handlers [await-handler (http-production-handler)] (get-json server.url "/served")))
     (finally (.close server)))
   seen)
 
@@ -79,12 +79,12 @@
                                                          :request-handlers (sim-request-handlers (SimClock)) :served BUILD))))
   (try
     (<- (with_handlers [(memory-records-handler store MAKER)] (SetStoreOutage OUTAGE-DETAIL)))
-    (<- record-op (with_handlers [(await-handler) (http-production-handler)]
+    (<- record-op (with_handlers [await-handler (http-production-handler)]
                                  (HttpRequest "POST" (+ server.url "/v1/records/put-row")
                                               :headers {"X-Records-Writer" MAKER}
                                               :body {"table" "parts" "key" ["k"] "value" {"label" "a"} "expect" {"kind" "any"}}
                                               :max-retries 0)))
-    (<- served tuple (with_handlers [(await-handler) (http-production-handler)] (get-json server.url "/served")))
+    (<- served tuple (with_handlers [await-handler (http-production-handler)] (get-json server.url "/served")))
     (finally (.close server)))
   (assert (= record-op.status 503) #(record-op.status record-op.text))
   (assert (= (get served 0) 200) served)

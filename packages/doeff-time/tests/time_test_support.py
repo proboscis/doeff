@@ -68,7 +68,7 @@ def run_with_handlers(program, *, env=None):
         wrapped = reader(env=env)(wrapped)
     # await_handler uses scheduler effects (CreateExternalPromise, Wait),
     # so it must be inside the scheduler.
-    wrapped = await_handler()(wrapped)
+    wrapped = await_handler(wrapped)
     wrapped = scheduled()(wrapped)
     wrapped = slog_handler(wrapped)
     wrapped = try_handler(wrapped)

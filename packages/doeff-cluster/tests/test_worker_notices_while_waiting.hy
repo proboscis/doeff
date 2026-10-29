@@ -80,7 +80,7 @@
 (deftest test-worker-notices-go-out-while-the-coordinator-waits-for-requests
   (val sent (SentNotices))
   (<- seen tuple ((sim-time-handler :clock (SimClock))
-                   (with-handlers [(await-handler) (http-requests (RequestInbox 0 30.0)) (network-broker sent)
+                   (with-handlers [await-handler (http-requests (RequestInbox 0 30.0)) (network-broker sent)
                                    (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES)]
                      (startup-then-move sent))))
   (val started (get seen 0))

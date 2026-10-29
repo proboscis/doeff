@@ -85,7 +85,7 @@
 (defk client-reads [server count]
   {:pre [(: server RunningServer) (: count int)] :post [(: % tuple)]}
   "口 server へ本物の HTTP と時計で読みを count 本 並べて撃つため。"
-  (<- answers tuple (with_handlers [(await-handler) (async-time-handler) (http-production-handler) records-unwaited
+  (<- answers tuple (with_handlers [await-handler (async-time-handler) (http-production-handler) records-unwaited
                                     (http-records-handler (RecordsEndpoint server.url :writer "reader"))]
                                    (reads-together count)))
   answers)

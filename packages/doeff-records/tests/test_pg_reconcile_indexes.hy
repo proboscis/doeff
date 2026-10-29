@@ -576,7 +576,7 @@
         serving (dataclasses.replace (run (records-serving NOTE-SCHEMA settings PG-STORE)) :maintenance None))
   (defn body []  ; defk にできない: thread の target
     (try
-      (.put ended (run (records-process (fn [program] (scheduled (with_handlers [(await-handler) (state) (async-time-handler) (stop-when stopping)]
+      (.put ended (run (records-process (fn [program] (scheduled (with_handlers [await-handler (state) (async-time-handler) (stop-when stopping)]
                                                                                 (records-connected settings (with_handlers [(listening-into opened)]
                                                                                                                            program)))))
                                         serving)))
@@ -590,7 +590,7 @@
 
 (defn over-http [#^ str url ask]  ; defk にできない: 検の入口で client の run を撃つ
   "記録の service の口へ client の handler で ask を 1 つ撃つ。"
-  (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock)) records-unwaited
+  (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock)) records-unwaited
                                   (http-records-handler (RecordsEndpoint url :writer MAKER))]
                                  ask))))
 

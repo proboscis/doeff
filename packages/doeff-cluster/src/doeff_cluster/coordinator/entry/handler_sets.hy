@@ -51,7 +51,7 @@
    (redis-notices か memory-notices — composition root が起動の引数で選ぶ・既定なし)。slog-handler = 調停ループの 1 行の
    報告(k8s の読みが答えない時の名指し — #2807)を stderr へ出す。state = kube の見張りの受け渡しの箱と見張っている相手を持つ session
    の置き場(kube-api・kube-unavailable の session val / session var)。"
-  [slog-handler (await-handler) (async-time-handler) os-file-handler (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults (state) kube
+  [slog-handler await-handler (async-time-handler) os-file-handler (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults (state) kube
    request-bodies durable-states reply-bodies #* notices])
 
 

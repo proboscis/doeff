@@ -47,7 +47,7 @@ def judge_stack(
     sink = slog_handler if log_stderr else slog_discard_handler
     # 効果は内側から外へ流れる: jev の slog("jev_judge") は journal(内)が消費し、
     # それ以外の slog は sink(外)へ抜ける。journal を sink の外に置くと sink が先に飲む。
-    layers: list[ProgramHandler] = [await_handler(), try_handler, sink]
+    layers: list[ProgramHandler] = [await_handler, try_handler, sink]
     if journal:
         layers.append(journal_handler(os.path.expanduser(journal), caller=caller))
     layers.append(http if http is not None else http_production_handler())

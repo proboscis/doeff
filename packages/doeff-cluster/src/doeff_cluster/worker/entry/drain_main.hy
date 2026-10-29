@@ -57,7 +57,7 @@
                               :connect-retries 0 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor (.format "drain@{}" args.name)))
   (defn #^ (| dict bool) on-coordinator [#^ object program]
     ;; 並びは外側から: 待ち・本物の HTTP の答え手・時計・coordinator への口(drain の頼みの言い換えも持つ)。
-    (run (scheduled (with-handlers [(await-handler) (http-production-handler) (sync-time-handler) (coordinator-calls cell options)] program))))
+    (run (scheduled (with-handlers [await-handler (http-production-handler) (sync-time-handler) (coordinator-calls cell options)] program))))
   ;; この Pod の worker の世代は、本物の file の答え手を被せて 1 度だけ読む(--boot-file が無ければ None)。
   (setv boot (if args.boot-file (run (with-handlers [os-file-handler] (read-boot args.boot-file))) None))
   (when (and (= args.mode "drain") args.boot-file boot)

@@ -212,7 +212,7 @@ def keep_one_drop_one():
 def test_the_timer_handler_runs_on_the_async_wall_clock() -> None:
     # await_handler performs scheduler effects and answers the async clock's Await, so it sits between them.
     assert (
-        run(scheduled(await_handler()(async_time_handler()(_on_events(keep_one_drop_one())))))
+        run(scheduled(await_handler(async_time_handler()(_on_events(keep_one_drop_one())))))
         == "kept"
     )
 
@@ -225,7 +225,7 @@ def _on_each_clock(program_of: Any) -> dict[str, Any]:
     """Run the program ``program_of()`` builds on the virtual clock and on both wall clocks; answer each run's value."""
     return {
         "sim": run_on_sim(program_of()),
-        "async": run(scheduled(await_handler()(async_time_handler()(_on_events(program_of()))))),
+        "async": run(scheduled(await_handler(async_time_handler()(_on_events(program_of()))))),
         "sync": run(scheduled(sync_time_handler()(_on_events(program_of())))),
     }
 

@@ -135,7 +135,7 @@ def _run_beat_loop(time_installer) -> int:
     composed = lazy_ask(env={})(
         state()(
             try_handler(
-                await_handler()(
+                await_handler(
                     time_installer(
                         _beat_loop(census)
                     )

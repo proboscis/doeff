@@ -126,7 +126,7 @@ def run_program(
             slog_handler,
             local_handler,
             listen_handler,
-            await_handler(),
+            await_handler,
             lazy_ask(env=env),
         ],
         _wrap(),

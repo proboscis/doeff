@@ -126,7 +126,7 @@ class TestDefhandlerBind:
               (resume (* single 2))))
 
           (run (scheduled
-            ((await_handler) ((store_handler results) ((real_add_handler) (doubling-handler (add_program))))))))
+            (await_handler ((store_handler results) ((real_add_handler) (doubling-handler (add_program))))))))
         """, results=results)
         # Add(3,4) → doubling delegates → real_add gets 7 → doubles to 14 → Store(14)
         assert results == [14]
@@ -142,7 +142,7 @@ class TestDefhandlerBind:
                          (! (Add :x 0 :y y))))))
 
           (run (scheduled
-            ((await_handler) ((store_handler results) ((real_add_handler) (split-handler (add_program))))))))
+            (await_handler ((store_handler results) ((real_add_handler) (split-handler (add_program))))))))
         """, results=results)
         # Add(3,4) → split: Add(3,0)+Add(0,4) = 3+4 = 7 → Store(7)
         assert results == [7]
@@ -158,7 +158,7 @@ class TestDefhandlerBind:
               (resume (+ x y))))
 
           (run (scheduled
-            ((await_handler) ((store_handler results) ((real_add_handler) (logging-handler (add_program))))))))
+            (await_handler ((store_handler results) ((real_add_handler) (logging-handler (add_program))))))))
         """, results=results)
         # delegates Add(0,0) as side-effect, resumes with x+y=7 → Store(7)
         assert results == [7]
@@ -172,7 +172,7 @@ class TestInlineHandleBind:
         results = []
         _eval_hy("""
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (handle (add_program)
+          (await_handler ((store_handler results) ((real_add_handler) (handle (add_program)
                   (Add [x y]
                     (<- single (Add :x x :y y))
                     (resume (* single 3)))))))))
@@ -185,7 +185,7 @@ class TestInlineHandleBind:
         results = []
         _eval_hy("""
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (handle (add_program)
+          (await_handler ((store_handler results) ((real_add_handler) (handle (add_program)
                   (Add [x y]
                     (resume (- (! (Add :x x :y y)) 1)))))))))
         """, results=results)
@@ -287,7 +287,7 @@ class TestSelfContainedMacros:
           (Add [x y] (resume (+ x y))))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) (simple-add (add_program))))))
+          (await_handler ((store_handler results) (simple-add (add_program))))))
         """, results=results)
         assert results == [7]
 
@@ -299,7 +299,7 @@ class TestSelfContainedMacros:
           (Add [x y] (transfer (+ x y))))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) (add-and-transfer (add_program))))))
+          (await_handler ((store_handler results) (add-and-transfer (add_program))))))
         """, results=results)
         # transfer removes add-and-transfer; Store still hits store_handler
         assert results == [7]
@@ -323,7 +323,7 @@ class TestSelfContainedMacros:
           (Unused [] (resume None)))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (noop-handler (add_program)))))))
+          (await_handler ((store_handler results) ((real_add_handler) (noop-handler (add_program)))))))
         """, results=results, Unused=Unused)
         assert results == [7]
 
@@ -332,7 +332,7 @@ class TestSelfContainedMacros:
         results = []
         _eval_hy_minimal("""
         (run (scheduled
-          ((await_handler) ((store_handler results) (handle (add_program)
+          (await_handler ((store_handler results) (handle (add_program)
                 (Add [x y] (resume (+ x y))))))))
         """, results=results)
         assert results == [7]
@@ -492,7 +492,7 @@ class TestDefhandlerFactoryYieldLeak:
 
         (setv h (make-handler "http://test"))
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (init-handler (h (add_program))))))))
+          (await_handler ((store_handler results) ((real_add_handler) (init-handler (h (add_program))))))))
         """, results=results, Init=Init)
         assert results == [7]
 
@@ -622,7 +622,7 @@ class TestReperform:
           (Add [x y] (reperform effect)))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (passthrough (add_program)))))))
+          (await_handler ((store_handler results) ((real_add_handler) (passthrough (add_program)))))))
         """, results=results)
         # passthrough reperforms Add → real_add_handler gets 7 → Store(7)
         assert results == [7]
@@ -638,7 +638,7 @@ class TestReperform:
                 (reperform effect))))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (conditional-handler (add_program)))))))
+          (await_handler ((store_handler results) ((real_add_handler) (conditional-handler (add_program)))))))
         """, results=results)
         # x=3, not > 10 → reperform → real_add_handler → 7
         assert results == [7]
@@ -674,7 +674,7 @@ class TestReperform:
           (Add [x y] (pass)))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (old-passthrough (add_program)))))))
+          (await_handler ((store_handler results) ((real_add_handler) (old-passthrough (add_program)))))))
         """, results=results)
         assert results == [7]
 
@@ -686,6 +686,6 @@ class TestReperform:
           (Add [x y] (reperform effect)))
 
         (run (scheduled
-          ((await_handler) ((store_handler results) ((real_add_handler) (passthrough (add_program)))))))
+          (await_handler ((store_handler results) ((real_add_handler) (passthrough (add_program)))))))
         """, results=results)
         assert results == [7]

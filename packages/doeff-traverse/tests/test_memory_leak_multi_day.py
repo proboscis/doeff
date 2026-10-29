@@ -128,7 +128,7 @@ def _run_multi_day(n_days, n_items_per_day, concurrency=20):
         state(),
         local_handler,
         listen_handler,
-        await_handler(),
+        await_handler,
         sim_time_handler(start_time=SIM_EPOCH),
         _make_mock_handler(),
         parallel(concurrency=concurrency),

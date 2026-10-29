@@ -151,7 +151,7 @@ by example, writes the workflow with DI for comparison, and lists
   when it can go on. A handler of your own can build on it, as the
   [virtual clock](20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) does
   ([Async Effects](04-async-effects.md)).
-- **Existing async code still runs.** `yield Await(coro)` under `await_handler()` waits for a
+- **Existing async code still runs.** `yield Await(coro)` under `await_handler` waits for a
   coroutine; one background asyncio loop thread runs the coroutines of the whole process
   ([Await Effect](04-async-effects.md#await-effect)).
 - **From inside an asyncio application**, `run()` is a blocking call: run it in a worker thread.
@@ -172,7 +172,7 @@ def fetch_value():                  # a plain def: no async here
     return (yield Await(read_answer()))
 
 async def endpoint():               # inside an asyncio application
-    program = scheduled(await_handler()(fetch_value()))
+    program = scheduled(await_handler(fetch_value()))
     return await asyncio.to_thread(run, program)
 
 print(asyncio.run(endpoint()))  # 42

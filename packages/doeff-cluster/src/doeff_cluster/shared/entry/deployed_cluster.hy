@@ -113,7 +113,7 @@
    :tags {:context "doeff-cluster" :role "process"}}
   "配備の cluster に話して筋書きを走らせる入口(sim-cluster・local-machine-cluster と同じ形 — 違いは土台の handler の組だけ)。本物の HTTP と
    本物の時計で話し、配備してある物は起こさず止めない。答え = 筋書きの答え。"
-  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (async-time-handler) (http-production-handler)
+  (<- answer (scheduled (with-handlers [await-handler slog-handler (async-time-handler) (http-production-handler)
                                         (deployed-cluster-answers target)]
                           scenario)))
   answer)

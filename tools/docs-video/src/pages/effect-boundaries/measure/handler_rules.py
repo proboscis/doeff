@@ -40,9 +40,9 @@ def over_async(effect: Fetch, k):  # needs Python async, so it performs Await; a
 
 CASES = [
     ("scheduled(from_table(prog))", lambda: run(scheduled(from_table(page("a.dev"))))),
-    ("scheduled(await_handler()(over_async(prog)))", lambda: run(scheduled(await_handler()(over_async(page("a.dev")))))),
+    ("scheduled(await_handler(over_async(prog)))", lambda: run(scheduled(await_handler(over_async(page("a.dev")))))),
     ("scheduled(over_async(prog))", lambda: run(scheduled(over_async(page("a.dev"))))),
-    ("scheduled(over_async(await_handler()(prog)))", lambda: run(scheduled(over_async(await_handler()(page("a.dev")))))),
+    ("scheduled(over_async(await_handler(prog)))", lambda: run(scheduled(over_async(await_handler(page("a.dev")))))),
 ]
 
 for i in range(3):

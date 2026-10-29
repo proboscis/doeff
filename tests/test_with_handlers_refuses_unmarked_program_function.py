@@ -215,7 +215,7 @@ def test_http_production_handler_installs_and_closes_its_client() -> None:
     production = http_production_handler(client_factory=lambda: client)
 
     assert handler(production) is production
-    assert run(scheduled(with_handlers([await_handler(), production], Pure("ok")))) == "ok"
+    assert run(scheduled(with_handlers([await_handler, production], Pure("ok")))) == "ok"
     assert client.close_calls == 1
 
 
@@ -229,7 +229,7 @@ def test_http_fixture_handler_installs_in_both_modes(
         client_factory=lambda: http_support.FakeAsyncClient([]),
     )
     assert handler(fixture) is fixture
-    assert run(scheduled(with_handlers([await_handler(), fixture], Pure("ok")))) == "ok"
+    assert run(scheduled(with_handlers([await_handler, fixture], Pure("ok")))) == "ok"
 
 
 # --- 束ねる公開の口 -----------------------------------------------------------------------------

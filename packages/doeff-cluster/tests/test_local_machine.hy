@@ -121,7 +121,7 @@
   "local-machine-cluster と同じ組で、1 つの effect の答え手だけを壊した物(一番内側)に差し替えて走らせるため(失敗ケース)。"
   (<- url str (coordinator-url machine))
   (val cell (MachineCell))
-  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (async-time-handler) (http-production-handler) subprocess-handler
+  (<- answer (scheduled (with-handlers [await-handler slog-handler (async-time-handler) (http-production-handler) subprocess-handler
                                         os-file-handler (machine-answers url cell machine) broken]
                           (machine-run scenario cell machine))))
   answer)

@@ -377,7 +377,7 @@
 (defk over-network [program]
   {:pre [(: program Program)] :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "送り手の Program を本物の網の上で走らせるため(本番の土台と同じ HTTP の答え手・await・壁の時計・log の答え手)。"
-  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (async-time-handler)] program)))
+  (<- answer (scheduled (with-handlers [await-handler slog-handler (http-production-handler) (async-time-handler)] program)))
   answer)
 
 

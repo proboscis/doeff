@@ -106,7 +106,7 @@ def test_an_idle_job_keeps_the_same_objects_over_its_ticks(
             yield _idle_tick(tick)
         return first, (_counts(), (yield SchedulerIntrospection()))
 
-    program = with_handlers([await_handler(), async_time_handler(sleep=_simulated_sleep)], job())
+    program = with_handlers([await_handler, async_time_handler(sleep=_simulated_sleep)], job())
     (first_counts, first_tables), (last_counts, last_tables) = run(
         scheduled(program, implementation=implementation)
     )

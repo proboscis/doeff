@@ -234,7 +234,7 @@
   {:pre [(: program Program)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を本物の答え手の組(外側が先 — event loop・実時間・子 process・子の終わりの待ち)の上で回すため(core の
    test_process_exit_wait の handled と同じ組)。"
-  (run (scheduled (with-handlers [(await-handler) (async-time-handler) subprocess-handler process-exit-handler] program))))
+  (run (scheduled (with-handlers [await-handler (async-time-handler) subprocess-handler process-exit-handler] program))))
 
 
 (deftest test-a-child-that-ends-wakes-the-wait-at-once

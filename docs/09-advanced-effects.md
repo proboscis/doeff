@@ -54,7 +54,7 @@ def parallel_dict():
 
 To run I/O in parallel, the program yields an effect for each request in a spawned task, and a
 handler performs the I/O. Here `HttpGet(url)` is the effect, and `http_handler` answers it by
-awaiting an async HTTP call with `Await`; `await_handler()` runs both awaits on one asyncio loop,
+awaiting an async HTTP call with `Await`; `await_handler` runs both awaits on one asyncio loop,
 so they overlap:
 
 ```python
@@ -86,7 +86,7 @@ def http_handler(effect: HttpGet, k):
     body = yield Await(http_get(effect.url))
     return (yield Resume(k, body))
 
-print(run(scheduled(await_handler()(http_handler(parallel_fetch())))))  # ['body of https://api1.example.com', 'body of https://api2.example.com']
+print(run(scheduled(await_handler(http_handler(parallel_fetch())))))  # ['body of https://api1.example.com', 'body of https://api2.example.com']
 ```
 
 `parallel_fetch` names no HTTP client. A test puts a handler that answers `HttpGet` with

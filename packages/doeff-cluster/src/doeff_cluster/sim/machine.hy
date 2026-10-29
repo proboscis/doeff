@@ -463,7 +463,7 @@
   "手元の 1 台の cluster の上で筋書きを走らせる入口(sim-cluster と同じ形 — 違いは土台の handler の組だけ)。答え = 筋書きの答え。"
   (<- url str (coordinator-url machine))
   (val cell (MachineCell))
-  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (async-time-handler) (http-production-handler) subprocess-handler
+  (<- answer (scheduled (with-handlers [await-handler slog-handler (async-time-handler) (http-production-handler) subprocess-handler
                                         os-file-handler (machine-answers url cell machine)]
                           (machine-run scenario cell machine))))
   answer)

@@ -204,7 +204,7 @@ def _redis_harness(url: str, prefix: str) -> EventLawHarness:
 
 def _run_on_wall_clock(program: Program[object]) -> object:
     """Run under the scheduler with the asyncio bridge and the wall clock (what a real process uses)."""
-    return run(scheduled(await_handler()(async_time_handler()(program))))
+    return run(scheduled(await_handler(async_time_handler()(program))))
 
 
 def _prefix() -> str:
@@ -1029,7 +1029,7 @@ def test_a_crowd_that_came_is_handed_out_with_a_few_reads_on_redis(redis_url: st
 
     handler = redis_notice_handler(redis_url, TIMEOUT_SECONDS)
     heard, reads = run(
-        scheduled(await_handler()(async_time_handler()(_awaits_counted(awaits)(handler(reads_a_crowd())))))
+        scheduled(await_handler(async_time_handler()(_awaits_counted(awaits)(handler(reads_a_crowd())))))
     )
     # Every notice, each channel's in the order announced.
     assert tuple(body for body in heard if body.startswith("p")) == tuple(f"p{i:03d}" for i in range(CROWD)), heard

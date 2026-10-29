@@ -296,7 +296,7 @@ def do(
     ``TypeError`` where ``@do`` is applied: calling it gives a coroutine or an async generator,
     which the VM would return as the value without awaiting it. The message says to write each
     ``await coro`` as ``yield Await(coro)`` and to run it as
-    ``run(scheduled(await_handler()(prog())))``.
+    ``run(scheduled(await_handler(prog())))``.
     """
 
     def decorate(fn: Callable[P, Any]) -> Callable[P, Expand]:
@@ -344,7 +344,7 @@ def _refuse_async_function(fn: Callable[..., Any]) -> None:
 
 
 def _async_function_message(fn: Callable[..., Any], *, async_generator: bool) -> str:
-    """``@do`` が断った ``async def`` の関数 ``fn`` の文 — ``yield Await(coro)`` の書き方と、``await_handler()`` を
+    """``@do`` が断った ``async def`` の関数 ``fn`` の文 — ``yield Await(coro)`` の書き方と、``await_handler`` を
     ``scheduled()`` の内に付ける run の 1 行(README の handler の表・UnhandledEffect の hint と同じ形)を言う。"""
     target: object = fn
     while isinstance(target, partial):
@@ -370,8 +370,8 @@ def _async_function_message(fn: Callable[..., Any], *, async_generator: bool) ->
     return (
         f"@do cannot wrap {name!r}: it is {what} write each await as a yield of Await: "
         "value = yield Await(coro) instead of value = await coro (Await from doeff). Await is "
-        "handled by await_handler(), which needs scheduled outside it: "
-        f"run(scheduled(await_handler()({call}))) (await_handler from "
+        "handled by await_handler, which needs scheduled outside it: "
+        f"run(scheduled(await_handler({call}))) (await_handler from "
         "doeff_core_effects._handlers, scheduled from doeff_core_effects._scheduler)."
     )
 

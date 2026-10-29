@@ -1380,12 +1380,12 @@
 
 
 ;; --- 本番の CLI の組(await-handler・async-time-handler・scheduled)の下の待ち ------------------------------------------
-;; 本番の CLI の host は scheduled の中で [(await-handler) … (async-time-handler) …] の組で動く(上の層の composition root)。待ちの部品
+;; 本番の CLI の host は scheduled の中で [await-handler … (async-time-handler) …] の組で動く(上の層の composition root)。待ちの部品
 ;; (別の thread が完了させる約束を WaitWithin :park True で待つ)と、直した handler の手番 1 本を、その組の下でも確かめる。
 
 (defn production-stack [#* inner]
   ;; 本番の CLI の組の時間と待ちの答え手(順も同じ — await-handler が外・async-time-handler が内)と、検が足す内側の答え手。
-  (+ [(await-handler) slog-discard-handler (async-time-handler)] (list inner)))
+  (+ [await-handler slog-discard-handler (async-time-handler)] (list inner)))
 
 (defk wait-for-a-bell-from-another-thread [#^ (| float None) ring-after #^ float seconds]
   {:pre [(: ring-after (| float None)) (: seconds float)] :post [(: % WaitOutcome)] :tags {:context "claude-code" :role "program"}}

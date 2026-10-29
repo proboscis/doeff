@@ -111,7 +111,7 @@ def test_two_and_three_element_binds_stay_unchecked(code):
 def _run_do_bang(type_name: str):
     return _eval(f"""
     (run (scheduled
-      ((await_handler) ((lazy_ask :env {{"key" "hello"}})
+      (await_handler ((lazy_ask :env {{"key" "hello"}})
           (do!
             (<- val {type_name} (Ask "key"))
             (+ val " world"))))))
@@ -125,7 +125,7 @@ def _run_defp(type_name: str):
       (<- val {type_name} (Ask "key"))
       (+ val " world"))
     (run (scheduled
-      ((await_handler) ((lazy_ask :env {{"key" "hello"}})
+      (await_handler ((lazy_ask :env {{"key" "hello"}})
           typed-prog))))
     """)
 

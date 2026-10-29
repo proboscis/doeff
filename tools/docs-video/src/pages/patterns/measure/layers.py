@@ -106,7 +106,7 @@ def observe(effect):
 orders = {7: Order(7, (Item(100.0, 1),))}
 for order_id in [7, 8]:
     print(f"get_order_handler({order_id}):")
-    stack = [state(), writer, try_handler, await_handler(), in_memory_cache_handler(), in_memory_orders(orders)]
+    stack = [state(), writer, try_handler, await_handler, in_memory_cache_handler(), in_memory_orders(orders)]
     response, log = run(scheduled(WithObserve(observe, with_handlers(stack, with_log(get_order_handler(order_id))))))
     print("  log:", log)
     print("  returns:", response)

@@ -128,7 +128,7 @@
   ;; (1): 1,000 本を同時に出す。直す前は全部が httpcore の列に並んだ(列の最大 ≒ 1,000)。直した後は宛先の上限の内。
   (val lane (Lane))
   (<- answers tuple
-      (with-handler [(await-handler) (http-production-handler :client-factory lane.watched)]
+      (with-handler [await-handler (http-production-handler :client-factory lane.watched)]
         (do-burst lane)))
   (assert (! (all-ok answers)))
   (assert (= lane.arrivals BURST) lane.arrivals)
@@ -171,7 +171,7 @@
   (val held (Lane :fill-at CLIENT-ORIGIN-MAX-IN-FLIGHT))
   (val other (Lane))
   (<- seen tuple
-      (with-handler [(await-handler) (http-production-handler)]
+      (with-handler [await-handler (http-production-handler)]
         (held-then-other held other)))
   (val answer (get seen 0))
   (val arrived-while-held (get seen 1))
@@ -221,9 +221,9 @@
 (deftest test-a-request-cancelled-as-it-is-given-a-new-connection-leaves-no-slot-behind
   ;; (3): 素の client は つないでいない接続を残し、上限 1 本の client の次の要求が PoolTimeout になる(上流 httpcore 1.0.9 の形)。
   ;; 答え手の送り方は残さず、次の要求は答えを受ける。
-  (<- plain tuple (with-handler [(await-handler)] (Await (leak-scenario False))))
+  (<- plain tuple (with-handler [await-handler] (Await (leak-scenario False))))
   (assert (= plain #(#("CONNECTING") "PoolTimeout")) plain)
-  (<- reaped tuple (with-handler [(await-handler)] (Await (leak-scenario True))))
+  (<- reaped tuple (with-handler [await-handler] (Await (leak-scenario True))))
   (assert (= reaped #(#() 200)) reaped))
 
 
@@ -250,7 +250,7 @@
   ;; (4): 答え手を通した 600 本の取り消しと時間切れの後に、同じ client の次の要求が答えを受け、pool に つないでいない接続が残らない。
   (val lane (Lane :delay STORM-DELAY-SECONDS))
   (<- seen tuple
-      (with-handler [(await-handler) (http-production-handler :client-factory lane.watched)]
+      (with-handler [await-handler (http-production-handler :client-factory lane.watched)]
         (storm lane)))
   (val answer (get seen 0))
   (val connecting (get seen 1))
