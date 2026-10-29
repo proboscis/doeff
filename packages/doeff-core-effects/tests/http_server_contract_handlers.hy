@@ -24,8 +24,8 @@
 (import wsgiref.simple-server [make-server])
 (import doeff [EffectBase Program run with_handlers])
 (import doeff_core_effects [state await-handler])
-(import doeff_core_effects.file_effects [MemoryFile MemoryFiles])
-(import doeff_core_effects.memory_file [memory-file-handler])
+(import doeff_core_effects [MemoryFile MemoryFiles])
+(import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpRequestArrived HttpRespond HttpScript HttpServed
                                                 ReadHttpServed ScriptedBody ScriptedUpstream WsBinaryArrived WsCloseSent WsClosed
                                                 WsTextArrived WsTextSent])

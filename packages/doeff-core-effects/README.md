@@ -100,10 +100,10 @@ import tempfile
 from pathlib import Path
 
 from doeff import do, run
-from doeff_core_effects.file_effects import FileFailed, MemoryFile, MemoryFiles, ReadText
+from doeff_core_effects import FileFailed, MemoryFile, MemoryFiles, ReadText
 from doeff_core_effects import state
-from doeff_core_effects.memory_file import memory_file_handler
-from doeff_core_effects.os_file import os_file_handler
+from doeff_core_effects import memory_file_handler
+from doeff_core_effects import os_file_handler
 from doeff_core_effects import scheduled
 
 
@@ -306,7 +306,7 @@ MPL-2.0).
 
 | Dependency | License | When it is installed | Used for |
 | --- | --- | --- | --- |
-| [frozendict](https://pypi.org/project/frozendict/) | LGPL-3.0 | always | the cache keys of the `@cache` decorator (`doeff_core_effects.cache`) |
+| [frozendict](https://pypi.org/project/frozendict/) | LGPL-3.0 | always | the cache keys of the `@cache` decorator (`doeff_core_effects._cache`) |
 | [psycopg](https://pypi.org/project/psycopg/) | LGPL-3.0 | only with the `postgres` extra | the PostgreSQL handler |
 
 doeff imports both as unmodified, separately installed libraries and does not copy or

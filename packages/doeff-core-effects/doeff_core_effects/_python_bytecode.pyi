@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor as ProcessPoolExecutor
 from doeff import run as run
 from doeff_hy_bytecode_guard import bytecode_is_current as bytecode_is_current
 from doeff_hy_bytecode_guard import source_to_code_as_import as source_to_code_as_import
-from doeff_core_effects.file_effects import SourceNotCompiled as SourceNotCompiled
+from doeff_core_effects._file_effects import SourceNotCompiled as SourceNotCompiled
 CHECKED_HASH_FLAGS: int
 
 def checked_hash_pyc(code: types.CodeType, data: bytes) -> _Program[bytes, object]:

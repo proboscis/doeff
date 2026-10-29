@@ -1,6 +1,6 @@
 ;;; Memo layer handler — defhandler implementation.
 ;;;
-;;; The Python-facing API stays in doeff_core_effects.memo_handlers, which
+;;; The Python-facing API stays in doeff_core_effects._memo_handlers, which
 ;;; delegates to memo-handler defined here.
 ;;;
 ;;; Storage may be a constructed DurableStorage, or a Program[DurableStorage]
@@ -20,11 +20,11 @@
 (import doeff [DoExpr EffectBase UnhandledEffect])
 (import doeff.program [Pure])
 (import doeff_core_effects._effects [SlogEffect])
-(import doeff_core_effects.memo-effects [
+(import doeff_core_effects._memo-effects [
   MemoDeleteEffect MemoExistsEffect MemoGetEffect MemoPutEffect])
-(import doeff_core_effects.memo-policy [RecomputeCost])
+(import doeff_core_effects._memo-policy [RecomputeCost])
 (import doeff_core_effects._storage [DurableStorage])
-(import doeff_core_effects.memo-handlers [
+(import doeff_core_effects._memo-handlers [
   _matches-cost _effect-cost _storage-key])
 
 

@@ -1,107 +1,21 @@
-"""Memo effects for memoization.
+# moved-submodule-shim: doeff_core_effects.memo_effects -> doeff_core_effects._memo_effects
+"""Moved: ``doeff_core_effects.memo_effects`` is now ``doeff_core_effects._memo_effects`` (ADR-DOE-API-001 R5).
 
-These effects represent storage operations for memoized computation results.
-The recompute_cost field drives routing: cheap→ephemeral storage, expensive→durable storage.
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_core_effects.memo_effects…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
 """
 
-from collections.abc import Mapping
-from typing import Any
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from doeff import EffectBase
-from doeff_core_effects.memo_policy import (
-    Lifecycle,
-    MemoPolicy,
-    RecomputeCost,
-    ensure_memo_policy,
-)
+if TYPE_CHECKING:
+    from doeff_core_effects._memo_effects import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
+if __name__ == "__main__":
+    import runpy
 
-class MemoGetEffect(EffectBase):
-    """Requests the memoized value for the key."""
-    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
-        super().__init__()
-        self.key = key
-        self.recompute_cost = recompute_cost
-
-    def __repr__(self) -> str:
-        return f"MemoGet({self.key!r}, cost={self.recompute_cost.value})"
-
-
-class MemoPutEffect(EffectBase):
-    """Persists a memoized value under the key."""
-    def __init__(
-        self, key: object, value: object, policy: MemoPolicy, source_effect: object = None
-    ) -> None:
-        super().__init__()
-        if not isinstance(policy, MemoPolicy):
-            raise TypeError(f"policy must be MemoPolicy, got {type(policy).__name__}")
-        self.key = key
-        self.value = value
-        self.policy = policy
-        self.source_effect = source_effect  # original effect for traceability
-
-    def __repr__(self) -> str:
-        return f"MemoPut({self.key!r}, ..., cost={self.policy.recompute_cost.value})"
-
-
-class MemoDeleteEffect(EffectBase):
-    """Deletes the memoized value under the key."""
-    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
-        super().__init__()
-        self.key = key
-        self.recompute_cost = recompute_cost
-
-    def __repr__(self) -> str:
-        return f"MemoDelete({self.key!r}, cost={self.recompute_cost.value})"
-
-
-class MemoExistsEffect(EffectBase):
-    """Checks if a key exists in memo storage."""
-    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
-        super().__init__()
-        self.key = key
-        self.recompute_cost = recompute_cost
-
-    def __repr__(self) -> str:
-        return f"MemoExists({self.key!r}, cost={self.recompute_cost.value})"
-
-
-# Convenience constructors
-
-def MemoGet(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoGetEffect:  # noqa: N802 - public or spec test name is intentionally stable
-    if isinstance(recompute_cost, str):
-        recompute_cost = RecomputeCost(recompute_cost)
-    return MemoGetEffect(key=key, recompute_cost=recompute_cost)
-
-
-def MemoPut(  # noqa: N802 - public or spec test name is intentionally stable
-    key: Any,
-    value: Any,
-    ttl: float | None = None,
-    *,
-    recompute_cost: RecomputeCost | str | None = None,
-    lifecycle: Lifecycle | str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    policy: MemoPolicy | Mapping[str, Any] | None = None,
-    source_effect: Any | None = None,
-) -> MemoPutEffect:
-    memo_policy = ensure_memo_policy(
-        recompute_cost=recompute_cost,
-        ttl=ttl,
-        lifecycle=lifecycle,
-        metadata=metadata,
-        policy=policy,
-    )
-    return MemoPutEffect(key=key, value=value, policy=memo_policy, source_effect=source_effect)
-
-
-def MemoDelete(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoDeleteEffect:  # noqa: N802 - public or spec test name is intentionally stable
-    if isinstance(recompute_cost, str):
-        recompute_cost = RecomputeCost(recompute_cost)
-    return MemoDeleteEffect(key=key, recompute_cost=recompute_cost)
-
-
-def MemoExists(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoExistsEffect:  # noqa: N802 - public or spec test name is intentionally stable
-    if isinstance(recompute_cost, str):
-        recompute_cost = RecomputeCost(recompute_cost)
-    return MemoExistsEffect(key=key, recompute_cost=recompute_cost)
+    runpy.run_module("doeff_core_effects._memo_effects", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_core_effects._memo_effects")

@@ -4,7 +4,7 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
-from doeff_core_effects.file_effects import PathKind as PathKind
+from doeff_core_effects._file_effects import PathKind as PathKind
 TIMED_OUT_CODE: int
 NOT_STARTED_CODE: int
 

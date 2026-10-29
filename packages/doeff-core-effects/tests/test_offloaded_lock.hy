@@ -14,8 +14,8 @@
 (import dataclasses [dataclass])
 (import threading)
 (import doeff [Program with_handlers])
-(import doeff_core_effects.file_effects [AcquireLock ReleaseLock LockHeld FileFailed])
-(import doeff_core_effects.os_file [os-file-handler offloaded-lock-handler])
+(import doeff_core_effects [AcquireLock ReleaseLock LockHeld FileFailed])
+(import doeff_core_effects [os-file-handler offloaded-lock-handler])
 (import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects [scheduled CreateExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 
