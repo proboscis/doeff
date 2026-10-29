@@ -1,7 +1,27 @@
 """doeff-adr の検の共通の土台。"""
 
+from collections.abc import Iterator
+
 import pytest
 from doeff_adr._env_places import SEMGREP_VERDICTS_ENV
+
+
+@pytest.fixture(autouse=True)
+def _pytester_samples_leave_no_adr_behind(request: pytest.FixtureRequest) -> Iterator[None]:
+    """pytester が同じ process で読む見本の ADR を、その test の後の登録簿に残さないため。
+
+    pytester.runpytest は既定で同じ process の中で見本の .hy を import し、defadr の展開が process の登録簿へ載せる。載った見本は
+    test の後も残るので、別の file の見本が同じ id(ADR-SAMPLE-097 など)を使うと、後で走る方の収集が duplicate ADR id で落ちる
+    (merge の後の逆依存の検 — doeff 923a655d2387 で test_adr_ids_effect の後の test_semgrep_effects が赤)。pytester を使う test を
+    空の登録簿で走らせ、出る時に入る前の登録簿へ戻す(isolated_registry)。
+    """
+    if "pytester" not in request.fixturenames:
+        yield
+        return
+    from doeff_adr._registry import isolated_registry
+
+    with isolated_registry():
+        yield
 
 
 @pytest.fixture(autouse=True)
