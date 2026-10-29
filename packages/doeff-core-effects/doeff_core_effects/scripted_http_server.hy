@@ -267,7 +267,8 @@
     (<- shortcut (| WsShortcut None) (ws-shortcut-for shortcuts head.text))
     (when (is-not shortcut None)
       (val outcome (ws-shortcut-outcome shortcut head.ticket head.text))
-      (when (isinstance outcome WsShortcutAnswered)
+      ;; 答えの文が無ければ何も送らず、当たらなかった 1 通と同じ形で渡す(本物と同じ — answered は積んだ時だけ)。
+      (when (and (isinstance outcome WsShortcutAnswered) outcome.texts)
         (for [one outcome.texts]
           (<- sent ScriptSend (script-sent head.ticket one limit stalled record still-open boxes counted later))
           (:= record sent.served)
