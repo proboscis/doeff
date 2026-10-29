@@ -6,7 +6,7 @@
 ;;;   record-store  record_store.entry.main の record-store-on を handler_sets の emulated-handlers(まねた受付の箱と memory の file system)
 ;;;                 の上で
 ;;;
-;;; 走らせ方 = package の根の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy`)。
+;;; 走らせ方 = package の根の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/_sim/test_entries_on_sim.hy`)。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
@@ -20,7 +20,7 @@
 (import doeff_cluster.foundation.coordinator_inbox [StopState ReplySlot RawRequest])
 (import doeff_cluster.record_store.entry.main [record-store-on])
 (import doeff_cluster.record_store.entry.handler_sets [ScriptedRecordInbox emulated-handlers])
-(import doeff_cluster.sim.local [sim-cluster SimCoordinatorRun CoordinatorRuns ReadCoordinator])
+(import doeff_cluster._sim.local [sim-cluster SimCoordinatorRun CoordinatorRuns ReadCoordinator])
 
 ;; 仮想の時計の起点(sim-cluster の既定の起点と同じ桁の、どこかの日)。
 (val START-MS 1767225600000)

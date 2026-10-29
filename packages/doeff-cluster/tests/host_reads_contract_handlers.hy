@@ -24,7 +24,8 @@
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.sim.local [SimChild SimLink host-answers])
+(import doeff_cluster [host-answers]
+        doeff_cluster._sim.local [SimChild SimLink])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
 
 (val HOST-PROCESS "host-process")

@@ -28,8 +28,8 @@
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess ServiceReadiness ProcessesOf ReadinessOf CutWorker StallWorker StartWorker
-                             DrainWorker Redeclare KillWorker ReadCoordinator])
+(import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf ReadinessOf CutWorker StallWorker StartWorker DrainWorker Redeclare KillWorker ReadCoordinator]
+        doeff_cluster._sim.local [ServiceReadiness])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
 (import tests.program_rows [SAMPLE-RUN reports-observed])

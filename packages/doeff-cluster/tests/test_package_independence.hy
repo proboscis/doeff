@@ -21,7 +21,7 @@
 ;; 無い path は検の赤にする: 移しで path が古くなると、検が黙ってその file を読まなくなるため)。
 (setv ENV-MODULES #("shared/intent/runtime_env_model.hy" "shared/intent/env_marker_model.hy" "shared/core/runtime_env.hy"
                     "shared/core/runtime_env_rules.hy"
-                    "worker/intent/env_prepare_model.hy" "worker/core/env_prepare.hy" "sim/env_world.hy"
+                    "worker/intent/env_prepare_model.hy" "worker/core/env_prepare.hy" "_sim/env_world.hy"
                     "worker/protocol/env_translation.hy" "worker/entry/env_tool.hy"))
 
 (setv HY-IMPORT (re.compile r"\((?:import|require)\s+([A-Za-z_.][A-Za-z0-9_.\-]*)"))
@@ -71,9 +71,9 @@
 
 (defk sim-imports [path]
   {:pre [(: path Path)] :post [(: % (get tuple str))]}
-  "file の中の、模擬の環境(doeff_cluster.sim — architecture.hy の :verification-environment)の import(\"<file>: <名>\")。"
+  "file の中の、模擬の環境(doeff_cluster._sim — architecture.hy の :verification-environment)の import(\"<file>: <名>\")。"
   (<- names tuple (imported-names (.read-text path :encoding "utf-8") path.suffix))
-  (tuple (lfor n names :if (or (= n "doeff_cluster.sim") (.startswith n "doeff_cluster.sim."))
+  (tuple (lfor n names :if (or (= n "doeff_cluster._sim") (.startswith n "doeff_cluster._sim."))
                (.format "{}: {}" path.name n))))
 
 
@@ -115,12 +115,12 @@
   (<- named tuple (named-packages (/ FIXTURES "package_name.hy") names))
   (assert (= named #("package_name.hy: doeff-vm")) named)
   (<- sims tuple (sim-imports (/ FIXTURES "imports_sim.hy")))
-  (assert (= sims #("imports_sim.hy: doeff_cluster.sim.local")) sims))
+  (assert (= sims #("imports_sim.hy: doeff_cluster._sim.local")) sims))
 
 
 (deftest test-production-does-not-import-the-verification-environment
-  ;; 模擬の環境(sim/)は本番の coordinator と worker を読むが、本番の code は sim を読まない。
-  (val files (sorted (lfor f (.rglob SOURCE "*.hy") :if (not (in "sim" (. (.relative-to f SOURCE) parts))) f)))
+  ;; 模擬の環境(_sim/)は本番の coordinator と worker を読むが、本番の code は _sim を読まない。
+  (val files (sorted (lfor f (.rglob SOURCE "*.hy") :if (not (in "_sim" (. (.relative-to f SOURCE) parts))) f)))
   (assert (> (len files) 30) "走査の母集団が空で緑にならない")
   (var found [])
   (for [f files]

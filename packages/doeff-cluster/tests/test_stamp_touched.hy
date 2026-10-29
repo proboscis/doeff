@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.core.resource_policy :as resource-policy)
 (import doeff_cluster.coordinator.core.resource_policy [stamp snapshot])
 (import doeff_cluster.coordinator.core.api_policy :as api-policy)
-(import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker StartWorker DrainWorker])
+(import doeff_cluster [sim-cluster SimWorker KillWorker StartWorker DrainWorker])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons handoff-beacons handoff-beacons-v2 gpu-only detaching relay])
 (import tests.test_local [crash-and-watch redeclare-and-watch watch-trainer watch-rows])

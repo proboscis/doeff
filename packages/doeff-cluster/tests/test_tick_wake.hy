@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
-(import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf ReadCoordinator])
+(import doeff_cluster [sim-cluster SimWorker ProcessesOf ReadCoordinator])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView DesiredJobs ReadDesired ObserveWorld
                                                   PublishStatus EnvReport])
 (import doeff_cluster.worker.core.program [run-worker])

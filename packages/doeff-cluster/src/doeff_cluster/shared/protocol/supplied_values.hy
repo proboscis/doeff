@@ -23,7 +23,7 @@
 ;;; 仕組み: 参照を API server の GET 1 本へ言い換え、doeff の汎用の effect(token の file の ReadText と HttpRequest・書き出しは file の effect・
 ;;; 機体の事実は ReadEnvironment)で問う。言い換えは環境で変わらず、本番と模擬で同じこの関数が動く。環境ごとに違うのは外側だけ(本番 =
 ;;; worker の file と、区画の CA で API server を検める接続 doeff_cluster.foundation.in_cluster_api の in-cluster-api-routed・模擬 = memory の
-;;; file と API server の相手役 doeff_cluster.sim.k8s_supplied)。区画の CA で検める接続は使い手の process の外側が並べる(宛先が API server の
+;;; file と API server の相手役 doeff_cluster._sim.k8s_supplied)。区画の CA で検める接続は使い手の process の外側が並べる(宛先が API server の
 ;;; 要求だけを区画の CA で検め、job の本体が外の系へ出す HTTP は既定の CA の client のまま)。
 ;;;
 ;;; 値は持たれているままを返す(前後の空白を落とさない — 鍵の file は行末の改行まで要る)。URL のように空白を落として使う値は、使い手が落とす。

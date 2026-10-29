@@ -12,8 +12,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.cluster_control [CrashCoordinator])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.sim.local [sim-cluster SimIntake SimPauses NextWorldDue CutWorker ProcessesOf CoordinatorRuns
-                             fresh-truth next-world-due])
+(import doeff_cluster [sim-cluster NextWorldDue CutWorker ProcessesOf CoordinatorRuns]
+        doeff_cluster._sim.local [SimIntake SimPauses fresh-truth next-world-due])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 
