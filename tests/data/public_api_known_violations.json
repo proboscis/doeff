@@ -12411,9 +12411,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_events": [
-      "GAP_NOTICE"
-     ],
      "doeff_events.effects.notices": [
       "KEPT_REDELIVERY_SECONDS"
      ],
@@ -12424,15 +12421,11 @@
       "stopped_value"
      ],
      "doeff_events.handlers": [
-      "GAP_NOTICE",
       "hold_broker"
      ],
      "doeff_events.handlers.memory_notices": [
       "KEPT_REDELIVERY_SECONDS",
       "hold_broker"
-     ],
-     "doeff_events.handlers.notice_events": [
-      "GAP_NOTICE"
      ],
      "doeff_events.handlers.redis_notices": [
       "KEPT_REDELIVERY_SECONDS"

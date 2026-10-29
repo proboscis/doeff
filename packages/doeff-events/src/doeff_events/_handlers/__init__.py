@@ -10,7 +10,6 @@ from doeff_events._handlers.memory_notices import (
     restore_broker,
 )
 from doeff_events._handlers.notice_events import (
-    GAP_NOTICE,
     Drop,
     GapAnswer,
     MarkGap,
@@ -41,7 +40,6 @@ __all__ = [
     "announce_file_change",
     "memory_file_watch_handler",
     "os_file_watch_handler",
-    "GAP_NOTICE",
     "BrokerConnectionsExhausted",
     "Drop",
     "EventBus",
