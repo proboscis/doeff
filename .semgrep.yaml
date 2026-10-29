@@ -5850,14 +5850,14 @@ rules:
     languages: [generic]
     severity: ERROR
     message: >
-      agora-redesign #1551: pytest の非公開の収集部品は doeff_adr/indexed_pytest.py だけが所有する。
+      agora-redesign #1551: pytest の非公開の収集部品は doeff_adr/_indexed_pytest.py だけが所有する。
       他の module は型付きの収集境界を呼び、pytest 更新時の修正先を一か所に保つ。
     pattern-regex: '\b(Metafunc|FuncFixtureInfo|_fixturemanager)\b|\b_pytest\.python\b'
     paths:
       include:
         - '**/doeff_adr/**'
       exclude:
-        - '**/doeff_adr/indexed_pytest.py'
+        - '**/doeff_adr/_indexed_pytest.py'
 
   - id: doeff-cluster-coordinator-core-does-not-know-where-its-lines-go
     languages: [generic]

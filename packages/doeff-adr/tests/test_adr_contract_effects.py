@@ -13,26 +13,24 @@ effect をこの handler の下で走らせる。
 import textwrap
 
 import doeff_adr
+import doeff_adr._registry as registry_module
 import doeff_adr.macros as macros_module
-import doeff_adr.registry as registry_module
 import hy
 import pytest
 from doeff_adr import (
     AdrSpec,
+    AdrStatus,
     AssertAdrContract,
     AssertAllAdrContracts,
+    EnforcementMode,
     EnforcementRef,
     RegisterDeftest,
-    adr_registry,
-)
-from doeff_adr.registry import (
-    AdrStatus,
-    EnforcementMode,
     SemgrepSpec,
+    adr_registry,
     get_enforcement,
-    isolated_registry,
     register_adr,
 )
+from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
 

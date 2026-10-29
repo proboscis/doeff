@@ -54,20 +54,20 @@ The installed form names a rule id and carries hit / clean fixtures:
   owns it and does not depend on where pytest was started.
 - `:config "/absolute/path.yaml"`: used as is.
 
-`doeff_adr.registry.resolved_config_path(spec)` returns the file a spec reads.
+`doeff_adr._registry.resolved_config_path(spec)` returns the file a spec reads.
 
 ## Semgrep over Hy code (macro expansion)
 
 Semgrep has no Hy grammar, and a regular expression over Hy text sees neither
 code a macro writes nor a name brought in under an alias
-(`(import socket :as s) (s.socket)`). `doeff_adr.semgrep_hy` reads Hy the way Hy
+(`(import socket :as s) (s.socket)`). `doeff_adr._semgrep_hy` reads Hy the way Hy
 does: it macro-expands each `.hy` file with Hy's compiler (project macros such as
 a `defservice` wrapping `defk` included), writes the Python to a scan tree at the
 same relative path with a `.py` suffix, runs ordinary `languages: [python]`
 rules, and reports findings at the Hy file and line.
 
 ```python
-from doeff_adr.semgrep_hy import scan_with_hy_expansion
+from doeff_adr._semgrep_hy import scan_with_hy_expansion
 
 findings = scan_with_hy_expansion(Path("adr/worker.semgrep.yaml"), repo_root, ["controllers"])
 ```
@@ -134,7 +134,7 @@ verdict from inside that run instead of spawning a second collection (a nested
 from pathlib import Path
 
 import pytest
-from doeff_adr.pytest_plugin import (
+from doeff_adr._pytest_plugin import (
     NotDefaultScope,
     WiringVerified,
     default_scope_wiring,

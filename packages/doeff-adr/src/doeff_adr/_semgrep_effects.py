@@ -18,7 +18,7 @@ from os import PathLike, fspath
 
 from doeff import EffectBase, K, Transfer, TransferThrow, handler
 from doeff.program import ProgramHandler
-from doeff_adr.registry import (
+from doeff_adr._registry import (
     EnforcementMode,
     EnforcementRef,
     FixtureSpec,

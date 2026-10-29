@@ -9,8 +9,8 @@ adr_registry() は process の登録簿の id を、adr_registry(specs=[spec, �
 """
 
 import doeff_adr
-from doeff_adr import AdrIds, AdrSpec, GetAdr, adr_registry
-from doeff_adr.registry import isolated_registry, register_adr
+from doeff_adr import AdrIds, AdrSpec, GetAdr, adr_registry, register_adr
+from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
 
@@ -95,7 +95,7 @@ def test_adr_ids_is_read_only_through_the_effect() -> None:
     assert {"AdrIds", "adr_registry"} <= set(doeff_adr.__all__)
     assert "adr_ids" not in doeff_adr.__all__
     assert not hasattr(doeff_adr, "adr_ids")
-    assert not hasattr(doeff_adr.registry, "adr_ids")
+    assert not hasattr(doeff_adr._registry, "adr_ids")
 
 
 def test_a_deftest_reads_the_ids_through_the_handler_its_fixture_installs(pytester) -> None:

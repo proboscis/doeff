@@ -11,8 +11,8 @@ adr_registry() は process の登録簿から、adr_registry(specs=[spec, …]) 
 
 import doeff_adr
 import pytest
-from doeff_adr import AdrSpec, GetAdr, adr_registry
-from doeff_adr.registry import isolated_registry, register_adr
+from doeff_adr import AdrSpec, GetAdr, adr_registry, register_adr
+from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
 
@@ -104,7 +104,7 @@ def test_the_effect_is_public_and_get_adr_is_gone() -> None:
     assert "get_adr" not in doeff_adr.__all__
     with pytest.raises(AttributeError, match="get_adr"):
         getattr(doeff_adr, "get_adr")  # noqa: B009 — 消えた名を型の検を通さずに引く
-    assert not hasattr(doeff_adr.registry, "get_adr")
+    assert not hasattr(doeff_adr._registry, "get_adr")
 
 
 def test_a_deftest_reads_the_adr_through_the_handler_its_fixture_installs(pytester) -> None:

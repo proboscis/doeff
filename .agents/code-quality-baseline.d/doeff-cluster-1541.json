@@ -5,7 +5,7 @@
       "path": "packages/doeff-cluster/tests/conftest.py",
       "reason": "registered-with-legacy",
       "rule": "dependency-not-allowed",
-      "subject": "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+      "subject": "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
     },
     {
       "count": 1,
