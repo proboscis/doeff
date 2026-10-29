@@ -5,9 +5,9 @@
 ;;;   FIELD-MANAGER        server-side apply の持ち主の名(この答え手が当てた欄を持つ — 他の持ち主が足した欄には触らない)
 ;;;   service-path         Service 1 つの、API server の上の path
 ;;;   service-apply-text   Service の宣言 → server-side apply の本文の JSON の字(宣言が持つ欄だけ — 模擬の答え手と検も同じ綴りで照らす)
-;;;   ingress-path         Ingress 1 つの、API server の上の path
-;;;   ingress-apply-text   Ingress の宣言 → server-side apply の本文の JSON の字(同上)
-;;;   applied-object       綴った宣言 1 つを path へ当て、結末(作った・当て直した)を得る。当てられなければ種類と namespace と名・理由を
+;;;   _ingress-path        Ingress 1 つの、API server の上の path
+;;;   _ingress-apply-text  Ingress の宣言 → server-side apply の本文の JSON の字(同上)
+;;;   _applied-object      綴った宣言 1 つを path へ当て、結末(作った・当て直した)を得る。当てられなければ種類と namespace と名・理由を
 ;;;                        挙げて断る
 ;;;   kube-services-api    EnsureKubeService・EnsureKubeIngress の本番の答え手
 ;;;
@@ -40,7 +40,7 @@
   (+ "/api/v1/namespaces/" (url-quote service.namespace :safe "") "/services/" (url-quote service.name :safe "")))
 
 
-(defk metadata-of [declaration]
+(defk _metadata-of [declaration]
   {:pre [(: declaration (| KubeService KubeIngress))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "宣言 declaration の metadata の欄を、server-side apply の本文の JSON の部分として組むため(空の labels・annotations は欄ごと省く)。"
   (| {"name" declaration.name "namespace" declaration.namespace}
@@ -53,7 +53,7 @@
   "宣言 service を server-side apply の本文の JSON の字へ綴るため(JSON の境界の 1 点 — 欄は k8s の Service と同じ名。宣言が持つ欄だけを書く:
    空の labels・annotations は欄ごと省き、load-balancer-class は書いた時だけ・LOAD-BALANCER は node の口を開けない — 頭の註は
    kube_service_model.hy)。口の protocol は TCP と書く(server-side apply は口の列を port と protocol の組で見分ける)。"
-  (val metadata (! (metadata-of service)))
+  (val metadata (! (_metadata-of service)))
   (val spec (| {"type" service.type.value
                 "selector" (dict service.selector)
                 "ports" (lfor port service.ports {"name" port.name "port" port.port "targetPort" port.target-port "protocol" "TCP"})}
@@ -62,17 +62,17 @@
   (json.dumps {"apiVersion" "v1" "kind" "Service" "metadata" metadata "spec" spec} :ensure-ascii False :sort-keys True))
 
 
-(defk ingress-path [ingress]
+(defk _ingress-path [ingress]
   {:pre [(: ingress KubeIngress)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "宣言 ingress の Ingress の、API server の上の path を組むため。"
   (+ "/apis/networking.k8s.io/v1/namespaces/" (url-quote ingress.namespace :safe "") "/ingresses/" (url-quote ingress.name :safe "")))
 
 
-(defk ingress-apply-text [ingress]
+(defk _ingress-apply-text [ingress]
   {:pre [(: ingress KubeIngress)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "宣言 ingress を server-side apply の本文の JSON の字へ綴るため(JSON の境界の 1 点 — 欄は k8s の Ingress と同じ名。宣言が持つ欄だけを書く:
    全部の求めを defaultBackend の Service の口へ向け、tls は名の在る時だけ書く — 頭の註は kube_service_model.hy)。"
-  (val metadata (! (metadata-of ingress)))
+  (val metadata (! (_metadata-of ingress)))
   (val spec (| {"ingressClassName" ingress.ingress-class
                 "defaultBackend" {"service" {"name" ingress.backend-service "port" {"number" ingress.backend-port}}}}
                (if ingress.tls-hosts {"tls" [{"hosts" (list ingress.tls-hosts)}]} {})))
@@ -98,7 +98,7 @@
     _ (raise (! (refused place (+ (str status) " " (cut (! (text-field answer.text)) 0 REFUSAL-BODY-LIMIT)))))))
 
 
-(defk applied-object [place path body]
+(defk _applied-object [place path body]
   {:pre [(: place str) (: path str) (: body str)] :post [(: % KubeServiceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "綴った宣言 body を、その job を回す worker の身元(ServiceAccount の token — 回るので当てるたびに読む)で自区画の API server の path へ
    当て、結末を得るため(頭の註 — 当てられなければ place = 種類と namespace と名・理由を挙げて断る・再試行しない)。"
@@ -119,10 +119,10 @@
   (EnsureKubeService [service]
     (<- path str (service-path service))
     (<- body str (service-apply-text service))
-    (<- outcome KubeServiceOutcome (applied-object (+ "Service " service.namespace "/" service.name) path body))
+    (<- outcome KubeServiceOutcome (_applied-object (+ "Service " service.namespace "/" service.name) path body))
     (resume outcome))
   (EnsureKubeIngress [ingress]
-    (<- path str (ingress-path ingress))
-    (<- body str (ingress-apply-text ingress))
-    (<- outcome KubeServiceOutcome (applied-object (+ "Ingress " ingress.namespace "/" ingress.name) path body))
+    (<- path str (_ingress-path ingress))
+    (<- body str (_ingress-apply-text ingress))
+    (<- outcome KubeServiceOutcome (_applied-object (+ "Ingress " ingress.namespace "/" ingress.name) path body))
     (resume outcome)))

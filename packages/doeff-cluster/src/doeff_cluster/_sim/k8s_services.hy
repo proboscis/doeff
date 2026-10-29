@@ -23,7 +23,7 @@
           #^ bool self.down down)))
 
 
-(defk held-after [held declaration]
+(defk _held-after [held declaration]
   {:pre [(: held tuple) (: declaration (| KubeService KubeIngress))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
   "同じ種類の一覧 held に宣言 declaration を当てた後の一覧を得るため(頭の註の契約 — 同じ物 = namespace と名が同じ・在れば置き換え、無ければ
    末に足す)。"
@@ -39,17 +39,17 @@
   (when log.down
     (raise (KubeServiceRefused (+ "Service " service.namespace "/" service.name " を当てられない — API server に届かない: 模擬の世界が down"))))
   (val before log.services)
-  (setv log.services (! (held-after before service)))
+  (setv log.services (! (_held-after before service)))
   (if (= (len log.services) (len before)) KubeServiceOutcome.APPLIED KubeServiceOutcome.CREATED))
 
 
-(defk held-ingress-outcome [log ingress]
+(defk _held-ingress-outcome [log ingress]
   {:pre [(: log KubeServiceLog) (: ingress KubeIngress)] :post [(: % KubeServiceOutcome)] :tags {:context "doeff-cluster" :role "foundation"}}
   "Ingress の宣言 ingress を入れ物 log に当て、結末を得るため(頭の註の契約)。"
   (when log.down
     (raise (KubeServiceRefused (+ "Ingress " ingress.namespace "/" ingress.name " を当てられない — API server に届かない: 模擬の世界が down"))))
   (val before log.ingresses)
-  (setv log.ingresses (! (held-after before ingress)))
+  (setv log.ingresses (! (_held-after before ingress)))
   (if (= (len log.ingresses) (len before)) KubeServiceOutcome.APPLIED KubeServiceOutcome.CREATED))
 
 
@@ -61,5 +61,5 @@
     (val outcome (! (held-outcome log service)))
     (resume outcome))
   (EnsureKubeIngress [ingress]
-    (val outcome (! (held-ingress-outcome log ingress)))
+    (val outcome (! (_held-ingress-outcome log ingress)))
     (resume outcome)))

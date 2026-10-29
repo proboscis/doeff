@@ -24,7 +24,7 @@
 (import doeff_core_effects [memory-file-handler])
 (import doeff_cluster.shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
                                                         KubeServicePort KubeServiceRefused KubeServiceType])
-(import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER ingress-apply-text ingress-path kube-services-api
+(import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER _ingress-apply-text _ingress-path kube-services-api
                                                     service-apply-text service-path])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster [held-kube-services]
@@ -211,7 +211,7 @@
 
 
 (deftest test-an-ingress-declaration-is-spelled-as-the-fields-it-holds
-  (<- entry str (ingress-apply-text ENTRY))
+  (<- entry str (_ingress-apply-text ENTRY))
   (assert (= (json.loads entry)
              {"apiVersion" "networking.k8s.io/v1" "kind" "Ingress"
               "metadata" {"name" "ledger" "namespace" "apps" "annotations" {"entry.example.dev/tags" "tag:apps"}}
@@ -220,11 +220,11 @@
                       "tls" [{"hosts" ["ledger"]}]}})
           entry)
   ;; TLS の名の無い Ingress は tls を書かない・空の labels と annotations は欄ごと省く。
-  (<- plain str (ingress-apply-text ENTRY-PLAIN))
+  (<- plain str (_ingress-apply-text ENTRY-PLAIN))
   (assert (not-in "tls" (get (json.loads plain) "spec")) plain)
   (assert (not-in "annotations" plain) plain)
   (assert (not-in "labels" plain) plain)
-  (<- path str (ingress-path ENTRY))
+  (<- path str (_ingress-path ENTRY))
   (assert (= path "/apis/networking.k8s.io/v1/namespaces/apps/ingresses/ledger") path))
 
 
@@ -294,8 +294,8 @@
   ;; 本番の相手役が持つ物は、模擬の一覧を同じ綴りにした物と同じ。
   (<- service-path-text str (service-path INSIDE))
   (<- service-text str (service-apply-text INSIDE))
-  (<- entry-path-text str (ingress-path ENTRY))
-  (<- entry-text str (ingress-apply-text ENTRY))
+  (<- entry-path-text str (_ingress-path ENTRY))
+  (<- entry-text str (_ingress-apply-text ENTRY))
   (assert (= world.objects #((AppliedObject :path service-path-text :body service-text) (AppliedObject :path entry-path-text :body entry-text)))
           world.objects))
 

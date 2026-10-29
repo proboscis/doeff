@@ -17282,6 +17282,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.intent.kube_service_model",
+   "name": "KubeIngress",
+   "訳": "Ingress を宣言で作る effect EnsureKubeIngress の宣言の型(KubeService と同じ形・同じ置き場 — doeff main 315137dea)。KubeService の行と同じく、ADR-DOE-API-001 R15 で submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
+   "決め": "ki-bfacc542a4f5"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.kube_service_model",
    "name": "KubeService",
    "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
@@ -17373,6 +17380,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.kube_services",
+   "name": "KubeIngress",
+   "訳": "Ingress を宣言で作る effect EnsureKubeIngress の宣言の型(KubeService と同じ形・同じ置き場 — doeff main 315137dea)。KubeService の行と同じく、ADR-DOE-API-001 R15 で submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
+   "決め": "ki-bfacc542a4f5"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.kube_services",
    "name": "KubeService",
    "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
@@ -17423,13 +17437,6 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.kube_services",
    "name": "SERVICE_ACCOUNT_TOKEN_FILE",
-   "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.kube_services",
-   "name": "applied_service",
    "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
   },
@@ -17502,6 +17509,13 @@
    "name": "lease_vacate_request",
    "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_services",
+   "name": "KubeIngress",
+   "訳": "Ingress を宣言で作る effect EnsureKubeIngress の宣言の型(KubeService と同じ形・同じ置き場 — doeff main 315137dea)。KubeService の行と同じく、ADR-DOE-API-001 R15 で submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
+   "決め": "ki-bfacc542a4f5"
   },
   {
    "package": "doeff-cluster",

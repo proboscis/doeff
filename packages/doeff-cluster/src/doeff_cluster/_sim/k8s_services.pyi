@@ -17,13 +17,13 @@ class KubeServiceLog:
     def __init__(self, down: bool=False) -> None:
         ...
 
-def held_after(held: tuple, declaration: KubeService | KubeIngress) -> _Program[tuple, object]:
+def _held_after(held: tuple, declaration: KubeService | KubeIngress) -> _Program[tuple, object]:
     ...
 
 def held_outcome(log: KubeServiceLog, service: KubeService) -> _Program[KubeServiceOutcome, object]:
     ...
 
-def held_ingress_outcome(log: KubeServiceLog, ingress: KubeIngress) -> _Program[KubeServiceOutcome, object]:
+def _held_ingress_outcome(log: KubeServiceLog, ingress: KubeIngress) -> _Program[KubeServiceOutcome, object]:
     ...
 
 def held_kube_services(log: KubeServiceLog) -> _Handler:
