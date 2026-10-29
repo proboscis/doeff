@@ -11,6 +11,15 @@ from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 NOT_DELIVERED: Incomplete
 
+class Delivered:
+    __slots__ = ...
+
+    def __init__(self: Delivered, value: Incomplete) -> None:
+        ...
+
+    def take(self: Delivered) -> Incomplete:
+        ...
+
 def run_detached(program: Incomplete) -> Incomplete:
     ...
 
