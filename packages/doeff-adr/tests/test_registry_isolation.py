@@ -4,9 +4,10 @@
 返すと、その ADR の条文の test が KeyError で落ちる(記録のキャッシュが冷えた時だけ出る順序の赤・agora-redesign #1211)。
 """
 
+from doeff_adr import AdrIds, AdrSpec, GetAdr, adr_registry
+from doeff_adr._registry import _ADRS, isolated_registry
+
 from doeff import run
-from doeff_adr import AdrIds, GetAdr, adr_registry
-from doeff_adr.registry import AdrSpec, _ADRS, isolated_registry
 
 
 def test_isolated_registry_restores_adrs_registered_before_it() -> None:

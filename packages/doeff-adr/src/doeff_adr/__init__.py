@@ -4,6 +4,7 @@
 公開 API の型は __init__.pyi で宣言し、Hy の import hook と AST の補正は従来どおり先に入れる。
 """
 
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 import doeff_hy as doeff_hy
@@ -27,6 +28,32 @@ if TYPE_CHECKING:
     from doeff_adr._effects import (
         adr_registry as adr_registry,
     )
+    from doeff_adr._pytest_plugin import DEFAULT_FILE_PATTERNS as DEFAULT_FILE_PATTERNS
+    from doeff_adr._pytest_plugin import DoeffAdrHyFile as DoeffAdrHyFile
+    from doeff_adr._registry import (
+        AdrSpec as AdrSpec,
+    )
+    from doeff_adr._registry import AdrStatus as AdrStatus
+    from doeff_adr._registry import EnforcementMode as EnforcementMode
+    from doeff_adr._registry import (
+        EnforcementRef as EnforcementRef,
+    )
+    from doeff_adr._registry import FixtureSpec as FixtureSpec
+    from doeff_adr._registry import (
+        SemgrepSpec as SemgrepSpec,
+    )
+    from doeff_adr._registry import (
+        clear_registry as clear_registry,
+    )
+    from doeff_adr._registry import (
+        enforcement_ids as enforcement_ids,
+    )
+    from doeff_adr._registry import (
+        get_enforcement as get_enforcement,
+    )
+    from doeff_adr._registry import (
+        register_adr as register_adr,
+    )
     from doeff_adr._semgrep_effects import (
         AssertSemgrep as AssertSemgrep,
     )
@@ -36,86 +63,50 @@ if TYPE_CHECKING:
     from doeff_adr._semgrep_effects import (
         semgrep_enforcements as semgrep_enforcements,
     )
-    from doeff_adr.registry import (
-        AdrSpec as AdrSpec,
-    )
-    from doeff_adr.registry import (
-        EnforcementRef as EnforcementRef,
-    )
-    from doeff_adr.registry import (
-        SemgrepSpec as SemgrepSpec,
-    )
-    from doeff_adr.registry import (
-        clear_registry as clear_registry,
-    )
-    from doeff_adr.registry import (
-        enforcement_ids as enforcement_ids,
-    )
-    from doeff_adr.registry import (
-        get_enforcement as get_enforcement,
-    )
-    from doeff_adr.registry import (
-        register_adr as register_adr,
-    )
+    from doeff_adr._semgrep_hy import HyScanExpansionError as HyScanExpansionError
 
 
-_PUBLIC_API_NAMES = (
-    "AdrIds",
-    "AdrSpec",
-    "AssertAdrContract",
-    "AssertAllAdrContracts",
-    "AssertSemgrep",
-    "EnforcementRef",
-    "GetAdr",
-    "RegisterDeftest",
-    "RegisterSemgrep",
-    "SemgrepSpec",
-    "adr_registry",
-    "clear_registry",
-    "doeff_hy",
-    "enforcement_ids",
-    "get_enforcement",
-    "register_adr",
-    "semgrep_enforcements",
-)
-#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f・ki-2d28425e0d40・ki-54e559d3c0e7)。
-_EFFECT_NAMES = frozenset(
-    {
-        "AdrIds",
-        "AssertAdrContract",
-        "AssertAllAdrContracts",
-        "GetAdr",
-        "RegisterDeftest",
-        "adr_registry",
-    }
-)
-#: 内側の module _semgrep_effects で定義する公開の名 — Semgrep の検の effect と handler(card ki-2a549274055c)。
-_SEMGREP_EFFECT_NAMES = frozenset({"AssertSemgrep", "RegisterSemgrep", "semgrep_enforcements"})
+#: 公開の名から、名を定義する module へ — 最初の利用の時にその module だけを読む(effect と handler は内側の module
+#: _effects・_semgrep_effects — card ki-24a2bca4339f・ki-2a549274055c・ki-54e559d3c0e7)。
+_LAZY_EXPORTS: dict[str, str] = {
+    "AdrIds": "doeff_adr._effects",
+    "AdrSpec": "doeff_adr._registry",
+    "AssertAdrContract": "doeff_adr._effects",
+    "AssertAllAdrContracts": "doeff_adr._effects",
+    "AssertSemgrep": "doeff_adr._semgrep_effects",
+    "EnforcementRef": "doeff_adr._registry",
+    "GetAdr": "doeff_adr._effects",
+    "RegisterDeftest": "doeff_adr._effects",
+    "RegisterSemgrep": "doeff_adr._semgrep_effects",
+    "SemgrepSpec": "doeff_adr._registry",
+    "adr_registry": "doeff_adr._effects",
+    "clear_registry": "doeff_adr._registry",
+    "enforcement_ids": "doeff_adr._registry",
+    "get_enforcement": "doeff_adr._registry",
+    "register_adr": "doeff_adr._registry",
+    "semgrep_enforcements": "doeff_adr._semgrep_effects",
+    "AdrStatus": "doeff_adr._registry",
+    "EnforcementMode": "doeff_adr._registry",
+    "FixtureSpec": "doeff_adr._registry",
+    "DEFAULT_FILE_PATTERNS": "doeff_adr._pytest_plugin",
+    "DoeffAdrHyFile": "doeff_adr._pytest_plugin",
+    "HyScanExpansionError": "doeff_adr._semgrep_hy",
+}
 
 
 def __getattr__(name: str) -> object:
     """宣言した公開名だけを遅延解決する。import 失敗は呼び手へそのまま伝える。"""
     # import * が名前を要求した時だけ遅延公開 API を列挙する。
     if name == "__all__":
-        return _PUBLIC_API_NAMES
-    if name not in _PUBLIC_API_NAMES:
+        return ("doeff_hy", *_LAZY_EXPORTS)
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from doeff_adr import _effects, _semgrep_effects, registry
-
-    def defining_module(key: str) -> object:
-        """公開の名を定義する module(名はその module の値をそのまま出す)。"""
-        if key in _EFFECT_NAMES:
-            return _effects
-        if key in _SEMGREP_EFFECT_NAMES:
-            return _semgrep_effects
-        return registry
-
-    exports: dict[str, object] = {
-        key: vars(defining_module(key))[key] for key in _PUBLIC_API_NAMES if key != "doeff_hy"
-    }
-    globals().update(exports)
-    return exports[name]
+    # 公開の名の値は定義の module の値そのもの。1 度引いた名は package の普通の属性になる。
+    value = vars(import_module(module_name))[name]
+    globals()[name] = value
+    return value
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(_PUBLIC_API_NAMES))
+    return sorted({*globals(), *_LAZY_EXPORTS})

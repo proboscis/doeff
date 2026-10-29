@@ -8,15 +8,20 @@ from pathlib import Path
 
 import doeff_adr
 import doeff_adr._effects
+import doeff_adr._pytest_plugin
+import doeff_adr._registry
 import doeff_adr._semgrep_effects
-import doeff_adr.registry
+import doeff_adr._semgrep_hy
 
 INIT = Path(doeff_adr.__file__)
-#: 公開の名を定義する module(registry と、effect と handler の内側の module — card ki-24a2bca4339f・ki-2a549274055c)。
+#: 公開の名を定義する module(registry と、effect と handler の内側の module — card ki-24a2bca4339f・ki-2a549274055c。
+#: 型・例外と pytest の plugin の名を出す _registry・_semgrep_hy・_pytest_plugin — card ki-cb4daa2ddbcb)。
 DEFINING_MODULES = {
-    "doeff_adr.registry": doeff_adr.registry,
+    "doeff_adr._registry": doeff_adr._registry,
     "doeff_adr._effects": doeff_adr._effects,
     "doeff_adr._semgrep_effects": doeff_adr._semgrep_effects,
+    "doeff_adr._semgrep_hy": doeff_adr._semgrep_hy,
+    "doeff_adr._pytest_plugin": doeff_adr._pytest_plugin,
 }
 
 
@@ -77,11 +82,11 @@ def test_unknown_names_fail_as_before() -> None:
 def test_loading_the_pytest_plugin_reads_neither_the_registry_nor_yaml() -> None:
     """pytest が plugin を読むだけ(収集)なら registry と YAML は読まない。公開の名を使った時に初めて読む。"""
     result = _run_python(
-        "import sys, doeff_adr.pytest_plugin\n"
-        "print('before', 'doeff_adr.registry' in sys.modules, 'yaml' in sys.modules)\n"
+        "import sys, doeff_adr._pytest_plugin\n"
+        "print('before', 'doeff_adr._registry' in sys.modules, 'yaml' in sys.modules)\n"
         "import doeff_adr\n"
         "doeff_adr.GetAdr\n"
-        "print('after', 'doeff_adr.registry' in sys.modules)\n"
+        "print('after', 'doeff_adr._registry' in sys.modules)\n"
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.split("\n")[:2] == ["before False False", "after True"]

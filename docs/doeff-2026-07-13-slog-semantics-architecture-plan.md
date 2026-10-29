@@ -21,7 +21,7 @@ driving ADR: `docs/adr/defadr_doeff_core_effects_001_slog_observability.hy`(ADR-
 | コード証拠 | `packages/doeff-core-effects/doeff_core_effects/_handlers.py:72-90,135-154,205-236` | writer() / slog_handler() / listen_handler(tee 実装) |
 | コード証拠 | `doeff/cli/run_services.py:175-197` | default_interpreter(沈黙の原因サイト) |
 | 静的ガード | `.semgrep.yaml`(222 rules、slog/.log/effect.message 関連は現状ゼロ) | Stage 1 で 3 rules 追加 |
-| collection | `packages/doeff-adr/src/doeff_adr/pytest_plugin.py:16-39` + `packages/doeff-adr/pyproject.toml:20-21`(pytest11) | `docs/adr/defadr_*.hy` の収集。root testpaths 非包含 → パス明示必須 |
+| collection | `packages/doeff-adr/src/doeff_adr/_pytest_plugin.py:16-39` + `packages/doeff-adr/pyproject.toml:20-21`(pytest11) | `docs/adr/defadr_*.hy` の収集。root testpaths 非包含 → パス明示必須 |
 | 先行 ADR 様式 | `docs/adr/defadr_doeff_agents_004_effects_session_host.hy` | ID 形式・defsemgrep inline 形式の参照 |
 
 ## Current state(観測事実と Gap)

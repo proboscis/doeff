@@ -16,13 +16,13 @@ dependencies = [
 ]
 
 [project.scripts]
-doeff-adr = "doeff_adr.cli:main"
+doeff-adr = "doeff_adr._cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doeff_adr"]
 
 [project.entry-points.pytest11]
-doeff_adr = "doeff_adr.pytest_plugin"
+doeff_adr = "doeff_adr._pytest_plugin"
 
 [tool.uv.sources]
 doeff-hy = { workspace = true }

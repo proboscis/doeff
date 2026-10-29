@@ -1,82 +1,23 @@
-"""Command-line entry point for doeff-adr repository checks."""
+# moved-submodule-shim: doeff_adr.cli -> doeff_adr._cli
+# moved-submodule-shim-names doeff_adr.cli:
+#   main
+"""Moved:``doeff_adr.cli`` is now ``doeff_adr._cli`` (ADR-DOE-API-001 R5).
 
-import argparse
-import subprocess
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_adr.cli…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
+
 import sys
-from collections.abc import Sequence
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_adr._cli import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="doeff-adr")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    verify_wiring = subparsers.add_parser(
-        "verify-wiring",
-        help="Fail when an executable ADR is outside the effective pytest collection scope.",
-    )
-    verify_wiring.add_argument(
-        "pytest_args",
-        nargs=argparse.REMAINDER,
-        help="Optional pytest paths or collection arguments.",
-    )
-    semgrep_hy = subparsers.add_parser(
-        "semgrep-hy",
-        help="Run Semgrep python rules over .hy/.py files, reading Hy through macro expansion.",
-    )
-    semgrep_hy.add_argument("--config", required=True, help="Semgrep config file.")
-    semgrep_hy.add_argument(
-        "--root", default=".", help="Project root (paths and imports are relative to it)."
-    )
-    semgrep_hy.add_argument(
-        "--python-path",
-        action="append",
-        default=[],
-        help="Extra import path while expanding (repeatable).",
-    )
-    semgrep_hy.add_argument("targets", nargs="+", help="Files or directories under --root.")
-    return parser
+if __name__ == "__main__":
+    import runpy
 
-
-def _semgrep_hy(arguments: argparse.Namespace) -> int:
-    from pathlib import Path
-
-    from doeff_adr.semgrep_hy import scan_with_hy_expansion
-
-    findings = scan_with_hy_expansion(
-        Path(arguments.config),
-        Path(arguments.root),
-        arguments.targets,
-        python_path=tuple(arguments.python_path),
-    )
-    for finding in findings:
-        print(f"{finding.path}:{finding.line}: {finding.short_rule_id}: {finding.message}")
-    print(f"{len(findings)} finding(s)")
-    return 1 if findings else 0
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    arguments = _parser().parse_args(argv)
-    if arguments.command == "verify-wiring":
-        command: list[str] = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            *arguments.pytest_args,
-            "--doeff-adr-wiring=strict",
-        ]
-        completed: subprocess.CompletedProcess[str] = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode == 0:
-            print("doeff-adr wiring verified: every executable ADR was collected.")
-            return 0
-        sys.stdout.write(completed.stdout)
-        sys.stderr.write(completed.stderr)
-        return completed.returncode
-    if arguments.command == "semgrep-hy":
-        return _semgrep_hy(arguments)
-    raise AssertionError(f"unhandled doeff-adr command: {arguments.command}")
+    runpy.run_module("doeff_adr._cli", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_adr._cli")
