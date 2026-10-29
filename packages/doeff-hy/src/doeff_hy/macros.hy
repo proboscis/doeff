@@ -1339,7 +1339,8 @@ defk {name}: {{:post [...]}} is required.
 ;; on-raise / absent-as — 失敗と不在を値へ畳む境目(ADR-DOE-CORE-EFFECTS-003 R7・R8)
 ;; ---------------------------------------------------------------------------
 ;;
-;; maybe / result は関数(doeff_core_effects._outcomes)— パターンも字面も要らないので macro にしない。
+;; maybe / result は handler を返す工場(doeff_core_effects._outcomes・ADR-DOE-API-001 R6)— ((maybe) body) と書く。
+;; パターンも字面も要らないので macro にしない。
 
 (defmacro on-raise [#^ Object program #^ Object #* clauses]
   "(on-raise 本文 パターン [:if 番] 写し先 …) — 本文の中の Raise のうち、パターン(失敗の型の形)に合う物だけを写し先の

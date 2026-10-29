@@ -1074,11 +1074,11 @@ impl<'a> Narrator<'a> {
             Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
             Explain::StaleBranch { branch } => Some(match branch.declared {
                 super::smells::DeclaredAs::Absent => format!(
-                    "{} の枝を消して成功の道だけにする — 不在で何かしたい所は (<- {} ({} …) :absent <失敗>) か absent-as、不在を値として持ち回る所は {} を (maybe ({} …)) で包んで Nothing を受ける(R14 (3))",
+                    "{} の枝を消して成功の道だけにする — 不在で何かしたい所は (<- {} ({} …) :absent <失敗>) か absent-as、不在を値として持ち回る所は {} を ((maybe) ({} …)) で包んで Nothing を受ける(R14 (3))",
                     branch.ty, branch.subject, branch.effect, branch.effect, branch.effect
                 ),
                 super::smells::DeclaredAs::Failure => format!(
-                    "{} の枝を消して成功の道だけにする — 失敗で何かしたい所は on-raise (on-raise 本文 ({} d) 写し先)、値として持ち回る所は (result ({} …)) で包んで Err を受ける(R14 (3))",
+                    "{} の枝を消して成功の道だけにする — 失敗で何かしたい所は on-raise (on-raise 本文 ({} d) 写し先)、値として持ち回る所は ((result) ({} …)) で包んで Err を受ける(R14 (3))",
                     branch.ty, branch.ty, branch.effect
                 ),
             }),

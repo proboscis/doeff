@@ -72,7 +72,7 @@
   (assert (isinstance reset Reset) reset)
   (assert (= reset.epoch epoch) reset)
   ;; result で畳んでも失敗にならない(Ok のまま)。
-  (assert (isinstance (in-store store (result (watch-once cursor))) Ok))
+  (assert (isinstance (in-store store ((result) (watch-once cursor))) Ok))
   ;; Reset の (epoch, floor) から読み直せば続けられる。
   (val resumed (in-store store (watch-once (WatchCursor reset.epoch reset.floor))))
   (assert (isinstance resumed Changes) resumed))
@@ -83,7 +83,7 @@
   (val cursor (head-of store))
   (in-store store (SetStoreOutage DETAIL))
   ;; 束ねずに逃がす: result で畳むと Err(Unreachable) — 値として束ねた名には Unreachable が来ない。
-  (val settled (in-store store (result (watch-once cursor))))
+  (val settled (in-store store ((result) (watch-once cursor))))
   ;; Ok / Err は値で比べられない(Rust の型)ので形を repr で比べる。
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" (Unreachable DETAIL))) settled)

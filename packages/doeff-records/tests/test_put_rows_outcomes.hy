@@ -77,7 +77,7 @@
   (assert (isinstance lost RowsConflict) lost)
   (assert (= #(lost.index lost.table lost.key) #(0 "parts" #("p1"))) lost)
   ;; result で畳んでも失敗にならない(Ok のまま)。
-  (assert (isinstance (in-store store (result (put-batch (batch "p1" {"label" "b"} (ExpectVersion 7))))) Ok))
+  (assert (isinstance (in-store store ((result) (put-batch (batch "p1" {"label" "b"} (ExpectVersion 7))))) Ok))
   ;; 値の中の今の行から読み直して撃ち直せば通る。
   (val retried (in-store store (put-batch (batch "p1" {"label" "b"} (ExpectVersion lost.current.version)))))
   (assert (isinstance retried WrittenRows) retried)
@@ -89,7 +89,7 @@
   ;; 状態の語 weird は宣言の外 — 束のある行を宣言が許さない。束ねずに逃がす: result で畳むと Err(RowsRefused)。
   (val refused (in-store store (batch "p1" {"state" "weird"} (ExpectAbsent))))
   (assert (isinstance refused RowsRefused) refused)
-  (val settled (in-store store (result (put-batch (batch "p1" {"state" "weird"} (ExpectAbsent))))))
+  (val settled (in-store store ((result) (put-batch (batch "p1" {"state" "weird"} (ExpectAbsent))))))
   ;; Ok / Err は値で比べられない(Rust の型)ので、直の撃ちの答え(値)と repr で比べる。
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" refused)) settled)
@@ -100,7 +100,7 @@
   ;; 同じ冪等キーの別の束も断り(束の 0 行目の RowsRefused)で、Raise として逃げる。
   (in-store store (put-batch (batch "p2" {"label" "a"} (ExpectAbsent) :idempotency-key "k1")))
   (val other (batch "p2" {"label" "z"} (ExpectAbsent) :idempotency-key "k1"))
-  (val keyed (in-store store (result (put-batch other))))
+  (val keyed (in-store store ((result) (put-batch other))))
   (assert (isinstance keyed Err) keyed)
   (assert (= (repr keyed) (.format "Err({!r})" (in-store store other))) keyed))
 
@@ -108,7 +108,7 @@
 (deftest test-an-unreachable-bundle-escapes-as-a-raise
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (SetStoreOutage DETAIL))
-  (val settled (in-store store (result (put-batch (batch "p1" {"label" "a"} (ExpectAbsent))))))
+  (val settled (in-store store ((result) (put-batch (batch "p1" {"label" "a"} (ExpectAbsent))))))
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" (Unreachable DETAIL))) settled)
   (with [(pytest.raises UnhandledEffect)]

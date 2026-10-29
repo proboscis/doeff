@@ -158,12 +158,14 @@ print(run(scheduled(state()(writer(main())))))  # ['A', 'B', 'C']
 ## Absence and failure
 
 A program writes only its success path. `Absent(why)` says "there is no value" and
-`Raise(reason)` says "this failed". The caller decides how to fold them into values:
+`Raise(reason)` says "this failed". The caller decides how to fold them into values, with
+a handler made by a factory — like `state()`, call the factory to get the handler, then
+apply that to the program:
 
 | Fold | `Absent` becomes | `Raise` becomes | Success becomes |
 | --- | --- | --- | --- |
-| `maybe(program)` | `Nothing` | passes through | `Some(value)` |
-| `result(program)` | passes through | `Err(reason)` | `Ok(value)` |
+| `maybe()(program)` | `Nothing` | passes through | `Some(value)` |
+| `result()(program)` | passes through | `Err(reason)` | `Ok(value)` |
 
 ```python
 from doeff import do, run
@@ -181,13 +183,13 @@ def age_of(name):
     return USERS[name]
 
 
-print(run(scheduled(maybe(age_of("ada")))))   # Some(36)
-print(run(scheduled(maybe(age_of("bob")))))   # Nothing
-print(run(scheduled(result(age_of("ada")))))  # Ok(36)
+print(run(scheduled(maybe()(age_of("ada")))))   # Some(36)
+print(run(scheduled(maybe()(age_of("bob")))))   # Nothing
+print(run(scheduled(result()(age_of("ada")))))  # Ok(36)
 ```
 
-Nest them to get both: `result(maybe(program))` gives `Ok(Some(v))`, `Ok(Nothing)` or
-`Err(e)`. `on_raise` and `absent_as` handle specific cases.
+Nest them to get both: `result()(maybe()(program))` gives `Ok(Some(v))`, `Ok(Nothing)` or
+`Err(e)`. `on_raise(case, …)(program)` and `absent_as(default)(program)` handle specific cases.
 
 ## Writing your own effect and handler
 
