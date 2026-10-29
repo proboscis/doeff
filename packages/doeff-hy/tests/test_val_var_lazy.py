@@ -17,7 +17,7 @@ import hy.compiler
 import pytest
 from hy.errors import HyMacroExpansionError
 
-from doeff_hy.binding_forms import RULE_LEGACY_LAZY, RULE_REBIND, RULE_SETV, Finding
+from doeff_hy._binding_forms import RULE_LEGACY_LAZY, RULE_REBIND, RULE_SETV, Finding
 from doeff_hy._static_check import Projection, project
 from doeff_hy._static_view import collect_findings, static_view
 
@@ -658,7 +658,7 @@ def test_colon_equals_on_a_module_var_inside_defk_is_an_expansion_error() -> Non
 
 
 def test_module_level_setv_is_warned_and_rebinding_a_module_val_is_red() -> None:
-    from doeff_hy.binding_forms import module_findings
+    from doeff_hy._binding_forms import module_findings
 
     found = module_findings(
         hy.read_many(

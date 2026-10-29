@@ -1,4 +1,4 @@
-"""handle・defhandler の展開が読む doeff の名の綴りの表(doeff_hy/expansion_names.py)の検(card ki-16180480129e)。
+"""handle・defhandler の展開が読む doeff の名の綴りの表(doeff_hy/_expansion_names.py)の検(card ki-16180480129e)。
 
 表は展開が読む名の別名(`_doeff_<名>`)と import の唯一の定義元。展開の名が書き手の同じ名の effect を隠さない事そのものは
 tests/test_handle_writer_names.py が、表を介さずに素の名を書く読み手が戻らない事はここが確かめる。
@@ -14,7 +14,7 @@ import doeff_core_effects._effects
 import doeff_hy
 import hy
 import pytest
-from doeff_hy import expansion_names
+from doeff_hy import _expansion_names as expansion_names
 from hy.models import Expression, Sequence, Symbol
 
 import doeff
@@ -161,7 +161,7 @@ def test_no_source_spells_an_expansion_name_bare() -> None:
     spelled = {
         path.name: names
         for path in sorted([*_PACKAGE.glob("*.hy"), *_PACKAGE.glob("*.py")])
-        if path.name != "expansion_names.py"
+        if path.name != "_expansion_names.py"
         if (
             names := _bare_symbols_in_hy(path)
             if path.suffix == ".hy"

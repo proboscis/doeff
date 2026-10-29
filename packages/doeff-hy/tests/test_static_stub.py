@@ -252,7 +252,7 @@ def test_a_dotted_module_import_no_declaration_reads_is_not_copied(tmp_path: Pat
     # 失敗ケース(#2886): defrecord の展開が引く `import doeff_hy.record` を .pyi に写すと、宣言はどれも読まないのに
     # .pyi が doeff_hy.record に依存する形になり、品質検査の module の依存の契約(dependency-not-allowed)に当たった
     # (meter_effects の手の .pyi を道具の出力に置き換えた時)。点つきの import は使い手に名を公開しないので写さない。
-    # 頭の辞書つきの defrecord の展開は `(import doeff_hy.declarations doeff_hy.record)` を出す。
+    # 頭の辞書つきの defrecord の展開は `(import doeff_hy._declarations doeff_hy.record)` を出す。
     checked = """\
 (require doeff-hy.record [defrecord])
 

@@ -25,7 +25,7 @@
 ;; 節を終える操作とその終わり方(続きを再開する・打ち切る …)は clause_ops.hy の表から引く — ここに名の一覧を写さない
 ;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた — card ki-b4c015d8ba1f)。resume は非末尾なら節へ戻るので、
 ;; 実行の時の検めが見る。
-(import doeff-hy.clause-ops [Ending clause-op ops-ending])
+(import doeff-hy._clause-ops [Ending clause-op ops-ending])
 
 
 ;; 名前で分かる effect(展開の時に断れる物)と、その再開の扱い。

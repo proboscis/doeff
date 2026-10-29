@@ -45,19 +45,19 @@
 (import hy.models [Expression Symbol List Keyword Sequence String])
 ;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
 ;; (ADR-DOE-API-001 R14・card ki-a28c20b93638)。素の名で束ねると、目録が doeff_hy.handle の公開の名と数える。
-(import doeff-hy.positions [locate-synthesized :as _locate-synthesized])
-(import doeff-hy.declarations [DECLARATION-KEYS :as _DECLARATION-KEYS
+(import doeff-hy._positions [locate-synthesized :as _locate-synthesized])
+(import doeff-hy._declarations [DECLARATION-KEYS :as _DECLARATION-KEYS
                                refuse-unknown-keys :as _refuse-unknown-keys
                                declaration-setters :as _declaration-setters])
 (import hy.models [Dict])
 (import doeff-hy._static-view [static-view-enabled :as _static-view-enabled report-findings :as _report-findings])
-(import doeff-hy.clause-ops [clause-op :as _clause-op node-names :as _node-names])
-(import doeff-hy.expansion-names [alias-symbol :as _alias-symbol
+(import doeff-hy._clause-ops [clause-op :as _clause-op node-names :as _node-names])
+(import doeff-hy._expansion-names [alias-symbol :as _alias-symbol
                                   import-form :as _import-form
                                   effect-symbol :as _effect-symbol
                                   continuation-symbol :as _continuation-symbol
                                   WRITER-VISIBLE :as _WRITER-VISIBLE])
-(import doeff-hy.binding-forms [parse-declaration :as _parse-declaration
+(import doeff-hy._binding-forms [parse-declaration :as _parse-declaration
                                 Timing :as _Timing
                                 Mutability :as _Mutability
                                 SessionName :as _SessionName
@@ -85,7 +85,7 @@
    HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない・agora-redesign #2279)。"
   (if (_static-view-enabled)
       '(do)
-      `(import doeff-hy.clause-endings [~name :as ~alias])))
+      `(import doeff-hy._clause-endings [~name :as ~alias])))
 
 
 (defn _vm-imports []
@@ -94,7 +94,7 @@
    typed-resume / typed-transfer になり Resume / Transfer を使わないので、表の static-nodes に載せない(使わない import は strict の
    赤 — agora-redesign #2279)。
 
-   名は `_doeff_<名>` の別名で束ねる(doeff_hy/expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
+   名は `_doeff_<名>` の別名で束ねる(doeff_hy/_expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
    (振込の Transfer)、節の頭の isinstance が VM の node を指して effect が外の handler へ黙って抜け、module の段では書き手の
    名が上書きされた(card ki-16180480129e)。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
   (_import-form (+ (_node-names (_static-view-enabled)) ["Pass" "WithHandlerType"])))
@@ -230,7 +230,7 @@
    (`_alias-forms` の束ね・型検査のための展開の effect は `_narrowed-alias-bindings` の束ねと `_clause-test` の絞り)。節の欄・session の名が同じ名なら束ねない —
    書き手が欄・session で決めた名が優先する。点つきの記号(`effect.amount`)も名を使うと数える。名が本体の中の局所の束ね
    (`(lfor k …)`)にだけ現れても数える — 余分な束ねは害が無い(型検査のための展開は束ねた名を読む)。"
-  (import doeff-hy.clause-endings [parse-clause-options])
+  (import doeff-hy._clause-endings [parse-clause-options])
   (setv options (parse-clause-options (list (cut clause 2 None)) "handle clause"))
   (setv taken (+ (lfor f (get clause 1) (str f))
                  (lfor #(lname _ _mut _legacy) (or lazy-defs []) (str lname))))
@@ -405,7 +405,7 @@
 
     ;; (match subject pattern body ...) — every arm terminates and the last arm is irrefutable
     (= head "match")
-      (do (import doeff-hy.clause-endings [match-terminates?])
+      (do (import doeff-hy._clause-endings [match-terminates?])
           (match-terminates? form))
 
     ;; (do form1 form2 ...) — sequence terminates if any form terminates
@@ -419,7 +419,7 @@
 
     ;; (try body (except ...)) — the body and every except clause terminate
     (= head "try")
-      (do (import doeff-hy.clause-endings [try-terminates?])
+      (do (import doeff-hy._clause-endings [try-terminates?])
           (try-terminates? form))
 
     ;; One-branch and short-circuit forms and loops never guarantee termination; a resume inside a
@@ -453,7 +453,7 @@
    The arms are split by clause_endings' match-arms — the same split the clause-ending check
    uses, so the two never disagree on where a body is. Only bodies are in tail position
    (patterns and guards are left as written); a malformed match is left untouched."
-  (import doeff-hy.clause-endings [match-arms])
+  (import doeff-hy._clause-endings [match-arms])
   (setv arms (match-arms form))
   (if (is arms None)
       form
@@ -586,7 +586,7 @@
    the single definition point shared with <- / do! / defp / deftest / for/do)
    (! expr) → (yield expr) in place [ADR-DOE-HY-003]"
   (import doeff-hy.macros [_is-bind _expand-bangs])
-  (import doeff-hy.outcome-forms [bind-form :as _bind-form])
+  (import doeff-hy._outcome-forms [bind-form :as _bind-form])
 
   (setv expanded [])
   (for [form forms]
@@ -603,7 +603,7 @@
    Returns #(effect-type cond-body). When `specs` is a list, appends the clause's ending
    description for the definition-time check (clause_endings.check-clause-endings).
    If lazy-defs is provided, inject lazy init for referenced lazy names."
-  (import doeff-hy.clause-endings [parse-clause-options clause-ops check-clause-by-name ending-spec-form])
+  (import doeff-hy._clause-endings [parse-clause-options clause-ops check-clause-by-name ending-spec-form])
   (assert (isinstance clause Expression)
           "handle clause must be an expression")
   (assert (>= (len clause) 3)
@@ -978,7 +978,7 @@
     (setv docstring (get clauses 0))
     (setv clauses (cut clauses 1 None)))
 
-  ;; Optional declaration dict {:effects [...] :tags {:context … :role …}} (agora-redesign #800 — doeff_hy.declarations).
+  ;; Optional declaration dict {:effects [...] :tags {:context … :role …}} (agora-redesign #800 — doeff_hy._declarations).
   ;; A handler has no :pre / :post, so only :effects and :tags are accepted.
   (setv declarations None)
   (when (and (> (len clauses) 0) (isinstance (get clauses 0) Dict))

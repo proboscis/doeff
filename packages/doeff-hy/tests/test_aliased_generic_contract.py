@@ -1,7 +1,7 @@
 """契約 `(: x T)` と型付き束縛 `(<- x T e)` の T が、型引数つきの総称型を値に持つ名(型の別名)でも、実行時に TypeError で落ちず
 外側の型で確かめること(card acp:kanban-issue:ki-8673c7bb5b0c)。
 
-契約と束縛は書いた型を `doeff_hy.type_forms.runtime_type_form` で isinstance に渡せる形へ写すが、写せるのは字面の総称型だけで、
+契約と束縛は書いた型を `doeff_hy._type_forms.runtime_type_form` で isinstance に渡せる形へ写すが、写せるのは字面の総称型だけで、
 名は展開の時に値が分からないのでそのまま isinstance に渡る。名の値が `Callable[..., object]` や `FrozenMap[object] | tuple[object, ...]`
 だと、どの値でも `TypeError: isinstance() argument 2 cannot be a parameterized generic` になった(2026-10-11 に本番で 2 度 —
 agora-controllers の turn-host が別名 LiveLimitAnswer = (get Callable #(... object)) で 9 分止まり、受付が別名 FrozenJson で全部の

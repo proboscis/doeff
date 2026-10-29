@@ -692,7 +692,7 @@ def test_an_unreached_function_in_binding_forms_and_static_view_keeps_a_defk_use
     # 覆っていた。
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
     real_tree.run("record")
-    _append(real_tree.lib / "doeff_hy" / "binding_forms.py", UNREACHED_PY)
+    _append(real_tree.lib / "doeff_hy" / "_binding_forms.py", UNREACHED_PY)
     _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
         "binding_forms と static_view に辿られない関数を足しただけで defk・val の使い手を古いと判じた"
@@ -704,8 +704,8 @@ def test_an_unreached_function_in_clause_endings_keeps_a_defhandler_user_current
 ) -> None:
     # 直す前は赤: defhandler が読む clause_endings.hy の表(NAMED-RESUMPTION)を辿ると clause_endings.hy の file で覆っていた。
     real_tree.run("record")
-    _append(real_tree.lib / "doeff_hy" / "clause_endings.hy", UNREACHED_HY)
-    _append(real_tree.lib / "doeff_hy" / "binding_forms.py", UNREACHED_PY)
+    _append(real_tree.lib / "doeff_hy" / "_clause_endings.hy", UNREACHED_HY)
+    _append(real_tree.lib / "doeff_hy" / "_binding_forms.py", UNREACHED_PY)
     _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
         "clause_endings・binding_forms・static_view に辿られない関数を足しただけで defhandler の使い手を古いと判じた"
@@ -730,7 +730,7 @@ REAL_HANDLER_USER = """\
 DOCUMENTED_MODULES = {
     "__init__.py": '"""doeff-hy — Standard Hy macros for doeff effect composition.',
     "record_runtime.py": '"""defrecord と defeffect の実行の展開が読み込みの時に読む部品',
-    "type_forms.py": '"""型の式を、実行時に ``isinstance`` の第 2 引数へ渡せる form へ写す',
+    "_type_forms.py": '"""型の式を、実行時に ``isinstance`` の第 2 引数へ渡せる form へ写す',
 }
 
 
@@ -752,7 +752,7 @@ def test_a_changed_table_in_binding_forms_makes_a_defk_user_stale(real_tree: Rea
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
     real_tree.run("record")
     _replace(
-        real_tree.lib / "doeff_hy" / "binding_forms.py",
+        real_tree.lib / "doeff_hy" / "_binding_forms.py",
         '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAL, "var": Mutability.VAR}',
         '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAR, "var": Mutability.VAR, "v": Mutability.VAL}',
     )
@@ -833,7 +833,7 @@ def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_reco
     (probe / "assigning.hy").write_text(REAL_ASSIGN_USER, encoding="utf-8")
     _run_pair(real_tree, "record")
     _replace(
-        real_tree.lib / "doeff_hy" / "binding_forms.py",
+        real_tree.lib / "doeff_hy" / "_binding_forms.py",
         ASSIGN_MESSAGE,
         ASSIGN_MESSAGE.replace("書けます", "書けます(替えた)"),
     )
@@ -846,7 +846,7 @@ def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_reco
 
 # ---- import の順に依らない digest(閉包の中の module が循環する import の途中で引けない時)-------------------------------------
 #
-# deff の閉包は、関数の中の import で doeff_hy.outcome_forms を引く。outcome_forms は doeff_hy.record の defrecord を require し、
+# deff の閉包は、関数の中の import で doeff_hy._outcome_forms を引く。outcome_forms は doeff_hy.record の defrecord を require し、
 # record.hy は deff を使う。.pyc から record を読む process では、record.hy の記録の照らしが record の本体の実行の前に走るので、
 # outcome_forms を import できない(record の macro の表がまだ空)。直す前は、その時の digest(名だけ)が process の覚えに残り、
 # その process の deff の使い手の照らしと記録が全部その値になって、import の順の違う process と置き場の entry を書き直し合った
@@ -981,8 +981,8 @@ def test_a_deff_user_stays_current_in_a_process_that_computed_defrecord_and_defw
 
 #: import の順の違う 2 つの process の形 — record を先に読む(record.hy の照らしの途中で outcome_forms を import できない)と、
 #: deff の使い手を先に読む(record.hy の照らしの途中で outcome_forms が import の途中)。
-RECORD_FIRST = ("doeff_hy.record", "doeff_hy._wire", "doeff_hy.clause_endings")
-DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy.clause_endings", "doeff_hy._wire", "doeff_hy.record")
+RECORD_FIRST = ("doeff_hy.record", "doeff_hy._wire", "doeff_hy._clause_endings")
+DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy._clause_endings", "doeff_hy._wire", "doeff_hy.record")
 
 
 @dataclass(frozen=True)

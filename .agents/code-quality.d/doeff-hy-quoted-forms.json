@@ -1,6 +1,6 @@
 {
   "include": [
-    "packages/doeff-hy/src/doeff_hy/quoted_forms.py",
+    "packages/doeff-hy/src/doeff_hy/_quoted_forms.py",
     "packages/doeff-hy/tests/test_quoted_forms.py"
   ],
   "modules": [
@@ -9,10 +9,10 @@
       "layer": "pure",
       "name": "doeff-hy-quoted-forms",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/quoted_forms.py"
+        "packages/doeff-hy/src/doeff_hy/_quoted_forms.py"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/quoted_forms.py"
+        "packages/doeff-hy/src/doeff_hy/_quoted_forms.py"
       ],
       "responsibility": "defk / defhandler / defp が残す本体(`__doeff_body__`)を、`hy.repr` した文字列で運び、読まれた時に初めて Hy の model へ戻す列 QuotedForms(import のたびに model の木を組み立てる compile の時間を避けるため)。macros.hy の展開が出す import の先として契約を置いた(card ki-d7bb10d49b0a の根治)。",
       "typed": true

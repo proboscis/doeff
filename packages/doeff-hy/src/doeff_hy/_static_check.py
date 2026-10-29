@@ -29,7 +29,7 @@
 3. 根の中身を symlink で映した一時の木に、展開した Python を `<名>.py` として置き、
    根の pyright の設定を写して pyright を撃つ。消費 repo の file は変えない。
 4. pyright の診断を、展開した Python の位置 → Hy の式の位置(macro は合成した式にも
-   包んでいる利用者の式の位置を付ける — doeff_hy/positions.hy)へ戻す。
+   包んでいる利用者の式の位置を付ける — doeff_hy/_positions.hy)へ戻す。
 
 設定: 根の `pyrightconfig.json`(無ければ `pyproject.toml` の `[tool.pyright]`)を土台にし、
 `reportDeprecated` だけを error に上げる(文の位置に置いた Program / effect を
@@ -128,9 +128,9 @@ from doeff_hy._static_view import (
     collect_findings,
     static_view,
 )
-from doeff_hy.binding_forms import Finding, ModuleScope
-from doeff_hy.expansion_names import PREFIX as _EXPANSION_PREFIX
-from doeff_hy.expansion_names import is_alias_import
+from doeff_hy._binding_forms import Finding, ModuleScope
+from doeff_hy._expansion_names import PREFIX as _EXPANSION_PREFIX
+from doeff_hy._expansion_names import is_alias_import
 
 if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
@@ -266,11 +266,11 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
 
 
 #: 定義の記帳(実行時の内観のための属性 — 型の意味を持たない)だけが使う module。展開の後に使い手が残らなければ
-#: import を外す(pyright strict で doeff_hy.quoted_forms の stub 無し・doeff_hy.declarations の重複の import に
+#: import を外す(pyright strict で doeff_hy._quoted_forms の stub 無し・doeff_hy._declarations の重複の import に
 #: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。doeff_hy._pytest_items は pytest の
 #: item の記録(deftest・defadr・defsemgrep・pytestmark が足す — 収集のための記帳)だけが使う(stub 無しの赤 — #2214)。
 BOOKKEEPING_MODULES: frozenset[str] = frozenset(
-    {"doeff_hy.declarations", "doeff_hy.quoted_forms", "doeff_hy.record", "doeff_hy._pytest_items"}
+    {"doeff_hy._declarations", "doeff_hy._quoted_forms", "doeff_hy.record", "doeff_hy._pytest_items"}
 )
 
 
@@ -306,8 +306,8 @@ def _bookkeeping_statement(statement: ast.stmt) -> bool:
 
 
 def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
-    """定義の記帳 `setattr(名, '__doeff_effects__', doeff_hy.declarations.effect_types(場所, tuple([A, B])))` を、
-    doeff_hy.declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めた文にするため(それ以外は None)。
+    """定義の記帳 `setattr(名, '__doeff_effects__', doeff_hy._declarations.effect_types(場所, tuple([A, B])))` を、
+    doeff_hy._declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めた文にするため(それ以外は None)。
     宣言 :effects にだけ出る効果の名(handler の節が下請けの関数を通して出す効果)を、型検査の中で読まれた名に残す —
     記帳ごと外すと、その名の import が strict の reportUnusedImport の赤になり、書き手は直せない(import を消すと実行の時に
     :effects の宣言が名を解けない — agora-redesign #3871 の後)。空の宣言 `:effects []`(effect を出さない)も `()` で残す:
@@ -364,7 +364,7 @@ def _dotted(node: ast.expr) -> str | None:
 
 def _referenced_paths(statements: list[ast.stmt]) -> frozenset[str]:
     """文の中で読まれている名と属性の連なり(`a.b.c` を読めば `a`・`a.b`・`a.b.c` の全部)— `import a.b` が読まれているかを
-    module の綴りで決めるため。`import doeff_hy.declarations` と `import doeff_hy.record` は同じ根の名 `doeff_hy` を束縛するので、
+    module の綴りで決めるため。`import doeff_hy._declarations` と `import doeff_hy.record` は同じ根の名 `doeff_hy` を束縛するので、
     根の名だけでは片方しか読まれていない時に両方を残してしまう(defrecord の :check の展開 — agora-redesign #2252)。"""
     return frozenset(
         path
@@ -383,7 +383,7 @@ def _alias_read(alias: ast.alias, used: frozenset[str]) -> bool:
 
 def _without_unused_bookkeeping(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
     """記帳だけが使う module(BOOKKEEPING_MODULES)の import から、もう読まれていない名を 1 つずつ外す。名が 1 つも残らなければ
-    文ごと外す(None)。1 つの文が読まれる名と読まれない名を並べる形(`import doeff_hy.declarations, doeff_hy.record` — defrecord の
+    文ごと外す(None)。1 つの文が読まれる名と読まれない名を並べる形(`import doeff_hy._declarations, doeff_hy.record` — defrecord の
     展開)で、読まれない側だけが strict の reportUnusedImport になっていた(agora-redesign #2252)。"""
     match statement:
         case ast.Import(names=names):

@@ -1,6 +1,6 @@
 """defrecord の :check の展開と doeff_hy.record の型(record.pyi)の失敗ケース(agora-redesign #2252)。
 
-:check つきの defrecord は `(import doeff_hy.declarations doeff_hy.record doeff_hy._record_check)` を出し、`doeff_hy.record.DoExpr`・
+:check つきの defrecord は `(import doeff_hy._declarations doeff_hy.record doeff_hy._record_check)` を出し、`doeff_hy.record.DoExpr`・
 `doeff_hy.record.EffectBase`・`doeff_hy._record_check.require_check` を名指す(require_check は前は `doeff_hy.record` に在った —
 macro の module は macro だけを見せる・ADR-DOE-API-001 R14・card ki-a28c20b93638)。前は使う側の defrecord の行に strict の赤が 5 件出ていた:
 
@@ -48,7 +48,7 @@ MODULE = """\
 
 #: 前に defrecord の行に出ていた赤の文言(どれも書き手に直せない)。
 FORMER_ERRORS: tuple[str, ...] = (
-    '"doeff_hy.declarations" is not accessed',
+    '"doeff_hy._declarations" is not accessed',
     'Type of "record" is unknown',
     'Type of "DoExpr" is unknown',
     'Type of "EffectBase" is unknown',
@@ -113,9 +113,9 @@ def test_only_the_runtime_expansion_refuses_a_program_verdict() -> None:
 def test_an_unread_bookkeeping_name_leaves_a_shared_import_alone() -> None:
     # 1 つの文に並んだ記帳の module の名のうち、読まれない declarations だけを外し、読まれる record は残す。
     tree = ast.parse(
-        "import doeff_hy.declarations, doeff_hy.record\n"
+        "import doeff_hy._declarations, doeff_hy.record\n"
         "isinstance(v, (doeff_hy.record.DoExpr, doeff_hy.record.EffectBase))\n"
-        "setattr(A, '__doeff_tags__', doeff_hy.declarations.DefinitionTags(context='c', role='type'))\n"
+        "setattr(A, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(context='c', role='type'))\n"
     )
     projected = ast.unparse(without_bookkeeping(tree))
     assert projected.splitlines()[0] == "import doeff_hy.record", projected
@@ -123,8 +123,8 @@ def test_an_unread_bookkeeping_name_leaves_a_shared_import_alone() -> None:
 
 def test_a_bookkeeping_import_with_no_reader_is_dropped() -> None:
     tree = ast.parse(
-        "import doeff_hy.declarations, doeff_hy.record\n"
-        "setattr(A, '__doeff_tags__', doeff_hy.declarations.DefinitionTags(context='c', role='type'))\n"
+        "import doeff_hy._declarations, doeff_hy.record\n"
+        "setattr(A, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(context='c', role='type'))\n"
     )
     assert ast.unparse(without_bookkeeping(tree)) == ""
 

@@ -65,7 +65,7 @@ pin の checkout を根の隣に置く(回ごとに path が違う)ので、同�
 2. 根の中身を symlink で映した一時の木に、展開した Python を `<名>.py` として置き、pyright を撃つ。
    利用者の repo の file は変えない。
 3. pyright の診断の位置を、展開した Python の node → Hy の式の位置へ戻す。macro が合成した式は、
-   包んでいる利用者の式の位置を持つ(`doeff_hy/positions.hy`・traceback の直しと同じ仕組み)。
+   包んでいる利用者の式の位置を持つ(`doeff_hy/_positions.hy`・traceback の直しと同じ仕組み)。
 
 macro の展開が型のために持つ形:
 
@@ -82,17 +82,17 @@ macro の展開が型のために持つ形:
 | `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_perform(e)`(Python の `@effectful` の `x = perform(e)` と同じ形・yield を出さない — docs/24-effectful-perform.md) |
 | `(! e)` | `yield e`(open-bind を通す) | `_doeff_perform(e)`(`<-` と同じ — 注記の無い generator の yield の値は Unknown・agora-redesign #2279) |
 | defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/_static_types.pyi` の `do` |
-| `defhandler` の `(resume v)` / `(transfer v)` | `_doeff_Resume(k, v)` / `_doeff_Transfer(k, v)` | core の `_doeff_typed_resume(effect, k, v)` / `_doeff_typed_transfer`(v を effect の答えの型と突き合わせる)。どちらも書き手の同じ名の effect を隠さない `_doeff_` の別名(`doeff_hy/expansion_names.py` が綴りと import の唯一の定義元・card ki-16180480129e) |
+| `defhandler` の `(resume v)` / `(transfer v)` | `_doeff_Resume(k, v)` / `_doeff_Transfer(k, v)` | core の `_doeff_typed_resume(effect, k, v)` / `_doeff_typed_transfer`(v を effect の答えの型と突き合わせる)。どちらも書き手の同じ名の effect を隠さない `_doeff_` の別名(`doeff_hy/_expansion_names.py` が綴りと import の唯一の定義元・card ki-16180480129e) |
 | `defhandler` / `handle` の節を回す関数 | `(effect: '節の型の和', k)`(VM の絞り込みのための注記) | `(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun`(節の `isinstance` が型を絞る)。import は `_doeff_Pass` と `_doeff_WithHandlerType` だけ(agora-redesign #2279) |
 | `defhandler` の本文を受ける関数 | `def __doeff_handler_fn__(__doeff_body__):` | `(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]`(本文の答えの型をそのまま運ぶ・型 = `static_types.pyi`・名の表 = `static_view.py` の `HANDLER_STATIC_NAMES`) |
 | `defhandler` の `session val` / `session var` | `(yield (_doeff_Get key))` の答え(`_doeff_Some` の中身)か初期化の値に名を束ねる(状態に置くのは初期化の値) | 名を初期化の値に束ねる(型は初期化の式の型 — Get の答えには型が無い)。キーの名は `:=` の `Put` が引くので残す。`:=`・旧い `set!` の `Put` / `Some` と初期化のキーの `session_key` は `_doeff_Put`・`_doeff_Some`・`_doeff_session_key` で引き、module の頭の補助の import(`static_view.py` の `SESSION_STATIC_IMPORTS` — 読む時だけ置く)から取る。handler ごとに import を出すと `:=` の無い handler の module で未使用の赤になっていた(再輸出の綴り `Some :as Some` は Hy が同じ名の別名を落とすので効かなかった)・`doeff_hy._session` の型は `session.pyi`(agora-redesign #2293) |
 | `defeffect` の `:answer` | class の本体の `__doeff_answer__: ClassVar[object] = A \| B`(答えの型の式そのもの) | `__doeff_answer__: ClassVar[object] = cast(object, (A, B))`(union の要素の tuple — 値の位置の `A \| B` を pyright が型として評価して出す赤を避け、名を読むだけにする。記帳の setattr に置くと型検査から消え、答えの型のためだけの import が reportUnusedImport になっていた。`<-` の束ねの型は変えない・agora-redesign #2322) |
-| 節の終わり方の検め | `doeff_hy.clause_endings` から import | module の頭で型付きの `static_types` の同じ名を import(clause_endings は .hy なので型が見えない) |
+| 節の終わり方の検め | `doeff_hy._clause_endings` から import | module の頭で型付きの `static_types` の同じ名を import(clause_endings は .hy なので型が見えない) |
 | 文の位置の式 | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
 | 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
 | `deftest` の関数 | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:`(fixture の名 → 型の表 = `static_view.py` の `DEFTEST_FIXTURE_TYPES`・型 = `static_types.pyi`。表に無い名は書き手の `#^ T 名` を写し、無ければ `object`)。decorator の pytest は module の頭の `_doeff_pytest`(agora-redesign #2214) |
 | pytest の item の記録 | `doeff_hy._pytest_items.record_at_import(globals(), …)` | 記帳として外す(`static_check.without_bookkeeping`) |
-| `_doeff_` の別名の import(doeff-cluster の `defsystem` など、持ち主の package の定義の macro) | 系ごとに `import doeff_cluster.shared.intent.service_model as _doeff_cluster_service_model`・`import doeff_cluster.shared.entry.service_build as _doeff_cluster_service_build`・`import doeff_hy.declarations` | 同じ文を出し、module の直下の重ねを `static_check.without_bookkeeping` が最初の 1 つに畳む(畳む物 = 束ねる名が展開の名の頭 `_doeff_`(`expansion_names.PREFIX`)の `import <module> as _doeff_<名>` と根 `doeff_hy` の import — doeff-hy は持ち主の module の綴りを持たない)。系を 2 つ持つ module に、書き手の書いていない import の reportDuplicateImport を出さない。書き手が自分で重ねた import は畳まず赤のまま |
+| `_doeff_` の別名の import(doeff-cluster の `defsystem` など、持ち主の package の定義の macro) | 系ごとに `import doeff_cluster.shared.intent.service_model as _doeff_cluster_service_model`・`import doeff_cluster.shared.entry.service_build as _doeff_cluster_service_build`・`import doeff_hy._declarations` | 同じ文を出し、module の直下の重ねを `static_check.without_bookkeeping` が最初の 1 つに畳む(畳む物 = 束ねる名が展開の名の頭 `_doeff_`(`expansion_names.PREFIX`)の `import <module> as _doeff_<名>` と根 `doeff_hy` の import — doeff-hy は持ち主の module の綴りを持たない)。系を 2 つ持つ module に、書き手の書いていない import の reportDuplicateImport を出さない。書き手が自分で重ねた import は畳まず赤のまま |
 
 ## 捕まえるもの(2026-09-23 の測定)
 

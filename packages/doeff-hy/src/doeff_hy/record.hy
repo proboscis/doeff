@@ -87,7 +87,7 @@
 ;;; (`; defk にできない: defrecord の :check が作る時に呼ぶ`)と :tags {… :role "judgment"} を付ける。
 ;;;
 ;;; 展開(頭の辞書つき):
-;;;   (do (import doeff_hy.declarations doeff_hy.record doeff_hy._record_check)
+;;;   (do (import doeff_hy._declarations doeff_hy.record doeff_hy._record_check)
 ;;;       (defclass [(dataclass :frozen True :kw-only True)] ChatId []
 ;;;         "chat の id"
 ;;;         ((annotate value str))
@@ -100,7 +100,7 @@
 ;;;               (doeff_hy._record_check.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
 ;;;                                                     (bool _verdict) {"value" value})))
 ;;;           None))
-;;;       (setattr ChatId "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context "chat" :role "type"))
+;;;       (setattr ChatId "__doeff_tags__" (doeff_hy._declarations.DefinitionTags :context "chat" :role "type"))
 ;;;       (setattr ChatId "__doeff_checks__" #("(CHAT-ID-PATTERN.fullmatch value)")))
 ;;;
 ;;; ---------------------------------------------------------------------------
@@ -203,8 +203,8 @@
 (defmacro defrecord [_hy-compiler name #* forms]
   (import doeff_hy.macros [_scoped-definition])
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
-  (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys tags-form])
-  (import doeff_hy.expansion_names [import-form])
+  (import doeff_hy._declarations [declared-value field-targets refuse-unknown-keys tags-form])
+  (import doeff_hy._expansion_names [import-form])
   (setv docstring None
         rest (list forms))
   (when (and rest (isinstance (get rest 0) String))
@@ -426,7 +426,7 @@
   (_scoped-definition _hy-compiler name
     [`(do
         ;; :check の require-check は内側の doeff_hy._record_check に在る(実行時と型検査の両方の展開が読む・card ki-a28c20b93638)。
-        (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]) ~@(if statements ['doeff_hy._record_check] []))
+        (import doeff_hy._declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]) ~@(if statements ['doeff_hy._record_check] []))
         ~@(if (and static-view statements) [(import-form ["cast"])] [])
         ~@(if (is written None)
               [`(defclass [(dataclass :frozen True :kw-only True)] ~name []
@@ -446,8 +446,8 @@
 (defmacro defwire [_hy-compiler name #* forms]
   (import re)
   (import hy.models [Dict Expression Keyword List String Symbol])
-  (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys])
-  (import doeff_hy.expansion_names [import-form])
+  (import doeff_hy._declarations [declared-value field-targets refuse-unknown-keys])
+  (import doeff_hy._expansion_names [import-form])
   (import doeff_hy.macros [_scoped-definition])
   (when (not (isinstance name Symbol))
     (raise (SyntaxError (.format "defwire の第 1 引数は型の名前(symbol)ちょうど: {}" (hy.repr name)))))

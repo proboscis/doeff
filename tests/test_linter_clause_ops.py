@@ -1,4 +1,4 @@
-"""doeff-linter が読む節の操作の一覧(data/clause_ops.json)が、表 1 つ(doeff_hy/clause_ops.hy の CLAUSE-OPS)から書き出した物と
+"""doeff-linter が読む節の操作の一覧(data/clause_ops.json)が、表 1 つ(doeff_hy/_clause_ops.hy の CLAUSE-OPS)から書き出した物と
 食い違わない事の検(card ki-d3ef2a50cc04)。
 
 節の操作の名(finish など)と終わり方の定義元は doeff-hy の表 CLAUSE-OPS 1 か所(card ki-b4c015d8ba1f)。ところが doeff-linter(Rust)の
@@ -19,8 +19,8 @@ from pathlib import Path
 
 import doeff_hy  # 拡張を登録する(clause_ops.hy を読むため)
 import pytest
-from doeff_hy import clause_ops
-from doeff_hy.clause_ops import ClauseOp, Ending
+from doeff_hy import _clause_ops as clause_ops
+from doeff_hy._clause_ops import ClauseOp, Ending
 from hy.models import Object
 
 _ROOT = Path(__file__).resolve().parent.parent

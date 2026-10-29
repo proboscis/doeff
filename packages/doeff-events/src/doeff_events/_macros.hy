@@ -176,7 +176,7 @@
    - 出来事ごとに slog(\"event-loop\" :event 型の名)を出す — 外に slog の handler が要る。
    - 外の bus の handler は StopArrived を係へ届ける物(subscribed_event_handler は必ず購読する)。
    待ちの部品 = doeff_events._event_loop(止めの見張りを係の寿命の間 1 つ・待つ前に StopRequested を 1 回)。"
-  (import doeff_hy.match_fields [mangle_match_fields])
+  (import doeff_hy._match_fields [mangle_match_fields])
   (setv #(state-name state-type state-init clauses) (_el-split-state args))
   (when (% (len clauses) 2)
     (_el-fail "節は (頭) 本体 の組で並べる — 本体の無い節がある"))

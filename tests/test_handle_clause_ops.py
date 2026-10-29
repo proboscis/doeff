@@ -1,4 +1,4 @@
-"""handler の節の操作(resume・transfer・finish・reperform・pass・raise)の名と性質が、表 1 つ(doeff_hy/clause_ops.hy の
+"""handler の節の操作(resume・transfer・finish・reperform・pass・raise)の名と性質が、表 1 つ(doeff_hy/_clause_ops.hy の
 CLAUSE-OPS)だけに在る事の検(card ki-b4c015d8ba1f・設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A)。
 
 前は名の一覧が handle.hy の `_terminates` と clause_endings.hy の `ENDING-OPS`・`RESUMING-OPS` に写しで在った。新しい操作
@@ -25,10 +25,13 @@ from pathlib import Path
 import doeff_hy  # 拡張を登録する(_READERS は置き場の __file__ を読む)
 import hy
 import pytest
-from doeff_hy import clause_endings, clause_ops, expansion_names, handle
+from doeff_hy import _clause_endings as clause_endings
+from doeff_hy import _clause_ops as clause_ops
+from doeff_hy import _expansion_names as expansion_names
+from doeff_hy import handle
+from doeff_hy._clause_ops import ClauseOp, Ending
+from doeff_hy._expansion_names import alias, alias_symbol, continuation_symbol
 from doeff_hy._static_view import static_view
-from doeff_hy.clause_ops import ClauseOp, Ending
-from doeff_hy.expansion_names import alias, alias_symbol, continuation_symbol
 from hy.models import Expression, Object, Sequence, String, Symbol
 
 from doeff import run
@@ -343,7 +346,7 @@ def test_table_rows_are_consistent(op: ClauseOp) -> None:
 # ---------------------------------------------------------------------------
 
 _PACKAGE = Path(doeff_hy.__file__).parent
-_READERS = tuple(_PACKAGE / name for name in ("handle.hy", "clause_endings.hy"))
+_READERS = tuple(_PACKAGE / name for name in ("handle.hy", "_clause_endings.hy"))
 _NAME = re.compile(r"[a-z][a-z0-9_!?-]*")
 
 
@@ -390,7 +393,7 @@ def test_no_module_writes_an_operation_name_outside_the_table() -> None:
     written = {
         (path.name, name)
         for path in sorted([*_PACKAGE.glob("*.hy"), *_PACKAGE.glob("*.py")])
-        if path.name != "clause_ops.hy"
+        if path.name != "_clause_ops.hy"
         for name in _written_names(path) & names
     }
     assert written - _UNRELATED_SPELLINGS == set()

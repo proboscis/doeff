@@ -4,11 +4,11 @@
 ;;; verification for defk functions that preserve their S-expr body.
 ;;;
 ;;; Usage:
-;;;   (import doeff_hy.sexpr [body-of args-of collect-effects effect-tree
+;;;   (import doeff_hy._sexpr [body-of args-of collect-effects effect-tree
 ;;;                           assert-handlers classify-call])
 
 (import hy.models)
-(import doeff-hy.quoted-forms [QuotedForms])
+(import doeff-hy._quoted-forms [QuotedForms])
 
 
 ;; ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@
 (defn _bind-var [form]
   "Get the variable name from a bind form. None for (<- expr).
    A trailing `:absent 失敗` is not part of it (ADR-DOE-CORE-EFFECTS-003 R6)."
-  (import doeff-hy.outcome-forms [split-absent])
+  (import doeff-hy._outcome-forms [split-absent])
   (setv core (. (split-absent form) core))
   (cond
     (= (len core) 2) None
@@ -84,7 +84,7 @@
 (defn _bind-expr [form]
   "Get the expression part of a bind form.
    (<- name expr) → expr.  (<- expr) → expr.  A trailing `:absent 失敗` is set aside."
-  (import doeff-hy.outcome-forms [split-absent])
+  (import doeff-hy._outcome-forms [split-absent])
   (setv core (. (split-absent form) core))
   (cond
     (= (len core) 2) (get core 1)

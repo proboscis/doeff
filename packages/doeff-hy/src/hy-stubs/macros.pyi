@@ -16,7 +16,7 @@ _F = TypeVar("_F", bound=Callable[..., object])
 #: `(defmacro 名 …)` の展開が呼ぶ decorator — 名を受け、macro の関数を登録して同じ関数(名を替えた物)を返す。
 def macro(name: str) -> Callable[[_F], _F]: ...
 
-#: `(require …)` の展開が呼ぶ macro の取り込み(doeff_hy.sexpr・検が module を指して直に呼ぶ)。target = module の名・module・名前の表
+#: `(require …)` の展開が呼ぶ macro の取り込み(doeff_hy._sexpr・検が module を指して直に呼ぶ)。target = module の名・module・名前の表
 #: (dict)・None(呼んだ module)。assignments = "ALL" か "EXPORTS" か (macro の名, 別名) の組の列。答え = 実際に移した macro の
 #: (新しい名, 元の名, macro の関数) の列。
 def require(

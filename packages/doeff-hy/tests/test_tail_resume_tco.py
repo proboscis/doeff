@@ -10,7 +10,7 @@ Test levels:
 
 import doeff_hy  # noqa: F401 — registers macros/extensions
 import hy  # noqa: F401 - activates Hy reader for macro tests
-from doeff_hy.expansion_names import alias
+from doeff_hy._expansion_names import alias
 from doeff_hy.handle import _build_clause
 from hy.models import Expression, Keyword, Symbol
 from hy.models import List as HyList

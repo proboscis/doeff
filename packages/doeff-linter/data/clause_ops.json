@@ -1,5 +1,5 @@
 {
- "_about": "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。生成物 — 手で直さない(直す所は表で、書き直しは uv run python scripts/export_clause_ops.py --write)。doeff-linter の business_fakes(DOEFF143 ほか)が節の終わりを判じるのに読み、終わり方ごとの読みは src/project/clause_ops.rs と business_fakes.rs が持つ。",
+ "_about": "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/_clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。生成物 — 手で直さない(直す所は表で、書き直しは uv run python scripts/export_clause_ops.py --write)。doeff-linter の business_fakes(DOEFF143 ほか)が節の終わりを判じるのに読み、終わり方ごとの読みは src/project/clause_ops.rs と business_fakes.rs が持つ。",
  "ops": [
   {"name": "resume", "ending": "resumes", "arity": 1},
   {"name": "transfer", "ending": "resumes", "arity": 1},

@@ -5,14 +5,14 @@
       "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
       "reason": "検査器 code-quality が Hy の quote と宣言の無い defmacro の定義を写せるようになり、macros.hy の中身が初めて測られた時の既存の所見(card ki-04f9037ab198)。契約の無い doeff-hy の内部 module への依存・static_view の公開口の外への依存・outcomes の動的 import は、macros.hy を触る便で減らす。",
       "rule": "dependency-uncontracted",
-      "subject": "packages/doeff-hy/src/doeff_hy/match_fields.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_match_fields.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
       "reason": "検査器 code-quality が Hy の quote と宣言の無い defmacro の定義を写せるようになり、macros.hy の中身が初めて測られた時の既存の所見(card ki-04f9037ab198)。契約の無い doeff-hy の内部 module への依存・static_view の公開口の外への依存・outcomes の動的 import は、macros.hy を触る便で減らす。",
       "rule": "dependency-uncontracted",
-      "subject": "packages/doeff-hy/src/doeff_hy/type_forms.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_type_forms.py"
     },
     {
       "count": 1,

@@ -22,7 +22,7 @@
 (import hy)
 (import collections.abc [Iterable])
 (import hy.models [Dict List Object Set Symbol String Keyword])
-(import doeff_hy.expansion_names [import-form])
+(import doeff_hy._expansion_names [import-form])
 
 ;; 役の閉じた一覧(agora-redesign #780 の層の確定 — 層の並びは core → intent → protocol。operator の決定 2026-09-27):
 ;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
@@ -117,7 +117,7 @@
         (for [item form]
           (when (not (isinstance item Symbol))
             (raise (SyntaxError (.format "{}: :effects の要素は effect の型の名: {}" where (hy.repr item))))))
-        `(doeff_hy.declarations.effect-types ~where (tuple [~@form])))))
+        `(doeff_hy._declarations.effect-types ~where (tuple [~@form])))))
 
 
 (defn #^ (| str None) effect-refusal [#^ object item]  ; defk にできない: macro が展開した定義の頭が module の読み込みの時に呼ぶ(Program の外)
@@ -172,7 +172,7 @@
   (for [#(name value) [#(":spells" spells) #(":reads" reads)]]
     (when (and (is-not value None) (not (and (isinstance value String) (in (str value) SPELLS))))
       (raise (SyntaxError (.format "{}: :tags の {} は {} のどれかの文字列の literal: {}" where name (.join " / " SPELLS) (hy.repr value))))))
-  `(doeff_hy.declarations.DefinitionTags :context ~context :role ~role
+  `(doeff_hy._declarations.DefinitionTags :context ~context :role ~role
                                          ~@(if (is spells None) [] [':spells spells])
                                          ~@(if (is reads None) [] [':reads reads])))
 
@@ -411,7 +411,7 @@
   `(do
      (import dataclasses [dataclass :as _doeff-dataclass])
      (import doeff [EffectBase :as _doeff-effect-base])
-     (import doeff_hy.declarations)
+     (import doeff_hy._declarations)
      ;; 答えの型は class の本体の `__doeff_answer__: ClassVar[object] = …` で置く(agora-redesign #2322)。型検査の展開は
      ;; 記帳の setattr(`__doeff_…__`)を外すので、setattr で置くと :answer の式が型検査から消え、答えの型のためだけに
      ;; import した名が reportUnusedImport の赤になっていた(消すと実行時に壊れるので書き手は直せない)。本体の代入は
@@ -484,7 +484,7 @@
   (setv effects (if (is contract None) None (declared-value contract ":effects"))
         tags (if (is contract None) None (declared-value contract ":tags"))
         needs (if (is contract None) None (declared-value contract ":needs")))
-  [`(import doeff_hy.declarations)
+  [`(import doeff_hy._declarations)
    `(setattr ~name "__doeff_effects__" ~(effects-form effects where))
    `(setattr ~name "__doeff_tags__" ~(tags-form tags where))
    `(setattr ~name "__doeff_needs__" ~(needs-form needs where))])
