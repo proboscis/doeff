@@ -1,11 +1,11 @@
-"""source の中身で引く code の保存先(:mod:`doeff_hy_bytecode_guard.code_store`)は、鍵 1 つに macro の環境ごとの entry を幾つか持ち、環境の
+"""source の中身で引く code の保存先(:mod:`doeff_hy_bytecode_guard._code_store`)は、鍵 1 つに macro の環境ごとの entry を幾つか持ち、環境の
 違う書き手が同じ鍵の entry を上書きし合わない(card ki-6828e9af04b4)の検。
 
 実例(2026-10-12・zeus): 鍵 1 つに entry 1 つの並びでは、実行環境の準備(worker の焼きの道具 — 記録の印 6)と会話の作業木の import
 (doeff の版が会話ごとに違う — 記録の印 5 など)が、同じ source の鍵の entry を互いに「古い」と見て compile し直し、上書きし合った。準備は
 同じ版の source でも 1 回に 100〜600 本を焼き直した(02:53 JST より前は 0〜10 本)。
 
-記録の代役: 記録は code の定数の末尾の組(:mod:`doeff_hy_bytecode_guard.records`)— ここでは記録の形の組を末尾に足した code で、記録の
+記録の代役: 記録は code の定数の末尾の組(:mod:`doeff_hy_bytecode_guard._records`)— ここでは記録の形の組を末尾に足した code で、記録の
 違う 2 つの書き手を作る(照らしは呼び手の物なので、ここでは「末尾の組が自分の物か」で照らす)。
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from types import CodeType
 
 import pytest
-from doeff_hy_bytecode_guard import code_store
+from doeff_hy_bytecode_guard import _code_store as code_store
 
 #: 記録の形の組 2 つ(doeff の版の違う 2 つの書き手 — macro の digest が違う)。
 RECORD_FIVE = ("doeff-hy/macro-dependencies/5", "1.1.0", (("_hy_macros", "pkg.macros", "answer", "aa" * 32),), (), (), (), ())

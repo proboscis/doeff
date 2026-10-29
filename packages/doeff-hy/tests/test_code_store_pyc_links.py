@@ -1,4 +1,4 @@
-"""木の .pyc を、保存先(:mod:`doeff_hy_bytecode_guard.code_store`)の中身の同じ file への hardlink で置く入口 :func:`link_pyc` の検
+"""木の .pyc を、保存先(:mod:`doeff_hy_bytecode_guard._code_store`)の中身の同じ file への hardlink で置く入口 :func:`link_pyc` の検
 (card ki-d51b7baa38bc)。
 
 実例(2026-10-17・Mac の worker): 実行環境の root を作り直すたびに、焼く道具が保存先の code から同じ中身の .pyc を root の木へ新しく
@@ -13,7 +13,7 @@ import os
 import stat
 from pathlib import Path
 
-from doeff_hy_bytecode_guard import code_store
+from doeff_hy_bytecode_guard import _code_store as code_store
 
 PYC = b"\x00" * 16 + b"marshalled code"
 

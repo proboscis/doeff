@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # Read at run time only where a Hy module is expanded or its stored tree read.
-    from doeff_hy_bytecode_guard.records import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,7 @@ class _ExpansionKey:
 def _expansion_key(source: str, module_name: str) -> _ExpansionKey:
     """The key of the place of the trees ``source`` expands to as ``module_name`` (see ``_ExpansionKey``)."""
     import hy
-    from doeff_hy_bytecode_guard.records import RECORD_TAG
+    from doeff_hy_bytecode_guard._records import RECORD_TAG
 
     return _ExpansionKey(
         python=_python_series(),
@@ -166,7 +166,7 @@ def _expansion(source: str, filename: str, module_name: str, directory: Path | N
 
 
 def _imported_expansion(source: str, module_name: str) -> _Expanded | None:
-    """The tree the import side already expanded for this source (``doeff_hy_bytecode_guard.expansion_trees`` —
+    """The tree the import side already expanded for this source (``doeff_hy_bytecode_guard._expansion_trees`` —
     a changed module is compiled by a process that imports it before it is analyzed, and both expand the same source
     with the same compiler: ki-e053a847c515), with the record of the macros it used; None when no import left one
     (the store of the bytecode, which holds the trees, is not named here, or the module was compiled before trees were
@@ -174,7 +174,7 @@ def _imported_expansion(source: str, module_name: str) -> _Expanded | None:
     names — ``DOEFF_HY_CODE_STORE``, shared by a worker's jobs — and not under this analyzer's own directory, whose
     variable the compiling job may not have had (ki-5c1fc605c17d). Read only — the import side is the one that writes
     these trees, so this module's key (``_ExpansionKey``) stays what it decides."""
-    from doeff_hy_bytecode_guard.expansion_trees import read_import_tree
+    from doeff_hy_bytecode_guard._expansion_trees import read_import_tree
 
     imported = read_import_tree(module_name, source)
     if imported is None:
@@ -206,7 +206,7 @@ def _read_expansion(path: Path) -> _Expanded | None:
     are not, or the entry is absent or unreadable. The entry starts with the record of those macros,
     so an entry of other macros is not read past it."""
     from doeff_hy_bytecode_guard import record_is_current_here
-    from doeff_hy_bytecode_guard.records import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
     try:
         with path.open("rb") as handle:

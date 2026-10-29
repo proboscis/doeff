@@ -22,7 +22,7 @@ from doeff_hy.static_check import (
     locate,
     span_index,
 )
-from doeff_hy_bytecode_guard.records import MacroRecord
+from doeff_hy_bytecode_guard._records import MacroRecord
 
 #: 位置の検は展開が使った macro を読まないので、空の記録を持たせる。
 NOTHING_USED = MacroRecord("probe", (), (), (), (), ())

@@ -149,7 +149,7 @@ def _gensym_rule_sha256() -> str:
     import hashlib
     import inspect
 
-    from doeff_hy_bytecode_guard import loader_hooks, records
+    from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _records as records
 
     parts = (
         inspect.getsource(loader_hooks.gensym_renaming),
@@ -536,7 +536,7 @@ WRITER = """\
 import sys
 from pathlib import Path
 from doeff_hy.static_cache import CachedProjection, store
-from doeff_hy_bytecode_guard.records import MacroRecord
+from doeff_hy_bytecode_guard._records import MacroRecord
 cache, mark, rounds = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 used = MacroRecord("probe", (), (), (), (), ())
 for _ in range(rounds):
@@ -569,7 +569,7 @@ def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
 def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 失敗ケース(#3863 の (b)): 2 度の書きが同じ一時の file を使わない(直す前は <entry>.tmp で同じ — 赤)。
     from doeff_hy import static_cache
-    from doeff_hy_bytecode_guard.records import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
     written: list[str] = []
     real = Path.write_text
@@ -592,7 +592,7 @@ def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: py
 def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> None:
     # import の名を entry が持つ(引くたびに展開の text を ast で読み直さない)。名を持たない古い entry は None で読める。
     from doeff_hy import static_cache
-    from doeff_hy_bytecode_guard.records import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
     used = MacroRecord("probe", (), (), (), (), ())
     static_cache.store(tmp_path, "c" * 64, static_cache.CachedProjection("t", (), (), used, ("a", "a.b")))
@@ -634,8 +634,8 @@ def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch
 def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None:
     # 照らしごとに覚えを捨てず、SharedScope の間は同じ file の状態を 1 度だけ読む。閉じた後は覚えが残らない。
     from doeff_hy_bytecode_guard import SharedScope
-    from doeff_hy_bytecode_guard.import_scope import current_scope
-    from doeff_hy_bytecode_guard import macro_use
+    from doeff_hy_bytecode_guard._import_scope import current_scope
+    from doeff_hy_bytecode_guard import _macro_use as macro_use
 
     probe = tmp_path / "x.py"
     probe.write_text("1", encoding="utf-8")
