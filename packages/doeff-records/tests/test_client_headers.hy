@@ -1,8 +1,9 @@
 ;; 記録の client が要求に付ける見出し(#2988・#3007・#2986): 書き手の名は平文の X-Records-Writer で送り、Authorization は送らない。
 ;; 呼び手の job の名は X-Records-Caller で送る(一覧の読みの数)。行の書きの冪等キーは X-Records-Idempotency-Key で送る。
 (require doeff-hy.macros [deftest val])
-(import doeff_records.http_client [RecordsEndpoint request-headers])
-(import doeff_records.wire [CALLER-HEADER WRITER-HEADER IDEMPOTENCY-HEADER])
+(import doeff_records [RecordsEndpoint]
+        doeff_records._http_client [request-headers])
+(import doeff_records._wire [CALLER-HEADER WRITER-HEADER IDEMPOTENCY-HEADER])
 
 
 (deftest test-a-writer-is-sent-as-a-plain-header-without-a-token

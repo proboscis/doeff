@@ -1,12 +1,12 @@
 ;;; 記録の service の composition root — env と Secret の file を読み、PostgreSQL の答え手・待ち受けを組んで、入口の Program
-;;; (http_server.hy の serve-records)を本番の土台の下で走らせる。判断はここに無い(流れ = _service.hy・
-;;; 判断 = admission.hy・綴り = wire.hy・待ち受けの形 = http_server.hy)。
+;;; (_http_server.hy の serve-records)を本番の土台の下で走らせる。判断はここに無い(流れ = _service.hy・
+;;; 判断 = _admission.hy・綴り = _wire.hy・待ち受けの形 = _http_server.hy)。
 ;;;
 ;;; 割り方(#1280 — 呼び手の系が自分の process の外側〔scheduler・時計・止めの合図〕の下へ、土台の口だけを差せるように):
 ;;;   records-settings       設定の読み: 呼び手が渡す DSN の Program と env(ReadEnvironment)から、設定の値 RecordsSettings にする
 ;;;   pg-url-file-dsn        単独の入口の DSN の得方: env RECORDS_PG_URL_FILE の path の file を ReadText で読み、呼び手の dsn-of で DSN にする
 ;;;   records-serving        本体の設定: 表の宣言 schema と設定の値と置き場の選び(StoreChoice — PostgreSQL = PG-STORE・memory =
-;;;                          doeff_records.memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
+;;;                          doeff_records._memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
 ;;;   records-process        本体の組み立て — 土台 foundation を引数で受け、serve-records を土台の下で走らせる(#834 の形・会話の記録の
 ;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
@@ -14,7 +14,7 @@
 ;;;                          答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
 ;;;                          pool の thread へ)・計算の答え手(thread-pool-compute-handler — 束の読みの行の読み解きと答えの綴りの Compute を
 ;;;                          COMPUTE-WORKERS 本の pool で scheduler の thread の外で回す・ADR-DOE-RECORDS-002)の下で本体を走らせ、終われば
-;;;                          接続と pool を閉じる。索引の用意(pg.hy の頭の註)の文は別の
+;;;                          接続と pool を閉じる。索引の用意(_pg.hy の頭の註)の文は別の
 ;;;                          database の名 DDL-DATABASE の接続 1 本(文の上限なし — DDL-TIMEOUTS)へ流す。外側(scheduler・Await の橋・session の値の
 ;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
 ;;;   records-foundation     単独で起こす時の本番の土台の全部 = 外側(scheduler・Await の橋・session の値の置き場・async-time-handler
@@ -48,9 +48,9 @@
 ;;;   RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
 ;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
 ;;;   RECORDS_CALLERS                一覧の読みを呼び手ごとに数える呼び手の job の名(, で区切る・既定 = 無し — 要求の見出し X-Records-Caller の
-;;;                                  名乗りをこの名に限って数え、ほかの名乗りは undeclared に畳む。http_server.hy の頭の註の一覧の読みの数)
+;;;                                  名乗りをこの名に限って数え、ほかの名乗りは undeclared に畳む。_http_server.hy の頭の註の一覧の読みの数)
 ;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。既に在る表に足りない索引は、索引の用意の task が
-;;; CREATE INDEX CONCURRENTLY で作る(pg.hy の頭の註の「索引の用意」)。
+;;; CREATE INDEX CONCURRENTLY で作る(_pg.hy の頭の註の「索引の用意」)。
 (require doeff-hy.macros [defhandler defk <- val])
 (require doeff-hy.record [defrecord])
 (import sys)
@@ -72,9 +72,9 @@
 (import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records._values [RecordsSchema])
-(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
-(import doeff_records.pg_sql [DEFAULT-PREFIX])
-(import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
+(import doeff_records._pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
+(import doeff_records._pg_sql [DEFAULT-PREFIX])
+(import doeff_records._http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records._store_choice [StoreChoice StorePressure PressureUnread])
 
 (val MODULE-TAGS {:context "records" :role "entry"})
@@ -96,7 +96,7 @@
 (val DEFAULT-KEEP-CHANGES-SECONDS 604800.0)
 ;; SqlQuery に書く database の名(この service の置き場は 1 つ — 答え手の宣言と揃える)。
 (val DATABASE "records")
-;; 索引の用意(pg.hy の頭の註)が CREATE INDEX CONCURRENTLY と索引の用意の錠を流す database の名(同じ DSN の別の貸し出し)。接続は 1 本
+;; 索引の用意(_pg.hy の頭の註)が CREATE INDEX CONCURRENTLY と索引の用意の錠を流す database の名(同じ DSN の別の貸し出し)。接続は 1 本
 ;; (錠は session の advisory lock — 取る文と外す文を同じ接続に届ける)。文の上限は付けない: 作る時間は表の大きさで決まり、query 用の
 ;; 上限(60 秒)で切ると作りかけを残して同じ所からやり直すだけ(2026-10-18 の 13:18〜14:26 JST)。死んだ相手を見つける上限(keepalive・
 ;; 送った bytes の返事を待つ上限)は query 用と同じ。
@@ -108,7 +108,7 @@
                                     :unacknowledged-milliseconds DEFAULT-TIMEOUTS.unacknowledged-milliseconds
                                     :statement-milliseconds None
                                     :idle-transaction-milliseconds DEFAULT-TIMEOUTS.idle-transaction-milliseconds))
-;; 束の読みの行の読み解きと答えの綴り(Compute — loop_work.hy の頭の註)を回す pool の thread の数。1 頁 500 行の読み解きと綴りは CPU で
+;; 束の読みの行の読み解きと答えの綴り(Compute — _loop_work.hy の頭の註)を回す pool の thread の数。1 頁 500 行の読み解きと綴りは CPU で
 ;; 40〜125 ms(ADR-DOE-RECORDS-002 の測り)— 一覧の読みは 1 秒に 7〜18 本なので、重なる大きな頁は 2 本ほど。free-threaded の Python では
 ;; 1 本が core 1 つを使う(機体の core を食い尽くさない数)。足りない時は pool の列で待つだけで、scheduler の thread は塞がない。
 (val COMPUTE-WORKERS 4)
@@ -190,7 +190,7 @@
   {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
   "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
    1 度だけ撃つ)。宣言の索引が置き場に足りないか、宣言に無い索引(旧い形か宣言から外した表ごとの形)が置き場に残っていれば、索引の用意の task(pg.reconcile-indexes)を
-   serving と別の daemon の task で立てる — 用意の終わりも serving の生死も索引の作りと外しに縛られない(pg.hy の頭の註の「索引の用意」)。"
+   serving と別の daemon の task で立てる — 用意の終わりも serving の生死も索引の作りと外しに縛られない(_pg.hy の頭の註の「索引の用意」)。"
   (<- store (prepare-records-store DATABASE DDL-DATABASE schema prefix))
   (when store.indexes.missing
     (print (.format "記録の service: 宣言の索引 {} 本が置き場に無い — 索引の用意の task が作る({})"
@@ -238,7 +238,7 @@
   (val ddl-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-ddl"))
   (val compute-pool (ThreadPoolExecutor :max-workers COMPUTE-WORKERS :thread-name-prefix "records-compute"))
   (try
-    ;; 書きの並び(writer-gates)は、同じ process の書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる(pg.hy の locked-transaction)。
+    ;; 書きの並び(writer-gates)は、同じ process の書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる(_pg.hy の locked-transaction)。
     ;; 計算の答え手は束の読みの読み解きと綴りを compute-pool で回す(頭の註・ADR-DOE-RECORDS-002)。
     (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) writer-gates
                                (pooled-postgres-sql-handler connections pool) (pooled-postgres-sql-handler ddl-connections ddl-pool)
@@ -339,7 +339,7 @@
   {:pre [(: schema RecordsSchema) (: settings RecordsSettings) (: choice StoreChoice)] :post [(: % RecordsServing)]
    :tags {:context "records" :role "entry"}}
   "本体(serve-records)の設定を、表の宣言 schema と設定の値と置き場の選び choice から作るため。表の用意(prepare)と /readyz の問い
-   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice。
+   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records._memory の memory-store-choice。
    以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた。"
   (RecordsServing :address settings.address :schema schema
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()

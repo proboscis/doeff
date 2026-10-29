@@ -13,7 +13,8 @@
 (import doeff_records [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty StreamTailEmpty WatchCursor])
 (import doeff_records [ReadRow ListRows WatchChanges WatchEvents ReadEvents ReadStreamEnd PutRow AppendEvent])
 (import doeff_records._laws [MAKER TICKET-KEEP-SECONDS])
-(import doeff_records.pg [pg-records-handler drop-records-tables])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler effect-round-trips])
 

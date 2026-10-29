@@ -874,7 +874,7 @@ impl<'a> Narrator<'a> {
             Explain::JsonValueUse { module, uses, refusal } => (
                 format!("module {} — {} を{}", module, uses.names.join("・"), json_value_where(uses)),
                 format!(
-                    "JsonValue は素の dict・list・str … を名で包んだだけの型で、中の形を何も約束しない。使う側が手で分解して読むと、形の食い違いが読む所ごとに違う形で漏れる。JSON に触ってよいのは、defwire が生む汎用の解き手(doeff_hy.wire・doeff_records.wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけで、ほかの module(protocol・intent・core …)は、解き手が一度に形を確かめた型のある値だけを見る。{}",
+                    "JsonValue は素の dict・list・str … を名で包んだだけの型で、中の形を何も約束しない。使う側が手で分解して読むと、形の食い違いが読む所ごとに違う形で漏れる。JSON に触ってよいのは、defwire が生む汎用の解き手(doeff_hy.wire・doeff_records._wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけで、ほかの module(protocol・intent・core …)は、解き手が一度に形を確かめた型のある値だけを見る。{}",
                     match refusal {
                         JsonValueRefusal::NotListed => "この module は :wire-modules に無い。".to_string(),
                         JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: Some(dir) } => {

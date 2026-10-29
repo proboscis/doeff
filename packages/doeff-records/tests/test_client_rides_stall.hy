@@ -1,4 +1,4 @@
-;; 記録の service の HTTP の client が、置き場の止まりを 1 か所で越える形の失敗ケース(#3557 — http_client.hy の頭の註「置き場の止まり」)。
+;; 記録の service の HTTP の client が、置き場の止まりを 1 か所で越える形の失敗ケース(#3557 — _http_client.hy の頭の註「置き場の止まり」)。
 ;; 確かめること:
 ;;   要求と答えの公開 effect の全部(公開 effect の一覧 PublicEffect から変化の待ち 2 つを除いた物)が、止まりの間は置き場の戻りを待ち、
 ;;   戻った刻に同じ要求を撃ち直して入る — 一覧に effect を 1 つ足すと、この検の表に無い物として赤になる
@@ -24,11 +24,12 @@
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA LawHarness MAKER as-writer])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._service [RecordsService])
-(import doeff_records.wire [PublicEffect])
-(import doeff_records.event_source [SignalSourcePatience source-patience-handler came-back-within])
-(import doeff_records.http_client [RecordsEndpoint RequestPatience http-records-handler request-patience-handler records-unwaited])
+(import doeff_records._wire [PublicEffect])
+(import doeff_records [SignalSourcePatience source-patience-handler]
+        doeff_records._event_source [came-back-within])
+(import doeff_records [RecordsEndpoint RequestPatience http-records-handler request-patience-handler records-unwaited])
 (import tests.interpreters [LawSetup IN-PROCESS-URL in-process-records-http])
 
 (val DETAIL "記録の service が落ちている(止まりを越える検の筋書き)")

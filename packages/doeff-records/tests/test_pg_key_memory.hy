@@ -1,4 +1,4 @@
-;; PostgreSQL の置き場の鍵の覚えの外し(card ki-4ebaefac6668 — maintenance.hy の頭の註の「鍵の覚えを外す」)の、移行と前からの覚え。
+;; PostgreSQL の置き場の鍵の覚えの外し(card ki-4ebaefac6668 — _maintenance.hy の頭の註の「鍵の覚えを外す」)の、移行と前からの覚え。
 ;; 性質: 覚えた刻の列(retired_keys.remembered_at)の無い置き場(前の版が作った表)を用意すると、列が足され、前からの覚えは足した刻に
 ;; 覚えた物として刻を持つ。列の在る置き場の用意は列を足す文を流さない(表の排他の錠を起動のたびに取らない)。前からの覚えは、覚え方を
 ;; 限った列なら足した刻から長さの後の回収で外れ、外さない列(既定)の覚えは残る。
@@ -14,9 +14,10 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [EventAbsent EventRetired])
 (import doeff_records [ReadEventByKey])
-(import doeff_records.maintenance [SweepExpired Swept])
+(import doeff_records [SweepExpired Swept])
 (import doeff_records._laws [LAW-SCHEMA MAKER BEAT-MEMORY-SECONDS])
-(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables prepare-records-store])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 

@@ -80,7 +80,7 @@
        "operator の問い 2026-09-28: これにも def* の macro を持てないか — 案 A(別の macro defwire)と案 B(defrecord に :wire の節)を示し、operator は案 A を選んだ。"
        :evidence "agora-redesign #840 のコメント(2026-09-27T16:22Z)")
      (fact
-       "実測: agora-controllers の本線に JsonValue(名前を変えた素の dict — dict | list | str | int | float | bool | None)を使う file が 36・179 行。core 7 file の判断の関数が JsonValue を受けて素の dict / list を返し、protocol は JsonValue を手で分解して読む。定義は doeff_records.wire の他に TypeAlias の写しが 4 つ・その場の定義が 3 つ。"
+       "実測: agora-controllers の本線に JsonValue(名前を変えた素の dict — dict | list | str | int | float | bool | None)を使う file が 36・179 行。core 7 file の判断の関数が JsonValue を受けて素の dict / list を返し、protocol は JsonValue を手で分解して読む。定義は doeff_records._wire の他に TypeAlias の写しが 4 つ・その場の定義が 3 つ。"
        :evidence "git grep -nwE 'JsonValue|JSONValue' -- controllers services(agora-controllers・2026-09-28)・agora-redesign #840 の本文")]
   :context
     [(interpretation

@@ -15,8 +15,9 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records [PutRow])
 (import doeff_records [ExpectAny])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
-(import doeff_records.http_client [records-unwaited])
+(import doeff_records [RecordsEndpoint http-records-handler]
+        doeff_records._http_client [zero-client-metrics])
+(import doeff_records [records-unwaited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.meter_report [with-meter-report])
 

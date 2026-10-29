@@ -1,4 +1,4 @@
-;; 版の違う service と client の間の答えの綴り(wire.hy の頭の註): 答えの読み手は知らない鍵を読み捨て、書き手は鍵を足すだけにする。
+;; 版の違う service と client の間の答えの綴り(_wire.hy の頭の註): 答えの読み手は知らない鍵を読み捨て、書き手は鍵を足すだけにする。
 ;;
 ;; 凍らせた答えの見本 tests/wire-answers/<日>.json = その日の書き手が test_wire.hy の ANSWERS を綴った JSON。file は足すだけで、古い
 ;; file は直さない(1 版前の client が読む形の記録)。答えの形を変えた変更は、新しい日の file を足す(test-the-newest-frozen-answers-…)。
@@ -12,7 +12,7 @@
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_hy.json_value [JsonValue])
-(import doeff_records.wire [ANSWER-KINDS encode-answer decode-answer])
+(import doeff_records._wire [ANSWER-KINDS encode-answer decode-answer])
 (import tests.test_wire [ANSWERS])
 
 (val FROZEN-DIR (/ (. (Path __file__) parent) "wire-answers"))

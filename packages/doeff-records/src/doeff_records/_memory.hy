@@ -1,7 +1,7 @@
 ;;; memory の handler — 公開 effect 11 個と列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
-;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
+;;; 判断(期待・書きの許可・保持・索引・頁)は _admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
 ;;; 時刻は doeff-time の GetTime(仮想の時計の下では保持の期限も一瞬で来る)。
 ;;; WatchChanges と WatchEvents の待ちは読み直しの繰り返し(ポーリング)ではなく呼び鈴: 待ち手は置き場に外の promise(呼び鈴)を、待つ名
 ;;; (表か列)と一緒に掛けて眠る。書きはその名の待ち手だけを鳴らす — 行の書きと保持の刈りの行の消し = その表・追記 = その列・版の更新と
@@ -21,7 +21,7 @@
 ;;; 自分が触る物だけを回収と同じく片付けてから判じる(PostgreSQL の handler と同じ順): 行の書きは今の行が期限を過ぎていれば消して
 ;;; RowRemoved を積み、無い行として判じる(writable-row)。追記は冪等キーの単位(出来事ごとに数える列は鍵の出来事・組で数える列は鍵の組)の
 ;;; 期限を過ぎた出来事を捨てて覚えへ移してから、前の使いを引く(retire-touched-events)。触らない物は SweepExpired まで残る(読みには出ない)。
-;;; 送ってから外す列(StreamDecl.archive-before-retire — maintenance.hy の頭の註の「出来事を送ってから外す」)は、回収が外さず(期限の索引に
+;;; 送ってから外す列(StreamDecl.archive-before-retire — _maintenance.hy の頭の註の「出来事を送ってから外す」)は、回収が外さず(期限の索引に
 ;;; 項を積まない)、書きは鍵を覚えるだけで、手入れの送りが確かめた出来事だけを RetireArchivedEvents が外す(PostgreSQL の handler と同じ形)。
 ;;; 鍵の覚えの外し(StreamDecl.key-memory — _values.hy の KeyMemory の註): 覚えた刻を覚えの隣に持ち(remembered-at)、出来事が置き場を
 ;;; 去った時に、覚えを残さない列(RememberNoKeys)は覚えを外し、長さを限った列(RememberKeysFor)は外してよい刻を覚えの外しの索引
@@ -58,7 +58,7 @@
 (import doeff [EffectBase Program with-handlers])
 (import doeff_core_effects [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait Cancel])
 (import doeff_events [PublishEffect])
-(import doeff_records.event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
+(import doeff_records._event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
                                     first-seen ride-out-stall stop-source waits-beside-sources])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time [GetTimeEffect WaitWithinEffect])
@@ -71,11 +71,11 @@
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch AwaitRecordsBack ReadSourcePatience write-parts])
 (import doeff_records._faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
-(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
+(import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
 (import doeff_records._store_choice [StoreChoice])
 (import functools [partial])
-(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
+(import doeff_records._admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
                                  retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
                                  listed-row key-text canonical-json
                                  next-watch-sequence
@@ -262,7 +262,7 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
-(defn #^ object guarded [#^ MemoryStore store #^ Callable operation]  ; defk にできない: 錠の内で同期に置き場を触る関数を 1 つ呼ぶ(pg.hy の guarded と同じ役)
+(defn #^ object guarded [#^ MemoryStore store #^ Callable operation]  ; defk にできない: 錠の内で同期に置き場を触る関数を 1 つ呼ぶ(_pg.hy の guarded と同じ役)
   "operation(引数なしの関数)を置き場の錠の内で呼ぶ — 保持の刈りと操作の組を、他の thread の操作と重ねない。"
   (with [store.lock] (operation)))
 
@@ -293,7 +293,7 @@
    admission.event-expired?。組で数える列は組の最後の出来事の刻 StoredGroup.last-at で数える — 回収の GroupDue と同じ)。読みの関数
    (追記の読み・列の待ち・列の末尾)の期限の見えはこの 1 つ。送ってから外す列(StreamDecl.archive-before-retire)は、書きが冪等キーを
    覚えただけで置き場に残した出来事も期限を過ぎた物に数える(組に新しい鍵が積まれて組が作り直されても読みに戻らない — PostgreSQL の
-   handler の event-expiry の remembered と同じ・maintenance.hy の頭の註の「出来事を送ってから外す」)。"
+   handler の event-expiry の remembered と同じ・_maintenance.hy の頭の註の「出来事を送ってから外す」)。"
   (when (not (isinstance decl.retention KeepFor))
     (return False))
   (when (and decl.archive-before-retire (in #(event.stream event.idempotency-key) store.retired-keys))
@@ -977,14 +977,14 @@
 (defk memory-read-expired-events [store names ask]
   {:pre [(: store MemoryStore) (: names tuple) (: ask ReadExpiredEvents)] :post [(: % ExpiredEvents)]
    :tags {:context "records" :role "foundation"}}
-  "ReadExpiredEvents に答えるため(maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の expired-page-locked)。"
+  "ReadExpiredEvents に答えるため(_maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の expired-page-locked)。"
   (guarded store (fn [] (expired-page-locked store names ask))))
 
 
 (defk memory-retire-archived-events [store ask]
   {:pre [(: store MemoryStore) (: ask RetireArchivedEvents)] :post [(: % RetiredEvents)]
    :tags {:context "records" :role "foundation"}}
-  "RetireArchivedEvents に答えるため(maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の retire-archived-locked)。覚えた刻は外す
+  "RetireArchivedEvents に答えるため(_maintenance.hy の頭の註の「出来事を送ってから外す」— 錠の内の retire-archived-locked)。覚えた刻は外す
    今の刻(PostgreSQL の handler の pg-retire-archived-events と同じ)。"
   (<- now (GetTime))
   (val now-ms (epoch-ms now))
@@ -1278,7 +1278,7 @@
   (ReadChangeLog [after limit]
     (<- log (memory-change-log store effect))
     (resume log))
-  ;; 送ってから外す列の送りの読みと外し(maintenance.hy の頭の註の「出来事を送ってから外す」)— 届かない状態(SetStoreOutage)は列の名で当てる。
+  ;; 送ってから外す列の送りの読みと外し(_maintenance.hy の頭の註の「出来事を送ってから外す」)— 届かない状態(SetStoreOutage)は列の名で当てる。
   (ReadExpiredEvents [at after limit]
     (<- names (archived-streams store))
     (<- page (expired-or-down store names (memory-read-expired-events store names effect)))
@@ -1315,7 +1315,7 @@
 
 
 ;; --- 模擬の源(memory の置き場の書きで合図を発する — #3127)-----------------------------------------------------------------
-;; 記録の置き場の源(event_source.hy の records-signal-handler — WatchChanges・WatchEvents の long-poll と繋ぎ直し)の模擬の組の代わり。置き場の
+;; 記録の置き場の源(_event_source.hy の records-signal-handler — WatchChanges・WatchEvents の long-poll と繋ぎ直し)の模擬の組の代わり。置き場の
 ;; 呼び鈴(hang-bell — 書きが鳴らす外の promise)で起きるので、時計を使わず(poll も Delay も無い)、始まりの位置も effect を出さずに置き場から
 ;; 直に読む。呼び鈴は置き場 1 つを共有する全部の書き手が鳴らすので、別の handler の組(模擬の別の process)の書きでも起きる。合図の型と keys は
 ;; 記録の置き場の源と同じ(結び SignalTables・ChangedRow)— 組み立ての違いは土台が鍵 SignalSourceFactory に答える値だけ。

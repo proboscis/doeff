@@ -1,6 +1,6 @@
-"""http_server.hy の公開面の型(型検査のための宣言 — 実行時は http_server.hy を読む)。
+"""_http_server.hy の公開面の型(型検査のための宣言 — 実行時は _http_server.hy を読む)。
 
-http_server.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、入口の設定 RecordsServing・走っている木 ServedBuild・
+_http_server.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、入口の設定 RecordsServing・走っている木 ServedBuild・
 検の殻 start-records-server が Unknown になる(使い手 — 記録の service の入口の組み立てと模擬の土台 — の strict の型検査で、書き手に
 直せない赤が連なる・#2742)。ここで型を宣言する。表の用意の告知 RecordsPrepared と、置き場に届くかの公開の判断 store-reach
 (答えの閉じた型 StoreReach)は、使い手の土台が準備の報告に使う(#3733)。
@@ -21,7 +21,7 @@ from typing import TypeAlias
 from doeff_core_effects.http_server_effects import HttpAddress
 from doeff_core_effects import Promise
 from doeff_hy.static_types import Handler as _Handler
-from doeff_records.request_timing import MarkAt, RequestMark
+from doeff_records._request_timing import MarkAt, RequestMark
 from doeff_records._service import HttpAnswer, HttpRequest
 from doeff_records._store_choice import PressureUnread, StorePressure
 from doeff_records._values import RecordsSchema, WaitsClosed

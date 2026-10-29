@@ -60,10 +60,9 @@ from doeff_events import (
 )
 from doeff_events import PublishEffect, WaitForEvent
 from doeff_hy.frozen import FrozenMap
-from doeff_records.admission import key_from_text, key_text
+from doeff_records._admission import key_from_text, key_text
 from doeff_records import AppendEvent, PutRow, ReadRow
-from doeff_records.event_source import (
-    WATCH_SECONDS,
+from doeff_records import (
     ChangedRow,
     SignalSourcePatience,
     SignalSourceUnreachable,
@@ -71,8 +70,9 @@ from doeff_records.event_source import (
     records_signal_handler,
     source_patience_handler,
 )
+from doeff_records._event_source import WATCH_SECONDS
 from doeff_records import AdvanceStoreEpoch, SetStoreOutage
-from doeff_records.memory import MemoryStore, memory_records_handler
+from doeff_records import MemoryStore, memory_records_handler
 from doeff_records import (
     Appended,
     ExpectAny,

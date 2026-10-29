@@ -150,7 +150,7 @@
    idempotency-key = 書き 1 つの身元(冪等キー — None = 鍵の無い書き。card ki-78c6d663491f): 置き場は確定した鍵つきの書きの答えを
    WRITE-KEY-MEMORY-SECONDS の間覚え、同じ鍵・同じ本文(表・鍵・値・期待)の送り直しには期待を見ずに前の答え(Written の replayed 真)を
    返す。同じ鍵の別の本文は Refused。衝突・断りの答えは覚えない(書いていない)。HTTP の client は鍵の無い書きに要求ごとの鍵を作り、
-   届かない書きの撃ち直しに同じ鍵を付ける(http_client.hy の頭の註)。
+   届かない書きの撃ち直しに同じ鍵を付ける(_http_client.hy の頭の註)。
    書き手の名は欄に無い — handler を組む時に身元から入り、行と出来事に記録される(書きの判断には使わない・#2994)。"
   (#^ str table)
   (#^ tuple key)
@@ -391,7 +391,7 @@
 
 
 (defclass [(dataclass :frozen True)] ReadSignalSource [EffectBase]
-  "この組で記録に答えている置き場の、源の工場を問う記録の effect(#3127)。答え = SignalSourceFactory(doeff_records.event_source の型)。答えるのは記録の handler 自身(memory の
+  "この組で記録に答えている置き場の、源の工場を問う記録の effect(#3127)。答え = SignalSourceFactory(doeff_records._event_source の型)。答えるのは記録の handler 自身(memory の
    handler = 自分の置き場の書きで鳴る模擬の源・HTTP の client と PostgreSQL = RECORDS-SIGNAL-SOURCE)— 源は必ず問うた所の記録の handler の置き場に
    結ばれる。Ask にしないのは、組の内側の設定の読み手(決まった鍵だけを持ち、知らない鍵を断る)に横取りされうるため — 記録の effect なら
    設定の読み手は触らない。")
@@ -414,13 +414,13 @@
 (defclass [(dataclass :frozen True)] ReadSourcePatience [EffectBase]
   "置き場の止まりに耐える時間を問う記録の effect(#3469)— 問うのは止まりに耐える物(合図の源の止まりの拍・止まりの間も書き手の入力を
    process の中に持ち、戻りの合図で撃ち直す物 — client の要求の待ちは問わない・#3557)。答え = SignalSourcePatience
-   (doeff_records.event_source の型・0 = 耐えない)。答えるのは組み立てが置く source-patience-handler(既定の値は無い)。HTTP の client の
+   (doeff_records._event_source の型・0 = 耐えない)。答えるのは組み立てが置く source-patience-handler(既定の値は無い)。HTTP の client の
    要求を待つ時間は別の問い ReadRequestPatience(#3557 — 2 つの違う問いを 1 つに載せると、handler を並べる位置で答え分けるしかなくなる)。
    Ask にしないのは ReadSignalSource と同じ理由(組の内側の設定の読み手に横取りされうる)。")
 
 
 (defclass [(dataclass :frozen True)] ReadRequestPatience [EffectBase]
   "HTTP の client が、要求 1 つが置き場に届かない時に置き場の戻りを待つ時間を問う記録の effect(#3557)— 問うのは client だけ(要求のたびに)。
-   答え = RequestPatience(doeff_records.http_client の型・0 = 待たない)。答えるのは組み立てが client の外側に置く request-patience-handler
+   答え = RequestPatience(doeff_records._http_client の型・0 = 待たない)。答えるのは組み立てが client の外側に置く request-patience-handler
    (既定の値は無い — 置き忘れは client の最初の要求で、答え手の無い effect として名指して落ちる)。待てない組み立てと呼びは、0 秒の名のある
    答え手 records-unwaited を置いて選ぶ。合図の源が止まりに耐える時間は別の問い ReadSourcePatience。")

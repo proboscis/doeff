@@ -15,9 +15,10 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records [PutRow ReadRow])
 (import doeff_records [ExpectAny])
-(import doeff_records.wire [CLIENT-ANSWER-METRICS])
-(import doeff_records.http_client [RecordsEndpoint WireError http-records-handler zero-client-metrics])
-(import doeff_records.http_client [records-unwaited])
+(import doeff_records._wire [CLIENT-ANSWER-METRICS])
+(import doeff_records [RecordsEndpoint WireError http-records-handler]
+        doeff_records._http_client [zero-client-metrics])
+(import doeff_records [records-unwaited])
 
 ;; 台本の答え 1 つ: 届かない(接続できない)か、#(status 本文)。本文 None = JSON でない本文(間の proxy の HTML の代役)。
 (val UNREACHABLE "unreachable")

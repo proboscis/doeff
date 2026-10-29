@@ -11,7 +11,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records [ExpectAbsent])
 (import doeff_records [PutRow AppendEvent])
-(import doeff_records.memory [MemoryStore memory-records-handler hang-bell drop-bell])
+(import doeff_records [MemoryStore memory-records-handler]
+        doeff_records._memory [hang-bell drop-bell])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 
 

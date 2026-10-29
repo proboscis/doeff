@@ -1177,7 +1177,7 @@ impl ProjectRule {
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
             ProjectRule::ClassWithBehaviour => "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
-            ProjectRule::JsonValueOutsideWire => "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy.wire・doeff_records.wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
+            ProjectRule::JsonValueOutsideWire => "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy.wire・doeff_records._wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
             ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
             ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
             ProjectRule::SemanticPlainCallable => "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",

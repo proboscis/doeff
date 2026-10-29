@@ -28,17 +28,15 @@ from doeff_records import (
     WatchChanges,
     WatchEvents,
 )
-from doeff_records.event_source import (
-    READ_SIGNAL_EFFECTS,
-    SOURCE_EFFECTS,
+from doeff_records import (
     ChangedRow,
     ReadSignalSource,
     SignalTables,
     read_signal_handler,
     records_signal_handler,
-    run_signal_source,
 )
-from doeff_records.memory import MEMORY_SOURCE_EFFECTS
+from doeff_records._event_source import READ_SIGNAL_EFFECTS, SOURCE_EFFECTS, run_signal_source
+from doeff_records._memory import MEMORY_SOURCE_EFFECTS
 from doeff_time import GetTimeEffect, WaitWithinEffect
 
 from doeff import EffectGenerator, do, with_handlers
@@ -87,7 +85,7 @@ def _job() -> EffectGenerator[Moved]:
 
 
 def test_the_analyzer_reads_the_factory_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_records.event_source:records_signal_handler")
+    handler = analyze_handler("doeff_records._event_source:records_signal_handler")
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset()
     assert handler.performs is not None
@@ -95,7 +93,7 @@ def test_the_analyzer_reads_the_factory_from_its_declaration() -> None:
 
 
 def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() -> None:
-    declared = analyze_handler("doeff_records.event_source:records_signal_handler").performs
+    declared = analyze_handler("doeff_records._event_source:records_signal_handler").performs
     assert declared is not None
     around = analyze_program(_wrapped).residual_with(runs_where_performed).effect_types
     body = analyze_program(_waits).residual_with(runs_where_performed).effect_types
@@ -132,7 +130,7 @@ def _read_job() -> EffectGenerator[Moved]:
 
 def test_the_analyzer_reads_read_signal_handler_from_its_declaration() -> None:
     """解析器は read_signal_handler を宣言から読む(何にも答えず、本体の周りで READ_SIGNAL_EFFECTS を出す包み)。"""
-    handler = analyze_handler("doeff_records.event_source:read_signal_handler")
+    handler = analyze_handler("doeff_records._event_source:read_signal_handler")
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset()
     assert handler.performs is not None

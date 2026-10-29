@@ -5,7 +5,7 @@
 ;; 取った表)にも RowExclusiveLock を取りに行く。
 ;; 性質: 書きが書きの錠の中なら、用意は書きの錠を待ち(表の lock を持たずに)、deadlock にならず transaction 1 つで通る。
 ;; 性質(card ki-954c58540d0f): 既に在る置き場の用意は既に在る表の索引の文を流さない(足りない索引は索引の用意の task が CONCURRENTLY で
-;; 作る — pg.hy の頭の註)ので、表の lock を取らない。書きの錠を取らない書き(錠の外の相手)が 3 つの表に RowExclusiveLock を持ったままでも、
+;; 作る — _pg.hy の頭の註)ので、表の lock を取らない。書きの錠を取らない書き(錠の外の相手)が 3 つの表に RowExclusiveLock を持ったままでも、
 ;; 用意は待たずに transaction 1 つで通る(前の版はここで deadlock になり、40P01 の流し直しで通っていた)。
 ;; 反例: 既に在る表へ移行の transaction の中で CREATE INDEX IF NOT EXISTS を流す前の形(空の置き場の文の全部 — schema-statements)は、
 ;; 同じ書きの代役を待つ(「待たない」の判定が何も確かめずに緑になる形を外す)。
@@ -19,8 +19,8 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.pg [drop-records-tables prepare-records-store PreparedStore])
-(import doeff_records.pg_sql [writer-lock-key migrate-lock-key schema-statements])
+(import doeff_records._pg [drop-records-tables prepare-records-store PreparedStore])
+(import doeff_records._pg_sql [writer-lock-key migrate-lock-key schema-statements])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE open-postgres postgres-connections fresh-prefix run-sql
                             prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])

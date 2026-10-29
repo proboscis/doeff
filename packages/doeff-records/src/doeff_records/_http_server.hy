@@ -58,7 +58,7 @@
 ;;;     打ち、受けた刻(received-at)と同じ物差しにそろう。待ちの刻の答え手と止めの切り手(wait-stamps・closing-cuts-waits)は、待つ操作
 ;;;     (WatchChanges・WatchEvents — 記録の handler が待ちを撃つのはこの 2 つだけ)にだけ被せる。答えが決まったら、記録の操作の要求だけ、
 ;;;     帳面の刻を 1 度割って答えの見出しに載せ、送り終わりの刻で決まる区間(sent-stages)を足した区間ごとの秒
-;;;     (request_timing.hy — queue・body・decode・handler・wait・encode・send・total・woke)を records_stage_<操作>_<区間> の観測の列にし、
+;;;     (_request_timing.hy — queue・body・decode・handler・wait・encode・send・total・woke)を records_stage_<操作>_<区間> の観測の列にし、
 ;;;     doeff の計器の効果 ObserveSecondsBatch 1 回で積む(区間ごとに ObserveSeconds を撃つと 1 要求で 7〜9 回 — 書きのたびに起きた待ちの
 ;;;     要求が波で並ぶ時、その 1 本ずつの後ろに観測の往復が乗っていた・#3688)。GET /metrics が区間ごとの秒の和と数を描く。log には書かない
 ;;;     (本番の書きと待ちの要求の数で行が積もり、log の file を切り替える仕組みが無いため)
@@ -68,9 +68,9 @@
 ;;;     undeclared・名乗りの無い要求は unnamed)。表ごとの系列は起動の時に 0 で置き、呼び手 × 表の系列は最初の答えで現れる(宣言の表 ×
 ;;;     呼び手の組は数千 — 全部を 0 で置くと /metrics の本文と、数えるたびの断面の写しが重くなる)。区間の秒の系列(records_stage_*)に表の
 ;;;     名は付けない(区間 9 × 表 80 の観測の列になる — 遅い表は呼びの数と行の数から絞り、区間は操作ごとに読む)
-;;;   - scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 受けの loop・要求の task・書きの門・変化の待ちは
+;;;   - scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — _loop_work.hy の頭の註): 受けの loop・要求の task・書きの門・変化の待ちは
 ;;;     全部 1 本の scheduler の thread の上で回るので、その thread は要求の受けと順の制御と、大きさが要求の本文か 1 行で決まる計算だけを持つ。
-;;;     束の読みの行の読み解き(pg.hy の decoded-batch)と束の読みの答えの綴り(_service.hy の answer-reply)は Compute を出す。入口の
+;;;     束の読みの行の読み解き(_pg.hy の decoded-batch)と束の読みの答えの綴り(_service.hy の answer-reply)は Compute を出す。入口の
 ;;;     Program は Compute に答えない — 答え手は土台が置く(本番の土台の口 = _main.hy の records-connected の thread の pool・検の殻 =
 ;;;     start-records-server の thread の pool・台本の検と模擬 = inline-compute-handler)
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
@@ -104,14 +104,14 @@
 (import doeff_records._schema_digest [schema-digests])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey ReadBatch])
-(import doeff_records.event_source [BodyWrapper])
-(import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
+(import doeff_records._event_source [BodyWrapper])
+(import doeff_records._maintenance [maintenance-loop])
+(import doeff_records._request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
                                       lock-metric-helps])
 (import doeff_records._service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
-(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
+(import doeff_records._wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
                             operation-of server-timing-spelled])
-(import doeff_records.wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
+(import doeff_records._wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
 (import doeff_records._store_choice [StorePressure PressureUnread])
 (import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation
@@ -177,11 +177,11 @@
 ;; --- 入口の設定 -------------------------------------------------------------------------------------------------------------------
 
 (defrecord MaintenancePlan
-  "手入れの周期の設定: interval-seconds = 拍の秒・keep-seconds = 変更の列に残す秒(maintenance.hy の PruneChanges)・archive = 刈る前に
+  "手入れの周期の設定: interval-seconds = 拍の秒・keep-seconds = 変更の列に残す秒(_maintenance.hy の PruneChanges)・archive = 刈る前に
    古い変更を送る関数(keep-seconds → 答えが ArchivedThrough | Unreachable の Program — 刈りはその番号まで・None = 送らない置き場。
-   maintenance.hy の頭の註の「消す前に送る」)・archive-events = 印(StreamDecl.archive-before-retire)の列の期限を過ぎた出来事を送る
+   _maintenance.hy の頭の註の「消す前に送る」)・archive-events = 印(StreamDecl.archive-before-retire)の列の期限を過ぎた出来事を送る
    関数(出来事の頁 → 答えが EventsArchived | Unreachable の Program — 確かめた出来事だけを外す・None = 送らない。印の列を宣言した
-   置き場では要る — unsent-streams。maintenance.hy の頭の註の「出来事を送ってから外す」)。"
+   置き場では要る — unsent-streams。_maintenance.hy の頭の註の「出来事を送ってから外す」)。"
   (#^ float interval-seconds)
   (#^ float keep-seconds)
   (setv #^ (| Callable None) archive None)
@@ -460,7 +460,7 @@
   (val content-type (match answer
                       (TextAnswer :content-type declared) declared
                       (HttpAnswer) JSON-CONTENT-TYPE))
-  ;; 綴りと同じ所で作った byte 列が在れば綴り直さない(束の読みの答えは scheduler の thread の外で作る — loop_work.hy の頭の註)。
+  ;; 綴りと同じ所で作った byte 列が在れば綴り直さない(束の読みの答えは scheduler の thread の外で作る — _loop_work.hy の頭の註)。
   (val data (if (and (isinstance answer HttpAnswer) (is-not answer.data None))
                 answer.data
                 (.encode answer.body "utf-8")))
