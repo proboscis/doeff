@@ -168,6 +168,9 @@ if TYPE_CHECKING:
     from doeff_cluster.shared.intent.detached_model import ReleaseDetached as ReleaseDetached
     from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
     from doeff_cluster.shared.intent.kube_service_model import (
+        EnsureKubeIngress as EnsureKubeIngress,
+    )
+    from doeff_cluster.shared.intent.kube_service_model import (
         EnsureKubeService as EnsureKubeService,
     )
     from doeff_cluster.shared.intent.metrics_model import ReportMetrics as ReportMetrics
@@ -252,6 +255,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DrainGeneration": "doeff_cluster._sim.local",
     "DrainWorker": "doeff_cluster._sim.local",
     "EndProcess": "doeff_cluster._sim.local",
+    "EnsureKubeIngress": "doeff_cluster.shared.intent.kube_service_model",
     "EnsureKubeService": "doeff_cluster.shared.intent.kube_service_model",
     "EnvReport": "doeff_cluster.worker.intent.worker_model",
     "FailRoute": "doeff_cluster._sim.local",
