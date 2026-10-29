@@ -18,6 +18,7 @@
 (import doeff_cluster.shared.core.job_rules [content-refusal])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
+(import doeff_cluster.shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker])
@@ -2097,6 +2098,23 @@
                    (WarmOffer :key w.key :runtime-env w.runtime-env)))))
 
 
+(defk supplied-for [state worker]
+  {:pre [(: state ClusterState) (: worker str)] :post [(: % (| (get tuple #(str ...)) None))] :tags {:context "coordinator" :role "judgment"}}
+  "worker に置かれうる job(置く対象の宣言のうち、pin と効く needs が合う物 — eligible。生死・drain・空きは見ない: 今は置けなくても、
+   ほかの worker が止まれば移って来る)の宣言の :environ の、ConfigMap・Secret の参照の綴りを、重ねずに綴りの順に並べるため(heartbeat の
+   返事の supplied — worker は API server が答える間に値の写しを持ち、止まった間に移って来た job が起動できる・ADR-DOE-CLUSTER-004)。
+   名乗っていない worker には None(渡さない — 空の列を渡すと、その worker は写しを全部消す)。"
+  (setv info (.row state.workers worker))
+  (when (is info None)
+    (return None))
+  (var found (frozenset))
+  (for [job (active-jobs state)]
+    (when (eligible state job info)
+      (<- spelled tuple (supplied-spellings job.spec.environ))
+      (:= found (| found (frozenset spelled)))))
+  (tuple (sorted found)))
+
+
 (defk heartbeat-reply [state name timing [ready-instances None] [now 0] [boot None] [statuses None]]
   {:pre [(: state ClusterState) (: name str) (: timing ClusterTiming) (: ready-instances (| dict None)) (: now int) (: boot (| str None))
          (: statuses (| tuple None))]
@@ -2110,6 +2128,7 @@
   ;; draining = この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
   ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
   ;; formats = 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
+  ;; supplied = この worker に置かれうる job の参照の綴り(supplied-for — ADR-DOE-CLUSTER-004)。
   ;; revision = この返事を作った時の coordinator の版(#1933): worker は次の変化を GET /watch?after=<この版> で待つ。
   ;; keepWhenCutOff = 他へ移せない job に付ける「途絶しても動かし続けてよい」印(#2804 — keep-marked)。印を渡した事実は呼び手が
   ;; remember-keep-marks で約束として状態に残す。
@@ -2123,6 +2142,7 @@
   ;; 載せる(worker は列に在る退いた process を寿命の上限で止めない)。退いた世代への返事(superseded-reply)には載せない — その世代の
   ;; 退いた process は Pod の止まりの drain の上限(寿命の上限 + 5 分)の内で終わる。
   (val hold-row (.row state.board (semaphore-key RETIREMENT-HOLD)))
+  (<- supplied (| tuple None) (supplied-for state name))
   (var held-specs #())
   (for [spec (jobs-for state name ready-instances)]
     (<- held tuple (live-instances (if (and spec.handoff (is-not hold-row None)) hold-row.value None) now spec.name))
@@ -2134,7 +2154,7 @@
                                          kept)))
                   :tasks (tasks-for state name boot) :warm (warms-for state name now)
                   :timing timing :draining (is-not (.row state.drains name) None) :superseded False :formats (tuple ACCEPTED-FORMATS)
-                  :revision state.revision :handover-pending pending))
+                  :revision state.revision :handover-pending pending :supplied supplied))
 
 
 ;; 受け渡しで「今の世代が受け取れる」と数える recreate の job の phase(AL-D2k): 準備と検めが揃って待っている(elder-runs)か、もう

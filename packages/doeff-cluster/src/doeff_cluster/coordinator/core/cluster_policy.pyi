@@ -15,6 +15,7 @@ from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
 from doeff_cluster.shared.core.capabilities import capabilities_of as capabilities_of
 from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
+from doeff_cluster.shared.core.supplied_spelling import supplied_spellings as supplied_spellings
 from doeff_cluster.shared.core.detached_rules import task_priority_refusal as task_priority_refusal
 from doeff_cluster.shared.core.detached_rules import task_limits_refusal as task_limits_refusal
 from doeff_cluster.shared.core.detached_rules import task_limits_of as task_limits_of
@@ -525,6 +526,9 @@ def promote_prepared(tasks: Table[TaskRecord], worker: WorkerInfo) -> Table[Task
     ...
 
 def warms_for(state: ClusterState, worker: str, now: int) -> tuple:
+    ...
+
+def supplied_for(state: ClusterState, worker: str) -> _Program[tuple[str, ...] | None, object]:
     ...
 
 def heartbeat_reply(state: ClusterState, name: str, timing: ClusterTiming, ready_instances: dict | None=None, now: int=0, boot: str | None=None, statuses: tuple | None=None) -> _Program[HeartbeatReply, object]:
