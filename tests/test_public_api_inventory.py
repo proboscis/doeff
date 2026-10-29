@@ -42,7 +42,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from doeff import EffectBase, Pass, do, handler
+from doeff import DoExpr, EffectBase, Pass, Resume, WithHandlerType, do, handler
 from doeff.program import ProgramHandler
 
 
@@ -139,6 +139,24 @@ def not_a_ping_handler_for(name: str) -> ProgramHandler:
     return raw_ping
 
 
+@do
+def flow_handled():
+    return (yield WithHandlerType(ping_handler, flow()))
+
+
+def _wrap(program):
+    return ping_handler(program)
+
+
+def flow_wrapped() -> DoExpr:
+    return _wrap(flow())
+
+
+@do
+def flow_answering(effect, cont):
+    return (yield Resume(cont, 1))
+
+
 def ping_handler_with_state_dir() -> ProgramHandler:
     (Path.home() / "ping-state").mkdir()
     (Path.cwd() / "ping-scratch").mkdir()
@@ -188,7 +206,10 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("ping_handler_factory", "handler", "handler を返す関数"),
         ("ping_handler_untyped", "handler", "handler を返す関数"),
         ("raw_ping", "handler", "素の handler の関数"),
-        ("flow", "other", "program 関数"),
+        ("flow", "other", "program の helper"),
+        ("flow_handled", "other", "handler を被せる program を返す関数"),
+        ("flow_wrapped", "other", "handler を被せる program を返す関数"),
+        ("flow_answering", "other", "effect に答える program を返す関数"),
         ("size", "other", "関数"),
         ("LIMIT", "other", "定数"),
         ("SessionHandler", "unclassified", "class"),
@@ -237,6 +258,28 @@ def test_a_factory_says_whether_its_call_was_checked(
     sample: ModuleType, name: str, said: str
 ) -> None:
     """工場の行の理由が、どう呼んだか(引数なし・置き物)と、印を確かめたか・呼ぶと例外が出たかを言う。"""
+    verdict = tool._Classifier().classify(sample.__dict__[name], name)
+    assert said in verdict.reason
+
+
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        (
+            "flow",
+            "@do / defk の関数(呼ぶと program を作る)・中で handler を被せず、effect に答えない",
+        ),
+        ("flow_handled", "flow_handled が WithHandlerType を読む"),
+        ("flow_wrapped", "戻りの型 DoExpr・_wrap が ping_handler を読む"),
+        ("flow_answering", "flow_answering が Resume を読む"),
+    ],
+)
+def test_a_program_function_says_whether_it_is_a_helper(
+    sample: ModuleType, name: str, said: str
+) -> None:
+    """program を返す関数の行の理由が、helper か(中と、中で読む同じ package の関数の中で handler を被せず effect に
+    答えない)、helper を越えるなら、どの関数がどの名を読むかを言う(ADR-DOE-API-001 R18)。
+    """
     verdict = tool._Classifier().classify(sample.__dict__[name], name)
     assert said in verdict.reason
 

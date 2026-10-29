@@ -33,9 +33,14 @@ Kinds:
   or a placeholder for each parameter without a default — with HOME, the XDG dirs and the cwd
   pointed at a scratch dir, and must return a value with the marker, or a list or tuple of them
   (ADR-DOE-API-001 R3); a factory whose call raises keeps the verdict its return type gives;
-- ``other``: decided to be neither — a program function (``@do``, ``defk``), a function read as a
-  factory whose call returns a value without the marker, any other function, class, exception,
-  type, constant, macro, console script or entry point;
+- ``other``: decided to be neither — a program function (``@do``, ``defk``) or a function whose
+  return type is a program, a function read as a factory whose call returns a value without the
+  marker, any other function, class, exception, type, constant, macro, console script or entry
+  point. A function that returns a program is a program helper (form ``program の helper``) when
+  nothing its body reads — and the bodies of its own package's functions it reads, followed
+  through — installs a handler (``WithHandler``, a handler value, a handler builder or factory) or
+  answers an effect (``Resume``, ``Pass``, ``Transfer`` ...) (ADR-DOE-API-001 R18): a helper stays
+  ``other``, and the known table allows it by name in the group ``許した物 — program の helper``;
 - ``unclassified``: what the machine cannot decide — a function with no return type, or one that
   says nothing (``Any``, ``object``, a bare ``Callable``, a list of them), whose ``return``
   statements do not decide it either; a class named like an effect or a handler without being
@@ -103,6 +108,14 @@ _HANDLER_TYPE_NAMES = frozenset({"ProgramHandler", "_InstalledHandler", "Handler
 FACTORY_FORMS = frozenset({"handler を返す関数", "handler の組を返す関数"})
 #: The form of a function read as a factory whose call returns a value without the handler marker.
 NOT_A_FACTORY = "handler を返さない関数"
+#: The form of a function that returns a program which only emits effects (ADR-DOE-API-001 R18).
+PROGRAM_HELPER = "program の helper"
+#: The forms of a function that returns a program and whose body goes past a helper's.
+HELPER_INSTALLS = "handler を被せる program を返す関数"
+HELPER_ANSWERS = "effect に答える program を返す関数"
+# What a helper's body must not read, by name in doeff.program (and by name when read as an attribute).
+_INSTALL_NAMES = ("WithHandler", "WithHandlerType")
+_ANSWER_NAMES = ("Resume", "ResumeThrow", "Transfer", "TransferThrow", "Pass")
 # What a factory call may write under: pointed at a scratch dir while a factory is called.
 _HOME_VARIABLES = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")
 # The generic collections a function may return a handler stack in.
@@ -545,6 +558,13 @@ class _Classifier:
             ),
             *_doeff_hy_handler_types(),
         )
+        # What makes a program function's body go past a helper's: a value of doeff.program, and the form it gives.
+        self.helper_breaches: tuple[tuple[object, str], ...] = tuple(
+            (program_module.__dict__[name], form)
+            for names, form in ((_INSTALL_NAMES, HELPER_INSTALLS), (_ANSWER_NAMES, HELPER_ANSWERS))
+            for name in names
+            if name in program_module.__dict__
+        )
         # The calls made so far, by the factory's id (a definition shown by several modules is called once).
         self._factory_calls: dict[int, _FactoryCall] = {}
 
@@ -637,9 +657,14 @@ class _Classifier:
                 "handler", "素の handler の関数", "引数が (effect, k)(handler の印は無い)"
             )
         if _is_program_function(obj):
-            return Verdict("other", "program 関数", "@do / defk の関数(呼ぶと program を作る)")
+            return self._program_verdict(
+                function,
+                Verdict("other", "program 関数", "@do / defk の関数(呼ぶと program を作る)"),
+            )
         annotation = _return_annotation(function)
         decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
+        if decided is not None and decided.form == "program を返す関数":
+            return self._program_verdict(function, decided)
         if decided is not None:
             return decided
         if annotation is _MISSING or self._is_vague(annotation):
@@ -683,6 +708,49 @@ class _Classifier:
             f"{read.reason} だが、{how}呼ぶと {type(outcome).__name__} を返す"
             "(handler の印 _doeff_is_handler_fn が無い)",
         )
+
+    def _program_verdict(self, function: object, read: Verdict) -> Verdict:
+        """The verdict on a function that returns a program: a program helper or not (ADR-DOE-API-001 R18).
+
+        A helper's program only emits effects: nothing its body reads — and the bodies of the
+        functions of its own package it reads, followed through — installs a handler or answers an
+        effect. A body that cannot be read (not a Python function) keeps the verdict ``read`` gave.
+        """
+        if not isinstance(function, types.FunctionType):
+            return Verdict(
+                read.kind, read.form, f"{read.reason}・中を読めず、helper と確かめていない"
+            )
+        breaches = (
+            _Breach(form, current.__qualname__, name)
+            for current in _package_bodies(function)
+            for name in sorted(_code_names(current.__code__))
+            if (form := self._breach_form(name, current.__globals__.get(name, _MISSING)))
+            is not None
+        )
+        breach = next(breaches, None)
+        if breach is None:
+            return Verdict(
+                "other", PROGRAM_HELPER, f"{read.reason}・中で handler を被せず、effect に答えない"
+            )
+        return Verdict(
+            "other", breach.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
+        )
+
+    def _breach_form(self, name: str, value: object) -> str | None:
+        """The form one name a body reads gives past a helper's (``None`` when a helper may read it).
+
+        A global is read by its value — doeff's ``WithHandler`` and handler control (``Resume``,
+        ``Pass`` ...), a handler value, builder or factory; an attribute (``doeff.Resume``) by its name.
+        """
+        if value is _MISSING:
+            if name in _INSTALL_NAMES:
+                return HELPER_INSTALLS
+            return HELPER_ANSWERS if name in _ANSWER_NAMES else None
+        listed = (form for target, form in self.helper_breaches if value is target)
+        found = next(listed, None)
+        if found is not None:
+            return found
+        return HELPER_INSTALLS if self._called_kind(value) == "handler" else None
 
     def _is_vague(self, annotation: object) -> bool:
         """Whether a return type says nothing about effect or handler (``Any``, a ``Callable``, a list of them)."""
@@ -906,6 +974,58 @@ def _takes_effect_and_k(function: object) -> bool:
         and parameter.default is parameter.empty
     ]
     return len(required) == 2 and required[1].name == "k"
+
+
+@dataclass(frozen=True)
+class _Breach:
+    """What takes a program function's body past a helper's: the form it gives, who reads it, the name read."""
+
+    form: str
+    where: str
+    name: str
+
+
+def _code_names(code: types.CodeType) -> frozenset[str]:
+    """The global and attribute names a code object reads, with those of the code defined inside it."""
+    inner = (
+        _code_names(constant) for constant in code.co_consts if isinstance(constant, types.CodeType)
+    )
+    return frozenset(code.co_names).union(*inner)
+
+
+def _read_functions(function: types.FunctionType, package: str) -> Iterator[types.FunctionType]:
+    """The functions of ``package`` (the top-level import name) a function's body reads by a global name."""
+    for name in sorted(_code_names(function.__code__)):
+        value = function.__globals__.get(name, _MISSING)
+        inner = _definition(value) if value is not _MISSING else _MISSING
+        if (
+            isinstance(inner, types.FunctionType)
+            and (inner.__module__ or "").split(".")[0] == package
+        ):
+            yield inner
+
+
+def _first_each(functions: Sequence[types.FunctionType]) -> tuple[types.FunctionType, ...]:
+    """``functions`` without the repeats (by identity), in the order first seen."""
+    return tuple(
+        function
+        for index, function in enumerate(functions)
+        if all(function is not earlier for earlier in functions[:index])
+    )
+
+
+def _package_bodies(function: types.FunctionType) -> tuple[types.FunctionType, ...]:
+    """A function and the functions of its own package its body reads, followed through (each once)."""
+    package = (function.__module__ or "").split(".")[0]
+    reached: tuple[types.FunctionType, ...] = (function,)
+    frontier = reached
+    while frontier:
+        read = _first_each(
+            [each for current in frontier for each in _read_functions(current, package)]
+        )
+        frontier = tuple(each for each in read if all(each is not seen for seen in reached))
+        reached = (*reached, *frontier)
+    return reached
 
 
 @dataclass(frozen=True)
@@ -1817,7 +1937,10 @@ _METHOD_NOTES = (
     "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler・"
     "program を受けて program を返す呼べる物・handler の組か、return が handler を作る)・引数が (effect, k) の素の"
     "handler の関数。",
-    "それ以外: program 関数(@do・defk)・ほかの関数・class・例外・型・定数・macro・console script・entry point。",
+    "それ以外: program 関数(@do・defk)と戻りの型が program の関数・ほかの関数・class・例外・型・定数・macro・"
+    "console script・entry point。program を返す関数は、中(と、中で読む同じ package の関数の中)で handler を被せず"
+    "(WithHandler・handler の値・作り手・工場を読まない)effect に答えない(Resume・Pass・Transfer などを読まない)時に"
+    "形「program の helper」— 既知の表は名ごとに組「許した物 — program の helper」で許す(ADR-DOE-API-001 R18)。",
     "未分類: 戻りの型が無いか中身を言わない型(Any・object・Callable・その list)で、return の形からも決まらない関数・"
     "名が Effect か Handler で終わるのに印の無い class(とそれを返す関数)・import できない module の名。",
     "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を import の根からの相対で"

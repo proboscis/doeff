@@ -8,7 +8,8 @@
   "新しく足すしか無い名は「足した名」に、package・module・名・訳・決め(card ki-… か依頼 lt-… か利用者の発言 ci-…)を 1 行ずつ書く。",
   "組の名(分け — 直しの向き・境界の種類)は card ki-1c2bd5bea63f の資料(doeff 5b1accad6 の目録の分け — 機械の案)から写した。範囲と境界の扱いは依頼書 lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM の答え待ち。",
   "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。",
-  "組「外れ — handler を返す工場の形に直す」= 2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で中核の state() と同じ handler を返す工場として扱うと決めた名のうち、今の形(program を受けて program を返す)が工場の構造(引数なしか最小の引数で呼ぶと印 _doeff_is_handler_fn の付いた handler が返る)に合わない物。形を工場に直したら表から消す(card ki-25eecd63bc57)。maybe・result・on_raise・absent_as・scheduled は工場の形を持ったが、旧い形(program を渡す)を同じ答えの移し替えの層として残す間は戻りの型が handler か program の 2 通りで、目録が工場と判じないので残す — 旧い形を消したら表から消す(card ki-d27fd0acfe07・ki-f2c2f789f5bb・外の repo の書き換えは card ki-2caf0f53603a)。"
+  "組「外れ — handler を返す工場の形に直す」= 2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で中核の state() と同じ handler を返す工場として扱うと決めた名のうち、今の形(program を受けて program を返す)が工場の構造(引数なしか最小の引数で呼ぶと印 _doeff_is_handler_fn の付いた handler が返る)に合わない物。形を工場に直したら表から消す(card ki-25eecd63bc57)。maybe・result・on_raise・absent_as・scheduled は工場の形を持ったが、旧い形(program を渡す)を同じ答えの移し替えの層として残す間は戻りの型が handler か program の 2 通りで、目録が工場と判じないので残す — 旧い形を消したら表から消す(card ki-d27fd0acfe07・ki-f2c2f789f5bb・外の repo の書き換えは card ki-2caf0f53603a)。",
+  "組「許した物 — program の helper」= 決まりが名ごとに見せてよいと許した program の helper(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)。test は、この組の名の目録の形が program の helper でなければ赤にする(card ki-f20b18c2aad9)。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -11863,17 +11864,8 @@
      ]
     },
     "境界 — combinator(program を包む関数)": {
-     "doeff_core_effects.aiohttp_ws_client": [
-      "closing_links"
-     ],
      "doeff_core_effects.apart_call": [
       "run_apart"
-     ],
-     "doeff_core_effects.scripted_ws_client": [
-      "closing_links"
-     ],
-     "doeff_core_effects.ws_client_effects": [
-      "closing_links"
      ]
     },
     "境界 — effect の値の型": {
@@ -12516,6 +12508,17 @@
      ],
      "doeff_core_effects.sql_transaction": [
       "SqlTransactionMisuse"
+     ]
+    },
+    "許した物 — program の helper": {
+     "doeff_core_effects.aiohttp_ws_client": [
+      "closing_links"
+     ],
+     "doeff_core_effects.scripted_ws_client": [
+      "closing_links"
+     ],
+     "doeff_core_effects.ws_client_effects": [
+      "closing_links"
      ]
     }
    }
@@ -17381,16 +17384,6 @@
       "doeff_traverse.helpers"
      ]
     },
-    "境界 — combinator(program を包む関数)": {
-     "doeff_traverse": [
-      "sequence",
-      "try_call"
-     ],
-     "doeff_traverse.helpers": [
-      "sequence",
-      "try_call"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_traverse": [
       "Collection"
@@ -17432,6 +17425,16 @@
      "doeff_traverse.handlers": [
       "ItemOutcomeNotPassedError"
      ]
+    },
+    "許した物 — program の helper": {
+     "doeff_traverse": [
+      "sequence",
+      "try_call"
+     ],
+     "doeff_traverse.helpers": [
+      "sequence",
+      "try_call"
+     ]
     }
    }
   },
@@ -17456,13 +17459,11 @@
     "境界 — combinator(program を包む関数)": {
      "doeff_validation": [
       "check",
-      "perform",
-      "validate"
+      "perform"
      ],
      "doeff_validation.api": [
       "check",
-      "perform",
-      "validate"
+      "perform"
      ]
     },
     "境界 — effect の値の型": {
@@ -17516,6 +17517,14 @@
      ],
      "doeff_validation.failures": [
       "ValidationException"
+     ]
+    },
+    "許した物 — program の helper": {
+     "doeff_validation": [
+      "validate"
+     ],
+     "doeff_validation.api": [
+      "validate"
      ]
     }
    }
