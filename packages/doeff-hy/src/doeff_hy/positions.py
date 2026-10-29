@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.positions -> doeff_hy._positions
+# moved-submodule-shim-names doeff_hy.positions:
+#   locate_synthesized
 """Moved: ``doeff_hy.positions`` is now ``doeff_hy._positions`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_docker.effects -> doeff_docker._effects
+# moved-submodule-shim-names doeff_docker.effects:
+#   Copy DockerBuild DockerRun Expose From ImagePush Run SetEnv ShellRun ShellRunResult Workdir
 """Moved: ``doeff_docker.effects`` is now ``doeff_docker._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

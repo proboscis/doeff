@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.cache_policy -> doeff_core_effects._cache_policy
+# moved-submodule-shim-names doeff_core_effects.cache_policy:
+#   CacheLifecycle CachePolicy CacheStorage ensure_cache_policy
 """Moved: ``doeff_core_effects.cache_policy`` is now ``doeff_core_effects._cache_policy`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,14 @@
 # moved-submodule-shim: doeff_time.effects -> doeff_time._effects
+# moved-submodule-shim-names doeff_time.effects:
+#   Delay DelayEffect GetMonotonic GetMonotonicEffect GetTime GetTimeEffect RaceOutcome RaceWithin
+#   RaceWithinEffect ScheduleAt ScheduleAtEffect SetTime SetTimeEffect TicksOutcome WaitTicks
+#   WaitTicksEffect WaitUntil WaitUntilEffect WaitWithin WaitWithinEffect delay get_monotonic
+#   get_time schedule_at set_time wait_until wait_within
+# moved-submodule-shim-names doeff_time.effects.time:
+#   Delay DelayEffect GetMonotonic GetMonotonicEffect GetTime GetTimeEffect RaceOutcome RaceWithin
+#   RaceWithinEffect ScheduleAt ScheduleAtEffect SetTime SetTimeEffect TicksOutcome WaitTicks
+#   WaitTicksEffect WaitUntil WaitUntilEffect WaitWithin WaitWithinEffect delay
+#   ensure_aware_datetime get_monotonic get_time schedule_at set_time wait_until wait_within
 """Moved: ``doeff_time.effects`` is now ``doeff_time._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

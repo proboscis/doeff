@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_secret.handlers -> doeff_secret._handlers
+# moved-submodule-shim-names doeff_secret.handlers:
+#   GetSecret ProtocolHandler env_var_handler env_var_handlers
 """Moved: ``doeff_secret.handlers`` is now ``doeff_secret._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

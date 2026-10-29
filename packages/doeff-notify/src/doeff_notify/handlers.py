@@ -1,4 +1,13 @@
 # moved-submodule-shim: doeff_notify.handlers -> doeff_notify._handlers
+# moved-submodule-shim-names doeff_notify.handlers:
+#   NotificationCapture collected_notifications console_handler log_handler testing_handler
+# moved-submodule-shim-names doeff_notify.handlers.log:
+#   log_handler
+# moved-submodule-shim-names doeff_notify.handlers.stdout:
+#   console_handler
+# moved-submodule-shim-names doeff_notify.handlers.testing:
+#   NotificationCapture ProtocolHandler build_testing_handler collected_notifications
+#   testing_handler
 """Moved: ``doeff_notify.handlers`` is now ``doeff_notify._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

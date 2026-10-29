@@ -26,9 +26,8 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
-(import doeff_core_effects.scripted_http_server [scripted-http-server])
-(import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived
-                                                HttpRespond HttpScript ReadHttpServed ScriptedBody])
+(import doeff_core_effects [scripted-http-server])
+(import doeff_core_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
 (import doeff_records [MemoryStore memory-records-handler])

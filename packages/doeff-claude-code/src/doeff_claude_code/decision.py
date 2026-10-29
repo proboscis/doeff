@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_claude_code.decision -> doeff_claude_code._decision
+# moved-submodule-shim-names doeff_claude_code.decision:
+#   ClaudeTurn ForkSession FreshSession Launch LentCredential Refuse ResumeSession Reuse
+#   SessionIdInUse SessionNotFound SessionView StartDecision TurnInFlight credential_due retire_time
+#   start_decision
 """Moved: ``doeff_claude_code.decision`` is now ``doeff_claude_code._decision`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

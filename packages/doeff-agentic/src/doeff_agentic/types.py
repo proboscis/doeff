@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_agentic.types -> doeff_agentic._types
+# moved-submodule-shim-names doeff_agentic.types:
+#   AgentConfig AgentInfo AgentStatus AgenticEndOfEvents AgenticEnvironmentHandle
+#   AgenticEnvironmentType AgenticEvent AgenticMessage AgenticMessageHandle AgenticSessionHandle
+#   AgenticSessionStatus AgenticWorkflowHandle AgenticWorkflowStatus WatchEventType WatchUpdate
+#   WorkflowInfo WorkflowStatus
 """Moved: ``doeff_agentic.types`` is now ``doeff_agentic._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

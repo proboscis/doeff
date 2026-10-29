@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_records.principals -> doeff_records._principals
+# moved-submodule-shim-names doeff_records.principals:
+#   ANONYMOUS MODULE_TAGS Principal writer_of
 """Moved: ``doeff_records.principals`` is now ``doeff_records._principals`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

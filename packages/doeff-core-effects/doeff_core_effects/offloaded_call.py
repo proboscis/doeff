@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.offloaded_call -> doeff_core_effects._offloaded_call
+# moved-submodule-shim-names doeff_core_effects.offloaded_call:
+#   CreateExternalPromise Delivered Handoff MODULE_TAGS NOT_DELIVERED ReusedThreads
+#   TaskCancelledError ThreadPerCall Wait keep_going keep_nothing offloaded run_detached
 """Moved: ``doeff_core_effects.offloaded_call`` is now ``doeff_core_effects._offloaded_call`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

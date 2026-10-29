@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agents.mcp_server -> doeff_agents._mcp_server
+# moved-submodule-shim-names doeff_agents.mcp_server:
+#   McpToolRequest McpToolServer PROTOCOL_VERSION SERVER_INFO TOOL_DISPATCH_WAKEUP_TIMEOUT
+#   TOOL_RESPONSE_TIMEOUT TOOL_VM_TIMEOUT log
 """Moved: ``doeff_agents.mcp_server`` is now ``doeff_agents._mcp_server`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

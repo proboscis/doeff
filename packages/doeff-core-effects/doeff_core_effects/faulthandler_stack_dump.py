@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.faulthandler_stack_dump -> doeff_core_effects._faulthandler_stack_dump
+# moved-submodule-shim-names doeff_core_effects.faulthandler_stack_dump:
+#   ArmStackDump DisarmStackDump MINIMUM_SECONDS MODULE_TAGS ReadStackDumps StackDumpLedger
+#   faulthandler_stack_dump_handler stack_dumps_at
 """Moved: ``doeff_core_effects.faulthandler_stack_dump`` is now ``doeff_core_effects._faulthandler_stack_dump`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

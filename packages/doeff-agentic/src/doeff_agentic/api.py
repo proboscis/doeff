@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agentic.api -> doeff_agentic._api
+# moved-submodule-shim-names doeff_agentic.api:
+#   AgenticAPI
 """Moved: ``doeff_agentic.api`` is now ``doeff_agentic._api`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

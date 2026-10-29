@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_conductor.monitor_app -> doeff_conductor._monitor_app
+# moved-submodule-shim-names doeff_conductor.monitor_app:
+#   MonitorApp NodeView STATUS_PENDING capture_agent_output node_situation node_status_map run_rows
 """Moved: ``doeff_conductor.monitor_app`` is now ``doeff_conductor._monitor_app`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

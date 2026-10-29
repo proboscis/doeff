@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_openai.chat -> doeff_openai._chat
+# moved-submodule-shim-names doeff_openai.chat:
+#   StreamChunk TokenUsage calculate_cost chat_completion chat_completion_async count_message_tokens
+#   count_tokens get_openai_client process_stream_chunks simple_chat track_api_call
 """Moved: ``doeff_openai.chat`` is now ``doeff_openai._chat`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

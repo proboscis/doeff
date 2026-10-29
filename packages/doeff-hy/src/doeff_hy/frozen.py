@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy.frozen -> doeff_hy._frozen
+# moved-submodule-shim-names doeff_hy.frozen:
+#   FrozenJson FrozenMap JSON_LEAF_TYPES V deep_frozen_map freeze_json freeze_json_text
+#   frozen_json_object frozen_map_of hyx_deeply_frozenXquestion_markX thaw_json
 """Moved: ``doeff_hy.frozen`` is now ``doeff_hy._frozen`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

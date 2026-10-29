@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agentic.visual_interceptor -> doeff_agentic._visual_interceptor
+# moved-submodule-shim-names doeff_agentic.visual_interceptor:
+#   VisualInterceptorConfig create_visual_interceptor visual_logging_console with_visual_logging
 """Moved: ``doeff_agentic.visual_interceptor`` is now ``doeff_agentic._visual_interceptor`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

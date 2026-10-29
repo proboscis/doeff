@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_google_secret_manager.handlers -> doeff_google_secret_manager._handlers
+# moved-submodule-shim-names doeff_google_secret_manager.handlers:
+#   mock_handlers production_handlers
+# moved-submodule-shim-names doeff_google_secret_manager.handlers.production:
+#   ProtocolHandler production_handlers
+# moved-submodule-shim-names doeff_google_secret_manager.handlers.testing:
+#   mock_handlers
 """Moved: ``doeff_google_secret_manager.handlers`` is now ``doeff_google_secret_manager._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

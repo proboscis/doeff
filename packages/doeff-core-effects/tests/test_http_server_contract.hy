@@ -20,12 +20,8 @@
 (require doeff-hy.macros [defk deftest <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
-(import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead
-                                                HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody
-                                                HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport
-                                                WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach
-                                                WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer WsShortcut
-                                                WsShortcutAhead WsShortcutCarried])
+(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsTextArrived HttpProbe HttpProbeAnswer WsShortcut]
+        doeff_core_effects._http_server_effects [WS-CUT-REASON WS-REFUSAL-TEXT WsShortcutAhead WsShortcutCarried])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
 (val SHUTDOWN-REASON "検が閉じた")

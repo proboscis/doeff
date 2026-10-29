@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_conductor.git_workspace -> doeff_conductor._git_workspace
+# moved-submodule-shim-names doeff_conductor.git_workspace:
+#   GitCommandError GitCommandResult append_git_output conflicted_files get_current_commit
+#   get_default_branch get_repo_root run_git
 """Moved: ``doeff_conductor.git_workspace`` is now ``doeff_conductor._git_workspace`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

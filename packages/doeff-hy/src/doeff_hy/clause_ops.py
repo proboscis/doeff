@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy.clause_ops -> doeff_hy._clause_ops
+# moved-submodule-shim-names doeff_hy.clause_ops:
+#   CLAUSE_OPS ClauseOp Ending alias_symbol clause_op continuation_symbol effect_symbol import_form
+#   linter_table_json named_op node_names ops_ending static_view_enabled
 """Moved: ``doeff_hy.clause_ops`` is now ``doeff_hy._clause_ops`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

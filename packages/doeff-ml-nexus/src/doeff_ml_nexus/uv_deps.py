@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_ml_nexus.uv_deps -> doeff_ml_nexus._uv_deps
+# moved-submodule-shim-names doeff_ml_nexus.uv_deps:
+#   LocalDep find_local_deps rewrite_pyproject_for_container rewrite_uv_lock_for_container
 """Moved: ``doeff_ml_nexus.uv_deps`` is now ``doeff_ml_nexus._uv_deps`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

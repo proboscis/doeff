@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_conductor.interpreters -> doeff_conductor._interpreters
+# moved-submodule-shim-names doeff_conductor.interpreters:
+#   InterpreterConstant plan_interpreter production_interpreter validation_interpreter
 """Moved: ``doeff_conductor.interpreters`` is now ``doeff_conductor._interpreters`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_codex.process -> doeff_codex._process
+# moved-submodule-shim-names doeff_codex.process:
+#   CUT_HEAD_BYTES CodexProcess CutLine EOF_GRACE_SECONDS LINE_CAP_BYTES LOG MODULE_TAGS
+#   READ_CHUNK_BYTES STDERR_TAIL_LINES StdinWriter TERM_GRACE_SECONDS
 """Moved: ``doeff_codex.process`` is now ``doeff_codex._process`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

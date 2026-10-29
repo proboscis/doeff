@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_openrouter.effects -> doeff_openrouter._effects
+# moved-submodule-shim-names doeff_openrouter.effects:
+#   RouterChat RouterStreamingChat RouterStructuredOutput
+# moved-submodule-shim-names doeff_openrouter.effects.chat:
+#   RouterChat RouterStreamingChat
+# moved-submodule-shim-names doeff_openrouter.effects.structured:
+#   RouterStructuredOutput
 """Moved: ``doeff_openrouter.effects`` is now ``doeff_openrouter._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

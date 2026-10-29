@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_claude_judge.wire -> doeff_claude_judge._wire
+# moved-submodule-shim-names doeff_claude_judge.wire:
+#   BLOCK_SEPARATOR CHOICE_HEAD ClaudeQuery MEDIA_TYPES MalformedAnswer NOUL_HEAD QueryImage
+#   STATE_TAG SUPPORTED_KINDS SYSTEM TAG_NAME UserPart parse prepare state_text
 """Moved: ``doeff_claude_judge.wire`` is now ``doeff_claude_judge._wire`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

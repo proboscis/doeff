@@ -1,4 +1,21 @@
 # moved-submodule-shim: doeff_agents.adapters -> doeff_agents._adapters
+# moved-submodule-shim-names doeff_agents.adapters:
+#   AgentAdapter AgentType ClaudeAdapter CodexAdapter GeminiAdapter InjectionMethod LaunchConfig
+#   LaunchParams
+# moved-submodule-shim-names doeff_agents.adapters.base:
+#   AgentAdapter AgentSessionLifecycle AgentType InjectionMethod IoGenerator LaunchConfig
+#   LaunchParams PreLaunchAdapter cli_available which_executable
+# moved-submodule-shim-names doeff_agents.adapters.claude:
+#   AgentType CLAUDE_SCREEN_READER_READY_PATTERN ClaudeAdapter InjectionMethod IoGenerator
+#   LaunchParams MISSING_CLAUDE_JSON UNAUTHENTICATED_CLAUDE_JSON as_bool as_optional_str as_str
+#   authenticated_account claude_pre_launch cli_available home_path logger make_dirs path_exists
+#   read_text write_text
+# moved-submodule-shim-names doeff_agents.adapters.codex:
+#   AgentType CODEX_READY_PATTERN CodexAdapter InjectionMethod IoGenerator LaunchParams
+#   as_optional_str cli_available codex_config_path make_dirs read_text toml_quoted_key
+#   toml_quoted_string trust_workspace_in_codex_home trusted_config_text write_text
+# moved-submodule-shim-names doeff_agents.adapters.gemini:
+#   AgentType GeminiAdapter InjectionMethod LaunchParams cli_available
 """Moved: ``doeff_agents.adapters`` is now ``doeff_agents._adapters`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

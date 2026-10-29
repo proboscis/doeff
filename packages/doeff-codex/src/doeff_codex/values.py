@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_codex.values -> doeff_codex._values
+# moved-submodule-shim-names doeff_codex.values:
+#   ApprovalPolicy CodexEvent CodexHome CodexImage CodexInput CodexLine CodexSessionSpec CodexTurn
+#   FreshThread MODULE_TAGS ResumeThread SandboxMode
 """Moved: ``doeff_codex.values`` is now ``doeff_codex._values`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_docker.compose -> doeff_docker._compose
+# moved-submodule-shim-names doeff_docker.compose:
+#   with_handlers
 """Moved: ``doeff_docker.compose`` is now ``doeff_docker._compose`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

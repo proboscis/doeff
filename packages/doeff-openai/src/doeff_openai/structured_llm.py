@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_openai.structured_llm -> doeff_openai._structured_llm
+# moved-submodule-shim-names doeff_openai.structured_llm:
+#   gpt4o_structured gpt5_nano_structured gpt5_structured is_gpt5_model
+#   requires_max_completion_tokens structured_llm__openai
 """Moved: ``doeff_openai.structured_llm`` is now ``doeff_openai._structured_llm`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_claude_code.print_once -> doeff_claude_code._print_once
+# moved-submodule-shim-names doeff_claude_code.print_once:
+#   AccountLimitHit ClaudePrintOnce DETAIL_CHARS PRINT_THREADS PrintAnswered PrintFailed
+#   PrintLimited PrintProcess PrintTimedOut RanPrint TurnResult WORK_DIR_PREFIX classify_record
+#   claude_print_handler close_credential_home elapsed_ms_since failed_detail limit_hit_after
+#   limit_in_stream open_credential_home parse_record print_once print_once_argv print_once_env
+#   print_once_stdin print_outcome run_print_once stderr_tail_within
 """Moved: ``doeff_claude_code.print_once`` is now ``doeff_claude_code._print_once`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

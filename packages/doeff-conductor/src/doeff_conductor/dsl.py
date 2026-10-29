@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_conductor.dsl -> doeff_conductor._dsl
+# moved-submodule-shim-names doeff_conductor.dsl:
+#   AgentCall AgentSpec ArtifactSpec BindSpec BindingInfo ExpandedNode ExpandedWorkflow FieldRef
+#   ForbiddenSpec GateCall GateSpec LoopSpec MergeCall MergeSpec OksProjection ParallelForSpec
+#   ParallelSpec PhaseSpec PromptExpr RandomCall RandomSpec RawNodeSpec Ref TimeCall TimeSpec
+#   WorkflowExpansionError WorkflowSpec WorkspaceCall WorkspaceSpec agent agent_bang artifact ask
+#   bind defphase defworkflow deref field gate gate_bang local loop merge merge_bang oks parallel
+#   parallel_for pipeline prompt random_bang random_value raw_node ref reset_workspace_occurrences
+#   time time_bang workspace workspace_bang
 """Moved: ``doeff_conductor.dsl`` is now ``doeff_conductor._dsl`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

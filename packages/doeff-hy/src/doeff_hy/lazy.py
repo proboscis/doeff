@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.lazy -> doeff_hy._lazy
+# moved-submodule-shim-names doeff_hy.lazy:
+#   LazyCell LazyInit MODULE_LAZIES ModuleLazy module_getattr module_lazy_value with_module_lazy
 """Moved: ``doeff_hy.lazy`` is now ``doeff_hy._lazy`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

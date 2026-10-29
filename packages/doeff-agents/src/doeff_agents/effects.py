@@ -1,4 +1,58 @@
 # moved-submodule-shim: doeff_agents.effects -> doeff_agents._effects
+# moved-submodule-shim-names doeff_agents.effects:
+#   AgentAccountLimit AgentAccountRefusal AgentAttemptExhaustedError AgentCallUsageEvent
+#   AgentCapabilityUnsupportedError AgentCompactionEndedEvent AgentCompactionEvent
+#   AgentCompactionStartedEvent AgentDeadlineExceededError AgentEffect AgentError AgentEvent
+#   AgentEventPage AgentHookEvent AgentInputFateEvent AgentLaunchError AgentModelRefusal
+#   AgentNotAvailableError AgentProviderCapacity AgentReadyTimeoutError AgentSessionLifecycle
+#   AgentSessionQuery AgentSessionSnapshot AgentSpec AgentStopHookFeedbackEvent
+#   AgentSubagentCallUsageEvent AgentTask AgentTextDeltaEvent AgentTextEvent AgentThinkingDeltaEvent
+#   AgentThinkingStartedEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
+#   AgentToolResultEvent AgentToolUseEvent AgentTurnCompleted AgentTurnEnd AgentTurnEndEvent
+#   AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentType
+#   AgentValidationErrorKind AgentValidationFailure AttachAgentSession AttachAgentSessionEffect
+#   AwaitOutcome AwaitResult AwaitResultEffect AwaitStatus CancelAgentSession
+#   CancelAgentSessionEffect Capture CaptureEffect CleanupAgentSession CleanupAgentSessionEffect
+#   CodexTurnCredential CompactionOutcome CompactionTrigger EventRecord Events EventsEffect
+#   ExportContextEffect FollowUp FollowUpEffect GetAgentSession GetAgentSessionEffect
+#   HandlerMadeContextId HomeTurnCredential InputFateState InputImage Interrupt InterruptEffect
+#   JSONSchema Launch LaunchEffect LaunchSession LaunchSessionEffect ListAgentSessions
+#   ListAgentSessionsEffect Monitor MonitorEffect NamedContextId NoTurnInFlightError Observation
+#   ObserveAgentSession ObserveAgentSessionEffect PutAgentSession PutAgentSessionEffect RecordStep
+#   RedeemTurnCredentialEffect ReleaseSession ReleaseSessionEffect ReplaceSessionCredential
+#   ReplaceSessionCredentialEffect ReplaceSessionCredentialOutcome ReplacementCredentialUnavailable
+#   ResumeTargetNotFoundError Send SendEffect SessionAlreadyExistsError SessionCredentialReplaced
+#   SessionHandle SessionNotFoundError SessionOnHomeCredential SessionProcessNotLive SessionStatus
+#   Stop StopEffect StopSession StopSessionEffect TranscriptRef TurnCredential
+#   TurnCredentialUnavailable TurnCredentialUnavailableError TurnInFlightError TurnInputMode TurnRef
+#   WarmSession WarmSessionEffect agent
+# moved-submodule-shim-names doeff_agents.effects.agent:
+#   AgentAccountLimit AgentAccountRefusal AgentAttemptExhaustedError AgentCallUsageEvent
+#   AgentCapabilityUnsupportedError AgentCompactionEndedEvent AgentCompactionEvent
+#   AgentCompactionStartedEvent AgentDeadlineExceededError AgentEffect AgentEffectBase AgentError
+#   AgentEvent AgentEventPage AgentHookEvent AgentInputFateEvent AgentLaunchError AgentModelRefusal
+#   AgentNotAvailableError AgentProviderCapacity AgentReadyTimeoutError AgentSessionLifecycle
+#   AgentSessionQuery AgentSessionSnapshot AgentSpec AgentStopHookFeedbackEvent
+#   AgentSubagentCallUsageEvent AgentTask AgentTextDeltaEvent AgentTextEvent AgentThinkingDeltaEvent
+#   AgentThinkingStartedEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
+#   AgentToolResultEvent AgentToolUseEvent AgentTurnCompleted AgentTurnEnd AgentTurnEndEvent
+#   AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentType
+#   AgentValidationErrorKind AgentValidationFailure AttachAgentSession AttachAgentSessionEffect
+#   AwaitOutcome AwaitResult AwaitResultEffect AwaitStatus CancelAgentSession
+#   CancelAgentSessionEffect Capture CaptureEffect CleanupAgentSession CleanupAgentSessionEffect
+#   CodexTurnCredential CompactionOutcome CompactionTrigger EventRecord Events EventsEffect
+#   ExportContextEffect FollowUp FollowUpEffect GetAgentSession GetAgentSessionEffect
+#   HandlerMadeContextId HomeTurnCredential InputFateState InputImage Interrupt InterruptEffect
+#   JSONSchema Launch LaunchEffect LaunchSession LaunchSessionEffect ListAgentSessions
+#   ListAgentSessionsEffect Monitor MonitorEffect NamedContextId NoTurnInFlightError Observation
+#   ObserveAgentSession ObserveAgentSessionEffect PutAgentSession PutAgentSessionEffect RecordStep
+#   RedeemTurnCredentialEffect ReleaseSession ReleaseSessionEffect ReplaceSessionCredential
+#   ReplaceSessionCredentialEffect ReplaceSessionCredentialOutcome ReplacementCredentialUnavailable
+#   ResumeTargetNotFoundError Send SendEffect SessionAlreadyExistsError SessionCredentialReplaced
+#   SessionHandle SessionNotFoundError SessionOnHomeCredential SessionProcessNotLive SessionStatus
+#   Stop StopEffect StopSession StopSessionEffect TranscriptRef TurnCredential
+#   TurnCredentialUnavailable TurnCredentialUnavailableError TurnInFlightError TurnInputMode TurnRef
+#   WarmSession WarmSessionEffect agent
 """Moved: ``doeff_agents.effects`` is now ``doeff_agents._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

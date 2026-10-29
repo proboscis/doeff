@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_ml_nexus.runner -> doeff_ml_nexus._runner
+# moved-submodule-shim-names doeff_ml_nexus.runner:
+#   RUNNER_INPUT_PATH_KEY RUNNER_OUTPUT_PATH_KEY default_serializer get_exchange_paths p_run
+#   resolve_runner_env run_from_file runner_interpreter
 """Moved: ``doeff_ml_nexus.runner`` is now ``doeff_ml_nexus._runner`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

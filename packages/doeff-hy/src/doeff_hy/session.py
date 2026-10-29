@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.session -> doeff_hy._session
+# moved-submodule-shim-names doeff_hy.session:
+#   session_key
 """Moved: ``doeff_hy.session`` is now ``doeff_hy._session`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

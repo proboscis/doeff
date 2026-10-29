@@ -1,4 +1,26 @@
 # moved-submodule-shim: doeff_events.effects -> doeff_events._effects
+# moved-submodule-shim-names doeff_events.effects:
+#   AckAnnouncement Announce Announcement ArmTimer ArmTimerEffect ArmedTimer ArmedTimers
+#   ArmedTimersEffect AwaitBrokerBack BrokerPatience BrokerUnreachable ChannelSubscription
+#   CloseFileWatch CloseSubscription DisarmTimer DisarmTimerEffect FileWatch FilesChanged
+#   NextAnnouncement NextFileChanges ProbeBroker Publish PublishEffect PublishGap PublishGapEffect
+#   ReadBrokerPatience SourceFailed SourceMissed SourceResumed SourceStalled SourceStarted
+#   StopArrived SubscribeChannels TimerFired WaitForEvent WaitForEventEffect WaitForEvents
+#   WaitForEventsEffect WatchFiles WatchRefused publish publish_effect_type publish_gap
+#   wait_for_event wait_for_events
+# moved-submodule-shim-names doeff_events.effects.events:
+#   Publish PublishEffect PublishGap PublishGapEffect SourceFailed SourceResumed SourceStalled
+#   SourceStarted StopArrived WaitForEvent WaitForEventEffect WaitForEvents WaitForEventsEffect
+#   publish publish_effect_type publish_gap wait_for_event wait_for_events
+# moved-submodule-shim-names doeff_events.effects.files:
+#   CloseFileWatch FileWatch FilesChanged NextFileChanges WatchFiles WatchRefused
+# moved-submodule-shim-names doeff_events.effects.notices:
+#   AckAnnouncement Announce Announcement AwaitBrokerBack BrokerPatience BrokerUnreachable
+#   ChannelSubscription CloseSubscription KEPT_REDELIVERY_SECONDS NextAnnouncement ProbeBroker
+#   ReadBrokerPatience SubscribeChannels
+# moved-submodule-shim-names doeff_events.effects.timers:
+#   ArmTimer ArmTimerEffect ArmedTimer ArmedTimers ArmedTimersEffect DisarmTimer DisarmTimerEffect
+#   TimerFired
 """Moved: ``doeff_events.effects`` is now ``doeff_events._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

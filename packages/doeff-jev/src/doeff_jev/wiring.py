@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_jev.wiring -> doeff_jev._wiring
+# moved-submodule-shim-names doeff_jev.wiring:
+#   DEFAULT_CACHE_DB DEFAULT_JOURNAL JevTarget durable_cache jev_handler jev_memo_handler
+#   journal_handler judge_stack target_from_process_environment
 """Moved: ``doeff_jev.wiring`` is now ``doeff_jev._wiring`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

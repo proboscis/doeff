@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_core_effects.meter_effects -> doeff_core_effects._meter_effects
+# moved-submodule-shim-names doeff_core_effects.meter_effects:
+#   CountMetric EMPTY_METER MeterBucket MeterSettings MeterSnapshot NAME_OF_PAIR ObserveSeconds
+#   ObserveSecondsBatch ReadMeter SecondsObservation SecondsTotal SetGauge counted gauged
+#   grouped_in_order metered observed observed_batch
 """Moved: ``doeff_core_effects.meter_effects`` is now ``doeff_core_effects._meter_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

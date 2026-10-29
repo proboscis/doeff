@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_docker.handlers -> doeff_docker._handlers
+# moved-submodule-shim-names doeff_docker.handlers:
+# moved-submodule-shim-names doeff_docker.handlers.docker:
+#   DockerBuild ImagePush ShellRun docker_build_handler image_push_handler
+# moved-submodule-shim-names doeff_docker.handlers.dockerfile:
+#   Copy Expose From Run SetEnv Workdir collect_dockerfile dockerfile_collector_handler
+#   render_dockerfile
+# moved-submodule-shim-names doeff_docker.handlers.shell:
+#   ShellRun ShellRunResult shell_run_handler
 """Moved: ``doeff_docker.handlers`` is now ``doeff_docker._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_records.loop_work -> doeff_records._loop_work
+# moved-submodule-shim-names doeff_records.loop_work:
+#   Appended AppendedEvents BATCH_READ_ANSWERS Changes Conflict Event EventAbsent EventRetired
+#   Events EventsMoved EventsQuiet MODULE_TAGS Missing NotIndexed ON_LOOP_ANSWERS Page Refused Reset
+#   Row RowsConflict RowsRefused StreamEmpty StreamEnd WireAnswer Written WrittenRows
+#   hyx_off_loop_answerXquestion_markX off_loop
 """Moved: ``doeff_records.loop_work`` is now ``doeff_records._loop_work`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

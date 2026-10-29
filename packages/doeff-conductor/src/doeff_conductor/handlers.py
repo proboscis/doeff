@@ -1,4 +1,35 @@
 # moved-submodule-shim: doeff_conductor.handlers -> doeff_conductor._handlers
+# moved-submodule-shim-names doeff_conductor.handlers:
+#   HandlerProtocol MockConductorRuntime RunSyncResult agent_handler conductor_state_handler
+#   default_scheduled_handlers exec_handler git_handler issue_handler journaled_agent_handler
+#   journaled_workflow_effect_handler journaled_workspace_handler make_async_scheduled_handler
+#   make_blocking_scheduled_handler make_blocking_scheduled_handler_with_store
+#   make_scheduled_handler_with_store mock_handlers production_handlers run_sync workspace_handler
+# moved-submodule-shim-names doeff_conductor.handlers.agent_handler:
+#   agent_handler
+# moved-submodule-shim-names doeff_conductor.handlers.exec_handler:
+#   exec_handler
+# moved-submodule-shim-names doeff_conductor.handlers.git_handler:
+#   git_handler
+# moved-submodule-shim-names doeff_conductor.handlers.issue_handler:
+#   issue_handler
+# moved-submodule-shim-names doeff_conductor.handlers.journaled_agent:
+#   journaled_agent_handler
+# moved-submodule-shim-names doeff_conductor.handlers.journaled_workspace:
+#   PreCoverageRunError journaled_workspace_handler
+# moved-submodule-shim-names doeff_conductor.handlers.state_handler:
+#   conductor_state_handler
+# moved-submodule-shim-names doeff_conductor.handlers.testing:
+#   AgentEffect Commit CreateIssue CreatePR CreateWorkspace DeleteWorkspace GetIssue Issue
+#   IssueNotFoundError IssueStatus ListIssues MergePR MergeStatus MergeWorkspaces
+#   MergeWorkspacesResult MockConductorRuntime PRHandle Push ResolveIssue ScheduledHandler Workspace
+#   exec_handler journaled_workflow_effect_handler mock_handlers
+# moved-submodule-shim-names doeff_conductor.handlers.utils:
+#   SimpleHandler default_scheduled_handlers make_async_scheduled_handler
+#   make_blocking_scheduled_handler make_blocking_scheduled_handler_with_store
+#   make_scheduled_handler_with_store
+# moved-submodule-shim-names doeff_conductor.handlers.workspace_handler:
+#   WorkspaceStateError workspace_handler
 """Moved: ``doeff_conductor.handlers`` is now ``doeff_conductor._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

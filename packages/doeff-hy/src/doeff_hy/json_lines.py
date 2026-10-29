@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.json_lines -> doeff_hy._json_lines
+# moved-submodule-shim-names doeff_hy.json_lines:
+#   LINE_END jsonl_lines whole_lines_end
 """Moved: ``doeff_hy.json_lines`` is now ``doeff_hy._json_lines`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_openrouter.types -> doeff_openrouter._types
+# moved-submodule-shim-names doeff_openrouter.types:
+#   APICallMetadata CostInfo TokenUsage
 """Moved: ``doeff_openrouter.types`` is now ``doeff_openrouter._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

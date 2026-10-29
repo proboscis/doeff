@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_conductor.replay_keying -> doeff_conductor._replay_keying
+# moved-submodule-shim-names doeff_conductor.replay_keying:
+#   ResolvedIdentity agent_cache_key longest_valid_prefix node_identity_fingerprint
+#   resolved_identity_fingerprint workflow_effect_cache_key
 """Moved: ``doeff_conductor.replay_keying`` is now ``doeff_conductor._replay_keying`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

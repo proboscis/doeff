@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_openai.client -> doeff_openai._client
+# moved-submodule-shim-names doeff_openai.client:
+#   APICallMetadata CalculateCost ClientHolder OpenAIClient TokenUsage extract_request_id
+#   extract_token_usage get_api_calls get_model_cost get_openai_client get_total_cost
+#   reset_cost_tracking track_api_call
 """Moved: ``doeff_openai.client`` is now ``doeff_openai._client`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

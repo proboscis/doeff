@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.memory_latest -> doeff_core_effects._memory_latest
+# moved-submodule-shim-names doeff_core_effects.memory_latest:
+#   AwaitLatest CreateExternalPromise ExternalPromise MODULE_TAGS MemoryLatestStore PRIORITY_IDLE
+#   PublishLatest ReadLatest Wait drop_bell memory_latest_handler
 """Moved: ``doeff_core_effects.memory_latest`` is now ``doeff_core_effects._memory_latest`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.http -> doeff_hy._http
+# moved-submodule-shim-names doeff_hy.http:
+#   MODULE_TAGS http_delete http_get http_head http_post http_put
 """Moved: ``doeff_hy.http`` is now ``doeff_hy._http`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

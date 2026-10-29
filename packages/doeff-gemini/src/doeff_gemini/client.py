@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_gemini.client -> doeff_gemini._client
+# moved-submodule-shim-names doeff_gemini.client:
+#   GeminiClient get_gemini_client track_api_call
 """Moved: ``doeff_gemini.client`` is now ``doeff_gemini._client`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

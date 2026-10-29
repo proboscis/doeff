@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_seedream.types -> doeff_seedream._types
+# moved-submodule-shim-names doeff_seedream.types:
+#   SeedreamImage SeedreamImageEditResult
 """Moved: ``doeff_seedream.types`` is now ``doeff_seedream._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_google_secret_manager.effects -> doeff_google_secret_manager._effects
+# moved-submodule-shim-names doeff_google_secret_manager.effects:
+#   DeleteSecret GetSecret ListSecrets SecretEffectBase SetSecret
+# moved-submodule-shim-names doeff_google_secret_manager.effects.secrets:
+#   DeleteSecret GetSecret ListSecrets SecretEffectBase SetSecret
 """Moved: ``doeff_google_secret_manager.effects`` is now ``doeff_google_secret_manager._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

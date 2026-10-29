@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_system_one.judgment -> doeff_system_one._judgment
+# moved-submodule-shim-names doeff_system_one.judgment:
+#   Answer STATE_CHARS_ADVISED answered calibration_ok chosen clip crosses
 """Moved: ``doeff_system_one.judgment`` is now ``doeff_system_one._judgment`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

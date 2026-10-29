@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agentic.opencode_handler -> doeff_agentic._opencode_handler
+# moved-submodule-shim-names doeff_agentic.opencode_handler:
+#   opencode_handler
 """Moved: ``doeff_agentic.opencode_handler`` is now ``doeff_agentic._opencode_handler`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

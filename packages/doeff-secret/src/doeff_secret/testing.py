@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_secret.testing -> doeff_secret._testing
+# moved-submodule-shim-names doeff_secret.testing:
+#   DeleteSecret GetSecret InMemorySecretStore ListSecrets ProtocolHandler SeedValue SetSecret
+#   in_memory_handler in_memory_handlers
 """Moved: ``doeff_secret.testing`` is now ``doeff_secret._testing`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

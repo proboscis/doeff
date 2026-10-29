@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_notify.types -> doeff_notify._types
+# moved-submodule-shim-names doeff_notify.types:
+#   Channel NotificationResult Urgency
 """Moved: ``doeff_notify.types`` is now ``doeff_notify._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

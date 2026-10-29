@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_openrouter.chat -> doeff_openrouter._chat
+# moved-submodule-shim-names doeff_openrouter.chat:
+#   OpenRouterResponseError chat_completion
 """Moved: ``doeff_openrouter.chat`` is now ``doeff_openrouter._chat`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

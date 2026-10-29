@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_claude_code.clock -> doeff_claude_code._clock
+# moved-submodule-shim-names doeff_claude_code.clock:
+#   clock_of read_time
 """Moved: ``doeff_claude_code.clock`` is now ``doeff_claude_code._clock`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

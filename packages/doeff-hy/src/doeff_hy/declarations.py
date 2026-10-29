@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_hy.declarations -> doeff_hy._declarations
+# moved-submodule-shim-names doeff_hy.declarations:
+#   CONTRACT_KEYS DECLARATION_KEYS DefinitionTags EFFECT_KEYS FUNCTION_CONTRACT_KEYS
+#   OPTIONAL_TAG_KEYS OUTCOME_KEYS ROLES SPELLS TAG_KEYS answer_value_form bound_answer_methods
+#   declaration_setters declared_value defeffect_form effect_field_forms effect_refusal effect_types
+#   effects_form field_targets import_form needs_form needs_names outcome_type_forms record_names
+#   refuse_unknown_keys runs_carried_names tags_form type_param_symbols
 """Moved: ``doeff_hy.declarations`` is now ``doeff_hy._declarations`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

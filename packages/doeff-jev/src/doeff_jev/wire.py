@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_jev.wire -> doeff_jev._wire
+# moved-submodule-shim-names doeff_jev.wire:
+#   CALLER_HEADER IMAGES_HEADER JevTarget PROXY_HEADER Prepared cache_key caller_header_value parse
+#   prepare proxy_outcome
 """Moved: ``doeff_jev.wire`` is now ``doeff_jev._wire`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

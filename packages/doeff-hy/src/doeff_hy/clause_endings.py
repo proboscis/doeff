@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_hy.clause_endings -> doeff_hy._clause_endings
+# moved-submodule-shim-names doeff_hy.clause_endings:
+#   CHECKED_DEFINITIONS ClauseEndingError ClauseOptions Ending MatchArm NAMED_RESUMPTION
+#   check_clause_by_name check_clause_endings check_clause_endings_once clause_op clause_ops
+#   effect_name ending_spec_form fell_through hyx_irrefutable_patternXquestion_markX
+#   hyx_match_terminatesXquestion_markX hyx_try_terminatesXquestion_markX match_arms ops_ending
+#   ops_in parse_clause_options
 """Moved: ``doeff_hy.clause_endings`` is now ``doeff_hy._clause_endings`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

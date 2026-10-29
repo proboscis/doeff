@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_ml_nexus.context -> doeff_ml_nexus._context
+# moved-submodule-shim-names doeff_ml_nexus.context:
+#   prepare-build-context
 """Moved: ``doeff_ml_nexus.context`` is now ``doeff_ml_nexus._context`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

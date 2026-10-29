@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_gemini.types -> doeff_gemini._types
+# moved-submodule-shim-names doeff_gemini.types:
+#   APICallMetadata CostInfo GeminiCallResult GeminiCostEstimate GeminiImageEditResult TokenUsage
 """Moved: ``doeff_gemini.types`` is now ``doeff_gemini._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

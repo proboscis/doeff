@@ -1,4 +1,34 @@
 # moved-submodule-shim: doeff_agentic.effects -> doeff_agentic._effects
+# moved-submodule-shim-names doeff_agentic.effects:
+#   AgentNotRunningError AgenticAbortSession AgenticAmbiguousPrefixError AgenticAnswerInput
+#   AgenticAttachAgent AgenticCaptureAgentOutput AgenticCleanupEnvironments AgenticCreateEnvironment
+#   AgenticCreateSession AgenticCreateWorkflow AgenticDeleteEnvironment AgenticDeleteSession
+#   AgenticDuplicateNameError AgenticEffectBase AgenticEnvironmentInUseError
+#   AgenticEnvironmentNotFoundError AgenticError AgenticFindWorkflow AgenticForkSession
+#   AgenticGetEnvironment AgenticGetMessages AgenticGetSession AgenticGetSessionStatus
+#   AgenticGetWorkflow AgenticInputRequested AgenticListEnvironments AgenticListWorkflows
+#   AgenticNextEvent AgenticSendMessage AgenticSendToAgent AgenticServerError
+#   AgenticSessionNotFoundError AgenticSessionNotRunningError AgenticStopWorkflow
+#   AgenticSupportsCapability AgenticTimeoutError AgenticUnsupportedOperationError
+#   AgenticWorkflowNotFoundError AmbiguousPrefixError CaptureOutput CaptureOutputEffect RunAgent
+#   RunAgentEffect SendMessage SendMessageEffect StopAgent StopAgentEffect UserInputTimeoutError
+#   WaitForStatus WaitForStatusEffect WaitForUserInput WaitForUserInputEffect WorkflowNotFoundError
+# moved-submodule-shim-names doeff_agentic.effects.environment:
+#   AgenticCreateEnvironment AgenticDeleteEnvironment AgenticEffectBase AgenticEnvironmentType
+#   AgenticGetEnvironment
+# moved-submodule-shim-names doeff_agentic.effects.messaging:
+#   AgenticEffectBase AgenticGetMessages AgenticNextEvent AgenticSendMessage
+# moved-submodule-shim-names doeff_agentic.effects.recorded:
+#   AgenticAnswerInput AgenticAttachAgent AgenticCaptureAgentOutput AgenticCleanupEnvironments
+#   AgenticFindWorkflow AgenticInputRequested AgenticListEnvironments AgenticListWorkflows
+#   AgenticSendToAgent AgenticStopWorkflow
+# moved-submodule-shim-names doeff_agentic.effects.session:
+#   AgenticAbortSession AgenticCreateSession AgenticDeleteSession AgenticEffectBase
+#   AgenticForkSession AgenticGetSession
+# moved-submodule-shim-names doeff_agentic.effects.status:
+#   AgenticEffectBase AgenticGetSessionStatus AgenticSupportsCapability
+# moved-submodule-shim-names doeff_agentic.effects.workflow:
+#   AgenticCreateWorkflow AgenticEffectBase AgenticGetWorkflow
 """Moved: ``doeff_agentic.effects`` is now ``doeff_agentic._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

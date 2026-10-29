@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_git.handlers -> doeff_git._handlers
+# moved-submodule-shim-names doeff_git.handlers:
+#   MockGitRuntime git_local_handler github_handler mock_handlers production_handlers
+# moved-submodule-shim-names doeff_git.handlers.production:
+#   git_local_handler github_handler production_handlers
+# moved-submodule-shim-names doeff_git.handlers.testing:
+#   MockGitRuntime mock_handlers
 """Moved: ``doeff_git.handlers`` is now ``doeff_git._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

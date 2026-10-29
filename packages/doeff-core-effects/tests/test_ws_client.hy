@@ -13,7 +13,7 @@
 (import doeff_core_effects [Await])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Cancel])
-(import doeff_core_effects.http_server_effects [HttpHeader])
+(import doeff_core_effects [HttpHeader])
 (import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect ReadWsSent WsLink WsConnectFailed WsConnectOutcome WsText
                                               WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome WsScript ScriptedWsEndpoint ScriptedWsReply
                                               ScriptedWsText ScriptedWsBinary ScriptedWsClosed WsSentText WsSentRecord SCRIPT-EXHAUSTED-REASON

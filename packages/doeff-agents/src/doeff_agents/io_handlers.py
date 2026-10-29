@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_agents.io_handlers -> doeff_agents._io_handlers
+# moved-submodule-shim-names doeff_agents.io_handlers:
+#   AppendText CopyFile EnvValue HomePath ListDir MakeDirs MonotonicTime PathExists ProcessId
+#   ReadText SpawnDetached StartSessionHost TempRoot TouchFile UnixConnectProbe UnixLineRequest
+#   WhichExecutable WriteText driver_io_handler run_driver_io
 """Moved: ``doeff_agents.io_handlers`` is now ``doeff_agents._io_handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

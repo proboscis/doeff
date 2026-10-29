@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_core_effects.scheduler_step_tally -> doeff_core_effects._scheduler_step_tally
+# moved-submodule-shim-names doeff_core_effects.scheduler_step_tally:
+#   CloseStepTally CloseTaskTally EMPTY_STEP_TALLY LOCK MODULE_TAGS OpenStepTally OpenTaskTally
+#   ReadTaskTally SiteTally StepTally StepWindow TASK_WINDOWS TaskTally TaskWindow WINDOWS closed
+#   empty_task_row note_spawned note_task_step opened scheduler_trace_sink set_scheduler_trace
+#   sink_claimed sink_released step_sink step_tally_handler tally_with_sites task_closed task_opened
+#   task_read task_table
 """Moved: ``doeff_core_effects.scheduler_step_tally`` is now ``doeff_core_effects._scheduler_step_tally`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

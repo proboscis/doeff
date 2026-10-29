@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_llm.effects -> doeff_llm._effects
+# moved-submodule-shim-names doeff_llm.effects:
+#   LLMChat LLMEmbedding LLMStreamingChat LLMStructuredQuery
+# moved-submodule-shim-names doeff_llm.effects.chat:
+#   LLMChat LLMStreamingChat
+# moved-submodule-shim-names doeff_llm.effects.embedding:
+#   LLMEmbedding
+# moved-submodule-shim-names doeff_llm.effects.structured:
+#   LLMStructuredQuery
 """Moved: ``doeff_llm.effects`` is now ``doeff_llm._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

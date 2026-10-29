@@ -46,7 +46,7 @@ def test_the_moved_submodule_shims_do_not_fire_and_other_star_imports_do(tmp_pat
     (root_dir / "_handlers").mkdir(parents=True)  # package の子(移した後の dir)
     for name in ("effects", "handlers"):
         child = tool.Child(ROOT_NAME, name, root_dir)
-        child.shim.write_text(tool.shim_text(child, True), encoding="utf-8")
+        child.shim.write_text(tool.shim_text(child, True, {}), encoding="utf-8")
     plain = tmp_path / "src" / "plain.py"
     plain.write_text(
         "from typing import TYPE_CHECKING\n"

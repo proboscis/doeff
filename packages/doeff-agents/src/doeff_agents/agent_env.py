@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_agents.agent_env -> doeff_agents._agent_env
+# moved-submodule-shim-names doeff_agents.agent_env:
+#   BINDING_OWNED_ENV_KEYS CLAUDE_RATE_LIMIT_TIER_ENV CLAUDE_SUBSCRIPTION_TYPE_ENV
+#   CLAUDE_TURN_CREDENTIAL_ENV GITHUB_TOKEN_ENV PROVIDER_AUTH_ENV_KEYS PROVIDER_ROUTING_ENV_KEYS
+#   TURN_AUTH_ENV_KEYS env_offenders_against overlay_env_offenders policy_normalized_env_key
+#   provider_auth_env_offenders
 """Moved: ``doeff_agents.agent_env`` is now ``doeff_agents._agent_env`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

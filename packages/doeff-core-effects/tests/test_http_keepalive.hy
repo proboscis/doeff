@@ -25,7 +25,8 @@
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_handlers :as http-handlers)
-(import doeff_core_effects.http_server_effects [HttpAddress WS-CLOSE-NORMAL])
+(import doeff_core_effects [HttpAddress]
+        doeff_core_effects._http_server_effects [WS-CLOSE-NORMAL])
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
 ;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
@@ -233,7 +234,7 @@
   "doeff の待ち受け(aiohttp-http-server の WebEdge)を空きの port で開いて接続を 1 本張り、待ち受けがその接続を受けるのを待って、
    使われない接続を閉じるまでの秒を aiohttp の受け手から読み、宣言の値と並べて閉じるため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server :as edge-module)
+  (import doeff_core_effects._aiohttp_http_server :as edge-module)
   (val edge (edge-module.WebEdge))
   (val loop (.edge-loop edge))
   (val bound (.result (asyncio.run-coroutine-threadsafe (.start edge (HttpAddress :host "127.0.0.1" :port 0) 1024 1024 #() False) loop)

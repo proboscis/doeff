@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_google_secret_manager.client -> doeff_google_secret_manager._client
+# moved-submodule-shim-names doeff_google_secret_manager.client:
+#   DEFAULT_SECRET_MANAGER_SCOPES SecretManagerClient get_secret_manager_client
 """Moved: ``doeff_google_secret_manager.client`` is now ``doeff_google_secret_manager._client`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

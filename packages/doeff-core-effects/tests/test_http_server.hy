@@ -30,13 +30,9 @@
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [MemoryFiles])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpServerClosed HttpListen HttpNextRequest
-                                                HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
-                                                ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText WsClose
-                                                HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed HttpTakeQueued
-                                                WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyFailed HttpBodyOutcome ScriptedBody
-                                                WS-CUT-REASON HttpProbe HttpProbeAnswer HttpStopListening WsTextSent])
-(import doeff_core_effects.scripted_http_server [scripted-http-server])
+(import doeff_core_effects [HttpAddress HttpHeader HttpRequestArrived HttpServerClosed HttpListen HttpNextRequest HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText WsClose HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed HttpTakeQueued WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyFailed HttpBodyOutcome ScriptedBody HttpProbe HttpProbeAnswer HttpStopListening WsTextSent]
+        doeff_core_effects._http_server_effects [WS-CUT-REASON])
+(import doeff_core_effects [scripted-http-server])
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
 ;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
@@ -283,7 +279,7 @@
 (defn #^ None test-the-aiohttp-server-relays-http-bodies-and-ws-frames [#^ Path tmp-path]
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
   (import aiohttp [web WSMsgType])
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (setv port (free-port) seen [])
   (defk serve-on-port [upstream]
     {:pre [(: upstream str)] :post [(: % int)]}
@@ -348,7 +344,7 @@
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
   (import aiohttp [WSMessage])
   (import queue)
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (setv result (queue.Queue) bound (queue.Queue))
   (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                        (ws-echo 64 bound.put))))))
@@ -379,7 +375,7 @@
   ;; A が待ち受けだけを閉じる。A に開いた接続は往復を続け、新しい接続は全部 B に当たる(A が待ち受けを閉じる前は kernel が振り分ける)。
   ;; 直す前は HttpListen に port の共有の欄が無く、A が開けない(赤)。
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (setv port (free-port) address (HttpAddress :host "127.0.0.1" :port port)
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
@@ -426,7 +422,7 @@
   ;; A に当たりうる(赤)。
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
   (import aiohttp [WSMsgType])
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (setv port (free-port) address (HttpAddress :host "127.0.0.1" :port port)
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
@@ -471,7 +467,7 @@
   (import queue)
   (import struct)
   (import time)
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (setv bound (queue.Queue) left (threading.Event) result (queue.Queue))
   (defk answer-after-the-peer-left []
     {:pre [] :post [(: % int)]}
@@ -645,7 +641,7 @@
   {:pre [(: hold Callable)] :post [(: % HeldAnswers)] :tags {:context "http-server-test" :role "program"}}
   "本物の答え手の下で probe-while-held を走らせるため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (<- got HeldAnswers (with-handler [await-handler (state) aiohttp-http-server] (probe-while-held hold)))
   got)
 
@@ -712,7 +708,7 @@
   {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
   "本物の答え手の下で respond-awaits を走らせ、#(共有の loop へ入った回数 相手が受けた答え) を返すため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target ask-once :args #(box answers) :daemon True))
@@ -743,7 +739,7 @@
   {:pre [] :post [(: % str)] :tags {:context "http-server-test" :role "program"}}
   "本物の答え手の下で listen-answer-a-gone-ticket-and-close を走らせるため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (<- done str (with-handler [await-handler (state) aiohttp-http-server] (listen-answer-a-gone-ticket-and-close)))
   done)
 
@@ -807,7 +803,7 @@
   "本物の答え手の下で send-awaits を走らせ、#(共有の loop へ入った回数 相手が受けた文字の 1 通の列 閉じの状態符) を返すため(aiohttp の
    無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target hear-until-closed :args #(box answers) :daemon True))
@@ -881,7 +877,7 @@
   "本物の答え手の下で read-awaits を走らせ、#(共有の loop へ入った回数 読みの答え 相手が受けた答え) を返すため(aiohttp の無い venv では
    skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target send-once :args #(box answers) :daemon True))
@@ -1000,7 +996,7 @@
   "本物の答え手の下で波を取る program take(take-a-wave か take-a-wave-at-once)を走らせ、#(共有の loop へ入った回数 取った順の到着
    相手が受けた答えの集合) を返すため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val sent (queue.Queue))
   (val answers (queue.Queue))
@@ -1236,7 +1232,7 @@
    :tags {:context "http-server-test" :role "program"}}
   "本物の答え手の下で relay-until-done を走らせ、相手が ws で 1 度 繋いだ結果を返すため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target dial-once :args #(box answers texts quiet) :daemon True))
@@ -1252,7 +1248,7 @@
   "本物の答え手の上限の定数 limit を、この検の間だけ CUT-SECONDS に縮めるため(待ち受けは開く時に定数を読む・aiohttp の無い venv では
    skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
-  (import doeff_core_effects.aiohttp_http_server :as edge-module)
+  (import doeff_core_effects._aiohttp_http_server :as edge-module)
   (.setattr monkeypatch edge-module limit CUT-SECONDS)
   None)
 

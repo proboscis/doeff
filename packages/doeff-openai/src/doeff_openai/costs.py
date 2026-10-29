@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_openai.costs -> doeff_openai._costs
+# moved-submodule-shim-names doeff_openai.costs:
+#   CostInfo MODEL_PRICING MissingCachedPricingError ModelPricing PricingError TokenUsage
+#   UnknownModelPricingError calculate_cost count_embedding_tokens count_message_tokens count_tokens
+#   estimate_cost estimate_max_cost get_encoding get_model_pricing
 """Moved: ``doeff_openai.costs`` is now ``doeff_openai._costs`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

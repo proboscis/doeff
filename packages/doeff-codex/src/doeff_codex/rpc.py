@@ -1,4 +1,11 @@
 # moved-submodule-shim: doeff_codex.rpc -> doeff_codex._rpc
+# moved-submodule-shim-names doeff_codex.rpc:
+#   APP_SERVER_ARGS ApprovalPolicy ClientInfoWire ConfigWire ImageInputWire InitializeParamsWire
+#   JSONRPC_VERSION MODULE_TAGS NotificationWire RequestParams RequestWire ResponseWire SandboxMode
+#   TextInputWire ThreadResumeParamsWire ThreadStartParamsWire TurnInterruptParamsWire
+#   TurnStartParamsWire TurnSteerParamsWire app_server_argv config_of initialize_request
+#   initialized_notification input_wires_of request_line server_response_line thread_resume_request
+#   thread_start_request turn_interrupt_request turn_start_request turn_steer_request
 """Moved: ``doeff_codex.rpc`` is now ``doeff_codex._rpc`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

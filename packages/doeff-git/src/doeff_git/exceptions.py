@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_git.exceptions -> doeff_git._exceptions
+# moved-submodule-shim-names doeff_git.exceptions:
+#   GitCommandError GitError
 """Moved: ``doeff_git.exceptions`` is now ``doeff_git._exceptions`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

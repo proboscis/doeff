@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agents.session_backend -> doeff_agents._session_backend
+# moved-submodule-shim-names doeff_agents.session_backend:
+#   IoGenerator IoRoot SessionBackend SessionConfig SessionInfo as_optional_str
+#   default_session_backend resolve_default_executable which_executable
 """Moved: ``doeff_agents.session_backend`` is now ``doeff_agents._session_backend`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

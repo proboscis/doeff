@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.latest_effects -> doeff_core_effects._latest_effects
+# moved-submodule-shim-names doeff_core_effects.latest_effects:
+#   AwaitLatest PublishLatest ReadLatest
 """Moved: ``doeff_core_effects.latest_effects`` is now ``doeff_core_effects._latest_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

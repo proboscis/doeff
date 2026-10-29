@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.meter_prometheus -> doeff_core_effects._meter_prometheus
+# moved-submodule-shim-names doeff_core_effects.meter_prometheus:
+#   CONTENT_TYPE MeterSnapshot render_prometheus
 """Moved: ``doeff_core_effects.meter_prometheus`` is now ``doeff_core_effects._meter_prometheus`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

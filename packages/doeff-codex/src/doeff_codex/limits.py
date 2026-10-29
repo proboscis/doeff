@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_codex.limits -> doeff_codex._limits
+# moved-submodule-shim-names doeff_codex.limits:
+#   MODULE_TAGS RateLimits SPENT_PERCENT TurnEnded USAGE_LIMIT_KIND UsageLimitHit merged_limits
+#   usage_limit_hit_of
 """Moved: ``doeff_codex.limits`` is now ``doeff_codex._limits`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

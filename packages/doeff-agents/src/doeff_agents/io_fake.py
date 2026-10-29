@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_agents.io_fake -> doeff_agents._io_fake
+# moved-submodule-shim-names doeff_agents.io_fake:
+#   ANY_COMMAND AppendText CopyFile EnvValue FakeIoWorld HomePath ListDir MakeDirs MonotonicTime
+#   PathExists ProcessId ReadText SpawnDetached SpawnLedger StartSessionHost TempRoot TouchFile
+#   UnixConnectProbe UnixLineRequest WhichExecutable WriteText absent_error direct_entries
+#   executable_file fake_driver_io_handler path_present recorded_spawn_handler require_parent
+#   scripted_outcome socket_refusal with_fake_io
 """Moved: ``doeff_agents.io_fake`` is now ``doeff_agents._io_fake`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

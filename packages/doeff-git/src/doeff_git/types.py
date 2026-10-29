@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_git.types -> doeff_git._types
+# moved-submodule-shim-names doeff_git.types:
+#   BranchRef MergeStrategy PRHandle
 """Moved: ``doeff_git.types`` is now ``doeff_git._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

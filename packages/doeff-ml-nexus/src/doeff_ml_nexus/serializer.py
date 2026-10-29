@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_ml_nexus.serializer -> doeff_ml_nexus._serializer
+# moved-submodule-shim-names doeff_ml_nexus.serializer:
+#   CloudpickleSerializer Serializer default_serializer
 """Moved: ``doeff_ml_nexus.serializer`` is now ``doeff_ml_nexus._serializer`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

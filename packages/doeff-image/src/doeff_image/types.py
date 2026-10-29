@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_image.types -> doeff_image._types
+# moved-submodule-shim-names doeff_image.types:
+#   ImageResult
 """Moved: ``doeff_image.types`` is now ``doeff_image._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

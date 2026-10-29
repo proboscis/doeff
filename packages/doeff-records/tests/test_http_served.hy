@@ -13,7 +13,7 @@
 (import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [HttpAddress])
 (import doeff_time [SimClock])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA MAKER])

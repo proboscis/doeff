@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.ast_unparse -> doeff_hy._ast_unparse
+# moved-submodule-shim-names doeff_hy.ast_unparse:
+#   install unparse_without_copying_constants
 """Moved: ``doeff_hy.ast_unparse`` is now ``doeff_hy._ast_unparse`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

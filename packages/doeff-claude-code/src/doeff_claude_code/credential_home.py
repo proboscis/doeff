@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_claude_code.credential_home -> doeff_claude_code._credential_home
+# moved-submodule-shim-names doeff_claude_code.credential_home:
+#   CLI_SCOPES CREDENTIALS_FILE CREDENTIAL_HOMES_DIR KEPT_DIRS LentCredential UNLINKED_NAMES
+#   close_credential_home credential_document open_credential_home replace_credential write_new_file
 """Moved: ``doeff_claude_code.credential_home`` is now ``doeff_claude_code._credential_home`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
