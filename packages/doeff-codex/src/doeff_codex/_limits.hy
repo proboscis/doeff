@@ -6,7 +6,7 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex" :role "foundation"})
 (require doeff-hy.macros [defk])
-(import doeff_codex.lines [RateLimits TurnEnded UsageLimitHit USAGE-LIMIT-KIND])
+(import doeff_codex._lines [RateLimits TurnEnded UsageLimitHit USAGE-LIMIT-KIND])
 
 ;; 窓が尽きたと読む使った割合(百分率)。
 (val SPENT-PERCENT 100)

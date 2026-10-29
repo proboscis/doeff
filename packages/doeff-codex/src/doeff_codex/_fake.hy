@@ -9,10 +9,10 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
-(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
-(import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
+(import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
+(import doeff_codex._lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
                            UsageLimitHit USAGE-LIMIT-KIND ServerOverloadedHit SERVER-OVERLOADED-KIND])
-(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
+(import doeff_codex._effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
 

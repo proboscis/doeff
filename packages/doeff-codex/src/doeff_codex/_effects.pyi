@@ -1,17 +1,17 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff_hy.json_value import OpaqueJson as OpaqueJson
-from doeff_codex.values import CodexSessionSpec as CodexSessionSpec
-from doeff_codex.values import CodexTurn as CodexTurn
-from doeff_codex.values import CodexEvent as CodexEvent
-from doeff_codex.values import CodexInput as CodexInput
-from doeff_codex.values import FreshThread as FreshThread
-from doeff_codex.values import ResumeThread as ResumeThread
-from doeff_codex.lines import TurnEnded as TurnEnded
+from doeff_codex._values import CodexSessionSpec as CodexSessionSpec
+from doeff_codex._values import CodexTurn as CodexTurn
+from doeff_codex._values import CodexEvent as CodexEvent
+from doeff_codex._values import CodexInput as CodexInput
+from doeff_codex._values import FreshThread as FreshThread
+from doeff_codex._values import ResumeThread as ResumeThread
+from doeff_codex._lines import TurnEnded as TurnEnded
 
 @dataclass(frozen=True, kw_only=True)
 class BackendLost:

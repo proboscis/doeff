@@ -9431,22 +9431,14 @@
       "state_db_release"
      ],
      "doeff_codex.fake": [
-      "AgentMessageDone",
-      "FakeCodexWorld",
-      "FakeReply",
       "FakeThread",
       "FakeTurn",
-      "ItemStarted",
       "MODULE_TAGS",
       "SERVER_OVERLOADED_KIND",
       "STEERED_PREFIX",
-      "ServerOverloadedHit",
-      "TextDelta",
       "TurnError",
       "TurnStartedLine",
-      "TurnStatus",
       "USAGE_LIMIT_KIND",
-      "UsageLimitHit",
       "fake_close",
       "fake_interrupt",
       "fake_launch_count",
@@ -9457,7 +9449,6 @@
      "doeff_codex.handler": [
       "CLIENT_NAME",
       "CLIENT_VERSION",
-      "CodexHost",
       "CodexProcess",
       "Continuation",
       "CutLine",
@@ -9524,20 +9515,13 @@
      ],
      "doeff_codex.limits": [
       "USAGE_LIMIT_KIND",
-      "UsageLimitHit",
       "merged_limits",
       "usage_limit_hit_of"
      ],
      "doeff_codex.lines": [
-      "AgentMessageDone",
-      "ItemStarted",
       "SERVER_OVERLOADED_KIND",
-      "ServerOverloadedHit",
-      "TextDelta",
       "TurnError",
-      "TurnStatus",
-      "USAGE_LIMIT_KIND",
-      "UsageLimitHit"
+      "USAGE_LIMIT_KIND"
      ],
      "doeff_codex.process": [
       "CodexProcess",
@@ -9579,7 +9563,6 @@
       "SPENT_PERCENT"
      ],
      "doeff_codex.lines": [
-      "AgentCall",
       "AgentState",
       "AgentStateWire",
       "CODE_MODE_FAIL_CLOSED",
@@ -9588,9 +9571,7 @@
       "CodexWarning",
       "CollabAgentToolCallWire",
       "CommandExecutionWire",
-      "CommandRun",
       "DeltaParamsWire",
-      "DynamicCall",
       "DynamicContentWire",
       "DynamicToolCallWire",
       "EnvelopeWire",
@@ -9601,19 +9582,15 @@
       "ErrorResponse",
       "FileChangeWire",
       "FileEdit",
-      "FilePatch",
       "FileUpdateWire",
       "HttpFailureWire",
       "IdWire",
-      "ImageView",
       "ImageViewWire",
-      "ItemDone",
       "ItemParamsWire",
       "ItemWire",
       "JSON_HEAD_TOKEN",
       "LimitRecord",
       "MODULE_TAGS",
-      "McpCall",
       "McpContentWire",
       "McpErrorWire",
       "McpResultWire",
@@ -9625,19 +9602,14 @@
       "RateLimitWindowWire",
       "RateLimits",
       "RateLimitsParamsWire",
-      "ReasoningDelta",
       "Response",
       "ResultWire",
       "RpcErrorWire",
       "ThreadParamsWire",
       "ThreadStarted",
-      "TokenCount",
       "TokenCountWire",
-      "TokenUsage",
       "TokenUsageParamsWire",
       "TokenUsageWire",
-      "ToolItem",
-      "ToolStatus",
       "TurnErrorWire",
       "TurnParamsWire",
       "TurnRecord",
@@ -9645,7 +9617,6 @@
       "UnknownValue",
       "Unparsed",
       "WarningParamsWire",
-      "WebSearch",
       "WebSearchActionWire",
       "WebSearchWire",
       "agent_call_of",
@@ -9807,15 +9778,21 @@
       "TurnStarted"
      ],
      "doeff_codex.fake": [
+      "AgentMessageDone",
       "BackendLost",
       "CodexEvent",
       "InterruptRequested",
+      "ItemStarted",
+      "ServerOverloadedHit",
       "SessionClosed",
       "Steered",
+      "TextDelta",
       "ThreadUnknown",
       "TurnEnded",
       "TurnEventPage",
-      "TurnStarted"
+      "TurnStarted",
+      "TurnStatus",
+      "UsageLimitHit"
      ],
      "doeff_codex.handler": [
       "Answered",
@@ -9831,17 +9808,44 @@
       "TurnStarted"
      ],
      "doeff_codex.limits": [
-      "TurnEnded"
+      "TurnEnded",
+      "UsageLimitHit"
      ],
      "doeff_codex.lines": [
+      "AgentCall",
+      "AgentMessageDone",
+      "CommandRun",
+      "DynamicCall",
+      "FilePatch",
+      "ImageView",
+      "ItemDone",
+      "ItemStarted",
+      "McpCall",
+      "ReasoningDelta",
+      "ServerOverloadedHit",
+      "TextDelta",
+      "TokenCount",
+      "TokenUsage",
+      "ToolItem",
+      "ToolStatus",
       "TurnEnded",
-      "TurnStarted"
+      "TurnStarted",
+      "TurnStatus",
+      "UsageLimitHit",
+      "WebSearch"
      ],
      "doeff_codex.values": [
       "CodexEvent"
      ]
     },
     "境界 — handler の設定の型": {
+     "doeff_codex.fake": [
+      "FakeCodexWorld",
+      "FakeReply"
+     ],
+     "doeff_codex.handler": [
+      "CodexHost"
+     ],
      "doeff_codex.rpc": [
       "ApprovalPolicy"
      ],

@@ -7,8 +7,8 @@
 (val MODULE-TAGS {:context "codex" :role "type"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field])
-(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
-(import doeff_codex.lines [CodexLine])
+(import doeff_codex._rpc [ApprovalPolicy SandboxMode])
+(import doeff_codex._lines [CodexLine])
 
 
 (defrecord CodexHome

@@ -5,8 +5,8 @@
 (require doeff-hy.macros [deftest defk <- var])
 (import json)
 (import pathlib [Path])
-(import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
-                         turn-start-request turn-steer-request turn-interrupt-request server-response-line ApprovalPolicy SandboxMode])
+(import doeff_codex [ApprovalPolicy SandboxMode]
+        doeff_codex._rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_hy.json_value [OpaqueJson])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
