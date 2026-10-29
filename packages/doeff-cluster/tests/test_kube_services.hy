@@ -1,13 +1,15 @@
-;;; job が自分へ届く網の宛先(k8s の Service)を宣言どおりに在らせる effect EnsureKubeService(doeff_cluster.shared.intent.kube_service_model)
-;;; の検 — 本番の答え手(doeff_cluster.shared.protocol.kube_services の kube-services-api)と模擬の答え手(doeff_cluster._sim.k8s_services の
-;;; held-kube-services)が同じ筋書きに同じ結末で答え、同じ Service の一覧を残す事を確かめる。
+;;; job が自分へ届く網の宛先(k8s の Service と Ingress)を宣言どおりに在らせる effect EnsureKubeService・EnsureKubeIngress
+;;; (doeff_cluster.shared.intent.kube_service_model)の検 — 本番の答え手(doeff_cluster.shared.protocol.kube_services の kube-services-api)と
+;;; 模擬の答え手(doeff_cluster._sim.k8s_services の held-kube-services)が同じ筋書きに同じ結末で答え、同じ一覧を残す事を確かめる。
 ;;;
-;;;   綴り              宣言 → server-side apply の本文(宣言が持つ欄だけ・LOAD-BALANCER は node の口を開けない・class は書いた時だけ)
-;;;   宣言の検め        空の selector・口の無い Service・同じ名の口・CLUSTER-IP の class は作る時に断る(失敗ケース)
-;;;   契約              初めて当てた Service は CREATED・在る Service は APPLIED(同じ宣言でも)・一覧は namespace と名ごとに最後の宣言
-;;;   本番の要求の形    worker の身元の Bearer の token で、API server の Service の path へ PATCH(server-side apply・持ち主の名・force)
-;;;   断る(失敗ケース)  権限の無い namespace(403)・名乗れない token(401)・読めない token の file・届かない API server は、namespace と名・
-;;;                     理由を挙げて断る。断りの文に token は載らない
+;;;   綴り              宣言 → server-side apply の本文(宣言が持つ欄だけ・LOAD-BALANCER は node の口を開けない・class は書いた時だけ・
+;;;                     Ingress は全部の求めを defaultBackend へ向け、tls は名の在る時だけ)
+;;;   宣言の検め        空の selector・口の無い Service・同じ名の口・CLUSTER-IP の class、class か宛先の無い Ingress・範囲の外の口・
+;;;                     空か重なる TLS の名は作る時に断る(失敗ケース)
+;;;   契約              初めて当てた物は CREATED・在る物は APPLIED(同じ宣言でも)・一覧は種類ごとに namespace と名ごとに最後の宣言
+;;;   本番の要求の形    worker の身元の Bearer の token で、API server の Service・Ingress の path へ PATCH(server-side apply・持ち主の名・force)
+;;;   断る(失敗ケース)  権限の無い namespace(403)・名乗れない token(401)・読めない token の file・届かない API server は、種類と namespace
+;;;                     と名・理由を挙げて断る。断りの文に token は載らない
 ;;; 外の世界は、この file の API server の相手役(server-side apply を受ける)と memory の file。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
@@ -20,9 +22,10 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_cluster.shared.intent.kube_service_model [EnsureKubeService KubeService KubeServiceOutcome KubeServicePort KubeServiceRefused
-                                                        KubeServiceType])
-(import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER kube-services-api service-apply-text service-path])
+(import doeff_cluster.shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
+                                                        KubeServicePort KubeServiceRefused KubeServiceType])
+(import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER ingress-apply-text ingress-path kube-services-api
+                                                    service-apply-text service-path])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster [held-kube-services]
         doeff_cluster._sim.k8s_services [KubeServiceLog])
@@ -49,6 +52,13 @@
 ;; 権限の外の namespace の宣言。
 (val ELSEWHERE (KubeService :namespace "vault" :name "ledger" :type KubeServiceType.CLUSTER-IP :selector ON-NODE
                             :ports #((KubeServicePort :name "http" :port 8621 :target-port 8621))))
+;; TLS を終える Ingress(INSIDE の口へ向ける・class と annotation つき)と、同じ Ingress の TLS の無い宣言。
+(val ENTRY (KubeIngress :namespace "apps" :name "ledger" :ingress-class "entry.example.dev" :backend-service "ledger" :backend-port 8621
+                        :tls-hosts #("ledger") :annotations (FrozenMap {"entry.example.dev/tags" "tag:apps"})))
+(val ENTRY-PLAIN (KubeIngress :namespace "apps" :name "ledger" :ingress-class "entry.example.dev" :backend-service "ledger" :backend-port 8621))
+;; 権限の外の namespace の Ingress。
+(val ENTRY-ELSEWHERE (KubeIngress :namespace "vault" :name "ledger" :ingress-class "entry.example.dev" :backend-service "ledger"
+                                  :backend-port 8621))
 
 
 (defrecord SeenRequest
@@ -87,9 +97,10 @@
 
 (defk applied-answer [world request]
   {:pre [(: world ApiServerWorld) (: request SeenRequest)] :post [(: % HttpResponse)]}
-  "Service の server-side apply 1 つに、API server と同じ順(身元 → 権限 → 作るか置き換えるか)で答えるため。"
+  "Service か Ingress の server-side apply 1 つに、API server と同じ順(身元 → 権限 → 作るか置き換えるか)で答えるため。"
   (val path (cut request.url (len KUBE-API) None))
-  (val namespace (get (.split path "/") 4))
+  (val parts (.split path "/"))
+  (val namespace (get parts (+ (.index parts "namespaces") 1)))
   (cond
     (!= request.authorization (+ "Bearer " TOKEN))
     (! (api-answer 401 "{\"kind\":\"Status\",\"reason\":\"Unauthorized\",\"code\":401}" request.url))
@@ -107,9 +118,11 @@
 
 (defhandler api-server-peer [#^ ApiServerWorld world]
   ;; 引数に残す理由: 相手役の世界(何を許し、何を持つか)は筋書きごとの外の世界の形で、走らせた後に読む入れ物でもある。
-  ;; API server の Service の PATCH だけに答え、ほかの HTTP の要求は外側へ通す。
+  ;; API server の Service と Ingress の PATCH だけに答え、ほかの HTTP の要求は外側へ通す。
   (HttpRequest [method url headers params body failures-as-values]
-    :when (and (= method "PATCH") (isinstance url str) (.startswith url (+ KUBE-API "/api/v1/namespaces/")) (in "/services/" url))
+    :when (and (= method "PATCH") (isinstance url str)
+               (or (and (.startswith url (+ KUBE-API "/api/v1/namespaces/")) (in "/services/" url))
+                   (and (.startswith url (+ KUBE-API "/apis/networking.k8s.io/v1/namespaces/")) (in "/ingresses/" url))))
     (when world.down
       (if failures-as-values
           (resume (HttpFailed :url url :detail "ConnectError: [Errno 111] Connection refused" :kind HttpFailureKind.CONNECT-FAILED))
@@ -121,12 +134,20 @@
     (resume (! (applied-answer world seen)))))
 
 
+(defk ensured [declaration]
+  {:pre [(: declaration (| KubeService KubeIngress))] :post [(: % KubeServiceOutcome)]}
+  "宣言 declaration を種類に合う effect で当て、結末を得るため。"
+  (if (isinstance declaration KubeIngress)
+      (do (<- outcome KubeServiceOutcome (EnsureKubeIngress declaration)) outcome)
+      (do (<- outcome KubeServiceOutcome (EnsureKubeService declaration)) outcome)))
+
+
 (defk ensured-all [services]
   {:pre [(: services tuple)] :post [(: % tuple)]}
-  "宣言 services を順に当て、結末の組を得るため。"
+  "宣言 services(Service と Ingress)を順に当て、結末の組を得るため。"
   (var outcomes #())
   (for [service services]
-    (<- outcome KubeServiceOutcome (EnsureKubeService service))
+    (<- outcome KubeServiceOutcome (ensured service))
     (:= outcomes (+ outcomes #(outcome))))
   outcomes)
 
@@ -147,10 +168,10 @@
 
 
 (defk refusal-on-api [world files service]
-  {:pre [(: world ApiServerWorld) (: files MemoryFiles) (: service KubeService)] :post [(: % (| str None))]}
+  {:pre [(: world ApiServerWorld) (: files MemoryFiles) (: service (| KubeService KubeIngress))] :post [(: % (| str None))]}
   "worker の file が files・API server が world の世界で宣言 service を当てた時の断りの文を得るため(断らなければ None)。"
   (try
-    (<- (with_handlers [(state) (api-server-peer world) (memory-file-handler files) kube-services-api] (EnsureKubeService service)))
+    (<- (with_handlers [(state) (api-server-peer world) (memory-file-handler files) kube-services-api] (ensured service)))
     None
     (except [error KubeServiceRefused]
       (str error))))
@@ -189,6 +210,24 @@
   (assert (= path "/api/v1/namespaces/apps/services/ledger-lb") path))
 
 
+(deftest test-an-ingress-declaration-is-spelled-as-the-fields-it-holds
+  (<- entry str (ingress-apply-text ENTRY))
+  (assert (= (json.loads entry)
+             {"apiVersion" "networking.k8s.io/v1" "kind" "Ingress"
+              "metadata" {"name" "ledger" "namespace" "apps" "annotations" {"entry.example.dev/tags" "tag:apps"}}
+              "spec" {"ingressClassName" "entry.example.dev"
+                      "defaultBackend" {"service" {"name" "ledger" "port" {"number" 8621}}}
+                      "tls" [{"hosts" ["ledger"]}]}})
+          entry)
+  ;; TLS の名の無い Ingress は tls を書かない・空の labels と annotations は欄ごと省く。
+  (<- plain str (ingress-apply-text ENTRY-PLAIN))
+  (assert (not-in "tls" (get (json.loads plain) "spec")) plain)
+  (assert (not-in "annotations" plain) plain)
+  (assert (not-in "labels" plain) plain)
+  (<- path str (ingress-path ENTRY))
+  (assert (= path "/apis/networking.k8s.io/v1/namespaces/apps/ingresses/ledger") path))
+
+
 (deftest test-a-declaration-that-cannot-be-a-service-is-refused-when-made
   (val port (KubeServicePort :name "http" :port 8621 :target-port 8621))
   ;; 失敗ケース: 空の selector(namespace の全部の Pod を選ぶ)・口の無い Service・同じ名の口・CLUSTER-IP の class・範囲の外の口。
@@ -202,6 +241,22 @@
     (assert refused build))
   ;; 判定が常に断る物でないこと。
   (<- fine bool (refused-record? (fn [] INSIDE)))
+  (assert (not fine)))
+
+
+(deftest test-a-declaration-that-cannot-be-an-ingress-is-refused-when-made
+  ;; 失敗ケース: class の無い Ingress・宛先の Service の無い Ingress・範囲の外の口・空の TLS の名・重なる TLS の名。
+  (for [build #((fn [] (KubeIngress :namespace "apps" :name "x" :ingress-class "" :backend-service "ledger" :backend-port 8621))
+                (fn [] (KubeIngress :namespace "apps" :name "x" :ingress-class "entry.example.dev" :backend-service "" :backend-port 8621))
+                (fn [] (KubeIngress :namespace "apps" :name "x" :ingress-class "entry.example.dev" :backend-service "ledger" :backend-port 0))
+                (fn [] (KubeIngress :namespace "apps" :name "x" :ingress-class "entry.example.dev" :backend-service "ledger" :backend-port 8621
+                                    :tls-hosts #("")))
+                (fn [] (KubeIngress :namespace "apps" :name "x" :ingress-class "entry.example.dev" :backend-service "ledger" :backend-port 8621
+                                    :tls-hosts #("ledger" "ledger"))))]
+    (<- refused bool (refused-record? build))
+    (assert refused build))
+  ;; 判定が常に断る物でないこと。
+  (<- fine bool (refused-record? (fn [] ENTRY)))
   (assert (not fine)))
 
 
@@ -223,6 +278,26 @@
     (<- text str (service-apply-text service))
     (:= expected-objects (+ expected-objects #((AppliedObject :path path :body text)))))
   (assert (= world.objects expected-objects) world.objects))
+
+
+(deftest test-both-handlers-keep-ingresses-apart-from-services
+  ;; Ingress と Service が同じ namespace と名でも別の物(種類ごとの一覧)・Ingress も初めは CREATED・在れば APPLIED。
+  (val story #(INSIDE ENTRY-PLAIN ENTRY))
+  (val expected #(KubeServiceOutcome.CREATED KubeServiceOutcome.CREATED KubeServiceOutcome.APPLIED))
+  (val world (ApiServerWorld TOKEN #("apps")))
+  (<- api-outcomes tuple (on-api world story))
+  (val log (KubeServiceLog))
+  (<- sim-outcomes tuple (on-sim log story))
+  (assert (= api-outcomes expected) api-outcomes)
+  (assert (= sim-outcomes expected) sim-outcomes)
+  (assert (= #(log.services log.ingresses) #(#(INSIDE) #(ENTRY))) #(log.services log.ingresses))
+  ;; 本番の相手役が持つ物は、模擬の一覧を同じ綴りにした物と同じ。
+  (<- service-path-text str (service-path INSIDE))
+  (<- service-text str (service-apply-text INSIDE))
+  (<- entry-path-text str (ingress-path ENTRY))
+  (<- entry-text str (ingress-apply-text ENTRY))
+  (assert (= world.objects #((AppliedObject :path service-path-text :body service-text) (AppliedObject :path entry-path-text :body entry-text)))
+          world.objects))
 
 
 (deftest test-the-production-handler-applies-with-the-worker-identity
@@ -260,4 +335,22 @@
   (assert (and (is-not sim-down None) (in "apps/ledger" sim-down) (in "届かない" sim-down)) sim-down)
   ;; 判定が常に断る物でないこと: 揃っていれば断らない。
   (<- fine (| str None) (refusal-on-api (ApiServerWorld TOKEN #("apps")) WORKER-FILES INSIDE))
+  (assert (is fine None) fine))
+
+
+(deftest test-an-ingress-that-cannot-be-applied-is-refused-with-the-kind-the-place-and-the-reason
+  ;; 失敗ケース 1: 身元が書けない namespace は 403 — 断りの文は種類 Ingress と namespace と名を挙げる。
+  (<- forbidden (| str None) (refusal-on-api (ApiServerWorld TOKEN #("apps")) WORKER-FILES ENTRY-ELSEWHERE))
+  (assert (and (is-not forbidden None) (in "Ingress vault/ledger" forbidden) (in "403" forbidden)) forbidden)
+  ;; 失敗ケース 2: 届かない API server(本番と模擬の両方)。
+  (<- down (| str None) (refusal-on-api (ApiServerWorld TOKEN #("apps") :down True) WORKER-FILES ENTRY))
+  (assert (and (is-not down None) (in "Ingress apps/ledger" down) (in "届かない" down)) down)
+  (var sim-down None)
+  (try
+    (<- (on-sim (KubeServiceLog :down True) #(ENTRY)))
+    (except [error KubeServiceRefused]
+      (:= sim-down (str error))))
+  (assert (and (is-not sim-down None) (in "Ingress apps/ledger" sim-down) (in "届かない" sim-down)) sim-down)
+  ;; 判定が常に断る物でないこと。
+  (<- fine (| str None) (refusal-on-api (ApiServerWorld TOKEN #("apps")) WORKER-FILES ENTRY))
   (assert (is fine None) fine))

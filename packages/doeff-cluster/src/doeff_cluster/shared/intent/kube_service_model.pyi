@@ -39,6 +39,20 @@ class KubeService:
     def __post_init__(self) -> None:
         ...
 
+@dataclass(frozen=True, kw_only=True)
+class KubeIngress:
+    namespace: str
+    name: str
+    ingress_class: str
+    backend_service: str
+    backend_port: int
+    tls_hosts: tuple[str, ...] = ...
+    labels: FrozenMap[str] = ...
+    annotations: FrozenMap[str] = ...
+
+    def __post_init__(self) -> None:
+        ...
+
 class KubeServiceRefused(RuntimeError):
     ...
 
@@ -46,3 +60,8 @@ class KubeServiceRefused(RuntimeError):
 class EnsureKubeService(EffectBase[KubeServiceOutcome]):
     __record_spec__: ClassVar[RecordSpec]
     service: KubeService
+
+@dataclass(frozen=True)
+class EnsureKubeIngress(EffectBase[KubeServiceOutcome]):
+    __record_spec__: ClassVar[RecordSpec]
+    ingress: KubeIngress

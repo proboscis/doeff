@@ -1,4 +1,4 @@
-;;; job が自分へ届く網の宛先(k8s の Service)を、YAML でなく宣言(値と effect)で作る時の型と effect(関数は持たない — 本番の答え手は
+;;; job が自分へ届く網の宛先(k8s の Service と Ingress)を、YAML でなく宣言(値と effect)で作る時の型と effect(関数は持たない — 本番の答え手は
 ;;; doeff_cluster.shared.protocol.kube_services の kube-services-api・模擬の答え手は doeff_cluster._sim.k8s_services の held-kube-services)。
 ;;; この package の service(名前付きで動き続ける Program)と区別するため、k8s の Service は名に Kube を付ける。
 ;;;
@@ -7,9 +7,15 @@
 ;;;                        付けないので数で書く)
 ;;;   KubeService          Service 1 つの宣言: namespace・name・type・selector(Pod の label — 空にしない)・ports・labels・annotations・
 ;;;                        load-balancer-class(LOAD-BALANCER の時だけ書ける)
-;;;   KubeServiceOutcome   当てた結末: CREATED = 無かったので作った・APPLIED = 在った物に宣言を当て直した(中身が同じで変わらない事も含む)
-;;;   KubeServiceRefused   当てられなかった(namespace と名・理由を文に持つ — token は載せない・既定の値で埋めない)
+;;;   KubeIngress          Ingress 1 つの宣言: namespace・name・ingress-class(Ingress を出す実装の名)・backend-service と backend-port
+;;;                        (同じ namespace の Service の口 — 全部の求めをそこへ向ける)・tls-hosts(TLS を終える名 — 空 = TLS なし)・labels・
+;;;                        annotations
+;;;   KubeServiceOutcome   当てた結末(Service と Ingress に共通): CREATED = 無かったので作った・APPLIED = 在った物に宣言を当て直した(中身が
+;;;                        同じで変わらない事も含む)
+;;;   KubeServiceRefused   当てられなかった(Service と Ingress に共通 — 種類と namespace と名・理由を文に持つ — token は載せない・既定の値で
+;;;                        埋めない)
 ;;;   EnsureKubeService    Service 1 つを宣言どおりに在らせる effect(答えは KubeServiceOutcome。当てられなければ KubeServiceRefused)
+;;;   EnsureKubeIngress    Ingress 1 つを宣言どおりに在らせる effect(答えと断りは EnsureKubeService と同じ)
 ;;;
 ;;; 宣言が持つ欄だけを当てる(server-side apply): cluster が埋める欄(clusterIP・status・load balancer の実装が足す finalizer や annotation)と、
 ;;; 他の持ち主が足した欄には触らない。何度当てても同じ宣言なら同じ物になる(job が起動のたびに当て直してよい)。LOAD-BALANCER の Service に
@@ -57,11 +63,34 @@
   (setv #^ (| str None) load-balancer-class None))
 
 
+(defrecord KubeIngress
+  "Ingress 1 つの宣言(頭の註): namespace・name・ingress-class = Ingress を出す実装の名・backend-service = 全部の求めを向ける同じ namespace の
+   Service の名・backend-port = その Service の口・tls-hosts = TLS を終える名(空 = TLS なし・名は重ねない)・labels・annotations = Ingress
+   自身の metadata。"
+  {:check [(> (len namespace) 0) (> (len name) 0) (> (len ingress-class) 0) (> (len backend-service) 0) (<= 1 backend-port 65535)
+           (all (gfor host tls-hosts (> (len host) 0))) (= (len (set tls-hosts)) (len tls-hosts))]}
+  (#^ str namespace)
+  (#^ str name)
+  (#^ str ingress-class)
+  (#^ str backend-service)
+  (#^ int backend-port)
+  (setv #^ (get tuple #(str ...)) tls-hosts #())
+  ;; labels・annotations が写像である訳は KubeService と同じ(k8s の metadata の写像そのもの)。
+  (setv #^ (get FrozenMap str) labels (FrozenMap {}))
+  (setv #^ (get FrozenMap str) annotations (FrozenMap {})))
+
+
 (defclass KubeServiceRefused [RuntimeError]
-  "Service を当てられなかった(namespace と名・理由を文に持つ — token は載せない・既定の値で埋めない)。")
+  "Service か Ingress を当てられなかった(種類と namespace と名・理由を文に持つ — token は載せない・既定の値で埋めない)。")
 
 
 (defclass [(dataclass :frozen True)] EnsureKubeService [(get EffectBase KubeServiceOutcome)]
   ;; 記録: 判断の外への報告(output — cluster の物を作る・当て直す)。
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT))
   (#^ KubeService service))
+
+
+(defclass [(dataclass :frozen True)] EnsureKubeIngress [(get EffectBase KubeServiceOutcome)]
+  ;; 記録: 判断の外への報告(output — cluster の物を作る・当て直す)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT))
+  (#^ KubeIngress ingress))
