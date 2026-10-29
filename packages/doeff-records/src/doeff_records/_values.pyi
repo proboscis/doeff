@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 
 TABLE_NAME_PATTERN: re.Pattern[str]
 FIELD_NAME_PATTERN: re.Pattern[str]

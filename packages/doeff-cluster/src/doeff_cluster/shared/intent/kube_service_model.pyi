@@ -4,7 +4,7 @@ from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from typing import ClassVar as ClassVar
 from doeff import EffectBase as EffectBase
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_cluster.shared.intent.record_spec import RecordSpec as RecordSpec
 from doeff_cluster.shared.intent.record_spec import RecordMode as RecordMode
 

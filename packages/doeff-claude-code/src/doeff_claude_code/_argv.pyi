@@ -3,8 +3,8 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from collections.abc import Mapping as Mapping
-from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_hy.frozen import thaw_json as thaw_json
+from doeff_hy._frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import thaw_json as thaw_json
 from doeff_claude_code._values import ClaudeSessionSpec as ClaudeSessionSpec
 from doeff_claude_code._values import ClaudeHome as ClaudeHome
 from doeff_claude_code._values import LentCredential as LentCredential

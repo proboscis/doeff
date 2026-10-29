@@ -9,7 +9,7 @@
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty StreamTailEmpty WatchCursor])
 (import doeff_records [ReadRow ListRows WatchChanges WatchEvents ReadEvents ReadStreamEnd PutRow AppendEvent])
 (import doeff_records._laws [MAKER TICKET-KEEP-SECONDS])

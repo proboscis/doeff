@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "codex" :role "intent"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex._lines [TurnEnded])
 

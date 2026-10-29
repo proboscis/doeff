@@ -234,7 +234,7 @@ from doeff_cluster.shared.intent.semaphore_model import LeaseAnswer as LeaseAnsw
 from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
 from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseVacated as AwaitLeaseVacated
 from doeff_cluster.shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMAPHORE_PREFIX
-from doeff_hy.wire import parse as parse_wire
+from doeff_hy._wire import parse as parse_wire
 from doeff_cluster.shared.core.lease_rules import drop_holders as drop_holders
 from doeff_cluster.shared.core.lease_rules import lease_holder as lease_holder
 from doeff_cluster.shared.core.lease_rules import holder_tokens_prefix as holder_tokens_prefix

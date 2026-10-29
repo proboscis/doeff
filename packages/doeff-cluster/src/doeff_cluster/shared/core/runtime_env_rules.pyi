@@ -10,7 +10,7 @@ doeff_cluster.shared.intent.runtime_env_model.pyi。
 from typing import Any
 
 from doeff import Program
-from doeff_hy.json_value import JsonValue
+from doeff_hy._json_value import JsonValue
 
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, EnvFailureKind, RepoCheckout, RepoLocation, RuntimeEnv
 

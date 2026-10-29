@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore SemaphoreSession])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 
 ;; 担い手が取る lease の名と、取った世代と刻を書く盤の行。

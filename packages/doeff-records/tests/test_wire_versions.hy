@@ -11,7 +11,7 @@
 (import json)
 (import pathlib [Path])
 (import doeff [run])
-(import doeff_hy.json_value [JsonValue])
+(import doeff_hy._json_value [JsonValue])
 (import doeff_records.wire [ANSWER-KINDS encode-answer decode-answer])
 (import tests.test_wire [ANSWERS])
 

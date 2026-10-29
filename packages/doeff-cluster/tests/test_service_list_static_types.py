@@ -30,7 +30,7 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster"
 # tuple にする形と、名簿を扱う handler が effect の答えを「届かない」と「一覧」に分けて欄を読む形。
 SERVICE_LIST_USERS = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_hy.wire [Malformed parse-json])
+(import doeff_hy._wire [Malformed parse-json])
 (import doeff_cluster.shared.intent.detached_model [ReadServices ServiceFact ServiceListWire ServicesUnreachable])
 (import doeff_cluster.shared.protocol.detached [service-facts-of-view])
 

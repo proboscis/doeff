@@ -5,9 +5,9 @@ from dataclasses import replace as replace
 from datetime import datetime as datetime
 from datetime import timezone as timezone
 from collections.abc import Mapping as Mapping
-from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_hy.frozen import frozen_json_object as frozen_json_object
-from doeff_hy.frozen import thaw_json as thaw_json
+from doeff_hy._frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import frozen_json_object as frozen_json_object
+from doeff_hy._frozen import thaw_json as thaw_json
 from doeff_records._values import RecordsSchema as RecordsSchema
 from doeff_records._values import TableDecl as TableDecl
 from doeff_records._values import StreamDecl as StreamDecl

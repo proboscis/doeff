@@ -3,7 +3,7 @@
 service_model.hy は Hy の module なので、pyright は中を読めず、`doeff_cluster.shared.intent.service_model` の名が全部 Unknown になる。
 defsystem の展開は `doeff_cluster.shared.intent.service_model.CallShape`(と service_build の system_of / job)を呼ぶので、defsystem を
 書いた file ごとに、書き手に直せない赤(Return type is unknown・Type of "system_of" is unknown ほか)が
-出ていた。ここで型を宣言する(doeff_hy/wire.pyi と同じ形)。
+出ていた。ここで型を宣言する(doeff_hy/_wire.pyi と同じ形)。
 
 - defrecord(CallShape・Job・System・Declaration)は凍った・キーワード引数だけの dataclass。
 - 関数は置き場を分けた(#2540): identity と検めの判断は core/service_rules.pyi、構成子と宣言の行の組み立ては
@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import Field, dataclass
 from typing import Any, ClassVar, NotRequired, Protocol, TypedDict, runtime_checkable
 
-from doeff_hy.json_value import JsonValue
+from doeff_hy._json_value import JsonValue
 
 from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
 

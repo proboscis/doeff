@@ -9,7 +9,7 @@
 (import doeff [Perform run with_handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Written WrittenRows Missing Refused Unreachable Appended Changes Page Events WatchCursor])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records [SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])

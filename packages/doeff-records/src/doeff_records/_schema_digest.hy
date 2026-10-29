@@ -7,7 +7,7 @@
 ;;; TableDecl の形(欄・repr の綴り)が doeff の版で変わると、全部の表の要約が一度に変わる — 使い手は宣言し直すまで前の版を選ぶ。
 (require doeff-hy.macros [defk val])
 (import hashlib)
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records._values [RecordsSchema])
 
 (val MODULE-TAGS {:context "records" :role "judgment"})

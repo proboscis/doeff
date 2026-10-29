@@ -35,7 +35,7 @@ from doeff_events import (
     timer_handler,
 )
 from doeff_events import WaitForEvent
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 from doeff_records import (
     ExpectAny,
     PutRows,

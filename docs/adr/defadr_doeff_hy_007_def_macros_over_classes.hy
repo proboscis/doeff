@@ -22,7 +22,7 @@
 (require doeff-hy.macros [deftest val var <-])
 (require doeff-hy.record [defrecord defwire])
 (import dataclasses [dataclass FrozenInstanceError])
-(import doeff_hy.wire [parse dump Malformed])
+(import doeff_hy._wire [parse dump Malformed])
 
 
 ;; 生きた probe — データの型は defrecord で 1 行に建ち、実行時の値はその型を呼んで作る。
@@ -44,8 +44,8 @@
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy"
           "packages/doeff-hy/src/doeff_hy/record.hy"
-          "packages/doeff-hy/src/doeff_hy/wire.hy"
-          "packages/doeff-hy/src/doeff_hy/json_value.py"
+          "packages/doeff-hy/src/doeff_hy/_wire.hy"
+          "packages/doeff-hy/src/doeff_hy/_json_value.py"
           "packages/doeff-linter"
           "packages/doeff-linter/src/project/smells.rs"]
   :problem
@@ -131,7 +131,7 @@
        :enforced-by ["doeff-linter DOEFF119"]
        :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地")
      (law json-is-parsed-into-declared-types
-       :statement "for_all module m(doeff_hy.wire と architecture.hy の :wire-modules に名指した foundation の module を除く): m は JsonValue / JSONValue / JsonObject / JSONObject を使わない ∧ for_all JSON の値 v と defwire の型 T: parse(T, v) は T の値か Malformed(どの型の・どの欄が・なぜ)で、T の値なら parse(T, dump(parse(T, v))) = parse(T, v)"
+       :statement "for_all module m(doeff_hy._wire と architecture.hy の :wire-modules に名指した foundation の module を除く): m は JsonValue / JSONValue / JsonObject / JSONObject を使わない ∧ for_all JSON の値 v と defwire の型 T: parse(T, v) は T の値か Malformed(どの型の・どの欄が・なぜ)で、T の値なら parse(T, dump(parse(T, v))) = parse(T, v)"
        :counterexamples
          [(counterexample "(defk state-of [row] {:pre [(: row JsonValue)] …} (.get row \"state\")) — JSON を手で分解して読む。綴り違いと型の違いが使う所まで見えない")
           (counterexample "core の判断の関数が (: value JsonValue) を受けて素の dict を返す — 型のある値に解かずに内側へ運ぶ")

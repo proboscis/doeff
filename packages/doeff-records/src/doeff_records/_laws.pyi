@@ -7,7 +7,7 @@ from datetime import datetime as datetime
 from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_core_effects import Spawn as Spawn
 from doeff_core_effects import Wait as Wait
 from doeff_time import Delay as Delay

@@ -22,7 +22,7 @@ import pytest
 SOURCE = """\
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 
 ;; 型引数つきの総称型を値に持つ名(使い手の module が書く別名の形)。
 (setv Answer (get Callable #(... object)))
@@ -85,7 +85,7 @@ def test_a_contract_naming_an_aliased_callable_accepts_a_function(mod: ModuleTyp
 
 
 def test_a_contract_naming_an_aliased_union_of_generics_accepts_each_outer_type(mod: ModuleType) -> None:
-    from doeff_hy.frozen import freeze_json_text
+    from doeff_hy._frozen import freeze_json_text
 
     for value in (freeze_json_text('{"a": 1}'), (1, 2), None):
         assert _run(mod.rows_of(value)) is True, value

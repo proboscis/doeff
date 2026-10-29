@@ -90,8 +90,8 @@ from doeff_cluster.shared.intent.detached_model import DetachedOutboxWire as Det
 from doeff_cluster.shared.intent.detached_model import DetachedOutboxAnswer as DetachedOutboxAnswer
 from doeff_cluster.shared.intent.detached_model import DetachedOutboxAcked as DetachedOutboxAcked
 from doeff_cluster.shared.intent.detached_model import DetachedAckAnswer as DetachedAckAnswer
-from doeff_hy.wire import Malformed as Malformed
-from doeff_hy.wire import parse as parse
+from doeff_hy._wire import Malformed as Malformed
+from doeff_hy._wire import parse as parse
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
 from doeff_cluster.shared.intent.remote_model import TaskFailed as TaskFailed
 from doeff_cluster.shared.protocol.program_codec import encode_program as encode_program

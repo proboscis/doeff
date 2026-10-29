@@ -15,7 +15,7 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlHangNotice SqlDropNotice])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [PutRow WatchChanges])
 (import doeff_records [Changes ExpectAbsent Reset WatchCursor])
 (import doeff_records._laws [MAKER])

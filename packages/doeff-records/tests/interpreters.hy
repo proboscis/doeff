@@ -46,7 +46,7 @@
 (import doeff_records._service [RecordsService respond HttpRequest :as ServiceRequest])
 (import doeff_records.wire [WRITER-HEADER IDEMPOTENCY-HEADER])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 
 (setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")

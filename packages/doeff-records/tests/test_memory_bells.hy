@@ -8,7 +8,7 @@
 (import doeff_core_effects [scheduled]
         doeff_core_effects._scheduler [HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent])
 (import doeff_records [PutRow AppendEvent])
 (import doeff_records.memory [MemoryStore memory-records-handler hang-bell drop-bell])

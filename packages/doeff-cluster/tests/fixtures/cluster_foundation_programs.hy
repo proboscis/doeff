@@ -11,7 +11,7 @@
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.entry.cluster_foundation [with-cluster-handlers])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 
 

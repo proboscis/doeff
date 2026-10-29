@@ -7,7 +7,7 @@ from enum import StrEnum as StrEnum
 from functools import partial as partial
 from typing import NamedTuple as NamedTuple
 from doeff import EffectBase as EffectBase
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
 from doeff_hy.table import Table as Table
 from doeff_hy.table import table_of as table_of
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec

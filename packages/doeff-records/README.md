@@ -33,7 +33,7 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
 - 行のキーは定義の `key_fields` の順の文字列の tuple。行の値は欄 → JSON の値の凍らせた写像(doeff-hy の `FrozenMap` —
   中の object も `FrozenMap`・array は tuple まで深く凍らせる)で、キーの欄を含む。`Row` / `Written` / `RowChanged` の `value`、
   `PutRow.value`・`ListRows.where`・`ListRows.where_any`、出来事の本文は、作る時に受けた写像を凍らせる(作った後に変えられない)。JSON へ書く所は
-  `doeff_hy.frozen.thaw_json` で dict / list へ戻す。
+  `doeff_hy._frozen.thaw_json` で dict / list へ戻す。
 - 版(`version`)は生まれた行が 1 で、書くたびに 1 増える。
 - 書きの答え `Written` の `position`(`WatchCursor(epoch, sequence)`)は、その書きが変更の列に積んだ変更の位置(`sequence` = `WatchChanges` の
   `RowChanged.sequence` と同じ番号・`epoch` = 置き場の版)。その位置から `WatchChanges` を読むと、その書きより後の変更だけが来る。memory・

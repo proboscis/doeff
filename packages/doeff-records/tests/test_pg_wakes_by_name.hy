@@ -21,7 +21,7 @@
 (import doeff_core_effects.sql_effects [SqlQuery])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay GetMonotonic])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAny ExpectAbsent WatchCursor Changes Reset Unreachable Written Appended EventsMoved EventsQuiet Events])
 (import doeff_records [PutRow ListRows WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records._laws [MAKER])

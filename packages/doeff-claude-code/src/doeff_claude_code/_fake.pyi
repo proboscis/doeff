@@ -12,9 +12,9 @@ from doeff_time import GetTime as GetTime
 from doeff_time import WaitWithin as WaitWithin
 from doeff_core_effects import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects import ExternalPromise as ExternalPromise
-from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_hy.frozen import FrozenJson as FrozenJson
-from doeff_hy.frozen import frozen_json_object as frozen_json_object
+from doeff_hy._frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenJson as FrozenJson
+from doeff_hy._frozen import frozen_json_object as frozen_json_object
 from doeff_claude_code._values import ClaudeTurn as ClaudeTurn
 from doeff_claude_code._values import ClaudeSessionSpec as ClaudeSessionSpec
 from doeff_claude_code._values import FreshSession as FreshSession
@@ -66,7 +66,7 @@ from doeff_claude_code._lines import ModelRefusalHit as ModelRefusalHit
 from doeff_claude_code._lines import STOP_REASON_REFUSAL as STOP_REASON_REFUSAL
 from doeff_claude_code._lines import stderr_tail_within as stderr_tail_within
 from doeff_claude_code._lines import CallClosed as CallClosed
-from doeff_hy.json_lines import jsonl_lines as jsonl_lines
+from doeff_hy._json_lines import jsonl_lines as jsonl_lines
 from doeff import run as run
 from doeff_claude_code._dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code._dialogue import refusal_hit_after as refusal_hit_after

@@ -1,5 +1,5 @@
 ;;; ReportMetrics の fake の handler。metrics-memory = list に記録する(テスト)。本物は metrics_handlers.hy の metrics-http。
-;;; 本物と分けた訳: fake は coordinator と同じ解きと検めを通すので coordinator の型の閉包(MetricsPayload・checked-metrics・doeff_hy.wire)
+;;; 本物と分けた訳: fake は coordinator と同じ解きと検めを通すので coordinator の型の閉包(MetricsPayload・checked-metrics・doeff_hy._wire)
 ;;; を読む。本物の module はどの job の foundation も読むので、fake を同じ module に置くと全部の job がその閉包を
 ;;; 起動で読んでいた。
 (require doeff-hy.macros [val])
@@ -8,7 +8,7 @@
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.coordinator.core.metrics_policy [checked-metrics :as _checked-metrics])
 (import doeff_cluster.coordinator.intent.request_bodies [MetricsPayload :as _MetricsPayload])
-(import doeff_hy.wire [parse Malformed])
+(import doeff_hy._wire [parse Malformed])
 (import doeff_cluster.coordinator.core.resource_policy [Refused :as _Refused])
 
 

@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts RootMarker RuntimeIdentity RuntimeIdentityMismatch RepoCommit])
 (import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts TreeCounts])
 (import doeff_cluster.shared.core.runtime_identity [check-runtime-identity decode-marker marker-bytecode])
-(import doeff_hy.wire [Malformed])
+(import doeff_hy._wire [Malformed])
 (import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])
 
 (val AC-COMMIT (* "a" 40))

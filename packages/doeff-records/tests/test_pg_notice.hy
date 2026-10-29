@@ -16,7 +16,7 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlParam SqlRows SqlFailed])
 (import doeff_core_effects.postgres_sql [NOTICE-STATEMENT postgres-sql-handler notice-payload])
 (import doeff_time [Delay GetMonotonic WaitWithin SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ListRows PutRow WatchChanges])
 (import doeff_records [Changes WatchCursor ExpectAbsent Written])
 (import doeff_records._laws [LawHarness MAKER as-writer])

@@ -19,7 +19,7 @@
 (import sys)
 (import pytest)
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Unreachable])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch])
 (import doeff_records [SetStoreOutage])

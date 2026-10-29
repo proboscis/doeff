@@ -18,7 +18,7 @@
 (import dataclasses [dataclass field])
 (import json)
 (import re)
-(import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
+(import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
 
 (setv TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
 (setv FIELD-NAME-PATTERN (re.compile "^[A-Za-z_][A-Za-z0-9_]{0,62}$"))

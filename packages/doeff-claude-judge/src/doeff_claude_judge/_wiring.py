@@ -18,7 +18,7 @@ from doeff_claude_code import AccountLimitHit, Usage
 from doeff_claude_code import claude_print_handler
 from doeff_core_effects import slog_discard_handler, slog_handler, try_handler
 from doeff_core_effects import scheduled
-from doeff_hy.frozen import freeze_json
+from doeff_hy._frozen import freeze_json
 
 from doeff import Pass, Resume, do, run, with_handlers
 from doeff import handler as _program_handler
@@ -28,7 +28,7 @@ from doeff_claude_judge._target import BorrowJudgeCredential, ClaudeJudgeTarget,
 from doeff_claude_judge._wire import ClaudeQuery
 
 if TYPE_CHECKING:
-    from doeff_hy.frozen import JsonIn  # 型の宣言(frozen.pyi)だけに在る JSON の値の別名
+    from doeff_hy._frozen import JsonIn  # 型の宣言(frozen.pyi)だけに在る JSON の値の別名
 
 #: 起こす CLI(実行ファイルと前置きの引数)の既定 — PATH の claude。
 DEFAULT_COMMAND: tuple[str, ...] = ("claude",)

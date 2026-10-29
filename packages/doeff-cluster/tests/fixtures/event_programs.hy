@@ -12,7 +12,7 @@
 (import datetime [datetime timedelta])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_events [ArmTimer TimerFired WaitForEvent EventBus subscribed-event-handler])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_time [GetTime])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 

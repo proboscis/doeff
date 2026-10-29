@@ -496,7 +496,7 @@
 ;; k8s の観測(Deployment・node の label)は ClusterState.observations の表に在り、版の比べ(resource_policy.stamp の dirty-keys)と
 ;; 保存の差分(durable_kv.durable-delta)の外。観測を書き直すだけの拍は、資源の版・出来事の記録・保存の行を 1 つも動かさない。
 
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])

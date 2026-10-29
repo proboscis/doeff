@@ -9,7 +9,7 @@
 ;;;   * env の値は、どの答えにも断りの文にも出ない
 ;;;   * 待ちの子との約束の 1 行は、頼みも答えも往復する(形の違う 1 行は読めない断り)
 (require doeff-hy.macros [defk deftest <- val var])
-(import doeff_hy.wire [Malformed])
+(import doeff_hy._wire [Malformed])
 (import doeff_core_effects.process_effects [EnvEntry ProcessSignal RunProcess])
 (import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited
                                          WarmLost WarmSignaled WarmGone warm-socket-missing warm-answer-late warm-answer-unreadable

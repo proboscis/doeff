@@ -9,9 +9,9 @@ from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from enum import StrEnum as StrEnum
-from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_hy.frozen import thaw_json as thaw_json
-from doeff_hy.json_value import JsonValue as JsonValue
+from doeff_hy._frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import thaw_json as thaw_json
+from doeff_hy._json_value import JsonValue as JsonValue
 from doeff_records._values import ExpectAbsent as ExpectAbsent
 from doeff_records._values import ExpectVersion as ExpectVersion
 from doeff_records._values import ExpectAny as ExpectAny

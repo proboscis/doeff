@@ -8,7 +8,7 @@
 2. 検の型(wire_codec_types.hy — 語彙の型を 1 つずつ持つ型・語彙の外の型)でも同じく一致し、組めないのは語彙の外の型だけである事。
 3. 照らしが見つけた差の直し: 配列と object の入れ子の深さの上限(pydantic と同じ 200 階層)を、文字列からも値からも守る事。
 
-agora-controllers の型は agora-controllers の検が同じ道具(doeff_hy.wire_parity)で照らす。
+agora-controllers の型は agora-controllers の検が同じ道具(doeff_hy._wire_parity)で照らす。
 """
 
 import importlib
@@ -17,10 +17,10 @@ import sys
 from pathlib import Path
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
-from doeff_hy import wire_parity
-from doeff_hy.json_value import OpaqueJson
-from doeff_hy.wire_codec import codec_of
-from doeff_hy.wire_malformed import Malformed
+from doeff_hy import _wire_parity as wire_parity
+from doeff_hy._json_value import OpaqueJson
+from doeff_hy._wire_codec import codec_of
+from doeff_hy._wire_malformed import Malformed
 
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:

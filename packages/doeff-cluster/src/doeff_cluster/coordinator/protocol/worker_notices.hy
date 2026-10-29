@@ -6,13 +6,13 @@
 ;;; 知らせる。受け手はその時に coordinator の状態から生死を読み直す(doeff-events の notice_events_handler・ADR-DOE-EVENTS-002 R5)。
 ;;; 起動の時の欠けの知らせ(start_channels)は持たない — coordinator は起動の後の最初の歩で名簿の全部の今の生死を出す。
 ;;; 綴り: 本文は defwire の型の JSON(欄の名は camel)。encode / decode は doeff-events が Program の外で呼ぶ普通の関数なので、型の解き手
-;;; (__doeff_wire__ の codec — doeff_hy.wire の parse-json / dump-json と同じ物)を直に使う。形の違う本文は MalformedNotice で、
+;;; (__doeff_wire__ の codec — doeff_hy._wire の parse-json / dump-json と同じ物)を直に使う。形の違う本文は MalformedNotice で、
 ;;; 受け手の源を名指しで落とす(doeff-events は読めない知らせを捨てない)。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff_events [MarkGap NoticeRoute])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_hy.wire_malformed [Malformed])
+(import doeff_hy._wire_malformed [Malformed])
 
 
 (defclass MalformedNotice [ValueError]

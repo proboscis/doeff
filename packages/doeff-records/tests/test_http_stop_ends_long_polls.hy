@@ -27,7 +27,7 @@
 (import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpScript ReadHttpServed ScriptedBody])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-sql-handler])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.pg [drop-records-tables])

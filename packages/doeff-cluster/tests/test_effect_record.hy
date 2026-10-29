@@ -19,8 +19,8 @@
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
-(import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster.foundation.record_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical
@@ -86,9 +86,9 @@
   (assert raised "知らない値は投げる"))
 
 (deftest test-frozen-maps-round-trip-as-frozen-maps
-  ;; doeff_hy.frozen の凍った写像 FrozenMap(業務の答えが運ぶ記録の行の値 — doeff-records の Row・Written の value)を、記録の形を通しても
+  ;; doeff_hy._frozen の凍った写像 FrozenMap(業務の答えが運ぶ記録の行の値 — doeff-records の Row・Written の value)を、記録の形を通しても
   ;; 同じ値・同じ型で戻す(dict に化けない)。入れ子(FrozenMap の中の FrozenMap・tuple の中の FrozenMap)も同じ型で戻る。
-  ;; 失敗ケース(直す前の形): encode-value が「記録の形にできない値の型: doeff_hy.frozen:FrozenMap」で投げて赤(#3687 の続き — 業務の答えが
+  ;; 失敗ケース(直す前の形): encode-value が「記録の形にできない値の型: doeff_hy._frozen:FrozenMap」で投げて赤(#3687 の続き — 業務の答えが
   ;; 書けた行の値を運ぶ形で、本番の記録係の記録がその答えで止まった欠け)。
   (val inner (FrozenMap {"k" #(1 2) "s" "x"}))
   (val v (FrozenMap {"inner" inner "pair" #(inner "y") "n" 3 "$weird" None}))

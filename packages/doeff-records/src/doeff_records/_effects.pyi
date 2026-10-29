@@ -9,7 +9,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 
 from doeff import EffectBase
 from doeff_records._values import (

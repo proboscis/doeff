@@ -2,7 +2,7 @@
 
 defk の :pre の型の契約は、実行の時は isinstance で確かめ(要素の型つきの総称型は外側の型へ写す — #1790)、型検査の展開でも同じ
 isinstance を出していた。型の別名(名)はそのまま isinstance へ渡るので、要素の型を書いた別名(例 `Body = Mapping[str, Body] | …`)を
-型検査の時だけ書く形(doeff_hy/json_value.py と同じ)にしても、型検査で『isinstance の第 2 引数は型でない』の赤になり、別名を素の和
+型検査の時だけ書く形(doeff_hy/_json_value.py と同じ)にしても、型検査で『isinstance の第 2 引数は型でない』の赤になり、別名を素の和
 (`Mapping | tuple | …`)のままにするしか無かった(使い手の strict に『一部不明』の赤が残る)。
 → 型検査の展開では :pre の型の契約の isinstance を出さない(引数の型は契約から書く注記が運ぶ)。実行の時の確かめは変えない。
 1 本目は型検査の赤が無い事、2 本目は実行の時に契約が今までどおり違う値を断る事を確かめる。
@@ -28,7 +28,7 @@ MODULE = """\
 (import collections.abc [Mapping])
 (import typing [TYPE_CHECKING TypeAlias])
 
-;; 型検査の時は要素の型つきの再帰の別名・実行の時は isinstance に渡せる和(doeff_hy/json_value.py と同じ形)。
+;; 型検査の時は要素の型つきの再帰の別名・実行の時は isinstance に渡せる和(doeff_hy/_json_value.py と同じ形)。
 (if TYPE_CHECKING
     (setv #^ TypeAlias Body "Mapping[str, Body] | tuple[Body, ...] | str | int | None")
     (setv Body (| Mapping tuple str int None)))

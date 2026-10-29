@@ -3,7 +3,7 @@
 runtime_env_model.hy は Hy の module なので、pyright は中を読めず、`doeff_cluster.shared.intent.runtime_env_model` の名が全部
 Unknown になる。SubmitDetached.environ(EnvVar の組)を使い手が組むと、書き手に直せない赤
 (Type of "EnvVar" is unknown・Argument type is unknown ほか)が使い手の file ごとに出た。
-ここで型を宣言する(service_model.pyi・doeff_hy/wire.pyi と同じ形)。
+ここで型を宣言する(service_model.pyi・doeff_hy/_wire.pyi と同じ形)。
 
 - defrecord(RepoCheckout・LocalPath・RemoteRepo・NativeWheel・PythonProject・ToolRequirement・EnvVar・RuntimeEnv・EnvFailure)は凍った・キーワード
   引数だけの dataclass。欄の型は runtime_env_model.hy の注記と __post_init__ の検めに合わせる(注記が素の tuple の所は、
