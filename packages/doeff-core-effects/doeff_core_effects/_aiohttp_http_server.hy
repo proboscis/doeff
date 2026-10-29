@@ -6,7 +6,11 @@
 ;;;                 共有の event loop とは別の daemon thread で回る)の上で走る。答え手の節は Await で共有の loop に入り、そこから待ち受けの
 ;;;                 loop の coroutine の完了を待つ(across)。共有の loop か協調型の scheduler が止まっても、待ち受けの loop は接続を受け続ける
 ;;;                 (agora-redesign #2776 — 2026-10-02 の record の job は共有の loop が 30 秒止まり、/healthz も答えなかった)
-;;;   probe の口    HttpListen の probes に当たる要求(probe-for — GET・HEAD と path)は列にも scheduler にも渡さず、待ち受けの loop が
+;;;   loop の遅れ   待ち受けの loop は作った時から EDGE-LAG-TICK-SECONDS ごとに寝て起き、予定の刻と起きた刻の差(寝過ごし — thread が
+;;;                 CPU を待った分と、loop の上の他の仕事が塞いだ分)を集め、EDGE-LAG-WINDOW-SECONDS の窓ごとに拍の数・最長・99% を
+;;;                 stderr に 1 行名乗る(edge-lag-line)。ws の ping への pong もこの loop が返すので、画面の外の測りの client の CPU の待ちと
+;;;                 分けて、待ち受けの側の往復の遅れを読める(agora card ki-5bf133f2c72c)
+;;;   probe の口   HttpListen の probes に当たる要求(probe-for — GET・HEAD と path)は列にも scheduler にも渡さず、待ち受けの loop が
 ;;;                 answer の Program を別の thread(asyncio.to_thread)の自分の run で走らせて答える(probe-answer)。札は 1 つ数える
 ;;;   待ち受け      aiohttp の server を待ち受けの loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
 ;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
@@ -59,6 +63,7 @@
 (import asyncio)
 (import collections [deque])
 (import collections.abc [Coroutine])
+(import math)
 (import sys)
 (import threading)
 (import time)
@@ -115,6 +120,10 @@
 (val EDGE-LOOPS {})
 (val EDGE-LOOP-LOCK (threading.Lock))
 (val EDGE-KEY "edge")
+;; 待ち受けの loop の遅れの計器(頭の註の loop の遅れ)の拍の間と、1 行名乗る窓の秒。走っている計器は鍵 EDGE-KEY → task の future で持つ。
+(val EDGE-LAG-TICK-SECONDS 0.05)
+(val EDGE-LAG-WINDOW-SECONDS 60.0)
+(val EDGE-LAG-METERS {})
 ;; across が待ち受けの loop から運ぶ答えの型。
 (val Carried (TypeVar "Carried"))
 
@@ -175,6 +184,32 @@
   "中継の失敗を stderr に 1 行名乗るため(access log を出さないので、どの口が落ちたかを外から見分ける)。"
   (print (+ "http-server: " line) :file sys.stderr :flush True)
   None)
+
+
+(defk edge-lag-line [overshoots window-seconds]
+  {:pre [(: overshoots tuple) (> (len overshoots) 0) (: window-seconds float)] :post [(: % str)]
+   :tags {:context "http-server" :role "judgment"}}
+  "待ち受けの loop の窓 1 つの寝過ごし(秒の組)を、拍の数・最長・99%(並べて 99% の位置の値 — 下から ceil(0.99 n) 番目)の 1 行に
+   するため(頭の註の loop の遅れ)。"
+  (val ordered (sorted overshoots))
+  (val p99 (get ordered (- (math.ceil (* 0.99 (len ordered))) 1)))
+  (.format "edge-loop lag: window={:.0f}s ticks={} max_ms={:.1f} p99_ms={:.1f}"
+           window-seconds (len ordered) (* 1000.0 (get ordered -1)) (* 1000.0 p99)))
+
+
+(defn :async #^ None meter-edge-lag [#^ float tick-seconds #^ float window-seconds]  ; defk にできない: 待ち受けの loop の上で寝て時計を読む実 I/O
+  "待ち受けの loop の寝過ごしを測り続け、窓ごとに 1 行名乗るため(頭の註の loop の遅れ)。待ち受けの loop が止まるまで回る。"
+  (setv overshoots #()
+        window-start (time.monotonic))
+  (while True
+    (setv due (+ (time.monotonic) tick-seconds))
+    (await (asyncio.sleep tick-seconds))
+    (setv woke (time.monotonic))
+    (setv overshoots (+ overshoots #((max 0.0 (- woke due)))))
+    (when (>= (- woke window-start) window-seconds)
+      (print (+ "http-server: " (run (edge-lag-line overshoots window-seconds))) :file sys.stderr :flush True)
+      (setv overshoots #()
+            window-start woke))))
 
 
 (defn #^ int refusal-status [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
@@ -294,13 +329,15 @@
 
   (defn #^ asyncio.AbstractEventLoop edge-loop [self]
     "待ち受けを共有の event loop と scheduler の止まりから切り離すため、process に 1 つの待ち受けの loop を引く(無い・閉じていれば作り、
-     自分の daemon thread で回す — 頭の註)。"
+     自分の daemon thread で回し、遅れの計器を載せる — 頭の註)。"
     (with [EDGE-LOOP-LOCK]
       (setv loop (.get EDGE-LOOPS EDGE-KEY))
       (when (or (is loop None) (.is-closed loop))
         (setv loop (asyncio.new-event-loop))
         (.start (threading.Thread :target loop.run-forever :name "doeff-http-edge" :daemon True))
-        (setv (get EDGE-LOOPS EDGE-KEY) loop))
+        (setv (get EDGE-LOOPS EDGE-KEY) loop
+              (get EDGE-LAG-METERS EDGE-KEY) (asyncio.run-coroutine-threadsafe
+                                               (meter-edge-lag EDGE-LAG-TICK-SECONDS EDGE-LAG-WINDOW-SECONDS) loop)))
       loop))
 
   (defn :async #^ Carried across [self #^ (get Coroutine #(object object Carried)) coroutine]

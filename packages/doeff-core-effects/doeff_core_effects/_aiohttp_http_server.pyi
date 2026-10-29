@@ -83,6 +83,9 @@ RELAY_FAILED_CLOSE: int
 EDGE_LOOPS: Incomplete
 EDGE_LOOP_LOCK: Incomplete
 EDGE_KEY: str
+EDGE_LAG_TICK_SECONDS: float
+EDGE_LAG_WINDOW_SECONDS: float
+EDGE_LAG_METERS: Incomplete
 Carried = TypeVar('Carried')
 
 def upgrade_asked(request: web.Request) -> bool:
@@ -101,6 +104,12 @@ def pump(source: web.WebSocketResponse | aiohttp.ClientWebSocketResponse, target
     ...
 
 def relay_failed(line: str) -> None:
+    ...
+
+def edge_lag_line(overshoots: tuple, window_seconds: float) -> _Program[str, object]:
+    ...
+
+def meter_edge_lag(tick_seconds: float, window_seconds: float) -> None:
     ...
 
 def refusal_status(request: web.Request) -> int:
