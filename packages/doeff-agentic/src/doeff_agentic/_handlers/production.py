@@ -34,7 +34,7 @@ from doeff_time import Delay
 
 from doeff import Effect, Pass, Resume, do, handler, stacked_handlers
 from doeff.program import ProgramHandler
-from doeff_agentic.effects import (
+from doeff_agentic._effects import (
     AgentNotRunningError,
     CaptureOutputEffect,
     RunAgentEffect,
@@ -44,9 +44,9 @@ from doeff_agentic.effects import (
     WaitForStatusEffect,
     WaitForUserInputEffect,
 )
-from doeff_agentic.exceptions import AgenticUnsupportedOperationError
-from doeff_agentic.state import StateManager, generate_workflow_id
-from doeff_agentic.types import (
+from doeff_agentic._exceptions import AgenticUnsupportedOperationError
+from doeff_agentic._state import StateManager, generate_workflow_id
+from doeff_agentic._types import (
     AgentConfig,
     AgentInfo,
     AgentStatus,

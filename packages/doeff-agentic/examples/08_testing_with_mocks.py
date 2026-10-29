@@ -19,8 +19,8 @@ from doeff_agentic import (
     AgenticGetMessages,
     AgenticGetSessionStatus,
     AgenticSendMessage,
+    mock_handlers,
 )
-from doeff_agentic.handlers import mock_handlers
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run

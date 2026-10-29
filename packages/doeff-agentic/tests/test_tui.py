@@ -88,8 +88,8 @@ class TestStatusHelpers:
 
     def test_get_status_symbol_workflow(self):
         """Test getting status symbols for workflow status."""
+        from doeff_agentic import WorkflowStatus
         from doeff_agentic._tui.widgets import _get_status_symbol
-        from doeff_agentic.types import WorkflowStatus
 
         assert _get_status_symbol(WorkflowStatus.RUNNING) == "●"
         assert _get_status_symbol(WorkflowStatus.BLOCKED) == "◉"
@@ -98,8 +98,8 @@ class TestStatusHelpers:
 
     def test_get_status_symbol_agent(self):
         """Test getting status symbols for agent status."""
+        from doeff_agentic import AgentStatus
         from doeff_agentic._tui.widgets import _get_status_symbol
-        from doeff_agentic.types import AgentStatus
 
         assert _get_status_symbol(AgentStatus.RUNNING) == "●"
         assert _get_status_symbol(AgentStatus.BLOCKED) == "◉"
@@ -108,8 +108,8 @@ class TestStatusHelpers:
 
     def test_get_status_class(self):
         """Test getting CSS class for status."""
+        from doeff_agentic import WorkflowStatus
         from doeff_agentic._tui.widgets import _get_status_class
-        from doeff_agentic.types import WorkflowStatus
 
         assert _get_status_class(WorkflowStatus.RUNNING) == "status-running"
         assert _get_status_class(WorkflowStatus.BLOCKED) == "status-blocked"

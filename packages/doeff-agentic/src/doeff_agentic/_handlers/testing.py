@@ -14,7 +14,7 @@ from typing import Any
 
 from doeff import Effect, Pass, Resume, handler
 from doeff.program import ProgramHandler
-from doeff_agentic.effects import (
+from doeff_agentic._effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
     AgenticCreateSession,
@@ -31,15 +31,15 @@ from doeff_agentic.effects import (
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
-from doeff_agentic.exceptions import (
+from doeff_agentic._exceptions import (
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
     AgenticEnvironmentNotFoundError,
     AgenticSessionNotFoundError,
     AgenticSessionNotRunningError,
 )
-from doeff_agentic.handlers._effect_groups import MessageEffect, SessionEffect, WorkflowEffect
-from doeff_agentic.types import (
+from doeff_agentic._handlers._effect_groups import MessageEffect, SessionEffect, WorkflowEffect
+from doeff_agentic._types import (
     AgenticEndOfEvents,
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,

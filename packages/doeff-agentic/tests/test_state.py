@@ -1,20 +1,18 @@
-"""Tests for doeff_agentic.state module."""
+"""Tests for doeff_agentic._state module."""
 
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from doeff_agentic.state import (
-    StateManager,
-    generate_workflow_id,
-    get_default_state_dir,
-)
-from doeff_agentic.types import (
+from doeff_agentic import (
     AgentInfo,
     AgentStatus,
+    StateManager,
     WorkflowInfo,
     WorkflowStatus,
+    generate_workflow_id,
+    get_default_state_dir,
 )
 
 
