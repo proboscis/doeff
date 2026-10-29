@@ -15,8 +15,8 @@ from doeff_openai import (
     TokenUsage,
     UnknownModelPricingError,
     calculate_cost,
+    openai_production_handler,
 )
-from doeff_openai.handlers.production import openai_production_handler
 
 from doeff import Pass, Resume, do, run
 from doeff import handler as _install_raw_handler

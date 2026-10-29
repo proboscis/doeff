@@ -4,30 +4,25 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff_llm.effects import (
-    LLMChat,
-    LLMEmbedding,
-    LLMStreamingChat,
-    LLMStructuredQuery,
-)
+from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_openai.chat import chat_completion
-from doeff_openai.costs import (
+from doeff_openai._chat import chat_completion
+from doeff_openai._costs import (
     MissingCachedPricingError,
     UnknownModelPricingError,
     calculate_cost,
 )
-from doeff_openai.effects import (
+from doeff_openai._effects import (
     CalculateCost,
     ChatCompletion,
     Embedding,
     StreamingChatCompletion,
     StructuredOutput,
 )
-from doeff_openai.embeddings import create_embedding
-from doeff_openai.structured_llm import build_api_parameters, process_structured_response
+from doeff_openai._embeddings import create_embedding
+from doeff_openai._structured_llm import build_api_parameters, process_structured_response
 
 ProtocolHandler = Callable[[Any], Any]
 

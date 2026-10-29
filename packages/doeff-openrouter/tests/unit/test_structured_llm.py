@@ -10,20 +10,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 from _runner import run_program
-from doeff_openrouter.chat import chat_completion
+from doeff_openrouter._chat import chat_completion
 from doeff_time import SimClock
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, do
 
-structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
-from doeff_openrouter.structured_llm import (  # noqa: E402 - late import preserves existing import/setup order
+structured_llm_module = importlib.import_module("doeff_openrouter._structured_llm")
+from doeff_openrouter import (  # noqa: E402 - late import preserves existing import/setup order
+    structured_llm,
+)
+from doeff_openrouter._structured_llm import (  # noqa: E402 - late import preserves existing import/setup order
     StructuredOutputParsingError,
     build_messages,
     ensure_strict_schema,
     process_structured_response,
     process_unstructured_response,
-    structured_llm,
 )
 
 

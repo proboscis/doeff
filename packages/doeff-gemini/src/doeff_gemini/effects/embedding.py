@@ -3,11 +3,11 @@
 
 import warnings
 
-from doeff_llm.effects import LLMEmbedding
+from doeff_llm import LLMEmbedding
 
 
 class GeminiEmbedding(LLMEmbedding):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMEmbedding`."""
+    """Deprecated alias of :class:`doeff_llm.LLMEmbedding`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -15,7 +15,7 @@ class GeminiEmbedding(LLMEmbedding):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "GeminiEmbedding is deprecated; use doeff_llm.effects.LLMEmbedding instead.",
+            "GeminiEmbedding is deprecated; use doeff_llm.LLMEmbedding instead.",
             DeprecationWarning,
             stacklevel=2,
         )

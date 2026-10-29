@@ -3,11 +3,11 @@
 
 import warnings
 
-from doeff_llm.effects import LLMEmbedding
+from doeff_llm import LLMEmbedding
 
 
 class Embedding(LLMEmbedding):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMEmbedding`.
+    """Deprecated alias of :class:`doeff_llm._effects.LLMEmbedding`.
 
     Defaults ``model`` to ``text-embedding-3-small`` to preserve the
     previous surface; callers can override via kwargs. Forwards all
@@ -19,7 +19,7 @@ class Embedding(LLMEmbedding):
     def __init__(self, *, model: str = "text-embedding-3-small", **kwargs):
         super().__init__(model=model, **kwargs)
         warnings.warn(
-            "Embedding is deprecated; use doeff_llm.effects.LLMEmbedding instead.",
+            "Embedding is deprecated; use doeff_llm._effects.LLMEmbedding instead.",
             DeprecationWarning,
             stacklevel=2,
         )

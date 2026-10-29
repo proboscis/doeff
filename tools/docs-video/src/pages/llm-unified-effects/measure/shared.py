@@ -4,13 +4,13 @@
 # and warn when built. Prints the provider that answered each model, and what the old names are.
 import warnings
 
-from doeff import do, handler, run
 from doeff_gemini.effects import GeminiChat
 from doeff_gemini.handlers.testing import MockGeminiHandler, gemini_mock_handler
-from doeff_llm.effects import LLMChat
-from doeff_openai.effects import ChatCompletion
-from doeff_openai.handlers.testing import MockOpenAIConfig, openai_mock_handler
-from doeff_openrouter.effects import RouterChat
+from doeff_llm import LLMChat
+from doeff_openai import ChatCompletion, MockOpenAIConfig, openai_mock_handler
+from doeff_openrouter import RouterChat
+
+from doeff import do, handler, run
 
 
 # The one program: asks a model, by name, to say hello.
