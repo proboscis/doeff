@@ -1,8 +1,8 @@
-"""doeff_hy.wire が pydantic を読まずに解き・書き・JSON Schema を出す事の検(card ki-b7701d5fc0dd)。
+"""doeff_hy._wire が pydantic を読まずに解き・書き・JSON Schema を出す事の検(card ki-b7701d5fc0dd)。
 
-wire.hy の 5 つの API(parse・parse-json・dump・dump-json・json-schema)は自前の解き手(doeff_hy/wire_codec.py)を呼び、pydantic を
+wire.hy の 5 つの API(parse・parse-json・dump・dump-json・json-schema)は自前の解き手(doeff_hy/_wire_codec.py)を呼び、pydantic を
 import しない。defwire の展開(record.hy)が置く __pydantic_config__ も pydantic を読まずに作る設定の辞書。照らしの相手の pydantic は
-doeff_hy.wire_parity だけが読む(この検は読まない)。job の土台の閉包は doeff-cluster の test_job_base_imports_no_pydantic.py が確かめる。
+doeff_hy._wire_parity だけが読む(この検は読まない)。job の土台の閉包は doeff-cluster の test_job_base_imports_no_pydantic.py が確かめる。
 """
 
 import subprocess
@@ -17,7 +17,7 @@ def test_the_wire_api_imports_no_pydantic_and_works_without_it() -> None:
         import hy
         import doeff_hy
         from doeff import run
-        from doeff_hy import wire
+        from doeff_hy import _wire as wire
 
         module = hy.I.types.ModuleType("probe_rows")
         sys.modules["probe_rows"] = module

@@ -17,7 +17,7 @@
 (import doeff_codex._handler [Continuation SessionRuntime absorb])
 (import doeff_codex [CodexSessionSpec CodexHome])
 (import doeff_codex [ApprovalPolicy SandboxMode])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 
 (val TEXT "You’ve hit your usage limit.")
 (val FIVE-HOURS-AT 1893456000)

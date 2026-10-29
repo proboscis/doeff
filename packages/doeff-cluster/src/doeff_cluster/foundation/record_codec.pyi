@@ -29,8 +29,8 @@ from doeff_core_effects.scheduler import Semaphore as Semaphore
 from doeff_time import GetTimeEffect as GetTimeEffect
 from doeff_time import GetMonotonicEffect as GetMonotonicEffect
 from doeff_time import DelayEffect as DelayEffect
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
+from doeff_hy._frozen import FrozenMap as FrozenMap
 FORMAT_VERSION: int
 READABLE_FORMATS: tuple[int, ...]
 DELTA_MIN_CHARS: int

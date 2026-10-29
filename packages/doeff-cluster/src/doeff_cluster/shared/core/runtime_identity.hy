@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key])
 (import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts])
-(import doeff_hy.wire [Malformed parse])
+(import doeff_hy._wire [Malformed parse])
 (import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin RootMarker RuntimeFacts RepoCommit
                                                            RuntimeIdentity RuntimeIdentityMismatch ProcessFacts ReadRuntimeFacts])
 (import  doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT] doeff_cluster.shared.core.runtime_env [project-dir])

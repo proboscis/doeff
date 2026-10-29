@@ -3,7 +3,7 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff [run])
-(import doeff_hy.wire [parse Malformed])
+(import doeff_hy._wire [parse Malformed])
 (import doeff_cluster.shared.intent.protocol [Request ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ServiceBody LegacyJobRow LegacyJobs])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])

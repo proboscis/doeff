@@ -5,7 +5,7 @@ _schema_digest.hy は Hy の module なので、型の宣言が無いと pyright
 64 字の sha256 の FrozenMap)。実装との食い違いは packages/doeff-records/tests/test_static_stubs.py が名と引数の名で検める。
 """
 
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 
 from doeff import Program
 from doeff_records._values import RecordsSchema

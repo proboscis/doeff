@@ -6,7 +6,7 @@ from pathlib import Path as Path
 import threading as threading
 from typing import Callable as Callable
 import httpx as httpx
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
 from doeff_core_effects.offloaded_call import run_detached as run_detached
 SA_DIR: str
 API_URL: str

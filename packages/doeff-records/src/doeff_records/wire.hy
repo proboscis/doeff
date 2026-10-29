@@ -23,9 +23,9 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import enum [StrEnum])
-(import doeff_hy.frozen [FrozenMap thaw-json])
-;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ — ここは import して、この module の読み手へも同じ名で見せる。
-(import doeff_hy.json_value [JsonValue])
+(import doeff_hy._frozen [FrozenMap thaw-json])
+;; JSON の値の型の定義は doeff_hy._json_value の 1 か所だけ — ここは import して、この module の読み手へも同じ名で見せる。
+(import doeff_hy._json_value [JsonValue])
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
@@ -192,7 +192,7 @@
                     OP-APPEND-EVENTS #("appendedEvents")
                     OP-READ-BATCH #("batchRead")})
 
-;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy.json_value)。
+;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy._json_value)。
 (setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents ReadEventByKey
                       AppendEvents ReadBatch))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events

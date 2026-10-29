@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated])
-(import doeff_hy.wire [parse])
+(import doeff_hy._wire [parse])
 (import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer
                                                      lease-vacate-request lease-vacate-answer])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request

@@ -4,7 +4,7 @@
 (import dataclasses)
 (import datetime [datetime timezone])
 (import uuid)
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff [Perform run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])

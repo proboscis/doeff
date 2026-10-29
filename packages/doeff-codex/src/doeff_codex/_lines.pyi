@@ -6,12 +6,12 @@ from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_hy.frozen import FrozenJson as FrozenJson
-from doeff_hy.frozen import freeze_json_text as freeze_json_text
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
-from doeff_hy.wire import parse as parse
-from doeff_hy.wire import parse_json as parse_json
-from doeff_hy.wire import Malformed as Malformed
+from doeff_hy._frozen import FrozenJson as FrozenJson
+from doeff_hy._frozen import freeze_json_text as freeze_json_text
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
+from doeff_hy._wire import parse as parse
+from doeff_hy._wire import parse_json as parse_json
+from doeff_hy._wire import Malformed as Malformed
 
 class TurnStatus(StrEnum):
     COMPLETED = 'completed'

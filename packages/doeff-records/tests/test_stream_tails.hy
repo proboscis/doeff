@@ -16,7 +16,7 @@
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_time [SimClock sim-time-handler Delay GetMonotonic])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [Appended Changes Event Events ExpectAbsent StreamEmpty StreamTail StreamTailEmpty UndeclaredTable WatchCursor Written])
 (import doeff_records [AppendEvent ListRows PutRow ReadEvents ReadStreamEnd WatchChanges])
 (import doeff_records._laws [LAW-SCHEMA LawHarness MAKER PULSE-KEEP-SECONDS as-writer law-watch-tails-match-last-events])

@@ -13,7 +13,7 @@
 ;;;     meter-writes-across-names-are-not-atomic の反例の検)
 ;;; 本物だけの性質(別の run・別の thread との共有・同じ名前で違う設定を断る・GC の停止)は test_process_meter.hy。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects.meter_effects [CountMetric MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter SetGauge SecondsObservation
                                          SecondsTotal])
 (import doeff_core_effects.meter_prometheus [render-prometheus])

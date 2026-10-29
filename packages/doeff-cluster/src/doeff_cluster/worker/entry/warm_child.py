@@ -65,7 +65,7 @@ from doeff_core_effects.handlers import vm_probe_handler
 from doeff_core_effects.os_warm_process import WarmRequestWire, own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
 from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused
-from doeff_hy.wire import Malformed
+from doeff_hy._wire import Malformed
 
 from doeff_cluster.foundation.child_environ import replace_environ
 from doeff_cluster.worker.entry.line_stamp import job_log_plan, stamped_lines

@@ -1,7 +1,7 @@
 """job の土台の import の閉包に pydantic が無い事の検(card ki-b7701d5fc0dd・親 card ki-2e0dce8d1ebb)。
 
-job の土台(shared_handlers・detached・runtime_identity・supplied_values)は defwire の解き手 doeff_hy.wire を読む。wire.hy が自前の
-解き手(doeff_hy/wire_codec.py)へ替わったので、土台を読み込む process は pydantic(import と組みで約 15 MB)を読まない。新しい
+job の土台(shared_handlers・detached・runtime_identity・supplied_values)は defwire の解き手 doeff_hy._wire を読む。wire.hy が自前の
+解き手(doeff_hy/_wire_codec.py)へ替わったので、土台を読み込む process は pydantic(import と組みで約 15 MB)を読まない。新しい
 import がその閉包へ pydantic を戻したら、ここが赤になる(どの module が読んだかを名指す)。
 """
 

@@ -16,7 +16,7 @@
 (import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
 (import doeff_claude_code [AgentToolResult BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult TurnResult]
         doeff_claude_code._lines [classify-record recorded-cost subagent-transcript-of usage-of])
-(import doeff_hy.json_lines [jsonl-lines whole-lines-end])
+(import doeff_hy._json_lines [jsonl-lines whole-lines-end])
 (import doeff_claude_code [ClaudeStartTurn])
 (import doeff_claude_code [ClaudeDropProcess])
 (import doeff_claude_code.clock [clock-of])

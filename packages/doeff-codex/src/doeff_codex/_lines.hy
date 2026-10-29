@@ -16,9 +16,9 @@
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import re)
-(import doeff_hy.frozen [FrozenJson freeze-json-text])
-(import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.wire [parse parse-json Malformed])
+(import doeff_hy._frozen [FrozenJson freeze-json-text])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._wire [parse parse-json Malformed])
 
 ;; ターンの状態(turn/started・turn/completed の turn.status の綴り — codex 0.162.1 の TurnStatus)。
 (defenum TurnStatus COMPLETED INTERRUPTED FAILED (IN-PROGRESS "inProgress"))

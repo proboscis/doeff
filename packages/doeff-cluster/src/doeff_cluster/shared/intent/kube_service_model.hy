@@ -21,7 +21,7 @@
 (import enum [StrEnum])  ; defenum の展開が使う
 (import typing [ClassVar])
 (import doeff [EffectBase])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode])
 
 ;; 値は k8s の spec.type の綴り。

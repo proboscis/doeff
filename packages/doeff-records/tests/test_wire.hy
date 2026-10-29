@@ -3,7 +3,7 @@
 (require doeff-hy.macros [deftest val])
 (import json)
 (import doeff [run])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch]
         doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX])

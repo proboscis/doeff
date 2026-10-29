@@ -1,6 +1,6 @@
 ;; 失敗の形(doeff-agents-decodes-no-wire-json): 層 3 が codex の item の JSON を自前の wire の型で解く。
-(import doeff_hy.wire [parse Malformed])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._wire [parse Malformed])
+(import doeff_hy._json_value [OpaqueJson])
 (defwire McpToolCallWire
   {:tags {:context "headless-adapter" :role "type"} :names :camel :unknown :ignore}
   (#^ str server) (#^ str tool))

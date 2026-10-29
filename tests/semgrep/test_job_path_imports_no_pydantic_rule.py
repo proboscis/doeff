@@ -2,7 +2,7 @@
 
 規則 doeff-job-path-imports-no-pydantic(Python)と doeff-job-path-imports-no-pydantic-hy(Hy)は、doeff の根と packages/ の module が
 pydantic と pydantic_core を import したら断る(利用者の決定 2026-10-27 lt-SJK77NQZ8NSESDVVZ0P41407XQ の問い scope の答え all)。範囲の外は
-LLM の出力を受ける doeff-openai・doeff-gemini・doeff-openrouter と、照らしの道具 doeff_hy/wire_parity.py と tests。
+LLM の出力を受ける doeff-openai・doeff-gemini・doeff-openrouter と、照らしの道具 doeff_hy/_wire_parity.py と tests。
 
 - 1 本目: 検体(tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/)で `fires` を付けた行だけが鳴る(型検査の時だけの
   import・pydantic が自分で呼ぶ口 __get_pydantic_core_schema__ の中の import・名の似た別の package pydantic_settings は鳴らない)。
@@ -47,8 +47,8 @@ def test_only_the_marked_pydantic_imports_fire(name: str) -> None:
 #: 照らしの道具(wire_parity.py)・範囲の外の LLM の package(doeff-openai)。木の全部は commit の hook と着地の門の semgrep の基点の比べが
 #: 撃つ(木の全部を撃つと 100 秒を越えるので、ここでは撃たない)。
 KEPT_PYDANTIC_IMPORTS = (
-    "packages/doeff-hy/src/doeff_hy/json_value.py",
-    "packages/doeff-hy/src/doeff_hy/wire_parity.py",
+    "packages/doeff-hy/src/doeff_hy/_json_value.py",
+    "packages/doeff-hy/src/doeff_hy/_wire_parity.py",
     "packages/doeff-openai/src/doeff_openai/_structured_llm.py",
 )
 

@@ -18,7 +18,7 @@
 (import json)
 (import pytest)
 (import doeff [EffectBase Program run with_handlers])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])

@@ -18,7 +18,7 @@
 (import uuid)
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
-(import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
+(import doeff_hy._frozen [FrozenMap FrozenJson frozen-json-object])
 (import doeff_claude_code._values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
                                   IMAGE-MIMES LentCredential])
 (import doeff_claude_code._lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested tap-lines
@@ -27,7 +27,7 @@
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
                                  HookNotice HookPhase SubagentTranscript SUBAGENT-TASK-TYPE
                                  ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed])
-(import doeff_hy.json_lines [jsonl-lines])
+(import doeff_hy._json_lines [jsonl-lines])
 (import doeff [run])
 (import doeff_claude_code._dialogue [limit-hit-after refusal-hit-after model-refusal-after])
 (import doeff_claude_code._effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents

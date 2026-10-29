@@ -49,7 +49,7 @@
                          ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedQueueAnswer StateQueueWire DetachedGroupWire DetachedLimitWire
                          AwaitDetachedOutbox AckDetachedOutbox DetachedEnded DetachedOutbox DetachedOutboxWire DetachedOutboxAnswer
                          DetachedOutboxAcked DetachedAckAnswer])
-(import doeff_hy.wire [Malformed parse])
+(import doeff_hy._wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 

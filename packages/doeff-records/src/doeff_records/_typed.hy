@@ -4,7 +4,7 @@
 ;;; 置き場の handler(memory・PostgreSQL・写し)は表の中身を知らないので、その層は写像のままにする。業務の呼び手は写像を
 ;;; 見ずに、表ごとの行の型(素の defrecord — defwire でない frozen の dataclass)で読み書きする — その写しの 1 か所がこの file。
 ;;;
-;;; 写し方: 行の型 ↔ 行の値は doeff_hy.wire_codec の行の解き手(row-codec-of — pydantic を読まない)が行う(読む = 型の strict な検め・
+;;; 写し方: 行の型 ↔ 行の値は doeff_hy._wire_codec の行の解き手(row-codec-of — pydantic を読まない)が行う(読む = 型の strict な検め・
 ;;; 書く = JSON の値への書き出し)。欄の名は行の型の Python の欄の名で、表の宣言の欄の名と同じにする。知らない欄は読み捨てる(欄を
 ;;; 足した新しい書き手の行を古い読み手が断らない)。欄ごとの判じ方は defwire と同じ strict(文字列を数にしない・真偽を数にしない・
 ;;; 整数は float の欄に入る・配列は tuple の欄)— 設計の記録 docs/design/defwire-decoder/design.md の節 6。
@@ -19,9 +19,9 @@
 (import functools)
 (import types [NoneType])
 (import typing [Generic TypeVar])
-(import doeff_hy.frozen [FrozenMap frozen-json-object])
-(import doeff_hy.wire_codec [Codec row-codec-of])
-(import doeff_hy.wire_malformed [Malformed])
+(import doeff_hy._frozen [FrozenMap frozen-json-object])
+(import doeff_hy._wire_codec [Codec row-codec-of])
+(import doeff_hy._wire_malformed [Malformed])
 (import doeff_records._values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
                               ExpectVersion ExpectAny checked-table-name])
 (import doeff_records._effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
@@ -31,7 +31,7 @@
 
 (defclass [(dataclass :frozen True)] RowType [(get Generic M)]
   "表 1 つの行の型: table = 表の名 / model = 行の値の型(素の defrecord — 欄の名は表の宣言の欄の名で、鍵の欄も含む)。
-   codec = 写しに使う行の解き手(doeff_hy.wire_codec の row-codec-of — 最初に写す時に組んで型に覚える)。"
+   codec = 写しに使う行の解き手(doeff_hy._wire_codec の row-codec-of — 最初に写す時に組んで型に覚える)。"
   (#^ str table)
   (#^ (get type M) model)
   (defn __post_init__ [self]

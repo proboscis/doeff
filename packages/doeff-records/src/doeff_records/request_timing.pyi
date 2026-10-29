@@ -3,7 +3,7 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_core_effects.meter_effects import SecondsObservation as SecondsObservation
 from doeff_records.wire import OPERATIONS as OPERATIONS
 from doeff_records.wire import SERVER_TIMING_NAMES as SERVER_TIMING_NAMES

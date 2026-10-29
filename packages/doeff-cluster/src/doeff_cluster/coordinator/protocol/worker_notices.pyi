@@ -4,7 +4,7 @@ from doeff_events import MarkGap as MarkGap
 from doeff_events import NoticeRoute as NoticeRoute
 from doeff_cluster.coordinator.intent.worker_notices import WorkerBack as WorkerBack
 from doeff_cluster.coordinator.intent.worker_notices import WorkerGone as WorkerGone
-from doeff_hy.wire_malformed import Malformed as Malformed
+from doeff_hy._wire_malformed import Malformed as Malformed
 
 class MalformedNotice(ValueError):
     ...

@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Generic, TypeVar
 
-from doeff_hy.frozen import FrozenMap
-from doeff_hy.wire_codec import Codec
-from doeff_hy.wire_malformed import Malformed
+from doeff_hy._frozen import FrozenMap
+from doeff_hy._wire_codec import Codec
+from doeff_hy._wire_malformed import Malformed
 
 from doeff import Program
 from doeff_records._values import (

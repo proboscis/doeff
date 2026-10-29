@@ -1,6 +1,6 @@
 {
   "include": [
-    "packages/doeff-hy/src/doeff_hy/frozen.hy"
+    "packages/doeff-hy/src/doeff_hy/_frozen.hy"
   ],
   "module_extensions": {
     "doeff-hy-wire": {
@@ -30,10 +30,10 @@
       "layer": "domain",
       "name": "doeff-hy-frozen",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/frozen.hy"
+        "packages/doeff-hy/src/doeff_hy/_frozen.hy"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/frozen.hy"
+        "packages/doeff-hy/src/doeff_hy/_frozen.hy"
       ],
       "responsibility": "凍らせた写像(FrozenMap)と、JSON の値を深く凍らせる・戻す関数 — 鍵の集合が開いた写像を、作った後に変えられない値で持つ。I/O なし(agora-redesign #1550 — doeff-records と doeff-hy の wire が読むのに契約が無かった)。",
       "typed": true

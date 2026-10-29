@@ -50,8 +50,8 @@
 (import doeff_core_effects.scheduler [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
-(import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._frozen [FrozenMap])
 
 (setv FORMAT-VERSION 2)
 ;; 読める形の版(1 = 差分・2 = 内容参照と問いと答えの 1 行)。
@@ -116,7 +116,7 @@
   #^ (get ClassVar dict) __dataclass_fields__)
 
 
-;; 凍った写像の型と記録の印の表(doeff_hy.frozen の型の一族 — 1 か所の表。型が足されたらここに足し、encode-value と decode-value は
+;; 凍った写像の型と記録の印の表(doeff_hy._frozen の型の一族 — 1 か所の表。型が足されたらここに足し、encode-value と decode-value は
 ;; この表だけを読む・型ごとの if を散らさない)。値は鍵と値の対の列で綴る(鍵が印の綴り $… でも素の dict の読みと混ざらない)。
 ;; 以前は記録の形にできない型として断っていた — 業務の答えが記録の行の値(doeff-records の Row・Written の value)をそのまま運ぶと、
 ;; 本番の記録係はその答えで記録を止め、strict の記録係は業務へ投げた(#3687 の続き)。
@@ -241,7 +241,7 @@
     (isinstance v list) (lfor x v (encode-value x handles))
     (isinstance v tuple) {"$t" (lfor x v (encode-value x handles))}
     ;; 凍った写像(表 FROZEN-MARKS の型)は印つきの鍵と値の対の列で綴る(dict の枝より前 — Mapping であっても dict に化けさせない)。
-    ;; FrozenMap の鍵は作りが str に限る(doeff_hy/frozen.hy:37)ので素のまま書く。
+    ;; FrozenMap の鍵は作りが str に限る(doeff_hy/_frozen.hy:37)ので素のまま書く。
     (setx frozen-mark (next (gfor #(mark cls) FROZEN-MARKS :if (isinstance v cls) mark) None))
       {frozen-mark (lfor #(k x) (.items v) [k (encode-value x handles)])}
     (isinstance v dict)

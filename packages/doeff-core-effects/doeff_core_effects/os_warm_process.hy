@@ -30,7 +30,7 @@
 (import platform)
 (import socket)
 (import dataclasses [dataclass])
-(import doeff_hy.wire [Malformed dump parse-json])
+(import doeff_hy._wire [Malformed dump parse-json])
 (import doeff_core_effects.process_effects [ProcessSignal])
 (import doeff_core_effects.process_stat [ProcStat ENDED-STATES])
 (import doeff_core_effects.darwin_proc [darwin-proc-stat darwin-thread-count])

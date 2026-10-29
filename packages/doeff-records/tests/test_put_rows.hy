@@ -3,7 +3,7 @@
 ;; test_parity_memory_pg が memory・PostgreSQL・HTTP の口越しで回す。
 (require doeff-hy.macros [deftest defk val <-])
 (import collections.abc [Callable])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectAny ExpectVersion])
 (import doeff_records [PutRow PutRows RowWrite])
 

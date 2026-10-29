@@ -8,7 +8,7 @@
 (import pytest)
 (import doeff [run with_handlers])
 (import doeff [Err UnhandledEffect])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects.outcomes [result])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])

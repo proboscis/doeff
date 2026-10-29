@@ -2,28 +2,28 @@
   "entries": [
     {
       "count": 1,
-      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "path": "packages/doeff-hy/src/doeff_hy/_frozen.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__delattr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "path": "packages/doeff-hy/src/doeff_hy/_frozen.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "path": "packages/doeff-hy/src/doeff_hy/_frozen.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__reduce__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-hy/src/doeff_hy/frozen.hy",
+      "path": "packages/doeff-hy/src/doeff_hy/_frozen.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__setattr__"

@@ -6,8 +6,8 @@ from dataclasses import dataclass as _doeff_dataclass
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
-from doeff_hy.frozen import FrozenJson as FrozenJson
-from doeff_hy.frozen import freeze_json as freeze_json
+from doeff_hy._frozen import FrozenJson as FrozenJson
+from doeff_hy._frozen import freeze_json as freeze_json
 from doeff_claude_code._values import ClaudeSessionSpec as ClaudeSessionSpec
 from doeff_claude_code._values import ClaudeHome as ClaudeHome
 from doeff_claude_code._values import ClaudeTurn as ClaudeTurn

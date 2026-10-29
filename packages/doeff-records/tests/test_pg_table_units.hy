@@ -17,7 +17,7 @@
 (import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.admission [key-text])
 (import doeff_records [ExpectAbsent ExpectAny Written WrittenRows Refused])

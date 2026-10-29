@@ -1,4 +1,4 @@
-"""自前の書き手と JSON Schema(doeff_hy/wire_codec.py — 書く側)の検(card ki-f6551d717654)。
+"""自前の書き手と JSON Schema(doeff_hy/_wire_codec.py — 書く側)の検(card ki-f6551d717654)。
 
 契約は設計の記録 docs/design/defwire-decoder/design.md(節 2 の表の「書き出し」の列・節 3b)。確かめること:
 
@@ -28,12 +28,12 @@ from typing import cast
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
-from doeff_hy.frozen import freeze_json
-from doeff_hy.json_value import OpaqueJson
-from doeff_hy.wire import WireValue
-from doeff_hy.wire_codec import codec_of
-from doeff_hy.wire_malformed import Malformed
-from doeff_hy.wire_parity import pydantic_dump, pydantic_dump_json, pydantic_json_schema
+from doeff_hy._frozen import freeze_json
+from doeff_hy._json_value import OpaqueJson
+from doeff_hy._wire import WireValue
+from doeff_hy._wire_codec import codec_of
+from doeff_hy._wire_malformed import Malformed
+from doeff_hy._wire_parity import pydantic_dump, pydantic_dump_json, pydantic_json_schema
 from pydantic import TypeAdapter
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -71,7 +71,7 @@ def _typed(value: object) -> object:
 
 
 def _pydantic(value: WireValue) -> tuple[object, str]:
-    """pydantic の書き手(doeff_hy.wire_parity — 切り替える前の wire.hy の dump・dump-json と同じ)の答え。欄の型に合わない値の書き出しの警告は読み捨てる。"""
+    """pydantic の書き手(doeff_hy._wire_parity — 切り替える前の wire.hy の dump・dump-json と同じ)の答え。欄の型に合わない値の書き出しの警告は読み捨てる。"""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return pydantic_dump(value), pydantic_dump_json(value)
@@ -364,7 +364,7 @@ def _object(value: object) -> dict[str, object]:
 
 
 def _pydantic_schema(wire_type: type) -> dict[str, object]:
-    """pydantic の json-schema(doeff_hy.wire_parity — 切り替える前の wire.hy と同じ)の答え。"""
+    """pydantic の json-schema(doeff_hy._wire_parity — 切り替える前の wire.hy と同じ)の答え。"""
     return _object(pydantic_json_schema(wire_type))
 
 
@@ -461,7 +461,7 @@ def test_the_writer_and_schema_import_no_pydantic_and_work_without_it() -> None:
         import dataclasses, sys, types
         import doeff_hy
         from doeff_hy import wire_codec
-        from doeff_hy.json_value import OpaqueJson
+        from doeff_hy._json_value import OpaqueJson
 
         @dataclasses.dataclass(frozen=True, kw_only=True)
         class Row:

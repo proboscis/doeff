@@ -1,4 +1,4 @@
-;;; defwire(doeff_hy/record.hy)と解き手(doeff_hy/wire.hy)の検(agora-redesign #840)。
+;;; defwire(doeff_hy/record.hy)と解き手(doeff_hy/_wire.hy)の検(agora-redesign #840)。
 ;;;
 ;;; 確かめること: 解けた値・欄の名の写し(:camel / :snake / :kebab / 明示の辞書)・知らない欄の断りと読み捨て・:check の失敗・
 ;;; 型違いの Malformed(文字列の数・真偽の数・列挙の外の綴り)・凍らせた JSON と JSON の文字列からの解き・dump と parse の往復・
@@ -12,10 +12,10 @@
 (import hy)
 (import pytest)
 (import doeff_hy.declarations [DefinitionTags])
-(import doeff_hy.frozen [freeze-json])
-(import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.wire [parse parse-json dump dump-json json-schema Malformed MalformedField WireShape])
-(import doeff_hy.wire_codec [Codec])
+(import doeff_hy._frozen [freeze-json])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._wire [parse parse-json dump dump-json json-schema Malformed MalformedField WireShape])
+(import doeff_hy._wire_codec [Codec])
 
 
 (defenum LandState QUEUED LANDED)
@@ -254,7 +254,7 @@
 
 
 ;; --- 解き手を組む時期(agora-redesign #2420・前例 #2327・card ki-8b518c8f8e9d・ki-b7701d5fc0dd)-------------------------------------------
-;; 解き手(doeff_hy.wire_codec の型の木)は型を定義した時には組まず、最初の parse / dump / json-schema で 1 度だけ組んで型に覚える
+;; 解き手(doeff_hy._wire_codec の型の木)は型を定義した時には組まず、最初の parse / dump / json-schema で 1 度だけ組んで型に覚える
 ;; (型の属性 __doeff_codec__)。この 2 型は他の検が使わない(使う前の型を写すため)。
 
 (defwire FieldsDefinedBefore

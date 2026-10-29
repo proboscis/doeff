@@ -407,7 +407,7 @@ defk {name}: :post must include a return type check (: % Type).
   "型検査のための展開(`_static-view?`)で、引数の型の契約 `(: x T)`(:pre の x が名)の isinstance を出さない所か(agora-redesign #2512)。
    引数の型は契約から書く注記(_annotate-params・defeffect の欄の注記)が運ぶので、型検査には isinstance が要らない。出すと、要素の型
    つきの総称型を含む型の別名(例 `JsonBody = Mapping[str, JsonBody] | tuple[JsonBody, ...] | …` を型検査の時だけ書く形 —
-   doeff_hy/json_value.py と同じ)が『isinstance の第 2 引数は型でない』の赤になり、別名に要素の型を書けなかった。実行の時の展開は
+   doeff_hy/_json_value.py と同じ)が『isinstance の第 2 引数は型でない』の赤になり、別名に要素の型を書けなかった。実行の時の展開は
    変えない(今までどおり isinstance で断る)。:post の `(: % T)` は本体の答えを絞る形に頼る書き手が在るので出したままにする。"
   (and (_static-view?)
        (in phase #("pre-condition" ":pre"))

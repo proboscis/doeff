@@ -37,7 +37,7 @@
 (import doeff_records.wire [ANSWER-METRICS list-rows-metrics])
 (import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [Row])
 (import doeff_records [ReadRow])
 (import doeff_records._store_choice [StorePressure PressureUnread])

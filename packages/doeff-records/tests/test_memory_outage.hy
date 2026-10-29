@@ -9,7 +9,7 @@
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 (import doeff_time [Delay GetTime])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records [SetStoreOutage])

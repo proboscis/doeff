@@ -4,7 +4,7 @@
 ;;; Other { type, subtype } へ名前だけ持つ(発明しない)。1 行の逐語は ClaudeStreamLine.raw に残る。
 ;;;
 ;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost — JSON Lines を行に割るのは
-;;; doeff_hy.json_lines の jsonl-lines)。状態機械(dialogue.hy)も
+;;; doeff_hy._json_lines の jsonl-lines)。状態機械(dialogue.hy)も
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val <-])
 (require doeff-hy.record [defenum defrecord])
@@ -15,8 +15,8 @@
 (import json)
 (import math)
 (import doeff [run])
-(import doeff_hy.frozen [FrozenMap FrozenJson freeze-json frozen-json-object])
-(import doeff_hy.json_lines [jsonl-lines whole-lines-end])
+(import doeff_hy._frozen [FrozenMap FrozenJson freeze-json frozen-json-object])
+(import doeff_hy._json_lines [jsonl-lines whole-lines-end])
 (import doeff_claude_code._values [ClaudeTurn])
 
 

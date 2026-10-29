@@ -9,7 +9,7 @@
 ;; faults.AddStoreFault を置き場の handler に撃って置く(lands = 書きを置き場に着けてから答えを Unreachable に差し替える)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [with_handlers])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Written WrittenRows Conflict RowsConflict Refused RowsRefused Row Unreachable])
 (import doeff_records [ReadRow PutRow PutRows RowWrite])
 (import doeff_records [AddStoreFault StoreFault StoreOperation])

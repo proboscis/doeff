@@ -21,7 +21,7 @@
 (import dataclasses [dataclass])  ; defrecord・defwire の展開が名指す
 (import json)
 (import urllib.parse [quote :as url-quote])
-(import doeff_hy.wire [Malformed parse-json])
+(import doeff_hy._wire [Malformed parse-json])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [FileFailed ReadText])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])

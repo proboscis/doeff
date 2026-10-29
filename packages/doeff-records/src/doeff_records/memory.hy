@@ -63,7 +63,7 @@
                                     first-seen ride-out-stall stop-source waits-beside-sources])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time [GetTimeEffect WaitWithinEffect])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records._values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed

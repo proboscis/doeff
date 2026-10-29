@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from doeff_hy.frozen import FrozenMap, freeze_json, freeze_json_text, frozen_json_object, frozen_map_of, thaw_json
+from doeff_hy._frozen import FrozenMap, freeze_json, freeze_json_text, frozen_json_object, frozen_map_of, thaw_json
 
 SOURCE = {"a": 1, "b": [1, {"c": "x"}], "d": {"e": None, "f": [True, 2.5]}}
 
@@ -193,7 +193,7 @@ def test_thaw_answers_keep_leaf_subtypes_as_they_are() -> None:
 
 
 def test_thaw_calls_itself_only_for_containers(monkeypatch: pytest.MonkeyPatch) -> None:
-    import doeff_hy.frozen as frozen_module
+    import doeff_hy._frozen as frozen_module
 
     original = frozen_module.thaw_json
     calls: list[object] = []
@@ -217,7 +217,7 @@ def test_thaw_calls_itself_only_for_containers(monkeypatch: pytest.MonkeyPatch) 
 
 def _counting_freeze(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     """module の freeze_json を、受けた値を記録して元へ渡す物に差し替える(中からの呼びの数を数えるため)。"""
-    import doeff_hy.frozen as frozen_module
+    import doeff_hy._frozen as frozen_module
 
     original = frozen_module.freeze_json
     calls: list[object] = []

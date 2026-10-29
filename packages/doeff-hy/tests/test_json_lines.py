@@ -1,4 +1,4 @@
-"""JSON Lines を行に割る 1 か所(doeff_hy/json_lines.hy)の test(card ki-3d45f5857239)。
+"""JSON Lines を行に割る 1 か所(doeff_hy/_json_lines.hy)の test(card ki-3d45f5857239)。
 
 確かめること:
 - 割るのは改行だけ: JSON の文字列の中の生の U+2028・U+2029・U+0085(str.splitlines が割る字)で行を割らない。空白だけの行は落とす。
@@ -8,7 +8,7 @@
 import json
 
 import hy  # noqa: F401  — Hy の module を import する仕掛けを入れる
-from doeff_hy.json_lines import jsonl_lines, whole_lines_end
+from doeff_hy._json_lines import jsonl_lines, whole_lines_end
 
 from doeff import run
 

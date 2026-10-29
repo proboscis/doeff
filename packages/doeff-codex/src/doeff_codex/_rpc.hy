@@ -12,8 +12,8 @@
 (require doeff-hy.record [defenum defwire])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
-(import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.wire [dump dump-json])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._wire [dump dump-json])
 
 (val JSONRPC-VERSION "2.0")
 ;; app-server を stdio で待ち受けさせる前置きの後ろの引数(--listen の既定も stdio:// だが、待ち受けの形を argv で名乗る)。

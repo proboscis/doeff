@@ -2043,7 +2043,7 @@
   ;; agora-redesign #3327: fake の組(fake_claude_agent_runtime_handlers)に渡した env と settings は、本番の組と同じく adapter が層 2 へ渡す
   ;; 起動の宣言(home.env と settings)に載る — 上の層の模擬が、本番と同じ手順で決めた子の env と CLI の settings を起動ごとに観測するため。
   (import doeff_agents [fake-claude-agent-runtime-handlers])
-  (import doeff_hy.frozen [thaw-json])
+  (import doeff_hy._frozen [thaw-json])
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (val env {"PATH" "/opt/agent-tools/bin:/usr/bin" "AGENT_SESSION_CLASS" "unattended"})
@@ -2077,7 +2077,7 @@
   ;; 筋書きが通る — 呼び手が層 2 を土台の外側に、adapter を Program の近くに置き分けても、組の中身は対の入口と同じ。
   (import doeff_agents [claude-agent-runtime-handlers fake-claude-agent-runtime-handlers claude-process-layer-handler
                         fake-claude-process-layer-handler claude-agent-adapter-handler])
-  (import doeff_hy.frozen [thaw-json])
+  (import doeff_hy._frozen [thaw-json])
   (setv home (str (/ tmp-path "home")))
   (assert (= (lfor h [(claude-process-layer-handler :live-limit 8 :credential-floor-seconds 7200.0) (claude-agent-adapter-handler :config-dir home :env {} :settings {})] (. (type h) __name__))
              (lfor h (claude-agent-runtime-handlers :config-dir home :env {} :live-limit 8 :credential-floor-seconds 7200.0) (. (type h) __name__))))

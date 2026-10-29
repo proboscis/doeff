@@ -227,7 +227,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated SEMAPHORE-PREFIX])
-(import doeff_hy.wire [parse :as parse-wire])
+(import doeff_hy._wire [parse :as parse-wire])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [System Declaration])

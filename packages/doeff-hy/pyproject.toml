@@ -43,8 +43,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # pydantic は本体の依存に置かない(card ki-5ddadb736f62・利用者の決定 2026-10-27 lt-SJK77NQZ8NSESDVVZ0P41407XQ)。defwire の解き手は
-# 自前の doeff_hy/wire_codec.py で、job の道(入口・foundation・本体)は pydantic を読まない(.semgrep.yaml の doeff-job-path-imports-no-pydantic)。
-# pydantic を読むのは、自前の解き手を pydantic の解き手と照らす道具 doeff_hy.wire_parity だけ — 照らしの test を持つ project が
+# 自前の doeff_hy/_wire_codec.py で、job の道(入口・foundation・本体)は pydantic を読まない(.semgrep.yaml の doeff-job-path-imports-no-pydantic)。
+# pydantic を読むのは、自前の解き手を pydantic の解き手と照らす道具 doeff_hy._wire_parity だけ — 照らしの test を持つ project が
 # test の依存の群に doeff-hy[parity] を置く(validate_by_alias は 2.11 から)。
 parity = ["pydantic>=2.11"]
 

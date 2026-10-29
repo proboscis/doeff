@@ -9,7 +9,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.cluster_control [RestartRefused])
 (import doeff_cluster.shared.protocol.declaration_requests [RESTART-MARK RestartPlan ServiceRead body-of reread-after-conflict restart-read])
 (import tests.program_rows [SAMPLE-RUN])

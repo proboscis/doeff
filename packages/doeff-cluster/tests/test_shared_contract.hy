@@ -13,7 +13,7 @@
 ;;; tests/board_fake.hy の頭の註。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_time [Delay])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])

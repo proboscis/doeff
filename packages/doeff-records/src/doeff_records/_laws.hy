@@ -17,7 +17,7 @@
 (import itertools)
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay GetTime])
 (import doeff_records._values [FieldDecl TableDecl DescendingWithin StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny

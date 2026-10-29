@@ -1,4 +1,4 @@
-"""doeff_hy.wire の型(wire.pyi)の失敗ケース(agora-redesign #2282・#2279 の子)。
+"""doeff_hy._wire の型(wire.pyi)の失敗ケース(agora-redesign #2282・#2279 の子)。
 
 wire.hy は Hy の module で、型の宣言(wire.pyi)が無いと pyright は `parse`・`Malformed` を Unknown として読み、parse の答えを
 使う所の赤が書き手に直せない形で連なる。宣言が在れば:
@@ -23,14 +23,14 @@ from pathlib import Path
 import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
-from doeff_hy.wire import WireShape
+from doeff_hy._wire import WireShape
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
 (require doeff-hy.record [defwire])
-(import doeff_hy.wire [Malformed parse])
+(import doeff_hy._wire [Malformed parse])
 
 (defwire Row
   "検体の行。"
@@ -107,8 +107,8 @@ DUMP_MODULE = """\
 (require doeff-hy.macros [defk <-])
 (require doeff-hy.record [defrecord defwire])
 (import dataclasses [dataclass])
-(import doeff_hy.json_value [JsonValue])
-(import doeff_hy.wire [dump dump-json])
+(import doeff_hy._json_value [JsonValue])
+(import doeff_hy._wire [dump dump-json])
 
 (defwire Status
   "検体の状態。"

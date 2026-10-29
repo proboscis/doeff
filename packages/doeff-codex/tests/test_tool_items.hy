@@ -9,8 +9,8 @@
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest defk <-])
 (import json)
-(import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.frozen [freeze-json])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._frozen [freeze-json])
 (import doeff_codex [ItemStarted ItemDone ToolStatus CommandRun FilePatch WebSearch McpCall DynamicCall AgentCall ImageView]
         doeff_codex._lines [classify-line TurnStarted Unparsed UnknownValue AgentState])
 (import tests.test_lines [recorded-records])

@@ -3,9 +3,9 @@
 (require doeff-hy.macros [deftest <- val])
 (import dataclasses [dataclass replace])
 (import enum [StrEnum])
-(import doeff_hy.frozen [FrozenMap])
-(import doeff_hy.wire_codec :as wire-codec)
-(import doeff_hy.wire_malformed [Malformed MalformedField])
+(import doeff_hy._frozen [FrozenMap])
+(import doeff_hy._wire_codec :as wire-codec)
+(import doeff_hy._wire_malformed [Malformed MalformedField])
 (import doeff_records [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes Row Written WrittenRows])
 (import doeff_records [WatchChanges ReadRow PutRow PutRows RowWrite])
 (import doeff_records._typed [RowType RowMalformed TypedRow TypedPage TypedWritten TypedConflict TypedRowChanged read-typed list-typed

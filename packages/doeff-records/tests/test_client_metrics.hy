@@ -12,7 +12,7 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [PutRow ReadRow])
 (import doeff_records [ExpectAny])
 (import doeff_records.wire [CLIENT-ANSWER-METRICS])

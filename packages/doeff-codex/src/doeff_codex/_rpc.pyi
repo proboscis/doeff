@@ -4,9 +4,9 @@ from typing import TypeAlias
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
-from doeff_hy.wire import dump as dump
-from doeff_hy.wire import dump_json as dump_json
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
+from doeff_hy._wire import dump as dump
+from doeff_hy._wire import dump_json as dump_json
 JSONRPC_VERSION: str
 APP_SERVER_ARGS: tuple[str, ...]
 

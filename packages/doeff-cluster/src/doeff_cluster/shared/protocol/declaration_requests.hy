@@ -9,7 +9,7 @@
 ;; 宣言の行(service_model の Declaration.rows — 型は .pyi の TypedDict)を読むだけなので、写像の読みの口 Mapping で受ける。
 (import collections.abc [Mapping])
 (import json)
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.cluster_control [RestartRefused])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])

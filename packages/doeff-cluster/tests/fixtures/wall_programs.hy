@@ -22,7 +22,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.sim.local [SharedRows])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])

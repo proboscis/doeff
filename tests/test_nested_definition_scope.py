@@ -310,7 +310,7 @@ _CASES = {
         lambda mod: mod.subject(),
         "doeff_hy",
     ),
-    # 同じ形の defwire(card ki-8a17293bc3e5 の再現の手順 — `_doeff_ClassVar` と doeff_hy.wire の import が来る)
+    # 同じ形の defwire(card ki-8a17293bc3e5 の再現の手順 — `_doeff_ClassVar` と doeff_hy._wire の import が来る)
     "defwire-after-module-doeff-hy-read": (
         """
         (defn subject [] (setv owner (. doeff_hy __name__)) (defwire Span {:names :camel} #^ int start) owner)
@@ -335,7 +335,7 @@ _CASES = {
     # 外の defk の traverse の後に入れ子の defwire — その型を解き手(parse-json)が wire の名で解く
     "defwire-in-defk-after-traverse-parses": (
         """
-        (import doeff_hy.wire [parse-json])
+        (import doeff_hy._wire [parse-json])
         (defk subject [items]
           {:pre [(: items list)] :post [(: % int)]}
           (<- coll (traverse (<- x (Iterate items)) (* x 2)))

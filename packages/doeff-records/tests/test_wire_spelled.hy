@@ -8,7 +8,7 @@
 (import json)
 (import pytest)
 (import doeff [run])
-(import doeff_hy.frozen [FrozenMap thaw-json])
+(import doeff_hy._frozen [FrozenMap thaw-json])
 (import doeff_records [ExpectAbsent ExpectVersion Row RowChanged Page Changes Written WatchCursor]
         doeff_records._values [stored-row stored-change stored-text])
 (import doeff_records [ListRows WatchChanges PutRow])

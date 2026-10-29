@@ -23,7 +23,7 @@ from doeff_core_effects.os_warm_process import WarmRequestWire, proc_stat_of, wa
 from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.scheduler import scheduled
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused
-from doeff_hy.wire import Malformed
+from doeff_hy._wire import Malformed
 
 
 def start_ticks(pid: int) -> int:

@@ -21,7 +21,7 @@ from doeff_claude_code._lines import TurnResult as TurnResult
 from doeff_claude_code._lines import parse_record as parse_record
 from doeff_claude_code._lines import classify_record as classify_record
 from doeff_claude_code._lines import stderr_tail_within as stderr_tail_within
-from doeff_hy.json_lines import jsonl_lines as jsonl_lines
+from doeff_hy._json_lines import jsonl_lines as jsonl_lines
 from doeff_claude_code._dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code._dialogue import print_once_stdin as print_once_stdin
 from doeff_claude_code._argv import print_once_argv as print_once_argv

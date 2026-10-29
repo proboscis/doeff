@@ -10,7 +10,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [StreamDecl KeepFor ExpectAbsent ExpectAny])
 (import doeff_records [AppendEvent ReadEvents PutRow])
 (import doeff_records.memory [MemoryStore memory-records-handler new-store-lock])

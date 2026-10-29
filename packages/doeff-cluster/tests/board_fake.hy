@@ -18,7 +18,7 @@
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key lease-full-until])
 (import tests.lease_wait_fake [lease-freed lease-waiters-rung LEASE-FREED-REPLY])
-(import doeff_hy.wire [dump])
+(import doeff_hy._wire [dump])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_cluster.shared.protocol.shared_handlers [shared-http])

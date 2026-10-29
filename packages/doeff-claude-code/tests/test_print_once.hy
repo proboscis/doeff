@@ -13,7 +13,7 @@
 (import sys)
 (import pytest)
 (import doeff [with_handlers])
-(import doeff_hy.frozen [thaw-json])
+(import doeff_hy._frozen [thaw-json])
 (import doeff_claude_code [ClaudeHome LentCredential ImageAttachment PrintContent])
 (import doeff_claude_code [AccountLimitHit Usage])
 (import doeff_claude_code._argv [print-once-argv print-once-env])

@@ -33,7 +33,7 @@
 (import traceback)
 (import typing [Callable])
 (import httpx)
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_core_effects.offloaded_call [run-detached])
 
 

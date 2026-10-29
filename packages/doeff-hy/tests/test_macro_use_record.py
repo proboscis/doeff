@@ -941,7 +941,7 @@ def _order_child(real_tree: RealTree, mode: str, *names: str) -> dict[str, objec
 def _warm_bytecode(real_tree: RealTree) -> None:
     """record と wire を 1 度 import して .pyc を作る(日次の 2 回目からの形)。作られた事も確かめる — .pyc が無いと record は
     毎回 compile され、揺れの起きない形で緑になる(検の一式の PYTHONDONTWRITEBYTECODE が子へ渡った時がそうだった)。"""
-    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")
+    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy._wire")
     pycache = real_tree.stored.parent / "pycache"
     assert any(pycache.rglob("record.*.pyc")), f"{pycache} に record.hy の .pyc が無い — 検の前提が崩れた"
 
@@ -980,8 +980,8 @@ def test_a_deff_user_stays_current_in_a_process_that_computed_defrecord_and_defw
 
 #: import の順の違う 2 つの process の形 — record を先に読む(record.hy の照らしの途中で outcome_forms を import できない)と、
 #: deff の使い手を先に読む(record.hy の照らしの途中で outcome_forms が import の途中)。
-RECORD_FIRST = ("doeff_hy.record", "doeff_hy.wire", "doeff_hy.clause_endings")
-DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy.clause_endings", "doeff_hy.wire", "doeff_hy.record")
+RECORD_FIRST = ("doeff_hy.record", "doeff_hy._wire", "doeff_hy.clause_endings")
+DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy.clause_endings", "doeff_hy._wire", "doeff_hy.record")
 
 
 @dataclass(frozen=True)

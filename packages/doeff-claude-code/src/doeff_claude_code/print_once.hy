@@ -27,7 +27,7 @@
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_claude_code._effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
 (import doeff_claude_code._lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
-(import doeff_hy.json_lines [jsonl-lines])
+(import doeff_hy._json_lines [jsonl-lines])
 (import doeff_claude_code._dialogue [limit-hit-after print-once-stdin])
 (import doeff_claude_code._argv [print-once-argv print-once-env])
 (import doeff_claude_code._credential_home [open-credential-home close-credential-home])

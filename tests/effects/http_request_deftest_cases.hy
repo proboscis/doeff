@@ -6,7 +6,7 @@
 (import doeff_core_effects [HttpError HttpRequest HttpResponse Listen SlogEffect])
 (import doeff_core_effects.handlers [await-handler listen-handler slog-handler state])
 (import doeff_core_effects.http_handlers [http-production-handler http-fixture-handler])
-(import doeff_hy.http [http-get http-post http-put http-delete http-head])
+(import doeff_hy._http [http-get http-post http-put http-delete http-head])
 (import tests.effects.http_request_support
   [FakeAsyncClient
    handler-name

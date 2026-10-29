@@ -4,9 +4,9 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 import socket as socket
 from dataclasses import dataclass as dataclass
-from doeff_hy.wire import Malformed as Malformed
-from doeff_hy.wire import dump as dump
-from doeff_hy.wire import parse_json as parse_json
+from doeff_hy._wire import Malformed as Malformed
+from doeff_hy._wire import dump as dump
+from doeff_hy._wire import parse_json as parse_json
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.process_stat import ProcStat as ProcStat
 from doeff_core_effects.process_stat import ENDED_STATES as ENDED_STATES

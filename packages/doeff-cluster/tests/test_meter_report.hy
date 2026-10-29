@@ -7,7 +7,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_core_effects.meter_effects [MeterSnapshot SecondsTotal])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.sim.local [sim-cluster ReadCoordinator])
 (import doeff_cluster.shared.protocol.meter_report [report-metrics-of])

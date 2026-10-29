@@ -33,7 +33,7 @@ from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
 from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase, postgres_sql_handler
 from doeff_core_effects.scheduler import Cancel, CreateExternalPromise, Spawn, Wait, scheduled
 from doeff_core_effects.thread_pool_compute import thread_pool_compute_handler
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 from doeff_records import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow
 from doeff_records._laws import LAW_SCHEMA, MAKER
 from doeff_records.pg import drop_records_tables, pg_records_handler, prepare_records_store, writer_gates

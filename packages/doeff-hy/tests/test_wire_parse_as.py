@@ -1,4 +1,4 @@
-"""doeff_hy.wire の parse-as・parse-json-as の検(card ki-7c4609cd96c9)。
+"""doeff_hy._wire の parse-as・parse-json-as の検(card ki-7c4609cd96c9)。
 
 parse-as は defwire でない語彙の型(入れ物 — dict[str, object]・list[str]・str | None・dict[str, OpaqueJson]・defwire の型の tuple)を
 parse と同じ型の木と厳しさで解く。pydantic の TypeAdapter で入れ物を直に解いていた読み手(agora-controllers)の移り先。確かめること:
@@ -13,9 +13,9 @@ import importlib
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
 from doeff import run
-from doeff_hy.frozen import freeze_json
-from doeff_hy.json_value import OpaqueJson
-from doeff_hy.wire import Malformed, parse_as, parse_json_as
+from doeff_hy._frozen import freeze_json
+from doeff_hy._json_value import OpaqueJson
+from doeff_hy._wire import Malformed, parse_as, parse_json_as
 
 types = importlib.import_module("wire_codec_types")
 

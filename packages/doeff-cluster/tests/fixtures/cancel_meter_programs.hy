@@ -21,7 +21,7 @@
 (import doeff_core_effects.os_process [metered-offloaded-subprocess-handler])
 (import doeff_core_effects.process_effects [RunProcess])
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 (import doeff_cluster.shared.protocol.meter_report [with-meter-report])
 

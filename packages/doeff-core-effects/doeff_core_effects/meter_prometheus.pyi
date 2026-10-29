@@ -2,7 +2,7 @@
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_core_effects.meter_effects import MeterSnapshot as MeterSnapshot
 CONTENT_TYPE: str
 _HELP_ESCAPES: Incomplete

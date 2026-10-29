@@ -6,7 +6,7 @@ from typing import ClassVar as ClassVar
 from doeff_cluster.shared.intent.record_spec import RecordSpec as RecordSpec
 from doeff_cluster.shared.intent.record_spec import RecordMode as RecordMode
 from doeff_cluster.shared.intent.record_spec import Unexecuted as Unexecuted
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
 
 @dataclass(frozen=True)
 class AnyExpect:

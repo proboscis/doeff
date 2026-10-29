@@ -67,7 +67,7 @@
 (import doeff_claude_code._lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming tap-lines
                                  TimedPhase TurnResult TaskEvent ToolResult AgentToolResult SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
                                  CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
-(import doeff_hy.json_lines [whole-lines-end])
+(import doeff_hy._json_lines [whole-lines-end])
 (import doeff_claude_code._effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed

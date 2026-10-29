@@ -1,7 +1,7 @@
 ;;; coordinator の盤(/board)と lease の口(/leases)へ送る要求の形 #(method path query 本文)。本番の client(同じ層の shared_handlers.hy の
 ;;; shared-http)と手元の sim-cluster の偽の宿(sim/local.hy)が同じ関数で作る(本文を写さない)。
 ;;; 層 protocol に置く(#2979 — 前は foundation/ に在った): 使い手の shared-http が protocol に在り、protocol は foundation を読めない。
-;;; この module は標準の library と doeff_hy.json_value だけを読む。
+;;; この module は標準の library と doeff_hy._json_value だけを読む。
 ;;; 盤の行の値は形を書き手が決める JSON なので、本文へ組むこの module が JSON の値を扱う送受信の口になる(DOEFF120 の :wire-modules —
 ;;; 前は shared_handlers.hy の中に在った)。書きの条件の印 ANY(intent の語彙)はここへ持ち込まず、呼び手が
 ;;; 「条件を付けるか」の真偽に訳して渡す。
@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import json)
 (import urllib.parse [quote :as url-quote])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 
 
 (deff board-read-request [#^ str prefix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断

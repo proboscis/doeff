@@ -14,7 +14,7 @@
 (require doeff-hy.macros [defk])
 (import collections.abc [Callable Mapping])
 (import doeff.program [ProgramHandler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code [ClaudeHome BypassAll PermissionPolicy])
 (import doeff_claude_code.clock [clock-of])

@@ -1,7 +1,7 @@
 {
   "include": [
-    "packages/doeff-hy/src/doeff_hy/wire_malformed.hy",
-    "packages/doeff-hy/src/doeff_hy/wire_codec.py"
+    "packages/doeff-hy/src/doeff_hy/_wire_malformed.hy",
+    "packages/doeff-hy/src/doeff_hy/_wire_codec.py"
   ],
   "module_extensions": {
     "doeff-hy-wire": {
@@ -18,10 +18,10 @@
       "layer": "domain",
       "name": "doeff-hy-wire-malformed",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/wire_malformed.hy"
+        "packages/doeff-hy/src/doeff_hy/_wire_malformed.hy"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/wire_malformed.hy"
+        "packages/doeff-hy/src/doeff_hy/_wire_malformed.hy"
       ],
       "responsibility": "形の違う JSON の答え Malformed・MalformedField の置き場(pydantic を読まない — wire.hy と自前の解き手 wire_codec.py が同じ型を返す・card ki-923c16d33551)",
       "typed": true
@@ -34,10 +34,10 @@
       "layer": "domain",
       "name": "doeff-hy-wire-codec",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/wire_codec.py"
+        "packages/doeff-hy/src/doeff_hy/_wire_codec.py"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/wire_codec.py"
+        "packages/doeff-hy/src/doeff_hy/_wire_codec.py"
       ],
       "responsibility": "defwire の自前の解き手の型の木(読む側・書く側・JSON Schema): JSON を defwire の型の値へ pydantic を読まずに strict に解いて確かめ、同じ木で値を今の pydantic と同じ JSON へ書き、JSON Schema を出す(codec_of・Codec)。契約は docs/design/defwire-decoder/design.md(card ki-923c16d33551・ki-f6551d717654)",
       "typed": true
