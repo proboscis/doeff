@@ -254,6 +254,14 @@ for name, key in (("default", None), ("method_and_url", method_and_url)):
     recorded(latest_releases(REPOS, "s3cr3t-token"), tape, github, *([key] if key else []))
     stored = b"".join(path.read_bytes() for path in directory.glob(f"token-{name}.sqlite*"))
     print(f"token in {name}:", b"s3cr3t-token" in stored, b"v2.4.1" in stored)
+
+# 既定の鍵はpickleした依頼のハッシュで、pickleのprotocolが変われば鍵も変わる(本文の限界「Python 3.13で作った鍵が3.14では当たりません」)。
+# pickleの既定のprotocolは、Python 3.14で4から5になった。
+import hashlib, pickle
+from doeff_core_effects.memo_handlers import content_address
+request = HttpRequest("GET", url, headers={"Authorization": "Bearer secret"})
+by_protocol = {protocol: hashlib.sha256(pickle.dumps(request, protocol=protocol)).hexdigest() for protocol in (4, 5)}
+print("key:", content_address(request) in by_protocol.values(), by_protocol[4] != by_protocol[5])
 """
 claims = [tuple(line.split(": ", 1)) for line in child(["-c", CLAIMS]).splitlines()]
 assert claims == [
@@ -270,6 +278,7 @@ assert claims == [
     ("post", "200 200 1"),
     ("token in default", "False True"),
     ("token in method_and_url", "False True"),
+    ("key", "True True"),
 ], claims
 
 # 別のプロセスが、同じファイルから再生する(本文「別のプロセスのテストやCIも、同じようにそのファイルから再生します」)。

@@ -200,7 +200,7 @@ print(recorded(reported(latest_releases(REPOS, "ci-dummy")), tape, offline))  # 
 LookupError: not recorded: GET https://api.github.com/repos/acme/server/releases/latest
 ```
 
-既定の鍵の`content_address`は、依頼の全部のハッシュです。メソッド・URL・ヘッダ・params・本文・時間の上限が入ります。トークンはヘッダに在るので、別のトークンの依頼は別の依頼です。だから、保存に当たりません。上で手で書いたtapeは、メソッドとURLで引きました。同じ鍵を、`make_memo_rewriter`に渡します。
+既定の鍵の`content_address`は、依頼の全部のハッシュです。メソッド・URL・ヘッダ・params・本文・時間の上限など、どの欄も入ります。トークンはヘッダに在るので、別のトークンの依頼は別の依頼です。だから、保存に当たりません。上で手で書いたtapeは、メソッドとURLで引きました。同じ鍵を、`make_memo_rewriter`に渡します。
 
 ```python
 # on_disk.py(抜粋)
@@ -256,8 +256,8 @@ VCR.pyや`unittest.mock`を知っている人もいるでしょう。VCR.pyは�
 ## 限界
 
 - 保存する答えは、pickleで残します。信頼できるファイルだけを開きます。pickleを読むと、コードが走ることがあるからです。
-- 既定の鍵は、pickleした依頼のハッシュです。doeffやPythonの版をまたいで同じままかは、約束されていません。`method_and_url`のような自分の鍵は、自分で決めるただの文字列です。
-- 保存のハンドラを付けないと、`make_memo_rewriter`はどの依頼も保存に無いと見ます。そして毎回、黙って外へ出します。通信の位置に`offline`を置いた再生なら、これに気付けます。保存に無い依頼が、例外を起こすからです。
+- 既定の鍵は、pickleした依頼のハッシュです。pickleのバイト列は、Pythonの版で変わります。下の「試す」の節のとおりに入れたdoeffでは、Python 3.13で作った鍵が3.14では当たりません。3.14のpickleは、既定で新しいprotocolを書くからです。doeffの版をまたいで同じままかも、約束されていません。`method_and_url`のような自分の鍵は、自分で決めるただの文字列です。
+- 保存のハンドラを付けないと、`make_memo_rewriter`はどの依頼も保存に無いと見ます。そして毎回、外へ出します。保存が無いという誤りは出ません。通信の位置に`offline`を置いた再生なら、これに気付けます。保存に無い依頼が、例外を起こすからです。
 - `make_memo_rewriter`は、型で選んで記録します。POSTも含めて、どの`HttpRequest`も記録します。記録したPOSTは、再生で送り直しません。たいていは、それがテストの望む形です。いつも外へ出したい依頼があるなら、`record`のような係を書きます。そして、その依頼を`Pass`で外へ渡します。
 - 再生で分かるのは、記録した答えをコードがどう扱うかです。APIが今もそう答えるかは分かりません。APIが変わったら、記録し直します。
 
@@ -272,7 +272,7 @@ python live.py  # 手元のサーバーで記録し、止めてから再生す�
 
 この記事の例はどれも、PyPIのdoeff 0.8.0で、載せたとおりに走ります。完全なファイルは、[examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay)にあります。docsの章[Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md)は、`CacheGet`と`CachePut`を扱います。プログラムが、わざとキャッシュする時に自分で`yield`する物です。ここの`make_memo_rewriter`は、外から来た答えを取っておきます。プログラムは、何も頼みません。
 
-時計をハンドラにし、何時間もの待ちを一瞬で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。
+時計をハンドラにし、何日分もの待ちを数ミリ秒で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。
 
 自分のコードで、どの答えを取っておきたいですか。鍵を選びにくいのは、どこでしょう。issueは https://github.com/proboscis/doeff/issues で受け付けています。
 
@@ -280,7 +280,7 @@ python live.py  # 手元のサーバーで記録し、止めてから再生す�
 
 ## 参考
 
-この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.14で試しました。
+この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.13・3.14で試しました。
 
 - [HttpRequestとHttpResponseの定義(doeff 0.8.0)](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/http_effects.hy)
 - [make_memo_rewriterとcontent_addressの実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
