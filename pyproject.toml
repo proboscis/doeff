@@ -917,6 +917,30 @@ tests = [
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-validation]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
+# 英語の記事 4 本目(記録と再生)と、その例の file の全部(examples/record_and_replay/)を変えた便は、記事の囲みが例の file と
+# 印字のままである事と、本文の主張(memo の層の effect の順・file に token が残らない など)の検を払う(取り組み doeff-publish・
+# card ki-e86c66488895)。例は memo の層と SQLite の保存と HTTP の handler を使うので、その 3 つの file の変更も選ぶ。検は例を
+# path で読むので、import の逆依存では選ばれない。秒は 14.8 秒(19 本・子 6 本・pytest の計・2026-10-29 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/articles/record-and-replay.md"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/record_and_replay/"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
 [dependency-groups]
 dev = [
     # make sync builds the Rust VM with maturin — declared here so every machine gets it
