@@ -18,15 +18,15 @@
 (defadr ADR-DOE-CORE-EFFECTS-004
   :title "動き続ける process の計器・最新の値・heap の凍結を汎用の effect にする — 1 つの名の中の書きは 1 度に見え、名をまたぐ書きは保証しない"
   :status "accepted"
-  :scope ["packages/doeff-core-effects/doeff_core_effects/meter_effects.hy"
+  :scope ["packages/doeff-core-effects/doeff_core_effects/_meter_effects.hy"
           "packages/doeff-core-effects/doeff_core_effects/process_meter.hy"
-          "packages/doeff-core-effects/doeff_core_effects/memory_meter.hy"
-          "packages/doeff-core-effects/doeff_core_effects/latest_effects.hy"
+          "packages/doeff-core-effects/doeff_core_effects/_memory_meter.hy"
+          "packages/doeff-core-effects/doeff_core_effects/_latest_effects.hy"
           "packages/doeff-core-effects/doeff_core_effects/process_latest.hy"
-          "packages/doeff-core-effects/doeff_core_effects/memory_latest.hy"
-          "packages/doeff-core-effects/doeff_core_effects/heap_effects.hy"
-          "packages/doeff-core-effects/doeff_core_effects/gc_freeze.hy"
-          "packages/doeff-core-effects/doeff_core_effects/scripted_freeze.hy"]
+          "packages/doeff-core-effects/doeff_core_effects/_memory_latest.hy"
+          "packages/doeff-core-effects/doeff_core_effects/_heap_effects.hy"
+          "packages/doeff-core-effects/doeff_core_effects/_gc_freeze.hy"
+          "packages/doeff-core-effects/doeff_core_effects/_scripted_freeze.hy"]
   :problem
     [(fact
        "agora-controllers の画面の計器 Meter(controllers/screen/entry/meter.py・592 行)は、画面の型で答えの起点を決める判断と、counter・gauge・秒の合計を積む汎用の部分と、time.monotonic・uuid・gc.callbacks・threading の生の副作用を 1 つの class に持っていた。処理ループの run が書き、probe の別の run(/metrics・/latency/samples)が lock を待たずに読む。"
@@ -84,8 +84,8 @@
        ;; thread をまたぐ面は packages/doeff-core-effects/tests/test_process_meter.hy の test-a-reader-in-another-thread-never-sees-half-of-one-name。
        (import doeff [run with_handlers])
        (import doeff_core_effects [state])
-       (import doeff_core_effects.meter_effects [MeterBucket MeterSettings ObserveSeconds ReadMeter])
-       (import doeff_core_effects.memory_meter [memory-meter-handler])
+       (import doeff_core_effects [MeterBucket MeterSettings ObserveSeconds ReadMeter])
+       (import doeff_core_effects [memory-meter-handler])
        (val settings (MeterSettings :buckets #((MeterBucket :label "le_1s" :ceiling 1.0)) :inf-label "le_inf"))
        (val snapshots (run (with_handlers [(state) (memory-meter-handler settings)]
                              (do! (<- (ObserveSeconds "fold" 0.5)) (<- after-short (ReadMeter))
@@ -98,8 +98,8 @@
        ;; law meter-writes-across-names-are-not-atomic の反例の検: 2 つの名への書きの間の読みは、片方だけ進んだ断面を見る。
        (import doeff [run with_handlers])
        (import doeff_core_effects [state])
-       (import doeff_core_effects.meter_effects [CountMetric MeterSettings ReadMeter])
-       (import doeff_core_effects.memory_meter [memory-meter-handler])
+       (import doeff_core_effects [CountMetric MeterSettings ReadMeter])
+       (import doeff_core_effects [memory-meter-handler])
        (val reads (run (with_handlers [(state) (memory-meter-handler (MeterSettings))]
                          (do! (<- (CountMetric "answers"))
                               (<- between (ReadMeter))

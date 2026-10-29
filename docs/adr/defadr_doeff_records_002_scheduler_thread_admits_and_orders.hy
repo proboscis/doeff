@@ -41,7 +41,7 @@
        :evidence "card ki-974e5ae37eca の発言 ob-cd4ccf8d5e81153d・card ki-67a745ab6c1c の作業の測り")
      (fact
        "doeff は純粋な program を回して答えを値で受ける汎用の effect Compute と、その答え手 thread-pool-compute-handler(呼び手の pool で回し、待つのは撃った task だけ — scheduler の他の task は回り続ける)・inline-compute-handler(その場で回す — 仮想の時計の模擬で決定的)を持つ。本番の Python は free-threaded の 3.14t で、pool の thread は scheduler の thread と並んで走る。thread の受け渡し 1 回の上乗せは手元で 約 0.5 ms(その間 scheduler の thread は空く)。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/compute_effects.hy・thread_pool_compute.hy・inline_compute.hy")
+       :evidence "packages/doeff-core-effects/doeff_core_effects/_compute_effects.hy・thread_pool_compute.hy・inline_compute.hy")
      (fact
        "束の読みを Compute へ出した後も、1 要求の計算の量は「頁の行の数 × 行の大きさ」で決まり、行の大きさの側だけが型で縛られていた(表の size-budget)。wire の list-rows の limit は上限を持たず、本文の上限 16 MiB の中なら何行でも頼めた。使い手の 4 つの repo の main(2026-10-22)で一覧の読みの limit は、固定の値で最も大きいもので 5,000 行(全行の一覧の 1 頁 — 1 回の要求の固定費 約 0.2 秒との釣り合いで選ばれた頁)。外から渡る数をそのまま載せる読みが 2 つ在った(呼び手の CLI の --limit N の N + 1・cursor が古い時に窓を限り無く倍にする読み — どちらも同じ日に続きの位置で頁を送る形に直した)。手元の測りの比で、5,000 行の頁の読み解きと綴りは 1 頁 約 0.9 秒、計算の pool の thread を 1 本塞ぐ(500 行で 92 ms)。"
        :evidence "card ki-42c40cb6014d の作業の測り・packages/doeff-records/src/doeff_records/_effects.hy の LIST-LIMIT-MAX")
