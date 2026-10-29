@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import click
-from doeff_core_effects.os_file import os_file_handler
+from doeff_core_effects import os_file_handler
 from doeff_time import Delay, sync_time_handler
 from rich.console import Console, Group, RenderableType
 from rich.live import Live

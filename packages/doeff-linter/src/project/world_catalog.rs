@@ -155,6 +155,10 @@ mod tests {
             ("thread_pool_compute", "thread_pool_compute_handler"),
             ("gc_freeze", "gc_freeze_handler"),
             ("faulthandler_stack_dump", "faulthandler_stack_dump_handler"),
+            // file・memo・cache の子も同じ(card ki-375e0a35b7a0)。
+            ("os_file", "os_file_handler"),
+            ("cache_handlers", "sqlite_cache_handler"),
+            ("memo_handlers", "sqlite_memo_handler"),
         ] {
             for name in [
                 format!("doeff_core_effects._{child}.{handler}"),

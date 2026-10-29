@@ -19,8 +19,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
-from doeff_core_effects import HttpRequest, slog
-from doeff_core_effects.cache_effects import CacheExistsEffect, cache_get, cache_put
+from doeff_core_effects import CacheExistsEffect, HttpRequest, cache_get, cache_put, slog
 from doeff_system_one import Judge, JudgeError, Verdict
 
 from doeff import Err, Ok, Pass, Transfer, TransferThrow, Try, do

@@ -20,13 +20,11 @@
 
 (import doeff_core_effects [Ask Get Put Local Listen Await Try WriterTellEffect ReadWriterLog SlogEffect])
 (import doeff_core_effects.http-effects [HttpRequest])
-(import doeff_core_effects.memo-effects [MemoGetEffect MemoPutEffect
-                                         MemoDeleteEffect MemoExistsEffect])
-(import doeff_core_effects.cache-effects [CacheGetEffect CachePutEffect
-                                          CacheDeleteEffect CacheExistsEffect])
+(import doeff_core_effects [MemoGetEffect MemoPutEffect MemoDeleteEffect MemoExistsEffect])
+(import doeff_core_effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect])
 (import doeff_core_effects [Spawn TaskCompleted Gather Wait Cancel Discard Race CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore CreateExternalPromise SchedulerIntrospection scheduled])
 (import doeff_core_effects [reader state writer slog-handler slog-discard-handler try-handler local-handler listen-handler await-handler lazy-ask env-var-ask])
-(import doeff_core_effects.cache-handlers [cache-handler])
+(import doeff_core_effects [cache-handler])
 ;; defhandler 製 factory は実装モジュールから直接列挙する(__doeff_body__ を持つ
 ;; 実物)。公開 wrapper(http_handlers / memo_handlers)は素の関数で構造情報を
 ;; 持たないため、導出の dogfood にはならない。
@@ -40,17 +38,10 @@
 (import doeff_core_effects [BoundAbsent maybe result on-raise absent-as absent-raises])
 
 ;; 土台の語彙と、その defhandler 製の答え手(注釈せず __doeff_body__ から導出 — D6)。
-(import doeff_core_effects.file-effects [StatPath ReadText ReadBytes WriteText
-                                         WriteBytes AppendText AppendBytes TruncateFile
-                                         SyncDirectory MakeDirectory
-                                         ListDirectory WalkTree StatTree RemoveTree
-                                         RenamePath CopyFile CopyTree
-                                         AcquireLock ReleaseLock ReadDiskFree
-                                         ReadDiskUsage MeasureTree LinkFile MakeSymlink
-                                         CompilePythonSources ReadMemoryFiles])
-(import doeff_core_effects.os-file [os-file-handler])
-(import doeff_core_effects.memory-file [memory-file-handler])
-(import doeff_core_effects.rooted-file [rooted-file-handler])
+(import doeff_core_effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile MakeSymlink CompilePythonSources ReadMemoryFiles])
+(import doeff_core_effects [os-file-handler])
+(import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [rooted-file-handler])
 (import doeff_core_effects.http-server-effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody
                                                 HttpRespond HttpForward
                                                 HttpShutdown HttpStopListening WsAccept WsSendText WsSendTextEach

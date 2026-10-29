@@ -3,8 +3,7 @@
 import json
 import pickle
 
-from doeff_core_effects import HttpRequest, HttpResponse
-from doeff_core_effects.cache_handlers import in_memory_cache_handler
+from doeff_core_effects import HttpRequest, HttpResponse, in_memory_cache_handler
 from doeff_jev import JevTarget, jev_handler, judge_stack, run_judgment
 from doeff_system_one import JudgeError, Verdict, choice, judge, noul
 

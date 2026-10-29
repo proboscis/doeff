@@ -20,7 +20,7 @@
 
 (import collections.abc [Iterable Mapping])
 (import doeff [EffectBase Program])
-(import doeff_core_effects.file_effects [PathKind])
+(import doeff_core_effects [PathKind])
 (import doeff_core_effects.process_effects [not-started-outcome start-refusal executable-file-answer])
 (import doeff_time [DelayEffect])
 (import doeff_agents._io_effects [

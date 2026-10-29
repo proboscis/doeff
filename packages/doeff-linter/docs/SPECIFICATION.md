@@ -615,7 +615,7 @@ module が、その層の `:forbid-modules` の module を import すると DOEF
                     :holders ["ConversationSent"] :why "…")]
   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"   ; 外の世界に触れてよい定義の許可名簿(下の註)
                      :touches [http file clock env] :answers [HttpRequest ReadText]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler"])
+                     :wraps ["doeff_core_effects._os_file:os-file-handler"])
                    (world-handler "controllers.foundation.clock:real-clock" :touches [clock]
                      :contract-test (none :doeff-test "packages/doeff-time/tests/test_clock.hy::test-clock-contract"))]   ; 縁の検を求めない handler(DOEFF137 — 理由つきの none)
   :stand-ins [(stand-in "controllers.agora_sim.peers.live_session_peer:with-live-session-peer"   ; 相手役の名簿(下の註・DOEFF137)

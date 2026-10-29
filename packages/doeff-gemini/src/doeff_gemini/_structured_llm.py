@@ -22,8 +22,7 @@ try:
 except ImportError:  # pragma: no cover - Python 3.10 fallback
     from typing_extensions import NotRequired, TypedDict
 
-from doeff_core_effects.memo_effects import MemoGet, MemoPut
-from doeff_core_effects.memo_policy import Lifecycle, RecomputeCost
+from doeff_core_effects import Lifecycle, MemoGet, MemoPut, RecomputeCost
 from doeff_time import Delay
 
 from doeff import (

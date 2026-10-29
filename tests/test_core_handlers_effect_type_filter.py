@@ -25,7 +25,6 @@ from doeff_core_effects import (
     Try,
     WriterTellEffect,
     await_handler,
-    cache_handlers,
     env_var_ask,
     lazy_ask,
     listen_handler,
@@ -37,6 +36,9 @@ from doeff_core_effects import (
     try_handler,
     vm_probe_handler,
     writer,
+)
+from doeff_core_effects import (
+    _cache_handlers as cache_handlers,
 )
 from doeff_vm._effect_types import handler_effect_types
 
