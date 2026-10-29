@@ -37,8 +37,7 @@ from types import FrameType
 
 import hy  # noqa: F401  - Hy の module(stop_signal_handlers.hy ほか)を import できるようにする
 import pytest
-from doeff_core_effects.handlers import state
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_core_effects import Spawn, Wait, scheduled, state
 from doeff_core_effects.stop_signal_effects import AwaitStop
 from doeff_core_effects.stop_signal_handlers import StopBox, os_signal_stop_handler
 

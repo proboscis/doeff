@@ -11,7 +11,7 @@ import threading
 from collections.abc import Iterable
 from typing import Any
 
-from doeff_core_effects.effects import Await
+from doeff_core_effects._effects import Await
 
 
 class InMemoryStorage:

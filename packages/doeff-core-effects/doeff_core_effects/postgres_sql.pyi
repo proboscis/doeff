@@ -20,9 +20,9 @@ from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects.sql_effects import SqlBatch as SqlBatch

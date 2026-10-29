@@ -40,8 +40,8 @@
 (import doeff.program [handler :as raw-handler])
 (import doeff [PyVM])
 (import collections.abc [Callable])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait TaskCancelledError])
-(import doeff_core_effects.handlers [try-handler])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait TaskCancelledError])
+(import doeff_core_effects._handlers [try-handler])
 
 (val MODULE-TAGS {:context "scheduler" :role "foundation"})
 

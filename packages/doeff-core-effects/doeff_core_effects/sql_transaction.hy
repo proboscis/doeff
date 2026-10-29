@@ -6,7 +6,7 @@
 ;;;                               往復 1 回が書き 1 回の待ちに乗る)。往復をまとめる: 下の「束ねた transaction」。
 ;;;
 ;;; 実現: 答え手は接続 1 本に束ねた scope(SqlQuery / SqlInsertRows 専用の handler)を program に被せて走らせる。effect.program をそのまま
-;;; 走らせると、中の SqlQuery は答え手の外側へ行き、同じ接続・同じ transaction に乗らない(doeff_core_effects.handlers の try_handler が
+;;; 走らせると、中の SqlQuery は答え手の外側へ行き、同じ接続・同じ transaction に乗らない(doeff_core_effects._handlers の try_handler が
 ;;; 内側の handler を被せ直すのと同じ理由)。
 ;;;   - 中の SqlQuery / SqlInsertRows が失敗の値(SqlFailed / SqlUnreachable)を答えたら、scope は継続を捨てて(program を再開せずに)
 ;;;     TransactionAborted を答えにする。例外を program へ投げ込むと program が捕まえて続けられるので、投げ込まない(約束 1)。

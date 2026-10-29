@@ -30,7 +30,7 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (import concurrent.futures [Executor])
 (import doeff [Program])
-(import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore])
+(import doeff_core_effects._scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice])
 (import doeff_core_effects.sql_transaction [stray-batch])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-ensure-tables offloaded-statement

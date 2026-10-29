@@ -24,7 +24,7 @@
 (import threading)
 (import typing [TYPE_CHECKING])
 (import doeff [EffectBase Program with_handlers])
-(import doeff_core_effects.handlers [state await-handler])
+(import doeff_core_effects [state await-handler])
 (import doeff_core_effects.ws_client_effects [ReadWsSent ScriptedWsBinary ScriptedWsClosed ScriptedWsEndpoint ScriptedWsReply ScriptedWsText
                                               WsScript WsSentClose WsSentRecord])
 (import doeff_core_effects.scripted_ws_client [scripted-ws-client])

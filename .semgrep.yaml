@@ -1216,7 +1216,7 @@ rules:
     severity: ERROR
     message: >
       ARC-529: HttpRequest, HttpResponse, and HttpError must be implemented in
-      Hy. Keep doeff_core_effects.effects as an export surface only.
+      Hy. Keep doeff_core_effects._effects as an export surface only.
     pattern-either:
       - pattern: |
           class HttpRequest(...):
@@ -1229,7 +1229,7 @@ rules:
               ...
     paths:
       include:
-        - /packages/doeff-core-effects/doeff_core_effects/effects.py
+        - /packages/doeff-core-effects/doeff_core_effects/_effects.py
 
   - id: http-request-handler-logic-is-hy
     languages: [python]
@@ -2610,7 +2610,7 @@ rules:
       and scan counts, the invariant checks, the Rust scheduler's trace and step budget flags)
       are doeff's effects ReadVmLiveCounts, ReadVmWorkCounts, ReadVmScanCounts,
       ReadInvariantChecks, SetInvariantChecks, SetSchedulerStepBudgetArmed and
-      SetSchedulerTraceInstalled, answered by doeff_core_effects.handlers.vm_probe_handler
+      SetSchedulerTraceInstalled, answered by doeff_core_effects._handlers.vm_probe_handler
       (card ki-27e8ea225b62 — a subpackage shows its users effects and handlers only). Yield the
       effect under vm_probe_handler instead of calling the extension's function; only that
       handler and doeff_core_effects' scheduler and world phases call the functions.
@@ -2624,9 +2624,9 @@ rules:
           regex: ^_?(vm_live_counts|vm_work_counts|vm_scan_counts|invariant_checks_enabled|set_invariant_checks|set_scheduler_step_budget_armed|set_scheduler_trace_installed)$
     paths:
       exclude:
-        - /packages/doeff-core-effects/doeff_core_effects/handlers.py
-        - /packages/doeff-core-effects/doeff_core_effects/scheduler.py
-        - /packages/doeff-core-effects/doeff_core_effects/world_phases.py
+        - /packages/doeff-core-effects/doeff_core_effects/_handlers.py
+        - /packages/doeff-core-effects/doeff_core_effects/_scheduler.py
+        - /packages/doeff-core-effects/doeff_core_effects/_world_phases.py
         # the extension's own test of its type stub (the functions it declares are on the extension)
         - /packages/doeff-vm/tests/test_memory_stats.py
         # the handler's test compares each effect's answer with the function it asks
@@ -5312,7 +5312,7 @@ rules:
       observability は SlogEffect / slog() を使う。
     patterns:
       - pattern-either:
-          - pattern: from doeff_core_effects.effects import WriterTellEffect as Slog
+          - pattern: from doeff_core_effects._effects import WriterTellEffect as Slog
           - pattern: from doeff_core_effects import WriterTellEffect as Slog
           - pattern: from doeff import WriterTellEffect as Slog
 
@@ -5341,7 +5341,7 @@ rules:
     pattern-regex: 'get_inner_handlers'
     paths:
       include:
-        - /packages/doeff-core-effects/doeff_core_effects/scheduler.py
+        - /packages/doeff-core-effects/doeff_core_effects/_scheduler.py
 
   - id: no-doeff-preset-import
     languages: [python]

@@ -11,7 +11,7 @@
 (import threading)
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.meter_effects [CountMetric MeterBucket MeterSettings MeterSnapshot ObserveSeconds ReadMeter])
 (import doeff_core_effects.process_meter [process-meter-handler])
 

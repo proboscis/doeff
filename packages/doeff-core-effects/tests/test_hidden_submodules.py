@@ -1,0 +1,92 @@
+"""doeff_core_effects の子を `_<名>` へ移した後も、どちらの package を先に import しても読み込みの順が保たれる事の検。
+
+決まり: ADR-DOE-API-001 の R5 — 名は入口(`__init__`)から出し、子は名に `_` を付けて隠す(card ki-c09b3b527fad)。
+doeff は読み込みの時にこの package の `_effects` と `_scheduler` を読み、この package の入口は先に doeff を読む。入口が
+遅延で出す名(`__getattr__` の `_LAZY_EXPORTS`)の module は、`import doeff` で読まない(起動を重くしない)。元の名の所の
+移し替えの module(1 行目に `# moved-submodule-shim:`)は、`_<名>` の module そのものを返す。
+
+失敗ケース: doeff を先に読む・doeff_core_effects を先に読む・古い path を先に読むの、どれかで import が落ちる・
+入口の名が doeff の名と別の物になる・`import doeff` が遅延の名の module を読む・古い path が別の写しの module を返すと赤。
+"""
+
+import subprocess
+import sys
+
+import pytest
+
+#: 子の古い path と新しい path(この card で移した 10 個 — storage は下の module も)。
+MOVED = {
+    "doeff_core_effects.effects": "doeff_core_effects._effects",
+    "doeff_core_effects.handlers": "doeff_core_effects._handlers",
+    "doeff_core_effects.scheduler": "doeff_core_effects._scheduler",
+    "doeff_core_effects.scheduler_channel": "doeff_core_effects._scheduler_channel",
+    "doeff_core_effects.scheduler_step_tally": "doeff_core_effects._scheduler_step_tally",
+    "doeff_core_effects.outcomes": "doeff_core_effects._outcomes",
+    "doeff_core_effects.world_phases": "doeff_core_effects._world_phases",
+    "doeff_core_effects.extra_hints": "doeff_core_effects._extra_hints",
+    "doeff_core_effects.unhandled_hints": "doeff_core_effects._unhandled_hints",
+    "doeff_core_effects.storage": "doeff_core_effects._storage",
+    "doeff_core_effects.storage.sqlite": "doeff_core_effects._storage.sqlite",
+    "doeff_core_effects.storage.memory": "doeff_core_effects._storage.memory",
+}
+
+#: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
+SHARED_NAMES = ("Ask", "Get", "Put", "Tell", "Spawn", "Gather", "Wait", "Promise", "Task", "MissingEnvKeyError")
+
+#: 入口が遅延で出す名と、その module(`import doeff` では読まない)。
+LAZY_NAMES = {
+    "StepBudget": "doeff_core_effects._scheduler",
+    "DurableStorage": "doeff_core_effects._storage",
+    "SQLiteStorage": "doeff_core_effects._storage.sqlite",
+    "AbsentAsToken": "doeff_core_effects._outcomes",
+}
+
+#: `import doeff` が読まない module(入口の遅延の名だけが読む)。
+NOT_LOADED_BY_DOEFF = (
+    "doeff_core_effects._storage",
+    "doeff_core_effects._scheduler_channel",
+    "doeff_core_effects._scheduler_step_tally",
+    "doeff_core_effects._world_phases",
+)
+
+
+def _run(code: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=120, check=False)
+
+
+@pytest.mark.parametrize(
+    "first",
+    ["doeff", "doeff_core_effects", "doeff_core_effects.effects", "doeff_core_effects.scheduler", "doeff_core_effects._handlers"],
+)
+def test_the_names_are_the_same_whichever_module_is_imported_first(first: str) -> None:
+    code = (
+        f"import importlib\nimportlib.import_module({first!r})\n"
+        "import doeff, doeff_core_effects\n"
+        f"for name in {SHARED_NAMES!r}:\n"
+        "    assert getattr(doeff, name) is getattr(doeff_core_effects, name), name\n"
+        f"for name, module in {LAZY_NAMES!r}.items():\n"
+        "    assert getattr(doeff_core_effects, name) is getattr(importlib.import_module(module), name), name\n"
+        "    assert name in dir(doeff_core_effects), name\n"
+    )
+    done = _run(code)
+    assert done.returncode == 0, done.stderr
+
+
+def test_import_doeff_does_not_load_the_modules_of_the_lazy_names() -> None:
+    code = (
+        "import sys, doeff\n"
+        f"loaded = sorted(m for m in {NOT_LOADED_BY_DOEFF!r} if m in sys.modules)\n"
+        "assert not loaded, loaded\n"
+    )
+    done = _run(code)
+    assert done.returncode == 0, done.stderr
+
+
+def test_the_old_path_gives_the_moved_module_itself() -> None:
+    code = (
+        "import importlib\n"
+        f"for old, new in {MOVED!r}.items():\n"
+        "    assert importlib.import_module(old) is importlib.import_module(new), old\n"
+    )
+    done = _run(code)
+    assert done.returncode == 0, done.stderr

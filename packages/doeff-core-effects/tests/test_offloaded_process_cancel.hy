@@ -33,7 +33,7 @@
 (import concurrent.futures [Future])
 (import pytest)
 (import doeff [Program with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.process_meter [process-meter-handler])
 (import doeff_core_effects.os_process :as process-module)
@@ -41,7 +41,7 @@
                                        CANCEL-TERMINATED-METRIC CANCEL-KILLED-METRIC])
 (import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.process_effects [ProcessAlive ProcessOutcome RunProcess])
-(import doeff_core_effects.scheduler [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
+(import doeff_core_effects [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
 ;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。

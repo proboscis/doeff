@@ -13,7 +13,7 @@
 (import collections [deque])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
-(import doeff_core_effects.scheduler [Promise])
+(import doeff_core_effects._scheduler [Promise])
 
 
 (defclass [(dataclass :eq False)] Channel []

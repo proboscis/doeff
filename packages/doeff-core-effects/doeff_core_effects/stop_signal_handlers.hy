@@ -11,7 +11,7 @@
 ;;; signal; the scripted handler: the promise RaiseStop completes). A scheduler handler must be outside them (AwaitStop and
 ;;; StopBell create promises).
 ;;;
-;;; Both keep their state in the session, so a state handler (doeff_core_effects.handlers.state) must be outside them.
+;;; Both keep their state in the session, so a state handler (doeff_core_effects._handlers.state) must be outside them.
 
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "stop-signal" :role "foundation"})
@@ -20,7 +20,7 @@
 (import types)
 
 (import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopBell StopRequested])
-(import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise Wait])
+(import doeff_core_effects._scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise Wait])
 
 
 ;; Signals that mean "stop" for a service.
