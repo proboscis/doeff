@@ -33,7 +33,7 @@
 (import aiohttp)
 (import aiohttp [WSMsgType ClientWSTimeout])
 (import doeff [EffectBase Program])
-(import doeff_core_effects.effects [Await])
+(import doeff_core_effects._effects [Await])
 (import doeff_core_effects.http_server_effects [HttpHeader])
 (import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsText WsBinary
                                               WsLinkClosed WsFrame WsSent link-name closed-answer closing-links])

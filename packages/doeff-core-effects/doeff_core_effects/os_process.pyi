@@ -11,7 +11,7 @@ from doeff import with_handlers as with_handlers
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import PathStat as PathStat
-from doeff_core_effects.handlers import state as state
+from doeff_core_effects._handlers import state as state
 from doeff_core_effects.meter_effects import CountMetric as CountMetric
 from doeff_core_effects.os_file import stat_path as stat_path
 from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall

@@ -17,7 +17,7 @@
 (import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.file_effects [MeasureTree RemoveTree StatTree FileFailed PathKind])
 (import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler TREE-THREADS])
-(import doeff_core_effects.scheduler [scheduled CreateExternalPromise Spawn Wait Task])
+(import doeff_core_effects [scheduled CreateExternalPromise Spawn Wait Task])
 
 ;; 筋書き 1 つの上限(秒)。普段は 1 秒の内に終わる。
 (val SCENARIO-LIMIT 5.0)

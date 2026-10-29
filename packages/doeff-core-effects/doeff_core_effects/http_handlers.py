@@ -4,7 +4,7 @@ Without the extra ``http`` (Hy and httpx), importing this module fails with the
 line that installs it (extra_hints.py).
 """
 
-from doeff_core_effects.extra_hints import extra_needed
+from doeff_core_effects._extra_hints import extra_needed
 
 with extra_needed("http", "the HTTP client handler is written in Hy and sends with httpx"):
     import doeff_hy as _doeff_hy  # noqa: F401  # registers Hy import hooks

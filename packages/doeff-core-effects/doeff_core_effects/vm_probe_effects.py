@@ -3,10 +3,10 @@
 The counts and switches belong to the VM of the whole process; they were functions of
 ``doeff_vm`` (``vm_live_counts``, ``vm_work_counts``, ...) and are effects now, so a user
 sees doeff's effects only (agora card ki-27e8ea225b62). ``vm_probe_handler``
-(``doeff_core_effects.handlers``) answers every one of them by asking the VM:
+(``doeff_core_effects._handlers``) answers every one of them by asking the VM:
 
     from doeff import ReadVmWorkCounts, run
-    from doeff_core_effects.handlers import vm_probe_handler
+    from doeff_core_effects._handlers import vm_probe_handler
 
     steps, handler_calls = run(vm_probe_handler(ReadVmWorkCounts()))
 
@@ -89,7 +89,7 @@ class SetInvariantChecks(EffectBase[None]):
 class SetSchedulerStepBudgetArmed(EffectBase[None]):
     """Switch the flag the Rust scheduler reads at every wake: whether a step budget is armed.
 
-    ``doeff_core_effects.scheduler.arm_step_budget`` and ``disarm_step_budget`` switch it
+    ``doeff_core_effects._scheduler.arm_step_budget`` and ``disarm_step_budget`` switch it
     together with the budget they arm; with the flag on and no budget armed, a wake checks
     nothing.
     """
@@ -105,7 +105,7 @@ class SetSchedulerStepBudgetArmed(EffectBase[None]):
 class SetSchedulerTraceInstalled(EffectBase[None]):
     """Switch the flag the Rust scheduler reads at every event: whether a trace sink is installed.
 
-    ``doeff_core_effects.scheduler.set_scheduler_trace`` switches it together with the sink
+    ``doeff_core_effects._scheduler.set_scheduler_trace`` switches it together with the sink
     it installs; with the flag on and no sink installed, an event reaches no one.
     """
 

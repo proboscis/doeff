@@ -5,7 +5,7 @@
 ;;; された時に、その promise へ渡した値が誰にも届かず消えるため — 値は常に列に残り、生きている待ち手が取る。
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "scheduler" :role "foundation"})
-(import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
+(import doeff_core_effects._scheduler [CreatePromise CompletePromise Wait])
 (import doeff_core_effects.channel_effects [Channel CreateChannel PutChannel TakeChannel])
 
 
@@ -30,7 +30,7 @@
 
 
 (defhandler scheduler-channel-handler
-  ;; 列の 3 つの effect に scheduler の promise で答える(頭の註)。
+  "CreateChannel・PutChannel・TakeChannel に、同じ run の scheduler の promise で答える(I/O を持たない — 頭の註)。"
   (CreateChannel []
     (resume (Channel)))
   (PutChannel [channel item]

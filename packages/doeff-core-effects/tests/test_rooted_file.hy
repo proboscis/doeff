@@ -7,7 +7,7 @@
 
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.file_effects [FileFailed PathKind PathStat LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText
                                          WriteText MakeDirectory RenamePath AcquireLock ReleaseLock MakeSymlink])
 (import doeff_core_effects.memory_file [memory-file-handler])

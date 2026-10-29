@@ -6,9 +6,9 @@ from collections.abc import Callable as Callable
 from concurrent.futures import Executor as Executor
 from concurrent.futures import Future as Future
 from doeff import PyVM as PyVM
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import Wait as Wait
-from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import Wait as Wait
+from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
 NOT_DELIVERED: Incomplete
 
 class Delivered:

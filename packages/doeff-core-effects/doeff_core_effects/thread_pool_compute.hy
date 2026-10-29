@@ -21,7 +21,7 @@
 (import weakref)
 (import doeff [Program])
 (import doeff [PyVM])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait])
 (import doeff_core_effects.compute_effects [Compute ComputeLoad ReadComputeLoad])
 (import doeff_core_effects.inline_compute [computed])
 

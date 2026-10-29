@@ -6,9 +6,9 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from dataclasses import replace as with_fields
-from doeff_core_effects.scheduler import CreatePromise as CreatePromise
-from doeff_core_effects.scheduler import CompletePromise as CompletePromise
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects._scheduler import CreatePromise as CreatePromise
+from doeff_core_effects._scheduler import CompletePromise as CompletePromise
+from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathStat as PathStat

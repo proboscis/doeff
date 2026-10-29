@@ -5,9 +5,9 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from concurrent.futures import Executor as Executor
 from doeff import Program as Program
-from doeff_core_effects.scheduler import CreateSemaphore as CreateSemaphore
-from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
-from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
+from doeff_core_effects._scheduler import CreateSemaphore as CreateSemaphore
+from doeff_core_effects._scheduler import AcquireSemaphore as AcquireSemaphore
+from doeff_core_effects._scheduler import ReleaseSemaphore as ReleaseSemaphore
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects.sql_effects import SqlBatch as SqlBatch

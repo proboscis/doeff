@@ -12,7 +12,7 @@
 
 (import datetime)
 (import httpx)
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects.http_handlers [http-production-handler])
 

@@ -29,7 +29,7 @@
 (import platform)
 (import collections.abc [Callable Generator])
 (import doeff [run])
-(import doeff_core_effects.effects [Await])
+(import doeff_core_effects._effects [Await])
 (import doeff_core_effects.process_effects [AwaitProcessExit ProcessEnded ProcessNotChild])
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_core_effects.os_process [STARTED-CHILDREN])

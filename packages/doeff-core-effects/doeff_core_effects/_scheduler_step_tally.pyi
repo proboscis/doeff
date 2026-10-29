@@ -1,11 +1,11 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = scheduler_step_tally.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _scheduler_step_tally.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 import threading as threading
-from doeff_core_effects.scheduler import scheduler_trace_sink as scheduler_trace_sink
-from doeff_core_effects.scheduler import set_scheduler_trace as set_scheduler_trace
+from doeff_core_effects._scheduler import scheduler_trace_sink as scheduler_trace_sink
+from doeff_core_effects._scheduler import set_scheduler_trace as set_scheduler_trace
 from doeff_core_effects.step_tally_effects import CloseStepTally as CloseStepTally
 from doeff_core_effects.step_tally_effects import EMPTY_STEP_TALLY as EMPTY_STEP_TALLY
 from doeff_core_effects.step_tally_effects import OpenStepTally as OpenStepTally

@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from doeff_core_effects.extra_hints import extra_needed
+from doeff_core_effects._extra_hints import extra_needed
 
 _REQUIRE_PRELUDE = (
     "(require doeff-hy.macros [do! <-])\n"

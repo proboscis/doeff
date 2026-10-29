@@ -8,11 +8,11 @@ from doeff_core_effects.stop_signal_effects import AwaitStop as AwaitStop
 from doeff_core_effects.stop_signal_effects import RaiseStop as RaiseStop
 from doeff_core_effects.stop_signal_effects import StopBell as StopBell
 from doeff_core_effects.stop_signal_effects import StopRequested as StopRequested
-from doeff_core_effects.scheduler import CompletePromise as CompletePromise
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import CreatePromise as CreatePromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects._scheduler import CompletePromise as CompletePromise
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import CreatePromise as CreatePromise
+from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects._scheduler import Wait as Wait
 STOP_SIGNALS: tuple[signal.Signals, ...]
 
 class StopBox:

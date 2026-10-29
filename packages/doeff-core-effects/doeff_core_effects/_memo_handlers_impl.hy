@@ -19,11 +19,11 @@
 
 (import doeff [DoExpr EffectBase UnhandledEffect])
 (import doeff.program [Pure])
-(import doeff_core_effects.effects [SlogEffect])
+(import doeff_core_effects._effects [SlogEffect])
 (import doeff_core_effects.memo-effects [
   MemoDeleteEffect MemoExistsEffect MemoGetEffect MemoPutEffect])
 (import doeff_core_effects.memo-policy [RecomputeCost])
-(import doeff_core_effects.storage [DurableStorage])
+(import doeff_core_effects._storage [DurableStorage])
 (import doeff_core_effects.memo-handlers [
   _matches-cost _effect-cost _storage-key])
 

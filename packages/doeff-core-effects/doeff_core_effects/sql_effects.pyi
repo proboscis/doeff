@@ -15,7 +15,7 @@ from collections.abc import Sequence as Sequence
 from typing import TypeGuard as TypeGuard
 from typing import TypeVar as TypeVar
 from doeff import Program as Program
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
 T = TypeVar('T')
 SQL_VALUE_TYPES: tuple[type, ...]
 PLAIN_VALUE_TYPES: frozenset[type]
