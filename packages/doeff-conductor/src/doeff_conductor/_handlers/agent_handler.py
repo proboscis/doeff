@@ -21,7 +21,7 @@ def _run_on_agentd(effect: AgentEffect, work_dir: Path) -> object:
     )
     from doeff_agents import AgentType
     from doeff_agents._agentd_client import LazyAgentdClient
-    from doeff_agents.handlers.daemon import DaemonAgentHandler
+    from doeff_agents import DaemonAgentHandler
 
     try:
         agent_type = AgentType(effect.task.agent_type)

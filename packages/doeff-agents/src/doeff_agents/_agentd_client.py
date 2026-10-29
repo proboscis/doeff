@@ -2,8 +2,8 @@
 
 段 7 lane 7c(agora-redesign・決定 1.3): protocol の組み立てと解釈・起動の
 判断はこの module に残り、socket の 1 往復・子 process・file・環境変数の
-読みは `doeff_agents.io_effects` の要求になった。実行する家は本番
-`doeff_agents.io_handlers` と検 `doeff_agents.io_fake` の 2 つで、どちらを
+読みは `doeff_agents._io_effects` の要求になった。実行する家は本番
+`doeff_agents._io_handlers` と検 `doeff_agents._io_fake` の 2 つで、どちらを
 当てるかは呼び手(composition root)が ``io_root`` で選ぶ。
 """
 
@@ -19,8 +19,8 @@ import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy
 from doeff_time import Delay
 
 from doeff import do
-from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects import (
+from doeff_agents._adapters.base import AgentType
+from doeff_agents._effects import (
     AgentSessionLifecycle,
     AgentSessionQuery,
     AgentSessionSnapshot,
@@ -28,7 +28,7 @@ from doeff_agents.effects import (
     AwaitStatus,
     SessionStatus,
 )
-from doeff_agents.io_effects import (
+from doeff_agents._io_effects import (
     StartSessionHost,
     _session_host_argv,
     env_value,
@@ -40,7 +40,7 @@ from doeff_agents.io_effects import (
     unix_connect_probe,
     unix_line_request,
 )
-from doeff_agents.io_root import (
+from doeff_agents._io_root import (
     IoGenerator,
     IoRoot,
     as_float,
@@ -52,7 +52,7 @@ from doeff_agents.io_root import (
 
 def _default_io_root() -> IoRoot:
     """既定の composition root: 本番の I/O handler。"""
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
 
     return run_driver_io
 

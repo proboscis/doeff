@@ -2,14 +2,14 @@
 
 from pathlib import Path
 
-from doeff_agents.adapters.base import AgentType
+from doeff_agents import AgentType
 
 
 class TestLaunchEffectFlattened:
     """LaunchEffect has flat fields — no LaunchConfig wrapper."""
 
     def test_launch_effect_flat_fields(self):
-        from doeff_agents.effects.agent import LaunchEffect
+        from doeff_agents import LaunchEffect
 
         effect = LaunchEffect(
             session_name="test-session",
@@ -29,7 +29,7 @@ class TestLaunchEffectFlattened:
         assert not hasattr(effect, "config"), "LaunchEffect must not have .config"
 
     def test_launch_effect_mcp_tools(self):
-        from doeff_agents.effects.agent import LaunchEffect
+        from doeff_agents import LaunchEffect
 
         from doeff.mcp import McpParamSchema, McpToolDef
 
@@ -49,7 +49,7 @@ class TestLaunchEffectFlattened:
         assert effect.mcp_tools[0].name == "test-tool"
 
     def test_launch_constructor_flat(self):
-        from doeff_agents.effects.agent import Launch, LaunchEffect
+        from doeff_agents import Launch, LaunchEffect
 
         effect = Launch(
             "my-session",
@@ -66,7 +66,7 @@ class TestClaudeLaunchEffectSimplified:
     """ClaudeLaunchEffect has work_dir + prompt directly, no AgentTaskSpec."""
 
     def test_claude_launch_effect_flat(self):
-        from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
+        from doeff_agents import ClaudeLaunchEffect
 
         effect = ClaudeLaunchEffect(
             session_name="claude-test",
@@ -83,7 +83,7 @@ class TestClaudeLaunchEffectSimplified:
         assert not hasattr(effect, "trusted_workspaces"), "trusted_workspaces is handler-internal"
 
     def test_claude_launch_effect_mcp_tools(self):
-        from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
+        from doeff_agents import ClaudeLaunchEffect
 
         effect = ClaudeLaunchEffect(
             session_name="mcp",
@@ -97,24 +97,25 @@ class TestDeprecatedTypesRemoved:
     """Deprecated types removed from effects/agent.py (still in old modules as compat)."""
 
     def test_launch_task_effect_is_removed(self):
-        from doeff_agents.effects import agent
+        from doeff_agents import agent
 
         assert not hasattr(agent, "LaunchTaskEffect")
 
     def test_no_agent_task_spec_in_effects(self):
-        from doeff_agents.effects import agent
+        from doeff_agents import agent
         assert not hasattr(agent, "AgentTaskSpec"), "AgentTaskSpec removed from effects"
 
     def test_no_workspace_file_in_effects(self):
-        from doeff_agents.effects import agent
+        from doeff_agents import agent
         assert not hasattr(agent, "WorkspaceFile"), "WorkspaceFile removed from effects"
 
     def test_no_expected_artifact_in_effects(self):
-        from doeff_agents.effects import agent
+        from doeff_agents import agent
         assert not hasattr(agent, "ExpectedArtifact"), "ExpectedArtifact removed from effects"
 
     def test_launch_config_kept_for_imperative_api(self):
-        from doeff_agents.adapters.base import LaunchConfig, LaunchParams
+        from doeff_agents import LaunchConfig
+        from doeff_agents._adapters.base import LaunchParams
         # LaunchConfig is separate (has agent_type), LaunchParams is adapter-only
         assert LaunchConfig is not LaunchParams
         assert hasattr(LaunchConfig, "__dataclass_fields__")

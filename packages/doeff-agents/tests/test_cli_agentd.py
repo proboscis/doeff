@@ -20,8 +20,8 @@ from doeff_agents import _agentd_client as agentd_client_module
 from doeff_agents import _cli as cli_module
 from doeff_agents._agentd_client import AgentdSessionList, AgentdSessionParseWarning, AgentdUnavailableError
 from doeff_agents._cli import cli
-from doeff_agents.handlers import daemon as daemon_module
-from doeff_agents.handlers._session_host import session_host_handlers
+from doeff_agents._handlers import daemon as daemon_module
+from doeff_agents._handlers._session_host import session_host_handlers
 
 
 class FakeAgentdClient:

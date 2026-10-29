@@ -20,8 +20,8 @@
 (import pathlib [Path])
 
 (import doeff [run])
-(import doeff_agents.effects [AgentSessionQuery GetAgentSession PutAgentSession])
-(import doeff_agents.io_fake [FakeIoWorld with-fake-io])
+(import doeff_agents [AgentSessionQuery GetAgentSession PutAgentSession])
+(import doeff_agents._io_fake [FakeIoWorld with-fake-io])
 (import doeff_agents.session_store [InMemoryAgentSessionRepository JsonlAgentSessionRepository])
 (import doeff_agents.session_store_sql [
   COLUMN-NAMES
@@ -33,7 +33,8 @@
   select-many-statement
   session-table-ddl
   upsert-statement])
-(import doeff_agents.handlers.session_store [SqlAgentSessionRepository agent-session-store])
+(import doeff_agents [agent-session-store]
+        doeff_agents._handlers.session_store [SqlAgentSessionRepository])
 (import session_store_laws [LAWS LAW-NAMES full-snapshot minimal-snapshot])
 
 

@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams
-from doeff_agents.effects.agent import (
+from doeff_agents import AgentType
+from doeff_agents._adapters.base import InjectionMethod, LaunchParams
+from doeff_agents import (
     AgentSpec,
     AwaitResult,
     AwaitStatus,
@@ -19,7 +20,7 @@ from doeff_agents.effects.agent import (
     StopEffect,
     StopSession,
 )
-from doeff_agents.handlers import agent_effectful_handler
+from doeff_agents import agent_effectful_handler
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.tmux import SessionInfo
 from doeff_core_effects.handlers import lazy_ask, state
@@ -153,7 +154,7 @@ def test_agent_effectful_mcp_tools_run_inside_caller_scheduler_vm(
     adapter = _FakeAdapter()
     backend = _FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: adapter,
     )
 
@@ -228,7 +229,7 @@ def test_agent_mcp_loop_runs_while_await_result_is_pending(
     adapter = _FakeAdapter()
     backend = _FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: adapter,
     )
 

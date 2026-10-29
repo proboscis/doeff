@@ -20,8 +20,8 @@ from test_vm_failfast_semgrep_rules import _semgrep_results
 pytestmark = pytest.mark.semgrep
 
 RULE = "doeff-agents-decodes-no-wire-json"
-ADAPTER_FILE = "packages/doeff-agents/src/doeff_agents/handlers/headless_codex.hy"
-FIXTURE = "packages/doeff-agents/src/doeff_agents/handlers/codex_wire_json_forbidden.hy"
+ADAPTER_FILE = "packages/doeff-agents/src/doeff_agents/_handlers/headless_codex.hy"
+FIXTURE = "packages/doeff-agents/src/doeff_agents/_handlers/codex_wire_json_forbidden.hy"
 
 
 def _hits(findings: list[dict], rule: str) -> list[int]:

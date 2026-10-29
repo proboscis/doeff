@@ -341,13 +341,13 @@ CLI.
 
 ### Headless Codex handler
 
-`doeff_agents.handlers.headless_compose` also builds the Codex pair, so callers
+`doeff_agents._handlers.headless_compose` also builds the Codex pair, so callers
 need not import `doeff-codex`: `codex_process_layer(command, launch_timeout)`
 (`doeff-codex`'s production handler — one `codex app-server` process per thread,
 kept across turns), `fake_codex_process_layer(world)` (its fake, over a
 `FakeCodexWorld` whose `respond` maps a `CodexTurnInput` to a `FakeCodexReply`)
 and `codex_adapter(env, approval_policy, sandbox)` (the adapter in
-`handlers/headless_codex.hy`, which answers `Launch(agent_type=CODEX)` and the
+`_handlers/headless_codex.hy`, which answers `Launch(agent_type=CODEX)` and the
 session effects of the sessions it launched). The adapter emits the same event
 types as the Claude adapter, so an upper layer reads both the same way:
 

@@ -6,7 +6,7 @@ module are handler internals: they persist facts after a handler has already
 performed the corresponding backend operation.
 
 段 7 lane 7c(agora-redesign・決定 1.3): どの path に何を書くかの判断は
-この module に残り、file の読み書きは `doeff_agents.io_effects` の要求に
+この module に残り、file の読み書きは `doeff_agents._io_effects` の要求に
 なった。実行する家は ``io_root``(本番 / 検)が選ぶ。
 """
 
@@ -21,9 +21,9 @@ from typing import Any, Protocol
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 
 from doeff import do
-from doeff_agents.effects import AgentSessionQuery, AgentSessionSnapshot
-from doeff_agents.io_effects import append_text, list_dir, make_dirs, read_text, write_text
-from doeff_agents.io_root import IoGenerator, IoRoot, as_optional_str, as_str_tuple
+from doeff_agents._effects import AgentSessionQuery, AgentSessionSnapshot
+from doeff_agents._io_effects import append_text, list_dir, make_dirs, read_text, write_text
+from doeff_agents._io_root import IoGenerator, IoRoot, as_optional_str, as_str_tuple
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -210,7 +210,7 @@ def list_snapshots_program(root: str, query: AgentSessionQuery | None) -> IoGene
 
 
 def _default_io_root() -> IoRoot:
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
 
     return run_driver_io
 

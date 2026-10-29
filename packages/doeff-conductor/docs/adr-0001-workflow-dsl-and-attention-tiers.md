@@ -650,11 +650,11 @@ worker→workflow data channel is the schema-validated result artifact.
 |---|---|
 | `doeff-agents/src/doeff_agents/monitor.py:253-261` | `PR_URL_PATTERN` / `detect_pr_url` — regex over screen text producing a domain fact |
 | `doeff-agents/src/doeff_agents/monitor.py:42` | `MonitorState.pr_url` |
-| `doeff-agents/src/doeff_agents/effects/agent.py:72,102,116,139,182,205` | `Observation.pr_url` / `AgentSessionSnapshot.pr_url` (+ serialization) — domain noun inside the session vocabulary |
+| `doeff-agents/src/doeff_agents/_effects/agent.py:72,102,116,139,182,205` | `Observation.pr_url` / `AgentSessionSnapshot.pr_url` (+ serialization) — domain noun inside the session vocabulary |
 | `doeff-agents/src/doeff_agents/session.py:226,258-262` | `on_pr_detected` callback wiring |
 | `doeff-agents/src/doeff_agents/programs.py:78,198-233,466-497` | program results carrying observation-derived `pr_url` |
-| `doeff-agents/src/doeff_agents/handlers/production.py:413-418,427-434,451,565,575,598` | sniffing + propagation in the tmux handler |
-| `doeff-agents/src/doeff_agents/handlers/daemon.py:144`, `handlers/testing.py:309` | propagation |
+| `doeff-agents/src/doeff_agents/_handlers/production.py:413-418,427-434,451,565,575,598` | sniffing + propagation in the tmux handler |
+| `doeff-agents/src/doeff_agents/_handlers/daemon.py:144`, `handlers/testing.py:309` | propagation |
 
 A PR URL must come from the typed result of the effect that created the PR
 (`CreatePR` / gh output) or from the worker's result artifact — never from

@@ -20,8 +20,8 @@
 ;;;   答え手で読むようになり、DOEFF004 から外す理由と doeff の import を禁じる理由が無くなった・agora-redesign #3012。)
 ;;; foundation = 環境変数の読みが許される foundation の handler の層(利用者の決定 2026-10-02 — 環境変数の読みは foundation の
 ;;;   handler の中だけで、外での読みは違反)。名指すのは、agent の起こしに答える handler の
-;;;   2 module だけ: doeff_agents.handlers.daemon(daemon の handler が codex を繋ぐ時の CODEX_HOME の既定)・
-;;;   doeff_agents.handlers.production(本番の handler が codex を起こす時の CODEX_HOME の既定)。どちらも policy が家を名指さない時だけ
+;;;   2 module だけ: doeff_agents._handlers.daemon(daemon の handler が codex を繋ぐ時の CODEX_HOME の既定)・
+;;;   doeff_agents._handlers.production(本番の handler が codex を起こす時の CODEX_HOME の既定)。どちらも policy が家を名指さない時だけ
 ;;;   本物の CLI と同じ既定(CODEX_HOME)を読む。ほかの file を足さない(doeff-core-effects の foundation の層と同じ形・cisco-c8 の決め)。
 ;;;   戻し方: この層を消せば、DOEFF004 が元どおり 2 module に当たる。
 ;;; 戻し方: この file を消すと、この package の file の母集団は根の設定へ戻る。
@@ -37,5 +37,5 @@
              :summary "環境変数の読みが許される foundation の handler の層 — agent の起こしに答える handler(daemon・production)"
              :knows "agent の CLI の家の環境変数の名(CODEX_HOME)と、その既定"
              :does-not-know "業務の Program・どの業務がどの agent を起こすか"
-             :modules [doeff_agents.handlers.daemon doeff_agents.handlers.production]
+             :modules [doeff_agents._handlers.daemon doeff_agents._handlers.production]
              :exempt [(rule DOEFF004 "foundation の層 — agent の起こしに答える handler が、policy が家を名指さない時に本物の CLI と同じ既定(CODEX_HOME)を読む。環境変数の読みは foundation の handler の中だけ可(利用者 2026-10-02)")])])

@@ -11,13 +11,13 @@
   :problem
     [(fact
        "旧 doeff-agents は agent に .agentd-result.json を書かせる transport を持っていたが、agent-created JSON result file は利用者が読まなくても runtime result contract として混入しやすい。"
-       :evidence "packages/doeff-agents/src/doeff_agents/handlers/production.py")
+       :evidence "packages/doeff-agents/src/doeff_agents/_handlers/production.py")
      (fact
        "doeff-agents は AgentSpec.result_schema と AwaitResultEffect / AwaitOutcome.result を公開 API として持つ。"
-       :evidence "packages/doeff-agents/src/doeff_agents/effects/agent.py")
+       :evidence "packages/doeff-agents/src/doeff_agents/_effects/agent.py")
      (fact
        "schema validation と retry prompt は doeff-agents handler が所有している。"
-       :evidence "packages/doeff-agents/src/doeff_agents/handlers/production.py")
+       :evidence "packages/doeff-agents/src/doeff_agents/_handlers/production.py")
      (fact
        "2026-07-02 の Nakagawa SBI L2 readiness では、agent pane に schema-valid な DOEFF_AGENT_RESULT_BEGIN/END block が出ていたが、通常監視幅と入力待ち判定の競合で AwaitResult.result として回収できなかった。"
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_extended_capture_before_awaiting_input")

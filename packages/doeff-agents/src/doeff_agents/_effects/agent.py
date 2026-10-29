@@ -1,0 +1,2099 @@
+"""Agent session effects for doeff.
+
+Fine-grained effects for agent session management.
+
+Key design:
+- LaunchEffect: flat fields (no LaunchConfig wrapper), user-facing
+- Monitor/Capture/Send/Stop: session lifecycle
+- Get/List/Observe/Cleanup/Cancel/Attach: session state management by id
+- SessionHandle: immutable value-type identifier
+"""
+
+import json
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path, PurePath
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code._lines
+from doeff import EffectBase
+from doeff_claude_code import ModelUsage as ModelUsage
+from doeff_claude_code import ModelUsageGap as ModelUsageGap
+from doeff_claude_code import ModelWindow as ModelWindow
+from doeff_claude_code import ToolAnswer as ToolAnswer
+from doeff_claude_code import ToolCall as ToolCall
+from doeff_claude_code import AutocompactAuto as AutocompactAuto
+from doeff_claude_code import AutocompactTokens as AutocompactTokens
+
+from doeff_agents._effects._ids import deterministic_session_id as _deterministic_session_id
+
+if TYPE_CHECKING:
+    from doeff.mcp import McpToolDef
+
+# =============================================================================
+# Values the effects carry: the agent kind, the session lifecycle and status
+# (defined here, the public module — the adapter and the monitor import them)
+# =============================================================================
+
+
+class AgentType(Enum):
+    """Supported agent types."""
+
+    CLAUDE = "claude"
+    CODEX = "codex"
+    GEMINI = "gemini"
+    GENERIC = "generic"
+    CUSTOM = "custom"
+
+
+class AgentSessionLifecycle(Enum):
+    """How a session should be supervised after an agent turn completes."""
+
+    RUN_TO_COMPLETION = "run_to_completion"
+    INTERACTIVE = "interactive"
+    #: A warm session (ADR-DOE-AGENTS-012 R10): the turn ends but the session
+    #: stays and takes the next one.  The host has spoken this word since that
+    #: revision (`policy.hy is-multi-turn`); the client did not, so every warm
+    #: row -- which is what the headless backend actually launches -- arrived as
+    #: "unparseable" and `ps` skipped it with a warning, leaving `stop`,
+    #: `watch` and `output` unable to name the session at all.
+    MULTI_TURN = "multi_turn"
+
+
+class SessionStatus(Enum):
+    """Session lifecycle states.
+
+    Transitions:
+    - PENDING → BOOTING → RUNNING
+    - RUNNING ↔ BLOCKED (waiting for input)
+    - RUNNING → BLOCKED_API (rate limited)
+    - RUNNING → EXITED (agent process ended, shell prompt showing)
+    - Any → STOPPED (explicitly killed by user)
+    """
+
+    PENDING = "pending"
+    BOOTING = "booting"
+    RUNNING = "running"
+    BLOCKED = "blocked"  # Waiting for user input
+    BLOCKED_API = "blocked_api"  # API rate limit
+    DONE = "done"
+    FAILED = "failed"
+    EXITED = "exited"  # Agent process ended (shell prompt showing)
+    STOPPED = "stopped"  # Explicitly killed by user
+
+
+# =============================================================================
+# SessionHandle - Immutable session identifier
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class SessionHandle:
+    """Immutable handle to an agent session.
+
+    Opaque value type.  It identifies a session without exposing substrate
+    nouns such as tmux pane ids; all mutable/backend state is handler-private
+    and keyed by ``session_id``.
+    """
+
+    session_id: str
+
+    def __repr__(self) -> str:
+        return f"SessionHandle({self.session_id!r})"
+
+
+JSONSchema = dict[str, Any]
+
+
+class AwaitStatus(Enum):
+    """Workflow-facing L2 await statuses."""
+
+    EXITED = "exited"
+    AWAITING_INPUT = "awaiting-input"
+    TIMED_OUT = "timed-out"
+
+
+class AgentValidationErrorKind(Enum):
+    """Why an ``agent`` effect could not return a valid structured result."""
+
+    ABSENT = "absent"
+    INVALID = "invalid"
+    AWAITING_INPUT = "awaiting-input"
+    TIMED_OUT = "timed-out"
+    NO_SUCH_SESSION = "no-such-session"
+
+
+@dataclass(frozen=True)
+class AgentValidationFailure:
+    """Typed validation failure used for retry and final failure reporting."""
+
+    kind: AgentValidationErrorKind
+    message: str
+
+
+@dataclass(frozen=True)
+class AwaitOutcome:
+    """Result of awaiting an L2 session result channel.
+
+    ``continuable`` declares whether the session can still accept a
+    corrective follow-up after a failure outcome.  Supervised (agentd)
+    sessions resolve their await only on TERMINAL states — the supervisor
+    has already spent the contract retries and reaped the pane, so a
+    failure is final and ``continuable`` is False.  Local/scenario
+    sessions stay alive across an invalid result, so the default holds.
+
+    ``turn_end`` is the typed end of the turn the await observed, for
+    handlers that see turns (the headless handler); terminal handlers
+    leave it ``None``.
+    """
+
+    status: AwaitStatus
+    result: Any | None = None
+    validation_error: str | None = None
+    exit_code: int | None = None
+    continuable: bool = True
+    turn_end: "AgentTurnEnd | None" = None
+
+
+# =============================================================================
+# Turn events — backend-neutral events of an agent runtime's turns
+# (agora-redesign #604).  Handlers translate their CLI's own lines into these;
+# callers never see stream-json lines, JSON-RPC messages, pids or argv.
+# =============================================================================
+
+
+class TurnInputMode(Enum):
+    """How a follow-up input reaches the session.
+
+    ``NEXT_TURN``: run it as the next turn (after the running turn ends).
+    ``INJECT``: add it to the running turn (the agent reads it at its next
+    boundary); refused with ``NoTurnInFlightError`` when no turn runs.
+    """
+
+    NEXT_TURN = "next-turn"
+    INJECT = "inject"
+
+
+class InputFateState(Enum):
+    """What became of one input (named by its ``input_ref``)."""
+
+    QUEUED = "queued"
+    STARTED = "started"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    DISCARDED = "discarded"
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnUsage:
+    """Tokens one turn used, and what it cost, as the agent runtime counted them.
+
+    ``cache_write_tokens`` = tokens written to the prompt cache,
+    ``cache_read_tokens`` = tokens read from it.  ``cache_write_5m_tokens`` /
+    ``cache_write_1h_tokens`` = the part of ``cache_write_tokens`` written with
+    a 5-minute / 1-hour lifetime, as the runtime stated them (Claude's
+    ``cache_creation.ephemeral_5m_input_tokens`` / ``ephemeral_1h_input_tokens``
+    — the two lifetimes are priced differently, so a reader prices each
+    separately; a runtime that does not state the split leaves both ``None``,
+    and a reader must not assume either lifetime).  ``cost_usd`` = what this
+    turn cost in USD, as the agent runtime (the CLI) itself priced it — for
+    Claude Code, the turn's share of the CLI's own ``total_cost_usd``, which
+    the CLI reports as a running total for the whole conversation.  A count or
+    cost the runtime did not report (or that cannot be attributed to this turn)
+    is ``None`` (never an invented 0).
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cost_usd: float | None = None
+    cache_write_5m_tokens: int | None = None
+    cache_write_1h_tokens: int | None = None
+
+
+# Every turn end also carries what the conversation's current context size is read from
+# (agora-redesign #3744): ``last_call_usage`` = the usage of the turn's last API call in the main
+# conversation (subagent calls excluded; ``cost_usd`` is None — the runtime prices whole turns, not
+# calls; the context size is its input side: input + cache_read + cache_write), ``last_call_model`` =
+# that call's model, ``model_windows`` = each model's context window and output limit as the runtime
+# stated them in the turn.  A turn that ended early carries what was read so far (``None`` / ``()``
+# when nothing was — never an invented 0).
+#
+# A turn the runtime finished (``AgentTurnCompleted`` / ``AgentTurnFailed``) also carries what each model used
+# in it (card ki-1d986d4f0007): ``model_usage`` = the turn's share of each model's tokens, web searches and
+# cost (``ModelUsage`` — the runtime reports running totals for the whole conversation; the runtime's layer
+# turns them into the turn's share from the same starting point as ``usage.cost_usd``; only the models the turn
+# used; ``None`` when it cannot be worked out), ``model_usage_gap`` = why the models' costs could not be
+# checked against ``usage.cost_usd`` within 0.01 USD (``ModelUsageGap`` — ``None`` when they add up;
+# ``NOT_NAMED`` when the runtime reports no per-model usage).  A stopped or lost turn carries neither, as
+# it carries no cost.
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentAccountLimit:
+    """The turn ran into the account's usage limit (agora-redesign #3983): the runtime refused the request and
+    answered with its limit message instead of the model.  ``window`` = which limit ran out (e.g. ``five_hour``;
+    ``None`` when not stated), ``resets_at`` = when it comes back (epoch seconds; ``None`` when not stated),
+    ``text`` = the runtime's limit message.  Which account it was is not in the runtime's lines — the layer that
+    started the turn knows it, and switches to an account with room left."""
+
+    window: str | None = None
+    resets_at: int | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentAccountRefusal:
+    """The account refused the turn's request: the runtime answered with the refusal instead of the model
+    (e.g. the account's organization has disabled subscription access — the production refusal of
+    2026-10-08 22:32).  This is not a usage limit (``AgentAccountLimit``): the account cannot be used until
+    someone changes it.  ``error`` = the runtime's refusal word as stated (e.g. ``oauth_org_not_allowed``),
+    ``text`` = the runtime's refusal message.  Which account it was is not in the runtime's lines — the
+    layer that started the turn knows it, and switches to another account."""
+
+    error: str
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentModelRefusal:
+    """The model's safeguards refused the turn's request: the runtime answered with the refusal instead of
+    the model (the API's ``stop_reason`` ``refusal`` — e.g. "Fable 5.1's safeguards flagged this message",
+    which can also hit a safe request).  The account can still be used; the transcript
+    can no longer be continued with this model.  ``category`` = the refusal's category as the API stated it
+    (e.g. ``reasoning_extraction``; ``None`` when not stated), ``model`` = the model that refused (``None``
+    when not stated), ``text`` = the runtime's refusal message.  The layer that started the turn decides how
+    to go on (e.g. have another model write a handoff and continue in a new session)."""
+
+    category: str | None = None
+    model: str | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentProviderCapacity:
+    """The model's provider was temporarily at capacity and refused the turn's request: the runtime ended the
+    turn with the provider's refusal instead of the model's answer (codex's ``serverOverloaded`` — "Selected
+    model is at capacity. Please try a different model.", the production refusal of 2026-10-22 21:59 JST).
+    Neither the account nor the transcript is at fault: the same session can be continued a little later.
+    ``model`` = the model the turn asked for (``None`` when not stated), ``text`` = the runtime's refusal
+    message.  The layer that started the turn decides how long to wait and how many times to try again."""
+
+    model: str | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnCompleted:
+    """The turn finished.  ``resume_from`` continues this agent's context.
+
+    ``usage`` = the tokens the turn used and what it cost (``None`` when the
+    runtime reports none of them).  ``account_limit`` = the turn ran into the
+    account's usage limit (``None`` when it did not — agora-redesign #3983).
+    ``account_refusal`` = the account refused the turn's request (``None`` when
+    it did not).  ``model_refusal`` = the model's safeguards refused the turn's
+    request (``None`` when they did not).
+    """
+
+    result_text: str
+    input_refs: tuple[str, ...] = ()
+    resume_from: str
+    usage: AgentTurnUsage | None = None
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ModelUsageGap.NOT_NAMED
+    account_limit: AgentAccountLimit | None = None
+    account_refusal: AgentAccountRefusal | None = None
+    model_refusal: AgentModelRefusal | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnFailed:
+    """The agent runtime ended the turn with an error.
+
+    ``usage`` = the tokens the turn used before the error and what they cost
+    (``None`` when the runtime reports none of them).  ``account_limit`` = the
+    turn ran into the account's usage limit (``None`` when it did not — #3983).
+    ``account_refusal`` = the account refused the turn's request (``None`` when
+    it did not).  ``model_refusal`` = the model's safeguards refused the turn's
+    request (``None`` when they did not).  ``provider_capacity`` = the model's
+    provider was at capacity and refused the turn's request (``None`` when it
+    was not — only a failed turn carries it).
+
+    ``exit_code`` / ``stderr_tail`` = 手番の終わりの前に agent の CLI の process が降りた時(手番を起こす前に降りて手番を
+    始められなかった時も)の、process の終了 code と stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。
+    process が降りずに終わった手番は None(agora-redesign #4207)。``detail`` の文にも今までどおり含まれる。
+    """
+
+    detail: str
+    input_refs: tuple[str, ...] = ()
+    resume_from: str
+    usage: AgentTurnUsage | None = None
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ModelUsageGap.NOT_NAMED
+    account_limit: AgentAccountLimit | None = None
+    account_refusal: AgentAccountRefusal | None = None
+    model_refusal: AgentModelRefusal | None = None
+    provider_capacity: AgentProviderCapacity | None = None
+    exit_code: int | None = None
+    stderr_tail: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnInterrupted:
+    """The turn was stopped (``Interrupt`` / ``Stop``); the context stays.
+
+    ``cli_kept`` tells whether the same agent CLI process stays with the
+    session and runs its next turn (a stop that interrupts only the turn) or
+    went down with the stop (a signal-form interrupt, ``Stop``, or the process
+    exiting while stopping) — the caller must not keep resources (e.g. a
+    borrowed credential) for a CLI that is gone.  It has no default: every
+    producer states it.
+    ``surviving_refs`` inputs run on as the next turn of the same session;
+    ``dropped_refs`` inputs were never read.
+    ``usage`` / ``model_usage`` / ``model_usage_gap`` = what the stopped turn
+    used before the stop, counted the same way as a completed turn, when the
+    runtime closed the stopped turn with a cost-bearing record (``None`` /
+    ``None`` / ``NOT_NAMED`` otherwise — e.g. the process went down while
+    stopping, or the surviving inputs run on and their turn carries the
+    stopped turn's share).
+    """
+
+    cli_kept: bool
+    surviving_refs: tuple[str, ...] = ()
+    dropped_refs: tuple[str, ...] = ()
+    resume_from: str
+    usage: AgentTurnUsage | None = None
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
+    model_usage: tuple[ModelUsage, ...] | None = None
+    model_usage_gap: ModelUsageGap | None = ModelUsageGap.NOT_NAMED
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnLost:
+    """The runtime went away before the turn's end was read.
+
+    The context is kept: the next turn continues from ``resume_from``.
+
+    ``exit_code`` / ``stderr_tail`` = 降りた agent の CLI の process の終了 code(信号で降りたなら負の数)と stderr の末尾
+    (runtime の上限の字数まで — 越えた分は頭を捨てる。stderr が空なら空の文字列)。runtime が process の降り方を知らない
+    終わりは None(agora-redesign #4207)。``detail`` の文にも今までどおり含まれる。
+    """
+
+    detail: str
+    resume_from: str
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
+    exit_code: int | None = None
+    stderr_tail: str | None = None
+
+
+AgentTurnEnd = AgentTurnCompleted | AgentTurnFailed | AgentTurnInterrupted | AgentTurnLost
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTextEvent:
+    """A finished piece of the agent's text."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTextDeltaEvent:
+    """A partial piece of text while the agent is still writing it."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentThinkingStartedEvent:
+    """The agent began thinking (the runtime opened a thinking block, before any piece of it). It arrives ahead of
+    the first AgentThinkingDeltaEvent, so an upper layer can show that the agent is thinking as soon as the
+    model starts answering (agora-redesign #4186)."""
+
+    seq: int
+    at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentThinkingDeltaEvent:
+    """A partial piece of the agent's thinking before it writes its text (``text`` may be empty when the
+    runtime streams the thinking without its words). An upper layer shows that the agent is thinking
+    before the first text arrives (agora-redesign #3789)."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolCallStartedEvent:
+    """The agent began writing a tool call (before its command is complete): ``id`` (the tool_use block id — the
+    same id the later AgentToolUseEvent's ToolCall names) and ``name`` (the tool). An upper layer shows that the
+    agent is calling that tool while the command is still being written (agora-redesign #3974)."""
+
+    seq: int
+    at: datetime
+    id: str
+    name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolInputDeltaEvent:
+    """A partial piece of the command of the tool call being written (``text`` is a fragment of JSON that cannot be
+    read on its own; it may be empty). It belongs to the latest AgentToolCallStartedEvent (agora-redesign #3974)."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentStopHookFeedbackEvent:
+    """A Stop hook sent the turn's answer back: the CLI fed ``reason`` into the turn and the agent answers again
+    (agora-redesign #4020). The text events after the turn's last tool result and before this event belong to the
+    answer that was sent back (a Stop hook runs only after a response that called no tool)."""
+
+    seq: int
+    at: datetime
+    reason: str
+
+
+class CompactionTrigger(Enum):
+    """How the runtime came to compact the conversation's context (agora-redesign #4189).
+
+    ``AUTO``: the runtime compacted on its own when the context passed its threshold.
+    ``MANUAL``: a ``/compact`` command compacted it.
+    """
+
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCompactionEvent:
+    """The runtime compacted the conversation's context in the middle of the turn; the turn goes on
+    (agora-redesign #4189 — an upper layer records it as an event of the turn).  The fields are the runtime's
+    compact boundary as stated: ``trigger`` (how it started), ``pre_tokens`` (the context size before),
+    ``post_tokens`` (the size after), ``cumulative_dropped_tokens`` (the tokens compaction dropped in this
+    conversation so far) and ``duration_ms`` (how long it took) — the last three are ``None`` when the runtime
+    does not state them (never an invented 0)."""
+
+    seq: int
+    at: datetime
+    trigger: CompactionTrigger
+    pre_tokens: int
+    post_tokens: int | None = None
+    cumulative_dropped_tokens: int | None = None
+    duration_ms: int | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCompactionStartedEvent:
+    """The runtime started compacting the conversation's context in the middle of the turn (agora card
+    ki-aeae6f9e643d — an upper layer shows "compacting" on the conversation screen while the summary is made,
+    which takes tens of seconds to minutes and otherwise looks like a stalled turn).  It carries only when it
+    started; how it started and the token counts come with the ``AgentCompactionEvent`` that ends it."""
+
+    seq: int
+    at: datetime
+
+
+class CompactionOutcome(Enum):
+    """How a compaction the runtime started ended (agora card ki-8239be27d5f6).
+
+    ``SUCCEEDED``: the context was compacted (an ``AgentCompactionEvent`` carries the token counts).
+    ``FAILED``: the compaction failed (``error`` names why, as the runtime stated it).
+    ``INTERRUPTED``: the compaction's request was stopped before it finished (e.g. the turn was interrupted).
+    ``NOT_COMPACTED``: the runtime ended the compaction without compacting (e.g. a PreCompact hook blocked it).
+    """
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    NOT_COMPACTED = "not_compacted"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCompactionEndedEvent:
+    """The runtime ended a compaction it started in the middle of the turn; the turn goes on (agora card
+    ki-8239be27d5f6 — an upper layer records failed and interrupted compactions too, not only the successful
+    ones an ``AgentCompactionEvent`` carries).  ``outcome`` = how it ended, ``error`` = the runtime's error text
+    for a failed or interrupted compaction (``None`` when not stated).  The runtime does not state the token usage
+    of the compaction's own API request on any line, so no event carries it.  A turn that ends between an
+    ``AgentCompactionStartedEvent`` and this event (the process went away mid-compaction) carries no end: an
+    upper layer reads a start without an end as a compaction that never finished."""
+
+    seq: int
+    at: datetime
+    outcome: CompactionOutcome
+    error: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentHookEvent:
+    """A hook the runtime ran in the turn answered (card acp:kanban-issue:ki-d8b473480303 — an upper layer shows the
+    hook's result, e.g. advice a conditional rule added or a Stop hook sending the answer back, in the conversation).
+    The fields are the runtime's hook response as stated: ``hook_event`` (the hook's event, e.g. ``PreToolUse``),
+    ``name`` (the hook's name, ``<event>:<matcher>``), ``hook_id`` (the id of this run of the hook), ``stdout`` and
+    ``stderr`` (the hook command's output — a hook answering in JSON leaves the JSON text as is), ``output`` (the
+    runtime's combined output), ``exit_code`` (``None`` when the runtime does not state it) and ``outcome`` (the
+    runtime's word for how the hook ended, e.g. ``success`` / ``error`` — empty when not stated).  Every response
+    is carried, with or without output; choosing which to keep is the upper layer's."""
+
+    seq: int
+    at: datetime
+    hook_event: str
+    name: str
+    hook_id: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    output: str = ""
+    exit_code: int | None = None
+    outcome: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCallUsageEvent:
+    """An API call of the main conversation stated its usage while the turn is still running — an upper layer
+    reads the conversation's current context size without waiting for the turn's end (its input side: input +
+    cache_read + cache_write).  ``usage`` = that call's usage as the runtime stated it (``cost_usd`` is None — the
+    runtime prices whole turns, not calls), ``model`` = that call's model (``None`` when not stated).  The line is
+    drawn where a turn end's ``last_call_usage`` draws it: subagent calls are not carried (they come apart as
+    ``AgentSubagentCallUsageEvent``), and a line that states
+    no usage carries no event (never an invented 0).  The runtime states one call's usage on each line of that
+    call, so consecutive events may repeat the same value; the last event of a turn equals the turn end's
+    ``last_call_usage`` / ``last_call_model``.  The model's context window is not in the event — the runtime
+    states windows only at the turn's end (``model_windows``).
+
+    ``call_id`` = the API call's id (the message id) when the runtime states it, so an upper layer folds the events of
+    one call into one response by id rather than by equal values (agora card ki-290ec664737d).  ``final`` tells which
+    value the event carries: ``False`` = a value the runtime stated while the call was still streaming (Claude Code
+    2.1.292 states the call's ``message_start`` usage on every assistant line of the call — its output is a mid-call
+    value such as 16); ``True`` = the call's final usage (Claude Code: ``message_start`` overlaid with the call's
+    ``message_delta``, the way the CLI itself merges them).  A call that never closes (interrupted, the process went
+    down, the stream broke and the CLI resent the request) has no final event — its output stays a mid-call value and
+    the upper layer must not read it as the call's whole output.
+
+    ``request_id`` = the API request's id when the runtime states it (Claude Code 2.1.292 puts it on each assistant line
+    of the call; the final event of a call does not carry it — ``None``).  It is the id the runtime's own telemetry
+    names the same call by, so an upper layer that adds calls seen only in that telemetry (calls a tool or the
+    conversation's compaction makes inside the runtime) counts a call once (agora card ki-b99ace070bf0)."""
+
+    seq: int
+    at: datetime
+    usage: AgentTurnUsage
+    model: str | None = None
+    call_id: str | None = None
+    final: bool = False
+    request_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSubagentCallUsageEvent:
+    """An API call of a subagent (an agent a tool call of the main conversation started) stated its usage while
+    the turn is running (agora card ki-8239be27d5f6 — an upper layer records what subagents consumed next to the
+    main conversation's calls, apart from them: a subagent's call is not the conversation's context).
+    ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent, ``call_id`` = the API
+    call's id (``None`` when not stated), ``usage`` = that call's usage as the runtime stated it (``cost_usd`` is
+    None), ``model`` = that call's model (``None`` when not stated).  As with ``AgentCallUsageEvent`` the runtime
+    states one call's usage on each line of that call, so events with the same ``call_id`` may repeat; subagents
+    running side by side interleave their calls, so an upper layer folds by ``call_id``, not by order.  A line
+    that states no usage carries no event (never an invented 0).  ``request_id`` = the API request's id when the
+    runtime states it (``AgentCallUsageEvent.request_id``).
+
+    ``output_partial`` = the output tokens in ``usage`` are a mid-call value, not the call's final output (agora card
+    ki-edb2b5947d6a).  Claude Code 2.1.306 writes a subagent's call to its transcript one line per content block and
+    puts the call's end (``message_delta`` — the stop reason and the final output tokens) on the last line; when the
+    last block's line is written before the ``message_delta`` arrives (side-by-side tool calls in one call, for
+    instance), no line of the call is closed: every line states no stop reason and a mid-call output such as 6.  The
+    final value is neither in the transcript nor in the Agent tool's result, so an upper layer records such a call's
+    usage from the runtime's own telemetry for the same ``request_id`` (its input side already equals the final
+    value).  ``False`` = the output is the call's final value."""
+
+    seq: int
+    at: datetime
+    parent_tool_use_id: str
+    usage: AgentTurnUsage
+    model: str | None = None
+    call_id: str | None = None
+    request_id: str | None = None
+    output_partial: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolUseEvent:
+    """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
+    ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
+    Each id is the one a later AgentToolResultEvent's answer names (agora-redesign #3744).
+
+    ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent when the calls are a
+    subagent's (the line's top-level ``parent_tool_use_id``), ``None`` for the main conversation's own calls — so
+    an upper layer tells a subagent's work from the main turn's (agora card ki-b25d579bf48b)."""
+
+    seq: int
+    at: datetime
+    tool_calls: tuple[ToolCall, ...]
+    parent_tool_use_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolResultEvent:
+    """Tool results went back to the agent: one ToolAnswer per result, in block order — ``id`` (the
+    call it answers), ``text`` (the result's text), ``is_error`` and ``non_text_kinds`` (kinds of the
+    result's non-text blocks, e.g. images, that ``text`` leaves out) (agora-redesign #3744).
+
+    ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent when the results went back to
+    a subagent (the line's top-level ``parent_tool_use_id``), ``None`` when they went back to the main conversation
+    — an upper layer that ends the main turn on a tool's answer must not end it on a subagent's tool answer (agora
+    card ki-b25d579bf48b)."""
+
+    seq: int
+    at: datetime
+    answers: tuple[ToolAnswer, ...]
+    parent_tool_use_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentInputFateEvent:
+    """An input changed state (``input_ref`` names the input)."""
+
+    seq: int
+    at: datetime
+    input_ref: str
+    state: InputFateState
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnEndEvent:
+    """A turn of the session ended (exactly one per turn)."""
+
+    seq: int
+    at: datetime
+    end: AgentTurnEnd
+
+
+AgentEvent = (
+    AgentTextEvent
+    | AgentTextDeltaEvent
+    | AgentThinkingStartedEvent
+    | AgentThinkingDeltaEvent
+    | AgentToolCallStartedEvent
+    | AgentToolInputDeltaEvent
+    | AgentStopHookFeedbackEvent
+    | AgentCompactionStartedEvent
+    | AgentCompactionEvent
+    | AgentCompactionEndedEvent
+    | AgentHookEvent
+    | AgentCallUsageEvent
+    | AgentSubagentCallUsageEvent
+    | AgentToolUseEvent
+    | AgentToolResultEvent
+    | AgentInputFateEvent
+    | AgentTurnEndEvent
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentEventPage:
+    """Events after ``after_seq`` in seq order, without gaps or repeats.
+
+    ``next_seq`` is the ``after_seq`` for the next read.  ``end`` is the end of
+    the last turn when the session has no turn running and no input waiting;
+    ``None`` while work is in flight.
+    """
+
+    events: tuple[AgentEvent, ...]
+    next_seq: int
+    end: AgentTurnEnd | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSpec:
+    """L2 launch specification.
+
+    The deterministic ``session_id`` is derived from ``(run_id, node_id,
+    attempt)`` and is used for idempotent re-adoption.
+    """
+
+    run_id: str
+    node_id: str
+    attempt: int
+    agent_type: AgentType
+    work_dir: Path
+    prompt: str
+    result_schema: JSONSchema
+    model: str | None = None
+    effort: str | None = None
+    mcp_tools: tuple["McpToolDef", ...] = ()
+    mcp_server_name: str = "doeff"
+    bare: bool = False
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
+    session_env: dict[str, str] | None = None
+    max_retries: int = 2
+
+    @property
+    def session_id(self) -> str:
+        return _deterministic_session_id(
+            run_id=self.run_id,
+            node_id=self.node_id,
+            attempt=self.attempt,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTask(AgentSpec):
+    """L3-ish task shape consumed by the schema-driven ``agent`` effect.
+
+    ``deadline_seconds`` is the node-spec wall-clock deadline (L-K4-3,
+    k8s ``activeDeadlineSeconds`` semantics): declared by the workflow,
+    observed by the attempt loop, and surfaced on exceed as
+    ``AgentDeadlineExceededError`` for the orchestrator to park as a
+    gate. It is NOT a transport timeout — per-await budgets are the
+    keep-alive heartbeat (``DEFAULT_AWAIT_BUDGET_SECONDS``).
+    """
+
+    deadline_seconds: float | None = None
+
+
+# =============================================================================
+# Observation - Immutable snapshot of session state
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class Observation:
+    """Immutable snapshot of session state from monitoring."""
+
+    status: SessionStatus
+    output_changed: bool = False
+    output_snippet: str | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in (
+            SessionStatus.DONE,
+            SessionStatus.FAILED,
+            SessionStatus.EXITED,
+            SessionStatus.STOPPED,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class TurnRef:
+    """The caller's reference to the last turn run on a session.
+
+    Opaque to the library: ``turn_id`` is the caller's turn identifier and
+    ``attempt`` its attempt number (agora-redesign #608).
+    """
+
+    turn_id: str
+    attempt: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class TranscriptRef:
+    """Where the CLI's transcript for a session lives (node and path, opaque)."""
+
+    node: str
+    path: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSessionSnapshot:
+    """Persistent, backend-neutral snapshot of an agent session.
+
+    ``caller_ref`` is the caller's identifier for whoever owns the session
+    (agora puts its agent id here); the library never interprets it.
+    ``node`` is the machine the session lives on, ``last_turn`` the caller's
+    last turn on it, and ``transcript_ref`` where the CLI transcript is kept.
+    """
+
+    session_id: str
+    session_name: str
+    agent_type: AgentType
+    work_dir: Path
+    status: SessionStatus
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
+    backend_kind: str = "terminal"
+    backend_ref: dict[str, str] = field(default_factory=dict)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_observed_at: datetime | None = None
+    finished_at: datetime | None = None
+    cleaned_at: datetime | None = None
+    output_snippet: str | None = None
+    caller_ref: str | None = None
+    node: str | None = None
+    last_turn: TurnRef | None = None
+    transcript_ref: TranscriptRef | None = None
+
+    @classmethod
+    def from_handle(
+        cls,
+        handle: SessionHandle,
+        *,
+        status: SessionStatus,
+        backend_kind: str = "terminal",
+        backend_ref: dict[str, str] | None = None,
+        last_observed_at: datetime | None = None,
+        finished_at: datetime | None = None,
+        cleaned_at: datetime | None = None,
+        output_snippet: str | None = None,
+        lifecycle: AgentSessionLifecycle | None = None,
+    ) -> "AgentSessionSnapshot":
+        """Create a snapshot from the public handle."""
+        return cls(
+            session_id=handle.session_id,
+            session_name=handle.session_id,
+            agent_type=AgentType(
+                str((backend_ref or {}).get("agent_type", AgentType.CUSTOM.value))
+            ),
+            work_dir=Path(str((backend_ref or {}).get("work_dir", "."))),
+            lifecycle=lifecycle or AgentSessionLifecycle.RUN_TO_COMPLETION,
+            status=status,
+            backend_kind=backend_kind,
+            backend_ref=backend_ref
+            or {
+                "session_name": handle.session_id,
+            },
+            started_at=datetime.now(timezone.utc),
+            last_observed_at=last_observed_at,
+            finished_at=finished_at,
+            cleaned_at=cleaned_at,
+            output_snippet=output_snippet,
+        )
+
+    def to_handle(self) -> SessionHandle:
+        """Recreate the public handle from a persisted snapshot."""
+        return SessionHandle(
+            session_id=self.session_id,
+        )
+
+    def with_update(self, **changes: Any) -> "AgentSessionSnapshot":
+        """Return a copy with selected fields updated."""
+        return replace(self, **changes)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible values."""
+        return {
+            "session_id": self.session_id,
+            "session_name": self.session_name,
+            "agent_type": self.agent_type.value,
+            "work_dir": str(self.work_dir),
+            "lifecycle": self.lifecycle.value,
+            "status": self.status.value,
+            "backend_kind": self.backend_kind,
+            "backend_ref": dict(self.backend_ref),
+            "started_at": self.started_at.isoformat(),
+            "last_observed_at": (
+                self.last_observed_at.isoformat() if self.last_observed_at is not None else None
+            ),
+            "finished_at": self.finished_at.isoformat() if self.finished_at is not None else None,
+            "cleaned_at": self.cleaned_at.isoformat() if self.cleaned_at is not None else None,
+            "output_snippet": self.output_snippet,
+            "caller_ref": self.caller_ref,
+            "node": self.node,
+            "last_turn": (
+                {"turn_id": self.last_turn.turn_id, "attempt": self.last_turn.attempt}
+                if self.last_turn is not None
+                else None
+            ),
+            "transcript_ref": (
+                {"node": self.transcript_ref.node, "path": self.transcript_ref.path}
+                if self.transcript_ref is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AgentSessionSnapshot":
+        """Deserialize from JSON-compatible values."""
+        return cls(
+            session_id=str(data["session_id"]),
+            session_name=str(data["session_name"]),
+            agent_type=AgentType(str(data["agent_type"])),
+            work_dir=Path(str(data["work_dir"])),
+            lifecycle=AgentSessionLifecycle(
+                str(data.get("lifecycle", AgentSessionLifecycle.RUN_TO_COMPLETION.value))
+            ),
+            status=SessionStatus(str(data["status"])),
+            backend_kind=str(data.get("backend_kind", "terminal")),
+            backend_ref=dict(data.get("backend_ref", {})),
+            started_at=_parse_datetime(str(data["started_at"])),
+            last_observed_at=_parse_optional_datetime(data.get("last_observed_at")),
+            finished_at=_parse_optional_datetime(data.get("finished_at")),
+            cleaned_at=_parse_optional_datetime(data.get("cleaned_at")),
+            output_snippet=data.get("output_snippet"),
+            caller_ref=_parse_optional_str(data.get("caller_ref")),
+            node=_parse_optional_str(data.get("node")),
+            last_turn=_parse_turn_ref(data.get("last_turn")),
+            transcript_ref=_parse_transcript_ref(data.get("transcript_ref")),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSessionQuery:
+    """Read-only filter for persistent agent session snapshots.
+
+    Every field left ``None`` matches anything; the set fields are ANDed.
+    ``matches`` is the single definition of the filter — every repository
+    and store handler answers ``ListAgentSessions`` by it.
+    """
+
+    status: SessionStatus | None = None
+    agent_type: AgentType | None = None
+    backend_kind: str | None = None
+    lifecycle: AgentSessionLifecycle | None = None
+    caller_ref: str | None = None
+    node: str | None = None
+
+    def matches(self, snapshot: "AgentSessionSnapshot") -> bool:
+        """Whether ``snapshot`` satisfies every field this query sets."""
+        return all(
+            expected is None or getattr(snapshot, name) == expected
+            for name, expected in (
+                ("status", self.status),
+                ("agent_type", self.agent_type),
+                ("backend_kind", self.backend_kind),
+                ("lifecycle", self.lifecycle),
+                ("caller_ref", self.caller_ref),
+                ("node", self.node),
+            )
+        )
+
+
+def _parse_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(str(value))
+
+
+def _parse_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _parse_turn_ref(value: Any) -> TurnRef | None:
+    if value is None:
+        return None
+    return TurnRef(turn_id=str(value["turn_id"]), attempt=int(value["attempt"]))
+
+
+def _parse_transcript_ref(value: Any) -> TranscriptRef | None:
+    if value is None:
+        return None
+    return TranscriptRef(node=str(value["node"]), path=str(value["path"]))
+
+
+# =============================================================================
+# Effect Base
+# =============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentEffectBase(EffectBase):
+    """Base class for agent effects."""
+
+
+# =============================================================================
+# Launch Effects
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class TurnCredential:
+    """An access token for this session's turns (issue #665).
+
+    It is never a field of a caller-visible effect: ``LaunchEffect`` carries
+    only ``turn_credential_ref`` (a reference the caller holds), and the launch
+    handler redeems that reference with ``RedeemTurnCredentialEffect`` — this
+    value is one answer of that effect (issue #979). The headless Claude
+    handler places it as the ``.credentials.json`` of a config dir of the
+    agent process's own (``CLAUDE_CONFIG_DIR`` — doeff-claude-code's
+    credential home), never in the process env and never through
+    ``session_env`` (which stays a non-auth overlay), so a refreshed token can
+    replace it while the process runs (``ReplaceSessionCredentialEffect`` —
+    card acp:kanban-issue:ki-4ffdafa021e5). Only the access token travels — a
+    refresh token is never carried. The token is kept out of ``repr`` so
+    effects, answers and errors never print it.
+
+    ``expires_at`` is when this credential may no longer be used (epoch
+    seconds; generic — the answer does not say who lent it), or ``None`` when
+    the redeemer does not know. The launch handler copies it to the session
+    declaration so the process layer can stop a live process before it (the
+    credential floor — agora-redesign #3672 D2); the lender is told through
+    the process layer's stop reason, never by this value.
+
+    ``github_token`` is a GitHub token lent for the same turns, or ``None``
+    when none is lent (agora-redesign #3753). A handler that can place it puts
+    it into the agent process's ``GH_TOKEN`` env (the name lives in
+    ``doeff_agents._agent_env``) so the agent's ``gh`` / ``git`` can write to
+    GitHub; it is checked like ``oauth_token`` and kept out of ``repr`` too.
+
+    ``subscription_type`` and ``rate_limit_tier`` are the plan kind (``pro``,
+    ``max`` ...) and the rate limit tier the lender read from the stored
+    credential, or ``None`` when the lender has not observed them (card
+    acp:kanban-issue:ki-d81bb8c7eaaa). Without a plan kind a Claude CLI
+    treats the account as possibly team / enterprise and checks the
+    organization policy on every start. The headless Claude handler writes
+    them next to the token in the ``.credentials.json`` it places
+    (``subscriptionType`` / ``rateLimitTier`` — ``null`` when not observed).
+    Both default to ``None`` (not observed), so a lender that does not read
+    them yet keeps working. They are not secrets, so they stay in ``repr``.
+    """
+
+    oauth_token: str = field(repr=False)
+    expires_at: float | None
+    github_token: str | None = field(default=None, repr=False)
+    subscription_type: str | None = field(default=None, kw_only=True)
+    rate_limit_tier: str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.oauth_token, str) or not self.oauth_token:
+            raise ValueError("TurnCredential.oauth_token must be a non-empty string")
+        if any(ch in self.oauth_token for ch in "\r\n\x00"):
+            raise ValueError("TurnCredential.oauth_token must be a single line")
+        if self.github_token is not None:
+            if not isinstance(self.github_token, str) or not self.github_token:
+                raise ValueError("TurnCredential.github_token must be a non-empty string or None")
+            if any(ch in self.github_token for ch in "\r\n\x00"):
+                raise ValueError("TurnCredential.github_token must be a single line")
+        for name, fact in (("subscription_type", self.subscription_type), ("rate_limit_tier", self.rate_limit_tier)):
+            if fact is None:
+                continue
+            if not isinstance(fact, str) or not fact:
+                raise ValueError(f"TurnCredential.{name} must be a non-empty string or None")
+            if any(ch in fact for ch in "\r\n\x00"):
+                raise ValueError(f"TurnCredential.{name} must be a single line")
+        if self.expires_at is not None and (
+            isinstance(self.expires_at, bool) or not isinstance(self.expires_at, int | float)
+        ):
+            raise TypeError("TurnCredential.expires_at must be epoch seconds or None")
+
+
+@dataclass(frozen=True)
+class CodexTurnCredential:
+    """A Codex account lent for this session's turns (card ki-0b244c011ca3): the
+    ``auth.json`` document the lender sealed for the borrower, as JSON text.
+
+    Like ``TurnCredential`` it is one answer of ``RedeemTurnCredentialEffect``
+    and never a field of a caller-visible effect. Codex reads its account only
+    from ``$CODEX_HOME/auth.json`` (it has no turn-auth env, and the provider
+    API key env stays forbidden), so a handler that can place it writes the
+    document as the ``auth.json`` of a home of the agent process's own and
+    deletes that home when the process goes down. The lender keeps the refresh
+    key: the document's refresh token is the lender's marker, never a real one.
+    The document is kept out of ``repr`` and out of every error message.
+
+    ``expires_at`` is when the lent access token may no longer be used (epoch
+    seconds), or ``None`` when the redeemer does not know.
+    """
+
+    auth_json: str = field(repr=False)
+    expires_at: float | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.auth_json, str) or not self.auth_json.strip():
+            raise ValueError("CodexTurnCredential.auth_json must be a non-empty string")
+        try:
+            document = json.loads(self.auth_json)
+        except ValueError:
+            raise ValueError("CodexTurnCredential.auth_json must be a JSON object") from None
+        if not isinstance(document, dict):
+            raise ValueError("CodexTurnCredential.auth_json must be a JSON object")
+        if self.expires_at is not None and (
+            isinstance(self.expires_at, bool) or not isinstance(self.expires_at, int | float)
+        ):
+            raise TypeError("CodexTurnCredential.expires_at must be epoch seconds or None")
+
+
+@dataclass(frozen=True)
+class HomeTurnCredential:
+    """Answer of ``RedeemTurnCredentialEffect``: the reference is valid, and the
+    credential lives in the agent's home — launch on the handler's own home
+    credentials (no token is handed over)."""
+
+
+@dataclass(frozen=True)
+class TurnCredentialUnavailable:
+    """Answer of ``RedeemTurnCredentialEffect``: the reference cannot be redeemed
+    (unknown, already returned, expired ...). ``reason`` is for people and never
+    holds a credential value. The launch handler does not start the session."""
+
+    reason: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class RedeemTurnCredentialEffect(AgentEffectBase):
+    """Redeem a turn credential reference for the credential itself (issue #979).
+
+    Emitted by a launch handler that can place a turn credential, when
+    ``LaunchEffect.turn_credential_ref`` is set, right before it starts the
+    agent process. It is answered by the environment the caller installs
+    outside the agent runtime handlers (whoever issued the reference) — the
+    caller's program never sees the token, and the token never appears in
+    ``LaunchEffect``.
+
+    Yields: TurnCredential | CodexTurnCredential | HomeTurnCredential | TurnCredentialUnavailable
+    """
+
+    credential_ref: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.credential_ref, str) or not self.credential_ref:
+            raise ValueError("RedeemTurnCredentialEffect.credential_ref must be a non-empty string")
+
+
+@dataclass(frozen=True)
+class HandlerMadeContextId:
+    """``LaunchEffect.new_context_id``: the handler makes the id of the session's
+    new context itself (the caller learns it from a turn end's ``resume_from``)."""
+
+
+@dataclass(frozen=True)
+class NamedContextId:
+    """``LaunchEffect.new_context_id``: the caller names the id of the session's
+    new context.
+
+    Two launches that name the same id (and the same launch conditions) mean
+    the same new context: a runtime started ahead of the input for one
+    (``WarmSessionEffect``) serves the first turn of the other.  The spelling
+    the runtime accepts is the handler's to check; a handler refuses an id it
+    cannot take with ``AgentLaunchError`` and an id already in use with
+    ``SessionAlreadyExistsError``.
+    """
+
+    context_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context_id, str) or not self.context_id:
+            raise ValueError("NamedContextId.context_id must be a non-empty string")
+
+
+@dataclass(frozen=True, kw_only=True)
+class InputImage:
+    """An image that rides with an input's text (``LaunchEffect.prompt`` or
+    ``FollowUpEffect.message``) into the agent's turn.
+
+    ``mime`` is the image type (``image/png`` …) and ``data_base64`` the image
+    bytes in base64.  The runtime receives it as part of the prompt (the claude
+    CLI: an ``image`` content block of the stream-json user message), not as a
+    reference it has to fetch.  Which types a runtime accepts is the handler's
+    check (claude: ``image/png``, ``image/jpeg``, ``image/gif``, ``image/webp``).
+    """
+
+    mime: str
+    data_base64: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mime, str) or not self.mime:
+            raise ValueError("InputImage.mime must be a non-empty string")
+        if not isinstance(self.data_base64, str) or not self.data_base64:
+            raise ValueError("InputImage.data_base64 must be a non-empty string")
+
+
+def _check_attachments(owner: str, attachments: object) -> None:
+    """Refuse an ``attachments`` field that is not a tuple of ``InputImage``, so a
+    handler never has to guess what an image looks like (one check for both
+    effects that carry images)."""
+    if not isinstance(attachments, tuple) or not all(
+        isinstance(item, InputImage) for item in attachments
+    ):
+        raise TypeError(f"{owner}.attachments must be a tuple of InputImage")
+
+
+@dataclass(frozen=True)
+class RecordStep:
+    """What one fold of an ``EventRecord`` answers: the new state and the file's
+    new text (``None`` = leave the file as it is)."""
+
+    state: object
+    text: str | None
+
+
+@dataclass(frozen=True)
+class EventRecord:
+    """A file the handler keeps current with a session's turns as it reads them.
+
+    ``fold(state, item)`` folds one item into the state and answers a
+    ``RecordStep`` (the new state and the file's new text). An item
+    is an ``AgentEvent`` the runtime read (the same events a page carries; their
+    ``seq`` is not the page's) or the ``record_note`` of a ``FollowUpEffect``.
+    The handler folds on the runtime's reader thread as it reads the output,
+    one item at a time in the order read, and replaces the file at ``path`` with
+    the text (written to a sibling first, so a reader never sees half a file;
+    a write that fails removes the file rather than leave a stale one).
+    ``state`` is the state before the first item. The fold must be pure and
+    must not raise (a raised error drops the item and keeps the state).
+    """
+
+    path: str
+    state: object
+    fold: "Callable[[object, object], RecordStep]"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not self.path:
+            raise ValueError("EventRecord.path must be a non-empty string")
+        if not callable(self.fold):
+            raise TypeError("EventRecord.fold must be callable")
+
+
+@dataclass(frozen=True, kw_only=True)
+class LaunchEffect(AgentEffectBase):
+    """Launch a new agent session.
+
+    User-facing effect — flat fields, no config wrapper.
+    The claude_resolver_handler converts this to ClaudeLaunchEffect
+    when agent_type is CLAUDE.
+
+    ``resume_from`` continues an earlier context of the agent runtime (the
+    value an earlier turn end carried as ``resume_from``; opaque to callers).
+    Handlers that cannot continue a context refuse it with
+    ``AgentCapabilityUnsupportedError`` rather than starting fresh.
+
+    ``resume_snapshot`` brings the ``resume_from`` context into this runtime
+    before it continues: an opaque copy of the context taken earlier with
+    ``ExportContextEffect`` (possibly by another runtime whose home is gone).
+    A context already present here is not overwritten. It needs
+    ``resume_from`` and must not be empty. Handlers that cannot bring a
+    context in refuse it with ``AgentCapabilityUnsupportedError``.
+
+    ``new_context_id`` says who makes the id of a new context (a launch
+    without ``resume_from``): the handler (``HandlerMadeContextId``, the
+    default) or the caller (``NamedContextId``).  A named id cannot be
+    combined with ``resume_from``.  Handlers that cannot start a context under
+    a given id refuse a named one with ``AgentCapabilityUnsupportedError``.
+
+    Yields: SessionHandle
+    """
+
+    session_name: str
+    agent_type: AgentType
+    # A plain path value: the handler builds the filesystem ``Path`` (and the
+    # directory) itself, so a caller never needs filesystem types to ask.
+    work_dir: str | PurePath
+    prompt: str | None = None
+    model: str | None = None
+    mcp_tools: tuple["McpToolDef", ...] = ()
+    mcp_server_name: str = "doeff"
+    effort: str | None = None
+    bare: bool = False
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
+    # Cold-start budget: matches the doeff-agentd oracle's 120s REPL-idle wait.
+    ready_timeout: float = 120.0
+    session_env: dict[str, str] | None = None
+    resume_from: str | None = None
+    # A reference to the credential for this session's turns (None = the
+    # handler's own home credentials). The launch handler redeems it with
+    # ``RedeemTurnCredentialEffect``; the token itself never rides on this
+    # effect (issue #979). Handlers that cannot place a turn credential refuse
+    # it with ``AgentCapabilityUnsupportedError``.
+    turn_credential_ref: str | None = None
+    # An opaque copy of the ``resume_from`` context (the answer of
+    # ``ExportContextEffect``) to bring in before continuing.
+    resume_snapshot: str | None = None
+    # Who makes the id of the new context of a launch without ``resume_from``.
+    new_context_id: HandlerMadeContextId | NamedContextId = HandlerMadeContextId()
+    # The context size at which the runtime compacts the conversation, stated
+    # by the caller (None = the runtime's own default, not stated). The values
+    # are the claude CLI's ``--autocompact <auto|tokens>`` (``AutocompactTokens``
+    # can only hold a token count the CLI accepts). Handlers that cannot place
+    # it refuse it with ``AgentCapabilityUnsupportedError``.
+    autocompact: AutocompactAuto | AutocompactTokens | None = None
+    # Images that ride with ``prompt`` into the first turn (part of the prompt,
+    # not a reference). They need a prompt (an empty string is a prompt of
+    # images only). Handlers that cannot hand images to the runtime refuse
+    # them with ``AgentCapabilityUnsupportedError``.
+    attachments: tuple[InputImage, ...] = ()
+    # A file the handler keeps current with the events of the turns this
+    # launch starts, as the runtime reads them (None = no record) — see
+    # ``EventRecord``. A caller keeps its own record of the turn current even
+    # when its page reads (``EventsEffect``) lag behind the runtime (agora card
+    # ki-31b41eac5071). Handlers that do not read the runtime's output as it
+    # comes refuse it with ``AgentCapabilityUnsupportedError``.
+    event_record: "EventRecord | None" = None
+
+    def __post_init__(self) -> None:
+        _check_attachments("LaunchEffect", self.attachments)
+        if self.event_record is not None and not isinstance(self.event_record, EventRecord):
+            raise TypeError("LaunchEffect.event_record must be an EventRecord or None")
+        if self.attachments and self.prompt is None:
+            raise ValueError("LaunchEffect.attachments ride with a prompt; prompt is None")
+        if self.autocompact is not None and not isinstance(
+            self.autocompact, AutocompactAuto | AutocompactTokens
+        ):
+            raise TypeError(
+                "LaunchEffect.autocompact must be AutocompactAuto, AutocompactTokens or None"
+            )
+        if self.turn_credential_ref is not None and (
+            not isinstance(self.turn_credential_ref, str) or not self.turn_credential_ref
+        ):
+            raise ValueError("LaunchEffect.turn_credential_ref must be a non-empty string")
+        if not isinstance(self.new_context_id, HandlerMadeContextId | NamedContextId):
+            raise TypeError(
+                "LaunchEffect.new_context_id must be HandlerMadeContextId or NamedContextId"
+            )
+        if isinstance(self.new_context_id, NamedContextId) and self.resume_from is not None:
+            raise ValueError(
+                "LaunchEffect.new_context_id names a new context; it cannot be combined with resume_from"
+            )
+        if self.resume_snapshot is None:
+            return
+        if self.resume_from is None:
+            raise ValueError("LaunchEffect.resume_snapshot needs resume_from")
+        if not isinstance(self.resume_snapshot, str) or not self.resume_snapshot.strip():
+            raise ValueError("LaunchEffect.resume_snapshot must be a non-empty string")
+
+
+# =============================================================================
+# L2 Session Algebra Effects
+# =============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class LaunchSessionEffect(AgentEffectBase):
+    """L2 Launch: idempotently create or re-adopt a deterministic session.
+
+    Yields: SessionHandle
+    """
+
+    spec: AgentSpec
+
+
+@dataclass(frozen=True, kw_only=True)
+class AwaitResultEffect(AgentEffectBase):
+    """L2 AwaitResult: await a schema result channel in one step.
+
+    Yields: AwaitOutcome
+    """
+
+    handle: SessionHandle
+    timeout_seconds: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class FollowUpEffect(AgentEffectBase):
+    """L2 FollowUp: continue an existing session or adapter-private retry.
+
+    ``mode`` chooses next turn or injection into the running turn;
+    ``input_ref`` names the input in ``AgentInputFateEvent`` (the handler
+    names it when ``None``).  Handlers without turns refuse ``INJECT`` with
+    ``AgentCapabilityUnsupportedError`` (and do not report fates for
+    ``input_ref``).  A ``NEXT_TURN`` input that waits behind a running turn
+    starts at the next effect that touches the session after that turn ends
+    (handlers act only when an effect arrives).
+
+    Yields: SessionHandle
+    """
+
+    handle: SessionHandle
+    message: str
+    mode: TurnInputMode = TurnInputMode.NEXT_TURN
+    input_ref: str | None = None
+    # Images that ride with ``message`` (an empty message is an input of images
+    # only). Handlers that cannot hand images to the runtime refuse them with
+    # ``AgentCapabilityUnsupportedError``.
+    attachments: tuple[InputImage, ...] = ()
+    # An item to fold into the session's event record (``LaunchEffect.event_record``)
+    # before the input reaches the runtime, so the record knows the input
+    # before the runtime's reader thread reads its fate (None = nothing to
+    # fold). Handlers without an event record for the session refuse it with
+    # ``AgentCapabilityUnsupportedError``.
+    record_note: object | None = None
+
+    def __post_init__(self) -> None:
+        _check_attachments("FollowUpEffect", self.attachments)
+
+
+@dataclass(frozen=True, kw_only=True)
+class StopSessionEffect(AgentEffectBase):
+    """L2 Stop: idempotent abort.
+
+    Yields: None
+    """
+
+    handle: SessionHandle
+    reason: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReleaseSessionEffect(AgentEffectBase):
+    """L2 Release: reclaim handler resources after a session is no longer used.
+
+    Yields: None
+    """
+
+    handle: SessionHandle
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentEffect(AgentEffectBase):
+    """Schema-validated worker invocation.
+
+    Yields: the validated structured result object.
+    """
+
+    task: AgentTask
+
+
+# =============================================================================
+# Session Lifecycle Effects
+# =============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class MonitorEffect(AgentEffectBase):
+    """Check and update session status (single poll).
+
+    Yields: Observation
+    """
+
+    handle: SessionHandle
+
+
+@dataclass(frozen=True, kw_only=True)
+class CaptureEffect(AgentEffectBase):
+    """Capture current pane output.
+
+    Yields: str
+    """
+
+    handle: SessionHandle
+    lines: int = 100
+
+
+@dataclass(frozen=True, kw_only=True)
+class SendEffect(AgentEffectBase):
+    """Send a message or keys to the session.
+
+    Yields: None
+    """
+
+    handle: SessionHandle
+    message: str
+    enter: bool = True
+    literal: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
+class StopEffect(AgentEffectBase):
+    """Stop (kill) an agent session.
+
+    Yields: None
+    """
+
+    handle: SessionHandle
+
+
+@dataclass(frozen=True, kw_only=True)
+class InterruptEffect(AgentEffectBase):
+    """Stop the running turn only; the session and its context stay.
+
+    The turn's end arrives as ``AgentTurnInterrupted`` through ``Events`` /
+    ``AwaitResult``.  Handlers without turns refuse it with
+    ``AgentCapabilityUnsupportedError``.
+
+    ``for_input`` names an input already added to the running turn (its
+    ``FollowUpEffect.input_ref``) that this stop exists to have read sooner.
+    When the agent has already read that input, there is nothing to hurry and
+    the turn is left running: only the layer that owns the agent process knows
+    whether the input was read, so the decision is made there.  Handlers that
+    cannot tell whether an input was read stop the turn as if ``for_input``
+    were absent.
+
+    Yields: bool (True = a turn was running; it was asked to stop, or the
+    named input was already read and the turn was left running)
+    """
+
+    handle: SessionHandle
+    for_input: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class EventsEffect(AgentEffectBase):
+    """Read the session's turn events after ``after_seq``.
+
+    Waits up to ``wait_seconds`` for a new event or for the session to go
+    idle; reading also advances the session (a waiting input starts once the
+    running turn's end is read).  Handlers without turns refuse it with
+    ``AgentCapabilityUnsupportedError``.
+
+    Yields: AgentEventPage
+    """
+
+    handle: SessionHandle
+    after_seq: int = -1
+    wait_seconds: float = 0.0
+
+
+@dataclass(frozen=True, kw_only=True)
+class WarmSessionEffect(AgentEffectBase):
+    """Start the session's agent runtime before its next input and keep it waiting.
+
+    Pays the runtime's start-up time (process start until it can take input)
+    before the input arrives.  The session's next turn (``Send`` /
+    ``FollowUp``) uses the waiting runtime when its launch conditions are
+    unchanged, and starts a new one otherwise.  A session launched without a
+    prompt keeps its new context, so its first turn still starts that context
+    fresh (the waiting runtime has not recorded anything before the input).
+    Before the first input the runtime may only report its session-start
+    hooks; anything else it prints takes it down.  Stop or release the session
+    to take the waiting runtime down without a turn.
+
+    Handlers whose ``LaunchEffect`` already starts a runtime that waits for
+    input (terminal handlers) refuse it with
+    ``AgentCapabilityUnsupportedError`` instead of silently doing nothing; a
+    stopped session is refused with ``SessionNotFoundError``.
+
+    Yields: bool (True = the runtime waits for the session's next input;
+    False = a turn is running or inputs are queued, so there is nothing to
+    warm)
+    """
+
+    handle: SessionHandle
+
+
+@dataclass(frozen=True)
+class SessionCredentialReplaced:
+    """Answer of ``ReplaceSessionCredentialEffect``: the session's live agent
+    process now holds the redeemed credential; its next upstream call (even
+    in the middle of a turn) uses the new access token."""
+
+
+@dataclass(frozen=True)
+class SessionProcessNotLive:
+    """Answer of ``ReplaceSessionCredentialEffect``: the session has no live
+    agent process (never started, gone down, or going down), so there is
+    nothing to replace. The session's next turn starts with the redeemed
+    credential."""
+
+
+@dataclass(frozen=True)
+class SessionOnHomeCredential:
+    """Answer of ``ReplaceSessionCredentialEffect``: the session was launched
+    on the handler's own home credentials (no turn credential was lent), so
+    there is no lent credential to replace."""
+
+
+@dataclass(frozen=True)
+class ReplacementCredentialUnavailable:
+    """Answer of ``ReplaceSessionCredentialEffect``: the reference could not be
+    redeemed for a lent credential (``TurnCredentialUnavailable``, or the
+    reference names the home credential, which cannot replace a lent one).
+    ``reason`` is for people and never holds a credential value. Nothing was
+    replaced."""
+
+    reason: str
+
+
+ReplaceSessionCredentialOutcome = (
+    SessionCredentialReplaced
+    | SessionProcessNotLive
+    | SessionOnHomeCredential
+    | ReplacementCredentialUnavailable
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReplaceSessionCredentialEffect(AgentEffectBase):
+    """Replace the turn credential of a session's live agent process (card
+    acp:kanban-issue:ki-4ffdafa021e5).
+
+    A lender that refreshes an account kills the previous access token
+    upstream; this hands the refreshed token to the agent process that is
+    already running, so the lender no longer has to hold the refresh while
+    the account is in use. Like ``LaunchEffect`` it carries only a reference
+    (``credential_ref``): the handler redeems it with
+    ``RedeemTurnCredentialEffect`` and the token never appears in this
+    effect. The session's later turns also use the redeemed credential.
+
+    Handlers that cannot place a turn credential into a running process
+    refuse it with ``AgentCapabilityUnsupportedError``; a session this handler
+    does not hold goes to the outer handler.
+
+    Yields: SessionCredentialReplaced | SessionProcessNotLive |
+    SessionOnHomeCredential | ReplacementCredentialUnavailable
+    """
+
+    handle: SessionHandle
+    credential_ref: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.credential_ref, str) or not self.credential_ref:
+            raise ValueError("ReplaceSessionCredentialEffect.credential_ref must be a non-empty string")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExportContextEffect(AgentEffectBase):
+    """Take an opaque copy of an agent runtime context out of this runtime.
+
+    ``context_id`` is the value a turn end carried as ``resume_from``;
+    ``work_dir`` is the work dir the context ran in.  The copy is kept by the
+    caller (for example outside a disposable home) and brought back with
+    ``LaunchEffect(resume_from=context_id, resume_snapshot=copy)``.  Handlers
+    that cannot take a copy refuse it with ``AgentCapabilityUnsupportedError``.
+
+    ``tail_bytes`` asks for only the last lines of the copy that fit in that
+    many bytes (starting at a line start).  Such a copy cannot be brought back
+    with ``resume_snapshot``; it is for callers that read only recent lines,
+    so a 100 MB context is not read whole on every turn (card ki-a264a73efcce).
+
+    ``from_byte`` asks for only the part of the copy after that many bytes
+    (``from_byte`` is a character start within a copy taken before).  Such a
+    copy cannot be brought back with ``resume_snapshot``; it is for callers
+    that hold an earlier copy and read only what was appended since (card
+    ki-3b521394a063).  The answer is None when the copy is shorter than
+    ``from_byte`` or ``from_byte`` falls inside a character.  ``tail_bytes``
+    and ``from_byte`` are not given together.
+
+    Yields: str | None (the copy; None = this runtime has no such context)
+    """
+
+    agent_type: AgentType
+    # A plain path value, like ``LaunchEffect.work_dir``.
+    work_dir: str | PurePath
+    context_id: str
+    tail_bytes: int | None = None
+    from_byte: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.tail_bytes is not None and (
+            isinstance(self.tail_bytes, bool) or not isinstance(self.tail_bytes, int) or self.tail_bytes < 1
+        ):
+            raise ValueError("ExportContextEffect.tail_bytes must be a positive int or None")
+        if self.from_byte is not None and (
+            isinstance(self.from_byte, bool) or not isinstance(self.from_byte, int) or self.from_byte < 0
+        ):
+            raise ValueError("ExportContextEffect.from_byte must be a non-negative int or None")
+        if self.tail_bytes is not None and self.from_byte is not None:
+            raise ValueError("ExportContextEffect takes tail_bytes or from_byte, not both")
+
+
+# =============================================================================
+# Session State Effects
+# =============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class GetAgentSessionEffect(AgentEffectBase):
+    """Read a persisted session snapshot by public session id.
+
+    Yields: AgentSessionSnapshot | None
+    """
+
+    session_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class ListAgentSessionsEffect(AgentEffectBase):
+    """List persisted session snapshots.
+
+    Yields: tuple[AgentSessionSnapshot, ...]
+    """
+
+    query: AgentSessionQuery = field(default_factory=AgentSessionQuery)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PutAgentSessionEffect(AgentEffectBase):
+    """Persist a session snapshot, replacing the row with the same session id.
+
+    The write half of the session store (agora-redesign #608). The handler is
+    chosen by the deployment: memory for tests, a SQL table (PostgreSQL in the
+    cluster, SQLite locally) for real runs.
+
+    Yields: AgentSessionSnapshot (the stored snapshot)
+    """
+
+    snapshot: AgentSessionSnapshot
+
+
+@dataclass(frozen=True, kw_only=True)
+class ObserveAgentSessionEffect(AgentEffectBase):
+    """Observe a session by id and persist the resulting snapshot.
+
+    Yields: AgentSessionSnapshot
+    """
+
+    session_id: str
+    lines: int = 100
+
+
+@dataclass(frozen=True, kw_only=True)
+class AttachAgentSessionEffect(AgentEffectBase):
+    """Attach to a session by id using the active backend.
+
+    Yields: None
+    """
+
+    session_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class CancelAgentSessionEffect(AgentEffectBase):
+    """Cancel a running session by id and persist the resulting status.
+
+    Yields: AgentSessionSnapshot
+    """
+
+    session_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class CleanupAgentSessionEffect(AgentEffectBase):
+    """Clean up backend resources for a session by id.
+
+    Yields: AgentSessionSnapshot
+    """
+
+    session_id: str
+
+
+# =============================================================================
+# Effect Constructors
+# =============================================================================
+
+
+def Launch(  # noqa: N802
+    session_name: str,
+    *,
+    agent_type: AgentType,
+    work_dir: str | PurePath,
+    prompt: str | None = None,
+    model: str | None = None,
+    mcp_tools: tuple["McpToolDef", ...] = (),
+    mcp_server_name: str = "doeff",
+    effort: str | None = None,
+    bare: bool = False,
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION,
+    ready_timeout: float = 120.0,
+    session_env: dict[str, str] | None = None,
+    resume_from: str | None = None,
+    resume_snapshot: str | None = None,
+    new_context_id: HandlerMadeContextId | NamedContextId = HandlerMadeContextId(),
+    attachments: tuple[InputImage, ...] = (),
+) -> LaunchEffect:
+    """Create a Launch effect with flat fields."""
+    return LaunchEffect(
+        session_name=session_name,
+        agent_type=agent_type,
+        work_dir=work_dir,
+        prompt=prompt,
+        model=model,
+        mcp_tools=mcp_tools,
+        mcp_server_name=mcp_server_name,
+        effort=effort,
+        bare=bare,
+        lifecycle=lifecycle,
+        ready_timeout=ready_timeout,
+        session_env=session_env,
+        resume_from=resume_from,
+        resume_snapshot=resume_snapshot,
+        new_context_id=new_context_id,
+        attachments=attachments,
+    )
+
+
+def LaunchSession(spec: AgentSpec) -> LaunchSessionEffect:  # noqa: N802
+    return LaunchSessionEffect(spec=spec)
+
+
+def AwaitResult(  # noqa: N802
+    handle: SessionHandle,
+    *,
+    timeout_seconds: float | None = None,
+) -> AwaitResultEffect:
+    return AwaitResultEffect(handle=handle, timeout_seconds=timeout_seconds)
+
+
+def FollowUp(  # noqa: N802
+    handle: SessionHandle,
+    message: str,
+    *,
+    mode: TurnInputMode = TurnInputMode.NEXT_TURN,
+    input_ref: str | None = None,
+    attachments: tuple[InputImage, ...] = (),
+) -> FollowUpEffect:
+    return FollowUpEffect(
+        handle=handle, message=message, mode=mode, input_ref=input_ref, attachments=attachments
+    )
+
+
+def StopSession(  # noqa: N802
+    handle: SessionHandle,
+    *,
+    reason: str | None = None,
+) -> StopSessionEffect:
+    return StopSessionEffect(handle=handle, reason=reason)
+
+
+def ReleaseSession(handle: SessionHandle) -> ReleaseSessionEffect:  # noqa: N802
+    return ReleaseSessionEffect(handle=handle)
+
+
+def agent(task: AgentTask) -> AgentEffect:
+    """Create a schema-validated ``agent`` effect."""
+    return AgentEffect(task=task)
+
+
+def Monitor(handle: SessionHandle) -> MonitorEffect:  # noqa: N802
+    return MonitorEffect(handle=handle)
+
+
+def Capture(handle: SessionHandle, *, lines: int = 100) -> CaptureEffect:  # noqa: N802
+    return CaptureEffect(handle=handle, lines=lines)
+
+
+def Send(  # noqa: N802
+    handle: SessionHandle,
+    message: str,
+    *,
+    enter: bool = True,
+    literal: bool = True,
+) -> SendEffect:
+    return SendEffect(handle=handle, message=message, enter=enter, literal=literal)
+
+
+def Stop(handle: SessionHandle) -> StopEffect:  # noqa: N802
+    return StopEffect(handle=handle)
+
+
+def Interrupt(handle: SessionHandle, *, for_input: str | None = None) -> InterruptEffect:  # noqa: N802
+    return InterruptEffect(handle=handle, for_input=for_input)
+
+
+def WarmSession(handle: SessionHandle) -> WarmSessionEffect:  # noqa: N802
+    return WarmSessionEffect(handle=handle)
+
+
+def ReplaceSessionCredential(  # noqa: N802
+    handle: SessionHandle, *, credential_ref: str
+) -> ReplaceSessionCredentialEffect:
+    return ReplaceSessionCredentialEffect(handle=handle, credential_ref=credential_ref)
+
+
+def Events(  # noqa: N802
+    handle: SessionHandle,
+    *,
+    after_seq: int = -1,
+    wait_seconds: float = 0.0,
+) -> EventsEffect:
+    return EventsEffect(handle=handle, after_seq=after_seq, wait_seconds=wait_seconds)
+
+
+def GetAgentSession(session_id: str) -> GetAgentSessionEffect:  # noqa: N802
+    return GetAgentSessionEffect(session_id=session_id)
+
+
+def ListAgentSessions(  # noqa: N802
+    *,
+    status: SessionStatus | None = None,
+    agent_type: AgentType | None = None,
+    backend_kind: str | None = None,
+    lifecycle: AgentSessionLifecycle | None = None,
+    caller_ref: str | None = None,
+    node: str | None = None,
+) -> ListAgentSessionsEffect:
+    return ListAgentSessionsEffect(
+        query=AgentSessionQuery(
+            status=status,
+            agent_type=agent_type,
+            backend_kind=backend_kind,
+            lifecycle=lifecycle,
+            caller_ref=caller_ref,
+            node=node,
+        )
+    )
+
+
+def PutAgentSession(snapshot: AgentSessionSnapshot) -> PutAgentSessionEffect:  # noqa: N802
+    return PutAgentSessionEffect(snapshot=snapshot)
+
+
+def ObserveAgentSession(  # noqa: N802
+    session_id: str,
+    *,
+    lines: int = 100,
+) -> ObserveAgentSessionEffect:
+    return ObserveAgentSessionEffect(session_id=session_id, lines=lines)
+
+
+def AttachAgentSession(session_id: str) -> AttachAgentSessionEffect:  # noqa: N802
+    return AttachAgentSessionEffect(session_id=session_id)
+
+
+def CancelAgentSession(session_id: str) -> CancelAgentSessionEffect:  # noqa: N802
+    return CancelAgentSessionEffect(session_id=session_id)
+
+
+def CleanupAgentSession(session_id: str) -> CleanupAgentSessionEffect:  # noqa: N802
+    return CleanupAgentSessionEffect(session_id=session_id)
+
+
+# =============================================================================
+# Errors
+# =============================================================================
+
+
+class AgentError(Exception):
+    """Base class for agent-related errors."""
+
+
+class AgentLaunchError(AgentError):
+    """Error during agent launch.
+
+    ``exit_code`` / ``stderr_tail`` = 手番を始める前に agent の CLI の process が降りた時の、process の終了 code と
+    stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。そうした process の無い起動の失敗は None
+    (agora-redesign #4207)。この例外を失敗の終わり(``AgentTurnFailed``)へ写す呼び手は、2 つの欄をそのまま運ぶ。
+    """
+
+    exit_code: int | None = None
+    stderr_tail: str | None = None
+
+    def __init__(self, *args: object, exit_code: int | None = None, stderr_tail: str | None = None) -> None:
+        super().__init__(*args)
+        self.exit_code = exit_code
+        self.stderr_tail = stderr_tail
+
+
+class AgentNotAvailableError(AgentLaunchError):
+    """Agent CLI is not available."""
+
+
+class AgentReadyTimeoutError(AgentLaunchError):
+    """Agent did not become ready within timeout."""
+
+
+class SessionNotFoundError(AgentError):
+    """Session does not exist."""
+
+
+class SessionAlreadyExistsError(AgentError):
+    """Session already exists."""
+
+
+class AgentCapabilityUnsupportedError(AgentError):
+    """The installed handler cannot do what the effect asks.
+
+    Raised instead of silently doing something else (for example a terminal
+    handler asked to continue a context, or the headless handler asked for
+    pane output).
+    """
+
+    def __init__(self, *, capability: str, handler: str) -> None:
+        self.capability = capability
+        self.handler = handler
+        super().__init__(f"{handler} does not support {capability}")
+
+
+class NoTurnInFlightError(AgentError):
+    """An input was to be injected into the running turn, but none runs."""
+
+    def __init__(self, *, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(f"session {session_id} has no turn in flight")
+
+
+class TurnInFlightError(AgentError):
+    """A turn was to be started in a context where another turn is already running.
+
+    The runtime refuses a second turn on the same context; the caller decides
+    whether to wait for the running turn or give up.
+    """
+
+    def __init__(self, *, session_id: str, context_id: str) -> None:
+        self.session_id = session_id
+        self.context_id = context_id
+        super().__init__(
+            f"session {session_id}: context {context_id} already has a turn in flight"
+        )
+
+
+class TurnCredentialUnavailableError(AgentLaunchError):
+    """``turn_credential_ref`` could not be redeemed, so the session was not started.
+
+    ``reason`` is the ``TurnCredentialUnavailable.reason`` of the redeem answer
+    (never a credential value). The caller decides what to do (e.g. refuse the
+    turn as credential-unavailable).
+    """
+
+    def __init__(self, *, credential_ref: str, reason: str) -> None:
+        self.credential_ref = credential_ref
+        self.reason = reason
+        super().__init__(f"turn credential {credential_ref} is unavailable: {reason}")
+
+
+class ResumeTargetNotFoundError(AgentLaunchError):
+    """``resume_from`` names a context the runtime cannot find here.
+
+    The caller decides: bring the context over, or start a fresh one.
+    """
+
+    def __init__(self, *, resume_from: str) -> None:
+        self.resume_from = resume_from
+        super().__init__(f"no context to resume from: {resume_from}")
+
+
+class AgentAttemptExhaustedError(AgentError):
+    """Raised when ``agent`` exhausts its schema-retry budget."""
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        attempts: int,
+        last_error: AgentValidationFailure,
+    ) -> None:
+        self.session_id = session_id
+        self.attempts = attempts
+        self.last_error = last_error
+        super().__init__(
+            f"agent session {session_id} exhausted {attempts} attempts: "
+            f"{last_error.kind.value}: {last_error.message}"
+        )
+
+
+class AgentDeadlineExceededError(AgentError):
+    """Raised when ``agent`` exceeds its node-spec wall-clock deadline (L-K4-3).
+
+    Distinct from ``AgentAttemptExhaustedError`` (the unit/attempt budget
+    axis): the session may still be alive and healthily working — the
+    declared wall-clock window simply ran out. The orchestrator parks
+    this as a gate; the ONLY extension path is a gate answer.
+    """
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        deadline_seconds: float,
+        elapsed_seconds: float,
+    ) -> None:
+        self.session_id = session_id
+        self.deadline_seconds = deadline_seconds
+        self.elapsed_seconds = elapsed_seconds
+        super().__init__(
+            f"agent session {session_id} exceeded its wall-clock deadline: "
+            f"{elapsed_seconds:.1f}s elapsed against a {deadline_seconds:.1f}s deadline"
+        )

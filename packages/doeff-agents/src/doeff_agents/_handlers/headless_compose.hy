@@ -1,0 +1,141 @@
+;;; headless の handler の組み立ての部品(composition root が使う)— agora-redesign #604。
+;;;
+;;; 呼び手(agora など)が doeff_claude_code を import せずに組めるように、doeff-claude-code の handler(層 2)と
+;;; headless の adapter(handlers/headless.hy・層 3)の対をここで作る。adapter の module は層 2 の handler も CLI の実行ファイルも
+;;; 知らない — 知るのはこの組み立ての module だけ。codex も同じ形(doeff-codex の handler と handlers/headless_codex.hy — 末尾の節)。
+;;; どちらの組も外側に doeff-time の時間の handler(本番 = sync-time-handler・模擬 = sim-time-handler)と scheduler を要る。
+;;; 本番の組は加えて slog の答え手を要る(層 2 の本番の handler が CLI の起動の計時の行を slog で出す — agora-redesign #3605)。
+;;; 本番の組と、上限(live-limit)を持つ fake の世界の組は、加えて知らせ ClaudeLiveLimitExceeded の答え手(ホスト)を要る — 層 2 は生かす
+;;; CLI の本数の上限を越える起動でも CLI を止めず、越えた事をこの知らせでホストへ伝える(止める CLI はホストが選ぶ・agora-redesign #4072 の E1b)。
+;;; 本番の層 2 を作る関数の live-limit は「1 以上の整数か None」(agora-redesign #4282): None は上限を宣言しない呼び手(同時に生かす本数を
+;;; 別の物差し — 機体の memory の余白 — で決める)で、そのまま層 2 の ClaudeCodeHost へ渡す(0 や大きい数に言い換えない)。None の層 2 は
+;;; 本数を比べず、上限越えの log の行も知らせも出さない。
+;;; 並びは with_handlers の順(先頭が外側): 層 2 の handler → adapter(Program に近い側)。
+(require doeff-hy.macros [defk])
+(import collections.abc [Callable Mapping])
+(import doeff.program [ProgramHandler])
+(import doeff_hy.frozen [FrozenMap])
+(import doeff_time [sync-time-handler])
+(import doeff_claude_code [ClaudeHome BypassAll PermissionPolicy])
+(import doeff_claude_code.clock [clock-of])
+(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
+;; 模擬の返事(FakeReply)の usage と last-call-usage の型(agora-redesign #3744)と、口座の側が要求を断る筋書き(account-refusal)・model の
+;; 安全装置が要求を断る筋書き(model-refusal)の型と、
+;; CLI が会話を自動で圧縮する筋書き(compactions)の行の型と起き方の語(agora-redesign #4189)。呼び手が doeff_claude_code を import せずに
+;; 返事を組めるように、FakeReply と並べてここから読ませる。
+;; CLI が回す hook の行の筋書き(hooks)の行の型と段階の語も同じ(card acp:kanban-issue:ki-d8b473480303)。圧縮の終わり方の筋書き
+;; (compactions の CompactEnded)の型も同じ(card acp:kanban-issue:ki-8239be27d5f6)。道具が走らせる subagent の筋書き(subagent-transcript
+;; の SubagentTranscript とその呼び SubagentCall — card ki-e798888dce4e)の型も同じ。AssistantMessage は前の subagent の筋書きの型で、
+;; 呼び手の読みのために残す。
+(import doeff_claude_code [Usage AccountRefusalHit ModelRefusalHit CompactBoundary CompactTrigger CompactEnded CompactOutcome AssistantMessage HookNotice HookPhase SubagentTranscript SubagentCall])
+;; 層 2 が生かす CLI の本数の上限を越える起動をホストへ伝える知らせ(ホストが答える — 呼び手が doeff_claude_code を import せずに答え手を
+;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
+(import doeff_claude_code [ClaudeLiveLimitExceeded])
+(import doeff_agents._handlers.headless [HeadlessClaudeConfig HeadlessState headless-claude-handler])
+;; codex の組(card acp:kanban-issue:ki-534a081e32eb): doeff-codex の handler(層 2)と headless の codex の adapter(層 3)。呼び手が
+;; doeff_codex を import せずに組めるように、宣言の語(許可の方針・sandbox)と fake の世界の型(筋書きの答え・入力)もここから読ませる。
+(import doeff_codex [CodexHome CodexInput :as CodexTurnInput])
+(import doeff_codex [ApprovalPolicy :as CodexApprovalPolicy SandboxMode :as CodexSandboxMode])
+(import doeff_codex [CodexHost codex-handler])
+(import doeff_codex [FakeCodexWorld FakeReply :as FakeCodexReply fake-codex-handler])
+;; 利用枠切れの事実(fake の筋書きの FakeCodexReply.usage-limit に渡す・層 2 の終わりが運ぶ — 窓は長さ〔分〕で名乗る)。
+(import doeff_codex [UsageLimitHit :as CodexUsageLimitHit])
+;; 提供側の混雑の事実(fake の筋書きの FakeCodexReply.server-overloaded に渡す・層 2 の終わりが運ぶ — card ki-843475dd8f8b)。
+(import doeff_codex [ServerOverloadedHit :as CodexServerOverloadedHit])
+(import doeff_agents._handlers.headless_codex [HeadlessCodexConfig HeadlessCodexState headless-codex-handler])
+
+
+(defn #^ (get list ProgramHandler) headless-claude-handlers [#^ str config-dir #^ (get FrozenMap str) env
+                                        [settings None] [cold-resume-prompt None] [command #("claude")]
+                                        * #^ (| int None) live-limit #^ float credential-floor-seconds]
+  "本番の組: doeff-claude-code の本番の handler(会話の CLI を手番をまたいで生かす)+ headless の adapter。
+   config-dir / env = claude の家(資格は root が custody から借りて env に置く — 凍らせた写像。dict を渡しても作る時に凍らせる)/
+   settings = CLI の settings の JSON(FrozenMap か None)/ live-limit = 同時に生かす CLI の本数の上限 / credential-floor-seconds =
+   借りた資格の期限の手前で CLI を止める床の秒(どちらも呼び手の宣言から — 既定を持たない・#3672 の D2)。行の時刻は壁の時計で刻む。
+   live-limit の None = 上限を宣言しない(頭の註・#4282 — 既定ではないので、宣言しない呼び手も None を明示で渡す)。"
+  (setv config (HeadlessClaudeConfig (ClaudeHome config-dir env)
+                                     :settings (if (is settings None) (FrozenMap) settings)
+                                     :cold-resume-prompt cold-resume-prompt))
+  [(claude-code-handler (ClaudeCodeHost (tuple command) (clock-of (sync-time-handler)) live-limit credential-floor-seconds))
+   (headless-claude-handler config (HeadlessState))])
+
+(defn #^ (get list ProgramHandler) fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]
+                                             * #^ (get Mapping #(str str)) env #^ (get Mapping #(str object)) settings
+                                             #^ PermissionPolicy [permission (BypassAll)]]
+  "模擬の組: doeff-claude-code の fake の handler + headless の adapter(process も API も使わない)。
+   responder = (入力の本文 それまでの入力の tuple) → FakeReply(返事の本文・道具の秒数・許可の問いの要否)。
+   world = 呼び手が持つ fake の世界(FakeClaudeWorld — 検の口で家の中身を触る・同じ家の上で process を作り直す〔world.restarted〕
+   模擬のため)。responder と world はちょうど 1 つ。
+   env / settings = 本番の組(headless-claude-handlers)と同じ意味の家の env(文字列 → 文字列の写像)と CLI の settings(JSON の写像)。
+   どちらも必ず渡す(既定の値は無い — 宣言する物の無い呼び手は空の写像を明示で渡す・agora-redesign #3387)。上の層の模擬が、本番と
+   同じ手順で決めた env と settings を起動の宣言(層 2 へ渡る ClaudeSessionSpec の home.env と settings)に載せて観測するため
+   (agora-redesign #3327)。fake の層 2 はどちらも読まない。どちらも宣言を作る時に凍らせる(ClaudeHome・HeadlessClaudeConfig)。
+   permission = 起動の宣言の許可の方策(既定 BypassAll — 本番の adapter と同じ形を上の層の模擬が渡して観測するため・#3753)。"
+  (when (= (is responder None) (is world None))
+    (raise (ValueError "fake-headless-claude-handlers は responder と world のちょうど 1 つを受ける")))
+  [(fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world))
+   (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :permission permission)
+                            (HeadlessState))])
+
+
+;; --- 層 2 と adapter を別々に作る入口(agora-redesign #3507)--------------------------------------------------------------------------
+;; 呼び手が層 2(CLI の process の寿命)と adapter(agent の寿命)を別の段に置くため — 層 2 を土台の外側(本番 = process を起こす土台・
+;; 模擬 = 外の世界の相手役)に置き、adapter だけを Program に近い側に置く。上の対の入口と同じ handler を同じ設定で作る(対の入口は変えない)。
+
+(defk claude-process-layer [command live-limit credential-floor-seconds]
+  {:pre [(: command tuple) (all (gfor part command (isinstance part str))) (: live-limit (| int None)) (: credential-floor-seconds float)]
+   :post [(: % Callable)]}
+  "層 2 の本番の handler だけ(会話の CLI を手番をまたいで生かす — headless-claude-handlers の対の 1 つ目と同じ物)を作るため。command =
+   CLI の実行の引数の頭・live-limit = 同時に生かす CLI の本数の上限・credential-floor-seconds = 借りた資格の期限の手前で CLI を止める
+   床の秒(どちらも呼び手の宣言から・#3672 の D2)。行の時刻は壁の時計で刻む。外側に doeff-time の時間の handler・scheduler・slog の
+   答え手を要る。live-limit の None = 上限を宣言しない(頭の註・#4282)。"
+  (claude-code-handler (ClaudeCodeHost command (clock-of (sync-time-handler)) live-limit credential-floor-seconds)))
+
+(defk fake-claude-process-layer [responder world]
+  {:pre [(: responder (| Callable None)) (: world (| FakeClaudeWorld None))] :post [(: % Callable)]}
+  "層 2 の fake の handler だけ(process も API も使わない — fake-headless-claude-handlers の対の 1 つ目と同じ物)を作るため。
+   responder / world の意味と「ちょうど 1 つ」は対の入口と同じ。"
+  (when (= (is responder None) (is world None))
+    (raise (ValueError "fake-claude-process-layer は responder と world のちょうど 1 つを受ける")))
+  (fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world)))
+
+(defk claude-adapter [config-dir env settings cold-resume-prompt permission]
+  {:pre [(: config-dir str) (: env Mapping) (: settings Mapping) (: cold-resume-prompt (| str None)) (: permission PermissionPolicy)]
+   :post [(: % Callable)]}
+  "headless の adapter だけ(doeff-agents の公開 effect を層 2 の effect へ写す — 対の入口の 2 つ目と同じ物。層 2 が本物でも fake でも同じ
+   adapter)を作るため。config-dir / env = claude の家(凍らせる)・settings = CLI の settings の JSON の写像・cold-resume-prompt = 冷えた
+   続きの前の 1 回きりの process に渡す文(None = 渡さない)・permission = 起動の宣言の許可の方策(HomeSettings = 設定 dir の settings.json の
+   permissions に任せて許可の旗を付けない — #3753)。"
+  (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :cold-resume-prompt cold-resume-prompt
+                                                 :permission permission)
+                           (HeadlessState)))
+
+
+;; --- codex の層 2 と adapter(card acp:kanban-issue:ki-534a081e32eb)------------------------------------------------------------------
+;; claude の別々の入口と同じ並び: 層 2 を土台の外側に・adapter を Program に近い側に置く。どちらの層 2 も外側に doeff-time の時間の
+;; handler と scheduler を要る。
+
+(defk codex-process-layer [command launch-timeout]
+  {:pre [(: command tuple) (all (gfor part command (isinstance part str))) (: launch-timeout float)] :post [(: % Callable)]
+   :tags {:context "headless-adapter" :role "entry"}}
+  "codex の層 2 の本番の handler(app-server の process を会話ごとにターンをまたいで生かす)を作るため。command = 実行ファイルと前置きの
+   引数(例 #(\"codex\"))・launch-timeout = 起動と要求の答えを待つ上限(秒)。"
+  (codex-handler (CodexHost command :launch-timeout launch-timeout)))
+
+(defk fake-codex-process-layer [world]
+  {:pre [(: world FakeCodexWorld)] :post [(: % Callable)] :tags {:context "headless-adapter" :role "entry"}}
+  "codex の層 2 の fake の handler(process を使わない — world = 筋書きの答え〔入力 CodexTurnInput → FakeCodexReply〕と fake の状態の
+   持ち主)を作るため。"
+  (fake-codex-handler world))
+
+(defk codex-adapter [env approval-policy sandbox disabled-features]
+  {:pre [(: env Mapping) (: approval-policy CodexApprovalPolicy) (: sandbox CodexSandboxMode) (: disabled-features tuple)]
+   :post [(: % Callable)]
+   :tags {:context "headless-adapter" :role "entry"}}
+  "headless の codex の adapter(doeff-agents の公開 effect を codex の層 2 の effect へ写す — 層 2 が本物でも fake でも同じ adapter)を
+   作るため。env = codex の家の env(PATH・HOME・CODEX_HOME — 資格は呼び手が置く)・approval-policy・sandbox = 会話の宣言の許可の方針と
+   sandbox・disabled-features = 会話の宣言の切って起こす codex の機能の名。"
+  (headless-codex-handler (HeadlessCodexConfig (CodexHome :env (dict env)) :approval-policy approval-policy :sandbox sandbox
+                                               :disabled-features disabled-features)
+                          (HeadlessCodexState)))

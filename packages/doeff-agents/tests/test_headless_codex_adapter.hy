@@ -20,20 +20,13 @@
 (import doeff_agents)
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
-(import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
-(import doeff_agents.effects [
-  LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession
-  SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow
-  AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent
-  AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent
-  AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentProviderCapacity
-  AgentCapabilityUnsupportedError NoTurnInFlightError
-  RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
-(import doeff_agents.effects.agent [AutocompactTokens])
+(import doeff_agents [AgentType AgentSessionLifecycle])
+(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
+(import doeff_agents._effects.agent [AutocompactTokens])
 (import doeff_hy.frozen [freeze-json])
-(import doeff_agents.effects.agent [SessionStatus])
+(import doeff_agents [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
-(import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
+(import doeff_agents._handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
                                                 CodexUsageLimitHit CodexServerOverloadedHit codex-process-layer fake-codex-process-layer
                                                 codex-adapter])
 

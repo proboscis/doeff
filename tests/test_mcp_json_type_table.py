@@ -15,8 +15,8 @@ import types
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import pytest
-from doeff_agents.handlers.mcp_server_loop import _tool_result_with_stack
-from doeff_agents.mcp_server import McpToolRequest, McpToolServer
+from doeff_agents._handlers.mcp_server_loop import _tool_result_with_stack
+from doeff_agents._mcp_server import McpToolRequest, McpToolServer
 
 import doeff.mcp
 from doeff import McpToolDef, run

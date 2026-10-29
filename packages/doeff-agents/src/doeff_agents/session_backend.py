@@ -1,7 +1,7 @@
 """Backend-neutral terminal session transport primitives.
 
 段 7 lane 7c(agora-redesign・決定 1.3): 既定の backend を組む時の PATH の
-探索は `doeff_agents.io_effects` の要求で、実行する家(本番 / 検)は
+探索は `doeff_agents._io_effects` の要求で、実行する家(本番 / 検)は
 ``io_root`` として渡される — この module は composition root であって、
 自分では実世界に触らない。
 """
@@ -15,8 +15,8 @@ from typing import Protocol
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 
 from doeff import do
-from doeff_agents.io_effects import which_executable
-from doeff_agents.io_root import IoGenerator, IoRoot, as_optional_str
+from doeff_agents._io_effects import which_executable
+from doeff_agents._io_root import IoGenerator, IoRoot, as_optional_str
 
 
 @dataclass(frozen=True)
@@ -108,7 +108,7 @@ def default_session_backend(
     ``io_root`` is the composition-root choice of I/O家: the production handler
     by default, the in-memory fake in tests.
     """
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
     from doeff_agents.tmux import StableTmuxSessionBackend, TmuxSessionBackend
 
     root: IoRoot = io_root if io_root is not None else run_driver_io

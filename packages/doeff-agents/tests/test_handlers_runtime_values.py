@@ -1,9 +1,9 @@
-"""doeff_agents.handlers が型の検査の節で見せる外の package の名を、実行の時にも同じ物で配る事の検。
+"""doeff_agents._handlers が型の検査の節で見せる外の package の名を、実行の時にも同じ物で配る事の検。
 
 handlers は doeff-claude-code と doeff-codex の値(fake の世界・許可の方針・sandbox など — handler の factory の引数の
 値)を、使い手がその package を import せずに読めるよう、``__getattr__`` で遅延して配る(``_RUNTIME_VALUES``)。
 ``if TYPE_CHECKING:`` の節が名を見せるのに表に足し忘れると、型の検査は通るのに実行の
-``from doeff_agents.handlers import FakeCodexWorld`` が AttributeError になる(card ki-21ee56535177 の前の
+``from doeff_agents._handlers import FakeCodexWorld`` が AttributeError になる(card ki-21ee56535177 の前の
 FakeCodexWorld・CodexApprovalPolicy・CodexSandboxMode — 公開 API の目録は「__getattr__ が名を作れない」未分類と数えた)。
 """
 
@@ -13,7 +13,7 @@ import ast
 import importlib
 from pathlib import Path
 
-import doeff_agents.handlers as handlers
+import doeff_agents._handlers as handlers
 
 SOURCE = Path(handlers.__file__)
 OUTSIDE_ROOTS = ("doeff_claude_code", "doeff_codex")

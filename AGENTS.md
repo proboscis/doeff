@@ -67,8 +67,8 @@ Application packages must not import `doeff_agents.tmux`, instantiate
 `TmuxSessionBackend` / `TmuxAgentHandler`, or shell out to `tmux` directly. The
 public API of doeff-agents is its effects and its handlers: callers emit the
 effects (`Launch` / `LaunchSession`, `AwaitResult`, `Events`, `Send` /
-`FollowUp`, `Stop` / `StopSession`, …) and install a handler factory from
-`doeff_agents.handlers` (`claude_agent_runtime_handlers()`,
+`FollowUp`, `Stop` / `StopSession`, …) and install a handler factory, all read
+from the `doeff_agents` package root (`claude_agent_runtime_handlers()`,
 `agent_effectful_handler()`, `daemon_agent_handlers()`, …). The session
 procedures and the handler objects are internal. The terminal multiplexer implementation is an internal
 doeff-agents detail so it can move to tmux, zellij, opencode, or another

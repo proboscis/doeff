@@ -7,7 +7,7 @@
 (defadr ADR-DOE-AGENTS-005
   :title "in-process result transport: report_result データチャネルのみ — 端末スクレイプ結果経路の全廃"
   :status "accepted"
-  :scope ["doeff-agents" "doeff-agents.handlers.production" "doeff-agents.handlers.effectful"
+  :scope ["doeff-agents" "doeff-agents._handlers.production" "doeff-agents._handlers.effectful"
           "doeff-agents.result-contract" "doeff-agents.inprocess-face"]
   :problem
     [(fact
@@ -65,6 +65,6 @@
        :bad ["RESULT_BLOCK_BEGIN = \"DOEFF_AGENT_RESULT_BEGIN\""]
        :good ["sink = handler.create_result_sink(session_id)  # ADR-DOE-AGENTS-005 R1"])]
   :plans ["docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy"
-          "packages/doeff-agents/src/doeff_agents/handlers/production.py (marker 語彙・抽出削除, sink-first await, launch fail-fast)"
-          "packages/doeff-agents/src/doeff_agents/handlers/effectful.hy (schema セッションは常に in-VM server + report_result)"
+          "packages/doeff-agents/src/doeff_agents/_handlers/production.py (marker 語彙・抽出削除, sink-first await, launch fail-fast)"
+          "packages/doeff-agents/src/doeff_agents/_handlers/effectful.hy (schema セッションは常に in-VM server + report_result)"
           "packages/doeff-agents/tests/test_inprocess_report_result.py (R1-R5 の機械検査)"])

@@ -1,0 +1,149 @@
+;;; codex_handler — handles LaunchEffect(CODEX) + session lifecycle effects.
+;;;
+;;; Mirrors claude_handler for the non-MCP Codex CLI path. MCP support is not
+;;; implemented for Codex here; callers that need MCP should fail loudly instead
+;;; of silently launching a session without tools.
+
+(require doeff-hy.handle [defhandler])
+(require doeff-hy.macros [<- set!])
+(import doeff [Ask])
+(import doeff_agents._effects.agent [
+  LaunchEffect MonitorEffect CaptureEffect
+  SendEffect StopEffect SessionHandle Observation ExportContextEffect WarmSessionEffect AgentCapabilityUnsupportedError])
+(import doeff_agents._effects._handler-effects [refuse-turn-capabilities])
+(import doeff_agents._adapters.base [AgentType LaunchParams])
+(import doeff_agents._adapters.codex [CodexAdapter])
+(import doeff_agents.session-backend [SessionBackend])
+(import doeff_agents._monitor [MonitorState SessionStatus
+  detect-status hash-content is-waiting-for-input])
+(import doeff_agents.shell [wrap-with-shell-exports
+                            assert-session-env-is-non-auth-overlay])
+(import doeff_agents._session [deliver-prompt-when-ready])
+(import doeff_agents [tmux])
+
+(import pathlib [Path])
+(import shlex)
+
+
+(defhandler codex-handler [* [backend None] [codex-home None]]
+  "Codex agent handler — catches LaunchEffect(CODEX) directly.
+
+   R9(ADR-DOE-AGENTS-004): auth は束縛時構成 — CODEX_HOME はこの handler を
+   束縛する者が `codex-home` で注入する(未指定ならプロセス env 継承のまま)。
+   session-env は非 auth overlay で、binding 所有キーの混入は loud に拒否。"
+  (lazy-var sessions {})
+
+  (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
+    :when (= agent-type AgentType.CODEX)
+    (refuse-turn-capabilities effect :handler "codex-handler")
+    (assert-session-env-is-non-auth-overlay session-env
+      :context "LaunchEffect.session_env (codex-handler)")
+    ;; effect は path を純粋な値で運ぶ — file 系の Path はここで作る。
+    (setv work-path (Path work-dir))
+    (setv launch-env (dict (or session-env {})))
+    (when (is-not codex-home None)
+      (setv (get launch-env "CODEX_HOME") (str codex-home)))
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (when mcp-tools
+      (raise (NotImplementedError "Codex MCP tools are not supported by codex-handler")))
+    (setv session-info (.new-session active-backend
+      (tmux.SessionConfig :session-name session-name :work-dir work-path :env launch-env)))
+    (setv params (LaunchParams
+      :work-dir work-path
+      :prompt prompt
+      :model model
+      :effort effort
+      :bare bare))
+    (setv argv (.launch-command (CodexAdapter) params))
+    (.send-keys active-backend session-info.pane-id
+      (wrap-with-shell-exports (shlex.join argv) launch-env)
+      :literal False)
+    ;; The task prompt belongs on the live terminal transport, never in argv
+    ;; or stdin. This keeps Codex interactive for validation follow-ups.
+    ;; Delivery is ready-gated: pasting before the composer renders splits
+    ;; the prompt into per-line submits (false Succeeded) — the choke point
+    ;; hard-fails with AgentReadyTimeoutError instead.
+    (deliver-prompt-when-ready active-backend session-info.pane-id
+      (CodexAdapter) prompt
+      :session-name session-name
+      :ready-timeout ready-timeout)
+    (setv handle (SessionHandle :session-id session-name))
+    (set! sessions (| sessions {session-name
+      {"handle" handle
+       "pane-id" session-info.pane-id
+       "agent-type" AgentType.CODEX
+       "monitor" (MonitorState)
+       "status" SessionStatus.BOOTING}}))
+    (resume handle))
+
+  ;; 文脈の写し(agora-redesign #731)は codex の文脈では取り出せない — 黙って None を返さず断る。
+  ;; LaunchEffect.resume_snapshot は上の refuse-turn-capabilities が断る。
+  (ExportContextEffect [agent-type]
+    :when (= agent-type AgentType.CODEX)
+    (raise (AgentCapabilityUnsupportedError :capability "ExportContextEffect" :handler "codex-handler")))
+
+  ;; 入力の前に runtime を事前起動する WarmSessionEffect は、この handler の会話では LaunchEffect が既に CLI を起動して入力を待たせて
+  ;; いる — 黙って何もせずに応答せず、型で拒否する。この handler の知らない会話は外側の handler へ回す。
+  (WarmSessionEffect [handle]
+    (when (not-in handle.session-id sessions)
+      (reperform effect))
+    (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "codex-handler")))
+
+  (MonitorEffect [handle]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv sname handle.session-id)
+    (setv session-data (.get sessions sname))
+    (when (is session-data None)
+      (reperform effect))
+    (when (not (.has-session active-backend sname))
+      (resume (Observation :status SessionStatus.EXITED)))
+    (setv output (.capture-pane active-backend (.get session-data "pane-id") 100))
+    (setv mon (.get session-data "monitor" (MonitorState)))
+    (setv skip-lines 3)
+    (setv content-hash (hash-content output skip-lines))
+    (setv output-changed (!= content-hash mon.output-hash))
+    (setv has-prompt (is-waiting-for-input output))
+    (when output-changed
+      (setv mon.output-hash content-hash)
+      (setv mon.last-output output))
+    (setv new-status (detect-status output mon output-changed has-prompt))
+    (when new-status
+      (setv (get session-data "status") new-status))
+    (resume (Observation
+      :status (.get session-data "status" SessionStatus.RUNNING)
+      :output-changed output-changed
+      :output-snippet (when output (cut output -500 None)))))
+
+  (CaptureEffect [handle lines]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv session-data (.get sessions handle.session-id))
+    (when (is session-data None)
+      (reperform effect))
+    (resume (.capture-pane active-backend (.get session-data "pane-id") lines)))
+
+  (SendEffect [handle message literal enter]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv session-data (.get sessions handle.session-id))
+    (when (is session-data None)
+      (reperform effect))
+    (.send-keys active-backend (.get session-data "pane-id") message :literal literal :enter enter)
+    (resume None))
+
+  (StopEffect [handle]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv session-data (.get sessions handle.session-id))
+    (when (is session-data None)
+      (reperform effect))
+    (when (.has-session active-backend handle.session-id)
+      (.kill-session active-backend handle.session-id))
+    (resume None)))

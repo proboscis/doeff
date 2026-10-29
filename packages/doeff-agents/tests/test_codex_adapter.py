@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.adapters.base import InjectionMethod, LaunchParams
-from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
+from doeff_agents._adapters.base import InjectionMethod, LaunchParams
+from doeff_agents._adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 
 from fake_io_support import FakeIoWorld, fake_io_root
 

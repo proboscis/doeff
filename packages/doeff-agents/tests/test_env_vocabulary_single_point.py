@@ -16,7 +16,7 @@ from pathlib import Path
 
 import hy  # noqa: F401 -- installs the .hy import hook
 import hy.models
-from doeff_agents import agent_env, shell
+from doeff_agents import _agent_env as agent_env, shell
 from doeff_agents.sessionhost import policy, substrate
 
 VOCABULARY = (

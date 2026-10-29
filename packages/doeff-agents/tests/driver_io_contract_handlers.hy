@@ -17,8 +17,9 @@
 (import tempfile)
 (import threading)
 (import doeff [EffectBase Program with_handlers])
-(import doeff_agents.io_fake [FakeIoWorld fake-driver-io-handler])
-(import doeff_agents.io_handlers [driver-io-handler])
+(import doeff_agents [fake-driver-io-handler]
+        doeff_agents._io_fake [FakeIoWorld])
+(import doeff_agents [driver-io-handler])
 (import doeff_time [sync-time-handler])
 
 (val DRIVER-IO "driver-io")

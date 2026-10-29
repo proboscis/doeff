@@ -20,7 +20,7 @@ def _agent_env() -> ModuleType:
     """
     import hy  # noqa: F401 -- installs the .hy import hook
 
-    from doeff_agents import agent_env
+    from doeff_agents import _agent_env as agent_env
 
     return agent_env
 

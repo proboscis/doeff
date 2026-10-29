@@ -1,5 +1,5 @@
 from doeff_agents import ClaudeRuntimePolicy, LaunchEffect
-from doeff_agents.adapters.base import AgentType
+from doeff_agents import AgentType
 
 
 def bad_launch(work_dir):

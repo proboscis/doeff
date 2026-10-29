@@ -9,7 +9,7 @@
 (defadr ADR-DOE-AGENTS-008
   :title "readiness/idle 判定の物理事実(pattern 文字列・trust-prompt 述語・repl-idle 予算既定値)は定義箇所を 1 箇所に限る — gate 形式は doeff-free leaf の doeff_agents/ready_physics.hy、observation 形式は impls/markers.hy、予算既定値は effects.hy MonitorKnobs 語彙。消費者(adapters / _session.py / launch.hy / host.hy)は import 参照のみ"
   :status "accepted"
-  :scope ["packages/doeff-agents/src/doeff_agents/adapters"
+  :scope ["packages/doeff-agents/src/doeff_agents/_adapters"
           "packages/doeff-agents/src/doeff_agents/_session.py"
           "packages/doeff-agents/src/doeff_agents/ready_physics.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost"]
@@ -57,8 +57,8 @@
     [(deftest test-adr-doe-agents-008-adapters-import-canonical-patterns
        ;; 家の identity: adapter property が返すのは leaf の定数オブジェクト
        ;; そのもの(is 一致)。literal 再定義では同一オブジェクトにならない。
-       (import doeff_agents.adapters.claude [ClaudeAdapter])
-       (import doeff_agents.adapters.codex [CodexAdapter])
+       (import doeff_agents._adapters.claude [ClaudeAdapter])
+       (import doeff_agents._adapters.codex [CodexAdapter])
        (import doeff_agents.ready-physics :as ready-physics)
        (assert (is (. (ClaudeAdapter) ready-pattern)
                    ready-physics.CLAUDE-SCREEN-READER-READY-PATTERN))
@@ -76,11 +76,11 @@
                   fx.REPL-IDLE-MAX-WAIT-SECONDS)))
      (defsemgrep ready-pattern-literal-outside-home
        "doeff-agents-ready-pattern-literal-outside-physics-home"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/adapters/claude.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
          "source" "CLAUDE_READY_PATTERN = r\"shift\\+tab to cycle\"\n"}
-        {"relative-path" "packages/doeff-agents/src/doeff_agents/adapters/codex.py"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/codex.py"
          "source" "CODEX_READY_PATTERN = r\"(?ims)composer\"\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/adapters/claude.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
          "source" "from doeff_agents.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN\n"}])
      (defsemgrep repl-idle-budget-literal-outside-home
        "doeff-agents-repl-idle-budget-literal-single-home"

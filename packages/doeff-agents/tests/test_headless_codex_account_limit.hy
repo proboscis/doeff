@@ -6,10 +6,10 @@
 ;; 層 2 の事実の刻と文をそのまま運び、窓の長さを claude と同じ綴りの窓の名にするだけ(判定・閾値・codex の誤りの種類の綴りは層 2)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "headless-codex-adapter-test" :role "program"})
-(import doeff_agents.effects [AgentAccountLimit])
-(import doeff_agents.handlers.headless_codex [account-limit-of])
+(import doeff_agents [AgentAccountLimit])
+(import doeff_agents._handlers.headless_codex [account-limit-of])
 ;; 層 2 の事実の型は組み立ての部品から読む(この検も doeff_codex を import しない)。
-(import doeff_agents.handlers.headless_compose [CodexUsageLimitHit])
+(import doeff_agents._handlers.headless_compose [CodexUsageLimitHit])
 
 (val TEXT "You’ve hit your usage limit.")
 (val FIVE-HOURS-AT 1893456000)

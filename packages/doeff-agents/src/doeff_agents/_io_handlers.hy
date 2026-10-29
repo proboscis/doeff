@@ -1,0 +1,193 @@
+;;; driver 層の I/O の本番 handler(agora-redesign 段 7 lane 7c — 決定 1.3)。
+;;;
+;;; 既知の形: algebraic effects。この module は
+;;; `doeff_agents._io_effects` の要求を実世界で果たす**唯一の家**で、
+;;; driver 層(adapters / tmux / session の台帳 / agentd の client)の
+;;; 生の syscall はここにしか無い。
+;;;
+;;; 検では `doeff_agents._io_fake` の handler を同じ program に
+;;; 当てる(composition root が選ぶ)。
+
+(require doeff-hy.handle [defhandler])
+(require doeff-hy.macros [<-])
+
+(import os)
+(import shutil)
+(import socket)
+(import subprocess)
+(import tempfile)
+(import time)
+(import pathlib [Path])
+
+(import doeff [Program run])
+(import doeff_core_effects.os_process [run-subprocess os-executable-at])
+(import doeff_time [sync-time-handler])
+(import doeff_agents._io_effects [
+  ProcessOutcome
+  WhichExecutable
+  HomePath
+  TempRoot
+  ProcessId
+  EnvValue
+  PathExists
+  ReadText
+  WriteText
+  AppendText
+  MakeDirs
+  TouchFile
+  CopyFile
+  ListDir
+  RunProcess
+  SpawnDetached
+  StartSessionHost
+  _session-host-argv
+  UnixLineRequest
+  UnixConnectProbe
+  ExecutableAt
+  MonotonicTime])
+
+
+(defn _write-text-io [path text mode]
+  "書いてから mode を与える。親 dir は呼び手が MakeDirs で先に作る。"
+  (setv target (Path path))
+  (.write-text target text :encoding "utf-8")
+  (when (is-not mode None)
+    (.chmod target mode))
+  None)
+
+
+(defn _touch-file-io [path mode]
+  (setv target (Path path))
+  (.touch target :exist-ok True)
+  (when (is-not mode None)
+    (.chmod target mode))
+  None)
+
+
+(defn _spawn-detached-io [argv log-path cwd]
+  (.mkdir (. (Path log-path) parent) :parents True :exist-ok True)
+  (with [log-file (open log-path "ab")]
+    (setv child (subprocess.Popen (list argv)
+                                  :stdin subprocess.DEVNULL
+                                  :stdout log-file
+                                  :stderr subprocess.STDOUT
+                                  :cwd cwd
+                                  :start-new-session True)))
+  child.pid)
+
+
+(defn _unix-line-request-io [socket-path payload timeout]
+  (with [sock (socket.socket socket.AF-UNIX socket.SOCK-STREAM)]
+    (when (is-not timeout None)
+      (.settimeout sock timeout))
+    (.connect sock socket-path)
+    (.sendall sock (.encode payload "utf-8"))
+    (with [reader (.makefile sock "r" :encoding "utf-8")]
+      (setv line (.readline reader))))
+  line)
+
+
+(defn _unix-connect-probe-io [socket-path timeout]
+  "繋がった = accepting / 相手不在の証明 = refused / それ以外 = unreachable。
+   観測できなかったこと(backlog 満杯の timeout 等)を不在へ畳まない。"
+  (setv probe (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
+  (try
+    (.settimeout probe timeout)
+    (.connect probe socket-path)
+    "accepting"
+    (except [#(ConnectionRefusedError FileNotFoundError)] "refused")
+    (except [OSError] "unreachable")
+    (finally (.close probe))))
+
+
+(defhandler driver-io-handler
+  "driver 層の I/O 要求を実世界で果たす。判断は 1 つも持たない。"
+
+  (WhichExecutable [name]
+    (resume (shutil.which name)))
+
+  (HomePath []
+    (resume (str (Path.home))))
+
+  (TempRoot []
+    (resume (tempfile.gettempdir)))
+
+  (ProcessId []
+    (resume (os.getpid)))
+
+  (EnvValue [name]
+    (resume (.get os.environ name)))
+
+  (PathExists [path]
+    (resume (.exists (Path path))))
+
+  (ReadText [path]
+    (setv target (Path path))
+    (resume (if (.exists target)
+                (.read-text target :encoding "utf-8" :errors "replace")
+                None)))
+
+  (WriteText [path text mode]
+    (resume (_write-text-io path text mode)))
+
+  (AppendText [path text]
+    (with [handle (open path "a" :encoding "utf-8")]
+      (.write handle text))
+    (resume None))
+
+  (MakeDirs [path mode]
+    (setv target (Path path))
+    (if (is mode None)
+        (.mkdir target :parents True :exist-ok True)
+        (.mkdir target :mode mode :parents True :exist-ok True))
+    (when (is-not mode None)
+      (.chmod target mode))
+    (resume None))
+
+  (TouchFile [path mode]
+    (resume (_touch-file-io path mode)))
+
+  (CopyFile [source target]
+    (if (.exists (Path source))
+        (do (shutil.copy2 source target) (resume True))
+        (resume False)))
+
+  (ListDir [path pattern]
+    (setv root (Path path))
+    (resume (if (.is-dir root)
+                (tuple (sorted (gfor entry (.glob root pattern) (str entry))))
+                #())))
+
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の run-subprocess — agora-redesign #802 便 1・#2184)。
+    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output))
+    (resume outcome))
+
+  (SpawnDetached [argv log-path cwd]
+    (resume (_spawn-detached-io argv log-path cwd)))
+
+  (StartSessionHost [db-path socket-path max-running log-path host-bin]
+    ;; host は入口の module を今の python で起こす(PATH を見ない — argv は io_effects の 1 点)。
+    (<- argv (_session-host-argv host-bin db-path socket-path max-running))
+    (resume (_spawn-detached-io argv log-path None)))
+
+  (UnixLineRequest [socket-path payload timeout]
+    (resume (_unix-line-request-io socket-path payload timeout)))
+
+  (UnixConnectProbe [socket-path timeout]
+    (resume (_unix-connect-probe-io socket-path timeout)))
+
+  (ExecutableAt [path]
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の os-executable-at — dir・無い path は False)。
+    (<- found (os-executable-at path))
+    (resume found))
+
+  (MonotonicTime []
+    (resume (time.monotonic))))
+
+
+(defn #^ object run-driver-io [#^ Program program]
+  "composition root: driver 層の program を本番の I/O で回す(答えは program の答え — 型は渡す program ごとに違う)。
+   program の待ち(doeff-time の Delay)には、外側の sync-time-handler が壁の時計で答える — driver-io-handler は待ちに
+   答えない(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R2)。"
+  (run ((sync-time-handler) (driver-io-handler program))))

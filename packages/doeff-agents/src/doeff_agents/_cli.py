@@ -1,10 +1,10 @@
 """CLI for doeff-agents: each command runs a program of doeff-agents effects under handlers.
 
 A command builds a program that yields effects — the public session effects
-(``doeff_agents.effects``) and, for the ``agentd`` verbs that speak the host
+(``doeff_agents._effects``) and, for the ``agentd`` verbs that speak the host
 protocol itself and for ``ps``'s unreadable rows, the internal host asks
-(``doeff_agents.effects._session_host_effects``) — and runs it under the
-handlers of ``doeff_agents.handlers._session_host``.  The command never builds a
+(``doeff_agents._effects._session_host_effects``) — and runs it under the
+handlers of ``doeff_agents._handlers._session_host``.  The command never builds a
 client: the one thing it hands those handlers is whether reaching no host may
 start one (``start_host``).
 """
@@ -28,7 +28,7 @@ from doeff_agents._agentd_client import (
     AgentdSessionParseWarning,
     AgentdUnavailableError,
 )
-from doeff_agents.effects import (
+from doeff_agents._effects import (
     AgentError,
     AgentSessionSnapshot,
     AgentType,
@@ -44,7 +44,7 @@ from doeff_agents.effects import (
     SessionNotFoundError,
     SessionStatus,
 )
-from doeff_agents.effects._session_host_effects import (
+from doeff_agents._effects._session_host_effects import (
     HostKindsReading,
     HostStatusReading,
     ListSessionRowsEffect,
@@ -52,7 +52,7 @@ from doeff_agents.effects._session_host_effects import (
     SessionHostKindsEffect,
     SessionHostStatusEffect,
 )
-from doeff_agents.handlers._session_host import (
+from doeff_agents._handlers._session_host import (
     session_host_handlers,
     terminal_session_handlers,
 )
