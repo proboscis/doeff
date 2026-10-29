@@ -90,7 +90,7 @@ def example_run_workflow():
 
 def example_trace_observer():
     """Run workflow with trace_observer context manager."""
-    from doeff_flow.trace import write_terminal_trace
+    from doeff_flow._trace import write_terminal_trace
 
     print("=== Example 2: Using trace_observer ===")
     print("Run 'doeff-flow watch example-wf-002' in another terminal\n")

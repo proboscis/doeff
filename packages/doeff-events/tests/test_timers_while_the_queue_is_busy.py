@@ -39,8 +39,7 @@ from doeff_events import (
     subscribed_event_handler,
     timer_handler,
 )
-from doeff_time import GetTime, WaitWithinEffect
-from doeff_time.handlers.sync_time import sync_time_handler
+from doeff_time import GetTime, WaitWithinEffect, sync_time_handler
 
 from doeff import Pass, do, run
 from doeff import handler as program_handler

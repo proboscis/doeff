@@ -3,8 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from doeff_time.effects import Delay, WaitUntil
-from doeff_time.handlers import async_time_handler
+from doeff_time import Delay, WaitUntil, async_time_handler
 from time_test_support import run_with_handlers
 
 from doeff import do

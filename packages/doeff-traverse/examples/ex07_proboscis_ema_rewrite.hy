@@ -24,9 +24,9 @@
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Fail Reduce Zip Inspect])
-(import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
-(import doeff_traverse.helpers [try-call :as try_call])
+(import doeff_traverse [Fail Reduce Zip Inspect])
+(import doeff_traverse [sequential parallel fail-handler :as fail_handler])
+(import doeff_traverse [try-call :as try_call])
 
 
 ;; ===========================================================================

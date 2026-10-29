@@ -10,10 +10,9 @@
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
 
-(import doeff_traverse.effects [Fail])
-(import doeff_traverse.handlers [fail-handler :as fail_handler
-                                  normalize-to-none :as normalize_to_none])
-(import doeff_traverse.helpers [try-call :as try_call])
+(import doeff_traverse [Fail])
+(import doeff_traverse [fail-handler :as fail_handler normalize-to-none :as normalize_to_none])
+(import doeff_traverse [try-call :as try_call])
 
 
 ;; ---------------------------------------------------------------------------

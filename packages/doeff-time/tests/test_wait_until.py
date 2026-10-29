@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 import pytest
-from doeff_time.effects import WaitUntil, WaitUntilEffect
+from doeff_time import WaitUntil, WaitUntilEffect
 
 
 def test_wait_until_factory_creates_effect() -> None:

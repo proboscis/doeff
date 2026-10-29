@@ -23,8 +23,15 @@ from doeff_core_effects.scheduler import (
     Spawn,
     scheduled,
 )
-from doeff_time import Delay, GetTime, TicksOutcome, WaitTicks, WaitWithin, sim_time_handler
-from doeff_time.handlers.sync_time import sync_time_handler
+from doeff_time import (
+    Delay,
+    GetTime,
+    TicksOutcome,
+    WaitTicks,
+    WaitWithin,
+    sim_time_handler,
+    sync_time_handler,
+)
 from time_test_support import run_with_handlers, sim_time
 
 from doeff import Effect, Pass, do

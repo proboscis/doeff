@@ -4,9 +4,15 @@
 import json
 from pathlib import Path
 
-from doeff_flow import run_result
-from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
-from doeff_flow.handlers import mock_handlers, production_handlers
+from doeff_flow import (
+    TraceAnnotate,
+    TraceCapture,
+    TracePush,
+    TraceSnapshot,
+    mock_handlers,
+    production_handlers,
+    run_result,
+)
 
 from doeff import do
 
@@ -31,16 +37,16 @@ def _trace_program():
 
 
 def test_effect_exports():
-    from doeff_flow.effects import TraceAnnotate as ImportedTraceAnnotate
-    from doeff_flow.effects import TracePush as ImportedTracePush
+    from doeff_flow import TraceAnnotate as ImportedTraceAnnotate
+    from doeff_flow import TracePush as ImportedTracePush
 
     assert ImportedTracePush is TracePush
     assert ImportedTraceAnnotate is TraceAnnotate
 
 
 def test_handler_exports():
-    from doeff_flow.handlers import mock_handlers as imported_mock_handlers
-    from doeff_flow.handlers import production_handlers as imported_production_handlers
+    from doeff_flow import mock_handlers as imported_mock_handlers
+    from doeff_flow import production_handlers as imported_production_handlers
 
     assert imported_production_handlers is production_handlers
     assert imported_mock_handlers is mock_handlers

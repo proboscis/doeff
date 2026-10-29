@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 import pytest
-from doeff_time.effects import ScheduleAt, ScheduleAtEffect, SetTime, SetTimeEffect
+from doeff_time import ScheduleAt, ScheduleAtEffect, SetTime, SetTimeEffect
 
 
 def test_set_time_factory_creates_effect() -> None:

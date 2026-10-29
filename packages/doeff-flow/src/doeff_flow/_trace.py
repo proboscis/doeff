@@ -1,0 +1,464 @@
+"""
+Live effect trace observability for doeff workflows.
+
+This module provides types and utilities for observing workflow execution
+in real-time, writing trace data to JSONL files that can be watched by
+external tools.
+
+Public API:
+    - TraceFrame: A frame in the effect trace (corresponds to a @do function call)
+    - LiveTrace: Current execution state of a workflow
+    - trace_observer: Context manager for creating an on_step callback
+
+Example usage:
+    from doeff import run
+    from doeff_flow._trace import trace_observer
+
+    with trace_observer("wf-001", Path(".doeff-flow")) as on_step:
+        result = run(my_workflow())
+"""
+
+
+import json
+import re
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from doeff import Err, Ok
+from doeff_flow import _env_places as env_places
+
+
+def get_default_trace_dir() -> Path:
+    """Get the default trace directory following XDG Base Directory Specification.
+
+    Returns the trace directory in this order of precedence:
+    1. $DOEFF_FLOW_TRACE_DIR if set
+    2. $XDG_STATE_HOME/doeff-flow if XDG_STATE_HOME is set
+    3. ~/.local/state/doeff-flow (XDG default)
+
+    Returns:
+        Path to the default trace directory.
+    """
+    # Check for explicit override
+    if env_dir := env_places.trace_dir_setting():
+        return Path(env_dir)
+
+    # Use XDG_STATE_HOME or default
+    return env_places.state_home() / "doeff-flow"
+
+
+@dataclass
+class TraceFrame:
+    """A frame in the effect trace (corresponds to a @do function call).
+
+    Attributes:
+        function: Function name.
+        file: Source file path.
+        line: Line number in the source file.
+        code: Optional source code at that line.
+    """
+
+    function: str
+    file: str
+    line: int
+    code: str | None
+
+
+@dataclass
+class GatherState:
+    """State of an active Gather (parallel) operation.
+
+    Attributes:
+        total: Total number of parallel tasks.
+        completed: Number completed so far.
+        results: Repr strings of completed results.
+    """
+
+    total: int
+    completed: int
+    results: list[str]
+
+
+@dataclass
+class LiveTrace:
+    """Current execution state of a workflow.
+
+    Attributes:
+        workflow_id: Unique identifier for the workflow.
+        step: Current interpreter step count.
+        status: Execution status ("pending" | "running" | "paused" | "completed" | "failed").
+        current_effect: String representation of the current effect being processed.
+        trace: List of trace frames (K stack, innermost last).
+        started_at: ISO timestamp of workflow start.
+        updated_at: ISO timestamp of last update.
+        error: Error message if status is "failed", None otherwise.
+        result: Repr of return value if completed, None otherwise.
+        gather: Info about active parallel gather, None if not gathering.
+        last_slog: Most recent structured log payload from slog(), None otherwise.
+    """
+
+    workflow_id: str
+    step: int
+    status: str  # "pending" | "running" | "paused" | "completed" | "failed"
+    current_effect: str | None
+    trace: list[TraceFrame]
+    started_at: str
+    updated_at: str
+    error: str | None = None
+    result: str | None = None
+    gather: GatherState | None = None
+    last_slog: dict | None = None
+
+
+def validate_workflow_id(workflow_id: str) -> str:
+    """Validate workflow_id contains only safe characters and reasonable length.
+
+    Args:
+        workflow_id: The workflow ID to validate.
+
+    Returns:
+        The validated workflow ID.
+
+    Raises:
+        ValueError: If the workflow ID is invalid (empty, too long, or has invalid characters).
+    """
+    if not workflow_id:
+        raise ValueError("workflow_id cannot be empty")
+    if len(workflow_id) > 255:
+        raise ValueError(f"workflow_id too long: {len(workflow_id)} > 255 characters")
+    if not re.match(r"^[a-zA-Z0-9_-]+$", workflow_id):
+        raise ValueError(f"Invalid workflow_id: {workflow_id!r}. Must match [a-zA-Z0-9_-]+")
+    return workflow_id
+
+
+# Alias for internal use
+_validate_workflow_id = validate_workflow_id
+
+
+def _safe_repr(obj: object, max_len: int = 200) -> str:
+    """Safe repr with truncation for large objects.
+
+    Args:
+        obj: The object to represent.
+        max_len: Maximum length of the representation.
+
+    Returns:
+        String representation, truncated if necessary.
+    """
+    r = repr(obj)
+    if len(r) > max_len:
+        return r[: max_len - 3] + "..."
+    return r
+
+
+def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
+    """Append trace as JSONL line.
+
+    Args:
+        trace_file: Path to the trace JSONL file.
+        trace: The LiveTrace to write.
+    """
+    # Convert dataclass to dict, handling nested TraceFrame dataclasses
+    trace_dict = {
+        "workflow_id": trace.workflow_id,
+        "step": trace.step,
+        "status": trace.status,
+        "current_effect": trace.current_effect,
+        "trace": [asdict(frame) for frame in trace.trace],
+        "started_at": trace.started_at,
+        "updated_at": trace.updated_at,
+        "error": trace.error,
+        "result": trace.result,
+        "gather": asdict(trace.gather) if trace.gather else None,
+        "last_slog": trace.last_slog,
+    }
+    with trace_file.open("a") as f:
+        f.write(json.dumps(trace_dict) + "\n")
+
+
+def _optional_str(value: object) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _frame_from_json(value: object) -> TraceFrame | None:
+    """One ``trace`` item of a line written by ``_write_trace``, or None when it is not one."""
+    if not isinstance(value, dict):
+        return None
+    function, file, line, code = (value.get(key) for key in ("function", "file", "line", "code"))
+    if not (isinstance(function, str) and isinstance(file, str) and isinstance(line, int)):
+        return None
+    if not _optional_str(code):
+        return None
+    return TraceFrame(function=function, file=file, line=line, code=code)
+
+
+def _gather_from_json(value: object) -> GatherState | None:
+    """The ``gather`` of a line written by ``_write_trace``, or None when it is not one."""
+    if not isinstance(value, dict):
+        return None
+    total, completed, results = (value.get(key) for key in ("total", "completed", "results"))
+    if not (isinstance(total, int) and isinstance(completed, int) and isinstance(results, list)):
+        return None
+    if not all(isinstance(result, str) for result in results):
+        return None
+    return GatherState(total=total, completed=completed, results=list(results))
+
+
+def _trace_from_line(line: str) -> LiveTrace | None:  # noqa: PLR0911 - one refusal per field keeps the reading flat
+    """The LiveTrace a ``_write_trace`` line holds, or None when the line is not one.
+
+    The reader's half of the file format ``_write_trace`` writes: a line still being
+    written, or one with a field of the wrong type, is not a trace entry.
+    """
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not (isinstance(value, dict) and isinstance(value.get("trace"), list)):
+        return None
+    frames = [_frame_from_json(frame) for frame in value["trace"]]
+    if any(frame is None for frame in frames):
+        return None
+    workflow_id, step, status = value.get("workflow_id"), value.get("step"), value.get("status")
+    if not (isinstance(workflow_id, str) and isinstance(step, int) and isinstance(status, str)):
+        return None
+    started_at, updated_at = value.get("started_at"), value.get("updated_at")
+    if not (isinstance(started_at, str) and isinstance(updated_at, str)):
+        return None
+    current_effect, error, result = (value.get(key) for key in ("current_effect", "error", "result"))
+    if not (_optional_str(current_effect) and _optional_str(error) and _optional_str(result)):
+        return None
+    gather_value = value.get("gather")
+    gather = None if gather_value is None else _gather_from_json(gather_value)
+    if gather_value is not None and gather is None:
+        return None
+    last_slog = value.get("last_slog")
+    if not (last_slog is None or isinstance(last_slog, dict)):
+        return None
+    return LiveTrace(
+        workflow_id=workflow_id,
+        step=step,
+        status=status,
+        current_effect=current_effect,
+        trace=[frame for frame in frames if frame is not None],
+        started_at=started_at,
+        updated_at=updated_at,
+        error=error,
+        result=result,
+        gather=gather,
+        last_slog=last_slog,
+    )
+
+
+def write_terminal_trace(
+    workflow_id: str,
+    trace_dir: Path | str | None,
+    run_result: Any,
+) -> None:
+    """Write a single terminal trace snapshot from a completed run result."""
+    workflow_id = _validate_workflow_id(workflow_id)
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+    elif isinstance(trace_dir, str):
+        trace_dir = Path(trace_dir)
+
+    trace_file = trace_dir / workflow_id / "trace.jsonl"
+    trace_file.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now().isoformat()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
+    error = None
+    result_repr = None
+
+    if isinstance(run_result, Ok):
+        is_ok = True
+        try:
+            result_repr = _safe_repr(run_result.value)
+        except Exception:
+            result_repr = None
+    elif isinstance(run_result, Err):
+        is_ok = False
+        try:
+            err = run_result.error
+            error = f"{type(err).__name__}: {err}"
+        except Exception:
+            error = "UnknownError"
+    else:
+        try:
+            result_repr = _safe_repr(run_result)
+        except Exception:
+            result_repr = None
+        is_ok = True
+
+    trace = LiveTrace(
+        workflow_id=workflow_id,
+        step=0,
+        status="completed" if is_ok else "failed",
+        current_effect=None,
+        trace=[],
+        started_at=now,
+        updated_at=now,
+        error=error,
+        result=result_repr,
+    )
+    _write_trace(trace_file, trace)
+
+
+@contextmanager
+def trace_observer(
+    workflow_id: str,
+    trace_dir: Path | str | None = None,
+) -> Generator[Callable[[Any], None], None, None]:
+    """Context manager that creates an on_step callback for live trace.
+
+    Creates a callback function that writes execution snapshots to a JSONL
+    file, enabling real-time observation of workflow execution.
+
+    Args:
+        workflow_id: Unique identifier for the workflow. Must match [a-zA-Z0-9_-]+.
+        trace_dir: Directory where trace files will be written. Can be Path or str.
+            If None, uses XDG-compliant default (~/.local/state/doeff-flow).
+
+    Yields:
+        A callback function that can be wired to interpreter step hooks.
+
+    Example:
+        from doeff import run
+        from doeff_flow._trace import trace_observer
+
+        # Uses default XDG directory
+        with trace_observer("wf-001") as on_step:
+            result = run(my_workflow())
+    """
+    workflow_id = _validate_workflow_id(workflow_id)
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+    elif isinstance(trace_dir, str):
+        trace_dir = Path(trace_dir)
+    trace_file = trace_dir / workflow_id / "trace.jsonl"
+    trace_file.parent.mkdir(parents=True, exist_ok=True)
+
+    started_at = datetime.now().isoformat()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
+
+    def on_step(snapshot: Any) -> None:
+        # For error cases, use the captured effect trace and error location
+        if snapshot.error is not None and snapshot.error.effect_trace:
+            # Build frames from the captured effect trace
+            frames = [
+                TraceFrame(
+                    function=loc.function,
+                    file=loc.filename,
+                    line=loc.line,
+                    code=loc.code,
+                )
+                for loc in snapshot.error.effect_trace
+            ]
+            # Update the deepest frame with error location (where exception was raised)
+            if snapshot.error.error_location is not None and frames:
+                error_loc = snapshot.error.error_location
+                # If error is in the same function as deepest frame, update that frame
+                # (shows the raise line instead of the yield line)
+                if frames[-1].function == error_loc.function:
+                    frames[-1] = TraceFrame(
+                        function=error_loc.function,
+                        file=error_loc.filename,
+                        line=error_loc.line,
+                        code=error_loc.code,
+                    )
+                # If error is in a different function (pure Python call), add as new frame
+                elif frames[-1].line != error_loc.line:
+                    frames.append(
+                        TraceFrame(
+                            function=error_loc.function,
+                            file=error_loc.filename,
+                            line=error_loc.line,
+                            code=error_loc.code,
+                        )
+                    )
+        else:
+            # Normal case: extract ReturnFrames from K stack
+            # K stack is [innermost, ..., outermost], reverse for tree display
+            frames = [
+                TraceFrame(
+                    function=f.location.function if f.location else "?",
+                    file=f.location.filename if f.location else "?",
+                    line=f.location.line if f.location else 0,
+                    code=f.location.code if f.location else None,
+                )
+                for f in reversed(snapshot.k_stack)
+                if f.frame_type == "ReturnFrame"
+            ]
+
+            # Include active_call as the deepest frame (captures non-yielding functions)
+            if snapshot.active_call is not None:
+                frames.append(
+                    TraceFrame(
+                        function=snapshot.active_call.function,
+                        file=snapshot.active_call.filename,
+                        line=snapshot.active_call.line,
+                        code=snapshot.active_call.code,
+                    )
+                )
+
+        # Extract error info if present
+        error_msg = None
+        if snapshot.error is not None:
+            error_msg = f"{snapshot.error.exception_type}: {snapshot.error.message}"
+
+        # Extract gather info if present
+        gather_state = None
+        if snapshot.gather_info is not None:
+            gather_state = GatherState(
+                total=snapshot.gather_info.total_tasks,
+                completed=snapshot.gather_info.completed_count,
+                results=list(snapshot.gather_info.completed_results),
+            )
+
+        # Extract structured log (slog) if current effect is WriterTellEffect with dict
+        last_slog = None
+        if snapshot.current_effect is not None:
+            current_effect = snapshot.current_effect
+            effect_cls = current_effect.__class__
+            is_writer_tell = (
+                effect_cls.__name__ == "WriterTellEffect"
+                and effect_cls.__module__.startswith("doeff")
+            )
+            if is_writer_tell and hasattr(current_effect, "message"):
+                msg = current_effect.message
+                if isinstance(msg, dict):
+                    last_slog = msg
+
+        trace = LiveTrace(
+            workflow_id=workflow_id,
+            step=snapshot.step_count,
+            status=snapshot.status,
+            current_effect=(
+                _safe_repr(snapshot.current_effect) if snapshot.current_effect else None
+            ),
+            trace=frames,
+            started_at=started_at,
+            updated_at=datetime.now().isoformat(),  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
+            error=error_msg,
+            result=snapshot.result,
+            gather=gather_state,
+            last_slog=last_slog,
+        )
+
+        _write_trace(trace_file, trace)
+
+    yield on_step
+    # No cleanup needed - final state already written by last on_step call
+
+
+__all__ = [
+    "GatherState",
+    "LiveTrace",
+    "TraceFrame",
+    "get_default_trace_dir",
+    "trace_observer",
+    "validate_workflow_id",
+    "write_terminal_trace",
+]

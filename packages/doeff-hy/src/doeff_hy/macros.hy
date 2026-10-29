@@ -2731,10 +2731,10 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   (if (_static-view?)
       `(do (import doeff-hy.static-types [do :as _doeff_validation_do])
            (import doeff-validation :as _doeff_validation)
-           (import doeff-validation.api :as _doeff_validation_api))
+           (import doeff-validation._api :as _doeff_validation_api))
       `(do ~(_runtime-do-import '_doeff_validation_do)
            (import doeff-validation :as _doeff_validation)
-           (import doeff-validation.api :as _doeff_validation_api))))
+           (import doeff-validation._api :as _doeff_validation_api))))
 
 
 (defn _validation-predicate [op params]

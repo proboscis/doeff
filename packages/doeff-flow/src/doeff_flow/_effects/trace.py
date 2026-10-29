@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import EffectBase
-from doeff_flow.trace import LiveTrace
+from doeff_flow._trace import LiveTrace
 
 
 @dataclass(frozen=True, kw_only=True)

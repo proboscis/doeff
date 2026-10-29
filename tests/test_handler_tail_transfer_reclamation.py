@@ -41,9 +41,7 @@ from doeff_core_effects.handlers import (
     try_handler,
 )
 from doeff_core_effects.scheduler import scheduled
-from doeff_time import Delay
-from doeff_time.effects import DelayEffect, GetTimeEffect
-from doeff_time.handlers.async_time import async_time_handler
+from doeff_time import Delay, DelayEffect, GetTimeEffect, async_time_handler
 
 from doeff import Await, Gather, Spawn, do, run
 from doeff import handler as _program_handler

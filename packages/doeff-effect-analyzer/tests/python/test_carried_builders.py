@@ -180,8 +180,7 @@ def test_a_handler_yielding_a_program_an_undeclared_field_built_stays_unresolved
 
 
 def test_doeff_traverse_sequential_is_followed() -> None:
-    from doeff_traverse.effects import Traverse
-    from doeff_traverse.handlers import sequential
+    from doeff_traverse import Traverse, sequential
 
     clauses = [
         c for c in analyze_handler(sequential(), name="sequential").clauses if c.handles is Traverse
@@ -197,8 +196,8 @@ def test_doeff_traverse_item_outcomes_stay_inside_the_handler(name: str) -> None
     it past the handler.  A clause that did would leave ``ItemOutcome`` unanswered in every
     stack installing the handler (a foundation closure check reports it as a gap, whether or
     not anything counts outcomes)."""
-    from doeff_traverse import handlers
-    from doeff_traverse.effects import ItemOutcome
+    from doeff_traverse import ItemOutcome
+    from doeff_traverse import _handlers as handlers
 
     read = analyze_handler(getattr(handlers, name)(), name=name)
     assert ItemOutcome in read.handled

@@ -18,10 +18,10 @@
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (import doeff_traverse [Skip :as _doeff_traverse_Skip])
-(import doeff_traverse.collection [Collection])
-(import doeff_traverse.effects [Inspect SortBy Take])
-(import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
-(import doeff_traverse.helpers [try-call :as try_call])
+(import doeff_traverse [Collection])
+(import doeff_traverse [Inspect SortBy Take])
+(import doeff_traverse [sequential fail-handler :as fail_handler])
+(import doeff_traverse [try-call :as try_call])
 
 
 ;; ===========================================================================

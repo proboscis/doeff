@@ -34,9 +34,7 @@ from doeff_events import (
     event_handler,
     timer_handler,
 )
-from doeff_time import GetTime, sim_time_handler
-from doeff_time.handlers.async_time import async_time_handler
-from doeff_time.handlers.sync_time import sync_time_handler
+from doeff_time import GetTime, async_time_handler, sim_time_handler, sync_time_handler
 
 from doeff import Pass, ReadVmWorkCounts, do, run
 from doeff import handler as program_handler

@@ -17,9 +17,12 @@ from typing import TypeVar
 import pytest
 from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
-from doeff_traverse.collection import Collection
-from doeff_traverse.effects import ItemOutcome, ItemOutcomeNotPassedError, Skip, Traverse
-from doeff_traverse.handlers import (
+from doeff_traverse import (
+    Collection,
+    ItemOutcome,
+    ItemOutcomeNotPassedError,
+    Skip,
+    Traverse,
     fail_handler,
     parallel,
     parallel_fail_fast,

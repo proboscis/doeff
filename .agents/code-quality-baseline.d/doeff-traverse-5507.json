@@ -79,14 +79,14 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/effects.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_effects.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 5,
-      "path": "packages/doeff-traverse/doeff_traverse/effects.pyi",
+      "path": "packages/doeff-traverse/doeff_traverse/_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -107,98 +107,98 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_collection.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_collection.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__iter__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_collection.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__len__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_collection.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_collection.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "from_iterable"
     },
     {
       "count": 9,
-      "path": "packages/doeff-traverse/doeff_traverse/effects.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_effects.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "attempt"
     },
     {
       "count": 4,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "parallel"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "parallel_fail_fast"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "progress_bars"
     },
     {
       "count": 2,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "run_item"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "sequential"
     },
     {
       "count": 1,
-      "path": "packages/doeff-traverse/doeff_traverse/helpers.py",
+      "path": "packages/doeff-traverse/doeff_traverse/_helpers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "try_call"

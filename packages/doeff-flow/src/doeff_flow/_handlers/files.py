@@ -1,7 +1,7 @@
 """The handler that answers ReadTraces from the trace files, through doeff's file effects.
 
 The trace of a workflow is ``{trace_dir}/{workflow_id}/trace.jsonl`` (written by
-``doeff_flow.trace``). This handler reads it with the foundation file effects
+``doeff_flow._trace``). This handler reads it with the foundation file effects
 (StatPath, ListDirectory, ReadText), so the handler above it decides where the files
 are: ``os_file_handler`` for the real files, ``memory_file_handler`` in tests.
 """
@@ -19,8 +19,8 @@ from doeff_core_effects.file_effects import (
 )
 
 from doeff import Effect, Pass, Resume, do, handler
-from doeff_flow.effects import ReadTraces
-from doeff_flow.trace import LiveTrace, _trace_from_line
+from doeff_flow._effects import ReadTraces
+from doeff_flow._trace import LiveTrace, _trace_from_line
 
 TRACE_FILE = "trace.jsonl"
 

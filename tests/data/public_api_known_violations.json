@@ -17271,14 +17271,6 @@
       "ProgressBar"
      ]
     },
-    "外れ — 内側の module へ移す": {
-     "doeff_traverse": [
-      "sequential"
-     ],
-     "doeff_traverse.handlers": [
-      "sequential"
-     ]
-    },
     "外れ — submodule を _ で隠す": {
      "(submodule)": [
       "doeff_traverse.collection",

@@ -11,8 +11,8 @@
       "packages/doeff-agentic/tests/test_handlers_module.py": 1,
       "packages/doeff-agents/src/doeff_agents/_agentd_client.py": 2,
       "packages/doeff-effect-analyzer/tests/python/test_result_cache.py": 1,
-      "packages/doeff-flow/src/doeff_flow/handlers/production.py": 1,
-      "packages/doeff-flow/src/doeff_flow/handlers/testing.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_handlers/production.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_handlers/testing.py": 1,
       "packages/doeff-gemini/src/doeff_gemini/_client.py": 2,
       "packages/doeff-git/src/doeff_git/_handlers/testing.py": 1,
       "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/_client.py": 3,
@@ -77,8 +77,8 @@
       "packages/doeff-events/src/doeff_events/__init__.py": 2,
       "packages/doeff-events/src/doeff_events/_effects/__init__.py": 1,
       "packages/doeff-events/src/doeff_events/_handlers/__init__.py": 1,
-      "packages/doeff-flow/src/doeff_flow/effects/__init__.py": 1,
-      "packages/doeff-flow/src/doeff_flow/handlers/__init__.py": 2,
+      "packages/doeff-flow/src/doeff_flow/_effects/__init__.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_handlers/__init__.py": 2,
       "packages/doeff-gemini/src/doeff_gemini/__init__.py": 6,
       "packages/doeff-gemini/src/doeff_gemini/_client.py": 2,
       "packages/doeff-gemini/src/doeff_gemini/_costs.py": 1,
@@ -122,7 +122,7 @@
       "packages/doeff-test-target/src/doeff_test_target/scenarios/__init__.py": 11,
       "packages/doeff-time/src/doeff_time/_internals/__init__.py": 2,
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1,
-      "packages/doeff-time/src/doeff_time/handlers/__init__.py": 3
+      "packages/doeff-time/src/doeff_time/_handlers/__init__.py": 3
     },
     "DOEFF021": {
       "packages/doeff-agentic/src/doeff_agentic/__init__.py": 1,
@@ -155,12 +155,12 @@
       "packages/doeff-events/src/doeff_events/_handlers/__init__.py": 1,
       "packages/doeff-events/src/doeff_events/_handlers/memory.py": 1,
       "packages/doeff-flow/src/doeff_flow/__init__.py": 1,
-      "packages/doeff-flow/src/doeff_flow/effects/__init__.py": 1,
-      "packages/doeff-flow/src/doeff_flow/effects/trace.py": 1,
-      "packages/doeff-flow/src/doeff_flow/handlers/__init__.py": 1,
-      "packages/doeff-flow/src/doeff_flow/handlers/production.py": 1,
-      "packages/doeff-flow/src/doeff_flow/handlers/testing.py": 1,
-      "packages/doeff-flow/src/doeff_flow/trace.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_effects/__init__.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_effects/trace.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_handlers/__init__.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_handlers/production.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_handlers/testing.py": 1,
+      "packages/doeff-flow/src/doeff_flow/_trace.py": 1,
       "packages/doeff-gemini/src/doeff_gemini/__init__.py": 1,
       "packages/doeff-gemini/src/doeff_gemini/_client.py": 1,
       "packages/doeff-gemini/src/doeff_gemini/_costs.py": 1,
@@ -248,7 +248,7 @@
       "packages/doeff-test-target/src/doeff_test_target/helpers/__init__.py": 1,
       "packages/doeff-test-target/src/doeff_test_target/scenarios/__init__.py": 1,
       "packages/doeff-time/src/doeff_time/_internals/__init__.py": 1,
-      "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
+      "packages/doeff-time/src/doeff_time/_handlers/__init__.py": 1
     }
   },
   "version": "doeff-linter の組み立ての入力 c90d3d5af56d9c48c57e56dd0c74220c7c8eaee2"

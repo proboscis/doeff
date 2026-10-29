@@ -39,7 +39,7 @@ from doeff_records.event_source import (
     run_signal_source,
 )
 from doeff_records.memory import MEMORY_SOURCE_EFFECTS
-from doeff_time.effects.time import GetTimeEffect, WaitWithinEffect
+from doeff_time import GetTimeEffect, WaitWithinEffect
 
 from doeff import EffectGenerator, do, with_handlers
 

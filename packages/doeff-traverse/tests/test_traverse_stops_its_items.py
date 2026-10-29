@@ -34,9 +34,10 @@ from doeff_core_effects.scheduler import (
     Wait,
     scheduled,
 )
-from doeff_traverse.collection import Collection
-from doeff_traverse.effects import ItemOutcome, Traverse
-from doeff_traverse.handlers import (
+from doeff_traverse import (
+    Collection,
+    ItemOutcome,
+    Traverse,
     fail_handler,
     parallel,
     parallel_fail_fast,

@@ -1,19 +1,19 @@
-"""Tests for doeff_flow.trace with VM-native tracing patterns."""
+"""Tests for doeff_flow._trace with VM-native tracing patterns."""
 
 
 import json
 from pathlib import Path
 
 import pytest
-from doeff_flow import run_result, run_workflow
-from doeff_flow.trace import (
+from doeff_flow import (
     LiveTrace,
     TraceFrame,
-    _safe_repr,
     get_default_trace_dir,
+    run_result,
+    run_workflow,
     validate_workflow_id,
-    write_terminal_trace,
 )
+from doeff_flow._trace import _safe_repr, write_terminal_trace
 
 from doeff import Ask, Effect, Get, Pass, Pure, Put, Resume, do
 from doeff import handler as _install_raw_handler

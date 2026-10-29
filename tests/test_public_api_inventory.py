@@ -239,7 +239,7 @@ def test_real_package_effects_and_handlers(real_packages: dict[str, dict]) -> No
     rows = _rows(package)
     assert rows[("doeff_time", "GetTimeEffect")]["kind"] == "effect"
     assert rows[("doeff_time", "GetTimeEffect")]["defined_at"].startswith(
-        "packages/doeff-time/src/doeff_time/effects/time.py:"
+        "packages/doeff-time/src/doeff_time/_effects/time.py:"
     )
     assert rows[("doeff_time", "get_time")]["kind"] == "effect"
     assert rows[("doeff_time", "sim_time_handler")]["kind"] == "handler"

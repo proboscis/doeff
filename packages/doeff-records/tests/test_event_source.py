@@ -83,7 +83,7 @@ from doeff_records import (
     Written,
 )
 from doeff_time import Delay, GetTime, SimClock, WaitWithin, sim_time_handler
-from doeff_time.effects.time import WaitWithinEffect
+from doeff_time import WaitWithinEffect
 
 from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, handler, run, with_handlers
 from doeff.program import ProgramHandler

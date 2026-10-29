@@ -960,7 +960,7 @@ _BUILT_VALUE_PREAMBLE = f"""
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
+(import doeff_traverse._handlers [sequential fail-handler :as fail_handler])
 
 (defn answer [built]
   (setv outcome (run (scheduled ((sequential) (fail_handler (try_handler built))))))

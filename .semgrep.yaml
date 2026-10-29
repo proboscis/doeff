@@ -1256,7 +1256,7 @@ rules:
     paths:
       include:
         - /doeff/__main__.py
-        - /packages/doeff-flow/src/doeff_flow/trace.py
+        - /packages/doeff-flow/src/doeff_flow/_trace.py
         - /packages/doeff-conductor/src/doeff_conductor/_api.py
 
   - id: no-run-module-cli-entrypoint-import

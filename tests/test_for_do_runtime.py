@@ -14,9 +14,7 @@ import hy
 import hy.macros
 import pytest
 from doeff_core_effects.scheduler import scheduled
-from doeff_traverse.collection import Collection
-from doeff_traverse.effects import Traverse
-from doeff_traverse.handlers import parallel, parallel_fail_fast, sequential
+from doeff_traverse import Collection, Traverse, parallel, parallel_fail_fast, sequential
 
 from doeff import EffectBase, Pass, Program, do, run
 from doeff import handler as program_handler
@@ -122,7 +120,7 @@ def test_skips_and_failures_of_both_froms_keep_their_places() -> None:
 
 def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
     from doeff_core_effects.scheduler import scheduled
-    from doeff_traverse.handlers import parallel
+    from doeff_traverse import parallel
 
     program = _eval("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (+ a b))")
     collection = run(scheduled(parallel(concurrency=2)(program)))

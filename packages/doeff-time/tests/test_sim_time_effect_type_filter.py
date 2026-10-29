@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from types import CodeType, FrameType
 
 from doeff_core_effects import Ask, WriterTellEffect
-from doeff_time import GetTime, sim_time_handler
-from doeff_time.effects import (
+from doeff_time import (
     DelayEffect,
     GetMonotonicEffect,
+    GetTime,
     GetTimeEffect,
     RaceWithinEffect,
     ScheduleAtEffect,
@@ -22,8 +22,9 @@ from doeff_time.effects import (
     WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
+    sim_time_handler,
 )
-from doeff_time.handlers.sim_time import SimTimeRuntime
+from doeff_time._handlers.sim_time import SimTimeRuntime
 from time_test_support import run_with_handlers, sim_time
 
 from doeff import do, handler_effect_types

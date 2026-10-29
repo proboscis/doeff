@@ -1,6 +1,6 @@
 
 import pytest
-from doeff_time.effects import Delay, DelayEffect
+from doeff_time import Delay, DelayEffect
 
 
 def test_delay_factory_creates_effect() -> None:
