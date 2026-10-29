@@ -11,19 +11,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from doeff_agents import tmux
-from doeff_agents.adapters.base import (
+from doeff_agents._adapters.base import (
     AgentAdapter,
     AgentSessionLifecycle,
     AgentType,
     InjectionMethod,
     LaunchParams,
 )
-from doeff_agents.adapters.claude import ClaudeAdapter
-from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
-from doeff_agents.adapters.gemini import GeminiAdapter
+from doeff_agents._adapters.claude import ClaudeAdapter
+from doeff_agents._adapters.codex import CodexAdapter, trust_workspace_in_codex_home
+from doeff_agents._adapters.gemini import GeminiAdapter
 from doeff_agents._agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.claude_home import prepare_claude_home
-from doeff_agents.effects import (
+from doeff_agents._effects import (
     AgentAttemptExhaustedError,
     AgentDeadlineExceededError,
     AgentEffect,
@@ -58,8 +58,8 @@ from doeff_agents.effects import (
     StopEffect,
     StopSessionEffect,
 )
-from doeff_agents.effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
-from doeff_agents.io_root import IoRoot
+from doeff_agents._effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
+from doeff_agents._io_root import IoRoot
 from doeff_agents._monitor import (
     MonitorState,
     SessionStatus,
@@ -68,8 +68,8 @@ from doeff_agents._monitor import (
     hash_content,
     is_waiting_for_input,
 )
-from doeff_agents.result_validation import validate_result_payload
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents._result_validation import validate_result_payload
+from doeff_agents._runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents._session import _dismiss_onboarding_dialogs, deliver_prompt_when_ready
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
@@ -1330,6 +1330,6 @@ class TmuxAgentHandler(AgentHandler):
 
 
 def _default_io_root() -> IoRoot:
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
 
     return run_driver_io

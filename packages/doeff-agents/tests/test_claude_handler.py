@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects.agent import (
+from doeff_agents import AgentType
+from doeff_agents import (
     AgentCapabilityUnsupportedError,
     LaunchEffect,
     SessionHandle,
@@ -55,7 +55,7 @@ class FakeTmuxBackend:
 
 
 def _run(program, backend):
-    from doeff_agents.handlers.claude import claude_handler
+    from doeff_agents import claude_handler
     from doeff_core_effects.scheduler import scheduled
     handler = claude_handler(backend=backend)
     wrapped = state()(handler(program))

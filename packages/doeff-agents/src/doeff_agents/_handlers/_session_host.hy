@@ -1,8 +1,8 @@
 ;;; The handlers the doeff-agents CLI runs its programs under (internal to doeff-agents).
 ;;;
 ;;; A CLI command is a program of effects: the public session effects
-;;; (`doeff_agents.effects`) and the host-protocol asks of
-;;; `doeff_agents.effects._session_host_effects`. `session-host-handlers` builds ONE
+;;; (`doeff_agents._effects`) and the host-protocol asks of
+;;; `doeff_agents._effects._session_host_effects`. `session-host-handlers` builds ONE
 ;;; connection to the session host and answers both over it — the session effects
 ;;; through `daemon-agent-handler`, the host asks through `session-host-defhandler` —
 ;;; so the command never builds a client itself. Whether a host may be started is
@@ -18,15 +18,15 @@
 (import doeff.program [ProgramHandler])
 (import doeff_time [sync-time-handler])
 (import doeff_agents._agentd-client [LazyAgentdClient agentd-socket-is-supervised])
-(import doeff_agents.effects._session-host-effects [
+(import doeff_agents._effects._session-host-effects [
   HostKindsReading
   HostStatusReading
   ListSessionRowsEffect
   SessionHostCallEffect
   SessionHostKindsEffect
   SessionHostStatusEffect])
-(import doeff_agents.handlers [daemon-agent-handler])
-(import doeff_agents.handlers.effectful [tmux-agent-defhandler])
+(import doeff_agents._handlers [daemon-agent-handler])
+(import doeff_agents._handlers.effectful [tmux-agent-defhandler])
 (import doeff_agents.tmux [get-default-backend])
 
 

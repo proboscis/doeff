@@ -18,8 +18,8 @@ from typing import Any, cast
 import doeff_hy  # noqa: F401  (register deftest .hy imports)
 import hy  # noqa: F401  (enable .hy imports)
 import pytest
-from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
-from doeff_agents.mcp_server import McpToolRequest, McpToolServer
+from doeff_agents._handlers.mcp_server_loop import mcp_server_loop
+from doeff_agents._mcp_server import McpToolRequest, McpToolServer
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import EffectBase, Pass, Perform, Pure, Resume, do, run
@@ -318,7 +318,7 @@ class TestMcpServerLoopDaemonSpawn:
         """Every (Spawn (mcp-server-loop ...)) site in the handler sources
         must pass :daemon True — a plain Spawn reintroduces the per-session
         RuntimeWarning this class documents."""
-        import doeff_agents.handlers as handlers_pkg
+        import doeff_agents._handlers as handlers_pkg
 
         handlers_dir = Path(handlers_pkg.__file__).resolve().parent
         spawn_lines: list[tuple[Path, str]] = []

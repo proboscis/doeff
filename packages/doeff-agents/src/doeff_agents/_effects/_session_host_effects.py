@@ -1,10 +1,10 @@
 """What the doeff-agents CLI asks the session host itself (internal to doeff-agents).
 
-The public effects (``doeff_agents.effects``) carry what a program asks of an
+The public effects (``doeff_agents._effects``) carry what a program asks of an
 agent session. The CLI's ``agentd`` verbs are an operator's binding to the host
 protocol instead — read the host's status or its binding kinds, adopt a seat,
 stamp a turn — and ``ps`` must say which of the host's rows it could not read.
-These effects carry those asks; ``doeff_agents.handlers._session_host`` answers
+These effects carry those asks; ``doeff_agents._handlers._session_host`` answers
 them. They are not part of the public API: a program outside doeff-agents asks
 for sessions through the public effects.
 """
@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from doeff_agents.effects.agent import AgentEffectBase, AgentSessionQuery
+from doeff_agents._effects.agent import AgentEffectBase, AgentSessionQuery
 
 
 @dataclass(frozen=True)

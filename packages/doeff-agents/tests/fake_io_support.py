@@ -1,6 +1,6 @@
 """検の I/O 家(段 7 lane 7c)。
 
-driver 層の program は `doeff_agents.io_effects` の要求しか出さないので、
+driver 層の program は `doeff_agents._io_effects` の要求しか出さないので、
 検は実 file・実 process・実 socket を 1 つも触らずに、記憶の中の世界で
 同じ program を回せる。ここはその composition root を組む助けだけを持つ。
 """
@@ -11,10 +11,10 @@ from collections.abc import Callable
 from subprocess import CompletedProcess
 
 import hy  # noqa: F401  # .hy import hook — the fake handler is a Hy module
-from doeff_agents.io_effects import ProcessOutcome as ProcessOutcome
-from doeff_agents.io_fake import FakeIoWorld as FakeIoWorld
-from doeff_agents.io_fake import with_fake_io
-from doeff_agents.io_root import IoRoot
+from doeff_agents._io_effects import ProcessOutcome as ProcessOutcome
+from doeff_agents._io_fake import FakeIoWorld as FakeIoWorld
+from doeff_agents._io_fake import with_fake_io
+from doeff_agents._io_root import IoRoot
 
 from doeff import Program, run
 

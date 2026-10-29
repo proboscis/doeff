@@ -6,7 +6,7 @@ task-configurable. These constructions must each fire
 `k4-deadline-not-transport-timeout`.
 """
 
-from doeff_agents.effects import AgentSpec, AgentTask
+from doeff_agents import AgentSpec, AgentTask
 
 
 def build_task_with_transport_timeout() -> AgentTask:

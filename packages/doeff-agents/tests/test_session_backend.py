@@ -34,16 +34,13 @@ from doeff_agents import session_backend as session_backend_module
 # The session procedures, the terminal backend and the tmux handler object are internal to doeff-agents;
 # these tests exercise them directly.
 from doeff_agents._session import capture_output, launch_session, monitor_session, send_message, stop_session
-from doeff_agents.adapters.base import (
-    InjectionMethod,
-    LaunchConfig,
-    LaunchParams,
-)
-from doeff_agents.handlers.production import TmuxAgentHandler
-from doeff_agents.adapters.codex import CodexAdapter
-from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
-from doeff_agents.result_validation import validate_result_payload
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents import LaunchConfig
+from doeff_agents._adapters.base import InjectionMethod, LaunchParams
+from doeff_agents._handlers.production import TmuxAgentHandler
+from doeff_agents._adapters.codex import CodexAdapter
+from doeff_agents import AwaitResultEffect, AwaitStatus, LaunchSession
+from doeff_agents._result_validation import validate_result_payload
+from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend, SessionConfig, SessionInfo
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
@@ -72,8 +69,8 @@ def test_session_api_import_does_not_load_the_handler_layer() -> None:
         "print(launch_session.__name__)\n"
         "print(default_session_backend.__name__)\n"
         "print(TmuxSessionBackend.__name__)\n"
-        "print('doeff_agents.io_handlers' in sys.modules)\n"
-        "print('doeff_agents.handlers' in sys.modules)\n"
+        "print('doeff_agents._io_handlers' in sys.modules)\n"
+        "print('doeff_agents._handlers' in sys.modules)\n"
         "print('doeff_agents._agentd_client' in sys.modules)\n"
     )
 
@@ -250,7 +247,7 @@ def _config() -> LaunchConfig:
 def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     handler = TmuxAgentHandler(backend=backend)
@@ -293,7 +290,7 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
 def test_tmux_agent_handler_dismisses_claude_mcp_permission_prompt(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     handler = TmuxAgentHandler(backend=backend)
@@ -323,7 +320,7 @@ def test_tmux_agent_handler_dismisses_claude_mcp_permission_prompt(monkeypatch) 
 def test_tmux_agent_handler_dismisses_claude_new_mcp_server_prompt(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     handler = TmuxAgentHandler(backend=backend)
@@ -356,7 +353,7 @@ def test_tmux_agent_handler_dismisses_claude_new_mcp_server_prompt(monkeypatch) 
 def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
     forbidden_key = "ANTHROPIC" + "_API_KEY"
 
@@ -380,7 +377,7 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
     backend = FakeBackend()
     repository = InMemoryAgentSessionRepository()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     handler = TmuxAgentHandler(backend=backend, session_repository=repository)
@@ -419,7 +416,7 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
 def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path: Path) -> None:
     backend = FakeBackend()
     adapter = RecordingAdapter()
-    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: adapter)
+    monkeypatch.setattr("doeff_agents._handlers.production.get_adapter", lambda _agent_type: adapter)
 
     handler = TmuxAgentHandler(backend=backend)
     spec = AgentSpec(
@@ -456,7 +453,7 @@ def test_tmux_agent_handler_sends_initial_prompt_via_terminal_transport(
 ) -> None:
     backend = FakeBackend()
     adapter = RecordingAdapter()
-    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: adapter)
+    monkeypatch.setattr("doeff_agents._handlers.production.get_adapter", lambda _agent_type: adapter)
 
     handler = TmuxAgentHandler(backend=backend)
     prompt = "line one\nline two"
@@ -480,7 +477,7 @@ def test_tmux_agent_handler_sends_initial_prompt_via_terminal_transport(
 def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
     backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
     )
     codex_home = tmp_path / "codex-home"
@@ -515,7 +512,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
     # write).
     backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
     )
     codex_home = tmp_path / "codex-home"
@@ -538,7 +535,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
 def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path) -> None:
     backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
     )
 
@@ -564,7 +561,7 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
 def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> None:
     backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
     )
     tool = McpToolDef(
@@ -604,7 +601,7 @@ def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
 ) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
@@ -641,7 +638,7 @@ def test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prom
 ) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
@@ -680,7 +677,7 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
 ) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
@@ -763,7 +760,7 @@ def test_imperative_session_api_rejects_anthropic_api_key_session_env(monkeypatc
 def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     @do
@@ -794,7 +791,7 @@ def test_agent_effectful_handler_accepts_claude_runtime_policy(
 ) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     @do
@@ -826,7 +823,7 @@ def test_tmux_handler_accepts_claude_runtime_policy(
 ) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+        "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
     handler = TmuxAgentHandler(
@@ -1191,9 +1188,9 @@ def test_tmux_backend_decodes_text_output_as_utf8() -> None:
 
 def test_production_io_handler_decodes_child_output_as_utf8() -> None:
     """段 7 lane 7c: utf-8 の復号の保証は本番の I/O handler 1 点が持つ。"""
-    from doeff_agents.io_effects import run_process
-    from doeff_agents.io_handlers import run_driver_io
-    from doeff_agents.io_root import as_process_outcome
+    from doeff_agents._io_effects import run_process
+    from doeff_agents._io_handlers import run_driver_io
+    from doeff_agents._io_root import as_process_outcome
 
     outcome = as_process_outcome(run_driver_io(run_process(("python3", "-c", "print('日本語')"))))
 

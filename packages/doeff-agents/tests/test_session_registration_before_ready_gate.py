@@ -35,14 +35,12 @@ TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from doeff_agents.adapters.base import AgentType  # noqa: E402
-from doeff_agents.effects.agent import (  # noqa: E402
-    AgentReadyTimeoutError as EffectsAgentReadyTimeoutError,
-)
-from doeff_agents.effects._handler_effects import ClaudeLaunchEffect  # noqa: E402
-from doeff_agents.effects.agent import LaunchEffect  # noqa: E402
-from doeff_agents.effects import SessionStatus  # noqa: E402
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy  # noqa: E402
+from doeff_agents import AgentType  # noqa: E402
+from doeff_agents import AgentReadyTimeoutError as EffectsAgentReadyTimeoutError  # noqa: E402
+from doeff_agents import ClaudeLaunchEffect  # noqa: E402
+from doeff_agents import LaunchEffect  # noqa: E402
+from doeff_agents import SessionStatus  # noqa: E402
+from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy  # noqa: E402
 from doeff_agents.session_store import InMemoryAgentSessionRepository  # noqa: E402
 from test_ready_gate import (  # noqa: E402
     CLAUDE_READY,
@@ -91,7 +89,7 @@ class RegistrationProbeBackend(ScriptedBackend):
 
 
 def _handler(backend: ScriptedBackend, repository, tmp_path: Path):
-    from doeff_agents.handlers.production import TmuxAgentHandler
+    from doeff_agents._handlers.production import TmuxAgentHandler
 
     return TmuxAgentHandler(
         backend=backend,
@@ -135,7 +133,7 @@ def test_handle_launch_registers_booting_row_before_ready_wait(
     repository = InMemoryAgentSessionRepository()
     backend = RegistrationProbeBackend(frames, repository, "codex-reg")
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
     handler = _handler(backend, repository, tmp_path)
@@ -171,7 +169,7 @@ def test_handle_launch_ready_timeout_transitions_row_to_failed(
         ["$ ", "$ codex --yolo"], repository, "codex-cold-reg"
     )
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
     handler = _handler(backend, repository, tmp_path)
@@ -218,7 +216,7 @@ def test_handle_claude_launch_registers_booting_row_before_ready_wait(
     repository = InMemoryAgentSessionRepository()
     backend = RegistrationProbeBackend(frames, repository, "claude-reg")
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
     handler = _handler(backend, repository, tmp_path)
@@ -249,7 +247,7 @@ def test_handle_claude_launch_ready_timeout_transitions_row_to_failed(
         ["$ ", "$ claude --ax-screen-reader"], repository, "claude-cold-reg"
     )
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
     handler = _handler(backend, repository, tmp_path)
@@ -292,7 +290,7 @@ def test_handle_launch_terminalizes_before_failed_tmux_cleanup(
         ["$ ", "$ codex --yolo"], repository, "codex-kill-broken"
     )
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
     handler = _handler(backend, repository, tmp_path)

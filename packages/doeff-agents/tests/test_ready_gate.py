@@ -30,15 +30,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff import Program, Pure
-from doeff_agents.adapters.base import AgentType, LaunchConfig
-from doeff_agents.adapters.claude import ClaudeAdapter
-from doeff_agents.adapters.codex import CodexAdapter
-from doeff_agents.effects.agent import (
-    AgentReadyTimeoutError as EffectsAgentReadyTimeoutError,
-)
-from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
-from doeff_agents.effects.agent import LaunchEffect
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents import AgentType, LaunchConfig
+from doeff_agents._adapters.claude import ClaudeAdapter
+from doeff_agents._adapters.codex import CodexAdapter
+from doeff_agents import AgentReadyTimeoutError as EffectsAgentReadyTimeoutError
+from doeff_agents import ClaudeLaunchEffect
+from doeff_agents import LaunchEffect
+from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents._session import (
     AgentReadyTimeoutError,
     launch_session,
@@ -346,7 +344,7 @@ def test_launch_session_claude_pastes_prompt_only_after_ready_frame(monkeypatch)
 
 
 def _production_handler(backend: ScriptedBackend, tmp_path: Path):
-    from doeff_agents.handlers.production import TmuxAgentHandler
+    from doeff_agents._handlers.production import TmuxAgentHandler
 
     return TmuxAgentHandler(
         backend=backend,
@@ -360,7 +358,7 @@ def test_handle_launch_codex_hard_fails_when_composer_never_appears(
 ) -> None:
     backend = ScriptedBackend(frames=["$ ", "$ codex --yolo"])
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
     handler = _production_handler(backend, tmp_path)
@@ -386,7 +384,7 @@ def test_handle_launch_codex_pastes_prompt_only_after_ready_frame(
     frames = ["$ ", "$ codex --yolo", CODEX_MCP_BOOT, CODEX_READY]
     backend = ScriptedBackend(frames=frames)
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
     handler = _production_handler(backend, tmp_path)
@@ -414,7 +412,7 @@ def test_handle_claude_launch_hard_fails_when_composer_never_appears(
     # was pasted right after onboarding dismissal returned.
     backend = ScriptedBackend(frames=["$ ", "$ claude --ax-screen-reader"])
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
     handler = _production_handler(backend, tmp_path)
@@ -439,7 +437,7 @@ def test_handle_claude_launch_pastes_prompt_only_after_ready_frame(
     frames = ["$ ", "$ claude --ax-screen-reader", CLAUDE_READY]
     backend = ScriptedBackend(frames=frames)
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
     handler = _production_handler(backend, tmp_path)
@@ -468,7 +466,7 @@ class ScriptedHyBackend(ScriptedBackend):
 
 
 def _run_with_codex_handler(program, backend):
-    from doeff_agents.handlers.codex import codex_handler
+    from doeff_agents import codex_handler
     from doeff_core_effects.handlers import state
     from doeff_core_effects.scheduler import scheduled
 
@@ -479,7 +477,7 @@ def _run_with_codex_handler(program, backend):
 
 
 def _run_with_claude_handler(program, backend):
-    from doeff_agents.handlers.claude import claude_handler
+    from doeff_agents import claude_handler
     from doeff_core_effects.handlers import state
     from doeff_core_effects.scheduler import scheduled
 

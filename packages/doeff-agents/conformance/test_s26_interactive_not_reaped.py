@@ -19,7 +19,7 @@ a dead monitor would green these tests vacuously).
 
 import time
 
-from doeff_agents.adapters.base import AgentSessionLifecycle
+from doeff_agents import AgentSessionLifecycle
 from harness import (
     AgentdHarness,
     break_pane_observation_out_of_band,

@@ -2,8 +2,8 @@
 
 段 7 lane 7c(agora-redesign・決定 1.3): argv の組み立て・出力の読み・
 再送するかの判断はこの module に残り、子 process / file / 時計に触る 1 行は
-`doeff_agents.io_effects` の要求になった。実行する家は本番
-`doeff_agents.io_handlers` と検 `doeff_agents.io_fake` の 2 つで、どちらを
+`doeff_agents._io_effects` の要求になった。実行する家は本番
+`doeff_agents._io_handlers` と検 `doeff_agents._io_fake` の 2 つで、どちらを
 当てるかは composition root(backend を組む側が渡す ``io_root``)が選ぶ。
 
 module 下端の ``*_program`` は effect で書かれた呼び手がそのまま bind できる
@@ -22,7 +22,7 @@ import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy
 from doeff_time import Delay
 
 from doeff import do
-from doeff_agents.io_effects import (
+from doeff_agents._io_effects import (
     ProcessOutcome,
     env_value,
     make_dirs,
@@ -32,7 +32,7 @@ from doeff_agents.io_effects import (
     temp_root,
     touch_file,
 )
-from doeff_agents.io_root import (
+from doeff_agents._io_root import (
     IoGenerator,
     IoRoot,
     as_bool,
@@ -529,7 +529,7 @@ class StableTmuxSessionBackend(TmuxSessionBackend):
 
 
 def _default_io_root() -> IoRoot:
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
 
     return run_driver_io
 

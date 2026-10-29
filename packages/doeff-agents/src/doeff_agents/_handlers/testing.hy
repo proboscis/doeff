@@ -4,9 +4,9 @@
 (import json)
 (import pathlib [Path])
 
-(import doeff_agents.adapters.base [AgentType])
-(import doeff_agents.effects._handler-effects [ClaudeLaunchEffect refuse-turn-capabilities])
-(import doeff_agents.effects [
+(import doeff_agents._adapters.base [AgentType])
+(import doeff_agents._effects._handler-effects [ClaudeLaunchEffect refuse-turn-capabilities])
+(import doeff_agents._effects [
   AgentSessionLifecycle
   AgentSessionSnapshot
   AttachAgentSessionEffect
@@ -31,8 +31,8 @@
   SessionNotFoundError
   StopEffect
   StopSessionEffect])
-(import doeff_agents.handlers.production [AgentHandler])
-(import doeff_agents.effects.agent [SessionStatus])
+(import doeff_agents._handlers.production [AgentHandler])
+(import doeff_agents._effects.agent [SessionStatus])
 (import doeff_agents.session-store [
   AgentSessionRepository
   InMemoryAgentSessionRepository])
@@ -360,7 +360,7 @@
 
   (defn wrap [self program]
     "Wrap a Program by swapping in the standard Hy defhandler boundary."
-    (import doeff_agents.handlers.effectful [agent-handler-defhandler])
+    (import doeff_agents._handlers.effectful [agent-handler-defhandler])
     ((agent-handler-defhandler self) program))
 
   (defn handle-launch-session [self effect [mcp-servers None]]

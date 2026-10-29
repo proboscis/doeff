@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from doeff_agents import AgentType
-from doeff_agents.effects import (
+from doeff_agents import (
     AgentAttemptExhaustedError,
     AgentDeadlineExceededError,
     AgentSpec,
@@ -28,7 +28,7 @@ from doeff_agents.effects import (
     StopSessionEffect,
     agent,
 )
-from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioAgentHandler, ScenarioStep
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
@@ -129,7 +129,7 @@ def test_l2_effect_constructors_return_core_effects(tmp_path: Path) -> None:
 
 
 def test_l2_agent_spec_carries_mcp_tools_into_launch_effect(tmp_path: Path) -> None:
-    from doeff_agents.handlers.production import _launch_effect_from_spec
+    from doeff_agents._handlers.production import _launch_effect_from_spec
 
     from doeff.mcp import McpParamSchema, McpToolDef
 

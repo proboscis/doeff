@@ -23,8 +23,9 @@ from urllib.parse import urlparse
 
 import pytest
 from doeff_agents import AgentType
-from doeff_agents.adapters.base import AgentSessionLifecycle, InjectionMethod, LaunchParams
-from doeff_agents.effects import (
+from doeff_agents import AgentSessionLifecycle
+from doeff_agents._adapters.base import InjectionMethod, LaunchParams
+from doeff_agents import (
     AgentLaunchError,
     AgentSpec,
     AwaitResultEffect,
@@ -32,9 +33,9 @@ from doeff_agents.effects import (
     LaunchSessionEffect,
     SessionHandle,
 )
-from doeff_agents.effects.agent import AwaitResult, LaunchSession, StopSession
-from doeff_agents.handlers import agent_effectful_handler
-from doeff_agents.handlers.production import (
+from doeff_agents import AwaitResult, LaunchSession, StopSession
+from doeff_agents import agent_effectful_handler
+from doeff_agents._handlers.production import (
     REPORT_RESULT_TOOL_NAME,
     SessionState,
     TmuxAgentHandler,
@@ -43,7 +44,7 @@ from doeff_agents.handlers.production import (
     make_report_result_tool,
     spec_uses_report_result_transport,
 )
-from doeff_agents.mcp_server import McpToolServer
+from doeff_agents._mcp_server import McpToolServer
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.tmux import SessionInfo
 from doeff_core_effects.handlers import lazy_ask, state
@@ -240,7 +241,7 @@ def test_dead_session_without_report_yields_typed_no_result(tmp_path: Path) -> N
 
 
 def test_release_session_discards_sink(tmp_path: Path) -> None:
-    from doeff_agents.effects import ReleaseSessionEffect
+    from doeff_agents import ReleaseSessionEffect
 
     backend = _AliveBackend("")
     handler = _handler_with_session(backend, "run-rr-node-rr-0", tmp_path)
@@ -403,7 +404,7 @@ def test_launch_session_via_effectful_handler_carries_report_result(
     adapter = _FakeAdapter()
     backend = _FakeLaunchBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: adapter,
     )
 
@@ -483,7 +484,7 @@ def test_launch_session_schema_without_tools_gets_report_result_server(
     adapter = _FakeAdapter()
     backend = _FakeLaunchBackend()
     monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter",
+        "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: adapter,
     )
 

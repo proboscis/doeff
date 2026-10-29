@@ -30,9 +30,9 @@ from doeff_claude_code import HookPhase as HookPhase
 from doeff_claude_code import SubagentTranscript as SubagentTranscript
 from doeff_claude_code import SubagentCall as SubagentCall
 from doeff_claude_code import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
-from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
-from doeff_agents.handlers.headless import HeadlessState as HeadlessState
-from doeff_agents.handlers.headless import headless_claude_handler as headless_claude_handler
+from doeff_agents._handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
+from doeff_agents._handlers.headless import HeadlessState as HeadlessState
+from doeff_agents._handlers.headless import headless_claude_handler as headless_claude_handler
 from doeff_codex import CodexHome as CodexHome
 from doeff_codex import CodexInput as CodexTurnInput
 from doeff_codex import ApprovalPolicy as CodexApprovalPolicy
@@ -44,9 +44,9 @@ from doeff_codex import FakeReply as FakeCodexReply
 from doeff_codex import fake_codex_handler as fake_codex_handler
 from doeff_codex import UsageLimitHit as CodexUsageLimitHit
 from doeff_codex import ServerOverloadedHit as CodexServerOverloadedHit
-from doeff_agents.handlers.headless_codex import HeadlessCodexConfig as HeadlessCodexConfig
-from doeff_agents.handlers.headless_codex import HeadlessCodexState as HeadlessCodexState
-from doeff_agents.handlers.headless_codex import headless_codex_handler as headless_codex_handler
+from doeff_agents._handlers.headless_codex import HeadlessCodexConfig as HeadlessCodexConfig
+from doeff_agents._handlers.headless_codex import HeadlessCodexState as HeadlessCodexState
+from doeff_agents._handlers.headless_codex import headless_codex_handler as headless_codex_handler
 
 def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int | None, credential_floor_seconds: float) -> list[ProgramHandler]:
     ...

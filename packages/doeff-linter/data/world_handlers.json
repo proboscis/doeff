@@ -321,7 +321,7 @@
    "why": "組み立て — 手元の道具の名乗りで detached-cluster を被せる・版の識別に os.environ の DOEFF_RUNTIME_ENV_KEY を読む(#2782)"
   },
   {
-   "handler": "doeff_agents.io_handlers:driver-io-handler",
+   "handler": "doeff_agents._io_handlers:driver-io-handler",
    "touches": [
     "file",
     "process",
@@ -357,7 +357,7 @@
    "why": "sqlite3.connect と単一 writer の thread"
   },
   {
-   "handler": "doeff_agents.handlers.claude:claude-handler",
+   "handler": "doeff_agents._handlers.claude:claude-handler",
    "touches": [
     "process",
     "file",
@@ -367,14 +367,14 @@
    "why": "tmux・~/.claude.json・McpToolServer"
   },
   {
-   "handler": "doeff_agents.handlers.codex:codex-handler",
+   "handler": "doeff_agents._handlers.codex:codex-handler",
    "touches": [
     "process"
    ],
    "why": "tmux の new-session・send-keys"
   },
   {
-   "handler": "doeff_agents.handlers.effectful:tmux-agent-defhandler",
+   "handler": "doeff_agents._handlers.effectful:tmux-agent-defhandler",
    "touches": [
     "process",
     "network",
@@ -383,7 +383,7 @@
    "why": "tmux・McpToolServer・time.monotonic"
   },
   {
-   "handler": "doeff_agents.handlers.effectful:agent-handler-defhandler",
+   "handler": "doeff_agents._handlers.effectful:agent-handler-defhandler",
    "touches": [
     "network",
     "clock"
@@ -391,7 +391,7 @@
    "why": "節の中で McpToolServer を起こす"
   },
   {
-   "handler": "doeff_agents.handlers:daemon_agent_handler",
+   "handler": "doeff_agents._handlers:daemon_agent_handler",
    "touches": [
     "network",
     "process"
@@ -399,7 +399,7 @@
    "why": "agentd の unix socket・daemon を起こす"
   },
   {
-   "handler": "doeff_agents.handlers:claude_agent_runtime_handlers",
+   "handler": "doeff_agents._handlers:claude_agent_runtime_handlers",
    "touches": [
     "process",
     "file",
@@ -417,7 +417,7 @@
    "why": "上の再輸出の綴り"
   },
   {
-   "handler": "doeff_agents.handlers:claude_process_layer_handler",
+   "handler": "doeff_agents._handlers:claude_process_layer_handler",
    "touches": [
     "process",
     "file",

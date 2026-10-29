@@ -1,7 +1,7 @@
 ;;; driver 層の I/O の検用 handler(agora-redesign 段 7 lane 7c — 決定 1.3)。
 ;;;
 ;;; 既知の形: algebraic effects。本番 handler
-;;; (`doeff_agents.io_handlers`)と同じ要求の語彙を、記憶の中の file 系と
+;;; (`doeff_agents._io_handlers`)と同じ要求の語彙を、記憶の中の file 系と
 ;;; 台本にした子 process で果たす。検は実 file・実 tmux・実 socket を
 ;;; 触らないので、並走しても互いを壊さない。
 ;;;
@@ -23,7 +23,7 @@
 (import doeff_core_effects.file_effects [PathKind])
 (import doeff_core_effects.process_effects [not-started-outcome start-refusal executable-file-answer])
 (import doeff_time [DelayEffect])
-(import doeff_agents.io_effects [
+(import doeff_agents._io_effects [
   ProcessOutcome
   WhichExecutable
   HomePath

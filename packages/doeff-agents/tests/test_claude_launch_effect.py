@@ -12,10 +12,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import ClaudeRuntimePolicy
-from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
-from doeff_agents.handlers.production import TmuxAgentHandler
+from doeff_agents import ClaudeLaunchEffect
+from doeff_agents._handlers.production import TmuxAgentHandler
 from doeff_agents.session_backend import SessionConfig
-from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams
+from doeff_agents import AgentType
+from doeff_agents._adapters.base import InjectionMethod, LaunchParams
 from doeff import Pure
 from doeff_agents.session_backend import SessionBackend
 
@@ -133,7 +134,7 @@ def test_prepare_claude_home_prefers_auth_already_in_agent_home(
 def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from doeff_agents.handlers import production as production_mod
+    from doeff_agents._handlers import production as production_mod
 
     backend = FakeBackend()
     monkeypatch.setattr(production_mod, "get_adapter", lambda _agent_type: FakeClaudeAdapter())
@@ -175,7 +176,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_session_env(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from doeff_agents.handlers import production as production_mod
+    from doeff_agents._handlers import production as production_mod
 
     backend = FakeBackend()
     monkeypatch.setattr(production_mod, "get_adapter", lambda _agent_type: FakeClaudeAdapter())
@@ -201,7 +202,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_bootstrap_exports(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from doeff_agents.handlers import production as production_mod
+    from doeff_agents._handlers import production as production_mod
 
     backend = FakeBackend()
     monkeypatch.setattr(production_mod, "get_adapter", lambda _agent_type: FakeClaudeAdapter())

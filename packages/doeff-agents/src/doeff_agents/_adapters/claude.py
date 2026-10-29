@@ -7,9 +7,9 @@ import posixpath
 import hy  # noqa: F401  # .hy import hook — the readiness physics home is a Hy module
 
 from doeff import Program, do
-from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
-from doeff_agents.io_effects import home_path, make_dirs, path_exists, read_text, write_text
-from doeff_agents.io_root import IoGenerator, as_bool, as_optional_str, as_str
+from doeff_agents._adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
+from doeff_agents._io_effects import home_path, make_dirs, path_exists, read_text, write_text
+from doeff_agents._io_root import IoGenerator, as_bool, as_optional_str, as_str
 from doeff_agents.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
 
 MISSING_CLAUDE_JSON = (
@@ -143,7 +143,7 @@ def claude_pre_launch() -> IoGenerator[None]:
     On k3s: mount a pre-authenticated Claude profile via PVC or secret.
 
     段 7 lane 7c(決定 1.3): 判断(認証済みか・何を作るか)はここ、
-    file の読み書きは `doeff_agents.io_effects` の要求で handler が持つ。
+    file の読み書きは `doeff_agents._io_effects` の要求で handler が持つ。
     """
     home = as_str((yield home_path()))
     claude_json = posixpath.join(home, ".claude.json")

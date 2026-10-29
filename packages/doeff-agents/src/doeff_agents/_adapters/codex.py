@@ -6,9 +6,9 @@ from pathlib import Path
 import hy  # noqa: F401  # .hy import hook — the readiness physics home is a Hy module
 
 from doeff import Program, do
-from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
-from doeff_agents.io_effects import make_dirs, read_text, write_text
-from doeff_agents.io_root import IoGenerator, as_optional_str
+from doeff_agents._adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
+from doeff_agents._io_effects import make_dirs, read_text, write_text
+from doeff_agents._io_root import IoGenerator, as_optional_str
 from doeff_agents.ready_physics import CODEX_READY_PATTERN
 
 

@@ -162,8 +162,8 @@ print(echo_tool.input_schema())  # {'type': 'object', 'properties': {'message': 
 
 ```python excerpt
 from pathlib import Path
-from doeff_agents.effects import Launch
-from doeff_agents.adapters.base import AgentType
+from doeff_agents import Launch
+from doeff_agents import AgentType
 
 launch_eff = Launch(
     "my-session",
@@ -177,8 +177,8 @@ launch_eff = Launch(
 From Hy:
 
 ```hy excerpt
-(import doeff_agents.effects [Launch])
-(import doeff_agents.adapters.base [AgentType])
+(import doeff_agents [Launch])
+(import doeff_agents [AgentType])
 (import pathlib [Path])
 
 (<- handle (Launch "my-session"
@@ -211,7 +211,7 @@ The new canonical entry point:
 
 ```python excerpt
 from doeff import run
-from doeff_agents.handlers import claude_agent_handler
+from doeff_agents import claude_agent_handler
 
 agent = claude_agent_handler()
 wrapped = agent(nak_handler(program))
@@ -256,9 +256,9 @@ result = run(wrapped)
 from pathlib import Path
 from doeff import do, run, Perform
 from doeff.mcp import McpToolDef, McpParamSchema
-from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects import LaunchEffect, Monitor, Capture, Stop
-from doeff_agents.handlers import claude_agent_handler
+from doeff_agents import AgentType
+from doeff_agents import LaunchEffect, Monitor, Capture, Stop
+from doeff_agents import claude_agent_handler
 from doeff_time import Delay, sync_time_handler
 
 # 1. Define a tool
@@ -306,9 +306,9 @@ print(result)
 ```hy excerpt
 (require doeff-hy.macros [defmcp-tool defp <- defhandler])
 (import doeff [run])
-(import doeff_agents.effects [Launch Monitor Capture Stop])
-(import doeff_agents.handlers [claude-agent-handler])
-(import doeff_agents.adapters.base [AgentType])
+(import doeff_agents [Launch Monitor Capture Stop])
+(import doeff_agents [claude-agent-handler])
+(import doeff_agents [AgentType])
 (import pathlib [Path])
 
 ;; Tools wrapping existing defk functions
@@ -415,7 +415,7 @@ Returns the Hy-based `defhandler` that catches `LaunchEffect(agent_type=CLAUDE)`
 manages trust, MCP, tmux, and session lifecycle.
 
 ```python excerpt
-from doeff_agents.handlers import claude_agent_handler
+from doeff_agents import claude_agent_handler
 handler = claude_agent_handler()  # optional: backend=my_backend
 ```
 

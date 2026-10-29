@@ -6,10 +6,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Protocol
 
-from doeff_agents.adapters.base import AgentType, LaunchParams
+from doeff_agents._adapters.base import AgentType, LaunchParams
 from doeff_agents._agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
 from doeff_agents.claude_home import prepare_claude_home
-from doeff_agents.effects import (
+from doeff_agents._effects import (
     AgentError,
     AgentLaunchError,
     AgentNotAvailableError,
@@ -36,10 +36,10 @@ from doeff_agents.effects import (
     StopEffect,
     StopSessionEffect,
 )
-from doeff_agents.handlers.production import AgentHandler, get_adapter
-from doeff_agents.effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
-from doeff_agents.io_root import IoRoot
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents._handlers.production import AgentHandler, get_adapter
+from doeff_agents._effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
+from doeff_agents._io_root import IoRoot
+from doeff_agents._runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,
@@ -437,6 +437,6 @@ class DaemonAgentHandler(AgentHandler):
 
 
 def _default_io_root() -> IoRoot:
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
 
     return run_driver_io

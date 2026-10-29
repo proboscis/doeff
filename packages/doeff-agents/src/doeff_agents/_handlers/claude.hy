@@ -13,15 +13,15 @@
 (import doeff [do :as _doeff-do Ask GetHandlers GetOuterHandlers])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
 
-(import doeff_agents.effects.agent [
+(import doeff_agents._effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
   SendEffect StopEffect SessionHandle Observation WarmSessionEffect AgentCapabilityUnsupportedError])
-(import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
-(import doeff_agents.adapters.base [AgentType LaunchParams])
-(import doeff_agents.adapters.claude [ClaudeAdapter])
+(import doeff_agents._effects._handler-effects [refuse-turn-capabilities])
+(import doeff_agents._adapters.base [AgentType LaunchParams])
+(import doeff_agents._adapters.claude [ClaudeAdapter])
 (import doeff_agents.session-backend [SessionBackend])
-(import doeff_agents.mcp-server [McpToolServer])
-(import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
+(import doeff_agents._mcp-server [McpToolServer])
+(import doeff_agents._handlers.mcp-server-loop [mcp-server-loop])
 (import doeff_agents._monitor [MonitorState SessionStatus
   detect-status hash-content is-waiting-for-input])
 (import doeff_agents.shell [wrap-with-shell-exports

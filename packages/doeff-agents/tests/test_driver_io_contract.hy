@@ -1,4 +1,4 @@
-;;; driver 層の I/O の契約テスト — 同じ効果(doeff_agents.io_effects)に答える本物(driver-io-handler)と fake(fake-driver-io-handler)が、
+;;; driver 層の I/O の契約テスト — 同じ効果(doeff_agents._io_effects)に答える本物(driver-io-handler)と fake(fake-driver-io-handler)が、
 ;;; 同じ deftest を通る。解釈器の組み立てと契約の世界は driver_io_contract_handlers.hy。本物は一時 dir の中の file と、そこで聞く実の
 ;;; unix socket と、短い子 process(/bin/sh -c 'exit 0')だけを使う。
 ;;;
@@ -22,27 +22,8 @@
 (require doeff-hy.macros [defk deftest <- val var])
 (import os)
 (import doeff [EffectBase])
-(import doeff_agents.io_effects [
-  AppendText
-  CopyFile
-  EnvValue
-  ExecutableAt
-  HomePath
-  ListDir
-  MakeDirs
-  MonotonicTime
-  PathExists
-  ProcessId
-  ProcessOutcome
-  ReadText
-  RunProcess
-  SpawnDetached
-  TempRoot
-  TouchFile
-  UnixConnectProbe
-  UnixLineRequest
-  WhichExecutable
-  WriteText])
+(import doeff_agents [AppendText CopyFile EnvValue HomePath ListDir MakeDirs MonotonicTime PathExists ProcessId ReadText SpawnDetached TempRoot TouchFile UnixConnectProbe UnixLineRequest WhichExecutable WriteText]
+        doeff_agents._io_effects [ExecutableAt ProcessOutcome RunProcess])
 (import doeff_time [Delay])
 (import driver_io_contract_handlers [ContractRoot LIVE-SOCKET SET-NAME UNSET-NAME])
 

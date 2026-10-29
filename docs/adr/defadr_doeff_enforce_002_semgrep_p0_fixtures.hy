@@ -36,9 +36,9 @@
          "source" "session_env = {'PYTHONUNBUFFERED': '1'}\n"}])
      (defsemgrep p0-no-claude-print-mode
        "doeff-agents-no-claude-print-mode"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/adapters/claude.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
          "source" "command = 'claude --print'\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/adapters/claude.py"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
          "source" "command = 'claude'\n"}])
      ;; enforcement-ledger は ADR 本文中の deftest 開始 token を raw count する。
      ;; fixture 内の Hy source は実 enforcement ではないため token を分割する。
@@ -153,20 +153,20 @@
      (defsemgrep p0-k4-no-sync-await-result-in-scheduled-handler
        "k4-no-sync-await-result-in-scheduled-handler"
        [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/handlers/agent.py"
+           "packages/doeff-agents/src/doeff_agents/_handlers/agent.py"
          "source"
            "handler = make_blocking_scheduled_handler(lambda effect: client.await_result(effect))\n"}]
        [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/handlers/agent.py"
+           "packages/doeff-agents/src/doeff_agents/_handlers/agent.py"
          "source"
            "handler = make_offloaded_scheduled_handler(lambda effect: client.await_result(effect))\n"}])
      (defsemgrep p0-k4-deadline-not-transport-timeout
        "k4-deadline-not-transport-timeout"
        [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/effects/agent.py"
+           "packages/doeff-agents/src/doeff_agents/_effects/agent.py"
          "source" "task = AgentTask(prompt='run', timeout_seconds=30)\n"}]
        [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/effects/agent.py"
+           "packages/doeff-agents/src/doeff_agents/_effects/agent.py"
          "source" "task = AgentTask(prompt='run', deadline_seconds=30)\n"}])]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"
           "docs/semgrep-rules-inventory-2026-07-14.md"])

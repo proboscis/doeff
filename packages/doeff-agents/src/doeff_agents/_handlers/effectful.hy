@@ -10,7 +10,7 @@
 (import doeff [Ask GetHandlers GetOuterHandlers])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
 (import doeff_agents._agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
-(import doeff_agents.effects [
+(import doeff_agents._effects [
   AgentCapabilityUnsupportedError
   AgentEffect
   AttachAgentSessionEffect
@@ -31,14 +31,14 @@
   StopEffect
   StopSessionEffect
   WarmSessionEffect])
-(import doeff_agents.effects._handler-effects [ClaudeLaunchEffect])
+(import doeff_agents._effects._handler-effects [ClaudeLaunchEffect])
 (import doeff_agents.session-backend [SessionBackend])
-(import doeff_agents.handlers.production [
+(import doeff_agents._handlers.production [
   TmuxAgentHandler
   make-report-result-tool
   spec-uses-report-result-transport])
-(import doeff_agents.mcp-server [McpToolServer])
-(import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
+(import doeff_agents._mcp-server [McpToolServer])
+(import doeff_agents._handlers.mcp-server-loop [mcp-server-loop])
 
 
 (setv AWAIT-RESULT-POLL-INTERVAL-SECONDS 0.2)

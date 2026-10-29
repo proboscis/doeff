@@ -3,14 +3,14 @@
 ``ClaudeLaunchEffect`` is the Claude-specific launch a handler emits for another
 handler, and ``refuse_turn_capabilities`` is the refusal every terminal handler
 applies to the turn-level fields it cannot honour. Neither is part of the public
-effects a doeff-agents user yields (``doeff_agents.effects``).
+effects a doeff-agents user yields (``doeff_agents._effects``).
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from doeff_agents.effects.agent import (
+from doeff_agents._effects.agent import (
     AgentCapabilityUnsupportedError,
     AgentEffectBase,
     AgentSessionLifecycle,

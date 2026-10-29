@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import pytest
-from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects.agent import (
+from doeff_agents import AgentType
+from doeff_agents import (
     AgentCapabilityUnsupportedError,
     LaunchEffect,
     SessionHandle,
@@ -59,7 +59,7 @@ class FakeTmuxBackend:
 
 
 def _run(program, backend):
-    from doeff_agents.handlers.codex import codex_handler
+    from doeff_agents import codex_handler
     from doeff_core_effects.scheduler import scheduled
 
     handler = codex_handler(backend=backend)
@@ -88,7 +88,7 @@ def test_launch_creates_tmux_session(tmp_path: Path) -> None:
 
 
 def test_codex_handler_asks_for_backend(tmp_path: Path) -> None:
-    from doeff_agents.handlers.codex import codex_handler
+    from doeff_agents import codex_handler
     from doeff_core_effects.scheduler import scheduled
 
     backend = FakeTmuxBackend()

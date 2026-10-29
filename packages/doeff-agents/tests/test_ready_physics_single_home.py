@@ -38,8 +38,8 @@ from pathlib import Path
 
 import hy  # noqa: F401  # .hy import hook — the physics home is a Hy module
 import pytest
-from doeff_agents.adapters.claude import ClaudeAdapter
-from doeff_agents.adapters.codex import CodexAdapter
+from doeff_agents._adapters.claude import ClaudeAdapter
+from doeff_agents._adapters.codex import CodexAdapter
 from doeff_agents import ready_physics
 from doeff_agents.sessionhost.impls import markers
 

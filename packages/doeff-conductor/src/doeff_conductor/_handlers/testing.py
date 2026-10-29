@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff_agents.result_validation import validate_result_payload
+from doeff_agents._result_validation import validate_result_payload
 
 from doeff import Effect, Gather, K, Pass, Resume, Spawn, handler, stacked_handlers
 from doeff.handler_utils import get_inner_handlers, reinstaller

@@ -1,9 +1,9 @@
 (require doeff-hy.macros [deftest])
 
 (import pathlib [Path])
-(import doeff-agents.adapters.base [InjectionMethod LaunchParams])
-(import doeff-agents.adapters.claude [ClaudeAdapter])
-(import doeff-agents.adapters.codex [CodexAdapter])
+(import doeff-agents._adapters.base [InjectionMethod LaunchParams])
+(import doeff-agents._adapters.claude [ClaudeAdapter])
+(import doeff-agents._adapters.codex [CodexAdapter])
 
 
 (setv _PROMPT-SENTINEL

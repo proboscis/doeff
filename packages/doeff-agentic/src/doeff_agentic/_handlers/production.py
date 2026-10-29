@@ -29,7 +29,7 @@ from doeff_agents import (
     SessionStatus,
     Stop,
 )
-from doeff_agents.effects import LaunchEffect
+from doeff_agents import LaunchEffect
 from doeff_time import Delay
 
 from doeff import Effect, Pass, Resume, do, handler, stacked_handlers
@@ -379,7 +379,7 @@ def agentic_effectful_handlers(
     time handler outside both.
     """
     if agent_runtime is None:
-        from doeff_agents.handlers import agent_effectful_handler
+        from doeff_agents import agent_effectful_handler
 
         agent_runtime = agent_effectful_handler()
 

@@ -398,7 +398,7 @@ def test_defhandler_must_be_top_level_rule_detects_nested_handler() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/handlers/nested_defhandler_forbidden.hy",
+        "packages/doeff-agents/src/doeff_agents/_handlers/nested_defhandler_forbidden.hy",
         cwd=fixture_root,
     )
 
@@ -409,7 +409,7 @@ def test_doeff_agents_rule_rejects_handler_callable_vocabulary() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/handlers/handler_callable_forbidden.py",
+        "packages/doeff-agents/src/doeff_agents/_handlers/handler_callable_forbidden.py",
         cwd=fixture_root,
     )
 
@@ -440,7 +440,7 @@ def test_session_registration_rule_detects_ready_gated_registration() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/handlers/"
+        "packages/doeff-agents/src/doeff_agents/_handlers/"
         "registration_after_ready_gate_forbidden.py",
         cwd=fixture_root,
     )

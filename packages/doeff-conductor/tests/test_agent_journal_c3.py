@@ -12,7 +12,7 @@ from doeff_agents import (
     AwaitStatus,
     LaunchSessionEffect,
 )
-from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioAgentHandler, ScenarioStep
 from doeff_conductor import CreateWorkspace
 from doeff_conductor import Agent, AgentTask
 from doeff_conductor import JournalCorruptionError

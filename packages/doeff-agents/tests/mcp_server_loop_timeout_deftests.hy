@@ -2,8 +2,8 @@
 
 (import threading)
 (import doeff.mcp [McpParamSchema McpToolDef])
-(import doeff-agents.handlers.mcp-server-loop [mcp-server-loop])
-(import doeff-agents.mcp-server [McpToolRequest McpToolServer])
+(import doeff-agents._handlers.mcp-server-loop [mcp-server-loop])
+(import doeff-agents._mcp-server [McpToolRequest McpToolServer])
 (import doeff_core_effects.scheduler [CreateExternalPromise PRIORITY_IDLE Wait])
 
 

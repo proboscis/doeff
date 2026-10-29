@@ -1,8 +1,8 @@
 """Claude Code home preparation shared by agent handlers.
 
 段 7 lane 7c(agora-redesign・決定 1.3): 何を作り何を写すかの判断はこの
-module に残り、file の読み書きは `doeff_agents.io_effects` の要求になった。
-実行する家は本番 `doeff_agents.io_handlers` と検 `doeff_agents.io_fake` の
+module に残り、file の読み書きは `doeff_agents._io_effects` の要求になった。
+実行する家は本番 `doeff_agents._io_handlers` と検 `doeff_agents._io_fake` の
 2 つで、どちらを当てるかは composition root(`TmuxAgentHandler` /
 `DaemonAgentHandler` の `io_root`)が選ぶ。
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 from doeff import do
 
-from doeff_agents.io_effects import (
+from doeff_agents._io_effects import (
     copy_file,
     home_path,
     make_dirs,
@@ -22,7 +22,7 @@ from doeff_agents.io_effects import (
     read_text,
     write_text,
 )
-from doeff_agents.io_root import IoGenerator, as_bool, as_optional_str, as_str
+from doeff_agents._io_root import IoGenerator, as_bool, as_optional_str, as_str
 
 
 def trusted_projects_json(raw_text: str | None, trusted_workspaces: tuple[Path, ...]) -> str:

@@ -10,8 +10,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.adapters.base import InjectionMethod, LaunchParams
-from doeff_agents.adapters.claude import ClaudeAdapter
+from doeff_agents._adapters.base import InjectionMethod, LaunchParams
+from doeff_agents._adapters.claude import ClaudeAdapter
 
 from fake_io_support import FakeIoWorld, fake_io_root
 
