@@ -299,9 +299,14 @@ def test_generation_dirs_on_a_version_without_them_is_refused() -> None:
 # 16.7 分止まった)。層を知らない版の boot.sh と worker は宣言を読まず、名(DOEFF_WORKER_JOB_CGROUP)だけを読んで、根に居る worker の
 # 兄弟を置けずに起動で止まる — だから層を宣言する worker の版は CGROUP_LAYOUT_SINCE かその子孫。
 CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
-# 層の名: 最初の層(居た process の移り先)と、job の子が自分の子(上に載る系の命令)を置く層。
+# 層の名: 最初の層(居た process の移り先)と、job の子が自分の子(上に載る系の命令)を置く層と、常駐の job が起こす CLI を置く層。
 CGROUP_FIRST_LAYER = "worker"
 CGROUP_CHILD_LAYER = "commands"
+CGROUP_CLI_LAYER = "clis"
+# cgroup の層の CPU の重み(card ki-b40c5c399455 — boot.sh の「cgroup の層」の CPU の重み): 層に cpu.weight・cpu.idle を書ける boot.sh
+# の最初の版。知らない版の boot.sh は cpu の file を宣言の誤りとして断り、worker が起動で止まる — だから cpu を書く層を宣言する worker の
+# 版は CGROUP_CPU_SINCE かその子孫。
+CGROUP_CPU_SINCE = "d5673eb9875c1c8535ebf11c80881016e839ad05"
 _BYTE_UNITS = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}
 
 
@@ -332,13 +337,47 @@ def test_zeus_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(ze
     assert layout[0][0] == CGROUP_FIRST_LAYER, layout
     guarded = {name for name, values in layout if "memory.min" in values}
     limited = {name for name, values in layout if "memory.max" in values}
-    assert guarded == {CGROUP_FIRST_LAYER, service}, layout
+    assert guarded == {CGROUP_FIRST_LAYER, service, CGROUP_CLI_LAYER}, layout
     assert limited == {jobs, CGROUP_CHILD_LAYER}, layout
     assert all("memory.high" not in values for _, values in layout), layout
     limits = _mapping(_mapping(_container(zeus_worker)["resources"], "resources")["limits"], "limits")
     limit = _bytes(str(limits["memory"]))
     total = sum(_bytes(settings[name]["memory.min"]) for name in guarded) + sum(_bytes(settings[name]["memory.max"]) for name in limited)
     assert total <= limit, f"守る層の min と限る層の max の和 {total} が container の上限 {limit} を越える"
+
+
+def test_zeus_worker_puts_its_resident_layers_before_the_bulk_layers_on_the_cpu(zeus_worker: Manifest) -> None:
+    """worker の本体と常駐の job の層の cpu.weight は、task・CLI・命令の層の cpu.weight より高い(card ki-b40c5c399455)。失敗ケース:
+    子に cpu を掛けない(重みの無い)層では、CPU が埋まった時に起きた画面の thread が CLI と task の thread と同じ重みで実行待ちに並び、
+    ws の ping の往復が 50〜140 ms に跳ねた。cpu.idle は掛けない(命令の層が CPU の埋まった間ずっと止まる)。"""
+    settings = dict(_layout(zeus_worker))
+    service = str(_env_value(zeus_worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
+    jobs = str(_env_value(zeus_worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    weights = {name: int(values["cpu.weight"]) for name, values in settings.items() if "cpu.weight" in values}
+    assert set(weights) == set(settings), settings
+    for resident in (CGROUP_FIRST_LAYER, service):
+        for bulk in (jobs, CGROUP_CHILD_LAYER, CGROUP_CLI_LAYER):
+            assert weights[resident] > weights[bulk], weights
+    assert all("cpu.idle" not in values for values in settings.values()), settings
+
+
+@pytest.mark.parametrize("node", NODES)
+def test_worker_with_cpu_in_its_cgroup_layout_runs_a_boot_script_that_knows_it(rendered: list[Manifest], node: str) -> None:
+    """cpu の file を書く層を宣言する worker の版は、boot.sh が cpu の file を知る版(CGROUP_CPU_SINCE)かその子孫。"""
+    worker = _worker_on(rendered, node)
+    if not any(entry["name"] == "WORKER_CGROUP_LAYOUT" for entry in _env(worker)):
+        return
+    if not any(key.startswith("cpu.") for _, values in _layout(worker) for key in values):
+        return
+    version = _worker_version(rendered, node)
+    assert _same_or_ancestor(CGROUP_CPU_SINCE, version), (
+        f"{node} の worker の版 {version} は cgroup の層の cpu の file を知らない(CGROUP_CPU_SINCE {CGROUP_CPU_SINCE} の子孫でない)"
+    )
+
+
+def test_cgroup_cpu_layout_on_a_version_without_it_is_refused() -> None:
+    """cpu の file の前の版(10-29 の zeus の版 036ea2cb1)で cpu を書く層を宣言する宣言を、版の判じが断る。"""
+    assert not _same_or_ancestor(CGROUP_CPU_SINCE, "036ea2cb175a3eb4b20cf25eb61bdd85a740d000")
 
 
 def test_zeus_worker_cgroup_is_delegated_by_a_root_sidecar_while_the_worker_stays_unprivileged(zeus_worker: Manifest) -> None:
