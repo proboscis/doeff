@@ -193,7 +193,7 @@
              :imports [foundation]
              ;; process_environ = 起動の script の入口(worker/entry/boot_wheel)が uv build の子へ渡す環境を、この process の環境変数から組む
              ;; 読み。doeff-vm を入れる前の venv の python で走るので doeff を import できず、Python の module(DOEFF004 の母集団)になる。
-             ;; doeff_cluster は __init__.py の無い namespace package で module の名が素の stem になるので、file を path で名指す(#2934 の形)。
+             ;; doeff_cluster が __init__.py の無い namespace package だった頃に module の名が素の stem になったので、file を path で名指す(#2934 の形)。
              :files ["src/doeff_cluster/foundation/process_environ.py"]
              :exempt [(rule DOEFF004 "起動の script が doeff-vm を入れる前の venv の python で読む Program の外の code で、子 process の環境を組む生の環境変数の読みそのもの(生の副作用に触ってよい foundation の層の役目)— 設定を Ask で受ける入口が無い")])
            (layer entry
@@ -207,7 +207,7 @@
   ;; 本番の code はこの dir を import しない。
   ;; JSON の値を手で綴ってよい foundation の module — 盤の送受信と、effect の記録の綴り(record_codec)と記録の形(record_log)(#2580)。
   :wire-modules ["doeff_cluster.shared.protocol.board_requests" "doeff_cluster.foundation.record_codec" "doeff_cluster.foundation.record_log"]
-  :verification-environment "sim")
+  :verification-environment "_sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}

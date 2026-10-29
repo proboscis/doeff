@@ -1,4 +1,4 @@
-;; 手元の runner sim-cluster(doeff_cluster.sim.local — ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5)。
+;; 手元の runner sim-cluster(doeff_cluster._sim.local — ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5)。
 ;;
 ;; sim の土台(tests.fixtures.envs の sim-foundation)で作った系の値を、本物の coordinator(emulated-handlers)と本物の run-worker(偽の宿)の
 ;; 上で、仮想の時計で走らせる。検の筋書き(scenario)は同じ scheduler・同じ時計で並んで走り、検の effect(Crash・Redeclare・ReportsOf・
@@ -18,10 +18,8 @@
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [decode-outcome])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport ServiceReadiness
-                             SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
-                             StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker
-                             SimOutside ProcessOutside])
+(import doeff_cluster [sim-cluster EndProcess SimWorker SimProcess SimReport Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker SimOutside ProcessOutside]
+        doeff_cluster._sim.local [sim-process SimChild SimLink ServiceReadiness SimCoordinatorRun])
 (import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
 (import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen

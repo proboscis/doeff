@@ -13,7 +13,7 @@
 ;;;                     事実が無い worker・file の名に成らないキーは、参照の綴りと理由を挙げて断る。断りの文に Secret の値と token は載らない
 ;;;   振り分け          宛先が自区画の API server の要求だけを区画の CA の口へ回し、ほかの宛先は外側の答え手へ流す。CA の file が無い worker では
 ;;;                     API server 宛ての要求を出さずに断る(失敗ケース)
-;;; 外の世界は模擬の API server の相手役(doeff_cluster.sim.k8s_supplied)と memory の file。
+;;; 外の世界は模擬の API server の相手役(doeff_cluster._sim.k8s_supplied)と memory の file。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
@@ -31,7 +31,7 @@
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-CA-FILE SERVICE-ACCOUNT-TOKEN-FILE supplied-directory
                                                       supplied-object-ref-of supplied-ref-of supplied-ref-text supplied-setting supplied-value])
-(import doeff_cluster.sim.k8s_supplied [HeldEntry HeldObject ReadGrant SuppliedCluster k8s-supplied-peer])
+(import doeff_cluster [HeldEntry HeldObject ReadGrant SuppliedCluster k8s-supplied-peer])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 

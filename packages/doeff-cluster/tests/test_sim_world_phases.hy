@@ -13,7 +13,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_core_effects._world_phases [open-phase-log close-phase-log])
-(import doeff_cluster.sim.local [sim-cluster])
+(import doeff_cluster [sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.phase_programs [phase-world phase-world-plus-part phase-world-double-idle])
 

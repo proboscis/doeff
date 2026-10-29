@@ -15,7 +15,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker Redeclare ProcessesOf])
+(import doeff_cluster [sim-cluster SimWorker DrainWorker Redeclare ProcessesOf])
 (import doeff_cluster.worker.intent.worker_model [DesiredUnreadable])
 (import doeff_cluster.worker.protocol.declared [DeclaredReplyMalformed declared-reply-of-json])
 (import tests.fixtures.envs [sim-foundation])
