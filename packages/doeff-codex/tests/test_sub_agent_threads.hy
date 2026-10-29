@@ -10,10 +10,10 @@
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest <- var])
 (import json)
-(import doeff_codex.lines [classify-line RateLimits TurnRecord])
-(import doeff_codex.handler [Continuation SessionRuntime absorb])
-(import doeff_codex.values [CodexSessionSpec CodexHome])
-(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
+(import doeff_codex._lines [classify-line RateLimits TurnRecord])
+(import doeff_codex._handler [Continuation SessionRuntime absorb])
+(import doeff_codex [CodexSessionSpec CodexHome])
+(import doeff_codex [ApprovalPolicy SandboxMode])
 (import tests.test_lines [RECORDED])
 
 

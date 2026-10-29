@@ -5,7 +5,7 @@
 (require doeff-hy.macros [deftest])
 (import queue)
 (import sys)
-(import doeff_codex.process [CodexProcess CutLine CUT-HEAD-BYTES LINE-CAP-BYTES])
+(import doeff_codex._process [CodexProcess CutLine CUT-HEAD-BYTES LINE-CAP-BYTES])
 
 ;; 替え玉の CLI: stdin の行を 1 行ずつ stdout へ返し、stdin の EOF で code 0 で終わる。
 (val ECHO "import sys\nfor line in sys.stdin:\n    sys.stdout.write(line)\n    sys.stdout.flush()\n")

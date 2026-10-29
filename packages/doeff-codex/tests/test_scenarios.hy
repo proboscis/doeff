@@ -7,11 +7,10 @@
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (import pathlib [Path])
-(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexImage CodexHome])
-(import doeff_codex.lines [TextDelta AgentMessageDone TurnEnded TurnStatus])
+(import doeff_codex [FreshThread ResumeThread CodexInput CodexImage CodexHome])
+(import doeff_codex [TextDelta AgentMessageDone TurnEnded TurnStatus])
 (import dataclasses [replace])
-(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
-                             Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight RequestRefused BackendLost ToolsUnavailable])
+(import doeff_codex [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight RequestRefused BackendLost ToolsUnavailable TurnStarted])
 (import tests.scenario_steps [settings read-until read-to-end read-to-first-delta records-of])
 (import tests.interpreters [USAGE-LIMIT-HIT CODE-MODE-WARNING OVERLOADED-HIT])
 

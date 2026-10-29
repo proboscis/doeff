@@ -6,4 +6,4 @@
   (#^ str server) (#^ str tool))
 (setv wire (parse-json McpToolCallWire line))
 ;; 通る形: 層 2 の型つきの記録だけを読む。
-(import doeff_codex.lines [ItemStarted CommandRun])
+(import doeff_codex [ItemStarted CommandRun])

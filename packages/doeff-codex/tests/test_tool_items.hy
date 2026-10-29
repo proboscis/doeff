@@ -11,8 +11,8 @@
 (import json)
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.frozen [freeze-json])
-(import doeff_codex.lines [classify-line ItemStarted ItemDone TurnStarted Unparsed UnknownValue ToolStatus CommandRun FilePatch WebSearch
-                           McpCall DynamicCall AgentCall AgentState ImageView])
+(import doeff_codex [ItemStarted ItemDone ToolStatus CommandRun FilePatch WebSearch McpCall DynamicCall AgentCall ImageView]
+        doeff_codex._lines [classify-line TurnStarted Unparsed UnknownValue AgentState])
 (import tests.test_lines [recorded-records])
 
 

@@ -17,11 +17,11 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexTurn CodexSessionSpec CodexHome])
-(import doeff_codex.lines [TurnEnded TurnStatus])
-(import doeff_codex.handler [CodexHost KEPT-TURNS codex-handler on-line])
-(import doeff_codex.effects [CodexStartTurn CodexCloseSession CodexLaunchCount CodexReadTurnEvents TurnStarted TurnEventPage UnknownTurn
-                             SessionClosed BackendLost])
+(import doeff_codex [FreshThread ResumeThread CodexInput CodexTurn CodexSessionSpec CodexHome])
+(import doeff_codex [TurnEnded TurnStatus])
+(import doeff_codex [CodexHost codex-handler]
+        doeff_codex._handler [KEPT-TURNS on-line])
+(import doeff_codex [CodexStartTurn CodexCloseSession CodexLaunchCount CodexReadTurnEvents TurnEventPage UnknownTurn SessionClosed BackendLost TurnStarted])
 (import tests.interpreters [STUB-PATH CODEX-HOME-DIR settings-for])
 (import tests.scenario_steps [read-to-end])
 

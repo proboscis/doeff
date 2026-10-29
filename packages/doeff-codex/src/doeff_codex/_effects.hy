@@ -10,8 +10,8 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
-(import doeff_codex.lines [TurnEnded])
+(import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
+(import doeff_codex._lines [TurnEnded])
 
 
 ;; --- ターンの終わり(lines.TurnEnded か、終わりの行を読む前に process が消えた・道具を呼べない process だった)--------------

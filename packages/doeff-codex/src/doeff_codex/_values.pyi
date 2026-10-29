@@ -1,10 +1,10 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = values.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _values.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
-from doeff_codex.rpc import ApprovalPolicy as ApprovalPolicy
-from doeff_codex.rpc import SandboxMode as SandboxMode
-from doeff_codex.lines import CodexLine as CodexLine
+from doeff_codex._rpc import ApprovalPolicy as ApprovalPolicy
+from doeff_codex._rpc import SandboxMode as SandboxMode
+from doeff_codex._lines import CodexLine as CodexLine
 
 @dataclass(frozen=True, kw_only=True)
 class CodexHome:

@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-# import 名 doeff_codex は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
+# import 名 doeff_codex の入口(__init__.py)は名を遅延で出すだけで、名は _ で始まる Hy の module に在る(読む時に hy を読み込む)。
 packages = ["src/doeff_codex"]
 # editable の install は .py の無い dir を sys.path に載せない — src を明示して載せる。
 dev-mode-dirs = ["src"]
