@@ -33,7 +33,6 @@ from doeff_effect_analyzer import _handler_effects as he
 from doeff_effect_analyzer import _program_effects as pe
 
 from doeff import EffectBase, EffectGenerator, Try, do, run
-from doeff.result import Result
 
 _Answer = TypeVar("_Answer")
 
@@ -167,7 +166,7 @@ def test_the_fold_counts_only_the_carriers_it_names(
 
 def test_a_target_that_cannot_be_analyzed_is_thrown_back_where_it_was_asked() -> None:
     @do
-    def asks() -> EffectGenerator[Result[ProgramEffects]]:
+    def asks() -> EffectGenerator[object]:
         tried = yield Try(AnalyzeProgram("no_such_module_here:job"))
         return tried
 
@@ -241,3 +240,123 @@ def test_a_changed_program_is_analyzed_again(
     source.write_text(source.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
     answered(CheckCoverage(jobs.job), result_cache=True)
     assert reads.call_count == 2
+
+
+HELPER_CARRIER = """
+from doeff import do
+from doeff_core_effects import Ask
+
+@do
+def child():
+    value = yield Ask("child")
+    return value
+
+def elsewhere(program):
+    return program
+
+@do
+def job():
+    first = yield Ask("x")
+    yield elsewhere(child())
+    return first
+"""
+
+
+def test_the_fold_names_a_helper_function_that_carries_a_program(
+    make_package: Callable[[Mapping[str, str]], str],
+) -> None:
+    pkg = make_package({"jobs.py": HELPER_CARRIER})
+    report = answered(AnalyzeProgram(f"{pkg}.jobs:job"))
+    helpers = [c.carrier for c in report.carried if not isinstance(c.carrier, type)]
+    assert [helper.__name__ for helper in helpers] == ["elsewhere"], report.carried
+    assert FoldCarried(names=("elsewhere",))(helpers[0])
+    assert not FoldCarried(declared=True)(helpers[0])
+
+
+def test_a_failure_of_the_analysis_itself_reaches_the_performing_site(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not only the refusals: whatever the reading raises is caught where the effect was performed."""
+
+    def broken(target: object, **options: object) -> ProgramEffects:
+        raise RecursionError("the reader went too deep")
+
+    monkeypatch.setattr(effects, "analyze_program", broken)
+
+    @do
+    def asks() -> EffectGenerator[object]:
+        tried = yield Try(AnalyzeProgram("doeff_core_effects:reader"))
+        return tried
+
+    outcome = run(try_handler(effect_analysis()(asks())))
+    assert outcome.is_err()
+    assert isinstance(outcome.error, RecursionError)
+
+
+FOUNDATION = """
+def foundation():
+    return []
+"""
+
+IGNORES_FOUNDATION = """
+from doeff import do
+from doeff_core_effects import Ask
+
+@do
+def job(foundation):
+    value = yield Ask("x")
+    return value
+"""
+
+
+def test_a_changed_module_of_a_bound_value_analyzes_again(
+    cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_package: Callable[[Mapping[str, str]], str],
+) -> None:
+    """The job does not read its foundation, so only the bound value names the foundation's module in
+    the key (``depends_on``): a change there analyzes again."""
+    pkg = make_package({"jobs.py": IGNORES_FOUNDATION, "envs.py": FOUNDATION})
+    reads = counting_reads(monkeypatch)
+    jobs = importlib.import_module(f"{pkg}.jobs")
+    envs = importlib.import_module(f"{pkg}.envs")
+    asked = CheckCoverage(jobs.job, bindings={"foundation": envs.foundation})
+    answered(asked, result_cache=True)
+    answered(asked, result_cache=True)
+    assert reads.call_count == 1
+    source = Path(envs.__file__)
+    source.write_text(source.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+    answered(asked, result_cache=True)
+    assert reads.call_count == 2
+
+
+UNNAMED_EFFECT = """
+from dataclasses import dataclass
+from doeff import EffectBase, do
+
+def _made():
+    @dataclass(frozen=True)
+    class Made(EffectBase[int]):
+        pass
+    return Made
+
+Made = _made()
+
+@do
+def job():
+    value = yield Made()
+    return value
+"""
+
+
+def test_an_answer_that_cannot_be_stored_is_answered_all_the_same(
+    cache_dir: Path, make_package: Callable[[Mapping[str, str]], str]
+) -> None:
+    """A gap of an effect class made inside a function is found again by no name, so the answer does not
+    pickle: it is answered, not stored, and no half-written file is left."""
+    pkg = make_package({"jobs.py": UNNAMED_EFFECT})
+    jobs = importlib.import_module(f"{pkg}.jobs")
+    coverage = answered(CheckCoverage(jobs.job), result_cache=True)
+    assert [gap.effect for gap in coverage.gaps] == [jobs.Made]
+    assert list(cache_dir.rglob("*.tmp")) == []
+    assert list((cache_dir / "results").rglob("*.pickle")) == []

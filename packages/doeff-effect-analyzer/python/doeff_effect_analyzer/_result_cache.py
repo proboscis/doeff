@@ -674,15 +674,21 @@ def _read_entry(path: Path) -> "_Entry[object] | None":
 
 def _write_entry(path: Path, entry: "_Entry[T]") -> None:
     """Store the answer atomically (a reader never sees half a file); a failed write only costs
-    the next process one analysis."""
+    the next process one analysis. An answer that does not pickle — a gap of an effect class defined
+    inside a function is found again by no name — is not stored either, and its half-written
+    temporary file is removed (the answer itself is still returned)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    except OSError:
+        return
+    try:
         with os.fdopen(handle, "wb") as out:
             pickle.dump(entry, out, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(temporary, path)
-    except OSError:
-        return
+    except (OSError, pickle.PicklingError, TypeError, AttributeError):
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
 
 
 def _drop_least_used(place: Path) -> None:
