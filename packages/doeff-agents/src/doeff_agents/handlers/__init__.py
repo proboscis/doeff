@@ -22,9 +22,9 @@ if TYPE_CHECKING:
     from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
     from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
     from doeff_claude_code.fake import FakeReply as FakeReply
-    from doeff_codex.fake import FakeCodexWorld as FakeCodexWorld
-    from doeff_codex.rpc import ApprovalPolicy as CodexApprovalPolicy
-    from doeff_codex.rpc import SandboxMode as CodexSandboxMode
+    from doeff_codex import ApprovalPolicy as CodexApprovalPolicy
+    from doeff_codex import FakeCodexWorld as FakeCodexWorld
+    from doeff_codex import SandboxMode as CodexSandboxMode
 
 from doeff_agents._agentd_client import LazyAgentdClient as _LazyAgentdClient
 from doeff_agents.handlers.daemon import AgentdSessionClient as AgentdSessionClient
@@ -50,9 +50,9 @@ _RUNTIME_VALUES = {
     "ClaudeLiveLimitExceeded": ("doeff_claude_code.effects", "ClaudeLiveLimitExceeded"),
     "FakeClaudeWorld": ("doeff_claude_code.fake", "FakeClaudeWorld"),
     "FakeReply": ("doeff_claude_code.fake", "FakeReply"),
-    "FakeCodexWorld": ("doeff_codex.fake", "FakeCodexWorld"),
-    "CodexApprovalPolicy": ("doeff_codex.rpc", "ApprovalPolicy"),
-    "CodexSandboxMode": ("doeff_codex.rpc", "SandboxMode"),
+    "FakeCodexWorld": ("doeff_codex", "FakeCodexWorld"),
+    "CodexApprovalPolicy": ("doeff_codex", "ApprovalPolicy"),
+    "CodexSandboxMode": ("doeff_codex", "SandboxMode"),
 }
 
 

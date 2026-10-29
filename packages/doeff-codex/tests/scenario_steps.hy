@@ -4,10 +4,10 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
-(import doeff_codex.values [CodexTurn CodexEvent])
-(import doeff_codex.lines [TextDelta])
-(import doeff_codex.effects [CodexReadTurnEvents TurnEventPage BackendLost ToolsUnavailable])
-(import doeff_codex.lines [TurnEnded])
+(import doeff_codex [CodexTurn CodexEvent])
+(import doeff_codex [TextDelta])
+(import doeff_codex [CodexReadTurnEvents TurnEventPage BackendLost ToolsUnavailable])
+(import doeff_codex [TurnEnded])
 (import tests.interpreters [ScenarioSettings Settings])
 
 ;; 1 回の読みで待つ上限(秒)。筋書きの全体の上限は Settings.turn-timeout。

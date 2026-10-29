@@ -7,10 +7,10 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_codex.values [CodexSessionSpec CodexHome FreshThread CodexInput])
-(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
-(import doeff_codex.handler [CodexHost codex-handler])
-(import doeff_codex.effects [CodexStartTurn LaunchFailed])
+(import doeff_codex [CodexSessionSpec CodexHome FreshThread CodexInput])
+(import doeff_codex [ApprovalPolicy SandboxMode])
+(import doeff_codex [CodexHost codex-handler])
+(import doeff_codex [CodexStartTurn LaunchFailed])
 
 ;; 替え玉の app-server: stderr に 2 行書いて何も答えず code 3 ですぐ終わる。
 (val DIES "import sys\nsys.stderr.write('first\\n')\nsys.stderr.write('boom\\n')\nsys.exit(3)\n")

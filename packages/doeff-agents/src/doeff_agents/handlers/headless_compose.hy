@@ -36,14 +36,14 @@
 (import doeff_agents.handlers.headless [HeadlessClaudeConfig HeadlessState headless-claude-handler])
 ;; codex の組(card acp:kanban-issue:ki-534a081e32eb): doeff-codex の handler(層 2)と headless の codex の adapter(層 3)。呼び手が
 ;; doeff_codex を import せずに組めるように、宣言の語(許可の方針・sandbox)と fake の世界の型(筋書きの答え・入力)もここから読ませる。
-(import doeff_codex.values [CodexHome CodexInput :as CodexTurnInput])
-(import doeff_codex.rpc [ApprovalPolicy :as CodexApprovalPolicy SandboxMode :as CodexSandboxMode])
-(import doeff_codex.handler [CodexHost codex-handler])
-(import doeff_codex.fake [FakeCodexWorld FakeReply :as FakeCodexReply fake-codex-handler])
+(import doeff_codex [CodexHome CodexInput :as CodexTurnInput])
+(import doeff_codex [ApprovalPolicy :as CodexApprovalPolicy SandboxMode :as CodexSandboxMode])
+(import doeff_codex [CodexHost codex-handler])
+(import doeff_codex [FakeCodexWorld FakeReply :as FakeCodexReply fake-codex-handler])
 ;; 利用枠切れの事実(fake の筋書きの FakeCodexReply.usage-limit に渡す・層 2 の終わりが運ぶ — 窓は長さ〔分〕で名乗る)。
-(import doeff_codex.lines [UsageLimitHit :as CodexUsageLimitHit])
+(import doeff_codex [UsageLimitHit :as CodexUsageLimitHit])
 ;; 提供側の混雑の事実(fake の筋書きの FakeCodexReply.server-overloaded に渡す・層 2 の終わりが運ぶ — card ki-843475dd8f8b)。
-(import doeff_codex.lines [ServerOverloadedHit :as CodexServerOverloadedHit])
+(import doeff_codex [ServerOverloadedHit :as CodexServerOverloadedHit])
 (import doeff_agents.handlers.headless_codex [HeadlessCodexConfig HeadlessCodexState headless-codex-handler])
 
 

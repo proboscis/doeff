@@ -34,16 +34,16 @@
 (import doeff [run])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_time [GetMonotonic WaitWithin])
-(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
-(import doeff_codex.lines :as lines)
-(import doeff_codex.limits [merged-limits usage-limit-hit-of])
+(import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
+(import doeff_codex._lines :as lines)
+(import doeff_codex._limits [merged-limits usage-limit-hit-of])
 (import dataclasses [replace])
-(import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
+(import doeff_codex._rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
-(import doeff_codex.process [CodexProcess CutLine EOF-GRACE-SECONDS TERM-GRACE-SECONDS LINE-CAP-BYTES])
-(import doeff_codex.credential_home [open-credential-home close-credential-home credential-env state-db-claim state-db-release
+(import doeff_codex._process [CodexProcess CutLine EOF-GRACE-SECONDS TERM-GRACE-SECONDS LINE-CAP-BYTES])
+(import doeff_codex._credential_home [open-credential-home close-credential-home credential-env state-db-claim state-db-release
                                      repoint-state-db])
-(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
+(import doeff_codex._effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight
                              UnknownTurn NoSuchRequest ProcessStillAlive])

@@ -8,7 +8,8 @@
 (require doeff-hy.macros [deftest defk <- var])
 (import dataclasses [fields MISSING])
 (import typing [get-args])
-(import doeff_codex.lines [CodexLine TurnRecord])
+(import doeff_codex [CodexLine]
+        doeff_codex._lines [TurnRecord])
 
 
 (defk names-a-turn [#^ type record-type]

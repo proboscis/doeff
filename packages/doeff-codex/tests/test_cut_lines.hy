@@ -7,8 +7,8 @@
 (require doeff-hy.macros [deftest defk <-])
 (import json)
 (import pathlib [Path])
-(import doeff_codex.lines [classify-cut-line closed-json-head Response ErrorResponse Unparsed])
-(import doeff_codex.process [CUT-HEAD-BYTES])
+(import doeff_codex._lines [classify-cut-line closed-json-head Response ErrorResponse Unparsed])
+(import doeff_codex._process [CUT-HEAD-BYTES])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
 (val CUT-SIZE 300000000)

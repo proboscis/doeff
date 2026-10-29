@@ -1,4 +1,4 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = handler.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _handler.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
@@ -9,59 +9,59 @@ from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternal
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import WaitWithin as WaitWithin
-from doeff_codex.values import CodexSessionSpec as CodexSessionSpec
-from doeff_codex.values import CodexTurn as CodexTurn
-from doeff_codex.values import CodexEvent as CodexEvent
-from doeff_codex.values import CodexInput as CodexInput
-from doeff_codex.values import FreshThread as FreshThread
-from doeff_codex.values import ResumeThread as ResumeThread
-import doeff_codex.lines as lines
-from doeff_codex.limits import merged_limits as merged_limits
-from doeff_codex.limits import usage_limit_hit_of as usage_limit_hit_of
+from doeff_codex._values import CodexSessionSpec as CodexSessionSpec
+from doeff_codex._values import CodexTurn as CodexTurn
+from doeff_codex._values import CodexEvent as CodexEvent
+from doeff_codex._values import CodexInput as CodexInput
+from doeff_codex._values import FreshThread as FreshThread
+from doeff_codex._values import ResumeThread as ResumeThread
+import doeff_codex._lines as lines
+from doeff_codex._limits import merged_limits as merged_limits
+from doeff_codex._limits import usage_limit_hit_of as usage_limit_hit_of
 from dataclasses import replace as replace
-from doeff_codex.rpc import app_server_argv as app_server_argv
-from doeff_codex.rpc import initialize_request as initialize_request
-from doeff_codex.rpc import initialized_notification as initialized_notification
-from doeff_codex.rpc import thread_start_request as thread_start_request
-from doeff_codex.rpc import thread_resume_request as thread_resume_request
-from doeff_codex.rpc import turn_start_request as turn_start_request
-from doeff_codex.rpc import turn_steer_request as turn_steer_request
-from doeff_codex.rpc import turn_interrupt_request as turn_interrupt_request
-from doeff_codex.rpc import server_response_line as server_response_line
-from doeff_codex.process import CodexProcess as CodexProcess
-from doeff_codex.process import CutLine as CutLine
-from doeff_codex.process import EOF_GRACE_SECONDS as EOF_GRACE_SECONDS
-from doeff_codex.process import TERM_GRACE_SECONDS as TERM_GRACE_SECONDS
-from doeff_codex.process import LINE_CAP_BYTES as LINE_CAP_BYTES
-from doeff_codex.credential_home import open_credential_home as open_credential_home
-from doeff_codex.credential_home import close_credential_home as close_credential_home
-from doeff_codex.credential_home import credential_env as credential_env
-from doeff_codex.credential_home import state_db_claim as state_db_claim
-from doeff_codex.credential_home import state_db_release as state_db_release
-from doeff_codex.credential_home import repoint_state_db as repoint_state_db
-from doeff_codex.effects import CodexStartTurn as CodexStartTurn
-from doeff_codex.effects import CodexSteerTurn as CodexSteerTurn
-from doeff_codex.effects import CodexInterruptTurn as CodexInterruptTurn
-from doeff_codex.effects import CodexReadTurnEvents as CodexReadTurnEvents
-from doeff_codex.effects import CodexAnswerRequest as CodexAnswerRequest
-from doeff_codex.effects import CodexCloseSession as CodexCloseSession
-from doeff_codex.effects import CodexLaunchCount as CodexLaunchCount
-from doeff_codex.effects import BackendLost as BackendLost
-from doeff_codex.effects import ToolsUnavailable as ToolsUnavailable
-from doeff_codex.effects import TurnStarted as TurnStarted
-from doeff_codex.effects import Steered as Steered
-from doeff_codex.effects import InterruptRequested as InterruptRequested
-from doeff_codex.effects import TurnEventPage as TurnEventPage
-from doeff_codex.effects import Answered as Answered
-from doeff_codex.effects import SessionClosed as SessionClosed
-from doeff_codex.effects import ThreadUnknown as ThreadUnknown
-from doeff_codex.effects import TurnInFlight as TurnInFlight
-from doeff_codex.effects import LaunchFailed as LaunchFailed
-from doeff_codex.effects import RequestRefused as RequestRefused
-from doeff_codex.effects import NoTurnInFlight as NoTurnInFlight
-from doeff_codex.effects import UnknownTurn as UnknownTurn
-from doeff_codex.effects import NoSuchRequest as NoSuchRequest
-from doeff_codex.effects import ProcessStillAlive as ProcessStillAlive
+from doeff_codex._rpc import app_server_argv as app_server_argv
+from doeff_codex._rpc import initialize_request as initialize_request
+from doeff_codex._rpc import initialized_notification as initialized_notification
+from doeff_codex._rpc import thread_start_request as thread_start_request
+from doeff_codex._rpc import thread_resume_request as thread_resume_request
+from doeff_codex._rpc import turn_start_request as turn_start_request
+from doeff_codex._rpc import turn_steer_request as turn_steer_request
+from doeff_codex._rpc import turn_interrupt_request as turn_interrupt_request
+from doeff_codex._rpc import server_response_line as server_response_line
+from doeff_codex._process import CodexProcess as CodexProcess
+from doeff_codex._process import CutLine as CutLine
+from doeff_codex._process import EOF_GRACE_SECONDS as EOF_GRACE_SECONDS
+from doeff_codex._process import TERM_GRACE_SECONDS as TERM_GRACE_SECONDS
+from doeff_codex._process import LINE_CAP_BYTES as LINE_CAP_BYTES
+from doeff_codex._credential_home import open_credential_home as open_credential_home
+from doeff_codex._credential_home import close_credential_home as close_credential_home
+from doeff_codex._credential_home import credential_env as credential_env
+from doeff_codex._credential_home import state_db_claim as state_db_claim
+from doeff_codex._credential_home import state_db_release as state_db_release
+from doeff_codex._credential_home import repoint_state_db as repoint_state_db
+from doeff_codex._effects import CodexStartTurn as CodexStartTurn
+from doeff_codex._effects import CodexSteerTurn as CodexSteerTurn
+from doeff_codex._effects import CodexInterruptTurn as CodexInterruptTurn
+from doeff_codex._effects import CodexReadTurnEvents as CodexReadTurnEvents
+from doeff_codex._effects import CodexAnswerRequest as CodexAnswerRequest
+from doeff_codex._effects import CodexCloseSession as CodexCloseSession
+from doeff_codex._effects import CodexLaunchCount as CodexLaunchCount
+from doeff_codex._effects import BackendLost as BackendLost
+from doeff_codex._effects import ToolsUnavailable as ToolsUnavailable
+from doeff_codex._effects import TurnStarted as TurnStarted
+from doeff_codex._effects import Steered as Steered
+from doeff_codex._effects import InterruptRequested as InterruptRequested
+from doeff_codex._effects import TurnEventPage as TurnEventPage
+from doeff_codex._effects import Answered as Answered
+from doeff_codex._effects import SessionClosed as SessionClosed
+from doeff_codex._effects import ThreadUnknown as ThreadUnknown
+from doeff_codex._effects import TurnInFlight as TurnInFlight
+from doeff_codex._effects import LaunchFailed as LaunchFailed
+from doeff_codex._effects import RequestRefused as RequestRefused
+from doeff_codex._effects import NoTurnInFlight as NoTurnInFlight
+from doeff_codex._effects import UnknownTurn as UnknownTurn
+from doeff_codex._effects import NoSuchRequest as NoSuchRequest
+from doeff_codex._effects import ProcessStillAlive as ProcessStillAlive
 RETIRE_WAIT_SECONDS: Incomplete
 KEPT_TURNS: int
 CLIENT_NAME: str

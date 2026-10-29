@@ -11,12 +11,12 @@
 (import dataclasses [fields])
 (import pathlib [Path])
 (import typing [get-args])
-(import doeff_codex.lines [classify-line CodexLine LimitRecord RateLimits RateLimitWindow TurnEnded TurnStatus UnknownValue
-                           UsageLimitHit])
-(import doeff_codex.limits [merged-limits usage-limit-hit-of])
-(import doeff_codex.handler [Continuation SessionRuntime absorb])
-(import doeff_codex.values [CodexSessionSpec CodexHome])
-(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
+(import doeff_codex [CodexLine TurnEnded TurnStatus UsageLimitHit]
+        doeff_codex._lines [classify-line LimitRecord RateLimits RateLimitWindow UnknownValue])
+(import doeff_codex._limits [merged-limits usage-limit-hit-of])
+(import doeff_codex._handler [Continuation SessionRuntime absorb])
+(import doeff_codex [CodexSessionSpec CodexHome])
+(import doeff_codex [ApprovalPolicy SandboxMode])
 (import doeff_hy.json_value [OpaqueJson])
 
 (val TEXT "You’ve hit your usage limit.")

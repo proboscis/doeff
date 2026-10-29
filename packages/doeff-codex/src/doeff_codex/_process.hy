@@ -36,7 +36,7 @@
 ;; stdout を 1 度に読む大きさ(bytes — 上限を超えた行の確保は上限とこの大きさで決まる。CUT-HEAD-BYTES 以上にし、上限を超えた行の
 ;; 初めの 1 度で頭が揃うようにする)。
 (val READ-CHUNK-BYTES (* 1024 1024))
-(val LOG (logging.getLogger "doeff_codex.process"))
+(val LOG (logging.getLogger "doeff_codex._process"))
 
 
 (defrecord CutLine

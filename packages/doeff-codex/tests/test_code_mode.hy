@@ -10,12 +10,12 @@
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest defk <- var])
 (import json)
-(import doeff_codex.lines [classify-line CodeModeUnavailable CodexWarning Response TurnStarted TextDelta
-                           CODE-MODE-UNAVAILABLE-HEAD CODE-MODE-FAIL-CLOSED])
-(import doeff_codex.handler [Continuation SessionRuntime absorb])
-(import doeff_codex.effects [ToolsUnavailable])
-(import doeff_codex.values [CodexSessionSpec CodexHome])
-(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
+(import doeff_codex [TextDelta]
+        doeff_codex._lines [classify-line CodeModeUnavailable CodexWarning Response TurnStarted CODE-MODE-UNAVAILABLE-HEAD CODE-MODE-FAIL-CLOSED])
+(import doeff_codex._handler [Continuation SessionRuntime absorb])
+(import doeff_codex [ToolsUnavailable])
+(import doeff_codex [CodexSessionSpec CodexHome])
+(import doeff_codex [ApprovalPolicy SandboxMode])
 (import tests.test_lines [RECORDED recorded-records recorded-line])
 
 

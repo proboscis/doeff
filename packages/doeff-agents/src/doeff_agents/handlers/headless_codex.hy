@@ -91,14 +91,14 @@
 ;; 手番の終わり → AwaitOutcome の写し(L2 の見え方)は claude の adapter と同じ 1 つの関数を使う。
 (import doeff_agents.handlers.headless [outcome-of])
 (import doeff_hy.frozen [frozen-json-object])
-(import doeff_codex.values [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread])
-(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
-(import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
-                           TurnStatus UsageLimitHit ServerOverloadedHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall DynamicCall AgentCall
-                           ImageView])
-(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
-                             BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested TurnEventPage
-                             ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
+(import doeff_codex [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread
+                     ApprovalPolicy SandboxMode
+                     CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
+                     TurnStatus UsageLimitHit ServerOverloadedHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall
+                     DynamicCall AgentCall ImageView
+                     CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
+                     BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested TurnEventPage
+                     ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
 
 (val HANDLER-NAME "headless-codex-handler")
 ;; 枠の窓の長さ(分)→ 窓の名(claude の CLI の rateLimitType と同じ綴り — 上の層が claude と同じ語で読む)。表に無い長さは名乗らない。

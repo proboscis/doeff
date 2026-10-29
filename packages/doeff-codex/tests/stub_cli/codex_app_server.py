@@ -36,7 +36,7 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   答え 1 行で運ぶ形)。ただし要求が excludeTurns: true を名乗った時は載せない(本物の codex 0.162.1 の v2/ThreadResumeParams の規則 —
   履歴を空にして thread の欄だけを返す)。--ignore-exclude-turns が在れば excludeTurns を無視して載せる(この欄を知らない版の codex の
   模型 — 読み手の 1 行の上限の検は、要求の側の工夫に依らず上限が守る事を見る)。
-- 状態の DB(本物の codex 0.162.1 で測った形 — doeff_codex.credential_home の頭の註): 起動の時、置き場($CODEX_SQLITE_HOME、
+- 状態の DB(本物の codex 0.162.1 で測った形 — doeff_codex._credential_home の頭の註): 起動の時、置き場($CODEX_SQLITE_HOME、
   無ければ $CODEX_HOME)の state_5.sqlite が無ければ、sessions の rollout を全部読んで DB を作る(backfill — 読んだ bytes を数える。
   環境変数 STUB_BACKFILL_SECONDS が在れば、作る間その秒だけ待つ)。ほかの起動が DB を作っている最中(作りの目印の file が在る)なら、
   本物と同じ文を stderr に書いて code 1 で降りる。thread/start は sessions に rollout を 1 本書き、DB の行に家を通る path

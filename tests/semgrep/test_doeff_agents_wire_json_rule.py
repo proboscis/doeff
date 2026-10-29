@@ -39,7 +39,7 @@ def test_wire_json_decoding_in_doeff_agents_is_rejected() -> None:
 def test_the_codex_adapter_reads_only_layer_two_records() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / ADAPTER_FILE).read_text(encoding="utf-8")
-    # 対照の前提: 実物の adapter は層 2(doeff_codex.lines)の記録を読んでいる(読んでいなければ下の緑は無意味)。
-    assert "doeff_codex.lines" in source
+    # 対照の前提: 実物の adapter は層 2 の記録(doeff_codex の入口の CodexLine と行の型)を読んでいる(読んでいなければ下の緑は無意味)。
+    assert "(import doeff_codex [" in source and " CodexLine " in source
     findings = _semgrep_results(root / ".semgrep.yaml", ADAPTER_FILE, cwd=root)
     assert _hits(findings, RULE) == []

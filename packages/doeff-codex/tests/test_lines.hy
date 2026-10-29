@@ -10,9 +10,8 @@
 (import json)
 (import pathlib [Path])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_codex.lines [classify-line TextDelta AgentMessageDone ReasoningDelta TurnStarted TurnEnded TurnStatus TurnError
-                           ThreadStarted TokenUsage Response ErrorResponse ServerRequest Other Unparsed ItemStarted ItemDone
-                           UnknownValue RateLimits RateLimitWindow ServerOverloadedHit])
+(import doeff_codex [TextDelta AgentMessageDone ReasoningDelta TurnEnded TurnStatus TokenUsage ServerRequest ItemStarted ItemDone ServerOverloadedHit]
+        doeff_codex._lines [classify-line TurnStarted TurnError ThreadStarted Response ErrorResponse Other Unparsed UnknownValue RateLimits RateLimitWindow])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
 ;; 利用枠切れの録りで、偽の上流が枠の header で名乗った戻りの刻(scripts/record_app_server_lines.py の USAGE_RESETS_AT・

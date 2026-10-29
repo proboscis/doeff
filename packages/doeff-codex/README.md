@@ -6,16 +6,20 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 
 ## この package が持つ物
 
+利用者は effect・handler とその型を入口 `doeff_codex` から読む(`from doeff_codex import CodexStartTurn, codex_handler`・
+Hy は `(import doeff_codex [CodexStartTurn codex-handler])`)。下の表の module は `_` で始まる内側の module で、利用者は import
+しない(ADR-DOE-API-001 R5)。入口の `TurnStarted` は `CodexStartTurn` の答えで、行の記録の同じ名の型は `doeff_codex._lines` に在る。
+
 | module | 何のため | 中身 |
 |---|---|---|
-| `doeff_codex.effects` | 上の層が codex のターンを effect で頼むため(公開の口) | 下の「公開 effect」の表 |
-| `doeff_codex.values` | effect の欄の値 | `CodexSessionSpec`(環境・作業の dir・model・許可の方針・sandbox・考えの深さ・圧縮の閾値)・`CodexHome`・`CodexInput`(文字と画像)・`CodexImage`・`FreshThread`・`ResumeThread`・`CodexTurn`・`CodexEvent` |
-| `doeff_codex.handler` | 本番の handler — 公開 effect に app-server の子 process で答えるため | `codex-handler`・`CodexHost`(composition root が 1 つ作る状態の持ち主) |
-| `doeff_codex.fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply`(`usage-limit` = 利用枠切れの事実 `UsageLimitHit` — 在れば誤りの種類 `usageLimitExceeded` の失敗で終える・`server-overloaded` = 提供側の混雑の事実 `ServerOverloadedHit` — 在れば誤りの種類 `serverOverloaded` の失敗で終える) |
-| `doeff_codex.limits` | ターンの中の枠の知らせを重ね、利用枠切れで終わったターンの事実を作るため(純粋 — handler が使う) | `merged-limits`・`usage-limit-hit-of` |
-| `doeff_codex.rpc` | app-server を起こす argv と、stdin へ書く要求・答えの 1 行を作るため | `app-server-argv`・`initialize-request`・`initialized-notification`・`thread-start-request`・`thread-resume-request`・`turn-start-request`・`turn-steer-request`・`turn-interrupt-request`・`server-response-line`・閉じた語彙 `ApprovalPolicy`・`SandboxMode` |
-| `doeff_codex.lines` | stdout の 1 行を、上の層が読む型つきの記録へ分けるため | `classify-line`(1 行 → `CodexLine`)と記録の型 |
-| `doeff_codex.process` | app-server の子 process を、ターンをまたいで生かして行を運ぶため(handler だけが持つ内部の器) | `CodexProcess`(stdin の書き手・stdout と stderr の読み手の thread・降ろす梯子) |
+| `doeff_codex._effects` | 上の層が codex のターンを effect で頼むため(公開の口) | 下の「公開 effect」の表 |
+| `doeff_codex._values` | effect の欄の値 | `CodexSessionSpec`(環境・作業の dir・model・許可の方針・sandbox・考えの深さ・圧縮の閾値)・`CodexHome`・`CodexInput`(文字と画像)・`CodexImage`・`FreshThread`・`ResumeThread`・`CodexTurn`・`CodexEvent` |
+| `doeff_codex._handler` | 本番の handler — 公開 effect に app-server の子 process で答えるため | `codex-handler`・`CodexHost`(composition root が 1 つ作る状態の持ち主) |
+| `doeff_codex._fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply`(`usage-limit` = 利用枠切れの事実 `UsageLimitHit` — 在れば誤りの種類 `usageLimitExceeded` の失敗で終える・`server-overloaded` = 提供側の混雑の事実 `ServerOverloadedHit` — 在れば誤りの種類 `serverOverloaded` の失敗で終える) |
+| `doeff_codex._limits` | ターンの中の枠の知らせを重ね、利用枠切れで終わったターンの事実を作るため(純粋 — handler が使う) | `merged-limits`・`usage-limit-hit-of` |
+| `doeff_codex._rpc` | app-server を起こす argv と、stdin へ書く要求・答えの 1 行を作るため | `app-server-argv`・`initialize-request`・`initialized-notification`・`thread-start-request`・`thread-resume-request`・`turn-start-request`・`turn-steer-request`・`turn-interrupt-request`・`server-response-line`・閉じた語彙 `ApprovalPolicy`・`SandboxMode` |
+| `doeff_codex._lines` | stdout の 1 行を、上の層が読む型つきの記録へ分けるため | `classify-line`(1 行 → `CodexLine`)と記録の型 |
+| `doeff_codex._process` | app-server の子 process を、ターンをまたいで生かして行を運ぶため(handler だけが持つ内部の器) | `CodexProcess`(stdin の書き手・stdout と stderr の読み手の thread・降ろす梯子) |
 
 ## 公開 effect
 
@@ -55,7 +59,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 履歴の全部を答え 1 行で載せる(session が育つほど数百 MB になる)。handler が答えから使うのは thread の id だけなので履歴は求めない。
 
 借りた口座(`CodexHome.auth-json` — 貸し手が封じた auth.json の中身)を持つ宣言の process は、元の CODEX_HOME の auth.json を
-書き換えず、その process だけの家(資格の家 — `doeff_codex.credential_home`)で走る。codex は口座を `$CODEX_HOME/auth.json` から
+書き換えず、その process だけの家(資格の家 — `doeff_codex._credential_home`)で走る。codex は口座を `$CODEX_HOME/auth.json` から
 だけ読み、同じ機体で別の口座のターンが並んで走るため。
 
 | 家の中身 | 形 | 訳 |

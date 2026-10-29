@@ -402,7 +402,7 @@ def record_app_server(codex: str, out: Path, env: dict[str, str], cwd: Path, nam
                       script: Callable[[Send, Wait, Path], None]) -> None:
     """1 つの筋書きを app-server の 1 つの process で走らせ、書いた行と読んだ行を届いた順に file へ残すため。"""
     with (out / f"{name}.stderr").open("w", encoding="utf-8") as stderr:
-        # argv は doeff_codex.rpc の app-server-argv と同じ形(前置き + app-server --listen stdio://)— 組み立てた argv を本物に当てる。
+        # argv は doeff_codex._rpc の app-server-argv と同じ形(前置き + app-server --listen stdio://)— 組み立てた argv を本物に当てる。
         process = subprocess.Popen([codex, *APP_SERVER_ARGS], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
                                    env=env, cwd=cwd, text=True, bufsize=1)
     if process.stdin is None or process.stdout is None:
