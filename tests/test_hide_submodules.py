@@ -415,3 +415,64 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _check_table(repo)
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)
+
+
+@pytest.mark.timeout(600)
+def test_hide_points_callers_at_an_entry_that_reads_its_children_by_the_old_path(
+    tmp_path: Path,
+) -> None:
+    """入口が子を古い path で読み(子の ``__init__`` も自分の下の module を古い path で読む)、2 つの子が同じ定義の名を
+    出し、入口に ``__all__`` が在っても、hide は名を入口へ 1 度だけ足し、呼び手を入口へ向ける(card ki-a883efd67a46 —
+    doeff-events の形)。
+
+    入口と比べる子の process は入口を import する。根の中の file を書き換える前に比べると、移し替えの module を読む途中で
+    古い path の下の module が読めず(読み込みの途中の移し替えの module は package でない)、どの名も入口へ向かなかった。
+    ``__all__`` の在る入口では、目録が ``__all__`` の名だけを数えるので、足した名を ``__all__`` にも足す。
+    """
+    files = {
+        **FILES,
+        f"packages/{PACKAGE}/src/{ROOT_NAME}/__init__.py": f'''
+            """The fixture package."""
+
+            from {ROOT_NAME}.effects import PingEffect as PingEffect
+            from {ROOT_NAME}.tools import Shout as Shout
+
+            __all__ = [
+                "PingEffect",
+                "Shout",
+            ]
+        ''',
+        f"packages/{PACKAGE}/src/{ROOT_NAME}/handlers.py": f'''
+            """The handler, read again from the effects module (one definition under a second child)."""
+
+            from {ROOT_NAME}.effects import ping_handler
+        ''',
+    }
+    repo = _write_repo(
+        tmp_path / "repo", {**files, **{f"callers/{k}": v for k, v in CALLERS.items()}}
+    )
+    package = repo / "packages" / PACKAGE
+
+    report = tool.hide(package, ["effects", "tools", "handlers"], None, None, [])
+
+    assert report.conflicts == ()
+    assert sorted(report.entry_added) == ["PingConfig", "ping_handler"]
+    entry = _text(repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/__init__.py")
+    assert f'"ping_handler": "{ROOT_NAME}._effects"' in entry
+    assert f"from {ROOT_NAME}._tools import Shout as Shout" in entry
+    listed = next(
+        node.value
+        for node in ast.parse(entry).body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+    )
+    assert ast.literal_eval(listed) == ["PingConfig", "PingEffect", "Shout", "ping_handler"]
+    [package_row] = tool._inventory_tool().inventory(repo, [PACKAGE], 1, 100)
+    assert {"PingConfig", "ping_handler"} <= {
+        row["name"] for row in package_row["exports"] if row["module"] == ROOT_NAME
+    }
+    callers = _text(repo, "callers/test_callers.py")
+    assert f"from {ROOT_NAME} import PingConfig, PingEffect\n" in callers
+    assert f"from {ROOT_NAME}._effects import call_helper, helper\n" in callers
+    assert f"(import {ROOT_NAME} [Shout]" in _text(repo, "callers/hy_caller.hy")
+    _run_callers(repo / "callers", package / "src")

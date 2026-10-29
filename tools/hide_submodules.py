@@ -37,7 +37,8 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 
 入口は遅延の import で書く: ``_LAZY_EXPORTS``(名から module へ)・``__getattr__``・``__dir__``・``if TYPE_CHECKING:`` の
 ``X as X``(``.py`` か ``.pyi`` の在る module の名だけ。``__all__`` は使わない — DOEFF021)。入口に ``_LAZY_EXPORTS`` と
-``__getattr__`` が在れば表に行を足し、無ければ形を末尾に足す。入口の無い名前空間 package には入口を作る。
+``__getattr__`` が在れば表に行を足し、無ければ形を末尾に足す。入口の無い名前空間 package には入口を作る。入口に
+``__all__`` が既に在れば、足した名を ``__all__`` にも足す(目録と ``import *`` は ``__all__`` の名だけを読む)。
 
 移し替えの module(``<根>/<子>.py`` の 1 file・1 行目に ``# moved-submodule-shim: <古い path> -> <新しい path>``)は、
 import すると ``_<子>`` の module そのものを返し(``sys.modules`` を差し替える)、子が package なら下の module も meta path の
@@ -1124,7 +1125,12 @@ def rewrite_tree(
     *,
     write: bool,
 ) -> TreeResult:
-    """木の候補の file を 2 回読む: 1 回目で入口と比べる名を集め、子の process で確かめてから 2 回目で書く。"""
+    """木の候補の file を 2 回読む: 1 回目で入口と比べる名を集め、子の process で確かめてから 2 回目で書く。
+
+    書く時は、``_`` の path だけを読む file(import の根の中と ``--underscore-only``)を比べる前に書く。子の process は
+    入口を import するので、移した子が自分の下の module を古い path で読んだままだと、読み込みの途中の移し替えの module
+    (package でない)の下が読めず、どの名も入口と同じ物と確かめられない(card ki-a883efd67a46)。
+    """
     files = tree.candidates(patterns)
     texts = {relative: (tree.path / relative).read_text(encoding="utf-8") for relative, _ in files}
     asked: set[tuple[str, str]] = set()
@@ -1136,6 +1142,15 @@ def rewrite_tree(
 
     for relative, kind in files:
         rewrite_text(kind, texts[relative], patterns, tree.context(relative), collect)
+    if write:
+        for relative, kind in files:
+            context = tree.context(relative)
+            if context.underscore_only:
+                text, _counts = rewrite_text(
+                    kind, texts[relative], patterns, context, lambda _m, _n: False
+                )
+                if text != texts[relative]:
+                    (tree.path / relative).write_text(text, encoding="utf-8")
     entry = same_as_entry(asked)
 
     def one(relative: str, kind: FileKind) -> FileResult:
@@ -1318,6 +1333,8 @@ class NameFate:
     fate: Fate
     source: str | None = None  # 入口が読む module(新しい path)
     note: str = ""
+    definition: str = ""  # 入口へ足す名の定義の場所(子どうしで同じ物かを比べる)
+    defined_here: bool = False  # source が定義の在る module か
 
 
 def _table_groups(
@@ -1357,17 +1374,19 @@ def _row_destination(
     return "underscore", None, "既知の表に無い effect と handler の外の名"
 
 
-def _preferred_module(rows: Sequence[ExportRow]) -> str:
-    """同じ定義を出す module のうち、定義の在る module(無ければ浅い module)。"""
+def _defined_in(row: ExportRow) -> bool:
+    """行の module が、名の定義の在る module か。"""
+    defined = row["defined_at"].split(":")[0]
+    return defined == row["module"] or defined.endswith(
+        row["module"].replace(".", "/") + Path(defined).suffix
+    )
 
-    def key(row: ExportRow) -> tuple[bool, int, str]:
-        defined = row["defined_at"].split(":")[0]
-        here = defined == row["module"] or defined.endswith(
-            row["module"].replace(".", "/") + Path(defined).suffix
-        )
-        return (not here, row["module"].count("."), row["module"])
 
-    return min(rows, key=key)["module"]
+def _preferred_row(rows: Sequence[ExportRow]) -> ExportRow:
+    """同じ定義を出す行のうち、定義の在る module の行(無ければ浅い module の行)。"""
+    return min(
+        rows, key=lambda row: (not _defined_in(row), row["module"].count("."), row["module"])
+    )
 
 
 def decide_names(
@@ -1419,21 +1438,46 @@ def _name_fate(
             return NameFate(name, modules, kind, group, "already")
         note = f"入口の {name} は別の定義({', '.join(sorted(existing))})"
         return NameFate(name, modules, kind, group, "conflict", note=note)
-    source = _renamed(_preferred_module(entry_rows), child)
-    return NameFate(name, modules, kind, group, "entry", source=source)
+    preferred = _preferred_row(entry_rows)
+    return NameFate(
+        name,
+        modules,
+        kind,
+        group,
+        "entry",
+        source=_renamed(preferred["module"], child),
+        definition=preferred["defined_at"],
+        defined_here=_defined_in(preferred),
+    )
 
 
 def _dedupe_across_children(fates: list[NameFate]) -> list[NameFate]:
-    """2 つの子が同じ名を入口へ出す時は、どちらも足さずにぶつかりにする。"""
-    counted = collections.Counter(f.name for f in fates if f.fate == "entry")
-    return [
-        NameFate(
-            f.name, f.modules, f.kind, f.group, "conflict", note="2 つ以上の子が同じ名を入口へ出す"
+    """2 つ以上の子が同じ名を入口へ出す時: 定義が 1 つなら 1 度だけ足し(定義の在る子から — 子の module が兄弟の子の
+    名を読み直すと、目録はどちらの子の名とも数える)、定義が違えばどれも足さずにぶつかりにする。"""
+    entries = [f for f in fates if f.fate == "entry"]
+    sharing = {f.name: [s for s in entries if s.name == f.name] for f in entries}
+    chosen = {
+        name: min(
+            same, key=lambda f: (not f.defined_here, cast(str, f.source).count("."), f.source)
         )
-        if f.fate == "entry" and counted[f.name] > 1
-        else f
-        for f in fates
-    ]
+        for name, same in sharing.items()
+        if len({f.definition for f in same}) == 1
+    }
+
+    def deduped(fate: NameFate) -> NameFate:
+        # 入口の遅延の表に同じ名の行を 2 つ書かず、同じ物を 1 度だけ出す為。
+        if fate.fate != "entry" or len(sharing[fate.name]) == 1:
+            return fate
+        kept = chosen.get(fate.name)
+        if kept is fate:
+            return fate
+        if kept is not None:
+            note = f"同じ定義を {kept.source} から入口へ足す"
+            return dataclasses.replace(fate, fate="already", source=None, note=note)
+        note = "2 つ以上の子が定義の違う同じ名を入口へ出す"
+        return dataclasses.replace(fate, fate="conflict", source=None, note=note)
+
+    return [deduped(fate) for fate in fates]
 
 
 # --- 入口と移し替えの module ---
@@ -1494,6 +1538,7 @@ class EntryShape:
     has_dir: bool
     type_checking: ast.If | None
     bound: frozenset[str]
+    listed: ast.List | ast.Tuple | None = None  # ``__all__`` の値(在れば)
 
     @classmethod
     def read(cls, path: Path) -> EntryShape:
@@ -1503,6 +1548,7 @@ class EntryShape:
         lazy: ast.Dict | None = None
         lazy_statement: ast.stmt | None = None
         type_checking: ast.If | None = None
+        listed: ast.List | ast.Tuple | None = None
         bound: set[str] = set()
         functions: set[str] = set()
         for node in tree.body:
@@ -1512,6 +1558,10 @@ class EntryShape:
                     isinstance(t, ast.Name) and t.id == "_LAZY_EXPORTS" for t in targets
                 ) and isinstance(node.value, ast.Dict):
                     lazy, lazy_statement = node.value, node
+                if any(
+                    isinstance(t, ast.Name) and t.id == "__all__" for t in targets
+                ) and isinstance(node.value, (ast.List, ast.Tuple)):
+                    listed = node.value
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 functions.add(node.name)
             elif (
@@ -1531,6 +1581,7 @@ class EntryShape:
             "__dir__" in functions,
             type_checking,
             frozenset(bound),
+            listed,
         )
 
     def problem(self) -> str | None:
@@ -1538,7 +1589,51 @@ class EntryShape:
             return f"{self.path.with_suffix('.hy')}: Hy の入口には名を足せない(手で足す)"
         if self.tree is not None and self.has_getattr != (self.lazy is not None):
             return f"{self.path}: __getattr__ と _LAZY_EXPORTS の dict の片方だけが在る — 道具は表に行を足せない(手で足す)"
+        if self.listed is not None and not _one_name_per_line(self.listed):
+            return (
+                f"{self.path}: __all__ が 1 行に 1 つの名の形でない — 道具は名を足せない(手で足す)"
+            )
         return None
+
+
+def _one_name_per_line(listed: ast.List | ast.Tuple) -> bool:
+    """``__all__`` が、名の文字列を 1 行に 1 つ並べ、閉じ括弧を行の頭に置く形か(道具が行を足せる形)。"""
+    rows = [
+        e.lineno for e in listed.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    ]
+    return (
+        len(rows) == len(listed.elts)
+        and len(set(rows)) == len(rows)
+        and listed.lineno not in rows
+        and cast(int, listed.end_lineno) > listed.lineno
+        and listed.end_col_offset == 1
+    )
+
+
+def _all_order(name: str) -> tuple[int, str]:
+    """ruff の RUF022 の並び(SCREAMING_SNAKE_CASE・CamelCase・その他の順)— 名を足した ``__all__`` が lint に掛からない為。"""
+    if all(c.isupper() or c.isdigit() or c == "_" for c in name):
+        return (0, name)
+    return (1, name) if name[:1].isupper() else (2, name)
+
+
+def _listed_rows(shape: EntryShape, additions: Sequence[NameFate]) -> tuple[tuple[int, str], ...]:
+    """入口の ``__all__`` に足す名の行: ``__all__`` の在る入口では、目録と ``import *`` が ``__all__`` の名だけを読む為。
+
+    名は RUF022 の並びの位置へ足す(並んでいない ``__all__`` では、後ろの名の前の最初の位置)。
+    """
+    listed = shape.listed
+    if listed is None or not additions:
+        return ()
+    elements = cast(list[ast.Constant], listed.elts)
+    indent = " " * (elements[0].col_offset if elements else 4)
+
+    def place(name: str) -> int:
+        later = [e.lineno - 1 for e in elements if _all_order(e.value) > _all_order(name)]
+        return later[0] if later else cast(int, listed.end_lineno) - 1
+
+    ordered = sorted(additions, key=lambda f: _all_order(f.name))
+    return tuple((place(f.name), f'{indent}"{f.name}",\n') for f in ordered)
 
 
 def _block(
@@ -1676,7 +1771,11 @@ def update_entry(
         edit = _merged_edit(shape, lines, additions, typed, value)
     else:
         edit = _appended_edit(shape, root, additions, typed, value)
-    inserts = (*edit.inserts, *(((_import_line(shape), edit.imports),) if edit.imports else ()))
+    inserts = (
+        *edit.inserts,
+        *_listed_rows(shape, additions),
+        *(((_import_line(shape), edit.imports),) if edit.imports else ()),
+    )
     at = {line: "".join(t for where, t in inserts if where == line) for line, _ in inserts}
     text = "".join(at.get(index, "") + line for index, line in enumerate(lines))
     text += at.get(len(lines), "")
