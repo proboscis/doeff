@@ -229,7 +229,9 @@ spec:
             # coordinator の process に効く差: 機体ごとの job の判断 per-machine? を 1 か所に置き、雛形を機体ごとに広げた job も機体ごとと
             # 読む(76652324c・fce290516)・枠の file の行を N+1 の判断の worker にする読み(c5501982e)・worker の知らせの読み
             # (worker_notices)。前の版 cc2e22aa8 は 96d851134 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 036ea2cb175a3eb4b20cf25eb61bdd85a740d000 }
+            # a227592e6 = task の置き方で、背景の仕事(優先 -1 の long-command)にも task-reserve の半分(切り捨て — zeus は 3)を守る版
+            # (cluster_policy.hy の task-misfit・place-tasks・card ki-66ebb596d7d6・依頼 lt-JPQY)。前の版 036ea2cb1 は a227592e6 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: a227592e6974f432a552a1504c36bb346e7f1f69 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
