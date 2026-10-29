@@ -14,7 +14,7 @@
 行の書きの錠を表の単位と番号の錠に分けた形(card ki-f2888153ff62 — 1 つの表の束の書きが他の表の行の書きを待たせない・番号の読みの約束を
 保つ)は test_pg_table_units.hy が確かめる。
 
-番号の読みの約束そのもの(番号は積んだ順に見える)は、法 law-concurrent-writes-appear-in-number-order(laws.hy)が memory と PostgreSQL の
+番号の読みの約束そのもの(番号は積んだ順に見える)は、法 law-concurrent-writes-appear-in-number-order(_laws.hy)が memory と PostgreSQL の
 両方で確かめる。
 """
 
@@ -34,11 +34,11 @@ from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabas
 from doeff_core_effects.scheduler import Cancel, CreateExternalPromise, Spawn, Wait, scheduled
 from doeff_core_effects.thread_pool_compute import thread_pool_compute_handler
 from doeff_hy.frozen import FrozenMap
-from doeff_records.effects import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow
-from doeff_records.laws import LAW_SCHEMA, MAKER
+from doeff_records import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow
+from doeff_records._laws import LAW_SCHEMA, MAKER
 from doeff_records.pg import drop_records_tables, pg_records_handler, prepare_records_store, writer_gates
 from doeff_records.pg_sql import ROWS_UNIT, stream_unit, table_unit, unit_lock_key, writer_lock_key
-from doeff_records.values import Appended, ExpectAbsent, ExpectAny, Row, Written
+from doeff_records import Appended, ExpectAbsent, ExpectAny, Row, Written
 from doeff_time import SimClock, sim_time_handler, sync_time_handler
 
 from doeff import do, run, with_handlers

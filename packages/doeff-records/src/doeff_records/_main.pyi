@@ -1,4 +1,4 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = main.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _main.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
@@ -29,7 +29,7 @@ from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
 from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler as pooled_postgres_sql_handler
 from doeff_core_effects.thread_pool_compute import thread_pool_compute_handler as thread_pool_compute_handler
 from doeff_time import async_time_handler as async_time_handler
-from doeff_records.values import RecordsSchema as RecordsSchema
+from doeff_records._values import RecordsSchema as RecordsSchema
 from doeff_records.pg import pg_records_handler as pg_records_handler
 from doeff_records.pg import prepare_records_store as prepare_records_store
 from doeff_records.pg import reconcile_indexes as reconcile_indexes
@@ -41,9 +41,9 @@ from doeff_records.http_server import RecordsListening as RecordsListening
 from doeff_records.http_server import RecordsPrepared as RecordsPrepared
 from doeff_records.http_server import REQUEST_MAX_BYTES as REQUEST_MAX_BYTES
 from doeff_records.http_server import serve_records as serve_records
-from doeff_records.store_choice import StoreChoice as StoreChoice
-from doeff_records.store_choice import StorePressure as StorePressure
-from doeff_records.store_choice import PressureUnread as PressureUnread
+from doeff_records._store_choice import StoreChoice as StoreChoice
+from doeff_records._store_choice import StorePressure as StorePressure
+from doeff_records._store_choice import PressureUnread as PressureUnread
 ENV_PG_URL_FILE: str
 ENV_PREFIX: str
 ENV_HOST: str

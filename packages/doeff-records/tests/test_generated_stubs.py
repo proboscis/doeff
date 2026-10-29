@@ -21,7 +21,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src"
 USED = (
     UsedModule("http_client", ("RecordsEndpoint", "http-records-handler", "http-table-records-handler")),
     UsedModule(
-        "main",
+        "_main",
         ("RecordsSettings", "MaintenancePlan", "records-settings", "pg-url-file-dsn", "records-connected", "pg-handlers-of", "records-serving",
          "PG-STORE"),
     ),
@@ -31,7 +31,7 @@ USED = (
     # 手入れの回収を effect で出す使い手(使い手の repo の写しの検 — 期限の後に SweepExpired を名で出す・2026-10-05)。
     UsedModule("maintenance", ("SweepExpired", "Swept", "PruneChanges", "Pruned", "ReadChangeLog", "ChangeLog")),
     UsedModule(
-        "laws",
+        "_laws",
         (
             "LAW-SCHEMA",
             "LawHarness",
@@ -67,7 +67,7 @@ def test_names_the_users_import_are_not_unknown(tmp_path: Path) -> None:
 FLOW = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Pure])
-(import doeff_records.main [RecordsSettings records-connected])
+(import doeff_records._main [RecordsSettings records-connected])
 
 (defk answer-of [settings]
   {:pre [(: settings RecordsSettings)] :post [(: % ANSWER)]}
@@ -153,7 +153,7 @@ def test_a_key_of_another_element_type_is_red_at_key_text(tmp_path: Path) -> Non
 PREPARED = """\
 (require doeff-hy.macros [defk <-])
 (import doeff_records.pg_sql [Statement schema-statements])
-(import doeff_records.values [RecordsSchema])
+(import doeff_records._values [RecordsSchema])
 
 (defk texts-of [schema]
   {:pre [(: schema RecordsSchema)] :post [(: % (get tuple #(str ...)))]}

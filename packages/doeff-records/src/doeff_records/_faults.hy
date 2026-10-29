@@ -5,7 +5,7 @@
 (import dataclasses [dataclass])
 (import enum [Enum])
 (import doeff [EffectBase])
-(import doeff_records.values [Refused Unreachable])
+(import doeff_records._values [Refused Unreachable])
 
 
 (defclass [(dataclass :frozen True)] AdvanceStoreEpoch [EffectBase]

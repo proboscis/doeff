@@ -12,7 +12,7 @@
 (import json)
 (import collections.abc [Mapping])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
-(import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
+(import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
                               RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused Written WrittenRows
                               RememberedWrite])
 
@@ -297,7 +297,7 @@
 
 (defn #^ Row listed-row [#^ TableDecl decl #^ (| tuple None) fields #^ Row row]
   "一覧に出す行(返す欄だけ)。欄を絞らない読み(fields = None)は行をそのまま出す(値を解かない — 保存の綴りを持つ行は綴りのまま
-   答えに継がれる・values.hy の頭の註)。"
+   答えに継がれる・_values.hy の頭の註)。"
   (if (is fields None)
       row
       (Row row.key (projected decl fields row.value) row.version)))

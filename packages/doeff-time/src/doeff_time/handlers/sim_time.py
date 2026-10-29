@@ -48,7 +48,7 @@ def _delay_span(seconds: float) -> timedelta:
 
     ``timedelta(seconds=s)`` rounds to whole microseconds, so a positive delay below half a
     microsecond became zero and the clock did not move. A wait loop that sleeps "the rest of
-    its timeout" (e.g. doeff_records.watching.wait-for-changes) then slept the same sub-tick
+    its timeout" (e.g. doeff_records._watching.wait-for-changes) then slept the same sub-tick
     remainder forever without advancing virtual time (agora-redesign #675, 2026-09-26: the
     remainder 7.2e-08 s after float drift). A real sleep of a positive duration always lets at
     least that much time pass, so the sim rounds such a delay up to one tick.

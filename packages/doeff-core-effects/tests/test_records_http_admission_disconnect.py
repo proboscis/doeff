@@ -97,8 +97,8 @@ def assert_http_callable_timed_out(abandoned):
 
 
 def records_config(connections, pool, observer, prefix, enabled):
+    from doeff_records._laws import LAW_SCHEMA
     from doeff_records.http_server import records_server_config
-    from doeff_records.laws import LAW_SCHEMA
     from doeff_records.pg import pg_records_handler, prepare_records_store, writer_gates
     from doeff_records.pg_sql import writer_lock_key
 

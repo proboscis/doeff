@@ -17,7 +17,7 @@ dependencies = [
     "doeff-hy",
     "doeff-time",
     "hy>=1.3",
-    # どの module も pydantic を import しない(typed.hy は doeff_hy.wire_codec の行の解き手 — tests/test_imports_no_pydantic.py)。
+    # どの module も pydantic を import しない(_typed.hy は doeff_hy.wire_codec の行の解き手 — tests/test_imports_no_pydantic.py)。
     # 依存から外すのは、pydantic を test の依存へ移す card ki-5ddadb736f62(消費者の uv.lock と一緒に)。
     "pydantic>=2.6",
 ]
@@ -27,7 +27,8 @@ dependencies = [
 pg = ["psycopg>=3.1"]
 
 [tool.hatch.build.targets.wheel]
-# import 名 doeff_records は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
+# import 名 doeff_records の入口(__init__.py)は effect・handler とその型を遅延の名で出し、名を読む時に hy を読み込んで Hy の
+# module(名に _ の付いた子 — ADR-DOE-API-001 R5)を読む。
 packages = ["src/doeff_records"]
 # editable の install は .py の無い dir を sys.path に載せない — src を明示して載せる。
 dev-mode-dirs = ["src"]

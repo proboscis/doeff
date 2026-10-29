@@ -9,7 +9,7 @@
 ;;;   持たない 大きさが置き場に在る行の数で決まる計算 = 置き場の束の読み(一覧の頁・変更の列・出来事の列 — 長さは上限 limit までの、置き場に
 ;;;           在る行の数で決まる)の行の読み解き(置き場の payload の JSON → 凍らせた値)と、束の読みの答え(BATCH-READ-ANSWERS)の綴り
 ;;;           (凍らせた値 → JSON の文字列 → UTF-8 の byte 列)。どちらも純粋な program を Compute で出し(off-loop)、composition root が
-;;;           置く Compute の答え手が回す(本番の土台の口 main.hy の records-connected と検の殻 http_server.hy の start-records-server =
+;;;           置く Compute の答え手が回す(本番の土台の口 _main.hy の records-connected と検の殻 http_server.hy の start-records-server =
 ;;;           thread の pool — free-threaded の Python では scheduler の thread と並んで走る・台本の検と模擬 = inline-compute-handler)
 ;;; 行を 1 つも運ばない束(空の頁・静かな変更の列)は綴る行が無く計算が定数なので、その場で綴る(thread の受け渡しの上乗せを払わない)。
 ;;;
@@ -21,7 +21,7 @@
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import doeff [DoExpr])
 (import doeff_core_effects.compute_effects [Compute Computed ComputeFailed])
-(import doeff_records.values [Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events WrittenRows RowsConflict
+(import doeff_records._values [Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events WrittenRows RowsConflict
                               RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents])
 (import doeff_records.wire [WireAnswer])
 

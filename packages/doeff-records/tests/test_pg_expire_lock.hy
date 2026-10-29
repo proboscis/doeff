@@ -24,7 +24,7 @@
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_records.maintenance [SweepExpired Swept])
-(import doeff_records.laws [MAKER PULSE-KEEP-SECONDS])
+(import doeff_records._laws [MAKER PULSE-KEEP-SECONDS])
 (import doeff_records.pg [pg-records-handler drop-records-tables EXPIRE-BATCH])
 (import doeff_records.pg_sql [Statement expiring-candidates-statement expire-chosen-events-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE postgres-connections fresh-prefix run-sql prepared-store])

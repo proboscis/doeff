@@ -1,4 +1,4 @@
-;;; 記録の service の入口の Program(main.hy の records-process — 本番と同じ組み立て)を、I/O なしの土台で走らせる検。
+;;; 記録の service の入口の Program(_main.hy の records-process — 本番と同じ組み立て)を、I/O なしの土台で走らせる検。
 ;;; 土台だけを差す: 待ち受け = 台本の scripted-http-server・置き場 = memory・時計 = 仮想の時計・止めの合図 = scripted-stop-handler。
 ;;; 本番の土台(records-foundation)との違いは土台の関数だけ。
 ;;;
@@ -30,7 +30,7 @@
 (import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived
                                                 HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_records.laws [LAW-SCHEMA])
+(import doeff_records._laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServing RecordsListening RecordsPrepared StoreReach StoreReachable StoreSilent StoreUnreachable
                                    serve-records store-reach])
@@ -38,10 +38,10 @@
 (import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [Row])
-(import doeff_records.effects [ReadRow])
-(import doeff_records.store_choice [StorePressure PressureUnread])
-(import doeff_records.main [records-process])
+(import doeff_records [Row])
+(import doeff_records [ReadRow])
+(import doeff_records._store_choice [StorePressure PressureUnread])
+(import doeff_records._main [records-process])
 
 ;; 本文の上限(検のために小さく — 本番は http_server.hy の REQUEST-MAX-BYTES)。
 (val MAX-BYTES 4096)

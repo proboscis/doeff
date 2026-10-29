@@ -1,6 +1,6 @@
 ;;; 記録の service の HTTP の口の流れ — HTTP の要求 1 つを、呼び手の身元の書き手の handler の下で公開 effect 1 つにして答える Program。
 ;;;
-;;; 判断は持たない: 綴りの読み書きは wire.hy、書き手の名は principals.hy、書きの許可・期待・保持は記録の handler(admission)。
+;;; 判断は持たない: 綴りの読み書きは wire.hy、書き手の名は _principals.hy、書きの許可・期待・保持は記録の handler(admission)。
 ;;; ここが持つのは順序だけ — 書き手の名 → 本文の読み → 宣言に在る表か → effect を撃つ → 答えを綴る。
 ;;; 答えの綴り(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 束の読みの答え(Page・Changes・Events で行を 1 つ以上運ぶ答え)は、綴り
 ;;; (答え → JSON の文字列 → UTF-8 の byte 列 — reply-of)を Compute で scheduler の thread の外で回す(答え手は組み立ての側 —
@@ -18,8 +18,8 @@
 (import collections.abc [Callable])
 (import json)
 (import doeff [with_handlers])
-(import doeff_records.values [RecordsSchema Unreachable])
-(import doeff_records.principals [Principal writer-of])
+(import doeff_records._values [RecordsSchema Unreachable])
+(import doeff_records._principals [Principal writer-of])
 (import doeff_records.loop_work [off-loop off-loop-answer?])
 (import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireAnswer WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE

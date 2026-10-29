@@ -16,7 +16,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-records/src/doeff_records/principals.hy",
+      "path": "packages/doeff-records/src/doeff_records/_principals.hy",
       "reason": "doeff ADR-DOE-HY-006 R6 の束縛し直し(hy-rebind)の既存の違反 — 触った行に足した分だけを赤にし、触った所から直す(2026-09-26 に code-quality の投影で数えて登記)",
       "rule": "hy-rebind",
       "subject": "hy:rebind"

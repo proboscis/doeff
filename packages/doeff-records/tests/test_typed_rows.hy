@@ -1,4 +1,4 @@
-;; 表ごとの行の型で読み書きする層(typed.hy)— 呼び手は欄 → 値の写像を見ずに、行の型(素の defrecord)で読み書きする。
+;; 表ごとの行の型で読み書きする層(_typed.hy)— 呼び手は欄 → 値の写像を見ずに、行の型(素の defrecord)で読み書きする。
 ;; 同じ筋書きを memory と PostgreSQL の handler の両方で回す(層は handler を足さないので、どの組の上でも同じ答え)。
 (require doeff-hy.macros [deftest <- val])
 (import dataclasses [dataclass replace])
@@ -6,11 +6,11 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_hy.wire_codec :as wire-codec)
 (import doeff_hy.wire_malformed [Malformed MalformedField])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes Row Written WrittenRows])
-(import doeff_records.effects [WatchChanges ReadRow PutRow PutRows RowWrite])
-(import doeff_records.typed [RowType RowMalformed TypedRow TypedPage TypedWritten TypedConflict TypedRowChanged read-typed list-typed
+(import doeff_records [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes Row Written WrittenRows])
+(import doeff_records [WatchChanges ReadRow PutRow PutRows RowWrite])
+(import doeff_records._typed [RowType RowMalformed TypedRow TypedPage TypedWritten TypedConflict TypedRowChanged read-typed list-typed
                              put-typed typed-change typed-row fields-of-value value-of-fields row-value])
-(import doeff_records.laws [MAKER PAINTER])
+(import doeff_records._laws [MAKER PAINTER])
 (import tests.interpreters [LawSetup])
 
 

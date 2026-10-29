@@ -1,6 +1,6 @@
 """doeff-records の import の閉包に pydantic が無い事の検(card ki-138189339298・親 card ki-2e0dce8d1ebb)。
 
-表の行の型の読み書き(typed.hy)は、pydantic の TypeAdapter から doeff_hy.wire_codec の行の解き手(row_codec_of)へ替わった。
+表の行の型の読み書き(_typed.hy)は、pydantic の TypeAdapter から doeff_hy.wire_codec の行の解き手(row_codec_of)へ替わった。
 記録を読み書きする process は pydantic(import と組みで約 15 MB)を読まない。新しい import が doeff-records のどこかの module の閉包へ
 pydantic を戻したら、ここが赤になる(どの module が読んだかを名指す)。
 """
@@ -15,7 +15,7 @@ import doeff_records
 
 def test_every_records_module_imports_no_pydantic() -> None:
     modules = sorted(info.name for info in pkgutil.iter_modules(doeff_records.__path__, "doeff_records."))
-    assert "doeff_records.typed" in modules, modules
+    assert "doeff_records._typed" in modules, modules
     script = textwrap.dedent(
         """
         import importlib, sys, traceback

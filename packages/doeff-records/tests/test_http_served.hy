@@ -15,10 +15,10 @@
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_time [SimClock])
-(import doeff_records.faults [SetStoreOutage])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records [SetStoreOutage])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.service [HttpRequest :as ServiceRequest])
+(import doeff_records._service [HttpRequest :as ServiceRequest])
 (import doeff_records.http_server [records-server-config MarkBook RecordsServing ServedBuild RepoCommit PreparedHandlers REQUEST-MAX-BYTES
                                    answer-with ready-handlers start-records-server])
 (import tests.interpreters [sim-request-handlers])

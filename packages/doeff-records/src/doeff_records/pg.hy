@@ -32,7 +32,7 @@
 ;;; 読みの手順(行・一覧・変更の列・追記の読み)は SqlQuery を 1 文ずつ流す(自動 commit — 旧い版と同じ断面)。
 ;;; 束の読みの読み解き(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 錠の外の束の読み(一覧の頁・変更の列・出来事の列と、手入れの送りの
 ;;; 読み — 長さは上限 limit までの、置き場に在る行の数で決まる)は、行の payload の読み解き(listed-rows-of・changes-of・events-of)を
-;;; decoded-batch が Compute で scheduler の thread の外へ出す — 答え手は組み立ての側が置く(本番 = main.hy の records-connected の
+;;; decoded-batch が Compute で scheduler の thread の外へ出す — 答え手は組み立ての側が置く(本番 = _main.hy の records-connected の
 ;;; thread の pool)。1 行と 1 出来事の読み(ReadRow・ReadEventByKey・上から読む頁の位置の行)は大きさが 1 行の上限で決まるので
 ;;; scheduler の thread で読む。書きの錠の transaction の中の読み解き(回収の期限を過ぎた行・捨てる出来事の鍵の覚え・追記の前の使い)は
 ;;; 今は scheduler の thread に残す(transaction の program は SQL の effect と純粋な計算だけを出す — 下の註。走るのは手入れの拍の
@@ -79,9 +79,9 @@
 ;;;     作る(空の表 — 一瞬)。既に在る表の索引の文は流さない(在る表への CREATE INDEX は表に ShareLock を取り、その表の書きを止め、表の
 ;;;     大きさに比例する時間を query 用の文の上限〔60 秒〕の中で使う — 2026-10-18 は 1 本 3 分 23 秒で 60 秒ごとに cancel された)。
 ;;;     終わりに置き場の索引を観測し(pg_sql.indexes-statement)、宣言した索引の欄のうち使える索引の在る欄を覚え(IndexBook)に書く。
-;;;   - 足りない索引は索引の用意の task(reconcile-indexes — main.hy の pg-handlers-of が serving と別の daemon の task で立てる)が、
+;;;   - 足りない索引は索引の用意の task(reconcile-indexes — _main.hy の pg-handlers-of が serving と別の daemon の task で立てる)が、
 ;;;     transaction の外の CREATE INDEX CONCURRENTLY で作る(表の書きを止めない)。文は置き場の ddl-database に流す: 接続 1 本・文の上限
-;;;     なし(main.hy の DDL-DATABASE — 作る時間は表の大きさで決まり、上限で切ると作りかけを残して同じ所からやり直すだけ)。同じ置き場の
+;;;     なし(_main.hy の DDL-DATABASE — 作る時間は表の大きさで決まり、上限で切ると作りかけを残して同じ所からやり直すだけ)。同じ置き場の
 ;;;     2 つの process(本体と twin)が同時に作らないよう、索引の用意の錠(session の advisory lock — pg_sql.index-lock-key)を待たずに取り
 ;;;     (持たれていれば、持つ process が放した合図〔置き場の通知の channel・名 INDEX-TOPIC〕で観測し直す — 錠を PostgreSQL の錠の待ちで
 ;;;     待つと、待つ側の snapshot と作り手の CONCURRENTLY が deadlock になり作り手が捨てられる・pg_sql.index-lock-statement)、錠の中で
@@ -118,21 +118,21 @@
                                         SqlUnreachable SqlLock])
 (import doeff_records.request_timing [lock-observations])
 (import doeff_records.loop_work [off-loop])
-(import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
+(import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty stored-row stored-change
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
+(import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey ReadBatch write-parts])
-(import doeff_records.faults [AdvanceStoreEpoch])
+(import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
 (import doeff_records.admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
                                  judge-write-replay write-digest])
-(import doeff_records.watching [wait-for-signal moved-of])
+(import doeff_records._watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
@@ -516,7 +516,7 @@
 
 
 (defhandler writer-gates
-  "同じ process の書きを、錠の単位ごとに 1 本ずつに並べる答え手(本番の組み立て — main.hy の records-connected が pg-records-handler と
+  "同じ process の書きを、錠の単位ごとに 1 本ずつに並べる答え手(本番の組み立て — _main.hy の records-connected が pg-records-handler と
    SQL の答え手より外側に 1 つ置く)。単位の錠を DB で待つ書きが接続を持ったまま並び、読みの接続を使い切るのを防ぐ(DB の錠の前に、
    接続を借りずに並ぶ — 同じ単位を DB で待つのは別の process の書きだけ)。違う単位の書きは互いを待たない。"
   {:tags {:context "records" :role "foundation"}}
@@ -984,7 +984,7 @@
 
 
 (defn #^ Row row-of [#^ tuple record]  ; defk にできない: decoded-value と同じ — listed-rows-of の内包表記が行ごとに呼ぶ純粋な綴り
-  "state_rows の行(key payload version …)を Row にするため。値は解かず、payload の綴りを保存の綴りとして持たせる(values.hy の頭の註 —
+  "state_rows の行(key payload version …)を Row にするため。値は解かず、payload の綴りを保存の綴りとして持たせる(_values.hy の頭の註 —
    値は読まれた時に解き、欄を絞らない一覧の行は綴りのまま答えに継がれる)。"
   (stored-row (key-from-text (get record 0)) (get record 1) (int (get record 2))))
 
@@ -1155,7 +1155,7 @@
 (defk departed-keys-statements [store stream removed now-ms]
   {:pre [(: store PreparedStore) (: stream str) (: removed tuple) (: now-ms int)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "置き場を去る出来事(append_rows の行 seq at payload の組 removed)の冪等キーの覚えを、列の覚え方(StreamDecl.key-memory — values.hy の
+  "置き場を去る出来事(append_rows の行 seq at payload の組 removed)の冪等キーの覚えを、列の覚え方(StreamDecl.key-memory — _values.hy の
    KeyMemory の註)に従って残す文を作るため(出来事を捨てる文と同じ transaction に流す): 覚えを残さない列は覚えを外す文(送ってから外す列で
    書きが覚えた鍵 — 入れない)・他の列は刻 now-ms に覚える文(長さを限った列の覚えは回収が外す — forget-expired-keys)。去る物が無ければ空。"
   (when (not removed)

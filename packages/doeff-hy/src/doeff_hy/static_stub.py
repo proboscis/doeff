@@ -14,7 +14,7 @@ defrecord の欄の `#^` を Python の注記にした module の木を返す。
 - 定数 → 注記があればそれ・literal / literal の組・辞書はその型・型の和(`A | B`)と TypeVar は形のまま。型を出せない
   値は Incomplete(typeshed の「型がまだ無い」印)にし、StubText.incomplete に名を残す。
 - import → `from m import X as X` の形で公開し直す(実行時の module は import した名を属性に持ち、使い手はそれを引く —
-  doeff_records.main の MaintenancePlan など)。macro の補助(`_doeff_*`・doeff_hy.static_types)と `hy` は外す。
+  doeff_records._main の MaintenancePlan など)。macro の補助(`_doeff_*`・doeff_hy.static_types)と `hy` は外す。
 
 一致の検は「作り直した物 == commit された物」(stale_stubs・CLI の --check)。手で書いた .pyi(先頭に MARK が無い物)は
 --replace を付けない限り書き換えない。

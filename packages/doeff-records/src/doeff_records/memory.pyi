@@ -19,8 +19,8 @@ from doeff_core_effects.scheduler import ExternalPromise
 from doeff import WithHandlerType
 
 from doeff import Program
-from doeff_records.values import RememberedWrite, RetiredKey
-from doeff_records.effects import (
+from doeff_records._values import RememberedWrite, RetiredKey
+from doeff_records._effects import (
     AppendEvent,
     AppendEvents,
     EventAppend,
@@ -35,11 +35,11 @@ from doeff_records.effects import (
     WatchChanges,
     WatchEvents,
 )
-from doeff_records.faults import SetStoreOutage, StoreFault
-from doeff_records.faults import StoreOperation as StoreOperation
-from doeff_records.store_choice import StoreChoice
+from doeff_records._faults import SetStoreOutage, StoreFault
+from doeff_records._faults import StoreOperation as StoreOperation
+from doeff_records._store_choice import StoreChoice
 from doeff_records.event_source import BodyWrapper, ChangedRow, SignalSourceFactory, SignalTables
-from doeff_records.values import (
+from doeff_records._values import (
     Appended,
     AppendedEvents,
     BatchRead,

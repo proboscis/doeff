@@ -26,7 +26,9 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
 (`doeff_cluster.shared.intent.semaphore_model`)をそのまま使う。
 
-型は `doeff_records.values`(定義・期待・答え)と `doeff_records.effects`(effect)にある。
+effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`from doeff_records import ReadRow, Row` /
+`(import doeff_records [ReadRow Row])`)。中身は名に `_` の付いた `doeff_records._effects`(effect)と
+`doeff_records._values`(定義・期待・答え)に在り、submodule の path は読まない(ADR-DOE-API-001 R5)。
 
 - 行のキーは定義の `key_fields` の順の文字列の tuple。行の値は欄 → JSON の値の凍らせた写像(doeff-hy の `FrozenMap` —
   中の object も `FrozenMap`・array は tuple まで深く凍らせる)で、キーの欄を含む。`Row` / `Written` / `RowChanged` の `value`、
@@ -138,7 +140,7 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
 operator の主体の名の tuple。`operator_paths` の欄の書き手に operator の主体が 1 人も居ない宣言は、作る時に `ValueError`)。
 
-## 表ごとの行の型で読み書きする(`doeff_records.typed`)
+## 表ごとの行の型で読み書きする(`doeff_records._typed`)
 
 業務の Program は欄 → 値の写像を見ずに、表ごとの行の型(pydantic の `BaseModel` か dataclass)で読み書きする。
 上の汎用の effect の上の Program なので、handler は増えない(memory・PostgreSQL・写しのどの handler の上でも同じに動く)。
@@ -177,7 +179,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 
 ## 記録の service の HTTP の口
 
-別の process(Python・TS・別の Hy)が同じ 8 つの操作を使うための口。`doeff_records.service.respond` は HTTP の要求 1 つを
+別の process(Python・TS・別の Hy)が同じ 8 つの操作を使うための口。`doeff_records._service.respond` は HTTP の要求 1 つを
 答え 1 つにする Program で、身元 → 本文の読み → 宣言に在る表か → 公開 effect を実行する、の順だけを持つ(判断は記録の handler)。
 
 | route | 本文 | 200 の答えの `kind` |
@@ -202,7 +204,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   `404 not-found`(宣言に無い表・知らない route)・`503 store-unavailable`(置き場に届かない = `Unreachable`)・`500 internal`。
 - 綴り(JSON の欄の名・`kind`・位置と期待の形)の正本は `doeff_records.wire`。口と client は両方これを呼ぶ。
 - 書き手の名: 口は呼び手を断らない(#2988)。呼び手が `X-Records-Writer: <名>`(綴りの正本 = `doeff_records.wire.WRITER_HEADER`)で名乗れば、確かめずにその名を使う。
-  名乗らない呼び手は `anonymous`(`doeff_records.principals`)。口は名簿の file も `Authorization` の見出しも読まない(#3008)。その名で記録の handler を組むので、書き手の名は effect の引数にならない。
+  名乗らない呼び手は `anonymous`(`doeff_records._principals`)。口は名簿の file も `Authorization` の見出しも読まない(#3008)。その名で記録の handler を組むので、書き手の名は effect の引数にならない。
   書き手の名は行と出来事に記録するだけで、記録の判断は書き手の名では断らない(`anonymous` の書きも通る・#2994)。
 - 待ち受けは入口の Program `doeff_records.http_server.serve_records` 1 つで、1 つの run・1 つの scheduler の中で動く(#880 U7)。
   doeff の汎用の HTTP の待ち受けの effect(`HttpListen`・`HttpNextRequest`・`HttpReadBody`・`HttpRespond`・`HttpShutdown`)を出し、
@@ -234,7 +236,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   (`inline-compute-handler` — 台本の検と模擬)は列を持たないので全部 0。
 - 走っている木と表の要約(#2742): `GET /served` は、動いている process が走っている木の commit と世代(`RecordsServing.served` の
   `ServedBuild` — 使い手の入口が土台の実行の文脈から読んで渡す・無ければ `null`)と、配っている表の宣言の要約(`schemaDigests` =
-  表の名 → 表の宣言の `repr` を utf-8 にした sha256)を答える。要約の評価は `doeff_records.schema_digest.schema_digests` の 1 か所で、
+  表の名 → 表の宣言の `repr` を utf-8 にした sha256)を答える。要約の評価は `doeff_records._schema_digest.schema_digests` の 1 か所で、
   使い手の木の data(使い手の repo が木ごとに書く表の要約の file)も同じ関数で書く。身元を引く前・表の用意を問う前に答えるので、
   置き場に届かない間も読める。計器の種は `other`。`TableDecl` の形が doeff の版で変わると、全部の表の要約が一度に変わる。
 - scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — `doeff_records.loop_work` の頭の註): 受けの loop・要求の task・書きの門・
@@ -295,13 +297,13 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
   途中で終えた訳)。記録の service の手入れの計画 `MaintenancePlan` の `archive_events` がこの関数で、送ってから外す列を宣言した置き場に
   `archive_events` の無い手入れを立てると、`serve_records` は起動の前に `ValueError` で断る。
 
-## 記録の service を起動する(`doeff_records.main`)
+## 記録の service を起動する(`doeff_records._main`)
 
 置き場の宣言と接続 URL の file の読み方は呼び手の系が持つので、呼び手の系の入口が `serve_records_service` を呼ぶ:
 
 ```hy
 (import myapp.tables [SCHEMA])
-(import doeff_records.main [serve-records-service])
+(import doeff_records._main [serve-records-service])
 (defk dsn-of [text] {:pre [(: text str)] :post [(: % str)]} (.strip text))
 (when (= __name__ "__main__")
   (sys.exit (run (with-handlers [subprocess-handler os-file-handler] (serve-records-service SCHEMA dsn-of)))))
@@ -318,7 +320,7 @@ Program で、答え = process の終わりの code。本番の土台(`records-f
   宛先・手入れ)を作る。接続 URL がどこに在るか(file・cluster の Secret など)は呼び手が決め、`records-settings` は知らない
 - `pg-url-file-dsn dsn-of` — DSN を接続 URL の file から得る `dsn-source`(env `RECORDS_PG_URL_FILE` の path の file を `ReadText` で読み、
   `dsn-of` で DSN にする)。単独の入口 `serve-records-service` は `(records-settings (pg-url-file-dsn dsn-of))` を使う
-- `records-serving schema settings choice` — 本体の設定 `RecordsServing` を作る。`choice` は置き場の選び `StoreChoice`(`doeff_records.store_choice` — 表の用意の作り手と /readyz の問い)で、PostgreSQL は `doeff_records.main` の `PG-STORE`、memory は `doeff_records.memory` の `memory-store-choice`
+- `records-serving schema settings choice` — 本体の設定 `RecordsServing` を作る。`choice` は置き場の選び `StoreChoice`(`doeff_records._store_choice` — 表の用意の作り手と /readyz の問い)で、PostgreSQL は `doeff_records._main` の `PG-STORE`、memory は `doeff_records.memory` の `memory-store-choice`
 - `records-connected settings body` — 土台の口(待ち受け・名乗りと用意の告知の印字・PostgreSQL の答え手・束の読みの読み解きと綴りの
   `Compute` を回す計算の pool〔`COMPUTE-WORKERS` 本〕。接続と pool を開き、終われば閉じる)。
   外側は持たない。用意の告知(`RecordsPrepared`)に別の答えを持つ使い手は、`body` を自分の答え手で包んで渡す(印字より内側が先に答える)
@@ -326,13 +328,13 @@ Program で、答え = process の終わりの code。本番の土台(`records-f
 
 `records-foundation` は単独の入口の土台の全部(外側 + `records-connected`)。
 
-env(接続 URL の file・接頭辞・port・手入れの間隔・変更の列に残す秒)の一覧と既定は `main.hy` の頭の註。
+env(接続 URL の file・接頭辞・port・手入れの間隔・変更の列に残す秒)の一覧と既定は `_main.hy` の頭の註。
 表は接頭辞(既定 `records_`)つきで、起動時に `CREATE ... IF NOT EXISTS` だけを流す(既存の表を消さない・変えない)。
 SIGTERM / SIGINT で口を閉じて接続を返す。
 
 ## 適合の筋書き
 
-`doeff_records.laws` は、どの handler の組も満たすべき法を Program として持つ(公開)。
+`doeff_records._laws` は、どの handler の組も満たすべき法を Program として持つ(入口の外 — 名に `_` の付いた module から読む)。
 
 | 法 | 確かめること |
 |---|---|
@@ -368,7 +370,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも
-確かめられる(`SHARED_LAWS` は時間を進めない法のうち、前からの 6 つの effect だけで回る法 — `PutRows` を答えない handler の組でも回せる)。置き場の版を進める検の口は `doeff_records.faults.AdvanceStoreEpoch`(公開 effect ではない)。置き場に届かない状態を起こす・戻す検の口は `doeff_records.faults.SetStoreOutage`(届かない理由 detail と、対象の表と追記の列の名 names — None で全部)で、memory の置き場が答える: 届かない間、名に当たる公開 effect は `Unreachable(detail)` を答え、置き場を変えない(本番の記録の口が service に届かない時と同じ答え)。記録の service の不達を筋書きにする検と模擬は、業務の effect に答える偽の handler を書かず、この口で正典の置き場を届かなくする。置き場の一部だけの断りを起こす・外す検の口は `doeff_records.faults.AddStoreFault(StoreFault(...))` と `ClearStoreFaults(names)`(names と名が重なる故障を外す — None で全部)で、これも memory の置き場が答える。`StoreFault` は名 names(表と追記の列の名の frozenset)・操作 operation(`StoreOperation.READ` = `ReadRow`・`ListRows`・`WatchChanges`・`ReadEvents`・`ReadStreamEnd` / `StoreOperation.WRITE` = `PutRow`・`PutRows`・`AppendEvent`・`AppendEvents`)・答え answer(`Refused` か `Unreachable`)・lands(True なら書きを置き場に着けてから答えを差し替える — 書きは届いたが答えが切れた形)・matching(effect を受けて当たるかを返す関数 — None で名と操作に当たる全部)・times(当たる回数 — None で外すまで当たり続け、数を持つ故障は当たるたびに 1 減って尽きた拍に外れる。lands と組むと「確定した後で答えが 1 度だけ切れた」形になり、撃ち直す client の次の要求は置き場に届く — `tests/test_client_replays_a_landed_write.hy`)を持つ。`PutRows` は束の中に当たる表が 1 つでもあれば束ごと当たる。`AppendEvents` は束の追記ごとに、同じ追記の `AppendEvent` として当たる(置き場に着けない `Unreachable` の故障が 1 つでも当たれば束のどれも積まずに `Unreachable`・`Refused` の故障はその追記だけを断る)。故障は置いた順に探して最初の 1 つが答え、置き場全体の不達(`SetStoreOutage`)がそれより先に答える。doeff の実行の外で筋書きを組む使い手は、同じ書きの同期の口 `doeff_records.memory.memory-add-fault` / `memory-clear-faults` を使う。
+確かめられる(`SHARED_LAWS` は時間を進めない法のうち、前からの 6 つの effect だけで回る法 — `PutRows` を答えない handler の組でも回せる)。置き場の版を進める検の口は `doeff_records._faults.AdvanceStoreEpoch`(公開 effect ではない)。置き場に届かない状態を起こす・戻す検の口は `doeff_records._faults.SetStoreOutage`(届かない理由 detail と、対象の表と追記の列の名 names — None で全部)で、memory の置き場が答える: 届かない間、名に当たる公開 effect は `Unreachable(detail)` を答え、置き場を変えない(本番の記録の口が service に届かない時と同じ答え)。記録の service の不達を筋書きにする検と模擬は、業務の effect に答える偽の handler を書かず、この口で正典の置き場を届かなくする。置き場の一部だけの断りを起こす・外す検の口は `doeff_records._faults.AddStoreFault(StoreFault(...))` と `ClearStoreFaults(names)`(names と名が重なる故障を外す — None で全部)で、これも memory の置き場が答える。`StoreFault` は名 names(表と追記の列の名の frozenset)・操作 operation(`StoreOperation.READ` = `ReadRow`・`ListRows`・`WatchChanges`・`ReadEvents`・`ReadStreamEnd` / `StoreOperation.WRITE` = `PutRow`・`PutRows`・`AppendEvent`・`AppendEvents`)・答え answer(`Refused` か `Unreachable`)・lands(True なら書きを置き場に着けてから答えを差し替える — 書きは届いたが答えが切れた形)・matching(effect を受けて当たるかを返す関数 — None で名と操作に当たる全部)・times(当たる回数 — None で外すまで当たり続け、数を持つ故障は当たるたびに 1 減って尽きた拍に外れる。lands と組むと「確定した後で答えが 1 度だけ切れた」形になり、撃ち直す client の次の要求は置き場に届く — `tests/test_client_replays_a_landed_write.hy`)を持つ。`PutRows` は束の中に当たる表が 1 つでもあれば束ごと当たる。`AppendEvents` は束の追記ごとに、同じ追記の `AppendEvent` として当たる(置き場に着けない `Unreachable` の故障が 1 つでも当たれば束のどれも積まずに `Unreachable`・`Refused` の故障はその追記だけを断る)。故障は置いた順に探して最初の 1 つが答え、置き場全体の不達(`SetStoreOutage`)がそれより先に答える。doeff の実行の外で筋書きを組む使い手は、同じ書きの同期の口 `doeff_records.memory.memory-add-fault` / `memory-clear-faults` を使う。
 
 ## 検
 

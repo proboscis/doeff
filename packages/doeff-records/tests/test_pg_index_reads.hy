@@ -13,13 +13,13 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables EXPIRE-BATCH PRUNE-BATCH])
 (import doeff_records.admission [canonical-json])
-(import doeff_records.values [ListCursor])
+(import doeff_records [ListCursor])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-candidates-statement expire-chosen-events-statement
                               touched-events-statement prune-bound-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement list-rows-statement top-rows-statement table-field-index-name
                               ordered-index-name ordered-expression ordered-within-index-name ordered-within-index table-field-expression
                               declared-indexes retired-index?])
-(import doeff_records.laws [LAW-SCHEMA])
+(import doeff_records._laws [LAW-SCHEMA])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 

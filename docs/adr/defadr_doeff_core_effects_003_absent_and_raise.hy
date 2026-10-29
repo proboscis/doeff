@@ -115,7 +115,7 @@
 (import doeff-core-effects.effects [Absent Raise Resumption resumption-of])
 (import doeff-core-effects.effects [Raise :as ProbeAliasedRaise])  ; R15 の反例: 名前では Raise と分からない別名
 (import doeff-core-effects.outcomes [maybe result open-bind RaiseCase Outcomes])
-(import doeff-records.values [ReadRowAnswer Row Missing Unreachable])
+(import doeff-records [ReadRowAnswer Row Missing Unreachable])
 (import doeff-traverse.effects [Fail])
 (import doeff-traverse.handlers [normalize-to-none])
 (import doeff-hy.handle [_check-clause-terminates])
@@ -403,7 +403,7 @@
        :evidence "packages/doeff-core-effects/doeff_core_effects/effects.py(Try)・packages/doeff-core-effects/doeff_core_effects/handlers.py(_try_handler — except Exception → Err)・doeff/__init__.py:68")
      (fact
        "doeff-records の effect は失敗を値で返す決まりで、README の表の列『失敗の答え(値で返す)』に並ぶ。例外で上がるのは組み立ての誤りと実装の誤りだけ。ReadRow の答えは Row | Missing | Unreachable — 成功(Row)・想定内の不在(Missing = 行が無い)・失敗(Unreachable = 置き場に届かない)が 1 つの union に並び、どれが成功でどれが失敗かは型に書かれていない。表ごとの型の層の read-typed も Missing と Unreachable をそのまま呼び手へ返す。"
-       :evidence "packages/doeff-records/README.md:11-19・:39・packages/doeff-records/src/doeff_records/values.hy:279-280(Missing)・:371-373(Unreachable)・:387(ReadRowAnswer)・effects.hy:39-45(ReadRow)・typed.hy:114-118(read-typed)")
+       :evidence "packages/doeff-records/README.md:11-19・:39・packages/doeff-records/src/doeff_records/_values.hy:279-280(Missing)・:371-373(Unreachable)・:387(ReadRowAnswer)・effects.hy:39-45(ReadRow)・typed.hy:114-118(read-typed)")
      (fact
        "成功の道だけを書きたい呼び手は、答えを受けるたびに不在と失敗を手で分けている: agora-controllers の本線 eb2abb27 で、isinstance による Missing / Unreachable の判定が 43 file・74 行ある。revise-input(controllers/protocol/conversation_input.hy:73-91)は 19 行のうち 2 つの match と 1 つの when が不在と失敗の分岐で、:effects [ReadRow PutRow ReadPlacedInput] を手で書いている(:75)。"
        :evidence "agora-controllers で git grep -P 'isinstance \\S+ (#?\\()?[^)]*(Missing|Unreachable)' origin/main -- '*.hy'(2026-09-27)・git show origin/main:controllers/protocol/conversation_input.hy")
@@ -415,7 +415,7 @@
        :evidence "packages/doeff-traverse/doeff_traverse/effects.py:20-38(Fail)・:40-51(Traverse — Handler decides … error strategy per item)・handlers.py:18-27(sequential)・:502-517(fail_handler)・:520-533(normalize_to_none)・helpers.py:9-22(try_call)")
      (fact
        "提案の時点(2026-09-27)の defeffect の頭の辞書が受けるキーは :fields・:answer・:tags・:pre で、答えは :answer の 1 つの型(union でよい)として __doeff_answer__ に残るだけだった — union のどの型が成功・不在・失敗かを宣言する場所は無かった(段階 2 で :absent / :failure / :value を足した — R5)。doeff-records の effect は defeffect でなく素の defclass で書かれている。"
-       :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/effects.hy:39")
+       :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/_effects.hy:39")
      (fact
        "handler の節の中で出した effect は、その handler より外側の handler へ行き、本文とその handler の間に置いた受け手を飛び越える — この ADR のテスト effect-performed-in-a-handler-skips-the-callers-scope(提案の時点の probe)と raise-in-a-handler-clause-skips-the-bodys-result(実装した Raise と result)で確かめた。"
        :evidence "この ADR の probe-read-handler・probe-raising-read-handler とテスト")

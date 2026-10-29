@@ -1,18 +1,18 @@
-"""effects.hy の公開面の型(型検査のための宣言 — 実行時は effects.hy を読む)。
+"""_effects.hy の公開面の型(型検査のための宣言 — 実行時は _effects.hy を読む)。
 
 effect は `EffectBase[答えの型]` の部分型として宣言する — `(<- answer (ReadRow table key))` の answer は型検査の展開で
-`_doeff_perform(ReadRow(...))`(doeff_hy/static_types.pyi)になり、答えの型(values.pyi の ReadRowAnswer など)を受ける。
+`_doeff_perform(ReadRow(...))`(doeff_hy/static_types.pyi)になり、答えの型(_values.pyi の ReadRowAnswer など)を受ける。
 欄の名・順・既定値は実装と同じ。写像の欄(PutRow.value・ListRows.where)は FrozenMap(実装は作る時に凍らせる)。
 """
 
 from collections.abc import Generator
 from dataclasses import dataclass
-
 from typing import TYPE_CHECKING, Any
 
-from doeff import EffectBase
 from doeff_hy.frozen import FrozenMap
-from doeff_records.values import (
+
+from doeff import EffectBase
+from doeff_records._values import (
     Appended,
     AppendEventAnswer,
     AppendEventsAnswer,
@@ -33,13 +33,13 @@ from doeff_records.values import (
     ReadRowAnswer,
     ReadStreamEndAnswer,
     Reset,
+    RowsConflict,
     StreamEmpty,
     StreamEnd,
     WatchChangesAnswer,
     WatchCursor,
     WatchEventsAnswer,
     WrittenRows,
-    RowsConflict,
 )
 
 DEFAULT_LIST_LIMIT: int
@@ -97,7 +97,7 @@ class RowWrite:
 class PutRows(EffectBase[PutRowsAnswer]):
     writes: tuple[RowWrite, ...]
     idempotency_key: str | None = None
-    # `<-` が束ねる名の型 = 答えから :failure(RowsRefused・Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    # `<-` が束ねる名の型 = 答えから :failure(RowsRefused・Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, WrittenRows | RowsConflict]: ...
 
 def write_parts(ask: PutRow | PutRows) -> tuple[PutRow | RowWrite, ...]: ...
@@ -109,7 +109,7 @@ class WatchChanges(EffectBase[WatchChangesAnswer]):
     timeout: float = 0.0
     limit: int = ...
     streams: tuple[str, ...] = ()
-    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, Changes | Reset]: ...
 
 @dataclass(frozen=True)
@@ -117,7 +117,7 @@ class AppendEvent(EffectBase[AppendEventAnswer]):
     stream: str
     idempotency_key: str
     body: object
-    # `<-` が束ねる名の型 = 答えから :failure(Refused・Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    # `<-` が束ねる名の型 = 答えから :failure(Refused・Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, Appended]: ...
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ class WatchEvents(EffectBase[WatchEventsAnswer]):
     stream: str
     after: int = 0
     timeout: float = 0.0
-    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, EventsMoved | EventsQuiet]: ...
 
 @dataclass(frozen=True)
@@ -144,20 +144,20 @@ class ReadEvents(EffectBase[ReadEventsAnswer]):
     after: int = 0
     limit: int = ...
     key_head: str | None = None
-    # `<-` が束ねる名の型 = 答えから :failure(Unreachable・NotIndexed)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable・NotIndexed)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, Events]: ...
 
 @dataclass(frozen=True)
 class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
     stream: str
-    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
+    # `<-` が束ねる名の型 = 答えから :failure(Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, StreamEnd | StreamEmpty]: ...
 
 @dataclass(frozen=True)
 class ReadEventByKey(EffectBase[ReadEventByKeyAnswer]):
     stream: str
     idempotency_key: str
-    # `<-` が束ねる名の型 = 答えから :absent(EventAbsent)と :failure(Unreachable)を除いた物(effects.hy の defeffect と同じ)。
+    # `<-` が束ねる名の型 = 答えから :absent(EventAbsent)と :failure(Unreachable)を除いた物(_effects.hy の defeffect と同じ)。
     def __iter__(self) -> Generator[Any, Any, Event | EventRetired]: ...
 
 # 源の工場の問い(#3127)— 答えは doeff_records.event_source の SignalSourceFactory。event_source は effects を読むので、ここでは型を文字列で名指す。

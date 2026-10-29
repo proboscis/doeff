@@ -6,10 +6,10 @@ from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff_time import Delay as Delay
 from doeff_time import GetTime as GetTime
-from doeff_records.values import Event as Event
-from doeff_records.values import RowChanged as RowChanged
-from doeff_records.values import RowRemoved as RowRemoved
-from doeff_records.values import Unreachable as Unreachable
+from doeff_records._values import Event as Event
+from doeff_records._values import RowChanged as RowChanged
+from doeff_records._values import RowRemoved as RowRemoved
+from doeff_records._values import Unreachable as Unreachable
 from datetime import datetime as datetime
 ARCHIVE_PAGE: int
 

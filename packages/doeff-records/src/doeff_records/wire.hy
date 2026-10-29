@@ -2,7 +2,7 @@
 ;;; 値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
-;;; HTTP の口(service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
+;;; HTTP の口(_service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
 ;;; 契約: この file の綴りが正本。呼び手の系が契約の file(route・要求・答え・断り)と golden を持つ時は、その golden をこの口に通して照合する。
 ;;;
 ;;; 読みは境界の検め: 足りない鍵・型の違う値は WireMalformed(黙って既定へ倒さない)。知らない鍵の扱いは向きで分ける:
@@ -12,7 +12,7 @@
 ;;;     新しい版の service の答えを読める(service を先に起こす順と両立する)。鍵を消す・綴りを変える・新しい鍵を必須にする変更はしない
 ;;;     (検 tests/test_wire_versions.hy が凍らせた答えの見本で断る)。知らない答えの kind は読み捨てられないので断る。
 ;;; effect の答えの失敗(Conflict・Refused・NotIndexed・Reset・Missing・RowsConflict・RowsRefused)は答えの値で、`kind` の欄で判別する。
-;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(service.hy)。
+;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(_service.hy)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "protocol"})
 (require doeff-hy.record [defenum defrecord])
@@ -26,11 +26,11 @@
 (import doeff_hy.frozen [FrozenMap thaw-json])
 ;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ — ここは import して、この module の読み手へも同じ名で見せる。
 (import doeff_hy.json_value [JsonValue])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
+(import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
                               EventsQuiet EventAbsent EventRetired BatchRead stored-text])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
+(import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
 
 (setv PATH-PREFIX "/v1/records/")
@@ -648,7 +648,7 @@
             (when (in "fields" body)
               (setv (get keywords "fields") (if (is (get body "fields") None) None (! (strings-of (get body "fields") "fields")))))
             (when (in "cursor" body) (setv (get keywords "cursor") (! (list-cursor-from (get body "cursor") "cursor" False))))
-            ;; limit の上限 LIST-LIMIT-MAX(effects.hy)は ListRows が作る時に断る — 越えた本文は malformed(400)に写る(ADR-DOE-RECORDS-002 R6)。
+            ;; limit の上限 LIST-LIMIT-MAX(_effects.hy)は ListRows が作る時に断る — 越えた本文は malformed(400)に写る(ADR-DOE-RECORDS-002 R6)。
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
             (when (in "descendingBy" body)
               (setv (get keywords "descending_by") (! (string-of (get body "descendingBy") "descendingBy"))))
@@ -768,7 +768,7 @@
 
 
 ;; --- 答え ------------------------------------------------------------------------------------------------
-;;; 答えの本文の綴り(answer-text — HTTP の口が送る本文)は、行と変更の値を保存の綴り(values.hy の頭の註)のまま継ぎ、値を解かず
+;;; 答えの本文の綴り(answer-text — HTTP の口が送る本文)は、行と変更の値を保存の綴り(_values.hy の頭の註)のまま継ぎ、値を解かず
 ;;; 戻さず綴り直さない(綴りを持たない値だけを値から綴る)。綴りの形は encode-answer の object を json.dumps で綴った物と同じ
 ;;; (鍵の順・区切り・ASCII の外の字をそのまま書く — 検 tests/test_wire_spelled.hy)。encode-answer は wire の object(dict と list)を
 ;;; 返す形のまま残す(答えの見本の検と、答えの object を読む呼び手のため)— 2 つは answer-object の 1 か所から作り、値の写し方だけが違う。

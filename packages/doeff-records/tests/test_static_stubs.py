@@ -1,5 +1,5 @@
-"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口・client の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
-store_choice.pyi・typed.pyi・principals.pyi・service.pyi・http_server.pyi・schema_digest.pyi・http_client.pyi)の検。
+"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口・client の型(_values.pyi・_effects.pyi・_faults.pyi・memory.pyi・
+_store_choice.pyi・_typed.pyi・_principals.pyi・_service.pyi・http_server.pyi・_schema_digest.pyi・http_client.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -7,13 +7,13 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - 失敗ケース: 同じ小さな .hy を、stub を外した写しと stub を置いた写しの 2 通りで doeff-hy-check --strict にかける。
   外すと import した名・`(<- answer (ReadRow …))` の answer・変更の欄が Unknown の赤になり、置くと消える。置いた側では
   型の取り違え(int の版に文字列を足す)が赤になる(stub が型を運んでいる)。
-- 行の型の層(typed.pyi)の失敗ケース: typed.pyi だけを外した写しでは、`typed-change` の答えの `.value` と `list-typed` の頁の
+- 行の型の層(_typed.pyi)の失敗ケース: _typed.pyi だけを外した写しでは、`typed-change` の答えの `.value` と `list-typed` の頁の
   `row.value` が Unknown の赤になり、置くと行の型(検体の Seat)に絞れて赤が消える。置いた側では行の型の欄の取り違え(str の名に
   int を足す)が赤になる。
-- HTTP の口の層(service.pyi・principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
+- HTTP の口の層(_service.pyi・_principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
   respond の答えの `.status` が Unknown の赤になり、置くと消える。置いた側では答えの欄の取り違え(int の status に文字列を足す)が赤に
   なる(使い手の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形)。
-- 走っている木と表の要約(http_server.pyi・schema_digest.pyi)の失敗ケース: 2 つを外した写しでは、ServedBuild・RepoCommit・
+- 走っている木と表の要約(http_server.pyi・_schema_digest.pyi)の失敗ケース: 2 つを外した写しでは、ServedBuild・RepoCommit・
   schema-digests と、要約の答えを受けた変数が Unknown の赤になり、置くと消える。置いた側では欄の取り違え(str の repo に int を
   足す)が赤になる(使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形・#2742)。
 - client の層(http_client.pyi)の失敗ケース: http_client.pyi だけを外した写しでは、口の組 RecordsEndpoint・答え手 http-records-handler・
@@ -38,17 +38,17 @@ from pathlib import Path
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
+from doeff_records import _effects as effects
+from doeff_records import _faults as faults
+from doeff_records import _principals as principals
+from doeff_records import _schema_digest as schema_digest
+from doeff_records import _service as service
+from doeff_records import _store_choice as store_choice
+from doeff_records import _typed as typed
+from doeff_records import _values as values
 from doeff_records import (
-    effects,
-    faults,
     http_server,
     memory,
-    principals,
-    schema_digest,
-    service,
-    store_choice,
-    typed,
-    values,
 )
 
 from doeff import EffectBase
@@ -56,6 +56,8 @@ from doeff import EffectBase
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 PACKAGE = Path(values.__file__).parent
+#: 写しの package の名(入れた doeff_records と別の名 — _check)。
+COPY_NAME = "copied_records"
 STUBBED: tuple[types.ModuleType, ...] = (
     values,
     effects,
@@ -71,8 +73,8 @@ STUBBED: tuple[types.ModuleType, ...] = (
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
-(import doeff_records.values [RecordsSchema Row RowChanged Changes])
-(import doeff_records.effects [ReadRow WatchChanges])
+(import doeff_records._values [RecordsSchema Row RowChanged Changes])
+(import doeff_records._effects [ReadRow WatchChanges])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 
 (val SCHEMA (RecordsSchema))
@@ -122,8 +124,8 @@ UNKNOWN_NAMES: tuple[str, ...] = (
 TYPED_MODULE = """\
 (require doeff-hy.macros [defk <- val])
 (import dataclasses [dataclass])
-(import doeff_records.values [RowChanged RowRemoved])
-(import doeff_records.typed [RowType TypedPage TypedRowChanged list-typed typed-change])
+(import doeff_records._values [RowChanged RowRemoved])
+(import doeff_records._typed [RowType TypedPage TypedRowChanged list-typed typed-change])
 
 (defclass [(dataclass :frozen True)] Seat []
   (#^ str name))
@@ -146,7 +148,7 @@ TYPED_MODULE = """\
   (if (isinstance answer TypedPage) (len (lfor row answer.rows (+ row.value.name 1))) 0))
 """
 
-#: typed.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数・行の値)。
+#: _typed.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数・行の値)。
 TYPED_UNKNOWN_NAMES: tuple[str, ...] = (
     '"RowType"',
     '"TypedPage"',
@@ -162,7 +164,7 @@ TYPED_UNKNOWN_NAMES: tuple[str, ...] = (
 #: HTTP の口の層の検体 — 口の組 RecordsService を受けて要求 1 つを respond に渡し、答えの status を読む。
 SERVICE_MODULE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_records.service [HttpRequest RecordsService respond])
+(import doeff_records._service [HttpRequest RecordsService respond])
 
 (defk status-of [service]
   {:pre [(: service RecordsService)] :post [(: % int)]}
@@ -175,7 +177,7 @@ SERVICE_MODULE = """\
   (+ answer.status "x"))
 """
 
-#: service.pyi・principals.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
+#: _service.pyi・_principals.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
 SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
     '"RecordsService"',
     '"HttpRequest"',
@@ -183,12 +185,12 @@ SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
     '"answer"',
 )
 
-#: 走っている木(http_server.pyi の ServedBuild・RepoCommit)と表の要約(schema_digest.pyi の schema-digests)を使う検体(#2742 —
+#: 走っている木(http_server.pyi の ServedBuild・RepoCommit)と表の要約(_schema_digest.pyi の schema-digests)を使う検体(#2742 —
 #: 使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形)。
 SERVED_MODULE = """(require doeff-hy.macros [defk <- val])
 (import doeff_records.http_server [ServedBuild RepoCommit])
-(import doeff_records.schema_digest [schema-digests])
-(import doeff_records.values [RecordsSchema])
+(import doeff_records._schema_digest [schema-digests])
+(import doeff_records._values [RecordsSchema])
 
 (defk instance-of [build]
   {:pre [(: build ServedBuild)] :post [(: % (| str None))]}
@@ -210,7 +212,7 @@ SERVED_MODULE = """(require doeff-hy.macros [defk <- val])
   (+ (. (get commits 0) repo) 1))
 """
 
-#: http_server.pyi・schema_digest.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
+#: http_server.pyi・_schema_digest.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
 SERVED_UNKNOWN_NAMES: tuple[str, ...] = (
     '"ServedBuild"',
     '"RepoCommit"',
@@ -223,7 +225,7 @@ SERVED_UNKNOWN_NAMES: tuple[str, ...] = (
 CLIENT_MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [with-handlers])
-(import doeff_records.effects [ReadRow])
+(import doeff_records._effects [ReadRow])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
 
 (defk url-after-read [endpoint]
@@ -270,20 +272,22 @@ def _line_of(marker: str, module: str = MODULE) -> int:
 def _check(tmp_path: Path, *, with_stubs: bool, module: str = MODULE, omit: tuple[str, ...] = ()) -> Run:
     """doeff_records の写し(.hy と、with_stubs なら omit に無い .pyi)を import の根に置き、検体を doeff-hy-check --strict にかける。
 
-    写しは __init__.py を持つ package にする — 名前空間の package のままだと pyright は写しに無い module を次の根(入れた
-    doeff_records)へ探しに行き、外したはずの stub を読む。
+    写しは別の名(COPY_NAME)の package にし、写しと検体の中の doeff_records をその名へ替える — 入れた doeff_records も
+    __init__.py を持つ普通の package なので、同じ名のままだと pyright は写しで解けない module(stub を外した .hy)を入れた側の
+    stub で解き、外したはずの stub を読む(doeff-core-effects の test_handler_static_stubs と同じ形)。
     """
     from doeff_hy.static_check import main
 
-    copy = tmp_path / ("stubbed" if with_stubs else "bare") / "doeff_records"
+    copy = tmp_path / ("stubbed" if with_stubs else "bare") / COPY_NAME
     copy.mkdir(parents=True)
     (copy / "__init__.py").write_text("", encoding="utf-8")
     for source in PACKAGE.iterdir():
         if source.suffix == ".hy" or (with_stubs and source.suffix == ".pyi" and source.name not in omit):
-            shutil.copy(source, copy / source.name)
+            text = source.read_text(encoding="utf-8").replace("doeff_records", COPY_NAME)
+            (copy / source.name).write_text(text, encoding="utf-8")
     root = tmp_path / "root"
     root.mkdir()
-    (root / "probe.hy").write_text(module, encoding="utf-8")
+    (root / "probe.hy").write_text(module.replace("doeff_records", COPY_NAME), encoding="utf-8")
     (root / "pyrightconfig.json").write_text(json.dumps({"extraPaths": [str(copy.parent)]}), encoding="utf-8")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -312,8 +316,8 @@ def test_with_the_stubs_nothing_is_unknown_and_a_wrong_type_is_red(tmp_path: Pat
 
 @needs_pyright
 def test_without_the_typed_stub_the_row_values_are_unknown(tmp_path: Path) -> None:
-    # 他の stub は置き、typed.pyi だけを外す — typed.hy の名と、行の型の値を読む所だけが Unknown になる。
-    unknown = _check(tmp_path, with_stubs=True, module=TYPED_MODULE, omit=("typed.pyi",)).unknown()
+    # 他の stub は置き、_typed.pyi だけを外す — _typed.hy の名と、行の型の値を読む所だけが Unknown になる。
+    unknown = _check(tmp_path, with_stubs=True, module=TYPED_MODULE, omit=("_typed.pyi",)).unknown()
     missing = [name for name in TYPED_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
     assert missing == [], unknown
     # typed-change の答えの `.value` と list-typed の頁の `row.value` の行が赤。
@@ -336,7 +340,7 @@ def test_with_the_typed_stub_row_values_are_the_row_type(tmp_path: Path) -> None
 @needs_pyright
 def test_without_the_service_stub_the_service_is_unknown(tmp_path: Path) -> None:
     # 他の stub は置き、HTTP の口の層の 2 つだけを外す — 口の組・入口と、入口の答えを読む所が Unknown になる。
-    omit = ("service.pyi", "principals.pyi")
+    omit = ("_service.pyi", "_principals.pyi")
     unknown = _check(tmp_path, with_stubs=True, module=SERVICE_MODULE, omit=omit).unknown()
     missing = [name for name in SERVICE_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
     assert missing == [], unknown
@@ -358,7 +362,7 @@ def test_with_the_service_stub_the_answer_is_an_http_answer(tmp_path: Path) -> N
 @needs_pyright
 def test_without_the_served_stubs_the_build_and_the_digests_are_unknown(tmp_path: Path) -> None:
     # 他の stub は置き、走っている木と表の要約の 2 つだけを外す — import した名と、要約の答えを受けた変数が Unknown になる。
-    omit = ("http_server.pyi", "schema_digest.pyi")
+    omit = ("http_server.pyi", "_schema_digest.pyi")
     unknown = _check(tmp_path, with_stubs=True, module=SERVED_MODULE, omit=omit).unknown()
     missing = [name for name in SERVED_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
     assert missing == [], unknown
