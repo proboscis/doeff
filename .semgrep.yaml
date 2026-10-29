@@ -4035,11 +4035,13 @@ rules:
     paths:
       include:
         - "/packages/doeff-flow/src/doeff_flow/_cli.py"
+        - "/packages/doeff-agentic/src/doeff_agentic/_cli.py"
         - "/packages/doeff-agentic/src/doeff_agentic/_tui/**"
     message: |
-      The doeff-flow console script (doeff_flow._cli) and the doeff-agentic-tui screens
-      (doeff_agentic._tui) run programs of effects: the traces are read with ReadTraces, the
-      recorded workflows with the doeff_agentic._effects.recorded effects, and the polls wait
+      The doeff-flow console script (doeff_flow._cli), the doeff-agentic console script
+      (doeff_agentic._cli) and the doeff-agentic-tui screens (doeff_agentic._tui) run programs
+      of effects: the traces are read with ReadTraces, the recorded workflows (and the agents'
+      tmux sessions) with the doeff_agentic._effects.recorded effects, and the polls wait
       with doeff-time's Delay. The command installs the handlers that read the files, the
       state directory and the clock (trace_files_handler over os_file_handler,
       recorded_workflows_handler, sync_time_handler) — do not read them here directly.

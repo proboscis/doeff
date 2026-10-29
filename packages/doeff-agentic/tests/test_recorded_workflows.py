@@ -5,11 +5,15 @@ under the agentic handlers writes). No session backend is reached: the workflows
 stop test stops have no agents, and an agent's output that cannot be read is "".
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from doeff_agentic import (
+    AgenticAnswerInput,
     AgenticFindWorkflow,
+    AgenticInputRequested,
+    AgenticListEnvironments,
     AgenticListWorkflows,
     AgenticStopWorkflow,
     AgentInfo,
@@ -85,10 +89,34 @@ def test_watch_view_reads_the_workflow_and_one_snippet_per_agent(app: AgenticTUI
     assert app.perform(_workflow_view("ffff", 0)) is None
 
 
-def test_stop_records_the_workflow_as_stopped(app: AgenticTUI):
+def test_stop_records_the_workflow_as_stopped_keeping_its_last_status(tmp_path):
+    state = StateManager(tmp_path)
+    _record(state, "b7e1d4f", minutes=5)
+    recorded = state.read_workflow("b7e1d4f")
+    assert recorded is not None
+    state.write_workflow_meta(replace(recorded, last_slog={"status": "fixing"}, error="boom"))
+    app = AgenticTUI(handlers=(recorded_workflows_handler(tmp_path),))
+
     stopped = app.perform(AgenticStopWorkflow(workflow_id="b7e1d4f"))
 
     assert stopped == ()
     found = app.perform(AgenticFindWorkflow(workflow_id="b7e1d4f"))
     assert found is not None
     assert found.status is WorkflowStatus.STOPPED
+    assert (found.last_slog, found.error) == ({"status": "fixing"}, "boom")
+
+
+def test_input_requested_until_the_answer_is_written(tmp_path, app: AgenticTUI):
+    assert app.perform(AgenticInputRequested(workflow_id="a3f8b2c")) is False
+
+    workflow_dir = tmp_path / "workflows" / "a3f8b2c"
+    (workflow_dir / "input_request.json").write_text('{"prompt": "approve?"}')
+    assert app.perform(AgenticInputRequested(workflow_id="a3f8b2c")) is True
+
+    app.perform(AgenticAnswerInput(workflow_id="a3f8b2c", text="approve"))
+    assert (workflow_dir / "input_response.txt").read_text() == "approve"
+
+
+def test_list_environments_answers_none_without_event_logs(app: AgenticTUI):
+    assert app.perform(AgenticListEnvironments()) == ()
+    assert app.perform(AgenticListEnvironments(workflow_id="a3f")) == ()

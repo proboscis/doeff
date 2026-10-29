@@ -1,44 +1,135 @@
 """
-CLI for doeff-agentic workflow management.
+CLI for doeff-agentic workflow management (the console script ``doeff-agentic``).
 
 Commands:
-    ps          List running workflows
-    watch       Monitor workflow progress (TUI)
-    attach      Attach to agent session (<workflow-id>:<session-name>)
-    logs        View session/workflow logs
-    stop        Stop workflow and all sessions
+    ps          List workflows and agents
     show        Show workflow details
+    watch       Stream workflow updates
+    attach      Attach to an agent's tmux session
+    send        Send a message to an agent (or answer WaitForUserInput)
+    stop        Stop workflow and kill its agents
+    logs        View an agent's output
     env         Environment management (list, cleanup)
     tui         Launch interactive Textual TUI
+
+ps, show, watch, attach, send and stop take the arguments of the Rust CLI
+(packages/doeff-agentic-cli) and write the same JSON, as the IDE plugins read it: the
+JSON of a workflow is ``WorkflowInfo.to_dict()``, ``ps --json`` writes the array of them.
+A failure writes ``Error: <message>`` to the standard error and exits with 1.
+
+Each command runs a doeff program: the program reads and acts on the recorded workflows
+with the effects of ``doeff_agentic._effects.recorded``, reads the clock and waits
+between polls with doeff-time's GetTime and Delay, and writes its output with Echo. The
+command is the composition root that installs the handlers — ``recorded_workflows_handler``
+over the state directory, ``sync_time_handler`` for the clock and ``_terminal_handler``
+for the output (a test puts its own handlers in ``obj["handlers"]``).
 """
 
-
 import json
-import sys
-import time
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import click
-from rich.console import Console
-from rich.live import Live
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+from doeff_core_effects import try_handler
+from doeff_time import Delay, GetTime, sync_time_handler
 
-from ._api import AgenticAPI
-from ._types import AgentStatus, WorkflowStatus
+from doeff import (
+    Effect,
+    EffectBase,
+    Err,
+    Pass,
+    Program,
+    Resume,
+    Try,
+    do,
+    handler,
+    run,
+    with_handlers,
+)
+from doeff.program import ProgramHandler
+from doeff_agentic._effects.recorded import (
+    AgenticAnswerInput,
+    AgenticAttachAgent,
+    AgenticCaptureAgentOutput,
+    AgenticCleanupEnvironments,
+    AgenticFindWorkflow,
+    AgenticInputRequested,
+    AgenticListEnvironments,
+    AgenticListWorkflows,
+    AgenticSendToAgent,
+    AgenticStopWorkflow,
+)
+from doeff_agentic._handlers.recorded import recorded_workflows_handler
+from doeff_agentic._types import WorkflowInfo, WorkflowStatus
 
-console = Console()
+_FINISHED = (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.STOPPED)
+
+#: How often ``logs --follow`` reads the agent's output again (seconds).
+_LOGS_POLL = 0.5
 
 
-def _format_duration(dt: datetime) -> str:
-    """Format a datetime as relative duration."""
-    now = datetime.now(timezone.utc)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    delta = now - dt
-    seconds = int(delta.total_seconds())
+class CommandError(Exception):
+    """A command cannot do what it was asked (written as ``Error: <message>``, exit 1)."""
 
+
+@dataclass(frozen=True, kw_only=True)
+class Echo(EffectBase[None]):
+    """Write ``text`` to the standard output, ending the line unless ``newline`` is False."""
+
+    text: str
+    newline: bool = True
+
+
+@handler
+def _terminal_handler(effect: Effect, k: Any):
+    """Answer Echo by writing to the standard output."""
+    if isinstance(effect, Echo):
+        click.echo(effect.text, nl=effect.newline)
+        return (yield Resume(k, None))
+    return (yield Pass(effect, k))
+
+
+@do
+def _attempt(program: Program[None, Any]):
+    """Catch the command program's failure as a value, so ``run`` prints no doeff traceback."""
+    return (yield Try(program))
+
+
+def _run(ctx: click.Context, program: Program[None, Any]) -> None:
+    """Run a command's program under the handlers ``cli`` installed.
+
+    A CommandError, or the ValueError AgenticFindWorkflow raises for a prefix that names
+    several workflows, is written as ``Error: <message>`` and exits with 1.
+    """
+    handlers: tuple[ProgramHandler, ...] = ctx.obj["handlers"]
+    outcome = run(with_handlers([try_handler, _terminal_handler, *handlers], _attempt(program)))
+    if isinstance(outcome, Err):
+        if not isinstance(outcome.error, (CommandError, ValueError)):
+            raise outcome.error
+        click.echo(f"Error: {outcome.error}", err=True)
+        ctx.exit(1)
+
+
+def _pretty(value: object) -> str:
+    """JSON with an indent of 2, as serde_json's to_string_pretty writes it."""
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def _compact(value: object) -> str:
+    """JSON on one line without spaces, as serde_json's to_string writes it."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def _ago(at: datetime, now: datetime) -> str:
+    """How long ago ``at`` was, as ``12s ago`` / ``3m ago`` / ``5h ago`` / ``2d ago``."""
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    seconds = int((now - at).total_seconds())
+    if seconds < 0:
+        return "in the future"
     if seconds < 60:
         return f"{seconds}s ago"
     if seconds < 3600:
@@ -48,415 +139,371 @@ def _format_duration(dt: datetime) -> str:
     return f"{seconds // 86400}d ago"
 
 
-def _status_color(status: WorkflowStatus | AgentStatus) -> str:
-    """Get Rich color for a status."""
-    if isinstance(status, WorkflowStatus):
-        return {
-            WorkflowStatus.PENDING: "dim",
-            WorkflowStatus.RUNNING: "green",
-            WorkflowStatus.BLOCKED: "yellow",
-            WorkflowStatus.COMPLETED: "blue",
-            WorkflowStatus.FAILED: "red",
-            WorkflowStatus.STOPPED: "magenta",
-        }.get(status, "white")
-    return {
-        AgentStatus.PENDING: "dim",
-        AgentStatus.BOOTING: "cyan",
-        AgentStatus.RUNNING: "green",
-        AgentStatus.BLOCKED: "yellow",
-        AgentStatus.DONE: "blue",
-        AgentStatus.FAILED: "red",
-        AgentStatus.EXITED: "dim",
-        AgentStatus.STOPPED: "dim",
-    }.get(status, "white")
+def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    """An ASCII table with a rule between the rows."""
+    widths = [max(len(cell) for cell in column) for column in zip(headers, *rows, strict=True)]
+    rule = "+" + "+".join("-" * (width + 2) for width in widths) + "+"
+
+    def line(cells: Sequence[str]) -> str:
+        return (
+            "|"
+            + "|".join(f" {cell.ljust(width)} " for cell, width in zip(cells, widths, strict=True))
+            + "|"
+        )
+
+    body = tuple(part for row in rows for part in (line(row), rule))
+    return "\n".join((rule, line(headers), rule, *body))
 
 
-def _parse_session_ref(ref: str) -> tuple[str, str | None]:
-    """Parse workflow:session reference.
+def _session_of(workflow: WorkflowInfo, agent: str) -> str:
+    """The tmux session of an agent (``doeff-{id}-{agent}`` when the agent is not recorded)."""
+    recorded = next((a for a in workflow.agents if a.name == agent), None)
+    return recorded.session_name if recorded else f"doeff-{workflow.id}-{agent}"
 
-    Returns (workflow_id, session_name).
-    If no colon, session_name is None.
-    """
-    if ":" in ref:
-        parts = ref.split(":", 1)
-        return parts[0], parts[1]
-    return ref, None
+
+def _some_agent(workflow: WorkflowInfo, agent: str | None) -> str | None:
+    """``agent``, else the workflow's current agent, else its first agent."""
+    if agent is not None:
+        return agent
+    if workflow.current_agent is not None:
+        return workflow.current_agent
+    return workflow.agents[0].name if workflow.agents else None
+
+
+@do
+def _find(workflow_id: str):
+    """The recorded workflow ``workflow_id`` names; CommandError when there is none."""
+    workflow = yield AgenticFindWorkflow(workflow_id=workflow_id)
+    if workflow is None:
+        raise CommandError(f"Workflow not found: {workflow_id}")
+    return workflow
 
 
 @click.group()
-@click.option("--state-dir", envvar="DOEFF_AGENTIC_STATE_DIR", help="State directory")
+@click.option(
+    "--state-dir",
+    envvar="DOEFF_AGENTIC_STATE_DIR",
+    type=click.Path(path_type=Path),
+    help="State directory (defaults to ~/.local/state/doeff-agentic)",
+)
 @click.pass_context
-def cli(ctx: click.Context, state_dir: str | None) -> None:
+def cli(ctx: click.Context, state_dir: Path | None) -> None:
     """doeff-agentic: Agent-based workflow orchestration."""
     ctx.ensure_object(dict)
-    ctx.obj["api"] = AgenticAPI(state_dir)
+    if "handlers" not in ctx.obj:
+        ctx.obj["handlers"] = (sync_time_handler(), recorded_workflows_handler(state_dir))
+
+
+# =============================================================================
+# ps
+# =============================================================================
+
+
+@do
+def _ps(statuses: tuple[str, ...], agent_statuses: tuple[str, ...], as_json: bool):
+    recorded = yield AgenticListWorkflows()
+    workflows = tuple(
+        workflow
+        for workflow in recorded
+        if (not statuses or workflow.status.value in statuses)
+        and (
+            not agent_statuses
+            or any(agent.status.value in agent_statuses for agent in workflow.agents)
+        )
+    )
+    if as_json:
+        yield Echo(text=_pretty([workflow.to_dict() for workflow in workflows]))
+        return None
+    if not workflows:
+        yield Echo(text="No workflows found")
+        return None
+
+    now = yield GetTime()
+
+    def row(workflow: WorkflowInfo) -> tuple[str, ...]:
+        current = workflow.current_agent
+        agent_status = next(
+            (agent.status.value for agent in workflow.agents if agent.name == current), "-"
+        )
+        return (
+            workflow.id,
+            workflow.name,
+            workflow.status.value,
+            current or "-",
+            agent_status if current else "-",
+            _ago(workflow.updated_at, now),
+        )
+
+    headers = ("ID", "Workflow", "Status", "Agent", "Agent Status", "Updated")
+    yield Echo(text=_table(headers, [row(workflow) for workflow in workflows]))
 
 
 @cli.command()
 @click.option("--status", "-s", multiple=True, help="Filter by workflow status")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--agent-status", "-a", multiple=True, help="Filter by agent status")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def ps(
-    ctx: click.Context,
-    status: tuple[str, ...],
-    output_json: bool,
+    ctx: click.Context, status: tuple[str, ...], agent_status: tuple[str, ...], as_json: bool
 ) -> None:
-    """List running workflows and agents.
-
-    Example output:
-        WORKFLOW    STATUS     AGENTS                          UPDATED
-        a3f8b2c     running    reviewer(done), fixer(running)  2m ago
-        b7e1d4f     done       tester(done)                    1h ago
-    """
-    api: AgenticAPI = ctx.obj["api"]
-
-    workflows = api.list_workflows(
-        status=list(status) if status else None,
-    )
-
-    if output_json:
-        click.echo(json.dumps([w.to_dict() for w in workflows], indent=2))
-        return
-
-    if not workflows:
-        console.print("[dim]No workflows found[/dim]")
-        return
-
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("WORKFLOW", style="cyan")
-    table.add_column("STATUS")
-    table.add_column("AGENTS")
-    table.add_column("UPDATED")
-
-    for wf in workflows:
-        status_style = _status_color(wf.status)
-
-        # Format agents list
-        agents_str = "-"
-        if wf.agents:
-            agent_parts = []
-            for a in wf.agents:
-                a_style = _status_color(a.status)
-                agent_parts.append(f"{a.name}([{a_style}]{a.status.value}[/{a_style}])")
-            agents_str = ", ".join(agent_parts)
-
-        table.add_row(
-            wf.id,
-            Text(wf.status.value, style=status_style),
-            Text.from_markup(agents_str),
-            _format_duration(wf.updated_at),
-        )
-
-    console.print(table)
-
-
-@cli.command()
-@click.argument("workflow_id")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON (streams JSONL)")
-@click.option("--poll-interval", "-p", default=1.0, help="Poll interval in seconds")
-@click.pass_context
-def watch(
-    ctx: click.Context,
-    workflow_id: str,
-    output_json: bool,
-    poll_interval: float,
-) -> None:
-    """Monitor workflow progress in real-time (live TUI).
-
-    Usage:
-        doeff-agentic watch <workflow-id>
-    """
-    api: AgenticAPI = ctx.obj["api"]
-
-    try:
-        if output_json:
-            # Stream JSONL for plugin consumption
-            for update in api.watch(workflow_id, poll_interval):
-                click.echo(json.dumps(update.to_dict()))
-                sys.stdout.flush()
-        else:
-            # Rich TUI display
-            _watch_tui(api, workflow_id, poll_interval)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
-    except KeyboardInterrupt:
-        console.print("\n[dim]Watch stopped[/dim]")
-
-
-def _watch_tui(api: AgenticAPI, workflow_id: str, poll_interval: float) -> None:
-    """Display watch TUI with Rich."""
-
-    def generate_display(workflow):
-        if workflow is None:
-            return Panel("[red]Workflow not found[/red]")
-
-        # Build workflow panel
-        status_style = _status_color(workflow.status)
-
-        content = []
-        content.append(f"[bold]ID:[/bold] {workflow.id}")
-        content.append(f"[bold]Name:[/bold] {workflow.name}")
-        content.append(
-            f"[bold]Status:[/bold] [{status_style}]{workflow.status.value}[/{status_style}]"
-        )
-        content.append(f"[bold]Started:[/bold] {_format_duration(workflow.started_at)}")
-        content.append(f"[bold]Updated:[/bold] {_format_duration(workflow.updated_at)}")
-
-        if workflow.last_slog:
-            slog_str = json.dumps(workflow.last_slog, indent=2)
-            content.append(f"\n[bold]Last Status:[/bold]\n{slog_str}")
-
-        # Agents table
-        if workflow.agents:
-            content.append("\n[bold]Agents:[/bold]")
-            for a in workflow.agents:
-                a_style = _status_color(a.status)
-                marker = ">" if a.name == workflow.current_agent else " "
-                content.append(
-                    f"  {marker} {a.name}: [{a_style}]{a.status.value}[/{a_style}]"
-                )
-
-        if workflow.error:
-            content.append(f"\n[red]Error:[/red] {workflow.error}")
-
-        footer = "\n[dim][q] quit  [a] attach to selected[/dim]"
-        content.append(footer)
-
-        return Panel(
-            "\n".join(content),
-            title=f"Workflow {workflow.id}",
-            border_style="cyan",
-        )
-
-    # Initial display
-    workflow = api.get_workflow(workflow_id)
-    if workflow is None:
-        console.print(f"[red]Workflow not found:[/red] {workflow_id}")
-        return
-
-    with Live(
-        generate_display(workflow), refresh_per_second=1, console=console
-    ) as live:
-        for update in api.watch(workflow_id, poll_interval):
-            live.update(generate_display(update.workflow))
-
-            # Check for terminal status
-            if update.workflow.status in (
-                WorkflowStatus.COMPLETED,
-                WorkflowStatus.FAILED,
-                WorkflowStatus.STOPPED,
-            ):
-                break
-
-
-@cli.command()
-@click.argument("target")
-@click.pass_context
-def attach(ctx: click.Context, target: str) -> None:
-    """Attach to specific agent session.
-
-    Usage:
-        doeff-agentic attach <workflow-id>:<session-name>
-        doeff-agentic attach a3f8b2c:reviewer
-        doeff-agentic attach a3f:reviewer  # Prefix match
-
-    If only workflow-id is provided and there's only one agent, attaches to that.
-    """
-    api: AgenticAPI = ctx.obj["api"]
-
-    workflow_id, session_name = _parse_session_ref(target)
-
-    try:
-        workflow = api.get_workflow(workflow_id)
-        if workflow is None:
-            console.print(f"[red]Workflow not found:[/red] {workflow_id}")
-            sys.exit(1)
-
-        # If no session specified and multiple agents, prompt
-        if not session_name and len(workflow.agents) > 1:
-            console.print(
-                f"[yellow]Multiple agents in workflow {workflow.id}. Specify session:[/yellow]"
-            )
-            for a in workflow.agents:
-                _status_color(a.status)
-                console.print(f"  doeff-agentic attach {workflow.id}:{a.name}")
-            sys.exit(1)
-
-        # If no session specified and single agent, use that
-        if not session_name and len(workflow.agents) == 1:
-            session_name = workflow.agents[0].name
-
-        if not session_name:
-            console.print("[red]No agents in workflow[/red]")
-            sys.exit(1)
-
-        api.attach(workflow_id, session_name)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
-
-
-@cli.command()
-@click.argument("target")
-@click.option("--follow", "-f", is_flag=True, help="Tail mode")
-@click.option("--lines", "-n", default=100, help="Number of lines")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.pass_context
-def logs(
-    ctx: click.Context,
-    target: str,
-    follow: bool,
-    lines: int,
-    output_json: bool,
-) -> None:
-    """View session logs.
-
-    Usage:
-        doeff-agentic logs <workflow-id>                  # All sessions, interleaved
-        doeff-agentic logs <workflow-id>:<session-name>  # Specific session
-        doeff-agentic logs --follow <workflow-id>        # Tail mode
-    """
-    api: AgenticAPI = ctx.obj["api"]
-
-    workflow_id, session_name = _parse_session_ref(target)
-
-    try:
-        workflow = api.get_workflow(workflow_id)
-        if workflow is None:
-            console.print(f"[red]Workflow not found:[/red] {workflow_id}")
-            sys.exit(1)
-
-        if follow:
-            # Tail mode
-            last_output = ""
-            while True:
-                output = api.get_agent_output(workflow_id, session_name, lines)
-                if output != last_output:
-                    # Print new content
-                    if last_output:
-                        new_lines = output[len(last_output) :]
-                        click.echo(new_lines, nl=False)
-                    else:
-                        click.echo(output, nl=False)
-                    last_output = output
-                time.sleep(0.5)
-        else:
-            output = api.get_agent_output(workflow_id, session_name, lines)
-            if output_json:
-                click.echo(json.dumps({"output": output}))
-            else:
-                click.echo(output)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
-    except KeyboardInterrupt:
-        pass
-
-
-@cli.command()
-@click.argument("workflow_id")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.pass_context
-def stop(
-    ctx: click.Context,
-    workflow_id: str,
-    output_json: bool,
-) -> None:
-    """Stop workflow and all its sessions.
-
-    Usage:
-        doeff-agentic stop <workflow-id>
-    """
-    api: AgenticAPI = ctx.obj["api"]
-
-    try:
-        stopped = api.stop(workflow_id)
-
-        if output_json:
-            click.echo(json.dumps({"ok": True, "stopped": stopped}))
-        elif stopped:
-            console.print(f"[green]Stopped sessions:[/green] {', '.join(stopped)}")
-        else:
-            console.print("[dim]No sessions to stop[/dim]")
-    except ValueError as e:
-        if output_json:
-            click.echo(json.dumps({"ok": False, "error": str(e)}))
-        else:
-            console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
-
-
-@cli.command()
-@click.argument("workflow_id")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.pass_context
-def show(
-    ctx: click.Context,
-    workflow_id: str,
-    output_json: bool,
-) -> None:
-    """Show workflow details."""
-    api: AgenticAPI = ctx.obj["api"]
-
-    try:
-        workflow = api.get_workflow(workflow_id)
-        if workflow is None:
-            if output_json:
-                click.echo(json.dumps({"error": "not found"}))
-            else:
-                console.print(f"[red]Workflow not found:[/red] {workflow_id}")
-            sys.exit(1)
-
-        if output_json:
-            click.echo(json.dumps(workflow.to_dict(), indent=2))
-        else:
-            console.print(
-                Panel(
-                    _workflow_details(workflow),
-                    title=f"Workflow: {workflow.id}",
-                    border_style="cyan",
-                )
-            )
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
-
-
-def _workflow_details(workflow) -> str:
-    """Format workflow details for display."""
-    lines = []
-    lines.append(f"[bold]Name:[/bold] {workflow.name}")
-    lines.append(
-        f"[bold]Status:[/bold] [{_status_color(workflow.status)}]{workflow.status.value}[/{_status_color(workflow.status)}]"
-    )
-    lines.append(f"[bold]Started:[/bold] {workflow.started_at.isoformat()}")
-    lines.append(f"[bold]Updated:[/bold] {workflow.updated_at.isoformat()}")
-
-    if workflow.current_agent:
-        lines.append(f"[bold]Current Agent:[/bold] {workflow.current_agent}")
-
-    if workflow.agents:
-        lines.append("\n[bold]Agents:[/bold]")
-        for a in workflow.agents:
-            style = _status_color(a.status)
-            lines.append(
-                f"  - {a.name}: [{style}]{a.status.value}[/{style}] ({a.session_name})"
-            )
-
-    if workflow.last_slog:
-        lines.append("\n[bold]Last Status:[/bold]")
-        for k, v in workflow.last_slog.items():
-            lines.append(f"  {k}: {v}")
-
-    if workflow.error:
-        lines.append(f"\n[bold red]Error:[/bold red] {workflow.error}")
-
-    return "\n".join(lines)
+    """List running workflows and agents."""
+    _run(ctx, _ps(status, agent_status, as_json))
 
 
 # =============================================================================
-# Environment Commands
+# show
+# =============================================================================
+
+
+def _details(workflow: WorkflowInfo) -> str:
+    current = (f"Current Agent: {workflow.current_agent}",) if workflow.current_agent else ()
+    agents = (
+        (
+            "\nAgents:",
+            *(
+                f"  {'*' if agent.name == workflow.current_agent else ' '} "
+                f"{agent.name}: {agent.status.value} ({agent.session_name})"
+                for agent in workflow.agents
+            ),
+        )
+        if workflow.agents
+        else ()
+    )
+    slog = (f"\nLast Status: {_pretty(workflow.last_slog)}",) if workflow.last_slog else ()
+    error = (f"\nError: {workflow.error}",) if workflow.error else ()
+    return "\n".join(
+        (
+            f"ID: {workflow.id}",
+            f"Name: {workflow.name}",
+            f"Status: {workflow.status.value}",
+            f"Started: {workflow.started_at.isoformat()}",
+            f"Updated: {workflow.updated_at.isoformat()}",
+            *current,
+            *agents,
+            *slog,
+            *error,
+        )
+    )
+
+
+@do
+def _show(workflow_id: str, as_json: bool):
+    workflow = yield _find(workflow_id)
+    yield Echo(text=_pretty(workflow.to_dict()) if as_json else _details(workflow))
+
+
+@cli.command()
+@click.argument("workflow_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def show(ctx: click.Context, workflow_id: str, as_json: bool) -> None:
+    """Show workflow details."""
+    _run(ctx, _show(workflow_id, as_json))
+
+
+# =============================================================================
+# watch
+# =============================================================================
+
+
+def _watch_screen(workflow: WorkflowInfo, now: datetime) -> str:
+    current = (f"Current Agent: {workflow.current_agent}",) if workflow.current_agent else ()
+    slog = (f"\nLast Status: {_pretty(workflow.last_slog)}",) if workflow.last_slog else ()
+    # Clear the screen and start at its top
+    return "\x1b[2J\x1b[1;1H" + "\n".join(
+        (
+            f"Watching: {workflow.id} ({workflow.name})",
+            f"Status: {workflow.status.value}",
+            f"Updated: {_ago(workflow.updated_at, now)}",
+            *current,
+            *slog,
+            "\n[Ctrl+C to stop]",
+        )
+    )
+
+
+@do
+def _watch(workflow_id: str, as_json: bool, poll: float):
+    """Write the workflow whenever its update time changes, until it finishes or is deleted."""
+    full_id = (yield _find(workflow_id)).id
+    shown: datetime | None = None
+    while True:
+        workflow = yield AgenticFindWorkflow(workflow_id=full_id)
+        if workflow is None:
+            deleted = {"event": "deleted", "workflow_id": full_id}
+            yield Echo(text=_compact(deleted) if as_json else "Workflow deleted")
+            return None
+        if workflow.updated_at != shown:
+            if as_json:
+                yield Echo(text=_compact(workflow.to_dict()))
+            else:
+                now = yield GetTime()
+                yield Echo(text=_watch_screen(workflow, now))
+            shown = workflow.updated_at
+        if workflow.status in _FINISHED:
+            if as_json:
+                yield Echo(text=_compact({"event": "terminal", "status": workflow.status.value}))
+            return None
+        yield Delay(poll)
+
+
+@cli.command()
+@click.argument("workflow_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON (JSONL stream)")
+@click.option("--poll", "-p", default=1.0, help="Poll interval in seconds")
+@click.pass_context
+def watch(ctx: click.Context, workflow_id: str, as_json: bool, poll: float) -> None:
+    """Watch workflow updates (streams JSONL with --json)."""
+    _run(ctx, _watch(workflow_id, as_json, poll))
+
+
+# =============================================================================
+# attach
+# =============================================================================
+
+
+@do
+def _attach(workflow_id: str, agent: str | None):
+    workflow = yield _find(workflow_id)
+    target = _some_agent(workflow, agent)
+    if target is None:
+        raise CommandError("No agent to attach to")
+    yield Echo(text=f"Attaching to: {_session_of(workflow, target)}")
+    yield AgenticAttachAgent(workflow_id=workflow.id, agent=target)
+
+
+@cli.command()
+@click.argument("workflow_id")
+@click.option("--agent", "-a", help="Specific agent name")
+@click.pass_context
+def attach(ctx: click.Context, workflow_id: str, agent: str | None) -> None:
+    """Attach to agent's tmux session.
+
+    WORKFLOW_ID is the workflow's ID or prefix. The agent is --agent, else the workflow's
+    current agent, else its first agent.
+    """
+    _run(ctx, _attach(workflow_id, agent))
+
+
+# =============================================================================
+# send
+# =============================================================================
+
+
+@do
+def _send(workflow_id: str, message: str, agent: str | None, as_json: bool):
+    workflow = yield _find(workflow_id)
+    if (yield AgenticInputRequested(workflow_id=workflow.id)):
+        yield AgenticAnswerInput(workflow_id=workflow.id, text=message)
+        answered = {"ok": True, "type": "user_input_response"}
+        yield Echo(text=_compact(answered) if as_json else "Response sent")
+        return None
+
+    target = agent if agent is not None else workflow.current_agent
+    if target is None:
+        raise CommandError("No agent to send to")
+    sent = yield AgenticSendToAgent(workflow_id=workflow.id, agent=target, message=message)
+    if as_json:
+        yield Echo(text=_compact({"ok": sent}))
+    elif sent:
+        yield Echo(text="Message sent")
+    else:
+        raise CommandError("Failed to send message")
+
+
+@cli.command()
+@click.argument("workflow_id")
+@click.argument("message")
+@click.option("--agent", "-a", help="Specific agent name")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def send(
+    ctx: click.Context, workflow_id: str, message: str, agent: str | None, as_json: bool
+) -> None:
+    """Send message to running agent.
+
+    When the workflow waits for the user's input (WaitForUserInput), MESSAGE answers it.
+    Otherwise it is typed into the session of --agent, else of the workflow's current agent.
+    """
+    _run(ctx, _send(workflow_id, message, agent, as_json))
+
+
+# =============================================================================
+# stop
+# =============================================================================
+
+
+@do
+def _stop(workflow_id: str, as_json: bool):
+    workflow = yield _find(workflow_id)
+    stopped = yield AgenticStopWorkflow(workflow_id=workflow.id)
+    if as_json:
+        yield Echo(text=_compact({"ok": True, "stopped": list(stopped)}))
+    elif stopped:
+        yield Echo(text=f"Stopped agents: {', '.join(stopped)}")
+    else:
+        yield Echo(text="No agents to stop")
+
+
+@cli.command()
+@click.argument("workflow_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def stop(ctx: click.Context, workflow_id: str, as_json: bool) -> None:
+    """Stop workflow and kill agents."""
+    _run(ctx, _stop(workflow_id, as_json))
+
+
+# =============================================================================
+# logs
+# =============================================================================
+
+
+@do
+def _logs(workflow_id: str, agent: str | None, follow: bool, lines: int, as_json: bool):
+    workflow = yield _find(workflow_id)
+    target = _some_agent(workflow, agent)
+    if target is None:
+        raise CommandError("No agent in workflow")
+    capture = AgenticCaptureAgentOutput(workflow_id=workflow.id, agent=target, lines=lines)
+    if not follow:
+        output = yield capture
+        yield Echo(text=json.dumps({"output": output}) if as_json else output)
+        return None
+
+    shown = ""
+    while True:
+        output = yield capture
+        if output != shown:
+            yield Echo(text=output[len(shown) :] if shown else output, newline=False)
+            shown = output
+        yield Delay(_LOGS_POLL)
+
+
+@cli.command()
+@click.argument("workflow_id")
+@click.option("--agent", "-a", help="Specific agent name")
+@click.option("--follow", "-f", is_flag=True, help="Tail mode")
+@click.option("--lines", "-n", default=100, help="Number of lines")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def logs(
+    ctx: click.Context,
+    workflow_id: str,
+    agent: str | None,
+    follow: bool,
+    lines: int,
+    as_json: bool,
+) -> None:
+    """View an agent's output.
+
+    The agent is --agent, else the workflow's current agent, else its first agent.
+    """
+    _run(ctx, _logs(workflow_id, agent, follow, lines, as_json))
+
+
+# =============================================================================
+# env
 # =============================================================================
 
 
@@ -465,140 +512,77 @@ def env() -> None:
     """Environment management commands."""
 
 
+@do
+def _env_list(workflow_id: str | None, as_json: bool):
+    recorded = yield AgenticListEnvironments(workflow_id=workflow_id)
+    environments = [
+        {
+            "workflow_id": wf_id,
+            "env_id": environment.id,
+            "env_type": environment.env_type.value,
+            "name": environment.name,
+            "working_dir": environment.working_dir,
+            "sessions": list(sessions),
+        }
+        for wf_id, environment, sessions in recorded
+    ]
+    if as_json:
+        yield Echo(text=json.dumps({"environments": environments}))
+        return None
+    if not environments:
+        yield Echo(text="No environments found")
+        return None
+
+    def row(environment: dict[str, Any]) -> tuple[str, ...]:
+        work_dir = environment["working_dir"]
+        return (
+            environment["env_id"][:8],
+            environment["env_type"],
+            "..." + work_dir[-37:] if len(work_dir) > 40 else work_dir,
+            ", ".join(environment["sessions"]) or "-",
+        )
+
+    headers = ("ENV ID", "TYPE", "WORKING DIR", "SESSIONS")
+    yield Echo(text=_table(headers, [row(environment) for environment in environments]))
+
+
 @env.command("list")
 @click.option("--workflow", "-w", help="Filter by workflow ID")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def env_list(
-    ctx: click.Context,
-    workflow: str | None,
-    output_json: bool,
-) -> None:
-    """List environments.
+def env_list(ctx: click.Context, workflow: str | None, as_json: bool) -> None:
+    """List environments."""
+    _run(ctx, _env_list(workflow, as_json))
 
-    Example output:
-        ENV ID      TYPE       WORKING DIR                    SESSIONS
-        env-abc     worktree   /tmp/doeff/worktrees/abc123    reviewer, fixer
-        env-def     worktree   /tmp/doeff/worktrees/def456    tester
-    """
-    from ._event_log import EventLogReader, WorkflowIndex
 
-    reader = EventLogReader()
-    index = WorkflowIndex()
-
-    # Get workflows to scan
-    if workflow:
-        try:
-            resolved = index.resolve_prefix(workflow)
-            workflow_ids = [resolved] if resolved else []
-        except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            sys.exit(1)
+@do
+def _env_cleanup(dry_run: bool, as_json: bool):
+    cleaned = yield AgenticCleanupEnvironments(dry_run=dry_run)
+    if as_json:
+        yield Echo(text=json.dumps({"dry_run": dry_run, "cleaned": list(cleaned)}))
+    elif cleaned:
+        action = "Would clean" if dry_run else "Cleaned"
+        yield Echo(text="\n".join((f"{action}:", *(f"  {path}" for path in cleaned))))
     else:
-        workflow_ids = reader.list_workflows()
-
-    environments = []
-
-    for wf_id in workflow_ids:
-        for env_id in reader.list_environments(wf_id):
-            env = reader.reconstruct_environment_state(wf_id, env_id)
-            if env:
-                sessions = reader.get_sessions_for_environment(wf_id, env_id)
-                environments.append({
-                    "workflow_id": wf_id,
-                    "env_id": env_id,
-                    "env_type": env.env_type.value,
-                    "name": env.name,
-                    "working_dir": env.working_dir,
-                    "sessions": sessions,
-                })
-
-    if output_json:
-        click.echo(json.dumps({"environments": environments}))
-    else:
-        if not environments:
-            console.print("[dim]No environments found[/dim]")
-            return
-
-        table = Table(show_header=True, header_style="bold")
-        table.add_column("ENV ID", style="cyan")
-        table.add_column("TYPE")
-        table.add_column("WORKING DIR")
-        table.add_column("SESSIONS")
-
-        for env in environments:
-            sessions_str = ", ".join(env["sessions"]) if env["sessions"] else "-"
-            # Truncate working dir if too long
-            work_dir = env["working_dir"]
-            if len(work_dir) > 40:
-                work_dir = "..." + work_dir[-37:]
-
-            table.add_row(
-                env["env_id"][:8],
-                env["env_type"],
-                work_dir,
-                sessions_str,
-            )
-
-        console.print(table)
+        yield Echo(text="No environment directories found")
 
 
 @env.command("cleanup")
 @click.option("--dry-run", is_flag=True, help="Show what would be cleaned up")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def env_cleanup(
-    ctx: click.Context,
-    dry_run: bool,
-    output_json: bool,
-) -> None:
-    """Cleanup orphaned environments (worktrees, copies).
+def env_cleanup(ctx: click.Context, dry_run: bool, as_json: bool) -> None:
+    """Remove every environment directory (worktrees, copies).
 
-    This removes:
-    - Git worktrees in /tmp/doeff/worktrees/ not associated with running workflows
-    - Copied directories in /tmp/doeff/copies/ not associated with running workflows
+    This removes every directory under /tmp/doeff/worktrees/ (as a git worktree too) and
+    /tmp/doeff/copies/, whether or not a workflow still uses it.
     """
-    import shutil
-    from pathlib import Path
+    _run(ctx, _env_cleanup(dry_run, as_json))
 
-    worktree_dir = Path("/tmp/doeff/worktrees")
-    copies_dir = Path("/tmp/doeff/copies")
 
-    cleaned = []
-
-    for base_dir in [worktree_dir, copies_dir]:
-        if base_dir.exists():
-            for item in base_dir.iterdir():
-                if item.is_dir():
-                    if dry_run:
-                        cleaned.append(str(item))
-                    else:
-                        try:
-                            if base_dir == worktree_dir:
-                                # Remove git worktree
-                                import subprocess
-                                subprocess.run(
-                                    ["git", "worktree", "remove", "--force", str(item)],
-                                    capture_output=True,
-                                    check=False,
-                                )
-                            shutil.rmtree(item, ignore_errors=True)
-                            cleaned.append(str(item))
-                        except Exception:
-                            pass
-
-    if output_json:
-        click.echo(json.dumps({
-            "dry_run": dry_run,
-            "cleaned": cleaned,
-        }))
-    elif cleaned:
-        action = "Would clean" if dry_run else "Cleaned"
-        console.print(f"[green]{action}:[/green]")
-        for path in cleaned:
-            console.print(f"  {path}")
-    else:
-        console.print("[dim]No orphaned environments found[/dim]")
+# =============================================================================
+# tui
+# =============================================================================
 
 
 @cli.command()
@@ -609,45 +593,13 @@ def tui() -> None:
     tui_main()
 
 
-# =============================================================================
-# Deprecated Commands (kept for backward compatibility)
-# =============================================================================
+def main() -> None:
+    """The console script ``doeff-agentic``."""
+    cli(prog_name="doeff-agentic")
 
 
-@cli.command(hidden=True)
-@click.argument("workflow_id")
-@click.argument("message")
-@click.option("--agent", "-a", help="Specific agent to send to")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.pass_context
-def send(
-    ctx: click.Context,
-    workflow_id: str,
-    message: str,
-    agent: str | None,
-    output_json: bool,
-) -> None:
-    """[DEPRECATED] Send message to running agent.
-
-    This command is deprecated. Use effects-based messaging instead.
-    """
-    console.print(
-        "[yellow]Warning: 'send' command is deprecated. "
-        "Use effects-based messaging in workflows instead.[/yellow]"
-    )
-
-    api: AgenticAPI = ctx.obj["api"]
-
-    success = api.send_message(workflow_id, message, agent)
-
-    if output_json:
-        click.echo(json.dumps({"ok": success, "deprecated": True}))
-    elif success:
-        console.print("[green]Message sent[/green]")
-    else:
-        console.print("[red]Failed to send message[/red]")
-        sys.exit(1)
+__all__ = ["cli"]
 
 
 if __name__ == "__main__":
-    cli()
+    main()

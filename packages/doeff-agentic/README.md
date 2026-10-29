@@ -169,30 +169,26 @@ output = api.get_agent_output("a3f", agent="review-agent")
 
 ## CLI Commands
 
+`pip install doeff-agentic` installs the `doeff-agentic` command (and `doeff-agentic-tui`).
+`--state-dir` (or `DOEFF_AGENTIC_STATE_DIR`) goes before the command.
+
 | Command | Description |
 |---------|-------------|
-| `ps` | List running workflows and agents |
-| `show <id>` | Show workflow details |
-| `watch <id>` | Monitor workflow in real-time |
-| `attach <id>` | Attach to agent's tmux session |
-| `logs <id>` | View agent output history |
-| `send <id> <msg>` | Send message to agent |
-| `stop <id>` | Stop workflow and kill agents |
+| `ps [-s <status>]… [-a <agent-status>]… [--json]` | List workflows and agents (`--json`: the array of workflows) |
+| `show <id> [--json]` | Show workflow details |
+| `watch <id> [--json] [-p <seconds>]` | Monitor a workflow (`--json`: one workflow per change, JSONL) |
+| `attach <id> [-a <agent>]` | Attach to agent's tmux session |
+| `send <id> <msg> [-a <agent>] [--json]` | Send message to agent (or answer `WaitForUserInput`) |
+| `stop <id> [--json]` | Stop workflow and kill agents |
+| `logs <id> [-a <agent>] [-f] [-n <lines>] [--json]` | View agent output |
+| `env list` / `env cleanup` | List environments / remove the environment directories |
+| `tui` | Launch the interactive TUI |
 
-All commands support `--json` for plugin consumption.
-
-## Fast Rust CLI
-
-For plugin integration, a fast Rust CLI is available at `packages/doeff-agentic-cli`:
-
-```bash
-# Build
-cd packages/doeff-agentic-cli
-cargo build --release
-
-# Use (~5ms startup vs ~300ms for Python)
-./target/release/doeff-agentic ps --json
-```
+`ps`, `show`, `watch`, `attach`, `send` and `stop` take the arguments of the Rust CLI
+(`packages/doeff-agentic-cli`, which this command replaces) and write the same JSON, as the IDE
+plugins read it. Each command runs a doeff program over the recorded-workflow effects
+(`AgenticListWorkflows`, `AgenticFindWorkflow`, `AgenticSendToAgent`, …) under
+`recorded_workflows_handler`.
 
 ## State Files
 

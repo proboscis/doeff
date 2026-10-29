@@ -26,18 +26,28 @@ Usage:
 """
 
 
+import shutil
+import subprocess
 from collections.abc import Iterator
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._event_log import EventLogReader, WorkflowIndex
 from ._state import StateManager, generate_workflow_id, get_default_state_dir
 from ._types import (
+    AgenticEnvironmentHandle,
     AgentStatus,
     WatchEventType,
     WatchUpdate,
     WorkflowInfo,
     WorkflowStatus,
 )
+
+# Where the worktree and copy environments put their directories (handlers/opencode.py)
+_WORKTREE_ROOT = Path("/tmp/doeff/worktrees")
+_COPIES_ROOT = Path("/tmp/doeff/copies")
 
 
 class AgenticAPI:
@@ -241,29 +251,42 @@ class AgenticAPI:
         if agent is None:
             return False
 
-        # Find session name
-        session_name: str | None = None
-        pane_id: str | None = None
-        for a in workflow.agents:
-            if a.name == agent:
-                session_name = a.session_name
-                pane_id = a.pane_id
-                break
-
-        if session_name is None:
-            session_name = f"doeff-{workflow.id}-{agent}"
-
-        # Check if this is a user input response
-        input_response_file = (
-            self.state_dir / "workflows" / workflow.id / "input_response.txt"
-        )
-        if (self.state_dir / "workflows" / workflow.id / "input_request.json").exists():
+        if self.input_requested(workflow.id):
             # This is a response to WaitForUserInput
-            input_response_file.write_text(message)
+            self.answer_input(workflow.id, message)
             return True
 
-        # Send via tmux
-        target = pane_id or session_name
+        return self.send_to_agent(workflow.id, agent, message)
+
+    def input_requested(self, workflow_id: str) -> bool:
+        """Whether the workflow (its full ID) waits for the user's input (WaitForUserInput)."""
+        return (self.state_dir / "workflows" / workflow_id / "input_request.json").exists()
+
+    def answer_input(self, workflow_id: str, text: str) -> None:
+        """Answer the user's input the workflow (its full ID) waits for."""
+        (self.state_dir / "workflows" / workflow_id / "input_response.txt").write_text(text)
+
+    def send_to_agent(self, workflow_id: str, agent: str, message: str) -> bool:
+        """Type a message into an agent's session and press Enter.
+
+        Args:
+            workflow_id: Full or prefix workflow ID
+            agent: Agent name
+            message: Message to send
+
+        Returns:
+            True if the session took the keys
+        """
+        workflow = self.get_workflow(workflow_id)
+        if workflow is None:
+            return False
+
+        recorded = next((a for a in workflow.agents if a.name == agent), None)
+        if recorded is None:
+            target = f"doeff-{workflow.id}-{agent}"
+        else:
+            target = recorded.pane_id or recorded.session_name
+
         try:
             self._session_backend().send_keys(target, message, literal=True, enter=True)
         except Exception:
@@ -292,21 +315,15 @@ class AgenticAPI:
             except Exception:
                 continue
 
-        # Update workflow status
-        if workflow:
-            # Mark as stopped
-            from datetime import datetime, timezone
-            updated = WorkflowInfo(
-                id=workflow.id,
-                name=workflow.name,
+        # Mark as stopped; the last status and the error stay recorded
+        self._state_manager.write_workflow_meta(
+            replace(
+                workflow,
                 status=WorkflowStatus.STOPPED,
-                started_at=workflow.started_at,
                 updated_at=datetime.now(timezone.utc),
                 current_agent=None,
-                agents=(),
-                error=None,
             )
-            self._state_manager.write_workflow_meta(updated)
+        )
 
         return stopped
 
@@ -427,7 +444,6 @@ class AgenticAPI:
             # Update workflow as failed
             workflow_info = self.get_workflow(wf_id)
             if workflow_info:
-                from datetime import datetime, timezone
                 updated = WorkflowInfo(
                     id=workflow_info.id,
                     name=workflow_info.name,
@@ -453,6 +469,68 @@ class AgenticAPI:
             True if deleted
         """
         return self._state_manager.delete_workflow(workflow_id)
+
+    def list_environments(
+        self, workflow_id: str | None = None
+    ) -> list[tuple[str, AgenticEnvironmentHandle, tuple[str, ...]]]:
+        """List the environments the workflows' event logs created.
+
+        Args:
+            workflow_id: Full or prefix workflow ID (every workflow when None)
+
+        Returns:
+            One (workflow ID, environment, names of the sessions bound to it) per environment
+
+        Raises:
+            ValueError: If prefix is ambiguous
+        """
+        reader = EventLogReader(self.state_dir)
+        if workflow_id is None:
+            workflow_ids = tuple(reader.list_workflows())
+        else:
+            resolved = WorkflowIndex(self.state_dir).resolve_prefix(workflow_id)
+            workflow_ids = (resolved,) if resolved else ()
+
+        recorded = (
+            (wf_id, env_id, reader.reconstruct_environment_state(wf_id, env_id))
+            for wf_id in workflow_ids
+            for env_id in reader.list_environments(wf_id)
+        )
+        return [
+            (wf_id, env, tuple(reader.get_sessions_for_environment(wf_id, env_id)))
+            for wf_id, env_id, env in recorded
+            if env is not None
+        ]
+
+    def cleanup_environments(self, dry_run: bool = False) -> list[str]:
+        """Remove every directory under the environments' worktree and copy roots.
+
+        Every directory under /tmp/doeff/worktrees (removed as a git worktree too) and
+        /tmp/doeff/copies is removed, whether or not a workflow still uses it.
+
+        Args:
+            dry_run: List the directories without removing them
+
+        Returns:
+            The directories removed (or that would be removed)
+        """
+        found = [
+            (base_dir, item)
+            for base_dir in (_WORKTREE_ROOT, _COPIES_ROOT)
+            if base_dir.exists()
+            for item in base_dir.iterdir()
+            if item.is_dir()
+        ]
+        if not dry_run:
+            for base_dir, item in found:
+                if base_dir == _WORKTREE_ROOT:
+                    subprocess.run(
+                        ["git", "worktree", "remove", "--force", str(item)],
+                        capture_output=True,
+                        check=False,
+                    )
+                shutil.rmtree(item, ignore_errors=True)
+        return [str(item) for _, item in found]
 
     def get_trace(self, workflow_id: str) -> list[dict[str, Any]]:
         """Get the effect trace for a workflow.

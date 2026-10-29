@@ -180,8 +180,8 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
             print(f"\nProposed fixes:\n{result['fixes'][:500]}...")
         print("\n" + "=" * 60)
         print("Run in another terminal:")
-        print("  doeff-agentic send <workflow-id>:review-agent 'approve'")
-        print("  doeff-agentic send <workflow-id>:review-agent 'reject'")
+        print("  doeff-agentic send <workflow-id> 'approve' --agent review-agent")
+        print("  doeff-agentic send <workflow-id> 'reject' --agent review-agent")
         print("=" * 60 + "\n")
 
         approval = yield wait_for_user_input(
