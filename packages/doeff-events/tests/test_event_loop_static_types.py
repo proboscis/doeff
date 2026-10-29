@@ -19,7 +19,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk])
-(require doeff-events._macros [event-loop])
+(require doeff-events.macros [event-loop])
 (import doeff_events [TimerFired])
 
 (defk counted []
@@ -36,7 +36,7 @@ MODULE = """\
 RECORD_MODULE = """\
 (require doeff-hy.macros [defk <-])
 (require doeff-hy.record [defrecord])
-(require doeff-events._macros [event-loop])
+(require doeff-events.macros [event-loop])
 (import dataclasses [dataclass])
 (import doeff_core_effects._effects [slog])
 (import doeff_events [TimerFired])

@@ -1,6 +1,6 @@
 """The parts the ``event-loop`` macro calls in its expansion (agora-redesign #3080).
 
-The macro (``doeff_events/_macros.hy``) writes the loop of a worker that waits for events: read the state,
+The macro (``doeff_events/macros.hy``) writes the loop of a worker that waits for events: read the state,
 then wait for the next event of the types its clauses name or for the stop signal, whichever comes first,
 and run the clause of what came. These parts own the waiting so every loop waits the same way:
 

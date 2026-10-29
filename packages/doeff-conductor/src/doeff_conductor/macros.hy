@@ -1,6 +1,6 @@
 ;;; Hy macros for the doeff-conductor workflow DSL.
 ;;;
-;;;   (require doeff-conductor._macros [defworkflow defphase agent! gate! workspace! merge!
+;;;   (require doeff-conductor.macros [defworkflow defphase agent! gate! workspace! merge!
 ;;;                                    parallel parallel-for loop <- time! random! pipeline])
 ;;;
 ;;; These macros are intentionally thin: they only translate the surface
@@ -10,6 +10,9 @@
 ;;; 持ち主は doeff-conductor(2026-10-27 に doeff-hy の doeff_hy.conductor から移した — 利用者の答え
 ;;; lt-GXXY5TVWBHJW4ZCBDTCRN68XZS の by-group・card ki-f2107259b141)。doeff-hy は effect・handler・test を書く macro と、
 ;;; 定義の macro の土台(_scoped-definition)だけを持つ。
+;;;
+;;; この module は名に _ を付けずに公開の境界に置く(ADR-DOE-API-001 R31 — Hy の require が module の path で macro を読む
+;;; ので、R14・R15 と同じく R5 の外の境界。card ki-d80c9c978b35 が段 1 の _macros から戻した)。
 
 (import hy.models [Keyword List Symbol])
 
