@@ -6,9 +6,12 @@
 実装され、stale-ratchet の強制どおり申告は除去された — 検査 (a) は申告なしで
 green になる。ratchet 自体の発火は test_stale_known_uncovered_declaration_rejected
 が固定する。
+
+表は effect で読み、domain_registry() が process の表(dogfood の module が import の時に載せる所)から答える
+(ADR-DOE-API-001 R29・card ki-03a7f0af2b64)。
 """
 
-import doeff_domain.core_effects_domains as dogfood  # noqa: F401 — import 時に登録
+import doeff_domain._core_effects_domains as dogfood  # noqa: F401 — import 時に登録
 import pytest
 from doeff_core_effects import (
     Ask,
@@ -23,13 +26,34 @@ from doeff_core_effects import (
 )
 from doeff_core_effects.http_effects import HttpRequest
 from doeff_domain import (
+    AssertDomainCovered,
+    AssertNoOrphanEffects,
+    AssertRegisteredDomainsCovered,
     DomainCheckError,
-    assert_domain_covered,
-    assert_no_orphan_effects,
-    get_domain,
-    handled_effects,
-    introducing_domain,
+    GetDomain,
+    HandledEffects,
+    Handles,
+    domain_registry,
 )
+from doeff_domain._registry import introducing_domain
+
+from doeff import run
+
+
+def ask(effect):
+    """effect 1 つを process の表の handler の下で走らせる。"""
+    return run(domain_registry()(effect))
+
+
+def get_domain(name):
+    """process の表の domain を名で引く(effect GetDomain)。"""
+    return ask(GetDomain(name))
+
+
+def handled_effects(handler, *, vocabulary=()):
+    """handler の処理集合を読む(effect HandledEffects)。"""
+    return ask(HandledEffects(handler, vocabulary=list(vocabulary)))
+
 
 DOGFOOD_DOMAIN_NAMES = [
     "doeff-reader",
@@ -55,6 +79,7 @@ DOGFOOD_DOMAIN_NAMES = [
     "doeff-channel",
     "doeff-compute",
     "doeff-stop-signal",
+    "doeff-vm-probe",
 ]
 
 
@@ -66,7 +91,13 @@ def test_all_dogfood_domains_registered():
 @pytest.mark.parametrize("name", DOGFOOD_DOMAIN_NAMES)
 def test_dogfood_coverage_green(name):
     # 検査 (a): 導入 effects ⊆ handlers の処理集合の和 — 申告なしで green
-    assert_domain_covered(get_domain(name))
+    ask(AssertDomainCovered(get_domain(name)))
+
+
+def test_every_dogfood_domain_is_covered_in_a_table_of_their_own():
+    # 検査 (a) を表の domain の全部へ — process の表にはほかの test の宣言も載るので、dogfood の domain だけの別の表で走らせる
+    dogfood_domains = [get_domain(name) for name in DOGFOOD_DOMAIN_NAMES]
+    run(domain_registry(domains=dogfood_domains)(AssertRegisteredDomainsCovered()))
 
 
 def test_stale_known_uncovered_declaration_rejected():
@@ -74,13 +105,13 @@ def test_stale_known_uncovered_declaration_rejected():
     # 申告を残すと stale として fail する(申告除去を強制する機構が働いている)
     for name, effect in (("doeff-memo", MemoDeleteEffect), ("doeff-cache", CacheDeleteEffect)):
         with pytest.raises(DomainCheckError, match="stale known_uncovered"):
-            assert_domain_covered(get_domain(name), known_uncovered=[effect])
+            ask(AssertDomainCovered(name, known_uncovered=[effect]))
 
 
 def test_no_orphan_effects_in_core_effects():
     # 検査 (c): doeff_core_effects 全体を import 走査 — 全 EffectBase 子孫が
     # いずれかの domain に導入されている
-    assert_no_orphan_effects(["doeff_core_effects"])
+    ask(AssertNoOrphanEffects(["doeff_core_effects"]))
 
 
 def test_http_and_memo_domains_use_defhandler_derivation():
@@ -97,9 +128,7 @@ def test_http_and_memo_domains_use_defhandler_derivation():
     assert not hasattr(memo_handler, "__doeff_handles__")
     derived = handled_effects(memo_handler, vocabulary=memo.effects)
     # MemoDeleteEffect 節の追加は構造導出に自動反映される(D6)
-    assert derived == frozenset(
-        {MemoExistsEffect, MemoGetEffect, MemoPutEffect, MemoDeleteEffect}
-    )
+    assert derived == frozenset({MemoExistsEffect, MemoGetEffect, MemoPutEffect, MemoDeleteEffect})
 
 
 def test_scope_domain_includes_reader_vocabulary():
@@ -109,10 +138,18 @@ def test_scope_domain_includes_reader_vocabulary():
     assert introducing_domain(Local).name == "doeff-scope"
 
 
-def test_raw_handler_annotations_applied_post_hoc():
-    # D5: core-effects を編集せず dogfood モジュールから handles() を後付け注釈
+def test_raw_handlers_are_declared_in_the_domain_without_touching_them():
+    # D5: core-effects を編集せず、dogfood の domain の handlers に Handles で宣言する — handler に印を付けない
     from doeff_core_effects import lazy_ask, reader, state
 
-    assert handled_effects(reader) == frozenset({Ask})
-    assert handled_effects(lazy_ask) == frozenset({Ask, Local})
-    assert handled_effects(state) == frozenset({Get, Put})
+    declared = {
+        entry.handler: entry
+        for name in ("doeff-reader", "doeff-scope", "doeff-state")
+        for entry in get_domain(name).handlers
+        if isinstance(entry, Handles)
+    }
+    assert handled_effects(declared[reader]) == frozenset({Ask})
+    assert handled_effects(declared[lazy_ask]) == frozenset({Ask, Local})
+    assert handled_effects(declared[state]) == frozenset({Get, Put})
+    assert not hasattr(reader, "__doeff_handles__")
+    assert not hasattr(lazy_ask, "__doeff_handles__")

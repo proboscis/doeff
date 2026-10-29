@@ -6,9 +6,32 @@
 ;;; enforcement は designed-red 番兵から緑の挙動ピンに置換済み。
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
-(require doeff-hy.macros [deftest])
-(require doeff-domain.macros [defdomain])
+(require doeff-hy.macros [deftest defk <- val var])
 (import doeff-adr.macros [fact interpretation counterexample])
+(import doeff [DoExpr])
+(import doeff_domain [DomainError GetDomain])
+
+
+(defk failure-of [program]
+  {:pre [(: program DoExpr)] :post [(: % (| DomainError KeyError))]
+   :tags {:context "doeff-domain-adr" :role "program"}}
+  "red の側の確かめ: program が domain の表の handler から投げ返された失敗(DomainError の子か KeyError)で終わる事を確かめ、その失敗を返す(答えれば赤)。"
+  (try
+    (<- answer program)
+    (raise (AssertionError (+ "the program answered instead of failing: " (repr answer))))
+    (except [failure #(DomainError KeyError)]
+      failure)))
+
+
+(defk read-domains [names]
+  {:pre [(: names list)] :post [(: % list)]
+   :tags {:context "doeff-domain-adr" :role "program"}}
+  "dogfood の確かめ: 名の並びを GetDomain で 1 つずつ引いた domain の並び(表は呼び手が据えた domain の表の handler)。"
+  (var found [])
+  (for [name names]
+    (<- domain (GetDomain name))
+    (:= found [#* found domain]))
+  found)
 
 
 (defadr ADR-DOE-DOMAIN-001
@@ -42,13 +65,14 @@
      (interpretation
        "裁定(2026-07-18, i–ii): E2(SEDA/registry 照会の CLI/MCP 面)は見送る。核#8 型増殖への実 enforcement は E1 の孤児禁止・被覆・stale-ratchet が既に担い、MemoDeleteEffect / CacheDeleteEffect の実ドリフト検出から裁定 A、PR #546 での解消まで実証済みである。照会対象の宣言は packages/doeff-domain/src/doeff_domain/core_effects_domains.hy の 1 ファイルに集約され grep 可能であり、Evidence Rule(docs/22-capability-classes.md)に従って証拠なき CLI/MCP コストは払わない。再開条件は『エージェントが語彙探索に実際に失敗した事例』の観測とし、その時点で再起票する。E3 の Program 使用 effect 集合 ⊆ interpreter 処理集合は価値を堅持するが、前提の interpreter→handler 列の列挙契約は frontier+人間の深い設計議論に予約し、worker へ委譲してはならず、E3 はその設計セッション後に着手する。2026-07-18 の frontier read-only 調査(原本 2026-07-18-seda-survey-doeff-e2.md)では、Python 解析系は cargo 統合テスト 8 件中 6 件が検出 effect 空集合で失敗し、ask( 等の文字列 prefix マッチだけで現 API の EffectBase サブクラス + dataclass を認識できず、specs/features/effect-analyzer.md も旧 API 前提と確認した。README / spec が参照する specs/effect-analyzer/ は存在しない幻参照である。一方、spec 外の Hy 解析系(hy_reader / hy_analyzer)は単体 14/14 green で、PascalCase 認識が現 API の粗い近似となり E3 左辺推論の土台候補である。handler 所在と interpreter 処理集合は doeff-domain registry の introducing_domain / handled_effects から静的解析なしで照会できるが、後者には上記の列挙契約が残る。なお 2026-07-17 の実装状況で maintainer 裁定待ちだった MemoDeleteEffect / CacheDeleteEffect は、裁定 A(PR #546、2026-07-18)で解消済みである。")]
   :decision
-    [(rule R1 "doeff-domain サブパッケージ(packages/doeff-domain)は凝集単位の宣言を提供する: 純データ Domain(name/title/effects/includes/terms/handlers/laws/adrs/docs)、プロセス内 registry(import 時登録・同名再登録は即例外)、宣言マクロ defdomain(Hy モジュール doeff_domain.macros)、生 Python handler 用の opt-in 注釈 handles()、処理集合の二層導出、適合検査 (a)(c)。doeff-domain は doeff-hy / doeff-adr に依存してはならない(doeff_vm.EffectBase と hy への依存は可、doeff-core-effects へは dogfood 宣言モジュールからのみ一方向)。")
+    [(rule R1 "doeff-domain サブパッケージ(packages/doeff-domain)は凝集単位の宣言を提供する: 純データ Domain(name/title/effects/includes/terms/handlers/laws/adrs/docs)、プロセス内 registry(import 時登録・同名再登録は即例外)、宣言マクロ defdomain(Hy モジュール doeff_domain.macros)、生 Python handler 用の opt-in 宣言の型 Handles(2026-10-29 に関数 handles() から改めた — R8)、処理集合の二層導出、適合検査 (a)(c)。表の読み書きと処理集合の導出と適合検査は effect と handler を返す工場 domain_registry で見せる(R8)。doeff-domain は doeff-hy / doeff-adr に依存してはならない(doeff_vm.EffectBase と hy への依存は可、doeff-core-effects へは dogfood 宣言モジュールからのみ一方向)。")
      (rule R2 "SEDA の CLI および MCP tool としての照会面『この Program が実行しうる effect 集合』『この effect 型の handler 所在』『この interpreter の処理集合』は見送る。IDE プラグイン面は非優先とする。(E2 見送り、2026-07-18 裁定 — 再開条件 = エージェントが語彙探索に実際に失敗した事例の観測)")
      (rule R3 "適合検査を defsemgrep / deftest で提供する: (a) handler が宣言 domain の導入 effect を被覆する(includes は導入元 domain の責務)、(b) Program の使用 effect 集合 ⊆ 実行 interpreter の処理集合(E3 — interpreter→handler 列の列挙契約の設計セッション(frontier+人間予約、worker への委譲禁止)後に着手)、(c) domain 宣言の外での同義語彙(同一意味論の述語・effect)の定義を禁止する — 実装形は『名指しパッケージの全 EffectBase 子孫がいずれかの domain に導入されている』検査。")
      (rule R4 "本 ADR の実装は計画 Stage E であり、Track B(pytest 正典ゲート)の完了を前提とする — 適合検査は走るゲートがあって初めて意味を持つ。")
      (rule R5 "裁定(2026-07-17, i): defdomain は完全 opt-in である — doeff 利用の必須要素ではなく組織化戦略であり、既定ゲート(run()/CLI/default interpreter)への強制はしない。適合検査は採用プロジェクトが自分のテストとして配線する。doeff 自身は dogfood として自パッケージ範囲(doeff-core-effects)に採用する。")
      (rule R6 "裁定(2026-07-17, ii): 導入 1 / 包含 ∞ — 1 つの effect クラスは全体でちょうど 1 つの domain の effects(導入)に現れてよい。2 つ目の domain が同じクラスを導入しようとしたら登録時に両 domain 名を明示して即例外。includes による参照はいくつでも可。キーはクラス同一性。")
-     (rule R7 "裁定(2026-07-17, iii): 処理集合の導出は二層 — (1) 注釈層: handles() が付与する __doeff_handles__(生 Python handler の opt-in 宣言。他パッケージの関数へ後付け可。全域性の保証ではなく、実態照合は E2/E3 の SEDA が担う)。(2) 構造層: defhandler 産物の __doeff_body__(quoted 節リスト。属性ダックタイピングで判定し doeff-hy を import しない。ドリフト不能)。lazy 初期化節(defhandler が認める 3 head: lazy / lazy-val / lazy-var)はスキップし、:when ガードや条件付き reperform を含む節も『処理に参加する宣言』として数える。名前解決は sys.modules[handler.__module__] 属性 → 照合先 domain の effect クラス名との文字列一致の順で試み、どちらも失敗したら検査エラー(fail loud)。どちらの属性も無い handler も検査エラー。")]
+     (rule R7 "裁定(2026-07-17, iii): 処理集合の導出は二層 — (1) 注釈層: domain の handlers に置く宣言の値 Handles(handler, effect …)と、handler が自分で持つ __doeff_handles__ の印(core の installer が付ける)の順に読む(生 Python handler の opt-in 宣言。他パッケージの handler も、その handler に何も付けずに宣言できる。全域性の保証ではなく、実態照合は E2/E3 の SEDA が担う。改めた前の形: 関数 handles() が handler に __doeff_handles__ を後付けした — 2026-10-29 に R8 で型 Handles に改めた)。(2) 構造層: defhandler 産物の __doeff_body__(quoted 節リスト。属性ダックタイピングで判定し doeff-hy を import しない。ドリフト不能)。lazy 初期化節(defhandler が認める 3 head: lazy / lazy-val / lazy-var)はスキップし、:when ガードや条件付き reperform を含む節も『処理に参加する宣言』として数える。名前解決は sys.modules[handler.__module__] 属性 → 照合先 domain の effect クラス名との文字列一致の順で試み、どちらも失敗したら検査エラー(fail loud)。宣言も、どちらの属性も無い handler も検査エラー。")
+     (rule R8 "表に置く・引く・check する関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・assert_domain_covered・assert_registered_domains_covered・assert_no_orphan_effects)は、effect RegisterDomain・GetDomain・HandledEffects・AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects と、表から答える handler を返す工場 domain_registry にし、関数は内側(doeff_domain._registry・_checks・_introspect)へ移した(2026-10-29・依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の問い domain の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV — effect にする・card ki-03a7f0af2b64・ADR-DOE-API-001 R29)。domain_registry() は process の表(defdomain が import の時に載せる所)を答える時に読み、domain_registry(domains=[Domain …]) は渡した domain だけの別の表から答える — isolated_registry の代わりで、RegisterDomain もその表へ載せ、名の無い時は process の表へ落ちずに KeyError。内側に据えた方が先に答えるので、test は program の一部だけを別の表で走らせられる。別の表は工場を呼んだ時に 1 つ作り、同じ handler の値を使い回す間は RegisterDomain の載せが残る(test ごとに新しい表が要るなら工場を呼び直す)。check の失敗は DomainError の子(走査で import できない module も DomainCheckError に包む — 元の例外は __cause__)、表に無い名は KeyError で、どちらも effect を出した所へ投げ返す。handles は呼ぶと印の付いた handler を返す工場(ADR-DOE-API-001 R3)でも、program を返す helper(R18)でもない import の時の宣言なので、effect にせず宣言の型 Handles にした(R19 の check と同じ道 — 型は R2)。defdomain・宣言の型・例外は今のまま入口と doeff_domain.macros から見せる。")]
   :laws
     [(law vocabulary-has-single-home
        :statement "for_all semantic_predicate_or_effect v: canonical_declaration_count(v) == 1 AND declared_in_some_domain(v); duplicate_definitions_detected_by_conformance_check"
@@ -57,112 +81,104 @@
           (counterexample "新規エージェントが既存 domain 語彙を発見できず、同義の effect 型を別パッケージに追加する — 照会面(SEDA)不在時の既定挙動")])]
   :enforcement
     [(deftest test-adr-doe-domain-001-defdomain-provided-by-doeff-domain
-       ;; R1 緑ピン: doeff-domain が宣言 API 一式を提供する(旧 designed-red 番兵の置換)。
-       ;; defdomain マクロ自体は本ファイル冒頭の require と下の includer ピンで実証される。
-       (import doeff_domain [Domain DomainLaw DomainTerm register-domain
-                             handles handled-effects assert-domain-covered
-                             assert-registered-domains-covered
-                             assert-no-orphan-effects isolated-registry])
+       ;; R1・R8 緑ピン: doeff-domain の入口は宣言の型・例外と、表の effect・handler を返す工場を出し、前の関数 8 個を出さない。
+       ;; defdomain マクロ自体は dogfood の宣言(下の dogfood ピン)が import の時に使い、GetDomain がその表から答える事で実証される。
+       (import doeff_domain)
+       (import doeff_domain [Domain DomainLaw DomainTerm Handles
+                             RegisterDomain GetDomain HandledEffects AssertDomainCovered
+                             AssertRegisteredDomainsCovered AssertNoOrphanEffects domain-registry])
        (import doeff_domain.macros)
-       (assert (callable register-domain))
-       (assert (callable handles))
-       (assert (callable handled-effects))
-       (assert (callable assert-domain-covered))
-       (assert (callable assert-registered-domains-covered))
-       (assert (callable assert-no-orphan-effects)))
+       (import doeff [EffectBase])
+       (for [effect [RegisterDomain GetDomain HandledEffects AssertDomainCovered
+                     AssertRegisteredDomainsCovered AssertNoOrphanEffects]]
+         (assert (issubclass effect EffectBase)))
+       (assert (. (domain-registry) _doeff-is-handler-fn))
+       (for [gone ["register_domain" "isolated_registry" "get_domain" "handles" "handled_effects"
+                   "assert_domain_covered" "assert_registered_domains_covered" "assert_no_orphan_effects"]]
+         (assert (not (hasattr doeff_domain gone)) gone)))
      (deftest test-adr-doe-domain-001-introduce-once-include-freely
-       ;; R6/D3 緑ピン: 2 つ目の導入は両 domain 名入りで登録時に即例外、includes は自由。
-       (import doeff_domain [Domain register-domain isolated-registry
-                             DuplicateEffectIntroductionError])
+       ;; R6/D3 緑ピン: 2 つ目の導入は両 domain 名入りで登録時に即例外(RegisterDomain を出した所へ投げ返す)、includes は自由。
+       ;; 表は domain-registry の空の別の表 — process の表(defdomain の載せる所)に触れない(R8)。
+       (import doeff_domain [Domain RegisterDomain domain-registry DuplicateEffectIntroductionError])
        (import doeff [EffectBase])
-       (import pytest)
        (defclass Adr001PinEffect [EffectBase])
-       (with [_ (isolated-registry)]
-         (setv home (register-domain
-                      (Domain :name "adr-001-pin-home" :title "pin: 導入元"
-                              :effects [Adr001PinEffect])))
-         (with [excinfo (pytest.raises DuplicateEffectIntroductionError)]
-           (register-domain
-             (Domain :name "adr-001-pin-second" :title "pin: 二重導入"
-                     :effects [Adr001PinEffect])))
-         (assert (in "adr-001-pin-home" (str excinfo.value)))
-         (assert (in "adr-001-pin-second" (str excinfo.value)))
-         ;; includes による参照はいくつでも可 — defdomain マクロの実使用ピンを兼ねる
-         (defdomain adr-001-pin-includer
-           :title "pin: 包含は自由"
-           :includes [home])
-         (defdomain adr-001-pin-includer-2
-           :title "pin: 包含は自由(2)"
-           :includes [home])
-         (assert (= adr-001-pin-includer.includes #(home)))))
+       (val table (domain-registry :domains []))
+       (<- home (table (RegisterDomain (Domain :name "adr-001-pin-home" :title "pin: 導入元"
+                                               :effects [Adr001PinEffect]))))
+       (<- failure (failure-of (table (RegisterDomain (Domain :name "adr-001-pin-second" :title "pin: 二重導入"
+                                                             :effects [Adr001PinEffect])))))
+       (assert (isinstance failure DuplicateEffectIntroductionError))
+       (assert (in "adr-001-pin-home" (str failure)))
+       (assert (in "adr-001-pin-second" (str failure)))
+       ;; includes による参照はいくつでも可
+       (<- includer (table (RegisterDomain (Domain :name "adr-001-pin-includer" :title "pin: 包含は自由"
+                                                   :includes [home]))))
+       (<- includer-2 (table (RegisterDomain (Domain :name "adr-001-pin-includer-2" :title "pin: 包含は自由(2)"
+                                                     :includes [home]))))
+       (assert (= includer.includes #(home)))
+       (assert (= includer-2.includes #(home))))
      (deftest test-adr-doe-domain-001-coverage-check-red-green
-       ;; R3(a) 緑ピン: 被覆欠落 domain で fail する fixture と、被覆で pass する fixture。
-       (import doeff_domain [Domain register-domain isolated-registry handles
-                             assert-domain-covered DomainCoverageError])
+       ;; R3(a) 緑ピン: 被覆欠落 domain で fail する fixture と、被覆で pass する fixture。生 handler は Handles で宣言する(R7・R8)。
+       (import doeff_domain [Domain Handles AssertDomainCovered domain-registry DomainCoverageError])
        (import doeff [EffectBase])
-       (import pytest)
        (defclass Adr001CoveredEffect [EffectBase])
        (defclass Adr001UncoveredEffect [EffectBase])
        (defn adr-001-pin-handler [body] body)
-       ((handles Adr001CoveredEffect) adr-001-pin-handler)
-       (with [_ (isolated-registry)]
-         (setv red (register-domain
-                     (Domain :name "adr-001-pin-red" :title "pin: 被覆欠落"
-                             :effects [Adr001CoveredEffect Adr001UncoveredEffect]
-                             :handlers [adr-001-pin-handler])))
-         (with [excinfo (pytest.raises DomainCoverageError)]
-           (assert-domain-covered red))
-         (assert (in "Adr001UncoveredEffect" (str excinfo.value))))
-       (with [_ (isolated-registry)]
-         (setv green (register-domain
-                       (Domain :name "adr-001-pin-green" :title "pin: 被覆済み"
-                               :effects [Adr001CoveredEffect]
-                               :handlers [adr-001-pin-handler])))
-         (assert-domain-covered green)))
+       (val declared (Handles adr-001-pin-handler Adr001CoveredEffect))
+       (val red (Domain :name "adr-001-pin-red" :title "pin: 被覆欠落"
+                         :effects [Adr001CoveredEffect Adr001UncoveredEffect]
+                         :handlers [declared]))
+       (<- failure (failure-of ((domain-registry :domains [red]) (AssertDomainCovered red))))
+       (assert (isinstance failure DomainCoverageError))
+       (assert (in "Adr001UncoveredEffect" (str failure)))
+       (val green (Domain :name "adr-001-pin-green" :title "pin: 被覆済み"
+                           :effects [Adr001CoveredEffect]
+                           :handlers [declared]))
+       (<- _ ((domain-registry :domains [green]) (AssertDomainCovered "adr-001-pin-green")))
+       (assert (not (hasattr adr-001-pin-handler "__doeff_handles__"))))
      (deftest test-adr-doe-domain-001-orphan-check-red-green
        ;; R3(c) 緑ピン: 未所属 EffectBase 子孫はクラス名+定義モジュールを挙げて fail し、
-       ;; 導入すれば pass する。
-       (import doeff_domain [Domain register-domain isolated-registry
-                             assert-no-orphan-effects OrphanEffectError])
+       ;; 導入すれば pass する(どちらも domain-registry の別の表で)。
+       (import doeff_domain [Domain AssertNoOrphanEffects domain-registry OrphanEffectError])
        (import doeff [EffectBase])
-       (import pytest sys types)
-       (setv mod-name "adr_doe_domain_001_orphan_pin")
-       (setv mod (types.ModuleType mod-name))
-       (setv OrphanPin (type "Adr001OrphanPinEffect" #(EffectBase)
+       (import sys types)
+       (val mod-name "adr_doe_domain_001_orphan_pin")
+       (val mod (types.ModuleType mod-name))
+       (val OrphanPin (type "Adr001OrphanPinEffect" #(EffectBase)
                              {"__module__" mod-name}))
        (setv (. mod Adr001OrphanPinEffect) OrphanPin)
        (setv (get sys.modules mod-name) mod)
        (try
-         (with [_ (isolated-registry)]
-           (with [excinfo (pytest.raises OrphanEffectError)]
-             (assert-no-orphan-effects [mod-name]))
-           (assert (in "Adr001OrphanPinEffect" (str excinfo.value)))
-           (assert (in mod-name (str excinfo.value)))
-           (register-domain
-             (Domain :name "adr-001-pin-orphan-home" :title "pin: 孤児の導入"
-                     :effects [OrphanPin]))
-           (assert-no-orphan-effects [mod-name]))
+         (<- failure (failure-of ((domain-registry :domains []) (AssertNoOrphanEffects [mod-name]))))
+         (assert (isinstance failure OrphanEffectError))
+         (assert (in "Adr001OrphanPinEffect" (str failure)))
+         (assert (in mod-name (str failure)))
+         (val home (Domain :name "adr-001-pin-orphan-home" :title "pin: 孤児の導入"
+                            :effects [OrphanPin]))
+         (<- _ ((domain-registry :domains [home]) (AssertNoOrphanEffects [mod-name])))
          (finally
            (del (get sys.modules mod-name)))))
      (deftest test-adr-doe-domain-001-dogfood-core-effects-green
-       ;; R5/D8 緑ピン: dogfood 宣言が登録され、(c) が doeff-core-effects 全域で green。
-       (import doeff_domain.core-effects-domains)
-       (import doeff_domain [get-domain assert-no-orphan-effects])
-       (for [name ["doeff-reader" "doeff-state" "doeff-writer" "doeff-slog"
-                   "doeff-error" "doeff-scope" "doeff-listen" "doeff-await"
-                   "doeff-scheduler" "doeff-http" "doeff-memo" "doeff-cache"
-                   "doeff-outcome" "doeff-file" "doeff-http-server" "doeff-sql"
-                   "doeff-process" "doeff-warm-process" "doeff-process-exit" "doeff-channel" "doeff-compute"
-                   "doeff-stop-signal"]]
-         (assert (get-domain name)))
-       (assert-no-orphan-effects ["doeff_core_effects"]))
+       ;; R5/D8 緑ピン: dogfood 宣言が defdomain で process の表へ登録され、domain-registry() が GetDomain に答え、
+       ;; (c) が doeff-core-effects 全域で green。
+       (import doeff_domain._core_effects_domains)
+       (import doeff_domain [AssertNoOrphanEffects domain-registry])
+       (val table (domain-registry))
+       (<- found (table (read-domains ["doeff-reader" "doeff-state" "doeff-writer" "doeff-slog"
+                                       "doeff-error" "doeff-scope" "doeff-listen" "doeff-await"
+                                       "doeff-scheduler" "doeff-http" "doeff-memo" "doeff-cache"
+                                       "doeff-outcome" "doeff-file" "doeff-http-server" "doeff-sql"
+                                       "doeff-process" "doeff-warm-process" "doeff-process-exit" "doeff-channel"
+                                       "doeff-compute" "doeff-stop-signal" "doeff-vm-probe"])))
+       (assert (all (gfor domain found domain.title)))
+       (<- _ (table (AssertNoOrphanEffects ["doeff_core_effects"]))))
      (defsemgrep domain-001-no-hy-adr-dependency
        "doeff-domain-no-hy-adr-dependency"
-       [{"relative-path" "packages/doeff-domain/src/doeff_domain/introspect.py"
+       [{"relative-path" "packages/doeff-domain/src/doeff_domain/_introspect.py"
          "source" "import doeff_hy\n"}
         {"relative-path" "packages/doeff-domain/src/doeff_domain/macros.hy"
          "source" "(require doeff-hy.handle [defhandler])\n"}]
-       [{"relative-path" "packages/doeff-domain/src/doeff_domain/introspect.py"
+       [{"relative-path" "packages/doeff-domain/src/doeff_domain/_introspect.py"
          "source" "import hy\n"}
         {"relative-path" "packages/doeff-domain/tests/test_domain_introspect.py"
          "source" "import doeff_hy\n"}])]

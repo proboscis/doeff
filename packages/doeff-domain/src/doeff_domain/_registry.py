@@ -1,13 +1,18 @@
-"""Domain data model and in-process registry (ADR-DOE-DOMAIN-001 D2/D3).
+"""Domain data model and the domain tables (ADR-DOE-DOMAIN-001 D2/D3).
 
 A Domain is pure data: the effect classes a cohesion unit *introduces*, the
 vocabulary it *includes* by reference, canonical terms, the handlers expected
-to cover it, and its laws. Registration happens at import time of the
-declaring module; violations of the registry invariants raise immediately:
+to cover it, and its laws. ``defdomain`` registers into the process table at
+import time of the declaring module; a table given to ``domain_registry``
+(doeff_domain._effects) is a separate table with the same invariants.
+Violations of the table invariants raise immediately:
 
 - same-name re-registration (D2),
 - a second *introduction* of an effect class already introduced by another
   registered domain, keyed by class identity (D3 — includes are unlimited).
+
+Inside the package: programs read and check the tables through the effects of
+doeff_domain._effects (ADR-DOE-API-001 R29 — card ki-03a7f0af2b64).
 """
 
 from collections.abc import Iterator
@@ -166,87 +171,116 @@ class Domain:
                 )
 
 
-_DOMAINS: dict[str, Domain] = {}
-# Effect class (identity key) -> introducing domain name. Class identity, not
-# class name: two distinct classes may share a __name__ (D3).
-_EFFECT_HOME: dict[type, str] = {}
+class DomainTable:
+    """One table of registered domains: name -> Domain and effect class -> introducing domain name.
+
+    The process table (``PROCESS_TABLE``) is the one ``defdomain`` registers into; ``domain_registry``
+    answers from it, or from a table of its own when given ``domains``.
+    """
+
+    def __init__(self) -> None:
+        self._domains: dict[str, Domain] = {}
+        # Effect class (identity key) -> introducing domain name. Class identity, not
+        # class name: two distinct classes may share a __name__ (D3).
+        self._effect_home: dict[type, str] = {}
+
+    def register(self, domain: Domain) -> Domain:
+        """Register a Domain in this table; returns it.
+
+        Validation is atomic: a failed registration leaves neither the domain
+        name nor any partial effect introduction behind.
+        """
+        if not isinstance(domain, Domain):
+            raise DomainRegistrationError(f"register_domain expects a Domain, got {domain!r}")
+        if domain.name in self._domains:
+            raise DuplicateDomainNameError(
+                f"domain {domain.name!r} is already registered — same-name "
+                f"re-registration is forbidden (ADR-DOE-DOMAIN-001 D2)"
+            )
+        for effect in domain.effects:
+            if effect in self._effect_home:
+                raise DuplicateEffectIntroductionError(
+                    f"effect {effect.__name__} ({effect.__module__}) is already "
+                    f"introduced by domain {self._effect_home[effect]!r} and cannot also "
+                    f"be introduced by domain {domain.name!r} — introduce once, "
+                    f"include freely (ADR-DOE-DOMAIN-001 D3)"
+                )
+        self._domains[domain.name] = domain
+        for effect in domain.effects:
+            self._effect_home[effect] = domain.name
+        return domain
+
+    def get(self, name: str) -> Domain:
+        """Return the registered domain with the given name; loud KeyError otherwise."""
+        if name not in self._domains:
+            raise KeyError(
+                f"domain not registered: {name!r} (registered: {sorted(self._domains) or 'none'})"
+            )
+        return self._domains[name]
+
+    def domains(self) -> list[Domain]:
+        """All registered domains, in registration order."""
+        return list(self._domains.values())
+
+    def introduces(self, effect: type) -> bool:
+        """Whether some domain of the table introduces the effect class (what check (c) asks)."""
+        return effect in self._effect_home
+
+    def introducing(self, effect: type) -> Domain:
+        """Return the unique domain that introduces the given effect class."""
+        if effect not in self._effect_home:
+            raise KeyError(
+                f"effect {effect.__name__} ({effect.__module__}) is not introduced "
+                f"by any registered domain"
+            )
+        return self._domains[self._effect_home[effect]]
+
+    def clear(self) -> None:
+        """Empty the table (test support — the process table between demonstrations)."""
+        self._domains.clear()
+        self._effect_home.clear()
+
+    @contextmanager
+    def isolated(self) -> Iterator[None]:
+        """Run the body against this table emptied; restore its previous state on exit."""
+        saved_domains = dict(self._domains)
+        saved_homes = dict(self._effect_home)
+        self.clear()
+        try:
+            yield
+        finally:
+            self._domains.clear()
+            self._domains.update(saved_domains)
+            self._effect_home.clear()
+            self._effect_home.update(saved_homes)
+
+
+PROCESS_TABLE = DomainTable()
 
 
 def register_domain(domain: Domain) -> Domain:
-    """Register a Domain in the process registry; returns it.
-
-    Validation is atomic: a failed registration leaves neither the domain
-    name nor any partial effect introduction behind.
-    """
-    if not isinstance(domain, Domain):
-        raise DomainRegistrationError(f"register_domain expects a Domain, got {domain!r}")
-    if domain.name in _DOMAINS:
-        raise DuplicateDomainNameError(
-            f"domain {domain.name!r} is already registered — same-name "
-            f"re-registration is forbidden (ADR-DOE-DOMAIN-001 D2)"
-        )
-    for effect in domain.effects:
-        if effect in _EFFECT_HOME:
-            raise DuplicateEffectIntroductionError(
-                f"effect {effect.__name__} ({effect.__module__}) is already "
-                f"introduced by domain {_EFFECT_HOME[effect]!r} and cannot also "
-                f"be introduced by domain {domain.name!r} — introduce once, "
-                f"include freely (ADR-DOE-DOMAIN-001 D3)"
-            )
-    _DOMAINS[domain.name] = domain
-    for effect in domain.effects:
-        _EFFECT_HOME[effect] = domain.name
-    return domain
+    """Register a Domain in the process table; returns it (the expansion of defdomain)."""
+    return PROCESS_TABLE.register(domain)
 
 
 def get_domain(name: str) -> Domain:
-    """Return the registered domain with the given name; loud KeyError otherwise."""
-    if name not in _DOMAINS:
-        raise KeyError(
-            f"domain not registered: {name!r} (registered: {sorted(_DOMAINS) or 'none'})"
-        )
-    return _DOMAINS[name]
-
-
-def registered_domains() -> list[Domain]:
-    """All registered domains, in registration order."""
-    return list(_DOMAINS.values())
-
-
-def domain_names() -> list[str]:
-    return sorted(_DOMAINS)
+    """The process table's domain with the given name; loud KeyError otherwise."""
+    return PROCESS_TABLE.get(name)
 
 
 def introducing_domain(effect: type) -> Domain:
-    """Return the unique domain that introduces the given effect class."""
-    if effect not in _EFFECT_HOME:
-        raise KeyError(
-            f"effect {effect.__name__} ({effect.__module__}) is not introduced "
-            f"by any registered domain"
-        )
-    return _DOMAINS[_EFFECT_HOME[effect]]
-
-
-def clear_registry() -> None:
-    """Empty the registry. Test support only."""
-    _DOMAINS.clear()
-    _EFFECT_HOME.clear()
+    """The process table's domain that introduces the given effect class."""
+    return PROCESS_TABLE.introducing(effect)
 
 
 @contextmanager
 def isolated_registry() -> Iterator[None]:
-    """Run the body against a fresh, empty registry; restore the previous state on exit.
+    """Run the body against a fresh, empty process table; restore the previous state on exit.
 
-    Test support: lets red/green demonstrations register throwaway domains
-    without colliding with import-time declarations (e.g. the dogfood module).
+    Test support for the declarations that register at import or eval time (defdomain):
+    lets red/green demonstrations register throwaway domains without colliding with
+    import-time declarations (e.g. the dogfood module). A program swaps the table
+    with ``domain_registry(domains=[…])`` instead.
     """
-    saved_domains = dict(_DOMAINS)
-    saved_homes = dict(_EFFECT_HOME)
-    clear_registry()
-    try:
+    with PROCESS_TABLE.isolated():
         yield
-    finally:
-        _DOMAINS.clear()
-        _DOMAINS.update(saved_domains)
-        _EFFECT_HOME.clear()
-        _EFFECT_HOME.update(saved_homes)

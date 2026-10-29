@@ -1,4 +1,7 @@
-"""handles 注釈と二層の処理集合導出 (ADR-DOE-DOMAIN-001 D5/D6)。
+"""Handles 宣言と二層の処理集合導出 (ADR-DOE-DOMAIN-001 D5/D6)。
+
+導出は effect HandledEffects で読み、domain_registry が答える(ADR-DOE-API-001 R29・card ki-03a7f0af2b64)。生 Python
+handler は domain の handlers に宣言の型 Handles(handler, effect …) で置く(前の関数 handles() は handler に印を後付けした)。
 
 導出テストは実物の defhandler 産物(無引数形・引数形・lazy 節・:when ガード)
 に対して行う。doeff-hy はテスト環境からのみ import する — doeff-domain 本体は
@@ -8,7 +11,13 @@
 import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)
 import domain_defhandler_fixtures as fixtures
 import pytest
-from doeff_domain import DomainCheckError, DomainDefinitionError, handled_effects, handles
+from doeff_domain import (
+    DomainCheckError,
+    DomainDefinitionError,
+    HandledEffects,
+    Handles,
+    domain_registry,
+)
 from domain_test_effects import (
     FixtureAlpha,
     FixtureBeta,
@@ -17,41 +26,60 @@ from domain_test_effects import (
     plain_installer,
 )
 
+from doeff import run
 
-class TestHandlesAnnotation:
-    def test_sets_attribute_and_returns_object(self):
+
+def handled_effects(handler, *, vocabulary=()) -> frozenset[type]:
+    """effect HandledEffects を domain_registry の下で走らせて、handler の処理集合を読む。"""
+    return run(domain_registry(domains=[])(HandledEffects(handler, vocabulary=list(vocabulary))))
+
+
+class TestHandlesDeclaration:
+    def test_holds_the_handler_and_the_effects(self):
         def raw_handler(body):
             return body
 
-        result = handles(FixtureAlpha, FixtureBeta)(raw_handler)
-        assert result is raw_handler
-        assert raw_handler.__doeff_handles__ == (FixtureAlpha, FixtureBeta)
+        declared = Handles(raw_handler, FixtureAlpha, FixtureBeta)
+        assert declared.handler is raw_handler
+        assert declared.effects == (FixtureAlpha, FixtureBeta)
+        assert handled_effects(declared) == frozenset({FixtureAlpha, FixtureBeta})
 
-    def test_applies_post_hoc_to_foreign_function(self):
-        # D5: 他モジュールで定義済みの生 handler へ後付け適用できる
-        handles(FixtureAlpha)(plain_installer)
-        assert handled_effects(plain_installer) == frozenset({FixtureAlpha})
+    def test_declares_a_foreign_function_without_touching_it(self):
+        # D5: 他モジュールで定義済みの生 handler を、その handler に何も付けずに宣言できる
+        declared = Handles(plain_installer, FixtureAlpha)
+        assert handled_effects(declared) == frozenset({FixtureAlpha})
+        assert not hasattr(plain_installer, "__doeff_handles__")
 
     def test_handles_requires_at_least_one_effect(self):
-        with pytest.raises(DomainDefinitionError, match="handles"):
-            handles()
+        with pytest.raises(DomainDefinitionError, match="Handles"):
+            Handles(plain_installer)
 
     def test_handles_rejects_non_effect_classes(self):
         with pytest.raises(DomainDefinitionError, match="EffectBase"):
-            handles("FixtureAlpha")  # type: ignore[arg-type]
+            Handles(plain_installer, "FixtureAlpha")  # type: ignore[arg-type]
+
+    def test_handles_is_a_frozen_value(self):
+        declared = Handles(plain_installer, FixtureAlpha)
+        assert declared == Handles(plain_installer, FixtureAlpha)
+        with pytest.raises(AttributeError):
+            declared.effects = (FixtureBeta,)  # type: ignore[misc]
 
 
 class TestDerivationLayers:
-    def test_annotation_layer_wins_over_defhandler_body(self):
+    def test_the_declaration_wins_over_defhandler_body(self):
         handler = fixtures.fixture_plain_handler
-        try:
-            handles(FixtureDelta)(handler)
-            assert handled_effects(handler) == frozenset({FixtureDelta})
-        finally:
-            del handler.__doeff_handles__
+        assert handled_effects(Handles(handler, FixtureDelta)) == frozenset({FixtureDelta})
         assert handled_effects(handler) == frozenset({FixtureAlpha, FixtureBeta})
 
-    def test_neither_attribute_fails_loud(self):
+    def test_the_handlers_own_mark_is_read(self):
+        # core の installer が付ける __doeff_handles__ の印は、宣言の無い handler の処理集合として読む
+        def marked(body):
+            return body
+
+        marked.__doeff_handles__ = (FixtureGamma,)
+        assert handled_effects(marked) == frozenset({FixtureGamma})
+
+    def test_neither_declaration_nor_attribute_fails_loud(self):
         def anonymous(body):
             return body
 
