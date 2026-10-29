@@ -19,13 +19,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_conductor.effects.agent import AgentEffect, AgentTask
-from doeff_conductor.effects.workspace import CreateWorkspace
-from doeff_conductor.handlers.testing import MockConductorRuntime
-from doeff_conductor.handlers.utils import (
-    make_offloaded_scheduled_handler,
-    make_scheduled_handler,
-)
+from doeff_conductor import AgentEffect, AgentTask
+from doeff_conductor import CreateWorkspace
+from doeff_conductor import MockConductorRuntime
+from doeff_conductor import make_offloaded_scheduled_handler, make_scheduled_handler
 from doeff_core_effects.scheduler import Gather, scheduled
 
 from doeff import Effect, Pass, Resume, Spawn, do, run, stacked_handlers
@@ -102,18 +99,10 @@ def _build_handler_with_real_scheduler(
     bridge under test) and ``make_scheduled_handler`` for all other
     conductor effects.
     """
-    from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
-    from doeff_conductor.effects.issue import (
-        CreateIssue,
-        GetIssue,
-        ListIssues,
-        ResolveIssue,
-    )
-    from doeff_conductor.effects.workspace import (
-        DeleteWorkspace,
-        MergeWorkspaces,
-    )
-    from doeff_conductor.workflow_effect_journal import journaled_workflow_effect_handler
+    from doeff_conductor import Commit, CreatePR, MergePR, Push
+    from doeff_conductor import CreateIssue, GetIssue, ListIssues, ResolveIssue
+    from doeff_conductor import DeleteWorkspace, MergeWorkspaces
+    from doeff_conductor import journaled_workflow_effect_handler
 
     handlers: tuple[tuple[type[Any], Any], ...] = (
         (CreateWorkspace, make_scheduled_handler(runtime.handle_create_workspace)),

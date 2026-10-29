@@ -2,7 +2,8 @@
 """Example 04: multi-agent workflow with scheduler-backed parallelism."""
 
 from doeff_conductor import Issue, IssueStatus, multi_agent
-from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
 from doeff_core_effects.scheduler import scheduled
 
 

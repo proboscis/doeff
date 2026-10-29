@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.effects import CreateWorkspace
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.types import WorkflowStatus, Workspace
+from doeff_conductor import CreateWorkspace
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor import WorkflowStatus, Workspace
 
 WORKFLOW_SOURCE = """
 (require doeff-conductor.macros [defworkflow agent! workspace! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -62,7 +62,7 @@ def test_same_run_id_binds_same_workspace_identity_for_explicit_and_implicit_nod
     # (simulating a conductor process restart).
     captured_runs: list[list[tuple[str, Workspace]]] = []
 
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**_: object):
         runtime = MockConductorRuntime(tmp_path / f"runtime-{len(captured_runs)}")
@@ -115,7 +115,7 @@ def test_different_run_id_binds_different_workspace_identity(
 
     captured_runs: list[list[str]] = []
 
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**_: object):
         runtime = MockConductorRuntime(tmp_path / f"runtime-{len(captured_runs)}")
@@ -148,7 +148,7 @@ def test_workspace_identity_distinguishes_punctuation_only_run_ids() -> None:
     collided into one identity and the second run silently re-adopted the
     first run's branch including its commits.
     """
-    from doeff_conductor.workflow_runtime import _workspace_identity
+    from doeff_conductor._workflow_runtime import _workspace_identity
 
     node_key = "wf/workspace!0/workspace"
     identities = {
@@ -161,7 +161,7 @@ def test_workspace_identity_distinguishes_punctuation_only_run_ids() -> None:
 
 SHARED_SETV_SOURCE = """
 (require doeff-conductor.macros [defworkflow agent! workspace! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -208,7 +208,7 @@ def test_module_level_setv_workspace_is_one_workspace_and_resume_stable(
 
     captured_runs: list[list[str]] = []
 
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**_: object):
         runtime = MockConductorRuntime(tmp_path / f"runtime-{len(captured_runs)}")

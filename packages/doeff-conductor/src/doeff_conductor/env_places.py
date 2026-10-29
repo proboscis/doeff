@@ -1,38 +1,21 @@
-"""doeff-conductor が環境変数から読む値(agora-redesign #2894)。
+# moved-submodule-shim: doeff_conductor.env_places -> doeff_conductor._env_places
+"""Moved: ``doeff_conductor.env_places`` is now ``doeff_conductor._env_places`` (ADR-DOE-API-001 R5).
 
-conductor の CLI と状態の記録は、どの Program・handler よりも前に、状態の置き場の dir と
-profile の設定を決める。この module は変数の素の値を返すだけで、既定の値・読み方・どれを使うかの
-判断は呼び手(journal・workflow_effect_journal・environment)に残す。読みは os.environ を直に読まず、
-ReadEnvironment の効果を本物の答え手 subprocess_handler の下で問う(agora-redesign #3012 — 環境変数の
-読みは foundation の handler の中だけ)。
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_conductor.env_places…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
 """
 
-from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_conductor._env_places import *  # noqa: F403
 
-def _setting(name: str) -> str | None:
-    """環境変数 name の素の値(無ければ None)を、本物の答え手の下の ReadEnvironment で読むため。"""
-    entries = run(with_handlers([subprocess_handler], ReadEnvironment((name,))))
-    return next((entry.value for entry in entries if entry.name == name), None)
+if __name__ == "__main__":
+    import runpy
 
-
-def xdg_state_home() -> str | None:
-    """XDG_STATE_HOME の素の値(無ければ None)。"""
-    return _setting("XDG_STATE_HOME")
-
-
-def profiles_json() -> str | None:
-    """CONDUCTOR_PROFILES_JSON の素の値(profile の宣言の JSON・無ければ None)。"""
-    return _setting("CONDUCTOR_PROFILES_JSON")
-
-
-def profile_config_path() -> str | None:
-    """CONDUCTOR_PROFILE_CONFIG の素の値(profile の宣言の file の path・無ければ None)。"""
-    return _setting("CONDUCTOR_PROFILE_CONFIG")
-
-
-def default_profile_name() -> str | None:
-    """CONDUCTOR_DEFAULT_PROFILE の素の値(既定の profile の名・無ければ None)。"""
-    return _setting("CONDUCTOR_DEFAULT_PROFILE")
+    runpy.run_module("doeff_conductor._env_places", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_conductor._env_places")

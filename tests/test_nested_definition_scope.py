@@ -1,6 +1,6 @@
 """関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff ほか
 doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum、持ち主の package が出す
-doeff_conductor.macros の defworkflow と doeff_cluster.shared.entry.macros の defsystem)が、
+doeff_conductor._macros の defworkflow と doeff_cluster.shared.entry.macros の defsystem)が、
 外の関数に局所の名を作らない事の検(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を
 検体で数える事は card ki-93395c51de1e・defrecord と defwire は card ki-8a17293bc3e5・class の本体と型検査の投影と defworkflow は
 ki-8a17293bc3e5 の残り)。
@@ -469,7 +469,7 @@ def _exported_definition_macros() -> set[str]:
 
 
 def test_every_definition_macro_has_a_nested_sample() -> None:
-    """doeff_hy.macros・doeff_hy.record と持ち主の module(doeff_conductor.macros・doeff_cluster.shared.entry.macros)が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
+    """doeff_hy.macros・doeff_hy.record と持ち主の module(doeff_conductor._macros・doeff_cluster.shared.entry.macros)が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
     補助の import が外の関数の局所の名になるかを誰も検めない(足した macro は検体を足すまで赤)。"""
     assert _exported_definition_macros() == set(_DEFINITION_SAMPLES)
 

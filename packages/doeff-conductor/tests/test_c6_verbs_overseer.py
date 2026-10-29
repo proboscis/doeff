@@ -6,17 +6,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 from doeff_conductor._cli import cli
-from doeff_conductor.dsl import (
-    agent_bang,
-    artifact,
-    bind,
-    defworkflow,
-    loop,
-    ref,
-)
-from doeff_conductor.environment import ProfileRegistry, load_profile_registry_from_env
-from doeff_conductor.overseer import list_open_gates, progress_since
-from doeff_conductor.verbs import (
+from doeff_conductor import agent_bang, artifact, bind, defworkflow, loop, ref
+from doeff_conductor._environment import ProfileRegistry, load_profile_registry_from_env
+from doeff_conductor._overseer import list_open_gates, progress_since
+from doeff_conductor._verbs import (
     BUILT_IN_VALIDATION_SCENARIOS,
     ScenarioValidationReport,
     TerminalState,
@@ -24,7 +17,7 @@ from doeff_conductor.verbs import (
     plan_workflow,
     validate_workflow,
 )
-from doeff_conductor.workflow_loader import load_workflow_spec
+from doeff_conductor._workflow_loader import load_workflow_spec
 
 RESULT_SCHEMA = {
     "type": "object",

@@ -1,7 +1,7 @@
 """
 Run state store for doeff-conductor (internal).
 
-``conductor_state_handler`` answers the run effects (``doeff_conductor.effects.runs``)
+``conductor_state_handler`` answers the run effects (``doeff_conductor._effects.runs``)
 through this store; users yield those effects instead of calling it:
 - Run workflows
 - List/get workflows
@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from doeff_conductor.types import Issue, WorkflowHandle, WorkflowStatus, Workspace
+    from doeff_conductor._types import Issue, WorkflowHandle, WorkflowStatus, Workspace
 
 
 def _get_state_dir() -> Path:
@@ -29,7 +29,7 @@ def _get_state_dir() -> Path:
 
 def _warn_corrupt_persistent_state(path: Path, reason: object) -> None:
     """Warn about one corrupt persisted entry while allowing list verbs to continue."""
-    from doeff_conductor.exceptions import ConductorStateWarning
+    from doeff_conductor._exceptions import ConductorStateWarning
 
     warnings.warn(
         f"Corrupt persistent state skipped: {path}: {reason}",
@@ -71,9 +71,9 @@ class ConductorAPI:
         Returns:
             WorkflowHandle for the started workflow
         """
-        from doeff_conductor.templates import get_template, is_template
-        from doeff_conductor.types import PRHandle, WorkflowHandle, WorkflowStatus
-        from doeff_conductor.workflow_loader import (
+        from doeff_conductor._templates import get_template, is_template
+        from doeff_conductor._types import PRHandle, WorkflowHandle, WorkflowStatus
+        from doeff_conductor._workflow_loader import (
             load_workflow_spec,
             prepare_workflow_source_for_run,
         )
@@ -146,12 +146,12 @@ class ConductorAPI:
                     raise ValueError("workflow function was not loaded")
                 program = workflow_func(**kwargs)
             else:
-                from doeff_conductor.overseer import (
+                from doeff_conductor._overseer import (
                     answered_gate_options,
                     answered_gate_stakes,
                     answered_retry_agent_counts,
                 )
-                from doeff_conductor.workflow_runtime import workflow_spec_to_program
+                from doeff_conductor._workflow_runtime import workflow_spec_to_program
 
                 program = workflow_spec_to_program(
                     workflow_spec,
@@ -168,7 +168,7 @@ class ConductorAPI:
                 )
 
             # Run with conductor handlers
-            import doeff_conductor.handlers as handlers_module
+            import doeff_conductor._handlers as handlers_module
 
             conductor_handler = handlers_module.production_handlers(
                 journal_state_dir=self.state_dir,
@@ -178,7 +178,7 @@ class ConductorAPI:
             result = run(scheduled(conductor_handler(program)))
             result_value = result.value if type(result).__name__ == "RunResult" else result
             open_gates = ()
-            from doeff_conductor.workflow_runtime import ParkedValue, WorkflowRuntimeResult
+            from doeff_conductor._workflow_runtime import ParkedValue, WorkflowRuntimeResult
 
             if isinstance(result_value, WorkflowRuntimeResult):
                 open_gates = result_value.open_gates
@@ -193,7 +193,7 @@ class ConductorAPI:
                 return superseding_terminal
 
             if open_gates:
-                from doeff_conductor.overseer import record_open_gates
+                from doeff_conductor._overseer import record_open_gates
 
                 record_open_gates(
                     self.state_dir,
@@ -269,14 +269,14 @@ class ConductorAPI:
     ) -> "WorkflowHandle":
         """Resume a run from its snapshotted workflow source."""
 
-        from doeff_conductor.workflow_loader import workflow_snapshot_path
+        from doeff_conductor._workflow_loader import workflow_snapshot_path
 
         snapshot_path: Path = workflow_snapshot_path(self.state_dir, workflow_id)
         if not snapshot_path.exists():
             raise ValueError(f"workflow snapshot not found for run: {workflow_id}")
         active_supervision = supervision
         if active_supervision is None:
-            from doeff_conductor.overseer import load_run_state
+            from doeff_conductor._overseer import load_run_state
 
             try:
                 active_supervision = load_run_state(self.state_dir, workflow_id).supervision
@@ -300,9 +300,9 @@ class ConductorAPI:
     ) -> "WorkflowHandle":
         """Record an overseer gate answer and apply its closure-preserving verb."""
 
-        from doeff_conductor.overseer import record_gate_answer
-        from doeff_conductor.types import WorkflowStatus
-        from doeff_conductor.workflow_loader import workflow_snapshot_path
+        from doeff_conductor._overseer import record_gate_answer
+        from doeff_conductor._types import WorkflowStatus
+        from doeff_conductor._workflow_loader import workflow_snapshot_path
 
         run_state = record_gate_answer(
             self.state_dir,
@@ -374,7 +374,7 @@ class ConductorAPI:
         status: "list[WorkflowStatus] | None" = None,
     ) -> "list[WorkflowHandle]":
         """List workflows with optional status filter."""
-        from doeff_conductor.types import WorkflowHandle
+        from doeff_conductor._types import WorkflowHandle
 
         workflows = []
 
@@ -404,7 +404,7 @@ class ConductorAPI:
 
     def get_workflow(self, workflow_id: str) -> "WorkflowHandle | None":
         """Get workflow by ID or prefix."""
-        from doeff_conductor.types import WorkflowHandle
+        from doeff_conductor._types import WorkflowHandle
 
         # Try exact match first
         workflow_dir = self.workflows_dir / workflow_id
@@ -475,7 +475,7 @@ class ConductorAPI:
 
         Returns list of stopped agent names.
         """
-        from doeff_conductor.types import WorkflowStatus
+        from doeff_conductor._types import WorkflowStatus
 
         handle = self.get_workflow(workflow_id)
         if handle is None:
@@ -492,7 +492,7 @@ class ConductorAPI:
         else:
             stopped.extend(name for name in handle.agents if name not in stopped)
 
-        from doeff_conductor.overseer import clear_open_gates
+        from doeff_conductor._overseer import clear_open_gates
 
         clear_open_gates(
             self.state_dir,
@@ -516,7 +516,7 @@ class ConductorAPI:
 
     def _session_ids_for_stop(self, workflow_id: str, *, agent: str | None) -> list[str]:
         """Return live agentd session ids recorded by the progress journal."""
-        from doeff_conductor.journal import (
+        from doeff_conductor._journal import (
             PROGRESS_STATUS_RUNNING,
             ProgressJournal,
         )
@@ -578,8 +578,8 @@ class ConductorAPI:
         workflow_id: str | None = None,
     ) -> "list[Workspace]":
         """List materialized workspaces."""
-        from doeff_conductor.handlers.workspace_handler import _get_workspace_base_dir
-        from doeff_conductor.types import Workspace
+        from doeff_conductor._handlers.workspace_handler import _get_workspace_base_dir
+        from doeff_conductor._types import Workspace
 
         workspaces = []
         workspace_base = _get_workspace_base_dir()
@@ -645,7 +645,7 @@ class ConductorAPI:
         """
         import shutil
 
-        from doeff_conductor.handlers.workspace_handler import _get_workspace_base_dir
+        from doeff_conductor._handlers.workspace_handler import _get_workspace_base_dir
 
         cleaned = []
         workspace_base = _get_workspace_base_dir()
@@ -728,4 +728,4 @@ class ConductorAPI:
 
 
 # Import WorkflowHandle for type hints
-from doeff_conductor.types import WorkflowHandle  # noqa: E402
+from doeff_conductor._types import WorkflowHandle  # noqa: E402

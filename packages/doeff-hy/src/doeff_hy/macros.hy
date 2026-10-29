@@ -674,7 +674,7 @@ defk {name}: :post type annotation cannot be an empty string.
             ~(hy.models.Symbol (. source name))))))
 
 (defn _scoped-definition [compiler name forms [module-forms #()] [nested-reads False]]
-  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・持ち主の package の定義の macro — doeff-conductor の defworkflow(doeff_conductor/macros.hy)と doeff-cluster の defsystem(doeff_cluster/shared/entry/macros.hy))の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・持ち主の package の定義の macro — doeff-conductor の defworkflow(doeff_conductor/_macros.hy)と doeff-cluster の defsystem(doeff_cluster/shared/entry/macros.hy))の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
    `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
    module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
    関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す(card ki-93395c51de1e・設計検証

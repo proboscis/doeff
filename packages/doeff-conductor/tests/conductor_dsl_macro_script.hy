@@ -1,7 +1,7 @@
 ;;; Test doeff-conductor workflow DSL macros build the shared Python IR.
 
-(require doeff-conductor.macros [defworkflow defphase agent! parallel <- workspace!])
-(import doeff_conductor.dsl [artifact ref])
+(require doeff-conductor._macros [defworkflow defphase agent! parallel <- workspace!])
+(import doeff_conductor [artifact ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["status"]

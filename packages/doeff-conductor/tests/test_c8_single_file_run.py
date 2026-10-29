@@ -8,13 +8,13 @@ import pytest
 from click.testing import CliRunner
 from doeff_conductor._api import ConductorAPI
 from doeff_conductor._cli import cli
-from doeff_conductor.effects import AgentTask
-from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.overseer import list_open_gates
-from doeff_conductor.replay_keying import ResolvedIdentity
-from doeff_conductor.types import WorkflowStatus
-from doeff_conductor.workflow_loader import (
+from doeff_conductor import AgentTask
+from doeff_conductor import journaled_agent_handler
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor._overseer import list_open_gates
+from doeff_conductor import ResolvedIdentity
+from doeff_conductor import WorkflowStatus
+from doeff_conductor._workflow_loader import (
     WorkflowNondeterminismError,
     load_workflow_spec,
     snapshot_workflow_source,
@@ -45,7 +45,7 @@ def _write_single_file_workflow(path: Path) -> None:
     path.write_text(
         """
 (require doeff-conductor.macros [defworkflow agent! workspace! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -83,7 +83,7 @@ def _install_mock_production_handlers(
     monkeypatch: pytest.MonkeyPatch,
     runtime: MockConductorRuntime,
 ) -> None:
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**kwargs: object):
         return stacked_handlers(
@@ -143,7 +143,7 @@ def test_loader_rejects_user_python_workflow(tmp_path: Path) -> None:
 
     message = str(error.value)
     assert ".hy" in message
-    assert "doeff_conductor.macros" in message
+    assert "doeff_conductor._macros" in message
 
 
 def test_snapshot_rejects_user_python_workflow(tmp_path: Path) -> None:

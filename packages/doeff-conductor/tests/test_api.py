@@ -16,16 +16,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import doeff_conductor.exceptions as conductor_exceptions
+import doeff_conductor._exceptions as conductor_exceptions
 import pytest
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.journal import ProgressJournal, ProgressJournalEntry
-from doeff_conductor.types import (
-    Issue,
-    IssueStatus,
-    WorkflowHandle,
-    WorkflowStatus,
-)
+from doeff_conductor._journal import ProgressJournal, ProgressJournalEntry
+from doeff_conductor import Issue, IssueStatus, WorkflowHandle, WorkflowStatus
 
 
 def _state_warning_type() -> type[Warning]:
@@ -375,7 +370,7 @@ class TestStopWorkflow:
         running_workflow: str,
     ):
         """An aborted workflow should not keep stale open gates in the queue."""
-        from doeff_conductor.overseer import (
+        from doeff_conductor._overseer import (
             GateOption,
             OpenGateView,
             list_open_gates,
@@ -481,7 +476,7 @@ class TestAnswerGate:
 
     def test_retry_agent_records_stakes_and_resumes(self, api: ConductorAPI):
         """retry-agent preserves validation details and resumes the workflow."""
-        from doeff_conductor.overseer import (
+        from doeff_conductor._overseer import (
             GateOption,
             OpenGateView,
             answered_gate_stakes,
@@ -598,7 +593,7 @@ class TestListWorkspaces:
     def test_list_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns empty list when no workspaces exist."""
         with patch(
-            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             mock_base.return_value = tmp_path / "empty-workspaces"
             workspaces = api.list_workspaces()
@@ -607,7 +602,7 @@ class TestListWorkspaces:
     def test_list_workspaces_with_mock(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns workspace objects."""
         with patch(
-            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             workspace_base.mkdir()
@@ -623,7 +618,7 @@ class TestListWorkspaces:
     ):
         """list_workspaces reports unreadable worktrees without dropping good ones."""
         with patch(
-            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             repo_base = workspace_base / "default"
@@ -671,7 +666,7 @@ class TestCleanupWorkspaces:
     def test_cleanup_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces returns empty list when no workspaces exist."""
         with patch(
-            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             mock_base.return_value = tmp_path / "empty-workspaces"
             cleaned = api.cleanup_workspaces()
@@ -680,7 +675,7 @@ class TestCleanupWorkspaces:
     def test_cleanup_workspaces_dry_run(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces dry_run doesn't delete."""
         with patch(
-            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             repo_base = workspace_base / "default"
@@ -742,7 +737,7 @@ class TestRunWorkflow:
         workflow_file = tmp_path / "test_workflow.hy"
         workflow_file.write_text("""
 (require doeff-conductor.macros [defworkflow])
-(import doeff_conductor.dsl [artifact])
+(import doeff_conductor._dsl [artifact])
 
 (defworkflow record-workflow
   :params {}
@@ -763,7 +758,7 @@ class TestRunWorkflow:
         workflow_file = tmp_path / "param_workflow.hy"
         workflow_file.write_text("""
 (require doeff-conductor.macros [defworkflow])
-(import doeff_conductor.dsl [artifact ref])
+(import doeff_conductor._dsl [artifact ref])
 
 (defworkflow param-workflow
   :params {"custom_param" str}
@@ -789,7 +784,7 @@ class TestRunWorkflow:
         workflow_file.write_text("""
 (require doeff-conductor.macros [defworkflow])
 (import types [SimpleNamespace])
-(import doeff_conductor.dsl [artifact])
+(import doeff_conductor._dsl [artifact])
 
 (defworkflow pr-url-workflow
   :params {}
@@ -812,7 +807,7 @@ class TestRunWorkflow:
         workflow_file = tmp_path / "dict_result_workflow.hy"
         workflow_file.write_text("""
 (require doeff-conductor.macros [defworkflow])
-(import doeff_conductor.dsl [artifact])
+(import doeff_conductor._dsl [artifact])
 
 (defworkflow dict-result-workflow
   :params {}
@@ -842,7 +837,7 @@ class TestRunWorkflow:
         workflow_file = tmp_path / "spawn_workflow.hy"
         workflow_file.write_text("""
 (require doeff-conductor.macros [defworkflow parallel <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (defworkflow spawn-workflow
   :params {}
@@ -870,7 +865,7 @@ class TestRunWorkflow:
         workflow_file = tmp_path / "non_run_result_workflow.hy"
         workflow_file.write_text("""
 (require doeff-conductor.macros [defworkflow])
-(import doeff_conductor.dsl [artifact])
+(import doeff_conductor._dsl [artifact])
 
 (defworkflow non-run-result-workflow
   :params {}

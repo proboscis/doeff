@@ -2,7 +2,7 @@
 
 import dataclasses
 
-from doeff_conductor.effects import (
+from doeff_conductor import (
     Agent,
     AgentTask,
     Commit,
@@ -67,7 +67,7 @@ class TestWorkspaceEffects:
             MergeWorkspaces(workspaces=())  # type: ignore[call-arg]
 
     def test_delete_workspace(self):
-        from doeff_conductor.types import Workspace
+        from doeff_conductor import Workspace
 
         env = Workspace(
             id="test",
@@ -81,7 +81,7 @@ class TestWorkspaceEffects:
         assert effect.force is False
 
     def test_delete_workspace_force(self):
-        from doeff_conductor.types import Workspace
+        from doeff_conductor import Workspace
 
         env = Workspace(
             id="test",
@@ -115,7 +115,7 @@ class TestIssueEffects:
 
     def test_list_issues_filters(self):
         """Test ListIssues filter options."""
-        from doeff_conductor.types import IssueStatus
+        from doeff_conductor import IssueStatus
 
         effect = ListIssues(status=IssueStatus.OPEN, labels=("bug",), limit=10)
         assert effect.status == IssueStatus.OPEN
@@ -129,7 +129,7 @@ class TestIssueEffects:
     def test_resolve_issue(self):
         from datetime import datetime, timezone
 
-        from doeff_conductor.types import Issue, IssueStatus
+        from doeff_conductor import Issue, IssueStatus
 
         issue = Issue(
             id="ISSUE-001",
@@ -147,7 +147,7 @@ class TestIssueEffects:
     def test_resolve_issue_with_result(self):
         from datetime import datetime, timezone
 
-        from doeff_conductor.types import Issue, IssueStatus
+        from doeff_conductor import Issue, IssueStatus
 
         issue = Issue(
             id="ISSUE-002",
@@ -172,7 +172,7 @@ class TestAgentEffects:
 
     def test_agent_effect_wraps_task(self):
         """Test schema-validated Agent effect construction."""
-        from doeff_conductor.types import Workspace
+        from doeff_conductor import Workspace
 
         env = Workspace(
             id="test",
@@ -203,7 +203,7 @@ class TestGitEffects:
 
     def test_commit_defaults(self):
         """Test Commit effect defaults."""
-        from doeff_conductor.types import Workspace
+        from doeff_conductor import Workspace
 
         env = Workspace(
             id="test",
@@ -218,7 +218,7 @@ class TestGitEffects:
 
     def test_push_defaults(self):
         """Test Push effect defaults."""
-        from doeff_conductor.types import Workspace
+        from doeff_conductor import Workspace
 
         env = Workspace(
             id="test",
@@ -234,7 +234,7 @@ class TestGitEffects:
 
     def test_create_pr_required_fields(self):
         """Test CreatePR required fields."""
-        from doeff_conductor.types import Workspace
+        from doeff_conductor import Workspace
 
         env = Workspace(
             id="test",
@@ -251,7 +251,7 @@ class TestGitEffects:
     def test_merge_pr(self):
         from datetime import datetime, timezone
 
-        from doeff_conductor.types import PRHandle
+        from doeff_conductor import PRHandle
 
         pr = PRHandle(
             url="https://github.com/org/repo/pull/42",
@@ -271,7 +271,7 @@ class TestGitEffects:
     def test_merge_pr_with_strategy(self):
         from datetime import datetime, timezone
 
-        from doeff_conductor.types import MergeStrategy, PRHandle
+        from doeff_conductor import MergeStrategy, PRHandle
 
         pr = PRHandle(
             url="https://github.com/org/repo/pull/43",
@@ -288,7 +288,7 @@ class TestGitEffects:
         assert effect.delete_branch is True
 
     def test_generic_git_aliases_are_exported(self):
-        from doeff_conductor.effects.git import (
+        from doeff_conductor._effects.git import (
             GitCommitEffect,
             GitCreatePREffect,
             GitDiffEffect,
@@ -309,7 +309,7 @@ class TestModuleExports:
     """Tests for package-level exports."""
 
     def test_effects_init_exports_all_effects(self):
-        import doeff_conductor.effects as effects_module
+        import doeff_conductor._effects as effects_module
 
         expected_names = {
             "ConductorEffectBase",
@@ -333,8 +333,8 @@ class TestModuleExports:
             assert hasattr(effects_module, name)
 
     def test_handlers_exports_include_production_and_mock_handlers(self, tmp_path):
-        from doeff_conductor.handlers import mock_handlers, production_handlers
-        from doeff_conductor.handlers.testing import MockConductorRuntime
+        from doeff_conductor import mock_handlers, production_handlers
+        from doeff_conductor import MockConductorRuntime
 
         runtime = MockConductorRuntime(tmp_path)
 

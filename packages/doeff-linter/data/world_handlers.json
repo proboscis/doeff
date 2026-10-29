@@ -451,7 +451,7 @@
    "why": "subprocess.run"
   },
   {
-   "handler": "doeff_conductor.handlers:production_handlers",
+   "handler": "doeff_conductor._handlers:production_handlers",
    "touches": [
     "file",
     "process",
@@ -462,7 +462,7 @@
    "why": "workspace_handler・exec_handler・agentd"
   },
   {
-   "handler": "doeff_conductor.handlers.utils:make_offloaded_scheduled_handler",
+   "handler": "doeff_conductor._handlers.utils:make_offloaded_scheduled_handler",
    "touches": [
     "thread"
    ],

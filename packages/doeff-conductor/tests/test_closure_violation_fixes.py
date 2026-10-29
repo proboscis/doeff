@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from doeff_conductor.dsl import (
+from doeff_conductor import (
     agent_bang,
     artifact,
     bind,
@@ -31,28 +31,23 @@ from doeff_conductor.dsl import (
     ref,
     workspace_bang,
 )
-from doeff_conductor.effects import (
+from doeff_conductor import (
     AgentAttemptExhaustedError,
     AgentEffect,
     AgentValidationErrorKind,
     AgentValidationFailure,
 )
-from doeff_conductor.effects.workspace import MergeWorkspaces
-from doeff_conductor.handlers import mock_handlers as build_mock_handlers
-from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.testing import MockConductorRuntime
-from doeff_conductor.overseer import GateOption, OpenGateView
-from doeff_conductor.types import (
-    MergeConflict,
-    MergeStatus,
-    MergeWorkspacesResult,
-    Workspace,
-)
-from doeff_conductor.verbs import (
+from doeff_conductor import MergeWorkspaces
+from doeff_conductor import mock_handlers as build_mock_handlers
+from doeff_conductor._handlers import run_sync
+from doeff_conductor import MockConductorRuntime
+from doeff_conductor._overseer import GateOption, OpenGateView
+from doeff_conductor import MergeConflict, MergeStatus, MergeWorkspacesResult, Workspace
+from doeff_conductor._verbs import (
     BUILT_IN_VALIDATION_SCENARIOS,
     validate_workflow,
 )
-from doeff_conductor.workflow_runtime import (
+from doeff_conductor._workflow_runtime import (
     ParkedValue,
     WorkflowRuntimeResult,
     workflow_spec_to_program,
@@ -627,8 +622,8 @@ def _run_quorum_workflow(
     run_id: str = "quorum-gate-run",
 ) -> Any:
     """Run a quorum workflow with a selective-failure agent handler."""
-    from doeff_conductor.effects.agent import AgentEffect
-    from doeff_conductor.exceptions import AgentError
+    from doeff_conductor import AgentEffect
+    from doeff_conductor import AgentError
 
     def handle_agent(effect: AgentEffect) -> dict[str, Any]:
         agent_prompt: str = effect.task.prompt

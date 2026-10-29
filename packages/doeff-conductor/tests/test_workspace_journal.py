@@ -8,20 +8,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_conductor.effects.workspace import CreateWorkspace
-from doeff_conductor.exceptions import JournalCorruptionError
-from doeff_conductor.handlers._workspace_path import WorkspacePath
-from doeff_conductor.handlers.journaled_workspace import (
-    PreCoverageRunError,
-    journaled_workspace_handler,
-)
-from doeff_conductor.journal import (
+from doeff_conductor import CreateWorkspace
+from doeff_conductor import JournalCorruptionError
+from doeff_conductor._handlers._workspace_path import WorkspacePath
+from doeff_conductor import PreCoverageRunError, journaled_workspace_handler
+from doeff_conductor._journal import (
     AGENT_JOURNAL_FILENAME,
     WORKSPACE_JOURNAL_FILENAME,
     CreateWorkspaceJournalEntry,
     WorkspaceJournal,
 )
-from doeff_conductor.types import Workspace
+from doeff_conductor import Workspace
 
 from doeff import K, Resume, handler, stacked_handlers
 from doeff.program import ProgramHandler
