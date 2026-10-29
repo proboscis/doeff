@@ -159,11 +159,39 @@
    "why": "asyncio の loop を daemon thread で起こす"
   },
   {
+   "handler": "doeff_core_effects:await_handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "await_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-c09b3b527fad)"
+  },
+  {
+   "handler": "doeff_core_effects.handlers:await_handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "await_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-c09b3b527fad の stage 3 の card ki-127f9cd053e0 が消す)"
+  },
+  {
    "handler": "doeff_core_effects._handlers:env_var_ask",
    "touches": [
     "env"
    ],
    "why": "os.environ を読む"
+  },
+  {
+   "handler": "doeff_core_effects:env_var_ask",
+   "touches": [
+    "env"
+   ],
+   "why": "env_var_ask の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-c09b3b527fad)"
+  },
+  {
+   "handler": "doeff_core_effects.handlers:env_var_ask",
+   "touches": [
+    "env"
+   ],
+   "why": "env_var_ask の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-c09b3b527fad の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",

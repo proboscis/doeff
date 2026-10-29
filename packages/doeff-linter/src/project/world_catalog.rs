@@ -141,6 +141,15 @@ mod tests {
         for name in ["doeff_agents._handlers.claude_process_layer_handler", "doeff_agents.claude_process_layer_handler"] {
             assert!(catalog.handlers.contains_key(name), "{} が目録に無い", name);
         }
+        // doeff_core_effects の子を _ へ移した後も、移し替えの module が残る間は古い綴りで :wraps に書ける(card ki-c09b3b527fad)。
+        for name in [
+            "doeff_core_effects._handlers.await_handler",
+            "doeff_core_effects.await_handler",
+            "doeff_core_effects.handlers.await_handler",
+            "doeff_core_effects.handlers.env_var_ask",
+        ] {
+            assert!(catalog.handlers.contains_key(name), "{} が目録に無い", name);
+        }
     }
 
     #[test]
