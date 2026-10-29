@@ -48,10 +48,6 @@ vim.api.nvim_create_user_command('DoeffClearCache', function(opts)
   vim.notify('doeff: Cache cleared', vim.log.levels.INFO)
 end, { desc = 'Clear doeff indexer cache' })
 
-vim.api.nvim_create_user_command('DoeffCloseTerminals', function(opts)
-  require('doeff').close_terminals()
-end, { desc = 'Close all doeff terminal windows' })
-
 -- Workflow commands
 vim.api.nvim_create_user_command('DoeffWorkflows', function(opts)
   require('doeff').pick_workflows()

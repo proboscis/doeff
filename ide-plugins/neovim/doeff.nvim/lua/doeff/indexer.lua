@@ -75,7 +75,12 @@ function M.exec(args, root)
   table.insert(cmd, '--root')
   table.insert(cmd, root)
 
-  local result = vim.system(cmd, { text = true }):wait()
+  -- vim.system raises when the binary is missing; answer that as an error like a failed run
+  local started, proc = pcall(vim.system, cmd, { text = true })
+  if not started then
+    return nil, tostring(proc)
+  end
+  local result = proc:wait()
 
   if result.code ~= 0 then
     return nil, result.stderr or 'Unknown error'

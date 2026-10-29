@@ -244,7 +244,6 @@ def test_every_maturin_package_builds_through_the_backend() -> None:
     }
 
     assert sorted(backends) == [
-        "doeff-agentic-cli",
         "doeff-effect-analyzer",
         "doeff-indexer",
         "doeff-linter",
@@ -254,7 +253,6 @@ def test_every_maturin_package_builds_through_the_backend() -> None:
         name: (system["build-backend"], system.get("backend-path"))
         for name, system in backends.items()
     } == {
-        "doeff-agentic-cli": ("doeff_cargo_backend", ["."]),
         "doeff-effect-analyzer": ("doeff_cargo_backend", ["."]),
         "doeff-indexer": ("doeff_indexer_build_backend", ["."]),
         "doeff-linter": ("doeff_cargo_backend", ["."]),
@@ -353,7 +351,6 @@ def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: P
 
     assert missing == {name: [] for name in missing}
     assert sorted(missing) == [
-        "doeff-agentic-cli",
         "doeff-effect-analyzer",
         "doeff-indexer",
         "doeff-linter",

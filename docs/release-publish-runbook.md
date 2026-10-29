@@ -76,7 +76,6 @@ root の tag でも単独でも出さない。どれかを公開すると決め�
 
 | 部品 | 種類 | 出さない訳 |
 | --- | --- | --- |
-| `doeff-agentic-cli` | native の道具 | agentic の CLI の workflow と一緒に配る。PyPI の部品ではない |
 | `doeff-claude-code` | agent の backend の effect の部品(`claude -p` の process の寿命を持つ) | 2026-09-25 に新設(d25172ad)。公開の入れ方がまだ無い |
 | `doeff-codex` | agent の backend の部品(`codex app-server` の process の寿命を持ち、その stdout の行を読む) | 2026-10-10 に新設(3c7c9b87)。公開の入れ方がまだ無い |
 | `doeff-cluster` | cluster の実行の部品(coordinator・worker・lease・rollout) | 2026-09-25 に新設(eae6a774)。公開の入れ方がまだ無い |

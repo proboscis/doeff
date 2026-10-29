@@ -16,12 +16,7 @@ describe('doeff.runner', function()
         program = 'src.pipelines.main',
       })
 
-      assert.is_true(vim.tbl_contains(cmd, 'python'))
-      assert.is_true(vim.tbl_contains(cmd, '-m'))
-      assert.is_true(vim.tbl_contains(cmd, 'doeff'))
-      assert.is_true(vim.tbl_contains(cmd, 'run'))
-      assert.is_true(vim.tbl_contains(cmd, '--program'))
-      assert.is_true(vim.tbl_contains(cmd, 'src.pipelines.main'))
+      assert.equals('uv run doeff run --program src.pipelines.main', cmd)
     end)
 
     it('should include interpreter when specified', function()
@@ -30,8 +25,7 @@ describe('doeff.runner', function()
         interpreter = 'src.interpreters.default',
       })
 
-      assert.is_true(vim.tbl_contains(cmd, '--interpreter'))
-      assert.is_true(vim.tbl_contains(cmd, 'src.interpreters.default'))
+      assert.equals('uv run doeff run --program src.pipelines.main --interpreter src.interpreters.default', cmd)
     end)
 
     it('should include transform when specified', function()
@@ -40,8 +34,7 @@ describe('doeff.runner', function()
         transform = 'src.transforms.optimize',
       })
 
-      assert.is_true(vim.tbl_contains(cmd, '--transform'))
-      assert.is_true(vim.tbl_contains(cmd, 'src.transforms.optimize'))
+      assert.equals('uv run doeff run --program src.pipelines.main --transform src.transforms.optimize', cmd)
     end)
 
     it('should include all options', function()
@@ -51,9 +44,18 @@ describe('doeff.runner', function()
         transform = 'src.transforms.optimize',
       })
 
-      assert.is_true(vim.tbl_contains(cmd, '--program'))
-      assert.is_true(vim.tbl_contains(cmd, '--interpreter'))
-      assert.is_true(vim.tbl_contains(cmd, '--transform'))
+      assert.equals(
+        'uv run doeff run --program src.pipelines.main'
+          .. ' --interpreter src.interpreters.default --transform src.transforms.optimize',
+        cmd
+      )
+    end)
+
+    it('should return an error without a program', function()
+      local cmd, err = runner.build_command({})
+
+      assert.is_nil(cmd)
+      assert.equals('opts.program is missing or invalid', err)
     end)
   end)
 
@@ -68,13 +70,6 @@ describe('doeff.runner', function()
     it('should notify when no previous run', function()
       -- This should not error, just notify
       runner.run_last()
-      assert.is_true(true)
-    end)
-  end)
-
-  describe('close_all', function()
-    it('should not error when no terminals open', function()
-      runner.close_all()
       assert.is_true(true)
     end)
   end)

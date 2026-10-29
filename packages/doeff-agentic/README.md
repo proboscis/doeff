@@ -184,9 +184,11 @@ output = api.get_agent_output("a3f", agent="review-agent")
 | `env list` / `env cleanup` | List environments / remove the environment directories |
 | `tui` | Launch the interactive TUI |
 
-`ps`, `show`, `watch`, `attach`, `send` and `stop` take the arguments of the Rust CLI
-(`packages/doeff-agentic-cli`, which this command replaces) and write the same JSON, as the IDE
-plugins read it. Each command runs a doeff program over the recorded-workflow effects
+`ps`, `show`, `watch`, `attach`, `send` and `stop` take the arguments the IDE plugins
+(VS Code's doeff-runner and doeff.nvim) pass and write the JSON they read — the arguments and
+JSON of the Rust CLI this command replaced. Install it with `pip install doeff-agentic`. The
+JSON `ps --json` writes for a recorded state directory is pinned by
+`ide-plugins/test-fixtures/doeff-agentic-ps.json`, which both plugins' tests read. Each command runs a doeff program over the recorded-workflow effects
 (`AgenticListWorkflows`, `AgenticFindWorkflow`, `AgenticSendToAgent`, …) under
 `recorded_workflows_handler`.
 

@@ -1,17 +1,21 @@
-"""The ``doeff-agentic`` console script answers the six verbs of the Rust CLI it replaces.
+"""The ``doeff-agentic`` console script answers the six verbs the IDE plugins call.
 
-ps, show, watch, attach, send and stop take the arguments of packages/doeff-agentic-cli
-(src/main.rs) and write its JSON — the IDE plugins call them (VS Code's doeff-runner reads
-``ps --json`` as the array of workflows; doeff.nvim calls all six). ``RUST_ARGUMENTS``
-copies main.rs's arguments; the tests check the commands' parameters against it and run
-the commands' programs under fake handlers: the recorded workflows live in memory, the
-tmux calls are recorded, the clock stands still and a Delay moves the workflow on.
+ps, show, watch, attach, send and stop take the arguments the plugins pass and write the
+JSON they read (VS Code's doeff-runner reads ``ps --json`` as the array of workflows;
+doeff.nvim calls all six) — the arguments and JSON of the Rust CLI this command replaced.
+``PLUGIN_ARGUMENTS`` lists those arguments; the tests check the commands' parameters against
+it and run the commands' programs under fake handlers: the recorded workflows live in
+memory, the tmux calls are recorded, the clock stands still and a Delay moves the workflow
+on. One test runs ``ps --json`` under the real handlers over a state directory on disk and
+pins its output to ``ide-plugins/test-fixtures/doeff-agentic-ps.json``, the file both
+plugins' tests read as what the CLI writes.
 """
 
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import click
@@ -27,6 +31,7 @@ from doeff_agentic import (
     AgenticStopWorkflow,
     AgentInfo,
     AgentStatus,
+    StateManager,
     WorkflowInfo,
     WorkflowStatus,
 )
@@ -37,9 +42,9 @@ from doeff import Effect, Pass, Resume, handler
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 
-#: main.rs's arguments per verb: (the option's names, multiple, flag, default) per option
+#: The arguments the IDE plugins pass, per verb: (the option's names, multiple, flag, default) per option
 #: and the positional arguments in order.
-RUST_ARGUMENTS: dict[
+PLUGIN_ARGUMENTS: dict[
     str, tuple[tuple[str, ...], frozenset[tuple[tuple[str, ...], bool, bool, Any]]]
 ] = {
     "ps": (
@@ -198,8 +203,8 @@ def world() -> FakeWorld:
 # =============================================================================
 
 
-@pytest.mark.parametrize("verb", sorted(RUST_ARGUMENTS))
-def test_each_verb_takes_the_arguments_of_the_rust_cli(verb: str):
+@pytest.mark.parametrize("verb", sorted(PLUGIN_ARGUMENTS))
+def test_each_verb_takes_the_arguments_the_ide_plugins_pass(verb: str):
     command = cli.commands[verb]
     positionals = tuple(param.name for param in command.params if isinstance(param, click.Argument))
     options = frozenset(
@@ -213,10 +218,10 @@ def test_each_verb_takes_the_arguments_of_the_rust_cli(verb: str):
         if isinstance(param, click.Option)
     )
 
-    assert (positionals, options) == RUST_ARGUMENTS[verb]
+    assert (positionals, options) == PLUGIN_ARGUMENTS[verb]
 
 
-def test_state_dir_is_the_option_before_the_verb_and_reads_the_rust_cli_variable():
+def test_state_dir_is_the_option_before_the_verb_and_reads_its_variable():
     (state_dir,) = (param for param in cli.params if param.name == "state_dir")
 
     assert isinstance(state_dir, click.Option)
@@ -257,7 +262,7 @@ def test_ps_filters_by_workflow_status_and_by_agent_status(world: FakeWorld):
     assert by_nothing.stdout == "[]\n"
 
 
-def test_ps_text_is_the_table_of_the_rust_cli(world: FakeWorld):
+def test_ps_text_is_the_table_of_workflows(world: FakeWorld):
     result = _invoke(world, "ps")
 
     assert result.exit_code == 0, result.stderr
@@ -295,7 +300,7 @@ def test_show_json_is_the_workflow_named_by_a_prefix(world: FakeWorld):
     assert workflow == world.workflows["a3f8b2c"].to_dict()
 
 
-def test_show_of_an_unrecorded_or_ambiguous_id_fails_with_the_rust_message(world: FakeWorld):
+def test_show_of_an_unrecorded_or_ambiguous_id_fails_with_an_error_line(world: FakeWorld):
     missing = _invoke(world, "show", "ffff", "--json")
     world.workflows["a3f0000"] = _workflow("a3f0000")
     ambiguous = _invoke(world, "show", "a3f")
@@ -454,3 +459,36 @@ def test_stop_text_and_an_unrecorded_id(world: FakeWorld):
         "",
         "Error: Workflow not found: ffff\n",
     )
+
+
+# =============================================================================
+# What the IDE plugins read
+# =============================================================================
+
+#: The ``ps --json`` the IDE plugins' tests read as the CLI's output (doeff-runner's
+#: src/test/workflows and doeff.nvim's tests/workflows_spec.lua).
+PLUGIN_PS_FIXTURE = Path(__file__).parents[3] / "ide-plugins/test-fixtures/doeff-agentic-ps.json"
+
+
+def test_ps_json_of_a_recorded_state_dir_is_the_fixture_the_plugins_read(tmp_path: Path):
+    state = StateManager(tmp_path)
+    for workflow in (
+        _workflow(
+            "a3f8b2c", minutes_ago=5, current="reviewer", agents=(_agent("reviewer", pane="%3"),)
+        ),
+        _workflow(
+            "b7e1d4f",
+            status=WorkflowStatus.BLOCKED,
+            minutes_ago=1,
+            current="fixer",
+            agents=(_agent("fixer", AgentStatus.BLOCKED),),
+        ),
+    ):
+        state.write_workflow_meta(workflow)
+        for agent in workflow.agents:
+            state.write_agent_state(workflow.id, agent)
+
+    result = CliRunner(mix_stderr=False).invoke(cli, ["--state-dir", str(tmp_path), "ps", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == json.loads(PLUGIN_PS_FIXTURE.read_text())

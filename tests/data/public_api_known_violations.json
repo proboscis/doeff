@@ -487,16 +487,6 @@
     }
    }
   },
-  "doeff-agentic-cli": {
-   "範囲": "範囲の答え待ち",
-   "名": {
-    "境界 — 基盤・道具の package": {
-     "(実行 file)": [
-      "doeff-agentic"
-     ]
-    }
-   }
-  },
   "doeff-agents": {
    "範囲": "決まりの範囲",
    "名": {

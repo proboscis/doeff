@@ -222,7 +222,7 @@ end
 ---Opens the workflow picker if multiple workflows are running
 function M.workflow_attach()
   if not workflows.is_available() then
-    vim.notify('doeff: doeff-agentic CLI not found', vim.log.levels.ERROR)
+    vim.notify('doeff: doeff-agentic CLI not found. Install with: ' .. workflows.install_hint, vim.log.levels.ERROR)
     return
   end
 
@@ -308,11 +308,6 @@ end
 ---Clear the indexer cache
 function M.clear_cache()
   indexer.clear_cache()
-end
-
----Close all doeff terminal windows
-function M.close_terminals()
-  runner.close_all()
 end
 
 -- Export submodules for advanced usage
