@@ -63,9 +63,9 @@ def _color_from_digest(seed_text: str) -> tuple[int, int, int]:
     return digest[0], digest[1], digest[2]
 
 
-@dataclass
-class MockGeminiHandler:
-    """In-memory deterministic mock for Gemini effects."""
+@dataclass(frozen=True)
+class _MockGemini:
+    """What the Gemini mock handler answers with: the recorded answers by model or type, and the defaults' settings."""
 
     default_chat_response: str = "mock-gemini-chat-response"
     chat_responses: Mapping[str, str] = field(default_factory=dict)
@@ -76,90 +76,98 @@ class MockGeminiHandler:
     embedding_dimensions: int = 8
     embedding_seed: int = 0
 
-    def handle_chat(self, effect: LLMChat | LLMStreamingChat) -> str:
-        configured = self.chat_responses.get(effect.model)
-        if configured is not None:
-            return configured
-        signature = _message_signature(effect.messages)
-        return f"{self.default_chat_response}:{signature}"
 
-    def handle_structured(self, effect: LLMStructuredQuery) -> Any:
-        configured = self.structured_responses.get(effect.response_format)
-        if configured is None:
-            configured = self._build_default_structured_payload(effect.response_format)
-        return self._coerce_structured_response(effect.response_format, configured)
+def _chat_answer(mock: _MockGemini, effect: LLMChat | LLMStreamingChat) -> str:
+    configured = mock.chat_responses.get(effect.model)
+    if configured is not None:
+        return configured
+    signature = _message_signature(effect.messages)
+    return f"{mock.default_chat_response}:{signature}"
 
-    def handle_embedding(self, effect: LLMEmbedding) -> list[float] | list[list[float]]:
-        configured = self.embedding_responses.get(effect.model)
-        if configured is not None:
-            return configured
 
-        if self.embedding_dimensions <= 0:
-            raise ValueError("embedding_dimensions must be > 0")
+def _structured_answer(mock: _MockGemini, effect: LLMStructuredQuery) -> Any:
+    configured = mock.structured_responses.get(effect.response_format)
+    if configured is None:
+        configured = _build_default_structured_payload(effect.response_format)
+    return _coerce_structured_response(effect.response_format, configured)
 
-        if isinstance(effect.input, str):
-            return self._vector_for_text(effect.model, effect.input)
-        return [self._vector_for_text(effect.model, text) for text in effect.input]
 
-    def handle_image_generate(self, effect: ImageGenerate) -> ImageResult:
-        configured = self.image_generate_responses.get(effect.model)
-        if configured is not None:
-            return configured
-        return self._default_image_result(prompt=effect.prompt, model=effect.model)
+def _embedding_answer(mock: _MockGemini, effect: LLMEmbedding) -> list[float] | list[list[float]]:
+    configured = mock.embedding_responses.get(effect.model)
+    if configured is not None:
+        return configured
 
-    def handle_image_edit(self, effect: ImageEdit) -> ImageResult:
-        configured = self.image_edit_responses.get(effect.model)
-        if configured is not None:
-            return configured
-        return self._default_image_result(prompt=effect.prompt, model=effect.model)
+    if mock.embedding_dimensions <= 0:
+        raise ValueError("embedding_dimensions must be > 0")
 
-    def _coerce_structured_response(self, response_format: type[Any], value: Any) -> Any:
-        if isinstance(value, response_format):
-            return value
-        validator = getattr(response_format, "model_validate", None)
-        if callable(validator):
-            return validator(value)
+    if isinstance(effect.input, str):
+        return _vector_for_text(mock, effect.model, effect.input)
+    return [_vector_for_text(mock, effect.model, text) for text in effect.input]
+
+
+def _image_generate_answer(mock: _MockGemini, effect: ImageGenerate) -> ImageResult:
+    configured = mock.image_generate_responses.get(effect.model)
+    if configured is not None:
+        return configured
+    return _default_image_result(prompt=effect.prompt, model=effect.model)
+
+
+def _image_edit_answer(mock: _MockGemini, effect: ImageEdit) -> ImageResult:
+    configured = mock.image_edit_responses.get(effect.model)
+    if configured is not None:
+        return configured
+    return _default_image_result(prompt=effect.prompt, model=effect.model)
+
+
+def _coerce_structured_response(response_format: type[Any], value: Any) -> Any:
+    if isinstance(value, response_format):
         return value
+    validator = getattr(response_format, "model_validate", None)
+    if callable(validator):
+        return validator(value)
+    return value
 
-    def _build_default_structured_payload(self, response_format: type[Any]) -> dict[str, Any]:
-        model_fields = getattr(response_format, "model_fields", None)
-        if not isinstance(model_fields, dict):
-            return {}
 
-        payload: dict[str, Any] = {}
-        for field_name, field_info in model_fields.items():
-            annotation = getattr(field_info, "annotation", Any)
-            payload[field_name] = _default_value_for_annotation(annotation, field_name)
-        return payload
+def _build_default_structured_payload(response_format: type[Any]) -> dict[str, Any]:
+    model_fields = getattr(response_format, "model_fields", None)
+    if not isinstance(model_fields, dict):
+        return {}
 
-    def _vector_for_text(self, model: str, text: str) -> list[float]:
-        seed_input = f"{self.embedding_seed}:{model}:{text}".encode()
-        digest = hashlib.sha256(seed_input).digest()
-        vector: list[float] = []
+    payload: dict[str, Any] = {}
+    for field_name, field_info in model_fields.items():
+        annotation = getattr(field_info, "annotation", Any)
+        payload[field_name] = _default_value_for_annotation(annotation, field_name)
+    return payload
 
-        for index in range(self.embedding_dimensions):
-            offset = (index * 4) % len(digest)
-            chunk = digest[offset : offset + 4]
-            if len(chunk) < 4:
-                chunk += digest[: 4 - len(chunk)]
-            value = int.from_bytes(chunk, "big") / 0xFFFFFFFF
-            vector.append(round(value, 6))
 
-        return vector
+def _vector_for_text(mock: _MockGemini, model: str, text: str) -> list[float]:
+    seed_input = f"{mock.embedding_seed}:{model}:{text}".encode()
+    digest = hashlib.sha256(seed_input).digest()
+    vector: list[float] = []
 
-    def _default_image_result(self, *, prompt: str, model: str) -> ImageResult:
-        image = PILImage.new("RGB", (16, 16), _color_from_digest(f"{model}:{prompt}"))
-        return ImageResult(
-            images=[image],
-            prompt=prompt,
-            model=model,
-            raw_response={"mock": True, "model": model},
-        )
+    for index in range(mock.embedding_dimensions):
+        offset = (index * 4) % len(digest)
+        chunk = digest[offset : offset + 4]
+        if len(chunk) < 4:
+            chunk += digest[: 4 - len(chunk)]
+        value = int.from_bytes(chunk, "big") / 0xFFFFFFFF
+        vector.append(round(value, 6))
+
+    return vector
+
+
+def _default_image_result(*, prompt: str, model: str) -> ImageResult:
+    image = PILImage.new("RGB", (16, 16), _color_from_digest(f"{model}:{prompt}"))
+    return ImageResult(
+        images=[image],
+        prompt=prompt,
+        model=model,
+        raw_response={"mock": True, "model": model},
+    )
 
 
 def mock_handlers(
     *,
-    handler: MockGeminiHandler | None = None,
     default_chat_response: str = "mock-gemini-chat-response",
     chat_responses: Mapping[str, str] | None = None,
     structured_responses: Mapping[type[Any], Any] | None = None,
@@ -171,7 +179,7 @@ def mock_handlers(
 ) -> ProtocolHandler:
     """Build a deterministic mock protocol handler for Gemini domain effects."""
 
-    active_handler = handler or MockGeminiHandler(
+    mock = _MockGemini(
         default_chat_response=default_chat_response,
         chat_responses=chat_responses or {},
         structured_responses=structured_responses or {},
@@ -188,26 +196,26 @@ def mock_handlers(
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
                 return None
-            return (yield Resume(k, active_handler.handle_chat(effect)))
+            return (yield Resume(k, _chat_answer(mock, effect)))
         if isinstance(effect, LLMChat | GeminiChat):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
                 return None
-            return (yield Resume(k, active_handler.handle_chat(effect)))
+            return (yield Resume(k, _chat_answer(mock, effect)))
         if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
                 return None
-            return (yield Resume(k, active_handler.handle_structured(effect)))
+            return (yield Resume(k, _structured_answer(mock, effect)))
         if isinstance(effect, LLMEmbedding | GeminiEmbedding):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
                 return None
-            return (yield Resume(k, active_handler.handle_embedding(effect)))
+            return (yield Resume(k, _embedding_answer(mock, effect)))
         if isinstance(effect, ImageGenerate):
-            return (yield Resume(k, active_handler.handle_image_generate(effect)))
+            return (yield Resume(k, _image_generate_answer(mock, effect)))
         if isinstance(effect, ImageEdit | GeminiImageEdit):
-            return (yield Resume(k, active_handler.handle_image_edit(effect)))
+            return (yield Resume(k, _image_edit_answer(mock, effect)))
         yield Pass(effect, k)
 
     return _program_handler(handler)
@@ -218,7 +226,6 @@ def gemini_mock_handler(
     effect: Any,
     k: Any,
     *,
-    handler: MockGeminiHandler | None = None,
     default_chat_response: str = "mock-gemini-chat-response",
     chat_responses: Mapping[str, str] | None = None,
     structured_responses: Mapping[type[Any], Any] | None = None,
@@ -227,7 +234,7 @@ def gemini_mock_handler(
     embedding_seed: int = 0,
 ):
     """Single protocol handler suitable for ``WithHandler`` usage."""
-    active_handler = handler or MockGeminiHandler(
+    mock = _MockGemini(
         default_chat_response=default_chat_response,
         chat_responses=chat_responses or {},
         structured_responses=structured_responses or {},
@@ -239,18 +246,17 @@ def gemini_mock_handler(
     if isinstance(effect, LLMStreamingChat | GeminiStreamingChat | LLMChat | GeminiChat) and (
         _is_gemini_model(effect.model)
     ):
-        return (yield Resume(k, active_handler.handle_chat(effect)))
+        return (yield Resume(k, _chat_answer(mock, effect)))
     if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput) and _is_gemini_model(
         effect.model
     ):
-        return (yield Resume(k, active_handler.handle_structured(effect)))
+        return (yield Resume(k, _structured_answer(mock, effect)))
     if isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
-        return (yield Resume(k, active_handler.handle_embedding(effect)))
+        return (yield Resume(k, _embedding_answer(mock, effect)))
     yield Pass(effect, k)
 
 
 __all__ = [
-    "MockGeminiHandler",
     "ProtocolHandler",
     "gemini_mock_handler",
     "mock_handlers",
