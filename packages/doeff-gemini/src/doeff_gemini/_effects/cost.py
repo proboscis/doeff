@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 
 from doeff import EffectBase
-from doeff_gemini.types import GeminiCallResult
+from doeff_gemini._types import GeminiCallResult
 
 
 @dataclass(frozen=True)

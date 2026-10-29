@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from doeff_gemini.handlers import gemini_mock_handler
+from doeff_gemini import gemini_mock_handler
 from doeff_llm import LLMChat, LLMStructuredQuery
 from doeff_openrouter import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel

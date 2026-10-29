@@ -9,15 +9,14 @@ from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin
 
 from doeff_core_effects.effects import EffectBase as Effect
-from doeff_image.effects import ImageEdit, ImageGenerate
-from doeff_image.types import ImageResult
+from doeff_image import ImageEdit, ImageGenerate, ImageResult
 from PIL import Image as PILImage
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
-from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
-from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
+from doeff_seedream._effects import SeedreamGenerate, SeedreamStructuredOutput
+from doeff_seedream._types import SeedreamImage, SeedreamImageEditResult
 
 ProtocolHandler = Callable[[Effect, Any], Any]
 
