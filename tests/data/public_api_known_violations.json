@@ -16833,6 +16833,20 @@
    "決め": "[id]"
   },
   {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "Count",
+   "訳": "CountRows(card [id])の答えの型(R2 の effect の結果の型 — Count は件数の答え・CountRowsAnswer は答えの和)。名を足した commit 97b4a3e83 が表を直さずに入ったので、表の test を緑にする card [id] が足した",
+   "決め": "[id]"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "CountRowsAnswer",
+   "訳": "CountRows(card [id])の答えの型(R2 の effect の結果の型 — Count は件数の答え・CountRowsAnswer は答えの和)。名を足した commit 97b4a3e83 が表を直さずに入ったので、表の test を緑にする card [id] が足した",
+   "決め": "[id]"
+  },
+  {
    "package": "doeff-validation",
    "module": "doeff_validation",
    "name": "Check",
