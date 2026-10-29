@@ -11,24 +11,6 @@ from doeff_system_one._handlers import (
 from doeff_system_one._handlers import (
     scripted_judge_handler as scripted_judge_handler,
 )
-from doeff_system_one._judgment import (
-    STATE_CHARS_ADVISED as STATE_CHARS_ADVISED,
-)
-from doeff_system_one._judgment import (
-    answered as answered,
-)
-from doeff_system_one._judgment import (
-    calibration_ok as calibration_ok,
-)
-from doeff_system_one._judgment import (
-    chosen as chosen,
-)
-from doeff_system_one._judgment import (
-    clip as clip,
-)
-from doeff_system_one._judgment import (
-    crosses as crosses,
-)
 from doeff_system_one._programs import (
     judge_many as judge_many,
 )
