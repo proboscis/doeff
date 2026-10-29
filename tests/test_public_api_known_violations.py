@@ -11,7 +11,8 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
 2. 名を submodule から入口へ移した行は、表の module を書き換えずに同じ行と読む: 表に無い根の (根, 名) は、表に同じ名の
    (根の下の submodule, 名) が在り、その submodule がまだ名を出していれば定義の場所が同じ時だけ、もう出していなければ
    (古い口を閉じた — 定義を比べる相手が無い)名と根だけで、表のその行と読む。違う定義を根に足すのは赤のまま。
-3. 表の形: packages/ の下の dir の全部が 1 つずつ載り、範囲が決まった値で、名が組の中で並んで重ならない。
+3. 表の形: 目録の package(packages/ の下の dir のうち、doeff の中の部品の外)の全部が 1 つずつ載り、範囲が決まった値で、名が
+   組の中で並んで重ならない。
 4. 表は減るだけ: 表の「名」の組の名は、この表を足した commit の版(git の履歴の最初の版)に在る名に限る。submodule の行は、
    submodule の行を表に足した commit の版に在る物に限る。新しく足すしか無い名は「足した名」に、訳と決め(card・依頼・
    利用者の発言の id)を 1 行ずつ書く。
@@ -26,18 +27,26 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    許した物の組は、目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
+8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
+   (ADR-DOE-API-001 R11・card ki-9c326052f21c)。その前提として、doeff の外の file(packages/ の下の部品の外の package・examples・
+   docs/adr)が部品の import の根を import すれば赤(file と行と module を名指す)。失敗ケース: 使い捨ての repo で、素の import・
+   from・下の module・Hy の import と require・importlib と pytest.importorskip に渡す名の文字列は赤、doeff の根と doeff._vm から
+   読む形と、部品そのもの・doeff の根の package・doeff の検(tests/)の import は緑。
 """
 
 from __future__ import annotations
 
+import ast
 import collections
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
 import textwrap
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NotRequired, TypedDict
@@ -1024,3 +1033,246 @@ def test_a_marked_shim_of_a_module_that_cannot_be_imported_keeps_the_names_of_th
         {"__init__.py": EFFECTS_AND_HANDLERS, "_types.py": UNIMPORTABLE, "types.py": MARKED_SHIM},
     )
     check_package(_read_fixture(stage_1), table)
+
+
+# --- doeff の中の部品は doeff だけが import する(ADR-DOE-API-001 R10・R11 — card ki-9c326052f21c) ---
+
+#: doeff の外の file を探す所(repo の根から): packages/ の下(部品そのものの dir を除く)・examples・docs/adr の Hy。doeff の根の
+#: package(doeff/)と doeff の検(tests/)は doeff の中。
+OUTSIDE_DOEFF = ("packages", "examples", "docs/adr")
+#: 読む file の種類と、探さない dir(組み立ての物と依存 — 名が . で始まる dir も探さない)。
+_SOURCE_SUFFIXES = (".py", ".pyi", ".hy")
+_SKIPPED_DIRS = frozenset({"__pycache__", "node_modules", "target"})
+#: module の名の文字列を受けて読む関数(importlib.import_module・pytest.importorskip・__import__・importlib.util.find_spec)。
+_IMPORTING_CALLS = frozenset({"import_module", "importorskip", "__import__", "find_spec"})
+#: Hy の字句: 文字列・註・括弧・それ以外の語(文字列と註の中の括弧を形と読まない)。
+_HY_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|;[^\n]*|[()\[\]{}]|[^\s()\[\]{}";]+')
+_OPENING = frozenset({"(", "[", "{"})
+_CLOSING = frozenset({")", "]", "}"})
+
+
+@dataclass(frozen=True)
+class PartImport:
+    """doeff の外の file が doeff の中の部品を import する 1 か所(repo の根からの path・行・import する module)。"""
+
+    path: str
+    line: int
+    module: str
+
+
+def _is_part(module: str, roots: frozenset[str]) -> bool:
+    """module の名(Hy の - の綴りも)の根が、部品の import の根のどれかか。"""
+    return module.replace("-", "_").split(".")[0] in roots
+
+
+def _source_files(base: Path, skipped: frozenset[Path]) -> Iterator[Path]:
+    """base の下の Python と Hy の file(skipped の dir・. で始まる dir・組み立ての物の dir を除く)。"""
+    for directory, dirs, files in os.walk(base):
+        here = Path(directory)
+        dirs[:] = sorted(
+            name
+            for name in dirs
+            if not name.startswith(".") and name not in _SKIPPED_DIRS and here / name not in skipped
+        )
+        yield from (here / name for name in sorted(files) if name.endswith(_SOURCE_SUFFIXES))
+
+
+def _python_imports(text: str) -> Iterator[tuple[int, str]]:
+    """Python の file が import する module(行と名): import・from(相対でない)・名の文字列を受けて読む関数の呼び。
+
+    構文の誤りで読めない file は、行の頭の import と from の文を字面で読む。
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        for number, line in enumerate(text.splitlines(), start=1):
+            found = re.match(r"\s*(?:from|import)\s+([\w.]+)", line)
+            if found:
+                yield number, found.group(1)
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            yield from ((node.lineno, alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            yield node.lineno, node.module
+        elif isinstance(node, ast.Call) and node.args:
+            called = (
+                node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else getattr(node.func, "id", None)
+            )
+            first = node.args[0]
+            if (
+                called in _IMPORTING_CALLS
+                and isinstance(first, ast.Constant)
+                and isinstance(first.value, str)
+            ):
+                yield node.lineno, first.value
+
+
+def _form_modules(tokens: list[tuple[int, str]], start: int) -> Iterator[tuple[int, str]]:
+    """Hy の import か require の形の module の語(位置と名): 形のすぐ下の段の語のうち、:as とその次の語と括弧の中を除いた物。
+
+    形は module ごとに「module [名 …]」か「module :as 別名」を並べるので、名の列は括弧の中、別名は :as の次に在る。
+    """
+    depth, alias_next = 0, False
+    for position, token in tokens[start:]:
+        if token in _OPENING:
+            depth += 1
+        elif token in _CLOSING:
+            if depth == 0:
+                return
+            depth -= 1
+        elif depth == 0 and alias_next:
+            alias_next = False
+        elif depth == 0 and token == ":as":
+            alias_next = True
+        elif depth == 0 and not token.startswith(('"', ":")):
+            yield position, token
+
+
+def _hy_imports(text: str) -> Iterator[tuple[int, str]]:
+    """Hy の file が import する module(行と名): (import …)・(require …) の module の語と、名の文字列を受けて読む関数の呼び。"""
+    tokens = [(found.start(), found.group()) for found in _HY_TOKEN.finditer(text)]
+    tokens = [(position, token) for position, token in tokens if not token.startswith(";")]
+    for index, (_position, token) in enumerate(tokens[:-2]):
+        if token != "(":
+            continue
+        head = tokens[index + 1][1]
+        if head in ("import", "require"):
+            found = _form_modules(tokens, index + 2)
+        elif head.replace("-", "_").rsplit(".", 1)[-1] in _IMPORTING_CALLS:
+            position, argument = tokens[index + 2]
+            found = iter([(position, argument[1:-1])] if argument.startswith('"') else [])
+        else:
+            continue
+        yield from ((text.count("\n", 0, position) + 1, module) for position, module in found)
+
+
+def part_imports(repo: Path) -> list[PartImport]:
+    """doeff の外の file(OUTSIDE_DOEFF の下 — 部品そのものの dir を除く)が doeff の中の部品の import の根を import する所の全部。"""
+    roots = frozenset(part.import_root for part in tool.DOEFF_PARTS)
+    own = frozenset(repo / "packages" / part.dir for part in tool.DOEFF_PARTS)
+    found: list[PartImport] = []
+    for base in OUTSIDE_DOEFF:
+        for path in _source_files(repo / base, own):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if not any(root in text.replace("-", "_") for root in roots):
+                continue
+            imports = _hy_imports(text) if path.suffix == ".hy" else _python_imports(text)
+            relative = path.relative_to(repo).as_posix()
+            found.extend(
+                PartImport(relative, line, module)
+                for line, module in imports
+                if _is_part(module, roots)
+            )
+    return sorted(found, key=lambda row: (row.path, row.line, row.module))
+
+
+def _part_imports_text(found: list[PartImport]) -> str:
+    return (
+        "doeff の外の file が doeff の中の部品を import している — 部品は目録が数えない doeff の中の物(ADR-DOE-API-001 R11)。"
+        "VM の型は doeff の根から(from doeff import EffectBase, K, Pass, Resume, UnhandledEffect)、doeff の subpackage が要る "
+        "VM の内側の物は doeff._vm から読む:\n"
+        + "\n".join(f"  {row.path}:{row.line} {row.module}" for row in found)
+    )
+
+
+def test_only_doeff_imports_its_parts() -> None:
+    """doeff の外の file(packages/ の下の部品の外の package・examples・docs/adr)は、doeff の中の部品(doeff_vm)を import しない。"""
+    found = part_imports(ROOT)
+    assert not found, _part_imports_text(found)
+
+
+#: doeff の外で doeff_vm を読む形(行の末の印 fires の行が赤)と、赤にならない形(doeff の根・doeff._vm・似た名・註と文字列)。
+PART_IMPORTS_PY = """
+import importlib
+
+import pytest
+
+import doeff_vm  # fires
+import doeff_vm.doeff_vm as ext  # fires
+from doeff_vm import K  # fires
+from doeff_vm._effect_types import declare_passes  # fires
+importlib.import_module("doeff_vm.doeff_vm")  # fires
+pytest.importorskip("doeff_vm")  # fires
+
+import doeff_vm_like_name
+from doeff import K as RootK
+from doeff._vm import native
+
+# from doeff_vm import K
+SAID = "doeff_vm"
+"""
+PART_IMPORTS_HY = """
+(import doeff-vm [K])  ; fires
+(import doeff_vm.doeff_vm :as ext)  ; fires
+(import pytest doeff_vm [Pass])  ; fires
+(require doeff-vm [m])  ; fires
+(pytest.importorskip "doeff_vm")  ; fires
+
+(import doeff [K Pass])
+(import doeff._vm [native] doeff-vm-like-name :as like)
+;; (import doeff_vm [K])
+(setv SAID "(import doeff_vm)")
+"""
+#: 同じ所を doeff の根と doeff._vm から読む形(緑)。
+ROOT_IMPORTS_PY = """
+from doeff import K, Pass
+from doeff._vm import declare_passes, native
+"""
+ROOT_IMPORTS_HY = """
+(import doeff [K Pass])
+(import doeff._vm [native])
+"""
+#: doeff の外の file(赤になる所)と、doeff の中の file(部品そのもの・doeff の根の package・doeff の検 — 数えない所)。
+OUTSIDE_FILES = {
+    f"packages/{FIXTURE_DIR}/src/{FIXTURE_ROOT}/__init__.py": PART_IMPORTS_PY,
+    f"packages/{FIXTURE_DIR}/src/{FIXTURE_ROOT}/hy_side.hy": PART_IMPORTS_HY,
+    "examples/vm_sample.py": PART_IMPORTS_PY,
+    "docs/adr/defadr_vm_sample.hy": PART_IMPORTS_HY,
+}
+INSIDE_FILES = {
+    "packages/doeff-vm/doeff_vm/__init__.py": PART_IMPORTS_PY,
+    "doeff/__init__.py": PART_IMPORTS_PY,
+    "tests/test_vm_sample.py": PART_IMPORTS_PY,
+}
+
+
+def _write_files(repo: Path, files: Mapping[str, str]) -> None:
+    for relative, source in files.items():
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+
+
+def test_a_doeff_part_imported_outside_doeff_turns_red(tmp_path: Path) -> None:
+    """doeff の外の file が doeff の中の部品(doeff_vm)を import すると赤 — 素の import・from・下の module・Hy の import と require
+    (1 つの形に module を並べる形も)・importlib.import_module と pytest.importorskip に渡す名の文字列の行を名指す。doeff の根と
+    doeff._vm から読む形・似た名・註と文字列は数えず、部品そのもの・doeff の根の package・doeff の検(tests/)の import も数えない。
+    外の file を doeff の根から読む形に直すと緑(ADR-DOE-API-001 R11)。"""
+    _write_files(tmp_path, {**OUTSIDE_FILES, **INSIDE_FILES})
+    found = part_imports(tmp_path)
+    marked = {
+        (relative, number)
+        for relative, source in OUTSIDE_FILES.items()
+        for number, line in enumerate(source.splitlines(), start=1)
+        if line.rstrip().endswith("fires")
+    }
+    assert {(row.path, row.line) for row in found} == marked
+    assert len(found) == len(marked) == 22
+    assert {row.module.replace("-", "_") for row in found} == {
+        "doeff_vm",
+        "doeff_vm.doeff_vm",
+        "doeff_vm._effect_types",
+    }
+    assert "  examples/vm_sample.py:6 doeff_vm" in _part_imports_text(found).splitlines()
+
+    _write_files(
+        tmp_path,
+        {
+            relative: ROOT_IMPORTS_HY if relative.endswith(".hy") else ROOT_IMPORTS_PY
+            for relative in OUTSIDE_FILES
+        },
+    )
+    assert part_imports(tmp_path) == []

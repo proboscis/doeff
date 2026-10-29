@@ -15,6 +15,9 @@ What is counted, per package dir:
   the rule (ADR-DOE-API-001 R5 — hide it by giving its name a leading ``_``);
 - ``[project.scripts]``, ``[project.entry-points]`` and the Rust executables of a maturin ``bin``.
 
+doeff's own parts under ``packages/`` (``DOEFF_PARTS`` — the VM ``doeff-vm``, imported only by doeff) are not
+package dirs of the inventory, as the repo root package ``doeff`` is not one (ADR-DOE-API-001 R11).
+
 The names a module exports: its ``__all__`` when it has one, otherwise every name not starting
 with ``_`` that the package itself defines (names imported from another package or the standard
 library, and module objects, are not counted). A module that makes names on demand (a module-level
@@ -211,6 +214,22 @@ class Place:
 
 
 @dataclass(frozen=True)
+class DoeffPart:
+    """One of doeff's own parts under ``packages/``: a package only doeff (the repo root package) imports.
+
+    A part is not a subpackage a user imports — a user reads its names from ``doeff`` — so the inventory does
+    not count it, as it does not count ``doeff`` itself (ADR-DOE-API-001 R10・R11 — agora card ki-9c326052f21c).
+    ``tests/test_public_api_known_violations.py`` checks that no file outside doeff imports its root.
+    """
+
+    dir: str
+    import_root: str
+
+
+DOEFF_PARTS: tuple[DoeffPart, ...] = (DoeffPart("doeff-vm", "doeff_vm"),)
+
+
+@dataclass(frozen=True)
 class ImportRoot:
     """A top-level import name a package installs, and the dir holding its source."""
 
@@ -242,11 +261,14 @@ class PackageLayout:
 
 
 def package_dirs(repo: Path = ROOT) -> list[Path]:
-    """Every package the inventory covers: each dir under ``packages/`` (not a dot or underscore dir)."""
+    """Every package the inventory covers: each dir under ``packages/`` (not a dot or underscore dir, nor one of
+    doeff's own parts — ``DOEFF_PARTS``)."""
     return sorted(
         path
         for path in (repo / "packages").iterdir()
-        if path.is_dir() and not path.name.startswith((".", "_"))
+        if path.is_dir()
+        and not path.name.startswith((".", "_"))
+        and path.name not in {part.dir for part in DOEFF_PARTS}
     )
 
 
@@ -1815,7 +1837,9 @@ def inventory(
     if packages is not None:
         unknown = set(packages) - {path.name for path in dirs}
         if unknown:
-            raise SystemExit(f"packages/ の下に無い: {', '.join(sorted(unknown))}")
+            raise SystemExit(
+                f"目録の package に無い(packages/ の下に無いか doeff の中の部品): {', '.join(sorted(unknown))}"
+            )
         dirs = [path for path in dirs if path.name in packages]
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         return list(pool.map(lambda path: _run_probe(path, timeout), dirs))
