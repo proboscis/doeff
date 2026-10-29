@@ -42,7 +42,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from doeff import DoExpr, EffectBase, Pass, Resume, WithHandlerType, do, handler
+import inventory_other
+from doeff import DoExpr, EffectBase, Pass, Resume, WithHandlerType, do, handler, with_handlers
 from doeff.program import ProgramHandler
 
 
@@ -157,6 +158,18 @@ def flow_answering(effect, cont):
     return (yield Resume(cont, 1))
 
 
+def flow_with_handlers() -> DoExpr:
+    return with_handlers([ping_handler], flow())
+
+
+def flow_given(given, program) -> DoExpr:
+    return given(program)
+
+
+def flow_elsewhere() -> DoExpr:
+    return inventory_other.install(flow())
+
+
 def ping_handler_with_state_dir() -> ProgramHandler:
     (Path.home() / "ping-state").mkdir()
     (Path.cwd() / "ping-scratch").mkdir()
@@ -181,12 +194,21 @@ def __getattr__(name):
     raise AttributeError(name)
 """
 
+#: 別の package の、handler を被せる関数(helper の読みは別の top-level package の関数を辿らない)。
+OTHER = """
+def install(program):
+    from inventory_sample import ping_handler
+
+    return ping_handler(program)
+"""
+
 
 @pytest.fixture
 def sample(tmp_path: Path) -> Iterator[ModuleType]:
     """SAMPLE を tmp_path の module として import する(inspect.getsource が読めるように file に置く)。"""
     (tmp_path / "inventory_sample.py").write_text(textwrap.dedent(SAMPLE), encoding="utf-8")
     (tmp_path / "inventory_lazy.py").write_text(textwrap.dedent(LAZY), encoding="utf-8")
+    (tmp_path / "inventory_other.py").write_text(textwrap.dedent(OTHER), encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
         yield importlib.import_module("inventory_sample")
@@ -194,6 +216,7 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("inventory_sample", None)
         sys.modules.pop("inventory_lazy", None)
+        sys.modules.pop("inventory_other", None)
 
 
 @pytest.mark.parametrize(
@@ -210,6 +233,7 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("flow_handled", "other", "handler を被せる program を返す関数"),
         ("flow_wrapped", "other", "handler を被せる program を返す関数"),
         ("flow_answering", "other", "effect に答える program を返す関数"),
+        ("flow_with_handlers", "other", "handler を被せる program を返す関数"),
         ("size", "other", "関数"),
         ("LIMIT", "other", "定数"),
         ("SessionHandler", "unclassified", "class"),
@@ -282,6 +306,18 @@ def test_a_program_function_says_whether_it_is_a_helper(
     """
     verdict = tool._Classifier().classify(sample.__dict__[name], name)
     assert said in verdict.reason
+
+
+@pytest.mark.parametrize("name", ["flow_given", "flow_elsewhere"])
+def test_what_the_helper_reading_does_not_see(sample: ModuleType, name: str) -> None:
+    """helper の読みが見ない形は、handler を被せても program の helper と出る(ADR-DOE-API-001 R18 — 今の限りを固定する)。
+
+    引数で受けた handler を当てる関数と、別の top-level package の関数が被せる関数。読みは中の名を global の値か属性の名で
+    見て、同じ package の関数だけを辿るので、この 2 つは見えない。helper は名ごとに許し、許す名の中を人が読むのが守り。
+    読めるように直したら、この期待を helper を越える形へ替える。
+    """
+    verdict = tool._Classifier().classify(sample.__dict__[name], name)
+    assert (verdict.kind, verdict.form) == ("other", tool.PROGRAM_HELPER)
 
 
 def test_a_factory_is_called_with_home_and_cwd_in_a_scratch_dir(
