@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     AcquireSemaphore,
     CompletePromise,
@@ -29,9 +29,9 @@ from doeff_core_effects.scheduler import (
     Semaphore,
     Spawn,
     Wait,
-    resolve_implementation,
     scheduled,
 )
+from doeff_core_effects._scheduler import resolve_implementation
 
 from doeff import EffectBase, Pass, Resume, do, run
 from doeff import handler as install_handler

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_core_effects.scheduler import Gather, Race, Spawn, scheduled
+from doeff_core_effects import Gather, Race, Spawn, scheduled
 
 from doeff import do, run
 from tests.test_handler_installer_typing import _pyright_errors
@@ -50,7 +50,7 @@ from collections.abc import Generator
 from typing import Any, assert_type
 
 from doeff import do
-from doeff_core_effects.scheduler import CreatePromise, Future, Gather, Race, Spawn, Task
+from doeff_core_effects._scheduler import CreatePromise, Future, Gather, Race, Spawn, Task
 
 
 @do

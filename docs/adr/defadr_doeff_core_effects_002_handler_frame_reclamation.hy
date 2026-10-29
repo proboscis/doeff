@@ -10,7 +10,7 @@
 (defadr ADR-DOE-CORE-EFFECTS-002
   :title "handler frame reclamation: ハンドラ節の最終制御命令(Transfer/TransferThrow/Resume/Pass/Delegate)は必ずハンドラ本体の最上位フレームから yield する — `yield sub-@do(effect, k)` 委譲の深部で最終命令を実行する形は、委譲中の全祖先フレームを回収不能のまま放置し、Task ハンドル weakref 経由で scheduler の terminal-entry sweep を永久に阻止する。末尾 resume は Transfer/TransferThrow を用いる(Resume 停止フレームはサイクル GC 待ちでしか回収されない)"
   :status "accepted"
-  :scope ["packages/doeff-core-effects/doeff_core_effects/handlers.py"
+  :scope ["packages/doeff-core-effects/doeff_core_effects/_handlers.py"
           "packages/doeff-time/src/doeff_time/_handlers"
           "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/_handlers/production.py"
           "packages/doeff-secret/src/doeff_secret/_handlers.py"
@@ -24,7 +24,7 @@
        "ドメイン無関係の最小再現: 50ms ビートの `Spawn x2 keepalive(Await asyncio.sleep) + Gather + Delay` ループが、ビート毎に task-dict エントリ +2・suspended generator +5 を厳密に線形蓄積(200/400/600 beats → tasks 400/800/1200, generators 1003/2003/3003)。promise sweep は機能(有界 ~600)。"
        :evidence "proboscis-ema experiments/2026-07-13-doeff-scheduler-accum-repro/repro_accum_pure_doeff_20260713.hy + .out.txt")
      (fact
-       "2026-07-14 の co_filename 付き forensics で保持フレームの正体を特定: 残留 generator は全て doeff-time async_time.py のものだった — wrapper `handler`(旧92行, `return (yield runtime.handle(effect, k))` の yield で停止)がビート毎 +4、dispatcher `handle`(旧71行, `yield self._handle_delay(effect, k)` の yield で停止)が +1。doeff_core_effects/handlers.py のフラットな await_handler のフレームは(末尾 Resume のままでも)gc.collect で回収されていた。"
+       "2026-07-14 の co_filename 付き forensics で保持フレームの正体を特定: 残留 generator は全て doeff-time async_time.py のものだった — wrapper `handler`(旧92行, `return (yield runtime.handle(effect, k))` の yield で停止)がビート毎 +4、dispatcher `handle`(旧71行, `yield self._handle_delay(effect, k)` の yield で停止)が +1。doeff_core_effects/_handlers.py のフラットな await_handler のフレームは(末尾 Resume のままでも)gc.collect で回収されていた。"
        :evidence "2026-07-14 診断スクリプト実行結果: ('async_time.py','handler',92) 480/120beats, ('async_time.py','handle',71) 120/120beats; 修正前 handlers.py 変換単独ではリーク率 5/beat 不変")
      (fact
        "保持されたフレームは full gc.collect() を生き延びる(census は毎回 collect 後に計数)。停止フレームの locals が Task ハンドルを強参照し、scheduler.sweep_terminal_unobserved_entries の『全ハンドル weakref 死亡』条件が永久に成立しない — terminal task エントリ 400 個全てに生存 weakref がちょうど1個(参照先 Task)。"

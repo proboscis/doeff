@@ -4,7 +4,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import (
     EffectBase,

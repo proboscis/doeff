@@ -3,7 +3,7 @@
 # steps of two tasks, the result run returns, and the error without scheduled.
 from dataclasses import dataclass
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_time import Delay, sim_time_handler
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run

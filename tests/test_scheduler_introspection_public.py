@@ -9,12 +9,7 @@ ki-f26dcea37a93).
 """
 
 import pytest
-from doeff_core_effects.scheduler import (
-    SchedulerIntrospection,
-    Spawn,
-    Wait,
-    scheduled,
-)
+from doeff_core_effects import SchedulerIntrospection, Spawn, Wait, scheduled
 
 from doeff import do
 from doeff import run as doeff_run

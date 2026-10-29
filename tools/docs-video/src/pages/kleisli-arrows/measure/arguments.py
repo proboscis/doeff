@@ -1,7 +1,7 @@
 # The arguments scene: a @do function's arguments are passed as given (docs/11-kleisli-arrows.md, "Arguments Are
 # Passed As Given" and "Resolving in the Caller"). An effect or a program passed in stays a value; the body yields
 # it to get its result, or the caller yields first and passes a plain value.
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import Ask, Pure, do, run
 

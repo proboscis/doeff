@@ -5,7 +5,7 @@
 # slower, a millisecond-scale call barely changed) is what the video shows.
 import time
 
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import Ask, do, run
 

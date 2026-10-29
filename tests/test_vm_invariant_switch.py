@@ -11,7 +11,7 @@ import sys
 import pytest
 
 PROBE = (
-    "from doeff_core_effects.handlers import vm_probe_handler\n"
+    "from doeff_core_effects._handlers import vm_probe_handler\n"
     "from doeff import ReadInvariantChecks, do, run\n"
     "@do\n"
     "def one():\n"
@@ -48,7 +48,7 @@ def test_unknown_value_is_refused() -> None:
 
 
 def test_setter_turns_the_checks_on_and_off() -> None:
-    from doeff_core_effects.handlers import vm_probe_handler
+    from doeff_core_effects import vm_probe_handler
 
     from doeff import ReadInvariantChecks, SetInvariantChecks, do, run
 

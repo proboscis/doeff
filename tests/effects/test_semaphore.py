@@ -3,7 +3,7 @@ from __future__ import annotations
 import gc
 
 import pytest
-from doeff_core_effects.scheduler import SchedulerImplementation, scheduled
+from doeff_core_effects import SchedulerImplementation, scheduled
 
 from doeff import (
     AcquireSemaphore,

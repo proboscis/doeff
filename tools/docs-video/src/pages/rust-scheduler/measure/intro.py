@@ -1,5 +1,5 @@
 # The opening program: main yields Spawn and Gather, and scheduled() answers them, under both implementations.
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+from doeff_core_effects import Gather, Spawn, scheduled
 
 from doeff import do, run
 

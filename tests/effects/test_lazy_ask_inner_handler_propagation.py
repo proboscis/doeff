@@ -33,8 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import lazy_ask, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import lazy_ask, scheduled, state, try_handler, writer
 
 from doeff import (
     Ask,

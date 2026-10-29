@@ -21,7 +21,7 @@ PYTHONPATH=. uv run --quiet --project "$repo" --with doeff-indexer==0.1.3 python
   doeff_run --program myapp.features.auth.login.login_program --env tests.fakes.test_env --format json
   doeff_run --program myapp.features.auth.login.login_program --interpreter tests.fakes.test_interpreter --format json
   doeff_run --program myapp.features.auth.login.login_program --interpreter tests.fakes.test_interpreter --env tests.fakes.test_env --format json
-  doeff_run --format json --hy '(import myapp.features.auth.login [login-program]) (import doeff-core-effects.handlers [reader]) ((reader :env {"db_host" "fake-db" "timeout" 1}) login-program)'
+  doeff_run --format json --hy '(import myapp.features.auth.login [login-program]) (import doeff-core-effects [reader]) ((reader :env {"db_host" "fake-db" "timeout" 1}) login-program)'
   doeff_run --program other.job.job_program --format json
   doeff_run --program other.job.ping_program --format json
 } > "$here/cli.log"

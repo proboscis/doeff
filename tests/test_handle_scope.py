@@ -24,8 +24,7 @@ from collections.abc import Callable
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import pytest
-from doeff_core_effects import state, try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, state, try_handler
 from doeff_traverse import fail_handler, sequential
 from hy.compiler import hy_compile
 
@@ -52,7 +51,7 @@ _HEADER = """
 (require doeff-hy.macros [defk do! <- traverse for/do handle defhandler])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_core_effects.effects [Resumption])
+(import doeff_core_effects._effects [Resumption])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
 (defk bump-n [n] {:pre [(: n int)] :post [(: % int)]} (<- y (Bump n)) y)

@@ -20,21 +20,20 @@ from collections.abc import Callable, Iterator
 from unittest.mock import Mock
 
 import pytest
-from doeff_core_effects import Try
-from doeff_core_effects import scheduler as scheduler_module
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     CompletePromise,
     CreatePromise,
     SchedulerImplementation,
     Spawn,
     StepBudget,
     StepBudgetExceeded,
+    Try,
     Wait,
-    arm_step_budget,
-    disarm_step_budget,
     scheduled,
+    try_handler,
 )
+from doeff_core_effects import _scheduler as scheduler_module
+from doeff_core_effects._scheduler import arm_step_budget, disarm_step_budget
 
 from doeff import Program, do, run
 

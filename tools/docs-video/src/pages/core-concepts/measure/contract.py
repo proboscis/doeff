@@ -4,7 +4,7 @@
 # doeff traceback (on stderr) points at the yield in page().
 from dataclasses import dataclass
 
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_core_effects import Spawn, Wait, scheduled
 
 from doeff import EffectBase, Pass, Resume, ResumeThrow, do, handler, run
 

@@ -121,8 +121,8 @@ turns an error in one task into a value, and collects the log lines of every tas
 from dataclasses import dataclass
 from doeff import EffectBase, Resume, do, handler, run
 from doeff_core_effects import Get, Listen, Put, Tell, Try
-from doeff_core_effects.handlers import listen_handler, state, try_handler, writer
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+from doeff_core_effects import listen_handler, state, try_handler, writer
+from doeff_core_effects import Gather, Spawn, scheduled
 
 @dataclass(frozen=True)
 class Fetch(EffectBase):

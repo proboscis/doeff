@@ -49,7 +49,7 @@ NOT_SCANNED = {
     # Hy の module の持ち主。自分の module の要る物は、下の _core_effects_needs が読む。
     canonicalize_name("doeff-core-effects"): "Hy の module の持ち主",
     # CLI の doeff run は Hy 無しで動き、--hy と .hy の program の時だけ遅い import で Hy を読む。Hy が無ければ、足す extra の名を
-    # 言う文で落ちる(tests/cli/test_cli_without_hy.py・doeff_core_effects/extra_hints.py)。
+    # 言う文で落ちる(tests/cli/test_cli_without_hy.py・doeff_core_effects/_extra_hints.py)。
     canonicalize_name("doeff"): "CLI の --hy と .hy の program だけが Hy を読む",
     # doeff-hy の依存としてだけ入る pytest の plugin(doeff-hy が doeff-hy-pytest を引く — 逆に引くと輪になる)。
     canonicalize_name("doeff-hy-pytest"): "doeff-hy が引く plugin",
@@ -366,7 +366,7 @@ def test_the_import_reader_finds_the_hy_and_http_modules_of_core_effects() -> No
     needs = _core_effects_needs()
     expected = {
         "doeff_core_effects": NOTHING,
-        "doeff_core_effects.effects": NOTHING,
+        "doeff_core_effects._effects": NOTHING,
         "doeff_core_effects.os_process": frozenset({DOEFF_HY}),
         "doeff_core_effects.cache": frozenset({DOEFF_HY}),
         "doeff_core_effects.http_handlers": frozenset({DOEFF_HY, HTTPX}),

@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     AcquireSemaphore,
     Cancel,
     CompletePromise,
@@ -30,9 +30,9 @@ from doeff_core_effects.scheduler import (
     Spawn,
     TaskCancelledError,
     Wait,
-    resolve_implementation,
     scheduled,
 )
+from doeff_core_effects._scheduler import resolve_implementation
 
 from doeff import EffectBase, Resume, do, handler, run, with_handlers
 

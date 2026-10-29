@@ -1,7 +1,6 @@
 # The root of the video's example project: a default interpreter and the base env. The interpreter runs the
 # program under a reader holding the merged envs, so every Ask the program yields is answered from them.
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, scheduled
 
 from doeff import Program, Pure, run
 

@@ -3,8 +3,7 @@
 
 (require doeff-hy.macros [defk <-])
 
-(import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Promise Spawn
-                                      Task TaskCancelledError Wait])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
 
 
 (defk noop []

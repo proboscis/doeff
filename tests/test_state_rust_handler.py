@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import pytest
-from doeff_core_effects.effects import Ask, Get, Put, Try
-from doeff_core_effects.handlers import reader, state, try_handler
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_core_effects import Ask, Get, Put, Try
+from doeff_core_effects import reader, state, try_handler
+from doeff_core_effects import Spawn, Wait, scheduled
 from doeff_vm._effect_types import handler_effect_types
 from doeff_vm.doeff_vm import StateHandler
 

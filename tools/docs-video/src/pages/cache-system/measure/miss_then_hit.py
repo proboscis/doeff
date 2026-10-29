@@ -6,12 +6,10 @@
 # (docs/07-cache-system.md, "Manual Cache Control").
 import time
 
-from doeff_core_effects import ReadWriterLog, Tell
+from doeff_core_effects import ReadWriterLog, Tell, await_handler, scheduled, state, writer
 from doeff_core_effects.cache_effects import CacheGet, CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
 from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
-from doeff_core_effects.handlers import await_handler, state, writer
-from doeff_core_effects.scheduler import scheduled
 from doeff_time import Delay, sync_time_handler
 
 from doeff import WithObserve, do, run

@@ -9,7 +9,7 @@ conftest.py が ini の値 vm_invariant_checks(既定 true)で有効にする(�
 ADR-DOE-ENFORCE-001 law `default-pytest-sees-all-enforcement`)。
 """
 
-from doeff_core_effects.handlers import vm_probe_handler
+from doeff_core_effects import vm_probe_handler
 
 from doeff import ReadInvariantChecks, run
 

@@ -1,7 +1,6 @@
 # State: the store lives in the state handler. Get and Put read and write it; the program returns what it read.
 # Each state() starts its own store. Backs the State scene of the video: the store after every Put.
-from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import Get, Put, state
 
 from doeff import Pass, do, handler, run
 

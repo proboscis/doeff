@@ -3,7 +3,7 @@ doeff-publish の区切り 8・card ki-7310ee8e4fd0)。
 
 `pip install doeff` は核の 4 個だけを入れ、Hy の言語(doeff-hy)は extra hy、HTTP の client の handler(Hy で書いてあり、httpx で
 送る)は extra http で足す(tests/test_core_install_extras.py)。足していない利用者が `No module named 'doeff_hy'` だけを見て
-止まらないよう、文の最後に `pip install "doeff[hy]"` などの入れ方の行を出す。文は doeff_core_effects/extra_hints.py の表 1 つが持つ。
+止まらないよう、文の最後に `pip install "doeff[hy]"` などの入れ方の行を出す。文は doeff_core_effects/_extra_hints.py の表 1 つが持つ。
 
 子の process に、塞ぐ名の import に ModuleNotFoundError を返す finder を最前に置いてから import を走らせる。CLI の doeff run の
 場面は tests/cli/test_cli_without_hy.py。
@@ -100,7 +100,7 @@ def test_import_doeff_still_needs_neither_hy_nor_httpx(deadline_scale_factor: fl
             "-c",
             BLOCK_THEN_IMPORT,
             ",".join(NO_HY + NO_HTTPX),
-            "import doeff, doeff_core_effects, doeff_core_effects.extra_hints",
+            "import doeff, doeff_core_effects, doeff_core_effects._extra_hints",
         ],
         cwd=REPO,
         capture_output=True,

@@ -1,7 +1,15 @@
 # slog: a structured entry (a message and keyword data), a separate effect from Tell. slog_handler prints each
 # entry on stderr; Listen(types=(SlogEffect,)) captures the entries as values. Backs the slog scene.
-from doeff_core_effects import Listen, SlogEffect, Tell, slog
-from doeff_core_effects.handlers import listen_handler, slog_handler, state, writer
+from doeff_core_effects import (
+    Listen,
+    SlogEffect,
+    Tell,
+    listen_handler,
+    slog,
+    slog_handler,
+    state,
+    writer,
+)
 
 from doeff import do, run
 

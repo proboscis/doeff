@@ -13,7 +13,7 @@ import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import hy.macros
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_traverse import Collection, Traverse, parallel, parallel_fail_fast, sequential
 
 from doeff import EffectBase, Pass, Program, do, run
@@ -119,7 +119,7 @@ def test_skips_and_failures_of_both_froms_keep_their_places() -> None:
 
 
 def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
     from doeff_traverse import parallel
 
     program = _eval("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (+ a b))")

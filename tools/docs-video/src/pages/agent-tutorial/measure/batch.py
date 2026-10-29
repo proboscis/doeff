@@ -7,8 +7,8 @@ load()
 
 from doeff import run  # noqa: E402
 from doeff_agents import AwaitOutcome, AwaitStatus  # noqa: E402
-from doeff_core_effects.handlers import try_handler  # noqa: E402
-from doeff_core_effects.scheduler import scheduled  # noqa: E402
+from doeff_core_effects import try_handler  # noqa: E402
+from doeff_core_effects import scheduled  # noqa: E402
 from review_all import review_all  # noqa: E402
 from scripted import scripted_agent  # noqa: E402
 

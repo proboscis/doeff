@@ -30,7 +30,7 @@ For custom handler composition, call a Program -> Program handler installer dire
 
 ```python
 from doeff import Gather, Spawn, do, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 @do
 def square(n):
@@ -51,8 +51,8 @@ Handler composition example:
 
 ```python
 from doeff import Ask, Tell, do, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 @do
 def my_program():
@@ -74,8 +74,8 @@ print(result)  # DOEFF
 
 ```python
 from doeff import Await, do, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import scheduled
 
 async def read_answer() -> int:
     return 42
@@ -98,7 +98,7 @@ program on `sim_time_handler()`'s virtual clock.
 
 ### Handler behavior
 
-`Await` is handled by `await_handler()` (from `doeff_core_effects.handlers`), installed inside
+`Await` is handled by `await_handler()` (from `doeff_core_effects._handlers`), installed inside
 `scheduled()`. It bridges completion through `CreateExternalPromise` plus `Wait`:
 
 - it submits the awaitable to one background asyncio loop thread, shared by the process
@@ -136,7 +136,7 @@ losers (cancelling a task that already completed is a no-op).
 
 ```python
 from doeff import CompletePromise, CreatePromise, Spawn, Wait, do, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 @do
 def child():
@@ -157,7 +157,7 @@ print(run(scheduled(parent())))  # (7, 8)
 
 ```python
 from doeff import Gather, Race, Spawn, do, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 @do
 def work_1():
@@ -225,8 +225,8 @@ Use `Try(...)` when you need partial results instead of fail-fast behavior.
 
 ```python
 from doeff import Gather, Try, Spawn, do, run
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 
 @do
 def work_1():
@@ -263,8 +263,8 @@ they wait on a virtual clock: the run takes no real time and `b` wins on every r
 
 ```python
 from doeff import Cancel, Race, Spawn, Try, Wait, do, run
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 from doeff_time import Delay, sim_time_handler
 
 @do
@@ -313,8 +313,8 @@ Cancellation is explicit and delivered into the task:
 ```python
 from doeff import Cancel, CreatePromise, Ok, Err, Try, Spawn, Wait, do, run
 from doeff_core_effects import slog
-from doeff_core_effects.handlers import slog_handler, try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import slog_handler, try_handler
+from doeff_core_effects import scheduled
 
 @do
 def acquire_lease():
@@ -381,8 +381,8 @@ from dataclasses import dataclass
 from doeff import (
     Cancel, CreateExternalPromise, EffectBase, Race, Resume, Spawn, Try, Wait, do, handler, run,
 )
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 
 @dataclass(frozen=True)
 class RunProcess(EffectBase):  # an effect: "run this command, give its output"
@@ -442,7 +442,7 @@ was never retrieved":
 import warnings
 
 from doeff import Spawn, do, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 @do
 def send_report():
@@ -474,7 +474,7 @@ external code (thread, callback, event-loop task, process) completes the value.
 
 ```python
 from doeff import CompletePromise, CreatePromise, Spawn, Wait, do, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 @do
 def internal_sync():

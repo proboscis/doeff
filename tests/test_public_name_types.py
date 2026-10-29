@@ -21,6 +21,7 @@ pyright の verifytypes は、package の公開の名ごとに、引数と戻り
 失敗ケース: 公開の module に注記の無い関数・属性・変数を足す・``Task`` の id の注記を外す・置き物を型の道具に見せる、で赤。
 """
 
+import ast
 import json
 import os
 import re
@@ -48,14 +49,23 @@ _DOEFF_GAPS: dict[str, str] = {
 _CORE_HEAD_GAPS: dict[str, str] = {}
 #: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。
 _CORE_TYPED_MODULES = (
-    "doeff_core_effects.effects",
-    "doeff_core_effects.scheduler",
-    "doeff_core_effects.handlers",
     "doeff_core_effects.cache_effects",
     "doeff_core_effects.cache_handlers",
     "doeff_core_effects.memo_effects",
     "doeff_core_effects.memo_handlers",
-    "doeff_core_effects.storage",
+)
+#: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5・card ki-c09b3b527fad)。
+#: verifytypes は _ の module の名を数えないので、入口がこれらの module から出す名
+#: (``doeff_core_effects.Task`` とその欄)で数える。
+_CORE_TYPED_HIDDEN_MODULES = (
+    "doeff_core_effects._effects",
+    "doeff_core_effects._scheduler",
+    "doeff_core_effects._handlers",
+    "doeff_core_effects._storage",
+)
+_CORE_ENTRY = (
+    Path(__file__).resolve().parents[1]
+    / "packages/doeff-core-effects/doeff_core_effects/__init__.py"
 )
 #: 廃止した名の置き物(実行時だけに在り、使うと替わりの名を言う)。
 _REMOVED = {
@@ -125,10 +135,30 @@ def test_the_scheduler_handles_and_tell_and_slog_have_known_types(core_symbols: 
     assert sorted(named - known) == []
 
 
+def _in_module(name: str, modules: tuple[str, ...]) -> bool:
+    return any(name == module or name.startswith(f"{module}.") for module in modules)
+
+
+def _entry_names_from_hidden_modules() -> set[str]:
+    """入口が ``from <隠した module> import X as X`` で出す名。
+
+    即座に結ぶ名と ``if TYPE_CHECKING:`` の名の両方。
+    """
+    tree = ast.parse(_CORE_ENTRY.read_text(encoding="utf-8"))
+    return {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and _in_module(node.module or "", _CORE_TYPED_HIDDEN_MODULES)
+        for alias in node.names
+    }
+
+
 def test_every_public_name_of_the_typed_core_modules_has_a_known_type(core_symbols: list[dict]) -> None:
+    entry_names = tuple(f"doeff_core_effects.{name}" for name in _entry_names_from_hidden_modules())
     covered = [
         symbol for symbol in core_symbols
-        if any(symbol["name"] == module or symbol["name"].startswith(f"{module}.") for module in _CORE_TYPED_MODULES)
+        if _in_module(symbol["name"], (*_CORE_TYPED_MODULES, *entry_names))
     ]
     assert len(covered) > 100, len(covered)
     assert sorted(_unknown(covered)) == []
