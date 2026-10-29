@@ -32,7 +32,7 @@ Generic publish/subscribe effects for doeff.
 係のループを「状態を読む → 出来事か止めの合図を待つ → 来た物の節を回す」の 1 つの形で書く Hy の macro です。
 
 ```hy
-(require doeff-events.macros [event-loop])
+(require doeff-events._macros [event-loop])
 
 (event-loop [board Board (! (read-board))]    ; state の名・型・初期値(初期値は do! の中 — 読みは (! …) で書く)
   (:stop reason)          board                ; 止めの節(必ず 1 つ)— この値が event-loop の値
@@ -141,12 +141,12 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
 - 止め方: 源の task は時間の上限の無い blocking の取りで待ち、本体が終わると `Cancel` で止まります(`await_handler` が取り消しを
   redis-py の coroutine へ伝える)。本体の止めは今までどおり `StopArrived` を `WaitForEvent` で受けます。
 
-下の層(broker の操作の effect — `doeff_events.effects.notices`): `Announce`(答え = 受け手の数)・`SubscribeChannels`(答えるのは broker が
+下の層(broker の操作の effect — `doeff_events._effects.notices`): `Announce`(答え = 受け手の数)・`SubscribeChannels`(答えるのは broker が
 確かめた後)・`NextAnnouncement`・`CloseSubscription`・`AwaitBrokerBack`。broker に届かない時は例外でなく `BrokerUnreachable` を答えます。
 答える handler は `memory_notice_handler(MemoryBroker())`(process の中・テストは `cut_broker` / `restore_broker` で止まりを作れる)と
 `redis_notice_handler(url, timeout_seconds)`(extra `doeff-events[redis]` が要る・設定は URL と、繋ぐ・送るの答えを待つ上限 `timeout_seconds` — 既定なし。答えない server や黙った網が出し手を止めない)。
 
-配達の法は `doeff_events.notice_laws` の筋書き(Program)の 1 か所に在り、memory と本物の redis-server の両方が同じ筋書きを通ります
+配達の法は `doeff_events._notice_laws` の筋書き(Program)の 1 か所に在り、memory と本物の redis-server の両方が同じ筋書きを通ります
 (宣言 = `docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy`)。本物を相手にするテストは `PATH` の `redis-server` を一時の dir で
 起動します。実行 file が無ければ、そのテストだけを訳つきで skip します(memory を相手にするテストは必ず走ります)。
 

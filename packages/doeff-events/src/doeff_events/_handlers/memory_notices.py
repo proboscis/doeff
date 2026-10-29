@@ -1,4 +1,4 @@
-"""In-memory notice broker: the lower layer of ``doeff_events.effects.notices`` inside one process.
+"""In-memory notice broker: the lower layer of ``doeff_events._effects.notices`` inside one process.
 
 ``MemoryBroker`` holds channels whose notices reach only current subscribers — the meaning Redis Pub/Sub has,
 without a server. The emulated environment and tests share one broker between the handlers of the programs that
@@ -31,7 +31,7 @@ from doeff_time import GetTime, WaitWithin
 
 from doeff import K, Pass, Pure, Resume, do
 from doeff import handler as _program_handler
-from doeff_events.effects.notices import (
+from doeff_events._effects.notices import (
     KEPT_REDELIVERY_SECONDS,
     AckAnnouncement,
     Announce,
@@ -44,7 +44,7 @@ from doeff_events.effects.notices import (
     ProbeBroker,
     SubscribeChannels,
 )
-from doeff_events.handlers._kept_readers import KeptReaders
+from doeff_events._handlers._kept_readers import KeptReaders
 
 if TYPE_CHECKING:
     from doeff import EffectGenerator

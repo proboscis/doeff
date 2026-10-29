@@ -19,20 +19,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_events.effects.files import (
+from doeff_events import (
     CloseFileWatch,
     FilesChanged,
     FileWatch,
+    MemoryFiles,
     NextFileChanges,
     WatchFiles,
     WatchRefused,
-)
-from doeff_events.handlers.memory_files import (
-    MemoryFiles,
-    announce_file_change,
     memory_file_watch_handler,
+    os_file_watch_handler,
 )
-from doeff_events.handlers.os_files import os_file_watch_handler
+from doeff_events._handlers.memory_files import announce_file_change
 from events_test_support import announce_file_wait, run_scheduled
 
 from doeff import do

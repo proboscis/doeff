@@ -1,6 +1,6 @@
 ;;; event-loop — 出来事を待つ係のループの macro(agora-redesign #3080・設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
 ;;;
-;;;   (require doeff-events.macros [event-loop])
+;;;   (require doeff-events._macros [event-loop])
 ;;;   (event-loop [board (! (ReadBoard))]
 ;;;     (:stop reason)          (stop board)                      ; 止めの節(必ず 1 つ)
 ;;;     (BoardMoved keys)       (! (read-board-at board keys))    ; 合図の所を読み直した盤 = 次の state
@@ -12,7 +12,7 @@
 ;;;   event-loop の値になる。止めの節の値もそのまま event-loop の値になる。state を省いた形(節だけ)も同じ macro。
 ;;; - 展開の時に断る形: 止めの節が無い・2 つ在る / 待つ型の節が無い / 型を導けない節(_・名前だけ・| ・値の式)/ 同じ型の節が 2 つ /
 ;;;   本体の無い節 / 最後の値の位置でない stop。
-;;; - 待ちの部品(止めの待ち・競わせ・出来事ごとの slog)は doeff_events/event_loop.py。展開は doeff-hy の <- と do! を
+;;; - 待ちの部品(止めの待ち・競わせ・出来事ごとの slog)は doeff_events/_event_loop.py。展開は doeff-hy の <- と do! を
 ;;;   hy.R で直に参照する(使う側の require に頼らない)。節の本体と初期値は do! に包むので、defk の本体の ! がその場で
 ;;;   (yield …) に書き換わっても、出来事ごとに回る位置は変わらない。
 
@@ -175,7 +175,7 @@
    - 止めの合図で抜ける時、列に残った出来事は回さない(合図は「どこが変わったか」だけなので、次に起きた係が記録を読み直せば揃う)。
    - 出来事ごとに slog(\"event-loop\" :event 型の名)を出す — 外に slog の handler が要る。
    - 外の bus の handler は StopArrived を係へ届ける物(subscribed_event_handler は必ず購読する)。
-   待ちの部品 = doeff_events.event_loop(止めの見張りを係の寿命の間 1 つ・待つ前に StopRequested を 1 回)。"
+   待ちの部品 = doeff_events._event_loop(止めの見張りを係の寿命の間 1 つ・待つ前に StopRequested を 1 回)。"
   (import doeff_hy.match_fields [mangle_match_fields])
   (setv #(state-name state-type state-init clauses) (_el-split-state args))
   (when (% (len clauses) 2)
@@ -222,9 +222,9 @@
   (setv next-state (if state-name [`(setv ~state-name ~out)] []))
   (setv start-state (if state-name [`(~bind ~state-name ~@state-check (~program ~state-init))] []))
   `(do
-     (import doeff_events.event_loop [begin_watch :as ~begin next_event :as ~next-of end_watch :as ~end
+     (import doeff_events._event_loop [begin_watch :as ~begin next_event :as ~next-of end_watch :as ~end
                                       LoopStop :as ~loop-stop stopped_value :as ~value-of]
-             doeff_events.effects [StopArrived :as ~arrived])
+             doeff_events._effects [StopArrived :as ~arrived])
      ~@start-state
      (~bind ~watch (~begin))
      (try

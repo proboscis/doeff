@@ -103,7 +103,7 @@ from doeff_time.effects.time import GetTimeEffect, WaitWithinEffect
 
 from doeff import K, Pass, Program, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
-from doeff_events.effects.events import (
+from doeff_events._effects.events import (
     Publish,
     PublishEffect,
     PublishGapEffect,
@@ -116,7 +116,7 @@ from doeff_events.effects.events import (
     WaitForEventsEffect,
     publish_effect_type,
 )
-from doeff_events.effects.notices import (
+from doeff_events._effects.notices import (
     AckAnnouncement,
     Announce,
     Announcement,

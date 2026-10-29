@@ -23,16 +23,18 @@ from pathlib import Path
 
 from doeff_core_effects.effects import Await
 from doeff_events import (
+    Announce,
+    AwaitBrokerBack,
     BrokerPatience,
     MarkGap,
     NoticeRoute,
+    ProbeBroker,
     broker_back_by_retry,
     broker_patience_handler,
     notice_events_handler,
     redis_notice_handler,
 )
-from doeff_events.effects.notices import Announce, AwaitBrokerBack, ProbeBroker
-from doeff_events.handlers.redis_notices import (
+from doeff_events._handlers.redis_notices import (
     BROKER_BACK_ANSWERS,
     BROKER_BACK_EFFECTS,
     REDIS_NOTICE_ANSWERS,
@@ -61,7 +63,7 @@ from doeff_effect_analyzer.program_effects import (
     runs_where_performed,
 )
 
-NOTICES_MODULE = "doeff_events.effects.notices"
+NOTICES_MODULE = "doeff_events._effects.notices"
 
 
 @dataclass(frozen=True)
@@ -145,7 +147,7 @@ def _emitted(handler: object) -> frozenset[type]:
 
 
 def test_the_analyzer_reads_the_redis_handler_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_events.handlers.redis_notices:redis_notice_handler")
+    handler = analyze_handler("doeff_events._handlers.redis_notices:redis_notice_handler")
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset(REDIS_NOTICE_ANSWERS)
     for clause in handler.clauses:
@@ -168,7 +170,7 @@ def test_the_redis_handler_performs_what_it_declares() -> None:
 
 
 def test_the_analyzer_reads_the_retry_handler_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_events.handlers.redis_notices:broker_back_by_retry")
+    handler = analyze_handler("doeff_events._handlers.redis_notices:broker_back_by_retry")
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset(BROKER_BACK_ANSWERS) == frozenset({AwaitBrokerBack})
     for clause in handler.clauses:

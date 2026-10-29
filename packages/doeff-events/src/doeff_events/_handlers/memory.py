@@ -15,7 +15,7 @@ from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise
 
 from doeff import K, Pass, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
-from doeff_events.effects import (
+from doeff_events._effects import (
     PublishEffect,
     SourceFailed,
     StopArrived,

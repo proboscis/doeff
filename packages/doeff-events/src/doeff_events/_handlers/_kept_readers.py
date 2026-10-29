@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar, final
 
-from doeff_events.effects.notices import ChannelSubscription
+from doeff_events._effects.notices import ChannelSubscription
 
 _R = TypeVar("_R")
 

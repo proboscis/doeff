@@ -1,4 +1,4 @@
-"""The file watch on the operating system's change notices: the effects of ``doeff_events.effects.files`` answered
+"""The file watch on the operating system's change notices: the effects of ``doeff_events._effects.files`` answered
 by the ``watchfiles`` library (inotify on Linux, FSEvents on macOS — #3977).
 
 ``os_file_watch_handler()`` needs the optional dependency ``doeff-events[files]``. The module itself imports without
@@ -32,7 +32,7 @@ from doeff_core_effects.effects import Await
 
 from doeff import K, Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_events.effects.files import (
+from doeff_events._effects.files import (
     CloseFileWatch,
     FilesChanged,
     FileWatch,

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, final
 
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import CompletePromise, Promise, scheduled
-from doeff_events.effects import BrokerPatience, NextFileChanges, WaitForEventEffect, WaitForEventsEffect
-from doeff_events.handlers.notice_events import broker_patience_handler, notice_events_handler
+from doeff_events import BrokerPatience, NextFileChanges, WaitForEventEffect, WaitForEventsEffect
+from doeff_events import broker_patience_handler, notice_events_handler
 
 from doeff import K, Pass, do, run
 from doeff import handler as program_handler
@@ -21,7 +21,7 @@ from doeff import handler as program_handler
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from doeff_events.handlers.notice_events import NoticeRoute
+    from doeff_events import NoticeRoute
 
     from doeff import EffectGenerator, Program
     from doeff.program import ProgramHandler

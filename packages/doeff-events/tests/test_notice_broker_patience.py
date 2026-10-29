@@ -16,17 +16,22 @@ import pytest
 from doeff_events import (
     BrokerPatience,
     EventBus,
+    MarkGap,
+    MemoryBroker,
+    NoticeRoute,
     NoticeSent,
+    NoticeSourceUnreachable,
+    Publish,
     ReadBrokerPatience,
     SourceStalled,
+    WaitForEvent,
     broker_patience_handler,
+    cut_broker,
+    memory_notice_handler,
     notice_events_handler,
     subscribed_event_handler,
 )
-from doeff_events.effects.events import Publish, WaitForEvent
-from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
-from doeff_events.handlers.notice_events import MarkGap, NoticeRoute, NoticeSourceUnreachable
-from doeff_events.notice_laws import LawNote, law_routes
+from doeff_events._notice_laws import LawNote, law_routes
 from doeff_time import GetTime
 from notice_law_support import PREFIX, T0, run_on_virtual_clock
 
