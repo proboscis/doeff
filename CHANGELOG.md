@@ -32,6 +32,11 @@
   still answer the same handler for one release, with a `DeprecationWarning`. doeff-git's `production_handlers` is
   still `github_handler` outside `git_local_handler`, as one handler (`doeff.program._former_factory_stack`).
   `publications/zenn-use-cases-v0` keeps the calls, since it runs against the packages on PyPI.
+- **doeff-core-effects:** `maybe` and `result` are handlers, not handler factories, for the same reason
+  (ADR-DOE-API-002 — they have neither settings nor per-call state): write `maybe(prog)`, `result(prog)` and
+  `result(maybe(prog))` (in Hy, `(maybe body)` and `(result body)`) where you wrote `maybe()(prog)` and
+  `((maybe) body)`. The former calls `maybe()` and `result()` still answer the same handler for one release, with a
+  `DeprecationWarning`. `on_raise` and `absent_as` take settings and stay handler factories.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export

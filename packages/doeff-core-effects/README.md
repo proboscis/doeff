@@ -164,8 +164,8 @@ apply that to the program:
 
 | Fold | `Absent` becomes | `Raise` becomes | Success becomes |
 | --- | --- | --- | --- |
-| `maybe()(program)` | `Nothing` | passes through | `Some(value)` |
-| `result()(program)` | passes through | `Err(reason)` | `Ok(value)` |
+| `maybe(program)` | `Nothing` | passes through | `Some(value)` |
+| `result(program)` | passes through | `Err(reason)` | `Ok(value)` |
 
 ```python
 from doeff import do, run
@@ -183,12 +183,12 @@ def age_of(name):
     return USERS[name]
 
 
-print(run(scheduled(maybe()(age_of("ada")))))   # Some(36)
-print(run(scheduled(maybe()(age_of("bob")))))   # Nothing
-print(run(scheduled(result()(age_of("ada")))))  # Ok(36)
+print(run(scheduled(maybe(age_of("ada")))))   # Some(36)
+print(run(scheduled(maybe(age_of("bob")))))   # Nothing
+print(run(scheduled(result(age_of("ada")))))  # Ok(36)
 ```
 
-Nest them to get both: `result()(maybe()(program))` gives `Ok(Some(v))`, `Ok(Nothing)` or
+Nest them to get both: `result(maybe(program))` gives `Ok(Some(v))`, `Ok(Nothing)` or
 `Err(e)`. `on_raise(case, …)(program)` and `absent_as(default)(program)` handle specific cases.
 
 ## Writing your own effect and handler

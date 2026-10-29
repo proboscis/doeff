@@ -78,8 +78,7 @@
      (rule R2 "引数を 1 つも取らない factory は、呼ぶたびに新しい状態(記憶の置き場・待ちの表など)を作って handler に閉じ込める時だけ許す。既定値だけの引数を持つ factory(state(initial=None))は設定を受けるので R1 の外。")
      (rule R3 "factory を値に直す時は、旧い呼び(引数の無い呼び)を 1 つの版の間、DeprecationWarning を出して同じ handler を返す形で残す(doeff.program の _former_factory_handler — 型は FormerFactoryHandler で、型の検査も旧い呼びを deprecated と言う)。doeff の中と、doeff の main を読む repo の呼び手を新しい形へ書き換えたら、旧い呼びを消す。PyPI の版で毎日走らせる examples/testing_without_mocks と publications/zenn-use-cases-v0 は、値の形を持つ版が PyPI に出た時に書き換える(ADR-DOE-CORE-003 R4 と同じ訳)。")
      (rule R4 "強制は 1 か所: tools/handler_factory_census.py が出荷する code(doeff/・packages/・examples/ の git の追う Python と Hy — tests の dir と examples/testing_without_mocks を除く)から引数の無い factory を拾い、tests/data/zero_parameter_handler_factories.json の既知の表と突き合わせる。表の行は分け(呼びごとの状態・直す・factory でない)と訳を持つ。表に無い factory は赤、表に在るのに拾えない行も赤(表は code と一緒に減るだけ)。「直す」の行は直す card を訳に書く。")
-     (rule R5 "await_handler を R1 の形に直した(2026-10-29・agora card ki-8d7e5eb863c7)。中の asyncio と scheduler の effect の import は、Await に初めて答える時に読む(doeff の import で asyncio を読まない・scheduler の module はこの module の後に読まれる)。Await の意味と bridge の loop の振る舞いは変えない。")
-     (rule R6 "R4 の一覧で「直す」に残った物は、card で 1 つずつ R1 の形に直す: sequential(agora card ki-b10e81c19717)・production_handlers の 3 つと conductor の agent_handler・git_handler(agora card ki-e9166ac1c3b1)。maybe と result は 2026-10-28 の決定(ADR-DOE-API-001 R6 — state() と同じ factory)と食い違うので、形を持ち主に問い、答えに揃える(agora card ki-2d05bfc6ec94)。答えが来るまで ADR-DOE-API-001 R6 の形のまま表に「直す」で置く。")]
+     (rule R5 "await_handler を R1 の形に直した(2026-10-29・agora card ki-8d7e5eb863c7)。中の asyncio と scheduler の effect の import は、Await に初めて答える時に読む(doeff の import で asyncio を読まない・scheduler の module はこの module の後に読まれる)。Await の意味と bridge の loop の振る舞いは変えない。")]
   :laws
     [(law a-handler-without-settings-is-a-value
        :statement "for_all f in shipped_code with params(f) = {} and returns_handler(f): row(f) in known_table and (verdict(row(f)) = 呼びごとの状態 => new_state_per_call(f)); for_all row in known_table: row.key in census(shipped_code)"
@@ -117,4 +116,4 @@
           "tools/handler_factory_census.py・tests/data/zero_parameter_handler_factories.json"
           "tests/test_await_handler_is_a_handler_value.py"
           "doeff の中の await_handler() と (await-handler) の呼び手(歴史の記録と PyPI の版で走る dir を除く)"
-          "agora card ki-b10e81c19717・ki-e9166ac1c3b1・ki-2d05bfc6ec94(R6 の残り)"])
+          "agora card ki-b10e81c19717(sequential)・ki-e9166ac1c3b1(production_handlers の 3 つと conductor の 2 つ)・ki-2d05bfc6ec94(maybe・result)— 一覧の「直す」を R1 の形に直した card"])

@@ -9,10 +9,9 @@
   失敗の答えを ``Raise(答え)`` に変えて呼び手のスコープで出す Program に、Result / Maybe の値は開く Program に
   する。それ以外(宣言の無い effect・Program)は **受け取った物をそのまま** 返す — 今までと同じ物を yield する(R6)。
 - 境目の handler(effect → 値に畳む): ``maybe``・``result``・``on_raise``・``absent_as``(R2・R7・R8)。
-  どれも中核の ``state()`` と同じく、呼ぶと handler を返す工場で、program はその handler に当てる —
-  ``maybe()(p)``・``result()(p)``・``on_raise(受け…)(p)``・``absent_as(既定値)(p)``(ADR-DOE-API-001 R6)。
-  program を工場に渡す旧い形 ``maybe(p)``・``result(p)``・``on_raise(p, 受け…)``・``absent_as(既定値, p)`` は
-  TypeError で断る(移し替えの層は agora card ki-53be25c354e4 で消した)。
+  設定の無い ``maybe``・``result`` は handler の値で ``maybe(p)``・``result(p)`` と当て(ADR-DOE-API-002 R1 — 旧い呼び
+  ``maybe()`` は 1 つの版の間 DeprecationWarning で同じ handler を返す)、設定を受ける ``on_raise``・``absent_as`` は
+  handler を返す工場で ``on_raise(受け…)(p)``・``absent_as(既定値)(p)`` と当てる(ADR-DOE-API-001 R6)。
   続きを再開しない(スコープをその値で終える)。再開してよいのは ``absent_as`` が、自分の字面の中の ``<-`` が出した
   ``Absent`` を再開する時だけ。
 
@@ -20,6 +19,7 @@ handler は値で答え、変換は呼び手の本文の ``<-`` で行う(R4)—
 その handler より外へ行き、呼び手の ``maybe`` / ``result`` を飛び越えるため。
 """
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -37,22 +37,31 @@ from typing import (
     cast,
     get_args,
     get_origin,
+    overload,
 )
 
 from doeff import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
 from doeff.do import do
-from doeff.program import Pass, ProgramHandler, Transfer
+from doeff.program import Pass, ProgramHandler, Transfer, _called_as_former_factory
 from doeff.program import handler as _program_handler
 from doeff.result import Maybe, Nothing, Some, _NothingType
 from doeff_core_effects._effects import Absent, Raise
 
 if TYPE_CHECKING:
+    from typing_extensions import deprecated
+
     # doeff の最上位は doeff_core_effects._effects を読み込む途中でこの module に来るので、最上位の後半で定義される
     # 名前(DoExpr・EffectGenerator)は型の注記にだけ使う(文字列の注記 — 実行時に評価しない)。
     from doeff import DoExpr, EffectGenerator, Program
 
     # ``<-`` に渡せる物: Program・effect・Result / Maybe の値。
     Bindable: TypeAlias = DoExpr | Program[Any, Any] | EffectBase[Any] | Ok[Any] | Err[Any] | Some[Any] | _NothingType
+else:
+
+    def deprecated(message: str) -> Callable[[Callable[..., object]], Callable[..., object]]:
+        """実行時の ``typing_extensions.deprecated`` の代わり: 型の検査は本物を読み、実行時の警告は handler が出す。"""
+        return lambda function: function
+
 
 _D = TypeVar("_D")
 
@@ -382,7 +391,7 @@ def _raise_to_err(effect: EffectBase, k: object) -> "EffectGenerator[object]":
 
 
 class BoundaryHandler(Protocol):
-    """境目の handler(``maybe()``・``result()``・``on_raise(…)``・``absent_as(…)`` が返す物)の型。
+    """境目の handler(``maybe``・``result`` と、``on_raise(…)``・``absent_as(…)`` が返す物)の型。
 
     印 ``_doeff_is_handler_fn`` を持つ handler で、``h1(h2(p))`` で当て、``with_handlers`` と ``stacked_handlers`` にも置ける。
     program は ``<-`` に渡せる物なら何でもよく(宣言を持つ effect をそのまま渡しても開いてから畳む)、答えの型は包んだ
@@ -394,6 +403,28 @@ class BoundaryHandler(Protocol):
     def __call__(self, program: "Bindable", /) -> "DoExpr": ...
 
 
+class FormerFactoryBoundaryHandler(BoundaryHandler, Protocol):
+    """設定の無い境目の handler(``maybe``・``result``)の型 — 前は引数の無い工場だった(ADR-DOE-API-002 R3)。
+
+    program に ``maybe(p)`` で当て、列には ``maybe`` のまま置く。1 つの版の間、旧い呼び ``maybe()`` は
+    DeprecationWarning を出して同じ handler を返す(型の検査も deprecated と言う — doeff.program の ``FormerFactoryHandler``
+    と同じ形)。
+    """
+
+    @overload
+    def __call__(self, program: "Bindable", /) -> "DoExpr": ...
+
+    @overload
+    @deprecated(
+        "This handler has no settings, so it is not a handler factory: write the handler itself, "
+        "without the call (ADR-DOE-API-002)"
+    )
+    def __call__(self) -> "FormerFactoryBoundaryHandler": ...
+
+
+_NO_PROGRAM: Any = object()
+
+
 def _boundary(name: str, clauses: ProgramHandler, opened: Callable[[object], object]) -> BoundaryHandler:
     """境目の handler: program を ``opened`` で開いて包み、その周りに ``clauses``(Absent か Raise を受ける節)を置く。
 
@@ -403,6 +434,26 @@ def _boundary(name: str, clauses: ProgramHandler, opened: Callable[[object], obj
     def install(program: "Bindable") -> "DoExpr":
         return clauses(opened(program))
 
+    return _marked(install, name, clauses)
+
+
+def _former_factory_boundary(
+    name: str, clauses: ProgramHandler, opened: Callable[[object], object], doc: str
+) -> FormerFactoryBoundaryHandler:
+    """``_boundary`` の、前は引数の無い工場だった handler(``maybe``・``result``)の形: program 無しの呼び ``maybe()`` は
+    1 つの版の間 DeprecationWarning を出して handler そのものを返す(ADR-DOE-API-002 R3)。"""
+
+    def install(program: "Bindable" = _NO_PROGRAM) -> object:
+        if program is _NO_PROGRAM:
+            warnings.warn(_called_as_former_factory(name), DeprecationWarning, stacklevel=2)
+            return install
+        return clauses(opened(program))
+
+    install.__doc__ = doc
+    return cast(FormerFactoryBoundaryHandler, _marked(install, name, clauses))
+
+
+def _marked(install: Callable[..., object], name: str, clauses: ProgramHandler) -> BoundaryHandler:
     install.__name__ = name
     install.__qualname__ = name
     install_meta = cast(Any, install)  # 関数に印の欄を置く(型の無い欄 — doeff.program の installer と同じ置き方)
@@ -426,26 +477,29 @@ def _opened_only(program: object) -> object:
     return _performed(open_bind(program))
 
 
-_MAYBE = _boundary("maybe", _program_handler(_absent_to_nothing), _some_of)
-_RESULT = _boundary("result", _program_handler(_raise_to_err), _ok_of)
+maybe: FormerFactoryBoundaryHandler = _former_factory_boundary(
+    "maybe",
+    _program_handler(_absent_to_nothing),
+    _some_of,
+    """``(maybe body)`` / ``maybe(body)`` — Absent を Nothing に、成功を Some に畳む handler(Raise は素通り)。
 
+    設定を持たないので工場でなく handler の値(ADR-DOE-API-002 R1)。body は ``<-`` に渡せる物なら何でもよい
+    (宣言を持つ effect をそのまま渡しても開いてから畳む)。旧い呼び ``maybe()`` は 1 つの版の間、
+    DeprecationWarning を出して同じ handler を返す。
+    """,
+)
 
-def maybe() -> BoundaryHandler:
-    """``((maybe) body)`` / ``maybe()(body)`` — 呼ぶと、Absent を Nothing に、成功を Some に畳む handler を返す(Raise は素通り)。
+result: FormerFactoryBoundaryHandler = _former_factory_boundary(
+    "result",
+    _program_handler(_raise_to_err),
+    _ok_of,
+    """``(result body)`` / ``result(body)`` — Raise(理由) を Err(理由) に、成功を Ok に畳む handler(Absent は素通り)。
 
-    body は ``<-`` に渡せる物なら何でもよい(宣言を持つ effect をそのまま渡しても開いてから畳む)。
-    """
-    return _MAYBE
-
-
-def result() -> BoundaryHandler:
-    """``((result) body)`` / ``result()(body)`` — 呼ぶと、Raise(理由) を Err(理由) に、成功を Ok に畳む handler を返す
-    (Absent は素通り)。
-
-    入れ子の順で組み合わせの型を選ぶ: ``result()(maybe()(b))`` は Ok(Some v)・Ok(Nothing)・Err(e)、
-    ``maybe()(result()(b))`` は Some(Ok v)・Some(Err e)・Nothing(R2)。
-    """
-    return _RESULT
+    設定を持たないので工場でなく handler の値(ADR-DOE-API-002 R1)。入れ子の順で組み合わせの型を選ぶ:
+    ``result(maybe(b))`` は Ok(Some v)・Ok(Nothing)・Err(e)、``maybe(result(b))`` は Some(Ok v)・Some(Err e)・Nothing(R2)。
+    旧い呼び ``result()`` は 1 つの版の間、DeprecationWarning を出して同じ handler を返す。
+    """,
+)
 
 
 @dataclass(frozen=True)

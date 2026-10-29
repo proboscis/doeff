@@ -54,7 +54,7 @@
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (SetStoreOutage DETAIL))
   ;; 束ねずに逃がす: result で畳むと Err(Unreachable) — 値として束ねた名には Unreachable が来ない。
-  (val settled (in-store store ((result) (watch-once 0))))
+  (val settled (in-store store (result (watch-once 0))))
   ;; Ok / Err は値で比べられない(Rust の型)ので形を repr で比べる。
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" (Unreachable DETAIL))) settled)

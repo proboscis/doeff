@@ -57,7 +57,7 @@
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (SetStoreOutage DETAIL))
   ;; 束ねずに逃がす: result で畳むと Err(Unreachable) — 値として束ねた名には Unreachable が来ない。
-  (val settled (in-store store ((result) (read-events "journal" None))))
+  (val settled (in-store store (result (read-events "journal" None))))
   ;; Ok / Err は値で比べられない(Rust の型)ので形を repr で比べる。
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" (Unreachable DETAIL))) settled)
@@ -69,7 +69,7 @@
 (deftest test-a-key-head-read-of-an-undeclared-stream-escapes-as-a-raise
   (val store (MemoryStore LAW-SCHEMA))
   ;; journal は key-lookup を宣言していない列 — 頭の読みの NotIndexed は失敗として Raise(NotIndexed) になる。
-  (val settled (in-store store ((result) (read-events "journal" "a"))))
+  (val settled (in-store store (result (read-events "journal" "a"))))
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" (NotIndexed #("idempotencyKey")))) settled)
   (with [(pytest.raises UnhandledEffect)]
