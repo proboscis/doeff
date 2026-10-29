@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -28,7 +26,7 @@ from doeff_agents import (
     StopSessionEffect,
     agent,
 )
-from doeff_agents import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioStep, ScenarioWorld, scenario_agent_handler
 from doeff_core_effects import scheduled
 
 from doeff import do, run
@@ -98,15 +96,15 @@ def _agent_task(work_dir: Path):
 
 
 def test_l2_launch_is_idempotent_and_handle_is_opaque(tmp_path: Path) -> None:
-    handler = ScenarioAgentHandler()
+    world = ScenarioWorld()
 
-    first, second = run(handler.wrap(_launch_twice(tmp_path)))
+    first, second = run(scenario_agent_handler(world=world)(_launch_twice(tmp_path)))
 
     assert first == second
     assert isinstance(first, SessionHandle)
     assert first.session_id == "run-001-node-a-0"
     assert not hasattr(first, "pane_id")
-    assert handler.launch_count("run-001-node-a-0") == 1
+    assert world.launch_count("run-001-node-a-0") == 1
 
 
 def test_l2_effect_constructors_return_core_effects(tmp_path: Path) -> None:
@@ -159,7 +157,7 @@ def test_l2_agent_spec_carries_mcp_tools_into_launch_effect(tmp_path: Path) -> N
 
 
 def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path) -> None:
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-c-0": [
                 ScenarioStep.invalid(
@@ -171,10 +169,10 @@ def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path)
         }
     )
 
-    result = run(handler.wrap(_agent_task(tmp_path)))
+    result = run(scenario_agent_handler(world=world)(_agent_task(tmp_path)))
 
     assert result == {"summary": "fixed", "ok": True}
-    assert handler.follow_up_messages("run-001-node-c-0") == [
+    assert world.follow_up_messages("run-001-node-c-0") == [
         "The structured result was invalid: required property 'ok' is missing. "
         "Call the `report_result` MCP tool again with a corrected payload; "
         "it validates against the result schema."
@@ -182,7 +180,7 @@ def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path)
 
 
 def test_agent_distinguishes_absent_result_in_retry_message(tmp_path: Path) -> None:
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-c-0": [
                 ScenarioStep.absent(),
@@ -191,10 +189,10 @@ def test_agent_distinguishes_absent_result_in_retry_message(tmp_path: Path) -> N
         }
     )
 
-    result = run(handler.wrap(_agent_task(tmp_path)))
+    result = run(scenario_agent_handler(world=world)(_agent_task(tmp_path)))
 
     assert result == {"summary": "reported", "ok": True}
-    assert handler.follow_up_messages("run-001-node-c-0") == [
+    assert world.follow_up_messages("run-001-node-c-0") == [
         "No structured result was reported. Complete the task and report the "
         "result by calling the `report_result` MCP tool exactly once; it "
         "validates the payload against the result schema."
@@ -202,7 +200,7 @@ def test_agent_distinguishes_absent_result_in_retry_message(tmp_path: Path) -> N
 
 
 def test_agent_raises_typed_failure_on_retry_exhaustion(tmp_path: Path) -> None:
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-c-0": [
                 ScenarioStep.invalid(
@@ -222,7 +220,7 @@ def test_agent_raises_typed_failure_on_retry_exhaustion(tmp_path: Path) -> None:
     )
 
     with pytest.raises(AgentAttemptExhaustedError) as exc_info:
-        run(handler.wrap(_agent_task(tmp_path)))
+        run(scenario_agent_handler(world=world)(_agent_task(tmp_path)))
 
     assert exc_info.value.session_id == "run-001-node-c-0"
     assert exc_info.value.last_error.kind == AgentValidationErrorKind.INVALID
@@ -230,7 +228,7 @@ def test_agent_raises_typed_failure_on_retry_exhaustion(tmp_path: Path) -> None:
 
 
 def test_agent_treats_awaiting_input_as_typed_failure(tmp_path: Path) -> None:
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-c-0": [
                 ScenarioStep.awaiting_input("needs human confirmation"),
@@ -239,7 +237,7 @@ def test_agent_treats_awaiting_input_as_typed_failure(tmp_path: Path) -> None:
     )
 
     with pytest.raises(AgentAttemptExhaustedError) as exc_info:
-        run(handler.wrap(_agent_task(tmp_path)))
+        run(scenario_agent_handler(world=world)(_agent_task(tmp_path)))
 
     assert exc_info.value.last_error.kind == AgentValidationErrorKind.AWAITING_INPUT
     assert "needs human confirmation" in exc_info.value.last_error.message
@@ -253,7 +251,7 @@ def test_agent_never_follows_up_a_terminal_failure(tmp_path: Path) -> None:
     session. Observed live four times as 'tmux send-keys failed' replacing
     the clean exhaustion error.
     """
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-c-0": [
                 ScenarioStep.terminal_invalid(
@@ -264,12 +262,12 @@ def test_agent_never_follows_up_a_terminal_failure(tmp_path: Path) -> None:
     )
 
     with pytest.raises(AgentAttemptExhaustedError) as exc_info:
-        run(handler.wrap(_agent_task(tmp_path)))
+        run(scenario_agent_handler(world=world)(_agent_task(tmp_path)))
 
     assert exc_info.value.last_error.kind == AgentValidationErrorKind.INVALID
     assert "exhausted after 2 retries" in exc_info.value.last_error.message
     # The defining assertion: no follow-up was sent to the dead session.
-    assert handler.follow_up_messages("run-001-node-c-0") == []
+    assert world.follow_up_messages("run-001-node-c-0") == []
 
 
 def test_agent_reawaits_on_timeout_without_follow_up(tmp_path: Path) -> None:
@@ -278,7 +276,7 @@ def test_agent_reawaits_on_timeout_without_follow_up(tmp_path: Path) -> None:
     Re-await it; injecting a retry prompt into a healthily working agent
     is noise (observed live) and must not happen.
     """
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-c-0": [
                 ScenarioStep.timeout(),
@@ -287,10 +285,10 @@ def test_agent_reawaits_on_timeout_without_follow_up(tmp_path: Path) -> None:
         }
     )
 
-    result = run(handler.wrap(_agent_task(tmp_path)))
+    result = run(scenario_agent_handler(world=world)(_agent_task(tmp_path)))
 
     assert result == {"summary": "finished late", "ok": True}
-    assert handler.follow_up_messages("run-001-node-c-0") == []
+    assert world.follow_up_messages("run-001-node-c-0") == []
 
 
 @do
@@ -323,7 +321,7 @@ def test_agent_heartbeat_expiry_never_burns_attempts(tmp_path: Path) -> None:
     attempt) raised AgentAttemptExhaustedError on the first expiry; the
     demoted loop re-awaits transparently until the structured result arrives.
     """
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             "run-001-node-d-0": [
                 ScenarioStep.timeout(),
@@ -333,10 +331,10 @@ def test_agent_heartbeat_expiry_never_burns_attempts(tmp_path: Path) -> None:
         }
     )
 
-    result = run(handler.wrap(_agent_task_with_deadline(tmp_path, 30.0)))
+    result = run(scenario_agent_handler(world=world)(_agent_task_with_deadline(tmp_path, 30.0)))
 
     assert result == {"summary": "finished late", "ok": True}
-    assert handler.follow_up_messages("run-001-node-d-0") == []
+    assert world.follow_up_messages("run-001-node-d-0") == []
 
 
 def test_agent_raises_deadline_exceeded_when_node_spec_deadline_passes(
@@ -348,34 +346,17 @@ def test_agent_raises_deadline_exceeded_when_node_spec_deadline_passes(
     deadline error — not attempt exhaustion — carrying the declared
     window and observed elapsed time for the K5 gate.
     """
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={"run-001-node-d-0": [ScenarioStep.timeout()]},
     )
 
     with pytest.raises(AgentDeadlineExceededError) as exc_info:
-        run(handler.wrap(_agent_task_with_deadline(tmp_path, 0.05)))
+        run(scenario_agent_handler(world=world)(_agent_task_with_deadline(tmp_path, 0.05)))
 
     assert exc_info.value.session_id == "run-001-node-d-0"
     assert exc_info.value.deadline_seconds == 0.05
     assert exc_info.value.elapsed_seconds >= 0.05
-    assert handler.follow_up_messages("run-001-node-d-0") == []
-
-
-class _SlowTransportScenarioHandler(ScenarioAgentHandler):
-    """Scenario handler whose transport delivers each outcome late.
-
-    Models an await whose outcome arrives only after the node-spec
-    deadline has already passed — the window in which no new work may
-    be commissioned (L-K4-3).
-    """
-
-    def __init__(self, *, deliver_late: Callable[[], None], **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._deliver_late = deliver_late
-
-    def handle_await_result(self, effect):
-        self._deliver_late()
-        return super().handle_await_result(effect)
+    assert world.follow_up_messages("run-001-node-d-0") == []
 
 
 @pytest.mark.realtime
@@ -401,37 +382,40 @@ def test_agent_validation_failure_past_deadline_parks_without_follow_up(
     """
     # Deliberately real wall-clock delay: run_agent_task measures the node-spec
     # deadline against time.monotonic() (L-K4-3), so the outcome has to arrive
-    # after 0.05 real seconds.
-    handler = _SlowTransportScenarioHandler(
-        deliver_late=lambda: time.sleep(0.08),
+    # after 0.05 real seconds — a slow transport delivers it 0.08 s late, i.e.
+    # only after the node-spec deadline has already passed (the window in
+    # which no new work may be commissioned).
+    world = ScenarioWorld(
         scripts={
             "run-001-node-d-0": [
-                ScenarioStep.invalid(
+                ScenarioStep(
+                    status=AwaitStatus.EXITED,
                     payload={"summary": "missing ok"},
                     validation_error="required property 'ok' is missing",
+                    latency_seconds=0.08,
                 ),
             ]
         },
     )
 
     with pytest.raises(AgentDeadlineExceededError) as exc_info:
-        run(handler.wrap(_agent_task_with_deadline(tmp_path, 0.05, max_retries)))
+        run(scenario_agent_handler(world=world)(_agent_task_with_deadline(tmp_path, 0.05, max_retries)))
 
     assert exc_info.value.session_id == "run-001-node-d-0"
     assert exc_info.value.elapsed_seconds >= 0.05
     # The defining assertion: no retry prompt was commissioned past the window.
-    assert handler.follow_up_messages("run-001-node-d-0") == []
+    assert world.follow_up_messages("run-001-node-d-0") == []
 
 
 def test_scenario_handler_supports_timeout_outcome(tmp_path: Path) -> None:
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={"run-001-node-b-0": [ScenarioStep.timeout()]},
     )
 
-    handle, outcome, retry_handle = run(scheduled(handler.wrap(_follow_up_and_release(tmp_path))))
+    handle, outcome, retry_handle = run(scheduled(scenario_agent_handler(world=world)(_follow_up_and_release(tmp_path))))
 
     assert outcome.status == AwaitStatus.TIMED_OUT
     assert outcome.result is None
     assert retry_handle == handle
-    assert handler.stopped_sessions == ["run-001-node-b-0"]
-    assert handler.released_sessions == ["run-001-node-b-0"]
+    assert world.stopped_sessions == ["run-001-node-b-0"]
+    assert world.released_sessions == ["run-001-node-b-0"]

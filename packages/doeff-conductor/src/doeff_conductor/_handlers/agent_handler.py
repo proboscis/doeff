@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from doeff import K, Resume, handler
+from doeff import K, Perform, Resume, handler, run
 from doeff.program import ProgramHandler
 from doeff_conductor._effects.agent import AgentEffect
 from doeff_conductor._handlers._offload import offloaded_call
@@ -12,44 +12,44 @@ __all__ = ["agent_handler"]
 
 
 def _run_on_agentd(effect: AgentEffect, work_dir: Path) -> object:
-    """Run one schema-validated conductor agent task on doeff-agentd, blocking until its result."""
+    """Run one schema-validated conductor agent task on doeff-agentd, blocking until its result.
+
+    It runs off the scheduler thread (``offloaded_call``), so it answers the doeff-agents agent effect with the
+    daemon handler in a program of its own.
+    """
     from doeff_agents import (
         AgentEffect as AgentsAgentEffect,
     )
     from doeff_agents import (
         AgentTask as AgentsAgentTask,
     )
-    from doeff_agents import AgentType
+    from doeff_agents import AgentType, daemon_agent_handler
     from doeff_agents._agentd_client import LazyAgentdClient
-    from doeff_agents import DaemonAgentHandler
 
     try:
         agent_type = AgentType(effect.task.agent_type)
     except ValueError as exc:
         raise ValueError(f"unsupported agent_type: {effect.task.agent_type}") from exc
 
-    daemon = DaemonAgentHandler(client=LazyAgentdClient())
-    return daemon.handle_agent(
-        AgentsAgentEffect(
-            task=AgentsAgentTask(
-                run_id=effect.task.run_id,
-                # The identity-qualified key, NOT the bare node id: the
-                # L2 task derives the session name from this, and the
-                # name must change when the resolved identity does
-                # (see AgentTask.session_node_key).
-                node_id=effect.task.session_node_key,
-                attempt=effect.task.attempt,
-                agent_type=agent_type,
-                work_dir=work_dir,
-                prompt=effect.task.worker_prompt,
-                result_schema=effect.task.result_schema,
-                model=effect.task.model,
-                effort=effect.task.effort,
-                max_retries=effect.task.max_retries,
-                deadline_seconds=effect.task.deadline_seconds,
-            )
-        )
+    task = AgentsAgentTask(
+        run_id=effect.task.run_id,
+        # The identity-qualified key, NOT the bare node id: the
+        # L2 task derives the session name from this, and the
+        # name must change when the resolved identity does
+        # (see AgentTask.session_node_key).
+        node_id=effect.task.session_node_key,
+        attempt=effect.task.attempt,
+        agent_type=agent_type,
+        work_dir=work_dir,
+        prompt=effect.task.worker_prompt,
+        result_schema=effect.task.result_schema,
+        model=effect.task.model,
+        effort=effect.task.effort,
+        max_retries=effect.task.max_retries,
+        deadline_seconds=effect.task.deadline_seconds,
     )
+    on_agentd = daemon_agent_handler(client=LazyAgentdClient())
+    return run(on_agentd(Perform(AgentsAgentEffect(task=task))))
 
 
 def agent_handler() -> ProgramHandler:

@@ -175,20 +175,20 @@ def review_document(timeout_seconds: float = 60):  # 文章とコードの両方
 
 ## エージェントの操作だけをテスト用のハンドラへ替える
 
-`doeff-agents`には、テスト用の`ScenarioAgentHandler`が付いています。セッションIDごとに、返す答えの列を決めておけます。
+`doeff-agents`には、テスト用のハンドラ`scenario_agent_handler`が付いています。セッションIDごとに、返す答えの列を`ScenarioWorld`に決めておけます。ハンドラが受けた操作(追加の指示・停止・解放)も、同じ`ScenarioWorld`から読めます。
 
 ```python
-from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep  # テスト用のハンドラ。
+from doeff_agents import ScenarioStep, ScenarioWorld, scenario_agent_handler  # テスト用のハンドラ。
 from doeff_core_effects.scheduler import scheduled  # SpawnとWaitに答えるスケジューラを付ける。
 
-testing = ScenarioAgentHandler(scripts={  # セッションIDごとに、答えの列を決める。
+testing = ScenarioWorld(scripts={  # セッションIDごとに、答えの列を決める。
     "article-example-language-0": [ScenarioStep.success({"summary": "文章を確認", "ok": True})],  # すぐ終わる。
     "article-example-examples-0": [  # こちらは入力待ちを挟む。
         ScenarioStep.awaiting_input("対象の確認が必要"),  # 1回目のAwaitResultは入力待ち。
         ScenarioStep.success({"summary": "コードを確認", "ok": False}),  # FollowUpの後に結果を返す。
     ],
 })
-result = run(scheduled(testing.wrap(review_document(timeout_seconds=0))))  # シナリオの答えで動かす。
+result = run(scheduled(scenario_agent_handler(world=testing)(review_document(timeout_seconds=0))))  # シナリオの答えで動かす。
 assert result == {"ready": False, "summaries": ["文章を確認", "コードを確認"]}  # 片方がok=False。
 assert len(testing.follow_up_messages("article-example-examples-0")) == 1  # 追加の指示は1回だけ。
 assert len(testing.released_sessions) == 2  # 2つのセッションとも解放された。
@@ -202,7 +202,7 @@ assert len(testing.released_sessions) == 2  # 2つのセッションとも解放
 | スケジューラ(`Spawn`と`Wait`に答える部品) | エージェントの答えと終わり方 |
 | 追加の指示と解放の依頼の数 | 待ち時間(0秒にしてある) |
 
-- `ScenarioAgentHandler`は決めた答えをそのまま返し、schemaの検査も再試行もしません。
+- `scenario_agent_handler`は決めた答えをそのまま返し、schemaの検査も再試行もしません。
 - 時間切れ、結果なし、schema違反の3つの場合は、[完全な例](examples/agents_workflow.py)で確かめています。
 - 待ち時間を0にしたのは、シナリオの答え1つごとに分岐を見るためです。実際の時間の流れは確かめていません。
 

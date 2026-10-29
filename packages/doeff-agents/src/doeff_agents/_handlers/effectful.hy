@@ -1,13 +1,15 @@
 ;;; Effectful doeff-agent handlers.
 ;;;
-;;; The handler boundary is Hy `defhandler`; backend-specific execution stays in
-;;; AgentHandler implementations.
+;;; The handler boundary is Hy `defhandler`. The parts every agent handler answers the same way — the in-VM MCP
+;;; server a launch carries and the AwaitResult loop over a transport looked at once at a time — are the programs
+;;; `_serve-mcp-tools` and `_await-result-by-polling`, which the mock, scenario and daemon handlers share.
 
 (require doeff-hy.handle [defhandler])
-(require doeff-hy.macros [<-])
+(require doeff-hy.macros [<- defk val var])
 
 (import time threading)
-(import doeff [Ask GetHandlers GetOuterHandlers])
+(import collections.abc [Callable])
+(import doeff [Ask GetHandlers GetOuterHandlers K])
 (import doeff_core_effects [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
 (import doeff_agents._agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
 (import doeff_agents._effects [
@@ -31,6 +33,7 @@
   StopEffect
   StopSessionEffect
   WarmSessionEffect])
+(import doeff_agents._effects [AwaitOutcome :as _AwaitOutcome SessionHandle :as _SessionHandle])
 (import doeff_agents._effects._handler-effects [ClaudeLaunchEffect])
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents._handlers.production [
@@ -43,6 +46,76 @@
 
 (setv AWAIT-RESULT-POLL-INTERVAL-SECONDS 0.2)
 (setv AWAIT-RESULT-AWAITING-INPUT-STABILITY-SECONDS 15.0)
+
+
+(defk _serve-mcp-tools [continuation tools]
+  {:pre [(: continuation K) (: tools tuple)] :post [(: % McpToolServer)]
+   :tags {:context "agent-handler" :role "foundation"}}
+  "Start the in-VM MCP server a launch carries and give it back once it listens. Its tools run under the
+   handlers around the launching program (read from the launch's continuation) and the handlers outside the
+   answering handler, so a tool's effects reach the program's domain handlers."
+  (<- inner-handlers (GetHandlers continuation))
+  (<- outer-handlers (GetOuterHandlers))
+  (val server (McpToolServer :tools tools))
+  (<- ready-ep (CreateExternalPromise))
+  (.start server :ready-promise ready-ep)
+  (<- (Wait ready-ep.future))
+  (<- (Spawn (mcp-server-loop server (+ (list inner-handlers) (list outer-handlers))) :daemon True))
+  server)
+
+
+(defk _stop-mcp-server [servers session-id]
+  {:pre [(: servers dict) (: session-id str)] :post [(: % (type None))]
+   :tags {:context "agent-handler" :role "foundation"}}
+  "A session that stops, is released or is cleaned up no longer needs its in-VM MCP server: shut down the one
+   `servers` (session id → server) keeps for it, if any."
+  (val server (.pop servers session-id None))
+  (when (is-not server None)
+    (.shutdown server))
+  None)
+
+
+(defk _await-result-by-polling [await-once handle timeout-seconds]
+  {:pre [(: await-once Callable) (: handle _SessionHandle) (: timeout-seconds (| int float None))]
+   :post [(: % _AwaitOutcome)]
+   :tags {:context "agent-handler" :role "protocol"}}
+  "AwaitResult over a transport looked at once at a time: `await-once` answers an AwaitResultEffect with a zero
+   timeout (a look that does not wait). Between looks the program waits on the scheduler at idle priority, so
+   other tasks run. It stops at a result, at a final outcome, when AWAITING_INPUT has held for the stability
+   window (or is not continuable), or when the budget (`timeout-seconds`, the transport heartbeat when None) runs out."
+  (val deadline (+ (time.monotonic)
+                   (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds)))
+  (var awaiting-input-deadline None)
+  (var outcome None)
+  (while True
+    (:= outcome (await-once (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
+    (when (and (is-not outcome.result None)
+               (is outcome.validation-error None))
+      (break))
+    (cond
+      (= outcome.status AwaitStatus.TIMED_OUT)
+      (:= awaiting-input-deadline None)
+
+      (= outcome.status AwaitStatus.AWAITING_INPUT)
+      (do
+        (when (is awaiting-input-deadline None)
+          (:= awaiting-input-deadline
+              (+ (time.monotonic) AWAIT-RESULT-AWAITING-INPUT-STABILITY-SECONDS)))
+        (when (or (not (getattr outcome "continuable" True))
+                  (>= (time.monotonic) awaiting-input-deadline))
+          (break)))
+
+      True
+      (break))
+    (when (>= (time.monotonic) deadline)
+      (break))
+    (val delay-seconds
+         (max 0.0 (min AWAIT-RESULT-POLL-INTERVAL-SECONDS (- deadline (time.monotonic)))))
+    (when (> delay-seconds 0.0)
+      (<- delay-ep (CreateExternalPromise))
+      (.start (threading.Timer delay-seconds delay-ep.complete [None]))
+      (<- (Wait delay-ep.future :priority PRIORITY_IDLE))))
+  outcome)
 
 
 (defn _mcp-server-map [agent-handler]
@@ -96,20 +169,13 @@
                (spec-uses-report-result-transport spec)))
     (setv wants-server? (or (bool spec.mcp-tools) report-transport?))
     (when wants-server?
-      (<- inner-handlers (GetHandlers k))
-      (<- outer-handlers (GetOuterHandlers))
-      (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
       (setv server-tools (tuple spec.mcp-tools))
       (when report-transport?
         (setv sink (.create-result-sink agent-handler spec.session-id))
         (setv server-tools
               (+ server-tools
                  #((make-report-result-tool sink spec.result-schema)))))
-      (setv server (McpToolServer :tools server-tools))
-      (<- ready-ep (CreateExternalPromise))
-      (.start server :ready-promise ready-ep)
-      (<- _ (Wait ready-ep.future))
-      (<- _ (Spawn (mcp-server-loop server captured-handlers) :daemon True))
+      (<- server (_serve-mcp-tools k server-tools))
       (_remember-mcp-server agent-handler spec.session-id server)
       (setv mcp-server-urls {spec.mcp-server-name server.url}))
     (setv launch-result None)
@@ -125,44 +191,7 @@
     (resume launch-result))
 
   (AwaitResultEffect [handle timeout-seconds]
-    (setv effective-timeout
-      (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
-    (setv deadline (+ (time.monotonic) effective-timeout))
-    (setv awaiting-input-deadline None)
-    (setv outcome None)
-    (while True
-      (setv outcome
-        (.handle-await-result agent-handler
-          (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
-      (when (and (is-not outcome.result None)
-                 (is outcome.validation-error None))
-        (break))
-      (cond
-        (= outcome.status AwaitStatus.TIMED_OUT)
-        (setv awaiting-input-deadline None)
-
-        (= outcome.status AwaitStatus.AWAITING_INPUT)
-        (do
-          (when (is awaiting-input-deadline None)
-            (setv awaiting-input-deadline
-                  (+ (time.monotonic)
-                     AWAIT-RESULT-AWAITING-INPUT-STABILITY-SECONDS)))
-          (when (or (not (getattr outcome "continuable" True))
-                    (>= (time.monotonic) awaiting-input-deadline))
-            (break)))
-
-        True
-        (break))
-      (when (>= (time.monotonic) deadline)
-        (break))
-      (setv delay-seconds
-            (max 0.0
-                 (min AWAIT-RESULT-POLL-INTERVAL-SECONDS
-                      (- deadline (time.monotonic)))))
-      (when (> delay-seconds 0.0)
-        (<- delay-ep (CreateExternalPromise))
-        (.start (threading.Timer delay-seconds delay-ep.complete [None]))
-        (<- _ (Wait delay-ep.future :priority PRIORITY_IDLE))))
+    (<- outcome (_await-result-by-polling agent-handler.handle-await-result handle timeout-seconds))
     (resume outcome))
 
   (FollowUpEffect [handle message]
@@ -186,14 +215,7 @@
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
     (setv mcp-server-urls None)
     (when mcp-tools
-      (<- inner-handlers (GetHandlers k))
-      (<- outer-handlers (GetOuterHandlers))
-      (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-      (setv server (McpToolServer :tools mcp-tools))
-      (<- ready-ep (CreateExternalPromise))
-      (.start server :ready-promise ready-ep)
-      (<- _ (Wait ready-ep.future))
-      (<- _ (Spawn (mcp-server-loop server captured-handlers) :daemon True))
+      (<- server (_serve-mcp-tools k (tuple mcp-tools)))
       (_remember-mcp-server agent-handler session-name server)
       (setv mcp-server-urls {mcp-server-name server.url}))
     (setv launch-result None)

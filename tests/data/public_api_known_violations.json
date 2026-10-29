@@ -1996,16 +1996,13 @@
     },
     "境界 — class の形の handler": {
      "doeff_agents.handlers.daemon": [
-      "AgentHandler",
-      "DaemonAgentHandler"
+      "AgentHandler"
      ],
      "doeff_agents.handlers.production": [
       "AgentHandler"
      ],
      "doeff_agents.handlers.testing": [
-      "AgentHandler",
-      "MockAgentHandler",
-      "ScenarioAgentHandler"
+      "AgentHandler"
      ]
     },
     "境界 — effect の値の型": {
@@ -17875,6 +17872,27 @@
    "module": "doeff_agents.effects.agent",
    "name": "RecordStep",
    "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card [id] が足し、[id] が表に書いた)",
+   "決め": "[id]"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "ScenarioWorld",
+   "訳": "handler の factory scenario_agent_handler(world=…) の引数の値の型(R2 の handler の設定の型 — doeff-codex の FakeCodexWorld と同じ形)。class の形の handler ScenarioAgentHandler を defhandler に書き直した時、test が読む scenario の状態(launch の数・follow-up・stop・release)と手順の入れ替えを、class の method から handler の外の値へ移した",
+   "決め": "[id]"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "ScenarioWorld",
+   "訳": "handler の factory scenario_agent_handler(world=…) の引数の値の型(R2 の handler の設定の型)。移し替えの module doeff_agents.handlers が同じ物を出す — 移し替えの module を消す段 3 で消える",
+   "決め": "[id]"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "ScenarioWorld",
+   "訳": "handler の factory scenario_agent_handler(world=…) の引数の値の型(R2 の handler の設定の型)の定義の場所。移し替えの module doeff_agents.handlers の下の古い path が同じ物を出す — 移し替えの module を消す段 3 で消える",
    "決め": "[id]"
   },
   {

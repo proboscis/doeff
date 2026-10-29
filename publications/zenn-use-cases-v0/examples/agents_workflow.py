@@ -19,9 +19,10 @@ from doeff_agents.effects import (  # セッションの依頼と、ハンドラ
     StopSession,  # 完了できないセッションを停止する操作。
 )
 from doeff_agents.handlers import agent_effectful_handler  # 本物のセッションを扱う公開のハンドラ。
-from doeff_agents.handlers.testing import (  # 実CLIの代わりに指定した応答列を返す境界。
-    ScenarioAgentHandler,  # アプリケーションの関数を変更せずエージェント操作を置き換える。
+from doeff_agents import (  # 実CLIの代わりに指定した応答列を返す境界。
     ScenarioStep,  # 結果・入力待ち・失敗をテストデータとして記述する。
+    ScenarioWorld,  # 応答列と、ハンドラが受けた操作(追加の指示・停止・解放)を持つ値。
+    scenario_agent_handler,  # アプリケーションの関数を変更せずエージェント操作を置き換える。
 )
 from doeff_agents.session_backend import SessionBackend, default_session_backend  # 端末への接続先。
 from doeff_core_effects import Ask, reader  # 値を頼む依頼と、それに答えるreader。
@@ -149,14 +150,14 @@ def verify() -> None:  # runを許すオフライン検証。CLI起動や外部�
     assert outcome.status is AwaitStatus.EXITED  # 終わったという答えが届いた。
     assert outcome.result == {"summary": "読みやすい", "ok": True}  # 決めた結果がそのまま届いた。
 
-    testing = ScenarioAgentHandler(scripts={  # セッションIDごとに、答えの列を決める。
+    testing = ScenarioWorld(scripts={  # セッションIDごとに、答えの列を決める。
         "article-example-language-0": [ScenarioStep.success({"summary": "文章を確認", "ok": True})],  # すぐ終わる。
         "article-example-examples-0": [  # こちらは入力待ちを挟む。
             ScenarioStep.awaiting_input("対象の確認が必要"),  # 1回目のAwaitResultは入力待ち。
             ScenarioStep.success({"summary": "コードを確認", "ok": False}),  # FollowUpの後に結果を返す。
         ],
     })
-    result = run(scheduled(testing.wrap(review_document(timeout_seconds=0))))  # シナリオの答えで動かす。
+    result = run(scheduled(scenario_agent_handler(world=testing)(review_document(timeout_seconds=0))))  # シナリオの答えで動かす。
     assert result == {"ready": False, "summaries": ["文章を確認", "コードを確認"]}  # 片方がok=False。
     assert len(testing.follow_up_messages("article-example-examples-0")) == 1  # 追加の指示は1回だけ。
     assert len(testing.released_sessions) == 2  # 2つのセッションとも解放された。
@@ -164,12 +165,12 @@ def verify() -> None:  # runを許すオフライン検証。CLI起動や外部�
     for payload in ({"summary": "文章を確認", "ok": True}, {"summary": "コードを確認", "ok": False}):  # シナリオの結果。
         validate(payload, RESULT_SCHEMA)  # シナリオのデータが宣言した形に合うことだけを確かめる。
 
-    timed_out = ScenarioAgentHandler(scripts={  # 結果が期限内に得られないケースを用意する。
+    timed_out = ScenarioWorld(scripts={  # 結果が期限内に得られないケースを用意する。
         "article-example-language-0": [ScenarioStep.timeout()],  # AwaitResultへタイムアウトを返す。
     })
     spec = run(review_spec("language", "文章を確認"))  # 外部操作のない仕様作成だけを実行する。
     try:  # タイムアウトが例外として呼び出し元へ届くか確認する。
-        run(timed_out.wrap(checked_review(spec, timeout_seconds=0)))  # 即時の応答なのでscheduler不要。
+        run(scenario_agent_handler(world=timed_out)(checked_review(spec, timeout_seconds=0)))  # 即時の応答なのでscheduler不要。
     except RuntimeError as error:  # 期待する失敗の理由まで確認する。
         if "レビュー未完了" not in str(error):  # 別の実行エラーを成功扱いしない。
             raise AssertionError("想定外の例外です") from error  # 元の失敗理由を保持する。
@@ -182,9 +183,9 @@ def verify() -> None:  # runを許すオフライン検証。CLI起動や外部�
         ScenarioStep.absent(),  # 終了していても結果がなければ失敗する。
         ScenarioStep.terminal_invalid(validation_error="型が不一致"),  # 検証エラーでも失敗する。
     ):
-        invalid = ScenarioAgentHandler(scripts={spec.session_id: [step]})  # 1件分の失敗応答を設置。
+        invalid = ScenarioWorld(scripts={spec.session_id: [step]})  # 1件分の失敗応答を設置。
         try:  # 結果境界が報告した異常を見落とさないことを確認する。
-            run(invalid.wrap(checked_review(spec, timeout_seconds=0)))  # 本物のエージェントは使わない。
+            run(scenario_agent_handler(world=invalid)(checked_review(spec, timeout_seconds=0)))  # 本物のエージェントは使わない。
         except RuntimeError as error:  # 未完了とは別の、結果利用不可エラーを期待する。
             if "レビュー結果を利用できません" not in str(error):  # 検証結果の扱いを確認する。
                 raise AssertionError("想定外の例外です") from error  # 別の原因なら検証を失敗させる。

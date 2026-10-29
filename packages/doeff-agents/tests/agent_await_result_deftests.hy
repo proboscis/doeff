@@ -6,7 +6,7 @@
 (import doeff-agents [AgentType])
 (import doeff-agents [AgentSpec AwaitOutcome AwaitResult AwaitStatus LaunchSession])
 (import doeff-agents._effects._ids [deterministic-session-id])
-(import doeff-agents [ScenarioAgentHandler ScenarioStep])
+(import doeff-agents [ScenarioStep scenario-agent-handler])
 
 
 (setv _SCHEMA
@@ -40,29 +40,29 @@
 
 (deftest test-await-result-reobserves-transient-awaiting-input [tmp-path]
   (setv handler
-        (ScenarioAgentHandler
+        (scenario-agent-handler
           :scripts {_SID [(ScenarioStep.awaiting-input "status prompt")
                           (ScenarioStep.success {"ok" True})]}))
-  (setv outcome (run (scheduled (.wrap handler (_await-session-once tmp-path)))))
+  (setv outcome (run (scheduled (handler (_await-session-once tmp-path)))))
   (assert (= outcome.status AwaitStatus.EXITED))
   (assert (= outcome.result {"ok" True})))
 
 
 (deftest test-await-result-result-wins-over-awaiting-input-status [tmp-path]
   (setv handler
-        (ScenarioAgentHandler
+        (scenario-agent-handler
           :scripts {_SID [(ScenarioStep
                             :status AwaitStatus.AWAITING_INPUT
                             :payload {"ok" True})]}))
-  (setv outcome (run (scheduled (.wrap handler (_await-session-once tmp-path)))))
+  (setv outcome (run (scheduled (handler (_await-session-once tmp-path)))))
   (assert (= outcome.status AwaitStatus.AWAITING_INPUT))
   (assert (= outcome.result {"ok" True})))
 
 
 (deftest test-await-result-returns-stable-awaiting-input [tmp-path]
   (setv handler
-        (ScenarioAgentHandler
+        (scenario-agent-handler
           :scripts {_SID [(ScenarioStep.awaiting-input "needs input")]}))
-  (setv outcome (run (scheduled (.wrap handler (_await-session-once tmp-path)))))
+  (setv outcome (run (scheduled (handler (_await-session-once tmp-path)))))
   (assert (= outcome.status AwaitStatus.AWAITING_INPUT))
   (assert (= outcome.validation-error "needs input")))

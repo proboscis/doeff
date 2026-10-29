@@ -12,7 +12,7 @@ never a node failure, never an attempt burn.
 
 These tests run the REAL workflow runtime (``ConductorAPI.run_workflow``
 over a Hy DSL file) and the REAL L2 attempt loop; only the transport
-seam is scripted (``ScenarioAgentHandler`` await outcomes), mirroring
+seam is scripted (``scenario_agent_handler`` await outcomes), mirroring
 the C9 live-gate suite.
 """
 
@@ -30,7 +30,7 @@ from doeff_agents import (
     AgentTask as AgentsAgentTask,
 )
 from doeff_agents import AgentType
-from doeff_agents import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioStep, ScenarioWorld, scenario_agent_handler
 from doeff_conductor._api import ConductorAPI
 from doeff_conductor import AgentEffect, AgentTask
 from doeff_conductor._handlers._workspace_path import WorkspacePath
@@ -44,7 +44,7 @@ from doeff_conductor._overseer import list_open_gates
 from doeff_conductor import ResolvedIdentity
 from doeff_conductor import WorkflowStatus
 
-from doeff import K, Resume, handler, stacked_handlers
+from doeff import K, Perform, Resume, handler, stacked_handlers
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -74,18 +74,18 @@ def _cheap_session_id(run_id: str, node_id: str) -> str:
 
 
 def _run_scenario_agent(
-    scenario_handler: ScenarioAgentHandler,
+    scenario_world: ScenarioWorld,
     effect: AgentEffect,
     work_dir: Path,
-) -> object:
+):
     """Run a conductor agent task on the REAL L2 attempt loop with scripted transport outcomes.
 
     Mirrors the production agent handler's conductor task → agents task translation exactly
-    (deadline included) but binds the L2 algebra to ``ScenarioAgentHandler`` instead of the
+    (deadline included) but binds the L2 algebra to ``scenario_agent_handler`` instead of the
     agentd daemon, so the deadline/heartbeat enforcement under test is the production
-    ``_run_agent_task`` code path.
+    ``_run_agent_task`` code path. Returns the program that answers the task.
     """
-    return scenario_handler.handle_agent(
+    return scenario_agent_handler(world=scenario_world)(Perform(
         AgentsAgentEffect(
             task=AgentsAgentTask(
                 run_id=effect.task.run_id,
@@ -101,14 +101,14 @@ def _run_scenario_agent(
                 deadline_seconds=effect.task.deadline_seconds,
             )
         )
-    )
+    ))
 
 
 def _install_scenario_production_handlers(
     *,
     monkeypatch: pytest.MonkeyPatch,
     runtime: MockConductorRuntime,
-    scenario_handler: ScenarioAgentHandler,
+    scenario_world: ScenarioWorld,
     delegate_calls: list[str],
 ) -> None:
     import doeff_conductor._handlers as handlers_module
@@ -118,7 +118,8 @@ def _install_scenario_production_handlers(
         """Answer the agent effects the journal does not replay, counting each run."""
         delegate_calls.append(effect.task.node_id)
         work_dir: Path = yield WorkspacePath(workspace=effect.task.env)
-        return (yield Resume(k, _run_scenario_agent(scenario_handler, effect, work_dir)))
+        result = yield _run_scenario_agent(scenario_world, effect, work_dir)
+        return (yield Resume(k, result))
 
     def production_handlers(**kwargs: object):
         return stacked_handlers(
@@ -166,7 +167,7 @@ class _ParkedRun(NamedTuple):
     api: ConductorAPI
     state_dir: Path
     session_id: str
-    scenario_handler: ScenarioAgentHandler
+    scenario_world: ScenarioWorld
     delegate_calls: list[str]
 
 
@@ -183,7 +184,7 @@ def _park_run_on_deadline(
     session_id = _cheap_session_id(run_id, "deadline-live/0/agent")
     # The stub never completes: every transport await expires (TIMED_OUT)
     # until the node-spec deadline is exceeded.
-    scenario_handler = ScenarioAgentHandler(
+    scenario_world = ScenarioWorld(
         scripts={session_id: [ScenarioStep.timeout()]},
     )
     runtime = MockConductorRuntime(tmp_path / "runtime")
@@ -191,14 +192,14 @@ def _park_run_on_deadline(
     _install_scenario_production_handlers(
         monkeypatch=monkeypatch,
         runtime=runtime,
-        scenario_handler=scenario_handler,
+        scenario_world=scenario_world,
         delegate_calls=delegate_calls,
     )
 
     api = ConductorAPI(state_dir=state_dir)
     handle = api.run_workflow(str(workflow_path), run_id=run_id)
     assert handle.status is WorkflowStatus.BLOCKED
-    return _ParkedRun(api, state_dir, session_id, scenario_handler, delegate_calls)
+    return _ParkedRun(api, state_dir, session_id, scenario_world, delegate_calls)
 
 
 def test_v1_deadline_exceeded_parks_k5_gate_with_journal_entry(
@@ -247,12 +248,12 @@ def test_v2_extend_answer_reawaits_completes_and_replays_without_reparking(
     invoking the agent again or re-parking.
     """
     run_id = "deadline-extend"
-    api, state_dir, session_id, scenario_handler, delegate_calls = _park_run_on_deadline(
+    api, state_dir, session_id, scenario_world, delegate_calls = _park_run_on_deadline(
         tmp_path, monkeypatch, run_id
     )
     gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
 
-    scenario_handler.configure_script(
+    scenario_world.configure_script(
         session_id, [ScenarioStep.success({"summary": "finished in extension"})]
     )
     extended_handle = api.answer_gate(run_id, gate_id, "extend", note="renewal granted")
@@ -297,7 +298,7 @@ def test_v3_heartbeat_expiry_is_transparent_and_node_completes(
     _write_deadline_workflow(workflow_path, deadline_seconds=30.0)
 
     session_id = _cheap_session_id(run_id, "deadline-live/0/agent")
-    scenario_handler = ScenarioAgentHandler(
+    scenario_world = ScenarioWorld(
         scripts={
             session_id: [
                 ScenarioStep.timeout(),
@@ -311,7 +312,7 @@ def test_v3_heartbeat_expiry_is_transparent_and_node_completes(
     _install_scenario_production_handlers(
         monkeypatch=monkeypatch,
         runtime=runtime,
-        scenario_handler=scenario_handler,
+        scenario_world=scenario_world,
         delegate_calls=delegate_calls,
     )
 
@@ -322,7 +323,7 @@ def test_v3_heartbeat_expiry_is_transparent_and_node_completes(
     assert list_open_gates(state_dir, run_id) == []
     assert delegate_calls == ["deadline-live/0/agent"]
     # Transparent re-await: no retry prompt was injected into the session.
-    assert scenario_handler.follow_up_messages(session_id) == []
+    assert scenario_world.follow_up_messages(session_id) == []
 
 
 def test_v3_run_state_records_no_gate_events_for_heartbeat_expiry(
@@ -336,7 +337,7 @@ def test_v3_run_state_records_no_gate_events_for_heartbeat_expiry(
     _write_deadline_workflow(workflow_path, deadline_seconds=30.0)
 
     session_id = _cheap_session_id(run_id, "deadline-live/0/agent")
-    scenario_handler = ScenarioAgentHandler(
+    scenario_world = ScenarioWorld(
         scripts={
             session_id: [
                 ScenarioStep.timeout(),
@@ -348,7 +349,7 @@ def test_v3_run_state_records_no_gate_events_for_heartbeat_expiry(
     _install_scenario_production_handlers(
         monkeypatch=monkeypatch,
         runtime=runtime,
-        scenario_handler=scenario_handler,
+        scenario_world=scenario_world,
         delegate_calls=[],
     )
 
