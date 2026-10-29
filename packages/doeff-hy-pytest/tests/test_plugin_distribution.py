@@ -11,6 +11,7 @@ import importlib
 import importlib.metadata as metadata
 from pathlib import Path
 
+import pytest
 import tomllib
 from packaging.requirements import Requirement
 
@@ -52,7 +53,7 @@ def test_installed_plugin_entry_point_belongs_to_doeff_hy_pytest() -> None:
 
 def test_the_plugin_shows_only_the_two_declarations() -> None:
     """入口が出す名は検ごとの宣言 2 個だけで、hook は pytest が拾う属性として在る(card ki-ad38495b7c15)。測りの中は _ で
-    始まる module に在り、_ の無い module は移し替えの間だけ残す旧い path で、名を 1 つも出さない。"""
+    始まる module に在り、_ の無い module は無い — 旧い path(budget・python_calls)の移し替えも消した(card ki-c1df9e7c5d02)。"""
     import doeff_hy_pytest
 
     assert doeff_hy_pytest.__all__ == ["declare_process_tree_cpu", "declare_step_budget"]
@@ -61,9 +62,10 @@ def test_the_plugin_shows_only_the_two_declarations() -> None:
     open_modules = sorted(
         path.stem for path in source.glob("*.py") if not path.name.startswith("_")
     )
-    assert open_modules == ["budget", "python_calls"]
-    for name in open_modules:
-        assert importlib.import_module(f"doeff_hy_pytest.{name}").__all__ == [], name
+    assert open_modules == []
+    for name in ("budget", "python_calls"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(f"doeff_hy_pytest.{name}")
 
 
 def test_the_plugin_package_ships_its_types() -> None:
