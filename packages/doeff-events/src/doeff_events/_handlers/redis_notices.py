@@ -32,9 +32,9 @@ How it talks to Redis:
   connection; when that connection is lost the subscription is dead (``NextAnnouncement`` answers
   ``BrokerUnreachable``) and the caller makes a new one — this handler never re-subscribes behind the caller's
   back, because a notice announced between the loss and the new subscription is gone and the caller must know.
-- One read takes everything that has already come, up to ``READ_BATCH`` (agora card ki-a83c715eab23): the read
+- One read takes everything that has already come, up to ``_READ_BATCH`` (agora card ki-a83c715eab23): the read
   that answers a ``NextAnnouncement`` waits for the first notice, then takes the Pub/Sub notices already received
-  on the connection without waiting, and ``XREAD`` takes up to ``READ_BATCH`` entries per kept stream. The notices
+  on the connection without waiting, and ``XREAD`` takes up to ``_READ_BATCH`` entries per kept stream. The notices
   after the first stay with the subscription, in order, and the next ``NextAnnouncement``s are answered from them
   without an ``Await`` — so a source publishes everything that came in one stretch, and its subscriber takes it in
   one wait. Before, every notice was one ``Await``, which parks the source's task; a subscriber whose reaction is
@@ -116,7 +116,7 @@ SUBSCRIPTION_SILENCE_SECONDS: Final = 7.0
 
 # The most notices one read of a subscription takes from what has already come (agora card ki-a83c715eab23): the
 # Pub/Sub notices already received on the connection, and the entries ``XREAD … COUNT`` answers per kept stream.
-READ_BATCH: Final = 1000
+_READ_BATCH: Final = 1000
 
 # The approximate number of entries a kept channel's stream holds (``XADD … MAXLEN ~``): a reader further behind
 # than this loses the oldest, as a Pub/Sub subscriber loses what was sent while it was away.
@@ -338,11 +338,11 @@ def _answers_ping(response: object) -> bool:
 async def _next_notices(pubsub: "PubSub", silence_seconds: float) -> tuple[Announcement, ...]:
     """Wait for the next notice of the subscription — without a limit while the connection answers, and failing
     as a lost connection once it answers nothing for ``silence_seconds`` — then take, without waiting, the notices
-    already received on the connection after it (``READ_BATCH`` in all at most; the module's notes on one read).
+    already received on the connection after it (``_READ_BATCH`` in all at most; the module's notes on one read).
     Only notices are expected on a subscribed connection once the subscription is confirmed; another kind of
     message is named, not skipped."""
     first = _notice_of(await _next_message(pubsub, silence_seconds))
-    return (first, *[notice async for notice in _already_received(pubsub, READ_BATCH - 1)])
+    return (first, *[notice async for notice in _already_received(pubsub, _READ_BATCH - 1)])
 
 
 async def _already_received(pubsub: "PubSub", limit: int) -> "AsyncIterator[Announcement]":
@@ -441,12 +441,12 @@ def _entries(answer: object) -> tuple[Announcement, ...]:
 async def _next_kept_entries(
     client: "Redis", positions: dict[str, str], silence_seconds: float
 ) -> tuple[Announcement, ...]:
-    """``XREAD BLOCK`` for the entries after ``positions`` (``READ_BATCH`` per stream at most — the module's notes on
+    """``XREAD BLOCK`` for the entries after ``positions`` (``_READ_BATCH`` per stream at most — the module's notes on
     one read). Blocks half the silence; empty = nothing came (a quiet stream is not a lost connection). A server
     that does not answer within the block and the silence is a lost connection."""
     half = silence_seconds / 2
     streams = {_kept_key(channel): position for channel, position in positions.items()}
-    read = client.xread(streams, count=READ_BATCH, block=int(half * 1000))
+    read = client.xread(streams, count=_READ_BATCH, block=int(half * 1000))
     try:
         answer: object = await asyncio.wait_for(read, timeout=half + silence_seconds)
     except TimeoutError:
