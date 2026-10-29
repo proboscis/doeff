@@ -7,9 +7,8 @@ from _runner import (
     openai_api_key_from_doeff_py_handler,
     run_program,
 )
-from doeff_openai.effects import ChatCompletion as ChatCompletionEffect
-from doeff_openai.effects import StructuredOutput
-from doeff_openai.handlers import production_handlers
+from doeff_openai import ChatCompletion as ChatCompletionEffect
+from doeff_openai import StructuredOutput, production_handlers
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, do

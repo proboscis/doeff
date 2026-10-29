@@ -3,11 +3,11 @@
 
 import warnings
 
-from doeff_llm.effects import LLMChat, LLMStreamingChat
+from doeff_llm import LLMChat, LLMStreamingChat
 
 
 class RouterChat(LLMChat):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMChat`."""
+    """Deprecated alias of :class:`doeff_llm._effects.LLMChat`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -15,14 +15,14 @@ class RouterChat(LLMChat):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "RouterChat is deprecated; use doeff_llm.effects.LLMChat instead.",
+            "RouterChat is deprecated; use doeff_llm._effects.LLMChat instead.",
             DeprecationWarning,
             stacklevel=2,
         )
 
 
 class RouterStreamingChat(LLMStreamingChat):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMStreamingChat`."""
+    """Deprecated alias of :class:`doeff_llm._effects.LLMStreamingChat`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -30,7 +30,7 @@ class RouterStreamingChat(LLMStreamingChat):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "RouterStreamingChat is deprecated; use doeff_llm.effects.LLMStreamingChat instead.",
+            "RouterStreamingChat is deprecated; use doeff_llm._effects.LLMStreamingChat instead.",
             DeprecationWarning,
             stacklevel=2,
         )

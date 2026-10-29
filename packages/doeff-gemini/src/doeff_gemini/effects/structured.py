@@ -3,11 +3,11 @@
 
 import warnings
 
-from doeff_llm.effects import LLMStructuredQuery
+from doeff_llm import LLMStructuredQuery
 
 
 class GeminiStructuredOutput(LLMStructuredQuery):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMStructuredQuery`."""
+    """Deprecated alias of :class:`doeff_llm.LLMStructuredQuery`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -15,7 +15,7 @@ class GeminiStructuredOutput(LLMStructuredQuery):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "GeminiStructuredOutput is deprecated; use doeff_llm.effects.LLMStructuredQuery instead.",
+            "GeminiStructuredOutput is deprecated; use doeff_llm.LLMStructuredQuery instead.",
             DeprecationWarning,
             stacklevel=2,
         )

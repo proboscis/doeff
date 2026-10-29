@@ -1,41 +1,21 @@
-"""Common LLM-oriented type aliases and dataclasses."""
+# moved-submodule-shim: doeff_llm.types -> doeff_llm._types
+"""Moved: ``doeff_llm.types`` is now ``doeff_llm._types`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_llm.types…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from dataclasses import dataclass
-from typing import Any
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-Message = dict[str, Any]
+if TYPE_CHECKING:
+    from doeff_llm._types import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
+if __name__ == "__main__":
+    import runpy
 
-@dataclass(frozen=True)
-class TokenUsage:
-    """Token usage snapshot for one LLM call."""
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-    @property
-    def input_tokens(self) -> int:
-        """Alias for provider-neutral naming."""
-        return self.prompt_tokens
-
-    @property
-    def output_tokens(self) -> int:
-        """Alias for provider-neutral naming."""
-        return self.completion_tokens
-
-
-@dataclass(frozen=True)
-class CostInfo:
-    """Cost metadata for one LLM call."""
-
-    total_cost: float
-    currency: str = "USD"
-
-
-__all__ = [
-    "CostInfo",
-    "Message",
-    "TokenUsage",
-]
+    runpy.run_module("doeff_llm._types", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_llm._types")

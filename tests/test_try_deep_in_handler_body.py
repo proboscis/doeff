@@ -33,7 +33,7 @@ class CustomQuery(EffectBase):
 
 @do
 def _get_state_or_none(key):
-    """Mimics doeff_openai.client._get_state_or_none."""
+    """Mimics doeff_openai._client._get_state_or_none."""
     @do
     def _read():
         return (yield Get(key))

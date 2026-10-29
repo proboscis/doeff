@@ -3,7 +3,7 @@
 Lets the pricing table live behind a handler so a user can install their
 own (for internal price overrides, future models, cached-input billing,
 etc.) without editing ``MODEL_PRICING``. The reference handler in
-:mod:`doeff_openai.handlers.production` knows the models in its table;
+:mod:`doeff_openai._handlers.production` knows the models in its table;
 anything unknown propagates via ``Pass`` so an outer handler has a chance,
 and an unhandled effect becomes a loud ``RuntimeError``.
 """
@@ -12,7 +12,7 @@ and an unhandled effect becomes a loud ``RuntimeError``.
 from dataclasses import dataclass
 
 from doeff import EffectBase
-from doeff_openai.types import TokenUsage
+from doeff_openai._types import TokenUsage
 
 
 @dataclass(frozen=True)

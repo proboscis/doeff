@@ -8,24 +8,17 @@ from typing import Any
 import pytest
 from _runner import run_program
 from doeff_core_effects.effects import EffectBase as Effect
-from doeff_llm.effects import (
-    LLMChat,
-    LLMEmbedding,
-    LLMStreamingChat,
-    LLMStructuredQuery,
-)
-from doeff_openrouter.effects import (
+from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
+from doeff_openrouter import (
+    MockOpenRouterRuntime,
     RouterChat,
     RouterStreamingChat,
     RouterStructuredOutput,
-)
-from doeff_openrouter.handlers import (
-    MockOpenRouterRuntime,
     mock_handlers,
     openrouter_mock_handler,
-    openrouter_production_handler,
     production_handlers,
 )
+from doeff_openrouter._handlers import openrouter_production_handler
 from pydantic import BaseModel
 
 from doeff import Pass, Resume, do
@@ -42,9 +35,9 @@ def _run_with_handler(program, handler):
 
 
 def test_effect_exports():
-    from doeff_openrouter.effects import RouterChat as ImportedRouterChat
-    from doeff_openrouter.effects import RouterStreamingChat as ImportedRouterStreamingChat
-    from doeff_openrouter.effects import RouterStructuredOutput as ImportedRouterStructuredOutput
+    from doeff_openrouter import RouterChat as ImportedRouterChat
+    from doeff_openrouter import RouterStreamingChat as ImportedRouterStreamingChat
+    from doeff_openrouter import RouterStructuredOutput as ImportedRouterStructuredOutput
 
     assert ImportedRouterChat is RouterChat
     assert ImportedRouterStreamingChat is RouterStreamingChat
@@ -74,8 +67,8 @@ def test_deprecated_effect_aliases_emit_warnings() -> None:
 
 
 def test_handler_exports():
-    from doeff_openrouter.handlers import mock_handlers as imported_mock_handlers
-    from doeff_openrouter.handlers import production_handlers as imported_production_handlers
+    from doeff_openrouter import mock_handlers as imported_mock_handlers
+    from doeff_openrouter import production_handlers as imported_production_handlers
 
     assert imported_production_handlers is production_handlers
     assert imported_mock_handlers is mock_handlers
@@ -131,7 +124,7 @@ def test_mock_handlers_return_configured_deterministic_payloads() -> None:
 
 
 def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
-    production_module = importlib.import_module("doeff_openrouter.handlers.production")
+    production_module = importlib.import_module("doeff_openrouter._handlers.production")
     observed_calls: list[dict[str, Any]] = []
     queued_responses = [
         {

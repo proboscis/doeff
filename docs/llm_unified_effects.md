@@ -45,10 +45,10 @@ This enables a single program to call multiple providers by model name.
 from pydantic import BaseModel
 
 from doeff import do, run
-from doeff_llm.effects import LLMChat, LLMStructuredQuery
+from doeff_llm import LLMChat, LLMStructuredQuery
 from doeff_gemini.handlers import gemini_production_handler
-from doeff_openai.handlers import openai_production_handler
-from doeff_openrouter.handlers import openrouter_production_handler
+from doeff_openai import openai_production_handler
+from doeff_openrouter import openrouter_production_handler
 
 
 class Analysis(BaseModel):
@@ -87,9 +87,9 @@ result = run(
 
 Provider-specific effect classes remain for compatibility:
 
-- `doeff_openai.effects.ChatCompletion`, `StructuredOutput`, `Embedding`
+- `doeff_openai.ChatCompletion`, `StructuredOutput`, `Embedding`
 - `doeff_gemini.effects.GeminiChat`, `GeminiStructuredOutput`, `GeminiEmbedding`
-- `doeff_openrouter.effects.RouterChat`, `RouterStructuredOutput`
+- `doeff_openrouter.RouterChat`, `RouterStructuredOutput`
 
 They are now deprecated aliases and emit `DeprecationWarning` when instantiated.
 

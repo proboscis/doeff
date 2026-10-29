@@ -3,11 +3,11 @@
 
 import warnings
 
-from doeff_llm.effects import LLMChat, LLMStreamingChat
+from doeff_llm import LLMChat, LLMStreamingChat
 
 
 class GeminiChat(LLMChat):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMChat`."""
+    """Deprecated alias of :class:`doeff_llm.LLMChat`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -15,14 +15,14 @@ class GeminiChat(LLMChat):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "GeminiChat is deprecated; use doeff_llm.effects.LLMChat instead.",
+            "GeminiChat is deprecated; use doeff_llm.LLMChat instead.",
             DeprecationWarning,
             stacklevel=2,
         )
 
 
 class GeminiStreamingChat(LLMStreamingChat):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMStreamingChat`."""
+    """Deprecated alias of :class:`doeff_llm.LLMStreamingChat`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -30,7 +30,7 @@ class GeminiStreamingChat(LLMStreamingChat):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "GeminiStreamingChat is deprecated; use doeff_llm.effects.LLMStreamingChat instead.",
+            "GeminiStreamingChat is deprecated; use doeff_llm.LLMStreamingChat instead.",
             DeprecationWarning,
             stacklevel=2,
         )

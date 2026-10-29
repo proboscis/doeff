@@ -34,15 +34,18 @@ Example:
     >>> )
 """
 
+from importlib import import_module
+from typing import TYPE_CHECKING
+
 # Client exports
 # Chat exports
-from doeff_openai.chat import (
+from doeff_openai._chat import (
     chat_completion,
     chat_completion_async,
     process_stream_chunks,
     simple_chat,
 )
-from doeff_openai.client import (
+from doeff_openai._client import (
     ClientHolder,
     OpenAIClient,
     extract_request_id,
@@ -56,7 +59,7 @@ from doeff_openai.client import (
 )
 
 # Cost calculation exports
-from doeff_openai.costs import (
+from doeff_openai._costs import (
     MissingCachedPricingError,
     PricingError,
     UnknownModelPricingError,
@@ -71,7 +74,7 @@ from doeff_openai.costs import (
 )
 
 # Effect exports (includes CalculateCost)
-from doeff_openai.effects import (
+from doeff_openai._effects import (
     CalculateCost,
     ChatCompletion,
     Embedding,
@@ -80,7 +83,7 @@ from doeff_openai.effects import (
 )
 
 # Embedding exports
-from doeff_openai.embeddings import (
+from doeff_openai._embeddings import (
     batch_embeddings,
     cosine_similarity,
     create_embedding,
@@ -90,7 +93,7 @@ from doeff_openai.embeddings import (
 )
 
 # Streaming exports
-from doeff_openai.streaming import (
+from doeff_openai._streaming import (
     buffered_stream,
     process_stream,
     stream_to_chunks,
@@ -99,7 +102,7 @@ from doeff_openai.streaming import (
 )
 
 # Structured LLM exports
-from doeff_openai.structured_llm import (
+from doeff_openai._structured_llm import (
     gpt4o_structured,
     gpt5_nano_structured,
     gpt5_structured,
@@ -109,7 +112,7 @@ from doeff_openai.structured_llm import (
 )
 
 # Type exports
-from doeff_openai.types import (
+from doeff_openai._types import (
     # Constants
     MODEL_PRICING,
     APICallMetadata,
@@ -135,6 +138,8 @@ __all__ = [
     "Embedding",
     "EmbeddingRequest",
     "MissingCachedPricingError",
+    "MockOpenAIConfig",
+    "MockOpenAIState",
     "ModelPricing",
     # Client
     "OpenAIClient",
@@ -149,6 +154,7 @@ __all__ = [
     "batch_embeddings",
     "buffered_stream",
     "calculate_cost",
+    "calculate_cost_handler",
     # Chat
     "chat_completion",
     "chat_completion_async",
@@ -175,9 +181,13 @@ __all__ = [
     "gpt5_nano_structured",
     "gpt5_structured",
     "is_gpt5_model",
+    "mock_handlers",
+    "openai_mock_handler",
+    "openai_production_handler",
     # Streaming
     "process_stream",
     "process_stream_chunks",
+    "production_handlers",
     "requires_max_completion_tokens",
     "reset_cost_tracking",
     "semantic_search",
@@ -189,3 +199,41 @@ __all__ = [
     "structured_llm__openai",
     "track_api_call",
 ]
+
+
+# Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
+# them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
+# lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
+if TYPE_CHECKING:
+    from doeff_openai._handlers.production import calculate_cost_handler as calculate_cost_handler
+    from doeff_openai._handlers.production import (
+        openai_production_handler as openai_production_handler,
+    )
+    from doeff_openai._handlers.production import production_handlers as production_handlers
+    from doeff_openai._handlers.testing import MockOpenAIConfig as MockOpenAIConfig
+    from doeff_openai._handlers.testing import MockOpenAIState as MockOpenAIState
+    from doeff_openai._handlers.testing import mock_handlers as mock_handlers
+    from doeff_openai._handlers.testing import openai_mock_handler as openai_mock_handler
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "MockOpenAIConfig": "doeff_openai._handlers.testing",
+    "MockOpenAIState": "doeff_openai._handlers.testing",
+    "calculate_cost_handler": "doeff_openai._handlers.production",
+    "mock_handlers": "doeff_openai._handlers.testing",
+    "openai_mock_handler": "doeff_openai._handlers.testing",
+    "openai_production_handler": "doeff_openai._handlers.production",
+    "production_handlers": "doeff_openai._handlers.production",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_LAZY_EXPORTS})

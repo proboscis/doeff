@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from _runner import run_program
 from doeff_openai import get_api_calls, structured_llm__openai
-from doeff_openai.client import OpenAIClient
+from doeff_openai._client import OpenAIClient
 
 from doeff import (
     Ask,
@@ -20,8 +20,8 @@ async def test_retry_tracking_on_failure_then_success():
     """Test that both failed and successful retry attempts are tracked."""
 
     # Mock time.time() to return predictable values
-    with patch("doeff_openai.structured_llm.time.time") as mock_time1, \
-         patch("doeff_openai.client.time.time") as mock_time2:
+    with patch("doeff_openai._structured_llm.time.time") as mock_time1, \
+         patch("doeff_openai._client.time.time") as mock_time2:
         # Return incrementing values for each call to time.time()
         # Each API call uses time.time() twice (start and end)
         time_values = [float(i) for i in range(1000, 1020)]
@@ -113,8 +113,8 @@ async def test_retry_exhaustion_tracking():
     """Test that all retry attempts are tracked even when all fail."""
 
     # Mock time.time() to return predictable values
-    with patch("doeff_openai.structured_llm.time.time") as mock_time1, \
-         patch("doeff_openai.client.time.time") as mock_time2:
+    with patch("doeff_openai._structured_llm.time.time") as mock_time1, \
+         patch("doeff_openai._client.time.time") as mock_time2:
         # Return incrementing values for each call to time.time()
         time_values = [float(i) for i in range(1000, 1020)]
         mock_time1.side_effect = time_values.copy()
@@ -163,8 +163,8 @@ async def test_no_retry_on_immediate_success():
     """Test that successful calls don't trigger retries."""
 
     # Mock time.time() to return predictable values
-    with patch("doeff_openai.structured_llm.time.time") as mock_time1, \
-         patch("doeff_openai.client.time.time") as mock_time2:
+    with patch("doeff_openai._structured_llm.time.time") as mock_time1, \
+         patch("doeff_openai._client.time.time") as mock_time2:
         # Return incrementing values for each call to time.time()
         time_values = [float(i) for i in range(1000, 1020)]
         mock_time1.side_effect = time_values.copy()

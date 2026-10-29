@@ -3,11 +3,11 @@
 
 import warnings
 
-from doeff_llm.effects import LLMStructuredQuery
+from doeff_llm import LLMStructuredQuery
 
 
 class RouterStructuredOutput(LLMStructuredQuery):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMStructuredQuery`."""
+    """Deprecated alias of :class:`doeff_llm._effects.LLMStructuredQuery`."""
 
     def __init__(self, **kwargs):
         # The doeff_llm base effects define an explicit ``__init__`` (they
@@ -15,7 +15,7 @@ class RouterStructuredOutput(LLMStructuredQuery):
         # constructor signature.
         super().__init__(**kwargs)
         warnings.warn(
-            "RouterStructuredOutput is deprecated; use doeff_llm.effects.LLMStructuredQuery instead.",
+            "RouterStructuredOutput is deprecated; use doeff_llm._effects.LLMStructuredQuery instead.",
             DeprecationWarning,
             stacklevel=2,
         )

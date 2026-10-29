@@ -4,22 +4,17 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff_llm.effects import (
-    LLMChat,
-    LLMEmbedding,
-    LLMStreamingChat,
-    LLMStructuredQuery,
-)
+from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_openrouter.chat import chat_completion
-from doeff_openrouter.effects import (
+from doeff_openrouter._chat import chat_completion
+from doeff_openrouter._effects import (
     RouterChat,
     RouterStreamingChat,
     RouterStructuredOutput,
 )
-from doeff_openrouter.structured_llm import (
+from doeff_openrouter._structured_llm import (
     build_response_format_payload,
     process_structured_response,
 )

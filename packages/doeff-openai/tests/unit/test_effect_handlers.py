@@ -6,25 +6,14 @@ from typing import Any
 import pytest
 from _runner import run_program
 from doeff_core_effects.effects import EffectBase
-from doeff_llm.effects import (
-    LLMChat,
-    LLMEmbedding,
-    LLMStreamingChat,
-    LLMStructuredQuery,
-)
-from doeff_openai.effects import (
-    ChatCompletion as ChatCompletionEffect,
-)
-from doeff_openai.effects import (
-    Embedding as EmbeddingEffect,
-)
-from doeff_openai.effects import (
-    StreamingChatCompletion,
-    StructuredOutput,
-)
-from doeff_openai.handlers import (
+from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
+from doeff_openai import ChatCompletion as ChatCompletionEffect
+from doeff_openai import Embedding as EmbeddingEffect
+from doeff_openai import (
     MockOpenAIConfig,
     MockOpenAIState,
+    StreamingChatCompletion,
+    StructuredOutput,
     mock_handlers,
     openai_mock_handler,
     production_handlers,

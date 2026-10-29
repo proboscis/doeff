@@ -9,12 +9,7 @@ from typing import Any, get_args, get_origin
 
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
-from doeff_llm.effects import (
-    LLMChat,
-    LLMEmbedding,
-    LLMStreamingChat,
-    LLMStructuredQuery,
-)
+from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 from PIL import Image as PILImage
 
 from doeff import Pass, Resume, do
