@@ -2,7 +2,8 @@
 """Example 02: issue lifecycle."""
 
 from doeff_conductor import CreateIssue, GetIssue, Issue, IssueStatus, ListIssues, ResolveIssue
-from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
 
 from doeff import EffectGenerator, do
 

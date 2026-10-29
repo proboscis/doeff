@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from doeff_conductor.dsl import (
+from doeff_conductor import (
     WorkflowExpansionError,
     agent_bang,
     artifact,

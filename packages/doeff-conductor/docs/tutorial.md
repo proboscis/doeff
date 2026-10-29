@@ -58,7 +58,8 @@ from doeff_conductor import (
     DeleteWorkspace,
     Exec,
 )
-from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
 
 @do
 def hello_workflow():
@@ -137,7 +138,8 @@ conductor template show basic_pr
 
 ```python
 from doeff_conductor import Issue, IssueStatus, basic_pr
-from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
 
 # Create an issue
 issue = Issue(
@@ -311,7 +313,7 @@ def my_custom_workflow(issue: Issue, max_attempts: int = 3):
 
 ```python
 from dataclasses import dataclass
-from doeff_conductor.effects.base import ConductorEffectBase
+from doeff_conductor import ConductorEffectBase
 
 @dataclass(frozen=True, kw_only=True)
 class RunLinter(ConductorEffectBase):

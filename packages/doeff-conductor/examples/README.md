@@ -97,7 +97,8 @@ Shows the high-level API for:
 ### Handler Setup
 
 ```python
-from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
 
 result = run_sync(my_workflow(), scheduled_handlers=mock_handlers())
 ```

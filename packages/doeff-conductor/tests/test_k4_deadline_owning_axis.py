@@ -32,17 +32,17 @@ from doeff_agents import (
 from doeff_agents import AgentType
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.effects import AgentEffect, AgentTask
-from doeff_conductor.handlers._workspace_path import WorkspacePath
-from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.journal import (
+from doeff_conductor import AgentEffect, AgentTask
+from doeff_conductor._handlers._workspace_path import WorkspacePath
+from doeff_conductor import journaled_agent_handler
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor._journal import (
     AgentJournal,
     GateAnswerJournal,
 )
-from doeff_conductor.overseer import list_open_gates
-from doeff_conductor.replay_keying import ResolvedIdentity
-from doeff_conductor.types import WorkflowStatus
+from doeff_conductor._overseer import list_open_gates
+from doeff_conductor import ResolvedIdentity
+from doeff_conductor import WorkflowStatus
 
 from doeff import K, Resume, handler, stacked_handlers
 
@@ -111,7 +111,7 @@ def _install_scenario_production_handlers(
     scenario_handler: ScenarioAgentHandler,
     delegate_calls: list[str],
 ) -> None:
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     @handler
     def run_agent_on_scenario(effect: AgentEffect, k: K):
@@ -137,7 +137,7 @@ def _write_deadline_workflow(path: Path, *, deadline_seconds: float) -> None:
     path.write_text(
         f"""
 (require doeff-conductor.macros [defworkflow agent! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {{"type" "object"
                      "required" ["summary"]

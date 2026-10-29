@@ -8,23 +8,21 @@ import pytest
 from click.testing import CliRunner
 from doeff_conductor._api import ConductorAPI
 from doeff_conductor._cli import cli
-from doeff_conductor.effects import AgentTask
-from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.journal import GateAnswerJournal
-from doeff_conductor.overseer import (
+from doeff_conductor import AgentTask
+from doeff_conductor import journaled_agent_handler
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor._journal import GateAnswerJournal
+from doeff_conductor._overseer import (
     RUN_STATE_FILENAME,
     VALID_GATE_OUTCOMES,
     list_gates_with_status,
     list_open_gates,
     progress_since,
 )
-from doeff_conductor.replay_keying import ResolvedIdentity
-from doeff_conductor.types import WorkflowStatus
-from doeff_conductor.workflow_effect_journal import (
-    WORKFLOW_EFFECT_JOURNAL_FILENAME,
-    journaled_workflow_effect_handler,
-)
+from doeff_conductor import ResolvedIdentity
+from doeff_conductor import WorkflowStatus
+from doeff_conductor import journaled_workflow_effect_handler
+from doeff_conductor._workflow_effect_journal import WORKFLOW_EFFECT_JOURNAL_FILENAME
 
 from doeff import stacked_handlers
 
@@ -53,7 +51,7 @@ def _install_mock_production_handlers(
     monkeypatch: pytest.MonkeyPatch,
     runtime: MockConductorRuntime,
 ) -> None:
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**kwargs: object):
         state_dir = cast(str | Path | None, kwargs["journal_state_dir"])
@@ -71,7 +69,7 @@ def _write_parallel_gate_workflow(path: Path) -> None:
     path.write_text(
         """
 (require doeff-conductor.macros [defworkflow agent! parallel <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -105,7 +103,7 @@ def _write_random_parallel_gate_workflow(path: Path) -> None:
     path.write_text(
         """
 (require doeff-conductor.macros [defworkflow agent! parallel random! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -140,7 +138,7 @@ def _write_checkpoint_workflow(path: Path) -> None:
     path.write_text(
         """
 (require doeff-conductor.macros [defworkflow defphase <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (defworkflow checkpoint-live
   :params {}
@@ -613,7 +611,7 @@ def test_gate_answer_cli_subcommand(
 
 def test_gate_option_outcome_validation() -> None:
     """Every GateOption constructed via from_dict must have outcome in VALID_GATE_OUTCOMES."""
-    from doeff_conductor.overseer import GateOption
+    from doeff_conductor._overseer import GateOption
 
     valid_data: dict[str, str] = {
         "name": "proceed",

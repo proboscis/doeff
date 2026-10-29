@@ -19,7 +19,7 @@ import pytest
 from tests.runner_env import e2e_flag, opencode_server_url
 
 if TYPE_CHECKING:
-    from doeff_conductor.types import Issue
+    from doeff_conductor import Issue
 
 
 # =============================================================================
@@ -213,7 +213,7 @@ def opencode_url() -> str | None:
 @pytest.fixture
 def sample_issue() -> "Issue":
     """Fixture providing a sample Issue for testing."""
-    from doeff_conductor.types import Issue, IssueStatus
+    from doeff_conductor import Issue, IssueStatus
 
     return Issue(
         id="TEST-001",

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_conductor.dsl import (
+from doeff_conductor import (
     WorkflowExpansionError,
     agent_bang,
     artifact,
@@ -34,11 +34,11 @@ from doeff_conductor.dsl import (
     ref,
     workspace_bang,
 )
-from doeff_conductor.handlers import mock_handlers as build_mock_handlers
-from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.testing import MockConductorRuntime
-from doeff_conductor.overseer import OpenGateView
-from doeff_conductor.workflow_runtime import (
+from doeff_conductor import mock_handlers as build_mock_handlers
+from doeff_conductor._handlers import run_sync
+from doeff_conductor import MockConductorRuntime
+from doeff_conductor._overseer import OpenGateView
+from doeff_conductor._workflow_runtime import (
     ErrValue,
     OkValue,
     ParkedValue,
@@ -102,8 +102,8 @@ def _run_quorum_workflow(
     fail_prompts: frozenset[str] = frozenset(),
 ) -> Any:
     """Run a quorum workflow with a selective-failure agent handler."""
-    from doeff_conductor.effects.agent import AgentEffect
-    from doeff_conductor.exceptions import AgentError
+    from doeff_conductor import AgentEffect
+    from doeff_conductor import AgentError
 
     def handle_agent(effect: AgentEffect) -> dict[str, Any]:
         agent_prompt: str = effect.task.prompt
@@ -402,7 +402,7 @@ class TestDefaultBehaviorPreserved:
 
     def test_plain_parallel_returns_tuple(self, tmp_path: Path) -> None:
         """parallel() without quorum returns plain tuple of results."""
-        from doeff_conductor.effects.agent import AgentEffect
+        from doeff_conductor import AgentEffect
 
         def handle_agent(effect: AgentEffect) -> dict[str, Any]:
             return {"summary": f"done: {effect.task.prompt}"}

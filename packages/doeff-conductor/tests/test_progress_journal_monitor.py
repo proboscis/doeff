@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from doeff_conductor import CreateWorkspace
-from doeff_conductor.effects import Agent, AgentTask
-from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.journal import (
+from doeff_conductor import Agent, AgentTask
+from doeff_conductor._handlers import run_sync
+from doeff_conductor import journaled_agent_handler
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor._journal import (
     PROGRESS_STATUS_PARKED,
     PROGRESS_STATUS_RUNNING,
     PROGRESS_STATUS_SUCCEEDED,
@@ -28,8 +28,8 @@ from doeff_conductor.journal import (
     ProgressJournal,
     ProgressJournalEntry,
 )
-from doeff_conductor.monitor import STATUS_DONE, node_status_map, render_run
-from doeff_conductor.replay_keying import ResolvedIdentity
+from doeff_conductor._monitor import STATUS_DONE, node_status_map, render_run
+from doeff_conductor import ResolvedIdentity
 
 from doeff.do import do
 
@@ -267,7 +267,7 @@ def test_render_run_shows_done_glyph(tmp_path: Path) -> None:
 def test_node_tree_falls_back_to_open_gates_without_progress_journal(tmp_path: Path) -> None:
     """A run with parked gates but no progress journal (e.g. created before the
     producer) still shows its parked nodes in the tree (not an empty tree)."""
-    from doeff_conductor.overseer import GateOption, OpenGateView, record_open_gates
+    from doeff_conductor._overseer import GateOption, OpenGateView, record_open_gates
 
     state_dir = tmp_path / "state"
     run_id = "run-gatefallback"

@@ -143,11 +143,11 @@
      (defsemgrep p0-k4-no-blocking-agent-handler
        "k4-no-blocking-agent-handler"
        [{"relative-path"
-           "packages/doeff-conductor/src/doeff_conductor/handlers/agent.py"
+           "packages/doeff-conductor/src/doeff_conductor/_handlers/agent.py"
          "source"
            "handlers = [(AgentEffect, make_blocking_scheduled_handler(handle_agent))]\n"}]
        [{"relative-path"
-           "packages/doeff-conductor/src/doeff_conductor/handlers/agent.py"
+           "packages/doeff-conductor/src/doeff_conductor/_handlers/agent.py"
          "source"
            "handlers = [(AgentEffect, make_offloaded_scheduled_handler(handle_agent))]\n"}])
      (defsemgrep p0-k4-no-sync-await-result-in-scheduled-handler

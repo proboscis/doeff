@@ -1,34 +1,21 @@
-"""Named conductor interpreter constants backing public verbs."""
+# moved-submodule-shim: doeff_conductor.interpreters -> doeff_conductor._interpreters
+"""Moved: ``doeff_conductor.interpreters`` is now ``doeff_conductor._interpreters`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_conductor.interpreters…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from dataclasses import dataclass
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_conductor._interpreters import *  # noqa: F403
 
-@dataclass(frozen=True)
-class InterpreterConstant:
-    """System-internal interpreter selection marker.
+if __name__ == "__main__":
+    import runpy
 
-    Public author and overseer surfaces expose verbs. They do not accept these
-    constants as arguments.
-    """
-
-    name: str
-    purpose: str
-    token_cost: str
-
-
-plan_interpreter = InterpreterConstant(
-    name="plan",
-    purpose="record and estimate agent!/gate!/workspace! without executing them",
-    token_cost="zero",
-)
-validation_interpreter = InterpreterConstant(
-    name="validation",
-    purpose="scenario-driven stub simulation for control flow and closure checks",
-    token_cost="zero",
-)
-production_interpreter = InterpreterConstant(
-    name="production",
-    purpose="journaled production execution through the resolved conductor handlers",
-    token_cost="real",
-)
+    runpy.run_module("doeff_conductor._interpreters", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_conductor._interpreters")

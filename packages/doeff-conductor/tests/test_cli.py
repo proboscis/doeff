@@ -17,12 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 from doeff_conductor._cli import cli
-from doeff_conductor.types import (
-    Issue,
-    IssueStatus,
-    WorkflowStatus,
-    Workspace,
-)
+from doeff_conductor import Issue, IssueStatus, WorkflowStatus, Workspace
 
 
 class TestCLIBase:
@@ -455,7 +450,7 @@ def _issue_vault_stub() -> Iterator[MagicMock]:
     and so on, and does not find or create a vault directory.
     """
     stub = MagicMock()
-    module = "doeff_conductor.handlers.issue_handler"
+    module = "doeff_conductor._handlers.issue_handler"
     with (
         patch(f"{module}._open_issues_dir", lambda _issues_dir: Path("unused-issue-vault")),
         patch(f"{module}._create_issue", lambda _vault, effect: stub.handle_create_issue(effect)),

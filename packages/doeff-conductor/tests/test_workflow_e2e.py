@@ -16,8 +16,9 @@ from doeff_conductor import (
     Push,
     ResolveIssue,
 )
-from doeff_conductor.handlers import mock_handlers, run_sync
-from doeff_conductor.handlers.testing import MockConductorRuntime
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
+from doeff_conductor import MockConductorRuntime
 
 from doeff import do
 
@@ -207,11 +208,7 @@ class TestTemplateE2E:
     """Template loading tests."""
 
     def test_template_imports(self):
-        from doeff_conductor.templates import (
-            get_available_templates,
-            get_template,
-            is_template,
-        )
+        from doeff_conductor import get_available_templates, get_template, is_template
 
         templates = get_available_templates()
         assert "basic_pr" in templates
@@ -226,8 +223,8 @@ class TestTemplateE2E:
         assert callable(func)
 
     def test_basic_pr_template_structure(self):
-        from doeff_conductor.templates import basic_pr
-        from doeff_conductor.types import Issue
+        from doeff_conductor import basic_pr
+        from doeff_conductor import Issue
 
         from doeff import ProgramBase
 
