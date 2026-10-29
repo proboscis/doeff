@@ -6,17 +6,19 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from doeff_agentic.effects import (
+from doeff_agentic import (
+    AgentConfig,
     AgenticCreateSession,
     AgenticGetMessages,
     AgenticGetSessionStatus,
     AgenticSendMessage,
+    AgentStatus,
     RunAgentEffect,
     WaitForStatusEffect,
+    agentic_effectful_handlers,
+    mock_handlers,
+    production_handlers,
 )
-from doeff_agentic.handlers import mock_handlers, production_handlers
-from doeff_agentic.handlers.production import agentic_effectful_handlers
-from doeff_agentic.types import AgentConfig, AgentStatus
 from doeff_agents import AgentType, SessionHandle, SessionStatus
 from doeff_agents.effects import (
     CaptureEffect,
@@ -31,7 +33,7 @@ from doeff import Effect, Pass, Resume, do, handler, run
 
 
 def test_handlers_init_exports_required_factory_functions() -> None:
-    """`doeff_agentic.handlers` exports both required factories."""
+    """`doeff_agentic._handlers` exports both required factories."""
     assert callable(production_handlers)
     assert callable(mock_handlers)
 
@@ -61,29 +63,6 @@ def test_mock_handlers_execute_simple_workflow() -> None:
     result = run(program)
 
     assert result == ("user", "assistant", "done")
-
-
-def test_legacy_opencode_and_tmux_modules_still_import() -> None:
-    """Backward-compatible top-level module imports still resolve."""
-    from doeff_agentic.handlers.opencode import opencode_handler as new_opencode_handler
-    from doeff_agentic.handlers.tmux import tmux_handler as new_tmux_handler
-    from doeff_agentic.opencode_handler import opencode_handler as old_opencode_handler
-    from doeff_agentic.tmux_handler import tmux_handler as old_tmux_handler
-
-    assert old_opencode_handler is new_opencode_handler
-    assert old_tmux_handler is new_tmux_handler
-
-
-def test_legacy_handler_module_reexport_when_optional_dependency_available() -> None:
-    """Legacy `doeff_agentic.handler` remains importable when doeff-agents is present."""
-    pytest.importorskip("doeff_agents")
-
-    from doeff_agentic.handler import agentic_effectful_handlers as old_export
-    from doeff_agentic.handlers.production import (
-        agentic_effectful_handlers as new_export,
-    )
-
-    assert old_export is new_export
 
 
 def _fake_agent_runtime(
@@ -182,7 +161,7 @@ def test_legacy_agentic_handler_polls_with_time_delay(tmp_path: Path) -> None:
 
 def test_legacy_agentic_handler_writes_observed_agent_status(tmp_path: Path) -> None:
     """The state files report each agent with the status the runtime's Monitor gave."""
-    from doeff_agentic.state import StateManager
+    from doeff_agentic import StateManager
 
     @do
     def workflow():
@@ -210,7 +189,7 @@ def test_legacy_agentic_handler_writes_observed_agent_status(tmp_path: Path) -> 
 
 def test_legacy_agentic_handler_refuses_resume_and_profile(tmp_path: Path) -> None:
     """Launch has no resume / profile any more; asking for them is an error, not a silent drop."""
-    from doeff_agentic.exceptions import AgenticUnsupportedOperationError
+    from doeff_agentic import AgenticUnsupportedOperationError
 
     for config in (
         AgentConfig(agent_type="codex", prompt="p", work_dir=str(tmp_path), resume=True),
@@ -256,7 +235,7 @@ def test_mock_handlers_pass_through_unrelated_effects() -> None:
 
 def test_mock_handlers_keep_their_world_in_the_handler() -> None:
     """One mock handler keeps its sessions across programs; a new handler starts empty."""
-    from doeff_agentic.exceptions import AgenticDuplicateNameError
+    from doeff_agentic import AgenticDuplicateNameError
 
     @do
     def create_reviewer():
@@ -271,8 +250,7 @@ def test_mock_handlers_keep_their_world_in_the_handler() -> None:
 
 def test_opencode_handler_answers_without_reaching_the_server() -> None:
     """Capability questions are answered from the handler alone; other effects go outward."""
-    from doeff_agentic.effects import AgenticSupportsCapability
-    from doeff_agentic.handlers import opencode_handler
+    from doeff_agentic import AgenticSupportsCapability, opencode_handler
     from doeff_core_effects import reader
 
     from doeff import Ask
@@ -319,8 +297,7 @@ def test_tmux_handler_drives_the_injected_session_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The tmux handler keeps its sessions in the handler and reaches tmux only through the backend."""
-    from doeff_agentic.effects import AgenticAbortSession
-    from doeff_agentic.handlers import tmux_handler
+    from doeff_agentic import AgenticAbortSession, tmux_handler
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     backend = _FakeSessionBackend()
@@ -349,14 +326,14 @@ def test_public_modules_export_no_handler_class() -> None:
 
     modules = (
         "doeff_agentic",
-        "doeff_agentic.handler",
-        "doeff_agentic.handlers",
-        "doeff_agentic.handlers.opencode",
-        "doeff_agentic.handlers.production",
-        "doeff_agentic.handlers.testing",
-        "doeff_agentic.handlers.tmux",
-        "doeff_agentic.opencode_handler",
-        "doeff_agentic.tmux_handler",
+        "doeff_agentic._handler",
+        "doeff_agentic._handlers",
+        "doeff_agentic._handlers.opencode",
+        "doeff_agentic._handlers.production",
+        "doeff_agentic._handlers.testing",
+        "doeff_agentic._handlers.tmux",
+        "doeff_agentic._opencode_handler",
+        "doeff_agentic._tmux_handler",
     )
     handler_classes = [
         f"{module_name}.{name}"

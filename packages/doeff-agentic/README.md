@@ -144,7 +144,7 @@ response = yield WaitForUserInput(
 ## Python API
 
 ```python
-from doeff_agentic.api import AgenticAPI
+from doeff_agentic import AgenticAPI
 
 api = AgenticAPI()
 

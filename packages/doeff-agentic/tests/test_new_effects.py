@@ -1,30 +1,24 @@
-"""Tests for new spec-compliant effects in doeff_agentic.effects module."""
+"""Tests for new spec-compliant effects in doeff_agentic._effects module."""
 
 import pytest
-from doeff_agentic.effects import (
+from doeff_agentic import (
     AgenticAbortSession,
-    # Environment effects
     AgenticCreateEnvironment,
-    # Session effects
     AgenticCreateSession,
-    # Workflow effects
     AgenticCreateWorkflow,
     AgenticDeleteEnvironment,
     AgenticDeleteSession,
+    AgenticEnvironmentType,
     AgenticForkSession,
     AgenticGetEnvironment,
     AgenticGetMessages,
     AgenticGetSession,
-    # Status effects
     AgenticGetSessionStatus,
     AgenticGetWorkflow,
-    # Event effects
     AgenticNextEvent,
-    # Message effects
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
-from doeff_agentic.types import AgenticEnvironmentType
 
 
 class TestWorkflowEffects:

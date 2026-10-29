@@ -1,4 +1,4 @@
-"""The handler that answers the effects on recorded workflows (``doeff_agentic.effects.recorded``).
+"""The handler that answers the effects on recorded workflows (``doeff_agentic._effects.recorded``).
 
 It reads and writes the records under the state directory and reaches the agents'
 sessions through the session backend of doeff-agents (the ``legacy`` extra), as the
@@ -10,8 +10,8 @@ from typing import Any
 
 from doeff import Effect, Pass, Resume, handler
 from doeff.program import ProgramHandler
-from doeff_agentic.api import AgenticAPI
-from doeff_agentic.effects.recorded import (
+from doeff_agentic._api import AgenticAPI
+from doeff_agentic._effects.recorded import (
     AgenticAttachAgent,
     AgenticCaptureAgentOutput,
     AgenticFindWorkflow,

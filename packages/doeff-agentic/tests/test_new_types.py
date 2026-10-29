@@ -1,19 +1,16 @@
-"""Tests for new spec-compliant types in doeff_agentic.types module."""
+"""Tests for new spec-compliant types in doeff_agentic._types module."""
 
 from datetime import datetime, timezone
 
 import pytest
-from doeff_agentic.types import (
+from doeff_agentic import (
     AgenticEndOfEvents,
     AgenticEnvironmentHandle,
-    # Enums
     AgenticEnvironmentType,
-    # Events
     AgenticEvent,
     AgenticMessage,
     AgenticSessionHandle,
     AgenticSessionStatus,
-    # Handles
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )

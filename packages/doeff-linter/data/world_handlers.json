@@ -469,7 +469,7 @@
    "why": "threading.Thread"
   },
   {
-   "handler": "doeff_agentic.handlers.opencode:opencode_handler",
+   "handler": "doeff_agentic._handlers.opencode:opencode_handler",
    "touches": [
     "http",
     "process",
@@ -478,7 +478,7 @@
    "why": "httpx・subprocess.Popen・time.sleep"
   },
   {
-   "handler": "doeff_agentic.handlers.tmux:tmux_handler",
+   "handler": "doeff_agentic._handlers.tmux:tmux_handler",
    "touches": [
     "process",
     "clock"
@@ -486,7 +486,7 @@
    "why": "subprocess.run・time.sleep"
   },
   {
-   "handler": "doeff_agentic.handlers.production:agentic_effectful_handlers",
+   "handler": "doeff_agentic._handlers.production:agentic_effectful_handlers",
    "touches": [
     "process",
     "file",

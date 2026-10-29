@@ -14,8 +14,8 @@ from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
     AgenticSendMessage,
+    opencode_handler,
 )
-from doeff_agentic.opencode_handler import opencode_handler
 
 from doeff import do
 

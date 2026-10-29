@@ -1,7 +1,9 @@
-"""Tests for doeff_agentic.effects module."""
+"""Tests for doeff_agentic._effects module."""
 
 import pytest
-from doeff_agentic.effects import (
+from doeff_agentic import (
+    AgentConfig,
+    AgentStatus,
     CaptureOutput,
     CaptureOutputEffect,
     RunAgent,
@@ -15,7 +17,6 @@ from doeff_agentic.effects import (
     WaitForUserInput,
     WaitForUserInputEffect,
 )
-from doeff_agentic.types import AgentConfig, AgentStatus
 
 
 class TestRunAgentEffect:

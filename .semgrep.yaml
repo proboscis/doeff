@@ -3115,6 +3115,16 @@ rules:
   - id: doeff-no-star-imports
     patterns:
       - pattern: from $MODULE import *
+      # The moved-submodule shim of tools/hide_submodules.py (ADR-DOE-API-001 R5): its star import is read by
+      # type checkers only, and the module replaces itself with the moved module, so nothing is polluted.
+      - pattern-not-inside: |
+          if TYPE_CHECKING:
+              from $MODULE import *
+          ...
+          if __name__ == "__main__":
+              ...
+          else:
+              sys.modules[__name__] = import_module($MODULE_NAME)
     paths:
       exclude:
         - "**/__init__.py"
@@ -3963,7 +3973,7 @@ rules:
     message: |
       The doeff-flow console script (doeff_flow._cli) and the doeff-agentic-tui screens
       (doeff_agentic._tui) run programs of effects: the traces are read with ReadTraces, the
-      recorded workflows with the doeff_agentic.effects.recorded effects, and the polls wait
+      recorded workflows with the doeff_agentic._effects.recorded effects, and the polls wait
       with doeff-time's Delay. The command installs the handlers that read the files, the
       state directory and the clock (trace_files_handler over os_file_handler,
       recorded_workflows_handler, sync_time_handler) — do not read them here directly.

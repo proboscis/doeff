@@ -20,8 +20,8 @@ from doeff_agentic import (
     AgenticGetMessages,
     AgenticMessage,
     AgenticSendMessage,
+    opencode_handler,
 )
-from doeff_agentic.opencode_handler import opencode_handler
 
 from doeff import do, slog
 

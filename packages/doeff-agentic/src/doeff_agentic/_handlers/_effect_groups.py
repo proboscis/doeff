@@ -5,7 +5,7 @@ group's effects), then the group's function matches the single effect. The alias
 function's argument, so the type checker sees when a clause is missing.
 """
 
-from doeff_agentic.effects import (
+from doeff_agentic._effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
     AgenticCreateSession,

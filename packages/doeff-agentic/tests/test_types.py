@@ -1,8 +1,8 @@
-"""Tests for doeff_agentic.types module."""
+"""Tests for doeff_agentic._types module."""
 
 from datetime import datetime, timezone
 
-from doeff_agentic.types import (
+from doeff_agentic import (
     AgentConfig,
     AgentInfo,
     AgentStatus,

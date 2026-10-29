@@ -5,7 +5,7 @@ This module provides the handler that uses OpenCode's HTTP API for agent session
 
 Usage:
     from doeff import run
-    from doeff_agentic.opencode_handler import opencode_handler
+    from doeff_agentic._opencode_handler import opencode_handler
     from doeff_core_effects.handlers import slog_handler
     from doeff_core_effects.scheduler import scheduled
 
@@ -28,7 +28,7 @@ from typing import Any
 
 from doeff import Await, Effect, Pass, Resume, do, handler, slog
 from doeff.program import ProgramHandler
-from doeff_agentic.effects import (
+from doeff_agentic._effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
     AgenticCreateSession,
@@ -45,8 +45,8 @@ from doeff_agentic.effects import (
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
-from doeff_agentic.event_log import EventLogWriter, WorkflowIndex
-from doeff_agentic.exceptions import (
+from doeff_agentic._event_log import EventLogWriter, WorkflowIndex
+from doeff_agentic._exceptions import (
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
     AgenticEnvironmentNotFoundError,
@@ -54,8 +54,8 @@ from doeff_agentic.exceptions import (
     AgenticSessionNotFoundError,
     AgenticTimeoutError,
 )
-from doeff_agentic.handlers._effect_groups import MessageEffect, SessionEffect, WorkflowEffect
-from doeff_agentic.types import (
+from doeff_agentic._handlers._effect_groups import MessageEffect, SessionEffect, WorkflowEffect
+from doeff_agentic._types import (
     AgenticEndOfEvents,
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,

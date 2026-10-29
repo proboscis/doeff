@@ -9,7 +9,7 @@ under the state directory (``~/.local/state/doeff-agentic``). A monitor — the
 from dataclasses import dataclass
 
 from doeff import EffectBase
-from doeff_agentic.types import WorkflowInfo
+from doeff_agentic._types import WorkflowInfo
 
 from .workflow import AgenticEffectBase
 

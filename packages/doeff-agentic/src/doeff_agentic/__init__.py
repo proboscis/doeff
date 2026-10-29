@@ -55,13 +55,15 @@ CLI Usage:
     $ doeff-agentic logs <id>                    # View logs
     $ doeff-agentic stop <id>                    # Stop workflow
 """
+from importlib import import_module
+from typing import TYPE_CHECKING
 
 # Types - new spec-compliant types
 # API
-from .api import AgenticAPI
+from ._api import AgenticAPI
 
 # Effects - new spec-compliant effects
-from .effects import (
+from ._effects import (
     AgenticAbortSession,
     # Recorded workflow effects (the monitor's)
     AgenticAttachAgent,
@@ -113,14 +115,14 @@ from .effects import (
 )
 
 # Event logging (new - JSONL event logs)
-from .event_log import (
+from ._event_log import (
     EventLogReader,
     EventLogWriter,
     WorkflowIndex,
 )
 
 # Exceptions
-from .exceptions import (
+from ._exceptions import (
     AgenticAmbiguousPrefixError,
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
@@ -133,25 +135,25 @@ from .exceptions import (
     AgenticUnsupportedOperationError,
     AgenticWorkflowNotFoundError,
 )
-from .handlers import (
+from ._handlers import (
     mock_handlers,
     production_handlers,
     recorded_workflows_handler,
 )
 
 # OpenCode Handler (new - primary)
-from .opencode_handler import opencode_handler
+from ._opencode_handler import opencode_handler
 
 # State management
-from .state import (
+from ._state import (
     StateManager,
     generate_workflow_id,
     get_default_state_dir,
 )
 
 # Tmux Handler (legacy fallback)
-from .tmux_handler import tmux_handler
-from .types import (
+from ._tmux_handler import tmux_handler
+from ._types import (
     # Legacy types (deprecated)
     AgentConfig,
     AgenticEndOfEvents,
@@ -176,14 +178,14 @@ from .types import (
 )
 
 # Visual Interceptor (for examples/debugging)
-from .visual_interceptor import (
+from ._visual_interceptor import (
     VisualInterceptorConfig,
     with_visual_logging,
 )
 
 # Legacy Handler (deprecated - requires doeff-agents)
 try:
-    from .handler import agentic_effectful_handlers
+    from ._handler import agentic_effectful_handlers
 except ImportError:
     # doeff-agents not installed, handlers not available
     agentic_effectful_handlers = None  # type: ignore
@@ -277,5 +279,34 @@ __all__ = [
     "production_handlers",
     "recorded_workflows_handler",
     "tmux_handler",
+    "with_agentic_effectful_handlers",
+    "with_handlers",
     "with_visual_logging",
 ]
+
+
+# Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
+# them while it loads. `X as X` shows each name to type checkers; `__all__` is not used (DOEFF021).
+if TYPE_CHECKING:
+    from doeff_agentic._handlers.production import (
+        with_agentic_effectful_handlers as with_agentic_effectful_handlers,
+    )
+    from doeff_agentic._runtime import with_handlers as with_handlers
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "with_agentic_effectful_handlers": "doeff_agentic._handlers.production",
+    "with_handlers": "doeff_agentic._runtime",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_LAZY_EXPORTS})

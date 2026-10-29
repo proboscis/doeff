@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from doeff_agentic.exceptions import (
+from doeff_agentic._exceptions import (
     AgenticAmbiguousPrefixError,
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
@@ -17,7 +17,7 @@ from doeff_agentic.exceptions import (
     AgenticUnsupportedOperationError,
     AgenticWorkflowNotFoundError,
 )
-from doeff_agentic.types import AgentConfig, AgentStatus
+from doeff_agentic._types import AgentConfig, AgentStatus
 
 from .environment import (
     AgenticCreateEnvironment,
