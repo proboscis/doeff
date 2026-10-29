@@ -10,7 +10,7 @@
 ;;;   写しを合わせる    宣言から外れた参照の写しと、403・404 で断られた物の写しは消し、届かない間は前の写しを残す。値の参照は宣言が
 ;;;                     名指したキーだけを持つ
 ;;;   値を出さない      写しの file は 0600・dir は作業の根から下の全部の段が 0700。log の行と coordinator の返事に値は載らない(綴りだけ)
-;;; 外の世界は模擬の API server の相手役(doeff_cluster.sim.k8s_supplied — down の世界は届かない)と memory の file(mode を確かめる検だけ
+;;; 外の世界は模擬の API server の相手役(doeff_cluster._sim.k8s_supplied — down の世界は届かない)と memory の file(mode を確かめる検だけ
 ;;; 本物の file)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (import base64)
@@ -32,7 +32,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState HeartbeatReply WorkerInfo])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply supplied-for])
 (import doeff_cluster.coordinator.protocol.replies [reply-json])
-(import doeff_cluster.sim.k8s_supplied [HeldEntry HeldObject ReadGrant SuppliedCluster k8s-supplied-peer service-account-token-file])
+(import doeff_cluster [HeldEntry HeldObject ReadGrant SuppliedCluster k8s-supplied-peer service-account-token-file])
 (import tests.state_rows [table-from-rows])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
