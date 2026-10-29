@@ -722,6 +722,19 @@ def test_from_root_import_keeps_a_name_the_entry_binds_to_another_object(tmp_pat
     assert hy == "(import pkg [_handlers :as handlers structured-llm])\n"
 
 
+def test_a_hy_relative_import_is_left_as_it_is(tmp_path: Path) -> None:
+    """Hy の相対の import(``(import .runtime-env-model [EnvVar])``)の頭の ``.`` を名として mangle しない。
+
+    doeff-cluster の intent の .hy が相対の import を持ち、doeff-hy の子を隠す hide が木の全部の .hy を読む所で落ちた
+    (card ki-797d1e7b122b)。
+    """
+    patterns = tool.Patterns.of([tool.Child("pkg", "handlers", tmp_path)])
+    context = tool.FileContext("caller.hy", None, False)
+    text = "(import .runtime-env-model [EnvVar])\n(import ..up [x])\n"
+    hy, _ = tool.rewrite_hy(text, patterns, context, lambda _module, _name: True)
+    assert hy == text
+
+
 def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path) -> None:
     """古い path を先に import しても、入口が子と同じ名で出す物(関数)が入口に残る。
 
