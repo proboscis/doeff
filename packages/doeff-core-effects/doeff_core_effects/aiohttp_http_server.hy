@@ -74,7 +74,8 @@
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
-                                                send-overflows closing-of HttpProbe probe-for probe-answer])
+                                                send-overflows closing-of HttpProbe probe-for probe-answer
+                                                WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome])
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
@@ -273,6 +274,8 @@
           self.ws-send-drain None
           ;; 答え手が自分で答える probe の口(HttpListen の probes)。
           self.probes #()
+          ;; 答え手がその場で答える ws の 1 通の口(HttpListen の ws-shortcuts)。
+          self.ws-shortcuts #()
           self.count 0
           ;; 相手が先に切って届かなかった答えの数(この待ち受けの起動から — 0 に戻さない)。
           self.dropped-answers 0)
@@ -306,13 +309,14 @@
     (await (asyncio.wrap-future (asyncio.run-coroutine-threadsafe coroutine (self.edge-loop)))))
 
   (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes #^ tuple probes
-                                     #^ bool share-port]
+                                     #^ bool share-port #^ tuple ws-shortcuts]
     "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求は、probe の口に当たる物を除いてすべて列へ並ぶ)。share-port = 同じ port を
-     別の待ち受けと共有して開く(SO_REUSEPORT)。"
+     別の待ち受けと共有して開く(SO_REUSEPORT)。ws-shortcuts = ws の 1 通にその場で答える口(頭の註)。"
     (setv self.address address
           self.ws-max-bytes ws-max-bytes
           self.ws-send-max-bytes ws-send-max-bytes
-          self.probes probes)
+          self.probes probes
+          self.ws-shortcuts ws-shortcuts)
     (setv self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
                                                                              :sock-read HTTP-READ-SECONDS)))
@@ -455,7 +459,7 @@
       (while True
         (setv message (await (.receive ws)))
         (match message.type
-          WSMsgType.TEXT (.put self.arrivals (WsTextArrived :ticket ticket :text message.data :received-at (time.monotonic)))
+          WSMsgType.TEXT (await (self.text-arrived ticket message.data))
           WSMsgType.BINARY (.put self.arrivals (WsBinaryArrived :ticket ticket :data message.data :received-at (time.monotonic)))
           WSMsgType.CLOSE (do (setv peer.received (WsCloseFrame :code (int message.data) :reason (or message.extra "")))
                               (break))
@@ -464,6 +468,27 @@
       (finally
         (await (self.finish-peer peer))))
     ws)
+
+  (defn :async #^ None text-arrived [self #^ str ticket #^ str text]
+    "ws の文字の 1 通を列へ並べるため。その場で答える口に当たる 1 通(ws-shortcut-for)は、answer を待ち受けの loop の外の thread の自分の run で
+     走らせ(ws-shortcut-outcome)、答えの文をその接続の箱へ積み終えてから、積んだ文と拍を載せて並べる(頭の註 — 読みの loop はこれを待つので、
+     同じ接続の次の 1 通はこの後に並ぶ)。answer が落ちたら 1 行名乗り、何も積まずに並べる。"
+    (setv received-at (time.monotonic))
+    (setv shortcut (run (ws-shortcut-for self.ws-shortcuts text)))
+    (when (is shortcut None)
+      (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))
+      (return None))
+    (setv outcome (await (asyncio.to-thread ws-shortcut-outcome shortcut ticket text)))
+    (match outcome
+      (WsShortcutAnswered :texts texts)
+        (do (for [one texts]
+              (self.send-text ticket one))
+            (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at :answered texts
+                                               :answered-at (time.monotonic))))
+      (WsShortcutFailed :reason reason)
+        (do (relay-failed (.format "札 {} の ws の 1 通にその場で答えられなかった(本体へ渡す): {}" ticket reason))
+            (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))))
+    None)
 
   (defn :async #^ None finish-peer [self #^ WsPeer peer]
     "読みの loop が終わった接続を畳むため: こちらが閉じを積んでいれば書き手が流し切るのを待ち、他は箱を捨てて書き手を止め、WsClosed を並べる。"
@@ -781,8 +806,8 @@
   ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
   ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
   (session val edge (WebEdge))
-  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port]
-    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes share-port))))
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts]
+    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts))))
     (resume bound))
   (HttpNextRequest []
     (<- arrival HttpEvent (next-on-edge edge))
