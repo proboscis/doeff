@@ -39,10 +39,10 @@
     "_adapters/codex.py"
     "_adapters/gemini.py"
     "_agentd_client.py"
-    "claude_home.py"
-    "session_backend.py"
-    "session_store.py"
-    "tmux.py"})
+    "_claude_home.py"
+    "_session_backend.py"
+    "_session_store.py"
+    "_tmux.py"})
 
 ;; 直接 I/O の字面。file・子 process・unix socket・環境変数・PATH の 5 種。
 ;; 時計(time.sleep / time.monotonic)は本 ADR の母集団の外 — driver 層の
@@ -68,7 +68,7 @@
 ;; 走査から除く: agentd(sessionhost — ADR-DOE-AGENTS-004 の凍結契約で
 ;; 自前の substrate 語彙を持つ)と handlers(I/O を果たす側)と、
 ;; driver 層の I/O を果たす 2 つの家。
-(setv SCAN-SKIP-DIRS #{"sessionhost" "_handlers" "__pycache__"})
+(setv SCAN-SKIP-DIRS #{"_sessionhost" "_handlers" "__pycache__"})
 (setv IO-HOME-FILES #{"_io_handlers.hy" "_io_fake.hy"})
 
 
@@ -128,7 +128,7 @@
        "round 3 の棚卸し(2026-09-12): doeff-agents の sessionhost は Hy 9,351 行で既に適合。その外の driver 層は Python 8,600 行で、22 file が doeff の effect で書かれ、8 file が直接 I/O を持っていた。"
        :evidence "agora-redesign docs/design/discuss-remaining-decisions-round3-2026-09-12.html:82")
      (fact
-       "直接 I/O は判断と同居していた: 例 = tmux.py の送信確認ループ(capture → 判定 → Enter 再送 → 待つ)が subprocess.run と time.sleep を直に持ち、検は `doeff_agents.tmux.subprocess.run` を monkeypatch する以外に撃てなかった(7 箇所)。"
+       "直接 I/O は判断と同居していた: 例 = tmux.py の送信確認ループ(capture → 判定 → Enter 再送 → 待つ)が subprocess.run と time.sleep を直に持ち、検は `doeff_agents._tmux.subprocess.run` を monkeypatch する以外に撃てなかった(7 箇所)。"
        :evidence "変更前 packages/doeff-agents/tests/test_session_backend.py の monkeypatch site")
      (fact
        "monkeypatch は module の綴りに依存するので、I/O の家が動くたびに検が黙って素通しになる: `agentd_client._start_agentd_process` は raising=False で patch されており、関数名が変わると本物の Popen が走った。"
@@ -150,7 +150,7 @@
     [(law driver-io-goes-through-effects
        :statement "for_all source f in driver_layer: count_direct_io_calls(f) = 0 — driver 層に file・子 process・unix socket・環境変数の直書きは 1 行も存在しない"
        :counterexamples
-         [(counterexample "tmux.py が subprocess.run を直に呼ぶ — 検は module の綴り(doeff_agents.tmux.subprocess.run)を monkeypatch するしかなく、I/O の家が動くと検が黙って素通しになる(2026-09-12 変更前の実測 7 箇所)")
+         [(counterexample "tmux.py が subprocess.run を直に呼ぶ — 検は module の綴り(doeff_agents._tmux.subprocess.run)を monkeypatch するしかなく、I/O の家が動くと検が黙って素通しになる(2026-09-12 変更前の実測 7 箇所)")
           (counterexample "agentd_client.py が socket.socket を直に開く — 判断(JSON の組み立てと解釈)と 1 往復の物理が同じ関数に同居し、protocol の検が実 socket を要求する")])
      (law driver-io-has-one-production-home
        :statement "exists_unique module m in driver_layer: m holds the raw syscalls, and m = doeff_agents._io_handlers"

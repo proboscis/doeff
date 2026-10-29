@@ -224,7 +224,7 @@ print("DOEFF_AGENT_RESULT_END", flush=True)
 
 # 2) Deliver the result over the agentd-owned report_result stdio MCP server.
 proc = subprocess.Popen(
-    [sys.executable, "-m", "doeff_agents.sessionhost.result_mcp",
+    [sys.executable, "-m", "doeff_agents._sessionhost.result_mcp",
      "--session", SESSION_ID, "--socket", SOCKET],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,

@@ -1,7 +1,7 @@
 """S28 supervised host lifetime — out-of-band orphan boundary (README S28).
 
 The leak this scenario pins (host-load-steward observation, 2026-07-30): the
-harness spawns `python -m doeff_agents.sessionhost.host ...` as a plain child process. Its
+harness spawns `python -m doeff_agents._sessionhost.host ...` as a plain child process. Its
 teardown (`__exit__` -> kill sessions -> SIGTERM daemon -> rmtree) is correct,
 but it lives INSIDE the pytest process — SIGKILL the driver and nothing is
 left with the authority or the code path to stop the daemon. 28 daemons at a

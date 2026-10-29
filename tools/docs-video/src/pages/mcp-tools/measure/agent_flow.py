@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 from doeff_agents import AgentType
 from doeff_agents import Launch, Stop
 from doeff_agents import claude_agent_handler
-from doeff_agents.tmux import SessionInfo
+from doeff_agents import SessionInfo
 from doeff_core_effects import state
 from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 

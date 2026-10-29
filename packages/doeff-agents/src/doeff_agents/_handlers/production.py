@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from doeff_agents import tmux
+from doeff_agents import _tmux as tmux
 from doeff_agents._adapters.base import (
     AgentAdapter,
     AgentSessionLifecycle,
@@ -22,7 +22,7 @@ from doeff_agents._adapters.claude import ClaudeAdapter
 from doeff_agents._adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 from doeff_agents._adapters.gemini import GeminiAdapter
 from doeff_agents._agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
-from doeff_agents.claude_home import prepare_claude_home
+from doeff_agents._claude_home import prepare_claude_home
 from doeff_agents._effects import (
     AgentAttemptExhaustedError,
     AgentDeadlineExceededError,
@@ -71,9 +71,9 @@ from doeff_agents._monitor import (
 from doeff_agents._result_validation import validate_result_payload
 from doeff_agents._runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents._session import _dismiss_onboarding_dialogs, deliver_prompt_when_ready
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
-from doeff_agents.shell import (
+from doeff_agents._session_backend import SessionBackend
+from doeff_agents._session_store import AgentSessionRepository, InMemoryAgentSessionRepository
+from doeff_agents._shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,
     wrap_with_shell_exports,

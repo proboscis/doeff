@@ -36,8 +36,8 @@ from doeff_agents._handlers.testing import MockSessionScript as MockSessionScrip
 from doeff_agents._handlers.testing import ScenarioStep as ScenarioStep
 from doeff_agents._runtime import ClaudeRuntimePolicy as ClaudeRuntimePolicy
 from doeff_agents._runtime import CodexRuntimePolicy as CodexRuntimePolicy
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.session_store import AgentSessionRepository as AgentSessionRepository
+from doeff_agents._session_backend import SessionBackend
+from doeff_agents._session_store import AgentSessionRepository as AgentSessionRepository
 
 # The headless adapter's default permission policy: skip the CLI's permission
 # checks (`BypassAll`) — the behavior every caller had before #3753.

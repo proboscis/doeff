@@ -22,7 +22,7 @@
 (import threading)
 (import time)
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   ProcResult
   SessionRow
   TmuxNewSession
@@ -57,7 +57,7 @@
   GitRun
   EnvGet
   LogLine])
-(import doeff_agents.sessionhost.policy [PROVIDER-AUTH-ENV-KEYS
+(import doeff_agents._sessionhost.policy [PROVIDER-AUTH-ENV-KEYS
                                          env-offenders-against
                                          policy-normalized-env-key])
 

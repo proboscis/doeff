@@ -68,7 +68,7 @@ class AgenticAPI:
             return self._backend
 
         try:
-            from doeff_agents.tmux import get_default_backend
+            from doeff_agents._tmux import get_default_backend
         except ImportError as exc:
             raise RuntimeError(
                 "tmux-backed AgenticAPI operations require doeff-agents. "
@@ -370,8 +370,7 @@ class AgenticAPI:
         Returns:
             Workflow ID
         """
-        from doeff_agents import SessionBackend
-        from doeff_agents.session_backend import default_session_backend
+        from doeff_agents import SessionBackend, default_session_backend
         from doeff_core_effects import (
             await_handler,
             lazy_ask,

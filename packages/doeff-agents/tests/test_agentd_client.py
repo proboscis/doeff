@@ -570,7 +570,7 @@ def test_ensure_agentd_error_prose_names_the_session_host_not_the_retired_daemon
 
     The Rust ``doeff-agentd`` binary was retired (ADR-DOE-AGENTS-004
     ``retired-impl-lives-only-in-git-history``); the host that ships with this
-    package is the entry module ``doeff_agents.sessionhost.host``.  A reader of
+    package is the entry module ``doeff_agents._sessionhost.host``.  A reader of
     this error must not be handed two different names for one daemon.
     """
     state_home = tmp_path / "state"
@@ -1157,7 +1157,7 @@ def test_start_session_host_runs_the_entry_module_on_the_running_interpreter(
             (
                 sys.executable,
                 "-m",
-                "doeff_agents.sessionhost.host",
+                "doeff_agents._sessionhost.host",
                 "--db",
                 str(paths.db_path),
                 "--socket",

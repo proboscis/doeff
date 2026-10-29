@@ -1,6 +1,6 @@
 """agentd e2e 群の sessionhost 束縛(issue #575 M2・card ki-bb337cfd0336)。
 
-daemon under test は host の入口の module(`python -m doeff_agents.sessionhost.host`)であり、
+daemon under test は host の入口の module(`python -m doeff_agents._sessionhost.host`)であり、
 退役 Rust crate(rollback tag agentd-rust-final に保存)のビルド(cargo)・path 算出にも、
 CLI コマンドの PATH の探索にも依存しない。起動の argv の頭は
 sessionhost_bin.sessionhost_command の単一実装: DOEFF_AGENTD_BIN(明示 seam、契約語彙)→
@@ -31,7 +31,7 @@ def test_default_is_the_entry_module_on_the_running_interpreter(monkeypatch, tmp
     monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
     # PATH に何が在っても(古い console script でも)見ない。
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert sessionhost_command() == (sys.executable, "-m", "doeff_agents.sessionhost.host")
+    assert sessionhost_command() == (sys.executable, "-m", "doeff_agents._sessionhost.host")
 
 
 def test_the_package_declares_no_sessionhost_console_script():

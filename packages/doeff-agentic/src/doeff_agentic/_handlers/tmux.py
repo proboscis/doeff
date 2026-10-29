@@ -90,7 +90,7 @@ def strip_ansi(text: str) -> str:
 
 def _resolve_default_backend():
     try:
-        from doeff_agents.tmux import get_default_backend
+        from doeff_agents._tmux import get_default_backend
     except ImportError as exc:
         raise AgenticServerError(
             "tmux backend requires doeff-agents. "
@@ -102,7 +102,7 @@ def _resolve_default_backend():
 
 def _session_config(session_name: str, work_dir: Path | None = None):
     try:
-        from doeff_agents.tmux import SessionConfig
+        from doeff_agents import SessionConfig
     except ImportError as exc:
         raise AgenticServerError(
             "tmux backend requires doeff-agents. "

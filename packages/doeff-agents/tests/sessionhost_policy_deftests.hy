@@ -13,52 +13,12 @@
 (import pytest)
 (import doeff [Program run with_handlers])
 (import doeff_core_effects [state])
-(import doeff_agents.sessionhost.store_memory [MemorySessionRows memory-session-store])
+(import doeff_agents [MemorySessionRows memory-session-store])
 (import memory_store_world [StoreWorld kept-in seeded reported])
 
-(import doeff_agents.sessionhost.effects [
-  SessionRow
-  TerminalCause
-  PaneObservation
-  JudgeVerdict
-  ProcResult
-  MonitorKnobs
-  BuildLaunch
-  PreLaunchSetup
-  ClassifyPane
-  DeliverMessage
-  WireResultChannel
-  SessionStoreListActive
-  SessionStoreGet
-  SessionStoreResultPayload
-  DiscoverConversation
-  ProbeConversationActivity
-  TmuxHasSession
-  TmuxPaneCurrentCommand
-  TmuxSessionPaneIds
-  TmuxCapture
-  TmuxSendKeys
-  TmuxKillSession
-  ClockNow
-  ProcRun
-  build-launch
-  pre-launch-setup
-  classify-pane
-  deliver-message
-  wire-result-channel
-  session-store-list-active
-  session-store-get
-  session-store-upsert
-  session-store-result-payload
-  session-store-record-event
-  tmux-has-session
-  tmux-pane-current-command
-  tmux-capture
-  tmux-send-keys
-  tmux-kill-session
-  clock-now
-  proc-run])
-(import doeff_agents.sessionhost.policy [
+(import doeff_agents [SessionRow PaneObservation ProcResult BuildLaunch PreLaunchSetup ClassifyPane DeliverMessage WireResultChannel SessionStoreListActive SessionStoreGet SessionStoreResultPayload DiscoverConversation ProbeConversationActivity TmuxHasSession TmuxPaneCurrentCommand TmuxSessionPaneIds TmuxCapture TmuxSendKeys TmuxKillSession ClockNow ProcRun build-launch pre-launch-setup classify-pane deliver-message wire-result-channel session-store-list-active session-store-get session-store-upsert session-store-result-payload session-store-record-event tmux-has-session tmux-pane-current-command tmux-capture tmux-send-keys tmux-kill-session clock-now proc-run]
+        doeff_agents._sessionhost.effects [TerminalCause JudgeVerdict MonitorKnobs])
+(import doeff_agents._sessionhost.policy [
   ACTIVE-STATUSES
   RESULT-SOLICITATION-MESSAGE
   TERMINAL-CAUSE-RETRYABLE
@@ -67,8 +27,8 @@
   tail-chars
   tail-lower
   monitor-cycle])
-(import doeff_agents.sessionhost.host [send-program])
-(import doeff_agents.sessionhost.impls.markers [has-api-limit-marker
+(import doeff_agents._sessionhost.host [send-program])
+(import doeff_agents._sessionhost.impls.markers [has-api-limit-marker
                                                 provider-failure-class])
 
 

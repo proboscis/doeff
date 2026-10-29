@@ -12,9 +12,9 @@
 
 (import json)
 
-(import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
+(import doeff_agents._sessionhost.drivers [DRIVER-EXECUTABLE])
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   BuildLaunch
   BuildResume
   DiscoverConversation
@@ -40,7 +40,7 @@
   fs-make-dirs
   env-get
   tmux-send-keys])
-(import doeff_agents.sessionhost.policy [
+(import doeff_agents._sessionhost.policy [
   BILLING-METERED
   BILLING-SUBSCRIPTION
   CODEX-AUTH-API-KEY-FIELD
@@ -48,10 +48,10 @@
   HOME-READING-MALFORMED
   binding-billing-class
   codex-home-metered-reading])
-(import doeff_agents.sessionhost.impls.channel [
+(import doeff_agents._sessionhost.impls.channel [
   REPORT-RESULT-MCP-SERVER
   result-channel-spec])
-(import doeff_agents.sessionhost.impls.markers [classify-output])
+(import doeff_agents._sessionhost.impls.markers [classify-output])
 
 
 ;; ---------------------------------------------------------------------------

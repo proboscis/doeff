@@ -2,7 +2,7 @@
 ;;;
 ;;; observation 形式の readiness/idle 物理の家(ADR-DOE-AGENTS-008 R1)。
 ;;; gate 形式(単発判定の pattern 文字列・screen-reader trust prompt)は
-;;; doeff-free leaf の doeff_agents/ready_physics.hy が家 — codex の両形式の一致は
+;;; doeff-free leaf の doeff_agents/_ready_physics.hy が家 — codex の両形式の一致は
 ;;; tests/test_ready_physics_single_home.py の parity 検定が執行する。
 ;;;
 ;;; 出自: 退役 Rust 実装 agentd-rust-final:src/main.rs の output_has_*
@@ -26,8 +26,8 @@
 (import datetime [datetime timedelta timezone])
 (import zoneinfo [ZoneInfo ZoneInfoNotFoundError])
 
-(import doeff_agents.sessionhost.effects [PaneObservation])
-(import doeff_agents.sessionhost.policy [tail-lower])
+(import doeff_agents._sessionhost.effects [PaneObservation])
+(import doeff_agents._sessionhost.policy [tail-lower])
 
 
 ;; ACP ADR 0049 R9 改訂(2026-08-07。2026-08-06 実 incident、Fable 週次枠):

@@ -24,7 +24,7 @@ from doeff_agents._agentd_client import (
 from doeff_agents._io_fake import with_fake_io
 from doeff_agents._io_handlers import run_driver_io
 from doeff_agents._io_root import IoRoot
-from doeff_agents.tmux import (
+from doeff_agents._tmux import (
     CONFIRM_INITIAL_SECONDS,
     CONFIRM_RETRY_WAITS,
     PASTE_SETTLE_SECONDS,

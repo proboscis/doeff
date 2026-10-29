@@ -16,8 +16,8 @@ from pathlib import Path
 
 import hy  # noqa: F401 -- installs the .hy import hook
 import hy.models
-from doeff_agents import _agent_env as agent_env, shell
-from doeff_agents.sessionhost import policy, substrate
+from doeff_agents import _agent_env as agent_env, _shell as shell
+from doeff_agents._sessionhost import policy, substrate
 
 VOCABULARY = (
     "PROVIDER_AUTH_ENV_KEYS",
@@ -67,15 +67,15 @@ def _imported_modules_of_hy(text: str) -> set[str]:
 
 
 def _reaches_session_host(names: set[str]) -> bool:
-    return any(name.startswith(("doeff_agents.sessionhost", ".sessionhost")) for name in names)
+    return any(name.startswith(("doeff_agents._sessionhost", ".sessionhost")) for name in names)
 
 
 def test_the_hy_import_reader_sees_dotted_and_relative_names() -> None:
     """読みの赤の証人: 点つきの名・相対の名・require も session host として見える(空振りしない)。"""
     for text in (
-        "(import doeff_agents.sessionhost.effects [SessionRow])",
+        "(import doeff_agents._sessionhost.effects [SessionRow])",
         "(import .sessionhost [policy])",
-        "(import json doeff_agents.sessionhost.policy :as p)",
+        "(import json doeff_agents._sessionhost.policy :as p)",
     ):
         assert _reaches_session_host(_imported_modules_of_hy(text)), text
     assert not _reaches_session_host(_imported_modules_of_hy("(require doeff-hy.macros [deff])\n(import json)"))
@@ -95,7 +95,7 @@ def test_home_does_not_import_the_session_host() -> None:
         if isinstance(node, ast.Import)
         for alias in node.names
     }
-    assert not any(name.startswith("doeff_agents.sessionhost") for name in shell_imports), shell_imports
+    assert not any(name.startswith("doeff_agents._sessionhost") for name in shell_imports), shell_imports
 
 
 def test_layer_sets_are_derived_from_agent_env() -> None:

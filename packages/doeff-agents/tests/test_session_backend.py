@@ -30,7 +30,7 @@ from doeff_agents import (
     StopEffect,
     agent_effectful_handler,
 )
-from doeff_agents import session_backend as session_backend_module
+from doeff_agents import _session_backend as session_backend_module
 # The session procedures, the terminal backend and the tmux handler object are internal to doeff-agents;
 # these tests exercise them directly.
 from doeff_agents._session import capture_output, launch_session, monitor_session, send_message, stop_session
@@ -41,9 +41,10 @@ from doeff_agents._adapters.codex import CodexAdapter
 from doeff_agents import AwaitResultEffect, AwaitStatus, LaunchSession
 from doeff_agents._result_validation import validate_result_payload
 from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy
-from doeff_agents.session_backend import SessionBackend, SessionConfig, SessionInfo
-from doeff_agents.session_store import InMemoryAgentSessionRepository
-from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
+from doeff_agents import SessionBackend
+from doeff_agents import SessionConfig, SessionInfo
+from doeff_agents import InMemoryAgentSessionRepository
+from doeff_agents._tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
 from fake_io_support import FakeIoWorld, completed_process_script, fake_io_root
 
 from doeff.mcp import McpParamSchema, McpToolDef
@@ -64,8 +65,8 @@ def test_session_api_import_does_not_load_the_handler_layer() -> None:
         "import sys\n"
         f"sys.path.insert(0, {str(src_path)!r})\n"
         "from doeff_agents._session import launch_session\n"
-        "from doeff_agents.session_backend import default_session_backend\n"
-        "from doeff_agents.tmux import TmuxSessionBackend\n"
+        "from doeff_agents._session_backend import default_session_backend\n"
+        "from doeff_agents._tmux import TmuxSessionBackend\n"
         "print(launch_session.__name__)\n"
         "print(default_session_backend.__name__)\n"
         "print(TmuxSessionBackend.__name__)\n"

@@ -32,7 +32,7 @@
   StopSessionEffect
   WarmSessionEffect])
 (import doeff_agents._effects._handler-effects [ClaudeLaunchEffect])
-(import doeff_agents.session-backend [SessionBackend])
+(import doeff_agents._session-backend [SessionBackend])
 (import doeff_agents._handlers.production [
   TmuxAgentHandler
   make-report-result-tool

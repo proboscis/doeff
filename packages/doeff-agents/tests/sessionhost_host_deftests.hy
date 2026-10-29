@@ -19,8 +19,8 @@
 (import tempfile)
 (import time)
 
-(import doeff_agents.sessionhost.policy [AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS])
-(import doeff_agents.sessionhost.host [
+(import doeff_agents._sessionhost.policy [AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS])
+(import doeff_agents._sessionhost.host [
   HostConfig
   SERVE-ENV-ONLY-SPECS
   SERVE-FLAG-SPECS
@@ -40,7 +40,7 @@
   run-hosted
   main])
 (import doeff_time [Delay])
-(import doeff_agents.sessionhost.store [
+(import doeff_agents._sessionhost.store [
   StoreActor
   db-acquire-lease
   open-conn
@@ -695,7 +695,7 @@
    judge は明示無効(実 claude subprocess を焼かない)。"
   (setv log (open log-path "ab"))
   (try
-    (subprocess.Popen [sys.executable "-m" "doeff_agents.sessionhost.host"
+    (subprocess.Popen [sys.executable "-m" "doeff_agents._sessionhost.host"
                        "--db" db-path "--socket" sock-path "--prompt-judge-cmd" ""]
                       :stdout log :stderr subprocess.STDOUT)
     (finally (.close log))))
@@ -999,7 +999,7 @@
 
 
 (deftest test-store-health-counts-only-storage-failures
-  (import doeff_agents.sessionhost.store_health [StoreWriteHealth next-health readiness-of storage-failure-name])
+  (import doeff_agents._sessionhost.store_health [StoreWriteHealth next-health readiness-of storage-failure-name])
   ;; 制約違反・program の誤り・lock の待ちは store の健康ではない(readiness を落としても直らない)。
   (setv conn (sqlite3.connect ":memory:"))
   (.execute conn "CREATE TABLE t (k TEXT PRIMARY KEY)")

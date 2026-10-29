@@ -33,7 +33,7 @@
   StopSessionEffect])
 (import doeff_agents._handlers.production [AgentHandler])
 (import doeff_agents._effects.agent [SessionStatus])
-(import doeff_agents.session-store [
+(import doeff_agents._session-store [
   AgentSessionRepository
   InMemoryAgentSessionRepository])
 

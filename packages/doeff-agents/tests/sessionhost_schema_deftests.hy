@@ -12,7 +12,7 @@
 
 (require doeff-hy.macros [deftest deff])
 
-(import doeff_agents.sessionhost.schema
+(import doeff_agents._sessionhost.schema
   [validate-against-schema schema-admission-error])
 
 

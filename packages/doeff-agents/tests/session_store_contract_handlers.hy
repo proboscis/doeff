@@ -13,8 +13,9 @@
 (import tempfile)
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects [state])
-(import doeff_agents.sessionhost.store [StoreActor sqlite-session-store])
-(import doeff_agents.sessionhost.store_memory [MemorySessionRows ReadMemorySessionRows memory-session-store])
+(import doeff_agents [sqlite-session-store]
+        doeff_agents._sessionhost.store [StoreActor])
+(import doeff_agents [MemorySessionRows ReadMemorySessionRows memory-session-store])
 
 (val SQLITE-SESSION-STORE "sqlite-session-store")
 (val MEMORY-SESSION-STORE "memory-session-store")

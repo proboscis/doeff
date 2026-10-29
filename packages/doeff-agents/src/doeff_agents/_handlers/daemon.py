@@ -8,7 +8,7 @@ from typing import Protocol
 
 from doeff_agents._adapters.base import AgentType, LaunchParams
 from doeff_agents._agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
-from doeff_agents.claude_home import prepare_claude_home
+from doeff_agents._claude_home import prepare_claude_home
 from doeff_agents._effects import (
     AgentError,
     AgentLaunchError,
@@ -40,12 +40,12 @@ from doeff_agents._handlers.production import AgentHandler, get_adapter
 from doeff_agents._effects._handler_effects import ClaudeLaunchEffect, refuse_turn_capabilities
 from doeff_agents._io_root import IoRoot
 from doeff_agents._runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
-from doeff_agents.shell import (
+from doeff_agents._shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,
     wrap_with_shell_exports,
 )
-from doeff_agents.tmux import attach_session as _attach_tmux_session
+from doeff_agents._tmux import attach_session as _attach_tmux_session
 
 
 class AgentdSessionClient(Protocol):

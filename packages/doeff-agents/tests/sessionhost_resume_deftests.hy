@@ -21,15 +21,13 @@
 (import json)
 
 (import doeff [run])
-(import doeff_agents.sessionhost.store_memory [with-row])
-(import doeff_agents.sessionhost.effects [SessionRow])
-(import doeff_agents.sessionhost.impls.claude_code [
-  claude-code-impl
-  claude-discover-conversation])
-(import doeff_agents.sessionhost.impls.codex [
-  codex-impl
-  codex-discover-conversation])
-(import doeff_agents.sessionhost.launch [
+(import doeff_agents._sessionhost.store_memory [with-row])
+(import doeff_agents [SessionRow])
+(import doeff_agents [claude-code-impl]
+        doeff_agents._sessionhost.impls.claude_code [claude-discover-conversation])
+(import doeff_agents [codex-impl]
+        doeff_agents._sessionhost.impls.codex [codex-discover-conversation])
+(import doeff_agents._sessionhost.launch [
   RESULT-PROTOCOL-INSTRUCTION
   resume-session])
 (import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate under-world])

@@ -163,7 +163,7 @@ rules:
     severity: ERROR
     message: >
       Readiness pattern literals are defined ONLY in the physics home
-      (doeff_agents/ready_physics.hy); adapters import the
+      (doeff_agents/_ready_physics.hy); adapters import the
       constant. Re-defining a ready pattern literal in an adapter re-creates
       the two-homes drift banned by ADR-DOE-AGENTS-004
       protocol-physics-has-one-home (the 2026-07-05 incident class: the same
@@ -186,7 +186,7 @@ rules:
     severity: ERROR
     message: >
       The repl-idle budget default has exactly ONE literal home:
-      doeff_agents/sessionhost/effects.hy (MonitorKnobs knob vocabulary).
+      doeff_agents/_sessionhost/effects.hy (MonitorKnobs knob vocabulary).
       Re-defining REPL-IDLE-MAX-WAIT-SECONDS elsewhere re-creates the drift
       between the launch ready gate and the boot-watchdog budget that the
       retired-Rust "oracle constant" comments used to justify —
@@ -194,10 +194,10 @@ rules:
     pattern: setv REPL-IDLE-MAX-WAIT-SECONDS
     paths:
       include:
-        - "**/doeff_agents/sessionhost/**"
-        - "**/sessionhost/repl_idle_budget_literal_forbidden.hy"
+        - "**/doeff_agents/_sessionhost/**"
+        - "**/_sessionhost/repl_idle_budget_literal_forbidden.hy"
       exclude:
-        - "**/sessionhost/effects.hy"
+        - "**/_sessionhost/effects.hy"
 
   - id: doeff-agents-charter-carried-key-hand-written-in-a-roster
     languages:
@@ -220,9 +220,9 @@ rules:
       - pattern-regex: '"(auto_compact_window|memory_dir|memory_files)"\s+\('
     paths:
       include:
-        - "**/doeff_agents/sessionhost/**"
+        - "**/doeff_agents/_sessionhost/**"
       exclude:
-        - "**/sessionhost/policy.hy"
+        - "**/_sessionhost/policy.hy"
 
   - id: doeff-agents-api-limit-possessive-verbatim-forbidden
     languages:
@@ -231,7 +231,7 @@ rules:
     message: >
       The possessive api-limit wording family (you've hit/reached your …
       limit) is matched by the bounded family regex
-      API-LIMIT-EXHAUSTED-FAMILY-RE in sessionhost/impls/markers.hy —
+      API-LIMIT-EXHAUSTED-FAMILY-RE in _sessionhost/impls/markers.hy —
       ACP ADR 0049 R9 (revised 2026-08-07). Adding a verbatim possessive
       substring re-creates the enumeration that broke identically three
       times (2026-07-20 / 07-26 / 08-06 — the last one silently discarded
@@ -241,8 +241,8 @@ rules:
       - pattern-regex: 'in "you[''’]ve (hit|reached) your'
     paths:
       include:
-        - "**/doeff_agents/sessionhost/impls/markers.hy"
-        - "**/sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy"
+        - "**/doeff_agents/_sessionhost/impls/markers.hy"
+        - "**/_sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy"
 
   - id: doeff-agents-herdr-session-identity-not-agent-name
     languages:
@@ -278,9 +278,9 @@ rules:
           "agent.get"
     paths:
       include:
-        - "**/doeff_agents/sessionhost/**"
+        - "**/doeff_agents/_sessionhost/**"
         - "**/doeff-agents/conformance/**"
-        - "**/sessionhost/herdr_agent_name_identity_forbidden.hy"
+        - "**/_sessionhost/herdr_agent_name_identity_forbidden.hy"
 
   - id: doeff-agents-herdr-label-holders-must-not-be-indexed
     languages:
@@ -304,9 +304,9 @@ rules:
       - pattern-regex: '(?:\(get\s+[A-Za-z_-]*holders\s+0\)|holders\[0\])'
     paths:
       include:
-        - "**/doeff_agents/sessionhost/substrate_herdr.hy"
+        - "**/doeff_agents/_sessionhost/substrate_herdr.hy"
         - "**/doeff-agents/conformance/harness.py"
-        - "**/sessionhost/herdr_label_holders_indexed_forbidden.hy"
+        - "**/_sessionhost/herdr_label_holders_indexed_forbidden.hy"
 
   - id: doeff-cluster-program-arguments-are-built-in-one-place
     languages:
@@ -479,9 +479,9 @@ rules:
       - pattern-regex: 'IDLE-SHELL-COMMANDS|IDLE_SHELL_COMMANDS'
     paths:
       include:
-        - "**/doeff_agents/sessionhost/**"
+        - "**/doeff_agents/_sessionhost/**"
       exclude:
-        - "**/doeff_agents/sessionhost/policy.hy"
+        - "**/doeff_agents/_sessionhost/policy.hy"
 
   - id: doeff-agents-provider-failure-verbatim-forbidden
     languages:
@@ -491,7 +491,7 @@ rules:
       The non-limit provider-failure families (re-auth demanded / access
       revoked / context exhausted / transport error) are matched by the
       bounded family regexes PROVIDER-*-FAMILY-RE in
-      sessionhost/impls/markers.hy — ACP ADR 0049 R9 (third revision,
+      _sessionhost/impls/markers.hy — ACP ADR 0049 R9 (third revision,
       2026-08-12). A verbatim substring test re-creates the enumeration that
       broke identically three times for the limit family, and the same drift
       is already on record here: the SAME auth event renders as "Not logged
@@ -503,8 +503,8 @@ rules:
       - pattern-regex: 'in "(not logged in|login expired|please run /login|organization has disabled|context limit reached|prompt is too long)'
     paths:
       include:
-        - "**/doeff_agents/sessionhost/impls/markers.hy"
-        - "**/sessionhost/impls/provider_failure_verbatim_forbidden.hy"
+        - "**/doeff_agents/_sessionhost/impls/markers.hy"
+        - "**/_sessionhost/impls/provider_failure_verbatim_forbidden.hy"
 
   - id: doeff-agents-prompt-paste-must-be-ready-gated
     languages:
@@ -666,7 +666,7 @@ rules:
     severity: ERROR
     message: >
       ADR-DOE-AGENTS-004 R2 (substrate-clean): per-kind impl modules under
-      packages/doeff-agents/src/doeff_agents/sessionhost/impls/ must only
+      packages/doeff-agents/src/doeff_agents/_sessionhost/impls/ must only
       yield substrate effects (SessionStore / Tmux / Fs / Env / Clock /
       Proc). Raw IO — subprocess, sqlite3, open(), os.system — is forbidden
       here; it belongs to the substrate handlers that interpret those
@@ -678,7 +678,7 @@ rules:
       - pattern-regex: '(?<![\w.])open\s*\('
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
+        - /packages/doeff-agents/src/doeff_agents/_sessionhost/impls/**
 
   - id: doeff-agents-memory-baseline-spelling-has-one-home
     languages:
@@ -688,7 +688,7 @@ rules:
       card acp:kanban-issue:ki-9fc7d4bca4dc / law
       conversation-memory-lives-in-the-row: the fold-back BASELINE file
       (`MEMORY.base.json`) has exactly one home — the seat's copy in
-      sessionhost/impls/claude_code.hy (CLAUDE-MEMORY-BASE-FILE). The wire
+      _sessionhost/impls/claude_code.hy (CLAUDE-MEMORY-BASE-FILE). The wire
       spelling in acp/effects.py retired with agentd (agora-redesign #668).
       A second site that spells the file builds a side car nobody
       reads: the fold-back then sees no baseline, writes NO book back (verdict
@@ -701,7 +701,7 @@ rules:
       include:
         - /packages/doeff-agents/**
       exclude:
-        - "**/sessionhost/impls/claude_code.hy"
+        - "**/_sessionhost/impls/claude_code.hy"
 
   - id: doeff-agents-turn-carried-key-must-not-become-a-launch-flag
     languages:
@@ -728,7 +728,7 @@ rules:
       include:
         - /packages/doeff-agents/**
         # hit fixture(規則が現に火を噴くことの証拠 — 本体の走査対象の外に置く)
-        - "**/sessionhost/turn_carried_key_as_launch_flag_forbidden.hy"
+        - "**/_sessionhost/turn_carried_key_as_launch_flag_forbidden.hy"
 
   - id: doeff-agents-auto-memory-dir-spelling-has-one-home
     languages:
@@ -739,7 +739,7 @@ rules:
       the auto-memory home is DECIDED in one place (judgment.memory-home-of —
       <memory root>/<conversation id>, with neither the custody account nor the
       working directory among its arguments) and SPELLED for the CLI in one
-      place (CLAUDE-AUTO-MEMORY-DIR-SETTING in sessionhost/impls/claude_code.hy).
+      place (CLAUDE-AUTO-MEMORY-DIR-SETTING in _sessionhost/impls/claude_code.hy).
       A second site that spells `autoMemoryDirectory` builds a memory home
       nobody declared. That is the defect this law fixes: until 2026-09-20 the
       effective key was "custody account x working directory", so one
@@ -753,7 +753,7 @@ rules:
       include:
         - /packages/doeff-agents/**
       exclude:
-        - "**/sessionhost/impls/claude_code.hy"
+        - "**/_sessionhost/impls/claude_code.hy"
         - "**/tests/sessionhost_impls_deftests.hy"
         - "**/tests/sessionhost_resume_deftests.hy"
 
@@ -867,7 +867,7 @@ rules:
         - /packages/doeff-agents/**
 
   # 上の規則の Hy の分(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R7): 上は Python の class / def / import の名だけを見るので、Hy の定義
-  # (io_effects.hy の Sleep と sleep・sessionhost/effects.hy の ClockSleep と clock-sleep)に当たらず、doeff-agents の program は
+  # (io_effects.hy の Sleep と sleep・_sessionhost/effects.hy の ClockSleep と clock-sleep)に当たらず、doeff-agents の program は
   # 自前の待ちの効果で待っていた。Hy で待ちの効果(名に Sleep / Delay を含む EffectBase の defclass・defeffect)と、その構築子
   # (名が sleep か -sleep で終わる定義)を定め直す形を止める。program の中の素の time.sleep は doeff-linter の DOEFF210 が持つ。
   # 極性の検 = tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py。
@@ -952,7 +952,7 @@ rules:
         # terminal-text sniffing — the module has no access to pane
         # captures at all. Sniffing stays banned everywhere else in
         # doeff-agents/src, including the rest of sessionhost.
-        - /packages/doeff-agents/src/doeff_agents/sessionhost/store.hy
+        - /packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy
 
   - id: doeff-agents-no-terminal-text-success-status
     languages: [python]
@@ -5393,8 +5393,8 @@ rules:
       include:
         # ターゲット相対照合(directory scan では packages/ prefix 無し)の
         # ため **/ 形式で指定する(doeff-domain ルールの教訓)。
-        - "**/sessionhost/adopt.hy"
-        - "**/sessionhost/adopt_mutates_substrate_forbidden.hy"
+        - "**/_sessionhost/adopt.hy"
+        - "**/_sessionhost/adopt_mutates_substrate_forbidden.hy"
 
   - id: doeff-agents-interactive-must-not-be-terminalized
     languages:
@@ -5412,8 +5412,8 @@ rules:
     pattern-regex: '(?s)\(defk monitor-session-once(?:(?!reap-exempt).)*?:status\s+"(failed|exited)"'
     paths:
       include:
-        - "**/sessionhost/policy.hy"
-        - "**/sessionhost/monitor_terminalizes_before_exemption_forbidden.hy"
+        - "**/_sessionhost/policy.hy"
+        - "**/_sessionhost/monitor_terminalizes_before_exemption_forbidden.hy"
 
   - id: doeff-agents-turn-rpc-must-not-touch-substrate
     languages:
@@ -5430,8 +5430,8 @@ rules:
     pattern-regex: '\((tmux-[a-z][a-z-]*|Tmux[A-Za-z]+|deliver-message|DeliverMessage|proc-run|ProcRun|herdr-call)\b'
     paths:
       include:
-        - "**/sessionhost/turn.hy"
-        - "**/sessionhost/turn_touches_substrate_forbidden.hy"
+        - "**/_sessionhost/turn.hy"
+        - "**/_sessionhost/turn_touches_substrate_forbidden.hy"
 
   - id: doeff-agents-turn-name-key-requires-bare-descriptor
     languages:
@@ -5451,7 +5451,7 @@ rules:
     pattern-regex: '\(when\s+\(is-not\s+agent-name\s+None\)'
     paths:
       include:
-        - "**/sessionhost/turn.hy"
+        - "**/_sessionhost/turn.hy"
 
   - id: doeff-agents-no-lost-terminal-cause
     languages:
@@ -5470,7 +5470,7 @@ rules:
     pattern-regex: '\(make-cause\s+"lost"'
     paths:
       include:
-        - "**/sessionhost/**/*.hy"
+        - "**/_sessionhost/**/*.hy"
         - "**/sessionhost_*.hy"
 
   - id: doeff-agents-terminal-cleanup-single-sweep
@@ -5490,7 +5490,7 @@ rules:
     pattern-regex: '(?s)\(is-run-to-completion row\.lifecycle\).{0,200}\(tmux-kill-session'
     paths:
       include:
-        - "**/sessionhost/policy.hy"
+        - "**/_sessionhost/policy.hy"
 
   - id: doeff-adr-no-git-metadata-anchor
     languages:
@@ -5556,7 +5556,7 @@ rules:
       card acp:kanban-issue:ki-62aa1f4e9c9c decision D6: the settings key that
       drops the seat-specific DOUBLE read of the common CLAUDE.md is spelled in
       exactly one place (CLAUDE-MD-EXCLUDES-SETTING in
-      sessionhost/impls/claude_code.hy, which is also the single merge point of
+      _sessionhost/impls/claude_code.hy, which is also the single merge point of
       `--settings`). A second site that spells `claudeMdExcludes` builds an
       exclude list that the merge point does not own: the two lists then race in
       one `--settings` flag and the later one silently wins, so the seat either
@@ -5570,7 +5570,7 @@ rules:
       include:
         - /packages/doeff-agents/**
       exclude:
-        - "**/sessionhost/impls/claude_code.hy"
+        - "**/_sessionhost/impls/claude_code.hy"
 
   - id: doeff-agents-seat-home-instruction-names-have-one-home
     languages:
@@ -5599,7 +5599,7 @@ rules:
         - /packages/doeff-agents/src/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
       exclude:
-        - "**/sessionhost/policy.hy"
+        - "**/_sessionhost/policy.hy"
 
   - id: doeff-agents-host-checkout-layout-is-never-spelled-here
     languages:
@@ -5642,7 +5642,7 @@ rules:
     severity: ERROR
     message: >
       card acp:kanban-issue:ki-62aa1f4e9c9c decision D8: installing a symlink is
-      ONE verb — sessionhost/substrate.hy ensure-symlink-outcome — and that verb
+      ONE verb — _sessionhost/substrate.hy ensure-symlink-outcome — and that verb
       stages a uniquely named link and lands it with a single rename(2). A second
       site that calls os.symlink / Path.symlink_to hand-rolls the install without
       that physics, and the home it writes into is SHARED: homes are minted per
@@ -5674,7 +5674,7 @@ rules:
         - /packages/doeff-agents/src/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
       exclude:
-        - "**/sessionhost/substrate.hy"
+        - "**/_sessionhost/substrate.hy"
 
   - id: doeff-agents-agent-argv-head-names-the-driver-executable
     languages:
@@ -5683,7 +5683,7 @@ rules:
     message: >
       ADR-DOE-AGENTS-012 R61 (card acp:kanban-issue:ki-f250d67a7157): the
       executable an agent kind launches (argv[0]) is named in ONE place —
-      sessionhost/drivers.py DRIVER_EXECUTABLE — and every argv builder reads
+      _sessionhost/drivers.py DRIVER_EXECUTABLE — and every argv builder reads
       it from there ((get DRIVER-EXECUTABLE "codex")). A literal "claude" /
       "codex" at the head of an argv is a second definition: the node's
       declaration (drivers.list → status.capabilities) checks one name while
@@ -5702,7 +5702,7 @@ rules:
       - pattern-regex: '\b(args|argv|cmd|command)\s*(=\s*)?[\[(]\s*"(claude|codex)"'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/sessionhost/**
+        - /packages/doeff-agents/src/doeff_agents/_sessionhost/**
 
   - id: doeff-agents-agent-binary-default-names-the-driver-executable
     languages:
@@ -5712,14 +5712,14 @@ rules:
       ADR-DOE-AGENTS-012 R61: a *_binary / *_executable setting that agentd
       itself launches (AgentdSettings.claude_binary — the summarize job runs
       claude in print mode without the host) takes its default from
-      sessionhost/drivers.py DRIVER_EXECUTABLE, never from a literal. The join
+      _sessionhost/drivers.py DRIVER_EXECUTABLE, never from a literal. The join
       beat resolves that same name on agentd's own PATH (ResolveLocalExecutable)
       to decide whether the node may declare claude; a literal default here
       would let the declaration and the launch drift apart.
     pattern-regex: '(?m)^\s+[a-z_]+_(binary|bin|executable)\s*:\s*str\s*=\s*"(claude|codex)"'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/sessionhost/**
+        - /packages/doeff-agents/src/doeff_agents/_sessionhost/**
 
   - id: doeff-agents-executable-lookup-has-one-home
     languages:
@@ -5727,7 +5727,7 @@ rules:
     severity: ERROR
     message: >
       ADR-DOE-AGENTS-012 R61: whether an executable is found on an env's PATH is
-      decided by ONE function — sessionhost/drivers.py driver_path_in (the same
+      decided by ONE function — _sessionhost/drivers.py driver_path_in (the same
       search as subprocess.Popen: os.get_exec_path(env)). The host's
       drivers.list and agentd's ResolveLocalExecutable both call it, so the node
       declares a kind only by the rule the launch itself obeys. A second
@@ -5740,15 +5740,15 @@ rules:
       - pattern-regex: '\(\s*import\s+shutil\s+\[[^\]]*\bwhich\b'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/sessionhost/**
+        - /packages/doeff-agents/src/doeff_agents/_sessionhost/**
       exclude:
-        - "**/sessionhost/drivers.py"
+        - "**/_sessionhost/drivers.py"
   - id: doeff-agents-driver-lookup-reads-only-the-path
     languages:
       - python
     severity: ERROR
     message: >
-      ADR-DOE-AGENTS-012 R61: inside sessionhost/drivers.py the env is read
+      ADR-DOE-AGENTS-012 R61: inside _sessionhost/drivers.py the env is read
       only as the PATH that subprocess.Popen searches — handed to
       os.get_exec_path or to driver_path_in, nothing else. The argv builders
       take argv[0] from DRIVER_EXECUTABLE and never read the env, so a lookup
@@ -5761,7 +5761,7 @@ rules:
       the lookup move together.
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py
+        - /packages/doeff-agents/src/doeff_agents/_sessionhost/drivers.py
     pattern-either:
       - pattern: os.environ
       - pattern: os.getenv(...)

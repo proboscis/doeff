@@ -10,7 +10,7 @@ from doeff import Program, do
 from doeff_agents._adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
 from doeff_agents._io_effects import home_path, make_dirs, path_exists, read_text, write_text
 from doeff_agents._io_root import IoGenerator, as_bool, as_optional_str, as_str
-from doeff_agents.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
+from doeff_agents._ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
 
 MISSING_CLAUDE_JSON = (
     "{path} not found.\n"
@@ -101,7 +101,7 @@ class ClaudeAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        # Physics home: doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008
+        # Physics home: doeff_agents/_ready_physics.hy (ADR-DOE-AGENTS-008
         # R1) — readiness in screen-reader mode is the permission-mode footer.
         return CLAUDE_SCREEN_READER_READY_PATTERN
 

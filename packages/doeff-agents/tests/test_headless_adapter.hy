@@ -6,7 +6,7 @@
 ;;   real  doeff-claude-code の本番の handler + 本物の claude(個人の profile・model haiku)。env DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR が
 ;;         無ければ skip・印 e2e(日次と着地の門は -m "not e2e" で除く)。会社の profile は使わない。
 ;;
-;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents.sessionhost も import しない(公開 effect だけ)。
+;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents._sessionhost も import しない(公開 effect だけ)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
@@ -1369,7 +1369,7 @@
                    :if (and stripped (not (.startswith stripped ";")))
                    stripped))
   (setv text (.join "\n" code))
-  (for [needle ["subprocess" "socket" "Popen" "signal" "os.kill" "doeff_agents.sessionhost" "--resume" "--session-id"
+  (for [needle ["subprocess" "socket" "Popen" "signal" "os.kill" "doeff_agents._sessionhost" "--resume" "--session-id"
                 "stream-json" "\"-p\"" ".pid" "doeff_claude_code.handler" "doeff_claude_code.fake" "ClaudeCodeHost"]]
     (assert (not-in needle text) (.format "adapter の code に {!r} が在る" needle))))
 
@@ -1735,7 +1735,7 @@
   (import doeff_agents._agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
   (import doeff_agents [LaunchEffect TurnCredential HomeTurnCredential RedeemTurnCredentialEffect])
   (import doeff_agents._handlers.headless [HeadlessClaudeConfig spec-of])
-  (import doeff_agents.sessionhost.policy [TURN-AUTH-ENV-KEYS])
+  (import doeff_agents._sessionhost.policy [TURN-AUTH-ENV-KEYS])
   (import doeff_claude_code.fake [FakeClaudeWorld])
   (import doeff_claude_code [ClaudeHome])
   (setv token "sk-ant-oat01-never-printed" work (/ tmp-path "work"))
