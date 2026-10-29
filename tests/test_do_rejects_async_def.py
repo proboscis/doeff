@@ -19,8 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled
 
 from doeff import Await, do, run
 
@@ -49,7 +48,7 @@ COROUTINE_FUNCTION_MESSAGE = (
     "each await as a yield of Await: value = yield Await(coro) instead of value = await coro "
     "(Await from doeff). Await is handled by await_handler(), which needs scheduled outside "
     "it: run(scheduled(await_handler()(fetch_answer()))) (await_handler from "
-    "doeff_core_effects.handlers, scheduled from doeff_core_effects.scheduler)."
+    "doeff_core_effects._handlers, scheduled from doeff_core_effects._scheduler)."
 )
 
 ASYNC_GENERATOR_FUNCTION_MESSAGE = (
@@ -59,7 +58,7 @@ ASYNC_GENERATOR_FUNCTION_MESSAGE = (
     "Await(coro) instead of value = await coro (Await from doeff). Await is handled by "
     "await_handler(), which needs scheduled outside it: "
     "run(scheduled(await_handler()(stream_answers()))) (await_handler from "
-    "doeff_core_effects.handlers, scheduled from doeff_core_effects.scheduler)."
+    "doeff_core_effects._handlers, scheduled from doeff_core_effects._scheduler)."
 )
 
 

@@ -98,8 +98,8 @@ Without it, `doeff run` silently uses its fallback interpreter and no envs.
 ```python
 # myapp/__init__.py
 from doeff import Program, Pure, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def my_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
@@ -262,8 +262,8 @@ which ignores envs.
 ```python
 # myapp/__init__.py
 from doeff import Program, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def base_interpreter(prog: Program):
@@ -275,8 +275,8 @@ def base_interpreter(prog: Program):
 
 # myapp/features/auth/__init__.py
 from doeff import Program, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def auth_interpreter(prog: Program):
@@ -354,8 +354,8 @@ The CLI discovers **all** environments marked with `# doeff: default`:
 ```python
 # myapp/__init__.py
 from doeff import Program, Pure, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
@@ -614,8 +614,8 @@ myapp/
 ```python
 # myapp/__init__.py
 from doeff import Program, Pure, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
@@ -666,8 +666,8 @@ myapp/
 ```python
 # myapp/__init__.py
 from doeff import Program, Pure, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
@@ -865,8 +865,8 @@ graph TD
 ```python
 # myapp/__init__.py
 from doeff import Program, Pure, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):

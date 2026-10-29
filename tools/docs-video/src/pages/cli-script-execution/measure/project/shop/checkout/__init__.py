@@ -1,6 +1,5 @@
 # The closest default interpreter to cart.py, and an env that overrides the base tax rate.
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, scheduled
 
 from doeff import Program, Pure, run
 

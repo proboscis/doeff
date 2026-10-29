@@ -59,7 +59,7 @@ from collections.abc import Generator
 from typing import Any, Literal, assert_type
 
 from doeff import Err, Maybe, Nothing, Ok, Pure, Some, do
-from doeff_core_effects.effects import Try
+from doeff_core_effects._effects import Try
 
 
 def first(items: list[int]) -> Maybe[int]:

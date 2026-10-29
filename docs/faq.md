@@ -160,8 +160,8 @@ by example, writes the workflow with DI for comparison, and lists
 import asyncio
 
 from doeff import Await, do, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import scheduled
 
 async def read_answer() -> int:     # an async function you already have
     await asyncio.sleep(0.01)

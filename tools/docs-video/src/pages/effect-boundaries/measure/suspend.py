@@ -6,8 +6,7 @@ import asyncio
 import threading
 import time
 
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled
 from doeff_time import Delay, GetTime, sim_time_handler
 
 from doeff import Await, CompletePromise, CreatePromise, Spawn, Wait, do, run

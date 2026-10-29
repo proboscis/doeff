@@ -467,7 +467,7 @@ const RUNS: Run[] = [
   {
     command: [
       "$ doeff run --hy '(import myapp.features.auth.login [login-program])",
-      '    (import doeff-core-effects.handlers [reader])',
+      '    (import doeff-core-effects [reader])',
       `    ((reader :env {"db_host" "fake-db" "timeout" 1}) login-program)'`,
     ],
     interpreter: 'none (reader by hand)',

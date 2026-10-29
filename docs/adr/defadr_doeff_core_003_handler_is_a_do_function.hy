@@ -50,7 +50,7 @@
        :evidence "PyPI の doeff 0.7.0 の doeff/program.py の docstring と、0.7.0 で @handler だけを付けた yield の def を走らせた結果(2026-10-20)")
      (fact
        "try_handler・local_handler・listen_handler・Spawn・doeff-traverse は、GetHandlers(k) で読んだ内側の handler を handler() で入れ直していた。VM が持つのは生の受け手(@do 関数・defhandler の節の data・Rust の scheduler の SchedulerPrompt)で、@do 関数とは限らない。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/handlers.py・packages/doeff-traverse/doeff_traverse/_handlers.py の _program_handler(h)")]
+       :evidence "packages/doeff-core-effects/doeff_core_effects/_handlers.py・packages/doeff-traverse/doeff_traverse/_handlers.py の _program_handler(h)")]
   :context
     [(interpretation
        "handler の body を @do 関数の 1 つの形にすると、型と読み手の前提が揃う。body の中で yield した物は走り、yield の値はその結果。return した値は handle した塊の答えになる。だから続けは return (yield Resume(k, v)) と書き、Resume(k, v) を返すだけでは走らない。")
@@ -141,6 +141,6 @@
   :plans ["docs/adr/defadr_doeff_core_003_handler_is_a_do_function.hy"
           "doeff/program.py (_is_do_function・_as_do_function・_yields_its_control・_refuse_unmarked — handler・with_handlers・stacked_handlers)"
           "doeff/handler_utils.py (reinstaller)"
-          "packages/doeff-core-effects/doeff_core_effects/handlers.py・packages/doeff-traverse/doeff_traverse/_handlers.py (入れ直しを reinstaller に)"
+          "packages/doeff-core-effects/doeff_core_effects/_handlers.py・packages/doeff-traverse/doeff_traverse/_handlers.py (入れ直しを reinstaller に)"
           "tests/test_handler_is_a_do_function.py・tests/test_with_handlers_refuses_unmarked_program_function.py"
           ".semgrep.yaml (4 規則)"])

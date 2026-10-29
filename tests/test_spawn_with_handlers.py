@@ -6,15 +6,20 @@ Spawned tasks need access to the full handler chain so that effects
 Bug: spawned task handler propagation previously raised a non-DoExpr VM error
 when a spawned task performed effects that require handlers.
 """
-from doeff_core_effects import Ask, Tell, Try
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
+    Ask,
+    Gather,
+    Spawn,
+    Tell,
+    Try,
+    Wait,
     reader,
+    scheduled,
     slog_handler,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
 from doeff_vm import EffectBase, Ok
 
 from doeff import Pass, Resume, do, run

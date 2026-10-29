@@ -4,8 +4,8 @@
 # next task enters at once. Backs the leak scene of the Semaphore Effects video.
 from datetime import datetime, timezone
 
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 from doeff_time import Delay, GetTime, sim_time_handler
 
 from doeff import AcquireSemaphore, Cancel, CreateSemaphore, Race, ReleaseSemaphore, Spawn, Try, Wait, do, run

@@ -7,7 +7,7 @@ handlers. But with many handlers, it appears to skip some.
 Works with 3 handlers, fails with 29.
 """
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_vm import EffectBase, Pass, Resume
 
 from doeff import do, run

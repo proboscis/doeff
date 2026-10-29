@@ -34,8 +34,7 @@ import doeff_hy.macros  # registers extensions(定義の macro の名も読む)
 import doeff_hy.record  # defrecord・defwire・defenum の名を読む
 import hy
 import pytest
-from doeff_core_effects import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, try_handler
 from doeff_hy.pytest_items import module_record_texts
 from doeff_hy.static_check import Projection, project
 from doeff_hy_bytecode_guard.records import MACRO_TABLE

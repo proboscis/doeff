@@ -26,9 +26,7 @@ import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import hy.macros
 import pytest
-from doeff_core_effects import Ask
-from doeff_core_effects.handlers import await_handler, lazy_ask
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Ask, await_handler, lazy_ask, scheduled
 
 from doeff import run
 
@@ -71,7 +69,7 @@ def _eval(code: str):
 # open-bind の答えが Pure(効果を出さない @do の呼びをその場で呼んだ答え)ならその値、それ以外は yield(#844・6a45b5e1)。
 _OPENED_EFF = (
     r'\(if \(is \(\. \(setx (?P<b>_hy_gensym_bound_\d+) \(\. \(setx (?P<m>_hy_gensym_outcomes_\d+) '
-    r'\(__import__ "doeff_core_effects\.outcomes" :fromlist #\("open_bind"\)\)\) \(open_bind \(Eff\)\)\)\) __class__\) '
+    r'\(__import__ "doeff_core_effects\._outcomes" :fromlist #\("open_bind"\)\)\) \(open_bind \(Eff\)\)\)\) __class__\) '
     r'(?P=m)\.Pure\) (?P=b)\.value \(yield (?P=b)\)\)'
 )
 

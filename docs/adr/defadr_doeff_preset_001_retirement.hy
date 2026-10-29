@@ -22,7 +22,7 @@
        :evidence "rg 'doeff_preset' packages/*/src → 0 件(2026-07-13 実測); packages/doeff-agents/examples/01_basic_session.py:131 の run_program は doeff-agents src に不在")
      (fact
        "preset の本務だった『とりあえず動く表示』は slog 統合設計で本体側の既定になった: slog_handler が stderr terminal sink として『入れたらログは見える』を契約し、CLI default_interpreter も標準装備する。config 既定は reader/lazy_ask の env 注入で足りる。つまり『バンドル済みプリセット』という第 3 の層に残る責務が無い。"
-       :evidence "docs/adr/defadr_doeff_core_effects_001_slog_observability.hy R2/R4; packages/doeff-core-effects/doeff_core_effects/handlers.py の slog_handler")]
+       :evidence "docs/adr/defadr_doeff_core_effects_001_slog_observability.hy R2/R4; packages/doeff-core-effects/doeff_core_effects/_handlers.py の slog_handler")]
   :context
     [(interpretation
        "preset は『core を薄く保ちつつ体験を良くする』ための緩衝層だったが、その動機は sink のデフォルト意味論が壊れていた(slog が黙る)ことへの補償だった。根本原因が ADR-DOE-CORE-EFFECTS-001 で直った今、preset は補償器(compensator)の遺物であり、維持するほど handler 合成の正典 idiom(installer を明示的に重ねる)と競合する第 2 の入口を作ってしまう。")
@@ -53,5 +53,5 @@
        :pattern "from doeff_preset import $X"
        :message "doeff-preset は ADR-DOE-PRESET-001 で退役済み。表示既定は slog_handler、config 既定は reader/lazy_ask env。"
        :bad ["from doeff_preset import preset_handlers"]
-       :good ["from doeff_core_effects.handlers import slog_handler"])]
+       :good ["from doeff_core_effects._handlers import slog_handler"])]
   :plans ["docs/doeff-2026-07-13-slog-semantics-architecture-plan.md"])

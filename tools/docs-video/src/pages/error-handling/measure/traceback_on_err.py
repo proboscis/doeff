@@ -2,7 +2,7 @@
 import traceback
 
 from doeff import Err, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 
 @do

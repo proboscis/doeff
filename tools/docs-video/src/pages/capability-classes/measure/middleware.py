@@ -5,7 +5,7 @@
 # Both re-dispatch with `yield effect`: the effect goes on to the rest of the stack, and its answer comes back as a value.
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 from doeff import EffectBase, Resume, Try, do, handler, run
 

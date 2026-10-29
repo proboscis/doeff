@@ -1,7 +1,6 @@
+from doeff_core_effects import await_handler, scheduled, slog_handler
 from doeff_core_effects.cache import cache
-from doeff_core_effects.handlers import await_handler, slog_handler
 from doeff_core_effects.memo_handlers import in_memory_memo_handler
-from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
 from doeff import handler as _program_handler

@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Any, assert_type
 
 from doeff import Ask, Program, do, run, stacked_handlers, with_handlers
-from doeff_core_effects.handlers import reader, state
+from doeff_core_effects import reader, state
 
 
 @do

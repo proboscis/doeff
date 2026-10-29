@@ -14,15 +14,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff_core_effects import Try, slog
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
+    Spawn,
+    Try,
+    Wait,
     await_handler,
+    scheduled,
+    slog,
     slog_handler,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
 
 from doeff import (
     EffectBase,

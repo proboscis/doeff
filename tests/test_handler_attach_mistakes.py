@@ -19,16 +19,20 @@ import traceback
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects import Ask, Get, Put, ReadWriterLog, Tell
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
+    Ask,
+    Get,
+    Put,
+    ReadWriterLog,
+    Tell,
     lazy_ask,
     listen_handler,
     reader,
+    scheduled,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import scheduled
 
 from doeff import EffectBase, Resume, do, handler, run
 

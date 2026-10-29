@@ -11,7 +11,7 @@
    package でない接頭辞の除外は読み手が止まる。
 3. 木を歩く検が、歩く先の変更で選ばれる: doeff-traverse の例の検は examples/ を glob して子の process で走らせ、例も
    macro も import しないので、逆依存では選ばれない。例・期待の出力・例が require する doeff-hy の macro の module・
-   macro の実行時の半分(`<-`・`!` の束ねの開き方を持つ doeff_core_effects.outcomes)を変えた差分は、本物の表から例の検を
+   macro の実行時の半分(`<-`・`!` の束ねの開き方を持つ doeff_core_effects._outcomes)を変えた差分は、本物の表から例の検を
    選ぶ(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間、例を壊す変更は登記の前に測られず、翌日の日次で初めて赤になった。
    実行時の半分は同じ依頼の設計検証の盲検 B が見つけた — doeff-hy の行だけでは選ばれなかった)。
 4. uv.lock の Hy の版で測る検が、uv.lock の変更と、uv.lock の版の読み手(scripts/semgrep_locked.py の locked_version)の
@@ -47,10 +47,10 @@ ADDED = "packages/doeff-added-without-row/"
 EXAMPLES_CHECK = "packages/doeff-traverse/tests/test_examples_run.py"
 EXAMPLES_DIR = "packages/doeff-traverse/examples"
 EXAMPLE_MACROS = "packages/doeff-hy/src/doeff_hy/macros.hy"
-#: macro の実行時の半分の module と、その file。doeff-hy の outcome_forms.hy は「実行時の意味は doeff_core_effects.outcomes が
+#: macro の実行時の半分の module と、その file。doeff-hy の outcome_forms.hy は「実行時の意味は doeff_core_effects._outcomes が
 #: 持ち、ここは形だけを作る」で、defk の本体の束ねは macros.hy が globals に置くこの module の open_bind を引く。
-EXAMPLE_MACRO_RUNTIME_MODULE = "doeff_core_effects.outcomes"
-EXAMPLE_MACRO_RUNTIME = "packages/doeff-core-effects/doeff_core_effects/outcomes.py"
+EXAMPLE_MACRO_RUNTIME_MODULE = "doeff_core_effects._outcomes"
+EXAMPLE_MACRO_RUNTIME = "packages/doeff-core-effects/doeff_core_effects/_outcomes.py"
 #: uv.lock と、doeff で uv.lock の版を読む 1 か所(card ki-33d2441b7e28)。
 LOCK = "uv.lock"
 LOCK_READER = "scripts/semgrep_locked.py"

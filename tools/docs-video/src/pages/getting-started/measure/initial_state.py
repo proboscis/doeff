@@ -1,7 +1,6 @@
 # The page's program run with initial state: reader(env=...) answers Ask and state(initial=...) answers Get.
 # Runs the same program with two initial states and prints each result. Backs the initial-state scene.
-from doeff_core_effects import Ask, Get
-from doeff_core_effects.handlers import reader, state
+from doeff_core_effects import Ask, Get, reader, state
 
 from doeff import do, run
 

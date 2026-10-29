@@ -5,10 +5,10 @@ be resolved by handler installation alone — only by the first handled memo
 effect — and it must be resolved exactly once per handler instance.
 """
 
+from doeff_core_effects import InMemoryStorage
 from doeff_core_effects.memo_effects import MemoGet, MemoPut
 from doeff_core_effects.memo_handlers import memo_handler
 from doeff_core_effects.memo_policy import MemoPolicy, RecomputeCost
-from doeff_core_effects.storage import InMemoryStorage
 
 from doeff import Program, do
 from tests._run_helpers import run_with_defaults

@@ -22,7 +22,7 @@ body:
       render: python
       placeholder: |
         from doeff import Ask, do, run
-        from doeff_core_effects.handlers import reader
+        from doeff_core_effects._handlers import reader
 
         @do
         def main():

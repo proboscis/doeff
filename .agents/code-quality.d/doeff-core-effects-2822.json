@@ -14,7 +14,7 @@
       "layer": "effects",
       "name": "doeff-core-effects-effects",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/_effects.py",
         "packages/doeff-core-effects/doeff_core_effects/compute_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/compute_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/file_effects.hy",
@@ -47,7 +47,7 @@
         "packages/doeff-core-effects/doeff_core_effects/proc_table_effects.pyi"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/_effects.py",
         "packages/doeff-core-effects/doeff_core_effects/compute_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/compute_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/file_effects.hy",
@@ -126,8 +126,8 @@
         "packages/doeff-core-effects/doeff_core_effects/python_bytecode.pyi",
         "packages/doeff-core-effects/doeff_core_effects/rooted_file.hy",
         "packages/doeff-core-effects/doeff_core_effects/rooted_file.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/scheduler_channel.hy",
-        "packages/doeff-core-effects/doeff_core_effects/scheduler_channel.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.pyi",
         "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
         "packages/doeff-core-effects/doeff_core_effects/sql_transaction.pyi",
         "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.hy",
@@ -196,8 +196,8 @@
         "packages/doeff-core-effects/doeff_core_effects/python_bytecode.pyi",
         "packages/doeff-core-effects/doeff_core_effects/rooted_file.hy",
         "packages/doeff-core-effects/doeff_core_effects/rooted_file.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/scheduler_channel.hy",
-        "packages/doeff-core-effects/doeff_core_effects/scheduler_channel.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.pyi",
         "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
         "packages/doeff-core-effects/doeff_core_effects/sql_transaction.pyi",
         "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.hy",
@@ -352,20 +352,20 @@
       "layer": "io",
       "name": "doeff-core-effects-runtime",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/handlers.py",
-        "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
-        "packages/doeff-core-effects/doeff_core_effects/outcomes.py",
+        "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
+        "packages/doeff-core-effects/doeff_core_effects/_outcomes.py",
         "packages/doeff-core-effects/doeff_core_effects/channel_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/unhandled_hints.py"
+        "packages/doeff-core-effects/doeff_core_effects/_unhandled_hints.py"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/handlers.py",
-        "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
-        "packages/doeff-core-effects/doeff_core_effects/outcomes.py",
+        "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
+        "packages/doeff-core-effects/doeff_core_effects/_outcomes.py",
         "packages/doeff-core-effects/doeff_core_effects/channel_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/unhandled_hints.py"
+        "packages/doeff-core-effects/doeff_core_effects/_unhandled_hints.py"
       ],
       "responsibility": "基本の handler(reader・state・writer)・協調 scheduler(Spawn・Wait・Promise・Semaphore ほか)と、その Promise を運ぶ channel の effect・不在と失敗の答えの開きと境目の handler(ADR-DOE-CORE-EFFECTS-003)・基本の effect を扱う handler の名と付け方の 1 行の表(UnhandledEffect の文の最後の hint)。",
       "typed": true
@@ -377,14 +377,14 @@
       "layer": "io",
       "name": "doeff-core-effects-storage",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/storage/__init__.py",
-        "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
-        "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py"
+        "packages/doeff-core-effects/doeff_core_effects/_storage/__init__.py",
+        "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
+        "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/storage/__init__.py",
-        "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
-        "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py"
+        "packages/doeff-core-effects/doeff_core_effects/_storage/__init__.py",
+        "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
+        "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py"
       ],
       "responsibility": "memo の答えを保つ耐久の置き場の口(DurableStorage)と、その実装 — in-memory(検用)と SQLite。",
       "typed": true

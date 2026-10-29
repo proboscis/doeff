@@ -18,8 +18,7 @@ import hy.compiler
 import hy.macros
 import hy.reader
 import pytest
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled
 from doeff_hy_bytecode_guard.macro_hints import HyMacroUseWarning
 
 from doeff import EffectBase, Pass, Resume, Transfer, run

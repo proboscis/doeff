@@ -32,8 +32,8 @@ def _environment_value(name: str) -> str | None:
     """環境変数 1 つの素の値(無ければ None)— foundation の答え手 env_var_ask の下で Ask を問う(doeff_hy.env_places の読みと同じ形)。
     os.environ を直に読むと doeff-linter の DOEFF004 に当たる(日次の lint の段の赤 2026-10-11 08:05 JST)。"""
     from doeff import run, with_handlers
-    from doeff_core_effects.effects import Ask
-    from doeff_core_effects.handlers import env_var_ask, reader
+    from doeff_core_effects import Ask
+    from doeff_core_effects import env_var_ask, reader
 
     value = run(with_handlers([reader({name: None}), env_var_ask(prefix="")], Ask(name)))
     return value if isinstance(value, str) else None

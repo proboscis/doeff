@@ -1,8 +1,7 @@
 # The error scene: three spawned children, the middle one raising. Gather raises that child's error in the
 # parent, so Try around Gather gives Err; the siblings are not cancelled and their writes stay
 # (docs/18-effect-combinations.md, Law 9). Prints the order the children ran in, what Try gave, and the store.
-from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import state, try_handler
+from doeff_core_effects import scheduled, state, try_handler
 
 from doeff import Gather, Get, Put, Spawn, Try, do, run
 

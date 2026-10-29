@@ -2,8 +2,7 @@
 # It wraps the program like a handler; run takes no trace parameter. Prints the answer with and without the
 # observer (the same), and what the observer saw. The observer sees only its body: Tell("start"), yielded
 # before the observed part, is not in the list.
-from doeff_core_effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import Ask, Get, Put, Tell, reader, state, writer
 
 from doeff import WithObserve, do, run
 

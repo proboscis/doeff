@@ -27,8 +27,7 @@ from typing import NamedTuple
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import pytest
-from doeff_core_effects import state
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, state
 from doeff_hy.static_view import static_view
 
 from doeff import run

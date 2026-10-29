@@ -14,9 +14,7 @@ import warnings
 from typing import Any
 
 import pytest
-from doeff_core_effects import scheduler as scheduler_module
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     Cancel,
     CompletePromise,
@@ -28,7 +26,9 @@ from doeff_core_effects.scheduler import (
     Spawn,
     Wait,
     scheduled,
+    try_handler,
 )
+from doeff_core_effects import _scheduler as scheduler_module
 
 from doeff import Try, do
 from doeff import run as doeff_run

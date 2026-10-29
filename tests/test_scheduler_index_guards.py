@@ -22,9 +22,9 @@ import heapq
 import types
 from pathlib import Path
 
-import doeff_core_effects.scheduler as scheduler_module
+import doeff_core_effects._scheduler as scheduler_module
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     PRIORITY_NORMAL,
     SchedulerIndexDriftError,

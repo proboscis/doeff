@@ -59,17 +59,17 @@ _TEST_SYMBOL = {"imported": True}
 
 def _env_interpreter(program, env=None):
     """Interpreter for tests that resolves Ask from env dict."""
-    from doeff_core_effects.handlers import (
+    from doeff_core_effects import (
         await_handler,
         listen_handler,
         local_handler,
         reader,
+        scheduled,
         slog_handler,
         state,
         try_handler,
         writer,
     )
-    from doeff_core_effects.scheduler import scheduled
 
 
     env_dict = {}

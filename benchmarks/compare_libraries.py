@@ -47,19 +47,23 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from doeff_core_effects import Ask, Gather, Spawn, reader, scheduled
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
+    Ask,
     CompletePromise,
     CreatePromise,
+    Gather,
     SchedulerImplementation,
+    Spawn,
     Wait,
-    resolve_implementation,
+    reader,
+    scheduled,
 )
+from doeff_core_effects._scheduler import resolve_implementation
 
 from doeff import EffectBase, EffectGenerator, K, Pass, Resume, do, handler, run, with_handlers
 
 if TYPE_CHECKING:
-    from doeff_core_effects.scheduler import Future, Promise, Task
+    from doeff_core_effects import Future, Promise, Task
 
 RESULTS_DIR = Path("benchmarks/results")
 SCHEDULER_IMPLEMENTATIONS = ("python", "rust")

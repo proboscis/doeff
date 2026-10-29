@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import doeff_hy  # noqa: F401  # registers Hy import hooks for the deftest module
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 import tests.effects.http_request_deftest_cases as http_request_deftest
 from doeff import run

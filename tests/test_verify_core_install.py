@@ -18,7 +18,7 @@ from typing import get_args
 import pytest
 import tomllib
 import yaml
-from doeff_core_effects import extra_hints
+from doeff_core_effects import _extra_hints as extra_hints
 
 from doeff import handler, run
 from doeff.cli.demo import budget, canned, digest, trace
@@ -161,7 +161,7 @@ def test_the_pypi_option_names_the_source(value: str | None, source: object) -> 
 
 
 HY_LINE = (
-    "doeff_core_effects.extra_hints.MissingExtraError: No module named 'doeff_hy' — Hy modules "
+    "doeff_core_effects._extra_hints.MissingExtraError: No module named 'doeff_hy' — Hy modules "
     'need Hy. Install the extra hy: pip install "doeff[hy]"'
 )
 
@@ -715,7 +715,7 @@ def _pyright_report(*diagnostics: tuple[str, str], analyzed: int = 4) -> dict[st
 
 NOT_EXPORTED = (
     "reportPrivateImportUsage",
-    '"Ask" is not exported from module "doeff_core_effects"\n  Import from "doeff_core_effects.effects" instead',
+    '"Ask" is not exported from module "doeff_core_effects"\n  Import from "doeff_core_effects._effects" instead',
 )
 
 
