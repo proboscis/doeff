@@ -12220,121 +12220,33 @@
    }
   },
   "doeff-domain": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {
-    "境界 — 基盤・道具の package": {
+    "境界 — Hy の macro": {
      "(submodule)": [
-      "doeff_domain.checks",
-      "doeff_domain.core_effects_domains",
-      "doeff_domain.introspect",
-      "doeff_domain.macros",
-      "doeff_domain.registry"
-     ],
-     "doeff_domain": [
-      "BODY_ATTRIBUTE",
-      "Domain",
-      "DomainCheckError",
-      "DomainCoverageError",
-      "DomainDefinitionError",
-      "DomainError",
-      "DomainLaw",
-      "DomainRegistrationError",
-      "DomainTerm",
-      "DuplicateDomainNameError",
-      "DuplicateEffectIntroductionError",
-      "HANDLES_ATTRIBUTE",
-      "OrphanEffectError",
-      "assert_domain_covered",
-      "assert_no_orphan_effects",
-      "assert_registered_domains_covered",
-      "clear_registry",
-      "domain_names",
-      "get_domain",
-      "handled_effects",
-      "handles",
-      "introducing_domain",
-      "isolated_registry",
-      "register_domain",
-      "registered_domains"
-     ],
-     "doeff_domain.checks": [
-      "Domain",
-      "DomainCheckError",
-      "DomainCoverageError",
-      "OrphanEffectError",
-      "assert_domain_covered",
-      "assert_no_orphan_effects",
-      "assert_registered_domains_covered",
-      "get_domain",
-      "handled_effects",
-      "introducing_domain",
-      "registered_domains"
-     ],
-     "doeff_domain.core_effects_domains": [
-      "DomainLaw",
-      "DomainTerm",
-      "doeff_await",
-      "doeff_cache",
-      "doeff_channel",
-      "doeff_compute",
-      "doeff_error",
-      "doeff_file",
-      "doeff_heap",
-      "doeff_http",
-      "doeff_http_server",
-      "doeff_latest",
-      "doeff_listen",
-      "doeff_memo",
-      "doeff_meter",
-      "doeff_outcome",
-      "doeff_proc_table",
-      "doeff_process",
-      "doeff_process_exit",
-      "doeff_random",
-      "doeff_reader",
-      "doeff_scheduler",
-      "doeff_scope",
-      "doeff_slog",
-      "doeff_sql",
-      "doeff_stack_dump",
-      "doeff_state",
-      "doeff_step_tally",
-      "doeff_stop_signal",
-      "doeff_warm_process",
-      "doeff_writer",
-      "doeff_ws_client",
-      "handles"
-     ],
-     "doeff_domain.introspect": [
-      "BODY_ATTRIBUTE",
-      "DomainCheckError",
-      "DomainDefinitionError",
-      "HANDLES_ATTRIBUTE",
-      "handled_effects",
-      "handles"
+      "doeff_domain.macros"
      ],
      "doeff_domain.macros": [
       "defdomain"
-     ],
-     "doeff_domain.registry": [
+     ]
+    },
+    "境界 — effect の値の型": {
+     "doeff_domain": [
       "Domain",
+      "DomainLaw",
+      "DomainTerm"
+     ]
+    },
+    "境界 — 例外の型": {
+     "doeff_domain": [
       "DomainCheckError",
       "DomainCoverageError",
       "DomainDefinitionError",
       "DomainError",
-      "DomainLaw",
       "DomainRegistrationError",
-      "DomainTerm",
       "DuplicateDomainNameError",
       "DuplicateEffectIntroductionError",
-      "OrphanEffectError",
-      "clear_registry",
-      "domain_names",
-      "get_domain",
-      "introducing_domain",
-      "isolated_registry",
-      "register_domain",
-      "registered_domains"
+      "OrphanEffectError"
      ]
     }
    }
@@ -18722,6 +18634,13 @@
    "name": "SymbolInfo",
    "訳": "effect FindSymbols の答えの 1 行の型(R2 の effect の結果の型)。前は Rust の拡張の class で、目録は doeff-indexer を環境に持たず字面で読んだので数えていなかった。索引を引く口を effect FindSymbols と handler rust_indexer にし(class Indexer は内側の拡張 doeff_indexer._native へ)、doeff-indexer を make sync の環境に入れて目録が import で読むようにした時に、Python の frozen dataclass として入口から見せた。R2 の型を目録の道具が許す物と数えるまで、R12 のとおりここに置く",
    "決め": "lt-ZDN45RSNPV16BKSM997GGZ9CVB"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain",
+   "name": "Handles",
+   "訳": "domain の handlers に置く、生 Python の handler が答える effect の宣言の型(effect RegisterDomain の値 Domain の欄の値 — R2 の effect の値の型)。前の関数 handles() は R3 の工場でも R18 の helper でもない import の時の宣言なので、ADR-DOE-API-001 R24 で R19 と同じく型にした(依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV)。目録が R2 の型を許す物と数えるまでは、ここに置く(R12)",
+   "決め": "ki-03a7f0af2b64"
   }
  ]
 }

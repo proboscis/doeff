@@ -1,4 +1,8 @@
-"""defdomain マクロ (ADR-DOE-DOMAIN-001 D4)。"""
+"""defdomain マクロ (ADR-DOE-DOMAIN-001 D4)。
+
+defdomain は import(と eval)の時に process の表へ載せる。載った domain は effect GetDomain で読み、domain_registry() が
+process の表から答える(ADR-DOE-API-001 R23・card ki-03a7f0af2b64)。eval の試しは内側の isolated_registry の空の表で走らせる。
+"""
 
 import sys
 import types
@@ -7,13 +11,16 @@ import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test
 import hy
 import hy.macros
 import pytest
-from doeff_domain import (
-    DuplicateDomainNameError,
-    get_domain,
-    introducing_domain,
-    isolated_registry,
-)
+from doeff_domain import DuplicateDomainNameError, GetDomain, domain_registry
+from doeff_domain._registry import introducing_domain, isolated_registry
 from domain_test_effects import FixtureGamma, make_effect_class
+
+from doeff import run
+
+
+def get_domain(name):
+    """process の表の domain を名で引く(effect GetDomain)。"""
+    return run(domain_registry()(GetDomain(name)))
 
 
 def _eval_defdomain(code: str, **extra_globals):
