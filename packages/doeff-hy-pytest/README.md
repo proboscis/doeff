@@ -106,7 +106,7 @@ fails unless `tests/over-budget` lists it.
 | Setting or API | What it does |
 | --- | --- |
 | `step_budget_multiplier` | While a step-limited test runs, the scheduler stops it once it reaches *limit × multiplier* steps (default 20), so a test that never finishes fails instead of hanging |
-| `doeff_test_call_steps_counted` | `call` (default): count all steps of the test. `world-running`: for tests that run a simulated world recorded in `doeff_core_effects.world_phases`, count only the steps of the world's running phase |
+| `doeff_test_call_steps_counted` | `call` (default): count all steps of the test. `world-running`: for tests that run a simulated world recorded in `doeff_core_effects._world_phases`, count only the steps of the world's running phase |
 | `doeff_hy_pytest.declare_step_budget(test, steps, reason)` | Gives one test its own step limit with a one-line reason, next to the test's definition. Over the declared value fails; at most half of it fails as stale |
 | `doeff_hy_pytest.declare_process_tree_cpu(test, reason)` | For a test that falls under a per-mark seconds limit and spends its time in child processes' CPU (not waiting on sockets or HTTP): judge the same limit by the CPU seconds of the process tree instead of wall-clock time. Wall-clock time stays as a backstop |
 | `--doeff-python-calls` | Command-line flag. Counts Python calls (`sys.monitoring` CALL events) during tests that declared a step limit, and prints one summary line. Reports only; never fails a test |
@@ -126,7 +126,7 @@ and its neighbours) and may change in any release; to use the measurements elsew
 (a daily report, a dashboard), read the summary lines the plugin prints.
 
 The step limits need a doeff that reads step counts with the effect `ReadVmWorkCounts`
-(answered by `doeff_core_effects.handlers.vm_probe_handler`). If it is missing, or the
+(answered by `doeff_core_effects._handlers.vm_probe_handler`). If it is missing, or the
 doeff-vm build is too old to answer it, pytest stops at start-up with a `UsageError`
 instead of silently falling back to seconds.
 

@@ -15,7 +15,7 @@
 (import threading)
 (import pathlib [Path])
 (import doeff [with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_codex [FreshThread ResumeThread CodexInput CodexTurn CodexSessionSpec CodexHome])
 (import doeff_codex [TurnEnded TurnStatus])

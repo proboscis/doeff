@@ -48,12 +48,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from doeff_hy.binding_forms import Finding
-from doeff_hy.expansion_names import alias, import_source
-
 # 型検査のための展開の印は bytecode の包みが持つ — 包みの compile の口が、この展開で作った実行できない code に macro の依存の
 # 記録を付けず、.pyc と共有の code の置き場から普通の import へ渡らないようにするため(doeff_hy_bytecode_guard/expansion.py)。
 from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION as _STATIC_VIEW
+
+from doeff_hy.binding_forms import Finding
+from doeff_hy.expansion_names import alias, import_source
 
 
 @dataclass(frozen=True)
@@ -181,7 +181,7 @@ STATIC_HELPER_IMPORTS: str = (
 #: defeffect-form)。型検査のための展開の掃除が、`_doeff_` の別名で束ねる import(持ち主の package の定義の macro — doeff-cluster の
 #: defsystem など — が出す形)と同じく macro が合成する import として畳み、関数・class の本体の中の
 #: 物を module の段へ移す綴り。展開の綴りとの一致は tests/test_nested_definition_scope.py が関数の中の defeffect の投影で検める。
-DEFEFFECT_OUTCOMES_MODULE: str = "doeff_core_effects.outcomes"
+DEFEFFECT_OUTCOMES_MODULE: str = "doeff_core_effects._outcomes"
 
 
 def static_view_enabled() -> bool:

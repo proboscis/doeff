@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Final, final
 
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
+from doeff_core_effects import CompletePromise, CreatePromise, Promise, Wait
 from doeff_time import GetTime, WaitWithin
 
 from doeff import K, Pass, Pure, Resume, do

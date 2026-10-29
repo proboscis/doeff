@@ -39,7 +39,7 @@ from datetime import datetime, timedelta
 from itertools import count
 from typing import Any
 
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Spawn, Wait
+from doeff_core_effects import CompletePromise, CreatePromise, Promise, Spawn, Wait
 from doeff_time import GetTime, WaitWithin
 
 from doeff import Pass, Transfer, do

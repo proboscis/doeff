@@ -88,7 +88,7 @@ from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Final, Generic, TypeVar, Union, final
 
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     Cancel,
     CompletePromise,
     CreatePromise,

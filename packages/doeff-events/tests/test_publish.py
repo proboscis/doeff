@@ -3,7 +3,7 @@ import copy
 import pickle
 from dataclasses import dataclass
 
-from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
+from doeff_core_effects import CreatePromise, Promise, Spawn, Wait
 from doeff_events import Publish, PublishEffect, WaitForEvent, event_handler
 from doeff_events._effects import publish_effect_type
 from events_test_support import announce_listening, run_scheduled

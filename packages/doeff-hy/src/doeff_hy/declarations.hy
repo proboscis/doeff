@@ -180,7 +180,7 @@
 ;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし・:pre は作る時の検め)。
 ;; :absent / :failure / :value は答えの型の分け方(ADR-DOE-CORE-EFFECTS-003 R5 — どれも任意・:answer の union の要素の list)。
 ;; :runs-carried は、答え手が effect を出した所(その所の handler の下)で走らせる Program の欄の名の list(agora-redesign #1456 —
-;; doeff_core_effects.effects の runs-carried-of が読む)。
+;; doeff_core_effects._effects の runs-carried-of が読む)。
 ;; :tp は型の引数(`:tp [T]` — defk・deff の :tp と同じ形・型検査の展開で class を PEP 695 の `class E[T]` にし、:answer と欄の型が T を読む。
 ;; 実行時の展開には型の引数を出さない — T は module の `(val T (TypeVar "T"))` で読む。agora-redesign #2939)。
 (setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value" ":runs-carried" ":tp"))
@@ -327,9 +327,9 @@
   (setv outcome-types (outcome-type-forms contract answer where))
   (setv outcomes
     (if (any (.values outcome-types))
-        [`(import doeff_core_effects.outcomes)
+        [`(import doeff_core_effects._outcomes)
          `(setattr ~name "__doeff_outcomes__"
-                   (doeff_core_effects.outcomes.Outcomes.declare
+                   (doeff_core_effects._outcomes.Outcomes.declare
                      ~(str name) ~answer
                      #(~@(get outcome-types ":absent"))
                      #(~@(get outcome-types ":failure"))

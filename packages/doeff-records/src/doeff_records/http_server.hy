@@ -87,12 +87,11 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
 (import doeff [Program EffectBase run with-handlers])
-(import doeff_core_effects.handlers [await-handler state])
+(import doeff_core_effects [await-handler state])
 (import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
 (import doeff_core_effects.compute_effects [ComputeLoad ReadComputeLoad])
 (import doeff_core_effects.apart_call [run-apart])
-(import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError
-                                      Wait scheduled])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader

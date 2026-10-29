@@ -15,8 +15,8 @@ from collections.abc import Callable, Iterable, Iterator
 from typing import TypeVar
 
 import pytest
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 from doeff_traverse import (
     Collection,
     ItemOutcome,

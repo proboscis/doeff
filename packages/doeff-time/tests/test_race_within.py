@@ -11,7 +11,7 @@
 from typing import Any, NamedTuple
 
 import pytest
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, FailPromise, Spawn
+from doeff_core_effects import CompletePromise, CreatePromise, FailPromise, Spawn
 from doeff_time import Delay, GetTime, RaceOutcome, RaceWithin, sim_time_handler
 from time_test_support import run_with_handlers, sim_time
 

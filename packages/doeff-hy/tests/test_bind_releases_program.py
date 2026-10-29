@@ -14,12 +14,12 @@ import pytest
 
 import doeff_hy  # noqa: F401 - Hy の import hook を登録する
 from doeff import run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 _SOURCE = """
 (require doeff-hy.macros *)
 (import doeff-hy.macros *)
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects._effects [Ask])
 
 (defk child [big]
   {:pre [(: big list)] :post [(: % int)]}

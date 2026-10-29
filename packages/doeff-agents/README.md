@@ -96,7 +96,7 @@ entry point installs the handlers that answer them.
 
 ```python
 from doeff import do, run, with_handlers
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_time import sync_time_handler
 
 from doeff_agents import AgentType, AwaitResult, Launch, Stop, claude_agent_runtime_handlers

@@ -14,7 +14,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import typing [get-args])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait Cancel Discard])
+(import doeff_core_effects [scheduled Spawn Wait Cancel Discard])
 (import gc)
 (import sys)
 (import pytest)

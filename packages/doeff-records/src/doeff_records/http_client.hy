@@ -64,7 +64,7 @@
 (import json)
 (import datetime [datetime])
 (import doeff [with-handlers])
-(import doeff_core_effects.effects [slog])
+(import doeff_core_effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpPhases])
 (import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_time [GetMonotonic GetTime])

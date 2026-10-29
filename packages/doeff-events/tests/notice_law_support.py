@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, final
 
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait, scheduled
+from doeff_core_effects import CompletePromise, CreatePromise, Promise, Wait, scheduled
 from doeff_events import (
     Announce,
     AwaitBrokerBack,

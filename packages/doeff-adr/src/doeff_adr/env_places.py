@@ -15,8 +15,7 @@ def environment_value(name: str) -> str | None:
     下で問う(doeff_hy.env_places の読みと同じ形)。os.environ を直に読むと doeff-linter の DOEFF004 に当たる(日次の lint の段の赤
     2026-10-11 08:05 JST)。env_var_ask は `{module.path}` の形の値を import の名として読むので、置き場の path をその形で書かない。"""
     # doeff-core-effects は doeff-hy の macro を読むので、この module を読み込む時点ではなく呼ばれた時に読む。
-    from doeff_core_effects.effects import Ask
-    from doeff_core_effects.handlers import env_var_ask, reader
+    from doeff_core_effects import Ask, env_var_ask, reader
 
     from doeff import run, with_handlers
 

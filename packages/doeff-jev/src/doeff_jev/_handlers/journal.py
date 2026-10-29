@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from doeff_core_effects.effects import SlogEffect
+from doeff_core_effects import SlogEffect
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler

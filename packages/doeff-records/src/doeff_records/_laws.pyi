@@ -8,8 +8,8 @@ from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
 from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_core_effects.scheduler import Spawn as Spawn
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects import Spawn as Spawn
+from doeff_core_effects import Wait as Wait
 from doeff_time import Delay as Delay
 from doeff_time import GetTime as GetTime
 from doeff_records._values import FieldDecl as FieldDecl

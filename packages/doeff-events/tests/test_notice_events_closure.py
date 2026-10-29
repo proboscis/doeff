@@ -144,7 +144,7 @@ def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() ->
 
 
 def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
-    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
     coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
 

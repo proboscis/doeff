@@ -212,7 +212,7 @@ def test_defeffect_makes_a_frozen_effect_with_its_answer_and_tags() -> None:
     import dataclasses
 
     from doeff import EffectBase, run
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
 
     ns = evaluate("""
 (defclass Lease [])
@@ -295,7 +295,7 @@ def test_defeffect_refuses_misplaced_defaults_and_pre() -> None:
 
 def test_defeffect_runs_carried_names_the_fields_its_handler_runs_in_place() -> None:
     """:runs-carried(agora-redesign #1456)— 答え手が出した所で走らせる Program の欄を宣言し、閉じの検がそれを読む。"""
-    from doeff_core_effects.effects import runs_carried_of
+    from doeff_core_effects._effects import runs_carried_of
 
     ns = evaluate("""
 (import doeff [Program])

@@ -7,7 +7,7 @@
 ;;   外す: 名が重なる故障だけ / None で全部。置き場全体の不達(SetStoreOutage)が故障より先に答える
 (require doeff-hy.macros [deftest defk <- val on-raise])
 (import doeff [Perform run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Written WrittenRows Missing Refused Unreachable Appended Changes Page Events WatchCursor])

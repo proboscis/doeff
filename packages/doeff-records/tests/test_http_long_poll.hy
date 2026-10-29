@@ -13,8 +13,8 @@
 (import pytest)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects [state])
+(import doeff_core_effects [Spawn Wait])
 (import doeff_core_effects.http_effects [HttpRequest HttpFailed HttpFailureKind])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [GetMonotonic])

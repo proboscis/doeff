@@ -5,7 +5,7 @@ which futures, how long the deadline is and in the answer. The async and sync ha
 one clause answers the three waits the same way.
 """
 
-from doeff_core_effects.scheduler import Future, Task
+from doeff_core_effects import Future, Task
 
 from doeff_time._effects import (
     RaceOutcome,

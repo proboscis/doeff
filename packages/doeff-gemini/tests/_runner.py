@@ -20,18 +20,23 @@ from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff_core_effects.effects import Get, Listen, Put, SlogEffect, Try, WriterTellEffect
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
+    Get,
+    Listen,
+    Put,
+    SlogEffect,
+    Try,
+    WriterTellEffect,
     await_handler,
     lazy_ask,
     listen_handler,
     local_handler,
     reader,
+    scheduled,
     slog_handler,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import scheduled
 from doeff_time import SimClock, sim_time_handler
 
 from doeff import EffectBase, Err, Ok, Pass, Transfer, do, run, with_handlers

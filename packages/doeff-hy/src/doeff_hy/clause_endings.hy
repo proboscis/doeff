@@ -6,7 +6,7 @@
 ;;;              節が名指す effect の名が Raise / Absent なら、resume・transfer を断る。ほかの effect を finish で打ち切る節は
 ;;;              理由 (:finish-reason "…") が要る。
 ;;;   定義の時   handler を作る式を評価した時に、節の effect の型が宣言する再開の扱い(__doeff_resumption__ —
-;;;              doeff_core_effects.effects.Resumption)と節の終わり方を照らす(別名で import した Raise も捕まえる)。
+;;;              doeff_core_effects._effects.Resumption)と節の終わり方を照らす(別名で import した Raise も捕まえる)。
 ;;;   実行の時   節が resume も finish もせずに抜けたら RuntimeError(黙ってスコープを None で終えない)。
 ;;;
 ;;; handle.hy は展開の時に関数の中でこの module を import する(handle.hy は macros.hy に require されるので、deff を使う
@@ -20,7 +20,8 @@
 (import typing [Union get-args get-origin])
 (import hy)
 (import hy.models [Expression Symbol Keyword String Sequence Object Tuple])
-(import doeff_core_effects.effects [Resumption resumption-of])
+(import doeff_core_effects [Resumption]
+        doeff_core_effects._effects [resumption-of])
 ;; 節を終える操作とその終わり方(続きを再開する・打ち切る …)は clause_ops.hy の表から引く — ここに名の一覧を写さない
 ;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた — card ki-b4c015d8ba1f)。resume は非末尾なら節へ戻るので、
 ;; 実行の時の検めが見る。

@@ -16,7 +16,7 @@ Run: uv run python packages/doeff-agents/examples/01_review_with_effects.py
 import tempfile
 from pathlib import Path
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_time import SimClock, sim_time_handler
 
 from doeff import Gather, Spawn, do, run, with_handlers

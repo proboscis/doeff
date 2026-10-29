@@ -47,8 +47,8 @@ from doeff_agents._handlers.production import (
 from doeff_agents._mcp_server import McpToolServer
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.tmux import SessionInfo
-from doeff_core_effects.handlers import lazy_ask, state
-from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
+from doeff_core_effects import lazy_ask, state
+from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 
 from doeff import Pure, do, run
 

@@ -12,7 +12,7 @@
 (import json)
 (import pytest)
 (import doeff [Program run with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_agents.sessionhost.store_memory [MemorySessionRows memory-session-store])
 (import memory_store_world [StoreWorld kept-in seeded reported])
 

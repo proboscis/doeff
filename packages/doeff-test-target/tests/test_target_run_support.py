@@ -10,7 +10,7 @@ other suites' helper modules when collected together.
 from collections.abc import Mapping
 from typing import Any
 
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 from doeff import run
 

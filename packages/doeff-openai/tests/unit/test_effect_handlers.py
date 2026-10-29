@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from _runner import run_program
-from doeff_core_effects.effects import EffectBase
+from doeff_core_effects._effects import EffectBase
 from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 from doeff_openai import ChatCompletion as ChatCompletionEffect
 from doeff_openai import Embedding as EmbeddingEffect

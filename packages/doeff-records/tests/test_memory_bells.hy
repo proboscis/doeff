@@ -5,7 +5,8 @@
 ;;   外した呼び鈴は置き場に残らず、後の書きも 2 度目の外しも効かずに通る
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers EffectBase])
-(import doeff_core_effects.scheduler [scheduled HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
+(import doeff_core_effects [scheduled]
+        doeff_core_effects._scheduler [HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records [ExpectAbsent])

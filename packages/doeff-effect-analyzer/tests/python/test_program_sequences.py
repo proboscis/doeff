@@ -39,8 +39,8 @@ FOUNDATIONS_HY = """\
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [Gather Spawn])
+(import doeff_core_effects._handlers [state])
+(import doeff_core_effects._scheduler [Gather Spawn])
 (import {pkg}.effects [ReadBoard WriteBoard Nap])
 
 (defk serve-reads []

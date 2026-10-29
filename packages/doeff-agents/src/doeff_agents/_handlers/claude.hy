@@ -11,7 +11,7 @@
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<- set!])
 (import doeff [do :as _doeff-do Ask GetHandlers GetOuterHandlers])
-(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
+(import doeff_core_effects [CreateExternalPromise Wait Spawn])
 
 (import doeff_agents._effects.agent [
   LaunchEffect MonitorEffect CaptureEffect

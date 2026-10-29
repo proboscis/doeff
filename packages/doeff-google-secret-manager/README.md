@@ -24,8 +24,8 @@ gcloud auth application-default login
 
 ```python
 from doeff import do, run, with_handlers
-from doeff_core_effects.handlers import await_handler, lazy_ask, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, lazy_ask, state, try_handler, writer
+from doeff_core_effects import scheduled
 from doeff_google_secret_manager import access_secret
 
 
@@ -56,8 +56,8 @@ print("password length:", len(result))
 
 ```python
 from doeff import do, run, with_handlers
-from doeff_core_effects.handlers import lazy_ask, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import lazy_ask, state, try_handler, writer
+from doeff_core_effects import scheduled
 from doeff_google_secret_manager import production_handlers
 from doeff_secret import GetSecret
 
