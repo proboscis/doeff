@@ -59,6 +59,11 @@ from doeff_core_effects.http_server_effects import closing_of as closing_of
 from doeff_core_effects.http_server_effects import HttpProbe as HttpProbe
 from doeff_core_effects.http_server_effects import probe_for as probe_for
 from doeff_core_effects.http_server_effects import probe_answer as probe_answer
+from doeff_core_effects.http_server_effects import WsShortcutAnswered as WsShortcutAnswered
+from doeff_core_effects.http_server_effects import WsShortcutFailed as WsShortcutFailed
+from doeff_core_effects.http_server_effects import ws_shortcut_for as ws_shortcut_for
+from doeff_core_effects.http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
+from doeff_core_effects.http_server_effects import ws_shortcut_stage as ws_shortcut_stage
 from aiohttp.web_protocol import PayloadAccessError as PayloadAccessError
 from doeff import run as run
 FILE_CHUNK_BYTES: int
@@ -151,6 +156,7 @@ class WebEdge:
     shut: Incomplete
     ws_send_drain: Incomplete
     probes: Incomplete
+    ws_shortcuts: Incomplete
     count: Incomplete
     dropped_answers: Incomplete
 
@@ -166,7 +172,7 @@ class WebEdge:
     def across(self, coroutine: Coroutine[object, object, Carried]) -> Carried:
         ...
 
-    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple, share_port: bool) -> HttpAddress:
+    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple, share_port: bool, ws_shortcuts: tuple) -> HttpAddress:
         ...
 
     def take_arrival(self) -> HttpEvent | None:
@@ -200,6 +206,9 @@ class WebEdge:
         ...
 
     def terminate_ws(self, request: web.Request, ticket: str) -> web.StreamResponse:
+        ...
+
+    def text_arrived(self, ticket: str, text: str) -> None:
         ...
 
     def finish_peer(self, peer: WsPeer) -> None:
