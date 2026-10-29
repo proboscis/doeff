@@ -722,6 +722,21 @@ def test_from_root_import_keeps_a_name_the_entry_binds_to_another_object(tmp_pat
     assert hy == "(import pkg [_handlers :as handlers structured-llm])\n"
 
 
+def test_hy_relative_import_is_kept_as_written(tmp_path: Path) -> None:
+    """Hy の相対 import(``(import .runtime-env-model [EnvVar])``)は隠す子を読まないので、そのまま残す。
+
+    doeff-cluster の shared/intent の 4 file が相対 import を持ち、名の mangle が頭の ``.`` の空の名で落ちた
+    (card ki-9b8308f2c7c3 — 区画 sim の hide)。
+    """
+    root_dir = tmp_path / "pkg"
+    root_dir.mkdir()
+    patterns = tool.Patterns.of([tool.Child("pkg", "sim", root_dir)])
+    context = tool.FileContext("caller.hy", None, False)
+    text = "(import .runtime-env-model [EnvVar])\n(import pkg.sim.local [run])\n"
+    hy, _ = tool.rewrite_hy(text, patterns, context, lambda _module, _name: True)
+    assert hy == "(import .runtime-env-model [EnvVar])\n(import pkg [run])\n"
+
+
 def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path) -> None:
     """古い path を先に import しても、入口が子と同じ名で出す物(関数)が入口に残る。
 
