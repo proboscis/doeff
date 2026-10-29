@@ -37,7 +37,7 @@ import hy  # noqa: F401 — 下の Hy の module(翻訳と答え手)を import �
 import pytest
 from doeff import do, run, with_handlers
 from doeff_core_effects import reader, state
-from doeff_core_effects.os_file import os_file_handler
+from doeff_core_effects import os_file_handler
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_time import sync_time_handler
 

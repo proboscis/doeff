@@ -16,8 +16,8 @@
 (import dataclasses [dataclass])
 (import pathlib [Path])
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadText ListDirectory WalkTree RenamePath MakeDirectory
-                                         RemoveTree file-done])
+(import doeff_core_effects [PathKind PathStat FileFailed StatPath ReadText ListDirectory WalkTree RenamePath MakeDirectory RemoveTree]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess ProcessNotStarted ProcessExited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode WakeSet WorkerWakes])

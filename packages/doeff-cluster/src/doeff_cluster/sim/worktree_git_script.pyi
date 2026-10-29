@@ -2,16 +2,16 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-from doeff_core_effects.file_effects import StatPath as StatPath
-from doeff_core_effects.file_effects import PathStat as PathStat
-from doeff_core_effects.file_effects import PathKind as PathKind
-from doeff_core_effects.file_effects import FileFailed as FileFailed
-from doeff_core_effects.file_effects import ReadText as ReadText
-from doeff_core_effects.file_effects import WriteText as WriteText
-from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
-from doeff_core_effects.file_effects import ListDirectory as ListDirectory
-from doeff_core_effects.file_effects import DirEntry as DirEntry
-from doeff_core_effects.file_effects import RemoveTree as RemoveTree
+from doeff_core_effects import StatPath as StatPath
+from doeff_core_effects import PathStat as PathStat
+from doeff_core_effects import PathKind as PathKind
+from doeff_core_effects import FileFailed as FileFailed
+from doeff_core_effects import ReadText as ReadText
+from doeff_core_effects import WriteText as WriteText
+from doeff_core_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects import ListDirectory as ListDirectory
+from doeff_core_effects import DirEntry as DirEntry
+from doeff_core_effects import RemoveTree as RemoveTree
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
 from doeff_core_effects.process_effects import RunProcess as RunProcess
 from doeff_core_effects.scripted_process import ScriptedCommand as ScriptedCommand

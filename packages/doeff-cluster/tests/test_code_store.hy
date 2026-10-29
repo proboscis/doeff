@@ -11,7 +11,7 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects [slog-handler state])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_core_effects._python_bytecode [compiled-pyc])

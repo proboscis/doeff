@@ -7,7 +7,7 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_core_effects.file_effects [PathKind PathStat ReadText StatPath])
+(import doeff_core_effects [PathKind PathStat ReadText StatPath])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess StartProcess])
 (import dataclasses)

@@ -9,9 +9,9 @@
 (import pathlib [Path])
 (import doeff [with-handlers])
 (import doeff_core_effects [slog-handler state])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.file_effects [ReadText])
+(import doeff_core_effects [ReadText])
 (import doeff_core_effects.process_effects [EnvMode StartProcess PollProcess ProcessAlive RunProcess ReadEnvironment ProcessStarted
                                             ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_time [sync-time-handler])

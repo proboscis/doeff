@@ -17,7 +17,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (import json)
 (import urllib.parse [quote :as url-quote])
-(import doeff_core_effects.file_effects [FileFailed])
+(import doeff_core_effects [FileFailed])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.kube_service_model [EnsureKubeService KubeService KubeServiceOutcome KubeServiceRefused KubeServiceType])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API REFUSAL-BODY-LIMIT REQUEST-TIMEOUT-SECONDS SERVICE-ACCOUNT-TOKEN-FILE

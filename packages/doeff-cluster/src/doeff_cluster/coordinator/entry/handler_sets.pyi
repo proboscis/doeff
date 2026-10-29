@@ -5,7 +5,7 @@ from doeff_cluster.coordinator.protocol.request_bodies import request_bodies as 
 from doeff_core_effects import await_handler as await_handler
 from doeff_core_effects import slog_handler as slog_handler
 from doeff_core_effects import state as state
-from doeff_core_effects.os_file import os_file_handler as os_file_handler
+from doeff_core_effects import os_file_handler as os_file_handler
 from doeff_time import async_time_handler as async_time_handler
 from doeff_cluster.coordinator.protocol.request_queue import RequestQueue as RequestQueue
 from doeff_cluster.coordinator.protocol.request_queue import queued_requests as queued_requests

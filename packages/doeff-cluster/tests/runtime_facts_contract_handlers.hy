@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.intent.runtime_identity_model [ModuleOrigin ProcessFacts ReadRuntimeFacts])
 (import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts process-runtime-facts])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 
 (val PROCESS-RUNTIME-FACTS "process-runtime-facts")
 (val GIVEN-RUNTIME-FACTS "given-runtime-facts")

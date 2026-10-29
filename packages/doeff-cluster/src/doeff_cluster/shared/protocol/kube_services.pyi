@@ -3,7 +3,7 @@
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from urllib.parse import quote as url_quote
-from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff_core_effects import FileFailed as FileFailed
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse

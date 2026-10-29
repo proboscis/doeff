@@ -38,11 +38,12 @@
 (import doeff [Program run with-handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [await-handler slog-handler state])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
 (import doeff_core_effects.process_exit [process-exit-handler])
-(import doeff_core_effects.file_effects [ReadText WriteText FileFailed file-done])
+(import doeff_core_effects [ReadText WriteText FileFailed]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment RunProcess ProcessOutcome StartProcess ProcessStarted ProcessNotStarted
                                             AwaitProcessExit PollProcess ProcessExited ProcessRunning ProcessNotChild])
 (import doeff_core_effects.warm_effects [ForkFromWarm WarmForked WarmRefused AwaitWarmChildExit PollWarmChild WarmExited WarmRunning WarmLost])

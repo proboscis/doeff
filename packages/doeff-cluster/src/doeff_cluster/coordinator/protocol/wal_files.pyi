@@ -3,18 +3,18 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_core_effects import slog as slog
-from doeff_core_effects.file_effects import Appended as Appended
-from doeff_core_effects.file_effects import AppendBytes as AppendBytes
-from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
-from doeff_core_effects.file_effects import PathKind as PathKind
-from doeff_core_effects.file_effects import PathStat as PathStat
-from doeff_core_effects.file_effects import ReadBytes as ReadBytes
-from doeff_core_effects.file_effects import ReadText as ReadText
-from doeff_core_effects.file_effects import StatPath as StatPath
-from doeff_core_effects.file_effects import SyncDirectory as SyncDirectory
-from doeff_core_effects.file_effects import TruncateFile as TruncateFile
-from doeff_core_effects.file_effects import WriteBytes as WriteBytes
-from doeff_core_effects.file_effects import file_done as file_done
+from doeff_core_effects import Appended as Appended
+from doeff_core_effects import AppendBytes as AppendBytes
+from doeff_core_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects import PathKind as PathKind
+from doeff_core_effects import PathStat as PathStat
+from doeff_core_effects import ReadBytes as ReadBytes
+from doeff_core_effects import ReadText as ReadText
+from doeff_core_effects import StatPath as StatPath
+from doeff_core_effects import SyncDirectory as SyncDirectory
+from doeff_core_effects import TruncateFile as TruncateFile
+from doeff_core_effects import WriteBytes as WriteBytes
+from doeff_core_effects._file_effects import file_done as file_done
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 MOVED_MARK: str
 SLOW_FSYNC_SECONDS: float

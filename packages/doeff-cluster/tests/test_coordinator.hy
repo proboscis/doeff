@@ -19,7 +19,7 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [slog-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
 (import doeff_events [MemoryBroker])

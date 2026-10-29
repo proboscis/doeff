@@ -4,11 +4,11 @@ from doeff import Program as _Program
 import argparse as argparse
 from doeff import run as run
 from doeff import with_handlers as with_handlers
-from doeff_core_effects.file_effects import FileFailed as FileFailed
-from doeff_core_effects.file_effects import ReadText as ReadText
-from doeff_core_effects.file_effects import WriteText as WriteText
-from doeff_core_effects.file_effects import file_done as file_done
-from doeff_core_effects.os_file import os_file_handler as os_file_handler
+from doeff_core_effects import FileFailed as FileFailed
+from doeff_core_effects import ReadText as ReadText
+from doeff_core_effects import WriteText as WriteText
+from doeff_core_effects._file_effects import file_done as file_done
+from doeff_core_effects import os_file_handler as os_file_handler
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
 from doeff_cluster.shared.intent.remote_model import TaskFailed as TaskFailed
 from doeff_cluster.shared.intent.remote_model import VersionMismatch as VersionMismatch

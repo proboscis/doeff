@@ -26,7 +26,7 @@
 (import doeff [with_handlers Program run])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [reader await-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [Spawn Cancel Task TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
